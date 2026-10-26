@@ -395,8 +395,10 @@ gregale edge-rules update <rule-id> --mode enforce
 ```
 
 `--challenge-difficulty` (10 to 22, default 16) sets how much work a browser
-does; each step doubles it. `--challenge-pass-ttl` (300 to 86400 seconds)
-sets how long a pass lasts.
+does; each step doubles it. At the default, a laptop solves the page in a
+fraction of a second, and an older mid-range phone in about a second. At
+22, that phone takes 15-20 seconds, so keep high values for attacks.
+`--challenge-pass-ttl` (300 to 86400 seconds) sets how long a pass lasts.
 
 Under attack the difficulty can rise on its own. Set
 `--challenge-max-difficulty` above the difficulty, and while the rule serves
@@ -568,6 +570,11 @@ Some details to know:
   its clients go. A log-mode rule never boxes anyone.
 - The edge protection summary shows how many clients were boxed and how many
   of their requests were refused.
+- Each box is also an event, from the request that tipped the client in:
+  `gregale edge-rules events --app my-site --outcome boxed` lists the
+  address, path and User-Agent, so you can tell a scanner from a customer.
+  Events are sampled (up to 10 boxes per rule per minute on each edge node)
+  and kept for 7 days.
 
 ## Outbound connections and DNS
 

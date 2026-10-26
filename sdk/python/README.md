@@ -495,7 +495,12 @@ for enrollment, pending-operation fences and recovery behavior.
 
 ## Batch event publication
 
-Use `faas_sdk.api.events.publish_event_batch.sync_detailed` or
+Events are a preview capability, so their operations and models live under
+`faas_sdk.preview` (`faas_sdk.preview.api.events`, `faas_sdk.preview.models`),
+for example `from faas_sdk.preview.api.events import publish_event` and
+`from faas_sdk.preview.models import PublishEventRequest`.
+
+Use `faas_sdk.preview.api.events.publish_event_batch.sync_detailed` or
 `asyncio_detailed` with `PublishEventBatchRequest(events=[...])`. Batches contain
 1–100 stable-id envelopes in at most 1 MiB. Inspect each parsed result: HTTP 200
 can include rejected or unknown items. Retry with the original source/id/content;
@@ -505,7 +510,7 @@ See [batch publication](../../docs/event-driven.md#batch-event-publishing).
 ## Event retention health
 
 The generated events service exposes `getEventRetentionHealth` (Node) or
-`faas_sdk.api.events.get_event_retention_health` (Python). Filter receipt
+`faas_sdk.preview.api.events.get_event_retention_health` (Python). Filter receipt
 observations by source/app and choose an expiry lookahead; storage utilization
 remains account-wide. Recovery preflight also returns current receipt expiry
 warnings and current retention holds. See [retention health](../../docs/event-driven.md#retention-health-and-expiry-alerts).
@@ -550,7 +555,7 @@ retained unresolved terminal-admission jobs. `counts_complete=False` marks
 lower-bound counts; prolonged waits measure time since admission completion.
 See [execution recovery health](../../docs/adr/917-execution-recovery-health-alerts.md).
 
-Use `faas_sdk.api.events.get_event_recovery_notifications` for a read-only report
+Use `faas_sdk.preview.api.events.get_event_recovery_notifications` for a read-only report
 of admission/execution capture and each selected receiver's current delivery.
 Missing selection or pruned delivery evidence remains unknown; capture alone
 does not prove acknowledgement. Retained dead deliveries link to independent
@@ -612,11 +617,11 @@ Continue with `next_cursor` even when `requests` is empty, retaining the same
 status selection. Each page is a fresh read-only snapshot. Returned detail and
 retry-preview paths use existing recovery inspection endpoints.
 
-Application-scoped producer keys: use `faas_sdk.api.events.publish_app_event` with `AppPublishEventRequest(key="order-123-created", type_="order.created", data={"order_id": "123"})`. Preserve app/key/content after uncertain responses. The result includes `duplicate`, generated `app.<UUID>` source and the durable original receipt. Deduplication lasts while the receipt is retained; consumers still deduplicate side effects.
+Application-scoped producer keys: use `faas_sdk.preview.api.events.publish_app_event` with `AppPublishEventRequest(key="order-123-created", type_="order.created", data={"order_id": "123"})`. Preserve app/key/content after uncertain responses. The result includes `duplicate`, generated `app.<UUID>` source and the durable original receipt. Deduplication lasts while the receipt is retained; consumers still deduplicate side effects.
 
-Read-only producer-key reconciliation: `faas_sdk.api.events.get_app_event_publish_status` accepts the app slug and original exact key. The response contains the retained receipt and paginated consumer evidence. `accepted` means routing settled, not consumer success; `processing` is still durably accepted. `unavailable` remains uncertain and must not automatically trigger publication. Follow `evidence.next_after` using `after`, with up to 200 recipients per page (default 100).
+Read-only producer-key reconciliation: `faas_sdk.preview.api.events.get_app_event_publish_status` accepts the app slug and original exact key. The response contains the retained receipt and paginated consumer evidence. `accepted` means routing settled, not consumer success; `processing` is still durably accepted. `unavailable` remains uncertain and must not automatically trigger publication. Follow `evidence.next_after` using `after`, with up to 200 recipients per page (default 100).
 
-Read-only content verification: call `faas_sdk.api.events.verify_app_event_publication` with the original `AppPublishEventRequest`. It returns match/conflict/unavailable, comparing normalized type, schema version and semantic JSON data rather than occurrence time or trace metadata. Match and conflict include the retained acceptance receipt. No publish or retention refresh occurs, and missing evidence remains uncertain.
+Read-only content verification: call `faas_sdk.preview.api.events.verify_app_event_publication` with the original `AppPublishEventRequest`. It returns match/conflict/unavailable, comparing normalized type, schema version and semantic JSON data rather than occurrence time or trace metadata. Match and conflict include the retained acceptance receipt. No publish or retention refresh occurs, and missing evidence remains uncertain.
 
 Acceptance guards: pass `expected_accepted_at` as the exact RFC3339 string from the saved receipt to status or verification. Query parameters deliberately use strings to preserve nanosecond precision rather than converting through Python's microsecond datetime. The independent acceptance result is same_acceptance/replacement_acceptance/unavailable. Replacement content may still match; never assign its consumer outcomes to the expected acceptance. Reconciliation remains read-only.
 ### Workflow blockers
@@ -2332,7 +2337,7 @@ Optionally require recent recovery evidence with `max_observation_age` (default 
 
 Optional `diagnostics=True` includes bounded exact-recipient delivery blocker diagnostics, separate from replay attribution. Missing evidence and settled routing never prove handler completion. See [diagnostics](../../docs/gregale-commit.md#diagnose-recovery-delivery-blockers).
 
-Exact routing lookup: `faas_sdk.api.events.get_event_recipient_blocker.asyncio_detailed(client=client, source=source, id=event_id, subscription_id=subscription_id, expected_accepted_at=accepted_at)`. Pass the original timestamp string to preserve fractional precision. `not_waiting` describes routing only.
+Exact routing lookup: `faas_sdk.preview.api.events.get_event_recipient_blocker.asyncio_detailed(client=client, source=source, id=event_id, subscription_id=subscription_id, expected_accepted_at=accepted_at)`. Pass the original timestamp string to preserve fractional precision. `not_waiting` describes routing only.
 
 Diagnostic coverage rotates within the 50-read cap and resumes from checkpoints. `diagnostics_progress` reports separate coverage counts; `retained` samples keep their original timestamps. Diagnostic completeness never gates delivery settlement. See [resumable coverage](../../docs/gregale-commit.md#resume-diagnostic-coverage-across-large-selections).
 
@@ -2380,7 +2385,7 @@ The CLI saves each snapshot before emitting alerts, including final-check transi
 
 The queue is bounded at 1,024 slots, including a reserved closing transition for every active incident. If a new opening cannot reserve both slots, monitoring stops with `alert_queue_full` and retains queued notifications and the sampled status. Acknowledge pending work and resume. No queued transition is evicted. Notification sequences are bounded to the exact integer range shared by the SDKs. Invalid saved state/acknowledgements are rejected and do not overwrite the CLI checkpoint. Non-durable watches retain the previous per-pass behavior. Delivery mutations, receipt budgets and ordinary watch completion are unchanged.
 
-Use `faas_sdk.api.events.get_event_consumer_delivery_health.sync(...)` or its
+Use `faas_sdk.preview.api.events.get_event_consumer_delivery_health.sync(...)` or its
 async counterpart with `slug`, `subscription_id`, and an authenticated `client`
 for a combined subscription delivery summary. Component timestamps represent
 independent reads. Inspect pending-sample truncation and execution retention

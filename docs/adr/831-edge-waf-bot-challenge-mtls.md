@@ -1094,7 +1094,8 @@ stays within the old sizing's range.
 Not yet measured on a production node. Rerun `TestEdgeWAFInlineLoad_E2E`
 on `gregale-compute-2` as in amendment 10, with `FAAS_E2E_WAF_LOAD_GATE=1`
 (ADR-20261024082000), and expect `busy` skips under 0.1% with p95 at most
-2 ms at 100-500 req/s, which retires amendment 11's known limit.
+2 ms at 100-500 req/s, which retires amendment 11's known limit. Measured
+in amendment 14.
 
 ## Amendment 13 (2026-10-24): the false-positive review
 
@@ -1139,3 +1140,87 @@ silencing a false positive meant restating a rule's whole WAF action
    shows the review for apps with a kind=waf rule, with an Exclude button
    per group. The operator procedure for W4 is
    `docs/runbooks/edge-waf-false-positive-review.md`.
+
+## Amendment 14 (2026-10-25): slot sizing measured on the reference node
+
+Amendment 12's sizing, measured where amendment 10 measured the old one.
+`TestEdgeWAFInlineLoad_E2E` with `FAAS_E2E_WAF_LOAD_GATE=1`, built from
+main at c0b566da41, ran on `gregale-compute-2` (n2-standard-4, Intel Xeon
+2.80 GHz, 4 vCPUs, so 3 check slots) on 2026-10-24 between 23:37 and
+23:43 UTC. It ran in private mount and network namespaces with its own
+Postgres in `/dev/shm`, beside the node's production daemons and up to
+two tenant microVMs, starting at a load average of 0.13. Each pass ran
+4 apps with a `warn` rule for 30 s per rate. There were three passes:
+
+| Rate (req/s) | Requests per pass | Check p50 | Check p95 | Check p99 | Within 2 ms | Skipped | Attacks warned | gatewayd-internal CPU |
+|---|---|---|---|---|---|---|---|---|
+| 100 | 2,920-3,007 | 1.03-1.09 ms | 1.49-1.57 ms | 1.93-1.98 ms | 99.2-99.5% | 0.0% | 445/445 | 2.94-3.02 ms/request |
+| 250 | 7,394-7,566 | 0.93-0.98 ms | 1.48-1.58 ms | 1.95-2.67 ms | 98.2-99.2% | 0.0% | 1,126/1,126 | 2.53-2.60 ms/request |
+| 500 | 14,915-15,087 | 0.90-0.91 ms | 1.52-1.54 ms | 2.65-2.74 ms | 98.0-98.1% | 0.0% | 2,252/2,252 | 2.28 ms/request |
+
+The test prints skips to one decimal, so 0.0% means under 0.05%. The gate
+checks the exact fraction against 0.1%, and every rate in every pass met
+both limits. No benign request was warned, every request was answered
+(status 200), and no check errored.
+
+Against amendment 10's run of the old sizing on the same node, skips fell
+from 2.5-8% to under 0.05% at 250-500 req/s. The check p95, which now
+includes the slot wait, is 1.48-1.58 ms, against 1.49-2.00 ms before.
+p99 went over 2 ms at 250-500 req/s (2.65-2.74 ms), where checks now wait
+for a slot instead of being skipped. The gate is set on p95.
+
+Decision:
+
+1. **ADR-20261024082000 criteria W1 and W2 are met.**
+2. **The skip rate is no longer a known limit.** Amendment 11 listed it
+   with slot sizing as the follow-up, and that follow-up is now measured.
+   Failing open itself stays: a flood that spends an app's inline budget,
+   or sustained overload, still lets requests through unchecked and counts
+   them as `inline_skipped`, as `docs/security.md` says.
+3. **Repeat this run** for any change that adds CPU to the in-path check:
+   CRS or Coraza upgrades, more in-path rules, or a paranoia level 2
+   in-path. Use the same node, rates and gate. The run kit is
+   cross-compiled binaries, a portable Postgres and an `unshare` launcher.
+   It refuses to start while `/var/lock/faas-deploy.lock` is held and waits
+   for a 1-minute load at or under 0.6.
+
+## Amendment 15 (2026-10-25): the challenge solver hashes the token once
+
+ADR-20261024082000 criterion H3 asks that a 2020 mid-range Android phone
+solve the challenge at the default difficulty within 2 s at the 95th
+percentile. Before the device test, the page ran in headless Chrome under
+CPU throttling (`docs/ops/evidence/20261025-edge-challenge-solve-time/`).
+That run used the page the gateway serves, fresh 225-byte tokens, and a
+local server that checked every solution. The solver needed 2.03 us of
+renderer CPU per hash on an Apple M3 Pro. Geekbench 6 puts a 2020 mid-range
+phone about 9x slower (11.5x on its slowest runs), which gives an estimated
+p95 of 3.8-4.9 s. Chrome's own 10x throttle measured a p95 of 6.4 s. The
+solver would have missed H3.
+
+The cause is the solver, not the difficulty. `token + ":" + counter` spans
+four 64-byte SHA-256 blocks, and only the last changes from one attempt to
+the next. The solver hashed all four, and allocated a new buffer, on every
+attempt.
+
+Decision:
+
+1. **The page hashes the token's whole blocks once.** `solve` computes the
+   SHA-256 state after the whole 64-byte blocks of `token + ":"`, then for
+   each counter pads and hashes only the last one or two blocks, in buffers
+   it reuses. The message, the hash and the counter it finds are unchanged,
+   so the gateway's check and old pages are unaffected.
+   `TestChallengeSolverJS` checks against Go that `solve` returns the first
+   valid counter, for token lengths 1-140 and starts where the counter
+   gains a digit.
+2. **Measured after the change**, on the same machine and method: 0.39 us
+   per hash (5.2x faster), Chrome 10x throttle p95 0.68 s, and an estimated
+   p95 of 0.88-1.12 s on a 2020 mid-range phone. The upper end of 2020
+   mid-range (Pixel 4a class, about 5.5x slower than the M3 Pro) is about
+   0.5 s.
+3. **The default difficulty stays at 16.** Lowering it would also have met
+   H3, but it would halve the work for every visitor, attackers included.
+   At difficulty 22 (about 4 million hashes on average), such a phone needs
+   about 15-20 s, which is acceptable only as a response to an attack.
+4. **H3 stays open** until a real phone is measured and recorded in
+   `docs/STATUS.md`. The estimate cannot see a phone's thermal state, or
+   whether Chrome runs the page on a big or a little core.

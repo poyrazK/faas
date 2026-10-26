@@ -94,6 +94,12 @@ func writeMissingRoute(w http.ResponseWriter, r *http.Request) {
 	http.NotFound(w, r)
 }
 
+// capabilityEnabledFor decides a capability for work on a loaded app
+// (ADR-20261023115741). Without a gate (unit tests) every capability is on.
+func (s *server) capabilityEnabledFor(capability string, acct state.Account, app state.App) bool {
+	return s.capGate == nil || s.capGate.Enabled(capability, appFlagSubject(acct, app))
+}
+
 // realtimeReleased decides the realtime capability for a realtime endpoint's
 // account and app (ADR-20261023115741). A failed lookup keeps the endpoint
 // registered, so a transient store error never disconnects healthy sockets.

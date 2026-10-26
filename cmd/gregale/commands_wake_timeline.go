@@ -178,7 +178,7 @@ func renderWakeTimelinePageWithOptions(w io.Writer, slug string, p api.WakeTimel
 	renderSummaryHeader(w, p.Events)
 	renderWakeTimingSummary(w, p.Events)
 	for _, ev := range p.Events {
-		_, _ = fmt.Fprintf(w, "  %s  %-9s  %s\n", ev.At, ev.Actor, ev.Kind)
+		_, _ = fmt.Fprintf(w, "  %s  %-9s  %s\n", timelineColumnTime(ev.At), ev.Actor, ev.Kind)
 		if ctx := renderContextSuffix(ev); ctx != "" {
 			_, _ = fmt.Fprintf(w, "        %s\n", ctx)
 		}
@@ -609,6 +609,17 @@ func timelineMillis(v any) (int64, bool) {
 	default:
 		return 0, false
 	}
+}
+
+// timelineColumnTime prints an event time at a fixed width: RFC3339Nano
+// drops trailing zeros, so "…24.8436Z" pushed its row out of the column
+// (Hunt 14 H14-64).
+func timelineColumnTime(s string) string {
+	t := timelineTime(s)
+	if t.IsZero() {
+		return s
+	}
+	return t.UTC().Format("2006-01-02T15:04:05.000000Z")
 }
 
 func timelineTime(s string) time.Time {

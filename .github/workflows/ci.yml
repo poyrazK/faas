@@ -488,6 +488,9 @@ jobs:
       - name: canary artifact retention gate
         run: make canary-artifact-retention-test
 
+      - name: serving probe gate
+        run: make serving-probe-test
+
       - name: GCP public-beta policy gate
         run: make gcp-public-beta-policy-test
 
@@ -955,7 +958,9 @@ jobs:
           # Recovery with an actual serving receipt requires local database authority.
           scripts/ci/with-pg16-unix.sh bash -euo pipefail <<'STATE_TESTS'
           STATE_RUN=$(go run ./scripts/ci/e2eshard -package=./pkg/state -all-tests -shards=8 -shard=${{ matrix.shard }})
-          go test -race -count=1 -v -p 4 -timeout=20m -run="$STATE_RUN" -coverpkg=./pkg/state -covermode=atomic -coverprofile=coverage/cover-shard-state-${{ matrix.shard }}.out ./pkg/state
+          # 30m: ADR-570's PostgreSQL contracts (#4153) took shards 1 and 4 past
+          # 20m on 2026-10-25; the 45-minute job bound still catches a hang.
+          go test -race -count=1 -v -p 4 -timeout=30m -run="$STATE_RUN" -coverpkg=./pkg/state -covermode=atomic -coverprofile=coverage/cover-shard-state-${{ matrix.shard }}.out ./pkg/state
           STATE_TESTS
       - name: upload state coverage
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
@@ -1313,8 +1318,10 @@ jobs:
           cache: false
       - name: Prepare traffic evidence
         run: |
-          mkdir -p "$RUNNER_TEMP/traffic-evidence/go-tmp" "$RUNNER_TEMP/traffic-evidence/binaries"
-          printf 'GOTMPDIR=%s\n' "$RUNNER_TEMP/traffic-evidence/go-tmp" >> "$GITHUB_ENV"
+          mkdir -p "$RUNNER_TEMP/traffic-evidence/binaries"
+          # Keep test temp directories short: tests bind unix sockets under
+          # them, and a path over 107 bytes fails with EINVAL.
+          printf 'GOTMPDIR=%s\n' "$(mktemp -d /tmp/tgo.XXXXXX)" >> "$GITHUB_ENV"
           python3 scripts/ci/traffic-platform-checks_test.py
           test "$(go env GOOS)/$(go env GOARCH)" = linux/amd64
           go version > "$RUNNER_TEMP/traffic-evidence/go-version.txt"

@@ -93,3 +93,32 @@ probe when SQL reachability is needed; provider metadata does not prove it.
 Keep the provisioning gate closed until the separate staging qualification is
 valid. Disable `health.enabled` and restart apid to pause monitoring during a
 rollback; no provider resources need to be mutated.
+
+## Compute caps
+
+`FaasManagedPostgresCapEnforcementStale` means the compute cap sweep
+([ADR-20261025094915](../adr/20261025094915-managed-postgres-compute-caps-on-running-databases.md))
+has not finished without a failed account for more than 45 minutes. The sweep
+runs after every usage sweep, while `FAAS_MANAGED_POSTGRES_CAP_ENFORCEMENT` is
+`shadow` or `on`.
+
+Running databases keep the Neon quotas last written, so a stalled sweep neither
+lifts a suspension nor imposes a new one. Customers who upgraded, or who reached
+a new month, stay suspended until a sweep succeeds. The 1st-of-month reset is
+Neon's own and does not need apid.
+
+1. If `FaasManagedPostgresUsageCollectionStale` is also firing, recover the
+   usage collector first; the cap sweep runs on its goroutine.
+2. Read `apid_managed_postgres_cap_accounts{state}`:
+   - `failed` counts accounts whose provider read or quota write failed. The
+     apid log line `managed postgres compute cap sweep failed` names them.
+   - `period_mismatch` means Neon's consumption period does not start at the
+     UTC month. Those accounts are skipped rather than capped; compare
+     `consumption_period_start` on one project before changing anything.
+3. `apid_managed_postgres_cap_quota_decisions_total{outcome}` shows whether
+   writes are happening (`applied`) or only computed (`shadowed`).
+
+To lift one customer's suspension by hand during an outage, raise that project's
+`settings.quota.compute_time_seconds` in the Neon console. Never set it to 0,
+which means unlimited. The next successful sweep rewrites it from the ledger.
+Switching enforcement to `off` stops new writes but leaves every quota in place.

@@ -354,7 +354,9 @@ failure_report_dir = %q
 					t.Fatalf("e2etest: create native ownership root: %v", err)
 				}
 			}
-			cfg += fmt.Sprintf("native_process_recovery = true\nprepared_networks = 0\nnative_image_staging_root = %q\nnative_snapshot_publication_root = %q\n", images, publications)
+			// Owner records let a restarted vmmd clean up after the one it
+			// replaced (ADR-2026101710 Amendment 1).
+			cfg += fmt.Sprintf("native_process_recovery = true\nnative_launch_owner_records = true\nprepared_networks = 0\nnative_image_staging_root = %q\nnative_snapshot_publication_root = %q\n", images, publications)
 			// Strict budgets need the native owner; their apps must still park
 			// and wake from snapshots (ADR 20261022184951).
 			if os.Getenv("FAAS_FINANCIAL_SYSTEM_ACCEPTANCE") == "1" {
@@ -2181,7 +2183,7 @@ var DaemonBinaries = []string{"apid", "schedd", "vmmd", "imaged", "gatewayd-inte
 // (Makefile DAEMONS, deploy/packer/scripts/compile-daemons.sh,
 // pkg/releaseinstall.Names), so building it here makes the harness match the
 // node rather than depend on a fallback that only works for static builds.
-var StaticHelperBinaries = []string{"vmmd-jail-helper"}
+var StaticHelperBinaries = []string{"vmmd-jail-helper", "vmmd-guestdisk"}
 
 var (
 	sharedBinOnce sync.Once

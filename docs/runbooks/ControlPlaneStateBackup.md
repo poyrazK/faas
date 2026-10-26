@@ -99,3 +99,7 @@ healthy standby, fail over instead.
    off-host basebackups (`docs/runbooks/PostgresBackup.md`), then deploy the
    release and repoint the compute nodes and public origin as in the failover
    runbook.
+6. Run `make ANSIBLE_INVENTORY=… object-storage-reconcile` before turning
+   `s3_enabled` back on. The restored bucket catalog is as old as the backup;
+   buckets created or deleted since then disagree with the providers
+   (`docs/runbooks/ObjectStorageRestoreReconcile.md`).

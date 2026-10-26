@@ -295,6 +295,21 @@ type AlertRuleChannel struct {
 	ChannelID pgtype.UUID
 }
 
+// Test sends apid relays to meterd, which holds the alerting seal-domain key (ADR 20261022111812). Short-lived: apid deletes a row once it reads the result, meterd prunes abandoned ones.
+type AlertTestSend struct {
+	ID           pgtype.UUID
+	AccountID    pgtype.UUID
+	Kind         string
+	SubjectID    pgtype.UUID
+	Event        []byte
+	State        string
+	ClaimToken   pgtype.UUID
+	ClaimedUntil pgtype.Timestamptz
+	Result       []byte
+	CreatedAt    pgtype.Timestamptz
+	CompletedAt  pgtype.Timestamptz
+}
+
 type ApiConsumer struct {
 	ID                    pgtype.UUID
 	AccountID             pgtype.UUID
@@ -2657,6 +2672,12 @@ type ComputeNode struct {
 	VmmdEpochIncarnation       pgtype.UUID
 	VmmdPredecessorIncarnation pgtype.UUID
 	VmmdRestartNoticeUntil     pgtype.Timestamptz
+	// Firecracker CPU template vmmd boots guests with; empty for none (ADR-20261024225612).
+	CpuTemplate string
+	// Host CPU signature <class>/<vendor>-<family>-<model>-<stepping>/<flags hash>; empty before vmmd reports it.
+	CpuModel        string
+	Readiness       string
+	ReadinessReason pgtype.Text
 }
 
 type ComputeNodeHeartbeat struct {
@@ -7519,6 +7540,18 @@ type LayerArtifactRetention struct {
 	DeleteRequestedAt pgtype.Timestamptz
 }
 
+type LogArchiveErasure struct {
+	AccountID           pgtype.UUID
+	DeletionRequestedAt pgtype.Timestamptz
+	SnapshottedAt       pgtype.Timestamptz
+}
+
+type LogArchiveErasureInstance struct {
+	AccountID  pgtype.UUID
+	InstanceID pgtype.UUID
+	ErasedAt   pgtype.Timestamptz
+}
+
 type LogEvent struct {
 	ID            pgtype.UUID
 	OccurredAt    pgtype.Timestamptz
@@ -9199,6 +9232,13 @@ type ObjectBucket struct {
 	EnvironmentCloneSourceBucketID pgtype.UUID
 	EnvironmentCloneOperationID    pgtype.UUID
 	OrgID                          pgtype.UUID
+}
+
+type ObjectBucketCor struct {
+	BucketID  pgtype.UUID
+	Rules     []byte
+	Revision  int64
+	UpdatedAt pgtype.Timestamptz
 }
 
 type ObjectBucketEncryption struct {
@@ -14196,6 +14236,10 @@ type Snapshot struct {
 	// Immutable historical capture reference. A fresh restore grant and current artifact approval are still required.
 	ApplicationStandardCaptureToken pgtype.UUID
 	RecoveryGeneration              int64
+	// CPU template of the capturing node; a templated snapshot restores on any node class the template supports.
+	CpuTemplate string
+	// Host CPU signature of the capturing node; a template-less snapshot restores only on the identical signature.
+	CpuModel string
 }
 
 type SnapshotFanoutEvent struct {

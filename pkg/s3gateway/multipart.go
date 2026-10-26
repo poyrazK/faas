@@ -89,7 +89,7 @@ func (h *Handler) initiateMultipart(w http.ResponseWriter, r *http.Request, req 
 		return
 	}
 	key := req.signatureKey(r)
-	if !objectstorage.ValidKey(key) {
+	if !objectstorage.ValidRequestKey(key) {
 		h.writeMultipartError(w, r, req, objectstorage.ErrInvalid, "InvalidRequest")
 		return
 	}

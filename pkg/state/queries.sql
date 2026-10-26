@@ -5361,6 +5361,11 @@ SELECT b.id, now(), now()+interval '2 minutes', sqlc.arg(token)::text FROM objec
 ON CONFLICT (bucket_id) DO UPDATE SET attempt_at=now(),lease_until=now()+interval '2 minutes',token=EXCLUDED.token
 WHERE object_storage_bucket_usage.lease_until IS NULL OR object_storage_bucket_usage.lease_until < now();
 
+-- name: ObjectInventoryRelease :execrows
+-- Give up a claim without publishing; attempt_at keeps the retry cadence.
+UPDATE object_storage_bucket_usage SET lease_until=NULL, token=''
+WHERE bucket_id=$1 AND token=sqlc.arg(token)::text AND token<>'';
+
 -- name: ObjectInventoryFinish :execrows
 UPDATE object_storage_bucket_usage u SET baseline_bytes = CASE WHEN observed_at IS NULL THEN sqlc.arg(bytes)::bigint ELSE baseline_bytes END,
 baseline_keys = CASE WHEN observed_at IS NULL THEN sqlc.arg(objects)::bigint ELSE baseline_keys END,
@@ -7461,6 +7466,11 @@ select i.*
 		         and active.state='claimed' and active.claim_expires_at > sqlc.arg(now_at)
 		   )) < i.work_fairness_limit)
 		   and (sqlc.arg(first_page)::boolean or (i.due_at, i.id) > (sqlc.arg(after_due_at)::timestamptz, sqlc.arg(after_id)::uuid))
+		   and (sqlc.narg(owner_node_id)::uuid is null or exists (
+		       select 1 from apps owner
+		        where owner.id = i.app_id
+		          and (owner.node_id is null or owner.node_id = sqlc.narg(owner_node_id)::uuid)
+		   ))
 		 order by i.due_at, i.id
 		 for update skip locked
 		 limit sqlc.arg(batch_limit)::bigint;
@@ -11818,10 +11828,11 @@ SELECT app_id::text,deployment_id::text,started_at FROM instances WHERE id=sqlc.
 SELECT changed_at FROM app_runtime_config_changes WHERE app_id=sqlc.arg(app_id)::uuid;
 
 -- name: CreateSnapshot :one
-INSERT INTO snapshots(deployment_id,fc_version,base_image_version,mem_bytes,disk_bytes,stored_bytes,storage_key,stale,tier,application_standard_capture_token,recovery_generation)
+INSERT INTO snapshots(deployment_id,fc_version,base_image_version,mem_bytes,disk_bytes,stored_bytes,storage_key,stale,tier,application_standard_capture_token,recovery_generation,cpu_template,cpu_model)
 VALUES(sqlc.arg(deployment_id)::uuid,sqlc.arg(fc_version)::text,sqlc.arg(base_image_version)::text,
  sqlc.arg(mem_bytes)::bigint,sqlc.arg(disk_bytes)::bigint,sqlc.arg(stored_bytes)::bigint,
- sqlc.arg(storage_key)::text,sqlc.arg(stale)::boolean,sqlc.arg(tier)::text,sqlc.narg(application_standard_capture_token)::uuid,sqlc.arg(recovery_generation)::bigint)
+ sqlc.arg(storage_key)::text,sqlc.arg(stale)::boolean,sqlc.arg(tier)::text,sqlc.narg(application_standard_capture_token)::uuid,sqlc.arg(recovery_generation)::bigint,
+ sqlc.arg(cpu_template)::text,sqlc.arg(cpu_model)::text)
 RETURNING *;
 
 -- name: LatestSnapshot :one
@@ -11833,6 +11844,11 @@ ORDER BY (tier='warm') DESC,created_at DESC LIMIT 1;
 SELECT * FROM snapshots WHERE deployment_id=sqlc.arg(deployment_id)::uuid AND tier=sqlc.arg(tier)::text AND stale=false
 AND recovery_generation=(SELECT snapshot_recovery_generation FROM deployments WHERE id=sqlc.arg(deployment_id)::uuid)
 ORDER BY created_at DESC LIMIT 1;
+
+-- name: LiveSnapshotsForTier :many
+SELECT * FROM snapshots WHERE deployment_id=sqlc.arg(deployment_id)::uuid AND tier=sqlc.arg(tier)::text AND stale=false
+AND recovery_generation=(SELECT snapshot_recovery_generation FROM deployments WHERE id=sqlc.arg(deployment_id)::uuid)
+ORDER BY created_at DESC;
 
 -- name: LockInstanceApplicationStandardBoot :one
 SELECT application_standard_lock_native_boot(sqlc.arg(instance_id)::uuid,sqlc.arg(expected_state)::text)::jsonb AS inputs;
@@ -12661,6 +12677,11 @@ WHERE id=$1 AND lease_token=$2 AND state='completing_conditional';
 -- name: ObjectCapacityFenced :one
 SELECT (EXISTS(SELECT 1 FROM object_version_protection p WHERE p.bucket_id=$1 AND p.state IN ('waiting','applying')) OR EXISTS(SELECT 1 FROM object_bucket_object_lock l WHERE l.bucket_id=$1 AND l.state<>'ready') OR EXISTS(SELECT 1 FROM object_deletions d WHERE d.bucket_id=$1 AND d.state IN ('prepared','dispatched')) OR EXISTS(SELECT 1 FROM object_bucket_versioning v WHERE v.bucket_id=$1 AND v.state<>'ready') OR EXISTS (SELECT 1 FROM object_storage_capacity_reconciliations c WHERE c.bucket_id=$1 AND c.state IN ('waiting','scanning')))::boolean AS fenced;
 
+-- name: ObjectCapacityFencedForKey :one
+-- ObjectCapacityFenced, except that only a deletion of this key fences it
+-- (ADR-20261025115958).
+SELECT (EXISTS(SELECT 1 FROM object_version_protection p WHERE p.bucket_id=sqlc.arg(bucket_id)::uuid AND p.state IN ('waiting','applying')) OR EXISTS(SELECT 1 FROM object_bucket_object_lock l WHERE l.bucket_id=sqlc.arg(bucket_id)::uuid AND l.state<>'ready') OR EXISTS(SELECT 1 FROM object_deletions d WHERE d.bucket_id=sqlc.arg(bucket_id)::uuid AND d.object_key=sqlc.arg(object_key)::text AND d.state IN ('prepared','dispatched')) OR EXISTS(SELECT 1 FROM object_bucket_versioning v WHERE v.bucket_id=sqlc.arg(bucket_id)::uuid AND v.state<>'ready') OR EXISTS (SELECT 1 FROM object_storage_capacity_reconciliations c WHERE c.bucket_id=sqlc.arg(bucket_id)::uuid AND c.state IN ('waiting','scanning')))::boolean AS fenced;
+
 -- name: ObjectWriteKeyFenced :one
 SELECT EXISTS(SELECT 1 FROM object_storage_write_admissions w
  WHERE w.bucket_id=$1 AND w.key_hash=$2 AND w.state='pending'
@@ -12689,6 +12710,17 @@ SELECT
  EXISTS (SELECT 1 FROM object_storage_multipart_uploads m WHERE m.bucket_id=$1 AND
   (m.state NOT IN ('completed','aborted') OR (m.state<>'completed' AND EXISTS (SELECT 1 FROM object_storage_multipart_part_grants p WHERE p.upload_id=m.id)))) AS multipart,
  (EXISTS (SELECT 1 FROM object_upload_completions WHERE bucket_id=$1 AND recovery_versions_observed) OR EXISTS(SELECT 1 FROM object_version_references WHERE bucket_id=$1 AND versions_observed) OR EXISTS(SELECT 1 FROM object_storage_multipart_uploads WHERE bucket_id=$1 AND completion_versions_observed) OR EXISTS (SELECT 1 FROM object_storage_bucket_usage WHERE bucket_id=$1 AND inventory_scope='all_versions') OR EXISTS(SELECT 1 FROM object_bucket_versioning WHERE bucket_id=$1 AND versions_required)) AS versions;
+
+-- name: ObjectDeletionKeyReadiness :one
+-- ADR-20261025115958: a deletion waits only for work on its own key; the
+-- bucket's accounting mode (unsafe grants, observed versions) stays bucket-wide.
+SELECT
+ ((SELECT count(*) FROM object_version_protection p WHERE p.bucket_id=sqlc.arg(bucket_id)::uuid AND p.state IN ('waiting','applying')) + (SELECT count(*) FROM object_deletions d WHERE d.bucket_id=sqlc.arg(bucket_id)::uuid AND d.object_key=sqlc.arg(object_key)::text AND d.state IN ('prepared','dispatched')) + (SELECT count(*) FROM object_storage_write_admissions w LEFT JOIN object_storage_multipart_uploads m ON m.id=w.multipart_upload_id
+  WHERE w.bucket_id=sqlc.arg(bucket_id)::uuid AND w.key_hash=sqlc.arg(key_hash)::text AND ((w.kind='proxy' AND w.state='pending') OR (w.kind='multipart' AND m.state NOT IN ('completed','aborted')))))::bigint AS pending,
+ EXISTS (SELECT 1 FROM object_storage_key_grants WHERE bucket_id=sqlc.arg(bucket_id)::uuid AND NOT reclaimable) AS unsafe,
+ EXISTS (SELECT 1 FROM object_storage_multipart_uploads m WHERE m.bucket_id=sqlc.arg(bucket_id)::uuid AND m.object_key=sqlc.arg(object_key)::text AND
+  (m.state NOT IN ('completed','aborted') OR (m.state<>'completed' AND EXISTS (SELECT 1 FROM object_storage_multipart_part_grants p WHERE p.upload_id=m.id)))) AS multipart,
+ (EXISTS (SELECT 1 FROM object_upload_completions WHERE bucket_id=sqlc.arg(bucket_id)::uuid AND recovery_versions_observed) OR EXISTS(SELECT 1 FROM object_version_references WHERE bucket_id=sqlc.arg(bucket_id)::uuid AND versions_observed) OR EXISTS(SELECT 1 FROM object_storage_multipart_uploads WHERE bucket_id=sqlc.arg(bucket_id)::uuid AND completion_versions_observed) OR EXISTS (SELECT 1 FROM object_storage_bucket_usage WHERE bucket_id=sqlc.arg(bucket_id)::uuid AND inventory_scope='all_versions') OR EXISTS(SELECT 1 FROM object_bucket_versioning WHERE bucket_id=sqlc.arg(bucket_id)::uuid AND versions_required)) AS versions;
 
 -- name: ObjectCapacityActive :one
 SELECT * FROM object_storage_capacity_reconciliations WHERE bucket_id=$1 AND state IN ('waiting','scanning');
@@ -17012,12 +17044,14 @@ AND (sqlc.narg(release_id)::uuid IS NULL OR id=sqlc.narg(release_id)::uuid);
 
 
 -- name: RetireLiveDeploymentSiblings :execrows
+-- A retired sibling is a retained stable revision, not a manual dark
+-- deployment, so it loses traffic_percent_explicit (Hunt 14 H14-71).
 UPDATE deployments d SET status = CASE WHEN
     EXISTS(SELECT 1 FROM deployment_revision_pins p WHERE p.deployment_id=d.id AND p.expires_at>now())
     OR EXISTS(SELECT 1 FROM project_release_members rm JOIN project_release_sets rs ON rs.id=rm.release_id
         WHERE rm.deployment_id=d.id AND (rs.active OR rs.expires_at>now()))
     OR EXISTS(SELECT 1 FROM durable_work_retained_deployment_refs retained WHERE retained.deployment_id=d.id)
-    THEN 'live' ELSE 'superseded' END, traffic_percent=0
+    THEN 'live' ELSE 'superseded' END, traffic_percent=0, traffic_percent_explicit=false
 WHERE d.app_id=sqlc.arg(app_id)::uuid AND d.scope=sqlc.arg(scope)::text
 AND d.status='live' AND d.id<>sqlc.arg(deployment_id)::uuid;
 
@@ -25299,6 +25333,52 @@ SELECT (
     )
 )::boolean AS owned;
 
+-- name: LogArchiveErasureRequestedAt :one
+-- The deletion request the account's archived-log snapshot was taken for.
+SELECT deletion_requested_at FROM log_archive_erasures
+WHERE account_id = sqlc.arg(account_id)::uuid
+FOR UPDATE;
+
+-- name: DeleteLogArchiveErasure :exec
+DELETE FROM log_archive_erasures WHERE account_id = sqlc.arg(account_id)::uuid;
+
+-- name: InsertLogArchiveErasure :execrows
+INSERT INTO log_archive_erasures (account_id, deletion_requested_at)
+VALUES (sqlc.arg(account_id)::uuid, sqlc.arg(deletion_requested_at)::timestamptz)
+ON CONFLICT (account_id) DO NOTHING;
+
+-- name: SnapshotLogArchiveErasureInstances :execrows
+-- Every instance whose archived logs go with the account: the instances and
+-- billing rows DeleteAccount removes, that is apps with no org or a personal
+-- org. Billing rows outlive instance rows, so they cover parked history.
+INSERT INTO log_archive_erasure_instances (account_id, instance_id)
+SELECT sqlc.arg(account_id)::uuid, s.instance_id
+FROM (
+    SELECT i.id AS instance_id
+    FROM instances i
+    JOIN apps a ON a.id = i.app_id
+    WHERE a.account_id = sqlc.arg(account_id)::uuid
+      AND (a.org_id IS NULL OR a.org_id IN (SELECT id FROM orgs WHERE personal_org))
+    UNION
+    SELECT u.instance_id
+    FROM usage_minutes u
+    WHERE u.account_id = sqlc.arg(account_id)::uuid
+      AND (u.org_id IS NULL OR u.org_id IN (SELECT id FROM orgs WHERE personal_org))
+) s
+ON CONFLICT (account_id, instance_id) DO NOTHING;
+
+-- name: PendingLogArchiveErasureInstances :many
+SELECT instance_id FROM log_archive_erasure_instances
+WHERE account_id = sqlc.arg(account_id)::uuid AND erased_at IS NULL
+ORDER BY instance_id
+LIMIT sqlc.arg(row_limit)::int;
+
+-- name: MarkLogArchiveInstanceErased :exec
+UPDATE log_archive_erasure_instances SET erased_at = now()
+WHERE account_id = sqlc.arg(account_id)::uuid
+  AND instance_id = sqlc.arg(instance_id)::uuid
+  AND erased_at IS NULL;
+
 -- name: JobTaskLogTarget :one
 -- ADR-1163: the job task a live log stream follows, scoped to the account
 -- and job name, with the node of its current instance (if any).
@@ -26023,3 +26103,20 @@ RETURNING true::boolean AS reserved;
 SELECT response_status, response_body, request_digest
 FROM idempotency_keys
 WHERE account_id = sqlc.arg(account_id)::text::uuid AND key = sqlc.arg(key)::text;
+
+-- name: ObjectBucketCORSGet :one
+-- ADR-20261025202805: a customer's bucket CORS rules.
+SELECT rules, revision, updated_at FROM object_bucket_cors WHERE bucket_id=$1;
+
+-- name: ObjectBucketCORSPut :one
+INSERT INTO object_bucket_cors (bucket_id, rules, revision, updated_at)
+SELECT b.id, sqlc.arg(rules)::jsonb, 1, now() FROM object_buckets b WHERE b.id=sqlc.arg(bucket_id)::uuid AND b.state='ready'
+ON CONFLICT (bucket_id) DO UPDATE SET rules=EXCLUDED.rules, revision=object_bucket_cors.revision+1, updated_at=now()
+RETURNING rules, revision, updated_at;
+
+-- name: ObjectBucketCORSDelete :exec
+DELETE FROM object_bucket_cors WHERE bucket_id=$1;
+
+-- name: ObjectBucketCORSRules :one
+-- The gateway's read: rules of a ready bucket only.
+SELECT c.rules FROM object_bucket_cors c JOIN object_buckets b ON b.id=c.bucket_id WHERE c.bucket_id=$1 AND b.state='ready';

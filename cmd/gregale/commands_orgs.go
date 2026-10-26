@@ -164,8 +164,8 @@ func cmdInvitations(args []string) int {
 	case "accept":
 		return cmdInvitationsAccept(args[1:])
 	default:
-		fmt.Fprintf(os.Stderr, "gregale invitations: unknown subcommand %q\n", args[0])
-		return 1
+		printCommandValidation(os.Stderr, "gregale invitations: unknown subcommand %q\n", args[0])
+		return unknownSubcommandChoices(os.Stderr, "invitations", nestedCliCommand("invitations"), args[0])
 	}
 }
 

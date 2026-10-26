@@ -43,13 +43,57 @@
       sends expiry and policy notices there.
   when: faas_custom_domain_tls | bool
 
+- name: public_edge — install the Caddy repository keyring directory
+  ansible.builtin.file:
+    path: /etc/apt/keyrings
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  when: faas_public_edge_enabled | bool
+
+- name: public_edge — install the Caddy repository keyring
+  ansible.builtin.get_url:
+    url: "{{ faas_public_edge_caddy_repo }}/gpg.key"
+    dest: /etc/apt/keyrings/caddy-stable.asc
+    owner: root
+    group: root
+    mode: "0644"
+  when: faas_public_edge_enabled | bool
+
+- name: public_edge — add the Caddy apt repository
+  ansible.builtin.deb822_repository:
+    name: caddy-stable
+    types: deb
+    uris: "{{ faas_public_edge_caddy_repo }}/deb/debian"
+    suites: any-version
+    components: [main]
+    signed_by: /etc/apt/keyrings/caddy-stable.asc
+    state: present
+    enabled: true
+  when: faas_public_edge_enabled | bool
+
+# The pin keeps an unattended upgrade from moving Caddy, and outranks the
+# distro's older package (H14-7).
+- name: public_edge — pin the Caddy version
+  ansible.builtin.copy:
+    dest: /etc/apt/preferences.d/caddy-pref
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      Package: caddy
+      Pin: version {{ faas_public_edge_caddy_version }}
+      Pin-Priority: 1001
+  when: faas_public_edge_enabled | bool
+
 - name: public_edge — install Caddy
   ansible.builtin.apt:
-    name: caddy
+    name: "caddy={{ faas_public_edge_caddy_version }}"
     state: present
     update_cache: true
-    cache_valid_time: 3600
   when: faas_public_edge_enabled | bool
+  notify: public_edge — restart caddy
 
 - name: public_edge — keep the Origin CA key readable by caddy only
   ansible.builtin.file:

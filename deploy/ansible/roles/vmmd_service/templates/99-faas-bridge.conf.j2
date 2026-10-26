@@ -1,0 +1,12 @@
+[Service]
+# Instance bridge switches; see roles/vmmd_service/defaults/main.yml. A switch
+# that is off sets nothing, which leaves vmmd's default (off).
+{% if vmmd_bridge_unprivileged | bool %}
+Environment=FAAS_BRIDGE_UNPRIVILEGED=1
+{% endif %}
+{% if vmmd_instance_bridge_sessions | bool %}
+Environment=FAAS_INSTANCE_BRIDGE_SESSIONS=1
+{% endif %}
+{% if vmmd_instance_bridge_unit | bool %}
+Environment=FAAS_INSTANCE_BRIDGE_UNIT=1
+{% endif %}

@@ -62,7 +62,7 @@ func TestUDPIngressMetal(t *testing.T) {
 		t.Fatalf("create app %q: status=%d", slug, got)
 	}
 
-	raw, status := postMultipartDeploymentWithOverrides(t, h, key, slug, NodeFixtureUDP(t), false, &api.CreateDeploymentOverrides{Port: 8080}, "")
+	raw, status := postMultipartDeploymentWithFields(t, h, key, slug, NodeFixtureUDP(t), false, nil, "")
 	if status != 202 {
 		t.Fatalf("create deployment: status=%d body=%s", status, raw)
 	}

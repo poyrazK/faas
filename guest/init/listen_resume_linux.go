@@ -62,6 +62,12 @@ const (
 	// not confirm its userspace RNG reseed (ADR-687). vmmd cold-boots instead
 	// of serving a process that may replay the snapshot's random values.
 	VsockResumeAckUserspaceReseed = 15
+	// VsockExtensionAckUnavailable answers an extension event that no
+	// extension endpoint accepted (ADR-20261025150000). vmmd then stops sending
+	// per-request invoke events to this instance for
+	// extension.InvokeUnavailableBackoff. Older hosts read it as a NACK of a
+	// best-effort hook and only log it at debug level.
+	VsockExtensionAckUnavailable = 16
 	// VsockResumeCapUserspaceReseed follows an OK ack when the reseed
 	// barrier ran (ADR-687). vmmd refuses a restore without it, which is how
 	// snapshots taken by an older guest-init retire themselves. Hosts that
@@ -158,7 +164,7 @@ func listenResumeHook(log *slog.Logger, onResume ...func()) error {
 	}, nil, nil)
 }
 
-func listenResumeHookWithExtension(log *slog.Logger, onResume func(), onExtension func(extensionHookRequest), onCritical func() error, onCPULimit ...func(int) error) error {
+func listenResumeHookWithExtension(log *slog.Logger, onResume func(), onExtension func(extensionHookRequest) error, onCritical func() error, onCPULimit ...func(int) error) error {
 	fd, err := unix.Socket(unix.AF_VSOCK, unix.SOCK_STREAM|unix.SOCK_CLOEXEC, 0)
 	if err != nil {
 		return fmt.Errorf("vsock socket: %w", err)
@@ -205,7 +211,7 @@ func acceptResumeConnsWith(fd int, log *slog.Logger, accept func(int, int) (int,
 	}
 }
 
-func acceptResumeConnsWithExtension(fd int, log *slog.Logger, accept func(int, int) (int, unix.Sockaddr, error), onResume func(), onExtension func(extensionHookRequest), onCritical func() error, onCPULimit ...func(int) error) {
+func acceptResumeConnsWithExtension(fd int, log *slog.Logger, accept func(int, int) (int, unix.Sockaddr, error), onResume func(), onExtension func(extensionHookRequest) error, onCritical func() error, onCPULimit ...func(int) error) {
 	defer func() { _ = unix.Close(fd) }()
 	for {
 		raw, _, err := accept(fd, unix.SOCK_CLOEXEC)
@@ -260,7 +266,7 @@ func handleResumeConn(f *os.File, log *slog.Logger, onResume ...func()) {
 	}, nil, nil)
 }
 
-func handleResumeConnWithExtension(f *os.File, log *slog.Logger, onResume func(), onExtension func(extensionHookRequest), onCritical func() error, onCPULimit ...func(int) error) {
+func handleResumeConnWithExtension(f *os.File, log *slog.Logger, onResume func(), onExtension func(extensionHookRequest) error, onCritical func() error, onCPULimit ...func(int) error) {
 	defer func() { _ = f.Close() }()
 
 	var hdr [8]byte
@@ -520,7 +526,7 @@ func handleAppCPULimitConn(f *os.File, log *slog.Logger, lengthHeader []byte, ap
 	_, _ = f.Write([]byte{VsockResumeAckOK})
 }
 
-func handleExtensionConn(f *os.File, log *slog.Logger, lengthHeader []byte, onExtension func(extensionHookRequest)) {
+func handleExtensionConn(f *os.File, log *slog.Logger, lengthHeader []byte, onExtension func(extensionHookRequest) error) {
 	bodyLen := binary.BigEndian.Uint32(lengthHeader)
 	if bodyLen == 0 || bodyLen > uint32(VsockExtensionMaxBodyBytes) {
 		log.Warn("vsock extension body length out of range", "len", bodyLen, "max", VsockExtensionMaxBodyBytes)
@@ -549,8 +555,9 @@ func handleExtensionConn(f *os.File, log *slog.Logger, lengthHeader []byte, onEx
 			return
 		}
 	}
-	if onExtension != nil {
-		onExtension(req)
+	ack := byte(VsockResumeAckOK)
+	if onExtension != nil && extension.IsUnavailable(onExtension(req)) {
+		ack = VsockExtensionAckUnavailable
 	}
-	_, _ = f.Write([]byte{VsockResumeAckOK})
+	_, _ = f.Write([]byte{ack})
 }

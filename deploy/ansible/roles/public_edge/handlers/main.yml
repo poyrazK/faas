@@ -3,3 +3,10 @@
   ansible.builtin.systemd_service:
     name: caddy.service
     state: reloaded
+
+# A new Caddy binary (the pinned version changing) needs a restart; a reload
+# keeps the running process.
+- name: public_edge — restart caddy
+  ansible.builtin.systemd_service:
+    name: caddy.service
+    state: restarted

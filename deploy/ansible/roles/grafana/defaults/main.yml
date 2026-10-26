@@ -31,6 +31,10 @@ gv_version: "11.3.1"
 # The role asserts against this value before any templates render.
 gv_release_sha256: "e6e1cc84d731a79044c5cf528b40bf7be2b097d3295bc7577eae7b014460a4e1"
 gv_listen_addr: "127.0.0.1:3000"
+# Resources inside faas-obs.slice (ADR-20261023124955 §1).
+gv_cpu_weight: 25
+gv_memory_high: 256M
+gv_memory_max: 384M
 gv_data_dir: /var/lib/grafana
 gv_config_path: /etc/grafana/grafana.ini
 gv_provisioning_dir: /etc/grafana/provisioning
@@ -52,14 +56,17 @@ gv_prom_url: "http://127.0.0.1:9095"
 # `make bootstrap` completes without operator-provisioned secrets.
 gv_dev_mode: false
 
-# Optional off-host Loki datasource. The URL and server name are provider-
-# owned because the Loki host is outside the control-plane inventory shipped
-# with the repository. The TLS PEM values are loaded from the provider-owned
-# EnvironmentFile below; they never enter Ansible vars or Git.
-gv_loki_url: ""
+# Loki datasource (ADR-20261023124955 §2). Loki runs on this control plane
+# at faas_obs_loki_address once faas_obs_logs_enabled is set. Grafana reads
+# its fleet-PKI client leaf (issued by the platform_logs_pki role) with
+# $__file{} in the datasource provisioning, so no certificate passes through
+# Ansible variables or templates.
+gv_loki_url: "{{ ('https://' ~ faas_obs_loki_address ~ ':3100') if (faas_obs_logs_enabled | default(false) | bool and (faas_obs_loki_address | default(''))) else '' }}"
 gv_loki_tenant_id: gregale
-gv_loki_server_name: ""
-gv_loki_credentials_file: /etc/grafana/secrets/loki.env
+gv_loki_server_name: "{{ faas_obs_loki_server_name | default('loki.faas', true) }}"
+gv_loki_ca_file: /etc/faas/tls/ca/ca.crt
+gv_loki_client_cert_file: /etc/faas/tls/grafana/loki-client.crt
+gv_loki_client_key_file: /etc/faas/tls/grafana/loki-client.key
 
 # Optional Prometheus exemplar destination. Set gv_trace_datasource_uid when
 # Grafana already has a Tempo/Jaeger/Datadog-compatible trace datasource, or

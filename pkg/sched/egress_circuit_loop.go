@@ -57,6 +57,7 @@ type EgressCircuitLoop struct {
 	seen    map[string]time.Time
 	tracked map[string]EgressUpstream
 	apps    func(context.Context) ([]string, error)
+	allowed func(context.Context, string) bool
 }
 
 // NewEgressCircuitLoop wires the loop. A zero interval uses 30s, matching the
@@ -82,6 +83,14 @@ func NewEgressCircuitLoop(breaker *EgressCircuitBreaker, read EgressCircuitCandi
 		seen:     make(map[string]time.Time),
 		tracked:  make(map[string]EgressUpstream),
 	}
+}
+
+// WithAppAllowed decides per app whether the breaker applies (the
+// egress-circuit-breaking capability, ADR-20261023115741). An app it refuses
+// has its circuits cleared, as if it declared no upstream.
+func (l *EgressCircuitLoop) WithAppAllowed(allowed func(ctx context.Context, appID string) bool) *EgressCircuitLoop {
+	l.allowed = allowed
+	return l
 }
 
 // WithClock overrides the loop's clock. Tests only.
@@ -131,6 +140,9 @@ func (l *EgressCircuitLoop) Tick(ctx context.Context) error {
 	l.selectFreshUpstreams(live, freshest, apps)
 	var failures []error
 	for appID, upstreams := range apps {
+		if l.allowed != nil && !l.allowed(ctx, appID) {
+			upstreams = nil // capability off: clear the app's circuits
+		}
 		if err := l.breaker.RefreshApp(ctx, appID, upstreams); err != nil {
 			failures = append(failures, err)
 			l.log.Warn("sched: egress circuit reconcile failed", "app", appID)

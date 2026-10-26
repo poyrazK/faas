@@ -309,6 +309,9 @@ type LogLine struct {
 type PingOutcome struct {
 	FcVersion  string
 	ServerTime time.Time
+	// BaseGenerations is vmmd's report on each configured runtime base
+	// (ADR-20261022184531). Empty from a vmmd that predates the report.
+	BaseGenerations []BaseGenerationReadiness
 }
 
 // StatsSnapshot is the typed wrapper over vmmdpb.StatsResponse.
@@ -328,8 +331,11 @@ type StatsSnapshot struct {
 	LiveCount          int32
 	LeasedCount        int32
 	TotalResidentBytes *int64
-	Instances          []VMInstanceStat
-	SampledAt          time.Time
+	// InstanceBridgeResidentBytes is the node's instance bridge units'
+	// memory (connection-survival ADR §2); nil when vmmd reports none.
+	InstanceBridgeResidentBytes *int64
+	Instances                   []VMInstanceStat
+	SampledAt                   time.Time
 }
 
 // VMInstanceStat is the sched-side view of vmmdpb.InstanceStats —
@@ -1747,6 +1753,12 @@ func (c *VMMClient) Ping(ctx context.Context) (*PingOutcome, error) {
 	if t := resp.GetServerTime(); t != nil {
 		out.ServerTime = t.AsTime()
 	}
+	for _, base := range resp.GetBaseGenerations() {
+		out.BaseGenerations = append(out.BaseGenerations, BaseGenerationReadiness{
+			BaseKey: base.GetBaseKey(), Generation: base.GetGeneration(),
+			Adoptable: base.GetAdoptable(), Reason: base.GetReason(),
+		})
+	}
 	return out, nil
 }
 
@@ -1768,6 +1780,10 @@ func (c *VMMClient) Stats(ctx context.Context) (*StatsSnapshot, error) {
 	if v := resp.GetTotalResidentBytes(); v != nil {
 		b := v.GetValue()
 		out.TotalResidentBytes = &b
+	}
+	if v := resp.GetInstanceBridgeResidentBytes(); v != nil {
+		b := v.GetValue()
+		out.InstanceBridgeResidentBytes = &b
 	}
 	for _, in := range resp.GetInstances() {
 		row := vmInstanceStatFromProto(in)

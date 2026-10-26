@@ -84,6 +84,10 @@ func (s *Service) GetEventReceiptAttempts(w http.ResponseWriter, r *http.Request
 		api.WriteProblem(w, api.ErrInternal("event receipt attempt store"))
 		return
 	}
+	if err := s.checkEventAccess(r.Context(), acct, source, id, sub); err != nil {
+		s.WriteEventReceiptError(w, r, err)
+		return
+	}
 	history, err := store.EventReceiptAttempts(r.Context(), acct.ID, source, id, sub, cursor, limit)
 	if err != nil {
 		s.WriteEventReceiptError(w, r, err)

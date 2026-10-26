@@ -154,7 +154,26 @@ func (s *Service) ObjectStorageEnabled() bool {
 }
 
 func (s *Service) ObjectStorageProvisioningReady() bool {
-	return s.ObjectStorageEnabled() && s.Host.ObjectStorage().CanProvisionAllRegions()
+	if !s.ObjectStorageEnabled() || !s.Host.ObjectStorage().CanProvisionAllRegions() {
+		return false
+	}
+	return !s.providerRefusingCredentials()
+}
+
+// providerRefusingCredentials reports a default backend whose provider last
+// refused this installation's credentials (providerHealth).
+func (s *Service) providerRefusingCredentials() bool {
+	registry := s.Host.ObjectStorage()
+	if registry == nil {
+		return false
+	}
+	var backends []string
+	for _, region := range registry.Regions() {
+		if backend, err := registry.Default(region); err == nil {
+			backends = append(backends, backend.ID)
+		}
+	}
+	return s.health.anyFailing(backends)
 }
 
 // BucketView deliberately excludes operator placement, credentials and leases.
@@ -169,11 +188,18 @@ func viewBucket(b state.ObjectBucket) BucketView {
 // objectstorage.ErrUnavailable for callers that test the broad class.
 var ErrObjectStorageDisabled = fmt.Errorf("%w: not enabled on this installation", objectstorage.ErrUnavailable)
 
+// ErrObjectStorageProviderRefused marks a provider that is refusing this
+// installation's credentials. A create is refused before any bucket row is
+// reserved, instead of leaving it stuck in provisioning (Hunt 14 H14-14).
+var ErrObjectStorageProviderRefused = fmt.Errorf("%w: the storage provider is refusing this installation's credentials", objectstorage.ErrUnavailable)
+
 func BucketProblem(w http.ResponseWriter, err error) {
 	status, code, detail := 503, "object_storage_unavailable", "Object storage is unavailable; retry later."
 	switch {
 	case errors.Is(err, ErrObjectStorageDisabled):
 		detail = "Object storage is not enabled on this Gregale installation; `gregale capabilities` shows feature availability."
+	case errors.Is(err, ErrObjectStorageProviderRefused):
+		detail = "Object storage is unavailable on this Gregale installation: its storage provider is refusing the platform's credentials. No bucket was created; `gregale capabilities` shows it as unavailable until an operator fixes the credentials."
 	case errors.Is(err, state.ErrObjectBucketWriteFenced):
 		status, code, detail = 503, "object_storage_checkpoint_active", "Bucket writes are temporarily paused for checkpoint capture."
 	case errors.Is(err, state.ErrObjectUsageStale):
@@ -322,6 +348,10 @@ func (s *Service) CreateBucket(w http.ResponseWriter, r *http.Request, acct stat
 		BucketProblem(w, ErrObjectStorageDisabled)
 		return
 	}
+	if s.providerRefusingCredentials() {
+		BucketProblem(w, ErrObjectStorageProviderRefused)
+		return
+	}
 	if req.Public && !s.Host.ObjectStorage().Accounting.Valid() {
 		// Public mounts are an anonymous data plane. Do not create one when
 		// the operator has not supplied the same fresh usage policy that gates
@@ -379,7 +409,7 @@ func (s *Service) reserveBucket(ctx context.Context, st state.ObjectBucketStore,
 		return state.ObjectBucket{}, err
 	}
 	id := uuid.NewString()
-	b, err := st.ReserveObjectBucket(ctx, state.ObjectBucket{ID: id, AccountID: account, AppID: app, Name: req.Name, Scope: req.Scope, Region: req.Region, BackendID: backend.ID, BackendFingerprint: backend.Fingerprint, PhysicalName: "gregale-" + strings.ReplaceAll(id, "-", ""), PublicRead: req.Public, ServeAt: req.ServeAt}, s.Host.ObjectStorage().MaxBucketsPerApp)
+	b, err := st.ReserveObjectBucket(ctx, state.ObjectBucket{ID: id, AccountID: account, AppID: app, Name: req.Name, Scope: req.Scope, Region: req.Region, BackendID: backend.ID, BackendFingerprint: backend.Fingerprint, PhysicalName: objectstorage.PhysicalBucketPrefix + strings.ReplaceAll(id, "-", ""), PublicRead: req.Public, ServeAt: req.ServeAt}, s.Host.ObjectStorage().MaxBucketsPerApp)
 	if err == nil && b.Region != req.Region {
 		return b, state.ErrConflict
 	}

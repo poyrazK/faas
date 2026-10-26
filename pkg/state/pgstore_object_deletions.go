@@ -125,11 +125,12 @@ func (s *PgStore) BeginObjectDeletion(ctx context.Context, j ObjectDeletion, pol
 	if j.ProtectionRequired && j.Lifecycle.ExpectedDeleteMarker == nil {
 		return j, false, ErrConflict
 	}
-	fenced, e := q.ObjectCapacityFenced(ctx, tx, mustPgUUID(j.BucketID))
+	// Only work on this key blocks the deletion (ADR-20261025115958).
+	fenced, e := q.ObjectCapacityFencedForKey(ctx, tx, sqlc.ObjectCapacityFencedForKeyParams{BucketID: mustPgUUID(j.BucketID), ObjectKey: j.Key})
 	if e != nil {
 		return j, false, e
 	}
-	ready, e := q.ObjectCapacityReadiness(ctx, tx, mustPgUUID(j.BucketID))
+	ready, e := q.ObjectDeletionKeyReadiness(ctx, tx, sqlc.ObjectDeletionKeyReadinessParams{BucketID: mustPgUUID(j.BucketID), ObjectKey: j.Key, KeyHash: objectKeyHash(j.Key)})
 	if e != nil {
 		return j, false, e
 	}
@@ -162,6 +163,11 @@ func (s *PgStore) BeginObjectDeletion(ctx context.Context, j ObjectDeletion, pol
 	snapshot, e := readObjectBucketUsage(ctx, tx, j.AccountID, j.BucketID, now.Time)
 	if e != nil {
 		return j, false, e
+	}
+	for _, u := range snapshot.Buckets {
+		if u.Bucket.ID == j.BucketID && inventoryClaimYields(u, now.Time) {
+			return ObjectDeletion{}, false, errors.Join(ErrConflict, ErrObjectBucketBusy)
+		}
 	}
 	if !immutableDeletion(j) && ready.Versions.Bool && (!versionAdmissionMode(snapshot, j.BucketID) || j.ProviderStatus == "") {
 		return ObjectDeletion{}, false, ErrConflict

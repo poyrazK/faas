@@ -265,3 +265,15 @@ CROSS JOIN LATERAL (SELECT event_subscription_delivery_waiting_reason(b.account_
 CROSS JOIN LATERAL (SELECT CASE WHEN b.routing_state='pending' AND NOT (b.routing_mode='event' AND coalesce(b.lease_until>sqlc.arg(observed_at)::timestamptz,false)) AND control.reason<>'' THEN control.reason ELSE event_backlog_waiting_reason(b.routing_state,b.capacity_scope,b.routing_mode,b.lease_until,b.next_attempt_at,b.consumer_kind,ordering.blocker,sqlc.arg(observed_at)::timestamptz) END AS reason) observation
 WHERE b.account_id=sqlc.arg(account_id)::uuid AND b.outbox_id=sqlc.arg(outbox_id)::bigint
  AND b.subscription_id=sqlc.arg(subscription_id)::text;
+
+-- name: EventReceiptScope :one
+-- The producer and each recipient's app, for company access on the account
+-- routes (ADR-20261025211616).
+SELECT coalesce(o.payload->>'producer', '')::text AS producer,
+       coalesce((SELECT jsonb_object_agg(s.recipient->>'id', s.recipient->>'app_id') FROM (
+           SELECT captured.recipient FROM jsonb_array_elements(coalesce(o.recipient_snapshot, '[]'::jsonb)) captured(recipient)
+           UNION ALL
+           SELECT added.recipient FROM event_fanout_recipients added WHERE added.outbox_id=o.id AND added.receipt_position IS NOT NULL
+       ) s), '{}'::jsonb)::jsonb AS recipient_apps
+FROM event_fanout_outbox o
+WHERE o.account_id=sqlc.arg(account_id)::uuid AND o.source=sqlc.arg(event_source)::text AND o.event_id=sqlc.arg(event_id)::text;

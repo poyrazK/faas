@@ -3111,79 +3111,6 @@ paths:
               schema: {$ref: '#/components/schemas/TestNotificationChannelResponse'}
         '402': {$ref: '#/components/responses/PaymentRequired'}
         '404': {$ref: '#/components/responses/NotFound'}
-  /v1/apps/{slug}/custom-metrics/{name}/series:
-    parameters:
-      - $ref: '#/components/parameters/Slug'
-      - name: name
-        in: path
-        required: true
-        description: "The pushed custom metric whose history to read."
-        schema: {type: string, pattern: '^[a-z][a-z0-9_]{0,62}$'}
-    get:
-      operationId: getCustomMetricSeries
-      summary: Read a custom metric's history (ADR-745)
-      description: |
-        ADR-745 internal preview, enabled by `FAAS_CUSTOM_METRIC_HISTORY_ENABLED=1`;
-        otherwise 503 `custom_metric_history_unavailable`.
-
-        Returns the values Prometheus recorded from pushed custom metrics over
-        `range` (`1h`, `6h`, `24h` default, `7d`, `15d`). Only fresh pushes are
-        recorded, so a gap means nothing was pushed then. Prometheus failure
-        returns 200 with `source: "degraded: <reason>"` and null `points`.
-      tags: [apps]
-      parameters:
-        - name: range
-          in: query
-          required: false
-          description: History window. Default 24h.
-          schema: {type: string, enum: ['1h', '6h', '24h', '7d', '15d'], default: '24h'}
-      responses:
-        '200':
-          description: The recorded history.
-          content:
-            application/json:
-              schema: {$ref: '#/components/schemas/CustomMetricSeriesResponse'}
-        '400': {$ref: '#/components/responses/ValidationFailed'}
-        '404': {$ref: '#/components/responses/NotFound'}
-        '503': {$ref: '#/components/responses/ServiceUnavailable'}
-  /v1/apps/{slug}/otlp/v1/metrics:
-    parameters:
-      - $ref: '#/components/parameters/Slug'
-    post:
-      operationId: postOTLPMetrics
-      summary: Ingest OTLP/HTTP metrics as custom metrics (ADR-745)
-      description: |
-        ADR-745 internal preview, enabled by `FAAS_CUSTOM_METRIC_HISTORY_ENABLED=1`;
-        otherwise 503. Point an OpenTelemetry exporter's metrics endpoint here
-        with a `metrics:write` API key as the bearer token.
-
-        Accepts an OTLP `ExportMetricsServiceRequest` as `application/x-protobuf`
-        or `application/json` (at most 1 MiB) and answers in the same encoding.
-        Gauges are stored as gauges and cumulative monotonic sums as counters;
-        metric names are lowercased with `.`, `-` and `/` mapped to `_`. Delta
-        or non-monotonic sums, histograms, data points with attributes,
-        negative values, and names beyond the per-app limit are not stored and
-        are reported through `partialSuccess`.
-      tags: [apps]
-      requestBody:
-        required: true
-        content:
-          application/x-protobuf:
-            schema: {type: string, format: binary}
-          application/json:
-            schema: {type: object, description: OTLP ExportMetricsServiceRequest in its JSON encoding.}
-      responses:
-        '200':
-          description: The export was processed; rejected data points are reported in partialSuccess.
-          content:
-            application/x-protobuf:
-              schema: {type: string, format: binary}
-            application/json:
-              schema: {type: object, description: OTLP ExportMetricsServiceResponse in its JSON encoding.}
-        '400': {$ref: '#/components/responses/ValidationFailed'}
-        '402': {$ref: '#/components/responses/PaymentRequired'}
-        '404': {$ref: '#/components/responses/NotFound'}
-        '503': {$ref: '#/components/responses/ServiceUnavailable'}
   /v1/apps/{slug}/pre-auth-observations:
     parameters:
       - $ref: '#/components/parameters/Slug'
@@ -5598,7 +5525,7 @@ paths:
 
         Once current-month overage meets/exceeds the cap, schedd refuses
         new wakes with `code: admission_refused` (HTTP 402). The cap is
-        account-self-scoped (no admin scope required) and the response
+        account-self-scoped (admin scope required) and the response
         is the post-update account state. Audit row
         `overage.cap_changed` is emitted on every successful call.
       requestBody:
@@ -10962,8 +10889,8 @@ paths:
         - name: outcome
           in: query
           required: false
-          description: Only events with this outcome; detected, warned and blocked are kind=waf detections; challenged, rejected, solved and failed are kind=challenge outcomes.
-          schema: {type: string, enum: [matched, logged, detected, warned, blocked, challenged, rejected, solved, failed]}
+          description: Only events with this outcome; detected, warned and blocked are kind=waf detections; challenged, rejected, solved and failed are kind=challenge outcomes; boxed is a client put in a penalty box.
+          schema: {type: string, enum: [matched, logged, detected, warned, blocked, challenged, rejected, solved, failed, boxed]}
         - name: request_id
           in: query
           required: false
@@ -20752,6 +20679,20 @@ components:
         storage_byte_seconds_remaining: {type: integer, format: int64, minimum: 0}
         history_byte_seconds: {type: integer, format: int64, minimum: 0}
         egress_bytes: {type: integer, format: int64, minimum: 0}
+        compute_allowance_unit_seconds:
+          description: The plan's monthly compute allowance in compute-unit seconds, pooled across the account's databases (ADR-20261025094915).
+          type: integer
+          format: int64
+          minimum: 0
+        compute_ceiling_unit_seconds:
+          description: Compute-unit seconds this month at which running databases are suspended. Absent while the usage ledger is off.
+          type: integer
+          format: int64
+          minimum: 0
+        compute_cap_state:
+          description: "healthy; warning at 80% of the allowance; overage past the allowance while the account allows overage; suspended once the ceiling is reached and the platform enforces caps. Suspended databases keep their data and resume next month or after an upgrade."
+          type: string
+          enum: [healthy, warning, overage, suspended]
     ObjectStoragePolicy:
       description: Operator safety limits. Empty accounting_mode requires qualified provider reports including cost. Explicit gateway_safety_v1 requires a coverage start, proxied transfers, billing off and no cost ceiling; all other budgets remain positive and finite.
       type: object
@@ -23760,27 +23701,6 @@ components:
           enum: [gauge, counter]
           description: "gauge for pushed values (a scaling signal); counter for ADR-745 OTLP cumulative sums, which never drive scaling."
       example: {name: orders_pending, value: 1284, observed_at: "2026-09-21T12:00:00Z", stale: false, kind: gauge}
-    CustomMetricSeriesResponse:
-      description: "ADR-745 history of one pushed custom metric. Degraded responses carry null points."
-      type: object
-      required: [app_id, name, kind, range, step, source, points]
-      properties:
-        app_id: {type: string}
-        name: {type: string}
-        kind: {type: string, enum: [gauge, counter], description: "counter histories are a per-second rate of the cumulative count."}
-        range: {type: string, enum: ['1h', '6h', '24h', '7d', '15d']}
-        step: {type: string, description: "Prometheus step between points."}
-        source: {type: string, description: '"prometheus", or "degraded: <reason>" when the metric history could not be read.'}
-        points:
-          type: [array, "null"]
-          items: {$ref: '#/components/schemas/CustomMetricSeriesPoint'}
-    CustomMetricSeriesPoint:
-      description: One recorded custom metric value.
-      type: object
-      required: [at, value]
-      properties:
-        at: {type: string, format: date-time}
-        value: {type: number, format: double}
     CustomMetricListResponse:
       description: "The app's ADR-202 gauges, plus the two limits needed to interpret them so debugging does not require reading the docs."
       type: object
@@ -24601,6 +24521,18 @@ components:
         request_id: {type: string}
         error_code: {type: string}
         error: {type: string}
+    DeploymentCompanion:
+      type: object
+      description: "One companion of a deployment: identity, image, port and size. Environment values and secret grants are never included."
+      required: [name]
+      properties:
+        name: {type: string, description: "Companion name."}
+        image: {type: string, description: "Digest-pinned image reference."}
+        preset: {type: string, description: "Built-in preset the companion uses, when any."}
+        type: {type: string, description: "init or sidecar."}
+        port: {type: integer, description: "Declared port; it also opens the public <app>--<name> hostname."}
+        ram_mb: {type: integer, description: "Reserved RAM in MB."}
+        primary_ingress: {type: boolean, description: "Whether the companion receives the app's public traffic."}
     DeploymentResponse:
       description: "One deployment: id, app, source ref, build status, commit SHA, and lifecycle timestamps. The optional `has_overrides` and `override_*` fields are the persisted echo of the create-time overrides object (issue #460 / ADR-053); they round-trip via `GET /v1/apps/{slug}/deployments/{id}` so a customer can audit what their last deploy pinned. Env values are NEVER echoed — only the keys (`override_env_keys`); env_secrets refs ARE echoed because the ref shape is non-secret by design."
       type: object
@@ -24804,6 +24736,10 @@ components:
           type: array
           items: {$ref: '#/components/schemas/WorkflowSpec'}
           description: "Validated workflow definitions persisted with this immutable deployment revision."
+        companions:
+          type: array
+          description: "Companions this deployment carries: name, image, port and size. Environment values and secret grants are never included."
+          items: {$ref: '#/components/schemas/DeploymentCompanion'}
         hosting_receipt:
           type: [object, "null"]
           additionalProperties: true
@@ -30109,6 +30045,10 @@ components:
           type: array
           items: {type: string}
           description: "Names of the Compose build.args passed to the Dockerfile build, sorted. Values are not returned."
+        go_command:
+          type: string
+          example: api
+          description: "The cmd/<name> main package this service builds from the root of a Go module with several commands (ADR-20261025134512)."
         secret_files:
           type: array
           items:
@@ -30276,6 +30216,36 @@ components:
         env_hint: {type: string, example: DATABASE_URL}
         source: {type: string}
         image: {type: string}
+        provision:
+          $ref: '#/components/schemas/PlanManagedProvision'
+        not_provisioned_reason:
+          type: string
+          enum: [unavailable, plan, quota, unsupported, configured, not_referenced]
+          description: "Why apply does not provide a Compose postgres service (ADR-20261025111824). Omitted for other datastores and when provision is set."
+    PlanManagedProvision:
+      description: "The managed PostgreSQL database a project apply creates or reuses for a Compose postgres service, and the service keys it binds (ADR-20261025111824)."
+      type: object
+      required: [database, bindings]
+      properties:
+        database: {type: string, example: shop-db}
+        existing:
+          type: boolean
+          description: "True when a database with this name already exists and is reused."
+        postgres_major:
+          type: integer
+          example: 17
+          description: "The database's PostgreSQL major: the Compose image's, or the nearest newer one the platform offers."
+        bindings:
+          type: array
+          items:
+            $ref: '#/components/schemas/PlanManagedBinding'
+    PlanManagedBinding:
+      description: "One service key bound to the database a project apply provides (ADR-20261025111824)."
+      type: object
+      required: [workload, env_key]
+      properties:
+        workload: {type: string}
+        env_key: {type: string, example: DATABASE_URL}
     PlanAffectedApp:
       description: |
         One row of the ADR-124 blast-radius partition. action is closed-
@@ -31525,8 +31495,8 @@ components:
         rule_kind: {type: string}
         outcome:
           type: string
-          enum: [matched, logged, detected, warned, blocked, challenged, rejected, solved, failed]
-          description: 'matched (enforced rule) and logged (log-mode rule) are rule matches. detected is a kind=waf detection in a sampled request; warned and blocked are kind=waf detections in-path by a warn or block rule (blocked requests were answered with 403). challenged, rejected, solved and failed are kind=challenge outcomes: the challenge page served to a browser, a request that is not a browser navigation answered with 403, a solution that earned a pass, and a solution answered with 403. An enforced challenge rule records these instead of matched.'
+          enum: [matched, logged, detected, warned, blocked, challenged, rejected, solved, failed, boxed]
+          description: 'matched (enforced rule) and logged (log-mode rule) are rule matches. detected is a kind=waf detection in a sampled request; warned and blocked are kind=waf detections in-path by a warn or block rule (blocked requests were answered with 403). challenged, rejected, solved and failed are kind=challenge outcomes: the challenge page served to a browser, a request that is not a browser navigation answered with 403, a solution that earned a pass, and a solution answered with 403. An enforced challenge rule records these instead of matched. boxed is a client put in a penalty box by the rule, recorded from the request whose refusal tipped it in.'
         occurred_at: {type: string, format: date-time}
         request_id: {type: string}
         method: {type: string}

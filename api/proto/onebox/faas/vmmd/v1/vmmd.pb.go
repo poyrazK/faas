@@ -4954,8 +4954,13 @@ type StatsResponse struct {
 	// Optional so unset != 0 (Int64Value = 0 vs absent differs in prom metrics).
 	TotalResidentBytes *wrapperspb.Int64Value `protobuf:"bytes,3,opt,name=total_resident_bytes,json=totalResidentBytes,proto3" json:"total_resident_bytes,omitempty"`
 	Instances          []*InstanceStats       `protobuf:"bytes,4,rep,name=instances,proto3" json:"instances,omitempty"`
-	unknownFields      protoimpl.UnknownFields
-	sizeCache          protoimpl.SizeCache
+	// Memory of faas-tenant-ibridge.slice: every instance bridge unit on the
+	// node (connection-survival ADR §2, ADR-909 amendment). Absent when bridge
+	// units are off or on an older vmmd. Measured admission adds it to the
+	// node's charge; it is platform overhead and never billed.
+	InstanceBridgeResidentBytes *wrapperspb.Int64Value `protobuf:"bytes,5,opt,name=instance_bridge_resident_bytes,json=instanceBridgeResidentBytes,proto3" json:"instance_bridge_resident_bytes,omitempty"`
+	unknownFields               protoimpl.UnknownFields
+	sizeCache                   protoimpl.SizeCache
 }
 
 func (x *StatsResponse) Reset() {
@@ -5012,6 +5017,13 @@ func (x *StatsResponse) GetTotalResidentBytes() *wrapperspb.Int64Value {
 func (x *StatsResponse) GetInstances() []*InstanceStats {
 	if x != nil {
 		return x.Instances
+	}
+	return nil
+}
+
+func (x *StatsResponse) GetInstanceBridgeResidentBytes() *wrapperspb.Int64Value {
+	if x != nil {
+		return x.InstanceBridgeResidentBytes
 	}
 	return nil
 }
@@ -5592,8 +5604,13 @@ type PingResponse struct {
 	SupportsSecretAliases              bool `protobuf:"varint,3,opt,name=supports_secret_aliases,json=supportsSecretAliases,proto3" json:"supports_secret_aliases,omitempty"`
 	SupportsImageHealthcheck           bool `protobuf:"varint,4,opt,name=supports_image_healthcheck,json=supportsImageHealthcheck,proto3" json:"supports_image_healthcheck,omitempty"`
 	SupportsImageHealthcheckMonitoring bool `protobuf:"varint,5,opt,name=supports_image_healthcheck_monitoring,json=supportsImageHealthcheckMonitoring,proto3" json:"supports_image_healthcheck_monitoring,omitempty"`
-	unknownFields                      protoimpl.UnknownFields
-	sizeCache                          protoimpl.SizeCache
+	// base_generations reports, for each runtime base this vmmd is configured
+	// with, whether it can adopt the configured generation
+	// (ADR-20261022184531). schedd marks a node degraded while one cannot.
+	// An older vmmd sends none, which schedd reads as no evidence.
+	BaseGenerations []*BaseGenerationReadiness `protobuf:"bytes,6,rep,name=base_generations,json=baseGenerations,proto3" json:"base_generations,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
 }
 
 func (x *PingResponse) Reset() {
@@ -5659,6 +5676,13 @@ func (x *PingResponse) GetSupportsImageHealthcheckMonitoring() bool {
 		return x.SupportsImageHealthcheckMonitoring
 	}
 	return false
+}
+
+func (x *PingResponse) GetBaseGenerations() []*BaseGenerationReadiness {
+	if x != nil {
+		return x.BaseGenerations
+	}
+	return nil
 }
 
 // Header is one (name, value) HTTP header line. Both fields are
@@ -16263,6 +16287,82 @@ func (x *InflightRequestTraceResponse) GetTraceparent() string {
 	return ""
 }
 
+// BaseGenerationReadiness is one configured runtime base and whether this
+// node can boot it.
+type BaseGenerationReadiness struct {
+	state   protoimpl.MessageState `protogen:"open.v1"`
+	BaseKey string                 `protobuf:"bytes,1,opt,name=base_key,json=baseKey,proto3" json:"base_key,omitempty"`
+	// generation is the configured immutable reference (an OCI digest).
+	Generation string `protobuf:"bytes,2,opt,name=generation,proto3" json:"generation,omitempty"`
+	// adoptable is false only when vmmd proved it cannot adopt generation:
+	// its cache does not hold it and the canonical scan sidecar names
+	// another generation. A sidecar vmmd could not read reports adoptable;
+	// the wake path still refuses on its own evidence.
+	Adoptable bool `protobuf:"varint,3,opt,name=adoptable,proto3" json:"adoptable,omitempty"`
+	// reason explains a false adoptable; empty otherwise.
+	Reason        string `protobuf:"bytes,4,opt,name=reason,proto3" json:"reason,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *BaseGenerationReadiness) Reset() {
+	*x = BaseGenerationReadiness{}
+	mi := &file_onebox_faas_vmmd_v1_vmmd_proto_msgTypes[209]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *BaseGenerationReadiness) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*BaseGenerationReadiness) ProtoMessage() {}
+
+func (x *BaseGenerationReadiness) ProtoReflect() protoreflect.Message {
+	mi := &file_onebox_faas_vmmd_v1_vmmd_proto_msgTypes[209]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use BaseGenerationReadiness.ProtoReflect.Descriptor instead.
+func (*BaseGenerationReadiness) Descriptor() ([]byte, []int) {
+	return file_onebox_faas_vmmd_v1_vmmd_proto_rawDescGZIP(), []int{209}
+}
+
+func (x *BaseGenerationReadiness) GetBaseKey() string {
+	if x != nil {
+		return x.BaseKey
+	}
+	return ""
+}
+
+func (x *BaseGenerationReadiness) GetGeneration() string {
+	if x != nil {
+		return x.Generation
+	}
+	return ""
+}
+
+func (x *BaseGenerationReadiness) GetAdoptable() bool {
+	if x != nil {
+		return x.Adoptable
+	}
+	return false
+}
+
+func (x *BaseGenerationReadiness) GetReason() string {
+	if x != nil {
+		return x.Reason
+	}
+	return ""
+}
+
 var File_onebox_faas_vmmd_v1_vmmd_proto protoreflect.FileDescriptor
 
 const file_onebox_faas_vmmd_v1_vmmd_proto_rawDesc = "" +
@@ -16705,13 +16805,14 @@ const file_onebox_faas_vmmd_v1_vmmd_proto_rawDesc = "" +
 	"\binstance\x18\x01 \x01(\tR\binstance\x12\x1b\n" +
 	"\texit_code\x18\x02 \x01(\x05R\bexitCode\x12(\n" +
 	"\x10kill_signal_sent\x18\x03 \x01(\bR\x0ekillSignalSent\"\x0e\n" +
-	"\fStatsRequest\"\xe2\x01\n" +
+	"\fStatsRequest\"\xc4\x02\n" +
 	"\rStatsResponse\x12\x1d\n" +
 	"\n" +
 	"live_count\x18\x01 \x01(\x05R\tliveCount\x12!\n" +
 	"\fleased_count\x18\x02 \x01(\x05R\vleasedCount\x12M\n" +
 	"\x14total_resident_bytes\x18\x03 \x01(\v2\x1b.google.protobuf.Int64ValueR\x12totalResidentBytes\x12@\n" +
-	"\tinstances\x18\x04 \x03(\v2\".onebox.faas.vmmd.v1.InstanceStatsR\tinstances\"\x95\x0f\n" +
+	"\tinstances\x18\x04 \x03(\v2\".onebox.faas.vmmd.v1.InstanceStatsR\tinstances\x12`\n" +
+	"\x1einstance_bridge_resident_bytes\x18\x05 \x01(\v2\x1b.google.protobuf.Int64ValueR\x1binstanceBridgeResidentBytes\"\x95\x0f\n" +
 	"\rInstanceStats\x12\x1a\n" +
 	"\binstance\x18\x01 \x01(\tR\binstance\x12\x1b\n" +
 	"\tlease_uid\x18\x02 \x01(\x05R\bleaseUid\x12\x17\n" +
@@ -16762,7 +16863,7 @@ const file_onebox_faas_vmmd_v1_vmmd_proto_rawDesc = "" +
 	"\x10desired_revision\x18\x03 \x01(\x03R\x0fdesiredRevision\x12)\n" +
 	"\x10applied_revision\x18\x04 \x01(\x03R\x0fappliedRevision\x12!\n" +
 	"\ftarget_count\x18\x05 \x01(\x05R\vtargetCount\"\r\n" +
-	"\vPingRequest\"\xb3\x02\n" +
+	"\vPingRequest\"\x8c\x03\n" +
 	"\fPingResponse\x12\x1d\n" +
 	"\n" +
 	"fc_version\x18\x01 \x01(\tR\tfcVersion\x12;\n" +
@@ -16770,7 +16871,8 @@ const file_onebox_faas_vmmd_v1_vmmd_proto_rawDesc = "" +
 	"serverTime\x126\n" +
 	"\x17supports_secret_aliases\x18\x03 \x01(\bR\x15supportsSecretAliases\x12<\n" +
 	"\x1asupports_image_healthcheck\x18\x04 \x01(\bR\x18supportsImageHealthcheck\x12Q\n" +
-	"%supports_image_healthcheck_monitoring\x18\x05 \x01(\bR\"supportsImageHealthcheckMonitoring\"2\n" +
+	"%supports_image_healthcheck_monitoring\x18\x05 \x01(\bR\"supportsImageHealthcheckMonitoring\x12W\n" +
+	"\x10base_generations\x18\x06 \x03(\v2,.onebox.faas.vmmd.v1.BaseGenerationReadinessR\x0fbaseGenerations\"2\n" +
 	"\x06Header\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value\"\x12\n" +
@@ -17542,7 +17644,14 @@ const file_onebox_faas_vmmd_v1_vmmd_proto_rawDesc = "" +
 	"\x1bInflightRequestTraceRequest\x12\x1b\n" +
 	"\tsource_ip\x18\x01 \x01(\tR\bsourceIp\"@\n" +
 	"\x1cInflightRequestTraceResponse\x12 \n" +
-	"\vtraceparent\x18\x01 \x01(\tR\vtraceparent*D\n" +
+	"\vtraceparent\x18\x01 \x01(\tR\vtraceparent\"\x8a\x01\n" +
+	"\x17BaseGenerationReadiness\x12\x19\n" +
+	"\bbase_key\x18\x01 \x01(\tR\abaseKey\x12\x1e\n" +
+	"\n" +
+	"generation\x18\x02 \x01(\tR\n" +
+	"generation\x12\x1c\n" +
+	"\tadoptable\x18\x03 \x01(\bR\tadoptable\x12\x16\n" +
+	"\x06reason\x18\x04 \x01(\tR\x06reason*D\n" +
 	"\n" +
 	"WakeMethod\x12\x12\n" +
 	"\x0eWAKE_COLD_BOOT\x10\x00\x12\x10\n" +
@@ -17646,7 +17755,7 @@ func file_onebox_faas_vmmd_v1_vmmd_proto_rawDescGZIP() []byte {
 }
 
 var file_onebox_faas_vmmd_v1_vmmd_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
-var file_onebox_faas_vmmd_v1_vmmd_proto_msgTypes = make([]protoimpl.MessageInfo, 211)
+var file_onebox_faas_vmmd_v1_vmmd_proto_msgTypes = make([]protoimpl.MessageInfo, 212)
 var file_onebox_faas_vmmd_v1_vmmd_proto_goTypes = []any{
 	(WakeMethod)(0),                                         // 0: onebox.faas.vmmd.v1.WakeMethod
 	(*AppSpec)(nil),                                         // 1: onebox.faas.vmmd.v1.AppSpec
@@ -17858,13 +17967,14 @@ var file_onebox_faas_vmmd_v1_vmmd_proto_goTypes = []any{
 	(*RehearseSuspendResumeResponse)(nil),                   // 207: onebox.faas.vmmd.v1.RehearseSuspendResumeResponse
 	(*InflightRequestTraceRequest)(nil),                     // 208: onebox.faas.vmmd.v1.InflightRequestTraceRequest
 	(*InflightRequestTraceResponse)(nil),                    // 209: onebox.faas.vmmd.v1.InflightRequestTraceResponse
-	nil,                                                     // 210: onebox.faas.vmmd.v1.JobColdBootRequest.EnvEntry
-	nil,                                                     // 211: onebox.faas.vmmd.v1.ExecuteExecutionOutboundResponse.HeadersEntry
-	(*structpb.Struct)(nil),                                 // 212: google.protobuf.Struct
-	(*wrapperspb.Int64Value)(nil),                           // 213: google.protobuf.Int64Value
-	(*wrapperspb.DoubleValue)(nil),                          // 214: google.protobuf.DoubleValue
-	(*timestamppb.Timestamp)(nil),                           // 215: google.protobuf.Timestamp
-	(*wrapperspb.Int32Value)(nil),                           // 216: google.protobuf.Int32Value
+	(*BaseGenerationReadiness)(nil),                         // 210: onebox.faas.vmmd.v1.BaseGenerationReadiness
+	nil,                                                     // 211: onebox.faas.vmmd.v1.JobColdBootRequest.EnvEntry
+	nil,                                                     // 212: onebox.faas.vmmd.v1.ExecuteExecutionOutboundResponse.HeadersEntry
+	(*structpb.Struct)(nil),                                 // 213: google.protobuf.Struct
+	(*wrapperspb.Int64Value)(nil),                           // 214: google.protobuf.Int64Value
+	(*wrapperspb.DoubleValue)(nil),                          // 215: google.protobuf.DoubleValue
+	(*timestamppb.Timestamp)(nil),                           // 216: google.protobuf.Timestamp
+	(*wrapperspb.Int32Value)(nil),                           // 217: google.protobuf.Int32Value
 }
 var file_onebox_faas_vmmd_v1_vmmd_proto_depIdxs = []int32{
 	4,   // 0: onebox.faas.vmmd.v1.AppSpec.sealed_env:type_name -> onebox.faas.vmmd.v1.SealedSecret
@@ -17880,8 +17990,8 @@ var file_onebox_faas_vmmd_v1_vmmd_proto_depIdxs = []int32{
 	4,   // 10: onebox.faas.vmmd.v1.SidecarSpec.sealed_secrets:type_name -> onebox.faas.vmmd.v1.SealedSecret
 	0,   // 11: onebox.faas.vmmd.v1.WakeResponse.method:type_name -> onebox.faas.vmmd.v1.WakeMethod
 	0,   // 12: onebox.faas.vmmd.v1.WakeResponse.requested_method:type_name -> onebox.faas.vmmd.v1.WakeMethod
-	212, // 13: onebox.faas.vmmd.v1.WakeResponse.problem:type_name -> google.protobuf.Struct
-	212, // 14: onebox.faas.vmmd.v1.WakeResponse.characterization:type_name -> google.protobuf.Struct
+	213, // 13: onebox.faas.vmmd.v1.WakeResponse.problem:type_name -> google.protobuf.Struct
+	213, // 14: onebox.faas.vmmd.v1.WakeResponse.characterization:type_name -> google.protobuf.Struct
 	1,   // 15: onebox.faas.vmmd.v1.CreateFromSnapshotRequest.app:type_name -> onebox.faas.vmmd.v1.AppSpec
 	7,   // 16: onebox.faas.vmmd.v1.CreateFromSnapshotRequest.snapshot:type_name -> onebox.faas.vmmd.v1.SnapshotRef
 	31,  // 17: onebox.faas.vmmd.v1.CreateFromSnapshotRequest.build:type_name -> onebox.faas.vmmd.v1.BuildSpec
@@ -17901,7 +18011,7 @@ var file_onebox_faas_vmmd_v1_vmmd_proto_depIdxs = []int32{
 	20,  // 31: onebox.faas.vmmd.v1.RetireEnvironmentQualificationArtifactsRequest.smoke_receipt:type_name -> onebox.faas.vmmd.v1.EnvironmentQualificationSmokeReceipt
 	1,   // 32: onebox.faas.vmmd.v1.CreateColdBootRequest.app:type_name -> onebox.faas.vmmd.v1.AppSpec
 	31,  // 33: onebox.faas.vmmd.v1.CreateColdBootRequest.build:type_name -> onebox.faas.vmmd.v1.BuildSpec
-	210, // 34: onebox.faas.vmmd.v1.JobColdBootRequest.env:type_name -> onebox.faas.vmmd.v1.JobColdBootRequest.EnvEntry
+	211, // 34: onebox.faas.vmmd.v1.JobColdBootRequest.env:type_name -> onebox.faas.vmmd.v1.JobColdBootRequest.EnvEntry
 	10,  // 35: onebox.faas.vmmd.v1.JobColdBootRequest.qualification_execution:type_name -> onebox.faas.vmmd.v1.EnvironmentQualificationExecution
 	4,   // 36: onebox.faas.vmmd.v1.JobColdBootRequest.sealed_env:type_name -> onebox.faas.vmmd.v1.SealedSecret
 	25,  // 37: onebox.faas.vmmd.v1.JobColdBootRequest.interactive:type_name -> onebox.faas.vmmd.v1.JobInteractiveAttach
@@ -17916,288 +18026,290 @@ var file_onebox_faas_vmmd_v1_vmmd_proto_depIdxs = []int32{
 	36,  // 46: onebox.faas.vmmd.v1.CaptureAdmittedRuntimeRequest.grant:type_name -> onebox.faas.vmmd.v1.RuntimeSnapshotGrant
 	33,  // 47: onebox.faas.vmmd.v1.CaptureAdmittedRuntimeResponse.snapshot:type_name -> onebox.faas.vmmd.v1.SnapshotResponse
 	37,  // 48: onebox.faas.vmmd.v1.CaptureAdmittedRuntimeResponse.acknowledgment:type_name -> onebox.faas.vmmd.v1.RuntimeSnapshotAcknowledgment
-	213, // 49: onebox.faas.vmmd.v1.StatsResponse.total_resident_bytes:type_name -> google.protobuf.Int64Value
+	214, // 49: onebox.faas.vmmd.v1.StatsResponse.total_resident_bytes:type_name -> google.protobuf.Int64Value
 	55,  // 50: onebox.faas.vmmd.v1.StatsResponse.instances:type_name -> onebox.faas.vmmd.v1.InstanceStats
-	213, // 51: onebox.faas.vmmd.v1.InstanceStats.resident_bytes:type_name -> google.protobuf.Int64Value
-	214, // 52: onebox.faas.vmmd.v1.InstanceStats.cpu_pct:type_name -> google.protobuf.DoubleValue
-	214, // 53: onebox.faas.vmmd.v1.InstanceStats.cpu_seconds:type_name -> google.protobuf.DoubleValue
-	214, // 54: onebox.faas.vmmd.v1.InstanceStats.cpu_throttled_seconds:type_name -> google.protobuf.DoubleValue
-	215, // 55: onebox.faas.vmmd.v1.InstanceStats.last_request_at:type_name -> google.protobuf.Timestamp
-	213, // 56: onebox.faas.vmmd.v1.InstanceStats.net_tx_bytes:type_name -> google.protobuf.Int64Value
-	213, // 57: onebox.faas.vmmd.v1.InstanceStats.request_count_total:type_name -> google.protobuf.Int64Value
-	213, // 58: onebox.faas.vmmd.v1.InstanceStats.net_rx_bytes:type_name -> google.protobuf.Int64Value
-	213, // 59: onebox.faas.vmmd.v1.InstanceStats.disk_used_bytes:type_name -> google.protobuf.Int64Value
-	213, // 60: onebox.faas.vmmd.v1.InstanceStats.disk_capacity_bytes:type_name -> google.protobuf.Int64Value
-	141, // 61: onebox.faas.vmmd.v1.InstanceStats.flow_summaries:type_name -> onebox.faas.vmmd.v1.FlowSummary
-	213, // 62: onebox.faas.vmmd.v1.InstanceStats.egress_new_destinations_per_min:type_name -> google.protobuf.Int64Value
-	213, // 63: onebox.faas.vmmd.v1.InstanceStats.egress_flood_drops_per_min:type_name -> google.protobuf.Int64Value
-	215, // 64: onebox.faas.vmmd.v1.InstanceStats.quiet_paused_since:type_name -> google.protobuf.Timestamp
-	215, // 65: onebox.faas.vmmd.v1.InstanceStats.frozen_since:type_name -> google.protobuf.Timestamp
-	215, // 66: onebox.faas.vmmd.v1.InstanceStats.quiet_last_pause_started_at:type_name -> google.protobuf.Timestamp
-	215, // 67: onebox.faas.vmmd.v1.InstanceStats.quiet_last_pause_ended_at:type_name -> google.protobuf.Timestamp
-	213, // 68: onebox.faas.vmmd.v1.InstanceStats.quiet_paused_ns_total:type_name -> google.protobuf.Int64Value
-	57,  // 69: onebox.faas.vmmd.v1.InstanceStats.egress_circuit_enforcement:type_name -> onebox.faas.vmmd.v1.EgressCircuitEnforcement
-	56,  // 70: onebox.faas.vmmd.v1.InstanceStats.http_admission_enforcement:type_name -> onebox.faas.vmmd.v1.HTTPAdmissionEnforcement
-	215, // 71: onebox.faas.vmmd.v1.PingResponse.server_time:type_name -> google.protobuf.Timestamp
-	68,  // 72: onebox.faas.vmmd.v1.CaptureProfileResponse.profiles:type_name -> onebox.faas.vmmd.v1.CapturedProfile
-	71,  // 73: onebox.faas.vmmd.v1.UpdateEgressCircuitRequest.circuits:type_name -> onebox.faas.vmmd.v1.EgressCircuitTarget
-	142, // 74: onebox.faas.vmmd.v1.UpdatePrivateNetworkRequest.private_network_firewall_rules:type_name -> onebox.faas.vmmd.v1.PrivateNetworkFirewallRule
-	215, // 75: onebox.faas.vmmd.v1.LogsRequest.since_written_at:type_name -> google.protobuf.Timestamp
-	215, // 76: onebox.faas.vmmd.v1.LogsResponse.written_at:type_name -> google.protobuf.Timestamp
-	215, // 77: onebox.faas.vmmd.v1.LogsResponse.gap_to_written_at:type_name -> google.protobuf.Timestamp
-	177, // 78: onebox.faas.vmmd.v1.MaterializeRuntimeScanRequest.sources:type_name -> onebox.faas.vmmd.v1.RuntimeArtifactSource
-	88,  // 79: onebox.faas.vmmd.v1.RuntimeScanView.source_tree:type_name -> onebox.faas.vmmd.v1.RuntimeScanTree
-	88,  // 80: onebox.faas.vmmd.v1.RuntimeScanView.projection_tree:type_name -> onebox.faas.vmmd.v1.RuntimeScanTree
-	89,  // 81: onebox.faas.vmmd.v1.MaterializeRuntimeScanResponse.views:type_name -> onebox.faas.vmmd.v1.RuntimeScanView
-	98,  // 82: onebox.faas.vmmd.v1.ForwardHTTPStreamRequest.init:type_name -> onebox.faas.vmmd.v1.ForwardHTTPRequestInit
-	60,  // 83: onebox.faas.vmmd.v1.ForwardHTTPRequestInit.headers:type_name -> onebox.faas.vmmd.v1.Header
-	100, // 84: onebox.faas.vmmd.v1.ForwardHTTPStreamResponse.init:type_name -> onebox.faas.vmmd.v1.ForwardHTTPResponseInit
-	60,  // 85: onebox.faas.vmmd.v1.ForwardHTTPResponseInit.headers:type_name -> onebox.faas.vmmd.v1.Header
-	60,  // 86: onebox.faas.vmmd.v1.ForwardHTTPResponseInit.trailers:type_name -> onebox.faas.vmmd.v1.Header
-	1,   // 87: onebox.faas.vmmd.v1.AdoptMigratedInstanceRequest.app_spec:type_name -> onebox.faas.vmmd.v1.AppSpec
-	0,   // 88: onebox.faas.vmmd.v1.AdoptMigratedInstanceResponse.method:type_name -> onebox.faas.vmmd.v1.WakeMethod
-	111, // 89: onebox.faas.vmmd.v1.ForwardRawRequest.init:type_name -> onebox.faas.vmmd.v1.ForwardRawRequestInit
-	60,  // 90: onebox.faas.vmmd.v1.ForwardRawResponseInit.headers:type_name -> onebox.faas.vmmd.v1.Header
-	113, // 91: onebox.faas.vmmd.v1.ForwardRawResponse.init:type_name -> onebox.faas.vmmd.v1.ForwardRawResponseInit
-	122, // 92: onebox.faas.vmmd.v1.ExecuteExecutionRequest.files:type_name -> onebox.faas.vmmd.v1.ExecutionSourceFile
-	216, // 93: onebox.faas.vmmd.v1.ExecuteExecutionResponse.exit_code:type_name -> google.protobuf.Int32Value
-	123, // 94: onebox.faas.vmmd.v1.ExecuteExecutionResponse.artifacts:type_name -> onebox.faas.vmmd.v1.ExecutionArtifact
-	126, // 95: onebox.faas.vmmd.v1.ExecuteExecutionEvent.output:type_name -> onebox.faas.vmmd.v1.ExecuteExecutionOutputChunk
-	124, // 96: onebox.faas.vmmd.v1.ExecuteExecutionEvent.terminal:type_name -> onebox.faas.vmmd.v1.ExecuteExecutionResponse
-	121, // 97: onebox.faas.vmmd.v1.ExecuteExecutionBrokerRequest.start:type_name -> onebox.faas.vmmd.v1.ExecuteExecutionRequest
-	130, // 98: onebox.faas.vmmd.v1.ExecuteExecutionBrokerRequest.outbound_response:type_name -> onebox.faas.vmmd.v1.ExecuteExecutionOutboundResponse
-	126, // 99: onebox.faas.vmmd.v1.ExecuteExecutionBrokerEvent.output:type_name -> onebox.faas.vmmd.v1.ExecuteExecutionOutputChunk
-	129, // 100: onebox.faas.vmmd.v1.ExecuteExecutionBrokerEvent.outbound_call:type_name -> onebox.faas.vmmd.v1.ExecuteExecutionOutboundCall
-	124, // 101: onebox.faas.vmmd.v1.ExecuteExecutionBrokerEvent.terminal:type_name -> onebox.faas.vmmd.v1.ExecuteExecutionResponse
-	211, // 102: onebox.faas.vmmd.v1.ExecuteExecutionOutboundResponse.headers:type_name -> onebox.faas.vmmd.v1.ExecuteExecutionOutboundResponse.HeadersEntry
-	7,   // 103: onebox.faas.vmmd.v1.RestoreExecutionRequest.snapshot:type_name -> onebox.faas.vmmd.v1.SnapshotRef
-	0,   // 104: onebox.faas.vmmd.v1.RestoreExecutionResponse.method:type_name -> onebox.faas.vmmd.v1.WakeMethod
-	0,   // 105: onebox.faas.vmmd.v1.RestoreExecutionResponse.requested_method:type_name -> onebox.faas.vmmd.v1.WakeMethod
-	137, // 106: onebox.faas.vmmd.v1.ForwardTCPRequest.init:type_name -> onebox.faas.vmmd.v1.ForwardTCPRequestInit
-	139, // 107: onebox.faas.vmmd.v1.ForwardTCPResponse.init:type_name -> onebox.faas.vmmd.v1.ForwardTCPResponseInit
-	1,   // 108: onebox.faas.vmmd.v1.RestoreAppTaskRequest.app:type_name -> onebox.faas.vmmd.v1.AppSpec
-	0,   // 109: onebox.faas.vmmd.v1.RestoreAppTaskResponse.method:type_name -> onebox.faas.vmmd.v1.WakeMethod
-	216, // 110: onebox.faas.vmmd.v1.ExecuteAppTaskResponse.exit_code:type_name -> google.protobuf.Int32Value
-	154, // 111: onebox.faas.vmmd.v1.ExecuteAppTaskEvent.output:type_name -> onebox.faas.vmmd.v1.ExecuteAppTaskOutputChunk
-	152, // 112: onebox.faas.vmmd.v1.ExecuteAppTaskEvent.terminal:type_name -> onebox.faas.vmmd.v1.ExecuteAppTaskResponse
-	156, // 113: onebox.faas.vmmd.v1.AttachAppTaskRequest.start:type_name -> onebox.faas.vmmd.v1.AttachAppTaskStart
-	157, // 114: onebox.faas.vmmd.v1.AttachAppTaskRequest.resize:type_name -> onebox.faas.vmmd.v1.AttachAppTaskResize
-	158, // 115: onebox.faas.vmmd.v1.AttachAppTaskRequest.stdin_close:type_name -> onebox.faas.vmmd.v1.AttachAppTaskStdinClose
-	160, // 116: onebox.faas.vmmd.v1.AttachAppTaskEvent.attached:type_name -> onebox.faas.vmmd.v1.AttachAppTaskAttached
-	154, // 117: onebox.faas.vmmd.v1.AttachAppTaskEvent.output:type_name -> onebox.faas.vmmd.v1.ExecuteAppTaskOutputChunk
-	152, // 118: onebox.faas.vmmd.v1.AttachAppTaskEvent.terminal:type_name -> onebox.faas.vmmd.v1.ExecuteAppTaskResponse
-	170, // 119: onebox.faas.vmmd.v1.AdoptionReportResponse.adopted:type_name -> onebox.faas.vmmd.v1.AdoptionReportInstance
-	170, // 120: onebox.faas.vmmd.v1.AdoptionReportResponse.refused:type_name -> onebox.faas.vmmd.v1.AdoptionReportInstance
-	169, // 121: onebox.faas.vmmd.v1.AdoptionInventoryResponse.records:type_name -> onebox.faas.vmmd.v1.AdoptionInventoryRecord
-	171, // 122: onebox.faas.vmmd.v1.AdoptionReportInstance.admission:type_name -> onebox.faas.vmmd.v1.AdoptionReportAdmission
-	174, // 123: onebox.faas.vmmd.v1.CreateAdmittedRuntimeRequest.binding:type_name -> onebox.faas.vmmd.v1.RuntimeBootBinding
-	23,  // 124: onebox.faas.vmmd.v1.CreateAdmittedRuntimeRequest.cold_boot:type_name -> onebox.faas.vmmd.v1.CreateColdBootRequest
-	9,   // 125: onebox.faas.vmmd.v1.CreateAdmittedRuntimeRequest.restore:type_name -> onebox.faas.vmmd.v1.CreateFromSnapshotRequest
-	177, // 126: onebox.faas.vmmd.v1.CreateAdmittedRuntimeRequest.artifact_sources:type_name -> onebox.faas.vmmd.v1.RuntimeArtifactSource
-	176, // 127: onebox.faas.vmmd.v1.CreateAdmittedRuntimeRequest.snapshot_restore:type_name -> onebox.faas.vmmd.v1.RuntimeSnapshotRestoreEvidence
-	35,  // 128: onebox.faas.vmmd.v1.RuntimeSnapshotRestoreEvidence.capture:type_name -> onebox.faas.vmmd.v1.RuntimeSnapshotCapture
-	174, // 129: onebox.faas.vmmd.v1.RuntimeBootReceipt.binding:type_name -> onebox.faas.vmmd.v1.RuntimeBootBinding
-	0,   // 130: onebox.faas.vmmd.v1.RuntimeBootReceipt.method:type_name -> onebox.faas.vmmd.v1.WakeMethod
-	181, // 131: onebox.faas.vmmd.v1.RuntimeBootReceipt.artifact_consumption:type_name -> onebox.faas.vmmd.v1.RuntimeArtifactConsumption
-	179, // 132: onebox.faas.vmmd.v1.RuntimeBootReceipt.snapshot_consumption:type_name -> onebox.faas.vmmd.v1.RuntimeSnapshotConsumption
-	180, // 133: onebox.faas.vmmd.v1.RuntimeBootReceipt.snapshot_resume_evidence:type_name -> onebox.faas.vmmd.v1.RuntimeSnapshotResumeEvidence
-	34,  // 134: onebox.faas.vmmd.v1.RuntimeSnapshotConsumption.memory:type_name -> onebox.faas.vmmd.v1.RuntimeCapturedArtifact
-	34,  // 135: onebox.faas.vmmd.v1.RuntimeSnapshotConsumption.vmstate:type_name -> onebox.faas.vmmd.v1.RuntimeCapturedArtifact
-	34,  // 136: onebox.faas.vmmd.v1.RuntimeSnapshotConsumption.private_drive:type_name -> onebox.faas.vmmd.v1.RuntimeCapturedArtifact
-	174, // 137: onebox.faas.vmmd.v1.RuntimeSnapshotResumeEvidence.binding:type_name -> onebox.faas.vmmd.v1.RuntimeBootBinding
-	174, // 138: onebox.faas.vmmd.v1.RuntimeSnapshotResumeEvidence.parent_binding:type_name -> onebox.faas.vmmd.v1.RuntimeBootBinding
-	182, // 139: onebox.faas.vmmd.v1.RuntimeArtifactConsumption.drives:type_name -> onebox.faas.vmmd.v1.RuntimeConsumedDrive
-	177, // 140: onebox.faas.vmmd.v1.RuntimeConsumedDrive.source:type_name -> onebox.faas.vmmd.v1.RuntimeArtifactSource
-	8,   // 141: onebox.faas.vmmd.v1.CreateAdmittedRuntimeResponse.runtime:type_name -> onebox.faas.vmmd.v1.WakeResponse
-	178, // 142: onebox.faas.vmmd.v1.CreateAdmittedRuntimeResponse.receipt:type_name -> onebox.faas.vmmd.v1.RuntimeBootReceipt
-	174, // 143: onebox.faas.vmmd.v1.PromoteAdmittedRuntimeRequest.binding:type_name -> onebox.faas.vmmd.v1.RuntimeBootBinding
-	178, // 144: onebox.faas.vmmd.v1.PromoteAdmittedRuntimeRequest.parent:type_name -> onebox.faas.vmmd.v1.RuntimeBootReceipt
-	178, // 145: onebox.faas.vmmd.v1.PromoteAdmittedRuntimeResponse.receipt:type_name -> onebox.faas.vmmd.v1.RuntimeBootReceipt
-	186, // 146: onebox.faas.vmmd.v1.ForwardUDPRequest.init:type_name -> onebox.faas.vmmd.v1.ForwardUDPRequestInit
-	188, // 147: onebox.faas.vmmd.v1.ForwardUDPResponse.init:type_name -> onebox.faas.vmmd.v1.ForwardUDPResponseInit
-	173, // 148: onebox.faas.vmmd.v1.UpdateAdmittedAppEgressPolicyRequest.identity:type_name -> onebox.faas.vmmd.v1.RuntimeAdmissionIdentityResponse
-	163, // 149: onebox.faas.vmmd.v1.UpdateAdmittedAppEgressPolicyRequest.policy:type_name -> onebox.faas.vmmd.v1.UpdateAppEgressPolicyRequest
-	173, // 150: onebox.faas.vmmd.v1.UpdateAdmittedAppEgressPolicyAck.identity:type_name -> onebox.faas.vmmd.v1.RuntimeAdmissionIdentityResponse
-	10,  // 151: onebox.faas.vmmd.v1.RestoreEnvironmentQualificationRequest.execution:type_name -> onebox.faas.vmmd.v1.EnvironmentQualificationExecution
-	1,   // 152: onebox.faas.vmmd.v1.RestoreEnvironmentQualificationRequest.app:type_name -> onebox.faas.vmmd.v1.AppSpec
-	10,  // 153: onebox.faas.vmmd.v1.RestoreEnvironmentQualificationResponse.execution:type_name -> onebox.faas.vmmd.v1.EnvironmentQualificationExecution
-	8,   // 154: onebox.faas.vmmd.v1.RestoreEnvironmentQualificationResponse.wake:type_name -> onebox.faas.vmmd.v1.WakeResponse
-	215, // 155: onebox.faas.vmmd.v1.ManagedPostgresDrainFrame.fenced_at:type_name -> google.protobuf.Timestamp
-	194, // 156: onebox.faas.vmmd.v1.RetireManagedPostgresDrainRequest.frame:type_name -> onebox.faas.vmmd.v1.ManagedPostgresDrainFrame
-	194, // 157: onebox.faas.vmmd.v1.RetireManagedPostgresDrainResponse.frame:type_name -> onebox.faas.vmmd.v1.ManagedPostgresDrainFrame
-	195, // 158: onebox.faas.vmmd.v1.RetireManagedPostgresDrainResponse.proof:type_name -> onebox.faas.vmmd.v1.ManagedPostgresDrainProof
-	215, // 159: onebox.faas.vmmd.v1.RetireDataRepairRehearsalResponse.retired_at:type_name -> google.protobuf.Timestamp
-	200, // 160: onebox.faas.vmmd.v1.Vmmd.DataRepairRehearsalIdentity:input_type -> onebox.faas.vmmd.v1.DataRepairRehearsalIdentityRequest
-	202, // 161: onebox.faas.vmmd.v1.Vmmd.RunDataRepairRehearsal:input_type -> onebox.faas.vmmd.v1.DataRepairRehearsalChunk
-	204, // 162: onebox.faas.vmmd.v1.Vmmd.RetireDataRepairRehearsal:input_type -> onebox.faas.vmmd.v1.RetireDataRepairRehearsalRequest
-	23,  // 163: onebox.faas.vmmd.v1.Vmmd.CreateRehearsalColdBoot:input_type -> onebox.faas.vmmd.v1.CreateColdBootRequest
-	9,   // 164: onebox.faas.vmmd.v1.Vmmd.CreateRehearsalFromSnapshot:input_type -> onebox.faas.vmmd.v1.CreateFromSnapshotRequest
-	172, // 165: onebox.faas.vmmd.v1.Vmmd.RuntimeAdmissionIdentity:input_type -> onebox.faas.vmmd.v1.RuntimeAdmissionIdentityRequest
-	175, // 166: onebox.faas.vmmd.v1.Vmmd.CreateAdmittedRuntime:input_type -> onebox.faas.vmmd.v1.CreateAdmittedRuntimeRequest
-	184, // 167: onebox.faas.vmmd.v1.Vmmd.PromoteAdmittedRuntime:input_type -> onebox.faas.vmmd.v1.PromoteAdmittedRuntimeRequest
-	38,  // 168: onebox.faas.vmmd.v1.Vmmd.CaptureAdmittedRuntime:input_type -> onebox.faas.vmmd.v1.CaptureAdmittedRuntimeRequest
-	9,   // 169: onebox.faas.vmmd.v1.Vmmd.CreateFromSnapshot:input_type -> onebox.faas.vmmd.v1.CreateFromSnapshotRequest
-	23,  // 170: onebox.faas.vmmd.v1.Vmmd.CreateColdBoot:input_type -> onebox.faas.vmmd.v1.CreateColdBootRequest
-	12,  // 171: onebox.faas.vmmd.v1.Vmmd.CreateEnvironmentQualification:input_type -> onebox.faas.vmmd.v1.CreateEnvironmentQualificationRequest
-	192, // 172: onebox.faas.vmmd.v1.Vmmd.RestoreEnvironmentQualification:input_type -> onebox.faas.vmmd.v1.RestoreEnvironmentQualificationRequest
-	14,  // 173: onebox.faas.vmmd.v1.Vmmd.RetireEnvironmentQualification:input_type -> onebox.faas.vmmd.v1.RetireEnvironmentQualificationRequest
-	17,  // 174: onebox.faas.vmmd.v1.Vmmd.CaptureEnvironmentQualification:input_type -> onebox.faas.vmmd.v1.CaptureEnvironmentQualificationRequest
-	21,  // 175: onebox.faas.vmmd.v1.Vmmd.RetireEnvironmentQualificationArtifacts:input_type -> onebox.faas.vmmd.v1.RetireEnvironmentQualificationArtifactsRequest
-	24,  // 176: onebox.faas.vmmd.v1.Vmmd.JobColdBoot:input_type -> onebox.faas.vmmd.v1.JobColdBootRequest
-	24,  // 177: onebox.faas.vmmd.v1.Vmmd.JobColdBootHeld:input_type -> onebox.faas.vmmd.v1.JobColdBootRequest
-	27,  // 178: onebox.faas.vmmd.v1.Vmmd.ReleaseJobStart:input_type -> onebox.faas.vmmd.v1.ReleaseJobStartRequest
-	121, // 179: onebox.faas.vmmd.v1.Vmmd.ExecuteExecution:input_type -> onebox.faas.vmmd.v1.ExecuteExecutionRequest
-	121, // 180: onebox.faas.vmmd.v1.Vmmd.ExecuteExecutionStream:input_type -> onebox.faas.vmmd.v1.ExecuteExecutionRequest
-	127, // 181: onebox.faas.vmmd.v1.Vmmd.ExecuteExecutionBrokerStream:input_type -> onebox.faas.vmmd.v1.ExecuteExecutionBrokerRequest
-	131, // 182: onebox.faas.vmmd.v1.Vmmd.RestoreExecution:input_type -> onebox.faas.vmmd.v1.RestoreExecutionRequest
-	149, // 183: onebox.faas.vmmd.v1.Vmmd.RestoreAppTask:input_type -> onebox.faas.vmmd.v1.RestoreAppTaskRequest
-	149, // 184: onebox.faas.vmmd.v1.Vmmd.RestoreRehearsalAppTask:input_type -> onebox.faas.vmmd.v1.RestoreAppTaskRequest
-	151, // 185: onebox.faas.vmmd.v1.Vmmd.ExecuteAppTask:input_type -> onebox.faas.vmmd.v1.ExecuteAppTaskRequest
-	151, // 186: onebox.faas.vmmd.v1.Vmmd.ExecForkCommand:input_type -> onebox.faas.vmmd.v1.ExecuteAppTaskRequest
-	151, // 187: onebox.faas.vmmd.v1.Vmmd.ExecuteAppTaskStream:input_type -> onebox.faas.vmmd.v1.ExecuteAppTaskRequest
-	155, // 188: onebox.faas.vmmd.v1.Vmmd.AttachAppTask:input_type -> onebox.faas.vmmd.v1.AttachAppTaskRequest
-	29,  // 189: onebox.faas.vmmd.v1.Vmmd.WaitJobExit:input_type -> onebox.faas.vmmd.v1.WaitJobExitRequest
-	32,  // 190: onebox.faas.vmmd.v1.Vmmd.PauseAndSnapshot:input_type -> onebox.faas.vmmd.v1.PauseAndSnapshotRequest
-	40,  // 191: onebox.faas.vmmd.v1.Vmmd.WarmSnapshot:input_type -> onebox.faas.vmmd.v1.WarmSnapshotRequest
-	143, // 192: onebox.faas.vmmd.v1.Vmmd.ResumeWarmInstance:input_type -> onebox.faas.vmmd.v1.ResumeWarmInstanceRequest
-	206, // 193: onebox.faas.vmmd.v1.Vmmd.RehearseSuspendResume:input_type -> onebox.faas.vmmd.v1.RehearseSuspendResumeRequest
-	145, // 194: onebox.faas.vmmd.v1.Vmmd.FreezeInstance:input_type -> onebox.faas.vmmd.v1.FreezeInstanceRequest
-	147, // 195: onebox.faas.vmmd.v1.Vmmd.ThawInstance:input_type -> onebox.faas.vmmd.v1.ThawInstanceRequest
-	115, // 196: onebox.faas.vmmd.v1.Vmmd.WaitBuilderReady:input_type -> onebox.faas.vmmd.v1.WaitBuilderReadyRequest
-	117, // 197: onebox.faas.vmmd.v1.Vmmd.DeleteWarmSnapshot:input_type -> onebox.faas.vmmd.v1.DeleteWarmSnapshotRequest
-	119, // 198: onebox.faas.vmmd.v1.Vmmd.RetireNativeRuntimeSnapshotObject:input_type -> onebox.faas.vmmd.v1.RetireNativeRuntimeSnapshotObjectRequest
-	41,  // 199: onebox.faas.vmmd.v1.Vmmd.FrameworkReady:input_type -> onebox.faas.vmmd.v1.FrameworkReadyRequest
-	43,  // 200: onebox.faas.vmmd.v1.Vmmd.Destroy:input_type -> onebox.faas.vmmd.v1.DestroyRequest
-	44,  // 201: onebox.faas.vmmd.v1.Vmmd.GetOperatorRestartGeneration:input_type -> onebox.faas.vmmd.v1.GetOperatorRestartGenerationRequest
-	46,  // 202: onebox.faas.vmmd.v1.Vmmd.ExecuteOperatorRestartDestroy:input_type -> onebox.faas.vmmd.v1.ExecuteOperatorRestartDestroyRequest
-	48,  // 203: onebox.faas.vmmd.v1.Vmmd.ExecuteOperatorPark:input_type -> onebox.faas.vmmd.v1.ExecuteOperatorParkRequest
-	165, // 204: onebox.faas.vmmd.v1.Vmmd.AdoptionReport:input_type -> onebox.faas.vmmd.v1.AdoptionReportRequest
-	167, // 205: onebox.faas.vmmd.v1.Vmmd.AdoptionInventory:input_type -> onebox.faas.vmmd.v1.AdoptionInventoryRequest
-	51,  // 206: onebox.faas.vmmd.v1.Vmmd.StopInstance:input_type -> onebox.faas.vmmd.v1.StopInstanceRequest
-	53,  // 207: onebox.faas.vmmd.v1.Vmmd.Stats:input_type -> onebox.faas.vmmd.v1.StatsRequest
-	208, // 208: onebox.faas.vmmd.v1.Vmmd.InflightRequestTrace:input_type -> onebox.faas.vmmd.v1.InflightRequestTraceRequest
-	58,  // 209: onebox.faas.vmmd.v1.Vmmd.Ping:input_type -> onebox.faas.vmmd.v1.PingRequest
-	61,  // 210: onebox.faas.vmmd.v1.Vmmd.Heartbeat:input_type -> onebox.faas.vmmd.v1.HeartbeatRequest
-	63,  // 211: onebox.faas.vmmd.v1.Vmmd.UpdateEgressAllowlist:input_type -> onebox.faas.vmmd.v1.UpdateEgressAllowlistRequest
-	163, // 212: onebox.faas.vmmd.v1.Vmmd.UpdateAppEgressPolicy:input_type -> onebox.faas.vmmd.v1.UpdateAppEgressPolicyRequest
-	190, // 213: onebox.faas.vmmd.v1.Vmmd.UpdateAdmittedAppEgressPolicy:input_type -> onebox.faas.vmmd.v1.UpdateAdmittedAppEgressPolicyRequest
-	161, // 214: onebox.faas.vmmd.v1.Vmmd.AllowResolvedEgress:input_type -> onebox.faas.vmmd.v1.AllowResolvedEgressRequest
-	65,  // 215: onebox.faas.vmmd.v1.Vmmd.UpdateAppCPULimit:input_type -> onebox.faas.vmmd.v1.UpdateAppCPULimitRequest
-	67,  // 216: onebox.faas.vmmd.v1.Vmmd.CaptureProfile:input_type -> onebox.faas.vmmd.v1.CaptureProfileRequest
-	73,  // 217: onebox.faas.vmmd.v1.Vmmd.UpdateStaticEgressIP:input_type -> onebox.faas.vmmd.v1.UpdateStaticEgressIPRequest
-	70,  // 218: onebox.faas.vmmd.v1.Vmmd.UpdateEgressCircuit:input_type -> onebox.faas.vmmd.v1.UpdateEgressCircuitRequest
-	75,  // 219: onebox.faas.vmmd.v1.Vmmd.UpdatePrivateNetwork:input_type -> onebox.faas.vmmd.v1.UpdatePrivateNetworkRequest
-	133, // 220: onebox.faas.vmmd.v1.Vmmd.ReconcilePrivateNetworkFabric:input_type -> onebox.faas.vmmd.v1.ReconcilePrivateNetworkFabricRequest
-	135, // 221: onebox.faas.vmmd.v1.Vmmd.RemovePrivateNetworkFabric:input_type -> onebox.faas.vmmd.v1.RemovePrivateNetworkFabricRequest
-	77,  // 222: onebox.faas.vmmd.v1.Vmmd.SeccompStatus:input_type -> onebox.faas.vmmd.v1.SeccompStatusRequest
-	79,  // 223: onebox.faas.vmmd.v1.Vmmd.Logs:input_type -> onebox.faas.vmmd.v1.LogsRequest
-	97,  // 224: onebox.faas.vmmd.v1.Vmmd.ForwardHTTPStream:input_type -> onebox.faas.vmmd.v1.ForwardHTTPStreamRequest
-	112, // 225: onebox.faas.vmmd.v1.Vmmd.ForwardRawStream:input_type -> onebox.faas.vmmd.v1.ForwardRawRequest
-	138, // 226: onebox.faas.vmmd.v1.Vmmd.ForwardTCPStream:input_type -> onebox.faas.vmmd.v1.ForwardTCPRequest
-	187, // 227: onebox.faas.vmmd.v1.Vmmd.ForwardUDPStream:input_type -> onebox.faas.vmmd.v1.ForwardUDPRequest
-	81,  // 228: onebox.faas.vmmd.v1.Vmmd.MountParentExt4ReadOnly:input_type -> onebox.faas.vmmd.v1.MountParentExt4ReadOnlyRequest
-	83,  // 229: onebox.faas.vmmd.v1.Vmmd.MaterializeParentExt4:input_type -> onebox.faas.vmmd.v1.MaterializeParentExt4Request
-	85,  // 230: onebox.faas.vmmd.v1.Vmmd.MaterializeVerifiedParentExt4:input_type -> onebox.faas.vmmd.v1.MaterializeVerifiedParentExt4Request
-	87,  // 231: onebox.faas.vmmd.v1.Vmmd.MaterializeRuntimeScan:input_type -> onebox.faas.vmmd.v1.MaterializeRuntimeScanRequest
-	91,  // 232: onebox.faas.vmmd.v1.Vmmd.UmountParentExt4:input_type -> onebox.faas.vmmd.v1.UmountParentExt4Request
-	93,  // 233: onebox.faas.vmmd.v1.Vmmd.MountOverlayParent:input_type -> onebox.faas.vmmd.v1.MountOverlayParentRequest
-	95,  // 234: onebox.faas.vmmd.v1.Vmmd.UmountOverlayParent:input_type -> onebox.faas.vmmd.v1.UmountOverlayParentRequest
-	101, // 235: onebox.faas.vmmd.v1.Vmmd.PrepareLiveMigration:input_type -> onebox.faas.vmmd.v1.PrepareLiveMigrationRequest
-	103, // 236: onebox.faas.vmmd.v1.Vmmd.AdoptMigratedInstance:input_type -> onebox.faas.vmmd.v1.AdoptMigratedInstanceRequest
-	104, // 237: onebox.faas.vmmd.v1.Vmmd.RetireMigrationAdoption:input_type -> onebox.faas.vmmd.v1.RetireMigrationAdoptionRequest
-	107, // 238: onebox.faas.vmmd.v1.Vmmd.AcknowledgeMigration:input_type -> onebox.faas.vmmd.v1.AcknowledgeMigrationRequest
-	109, // 239: onebox.faas.vmmd.v1.Vmmd.CancelLiveMigration:input_type -> onebox.faas.vmmd.v1.CancelLiveMigrationRequest
-	196, // 240: onebox.faas.vmmd.v1.Vmmd.RetireManagedPostgresDrain:input_type -> onebox.faas.vmmd.v1.RetireManagedPostgresDrainRequest
-	198, // 241: onebox.faas.vmmd.v1.Vmmd.ResolveServiceCaller:input_type -> onebox.faas.vmmd.v1.ResolveServiceCallerRequest
-	149, // 242: onebox.faas.vmmd.v1.Vmmd.RestoreManagedServiceProbe:input_type -> onebox.faas.vmmd.v1.RestoreAppTaskRequest
-	201, // 243: onebox.faas.vmmd.v1.Vmmd.DataRepairRehearsalIdentity:output_type -> onebox.faas.vmmd.v1.DataRepairRehearsalIdentityResponse
-	203, // 244: onebox.faas.vmmd.v1.Vmmd.RunDataRepairRehearsal:output_type -> onebox.faas.vmmd.v1.DataRepairRehearsalResult
-	205, // 245: onebox.faas.vmmd.v1.Vmmd.RetireDataRepairRehearsal:output_type -> onebox.faas.vmmd.v1.RetireDataRepairRehearsalResponse
-	8,   // 246: onebox.faas.vmmd.v1.Vmmd.CreateRehearsalColdBoot:output_type -> onebox.faas.vmmd.v1.WakeResponse
-	8,   // 247: onebox.faas.vmmd.v1.Vmmd.CreateRehearsalFromSnapshot:output_type -> onebox.faas.vmmd.v1.WakeResponse
-	173, // 248: onebox.faas.vmmd.v1.Vmmd.RuntimeAdmissionIdentity:output_type -> onebox.faas.vmmd.v1.RuntimeAdmissionIdentityResponse
-	183, // 249: onebox.faas.vmmd.v1.Vmmd.CreateAdmittedRuntime:output_type -> onebox.faas.vmmd.v1.CreateAdmittedRuntimeResponse
-	185, // 250: onebox.faas.vmmd.v1.Vmmd.PromoteAdmittedRuntime:output_type -> onebox.faas.vmmd.v1.PromoteAdmittedRuntimeResponse
-	39,  // 251: onebox.faas.vmmd.v1.Vmmd.CaptureAdmittedRuntime:output_type -> onebox.faas.vmmd.v1.CaptureAdmittedRuntimeResponse
-	8,   // 252: onebox.faas.vmmd.v1.Vmmd.CreateFromSnapshot:output_type -> onebox.faas.vmmd.v1.WakeResponse
-	8,   // 253: onebox.faas.vmmd.v1.Vmmd.CreateColdBoot:output_type -> onebox.faas.vmmd.v1.WakeResponse
-	13,  // 254: onebox.faas.vmmd.v1.Vmmd.CreateEnvironmentQualification:output_type -> onebox.faas.vmmd.v1.CreateEnvironmentQualificationResponse
-	193, // 255: onebox.faas.vmmd.v1.Vmmd.RestoreEnvironmentQualification:output_type -> onebox.faas.vmmd.v1.RestoreEnvironmentQualificationResponse
-	16,  // 256: onebox.faas.vmmd.v1.Vmmd.RetireEnvironmentQualification:output_type -> onebox.faas.vmmd.v1.RetireEnvironmentQualificationResponse
-	19,  // 257: onebox.faas.vmmd.v1.Vmmd.CaptureEnvironmentQualification:output_type -> onebox.faas.vmmd.v1.CaptureEnvironmentQualificationResponse
-	22,  // 258: onebox.faas.vmmd.v1.Vmmd.RetireEnvironmentQualificationArtifacts:output_type -> onebox.faas.vmmd.v1.RetireEnvironmentQualificationArtifactsResponse
-	26,  // 259: onebox.faas.vmmd.v1.Vmmd.JobColdBoot:output_type -> onebox.faas.vmmd.v1.JobColdBootResponse
-	26,  // 260: onebox.faas.vmmd.v1.Vmmd.JobColdBootHeld:output_type -> onebox.faas.vmmd.v1.JobColdBootResponse
-	28,  // 261: onebox.faas.vmmd.v1.Vmmd.ReleaseJobStart:output_type -> onebox.faas.vmmd.v1.ReleaseJobStartResponse
-	124, // 262: onebox.faas.vmmd.v1.Vmmd.ExecuteExecution:output_type -> onebox.faas.vmmd.v1.ExecuteExecutionResponse
-	125, // 263: onebox.faas.vmmd.v1.Vmmd.ExecuteExecutionStream:output_type -> onebox.faas.vmmd.v1.ExecuteExecutionEvent
-	128, // 264: onebox.faas.vmmd.v1.Vmmd.ExecuteExecutionBrokerStream:output_type -> onebox.faas.vmmd.v1.ExecuteExecutionBrokerEvent
-	132, // 265: onebox.faas.vmmd.v1.Vmmd.RestoreExecution:output_type -> onebox.faas.vmmd.v1.RestoreExecutionResponse
-	150, // 266: onebox.faas.vmmd.v1.Vmmd.RestoreAppTask:output_type -> onebox.faas.vmmd.v1.RestoreAppTaskResponse
-	150, // 267: onebox.faas.vmmd.v1.Vmmd.RestoreRehearsalAppTask:output_type -> onebox.faas.vmmd.v1.RestoreAppTaskResponse
-	152, // 268: onebox.faas.vmmd.v1.Vmmd.ExecuteAppTask:output_type -> onebox.faas.vmmd.v1.ExecuteAppTaskResponse
-	152, // 269: onebox.faas.vmmd.v1.Vmmd.ExecForkCommand:output_type -> onebox.faas.vmmd.v1.ExecuteAppTaskResponse
-	153, // 270: onebox.faas.vmmd.v1.Vmmd.ExecuteAppTaskStream:output_type -> onebox.faas.vmmd.v1.ExecuteAppTaskEvent
-	159, // 271: onebox.faas.vmmd.v1.Vmmd.AttachAppTask:output_type -> onebox.faas.vmmd.v1.AttachAppTaskEvent
-	30,  // 272: onebox.faas.vmmd.v1.Vmmd.WaitJobExit:output_type -> onebox.faas.vmmd.v1.JobExitResponse
-	33,  // 273: onebox.faas.vmmd.v1.Vmmd.PauseAndSnapshot:output_type -> onebox.faas.vmmd.v1.SnapshotResponse
-	33,  // 274: onebox.faas.vmmd.v1.Vmmd.WarmSnapshot:output_type -> onebox.faas.vmmd.v1.SnapshotResponse
-	144, // 275: onebox.faas.vmmd.v1.Vmmd.ResumeWarmInstance:output_type -> onebox.faas.vmmd.v1.ResumeWarmInstanceResponse
-	207, // 276: onebox.faas.vmmd.v1.Vmmd.RehearseSuspendResume:output_type -> onebox.faas.vmmd.v1.RehearseSuspendResumeResponse
-	146, // 277: onebox.faas.vmmd.v1.Vmmd.FreezeInstance:output_type -> onebox.faas.vmmd.v1.FreezeInstanceResponse
-	148, // 278: onebox.faas.vmmd.v1.Vmmd.ThawInstance:output_type -> onebox.faas.vmmd.v1.ThawInstanceResponse
-	116, // 279: onebox.faas.vmmd.v1.Vmmd.WaitBuilderReady:output_type -> onebox.faas.vmmd.v1.WaitBuilderReadyResponse
-	118, // 280: onebox.faas.vmmd.v1.Vmmd.DeleteWarmSnapshot:output_type -> onebox.faas.vmmd.v1.DeleteWarmSnapshotResponse
-	120, // 281: onebox.faas.vmmd.v1.Vmmd.RetireNativeRuntimeSnapshotObject:output_type -> onebox.faas.vmmd.v1.RetireNativeRuntimeSnapshotObjectResponse
-	42,  // 282: onebox.faas.vmmd.v1.Vmmd.FrameworkReady:output_type -> onebox.faas.vmmd.v1.FrameworkReadyResponse
-	50,  // 283: onebox.faas.vmmd.v1.Vmmd.Destroy:output_type -> onebox.faas.vmmd.v1.DestroyResponse
-	45,  // 284: onebox.faas.vmmd.v1.Vmmd.GetOperatorRestartGeneration:output_type -> onebox.faas.vmmd.v1.GetOperatorRestartGenerationResponse
-	47,  // 285: onebox.faas.vmmd.v1.Vmmd.ExecuteOperatorRestartDestroy:output_type -> onebox.faas.vmmd.v1.ExecuteOperatorRestartDestroyResponse
-	49,  // 286: onebox.faas.vmmd.v1.Vmmd.ExecuteOperatorPark:output_type -> onebox.faas.vmmd.v1.ExecuteOperatorParkResponse
-	166, // 287: onebox.faas.vmmd.v1.Vmmd.AdoptionReport:output_type -> onebox.faas.vmmd.v1.AdoptionReportResponse
-	168, // 288: onebox.faas.vmmd.v1.Vmmd.AdoptionInventory:output_type -> onebox.faas.vmmd.v1.AdoptionInventoryResponse
-	52,  // 289: onebox.faas.vmmd.v1.Vmmd.StopInstance:output_type -> onebox.faas.vmmd.v1.StopInstanceResponse
-	54,  // 290: onebox.faas.vmmd.v1.Vmmd.Stats:output_type -> onebox.faas.vmmd.v1.StatsResponse
-	209, // 291: onebox.faas.vmmd.v1.Vmmd.InflightRequestTrace:output_type -> onebox.faas.vmmd.v1.InflightRequestTraceResponse
-	59,  // 292: onebox.faas.vmmd.v1.Vmmd.Ping:output_type -> onebox.faas.vmmd.v1.PingResponse
-	62,  // 293: onebox.faas.vmmd.v1.Vmmd.Heartbeat:output_type -> onebox.faas.vmmd.v1.HeartbeatResponse
-	64,  // 294: onebox.faas.vmmd.v1.Vmmd.UpdateEgressAllowlist:output_type -> onebox.faas.vmmd.v1.UpdateEgressAllowlistAck
-	164, // 295: onebox.faas.vmmd.v1.Vmmd.UpdateAppEgressPolicy:output_type -> onebox.faas.vmmd.v1.UpdateAppEgressPolicyAck
-	191, // 296: onebox.faas.vmmd.v1.Vmmd.UpdateAdmittedAppEgressPolicy:output_type -> onebox.faas.vmmd.v1.UpdateAdmittedAppEgressPolicyAck
-	162, // 297: onebox.faas.vmmd.v1.Vmmd.AllowResolvedEgress:output_type -> onebox.faas.vmmd.v1.AllowResolvedEgressAck
-	66,  // 298: onebox.faas.vmmd.v1.Vmmd.UpdateAppCPULimit:output_type -> onebox.faas.vmmd.v1.UpdateAppCPULimitAck
-	69,  // 299: onebox.faas.vmmd.v1.Vmmd.CaptureProfile:output_type -> onebox.faas.vmmd.v1.CaptureProfileResponse
-	74,  // 300: onebox.faas.vmmd.v1.Vmmd.UpdateStaticEgressIP:output_type -> onebox.faas.vmmd.v1.UpdateStaticEgressIPAck
-	72,  // 301: onebox.faas.vmmd.v1.Vmmd.UpdateEgressCircuit:output_type -> onebox.faas.vmmd.v1.UpdateEgressCircuitAck
-	76,  // 302: onebox.faas.vmmd.v1.Vmmd.UpdatePrivateNetwork:output_type -> onebox.faas.vmmd.v1.UpdatePrivateNetworkAck
-	134, // 303: onebox.faas.vmmd.v1.Vmmd.ReconcilePrivateNetworkFabric:output_type -> onebox.faas.vmmd.v1.ReconcilePrivateNetworkFabricAck
-	136, // 304: onebox.faas.vmmd.v1.Vmmd.RemovePrivateNetworkFabric:output_type -> onebox.faas.vmmd.v1.RemovePrivateNetworkFabricAck
-	78,  // 305: onebox.faas.vmmd.v1.Vmmd.SeccompStatus:output_type -> onebox.faas.vmmd.v1.SeccompStatusResponse
-	80,  // 306: onebox.faas.vmmd.v1.Vmmd.Logs:output_type -> onebox.faas.vmmd.v1.LogsResponse
-	99,  // 307: onebox.faas.vmmd.v1.Vmmd.ForwardHTTPStream:output_type -> onebox.faas.vmmd.v1.ForwardHTTPStreamResponse
-	114, // 308: onebox.faas.vmmd.v1.Vmmd.ForwardRawStream:output_type -> onebox.faas.vmmd.v1.ForwardRawResponse
-	140, // 309: onebox.faas.vmmd.v1.Vmmd.ForwardTCPStream:output_type -> onebox.faas.vmmd.v1.ForwardTCPResponse
-	189, // 310: onebox.faas.vmmd.v1.Vmmd.ForwardUDPStream:output_type -> onebox.faas.vmmd.v1.ForwardUDPResponse
-	82,  // 311: onebox.faas.vmmd.v1.Vmmd.MountParentExt4ReadOnly:output_type -> onebox.faas.vmmd.v1.MountParentExt4ReadOnlyResponse
-	84,  // 312: onebox.faas.vmmd.v1.Vmmd.MaterializeParentExt4:output_type -> onebox.faas.vmmd.v1.MaterializeParentExt4Response
-	86,  // 313: onebox.faas.vmmd.v1.Vmmd.MaterializeVerifiedParentExt4:output_type -> onebox.faas.vmmd.v1.MaterializeVerifiedParentExt4Response
-	90,  // 314: onebox.faas.vmmd.v1.Vmmd.MaterializeRuntimeScan:output_type -> onebox.faas.vmmd.v1.MaterializeRuntimeScanResponse
-	92,  // 315: onebox.faas.vmmd.v1.Vmmd.UmountParentExt4:output_type -> onebox.faas.vmmd.v1.UmountParentExt4Response
-	94,  // 316: onebox.faas.vmmd.v1.Vmmd.MountOverlayParent:output_type -> onebox.faas.vmmd.v1.MountOverlayParentResponse
-	96,  // 317: onebox.faas.vmmd.v1.Vmmd.UmountOverlayParent:output_type -> onebox.faas.vmmd.v1.UmountOverlayParentResponse
-	102, // 318: onebox.faas.vmmd.v1.Vmmd.PrepareLiveMigration:output_type -> onebox.faas.vmmd.v1.PrepareLiveMigrationResponse
-	106, // 319: onebox.faas.vmmd.v1.Vmmd.AdoptMigratedInstance:output_type -> onebox.faas.vmmd.v1.AdoptMigratedInstanceResponse
-	105, // 320: onebox.faas.vmmd.v1.Vmmd.RetireMigrationAdoption:output_type -> onebox.faas.vmmd.v1.RetireMigrationAdoptionResponse
-	108, // 321: onebox.faas.vmmd.v1.Vmmd.AcknowledgeMigration:output_type -> onebox.faas.vmmd.v1.AcknowledgeMigrationResponse
-	110, // 322: onebox.faas.vmmd.v1.Vmmd.CancelLiveMigration:output_type -> onebox.faas.vmmd.v1.CancelLiveMigrationResponse
-	197, // 323: onebox.faas.vmmd.v1.Vmmd.RetireManagedPostgresDrain:output_type -> onebox.faas.vmmd.v1.RetireManagedPostgresDrainResponse
-	199, // 324: onebox.faas.vmmd.v1.Vmmd.ResolveServiceCaller:output_type -> onebox.faas.vmmd.v1.ResolveServiceCallerResponse
-	150, // 325: onebox.faas.vmmd.v1.Vmmd.RestoreManagedServiceProbe:output_type -> onebox.faas.vmmd.v1.RestoreAppTaskResponse
-	243, // [243:326] is the sub-list for method output_type
-	160, // [160:243] is the sub-list for method input_type
-	160, // [160:160] is the sub-list for extension type_name
-	160, // [160:160] is the sub-list for extension extendee
-	0,   // [0:160] is the sub-list for field type_name
+	214, // 51: onebox.faas.vmmd.v1.StatsResponse.instance_bridge_resident_bytes:type_name -> google.protobuf.Int64Value
+	214, // 52: onebox.faas.vmmd.v1.InstanceStats.resident_bytes:type_name -> google.protobuf.Int64Value
+	215, // 53: onebox.faas.vmmd.v1.InstanceStats.cpu_pct:type_name -> google.protobuf.DoubleValue
+	215, // 54: onebox.faas.vmmd.v1.InstanceStats.cpu_seconds:type_name -> google.protobuf.DoubleValue
+	215, // 55: onebox.faas.vmmd.v1.InstanceStats.cpu_throttled_seconds:type_name -> google.protobuf.DoubleValue
+	216, // 56: onebox.faas.vmmd.v1.InstanceStats.last_request_at:type_name -> google.protobuf.Timestamp
+	214, // 57: onebox.faas.vmmd.v1.InstanceStats.net_tx_bytes:type_name -> google.protobuf.Int64Value
+	214, // 58: onebox.faas.vmmd.v1.InstanceStats.request_count_total:type_name -> google.protobuf.Int64Value
+	214, // 59: onebox.faas.vmmd.v1.InstanceStats.net_rx_bytes:type_name -> google.protobuf.Int64Value
+	214, // 60: onebox.faas.vmmd.v1.InstanceStats.disk_used_bytes:type_name -> google.protobuf.Int64Value
+	214, // 61: onebox.faas.vmmd.v1.InstanceStats.disk_capacity_bytes:type_name -> google.protobuf.Int64Value
+	141, // 62: onebox.faas.vmmd.v1.InstanceStats.flow_summaries:type_name -> onebox.faas.vmmd.v1.FlowSummary
+	214, // 63: onebox.faas.vmmd.v1.InstanceStats.egress_new_destinations_per_min:type_name -> google.protobuf.Int64Value
+	214, // 64: onebox.faas.vmmd.v1.InstanceStats.egress_flood_drops_per_min:type_name -> google.protobuf.Int64Value
+	216, // 65: onebox.faas.vmmd.v1.InstanceStats.quiet_paused_since:type_name -> google.protobuf.Timestamp
+	216, // 66: onebox.faas.vmmd.v1.InstanceStats.frozen_since:type_name -> google.protobuf.Timestamp
+	216, // 67: onebox.faas.vmmd.v1.InstanceStats.quiet_last_pause_started_at:type_name -> google.protobuf.Timestamp
+	216, // 68: onebox.faas.vmmd.v1.InstanceStats.quiet_last_pause_ended_at:type_name -> google.protobuf.Timestamp
+	214, // 69: onebox.faas.vmmd.v1.InstanceStats.quiet_paused_ns_total:type_name -> google.protobuf.Int64Value
+	57,  // 70: onebox.faas.vmmd.v1.InstanceStats.egress_circuit_enforcement:type_name -> onebox.faas.vmmd.v1.EgressCircuitEnforcement
+	56,  // 71: onebox.faas.vmmd.v1.InstanceStats.http_admission_enforcement:type_name -> onebox.faas.vmmd.v1.HTTPAdmissionEnforcement
+	216, // 72: onebox.faas.vmmd.v1.PingResponse.server_time:type_name -> google.protobuf.Timestamp
+	210, // 73: onebox.faas.vmmd.v1.PingResponse.base_generations:type_name -> onebox.faas.vmmd.v1.BaseGenerationReadiness
+	68,  // 74: onebox.faas.vmmd.v1.CaptureProfileResponse.profiles:type_name -> onebox.faas.vmmd.v1.CapturedProfile
+	71,  // 75: onebox.faas.vmmd.v1.UpdateEgressCircuitRequest.circuits:type_name -> onebox.faas.vmmd.v1.EgressCircuitTarget
+	142, // 76: onebox.faas.vmmd.v1.UpdatePrivateNetworkRequest.private_network_firewall_rules:type_name -> onebox.faas.vmmd.v1.PrivateNetworkFirewallRule
+	216, // 77: onebox.faas.vmmd.v1.LogsRequest.since_written_at:type_name -> google.protobuf.Timestamp
+	216, // 78: onebox.faas.vmmd.v1.LogsResponse.written_at:type_name -> google.protobuf.Timestamp
+	216, // 79: onebox.faas.vmmd.v1.LogsResponse.gap_to_written_at:type_name -> google.protobuf.Timestamp
+	177, // 80: onebox.faas.vmmd.v1.MaterializeRuntimeScanRequest.sources:type_name -> onebox.faas.vmmd.v1.RuntimeArtifactSource
+	88,  // 81: onebox.faas.vmmd.v1.RuntimeScanView.source_tree:type_name -> onebox.faas.vmmd.v1.RuntimeScanTree
+	88,  // 82: onebox.faas.vmmd.v1.RuntimeScanView.projection_tree:type_name -> onebox.faas.vmmd.v1.RuntimeScanTree
+	89,  // 83: onebox.faas.vmmd.v1.MaterializeRuntimeScanResponse.views:type_name -> onebox.faas.vmmd.v1.RuntimeScanView
+	98,  // 84: onebox.faas.vmmd.v1.ForwardHTTPStreamRequest.init:type_name -> onebox.faas.vmmd.v1.ForwardHTTPRequestInit
+	60,  // 85: onebox.faas.vmmd.v1.ForwardHTTPRequestInit.headers:type_name -> onebox.faas.vmmd.v1.Header
+	100, // 86: onebox.faas.vmmd.v1.ForwardHTTPStreamResponse.init:type_name -> onebox.faas.vmmd.v1.ForwardHTTPResponseInit
+	60,  // 87: onebox.faas.vmmd.v1.ForwardHTTPResponseInit.headers:type_name -> onebox.faas.vmmd.v1.Header
+	60,  // 88: onebox.faas.vmmd.v1.ForwardHTTPResponseInit.trailers:type_name -> onebox.faas.vmmd.v1.Header
+	1,   // 89: onebox.faas.vmmd.v1.AdoptMigratedInstanceRequest.app_spec:type_name -> onebox.faas.vmmd.v1.AppSpec
+	0,   // 90: onebox.faas.vmmd.v1.AdoptMigratedInstanceResponse.method:type_name -> onebox.faas.vmmd.v1.WakeMethod
+	111, // 91: onebox.faas.vmmd.v1.ForwardRawRequest.init:type_name -> onebox.faas.vmmd.v1.ForwardRawRequestInit
+	60,  // 92: onebox.faas.vmmd.v1.ForwardRawResponseInit.headers:type_name -> onebox.faas.vmmd.v1.Header
+	113, // 93: onebox.faas.vmmd.v1.ForwardRawResponse.init:type_name -> onebox.faas.vmmd.v1.ForwardRawResponseInit
+	122, // 94: onebox.faas.vmmd.v1.ExecuteExecutionRequest.files:type_name -> onebox.faas.vmmd.v1.ExecutionSourceFile
+	217, // 95: onebox.faas.vmmd.v1.ExecuteExecutionResponse.exit_code:type_name -> google.protobuf.Int32Value
+	123, // 96: onebox.faas.vmmd.v1.ExecuteExecutionResponse.artifacts:type_name -> onebox.faas.vmmd.v1.ExecutionArtifact
+	126, // 97: onebox.faas.vmmd.v1.ExecuteExecutionEvent.output:type_name -> onebox.faas.vmmd.v1.ExecuteExecutionOutputChunk
+	124, // 98: onebox.faas.vmmd.v1.ExecuteExecutionEvent.terminal:type_name -> onebox.faas.vmmd.v1.ExecuteExecutionResponse
+	121, // 99: onebox.faas.vmmd.v1.ExecuteExecutionBrokerRequest.start:type_name -> onebox.faas.vmmd.v1.ExecuteExecutionRequest
+	130, // 100: onebox.faas.vmmd.v1.ExecuteExecutionBrokerRequest.outbound_response:type_name -> onebox.faas.vmmd.v1.ExecuteExecutionOutboundResponse
+	126, // 101: onebox.faas.vmmd.v1.ExecuteExecutionBrokerEvent.output:type_name -> onebox.faas.vmmd.v1.ExecuteExecutionOutputChunk
+	129, // 102: onebox.faas.vmmd.v1.ExecuteExecutionBrokerEvent.outbound_call:type_name -> onebox.faas.vmmd.v1.ExecuteExecutionOutboundCall
+	124, // 103: onebox.faas.vmmd.v1.ExecuteExecutionBrokerEvent.terminal:type_name -> onebox.faas.vmmd.v1.ExecuteExecutionResponse
+	212, // 104: onebox.faas.vmmd.v1.ExecuteExecutionOutboundResponse.headers:type_name -> onebox.faas.vmmd.v1.ExecuteExecutionOutboundResponse.HeadersEntry
+	7,   // 105: onebox.faas.vmmd.v1.RestoreExecutionRequest.snapshot:type_name -> onebox.faas.vmmd.v1.SnapshotRef
+	0,   // 106: onebox.faas.vmmd.v1.RestoreExecutionResponse.method:type_name -> onebox.faas.vmmd.v1.WakeMethod
+	0,   // 107: onebox.faas.vmmd.v1.RestoreExecutionResponse.requested_method:type_name -> onebox.faas.vmmd.v1.WakeMethod
+	137, // 108: onebox.faas.vmmd.v1.ForwardTCPRequest.init:type_name -> onebox.faas.vmmd.v1.ForwardTCPRequestInit
+	139, // 109: onebox.faas.vmmd.v1.ForwardTCPResponse.init:type_name -> onebox.faas.vmmd.v1.ForwardTCPResponseInit
+	1,   // 110: onebox.faas.vmmd.v1.RestoreAppTaskRequest.app:type_name -> onebox.faas.vmmd.v1.AppSpec
+	0,   // 111: onebox.faas.vmmd.v1.RestoreAppTaskResponse.method:type_name -> onebox.faas.vmmd.v1.WakeMethod
+	217, // 112: onebox.faas.vmmd.v1.ExecuteAppTaskResponse.exit_code:type_name -> google.protobuf.Int32Value
+	154, // 113: onebox.faas.vmmd.v1.ExecuteAppTaskEvent.output:type_name -> onebox.faas.vmmd.v1.ExecuteAppTaskOutputChunk
+	152, // 114: onebox.faas.vmmd.v1.ExecuteAppTaskEvent.terminal:type_name -> onebox.faas.vmmd.v1.ExecuteAppTaskResponse
+	156, // 115: onebox.faas.vmmd.v1.AttachAppTaskRequest.start:type_name -> onebox.faas.vmmd.v1.AttachAppTaskStart
+	157, // 116: onebox.faas.vmmd.v1.AttachAppTaskRequest.resize:type_name -> onebox.faas.vmmd.v1.AttachAppTaskResize
+	158, // 117: onebox.faas.vmmd.v1.AttachAppTaskRequest.stdin_close:type_name -> onebox.faas.vmmd.v1.AttachAppTaskStdinClose
+	160, // 118: onebox.faas.vmmd.v1.AttachAppTaskEvent.attached:type_name -> onebox.faas.vmmd.v1.AttachAppTaskAttached
+	154, // 119: onebox.faas.vmmd.v1.AttachAppTaskEvent.output:type_name -> onebox.faas.vmmd.v1.ExecuteAppTaskOutputChunk
+	152, // 120: onebox.faas.vmmd.v1.AttachAppTaskEvent.terminal:type_name -> onebox.faas.vmmd.v1.ExecuteAppTaskResponse
+	170, // 121: onebox.faas.vmmd.v1.AdoptionReportResponse.adopted:type_name -> onebox.faas.vmmd.v1.AdoptionReportInstance
+	170, // 122: onebox.faas.vmmd.v1.AdoptionReportResponse.refused:type_name -> onebox.faas.vmmd.v1.AdoptionReportInstance
+	169, // 123: onebox.faas.vmmd.v1.AdoptionInventoryResponse.records:type_name -> onebox.faas.vmmd.v1.AdoptionInventoryRecord
+	171, // 124: onebox.faas.vmmd.v1.AdoptionReportInstance.admission:type_name -> onebox.faas.vmmd.v1.AdoptionReportAdmission
+	174, // 125: onebox.faas.vmmd.v1.CreateAdmittedRuntimeRequest.binding:type_name -> onebox.faas.vmmd.v1.RuntimeBootBinding
+	23,  // 126: onebox.faas.vmmd.v1.CreateAdmittedRuntimeRequest.cold_boot:type_name -> onebox.faas.vmmd.v1.CreateColdBootRequest
+	9,   // 127: onebox.faas.vmmd.v1.CreateAdmittedRuntimeRequest.restore:type_name -> onebox.faas.vmmd.v1.CreateFromSnapshotRequest
+	177, // 128: onebox.faas.vmmd.v1.CreateAdmittedRuntimeRequest.artifact_sources:type_name -> onebox.faas.vmmd.v1.RuntimeArtifactSource
+	176, // 129: onebox.faas.vmmd.v1.CreateAdmittedRuntimeRequest.snapshot_restore:type_name -> onebox.faas.vmmd.v1.RuntimeSnapshotRestoreEvidence
+	35,  // 130: onebox.faas.vmmd.v1.RuntimeSnapshotRestoreEvidence.capture:type_name -> onebox.faas.vmmd.v1.RuntimeSnapshotCapture
+	174, // 131: onebox.faas.vmmd.v1.RuntimeBootReceipt.binding:type_name -> onebox.faas.vmmd.v1.RuntimeBootBinding
+	0,   // 132: onebox.faas.vmmd.v1.RuntimeBootReceipt.method:type_name -> onebox.faas.vmmd.v1.WakeMethod
+	181, // 133: onebox.faas.vmmd.v1.RuntimeBootReceipt.artifact_consumption:type_name -> onebox.faas.vmmd.v1.RuntimeArtifactConsumption
+	179, // 134: onebox.faas.vmmd.v1.RuntimeBootReceipt.snapshot_consumption:type_name -> onebox.faas.vmmd.v1.RuntimeSnapshotConsumption
+	180, // 135: onebox.faas.vmmd.v1.RuntimeBootReceipt.snapshot_resume_evidence:type_name -> onebox.faas.vmmd.v1.RuntimeSnapshotResumeEvidence
+	34,  // 136: onebox.faas.vmmd.v1.RuntimeSnapshotConsumption.memory:type_name -> onebox.faas.vmmd.v1.RuntimeCapturedArtifact
+	34,  // 137: onebox.faas.vmmd.v1.RuntimeSnapshotConsumption.vmstate:type_name -> onebox.faas.vmmd.v1.RuntimeCapturedArtifact
+	34,  // 138: onebox.faas.vmmd.v1.RuntimeSnapshotConsumption.private_drive:type_name -> onebox.faas.vmmd.v1.RuntimeCapturedArtifact
+	174, // 139: onebox.faas.vmmd.v1.RuntimeSnapshotResumeEvidence.binding:type_name -> onebox.faas.vmmd.v1.RuntimeBootBinding
+	174, // 140: onebox.faas.vmmd.v1.RuntimeSnapshotResumeEvidence.parent_binding:type_name -> onebox.faas.vmmd.v1.RuntimeBootBinding
+	182, // 141: onebox.faas.vmmd.v1.RuntimeArtifactConsumption.drives:type_name -> onebox.faas.vmmd.v1.RuntimeConsumedDrive
+	177, // 142: onebox.faas.vmmd.v1.RuntimeConsumedDrive.source:type_name -> onebox.faas.vmmd.v1.RuntimeArtifactSource
+	8,   // 143: onebox.faas.vmmd.v1.CreateAdmittedRuntimeResponse.runtime:type_name -> onebox.faas.vmmd.v1.WakeResponse
+	178, // 144: onebox.faas.vmmd.v1.CreateAdmittedRuntimeResponse.receipt:type_name -> onebox.faas.vmmd.v1.RuntimeBootReceipt
+	174, // 145: onebox.faas.vmmd.v1.PromoteAdmittedRuntimeRequest.binding:type_name -> onebox.faas.vmmd.v1.RuntimeBootBinding
+	178, // 146: onebox.faas.vmmd.v1.PromoteAdmittedRuntimeRequest.parent:type_name -> onebox.faas.vmmd.v1.RuntimeBootReceipt
+	178, // 147: onebox.faas.vmmd.v1.PromoteAdmittedRuntimeResponse.receipt:type_name -> onebox.faas.vmmd.v1.RuntimeBootReceipt
+	186, // 148: onebox.faas.vmmd.v1.ForwardUDPRequest.init:type_name -> onebox.faas.vmmd.v1.ForwardUDPRequestInit
+	188, // 149: onebox.faas.vmmd.v1.ForwardUDPResponse.init:type_name -> onebox.faas.vmmd.v1.ForwardUDPResponseInit
+	173, // 150: onebox.faas.vmmd.v1.UpdateAdmittedAppEgressPolicyRequest.identity:type_name -> onebox.faas.vmmd.v1.RuntimeAdmissionIdentityResponse
+	163, // 151: onebox.faas.vmmd.v1.UpdateAdmittedAppEgressPolicyRequest.policy:type_name -> onebox.faas.vmmd.v1.UpdateAppEgressPolicyRequest
+	173, // 152: onebox.faas.vmmd.v1.UpdateAdmittedAppEgressPolicyAck.identity:type_name -> onebox.faas.vmmd.v1.RuntimeAdmissionIdentityResponse
+	10,  // 153: onebox.faas.vmmd.v1.RestoreEnvironmentQualificationRequest.execution:type_name -> onebox.faas.vmmd.v1.EnvironmentQualificationExecution
+	1,   // 154: onebox.faas.vmmd.v1.RestoreEnvironmentQualificationRequest.app:type_name -> onebox.faas.vmmd.v1.AppSpec
+	10,  // 155: onebox.faas.vmmd.v1.RestoreEnvironmentQualificationResponse.execution:type_name -> onebox.faas.vmmd.v1.EnvironmentQualificationExecution
+	8,   // 156: onebox.faas.vmmd.v1.RestoreEnvironmentQualificationResponse.wake:type_name -> onebox.faas.vmmd.v1.WakeResponse
+	216, // 157: onebox.faas.vmmd.v1.ManagedPostgresDrainFrame.fenced_at:type_name -> google.protobuf.Timestamp
+	194, // 158: onebox.faas.vmmd.v1.RetireManagedPostgresDrainRequest.frame:type_name -> onebox.faas.vmmd.v1.ManagedPostgresDrainFrame
+	194, // 159: onebox.faas.vmmd.v1.RetireManagedPostgresDrainResponse.frame:type_name -> onebox.faas.vmmd.v1.ManagedPostgresDrainFrame
+	195, // 160: onebox.faas.vmmd.v1.RetireManagedPostgresDrainResponse.proof:type_name -> onebox.faas.vmmd.v1.ManagedPostgresDrainProof
+	216, // 161: onebox.faas.vmmd.v1.RetireDataRepairRehearsalResponse.retired_at:type_name -> google.protobuf.Timestamp
+	200, // 162: onebox.faas.vmmd.v1.Vmmd.DataRepairRehearsalIdentity:input_type -> onebox.faas.vmmd.v1.DataRepairRehearsalIdentityRequest
+	202, // 163: onebox.faas.vmmd.v1.Vmmd.RunDataRepairRehearsal:input_type -> onebox.faas.vmmd.v1.DataRepairRehearsalChunk
+	204, // 164: onebox.faas.vmmd.v1.Vmmd.RetireDataRepairRehearsal:input_type -> onebox.faas.vmmd.v1.RetireDataRepairRehearsalRequest
+	23,  // 165: onebox.faas.vmmd.v1.Vmmd.CreateRehearsalColdBoot:input_type -> onebox.faas.vmmd.v1.CreateColdBootRequest
+	9,   // 166: onebox.faas.vmmd.v1.Vmmd.CreateRehearsalFromSnapshot:input_type -> onebox.faas.vmmd.v1.CreateFromSnapshotRequest
+	172, // 167: onebox.faas.vmmd.v1.Vmmd.RuntimeAdmissionIdentity:input_type -> onebox.faas.vmmd.v1.RuntimeAdmissionIdentityRequest
+	175, // 168: onebox.faas.vmmd.v1.Vmmd.CreateAdmittedRuntime:input_type -> onebox.faas.vmmd.v1.CreateAdmittedRuntimeRequest
+	184, // 169: onebox.faas.vmmd.v1.Vmmd.PromoteAdmittedRuntime:input_type -> onebox.faas.vmmd.v1.PromoteAdmittedRuntimeRequest
+	38,  // 170: onebox.faas.vmmd.v1.Vmmd.CaptureAdmittedRuntime:input_type -> onebox.faas.vmmd.v1.CaptureAdmittedRuntimeRequest
+	9,   // 171: onebox.faas.vmmd.v1.Vmmd.CreateFromSnapshot:input_type -> onebox.faas.vmmd.v1.CreateFromSnapshotRequest
+	23,  // 172: onebox.faas.vmmd.v1.Vmmd.CreateColdBoot:input_type -> onebox.faas.vmmd.v1.CreateColdBootRequest
+	12,  // 173: onebox.faas.vmmd.v1.Vmmd.CreateEnvironmentQualification:input_type -> onebox.faas.vmmd.v1.CreateEnvironmentQualificationRequest
+	192, // 174: onebox.faas.vmmd.v1.Vmmd.RestoreEnvironmentQualification:input_type -> onebox.faas.vmmd.v1.RestoreEnvironmentQualificationRequest
+	14,  // 175: onebox.faas.vmmd.v1.Vmmd.RetireEnvironmentQualification:input_type -> onebox.faas.vmmd.v1.RetireEnvironmentQualificationRequest
+	17,  // 176: onebox.faas.vmmd.v1.Vmmd.CaptureEnvironmentQualification:input_type -> onebox.faas.vmmd.v1.CaptureEnvironmentQualificationRequest
+	21,  // 177: onebox.faas.vmmd.v1.Vmmd.RetireEnvironmentQualificationArtifacts:input_type -> onebox.faas.vmmd.v1.RetireEnvironmentQualificationArtifactsRequest
+	24,  // 178: onebox.faas.vmmd.v1.Vmmd.JobColdBoot:input_type -> onebox.faas.vmmd.v1.JobColdBootRequest
+	24,  // 179: onebox.faas.vmmd.v1.Vmmd.JobColdBootHeld:input_type -> onebox.faas.vmmd.v1.JobColdBootRequest
+	27,  // 180: onebox.faas.vmmd.v1.Vmmd.ReleaseJobStart:input_type -> onebox.faas.vmmd.v1.ReleaseJobStartRequest
+	121, // 181: onebox.faas.vmmd.v1.Vmmd.ExecuteExecution:input_type -> onebox.faas.vmmd.v1.ExecuteExecutionRequest
+	121, // 182: onebox.faas.vmmd.v1.Vmmd.ExecuteExecutionStream:input_type -> onebox.faas.vmmd.v1.ExecuteExecutionRequest
+	127, // 183: onebox.faas.vmmd.v1.Vmmd.ExecuteExecutionBrokerStream:input_type -> onebox.faas.vmmd.v1.ExecuteExecutionBrokerRequest
+	131, // 184: onebox.faas.vmmd.v1.Vmmd.RestoreExecution:input_type -> onebox.faas.vmmd.v1.RestoreExecutionRequest
+	149, // 185: onebox.faas.vmmd.v1.Vmmd.RestoreAppTask:input_type -> onebox.faas.vmmd.v1.RestoreAppTaskRequest
+	149, // 186: onebox.faas.vmmd.v1.Vmmd.RestoreRehearsalAppTask:input_type -> onebox.faas.vmmd.v1.RestoreAppTaskRequest
+	151, // 187: onebox.faas.vmmd.v1.Vmmd.ExecuteAppTask:input_type -> onebox.faas.vmmd.v1.ExecuteAppTaskRequest
+	151, // 188: onebox.faas.vmmd.v1.Vmmd.ExecForkCommand:input_type -> onebox.faas.vmmd.v1.ExecuteAppTaskRequest
+	151, // 189: onebox.faas.vmmd.v1.Vmmd.ExecuteAppTaskStream:input_type -> onebox.faas.vmmd.v1.ExecuteAppTaskRequest
+	155, // 190: onebox.faas.vmmd.v1.Vmmd.AttachAppTask:input_type -> onebox.faas.vmmd.v1.AttachAppTaskRequest
+	29,  // 191: onebox.faas.vmmd.v1.Vmmd.WaitJobExit:input_type -> onebox.faas.vmmd.v1.WaitJobExitRequest
+	32,  // 192: onebox.faas.vmmd.v1.Vmmd.PauseAndSnapshot:input_type -> onebox.faas.vmmd.v1.PauseAndSnapshotRequest
+	40,  // 193: onebox.faas.vmmd.v1.Vmmd.WarmSnapshot:input_type -> onebox.faas.vmmd.v1.WarmSnapshotRequest
+	143, // 194: onebox.faas.vmmd.v1.Vmmd.ResumeWarmInstance:input_type -> onebox.faas.vmmd.v1.ResumeWarmInstanceRequest
+	206, // 195: onebox.faas.vmmd.v1.Vmmd.RehearseSuspendResume:input_type -> onebox.faas.vmmd.v1.RehearseSuspendResumeRequest
+	145, // 196: onebox.faas.vmmd.v1.Vmmd.FreezeInstance:input_type -> onebox.faas.vmmd.v1.FreezeInstanceRequest
+	147, // 197: onebox.faas.vmmd.v1.Vmmd.ThawInstance:input_type -> onebox.faas.vmmd.v1.ThawInstanceRequest
+	115, // 198: onebox.faas.vmmd.v1.Vmmd.WaitBuilderReady:input_type -> onebox.faas.vmmd.v1.WaitBuilderReadyRequest
+	117, // 199: onebox.faas.vmmd.v1.Vmmd.DeleteWarmSnapshot:input_type -> onebox.faas.vmmd.v1.DeleteWarmSnapshotRequest
+	119, // 200: onebox.faas.vmmd.v1.Vmmd.RetireNativeRuntimeSnapshotObject:input_type -> onebox.faas.vmmd.v1.RetireNativeRuntimeSnapshotObjectRequest
+	41,  // 201: onebox.faas.vmmd.v1.Vmmd.FrameworkReady:input_type -> onebox.faas.vmmd.v1.FrameworkReadyRequest
+	43,  // 202: onebox.faas.vmmd.v1.Vmmd.Destroy:input_type -> onebox.faas.vmmd.v1.DestroyRequest
+	44,  // 203: onebox.faas.vmmd.v1.Vmmd.GetOperatorRestartGeneration:input_type -> onebox.faas.vmmd.v1.GetOperatorRestartGenerationRequest
+	46,  // 204: onebox.faas.vmmd.v1.Vmmd.ExecuteOperatorRestartDestroy:input_type -> onebox.faas.vmmd.v1.ExecuteOperatorRestartDestroyRequest
+	48,  // 205: onebox.faas.vmmd.v1.Vmmd.ExecuteOperatorPark:input_type -> onebox.faas.vmmd.v1.ExecuteOperatorParkRequest
+	165, // 206: onebox.faas.vmmd.v1.Vmmd.AdoptionReport:input_type -> onebox.faas.vmmd.v1.AdoptionReportRequest
+	167, // 207: onebox.faas.vmmd.v1.Vmmd.AdoptionInventory:input_type -> onebox.faas.vmmd.v1.AdoptionInventoryRequest
+	51,  // 208: onebox.faas.vmmd.v1.Vmmd.StopInstance:input_type -> onebox.faas.vmmd.v1.StopInstanceRequest
+	53,  // 209: onebox.faas.vmmd.v1.Vmmd.Stats:input_type -> onebox.faas.vmmd.v1.StatsRequest
+	208, // 210: onebox.faas.vmmd.v1.Vmmd.InflightRequestTrace:input_type -> onebox.faas.vmmd.v1.InflightRequestTraceRequest
+	58,  // 211: onebox.faas.vmmd.v1.Vmmd.Ping:input_type -> onebox.faas.vmmd.v1.PingRequest
+	61,  // 212: onebox.faas.vmmd.v1.Vmmd.Heartbeat:input_type -> onebox.faas.vmmd.v1.HeartbeatRequest
+	63,  // 213: onebox.faas.vmmd.v1.Vmmd.UpdateEgressAllowlist:input_type -> onebox.faas.vmmd.v1.UpdateEgressAllowlistRequest
+	163, // 214: onebox.faas.vmmd.v1.Vmmd.UpdateAppEgressPolicy:input_type -> onebox.faas.vmmd.v1.UpdateAppEgressPolicyRequest
+	190, // 215: onebox.faas.vmmd.v1.Vmmd.UpdateAdmittedAppEgressPolicy:input_type -> onebox.faas.vmmd.v1.UpdateAdmittedAppEgressPolicyRequest
+	161, // 216: onebox.faas.vmmd.v1.Vmmd.AllowResolvedEgress:input_type -> onebox.faas.vmmd.v1.AllowResolvedEgressRequest
+	65,  // 217: onebox.faas.vmmd.v1.Vmmd.UpdateAppCPULimit:input_type -> onebox.faas.vmmd.v1.UpdateAppCPULimitRequest
+	67,  // 218: onebox.faas.vmmd.v1.Vmmd.CaptureProfile:input_type -> onebox.faas.vmmd.v1.CaptureProfileRequest
+	73,  // 219: onebox.faas.vmmd.v1.Vmmd.UpdateStaticEgressIP:input_type -> onebox.faas.vmmd.v1.UpdateStaticEgressIPRequest
+	70,  // 220: onebox.faas.vmmd.v1.Vmmd.UpdateEgressCircuit:input_type -> onebox.faas.vmmd.v1.UpdateEgressCircuitRequest
+	75,  // 221: onebox.faas.vmmd.v1.Vmmd.UpdatePrivateNetwork:input_type -> onebox.faas.vmmd.v1.UpdatePrivateNetworkRequest
+	133, // 222: onebox.faas.vmmd.v1.Vmmd.ReconcilePrivateNetworkFabric:input_type -> onebox.faas.vmmd.v1.ReconcilePrivateNetworkFabricRequest
+	135, // 223: onebox.faas.vmmd.v1.Vmmd.RemovePrivateNetworkFabric:input_type -> onebox.faas.vmmd.v1.RemovePrivateNetworkFabricRequest
+	77,  // 224: onebox.faas.vmmd.v1.Vmmd.SeccompStatus:input_type -> onebox.faas.vmmd.v1.SeccompStatusRequest
+	79,  // 225: onebox.faas.vmmd.v1.Vmmd.Logs:input_type -> onebox.faas.vmmd.v1.LogsRequest
+	97,  // 226: onebox.faas.vmmd.v1.Vmmd.ForwardHTTPStream:input_type -> onebox.faas.vmmd.v1.ForwardHTTPStreamRequest
+	112, // 227: onebox.faas.vmmd.v1.Vmmd.ForwardRawStream:input_type -> onebox.faas.vmmd.v1.ForwardRawRequest
+	138, // 228: onebox.faas.vmmd.v1.Vmmd.ForwardTCPStream:input_type -> onebox.faas.vmmd.v1.ForwardTCPRequest
+	187, // 229: onebox.faas.vmmd.v1.Vmmd.ForwardUDPStream:input_type -> onebox.faas.vmmd.v1.ForwardUDPRequest
+	81,  // 230: onebox.faas.vmmd.v1.Vmmd.MountParentExt4ReadOnly:input_type -> onebox.faas.vmmd.v1.MountParentExt4ReadOnlyRequest
+	83,  // 231: onebox.faas.vmmd.v1.Vmmd.MaterializeParentExt4:input_type -> onebox.faas.vmmd.v1.MaterializeParentExt4Request
+	85,  // 232: onebox.faas.vmmd.v1.Vmmd.MaterializeVerifiedParentExt4:input_type -> onebox.faas.vmmd.v1.MaterializeVerifiedParentExt4Request
+	87,  // 233: onebox.faas.vmmd.v1.Vmmd.MaterializeRuntimeScan:input_type -> onebox.faas.vmmd.v1.MaterializeRuntimeScanRequest
+	91,  // 234: onebox.faas.vmmd.v1.Vmmd.UmountParentExt4:input_type -> onebox.faas.vmmd.v1.UmountParentExt4Request
+	93,  // 235: onebox.faas.vmmd.v1.Vmmd.MountOverlayParent:input_type -> onebox.faas.vmmd.v1.MountOverlayParentRequest
+	95,  // 236: onebox.faas.vmmd.v1.Vmmd.UmountOverlayParent:input_type -> onebox.faas.vmmd.v1.UmountOverlayParentRequest
+	101, // 237: onebox.faas.vmmd.v1.Vmmd.PrepareLiveMigration:input_type -> onebox.faas.vmmd.v1.PrepareLiveMigrationRequest
+	103, // 238: onebox.faas.vmmd.v1.Vmmd.AdoptMigratedInstance:input_type -> onebox.faas.vmmd.v1.AdoptMigratedInstanceRequest
+	104, // 239: onebox.faas.vmmd.v1.Vmmd.RetireMigrationAdoption:input_type -> onebox.faas.vmmd.v1.RetireMigrationAdoptionRequest
+	107, // 240: onebox.faas.vmmd.v1.Vmmd.AcknowledgeMigration:input_type -> onebox.faas.vmmd.v1.AcknowledgeMigrationRequest
+	109, // 241: onebox.faas.vmmd.v1.Vmmd.CancelLiveMigration:input_type -> onebox.faas.vmmd.v1.CancelLiveMigrationRequest
+	196, // 242: onebox.faas.vmmd.v1.Vmmd.RetireManagedPostgresDrain:input_type -> onebox.faas.vmmd.v1.RetireManagedPostgresDrainRequest
+	198, // 243: onebox.faas.vmmd.v1.Vmmd.ResolveServiceCaller:input_type -> onebox.faas.vmmd.v1.ResolveServiceCallerRequest
+	149, // 244: onebox.faas.vmmd.v1.Vmmd.RestoreManagedServiceProbe:input_type -> onebox.faas.vmmd.v1.RestoreAppTaskRequest
+	201, // 245: onebox.faas.vmmd.v1.Vmmd.DataRepairRehearsalIdentity:output_type -> onebox.faas.vmmd.v1.DataRepairRehearsalIdentityResponse
+	203, // 246: onebox.faas.vmmd.v1.Vmmd.RunDataRepairRehearsal:output_type -> onebox.faas.vmmd.v1.DataRepairRehearsalResult
+	205, // 247: onebox.faas.vmmd.v1.Vmmd.RetireDataRepairRehearsal:output_type -> onebox.faas.vmmd.v1.RetireDataRepairRehearsalResponse
+	8,   // 248: onebox.faas.vmmd.v1.Vmmd.CreateRehearsalColdBoot:output_type -> onebox.faas.vmmd.v1.WakeResponse
+	8,   // 249: onebox.faas.vmmd.v1.Vmmd.CreateRehearsalFromSnapshot:output_type -> onebox.faas.vmmd.v1.WakeResponse
+	173, // 250: onebox.faas.vmmd.v1.Vmmd.RuntimeAdmissionIdentity:output_type -> onebox.faas.vmmd.v1.RuntimeAdmissionIdentityResponse
+	183, // 251: onebox.faas.vmmd.v1.Vmmd.CreateAdmittedRuntime:output_type -> onebox.faas.vmmd.v1.CreateAdmittedRuntimeResponse
+	185, // 252: onebox.faas.vmmd.v1.Vmmd.PromoteAdmittedRuntime:output_type -> onebox.faas.vmmd.v1.PromoteAdmittedRuntimeResponse
+	39,  // 253: onebox.faas.vmmd.v1.Vmmd.CaptureAdmittedRuntime:output_type -> onebox.faas.vmmd.v1.CaptureAdmittedRuntimeResponse
+	8,   // 254: onebox.faas.vmmd.v1.Vmmd.CreateFromSnapshot:output_type -> onebox.faas.vmmd.v1.WakeResponse
+	8,   // 255: onebox.faas.vmmd.v1.Vmmd.CreateColdBoot:output_type -> onebox.faas.vmmd.v1.WakeResponse
+	13,  // 256: onebox.faas.vmmd.v1.Vmmd.CreateEnvironmentQualification:output_type -> onebox.faas.vmmd.v1.CreateEnvironmentQualificationResponse
+	193, // 257: onebox.faas.vmmd.v1.Vmmd.RestoreEnvironmentQualification:output_type -> onebox.faas.vmmd.v1.RestoreEnvironmentQualificationResponse
+	16,  // 258: onebox.faas.vmmd.v1.Vmmd.RetireEnvironmentQualification:output_type -> onebox.faas.vmmd.v1.RetireEnvironmentQualificationResponse
+	19,  // 259: onebox.faas.vmmd.v1.Vmmd.CaptureEnvironmentQualification:output_type -> onebox.faas.vmmd.v1.CaptureEnvironmentQualificationResponse
+	22,  // 260: onebox.faas.vmmd.v1.Vmmd.RetireEnvironmentQualificationArtifacts:output_type -> onebox.faas.vmmd.v1.RetireEnvironmentQualificationArtifactsResponse
+	26,  // 261: onebox.faas.vmmd.v1.Vmmd.JobColdBoot:output_type -> onebox.faas.vmmd.v1.JobColdBootResponse
+	26,  // 262: onebox.faas.vmmd.v1.Vmmd.JobColdBootHeld:output_type -> onebox.faas.vmmd.v1.JobColdBootResponse
+	28,  // 263: onebox.faas.vmmd.v1.Vmmd.ReleaseJobStart:output_type -> onebox.faas.vmmd.v1.ReleaseJobStartResponse
+	124, // 264: onebox.faas.vmmd.v1.Vmmd.ExecuteExecution:output_type -> onebox.faas.vmmd.v1.ExecuteExecutionResponse
+	125, // 265: onebox.faas.vmmd.v1.Vmmd.ExecuteExecutionStream:output_type -> onebox.faas.vmmd.v1.ExecuteExecutionEvent
+	128, // 266: onebox.faas.vmmd.v1.Vmmd.ExecuteExecutionBrokerStream:output_type -> onebox.faas.vmmd.v1.ExecuteExecutionBrokerEvent
+	132, // 267: onebox.faas.vmmd.v1.Vmmd.RestoreExecution:output_type -> onebox.faas.vmmd.v1.RestoreExecutionResponse
+	150, // 268: onebox.faas.vmmd.v1.Vmmd.RestoreAppTask:output_type -> onebox.faas.vmmd.v1.RestoreAppTaskResponse
+	150, // 269: onebox.faas.vmmd.v1.Vmmd.RestoreRehearsalAppTask:output_type -> onebox.faas.vmmd.v1.RestoreAppTaskResponse
+	152, // 270: onebox.faas.vmmd.v1.Vmmd.ExecuteAppTask:output_type -> onebox.faas.vmmd.v1.ExecuteAppTaskResponse
+	152, // 271: onebox.faas.vmmd.v1.Vmmd.ExecForkCommand:output_type -> onebox.faas.vmmd.v1.ExecuteAppTaskResponse
+	153, // 272: onebox.faas.vmmd.v1.Vmmd.ExecuteAppTaskStream:output_type -> onebox.faas.vmmd.v1.ExecuteAppTaskEvent
+	159, // 273: onebox.faas.vmmd.v1.Vmmd.AttachAppTask:output_type -> onebox.faas.vmmd.v1.AttachAppTaskEvent
+	30,  // 274: onebox.faas.vmmd.v1.Vmmd.WaitJobExit:output_type -> onebox.faas.vmmd.v1.JobExitResponse
+	33,  // 275: onebox.faas.vmmd.v1.Vmmd.PauseAndSnapshot:output_type -> onebox.faas.vmmd.v1.SnapshotResponse
+	33,  // 276: onebox.faas.vmmd.v1.Vmmd.WarmSnapshot:output_type -> onebox.faas.vmmd.v1.SnapshotResponse
+	144, // 277: onebox.faas.vmmd.v1.Vmmd.ResumeWarmInstance:output_type -> onebox.faas.vmmd.v1.ResumeWarmInstanceResponse
+	207, // 278: onebox.faas.vmmd.v1.Vmmd.RehearseSuspendResume:output_type -> onebox.faas.vmmd.v1.RehearseSuspendResumeResponse
+	146, // 279: onebox.faas.vmmd.v1.Vmmd.FreezeInstance:output_type -> onebox.faas.vmmd.v1.FreezeInstanceResponse
+	148, // 280: onebox.faas.vmmd.v1.Vmmd.ThawInstance:output_type -> onebox.faas.vmmd.v1.ThawInstanceResponse
+	116, // 281: onebox.faas.vmmd.v1.Vmmd.WaitBuilderReady:output_type -> onebox.faas.vmmd.v1.WaitBuilderReadyResponse
+	118, // 282: onebox.faas.vmmd.v1.Vmmd.DeleteWarmSnapshot:output_type -> onebox.faas.vmmd.v1.DeleteWarmSnapshotResponse
+	120, // 283: onebox.faas.vmmd.v1.Vmmd.RetireNativeRuntimeSnapshotObject:output_type -> onebox.faas.vmmd.v1.RetireNativeRuntimeSnapshotObjectResponse
+	42,  // 284: onebox.faas.vmmd.v1.Vmmd.FrameworkReady:output_type -> onebox.faas.vmmd.v1.FrameworkReadyResponse
+	50,  // 285: onebox.faas.vmmd.v1.Vmmd.Destroy:output_type -> onebox.faas.vmmd.v1.DestroyResponse
+	45,  // 286: onebox.faas.vmmd.v1.Vmmd.GetOperatorRestartGeneration:output_type -> onebox.faas.vmmd.v1.GetOperatorRestartGenerationResponse
+	47,  // 287: onebox.faas.vmmd.v1.Vmmd.ExecuteOperatorRestartDestroy:output_type -> onebox.faas.vmmd.v1.ExecuteOperatorRestartDestroyResponse
+	49,  // 288: onebox.faas.vmmd.v1.Vmmd.ExecuteOperatorPark:output_type -> onebox.faas.vmmd.v1.ExecuteOperatorParkResponse
+	166, // 289: onebox.faas.vmmd.v1.Vmmd.AdoptionReport:output_type -> onebox.faas.vmmd.v1.AdoptionReportResponse
+	168, // 290: onebox.faas.vmmd.v1.Vmmd.AdoptionInventory:output_type -> onebox.faas.vmmd.v1.AdoptionInventoryResponse
+	52,  // 291: onebox.faas.vmmd.v1.Vmmd.StopInstance:output_type -> onebox.faas.vmmd.v1.StopInstanceResponse
+	54,  // 292: onebox.faas.vmmd.v1.Vmmd.Stats:output_type -> onebox.faas.vmmd.v1.StatsResponse
+	209, // 293: onebox.faas.vmmd.v1.Vmmd.InflightRequestTrace:output_type -> onebox.faas.vmmd.v1.InflightRequestTraceResponse
+	59,  // 294: onebox.faas.vmmd.v1.Vmmd.Ping:output_type -> onebox.faas.vmmd.v1.PingResponse
+	62,  // 295: onebox.faas.vmmd.v1.Vmmd.Heartbeat:output_type -> onebox.faas.vmmd.v1.HeartbeatResponse
+	64,  // 296: onebox.faas.vmmd.v1.Vmmd.UpdateEgressAllowlist:output_type -> onebox.faas.vmmd.v1.UpdateEgressAllowlistAck
+	164, // 297: onebox.faas.vmmd.v1.Vmmd.UpdateAppEgressPolicy:output_type -> onebox.faas.vmmd.v1.UpdateAppEgressPolicyAck
+	191, // 298: onebox.faas.vmmd.v1.Vmmd.UpdateAdmittedAppEgressPolicy:output_type -> onebox.faas.vmmd.v1.UpdateAdmittedAppEgressPolicyAck
+	162, // 299: onebox.faas.vmmd.v1.Vmmd.AllowResolvedEgress:output_type -> onebox.faas.vmmd.v1.AllowResolvedEgressAck
+	66,  // 300: onebox.faas.vmmd.v1.Vmmd.UpdateAppCPULimit:output_type -> onebox.faas.vmmd.v1.UpdateAppCPULimitAck
+	69,  // 301: onebox.faas.vmmd.v1.Vmmd.CaptureProfile:output_type -> onebox.faas.vmmd.v1.CaptureProfileResponse
+	74,  // 302: onebox.faas.vmmd.v1.Vmmd.UpdateStaticEgressIP:output_type -> onebox.faas.vmmd.v1.UpdateStaticEgressIPAck
+	72,  // 303: onebox.faas.vmmd.v1.Vmmd.UpdateEgressCircuit:output_type -> onebox.faas.vmmd.v1.UpdateEgressCircuitAck
+	76,  // 304: onebox.faas.vmmd.v1.Vmmd.UpdatePrivateNetwork:output_type -> onebox.faas.vmmd.v1.UpdatePrivateNetworkAck
+	134, // 305: onebox.faas.vmmd.v1.Vmmd.ReconcilePrivateNetworkFabric:output_type -> onebox.faas.vmmd.v1.ReconcilePrivateNetworkFabricAck
+	136, // 306: onebox.faas.vmmd.v1.Vmmd.RemovePrivateNetworkFabric:output_type -> onebox.faas.vmmd.v1.RemovePrivateNetworkFabricAck
+	78,  // 307: onebox.faas.vmmd.v1.Vmmd.SeccompStatus:output_type -> onebox.faas.vmmd.v1.SeccompStatusResponse
+	80,  // 308: onebox.faas.vmmd.v1.Vmmd.Logs:output_type -> onebox.faas.vmmd.v1.LogsResponse
+	99,  // 309: onebox.faas.vmmd.v1.Vmmd.ForwardHTTPStream:output_type -> onebox.faas.vmmd.v1.ForwardHTTPStreamResponse
+	114, // 310: onebox.faas.vmmd.v1.Vmmd.ForwardRawStream:output_type -> onebox.faas.vmmd.v1.ForwardRawResponse
+	140, // 311: onebox.faas.vmmd.v1.Vmmd.ForwardTCPStream:output_type -> onebox.faas.vmmd.v1.ForwardTCPResponse
+	189, // 312: onebox.faas.vmmd.v1.Vmmd.ForwardUDPStream:output_type -> onebox.faas.vmmd.v1.ForwardUDPResponse
+	82,  // 313: onebox.faas.vmmd.v1.Vmmd.MountParentExt4ReadOnly:output_type -> onebox.faas.vmmd.v1.MountParentExt4ReadOnlyResponse
+	84,  // 314: onebox.faas.vmmd.v1.Vmmd.MaterializeParentExt4:output_type -> onebox.faas.vmmd.v1.MaterializeParentExt4Response
+	86,  // 315: onebox.faas.vmmd.v1.Vmmd.MaterializeVerifiedParentExt4:output_type -> onebox.faas.vmmd.v1.MaterializeVerifiedParentExt4Response
+	90,  // 316: onebox.faas.vmmd.v1.Vmmd.MaterializeRuntimeScan:output_type -> onebox.faas.vmmd.v1.MaterializeRuntimeScanResponse
+	92,  // 317: onebox.faas.vmmd.v1.Vmmd.UmountParentExt4:output_type -> onebox.faas.vmmd.v1.UmountParentExt4Response
+	94,  // 318: onebox.faas.vmmd.v1.Vmmd.MountOverlayParent:output_type -> onebox.faas.vmmd.v1.MountOverlayParentResponse
+	96,  // 319: onebox.faas.vmmd.v1.Vmmd.UmountOverlayParent:output_type -> onebox.faas.vmmd.v1.UmountOverlayParentResponse
+	102, // 320: onebox.faas.vmmd.v1.Vmmd.PrepareLiveMigration:output_type -> onebox.faas.vmmd.v1.PrepareLiveMigrationResponse
+	106, // 321: onebox.faas.vmmd.v1.Vmmd.AdoptMigratedInstance:output_type -> onebox.faas.vmmd.v1.AdoptMigratedInstanceResponse
+	105, // 322: onebox.faas.vmmd.v1.Vmmd.RetireMigrationAdoption:output_type -> onebox.faas.vmmd.v1.RetireMigrationAdoptionResponse
+	108, // 323: onebox.faas.vmmd.v1.Vmmd.AcknowledgeMigration:output_type -> onebox.faas.vmmd.v1.AcknowledgeMigrationResponse
+	110, // 324: onebox.faas.vmmd.v1.Vmmd.CancelLiveMigration:output_type -> onebox.faas.vmmd.v1.CancelLiveMigrationResponse
+	197, // 325: onebox.faas.vmmd.v1.Vmmd.RetireManagedPostgresDrain:output_type -> onebox.faas.vmmd.v1.RetireManagedPostgresDrainResponse
+	199, // 326: onebox.faas.vmmd.v1.Vmmd.ResolveServiceCaller:output_type -> onebox.faas.vmmd.v1.ResolveServiceCallerResponse
+	150, // 327: onebox.faas.vmmd.v1.Vmmd.RestoreManagedServiceProbe:output_type -> onebox.faas.vmmd.v1.RestoreAppTaskResponse
+	245, // [245:328] is the sub-list for method output_type
+	162, // [162:245] is the sub-list for method input_type
+	162, // [162:162] is the sub-list for extension type_name
+	162, // [162:162] is the sub-list for extension extendee
+	0,   // [0:162] is the sub-list for field type_name
 }
 
 func init() { file_onebox_faas_vmmd_v1_vmmd_proto_init() }
@@ -18276,7 +18388,7 @@ func file_onebox_faas_vmmd_v1_vmmd_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_onebox_faas_vmmd_v1_vmmd_proto_rawDesc), len(file_onebox_faas_vmmd_v1_vmmd_proto_rawDesc)),
 			NumEnums:      1,
-			NumMessages:   211,
+			NumMessages:   212,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

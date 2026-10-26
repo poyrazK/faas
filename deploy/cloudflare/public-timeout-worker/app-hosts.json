@@ -1,0 +1,35 @@
+{
+  "_comment": "Which <label>.<apps domain> hosts are apps (ADR-1343). Mirrors pkg/api/app_slug.go: slug_pattern is appSlugRE, invalid_prefixes are rejected by ValidAppSlug, reserved_slugs is reservedAppSlugs; pkg/api/app_hosts_worker_test.go keeps them equal. platform_labels are platform hostnames that are never apps here: s3 is not an app name at all, origin and app-edge are this Worker's origin hostnames. An app holding one of those names is served by the control plane.",
+  "slug_pattern": "^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$",
+  "invalid_prefixes": [
+    "tag-"
+  ],
+  "reserved_slugs": [
+    "account",
+    "admin",
+    "api",
+    "assets",
+    "billing",
+    "cdn",
+    "console",
+    "dashboard",
+    "docs",
+    "help",
+    "login",
+    "logout",
+    "mail",
+    "ns",
+    "operations",
+    "security",
+    "signup",
+    "static",
+    "status",
+    "support",
+    "www"
+  ],
+  "platform_labels": [
+    "app-edge",
+    "origin",
+    "s3"
+  ]
+}

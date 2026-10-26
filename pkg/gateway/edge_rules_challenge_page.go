@@ -15,8 +15,17 @@ import (
 // SHA-256(token + ":" + counter) starts with difficulty zero bits. It is a
 // self-contained SHA-256 over ASCII input, so the page needs no third-party
 // code and runs where crypto.subtle is unavailable (plain HTTP in
-// development). solve() is pure; the page part runs only in a browser, so a
-// test can load this script in Node and call solve() directly.
+// development). A token is about 225 bytes, so token + ":" + counter spans
+// four 64-byte blocks of which only the last changes: solve hashes the whole
+// blocks of token + ":" once and then, per counter, only the tail, in
+// buffers it reuses (ADR-831 amendment 15). compress runs one block, already
+// in W[0..15], on the state h; midState is the state after the first full
+// bytes of s (a multiple of 64); tailWord0 pads the last len bytes, held in
+// tail, of a message of total bytes, hashes them from mid and returns the
+// digest's first word. sha256Word0 and solve are pure; the page part runs
+// only in a browser, so a test can load this script in Node and call them
+// directly. The script has no comments: html/template, which
+// TestChallengePageMatchesHTMLTemplate compares the page with, strips them.
 const challengeSolverJS = `"use strict";
 var K = new Uint32Array([
 0x428a2f98,0x71374491,0xb5c0fbcf,0xe9b5dba5,0x3956c25b,0x59f111f1,0x923f82a4,0xab1c5ed5,
@@ -28,39 +37,64 @@ var K = new Uint32Array([
 0x19a4c116,0x1e376c08,0x2748774c,0x34b0bcb5,0x391c0cb3,0x4ed8aa4a,0x5b9cca4f,0x682e6ff3,
 0x748f82ee,0x78a5636f,0x84c87814,0x8cc70208,0x90befffa,0xa4506ceb,0xbef9a3f7,0xc67178f2]);
 var W = new Uint32Array(64);
-function sha256Word0(s) {
-  var len = s.length, blocks = (len + 72) >> 6, m = new Uint8Array(blocks * 64), i;
-  for (i = 0; i < len; i++) m[i] = s.charCodeAt(i) & 0xff;
-  m[len] = 0x80;
-  var bitLen = len * 8, end = blocks * 64;
-  m[end - 4] = bitLen >>> 24; m[end - 3] = bitLen >>> 16; m[end - 2] = bitLen >>> 8; m[end - 1] = bitLen;
-  var h0 = 0x6a09e667, h1 = 0xbb67ae85, h2 = 0x3c6ef372, h3 = 0xa54ff53a,
-      h4 = 0x510e527f, h5 = 0x9b05688c, h6 = 0x1f83d9ab, h7 = 0x5be0cd19;
-  for (var o = 0; o < end; o += 64) {
-    for (i = 0; i < 16; i++) W[i] = (m[o + 4 * i] << 24) | (m[o + 4 * i + 1] << 16) | (m[o + 4 * i + 2] << 8) | m[o + 4 * i + 3];
-    for (i = 16; i < 64; i++) {
-      var x = W[i - 15], y = W[i - 2];
-      var s0 = ((x >>> 7) | (x << 25)) ^ ((x >>> 18) | (x << 14)) ^ (x >>> 3);
-      var s1 = ((y >>> 17) | (y << 15)) ^ ((y >>> 19) | (y << 13)) ^ (y >>> 10);
-      W[i] = (W[i - 16] + s0 + W[i - 7] + s1) | 0;
-    }
-    var a = h0, b = h1, c = h2, d = h3, e = h4, f = h5, g = h6, h = h7;
-    for (i = 0; i < 64; i++) {
-      var S1 = ((e >>> 6) | (e << 26)) ^ ((e >>> 11) | (e << 21)) ^ ((e >>> 25) | (e << 7));
-      var t1 = (h + S1 + ((e & f) ^ (~e & g)) + K[i] + W[i]) | 0;
-      var S0 = ((a >>> 2) | (a << 30)) ^ ((a >>> 13) | (a << 19)) ^ ((a >>> 22) | (a << 10));
-      var t2 = (S0 + ((a & b) ^ (a & c) ^ (b & c))) | 0;
-      h = g; g = f; f = e; e = (d + t1) | 0; d = c; c = b; b = a; a = (t1 + t2) | 0;
-    }
-    h0 = (h0 + a) | 0; h1 = (h1 + b) | 0; h2 = (h2 + c) | 0; h3 = (h3 + d) | 0;
-    h4 = (h4 + e) | 0; h5 = (h5 + f) | 0; h6 = (h6 + g) | 0; h7 = (h7 + h) | 0;
+var IV = [0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19];
+function compress(h) {
+  var i;
+  for (i = 16; i < 64; i++) {
+    var x = W[i - 15], y = W[i - 2];
+    var s0 = ((x >>> 7) | (x << 25)) ^ ((x >>> 18) | (x << 14)) ^ (x >>> 3);
+    var s1 = ((y >>> 17) | (y << 15)) ^ ((y >>> 19) | (y << 13)) ^ (y >>> 10);
+    W[i] = (W[i - 16] + s0 + W[i - 7] + s1) | 0;
   }
-  return h0 >>> 0;
+  var a = h[0], b = h[1], c = h[2], d = h[3], e = h[4], f = h[5], g = h[6], hh = h[7];
+  for (i = 0; i < 64; i++) {
+    var S1 = ((e >>> 6) | (e << 26)) ^ ((e >>> 11) | (e << 21)) ^ ((e >>> 25) | (e << 7));
+    var t1 = (hh + S1 + ((e & f) ^ (~e & g)) + K[i] + W[i]) | 0;
+    var S0 = ((a >>> 2) | (a << 30)) ^ ((a >>> 13) | (a << 19)) ^ ((a >>> 22) | (a << 10));
+    var t2 = (S0 + ((a & b) ^ (a & c) ^ (b & c))) | 0;
+    hh = g; g = f; f = e; e = (d + t1) | 0; d = c; c = b; b = a; a = (t1 + t2) | 0;
+  }
+  h[0] = (h[0] + a) | 0; h[1] = (h[1] + b) | 0; h[2] = (h[2] + c) | 0; h[3] = (h[3] + d) | 0;
+  h[4] = (h[4] + e) | 0; h[5] = (h[5] + f) | 0; h[6] = (h[6] + g) | 0; h[7] = (h[7] + hh) | 0;
+}
+function load(m, o) {
+  for (var i = 0; i < 16; i++) W[i] = (m[o + 4 * i] << 24) | (m[o + 4 * i + 1] << 16) | (m[o + 4 * i + 2] << 8) | m[o + 4 * i + 3];
+}
+function midState(s, full) {
+  var h = new Int32Array(IV), m = new Uint8Array(64), o, i;
+  for (o = 0; o < full; o += 64) {
+    for (i = 0; i < 64; i++) m[i] = s.charCodeAt(o + i) & 0xff;
+    load(m, 0);
+    compress(h);
+  }
+  return h;
+}
+function tailWord0(mid, h, tail, len, total) {
+  var end = ((len + 72) >> 6) * 64, bitLen = total * 8, i;
+  tail[len] = 0x80;
+  for (i = len + 1; i < end - 4; i++) tail[i] = 0;
+  tail[end - 4] = bitLen >>> 24; tail[end - 3] = bitLen >>> 16; tail[end - 2] = bitLen >>> 8; tail[end - 1] = bitLen;
+  h.set(mid);
+  for (i = 0; i < end; i += 64) {
+    load(tail, i);
+    compress(h);
+  }
+  return h[0] >>> 0;
+}
+function sha256Word0(s) {
+  var full = s.length & ~63, tail = new Uint8Array(128), i;
+  for (i = full; i < s.length; i++) tail[i - full] = s.charCodeAt(i) & 0xff;
+  return tailWord0(midState(s, full), new Int32Array(8), tail, s.length - full, s.length);
 }
 function solve(token, difficulty, start, limit) {
-  var prefix = token + ":";
-  for (var n = start; n < start + limit; n++) {
-    if (Math.clz32(sha256Word0(prefix + n)) >= difficulty) return n;
+  var prefix = token + ":", full = prefix.length & ~63, mid = midState(prefix, full);
+  var rest = prefix.length - full, tail = new Uint8Array(128), h = new Int32Array(8), i, n, digits, len;
+  for (i = 0; i < rest; i++) tail[i] = prefix.charCodeAt(full + i) & 0xff;
+  for (n = start; n < start + limit; n++) {
+    digits = String(n);
+    len = rest;
+    for (i = 0; i < digits.length; i++) tail[len++] = digits.charCodeAt(i);
+    if (Math.clz32(tailWord0(mid, h, tail, len, full + len)) >= difficulty) return n;
   }
   return -1;
 }

@@ -720,6 +720,9 @@ type Instance struct {
 	// recorded in its adoption block so a successor keeps refusing its
 	// snapshots. Guarded by Manager.mu.
 	devPatched bool
+	// bridge is the instance bridge unit run recorded in the adoption block
+	// (instance_bridge.go). Guarded by Manager.mu.
+	bridge *resourceAdoptionBridge
 	// migrationPaused marks a live-migration source SnapshotKeepAlive left
 	// paused for the migration lease owner, who alone may resume or destroy
 	// it. Recorded in the adoption block, so a successor keeps it paused.
@@ -2412,6 +2415,19 @@ func (m *Manager) WithLivenessProbes(reg *LivenessRegistry, defaultCfg LivenessP
 // returns its cancel func for the registry. We don't
 // construct the loop here because the loop body binds cmd-level
 // types (slog, vsock, wire envelope).
+// stopSignalsGuest reports whether a graceful stop must reach the workload
+// through guest-init's control port: every job, and a declared or
+// characterized worker that is not frozen. Signalling the Firecracker host
+// process never reaches the guest, so scaling a worker in killed its VM in
+// ~140 ms without its stop signal while the drain audit said "completed"
+// (Hunt 14 H14-59). A frozen guest cannot act on a signal.
+func stopSignalsGuest(inst *Instance, frozen bool) bool {
+	if inst.IsJob {
+		return true
+	}
+	return !frozen && instanceHasNoHTTPContract(inst)
+}
+
 // instanceHasNoHTTPContract reports whether the instance is a declared
 // worker/job (ADR-137), or a legacy undeclared app the guest characterized
 // as a worker, so no port answers the plan-default HTTP liveness probe.
@@ -4697,6 +4713,7 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 	lease.MemoryMaxMiB = wakeGuestMemoryMiB(req)
 	lease.CPUMillicores = req.CPUMillicores
 	lease.DisableStartupCPUBoost = req.DisableStartupCPUBoost
+	lease.AppPort = req.Port
 	m.mu.Lock()
 	if m.waking == nil {
 		m.waking = make(map[string]wakingInstance)
@@ -6467,7 +6484,7 @@ func (m *Manager) SignalAndKill(ctx context.Context, instance string, signal sys
 	m.beginAdoptionOp(instance, adoptionOpStop)
 	if signaler, supported := m.vmm.(interface {
 		SignalJob(context.Context, Lease, syscall.Signal, time.Duration) (bool, int32, error)
-	}); inst.IsJob && supported {
+	}); supported && stopSignalsGuest(inst, m.isFrozen(inst)) {
 		killSignalSent, exitCode, err = signaler.SignalJob(ctx, inst.Lease, signal, grace)
 	} else if m.isFrozen(inst) {
 		// A frozen guest (ADR-1151) cannot act on a signal, so the grace

@@ -77,6 +77,13 @@ func (e *Engine) appCapabilityAllowed(ctx context.Context, app state.App, capabi
 	return e.capabilities.Enabled(capability, subject)
 }
 
+// EgressCircuitAllowed reports whether egress circuit breaking applies to the
+// account that owns appID; the egress circuit loop clears the circuits of an
+// app it refuses.
+func (e *Engine) EgressCircuitAllowed(ctx context.Context, appID string) bool {
+	return e.appIDCapabilityAllowed(ctx, appID, "egress-circuit-breaking")
+}
+
 // appIDCapabilityAllowed is appCapabilityAllowed for an app known by id.
 func (e *Engine) appIDCapabilityAllowed(ctx context.Context, appID, capability string) bool {
 	if e == nil || e.capabilities == nil || capability == "" || appID == "" {
