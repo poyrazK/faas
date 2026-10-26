@@ -150,6 +150,8 @@ func Run(t *testing.T, open Open) {
 		{"removed_member_can_rejoin", testRemovedMemberCanRejoin},
 		{"account_release_webhook_follows_org_access", testAccountReleaseWebhookFollowsOrgAccess},
 		{"departed_member_integrations_pause", testDepartedMemberIntegrationsPause},
+		{"object_storage_timeline_fence", testObjectStorageTimelineFence},
+		{"audit_log_anchors_seal_and_verify", testAuditLogAnchors},
 		{"api_key_requires_scopes", testAPIKeyRequiresScopes},
 		{"login_token_single_use_and_expiry", testLoginTokenSingleUseAndExpiry},
 		{"email_verification_token_single_use_and_expiry", testEmailVerificationTokenSingleUseAndExpiry},

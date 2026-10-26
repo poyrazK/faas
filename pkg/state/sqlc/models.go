@@ -139,6 +139,15 @@ type AccountPassword struct {
 	UpdatedAt pgtype.Timestamptz
 }
 
+// Accounts whose combined billable overage (compute plus live secondary meters) reached overage_cap_cents this UTC month. Written by meterd, read by schedd (ADR-20261026120843).
+type AccountSpendCapHold struct {
+	AccountID     pgtype.UUID
+	Month         pgtype.Date
+	CapCents      int64
+	ObservedCents int64
+	ReachedAt     pgtype.Timestamptz
+}
+
 type AccountSpendSnapshot struct {
 	ID          pgtype.UUID
 	AccountID   pgtype.UUID
@@ -1899,6 +1908,18 @@ type AuditLog struct {
 	Actor        pgtype.Text
 	ReceivedAt   pgtype.Timestamptz
 	Data         []byte
+}
+
+type AuditLogAnchor struct {
+	Seq         int64
+	WindowStart pgtype.Timestamptz
+	WindowEnd   pgtype.Timestamptz
+	RowCount    int64
+	RowsDigest  string
+	PrevMac     string
+	Mac         string
+	KeyID       string
+	CreatedAt   pgtype.Timestamptz
 }
 
 type AutomaticRouteCheck struct {
@@ -9668,6 +9689,13 @@ type ObjectStorageS3Credential struct {
 	UrlReceiptID         pgtype.UUID
 	IssuerAccountID      pgtype.UUID
 	IssuerAccessRevision pgtype.Int8
+}
+
+type ObjectStorageTimelineAcceptance struct {
+	Singleton  bool
+	Timeline   string
+	AcceptedAt pgtype.Timestamptz
+	AcceptedBy string
 }
 
 type ObjectStorageUploadGrant struct {

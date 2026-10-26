@@ -22,7 +22,11 @@ const jsonMutationCronID = "0123456789abcdef0123456789abcdef"
 func TestJSONMutations_ParkAndWake(t *testing.T) {
 	var paths []string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		paths = append(paths, r.Method+" "+r.URL.Path)
+		// wake reads the app after queuing to explain an idle worker pool
+		// (H14-75); only the mutations matter here.
+		if r.Method != http.MethodGet {
+			paths = append(paths, r.Method+" "+r.URL.Path)
+		}
 		if strings.HasSuffix(r.URL.Path, "/wake") {
 			main.WriteJSONTest(w, api.AppWakeResponse{WakeID: "wake-1"})
 			return

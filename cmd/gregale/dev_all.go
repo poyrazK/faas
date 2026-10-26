@@ -46,6 +46,9 @@ type devAllApp struct {
 	Service string
 	// Depends are the Service names of the group's apps it declares it calls.
 	Depends []string
+	// GoCommand is the `cmd/<name>` a command of a multi-command Go module
+	// builds, passed as --go-command (ADR-20261026120412).
+	GoCommand string
 	// declared is the scanner's raw service name, kept to report a name
 	// that cannot be called.
 	declared string
@@ -97,6 +100,9 @@ func (o devAllOptions) childArgs(app devAllApp, jsonMode bool) []string {
 	if o.devAllWatches(app) {
 		args = append(args, "--watch")
 	}
+	if app.GoCommand != "" && !o.stop {
+		args = append(args, "--go-command", app.GoCommand)
+	}
 	args = appendDevBucketArgs(args, o.buckets)
 	// Pass the output mode explicitly: a child would otherwise fall back to a
 	// persisted JSON preference that the parent's --json=false overrode.
@@ -141,13 +147,25 @@ func discoverDevAllApps(root string, discover func(string) ([]projectSource, err
 		}
 		services[service] = source.RootDir
 		byDeclared[strings.ToLower(strings.TrimSpace(source.Name))] = service
-		apps = append(apps, devAllApp{Project: project, RootDir: source.RootDir, SourceDir: source.Path, Service: service, declared: source.Name, Depends: source.DependsOn})
+		apps = append(apps, devAllApp{Project: project, RootDir: source.RootDir, SourceDir: source.Path, Service: service, declared: source.Name,
+			Depends: source.DependsOn, GoCommand: source.GoCommand})
 	}
 	for i := range apps {
 		apps[i].Depends = groupDependencies(apps[i], byDeclared)
 	}
-	sort.Slice(apps, func(i, j int) bool { return apps[i].RootDir < apps[j].RootDir })
+	sort.Slice(apps, func(i, j int) bool {
+		return apps[i].RootDir < apps[j].RootDir || (apps[i].RootDir == apps[j].RootDir && apps[i].Project < apps[j].Project)
+	})
 	return apps, nil
+}
+
+// sourceLabel is where an app's source lives: its root, or the command of a
+// Go module it builds.
+func (a devAllApp) sourceLabel() string {
+	if a.GoCommand != "" {
+		return "cmd/" + a.GoCommand
+	}
+	return a.RootDir
 }
 
 // groupDependencies maps an app's declared dependencies to the Service names
@@ -473,7 +491,7 @@ func cmdDevAll(sourceDir string, opts devAllOptions) int {
 	if !jsonOutput {
 		labels := make([]string, len(apps))
 		for i, app := range apps {
-			labels[i] = app.Project + " (" + app.RootDir + ")"
+			labels[i] = app.Project + " (" + app.sourceLabel() + ")"
 		}
 		PrintProgress(osStdout, "Starting %d developer loops: %s", len(apps), strings.Join(labels, ", "))
 		for _, app := range apps {

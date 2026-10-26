@@ -6,6 +6,7 @@ import (
 	"net/http"
 
 	"github.com/onebox-faas/faas/pkg/apid/appevents"
+	"github.com/onebox-faas/faas/pkg/events"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -32,3 +33,5 @@ func (h appEventsHost) EmitAudit(ctx context.Context, kind string, accountID *st
 func (h appEventsHost) Notify(ctx context.Context, channel, payload string) error {
 	return h.s.notif.Notify(ctx, channel, payload)
 }
+
+func (h appEventsHost) PublishLimiter() *events.PublishLimiter { return &h.s.eventPublishLimiter }

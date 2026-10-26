@@ -104,6 +104,20 @@ func (q *Queries) AbortLockedInstanceMigration(ctx context.Context, db DBTX, arg
 	return result.RowsAffected(), nil
 }
 
+const acceptObjectStorageTimeline = `-- name: AcceptObjectStorageTimeline :one
+INSERT INTO object_storage_timeline_acceptance (singleton, timeline, accepted_by)
+VALUES (true, upper(substring(pg_walfile_name(pg_current_wal_lsn()) FROM 1 FOR 8)), $1::text)
+ON CONFLICT (singleton) DO UPDATE SET timeline = EXCLUDED.timeline, accepted_at = now(), accepted_by = EXCLUDED.accepted_by
+RETURNING timeline
+`
+
+func (q *Queries) AcceptObjectStorageTimeline(ctx context.Context, db DBTX, acceptedBy string) (string, error) {
+	row := db.QueryRow(ctx, acceptObjectStorageTimeline, acceptedBy)
+	var timeline string
+	err := row.Scan(&timeline)
+	return timeline, err
+}
+
 const accountByEmail = `-- name: AccountByEmail :one
 select id, email, plan, status, coalesce(provider_customer_id, ''), created_at
 from accounts where email = $1
@@ -3283,6 +3297,19 @@ func (q *Queries) BootstrapFencedGatewayCachePurgeCursor(ctx context.Context, db
 	var last_change_id int64
 	err := row.Scan(&last_change_id)
 	return last_change_id, err
+}
+
+const bootstrapObjectStorageTimeline = `-- name: BootstrapObjectStorageTimeline :exec
+INSERT INTO object_storage_timeline_acceptance (singleton, timeline, accepted_by)
+VALUES (true, upper(substring(pg_walfile_name(pg_current_wal_lsn()) FROM 1 FOR 8)), 'bootstrap')
+ON CONFLICT (singleton) DO NOTHING
+`
+
+// Accept the current timeline once, on the first start of a release that
+// knows the fence, so later backups carry an acceptance.
+func (q *Queries) BootstrapObjectStorageTimeline(ctx context.Context, db DBTX) error {
+	_, err := db.Exec(ctx, bootstrapObjectStorageTimeline)
+	return err
 }
 
 const buildByDeployment = `-- name: BuildByDeployment :one
@@ -63169,7 +63196,7 @@ SELECT g.id, g.account_id, g.credential_id, g.bucket_id, g.source_bucket_id, g.p
  AND c.permission IN ('write','read_write') AND c.url_request IS NULL
  AND p.account_id=c.account_id AND p.bucket_id=c.bucket_id AND p.status='active' AND p.permission IN ('write','read_write') AND p.url_request IS NULL
  AND g.account_id=c.account_id AND g.bucket_id=c.bucket_id AND g.source_bucket_id=$3::uuid
- AND s.account_id=c.account_id AND d.account_id=c.account_id AND s.state='ready' AND d.state='ready'
+ AND s.account_id=c.account_id AND d.account_id=c.account_id AND s.org_id=d.org_id AND s.state='ready' AND d.state='ready'
  AND (s.backend_id,s.backend_fingerprint)=(d.backend_id,d.backend_fingerprint)
  AND left($4::text,length(g.prefix))=g.prefix
  AND NOT EXISTS(SELECT 1 FROM object_deletions WHERE bucket_id IN (s.id,d.id) AND state IN ('prepared','dispatched'))
@@ -67191,6 +67218,25 @@ func (q *Queries) ObjectStorageProviderRequestMetrics(ctx context.Context, db DB
 		return nil, err
 	}
 	return items, nil
+}
+
+const objectStorageTimelines = `-- name: ObjectStorageTimelines :one
+SELECT coalesce((SELECT a.timeline FROM object_storage_timeline_acceptance a), '')::text AS accepted,
+       upper(substring(pg_walfile_name(pg_current_wal_lsn()) FROM 1 FOR 8))::text AS current
+`
+
+type ObjectStorageTimelinesRow struct {
+	Accepted string
+	Current  string
+}
+
+// ADR-20261025111015 amendment: the accepted serving timeline (” before
+// the first acceptance) and the timeline the database runs on now.
+func (q *Queries) ObjectStorageTimelines(ctx context.Context, db DBTX) (ObjectStorageTimelinesRow, error) {
+	row := db.QueryRow(ctx, objectStorageTimelines)
+	var i ObjectStorageTimelinesRow
+	err := row.Scan(&i.Accepted, &i.Current)
+	return i, err
 }
 
 const objectTrackedGrantUpsert = `-- name: ObjectTrackedGrantUpsert :exec
@@ -82771,6 +82817,29 @@ type ReadPublicRoutingRevisionParams struct {
 
 func (q *Queries) ReadPublicRoutingRevision(ctx context.Context, db DBTX, arg ReadPublicRoutingRevisionParams) (bool, error) {
 	row := db.QueryRow(ctx, readPublicRoutingRevision, arg.DeploymentID, arg.AppID, arg.Scope)
+	var allowed bool
+	err := row.Scan(&allowed)
+	return allowed, err
+}
+
+const readPublicRoutingSmokeCandidate = `-- name: ReadPublicRoutingSmokeCandidate :one
+SELECT EXISTS (
+    SELECT 1 FROM deployments WHERE id = $1::uuid AND app_id = $2::uuid
+      AND status IN ('snapshotting', 'live') AND deleted_at IS NULL
+)::boolean AS allowed
+`
+
+type ReadPublicRoutingSmokeCandidateParams struct {
+	DeploymentID pgtype.UUID
+	AppID        pgtype.UUID
+}
+
+// imaged's hosting smoke verifies a candidate before MarkDeploymentLive, so
+// the candidate is still snapshotting. The smoke always uses the app's own
+// host, whatever the candidate's environment, so no scope applies; the smoke
+// challenge already binds the app and deployment.
+func (q *Queries) ReadPublicRoutingSmokeCandidate(ctx context.Context, db DBTX, arg ReadPublicRoutingSmokeCandidateParams) (bool, error) {
+	row := db.QueryRow(ctx, readPublicRoutingSmokeCandidate, arg.DeploymentID, arg.AppID)
 	var allowed bool
 	err := row.Scan(&allowed)
 	return allowed, err

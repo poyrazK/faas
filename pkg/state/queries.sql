@@ -8578,6 +8578,16 @@ SELECT EXISTS (
       AND scope = sqlc.arg(scope)::text AND status IN ('ready', 'snapshot_ready', 'live') AND deleted_at IS NULL
 )::boolean AS allowed;
 
+-- imaged's hosting smoke verifies a candidate before MarkDeploymentLive, so
+-- the candidate is still snapshotting. The smoke always uses the app's own
+-- host, whatever the candidate's environment, so no scope applies; the smoke
+-- challenge already binds the app and deployment.
+-- name: ReadPublicRoutingSmokeCandidate :one
+SELECT EXISTS (
+    SELECT 1 FROM deployments WHERE id = sqlc.arg(deployment_id)::uuid AND app_id = sqlc.arg(app_id)::uuid
+      AND status IN ('snapshotting', 'live') AND deleted_at IS NULL
+)::boolean AS allowed;
+
 -- ADR-570: public host policy reads are credential-minimal and transaction-scoped.
 -- name: ReadPublicHostApp :one
 SELECT (jsonb_build_object(
@@ -13091,7 +13101,7 @@ SELECT sqlc.embed(g), sqlc.embed(s) FROM object_storage_s3_credentials c
  AND c.permission IN ('write','read_write') AND c.url_request IS NULL
  AND p.account_id=c.account_id AND p.bucket_id=c.bucket_id AND p.status='active' AND p.permission IN ('write','read_write') AND p.url_request IS NULL
  AND g.account_id=c.account_id AND g.bucket_id=c.bucket_id AND g.source_bucket_id=sqlc.arg(source_bucket_id)::uuid
- AND s.account_id=c.account_id AND d.account_id=c.account_id AND s.state='ready' AND d.state='ready'
+ AND s.account_id=c.account_id AND d.account_id=c.account_id AND s.org_id=d.org_id AND s.state='ready' AND d.state='ready'
  AND (s.backend_id,s.backend_fingerprint)=(d.backend_id,d.backend_fingerprint)
  AND left(sqlc.arg(object_key)::text,length(g.prefix))=g.prefix
  AND NOT EXISTS(SELECT 1 FROM object_deletions WHERE bucket_id IN (s.id,d.id) AND state IN ('prepared','dispatched'));
@@ -26142,3 +26152,22 @@ DELETE FROM object_bucket_cors WHERE bucket_id=$1;
 -- name: ObjectBucketCORSRules :one
 -- The gateway's read: rules of a ready bucket only.
 SELECT c.rules FROM object_bucket_cors c JOIN object_buckets b ON b.id=c.bucket_id WHERE c.bucket_id=$1 AND b.state='ready';
+
+-- name: ObjectStorageTimelines :one
+-- ADR-20261025111015 amendment: the accepted serving timeline ('' before
+-- the first acceptance) and the timeline the database runs on now.
+SELECT coalesce((SELECT a.timeline FROM object_storage_timeline_acceptance a), '')::text AS accepted,
+       upper(substring(pg_walfile_name(pg_current_wal_lsn()) FROM 1 FOR 8))::text AS current;
+
+-- name: AcceptObjectStorageTimeline :one
+INSERT INTO object_storage_timeline_acceptance (singleton, timeline, accepted_by)
+VALUES (true, upper(substring(pg_walfile_name(pg_current_wal_lsn()) FROM 1 FOR 8)), sqlc.arg(accepted_by)::text)
+ON CONFLICT (singleton) DO UPDATE SET timeline = EXCLUDED.timeline, accepted_at = now(), accepted_by = EXCLUDED.accepted_by
+RETURNING timeline;
+
+-- name: BootstrapObjectStorageTimeline :exec
+-- Accept the current timeline once, on the first start of a release that
+-- knows the fence, so later backups carry an acceptance.
+INSERT INTO object_storage_timeline_acceptance (singleton, timeline, accepted_by)
+VALUES (true, upper(substring(pg_walfile_name(pg_current_wal_lsn()) FROM 1 FOR 8)), 'bootstrap')
+ON CONFLICT (singleton) DO NOTHING;

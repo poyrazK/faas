@@ -28087,6 +28087,29 @@ CREATE TABLE public.account_passwords (
 
 
 --
+-- Name: account_spend_cap_holds; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.account_spend_cap_holds (
+    account_id uuid NOT NULL,
+    month date NOT NULL,
+    cap_cents bigint NOT NULL,
+    observed_cents bigint NOT NULL,
+    reached_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT account_spend_cap_holds_cap_cents_check CHECK ((cap_cents >= 0)),
+    CONSTRAINT account_spend_cap_holds_check CHECK ((observed_cents >= cap_cents)),
+    CONSTRAINT account_spend_cap_holds_month_check CHECK ((month = (date_trunc('month'::text, (month)::timestamp with time zone))::date))
+);
+
+
+--
+-- Name: TABLE account_spend_cap_holds; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.account_spend_cap_holds IS 'Accounts whose combined billable overage (compute plus live secondary meters) reached overage_cap_cents this UTC month. Written by meterd, read by schedd (ADR-20261026120843).';
+
+
+--
 -- Name: account_spend_snapshot; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -31049,6 +31072,31 @@ CREATE TABLE public.audit_log (
     actor text,
     received_at timestamp with time zone DEFAULT now() NOT NULL,
     data jsonb
+);
+
+
+--
+-- Name: audit_log_anchors; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.audit_log_anchors (
+    seq bigint NOT NULL,
+    window_start timestamp with time zone NOT NULL,
+    window_end timestamp with time zone NOT NULL,
+    row_count bigint NOT NULL,
+    rows_digest text NOT NULL,
+    prev_mac text NOT NULL,
+    mac text NOT NULL,
+    key_id text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT audit_log_anchors_check CHECK ((window_end > window_start)),
+    CONSTRAINT audit_log_anchors_check1 CHECK (((seq = 1) = (prev_mac = ''::text))),
+    CONSTRAINT audit_log_anchors_key_id_check CHECK ((key_id ~ '^[0-9a-f]{16}$'::text)),
+    CONSTRAINT audit_log_anchors_mac_check CHECK ((mac ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT audit_log_anchors_prev_mac_check CHECK (((prev_mac = ''::text) OR (prev_mac ~ '^[0-9a-f]{64}$'::text))),
+    CONSTRAINT audit_log_anchors_row_count_check CHECK ((row_count >= 0)),
+    CONSTRAINT audit_log_anchors_rows_digest_check CHECK ((rows_digest ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT audit_log_anchors_seq_check CHECK ((seq > 0))
 );
 
 
@@ -45562,6 +45610,21 @@ CREATE TABLE public.object_storage_request_metrics (
 
 
 --
+-- Name: object_storage_timeline_acceptance; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.object_storage_timeline_acceptance (
+    singleton boolean DEFAULT true NOT NULL,
+    timeline text NOT NULL,
+    accepted_at timestamp with time zone DEFAULT now() NOT NULL,
+    accepted_by text NOT NULL,
+    CONSTRAINT object_storage_timeline_acceptance_accepted_by_check CHECK (((char_length(accepted_by) >= 1) AND (char_length(accepted_by) <= 128))),
+    CONSTRAINT object_storage_timeline_acceptance_singleton_check CHECK (singleton),
+    CONSTRAINT object_storage_timeline_acceptance_timeline_check CHECK ((timeline ~ '^[0-9A-F]{8}$'::text))
+);
+
+
+--
 -- Name: object_storage_upload_grants; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -55656,6 +55719,14 @@ ALTER TABLE ONLY public.account_passwords
 
 
 --
+-- Name: account_spend_cap_holds account_spend_cap_holds_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.account_spend_cap_holds
+    ADD CONSTRAINT account_spend_cap_holds_pkey PRIMARY KEY (account_id);
+
+
+--
 -- Name: account_spend_snapshot account_spend_snapshot_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -56989,6 +57060,14 @@ ALTER TABLE ONLY public.audit_event_outbox
 
 ALTER TABLE ONLY public.audit_event_outbox
     ADD CONSTRAINT audit_event_outbox_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: audit_log_anchors audit_log_anchors_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.audit_log_anchors
+    ADD CONSTRAINT audit_log_anchors_pkey PRIMARY KEY (seq);
 
 
 --
@@ -63397,6 +63476,14 @@ ALTER TABLE ONLY public.object_storage_s3_credentials
 
 ALTER TABLE ONLY public.object_storage_s3_credentials
     ADD CONSTRAINT object_storage_s3_credentials_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: object_storage_timeline_acceptance object_storage_timeline_acceptance_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.object_storage_timeline_acceptance
+    ADD CONSTRAINT object_storage_timeline_acceptance_pkey PRIMARY KEY (singleton);
 
 
 --
@@ -72217,6 +72304,13 @@ CREATE UNIQUE INDEX instance_billing_intervals_open_idx ON public.instance_billi
 --
 
 CREATE INDEX instance_billing_intervals_range_idx ON public.instance_billing_intervals USING btree (started_at, ended_at);
+
+
+--
+-- Name: instance_quiet_pauses_ended_at; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX instance_quiet_pauses_ended_at ON public.instance_quiet_pauses USING btree (ended_at);
 
 
 --
@@ -84742,6 +84836,14 @@ ALTER TABLE ONLY public.account_deploy_rate_limits
 
 ALTER TABLE ONLY public.account_passwords
     ADD CONSTRAINT account_passwords_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: account_spend_cap_holds account_spend_cap_holds_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.account_spend_cap_holds
+    ADD CONSTRAINT account_spend_cap_holds_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
 
 
 --

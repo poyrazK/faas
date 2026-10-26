@@ -84,7 +84,8 @@ type quietState struct {
 	// epoch counts pauses and resumes, so a probe can tell that the guest
 	// was paused at some point while the probe ran.
 	epoch atomic.Uint64
-	// since is when the current pause took effect. Guarded by mu.
+	// since is when the current pause took effect; it stays zero while a
+	// failed pause leaves the guest's state unknown. Guarded by mu.
 	since time.Time
 	// lastStarted and lastEnded bound the most recent completed pause, and
 	// pausedTotal sums every completed pause of this incarnation on the
@@ -271,8 +272,24 @@ func (m *Manager) quietPauseOne(ctx context.Context, c quietCandidate, now time.
 	err := pauser.PauseVM(pauseCtx, lease)
 	cancel()
 	if err != nil {
-		st.paused.Store(false)
 		m.quietMetrics.observePause("error")
+		// The call can fail after Firecracker paused the guest: the timeout
+		// can fire late, and the API client resends a request after a
+		// transport error. Resume so the guest is known to run; ResumeVM
+		// treats a running VM as success.
+		resumeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), quietVMMTimeout)
+		rerr := m.resumeWithRehearsalNetwork(resumeCtx, c.inst)
+		cancel()
+		if rerr != nil {
+			// The guest may still be paused. It stays marked paused, with no
+			// start, so the next request resumes it first and the pause
+			// ledger never counts it as unbilled time.
+			m.log.Warn("quiet pause: pause failed, then the resume after it failed; the next request resumes the guest",
+				"instance", c.id, "err", err, "resume_err", rerr)
+			return
+		}
+		st.paused.Store(false)
+		st.epoch.Add(1)
 		m.log.Warn("quiet pause: pause failed; instance keeps running", "instance", c.id, "err", err)
 		return
 	}
@@ -371,7 +388,8 @@ func (m *Manager) QuietPauseState(instance string) (paused bool, since time.Time
 // in the ledger meterd subtracts from billed seconds (ADR-20261023171905).
 type QuietPauseReport struct {
 	// Paused and Since describe the current pause; Since is zero unless
-	// Paused.
+	// Paused, and while a failed pause leaves the guest's state unknown
+	// (the next resume settles it, and no pause is recorded).
 	Paused bool
 	Since  time.Time
 	// LastStarted and LastEnded bound the most recent completed pause;

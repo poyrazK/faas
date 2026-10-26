@@ -227,7 +227,10 @@ commit-source, preview-status and deleted-app ID URLs also enforce current
 membership, while their legacy operations still require the creator to be
 owner/admin. So do routes that name a company app in the request body or query
 string, such as creating a cron, custom domain, release freeze, CORS preset,
-dev bridge or managed PostgreSQL cutover. Trigger URLs enforce membership too;
+dev bridge or managed PostgreSQL cutover. An open dev bridge keeps enforcing
+it: the relay rechecks its creator's organization access on every request and
+on open connections, so leaving the company ends the bridge at once. Trigger
+URLs enforce membership too;
 legacy `/v1/triggers` administration covers personal apps only, as described
 in [organization queues](organization-queues.md).
 

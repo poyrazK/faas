@@ -91,6 +91,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/reconcile"
 	objruntime "github.com/onebox-faas/faas/pkg/rehearsalobj/runtime"
 	pgruntime "github.com/onebox-faas/faas/pkg/rehearsalpg/runtime"
+	"github.com/onebox-faas/faas/pkg/releasemetrics"
 	"github.com/onebox-faas/faas/pkg/session"
 	"github.com/onebox-faas/faas/pkg/state"
 	usagestore "github.com/onebox-faas/faas/pkg/state/dataapiusage"
@@ -155,9 +156,10 @@ type server struct {
 	devBridgeObserver                      *devbridge.Observer
 	operation                              operation.Service // ADR-977; Host wired in newServer
 	productControl                         product.Service
-	appEvents                              appevents.Service  // ADR-977; Host wired in newServer
-	serviceMap                             servicemap.Service // ADR-1131; Host wired in newServer
-	logSearch                              logsearch.Service  // ADR-20261018083536; Host wired in newServer
+	appEvents                              appevents.Service     // ADR-977; Host wired in newServer
+	eventPublishLimiter                    events.PublishLimiter // ADR-20261026140000
+	serviceMap                             servicemap.Service    // ADR-1131; Host wired in newServer
+	logSearch                              logsearch.Service     // ADR-20261018083536; Host wired in newServer
 	logReads                               *logsearch.ReadLimiter
 	dashboards                             dashboards.Service // ADR-20261022173833; Host wired in newServer
 	incidents                              incidents.Service  // ADR-20261022193512; Host wired in newServer
@@ -445,6 +447,8 @@ type server struct {
 	statusMetrics      *statusMetrics
 	idempotencyMetrics *idempotencyMetrics
 	devLoopMetrics     *devloop.Metrics
+	// releaseMetrics instruments the release guards; nil records nothing.
+	releaseMetrics *releasemetrics.Metrics
 	// promqlClient is the Prometheus HTTP client shared by the
 	// statusCache and the per-app metrics endpoint (issue #273 /
 	// ADR-042). Owned here so the GET /v1/apps/{slug}/metrics handler
@@ -750,6 +754,11 @@ func (s *server) WithOpsMetrics(ctx context.Context, ops *wire.OpsMetrics) *serv
 		s.idempotencyMetrics = nil
 	} else if s.idempotencyMetrics == nil || s.idempotencyMetrics.registry != ops.Registry() {
 		s.idempotencyMetrics = newIdempotencyMetrics(ops.Registry(), ops.MetricPrefix())
+	}
+	if ops == nil {
+		s.releaseMetrics = nil
+	} else if s.releaseMetrics.Registry() != ops.Registry() {
+		s.releaseMetrics = releasemetrics.New(ops.Registry())
 	}
 	if ops != nil && (s.durable.Metrics == nil || s.durable.Metrics.Registry() != ops.Registry()) {
 		s.durable.Metrics = durable.NewMetrics(ops.Registry(), ops.MetricPrefix())
@@ -4875,6 +4884,7 @@ func (s *server) handler() http.Handler {
 	mux.Handle("GET /dashboard/service-map", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.renderServiceMapDashboard))))
 	mux.Handle("GET /dashboard/dev-bridges/{id}", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.renderDevBridgesDashboard))))
 	mux.Handle("GET /dashboard/apps/{slug}/changes", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.renderAppChangesDashboard))))
+	mux.Handle("GET /dashboard/apps/{slug}/release-safety", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.renderReleaseSafetyDashboard))))
 	// ADR-20261020085706: the page approval notifications link to.
 	mux.Handle("GET /dashboard/releases/{id}/approval", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.renderReleaseApprovalPage))))
 	mux.Handle("GET /dashboard/apps/{slug}/log-search", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.renderAppLogSearchDashboard))))
@@ -4973,6 +4983,7 @@ func (s *server) handler() http.Handler {
 	// Issue #248 slice B: route account-page plan changes through the
 	// provider-confirmed checkout or portal flow. The local plan changes
 	// only after the provider webhook confirms the operation.
+	mux.Handle("POST /dashboard/postgres/overage", s.dashboardChain(s.sessionAuth(s.requireVerifiedEmailHandler(s.requireStepUpHandler(5*time.Minute)(http.HandlerFunc(s.dashboardPostgresOverage))))))
 	mux.Handle("POST /dashboard/account/plan", s.dashboardChain(s.sessionAuth(s.requireVerifiedEmailHandler(s.requireStepUpHandler(5*time.Minute)(http.HandlerFunc(s.dashboardAccountPlan))))))
 	// Issue #561 — spend cap self-service form. Same CSRF-envelope
 	// envelope shape as dashboardDelete (see cmd/apid/dashboard_delete.go).

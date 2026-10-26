@@ -12,6 +12,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/httpkit"
 	"github.com/onebox-faas/faas/pkg/db"
+	"github.com/onebox-faas/faas/pkg/eventcontract"
 	"github.com/onebox-faas/faas/pkg/state"
 	pkgtrace "github.com/onebox-faas/faas/pkg/trace"
 )
@@ -39,6 +40,9 @@ func (s *Service) PublishEventBatch(w http.ResponseWriter, r *http.Request, acct
 		return
 	}
 	producer, problem := s.accountProducer(r.Context(), acct)
+	if problem == nil {
+		problem = s.PublishRateProblem(acct, len(wire.Events))
+	}
 	if problem != nil {
 		api.WriteProblem(w, problem)
 		return
@@ -73,6 +77,9 @@ func (s *Service) publishEventBatchItem(ctx context.Context, store state.Publish
 	}
 	if strings.HasPrefix(envelope.Source, "gregale.") {
 		return batchPublishFailure("rejected", false, api.ErrValidation("gregale.* sources are reserved for platform events"))
+	}
+	if _, reserved := eventcontract.AppSource(envelope.Source); reserved {
+		return batchPublishFailure("rejected", false, AppSourceReservedProblem())
 	}
 	if problem, retryable := s.batchEventSchemaProblem(ctx, acct.ID, req); problem != nil {
 		return batchPublishFailure("rejected", retryable, problem)

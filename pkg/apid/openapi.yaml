@@ -89427,6 +89427,10 @@ components:
           description: How long the environment survives after this request. Omit for the 24-hour default. Values above the plan's developer lease maximum return 403 plan_limit_developer_lease.
         watch:
           $ref: '#/components/schemas/DevWatch'
+        go_command:
+          type: string
+          example: worker
+          description: "Builds cmd/<go_command> of the Go module at the source root (ADR-20261026120412), as a project service's Go command does. Omit to build what the source builds by default; applies from the next developer build. Refused with 400 for a function or a name that is not a cmd/ directory name."
 
     DevWatch:
       description: Watch mode (ADR-1170). The environment runs this development server instead of the production build, and live source patches reach the server's own reloader. Omit to turn watch mode off; the change applies from the next developer build. Refused with 422 dev_watch_unsupported when the developer app has less than 512 MB of RAM or does not require authentication.
@@ -90355,6 +90359,9 @@ components:
           description: Active automatic bucket bindings, including resources omitted from the latest upsert. Included only for principals with storage:manage or admin. Revoked bindings are excluded.
           items: { $ref: '#/components/schemas/DevBucketResponse' }
         watch: { $ref: '#/components/schemas/DevWatch' }
+        go_command:
+          type: string
+          description: "The stored Go command (ADR-20261026120412); omitted when none."
 
     DevSyncPhase:
       description: Safe phase-level timing from a developer sync.

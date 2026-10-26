@@ -242,7 +242,6 @@ HasStripePushHour
 IncInstanceRequestCount
 IncrementAppError
 InsertAppErrorRequest
-InsertAuditLog
 InsertDataUpstream
 InsertDataUpstreamProbe
 InsertMirrorResult
