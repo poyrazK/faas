@@ -12,7 +12,8 @@ import (
 // 128-bit UUIDs fit in one DNS label when encoded as unpadded base32 (57 bytes
 // including separators), so the existing platform wildcard certificate covers
 // the URL without a hostname allocation table or per-environment DNS records.
-// DeployWildcardSuffix names the shared platform deployment namespace.
+// DeployWildcardSuffix is the default deployment namespace. Hosts are built
+// and parsed under DeploySuffix(), the configured one (ADR-20261026100000).
 const DeployWildcardSuffix = ".gregale.dev"
 
 const environmentHostPrefix = "env-"

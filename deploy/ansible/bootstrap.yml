@@ -129,6 +129,10 @@
       when: faas_cp_converge_roles | default(none) is none or 'internal_pki_renewal' in faas_cp_converge_roles
     - role: canary_artifact_retention
       when: faas_cp_converge_roles | default(none) is none or 'canary_artifact_retention' in faas_cp_converge_roles
+    # ADR-20261023124955: per-slice CPU, memory, IO and stall time, so the
+    # dashboards show what PostgreSQL, the daemons and observability each use.
+    - role: cgroup_metrics
+      when: faas_cp_converge_roles | default(none) is none or 'cgroup_metrics' in faas_cp_converge_roles
     # ADR-20261023124955 §2: the log pipeline's fleet-PKI feature leaves,
     # before Prometheus, Grafana, Loki and Promtail read them.
     - role: platform_logs_pki
@@ -268,6 +272,7 @@
     - role: gcp_ops_agent
     - role: internal_pki_renewal
     - role: canary_artifact_retention
+    - role: cgroup_metrics
     # ADR-20261023124955 §5: alerts on the public serving path without the
     # control plane. Removes its timer while no probe URL is configured.
     - role: serving_probe

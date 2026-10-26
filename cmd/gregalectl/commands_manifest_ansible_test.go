@@ -161,6 +161,60 @@ func TestRenderManifestAnsibleFiles_DerivesRouting(t *testing.T) {
 	}
 }
 
+// adr: 20261026100000 — the manifest's domain layout reaches every host's
+// vars (the drop-ins of every daemon read it), and an unset layout renders
+// only the apps domain.
+func TestRenderManifestAnsibleFiles_DomainLayout(t *testing.T) {
+	render := func(t *testing.T, dns string) map[string]string {
+		t.Helper()
+		yaml := strings.Replace(validManifestYAML,
+			"    - name: fsn-1\n      role: control-plane\n",
+			"    - name: fsn-1\n      role: control-plane\n      address: 10.42.0.1:7100\n    - name: fsn-2\n      role: compute-only\n      address: 10.42.0.2:50051\n      storage_device: /dev/disk/by-id/google-local-ssd-0\n", 1)
+		yaml = strings.Replace(yaml, "dns:\n  apps_domain: apps.gregale.dev\n  mode: cloudflare\n", dns, 1)
+		m, err := manifest.Parse([]byte(yaml))
+		if err != nil {
+			t.Fatalf("manifest.Parse: %v", err)
+		}
+		if errs := m.Validate(); errs != nil {
+			t.Fatalf("manifest.Validate: %v", errs)
+		}
+		files, err := renderManifestAnsibleFiles(m, t.TempDir())
+		if err != nil {
+			t.Fatalf("renderManifestAnsibleFiles: %v", err)
+		}
+		vars := map[string]string{}
+		for _, file := range files {
+			for _, host := range []string{"fsn-1", "fsn-2"} {
+				if strings.HasSuffix(file.Path, host+".yml") {
+					vars[host] = string(file.Body)
+				}
+			}
+		}
+		return vars
+	}
+
+	split := render(t, "dns:\n  apps_domain: gregale.app\n  mode: cloudflare\n  platform_domain: gregale.dev\n  deploy_domain: gregale.app\n  apps_domain_aliases: [gregale.dev]\n  apps_domain_alias_mode: redirect\n")
+	for _, host := range []string{"fsn-1", "fsn-2"} {
+		for _, want := range []string{
+			`gatewayd_apps_domain: "gregale.app"`,
+			`faas_platform_domain: "gregale.dev"`,
+			`faas_deploy_domain: "gregale.app"`,
+			`faas_apps_domain_aliases: ["gregale.dev"]`,
+			`faas_apps_domain_alias_mode: "redirect"`,
+		} {
+			if !strings.Contains(split[host], want) {
+				t.Errorf("%s vars missing %s:\n%s", host, want, split[host])
+			}
+		}
+	}
+
+	shared := render(t, "dns:\n  apps_domain: gregale.dev\n  mode: cloudflare\n")
+	if !strings.Contains(shared["fsn-1"], `gatewayd_apps_domain: "gregale.dev"`) || strings.Contains(shared["fsn-1"], "faas_platform_domain") ||
+		strings.Contains(shared["fsn-1"], "faas_apps_domain_alias") || strings.Contains(shared["fsn-1"], "faas_deploy_domain") {
+		t.Errorf("shared layout vars:\n%s", shared["fsn-1"])
+	}
+}
+
 func TestRenderManifestAnsibleFiles_TwoComputeTargetsAreDistinct(t *testing.T) {
 	yaml := strings.Replace(validManifestYAML,
 		"    - name: fsn-1\n      role: control-plane\n",

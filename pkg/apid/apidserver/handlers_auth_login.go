@@ -316,11 +316,11 @@ func (s *server) sendPasswordResetEmail(ctx context.Context, r *http.Request, ac
 		scheme = schemeHTTPS
 	}
 	host := r.Host
-	if s.domain != "" && s.domain != domainUnset {
+	if platform := s.platformHost(); platform != "" && platform != domainUnset {
 		// Use the configured domain verbatim — the email link should
 		// always point at the canonical hostname, not the loopback
 		// the request arrived on.
-		host = s.domain
+		host = platform
 		scheme = schemeHTTPS
 	}
 	link := fmt.Sprintf("%s://%s%s?token=%s", scheme, host, resetTokenPath, base64.RawURLEncoding.EncodeToString(raw))
@@ -1123,8 +1123,8 @@ func (s *server) sendMagicLinkEmail(ctx context.Context, r *http.Request, acct s
 		scheme = schemeHTTPS
 	}
 	host := r.Host
-	if s.domain != "" && s.domain != domainUnset {
-		host = s.domain
+	if platform := s.platformHost(); platform != "" && platform != domainUnset {
+		host = platform
 		scheme = schemeHTTPS
 	}
 	link := fmt.Sprintf("%s://%s%s?token=%s", scheme, host, magicLinkPath, base64.RawURLEncoding.EncodeToString(raw))
@@ -1161,8 +1161,8 @@ func (s *server) sendEmailVerification(ctx context.Context, r *http.Request, acc
 		scheme = schemeHTTPS
 	}
 	host := r.Host
-	if s.domain != "" && s.domain != domainUnset {
-		host = s.domain
+	if platform := s.platformHost(); platform != "" && platform != domainUnset {
+		host = platform
 		scheme = schemeHTTPS
 	}
 	link := fmt.Sprintf("%s://%s%s?token=%s", scheme, host, emailVerificationPath, base64.RawURLEncoding.EncodeToString(raw))

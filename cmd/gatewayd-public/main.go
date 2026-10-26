@@ -67,6 +67,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/gateway/drain"
 	"github.com/onebox-faas/faas/pkg/gateway/grpcproblem"
 	"github.com/onebox-faas/faas/pkg/gateway/ingress"
+	"github.com/onebox-faas/faas/pkg/hostidentity"
 	"github.com/onebox-faas/faas/pkg/httpsec"
 	"github.com/onebox-faas/faas/pkg/oauthmetadata"
 	"github.com/onebox-faas/faas/pkg/objectstorage"
@@ -248,6 +249,13 @@ func run(ctx context.Context, log *slog.Logger) error {
 		}
 		log.Info("gatewayd-public: compute-node app edge (ADR-1343)")
 	}
+	// ADR-20261026100000: the platform, apps, deployment-preview and alias
+	// domains. Only FAAS_APPS_DOMAIN set keeps the shared layout.
+	domains, err := hostidentity.DomainsFromEnv(os.Getenv, hostidentity.DefaultAppsDomain, hostidentity.FileConfig{})
+	if err != nil {
+		return fmt.Errorf("gatewayd-public: %w", err)
+	}
+	hostidentity.Configure(domains)
 
 	// Mega-PR-A (issue #911 / ADR-110 PR-1): capture FAAS_NODE_NAME
 	// before any control-plane handshake so the boot log carries the
@@ -567,7 +575,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 	}
 	traceMux := http.NewServeMux()
 	var tenantRoot http.Handler
-	installPublicStaticRoutes(traceMux, platformAppsDomain(), func() http.Handler { return tenantRoot })
+	installPublicStaticRoutes(traceMux, domains.Platform, func() http.Handler { return tenantRoot })
 	traceMux.Handle("/v1/traces/", traceSetup.Handler)
 	if edgeMode == edgeModeCompute {
 		traceMux.Handle(otelTracesPath, edgeForward)
@@ -648,13 +656,13 @@ func run(ctx context.Context, log *slog.Logger) error {
 	if edgeMode == edgeModeCompute {
 		// No storage credentials here: upload routes and public bucket
 		// reads go to the control plane's edge.
-		rootHandler, err = computeEdgeRoot(controlPlaneHandler, edgeForward, pgStore, platformAppsDomain(), log)
+		rootHandler, err = computeEdgeRoot(controlPlaneHandler, edgeForward, pgStore, domains, log)
 		if err != nil {
 			return fmt.Errorf("gatewayd-public: compute edge routes: %w", err)
 		}
 	} else if publicStorageRegistry != nil {
 		rootHandler, err = publicObjectStorageRoot(pgStore, publicStorageRegistry, s3Flag.Load,
-			os.Getenv("FAAS_APPS_DOMAIN"), controlPlaneHandler, log)
+			domains, controlPlaneHandler, log)
 		if err != nil {
 			return err
 		}
@@ -682,7 +690,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 	// of where the slowness lives.
 	edgeRoot := http.Handler(traceMux)
 	if edgeMode == edgeModeCompute {
-		edgeRoot = appHostsOnly(traceMux, platformAppsDomain(), edgeMetricsSet.misdirected)
+		edgeRoot = appHostsOnly(traceMux, domains, edgeMetricsSet.misdirected)
 	}
 	publicHandler := budgetCfg.Middleware(otelhttp.NewHandler(
 		trace.WithTraceIDHeader(edgeRoot), "gatewayd-public.handler"))
@@ -692,10 +700,13 @@ func run(ctx context.Context, log *slog.Logger) error {
 	publicHandler = gateway.RequestIDMiddleware(publicHandler)
 	// ADR-830: forced headers on Gregale-owned hosts; on customer hosts the
 	// platform values are defaults the proxy hop replaces with the app's.
-	appsDomain := platformAppsDomain()
 	publicHandler = httpsec.ForSurface(
-		func(r *http.Request) httpsec.Surface { return httpsec.ClassifyHost(r.Host, appsDomain) },
+		func(r *http.Request) httpsec.Surface { return httpsec.ClassifyHostIn(r.Host, domains) },
 		true, publicHandler)
+	// An alias apps domain host becomes its canonical host here, before
+	// host classification, routing and every host-keyed policy; in redirect
+	// mode it is answered here and never reaches tenant code.
+	publicHandler = aliasHosts(publicHandler, domains)
 	if edgeMode == edgeModeCompute {
 		// Outermost, so every layer below sees the canonical client address.
 		publicHandler = cloudflareClientIP(publicHandler, trustedIngressCIDRs)
@@ -719,7 +730,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 	controlMux := gateway.ControlMuxWithExtra(gatewayMetrics,
 		prometheus.Gatherers{opsMetrics.Registry(), budgetReg, tcpMetrics.Registry(), udpMetrics.Registry(), tlsAskReg, edgeMetricsSet.registry},
 		probe.ReadyFunc(), drainTracker)
-	installOnDemandTLSAsk(controlMux, pgStore, platformAppsDomain(), tlsAskReg, log)
+	installOnDemandTLSAsk(controlMux, pgStore, domains, tlsAskReg, log)
 	controlAddr := envOr("FAAS_PUBLIC_CONTROL_ADDR", defaultPublicControlAddr)
 	listenAddr := envOr("FAAS_PUBLIC_LISTEN_ADDR", defaultListenAddr)
 	// Multi-host safety cluster PR-8 (audit F8-A): in multi-host
@@ -790,16 +801,16 @@ func run(ctx context.Context, log *slog.Logger) error {
 // server must publish its own RFC 8414 metadata, and RFC 9116 security.txt is
 // per origin. tenant resolves the handler that serves those hosts; it is a
 // func because the catch-all is built after these routes are mounted.
-func installPublicStaticRoutes(mux *http.ServeMux, appsDomain string, tenant func() http.Handler) {
-	mux.Handle("/.well-known/security.txt", platformHostOnly(securitytxt.Handler(), appsDomain, tenant))
-	mux.Handle(oauthmetadata.Path, platformHostOnly(oauthmetadata.Handler(), appsDomain, tenant))
+func installPublicStaticRoutes(mux *http.ServeMux, platformDomain string, tenant func() http.Handler) {
+	mux.Handle("/.well-known/security.txt", platformHostOnly(securitytxt.Handler(), platformDomain, tenant))
+	mux.Handle(oauthmetadata.Path, platformHostOnly(oauthmetadata.Handler(), platformDomain, tenant))
 }
 
 // platformHostOnly serves platform on platform hosts and hands every other
 // Host to the tenant handler (404 when none is wired yet).
-func platformHostOnly(platform http.Handler, appsDomain string, tenant func() http.Handler) http.Handler {
+func platformHostOnly(platform http.Handler, platformDomain string, tenant func() http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if apid.IsPlatformHost(r.Host, appsDomain) {
+		if apid.IsPlatformHost(r.Host, platformDomain) {
 			platform.ServeHTTP(w, r)
 			return
 		}

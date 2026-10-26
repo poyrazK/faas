@@ -295,7 +295,7 @@ func inboundWebhookEndpointResponse(endpoint state.InboundWebhookEndpoint) api.I
 }
 
 func (s *server) inboundWebhookURL(token string) string {
-	domain := strings.TrimPrefix(strings.TrimSpace(s.domain), ".")
+	domain := strings.TrimPrefix(strings.TrimSpace(s.platformHost()), ".")
 	return "https://api." + domain + "/v1/hooks/" + token
 }
 
