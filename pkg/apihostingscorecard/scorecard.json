@@ -553,7 +553,9 @@
       "evidence": [
         {"kind": "test", "locator": "pkg/githubdgrpc/handlers_round_trip_test.go::TestCreateDeploymentFromPush_HappyPath"},
         {"kind": "test", "locator": "pkg/dashboard/preview_panel_test.go::TestRender_AppDetail_PreviewPanel_Shape"},
-        {"kind": "test", "locator": "cmd/e2e/preview_e2e_test.go::TestPreview_E2E_HappyPath_PreviewAppsByParent"}
+        {"kind": "test", "locator": "cmd/e2e/preview_e2e_test.go::TestPreview_E2E_HappyPath_PreviewAppsByParent"},
+        {"kind": "test", "locator": "cmd/e2e/github_webhook_deploy_e2e_test.go::TestE2E_GitHubWebhookEnqueuesDeployments"},
+        {"kind": "test", "locator": "pkg/apid/apidserver/preview_environment_ga_test.go::TestCreatePreviewDoesNotCopyProductionEnv"}
       ]
     },
     {

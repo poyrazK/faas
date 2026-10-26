@@ -18,6 +18,7 @@ import (
 
 	"github.com/google/uuid"
 	vmmdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/vmmd/v1"
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/gateway"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/trafficrevocation"
@@ -254,6 +255,25 @@ func TestSyntheticSecurityRefusesBeforeWakeAndForward(t *testing.T) {
 	}
 }
 
+// securityClock moves a registry past its outage grace
+// (ADR-20261026160000) without waiting five minutes.
+type securityClock struct {
+	mu     sync.Mutex
+	offset time.Duration
+}
+
+func (c *securityClock) Now() time.Time {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return time.Now().Add(c.offset)
+}
+
+func (c *securityClock) pastOutageGrace() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.offset += api.TrafficSecurityOutageGrace + time.Second
+}
+
 func TestSyntheticSecurityFencesWakeAndForwardUntilCleanup(t *testing.T) {
 	for _, phase := range []string{"wake", "forward"} {
 		for _, kind := range []string{"account", "app", "deployment", "missed revoke release", "store outage"} {
@@ -263,7 +283,8 @@ func TestSyntheticSecurityFencesWakeAndForwardUntilCleanup(t *testing.T) {
 			t.Run(phase+"/"+kind, func(t *testing.T) {
 				store, app, dep, target := invocationDeliveryFixture(t)
 				security := &syntheticSecurityStore{}
-				registry := trafficrevocation.New(security)
+				clock := &securityClock{}
+				registry := trafficrevocation.New(security).WithClock(clock.Now)
 				defer registry.Close()
 				started, canceled := make(chan struct{}), make(chan error, 1)
 				cleanup := make(chan struct{})
@@ -313,6 +334,7 @@ func TestSyntheticSecurityFencesWakeAndForwardUntilCleanup(t *testing.T) {
 				want := trafficrevocation.ErrRevoked
 				if kind == "store outage" {
 					security.change(scope, 0, false, errors.New("store offline"))
+					clock.pastOutageGrace() // an outage cancels only once the grace has run out
 					want = trafficrevocation.ErrUnavailable
 				} else if kind == "missed revoke release" {
 					scope = trafficrevocation.Scope{Kind: "account", ID: app.AccountID}

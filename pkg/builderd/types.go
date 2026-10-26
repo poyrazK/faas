@@ -81,6 +81,10 @@ type VMRequest struct {
 	// WarmScopeKey identifies the app/runtime scope allowed to reuse a warm
 	// builder drive. It is host metadata and is never written into the guest.
 	WarmScopeKey string
+	// RegistryCredentials are the app's sealed registry credentials a
+	// Dockerfile build pulls its base images with (ADR-20261026090000);
+	// vmmd opens them into the builder VM's Docker config.
+	RegistryCredentials []SealedRegistryCredential
 }
 
 // VMResult is the legacy single-step result — kept for backwards compat

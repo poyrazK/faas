@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"strings"
+
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 // NodeAdmission binds an admission to the node generation selected by placement.
@@ -11,6 +13,12 @@ import (
 type NodeAdmission struct {
 	NodeID     string
 	Generation int64
+	// ReservationPercent is how far Σ(ram_mb + overhead) may reach on this
+	// node, as a percent of its admission ceiling. A scheduler that admits by
+	// a fresh measurement of the node sets the ADR-909 overcommit bound;
+	// zero, and anything outside [100, api.MeasuredAdmissionMaxOvercommitPercent],
+	// is clamped, so an unbound or reservation-only admission keeps 100.
+	ReservationPercent int
 }
 
 type nodeAdmissionKey struct{}
@@ -31,6 +39,22 @@ func nodeAdmissionExpectation(ctx context.Context, nodeID string) (NodeAdmission
 		return NodeAdmission{}, false, ErrInvalidArgument
 	}
 	return expected, present, nil
+}
+
+// nodeReservationPercent is the reservation allowance ctx grants an admission
+// to nodeID (ADR-909 amendment 1). Only a binding for this node counts.
+func nodeReservationPercent(ctx context.Context, nodeID string) int {
+	expected, present := ctx.Value(nodeAdmissionKey{}).(NodeAdmission)
+	if !present || expected.NodeID != nodeID {
+		return 100
+	}
+	return min(max(expected.ReservationPercent, 100), api.MeasuredAdmissionMaxOvercommitPercent)
+}
+
+// nodeReservationCapMB is the most Σ(ram_mb + overhead) a node with this
+// ceiling may hold under the reservation allowance.
+func nodeReservationCapMB(ceilingMB int64, percent int) int64 {
+	return ceilingMB * int64(percent) / 100
 }
 
 func (m *MemStore) checkNodeAdmissionLocked(ctx context.Context, nodeID string) error {

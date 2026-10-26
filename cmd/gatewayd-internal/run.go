@@ -3094,6 +3094,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// legacy wiring keep counting disabled.
 	if hitStore, ok := any(deps.pgStore).(state.EdgeRuleHitStore); ok && deps.pgStore != nil {
 		hitCounter := newEdgeRuleHitCounter()
+		hitCounter.register(metricsRegisterer)
 		handler.WithEdgeRuleHitRecorder(hitCounter)
 		// ADR-831 amendment 5: off-path WAF detections become events too.
 		wafInspector.WithEventRecorder(hitCounter)
@@ -4544,7 +4545,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		if appsControl != nil {
 			apps = appsControl
 		}
-		privateMux := newPrivateControlMux(apps, http.HandlerFunc(responseChecker.Capabilities))
+		privateMux := newPrivateControlMux(apps, http.HandlerFunc(responseChecker.Capabilities), realtimeControlProxy)
 		privateListener, err := gateway.ListenControl(addr)
 		if err != nil {
 			return fmt.Errorf("gatewayd: private control listen %s: %w", addr, err)

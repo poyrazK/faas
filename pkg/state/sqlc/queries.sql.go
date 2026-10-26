@@ -104,6 +104,20 @@ func (q *Queries) AbortLockedInstanceMigration(ctx context.Context, db DBTX, arg
 	return result.RowsAffected(), nil
 }
 
+const acceptObjectStorageTimeline = `-- name: AcceptObjectStorageTimeline :one
+INSERT INTO object_storage_timeline_acceptance (singleton, timeline, accepted_by)
+VALUES (true, upper(substring(pg_walfile_name(pg_current_wal_lsn()) FROM 1 FOR 8)), $1::text)
+ON CONFLICT (singleton) DO UPDATE SET timeline = EXCLUDED.timeline, accepted_at = now(), accepted_by = EXCLUDED.accepted_by
+RETURNING timeline
+`
+
+func (q *Queries) AcceptObjectStorageTimeline(ctx context.Context, db DBTX, acceptedBy string) (string, error) {
+	row := db.QueryRow(ctx, acceptObjectStorageTimeline, acceptedBy)
+	var timeline string
+	err := row.Scan(&timeline)
+	return timeline, err
+}
+
 const accountByEmail = `-- name: AccountByEmail :one
 select id, email, plan, status, coalesce(provider_customer_id, ''), created_at
 from accounts where email = $1
@@ -3283,6 +3297,19 @@ func (q *Queries) BootstrapFencedGatewayCachePurgeCursor(ctx context.Context, db
 	var last_change_id int64
 	err := row.Scan(&last_change_id)
 	return last_change_id, err
+}
+
+const bootstrapObjectStorageTimeline = `-- name: BootstrapObjectStorageTimeline :exec
+INSERT INTO object_storage_timeline_acceptance (singleton, timeline, accepted_by)
+VALUES (true, upper(substring(pg_walfile_name(pg_current_wal_lsn()) FROM 1 FOR 8)), 'bootstrap')
+ON CONFLICT (singleton) DO NOTHING
+`
+
+// Accept the current timeline once, on the first start of a release that
+// knows the fence, so later backups carry an acceptance.
+func (q *Queries) BootstrapObjectStorageTimeline(ctx context.Context, db DBTX) error {
+	_, err := db.Exec(ctx, bootstrapObjectStorageTimeline)
+	return err
 }
 
 const buildByDeployment = `-- name: BuildByDeployment :one
@@ -41971,7 +41998,8 @@ WITH page AS MATERIALIZED (
 )
 SELECT p.id::text AS instance_id, p.app_id::text AS app_id, p.wake_id::text AS wake_id,
        p.state, p.started_at, bs.data AS boot_data, bs.at AS boot_at,
-       (bs.id IS NOT NULL)::boolean AS has_meta, bc.at AS completed_at
+       (bs.id IS NOT NULL)::boolean AS has_meta, bc.at AS completed_at,
+       bc.data AS completed_data
 FROM page p
 LEFT JOIN LATERAL (
  SELECT id, data, at FROM events
@@ -41979,7 +42007,7 @@ LEFT JOIN LATERAL (
  ORDER BY (actor = 'schedd') DESC, at ASC, id ASC LIMIT 1
 ) bs ON true
 LEFT JOIN LATERAL (
- SELECT at FROM events
+ SELECT at, data FROM events
  WHERE kind = 'wake.boot_completed' AND data->>'app_id' = p.app_id::text AND data->>'wake_id' = p.wake_id::text
  ORDER BY at ASC, id ASC LIMIT 1
 ) bc ON true
@@ -41996,15 +42024,16 @@ type ListAppWakeHistoryPageParams struct {
 }
 
 type ListAppWakeHistoryPageRow struct {
-	InstanceID  string
-	AppID       string
-	WakeID      string
-	State       string
-	StartedAt   pgtype.Timestamptz
-	BootData    []byte
-	BootAt      pgtype.Timestamptz
-	HasMeta     bool
-	CompletedAt pgtype.Timestamptz
+	InstanceID    string
+	AppID         string
+	WakeID        string
+	State         string
+	StartedAt     pgtype.Timestamptz
+	BootData      []byte
+	BootAt        pgtype.Timestamptz
+	HasMeta       bool
+	CompletedAt   pgtype.Timestamptz
+	CompletedData []byte
 }
 
 // ADR-1638: retained history is scoped and windowed before limiting. Metadata
@@ -42035,6 +42064,7 @@ func (q *Queries) ListAppWakeHistoryPage(ctx context.Context, db DBTX, arg ListA
 			&i.BootAt,
 			&i.HasMeta,
 			&i.CompletedAt,
+			&i.CompletedData,
 		); err != nil {
 			return nil, err
 		}
@@ -52086,7 +52116,8 @@ WITH page AS MATERIALIZED (
 )
 SELECT p.id::text AS instance_id, p.app_id::text AS app_id, p.wake_id::text AS wake_id,
        p.state, p.started_at, bs.data AS boot_data, bs.at AS boot_at,
-       (bs.id IS NOT NULL)::boolean AS has_meta, bc.at AS completed_at
+       (bs.id IS NOT NULL)::boolean AS has_meta, bc.at AS completed_at,
+       bc.data AS completed_data
 FROM page p
 LEFT JOIN LATERAL (
  SELECT id, data, at FROM events
@@ -52094,7 +52125,7 @@ LEFT JOIN LATERAL (
  ORDER BY (actor = 'schedd') DESC, at ASC, id ASC LIMIT 1
 ) bs ON true
 LEFT JOIN LATERAL (
- SELECT at FROM events
+ SELECT at, data FROM events
  WHERE kind = 'wake.boot_completed' AND data->>'app_id' = p.app_id::text AND data->>'wake_id' = p.wake_id::text
  ORDER BY at ASC, id ASC LIMIT 1
 ) bc ON true
@@ -52107,15 +52138,16 @@ type ListWakeHistoryByWakeIDsParams struct {
 }
 
 type ListWakeHistoryByWakeIDsRow struct {
-	InstanceID  string
-	AppID       string
-	WakeID      string
-	State       string
-	StartedAt   pgtype.Timestamptz
-	BootData    []byte
-	BootAt      pgtype.Timestamptz
-	HasMeta     bool
-	CompletedAt pgtype.Timestamptz
+	InstanceID    string
+	AppID         string
+	WakeID        string
+	State         string
+	StartedAt     pgtype.Timestamptz
+	BootData      []byte
+	BootAt        pgtype.Timestamptz
+	HasMeta       bool
+	CompletedAt   pgtype.Timestamptz
+	CompletedData []byte
 }
 
 // The account trace view's per-request wakes: one canonical instance per wake
@@ -52140,7 +52172,64 @@ func (q *Queries) ListWakeHistoryByWakeIDs(ctx context.Context, db DBTX, arg Lis
 			&i.BootAt,
 			&i.HasMeta,
 			&i.CompletedAt,
+			&i.CompletedData,
 		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listWakeThawsByWakeIDs = `-- name: ListWakeThawsByWakeIDs :many
+SELECT (data->>'wake_id')::text AS wake_id, at,
+       (CASE WHEN jsonb_typeof(data->'total_ms') = 'number' THEN (data->>'total_ms')::numeric ELSE 0 END)::bigint AS total_ms
+FROM events
+WHERE kind = 'wake.thaw_breakdown'
+  AND at >= $1::timestamptz
+  AND at <= $2::timestamptz
+  AND data->>'app_id' = ANY($3::text[])
+  AND data->>'wake_id' = ANY($4::text[])
+ORDER BY at ASC, id ASC
+LIMIT $5::int
+`
+
+type ListWakeThawsByWakeIDsParams struct {
+	Since    pgtype.Timestamptz
+	Until    pgtype.Timestamptz
+	AppIds   []string
+	WakeIds  []string
+	RowLimit int32
+}
+
+type ListWakeThawsByWakeIDsRow struct {
+	WakeID  string
+	At      pgtype.Timestamptz
+	TotalMs int64
+}
+
+// The account trace view's frozen-VM thaws (ADR-1151): a thaw resumes an
+// instance under its original wake_id, so a request that thawed one names
+// that wake. Read within the trace's time window through events_kind_at_idx.
+func (q *Queries) ListWakeThawsByWakeIDs(ctx context.Context, db DBTX, arg ListWakeThawsByWakeIDsParams) ([]ListWakeThawsByWakeIDsRow, error) {
+	rows, err := db.Query(ctx, listWakeThawsByWakeIDs,
+		arg.Since,
+		arg.Until,
+		arg.AppIds,
+		arg.WakeIds,
+		arg.RowLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListWakeThawsByWakeIDsRow{}
+	for rows.Next() {
+		var i ListWakeThawsByWakeIDsRow
+		if err := rows.Scan(&i.WakeID, &i.At, &i.TotalMs); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -63090,7 +63179,7 @@ SELECT g.id, g.account_id, g.credential_id, g.bucket_id, g.source_bucket_id, g.p
  AND c.permission IN ('write','read_write') AND c.url_request IS NULL
  AND p.account_id=c.account_id AND p.bucket_id=c.bucket_id AND p.status='active' AND p.permission IN ('write','read_write') AND p.url_request IS NULL
  AND g.account_id=c.account_id AND g.bucket_id=c.bucket_id AND g.source_bucket_id=$3::uuid
- AND s.account_id=c.account_id AND d.account_id=c.account_id AND s.state='ready' AND d.state='ready'
+ AND s.account_id=c.account_id AND d.account_id=c.account_id AND s.org_id=d.org_id AND s.state='ready' AND d.state='ready'
  AND (s.backend_id,s.backend_fingerprint)=(d.backend_id,d.backend_fingerprint)
  AND left($4::text,length(g.prefix))=g.prefix
  AND NOT EXISTS(SELECT 1 FROM object_deletions WHERE bucket_id IN (s.id,d.id) AND state IN ('prepared','dispatched'))
@@ -67112,6 +67201,25 @@ func (q *Queries) ObjectStorageProviderRequestMetrics(ctx context.Context, db DB
 		return nil, err
 	}
 	return items, nil
+}
+
+const objectStorageTimelines = `-- name: ObjectStorageTimelines :one
+SELECT coalesce((SELECT a.timeline FROM object_storage_timeline_acceptance a), '')::text AS accepted,
+       upper(substring(pg_walfile_name(pg_current_wal_lsn()) FROM 1 FOR 8))::text AS current
+`
+
+type ObjectStorageTimelinesRow struct {
+	Accepted string
+	Current  string
+}
+
+// ADR-20261025111015 amendment: the accepted serving timeline (” before
+// the first acceptance) and the timeline the database runs on now.
+func (q *Queries) ObjectStorageTimelines(ctx context.Context, db DBTX) (ObjectStorageTimelinesRow, error) {
+	row := db.QueryRow(ctx, objectStorageTimelines)
+	var i ObjectStorageTimelinesRow
+	err := row.Scan(&i.Accepted, &i.Current)
+	return i, err
 }
 
 const objectTrackedGrantUpsert = `-- name: ObjectTrackedGrantUpsert :exec
@@ -82691,6 +82799,29 @@ type ReadPublicRoutingRevisionParams struct {
 
 func (q *Queries) ReadPublicRoutingRevision(ctx context.Context, db DBTX, arg ReadPublicRoutingRevisionParams) (bool, error) {
 	row := db.QueryRow(ctx, readPublicRoutingRevision, arg.DeploymentID, arg.AppID, arg.Scope)
+	var allowed bool
+	err := row.Scan(&allowed)
+	return allowed, err
+}
+
+const readPublicRoutingSmokeCandidate = `-- name: ReadPublicRoutingSmokeCandidate :one
+SELECT EXISTS (
+    SELECT 1 FROM deployments WHERE id = $1::uuid AND app_id = $2::uuid
+      AND status IN ('snapshotting', 'live') AND deleted_at IS NULL
+)::boolean AS allowed
+`
+
+type ReadPublicRoutingSmokeCandidateParams struct {
+	DeploymentID pgtype.UUID
+	AppID        pgtype.UUID
+}
+
+// imaged's hosting smoke verifies a candidate before MarkDeploymentLive, so
+// the candidate is still snapshotting. The smoke always uses the app's own
+// host, whatever the candidate's environment, so no scope applies; the smoke
+// challenge already binds the app and deployment.
+func (q *Queries) ReadPublicRoutingSmokeCandidate(ctx context.Context, db DBTX, arg ReadPublicRoutingSmokeCandidateParams) (bool, error) {
+	row := db.QueryRow(ctx, readPublicRoutingSmokeCandidate, arg.DeploymentID, arg.AppID)
 	var allowed bool
 	err := row.Scan(&allowed)
 	return allowed, err

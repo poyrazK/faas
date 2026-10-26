@@ -237,6 +237,26 @@ func scanOutboundAIRequestLogRows(rows pgx.Rows) ([]OutboundAIRequestLogEntry, e
 
 var _ OutboundAIContentStore = (*PgStore)(nil)
 
+var _ OutboundAIRequestCallerStore = (*PgStore)(nil)
+
+// OutboundAIRequestCaller reads who made one logged call of the account's
+// integration: an app ID or a named Gregale caller.
+func (s *PgStore) OutboundAIRequestCaller(ctx context.Context, accountID, integrationID, logID string) (string, error) {
+	if _, err := uuid.Parse(logID); err != nil {
+		return "", ErrNotFound
+	}
+	if err := s.outboundManagedIntegrationExists(ctx, accountID, integrationID); err != nil {
+		return "", err
+	}
+	var caller string
+	err := s.pool.QueryRow(ctx, `SELECT caller FROM outbound_ai_request_log WHERE integration_id = $1 AND id = $2`,
+		mustPgUUID(integrationID), mustPgUUID(logID)).Scan(&caller)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", ErrNotFound
+	}
+	return caller, mapErr(err)
+}
+
 // GetOutboundAIRequestContent reads one logged call's captured bodies
 // (ADR-996). A call without a capture, or one outside the account's
 // integration, is not found.

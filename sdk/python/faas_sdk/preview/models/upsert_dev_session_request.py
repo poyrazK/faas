@@ -45,6 +45,10 @@ class UpsertDevSessionRequest:
     live source patches reach the server's own reloader. Omit to turn watch mode off; the change applies from the
     next developer build. Refused with 422 dev_watch_unsupported when the developer app has less than 512 MB of RAM
     or does not require authentication."""
+    go_command: str | Unset = UNSET
+    """Builds cmd/<go_command> of the Go module at the source root (ADR-20261026120412), as a project service's Go
+    command does. Omit to build what the source builds by default; applies from the next developer build. Refused
+    with 400 for a function or a name that is not a cmd/ directory name."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -75,6 +79,8 @@ class UpsertDevSessionRequest:
         if not isinstance(self.watch, Unset):
             watch = self.watch.to_dict()
 
+        go_command = self.go_command
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update({})
@@ -92,6 +98,8 @@ class UpsertDevSessionRequest:
             field_dict["lease_seconds"] = lease_seconds
         if watch is not UNSET:
             field_dict["watch"] = watch
+        if go_command is not UNSET:
+            field_dict["go_command"] = go_command
 
         return field_dict
 
@@ -143,6 +151,8 @@ class UpsertDevSessionRequest:
         else:
             watch = DevWatch.from_dict(_watch)
 
+        go_command = d.pop("go_command", UNSET)
+
         upsert_dev_session_request = cls(
             type_=type_,
             runtime=runtime,
@@ -151,6 +161,7 @@ class UpsertDevSessionRequest:
             buckets=buckets,
             lease_seconds=lease_seconds,
             watch=watch,
+            go_command=go_command,
         )
 
         upsert_dev_session_request.additional_properties = d

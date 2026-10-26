@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/objectstorage"
+	"github.com/onebox-faas/faas/pkg/runtimeconfig"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -44,7 +45,21 @@ type objectStorageReconcileBackend struct {
 
 func cmdObjectStorage(args []string) int {
 	if len(args) == 0 || args[0] == "--help" || args[0] == "-h" {
-		PrintUsage(os.Stderr, "usage: gregalectl object-storage reconcile [flags]", dispatchObjectStorage)
+		PrintUsage(os.Stderr, "usage: gregalectl object-storage reconcile|hold|accept [flags]", dispatchObjectStorage)
+		return 0
+	}
+	if args[0] == "accept" {
+		if err := runObjectStorageAccept(args[1:]); err != nil {
+			fmt.Fprintf(os.Stderr, "gregalectl object-storage accept: %v\n", err)
+			return 3
+		}
+		return 0
+	}
+	if args[0] == "hold" {
+		if err := runObjectStorageHold(args[1:]); err != nil {
+			fmt.Fprintf(os.Stderr, "gregalectl object-storage hold: %v\n", err)
+			return 3
+		}
 		return 0
 	}
 	if args[0] != "reconcile" {
@@ -119,10 +134,114 @@ func runObjectStorageReconcile(args []string) (int, error) {
 	return len(report.Findings), nil
 }
 
+// objectStorageHoldReason is the audit reason the hold writes.
+const objectStorageHoldReason = "control-plane restore: S3 held until the object storage reconcile is accepted"
+
+// runObjectStorageHold turns S3 off in the database itself. A control-plane
+// restore brings the s3_enabled row back as it was at the restore point,
+// usually on, and with it every S3 key and grant revoked after that point.
+// The hold needs no apid, so it runs right after PostgreSQL is restored and
+// before any daemon serves the restored catalog.
+func runObjectStorageHold(args []string) error {
+	fs := flag.NewFlagSet("object-storage hold", flag.ContinueOnError)
+	fs.SetOutput(os.Stderr)
+	dsn := fs.String("pg-dsn", "", "PostgreSQL DSN")
+	dbEnv := fs.String("db-env", "", "systemd env file containing DATABASE_URL")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	pool, err := openFleetSealPool(*dsn, *dbEnv)
+	if err != nil {
+		return err
+	}
+	defer pool.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	version, err := holdObjectStorage(ctx, state.NewPgStore(pool))
+	if err != nil {
+		return err
+	}
+	_, _ = fmt.Fprintf(osStdout, "s3_enabled is false (version %d); S3 and public reads answer 503 until it is turned back on\n", version)
+	return nil
+}
+
+// runObjectStorageAccept accepts the PostgreSQL timeline the database runs
+// on for serving object storage (ADR-20261025111015 amendment). A restore
+// that promoted onto a new timeline fences the S3 gateway and public reads
+// until this runs, after the reconcile and the revocation review; a planned
+// promotion and the restore drill run it themselves.
+func runObjectStorageAccept(args []string) error {
+	fs := flag.NewFlagSet("object-storage accept", flag.ContinueOnError)
+	fs.SetOutput(os.Stderr)
+	dsn := fs.String("pg-dsn", "", "PostgreSQL DSN")
+	dbEnv := fs.String("db-env", "", "systemd env file containing DATABASE_URL")
+	by := fs.String("by", "", "who accepts, for the record (default: $SUDO_USER or $USER)")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	pool, err := openFleetSealPool(*dsn, *dbEnv)
+	if err != nil {
+		return err
+	}
+	defer pool.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	timeline, err := acceptObjectStorageTimeline(ctx, state.NewPgStore(pool), *by, os.Getenv)
+	if err != nil {
+		return err
+	}
+	_, _ = fmt.Fprintf(osStdout, "object storage serves on PostgreSQL timeline %s; s3_enabled still decides whether it serves at all\n", timeline)
+	return nil
+}
+
+// acceptObjectStorageTimeline records who accepted the current timeline.
+func acceptObjectStorageTimeline(ctx context.Context, store state.ObjectStorageTimelineStore, by string, getenv func(string) string) (string, error) {
+	for _, candidate := range []string{by, getenv("SUDO_USER"), getenv("USER")} {
+		if candidate = strings.TrimSpace(candidate); candidate != "" {
+			by = candidate
+			break
+		}
+	}
+	if strings.TrimSpace(by) == "" {
+		by = "gregalectl"
+	}
+	return store.AcceptObjectStorageTimeline(ctx, "gregalectl:"+by)
+}
+
+// objectStorageHoldStore writes the s3_enabled row.
+type objectStorageHoldStore interface {
+	UpsertRuntimeConfig(ctx context.Context, update state.RuntimeConfigUpdate) (state.RuntimeConfig, error)
+	MarkRuntimeConfigApplied(ctx context.Context, key string, scope state.RuntimeConfigScope, scopeID string, version int64, effectiveValue json.RawMessage, applyErr string) error
+}
+
+// holdObjectStorage writes s3_enabled=false as applied, so every gateway's
+// watcher takes it on its next read, and returns the new version.
+func holdObjectStorage(ctx context.Context, store objectStorageHoldStore) (int64, error) {
+	off := json.RawMessage("false")
+	row, err := store.UpsertRuntimeConfig(ctx, state.RuntimeConfigUpdate{Key: runtimeconfig.KeyS3, Scope: state.RuntimeConfigScopeGlobal,
+		DesiredValue: off, Reason: objectStorageHoldReason})
+	if err != nil {
+		return 0, fmt.Errorf("write s3_enabled: %w", err)
+	}
+	if err := store.MarkRuntimeConfigApplied(ctx, runtimeconfig.KeyS3, state.RuntimeConfigScopeGlobal, "", row.Version, off, ""); err != nil {
+		return 0, fmt.Errorf("apply s3_enabled: %w", err)
+	}
+	return row.Version, nil
+}
+
 // reconcileObjectStorage compares every configured backend with the buckets
-// bound to it in the catalog.
+// bound to it in the catalog. Backends can share a provider account or
+// project, so each lists the others' buckets too: a bucket another
+// backend's catalog holds is that backend's, not provider_only here.
 func reconcileObjectStorage(ctx context.Context, registry *objectstorage.Registry, store state.ObjectStorageProviderUsageStore) (objectStorageReconcileReport, error) {
 	report := objectStorageReconcileReport{Backends: []objectStorageReconcileBackend{}, Findings: []objectstorage.ReconcileFinding{}}
+	type listed struct {
+		id       string
+		physical []string
+		catalog  []state.ObjectBucket
+	}
+	var backends []listed
+	catalogued := map[string]bool{}
 	for _, backend := range registry.Backends() {
 		lister, ok := backend.Provider.(objectstorage.BucketLister)
 		if !ok {
@@ -136,8 +255,19 @@ func reconcileObjectStorage(ctx context.Context, registry *objectstorage.Registr
 		if err != nil {
 			return report, fmt.Errorf("list catalog buckets for backend %s: %w", backend.ID, err)
 		}
-		report.Backends = append(report.Backends, objectStorageReconcileBackend{ID: backend.ID, Physical: len(physical), Catalog: len(catalog)})
-		report.Findings = append(report.Findings, objectstorage.ReconcileBuckets(backend.ID, physical, catalog)...)
+		for _, b := range catalog {
+			catalogued[b.PhysicalName] = true
+		}
+		backends = append(backends, listed{id: backend.ID, physical: physical, catalog: catalog})
+	}
+	for _, b := range backends {
+		report.Backends = append(report.Backends, objectStorageReconcileBackend{ID: b.id, Physical: len(b.physical), Catalog: len(b.catalog)})
+		for _, f := range objectstorage.ReconcileBuckets(b.id, b.physical, b.catalog) {
+			if f.Kind == objectstorage.ReconcileProviderOnly && catalogued[f.PhysicalName] {
+				continue
+			}
+			report.Findings = append(report.Findings, f)
+		}
 	}
 	return report, nil
 }

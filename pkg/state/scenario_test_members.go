@@ -48,6 +48,23 @@ type ScenarioTestDNSChaosPolicy struct {
 
 var scenarioTestRunPattern = regexp.MustCompile(`^[0-9a-f]{32}$`)
 var scenarioTestWorkloadPattern = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$`)
+
+// scenarioTestServiceNamePattern is a service DNS label, the name the
+// gateway resolves inside a run (ADR-20261026105459).
+var scenarioTestServiceNamePattern = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$`)
+
+// validScenarioTestMemberName accepts any service name for a plain member,
+// such as a `gregale dev --all` app. A member enrolled in rehearsal capture,
+// simulation or fault plans keeps the slug rule those plans and their
+// action policies are written for.
+func validScenarioTestMemberName(member ScenarioTestMember) bool {
+	if member.WebhookMode == "" && member.NetworkMode == "" && member.SimulationJSON == "" && member.ColdStartJSON == "" &&
+		member.SuspendResumeJSON == "" && member.ManagedWorkJSON == "" {
+		return scenarioTestServiceNamePattern.MatchString(member.Workload)
+	}
+	return scenarioTestWorkloadPattern.MatchString(member.Workload)
+}
+
 var scenarioChaosRuleIDPattern = regexp.MustCompile(`^[0-9a-f]{64}$`)
 
 func validScenarioTestMembers(accountID, runID string, members []ScenarioTestMember) error {
@@ -57,7 +74,7 @@ func validScenarioTestMembers(accountID, runID string, members []ScenarioTestMem
 	seenNames := make(map[string]bool, len(members))
 	seenApps := make(map[string]bool, len(members))
 	for _, member := range members {
-		if !scenarioTestWorkloadPattern.MatchString(member.Workload) || member.AppID == "" || seenNames[member.Workload] || seenApps[member.AppID] ||
+		if !validScenarioTestMemberName(member) || member.AppID == "" || seenNames[member.Workload] || seenApps[member.AppID] ||
 			(member.WebhookMode != "" && member.WebhookMode != ScenarioWebhookCaptureMode) || member.WebhookMode != members[0].WebhookMode ||
 			(member.NetworkMode != "" && (member.NetworkMode != ScenarioNetworkContained || member.WebhookMode != ScenarioWebhookCaptureMode)) || member.NetworkMode != members[0].NetworkMode {
 			return ErrConflict

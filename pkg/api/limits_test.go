@@ -257,6 +257,7 @@ func TestPlanLimitsMatchSpec(t *testing.T) {
 			MaxQueueAttempts: 0,
 			// ADR-134 PR-B: Free's per-account cap ladder.
 			EventDeliveries:                   EventDeliveryLimits{64, 256, 1024},
+			EventPublish:                      EventPublishLimits{5, 100},
 			EventStorage:                      EventStorageLimits{4096, 8 << 20, 86400},
 			MaxAsyncInvocationsPerAccount:     100,
 			MaxAsyncInvocationDeadlineSeconds: 300,
@@ -419,6 +420,7 @@ func TestPlanLimitsMatchSpec(t *testing.T) {
 			MaxQueueAttempts: 3,
 			// ADR-134 PR-B: Hobby 1k / 1h / 7d.
 			EventDeliveries:                   EventDeliveryLimits{256, 1024, 4096},
+			EventPublish:                      EventPublishLimits{20, 200},
 			EventStorage:                      EventStorageLimits{131072, 256 << 20, 259200},
 			MaxAsyncInvocationsPerAccount:     1000,
 			MaxAsyncInvocationDeadlineSeconds: 3600,
@@ -590,6 +592,7 @@ func TestPlanLimitsMatchSpec(t *testing.T) {
 			MaxQueueAttempts: 10,
 			// ADR-134 PR-B: Pro 10k / 6h / 30d.
 			EventDeliveries:                   EventDeliveryLimits{1024, 4096, 16384},
+			EventPublish:                      EventPublishLimits{100, 1000},
 			EventStorage:                      EventStorageLimits{1048576, 2 << 30, 604800},
 			MaxAsyncInvocationsPerAccount:     10000,
 			MaxAsyncInvocationDeadlineSeconds: 21600,
@@ -756,6 +759,7 @@ func TestPlanLimitsMatchSpec(t *testing.T) {
 			MaxQueueAttempts: 25,
 			// ADR-134 PR-B: Scale 100k / 24h / 90d.
 			EventDeliveries:                   EventDeliveryLimits{4096, 16384, 65536},
+			EventPublish:                      EventPublishLimits{500, 5000},
 			EventStorage:                      EventStorageLimits{8388608, 16 << 30, 1209600},
 			MaxAsyncInvocationsPerAccount:     100000,
 			MaxAsyncInvocationDeadlineSeconds: 86400,

@@ -152,6 +152,9 @@ func resolveLogCount(ctx context.Context, src Sources, acct state.Account, app s
 	if errors.Is(err, state.ErrLogSearchTimeout) {
 		return errors.New("the log count timed out; narrow the window or the filters")
 	}
+	if errors.Is(err, state.ErrLogReadBusy) {
+		return errors.New("too many log reads at once; refresh in a few seconds")
+	}
 	if err != nil {
 		return errors.New("logs unavailable")
 	}

@@ -454,7 +454,7 @@ func (m *MemStore) releaseSetHasManagedMembersLocked(release ProjectReleaseSet) 
 	return false
 }
 
-func (m *MemStore) PublishProjectEnvironmentPromotionReleaseSet(_ context.Context, accountID, promotionID string, ttlSeconds int, members []ProjectReleaseMember) (ProjectReleaseSet, error) {
+func (m *MemStore) PublishProjectEnvironmentPromotionReleaseSet(ctx context.Context, accountID, promotionID string, ttlSeconds int, members []ProjectReleaseMember) (ProjectReleaseSet, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	promotion, ok := m.projectEnvironmentPromotions[promotionID]
@@ -520,6 +520,9 @@ func (m *MemStore) PublishProjectEnvironmentPromotionReleaseSet(_ context.Contex
 	if err != nil {
 		return ProjectReleaseSet{}, err
 	}
+	if err := m.checkMemPromotionWorkloadBindingsLocked(ctx, promotion.AccountID, changes); err != nil {
+		return ProjectReleaseSet{}, err
+	}
 	flagVersion, err := m.preparePromotionFeatureFlagsLocked(promotion, false, false)
 	if err != nil {
 		return ProjectReleaseSet{}, err
@@ -546,7 +549,7 @@ func (m *MemStore) PublishProjectEnvironmentPromotionReleaseSet(_ context.Contex
 	return cloneProjectReleaseSet(release), nil
 }
 
-func (m *MemStore) RollbackProjectEnvironmentPromotionReleaseSet(_ context.Context, accountID, promotionID string, ttlSeconds int, members []ProjectReleaseMember) (ProjectReleaseSet, error) {
+func (m *MemStore) RollbackProjectEnvironmentPromotionReleaseSet(ctx context.Context, accountID, promotionID string, ttlSeconds int, members []ProjectReleaseMember) (ProjectReleaseSet, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	promotion, ok := m.projectEnvironmentPromotions[promotionID]
@@ -600,6 +603,9 @@ func (m *MemStore) RollbackProjectEnvironmentPromotionReleaseSet(_ context.Conte
 	}
 	changes, err := m.promotionWorkloadActivationsLocked(promotion, members, true, false)
 	if err != nil {
+		return ProjectReleaseSet{}, err
+	}
+	if err := m.checkMemPromotionWorkloadBindingsLocked(ctx, promotion.AccountID, changes); err != nil {
 		return ProjectReleaseSet{}, err
 	}
 	flagVersion, err := m.preparePromotionFeatureFlagsLocked(promotion, true, false)

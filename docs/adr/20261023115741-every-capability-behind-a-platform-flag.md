@@ -184,6 +184,8 @@ off everywhere, at runtime and without a deploy.
   accounts that used each preview capability in the last 30 days.
 - Native acceptance environments that exercise preview capabilities through
   production wiring must enable the matching flags for their test accounts.
+  Each such run checks its account with `scripts/ci/require-capabilities.py`
+  before it starts and prints the allow commands an operator must run.
 - No migration: flags live in `runtime_config_entries`. Older daemons ignore
   the new keys, so release N runs beside N-1.
 - A capability turned off in schedd keeps its queue: a long-off capability's

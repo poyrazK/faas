@@ -79,7 +79,10 @@ func (e *HostEntry) SealPolicy() error {
 // rebindEdgeRuleConditions shares each rule's compiled ADR-962 condition with
 // its JSON copy. Programs are immutable; JSON carries only their identity for
 // the digest, so a copied condition that is still unbound fails the seal
-// closed instead of silently never matching.
+// closed instead of silently never matching. The whole condition is copied:
+// every resolved kind has its own AppID, which hides the condition's AppID
+// from encoding/json, and hit counts need it (rc.296 recorded "" and failed
+// every edge-rule hit and event flush).
 func rebindEdgeRuleConditions(dst, src *HostEntry) error {
 	conditionType := reflect.TypeFor[EdgeRuleCondition]()
 	dv, sv := reflect.ValueOf(dst).Elem(), reflect.ValueOf(src).Elem()
@@ -97,7 +100,7 @@ func rebindEdgeRuleConditions(dst, src *HostEntry) error {
 		}
 		for j := range df.Len() {
 			copied := df.Index(j).FieldByIndex(field.Index).Addr().Interface().(*EdgeRuleCondition)
-			copied.Match = sf.Index(j).FieldByIndex(field.Index).Interface().(EdgeRuleCondition).Match
+			*copied = sf.Index(j).FieldByIndex(field.Index).Interface().(EdgeRuleCondition)
 			if !copied.Match.Bound() {
 				return fmt.Errorf("copy compiled host policy: %s rule %d has an unbound condition", dv.Type().Field(i).Name, j)
 			}

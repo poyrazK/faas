@@ -7,11 +7,11 @@
 #      /usr/sbin/grafana-server binary, not against the downloaded
 #      tarball (apt is the install path, not a tarball drop). Same
 #      defence-in-depth principle as the alertmanager role's assert.
-#   2. Admin password is read at process start by Grafana via the
-#      GF_SECURITY_ADMIN_PASSWORD__FILE env var (see
-#      templates/grafana-server.service.j2). The role only asserts the file
-#      exists with mode 0400 owned by grafana:grafana — nothing is
-#      slurped, base64-decoded, or templated into grafana.ini. Same
+#   2. Admin password is read at process start by Grafana through
+#      grafana.ini's $__file{} expansion. The role asserts the file
+#      exists with mode 0400 owned by grafana:grafana and never templates
+#      it into grafana.ini; the reconcile step after start reads it only
+#      to check it and to set it. Same
 #      precedent as the alertmanager *_file secrets (gap G2 lean §17,
 #      sealed at rest).
 #   3. Bind addr must be loopback (127/8) or management-bridge
@@ -140,11 +140,36 @@
     - /etc/grafana/secrets
     - /var/log/grafana
 
-# Secret file: assert existence + perms before systemd enable. We do NOT
-# slurp or template the secret bytes — Grafana reads it at start via
-# GF_SECURITY_ADMIN_PASSWORD__FILE (see templates/grafana-server.service.j2).
+# Secret file: assert existence + perms before systemd enable. The secret
+# bytes are never templated — Grafana reads the file at start through
+# grafana.ini's $__file{} expansion.
 # dev_mode: skip the assert so dev / CI hosts without secrets still
 # bootstrap (and Grafana isn't enabled in that case — see below).
+# The grafana package resets everything under /etc/grafana to root:grafana
+# 0640 when it is installed or upgraded, which leaves the admin password
+# group-readable and fails the check below on the next converge. Put an
+# existing, operator-provisioned file back to grafana:grafana 0400; its
+# contents are never read.
+- name: grafana — stat the admin password file
+  ansible.builtin.stat:
+    path: "{{ gv_admin_password_file }}"
+  register: gv_secret_present
+  when:
+    - not gv_dev_mode | bool
+  no_log: true
+
+- name: grafana — keep the admin password file private after package installs
+  ansible.builtin.file:
+    path: "{{ gv_admin_password_file }}"
+    owner: grafana
+    group: grafana
+    mode: "0400"
+  when:
+    - not gv_dev_mode | bool
+    - gv_secret_present.stat.exists | default(false)
+    - gv_secret_present.stat.isreg | default(false)
+  no_log: true
+
 - name: grafana — assert admin password file perms (production)
   ansible.builtin.stat:
     path: "{{ gv_admin_password_file }}"
@@ -381,6 +406,19 @@
     - restart grafana-server
     - reload grafana provisioning
 
+# Control-plane PostgreSQL activity (role postgres_metrics). Byte-identical
+# copy of deploy/grafana/postgres.json (make grafana-mirror-check).
+- name: grafana — drop postgres dashboard JSON
+  ansible.builtin.copy:
+    src: postgres.json
+    dest: "{{ gv_dashboards_dir }}/postgres.json"
+    owner: grafana
+    group: grafana
+    mode: "0640"
+  notify:
+    - restart grafana-server
+    - reload grafana provisioning
+
 # ADR-20261023124955: per-slice CPU, memory, IO and pressure-stall time from
 # faas-cgroup-metrics. Byte-identical copy of
 # deploy/grafana/control-plane-resources.json (make grafana-mirror-check).
@@ -476,13 +514,71 @@
 # dev_mode: drop the unit but do not enable — production hosts that
 # forget to set the admin password won't accidentally start a broken
 # Grafana admin surface.
+# daemon_reload here, not only in the handler: the handler runs at the end of
+# the play, so on a fresh host the first start would use the package's own
+# unit, outside faas-obs.slice and without the role's limits and hardening.
 - name: grafana — enable + start service (production only)
-  ansible.builtin.service:
+  ansible.builtin.systemd:
     name: grafana-server
     enabled: true
     state: started
+    daemon_reload: true
   register: gv_svc
   when: not gv_dev_mode | bool
+
+# admin_password in grafana.ini applies only when Grafana creates its
+# database. Before $__file{} the role set the password through
+# GF_SECURITY_ADMIN_PASSWORD__FILE, which grafana-server ignores (only the
+# Docker image reads it), so a database created then kept admin/admin. Check
+# the provisioned password and, if it does not log in, set it with the CLI.
+# The password goes through stdin, never argv or logs.
+- name: grafana — wait for the HTTP API
+  ansible.builtin.uri:
+    url: "http://{{ gv_listen_addr }}/api/health"
+    status_code: 200
+  register: gv_health
+  retries: 30
+  delay: 2
+  until: gv_health.status == 200
+  when: not gv_dev_mode | bool
+
+- name: grafana — read the provisioned admin password
+  ansible.builtin.slurp:
+    src: "{{ gv_admin_password_file }}"
+  register: gv_admin_password_now
+  no_log: true
+  when: not gv_dev_mode | bool
+
+- name: grafana — check that the provisioned admin password logs in
+  ansible.builtin.uri:
+    url: "http://{{ gv_listen_addr }}/api/user"
+    user: admin
+    password: "{{ gv_admin_password_now.content | b64decode | trim }}"
+    force_basic_auth: true
+    status_code: [200, 401]
+  register: gv_admin_login
+  no_log: true
+  when: not gv_dev_mode | bool
+
+- name: grafana — set the provisioned admin password
+  ansible.builtin.command:
+    argv:
+      - /usr/sbin/grafana-cli
+      - --homepath
+      - /usr/share/grafana
+      - --config
+      - "{{ gv_config_path }}"
+      - admin
+      - reset-admin-password
+      - --password-from-stdin
+    stdin: "{{ gv_admin_password_now.content | b64decode | trim }}"
+  become: true
+  become_user: grafana
+  changed_when: true
+  no_log: true
+  when:
+    - not gv_dev_mode | bool
+    - gv_admin_login.status == 401
 
 - name: "grafana — dev mode: skip service start"
   ansible.builtin.debug:

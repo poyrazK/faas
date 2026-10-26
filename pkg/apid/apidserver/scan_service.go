@@ -913,6 +913,14 @@ func (s *server) applyBuildsForAddedChangedOrdered(
 			out = append(out, res)
 			continue
 		}
+		// A project apply releases each app without a canary, atomic or not,
+		// so an app requiring approvals is refused like an immediate deploy
+		// (ADR-20261020085706 amendment 1).
+		if prob := s.releaseApprovalCanaryProblem(ctx, app, &api.CreateDeploymentRequest{Scope: environment}); prob != nil {
+			res.Error = prob.Detail
+			out = append(out, res)
+			continue
+		}
 		// New services install their pinned company intent before staging or
 		// consuming deploy rate. The ordinary deployment fence still applies.
 		var standardError string

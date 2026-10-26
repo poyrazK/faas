@@ -215,6 +215,8 @@ type PreviewListItem struct {
 	CreatedAt     time.Time
 	Hostname      string
 	DestroyAction string
+	// DestroyCSRF is the token the Tear down form posts with DestroyAction.
+	DestroyCSRF string
 }
 
 // PRPreviewEnvironmentView is the current-head, whole-PR status shown on the
@@ -3490,6 +3492,19 @@ type ManagedPostgresData struct {
 	Available bool
 	Error     string
 	Databases []ManagedPostgresDatabaseItem
+	// Overage is the compute overage form (ADR-20261025094915); nil hides it,
+	// as for Free plans and accounts without the postgres-overage capability.
+	Overage *ManagedPostgresOverageItem
+}
+
+// ManagedPostgresOverageItem backs the compute overage form on
+// /dashboard/postgres.
+type ManagedPostgresOverageItem struct {
+	Enabled        bool
+	AllowanceLabel string
+	CeilingLabel   string
+	ConfirmToken   string
+	Flash          string
 }
 
 // ManagedPostgresDatabaseItem is one database row on /dashboard/postgres.

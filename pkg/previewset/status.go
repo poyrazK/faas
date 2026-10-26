@@ -34,6 +34,18 @@ type Result struct {
 	TotalCount     int
 }
 
+// EvaluateSet is Evaluate for a recorded set. A setup error recorded for the
+// head (githubd could not reserve or start it) fails the set whatever its
+// members' deployments report.
+func EvaluateSet(prNumber int, rootAppID string, members []Member, setupError string) Result {
+	result := Evaluate(prNumber, rootAppID, members)
+	if setupError != "" {
+		result.Phase = PhaseFailed
+		result.Summary = fmt.Sprintf("Preview PR #%d failed: %s", prNumber, setupError)
+	}
+	return result
+}
+
 // Evaluate is fail-closed: only a live deployment for the recorded commit
 // makes a member ready. The caller supplies the exact-head members.
 func Evaluate(prNumber int, rootAppID string, members []Member) Result {

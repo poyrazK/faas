@@ -1,0 +1,13 @@
+{
+  "name": "gregale",
+  "displayName": "Gregale",
+  "version": "0.2.0",
+  "description": "Deploy, diagnose and roll back Gregale apps: the Gregale management MCP server plus deploy and diagnose skills.",
+  "author": {
+    "name": "Gregale",
+    "url": "https://gregale.dev"
+  },
+  "homepage": "https://gregale.dev/docs/agents",
+  "repository": "https://github.com/poyrazK/faas",
+  "keywords": ["gregale", "deploy", "serverless", "mcp", "firecracker"]
+}

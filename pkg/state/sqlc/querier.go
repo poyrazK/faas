@@ -18,6 +18,7 @@ type Querier interface {
 	AbandonProjectEnvironmentCloneConfiguration(ctx context.Context, db DBTX, arg AbandonProjectEnvironmentCloneConfigurationParams) (int64, error)
 	AbortLockedInstanceMigration(ctx context.Context, db DBTX, arg AbortLockedInstanceMigrationParams) (int64, error)
 	AbortProfileGatedCanary(ctx context.Context, db DBTX, arg AbortProfileGatedCanaryParams) (int64, error)
+	AcceptObjectStorageTimeline(ctx context.Context, db DBTX, acceptedBy string) (string, error)
 	AccountByEmail(ctx context.Context, db DBTX, email interface{}) (AccountByEmailRow, error)
 	AccountByID(ctx context.Context, db DBTX, id pgtype.UUID) (AccountByIDRow, error)
 	AccountByKeyHash(ctx context.Context, db DBTX, keySha256 []byte) (AccountByKeyHashRow, error)
@@ -161,6 +162,11 @@ type Querier interface {
 	AttachDeploymentSubmission(ctx context.Context, db DBTX, arg AttachDeploymentSubmissionParams) (AttachDeploymentSubmissionRow, error)
 	AttachProjectEnvironmentCloneDeployment(ctx context.Context, db DBTX, arg AttachProjectEnvironmentCloneDeploymentParams) (int64, error)
 	AttestPromotionMigrationRuntime(ctx context.Context, db DBTX, arg AttestPromotionMigrationRuntimeParams) error
+	// One page of the audit rows received in [window_start, window_end), in the
+	// order anchors digest them, after the (received_at, id) cursor. data is
+	// jsonb's canonical text, so the digest does not depend on how a row was
+	// written.
+	AuditLogWindowPage(ctx context.Context, db DBTX, arg AuditLogWindowPageParams) ([]AuditLogWindowPageRow, error)
 	AuthorizeBaseImageProducerInsert(ctx context.Context, db DBTX, id string) error
 	AuthorizeBaseImageScanInsert(ctx context.Context, db DBTX, id pgtype.UUID) error
 	AuthorizeBindingReleaseDeactivation(ctx context.Context, db DBTX, arg AuthorizeBindingReleaseDeactivationParams) (bool, error)
@@ -232,6 +238,9 @@ type Querier interface {
 	BindMigrationExpansionRuntime(ctx context.Context, db DBTX, arg BindMigrationExpansionRuntimeParams) (int64, error)
 	BlockApplicationStandardEnrollmentWorker(ctx context.Context, db DBTX, arg BlockApplicationStandardEnrollmentWorkerParams) (int64, error)
 	BootstrapFencedGatewayCachePurgeCursor(ctx context.Context, db DBTX, arg BootstrapFencedGatewayCachePurgeCursorParams) (int64, error)
+	// Accept the current timeline once, on the first start of a release that
+	// knows the fence, so later backups carry an acceptance.
+	BootstrapObjectStorageTimeline(ctx context.Context, db DBTX) error
 	BuildByDeployment(ctx context.Context, db DBTX, deploymentID pgtype.UUID) (BuildByDeploymentRow, error)
 	BuildByID(ctx context.Context, db DBTX, id pgtype.UUID) (BuildByIDRow, error)
 	// issue #667 / ADR-078 — atomically apply delta to the instance's
@@ -1715,6 +1724,9 @@ type Querier interface {
 	// pending returns no row.
 	FinishScheduledRelease(ctx context.Context, db DBTX, arg FinishScheduledReleaseParams) (ScheduledRelease, error)
 	FinishWorkflowRunCancellation(ctx context.Context, db DBTX, arg FinishWorkflowRunCancellationParams) (WorkflowRun, error)
+	// The first anchor whose window ends after a time: where a verification of
+	// recent history starts.
+	FirstAuditLogAnchorEndingAfter(ctx context.Context, db DBTX, after pgtype.Timestamptz) ([]int64, error)
 	FirstCustomerOperationWorkflowEvent(ctx context.Context, db DBTX, arg FirstCustomerOperationWorkflowEventParams) (WorkflowEvent, error)
 	// ADR-1740, ADR-1741: read first when a VM freezes, before the rest of its
 	// ticket, so any change after it moves the generation the guarded thaw
@@ -2184,6 +2196,8 @@ type Querier interface {
 	InsertApplicationStandardReviewPlan(ctx context.Context, db DBTX, arg InsertApplicationStandardReviewPlanParams) error
 	InsertApplicationStandardSnapshotCapture(ctx context.Context, db DBTX, arg InsertApplicationStandardSnapshotCaptureParams) error
 	InsertApplicationStandardVersion(ctx context.Context, db DBTX, arg InsertApplicationStandardVersionParams) error
+	// A second anchorer racing for the same seq inserts nothing.
+	InsertAuditLogAnchor(ctx context.Context, db DBTX, arg InsertAuditLogAnchorParams) (int64, error)
 	InsertAutomationLiveBaselinePromotion(ctx context.Context, db DBTX, arg InsertAutomationLiveBaselinePromotionParams) error
 	InsertAutomationLiveBaselineRetirement(ctx context.Context, db DBTX, arg InsertAutomationLiveBaselineRetirementParams) error
 	InsertAutomationLiveSuite(ctx context.Context, db DBTX, arg InsertAutomationLiveSuiteParams) (WorkflowAutomationLiveSuite, error)
@@ -2905,6 +2919,8 @@ type Querier interface {
 	LatchAutomationFailurePause(ctx context.Context, db DBTX, arg LatchAutomationFailurePauseParams) error
 	LatestAppConfigGuard(ctx context.Context, db DBTX, arg LatestAppConfigGuardParams) (AppConfigGuard, error)
 	LatestAppConfigRevision(ctx context.Context, db DBTX, arg LatestAppConfigRevisionParams) (AppConfigRevision, error)
+	// ADR-20261026163015: the newest anchor, or no row before the first.
+	LatestAuditLogAnchor(ctx context.Context, db DBTX) ([]AuditLogAnchor, error)
 	LatestDeployment(ctx context.Context, db DBTX, appID pgtype.UUID) (LatestDeploymentRow, error)
 	LatestDevSourcePatch(ctx context.Context, db DBTX, arg LatestDevSourcePatchParams) (LatestDevSourcePatchRow, error)
 	// Gateway restart hydration: readiness is independent of the instance's
@@ -3094,6 +3110,7 @@ type Querier interface {
 	// Index: request_telemetry_app_received_idx on (app_id, received_at
 	// DESC) makes this DISTINCT scan cheap.
 	ListAppsWithRecentTelemetry(ctx context.Context, db DBTX, dollar_1 pgtype.Interval) ([]pgtype.UUID, error)
+	ListAuditLogAnchors(ctx context.Context, db DBTX, arg ListAuditLogAnchorsParams) ([]AuditLogAnchor, error)
 	ListAutomationFailurePauses(ctx context.Context, db DBTX, appID pgtype.UUID) ([]string, error)
 	ListAutomationFailurePolicyCandidates(ctx context.Context, db DBTX, arg ListAutomationFailurePolicyCandidatesParams) ([]ListAutomationFailurePolicyCandidatesRow, error)
 	ListAutomationLiveBaselineHeads(ctx context.Context, db DBTX, arg ListAutomationLiveBaselineHeadsParams) ([]WorkflowAutomationLiveBaselinePromotion, error)
@@ -3539,6 +3556,10 @@ type Querier interface {
 	// (its first), scoped to the account's apps before reading wake metadata, with
 	// the same boot and completion reads as ListAppWakeHistoryPage.
 	ListWakeHistoryByWakeIDs(ctx context.Context, db DBTX, arg ListWakeHistoryByWakeIDsParams) ([]ListWakeHistoryByWakeIDsRow, error)
+	// The account trace view's frozen-VM thaws (ADR-1151): a thaw resumes an
+	// instance under its original wake_id, so a request that thawed one names
+	// that wake. Read within the trace's time window through events_kind_at_idx.
+	ListWakeThawsByWakeIDs(ctx context.Context, db DBTX, arg ListWakeThawsByWakeIDsParams) ([]ListWakeThawsByWakeIDsRow, error)
 	ListWarmPoolReconciliationAppIDs(ctx context.Context, db DBTX, nodeID string) ([]string, error)
 	ListWatchingAppConfigGuards(ctx context.Context, db DBTX, rowLimit int32) ([]AppConfigGuard, error)
 	ListWorkerRecoveryApps(ctx context.Context, db DBTX, arg ListWorkerRecoveryAppsParams) ([]pgtype.UUID, error)
@@ -4022,9 +4043,12 @@ type Querier interface {
 	ManagedPostgresCutoverUnreleasedSourceFences(ctx context.Context, db DBTX, cutoverID string) (int64, error)
 	ManagedPostgresDrainPlanHasUnplannedInstances(ctx context.Context, db DBTX, arg ManagedPostgresDrainPlanHasUnplannedInstancesParams) (bool, error)
 	ManagedPostgresDueBindings(ctx context.Context, db DBTX, arg ManagedPostgresDueBindingsParams) ([]ManagedPostgresBinding, error)
+	// ADR-20261025094915: managed PostgreSQL compute overage and cap subjects.
+	ManagedPostgresOverageEnabled(ctx context.Context, db DBTX, subjectID pgtype.UUID) (bool, error)
 	ManagedPostgresPersonalBindingReference(ctx context.Context, db DBTX, arg ManagedPostgresPersonalBindingReferenceParams) (bool, error)
 	ManagedPostgresPersonalDatabaseReference(ctx context.Context, db DBTX, arg ManagedPostgresPersonalDatabaseReferenceParams) (bool, error)
 	ManagedPostgresUsageForSubject(ctx context.Context, db DBTX, arg ManagedPostgresUsageForSubjectParams) (ManagedPostgresUsageForSubjectRow, error)
+	ManagedPostgresUsageSubjects(ctx context.Context, db DBTX, databaseIds []pgtype.UUID) ([]ManagedPostgresUsageSubjectsRow, error)
 	ManagedWorkflowEffectAppScope(ctx context.Context, db DBTX, appID string) (ManagedWorkflowEffectAppScopeRow, error)
 	MarkAppForkRunning(ctx context.Context, db DBTX, arg MarkAppForkRunningParams) (AppFork, error)
 	MarkCheckedRollbackReady(ctx context.Context, db DBTX, targetID pgtype.UUID) error
@@ -4403,6 +4427,9 @@ type Querier interface {
 	ObjectStorageReportCutover(ctx context.Context, db DBTX, arg ObjectStorageReportCutoverParams) (pgtype.Timestamptz, error)
 	ObjectStorageReserveOwner(ctx context.Context, db DBTX, arg ObjectStorageReserveOwnerParams) (ObjectStorageReserveOwnerRow, error)
 	ObjectStorageSubject(ctx context.Context, db DBTX, arg ObjectStorageSubjectParams) (pgtype.UUID, error)
+	// ADR-20261025111015 amendment: the accepted serving timeline ('' before
+	// the first acceptance) and the timeline the database runs on now.
+	ObjectStorageTimelines(ctx context.Context, db DBTX) (ObjectStorageTimelinesRow, error)
 	ObjectTrackedGrantUpsert(ctx context.Context, db DBTX, arg ObjectTrackedGrantUpsertParams) error
 	ObjectTrackedUploadClaim(ctx context.Context, db DBTX, arg ObjectTrackedUploadClaimParams) (ObjectUploadCompletion, error)
 	ObjectTrackedUploadDispatch(ctx context.Context, db DBTX, arg ObjectTrackedUploadDispatchParams) (ObjectUploadCompletion, error)
@@ -5379,6 +5406,11 @@ type Querier interface {
 	ReadPublicRoutingOwner(ctx context.Context, db DBTX, arg ReadPublicRoutingOwnerParams) (bool, error)
 	ReadPublicRoutingRelease(ctx context.Context, db DBTX, arg ReadPublicRoutingReleaseParams) ([]ReadPublicRoutingReleaseRow, error)
 	ReadPublicRoutingRevision(ctx context.Context, db DBTX, arg ReadPublicRoutingRevisionParams) (bool, error)
+	// imaged's hosting smoke verifies a candidate before MarkDeploymentLive, so
+	// the candidate is still snapshotting. The smoke always uses the app's own
+	// host, whatever the candidate's environment, so no scope applies; the smoke
+	// challenge already binds the app and deployment.
+	ReadPublicRoutingSmokeCandidate(ctx context.Context, db DBTX, arg ReadPublicRoutingSmokeCandidateParams) (bool, error)
 	ReadPublicRoutingWeights(ctx context.Context, db DBTX, arg ReadPublicRoutingWeightsParams) ([]ReadPublicRoutingWeightsRow, error)
 	ReadQueueCanary(ctx context.Context, db DBTX, arg ReadQueueCanaryParams) (ReadQueueCanaryRow, error)
 	ReadQueueLeaseReceipt(ctx context.Context, db DBTX, invocationID pgtype.UUID) (InvocationQueueLeaseReceipt, error)
@@ -6296,6 +6328,7 @@ type Querier interface {
 	// Enrollment and policy changes invalidate saved disable-email links, including
 	// while issuance/delivery gates are off. Burns of recovery codes keep the factor.
 	SetMFASecret(ctx context.Context, db DBTX, arg SetMFASecretParams) (int64, error)
+	SetManagedPostgresOverage(ctx context.Context, db DBTX, arg SetManagedPostgresOverageParams) error
 	SetMigrationAdmissionCleaned(ctx context.Context, db DBTX, arg SetMigrationAdmissionCleanedParams) (int64, error)
 	SetMigrationAdmissionCleaning(ctx context.Context, db DBTX, id pgtype.UUID) (int64, error)
 	SetMigrationSourceRetiring(ctx context.Context, db DBTX, leaseToken string) (int64, error)

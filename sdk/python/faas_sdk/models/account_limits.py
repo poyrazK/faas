@@ -24,7 +24,7 @@ class AccountLimits:
     max_concurrency: int
     deployed_apps: int
     preview_apps: int
-    """Maximum live pull-request preview apps, separate from production apps."""
+    """Maximum open PR preview environments, separate from production apps."""
     deploys_per_hour: int
     """Account-wide deployment admissions per fixed one-hour window."""
     developer_apps: int

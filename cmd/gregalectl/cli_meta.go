@@ -290,6 +290,8 @@ var cliCommands = []cliCommand{
 		Short:   "Reconcile the object bucket catalog with each provider after a database restore (ADR 20261025111015)",
 		Subcommands: []cliSub{
 			{Name: "reconcile", Short: "List each backend's Gregale buckets and report catalog disagreements, read-only (exit 4 on findings)", Flags: []cliFlag{{Name: "config", Short: "provider registry JSON"}, {Name: "provider-env", Short: "provider credential env file"}, {Name: "pg-dsn", Short: "PostgreSQL DSN"}, {Name: "db-env", Short: "file containing DATABASE_URL"}, {Name: "json", Short: "emit structured JSON"}}},
+			{Name: "hold", Short: "Turn s3_enabled off directly in the database, without apid, right after a restore", Flags: []cliFlag{{Name: "pg-dsn", Short: "PostgreSQL DSN"}, {Name: "db-env", Short: "file containing DATABASE_URL"}}},
+			{Name: "accept", Short: "Accept the database's PostgreSQL timeline for serving S3 after a restore has been reconciled", Flags: []cliFlag{{Name: "pg-dsn", Short: "PostgreSQL DSN"}, {Name: "db-env", Short: "file containing DATABASE_URL"}, {Name: "by", Short: "who accepts, for the record"}}},
 		},
 	},
 	{
@@ -299,7 +301,7 @@ var cliCommands = []cliCommand{
 		Subcommands: []cliSub{
 			{Name: "init", Short: "Create <domain>.age and <domain>.age.pub", Flags: []cliFlag{{Name: "domain", Short: "seal domain"}, {Name: "dir", Short: "domain identity directory"}, {Name: "force", Short: "coordinated identity replacement"}, {Name: "json", Short: "emit structured JSON"}}},
 			{Name: "verify", Short: "Prove this node's domain identity opens the domain probe", Flags: []cliFlag{{Name: "domain", Short: "seal domain"}, {Name: "dir", Short: "domain identity directory"}, {Name: "publish", Short: "write the probe when the domain has none"}, {Name: "pg-dsn", Short: "PostgreSQL DSN"}, {Name: "db-env", Short: "file containing DATABASE_URL"}, {Name: "metrics-file", Short: "node_exporter textfile output"}, {Name: "recipient-only", Short: "check the staged recipient against the published probe"}, {Name: "json", Short: "emit structured JSON"}}},
-			{Name: "migrate", Short: "Re-seal a domain's stored envelopes", Flags: []cliFlag{{Name: "domain", Short: "seal domain (outbound, runtime, source, build, edge, alerting, storage or control)"}, {Name: "dir", Short: "domain identity directory"}, {Name: "fleet-key", Short: "fleet.age identity"}, {Name: "host-key", Short: "legacy host.age identity"}, {Name: "readers-verified", Short: "every reader holds the domain identity"}, {Name: "pg-dsn", Short: "PostgreSQL DSN"}, {Name: "db-env", Short: "file containing DATABASE_URL"}, {Name: "json", Short: "emit structured JSON"}}},
+			{Name: "migrate", Short: "Re-seal a domain's stored envelopes", Flags: []cliFlag{{Name: "domain", Short: "seal domain (outbound, runtime, source, build, edge, alerting, storage, control or delivery)"}, {Name: "dir", Short: "domain identity directory"}, {Name: "fleet-key", Short: "fleet.age identity"}, {Name: "host-key", Short: "legacy host.age identity"}, {Name: "readers-verified", Short: "every reader holds the domain identity"}, {Name: "pg-dsn", Short: "PostgreSQL DSN"}, {Name: "db-env", Short: "file containing DATABASE_URL"}, {Name: "json", Short: "emit structured JSON"}}},
 		},
 	},
 	{
@@ -760,7 +762,7 @@ var cliCommands = []cliCommand{
 	{
 		Name:    dispatchAudit,
 		DocSlug: "audit",
-		Short:   "Correlate operator intents by trace ID; audit app layers before a base change",
+		Short:   "Correlate operator intents by trace ID; audit app layers before a base change; seal and verify the audit log",
 		Subcommands: []cliSub{{
 			Name:  "trace",
 			Short: "Look up one exact OTel trace ID through the operator API",
@@ -781,6 +783,30 @@ var cliCommands = []cliCommand{
 				{Name: "work-dir", Short: "scratch directory for layer copies and dumps"},
 				{Name: "debugfs", Short: "debugfs binary (e2fsprogs)"},
 				{Name: "libraries", Short: "comma-separated sonames the new base drops"},
+			},
+		}, {
+			// ADR-20261026163015: reads and appends audit_log_anchors directly
+			// from the control plane; the timer runs it every 15 minutes.
+			Name:  auditAnchorSub,
+			Short: "Seal the next window of the audit log into the anchor chain and re-verify recent anchors",
+			Flags: []cliFlag{
+				{Name: "pg-dsn", Short: "PostgreSQL DSN (default: $FAAS_PG_DSN or $DATABASE_URL)"},
+				{Name: "db-env", Short: "systemd env file containing DATABASE_URL (and FAAS_AUDIT_HMAC_KEY)"},
+				{Name: "key-file", Short: "apid's audit HMAC key file"},
+				{Name: "metrics-file", Short: "node_exporter textfile to write the outcome to"},
+				{Name: "lag", Short: "how far behind now a window ends (default 10m)"},
+				{Name: "verify-since", Short: "re-verify anchors whose windows end within this (default 48h; 0 skips)"},
+				{Name: "accept-key-change", Short: "extend a chain sealed under a lost audit HMAC key"},
+			},
+		}, {
+			Name:  auditVerifySub,
+			Short: "Recompute the audit log anchor chain and report tampering",
+			Flags: []cliFlag{
+				{Name: "pg-dsn", Short: "PostgreSQL DSN (default: $FAAS_PG_DSN or $DATABASE_URL)"},
+				{Name: "db-env", Short: "systemd env file containing DATABASE_URL (and FAAS_AUDIT_HMAC_KEY)"},
+				{Name: "key-file", Short: "apid's audit HMAC key file"},
+				{Name: "metrics-file", Short: "node_exporter textfile to write the outcome to"},
+				{Name: "from-seq", Short: "first anchor to verify (default 1)"},
 			},
 		}},
 	},
@@ -1332,7 +1358,7 @@ var cliCommands = []cliCommand{
 		// writer landed.
 		Name:    dispatchDebug,
 		DocSlug: "debug",
-		Short:   "Operator-side smoke harness for the OTel spans writer (debug otel-smoke; ADR-127 PR-D)",
+		Short:   "Operator debugging: the OTel spans writer smoke (otel-smoke) and daemon profiles (pprof)",
 		Subcommands: []cliSub{
 			{
 				Name:  subDebugOtel,
@@ -1343,6 +1369,20 @@ var cliCommands = []cliCommand{
 					{Name: "expected-spans", Short: "expected accepted_spans value from the handler response (default 3)"},
 					{Name: "timeout", Short: "HTTP timeout for the gatewayd-public round-trip (default 10s)"},
 					{Name: "json", Short: "emit structured JSON to stdout (overrides human summary)"},
+				},
+			},
+			{
+				Name:  subDebugPprof,
+				Short: "Capture a Go profile from a platform daemon on this host (root; ADR-20261023200002)",
+				Flags: []cliFlag{
+					{Name: "daemon", Short: "daemon to profile (schedd, apid, vmmd, gatewayd-internal, …)"},
+					{Name: "pid", Short: "the daemon's pid, when two generations run (see --list)"},
+					{Name: "profile", Short: "cpu, trace, heap, allocs, goroutine, threadcreate, block or mutex (default heap)"},
+					{Name: "seconds", Short: "cpu and trace: how long to record (1..60; default 30)"},
+					{Name: "debug", Short: "named profiles: 0 binary, 1 or 2 text (goroutine 2 = full dump)"},
+					{Name: "gc", Short: "heap: run a GC first so the profile shows live memory"},
+					{Name: "o", Short: "output file (default <daemon>-<profile>-<time>.<ext>)"},
+					{Name: "list", Short: "list the daemons serving profiles on this host"},
 				},
 			},
 		},
