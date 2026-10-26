@@ -7047,7 +7047,7 @@ haveApp:
 		exactUnavailableDetail = "the selected release member has no routable target"
 	}
 	if routing, ok := publicRoutingSnapshot(r.Context()); ok && exactDeploymentID == "" {
-		exactDeploymentID, exactDeploymentScope, exactDeploymentTrigger = routing.SelectedDeploymentID, routing.Scope, sched.TriggerGateway
+		exactDeploymentID, exactDeploymentScope, exactDeploymentTrigger = routing.SelectedDeploymentID, routing.admissionScope(), sched.TriggerGateway
 		exactUnavailableTitle, exactUnavailableDetail = "Traffic policy deployment unavailable", "the admitted deployment has no routable target"
 	}
 	if routeProbe {
