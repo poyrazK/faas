@@ -6959,12 +6959,17 @@ func (s *server) accountUsage(w http.ResponseWriter, r *http.Request, acct state
 
 	if s.managedPostgres != nil {
 		if limits, ok := api.ManagedPostgresLimitsFor(acct.Plan); ok && limits.DatabasesMax > 0 {
-			usage, err := s.managedPostgres.UsageSummary(r.Context(), acct.ID, now, managedPostgresUsageCeilings(limits))
+			overage, err := s.managedPostgresOverageOn(r.Context(), acct, acct.ID)
 			if err != nil {
 				managedPostgresProblem(w, err)
 				return
 			}
-			view := managedPostgresUsageView(usage, limits, s.managedPostgresCapMode)
+			usage, err := s.managedPostgres.UsageSummary(r.Context(), acct.ID, now, managedPostgresUsageCeilings(limits, overage))
+			if err != nil {
+				managedPostgresProblem(w, err)
+				return
+			}
+			view := managedPostgresUsageView(usage, limits, s.managedPostgresCapMode, overage)
 			out.ManagedPostgres = &view
 		}
 	}

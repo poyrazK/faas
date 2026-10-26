@@ -3911,6 +3911,27 @@
       ]
     },
     {
+      "id": "postgres-overage",
+      "name": "Postgres compute overage",
+      "category": "data",
+      "description": "Let a paid account's managed PostgreSQL databases keep running past the plan's monthly compute allowance, up to twice it, before they are suspended.",
+      "maturity": "internal",
+      "plans": [
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/managed-postgres",
+      "acceptance_test": "pkg/apid/apidserver/handlers_managed_postgres_overage_test.go::TestManagedPostgresOverageRoutes",
+      "parent": "managed-postgres",
+      "routes": [
+        "/v1/postgres/overage"
+      ],
+      "cli": [
+        "postgres overage"
+      ]
+    },
+    {
       "id": "postgres-restore",
       "name": "Postgres point-in-time restore",
       "category": "data",

@@ -276,7 +276,9 @@ func (b *MemoryBackend) Admit(ctx context.Context, spec AdmissionSpec) (Decision
 		return Decision{RetryAfter: retry, Reason: reason, RequestTimeout: ttl}, nil
 	}
 	if spec.AITraceID != "" {
-		if reason := aiTraceRejection(state.traceState(spec.AITraceID, today, now), spec.AITraceLimits, reserve); reason != "" {
+		trace := state.traceState(spec.AITraceID, today, now)
+		trace.named = spec.AITraceNamed
+		if reason := aiTraceRejection(trace, spec.AITraceLimits, reserve); reason != "" {
 			return Decision{Reason: reason, RequestTimeout: ttl}, nil
 		}
 	}

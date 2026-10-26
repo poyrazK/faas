@@ -101,6 +101,18 @@ func TestTraceMatchBreakdown(t *testing.T) {
 			Request: api.DebugTelemetryRequestItem{LatencyMS: 3700, ColdBoot: true, WakeID: "w8"},
 			Wake:    &api.AccountTraceWake{WakeID: "w8", Method: "cold_boot", PlannedMethod: "restore", RestoreFallbackReason: "after_restore_failed", ReadyInMS: 3612},
 		}, "woke by cold_boot in 3612 ms (wake w8) · the planned restore fell back to a cold boot because the app's after-restore hook failed"},
+		{"thawed a frozen instance", api.AccountTraceMatch{
+			Request: api.DebugTelemetryRequestItem{LatencyMS: 300, ColdBoot: true, WakeID: "w9", Guest: guest(150)},
+			Wake:    &api.AccountTraceWake{WakeID: "w9", Thawed: true, ThawMS: 110},
+		}, "resumed a frozen instance in 110 ms (wake w9) · app ≈150 ms · other ≈40 ms"},
+		{"thaw without a duration", api.AccountTraceMatch{
+			Request: api.DebugTelemetryRequestItem{LatencyMS: 300, ColdBoot: true, WakeID: "w10"},
+			Wake:    &api.AccountTraceWake{WakeID: "w10", Thawed: true},
+		}, "resumed a frozen instance (wake w10)"},
+		{"a cold request that started after its wake booted", api.AccountTraceMatch{
+			Request: api.DebugTelemetryRequestItem{LatencyMS: 300, ColdBoot: true, WakeID: "w11"},
+			Wake:    &api.AccountTraceWake{WakeID: "w11"},
+		}, "found the app parked (wake w11)"},
 		{"wake without a method", api.AccountTraceMatch{
 			Request: api.DebugTelemetryRequestItem{LatencyMS: 700, ColdBoot: true, WakeID: "w2"},
 			Wake:    &api.AccountTraceWake{WakeID: "w2", ReadyInMS: 650},

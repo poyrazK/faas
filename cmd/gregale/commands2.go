@@ -4636,6 +4636,13 @@ func cmdWake(args []string) int {
 	if strings.TrimSpace(response.WakeID) == "" {
 		return printErr("Wake failed", errors.New("server accepted the wake without returning a wake_id"))
 	}
+	// A worker pool's wake only reconciles it to its desired replicas; with
+	// min 0 and no queued work that is none, so --wait would wait out its
+	// timeout for an instance schedd never creates (Hunt 14 H14-75).
+	idleWorker := idleScaleToZeroWorker(context.Background(), client, slug)
+	if idleWorker != "" && *wait {
+		return printErr("Wake did not start a replica", errors.New(idleWorker))
+	}
 	status := "waking"
 	instanceID := ""
 	if *wait {
@@ -4662,7 +4669,24 @@ func cmdWake(args []string) int {
 		return 0
 	}
 	PrintOK(osStdout, "Wake queued (%s)", response.WakeID)
+	if idleWorker != "" {
+		PrintWarn(osStderr, "%s", idleWorker)
+	}
 	return 0
+}
+
+// idleScaleToZeroWorker explains, for a worker pool whose minimum is 0, that a
+// wake starts no replica until the pool has work. It is empty for every other
+// app, and when the app cannot be read.
+func idleScaleToZeroWorker(ctx context.Context, client *Client, slug string) string {
+	app, err := client.GetApp(ctx, slug)
+	if err != nil || (inspectExecutionMode(app) != api.ExecutionModeWorker && app.WorkloadClass != "worker") {
+		return ""
+	}
+	if lo, _ := workerReplicaBounds(app); lo != 0 {
+		return ""
+	}
+	return fmt.Sprintf("%s is a worker pool with min 0: it starts replicas when it has work, not on wake. To keep one running, run `gregale workers scale %s --min 1`.", slug, slug)
 }
 
 func waitForAppWake(ctx context.Context, client *Client, slug, wakeID string, timeout, pollInterval time.Duration) (api.InstanceResponse, error) {

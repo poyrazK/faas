@@ -7827,6 +7827,45 @@ paths:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
 
+  /v1/postgres/overage:
+    get:
+      operationId: getManagedPostgresOverage
+      summary: Show whether compute overage is on
+      description: With overage on, a paid account's managed PostgreSQL databases keep running past the plan's monthly compute allowance until the ceiling, twice the allowance, and are then suspended. Off is the default; the databases are then suspended at the allowance. A cap never deletes a database (ADR-20261025094915).
+      tags: [managed_postgres]
+      responses:
+        '200':
+          description: The account's overage setting and compute ceiling
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ManagedPostgresOverage' }
+        default:
+          description: Authentication, plan or capability error
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+    put:
+      operationId: setManagedPostgresOverage
+      summary: Turn compute overage on or off
+      description: Paid plans only; Free stops at its allowance and answers 403 managed_postgres_not_in_plan. Turning overage off while past the allowance suspends the databases at the next cap sweep. Compute above the allowance is not billed until managed PostgreSQL has invoicing.
+      tags: [managed_postgres]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ManagedPostgresOverageRequest' }
+      responses:
+        '200':
+          description: The new overage setting and compute ceiling
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ManagedPostgresOverage' }
+        default:
+          description: Validation, authentication, plan or capability error
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
   /v1/postgres/databases:
     get:
       operationId: listManagedPostgresDatabases
@@ -82009,6 +82048,32 @@ components:
           description: "healthy; warning at 80% of the allowance; overage past the allowance while the account allows overage; suspended once the ceiling is reached and the platform enforces caps. Suspended databases keep their data and resume next month or after an upgrade."
           type: string
           enum: [healthy, warning, overage, suspended]
+        overage_enabled:
+          description: True while the account runs its databases past the allowance, up to the ceiling.
+          type: boolean
+    ManagedPostgresOverage:
+      description: An account's managed PostgreSQL compute overage setting (ADR-20261025094915).
+      type: object
+      required: [enabled, compute_allowance_unit_seconds, compute_ceiling_unit_seconds]
+      properties:
+        enabled: { type: boolean }
+        compute_allowance_unit_seconds:
+          description: The plan's monthly compute allowance in compute-unit seconds.
+          type: integer
+          format: int64
+          minimum: 0
+        compute_ceiling_unit_seconds:
+          description: Where running databases are suspended before the operator's usage cap; twice the allowance with overage on.
+          type: integer
+          format: int64
+          minimum: 0
+    ManagedPostgresOverageRequest:
+      description: Turn an account's managed PostgreSQL compute overage on or off (ADR-20261025094915).
+      type: object
+      required: [enabled]
+      additionalProperties: false
+      properties:
+        enabled: { type: boolean }
     ManagedPostgresUsageLineItem:
       description: Normalized operator-only managed PostgreSQL ledger line.
       type: object
@@ -106082,7 +106147,7 @@ components:
           $ref: '#/components/schemas/PlanManagedProvision'
         not_provisioned_reason:
           type: string
-          enum: [unavailable, plan, quota, unsupported, configured, not_referenced]
+          enum: [unavailable, plan, quota, unsupported, configured, not_referenced, permission]
           description: "Why apply does not provide a Compose postgres service (ADR-20261025111824). Omitted for other datastores and when provision is set."
 
     PlanManagedProvision:
@@ -113863,6 +113928,8 @@ components:
         ready_in_ms: { type: integer, format: int32, minimum: 0, description: "Milliseconds from boot start to ready; omitted until the wake completed." }
         planned_method: { type: string, description: "What schedd planned for this wake when it differs from method, such as restore for a restore that fell back to a cold boot." }
         restore_fallback_reason: { type: string, enum: [after_restore_failed], description: "Closed reason for a restore that fell back to a cold boot, when one is reported." }
+        thawed: { type: boolean, description: "True when the request resumed this wake's frozen instance instead of waiting for its boot. A thaw keeps the instance's original wake ID; method and ready_in_ms, which describe the original boot, are then omitted." }
+        thaw_ms: { type: integer, format: int32, minimum: 0, description: "Milliseconds the thaw took from the wake request to the answer, when thawed." }
 
     AccountTraceInvocation:
       type: object

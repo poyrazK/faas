@@ -650,7 +650,7 @@ func (p *InternalReverseProxy) serveHTTP(w http.ResponseWriter, r *http.Request)
 		}
 		return
 	}
-	longLived := isLongLivedResponse(resp.StatusCode, resp.Header)
+	longLived := isLongLivedResponse(resp.StatusCode, resp.Header) || isUnverifiedPeerStream(r, resp)
 	publicBudget := r.Context()
 	if longLived {
 		detachBudget()

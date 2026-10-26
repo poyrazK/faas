@@ -30,6 +30,11 @@ class AccountTraceWake:
     to a cold boot."""
     restore_fallback_reason: AccountTraceWakeRestoreFallbackReason | Unset = UNSET
     """Closed reason for a restore that fell back to a cold boot, when one is reported."""
+    thawed: bool | Unset = UNSET
+    """True when the request resumed this wake's frozen instance instead of waiting for its boot. A thaw keeps the
+    instance's original wake ID; method and ready_in_ms, which describe the original boot, are then omitted."""
+    thaw_ms: int | Unset = UNSET
+    """Milliseconds the thaw took from the wake request to the answer, when thawed."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -44,6 +49,10 @@ class AccountTraceWake:
         restore_fallback_reason: str | Unset = UNSET
         if not isinstance(self.restore_fallback_reason, Unset):
             restore_fallback_reason = self.restore_fallback_reason
+
+        thawed = self.thawed
+
+        thaw_ms = self.thaw_ms
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
@@ -60,6 +69,10 @@ class AccountTraceWake:
             field_dict["planned_method"] = planned_method
         if restore_fallback_reason is not UNSET:
             field_dict["restore_fallback_reason"] = restore_fallback_reason
+        if thawed is not UNSET:
+            field_dict["thawed"] = thawed
+        if thaw_ms is not UNSET:
+            field_dict["thaw_ms"] = thaw_ms
 
         return field_dict
 
@@ -81,12 +94,18 @@ class AccountTraceWake:
         else:
             restore_fallback_reason = check_account_trace_wake_restore_fallback_reason(_restore_fallback_reason)
 
+        thawed = d.pop("thawed", UNSET)
+
+        thaw_ms = d.pop("thaw_ms", UNSET)
+
         account_trace_wake = cls(
             wake_id=wake_id,
             method=method,
             ready_in_ms=ready_in_ms,
             planned_method=planned_method,
             restore_fallback_reason=restore_fallback_reason,
+            thawed=thawed,
+            thaw_ms=thaw_ms,
         )
 
         account_trace_wake.additional_properties = d

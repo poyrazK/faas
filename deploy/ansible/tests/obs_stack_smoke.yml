@@ -1,0 +1,91 @@
+---
+# Converge the control plane's observability stack on this host, in
+# production mode, for scripts/ci/obs_stack_smoke.sh (ADR-20261023124955).
+# Only for a disposable host: it writes /etc/faas, the faas slices and system
+# users. The script prepares the fleet CA, a local TLS S3 endpoint and the
+# secret files production asserts require; everything else is role defaults.
+#
+#   ansible-playbook -i localhost, -c local deploy/ansible/tests/obs_stack_smoke.yml \
+#     -e faas_obs_loki_address=<this host's private address> -e smoke_dir=<dir>
+- name: Converge the observability stack as a control plane
+  hosts: localhost
+  become: true
+  vars:
+    faas_box_role: control-plane
+    faas_node_name: obs-smoke
+    faas_platform_logs_pki_issuer_host: localhost
+    faas_obs_logs_enabled: true
+    loki_storage_backend: s3
+    loki_s3_endpoint: 127.0.0.1:19000
+    loki_s3_bucket: loki-smoke
+    loki_s3_ca_file: "{{ smoke_dir }}/s3/ca.crt"
+    am_slack_webhook_url_file: /etc/faas/secrets/alertmanager/slack-url
+    am_heartbeat_url_file: /etc/faas/secrets/alertmanager/heartbeat-url
+    am_heartbeat_interval: 1m
+  pre_tasks:
+    - name: smoke — require the prepared fleet CA and S3 endpoint
+      ansible.builtin.stat:
+        path: "{{ item }}"
+      register: smoke_inputs
+      loop:
+        - /etc/faas/tls/ca/ca.crt
+        - "{{ loki_s3_ca_file }}"
+        - "{{ loki_s3_credentials_file | default('/etc/faas/secrets/loki/s3.env') }}"
+      failed_when: not smoke_inputs.stat.exists
+
+    # The Alertmanager and Grafana roles assert their secret files are owned
+    # by their service users before they start; production provisions these
+    # by hand. The users are created here first with the roles' own settings.
+    - name: smoke — service users that own secret files
+      ansible.builtin.user:
+        name: "{{ item }}"
+        system: true
+        shell: /usr/sbin/nologin
+        create_home: false
+      loop: [alertmanager, grafana]
+
+    - name: smoke — secret directories (the roles' own owners and modes)
+      ansible.builtin.file:
+        path: "{{ item.path }}"
+        state: directory
+        owner: "{{ item.owner }}"
+        group: "{{ item.owner }}"
+        mode: "{{ item.mode }}"
+      loop:
+        - { path: /etc/faas/secrets/alertmanager, owner: root, mode: "0755" }
+        - { path: /etc/grafana, owner: grafana, mode: "0750" }
+        - { path: /etc/grafana/secrets, owner: grafana, mode: "0750" }
+
+    - name: smoke — Alertmanager receivers point at the local sink
+      ansible.builtin.copy:
+        dest: "{{ item.path }}"
+        content: "{{ item.url }}\n"
+        owner: alertmanager
+        group: alertmanager
+        mode: "0400"
+      loop:
+        - { path: "{{ am_slack_webhook_url_file }}", url: "http://127.0.0.1:18099/slack" }
+        - { path: "{{ am_heartbeat_url_file }}", url: "http://127.0.0.1:18099/heartbeat" }
+      no_log: true
+
+    # Random per run; the script reads it back with sudo for the API checks.
+    - name: smoke — Grafana admin password
+      ansible.builtin.copy:
+        dest: /etc/grafana/secrets/admin_password
+        content: "{{ lookup('ansible.builtin.password', '/dev/null', length=32, chars=['ascii_letters', 'digits']) }}"
+        force: false
+        owner: grafana
+        group: grafana
+        mode: "0400"
+      no_log: true
+
+  roles:
+    - systemd_slices
+    - node_exporter
+    - platform_logs_pki
+    - prometheus
+    - alertmanager
+    - grafana
+    - loki
+    - alloy
+    - cgroup_metrics
