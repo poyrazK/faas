@@ -152,7 +152,7 @@ func scanSourceTarballSecrets(sourcePath string, limits api.Limits) *api.Problem
 	defer func() { _ = os.RemoveAll(scanDir) }()
 
 	// Only credential-format findings refuse the source; heuristic ones are
-	// reported by the built image's per-deployment scan (ADR-20261026120000).
+	// reported by the built image's per-deployment scan (ADR-20261026152731).
 	findings, err := scanExtractedTreeSecrets(scanDir)
 	if blocking := secretscan.Blocking(findings); len(blocking) > 0 {
 		return newSecretScanRejectionProblem(blocking)

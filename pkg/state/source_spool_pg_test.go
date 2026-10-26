@@ -1,6 +1,6 @@
 //go:build !no_pg
 
-// PostgreSQL's source spool retention matches MemStore (ADR-20261026120000).
+// PostgreSQL's source spool retention matches MemStore (ADR-20261026152731).
 package state_test
 
 import (

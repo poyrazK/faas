@@ -5,7 +5,7 @@
 // CLI's doctor preflight so both sides agree on what is refused.
 //
 // Only database-store files under a top-level data/ or db/ directory are
-// refused (ADR-20261026120000). Source that merely lives in those
+// refused (ADR-20261026152731). Source that merely lives in those
 // directories, such as db/migrations/*.sql, db/schema.ts or data/seed.json,
 // is ordinary stateless code.
 package statelessshape

@@ -320,7 +320,7 @@ func TestRunDoctorChecks_StatelessOnlyDir(t *testing.T) {
 	}
 }
 
-// TestRunDoctorChecks_StatelessAllowsMigrations pins ADR-20261026120000:
+// TestRunDoctorChecks_StatelessAllowsMigrations pins ADR-20261026152731:
 // source in data/ or db/ (migrations, schemas, seed files) and an empty
 // state directory are ordinary stateless code.
 func TestRunDoctorChecks_StatelessAllowsMigrations(t *testing.T) {

@@ -891,7 +891,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 				}
 			}()
 		}
-		// ADR-20261026120000: accepted source archives and build logs no
+		// ADR-20261026152731: accepted source archives and build logs no
 		// longer stay on the control plane for good.
 		if spoolStore, ok := srv.store.(state.SourceSpoolStore); ok {
 			go sourcespool.Sweeper{Root: spoolRoot(), Layout: sourcespool.BuildSpool, Store: spoolStore,

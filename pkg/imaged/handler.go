@@ -2713,7 +2713,7 @@ func (h *Handler) buildImageLayer(ctx context.Context, app state.App, dep state.
 		dep.ImageDigest, scannedAt, h.log)
 	// Every finding is recorded for `gregale deployment ID
 	// --show-secret-scan`; only credential formats fail the deploy
-	// (ADR-20261026120000). Heuristic findings stay advisory.
+	// (ADR-20261026152731). Heuristic findings stay advisory.
 	if len(secretscan.Blocking(allFindings)) == 0 {
 		h.log.Info("imaged: layer secret scan advisory findings",
 			"deployment", dep.ID, "app", app.Slug, "findings", len(allFindings))

@@ -531,7 +531,7 @@ func enqueueWithSourceStorage(ctx context.Context, store Store, notif Notifier, 
 		// An explicit Dockerfile selection (a gregale.yaml build: section, a
 		// Compose build) makes a Dockerfile build whatever the deployment's
 		// provenance kind, so a GitHub or source-ref deploy honours it too
-		// (ADR-20261026120000).
+		// (ADR-20261026152731).
 		dockerfileBuild := p.Kind == state.DeploymentKindDockerfile || p.DockerfilePath != ""
 		if profileErr == nil || dockerfileBuild {
 			// The explicit deployment kind is authoritative. A source tree can

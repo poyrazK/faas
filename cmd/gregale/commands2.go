@@ -1304,7 +1304,7 @@ func materializeCommittedGitSource(prov zeroConfigProvenance, selectedSourceDir,
 		return "", "", nil, err
 	}
 	// Symlinks, submodules and Git LFS files become the bytes they stand
-	// for before anything reads the archive (ADR-20261026120000).
+	// for before anything reads the archive (ADR-20261026152731).
 	if prefix = path.Clean(filepath.ToSlash(prefix)); prefix == "." {
 		prefix = ""
 	}

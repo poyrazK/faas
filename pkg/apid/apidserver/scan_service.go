@@ -975,7 +975,7 @@ func (s *server) applyBuildsForAddedChangedOrdered(
 			continue
 		}
 		// Each workload gets the accept-time stateless check a single-app
-		// deploy gets (ADR-20261026120000). Presence of the Dockerfile is
+		// deploy gets (ADR-20261026152731). Presence of the Dockerfile is
 		// the builder's call here, so only its contents are checked.
 		if prob := scanForStatefulShapeWithDockerfileAtRoot(staged, false, sourceApp.RootDir, app.Manifest.BuildDockerfile); prob != nil {
 			_ = os.Remove(staged)
@@ -1577,7 +1577,7 @@ func (s *server) scanService(
 	// excluded/build/VCS directories too because a direct tarball upload
 	// must not be able to hide a secret by choosing a directory name.
 	// Only credential-format findings refuse the upload; heuristic ones
-	// are advisory (ADR-20261026120000). A refusal takes precedence over a
+	// are advisory (ADR-20261026152731). A refusal takes precedence over a
 	// walk error; a walk error otherwise fails closed with a 500.
 	secretFindings, ssErr := scanExtractedTreeSecrets(req.ScanDir)
 	if blocking := secretscan.Blocking(secretFindings); len(blocking) > 0 {

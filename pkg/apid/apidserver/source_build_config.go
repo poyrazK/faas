@@ -9,7 +9,7 @@ import (
 )
 
 // sourceDockerfileBuild is a gregale.yaml build: section resolved against the
-// uploaded source (ADR-20261026120000): the Dockerfile it selects, relative
+// uploaded source (ADR-20261026152731): the Dockerfile it selects, relative
 // to the source root, and the build arguments, target and secrets.
 type sourceDockerfileBuild struct {
 	path    string

@@ -439,7 +439,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		}
 		go builderdpkg.SourceGCSweepLoop(runCtx, sourceStorage, store, sourceGCInterval, sourceMaxAge, log)
 	}
-	// ADR-20261026120000: materialized source archives and build logs in the
+	// ADR-20261026152731: materialized source archives and build logs in the
 	// local spool. On a single box this is also apid's spool; both sweepers
 	// keep whatever an in-flight deployment names, so running both is safe.
 	if cfg.SourceSpoolDir != "" {

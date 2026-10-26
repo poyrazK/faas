@@ -9,7 +9,7 @@ import (
 
 // SourceSpoolStore lists the build-spool files that a deployment still in
 // flight may read (its source archive) or append to (its build log). The
-// spool sweeper keeps them whatever their age (ADR-20261026120000).
+// spool sweeper keeps them whatever their age (ADR-20261026152731).
 type SourceSpoolStore interface {
 	ListInFlightDeploymentSpoolPaths(ctx context.Context) ([]string, error)
 }

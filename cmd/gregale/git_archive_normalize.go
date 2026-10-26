@@ -18,7 +18,7 @@ import (
 
 // `git archive` reproduces a commit faithfully, but three of its outputs used
 // to make the default committed-HEAD deploy fail or ship the wrong bytes
-// (ADR-20261026120000):
+// (ADR-20261026152731):
 //
 //   - a committed symlink became a symlink entry, which the packer and apid
 //     refuse, so the deploy failed with "unsupported type 50";

@@ -262,7 +262,7 @@ func stageFixtureFile(t *testing.T, rootDir, subpath string, body []byte) (strin
 
 // --- tests ------------------------------------------------------------------
 
-// TestEnqueueBuild_RefusesStatefulSource pins ADR-20261026120000: a push
+// TestEnqueueBuild_RefusesStatefulSource pins ADR-20261026152731: a push
 // gets the same stateless check as a CLI upload, before any deployment row.
 func TestEnqueueBuild_RefusesStatefulSource(t *testing.T) {
 	store := &bridgeStubStore{app: state.App{ID: "app-1", AccountID: "acct-1", Status: state.AppActive}}

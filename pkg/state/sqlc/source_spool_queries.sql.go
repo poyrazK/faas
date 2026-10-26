@@ -21,7 +21,7 @@ type ListInFlightDeploymentSpoolPathsRow struct {
 	LogPath    string
 }
 
-// Source spool retention (ADR-20261026120000). A deployment that can still
+// Source spool retention (ADR-20261026152731). A deployment that can still
 // build or image reads its source archive from the build spool and appends
 // to its build log there. The spool sweeper never removes either while the
 // deployment is in one of these states, whatever the file's age.

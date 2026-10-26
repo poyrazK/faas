@@ -1,7 +1,7 @@
 //go:build metal
 
 // dockerfile_healthcheck_metal_test.go — qualification for
-// ADR-20261024100000 on a source-built image (ADR-20261026120000): a
+// ADR-20261024100000 on a source-built image (ADR-20261026152731): a
 // Dockerfile's command HEALTHCHECK gates readiness. Before, it was recorded
 // but ignored for source builds; the native lane was still pending.
 //

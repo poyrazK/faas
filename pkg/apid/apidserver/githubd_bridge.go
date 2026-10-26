@@ -527,7 +527,7 @@ func (g *githubdBridge) newDeploymentActivity(ctx context.Context, acct state.Ac
 
 // bridgeSourcePolicy gives a push the accept-time source policy a CLI upload
 // gets. The GitHub path used to skip both scans, so a repository refused by
-// `gregale deploy` still deployed on push (ADR-20261026120000). A Compose
+// `gregale deploy` still deployed on push (ADR-20261026152731). A Compose
 // image service builds nothing from the source and is skipped. A scan that
 // could not run (a 5xx problem) is Unavailable so githubd's delivery worker
 // retries it; a refused source is InvalidArgument.
@@ -554,7 +554,7 @@ func bridgeSourcePolicy(sourcePath string, app state.App, plan api.Plan) error {
 
 // bridgeDockerfileBuild picks a push's Dockerfile build: a Compose build
 // recorded on a project app, or a gregale.yaml build: section
-// (ADR-20261026120000). Declaring both is refused rather than guessed.
+// (ADR-20261026152731). Declaring both is refused rather than guessed.
 func bridgeDockerfileBuild(sourcePath string, app state.App, manifest *gregalemanifest.Manifest) (string, *api.DockerfileBuildOptions, error) {
 	if app.Manifest.ProjectImage != "" {
 		return "", app.Manifest.DockerfileBuild, nil
