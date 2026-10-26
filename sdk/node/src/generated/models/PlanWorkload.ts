@@ -59,6 +59,10 @@ export type PlanWorkload = {
    */
   build_args?: Array<string>;
   /**
+   * The cmd/<name> main package this service builds from the root of a Go module with several commands (ADR-20261025134512).
+   */
+  go_command?: string;
+  /**
    * Compose secrets written to /run/secrets (ADR-20261023090000).
    */
   secret_files?: Array<SecretFile>;

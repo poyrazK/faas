@@ -53,6 +53,7 @@ func mergeByKey(seeds []workloadSeed) []Workload {
 		source              string // highest-tier seed's source
 		dockerfile          string // highest-tier seed's dockerfile
 		dockerfileBuild     *api.DockerfileBuildOptions
+		goCommand           string
 		image               string // highest-tier seed's prebuilt image
 		healthcheck         *api.ComposeHealthcheck
 		imageProcess        *api.ComposeProcess
@@ -146,6 +147,9 @@ func mergeByKey(seeds []workloadSeed) []Workload {
 		}
 		if b.dockerfileBuild == nil && s.dockerfileBuild != nil {
 			b.dockerfileBuild = s.dockerfileBuild.Clone()
+		}
+		if b.goCommand == "" {
+			b.goCommand = s.goCommand
 		}
 		if b.secretFiles == nil && s.secretFiles != nil {
 			b.secretFiles = api.CloneSecretFiles(s.secretFiles)
@@ -257,6 +261,7 @@ func mergeByKey(seeds []workloadSeed) []Workload {
 			RootDir:             b.rootDir,
 			Dockerfile:          b.dockerfile,
 			DockerfileBuild:     b.dockerfileBuild.Clone(),
+			GoCommand:           goCommandForBuild(b.goCommand, b.dockerfile, b.image),
 			Image:               b.image,
 			Command:             b.command,
 			CommandShell:        b.commandShell,
