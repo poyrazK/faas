@@ -10611,8 +10611,9 @@ type EdgeRuleStatsResponse struct {
 // the rule has been deleted. Detections (outcome detected, warned or
 // blocked; ADR-831 amendment 5) also carry the CRS rule IDs that scored,
 // their attack categories and the anomaly score. Challenge outcomes
-// (challenged, rejected, solved or failed; amendment 7 follow-up) carry the
-// request fields only.
+// (challenged, rejected, solved or failed; amendment 7 follow-up) and
+// penalty boxes (boxed; ADR-20261022105846 amendment 2) carry the request
+// fields only.
 type EdgeRuleEventResponse struct {
 	ID         string    `json:"id"`
 	RuleID     string    `json:"rule_id"`

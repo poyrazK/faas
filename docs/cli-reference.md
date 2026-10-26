@@ -11289,7 +11289,7 @@ Show sampled requests that rules matched, newest first
 | `--app <slug>` | app slug | required |
 | `--rule <ID>` | only this rule id |  |
 | `--request-id <ID>` | only this request, e.g. the reference a visitor without JavaScript saw on the challenge page |  |
-| `--outcome <OUTCOME>` | outcome filter; detected, warned and blocked are kind=waf detections; challenged, rejected, solved and failed are kind=challenge outcomes | one of `matched` · `logged` · `detected` · `warned` · `blocked` · `challenged` · `rejected` · `solved` · `failed` |
+| `--outcome <OUTCOME>` | outcome filter; detected, warned and blocked are kind=waf detections; challenged, rejected, solved and failed are kind=challenge outcomes; boxed is a client put in a penalty box | one of `matched` · `logged` · `detected` · `warned` · `blocked` · `challenged` · `rejected` · `solved` · `failed` · `boxed` |
 | `--since <DURATION>` | how far back, e.g. 1h, 24h, 7d (clamped to the plan window) |  |
 | `--limit <N>` | events per page (1..200) |  |
 | `--cursor <CURSOR>` | continue from a previous page&#39;s next cursor |  |
