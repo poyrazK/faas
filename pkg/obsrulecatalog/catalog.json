@@ -4,7 +4,7 @@
   "sets": [
     {
       "id": "gregale-core-v1",
-      "revision": "2e4a168d0c191e2b2da578d8ae5974f738609ea7dac87c6d042633c9fb815f89",
+      "revision": "10146f2633f5bc2b5e5ce3e17fd4d9d94bfae41c705a1aaaa37fe07e8467a1d0",
       "files": [
         "faas.rules.yml"
       ],
@@ -3806,6 +3806,19 @@
           }
         },
         {
+          "id": "ad3bbdef0e3ecb3698f623c30e1ecbd268d731c20f7886bd9e98f19ae519f22f",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_quiet_pause_billing",
+          "rule_name": "FaasQuietPauseUnbilledExceedsMeasured",
+          "definition": {
+            "expression_hash": "06bcd4086dc0446a1afa2c2e6124c3515fc6538a416a3bca991c33c26fd75f7e",
+            "labels_hash": "01d9c7fcd05a6fc8297b249442f23e318554c5ab472fe2ea652addd6347215b9",
+            "for_seconds": 1800,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "53189ab54b8a17257a8c5c2ec9cef7aa5f58c24642c5f4273ad123df2f4bef12"
+          }
+        },
+        {
           "id": "ad47bca5bed34cef63fe1f39d7430f45ea9b64bb4359be61f31785d9962a8066",
           "file_name": "faas.rules.yml",
           "group_name": "faas_spec12_operator_signals",
@@ -4911,6 +4924,19 @@
           }
         },
         {
+          "id": "e1b5c6adf94e113398c9f9788b00019a76d88f6e1d24efed477dac793e5f8208",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_slo",
+          "rule_name": "FaasPreviewJanitorFailing",
+          "definition": {
+            "expression_hash": "06dbdc457cfdeaa5a2beccc019c3b57ec36f51928ffb40fc7174f416a1b71839",
+            "labels_hash": "3e8f1abf189ddefe7476a7fb57ca855b26ea621af5929b196bc849c9138dfbf7",
+            "for_seconds": 900,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "e79a63acdb12e49101438fa400a639682899c18e9037c9091ca603ed59588587"
+          }
+        },
+        {
           "id": "e1b7cf3814214e0fb4d9c3e2126bc211af128e0d203c00574635c090d37ac107",
           "file_name": "faas.rules.yml",
           "group_name": "faas_billing",
@@ -5694,7 +5720,7 @@
     },
     {
       "id": "gregale-full-v1",
-      "revision": "9fbb6927c4c542efe2295571048325c835e76b64fd2b9764fdf46f0d6b1950e5",
+      "revision": "833149daf926159260de406498201da5eb4addbb2cb1569a7b47696419545c39",
       "files": [
         "bridge.rules.yml",
         "data_placement.yaml",
@@ -9682,6 +9708,19 @@
           }
         },
         {
+          "id": "ad3bbdef0e3ecb3698f623c30e1ecbd268d731c20f7886bd9e98f19ae519f22f",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_quiet_pause_billing",
+          "rule_name": "FaasQuietPauseUnbilledExceedsMeasured",
+          "definition": {
+            "expression_hash": "06bcd4086dc0446a1afa2c2e6124c3515fc6538a416a3bca991c33c26fd75f7e",
+            "labels_hash": "01d9c7fcd05a6fc8297b249442f23e318554c5ab472fe2ea652addd6347215b9",
+            "for_seconds": 1800,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "53189ab54b8a17257a8c5c2ec9cef7aa5f58c24642c5f4273ad123df2f4bef12"
+          }
+        },
+        {
           "id": "ad47bca5bed34cef63fe1f39d7430f45ea9b64bb4359be61f31785d9962a8066",
           "file_name": "faas.rules.yml",
           "group_name": "faas_spec12_operator_signals",
@@ -10836,6 +10875,19 @@
             "for_seconds": 900,
             "keep_firing_for_seconds": 0,
             "fingerprint": "f80ac278a66fa1a1cb14bc3cc6218f6de22d31044fa9b43b6de53990ab178133"
+          }
+        },
+        {
+          "id": "e1b5c6adf94e113398c9f9788b00019a76d88f6e1d24efed477dac793e5f8208",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_slo",
+          "rule_name": "FaasPreviewJanitorFailing",
+          "definition": {
+            "expression_hash": "06dbdc457cfdeaa5a2beccc019c3b57ec36f51928ffb40fc7174f416a1b71839",
+            "labels_hash": "3e8f1abf189ddefe7476a7fb57ca855b26ea621af5929b196bc849c9138dfbf7",
+            "for_seconds": 900,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "e79a63acdb12e49101438fa400a639682899c18e9037c9091ca603ed59588587"
           }
         },
         {
