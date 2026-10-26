@@ -4201,6 +4201,18 @@ func ErrJobQuota(plan Plan, quotaName string, limit, observed int) *Problem {
 		WithDocs(docsBase + "/plans#jobs")
 }
 
+// ValidateJobRAMMB refuses a job or image run whose memory cannot boot a
+// guest. Zero means the default and is resolved before this check.
+func ValidateJobRAMMB(ramMB int) *Problem {
+	if ramMB >= JobMinRAMMB {
+		return nil
+	}
+	return NewProblem(http.StatusBadRequest, CodeValidation, "Invalid ram_mb",
+		fmt.Sprintf("ram_mb must be at least %d MB; requested %d MB.", JobMinRAMMB, ramMB)).
+		WithLimit(int64(JobMinRAMMB), int64(ramMB)).
+		WithDocs(docsBase + "/plans#jobs")
+}
+
 // ErrPlanWorkflowsNotAllowed is returned by apid workflow endpoints
 // when the customer's plan has WorkflowsAllowed == false (Free today).
 func ErrPlanWorkflowsNotAllowed(p Plan) *Problem {

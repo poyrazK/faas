@@ -2466,3 +2466,6 @@ func DockerConfigRegistryAuth(ctx context.Context, configPath, image string, hel
 var RenderRouteMonitorReport = renderRouteMonitorReport
 
 var PreviewCompanionsFromManifest = previewCompanionsFromManifest
+
+// FormatStageDuration is the live ticker's stage duration cell.
+var FormatStageDuration = formatStageDuration

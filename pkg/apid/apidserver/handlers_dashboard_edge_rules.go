@@ -468,6 +468,19 @@ func (s *server) dashboardDeleteEdgeRule(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	slug, id := r.PathValue("slug"), r.PathValue("id")
+	// The dashboard gate authorized the caller for {slug} only; the rule must
+	// be that app's, as the toggle and mode handlers require. Company apps and
+	// their creator's personal apps share AccountID.
+	app, err := s.store.AppBySlug(r.Context(), slug)
+	if err != nil || app.AccountID != acct.ID {
+		http.NotFound(w, r)
+		return
+	}
+	rule, err := s.store.GetEdgeRuleByID(r.Context(), id)
+	if err != nil || rule.AccountID != acct.ID || rule.AppID != app.ID {
+		http.NotFound(w, r)
+		return
+	}
 	resp := s.forwardDashboardEdgeRuleJSON(r, acct, http.MethodDelete, "/v1/edge-rules/"+url.PathEscape(id), id, nil, s.edgeRules.DeleteEdgeRule)
 	if !dashboardMutationSucceeded(w, resp) {
 		return

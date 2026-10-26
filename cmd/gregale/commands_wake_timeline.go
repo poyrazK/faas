@@ -189,6 +189,9 @@ func renderWakeTimelinePageWithOptions(w io.Writer, slug string, p api.WakeTimel
 			if breakdown := renderColdBootBreakdown(ev); breakdown != "" {
 				_, _ = fmt.Fprintf(w, "        %s\n", breakdown)
 			}
+			if breakdown := renderPreWakeBreakdown(ev); breakdown != "" {
+				_, _ = fmt.Fprintf(w, "        %s\n", breakdown)
+			}
 			if breakdown := renderPreRPCBreakdown(ev); breakdown != "" {
 				_, _ = fmt.Fprintf(w, "        %s\n", breakdown)
 			}
@@ -197,6 +200,20 @@ func renderWakeTimelinePageWithOptions(w io.Writer, slug string, p api.WakeTimel
 			}
 		}
 	}
+}
+
+// renderPreWakeBreakdown renders schedd's EnsureWake steps before the wake
+// itself starts. Older events omit them.
+func renderPreWakeBreakdown(ev api.WakeTimelineEvent) string {
+	if ev.Kind != "wake.boot_started" {
+		return ""
+	}
+	return renderSchedSpans(ev, "pre-wake", []struct{ key, label string }{
+		{"pre_wake_authorize_ms", "authorize"},
+		{"pre_wake_environment_ms", "environment"},
+		{"pre_wake_coordinate_ms", "coordinate"},
+		{"pre_wake_transition_ms", "transition"},
+	})
 }
 
 // renderPreRPCBreakdown renders schedd's steps from the start of the wake to
