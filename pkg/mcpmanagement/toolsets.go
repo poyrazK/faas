@@ -45,6 +45,8 @@ var toolsetOf = map[string]string{
 	"gregale_plan_rollback":        ToolsetCore,
 	"gregale_apply_rollback":       ToolsetCore,
 	"gregale_get_rollback":         ToolsetCore,
+	"gregale_request_secret":       ToolsetCore,
+	"gregale_get_secret_request":   ToolsetCore,
 
 	"gregale_list_deployments":            ToolsetRelease,
 	"gregale_preflight":                   ToolsetRelease,
