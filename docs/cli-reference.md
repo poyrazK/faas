@@ -148,7 +148,7 @@ Expose Gregale management tools over stdio or OAuth HTTP
 | `--transport <TRANSPORT>` | management MCP transport (default stdio) | one of `stdio` · `streamable-http` |
 | `--timeout <DURATION>` | per-tool API timeout (default 30s, maximum 1m) |  |
 | `--allow-writes` | enable reviewed deploy, promotion, and rollback actions |  |
-| `--tools <TOOLSETS>` | toolsets to list, comma-separated: core, release, diagnose (default all) |  |
+| `--tools <TOOLSETS>` | toolsets to list, comma-separated: core, release, diagnose, provision (default all) |  |
 | `--listen <ADDR>` | HTTP listen address behind TLS proxy (default 127.0.0.1:8787) |  |
 | `--resource-url <URL>` | public HTTPS URL ending in /mcp (required for HTTP) |  |
 | `--oauth-onboarding <MODE>` | remote onboarding (default browser) | one of `browser` · `api-key` |

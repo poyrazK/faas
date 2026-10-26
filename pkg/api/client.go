@@ -55,6 +55,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/reqbudget"
+	"github.com/onebox-faas/faas/pkg/sessioncookie"
 )
 
 // cookieOnlyPathRE matches routes that are gated server-side to the
@@ -4846,7 +4847,7 @@ func (c *Client) SetPasswordWithSession(ctx context.Context, sessionCookie strin
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("Idempotency-Key", newUUIDv4())
-	req.AddCookie(&http.Cookie{Name: "faas_sid", Value: sessionCookie})
+	sessioncookie.AddToRequest(req, sessionCookie)
 	req.AddCookie(&http.Cookie{Name: "faas_csrf", Value: input.CSRFToken})
 
 	noRedirect := *c.http
