@@ -155,5 +155,18 @@ func TestEventFanoutKeepsCompanyBoundary(t *testing.T) {
 				t.Fatalf("replay preview for %s offered %v, want %v", c.app.Slug, got, want)
 			}
 		}
+
+		// The account routes read each event's producer and recipients' apps.
+		for id, producer := range published {
+			scope, err := store.EventReceiptScope(ctx, creator.ID, "orders", id)
+			if err != nil || scope.Producer != producer || len(scope.RecipientApps) == 0 {
+				t.Fatalf("scope of %s = %+v, %v; want producer %q", id, scope, err, producer)
+			}
+			for sub, app := range scope.RecipientApps {
+				if (sub != companySub || app != company.ID) && (sub != personalSub || app != personal.ID) {
+					t.Fatalf("scope of %s maps %s to %s", id, sub, app)
+				}
+			}
+		}
 	})
 }

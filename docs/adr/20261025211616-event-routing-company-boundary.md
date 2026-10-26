@@ -70,10 +70,18 @@ Event routing names no app, which leaves two holes:
   creator's personal apps, in both directions at once.
 - Fanout reads `apps`, `orgs` and `org_memberships` per recipient for stamped
   events: indexed primary-key lookups, a few per published event.
-- Still open, as follow-ups: the account read routes (`/v1/events/receipt`,
-  attempts, replays, recipient blockers) still show a company's events to the
-  creator, and the account routes still accept `app.<id>` sources, which the
-  app producer route uses for its identities.
+- The account read routes apply the same visibility as the app routes
+  (`appaccess.VisibleApps`): `/v1/events/receipt`, its attempts and replays
+  answer 404 for an event whose producer, or for a recipient whose app, the
+  caller may not see; the receipt and `/v1/events/backlog` leave out
+  recipients and consumers in hidden apps (aggregate counts still cover the
+  account); recipient blockers answer `receipt_unavailable`; and replay jobs
+  of a hidden app answer 404.
+- Still open: the account routes accept `app.<id>` sources, which the app
+  producer route uses for its identities (ADR-929 makes that namespace a
+  convenience, not a boundary). A creator who left can no longer reach company
+  recipients with them, but could pre-publish an identity a company app later
+  uses.
 
 ## Alternatives
 

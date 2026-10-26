@@ -12,13 +12,13 @@ SET LOCAL lock_timeout = '5s';
 -- crosses into another one only while the account's owner is an active owner,
 -- admin or developer of every company on both sides. Events without a
 -- producer (N-1 publishers, platform events) route as before.
-CREATE FUNCTION event_app_company(target_app uuid) RETURNS uuid
+CREATE OR REPLACE FUNCTION event_app_company(target_app uuid) RETURNS uuid
 LANGUAGE sql STABLE AS $$
     SELECT o.id FROM apps a JOIN orgs o ON o.id = a.org_id AND NOT o.personal_org
     WHERE a.id = target_app
 $$;
 
-CREATE FUNCTION event_company_reachable(target_account uuid, company uuid) RETURNS boolean
+CREATE OR REPLACE FUNCTION event_company_reachable(target_account uuid, company uuid) RETURNS boolean
 LANGUAGE sql STABLE AS $$
     SELECT EXISTS (SELECT 1 FROM org_memberships m JOIN orgs o ON o.id = m.org_id
         WHERE m.org_id = company AND m.account_id = target_account AND m.removed_at IS NULL
@@ -26,7 +26,7 @@ LANGUAGE sql STABLE AS $$
           AND NOT o.deleted_pending AND o.status <> 'deleted_pending')
 $$;
 
-CREATE FUNCTION event_recipients_in_producer_reach(target_account uuid, producer text, recipients jsonb) RETURNS jsonb
+CREATE OR REPLACE FUNCTION event_recipients_in_producer_reach(target_account uuid, producer text, recipients jsonb) RETURNS jsonb
 LANGUAGE plpgsql STABLE AS $$
 DECLARE producer_company uuid; producer_reachable boolean;
 BEGIN
@@ -55,7 +55,7 @@ $$;
 
 -- Replays and their previews select past events by account; a recipient app
 -- gets only the events fanout would have routed to it now.
-CREATE FUNCTION event_app_in_producer_reach(target_account uuid, producer text, target_app text) RETURNS boolean
+CREATE OR REPLACE FUNCTION event_app_in_producer_reach(target_account uuid, producer text, target_app text) RETURNS boolean
 LANGUAGE sql STABLE AS $$
     SELECT jsonb_array_length(event_recipients_in_producer_reach(target_account, producer,
         jsonb_build_array(jsonb_build_object('app_id', target_app)))) = 1
@@ -252,8 +252,8 @@ BEGIN
     RETURN NEW;
 END;
 $$;
-DROP FUNCTION event_app_in_producer_reach(uuid, text, text);
-DROP FUNCTION event_recipients_in_producer_reach(uuid, text, jsonb);
-DROP FUNCTION event_company_reachable(uuid, uuid);
-DROP FUNCTION event_app_company(uuid);
+DROP FUNCTION IF EXISTS event_app_in_producer_reach(uuid, text, text);
+DROP FUNCTION IF EXISTS event_recipients_in_producer_reach(uuid, text, jsonb);
+DROP FUNCTION IF EXISTS event_company_reachable(uuid, uuid);
+DROP FUNCTION IF EXISTS event_app_company(uuid);
 -- +goose StatementEnd
