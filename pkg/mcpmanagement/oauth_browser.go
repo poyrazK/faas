@@ -17,7 +17,7 @@ var consentPage = template.Must(template.New("consent").Parse(`<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Connect to Gregale</title></head>
 <body><main><h1>Connect to Gregale</h1><p>Client: <strong>{{.Client}}</strong></p><p>Return address: {{.Redirect}}</p><p>Gregale API: {{.APIBase}}</p>
 {{if .Account}}<p>Account: <strong>{{.Account}}</strong></p><p>This client can inspect apps, deployments, logs, metrics, health and routes in this account. App logs may contain private data.</p>
-<form method="post" action="/oauth/consent"><input type="hidden" name="request_id" value="{{.RequestID}}"><input type="hidden" name="csrf" value="{{.CSRF}}">
+<form method="post" action="{{.ConsentAction}}"><input type="hidden" name="request_id" value="{{.RequestID}}"><input type="hidden" name="csrf" value="{{.CSRF}}">
 {{if .Writes}}<p><label><input type="checkbox" name="allow_writes" value="yes" required> Also allow reviewed deployments, production promotion, and checked rollback. These actions can change traffic and incur costs.</label></p>{{end}}
 <fieldset><legend>Apps this agent may access</legend><label><input type="radio" name="app_access" value="all" required> All apps in this account, including future apps</label><br><label><input type="radio" name="app_access" value="selected" required> Only selected apps</label>{{range .Apps}}<p><label><input type="checkbox" name="apps" value="{{.Slug}}"> {{.Slug}}</label></p>{{end}}</fieldset>
 <fieldset><legend>App diagnostics (optional)</legend><p>Allow retained request status, routes, timing, performance evidence, retained wake observations, trace-correlated invocation lifecycle metadata, sampled CPU profile function labels and collection/attribution summaries, and scheduler residency causes across all environments of each selected app. This may contain private application data. Future apps are excluded. Native plan and retention limits still apply. This does not grant environment, log or write access.</p>{{range .Apps}}<p><label><input type="checkbox" name="request_read_apps" value="{{.Slug}}"> Read app diagnostics for {{.Slug}}</label></p>{{end}}</fieldset>
@@ -27,25 +27,27 @@ var consentPage = template.Must(template.New("consent").Parse(`<!doctype html>
 <button name="decision" value="approve" type="submit">Connect this account</button> <button name="decision" value="deny" type="submit" formnovalidate>Cancel</button></form>
 {{else if .Native}}<p>Sign in to Gregale to choose your account. Then return here to review the agent's access.</p>
 {{if .LoginURL}}<p><a href="{{.LoginURL}}" target="_blank" rel="noopener noreferrer">Sign in to Gregale</a></p>{{end}}
-<form method="post" action="/oauth/consent"><input type="hidden" name="request_id" value="{{.RequestID}}"><input type="hidden" name="csrf" value="{{.CSRF}}"><button name="decision" value="{{if .LoginURL}}check-login{{else}}start-login{{end}}" type="submit">{{if .LoginURL}}I authorized in Gregale; review account{{else}}Start Gregale sign-in{{end}}</button><button name="decision" value="deny" type="submit">Cancel</button></form>
+<form method="post" action="{{.ConsentAction}}"><input type="hidden" name="request_id" value="{{.RequestID}}"><input type="hidden" name="csrf" value="{{.CSRF}}"><button name="decision" value="{{if .LoginURL}}check-login{{else}}start-login{{end}}" type="submit">{{if .LoginURL}}I authorized in Gregale; review account{{else}}Start Gregale sign-in{{end}}</button><button name="decision" value="deny" type="submit">Cancel</button></form>
 {{else}}<p>Enter a Gregale API key for the account you want to connect. Use a dedicated key with the smallest needed API scopes. The next screen identifies the account before you approve access.</p>
-<form method="post" action="/oauth/consent" autocomplete="off"><input type="hidden" name="request_id" value="{{.RequestID}}"><input type="hidden" name="csrf" value="{{.CSRF}}">
+<form method="post" action="{{.ConsentAction}}" autocomplete="off"><input type="hidden" name="request_id" value="{{.RequestID}}"><input type="hidden" name="csrf" value="{{.CSRF}}">
 <p><label>Gregale API key <input name="api_key" type="password" required autocomplete="off" maxlength="4096"></label></p>
 <button name="decision" value="verify" type="submit">Review account</button> <button name="decision" value="deny" type="submit" formnovalidate>Cancel</button></form>{{end}}
 </main></body></html>`))
 
 type consentView struct {
-	Client       string
-	Redirect     string
-	APIBase      string
-	Account      string
-	RequestID    string
-	CSRF         string
-	Writes       bool
-	Native       bool
-	LoginURL     string
-	Apps         []consentApp
-	Environments []EnvironmentGrant
+	Client   string
+	Redirect string
+	APIBase  string
+	Account  string
+	// ConsentAction is the consent endpoint, under /mcp on the hosted bridge.
+	ConsentAction string
+	RequestID     string
+	CSRF          string
+	Writes        bool
+	Native        bool
+	LoginURL      string
+	Apps          []consentApp
+	Environments  []EnvironmentGrant
 }
 
 func (r *remoteServer) authorize(w http.ResponseWriter, req *http.Request) {
@@ -94,7 +96,7 @@ func (r *remoteServer) renderConsent(w http.ResponseWriter, flow *authorizationR
 		oauthError(w, 400, "access_denied", "Client registration expired; start a new connection")
 		return
 	}
-	view := consentView{Client: client.Name, Redirect: flow.Redirect, APIBase: r.opts.APIBase, Account: account, RequestID: flow.ID, CSRF: csrf, Writes: slices.Contains(flow.Scopes, scopeWrite), Native: r.opts.Onboarding == "browser", LoginURL: flow.NativeURL}
+	view := consentView{ConsentAction: r.issuer + "/oauth/consent", Client: client.Name, Redirect: flow.Redirect, APIBase: r.opts.APIBase, Account: account, RequestID: flow.ID, CSRF: csrf, Writes: slices.Contains(flow.Scopes, scopeWrite), Native: r.opts.Onboarding == "browser", LoginURL: flow.NativeURL}
 	if g := r.grants[flow.GrantID]; g != nil {
 		view.Environments = g.availableEnvironments
 		for _, app := range g.availableApps {

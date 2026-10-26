@@ -32,6 +32,7 @@ type mcpServeOptions struct {
 	onboarding    string
 	stateFile     string
 	statePostgres string
+	hosted        bool
 	stateKeyFile  string
 	toolsets      []string
 }
@@ -49,6 +50,7 @@ func parseMCPServeOptions(args []string) (mcpServeOptions, error) {
 	fs.Func("oauth-redirect-uri", "allowed OAuth callback URI; repeat; omit loopback HTTP port for ephemeral client ports", func(value string) error { opts.redirects = append(opts.redirects, value); return nil })
 	fs.StringVar(&opts.onboarding, "oauth-onboarding", "browser", "remote onboarding: browser sign-in or explicit api-key fallback")
 	fs.StringVar(&opts.stateFile, "state-file", "", "private encrypted remote state file for restart-safe connections")
+	fs.BoolVar(&opts.hosted, "hosted", false, "serve as Gregale's hosted bridge: path issuer under /mcp; requires --state-postgres")
 	fs.StringVar(&opts.statePostgres, "state-postgres", "", "keep remote state in Postgres under the named bridge lease (DATABASE_URL or FAAS_DATABASE_URL)")
 	fs.StringVar(&opts.stateKeyFile, "state-key-file", "", "independent private file with the 32-byte state encryption key")
 	tools := fs.String("tools", mcpmanagement.ToolsetAll, "toolsets to list, comma-separated: core, release, diagnose, provision or all")
@@ -71,6 +73,9 @@ func parseMCPServeOptions(args []string) (mcpServeOptions, error) {
 	}
 	if (opts.stateFile == "" && opts.statePostgres == "") != (opts.stateKeyFile == "") {
 		return opts, errors.New("--state-file or --state-postgres and --state-key-file must be supplied together")
+	}
+	if opts.hosted && (opts.transport != "streamable-http" || opts.statePostgres == "" || opts.onboarding != "browser") {
+		return opts, errors.New("--hosted needs --transport streamable-http, --state-postgres and browser onboarding")
 	}
 	if opts.transport == "stdio" && (opts.adminSocket != "" || opts.onboarding != "browser" || opts.stateFile != "" || opts.statePostgres != "" || opts.resourceURL != "" || len(opts.redirects) > 0 || opts.listen != "127.0.0.1:8787") {
 		return opts, errors.New("remote OAuth and listen options require --transport streamable-http")
@@ -140,7 +145,7 @@ func serveMCPHTTP(ctx context.Context, opts mcpServeOptions) error {
 		opts.lifecycle = mcpmanagement.NewLifecycle()
 	}
 	connection := effectiveConnectionContext()
-	handlerOptions := mcpmanagement.HTTPOptions{Lifecycle: opts.lifecycle, Telemetry: opts.telemetry, AuditLogger: slog.New(slog.NewJSONHandler(osStderr, nil)), Onboarding: opts.onboarding, APIBase: connection.APIBase, ResourceURL: opts.resourceURL, RedirectURIs: opts.redirects, Version: wire.Version, Timeout: opts.timeout, AllowWrites: opts.allowWrites, Toolsets: opts.toolsets}
+	handlerOptions := mcpmanagement.HTTPOptions{Lifecycle: opts.lifecycle, Telemetry: opts.telemetry, AuditLogger: slog.New(slog.NewJSONHandler(osStderr, nil)), Onboarding: opts.onboarding, APIBase: connection.APIBase, ResourceURL: opts.resourceURL, RedirectURIs: opts.redirects, Version: wire.Version, Timeout: opts.timeout, AllowWrites: opts.allowWrites, Toolsets: opts.toolsets, Hosted: opts.hosted}
 	if opts.stateFile != "" {
 		store, err := mcpmanagement.OpenStateStore(opts.stateFile, opts.stateKeyFile)
 		if err != nil {

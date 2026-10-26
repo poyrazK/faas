@@ -159,6 +159,8 @@ func TestMCPServeRemoteStateAndOnboardingOptions(t *testing.T) {
 		{"--transport", "streamable-http", "--state-postgres", "hosted"},
 		{"--transport", "streamable-http", "--state-file", "state", "--state-postgres", "hosted", "--state-key-file", "key"},
 		{"--state-postgres", "hosted", "--state-key-file", "key"},
+		{"--transport", "streamable-http", "--hosted"},
+		{"--transport", "streamable-http", "--hosted", "--state-file", "state", "--state-key-file", "key"},
 	} {
 		if _, err := main.ParseMCPServeOptions(args); err == nil {
 			t.Fatalf("invalid remote options accepted: %v", args)
@@ -168,7 +170,7 @@ func TestMCPServeRemoteStateAndOnboardingOptions(t *testing.T) {
 	if err != nil || (*opts.Onboarding()) != "browser" || (*opts.StateFile()) != "state" || (*opts.AllowWrites()) {
 		t.Fatalf("remote state options=%+v err=%v", opts, err)
 	}
-	if _, err := main.ParseMCPServeOptions([]string{"--transport", "streamable-http", "--state-postgres", "hosted", "--state-key-file", "key"}); err != nil {
+	if _, err := main.ParseMCPServeOptions([]string{"--transport", "streamable-http", "--hosted", "--state-postgres", "hosted", "--state-key-file", "key"}); err != nil {
 		t.Fatalf("postgres state options refused: %v", err)
 	}
 }
