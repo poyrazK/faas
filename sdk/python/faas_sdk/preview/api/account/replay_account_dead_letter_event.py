@@ -49,6 +49,11 @@ def _parse_response(
 
         return response_404
 
+    if response.status_code == 409:
+        response_409 = Problem.from_dict(response.json())
+
+        return response_409
+
     if response.status_code == 429:
         response_429 = Problem.from_dict(response.json())
 
@@ -78,6 +83,9 @@ def sync_detailed(
     idempotency_key: str | Unset = UNSET,
 ) -> Response[DeadLetterEvent | Problem]:
     """Replay one account-owned dead-letter event atomically.
+
+     An event_route entry (a routing failure whose receipt was pruned) has
+    nothing to redrive and answers 409 dead_letter_not_replayable.
 
     Args:
         id (str):
@@ -111,6 +119,9 @@ def sync(
 ) -> DeadLetterEvent | Problem | None:
     """Replay one account-owned dead-letter event atomically.
 
+     An event_route entry (a routing failure whose receipt was pruned) has
+    nothing to redrive and answers 409 dead_letter_not_replayable.
+
     Args:
         id (str):
         idempotency_key (str | Unset):
@@ -137,6 +148,9 @@ async def asyncio_detailed(
     idempotency_key: str | Unset = UNSET,
 ) -> Response[DeadLetterEvent | Problem]:
     """Replay one account-owned dead-letter event atomically.
+
+     An event_route entry (a routing failure whose receipt was pruned) has
+    nothing to redrive and answers 409 dead_letter_not_replayable.
 
     Args:
         id (str):
@@ -167,6 +181,9 @@ async def asyncio(
     idempotency_key: str | Unset = UNSET,
 ) -> DeadLetterEvent | Problem | None:
     """Replay one account-owned dead-letter event atomically.
+
+     An event_route entry (a routing failure whose receipt was pruned) has
+    nothing to redrive and answers 409 dead_letter_not_replayable.
 
     Args:
         id (str):
