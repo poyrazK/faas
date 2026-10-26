@@ -1088,7 +1088,7 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 	// Keep this projection best-effort, matching imaged's transition helper;
 	// the durable build/deployment status remains authoritative if the stage
 	// write is temporarily unavailable.
-	if _, stageErr := b.store.AppendDeploymentStage(ctx, dep.ID, state.StageSourceDownload, state.StageImageBuild, buildStart, ""); stageErr != nil {
+	if _, stageErr := b.store.AppendDeploymentStage(ctx, dep.ID, state.StageSourceDownload, state.StageImageBuild, buildStart, builderQueueWaitReason(build)); stageErr != nil {
 		b.log.Warn("builderd: open image-build stage", "deployment", dep.ID, "err", stageErr)
 	}
 

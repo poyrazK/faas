@@ -356,6 +356,14 @@ the provider your Gregale API key. There is no per-callback public URL.
 For repeatable or broadcast signals, continue using `wait_for_event` and
 `POST /v1/workflows/runs/{id}/events` with a stable `Idempotency-Key`.
 
+A `wait_for_event` step completes with the earliest event of that name the run
+has received, including one that arrived before the step started waiting and
+one an earlier step already completed with. Events are facts on the run, not a
+queue, so every wait for a name matches the same first event. To wait for a
+second, distinct signal (a second approval, say), give it its own event name,
+or use a [code-first workflow](code-workflows.md), where each `waitForEvent`
+consumes one event of its name in arrival order.
+
 Stripe can instead complete a callback without waking your app. Create a
 [durable inbound Stripe webhook endpoint](inbound-webhooks.md) for the
 same app and configure its one-time-disclosed URL in Stripe. Then bind the
@@ -1099,7 +1107,10 @@ ordering guarantee. Delivery remains at least once. See
 Gregale identifies an event by account, source, and id. Repeating that
 identity with the same type, schema version, and JSON data is safe. Changing
 the content returns `409 Conflict` while the plan's [settled-receipt window](#settled-receipt-retention)
-keeps the original receipt. Fanout work is stored with the event, so durable routing resumes after a
+keeps the original receipt. Once that receipt is pruned, publishing the same
+identity again is a new event: it is delivered again under a delivery id of
+its own, which its receipt reports, even while the earlier delivery is still
+retained ([ADR 20261026010000](adr/20261026010000-event-reacceptance-delivery-identity.md)). Fanout work is stored with the event, so durable routing resumes after a
 scheduler outage. Configured delivery age limits can expire stale recipients. New events capture
 their enabled source/type subscription candidates when they are accepted. A
 later subscription edit or deletion does not change that event's recipients;

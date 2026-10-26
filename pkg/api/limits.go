@@ -6509,6 +6509,12 @@ const (
 	JobDefaultRetryMax       = 0
 	JobDefaultRAMMB          = 256
 
+	// JobMinRAMMB is the smallest ram_mb a job or image run accepts: the
+	// smallest guest the metal suite boots to guest-init
+	// (pkg/fcvm/vmm_lifecycle_metal_test.go). Below it every attempt
+	// cold-boots a VM that cannot start.
+	JobMinRAMMB = 64
+
 	// Snapshots / disk (spec §1, §8).
 	FleetSnapshotAvgTargetMB = 130 // business metric; alert >160 warn, >200 page
 	SnapshotBudgetGB         = 452
@@ -11029,6 +11035,9 @@ const (
 	ObsAlertResponseTimesWindowMax                   = 30 * 24 * time.Hour
 	ObsAlertResponseTimesEpisodesMax                 = 1000
 	ObsAlertResponseTimesReceiptsMax                 = 10000
+	ObsWakeTimelineEventsMax                         = 1000 // events returned for one wake; more sets truncated
+	ObsWakeTimelineBudget                            = 5 * time.Second
+	ObsAppSnapshotDeploymentsMax                     = 4 // live deployments whose snapshots `obs app` reads (2 during a canary)
 	ObsAlertRecurrenceBudget                         = 5 * time.Second
 	ObsAlertRecurrenceWindowDefault                  = 24 * time.Hour
 	ObsAlertRecurrenceWindowMax                      = 30 * 24 * time.Hour

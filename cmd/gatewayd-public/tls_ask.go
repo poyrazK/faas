@@ -8,6 +8,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/gateway"
+	"github.com/onebox-faas/faas/pkg/hostidentity"
 )
 
 // installOnDemandTLSAsk mounts ADR-520's certificate permission check on the
@@ -15,11 +16,12 @@ import (
 // (Caddy, same host) calls it before loading, obtaining or renewing a
 // certificate for a customer hostname. Without the flag the path is absent
 // and the edge's ask fails closed, so no customer certificate is issued.
-func installOnDemandTLSAsk(mux *http.ServeMux, store gateway.OnDemandTLSStore, appsDomain string, reg prometheus.Registerer, log *slog.Logger) bool {
+func installOnDemandTLSAsk(mux *http.ServeMux, store gateway.OnDemandTLSStore, domains hostidentity.Domains, reg prometheus.Registerer, log *slog.Logger) bool {
 	if !api.CustomDomainTLSOnDemand() {
 		return false
 	}
-	mux.Handle(gateway.OnDemandTLSAskPath, gateway.NewOnDemandTLSPolicy(store, appsDomain, reg, log).Handler())
+	policy := gateway.NewOnDemandTLSPolicy(store, domains.Apps, reg, log).RefuseOwned(domains.OwnedDomains())
+	mux.Handle(gateway.OnDemandTLSAskPath, policy.Handler())
 	log.Info("gatewayd-public: on-demand custom-domain TLS ask endpoint enabled", "path", gateway.OnDemandTLSAskPath)
 	return true
 }

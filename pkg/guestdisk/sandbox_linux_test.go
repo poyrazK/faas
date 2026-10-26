@@ -21,6 +21,14 @@ func TestMain(m *testing.M) {
 
 func sandboxedSession(t *testing.T, img string) *Session {
 	t.Helper()
+	return sandboxedSessionUnder(t, img, 0o755)
+}
+
+// sandboxedSessionUnder places a root caller's image and scratch root in a
+// directory of the given mode: 01700 is the production jail base
+// (/srv/fc/jail), which the image owner cannot search.
+func sandboxedSessionUnder(t *testing.T, img string, mode os.FileMode) *Session {
+	t.Helper()
 	exe, err := os.Executable()
 	if err != nil {
 		t.Fatal(err)
@@ -30,9 +38,13 @@ func sandboxedSession(t *testing.T, img string) *Session {
 		// Root's sandbox masks /tmp, where t.TempDir lives, and runs the
 		// tools as the image owner: give it a scratch root and an image
 		// outside the masked directories, owned by an unprivileged uid.
-		scratch = filepath.Join(sandboxTestRoot(t), "scratch")
-		img = moveImage(t, img, sandboxTestRoot(t))
+		base := sandboxTestRoot(t)
+		scratch = filepath.Join(base, "scratch")
+		img = moveImage(t, img, base)
 		if err := os.Chown(img, 23456, 23456); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chmod(base, mode); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -109,6 +121,41 @@ func TestSandboxedEdit(t *testing.T) {
 	fsckClean(t, s.image)
 }
 
+// TestSandboxReachesImageInPrivateDirectory edits an image the way vmmd does
+// on a node: the image and the scratch root sit below a root-owned 01700
+// directory (the jail base), which the image owner cannot search. The tool
+// reaches both through inherited descriptors.
+func TestSandboxReachesImageInPrivateDirectory(t *testing.T) {
+	if os.Geteuid() != 0 {
+		t.Skip("needs root: the sandbox changes uid only for a root caller")
+	}
+	img := mkImage(t, func(root string) { write(t, filepath.Join(root, "upper/app/a"), "a") })
+	s := sandboxedSessionUnder(t, img, 0o1700)
+	ctx := context.Background()
+	if _, err := s.Prepare(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.WriteFiles(ctx, []File{{Path: "/upper/etc/faas/secrets.env", Data: []byte("s"), Mode: 0o400}}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.Inspect(ctx, []string{"/upper/app/a"}, map[string]Read{"/upper/app/a": {Max: 16}})
+	if err != nil || string(got["/upper/app/a"].Data) != "a" {
+		t.Fatalf("inspect /upper/app/a = %+v, %v", got["/upper/app/a"], err)
+	}
+	dest := filepath.Join(filepath.Dir(s.image), "dump")
+	if err := os.Mkdir(dest, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	dumped, err := s.DumpFiles(ctx, "/upper/etc", dest, testDumpBudget)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if b, err := os.ReadFile(filepath.Join(dumped, "faas/secrets.env")); err != nil || string(b) != "s" {
+		t.Fatalf("dumped secrets.env = %q, %v", b, err)
+	}
+	fsckClean(t, s.image)
+}
+
 // TestSandboxConfinesFilesystem runs cat in the sandbox against a file the
 // ruleset does not cover: Landlock must refuse it.
 func TestSandboxConfinesFilesystem(t *testing.T) {
@@ -133,7 +180,7 @@ func TestSandboxConfinesFilesystem(t *testing.T) {
 		t.Fatalf("sandboxed cat read %s: exit %d stdout %q", secret, res.exit, res.stdout)
 	}
 	// The image itself stays readable.
-	res, err = s.run(context.Background(), cat, []string{s.image}, nil, runLimits{output: 64 << 20})
+	res, err = s.run(context.Background(), cat, []string{s.toolImage()}, nil, runLimits{output: 64 << 20})
 	if err != nil || res.exit != 0 {
 		t.Fatalf("sandboxed cat could not read the image: exit %d %v %s", res.exit, err, res.stderr)
 	}
