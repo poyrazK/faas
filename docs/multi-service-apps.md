@@ -118,6 +118,12 @@ development, `gregale dev --all` runs every service in its own developer
 environment, and the same names reach those environments instead of
 production ([gregale dev](gregale-dev.md#call-the-other-apps)).
 
+A name is called in its DNS form: lower case, with `_` and `.` written as `-`.
+A Compose service `billing_api` is `http://billing-api.internal:10081`, and its
+dependents get `GREGALE_SERVICE_BILLING_API_URL` pointing there. The plan
+warns when a name cannot be called this way, or when two services share one
+([ADR-20261026170512](adr/20261026170512-service-dns-names.md)).
+
 Addresses from Docker, such as `http://billing:8080`, do not resolve on Gregale.
 Use the `.internal` name instead, or declare the dependency and read the URL
 Gregale injects:

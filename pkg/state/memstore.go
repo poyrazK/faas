@@ -5255,7 +5255,7 @@ func (m *MemStore) PreviewAppByProjectWorkload(_ context.Context, accountID, pro
 	defer m.mu.Unlock()
 	for _, app := range m.apps {
 		if app.AccountID == accountID && app.ProjectID == projectID &&
-			app.PreviewPrNumber == previewPRNumber && app.WorkloadName == workloadName &&
+			app.PreviewPrNumber == previewPRNumber && api.SameServiceName(app.WorkloadName, workloadName) &&
 			app.PreviewOfSlug != "" && app.Status != AppDeleted {
 			return app, nil
 		}
@@ -5263,7 +5263,7 @@ func (m *MemStore) PreviewAppByProjectWorkload(_ context.Context, accountID, pro
 	return App{}, ErrNotFound
 }
 
-// ProjectAppByWorkload mirrors PgStore: a case-folded production alias in
+// ProjectAppByWorkload mirrors PgStore: a service-name production alias in
 // the owner's project, ErrConflict when two apps share it.
 func (m *MemStore) ProjectAppByWorkload(_ context.Context, accountID, projectID, name string) (App, error) {
 	m.mu.Lock()
@@ -5271,7 +5271,7 @@ func (m *MemStore) ProjectAppByWorkload(_ context.Context, accountID, projectID,
 	var found App
 	for _, app := range m.apps {
 		if app.AccountID != accountID || app.ProjectID == "" || app.ProjectID != projectID ||
-			app.PreviewOfSlug != "" || app.Status == AppDeleted || !strings.EqualFold(app.WorkloadName, name) {
+			app.PreviewOfSlug != "" || app.Status == AppDeleted || !api.SameServiceName(app.WorkloadName, name) {
 			continue
 		}
 		if found.ID != "" {
