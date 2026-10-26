@@ -876,6 +876,13 @@ type ComputeNodeCPUUsageBatcher interface {
 	ComputeNodeUsedCPUMillicoresByNode(ctx context.Context, nodeIDs []string) (map[string]int64, error)
 }
 
+// ComputeNodeVCPUUsageBatcher is the optional fleet-wide guest vCPU view used
+// by placement: each live instance's capacity_vcpu, grouped by node. Like the
+// CPU view it counts instances every scheduler placed, not only this one's.
+type ComputeNodeVCPUUsageBatcher interface {
+	ComputeNodeUsedVCPUByNode(ctx context.Context, nodeIDs []string) (map[string]int64, error)
+}
+
 // ManagedRealtimeEndpointStore is the optional persistence surface for
 // managed realtime endpoint resources. It is intentionally separate from
 // Store so narrow test doubles and older integrations remain source-

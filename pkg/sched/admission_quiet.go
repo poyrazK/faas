@@ -82,6 +82,22 @@ func (l *NodeLedger) EffectiveVCPUForNode(nodeID string, budget int) int {
 	return quietEffective(used, vcpu, budget)
 }
 
+// EffectiveFleetVCPUForNode is EffectiveVCPUForNode over the larger of this
+// ledger's booking and fleet, the store's count of every live instance on
+// the node. Each owner scheduler books only its own apps' instances, so on a
+// node shared by several owners the ledger alone undercounts.
+func (l *NodeLedger) EffectiveFleetVCPUForNode(nodeID string, fleet int64, budget int) int {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	used := 0
+	if node := l.resident[nodeID]; node != nil {
+		used = node.usedVCPU
+	}
+	used = max(used, int(fleet))
+	vcpu, _ := l.quietDiscount_locked(nodeID)
+	return quietEffective(used, vcpu, budget)
+}
+
 // EffectiveCPUMillicoresForNode applies the quiet pause discount to a
 // node's booked CPU millicores, which placement reads from the ledger and
 // the fleet-wide store view.
