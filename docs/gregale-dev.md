@@ -481,15 +481,21 @@ curl http://api.internal:10081/health      # the api app's developer environment
 curl http://api.svc.gregale:10081/health    # the same
 ```
 
-Each app is named after its developer project (`apps/api` is `api`). A call by
-name reaches only the apps of the same `gregale dev --all` and never a deployed
-app: a name that is not running in the group fails instead of reaching
-production. Call a deployed service through its public URL. An app whose name
-is shorter than 3 characters (for example `ui`) cannot be called by name; the
-CLI says so when it starts, and that app runs outside the group, like a single
-`gregale dev`. Developer environments get no `GREGALE_SERVICE_<NAME>_URL`
-variables, so use the `.internal` names in code. See
-[ADR-20261025121530](adr/20261025121530-dev-all-namespace.md).
+Each app is called by its service name, as in production: the Compose service
+or workspace member name, such as `ui` or `api`. A name that is not a DNS name
+(`Billing_API`) cannot be called in production either; in the group the app is
+called by its developer project name (`billing-api`), and the CLI says so when
+it starts. A call by name reaches only the apps of the same `gregale dev --all`
+and never a deployed app: a name that is not running in the group fails
+instead of reaching production. Call a deployed service through its public URL.
+
+An app that declares `depends_on` services running in the group gets the same
+`GREGALE_SERVICE_<NAME>_URL`, `GREGALE_SERVICE_<NAME>_HTTPS_URL` and
+`GREGALE_SERVICE_<NAME>_HOST` variables a deployed project service gets, set
+as developer config on its environment. A dependency outside the group, such
+as a database image, gets none; use `--postgres` for a database. See
+[ADR-20261025121530](adr/20261025121530-dev-all-namespace.md) and
+[ADR-20261026105459](adr/20261026105459-dev-all-service-names-and-urls.md).
 
 The group's environments belong to the `--all` root: running
 `gregale dev --path apps/api` on its own starts a separate environment outside

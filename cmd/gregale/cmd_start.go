@@ -306,9 +306,10 @@ func (r *startRunner) deployProject() int {
 // projectSource is one deployable member of a workspace or convention-shaped
 // repository, below the scanned root.
 type projectSource struct {
-	Name    string // workload name from the scanner
-	RootDir string // slash-separated path relative to the scanned root
-	Path    string // absolute source directory
+	Name      string   // workload name from the scanner
+	RootDir   string   // slash-separated path relative to the scanned root
+	Path      string   // absolute source directory
+	DependsOn []string // services it declares it calls (Compose depends_on)
 }
 
 // discoverProjectSources lists the deployable workspace, convention and
@@ -331,7 +332,7 @@ func discoverProjectSources(root string) ([]projectSource, error) {
 		path := filepath.Join(root, filepath.FromSlash(workload.RootDir))
 		if !seen[path] && detectShape(path) != shapeUnknown {
 			seen[path] = true
-			sources = append(sources, projectSource{Name: workload.Name, RootDir: workload.RootDir, Path: path})
+			sources = append(sources, projectSource{Name: workload.Name, RootDir: workload.RootDir, Path: path, DependsOn: workload.DependsOn})
 		}
 	}
 	return sources, nil
