@@ -1099,7 +1099,10 @@ ordering guarantee. Delivery remains at least once. See
 Gregale identifies an event by account, source, and id. Repeating that
 identity with the same type, schema version, and JSON data is safe. Changing
 the content returns `409 Conflict` while the plan's [settled-receipt window](#settled-receipt-retention)
-keeps the original receipt. Fanout work is stored with the event, so durable routing resumes after a
+keeps the original receipt. Once that receipt is pruned, publishing the same
+identity again is a new event: it is delivered again under a delivery id of
+its own, which its receipt reports, even while the earlier delivery is still
+retained ([ADR 20261026010000](adr/20261026010000-event-reacceptance-delivery-identity.md)). Fanout work is stored with the event, so durable routing resumes after a
 scheduler outage. Configured delivery age limits can expire stale recipients. New events capture
 their enabled source/type subscription candidates when they are accepted. A
 later subscription edit or deletion does not change that event's recipients;
