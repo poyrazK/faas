@@ -34,10 +34,7 @@ func cmdEdgeRuleLists(args []string) int {
 		return cmdEdgeRuleListsRm(args[1:])
 	}
 	printCommandValidation(os.Stderr, "unknown edge-rule-lists subcommand %q\n", args[0])
-	if sug, _ := suggestSubcommand(args[0], parent); sug != "" {
-		maybeSuggestSub(sug)
-	}
-	return 1
+	return unknownSubcommandChoices(os.Stderr, "edge-rule-lists", parent, args[0])
 }
 
 func cmdEdgeRuleListsList(args []string) int {

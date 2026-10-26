@@ -546,7 +546,7 @@
         "scale"
       ],
       "docs_url": "/docs/event-driven",
-      "acceptance_test": "pkg/apid/apidserver/handlers_ext_test.go::TestAsyncInvoke_FreeRejected",
+      "acceptance_test": "pkg/apid/apidserver/handlers_ext_test.go::TestAsyncInvoke_AcceptedWithId",
       "consumers": [
         "schedd"
       ],
@@ -796,6 +796,25 @@
       "routes": [
         "/v1/apps/{}/buckets/{}/access-grants",
         "/v1/orgs/{}/apps/{}/buckets/{}/access-grants"
+      ]
+    },
+    {
+      "id": "bucket-cors",
+      "name": "Bucket CORS",
+      "category": "data",
+      "description": "Let browsers on your own sites use a bucket's signed URLs and upload grants.",
+      "maturity": "preview",
+      "plans": [
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/object-storage",
+      "acceptance_test": "pkg/s3gateway/bucket_cors_test.go::TestGatewayBucketCORS",
+      "parent": "object-storage",
+      "routes": [
+        "/v1/apps/{}/buckets/{}/cors",
+        "/v1/orgs/{}/apps/{}/buckets/{}/cors"
       ]
     },
     {
@@ -1261,7 +1280,7 @@
         "scale"
       ],
       "docs_url": "/docs/queue-pull-leases",
-      "acceptance_test": "pkg/webhook/dispatcher_test.go::TestDispatcher_Attempt7DLQs",
+      "acceptance_test": "pkg/apid/apidserver/handlers_dead_letter_test.go::TestUnifiedDeadLetter_QueueListInspectAndReplay",
       "parent": "queues",
       "routes": [
         "/dashboard/apps/{}/queues/dead_letter",
@@ -2198,7 +2217,7 @@
         "scale"
       ],
       "docs_url": "/docs/event-driven",
-      "acceptance_test": "pkg/objectstorage/gcs_features_test.go::TestGCSTrackedWriteLostAcknowledgment",
+      "acceptance_test": "pkg/apid/apidserver/event_acknowledgment_acceptance_test.go::TestEventAcknowledgmentLifecycle",
       "parent": "events",
       "routes": [
         "/v1/apps/{}/event-deliveries/{}/acknowledgment",
@@ -2218,7 +2237,7 @@
         "scale"
       ],
       "docs_url": "/docs/event-driven",
-      "acceptance_test": "pkg/internalmail/control_pg_test.go::TestPGDeliveryControlPersistenceCASAndReplay",
+      "acceptance_test": "pkg/apid/apidserver/event_delivery_controls_acceptance_test.go::TestEventDeliveryControlsPauseAndResume",
       "parent": "events",
       "routes": [
         "/v1/apps/{}/event-subscriptions/{}/circuit-breaker",
@@ -2357,7 +2376,7 @@
         "scale"
       ],
       "docs_url": "/docs/event-driven",
-      "acceptance_test": "pkg/apid/apidserver/handlers_event_subscriptions_test.go::TestListEventSubscriptions_ReturnsReconciledManifestRows",
+      "acceptance_test": "cmd/e2e/events_fanout_e2e_test.go::TestE2E_EventFanout_MatchesFiltersAndIsolatesAccounts",
       "routes": [
         "/dashboard/apps/{}/event-deliveries",
         "/dashboard/apps/{}/events",
@@ -2935,7 +2954,7 @@
         "pro",
         "scale"
       ],
-      "docs_url": "/docs/datadog",
+      "docs_url": "/docs/logs#log-drains",
       "acceptance_test": "cmd/gregale/commands_log_drains_test.go::TestCmdLogDrainsListJSON",
       "routes": [
         "/dashboard/apps/{}/log-drains",
@@ -2970,7 +2989,7 @@
       "id": "logs",
       "name": "Logs",
       "category": "observability",
-      "description": "View, search, tail and archive app logs.",
+      "description": "View, tail, filter and archive app logs.",
       "maturity": "ga",
       "plans": [
         "free",
@@ -2978,7 +2997,7 @@
         "pro",
         "scale"
       ],
-      "docs_url": "/docs/cli",
+      "docs_url": "/docs/logs",
       "acceptance_test": "pkg/api/client_test.go::TestStreamAppLogs_HappyPath",
       "routes": [
         "/dashboard/apps/{}/logs",
@@ -3768,7 +3787,7 @@
         "scale"
       ],
       "docs_url": "/docs/event-driven",
-      "acceptance_test": "pkg/apid/apidserver/handlers_dashboard_webhooks_test.go::TestParseAppWebhooksPath",
+      "acceptance_test": "pkg/webhook/dispatcher_test.go::TestDispatch_HeaderShape",
       "routes": [
         "/dashboard/apps/{}/webhooks",
         "=/v1/apps/{}/webhooks",

@@ -72,7 +72,7 @@ Browser challenge (GA):
 | H2 | The page's solver agrees with the gateway | all pass | `TestChallengeSolverJS` | met |
 | H3 | Solve time at the default difficulty on a low-end phone (2020 mid-range Android, current Chrome) | p95 at most 2 s | manual measurement, recorded in `docs/STATUS.md` | open: estimated at p95 0.88-1.12 s from throttled Chrome after ADR-831 amendment 15 (3.8-4.9 s before); the device measurement is pending |
 | H4 | Raised difficulty is capped and falls back | all pass | `TestChallengeLoadRaisesAndLowers` | met |
-| H5 | Browser navigations that get the page go on to solve it, on real traffic | at least 90% over 14 days | `gateway_edge_challenge_total` solved / issued | open |
+| H5 | Browser navigations that get the page go on to solve it, on real traffic | at least 90% over 14 days | `gateway_edge_challenge_total` solved / issued, with bots removed using `challenged` events (`docs/runbooks/edge-challenge-solve-rate-review.md`, amendment 4) | open |
 
 Penalty box (preview):
 
@@ -81,7 +81,7 @@ Penalty box (preview):
 | P1 | Boxes after the threshold, refuses on every path with Retry-After, releases when the rule loses its penalty | all pass | `TestPenaltyBoxRefusesBoxedClientAcrossPaths`, `TestPenaltyBoxThresholdWindowAndExpiry` | met |
 | P2 | A box holds on every gateway and survives a restart | within 1 s, p95 | `TestPenaltyBoxSharedAcrossGateways`, `TestPgStore_EdgePenaltyBoxes` (ADR-20261022105846 amendment 1) | met in tests; production timing open |
 | P3 | Memory stays bounded | per-app and per-gateway caps hold | `TestPenaltyBoxPerAppCap` | met |
-| P4 | No client boxed in error | none unexplained in 14 days of design-partner traffic | stage-2 review | open |
+| P4 | No client boxed in error | none unexplained in 14 days of design-partner traffic | stage-2 review of `boxed` events (ADR-20261022105846 amendment 2; `docs/runbooks/edge-penalty-box-review.md`) | open; review tooling built |
 
 Attack mode (preview):
 
@@ -97,7 +97,7 @@ AI crawler controls (preview):
 |---|---|---|---|---|
 | I1 | Conditions match the claim and purpose, verify against published ranges, and read absent while unreleased | all pass | `TestEdgeRuleMatchAICrawlerFields`, `TestEdgeRuleMatchAICrawlerFieldsUnreleased`, `TestAICrawlerConditionsNeedTheirFlag` | met |
 | I2 | Published ranges refresh, keep the last good copy on a bad feed, and expire | all pass | `TestRefresherKeepsPreviousRangesOnBadFeeds` | met |
-| I3 | The catalog matches the crawlers that actually visit | no unknown AI User-Agent above 1% of crawler traffic in 14 days of stage 2 | `gateway_ai_crawler_requests_total`, request telemetry | open |
+| I3 | The catalog matches the crawlers that actually visit | no unknown AI User-Agent above 1% of crawler traffic in 14 days of stage 2 | `gateway_ai_crawler_requests_total`, and a log-mode rule sampling the bots the catalog does not name (`docs/runbooks/edge-ai-crawler-catalog-review.md`, amendment 4) | open |
 
 ## Consequences
 
@@ -181,3 +181,25 @@ estimate showed the solver as it stood would miss: about 3.8 s at p95 on a
 2020 mid-range phone. ADR-831 amendment 15 made the solver about 5x faster,
 for an estimated p95 of 0.88-1.12 s. The device measurement still decides
 H3.
+
+## Amendment 4 (2026-10-26): the stage reviews have their data
+
+A check of each open criterion against the data it needs found three gaps:
+
+- **P4** needed to know which clients were boxed. Only per-app counts
+  existed, and a box's shared row is pruned an hour after it ends. Boxes are
+  now events (ADR-20261022105846 amendment 2), read weekly by
+  `docs/runbooks/edge-penalty-box-review.md`.
+- **H5**'s metric counts every page served, bots that send browser-like
+  headers included, so an attack lowers the ratio without any browser
+  failing. `challenged` events record each page's User-Agent, and
+  `docs/runbooks/edge-challenge-solve-rate-review.md` uses them to remove
+  the bots.
+- **I3**'s evidence could not see the crawlers it is about. The gateway
+  counts only crawlers the catalog names, and request telemetry keeps only
+  a User-Agent family. `docs/runbooks/edge-ai-crawler-catalog-review.md`
+  samples the bots the catalog does not name with a log-mode rule on each
+  stage-2 app.
+
+Each review runs at least weekly, because events are kept 7 days. No
+target changes.

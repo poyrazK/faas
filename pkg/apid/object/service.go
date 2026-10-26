@@ -49,6 +49,10 @@ type Host interface {
 	// SecretRecipient, HostHMACKey and MFAIdentities return empty values when
 	// the host secrets are not installed.
 	SecretRecipient() *age.X25519Recipient
+	// StorageCredentialRecipients is who a Gregale S3 secret access key is
+	// sealed to, which s3-gatewayd opens, and the key id to store with it
+	// (ADR 20261022111812).
+	StorageCredentialRecipients() ([]*age.X25519Recipient, string, error)
 	// RuntimeSecretRecipient seals the app secrets a binding hands to the
 	// workload, which vmmd opens (ADR 20261022111812).
 	RuntimeSecretRecipient() *age.X25519Recipient

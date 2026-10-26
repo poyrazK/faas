@@ -65,14 +65,22 @@ func parseAppJobsPath(rest string) (string, bool) {
 func (s *server) renderJobsQueues(w http.ResponseWriter, r *http.Request, log *slog.Logger, acct state.Account, selectedApp string) {
 	ctx := r.Context()
 	apps, err := s.store.ListApps(ctx, acct.ID)
+	appsKnown := err == nil
 	if err != nil {
 		log.Warn("dashboard jobs: list apps", "account_id", acct.ID, "err", err)
 		apps = nil
 	}
+	// Queue payloads and async invocations of a company app the session
+	// may no longer see stay off this account-wide page.
+	apps, hiddenApps, err := s.visibleAccountApps(r, acct, apps)
+	if err != nil {
+		log.Warn("dashboard jobs: app access", "account_id", acct.ID, "err", err)
+		appsKnown = false
+	}
 
 	if selectedApp != "" {
 		app, err := s.store.AppBySlug(ctx, selectedApp)
-		if err != nil || app.AccountID != acct.ID {
+		if err != nil || app.AccountID != acct.ID || !accountViewAppVisible(ctx, s.store, log, acct, app) {
 			http.NotFound(w, r)
 			return
 		}
@@ -111,6 +119,9 @@ func (s *server) renderJobsQueues(w http.ResponseWriter, r *http.Request, log *s
 	if selectedApp == "" {
 		before := r.URL.Query().Get("async_before")
 		rows, err := s.store.ListAsyncInvocationsForAccount(ctx, acct.ID, dashboardAsyncHistoryLimit+1, before)
+		if err == nil && !appsKnown {
+			err = errors.New("app access unavailable")
+		}
 		if err != nil {
 			log.Warn("dashboard jobs: list async invocations", "account_id", acct.ID, "err", err)
 			data.AsyncInvocationError = "Async invocation history is temporarily unavailable. Please try again shortly."
@@ -119,7 +130,7 @@ func (s *server) renderJobsQueues(w http.ResponseWriter, r *http.Request, log *s
 			if hasOlder {
 				rows = rows[:dashboardAsyncHistoryLimit]
 			}
-			data.AsyncInvocations = projectDashboardAsyncInvocations(rows, apps)
+			data.AsyncInvocations = projectDashboardAsyncInvocations(rows, apps, hiddenApps)
 			if hasOlder && len(rows) > 0 {
 				values := url.Values{}
 				values.Set("async_before", rows[len(rows)-1].ID)
@@ -257,7 +268,10 @@ func projectDashboardJobRuns(rows []state.JobRun, jobs []state.Job) []dashboard.
 	return items
 }
 
-func projectDashboardAsyncInvocations(rows []state.Invocation, apps []state.App) []dashboard.AsyncInvocationPageItem {
+// projectDashboardAsyncInvocations drops the rows of hidden apps; the
+// "older" cursor still follows the page that was read, so hidden rows never
+// end paging.
+func projectDashboardAsyncInvocations(rows []state.Invocation, apps []state.App, hidden map[string]bool) []dashboard.AsyncInvocationPageItem {
 	if len(rows) == 0 {
 		return nil
 	}
@@ -267,6 +281,9 @@ func projectDashboardAsyncInvocations(rows []state.Invocation, apps []state.App)
 	}
 	items := make([]dashboard.AsyncInvocationPageItem, 0, len(rows))
 	for _, row := range rows {
+		if hidden[row.AppID] {
+			continue
+		}
 		appSlug := appSlugs[row.AppID]
 		if appSlug == "" {
 			appSlug = "deleted app"

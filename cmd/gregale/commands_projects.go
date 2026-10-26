@@ -35,8 +35,8 @@ func cmdProjects(args []string) int {
 	case "rm", "delete":
 		return cmdProjectsRemove(args[1:])
 	default:
-		PrintUsage(os.Stderr, fmt.Sprintf("unknown projects subcommand %q", args[0]), "projects")
-		return 1
+		printCommandValidation(os.Stderr, "unknown projects subcommand %q\n", args[0])
+		return unknownSubcommandChoices(os.Stderr, "projects", nestedCliCommand("projects"), args[0])
 	}
 }
 

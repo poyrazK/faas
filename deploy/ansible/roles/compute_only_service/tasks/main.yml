@@ -546,6 +546,17 @@
     - faas-imaged
     - faas-schedd
 
+# ADR-20261025114554: imaged pulls anonymous Docker Hub images through the
+# operator's mirrors (faas_docker_hub_mirrors) before Docker Hub.
+- name: compute_only_service — install Docker Hub mirrors drop-in
+  notify: restart faas-imaged
+  ansible.builtin.template:
+    src: ../../_shared/templates/99-faas-docker-hub-mirrors.conf.j2
+    dest: /etc/systemd/system/faas-imaged.service.d/99-faas-docker-hub-mirrors.conf
+    owner: root
+    group: root
+    mode: "0644"
+
 # Mega-PR-C (issue #911 / ADR-110): wire the per-box role gate
 # through to imaged via FAAS_IMAGED_ROLE so cmd/imaged/main.go
 # picks up faas_box_role (compute-only on fsn-2). See

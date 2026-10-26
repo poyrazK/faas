@@ -38,7 +38,7 @@ func prepareJobProcess(m JobManifest, secrets map[string]string, log *slog.Logge
 	env := buildImageJobEnv(os.Environ(), app.Env, m, secrets)
 	env = withImageHome(env, imagePasswdHome(credential.Uid))
 	dir := imageJobWorkdir(m, app)
-	if err := ensureJobWorkdir(dir, credential.Uid, credential.Gid); err != nil {
+	if err := ensureWorkingDir(dir, credential.Uid, credential.Gid); err != nil {
 		return fail(126, "prepare working directory", err)
 	}
 	argv := append([]string(nil), m.Command...)
@@ -70,9 +70,9 @@ func imagePasswdHome(uid uint32) string {
 	return passwdHome(string(passwd), uid)
 }
 
-// ensureJobWorkdir creates a missing working directory owned by the
+// ensureWorkingDir creates a missing working directory owned by the
 // process identity, as `docker run -w` creates one.
-func ensureJobWorkdir(dir string, uid, gid uint32) error {
+func ensureWorkingDir(dir string, uid, gid uint32) error {
 	info, err := os.Stat(dir)
 	if err == nil {
 		if !info.IsDir() {

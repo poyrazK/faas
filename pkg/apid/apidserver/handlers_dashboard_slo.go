@@ -168,7 +168,11 @@ func (s *server) fetchDashboardAccountSLO(ctx context.Context, log *slog.Logger,
 	scalar, src := s.fetchAccountSLO(dctx, acct, window)
 	var appIDs []string
 	if s.store != nil {
-		if apps, err := s.store.ListApps(dctx, acct.ID); err == nil {
+		apps, err := s.store.ListApps(dctx, acct.ID)
+		if err == nil {
+			apps, err = accountViewApps(dctx, s.store, acct, apps)
+		}
+		if err == nil {
 			appIDs = make([]string, 0, len(apps))
 			for _, app := range apps {
 				appIDs = append(appIDs, app.ID)

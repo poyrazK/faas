@@ -35,8 +35,13 @@ func cmdCache(args []string) int {
 	case "PURGE":
 		return cmdCachePurge(args[1:])
 	default:
-		PrintUsage(os.Stderr, cacheDeclareUsage+"\n       "+strings.TrimPrefix(cachePurgeUsage, "usage: "), "cache")
-		return 1
+		printCommandValidation(os.Stderr, "unknown cache subcommand %q\n", args[0])
+		if args[0] == subList || args[0] == "ls" {
+			// Cache rules are edge rules of kind cache; `cache list` found
+			// no way to see them on production-us rc.294 (Hunt 14 H14-64).
+			_, _ = fmt.Fprintln(os.Stderr, "  Cache rules are edge rules: gregale edge-rules list <slug>")
+		}
+		return unknownSubcommandChoices(os.Stderr, "cache", nestedCliCommand("cache"), args[0])
 	}
 }
 

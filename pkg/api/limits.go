@@ -871,8 +871,17 @@ const (
 )
 
 // Workflow reliability bounds (ADR-725, ADR-726, ADR-649).
+//
+// WorkflowDispatchSlots bounds the runs one schedd executes at once; a slot
+// waits on the customer's handler for up to the plan's step timeout. The
+// first WorkflowDispatchBaseSlots are offered every tick, and one more only
+// while every lower slot is busy. Database work is bounded separately by
+// WorkflowDispatchDBPhaseSlots, which a slot gives back while it waits on a
+// handler (ADR-20261025232118).
 const (
-	WorkflowDispatchSlots                = 4
+	WorkflowDispatchSlots                = 32
+	WorkflowDispatchBaseSlots            = 4
+	WorkflowDispatchDBPhaseSlots         = 4
 	WorkflowDispatchBatchPerSlot         = 8
 	WorkflowDispatchMaxPerApp            = 2
 	WorkflowDispatchMaxPerTenant         = 1
@@ -2483,6 +2492,13 @@ const (
 	ObjectUploadMinRateGrace      = time.Minute
 	ObjectUploadMinBytesPerSecond = 8 << 10
 )
+
+// ProjectWorkloadDefaultRAMMB is the RAM a project service gets when its
+// Compose file declares no memory (deploy.resources.limits.memory or
+// mem_limit). It is also the store's floor for an app created without RAM.
+// Standalone apps default to the plan's RAM instead; the project plan shows
+// which services start at this default (Hunt 14 H14-36).
+const ProjectWorkloadDefaultRAMMB = 128
 
 // App CPU is expressed as sustained millicores enforced by cgroup v2 cpu.max.
 // Keep the first release deliberately small: it lets customers right-size
@@ -7170,6 +7186,22 @@ const (
 	// quota/limit lives in this one table" rule, never inline at the
 	// point of use.
 	MaxAppManifestStopGracePeriod = 5 * time.Minute
+
+	// MaxDockerHubMirrors bounds the operator's Docker Hub mirror list
+	// (DockerHubMirrorsEnv, ADR-20261025114554): every miss costs a round
+	// trip before the next mirror or Docker Hub itself is tried.
+	MaxDockerHubMirrors = 4
+
+	// GuestOpenFilesSoftLimit and GuestOpenFilesHardLimit are the
+	// RLIMIT_NOFILE every guest process inherits from guest-init
+	// (ADR-20261025111339). The kernel's 1024/4096 default capped a Go or
+	// JVM server, which raises its soft limit to the hard one, near 4,096
+	// sockets. The hard limit is the kernel's default fs.nr_open, as under
+	// Kubernetes; the soft limit stays low enough that programs which close
+	// or index every possible descriptor do not slow down. The guest's
+	// fs.file-max, which scales with its RAM, still bounds the total.
+	GuestOpenFilesSoftLimit = 65536
+	GuestOpenFilesHardLimit = 1 << 20
 
 	// ColdBootReadyWindowS is how long an app may take to become ready
 	// on any cold boot: the spec §6.1 COLD_BOOTING budget the scheduler's
@@ -12116,6 +12148,17 @@ const (
 	WorkPolicyMaxBytes                = 16384
 	WorkPolicyMaxRules                = 64
 	WorkPolicyMaxStartDeadlineSeconds = 30 * 24 * 60 * 60
+)
+
+// Customer bucket CORS (ADR-20261025202805). The rule count, the 64 KiB
+// configuration and the methods follow S3's PutBucketCors.
+const (
+	MaxObjectBucketCORSRules         = 100
+	MaxObjectBucketCORSRuleValues    = 100
+	MaxObjectBucketCORSValueBytes    = 1024
+	MaxObjectBucketCORSRuleIDBytes   = 255
+	MaxObjectBucketCORSMaxAgeSeconds = 86400
+	MaxObjectBucketCORSBodyBytes     = 64 << 10
 )
 
 // S3 protocol and browser-policy bounds shared by the branded gateway and stores.

@@ -6,6 +6,12 @@ the canonical event envelope without logging the payload.
 
 ## Start here
 
+Internal events (publishing, `event_triggers` subscriptions, acknowledgments
+and delivery controls) are a preview capability. Until it is released to your
+account, a deploy that declares `event_triggers` answers `403
+capability_not_released`. Run `gregale previews list` to see whether you can
+join it with `gregale previews join <key>`, or contact support for access.
+
 ```sh
 gregale init --template event-worker --path ./invoice-worker
 cd invoice-worker
@@ -39,5 +45,5 @@ The handler receives the full event envelope as its parsed JSON request body
 (`event.body`; a raw JSON string is accepted too). It rejects malformed
 envelopes instead of acknowledging and discarding them. Keep event
 processing idempotent: Gregale retries asynchronous deliveries and exposes
-terminal failures through `gregale dlq invoice-worker` for inspection and
+terminal failures through `gregale dlq list invoice-worker` for inspection and
 replay.

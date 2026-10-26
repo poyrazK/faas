@@ -28,6 +28,8 @@ const (
 	envSealDomainEdgeWrites        = "FAAS_SEAL_DOMAIN_EDGE_WRITES"
 	envSealDomainAlertingRecipient = "FAAS_SEAL_DOMAIN_ALERTING_RECIPIENT_PATH"
 	envSealDomainAlertingWrites    = "FAAS_SEAL_DOMAIN_ALERTING_WRITES"
+	envSealDomainStorageRecipient  = "FAAS_SEAL_DOMAIN_STORAGE_RECIPIENT_PATH"
+	envSealDomainStorageWrites     = "FAAS_SEAL_DOMAIN_STORAGE_WRITES"
 	// envRuntimeSecretBinding turns on account-bound runtime envelopes
 	// (ADR-20261023173624): off (the default) or account. Unit
 	// configuration, like the write modes: a database writer must not be
@@ -101,6 +103,14 @@ var alertingDomainRecipient func() *age.X25519Recipient
 // meterd opens.
 var alertingWriteMode sealdomain.WriteMode
 
+// storageDomainRecipient is the storage domain's recipient once the
+// seal_domains role stages it; nil until then.
+var storageDomainRecipient func() *age.X25519Recipient
+
+// storageWriteMode picks the recipients of Gregale S3 secret access keys,
+// which s3-gatewayd opens.
+var storageWriteMode sealdomain.WriteMode
+
 // runtimeDomainRecipient is the runtime domain's recipient once the
 // seal_domains role stages it; nil until then.
 var runtimeDomainRecipient func() *age.X25519Recipient
@@ -160,6 +170,15 @@ func loadSealDomains(getenv func(string) string, log *slog.Logger) error {
 		return fmt.Errorf("apid: alerting seal domain: %w", err)
 	}
 	log.Info("alerting seal domain", "write_mode", string(alertingWriteMode), "domain_recipient_staged", alertingDomainRecipient != nil, "recipients", len(alertingRecipients))
+
+	if storageDomainRecipient, storageWriteMode, err = loadDomainWriter(getenv, envSealDomainStorageRecipient, envSealDomainStorageWrites); err != nil {
+		return err
+	}
+	storageRecipients, _, err := storageCredentialRecipients()
+	if err != nil && storageWriteMode != sealdomain.WriteAuto && storageWriteMode != sealdomain.WriteFleet {
+		return fmt.Errorf("apid: storage seal domain: %w", err)
+	}
+	log.Info("storage seal domain", "write_mode", string(storageWriteMode), "domain_recipient_staged", storageDomainRecipient != nil, "recipients", len(storageRecipients))
 
 	if runtimeDomainRecipient, runtimeWriteMode, err = loadDomainWriter(getenv, envSealDomainRuntimeRecipient, envSealDomainRuntimeWrites); err != nil {
 		return err
@@ -231,6 +250,22 @@ func edgeCredentialRecipients() ([]*age.X25519Recipient, error) {
 // a test it cannot open through meterd (alert_test_relay.go).
 func alertingCredentialRecipients() ([]*age.X25519Recipient, error) {
 	return sealdomain.Recipients(alertingWriteMode, recipientOrNil(alertingDomainRecipient), hostSecretRecipient())
+}
+
+// storageCredentialRecipients returns who a Gregale S3 secret access key is
+// sealed to (the fleet recipient alone until the storage domain is staged,
+// then the domain and the fleet recipient, then the domain alone) and the
+// key id to store with it. s3-gatewayd's startup rekey re-seals a row whose
+// key id is not its current key, so the id stays the fleet recipient while
+// the value opens with it, and becomes the domain's once only the domain
+// opens it.
+func storageCredentialRecipients() ([]*age.X25519Recipient, string, error) {
+	fleet := hostSecretRecipient()
+	recipients, err := sealdomain.Recipients(storageWriteMode, recipientOrNil(storageDomainRecipient), fleet)
+	if err != nil {
+		return nil, "", err
+	}
+	return recipients, sealdomain.KeyID(recipients, fleet), nil
 }
 
 // runtimeSecretRecipient is who app, project, release and binding secrets,

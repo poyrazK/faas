@@ -8117,6 +8117,8 @@ BEGIN
             FROM workflow_event_recipients(NEW.subject, NEW.data->>'source', NEW.data->>'type') AS w(recipient)
             WHERE NOT EXISTS (SELECT 1 FROM scenario_test_action_policies x
                 WHERE x.app_id = (w.recipient->>'app_id')::uuid)), '[]'::jsonb);
+        -- ADR-20261025211616: keep the event inside its producer's company.
+        recipients := event_recipients_in_producer_reach(NEW.subject, NEW.data->>'producer', recipients);
     END IF;
 
     INSERT INTO event_fanout_outbox
@@ -11002,6 +11004,30 @@ $_$;
 
 
 --
+-- Name: event_app_company(uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.event_app_company(target_app uuid) RETURNS uuid
+    LANGUAGE sql STABLE
+    AS $$
+    SELECT o.id FROM apps a JOIN orgs o ON o.id = a.org_id AND NOT o.personal_org
+    WHERE a.id = target_app
+$$;
+
+
+--
+-- Name: event_app_in_producer_reach(uuid, text, text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.event_app_in_producer_reach(target_account uuid, producer text, target_app text) RETURNS boolean
+    LANGUAGE sql STABLE
+    AS $$
+    SELECT jsonb_array_length(event_recipients_in_producer_reach(target_account, producer,
+        jsonb_build_array(jsonb_build_object('app_id', target_app)))) = 1
+$$;
+
+
+--
 -- Name: event_backlog_waiting_reason(text, text, text, timestamp with time zone, timestamp with time zone, text, jsonb, timestamp with time zone); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -11016,6 +11042,20 @@ SELECT CASE
  WHEN next_attempt_at > observed_at THEN 'retry_backoff'
  WHEN consumer_kind = 'workflow' THEN 'workflow_routing'
  ELSE 'ready' END;
+$$;
+
+
+--
+-- Name: event_company_reachable(uuid, uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.event_company_reachable(target_account uuid, company uuid) RETURNS boolean
+    LANGUAGE sql STABLE
+    AS $$
+    SELECT EXISTS (SELECT 1 FROM org_memberships m JOIN orgs o ON o.id = m.org_id
+        WHERE m.org_id = company AND m.account_id = target_account AND m.removed_at IS NULL
+          AND m.role IN ('owner', 'admin', 'developer')
+          AND NOT o.deleted_pending AND o.status <> 'deleted_pending')
 $$;
 
 
@@ -11266,6 +11306,39 @@ CREATE FUNCTION public.event_recipient_schema_version_mismatch(recipient jsonb, 
     AS $$
  SELECT NOT recipient ? 'workflow' AND NOT recipient ? 'object_notification' AND jsonb_array_length(coalesce(recipient->'schema_versions','[]'::jsonb))>0 AND NOT (recipient->'schema_versions' ? coalesce(payload->>'schemaversion',''));
 $$;
+
+
+--
+-- Name: event_recipients_in_producer_reach(uuid, text, jsonb); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.event_recipients_in_producer_reach(target_account uuid, producer text, recipients jsonb) RETURNS jsonb
+    LANGUAGE plpgsql STABLE
+    AS $_$
+DECLARE producer_company uuid; producer_reachable boolean;
+BEGIN
+    IF producer IS NULL OR jsonb_array_length(recipients) = 0 THEN
+        RETURN recipients;
+    END IF;
+    IF producer = 'personal' THEN
+        producer_company := NULL;
+    ELSIF producer ~* '^org:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' THEN
+        SELECT o.id INTO producer_company FROM orgs o
+        WHERE o.id = substr(producer, 5)::uuid AND NOT o.personal_org;
+    ELSIF producer ~* '^app:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' THEN
+        producer_company := event_app_company(substr(producer, 5)::uuid);
+    ELSE
+        RAISE EXCEPTION 'event producer % is not recognized', producer USING ERRCODE = '23514';
+    END IF;
+    producer_reachable := producer_company IS NULL OR event_company_reachable(target_account, producer_company);
+    RETURN coalesce((SELECT jsonb_agg(r.recipient ORDER BY r.position)
+        FROM jsonb_array_elements(recipients) WITH ORDINALITY AS r(recipient, position)
+        CROSS JOIN LATERAL (SELECT event_app_company((r.recipient->>'app_id')::uuid) AS company) d
+        WHERE d.company IS NOT DISTINCT FROM producer_company
+           OR (producer_reachable AND (d.company IS NULL OR event_company_reachable(target_account, d.company)))),
+        '[]'::jsonb);
+END;
+$_$;
 
 
 --
@@ -35125,7 +35198,7 @@ CREATE TABLE public.edge_rule_events (
     CONSTRAINT edge_rule_events_country_check CHECK ((length(country) <= 8)),
     CONSTRAINT edge_rule_events_host_check CHECK ((length(host) <= 253)),
     CONSTRAINT edge_rule_events_method_check CHECK ((length(method) <= 16)),
-    CONSTRAINT edge_rule_events_outcome_check CHECK ((outcome = ANY (ARRAY['matched'::text, 'logged'::text, 'detected'::text, 'warned'::text, 'blocked'::text, 'challenged'::text, 'rejected'::text, 'solved'::text, 'failed'::text]))),
+    CONSTRAINT edge_rule_events_outcome_check CHECK ((outcome = ANY (ARRAY['matched'::text, 'logged'::text, 'detected'::text, 'warned'::text, 'blocked'::text, 'challenged'::text, 'rejected'::text, 'solved'::text, 'failed'::text, 'boxed'::text]))),
     CONSTRAINT edge_rule_events_path_check CHECK ((octet_length(path) <= 1024)),
     CONSTRAINT edge_rule_events_request_id_check CHECK ((length(request_id) <= 128)),
     CONSTRAINT edge_rule_events_user_agent_check CHECK ((octet_length(user_agent) <= 256)),
@@ -41613,6 +41686,31 @@ CREATE TABLE public.layer_artifact_retention (
 
 
 --
+-- Name: log_archive_erasure_instances; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.log_archive_erasure_instances (
+    account_id uuid NOT NULL,
+    instance_id uuid NOT NULL,
+    erased_at timestamp with time zone,
+    CONSTRAINT log_archive_erasure_instances_erased_at_check CHECK (((erased_at IS NULL) OR isfinite(erased_at)))
+);
+
+
+--
+-- Name: log_archive_erasures; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.log_archive_erasures (
+    account_id uuid NOT NULL,
+    deletion_requested_at timestamp with time zone NOT NULL,
+    snapshotted_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT log_archive_erasures_deletion_requested_at_check CHECK (isfinite(deletion_requested_at)),
+    CONSTRAINT log_archive_erasures_snapshotted_at_check CHECK (isfinite(snapshotted_at))
+);
+
+
+--
 -- Name: log_events; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -44608,6 +44706,20 @@ CREATE TABLE public.oauth_links (
     email text NOT NULL,
     email_verified boolean NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: object_bucket_cors; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.object_bucket_cors (
+    bucket_id uuid NOT NULL,
+    rules jsonb NOT NULL,
+    revision bigint NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT object_bucket_cors_revision_check CHECK ((revision > 0)),
+    CONSTRAINT object_bucket_cors_rules_check CHECK (((jsonb_typeof(rules) = 'array'::text) AND ((jsonb_array_length(rules) >= 1) AND (jsonb_array_length(rules) <= 100)) AND (octet_length((rules)::text) <= 65536)))
 );
 
 
@@ -61699,6 +61811,22 @@ ALTER TABLE ONLY public.layer_artifact_retention
 
 
 --
+-- Name: log_archive_erasure_instances log_archive_erasure_instances_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.log_archive_erasure_instances
+    ADD CONSTRAINT log_archive_erasure_instances_pkey PRIMARY KEY (account_id, instance_id);
+
+
+--
+-- Name: log_archive_erasures log_archive_erasures_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.log_archive_erasures
+    ADD CONSTRAINT log_archive_erasures_pkey PRIMARY KEY (account_id);
+
+
+--
 -- Name: log_events log_events_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -62816,6 +62944,14 @@ ALTER TABLE ONLY public.notification_outbox
 
 ALTER TABLE ONLY public.oauth_links
     ADD CONSTRAINT oauth_links_pkey PRIMARY KEY (provider, provider_subject);
+
+
+--
+-- Name: object_bucket_cors object_bucket_cors_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.object_bucket_cors
+    ADD CONSTRAINT object_bucket_cors_pkey PRIMARY KEY (bucket_id);
 
 
 --
@@ -72774,6 +72910,13 @@ CREATE INDEX jobs_image_run_lru_idx ON public.jobs USING btree (account_id, upda
 --
 
 CREATE INDEX jobs_legacy_artifact_verification_idx ON public.jobs USING btree (updated_at, id) WHERE ((status <> 'deleted'::text) AND (image_materialization_status = 'verifying_legacy'::text));
+
+
+--
+-- Name: log_archive_erasure_instances_pending_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX log_archive_erasure_instances_pending_idx ON public.log_archive_erasure_instances USING btree (account_id, instance_id) WHERE (erased_at IS NULL);
 
 
 --
@@ -92257,6 +92400,22 @@ ALTER TABLE ONLY public.jobs
 
 
 --
+-- Name: log_archive_erasure_instances log_archive_erasure_instances_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.log_archive_erasure_instances
+    ADD CONSTRAINT log_archive_erasure_instances_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.log_archive_erasures(account_id) ON DELETE CASCADE;
+
+
+--
+-- Name: log_archive_erasures log_archive_erasures_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.log_archive_erasures
+    ADD CONSTRAINT log_archive_erasures_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
 -- Name: log_saved_searches log_saved_searches_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -93494,6 +93653,14 @@ ALTER TABLE ONLY public.notification_channels
 
 ALTER TABLE ONLY public.oauth_links
     ADD CONSTRAINT oauth_links_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: object_bucket_cors object_bucket_cors_bucket_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.object_bucket_cors
+    ADD CONSTRAINT object_bucket_cors_bucket_id_fkey FOREIGN KEY (bucket_id) REFERENCES public.object_buckets(id) ON DELETE CASCADE;
 
 
 --

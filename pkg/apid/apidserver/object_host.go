@@ -85,6 +85,10 @@ func (h objectHost) SecretRecipient() *age.X25519Recipient {
 	return hostSecretRecipient()
 }
 
+func (h objectHost) StorageCredentialRecipients() ([]*age.X25519Recipient, string, error) {
+	return storageCredentialRecipients()
+}
+
 func (h objectHost) RuntimeSecretRecipient() *age.X25519Recipient {
 	return runtimeSecretRecipient()
 }
