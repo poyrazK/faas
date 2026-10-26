@@ -119,7 +119,7 @@ type EventConsumerPendingSample struct {
 	Recipients     []EventBacklogRecipient `json:"recipients"`
 }
 
-func (c *Client) GetEventConsumerDeliveryHealth(ctx context.Context, app, id, window string) (EventConsumerDeliveryHealth, error) {
+func (c *PreviewClient) GetEventConsumerDeliveryHealth(ctx context.Context, app, id, window string) (EventConsumerDeliveryHealth, error) {
 	var out EventConsumerDeliveryHealth
 	err := c.do(ctx, http.MethodGet, "/v1/apps/"+url.PathEscape(app)+"/event-subscriptions/"+url.PathEscape(id)+"/delivery-health?window="+url.QueryEscape(window), nil, &out)
 	return out, err

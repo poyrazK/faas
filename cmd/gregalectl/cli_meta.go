@@ -259,8 +259,8 @@ var cliCommands = []cliCommand{
 		Subcommands: []cliSub{
 			{Name: "init", Short: "Create fleet.age and fleet.age.pub", Flags: []cliFlag{{Name: "dir", Short: "fleet identity directory"}, {Name: "force", Short: "coordinated identity replacement"}, {Name: "json", Short: "emit structured JSON"}}},
 			{Name: "retire-release-key", Short: "Verify and retire a recipient from release-secret storage", Flags: []cliFlag{{Name: "kid", Short: "previous age recipient"}, {Name: "current-key", Short: "current fleet identity"}, {Name: "pg-dsn", Short: "PostgreSQL DSN"}, {Name: "db-env", Short: "database environment file"}, {Name: "dry-run", Short: "read dependencies without retiring"}, {Name: "json", Short: "emit retirement status"}}},
-			{Name: "migrate", Short: "Re-seal cluster and customer material to fleet.age", Flags: []cliFlag{{Name: "fleet-key", Short: "fleet.age identity"}, {Name: "legacy-host-dir", Short: "legacy host identity directory"}, {Name: "pg-dsn", Short: "PostgreSQL DSN"}, {Name: "db-env", Short: "file containing DATABASE_URL"}, {Name: "json", Short: "emit structured JSON"}}},
-			{Name: "verify", Short: "Prove customer probe and shared-kid JWT access", Flags: []cliFlag{{Name: "fleet-key", Short: "staged fleet.age identity"}, {Name: "host-key", Short: "per-host host.age identity"}, {Name: "pg-dsn", Short: "PostgreSQL DSN"}, {Name: "db-env", Short: "file containing DATABASE_URL"}, {Name: "metrics-file", Short: "node_exporter textfile output"}, {Name: "json", Short: "emit structured JSON"}}},
+			{Name: "migrate", Short: "Re-seal cluster and customer material to fleet.age", Flags: []cliFlag{{Name: "fleet-key", Short: "fleet.age identity"}, {Name: "legacy-host-dir", Short: "legacy host identity directory"}, {Name: "control-key", Short: "control seal-domain identity"}, {Name: "pg-dsn", Short: "PostgreSQL DSN"}, {Name: "db-env", Short: "file containing DATABASE_URL"}, {Name: "json", Short: "emit structured JSON"}}},
+			{Name: "verify", Short: "Prove customer probe and shared-kid JWT access", Flags: []cliFlag{{Name: "fleet-key", Short: "staged fleet.age identity"}, {Name: "host-key", Short: "per-host host.age identity"}, {Name: "control-key", Short: "control seal-domain identity"}, {Name: "pg-dsn", Short: "PostgreSQL DSN"}, {Name: "db-env", Short: "file containing DATABASE_URL"}, {Name: "metrics-file", Short: "node_exporter textfile output"}, {Name: "json", Short: "emit structured JSON"}}},
 		},
 	},
 	{
@@ -285,13 +285,22 @@ var cliCommands = []cliCommand{
 		},
 	},
 	{
+		Name:    dispatchObjectStorage,
+		DocSlug: "object-storage",
+		Short:   "Reconcile the object bucket catalog with each provider after a database restore (ADR 20261025111015)",
+		Subcommands: []cliSub{
+			{Name: "reconcile", Short: "List each backend's Gregale buckets and report catalog disagreements, read-only (exit 4 on findings)", Flags: []cliFlag{{Name: "config", Short: "provider registry JSON"}, {Name: "provider-env", Short: "provider credential env file"}, {Name: "pg-dsn", Short: "PostgreSQL DSN"}, {Name: "db-env", Short: "file containing DATABASE_URL"}, {Name: "json", Short: "emit structured JSON"}}},
+			{Name: "hold", Short: "Turn s3_enabled off directly in the database, without apid, right after a restore", Flags: []cliFlag{{Name: "pg-dsn", Short: "PostgreSQL DSN"}, {Name: "db-env", Short: "file containing DATABASE_URL"}}},
+		},
+	},
+	{
 		Name:    dispatchSealDomain,
 		DocSlug: "seal-domain",
 		Short:   "Provision, verify, and migrate per-reader seal domains (ADR 20261022111812)",
 		Subcommands: []cliSub{
 			{Name: "init", Short: "Create <domain>.age and <domain>.age.pub", Flags: []cliFlag{{Name: "domain", Short: "seal domain"}, {Name: "dir", Short: "domain identity directory"}, {Name: "force", Short: "coordinated identity replacement"}, {Name: "json", Short: "emit structured JSON"}}},
 			{Name: "verify", Short: "Prove this node's domain identity opens the domain probe", Flags: []cliFlag{{Name: "domain", Short: "seal domain"}, {Name: "dir", Short: "domain identity directory"}, {Name: "publish", Short: "write the probe when the domain has none"}, {Name: "pg-dsn", Short: "PostgreSQL DSN"}, {Name: "db-env", Short: "file containing DATABASE_URL"}, {Name: "metrics-file", Short: "node_exporter textfile output"}, {Name: "recipient-only", Short: "check the staged recipient against the published probe"}, {Name: "json", Short: "emit structured JSON"}}},
-			{Name: "migrate", Short: "Re-seal a domain's stored envelopes", Flags: []cliFlag{{Name: "domain", Short: "seal domain (outbound, runtime, source or build)"}, {Name: "dir", Short: "domain identity directory"}, {Name: "fleet-key", Short: "fleet.age identity"}, {Name: "host-key", Short: "legacy host.age identity"}, {Name: "readers-verified", Short: "every reader holds the domain identity"}, {Name: "pg-dsn", Short: "PostgreSQL DSN"}, {Name: "db-env", Short: "file containing DATABASE_URL"}, {Name: "json", Short: "emit structured JSON"}}},
+			{Name: "migrate", Short: "Re-seal a domain's stored envelopes", Flags: []cliFlag{{Name: "domain", Short: "seal domain (outbound, runtime, source, build, edge, alerting, storage or control)"}, {Name: "dir", Short: "domain identity directory"}, {Name: "fleet-key", Short: "fleet.age identity"}, {Name: "host-key", Short: "legacy host.age identity"}, {Name: "readers-verified", Short: "every reader holds the domain identity"}, {Name: "pg-dsn", Short: "PostgreSQL DSN"}, {Name: "db-env", Short: "file containing DATABASE_URL"}, {Name: "json", Short: "emit structured JSON"}}},
 		},
 	},
 	{
@@ -752,13 +761,27 @@ var cliCommands = []cliCommand{
 	{
 		Name:    dispatchAudit,
 		DocSlug: "audit",
-		Short:   "Correlate durable operator intents and live events by trace ID",
+		Short:   "Correlate operator intents by trace ID; audit app layers before a base change",
 		Subcommands: []cliSub{{
 			Name:  "trace",
 			Short: "Look up one exact OTel trace ID through the operator API",
 			Flags: []cliFlag{
 				{Name: "trace-id", Short: "OTel 32-char lowercase hex trace id", Req: true},
 				{Name: "limit", Short: "maximum intents and events to return (1..500)"},
+			},
+		}, {
+			// ADR 20261023220532 rollout step 4: read-only; reads PostgreSQL
+			// and the layer store directly from a control-plane node.
+			Name:  auditBaseLibrariesSub,
+			Short: "List live base-minimal app layers that need a library the Debian 13 base drops",
+			Flags: []cliFlag{
+				{Name: "pg-dsn", Short: "PostgreSQL DSN (default: $FAAS_PG_DSN or $DATABASE_URL)"},
+				{Name: "db-env", Short: "systemd env file containing DATABASE_URL"},
+				{Name: "app", Short: "audit only this app slug"},
+				{Name: "include-superseded", Short: "also audit superseded deployments (rollback targets)"},
+				{Name: "work-dir", Short: "scratch directory for layer copies and dumps"},
+				{Name: "debugfs", Short: "debugfs binary (e2fsprogs)"},
+				{Name: "libraries", Short: "comma-separated sonames the new base drops"},
 			},
 		}},
 	},
@@ -1110,6 +1133,68 @@ var cliCommands = []cliCommand{
 				},
 			},
 			{
+				Name:  subObsNode,
+				Short: "One compute node's support page: admitted RAM, heartbeats, wake latency, drain safety, apps, instances",
+				Flags: []cliFlag{
+					{Name: "heartbeats", Short: "recent heartbeats to read, 1-100 (default 20)"},
+					{Name: "instances", Short: "live instances to list, 0-100 (default 20)"},
+					{Name: "admin-token", Short: "admin bearer (default: $FAAS_ADMIN_TOKEN)"},
+					{Name: "timeout", Short: "HTTP timeout per request (default 30s)"},
+					{Name: "json", Short: "emit structured JSON"},
+				},
+			},
+			{
+				Name:  subObsApp,
+				Short: "One app's support page: live deployment, next-wake path, instances, health, wakes, errors",
+				Flags: []cliFlag{
+					{Name: "range", Short: "health window: 5m|15m|1h|6h|24h|7d|15d (default 1h)"},
+					{Name: "wakes", Short: "recent wakes to list, 0-100 (default 10)"},
+					{Name: "admin-token", Short: "admin bearer (default: $FAAS_ADMIN_TOKEN)"},
+					{Name: "timeout", Short: "HTTP timeout (default 30s)"},
+					{Name: "json", Short: "emit the full response as JSON"},
+				},
+			},
+			{
+				Name:  subObsWake,
+				Short: "One wake's platform events and log lines from every host, as one timeline",
+				Flags: []cliFlag{
+					{Name: "no-logs", Short: "events only; do not query Loki"},
+					{Name: "log-margin", Short: "how far around the first and last event to search the logs (default 2m)"},
+					{Name: "admin-token", Short: "admin bearer (default: $FAAS_ADMIN_TOKEN)"},
+					{Name: "timeout", Short: "HTTP timeout for apid and Loki (default 30s)"},
+					{Name: "json", Short: "emit structured JSON"},
+				},
+			},
+			{
+				Name:  subObsLogs,
+				Short: "Search platform logs in Loki by wake, request, trace, host, unit or level",
+				Flags: []cliFlag{
+					{Name: "wake-id", Short: "lines that mention this wake_id"},
+					{Name: "request-id", Short: "lines that mention this request_id"},
+					{Name: "trace-id", Short: "lines that mention this trace_id"},
+					{Name: "host", Short: "only this host (e.g. fsn-3)"},
+					{Name: "unit", Short: "only this unit (schedd or faas-schedd.service)"},
+					{Name: "level", Short: "only debug|info|warn|error"},
+					{Name: "app", Short: "only customer app-log records of this app_id"},
+					{Name: "account", Short: "only customer app-log records of this account_id"},
+					{Name: "grep", Short: "only lines containing this text"},
+					{Name: "query", Short: "raw LogQL; replaces every filter flag"},
+					{Name: "since", Short: "how far back from --to (default 1h, maximum 14d)"},
+					{Name: "from", Short: "RFC3339 start (overrides --since)"},
+					{Name: "to", Short: "RFC3339 end (default now)"},
+					{Name: "limit", Short: "maximum lines (1..5000; default 200)"},
+					{Name: "forward", Short: "return the oldest lines in the range instead of the newest"},
+					{Name: "loki-url", Short: "Loki base URL (default: $FAAS_LOKI_URL or /etc/faas/loki-client.env)"},
+					{Name: "loki-server-name", Short: "name in the Loki server certificate"},
+					{Name: "loki-tenant", Short: "Loki tenant (default gregale)"},
+					{Name: "loki-ca", Short: "CA file that signed the Loki server certificate"},
+					{Name: "loki-cert", Short: "client certificate file"},
+					{Name: "loki-key", Short: "client key file"},
+					{Name: "json", Short: "emit structured JSON"},
+					{Name: "timeout", Short: "HTTP timeout (default 30s)"},
+				},
+			},
+			{
 				Name:  subObsIncidents,
 				Short: "List bounded deployment, job, node, and alert incidents",
 				Flags: []cliFlag{
@@ -1248,7 +1333,7 @@ var cliCommands = []cliCommand{
 		// writer landed.
 		Name:    dispatchDebug,
 		DocSlug: "debug",
-		Short:   "Operator-side smoke harness for the OTel spans writer (debug otel-smoke; ADR-127 PR-D)",
+		Short:   "Operator debugging: the OTel spans writer smoke (otel-smoke) and daemon profiles (pprof)",
 		Subcommands: []cliSub{
 			{
 				Name:  subDebugOtel,
@@ -1259,6 +1344,20 @@ var cliCommands = []cliCommand{
 					{Name: "expected-spans", Short: "expected accepted_spans value from the handler response (default 3)"},
 					{Name: "timeout", Short: "HTTP timeout for the gatewayd-public round-trip (default 10s)"},
 					{Name: "json", Short: "emit structured JSON to stdout (overrides human summary)"},
+				},
+			},
+			{
+				Name:  subDebugPprof,
+				Short: "Capture a Go profile from a platform daemon on this host (root; ADR-20261023200002)",
+				Flags: []cliFlag{
+					{Name: "daemon", Short: "daemon to profile (schedd, apid, vmmd, gatewayd-internal, …)"},
+					{Name: "pid", Short: "the daemon's pid, when two generations run (see --list)"},
+					{Name: "profile", Short: "cpu, trace, heap, allocs, goroutine, threadcreate, block or mutex (default heap)"},
+					{Name: "seconds", Short: "cpu and trace: how long to record (1..60; default 30)"},
+					{Name: "debug", Short: "named profiles: 0 binary, 1 or 2 text (goroutine 2 = full dump)"},
+					{Name: "gc", Short: "heap: run a GC first so the profile shows live memory"},
+					{Name: "o", Short: "output file (default <daemon>-<profile>-<time>.<ext>)"},
+					{Name: "list", Short: "list the daemons serving profiles on this host"},
 				},
 			},
 		},

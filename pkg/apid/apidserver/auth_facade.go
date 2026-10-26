@@ -66,14 +66,14 @@ func (s *server) auth(next accountHandler) http.HandlerFunc {
 // the wrapping because the spec §11 "10/min/IP" rule is a
 // middleware-level concern, not a per-daemon configuration detail.
 func (s *server) authLimited(next accountHandler) http.HandlerFunc {
-	pkgNext := middleware.AccountHandler(s.sameOriginSessionWrites(s.requireMFA(s.authorizeAppResource(next))))
+	pkgNext := middleware.AccountHandler(s.capabilityAllowed(s.sameOriginSessionWrites(s.requireMFA(s.authorizeAppResource(next)))))
 	return s.authMw.RequireLimited(pkgNext)
 }
 
 // Project publishing checks the human's verification before resolving the
 // project, so a missing resource cannot bypass the verification response.
 func (s *server) authVerifiedLimited(next accountHandler) http.HandlerFunc {
-	pkgNext := middleware.AccountHandler(s.sameOriginSessionWrites(s.requireMFA(s.requireVerifiedEmail(s.authorizeAppResource(next)))))
+	pkgNext := middleware.AccountHandler(s.capabilityAllowed(s.sameOriginSessionWrites(s.requireMFA(s.requireVerifiedEmail(s.authorizeAppResource(next))))))
 	return s.authMw.RequireLimited(pkgNext)
 }
 
@@ -84,6 +84,10 @@ func (s *server) authorizeAppResource(next accountHandler) accountHandler {
 }
 
 func (s *server) authorizeDashboardProject(next http.Handler, w http.ResponseWriter, r *http.Request, actor state.Account) {
+	if slug := dashboardAppSlug(r); slug != "" {
+		s.authorizeDashboardApp(next, w, r, actor, slug)
+		return
+	}
 	if !strings.HasPrefix(r.URL.Path, "/dashboard/projects/") || r.PathValue("slug") == "" {
 		next.ServeHTTP(w, r)
 		return
@@ -92,6 +96,53 @@ func (s *server) authorizeDashboardProject(next http.Handler, w http.ResponseWri
 	projectaccess.Wrap(s.store, loadOrgAuditFrom(s.audit), func(w http.ResponseWriter, r *http.Request, _ state.Account) {
 		next.ServeHTTP(w, r)
 	})(w, r, actor)
+}
+
+// authorizeDashboardApp gates the session-only app routes
+// (/dashboard/apps/{slug}/*, /v1/apps/{slug}/install*) on the caller's
+// current organization access, the decision appaccess.Wrap makes for /v1.
+// Their handlers only check that the caller created the app, which a member
+// keeps after being removed from the company or demoted. The gate decides
+// and then serves the original request: the handlers keep their
+// creator-scoped behaviour, now only for a creator who still holds the
+// route's permission.
+func (s *server) authorizeDashboardApp(next http.Handler, w http.ResponseWriter, r *http.Request, actor state.Account, slug string) {
+	app, err := s.store.AppBySlug(r.Context(), slug)
+	if err != nil {
+		// Missing and foreign apps keep the handlers' own not-found answer.
+		next.ServeHTTP(w, r)
+		return
+	}
+	gate := r.WithContext(middleware.WithPrincipal(r.Context(), actor, nil, nil))
+	if _, problem := appaccess.Authorize(gate, s.store, loadOrgAuditFrom(s.audit), actor, app); problem != nil {
+		api.WriteProblem(w, problem)
+		return
+	}
+	next.ServeHTTP(w, r)
+}
+
+// dashboardAppSlug names the app a session-only app route addresses, or ""
+// for any other route. Most carry {slug} in their pattern (the MCP actions
+// under /dashboard/mcp/apps/ too), but the "GET /dashboard/" subtree
+// dispatches the app pages (detail, logs, env, debug, jobs, ...) by path in
+// dashboardHandler, so there the slug is the first segment under
+// /dashboard/apps/. /dashboard/apps/new is the deploy wizard, not an app's
+// page.
+func dashboardAppSlug(r *http.Request) string {
+	if slug := r.PathValue("slug"); slug != "" {
+		for _, prefix := range []string{"/dashboard/apps/", "/dashboard/mcp/apps/", "/v1/apps/"} {
+			if strings.HasPrefix(r.URL.Path, prefix) {
+				return slug
+			}
+		}
+		return ""
+	}
+	rest, ok := strings.CutPrefix(r.URL.Path, "/dashboard/apps/")
+	if !ok || !strings.HasSuffix(r.Pattern, "/") || rest == "new" {
+		return ""
+	}
+	slug, _, _ := strings.Cut(rest, "/")
+	return slug
 }
 
 // sameOriginSessionWrites refuses a state-changing /v1 request that is
@@ -164,7 +215,7 @@ func (s *server) browserRequestFromTrustedOrigin(r *http.Request) bool {
 // customer app, unlike the <slug>.<domain> hosts this guard exists to stop.
 // Provider-admin mutations keep the narrower isTrustedAdminOrigin.
 func (s *server) isWebDashboardOrigin(origin *url.URL) bool {
-	base := strings.ToLower(strings.TrimSuffix(strings.TrimSpace(s.domain), "."))
+	base := strings.ToLower(strings.TrimSuffix(strings.TrimSpace(s.platformHost()), "."))
 	return base != "" && base != domainUnset && strings.EqualFold(origin.Scheme, "https") &&
 		strings.ToLower(origin.Hostname()) == base && origin.Port() == ""
 }
@@ -282,6 +333,79 @@ func (s *server) requireOperator(next accountHandler) accountHandler {
 	}
 }
 
+// requireOperatorRead is the policy for provider reads that name no tenant:
+// fleet, node and alert-pipeline telemetry (ADR 20261023214253). An
+// operator's bearer key may read them, so probes and scripts keep working;
+// a session must have completed MFA and belong to an enrolled operator.
+func (s *server) requireOperatorRead(next accountHandler) accountHandler {
+	return s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.requireOperator(s.requireEnrolledOperatorSession(next))))
+}
+
+// requireOperatorSessionRead is the policy for provider reads that return
+// customer data: tenant records, events, audit rows, traces, client IPs.
+// Only an MFA-completed session of an enrolled operator reads them, so a
+// leaked operator key does not (ADR 20261023214253).
+func (s *server) requireOperatorSessionRead(next accountHandler) accountHandler {
+	return s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.requireOperator(s.requireOperatorSession(s.requireEnrolledOperatorSession(next)))))
+}
+
+// requireOperatorSession is requireSessionPrincipal with the one-release
+// grace of FAAS_OPERATOR_BEARER_READS=deprecated: an operator key still
+// passes, marked deprecated, so automation can move to a session first.
+func (s *server) requireOperatorSession(next accountHandler) accountHandler {
+	strict := s.requireSessionPrincipal(next)
+	return func(w http.ResponseWriter, r *http.Request, acct state.Account) {
+		if _, key, ok := middleware.AccountFromContext(r); ok && key != nil && s.operatorBearerReadsDeprecated {
+			w.Header().Set("Deprecation", "true")
+			w.Header().Set("Warning", `299 - "operator keys cannot read customer data after this release; sign in with gregalectl auth login (ADR 20261023214253)"`)
+			s.audit.Emit(r.Context(), "auth.operator_bearer_read_deprecated", &acct.ID, map[string]any{
+				"route":      r.Pattern,
+				"api_key_id": key.ID,
+			})
+			next(w, r, acct)
+			return
+		}
+		strict(w, r, acct)
+	}
+}
+
+// requireEnrolledOperatorSession refuses an operator session whose account
+// has no confirmed authenticator. Login stamps such a session mfa_pending,
+// but one issued before that rule, or by an older apid during a rolling
+// deploy, was not, and lives for days. Bearer keys are left to the route's
+// policy.
+func (s *server) requireEnrolledOperatorSession(next accountHandler) accountHandler {
+	return func(w http.ResponseWriter, r *http.Request, acct state.Account) {
+		actor, key, ok := middleware.AccountFromContext(r)
+		if !ok {
+			api.WriteProblem(w, api.ErrCapacity("authenticated principal missing"))
+			return
+		}
+		if key == nil && !actor.MFAEnrolled() {
+			api.WriteProblem(w, api.NewProblem(http.StatusForbidden, api.CodeMFARequired, "MFA required",
+				"platform operators must enroll an authenticator: complete /v1/account/mfa/enroll and /v1/account/mfa/confirm"))
+			return
+		}
+		next(w, r, acct)
+	}
+}
+
+// WithOperatorBearerReads sets the FAAS_OPERATOR_BEARER_READS mode of ADR
+// 20261023214253. "deprecated" keeps operator keys on session-only reads for
+// one release; "" and "deny" enforce, and any other value enforces too.
+func (s *server) WithOperatorBearerReads(mode string) *server {
+	switch strings.TrimSpace(mode) {
+	case "deprecated":
+		s.operatorBearerReadsDeprecated = true
+	case "", "deny":
+		s.operatorBearerReadsDeprecated = false
+	default:
+		s.operatorBearerReadsDeprecated = false
+		s.log.Warn("apid: unknown FAAS_OPERATOR_BEARER_READS; operator keys stay refused on customer-data reads", "value", mode)
+	}
+	return s
+}
+
 // requireSessionPrincipal rejects bearer/API-key principals without imposing
 // the mutation-only five-minute step-up freshness window. It is used for
 // sensitive operator reads that require an MFA-completed browser/CLI session.
@@ -335,7 +459,7 @@ func (s *server) isTrustedAdminOrigin(origin *url.URL, r *http.Request) bool {
 	if originHost == requestHost {
 		return true
 	}
-	base := strings.ToLower(strings.TrimSpace(s.domain))
+	base := strings.ToLower(strings.TrimSpace(s.platformHost()))
 	return base != "" && originHost == "operations."+base
 }
 
@@ -391,13 +515,42 @@ func (s *server) requireBearer(next accountHandler) accountHandler {
 
 // loadApp delegates to pkg/auth.Middleware.LoadApp (IDOR-safe
 // slug→App with the ownership predicate app.AccountID == acct.ID).
-// Behaviour matches cmd/apid/server.go:1611-1617.
+// Behaviour matches cmd/apid/server.go:1611-1617. A slug from the body or
+// query string has not passed appaccess.Wrap, so it gets the same
+// organization check through authorizeNamedApp.
 func (s *server) loadApp(w http.ResponseWriter, r *http.Request, acct state.Account, slug string) (state.App, bool) {
-	if grant, ok := appaccess.From(r); ok && (grant.App.Slug != slug || grant.Owner.ID != acct.ID) {
+	grant, granted := appaccess.From(r)
+	if granted && (grant.App.Slug != slug || grant.Owner.ID != acct.ID) {
 		s.notFound(w, "no such app")
 		return state.App{}, false
 	}
-	return s.authMw.LoadApp(w, r, acct, slug)
+	app, ok := s.authMw.LoadApp(w, r, acct, slug)
+	if !ok || granted {
+		return app, ok
+	}
+	if prob := s.authorizeNamedApp(r, acct, app); prob != nil {
+		api.WriteProblem(w, prob)
+		return state.App{}, false
+	}
+	return app, true
+}
+
+// authorizeNamedApp applies the organization access check that the /v1/apps
+// routes get from appaccess.Wrap to an app a request names in its body, its
+// query string or a stored session. Wrap cannot see those, and a company
+// app's rows stay under its creator's account, so a creator removed from,
+// demoted in or suspended with the app's organization could otherwise keep
+// acting on the app through such a route. Browser dashboard pages carry no
+// API principal and keep their creator check.
+func (s *server) authorizeNamedApp(r *http.Request, acct state.Account, app state.App) *api.Problem {
+	if grant, ok := appaccess.From(r); ok && grant.App.ID == app.ID {
+		return nil
+	}
+	if _, _, _, ok := middleware.PrincipalFrom(r); !ok {
+		return nil
+	}
+	_, prob := appaccess.Authorize(r, s.store, loadOrgAuditFrom(s.audit), actorAccount(r, acct), app)
+	return prob
 }
 
 // loadOrg wraps an accountHandler with pkg/authz.LoadOrg — the

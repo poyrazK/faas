@@ -275,6 +275,7 @@ func (j *previewJanitor) sweepOnce(ctx context.Context) error {
 			if !errors.Is(err, state.ErrNotFound) {
 				j.log.Warn("preview janitor: claim teardown failed",
 					"app_id", row.ID, "slug", row.Slug, "err", err)
+				j.observeOutcome("row_failed")
 			}
 			continue
 		}
@@ -284,6 +285,7 @@ func (j *previewJanitor) sweepOnce(ctx context.Context) error {
 		if err := j.tombstone(ctx, claimed); err != nil {
 			j.log.Warn("preview janitor: tombstone failed",
 				"app_id", row.ID, "slug", row.Slug, "err", err)
+			j.observeOutcome("row_failed")
 			continue
 		}
 		tombstoned++

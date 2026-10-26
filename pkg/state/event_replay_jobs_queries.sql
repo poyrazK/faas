@@ -121,6 +121,7 @@ WHERE o.account_id=sqlc.arg(account_id)::uuid
   AND o.created_at >= sqlc.arg(from_at)::timestamptz
   AND o.created_at < sqlc.arg(cutoff_at)::timestamptz
   AND (o.created_at,o.id) > (sqlc.arg(cursor_at)::timestamptz,sqlc.arg(cursor_outbox_id)::bigint)
+  AND event_app_in_producer_reach(o.account_id, o.payload->>'producer', sqlc.arg(app_id)::text)
 ORDER BY o.created_at,o.id
 LIMIT sqlc.arg(page_limit)::integer;
 
@@ -328,13 +329,28 @@ DELETE FROM event_replay_jobs WHERE id IN (
 );
 
 -- name: EventReplayBackfillPruneAccounts :many
-WITH candidates AS MATERIALIZED (
- SELECT o.account_id,o.delivered_at,o.id FROM event_fanout_outbox o
- WHERE o.state='delivered' AND o.delivered_at<sqlc.arg(before_at)::timestamptz
-  AND event_receipt_retention_hold(o.account_id,o.id,o.created_at,sqlc.arg(job_cutoff_at)::timestamptz,sqlc.arg(now_at)::timestamptz)=''
- ORDER BY o.delivered_at,o.id LIMIT sqlc.arg(page_limit)::integer
+-- ADR-20261023215834: owners with an unheld settled receipt past their
+-- plan's window, oldest first, each with its cutoff. Every owner with a
+-- receipt has a usage row, and its retention index bounds each probe. An
+-- owner without a known plan keeps the longest window.
+WITH plan_retention AS (
+ SELECT unnest(sqlc.arg(plans)::text[]) AS plan,unnest(sqlc.arg(retention_seconds)::bigint[]) AS seconds
 )
-SELECT account_id FROM candidates GROUP BY account_id ORDER BY min(delivered_at),account_id;
+SELECT u.account_id,w.before_at::timestamptz AS before_at
+FROM event_receipt_usage u
+LEFT JOIN accounts a ON a.id=u.account_id
+LEFT JOIN orgs g ON g.id=u.account_id AND NOT g.personal_org AND g.resource_ownership_enabled
+LEFT JOIN plan_retention r ON r.plan=coalesce(a.plan,g.plan)
+CROSS JOIN LATERAL (
+ SELECT sqlc.arg(now_at)::timestamptz-make_interval(secs=>coalesce(r.seconds,sqlc.arg(max_retention_seconds)::bigint)) AS before_at
+) w
+CROSS JOIN LATERAL (
+ SELECT o.delivered_at FROM event_fanout_outbox o
+ WHERE o.account_id=u.account_id AND o.state='delivered' AND o.delivered_at<w.before_at
+  AND event_receipt_retention_hold(o.account_id,o.id,o.created_at,sqlc.arg(job_cutoff_at)::timestamptz,sqlc.arg(now_at)::timestamptz)=''
+ ORDER BY o.delivered_at,o.id LIMIT 1
+) due
+ORDER BY due.delivered_at,u.account_id LIMIT sqlc.arg(page_limit)::integer;
 
 -- name: EventReplayBackfillTryLockAccountRange :one
 SELECT pg_try_advisory_xact_lock(hashtextextended(sqlc.arg(account_id)::uuid::text,625))::boolean AS acquired;

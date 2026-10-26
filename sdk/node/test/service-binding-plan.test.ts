@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { AppsService, OpenAPI } from '../src/index.js';
-import type { AppBindingInventory, ServiceBindingExplanation, UpdateAppRequest } from '../src/index.js';
-import type { BindingVerification, ManagedServiceProbeSpec } from '../src/index.js';
+import { AppsService, OpenAPI } from '../src/preview.js';
+import type { AppBindingInventory, ServiceBindingExplanation, UpdateAppRequest } from '../src/preview.js';
+import type { BindingVerification, ManagedServiceProbeSpec } from '../src/preview.js';
 
 test('managed service receipts preserve the versioned frozen context', () => {
   const spec: ManagedServiceProbeSpec = {

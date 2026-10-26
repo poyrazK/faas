@@ -1,7 +1,7 @@
 // This file is excluded from source deployments. No account or bucket credentials are used.
 import {createServer} from 'node:http';
 import {fileURLToPath} from 'node:url';
-import {DurableEntitySimulator} from '@gregale/sdk-node/durable-entities/testing';
+import {DurableEntitySimulator} from '@gregale/sdk-node/preview/durable-entities/testing';
 import {registry} from './registry.mjs';
 import {readBody} from './server.mjs';
 

@@ -37,11 +37,16 @@ func TestGatewayNotificationsValidationAndPermissions(t *testing.T) {
 				f.handler.ServeHTTP(w, r)
 				return w
 			}
-			if permission == state.ObjectBucketPermissionRead {
+			if permission != state.ObjectBucketPermissionReadWrite {
+				// Only a customer-created read_write key changes bucket settings.
 				if w := send("PUT", "assets?notification", body, false); w.Code != 403 {
 					t.Fatal(w.Code, w.Body.String())
 				}
-				if w := send("GET", "assets?notification", "", false); w.Code != 200 {
+				wantGet := 200
+				if permission == state.ObjectBucketPermissionWrite {
+					wantGet = 403
+				}
+				if w := send("GET", "assets?notification", "", false); w.Code != wantGet {
 					t.Fatal(w.Code, w.Body.String())
 				}
 				return

@@ -33,6 +33,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/onebox-faas/faas/pkg/hostidentity"
 	"gopkg.in/yaml.v3"
 )
 
@@ -170,10 +171,50 @@ type Manifest struct {
 	// flip it.
 	Egress Egress `yaml:"egress,omitempty"`
 
+	// ObjectStorage places the customer object storage gateway
+	// (s3-gatewayd) under the playbooks (ADR 20261025111015). Absent keeps
+	// the gateway unmanaged; strict fleet verify then fails if one runs.
+	ObjectStorage ObjectStorage `yaml:"object_storage,omitempty"`
+
 	// WorkloadIdentity turns on workload-identity tokens (ADR-1141): the
 	// renderer hands its source directory to every control-plane and
 	// compute host, so the roles install the JWKS and the signing key.
 	WorkloadIdentity WorkloadIdentity `yaml:"workload_identity,omitempty"`
+}
+
+// ObjectStorage is the s3-gatewayd deployment contract for the control plane.
+type ObjectStorage struct {
+	// Gateway is "managed" (the s3_gateway_service role installs and
+	// health-gates s3-gatewayd, and Prometheus scrapes it) or empty/"off".
+	Gateway string `yaml:"gateway,omitempty"`
+	// ConfigSrc is the controller-local provider registry JSON the role
+	// copies to /etc/faas/object-storage.json. Required when managed.
+	ConfigSrc string `yaml:"config_src,omitempty"`
+	// ProviderEnvSrc is the optional controller-local credential env file
+	// for S3-compatible providers; GCS with attached ADC needs none.
+	ProviderEnvSrc string `yaml:"provider_env_src,omitempty"`
+}
+
+// Managed reports whether the playbooks own s3-gatewayd.
+func (o ObjectStorage) Managed() bool { return o.Gateway == "managed" }
+
+func (o ObjectStorage) validate() Errors {
+	var errs Errors
+	switch o.Gateway {
+	case "", "off", "managed":
+	default:
+		errs = append(errs, Error{"object_storage.gateway", fmt.Sprintf("%q must be managed or off", o.Gateway)})
+	}
+	if o.Managed() && !filepath.IsAbs(o.ConfigSrc) {
+		errs = append(errs, Error{"object_storage.config_src", "must be an absolute controller path when the gateway is managed"})
+	}
+	if o.ProviderEnvSrc != "" && !filepath.IsAbs(o.ProviderEnvSrc) {
+		errs = append(errs, Error{"object_storage.provider_env_src", "must be an absolute controller path"})
+	}
+	if !o.Managed() && (o.ConfigSrc != "" || o.ProviderEnvSrc != "") {
+		errs = append(errs, Error{"object_storage.gateway", "must be managed when config_src or provider_env_src is set"})
+	}
+	return errs
 }
 
 // WorkloadIdentity names the directory `gregalectl workload-identity init`
@@ -609,6 +650,17 @@ type DNS struct {
 	// consistency against the gatewayd-internal / apid / CLI
 	// running config.
 	AppsDomain string `yaml:"apps_domain"`
+	// PlatformDomain, DeployDomain, AppsDomainAliases and
+	// AppsDomainAliasMode split the layout (ADR-20261026100000): the site,
+	// dashboard and API hosts, the deployment-preview hosts, further apps
+	// domains that reach the same apps, and whether those serve or redirect.
+	// Empty keeps every host under apps_domain. manifest-ansible renders them
+	// as the faas_* variables the domain-layout drop-in and the public edge
+	// read.
+	PlatformDomain      string   `yaml:"platform_domain,omitempty"`
+	DeployDomain        string   `yaml:"deploy_domain,omitempty"`
+	AppsDomainAliases   []string `yaml:"apps_domain_aliases,omitempty"`
+	AppsDomainAliasMode string   `yaml:"apps_domain_alias_mode,omitempty"`
 	// Mode is the DNS provider ("cloudflare", "manual", "nip_io").
 	// The validator rejects values outside the supported set.
 	Mode string `yaml:"mode"`
@@ -1048,6 +1100,7 @@ func (m *Manifest) Validate() Errors {
 	errs = append(errs, m.Cgroups.validate()...)
 	errs = append(errs, m.PKI.validate()...)
 	errs = append(errs, m.Egress.validate(m.Overlay.CIDR)...)
+	errs = append(errs, m.ObjectStorage.validate()...)
 	errs = append(errs, m.WorkloadIdentity.validate()...)
 	if len(errs) > 0 {
 		return errs
@@ -1479,6 +1532,8 @@ func (d *DNS) validate() Errors {
 	} else if !looksLikeHostname(d.AppsDomain) {
 		errs = append(errs, Error{"dns.apps_domain",
 			fmt.Sprintf("apps_domain %q must be a valid hostname (e.g. gregale.dev)", d.AppsDomain)})
+	} else if _, err := hostidentity.NewDomains(d.PlatformDomain, d.AppsDomain, d.DeployDomain, d.AppsDomainAliases, d.AppsDomainAliasMode); err != nil {
+		errs = append(errs, Error{"dns", err.Error()})
 	}
 	if d.Mode == "" {
 		errs = append(errs, Error{"dns.mode", "is required"})

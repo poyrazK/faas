@@ -1,9 +1,9 @@
 from uuid import uuid4
 
-from faas_sdk.api.apps import delete_issue_tracker_link, list_issue_tracker_links, put_issue_tracker_link
-from faas_sdk.models.issue_tracker_link import IssueTrackerLink
-from faas_sdk.models.list_issue_tracker_links_response import ListIssueTrackerLinksResponse
-from faas_sdk.models.put_issue_tracker_link_request import PutIssueTrackerLinkRequest
+from faas_sdk.preview.api.apps import delete_issue_tracker_link, list_issue_tracker_links, put_issue_tracker_link
+from faas_sdk.preview.models.issue_tracker_link import IssueTrackerLink
+from faas_sdk.preview.models.list_issue_tracker_links_response import ListIssueTrackerLinksResponse
+from faas_sdk.preview.models.put_issue_tracker_link_request import PutIssueTrackerLinkRequest
 
 
 def test_tracker_link_management_and_provenance_contracts():

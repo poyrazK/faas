@@ -2,6 +2,7 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { PlanManagedProvision } from './PlanManagedProvision.js';
 /**
  * A service the repo declared (compose image:, render.yaml, etc.)
  * but the platform will NOT provision. Surfaced so the customer
@@ -15,5 +16,10 @@ export type PlanManaged = {
   env_hint: string;
   source: string;
   image: string;
+  provision?: PlanManagedProvision;
+  /**
+   * Why apply does not provide a Compose postgres service (ADR-20261025111824). Omitted for other datastores and when provision is set.
+   */
+  not_provisioned_reason?: 'unavailable' | 'plan' | 'quota' | 'unsupported' | 'configured' | 'not_referenced' | 'permission';
 };
 

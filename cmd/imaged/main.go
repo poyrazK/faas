@@ -230,7 +230,7 @@ func (d runDeps) run(ctx context.Context, log *slog.Logger) error {
 		return err
 	}
 
-	store := state.NewPgStore(pool)
+	store := state.NewPgStore(pool, state.WithTrafficAppsDomain(imgCfg.GetAppsDomain(getenv)))
 	// Register the same canonical OpenAPI projector as apid. imaged owns the
 	// snapshot_written → live transition, so the capture and the contract gate
 	// must be wired in this process too.
@@ -306,6 +306,18 @@ func (d runDeps) run(ctx context.Context, log *slog.Logger) error {
 		})
 		pullerOpts = append(pullerOpts, oci.WithBlobCache(blobCache))
 		log.Info("imaged: OCI blob cache enabled", "root", blobCache.Root(), "max_bytes", blobCacheMaxBytes)
+	}
+	// ADR-20261025114554: anonymous Docker Hub pulls go through the
+	// operator's mirrors first, since Docker Hub limits them per IP.
+	mirrors, err := api.ParseDockerHubMirrors(os.Getenv(api.DockerHubMirrorsEnv))
+	if err != nil {
+		return fmt.Errorf("imaged: %w", err)
+	}
+	if len(mirrors) > 0 {
+		pullerOpts = append(pullerOpts, oci.WithDockerHubMirrors(mirrors, func(mirror string, err error) {
+			log.Warn("imaged: Docker Hub mirror failed; trying the next source", "mirror", mirror, "err", err)
+		}))
+		log.Info("imaged: Docker Hub mirrors enabled", "mirrors", mirrors)
 	}
 	puller := oci.NewRegistryClient(pullerOpts...)
 	log.Info("imaged: oci puller ready", "timeout_s", int(ociPullTimeout().Seconds()))
@@ -753,11 +765,21 @@ func (d runDeps) run(ctx context.Context, log *slog.Logger) error {
 		log.Info("imaged execution profile base ready", "profile", base.Runtime, "digest", base.ConfigDigest, "skipped", base.Skipped)
 	}
 	if prestageOnlyFromEnv(getenv) {
+		// ADR-20261024191249: the rolled vmmd must be able to boot every
+		// runtime base the release configures, not only those of the apps
+		// this node owns (rc.293: fsn-2 owned none and published nothing).
+		releaseBases, err := h.EnsureReleaseBases(ctx, arch, getenv, assignedBases)
+		if err != nil {
+			return err
+		}
 		log.Info("imaged runtime-base pre-stage complete",
 			"arch", arch,
 			"assigned_runtimes", assignedBases.Runtimes,
 			"assigned_minimal", assignedBases.Minimal,
-			"deferred_to_serving_imaged", assignedBases.Deferred,
+			"release_bases_published", releaseBases.Staged,
+			"release_bases_current", releaseBases.Current,
+			"release_bases_unpublished", releaseBases.Unpublished,
+			"deferred_to_serving_imaged", append(assignedBases.Deferred, releaseBases.Deferred...),
 		)
 		return nil
 	}

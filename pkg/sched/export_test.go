@@ -19,10 +19,14 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/redis/go-redis/v9"
+	"github.com/segmentio/kafka-go"
 
 	vmmdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/vmmd/v1"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/db"
+	"github.com/onebox-faas/faas/pkg/events"
+	"github.com/onebox-faas/faas/pkg/fcvm"
 	"github.com/onebox-faas/faas/pkg/nodereport"
 	"github.com/onebox-faas/faas/pkg/runtimeadmission"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -80,6 +84,7 @@ const TriggerReasonMaxAttempts = triggerReasonMaxAttempts
 const TriggerReasonPoisonRecord = triggerReasonPoisonRecord
 const WakeTierColdBootFallback = wakeTierColdBootFallback
 const WakeTierInit = wakeTierInit
+const MaxDuePagesPerTick = maxDuePagesPerTick
 const WorkReaper = workReaper
 
 // Package-level vars
@@ -156,6 +161,34 @@ var NewNodeCapacityTable = newNodeCapacityTable
 var NewNodePresenceTracker = newNodePresenceTracker
 var NewQueuePoller = newQueuePoller
 var NewRealtimePoller = newRealtimePoller
+
+type KafkaBrokerOp = kafkaBrokerOp
+
+// NewKafkaPollerWithReader is a kafka poller over reader instead of a
+// broker connection.
+func NewKafkaPollerWithReader(reader KafkaBrokerOp) TriggerSource {
+	return &kafkaPoller{reader: reader, batchMax: 100, inFlight: map[string]kafka.Message{},
+		open: map[int]map[int64]bool{}, settled: map[int][]kafka.Message{}}
+}
+
+type NATSBroker = natsBroker
+
+// NewNATSBrokerPool is a broker pool that dials with dial instead of
+// connecting to NATS.
+func NewNATSBrokerPool(dial func(rawURL string) (*NATSBroker, error)) *natsBrokerPool {
+	return &natsBrokerPool{dial: dial, brokers: map[string]*natsBroker{}}
+}
+
+func (p *natsBrokerPool) ForURL(rawURL string) (*NATSBroker, error) { return p.forURL(rawURL) }
+
+// NewRedisStreamPoller wraps an already connected client, as newRedisPoller
+// does after its ping and group creation; the egress dialer refuses the
+// loopback address a test server listens on.
+func NewRedisStreamPoller(client *redis.Client, stream, group, consumer string) TriggerSource {
+	return &redisPoller{client: client, stream: stream, group: group, consumer: consumer, addr: "test",
+		batchMax: 100, visibility: 30 * time.Second, inFlight: map[string]string{}}
+}
+
 var NewStandardCaptureService = newStandardCaptureService
 var NewStandardNativeTestVMM = newStandardNativeTestVMM
 var NewWakeCoord = newWakeCoord
@@ -206,6 +239,22 @@ var StartupDeadlineForApp = startupDeadlineForApp
 var TaskObservationStore = taskObservationStore
 var TestLog = testLog
 var TriggerDispatchParent = triggerDispatchParent
+var TruncateCodeError = truncateCodeError
+
+var JobDispatchResult = jobDispatchResult
+
+// Dispatch DB-phase tokens (ADR-20261025232118).
+func (o *WorkflowOrchestrator) SetDBPhaseSlotsForTest(slots int) {
+	o.dbPhase = newWorkflowDBPhase(slots)
+}
+func (o *WorkflowOrchestrator) EnterDBPhaseForTest(ctx context.Context) (context.Context, func(), error) {
+	return o.enterDBPhase(ctx)
+}
+func (o *WorkflowOrchestrator) ChildDBPhaseForTest(ctx context.Context) (context.Context, func()) {
+	return o.childDBPhase(ctx)
+}
+func OutsideDBPhaseForTest(ctx context.Context, wait func()) { outsideDBPhase(ctx, wait) }
+
 var UntilNextMinuteTick = untilNextMinuteTick
 var ValidEnvironmentGitOpsJobVariables = validEnvironmentGitOpsJobVariables
 var ValidRuntimeSnapshot = validRuntimeSnapshot
@@ -228,12 +277,21 @@ var XLayerKey = layerKey
 var XNewEngine = newEngine
 var ReadWakeRPC = readWakeRPC
 
+// XWakeLeaderBudget is the deadline a coordinated wake's leader runs under.
+func (e *Engine) XWakeLeaderBudget() time.Duration { return e.wakeLeaderBudget() }
+
 // XEventFanoutSafetyTick and XRunEventFanoutSweep let the event substrate
 // benchmark schedule fanout exactly as Loop.Run does (spec Appendix D V12).
 // adr: 647 — the sweep admits independently routed recipients.
 const XEventFanoutSafetyTick = eventFanoutSafetyTick
 
 func (l *Loop) XRunEventFanoutSweep(ctx context.Context) { l.runEventFanoutSweep(ctx) }
+
+// XDispatchExplicitWake is Loop.Run's arm for app_wake and
+// runtime_config_restart deliveries.
+func (l *Loop) XDispatchExplicitWake(ctx context.Context, n db.Notification) {
+	l.dispatchExplicitWake(ctx, n)
+}
 
 // XRunEventRecipientSweep runs only the sweep's independent recipient stage.
 // adr: 614 — recipients are claimed in batches and unrouted claims released.
@@ -254,6 +312,9 @@ func (r *DeploymentCounterWatcher) Resync(p0 context.Context) error { return r.r
 
 // Members of DiskDrift
 func (r *DiskDrift) Timeout() *time.Duration { return &r.timeout }
+
+// Members of EgressCircuitBreaker
+func (r *EgressCircuitBreaker) Resolve() *EgressResolver { return &r.resolve }
 
 // Members of Drain
 func (r *Drain) Engine() **Engine       { return &r.engine }
@@ -402,7 +463,11 @@ func (r *Loop) GatewayBaseURL() *string                   { return &r.gatewayBas
 func (r *Loop) GatewayHTTPClient() **http.Client          { return &r.gatewayHTTPClient }
 func (r *Loop) Pool() **pgxpool.Pool                      { return &r.pool }
 func (r *Loop) TriggerPollers() *map[string]triggerSource { return &r.triggerPollers }
-func (r *Loop) BeatMain()                                 { r.beatMain() }
+func (r *Loop) PollerForTrigger(t sqlc.Trigger) (triggerSource, bool, error) {
+	return r.pollerForTrigger(t)
+}
+func (r *Loop) EvictTriggerPollers(enabled []sqlc.Trigger) { r.evictTriggerPollers(enabled) }
+func (r *Loop) BeatMain()                                  { r.beatMain() }
 func (r *Loop) DispatchOneCron(p0 context.Context, p1 state.Cron, p2 time.Time) {
 	r.dispatchOneCron(p0, p1, p2)
 }
@@ -506,6 +571,25 @@ func (r *fakeNotifier) Mu() *sync.Mutex        { return &r.mu }
 func (r *fakeNotifier) Count(p0 string) int    { return r.count(p0) }
 
 // Members of fakeVMM
+// SetPingResult sets what Ping returns for target: err when non-nil, else
+// a success carrying bases (ADR-20261022184531).
+func (h *heartbeatFakeDialer) SetPingResult(target string, bases []BaseGenerationReadiness, err error) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.pingErr == nil {
+		h.pingErr = map[string]error{}
+	}
+	if h.baseGenerations == nil {
+		h.baseGenerations = map[string][]BaseGenerationReadiness{}
+	}
+	h.pingErr[target], h.baseGenerations[target] = err, bases
+	if err == nil {
+		delete(h.pingErr, target)
+	}
+}
+
+var EvaluateNodeReadiness = evaluateNodeReadiness
+
 func (r *fakeVMM) ColdBootHook() *func()            { return &r.coldBootHook }
 func (r *fakeVMM) ColdBoots() *int                  { return &r.coldBoots }
 func (r *fakeVMM) DestroyErr() *error               { return &r.destroyErr }
@@ -713,3 +797,74 @@ func NewWarmResumeFakeVMM() *warmResumeFakeVMM { return &warmResumeFakeVMM{fakeV
 func (r *Engine) DrainRequestBound() *time.Duration { return &r.drainRequestBound }
 
 func (r *warmResumeFakeVMM) ResumeCalls() *int { return &r.resumeCalls }
+
+// ADR-20261024140000: build secrets resolve with state.ResolveRuntimeSecretSources;
+// RuntimeMainSecretEntries is the wake's own serving delivery to compare it with.
+func RuntimeMainSecretEntries(snapshot state.RuntimeAppValuesSnapshot, intent state.AppEnvironmentSecretIntent) ([]fcvm.SealedEnvEntry, error) {
+	refs, err := state.DeploymentSecretReferences(snapshot.SecretGrants.OverrideEnvSecrets)
+	if err != nil {
+		return nil, err
+	}
+	delivery, err := sealedEnvDeliveryFromRowsWithIntent(snapshot.Secrets, snapshot.AccountID, snapshot.AppID, snapshot.Scope, refs, false, intent, true)
+	if err != nil {
+		return nil, err
+	}
+	if len(refs) == 0 {
+		return withInheritedProjectSecrets(snapshot.InheritedSecrets, delivery.Entries), nil
+	}
+	return delivery.Entries, nil
+}
+
+var QueueDeadLetterError = queueDeadLetterError
+var PrimeRuntimeBusyBackoff = &primeRuntimeBusyBackoff
+var ApplicationStandardRuntimeProblem = applicationStandardRuntimeProblem
+var HealthcheckGRPCForApp = healthcheckGRPCForApp
+
+// ADR-20261024225612 (CPU-compatible restore, per-platform snapshot slots).
+var (
+	SnapshotRestorableOn      = snapshotRestorableOn
+	LegacySnapshotsRestorable = legacySnapshotsRestorable
+)
+
+func (r *Engine) XReusableSnapshotOn(ctx context.Context, depID, tier, nodeID string) (state.Snapshot, bool) {
+	return r.reusableSnapshotOn(ctx, depID, tier, nodeID)
+}
+
+func (r *Engine) XEmitSnapshotWritten(ctx context.Context, nodeID string) {
+	r.emitSnapshotWritten(ctx, "ins", time.Time{}, "dep", nodeID, "", "key", SnapshotBytes{}, state.SnapshotTierInit, nil)
+}
+
+// LastPayload is the newest notification payload on channel.
+func (r *fakeNotifier) LastPayload(channel string) (string, bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for i := len(r.events) - 1; i >= 0; i-- {
+		if r.events[i].channel == channel {
+			return r.events[i].payload, true
+		}
+	}
+	return "", false
+}
+
+// WithPreWakeClockForTest starts a pre-wake clock with every stamp given.
+func WithPreWakeClockForTest(ctx context.Context, rpc, ensure, env, leader time.Time) context.Context {
+	return context.WithValue(ctx, preWakeClockKey{}, &preWakeClock{rpcStarted: rpc, ensureStarted: ensure, envReady: env, leader: leader})
+}
+
+// WithWakeStartedForTest is withWakeStarted.
+func WithWakeStartedForTest(ctx context.Context, at time.Time) context.Context {
+	return withWakeStarted(ctx, at)
+}
+
+// PreRPCWithPreWakeForTest is preRPCWithPreWake.
+func PreRPCWithPreWakeForTest(ctx context.Context, t events.PreRPCTimings, attempt time.Time) events.PreRPCTimings {
+	return preRPCWithPreWake(ctx, t, attempt)
+}
+
+// MarkPreWakeForTest stamps the ensure-started, environment-ready and leader
+// marks in order.
+func MarkPreWakeForTest(ctx context.Context) {
+	markPreWake(ctx, preWakeEnsureStarted)
+	markPreWake(ctx, preWakeEnvironmentReady)
+	markPreWake(ctx, preWakeLeader)
+}

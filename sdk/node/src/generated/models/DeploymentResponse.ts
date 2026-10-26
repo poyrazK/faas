@@ -4,6 +4,8 @@
 /* eslint-disable */
 import type { AppReleaseReview } from './AppReleaseReview.js';
 import type { BuildPlan } from './BuildPlan.js';
+import type { DatabaseSwitch } from './DatabaseSwitch.js';
+import type { DeploymentCompanion } from './DeploymentCompanion.js';
 import type { DeploymentConfigurationStatus } from './DeploymentConfigurationStatus.js';
 import type { DeploymentHealthcheck } from './DeploymentHealthcheck.js';
 import type { DeploymentLivenessProbe } from './DeploymentLivenessProbe.js';
@@ -44,6 +46,10 @@ export type DeploymentResponse = {
    * The schedule of a release that waits live without traffic for its scheduled start, or how its latest schedule ended (ADR-20261021152201).
    */
   scheduled_release?: ScheduledRelease;
+  /**
+   * The switch a rollback with restore_databases started (ADR-20261023181931).
+   */
+  database_switch?: DatabaseSwitch;
   durable_entity_validator?: DurableEntityValidatorDeploymentInfo;
   /**
    * Actual stage progress; the same document GET /v1/deployments/{id}/stages serves. retry_requested_stage and retry_restart_reason appear when prerequisites must be rebuilt; hosting_verification appears during unavailable candidate verification recovery (ADR-481, ADR-482).
@@ -201,6 +207,10 @@ export type DeploymentResponse = {
    * Validated workflow definitions persisted with this immutable deployment revision.
    */
   workflows?: Array<WorkflowSpec>;
+  /**
+   * Companions this deployment carries: name, image, port and size. Environment values and secret grants are never included.
+   */
+  companions?: Array<DeploymentCompanion>;
   /**
    * Durable non-secret deployment evidence captured after readiness, including the resolved API profile, artifact identity, and post-readiness smoke result.
    */

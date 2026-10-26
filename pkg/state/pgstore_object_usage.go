@@ -14,6 +14,7 @@ import (
 
 var _ ObjectStorageAccountingStore = (*PgStore)(nil)
 var _ ObjectStorageBillingStore = (*PgStore)(nil)
+var _ ObjectInventoryReleaser = (*PgStore)(nil)
 
 func objectUsageTime(t time.Time) pgtype.Timestamptz { return pgtype.Timestamptz{Time: t, Valid: true} }
 
@@ -71,6 +72,7 @@ func readObjectUsageForPeriod(ctx context.Context, db sqlc.DBTX, account string,
 			MultipartBytes: r.MultipartBytes, InventoryScope: r.InventoryScope.String, BaselineBytes: r.BaselineBytes.Int64, BaselineKeys: r.BaselineKeys.Int64, GrantedBytes: r.GrantedBytes.Int64, GrantedKeys: r.GrantedKeys.Int64,
 			ObservedBytes: r.ObservedBytes.Int64, ObservedKeys: r.ObservedKeys.Int64, ObservedAt: r.ObservedAt.Time, AttemptAt: r.AttemptAt.Time, LeaseUntil: r.InventoryLeaseUntil.Time, Token: r.Token.String,
 			RequestCount: r.GatewayRequestCount, EgressBytes: r.GatewayEgressBytes, GatewayMetricsKnown: true,
+			StoredByteHours: r.GatewayStoredByteHours, StorageMeteredThrough: r.GatewayStorageThrough.Time,
 		})
 	}
 	reports, err := q.ObjectUsageReports(ctx, db, sqlc.ObjectUsageReportsParams{AccountID: mustPgUUID(account), PeriodStart: objectUsageTime(periodStart)})
@@ -155,7 +157,8 @@ func admitObjectWriteSourceTx(ctx context.Context, tx pgx.Tx, account, bucket, k
 		return err
 	}
 	if put {
-		fenced, e := q.ObjectCapacityFenced(ctx, tx, mustPgUUID(bucket))
+		// Only a deletion of this key fences the write (ADR-20261025115958).
+		fenced, e := q.ObjectCapacityFencedForKey(ctx, tx, sqlc.ObjectCapacityFencedForKeyParams{BucketID: mustPgUUID(bucket), ObjectKey: key})
 		if e != nil {
 			return e
 		}
@@ -266,6 +269,20 @@ func (s *pgCore) ClaimObjectInventory(ctx context.Context, bucket, token string)
 		return ErrConflict
 	}
 	n, err := sqlc.New().ObjectInventoryClaim(ctx, s.pool, sqlc.ObjectInventoryClaimParams{ID: mustPgUUID(bucket), Token: token})
+	if err != nil {
+		return err
+	}
+	if n != 1 {
+		return ErrConflict
+	}
+	return nil
+}
+
+func (s *pgCore) ReleaseObjectInventory(ctx context.Context, bucket, token string) error {
+	if token == "" {
+		return ErrConflict
+	}
+	n, err := sqlc.New().ObjectInventoryRelease(ctx, s.pool, sqlc.ObjectInventoryReleaseParams{BucketID: mustPgUUID(bucket), Token: token})
 	if err != nil {
 		return err
 	}

@@ -70,3 +70,42 @@ func TestWriteFleetSealMetricReadyAndFailed(t *testing.T) {
 		t.Fatalf("unexpected failed metric:\n%s", body)
 	}
 }
+
+// TestLoadFleetSealControlKey pins when fleet-seal reads the control
+// seal-domain identity: the default only once the role staged it, and a
+// staged key this process cannot reach fails rather than passing as absent.
+func TestLoadFleetSealControlKey(t *testing.T) {
+	dir := t.TempDir()
+	prev := controlKeyDefault
+	t.Cleanup(func() { controlKeyDefault = prev })
+	controlKeyDefault = filepath.Join(dir, "control.age")
+
+	if ids, err := loadFleetSealControlKey(""); err != nil || ids != nil {
+		t.Fatalf("unstaged default = %v, %v; want nothing", ids, err)
+	}
+	if _, err := loadFleetSealControlKey(filepath.Join(dir, "missing.age")); err == nil {
+		t.Fatal("a missing explicit --control-key loaded")
+	}
+	id, err := age.GenerateX25519Identity()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(controlKeyDefault, []byte(id.String()), 0o400); err != nil {
+		t.Fatal(err)
+	}
+	ids, err := loadFleetSealControlKey("")
+	if err != nil || len(ids) != 1 || ids[0].Recipient().String() != id.Recipient().String() {
+		t.Fatalf("staged default = %v, %v; want the control identity", ids, err)
+	}
+
+	if os.Geteuid() == 0 {
+		t.Skip("root reaches the key through any directory mode")
+	}
+	if err := os.Chmod(dir, 0); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(dir, 0o700) })
+	if _, err := loadFleetSealControlKey(""); err == nil {
+		t.Fatal("a staged key behind an unreadable directory passed as absent")
+	}
+}

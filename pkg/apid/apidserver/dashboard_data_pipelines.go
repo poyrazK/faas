@@ -49,6 +49,9 @@ func (s *server) renderDashboardPipelines(w http.ResponseWriter, r *http.Request
 
 func (s *server) pipelineAuthChoices(r *http.Request, account string, data *dashboard.DataPipelinesData) {
 	apps, err := s.store.ListApps(r.Context(), account)
+	if err == nil {
+		apps, _, err = s.visibleAccountApps(r, state.Account{ID: account}, apps)
+	}
 	if err != nil {
 		data.Message = "Auth app choices are temporarily unavailable."
 		return

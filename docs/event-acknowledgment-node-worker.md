@@ -15,7 +15,7 @@ headers; these headers are not signatures.
 ## Accept and reconstruct
 
 ```js
-import { eventAcknowledgmentWorkerFromHeaders } from '@gregale/sdk-node';
+import { eventAcknowledgmentWorkerFromHeaders } from '@gregale/sdk-node/preview';
 
 const worker = eventAcknowledgmentWorkerFromHeaders(
   appSlug, originalHeaders, originalBody, accountId, appId,

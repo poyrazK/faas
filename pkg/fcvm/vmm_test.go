@@ -168,6 +168,28 @@ func TestNotReadyProblemUsesPerAppTimeout(t *testing.T) {
 	}
 }
 
+// The probe reaches the app through the host's :8080 forward, but the app
+// was asked to listen on its own port; the failure names that port, in the
+// "on :N got ECONNREFUSED" form the CLI reads.
+func TestNotReadyProblemNamesTheAppPort(t *testing.T) {
+	v := &JailerVMM{readyTimeout: 30 * time.Second}
+	for _, tc := range []struct {
+		lease Lease
+		want  string
+	}{
+		{Lease{Instance: "i", AppPort: 3000}, "on :3000 got ECONNREFUSED"},
+		{Lease{Instance: "i"}, "on :8080 got ECONNREFUSED"},
+	} {
+		if p := v.notReadyProblem(tc.lease, "", 2); !strings.Contains(p.Detail, tc.want) {
+			t.Errorf("TCP detail = %q, want %q", p.Detail, tc.want)
+		}
+		p := v.healthcheckNotReadyProblem(tc.lease, "/healthz", readinessObservation{connRefused: 2}, time.Second)
+		if !strings.Contains(p.Detail, "GET /healthz "+tc.want) {
+			t.Errorf("HTTP detail = %q, want %q", p.Detail, tc.want)
+		}
+	}
+}
+
 func TestProvisionRewritesPathsIntoChroot(t *testing.T) {
 	// provision hardlinks images into the chroot and rewrites config paths to
 	// their in-chroot basenames — the jailed firecracker sees only these.
@@ -392,11 +414,11 @@ func TestCopyFile(t *testing.T) {
 	}
 }
 
-// TestCopyTreeCopiesRealTreeAndDropsSymlinks — copyTree exports untrusted
+// TestMoveTreeMovesRealTreeAndDropsSymlinks — moveTree exports untrusted
 // builder output as root. Real directories and regular files keep their
 // layout and modes; a symlink is dropped rather than recreated, because a
 // recreated link hands builderd a path into the host.
-func TestCopyTreeCopiesRealTreeAndDropsSymlinks(t *testing.T) {
+func TestMoveTreeMovesRealTreeAndDropsSymlinks(t *testing.T) {
 	src := t.TempDir()
 	dst := filepath.Join(t.TempDir(), "out")
 	if err := os.MkdirAll(filepath.Join(src, "usr", "bin"), 0o755); err != nil {
@@ -412,8 +434,8 @@ func TestCopyTreeCopiesRealTreeAndDropsSymlinks(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := copyTree(src, dst, 0); err != nil {
-		t.Fatalf("copyTree: %v", err)
+	if err := moveTree(src, dst, 0); err != nil {
+		t.Fatalf("moveTree: %v", err)
 	}
 	info, err := os.Stat(filepath.Join(dst, "usr", "bin", "node"))
 	if err != nil || info.Mode().Perm() != 0o755 {

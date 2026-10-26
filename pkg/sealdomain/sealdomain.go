@@ -118,7 +118,7 @@ var registry = []Spec{
 		cols("outbound_integration_credentials", "authorization_sealed"),
 		cols("outbound_integration_credential_keys", "authorization_sealed"),
 	)},
-	{Domain: Build, Readers: []string{"imaged"}, Roles: computeOnly, Wired: true, Columns: join(
+	{Domain: Build, Readers: []string{"imaged", "vmmd"}, Roles: computeOnly, Wired: true, Columns: join(
 		cols("app_registry_credentials", "password_encrypted"),
 		cols("job_registry_credentials", "password_encrypted"),
 	)},
@@ -126,18 +126,21 @@ var registry = []Spec{
 		cols("github_installations", "sealed_install_token"),
 		cols("github_webhook_secrets", "secret_sealed"),
 	)},
-	{Domain: Edge, Readers: []string{"gatewayd-internal", "gatewayd-public"}, Roles: bothRoles, Columns: join(
+	// gatewayd-internal on compute opens basic-auth credentials and log
+	// drain headers. gatewayd-public's DNS-provider token is not stored in
+	// these columns, so it is not a reader.
+	{Domain: Edge, Readers: []string{"gatewayd-internal"}, Roles: computeOnly, Wired: true, Columns: join(
 		cols("apps", "public_auth_basic"),
 		cols("app_log_drains", "auth_header_sealed"),
 		cols("application_standard_log_destinations", "auth_header_sealed"),
 	)},
-	{Domain: Alerting, Readers: []string{"meterd"}, Roles: cpOnly, Columns: join(
+	{Domain: Alerting, Readers: []string{"meterd"}, Roles: cpOnly, Wired: true, Columns: join(
 		cols("alert_rules", "webhook_secret_sealed"),
 		cols("notification_channels", "target_sealed"),
 		cols("mcp_readiness_pagerduty_policies", "integration_key_sealed"),
 		cols("mcp_readiness_fallback_policies", "integration_key_sealed", "webhook_secret_sealed"),
 	)},
-	{Domain: Storage, Readers: []string{"s3-gatewayd"}, Roles: cpOnly, Columns: join(
+	{Domain: Storage, Readers: []string{"s3-gatewayd"}, Roles: cpOnly, Wired: true, Columns: join(
 		cols("object_storage_s3_credentials", "secret_sealed"),
 	)},
 	{Domain: Delivery, Readers: []string{"schedd"}, Roles: bothRoles, Columns: join(
@@ -146,7 +149,7 @@ var registry = []Spec{
 		cols("app_webhooks", "secret_sealed"),
 		cols("commit_sources", "sealed_connection"),
 	)},
-	{Domain: Control, Readers: []string{"schedd"}, Roles: bothRoles, Columns: join(
+	{Domain: Control, Readers: []string{"schedd"}, Roles: bothRoles, Wired: true, Columns: join(
 		cols("cluster_signing_keys", "sealed_blob"),
 	)},
 	{Domain: Account, Readers: []string{"apid", "apid-clone-worker", "apid-data-pipeline-worker"}, Roles: cpOnly, Columns: join(

@@ -12,10 +12,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"io/fs"
 	"os"
 	"path/filepath"
-	"strings"
 	"syscall"
 )
 
@@ -30,13 +28,21 @@ var errResourceJournalClosed = errors.New("resource journal closed")
 // or physical deletion by a replacement Manager.
 // No environment, command, credential or artifact contents are stored.
 type ResourceJournal struct {
-	mu            journalMutex
-	dir           *os.Root
-	lock          *os.File
-	records       map[string]resourceJournalRecord
-	closed        bool
-	directorySync func() error
-	timing        map[string]resourceJournalTiming // see resource_journal_timing.go
+	mu      journalMutex
+	dir     *os.Root
+	lock    *os.File
+	records map[string]resourceJournalRecord
+	closed  bool
+	// commitSync makes a record write durable. Persists whose assets cannot
+	// outlive a host reboot pass durable=false and skip the directory fsync
+	// (see persist); tests replace it to fail either kind of commit.
+	commitSync func(durable bool) error
+	timing     map[string]resourceJournalTiming // see resource_journal_timing.go
+	// volatile holds each record's newest version on this boot, on tmpfs
+	// (ADR-20261026113920). nil when the journal has no tmpfs copies.
+	volatile *os.Root
+	// volatileWrites sends volatile commits only to volatile.
+	volatileWrites bool
 }
 
 type resourceProcessIdentity struct {
@@ -77,7 +83,16 @@ func resourceLeaseMatches(a, b Lease) bool {
 
 // OpenResourceJournal locks private persistent storage. Corrupt, foreign,
 // oversized or ambiguous records fail startup rather than free their slots.
+// OpenResourceJournal opens a journal without tmpfs copies.
 func OpenResourceJournal(path string) (*ResourceJournal, error) {
+	return OpenResourceJournalConfig(ResourceJournalConfig{Dir: path})
+}
+
+// OpenResourceJournalConfig opens the journal and, when configured, its tmpfs
+// copies: it reads them over the persistent records, and with volatile writes
+// off commits them to disk and removes them (ADR-20261026113920).
+func OpenResourceJournalConfig(cfg ResourceJournalConfig) (*ResourceJournal, error) {
+	path := cfg.Dir
 	if !filepath.IsAbs(path) {
 		return nil, errors.New("resource journal: absolute persistent directory required")
 	}
@@ -117,9 +132,24 @@ func OpenResourceJournal(path string) (*ResourceJournal, error) {
 		return nil, fmt.Errorf("resource journal: exclusive lock: %w", err)
 	}
 	j.lock = f
-	j.directorySync = func() error { return journalSyncDirectory(dir) }
+	if cfg.VolatileDir != "" {
+		if j.volatile, err = openVolatileJournal(cfg.VolatileDir, path, cfg.VolatileWrites); err != nil {
+			_ = j.Close()
+			return nil, err
+		}
+		j.volatileWrites = cfg.VolatileWrites && j.volatile != nil
+	}
+	j.commitSync = func(durable bool) error {
+		if !durable {
+			return nil
+		}
+		return journalSyncDirectory(dir)
+	}
 	if err = j.load(); err == nil {
-		err = j.directorySync()
+		err = j.commitSync(true)
+	}
+	if err == nil && !j.volatileWrites {
+		err = j.flushVolatileCopies()
 	}
 	if err == nil {
 		var parent *os.Root
@@ -156,31 +186,25 @@ func journalSyncDirectory(root *os.Root) error {
 	return errors.Join(f.Sync(), f.Close())
 }
 
+// load reads the persistent records, then lets each tmpfs copy replace the
+// record of the same name: on this boot a copy is the newest version.
 func (j *ResourceJournal) load() error {
-	entries, err := fs.ReadDir(j.dir.FS(), ".")
+	records, err := readRecords(j.dir, ".lock", resourceEpochFile) // the epoch claim is read separately (resource_epoch.go)
 	if err != nil {
 		return err
 	}
-	slots := make(map[int]bool)
-	identities := make(map[string]bool)
-	for _, entry := range entries {
-		name := entry.Name()
-		if name == ".lock" || name == resourceEpochFile {
-			continue // The epoch claim is read separately (resource_epoch.go).
-		}
-		if strings.HasPrefix(name, ".pending-") && entry.Type().IsRegular() {
-			if err := j.dir.Remove(name); err != nil {
-				return err
-			}
-			continue
-		}
-		if !entry.Type().IsRegular() || !strings.HasSuffix(name, ".json") {
-			return fmt.Errorf("unexpected journal entry %q", name)
-		}
-		r, err := j.readRecord(name)
+	if j.volatile != nil {
+		copies, err := readRecords(j.volatile, resourceVolatileBootFile)
 		if err != nil {
 			return err
 		}
+		for name, r := range copies {
+			records[name] = r
+		}
+	}
+	slots := make(map[int]bool)
+	identities := make(map[string]bool)
+	for name, r := range records {
 		if name != resourceRecordName(r.storageIdentity()) || slots[r.Lease.Slot] || len(j.records) >= MaxSlots {
 			return errors.New("resource journal: ambiguous record identity or slot")
 		}
@@ -203,9 +227,9 @@ func (j *ResourceJournal) load() error {
 	return nil
 }
 
-func (j *ResourceJournal) readRecord(name string) (resourceJournalRecord, error) {
+func readRecord(dir *os.Root, name string) (resourceJournalRecord, error) {
 	var r resourceJournalRecord
-	f, err := j.dir.OpenFile(name, os.O_RDONLY|syscall.O_NOFOLLOW, 0)
+	f, err := dir.OpenFile(name, os.O_RDONLY|syscall.O_NOFOLLOW, 0)
 	if err != nil {
 		return r, err
 	}
@@ -276,7 +300,7 @@ func (j *ResourceJournal) beginRecord(r resourceJournalRecord) error {
 			return errors.New("resource journal: slot already recorded")
 		}
 	}
-	return j.persist(r)
+	return j.persist(r, false)
 }
 
 func (j *ResourceJournal) recordProcess(l Lease, process resourceProcessIdentity) error {
@@ -293,12 +317,28 @@ func (j *ResourceJournal) recordProcess(l Lease, process resourceProcessIdentity
 	if err := r.validate(); err != nil {
 		return err
 	}
-	return j.persist(r)
+	return j.persist(r, false)
 }
 
 // persist publishes the cache after rename, even if directory fsync fails.
 // The caller still fails closed; cleanup can then retire that uncertain write.
-func (j *ResourceJournal) persist(r resourceJournalRecord) error {
+//
+// The record file is always fsynced before the rename, so the name never
+// points at partial content. Only a durable persist also fsyncs the directory
+// (ADR-20261024135625). A volatile one is visible to a restarted vmmd at once,
+// because a daemon crash keeps the page cache; after a power loss it may come
+// back as the record's previous complete version, or not at all for a new
+// record, which is safe because every asset such a write adds is gone after a
+// reboot too (mounts, tmpfs placeholders, namespaces, links, processes). Any
+// write that names a reboot-surviving asset is durable, and so is the whole
+// record it writes. On production-us these commits were ~60 fsyncs, ~85 ms,
+// of every restore's staging.
+//
+// With volatile writes on (ADR-20261026113920), every write first replaces
+// the record's tmpfs copy, which a restart on this boot reads in place of the
+// disk file, and publishes the cache. Only a durable write then commits the
+// record to disk; a volatile one never touches it.
+func (j *ResourceJournal) persist(r resourceJournalRecord, durable bool) error {
 	b, err := json.Marshal(r)
 	if err != nil {
 		return err
@@ -308,7 +348,8 @@ func (j *ResourceJournal) persist(r resourceJournalRecord) error {
 	}
 	key := r.timingKey()
 	j.noteCommit(key)
-	return j.persistFile(resourceRecordName(r.storageIdentity()), b, key, func() {
+	name := resourceRecordName(r.storageIdentity())
+	published := func() {
 		if r.Prepared != nil {
 			delete(j.records, r.Prepared.Source)
 			if r.Prepared.Source != key {
@@ -316,15 +357,28 @@ func (j *ResourceJournal) persist(r resourceJournalRecord) error {
 			}
 		}
 		j.records[r.Lease.Instance] = r
-	})
+	}
+	if !j.volatileWrites {
+		return j.persistFile(name, b, key, durable, published)
+	}
+	// ADR-20261026113920: the tmpfs copy is this boot's newest version; a
+	// durable write then commits the whole record to disk as before.
+	if err := replaceVolatileFile(j.volatile, name, b); err != nil {
+		return err
+	}
+	published()
+	if !durable {
+		return nil
+	}
+	return j.persistFile(name, b, key, true, nil)
 }
 
-// persistFile durably replaces one journal file: private temporary file,
-// fsync, atomic rename, then directory fsync. published runs once the rename
-// has replaced the target and before the directory fsync, even when that
-// fsync then fails. A non-empty key accounts the fsyncs to that record's
+// persistFile replaces one journal file: private temporary file, fsync,
+// atomic rename, then, when durable, directory fsync. published runs once the
+// rename has replaced the target and before the directory fsync, even when
+// that fsync then fails. A non-empty key accounts the fsyncs to that record's
 // commit (noteCommit first). The caller holds j.mu.
-func (j *ResourceJournal) persistFile(target string, b []byte, key string, published func()) error {
+func (j *ResourceJournal) persistFile(target string, b []byte, key string, durable bool, published func()) error {
 	synced := func(fn func() error) error {
 		if key == "" {
 			return fn()
@@ -354,7 +408,7 @@ func (j *ResourceJournal) persistFile(target string, b []byte, key string, publi
 	if published != nil {
 		published()
 	}
-	return synced(j.directorySync)
+	return synced(func() error { return j.commitSync(durable) })
 }
 
 // forget is called after physical cleanup, before allocator release. An
@@ -382,8 +436,15 @@ func (j *ResourceJournal) forgetRecord(r resourceJournalRecord) error {
 	if err := j.dir.Remove(resourceRecordName(r.storageIdentity())); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
-	if err := j.timedSync(key, j.directorySync); err != nil {
+	if err := j.timedSync(key, func() error { return j.commitSync(true) }); err != nil {
 		return err
+	}
+	// The tmpfs copy goes last: until the disk removal is durable, a restart
+	// on this boot must still find the record.
+	if j.volatile != nil {
+		if err := j.volatile.Remove(resourceRecordName(r.storageIdentity())); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
 	}
 	delete(j.records, r.Lease.Instance)
 	delete(j.timing, key)
@@ -467,7 +528,11 @@ func (j *ResourceJournal) Close() error {
 		return nil
 	}
 	j.closed = true
-	return errors.Join(syscall.Flock(int(j.lock.Fd()), syscall.LOCK_UN), j.lock.Close(), j.dir.Close())
+	var volatileErr error
+	if j.volatile != nil {
+		volatileErr = j.volatile.Close()
+	}
+	return errors.Join(syscall.Flock(int(j.lock.Fd()), syscall.LOCK_UN), j.lock.Close(), j.dir.Close(), volatileErr)
 }
 
 // WithResourceJournal is startup-only. Journaling is mandatory in Linux daemon

@@ -8,6 +8,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/workpolicy"
 )
@@ -182,7 +183,7 @@ func TestEventReceiptWorkOutcomesAndRetention(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if receipt.RoutingSettledAt == nil || receipt.RetainUntil == nil || receipt.RetainUntil.Sub(*receipt.RoutingSettledAt) != state.PublishedEventIdentityRetention {
+		if receipt.RoutingSettledAt == nil || receipt.RetainUntil == nil || receipt.RetainUntil.Sub(*receipt.RoutingSettledAt) != api.MustLimitsFor(api.PlanPro).EventStorage.SettledRetention() {
 			t.Fatalf("settled retention: %+v", receipt)
 		}
 		if receipt.Recipients[0].Execution.State != "superseded" || receipt.Recipients[1].Execution.State != "cancelled" || receipt.Recipients[2].Cancellation == nil || receipt.Recipients[2].Execution != nil || receipt.Recipients[2].ExecutionUnavailable != "cancel_pending" {
@@ -194,7 +195,7 @@ func TestEventReceiptWorkOutcomesAndRetention(t *testing.T) {
 		if err != nil || fresh.Recipients[0].Execution.CompletedAt.IsZero() {
 			t.Fatalf("aliased execution: %+v %v", fresh, err)
 		}
-		pruned, err := store.PruneDeliveredPublishedEvents(ctx, time.Now().Add(state.PublishedEventIdentityRetention+time.Hour), 1)
+		pruned, err := store.PruneSettledPublishedEvents(ctx, time.Now().Add(api.EventSettledRetentionMax()+time.Hour), 1)
 		if err != nil || pruned != 1 {
 			t.Fatalf("prune: %d %v", pruned, err)
 		}

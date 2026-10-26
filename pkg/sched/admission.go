@@ -291,6 +291,10 @@ type Request struct {
 	// through to the normal fleet chooser and the shared backend remains the
 	// cold-restore fallback.
 	PreferredNodeIDs []string
+	// ExcludeNodeIDs are nodes that already refused this wake before
+	// starting its VM (ADR-20261022184531). The chooser skips them like
+	// nodes without headroom; hints never bring them back.
+	ExcludeNodeIDs []string
 	// PrioritizeSnapshotLocality is reserved for an authenticated deployment
 	// smoke. The candidate's first public request must use a fitting node
 	// already holding its snapshot when one is known; choosing an empty node
@@ -311,11 +315,24 @@ type Request struct {
 	// preferred region with no headroom falls through to the
 	// least-loaded path (ADR-005 cold-boot invariant).
 	PreferredRegion string
+	// SpreadReplicas places this instance away from the app's other live
+	// instances: among the nodes that fit, those whose zone and then whose
+	// own node hold the fewest of them (ADR-20261026140000). Service replicas
+	// and minimum-instance floors set it. It is a preference among fitting
+	// nodes, never a capacity gate: a fleet with one fitting node still admits.
+	SpreadReplicas bool
+	// AppInstancesByNode counts the app's live instances on each node for
+	// SpreadReplicas. The Engine fills it from the ledger.
+	AppInstancesByNode map[string]int
 	// restorePressureAware marks snapshot restores whose placement may account
 	// for other in-flight restore RPCs on each node. The Engine sets this only
 	// for real snapshot restores; cold boots and deployment smokes keep their
 	// existing placement rules.
 	restorePressureAware bool
+	// restoreSnapshot, when set, narrows placement to the nodes whose CPU can
+	// restore this snapshot (ADR-20261024225612). Only snapshot restores set
+	// it; cold boots may land on any node.
+	restoreSnapshot *state.Snapshot
 	// restorePressureByNode is a point-in-time count captured atomically with
 	// restore placement reservation. It is a short-lived I/O-pressure hint, not
 	// durable capacity accounting.
@@ -818,6 +835,21 @@ func (l *NodeLedger) Concurrency(appID string) int {
 	return l.perApp[appID]
 }
 
+// AppInstancesByNode counts appID's serving reservations on each node, the
+// instances replica spread keeps apart (ADR-20261026140000). The owner
+// scheduler admits every instance of its apps, so its ledger sees them all.
+func (l *NodeLedger) AppInstancesByNode(appID string) map[string]int {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	byNode := make(map[string]int)
+	for _, r := range l.entries {
+		if r.appID == appID && r.countsConc {
+			byNode[r.nodeID]++
+		}
+	}
+	return byNode
+}
+
 // ConcurrencyForDeployment returns the per-(app, deployment) live
 // instance count that the ledger tracks (ADR-072, issue #557 closure).
 // The floor trigger reads this for per-deployment floor arithmetic;
@@ -937,6 +969,23 @@ func (l *NodeLedger) MeasuredAdmissionEnabled() bool {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	return l.measured != nil
+}
+
+// ReservationPercent is how far Σ(ram_mb + 8) on nodeID may reach, as a
+// percent of its admission ceiling, for an admission this ledger makes now:
+// the ADR-909 overcommit bound while a fresh measurement of the node drives
+// admission, otherwise 100. The durable per-node guard enforces it (ADR-909
+// amendment 1), so a measured admission is not refused at the bare ceiling.
+func (l *NodeLedger) ReservationPercent(nodeID string) int {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.measured == nil {
+		return 100
+	}
+	if _, _, ok := l.measured(nodeID); !ok {
+		return 100
+	}
+	return api.MeasuredAdmissionMaxOvercommitPercent
 }
 
 // CeilingForNode is the RAM admission ceiling the ledger last applied on a

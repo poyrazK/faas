@@ -200,6 +200,13 @@ type Endpoint struct {
 	// AccountMaxConnections is the account's plan allowance of concurrent
 	// connections across the fleet (ADR-1323). Zero enforces no account limit.
 	AccountMaxConnections int
+	// ChannelRules authorize channels from verified token claims without the
+	// authorize callback (ADR-20261019102657).
+	ChannelRules []api.RealtimeChannelRule
+	// Preview marks an endpoint whose account is in the realtime preview
+	// rollout (ADR-20261019102657). Preview features need both this mark and
+	// the node's own flag, so an apid that sends no mark turns them off.
+	Preview bool
 
 	// LiveRoutes are the live-query keys this endpoint's connections may use
 	// (ADR-20261016151947): those of databases bound to the endpoint's app. A seal
@@ -222,20 +229,25 @@ type EndpointPreviews struct {
 	Occupancy bool `json:"occupancy,omitempty"`
 }
 
+// A preview feature is on for an endpoint only when the node's switch is on,
+// apid marked the endpoint's account as in the realtime preview rollout
+// (ADR-20261019102657), and apid's per-feature decision, if it sent one,
+// allows it (ADR 20261021080640).
+
 func (e Endpoint) resumeOn(cfg Config) bool {
-	return cfg.ResumePreview && (e.Previews == nil || e.Previews.Resume)
+	return cfg.ResumePreview && e.Preview && (e.Previews == nil || e.Previews.Resume)
 }
 
 func (e Endpoint) ticketsOn(cfg Config) bool {
-	return cfg.TicketPreview && (e.Previews == nil || e.Previews.Tickets)
+	return cfg.TicketPreview && e.Preview && (e.Previews == nil || e.Previews.Tickets)
 }
 
 func (e Endpoint) accessOn(cfg Config) bool {
-	return cfg.AccessPreview && (e.Previews == nil || e.Previews.Access)
+	return cfg.AccessPreview && e.Preview && (e.Previews == nil || e.Previews.Access)
 }
 
 func (e Endpoint) occupancyOn(cfg Config) bool {
-	return cfg.OccupancyPreview && (e.Previews == nil || e.Previews.Occupancy)
+	return cfg.OccupancyPreview && e.Preview && (e.Previews == nil || e.Previews.Occupancy)
 }
 
 func clonePreviews(p *EndpointPreviews) *EndpointPreviews {
@@ -717,6 +729,11 @@ func (m *Manager) RegisterEndpoint(e Endpoint) error {
 			return fmt.Errorf("realtime: previous auth token requires an expiry")
 		}
 	}
+	if err := api.ValidateRealtimeChannelRules(e.ChannelRules); err != nil {
+		return fmt.Errorf("realtime: %w", err)
+	}
+	e.ChannelRules = append([]api.RealtimeChannelRule(nil), e.ChannelRules...)
+	auth.ExtractClaims = channelRuleClaims(e.ChannelRules)
 	e.ClientAuth = auth
 	for name, path := range map[string]string{
 		"connect_path":    e.ConnectPath,
@@ -971,6 +988,7 @@ func (m *Manager) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	var issuedAt time.Time
 	var identity JWTIdentity
 	var identityToken string
+	var tokenExpiry time.Time
 	identityAt := time.Now()
 	if usesTicket {
 		claims, err := m.readTicket(r.Context(), endpoint.ID, ticketToken)
@@ -1012,6 +1030,9 @@ func (m *Manager) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				principal, identityToken = identity.Principal, token
 			} else {
 				principal, err = m.cfg.JWTAuthorizer.Authorize(r.Context(), token, endpoint.ClientAuth)
+				// v1 sockets never re-check the token, so they end when it
+				// expires instead of living out MaxConnectionAge on it.
+				tokenExpiry = verifiedTokenExpiry(token)
 			}
 			if err != nil || strings.TrimSpace(principal) == "" {
 				m.recordAuthOutcome(authMetricMode, authMetricOutcomeRejected)
@@ -1110,6 +1131,13 @@ func (m *Manager) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		return ""
 	}(), verifiedConnection)
+	if !tokenExpiry.IsZero() {
+		conn.mu.Lock()
+		if tokenExpiry.Before(conn.info.Expires) {
+			conn.info.Expires = tokenExpiry
+		}
+		conn.mu.Unlock()
+	}
 	state.gate.Unlock()
 	conn.browser = r.Header.Get("Origin") != ""
 	conn.liveOnly = liveOnly

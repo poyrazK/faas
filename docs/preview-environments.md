@@ -2,7 +2,8 @@
 
 Every pull request against a connected GitHub repo gets an
 ephemeral app for the bound workload and its declared transitive
-`depends_on` workload dependencies, deployed on push and routed at
+`depends_on` workload dependencies (every callable project service under the
+`project` service policy), deployed on push and routed at
 per-PR subdomains. They are torn down on PR close (or after the TTL —
 whichever comes first). No CI configuration required; the integration is
 triggered by the GitHub App the customer installed via
@@ -63,7 +64,7 @@ no per-PR cert provisioning, no DNS work.
 | **Open** | A live preview app responding to requests. Wakes on first hit (cold-boot), scales to zero on idle. |
 | **Closed** | PR was closed / merged. The preview stays live for **24 hours** so the author (or a reviewer) can revisit the URL one last time. Wakes are still served. |
 | **Stale** | 24h grace elapsed. The preview app is queued for teardown on the next janitor tick. Wakes still complete. |
-| **Torn down** | App row tombstoned, instances reaped, snapshot freed. The URL returns `410 Gone`. |
+| **Torn down** | App row tombstoned, instances reaped, snapshot freed. The URL returns `404`, the PR's GitHub deployment turns inactive, and the status comment says the preview is gone. |
 
 A reopened PR during the grace period bumps the row back to
 **Open** and the URL starts serving again on the next push.
@@ -76,30 +77,36 @@ take traffic after a newer preview deployment has been accepted. See
 
 ## Quota
 
-Each preview workload consumes **one slot** of the separate
-`PreviewApps` allowance:
+Each open pull request with a preview uses **one PR preview environment** of
+the separate `PreviewApps` allowance, however many workloads it runs:
 
-- **Free** — 1 preview slot in addition to the production app.
-- **Hobby** — 2 preview slots.
-- **Pro** — 5 preview slots.
-- **Scale** — 20 preview slots.
+- **Free** — 1 PR preview environment in addition to the production app.
+- **Hobby** — 2 PR preview environments.
+- **Pro** — 5 PR preview environments.
+- **Scale** — 20 PR preview environments.
 
-Production apps keep their own plan limit. A preview with two app dependencies
-consumes three slots. The root and its dependency previews reserve those slots atomically:
-if the full set does not fit, no new preview rows are kept and no builds are
-queued. Existing rows for the same PR are preserved on retries. The 7-day
-default TTL plus the 24h
-closed-grace window plus the janitor's per-tick sweep keep
-the steady-state preview count bounded — a customer who
-opens 20 PRs today will not have 20 previews live a week
-from now.
+One environment runs at most as many workloads as the plan can deploy
+(`DeployedApps`: 1, 5, 25 and 100). Production apps keep their own plan limit.
+The root and its dependency previews are reserved together: if the environment
+does not fit, no new preview rows are kept, no builds are queued, and the PR's
+`gregale-preview` check and status comment say which limit was reached.
+Existing rows for the same PR are preserved on retries.
+
+A closed PR's preview keeps serving through its 24-hour grace but no longer
+holds an environment, so the next pull request can be previewed at once.
+Reopening a PR takes an environment again. The 7-day default TTL and the
+janitor's per-tick sweep keep the steady-state preview count bounded — a
+customer who opens 20 PRs today will not have 20 previews live a week from now.
+To free an environment immediately, close the PR or run
+`gregale preview destroy <preview-slug>`; destroying any workload of a PR's
+preview tears down the whole environment.
 
 ## Fork PRs
 
-PRs from forks are **refused**. The webhook posts a
-`gregale-preview` Check Run with `conclusion: neutral` and
-`text: "Preview skipped for fork PR (security policy)"`. No
-app row is provisioned. This is deliberate: we cannot
+PRs from forks are **refused**. On a connected repository with previews
+enabled, the webhook posts a `gregale-preview` Check Run with
+`conclusion: neutral` and `text: "Preview skipped for fork PR (security policy)"`.
+No app row is provisioned. This is deliberate: we cannot
 guarantee that untrusted code from a fork will not reach the
 build VM without a per-install override. The GitHub App needs
 `Deployments:write` for the deployment timeline and `Issues:write`
@@ -108,29 +115,41 @@ thread; it does not need `Pull requests:write`.
 
 ## Dashboard
 
-Open `/dashboard/apps/{slug}` on the production app — the
-**Preview environments** panel lists every preview with its PR
-number, current state (chip), the preview URL, and a Copy
-URL button (writes to clipboard). A preview row on the apps
-list (`/dashboard/apps`) is indented and tagged with a
-`preview` chip.
+A preview is an app in the dashboard. Open `/dashboard/apps/{preview-slug}`
+(the PR comment's **Preview details and teardown** link) to see the whole PR
+environment: every workload, its status at the current PR head, and its
+changes from production. The app menu's **Tear down preview** action destroys
+the environment. The project page's **PR previews** panel lists the previews of
+the project's apps.
 
 ## Pull request feedback
 
 Gregale maintains one bot comment per preview PR. The comment is
-updated on `opened`, `synchronize`, `reopened`, and `closed` events,
-and includes the preview URL, current lifecycle status, commit SHA,
-and one-click destroy link. A hidden marker makes webhook retries and
-repeated synchronize events idempotent instead of creating duplicate
-comments. The comment links to the root preview's dashboard details page so
-reviewers can inspect the whole workload set, including per-workload production
-changes and diagnostics. The Check Run remains the source of build-stage status.
+updated on `opened`, `synchronize`, `reopened`, and `closed` events, as
+deployments progress, and when the preview is torn down. It includes the
+preview URL, current lifecycle status, commit SHA, and links to the latest
+workload deployment, its logs, and the root preview's dashboard page, where
+reviewers inspect the whole workload set and tear the environment down. A
+hidden marker makes webhook retries and repeated synchronize events
+idempotent; Gregale only ever edits its own bot comment, never a comment
+someone else wrote with the marker. The Check Run remains the source of
+build-stage status.
+
+If Gregale cannot set up a preview for the PR head, the `gregale-preview`
+check fails and the comment says why: the project cannot be read at that
+commit, a workload depends on a service that is not in the project, the
+environment exceeds the plan, the hourly deploy limit is reached, the
+manifest is invalid, or the account cannot deploy (details are on the
+dashboard, not on the PR). `GET /v1/preview/{slug}/environment` and
+`gregale preview wait` report the same failure. Push a new commit to retry.
 
 Each preview deployment also appears in GitHub's Deployments timeline
-with a stable environment URL and deployment/log links. Status updates
-reuse the same provider deployment across retries, so GitHub consumers
-see one `queued` → `in_progress` → `success`/`failure` lifecycle rather
-than a new deployment row for every phase.
+with a stable environment URL and deployment/log links. Every preview of a
+production app reports to one GitHub environment, `preview/<app>`, rather
+than one per pull request. Status updates reuse the same provider deployment
+across retries, so GitHub consumers see one `queued` → `in_progress` →
+`success`/`failure` lifecycle rather than a new deployment row for every
+phase. When the preview is torn down, its deployment turns `inactive`.
 
 The Deployment record also carries the provenance already stored on the
 Gregale deployment row: deployer, pull-request number, tag, and optional
@@ -164,9 +183,10 @@ bounded to 64 KiB; status `204` and `304` cannot carry a body.
 
 - **Stuck teardowns.** If a preview sits in `closed` for
   longer than 24h + one janitor tick, check
-  `journalctl -u faas-apid` for `preview janitor: tick
-  failed`. The janitor is non-fatal on row errors; a single
-  bad row does not abort the sweep.
+  `journalctl -u faas-apid` for `preview janitor:` warnings.
+  The janitor is non-fatal on row errors; a single bad row
+  does not abort the sweep. Sweep and row failures raise
+  `FaasPreviewJanitorFailing`.
 - **Premature teardown.** A `closed` preview's 24h grace is
   a contract, not a knob. To keep a preview alive beyond
   grace, either reopen the PR (bumps state to `open`,
@@ -193,7 +213,10 @@ must explicitly opt in again if production calls are intended. Previews are
 enabled by default, with a 7-day TTL, no ignored paths, and the repository root.
 
 When all changed files match ignored paths, githubd records the delivery as a
-successful no-op and does not enqueue builds. Compare-API failures still use
+successful no-op and does not enqueue builds. The same holds for a push to a
+pull request whose preview is live: the preview keeps serving its last built
+commit and the new commit's `gregale-preview` check passes with that
+explanation. Compare-API failures, force pushes and truncated diffs still use
 the existing safe full-fan-out fallback, because an unavailable GitHub API
 must not be mistaken for an ignored change set.
 
@@ -278,6 +301,7 @@ to the target branch and triggers the normal deployment event.
 
 - ADR-095 (decision + schema + state machine rationale).
 - ADR-310 (production trigger ownership and separate preview quota).
+- ADR-20261026090000 (environment allowance, environment-wide destroy, setup failures on the PR, gate sync).
 - `docs/runbooks/PreviewSubdomainRouting.md` — operator
   recovery for routing failures.
 - `pkg/githubd` — webhook receiver (PR-A surface).
@@ -289,10 +313,14 @@ A project PR preview first resolves a service name inside its own account,
 project, and PR. If that workload preview exists, the call stays isolated; a
 preview in another PR, project, or account is never eligible.
 
-On each PR head update, githubd scans the source and provisions only the bound
-workload's transitive `depends_on` app closure, in dependency order. Enqueue
-order does not itself guarantee that a dependency is live before its caller
-starts. Unrelated project workloads are not copied. Retries reuse the same
+On each PR head update, githubd scans the source and provisions the bound
+workload's transitive `depends_on` app closure, in dependency order. When the
+bound workload's service policy is `project`, every other callable workload of
+the project joins it, since the preview may call any of them without declaring
+it; workers, jobs and scheduled workloads join only as declared dependencies
+([ADR-20261025093331](adr/20261025093331-project-config-and-whole-project-previews.md)).
+Enqueue order does not itself guarantee that a dependency is live before its
+caller starts. Under other policies unrelated project workloads are not copied. Retries reuse the same
 preview rows; closing the PR closes the sibling rows together. Managed services
 are external to this app fan-out. A newly declared dependency with no
 production app gets a preview-only sibling from the PR source, with no
@@ -306,6 +334,13 @@ scan. A new PR push clears environment values left on older preview rows.
 Configure preview-specific credentials separately before relying on a preview
 that needs external managed services; Gregale does not provision isolated
 databases or buckets for the PR.
+
+Previews keep their production app's access and egress gates: password,
+IP allowlist, signed-request and consumer-auth requirements, the egress
+allowlist and the app's visibility. A gate changed on the production app
+applies to its live previews at once. A service the PR adds takes the bound
+app's gates and the visibility production would give it, so a service
+without ports stays internal.
 When a dependency preview is absent, the gateway considers the **production**
 service and its side effects are real if policy permits it.
 

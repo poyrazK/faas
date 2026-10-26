@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { FaaSClient, QueuesService } from '../src/index.js';
+import { FaaSClient, QueuesService } from '../src/preview.js';
 
 test('retained queue history preserves recovery UUID and retirement timestamp', async () => {
   const id = '11111111-2222-4333-8444-555555555555';

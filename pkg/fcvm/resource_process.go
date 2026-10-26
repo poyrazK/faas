@@ -21,8 +21,8 @@ func readResourceProcessIdentity(root string, pid int) (resourceProcessIdentity,
 	if err != nil {
 		return p, err
 	}
-	stat, err := os.ReadFile(filepath.Join(root, strconv.Itoa(pid), "stat"))
-	if errors.Is(err, os.ErrNotExist) {
+	stat, err := readProcFile(filepath.Join(root, strconv.Itoa(pid), "stat"))
+	if processExited(err) {
 		return p, errResourceProcessAbsent
 	}
 	if err != nil {
@@ -145,8 +145,8 @@ func journalProcessMatches(root string, r resourceJournalRecord) (bool, error) {
 		return false, nil
 	}
 	path := filepath.Join(root, strconv.Itoa(current.PID))
-	argv, err := os.ReadFile(filepath.Join(path, "cmdline"))
-	if errors.Is(err, os.ErrNotExist) {
+	argv, err := readProcFile(filepath.Join(path, "cmdline"))
+	if processExited(err) {
 		return false, nil
 	}
 	if err != nil {

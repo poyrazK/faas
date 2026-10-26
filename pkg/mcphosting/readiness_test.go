@@ -156,3 +156,53 @@ func TestReadinessMetadataOnlyServer(t *testing.T) {
 		t.Fatalf("metadata-only readiness: %+v calls=%+v", report, calls)
 	}
 }
+
+// Production-us rc.294: `gregale mcp readiness` failed "initialize" for every
+// Gregale starter. They answer notifications/initialized with a bare 202
+// Accepted, which has no body and so no protocol version to echo, and the
+// readiness transport demanded MCP-Protocol-Version on every 2xx (Hunt 14
+// H14-2). A body-carrying response must still name the version, and no
+// response may create a session.
+func TestReadinessAcceptsABareNotificationAck(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		ackHeaders map[string]string
+		wantOK     bool
+	}{
+		{name: "bare 202 like the starters", wantOK: true},
+		{name: "202 that opens a session", ackHeaders: map[string]string{"MCP-Session-Id": "s-1"}, wantOK: false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c := testClient(t, func(w http.ResponseWriter, r *http.Request) {
+				var req struct {
+					ID     int    `json:"id"`
+					Method string `json:"method"`
+				}
+				_ = json.NewDecoder(r.Body).Decode(&req)
+				if req.Method == "notifications/initialized" {
+					for k, v := range tc.ackHeaders {
+						w.Header().Set(k, v)
+					}
+					w.WriteHeader(http.StatusAccepted)
+					return
+				}
+				w.Header().Set("Content-Type", "application/json")
+				w.Header().Set("MCP-Protocol-Version", ProtocolVersion)
+				var result any = map[string]any{}
+				switch req.Method {
+				case "initialize":
+					result = map[string]any{"protocolVersion": ProtocolVersion, "capabilities": map[string]any{"tools": map[string]any{}}}
+				case "server/discover":
+					result = map[string]any{"supportedVersions": []string{ProtocolVersion}, "capabilities": map[string]any{"tools": map[string]any{}}}
+				case "tools/list":
+					result = map[string]any{"tools": []any{map[string]any{"name": "add", "inputSchema": map[string]any{"type": "object"}}}}
+				}
+				_ = json.NewEncoder(w).Encode(map[string]any{"jsonrpc": "2.0", "id": req.ID, "result": result})
+			})
+			report := CheckReadiness(t.Context(), c, nil)
+			if report.OK != tc.wantOK {
+				t.Fatalf("readiness OK = %v, want %v: %+v", report.OK, tc.wantOK, report.Checks)
+			}
+		})
+	}
+}

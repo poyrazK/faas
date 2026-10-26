@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { FaaSClient, type ExecutionEvent } from '../src/index.js';
+import { FaaSClient, type ExecutionEvent } from '../src/preview.js';
 
 const stream = (frames: string) => new Response(frames, {
   status: 200,

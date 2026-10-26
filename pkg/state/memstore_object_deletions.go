@@ -41,6 +41,16 @@ func (m *MemStore) activeDeletionLocked(bucket string) bool {
 	}
 	return false
 }
+
+// activeKeyDeletionLocked reports an unsettled deletion of key.
+func (m *MemStore) activeKeyDeletionLocked(bucket, key string) bool {
+	for _, j := range m.objectDeletions {
+		if j.BucketID == bucket && j.Key == key && deletionActive(j) {
+			return true
+		}
+	}
+	return false
+}
 func (m *MemStore) BeginObjectDeletion(ctx context.Context, j ObjectDeletion, policy api.ObjectStoragePolicy) (ObjectDeletion, bool, error) {
 	if !validDeletionIdentity(j) {
 		return ObjectDeletion{}, false, ErrConflict
@@ -88,15 +98,16 @@ func (m *MemStore) BeginObjectDeletion(ctx context.Context, j ObjectDeletion, po
 	if j.ProtectionRequired && j.Lifecycle.ExpectedDeleteMarker == nil {
 		return ObjectDeletion{}, false, ErrConflict
 	}
-	pending, unsafe, multipart, versions := m.capacityReadinessLocked(b.ID)
+	// Only work on this key blocks the deletion (ADR-20261025115958).
+	pending, unsafe, multipart, versions := m.deletionReadinessLocked(b.ID, j.Key)
 	v := m.objectBucketVersioning[b.ID]
 	if b.State != "ready" || multipart || !immutableDeletion(j) && unsafe && (versions || v.ObservedStatus != "") {
 		return ObjectDeletion{}, false, ErrConflict
 	}
-	if pending > 0 {
+	if pending > 0 || inventoryClaimYields(m.objectUsage[b.ID], m.clock()) {
 		return ObjectDeletion{}, false, errors.Join(ErrConflict, ErrObjectBucketBusy)
 	}
-	if m.objectCapacityFencedLocked(b.ID) {
+	if m.objectCapacityFencedForKeyLocked(b.ID, j.Key) {
 		return ObjectDeletion{}, false, ErrConflict
 	}
 	if !immutableDeletion(j) && versions && (m.objectUsage[b.ID].InventoryScope != ObjectInventoryAllVersions || v.ObservedStatus == "") {

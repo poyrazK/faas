@@ -26,6 +26,7 @@ import (
 
 	"filippo.io/age"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/onebox-faas/faas/pkg/logsanitize"
 	"go.opentelemetry.io/otel/attribute"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -36,7 +37,6 @@ import (
 	"github.com/onebox-faas/faas/pkg/dependencytrace"
 	"github.com/onebox-faas/faas/pkg/exclusivework"
 	"github.com/onebox-faas/faas/pkg/httpjson"
-	"github.com/onebox-faas/faas/pkg/logsanitize"
 	"github.com/onebox-faas/faas/pkg/middleware"
 	"github.com/onebox-faas/faas/pkg/safetext"
 	"github.com/onebox-faas/faas/pkg/sched/floor"
@@ -47,6 +47,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/sched/targets"
 	"github.com/onebox-faas/faas/pkg/state"
 	pkgtrace "github.com/onebox-faas/faas/pkg/trace"
+	"github.com/onebox-faas/faas/pkg/trafficrevocation"
 	"github.com/onebox-faas/faas/pkg/wire"
 	"github.com/onebox-faas/faas/pkg/workpolicy"
 )
@@ -92,11 +93,14 @@ type Loop struct {
 	// through the GatewaySynth interface.
 	gatewayHTTPClient *http.Client
 	gatewayBaseURL    string
-	// triggerPollers caches one triggerSource per trigger id. The
-	// cache is invalidated by NotifyTriggerChanged (commit #16);
-	// for now we never rebuild within a process lifetime.
-	triggerPollersMu sync.Mutex
-	triggerPollers   map[string]triggerSource
+	// triggerPollers caches one triggerSource per trigger id.
+	// triggerPollerConfigs holds the fingerprint of the config each
+	// poller was built from: a changed trigger (credentials, topic, URL)
+	// gets a new poller, and a trigger no longer enabled has its poller
+	// closed on the next tick.
+	triggerPollersMu     sync.Mutex
+	triggerPollers       map[string]triggerSource
+	triggerPollerConfigs map[string]string
 	// queuePushLanes holds each push-queue trigger's lane allowance
 	// (ADR-972). In memory and per schedd; a restart ramps from one lane.
 	queuePushLanes queuePushLaneAllowance
@@ -274,8 +278,17 @@ func (l *Loop) WithWorkflowsDispatched(enabled bool) *Loop {
 
 // WithWorkflowOrchestrator sets the orchestrator instance for workflow dispatch.
 func (l *Loop) WithWorkflowOrchestrator(o *WorkflowOrchestrator) *Loop {
+	if o != nil {
+		o.capabilityAllowed = l.workflowCapabilityAllowed
+	}
 	l.workflowOrch = o
 	return l
+}
+
+// workflowCapabilityAllowed decides the workflows capability for an app's
+// account (ADR-20261023115741).
+func (l *Loop) workflowCapabilityAllowed(ctx context.Context, appID string) bool {
+	return l.engine.appIDCapabilityAllowed(ctx, appID, "workflows")
 }
 
 // WithWorkflowRetention attaches the workflow retention cleaner.
@@ -308,13 +321,11 @@ func (l *Loop) WithWatchdog(w *Watchdog) *Loop {
 // iteration. MainLoopBudget is its stall budget.
 //
 // ADR-191 moved Prime and the four reconcile arms onto the bounded work
-// pool, and its amendment moved the reaper tick, so the longest thing that
-// still runs on this goroutine is handleAppWake. That one stays inline deliberately: its error decides
-// whether the durable notification is acknowledged, and moving it off
-// the loop means re-plumbing outbox ack through the worker. EnsureWake
-// can legitimately cold-boot at ColdBootTimeout (35 s) plus admission,
-// so 60 s is the honest ceiling — down from the 180 s the loop needed
-// when a Scale-plan Prime ran here.
+// pool, and its amendments moved the reaper tick and then the explicit
+// app_wake and runtime_config_restart deliveries, which now claim and settle
+// their outbox rows on the worker (explicit_wake.go). No arm left on this
+// goroutine boots a VM in the normal case, so 60 s stays a generous ceiling
+// — down from the 180 s the loop needed when a Scale-plan Prime ran here.
 //
 // The prime path can still land inline when all four prime slots are
 // busy (workSpecs: overflowInline, because dropping strands a
@@ -825,6 +836,11 @@ func (l *Loop) Run(ctx context.Context) error {
 		db.NotifyInstanceFailureRelayed, // issue #3359: vmmd reports relayed by the hosting schedd to the app's owner.
 	}, l.log)
 	if err != nil {
+		if ctx.Err() != nil {
+			// Stopped before the first LISTEN came up: a clean drain,
+			// not a failed start.
+			return nil
+		}
 		return err
 	}
 	// SubscribeWithReconnect owns its own cancel via the deferred
@@ -1217,17 +1233,12 @@ func (l *Loop) Run(ctx context.Context) error {
 				// Defensive — wrapper guarantees open until ctx done.
 				return nil
 			}
-			if n.Channel == db.NotifyAppWake {
-				if err := l.handleAppWake(ctx, n); err != nil {
-					l.log.Warn("sched: explicit app wake failed; leaving durable request pending", "err", err)
-					continue
-				}
-			} else if n.Channel == db.NotifyRuntimeConfigRestart {
-				if err := l.handleRuntimeConfigRestart(ctx, n); err != nil {
-					l.log.Warn("sched: runtime config restart failed; leaving durable request pending", "err", err)
-					continue
-				}
-			} else if n.Channel == db.NotifyPrivateNetworkAttachmentChanged {
+			if n.Channel == db.NotifyAppWake || n.Channel == db.NotifyRuntimeConfigRestart {
+				// Both boot VMs; the worker settles the durable row itself.
+				l.dispatchExplicitWake(ctx, n)
+				continue
+			}
+			if n.Channel == db.NotifyPrivateNetworkAttachmentChanged {
 				if err := l.HandleDurableNotification(ctx, n); err != nil {
 					l.log.Warn("sched: private network detach cleanup failed; leaving durable request pending", "err", err)
 					continue
@@ -2220,6 +2231,10 @@ func (l *Loop) handleNotification(ctx context.Context, n db.Notification) {
 	switch n.Channel {
 	case db.NotifyAppWake:
 		if err := l.handleAppWake(ctx, n); err != nil {
+			if errors.Is(err, ErrAppOwnedByAnotherNode) {
+				l.log.Debug("sched: explicit app wake left to the owning node", "err", err)
+				return
+			}
 			l.log.Warn("sched: explicit app wake failed", "err", err)
 		}
 	case db.NotifyAppChanged:
@@ -2703,7 +2718,6 @@ func (l *Loop) runReaper(ctx context.Context) {
 	// lifecycle decision if the audit write is unavailable.
 	l.recordRunningReasonObservations(ctx, apps, snapshot, now)
 	l.engine.publishPressureParkCandidates(SelectPressureParkCandidates(now, snapshot), now)
-	resident := l.engine.Ledger().ResidentRAM()
 	// instanceToApp (PR-C review fix): O(N) instance→app map shared
 	// between the idle and aggressive reaper branches. The pre-PR-C
 	// idle branch was O(N×M) (each parked ID linear-scanned the
@@ -2822,7 +2836,7 @@ func (l *Loop) runReaper(ctx context.Context) {
 
 	l.parkExpiredFrozen(ctx, snapshot, now)
 	l.evictForMeasuredMemory(ctx, snapshot, activityByInstance, now)
-	for _, id := range SelectEvictions(resident, now, snapshot) {
+	for _, id := range reservationEvictions(l.engine.Ledger(), now, snapshot) {
 		if err := l.engine.EvictUnderPressure(ctx, id); err != nil {
 			l.log.Warn("reaper: eviction", "instance", id, "err", err)
 			continue
@@ -3878,6 +3892,7 @@ func (h *httpGatewaySynth) invokeWithStatusUsing(ctx context.Context, client *ht
 	dispatchCtx := pkgtrace.ExtractHeaders(ctx, headers)
 	dispatch := map[string]any{
 		"platform_tenant_id": inv.PlatformTenantID,
+		"account_id":         inv.AccountID,
 		"invocation_id":      inv.ID,
 		"app_id":             appID,
 		"source":             string(inv.Source),
@@ -3909,6 +3924,9 @@ func (h *httpGatewaySynth) invokeWithStatusUsing(ctx context.Context, client *ht
 		dispatch["deployment_id"] = wake.DeploymentID
 		dispatch["wake_id"] = wake.WakeID
 		dispatch["port"] = wake.Port
+	}
+	if snapshot := trafficrevocation.HandoffValue(ctx); snapshot != "" {
+		dispatch["security_snapshot"] = snapshot
 	}
 	body, err := json.Marshal(dispatch)
 	if err != nil {
@@ -3950,7 +3968,7 @@ func (h *httpGatewaySynth) invokeWithStatusUsing(ctx context.Context, client *ht
 		if res, lookupErr := h.appPublicAuthModeLookup(ctx, appID); lookupErr != nil || res.Mode == "internal_only" {
 			if h.mintInternalSvcToken == nil {
 				h.log.Warn("sched: invoke path: app in internal_only mode (or lookup failed) but no minter wired; gate will 403",
-					"app_id", appID, "lookup_err", lookupErrStr(lookupErr))
+					"app_id", logsanitize.Field(appID), "lookup_err", lookupErrStr(lookupErr))
 			} else {
 				tok, mErr := h.mintInternalSvcToken(appID)
 				if mErr != nil {
@@ -4264,16 +4282,30 @@ func (l *Loop) runWorkflowsDispatchTick(ctx context.Context) {
 			l.log.Warn("schedd: workflow schedule tick failed", "error_type", logsanitize.Field(fmt.Sprintf("%T", err)))
 		}
 	})
+	// The base slots are offered every tick. A further slot is offered only
+	// while every lower slot is still busy, so an idle scheduler polls as
+	// before and capacity grows by one slot a tick under load (ADR-20261025232118).
+	busy := 0
 	for slot := range api.WorkflowDispatchSlots {
-		l.submitWork(workWorkflowDispatch, fmt.Sprintf("%d", slot), func() {
+		if slot >= api.WorkflowDispatchBaseSlots && busy < slot {
+			break
+		}
+		outcome := l.workPool().submit(workWorkflowDispatch, fmt.Sprintf("%d", slot), func() {
 			orch := l.workflowOrch
 			if orch == nil {
 				orch = NewWorkflowOrchestrator(l.engine.Store(), nil, l.audit, nil, l.log)
+				orch.capabilityAllowed = l.workflowCapabilityAllowed
 			}
 			if err := orch.DispatchBatch(ctx); err != nil && l.log != nil {
 				l.log.Warn("schedd: workflow dispatch tick failed", "err", err)
 			}
 		})
+		if outcome == "coalesced" {
+			busy++
+		}
+	}
+	if l.workflowOrch != nil {
+		l.workflowOrch.metrics.SetDispatchSlots(busy, api.WorkflowDispatchSlots)
 	}
 }
 
@@ -4929,6 +4961,12 @@ func (l *Loop) dispatchCronLocked(ctx context.Context, c state.Cron, now time.Ti
 		// the "we didn't fire" semantic too).
 		return CronRun{}, false
 	}
+	// ADR-20261023115741: crons switched off for the account do not fire,
+	// the same no-fire, no-audit outcome as a suspended account.
+	if !l.engine.appCapabilityAllowed(ctx, app, "crons") {
+		l.log.Debug("cron: capability off; skipped", "cron_id", c.ID, "app_id", app.ID)
+		return CronRun{}, false
+	}
 	acct = acctRec
 	// Defer the cron.fired emit so ALL post-boundary failure modes
 	// (Wake error, Invoke error, SynthesizeRequest fallback error)
@@ -5034,7 +5072,7 @@ func (l *Loop) dispatchCronLocked(ctx context.Context, c state.Cron, now time.Ti
 	}
 	enq, err := l.engine.Store().EnqueueInvocation(ctx, inv)
 	if err != nil {
-		l.log.Warn("cron: enqueue invocation", "cron_id", c.ID, "err", err)
+		l.log.Warn("cron: enqueue invocation", "cron_id", logsanitize.Field(c.ID), "error_class", dispatchErrorClass(err))
 		return CronRun{}, true
 	}
 	// Enqueue mints the durable invocation ID. Dispatch that persisted row;
@@ -5295,6 +5333,26 @@ func (l *Loop) runCronNowWithRequestID(ctx context.Context, cronID, accountID, r
 	// stamped succeeded on the row — a customer-visible
 	// disagreement. Propagate the real result.
 	return run, nil
+}
+
+// reservationEvictions is RAM-pressure eviction under reservation admission
+// (spec §4.3): each node in the snapshot evicts above 80% of its own admission
+// ceiling. Under measured admission it returns nothing. Reservations there may
+// reach twice the ceiling by design (ADR-909), and evictForMeasuredMemory owns
+// pressure eviction from the node's measured memory.
+func reservationEvictions(ledger *NodeLedger, now time.Time, snapshot []InstanceInfo) []string {
+	if ledger.MeasuredAdmissionEnabled() {
+		return nil
+	}
+	reserved, ceiling := map[string]int{}, map[string]int{}
+	for _, in := range snapshot {
+		if _, seen := reserved[in.NodeID]; seen {
+			continue
+		}
+		reserved[in.NodeID] = ledger.ResidentRAMForNode(in.NodeID)
+		ceiling[in.NodeID] = ledger.CeilingForNode(in.NodeID)
+	}
+	return SelectNodeEvictions(now, snapshot, reserved, ceiling)
 }
 
 // evictForMeasuredMemory evicts on nodes whose measured memory exceeds their

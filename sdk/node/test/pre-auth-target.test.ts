@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { preAuthTargetDigest, PRE_AUTH_TARGET_HEADER } from '../src/index.js';
+import { preAuthTargetDigest, PRE_AUTH_TARGET_HEADER } from '../src/preview.js';
 
 test('produces the lowercase HMAC-SHA256 target expected by the gateway', () => {
   assert.equal(PRE_AUTH_TARGET_HEADER, 'X-Gregale-Abuse-Target');

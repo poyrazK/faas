@@ -428,7 +428,7 @@ The per-route rate-limiting primitive. A customer tightens the per-route rps/bur
 - **`AdmitInstance` RPC (issue #168):** `gatewayd-internal` can ask schedd to admit ONE additional instance for an app, bypassing the Phase-1 fast-path shortcut. The cap is enforced atomically by the same ledger as `Wake`; the response carries an `at_capacity` typed result so the gateway can distinguish "we refused because you're already at cap" (no FAILED row written) from a real failure (RAM headroom, chooser, store). The gRPC surface is additive — see ADR-018 update.
 - **Idle reaper:** every 10 s, park instances with `now − last_request_at > idle_timeout(plan)`. Defaults: Free 60 s, Hobby 60 s, Pro 300 s, Scale 600 s; functions 30 s on every plan (ADR-974). Configurable down to 10 s, not above plan default × 2.
 - **Aggressive reaper (ADR-038, issue #171):** every 10 s, *alongside* the idle reaper, a fast-cooldown path parks the surplus above `max(min_instances, desired + 1)` where `desired = ceil(windowed_rps / autoscale_target_rps)` from a per-app 5 × 1 s rolling RPS mirror (`pkg/sched/recentload/`). The `+1` is a hysteresis buffer so a brief RPS wobble doesn't wake-then-park. Scope: apps with `max_concurrency > 1` and `autoscale_target_rps > 0`; single-instance apps and apps without an autoscale target stay on the idle reaper only. Per-tick cap of 8 parks per app to prevent a single tick from blocking the reaper for `8 × ~150 ms ≈ 1.2 s` during a sudden scale-down storm. Default ON; `FAAS_REAPER_AGGRESSIVE=false` (schedd.toml `reaper_aggressive = false`) disables in-place — the mirror, metric, and audit row stay live so diagnosis continues. G7 (OpenConns > 0) and `MinInstanceAge` (30 s) protections still apply. Acceptance: 5-instance burst → 0 rps parks back to ≤ `min_instances + 1` within 30 s (three 10 s ticks). Audit row `events.kind='reaper_scale_down'` is emitted once per app per tick that parks ≥ 1 instance with `{app, desired, parked[], reason: "traffic_dropped", now}` in `data jsonb`.
-- **Eviction (RAM pressure > 80 % of the 85 % target):** park instances LRU by last request; never evict an instance younger than 30 s; Scale plan evicted last.
+- **Eviction (RAM pressure > 80 % of the 85 % target):** park instances LRU by last request; never evict an instance younger than 30 s; Scale plan evicted last. The threshold is per node: 80 % of that node's own admission ceiling (ADR-203), 38,080 MB on the reference box. Under measured admission (ADR-909) reservations do not trigger it; eviction follows the node's measured memory instead.
 - **Free-tier disk reaper:** free apps with zero requests for 14 days → snapshot + rootfs moved to object storage, state `EVICTED_COLD` (redeploy = one click, re-flatten from stored image). This is the founding doc's ceiling-protection policy (§9.7 there).
 - **Cron:** `crons` table; fire = synthetic `POST` through `gatewayd-internal` (so metering/limits apply identically). Per-app and per-account caps are enforced in `apid`'s `createCron` under an apps `FOR UPDATE` row lock (mirrors `CreateAppIfUnderQuota`); Free plan is gated to 402 `plan_crons_not_allowed` because the per-app cap is 0. See `pkg/api/limits.go::CronLimitPerApp` / `CronLimitPerAccount`.
 - Single process, single writer to `instances` per node — no distributed locking required. Multi-node today: each node has its own schedd writing the rows it owns; `apid` routes writes (interface kept narrow deliberately: `EnsureInstance`, `Park`, `Evict`).
@@ -1654,6 +1654,10 @@ Prometheus (node_exporter + per-daemon `/metrics`) → self-hosted Grafana OSS o
 | `<daemon>_loop_last_beat_age_seconds{loop}` gauge | ≪ loop budget | none (ADR-190 diagnostic; pairs with the stalled gauge) |
 | `<daemon>_grpc_client_calls_without_deadline_total{method}` rate | 0 | none — every labelled method is a call site still relying on `FAAS_GRPC_DEFAULT_DEADLINE` (ADR-190 §1); fix the site, not the alert |
 | `gateway_route_lookup_stale_served_total` rate | 0 | > 0 / 5 m warn (ADR-190 §3 — Postgres route lookups are erroring and the edge is coasting on last-known-good routes bounded by `FAAS_GATEWAY_ROUTE_STALE_TTL`) |
+| `gateway_route_metrics_rejected_total` rate | 0 | > 0 sustained 15 m warn via `GatewayRouteMetricsBudgetExhausted` (ADR-20261024154324 — the gateway holds `gateway_route_metrics_budget_routes` live (app, route) pairs and declines new per-route series; `gateway_route_metrics_routes` and `gateway_route_metrics_evictions_total` are the live count and idle-app evictions) |
+| `apid_route_insights_last_success_timestamp_seconds` gauge | within the 6 h interval | no successful run in 13 h, warn via `FaasRouteInsightsStalled`; `apid_route_insights_runs_total{outcome}` / `apid_route_insights_apps_total{outcome}` failures warn via `FaasRouteInsightsFailing` (ADR-20261024154324) |
+| `apid_route_monitor_lag_seconds` gauge | < 60 s | > 300 s for 10 m warn via `FaasRouteMonitorLagging` (ADR-20261024154324 — production route monitors are overdue, so budget incidents and opt-in rollbacks are late) |
+| `apid_route_monitor_evaluations_total{outcome}`, `apid_route_checks_total{outcome}`, `apid_route_worker_queue_unavailable_total{worker}` rate | failures ≈ 0 | queue unreadable, > 10 % failed monitor evaluations or > 50 % retried route checks for 15 m warn via `FaasRouteWorkersFailing` (ADR-20261024154324) |
 | `<daemon>_db_notify_hub_reconnects_total` rate | 0 | > 1 / 5 m warn (ADR-190 §4 — the daemon's single LISTEN connection is being dropped; check Postgres restarts and idle-connection reaping) |
 | `<daemon>_db_notify_hub_dropped_total{channel}` rate | 0 | > 0 sustained 15 m warn (ADR-190 §4 — a subscriber is not draining its fan-out buffer; the durable table + safety tick recover the work, but the consumer is falling behind) |
 | `vmmd_snapshot_materialize_seconds{artifact,source}` p95 | `source="materialized"` rare; local sources ≪ 10 ms | `histogram_quantile(0.95, sum by (le) (rate(vmmd_snapshot_materialize_seconds_bucket{artifact="mem",source="materialized"}[5m]))) > 0.2` for 15 m warn — wakes are fetching the memory blob across the network. At the 130 MB fleet snapshot target one fetch can exceed the whole §6.3 wake budget, so a sustained rate means placement is landing away from snapshot replicas (ADR-063). Compare against the local-source quantile to price locality |
@@ -1672,6 +1676,8 @@ Prometheus (node_exporter + per-daemon `/metrics`) → self-hosted Grafana OSS o
 | `schedd_instance_divergence_total{outcome}` rate | 0 | > 0 / 15 m warn (`FaasInstanceDivergence`, runbook `FaasInstanceDivergence.md`; ADR-191 §1 — live rows the owning vmmd is not reporting, after the node-reporting, grace and confirm-twice gates. `suppressed` is report-only mode counting what enforcement would repair; promote to page in the change that sets `FAAS_SCHEDD_RECONCILE_ENFORCE=1`) |
 | `schedd_loop_work_total{kind,outcome}` rate | n/a (per-kind) | `outcome="dropped"` sustained > 1 / min warn (ADR-191 §2 — a reconcile kind's slot budget is too small for the notification rate; the durable table plus its safety ticker still recover the work); any `outcome="panicked"`, shipped as warn (ADR-1235; a handler bug, not a capacity signal) |
 | `schedd_loop_work_duration_seconds{kind}` p95 | `kind="prime"` ≤ 110 s; every other kind ≤ 1 s | none (ADR-191 §2 diagnostic; the prime tail carries cold boot plus snapshot capture by design, so alert on `gateway_wake_latency_seconds` instead) |
+| `schedd_wake_failover_total{reason,outcome}` rate | 0 outside a node fault | none (ADR-20261022184531 diagnostic). Counts wakes a node refused before starting the VM and schedd re-placed: `outcome="succeeded"` is a wake another node served inside the same hold; `refused_again`, `no_alternate` and `out_of_time` are wakes that still failed. A sustained non-zero rate names a node that answers heartbeats but cannot serve (the ADR's step 3 adds a node breaker and the `FaasComputeNodeDegraded` alert) |
+| `schedd_compute_node_readiness{node,state}` gauge | `state="ready"` = 1 for every node | none yet (ADR-20261022184531 step 2; step 3 adds `FaasComputeNodeDegraded`). One-hot per node: `ready`, `degraded` (answers its heartbeat but its vmmd cannot adopt a configured base generation, so placement uses it only when no ready node fits), `unavailable` or `draining` (both mirror lifecycle). `compute_nodes.readiness_reason` says why a node is not ready |
 
 **Alert implementation (ADR-1235).** The rows above that promised an alert
 with no rule behind it now have one, in the `faas_spec12_operator_signals`
@@ -1741,10 +1747,22 @@ bounded per app to 50 distinct real routes + the reserved
 `__route_other__` overflow bucket (ADR-093 D2). The bounded
 admission set is the only thing standing between us and
 `O(paths)` Prometheus cardinality under wildcard path patterns.
+A route earns a label only once the app answers it with a status
+that shows the route exists, or when it is declared; scanner 404s
+and non-standard methods stay `__route_other__`
+(ADR-20261026143210).
 The in-memory reader is also exposed via the control listener at
 `GET /v1/internal/apps/{slug}/routes` (loopback-only, mTLS-free
 within the same box) and reverse-proxied by apid as
 `GET /v1/apps/{slug}/routes` for the dashboard panel.
+
+Every Hobby+ app is opted in by default, so each `gatewayd-internal` also
+bounds its own export (ADR-20261024154324): at most
+`RouteMetricsMaxRoutesPerGateway` (app, route) pairs carry live per-route
+series, and an app's series are deleted after `RouteMetricsSeriesIdleTTL`
+without a request on that gateway. apid lists an app's routes from
+`last_over_time` over `RouteMetricsObservedWindow`, so eviction does not hide
+them.
 
 ADR-042 §1 is **partially superseded** by ADR-093 — the route
 label is now opt-in for Hobby+ plans, not blanket-dropped. The
@@ -1839,9 +1857,9 @@ sum by (route) (rate(apid_request_total{account_id="<uuid>"}[5m]))
 
 The `account_id="__other__"` series is the bounded overflow bucket — drill-down on this means the customer is past the 10 000 admission cap, and the operator must check the daemon slog for the original id (issue #278).
 
-**SLOs (public, on the status page):** API availability 99.5 % monthly; wake p95 < 1 s; build success (non-`user_error`) 99 %. Error budgets, not promises — single-node deployments (until Gate A) are stated honestly on the status page.
+**SLOs (public, on the status page):** API availability 99.5 % monthly; wake p95 < 1 s; build success (non-`user_error`) 99 %. Error budgets, not promises — single-node deployments (until Gate A) are stated honestly on the status page. The `faas_slo_monthly` recording group computes each as a rolling 30 d ratio (`faas_slo_api_availability:ratio_30d`, `faas_slo_wakes_within_1s:ratio_30d`, `faas_slo_build_success:ratio_30d`, plus `faas_slo_platform_wakes_within_350ms:ratio_30d` for the 350 ms platform gate), shown on the fleet dashboard; Prometheus keeps 35 d so the window is whole (ADR-20261023124955).
 
-Logs: journald → Loki free tier; tenant app stdout/stderr ring-buffered per instance (10 MB), surfaced via `GET /v1/apps/{app}/logs` (tail + follow).
+Logs: journald → Promtail on every host → Loki on the control plane, chunks in object storage, 14 d, behind `faas_obs_logs_enabled` (ADR-20261023124955; `docs/ops/logs.md`); tenant app stdout/stderr ring-buffered per instance (10 MB), surfaced via `GET /v1/apps/{app}/logs` (tail + follow).
 
 ### 12.4 Per-tenant noisy-customer gauge (issue #300, ADR-041)
 
@@ -1983,6 +2001,14 @@ same values, so rules and panels aggregate with `max`. Alerts are `warn`
 |---|---|---|---|
 | `apid_idempotency_key_reused_total` | `route` | `pkg/apid/apidserver/idempotency_metrics.go` | Requests refused with `422 idempotency_key_reused` because their key was bound to a different request. `route` is the matched route pattern (`POST /v1/apps/{slug}/inbox`). A rising route names a client that reuses keys. |
 
+### 12.11 Public-edge traffic security enforcement (ADR-570, amendment of 2026-10-26)
+
+| Metric name | Labels | Producer | Semantics |
+|---|---|---|---|
+| `gatewayd_public_traffic_security_enforced` | — | `cmd/gatewayd-public/traffic_security_peers.go` | 1 while every compute gateway this edge may dial freshly reports traffic-security wiring and the edge requires the `X-Faas-Traffic-Security` snapshot. 0 while a gateway predates it (N-1), lacks the wiring, or its report is stale or retired, and answers pass unverified. Expect 0 during a rollout; a 0 that outlives one, with every node on the same release, means a gateway stopped reporting. |
+| `gatewayd_public_traffic_security_legacy_gateways` | — | same | How many gateways the edge may dial lack a fresh wiring report. |
+| `gatewayd_public_traffic_security_unverified_total` | — | same, through `pkg/gateway` `TrafficSecurityPeers.Unverified` | Answers forwarded without snapshot verification (a stamped value from such a fleet is dropped, never trusted). |
+
 ---
 
 ## 13. RAM budget ledger (enforced as systemd slices)
@@ -1991,6 +2017,7 @@ same values, so rules and panels aggregate with `max`. Alerts are `warn`
 |---|---|---|
 | `system.slice` | 2,048 MB | OS, sshd, journald, node_exporter, chrony |
 | `faas-cp.slice` | 6,144 MB | postgres 1,536 · gatewayd-public + gatewayd-internal 512 · apid 384 (two generations during a reload, ADR 20261018132058) · schedd 128 · vmmd 256 · builderd 128 · meterd 256 · imaged 512 (spikes during flatten) · loki/promtail agents 256 · slack 2,176 → **1 guaranteed builder VM (2,048 + 8) lives here** |
+| `faas-obs.slice` (control plane) | 3,584 MB, `CPUWeight=20`, `CPUQuota=100%`, `IOWeight=20` | prometheus (`MemoryHigh` 2,304) · alertmanager 128 · grafana 384 · loki and the control plane's promtail once logs are enabled; yields CPU and IO to PostgreSQL and the daemons. Sized for a split-box control plane with no tenant VMs; a single box that also runs tenants sizes `faas_obs_slice_memory_max` down, out of the headroom above the admission line (ADR-20261023124955) |
 | `faas-tenant.slice` | 57,344 MB (`memory.max`, hard fence) | tenant microVMs; **schedd admits measured memory only to 47,600 MB** (85 % of the model's 56 GB budget; reservations up to twice that, ADR-909) |
 | headroom (inside tenant slice, above admission line) | ≈ 8.4 GB | tenant spike absorption and restore safety margin; builder VMs do not borrow from this slice |
 

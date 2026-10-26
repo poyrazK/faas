@@ -3,13 +3,13 @@ from uuid import UUID
 
 import httpx
 
-from faas_sdk.api.managed_postgres import (
+from faas_sdk.preview.api.managed_postgres import (
     change_managed_postgres_compute_policy,
     get_managed_postgres_compute_policy_change,
 )
 from faas_sdk.client import AuthenticatedClient
-from faas_sdk.models.change_managed_postgres_compute_policy_request import ChangeManagedPostgresComputePolicyRequest
-from faas_sdk.models.managed_postgres_compute_policy_change import ManagedPostgresComputePolicyChange
+from faas_sdk.preview.models.change_managed_postgres_compute_policy_request import ChangeManagedPostgresComputePolicyRequest
+from faas_sdk.preview.models.managed_postgres_compute_policy_change import ManagedPostgresComputePolicyChange
 
 
 def test_compute_policy_uuid_replay_and_progress() -> None:

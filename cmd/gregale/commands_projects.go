@@ -35,8 +35,8 @@ func cmdProjects(args []string) int {
 	case "rm", "delete":
 		return cmdProjectsRemove(args[1:])
 	default:
-		PrintUsage(os.Stderr, fmt.Sprintf("unknown projects subcommand %q", args[0]), "projects")
-		return 1
+		printCommandValidation(os.Stderr, "unknown projects subcommand %q\n", args[0])
+		return unknownSubcommandChoices(os.Stderr, "projects", nestedCliCommand("projects"), args[0])
 	}
 }
 
@@ -93,8 +93,7 @@ func cmdProjectsEnvironments(args []string) int {
 	case "rollback":
 		return cmdProjectsEnvironmentPromotionRollback(args[1:])
 	default:
-		PrintUsage(os.Stderr, fmt.Sprintf("unknown project environments subcommand %q", args[0]), "projects environments")
-		return 1
+		return printUnknownSubcommand(os.Stderr, "projects environments", nestedCliCommand("projects", "environments"), args[0])
 	}
 }
 
@@ -1161,7 +1160,7 @@ func renderProject(project api.ProjectResponse) int {
 		return jsonOut(writeJSON(project))
 	}
 	_, _ = fmt.Fprintf(osStdout, "%s\n  repository: %s\n  production branch: %s\n  scan source: %s\n  workloads: %d\n  exclusions: %s\n  last deploy: %s\n  last build: %s\n",
-		project.Slug, project.RepoFullName, project.ProductionBranch, project.ScanSource,
-		len(project.Workloads), strings.Join(project.Exclusions, ", "), project.LastReconciliationStatus, project.LastBuildStatus)
+		project.Slug, orDash(project.RepoFullName), orDash(project.ProductionBranch), orDash(project.ScanSource),
+		len(project.Workloads), orDash(strings.Join(project.Exclusions, ", ")), orDash(project.LastReconciliationStatus), orDash(project.LastBuildStatus))
 	return 0
 }

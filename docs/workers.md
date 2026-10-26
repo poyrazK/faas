@@ -90,6 +90,15 @@ On the stop signal, stop leasing and finish or nack in-flight messages within
 `stop_grace_period_s`. The SDK consumers do this for you; an unacked lease is
 redelivered after its visibility timeout.
 
+## Inspect and operate
+
+```bash
+gregale workers                     # worker apps and their pools
+gregale workers status my-worker    # replicas, scaling metric, backlog, dead letters
+gregale workers logs my-worker --follow
+gregale workers scale my-worker --min 0 --max 3 --target 100
+```
+
 ## Limits
 
 | | Hobby | Pro | Scale |

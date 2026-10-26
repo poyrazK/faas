@@ -56,7 +56,11 @@ secrets derive a key from the source and flags, so repeating an identical deploy
 returns the deployment already in progress or live. Branches, tags, short SHAs,
 and secret bundles use a fresh key per invocation; transport retries reuse it.
 A local wait timeout or interruption preserves accepted deployment configuration;
-resume with `gregale deployment wait <deployment-id>`. Submission errors report
+resume with `gregale deployment wait <deployment-id>`. The server bounds every
+deployment on its own: a build still waiting in the builder queue after 6 hours
+fails with `deployment_queue_timeout`, and a deployment with no build running
+that makes no progress for 3 hours fails with `deployment_stalled` (a running
+build is bounded by the build timeout). Deploy again after either. Submission errors report
 accepted, rejected, or unknown acceptance. Accepted and unknown outcomes retain
 staged triggers, profiling, and tracing; only definite rejection restores prior
 settings. Inspect deployment history and reuse the printed retry key when
@@ -176,10 +180,86 @@ For a managed PostgreSQL database that the app's release commands can migrate
 (attached with `--access migration`), the refusal names the moment before the
 earliest crossed release. `gregale postgres restore` creates a new database
 from that point without touching the current one; attach it when you have
-checked it. The point must be inside the database's restore window.
+checked it. The point must be inside the database's restore window. To
+restore it and move the app to it as part of the rollback, see
+[Rollbacks that restore the database](#rollbacks-that-restore-the-database).
 `gregale deployment summary <id>` and `GET /v1/deployments/{id}` show a
 deployment's release run as `release`: its status, start and finish times,
 and the databases it can migrate.
+
+## Rollbacks that restore the database
+
+`--restore-databases` rolls back the code and the managed PostgreSQL database
+together ([ADR-20261023181931](adr/20261023181931-rollbacks-that-restore-the-database.md)):
+
+```sh
+gregale rollback my-api --to v41 --restore-databases
+```
+
+```text
+This rollback undoes release commands that ran after its target last served:
+  v42  succeeded  started 2026-10-23T12:03:10Z
+orders is restored to 2026-10-23T12:03:10Z as a new database; writes to orders after that moment stay only in orders.
+my-api stops serving while it switches (usually under a minute, then a cold start).
+Type my-api to continue: my-api
+restoring orders to 2026-10-23T12:03:10Z as orders-before-v42
+staging and verifying credentials for orders-before-v42
+fencing my-api; it stops serving until the switch ends
+draining my-api: 3 retired, 1 parked, 0 pending
+switching my-api to v41 and orders-before-v42
+resuming my-api on v41
+✓ Rolled back to v41 on orders-before-v42. orders keeps every write and is no longer bound to my-api; delete it when you no longer need it.
+```
+
+The switch runs in phases, and the app keeps serving its current release
+until the copy is ready and its credentials are verified:
+
+1. **Restore.** The database the release commands migrate is restored, as a
+   new database named `<name>-before-v<revision>`, to the start of the earliest
+   release the rollback undoes. A database already restored to that point
+   under that name is reused.
+2. **Stage and verify.** Gregale issues credentials on the copy for every
+   binding the app has in the scope, and checks them over SQL.
+3. **Fence and drain.** Nothing new starts for the app, in any scope. Running
+   instances are stopped and their exit confirmed on the host; parked ones
+   have no process and their snapshots are discarded.
+4. **Switch.** The rollback target becomes the live release, and in one
+   transaction the app's bindings move to the copy under the same variable
+   names.
+5. **Resume.** The fence lifts. The first request cold-boots the target with
+   the copy's credentials.
+
+Until the switch reaches step 4, any failure (or `gregale rollback switch
+my-api <id> --cancel`) unwinds it, and the app keeps serving its current
+release on the original database. The restored copy is kept either way;
+delete it with `gregale postgres delete` if you do not need it.
+
+What to expect:
+- **Writes after the restore point are not copied.** The original database
+  keeps them, unchanged, so you can compare or copy rows by hand.
+- **The app is unavailable** from the fence until the first request after the
+  switch is served, usually under a minute plus a cold start.
+- **One database per switch.** When the release commands can migrate more
+  than one managed database, restore them with `gregale postgres restore` and
+  roll back with `--acknowledge-releases`.
+- **The switch waits for the app to settle.** Frozen instances, starting
+  instances and running tasks must finish within two minutes of the fence,
+  and the drain must finish within ten; otherwise the switch fails and the app
+  resumes as it was.
+- **The restore point must be inside the database's restore window**,
+  otherwise the request is refused before anything changes.
+
+After a switch, rolling back to a release whose migration it undid is refused
+with `rollback_target_database_restored`, and automated rollbacks cannot go
+there either: deploy that code again so its release command runs. Later
+rollbacks no longer list the undone release commands as crossed.
+
+`gregale rollback switches my-api` lists an app's switches and `gregale
+rollback switch my-api <id> --wait` follows one. The API is
+`"restore_databases": true` on `POST /v1/apps/{slug}/rollback` (it needs
+`"acknowledge_releases": true` and the `postgres:manage` scope), then
+`GET /v1/apps/{slug}/database-switches/{id}` and
+`POST /v1/apps/{slug}/database-switches/{id}/cancel`.
 
 ## Release gates
 
@@ -584,6 +664,11 @@ Probes are always `GET`, and the twenty a minute are split across the paths.
 Pick cheap, read-only routes your app answers without a login; each path must
 be concrete, with no query, wildcard, or `{parameter}`. The setting is
 `release_probe_paths` in the app manifest and the API.
+
+Probes are ordinary requests to your app: they wake the new release and the
+one it replaces and keep both running while the rollout waits for evidence,
+and that running time is billed like any other request (about 0.09 GB-h for a
+quiet rollout of a 256 MB app). `release_policy: immediate` skips them.
 
 When probes cannot give an answer (for example, the probed path requires a login), a
 stage whose only problem is too few samples waits up to 5 more minutes after

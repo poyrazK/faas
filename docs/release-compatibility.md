@@ -46,9 +46,15 @@ runs `vmmd base-generation-check` and, when a release changes a generation,
 pre-stages it only behind the drain barrier and never re-activates a node
 whose cache has moved
 ([ADR 20261024085817](adr/20261024085817-rollout-base-generation-and-drain-completion.md)).
-An N-1 node still fetches a base it has not cached from the shared key, and
-a compute rollback across a generation change is not covered yet: both wait
-for generation-addressed base keys.
+That pre-stage publishes every base the release configures that the node
+could not adopt, whoever owns the apps on it, and the play keeps the node
+drained until `vmmd base-adoption-check` confirms that its installed vmmd
+can adopt every configured base
+([ADR 20261024191249](adr/20261024191249-rollout-publishes-release-bases-and-gates-activation.md)).
+So the first node to roll publishes each changed base: from then on an N-1
+node refuses a changed base it has not cached, until it rolls, and a compute
+rollback across a generation change is not covered yet. Both wait for
+generation-addressed base keys.
 
 ## No downtime, no exceptions
 
@@ -93,6 +99,33 @@ Roll a release out in this order, and roll back in the reverse order:
 
 A contract migration (a drop, or tightening a constraint) is the data step of
 a *later* release, after every unit that read the old shape has moved past it.
+
+The public edge's Caddy follows the same rule for a new upstream protocol.
+gatewayd-public accepts HTTP/2 cleartext (h2c) for gRPC on its loopback
+listener; Caddy only starts sending gRPC that way when the operator sets
+`faas_public_edge_grpc_h2c`, which is safe once every gatewayd-public in the
+fleet runs that release. Rolling back past it means turning the variable off
+first. Every other request stays on HTTP/1.1, so an older gatewayd-public
+behind an h2c-enabled Caddy fails gRPC only.
+
+**Headers and trailers between gateways are part of the N±1 contract.**
+gatewayd-public runs on the control-plane host and moves with the
+control-plane stage, so for a whole rollout it sits in front of N-1 compute
+gateways. Rolling it back puts it in front of N ones. A receiver accepts the
+absence of a header that an N-1 sender never writes, and a sender must not
+emit a header that an N-1 receiver would pass to clients. On 2026-10-26 an
+rc.295 gatewayd-public required ADR-570's `X-Faas-Traffic-Security` snapshot,
+which rc.294 compute gateways never stamp. Every successful application
+response became a 503 from 10:39 to 12:14 UTC. The public edge now
+requires the snapshot only once every compute gateway it may dial reports the
+wiring (ADR-570, amendment of 2026-10-26). A changed marker counts as well.
+rc.295 started recognising streams by a new session header, and without a
+fallback an SSE answer from an rc.294 node would have been cut at the request
+budget. `TestPublicTrafficSecurityFollowsItsPeers`,
+`TestPublicTrafficSecurityKeepsN1StreamsOpen` and
+`TestPublicProxyServesAPlainN1Answer` (`pkg/gateway`) hold the public hop to
+this. A new header requirement needs the same fleet gate or an opt-in
+negotiation, plus a case in those tests.
 
 ## Gate 1: version skew (CI, every pull request)
 
@@ -430,3 +463,6 @@ The unit lanes enforce the rules above in their workflows:
   Neither is built.
 - The full release pipeline still has to enforce that no unit lags more than
   one release. The unit lanes do enforce it.
+- Gate 1 checks protos and guest JSON only. HTTP headers and trailers
+  between gatewayd-public and gatewayd-internal have no CI skew check; the
+  tests named under Deploy order are the guard.

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"net/netip"
 	"strings"
 	"time"
 
@@ -110,6 +111,85 @@ func (m *MemStore) ReleaseDeletedPreviewSlug(_ context.Context, desired App) (bo
 	return false, nil
 }
 
+// PRPreviewReopenStore renews a GitHub PR preview's lease and reopens it
+// under the environment allowance: a closed preview holds none, so
+// reopening it takes one. ErrNotFound means the row is no longer a live PR
+// preview.
+type PRPreviewReopenStore interface {
+	ReopenPRPreview(ctx context.Context, appID string, expiresAt time.Time, limits api.Limits) (App, error)
+}
+
+var (
+	_ PRPreviewReopenStore = (*PgStore)(nil)
+	_ PRPreviewReopenStore = (*MemStore)(nil)
+)
+
+func reopenablePRPreview(app App) bool {
+	return app.PreviewOfSlug != "" && app.PreviewPrNumber > 0 && app.Status != AppDeleted &&
+		app.PreviewPrState != PreviewPrStateTearingDown && app.PreviewPrState != PreviewPrStateTornDown
+}
+
+func (s *PgStore) ReopenPRPreview(ctx context.Context, appID string, expiresAt time.Time, limits api.Limits) (App, error) {
+	current, err := s.AppByID(ctx, appID)
+	if err != nil {
+		return App{}, err
+	}
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return App{}, fmt.Errorf("state: begin preview reopen: %w", err)
+	}
+	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }() //nolint:errcheck // no-op after Commit
+	// Account, then app row, then the quota owner: the order preview set
+	// reservations take.
+	var locked int
+	if err := tx.QueryRow(ctx, `select 1 from accounts where id = $1 for update`, current.AccountID).Scan(&locked); err != nil {
+		return App{}, fmt.Errorf("state: lock preview account: %w", mapErr(err))
+	}
+	app, err := scanApp(tx.QueryRow(ctx, `select `+appsSelectColumns+` from apps where id = $1 for update`, appID))
+	if err != nil {
+		return App{}, err
+	}
+	if !reopenablePRPreview(app) {
+		return App{}, ErrNotFound
+	}
+	if app.PreviewPrState != PreviewPrStateOpen {
+		reopened := app
+		reopened.PreviewPrState = PreviewPrStateOpen
+		if err := checkAppQuotaDeltaTx(ctx, tx, reopened, limits, 1); err != nil {
+			return App{}, err
+		}
+	}
+	app, err = scanApp(tx.QueryRow(ctx, `update apps set preview_pr_state = $2, preview_expires_at = $3
+		where id = $1 returning `+appsSelectColumns, appID, PreviewPrStateOpen, expiresAt))
+	if err != nil {
+		return App{}, fmt.Errorf("state: reopen preview: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return App{}, fmt.Errorf("state: commit preview reopen: %w", err)
+	}
+	return app, nil
+}
+
+func (m *MemStore) ReopenPRPreview(_ context.Context, appID string, expiresAt time.Time, limits api.Limits) (App, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	app, ok := m.apps[appID]
+	if !ok || !reopenablePRPreview(app) {
+		return App{}, ErrNotFound
+	}
+	if app.PreviewPrState != PreviewPrStateOpen {
+		reopened := app
+		reopened.PreviewPrState = PreviewPrStateOpen
+		if err := m.checkAppQuotaDeltaInLocked(reopened, limits, 1, m.apps); err != nil {
+			return App{}, err
+		}
+	}
+	app.PreviewPrState = PreviewPrStateOpen
+	app.PreviewExpiresAt = &expiresAt
+	m.apps[appID] = app
+	return app, nil
+}
+
 func validatePRPreviewHead(head PRPreviewHead, apps []App) error {
 	if err := validatePRPreviewBatch(apps); err != nil {
 		return err
@@ -149,11 +229,11 @@ func (s *PgStore) ReservePRPreviewSet(ctx context.Context, head PRPreviewHead, a
 			}
 		}
 	}
-	tx, err := s.pool.Begin(ctx)
+	tx, err := s.beginAccountAppTrafficMutation(ctx, apps[0].AccountID, "")
 	if err != nil {
 		return nil, fmt.Errorf("state: begin PR preview replacement: %w", err)
 	}
-	defer func() { _ = tx.Rollback(ctx) }() //nolint:errcheck // no-op after Commit
+	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }() //nolint:errcheck // no-op after Commit
 	var locked int
 	if err := tx.QueryRow(ctx, `select 1 from accounts where id = $1 for update`, apps[0].AccountID).Scan(&locked); err != nil {
 		return nil, fmt.Errorf("state: lock PR preview account: %w", mapErr(err))
@@ -192,6 +272,17 @@ func (s *PgStore) ReservePRPreviewSet(ctx context.Context, head PRPreviewHead, a
 				app.PreviewPrState == PreviewPrStateTearingDown || app.PreviewPrState == PreviewPrStateTornDown {
 				return nil, ErrConflict
 			}
+			// A closed preview holds no allowance; reopening it takes one.
+			if app.PreviewPrState != PreviewPrStateOpen {
+				reopened := app
+				reopened.PreviewPrState = PreviewPrStateOpen
+				if err := checkAppQuotaDeltaTx(ctx, tx, reopened, limits, 1); err != nil {
+					return nil, err
+				}
+			}
+			if err := refreshPreviewGatesTx(ctx, tx, app.ID, desired); err != nil {
+				return nil, err
+			}
 		case errors.Is(lookupErr, ErrNotFound):
 			app, err = createAppIfUnderQuotaTx(ctx, tx, desired, limits)
 			if err != nil {
@@ -221,7 +312,7 @@ func (s *PgStore) ReservePRPreviewSet(ctx context.Context, head PRPreviewHead, a
 		values ($1, $2, $3, $4, $5, $6)
 		on conflict (installation_id, repo_full_name, pr_number)
 		do update set commit_sha = excluded.commit_sha, root_app_id = excluded.root_app_id,
-		member_app_ids = excluded.member_app_ids, closed_at = null, updated_at = now()`,
+		member_app_ids = excluded.member_app_ids, closed_at = null, setup_error = null, updated_at = now()`,
 		set.InstallationID, set.RepoFullName, set.PRNumber, set.CommitSHA, set.RootAppID, set.MemberAppIDs); err != nil {
 		return nil, fmt.Errorf("state: replace PR preview set: %w", err)
 	}
@@ -229,6 +320,113 @@ func (s *PgStore) ReservePRPreviewSet(ctx context.Context, head PRPreviewHead, a
 		return nil, fmt.Errorf("state: commit PR preview replacement: %w", err)
 	}
 	return reserved, nil
+}
+
+// refreshPreviewGatesTx copies the desired access and egress gates onto a
+// reused preview row. githubd derives them from the production app on every
+// PR head, so a gate the production app gained since the preview was created
+// (or a preview created before gates were copied) applies on the next push.
+// A changed row is announced so gateways drop their cached copy.
+func refreshPreviewGatesTx(ctx context.Context, tx pgx.Tx, id string, desired App) error {
+	publicAuthMode := desired.PublicAuthMode
+	if publicAuthMode == "" {
+		publicAuthMode = AppPublicAuthModeOpen
+	}
+	consumerAuth := desired.ConsumerAuthMode
+	if consumerAuth == "" {
+		consumerAuth = ConsumerAuthModeOptional
+	}
+	visibility := string(api.NormalizeAppVisibility(desired.Visibility))
+	_, err := tx.Exec(ctx, `with changed as (
+			update apps set require_authn = $2, public_auth_mode = $3, public_auth_basic = $4,
+			       public_auth_ip_allowlist = $5, consumer_auth_mode = $6, require_signed = $7,
+			       egress_allowlist = $8, visibility = $9
+			where id = $1
+			  and (require_authn, public_auth_mode, public_auth_basic, public_auth_ip_allowlist,
+			       consumer_auth_mode, require_signed, egress_allowlist, visibility)
+			      is distinct from ($2, $3, $4::bytea, $5::cidr[], $6, $7, $8::cidr[], $9)
+			returning id)
+		select pg_notify('app_changed', id::text) from changed`,
+		id, desired.RequireAuthn, publicAuthMode, desired.PublicAuthBasicSealed,
+		cidrPrefixesToArray(desired.PublicAuthIPAllowlist), string(consumerAuth), desired.RequireSigned,
+		cidrPrefixesToArray(desired.EgressAllowlist), visibility)
+	if err != nil {
+		return fmt.Errorf("state: refresh PR preview gates: %w", err)
+	}
+	return nil
+}
+
+// copyPreviewGates is refreshPreviewGatesTx for MemStore.
+func copyPreviewGates(row, desired App) App {
+	row.RequireAuthn = desired.RequireAuthn
+	row.PublicAuthMode = desired.PublicAuthMode
+	row.PublicAuthBasicSealed = append([]byte(nil), desired.PublicAuthBasicSealed...)
+	row.PublicAuthIPAllowlist = append([]netip.Prefix(nil), desired.PublicAuthIPAllowlist...)
+	row.ConsumerAuthMode = desired.ConsumerAuthMode
+	row.RequireSigned = desired.RequireSigned
+	row.EgressAllowlist = append([]netip.Prefix(nil), desired.EgressAllowlist...)
+	row.Visibility = desired.Visibility
+	return row
+}
+
+// PRPreviewSetupFailureStore records why githubd could not reserve or start
+// a PR head. Recording moves the set to that head, so deployments of the
+// previous head can no longer report for the PR, and the set reads as failed
+// until a later head is reserved. A PR without a recorded set has nothing to
+// record against; ErrNotFound reports it.
+type PRPreviewSetupFailureStore interface {
+	FailPRPreviewSetup(ctx context.Context, head PRPreviewHead, reason string) error
+}
+
+var (
+	_ PRPreviewSetupFailureStore = (*PgStore)(nil)
+	_ PRPreviewSetupFailureStore = (*MemStore)(nil)
+)
+
+// PRPreviewSetupErrorMaxLen bounds the recorded reason (pr_preview_sets_setup_error_chk).
+const PRPreviewSetupErrorMaxLen = 1000
+
+func boundedSetupError(reason string) string {
+	reason = strings.Join(strings.Fields(reason), " ")
+	if reason == "" {
+		reason = "preview setup failed"
+	}
+	if runes := []rune(reason); len(runes) > PRPreviewSetupErrorMaxLen {
+		reason = string(runes[:PRPreviewSetupErrorMaxLen-1]) + "…"
+	}
+	return reason
+}
+
+func (s *PgStore) FailPRPreviewSetup(ctx context.Context, head PRPreviewHead, reason string) error {
+	if head.InstallationID <= 0 || head.RepoFullName == "" || head.PRNumber <= 0 || !previewSetSHA.MatchString(head.CommitSHA) {
+		return fmt.Errorf("state: invalid PR preview head: %w", ErrConflict)
+	}
+	tag, err := s.pool.Exec(ctx, `update pr_preview_sets set commit_sha = $4, setup_error = $5, updated_at = now()
+		where installation_id = $1 and repo_full_name = $2 and pr_number = $3 and closed_at is null`,
+		head.InstallationID, head.RepoFullName, head.PRNumber, head.CommitSHA, boundedSetupError(reason))
+	if err != nil {
+		return fmt.Errorf("state: record PR preview setup failure: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+func (m *MemStore) FailPRPreviewSetup(_ context.Context, head PRPreviewHead, reason string) error {
+	if head.InstallationID <= 0 || head.RepoFullName == "" || head.PRNumber <= 0 || !previewSetSHA.MatchString(head.CommitSHA) {
+		return fmt.Errorf("state: invalid PR preview head: %w", ErrConflict)
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	key := previewSetKey(head.InstallationID, head.RepoFullName, head.PRNumber)
+	set, ok := m.previewSets[key]
+	if !ok || set.Closed {
+		return ErrNotFound
+	}
+	set.CommitSHA, set.SetupError = head.CommitSHA, boundedSetupError(reason)
+	m.previewSets[key] = set
+	return nil
 }
 
 func retireReplacedPreviewMembersTx(ctx context.Context, tx pgx.Tx, head PRPreviewHead, desired []App, previous []string) error {
@@ -320,7 +518,7 @@ func retireReplacedPreviewMembersTx(ctx context.Context, tx pgx.Tx, head PRPrevi
 	return nil
 }
 
-func (m *MemStore) ReservePRPreviewSet(_ context.Context, head PRPreviewHead, apps []App, limits api.Limits) ([]App, error) {
+func (m *MemStore) ReservePRPreviewSet(ctx context.Context, head PRPreviewHead, apps []App, limits api.Limits) ([]App, error) {
 	if err := validatePRPreviewHead(head, apps); err != nil {
 		return nil, err
 	}
@@ -341,29 +539,13 @@ func (m *MemStore) ReservePRPreviewSet(_ context.Context, head PRPreviewHead, ap
 			return nil, ErrConflict
 		}
 	}
-	original := make(map[string]App)
-	addressIndexBefore := maps.Clone(m.serviceAddressIndex)
-	addressCursorsBefore := maps.Clone(m.serviceAddressCursors)
-	var inserted []string
-	rollback := func(err error) ([]App, error) {
-		for _, id := range inserted {
-			delete(m.apps, id)
-			delete(m.applicationStandardEnrollments, id)
-			m.eraseStandardAppExceptionsLocked(id)
-			m.deleteStandardMaterializationControlsLocked(id)
-		}
-		m.serviceAddressIndex, m.serviceAddressCursors = addressIndexBefore, addressCursorsBefore
-		for id, app := range original {
-			m.apps[id] = app
-		}
-		return nil, err
-	}
+	stagedApps := maps.Clone(m.apps)
 	desiredSlugs := make(map[string]bool, len(apps))
 	for _, app := range apps {
 		desiredSlugs[app.Slug] = true
 	}
 	for _, id := range previous.MemberAppIDs {
-		old, ok := m.apps[id]
+		old, ok := stagedApps[id]
 		if !ok || old.AccountID != apps[0].AccountID || old.ProjectID != apps[0].ProjectID ||
 			old.PreviewPrNumber != head.PRNumber || old.PreviewOfSlug == "" || old.Status == AppDeleted || desiredSlugs[old.Slug] ||
 			old.PreviewPrState == PreviewPrStateTearingDown || old.PreviewPrState == PreviewPrStateTornDown {
@@ -383,10 +565,9 @@ func (m *MemStore) ReservePRPreviewSet(_ context.Context, head PRPreviewHead, ap
 		}
 		for _, bucket := range m.objectBuckets {
 			if bucket.AppID == id && bucket.State != "deleted" {
-				return rollback(ErrConflict)
+				return nil, ErrConflict
 			}
 		}
-		original[id] = old
 		now := time.Now().UTC()
 		deadline := now.Add(AppDeleteGraceDuration())
 		old.Slug = "retired-pr-" + strings.ReplaceAll(old.ID, "-", "")
@@ -397,42 +578,47 @@ func (m *MemStore) ReservePRPreviewSet(_ context.Context, head PRPreviewHead, ap
 		if old.DeleteGraceUntil == nil {
 			old.DeleteGraceUntil = &deadline
 		}
-		m.apps[id] = old
+		stagedApps[id] = old
 	}
 	reserved := make([]App, 0, len(apps))
+	var inserted []App
 	for _, desired := range apps {
 		var row App
 		found := false
-		for id, existing := range m.apps {
+		for id, existing := range stagedApps {
 			if existing.Slug != desired.Slug {
 				continue
 			}
 			if releasesPreviewTombstone(existing, desired) {
-				original[id] = existing
 				existing.Slug = previewTombstoneSlug(id)
-				m.apps[id] = existing
+				stagedApps[id] = existing
 				continue
 			}
 			if existing.Status == AppDeleted || !samePRPreview(existing, desired) ||
 				existing.PreviewPrState == PreviewPrStateTearingDown || existing.PreviewPrState == PreviewPrStateTornDown {
-				return rollback(ErrConflict)
+				return nil, ErrConflict
 			}
-			row, found = existing, true
+			if existing.PreviewPrState != PreviewPrStateOpen {
+				reopened := existing
+				reopened.PreviewPrState = PreviewPrStateOpen
+				if err := m.checkAppQuotaDeltaInLocked(reopened, limits, 1, stagedApps); err != nil {
+					return nil, err
+				}
+			}
+			row, found = copyPreviewGates(existing, desired), true
 			break
 		}
 		if !found {
 			var err error
-			row, err = m.createAppIfUnderQuotaLocked(desired, limits)
+			row, err = m.prepareAppIfUnderQuotaLocked(desired, limits, stagedApps)
 			if err != nil {
-				return rollback(err)
+				return nil, err
 			}
-			inserted = append(inserted, row.ID)
-		} else {
-			original[row.ID] = row
+			inserted = append(inserted, row)
 		}
 		row.PreviewPrState = PreviewPrStateOpen
 		row.PreviewExpiresAt = desired.PreviewExpiresAt
-		m.apps[row.ID] = row
+		stagedApps[row.ID] = row
 		reserved = append(reserved, row)
 	}
 	set := PRPreviewSet{InstallationID: head.InstallationID, RepoFullName: head.RepoFullName,
@@ -441,7 +627,17 @@ func (m *MemStore) ReservePRPreviewSet(_ context.Context, head PRPreviewHead, ap
 		set.MemberAppIDs = append(set.MemberAppIDs, app.ID)
 	}
 	if err := validatePRPreviewSet(set); err != nil {
-		return rollback(err)
+		return nil, err
+	}
+	if err := appTrafficBindingError(m.checkMemTrafficBindingLocked(ctx, apps[0].AccountID, nil, "", memTrafficPolicyChange{Apps: stagedApps})); err != nil {
+		return nil, err
+	}
+	if err := m.enrollNewAppsLocked(inserted); err != nil {
+		return nil, err
+	}
+	m.apps = stagedApps
+	for _, app := range inserted {
+		m.ensureServiceAddressIndexLocked(&app)
 	}
 	if m.previewSets == nil {
 		m.previewSets = make(map[string]PRPreviewSet)

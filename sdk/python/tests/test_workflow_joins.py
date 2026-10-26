@@ -1,6 +1,6 @@
-from faas_sdk.models.workflow_join_spec import WorkflowJoinSpec
-from faas_sdk.models.workflow_spec import WorkflowSpec
-from faas_sdk.models.workflow_step_response import WorkflowStepResponse
+from faas_sdk.preview.models.workflow_join_spec import WorkflowJoinSpec
+from faas_sdk.preview.models.workflow_spec import WorkflowSpec
+from faas_sdk.preview.models.workflow_step_response import WorkflowStepResponse
 
 
 def test_join_definition_preserves_explicit_selection_order():

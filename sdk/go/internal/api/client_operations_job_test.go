@@ -29,11 +29,11 @@ func TestJobOperationClientRejectsCredentialsAndRedirects(t *testing.T) {
 	proof := OperationJobRuntimeProof{RunID: "run", InstanceID: "instance", Generation: 1, Attempt: 1, Capability: strings.Repeat("a", 64)}
 	for _, capability := range []string{strings.Repeat("a", 64), ""} {
 		proof.Capability = capability
-		if _, err := NewClient(server.URL, "").GetJobOperationExecutionControl(context.Background(), "operation", proof); err == nil || redirects != 0 {
+		if _, err := NewPreviewClient(NewClient(server.URL, "")).GetJobOperationExecutionControl(context.Background(), "operation", proof); err == nil || redirects != 0 {
 			t.Fatal("runtime proof followed redirect", err)
 		}
 	}
-	if _, err := NewClient(server.URL, "account-token").GetJobOperationExecutionControl(context.Background(), "operation", proof); err == nil || calls != 2 {
+	if _, err := NewPreviewClient(NewClient(server.URL, "account-token")).GetJobOperationExecutionControl(context.Background(), "operation", proof); err == nil || calls != 2 {
 		t.Fatal("account credentials reached runtime endpoint", err)
 	}
 }
@@ -66,14 +66,14 @@ func TestJobOperationDirectUploadClient(t *testing.T) {
 	if _, err := cli.UploadJobOperationArtifact(context.Background(), "operation", proof, declaration, strings.NewReader("csv")); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := cli.ReuseJobOperationUpload(context.Background(), "operation", proof, declaration); err != nil {
+	if _, err := NewPreviewClient(cli).ReuseJobOperationUpload(context.Background(), "operation", proof, declaration); err != nil {
 		t.Fatal(err)
 	}
 	cli = NewClient(host.URL, "account-key")
 	if _, err := cli.UploadJobOperationArtifact(context.Background(), "operation", proof, declaration, strings.NewReader("csv")); err == nil {
 		t.Fatal("bearer accepted")
 	}
-	if _, err := cli.ReuseJobOperationUpload(context.Background(), "operation", proof, declaration); err == nil {
+	if _, err := NewPreviewClient(cli).ReuseJobOperationUpload(context.Background(), "operation", proof, declaration); err == nil {
 		t.Fatal("bearer accepted")
 	}
 	if calls != 2 {
@@ -90,7 +90,7 @@ func TestJobOperationDirectUploadClient(t *testing.T) {
 	if _, err := cli.UploadJobOperationArtifact(context.Background(), "operation", proof, declaration, strings.NewReader("csv")); err == nil || redirects != 0 {
 		t.Fatal("upload proof followed redirect", err)
 	}
-	if _, err := cli.ReuseJobOperationUpload(context.Background(), "operation", proof, declaration); err == nil || redirects != 0 {
+	if _, err := NewPreviewClient(cli).ReuseJobOperationUpload(context.Background(), "operation", proof, declaration); err == nil || redirects != 0 {
 		t.Fatal("lookup proof followed redirect", err)
 	}
 }
@@ -113,11 +113,11 @@ func TestJobOperationFileClientsUseTokenlessNativeProof(t *testing.T) {
 	defer server.Close()
 	client := NewClient(server.URL, "")
 	proof := OperationJobRuntimeProof{RunID: "run", InstanceID: "instance", Generation: 1, Attempt: 1, Capability: strings.Repeat("b", 64)}
-	prepared, err := client.PrepareJobOperationArtifact(context.Background(), "operation", proof, declaration)
+	prepared, err := NewPreviewClient(client).PrepareJobOperationArtifact(context.Background(), "operation", proof, declaration)
 	if err != nil || !prepared.Available || prepared.Artifact.ID != "file" {
 		t.Fatal("prepare", err)
 	}
-	reused, err := client.ReuseJobOperationArtifact(context.Background(), "operation", proof, declaration)
+	reused, err := NewPreviewClient(client).ReuseJobOperationArtifact(context.Background(), "operation", proof, declaration)
 	if err != nil || !reused.Available || reused.Artifact.ID != prepared.Artifact.ID {
 		t.Fatal("replay", err)
 	}
@@ -125,10 +125,10 @@ func TestJobOperationFileClientsUseTokenlessNativeProof(t *testing.T) {
 		t.Fatal("wrong endpoints", paths)
 	}
 	client = NewClient(server.URL, "account-token")
-	if _, err := client.PrepareJobOperationArtifact(context.Background(), "operation", proof, declaration); err == nil {
+	if _, err := NewPreviewClient(client).PrepareJobOperationArtifact(context.Background(), "operation", proof, declaration); err == nil {
 		t.Fatal("account credential accepted")
 	}
-	if _, err := client.ReuseJobOperationArtifact(context.Background(), "operation", proof, declaration); err == nil {
+	if _, err := NewPreviewClient(client).ReuseJobOperationArtifact(context.Background(), "operation", proof, declaration); err == nil {
 		t.Fatal("account credential accepted")
 	}
 	if len(paths) != 2 {

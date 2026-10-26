@@ -2,6 +2,7 @@ package apidserver
 
 import (
 	"context"
+	"errors"
 	"net/http"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -28,7 +29,15 @@ func newHoneytokenMetrics(reg prometheus.Registerer) *honeytokenMetrics {
 			Help: "Honeytokens presented as credentials (ADR 20261024014500). Any increase means the place a decoy was planted has been read.",
 		}, []string{"kind"}),
 	}
-	reg.MustRegister(m.presented)
+	// A second server on the same registry (tests, a reload) reuses the
+	// counter instead of panicking, as the other apid metrics do.
+	if err := reg.Register(m.presented); err != nil {
+		var already prometheus.AlreadyRegisteredError
+		if !errors.As(err, &already) {
+			panic(err)
+		}
+		m.presented = already.ExistingCollector.(*prometheus.CounterVec)
+	}
 	m.presented.WithLabelValues(state.HoneytokenKindAPIKey)
 	return m
 }

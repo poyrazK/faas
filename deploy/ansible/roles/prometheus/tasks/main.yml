@@ -39,6 +39,24 @@
       prom_exemplar_max_size must be a positive integer so the bounded
       exemplar buffer cannot be accidentally disabled or rendered invalid.
 
+# ADR-20261023124955 §3: the faas_slo_monthly ratios read 30 d windows, so a
+# shorter time retention silently turns them into partial months. The size
+# cap uses Prometheus's own unit syntax; the memory bounds use systemd's and
+# Go's.
+- name: prometheus — assert retention and memory bounds
+  ansible.builtin.assert:
+    that:
+      - prom_retention_days | int >= 31
+      - prom_retention_size | string is match('^[0-9]+(B|KB|MB|GB|TB|PB)$')
+      - prom_memory_high | string is match('^[0-9]+[KMG]$')
+      - prom_gomemlimit | string is match('^[0-9]+(KiB|MiB|GiB)$')
+    fail_msg: >-
+      prom_retention_days must be at least 31 (got {{ prom_retention_days }}) so
+      the monthly SLO window fits; prom_retention_size must look like 40GB (got
+      {{ prom_retention_size }}); prom_memory_high a systemd size such as 2304M
+      (got {{ prom_memory_high }}); prom_gomemlimit a Go size such as 2048MiB
+      (got {{ prom_gomemlimit }}).
+
 # Loopback bind discipline (CLAUDE.md §Component ownership). The
 # alertmanager target must not be reachable off-box: alert payloads
 # contain operational labels (component, family, severity) that the
@@ -99,8 +117,9 @@
       - prom_loki_metrics_port | int < 65536
       - prom_loki_metrics_server_name | length > 0
     fail_msg: >-
-      prom_loki_metrics_target must be the dedicated observability host (not
-      loopback), and prom_loki_metrics_server_name must match its certificate.
+      prom_loki_metrics_target must be Loki's private address
+      (faas_obs_loki_address, not loopback), and prom_loki_metrics_server_name
+      must match its certificate (faas_obs_loki_server_name).
   when: prom_loki_metrics_target | length > 0
 
 - name: prometheus — stat Loki meta-monitoring mTLS material
@@ -122,7 +141,9 @@
       - (item.stat.mode | default('0000')) in ['0400', '0440', '0444', '0640', '0644']
     fail_msg: >-
       Loki meta-monitoring TLS {{ item.item.name }} is missing or has an
-      unsupported mode; provision the provider-owned bundle for Prometheus.
+      unsupported mode. The platform_logs_pki role issues Prometheus's Loki
+      client leaf from the fleet CA (ADR-20261023124955 §2); converge it
+      before this role.
   loop: "{{ prom_loki_tls_stats.results | default([]) }}"
   loop_control:
     label: "{{ item.item.name }}"
@@ -137,6 +158,17 @@
     home: "{{ prom_data_dir }}"
     createhome: false
   register: prom_user
+
+# pkg/pki writes keys root:root 0400; platform_logs_pki repeats this on
+# renewal (ADR-20261023124955 §2).
+- name: prometheus — let prometheus read its Loki client key
+  ansible.builtin.file:
+    path: "{{ prom_loki_metrics_client_key_file }}"
+    state: file
+    owner: root
+    group: prometheus
+    mode: "0440"
+  when: prom_loki_metrics_target | length > 0
 
 - name: prometheus — mkdir /etc/prometheus and data dir
   ansible.builtin.file:

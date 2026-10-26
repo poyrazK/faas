@@ -29,6 +29,9 @@ func (s *Service) GetRequestContent(w http.ResponseWriter, r *http.Request, acct
 		problem(w, http.StatusServiceUnavailable, "outbound_ai_unavailable", "Outbound AI content capture is unavailable")
 		return
 	}
+	if !s.requestVisible(w, r, acct, integrationID, requestID, "captured AI request content not found") {
+		return
+	}
 	content, err := store.GetOutboundAIRequestContent(r.Context(), acct.ID, integrationID, requestID)
 	switch {
 	case errors.Is(err, state.ErrNotFound):

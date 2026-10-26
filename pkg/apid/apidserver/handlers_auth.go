@@ -144,7 +144,7 @@ func magicLinkHash(token string) ([]byte, bool) {
 }
 
 func (a *authHandlers) finishMagicLink(w http.ResponseWriter, r *http.Request, acct state.Account) {
-	mfaPending := mfaSessionPending(acct)
+	mfaPending := a.srv.sessionMFAPending(acct)
 	// IAM-3 (ADR-039): the magic-link verify path now mints a sid
 	// + creates the sessions row + emits auth.session.created
 	// through the unified helper. The route never reaches the
@@ -306,6 +306,10 @@ func (s *server) sessionAuth(next http.Handler) http.Handler {
 		//
 		//nolint:contextcheck // pointer-mutation contract (same as withSession/withPrincipal/withMFAPending at middleware.go:530-554): r.Context() must be the inherited ctx; capturing into a local would break observeWrap.
 		r = r.WithContext(authmw.WithStepUp(r.Context(), env.StepUpAt))
+		if !s.capabilityAllowedFor(r, acct) {
+			http.NotFound(w, r)
+			return
+		}
 		s.authorizeDashboardProject(next, w, r, acct)
 	})
 }

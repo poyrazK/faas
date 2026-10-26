@@ -132,3 +132,31 @@ generated host vars. A `workload_identity.source_dir` manifest field (an
 absolute controller path) now renders that variable for every control-plane
 and compute host; empty keeps issuance off. The production template carries
 it commented out until an operator generates the keys.
+## Amendment 2026-10-25 — tokens name their environment
+
+A security review found that every instance of an app received the subject
+`app:<app_id>`, whatever deployment scope (environment) it ran. Scopes are the
+`--env` of a deploy: a staging deployment of an app received exactly the
+token a production deployment did, so a cloud role whose trust policy names
+`app:<app_id>` accepted code that was only ever reviewed for staging. AWS IAM
+can condition a generic OIDC provider's trust on `sub` and `aud` alone, so a
+separate claim would not let customers tell the two apart there.
+
+- Guest tokens carry an `environment` claim: the scope of the deployment the
+  instance runs.
+- The subject stays `app:<app_id>` in the `default` scope and becomes
+  `app:<app_id>:env:<scope>` in any other. A trust policy written for the
+  default scope keeps working; one for a named scope names it.
+- vmmd reads the scope from the instance's deployment. When it cannot (no
+  deployment recorded, or the read fails), it refuses the request with
+  `environment_unavailable` rather than mint the default subject. A node with
+  no database keeps minting without the claim.
+- apid's verifier and outboundd accept either form when it agrees with the
+  token's `environment` claim. They ship with the control plane, before
+  vmmd mints the new form (docs/release-compatibility.md order).
+- vmmd's host-internal relay tokens (ADR-989) keep the plain subject.
+
+**Customer impact:** an app whose production runs in a named scope, rather
+than `default`, must update its trust policies to
+`app:<app_id>:env:<scope>`. Gregale is pre-GA, and the docs only ever showed
+the default scope.

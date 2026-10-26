@@ -215,6 +215,8 @@ type PreviewListItem struct {
 	CreatedAt     time.Time
 	Hostname      string
 	DestroyAction string
+	// DestroyCSRF is the token the Tear down form posts with DestroyAction.
+	DestroyCSRF string
 }
 
 // PRPreviewEnvironmentView is the current-head, whole-PR status shown on the
@@ -988,6 +990,8 @@ type AppEdgeRulesData struct {
 	AttackModeAvailable bool
 	// Events is the ADR-964 security-events section.
 	Events EdgeRuleEventsPageData
+	// WAFReview is the WAF false-positive review (ADR-831 amendment 13).
+	WAFReview EdgeWAFReviewPageData
 	// Recipes is the protection-recipes section (ADR-986).
 	Recipes []EdgeRuleRecipeView
 	// RecipeAlerts is set when the plan includes alert rules, so recipe
@@ -1051,6 +1055,34 @@ type EdgeRuleRecipeParamView struct {
 	Default     string
 	Placeholder string
 	Required    bool
+}
+
+// EdgeWAFReviewPageData is the WAF false-positive review (ADR-831
+// amendment 13). Show is set when the app has a kind=waf rule.
+type EdgeWAFReviewPageData struct {
+	Show         bool
+	SinceLabel   string
+	Scanned      int
+	Truncated    bool
+	Groups       []EdgeWAFReviewView
+	ErrorMessage string
+}
+
+// EdgeWAFReviewView is one rule's detections by one CRS rule on one path.
+type EdgeWAFReviewView struct {
+	RuleID           string
+	RuleLabel        string
+	RuleMode         string
+	CRSRuleID        int
+	Category         string
+	Path             string
+	Events           int
+	Clients          int
+	Assessment       string
+	AssessmentLabel  string
+	Reason           string
+	ExampleRequestID string
+	Excluded         bool
 }
 
 // EdgeRuleEventsPageData is the filterable security-events table (ADR-964).
@@ -3404,6 +3436,12 @@ type AccountData struct {
 	ShowRestore         bool
 	RestoreUntil        string
 	RestoreConfirmToken string
+
+	// ShowDeleteManagedPostgres offers the checkbox that makes the deletion
+	// include the account's managed PostgreSQL databases
+	// (ADR-20261024150500); only for accounts in
+	// FAAS_ACCOUNT_DELETION_MANAGED_POSTGRES_ACCOUNTS until launch.
+	ShowDeleteManagedPostgres bool
 	// ConnectGithubConfirmToken (issue #961 / Mega-B PR-3) backs the
 	// dashboard's "Connect GitHub" button. The form posts to
 	// /dashboard/install/connect with this token + the matching named

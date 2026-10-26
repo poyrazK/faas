@@ -16,7 +16,11 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-func loadManagedPostgres(pool *pgxpool.Pool, getenv func(string) string, log *slog.Logger, registerers ...prometheus.Registerer) (*managedpostgres.Service, *managedpostgres.Reconciler, *managedpostgres.BindingService, *managedpostgres.BindingReconciler, *managedpostgres.UsageCollector, *managedpostgres.HealthCollector, error) {
+// managedPostgresOverageGate decides whether an account may run its databases
+// past the compute allowance (plan and capability); nil means never.
+type managedPostgresOverageGate func(state.Account) bool
+
+func loadManagedPostgres(pool *pgxpool.Pool, getenv func(string) string, log *slog.Logger, overage managedPostgresOverageGate, registerers ...prometheus.Registerer) (*managedpostgres.Service, *managedpostgres.Reconciler, *managedpostgres.BindingService, *managedpostgres.BindingReconciler, *managedpostgres.UsageCollector, *managedpostgres.HealthCollector, error) {
 	registry, err := managedpostgres.Load(getenv, managedPostgresFactories())
 	if err != nil || registry == nil {
 		return nil, nil, nil, nil, nil, nil, err
@@ -37,6 +41,15 @@ func loadManagedPostgres(pool *pgxpool.Pool, getenv func(string) string, log *sl
 	if metrics != nil {
 		usageOptions.Observe = metrics.ObserveUsage
 		usageOptions.ObserveSweep = metrics.ObserveUsageSweep
+	}
+	capEnforcer, err := loadManagedPostgresCapEnforcer(registry, store, accountStore, getenv, log, overage, registerers...)
+	if err != nil {
+		return nil, nil, nil, nil, nil, nil, err
+	}
+	usageOptions.AfterSweep = func(ctx context.Context) {
+		if _, err := capEnforcer.Enforce(ctx); err != nil && ctx.Err() == nil {
+			log.Warn("managed postgres compute cap sweep failed", "error", err)
+		}
 	}
 	usageCollector, err := managedpostgres.NewUsageCollector(registry, store, usageOptions)
 	if err != nil {
@@ -106,7 +119,11 @@ func loadManagedPostgres(pool *pgxpool.Pool, getenv func(string) string, log *sl
 				}
 				return admitErr
 			}
-			admitErr := registry.UsagePolicy().AdmitWithCeilings(ctx, store, accountID, time.Now().UTC(), managedPostgresUsageCeilings(limits))
+			overageOn, overageErr := managedPostgresStoredOverage(ctx, store, overage, account, accountID)
+			if overageErr != nil {
+				return overageErr
+			}
+			admitErr := registry.UsagePolicy().AdmitWithCeilings(ctx, store, accountID, time.Now().UTC(), managedPostgresUsageCeilings(limits, overageOn))
 			if metrics != nil {
 				metrics.ObserveAdmission(admitErr)
 			}
@@ -205,14 +222,64 @@ func hostCredentialIdentities() []*age.X25519Identity {
 	return nil
 }
 
-func managedPostgresUsageCeilings(limits api.ManagedPostgresPlanLimits) managedpostgres.UsageCeilings {
+// loadManagedPostgresCapEnforcer builds the compute cap enforcer
+// (ADR-20261025094915). Each subject's ceiling is its plan's monthly compute
+// allowance, or twice it with overage on; the enforcer intersects it with the
+// operator's usage cap.
+func loadManagedPostgresCapEnforcer(registry *managedpostgres.Registry, store *managedpostgres.PostgresStore, accountStore state.AppOwnerReader, getenv func(string) string, log *slog.Logger, overage managedPostgresOverageGate, registerers ...prometheus.Registerer) (*managedpostgres.CapEnforcer, error) {
+	mode, err := managedpostgres.ParseCapEnforcementMode(getenv(managedpostgres.CapEnforcementEnv))
+	if err != nil {
+		return nil, err
+	}
+	options := managedpostgres.CapEnforcerOptions{
+		Mode:   mode,
+		Logger: log,
+		Ceiling: func(ctx context.Context, subject string) (int64, error) {
+			account, err := state.BillingResourceAccount(ctx, accountStore, subject)
+			if err != nil {
+				return 0, err
+			}
+			limits, _ := api.ManagedPostgresLimitsFor(api.Plan(account.Plan))
+			overageOn, err := managedPostgresStoredOverage(ctx, store, overage, account, subject)
+			if err != nil {
+				return 0, err
+			}
+			return managedPostgresComputeCeiling(limits, overageOn), nil
+		},
+	}
+	if len(registerers) > 0 {
+		metrics, err := managedpostgres.NewCapMetrics(registerers[0], "apid", mode)
+		if err != nil {
+			return nil, err
+		}
+		options.Observe = metrics.Observe
+	}
+	return managedpostgres.NewCapEnforcer(registry, store, options)
+}
+
+// configureManagedPostgresCapMode records the compute cap enforcement mode for
+// the usage views. loadManagedPostgres already refused an invalid value.
+func (s *server) configureManagedPostgresCapMode(getenv func(string) string) {
+	s.managedPostgresCapMode, _ = managedpostgres.ParseCapEnforcementMode(getenv(managedpostgres.CapEnforcementEnv))
+}
+
+// managedPostgresStoredOverage reads a subject's overage choice when the
+// account may use overage at all.
+func managedPostgresStoredOverage(ctx context.Context, store managedpostgres.OverageStore, overage managedPostgresOverageGate, account state.Account, subject string) (bool, error) {
+	if overage == nil || !overage(account) {
+		return false, nil
+	}
+	return store.OverageEnabled(ctx, subject)
+}
+
+func managedPostgresUsageCeilings(limits api.ManagedPostgresPlanLimits, overage bool) managedpostgres.UsageCeilings {
 	if limits.DatabasesMax <= 0 {
 		return managedpostgres.UsageCeilings{}
 	}
 	const secondsPerBillingMonth = int64(31 * 24 * time.Hour / time.Second)
 	ceilings := managedpostgres.UsageCeilings{}
 	if limits.MonthlyComputeUnitSeconds > 0 {
-		ceilings.MaxMonthlyComputeUnitSeconds = limits.MonthlyComputeUnitSeconds
+		ceilings.MaxMonthlyComputeUnitSeconds = managedPostgresComputeCeiling(limits, overage)
 	}
 	if limits.StorageLimitBytes > 0 && limits.StorageLimitBytes <= math.MaxInt64/secondsPerBillingMonth {
 		ceilings.MaxMonthlyStorageByteSeconds = limits.StorageLimitBytes * secondsPerBillingMonth

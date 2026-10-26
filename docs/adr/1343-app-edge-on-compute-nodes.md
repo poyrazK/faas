@@ -227,6 +227,21 @@ Every step is dark until the manifest turns it on:
    traffic. WebSocket and SSE connections drop when DNS flips. Keep the
    control-plane edge serving the wildcard until the pilot passes.
 
+   Found when preparing the pilot (2026-10-25): production's public-timeout
+   Worker runs on `*.<apps domain>/*` and picks the origin itself with
+   `cf.resolveOverride`, so an app host's DNS record does not decide where
+   its requests go. The Worker therefore chooses the origin per host:
+   `APP_EDGE_HOSTS` (exact hostnames) resolve to `APP_EDGE_ORIGIN_HOSTNAME`,
+   a proxied in-zone CNAME to the tunnel, and every other host keeps the
+   control-plane origin. The pilot is that list with one test app; rollback
+   is removing it. `APP_EDGE_HOSTS = "*"` then moves every app host: the
+   §3 split is the app-name rule itself (one label that `pkg/api` accepts as
+   a valid, unreserved app slug), mirrored in the Worker's `app-hosts.json`
+   and kept equal to Go by a test, rather than a list of platform hosts. A
+   reserved name can never be an app, so every platform host, including ones
+   added later, stays on the control plane once it is reserved. The cutover
+   steps are in `docs/runbooks/AppEdgeCutover.md`.
+
 The OVH launch (ADR-1344 §8) turns it on from day one. Whether the GCP beta
 moves first is decided after the pilot.
 
@@ -261,6 +276,10 @@ draining one compute node fails no request.
 
 ## Open questions
 
-- Cloudflare Tunnel limits on our plan: connectors per tunnel, request body
-  size (uploads), and WebSocket idle timeouts.
+- Cloudflare Tunnel limits on our plan. Answered 2026-10-25 from
+  Cloudflare's documentation: a tunnel takes up to 25 replicas (100
+  connections), so one connector per compute node fits a cell of up to 25
+  nodes. Request body size and WebSocket idle timeouts are the zone's proxy
+  limits, which already apply today because app traffic is proxied and runs
+  through the Worker; the tunnel does not change them.
 - The edge CPU hold-back value, from the cutover load test.

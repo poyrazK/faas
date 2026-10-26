@@ -68,7 +68,7 @@ var catalog = map[string]Render{
 		Title: "No process listening on $PORT",
 		Hint:  "your app isn't accepting traffic on the port we expect",
 		Why:   "the wake readiness probe found no listener on $PORT after the wake timeout — either nothing is bound, or your listener bound to a different port/address",
-		Fix:   "• make sure your app listens on process.env.PORT (or 8080)\n• if you bind manually, bind to 0.0.0.0 not 127.0.0.1\n• run `gregale doctor` to scan your source for bind issues",
+		Fix:   "• make sure your app listens on process.env.PORT\n• if your app must use a fixed port, declare it: hosting.port in gregale.yaml\n• if you bind manually, bind to 0.0.0.0 not 127.0.0.1\n• run `gregale doctor` to scan your source for bind issues",
 		Observed: func(observed any) (why, fix string) {
 			if observed == nil {
 				return "", ""
@@ -163,7 +163,10 @@ var catalog = map[string]Render{
 		Title: "Application startup timeout",
 		Hint:  "your app didn't become ready in time",
 		Why:   "the application did not satisfy its configured readiness check before the startup deadline; the app's startup deadline (`startup_deadline_s` in gregale.yaml, `--startup-deadline-s` on deploy) controls this window, while its idle timeout controls parking",
-		Fix:   "• check `gregale logs <slug>` for startup failures and verify the configured readiness check\n• defer expensive initialization where possible\n• raise the startup deadline (`startup_deadline_s`, or `--startup-deadline-s` on deploy) only when healthy startup needs more time",
+		// The deadline cannot exceed the cold-boot window every later wake must
+		// meet (H12-10), so "raise the deadline" was advice no app could follow
+		// (Hunt 14 H14-4).
+		Fix: fmt.Sprintf("• check `gregale logs <slug>` for startup failures and verify the configured readiness check\n• listen first and defer expensive initialization: the app must answer within %d s, the cold-boot window every later wake must also meet, and `startup_deadline_s` cannot be raised above it", api.ColdBootReadyWindowS),
 	},
 	api.CodeAppStartupCrash: {
 		Title: "Application exited during startup",
@@ -314,11 +317,11 @@ func startupFailureGuidance(detail string) (why, fix string) {
 	for _, field := range strings.Fields(detail) {
 		switch strings.TrimRight(field, ":;,") {
 		case "startup_phase=guest_startup":
-			return "The guest did not answer the readiness probe before the startup deadline. This does not establish that an HTTP health endpoint returned an unhealthy response.", "• check `gregale logs <slug>` for process launch, image user, permissions and initialization failures\n• verify the expected listener and bind address\n• raise the startup deadline (`startup_deadline_s`, or `--startup-deadline-s` on deploy) only after confirming healthy startup needs more time"
+			return "The guest did not answer the readiness probe before the startup deadline. This does not establish that an HTTP health endpoint returned an unhealthy response.", fmt.Sprintf("• check `gregale logs <slug>` for process launch, image user, permissions and initialization failures\n• verify the expected listener and bind address\n• listen first and defer expensive initialization: the app must answer within %d s, and `startup_deadline_s` cannot be raised above that", api.ColdBootReadyWindowS)
 		case "startup_phase=handler_healthcheck":
-			return "The application answered readiness probes but did not report ready before the startup deadline. HTTP readiness requires a 2xx response; gRPC readiness requires SERVING.", "• verify the configured readiness path or gRPC service and allow unauthenticated probes\n• check startup logs and required dependencies\n• raise the startup deadline (`startup_deadline_s`, or `--startup-deadline-s` on deploy) only when healthy initialization needs more time"
+			return "The application answered readiness probes but did not report ready before the startup deadline. HTTP readiness requires a 2xx response; gRPC readiness requires SERVING.", fmt.Sprintf("• verify the configured readiness path or gRPC service and allow unauthenticated probes\n• check startup logs and required dependencies\n• report ready sooner: the app must be ready within %d s, and `startup_deadline_s` cannot be raised above that", api.ColdBootReadyWindowS)
 		case "startup_phase=image_healthcheck":
-			return "The image's command healthcheck did not produce a fresh successful result for this boot or restore. A listening port alone cannot pass this check.", "• run the declared HEALTHCHECK inside the image with its configured user, working directory and environment\n• verify the check executable and required dependencies exist\n• review command timeouts, retries and startup grace; raise the startup deadline (`startup_deadline_s`, or `--startup-deadline-s` on deploy) only when healthy initialization needs more time"
+			return "The image's command healthcheck did not produce a fresh successful result for this boot or restore. A listening port alone cannot pass this check.", fmt.Sprintf("• run the declared HEALTHCHECK inside the image with its configured user, working directory and environment\n• verify the check executable and required dependencies exist\n• review command timeouts, retries and startup grace: the check must pass within %d s, and `startup_deadline_s` cannot be raised above that", api.ColdBootReadyWindowS)
 
 		}
 	}

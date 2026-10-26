@@ -155,8 +155,11 @@ class WorkflowContext:
         return int(self._request.get("invocation", 1))
 
     def _claim(self, name: str, kind: str, event: str | None = None) -> tuple[int, str, Mapping[str, Any] | None, bool]:
-        if not _OP_NAME.match(name):
-            raise ValueError(f'invalid workflow operation name "{name}": use 1-128 of A-Z a-z 0-9 _ . : # / - starting with a letter or digit')
+        if not _OP_NAME.match(name) or "#" in name:
+            raise ValueError(
+                f'invalid workflow operation name "{name}": use 1-128 of A-Z a-z 0-9 _ . : / - starting with a letter or digit; '
+                '"#" is reserved for repeated names (poll, poll#2, …)'
+            )
         count = self._names.get(name, 0) + 1
         self._names[name] = count
         op_name = name if count == 1 else f"{name}#{count}"
@@ -188,6 +191,9 @@ class WorkflowContext:
             return entry.get("output")
         if entry is not None and entry.get("status") == "failed":
             raise WorkflowStepError(op_name, entry.get("error") or "step failed", int(entry.get("attempt") or 1))
+        if entry is not None and entry.get("status") == "scheduled":
+            # Its back-off has not elapsed; Gregale calls again when it is due.
+            return await self._suspend()
         attempt = int((entry or {}).get("attempt") or 0) + 1
         context = StepContext(attempt=attempt, idempotency_key=f"workflow/{self.run_id}/{op_name}")
         self.activity += 1

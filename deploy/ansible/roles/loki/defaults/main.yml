@@ -1,35 +1,70 @@
-# loki — dedicated off-host log backend (issue #274).
+# loki — platform log backend (issue #274, ADR-143, ADR-20261023124955 §2).
 #
-# The role is intended for a host in the inventory's `observability` group,
-# not for a FaaS control-plane or compute host. FaaS hosts send journald
-# records to this service through Promtail over the private network.
+# Runs on the control plane inside faas-obs.slice. With
+# loki_storage_backend: s3 the chunks and index live in an object-storage
+# bucket, so losing the control plane loses only the un-flushed head and the
+# compute nodes' Promtail replays their journals into a replacement. FaaS
+# hosts send journald records through Promtail over the private network.
 
 loki_version: "3.5.3"
 # SHA-256 of loki-linux-amd64.zip from the upstream v{{ loki_version }} release.
-loki_release_sha256: "a69a830d33d9709f350270f2191580be25d154fe68ecf92b67e763369656e97d"
+loki_release_sha256: "5da0394082e7399e88b6de2a35748531cf31fa938559346e3887b4fdb296a79e"
 
-# Bind to loopback by default. Production inventory must override this with
-# the observability host's private transport address; never bind Loki to a
+# Bind to loopback by default. Production uses the control plane's private
+# transport address (faas_obs_loki_address); never bind Loki to a
 # public interface without a private firewall and mTLS policy in front of it.
-loki_http_listen_address: "127.0.0.1"
+loki_http_listen_address: "{{ faas_obs_loki_address | default('127.0.0.1', true) }}"
 loki_http_listen_port: 3100
 loki_grpc_listen_address: "127.0.0.1"
-loki_grpc_listen_port: 9096
+# Not 9096: s3-gatewayd's control listener holds 127.0.0.1:9096 on a control
+# plane that runs the managed S3 gateway (TestLokiPortsAreFree).
+loki_grpc_listen_port: 9197
 
 loki_data_dir: /var/lib/loki
 loki_config_path: /etc/loki/config.yml
-loki_retention_period: 168h
+# 14 days (ADR-20261023124955 §2). With object storage, a bucket lifecycle
+# rule a little longer than this is the backstop for the compactor.
+loki_retention_period: 336h
 loki_ingestion_rate_mb: 4
 loki_ingestion_burst_size_mb: 6
 loki_max_streams_per_user: 2000
 loki_max_query_series: 500
 loki_max_entries_limit_per_query: 5000
 
-# These files are provisioned out-of-band. The role checks their permissions
-# but never reads or templates their contents.
-loki_tls_ca_file: /etc/faas/secrets/loki/tls/ca.crt
-loki_tls_cert_file: /etc/faas/secrets/loki/tls/server.crt
-loki_tls_key_file: /etc/faas/secrets/loki/tls/server.key
+# Fleet-PKI feature leaves (ADR-20261023124955 §2), issued by the
+# platform_logs_pki role before this one runs. Loki verifies clients against
+# the fleet CA. The role checks permissions and never reads the contents.
+loki_tls_ca_file: /etc/faas/tls/ca/ca.crt
+loki_tls_cert_file: /etc/faas/tls/loki/server.crt
+loki_tls_key_file: /etc/faas/tls/loki/server.key
 
 # Dev mode is for connection-free role work only. Production requires mTLS.
 loki_dev_mode: false
+
+# Storage (ADR-20261023124955 §2). "filesystem" keeps chunks under
+# loki_data_dir, for dev and role validation. "s3" puts chunks and index in
+# an S3-compatible bucket (any provider, including GCS through HMAC interop);
+# only the WAL, index cache and compactor scratch stay on local disk. The
+# bucket is dedicated to Loki. Credentials come from an operator-provisioned
+# root:root 0400 environment file holding AWS_ACCESS_KEY_ID and
+# AWS_SECRET_ACCESS_KEY; Ansible never reads or writes its contents.
+loki_storage_backend: filesystem
+loki_s3_endpoint: ""          # host[:port], no scheme, e.g. storage.googleapis.com
+loki_s3_bucket: ""
+loki_s3_region: auto
+loki_s3_credentials_file: /etc/faas/secrets/loki/s3.env
+# CA that signed the S3 endpoint's certificate, for a self-hosted gateway on
+# a private CA (and the CI smoke, scripts/ci/obs_stack_smoke.sh). Empty uses
+# the system roots, which is right for GCS and AWS.
+loki_s3_ca_file: ""
+
+# Resources inside faas-obs.slice (ADR-20261023124955 §1).
+loki_memory_max: 768M
+loki_gomemlimit: 640MiB
+
+# Client settings for `gregalectl obs logs` on this host, rendered to
+# /etc/faas/loki-client.env (no secrets: paths only). The command reuses the
+# Prometheus client pair, so operators run it as root on the control plane.
+loki_cli_env_path: /etc/faas/loki-client.env
+loki_cli_client_cert_file: /etc/faas/tls/prometheus/loki-client.crt
+loki_cli_client_key_file: /etc/faas/tls/prometheus/loki-client.key

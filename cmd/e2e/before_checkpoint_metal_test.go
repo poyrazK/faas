@@ -122,7 +122,7 @@ http.createServer((req, res) => {
   if (req.url === '/arm/reject') { mode = 'reject'; res.writeHead(200); res.end('armed'); return; }
   if (req.url === '/healthz') { res.writeHead(200); res.end('ready'); return; }
   res.writeHead(200); res.end('checkpoints=' + checkpoints);
-}).listen(8080, '0.0.0.0');`
+}).listen(Number(process.env.PORT || 8080), '0.0.0.0');`
 	return buildTarGz(t, map[string]string{
 		"package.json": packageJSON, "index.js": indexJS, ".faas-fixture": "node22\n",
 		"faas-build-token": time.Now().UTC().Format(time.RFC3339Nano) + "\n",

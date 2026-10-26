@@ -15,6 +15,7 @@ package edgerules
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -22,7 +23,9 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/appaccess"
 	"github.com/onebox-faas/faas/pkg/apid/httpkit"
+	"github.com/onebox-faas/faas/pkg/auth/middleware"
 	"github.com/onebox-faas/faas/pkg/logsanitize"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -334,6 +337,40 @@ func ValidateEdgeRuleAction(kind string, raw json.RawMessage, matchPath string, 
 	return api.ErrValidation("edge rule action validation fell through — internal bug")
 }
 
+// RouteTargetProblem refuses a kind=route rule whose target is an internal
+// app of the rule's account. Private apps are off the public edge entirely:
+// the gateway resolves route targets through the same visibility check, so
+// such a rule would never fire, and before that check it served the internal
+// app on a public host. Unknown slugs and other accounts' apps keep their
+// handling (the gateway refuses them at match time), so the check reveals
+// nothing about slugs the caller does not own.
+func (s *Service) RouteTargetProblem(ctx context.Context, accountID, kind string, raw json.RawMessage) *api.Problem {
+	if kind != string(state.EdgeRuleKindRoute) || len(raw) == 0 {
+		return nil
+	}
+	var action api.EdgeRuleRouteAction
+	if json.Unmarshal(raw, &action) != nil || action.TargetAppSlug == "" {
+		return nil //nolint:nilerr // A malformed action is ValidateEdgeRuleAction's to report.
+	}
+	target, err := s.Host.Store().AppBySlug(ctx, action.TargetAppSlug)
+	if errors.Is(err, state.ErrNotFound) {
+		return nil //nolint:nilerr // An unknown slug is the gateway's to refuse; refusing it here would reveal which slugs exist.
+	}
+	if err != nil {
+		return api.ErrCapacity("could not check the route target")
+	}
+	if target.AccountID != accountID || api.NormalizeAppVisibility(target.Visibility) != api.AppVisibilityInternal {
+		return nil
+	}
+	return InternalRouteTargetProblem(target.Slug)
+}
+
+// InternalRouteTargetProblem is the refusal for a route rule, or manifest path
+// route, whose target app is internal.
+func InternalRouteTargetProblem(slug string) *api.Problem {
+	return api.ErrValidation(fmt.Sprintf("route target %q is an internal app; internal apps are off the public edge. Route to a public app, or call %q as an internal service", slug, slug))
+}
+
 // validateEdgeRuleAsyncDestinations keeps async-route callbacks scoped to the
 // same app and account as the edge rule. Invocation destinations use the same
 // ownership boundary, so a route cannot turn a webhook ID into a cross-tenant
@@ -397,6 +434,19 @@ func (s *Service) ListEdgeRules(w http.ResponseWriter, r *http.Request, acct sta
 		api.WriteProblem(w, api.ErrCapacity("could not list edge rules"))
 		return
 	}
+	// Company apps and their creator's personal apps share AccountID, so the
+	// account's rules are filtered to the apps this caller may still see: a
+	// removed creator or a key bound to one app or org sees only those, as
+	// the other account-wide lists do.
+	actor := acct
+	if a, _, ok := middleware.AccountFromContext(r); ok {
+		actor = a
+	}
+	rules, err = appaccess.VisibleResources(r, s.Host.Store(), actor, rules, func(rule state.EdgeRule) string { return rule.AppID })
+	if err != nil {
+		api.WriteProblem(w, api.ErrCapacity("could not list edge rules"))
+		return
+	}
 	out := make([]api.EdgeRuleResponse, 0, len(rules))
 	for _, rule := range rules {
 		out = append(out, s.RuleResponse(acct, rule))
@@ -437,7 +487,7 @@ func (s *Service) CreateEdgeRule(w http.ResponseWriter, r *http.Request, acct st
 	// The per-kind cap is enforced inside the store's
 	// CreateEdgeRuleIfUnderQuota FOR UPDATE lock and surfaced
 	// below via qe.PerKind / ErrPlanEdgeRuleKindQuotaReached.
-	if prob := planKindProblem(acct, req.Kind); prob != nil {
+	if prob := s.kindProblem(acct, req.Kind); prob != nil {
 		api.WriteProblem(w, prob)
 		return
 	}
@@ -685,6 +735,7 @@ func ActionFromBody(kind string, raw json.RawMessage) state.EdgeRuleAction {
 			// apid-Validate.
 			out.Budget = &state.EdgeRuleBudgetAction{
 				BudgetMs:            a.BudgetMs,
+				TotalDeadlineMs:     a.TotalDeadlineMs,
 				AllowOverrideHeader: a.AllowOverrideHeader,
 			}
 		}

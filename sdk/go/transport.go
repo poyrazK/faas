@@ -1,6 +1,7 @@
 package faas
 
 import (
+	"context"
 	"io"
 	"log/slog"
 	"net/http"
@@ -134,7 +135,7 @@ func newRetryRoundTripper(next http.RoundTripper, max int, backoff time.Duration
 // context aborts the wait and returns the context error.
 func (r *retryRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
 	// Outbox policy recovery owns retry scheduling and must see Retry-After.
-	if managed, _ := req.Context().Value(eventOutboxPolicyContextKey{}).(bool); managed {
+	if managed, _ := req.Context().Value(transportRetryContextKey{}).(bool); managed {
 		return r.next.RoundTrip(req)
 	}
 
@@ -188,4 +189,15 @@ func (r *retryRoundTripper) RoundTrip(req *http.Request) (*http.Response, error)
 		_ = resp.Body.Close()
 	}
 	return lastResp, nil
+}
+
+// transportRetryContextKey marks a request whose caller owns retry
+// scheduling.
+type transportRetryContextKey struct{}
+
+// WithoutTransportRetry returns a context whose requests skip the client's
+// retry layer and see every Retry-After answer themselves. Event outbox
+// recovery (faas/preview) uses it to own its retry schedule.
+func WithoutTransportRetry(ctx context.Context) context.Context {
+	return context.WithValue(ctx, transportRetryContextKey{}, true)
 }

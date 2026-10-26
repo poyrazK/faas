@@ -2491,6 +2491,34 @@ type PublicAuthStatus struct {
 // below for the contract.
 type Sidecars []Sidecar
 
+// DeploymentCompanion is one companion of a deployment as the API shows it:
+// identity, image, port and size, never environment values or secret
+// grants.
+type DeploymentCompanion struct {
+	Name           string `json:"name"`
+	Image          string `json:"image,omitempty"`
+	Preset         string `json:"preset,omitempty"`
+	Type           string `json:"type,omitempty"`
+	Port           int    `json:"port,omitempty"`
+	RAMMB          int    `json:"ram_mb,omitempty"`
+	PrimaryIngress bool   `json:"primary_ingress,omitempty"`
+}
+
+// Summaries returns the API view of each companion, nil when there are none.
+func (ss Sidecars) Summaries() []DeploymentCompanion {
+	if len(ss) == 0 {
+		return nil
+	}
+	out := make([]DeploymentCompanion, 0, len(ss))
+	for _, sc := range ss {
+		out = append(out, DeploymentCompanion{
+			Name: sc.Name, Image: sc.Image, Preset: sc.Preset, Type: string(sc.Type),
+			Port: sc.Port, RAMMB: sc.RamMB, PrimaryIngress: sc.PrimaryIngress,
+		})
+	}
+	return out
+}
+
 // Companion and Companions are the customer-facing names for the bounded
 // helper workload model. Sidecar/Sidecars remain the storage and runtime wire
 // names for backwards compatibility with deployments created before the
@@ -3354,6 +3382,9 @@ type DeploymentResponse struct {
 	// pending while it waits, or how its latest schedule ended
 	// (ADR-20261021152201).
 	ScheduledRelease *ScheduledRelease `json:"scheduled_release,omitempty"`
+	// DatabaseSwitch is set on the response to a rollback that restores the
+	// database (ADR-20261023181931).
+	DatabaseSwitch *DatabaseSwitch `json:"database_switch,omitempty"`
 	// DevPatch is set only on the response to a developer source upload
 	// (`gregale dev`). It reports whether the sync could have been applied as
 	// a live source patch (ADR-740 phase 1, measurement only).
@@ -3544,6 +3575,10 @@ type DeploymentResponse struct {
 	// deployment. It lets deploy preview compare the next immutable revision
 	// with the currently deployed workflow contract.
 	Workflows []WorkflowSpec `json:"workflows,omitempty"`
+	// Companions summarizes the companions this deployment carries, without
+	// their environment, so deploy preview can show companion changes and the
+	// public hostname a companion port opens (Hunt 14 H14-53).
+	Companions []DeploymentCompanion `json:"companions,omitempty"`
 	// APIHostingReceipt is the non-secret evidence captured when imaged
 	// promoted this deployment to live. It is intentionally free-form on the
 	// API surface so future receipt schema versions remain additive.
@@ -4074,6 +4109,12 @@ type RollbackRequest struct {
 	// rollback is refused with rollback_crosses_release. Automated rollbacks
 	// never set it.
 	AcknowledgeReleases bool `json:"acknowledge_releases,omitempty"`
+
+	// RestoreDatabases also restores the app's managed PostgreSQL database
+	// to just before the earliest crossed release and switches the app to
+	// that copy (ADR-20261023181931). It requires AcknowledgeReleases; the
+	// response carries the switch, and the code rollback happens inside it.
+	RestoreDatabases bool `json:"restore_databases,omitempty"`
 }
 
 // CapabilityStatus is a customer-visible catalog row with the account's
@@ -4102,6 +4143,11 @@ type CapabilitiesResponse struct {
 	RegistryVersion    int                `json:"registry_version"`
 	Plan               string             `json:"plan"`
 	Capabilities       []CapabilityStatus `json:"capabilities"`
+	// HiddenCapabilities are the catalog capabilities, internal ones
+	// included, whose platform flag is off for this account
+	// (ADR-20261023115741). Clients hide their commands and links. Omitted
+	// when nothing is hidden, and by servers without the capability gate.
+	HiddenCapabilities []string `json:"hidden_capabilities,omitempty"`
 }
 
 // AccountAbuseHold is the customer view of an ADR-361 account abuse hold.
@@ -5799,6 +5845,16 @@ type AccountTraceWake struct {
 	WakeID    string `json:"wake_id"`
 	Method    string `json:"method,omitempty"`
 	ReadyInMS int32  `json:"ready_in_ms,omitempty"`
+	// PlannedMethod and RestoreFallbackReason are set when a planned restore
+	// fell back to a cold boot, as on WakeTimelineJSONRow.
+	PlannedMethod         string `json:"planned_method,omitempty"`
+	RestoreFallbackReason string `json:"restore_fallback_reason,omitempty"`
+	// Thawed marks a request that resumed this wake's frozen instance
+	// (ADR-1151) instead of waiting for its boot; a thaw keeps the instance's
+	// original wake ID. ThawMS is how long the thaw took, and Method and
+	// ReadyInMS, which describe the original boot, are omitted.
+	Thawed bool  `json:"thawed,omitempty"`
+	ThawMS int32 `json:"thaw_ms,omitempty"`
 }
 
 // AccountTraceInvocation is a safe durable invocation lifecycle projection.
@@ -7135,6 +7191,12 @@ type WakeTimelineJSONRow struct {
 	AtCapacity         bool   `json:"at_capacity"`
 	AtCapacityPresent  bool   `json:"at_capacity_present"`
 	ReadyInMS          int32  `json:"ready_in_ms,omitempty"` // -1 = em-dash on absent
+	// PlannedMethod is the method schedd planned when vmmd ran another one,
+	// such as a restore that fell back to a cold boot; empty otherwise.
+	PlannedMethod string `json:"planned_method,omitempty"`
+	// RestoreFallbackReason is the closed reason for that fallback when one
+	// is reported (after_restore_failed); empty otherwise.
+	RestoreFallbackReason string `json:"restore_fallback_reason,omitempty"`
 }
 
 // AccountSLOResponse is the flat account-wide SLO rollup returned by
@@ -7357,6 +7419,9 @@ type PlanWorkload struct {
 	// options (ADR-20261019142544); argument values stay out of plans.
 	BuildTarget string   `json:"build_target,omitempty"`
 	BuildArgs   []string `json:"build_args,omitempty"`
+	// GoCommand is the `cmd/<name>` main package a service of a multi-command
+	// Go module builds from the module root (ADR-20261025134512).
+	GoCommand string `json:"go_command,omitempty"`
 	// SecretFiles are the Compose secrets written to /run/secrets
 	// (ADR-20261023090000); they name app secrets, never values.
 	SecretFiles []SecretFile `json:"secret_files,omitempty"`
@@ -7461,6 +7526,31 @@ type PlanManaged struct {
 	EnvHint string `json:"env_hint"`
 	Source  string `json:"source"`
 	Image   string `json:"image"`
+	// Provision is the managed PostgreSQL database apply creates or reuses
+	// for a Compose postgres service, and the keys it binds
+	// (ADR-20261025111824). Nil means apply does not provide it; see
+	// NotProvisionedReason.
+	Provision *PlanManagedProvision `json:"provision,omitempty"`
+	// NotProvisionedReason says why a Compose postgres service is not
+	// provided: unavailable, plan, quota, unsupported, configured,
+	// not_referenced or permission. Empty for other datastores.
+	NotProvisionedReason string `json:"not_provisioned_reason,omitempty"`
+}
+
+// PlanManagedProvision is a managed database a project apply provides.
+type PlanManagedProvision struct {
+	Database string `json:"database"`
+	Existing bool   `json:"existing,omitempty"`
+	// PostgresMajor is the database's PostgreSQL major: the Compose image's,
+	// or the nearest newer one the platform offers.
+	PostgresMajor int                  `json:"postgres_major,omitempty"`
+	Bindings      []PlanManagedBinding `json:"bindings"`
+}
+
+// PlanManagedBinding is one service key bound to a provided database.
+type PlanManagedBinding struct {
+	Workload string `json:"workload"`
+	EnvKey   string `json:"env_key"`
 }
 
 // PlanCron is the per-cron line in the scan response. Carries the
@@ -8582,7 +8672,9 @@ func (ss Sidecars) ValidateWithMainDependencies(mainDependencies []WorkloadDepen
 // collide inside the shared task network namespace. Port zero on a sidecar is
 // intentionally ignored: init/worker sidecars commonly have no listener and
 // image-derived ports are checked again by guest-init once the baked manifest
-// is available. A zero mainPort uses the platform's 8080 contract.
+// is available. A zero mainPort uses the platform's 8080 contract; a negative
+// mainPort means the main port is not known yet (the build decides it), so
+// only the companions are compared with each other.
 func (ss Sidecars) ValidatePortConflicts(mainPort int) *Problem {
 	if mainPort == 0 {
 		mainPort = DefaultAppPort
@@ -10182,13 +10274,19 @@ func validateThrottleMaxKeys(maxKeys, planMax int) *Problem {
 // The hot-path applier is
 // pkg/gateway.(*Handler).applyEdgeRuleBudget (§4.1.2.8d).
 type EdgeRuleBudgetAction struct {
-	BudgetMs            int    `json:"budget_ms"`
+	BudgetMs int `json:"budget_ms"`
+	// TotalDeadlineMs includes upload/wake/admission from trusted public ingress.
+	// Zero leaves the existing execution-only budget unchanged (ADR-570).
+	TotalDeadlineMs     int    `json:"total_deadline_ms,omitempty"`
 	AllowOverrideHeader string `json:"allow_override_header,omitempty"`
 }
 
 func (a *EdgeRuleBudgetAction) Validate() *Problem {
 	if a == nil {
 		return ErrValidation("budget action is required")
+	}
+	if a.TotalDeadlineMs < 0 || a.TotalDeadlineMs > int(RequestBudgetPlanMax.Milliseconds()) {
+		return ErrValidation("budget action: total_deadline_ms must be zero (unset) or within the platform request budget ceiling")
 	}
 	if a.BudgetMs <= 0 {
 		return ErrValidation(fmt.Sprintf(
@@ -10589,8 +10687,9 @@ type EdgeRuleStatsResponse struct {
 // the rule has been deleted. Detections (outcome detected, warned or
 // blocked; ADR-831 amendment 5) also carry the CRS rule IDs that scored,
 // their attack categories and the anomaly score. Challenge outcomes
-// (challenged, rejected, solved or failed; amendment 7 follow-up) carry the
-// request fields only.
+// (challenged, rejected, solved or failed; amendment 7 follow-up) and
+// penalty boxes (boxed; ADR-20261022105846 amendment 2) carry the request
+// fields only.
 type EdgeRuleEventResponse struct {
 	ID         string    `json:"id"`
 	RuleID     string    `json:"rule_id"`

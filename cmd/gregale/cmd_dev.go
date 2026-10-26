@@ -164,14 +164,24 @@ func runDevWatchLoop(ctx context.Context, sourceDir string, previous [sha256.Siz
 	}
 
 	startPending := func() {
+		if ctx.Err() != nil {
+			return
+		}
 		config, err := ops.resolve(sourceDir)
+		if ctx.Err() != nil {
+			return
+		}
 		if err != nil {
 			if ops.onResolveFailed != nil {
 				ops.onResolveFailed(err)
 			}
 			return
 		}
-		if err := ops.refresh(config); err != nil {
+		err = ops.refresh(config)
+		if ctx.Err() != nil {
+			return
+		}
+		if err != nil {
 			if ops.onRefreshFailed != nil {
 				ops.onRefreshFailed(err)
 			}
@@ -179,6 +189,9 @@ func runDevWatchLoop(ctx context.Context, sourceDir string, previous [sha256.Siz
 		}
 		if ops.onChange != nil {
 			ops.onChange()
+		}
+		if ctx.Err() != nil {
+			return
 		}
 		current = startDevDeploy(ctx, config, ops.deploy)
 		queued = current.queued
@@ -191,10 +204,10 @@ func runDevWatchLoop(ctx context.Context, sourceDir string, previous [sha256.Siz
 			return 0
 
 		case change := <-changes:
+			if ctx.Err() != nil {
+				return 0
+			}
 			if change.err != nil {
-				if ctx.Err() != nil {
-					return 0
-				}
 				if ops.onWatchFailed != nil {
 					return ops.onWatchFailed(change.err)
 				}
@@ -256,10 +269,10 @@ func runDevWatchLoop(ctx context.Context, sourceDir string, previous [sha256.Siz
 			for {
 				select {
 				case change := <-changes:
+					if ctx.Err() != nil {
+						return 0
+					}
 					if change.err != nil {
-						if ctx.Err() != nil {
-							return 0
-						}
 						if ops.onWatchFailed != nil {
 							return ops.onWatchFailed(change.err)
 						}
@@ -328,8 +341,11 @@ func cmdDev(args []string) int {
 		PrintUsage(osStderr, devUsage, "dev")
 		return 1
 	}
-	if fs.NArg() != 0 {
-		PrintUsage(osStderr, devUsage, "dev")
+	if dir, ok := sourceDirPositional(fs); ok {
+		return printErr("Invalid arguments", fmt.Errorf(
+			"gregale dev takes the source directory with --path. Did you mean `gregale dev --path %s`?", dir))
+	}
+	if rejectUnexpectedFlagArgs(fs) {
 		return 1
 	}
 	explicitFlags := flagSetWasSet(fs)
@@ -483,6 +499,12 @@ func cmdDev(args []string) int {
 	if err != nil {
 		return printErr("Could not identify developer workspace", err)
 	}
+	// A `dev --all` child lives in its group's workspace and joins the group's
+	// namespace once its environment exists (ADR-20261025121530).
+	group := devGroupWorkspace()
+	if group != "" {
+		workspaceID = group
+	}
 
 	client, err := authedClient()
 	if err != nil {
@@ -527,6 +549,14 @@ func cmdDev(args []string) int {
 	session, err := upsertDevSession(client, project, config.sessionRequest(workspaceID, *withPostgres, *postgresRegion, lease, devWatch, buckets...))
 	if err != nil {
 		return printErr("Could not create developer environment", err)
+	}
+	if group != "" {
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		err := joinDevGroup(ctx, client, group, project, session.App.Slug, osStderr)
+		cancel()
+		if err != nil {
+			return printErr("Could not connect to the other developer environments", err)
+		}
 	}
 	defer renderDevSessionExit(sourceDir, project, session.App.Slug, lease)
 	if code := applyDevDebugSetting(client, session.App.Slug, *debug); code != 0 {

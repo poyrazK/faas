@@ -140,6 +140,216 @@ require('readline').createInterface({ input: process.stdin }).on('line', (l) => 
 setInterval(() => {}, 1000);
 `
 
+// nodeThreadProbe blocks its event loop on request, so a test can show the
+// thread-mode client answers the barrier without it.
+const nodeThreadProbe = `
+const m = globalThis[Symbol.for('gregale.restoreReseed')];
+const replaced = !!m && !/native code/.test(Function.prototype.toString.call(Math.random));
+process.stdout.write(JSON.stringify({ ready: true, replaced }) + '\n');
+const block = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+require('readline').createInterface({ input: process.stdin }).on('line', (l) => {
+  if (l === 'state') process.stdout.write(JSON.stringify({ state: Array.from(m.state).join(','), ...m.stale }) + '\n');
+  if (l === 'block') {
+    process.stdout.write(JSON.stringify({ blocking: true }) + '\n');
+    block(1500);
+    const before = { state: Array.from(m.state).join(','), ...m.stale };
+    const value = Math.random();
+    const after = { state: Array.from(m.state).join(','), ...m.stale };
+    process.stdout.write(JSON.stringify({ before, after, value }) + '\n');
+  }
+});
+setInterval(() => {}, 1000);
+`
+
+type nodeThreadState struct {
+	State string
+	UUID  bool
+	Int   bool
+}
+
+func threadModeEnv(assets, sock string) []string {
+	return stampRestoreReseedMode(baseRuntimeEnv(assets, sock), restoreReseedThreadMode)
+}
+
+// ADR-20261024105607: in thread mode the addon's native thread registers the
+// process and answers the barrier while the event loop is blocked. Math.random
+// adopts the restore before it returns its next value, even when that call
+// runs before the event loop has woken for the restore.
+func TestRestoreReseedNodeThreadAnswersWithoutEventLoop(t *testing.T) {
+	assets := restoreReseedAssetDir(t, true)
+	b, sock := startTestBarrier(t)
+	p := startRuntime(t, "node", threadModeEnv(assets, sock), "-e", nodeThreadProbe)
+	var ready struct{ Ready, Replaced bool }
+	p.read(t, &ready)
+	if !ready.Replaced {
+		t.Fatal("Math.random was not replaced by the preload")
+	}
+	waitRegistered(t, b, 1)
+	if got := registeredRuntimes(b); got != "node-thread" {
+		t.Fatalf("registered runtimes = %q, want the addon's thread", got)
+	}
+
+	var blocking struct{ Blocking bool }
+	p.ask(t, "block", &blocking)
+	started := time.Now()
+	stats, err := b.ReseedWithStats(time.Second)
+	if err != nil {
+		t.Fatalf("Reseed with the event loop blocked: %v", err)
+	}
+	if elapsed := time.Since(started); elapsed > 500*time.Millisecond {
+		t.Fatalf("thread-mode reseed took %s: it waited for the blocked event loop", elapsed)
+	}
+	if stats.Clients != 1 || stats.SlowestRuntime != "node-thread" {
+		t.Fatalf("stats = %+v, want one node-thread client", stats)
+	}
+	var result struct {
+		Before, After nodeThreadState
+		Value         float64
+	}
+	p.read(t, &result)
+	if result.Before.UUID || result.Before.Int {
+		t.Fatalf("caches stale before the event loop ran: %+v", result.Before)
+	}
+	if !result.After.UUID || !result.After.Int {
+		t.Fatalf("Math.random returned without adopting the restore: %+v", result.After)
+	}
+	if result.Before.State == result.After.State {
+		t.Fatal("Math.random state unchanged by the restore")
+	}
+
+	// A second restore: the event loop is idle now, and the addon's wake
+	// lets it adopt the restore without any call into the generators.
+	var idle nodeThreadState
+	p.ask(t, "state", &idle)
+	if err := b.Reseed(time.Second); err != nil {
+		t.Fatalf("second Reseed: %v", err)
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		var now nodeThreadState
+		p.ask(t, "state", &now)
+		if now.State != idle.State {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the event loop never adopted the restore after the addon's wake")
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+}
+
+// The thread-mode client fails the barrier closed exactly like the
+// event-loop client: a nonce too short to be guest-init's is refused.
+func TestRestoreReseedNodeThreadRejectsShortNonce(t *testing.T) {
+	assets := restoreReseedAssetDir(t, true)
+	b, sock := startTestBarrier(t)
+	p := startRuntime(t, "node", threadModeEnv(assets, sock), "-e", nodeThreadProbe)
+	var ready struct{ Ready, Replaced bool }
+	p.read(t, &ready)
+	waitRegistered(t, b, 1)
+	var client *restoreReseedClient
+	b.mu.Lock()
+	for c := range b.clients {
+		client = c
+	}
+	b.mu.Unlock()
+	if _, err := io.WriteString(client.conn, "reseed 00ff\n"); err != nil {
+		t.Fatal(err)
+	}
+	_ = client.conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+	line, err := readRestoreReseedLine(client.reader)
+	_ = client.conn.SetReadDeadline(time.Time{})
+	if err != nil || line != "err bad_nonce" {
+		t.Fatalf("short nonce reply = %q, %v; want err bad_nonce", line, err)
+	}
+	if err := b.Reseed(time.Second); err != nil {
+		t.Fatalf("Reseed after a refused nonce: %v", err)
+	}
+}
+
+// Without the addon there is no thread: the preload falls back to the
+// event-loop client, which then fails the barrier closed.
+func TestRestoreReseedNodeThreadWithoutAddonFailsClosed(t *testing.T) {
+	assets := restoreReseedAssetDir(t, false)
+	if err := os.Remove(filepath.Join(assets, "reseed.node")); err != nil {
+		t.Fatal(err)
+	}
+	b, sock := startTestBarrier(t)
+	p := startRuntime(t, "node", threadModeEnv(assets, sock), "-e", nodeThreadProbe)
+	var ready struct{ Ready, Replaced bool }
+	p.read(t, &ready)
+	waitRegistered(t, b, 1)
+	err := b.Reseed(2 * time.Second)
+	if err == nil || !strings.Contains(err.Error(), "openssl_reseed_unavailable") {
+		t.Fatalf("Reseed err = %v, want openssl_reseed_unavailable", err)
+	}
+}
+
+// nodeWorkerProbe runs the preload in a worker thread too. The worker
+// reports its generators around one Math.random call on request.
+const nodeWorkerProbe = `
+const { Worker } = require('worker_threads');
+const worker = new Worker(` + "`" + `
+const { parentPort } = require('worker_threads');
+const m = globalThis[Symbol.for('gregale.restoreReseed')];
+parentPort.on('message', () => {
+  const before = { state: Array.from(m.state).join(','), ...m.stale };
+  Math.random();
+  const after = { state: Array.from(m.state).join(','), ...m.stale };
+  parentPort.postMessage({ before, after });
+});
+parentPort.postMessage({ ready: !!m });
+` + "`" + `, { eval: true });
+worker.once('message', (msg) => {
+  process.stdout.write(JSON.stringify({ ready: msg.ready }) + '\n');
+  require('readline').createInterface({ input: process.stdin }).on('line', (l) => {
+    if (l !== 'worker') return;
+    worker.once('message', (reply) => process.stdout.write(JSON.stringify(reply) + '\n'));
+    worker.postMessage('probe');
+  });
+});
+`
+
+// In thread mode a worker isolate does not join the barrier: the process's
+// one addon thread answers for it, and the worker adopts each restore from
+// the shared generation before its next value.
+func TestRestoreReseedNodeThreadWorkerAdoptsRestore(t *testing.T) {
+	assets := restoreReseedAssetDir(t, true)
+	b, sock := startTestBarrier(t)
+	p := startRuntime(t, "node", threadModeEnv(assets, sock), "-e", nodeWorkerProbe)
+	var ready struct{ Ready bool }
+	p.read(t, &ready)
+	if !ready.Ready {
+		t.Fatal("the preload did not run in the worker")
+	}
+	waitRegistered(t, b, 1)
+	time.Sleep(300 * time.Millisecond)
+	if got := registeredRuntimes(b); got != "node-thread" {
+		t.Fatalf("registered runtimes = %q, want only the process's addon thread", got)
+	}
+	if err := b.Reseed(time.Second); err != nil {
+		t.Fatalf("Reseed: %v", err)
+	}
+	var result struct{ Before, After nodeThreadState }
+	p.ask(t, "worker", &result)
+	if result.Before.UUID || result.Before.Int || !result.After.UUID || !result.After.Int {
+		t.Fatalf("worker caches before/after Math.random = %+v / %+v, want adoption on that call", result.Before, result.After)
+	}
+	if result.Before.State == result.After.State {
+		t.Fatal("worker Math.random state unchanged by the restore")
+	}
+}
+
+func registeredRuntimes(b *restoreReseedBarrier) string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	names := make([]string, 0, len(b.clients))
+	for c := range b.clients {
+		names = append(names, c.runtime)
+	}
+	return strings.Join(names, ",")
+}
+
 func TestRestoreReseedNodePreload(t *testing.T) {
 	assets := restoreReseedAssetDir(t, true)
 	b, sock := startTestBarrier(t)
@@ -267,6 +477,7 @@ func TestRestoreReseedNodePreloadFailsClosedWithoutAddon(t *testing.T) {
 
 const pythonProbe = `
 import hashlib, json, os, random, ssl, sys, time
+ssl.RAND_bytes(16)
 def state():
     return hashlib.sha256(repr(random.getstate()).encode()).hexdigest()
 print(json.dumps({"ready": True, "customer_site": os.environ.get("CUSTOMER_SITE_RAN", "")}), flush=True)
@@ -286,6 +497,17 @@ if child:
 `
 
 func TestRestoreReseedPythonPreload(t *testing.T) {
+	testRestoreReseedPythonPreload(t, "")
+}
+
+// ADR-20261024105607: thread mode changes only Node's client. A Python
+// process booted in thread mode keeps its listener thread and every
+// guarantee, forked children included.
+func TestRestoreReseedPythonPreloadThreadMode(t *testing.T) {
+	testRestoreReseedPythonPreload(t, restoreReseedThreadMode)
+}
+
+func testRestoreReseedPythonPreload(t *testing.T, mode string) {
 	assets := restoreReseedAssetDir(t, false)
 	customer := shortSocketDir(t)
 	site := "import os\nos.environ['CUSTOMER_SITE_RAN'] = '1'\n"
@@ -294,6 +516,9 @@ func TestRestoreReseedPythonPreload(t *testing.T) {
 	}
 	b, sock := startTestBarrier(t)
 	env := baseRuntimeEnv(assets, sock)
+	if mode != "" {
+		env = stampRestoreReseedMode(env, mode)
+	}
 	env = setEnvValue(env, "PYTHONPATH", envValue(env, "PYTHONPATH")+string(os.PathListSeparator)+customer)
 	p := startRuntime(t, "python3", env, "-c", pythonProbe)
 	var ready struct {
@@ -330,6 +555,24 @@ func TestRestoreReseedPythonPreload(t *testing.T) {
 	waitRegistered(t, b, 2)
 	if err := b.Reseed(2 * time.Second); err != nil {
 		t.Fatalf("Reseed with a forked child: %v", err)
+	}
+
+	// A nonce too short to be guest-init's fails the barrier closed.
+	var client *restoreReseedClient
+	b.mu.Lock()
+	for c := range b.clients {
+		client = c
+		break
+	}
+	b.mu.Unlock()
+	if _, err := io.WriteString(client.conn, "reseed 00ff\n"); err != nil {
+		t.Fatal(err)
+	}
+	_ = client.conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+	line, err := readRestoreReseedLine(client.reader)
+	_ = client.conn.SetReadDeadline(time.Time{})
+	if err != nil || line != "err bad_nonce" {
+		t.Fatalf("short nonce reply = %q, %v; want err bad_nonce", line, err)
 	}
 }
 

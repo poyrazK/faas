@@ -319,7 +319,9 @@ func readAuthzFile(path string) (string, error) {
 type authIssuer struct{ Issuer, JWKSURL, Audience string }
 
 // resolveAuthIssuer backs the --auth flags of the Data API and edge JWT rules.
-func resolveAuthIssuer(ctx context.Context, client *api.Client, name string) (authIssuer, error) {
+func resolveAuthIssuer(ctx context.Context, client interface {
+	GetApp(context.Context, string) (api.AppResponse, error)
+}, name string) (authIssuer, error) {
 	if !api.ValidAppSlug(name) {
 		return authIssuer{}, fmt.Errorf("invalid Auth app name %q", name)
 	}

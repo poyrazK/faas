@@ -185,11 +185,18 @@ type Evaluator struct {
 	now          func() time.Time
 	log          *slog.Logger
 	ops          Ops
+
+	// testSendsPrunedAt is when RunTestSendsOnce last pruned abandoned test
+	// sends (ADR 20261022111812).
+	testSendsPrunedAt time.Time
+
 	// channels and its companions deliver to ADR-749 notification
 	// channels; nil disables channel delivery.
 	channels         ChannelSender
 	channelOutcome   func(kind, outcome string)
 	dashboardBaseURL string
+	// logContextEnabled attaches the ADR-20261022172052 log context to fires.
+	logContextEnabled bool
 
 	// anomaly caches ADR-744 baselines per rule; see anomaly.go.
 	anomaly anomalyState
@@ -552,7 +559,14 @@ func (e *Evaluator) evalRule(ctx context.Context, rule state.AlertRule, now time
 	if convergence != nil {
 		paths.mcpConvergence = convergence
 	}
-	payloadBytes, payloadMap, err := buildPayload(rule, observed, paths, e.anomalyPayload(rule, observed))
+	extra := e.anomalyPayload(rule, observed)
+	if lc, ok := e.readLogContext(ctx, rule, e.appSlug(ctx, rule.AppID), e.now()); ok {
+		if extra == nil {
+			extra = map[string]any{}
+		}
+		extra["log_context"] = lc.payload()
+	}
+	payloadBytes, payloadMap, err := buildPayload(rule, observed, paths, extra)
 	if err != nil {
 		e.log.Warn("alerts: marshal payload", "rule", rule.ID, "err", err)
 		return
@@ -1097,6 +1111,8 @@ func (e *Evaluator) observe(ctx context.Context, rule state.AlertRule) (float64,
 		return observed, compareFloat(observed, rule.Comparison, rule.Threshold), ""
 	case state.AlertMetricCustomMetric:
 		return e.observeCustomMetric(ctx, rule)
+	case state.AlertMetricLogSearchMatches:
+		return e.observeLogSearch(ctx, rule)
 	case state.AlertMetricSLOBudgetBurn, state.AlertMetricSLOBudgetRemaining:
 		return e.observeCustomSLO(ctx, rule)
 	case state.AlertMetricSyntheticConsecutiveFailures, state.AlertMetricSyntheticLatencyP95:
@@ -1313,6 +1329,9 @@ func buildPayload(rule state.AlertRule, observed float64, paths investigationPat
 	}
 	if rule.CustomMetricName != "" {
 		m["custom_metric_name"] = rule.CustomMetricName
+	}
+	if rule.LogQuery != "" {
+		m["log_query"] = rule.LogQuery
 	}
 	if rule.SLOID != "" {
 		m["slo_id"] = rule.SLOID

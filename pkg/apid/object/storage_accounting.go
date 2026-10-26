@@ -27,11 +27,13 @@ func ValidateObjectStorageBillingSetup(provider billing.Provider, registry *obje
 	if !enabled {
 		return nil
 	}
-	if registry != nil && registry.Accounting.GatewaySafety() {
-		return errors.New("apid: gateway safety accounting requires object storage billing to be off")
-	}
 	if registry == nil || registry.Pricing == nil {
 		return errors.New("apid: object storage billing requires object-storage pricing")
+	}
+	// Gateway safety bills Gregale's own storage meter, so only a
+	// storage-only rate card can be charged (ADR-20261024132844).
+	if registry.Accounting.GatewaySafety() && !registry.Pricing.StorageOnly() {
+		return errors.New("apid: gateway safety accounting bills storage only; set request and egress prices to zero")
 	}
 	if !registry.Pricing.Valid() {
 		return errors.New("apid: object storage billing requires a valid object-storage rate card")
@@ -239,12 +241,58 @@ func (s *Service) reconcileObjectInventory(ctx context.Context, st state.ObjectS
 		return err
 	}
 	outcome := "success"
-	if err := s.scanObjectInventory(ctx, st, b, token, page); err != nil {
+	err = awaitObjectDeletions(ctx, st, b, api.ObjectInventoryDeletionDrain)
+	if err == nil {
+		err = s.scanObjectInventory(ctx, st, b, token, page)
+	}
+	if err != nil {
 		outcome = "failed"
+		releaseObjectInventory(ctx, st, b.ID, token)
 		s.Host.Logger().Warn("object storage inventory failed", "bucket_id", b.ID, "backend_id", b.BackendID)
 	}
 	report(outcome)
 	return nil
+}
+
+var errObjectDeletionsUnsettled = errors.New("object deletions did not settle before inventory")
+
+// awaitObjectDeletions waits up to drain for deletions admitted before the
+// inventory claim to settle. New deletions wait for the claim, so the listing
+// starts from a settled bucket (ADR-20261025115958).
+func awaitObjectDeletions(ctx context.Context, st state.ObjectStorageAccountingStore, b state.ObjectBucket, drain time.Duration) error {
+	deletions, ok := st.(state.ObjectDeletionActivityStore)
+	if !ok {
+		return nil
+	}
+	deadline := time.Now().Add(drain)
+	for {
+		active, err := deletions.HasActiveObjectDeletion(ctx, b.AccountID, b.AppID, b.ID)
+		if err != nil || !active {
+			return err
+		}
+		if !time.Now().Before(deadline) {
+			return errObjectDeletionsUnsettled
+		}
+		timer := time.NewTimer(api.ObjectDeletionAdmissionMaxPoll)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return ctx.Err()
+		case <-timer.C:
+		}
+	}
+}
+
+// releaseObjectInventory gives up a claim that will not publish, so
+// deletions waiting for it continue at once.
+func releaseObjectInventory(ctx context.Context, st state.ObjectStorageAccountingStore, bucket, token string) {
+	releaser, ok := st.(state.ObjectInventoryReleaser)
+	if !ok {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	defer cancel()
+	_ = releaser.ReleaseObjectInventory(ctx, bucket, token)
 }
 
 // ScanObjectInventory lists one claimed bucket and publishes its inventory.
@@ -306,8 +354,9 @@ func (s *Service) CustomerObjectRequestRecorder(b state.ObjectBucket) func(conte
 func (s *Service) RunObjectStorageAccounting(ctx context.Context) {
 	counter := prometheus.NewCounterVec(prometheus.CounterOpts{Name: "faas_object_storage_inventory_scans_total", Help: "Complete or failed object storage inventory scans."}, []string{"outcome"})
 	pages := prometheus.NewCounter(prometheus.CounterOpts{Name: "faas_object_storage_inventory_provider_requests_total", Help: "Provider listing requests made by periodic inventory scans; platform maintenance, not charged to accounts."})
+	accruals := prometheus.NewCounterVec(prometheus.CounterOpts{Name: "faas_object_storage_gateway_storage_accruals_total", Help: "Gateway-metered stored byte-hour accruals (ADR-20261024132844)."}, []string{"outcome"})
 	if s.Host.Ops() != nil {
-		s.Host.Ops().Registry().MustRegister(counter, pages)
+		s.Host.Ops().Registry().MustRegister(counter, pages, accruals)
 	}
 	var finalizedPeriod, estimatedAt time.Time
 	ticker := time.NewTicker(time.Minute)
@@ -333,6 +382,9 @@ func (s *Service) RunObjectStorageAccounting(ctx context.Context) {
 		if err := s.reconcileObjectInventories(ctx, func(outcome string) { counter.WithLabelValues(outcome).Inc() }, pages.Inc); err != nil && ctx.Err() == nil {
 			s.Host.Logger().Warn("object storage inventory sweep failed")
 		}
+		if outcome := s.AccrueGatewayStorage(ctx); outcome != "" {
+			accruals.WithLabelValues(outcome).Inc()
+		}
 		if s.Host.ObjectStorage() != nil && s.Host.ObjectStorage().Pricing != nil {
 			now := time.Now().UTC()
 			period := state.ObjectStoragePeriod(now).AddDate(0, -1, 0)
@@ -355,6 +407,30 @@ func (s *Service) RunObjectStorageAccounting(ctx context.Context) {
 		case <-s.InventoryWake:
 		}
 	}
+}
+
+// AccrueGatewayStorage meters stored bytes under gateway-safety accounting,
+// where no provider usage report exists (ADR-20261024132844). It runs after
+// the inventory sweep and before month close, and returns "success",
+// "failed", or "" when it does not apply.
+func (s *Service) AccrueGatewayStorage(ctx context.Context) string {
+	registry := s.Host.ObjectStorage()
+	if registry == nil || !registry.Accounting.GatewaySafety() {
+		return ""
+	}
+	st, ok := s.Host.Store().(state.ObjectStorageGatewayStorageStore)
+	if !ok {
+		return ""
+	}
+	accrueCtx, cancel := context.WithTimeout(ctx, 45*time.Second)
+	defer cancel()
+	if err := st.AccrueObjectStorageGatewayStorage(accrueCtx); err != nil {
+		if ctx.Err() == nil {
+			s.Host.Logger().Warn("object storage gateway storage accrual failed", "err", err)
+		}
+		return "failed"
+	}
+	return "success"
 }
 
 // finalizeObjectStorageBilling is the daemon-side month-close boundary. The

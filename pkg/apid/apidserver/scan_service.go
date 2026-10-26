@@ -52,6 +52,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/apid/projectmigration"
 	"github.com/onebox-faas/faas/pkg/apid/projectsetup"
 	"github.com/onebox-faas/faas/pkg/apid/serviceadditions"
+	"github.com/onebox-faas/faas/pkg/apid/trafficproblem"
 	"github.com/onebox-faas/faas/pkg/cronexpr"
 	"github.com/onebox-faas/faas/pkg/githubd"
 	"github.com/onebox-faas/faas/pkg/logsanitize"
@@ -1947,6 +1948,17 @@ func (s *server) scanService(
 	if composeEnvErr != nil {
 		composeEnv = reposcan.ComposeEnv{}
 	}
+	planScope := req.Environment
+	if planScope == "" {
+		planScope = api.DefaultEnvScope
+	}
+	// Compose postgres services become managed databases where the account
+	// has managed PostgreSQL (ADR-20261025111824).
+	composePostgres, composePostgresReasons, composePostgresErr := s.composePostgresPlan(r.Context(), acct, req.ProjectSlug, planScope,
+		filteredMc, filteredW, composeEnv, projectApps)
+	if composePostgresErr != nil {
+		return nil, state.Project{}, nil, nil, nil, nil, api.ErrCapacity("could not plan the project's managed databases")
+	}
 	respWorkloads := make([]api.PlanWorkload, len(filteredW))
 	for i, w := range filteredW {
 		pw := toPlanWorkload(w)
@@ -1978,15 +1990,12 @@ func (s *server) scanService(
 			return nil, state.Project{}, nil, nil, nil, nil, api.ErrValidation("invalid required-secret declaration for a selected workload")
 		}
 		pw.RequiredEnvKeys = required
-		envScope := req.Environment
-		if envScope == "" {
-			envScope = api.DefaultEnvScope
-		}
-		unset, err := projectsetup.UnsetEnvKeys(r.Context(), s.store, acct.ID, envScope, existing, w.EnvKeys, required)
+		unset, err := projectsetup.UnsetEnvKeys(r.Context(), s.store, acct.ID, planScope, existing, w.EnvKeys, required)
 		if err != nil {
 			return nil, state.Project{}, nil, nil, nil, nil, api.ErrCapacity("could not read the configuration of a selected workload")
 		}
-		pw.UnsetEnvKeys, pw.ImportedEnvKeys, pw.UnsetEnvKeyReasons = projectsetup.SplitEnvImport(unset, projectsetup.PlanEnvImport(composeEnv, w.Name, limits))
+		pw.UnsetEnvKeys, pw.ImportedEnvKeys, pw.UnsetEnvKeyReasons = projectsetup.SplitEnvImport(
+			withoutProvidedKeys(w.Name, unset, composePostgres), projectsetup.PlanEnvImport(composeEnv, w.Name, limits))
 		if w.ServiceBindingPolicy == "" && existing != nil {
 			pw.ServiceBindingPolicy = existing.Manifest.EffectiveServiceBindingPolicy()
 		}
@@ -1995,6 +2004,11 @@ func (s *server) scanService(
 	respManaged := make([]api.PlanManaged, len(filteredMc))
 	for i, m := range filteredMc {
 		respManaged[i] = toPlanManaged(m)
+		if provision, ok := composePostgres[m.Name]; ok {
+			respManaged[i].Provision = planManagedProvision(provision)
+		} else {
+			respManaged[i].NotProvisionedReason = composePostgresReasons[m.Name]
+		}
 	}
 	resp := &scanPlanResponse{
 		SafeRelease:           req.SafeRelease,
@@ -2400,7 +2414,7 @@ func (s *server) scanService(
 			if mapped.Quota != nil {
 				prob = quotaProblem(acct.Plan, limits, mapped.Quota)
 			} else {
-				prob = api.NewProblem(mapped.Status, mapped.Code, mapped.Msg, "")
+				prob = trafficproblem.Policy(recErr, api.NewProblem(mapped.Status, mapped.Code, mapped.Msg, ""))
 			}
 			capturedProb = prob
 			return resp, state.Project{}, nil, nil, nil, nil, prob
@@ -2566,6 +2580,15 @@ func (s *server) scanService(
 	}
 	if problem := s.importComposeEnv(r, acct, project.ID, importScope, composeEnv, filteredW, limits); problem != nil {
 		return resp, state.Project{}, nil, nil, nil, nil, problem
+	}
+	if len(composePostgres) > 0 {
+		apps, err := s.store.AppsForProject(r.Context(), acct.ID, project.ID)
+		if err != nil {
+			return resp, state.Project{}, nil, nil, nil, nil, api.ErrCapacity("could not load project database targets")
+		}
+		if problem := s.applyComposePostgres(r.Context(), acct, importScope, composePostgres, apps); problem != nil {
+			return resp, state.Project{}, nil, nil, nil, nil, problem
+		}
 	}
 	buildAdded := rec.Added
 	if run := projectmigration.FromContext(r.Context()); run != nil {

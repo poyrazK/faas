@@ -35,6 +35,9 @@ type nativeLaunchRecord struct {
 	ExitConfirmed    bool                   `json:"exit_confirmed"`
 	ResourcesRemoved bool                   `json:"resources_removed"`
 	Producer         nativeProducerIdentity `json:"producer,omitzero"`
+	// Owner is the vmmd incarnation that published an ordinary version-three
+	// record (ADR-2026101710 Amendment 1).
+	Owner nativeProducerIdentity `json:"owner,omitzero"`
 }
 
 type nativeLaunchJournal struct {
@@ -48,6 +51,9 @@ type nativeLaunchJournal struct {
 	bootID func() (string, error)
 	// Tests inject write failure before the child receives authorization.
 	writeRecord func(string, nativeLaunchRecord) error
+	// owners publishes ordinary launches as version three, naming this vmmd.
+	// vmmd binaries without a version-three reader refuse the journal.
+	owners bool
 }
 
 // False/zero fields are still required. Missing revocation or authorization
@@ -58,6 +64,9 @@ func (r *nativeLaunchRecord) UnmarshalJSON(data []byte) error {
 	fields, err := nativeJournalObjectFields(data, keys)
 	if err != nil {
 		fields, err = nativeJournalObjectFields(data, append(keys, "producer"))
+	}
+	if err != nil {
+		fields, err = nativeJournalObjectFields(data, append(keys, "owner"))
 	}
 	if err != nil {
 		return err
@@ -73,7 +82,9 @@ func (r *nativeLaunchRecord) UnmarshalJSON(data []byte) error {
 		return err
 	}
 	*r = nativeLaunchRecord(decoded)
-	if _, present := fields["producer"]; present != (r.Version == 2) {
+	_, producer := fields["producer"]
+	_, owner := fields["owner"]
+	if producer != (r.Version == 2) || owner != (r.Version == 3) {
 		return errors.New("native producer: version requires its exact field set")
 	}
 	return r.validateProducer()
@@ -219,8 +230,24 @@ func (j *nativeLaunchJournal) prepareGeneration(ctx context.Context, lease Lease
 			return errors.New("native producer: repair enrollment has no original task frame")
 		}
 		record.Version, record.Producer = 2, producer
+	} else if record, err = j.owned(record); err != nil {
+		return err
 	}
 	return j.write(record)
+}
+
+// owned names this vmmd incarnation on an ordinary record, atomically with
+// its physical generation, when the journal publishes version three.
+func (j *nativeLaunchJournal) owned(record nativeLaunchRecord) (nativeLaunchRecord, error) {
+	if !j.owners {
+		return record, nil
+	}
+	owner, err := nativeCurrentIdentity(nativeLaunchOwnerProtocol)
+	if err != nil {
+		return record, fmt.Errorf("native journal: name launch owner: %w", err)
+	}
+	record.Version, record.Owner = 3, owner
+	return record, nil
 }
 
 func (j *nativeLaunchJournal) currentBootID() (string, error) {

@@ -122,8 +122,8 @@ func cmdAutomations(args []string) int {
 	case "publish":
 		return cmdAutomationsPublish(args[1:])
 	default:
-		PrintUsage(os.Stderr, fmt.Sprintf("unknown automations subcommand: %s", args[0]), "automations")
-		return 1
+		printCommandValidation(os.Stderr, "unknown automations subcommand %q\n", args[0])
+		return unknownSubcommandChoices(os.Stderr, "automations", nestedCliCommand("automations"), args[0])
 	}
 }
 

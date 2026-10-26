@@ -1,7 +1,7 @@
 import {
   adoptEventAcknowledgmentIntentRetryPolicy,
   getEventAcknowledgmentIntentPolicyAdoptionCandidate,
-} from '@gregale/sdk-node';
+} from '@gregale/sdk-node/preview';
 
 // Read metadata for a deliberate operator decision; this grants no claim.
 export async function selectPolicyAdoption(pool, scope, key, commandId, signal) {

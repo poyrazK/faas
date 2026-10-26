@@ -67,14 +67,14 @@ func TestSubmitExclusiveAppTaskOperationAndReadTaskResult(t *testing.T) {
 	}))
 	defer server.Close()
 	client := NewClient(server.URL, "fp_test")
-	accepted, err := client.SubmitExclusiveAppTaskOperation(context.Background(), "my-app", ExclusiveAppTaskOperationRequest{
+	accepted, err := NewPreviewClient(client).SubmitExclusiveAppTaskOperation(context.Background(), "my-app", ExclusiveAppTaskOperationRequest{
 		Policy: "customer-sync", Key: json.RawMessage(`"customer:acme:sync"`),
 		Task: CreateAppTaskRequest{Command: []string{"bin/sync"}},
 	}, "stable-submit")
 	if err != nil || accepted.ID != operationID {
 		t.Fatalf("accepted=%+v err=%v", accepted, err)
 	}
-	task, err := client.GetAppTask(context.Background(), "my-app", appTaskID)
+	task, err := NewPreviewClient(client).GetAppTask(context.Background(), "my-app", appTaskID)
 	if err != nil || task.ID != appTaskID || task.Status != AppTaskStatusSucceeded {
 		t.Fatalf("task=%+v err=%v", task, err)
 	}
@@ -329,7 +329,10 @@ func TestDo_GETCallsDoNotCarryIdempotencyKey(t *testing.T) {
 		{"ListInstances", func(c *Client) error { _, err := c.ListInstances(context.Background(), "x"); return err }},
 		{"ListDeploymentAliases", func(c *Client) error { _, err := c.ListDeploymentAliases(context.Background(), "x"); return err }},
 		{"ListDomains", func(c *Client) error { _, err := c.ListDomains(context.Background()); return err }},
-		{"DomainDoctor", func(c *Client) error { _, err := c.DomainDoctor(context.Background(), "x"); return err }},
+		{"DomainDoctor", func(c *Client) error {
+			_, err := NewPreviewClient(c).DomainDoctor(context.Background(), "x")
+			return err
+		}},
 		{"ListCrons", func(c *Client) error { _, err := c.ListCrons(context.Background(), "x"); return err }},
 		{"ListKeys", func(c *Client) error { _, err := c.ListKeys(context.Background()); return err }},
 		{"ListSecrets", func(c *Client) error { _, err := c.ListSecrets(context.Background(), "x"); return err }},
@@ -342,8 +345,14 @@ func TestDo_GETCallsDoNotCarryIdempotencyKey(t *testing.T) {
 		}},
 		{"UsageSummary", func(c *Client) error { _, err := c.UsageSummary(context.Background(), ""); return err }},
 		// Issue #696 / ADR-082 — customer-facing SLO surface.
-		{"GetAppSLO", func(c *Client) error { _, err := c.GetAppSLO(context.Background(), "x", "24h"); return err }},
-		{"GetAccountSLO", func(c *Client) error { _, err := c.GetAccountSLO(context.Background(), "24h"); return err }},
+		{"GetAppSLO", func(c *Client) error {
+			_, err := NewPreviewClient(c).GetAppSLO(context.Background(), "x", "24h")
+			return err
+		}},
+		{"GetAccountSLO", func(c *Client) error {
+			_, err := NewPreviewClient(c).GetAccountSLO(context.Background(), "24h")
+			return err
+		}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

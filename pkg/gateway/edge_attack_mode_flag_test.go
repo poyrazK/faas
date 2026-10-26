@@ -6,6 +6,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus/testutil"
+
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/platformflags"
 )
@@ -39,5 +41,32 @@ func TestEdgeAttackModeFlag(t *testing.T) {
 				t.Errorf("challenged = %v, want %v", got, tc.want)
 			}
 		})
+	}
+}
+
+// adr: 20261024082000 — amendment 1: an attack-mode rule's decisions count
+// in gateway_edge_attack_mode_total as well as the challenge counter; an
+// ordinary challenge rule's count in the challenge counter only.
+func TestEdgeAttackModeMetric(t *testing.T) {
+	app := App{ID: "app-1", AccountID: "acct-1", Plan: api.PlanFree}
+	script := httptest.NewRequest(http.MethodGet, "/api/items", nil)
+	for _, attackMode := range []bool{true, false} {
+		rule := &EdgeRuleChallengeResolved{ID: "rule-1", AccountID: "acct-1", AppID: "app-1", Difficulty: 8, PassTTLSeconds: 3600, AttackMode: attackMode}
+		h := challengeTestHandler(rule, time.Now())
+		h.metrics = NewMetrics()
+		h.applyEdgeRuleChallenge(httptest.NewRecorder(), browserRequest(http.MethodGet, "/"), app, false)
+		h.applyEdgeRuleChallenge(httptest.NewRecorder(), script, app, false)
+		want := 0.0
+		if attackMode {
+			want = 1
+		}
+		for _, outcome := range []string{"issued", "rejected"} {
+			if got := testutil.ToFloat64(h.metrics.edgeChallenge.WithLabelValues("app-1", outcome)); got != 1 {
+				t.Errorf("attack mode %v: challenge %s = %v, want 1", attackMode, outcome, got)
+			}
+			if got := testutil.ToFloat64(h.metrics.edgeAttackMode.WithLabelValues("app-1", outcome)); got != want {
+				t.Errorf("attack mode %v: attack mode %s = %v, want %v", attackMode, outcome, got, want)
+			}
+		}
 	}
 }

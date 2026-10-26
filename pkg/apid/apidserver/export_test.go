@@ -38,6 +38,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/apid/durable"
 	"github.com/onebox-faas/faas/pkg/apid/edgerules"
 	"github.com/onebox-faas/faas/pkg/apid/issuetrackers"
+	"github.com/onebox-faas/faas/pkg/apid/logerasure"
 	"github.com/onebox-faas/faas/pkg/apid/managedrealtime"
 	"github.com/onebox-faas/faas/pkg/apid/object"
 	"github.com/onebox-faas/faas/pkg/apid/operation"
@@ -46,6 +47,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/apid/tenantplans"
 	"github.com/onebox-faas/faas/pkg/billing"
 	"github.com/onebox-faas/faas/pkg/db"
+	"github.com/onebox-faas/faas/pkg/environmentsync"
 	"github.com/onebox-faas/faas/pkg/gitlabsource"
 	"github.com/onebox-faas/faas/pkg/gregalemanifest"
 	"github.com/onebox-faas/faas/pkg/issuetracker"
@@ -60,6 +62,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/wire"
 	"github.com/onebox-faas/faas/pkg/workloadidentity"
+	"net/url"
 )
 
 var ResolveAlertmanagerURL = resolveAlertmanagerURL
@@ -150,6 +153,7 @@ const CsrfActionSessionsRevokeAll = csrfActionSessionsRevokeAll
 const DashboardAsyncInvocationPath = dashboardAsyncInvocationPath
 const DashboardDataAPICookie = dashboardDataAPICookie
 const DashboardAuthSettingsCookie = dashboardAuthSettingsCookie
+const DashboardPreviewDestroyCSRFCookie = dashboardPreviewDestroyCSRFCookie
 const DashboardDebugReplayCSRFCookie = dashboardDebugReplayCSRFCookie
 const DashboardDevBridgeAction = dashboardDevBridgeAction
 const DashboardDevBridgeCSRFCookie = dashboardDevBridgeCSRFCookie
@@ -252,6 +256,8 @@ var CapsDecl = &capsDecl
 var CertDialContextFunc = &certDialContextFunc
 var CertLookupIPFunc = &certLookupIPFunc
 var ChannelSender = &channelSender
+var TestRelayPoll = &testRelayPoll
+var ChannelTestRelayWait = &channelTestRelayWait
 var CnameLookupFunc = &cnameLookupFunc
 var DialCertFunc = &dialCertFunc
 var ErrCertAddressBlocked = &errCertAddressBlocked
@@ -292,6 +298,17 @@ var SourceDomainRecipient = &sourceDomainRecipient
 var HostHMACKeyBytes = hostHMACKeyBytes
 var BuildDomainRecipient = &buildDomainRecipient
 var BuildWriteMode = &buildWriteMode
+var EdgeDomainRecipient = &edgeDomainRecipient
+var EdgeWriteMode = &edgeWriteMode
+var AlertingDomainRecipient = &alertingDomainRecipient
+var AlertingWriteMode = &alertingWriteMode
+var StorageDomainRecipient = &storageDomainRecipient
+var StorageWriteMode = &storageWriteMode
+var StorageCredentialRecipients = storageCredentialRecipients
+var SealPresetWebhookSecret = sealPresetWebhookSecret
+var SealMCPFallbackSecret = sealMCPFallbackSecret
+var SealMCPPagerDutyKey = sealMCPPagerDutyKey
+var SealAppLogDrainAuthHeader = sealAppLogDrainAuthHeader
 var SourceWriteMode = &sourceWriteMode
 var SseChannels = &sseChannels
 var TimeNow = &timeNow
@@ -507,6 +524,13 @@ func (s *server) ConfigureHostingForTest(getenv func(string) string) error {
 	return s.configureHosting(getenv)
 }
 
+func (s *server) InboundWebhookURLForTest(token string) string { return s.inboundWebhookURL(token) }
+func (s *server) IsWebDashboardOriginForTest(origin *url.URL) bool {
+	return s.isWebDashboardOrigin(origin)
+}
+
+var PlatformDomainFromConfig = platformDomainFromConfig
+
 var NewSafeReleaseLeaseMetrics = newSafeReleaseLeaseMetrics
 var NewServer = newServer
 var NewServerWithDeps = newServerWithDeps
@@ -650,8 +674,10 @@ var StoreAsSessionLookup = storeAsSessionLookup
 var StorePlanCache = storePlanCache
 var StripeWebhookHarness = stripeWebhookHarness
 var SummarizeDevSyncHistory = summarizeDevSyncHistory
+var SummarizeRuntimePolicyComponent = summarizeRuntimePolicyComponent
 var SummarizeRuntimePolicySchedulerStatus = summarizeRuntimePolicySchedulerStatus
 var SummarizeRuntimePolicyStatus = summarizeRuntimePolicyStatus
+var SummarizeTrafficRuntime = summarizeTrafficRuntime
 var SuspectedDependency = suspectedDependency
 var SuspectedDependencyFor = suspectedDependencyFor
 var SweepExpiredCacheEntries = sweepExpiredCacheEntries
@@ -904,6 +930,10 @@ func (r *server) Log() **slog.Logger                                 { return &r
 func (r *server) MailBounce() *mailBounceHandler                     { return &r.mailBounce }
 func (r *server) Mailer() *Mailer                                    { return &r.mailer }
 func (r *server) ManagedPostgres() **managedpostgres.Service         { return &r.managedPostgres }
+func (r *server) LogArchive() *logerasure.Objects                    { return &r.logArchive }
+func (r *server) BeforeAccountDelete(ctx context.Context, acct state.Account) error {
+	return r.beforeAccountDelete(ctx, acct)
+}
 func (r *server) ManagedPostgresBindings() **managedpostgres.BindingService {
 	return &r.managedPostgresBindings
 }
@@ -1435,6 +1465,9 @@ func (r testEnv) Do(p0 *testing.T, p1 string, p2 string, p3 any, p4 map[string]s
 func (r testEnv) DoAdmin(p0 *testing.T, p1 string, p2 string, p3 any, p4 map[string]string) *httptest.ResponseRecorder {
 	return r.doAdmin(p0, p1, p2, p3, p4)
 }
+func (r testEnv) DoOperator(p0 *testing.T, p1 string, p2 string, p3 any, p4 map[string]string) *httptest.ResponseRecorder {
+	return r.doOperator(p0, p1, p2, p3, p4)
+}
 func (r testEnv) DoAs(p0 *testing.T, p1 string, p2 string, p3 any, p4 map[string]string, p5 string) *httptest.ResponseRecorder {
 	return r.doAs(p0, p1, p2, p3, p4, p5)
 }
@@ -1592,6 +1625,36 @@ func (s *server) LiveRoutesForTest(ctx context.Context, accountID, appID string)
 	return s.liveRoutes(ctx, nil, accountID, appID)
 }
 
+// RealtimePreviewEveryone shows realtime preview features to every account
+// (ADR-20261019102657).
+func RealtimePreviewEveryone() managedrealtime.PreviewRollout {
+	r, err := managedrealtime.ParsePreviewRollout("*")
+	if err != nil {
+		panic(err)
+	}
+	return r
+}
+
+// AppWebhookEventsForTest is the app webhook vocabulary accountID may choose.
+func (s *server) AppWebhookEventsForTest(accountID string) []string {
+	return s.appWebhookEvents(accountID)
+}
+
+// ConfigureRealtimePreviewForTest reads FAAS_REALTIME_PREVIEW_ACCOUNTS from
+// getenv, seeding the realtime_preview platform flag.
+func (s *server) ConfigureRealtimePreviewForTest(getenv func(string) string) error {
+	return s.configureRealtimePreview(getenv)
+}
+
+// RealtimePreviewGateForTest is the gate the realtime handlers consult.
+func (s *server) RealtimePreviewGateForTest() managedrealtime.PreviewGate {
+	return s.realtime.Preview
+}
+
+// RealtimePreviewPublishedForTest reports whether the served spec lists the
+// realtime preview.
+func (s *server) RealtimePreviewPublishedForTest() bool { return s.realtimePreviewPublished() }
+
 // GatewayControlURL exposes gatewayControlURL (ADR-20261022004500).
 func (s *server) GatewayControlURL(ctx context.Context) string { return s.gatewayControlURL(ctx) }
 
@@ -1638,3 +1701,62 @@ func VerifyCandidateObjectStorageCredentialForTest(ctx context.Context, c state.
 	hmacKey []byte, canary func(context.Context, string, string, func(string) string) api.ObjectStorageBindingProbeReport) error {
 	return verifyCandidateObjectStorageCredentialWith(ctx, identities, hmacKey, canary, c)
 }
+
+// SetDatabaseSwitchDrain gives a test server's database switch worker drain
+// evidence the in-memory store lacks (ADR-20261023181931).
+func (e sourceRefTestEnv) SetDatabaseSwitchDrain(drain state.DatabaseSwitchDrainStore) {
+	e.srv.databaseSwitchDrainOverride = drain
+	e.srv.rollbackArtifactVerifier = stubRollbackArtifactVerifier{}
+}
+
+// DatabaseSwitchWorkerConfigured reports whether the server can run database
+// switches.
+func (e sourceRefTestEnv) DatabaseSwitchWorkerConfigured() bool {
+	return e.srv.databaseSwitchWorker() != nil
+}
+
+// PrepareGitOpsWorkloadCandidatesForTest runs the GitOps backend's candidate
+// preparation against s's runtime configuration (ADR 20261022140000).
+func (s *server) PrepareGitOpsWorkloadCandidatesForTest(ctx context.Context, intent state.EnvironmentGitOpsIntentStore,
+	lease state.EnvironmentGitOpsLease, plan environmentsync.Plan) (bool, error) {
+	b := &environmentGitOpsBackend{server: s, intent: intent}
+	return b.prepareWorkloadCandidates(ctx, lease, plan)
+}
+
+// DashboardWidgetAppForTest resolves a dashboard widget's app as the
+// dashboards host does (ADR-20261022173833).
+func (s *server) DashboardWidgetAppForTest(ctx context.Context, acct state.Account, slug string) (state.App, bool) {
+	return dashboardsHost{s}.AppForAccount(ctx, acct, slug)
+}
+
+// IncidentAppVisibleForTest reports whether the incidents host serves an
+// app's incidents (ADR-20261022193512).
+func (s *server) IncidentAppVisibleForTest(ctx context.Context, acct state.Account, app state.App) bool {
+	return incidentsHost{s}.AppVisible(ctx, acct, app)
+}
+
+// ServiceMapAppsForTest lists the apps the service map draws (ADR-1131).
+func (s *server) ServiceMapAppsForTest(ctx context.Context, accountID string) ([]state.App, error) {
+	return serviceMapHost{s}.Apps(ctx, accountID)
+}
+
+// EventsAppScopeForTest returns the /v1/events stream's owned and hidden
+// app sets for a caller.
+func (s *server) EventsAppScopeForTest(ctx context.Context, acct state.Account, key *state.APIKey) (owned, hidden map[string]struct{}) {
+	return s.buildOwnedAppCache(ctx, acct, key)
+}
+
+var ValidateAndPlanSidecars = validateAndPlanSidecars
+
+// StatusPageFromStore evaluates the public status page against a Prometheus
+// URL and a store with the durable deployment-outcome aggregate.
+func StatusPageFromStore(ctx context.Context, promURL string, store state.Store) (StatusPage, error) {
+	return newStatusCacheWithStore(promURL, store, slog.Default()).Get(ctx)
+}
+
+// WriteExclusiveError maps a managed operation store error to its problem.
+var WriteExclusiveError = writeExclusiveError
+
+// ResolveAndCheckEgress is the create-time egress check every outbound URL
+// (alert, log drain, webhook, channel) passes.
+var ResolveAndCheckEgress = resolveAndCheckEgress

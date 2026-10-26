@@ -1,9 +1,9 @@
 import httpx
 import pytest
 
-from faas_sdk.api.workflows import list_workflow_schedules
+from faas_sdk.preview.api.workflows import list_workflow_schedules
 from faas_sdk.client import AuthenticatedClient
-from faas_sdk.models.workflow_trigger_spec import WorkflowTriggerSpec
+from faas_sdk.preview.models.workflow_trigger_spec import WorkflowTriggerSpec
 
 
 @pytest.mark.parametrize("input_value", [None, False, 7, "daily", [1, 2], {"report": "daily"}])

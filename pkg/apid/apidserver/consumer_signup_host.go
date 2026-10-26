@@ -45,6 +45,6 @@ func (h consumerSignupHost) Audit(ctx context.Context, event, accountID string, 
 	h.s.audit.Emit(ctx, event, &accountID, fields)
 }
 
-func (h consumerSignupHost) PublicOrigin() string { return "https://" + h.s.domain }
+func (h consumerSignupHost) PublicOrigin() string { return "https://" + h.s.platformHost() }
 
 func (h consumerSignupHost) ClientIP(r *http.Request) string { return middleware.ClientIP(r) }

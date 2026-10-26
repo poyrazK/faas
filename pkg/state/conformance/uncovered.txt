@@ -20,7 +20,6 @@ AccountsByIDs
 ActiveComputeNodes
 AlertPresetByName
 AlertRuleByAccountAppAndPresetName
-AlertRuleByID
 AppBySlug
 AppForkByID
 AppForkExecByID
@@ -143,7 +142,6 @@ DecrementInstanceTailCount
 DeleteAPIKeyReturning
 DeleteAccount
 DeleteAccountPassword
-DeleteAlertRule
 DeleteAppEnv
 DeleteAppEnvInScope
 DeleteAppErrorRequestsByIDs
@@ -236,7 +234,6 @@ GetTenantSurfaceByName
 GetUploadCommitOutcome
 GetUploadSession
 GetWorkflowEventsForRun
-GetWorkflowRunByIdempotencyKey
 GitHubBindingForApp
 GitHubInstallForAccount
 GithubInstallBindingForRepoBranch
@@ -537,7 +534,6 @@ SetAccountEgressAllowlistExtra
 SetAccountKeyGraceWindow
 SetAccountPassword
 SetAlertRuleLastEvaluated
-SetAlertRuleState
 SetAppMinInstances
 SetAppWorkloadClass
 SetComputeNodeRole

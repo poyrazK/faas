@@ -136,6 +136,10 @@ type PublishedEventRecipientProgress struct {
 	Retryable             bool       `json:"retryable,omitempty"`
 	LastError             string     `json:"last_error,omitempty"`
 	UpdatedAt             time.Time  `json:"updated_at"`
+	// DeliveryID is the delivery a re-accepted event routed to when an earlier
+	// acceptance's delivery still held the original identity
+	// (PublishedEventReacceptanceID). Empty means the original identity.
+	DeliveryID string `json:"delivery_id,omitempty"`
 }
 
 // EventFanoutFailure is a terminal routing failure recorded before an
@@ -263,11 +267,12 @@ type EventFanoutReplayBatchStore interface {
 }
 
 const PublishedEventLease = 5 * time.Minute
-const PublishedEventIdentityRetention = 30 * 24 * time.Hour
 const EventFanoutReplayBatchMax = 100
 
+// PublishedEventRetentionStore prunes settled receipts past their owner's
+// plan window (ADR-20261023215834), at most limit per call.
 type PublishedEventRetentionStore interface {
-	PruneDeliveredPublishedEvents(context.Context, time.Time, int) (int64, error)
+	PruneSettledPublishedEvents(ctx context.Context, now time.Time, limit int) (int64, error)
 }
 
 func (s *PgStore) ClaimDuePublishedEvent(ctx context.Context, now time.Time) (*PublishedEventWork, error) {
@@ -448,15 +453,17 @@ func (s *PgStore) FinishPublishedEvent(ctx context.Context, id int64, token stri
 	return nil
 }
 
-func (s *PgStore) PruneDeliveredPublishedEvents(ctx context.Context, before time.Time, limit int) (int64, error) {
+func (s *PgStore) PruneSettledPublishedEvents(ctx context.Context, now time.Time, limit int) (int64, error) {
 	if limit <= 0 {
 		return 0, nil
 	}
 	q := sqlc.New()
-	now := before.Add(PublishedEventIdentityRetention).UTC()
+	now = now.UTC()
 	cutoff := now.Add(-api.EventReplayBackfillJobRetention)
+	plans, seconds := eventSettledRetentionPlans()
 	accounts, err := q.EventReplayBackfillPruneAccounts(ctx, s.pool, sqlc.EventReplayBackfillPruneAccountsParams{
-		BeforeAt: pgtypeFromTime(before.UTC()), JobCutoffAt: pgtypeFromTime(cutoff), NowAt: pgtypeFromTime(now), PageLimit: int32(min(limit, api.EventReplayBackfillPruneBatch)),
+		Plans: plans, RetentionSeconds: seconds, MaxRetentionSeconds: int64(api.EventSettledRetentionMax() / time.Second),
+		JobCutoffAt: pgtypeFromTime(cutoff), NowAt: pgtypeFromTime(now), PageLimit: int32(min(limit, api.EventReplayBackfillPruneBatch)),
 	})
 	if err != nil {
 		return 0, fmt.Errorf("select receipt pruning accounts: %w", err)
@@ -467,7 +474,7 @@ func (s *PgStore) PruneDeliveredPublishedEvents(ctx context.Context, before time
 			break
 		}
 		n, err := s.pruneEventReceiptsForAccount(ctx, q, sqlc.EventReplayBackfillPruneEnvelopesParams{
-			AccountID: account, BeforeAt: pgtypeFromTime(before.UTC()), JobCutoffAt: pgtypeFromTime(cutoff), NowAt: pgtypeFromTime(now), PageLimit: int32(min(limit-int(removed), api.EventReplayBackfillPruneBatch)),
+			AccountID: account.AccountID, BeforeAt: account.BeforeAt, JobCutoffAt: pgtypeFromTime(cutoff), NowAt: pgtypeFromTime(now), PageLimit: int32(min(limit-int(removed), api.EventReplayBackfillPruneBatch)),
 		})
 		if err != nil {
 			return removed, err
@@ -634,6 +641,7 @@ type publishedEventIdentity struct {
 	AppID            string          `json:"appid,omitempty"`
 	PlatformTenantID string          `json:"platformtenantid,omitempty"`
 	TenantEventID    string          `json:"tenanteventid,omitempty"`
+	Producer         string          `json:"producer,omitempty"`
 }
 
 // appendEventFanoutAttemptLocked mirrors the durable attempt-history insert.
@@ -721,6 +729,10 @@ func (m *MemStore) enqueuePublishedEventLocked(subject *uuid.UUID, payload []byt
 		recipients = append(recipients, m.tenantWorkflowEventRecipientsLocked(subject.String(), event.AppID, event.PlatformTenantID, event.Source, event.Type)...)
 	} else {
 		recipients = append(recipients, m.workflowEventRecipientsLocked(subject.String(), event.Source, event.Type)...)
+		var err error
+		if recipients, err = m.recipientsInProducerReachLocked(subject.String(), event.Producer, recipients); err != nil {
+			return false, err
+		}
 	}
 	// ADR-20261021210000: an app enrolled in a rehearsal never receives the
 	// account's events, mirroring enqueue_event_fanout.
@@ -977,17 +989,17 @@ func (m *MemStore) FinishPublishedEvent(_ context.Context, id int64, token strin
 	return ErrNotFound
 }
 
-func (m *MemStore) PruneDeliveredPublishedEvents(_ context.Context, before time.Time, limit int) (int64, error) {
+func (m *MemStore) PruneSettledPublishedEvents(_ context.Context, now time.Time, limit int) (int64, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	holds := m.eventRecoveryReceiptHoldsLocked("", before.Add(PublishedEventIdentityRetention))
+	holds := m.eventRecoveryReceiptHoldsLocked("", now)
 	var pruned int64
 	for key, work := range m.eventFanout {
 		if int(pruned) >= limit {
 			break
 		}
 		_, held := holds[work.ID]
-		if work.Delivered && work.DeliveredAt.Before(before) && !held {
+		if work.Delivered && work.DeliveredAt.Before(now.Add(-m.eventSettledRetentionLocked(memEventFanoutOwner(key)))) && !held {
 			for _, recipient := range work.RecipientSnapshot {
 				m.loseSubscriptionExecutionCoverageLocked(recipient.ID, "receipt_deleted", time.Now().UTC())
 			}

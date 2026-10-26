@@ -32,14 +32,14 @@ func TestSealDomainCDContract(t *testing.T) {
 	}{
 		{
 			workflow: ".github/workflows/cd-controlplane.yml",
-			tokens:   secrets("OUTBOUND", "SOURCE", "RUNTIME", "BUILD"),
+			tokens:   secrets("OUTBOUND", "SOURCE", "ALERTING", "STORAGE", "CONTROL", "RUNTIME", "BUILD", "EDGE"),
 			// The full converge and the host-configuration lane.
 			call:  `scripts/ci/seal_domain_vars.sh control-plane "$work/seal-domains" "$work/vars.yml"`,
 			count: 2,
 		},
 		{
 			workflow: ".github/workflows/cd-compute.yml",
-			tokens:   secrets("RUNTIME", "BUILD"),
+			tokens:   secrets("RUNTIME", "BUILD", "EDGE", "CONTROL"),
 			call:     `scripts/ci/seal_domain_vars.sh compute "$ARTIFACT_DIR/seal-domains" "$ARTIFACT_DIR/ansible-vars.yml"`,
 			count:    1,
 		},
