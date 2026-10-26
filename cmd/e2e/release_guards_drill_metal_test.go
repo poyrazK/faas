@@ -269,12 +269,15 @@ func TestReleaseGuardsDrillMetal(t *testing.T) {
 		}
 		t.Logf("DRILL approval_waiting since=%s expires=%s holds=%v", waiting.WaitingSince, waiting.ExpiresAt, rules)
 
-		// The deployer's own approval does not count.
-		var own api.ReleaseApprovalStatus
-		og.mustStatus(t, od.key, http.MethodPost, "/v1/deployments/"+candidate.ID+"/approvals",
-			api.DecideReleaseApprovalRequest{Decision: api.ReleaseApprovalDecisionApprove}, http.StatusOK, &own)
-		if own.State != api.ReleaseApprovalStateWaiting || own.Approvals != 0 || len(own.Decisions) != 1 || own.Decisions[0].Counted {
-			t.Fatalf("self approval = %+v, want recorded, not counted, still waiting", own)
+		// With self-approval off, the deployer's own approval is refused and
+		// the release keeps waiting.
+		raw, code := doReq(t, h, od.key, http.MethodPost, "/v1/deployments/"+candidate.ID+"/approvals",
+			api.DecideReleaseApprovalRequest{Decision: api.ReleaseApprovalDecisionApprove})
+		if code != http.StatusForbidden || !strings.Contains(string(raw), api.CodeReleaseApprovalSelf) {
+			t.Fatalf("self approval: status=%d body=%s, want 403 %s", code, raw, api.CodeReleaseApprovalSelf)
+		}
+		if own := og.waitApproval(t, candidate.ID, time.Minute, api.ReleaseApprovalStateWaiting); own.Approvals != 0 {
+			t.Fatalf("after the refused self approval = %+v, want no approvals counted", own)
 		}
 		approvedAt := time.Now()
 		og.mustStatus(t, approverKey, http.MethodPost, "/v1/deployments/"+candidate.ID+"/approvals",
