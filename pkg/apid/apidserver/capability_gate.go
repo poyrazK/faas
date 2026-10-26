@@ -77,7 +77,7 @@ func (s *server) capabilityAllowedFor(r *http.Request, acct state.Account) bool 
 // deploymentBodyCapabilityAllowed decides POST /v1/apps/{slug}/deployments by
 // its body: the route belongs to the core apps capability, a multipart
 // source upload to source-deploy and an image deployment to
-// container-deployments (ADR-20261026120000). Either kill switch hides only
+// container-deployments (ADR-20261026152731). Either kill switch hides only
 // its own kind of deploy, before the app is resolved.
 func (s *server) deploymentBodyCapabilityAllowed(r *http.Request, acct state.Account) bool {
 	if s.capGate == nil {

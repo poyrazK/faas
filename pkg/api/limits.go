@@ -2383,7 +2383,7 @@ const (
 	// build log after its last write; `deploys retry` relies on the archive
 	// for this long. It matches builderd's default source_max_age for the
 	// object-store copy. Nothing an in-flight deployment still needs is
-	// removed, whatever its age (ADR-20261026120000).
+	// removed, whatever its age (ADR-20261026152731).
 	SourceSpoolRetention = 24 * time.Hour
 	// SourceSpoolSweepInterval is the cadence of the spool sweeper on the
 	// apid, builderd and githubd hosts.

@@ -576,7 +576,7 @@ func TestPackDirToTarGz_ExcludesLinkedWorktreeGitFile(t *testing.T) {
 	}
 }
 
-// An in-tree symlink is packed as its target (ADR-20261026120000); one that
+// An in-tree symlink is packed as its target (ADR-20261026152731); one that
 // leaves the source directory is still refused.
 func TestPackDirToTarGz_RejectsEscapingSymlink(t *testing.T) {
 	if runtime.GOOS == "windows" {

@@ -299,7 +299,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// gitfetch temp dir hoisted at line 123-127; both
 	// producers share the operator-controlled dir tree.
 	webhookSvc.WorkDir = workDir
-	// ADR-20261026120000: each push stages a full repository archive under
+	// ADR-20261026152731: each push stages a full repository archive under
 	// build-sources/<account>/<app>/<commit>; expire them like apid's spool.
 	go sourcespool.Sweeper{Root: filepath.Join(workDir, "build-sources"), Layout: sourcespool.GithubdStaging,
 		Store: store, MaxAge: api.SourceSpoolRetention, Log: log}.Run(ctx, api.SourceSpoolSweepInterval)

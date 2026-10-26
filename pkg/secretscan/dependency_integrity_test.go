@@ -19,7 +19,7 @@ func TestNpmIntegrityDoesNotHideCredentials(t *testing.T) {
 	}{
 		{"checksum", "package-lock.json", integrity, "", 0},
 		{"shrinkwrap", "npm-shrinkwrap.json", integrity, "", 0},
-		// ADR-20261026120000: an SRI digest is public in every file.
+		// ADR-20261026152731: an SRI digest is public in every file.
 		{"ordinary source", "source.json", integrity, "", 0},
 		{"not a checksum", "package-lock.json", token, "", 1},
 		{"credential in lock", "package-lock.json", integrity, `,"token":"` + token + `"`, 1},

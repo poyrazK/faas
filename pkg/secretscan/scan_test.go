@@ -379,7 +379,7 @@ func TestSeverityString(t *testing.T) {
 	}
 }
 
-// TestBlockingKeepsCredentialFormatsOnly pins ADR-20261026120000: servers
+// TestBlockingKeepsCredentialFormatsOnly pins ADR-20261026152731: servers
 // refuse source only for High findings; heuristics stay advisory.
 func TestBlockingKeepsCredentialFormatsOnly(t *testing.T) {
 	findings := []Finding{

@@ -71,7 +71,7 @@ func (s Severity) String() string {
 // Blocking returns the findings that refuse a deploy: High severity, the
 // known credential formats and private keys. Medium findings are heuristics
 // (high_entropy) or sandbox credentials (stripe_test); servers record them
-// as advisory instead of refusing the source (ADR-20261026120000).
+// as advisory instead of refusing the source (ADR-20261026152731).
 func Blocking(findings []Finding) []Finding {
 	var out []Finding
 	for _, f := range findings {

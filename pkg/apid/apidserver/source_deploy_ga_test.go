@@ -13,7 +13,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-// Accept-time source policy for GA (ADR-20261026120000).
+// Accept-time source policy for GA (ADR-20261026152731).
 
 func writeSourceArchive(t *testing.T, files map[string]string) string {
 	t.Helper()

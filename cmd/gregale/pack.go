@@ -308,7 +308,7 @@ func shouldExclude(relSlashPath string, isDir bool, patterns []gregaleignorePatt
 // buildOutputDirs are the default-excluded directories that hold build
 // output. A Dockerfile build commonly COPYs them (`COPY target/*.jar`,
 // `COPY dist/ ...`), so they ship by default when the source builds with a
-// Dockerfile (ADR-20261026120000).
+// Dockerfile (ADR-20261026152731).
 var buildOutputDirs = map[string]bool{"dist": true, ".next": true, "coverage": true, "target": true, ".cache": true}
 
 // packRules is the complete file-selection policy for one packed root.
@@ -326,7 +326,7 @@ type packRules struct {
 // exclude applies, in order: .git (always excluded, cannot be re-included);
 // the default exclusions; then every pattern, the last match deciding, so a
 // negated line such as `!dist/` re-includes a default-excluded directory.
-// Before ADR-20261026120000 the defaults could not be overridden at all.
+// Before ADR-20261026152731 the defaults could not be overridden at all.
 func (r packRules) exclude(rel string, isDir bool) bool {
 	base := rel
 	if i := strings.LastIndex(rel, "/"); i >= 0 {
@@ -883,7 +883,7 @@ func packDirToTarGzFlat(srcDir, destPath string, capMB int, envOverride map[stri
 // the archive and never materialized in the customer's source directory.
 // dockerfile selects the Dockerfile file-selection defaults (packRules).
 //
-// Two limits apply, the ones apid enforces (ADR-20261026120000): the packed
+// Two limits apply, the ones apid enforces (ADR-20261026152731): the packed
 // (compressed) archive may not exceed capMB, the plan's upload limit, and the
 // expanded source may not exceed api.SourceArchiveMaxExpandedBytes. Before,
 // the plan limit was applied to the uncompressed bytes, refusing sources the
@@ -1105,7 +1105,7 @@ type packEntry struct {
 
 // collectPackEntries walks dir, whose archive path is rel ("" at the root).
 // A symlink inside the source tree is packed as the file or directory it
-// points to, because apid accepts regular files only (ADR-20261026120000);
+// points to, because apid accepts regular files only (ADR-20261026152731);
 // one that leaves the tree, dangles or loops is an error naming the fix.
 func collectPackEntries(root, dir, rel string, rules packRules, extra map[string]bool, out *[]packEntry, depth int) error {
 	return filepath.WalkDir(dir, func(p string, d os.DirEntry, werr error) error {

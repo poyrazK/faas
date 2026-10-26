@@ -1,5 +1,5 @@
 // Package sourcespool removes deployment source archives and build logs from
-// a host's build spool once no deployment can need them (ADR-20261026120000).
+// a host's build spool once no deployment can need them (ADR-20261026152731).
 // Before it, every source deploy left its archive (up to the plan's source
 // cap) and its build-log directory on the apid host, the builder host and,
 // for pushes, the githubd host for good.

@@ -274,7 +274,7 @@ func TestScanFile_ValidatorBundleScansDecodedSources(t *testing.T) {
 	}
 }
 
-// TestScanFile_SRIDigestsArePublic pins ADR-20261026120000: a Subresource
+// TestScanFile_SRIDigestsArePublic pins ADR-20261026152731: a Subresource
 // Integrity attribute (the usual CDN <script> snippet) is a checksum of a
 // public file, not a credential.
 func TestScanFile_SRIDigestsArePublic(t *testing.T) {

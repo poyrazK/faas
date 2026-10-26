@@ -1457,7 +1457,7 @@ type Manifest struct {
 	SchemaVersion int                   `yaml:"schema_version,omitempty"`
 	Hosting       *hostingconfig.Config `yaml:"hosting,omitempty"`
 	// Build selects and parameterizes a Dockerfile build for a source
-	// deploy (ADR-20261026120000).
+	// deploy (ADR-20261026152731).
 	Build    *BuildConfig    `yaml:"build,omitempty"`
 	Dev      *DevConfig      `yaml:"dev,omitempty"`
 	Function *FunctionConfig `yaml:"function,omitempty"`

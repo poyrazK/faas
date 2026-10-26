@@ -10,7 +10,7 @@ import (
 
 // BuildConfig is the `build:` section of gregale.yaml: the Dockerfile build
 // options a Compose service's build: takes, for a single-app source deploy
-// (ADR-20261026120000). Declaring it makes the deploy a Dockerfile build.
+// (ADR-20261026152731). Declaring it makes the deploy a Dockerfile build.
 //
 //	build:
 //	  dockerfile: docker/Dockerfile.prod   # relative to the source root

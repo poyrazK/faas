@@ -821,7 +821,7 @@ func escapesArchiveRoot(p string) bool {
 //     of the Dockerfile so a multi-MB heredoc can't pin apid.
 //  2. Reject a database-store file (by name or SQLite signature) under a
 //     source-root-level data/ or db/ directory (pkg/statelessshape,
-//     ADR-20261026120000). Migrations, schemas and seed files in those
+//     ADR-20261026152731). Migrations, schemas and seed files in those
 //     directories are ordinary source. Short-circuits the scan: as soon
 //     as the offending entry is observed, the loop returns without
 //     reading the rest of the tarball.

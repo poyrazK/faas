@@ -1,7 +1,7 @@
 # Source deploys: GA release notes
 
 These notes cover the customer-visible changes in
-[ADR-20261026120000](adr/20261026120000-source-deploy-ga-hardening.md) and
+[ADR-20261026152731](adr/20261026152731-source-deploy-ga-hardening.md) and
 the Dockerfile `HEALTHCHECK` enforcement of
 [ADR-20261024100000](adr/20261024100000-dockerfile-healthcheck-enforced.md).
 Publish them with the release that ships both. The customer reference is
