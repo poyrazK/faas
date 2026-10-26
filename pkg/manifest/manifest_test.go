@@ -403,12 +403,13 @@ func TestValidate_DomainLayout(t *testing.T) {
 		layout string
 		want   string
 	}{
-		"split":           {"  platform_domain: gregale.dev\n  deploy_domain: gregale.app\n  apps_domain_aliases: [gregale.dev]\n  apps_domain_alias_mode: redirect\n", ""},
-		"bad mode":        {"  apps_domain_alias_mode: bounce\n", "dns"},
-		"bad platform":    {"  platform_domain: -nope\n", "dns"},
-		"nested alias":    {"  apps_domain_aliases: [x.apps.gregale.dev]\n", "dns"},
-		"alias is apps":   {"  apps_domain_aliases: [apps.gregale.dev]\n", "dns"},
-		"no layout field": {"", ""},
+		"split":            {"  platform_domain: gregale.dev\n  deploy_domain: gregale.app\n  apps_domain_aliases: [old.example]\n  apps_domain_alias_mode: redirect\n", ""},
+		"alias nests apps": {"  apps_domain_aliases: [gregale.dev]\n", "dns"},
+		"bad mode":         {"  apps_domain_alias_mode: bounce\n", "dns"},
+		"bad platform":     {"  platform_domain: -nope\n", "dns"},
+		"nested alias":     {"  apps_domain_aliases: [x.apps.gregale.dev]\n", "dns"},
+		"alias is apps":    {"  apps_domain_aliases: [apps.gregale.dev]\n", "dns"},
+		"no layout field":  {"", ""},
 	} {
 		t.Run(name, func(t *testing.T) {
 			s := strings.Replace(validManifest, "  apps_domain: apps.gregale.dev\n", "  apps_domain: apps.gregale.dev\n"+tc.layout, 1)

@@ -168,8 +168,8 @@
       {% endif %}
       {% if faas_public_edge_platform_tls | default(true) | bool %}
       {% set faas_public_edge_sites = [[faas_public_edge_domain, faas_public_edge_cert, faas_public_edge_key]] %}
-      {% for domain in faas_public_edge_extra_domains %}
-      {% set _ = faas_public_edge_sites.append([domain, faas_public_edge_tls_dir ~ '/cloudflare-origin-' ~ domain ~ '.pem', faas_public_edge_tls_dir ~ '/cloudflare-origin-' ~ domain ~ '.key']) %}
+      {% for domain in faas_public_edge_extra_domains | default([]) %}
+      {% set _ = faas_public_edge_sites.append([domain, (faas_public_edge_tls_dir | default('/etc/caddy/tls')) ~ '/cloudflare-origin-' ~ domain ~ '.pem', (faas_public_edge_tls_dir | default('/etc/caddy/tls')) ~ '/cloudflare-origin-' ~ domain ~ '.key']) %}
       {% endfor %}
       {% for site in faas_public_edge_sites %}
       {{ site[0] }}, *.{{ site[0] }} {
