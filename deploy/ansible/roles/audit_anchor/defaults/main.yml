@@ -1,0 +1,14 @@
+---
+# ADR-20261026163015: audit log tamper evidence on the control plane
+# (docs/runbooks/AuditLogAnchors.md).
+
+faas_audit_anchor_enabled: true
+faas_audit_anchor_gregalectl: /usr/local/bin/gregalectl
+# DATABASE_URL, and FAAS_AUDIT_HMAC_KEY when apid takes its key from there;
+# otherwise gregalectl reads /var/lib/faas/audit-hmac.key as apid does.
+faas_audit_anchor_db_env: /etc/faas/sealed.env
+faas_audit_anchor_textfile_dir: /var/lib/node_exporter/textfile_collector
+
+# Seal every 15 minutes; verify the whole chain daily.
+faas_audit_anchor_schedule: "*:0/15"
+faas_audit_verify_schedule: "*-*-* 05:10:00"

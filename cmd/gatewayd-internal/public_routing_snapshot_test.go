@@ -269,6 +269,10 @@ func (cachedRoutingReader) PublicHostPinAllowed(context.Context, string, string,
 	return false, nil
 }
 
+func (r cachedRoutingReader) PublicSmokeCandidateAllowed(_ context.Context, _, deployment string) (bool, error) {
+	return deployment == r.deployment, nil
+}
+
 // A host resolved from the route cache (the production default) carries no
 // host-policy snapshot. Requiring one refused every public request with
 // traffic_policy_unavailable; only the authoritative mode re-verifies it.
@@ -282,6 +286,79 @@ func TestPublicRoutingPinnerVerifiesHostPolicyOnlyWhenAuthoritative(t *testing.T
 	}
 	if _, err := publicRoutingPinnerFor(cachedRoutingStore{deployment}, false)(t.Context(), app, inputs); err == nil {
 		t.Fatal("authoritative host policy accepted an app without a host-policy snapshot")
+	}
+}
+
+// imaged's hosting smoke verifies a candidate before MarkDeploymentLive, on
+// the app's own host. rc.296 checked it as a host pin (live, in the host's
+// scope) and refused every smoke with traffic_policy_unavailable, so a
+// redeploy of a live app could not pass its required smoke.
+func TestPublicRoutingSnapshotPostgresAdmitsHostingSmokeCandidate(t *testing.T) {
+	f := newPublicRoutingPGFixture(t)
+	current := f.deployment(t, "production", "sha256:current")
+	candidate := func(scope, digest string) state.Deployment {
+		t.Helper()
+		deployment, err := f.store.CreateDeployment(t.Context(), state.Deployment{AppID: f.app.ID, Kind: state.DeploymentKindImage,
+			Scope: scope, ImageDigest: digest, Status: state.DeployPending})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := f.pool.Exec(t.Context(), `UPDATE deployments SET status='snapshotting' WHERE id=$1`, deployment.ID); err != nil {
+			t.Fatal(err)
+		}
+		return deployment
+	}
+	production, staging := candidate("production", "sha256:candidate"), candidate("staging", "sha256:staging")
+	failed, deleted := candidate("production", "sha256:failed"), candidate("production", "sha256:deleted")
+	if _, err := f.pool.Exec(t.Context(), `UPDATE deployments SET status='failed' WHERE id=$1`, failed.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.pool.Exec(t.Context(), `UPDATE deployments SET deleted_at=now() WHERE id=$1`, deleted.ID); err != nil {
+		t.Fatal(err)
+	}
+	other := f
+	other.app = f.sourceApp(t, "public-routing-other", f.app.AccountID)
+	foreign := other.deployment(t, "production", "sha256:foreign")
+	app := f.routingApp()
+	pin := publicRoutingPinnerFor(f.store, true)
+	for _, tc := range []struct {
+		name, deployment string
+		smoke, want      bool
+	}{
+		{"snapshotting candidate", production.ID, true, true},
+		{"live deployment", current.ID, true, true},
+		{"candidate in another environment", staging.ID, true, true},
+		{"failed candidate", failed.ID, true, false},
+		{"deleted candidate", deleted.ID, true, false},
+		{"another app's deployment", foreign.ID, true, false},
+		{"missing deployment", uuid.NewString(), true, false},
+		// A deployment host pin (preview hostname) still reaches only live deployments.
+		{"host pin to a candidate", production.ID, false, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			// pkg/gateway publicRoutingInputs: a smoke pins the deployment in app.Scope.
+			inputs := gateway.PublicRoutingInputs{Valid: true, Scope: "production", HostDeploymentID: tc.deployment, HostScope: app.Scope, Smoke: tc.smoke}
+			snapshot, err := pin(t.Context(), app, inputs)
+			if err != nil || !snapshot.HostChecked || snapshot.HostAllowed != tc.want || snapshot.HostDeploymentID != tc.deployment {
+				t.Fatalf("smoke verdict: %+v %v; want allowed=%v", snapshot, err, tc.want)
+			}
+		})
+	}
+	if f.pool.Stat().AcquiredConns() != 0 {
+		t.Fatal("public routing retained a transaction")
+	}
+}
+
+func TestPublicRoutingPinnerChecksSmokeAsCandidate(t *testing.T) {
+	deployment := uuid.NewString()
+	app := gateway.App{ID: uuid.NewString(), AccountID: uuid.NewString()}
+	pin := publicRoutingPinnerFor(cachedRoutingStore{deployment}, true)
+	for _, smoke := range []bool{true, false} {
+		inputs := gateway.PublicRoutingInputs{Valid: true, Scope: "production", HostDeploymentID: deployment, Smoke: smoke}
+		snapshot, err := pin(t.Context(), app, inputs)
+		if err != nil || !snapshot.HostChecked || snapshot.HostAllowed != smoke {
+			t.Fatalf("smoke=%v: snapshot=%+v err=%v; want allowed=%v", smoke, snapshot, err, smoke)
+		}
 	}
 }
 

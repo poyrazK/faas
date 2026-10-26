@@ -82849,6 +82849,29 @@ func (q *Queries) ReadPublicRoutingRevision(ctx context.Context, db DBTX, arg Re
 	return allowed, err
 }
 
+const readPublicRoutingSmokeCandidate = `-- name: ReadPublicRoutingSmokeCandidate :one
+SELECT EXISTS (
+    SELECT 1 FROM deployments WHERE id = $1::uuid AND app_id = $2::uuid
+      AND status IN ('snapshotting', 'live') AND deleted_at IS NULL
+)::boolean AS allowed
+`
+
+type ReadPublicRoutingSmokeCandidateParams struct {
+	DeploymentID pgtype.UUID
+	AppID        pgtype.UUID
+}
+
+// imaged's hosting smoke verifies a candidate before MarkDeploymentLive, so
+// the candidate is still snapshotting. The smoke always uses the app's own
+// host, whatever the candidate's environment, so no scope applies; the smoke
+// challenge already binds the app and deployment.
+func (q *Queries) ReadPublicRoutingSmokeCandidate(ctx context.Context, db DBTX, arg ReadPublicRoutingSmokeCandidateParams) (bool, error) {
+	row := db.QueryRow(ctx, readPublicRoutingSmokeCandidate, arg.DeploymentID, arg.AppID)
+	var allowed bool
+	err := row.Scan(&allowed)
+	return allowed, err
+}
+
 const readPublicRoutingWeights = `-- name: ReadPublicRoutingWeights :many
 SELECT id, traffic_percent FROM deployments
 WHERE app_id = $1::uuid AND scope = $2::text AND status = 'live' AND deleted_at IS NULL AND traffic_percent > 0

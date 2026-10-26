@@ -44,6 +44,11 @@ func publicRoutingPinner(store state.PublicRoutingSnapshotStore, verifyHostPolic
 			if inputs.HostDeploymentID != "" {
 				result.HostChecked = true
 				var err error
+				if inputs.Smoke {
+					// The candidate is not live yet, and its scope need not be the host's.
+					result.HostAllowed, err = reader.PublicSmokeCandidateAllowed(ctx, app.ID, inputs.HostDeploymentID)
+					return err
+				}
 				result.HostAllowed, err = reader.PublicHostPinAllowed(ctx, app.ID, inputs.HostScope, inputs.HostDeploymentID)
 				return err
 			}

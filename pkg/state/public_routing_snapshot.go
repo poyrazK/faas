@@ -18,6 +18,7 @@ type PublicRoutingPolicyReader interface {
 	ResolvePublicProjectRelease(context.Context, string, string, string) (string, string, error)
 	PublicRevisionAllowed(context.Context, string, string, string) (bool, error)
 	PublicHostPinAllowed(context.Context, string, string, string) (bool, error)
+	PublicSmokeCandidateAllowed(context.Context, string, string) (bool, error)
 }
 
 type PublicRoutingSnapshotStore interface {
@@ -116,4 +117,11 @@ func (s servicePolicyReader) PublicRevisionAllowed(ctx context.Context, app, sco
 func (s servicePolicyReader) PublicHostPinAllowed(ctx context.Context, app, scope, deployment string) (bool, error) {
 	return sqlc.New().ReadPublicRoutingHostPin(ctx, s.tx, sqlc.ReadPublicRoutingHostPinParams{
 		AppID: uuidToPgtype(app), Scope: normalizedDeploymentScope(scope), DeploymentID: uuidToPgtype(deployment)})
+}
+
+// PublicSmokeCandidateAllowed reports whether a hosting smoke may reach the
+// deployment: the app's own snapshotting candidate, or a live deployment.
+func (s servicePolicyReader) PublicSmokeCandidateAllowed(ctx context.Context, app, deployment string) (bool, error) {
+	return sqlc.New().ReadPublicRoutingSmokeCandidate(ctx, s.tx, sqlc.ReadPublicRoutingSmokeCandidateParams{
+		AppID: uuidToPgtype(app), DeploymentID: uuidToPgtype(deployment)})
 }
