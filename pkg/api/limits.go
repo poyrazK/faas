@@ -14105,6 +14105,18 @@ const (
 	LogSavedSearchesPerApp = 25
 )
 
+// Log reads in flight. Each ledger read holds one of an apid's database
+// connections for up to LogSearchStatementTimeout, so an apid runs at most
+// LogReadsInFlightPerAccount of one account's log reads (searches, facets,
+// log widgets, log pages, trace lookups) at once and LogReadsInFlightMax in
+// all, leaving the rest of its pool to every other request. A read that
+// finds no slot within LogReadSlotWait is refused as busy (429).
+const (
+	LogReadsInFlightPerAccount = 2
+	LogReadsInFlightMax        = 4
+	LogReadSlotWait            = 2 * time.Second
+)
+
 // Alert log context (ADR-20261022172052): a firing app alert reads the log
 // ledger over its window (capped at the text search bound) and the deploys
 // of the hour before it.
