@@ -486,6 +486,15 @@ func traceMatchBreakdown(match api.AccountTraceMatch) string {
 	}
 	wakeMS := 0
 	switch {
+	case match.Wake != nil && match.Wake.Thawed:
+		// A thaw resumes a frozen instance under its original wake ID; the
+		// original boot is not what this request waited for (H12-49).
+		wakeMS = int(match.Wake.ThawMS)
+		thaw := "resumed a frozen instance"
+		if wakeMS > 0 {
+			thaw += fmt.Sprintf(" in %d ms", wakeMS)
+		}
+		parts = append(parts, fmt.Sprintf("%s (wake %s)", thaw, match.Wake.WakeID))
 	case match.Wake != nil && match.Wake.ReadyInMS > 0:
 		wakeMS = int(match.Wake.ReadyInMS)
 		how := "woke"
