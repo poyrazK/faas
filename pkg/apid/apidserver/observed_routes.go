@@ -174,8 +174,9 @@ func (s *server) collectFleetObservedRoutes(ctx context.Context, appID string) o
 	defer cancel()
 	// Gateways drop an idle app's per-route series (ADR-20261024154324), so
 	// look back over the observed window rather than at current series only.
-	routeQuery := fmt.Sprintf(`max by (node_id, route) (last_over_time(gateway_requests_by_route_total{app=%s}[%ds]))`,
-		strconv.Quote(appID), int(api.RouteMetricsObservedWindow.Seconds()))
+	// Only answers that prove the route exists count (api.RouteDiscoverableStatus).
+	routeQuery := fmt.Sprintf(`max by (node_id, route) (last_over_time(gateway_requests_by_route_total{app=%s,code=~%s}[%ds]))`,
+		strconv.Quote(appID), strconv.Quote(api.RouteDiscoverableCodeRegex), int(api.RouteMetricsObservedWindow.Seconds()))
 	healthQuery := `max by (node_id) (up{job="gatewayd-internal"})`
 
 	var routeSamples, healthSamples []promql.VectorSample
