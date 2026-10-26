@@ -273,3 +273,64 @@ func TestUsageCollectorRunsTheCapEnforcerAfterEverySweep(t *testing.T) {
 		t.Fatalf("after-sweep hook ran %d times; want 1", sweeps)
 	}
 }
+
+// capSubjectTestStore pools by an explicit subject map, as the catalog's
+// managed_postgres_usage_subject does for organizations that own resources.
+type capSubjectTestStore struct {
+	*capTestStore
+	subjects map[string]string
+}
+
+func (s *capSubjectTestStore) UsageSubjects(_ context.Context, ids []string) (map[string]string, error) {
+	out := map[string]string{}
+	for _, id := range ids {
+		if subject, ok := s.subjects[id]; ok {
+			out[id] = subject
+		}
+	}
+	return out, nil
+}
+
+func TestCapEnforcerPoolsAnOrganizationAcrossNamespaces(t *testing.T) {
+	now := time.Date(2026, 10, 25, 12, 0, 0, 0, time.UTC)
+	month := time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)
+	provider := &capTestProvider{
+		fakeProvider: &fakeProvider{capabilities: testCapabilities()},
+		observed: map[string]ComputeCapObservation{
+			"proj-1": {Scope: "1", PeriodStart: month, UsedUnitSeconds: 6000},
+			"proj-2": {Scope: "2", PeriodStart: month, UsedUnitSeconds: 8000},
+		},
+		set: map[string]int64{},
+	}
+	registry := testRegistry(t, provider, nil)
+	backend, err := registry.Default("us-east-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	database := func(id, namespace, resource string) Database {
+		return Database{ID: id, AccountID: namespace, OrgID: "org", BackendID: backend.ID, BackendFingerprint: backend.Fingerprint, ProviderResourceID: resource, State: StateReady}
+	}
+	store := &capSubjectTestStore{
+		capTestStore: &capTestStore{databases: []Database{database("db-1", "ns-1", "proj-1"), database("db-2", "ns-2", "proj-2")}},
+		subjects:     map[string]string{"db-1": "org", "db-2": "org"},
+	}
+	var asked []string
+	enforcer, err := NewCapEnforcer(registry, store, CapEnforcerOptions{
+		Mode: CapEnforcementShadow, Now: func() time.Time { return now },
+		Ceiling: func(_ context.Context, subject string) (int64, error) {
+			asked = append(asked, subject)
+			return 18000, nil
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	summary, err := enforcer.Enforce(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	// One ceiling lookup and one pool for the organization, not one per namespace.
+	if len(asked) != 1 || asked[0] != "org" || summary.Accounts != 1 || summary.ScopesShadowed != 2 {
+		t.Fatalf("ceilings asked for %v, summary %+v; want one org pool", asked, summary)
+	}
+}

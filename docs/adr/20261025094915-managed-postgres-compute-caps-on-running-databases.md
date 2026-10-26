@@ -194,8 +194,14 @@ Each step is its own PR, in this order:
    - the usage fields and `compute_cap_state`;
    - the warning emails and `suspended_at`;
    - the `FaasManagedPostgresCapEnforcementStale` alert.
-4. The `postgres-overage` capability: migration, API, CLI and dashboard, at
-   maturity `internal`.
+4. The `postgres-overage` capability, at maturity `internal`, in two PRs:
+   - the migration, the API, and the doubled ceiling in the cap sweep,
+     admission and usage view;
+   - the hidden CLI command and the dashboard toggle.
+
+   The first also pools the cap sweep by `managed_postgres_usage_subject`, so an
+   organization that owns resources is one pool. It is keyed by the subject
+   the ledger uses, not by each namespace.
 5. The staging qualification probe for decision 10, then an operator step:
    `on` in staging, then in production, after a shadow week whose logged
    quotas match the ledger.

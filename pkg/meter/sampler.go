@@ -538,6 +538,7 @@ func (s *Sampler) rollApps(ctx context.Context, observedAt, minute time.Time, ex
 			planByAccount[a.ID] = a.Plan
 		}
 	}
+	floorHeld := newFloorHolders(s.store)
 	instancesByApp, err := s.billingWindowInstances(ctx, minute)
 	if err != nil {
 		return nil, err
@@ -737,10 +738,13 @@ func (s *Sampler) rollApps(ctx context.Context, observedAt, minute time.Time, ex
 		// may an explicitly parked (evicted_cold) app: schedd leaves it parked
 		// and does not hold its floor (H5-54), so ADR-060's "schedd cannot
 		// provide the configured capacity" applies. Its real instances above
-		// stay billable.
-		if !app.FloorServed() {
+		// stay billable. Nor may an app of a suspended, abuse-held or deleting
+		// account: schedd parks or evicts all of them, so a reinstated account
+		// would otherwise be billed for floor capacity it never had (H16-5).
+		if !app.FloorServed() || !floorHeld.forApp(ctx, app) {
 			continue
 		}
+		subject := meterAppSubject(app, planByAccount)
 		// A strict app budget preempts the capacity floor. The retained book
 		// waives synthetic charges for its UTC month, including catch-up after
 		// policy deletion; only funded physical residency remains billable.
@@ -864,16 +868,19 @@ func (s *Sampler) rollApps(ctx context.Context, observedAt, minute time.Time, ex
 				// mb_seconds is non-zero. Synthetic floors do not
 				// have live instances draining waitUntil tasks, so
 				// tail_seconds is 0 by construction.
-				if err := s.store.AppendUsage(ctx, app.AccountID, app.ID, instanceID, minute, mb, 0, 0, 0, 0, 0, 0, 0); err != nil {
+				// The billing subject, like live rows: a company app's floor is
+				// the company's, and the row's plan labels the metered metric.
+				if err := s.store.AppendUsage(ctx, subject, app.ID, instanceID, minute, mb, 0, 0, 0, 0, 0, 0, 0); err != nil {
 					return out, err
 				}
 				out = append(out, RolledRow{
 					InstanceID:     instanceID,
 					AppID:          app.ID,
-					AccountID:      app.AccountID,
+					AccountID:      subject,
 					Minute:         minute,
 					AdmissionMB:    billable,
 					MBSeconds:      mb,
+					Plan:           string(planByAccount[subject]),
 					SyntheticFloor: true,
 				})
 			}

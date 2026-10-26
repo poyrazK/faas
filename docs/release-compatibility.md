@@ -118,8 +118,11 @@ rc.295 gatewayd-public required ADR-570's `X-Faas-Traffic-Security` snapshot,
 which rc.294 compute gateways never stamp. Every successful application
 response became a 503 from 10:39 to 12:14 UTC. The public edge now
 requires the snapshot only once every compute gateway it may dial reports the
-wiring (ADR-570, amendment of 2026-10-26).
-`TestPublicTrafficSecurityFollowsItsPeers` and
+wiring (ADR-570, amendment of 2026-10-26). A changed marker counts as well.
+rc.295 started recognising streams by a new session header, and without a
+fallback an SSE answer from an rc.294 node would have been cut at the request
+budget. `TestPublicTrafficSecurityFollowsItsPeers`,
+`TestPublicTrafficSecurityKeepsN1StreamsOpen` and
 `TestPublicProxyServesAPlainN1Answer` (`pkg/gateway`) hold the public hop to
 this. A new header requirement needs the same fleet gate or an opt-in
 negotiation, plus a case in those tests.

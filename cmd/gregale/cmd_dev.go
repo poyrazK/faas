@@ -552,7 +552,10 @@ func cmdDev(args []string) int {
 	}
 	if group != "" {
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-		err := joinDevGroup(ctx, client, group, project, session.App.Slug, osStderr)
+		err := joinDevGroup(ctx, client, group, devGroupService(project), project, session.App.Slug, osStderr)
+		if err == nil {
+			setDevGroupServiceConfig(ctx, client, session.App.Slug, devGroupDepends(), osStderr)
+		}
 		cancel()
 		if err != nil {
 			return printErr("Could not connect to the other developer environments", err)
