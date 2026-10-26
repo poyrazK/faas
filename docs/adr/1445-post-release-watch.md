@@ -1,6 +1,6 @@
 # ADR-1445 · Post-release watch
 
-- **Status:** proposed; verified on n2 2026-10-17 (safe-release drill post-release case)
+- **Status:** accepted (shipped in PR 4872, 2026-10-18); verified on n2 2026-10-17 (safe-release drill post-release case)
 - **Date:** 2026-10-17
 - **Amends:** [ADR-625](625-first-wake-5xx-rollback-from-request-telemetry.md) (automatic rollback after a release completes), [ADR-1446](1446-safe-releases-by-default.md) (rollback triggers)
 - **Follows:** [ADR-1447](1447-explained-rollout-decisions.md) (explained decisions), [ADR-1448](1448-releases-that-change-the-database.md) (automation never crosses a release)
