@@ -40,10 +40,23 @@ type publicTrafficSecurity struct {
 	registry *trafficrevocation.Registry
 	cancel   context.CancelCauseFunc
 	release  func()
+	// required is false while a compute gateway behind this edge predates
+	// the snapshot header (release N-1), so its unstamped answers pass.
+	required bool
 }
 
 func (p *InternalReverseProxy) WithTrafficRevocations(registry *trafficrevocation.Registry) *InternalReverseProxy {
 	p.trafficRevocations = registry
+	return p
+}
+
+// WithTrafficSecurityPeers makes the snapshot header mandatory only while
+// required reports that every compute gateway stamps it. Release N of the
+// public edge runs beside N-1 compute gateways during a rollout
+// (docs/release-compatibility.md); refusing their unstamped answers turned
+// every successful response into a 503 (2026-10-26, rc.295).
+func (p *InternalReverseProxy) WithTrafficSecurityPeers(required func() bool) *InternalReverseProxy {
+	p.trafficSecurityRequired = required
 	return p
 }
 
@@ -52,7 +65,8 @@ func (p *InternalReverseProxy) publicTrafficContext(parent context.Context) (con
 		return parent, func() {}
 	}
 	ctx, cancel := reqbudget.WithCancellationFence(parent)
-	owner := &publicTrafficSecurity{registry: p.trafficRevocations, cancel: cancel}
+	required := p.trafficSecurityRequired == nil || p.trafficSecurityRequired()
+	owner := &publicTrafficSecurity{registry: p.trafficRevocations, cancel: cancel, required: required}
 	ctx = context.WithValue(ctx, publicTrafficSecurityKey{}, owner)
 	return ctx, func() {
 		if owner.release != nil {
@@ -70,6 +84,9 @@ func bindPublicTrafficSecurity(r *http.Request, resp *http.Response) error {
 	owner, _ := r.Context().Value(publicTrafficSecurityKey{}).(*publicTrafficSecurity)
 	if owner == nil {
 		return nil
+	}
+	if len(values) == 0 && !owner.required {
+		return nil // An N-1 compute gateway stamps nothing; the edge behaves as N-1 did.
 	}
 	if len(values) == 0 && resp.StatusCode >= http.StatusBadRequest && !isLongLivedResponse(resp.StatusCode, resp.Header) {
 		return nil // No owner exists for a pre-admission platform error.

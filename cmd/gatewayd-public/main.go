@@ -291,6 +291,10 @@ func run(ctx context.Context, log *slog.Logger) error {
 	// nothing else, so a store change elsewhere does not change this
 	// daemon (docs/adr/20261021092138-edge-store-blast-radius.md).
 	pgStore := state.NewEdgeStore(pool)
+	// Require compute gateways' traffic security snapshots only once every
+	// serving gateway stamps them; N-1 gateways do not (ADR-570).
+	trafficSecurityPeers := newTrafficSecurityPeers(ctx, pgStore, log)
+	go trafficSecurityPeers.run(ctx)
 	tcpMetrics := tcpmetrics.New(prometheus.NewRegistry(), "gatewayd_public")
 	tcpStop, tcpDrain, err := startTCPIngress(ctx, log, pgStore, tcpMetrics)
 	if err != nil {
@@ -438,7 +442,8 @@ func run(ctx context.Context, log *slog.Logger) error {
 		internalURL,
 		log,
 		h2cEnabled,
-	).WithTrustedIngressCIDRs(trustedIngressCIDRs).WithTrafficRevocations(trafficRevocations)
+	).WithTrustedIngressCIDRs(trustedIngressCIDRs).WithTrafficRevocations(trafficRevocations).
+		WithTrafficSecurityPeers(trafficSecurityPeers.Required)
 	// A dynamic dialer selects a different compute node per request. Do not
 	// let the transport pool an idle connection under the single logical
 	// gatewayd URL, otherwise a drained node could keep receiving traffic.

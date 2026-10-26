@@ -1602,3 +1602,26 @@ guards. A non-read-committed admission writer locks that row FOR SHARE before
 the fence check: a retirement committed after its snapshot raises a
 serialization failure (the writer retries with a fresh snapshot), and one
 still in flight is waited for. Read-committed writers keep ADR-590's path.
+
+### Amendment: public enforcement waits for the compute fleet (2026-10-26)
+
+"Compute must be upgraded before public enforcement" was left to deploy order,
+and deploy order does not guarantee it: gatewayd-public runs on the control
+plane host and moves with the control-plane stage, before the compute
+gateways (docs/release-compatibility.md). On 2026-10-26 the rc.295
+control-plane stage put an enforcing public edge in front of rc.294 compute
+gateways, which never stamp `X-Faas-Traffic-Security`, and every successful
+application response became a 503 `traffic_revocation_unavailable`.
+
+The public edge now decides from the fleet's own runtime observations. It reads
+the serving compute gateway roster (the observation membership above) every
+observation interval. Missing metadata refuses a successful response only while
+every serving gateway has a fresh observation with security-fence wiring. While
+any gateway has no observation (an N-1 daemon), reports without the wiring, or
+has a stale report (a node rolled back stops reporting), the edge accepts
+unstamped answers as it did before this fence. Stamped answers are still
+verified and enrolled, and malformed or ambiguous metadata still refuses. An
+empty roster (an edge in front of its own same-release gateway) keeps
+enforcement on. The edge keeps its last decision when the roster cannot be
+read, and starts enforcing until its first successful read. Each change of
+decision is logged with the gateways that lack the wiring.
