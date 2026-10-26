@@ -67,6 +67,31 @@ you filter by level.
 Save filters you use often with `gregale logs views save NAME ...` and reuse
 them with `--view NAME`.
 
+## Reading a whole project
+
+`--project` reads the runtime logs of every service of a
+[project](multi-service-apps.md) together, each line prefixed with its
+service, as `docker compose logs` does:
+
+```sh
+gregale logs --project shop --follow
+gregale logs --project shop --service api,billing --since 15m --level error
+```
+
+```text
+[api] GET /orders 200
+[billing] charge ok order=1042
+```
+
+`--service` takes service names in either form (`billing_api` or
+`billing-api`). With `--follow`, a parked service is asked again every few
+seconds, so its lines appear once a call wakes it. Without `--follow`, each
+running service prints its recent lines and a parked service is named with
+the command that reads its retained logs. `--since`, `--grep` and `--level`
+apply to every service; `--json` adds a `service` field to each line. To
+follow one request across services, use `--trace` on the app that received it
+([ADR-20261026190244](adr/20261026190244-project-logs.md)).
+
 ## Reading one archived day
 
 To read one instance's archived lines for one UTC day:

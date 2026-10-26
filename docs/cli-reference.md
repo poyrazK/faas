@@ -14377,7 +14377,7 @@ Search an app&#39;s runtime logs and HTTP requests, or follow them
 
 See also: [`tail`](#tail).
 
-`gregale logs [<slug>] [--dry-run] [--view <NAME>] [--saved-view] [--clear-status] [--clear-grep] [--clear-level] [--clear-route] [--latest-failure] [--latest-request-error] [--interactive] [--follow] [--deployment <ID>] [--release <ID|vN>] [--source <SOURCE>] [--grep <SUBSTR>] [--since <15m|3d|RFC3339>] [--level <LEVEL>] [--status <100..599>] [--route <METHOD /path>] [--request <ID>] [--trace <TRACE_ID>] [--limit <N>] [--all] [--explain] [--archive] [--instance <ID>] [--date <DAY>]`
+`gregale logs [<slug>] [--dry-run] [--view <NAME>] [--saved-view] [--clear-status] [--clear-grep] [--clear-level] [--clear-route] [--latest-failure] [--latest-request-error] [--interactive] [--follow] [--deployment <ID>] [--release <ID|vN>] [--source <SOURCE>] [--grep <SUBSTR>] [--since <15m|3d|RFC3339>] [--level <LEVEL>] [--status <100..599>] [--route <METHOD /path>] [--request <ID>] [--trace <TRACE_ID>] [--project <SLUG>] [--service <NAME,...>] [--limit <N>] [--all] [--explain] [--archive] [--instance <ID>] [--date <DAY>]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -14402,6 +14402,8 @@ See also: [`tail`](#tail).
 | `--route <METHOD /path>` | only show HTTP requests for this route label |  |
 | `--request <ID>` | show one HTTP request by public request id or row id |  |
 | `--trace <TRACE_ID>` | show HTTP access logs correlated with a W3C trace id |  |
+| `--project <SLUG>` | read every service of a project together, each line prefixed with its service |  |
+| `--service <NAME,...>` | with --project, only these services |  |
 | `--limit <N>` | HTTP request page size (1..200) |  |
 | `--all` | read every retained HTTP request page |  |
 | `--explain` | summarize the last failure and common error patterns |  |
@@ -14414,6 +14416,7 @@ Examples:
 ```sh
 gregale logs my-api --interactive
 gregale logs my-api --follow
+gregale logs --project shop --follow
 gregale logs my-api --since 1h --level error
 gregale logs views save runtime-errors --since 1h --level error
 gregale logs my-api --view runtime-errors
