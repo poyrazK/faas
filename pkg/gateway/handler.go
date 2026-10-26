@@ -6272,9 +6272,10 @@ haveApp:
 	routeCarrier := ObservedRouteCarrierFrom(r.Context())
 	if set != nil || telemetryRouteSet != nil || h.requestAuditEnabled || h.apiDiscoveryEnabled || billingAttributed || jwtTenantPossible || routeCarrier != nil {
 		path := inferredObservedPath(r.URL.Path)
+		declared := false
 		if resolver, ok := h.declaredRoutes.(ObservedRouteResolver); ok {
 			if template, matched, err := resolver.ResolveObservedRoute(r.Context(), app, r.URL.Path, r.Method); err == nil && matched {
-				path = template
+				path, declared = template, true
 			}
 		}
 		preLabel := observedRouteLabel(r.Method, path)
@@ -6287,10 +6288,21 @@ haveApp:
 		} else if jwtTenantPossible {
 			r = withBillingRouteCandidate(r, preLabel)
 		}
+		// A route earns one of the app's bounded labels only once the app
+		// answers it (ADR-20261026143210): until then the label is pending
+		// and Handler.observe resolves it from the response.
+		labelRoute := preLabel
+		if !routeLabelMethodAllowed(r.Method) {
+			labelRoute = otherRouteLabel
+		}
+		pendingSet := set
+		if pendingSet == nil {
+			pendingSet = telemetryRouteSet
+		}
 		if h.requestTelemetry != nil {
 			telemetryRoute := otherRouteLabel
 			if telemetryRouteSet != nil {
-				telemetryRoute = telemetryRouteSet.admit(preLabel)
+				telemetryRoute = telemetryRouteSet.labelBeforeResponse(labelRoute, declared)
 			}
 			r = withRequestTelemetryRoute(r, telemetryRoute)
 		}
@@ -6298,8 +6310,13 @@ haveApp:
 			// The histogram classes are pre-instantiated when
 			// Handler.observe first emits the route under the
 			// gateway's series budget (ADR-20261024154324).
-			routeLabel = set.admit(preLabel)
+			routeLabel = set.labelBeforeResponse(labelRoute, declared)
 			r = withRouteLabel(r, routeLabel)
+		}
+		if pendingSet != nil {
+			if _, admitted := pendingSet.lookup(labelRoute); !admitted {
+				r = withPendingRouteLabel(r, labelRoute, pendingSet, set != nil)
+			}
 		}
 	}
 
@@ -8048,6 +8065,12 @@ func (h *Handler) observe(r *http.Request, status int, appID, plan string, cold 
 	// empty when the app is not opted in OR the request didn't
 	// resolve to an app.
 	routeLabel := RouteLabelFrom(r)
+	// A route still waiting for a label gets it from this response
+	// (ADR-20261026143210); telemetry reads the same decision below.
+	pendingRoute, pendingMetrics := resolvePendingRouteLabel(r, status)
+	if routeLabel == "" && pendingMetrics {
+		routeLabel = pendingRoute
+	}
 	// Measure elapsed against the same start stamp set at the top of
 	// ServeHTTP (issue #273 / ADR-042 fixed the WithStartTime dead-code
 	// bug so this is now request-received → handler-return, not
@@ -8168,6 +8191,9 @@ func (h *Handler) observe(r *http.Request, status int, appID, plan string, cold 
 				deploymentUUID, _ = uuid.Parse(target.DeploymentID)
 			}
 			telemetryRoute := requestTelemetryRouteFrom(r)
+			if telemetryRoute == "" {
+				telemetryRoute = pendingRoute
+			}
 			if telemetryRoute == "" {
 				telemetryRoute = routeLabel
 			}

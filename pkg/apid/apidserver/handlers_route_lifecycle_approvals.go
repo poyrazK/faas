@@ -27,6 +27,9 @@ func (s *server) routeLifecycleApprovalTarget(w http.ResponseWriter, r *http.Req
 	return app, store, ok
 }
 func (s *server) postRouteLifecycleApproval(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	if !requireRouteControlsPlan(w, acct) {
+		return
+	}
 	actor, ok := routeRemovalActor(w, r, acct)
 	if !ok {
 		return
@@ -49,6 +52,9 @@ func (s *server) postRouteLifecycleApproval(w http.ResponseWriter, r *http.Reque
 	writeJSON(w, http.StatusCreated, receipt)
 }
 func (s *server) getRouteLifecycleApproval(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	if !requireRouteControlsPlan(w, acct) {
+		return
+	}
 	id := r.PathValue("approval_id")
 	parsed, err := uuid.Parse(id)
 	if err != nil || parsed == uuid.Nil || parsed.String() != id {

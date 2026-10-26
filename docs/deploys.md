@@ -665,6 +665,11 @@ Pick cheap, read-only routes your app answers without a login; each path must
 be concrete, with no query, wildcard, or `{parameter}`. The setting is
 `release_probe_paths` in the app manifest and the API.
 
+Probes are ordinary requests to your app: they wake the new release and the
+one it replaces and keep both running while the rollout waits for evidence,
+and that running time is billed like any other request (about 0.09 GB-h for a
+quiet rollout of a 256 MB app). `release_policy: immediate` skips them.
+
 When probes cannot give an answer (for example, the probed path requires a login), a
 stage whose only problem is too few samples waits up to 5 more minutes after
 its 2 minutes and then advances, provided the new revision returned no 5xx

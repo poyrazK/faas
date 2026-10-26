@@ -12486,6 +12486,12 @@ const (
 	RouteHealthPooledMaxSpan = 30 * time.Minute
 )
 
+// RouteAnalyticsQueryTimeout bounds each routes analytics read over retained
+// request telemetry (route advice, the awake report and the insights
+// evaluator that reuses them): Postgres cancels the statement past it and the
+// caller is told to narrow the window (ADR-20261026143210).
+const RouteAnalyticsQueryTimeout = 10 * time.Second
+
 // RouteAdvice bounds the route advisor (ADR-976): it reads retained request
 // telemetry for the busiest RouteAdviceMaxRoutes routes and only suggests a
 // rule for a route with at least RouteAdviceMinRequests in the window.
