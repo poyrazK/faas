@@ -766,7 +766,7 @@ func (s *Service) DeleteBucketAccessGrant(w http.ResponseWriter, r *http.Request
 		BucketProblem(w, err)
 		return
 	}
-	s.Host.EmitAudit(r.Context(), "object_storage.access_grant_deleted", &acct.ID, map[string]any{
+	s.emitRevocation(r.Context(), "object_storage.access_grant_deleted", acct.ID, map[string]any{
 		"app_id": bucket.AppID, "bucket_id": bucket.ID, "key_id": keyID,
 	})
 	w.WriteHeader(http.StatusNoContent)

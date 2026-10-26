@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"sort"
 	"strings"
 	"sync"
@@ -521,11 +522,26 @@ func inspectUnavailable(in inspectSummaryInputs) []string {
 		name string
 		err  error
 	}{{"deployment", in.DeploymentErr}, {"openapi", in.OpenAPIErr}, {"upstreams", in.UpstreamsErr}, {"alerts", in.AlertsErr}, {"operational", in.OperationalErr}} {
-		if row.err != nil {
+		if row.err != nil && !routeNotOffered(row.err) {
 			out = append(out, row.name)
 		}
 	}
 	return out
+}
+
+// noSuchRouteDetail is the detail apid writes for an unregistered /v1 route
+// (pkg/apid/httpkit.NoSuchRoute).
+const noSuchRouteDetail = "no such API route"
+
+// routeNotOffered reports a 404 for a route this installation does not offer
+// the caller: one an older apid lacks, or one whose capability is not released
+// to the account. apid hides those exactly like missing routes
+// (ADR-20261023115741), so inspect leaves the section out instead of calling
+// the app's health unknown: with previews unreleased, every app on rc.295 read
+// "Incomplete information … Current health is not established" (2026-10-26).
+func routeNotOffered(err error) bool {
+	var ae *api.APIError
+	return errors.As(err, &ae) && ae.Problem.Status == http.StatusNotFound && ae.Problem.Detail == noSuchRouteDetail
 }
 
 func inspectRecommendations(summary inspectSummary) []inspectRecommendation {

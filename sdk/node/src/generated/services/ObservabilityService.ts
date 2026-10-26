@@ -39,7 +39,9 @@ export class ObservabilityService {
    * combine with AND. A text search (`q`) covers at most 24 hours and
    * answers 400 `log_search_window_too_large` beyond that; every search
    * runs under a 5 second statement timeout and answers 503
-   * `log_search_timeout` when it trips. Pass `next_cursor` back as
+   * `log_search_timeout` when it trips. An account runs at most 2 log
+   * reads at once; a read that waits over 2 seconds for one answers 429
+   * `log_reads_busy` with Retry-After. Pass `next_cursor` back as
    * `cursor` for the following page.
    *
    * @returns LogEventsResponse One page of matching events.

@@ -1,14 +1,28 @@
 package apidserver
 
 import (
+	"context"
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/managedpostgres"
+	"github.com/onebox-faas/faas/pkg/reposcan"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 // AttachTestManagedPostgres exposes attachTestManagedPostgres to the
 // external apidserver_test package.
 var AttachTestManagedPostgres = attachTestManagedPostgres
+
+// ComposePostgresPlanFor plans a Compose `db: postgres:17` service that
+// workload api depends on, and returns whether apply would provide it and
+// the reason it would not.
+func ComposePostgresPlanFor(srv *server, ctx context.Context, acct state.Account) (bool, string, error) {
+	managed := []reposcan.Managed{{Name: "db", Kind: "postgres", EnvHint: "DATABASE_URL", Image: "postgres:17"}}
+	workloads := []reposcan.Workload{{Name: "api", DependsOn: []string{"db"}}}
+	provisions, reasons, err := srv.composePostgresPlan(ctx, acct, "company", "production", managed, workloads, reposcan.ComposeEnv{}, nil)
+	_, provided := provisions["db"]
+	return provided, reasons["db"], err
+}
 
 // ComposePostgresMajor exposes composePostgresMajor to the external
 // apidserver_test package.

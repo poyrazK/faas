@@ -202,6 +202,7 @@ func (s *server) createAppLogDrain(w http.ResponseWriter, r *http.Request, acct 
 	row, err := s.store.CreateAppLogDrainIfUnderQuota(r.Context(), state.AppLogDrain{
 		AppID: app.ID, AccountID: acct.ID, Kind: state.AppLogDrainKind(req.Kind),
 		TargetURL: req.TargetURL, AuthHeaderSealed: sealed, Enabled: enabled,
+		CreatedByAccountID: actorAccount(r, acct).ID,
 	}, limits)
 	if err != nil {
 		var quotaErr *state.AppLogDrainQuotaError

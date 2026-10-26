@@ -12,6 +12,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"slices"
 	"strings"
 
 	"filippo.io/age"
@@ -102,6 +103,16 @@ func SealRequest(recipient *age.X25519Recipient, request api.ResolvedExecutionRe
 	if recipient == nil {
 		return nil, fmt.Errorf("%w: recipient is nil", ErrInvalid)
 	}
+	return SealRequestTo([]*age.X25519Recipient{recipient}, request)
+}
+
+// SealRequestTo is SealRequest for several recipients: the delivery seal
+// domain and the fleet recipient while the domain rolls out (ADR
+// 20261022111812). Any one of them opens the payload.
+func SealRequestTo(recipients []*age.X25519Recipient, request api.ResolvedExecutionRequest) ([]byte, error) {
+	if len(recipients) == 0 || slices.Contains(recipients, nil) {
+		return nil, fmt.Errorf("%w: recipient is nil", ErrInvalid)
+	}
 	input := request.Input
 	if input == nil {
 		input = json.RawMessage("null")
@@ -125,7 +136,7 @@ func SealRequest(recipient *age.X25519Recipient, request api.ResolvedExecutionRe
 	if err != nil {
 		return nil, fmt.Errorf("%w: marshal envelope: %w", ErrInvalid, err)
 	}
-	sealed, err := secretbox.SealBytes(recipient, Namespace, plaintext, api.ExecutionSealedPayloadMaxBytes)
+	sealed, err := secretbox.SealBytesTo(recipients, Namespace, plaintext, api.ExecutionSealedPayloadMaxBytes)
 	if err != nil {
 		return nil, fmt.Errorf("executionpayload: seal envelope: %w", err)
 	}

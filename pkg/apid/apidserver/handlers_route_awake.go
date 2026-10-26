@@ -1,6 +1,8 @@
 package apidserver
 
 import (
+	"errors"
+	"fmt"
 	"net/http"
 	"time"
 
@@ -40,7 +42,7 @@ func (s *server) getRouteAwake(w http.ResponseWriter, r *http.Request, acct stat
 	data, err := routeawake.Load(r.Context(), store, acct.ID, app.ID, window.From, window.Until)
 	if err != nil {
 		s.log.Warn("route awake read failed", "app_id", app.ID, "err", err)
-		api.WriteProblem(w, api.ErrCapacity("route awake report"))
+		api.WriteProblem(w, routeAnalyticsProblem(err, "route awake report"))
 		return
 	}
 	out := routeawake.Analyze(routeawake.Inputs{
@@ -51,4 +53,13 @@ func (s *server) getRouteAwake(w http.ResponseWriter, r *http.Request, acct stat
 	out.Slug, out.WindowClamped, out.MinInstances = app.Slug, window.WindowClamped, app.MinInstances
 	out.From, out.Until = window.From.Format(time.RFC3339Nano), window.Until.Format(time.RFC3339Nano)
 	writeJSON(w, http.StatusOK, out)
+}
+
+// routeAnalyticsProblem tells the caller to narrow the window when a routes
+// analytics read ran past its time budget (ADR-20261026143210).
+func routeAnalyticsProblem(err error, what string) *api.Problem {
+	if errors.Is(err, state.ErrRouteAnalyticsTimeout) {
+		return api.ErrCapacity(fmt.Sprintf("%s took longer than %s for this window; retry with a shorter ?since", what, api.RouteAnalyticsQueryTimeout))
+	}
+	return api.ErrCapacity(what)
 }

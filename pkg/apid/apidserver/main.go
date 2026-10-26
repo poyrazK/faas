@@ -766,6 +766,13 @@ func run(ctx context.Context, log *slog.Logger) error {
 	deps.store = func() state.Store {
 		return state.NewPgStore(pool, state.WithTrafficAppsDomain(cfg.GetAppsDomain(deps.getenv)))
 	}
+	// The first start of a release that knows the object storage timeline
+	// fence accepts the database's current timeline, so every later backup
+	// carries an acceptance a restore can be told apart from
+	// (ADR-20261025111015 amendment). Later starts change nothing.
+	if err := state.NewPgStore(pool).BootstrapObjectStorageTimeline(ctx); err != nil {
+		log.Warn("apid: bootstrap object storage timeline fence", "err", err)
+	}
 	// Wire the canonical OpenAPI projector before any deployment can be
 	// promoted. state.MarkDeploymentLive invokes it inside the same Postgres
 	// transaction as the status flip and snapshot UPSERT.
@@ -1641,7 +1648,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if err := srv.configureDurableEntities(ctx, deps.getenv); err != nil {
 		return fmt.Errorf("apid durable entities configuration: %w", err)
 	}
-	managedPostgresService, managedPostgresReconciler, managedPostgresBindings, managedPostgresBindingReconciler, managedPostgresUsageCollector, managedPostgresHealthCollector, err := loadManagedPostgres(deps.pool, deps.getenv, log, ops.Registry())
+	managedPostgresService, managedPostgresReconciler, managedPostgresBindings, managedPostgresBindingReconciler, managedPostgresUsageCollector, managedPostgresHealthCollector, err := loadManagedPostgres(deps.pool, deps.getenv, log, srv.managedPostgresOverageAvailable, ops.Registry())
 	if err != nil {
 		return fmt.Errorf("apid managed postgres configuration: %w", err)
 	}

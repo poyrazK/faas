@@ -64,8 +64,13 @@ func TestSetDeploymentRuntimeProfile_ImagePortHandoff(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if err := store.SetDeploymentRuntimeProfile(ctx, sourceDep.ID, profile); !errors.Is(err, state.ErrInvalidStateTransition) {
-				t.Fatalf("source profile overwrite error=%v, want invalid state transition", err)
+			// A source build records imaged's HEALTHCHECK verdict here while it
+			// is being assembled (ADR-20261024100000), so the write is accepted.
+			if err := store.SetDeploymentRuntimeProfile(ctx, sourceDep.ID, profile); err != nil {
+				t.Fatalf("source build profile write error=%v, want accepted (ADR-20261024100000)", err)
+			}
+			if got, err := store.DeploymentByID(ctx, sourceDep.ID); err != nil || !json.Valid(got.InferredProfile) {
+				t.Fatalf("source build profile = %s, %v", got.InferredProfile, err)
 			}
 			if err := store.UpdateDeploymentStatus(ctx, dep.ID, state.DeployCancelled, ""); err != nil {
 				t.Fatal(err)

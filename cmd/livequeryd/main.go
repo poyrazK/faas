@@ -66,6 +66,9 @@ func main() {
 // host with the parser and the memory it needs. -role all runs both in one
 // process.
 func run(ctx context.Context, log *slog.Logger) error {
+	if *reseal {
+		return runReseal(ctx, log)
+	}
 	// The first parse compiles the SQL parser to native code, which takes
 	// seconds. Start it now, beside connecting and restoring checkpoints, so
 	// no subscriber waits for it. An engine with a remote compiler never

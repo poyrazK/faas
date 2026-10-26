@@ -92,7 +92,7 @@ func runProjectEnvironmentCloneWorker(ctx context.Context, log *slog.Logger) (er
 		return errors.New("clone worker: object provider configuration unavailable")
 	}
 	srv.WithObjectStorage(objects)
-	service, reconciler, bindings, bindingReconciler, usage, health, err := loadManagedPostgres(pool, os.Getenv, log)
+	service, reconciler, bindings, bindingReconciler, usage, health, err := loadManagedPostgres(pool, os.Getenv, log, nil)
 	if err != nil {
 		return errors.New("clone worker: PostgreSQL provider configuration unavailable")
 	}

@@ -48,6 +48,17 @@ func ErrLogSearchTimeout() *Problem {
 		WithHint("narrow the window or add filters such as --source, --level or --route")
 }
 
+// ErrLogReadBusy refuses a log read while the account already has
+// LogReadsInFlightPerAccount reads in flight, or apid its
+// LogReadsInFlightMax.
+func ErrLogReadBusy() *Problem {
+	p := NewProblem(http.StatusTooManyRequests, "log_reads_busy", "Too many log reads",
+		fmt.Sprintf("at most %d log reads of one account run at once; retry when one finishes", LogReadsInFlightPerAccount))
+	l := int64(LogReadsInFlightPerAccount)
+	p.Limit = &l
+	return p.WithDocs(docsBase + "/log-search").WithHint("retry in a few seconds, or run fewer searches at once")
+}
+
 // ErrLogSearchUnavailable is the FAAS_LOG_SEARCH_ENABLED gate's answer.
 func ErrLogSearchUnavailable() *Problem {
 	return NewProblem(http.StatusServiceUnavailable, "log_search_unavailable", "Log search unavailable",

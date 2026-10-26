@@ -129,6 +129,10 @@ func (d *tcpDialer) DialContext(ctx context.Context, _ string) (net.Conn, error)
 //
 // The zero value is unusable; construct via NewInternalReverseProxy.
 type InternalReverseProxy struct {
+	// trafficSecurityPeers says whether every compute gateway behind this edge
+	// stamps the traffic security snapshot; nil means it does.
+	trafficSecurityPeers TrafficSecurityPeers
+
 	trafficRevocations  *trafficrevocation.Registry
 	Dialer              InternalDialer
 	Target              *url.URL
@@ -646,7 +650,7 @@ func (p *InternalReverseProxy) serveHTTP(w http.ResponseWriter, r *http.Request)
 		}
 		return
 	}
-	longLived := isLongLivedResponse(resp.StatusCode, resp.Header)
+	longLived := isLongLivedResponse(resp.StatusCode, resp.Header) || isUnverifiedPeerStream(r, resp)
 	publicBudget := r.Context()
 	if longLived {
 		detachBudget()

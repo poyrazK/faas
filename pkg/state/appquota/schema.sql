@@ -7,7 +7,8 @@ CREATE TABLE orgs (
 );
 CREATE TABLE apps (
     id uuid PRIMARY KEY, account_id uuid NOT NULL, org_id uuid,
-    status text NOT NULL, preview_of_slug text, preview_pr_number integer
+    status text NOT NULL, preview_of_slug text, preview_pr_number integer,
+    project_id uuid, preview_pr_state text
 );
 CREATE TABLE org_app_quota_fences (
     org_id uuid PRIMARY KEY REFERENCES orgs(id) ON DELETE CASCADE,

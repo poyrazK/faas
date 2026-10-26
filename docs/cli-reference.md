@@ -141,13 +141,14 @@ Connect agents to Gregale, or scaffold and deploy MCP servers
 
 Expose Gregale management tools over stdio or OAuth HTTP
 
-`gregale mcp serve [--transport <TRANSPORT>] [--timeout <DURATION>] [--allow-writes] [--listen <ADDR>] [--resource-url <URL>] [--oauth-onboarding <MODE>] [--state-file <PATH>] [--admin-socket <PATH>] [--metrics-listen <ADDR>] [--state-key-file <PATH>] [--oauth-redirect-uri <URI>]`
+`gregale mcp serve [--transport <TRANSPORT>] [--timeout <DURATION>] [--allow-writes] [--tools <TOOLSETS>] [--listen <ADDR>] [--resource-url <URL>] [--oauth-onboarding <MODE>] [--state-file <PATH>] [--admin-socket <PATH>] [--metrics-listen <ADDR>] [--state-key-file <PATH>] [--oauth-redirect-uri <URI>]`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--transport <TRANSPORT>` | management MCP transport (default stdio) | one of `stdio` · `streamable-http` |
 | `--timeout <DURATION>` | per-tool API timeout (default 30s, maximum 1m) |  |
 | `--allow-writes` | enable reviewed deploy, promotion, and rollback actions |  |
+| `--tools <TOOLSETS>` | toolsets to list, comma-separated: core, release, diagnose, provision (default all) |  |
 | `--listen <ADDR>` | HTTP listen address behind TLS proxy (default 127.0.0.1:8787) |  |
 | `--resource-url <URL>` | public HTTPS URL ending in /mcp (required for HTTP) |  |
 | `--oauth-onboarding <MODE>` | remote onboarding (default browser) | one of `browser` · `api-key` |

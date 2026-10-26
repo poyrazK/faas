@@ -36,6 +36,22 @@ command = "gregale"
 args = ["mcp", "serve", "--transport", "stdio"]
 ```
 
+A client loads every listed tool's schema into the model's context on each
+turn. `--tools` lists only the selected toolsets, comma-separated
+(ADR-20261026152009):
+
+| Toolset | Tools |
+|---|---|
+| `core` | Context, apps, app deployments, logs, metrics, health, error groups, local deploy and env changes, secret requests, promote and rollback (20 tools, about a fifth of the catalog) |
+| `release` | Image and Git source releases, service and worker rollouts, named environments, route budgets, preflight, account deployment history |
+| `diagnose` | Request, analytics, profile, wake, trace, regression and incident diagnostics |
+| `provision` | Local connections: custom domains, buckets, managed PostgreSQL and crons (ADR-20261026174727) |
+| `all` | Every tool (the default) |
+
+For example, `gregale mcp serve --transport stdio --tools core,diagnose`.
+Write tools still need `--allow-writes`. Resources and prompts are always
+listed.
+
 Use an absolute executable path if the client cannot find `gregale` on its PATH.
 To select a named connection, place the prefix before the command, for example
 `["--profile", "staging", "mcp", "serve", "--transport", "stdio"]`.
@@ -93,6 +109,10 @@ failures are returned as MCP tool errors; the server never starts a login flow.
 | `gregale_watch_rollout` | Bounded combined build, scoped health and native rollout observation for one exact deployment. |
 | `gregale_get_rollout` | Exact deployment lifecycle and service handoff barriers; worker completion limits are explicit. |
 | `gregale_wait_deployment` | Bounded deployment polling with terminal and pending results. |
+| `gregale_plan_local_deploy` | Local connections only. Review deploying a project directory as one app through the CLI; fingerprints the files and pins the app's release state. |
+| `gregale_plan_env_change` | Local connections only. Review setting non-secret variables on an app's default scope; credential-shaped values are refused. |
+| `gregale_plan_domain`, `gregale_plan_bucket`, `gregale_plan_postgres`, `gregale_plan_cron` | Local connections only. Review attaching a custom domain, a bucket, a managed PostgreSQL database or a cron through the CLI. |
+| `gregale_check_domain` | Local connections only. A custom domain's DNS verification, certificate state and the DNS records still needed. |
 
 All operations use the ordinary authenticated customer API and its existing
 account ownership, scopes, and plan checks. Each call has a 30-second deadline;
@@ -1554,7 +1574,10 @@ Add `--allow-writes` to the agent's subprocess arguments to expose
 `gregale_apply_deploy`, `gregale_promote_deployment`, `gregale_apply_rollback`,
 `gregale_apply_environment_promotion`, `gregale_apply_environment_rollback`,
 `gregale_apply_workload_rollout`, `gregale_apply_service_abort`,
-`gregale_apply_route_budgets`, and `gregale_apply_regression_action`.
+`gregale_apply_route_budgets`, `gregale_apply_regression_action`, the secret
+request pair `gregale_request_secret` and `gregale_get_secret_request`, and, on
+local connections, `gregale_apply_local_deploy`, `gregale_apply_env_change`
+and `gregale_apply_provision`.
 The selected credential still needs ordinary API permissions. A dedicated key
 with `apps:read` and `deploy:write` scopes supports management; additional API
 policies, including MFA and release checks, remain enforced.
@@ -1597,11 +1620,115 @@ checks. Reviewed image staging requires an API that implements
 
 Deploy tools support immutable OCI images for existing request-mode apps in the
 default scope or a selected named project environment. Connected GitHub source
-builds use the source workflow below. Mutable image tags, local uploads,
-and app creation retain their CLI release workflows.
+builds use the source workflow below. Local connections create apps and
+deploy a project directory with the local tools below; mutable image tags keep
+their CLI release workflow.
 Image and reviewed source service/worker rollouts use the native workflow below. Apps with multiple serving
-releases require explicit traffic-split review in the CLI. Secret-value and
-arbitrary configuration mutation APIs are not exposed.
+releases require explicit traffic-split review in the CLI. Secret values are
+never accepted, and other configuration mutations are not exposed.
+
+## Deploy a local project and set variables
+
+On a local stdio connection, the server can deploy a project directory and set
+non-secret variables. It runs the same `gregale` binary as a subprocess with
+`--non-interactive --json` and the connection's credential, so each step does
+exactly what the matching CLI command does (ADR-20261026141841). These four
+tools are absent from remote OAuth connections.
+
+1. Call `gregale_plan_local_deploy` with the absolute `path` of the project
+   directory, the `app` slug and a `reason`. The plan:
+   - shows the app shape the CLI infers (`gregale deploy --app --plan`);
+   - records a fingerprint of the files;
+   - pins the app's release state.
+
+   The filesystem root, the home directory, and a directory under a linked
+   project context (`.gregale/project.json`) are refused. Functions and
+   multi-service projects stay in the CLI.
+2. Call `gregale_apply_local_deploy` with its `plan_id`. Apply refuses a
+   directory that changed since planning. It uploads with the stable
+   idempotency key `mcp-local-<plan_id>`, so retry with the same plan ID after a
+   timeout. An upload may take up to ten minutes.
+   - A new app, or one that serves nothing yet, is created if needed and its
+     first release goes live.
+   - An app with a serving release is staged at **0% traffic**. Wait with
+     `gregale_wait_deployment`, then call `gregale_promote_deployment` with the
+     same plan ID. Promotion keeps its atomic guard on the planned serving
+     release.
+3. To create an app before its first deploy, for example to set variables
+   first, plan with `create_only: true`.
+
+To set variables, call `gregale_plan_env_change` with the `app`, up to 50
+`values` (keys match `^[A-Z][A-Z0-9_]*$`, values hold no newlines), a
+`reason`, and optional `restart`.
+- The plan runs `gregale env push --dry-run --secret-scan strict` on the
+  default scope and pins the newest config revision.
+- A value that looks like a credential refuses the plan. The agent should
+  request it with `gregale_request_secret` (below) and never handle a secret
+  value.
+- `gregale_apply_env_change` applies the plan only if no other config change
+  landed since planning. The config guard judges the change as it does any
+  push.
+
+The credential needs `deploy:write` to create and deploy apps. It needs
+`secrets:write` to set variables, because `env push` stores them through the
+secrets API.
+
+## Ask the user for a secret
+
+An agent never handles a secret value. On a connection with `--allow-writes`
+it asks the user to enter one on a Gregale page instead
+(ADR-20261026174727):
+
+1. Call `gregale_request_secret` with the `app`, the `key` (for example
+   `STRIPE_SECRET_KEY`) and a `reason` the user will see.
+   - If the client supports URL elicitation, it opens the page and the result
+     reports `elicitation: opened`, or `declined` if the user refused.
+   - Otherwise the result has an `entry_url`. Give it to the user to open in a
+     browser where they are signed in to Gregale.
+2. The user types the value on the page. It goes from their browser straight
+   to Gregale; the agent, the MCP client and its transcript never see it.
+3. Call `gregale_get_secret_request` with the `request_id`. It waits up to
+   `wait_seconds` (default 20, maximum 45; 0 checks once) and returns
+   `pending`, `set` or `expired`.
+
+A request expires after 15 minutes and can be used once. Only the account
+that requested it can set the value. The key needs `secrets:write`. Restart or
+redeploy the app so running instances receive the secret.
+
+## Provision a domain, data and crons
+
+On a local stdio connection, the `provision` toolset adds what an app needs
+beyond its code. Like local deploys, each plan names the exact CLI command,
+pins the account and app, and expires after 15 minutes. Apply runs the command
+through the same `gregale` binary and returns its receipt. Retry with the same
+plan ID after a timeout: the receipt is cached, and a retry adopts what an
+earlier attempt created instead of creating it twice.
+
+| Plan | Runs | Key scope |
+|---|---|---|
+| `gregale_plan_domain` (`app`, `domain`) | `gregale domains add DOMAIN --app APP` | `deploy:write` |
+| `gregale_plan_bucket` (`app`, `name`, `permission`) | `gregale add bucket --app APP --env default --permission P NAME` | `storage:manage` |
+| `gregale_plan_postgres` (`app`, `region`, `access`) | `gregale add postgres --app APP --env default --region R --access A` | `postgres:manage`, `postgres:read` |
+| `gregale_plan_cron` (`app`, `schedule`, `path`, `timezone`) | `gregale crons add --app APP --schedule S --path P` | `deploy:write` |
+
+Every plan also takes a `reason`. Apply each with `gregale_apply_provision`
+and its `plan_id`.
+
+- **Domains.** Apply returns the `dns_records` the user must create at their
+  DNS provider. Call `gregale_check_domain` until `pending` is false and
+  `verified` is true; `cert_status` follows the TLS certificate. A domain
+  attached to another app fails with `domain_elsewhere`.
+- **Buckets and databases.** Each binds the resource to the app's default
+  scope as sealed variables: `GREGALE_S3_<NAME>_*` for a bucket and
+  `DATABASE_URL` for a database. Receipts name the variables and never contain
+  their values. Restart or redeploy the app to pick them up. A database can
+  take up to ten minutes and is billed.
+- **Crons.** The plan reports `duplicate_of` if the app already has a cron
+  with the same schedule and path.
+
+Object storage and managed PostgreSQL are preview capabilities; when one is
+off for the account, apply returns the API's error. Jobs and `gregale run`
+stay in the CLI.
 
 ## Reviewed Git source deployments
 

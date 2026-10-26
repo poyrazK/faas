@@ -1224,3 +1224,32 @@ Decision:
 4. **H3 stays open** until a real phone is measured and recorded in
    `docs/STATUS.md`. The estimate cannot see a phone's thermal state, or
    whether Chrome runs the page on a big or a little core.
+
+## Amendment 16 (2026-10-26): a freed check slot goes first to an account below its share
+
+The in-path check slots were one FIFO pool for the node, and each app's
+inline budget (500 worker-ms per second, about half a slot) was the only
+per-tenant bound. An account with many apps could keep every slot busy with
+its own matching requests, so another account's checks waited out the 1 ms
+slot wait and failed open as `busy`: its `block` rules stopped blocking while
+the flood lasted.
+
+Decision:
+
+1. **The pool stays work-conserving.** A check takes any free slot, so one
+   busy account still uses the whole pool while it is alone, and amendment
+   12's skip rates for that case are unchanged.
+2. **Waiting checks are served by share.** When every slot is busy, a check
+   whose account holds and awaits fewer than
+   `api.EdgeWAFInlineAccountSharePercent` (50%, at least one) of the node's
+   slots queues ahead of checks from accounts at or above it. A freed slot
+   goes straight to the first such waiter, then to the rest in arrival order.
+   A check without an account counts against its app alone.
+3. **Skips by reason.** A check that times out while its account was over its
+   share is counted as `reason="account_share"`: that account's own load, not
+   a node shortfall, so it does not fire `FaasEdgeWAFChecksSkipped`.
+   `reason="busy"` now means a check below its share still found no slot.
+4. **Unchanged:** failing open, the slot wait, the per-app budget. A flood on
+   the protected app itself still spends that app's budget and then skips as
+   `budget`; throttle rules, the pre-auth limit and the penalty box remain the
+   defence there.

@@ -82,10 +82,10 @@ func TestServiceAliasAllowedNamesNamespaceSiblings(t *testing.T) {
 		}
 		return app
 	}
-	web, api1, loner := session("dev-web-1", "web"), session("dev-api-1", "api"), session("dev-other-1", "other")
+	web, api1, loner, ui := session("dev-web-1", "web"), session("dev-api-1", "api"), session("dev-other-1", "other"), session("dev-ui-1", "app-ui")
 	runID := "0123456789abcdef0123456789abcdef"
 	if err := store.RegisterScenarioTestMembers(ctx, account.ID, runID, []state.ScenarioTestMember{
-		{Workload: "web", AppID: web.ID}, {Workload: "api", AppID: api1.ID},
+		{Workload: "web", AppID: web.ID}, {Workload: "api", AppID: api1.ID}, {Workload: "ui", AppID: ui.ID}, // ADR-20261026105459: any service name
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -96,6 +96,8 @@ func TestServiceAliasAllowedNamesNamespaceSiblings(t *testing.T) {
 	}{
 		{web.ID, "api", true},
 		{api1.ID, "web", true},
+		{web.ID, "ui", true},
+		{ui.ID, "api", true},
 		{web.ID, "billing", false},
 		{loner.ID, "api", false},
 	} {

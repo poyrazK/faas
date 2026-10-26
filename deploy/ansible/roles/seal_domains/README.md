@@ -1,6 +1,6 @@
 # seal_domains
 
-Stages per-reader seal-domain identities (ADR 20261022111812). Eight domains
+Stages per-reader seal-domain identities (ADR 20261022111812). Nine domains
 are wired, each opened by one daemon:
 - `outbound`: customer AI provider and other outbound credentials (outboundd);
 - `runtime`: customer env vars and secrets (vmmd);
@@ -13,7 +13,10 @@ are wired, each opened by one daemon:
 - `storage`: Gregale S3 secret access keys (s3-gatewayd, on the control
   plane);
 - `control`: the cluster signing key (schedd, on every host; no writer
-  drop-in, the key moves only through `seal-domain migrate`).
+  drop-in, the key moves only through `seal-domain migrate`);
+- `delivery`: app webhook signing secrets, commit-source connections and
+  execution payloads (schedd, on every host; apid on the control plane
+  seals to the recipient).
 
 The `outbound` steps:
 
@@ -69,7 +72,9 @@ The `build` domain stages like `runtime`: compute hosts get
 imaged and proves the probe), control-plane hosts
 `faas_seal_domain_build_recipient_src` (apid seals to it, to both keys until
 `faas_seal_domain_build_writes: domain`). The `edge` domain stages the same
-way, with gatewayd-internal as its reader.
+way, with gatewayd-internal as its reader. The `delivery` domain stages its
+identity on every host instead, since schedd runs on both node roles, and
+its recipient on control-plane hosts.
 
 In production, CD supplies the `*_src` variables from the
 `SEAL_DOMAIN_<DOMAIN>_AGE_KEY` and `_AGE_RECIPIENT` secrets

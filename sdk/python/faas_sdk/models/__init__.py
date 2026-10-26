@@ -1999,6 +1999,11 @@ from .scoped_app_secret_response_last_runtime_reload_signal import ScopedAppSecr
 from .scoped_app_secret_response_secret_class import ScopedAppSecretResponseSecretClass
 from .seat_usage_response import SeatUsageResponse
 from .seat_usage_response_plan import SeatUsageResponsePlan
+from .secret_entry_request import SecretEntryRequest
+from .secret_entry_response import SecretEntryResponse
+from .secret_entry_status import SecretEntryStatus
+from .secret_entry_status_request import SecretEntryStatusRequest
+from .secret_entry_status_status import SecretEntryStatusStatus
 from .secret_file import SecretFile
 from .secret_finding import SecretFinding
 from .secret_finding_severity import SecretFindingSeverity
@@ -2202,6 +2207,7 @@ from .wake_timeline_event import WakeTimelineEvent
 from .wake_timeline_event_data import WakeTimelineEventData
 from .wake_timeline_json_row import WakeTimelineJSONRow
 from .wake_timeline_json_row_kind import WakeTimelineJSONRowKind
+from .wake_timeline_json_row_restore_fallback_reason import WakeTimelineJSONRowRestoreFallbackReason
 from .wake_timeline_json_row_tier import WakeTimelineJSONRowTier
 from .wake_timeline_json_row_trigger_class import WakeTimelineJSONRowTriggerClass
 from .wake_timeline_page import WakeTimelinePage
@@ -4293,6 +4299,11 @@ __all__ = (
     "ScopedAppSecretResponseSecretClass",
     "SeatUsageResponse",
     "SeatUsageResponsePlan",
+    "SecretEntryRequest",
+    "SecretEntryResponse",
+    "SecretEntryStatus",
+    "SecretEntryStatusRequest",
+    "SecretEntryStatusStatus",
     "SecretFile",
     "SecretFinding",
     "SecretFindingSeverity",
@@ -4488,6 +4499,7 @@ __all__ = (
     "WakeTimelineEventData",
     "WakeTimelineJSONRow",
     "WakeTimelineJSONRowKind",
+    "WakeTimelineJSONRowRestoreFallbackReason",
     "WakeTimelineJSONRowTier",
     "WakeTimelineJSONRowTriggerClass",
     "WakeTimelinePage",

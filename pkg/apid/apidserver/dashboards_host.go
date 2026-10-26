@@ -77,7 +77,7 @@ func (d dashboardSources) AppMetrics(ctx context.Context, acct state.Account, ap
 	return resp, nil
 }
 
-func (d dashboardSources) LogEvents() state.LogEventStore { return d.s.store }
+func (d dashboardSources) LogEvents() state.LogEventStore { return d.s.logEvents() }
 
 func (d dashboardSources) CustomMetricSeries(ctx context.Context, app state.App, name, rng string) api.CustomMetricSeriesResponse {
 	return d.s.customMetricSeries(ctx, app.ID, name, d.s.customMetricKind(ctx, app.ID, name), rng, time.Now().UTC())

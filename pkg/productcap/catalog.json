@@ -2604,8 +2604,7 @@
       "routes": [
         "/dashboard/apps/{}/commit-sources",
         "/v1/apps/{}/commit-sources",
-        "/v1/commit-sources",
-        "/v1/uploads/{}/commit"
+        "/v1/commit-sources"
       ],
       "cli": [
         "commit"
@@ -3912,6 +3911,28 @@
       ]
     },
     {
+      "id": "postgres-overage",
+      "name": "Postgres compute overage",
+      "category": "data",
+      "description": "Let a paid account's managed PostgreSQL databases keep running past the plan's monthly compute allowance, up to twice it, before they are suspended.",
+      "maturity": "internal",
+      "plans": [
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/managed-postgres",
+      "acceptance_test": "pkg/apid/apidserver/handlers_managed_postgres_overage_test.go::TestManagedPostgresOverageRoutes",
+      "parent": "managed-postgres",
+      "routes": [
+        "/dashboard/postgres/overage",
+        "/v1/postgres/overage"
+      ],
+      "cli": [
+        "postgres overage"
+      ]
+    },
+    {
       "id": "postgres-restore",
       "name": "Postgres point-in-time restore",
       "category": "data",
@@ -3938,8 +3959,8 @@
       "id": "pr-previews",
       "name": "Pull-request previews",
       "category": "delivery",
-      "description": "Create an isolated, reviewable API URL for a pull request.",
-      "maturity": "beta",
+      "description": "Every pull request gets an isolated preview environment with its own URL, PR comment and GitHub status, torn down after the PR closes.",
+      "maturity": "ga",
       "plans": [
         "free",
         "hobby",
@@ -3947,7 +3968,7 @@
         "scale"
       ],
       "docs_url": "/docs/preview-environments",
-      "acceptance_test": "pkg/dashboard/preview_panel_test.go::TestRender_AppDetail_PreviewPanel_Shape",
+      "acceptance_test": "cmd/e2e/github_webhook_deploy_e2e_test.go::TestE2E_GitHubWebhookEnqueuesDeployments",
       "consumers": [
         "githubd"
       ],
@@ -4104,6 +4125,7 @@
         "app.version_affinity_managed_cookie"
       ],
       "routes": [
+        "/dashboard/apps/{}/release-safety",
         "/dashboard/apps/{}/rollouts",
         "/dashboard/releases",
         "/dashboard/safe-releases",
@@ -5178,7 +5200,8 @@
         "/v1/deployments/{}/stages",
         "/v1/deployments/{}/url",
         "=/v1/uploads",
-        "=/v1/uploads/{}"
+        "=/v1/uploads/{}",
+        "=/v1/uploads/{}/commit"
       ]
     },
     {

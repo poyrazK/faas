@@ -75,8 +75,18 @@ type Worker struct {
 	AppChanged func(ctx context.Context, appID string)
 	// Observe records audit rows for a step; nil records nothing.
 	Observe func(ctx context.Context, sw state.DatabaseSwitch, event Event)
-	Log     *slog.Logger
-	Now     func() time.Time
+	// Report feeds worker liveness metrics: true after each tick that could
+	// claim its due switches, false after a tick that could not and after
+	// each step that ended in a retry. nil reports nothing.
+	Report func(ok bool, at time.Time)
+	Log    *slog.Logger
+	Now    func() time.Time
+}
+
+func (w *Worker) report(ok bool, at time.Time) {
+	if w.Report != nil {
+		w.Report(ok, at)
+	}
 }
 
 func (w *Worker) now() time.Time {
@@ -115,9 +125,11 @@ func (w *Worker) Tick(ctx context.Context) {
 	if err != nil {
 		if ctx.Err() == nil {
 			w.log().Warn("database switch: claim due switches", "err", err)
+			w.report(false, now)
 		}
 		return
 	}
+	w.report(true, now)
 	for _, sw := range due {
 		if ctx.Err() != nil {
 			return
@@ -129,6 +141,9 @@ func (w *Worker) Tick(ctx context.Context) {
 // Advance runs one step of a leased switch and saves the result.
 func (w *Worker) Advance(ctx context.Context, sw state.DatabaseSwitch) state.DatabaseSwitch {
 	next := w.step(ctx, sw)
+	if next.LastErrorCode != "" && next.AttemptCount > sw.AttemptCount {
+		w.report(false, w.now())
+	}
 	saved, err := w.Store.SaveDatabaseSwitch(ctx, next, w.now())
 	if err != nil {
 		w.log().Warn("database switch: save progress", "switch", sw.ID, "phase", next.Phase, "err", err)

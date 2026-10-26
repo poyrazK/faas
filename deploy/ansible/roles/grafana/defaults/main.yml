@@ -40,9 +40,8 @@ gv_config_path: /etc/grafana/grafana.ini
 gv_provisioning_dir: /etc/grafana/provisioning
 gv_dashboards_dir: /var/lib/grafana/dashboards
 
-# Admin password is read from a file (Grafana's native `*_FILE`
-# indirection via GF_SECURITY_ADMIN_PASSWORD__FILE) so the secret
-# never enters Ansible vars or the rendered config. Same precedent as
+# Admin password is read from a file (grafana.ini's $__file{} expansion)
+# so the secret never enters Ansible vars or the rendered config. Same precedent as
 # the alertmanager secret files (gap G2 lean §17, sealed at rest).
 # Mode 0400, owner grafana:grafana — asserted before systemd enable.
 gv_admin_password_file: /etc/grafana/secrets/admin_password

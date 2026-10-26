@@ -22,9 +22,11 @@ const (
 	// was missed.
 	penaltyBoxRepairInterval = 15 * time.Second
 	penaltyBoxPruneInterval  = 10 * time.Minute
-	// penaltyBoxLookback re-reads boxes created this long before the last
-	// read caught up, so a box whose insert committed late is not missed.
-	// Re-reading a box is harmless: holding it again keeps the later end.
+	// penaltyBoxLookback is how far each repair re-reads behind the last
+	// read, so a box whose insert committed late is not missed. Re-reading a
+	// box is harmless: holding it again keeps the later end. Reads on a
+	// notification only move forward, so a flood of boxes costs each read
+	// the new ones, not the whole window again.
 	penaltyBoxLookback = 30 * time.Second
 	penaltyBoxPage     = 1000
 	// penaltyBoxMaxQueued bounds boxes waiting for a flush; past it a box
@@ -49,11 +51,12 @@ type penaltyBoxSharer struct {
 	dropped  int64
 
 	// after is where the next read starts and seen the newest box read so
-	// far; loaded reports the first read is done. Only run's goroutine
-	// uses them.
+	// far; loaded reports the first read is done and dbNow is the database
+	// clock of the last read. Only run's goroutine uses them.
 	after  state.EdgePenaltyBoxCursor
 	seen   state.EdgePenaltyBoxCursor
 	loaded bool
+	dbNow  time.Time
 }
 
 func newPenaltyBoxSharer(box *gateway.PenaltyBox, store state.EdgePenaltyBoxStore, metrics *gateway.Metrics, log *slog.Logger) *penaltyBoxSharer {
@@ -116,20 +119,27 @@ func (s *penaltyBoxSharer) sync(ctx context.Context) {
 			s.log.Warn("gatewayd: read shared penalty boxes failed", "err", err)
 			return
 		}
+		s.dbNow = now
 		for _, b := range boxes {
 			s.box.Hold(gateway.PenaltyBoxRecord{AppID: b.AppID, RuleID: b.RuleID, Client: b.Client, Until: b.Until})
 			s.after = state.EdgePenaltyBoxCursor{CreatedAt: b.CreatedAt, ID: b.ID}
 			s.observeArrival(b, now)
 		}
 		if len(boxes) < s.page {
-			if lookback := now.Add(-penaltyBoxLookback); lookback.Before(s.after.CreatedAt) || s.after.CreatedAt.IsZero() {
-				s.after = state.EdgePenaltyBoxCursor{CreatedAt: lookback}
-			}
 			s.loaded = true
 			s.metrics.ObservePenaltyShare("sync", nil)
 			return
 		}
 	}
+}
+
+// repair re-reads from penaltyBoxLookback before the last read, catching a
+// box whose insert committed after newer ones were read, then reads on.
+func (s *penaltyBoxSharer) repair(ctx context.Context) {
+	if lookback := s.dbNow.Add(-penaltyBoxLookback); s.loaded && lookback.Before(s.after.CreatedAt) {
+		s.after = state.EdgePenaltyBoxCursor{CreatedAt: lookback}
+	}
+	s.sync(ctx)
 }
 
 // observeArrival records a box's propagation delay the first time it is
@@ -173,7 +183,7 @@ func (s *penaltyBoxSharer) run(ctx context.Context, notes <-chan db.Notification
 		case <-flush.C:
 			s.flush(ctx)
 		case <-repair.C:
-			s.sync(ctx)
+			s.repair(ctx)
 		case _, ok := <-notes:
 			if !ok {
 				notes = nil
