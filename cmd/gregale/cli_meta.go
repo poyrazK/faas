@@ -6328,9 +6328,15 @@ var cliCommands = []cliCommand{
 		Positionals: []string{"[<slug>]"},
 	},
 	{
-		Name:    statusLiteral,
-		DocSlug: "status",
-		Short:   "Show Gregale platform status (not specific to your account)",
+		Name:      statusLiteral,
+		DocSlug:   "status",
+		Short:     "Show what this checkout targets, or Gregale's platform status",
+		HelpNotes: []string{"In a linked checkout (or with --app), shows the project, app, environment, state and account. Elsewhere, and with --platform, shows Gregale's platform status."},
+		Examples:  []string{"gregale status", "gregale status --app my-api", "gregale status --platform"},
+		Flags: []cliFlag{
+			{Name: "app", Short: "show this app instead of the linked one", Value: "SLUG"},
+			{Name: "platform", Short: "show Gregale's platform status", Bool: true},
+		},
 	},
 	{
 		Name:    "tail",

@@ -111,7 +111,7 @@ Automation: put `--non-interactive` before the command to disable prompts and br
 | [`scan`](#scan) | Show how a source tree splits into deployable workloads |
 | [`secrets`](#secrets) | Set, rotate and audit encrypted secrets for apps and environments |
 | [`slo`](#slo) | Show an app&#39;s SLO panel for a time window |
-| [`status`](#status) | Show Gregale platform status (not specific to your account) |
+| [`status`](#status) | Show what this checkout targets, or Gregale&#39;s platform status |
 | [`tail`](#tail) | Watch invocations finish across your account in real time |
 | [`trusted-publishers`](#trusted-publishers) | Manage public keys trusted to sign an app&#39;s images |
 | [`usage`](#usage) | Show this month&#39;s usage, or daily, storage and summary views |
@@ -18130,9 +18130,24 @@ See also: [`slos`](#slos).
 
 ## status
 
-Show Gregale platform status (not specific to your account)
+Show what this checkout targets, or Gregale&#39;s platform status
 
-`gregale status`
+`gregale status [--app <SLUG>] [--platform]`
+
+In a linked checkout (or with --app), shows the project, app, environment, state and account. Elsewhere, and with --platform, shows Gregale&#39;s platform status.
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | show this app instead of the linked one |  |
+| `--platform` | show Gregale&#39;s platform status |  |
+
+Examples:
+
+```sh
+gregale status
+gregale status --app my-api
+gregale status --platform
+```
 
 
 ## tail
