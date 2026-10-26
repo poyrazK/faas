@@ -24710,6 +24710,20 @@ components:
           type: array
           items: {$ref: '#/components/schemas/WorkflowSpec'}
           description: "Validated workflow definitions persisted with this immutable deployment revision."
+        companions:
+          type: array
+          description: "Companions this deployment carries: name, image, port and size. Environment values and secret grants are never included."
+          items:
+            type: object
+            required: [name]
+            properties:
+              name: {type: string}
+              image: {type: string}
+              preset: {type: string}
+              type: {type: string}
+              port: {type: integer}
+              ram_mb: {type: integer}
+              primary_ingress: {type: boolean}
         hosting_receipt:
           type: [object, "null"]
           additionalProperties: true

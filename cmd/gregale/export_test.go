@@ -2456,3 +2456,5 @@ func DockerConfigRegistryAuth(ctx context.Context, configPath, image string, hel
 }
 
 var RenderRouteMonitorReport = renderRouteMonitorReport
+
+var PreviewCompanionsFromManifest = previewCompanionsFromManifest

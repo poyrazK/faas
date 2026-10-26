@@ -2491,6 +2491,34 @@ type PublicAuthStatus struct {
 // below for the contract.
 type Sidecars []Sidecar
 
+// DeploymentCompanion is one companion of a deployment as the API shows it:
+// identity, image, port and size, never environment values or secret
+// grants.
+type DeploymentCompanion struct {
+	Name           string `json:"name"`
+	Image          string `json:"image,omitempty"`
+	Preset         string `json:"preset,omitempty"`
+	Type           string `json:"type,omitempty"`
+	Port           int    `json:"port,omitempty"`
+	RAMMB          int    `json:"ram_mb,omitempty"`
+	PrimaryIngress bool   `json:"primary_ingress,omitempty"`
+}
+
+// Summaries returns the API view of each companion, nil when there are none.
+func (ss Sidecars) Summaries() []DeploymentCompanion {
+	if len(ss) == 0 {
+		return nil
+	}
+	out := make([]DeploymentCompanion, 0, len(ss))
+	for _, sc := range ss {
+		out = append(out, DeploymentCompanion{
+			Name: sc.Name, Image: sc.Image, Preset: sc.Preset, Type: string(sc.Type),
+			Port: sc.Port, RAMMB: sc.RamMB, PrimaryIngress: sc.PrimaryIngress,
+		})
+	}
+	return out
+}
+
 // Companion and Companions are the customer-facing names for the bounded
 // helper workload model. Sidecar/Sidecars remain the storage and runtime wire
 // names for backwards compatibility with deployments created before the
@@ -3547,6 +3575,10 @@ type DeploymentResponse struct {
 	// deployment. It lets deploy preview compare the next immutable revision
 	// with the currently deployed workflow contract.
 	Workflows []WorkflowSpec `json:"workflows,omitempty"`
+	// Companions summarizes the companions this deployment carries, without
+	// their environment, so deploy preview can show companion changes and the
+	// public hostname a companion port opens (Hunt 14 H14-53).
+	Companions []DeploymentCompanion `json:"companions,omitempty"`
 	// APIHostingReceipt is the non-secret evidence captured when imaged
 	// promoted this deployment to live. It is intentionally free-form on the
 	// API surface so future receipt schema versions remain additive.

@@ -207,6 +207,18 @@ export type DeploymentResponse = {
    */
   workflows?: Array<WorkflowSpec>;
   /**
+   * Companions this deployment carries: name, image, port and size. Environment values and secret grants are never included.
+   */
+  companions?: Array<{
+    name: string;
+    image?: string;
+    preset?: string;
+    type?: string;
+    port?: number;
+    ram_mb?: number;
+    primary_ingress?: boolean;
+  }>;
+  /**
    * Durable non-secret deployment evidence captured after readiness, including the resolved API profile, artifact identity, and post-readiness smoke result.
    */
   hosting_receipt?: any | null;

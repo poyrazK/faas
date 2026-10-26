@@ -57,6 +57,7 @@ if TYPE_CHECKING:
     from ..models.deployment_promotion_hold import DeploymentPromotionHold
     from ..models.deployment_readiness_probe import DeploymentReadinessProbe
     from ..models.deployment_release import DeploymentRelease
+    from ..models.deployment_response_companions_item import DeploymentResponseCompanionsItem
     from ..models.deployment_response_hosting_receipt_type_0 import DeploymentResponseHostingReceiptType0
     from ..models.deployment_response_override_env_secret_refs import DeploymentResponseOverrideEnvSecretRefs
     from ..models.deployment_stage_state import DeploymentStageState
@@ -231,6 +232,9 @@ class DeploymentResponse:
     nil for image deploys."""
     workflows: list[WorkflowSpec] | Unset = UNSET
     """Validated workflow definitions persisted with this immutable deployment revision."""
+    companions: list[DeploymentResponseCompanionsItem] | Unset = UNSET
+    """Companions this deployment carries: name, image, port and size. Environment values and secret grants are
+    never included."""
     hosting_receipt: DeploymentResponseHostingReceiptType0 | None | Unset = UNSET
     """Durable non-secret deployment evidence captured after readiness, including the resolved API profile,
     artifact identity, and post-readiness smoke result."""
@@ -546,6 +550,13 @@ class DeploymentResponse:
                 workflows_item = workflows_item_data.to_dict()
                 workflows.append(workflows_item)
 
+        companions: list[dict[str, Any]] | Unset = UNSET
+        if not isinstance(self.companions, Unset):
+            companions = []
+            for companions_item_data in self.companions:
+                companions_item = companions_item_data.to_dict()
+                companions.append(companions_item)
+
         hosting_receipt: dict[str, Any] | None | Unset
         if isinstance(self.hosting_receipt, Unset):
             hosting_receipt = UNSET
@@ -762,6 +773,8 @@ class DeploymentResponse:
             field_dict["build_plan"] = build_plan
         if workflows is not UNSET:
             field_dict["workflows"] = workflows
+        if companions is not UNSET:
+            field_dict["companions"] = companions
         if hosting_receipt is not UNSET:
             field_dict["hosting_receipt"] = hosting_receipt
         if deployed_by_user_id is not UNSET:
@@ -822,6 +835,7 @@ class DeploymentResponse:
         from ..models.deployment_promotion_hold import DeploymentPromotionHold
         from ..models.deployment_readiness_probe import DeploymentReadinessProbe
         from ..models.deployment_release import DeploymentRelease
+        from ..models.deployment_response_companions_item import DeploymentResponseCompanionsItem
         from ..models.deployment_response_hosting_receipt_type_0 import DeploymentResponseHostingReceiptType0
         from ..models.deployment_response_override_env_secret_refs import DeploymentResponseOverrideEnvSecretRefs
         from ..models.deployment_stage_state import DeploymentStageState
@@ -1229,6 +1243,15 @@ class DeploymentResponse:
 
                 workflows.append(workflows_item)
 
+        _companions = d.pop("companions", UNSET)
+        companions: list[DeploymentResponseCompanionsItem] | Unset = UNSET
+        if _companions is not UNSET:
+            companions = []
+            for companions_item_data in _companions:
+                companions_item = DeploymentResponseCompanionsItem.from_dict(companions_item_data)
+
+                companions.append(companions_item)
+
         def _parse_hosting_receipt(data: object) -> DeploymentResponseHostingReceiptType0 | None | Unset:
             if data is None:
                 return data
@@ -1516,6 +1539,7 @@ class DeploymentResponse:
             secret_scan=secret_scan,
             build_plan=build_plan,
             workflows=workflows,
+            companions=companions,
             hosting_receipt=hosting_receipt,
             deployed_by_user_id=deployed_by_user_id,
             deployed_via=deployed_via,
