@@ -44,8 +44,8 @@ Columns:
 
 | Tier | Rows | Meaning |
 |---|---|---|
-| `GA` | 41 | Ships in v1.0, billed, held to the "ready to charge" bar. |
-| `beta` | 36 | On for every account, labelled beta, may change, no service credits. |
+| `GA` | 42 | Ships in v1.0, billed, held to the "ready to charge" bar. |
+| `beta` | 35 | On for every account, labelled beta, may change, no service credits. |
 | `preview` | 48 | Off by default; released per account with a platform flag (design partners). |
 | `internal` | 42 | Hidden from customers; development frozen until after v1.0. |
 
@@ -53,9 +53,10 @@ Columns:
 - **GA** is the compute product the financial model sells: deploy (source,
   GitHub, image), runtimes, scale-to-zero, domains, env and secrets, health
   probes, logs and metrics, rollback, crons, account, keys, billing, GDPR, CLI,
-  dashboard, docs and status page.
+  dashboard, docs and status page. PR preview environments joined GA on
+  2026-10-26 (ADR-20261026090000) with live-path acceptance evidence.
 - **beta** is what customers expect around that core and what already runs on
-  production, but should not hold up the charge bar: canaries, PR previews,
+  production, but should not hold up the charge bar: canaries,
   jobs and workflows, internal services, edge rules, caching, alerts, orgs.
 - **preview** is every large standalone product (object storage, Postgres,
   Data API, realtime, live queries, application Auth, AI gateway, durable
@@ -122,7 +123,7 @@ internal hosting service and Gregale Agents are already unreachable.
 | 24 | Rollback to a named revision | `rollback`, `gregale rollback` | `progressive-rollouts` beta | — | GA |
 | 25 | Progressive rollouts: canary ladder, traffic split, automatic rollback on 5xx | `rollouts`, `gregale canary` | `progressive-rollouts` beta | — | beta |
 | 26 | Deployment aliases | `deployment-aliases`, `gregale alias` | **MISSING** | — | beta |
-| 27 | Pull-request previews | `previews` | `pr-previews` beta | — | beta |
+| 27 | Pull-request previews | `previews` | `pr-previews` ga | — | GA |
 | 28 | Release gates on customer signals | `release-gates` | **MISSING** | — | preview |
 | 29 | Release approvals and approval policy | `release-approvals`, `release-approval-policy`, `gregale approvals` | **MISSING** | — | preview |
 | 30 | Deploy freezes and release windows | `/v1/freezes`, `gregale freeze` | **MISSING** | — | preview |
