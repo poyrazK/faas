@@ -6248,6 +6248,14 @@ func (s *server) deploymentResponse(parent context.Context, d state.Deployment, 
 	if len(d.Workflows) > 0 && string(d.Workflows) != "null" {
 		_ = json.Unmarshal(d.Workflows, &resp.Workflows)
 	}
+	if len(d.Sidecars) > 0 && string(d.Sidecars) != "null" {
+		// Environment values are sealed and never echoed; the summary
+		// carries only identity, image, port and size.
+		var companions api.Sidecars
+		if json.Unmarshal(d.Sidecars, &companions) == nil {
+			resp.Companions = companions.Summaries()
+		}
+	}
 	return resp
 }
 
@@ -6948,7 +6956,7 @@ func (s *server) accountUsage(w http.ResponseWriter, r *http.Request, acct state
 				managedPostgresProblem(w, err)
 				return
 			}
-			view := managedPostgresUsageView(usage, limits)
+			view := managedPostgresUsageView(usage, limits, s.managedPostgresCapMode)
 			out.ManagedPostgres = &view
 		}
 	}

@@ -31,7 +31,9 @@ func (s *server) renderAsyncInvocationDetail(w http.ResponseWriter, r *http.Requ
 	app, err := s.store.AppByID(ctx, inv.AppID)
 	appSlug := "deleted app"
 	if err == nil {
-		if app.AccountID != acct.ID {
+		// The URL names the invocation, not its app, so the dashboard gate
+		// never decided for a company app the session may no longer see.
+		if app.AccountID != acct.ID || !accountViewAppVisible(ctx, s.store, log, acct, app) {
 			http.NotFound(w, r)
 			return
 		}

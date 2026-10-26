@@ -4380,6 +4380,8 @@ CREATE TABLE public.snapshots (
     delete_pending boolean DEFAULT false NOT NULL,
     application_standard_capture_token uuid,
     recovery_generation bigint DEFAULT 0 NOT NULL,
+    cpu_template text DEFAULT ''::text NOT NULL,
+    cpu_model text DEFAULT ''::text NOT NULL,
     CONSTRAINT snapshots_recovery_generation_check CHECK ((recovery_generation >= 0)),
     CONSTRAINT snapshots_stored_bytes_nonnegative CHECK ((stored_bytes >= 0)),
     CONSTRAINT snapshots_tier_check CHECK ((tier = ANY (ARRAY['init'::text, 'warm'::text])))
@@ -4405,6 +4407,20 @@ COMMENT ON COLUMN public.snapshots.base_image_version IS 'Runner base-image comp
 --
 
 COMMENT ON COLUMN public.snapshots.application_standard_capture_token IS 'Immutable historical capture reference. A fresh restore grant and current artifact approval are still required.';
+
+
+--
+-- Name: COLUMN snapshots.cpu_template; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.snapshots.cpu_template IS 'CPU template of the capturing node; a templated snapshot restores on any node class the template supports.';
+
+
+--
+-- Name: COLUMN snapshots.cpu_model; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.snapshots.cpu_model IS 'Host CPU signature of the capturing node; a template-less snapshot restores only on the identical signature.';
 
 
 --
@@ -32310,6 +32326,8 @@ CREATE TABLE public.compute_nodes (
     vmmd_epoch_incarnation uuid,
     vmmd_predecessor_incarnation uuid,
     vmmd_restart_notice_until timestamp with time zone,
+    cpu_template text DEFAULT ''::text NOT NULL,
+    cpu_model text DEFAULT ''::text NOT NULL,
     readiness text DEFAULT 'ready'::text NOT NULL,
     readiness_reason text,
     CONSTRAINT compute_nodes_admission_ceiling_mb_check CHECK ((admission_ceiling_mb > 0)),
@@ -32390,6 +32408,20 @@ COMMENT ON COLUMN public.compute_nodes.generation IS 'monotonic counter bumped b
 --
 
 COMMENT ON COLUMN public.compute_nodes.overlay_ip IS 'vmmd-registered IPv4 address on the operator-managed regional overlay';
+
+
+--
+-- Name: COLUMN compute_nodes.cpu_template; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.compute_nodes.cpu_template IS 'Firecracker CPU template vmmd boots guests with; empty for none (ADR-20261024225612).';
+
+
+--
+-- Name: COLUMN compute_nodes.cpu_model; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.compute_nodes.cpu_model IS 'Host CPU signature <class>/<vendor>-<family>-<model>-<stepping>/<flags hash>; empty before vmmd reports it.';
 
 
 --
@@ -35065,7 +35097,7 @@ CREATE TABLE public.edge_rule_events (
     CONSTRAINT edge_rule_events_country_check CHECK ((length(country) <= 8)),
     CONSTRAINT edge_rule_events_host_check CHECK ((length(host) <= 253)),
     CONSTRAINT edge_rule_events_method_check CHECK ((length(method) <= 16)),
-    CONSTRAINT edge_rule_events_outcome_check CHECK ((outcome = ANY (ARRAY['matched'::text, 'logged'::text, 'detected'::text, 'warned'::text, 'blocked'::text, 'challenged'::text, 'rejected'::text, 'solved'::text, 'failed'::text]))),
+    CONSTRAINT edge_rule_events_outcome_check CHECK ((outcome = ANY (ARRAY['matched'::text, 'logged'::text, 'detected'::text, 'warned'::text, 'blocked'::text, 'challenged'::text, 'rejected'::text, 'solved'::text, 'failed'::text, 'boxed'::text]))),
     CONSTRAINT edge_rule_events_path_check CHECK ((octet_length(path) <= 1024)),
     CONSTRAINT edge_rule_events_request_id_check CHECK ((length(request_id) <= 128)),
     CONSTRAINT edge_rule_events_user_agent_check CHECK ((octet_length(user_agent) <= 256)),
@@ -41553,6 +41585,31 @@ CREATE TABLE public.layer_artifact_retention (
 
 
 --
+-- Name: log_archive_erasure_instances; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.log_archive_erasure_instances (
+    account_id uuid NOT NULL,
+    instance_id uuid NOT NULL,
+    erased_at timestamp with time zone,
+    CONSTRAINT log_archive_erasure_instances_erased_at_check CHECK (((erased_at IS NULL) OR isfinite(erased_at)))
+);
+
+
+--
+-- Name: log_archive_erasures; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.log_archive_erasures (
+    account_id uuid NOT NULL,
+    deletion_requested_at timestamp with time zone NOT NULL,
+    snapshotted_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT log_archive_erasures_deletion_requested_at_check CHECK (isfinite(deletion_requested_at)),
+    CONSTRAINT log_archive_erasures_snapshotted_at_check CHECK (isfinite(snapshotted_at))
+);
+
+
+--
 -- Name: log_events; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -44548,6 +44605,20 @@ CREATE TABLE public.oauth_links (
     email text NOT NULL,
     email_verified boolean NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: object_bucket_cors; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.object_bucket_cors (
+    bucket_id uuid NOT NULL,
+    rules jsonb NOT NULL,
+    revision bigint NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT object_bucket_cors_revision_check CHECK ((revision > 0)),
+    CONSTRAINT object_bucket_cors_rules_check CHECK (((jsonb_typeof(rules) = 'array'::text) AND ((jsonb_array_length(rules) >= 1) AND (jsonb_array_length(rules) <= 100)) AND (octet_length((rules)::text) <= 65536)))
 );
 
 
@@ -61639,6 +61710,22 @@ ALTER TABLE ONLY public.layer_artifact_retention
 
 
 --
+-- Name: log_archive_erasure_instances log_archive_erasure_instances_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.log_archive_erasure_instances
+    ADD CONSTRAINT log_archive_erasure_instances_pkey PRIMARY KEY (account_id, instance_id);
+
+
+--
+-- Name: log_archive_erasures log_archive_erasures_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.log_archive_erasures
+    ADD CONSTRAINT log_archive_erasures_pkey PRIMARY KEY (account_id);
+
+
+--
 -- Name: log_events log_events_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -62756,6 +62843,14 @@ ALTER TABLE ONLY public.notification_outbox
 
 ALTER TABLE ONLY public.oauth_links
     ADD CONSTRAINT oauth_links_pkey PRIMARY KEY (provider, provider_subject);
+
+
+--
+-- Name: object_bucket_cors object_bucket_cors_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.object_bucket_cors
+    ADD CONSTRAINT object_bucket_cors_pkey PRIMARY KEY (bucket_id);
 
 
 --
@@ -72717,6 +72812,13 @@ CREATE INDEX jobs_legacy_artifact_verification_idx ON public.jobs USING btree (u
 
 
 --
+-- Name: log_archive_erasure_instances_pending_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX log_archive_erasure_instances_pending_idx ON public.log_archive_erasure_instances USING btree (account_id, instance_id) WHERE (erased_at IS NULL);
+
+
+--
 -- Name: log_events_app_deployment_time_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -76672,10 +76774,14 @@ CREATE INDEX snapshots_deployment_idx ON public.snapshots USING btree (deploymen
 
 
 --
--- Name: snapshots_deployment_tier_key; Type: INDEX; Schema: public; Owner: -
+-- Name: snapshots_deployment_tier_platform_key; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE UNIQUE INDEX snapshots_deployment_tier_key ON public.snapshots USING btree (deployment_id, tier) WHERE (stale = false);
+CREATE UNIQUE INDEX snapshots_deployment_tier_platform_key ON public.snapshots USING btree (deployment_id, tier, (
+CASE
+    WHEN (cpu_template <> ''::text) THEN ('template:'::text || cpu_template)
+    ELSE cpu_model
+END)) WHERE (stale = false);
 
 
 --
@@ -92193,6 +92299,22 @@ ALTER TABLE ONLY public.jobs
 
 
 --
+-- Name: log_archive_erasure_instances log_archive_erasure_instances_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.log_archive_erasure_instances
+    ADD CONSTRAINT log_archive_erasure_instances_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.log_archive_erasures(account_id) ON DELETE CASCADE;
+
+
+--
+-- Name: log_archive_erasures log_archive_erasures_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.log_archive_erasures
+    ADD CONSTRAINT log_archive_erasures_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
 -- Name: log_saved_searches log_saved_searches_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -93430,6 +93552,14 @@ ALTER TABLE ONLY public.notification_channels
 
 ALTER TABLE ONLY public.oauth_links
     ADD CONSTRAINT oauth_links_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: object_bucket_cors object_bucket_cors_bucket_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.object_bucket_cors
+    ADD CONSTRAINT object_bucket_cors_bucket_id_fkey FOREIGN KEY (bucket_id) REFERENCES public.object_buckets(id) ON DELETE CASCADE;
 
 
 --

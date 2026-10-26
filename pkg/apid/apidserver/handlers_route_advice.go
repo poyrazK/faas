@@ -83,7 +83,7 @@ func (s *server) routeAdviceSettings(ctx context.Context, acct state.Account, ap
 	if err != nil {
 		return nil
 	}
-	in.WakeAheadEnabled = setting.Enabled
+	in.WakeAheadEnabled = state.EffectiveServiceWakeAhead(setting, app)
 	source, _, err := state.EffectiveRoutePriorities(ctx, s.store, acct.ID, app.ID)
 	if err != nil {
 		return nil

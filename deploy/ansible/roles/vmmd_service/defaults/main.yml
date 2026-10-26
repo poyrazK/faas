@@ -25,6 +25,14 @@ vmmd_outbound_client_tls_ca_path: /etc/faas/tls/ca/ca.crt
 # 64-77 ms on every wake (hunt #9). 0 disables; the API bound is 0-16.
 vmmd_prepared_networks: 4
 
+# ADR-20261024225612 Firecracker CPU template every guest boots with. Set one
+# value for every compute node of a cell: "T2CL" lets Intel Cascade Lake and
+# Ice Lake nodes share snapshots, "T2S" Skylake + Cascade Lake, "C3"/"T2"
+# Skylake through Ice Lake, "T2A" AMD Milan. vmmd refuses to start on a CPU
+# the template does not list. Changing it makes every app cold-boot once.
+# Empty (the default) keeps the host's CPUID and installs no drop-in.
+vmmd_cpu_template: ""
+
 # vmmd restart adoption (docs/adr/20261017-vmmd-restart-adoption.md): with
 # all three on, a rollout restarts vmmd without draining the node when the
 # new vmmd adopts every live guest (node_join.yml asks `vmmd adoption-check`).

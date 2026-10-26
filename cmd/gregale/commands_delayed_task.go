@@ -71,10 +71,8 @@ func cmdDelayedTask(args []string) int {
 	case "cancel":
 		return cmdDelayedTaskCancel(args[1:])
 	}
-	fmt.Fprintf(os.Stderr, "gregale delayed-task: unknown subcommand %q\n", args[0])
-	sug, _ := suggestSubcommand(args[0], parent)
-	maybeSuggestSub(sug)
-	return 1
+	printCommandValidation(os.Stderr, "gregale delayed-task: unknown subcommand %q\n", args[0])
+	return unknownSubcommandChoices(os.Stderr, "delayed-task", parent, args[0])
 }
 
 // cmdDelayedTaskAdd implements `gregale delayed-task add --app <slug>

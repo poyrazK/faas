@@ -68,10 +68,8 @@ func cmdAccount(args []string) int {
 }
 
 func unknownAccountSubcommand(parent cliCommand, name string) int {
-	sug, _ := suggestSubcommand(name, parent)
-	fmt.Fprintf(os.Stderr, "gregale account: unknown subcommand %q\n", name)
-	maybeSuggestSub(sug)
-	return 1
+	printCommandValidation(os.Stderr, "gregale account: unknown subcommand %q\n", name)
+	return unknownSubcommandChoices(os.Stderr, "account", parent, name)
 }
 
 // cmdAccountExport downloads the GDPR export bundle. Default output

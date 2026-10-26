@@ -432,6 +432,7 @@ type MemStore struct {
 	objectWriteAdmissions       map[string]objectWriteAdmission
 	objectCapacityJobs          map[string]ObjectCapacityReconciliation
 	objectBucketVersioning      map[string]ObjectBucketVersioning
+	objectBucketCORS            map[string]api.ObjectBucketCORS
 	objectBucketEncryption      map[string]ObjectBucketEncryption
 	objectBucketObjectLock      map[string]ObjectBucketObjectLock
 	objectVersionProtection     map[string]ObjectVersionProtection
@@ -1136,6 +1137,9 @@ type MemStore struct {
 	// per-app shape unchanged. (M7 fix; the previous shape was wrong.)
 	usage        []usageMinute
 	usageByMonth []Usage
+	// logArchiveErasures mirrors log_archive_erasures and its instance rows,
+	// keyed by account ID.
+	logArchiveErasures map[string]*memLogArchiveErasure
 	// apiConsumerUsage mirrors the durable per-(app, consumer, minute)
 	// aggregate. apiConsumerUsageEvents is the idempotency ledger: an
 	// event is applied at most once even when the gateway retries a
@@ -16886,12 +16890,15 @@ func (m *MemStore) createSnapshotLocked(snap Snapshot) (Snapshot, error) {
 		snap.CreatedAt = time.Now()
 	}
 	for _, existing := range m.snapshots {
-		// Mirror the (deployment_id, tier) unique index from migration
-		// 00110: a non-stale row with the same (deployment_id, tier)
+		// Mirror the (deployment_id, tier, cpu platform) unique index
+		// (migration 00110, widened by ADR-20261024225612 amendment 1): a
+		// non-stale row with the same deployment, tier and CPU platform
 		// is a duplicate — surface ErrConflict so callers fall through
 		// to the existing-imaged semantic. Different-tier rows on the
-		// same deployment are allowed (warm + init coexist).
-		if existing.DeploymentID == snap.DeploymentID && existing.Tier == snap.Tier && !existing.Stale {
+		// same deployment are allowed (warm + init coexist), and so are
+		// rows of different CPU platforms.
+		if existing.DeploymentID == snap.DeploymentID && existing.Tier == snap.Tier && !existing.Stale &&
+			existing.CPUPlatform() == snap.CPUPlatform() {
 			return Snapshot{}, ErrConflict
 		}
 	}
@@ -23571,6 +23578,7 @@ func (m *MemStore) DeleteAccount(ctx context.Context, id string) error {
 		}
 	}
 	m.usageByMonth = keptMonth
+	delete(m.logArchiveErasures, id)
 	for deploymentID, deployment := range m.deployments {
 		if deployment.DeployedByUserID == id {
 			deployment.DeployedByUserID = ""

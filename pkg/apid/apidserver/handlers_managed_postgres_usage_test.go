@@ -26,7 +26,7 @@ func TestManagedPostgresUsageViewIsCustomerSafe(t *testing.T) {
 			EgressBytes:        60,
 			CostMillicents:     999,
 		},
-	}, api.ManagedPostgresPlanLimits{DatabasesMax: 1, StorageLimitBytes: 10 << 30})
+	}, api.ManagedPostgresPlanLimits{DatabasesMax: 1, StorageLimitBytes: 10 << 30}, managedpostgres.CapEnforcementShadow)
 	if view.GuardrailState != "healthy" || view.StorageByteSecondsRemaining <= 0 || view.ObservedAt == nil {
 		t.Fatalf("view = %+v", view)
 	}
@@ -58,7 +58,7 @@ func TestManagedPostgresUsageViewReportsEnforcedDatabaseLimit(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			view := apidserver.ManagedPostgresUsageView(managedpostgres.UsageSummary{DatabaseLimit: tc.enforced}, limits)
+			view := apidserver.ManagedPostgresUsageView(managedpostgres.UsageSummary{DatabaseLimit: tc.enforced}, limits, managedpostgres.CapEnforcementShadow)
 			if view.DatabaseLimit != tc.want {
 				t.Fatalf("database_limit = %d, want %d", view.DatabaseLimit, tc.want)
 			}
@@ -79,7 +79,7 @@ func TestManagedPostgresUsageViewGuardrailStates(t *testing.T) {
 		{name: "healthy", summary: managedpostgres.UsageSummary{PolicyEnabled: true, Fresh: true}, want: "healthy"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := apidserver.ManagedPostgresUsageView(tc.summary, limits).GuardrailState; got != tc.want {
+			if got := apidserver.ManagedPostgresUsageView(tc.summary, limits, managedpostgres.CapEnforcementShadow).GuardrailState; got != tc.want {
 				t.Fatalf("state = %q, want %q", got, tc.want)
 			}
 		})
@@ -98,7 +98,7 @@ func TestManagedPostgresUsageOperatorViewIncludesNormalizedCostOnly(t *testing.T
 			ComputeUnitHourMillicents: 3600,
 		},
 		Snapshot: managedpostgres.UsageSnapshot{PeriodStart: period, ComputeUnitSeconds: 3600, CostMillicents: 100},
-	}, api.ManagedPostgresPlanLimits{DatabasesMax: 1, StorageLimitBytes: 1 << 30})
+	}, api.ManagedPostgresPlanLimits{DatabasesMax: 1, StorageLimitBytes: 1 << 30}, managedpostgres.CapEnforcementShadow)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -114,4 +114,55 @@ func TestManagedPostgresUsageOperatorViewIncludesNormalizedCostOnly(t *testing.T
 			t.Fatalf("operator usage response contains %q: %s", forbidden, encoded)
 		}
 	}
+}
+
+// adr: 20261025094915 — compute_cap_state reports suspension only while caps
+// are enforced, and leaves guardrail_state's values unchanged for old SDKs.
+func TestManagedPostgresUsageViewComputeCapState(t *testing.T) {
+	const allowance = int64(25 * 3600)
+	limits := api.ManagedPostgresPlanLimits{DatabasesMax: 1, StorageLimitBytes: 1 << 30, MonthlyComputeUnitSeconds: allowance}
+	summary := func(used int64) managedpostgres.UsageSummary {
+		return managedpostgres.UsageSummary{PolicyEnabled: true, Fresh: true,
+			EffectivePolicy: managedpostgres.UsagePolicy{Enabled: true, MaxMonthlyComputeUnitSeconds: allowance},
+			Snapshot:        managedpostgres.UsageSnapshot{ComputeUnitSeconds: used}}
+	}
+	for _, tc := range []struct {
+		name string
+		used int64
+		mode managedpostgres.CapEnforcementMode
+		want string
+	}{
+		{name: "under 80% is healthy", used: allowance*4/5 - 1, mode: managedpostgres.CapEnforcementOn, want: "healthy"},
+		{name: "80% warns", used: allowance * 4 / 5, mode: managedpostgres.CapEnforcementOn, want: "warning"},
+		{name: "the ceiling suspends while enforced", used: allowance, mode: managedpostgres.CapEnforcementOn, want: "suspended"},
+		{name: "shadow never reports a suspension", used: allowance * 2, mode: managedpostgres.CapEnforcementShadow, want: "warning"},
+		{name: "off never reports a suspension", used: allowance, mode: managedpostgres.CapEnforcementOff, want: "warning"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			view := apidserver.ManagedPostgresUsageView(summary(tc.used), limits, tc.mode)
+			if view.ComputeCapState != tc.want || view.ComputeAllowanceUnitSeconds != allowance || view.ComputeCeilingUnitSeconds != allowance {
+				t.Fatalf("compute cap = %q allowance %d ceiling %d; want %q, %d, %d", view.ComputeCapState, view.ComputeAllowanceUnitSeconds, view.ComputeCeilingUnitSeconds, tc.want, allowance, allowance)
+			}
+			if view.GuardrailState != "healthy" {
+				t.Fatalf("guardrail_state changed to %q", view.GuardrailState)
+			}
+		})
+	}
+	t.Run("a disabled ledger reports the allowance without a ceiling", func(t *testing.T) {
+		view := apidserver.ManagedPostgresUsageView(managedpostgres.UsageSummary{}, limits, managedpostgres.CapEnforcementOn)
+		if view.ComputeAllowanceUnitSeconds != allowance || view.ComputeCeilingUnitSeconds != 0 || view.ComputeCapState != "healthy" {
+			t.Fatalf("view = %+v", view)
+		}
+	})
+	t.Run("a plan without compute omits the fields", func(t *testing.T) {
+		encoded, err := json.Marshal(apidserver.ManagedPostgresUsageView(summary(0), api.ManagedPostgresPlanLimits{DatabasesMax: 1}, managedpostgres.CapEnforcementOn))
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, key := range []string{"compute_allowance_unit_seconds", "compute_ceiling_unit_seconds", "compute_cap_state"} {
+			if strings.Contains(string(encoded), key) {
+				t.Fatalf("%s present without a plan allowance: %s", key, encoded)
+			}
+		}
+	})
 }

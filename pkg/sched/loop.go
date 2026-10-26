@@ -4293,8 +4293,15 @@ func (l *Loop) runWorkflowsDispatchTick(ctx context.Context) {
 			l.log.Warn("schedd: workflow schedule tick failed", "error_type", logsanitize.Field(fmt.Sprintf("%T", err)))
 		}
 	})
+	// The base slots are offered every tick. A further slot is offered only
+	// while every lower slot is still busy, so an idle scheduler polls as
+	// before and capacity grows by one slot a tick under load (ADR-20261025232118).
+	busy := 0
 	for slot := range api.WorkflowDispatchSlots {
-		l.submitWork(workWorkflowDispatch, fmt.Sprintf("%d", slot), func() {
+		if slot >= api.WorkflowDispatchBaseSlots && busy < slot {
+			break
+		}
+		outcome := l.workPool().submit(workWorkflowDispatch, fmt.Sprintf("%d", slot), func() {
 			orch := l.workflowOrch
 			if orch == nil {
 				orch = NewWorkflowOrchestrator(l.engine.Store(), nil, l.audit, nil, l.log)
@@ -4304,6 +4311,12 @@ func (l *Loop) runWorkflowsDispatchTick(ctx context.Context) {
 				l.log.Warn("schedd: workflow dispatch tick failed", "err", err)
 			}
 		})
+		if outcome == "coalesced" {
+			busy++
+		}
+	}
+	if l.workflowOrch != nil {
+		l.workflowOrch.metrics.SetDispatchSlots(busy, api.WorkflowDispatchSlots)
 	}
 }
 

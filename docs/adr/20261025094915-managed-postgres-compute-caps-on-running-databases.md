@@ -115,13 +115,20 @@ The owner decided the policy on 2026-10-25.
    `/dashboard/postgres`) gains these fields, all `omitempty`:
    - `compute_allowance_unit_seconds`
    - `compute_ceiling_unit_seconds`
-   - `overage_enabled`
-   - `suspended_at` (when the cap suspended the account's databases)
+   - `compute_cap_state`: one of these values:
+     - `healthy`.
+     - `warning`: at or above 80% of the allowance.
+     - `overage`: past the allowance, with overage on.
+     - `suspended`: at the ceiling. It is reported only while enforcement
+       is `on`, so shadow mode never tells a customer that a running database
+       is stopped.
+   - `overage_enabled`, which arrives with the overage setting (decision 11).
+   - `suspended_at`, when the cap suspended the account's databases. It
+     arrives with the warning emails, which persist the per-account cap state.
 
-   `guardrail_state` gains three values:
-   - `warning`: at or above 80% of the allowance.
-   - `overage`: past the allowance, with overage on.
-   - `suspended`: at the ceiling.
+   `guardrail_state` keeps its existing values. Released SDKs validate it
+   against a closed set, so new values would break them. Old SDKs ignore an
+   unknown field.
 
    The usage-warning mail sends one email per account, month and threshold:
    80% of the allowance, the allowance itself (which says whether the databases
@@ -183,7 +190,10 @@ Each step is its own PR, in this order:
 1. This record.
 2. Neon quota support, behind an optional `ComputeCapProvider` interface, plus
    the enforcer and its apid wiring in `shadow` mode.
-3. The customer view: usage fields, guardrail states and warning emails.
+3. The customer view, in three PRs:
+   - the usage fields and `compute_cap_state`;
+   - the warning emails and `suspended_at`;
+   - the `FaasManagedPostgresCapEnforcementStale` alert.
 4. The `postgres-overage` capability: migration, API, CLI and dashboard, at
    maturity `internal`.
 5. The staging qualification probe for decision 10, then an operator step:

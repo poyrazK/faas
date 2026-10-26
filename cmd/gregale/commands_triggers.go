@@ -100,10 +100,8 @@ func cmdTriggers(args []string) int {
 	case "metrics":
 		return cmdTriggersMetrics(args[1:])
 	default:
-		fmt.Fprintf(os.Stderr, "gregale triggers: unknown subcommand %q\n", args[0])
-		sug, _ := suggestSubcommand(args[0], parent)
-		maybeSuggestSub(sug)
-		return 1
+		printCommandValidation(os.Stderr, "gregale triggers: unknown subcommand %q\n", args[0])
+		return unknownSubcommandChoices(os.Stderr, "triggers", parent, args[0])
 	}
 }
 
