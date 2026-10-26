@@ -2809,6 +2809,7 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/deployments/{id}/audit", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listDeploymentAudit))))
 	readiness := mcpreadiness.New(s.store, s.mcpReadinessPreview, s.authMw)
 	readiness.Identities = hostIdentitiesForUnseal
+	readiness.AccountIdentities = accountIdentitiesFor
 	readiness.FallbackURL = resolveAndCheckEgress
 	readiness.FallbackSeal = sealMCPFallbackSecret
 	readiness.PagerDutySeal = sealMCPPagerDutyKey

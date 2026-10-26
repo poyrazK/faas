@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -630,6 +631,132 @@ func (s *PgStore) ResealDeliveryValue(ctx context.Context, v DeliverySealedValue
 	}
 	if err != nil {
 		return false, fmt.Errorf("state: reseal delivery value %s %s: %w", v.Kind, v.ID, err)
+	}
+	return tag.RowsAffected() == 1, nil
+}
+
+// Account value kinds (ADR 20261022111812) that apid both seals and opens:
+// an account's TOTP secret, an inbound webhook endpoint's signing secret, a
+// billing provider key, a managed workflow's plan and a PagerDuty
+// acknowledgement signing secret.
+const (
+	AccountSealedMFASecret      = "mfa_secret"
+	AccountSealedInboundWebhook = "inbound_webhook"
+	AccountSealedBillingKey     = "billing_key"
+	AccountSealedWorkflowPlan   = "workflow_plan"
+	AccountSealedPagerDutyAck   = "pagerduty_ack"
+)
+
+// AccountSealedValue is one sealed account value, listed for the account
+// seal-domain re-seal. ID is the row's id; a billing key's is
+// "<account id>/<provider>" and a PagerDuty acknowledgement's
+// "<rule id>/<destination>". KID is a workflow plan's key id: apid's worker
+// opens a plan only with the identity it names.
+type AccountSealedValue struct {
+	Kind   string
+	ID     string
+	Sealed []byte
+	KID    string
+}
+
+// ListAccountSealedValues pages through one kind's sealed account values in
+// id order after afterID. Plans of finished workflows are already cleared.
+func (s *PgStore) ListAccountSealedValues(ctx context.Context, kind, afterID string, limit int) ([]AccountSealedValue, error) {
+	if limit <= 0 || limit > 1000 {
+		limit = 1000
+	}
+	// Kinds keyed by a uuid page on their primary key, which needs a uuid
+	// cursor; the composite-keyed ones page on their text id.
+	uuidAfter := afterID
+	if uuidAfter == "" {
+		uuidAfter = "00000000-0000-0000-0000-000000000000"
+	}
+	var query string
+	after := uuidAfter
+	switch kind {
+	case AccountSealedMFASecret:
+		query = `SELECT id::text, mfa_secret_encrypted, '' FROM accounts
+		          WHERE octet_length(mfa_secret_encrypted) > 0 AND id > $1::uuid ORDER BY id LIMIT $2`
+	case AccountSealedInboundWebhook:
+		query = `SELECT id::text, signing_secret_sealed, '' FROM inbound_webhook_endpoints
+		          WHERE id > $1::uuid ORDER BY id LIMIT $2`
+	case AccountSealedWorkflowPlan:
+		query = `SELECT id::text, sealed_plan, payload_kid FROM agent_execution_workflows
+		          WHERE sealed_plan IS NOT NULL AND id > $1::uuid ORDER BY id LIMIT $2`
+	case AccountSealedBillingKey:
+		query, after = `SELECT k, sealed_secret, '' FROM (
+		           SELECT account_id::text || '/' || provider AS k, sealed_secret FROM account_billing_connections
+		         ) c WHERE k > $1 ORDER BY k LIMIT $2`, afterID
+	case AccountSealedPagerDutyAck:
+		query, after = `SELECT k, signing_secret_sealed, '' FROM (
+		           SELECT rule_id::text || '/' || destination AS k, signing_secret_sealed FROM mcp_readiness_pagerduty_acknowledgements
+		         ) a WHERE k > $1 ORDER BY k LIMIT $2`, afterID
+	default:
+		return nil, fmt.Errorf("state: list account sealed values: unknown kind %q", kind)
+	}
+	rows, err := s.pool.Query(ctx, query, after, limit)
+	if err != nil {
+		return nil, fmt.Errorf("state: list account sealed values %s: %w", kind, err)
+	}
+	defer rows.Close()
+	var out []AccountSealedValue
+	for rows.Next() {
+		v := AccountSealedValue{Kind: kind}
+		if err := rows.Scan(&v.ID, &v.Sealed, &v.KID); err != nil {
+			return nil, fmt.Errorf("state: scan account sealed value %s: %w", kind, err)
+		}
+		out = append(out, v)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("state: list account sealed values %s: %w", kind, err)
+	}
+	return out, nil
+}
+
+// ResealAccountValue replaces v's ciphertext only while it still holds
+// v.Sealed, so a customer change between the read and the write wins. A
+// workflow plan's key id moves with it. It reports whether the row was
+// replaced; updated_at is left alone because the value did not change.
+func (s *PgStore) ResealAccountValue(ctx context.Context, v AccountSealedValue, sealed []byte, kid string) (bool, error) {
+	if len(v.Sealed) == 0 || len(sealed) == 0 {
+		return false, errors.New("state: reseal account value needs the old and new ciphertext")
+	}
+	var (
+		tag pgconn.CommandTag
+		err error
+	)
+	switch v.Kind {
+	case AccountSealedMFASecret:
+		tag, err = s.pool.Exec(ctx, `UPDATE accounts SET mfa_secret_encrypted = $3
+		                             WHERE id = $1::uuid AND mfa_secret_encrypted = $2`, v.ID, v.Sealed, sealed)
+	case AccountSealedInboundWebhook:
+		tag, err = s.pool.Exec(ctx, `UPDATE inbound_webhook_endpoints SET signing_secret_sealed = $3
+		                             WHERE id = $1::uuid AND signing_secret_sealed = $2`, v.ID, v.Sealed, sealed)
+	case AccountSealedWorkflowPlan:
+		if kid == "" {
+			return false, errors.New("state: reseal workflow plan needs a key id")
+		}
+		tag, err = s.pool.Exec(ctx, `UPDATE agent_execution_workflows SET sealed_plan = $3, payload_kid = $4
+		                             WHERE id = $1::uuid AND sealed_plan = $2`, v.ID, v.Sealed, sealed, kid)
+	case AccountSealedBillingKey:
+		account, provider, ok := strings.Cut(v.ID, "/")
+		if !ok {
+			return false, fmt.Errorf("state: reseal billing key: malformed id %q", v.ID)
+		}
+		tag, err = s.pool.Exec(ctx, `UPDATE account_billing_connections SET sealed_secret = $4
+		                             WHERE account_id = $1::uuid AND provider = $2 AND sealed_secret = $3`, account, provider, v.Sealed, sealed)
+	case AccountSealedPagerDutyAck:
+		rule, destination, ok := strings.Cut(v.ID, "/")
+		if !ok {
+			return false, fmt.Errorf("state: reseal PagerDuty acknowledgement: malformed id %q", v.ID)
+		}
+		tag, err = s.pool.Exec(ctx, `UPDATE mcp_readiness_pagerduty_acknowledgements SET signing_secret_sealed = $4
+		                             WHERE rule_id = $1::uuid AND destination = $2 AND signing_secret_sealed = $3`, rule, destination, v.Sealed, sealed)
+	default:
+		return false, fmt.Errorf("state: reseal account value: unknown kind %q", v.Kind)
+	}
+	if err != nil {
+		return false, fmt.Errorf("state: reseal account value %s %s: %w", v.Kind, v.ID, err)
 	}
 	return tag.RowsAffected() == 1, nil
 }
