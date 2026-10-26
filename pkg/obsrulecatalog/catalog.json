@@ -4,7 +4,7 @@
   "sets": [
     {
       "id": "gregale-core-v1",
-      "revision": "9bb4195ebeac8a8c6d1b4b14c4e20769296b8720ddf7df41614a7c57c7a52377",
+      "revision": "7c299800fa2af23bfddacaf28a21b79d235503fcc48f1576f17dbb1511c67890",
       "files": [
         "faas.rules.yml"
       ],
@@ -1359,6 +1359,19 @@
             "for_seconds": 120,
             "keep_firing_for_seconds": 0,
             "fingerprint": "7252dc8f003ac993ec7ef9a043ee20801861e71f15183fe378f74243d146b7fb"
+          }
+        },
+        {
+          "id": "3c35553a077d6cad1c7b8f4535c1b8d98c26d748d805942176505b05d635a9d1",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_slo",
+          "rule_name": "FaasWorkflowDispatchSaturated",
+          "definition": {
+            "expression_hash": "1c09e9ffadb1545513145441d0001d3f9700fc6e8951f4e2b8f430148b7ea6f9",
+            "labels_hash": "bd698820875aef1f5c37af67b7c653e0d9f351d0aec34f66dedae6c62576b130",
+            "for_seconds": 600,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "9575905ff61ab646ae2178f41a368184d93c152a3fd764594511c75fed04883f"
           }
         },
         {
@@ -2927,11 +2940,11 @@
           "group_name": "faas_loki_pipeline",
           "rule_name": "FaasLokiShippingStalled",
           "definition": {
-            "expression_hash": "073d4bde9115e60ec0d9654622117f797d68a57d729f68289f5e6816ac731177",
+            "expression_hash": "09b549bb1d7f764c9bf012daef812ce5e65eefa66ba32aef3d384470717cad9f",
             "labels_hash": "5dc703aab6eca7efc60d593bba0a18ae10a7575d0a3b3de804ba4ce62ae00a55",
             "for_seconds": 600,
             "keep_firing_for_seconds": 0,
-            "fingerprint": "7671f8c2128ae15a676504b1f7a139837d26671a4430def8c868f952e61e77f3"
+            "fingerprint": "378b24927c85de567046a55870aa03a97f2c2e6fc94d4eebde7595091e075511"
           }
         },
         {
@@ -3075,6 +3088,19 @@
             "for_seconds": 300,
             "keep_firing_for_seconds": 0,
             "fingerprint": "2e76efde300dc712601ad553438525e986396f94dd8ce602d682711f570a6431"
+          }
+        },
+        {
+          "id": "930534794f4cd55535337689ef8037ecd879daf961c432ac3374d52e3ee8b2ef",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_slo",
+          "rule_name": "FaasWorkflowDispatchLagHigh",
+          "definition": {
+            "expression_hash": "5a1a4c991ae2a1e2279b5daaf8fac0e3d025a029da7f2c957c6cbb90a29c926d",
+            "labels_hash": "bd698820875aef1f5c37af67b7c653e0d9f351d0aec34f66dedae6c62576b130",
+            "for_seconds": 600,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "1482a12e5ab534366e2bda10611828a21c9f1ad86744b84362409a5aa5c01f83"
           }
         },
         {
@@ -3400,6 +3426,19 @@
             "for_seconds": 300,
             "keep_firing_for_seconds": 0,
             "fingerprint": "2170b15d8f92fffd21d2779db3118ad8844e33e0bc7280b8dd8c8cdfad5a7ca3"
+          }
+        },
+        {
+          "id": "9e66490b352e5a3c67a0fc859ae8fa3e204c02c9e7db8814ab5f56d8781b270b",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_slo",
+          "rule_name": "FaasJobsQueueBacklog",
+          "definition": {
+            "expression_hash": "c2a2c4ca90187b6268ed32f962a1dd2c7ccd300e3c239f882c4bd0340b6f68e7",
+            "labels_hash": "afca7751813f48171410f68cb71a0e24679508dc9fc058bf10c50ac8e94fc6c8",
+            "for_seconds": 900,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "a0c3f43af6d4db8829aa2bd6622ebfb68af8da74c97db1718a70bab2c95ac273"
           }
         },
         {
@@ -5319,11 +5358,11 @@
           "group_name": "faas_loki_pipeline",
           "rule_name": "FaasLokiShippingDropped",
           "definition": {
-            "expression_hash": "42c02556aad69a71c6050cf1861e9916d96660221c7952e316d3767dc1eb5e44",
+            "expression_hash": "c5d809f14c92e4e1d4984e0636bfa3a54ded8254511b6d507bcccd551411b6c4",
             "labels_hash": "5dc703aab6eca7efc60d593bba0a18ae10a7575d0a3b3de804ba4ce62ae00a55",
             "for_seconds": 300,
             "keep_firing_for_seconds": 0,
-            "fingerprint": "4b4d10d0b867c7206815f71e845b1b1d8ba2fc1572eb445b4f3c478f23cdb5a8"
+            "fingerprint": "54ac9a138926a4c1d83f65c602f65eb528559a1b4996d0884ac049cc5aa1950c"
           }
         },
         {
@@ -5512,7 +5551,7 @@
     },
     {
       "id": "gregale-full-v1",
-      "revision": "05f77456124aee34fb7882f1f28ddbd09376c863eaacfdec28f2745d5983aa56",
+      "revision": "e8ddca61d6b9e6d9aeb64d5ae60cf909d5a5b5a9d1c4d6c2d7f7cc4efba47741",
       "files": [
         "bridge.rules.yml",
         "data_placement.yaml",
@@ -6949,6 +6988,19 @@
             "for_seconds": 120,
             "keep_firing_for_seconds": 0,
             "fingerprint": "7252dc8f003ac993ec7ef9a043ee20801861e71f15183fe378f74243d146b7fb"
+          }
+        },
+        {
+          "id": "3c35553a077d6cad1c7b8f4535c1b8d98c26d748d805942176505b05d635a9d1",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_slo",
+          "rule_name": "FaasWorkflowDispatchSaturated",
+          "definition": {
+            "expression_hash": "1c09e9ffadb1545513145441d0001d3f9700fc6e8951f4e2b8f430148b7ea6f9",
+            "labels_hash": "bd698820875aef1f5c37af67b7c653e0d9f351d0aec34f66dedae6c62576b130",
+            "for_seconds": 600,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "9575905ff61ab646ae2178f41a368184d93c152a3fd764594511c75fed04883f"
           }
         },
         {
@@ -8608,11 +8660,11 @@
           "group_name": "faas_loki_pipeline",
           "rule_name": "FaasLokiShippingStalled",
           "definition": {
-            "expression_hash": "073d4bde9115e60ec0d9654622117f797d68a57d729f68289f5e6816ac731177",
+            "expression_hash": "09b549bb1d7f764c9bf012daef812ce5e65eefa66ba32aef3d384470717cad9f",
             "labels_hash": "5dc703aab6eca7efc60d593bba0a18ae10a7575d0a3b3de804ba4ce62ae00a55",
             "for_seconds": 600,
             "keep_firing_for_seconds": 0,
-            "fingerprint": "7671f8c2128ae15a676504b1f7a139837d26671a4430def8c868f952e61e77f3"
+            "fingerprint": "378b24927c85de567046a55870aa03a97f2c2e6fc94d4eebde7595091e075511"
           }
         },
         {
@@ -8756,6 +8808,19 @@
             "for_seconds": 300,
             "keep_firing_for_seconds": 0,
             "fingerprint": "2e76efde300dc712601ad553438525e986396f94dd8ce602d682711f570a6431"
+          }
+        },
+        {
+          "id": "930534794f4cd55535337689ef8037ecd879daf961c432ac3374d52e3ee8b2ef",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_slo",
+          "rule_name": "FaasWorkflowDispatchLagHigh",
+          "definition": {
+            "expression_hash": "5a1a4c991ae2a1e2279b5daaf8fac0e3d025a029da7f2c957c6cbb90a29c926d",
+            "labels_hash": "bd698820875aef1f5c37af67b7c653e0d9f351d0aec34f66dedae6c62576b130",
+            "for_seconds": 600,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "1482a12e5ab534366e2bda10611828a21c9f1ad86744b84362409a5aa5c01f83"
           }
         },
         {
@@ -9081,6 +9146,19 @@
             "for_seconds": 300,
             "keep_firing_for_seconds": 0,
             "fingerprint": "2170b15d8f92fffd21d2779db3118ad8844e33e0bc7280b8dd8c8cdfad5a7ca3"
+          }
+        },
+        {
+          "id": "9e66490b352e5a3c67a0fc859ae8fa3e204c02c9e7db8814ab5f56d8781b270b",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_slo",
+          "rule_name": "FaasJobsQueueBacklog",
+          "definition": {
+            "expression_hash": "c2a2c4ca90187b6268ed32f962a1dd2c7ccd300e3c239f882c4bd0340b6f68e7",
+            "labels_hash": "afca7751813f48171410f68cb71a0e24679508dc9fc058bf10c50ac8e94fc6c8",
+            "for_seconds": 900,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "a0c3f43af6d4db8829aa2bd6622ebfb68af8da74c97db1718a70bab2c95ac273"
           }
         },
         {
@@ -11078,11 +11156,11 @@
           "group_name": "faas_loki_pipeline",
           "rule_name": "FaasLokiShippingDropped",
           "definition": {
-            "expression_hash": "42c02556aad69a71c6050cf1861e9916d96660221c7952e316d3767dc1eb5e44",
+            "expression_hash": "c5d809f14c92e4e1d4984e0636bfa3a54ded8254511b6d507bcccd551411b6c4",
             "labels_hash": "5dc703aab6eca7efc60d593bba0a18ae10a7575d0a3b3de804ba4ce62ae00a55",
             "for_seconds": 300,
             "keep_firing_for_seconds": 0,
-            "fingerprint": "4b4d10d0b867c7206815f71e845b1b1d8ba2fc1572eb445b4f3c478f23cdb5a8"
+            "fingerprint": "54ac9a138926a4c1d83f65c602f65eb528559a1b4996d0884ac049cc5aa1950c"
           }
         },
         {

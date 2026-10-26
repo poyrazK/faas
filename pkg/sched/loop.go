@@ -93,11 +93,14 @@ type Loop struct {
 	// through the GatewaySynth interface.
 	gatewayHTTPClient *http.Client
 	gatewayBaseURL    string
-	// triggerPollers caches one triggerSource per trigger id. The
-	// cache is invalidated by NotifyTriggerChanged (commit #16);
-	// for now we never rebuild within a process lifetime.
-	triggerPollersMu sync.Mutex
-	triggerPollers   map[string]triggerSource
+	// triggerPollers caches one triggerSource per trigger id.
+	// triggerPollerConfigs holds the fingerprint of the config each
+	// poller was built from: a changed trigger (credentials, topic, URL)
+	// gets a new poller, and a trigger no longer enabled has its poller
+	// closed on the next tick.
+	triggerPollersMu     sync.Mutex
+	triggerPollers       map[string]triggerSource
+	triggerPollerConfigs map[string]string
 	// queuePushLanes holds each push-queue trigger's lane allowance
 	// (ADR-972). In memory and per schedd; a restart ramps from one lane.
 	queuePushLanes queuePushLaneAllowance

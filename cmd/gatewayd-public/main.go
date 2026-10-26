@@ -763,13 +763,21 @@ func run(ctx context.Context, log *slog.Logger) error {
 	if err := startHAComponents(handoffCtx, log, pool, pgStore, inflight, envOr("FAAS_NODE_NAME", ""), envOr("FAAS_NODE_PUBLIC_IP", listenAddr), opsMetrics); err != nil {
 		return err
 	}
+	// Claim every listening socket before reporting ready: a hand-off
+	// successor's readiness closes the sockets its predecessor passed that
+	// nothing has claimed, and binding one of those addresses afterwards
+	// fails while the predecessor still holds it.
+	listeners, err := openEdgeListeners(publicSrv.Addr, strings.TrimSpace(os.Getenv(publicPrivateListenEnv)), controlSrv.Addr)
+	if err != nil {
+		return err
+	}
 	notifyStop := wire.NotifyReadyWhen(ctx, probe.ReadyFunc())
 	defer notifyStop()
 	defer wire.StartWatchdog(ctx, wire.NewLiveness(), opsMetrics, log)()
 
 	// Drain orchestration.
 	checks := handoffChecks(publicSrv.Addr, controlSrv.Addr, edgeMode == edgeModeCompute)
-	if err := runDrain(ctx, log, publicSrv, controlSrv, strings.TrimSpace(os.Getenv(publicPrivateListenEnv)), pgProbeSig, pgStop, traceSetup, drainTracker, gatewayMetrics, rawIngressDrain, endHandoffWork, checks); err != nil {
+	if err := runDrain(ctx, log, publicSrv, controlSrv, listeners, pgProbeSig, pgStop, traceSetup, drainTracker, gatewayMetrics, rawIngressDrain, endHandoffWork, checks); err != nil {
 		return err
 	}
 	return nil
@@ -942,11 +950,11 @@ func buildServers(listenAddr, controlAddr string, publicHandler http.Handler, co
 //     that same budget. A second SIGTERM cancels the drain immediately.
 //  5. The caller's deferred pgStop runs again as an idempotent safety net.
 //
-// privateAddr, when set, adds a second listener for publicSrv on the control
-// plane's private address (ADR-1343 §2): compute-node edges forward
+// listeners.private, when set, is a second listener for publicSrv on the
+// control plane's private address (ADR-1343 §2): compute-node edges forward
 // credential-bound requests there. It shares publicSrv, so Shutdown closes and
 // drains it with the public listener.
-func runDrain(ctx context.Context, log *slog.Logger, publicSrv, controlSrv *http.Server, privateAddr string, pgProbeSig *gateway.ReadySignal, pgStop func(), traceSetup *gateway.TraceSetup, drainTracker *drain.Tracker, gMetrics *gateway.Metrics, tcpDrain func(context.Context) error, endHandoffWork func(), checks []wire.HandoffCheck) error {
+func runDrain(ctx context.Context, log *slog.Logger, publicSrv, controlSrv *http.Server, listeners edgeListeners, pgProbeSig *gateway.ReadySignal, pgStop func(), traceSetup *gateway.TraceSetup, drainTracker *drain.Tracker, gMetrics *gateway.Metrics, tcpDrain func(context.Context) error, endHandoffWork func(), checks []wire.HandoffCheck) error {
 	drainCtx, cancelDrain := context.WithCancel(context.Background())
 	defer cancelDrain()
 	forceCtx, forceCancel := context.WithCancel(context.WithoutCancel(ctx))
@@ -984,36 +992,23 @@ func runDrain(ctx context.Context, log *slog.Logger, publicSrv, controlSrv *http
 	// shutdown deliver their requests instead of being closed unanswered.
 	publicDrain := wire.NewHTTPDrain(publicSrv)
 	errc := make(chan error, 3)
-	if privateAddr != "" {
-		privateLn, lerr := wire.ListenInherited("tcp", privateAddr)
-		if lerr != nil {
-			return fmt.Errorf("gatewayd-public: listen private %s: %w", privateAddr, lerr)
-		}
+	if listeners.private != nil {
 		go func() {
-			log.Info("gatewayd-public: private listening for compute edges", "addr", privateAddr)
-			if err := publicDrain.ServeErr(publicSrv.Serve(publicDrain.Listener(privateLn))); err != nil {
+			log.Info("gatewayd-public: private listening for compute edges", "addr", listeners.private.Addr().String())
+			if err := publicDrain.ServeErr(publicSrv.Serve(publicDrain.Listener(listeners.private))); err != nil {
 				errc <- err
 			}
 		}()
 	}
 	go func() {
-		l, lerr := publicListener(publicSrv.Addr)
-		if lerr != nil {
-			errc <- fmt.Errorf("gatewayd-public: listen %s: %w", publicSrv.Addr, lerr)
-			return
-		}
 		log.Info("gatewayd-public: public listening", "addr", publicSrv.Addr)
-		if err := publicDrain.ServeErr(publicSrv.Serve(publicDrain.Listener(l))); err != nil {
+		if err := publicDrain.ServeErr(publicSrv.Serve(publicDrain.Listener(listeners.public))); err != nil {
 			errc <- err
 		}
 	}()
-	controlLn, err := wire.ListenInherited("tcp", controlSrv.Addr)
-	if err != nil {
-		return fmt.Errorf("gatewayd-public: listen control %s: %w", controlSrv.Addr, err)
-	}
 	go func() {
 		log.Info("gatewayd-public: control listening", "addr", controlSrv.Addr)
-		if err := controlSrv.Serve(controlLn); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		if err := controlSrv.Serve(listeners.control); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			errc <- err
 		}
 	}()
@@ -1193,6 +1188,41 @@ func shutdownGatewayServers(ctx context.Context, log *slog.Logger, publicSrv *ht
 // connections wait in the kernel backlog for the replacement. Local/dev runs
 // without LISTEN_PID/LISTEN_FDS retain the normal net.Listen path.
 //
+// edgeListeners are gatewayd-public's listening sockets, opened before the
+// daemon reports ready. private is nil when no private address is set.
+type edgeListeners struct {
+	public, private, control net.Listener
+}
+
+// openEdgeListeners opens the public, optional private and control listeners,
+// claiming any socket a hand-off predecessor passed for them. On error it
+// closes the ones it already opened.
+func openEdgeListeners(publicAddr, privateAddr, controlAddr string) (edgeListeners, error) {
+	var l edgeListeners
+	var err error
+	closeAll := func() {
+		for _, ln := range []net.Listener{l.public, l.private, l.control} {
+			if ln != nil {
+				_ = ln.Close()
+			}
+		}
+	}
+	if privateAddr != "" {
+		if l.private, err = wire.ListenInherited("tcp", privateAddr); err != nil {
+			return edgeListeners{}, fmt.Errorf("gatewayd-public: listen private %s: %w", privateAddr, err)
+		}
+	}
+	if l.public, err = publicListener(publicAddr); err != nil {
+		closeAll()
+		return edgeListeners{}, fmt.Errorf("gatewayd-public: listen %s: %w", publicAddr, err)
+	}
+	if l.control, err = wire.ListenInherited("tcp", controlAddr); err != nil {
+		closeAll()
+		return edgeListeners{}, fmt.Errorf("gatewayd-public: listen control %s: %w", controlAddr, err)
+	}
+	return l, nil
+}
+
 // Issue #607 / ADR-068: this closes the remaining connection-refused window
 // between the existing Caddy edge and gatewayd-public's graceful drain.
 func publicListener(addr string) (net.Listener, error) {

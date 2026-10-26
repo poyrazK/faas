@@ -1283,6 +1283,9 @@ func runBuildOnce(m api.BuildManifest) error {
 	if m.Framework != api.FrameworkDockerfile && strings.TrimSpace(m.RuntimeBaseRef) == "" {
 		return finish(fmt.Errorf("missing runtime_base_ref for %s build", m.Framework), "")
 	}
+	if err := checkGoCommand(m); err != nil {
+		return finish(err, "")
+	}
 	var restoreRailpackConfig func() error
 	if m.Framework != api.FrameworkDockerfile {
 		var err error
@@ -1884,6 +1887,8 @@ func buildArgv(m api.BuildManifest) []string {
 		"--plan-out", shellQuote(planPath),
 		"--info-out", shellQuote(infoPath),
 	}, " ")
+	goCommand, goCommandEnv := railpackGoCommand(m)
+	prepare += goCommand
 	if len(m.PublicBuildURLs) > 0 || m.BuildDependencyDigest != "" {
 		prepare += " && " + dependencyInputsHelperEnv + "=" + publicBuildURLsHelperValue + " /proc/1/exe " + shellQuote(planPath)
 	}
@@ -1895,6 +1900,12 @@ func buildArgv(m api.BuildManifest) []string {
 		"--local", "context=" + shellQuote(contextDir),
 		"--local", "dockerfile=" + shellQuote(planDir),
 	}, " ")
+	if goCommandEnv != "" {
+		// Railpack lists each --env value as a plan secret its steps mount,
+		// and BuildKit refuses a build whose secret is missing.
+		build += " --secret id=" + railpackGoBinEnv + ",env=" + railpackGoBinEnv
+		prepare = goCommandEnv + prepare
+	}
 	if m.DependencyCacheImport {
 		build += " --import-cache " + shellQuote("type=local,src=/build/cache")
 	}
@@ -2168,6 +2179,41 @@ func dockerfileBuildAcknowledgement(m api.BuildManifest) string {
 	return m.DockerfileBuild.SHA256()
 }
 
+// railpackGoBinEnv is Railpack's selector for the `cmd/<name>` main package
+// of a Go module (ADR-20261025134512).
+const railpackGoBinEnv = "RAILPACK_GO_BIN"
+
+// railpackGoCommand returns the `railpack prepare` flag that selects the
+// manifest's Go command and the shell export that hands BuildKit the same
+// value, or two empty strings. checkGoCommand has already refused a command
+// this build cannot honour.
+func railpackGoCommand(m api.BuildManifest) (prepareFlag, export string) {
+	if m.GoCommand == "" || m.Framework == api.FrameworkDockerfile {
+		return "", ""
+	}
+	return " --env " + shellQuote(railpackGoBinEnv+"="+m.GoCommand), "export " + railpackGoBinEnv + "=" + shellQuote(m.GoCommand) + "; "
+}
+
+// checkGoCommand refuses a Go command the build cannot honour, rather than
+// building the module's default command under the selected service's name.
+func checkGoCommand(m api.BuildManifest) error {
+	if m.GoCommand == "" {
+		return nil
+	}
+	if m.Framework == api.FrameworkDockerfile || m.DevWatchCommand != "" || !api.ValidGoCommand(m.GoCommand) {
+		return fmt.Errorf("go command %q cannot be built by this %s build", m.GoCommand, m.Framework)
+	}
+	return nil
+}
+
+// goCommandAcknowledgement is the Go command a successful build compiled.
+func goCommandAcknowledgement(m api.BuildManifest) string {
+	if checkGoCommand(m) != nil {
+		return ""
+	}
+	return m.GoCommand
+}
+
 // writeBuildDone writes /etc/faas/build-done.json (vmmd's Destroy loopback-
 // mounts the chroot drive1 to copy it out). Warm builders call this while the
 // guest remains alive; ordinary builders call it immediately before poweroff.
@@ -2190,6 +2236,7 @@ func writeBuildDone(m api.BuildManifest, runErr error, logTail string) {
 	if runErr == nil {
 		done.PublicBuildURLsSHA256 = api.PublicBuildURLsSHA256(m.PublicBuildURLs)
 		done.DockerfileBuildSHA256 = dockerfileBuildAcknowledgement(m)
+		done.GoCommand = goCommandAcknowledgement(m)
 		done.BuildDependencyDigest = m.BuildDependencyDigest
 		done.DependencyCacheUnchanged = m.DependencyCache && dependencyCacheKept(m.OutDir)
 		sourceMap, watchErr := devWatchSourceMap(m, buildDevPatchSourceMap(m, readBuildPlan))
