@@ -1,0 +1,412 @@
+# Paths in the ADR-20261026145832 tree that still break its naming rules.
+# This list only shrinks: give a path a tree name in cli_tree.go instead of adding it.
+account billing-connection  # hyphenated billing-connection, verb billing-connection
+account billing-run  # hyphenated billing-run
+account billing-run get  # hyphenated billing-run
+account billing-run list  # hyphenated billing-run
+account billing-run schedule  # hyphenated billing-run, verb schedule
+account billing-run schedule-delete  # hyphenated billing-run, hyphenated schedule-delete, verb schedule-delete
+account billing-run schedule-set  # hyphenated billing-run, hyphenated schedule-set, verb schedule-set
+account billing-run start  # hyphenated billing-run
+account dpa  # verb dpa
+account slo  # verb slo
+ai app-limit  # hyphenated app-limit, verb app-limit
+ai content-policy  # hyphenated content-policy, verb content-policy
+ai quality-alerts  # hyphenated quality-alerts, verb quality-alerts
+ai tag-limits  # hyphenated tag-limits, verb tag-limits
+alert incident note  # verb note
+alert rotate-secret  # hyphenated rotate-secret, verb rotate-secret
+api consumer billing-policy  # hyphenated billing-policy, verb billing-policy
+api consumer billing-policy-delete  # hyphenated billing-policy-delete, verb billing-policy-delete
+api consumer billing-policy-set  # hyphenated billing-policy-set, verb billing-policy-set
+api consumer credit-grant  # hyphenated credit-grant, verb credit-grant
+api consumer credit-void  # hyphenated credit-void, verb credit-void
+api consumer key-create  # hyphenated key-create, verb key-create
+api consumer key-revoke  # hyphenated key-revoke, verb key-revoke
+api consumer overdue-holds  # hyphenated overdue-holds, verb overdue-holds
+api consumer plan-create  # hyphenated plan-create, verb plan-create
+api consumer plan-history  # hyphenated plan-history, verb plan-history
+api consumer plan-update  # hyphenated plan-update, verb plan-update
+api consumer plans  # verb plans
+api consumer quote  # verb quote
+api consumer rate-card-create  # hyphenated rate-card-create, verb rate-card-create
+api consumer rate-cards  # hyphenated rate-cards, verb rate-cards
+api consumer set-plan  # hyphenated set-plan, verb set-plan
+api consumer signup  # verb signup
+api consumer signup-delete  # hyphenated signup-delete, verb signup-delete
+api consumer signup-set  # hyphenated signup-set, verb signup-set
+api consumer spend-cap-delete  # hyphenated spend-cap-delete, verb spend-cap-delete
+api consumer spend-cap-set  # hyphenated spend-cap-set, verb spend-cap-set
+api consumer statement-draft  # hyphenated statement-draft, verb statement-draft
+api consumer statement-export  # hyphenated statement-export, verb statement-export
+api consumer statement-finalize  # hyphenated statement-finalize, verb statement-finalize
+api consumer statement-handoff  # hyphenated statement-handoff, verb statement-handoff
+api consumer statement-show  # hyphenated statement-show, verb statement-show
+api consumer trial  # verb trial
+api consumer trial-end  # hyphenated trial-end, verb trial-end
+api consumer trial-set  # hyphenated trial-set, verb trial-set
+api consumer usage-alerts  # hyphenated usage-alerts, verb usage-alerts
+api route awake  # verb awake
+api route contract check  # more than three words
+api route gate get  # more than three words
+api route gate set  # more than three words
+api route health correlate  # more than three words
+api route health explain  # more than three words
+api route health get  # more than three words
+api route health investigate  # more than three words
+api route health profile-history  # more than three words, hyphenated profile-history, verb profile-history
+api route health report  # more than three words
+api route health review  # more than three words
+api route health review-release  # more than three words, hyphenated review-release, verb review-release
+api route health set  # more than three words
+api route health suggest  # more than three words
+api route lifecycle approve  # more than three words
+api route lifecycle declarations  # more than three words
+api route lifecycle history  # more than three words
+api route lifecycle prepare-approval  # more than three words, hyphenated prepare-approval, verb prepare-approval
+api route lifecycle receipt  # more than three words
+api route lifecycle review  # more than three words
+api route migration approve  # more than three words
+api route migration authorize  # more than three words
+api route migration gate  # more than three words, verb gate
+api route migration policy  # more than three words
+api route migration readiness  # more than three words
+api route migration review  # more than three words
+api route migration server-check  # more than three words, hyphenated server-check, verb server-check
+api route migration suggest  # more than three words
+api route monitor explain  # more than three words
+api route monitor get  # more than three words
+api route monitor incidents  # more than three words
+api route monitor preview  # more than three words, verb preview
+api route monitor report  # more than three words
+api route monitor set  # more than three words
+api route requirements get  # more than three words
+api route requirements set  # more than three words
+api route sunsets diff  # more than three words
+api spec dry-run  # hyphenated dry-run, verb dry-run
+api spec preview  # verb preview
+api tenant activation  # verb activation
+api tenant billing-policy  # hyphenated billing-policy, verb billing-policy
+api tenant billing-policy-delete  # hyphenated billing-policy-delete, verb billing-policy-delete
+api tenant billing-policy-set  # hyphenated billing-policy-set, verb billing-policy-set
+api tenant credentials-apply  # hyphenated credentials-apply, verb credentials-apply
+api tenant credentials-list  # hyphenated credentials-list, verb credentials-list
+api tenant credit-grant  # hyphenated credit-grant, verb credit-grant
+api tenant credit-void  # hyphenated credit-void, verb credit-void
+api tenant link-consumer  # hyphenated link-consumer, verb link-consumer
+api tenant link-surface  # hyphenated link-surface, verb link-surface
+api tenant overdue-holds  # hyphenated overdue-holds, verb overdue-holds
+api tenant plan-create  # hyphenated plan-create, verb plan-create
+api tenant plan-history  # hyphenated plan-history, verb plan-history
+api tenant plan-update  # hyphenated plan-update, verb plan-update
+api tenant plans  # verb plans
+api tenant rate-card-create  # hyphenated rate-card-create, verb rate-card-create
+api tenant rate-cards  # hyphenated rate-cards, verb rate-cards
+api tenant set-plan  # hyphenated set-plan, verb set-plan
+api tenant spend-cap-delete  # hyphenated spend-cap-delete, verb spend-cap-delete
+api tenant spend-cap-set  # hyphenated spend-cap-set, verb spend-cap-set
+api tenant statement-draft  # hyphenated statement-draft, verb statement-draft
+api tenant statement-export  # hyphenated statement-export, verb statement-export
+api tenant statement-finalize  # hyphenated statement-finalize, verb statement-finalize
+api tenant statement-handoff  # hyphenated statement-handoff, verb statement-handoff
+api tenant statement-show  # hyphenated statement-show, verb statement-show
+api tenant trial  # verb trial
+api tenant trial-end  # hyphenated trial-end, verb trial-end
+api tenant trial-set  # hyphenated trial-set, verb trial-set
+app binding object-storage  # hyphenated object-storage
+app binding object-storage list  # more than three words, hyphenated object-storage
+app binding object-storage revoke  # more than three words, hyphenated object-storage
+app binding object-storage rotate  # more than three words, hyphenated object-storage
+app binding probe-policy  # hyphenated probe-policy, verb probe-policy
+app binding release-policy  # hyphenated release-policy
+app binding release-policy get  # more than three words, hyphenated release-policy
+app binding release-policy set  # more than three words, hyphenated release-policy
+app binding service apply  # more than three words
+app binding service check  # more than three words
+app binding service configure  # more than three words
+app binding service explain  # more than three words
+app binding service export  # more than three words
+app binding smoke  # verb smoke
+app binding verification-runs  # hyphenated verification-runs
+app binding verification-runs cancel  # more than three words, hyphenated verification-runs
+app binding verification-runs diagnostics  # more than three words, hyphenated verification-runs
+app binding verification-runs list  # more than three words, hyphenated verification-runs
+app binding verification-runs resume  # more than three words, hyphenated verification-runs
+app binding verification-runs status  # more than three words, hyphenated verification-runs
+app list tcp  # verb tcp
+app list udp  # verb udp
+automation event-recover  # hyphenated event-recover, verb event-recover
+automation event-recovery-plan  # hyphenated event-recovery-plan, verb event-recovery-plan
+automation event-recovery-start  # hyphenated event-recovery-start, verb event-recovery-start
+automation failure-recovery-evidence  # hyphenated failure-recovery-evidence, verb failure-recovery-evidence
+automation failure-recovery-plan  # hyphenated failure-recovery-plan, verb failure-recovery-plan
+automation failure-recovery-review  # hyphenated failure-recovery-review, verb failure-recovery-review
+automation failure-recovery-reviews  # hyphenated failure-recovery-reviews, verb failure-recovery-reviews
+automation live baseline get  # more than three words
+automation live baseline history  # more than three words
+automation live baseline list  # more than three words
+automation live baseline promote  # more than three words
+automation live baseline retire  # more than three words
+automation live gate  # verb gate
+automation live suite  # verb suite
+automation publish-policy  # hyphenated publish-policy, verb publish-policy
+automation recovery-cancel-preview  # hyphenated recovery-cancel-preview, verb recovery-cancel-preview
+automation recovery-policy  # hyphenated recovery-policy, verb recovery-policy
+automation recovery-policy-evaluate  # hyphenated recovery-policy-evaluate, verb recovery-policy-evaluate
+automation recovery-policy-reviews  # hyphenated recovery-policy-reviews, verb recovery-policy-reviews
+automation recovery-preview  # hyphenated recovery-preview, verb recovery-preview
+automation recovery-response-apply  # hyphenated recovery-response-apply, verb recovery-response-apply
+automation recovery-response-plan  # hyphenated recovery-response-plan, verb recovery-response-plan
+automation recovery-response-preview  # hyphenated recovery-response-preview, verb recovery-response-preview
+automation recovery-response-status  # hyphenated recovery-response-status, verb recovery-response-status
+automation recovery-retry-evidence  # hyphenated recovery-retry-evidence, verb recovery-retry-evidence
+automation recovery-retry-plan  # hyphenated recovery-retry-plan, verb recovery-retry-plan
+billing backfill-invoices  # hyphenated backfill-invoices, verb backfill-invoices
+billing budget-preview  # hyphenated budget-preview, verb budget-preview
+billing payment-method  # hyphenated payment-method, verb payment-method
+billing portal  # verb portal
+billing refresh-invoice  # hyphenated refresh-invoice, verb refresh-invoice
+billing usage object-storage  # hyphenated object-storage, verb object-storage
+bucket copy-sources  # hyphenated copy-sources
+bucket copy-sources grant  # hyphenated copy-sources
+bucket copy-sources list  # hyphenated copy-sources
+bucket copy-sources revoke  # hyphenated copy-sources
+bucket encryption set AES256  # more than three words, verb AES256
+bucket encryption set aws:kms  # more than three words, verb aws:kms
+bucket encryption set aws:kms:dsse  # more than three words, verb aws:kms:dsse
+bucket encryption set clear  # more than three words
+bucket encryption set status  # more than three words
+bucket encryption-keys  # hyphenated encryption-keys, verb encryption-keys
+bucket object-lock set COMPLIANCE  # more than three words, verb COMPLIANCE
+bucket object-lock set GOVERNANCE  # more than three words, verb GOVERNANCE
+bucket object-lock set capabilities  # more than three words
+bucket object-lock set clear-default  # more than three words, hyphenated clear-default, verb clear-default
+bucket object-lock set enable  # more than three words
+bucket object-lock set status  # more than three words
+bucket protection event-hold  # hyphenated event-hold, verb event-hold
+bucket protection legal-hold  # hyphenated legal-hold, verb legal-hold
+config upload-cache cleanup  # verb cleanup
+cron fire-now  # hyphenated fire-now, verb fire-now
+cron next  # verb next
+data-api dev  # verb dev
+data-api fixture build  # verb build
+data-api migration guide  # verb guide
+data-api migration preview  # verb preview
+data-api rotation preflight  # verb preflight
+data-api server-key  # hyphenated server-key
+data-api server-key create  # hyphenated server-key
+data-api server-key list  # hyphenated server-key
+data-api server-key revoke  # hyphenated server-key
+data-api storage sql  # verb sql
+data-api verify release  # verb release
+debug capture-diff  # hyphenated capture-diff, verb capture-diff
+debug issue bulk  # verb bulk
+debug issue compare-releases  # hyphenated compare-releases, verb compare-releases
+debug issue compound-alerts  # hyphenated compound-alerts, verb compound-alerts
+debug issue create-token  # hyphenated create-token, verb create-token
+debug issue impact-alert  # hyphenated impact-alert, verb impact-alert
+debug issue lifecycle-alerts  # hyphenated lifecycle-alerts, verb lifecycle-alerts
+debug issue ownership-rules  # hyphenated ownership-rules, verb ownership-rules
+debug issue revoke-token  # hyphenated revoke-token, verb revoke-token
+debug issue source-maps  # hyphenated source-maps, verb source-maps
+debug regressions acknowledge  # verb acknowledge
+domain set-default  # hyphenated set-default, verb set-default
+edge cache GET  # verb GET
+edge cache HEAD  # verb HEAD
+edge rule attack-mode  # hyphenated attack-mode, verb attack-mode
+edge rule recipe  # verb recipe
+edge rule waf-exclude  # hyphenated waf-exclude, verb waf-exclude
+edge rule waf-review  # hyphenated waf-review, verb waf-review
+environment abort  # verb abort
+environment gitops adoption-preview  # hyphenated adoption-preview, verb adoption-preview
+environment gitops promotion-plan  # hyphenated promotion-plan, verb promotion-plan
+environment gitops promotion-pr  # hyphenated promotion-pr, verb promotion-pr
+environment gitops remove-override  # hyphenated remove-override, verb remove-override
+environment gitops rollback-plan  # hyphenated rollback-plan, verb rollback-plan
+environment gitops rollback-pr  # hyphenated rollback-pr, verb rollback-pr
+environment preflight  # verb preflight
+environment preview  # verb preview
+environment recover-migration  # hyphenated recover-migration, verb recover-migration
+environment release-sets  # hyphenated release-sets
+environment release-sets activate  # hyphenated release-sets
+environment release-sets cancel-stage  # hyphenated release-sets, hyphenated cancel-stage, verb cancel-stage
+environment release-sets deactivate  # hyphenated release-sets
+environment release-sets prepare  # hyphenated release-sets
+environment release-sets prepare-deactivation  # hyphenated release-sets, hyphenated prepare-deactivation, verb prepare-deactivation
+environment release-sets prepare-rollback  # hyphenated release-sets, hyphenated prepare-rollback, verb prepare-rollback
+environment release-sets rollback  # hyphenated release-sets
+environment release-sets stage  # hyphenated release-sets, verb stage
+environment release-sets stage-status  # hyphenated release-sets, hyphenated stage-status, verb stage-status
+environment release-sets verification-runs  # hyphenated release-sets, hyphenated verification-runs
+environment release-sets verification-runs cancel  # more than three words, hyphenated release-sets, hyphenated verification-runs
+environment release-sets verification-runs diagnostics  # more than three words, hyphenated release-sets, hyphenated verification-runs
+environment release-sets verification-runs list  # more than three words, hyphenated release-sets, hyphenated verification-runs
+environment release-sets verification-runs resume  # more than three words, hyphenated release-sets, hyphenated verification-runs
+environment release-sets verification-runs status  # more than three words, hyphenated release-sets, hyphenated verification-runs
+environment release-sets verify  # hyphenated release-sets
+event deadline-alert-investigate  # hyphenated deadline-alert-investigate, verb deadline-alert-investigate
+event delivery-dead-letter  # hyphenated delivery-dead-letter, verb delivery-dead-letter
+event delivery-health-alerts  # hyphenated delivery-health-alerts, verb delivery-health-alerts
+event fanout-history  # hyphenated fanout-history, verb fanout-history
+event notification-retry-apply  # hyphenated notification-retry-apply, verb notification-retry-apply
+event notification-retry-backlog  # hyphenated notification-retry-backlog, verb notification-retry-backlog
+event notification-retry-plan  # hyphenated notification-retry-plan, verb notification-retry-plan
+event notification-retry-reconcile  # hyphenated notification-retry-reconcile, verb notification-retry-reconcile
+event preview  # verb preview
+event publish-app  # hyphenated publish-app, verb publish-app
+event publish-app-status  # hyphenated publish-app-status, verb publish-app-status
+event publish-app-verify  # hyphenated publish-app-verify, verb publish-app-verify
+event publish-batch  # hyphenated publish-batch, verb publish-batch
+event recovery-notification-retry  # hyphenated recovery-notification-retry, verb recovery-notification-retry
+event recovery-notification-retry-history  # hyphenated recovery-notification-retry-history, verb recovery-notification-retry-history
+event recovery-notification-retry-preview  # hyphenated recovery-notification-retry-preview, verb recovery-notification-retry-preview
+event recovery-notifications  # hyphenated recovery-notifications, verb recovery-notifications
+event recovery-preflight  # hyphenated recovery-preflight, verb recovery-preflight
+event recovery-preview  # hyphenated recovery-preview, verb recovery-preview
+event replay-preview  # hyphenated replay-preview, verb replay-preview
+event replay-retryable  # hyphenated replay-retryable, verb replay-retryable
+event schema-rollout-preview  # hyphenated schema-rollout-preview, verb schema-rollout-preview
+event subscription-capacity-preview  # hyphenated subscription-capacity-preview, verb subscription-capacity-preview
+event subscription-delivery-health  # hyphenated subscription-delivery-health, verb subscription-delivery-health
+event subscription-execution-health  # hyphenated subscription-execution-health, verb subscription-execution-health
+event subscription-execution-reconciliation  # hyphenated subscription-execution-reconciliation, verb subscription-execution-reconciliation
+event subscription-lineage-case-backfill  # hyphenated subscription-lineage-case-backfill, verb subscription-lineage-case-backfill
+event subscription-lineage-case-backfill-cancel  # hyphenated subscription-lineage-case-backfill-cancel, verb subscription-lineage-case-backfill-cancel
+event subscription-lineage-case-backfill-pause  # hyphenated subscription-lineage-case-backfill-pause, verb subscription-lineage-case-backfill-pause
+event subscription-lineage-case-backfill-request  # hyphenated subscription-lineage-case-backfill-request, verb subscription-lineage-case-backfill-request
+event subscription-lineage-case-backfill-resume  # hyphenated subscription-lineage-case-backfill-resume, verb subscription-lineage-case-backfill-resume
+event subscription-lineage-cases  # hyphenated subscription-lineage-cases, verb subscription-lineage-cases
+event subscription-lineage-retry  # hyphenated subscription-lineage-retry, verb subscription-lineage-retry
+event subscription-lineage-retry-control-plan-apply  # hyphenated subscription-lineage-retry-control-plan-apply, verb subscription-lineage-retry-control-plan-apply
+event subscription-lineage-retry-control-plan-export  # hyphenated subscription-lineage-retry-control-plan-export, verb subscription-lineage-retry-control-plan-export
+event subscription-lineage-retry-control-plan-preflight  # hyphenated subscription-lineage-retry-control-plan-preflight, verb subscription-lineage-retry-control-plan-preflight
+event subscription-lineage-retry-control-plan-reconcile  # hyphenated subscription-lineage-retry-control-plan-reconcile, verb subscription-lineage-retry-control-plan-reconcile
+event subscription-lineage-retry-export  # hyphenated subscription-lineage-retry-export, verb subscription-lineage-retry-export
+event subscription-lineage-retry-job  # hyphenated subscription-lineage-retry-job, verb subscription-lineage-retry-job
+event subscription-lineage-retry-job-cancel  # hyphenated subscription-lineage-retry-job-cancel, verb subscription-lineage-retry-job-cancel
+event subscription-lineage-retry-job-controls  # hyphenated subscription-lineage-retry-job-controls, verb subscription-lineage-retry-job-controls
+event subscription-lineage-retry-job-controls-export  # hyphenated subscription-lineage-retry-job-controls-export, verb subscription-lineage-retry-job-controls-export
+event subscription-lineage-retry-job-controls-inspect  # hyphenated subscription-lineage-retry-job-controls-inspect, verb subscription-lineage-retry-job-controls-inspect
+event subscription-lineage-retry-job-create  # hyphenated subscription-lineage-retry-job-create, verb subscription-lineage-retry-job-create
+event subscription-lineage-retry-job-export  # hyphenated subscription-lineage-retry-job-export, verb subscription-lineage-retry-job-export
+event subscription-lineage-retry-job-pause  # hyphenated subscription-lineage-retry-job-pause, verb subscription-lineage-retry-job-pause
+event subscription-lineage-retry-job-resume  # hyphenated subscription-lineage-retry-job-resume, verb subscription-lineage-retry-job-resume
+event subscription-lineage-retry-job-watch  # hyphenated subscription-lineage-retry-job-watch, verb subscription-lineage-retry-job-watch
+event subscription-lineage-retry-jobs  # hyphenated subscription-lineage-retry-jobs, verb subscription-lineage-retry-jobs
+event subscription-lineage-retry-preflight  # hyphenated subscription-lineage-retry-preflight, verb subscription-lineage-retry-preflight
+event subscription-lineage-retry-preview  # hyphenated subscription-lineage-retry-preview, verb subscription-lineage-retry-preview
+event subscription-reconcile-execution  # hyphenated subscription-reconcile-execution, verb subscription-reconcile-execution
+event workflow-backfill  # hyphenated workflow-backfill, verb workflow-backfill
+event workflow-replay-preview  # hyphenated workflow-replay-preview, verb workflow-replay-preview
+job artifact-download  # hyphenated artifact-download, verb artifact-download
+job artifact-url  # hyphenated artifact-url, verb artifact-url
+job next  # verb next
+job replay-failed  # hyphenated replay-failed, verb replay-failed
+key grace-window  # hyphenated grace-window, verb grace-window
+mcp server access audit  # more than three words
+mcp server access explain  # more than three words
+mcp server access history  # more than three words
+mcp server config  # verb config
+mcp server monitor connect  # more than three words
+mcp server monitor disable  # more than three words
+mcp server monitor disconnect  # more than three words
+mcp server monitor pause  # more than three words
+mcp server monitor provider-check  # more than three words, hyphenated provider-check, verb provider-check
+mcp server monitor reconnect  # more than three words
+mcp server monitor restart  # more than three words
+mcp server monitor resume  # more than three words
+mcp server monitor run  # more than three words
+mcp server monitor setup  # more than three words
+mcp server monitor status  # more than three words
+mcp server monitor stop  # more than three words
+mcp server readiness attention  # more than three words
+mcp server readiness attention acknowledge  # more than three words, verb acknowledge
+mcp server readiness attention configure  # more than three words
+mcp server readiness attention history  # more than three words
+mcp server readiness attention list  # more than three words
+mcp server readiness attention release  # more than three words, verb release
+mcp server readiness fallback  # more than three words
+mcp server readiness fallback disable  # more than three words
+mcp server readiness fallback get  # more than three words
+mcp server readiness fallback set  # more than three words
+mcp server readiness incidents  # more than three words
+mcp server readiness maintenance  # more than three words
+mcp server readiness maintenance cancel  # more than three words
+mcp server readiness maintenance create  # more than three words
+mcp server readiness maintenance list  # more than three words
+mcp server readiness notifications  # more than three words
+mcp server readiness notifications abandon  # more than three words
+mcp server readiness notifications list  # more than three words
+mcp server readiness notifications retry  # more than three words
+mcp server readiness pagerduty  # more than three words
+mcp server readiness pagerduty acknowledgements  # more than three words
+mcp server readiness pagerduty disable  # more than three words
+mcp server readiness pagerduty get  # more than three words
+mcp server readiness pagerduty set  # more than three words
+mcp server readiness policy  # more than three words
+mcp server readiness policy diff  # more than three words
+mcp server readiness policy get  # more than three words
+mcp server readiness policy history  # more than three words
+mcp server readiness policy restore  # more than three words
+mcp server readiness policy set  # more than three words
+mcp server readiness reminder-defaults  # more than three words, hyphenated reminder-defaults
+mcp server readiness reminder-defaults disable  # more than three words, hyphenated reminder-defaults
+mcp server readiness reminder-defaults get  # more than three words, hyphenated reminder-defaults
+mcp server readiness reminder-defaults set  # more than three words, hyphenated reminder-defaults
+mcp server retirements acknowledge-manual  # more than three words, hyphenated acknowledge-manual, verb acknowledge-manual
+mcp server retirements list  # more than three words
+mcp server retirements retry  # more than three words
+mcp server tasks configure  # more than three words
+mcp server tasks observer  # more than three words
+mcp server tasks observer setup  # more than three words
+mcp server tasks observer status  # more than three words
+mcp server tasks release  # more than three words, verb release
+mcp server tasks setup  # more than three words
+mcp server tasks status  # more than three words
+org invitation list-all  # hyphenated list-all, verb list-all
+org members change-role  # hyphenated change-role, verb change-role
+org seat-usage  # hyphenated seat-usage, verb seat-usage
+org standards application  # verb application
+org standards assignments get  # more than three words
+org standards assignments list  # more than three words
+org standards destinations create  # more than three words
+org standards destinations get  # more than three words
+org standards destinations list  # more than three words
+org standards exceptions approve  # more than three words
+org standards exceptions revoke  # more than three words
+org standards local-intent  # hyphenated local-intent, verb local-intent
+org standards operation abort  # more than three words, verb abort
+org standards operation pause  # more than three words
+org standards operation resume  # more than three words
+org standards publishers create  # more than three words
+org standards publishers get  # more than three words
+org standards publishers list  # more than three words
+org standards reviews approve  # more than three words
+org standards reviews get  # more than three words
+org standards reviews preview  # more than three words, verb preview
+org transfer-ownership  # hyphenated transfer-ownership, verb transfer-ownership
+postgres compute-policy  # hyphenated compute-policy, verb compute-policy
+postgres compute-policy-status  # hyphenated compute-policy-status, verb compute-policy-status
+postgres overage  # verb overage
+postgres resize-status  # hyphenated resize-status, verb resize-status
+postgres usage-import  # hyphenated usage-import, verb usage-import
+preview customers migration diff  # more than three words
+preview customers migration review  # more than three words
+queue dead-letter  # hyphenated dead-letter, verb dead-letter
+realtime drain-status  # hyphenated drain-status, verb drain-status
+realtime send-principal  # hyphenated send-principal, verb send-principal
+release approval off  # verb off
+release canary gate  # verb gate
+release rollback switch  # verb switch
+test coverage-trend  # hyphenated coverage-trend, verb coverage-trend
+test recovery-trend  # hyphenated recovery-trend, verb recovery-trend
+trigger dlq  # verb dlq
+webhook account rotate-secret  # hyphenated rotate-secret, verb rotate-secret
+webhook rotate-secret  # hyphenated rotate-secret, verb rotate-secret
+workflow cancel-queued  # hyphenated cancel-queued, verb cancel-queued
+workflow cancel-queued-preview  # hyphenated cancel-queued-preview, verb cancel-queued-preview
+workflow resume-wait  # hyphenated resume-wait, verb resume-wait
+workflow schedule-history  # hyphenated schedule-history
+workflow schedule-history replay  # hyphenated schedule-history
+workflow schedule-history replay-preview  # hyphenated schedule-history, hyphenated replay-preview, verb replay-preview
+workflow schedules preview  # verb preview

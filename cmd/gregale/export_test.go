@@ -2491,3 +2491,24 @@ func CliPathHasVerbs(words []string) (exists, hasVerbs bool) {
 	node, ok := lookupCliPath(words)
 	return ok, ok && len(node.Subs) > 0 && !node.AfterPositionals
 }
+
+// CliTreeChild is one verb under a manifest path, for the tree's verb baseline.
+type CliTreeChild struct {
+	Name     string
+	HasVerbs bool
+}
+
+var CliTreeStandardVerb = cliTreeStandardVerb
+
+// CliPathChildren lists the verbs under words, or nil for a slug-first family.
+func CliPathChildren(words []string) []CliTreeChild {
+	node, ok := lookupCliPath(words)
+	if !ok || node.AfterPositionals {
+		return nil
+	}
+	children := make([]CliTreeChild, 0, len(node.Subs))
+	for _, sub := range node.Subs {
+		children = append(children, CliTreeChild{Name: sub.Name, HasVerbs: len(sub.Subcommands) > 0 && !sub.SubcommandsAfterPositionals})
+	}
+	return children
+}
