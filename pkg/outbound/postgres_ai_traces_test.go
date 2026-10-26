@@ -32,10 +32,12 @@ func TestPostgresAITraces(t *testing.T) {
 	if err != nil || integration.traceLimits() != (aiTraceLimits{calls: 4, cost: 1_000, repeats: 2}) {
 		t.Fatalf("resolved trace limits = %+v, %v", integration.traceLimits(), err)
 	}
+	// admit admits a call of a trace the app named with X-Gregale-AI-Trace.
 	admit := func(traceID string, reserve int64) Decision {
 		t.Helper()
 		spec := f.spec()
 		spec.AITraceID, spec.AITraceLimits, spec.AIReservedCostMillicents = traceID, integration.traceLimits(), reserve
+		spec.AITraceNamed = true
 		decision, err := backend.Admit(ctx, spec)
 		if err != nil {
 			t.Fatal(err)
@@ -128,6 +130,15 @@ func TestPostgresAITraces(t *testing.T) {
 	}
 	if refused := admit("task-new", 0); refused.Granted || refused.Reason != ReasonTraceUntracked {
 		t.Fatalf("an untracked trace = %+v", refused)
+	}
+	// A traceparent trace can come from the app's own clients: it goes on
+	// untracked instead (ADR 20261020202035, amended).
+	traceparent := f.spec()
+	traceparent.AITraceID, traceparent.AITraceLimits = "4bf92f3577b34da6a3ce929d0e0e4736", integration.traceLimits()
+	if granted, err := backend.Admit(ctx, traceparent); err != nil || !granted.Granted {
+		t.Fatalf("an untracked traceparent trace = %+v, %v", granted, err)
+	} else if err := backend.Release(ctx, f.offer.ID, granted.LeaseID); err != nil {
+		t.Fatal(err)
 	}
 	settle("", "task-new", AIUsageOutcomeKnown, nil, nil)
 	settle("", "task-4", AIUsageOutcomeKnown, nil, nil)

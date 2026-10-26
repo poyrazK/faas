@@ -13,6 +13,12 @@
 //
 // The chain stops at the queued build: building and serving it needs a
 // builder microVM (the native metal source-deploy tests cover that half).
+// The pull-request half runs a preview's whole lifecycle: open queues the
+// preview build, its GitHub status sync and the PR comment; close starts the
+// grace window; and apid's own janitor tears the environment down when the
+// grace ends, queueing the final GitHub status sync. Only the GitHub HTTP
+// writes are recorded (their wire format is covered in pkg/githubd and
+// cmd/githubd).
 package e2e_test
 
 import (
@@ -30,6 +36,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"testing/fstest"
 	"time"
@@ -76,7 +83,9 @@ func TestE2E_GitHubWebhookEnqueuesDeployments(t *testing.T) {
 	workDir := t.TempDir()
 	h := e2etest.Start(t, pool, e2etest.APID,
 		"FAAS_APID_GITHUBD_BRIDGE_SOCK="+bridgeSock,
-		"FAAS_GITHUBD_WORK_DIR="+workDir)
+		"FAAS_GITHUBD_WORK_DIR="+workDir,
+		"FAAS_PREVIEW_JANITOR_STARTUP_DELAY_SECONDS=0",
+		"FAAS_PREVIEW_JANITOR_INTERVAL_SECONDS=1")
 	waitForSocket(t, bridgeSock, 30*time.Second)
 
 	key := h.SeedAccount(ctx, api.PlanPro)
@@ -94,7 +103,8 @@ func TestE2E_GitHubWebhookEnqueuesDeployments(t *testing.T) {
 		t.Fatalf("seed installation: %v", err)
 	}
 
-	webhookURL := startGitHubd(t, pool, store, workDir, bridgeSock)
+	comments := &githubE2EComments{}
+	webhookURL := startGitHubd(t, pool, store, workDir, bridgeSock, comments)
 
 	// -- push to the production branch ------------------------------------
 	pushSHA := strings.Repeat("a1", 20)
@@ -125,11 +135,104 @@ func TestE2E_GitHubWebhookEnqueuesDeployments(t *testing.T) {
 		t.Fatalf("preview deployment on app %s (%s), want a pr-7- preview app separate from %s", preview.appSlug, preview.appID, pushed.appID)
 	}
 	t.Logf("pull request: preview app %s deployment %s build %s (%s)", preview.appSlug, preview.deploymentID, preview.buildID, preview.buildStatus)
+	// The deployment queued its GitHub check and deployment status sync, and
+	// the PR thread got the preview comment with its dashboard link.
+	queuedSync := waitForCheckUpdate(t, pool, preview.deploymentID, 0)
+	comments.waitFor(t, 7, "### Gregale preview — queued", githubd.DashboardAppURL(preview.appSlug))
+
+	// -- pull request closed --------------------------------------------------
+	// The preview keeps serving through its grace window, but its set closes
+	// and it no longer holds a PR preview environment (ADR-20261026090000).
+	postGitHubWebhook(t, webhookURL, "pull_request", fmt.Sprintf(`{"action":"closed","number":7,
+		"pull_request":{"state":"closed","merged":true,"head_sha":%q,"head_ref":"feat/x","base":{"ref":"main"},
+		"head":{"ref":"feat/x","sha":%q,"repo":{"full_name":%q}}},
+		"repository":{"full_name":%q,"name":"e2e-api"},"installation":{"id":%d},"sender":{"login":"octocat"}}`,
+		prSHA, prSHA, githubE2ERepo, githubE2ERepo, githubE2EInstallation))
+	waitForClosedPreview(t, pool, preview.appID, githubE2EInstallation, githubE2ERepo, 7)
+	comments.waitFor(t, 7, "### Gregale preview — closed", "torn down")
+
+	// -- grace window ends ----------------------------------------------------
+	// apid's janitor tears the preview down and queues the last GitHub sync,
+	// which marks the GitHub deployment inactive and the comment torn down.
+	// The earlier syncs are marked done first, as githubd's check sync would.
+	var closedSync int64
+	if err := pool.QueryRow(ctx, `update github_check_updates set status = 'succeeded', processed_at = now()
+		 where deployment_id = $1 and generation >= $2 returning generation`, preview.deploymentID, queuedSync).Scan(&closedSync); err != nil {
+		t.Fatalf("mark GitHub status sync done: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `update apps set preview_expires_at = now() - interval '1 second' where id = $1`, preview.appID); err != nil {
+		t.Fatalf("end grace window: %v", err)
+	}
+	waitForTornDownPreview(t, pool, preview.appID)
+	waitForCheckUpdate(t, pool, preview.deploymentID, closedSync)
+}
+
+// waitForCheckUpdate waits for a pending GitHub status sync of deploymentID
+// newer than after, and returns its generation.
+func waitForCheckUpdate(t *testing.T, pool *pgxpool.Pool, deploymentID string, after int64) int64 {
+	t.Helper()
+	deadline := time.Now().Add(90 * time.Second)
+	for {
+		var generation int64
+		var status string
+		err := pool.QueryRow(context.Background(), `select generation, status from github_check_updates where deployment_id = $1`,
+			deploymentID).Scan(&generation, &status)
+		if err == nil && generation > after && status == "pending" {
+			return generation
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("GitHub status sync for deployment %s = (generation %d, %s, %v), want pending after generation %d",
+				deploymentID, generation, status, err, after)
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+}
+
+// waitForTornDownPreview waits for the janitor to soft-delete the preview
+// and mark it torn down.
+func waitForTornDownPreview(t *testing.T, pool *pgxpool.Pool, appID string) {
+	t.Helper()
+	deadline := time.Now().Add(90 * time.Second)
+	for {
+		var prState, appStatus string
+		err := pool.QueryRow(context.Background(), `select preview_pr_state, status from apps where id = $1`,
+			appID).Scan(&prState, &appStatus)
+		if err == nil && prState == state.PreviewPrStateTornDown && appStatus == string(state.AppDeleted) {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("preview %s after grace = (%s, %s, %v), want torn down", appID, prState, appStatus, err)
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+}
+
+// waitForClosedPreview waits for the close delivery: the preview app is
+// closed with a grace deadline and still active, and its PR set is closed.
+func waitForClosedPreview(t *testing.T, pool *pgxpool.Pool, appID string, installationID int64, repo string, prNumber int) {
+	t.Helper()
+	deadline := time.Now().Add(90 * time.Second)
+	for {
+		var prState, appStatus string
+		var setClosed bool
+		err := pool.QueryRow(context.Background(), `
+			select a.preview_pr_state, a.status, s.closed_at is not null
+			  from apps a
+			  join pr_preview_sets s on s.installation_id = $2 and s.repo_full_name = $3 and s.pr_number = $4
+			 where a.id = $1 and a.preview_expires_at > now()`, appID, installationID, repo, prNumber).Scan(&prState, &appStatus, &setClosed)
+		if err == nil && prState == state.PreviewPrStateClosed && appStatus == string(state.AppActive) && setClosed {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("preview %s after close = (%s, %s, set closed %t, %v), want closed in grace", appID, prState, appStatus, setClosed, err)
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
 }
 
 // startGitHubd runs githubd's production webhook path in process against
 // the harness database and apid bridge, and returns the webhook URL.
-func startGitHubd(t *testing.T, pool *pgxpool.Pool, store *state.PgStore, workDir, bridgeSock string) string {
+func startGitHubd(t *testing.T, pool *pgxpool.Pool, store *state.PgStore, workDir, bridgeSock string, comments *githubE2EComments) string {
 	t.Helper()
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	conn, err := grpc.NewClient("unix://"+bridgeSock, grpc.WithTransportCredentials(insecure.NewCredentials()))
@@ -148,6 +251,7 @@ func startGitHubd(t *testing.T, pool *pgxpool.Pool, store *state.PgStore, workDi
 	svc.Reconcile = reconcile.NewService(store, audit.New(store, log, nil, "githubd_e2e"), log)
 	svc.WorkDir = workDir
 	svc.Enqueuer = githubd.NewApidEnqueuer(githubE2EBridge{githubdpb.NewGithubdClient(conn)}, log)
+	svc.WritePreviewCommentForInstallation = comments.write
 
 	deliveries := githubd.NewPGWebhookDeliveryStore(pool)
 	server := &githubd.Server{Service: svc, Log: log, WebhookSecret: []byte(githubE2ESecret), Deliveries: deliveries}
@@ -271,4 +375,52 @@ type githubE2EBridge struct{ client githubdpb.GithubdClient }
 
 func (b githubE2EBridge) EnqueueBuild(ctx context.Context, in *githubdpb.EnqueueBuildRequest) (*githubdpb.EnqueueBuildResponse, error) {
 	return b.client.EnqueueBuild(ctx, in)
+}
+
+// githubE2EComments records the PR preview comments githubd writes.
+type githubE2EComments struct {
+	mu     sync.Mutex
+	bodies map[int][]string
+}
+
+func (c *githubE2EComments) write(_ context.Context, installationID int64, repo string, prNumber int, marker, body string) error {
+	if installationID != githubE2EInstallation || repo != githubE2ERepo || !strings.HasPrefix(body, marker) {
+		return fmt.Errorf("preview comment for %d/%s does not start with its marker", installationID, repo)
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.bodies == nil {
+		c.bodies = map[int][]string{}
+	}
+	c.bodies[prNumber] = append(c.bodies[prNumber], body)
+	return nil
+}
+
+// waitFor waits for a comment on prNumber that contains every part.
+func (c *githubE2EComments) waitFor(t *testing.T, prNumber int, parts ...string) {
+	t.Helper()
+	deadline := time.Now().Add(90 * time.Second)
+	for {
+		c.mu.Lock()
+		bodies := append([]string(nil), c.bodies[prNumber]...)
+		c.mu.Unlock()
+		for _, body := range bodies {
+			if containsAll(body, parts) {
+				return
+			}
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("PR #%d comments = %q, want one containing %q", prNumber, bodies, parts)
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+}
+
+func containsAll(s string, parts []string) bool {
+	for _, part := range parts {
+		if !strings.Contains(s, part) {
+			return false
+		}
+	}
+	return true
 }

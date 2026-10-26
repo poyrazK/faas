@@ -1443,14 +1443,18 @@ func TestClearSessionCookie_Attributes(t *testing.T) {
 	rec := httptest.NewRecorder()
 	mw.ClearSessionCookie(rec)
 
+	// ADR-20261026112500: both the __Host- cookie and the legacy name.
 	setCookies := rec.Result().Cookies()
-	if len(setCookies) != 1 {
-		t.Fatalf("Set-Cookie count = %d, want 1 (got %v)", len(setCookies), setCookies)
+	if len(setCookies) != 2 || setCookies[0].Name != "__Host-faas_sid" || setCookies[1].Name != "faas_sid" {
+		t.Fatalf("Set-Cookie = %v, want __Host-faas_sid and faas_sid evictions", setCookies)
 	}
-	c := setCookies[0]
-	if c.Name != "faas_sid" {
-		t.Errorf("cookie name = %q, want faas_sid", c.Name)
+	for _, c := range setCookies {
+		assertSessionEviction(t, c)
 	}
+}
+
+func assertSessionEviction(t *testing.T, c *http.Cookie) {
+	t.Helper()
 	if c.Value != "" {
 		t.Errorf("cookie value = %q, want empty (eviction)", c.Value)
 	}

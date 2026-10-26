@@ -13,6 +13,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/ci"
+	"github.com/onebox-faas/faas/pkg/sessioncookie"
 )
 
 func (c *operatorHTTPClient) downloadCIArtifact(ctx context.Context, o ciExecutionOptions, path string) error {
@@ -43,7 +44,7 @@ func (c *operatorHTTPClient) downloadCIArtifact(ctx context.Context, o ciExecuti
 	}
 	req.Header.Set("User-Agent", operatorUserAgent)
 	if c.session != nil {
-		req.AddCookie(&http.Cookie{Name: "faas_sid", Value: c.session.Cookie})
+		sessioncookie.AddToRequest(req, c.session.Cookie)
 	}
 	response, err := c.http.Do(req)
 	if err != nil {

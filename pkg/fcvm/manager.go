@@ -1110,6 +1110,10 @@ type Manager struct {
 	// rejected with ErrNoHostKey rather than silently dropping
 	// plaintext. vmmd owns the on-disk files.
 	hostIdentities []*age.X25519Identity
+	// registryIdentities open the registry passwords a builder VM pulls its
+	// base images with (ADR-20261026090000): the build seal domain, then
+	// the fleet and host identities. nil leaves builders anonymous.
+	registryIdentities []*age.X25519Identity
 	// requireSecretBinding refuses runtime envelopes that carry no account
 	// binding (ADR-20261023173624, contract step). Off until every stored
 	// envelope is bound.
@@ -3486,11 +3490,24 @@ func jsonMarshalEnvelope(e secretbox.Envelope) ([]byte, error) {
 // only secret-unseal boundary without allowing guest-init to race a late
 // loopback write.
 func (m *Manager) prepareWakeFiles(req WakeRequest) (secretsJSON, apiJSON []byte, err error) {
+	var merged secretbox.Envelope
 	if len(req.SealedEnvEntries) > 0 {
-		merged, openErr := m.openSealedEnvEntries(req.SealedEnvEntries, req.AccountID)
-		if openErr != nil {
-			return nil, nil, openErr
+		merged, err = m.openSealedEnvEntries(req.SealedEnvEntries, req.AccountID)
+		if err != nil {
+			return nil, nil, err
 		}
+	}
+	// ADR-20261026090000: a builder's Docker config rides in its
+	// secrets.env, written after the build's own secrets.
+	if req.ExportDir != "" {
+		if config, ok := m.buildRegistryAuth(req.BuildRegistryCredentials); ok {
+			if merged == nil {
+				merged = secretbox.Envelope{}
+			}
+			merged[api.BuildRegistryAuthKey] = config
+		}
+	}
+	if merged != nil {
 		secretsJSON, err = jsonMarshalEnvelope(merged)
 		if err != nil {
 			return nil, nil, fmt.Errorf("marshal envelope: %w", err)
@@ -3498,11 +3515,11 @@ func (m *Manager) prepareWakeFiles(req WakeRequest) (secretsJSON, apiJSON []byte
 	}
 
 	if len(req.APIEnvEntries) > 0 {
-		merged := make(map[string]string, len(req.APIEnvEntries))
+		apiEnv := make(map[string]string, len(req.APIEnvEntries))
 		for _, entry := range req.APIEnvEntries {
-			merged[entry.Key] = entry.Value
+			apiEnv[entry.Key] = entry.Value
 		}
-		apiJSON, err = json.Marshal(merged)
+		apiJSON, err = json.Marshal(apiEnv)
 		if err != nil {
 			return nil, nil, fmt.Errorf("marshal api env: %w", err)
 		}
@@ -3764,6 +3781,11 @@ type WakeRequest struct {
 	// It must match the timeout written by builderd into the build manifest;
 	// vmmd uses it to retain the corresponding export/teardown headroom.
 	BuildTimeoutSec int
+	// BuildRegistryCredentials are the sealed registry credentials of the
+	// app a builder VM builds (ADR-20261026090000). prepareWakeFiles opens
+	// them into the builder's secrets.env as a Docker config. Ignored for
+	// every VM that is not a builder.
+	BuildRegistryCredentials []BuildRegistryCredential
 	// Port (issue #460 / ADR-053, PR-C) is the per-deployment runtime
 	// port the customer's app binds inside the guest. 0 = legacy 8080
 	// (netns.AppPort default). The host's published and readiness port

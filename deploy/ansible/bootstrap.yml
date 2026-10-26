@@ -169,6 +169,8 @@
       when: faas_cp_converge_roles | default(none) is none or 'postgres' in faas_cp_converge_roles
     - role: postgres_capacity
       when: faas_cp_converge_roles | default(none) is none or 'postgres_capacity' in faas_cp_converge_roles
+    - role: postgres_metrics
+      when: faas_cp_converge_roles | default(none) is none or 'postgres_metrics' in faas_cp_converge_roles
     - role: pgbouncer
       when:
         - faas_pgbouncer_enabled | default(false) | bool
@@ -183,6 +185,12 @@
       when:
         - not (faas_image_seed | default(false) | bool)
         - faas_cp_converge_roles | default(none) is none or 'cp_state_backup' in faas_cp_converge_roles
+    # ADR-20261026163015: seal the audit log into a MAC-chained anchor every
+    # 15 minutes and verify the chain daily.
+    - role: audit_anchor
+      when:
+        - not (faas_image_seed | default(false) | bool)
+        - faas_cp_converge_roles | default(none) is none or 'audit_anchor' in faas_cp_converge_roles
     - role: control_plane_service
       when: faas_cp_converge_roles | default(none) is none or 'control_plane_service' in faas_cp_converge_roles
     - role: seal_domains

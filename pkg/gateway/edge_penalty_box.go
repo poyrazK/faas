@@ -9,6 +9,7 @@ package gateway
 // so a box holds on every node and survives a restart.
 
 import (
+	"container/heap"
 	"context"
 	"math"
 	"net"
@@ -36,13 +37,71 @@ type penaltyHitKey struct {
 }
 
 type penaltyHits struct {
-	count int
-	since time.Time
+	count  int
+	since  time.Time
+	within time.Duration
 }
 
 type penaltyEntry struct {
 	ruleID string
 	until  time.Time
+}
+
+// penaltySweepInterval spaces the sweeps of a full count table, so a flood
+// that keeps it full cannot make every rejection scan it under the lock.
+const penaltySweepInterval = time.Second
+
+// heldBox is one held client, placed in its app's heap by end.
+type heldBox struct {
+	client netip.Prefix
+	penaltyEntry
+	index int
+}
+
+// appBoxes is one app's boxes, by client and by end: a full app drops its
+// soonest-ending box, and ended boxes leave from the top, without a scan.
+type appBoxes struct {
+	byClient map[netip.Prefix]*heldBox
+	byEnd    boxHeap
+}
+
+func newAppBoxes() *appBoxes { return &appBoxes{byClient: map[netip.Prefix]*heldBox{}} }
+
+func (a *appBoxes) add(client netip.Prefix, entry penaltyEntry) {
+	box := &heldBox{client: client, penaltyEntry: entry}
+	a.byClient[client] = box
+	heap.Push(&a.byEnd, box)
+}
+
+func (a *appBoxes) remove(box *heldBox) {
+	heap.Remove(&a.byEnd, box.index)
+	delete(a.byClient, box.client)
+}
+
+func (a *appBoxes) soonest() *heldBox { return a.byEnd[0] }
+
+// boxHeap orders an app's boxes by end, soonest first.
+type boxHeap []*heldBox
+
+func (h boxHeap) Len() int           { return len(h) }
+func (h boxHeap) Less(i, j int) bool { return h[i].until.Before(h[j].until) }
+func (h boxHeap) Swap(i, j int) {
+	h[i], h[j] = h[j], h[i]
+	h[i].index, h[j].index = i, j
+}
+
+func (h *boxHeap) Push(x any) {
+	box := x.(*heldBox)
+	box.index = len(*h)
+	*h = append(*h, box)
+}
+
+func (h *boxHeap) Pop() any {
+	old := *h
+	box := old[len(old)-1]
+	old[len(old)-1] = nil
+	*h = old[:len(old)-1]
+	return box
 }
 
 // PenaltyBoxRecord is one box as gateways share it (amendment 1).
@@ -61,17 +120,20 @@ type PenaltyBox struct {
 	// onBox, when set, is told of every box a Hit makes; it must not block.
 	onBox func(PenaltyBoxRecord)
 
-	mu    sync.Mutex
-	boxes map[string]map[netip.Prefix]penaltyEntry // app -> client -> box
-	hits  map[penaltyHitKey]penaltyHits
+	mu        sync.Mutex
+	boxes     map[string]*appBoxes // by app
+	hits      map[penaltyHitKey]penaltyHits
+	appHits   map[string]int // pending counts by app
+	sweptHits time.Time
 }
 
 // NewPenaltyBox returns an empty box.
 func NewPenaltyBox() *PenaltyBox {
 	return &PenaltyBox{
-		now:   time.Now,
-		boxes: map[string]map[netip.Prefix]penaltyEntry{},
-		hits:  map[penaltyHitKey]penaltyHits{},
+		now:     time.Now,
+		boxes:   map[string]*appBoxes{},
+		hits:    map[penaltyHitKey]penaltyHits{},
+		appHits: map[string]int{},
 	}
 }
 
@@ -112,20 +174,50 @@ func (b *PenaltyBox) hit(app, rule string, client netip.Prefix, p api.EdgeRulePe
 	defer b.mu.Unlock()
 	key := penaltyHitKey{app: app, rule: rule, client: client}
 	h, seen := b.hits[key]
-	if !seen || now.Sub(h.since) >= time.Duration(p.WithinSeconds)*time.Second {
-		h = penaltyHits{since: now}
+	if within := time.Duration(p.WithinSeconds) * time.Second; !seen || now.Sub(h.since) >= within {
+		h = penaltyHits{since: now, within: within}
 	}
 	h.count++
 	if h.count < max(p.After, 1) {
-		if !seen && len(b.hits) >= api.EdgePenaltyBoxMaxEntries && !b.sweepHitsLocked(now) {
-			return false, time.Time{}
+		if !seen {
+			if !b.roomForHitLocked(app, now) {
+				return false, time.Time{}
+			}
+			b.appHits[app]++
 		}
 		b.hits[key] = h
 		return false, time.Time{}
 	}
-	delete(b.hits, key)
+	if seen {
+		b.dropHitLocked(key)
+	}
 	until := now.Add(time.Duration(p.Seconds) * time.Second)
 	return b.boxLocked(app, client, penaltyEntry{ruleID: rule, until: until}, now), until
+}
+
+// roomForHitLocked reports whether a new count fits. One app holds at most
+// EdgePenaltyHitsMaxPerApp counts, so a flood against one app cannot crowd
+// the others' out, and a full table is swept at most once per
+// penaltySweepInterval.
+func (b *PenaltyBox) roomForHitLocked(app string, now time.Time) bool {
+	if b.appHits[app] >= api.EdgePenaltyHitsMaxPerApp {
+		return false
+	}
+	if len(b.hits) < api.EdgePenaltyBoxMaxEntries {
+		return true
+	}
+	if now.Sub(b.sweptHits) < penaltySweepInterval {
+		return false
+	}
+	b.sweptHits = now
+	return b.sweepHitsLocked(now)
+}
+
+func (b *PenaltyBox) dropHitLocked(key penaltyHitKey) {
+	delete(b.hits, key)
+	if b.appHits[key.app]--; b.appHits[key.app] <= 0 {
+		delete(b.appHits, key.app)
+	}
 }
 
 // OnBox reports every box a Hit makes to fn, which must not block. Set it
@@ -164,75 +256,73 @@ func penaltyIdentity(p netip.Prefix) netip.Prefix {
 }
 
 // boxLocked holds client for app. A client already held keeps the later
-// end. A full app drops its soonest-ending box; a full gateway that frees
-// nothing by expiry refuses the box.
+// end. A full app drops its soonest-ending box; a full gateway makes room
+// (makeRoomLocked).
 func (b *PenaltyBox) boxLocked(app string, client netip.Prefix, entry penaltyEntry, now time.Time) bool {
 	if held := b.boxes[app]; held != nil {
-		if prev, ok := held[client]; ok {
-			if prev.until.After(entry.until) {
-				entry = prev
+		if prev, ok := held.byClient[client]; ok {
+			if !prev.until.After(entry.until) {
+				prev.penaltyEntry = entry
+				heap.Fix(&held.byEnd, prev.index)
 			}
-			held[client] = entry
 			return true
 		}
-		if len(held) >= api.EdgePenaltyBoxMaxPerApp {
-			b.dropSoonestLocked(held)
-			held[client] = entry
-			b.count.Add(1)
+		if len(held.byClient) >= api.EdgePenaltyBoxMaxPerApp {
+			held.remove(held.soonest())
+			held.add(client, entry)
 			return true
 		}
 	}
-	if b.count.Load() >= api.EdgePenaltyBoxMaxEntries && !b.sweepBoxesLocked(now) {
-		return false
+	if b.count.Load() >= api.EdgePenaltyBoxMaxEntries {
+		b.makeRoomLocked(now)
 	}
-	// Fetched again: the sweep may have dropped the app's emptied map.
+	// Fetched again: making room may have dropped the app's emptied boxes.
 	held := b.boxes[app]
 	if held == nil {
-		held = map[netip.Prefix]penaltyEntry{}
+		held = newAppBoxes()
 		b.boxes[app] = held
 	}
-	held[client] = entry
+	held.add(client, entry)
 	b.count.Add(1)
 	return true
 }
 
-func (b *PenaltyBox) dropSoonestLocked(held map[netip.Prefix]penaltyEntry) {
-	var soonest netip.Prefix
-	var until time.Time
-	for client, e := range held {
-		if until.IsZero() || e.until.Before(until) {
-			soonest, until = client, e.until
-		}
-	}
-	delete(held, soonest)
-	b.count.Add(-1)
-}
-
-// sweepBoxesLocked drops ended boxes and reports whether any were dropped.
-func (b *PenaltyBox) sweepBoxesLocked(now time.Time) bool {
-	freed := false
+// makeRoomLocked frees a slot of a full gateway: ended boxes first, from
+// the top of each app's heap, then the soonest-ending box of the app that
+// holds the most, so a tenant that fills the gateway gives up its own boxes
+// before any other app does.
+func (b *PenaltyBox) makeRoomLocked(now time.Time) {
+	var largest *appBoxes
+	var largestApp string
 	for app, held := range b.boxes {
-		for client, e := range held {
-			if !now.Before(e.until) {
-				delete(held, client)
-				b.count.Add(-1)
-				freed = true
-			}
+		for held.byEnd.Len() > 0 && !now.Before(held.soonest().until) {
+			held.remove(held.soonest())
+			b.count.Add(-1)
 		}
-		if len(held) == 0 {
+		switch {
+		case held.byEnd.Len() == 0:
 			delete(b.boxes, app)
+		case largest == nil || held.byEnd.Len() > largest.byEnd.Len():
+			largest, largestApp = held, app
 		}
 	}
-	return freed
+	if b.count.Load() < api.EdgePenaltyBoxMaxEntries || largest == nil {
+		return
+	}
+	largest.remove(largest.soonest())
+	b.count.Add(-1)
+	if largest.byEnd.Len() == 0 {
+		delete(b.boxes, largestApp)
+	}
 }
 
-// sweepHitsLocked drops counts older than the longest window and reports
-// whether any were dropped.
+// sweepHitsLocked drops counts whose window ended and reports whether any
+// were dropped.
 func (b *PenaltyBox) sweepHitsLocked(now time.Time) bool {
 	freed := false
 	for key, h := range b.hits {
-		if now.Sub(h.since) >= api.MaxEdgePenaltyWithinSeconds*time.Second {
-			delete(b.hits, key)
+		if now.Sub(h.since) >= h.within {
+			b.dropHitLocked(key)
 			freed = true
 		}
 	}
@@ -252,19 +342,22 @@ func (b *PenaltyBox) Boxed(app string, ip net.IP) (ruleID string, left time.Dura
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	held := b.boxes[app]
-	e, ok := held[client]
+	if held == nil {
+		return "", 0, false
+	}
+	box, ok := held.byClient[client]
 	if !ok {
 		return "", 0, false
 	}
-	if !now.Before(e.until) {
-		delete(held, client)
+	if !now.Before(box.until) {
+		held.remove(box)
 		b.count.Add(-1)
-		if len(held) == 0 {
+		if held.byEnd.Len() == 0 {
 			delete(b.boxes, app)
 		}
 		return "", 0, false
 	}
-	return e.ruleID, e.until.Sub(now), true
+	return box.ruleID, box.until.Sub(now), true
 }
 
 // WithPenaltyBox arms rule penalties (ADR-20261022105846). nil leaves
@@ -310,7 +403,14 @@ func (h *Handler) applyEdgePenaltyBox(w http.ResponseWriter, r *http.Request, ap
 // its penalty box. Callers are the policy decisions only (an IP or country
 // refused, a throttle exhausted, a WAF block), never a gate's own fault
 // such as a forged forwarding header or a missing GeoIP database.
+//
+// A browser's cross-site request is one a page elsewhere chose to make, such
+// as an <img> another site embeds: it is still refused but never counts, so
+// a third party cannot get an app's real visitors boxed.
 func (h *Handler) penalizeEdgeRuleRejection(r *http.Request, app App, ruleID string) {
+	if r.Header.Get("Sec-Fetch-Site") == "cross-site" {
+		return
+	}
 	p, ok := h.edgeRulePenalty(r, ruleID)
 	if !ok || !h.edgeFeatureReleased(platformflags.EdgePenaltyBox, app) {
 		return

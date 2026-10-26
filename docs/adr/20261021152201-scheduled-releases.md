@@ -1,6 +1,6 @@
 # ADR-20261021152201 · Scheduled releases
 
-- **Status:** proposed
+- **Status:** accepted (shipped in PR 5126, 2026-10-22); n2 metal drill passed 2026-10-26 (start on time, blocked by a freeze)
 - **Date:** 2026-10-21
 - **Uses:** safe releases by default ([ADR-1446](1446-safe-releases-by-default.md)), deploy freezes ([ADR-20261019071733](20261019071733-deploy-freezes-and-release-windows.md)), release approvals ([ADR-20261020085706](20261020085706-release-approvals.md)), traffic splitting (issue #556)
 - **Decision:** A production deploy may carry `release_at`. Gregale builds the release now and parks it: the release goes live at 0% traffic, ready to wake, while the current release keeps serving. At `release_at`, apid starts the rollout the deploy would have had: the same canary ladder, or a full cutover when the deploy had no canary. Before it starts, apid checks again that no newer release serves, that no deploy freeze is active, and that the app's approval policy can hold the release. If any check fails, the release stays parked and the schedule records why. `PUT /v1/deployments/{id}/schedule` schedules a release that is already parked. `gregale deploy --at`, `gregale traffic promote --at` and `gregale scheduled-releases` expose it.

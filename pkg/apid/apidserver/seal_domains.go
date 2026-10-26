@@ -30,6 +30,8 @@ const (
 	envSealDomainAlertingWrites    = "FAAS_SEAL_DOMAIN_ALERTING_WRITES"
 	envSealDomainStorageRecipient  = "FAAS_SEAL_DOMAIN_STORAGE_RECIPIENT_PATH"
 	envSealDomainStorageWrites     = "FAAS_SEAL_DOMAIN_STORAGE_WRITES"
+	envSealDomainDeliveryRecipient = "FAAS_SEAL_DOMAIN_DELIVERY_RECIPIENT_PATH"
+	envSealDomainDeliveryWrites    = "FAAS_SEAL_DOMAIN_DELIVERY_WRITES"
 	// envRuntimeSecretBinding turns on account-bound runtime envelopes
 	// (ADR-20261023173624): off (the default) or account. Unit
 	// configuration, like the write modes: a database writer must not be
@@ -111,6 +113,14 @@ var storageDomainRecipient func() *age.X25519Recipient
 // which s3-gatewayd opens.
 var storageWriteMode sealdomain.WriteMode
 
+// deliveryDomainRecipient is the delivery domain's recipient once the
+// seal_domains role stages it; nil until then.
+var deliveryDomainRecipient func() *age.X25519Recipient
+
+// deliveryWriteMode picks the recipients of app webhook signing secrets,
+// commit-source connections and execution payloads, which schedd opens.
+var deliveryWriteMode sealdomain.WriteMode
+
 // runtimeDomainRecipient is the runtime domain's recipient once the
 // seal_domains role stages it; nil until then.
 var runtimeDomainRecipient func() *age.X25519Recipient
@@ -179,6 +189,15 @@ func loadSealDomains(getenv func(string) string, log *slog.Logger) error {
 		return fmt.Errorf("apid: storage seal domain: %w", err)
 	}
 	log.Info("storage seal domain", "write_mode", string(storageWriteMode), "domain_recipient_staged", storageDomainRecipient != nil, "recipients", len(storageRecipients))
+
+	if deliveryDomainRecipient, deliveryWriteMode, err = loadDomainWriter(getenv, envSealDomainDeliveryRecipient, envSealDomainDeliveryWrites); err != nil {
+		return err
+	}
+	deliveryRecipients, err := deliveryValueRecipients()
+	if err != nil && deliveryWriteMode != sealdomain.WriteAuto && deliveryWriteMode != sealdomain.WriteFleet {
+		return fmt.Errorf("apid: delivery seal domain: %w", err)
+	}
+	log.Info("delivery seal domain", "write_mode", string(deliveryWriteMode), "domain_recipient_staged", deliveryDomainRecipient != nil, "recipients", len(deliveryRecipients))
 
 	if runtimeDomainRecipient, runtimeWriteMode, err = loadDomainWriter(getenv, envSealDomainRuntimeRecipient, envSealDomainRuntimeWrites); err != nil {
 		return err
@@ -262,6 +281,35 @@ func alertingCredentialRecipients() ([]*age.X25519Recipient, error) {
 func storageCredentialRecipients() ([]*age.X25519Recipient, string, error) {
 	fleet := hostSecretRecipient()
 	recipients, err := sealdomain.Recipients(storageWriteMode, recipientOrNil(storageDomainRecipient), fleet)
+	if err != nil {
+		return nil, "", err
+	}
+	return recipients, sealdomain.KeyID(recipients, fleet), nil
+}
+
+// deliveryValueRecipients returns who an app webhook signing secret is sealed
+// to: the fleet recipient alone until the delivery domain is staged, then
+// the domain and the fleet recipient, then the domain alone.
+func deliveryValueRecipients() ([]*age.X25519Recipient, error) {
+	return sealdomain.Recipients(deliveryWriteMode, recipientOrNil(deliveryDomainRecipient), hostSecretRecipient())
+}
+
+// commitConnectionRecipients is deliveryValueRecipients for a commit
+// source's database connection. Its fleet recipient must be the shared one
+// (FAAS_FLEET_AGE_RECIPIENT_PATH), never a host's own: schedd on any node
+// opens it.
+func commitConnectionRecipients() ([]*age.X25519Recipient, error) {
+	return sealdomain.Recipients(deliveryWriteMode, recipientOrNil(deliveryDomainRecipient), recipientOrNil(outboundCredentialRecipient))
+}
+
+// executionPayloadRecipients returns who an execution payload is sealed to,
+// as deliveryValueRecipients does, and the key id stored beside it. schedd
+// opens a payload only with the identity its key id names, so the id stays
+// the fleet recipient while the payload opens with it, and becomes the
+// domain's once only the domain opens it.
+func executionPayloadRecipients() ([]*age.X25519Recipient, string, error) {
+	fleet := hostSecretRecipient()
+	recipients, err := sealdomain.Recipients(deliveryWriteMode, recipientOrNil(deliveryDomainRecipient), fleet)
 	if err != nil {
 		return nil, "", err
 	}

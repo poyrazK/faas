@@ -33,6 +33,7 @@ import type { ObsNotificationHealth } from '../models/ObsNotificationHealth.js';
 import type { ObsRecordingCoverage } from '../models/ObsRecordingCoverage.js';
 import type { ObsRuleCoverage } from '../models/ObsRuleCoverage.js';
 import type { ObsRuleHealthResponse } from '../models/ObsRuleHealthResponse.js';
+import type { ObsWakeTimeline } from '../models/ObsWakeTimeline.js';
 import type { OperatorIntentAcceptedResponse } from '../models/OperatorIntentAcceptedResponse.js';
 import type { OperatorIntentResponse } from '../models/OperatorIntentResponse.js';
 import type { PublicStatusEvent } from '../models/PublicStatusEvent.js';
@@ -1553,6 +1554,46 @@ export class AdminService {
         \`profile_investigation_limit\`.
         `,
         503: `Response timing storage could not be read within its deadline.`,
+      },
+    });
+  }
+  /**
+   * Read every platform event recorded for one wake.
+   * Returns the events whose data carries this wake_id, oldest first, for an
+   * operator who has only the wake_id (from a log line, a latency exemplar or
+   * a customer report) and not the app or account. At most 1000 events are
+   * returned; truncated is true when the wake recorded more. Reads use the
+   * events wake_id index and a five-second budget. gregalectl obs wake
+   * merges these events with the wake's platform log lines.
+   *
+   * @returns ObsWakeTimeline The wake's events, oldest first.
+   * @throws ApiError
+   */
+  public static getObsWakeTimeline({
+    wakeId,
+  }: {
+    /**
+     * The wake's id, 8-64 letters, digits or dashes.
+     */
+    wakeId: string,
+  }): CancelablePromise<ObsWakeTimeline> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/admin/obs/wakes/{wake_id}',
+      path: {
+        'wake_id': wakeId,
+      },
+      errors: {
+        400: `Malformed wake_id or unexpected query parameters.`,
+        401: `code: unauthorized`,
+        403: `Wake read denied by operator scope or MFA or allowlist policy.`,
+        404: `No events are recorded for this wake_id.`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `Event storage could not be read within its deadline.`,
       },
     });
   }

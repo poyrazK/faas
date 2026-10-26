@@ -527,8 +527,11 @@ const (
 	QuotaErrorKindApps          QuotaErrorKind = "apps"
 	QuotaErrorKindDeveloperApps QuotaErrorKind = "developer_apps"
 	QuotaErrorKindPreviewApps   QuotaErrorKind = "preview_apps"
-	QuotaErrorKindCrons         QuotaErrorKind = "crons"
-	QuotaErrorKindMemory                       = "memory" // reserved for ADR-046 follow-on
+	// QuotaErrorKindPreviewWorkloads trips when one PR preview environment
+	// would hold more workloads than Limits.DeployedApps.
+	QuotaErrorKindPreviewWorkloads QuotaErrorKind = "preview_workloads"
+	QuotaErrorKindCrons            QuotaErrorKind = "crons"
+	QuotaErrorKindMemory                          = "memory" // reserved for ADR-046 follow-on
 	// QuotaErrorKindMirror (issue #72 / ADR-125) trips when a
 	// Pro/Scale customer tries to create more than
 	// limits.MirrorTargetsPerApp mirror rules on one app. Free /
@@ -561,7 +564,9 @@ func (e *QuotaError) Error() string {
 	case QuotaErrorKindDeveloperApps:
 		return fmt.Sprintf("state: developer environment quota exceeded (limit=%d, observed=%d)", e.Limit, e.Observed)
 	case QuotaErrorKindPreviewApps:
-		return fmt.Sprintf("state: PR preview quota exceeded (limit=%d, observed=%d)", e.Limit, e.Observed)
+		return fmt.Sprintf("state: PR preview environment quota exceeded (limit=%d, observed=%d)", e.Limit, e.Observed)
+	case QuotaErrorKindPreviewWorkloads:
+		return fmt.Sprintf("state: PR preview environment workload quota exceeded (limit=%d, observed=%d)", e.Limit, e.Observed)
 	case QuotaErrorKindCrons:
 		if e.NotAllowed {
 			return "state: crons not allowed on this plan"
@@ -5986,7 +5991,9 @@ type Store interface {
 	ListAppSecretRuntimeReloadTargets(ctx context.Context, accountID, appID, scope string) ([]AppSecretRuntimeReloadTarget, error)
 
 	// Per-app private-registry Basic Auth (issue #461 / ADR-062). apid
-	// is the only writer; imaged is the only reader. PasswordEncrypted
+	// is the only writer. imaged opens the passwords to pull images;
+	// builderd forwards them unopened to vmmd, which opens them into a
+	// Dockerfile builder's Docker config (ADR-20261026090000). PasswordEncrypted
 	// is the age-sealed bytea produced by pkg/secretbox.SealBytes with
 	// namespace="registry_creds" — the plaintext password is never
 	// stored, never logged, never returned over the wire.

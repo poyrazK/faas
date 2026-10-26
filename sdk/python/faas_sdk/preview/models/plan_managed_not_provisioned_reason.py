@@ -1,10 +1,13 @@
 from typing import Literal
 
-PlanManagedNotProvisionedReason = Literal["configured", "not_referenced", "plan", "quota", "unavailable", "unsupported"]
+PlanManagedNotProvisionedReason = Literal[
+    "configured", "not_referenced", "permission", "plan", "quota", "unavailable", "unsupported"
+]
 
 PLAN_MANAGED_NOT_PROVISIONED_REASON_VALUES: set[PlanManagedNotProvisionedReason] = {
     "configured",
     "not_referenced",
+    "permission",
     "plan",
     "quota",
     "unavailable",

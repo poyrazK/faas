@@ -20,6 +20,6 @@ export type PlanManaged = {
   /**
    * Why apply does not provide a Compose postgres service (ADR-20261025111824). Omitted for other datastores and when provision is set.
    */
-  not_provisioned_reason?: 'unavailable' | 'plan' | 'quota' | 'unsupported' | 'configured' | 'not_referenced';
+  not_provisioned_reason?: 'unavailable' | 'plan' | 'quota' | 'unsupported' | 'configured' | 'not_referenced' | 'permission';
 };
 

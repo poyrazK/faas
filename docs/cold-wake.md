@@ -126,8 +126,8 @@ resumes the instance it was pinned to when that one is frozen.
 On nodes with early freeze enabled, a `between_requests` workload (every
 function by default, and any app that sets `pause: between_requests`) is
 frozen a few seconds after its last request instead of at its idle timeout,
-so it stops accruing usage almost as soon as it finishes serving. Nothing else
-changes for the app: its timers already stop between requests, and the next
+so it stops accruing usage almost as soon as it finishes serving. For the app
+this is the same as a pause between requests: its timers stop, and the next
 request thaws it in a few milliseconds. `when_idle` apps keep running through
 their idle timeout as declared. Apps with `--min` instances are not frozen
 early.
@@ -146,6 +146,10 @@ lifecycle:
 | `between_requests` | paused after 2 s without a request; timers stop | frozen | functions |
 | `when_idle` | keeps running | frozen | apps |
 | `never` | keeps running | parked, as before | |
+
+Pausing between requests and freezing are each enabled per node, like early
+freeze. On a node without pausing, the instance keeps running between
+requests; on a node without freezing, it parks at the idle timeout instead.
 
 Choose `never` when your app must keep running timers or heartbeats for the
 whole idle timeout and must not resume with them delayed, or `between_requests`

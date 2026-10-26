@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"net/http"
 	"strconv"
 	"strings"
@@ -649,7 +650,10 @@ const (
 	// CodeDeployRateLimited marks an account that exhausted its plan's
 	// deployment admissions in the current one-hour window.
 	CodeDeployRateLimited = "deploy_rate_limited"
-	CodeUnauthorized      = "unauthorized"
+	// CodeEventPublishRateLimited marks a publication beyond the account's
+	// event publish rate (EventPublishLimits); retry after Retry-After.
+	CodeEventPublishRateLimited = "event_publish_rate_limited"
+	CodeUnauthorized            = "unauthorized"
 	// CodeAuthRateLimited marks a rejected credential after the caller's
 	// source IP exhausted the failed-auth budget. Valid credentials from the
 	// same IP are still admitted, so one broken client behind a shared NAT
@@ -1805,6 +1809,9 @@ const (
 	CodeCliAuthUnavailable         = "cli_auth_code_unavailable"
 	CodeBrowserApprovalPending     = "browser_approval_pending"
 	CodeBrowserApprovalUnavailable = "browser_approval_unavailable"
+	// CodeSecretEntryUnavailable covers an expired, used, unknown or
+	// mismatched secret entry request (ADR-20261026174727).
+	CodeSecretEntryUnavailable = "secret_entry_unavailable"
 
 	// CodeAppConcurReached is the typed "already at max_concurrency"
 	// result from Engine.AdmitInstance (issue #168). Distinct from
@@ -2104,7 +2111,7 @@ func StatusForCode(code string) int {
 		CodeAccountAbuseHold:
 		return http.StatusForbidden
 	case CodePlanLimitConcur, CodeQuotaExhausted, CodeAppConcurReached, CodeConcurrencyThrottled, CodeConcurrencyQueueFull, CodeExportRateLimited, CodeDeployRateLimited,
-		CodeAuthRateLimited, CodeDevDebugSessionLimit:
+		CodeAuthRateLimited, CodeDevDebugSessionLimit, CodeEventPublishRateLimited:
 		return http.StatusTooManyRequests
 	case CodeSourceTooLarge, CodeInboundWebhookTooLarge:
 		return http.StatusRequestEntityTooLarge
@@ -2391,7 +2398,7 @@ func StatusForCode(code string) int {
 		return http.StatusConflict
 	case CodeCliAuthPending, CodeBrowserApprovalPending:
 		return http.StatusNotFound
-	case CodeCliAuthUnavailable, CodeBrowserApprovalUnavailable:
+	case CodeCliAuthUnavailable, CodeBrowserApprovalUnavailable, CodeSecretEntryUnavailable:
 		return http.StatusGone
 	case CodePlanQueueDepth, CodePlanDelayedCap, CodePlanQueueBacklogBytes:
 		return http.StatusForbidden
@@ -2618,6 +2625,27 @@ func ErrPlanLimitDeveloperApps(l Limits, observed int) *Problem {
 		fmt.Sprintf("%s plan allows %d developer environment(s); you have %d. Stop an unused environment with `gregale dev --stop`.", l.Plan, l.DeveloperApps, observed)).
 		WithLimit(int64(l.DeveloperApps), int64(observed)).
 		WithDocs(docsBase + "/plans#developer-environments")
+}
+
+// ErrPlanLimitPreviewEnvironments is returned when a pull-request preview
+// would open more PR preview environments than the plan allows. A closed
+// PR's preview holds no allowance. It keeps the plan_limit_apps code.
+func ErrPlanLimitPreviewEnvironments(l Limits, observed int) *Problem {
+	return NewProblem(http.StatusForbidden, CodePlanLimitApps,
+		"PR preview limit reached",
+		fmt.Sprintf("%s plan allows %d open PR preview environment(s); you have %d. Close a pull request or run `gregale preview destroy` on one of its previews.", l.Plan, l.PreviewApps, observed)).
+		WithLimit(int64(l.PreviewApps), int64(observed)).
+		WithDocs(docsBase + "/plans#apps")
+}
+
+// ErrPlanLimitPreviewWorkloads is returned when one PR preview environment
+// would hold more workloads than the plan can deploy.
+func ErrPlanLimitPreviewWorkloads(l Limits, observed int) *Problem {
+	return NewProblem(http.StatusForbidden, CodePlanLimitApps,
+		"PR preview environment too large",
+		fmt.Sprintf("%s plan allows %d workload(s) in one PR preview environment; this one already has %d.", l.Plan, l.DeployedApps, observed)).
+		WithLimit(int64(l.DeployedApps), int64(observed)).
+		WithDocs(docsBase + "/plans#apps")
 }
 
 // ErrDevWatchRAM refuses watch mode (ADR-1170) for a developer app whose RAM
@@ -2970,6 +2998,21 @@ func ErrDeployRateLimited(limit, retryAfterS int) *Problem {
 		WithLimit(int64(limit), int64(limit)).
 		WithHeader("Retry-After", strconv.Itoa(retryAfterS)).
 		WithDocs("https://gregale.dev/docs/deployments#rate-limit")
+}
+
+// ErrEventPublishRateLimited reports a publication of events beyond the
+// account's per-second event publish rate. Nothing was accepted.
+func ErrEventPublishRateLimited(perSecond, events int, retryAfter time.Duration) *Problem {
+	retryAfterS := int(math.Ceil(retryAfter.Seconds()))
+	if retryAfterS <= 0 {
+		retryAfterS = 1
+	}
+	return NewProblem(http.StatusTooManyRequests, CodeEventPublishRateLimited,
+		"Event publish rate limited",
+		fmt.Sprintf("This account publishes at most %d events per second; retry the same events after the indicated back-off.", perSecond)).
+		WithLimit(int64(perSecond), int64(events)).
+		WithHeader("Retry-After", strconv.Itoa(retryAfterS)).
+		WithDocs("https://gregale.dev/docs/event-driven#publish-rate")
 }
 
 // ErrAuthRateLimited reports that the caller's source IP exhausted the
@@ -6259,6 +6302,12 @@ func ErrPlanFeatureGated(feature string, p Plan) *Problem {
 			"Plan doesn't include the AI gateway",
 			fmt.Sprintf("the %s plan doesn't include the AI gateway; upgrade to Hobby or higher to call AI providers through managed integrations.", p)).
 			WithDocs(docsBase + "/ai-gateway#plans")
+	}
+	if feature == "route_controls" {
+		return NewProblem(http.StatusPaymentRequired, CodePlanFeatureGated,
+			"Plan doesn't include route controls",
+			fmt.Sprintf("the %s plan doesn't include route priorities, throttle suggestions or route lifecycle review; upgrade to Hobby or higher.", p)).
+			WithDocs(docsBase + "/plans")
 	}
 	if feature == "sync_invoke" {
 		return NewProblem(http.StatusPaymentRequired, CodePlanFeatureGated,
