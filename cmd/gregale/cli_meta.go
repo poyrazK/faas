@@ -2231,7 +2231,9 @@ var cliCommands = []cliCommand{
 		DocSlug: "workers",
 		Short:   "Inspect and manage background worker pools",
 		Subcommands: []cliSub{
-			{Name: "list", Short: "List background worker pools, or one pool by app", Positionals: []string{"[<app>]"}},
+			{Name: "list", Short: "List background worker pools, or one pool by app", Positionals: []string{"[<app>]"}, Flags: []cliFlag{
+				{Name: "app", Short: "list only this app's worker pool", Value: "slug"},
+			}},
 			{Name: "status", Short: "Show real-time status and autoscaling for a worker pool", Positionals: []string{"[<app>]"}, Flags: []cliFlag{
 				{Name: "app", Short: "app slug (optional; defaults to linked context)", Value: "slug"},
 			}},
@@ -6048,7 +6050,7 @@ var cliCommands = []cliCommand{
 			{Name: "list", Short: "List projects in this account"},
 			{Name: "info", Short: "Show a project and its workloads", Positionals: []string{"<slug>"}},
 			{Name: "environments", Aliases: []string{"envs"}, Short: "Manage project environments, releases and promotions", Notes: []string{"Qualify binds probes to release, config and secret revisions."}, Subcommands: []cliSub{
-				{Name: "list", Aliases: []string{"ls"}, Short: "List environments"},
+				{Name: "list", Aliases: []string{"ls"}, Short: "List environments", Positionals: []string{"<project-slug>"}},
 				{Name: "create", Short: "Create or clone an environment"},
 				{Name: "protect", Short: "Protect an environment"},
 				{Name: "unprotect", Short: "Remove environment protection"},

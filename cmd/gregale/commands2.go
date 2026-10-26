@@ -2203,9 +2203,17 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 				"gregale deploy names the app with --name; --app only selects the app shape. Did you mean `gregale deploy --name %s`?",
 				fs.Arg(0)))
 		}
-		return printErr("Invalid arguments", fmt.Errorf(
+		// `deploy ./my-app` named neither --path nor the deploy verbs on
+		// production-us rc.294 (Hunt 14 H14-64).
+		if dir, ok := sourceDirPositional(fs); ok {
+			return printErr("Invalid arguments", fmt.Errorf(
+				"gregale deploy takes the source directory with --path. Did you mean `gregale deploy --path %s`?", dir))
+		}
+		code := printErr("Invalid arguments", fmt.Errorf(
 			"gregale deploy accepts flags only; unexpected positional arguments: %s",
 			strings.Join(fs.Args(), " ")))
+		_ = unknownSubcommandChoices(os.Stderr, "deploy", nestedCliCommand("deploy"), fs.Arg(0))
+		return code
 	}
 	// Capture explicit presence once. Several deploy flags use sentinel values,
 	// and create-only/preflight validation must distinguish an omitted default
