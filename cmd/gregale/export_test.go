@@ -2476,6 +2476,10 @@ var PreviewCompanionsFromManifest = previewCompanionsFromManifest
 // FormatStageDuration is the live ticker's stage duration cell.
 var FormatStageDuration = formatStageDuration
 
+// gregale logs --project (ADR-20261026190244).
+var RunProjectLogs = runProjectLogs
+var ProjectLogJSON = projectLogJSON
+
 // dev --all and gregale dev Go commands (ADR-20261026120412).
 var DiscoverDevAllApps = discoverDevAllApps
 
