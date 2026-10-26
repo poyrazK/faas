@@ -1,0 +1,11 @@
+# Managed by Ansible (audit_anchor). Local edits are overwritten.
+[Unit]
+Description=Seal the Gregale audit log every 15 minutes (ADR-20261026163015)
+
+[Timer]
+OnCalendar={{ faas_audit_anchor_schedule }}
+RandomizedDelaySec=60s
+Persistent=true
+
+[Install]
+WantedBy=timers.target

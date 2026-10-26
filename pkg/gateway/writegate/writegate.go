@@ -48,6 +48,7 @@ import (
 	"strings"
 
 	"github.com/onebox-faas/faas/pkg/apid"
+	"github.com/onebox-faas/faas/pkg/sessioncookie"
 )
 
 // LoopGuardSentinel is the header name the writeGate sets on the
@@ -268,7 +269,8 @@ func IsWriteMethod(method string) bool {
 // Order of precedence:
 //
 //  1. `Authorization: Bearer ...` → AuthBearer.
-//  2. `Cookie: faas_sid=...` (the ADR-039 session cookie name)
+//  2. `Cookie: __Host-faas_sid=...` or the legacy `faas_sid=` (the ADR-039
+//     session cookie, ADR-20261026112500)
 //     → AuthCookie.
 //  3. else → AuthAnonymous (the unauthenticatedCarveOuts paths).
 //
@@ -293,7 +295,7 @@ func AuthKindOf(r *http.Request) AuthKind {
 	if h := strings.TrimSpace(r.Header.Get("Authorization")); strings.HasPrefix(strings.ToLower(h), "bearer") {
 		return AuthBearer
 	}
-	if c, err := r.Cookie("faas_sid"); err == nil && c != nil {
+	if c, err := sessioncookie.Get(r); err == nil && c != nil {
 		return AuthCookie
 	}
 	return AuthAnonymous

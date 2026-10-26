@@ -115,8 +115,9 @@ func (s *server) listAlertRules(w http.ResponseWriter, r *http.Request, acct sta
 		return
 	}
 	out := make([]api.AlertRuleResponse, 0, len(rows))
+	creator := creatorView(r, acct)
 	for _, row := range rows {
-		if row.AppID != "" && row.AppID != app.ID {
+		if row.AppID != "" && row.AppID != app.ID || row.AppID == "" && !creator {
 			continue
 		}
 		out = append(out, s.alertRuleResponseWithChannels(r.Context(), row))
@@ -217,6 +218,10 @@ func (s *server) createAlertRule(w http.ResponseWriter, r *http.Request, acct st
 	if !s.appEvents.CheckEventConsumerAlertTarget(w, r, acct.ID, app.ID, req) {
 		return
 	}
+	if len(req.ChannelIDs) > 0 && !creatorView(r, acct) {
+		api.WriteProblem(w, creatorChannelsProblem())
+		return
+	}
 	channelIDs, prob := s.validateRuleChannels(r.Context(), acct.ID, req.ChannelIDs)
 	if prob != nil {
 		api.WriteProblem(w, prob)
@@ -234,6 +239,7 @@ func (s *server) createAlertRule(w http.ResponseWriter, r *http.Request, acct st
 	}
 	row, err := s.store.CreateAlertRuleIfUnderQuota(r.Context(), state.AlertRule{MCPReadinessScope: req.MCPReadinessScope, MCPMinCalls: minCalls, MCPForMinutes: forMinutes,
 		AccountID:                       acct.ID,
+		CreatedByAccountID:              actorAccount(r, acct).ID,
 		AppID:                           app.ID,
 		Name:                            req.Name,
 		Enabled:                         alertRuleEnabledFrom(req.Enabled),
@@ -329,11 +335,27 @@ func (s *server) alertRuleForSlug(w http.ResponseWriter, r *http.Request, acct s
 		return state.AlertRule{}, false
 	}
 	row, err := s.store.AlertRuleByID(r.Context(), id)
-	if err != nil || row.AccountID != acct.ID || row.AppID != "" && row.AppID != app.ID {
+	if err != nil || row.AccountID != acct.ID || row.AppID != "" && row.AppID != app.ID || row.AppID == "" && !creatorView(r, acct) {
 		s.notFound(w, "no such alert rule")
 		return state.AlertRule{}, false
 	}
 	return row, true
+}
+
+// creatorView reports whether the caller is the account an app's rows
+// belong to. Company apps share their creator's AccountID, so an
+// organization owner or admin working on a company app (ADR-20261026151103)
+// acts on rows under the creator's account: the creator's account-wide
+// alert rules and notification channels are that person's own, and stay
+// out of their reach.
+func creatorView(r *http.Request, acct state.Account) bool {
+	return actorAccount(r, acct).ID == acct.ID
+}
+
+// creatorChannelsProblem refuses an organization member who is not the app's
+// creator binding notification channels, which are the creator's own.
+func creatorChannelsProblem() *api.Problem {
+	return api.ErrOrgRoleForbidden("binding the app creator's notification channels (give the rule a webhook_url instead)")
 }
 
 // getAlertRule returns the rule if the {slug} app may see it.
@@ -467,6 +489,10 @@ func (s *server) updateAlertRule(w http.ResponseWriter, r *http.Request, acct st
 			api.WriteProblem(w, prob)
 			return
 		}
+	}
+	if req.ChannelIDs != nil && len(*req.ChannelIDs) > 0 && !creatorView(r, acct) {
+		api.WriteProblem(w, creatorChannelsProblem())
+		return
 	}
 	newChannels, prob := s.updatedRuleChannels(r.Context(), acct.ID, row, merged, req.ChannelIDs)
 	if prob != nil {

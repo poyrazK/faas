@@ -48,13 +48,13 @@ func (s *PgStore) CreateAppWebhook(ctx context.Context, in AppWebhook) (AppWebho
 	row := s.pool.QueryRow(ctx, `
 		insert into app_webhooks
 			(app_id, account_id, target_url, secret_sealed,
-			 event_filter, retry_policy, delivery_format, enabled)
-		values ($1, $2, $3, $4, $5::text[], $6, $7, $8)
+			 event_filter, retry_policy, delivery_format, enabled, created_by_account_id)
+		values ($1, $2, $3, $4, $5::text[], $6, $7, $8, NULLIF($9, '')::uuid)
 		returning id, app_id::text, platform_tenant_id::text, account_id, scope, target_url, secret_sealed,
 		          event_filter, retry_policy, delivery_format, enabled,
 		          created_at, updated_at
 	`, in.AppID, in.AccountID, in.TargetURL, in.SecretSealed,
-		filterArr, string(in.RetryPolicy), string(in.DeliveryFormat), in.Enabled)
+		filterArr, string(in.RetryPolicy), string(in.DeliveryFormat), in.Enabled, in.CreatedByAccountID)
 	w, err := scanAppWebhook(row)
 	if err != nil {
 		if isUniqueViolation(err) {
@@ -145,13 +145,13 @@ func (s *PgStore) CreateAppWebhookIfUnderQuota(ctx context.Context, in AppWebhoo
 	row := tx.QueryRow(ctx, `
 		insert into app_webhooks
 			(app_id, account_id, target_url, secret_sealed,
-			 event_filter, retry_policy, delivery_format, enabled)
-		values ($1, $2, $3, $4, $5::text[], $6, $7, $8)
+			 event_filter, retry_policy, delivery_format, enabled, created_by_account_id)
+		values ($1, $2, $3, $4, $5::text[], $6, $7, $8, NULLIF($9, '')::uuid)
 		returning id, app_id::text, platform_tenant_id::text, account_id, scope, target_url, secret_sealed,
 		          event_filter, retry_policy, delivery_format, enabled,
 		          created_at, updated_at
 	`, in.AppID, in.AccountID, in.TargetURL, in.SecretSealed,
-		filterArr, string(in.RetryPolicy), string(in.DeliveryFormat), in.Enabled)
+		filterArr, string(in.RetryPolicy), string(in.DeliveryFormat), in.Enabled, in.CreatedByAccountID)
 	w, err := scanAppWebhook(row)
 	if err != nil {
 		if isUniqueViolation(err) {

@@ -52,6 +52,7 @@ type releasePlan struct {
 	ExpiresAt               time.Time                          `json:"expires_at"`
 	LocalSource             *localSourcePlan                   `json:"local_source,omitempty"`
 	EnvChange               *envChangePlan                     `json:"env_change,omitempty"`
+	Provision               *provisionPlan                     `json:"provision,omitempty"`
 	localReceipt            any
 	localInFlight           bool
 	appHash                 [32]byte

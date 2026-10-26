@@ -1119,6 +1119,9 @@ type MemStore struct {
 	// section that drops the accounts row, mirroring the PG
 	// atomicity contract.
 	auditLog []AuditLog
+	// auditLogAnchors mirrors audit_log_anchors in seq order
+	// (ADR-20261026163015).
+	auditLogAnchors []AuditLogAnchor
 	// deploymentAudit is the in-memory mirror of the deployment_audit
 	// table (migrations/00332_deployment_audit.sql, issue #976 /
 	// ADR-122 / SAFE-RELEASES-E.2). Same shape as the PG row; the
@@ -26628,6 +26631,7 @@ func (m *MemStore) RemoveOrgMember(ctx context.Context, orgID, accountID string)
 	now := time.Now().UTC()
 	mem.RemovedAt = &now
 	m.setOrgMembershipLocked(k, mem)
+	m.pauseDepartedMemberIntegrationsLocked(orgID, accountID)
 	return nil
 }
 

@@ -1,7 +1,7 @@
 {
   "name": "gregale",
   "displayName": "Gregale",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Deploy, diagnose and roll back Gregale apps: the Gregale management MCP server plus deploy and diagnose skills.",
   "author": {
     "name": "Gregale",

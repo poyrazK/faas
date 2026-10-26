@@ -98,6 +98,7 @@ func TestParseToolsets(t *testing.T) {
 		"core":                 {"core"},
 		" diagnose , core ":    {"core", "diagnose"},
 		"core,core,release":    {"core", "release"},
+		"provision,core":       {"core", "provision"},
 		"core,all":             nil,
 		"release,diagnose,all": nil,
 	} {

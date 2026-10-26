@@ -46,6 +46,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/httpsec"
 	mailpkg "github.com/onebox-faas/faas/pkg/mail"
 	"github.com/onebox-faas/faas/pkg/middleware"
+	"github.com/onebox-faas/faas/pkg/sessioncookie"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -794,8 +795,7 @@ func (s *server) issueSessionCookie(w http.ResponseWriter, r *http.Request, acct
 			"internal_error", "Internal Error", "failed to issue session"))
 		return
 	}
-	http.SetCookie(w, &http.Cookie{
-		Name:     sessionCookie,
+	sessioncookie.Set(w, http.Cookie{
 		Value:    cookie,
 		Path:     "/",
 		HttpOnly: true,

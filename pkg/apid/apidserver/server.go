@@ -4463,6 +4463,10 @@ func (s *server) handler() http.Handler {
 	// output (same invariant the per-app handler upholds).
 	mux.HandleFunc("GET /v1/secrets", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listSecretsForAccount))))
 	mux.HandleFunc("PUT /v1/apps/{slug}/secrets/{key}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesSecretsWriteSurface...)(s.setSecret))))
+	// ADR-20261026174727: an agent asks the owner for a secret; the value is
+	// typed on /cli-auth and never passes through the requester.
+	mux.HandleFunc("POST /v1/apps/{slug}/secret-requests", s.authLimited(s.requireMFA(s.requireScope(api.ScopesSecretsWriteSurface...)(s.requestSecretEntry))))
+	mux.HandleFunc("POST /v1/apps/{slug}/secret-requests/status", s.authLimited(s.requireMFA(s.requireScope(api.ScopesSecretsWriteSurface...)(s.secretEntryStatus))))
 	mux.HandleFunc("DELETE /v1/apps/{slug}/secrets/{key}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesSecretsWriteSurface...)(s.deleteSecret))))
 	// Per-secret rotation (ADR-089 PR-B). Distinct verb from PUT so
 	// dashboards filtering on audit kind='secret.rotated' see
@@ -4983,6 +4987,7 @@ func (s *server) handler() http.Handler {
 	// Issue #248 slice B: route account-page plan changes through the
 	// provider-confirmed checkout or portal flow. The local plan changes
 	// only after the provider webhook confirms the operation.
+	mux.Handle("POST /dashboard/postgres/overage", s.dashboardChain(s.sessionAuth(s.requireVerifiedEmailHandler(s.requireStepUpHandler(5*time.Minute)(http.HandlerFunc(s.dashboardPostgresOverage))))))
 	mux.Handle("POST /dashboard/account/plan", s.dashboardChain(s.sessionAuth(s.requireVerifiedEmailHandler(s.requireStepUpHandler(5*time.Minute)(http.HandlerFunc(s.dashboardAccountPlan))))))
 	// Issue #561 — spend cap self-service form. Same CSRF-envelope
 	// envelope shape as dashboardDelete (see cmd/apid/dashboard_delete.go).
