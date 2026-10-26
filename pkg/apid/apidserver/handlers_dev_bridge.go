@@ -11,8 +11,8 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/devbridge"
 	"github.com/onebox-faas/faas/pkg/gateway"
+	"github.com/onebox-faas/faas/pkg/hostidentity"
 	"github.com/onebox-faas/faas/pkg/state"
-	"github.com/onebox-faas/faas/pkg/wire"
 )
 
 func (s *server) devBridgeStore(w http.ResponseWriter) (state.DevBridgeStore, bool) {
@@ -60,7 +60,7 @@ func (s *server) createDevBridge(w http.ResponseWriter, r *http.Request, acct st
 	}
 	w.Header().Set("Cache-Control", "no-store")
 	writeJSON(w, http.StatusCreated, api.CreateDevBridgeResponse{Session: session, Credentials: credentials,
-		EnvironmentURL: "https://" + gateway.BuildEnvironmentHost(wire.DeployWildcardSuffix, scope.EnvironmentID, entrypoint), Dependencies: dependencies})
+		EnvironmentURL: "https://" + gateway.BuildEnvironmentHost(hostidentity.DeploySuffix(), scope.EnvironmentID, entrypoint), Dependencies: dependencies})
 }
 
 func (s *server) devBridgeEndpoints(ctx context.Context, scope devbridge.Scope, requested string) (string, []api.DevBridgeDependency, error) {
@@ -76,7 +76,7 @@ func (s *server) devBridgeEndpoints(ctx context.Context, scope devbridge.Scope, 
 			name = dependency.WorkloadName
 		}
 		dependencies = append(dependencies, api.DevBridgeDependency{AppID: id, Name: name,
-			EnvironmentURL: "https://" + gateway.BuildEnvironmentHost(wire.DeployWildcardSuffix, scope.EnvironmentID, id)})
+			EnvironmentURL: "https://" + gateway.BuildEnvironmentHost(hostidentity.DeploySuffix(), scope.EnvironmentID, id)})
 		if requested == name || requested == dependency.Slug {
 			entrypoint = id
 		}

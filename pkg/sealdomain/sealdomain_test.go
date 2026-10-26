@@ -63,6 +63,19 @@ func TestRegistry_SourceIsWiredToGithubdAlone(t *testing.T) {
 	}
 }
 
+func TestRegistry_ControlIsWiredToScheddAlone(t *testing.T) {
+	s, ok := sealdomain.Lookup(sealdomain.Control)
+	if !ok || !s.Wired {
+		t.Fatalf("control domain = %+v, %v; want wired", s, ok)
+	}
+	if len(s.Readers) != 1 || s.Readers[0] != "schedd" {
+		t.Fatalf("control readers = %v, want [schedd]", s.Readers)
+	}
+	if len(s.Roles) != 2 {
+		t.Fatalf("control roles = %v; schedd runs on both node roles", s.Roles)
+	}
+}
+
 func TestRegistry_StorageIsWiredToS3GatewaydAlone(t *testing.T) {
 	s, ok := sealdomain.Lookup(sealdomain.Storage)
 	if !ok || !s.Wired {

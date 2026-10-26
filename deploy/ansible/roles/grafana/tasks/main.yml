@@ -381,6 +381,20 @@
     - restart grafana-server
     - reload grafana provisioning
 
+# ADR-20261023124955: per-slice CPU, memory, IO and pressure-stall time from
+# faas-cgroup-metrics. Byte-identical copy of
+# deploy/grafana/control-plane-resources.json (make grafana-mirror-check).
+- name: grafana — drop control-plane-resources dashboard JSON
+  ansible.builtin.copy:
+    src: control-plane-resources.json
+    dest: "{{ gv_dashboards_dir }}/control-plane-resources.json"
+    owner: grafana
+    group: grafana
+    mode: "0640"
+  notify:
+    - restart grafana-server
+    - reload grafana provisioning
+
 # Issue #274 — journald → Promtail → Loki pipeline health.
 # Byte-identical copy of deploy/grafana/loki-pipeline.json; the dashboard
 # shows target availability, source ingestion, successful sends, drops, and

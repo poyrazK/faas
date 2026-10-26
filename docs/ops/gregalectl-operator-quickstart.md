@@ -407,6 +407,56 @@ inspection path, and a runbook link. Use the existing `deployments`, `jobs`,
 and `compute-nodes` commands for explicit retry, cancellation, or drain
 actions after reviewing the inbox.
 
+Search the platform logs every host ships to Loki (once logs are enabled,
+`docs/ops/logs.md`), for example everything one wake did across hosts:
+
+```bash
+sudo gregalectl obs logs --wake-id <wake_id> --since 6h
+```
+
+For one wake, `obs wake` prints a single timeline. It merges the platform
+events apid recorded for the wake (admitted, restore breakdown, completed or
+failed) with every log line that mentions the wake_id, oldest first, with the
+gap between rows:
+
+```bash
+sudo gregalectl obs wake <wake_id>              # events plus logs, ±2m around the events
+sudo gregalectl obs wake <wake_id> --no-logs    # events only; works without Loki
+sudo gregalectl obs wake <wake_id> --json
+```
+
+For one app, usually from a customer report, `obs app` takes the slug or the
+UUID and prints one support page:
+
+- the live deployment, and whether its next wake restores from a warm or init
+  snapshot or cold boots;
+- the instances, with state and node;
+- health over `--range`;
+- the last 24 hours of wakes, each with its wake_id for `obs wake`;
+- the top errors and the newest deployments.
+
+```bash
+gregalectl obs app <slug>                       # health over the last hour
+gregalectl obs app <slug> --range 24h --wakes 30
+gregalectl obs app <app_id> --json
+```
+
+For one compute node, `obs node` prints its support page:
+
+- admitted RAM against the admission ceiling, and the live instances;
+- CPU and snapshot disk from the last heartbeat;
+- heartbeat freshness, with gaps and missed beats over the last `--heartbeats`;
+- the node's wake p50, p95 and p99 against the fleet p95 (5 minutes);
+- whether a drain is safe right now;
+- the apps holding the most RAM;
+- the live instances, each with the wake_id that started it.
+
+```bash
+gregalectl obs node fsn-3
+gregalectl obs node fsn-3 --heartbeats 100 --instances 50
+gregalectl obs node fsn-3 --json
+```
+
 Inspect an incident's current potential exposure and related evidence:
 
 ```

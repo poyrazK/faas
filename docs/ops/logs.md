@@ -142,8 +142,9 @@ Lines are the daemons' own JSON (the shipper drops journald's envelope), so
 | Error rate by daemon | `sum by (unit) (rate({level="ERROR"}[5m]))` |
 
 The `wake_id` exemplar on a slow `gateway_wake_latency_seconds` bucket gives
-the id for the first row. The same id is in the events table's wake-phase
-timeline (`gregalectl obs evidence`).
+the id for the first row. The same id keys the events table's wake-phase
+events. `sudo gregalectl obs wake <wake_id>` prints those events and this
+row's log lines as one timeline, with the gap between rows.
 
 ## Turn it off
 

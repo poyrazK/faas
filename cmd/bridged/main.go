@@ -18,6 +18,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/devbridge"
 	"github.com/onebox-faas/faas/pkg/gateway"
+	"github.com/onebox-faas/faas/pkg/hostidentity"
 	"github.com/onebox-faas/faas/pkg/role"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/wire"
@@ -86,7 +87,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 	director := dependencies.Director                          //nolint:staticcheck // SA1019: retain the qualified forwarding contract during the compiler patch.
 	dependencies.Director = func(r *http.Request) {            //nolint:staticcheck // SA1019: supported Go 1.26 API; Rewrite migration needs forwarding-contract qualification.
 		director(r)
-		r.Host = gateway.BuildEnvironmentHost(wire.DeployWildcardSuffix, r.Header.Get("X-Gregale-Dev-Environment"), r.Header.Get("X-Gregale-Dev-Dependency"))
+		r.Host = gateway.BuildEnvironmentHost(hostidentity.DeploySuffix(), r.Header.Get("X-Gregale-Dev-Environment"), r.Header.Get("X-Gregale-Dev-Dependency"))
 		r.Header.Del("X-Gregale-Dev-Environment")
 		r.Header.Del("X-Gregale-Dev-Dependency")
 		r.Header.Del("X-Gregale-Dev-Account")

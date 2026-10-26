@@ -720,8 +720,8 @@ func (s *server) mfaDisableEmailLink(r *http.Request, raw []byte) string {
 		scheme = schemeHTTPS
 	}
 	host := r.Host
-	if s.domain != "" && s.domain != domainUnset {
-		host = s.domain
+	if platform := s.platformHost(); platform != "" && platform != domainUnset {
+		host = platform
 		scheme = schemeHTTPS
 	}
 	return fmt.Sprintf("%s://%s/v1/account/mfa/disable-email/confirm?token=%s", scheme, host, base64.RawURLEncoding.EncodeToString(raw))
