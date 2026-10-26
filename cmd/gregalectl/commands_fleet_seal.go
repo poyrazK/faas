@@ -252,10 +252,11 @@ var controlKeyDefault = sealdomain.IdentityPath(sealdomain.DefaultDir, sealdomai
 
 // loadFleetSealControlKey loads the control seal-domain identities that open
 // a cluster key sealed to the domain. An explicit path must load; the
-// default is used only when the role staged it.
+// default is skipped only when the role has not staged it, so a staged key
+// this process cannot read fails rather than passing as absent.
 func loadFleetSealControlKey(path string) ([]*age.X25519Identity, error) {
 	if path == "" {
-		if _, err := os.Stat(controlKeyDefault); err != nil {
+		if _, err := os.Stat(controlKeyDefault); errors.Is(err, os.ErrNotExist) {
 			return nil, nil
 		}
 		path = controlKeyDefault
