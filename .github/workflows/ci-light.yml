@@ -373,6 +373,8 @@ jobs:
           bash scripts/ci/light_diff_base_test.sh
       - name: curl installer and its cli-channel pointers
         run: make cli-install-check
+      - name: coding-agent eval harness (parsers, commands, checks; no agents run)
+        run: make agent-eval-test
       - name: deploy Action scripts (vendored CLI, push-head guard, environment preflight)
         run: |
           make deploy-action-cli-check

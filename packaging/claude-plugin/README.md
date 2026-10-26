@@ -2,8 +2,8 @@
 
 Deploy, diagnose and roll back Gregale apps from Claude Code. The plugin adds:
 
-- the Gregale management MCP server (`gregale mcp serve --transport stdio`),
-  read-only;
+- the Gregale management MCP server (`gregale mcp serve --transport stdio
+  --tools core`), read-only, with the everyday `core` toolset;
 - `/gregale:deploy`, which deploys the current project, checks its URL and
   rolls back a broken release with your approval;
 - `/gregale:diagnose`, which finds why an app is failing or slow.

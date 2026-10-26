@@ -114,11 +114,19 @@ healthy standby, fail over instead.
    `s3_enabled` lives in the database, so the restore brought it back as it
    was at the restore point, usually on, and with it every S3 key, copy
    source, compute binding and access grant revoked after that point. The
-   hold needs no apid. Then deploy the release and repoint the compute nodes
-   and public origin as in the failover runbook. S3 requests and public
-   bucket reads answer 503 until step 6 is done.
+   hold needs no apid. The restore also promoted the database onto a new
+   PostgreSQL timeline, which by itself fences the S3 gateway and public
+   reads (ADR-20261025111015 amendment 1); the hold covers a backup taken
+   before that fence existed. Then deploy the release and repoint the
+   compute nodes and public origin as in the failover runbook. S3 requests
+   and public bucket reads answer 503 until step 6 is done.
 6. Run `make ANSIBLE_INVENTORY=… object-storage-reconcile` and the
-   revocation review in `docs/runbooks/ObjectStorageRestoreReconcile.md`
-   before turning `s3_enabled` back on. The restored bucket catalog is as old
-   as the backup; buckets created or deleted since then disagree with the
-   providers, and revocations made since then are undone.
+   revocation review in `docs/runbooks/ObjectStorageRestoreReconcile.md`,
+   then accept the restored database's timeline and turn `s3_enabled` back
+   on. The restored bucket catalog is as old as the backup; buckets created
+   or deleted since then disagree with the providers, and revocations made
+   since then are undone.
+
+   ```bash
+   sudo gregalectl object-storage accept --db-env /etc/faas/sealed.env
+   ```
