@@ -12,6 +12,10 @@ import type { PutAppSecretReferenceRequest } from '../models/PutAppSecretReferen
 import type { PutAppSecretRequest } from '../models/PutAppSecretRequest.js';
 import type { RotateAppSecretRequest } from '../models/RotateAppSecretRequest.js';
 import type { RotateAppSecretResponse } from '../models/RotateAppSecretResponse.js';
+import type { SecretEntryRequest } from '../models/SecretEntryRequest.js';
+import type { SecretEntryResponse } from '../models/SecretEntryResponse.js';
+import type { SecretEntryStatus } from '../models/SecretEntryStatus.js';
+import type { SecretEntryStatusRequest } from '../models/SecretEntryStatusRequest.js';
 import type { CancelablePromise } from '../core/CancelablePromise.js';
 import { OpenAPI } from '../core/OpenAPI.js';
 import { request as __request } from '../core/request.js';
@@ -463,6 +467,82 @@ export class SecretsService {
         503: `code: capacity_unavailable — no host headroom.
         Resource increases can return service_recovery_capacity_unavailable
         when enabled bare-metal service protection needs more recovery headroom.
+        `,
+      },
+    });
+  }
+  /**
+   * Ask the signed-in account owner to enter a secret on a one-time page.
+   * @returns SecretEntryResponse Private bridge response; ticket and exchange_code must never be returned to an agent.
+   * @throws ApiError
+   */
+  public static requestSecretEntry({
+    slug,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    requestBody: SecretEntryRequest,
+  }): CancelablePromise<SecretEntryResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/secret-requests',
+      path: {
+        'slug': slug,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `code: capacity_unavailable — no host headroom.
+        Resource increases can return service_recovery_capacity_unavailable
+        when enabled bare-metal service protection needs more recovery headroom.
+        `,
+      },
+    });
+  }
+  /**
+   * Privately check whether the owner has set a requested secret; never returns the value.
+   * @returns SecretEntryStatus Pending or set.
+   * @throws ApiError
+   */
+  public static getSecretEntryStatus({
+    slug,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    requestBody: SecretEntryStatusRequest,
+  }): CancelablePromise<SecretEntryStatus> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/secret-requests/status',
+      path: {
+        'slug': slug,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        410: `code: upload_session_expired — the resumable-upload session has been swept by the reaper (cmd/apid/upload_session_reaper.go) and cannot be appended to or committed. The CLI is expected to detect this on the first PATCH/COMMIT after expiry and mint a fresh session (issue #1182 §P1 PR-2).`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
         `,
       },
     });
