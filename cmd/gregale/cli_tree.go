@@ -164,6 +164,17 @@ var cliTreeAliases = []cliTreeAlias{
 
 	// Data.
 	{"postgres", "postgres"},
+	{"bucket multipart get", "bucket uploads status"},
+	{"bucket multipart", "bucket uploads"},
+	{"bucket version delete", "bucket version-delete"},
+	{"bucket version", "bucket versions"},
+	{"bucket deletion create", "bucket deletions start"},
+	{"bucket deletion get", "bucket deletions status"},
+	{"bucket deletion", "bucket deletions"},
+	{"bucket encryption set", "bucket encryption"},
+	{"bucket object-lock set", "bucket object-lock"},
+	{"bucket inventory get", "bucket reconcile status"},
+	{"bucket inventory", "bucket reconcile"},
 	{"bucket", "bucket"},
 	{"pipeline", "pipeline"},
 	{"data-api", "data-api"},
@@ -308,18 +319,28 @@ func leadingTreeWords(args []string) []string {
 	return words
 }
 
-// isOldCommandPath reports whether args already name one of today's
-// commands, so they must keep their meaning.
-func isOldCommandPath(args []string) bool {
+// oldPathDepth counts the leading words of args that name one of today's
+// commands and verbs. It stops at a flag, at an unknown word, and before the
+// data word of a slug-first family.
+func oldPathDepth(args []string) int {
+	if len(args) == 0 {
+		return 0
+	}
 	command, ok := lookupCliCommand(args[0])
 	if !ok {
-		return false
+		return 0
 	}
-	if len(args) == 1 || strings.HasPrefix(args[1], "-") || command.SubcommandsAfterPositionals {
-		return true
+	subs, afterPositionals := command.Subcommands, command.SubcommandsAfterPositionals
+	depth := 1
+	for depth < len(args) && !afterPositionals && !strings.HasPrefix(args[depth], "-") {
+		sub, ok := findCliSubcommand(subs, args[depth])
+		if !ok {
+			break
+		}
+		subs, afterPositionals = sub.Subcommands, sub.SubcommandsAfterPositionals
+		depth++
 	}
-	_, ok = findCliSubcommand(command.Subcommands, args[1])
-	return ok
+	return depth
 }
 
 // matchCliTreeAlias finds the longest tree path that prefixes args.
@@ -347,14 +368,18 @@ func rewriteTreePath(args []string) ([]string, error) {
 	if args[0] == appSlugFallback {
 		return rewriteAppPath(args)
 	}
-	if isOldCommandPath(args) {
-		return args, nil
-	}
 	alias, used, ok := matchCliTreeAlias(args)
 	if !ok {
 		return args, nil
 	}
-	return joinTreeRewrite(alias, args[used:]), nil
+	// Today's path wins wherever it reaches at least as far as the tree path;
+	// a word after it that today's command does not know still goes to the
+	// tree (`bucket get` → `bucket info`, `dashboard list` → `dashboards`).
+	depth := oldPathDepth(args)
+	if used > depth || (used == depth && len(args) > depth && !strings.HasPrefix(args[depth], "-")) {
+		return joinTreeRewrite(alias, args[used:]), nil
+	}
+	return args, nil
 }
 
 // joinTreeRewrite builds today's argv for alias, mapping a standard verb to

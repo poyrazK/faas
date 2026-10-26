@@ -31,6 +31,7 @@ var cliTreeReadNouns = []string{
 var cliTreeCompoundWords = []string{
 	"data-api", "rule-list", "egress-allowlist", "egress-ports", "static-egress-ip",
 	"port-forward", "wake-ahead", "wake-timeline", "streaming-cap", "spend-cap", "upload-cache",
+	"object-lock",
 }
 
 // Rule 5: top-level verbs that may start a tree path.
@@ -105,12 +106,12 @@ func TestCliTreePathsDoNotShadowTodaysCommands(t *testing.T) {
 			continue
 		}
 		if len(path) == 1 && slices.Contains(cliTreeNounsChangingMeaning, path[0]) {
-			if main.IsOldCommandPath([]string{path[0], "list"}) {
+			if _, hasVerbs := main.CliPathHasVerbs(path); hasVerbs {
 				t.Errorf("%q: today's command takes verbs, so the tree's verbs never apply", alias.New)
 			}
 			continue
 		}
-		if main.IsOldCommandPath(path) {
+		if main.OldPathDepth(path) >= len(path) {
 			t.Errorf("%q already names today's command; the alias to %q never applies", alias.New, alias.Old)
 		}
 	}
@@ -154,6 +155,19 @@ func TestCliTreeRewrite(t *testing.T) {
 		{"account mfa enroll", "mfa enroll"},
 		{"deploys status 1", "deploys status 1"},
 		{"help release list", "help deployments"},
+		{"bucket encryption set AES256 --app api", "bucket encryption AES256 --app api"},
+		{"bucket encryption status --app api", "bucket encryption status --app api"},
+		{"bucket object-lock set GOVERNANCE", "bucket object-lock GOVERNANCE"},
+		{"bucket multipart list", "bucket uploads list"},
+		{"bucket multipart get u1", "bucket uploads status u1"},
+		{"bucket uploads list", "bucket uploads list"},
+		{"bucket version delete k", "bucket version-delete k"},
+		{"bucket version list", "bucket versions list"},
+		{"bucket deletion create", "bucket deletions start"},
+		{"bucket inventory get", "bucket reconcile status"},
+		{"bucket inventory cancel", "bucket reconcile cancel"},
+		{"dashboard list", "dashboards list"},
+		{"dashboard", "dashboard"},
 		{"--version", "--version"},
 	}
 	for _, tc := range cases {

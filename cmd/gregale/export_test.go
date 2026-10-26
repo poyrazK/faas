@@ -2483,7 +2483,7 @@ type CliTreeNoun = cliTreeNoun
 var CliTreeAliases = &cliTreeAliases
 var CliTreeNouns = &cliTreeNouns
 var RewriteCliTree = rewriteCliTree
-var IsOldCommandPath = isOldCommandPath
+var OldPathDepth = oldPathDepth
 
 // CliPathHasVerbs reports whether words name a manifest command or verb, and
 // whether it has verbs of its own that a tree noun can expose.
