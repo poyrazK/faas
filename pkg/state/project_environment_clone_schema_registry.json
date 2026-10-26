@@ -3559,6 +3559,7 @@
       "retry_backoff_seconds",
       "retry_max",
       "schedule",
+      "schedule_anchor_at",
       "schedule_policy",
       "schedule_revision",
       "skip_if_running",

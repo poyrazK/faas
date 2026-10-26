@@ -26,7 +26,7 @@
     {"path": "companions", "source": "docs/companions.md"},
     {"path": "crash-snapshots", "source": "docs/crash-snapshots.md"},
     {"path": "custom-domains", "source": "docs/domains.md"},
-    {"path": "crons", "source": "docs/event-driven.md"},
+    {"path": "crons", "source": "docs/crons.md"},
     {"path": "data-api", "source": "docs/data-api.md"},
     {"path": "data-api-onboarding", "source": "docs/data-api-onboarding.md"},
     {"path": "data-pipelines", "source": "docs/data-pipelines.md"},

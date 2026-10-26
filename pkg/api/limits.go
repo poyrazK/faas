@@ -1149,6 +1149,16 @@ const SyncInvokeWaitSecondsFree = 5
 // longer is bounded by AsyncInvocationDispatchTimeout instead (ADR-1180).
 const GatewaySynthDispatchTimeout = 30 * time.Second
 
+// CronFireNowActivePerCron bounds the manual runs (POST /v1/crons/{id}/run)
+// one cron may have waiting or running at once; another request gets a 429
+// (ADR-20261026201726). Only requests made within CronFireNowActiveWindow
+// count, so a request whose run never settles cannot block manual runs for
+// good.
+const (
+	CronFireNowActivePerCron = 5
+	CronFireNowActiveWindow  = 15 * time.Minute
+)
+
 // New apps start with the pre-auth source limit in observe mode (ADR-829):
 // it records which sources would exceed this per-source rate without
 // rejecting anything. Values are clamped to the app's plan ceiling.
