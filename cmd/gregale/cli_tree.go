@@ -88,6 +88,11 @@ var cliTreeAliases = []cliTreeAlias{
 	// Ship.
 	{"release list", "deployments"},
 	{"release get", "deploys status"},
+	{"release stages", "deploys show"},
+	{"release summary", "deployment summary"},
+	{"release attempt get", "deploy status"},
+	{"release attempt cancel", "deploy abort"},
+	{"release attempt retry", "deploy retry"},
 	{"release logs", "deploys logs"},
 	{"release wait", "deployment wait"},
 	{"release cancel", "deploys cancel"},
@@ -455,6 +460,9 @@ func rewriteAppPath(args []string) ([]string, error) {
 		return joinTreeRewrite(alias, args[used:]), nil
 	}
 	verb := args[1]
+	if verb == "listener" {
+		return rewriteAppListener(args)
+	}
 	if verb == "get" || verb == "update" {
 		app, rest, err := takeAppTarget(args[2:])
 		if err != nil && hasHelpFlag(args) {
@@ -490,6 +498,52 @@ func rewriteAppPath(args []string) ([]string, error) {
 	}
 	out := append([]string{appSlugFallback, app}, chain...)
 	return append(out, rest...), nil
+}
+
+// rewriteAppListener maps `app listener <verb> [<app>] [--protocol tcp|udp]`
+// to today's `app <app> tcp|udp <verb>`; TCP is the default.
+func rewriteAppListener(args []string) ([]string, error) {
+	protocol := "tcp"
+	rest := make([]string, 0, len(args))
+	for i := 2; i < len(args); i++ {
+		name, value, hasValue := strings.Cut(args[i], "=")
+		if name != "--protocol" {
+			rest = append(rest, args[i])
+			continue
+		}
+		if !hasValue && i+1 < len(args) {
+			i++
+			value = args[i]
+		}
+		protocol = strings.ToLower(value)
+	}
+	if protocol != "tcp" && protocol != "udp" {
+		return nil, fmt.Errorf("--protocol must be tcp or udp; got %q", protocol)
+	}
+	if len(rest) == 0 || strings.HasPrefix(rest[0], "-") {
+		if hasHelpFlag(args) {
+			return []string{appSlugFallback, "--help"}, nil
+		}
+		return nil, fmt.Errorf("name a listener verb: gregale app listener <list|create|delete|enable|disable> <app> [--protocol tcp|udp]")
+	}
+	verb := rest[0]
+	if command, ok := lookupCliCommand(appSlugFallback); ok {
+		if family, ok := findCliSubcommand(command.Subcommands, protocol); ok {
+			if _, known := findCliSubcommand(family.Subcommands, verb); !known {
+				for _, spelling := range cliTreeVerbSynonyms[verb] {
+					if _, found := findCliSubcommand(family.Subcommands, spelling); found {
+						verb = spelling
+						break
+					}
+				}
+			}
+		}
+	}
+	app, tail, err := takeAppTarget(rest[1:])
+	if err != nil {
+		return nil, err
+	}
+	return append([]string{appSlugFallback, app, protocol, verb}, tail...), nil
 }
 
 // takeAppTarget returns the app a tree `app` verb addresses: the first

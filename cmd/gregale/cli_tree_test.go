@@ -46,6 +46,7 @@ var cliTreeReadNouns = []string{
 	"results", "retention", "routes", "runs", "running", "sbom", "stats", "steps", "storage",
 	"summary", "tables", "tags", "tasks", "teams", "tickets", "tokens", "traces", "types", "usage",
 	"users", "views", "signups", "statements", "switches", "recipes", "repos", "resumes", "state",
+	"stages",
 }
 
 // Rule 6: hyphens only inside these compound words.
@@ -195,6 +196,12 @@ func TestCliTreeRewrite(t *testing.T) {
 		{"event publish --source s", "events publish --source s"},
 		{"automation recovery health --app api", "automations recovery-health --app api"},
 		{"automation failure list --app api", "automations failures --app api"},
+		{"release stages 42", "deploys show 42"},
+		{"release summary 42", "deployment summary 42"},
+		{"release attempt cancel a1", "deploy abort a1"},
+		{"app listener list api", "app api tcp list"},
+		{"app listener create api --port 7000 --protocol udp", "app api udp add --port 7000"},
+		{"app listener delete --protocol=tcp api l1", "app api tcp delete l1"},
 		{"dashboard list", "dashboards list"},
 		{"dashboard", "dashboard"},
 		{"--version", "--version"},
