@@ -2864,7 +2864,7 @@ func (s *PgStore) PreviewAppByProjectWorkload(ctx context.Context, accountID, pr
 		 where account_id = $1
 		   and project_id = $2
 		   and preview_pr_number = $3
-		   and workload_name = $4
+		   and translate(lower(workload_name), '_.', '--') = translate(lower($4), '_.', '--')
 		   and preview_of_slug is not null
 		   and status <> 'deleted'
 	`, accountID, projectID, previewPRNumber, workloadName)
@@ -19112,6 +19112,47 @@ func (s *PgStore) ComputeNodeUsedMBByNode(ctx context.Context, nodeIDs []string)
 	}
 	for _, resource := range resources {
 		used[resource.NodeID] += resource.RamMb
+	}
+	return used, nil
+}
+
+// ComputeNodeUsedVCPUByNode returns the guest vCPUs booked by live instances
+// on each requested node: capacity_vcpu, which capture_instance_capacity
+// stamps on every insert from the plan's vCPU count.
+func (s *PgStore) ComputeNodeUsedVCPUByNode(ctx context.Context, nodeIDs []string) (map[string]int64, error) {
+	used := make(map[string]int64, len(nodeIDs))
+	if len(nodeIDs) == 0 {
+		return used, nil
+	}
+	parsedIDs := make([]uuid.UUID, 0, len(nodeIDs))
+	for _, nodeID := range nodeIDs {
+		parsed, err := uuid.Parse(nodeID)
+		if err != nil {
+			return nil, fmt.Errorf("state: compute node %q is not a UUID: %w", nodeID, err)
+		}
+		parsedIDs = append(parsedIDs, parsed)
+	}
+	rows, err := s.pool.Query(ctx, `
+		select node_id::text, coalesce(sum(capacity_vcpu), 0)::bigint
+		  from instances
+		 where node_id = any($1::uuid[])
+		   and state in ('waking','cold_booting','running','draining','warm')
+		 group by node_id
+	`, parsedIDs)
+	if err != nil {
+		return nil, fmt.Errorf("state: compute nodes used_vcpu: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var nodeID string
+		var value int64
+		if err := rows.Scan(&nodeID, &value); err != nil {
+			return nil, fmt.Errorf("state: scan compute nodes used_vcpu: %w", err)
+		}
+		used[nodeID] = value
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("state: iterate compute nodes used_vcpu: %w", err)
 	}
 	return used, nil
 }

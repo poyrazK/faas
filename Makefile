@@ -650,12 +650,19 @@ e2e: ## End-to-end tests in cmd/e2e (needs Postgres reachable; metal subset via 
 	# reruns + cold-cache cold-runner edge cases.
 	$(GO) test -race -count=1 -timeout=20m ./cmd/e2e/...
 
+# E2E_GENERAL_RUN narrows e2e-general to one group (the e2e-general workflow
+# runs the two groups as separate jobs).
+E2E_GENERAL_RUN ?= ^TestE2E_(NormalPath|Routes)_
+
 .PHONY: e2e-general
-e2e-general: ## Focused KVM-free general-path acceptance gate (real daemons + Postgres; needs DATABASE_URL).
+e2e-general: ## Focused KVM-free general-path and routes acceptance gate (real daemons + Postgres; needs DATABASE_URL).
 	@command -v psql >/dev/null 2>&1 || (echo "psql not on PATH; e2e-general needs DATABASE_URL set to a reachable Postgres" ; exit 1)
 	@test -n "$$DATABASE_URL" || (echo "DATABASE_URL not set; set it to a reachable Postgres to run e2e-general" ; exit 1)
+	@test -z "$$FAAS_SKIP_PG_TESTS" || (echo "Unset FAAS_SKIP_PG_TESTS; e2e-general refuses a skipped run" ; exit 1)
 	@psql "$$DATABASE_URL" -v ON_ERROR_STOP=1 -Atqc 'select 1' >/dev/null || (echo "Postgres is not reachable; e2e-general refuses a green no-op run" ; exit 1)
-	$(GO) test -race -count=1 -timeout=12m -run '^TestE2E_NormalPath_' ./cmd/e2e/...
+	# The routes tests wait for closed one-minute telemetry windows (about
+	# four minutes each).
+	$(GO) test -race -count=1 -timeout=30m -run '$(E2E_GENERAL_RUN)' ./cmd/e2e/...
 
 .PHONY: e2e-start
 e2e-start: ## Gregale start acceptance: real CLI/daemons/Postgres, simulated build and VM boundary (Linux, no KVM).

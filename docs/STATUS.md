@@ -105,9 +105,15 @@ its cache without reaching the app; and apid's production route monitor opens
 one incident from two sustained 5xx windows. The first runs also hit the
 ADR-570 regression where the public routing pinner refused every public request
 with the default `FAAS_TRAFFIC_AUTHORITATIVE_HOST_POLICY=false`, fixed by
-#5406; the passing runs carried an equivalent fix. Open: canary route health, route requirements and
-OpenAPI contract preview have no end-to-end test; six routes capabilities are
-`internal` and three `preview` (ADR-20261023115741).
+#5406; the passing runs carried an equivalent fix. Canary route health has
+its own end-to-end test (2026-10-26, n2, `cmd/e2e/routes_canary_e2e_test.go`):
+two apps at a 50% canary, an enforce-mode gate on two routes; the canary whose
+`/checkout` answers 500 is held with `route_health_blocked` and a blocked
+history entry, the healthy one advances to 100% and the gateway follows. The
+three routes tests and the general-path tests now run on pull requests that
+change Go code (`e2e-general` workflow, docs/ci-general-path.md). Open: route
+requirements and OpenAPI contract preview have no end-to-end test; six routes
+capabilities are `internal` and three `preview` (ADR-20261023115741).
 
 A follow-up review (2026-10-26,
 [ADR-20261026143210](adr/20261026143210-route-labels-for-served-routes.md))
