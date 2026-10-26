@@ -17,7 +17,7 @@ Automation: put `--non-interactive` before the command to disable prompts and br
 | [`add`](#add) | Provision and bind managed resources to an app |
 | [`bucket`](#bucket) | Manage object storage buckets: encryption, versioning and lifecycle |
 | [`bindings`](#bindings) | Inspect an app&#39;s resource bindings and credential rotation |
-| [`capabilities`](#capabilities) | Show feature maturity and plan availability |
+| [`capabilities`](#capabilities) | Show feature maturity, plan availability and early access |
 | [`ai`](#ai) | Configure the AI gateway: providers, cost caps, guardrails and usage |
 | [`channels`](#channels) | Manage where alerts are sent: Slack, PagerDuty or email |
 | [`dashboards`](#dashboards) | Save dashboards that combine metrics, log counts and SLOs across apps |
@@ -2754,9 +2754,24 @@ gregale bindings smoke public-api billing --caller-deployment v12 --target-deplo
 
 ## capabilities
 
-Show feature maturity and plan availability
+Show feature maturity, plan availability and early access
 
-`gregale capabilities`
+`gregale capabilities [--early-access] [--org <SLUG>]`
+
+Signed in, the list ends with early-access features you can join or have joined; join one with `gregale previews join &lt;key&gt;`.
+
+| Flag | Meaning | |
+|---|---|---|
+| `--early-access` | list only early-access features you can join or have joined |  |
+| `--org <SLUG>` | with --early-access, list the organization&#39;s early access |  |
+
+Examples:
+
+```sh
+gregale capabilities
+gregale capabilities --early-access
+gregale capabilities --early-access --org acme
+```
 
 
 ## ai

@@ -866,9 +866,15 @@ var cliCommands = []cliCommand{
 		},
 	},
 	{
-		Name:    "capabilities",
-		DocSlug: "capabilities",
-		Short:   "Show feature maturity and plan availability",
+		Name:      "capabilities",
+		DocSlug:   "capabilities",
+		Short:     "Show feature maturity, plan availability and early access",
+		HelpNotes: []string{"Signed in, the list ends with early-access features you can join or have joined; join one with `gregale previews join <key>`."},
+		Examples:  []string{"gregale capabilities", "gregale capabilities --early-access", "gregale capabilities --early-access --org acme"},
+		Flags: []cliFlag{
+			{Name: "early-access", Short: "list only early-access features you can join or have joined", Bool: true},
+			{Name: "org", Short: "with --early-access, list the organization's early access", Value: "SLUG"},
+		},
 	},
 	{
 		Name:     "admin",
