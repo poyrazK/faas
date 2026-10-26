@@ -20,6 +20,25 @@ type drainSecurityStore struct {
 	mu     sync.Mutex
 	states map[trafficrevocation.Scope]trafficrevocation.State
 	err    error
+	// offset moves the registry's clock past its outage grace
+	// (ADR-20261026160000) without waiting five minutes.
+	offset time.Duration
+}
+
+func (s *drainSecurityStore) now() time.Time {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return time.Now().Add(s.offset)
+}
+
+// outage makes the store unreadable for scope's read and moves the clock past
+// the outage grace: verified traffic keeps running through the grace, and
+// only an outage that outlasts it refuses and cancels (ADR-20261026160000).
+func (s *drainSecurityStore) outage(scope trafficrevocation.Scope) {
+	s.change(scope, trafficrevocation.State{}, errors.New("offline"))
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.offset += api.TrafficSecurityOutageGrace + time.Second
 }
 
 func (s *drainSecurityStore) Read(_ context.Context, scopes []trafficrevocation.Scope) (map[trafficrevocation.Scope]trafficrevocation.State, error) {
@@ -56,7 +75,7 @@ func newSecurityDrain(t *testing.T) (*Drain, state.Store, *fakeVMM, *drainSecuri
 		t.Fatal(err)
 	}
 	security := &drainSecurityStore{states: make(map[trafficrevocation.Scope]trafficrevocation.State)}
-	registry := trafficrevocation.New(security)
+	registry := trafficrevocation.New(security).WithClock(security.now)
 	t.Cleanup(registry.Close)
 	WithDrainTrafficRevocations(registry)(d)
 	return d, store, vmm, security, registry, inv, dep.ID
@@ -157,7 +176,7 @@ func TestDrainSecurityCancelsWaiterWhileSharedWakeRemainsOwned(t *testing.T) {
 				scope = trafficrevocation.Scope{Kind: "app", ID: inv.AppID}
 			}
 			if kind == "outage" {
-				security.change(scope, trafficrevocation.State{}, errors.New("offline"))
+				security.outage(scope)
 			} else {
 				security.change(scope, trafficrevocation.State{Revision: 1, Revoked: true}, nil)
 				if kind == "missed release" {
@@ -234,7 +253,7 @@ func TestDrainSecurityRetainsOwnershipThroughGatewayCleanup(t *testing.T) {
 				scope = trafficrevocation.Scope{Kind: "deployment", ID: dep}
 			}
 			if kind == "outage" {
-				security.change(scope, trafficrevocation.State{}, errors.New("offline"))
+				security.outage(scope)
 			} else {
 				security.change(scope, trafficrevocation.State{Revision: 2}, nil)
 			}
@@ -275,8 +294,12 @@ func TestDrainSecurityFreshReadRejectsLateSuccessWithoutNotification(t *testing.
 					security.change(trafficrevocation.Scope{Kind: "account", ID: inv.AccountID}, trafficrevocation.State{Revision: 2}, nil)
 				}
 				if kind == "outage" {
-					security.change(trafficrevocation.Scope{}, trafficrevocation.State{}, errors.New("offline"))
+					security.outage(trafficrevocation.Scope{})
 				}
+				// The once-a-second refresher reads the change before the
+				// late result lands; with no notification, that read is
+				// the only signal (ADR-20261026160000).
+				_ = registry.Refresh(ctx)
 				row.Result = json.RawMessage(`{"ok":true}`)
 				return row, nil
 			}}
@@ -331,7 +354,7 @@ func TestDrainSecurityRechecksAfterWakeBeforeForwarding(t *testing.T) {
 					scope = trafficrevocation.Scope{Kind: "deployment", ID: dep}
 				}
 				if kind == "outage" {
-					security.change(scope, trafficrevocation.State{}, errors.New("offline"))
+					security.outage(scope)
 				} else {
 					after := trafficrevocation.State{Revision: 2}
 					if kind == "deployment" {
@@ -339,6 +362,10 @@ func TestDrainSecurityRechecksAfterWakeBeforeForwarding(t *testing.T) {
 					}
 					security.change(scope, after, nil)
 				}
+				// The once-a-second refresher reads the change while the VM
+				// boots; the delivery admits from that view
+				// (ADR-20261026160000).
+				_ = registry.Refresh(context.Background())
 			}
 			d.dispatchOne(t.Context(), inv)
 			if d.gateway.(*drainSynth).calls.Load() != 0 {
@@ -385,7 +412,7 @@ func TestDrainSecurityCancelsPinnedWakeAndPersistsClaimRefusal(t *testing.T) {
 				scope = trafficrevocation.Scope{Kind: "deployment", ID: dep}
 			}
 			if kind == "outage" {
-				security.change(scope, trafficrevocation.State{}, errors.New("offline"))
+				security.outage(scope)
 			} else {
 				security.change(scope, trafficrevocation.State{Revision: 1, Revoked: true}, nil)
 			}
