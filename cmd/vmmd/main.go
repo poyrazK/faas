@@ -386,7 +386,7 @@ type runDeps struct {
 	recoverNativeProcesses func(context.Context, *fcvm.Manager) error
 	// recoverResources permits deterministic cancellation during startup inventory.
 	// nil selects the platform restart quarantine implementation.
-	recoverResources func(context.Context, *fcvm.Manager, string, string, *slog.Logger) (*fcvm.ResourceJournal, error)
+	recoverResources func(context.Context, *fcvm.Manager, string, fcvm.ResourceJournalConfig, *slog.Logger) (*fcvm.ResourceJournal, error)
 }
 
 func defaultDeps() runDeps {
@@ -1071,7 +1071,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// adoptionReport is what this start adopted, served by AdoptionReport.
 	var adoptionReport *vmmdgrpc.AdoptionReport
 	if cfg.NativeProcessRecovery {
-		resourceJournal, err = fcvm.OpenResourceJournal(cfg.ResourceJournalDir)
+		resourceJournal, err = fcvm.OpenResourceJournalConfig(cfg.resourceJournal())
 		if err != nil {
 			return fmt.Errorf("vmmd: lock legacy resources before native recovery: %w", err)
 		}
@@ -1147,7 +1147,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		if recoverResources == nil {
 			recoverResources = recoverRestartResources
 		}
-		resourceJournal, err = recoverResources(ctx, mgr, jailer.JailRoot(), cfg.ResourceJournalDir, log)
+		resourceJournal, err = recoverResources(ctx, mgr, jailer.JailRoot(), cfg.resourceJournal(), log)
 		if err != nil {
 			if errors.Is(err, context.Canceled) && errors.Is(ctx.Err(), context.Canceled) {
 				return nil

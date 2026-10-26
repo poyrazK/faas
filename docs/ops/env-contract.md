@@ -896,6 +896,8 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_VMMD_OUTBOUND_RELAY_TARGET` | vmmd | `dropin` |  |  | `` | outboundd relay listener for app outbound integrations: unix:// on a single box, tcp:// with client mTLS on a split box; empty closes the relay (ADR-989) |
 | `FAAS_VMMD_RAW_BRIDGE_PATH` | shared | `default` |  |  | `` |  |
 | `FAAS_VMMD_RESOURCE_JOURNAL_DIR` | vmmd, shared | `default` |  |  | `` | optional absolute override of vmmd's resource journal directory; set only by acceptance harnesses so several vmmd builds on one shared host keep private journals (pkg/e2etest forwards it) |
+| `FAAS_VMMD_RESOURCE_JOURNAL_VOLATILE_DIR` | vmmd | `default` |  |  | `` | optional absolute tmpfs directory for vmmd's journal record copies (ADR-20261026113920); empty disables them; defaults to /run/faas/vmmd-resources, or to none when FAAS_VMMD_RESOURCE_JOURNAL_DIR is set |
+| `FAAS_VMMD_RESOURCE_JOURNAL_VOLATILE_WRITES` | vmmd | `default` |  |  | `` | optional boolean switch: volatile resource journal commits go only to the tmpfs copies and skip the disk fsync (ADR-20261026113920); enable only where the rollback target is this release or later |
 | `FAAS_VMMD_ROLE` | vmmd, shared | `dropin` |  |  | `` |  |
 | `FAAS_VMMD_SCHEDD_TARGET` | vmmd | `dropin` |  |  | `` |  |
 | `FAAS_VMMD_SPANS_WRITER_TARGET` | vmmd | `dropin` |  |  | `` | split-box apid private mTLS listener for guest trace exports; empty uses the single-box socket (ADR-958) |

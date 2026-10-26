@@ -980,6 +980,8 @@ var EnvContract = []EnvVar{
 	{Name: "FAAS_VMMD_OUTBOUND_RELAY_TARGET", Owners: []string{"vmmd"}, Source: EnvSourceDropin, Note: "outboundd relay listener for app outbound integrations: unix:// on a single box, tcp:// with client mTLS on a split box; empty closes the relay (ADR-989)"},
 	{Name: "FAAS_VMMD_RAW_BRIDGE_PATH", Owners: []string{"shared"}, Source: EnvSourceDefault},
 	{Name: "FAAS_VMMD_RESOURCE_JOURNAL_DIR", Owners: []string{"vmmd", "shared"}, Source: EnvSourceDefault, Note: "optional absolute override of vmmd's resource journal directory; set only by acceptance harnesses so several vmmd builds on one shared host keep private journals (pkg/e2etest forwards it)"},
+	{Name: "FAAS_VMMD_RESOURCE_JOURNAL_VOLATILE_DIR", Owners: []string{"vmmd"}, Source: EnvSourceDefault, Note: "optional absolute tmpfs directory for vmmd's journal record copies (ADR-20261026113920); empty disables them; defaults to /run/faas/vmmd-resources, or to none when FAAS_VMMD_RESOURCE_JOURNAL_DIR is set"},
+	{Name: "FAAS_VMMD_RESOURCE_JOURNAL_VOLATILE_WRITES", Owners: []string{"vmmd"}, Source: EnvSourceDefault, Note: "optional boolean switch: volatile resource journal commits go only to the tmpfs copies and skip the disk fsync (ADR-20261026113920); enable only where the rollback target is this release or later"},
 	{Name: "FAAS_VMMD_ROLE", Owners: []string{"vmmd", "shared"}, Source: EnvSourceDropin},
 	{Name: "FAAS_VMMD_SCHEDD_TARGET", Owners: []string{"vmmd"}, Source: EnvSourceDropin},
 	{Name: "FAAS_VMMD_SPANS_WRITER_TARGET", Owners: []string{"vmmd"}, Source: EnvSourceDropin, Note: "split-box apid private mTLS listener for guest trace exports; empty uses the single-box socket (ADR-958)"},
