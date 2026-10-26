@@ -38,7 +38,7 @@ export type BuildProvenanceResponse = {
   plan: string;
   runner_digest?: string;
   /**
-   * compute_node name (default `default-local` on the one-box).
+   * Compute node name (`default-local` on a single-node install).
    */
   builder_node_id: string;
   started_at: string;
