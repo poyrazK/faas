@@ -72284,6 +72284,13 @@ CREATE INDEX instance_billing_intervals_range_idx ON public.instance_billing_int
 
 
 --
+-- Name: instance_quiet_pauses_ended_at; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX instance_quiet_pauses_ended_at ON public.instance_quiet_pauses USING btree (ended_at);
+
+
+--
 -- Name: instance_quiet_pauses_open; Type: INDEX; Schema: public; Owner: -
 --
 

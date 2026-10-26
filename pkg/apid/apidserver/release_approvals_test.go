@@ -282,6 +282,10 @@ func TestReleaseApprovalsRequireACanaryAtReleaseTime(t *testing.T) {
 	half := 50
 	rec = e.Do(t, http.MethodPost, path, api.CreateDeploymentRequest{Image: imageRef('d'), TrafficPercent: &half}, nil)
 	apidserver.AssertProblem(t, rec, http.StatusConflict, api.CodeReleaseApprovalCanaryRequired)
+	// The production environment's scope is the same production lane, so
+	// naming it does not step around the policy.
+	rec = e.Do(t, http.MethodPost, path, api.CreateDeploymentRequest{Image: imageRef('f'), Scope: "production", Canary: &api.CanaryPresetSpec{Preset: "none"}}, nil)
+	apidserver.AssertProblem(t, rec, http.StatusConflict, api.CodeReleaseApprovalCanaryRequired)
 	zero := 0
 	rec = e.Do(t, http.MethodPost, path, api.CreateDeploymentRequest{Image: imageRef('e'), TrafficPercent: &zero}, nil)
 	var p api.Problem
