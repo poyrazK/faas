@@ -414,20 +414,24 @@ func TestStampTraceparentEnv_EmptyIsNoOp(t *testing.T) {
 
 // production-us hunt #8: apps run as uid 1000 with a read-only "/", and an
 // unset HOME sent mise/npm/pip writes to "/.local". A HOME the image or the
-// customer set is kept.
+// customer set is kept; otherwise the user's writable passwd home is used, as
+// under Docker (ADR-20261025111339), and /tmp when there is none.
 func TestStampDefaultHomeEnv(t *testing.T) {
 	for _, tc := range []struct {
-		name string
-		env  []string
-		want string
+		name      string
+		env       []string
+		imageHome string
+		want      string
 	}{
-		{"unset", []string{"PATH=/usr/bin"}, "/tmp"},
-		{"empty", []string{"HOME="}, "/tmp"},
-		{"kernel default inherited by PID 1", []string{"HOME=/", "TERM=linux"}, "/tmp"},
-		{"image or customer value kept", []string{"HOME=/home/node"}, "/home/node"},
+		{"unset", []string{"PATH=/usr/bin"}, "", "/tmp"},
+		{"empty", []string{"HOME="}, "", "/tmp"},
+		{"kernel default inherited by PID 1", []string{"HOME=/", "TERM=linux"}, "", "/tmp"},
+		{"image or customer value kept", []string{"HOME=/home/node"}, "/home/app", "/home/node"},
+		{"writable passwd home", []string{"HOME=/"}, "/home/node", "/home/node"},
+		{"passwd home when unset", []string{"PATH=/usr/bin"}, "/root", "/root"},
 	} {
 		got := ""
-		for _, kv := range StampDefaultHomeEnv(tc.env) {
+		for _, kv := range StampDefaultHomeEnv(tc.env, tc.imageHome) {
 			if k, v, ok := cut(kv); ok && k == "HOME" {
 				got = v // the exec'd env takes the last value
 			}

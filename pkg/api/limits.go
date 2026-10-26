@@ -7191,6 +7191,17 @@ const (
 	// trip before the next mirror or Docker Hub itself is tried.
 	MaxDockerHubMirrors = 4
 
+	// GuestOpenFilesSoftLimit and GuestOpenFilesHardLimit are the
+	// RLIMIT_NOFILE every guest process inherits from guest-init
+	// (ADR-20261025111339). The kernel's 1024/4096 default capped a Go or
+	// JVM server, which raises its soft limit to the hard one, near 4,096
+	// sockets. The hard limit is the kernel's default fs.nr_open, as under
+	// Kubernetes; the soft limit stays low enough that programs which close
+	// or index every possible descriptor do not slow down. The guest's
+	// fs.file-max, which scales with its RAM, still bounds the total.
+	GuestOpenFilesSoftLimit = 65536
+	GuestOpenFilesHardLimit = 1 << 20
+
 	// ColdBootReadyWindowS is how long an app may take to become ready
 	// on any cold boot: the spec §6.1 COLD_BOOTING budget the scheduler's
 	// watchdog enforces on every wake (sched.ColdBootSweepBudget).
