@@ -744,6 +744,11 @@ var cliCommands = []cliCommand{
 				{Name: "scan", Short: "Start or resume due discovery", Positionals: []string{"<app>", "<bucket-id>"}},
 				{Name: "status", Short: "Read discovery progress", Positionals: []string{"<app>", "<bucket-id>", "<scan-id>"}},
 			}},
+			{Name: "cors", Short: "Let browsers on your sites use the bucket's signed URLs", Subcommands: []cliSub{
+				{Name: "get", Short: "Read the bucket's CORS rules", Positionals: []string{"<app>", "<bucket-id>"}},
+				{Name: "set", Short: "Replace rules from a JSON file or stdin", Positionals: []string{"<app>", "<bucket-id>", "<JSON-file|->"}},
+				{Name: "clear", Short: "Remove the rules; console origins stay allowed", Positionals: []string{"<app>", "<bucket-id>"}},
+			}},
 			{Name: "versioning", Short: "Inspect or configure bucket versioning", Subcommands: []cliSub{
 				{Name: "status", Short: "Show durable versioning progress", Positionals: []string{"<app>", "<bucket-id>"}},
 				{Name: "enable", Short: "Enable retained versions", Positionals: []string{"<app>", "<bucket-id>"}},

@@ -2399,6 +2399,28 @@ Read discovery progress
 
 `gregale bucket lifecycle status <app> <bucket-id> <scan-id>`
 
+### bucket cors
+
+Let browsers on your sites use the bucket&#39;s signed URLs
+
+#### bucket cors get
+
+Read the bucket&#39;s CORS rules
+
+`gregale bucket cors get <app> <bucket-id>`
+
+#### bucket cors set
+
+Replace rules from a JSON file or stdin
+
+`gregale bucket cors set <app> <bucket-id> <JSON-file|->`
+
+#### bucket cors clear
+
+Remove the rules; console origins stay allowed
+
+`gregale bucket cors clear <app> <bucket-id>`
+
 ### bucket versioning
 
 Inspect or configure bucket versioning

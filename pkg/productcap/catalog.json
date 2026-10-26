@@ -815,6 +815,9 @@
       "routes": [
         "/v1/apps/{}/buckets/{}/cors",
         "/v1/orgs/{}/apps/{}/buckets/{}/cors"
+      ],
+      "cli": [
+        "bucket cors"
       ]
     },
     {
