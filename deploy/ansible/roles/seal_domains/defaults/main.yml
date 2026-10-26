@@ -157,5 +157,25 @@ faas_seal_domain_storage_readers_verified: false
 # signing key with it. The key has no writer drop-in and no write mode.
 faas_seal_domain_control_identity_src: ""
 
+# Operator-local files from `gregalectl seal-domain init --domain delivery`.
+# Every host stages the identity (schedd runs on both node roles and opens
+# app webhook signing secrets, commit-source connections and execution
+# payloads); control-plane hosts also stage the recipient (apid seals to it).
+faas_seal_domain_delivery_identity_src: ""
+faas_seal_domain_delivery_recipient_src: ""
+
+# Who apid seals delivery values to:
+#   ""      the domain and the fleet recipient (safe beside the previous
+#           release, whose schedd holds only the fleet identity)
+#   fleet   the fleet recipient alone (opt out)
+#   domain  the domain recipient alone; needs
+#           faas_seal_domain_delivery_readers_verified
+faas_seal_domain_delivery_writes: ""
+
+# Set true only after every schedd on both node roles reports
+# faas_seal_domain_loaded{domain="delivery"} 1 and the previous release
+# left the rollback window. Required for writes=domain.
+faas_seal_domain_delivery_readers_verified: false
+
 faas_seal_domain_db_env: /etc/faas/compute-db.env
 faas_seal_domain_textfile_dir: /var/lib/node_exporter/textfile_collector

@@ -8,6 +8,10 @@ from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
 from ..models.wake_timeline_json_row_kind import WakeTimelineJSONRowKind, check_wake_timeline_json_row_kind
+from ..models.wake_timeline_json_row_restore_fallback_reason import (
+    WakeTimelineJSONRowRestoreFallbackReason,
+    check_wake_timeline_json_row_restore_fallback_reason,
+)
 from ..models.wake_timeline_json_row_tier import WakeTimelineJSONRowTier, check_wake_timeline_json_row_tier
 from ..models.wake_timeline_json_row_trigger_class import (
     WakeTimelineJSONRowTriggerClass,
@@ -54,9 +58,10 @@ class WakeTimelineJSONRow:
     trigger_class: WakeTimelineJSONRowTriggerClass | Unset = UNSET
     """Bounded User-Agent classification for the request that caused the wake. Empty/absent on pre-M3 fleet rows."""
     method: str | Unset = UNSET
-    """Wake method (restore or cold_boot), when telemetry is available."""
+    """Wake method vmmd ran (restore or cold_boot), when telemetry is available. A planned restore that fell back
+    to a cold boot reads cold_boot."""
     tier: WakeTimelineJSONRowTier | Unset = UNSET
-    """Snapshot tier selected for the wake."""
+    """Snapshot tier selected for the wake; cold_boot_fallback when a planned restore fell back to a cold boot."""
     queued_count: int | Unset = UNSET
     """ledger.Concurrency at admit. 0 when absent."""
     concurrency_at_admit: int | Unset = UNSET
@@ -64,6 +69,12 @@ class WakeTimelineJSONRow:
     ready_in_ms: int | Unset = UNSET
     """Wall-clock boot_started → boot_completed delta in ms. -1 when still booting or rejected. 0 is impossible (a
     0ms wake would round to a positive integer)."""
+    planned_method: str | Unset = UNSET
+    """The method schedd planned when vmmd ran another one, for example restore on a wake that fell back to a cold
+    boot. Absent otherwise."""
+    restore_fallback_reason: WakeTimelineJSONRowRestoreFallbackReason | Unset = UNSET
+    """Closed reason for a restore that fell back to a cold boot, when one is reported. Absent for other fallbacks,
+    such as a snapshot made from an older base."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -99,6 +110,12 @@ class WakeTimelineJSONRow:
 
         ready_in_ms = self.ready_in_ms
 
+        planned_method = self.planned_method
+
+        restore_fallback_reason: str | Unset = UNSET
+        if not isinstance(self.restore_fallback_reason, Unset):
+            restore_fallback_reason = self.restore_fallback_reason
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -127,6 +144,10 @@ class WakeTimelineJSONRow:
             field_dict["concurrency_at_admit"] = concurrency_at_admit
         if ready_in_ms is not UNSET:
             field_dict["ready_in_ms"] = ready_in_ms
+        if planned_method is not UNSET:
+            field_dict["planned_method"] = planned_method
+        if restore_fallback_reason is not UNSET:
+            field_dict["restore_fallback_reason"] = restore_fallback_reason
 
         return field_dict
 
@@ -174,6 +195,15 @@ class WakeTimelineJSONRow:
 
         ready_in_ms = d.pop("ready_in_ms", UNSET)
 
+        planned_method = d.pop("planned_method", UNSET)
+
+        _restore_fallback_reason = d.pop("restore_fallback_reason", UNSET)
+        restore_fallback_reason: WakeTimelineJSONRowRestoreFallbackReason | Unset
+        if isinstance(_restore_fallback_reason, Unset):
+            restore_fallback_reason = UNSET
+        else:
+            restore_fallback_reason = check_wake_timeline_json_row_restore_fallback_reason(_restore_fallback_reason)
+
         wake_timeline_json_row = cls(
             kind=kind,
             state=state,
@@ -188,6 +218,8 @@ class WakeTimelineJSONRow:
             queued_count=queued_count,
             concurrency_at_admit=concurrency_at_admit,
             ready_in_ms=ready_in_ms,
+            planned_method=planned_method,
+            restore_fallback_reason=restore_fallback_reason,
         )
 
         wake_timeline_json_row.additional_properties = d

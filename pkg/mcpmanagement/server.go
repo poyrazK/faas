@@ -46,7 +46,11 @@ type Options struct {
 	// AllowedApps binds consented slugs to app identities; nil allows the account.
 	AllowedApps map[string]string
 	// Environments is nil for local account access. Remote grants always set it.
-	Environments  *EnvironmentConsent
+	Environments *EnvironmentConsent
+	// LocalCLI enables the local deploy and env tools on local connections.
+	LocalCLI LocalCLI
+	// Toolsets limits the listed tools (see ParseToolsets); nil lists all.
+	Toolsets      []string
 	planStore     *StateStore
 	planNamespace string
 	auditLogger   *slog.Logger
@@ -99,6 +103,13 @@ func newManagementServer(client *api.Client, opts Options) (*mcp.Server, *manage
 	}
 	if opts.Version == "" {
 		opts.Version = "dev"
+	}
+	if opts.Toolsets != nil {
+		toolsets, err := ParseToolsets(strings.Join(opts.Toolsets, ","))
+		if err != nil {
+			return nil, nil, err
+		}
+		opts.Toolsets = toolsets
 	}
 	if opts.AllowedApps != nil {
 		apps := make(map[string]string, len(opts.AllowedApps))
@@ -161,6 +172,7 @@ func newManagementServer(client *api.Client, opts Options) (*mcp.Server, *manage
 	registerPerformanceDiagnostics(s, m)
 	registerResidencyDiagnostics(s, m)
 	registerReleases(s, m)
+	registerLocalReleases(s, m)
 	registerEnvironments(s, m)
 	registerContextCatalog(s, m)
 	registerLifecycle(s, m)
@@ -174,12 +186,19 @@ func register[In any](s *mcp.Server, m *management, name, description string, ha
 }
 
 func registerTool[In any](s *mcp.Server, m *management, name, description string, readOnly bool, handle func(context.Context, In) (any, error)) {
+	if !m.toolListed(name) {
+		return
+	}
 	m.toolNames[name] = true
 	m.toolWrites[name] = !readOnly
 	destructive := !readOnly
 	mcp.AddTool(s, &mcp.Tool{Name: name, Description: description, Annotations: &mcp.ToolAnnotations{ReadOnlyHint: readOnly, DestructiveHint: &destructive, IdempotentHint: !readOnly}},
 		func(ctx context.Context, req *mcp.CallToolRequest, args In) (*mcp.CallToolResult, any, error) {
-			ctx, cancel := context.WithTimeout(ctx, m.opts.Timeout)
+			timeout := m.opts.Timeout
+			if name == "gregale_apply_local_deploy" {
+				timeout = localDeployTimeout // the source upload
+			}
+			ctx, cancel := context.WithTimeout(ctx, timeout)
 			defer cancel()
 			if err := m.authorizeToolArgs(ctx, args, !readOnly); err != nil {
 				return m.toolError(err), nil, nil

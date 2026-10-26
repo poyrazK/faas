@@ -358,6 +358,11 @@ gregale approvals status <deployment>
 gregale approvals off
 ```
 
+A production release is one to the default scope or to the project's
+`production` environment (`--environment production`); both serve the app's
+production traffic, so the policy gates both. Other environments and scopes
+are not gated.
+
 The release starts its canary as usual. At the stage the policy names
 (`--after-stage`, default 1), it waits. `gregale deploy` shows the wait and
 the approve command. The canary still judges the waiting stage, so a
@@ -664,6 +669,11 @@ Probes are always `GET`, and the twenty a minute are split across the paths.
 Pick cheap, read-only routes your app answers without a login; each path must
 be concrete, with no query, wildcard, or `{parameter}`. The setting is
 `release_probe_paths` in the app manifest and the API.
+
+Probes are ordinary requests to your app: they wake the new release and the
+one it replaces and keep both running while the rollout waits for evidence,
+and that running time is billed like any other request (about 0.09 GB-h for a
+quiet rollout of a 256 MB app). `release_policy: immediate` skips them.
 
 When probes cannot give an answer (for example, the probed path requires a login), a
 stage whose only problem is too few samples waits up to 5 more minutes after

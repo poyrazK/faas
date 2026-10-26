@@ -1,0 +1,7 @@
+# Managed by the seal_domains role (ADR 20261022111812): schedd opens app
+# webhook signing secrets, commit-source connections and execution payloads
+# with the delivery seal-domain identity. The fleet identity stays in the
+# base unit until the domain re-seal completes.
+[Service]
+LoadCredential=faas_seal_domain_delivery:/etc/faas/secrets/domains/delivery.age
+Environment=FAAS_SEAL_DOMAIN_DELIVERY_IDENTITY_PATH=%d/faas_seal_domain_delivery

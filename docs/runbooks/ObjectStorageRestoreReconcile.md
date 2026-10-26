@@ -31,7 +31,11 @@ worker has not created them yet.
 
 ## Check
 
-1. Keep `s3_enabled` false. Run the reconcile from the operator checkout:
+1. Keep `s3_enabled` false. The restore brought it back as it was at the
+   restore point; `gregalectl object-storage hold --db-env
+   /etc/faas/sealed.env` turns it off in the database without apid
+   (`ControlPlaneStateBackup.md` step 5). Run the reconcile from the operator
+   checkout:
 
    ```bash
    make ANSIBLE_INVENTORY=deploy/ansible/.generated/inventory/hosts.ini object-storage-reconcile
@@ -51,21 +55,29 @@ worker has not created them yet.
      --format='value(creation_time,labels)'
    ```
 
-   The `gregale-backend` label must match the backend; a bucket without it was
-   not made by this backend. The provider's admin activity audit log records
-   who created or deleted the bucket and when. The physical name is
-   `gregale-` plus the bucket ID without dashes.
+   The `gregale-backend` label is the first 32 characters of the backend's
+   configuration fingerprint, not its ID; a bucket without a matching label
+   was not made by this backend's current configuration. The provider's admin
+   activity audit log records when a bucket was created or deleted, but its
+   actor is Gregale's own service account, never the customer. The physical
+   name is `gregale-` plus the bucket ID without dashes. Two backends that
+   share a provider account or project list each other's buckets; the
+   reconcile leaves out a bucket another backend's catalog holds.
 
 ## Recover
 
 Never delete a physical bucket that holds customer data without the incident
 owner's sign-off.
 
-1. **`provider_only`, created after the restore point.** The customer created
-   this bucket, and the restore lost its row. Keep it. Tell the account owner
-   (from the provider audit log or support records) that the bucket must be
-   recreated in Gregale; copy its data into the new bucket on request. Delete
-   the orphan only after the incident's retention window and sign-off.
+1. **`provider_only`, created after the restore point.** A customer created
+   this bucket, and the restore lost its row, and with it the only record of
+   which account owns it: nothing at the provider names the customer. Keep
+   it, and give its data to no one until an owner is proven out of band: a
+   support ticket or customer record naming this bucket ID, confirmed by the
+   account owner, with the incident owner's sign-off. Then tell that owner the
+   bucket must be recreated in Gregale and copy its data into the new bucket
+   on request. Delete the orphan only after the incident's retention window
+   and sign-off.
 2. **`provider_only`, older than the restore point or unlabeled.** A leak, or
    a bucket another system made in this namespace. Investigate before acting;
    the namespace is supposed to be Gregale's alone.
@@ -80,4 +92,41 @@ owner's sign-off.
    With sign-off, empty and delete the physical bucket at the provider.
 6. Rerun the reconcile until it exits 0, or until every remaining finding has
    a recorded decision. Then run it once more with `ACCEPT=1`, which lists the
-   findings without stopping, and turn `s3_enabled` back on.
+   findings without stopping.
+7. Re-apply the revocations the restore undid (next section), then accept
+   the restored database's PostgreSQL timeline and turn `s3_enabled` back
+   on. The restore promoted onto a new timeline, which fences the S3 gateway
+   and public reads until it is accepted (ADR-20261025111015 amendment 1):
+
+   ```bash
+   sudo gregalectl object-storage accept --db-env /etc/faas/sealed.env
+   ```
+
+## Revocations undone by the restore
+
+The restore brought back every S3 key, copy source, compute binding and
+access grant that was revoked after the restore point, and the audit rows
+that recorded the revocations went with them. They work again as soon as
+`s3_enabled` is on, so re-apply them first.
+
+1. apid also logs each revocation as `object storage access revoked`, with
+   its `kind` (`object_storage.s3_credential_revoked`,
+   `object_storage.copy_source_revoked`,
+   `object_storage.compute_binding_revoked` or
+   `object_storage.access_grant_deleted`), `account_id` and IDs. The log
+   pipeline keeps it outside the database. In Grafana Explore on Loki:
+
+   ```logql
+   {job="faas-journal", unit="faas-apid.service"} |= "object storage access revoked" | json
+   ```
+
+   over the window from the restore point to the failure.
+2. For each line, re-apply it with the customer's consent, or as support
+   with sign-off, through the same API route: `DELETE` on
+   `/v1/apps/{slug}/buckets/{bucket}/s3-credentials/{credential_id}`,
+   `.../s3-credentials/{credential_id}/copy-sources/{source_bucket_id}`,
+   `.../compute-bindings/{binding_id}` or `.../access-grants/{key_id}`.
+3. If the logs do not cover the whole window (Loki keeps 14 days), the undone
+   revocations cannot be listed. Revoke every S3 key, copy source and compute
+   binding issued before the restore point, with the incident owner's
+   sign-off, and tell each account owner to issue new ones.

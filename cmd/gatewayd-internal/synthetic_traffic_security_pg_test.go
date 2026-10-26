@@ -63,10 +63,11 @@ func TestSyntheticTrafficSecurityPostgresMissedReleaseAndOutage(t *testing.T) {
 	}
 	pools := []*pgxpool.Pool{firstPool, secondPool}
 	registries := make([]*trafficrevocation.Registry, 2)
+	clocks := []*securityClock{{}, {}}
 	servers := make([]*httptest.Server, 2)
 	started := make(chan int, 4)
 	for i, pool := range pools {
-		registry := trafficrevocation.New(state.NewPGTrafficSecurityBackend(pool))
+		registry := trafficrevocation.New(state.NewPGTrafficSecurityBackend(pool)).WithClock(clocks[i].Now)
 		registries[i] = registry
 		defer registry.Close()
 		adapter := &synthAdapter{store: state.NewPgStore(pool), trafficRevocations: registry,
@@ -161,6 +162,16 @@ func TestSyntheticTrafficSecurityPostgresMissedReleaseAndOutage(t *testing.T) {
 	firstPool.Close()
 	if err := registries[0].Refresh(ctx); !errors.Is(err, trafficrevocation.ErrUnavailable) {
 		t.Fatalf("pool outage refresh: %v", err)
+	}
+	// ADR-20261026160000: verified delivery survives an outage for its grace.
+	select {
+	case err := <-results:
+		t.Fatalf("delivery ended inside the outage grace: %v", err)
+	case <-time.After(300 * time.Millisecond):
+	}
+	clocks[0].pastOutageGrace()
+	if err := registries[0].Refresh(ctx); !errors.Is(err, trafficrevocation.ErrUnavailable) {
+		t.Fatalf("pool outage refresh past the grace: %v", err)
 	}
 	waitResult()
 	assertSyntheticSecurityReleased(t, registries[0])
@@ -267,10 +278,15 @@ func TestSyntheticTrafficSecurityPostgresSchedulerHandoff(t *testing.T) {
 	if senderCtx.Err() != nil {
 		t.Fatal("sender unexpectedly observed omitted notifications")
 	}
+	// The sender admits from its refreshed view (ADR-20261026160000), so its
+	// periodic refresh, not the next admission, discovers the missed pair.
 	if status := call(old); status != http.StatusBadGateway || forwards != 0 {
 		t.Fatalf("stale scheduler handoff accepted: %d forwards=%d", status, forwards)
 	}
 	assertSyntheticSecurityReleased(t, receiver)
+	if err := sender.Refresh(ctx); err != nil {
+		t.Fatal(err)
+	}
 	freshCtx, freshCancel := context.WithCancelCause(ctx)
 	defer freshCancel(nil)
 	current, currentRelease, err := sender.AdmitSnapshot(freshCtx, scopes, freshCancel)

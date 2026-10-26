@@ -48,6 +48,8 @@ class ManagedPostgresUsageResponse:
     """healthy; warning at 80% of the allowance; overage past the allowance while the account allows overage;
     suspended once the ceiling is reached and the platform enforces caps. Suspended databases keep their data and
     resume next month or after an upgrade."""
+    overage_enabled: bool | Unset = UNSET
+    """True while the account runs its databases past the allowance, up to the ceiling."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -93,6 +95,8 @@ class ManagedPostgresUsageResponse:
         if not isinstance(self.compute_cap_state, Unset):
             compute_cap_state = self.compute_cap_state
 
+        overage_enabled = self.overage_enabled
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -120,6 +124,8 @@ class ManagedPostgresUsageResponse:
             field_dict["compute_ceiling_unit_seconds"] = compute_ceiling_unit_seconds
         if compute_cap_state is not UNSET:
             field_dict["compute_cap_state"] = compute_cap_state
+        if overage_enabled is not UNSET:
+            field_dict["overage_enabled"] = overage_enabled
 
         return field_dict
 
@@ -180,6 +186,8 @@ class ManagedPostgresUsageResponse:
         else:
             compute_cap_state = check_managed_postgres_usage_response_compute_cap_state(_compute_cap_state)
 
+        overage_enabled = d.pop("overage_enabled", UNSET)
+
         managed_postgres_usage_response = cls(
             period_start=period_start,
             policy_enabled=policy_enabled,
@@ -198,6 +206,7 @@ class ManagedPostgresUsageResponse:
             compute_allowance_unit_seconds=compute_allowance_unit_seconds,
             compute_ceiling_unit_seconds=compute_ceiling_unit_seconds,
             compute_cap_state=compute_cap_state,
+            overage_enabled=overage_enabled,
         )
 
         managed_postgres_usage_response.additional_properties = d

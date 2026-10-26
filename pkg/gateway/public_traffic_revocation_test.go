@@ -49,7 +49,8 @@ func TestPublicTrafficRevocationInterruptsBlockedWrite(t *testing.T) {
 			for _, h2 := range []bool{false, true} {
 				t.Run(change+"/long="+strconv.FormatBool(long)+"/h2="+strconv.FormatBool(h2), func(t *testing.T) {
 					store := &gatewaySecurityStore{}
-					computeRegistry, publicRegistry := trafficrevocation.New(store), trafficrevocation.New(store)
+					publicClock := &securityClock{}
+					computeRegistry, publicRegistry := trafficrevocation.New(store), trafficrevocation.New(store).WithClock(publicClock.Now)
 					defer computeRegistry.Close()
 					defer publicRegistry.Close()
 					h, backend := securityTestHandler(t, computeRegistry)
@@ -100,6 +101,7 @@ func TestPublicTrafficRevocationInterruptsBlockedWrite(t *testing.T) {
 						store.mu.Lock()
 						store.err = errors.New("verification offline")
 						store.mu.Unlock()
+						publicClock.pastOutageGrace()
 					} else {
 						revision := int64(1)
 						if change == "missed-revoke-release" {
@@ -175,6 +177,15 @@ func TestPublicTrafficRevocationRefusesMissedPairAtHandoffAndRecovers(t *testing
 		}
 	}}
 	for _, want := range []int{http.StatusForbidden, http.StatusNoContent} {
+		if want == http.StatusNoContent {
+			// Compute admits from its refreshed view (ADR-20261026160000); its
+			// refresher, or the change notification, picks up the new
+			// generation within a second. Until then the public hop refuses
+			// the old baseline, as above.
+			if err := computeRegistry.Refresh(t.Context()); err != nil {
+				t.Fatal(err)
+			}
+		}
 		rec := httptest.NewRecorder()
 		proxy.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "http://"+backend.host+"/", nil))
 		if rec.Code != want || rec.Header().Get(trafficSecurityHeader) != "" {
@@ -329,7 +340,8 @@ func TestPublicTrafficRevocationClosesBothUpgradeDirections(t *testing.T) {
 		for _, outage := range []bool{false, true} {
 			t.Run(direction+"/outage="+strconv.FormatBool(outage), func(t *testing.T) {
 				store := &gatewaySecurityStore{}
-				registry := trafficrevocation.New(store)
+				clock := &securityClock{}
+				registry := trafficrevocation.New(store).WithClock(clock.Now)
 				defer registry.Close()
 				metadata := securityTestMetadata(t)
 				backendDone, publicDone, resumeRead := make(chan struct{}), make(chan struct{}), make(chan struct{})
@@ -397,6 +409,7 @@ func TestPublicTrafficRevocationClosesBothUpgradeDirections(t *testing.T) {
 					store.mu.Lock()
 					store.err = errors.New("store unavailable")
 					store.mu.Unlock()
+					clock.pastOutageGrace()
 				} else {
 					store.set(trafficrevocation.Scope{Kind: "app", ID: securityTestApp}, 1, true)
 				}

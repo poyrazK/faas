@@ -43,7 +43,8 @@ Changing or removing the policy needs the organization's `manage_app_security` a
 
 A deployment needs approval when all of these hold:
 - its app has a policy;
-- it is in the app's default (production) scope;
+- it is in the app's production lane: the default scope, or the project
+  `production` environment's scope (amended 2026-10-26, see Scope);
 - it has never completed a rollout and is not the app's serving release;
 - it was created, or its rollout started, after the policy. A scheduled release ([ADR-20261021152201](20261021152201-scheduled-releases.md)) starts its rollout at its time, so a policy set while it waited applies to it.
 
@@ -136,6 +137,20 @@ Email carries the same links.
 ### Scope
 
 Named environment scopes and project environments are not covered. Project environments keep their own promotion approvals.
+
+*Amendment (2026-10-26).* The `production` environment's scope later became
+the app's production routing lane (`state.ProductionRoutingDeployments`), and
+release freezes already treat it as production (`freeze.IsProductionScope`).
+A release deployed straight into it, with `--environment production` on a
+project app or `scope: production` on any app, therefore took production
+traffic outside the policy. A plain CLI deploy could skip the approvals this
+ADR exists to require. Such releases now wait like default-scope ones, and the
+release-time canary check covers them (`state.IsProductionScope`). An app is
+on its first release only when neither production scope has a live
+deployment.
+
+Environment promotions into `production` keep their own approvals. They are
+not checked at release time and go live at full traffic, as before.
 
 Services, workers and jobs have no canary. Their releases are not held, and a policy cannot be set on them.
 
