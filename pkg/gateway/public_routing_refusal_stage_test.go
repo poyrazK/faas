@@ -27,12 +27,20 @@ func TestPublicRoutingRefusalRecordsStage(t *testing.T) {
 		{name: "timeout", want: "routing_read_timeout",
 			pin: func(s PublicRoutingSnapshot) (PublicRoutingSnapshot, error) { return s, context.DeadlineExceeded }},
 		{name: "read", want: "routing_read_error",
-			pin: func(s PublicRoutingSnapshot) (PublicRoutingSnapshot, error) { return s, errors.New("private store failure") }},
+			pin: func(s PublicRoutingSnapshot) (PublicRoutingSnapshot, error) {
+				return s, errors.New("private store failure")
+			}},
 		{name: "invalid", want: "routing_snapshot_invalid",
-			pin: func(s PublicRoutingSnapshot) (PublicRoutingSnapshot, error) { s.AppID = uuid.NewString(); return s, nil }},
+			pin: func(s PublicRoutingSnapshot) (PublicRoutingSnapshot, error) {
+				s.AppID = uuid.NewString()
+				return s, nil
+			}},
 		{name: "project without a live deployment", want: "routing_empty_roster",
 			prepare: func(app *App) { app.ProjectID = uuid.NewString() },
-			pin:     func(s PublicRoutingSnapshot) (PublicRoutingSnapshot, error) { s.ReleaseVerdict = "allowed"; return s, nil }},
+			pin: func(s PublicRoutingSnapshot) (PublicRoutingSnapshot, error) {
+				s.ReleaseVerdict = "allowed"
+				return s, nil
+			}},
 		{name: "host pin", want: "routing_host_pin_denied",
 			prepare: func(app *App) { app.PinnedDeploymentID, app.PinnedDeploymentScope = uuid.NewString(), "default" },
 			pin:     func(s PublicRoutingSnapshot) (PublicRoutingSnapshot, error) { s.HostChecked = true; return s, nil }},
