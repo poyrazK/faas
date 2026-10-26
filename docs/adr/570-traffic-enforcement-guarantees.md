@@ -1047,6 +1047,23 @@ lease, submission, reservation and candidate intent unchanged. Promotion
 visibility, environment policy writes and verification/environment
 withdrawals remain separate follow-ups.
 
+### Follow-up: environment deletion and DNS-drift withdrawal
+
+Deleting a project environment cascades every custom domain bound to it. Like
+direct custom-domain removal and app deletion, that customer withdrawal can let
+another owner's wildcard serve the hostname, so environment deletion and
+failed-clone environment rollback join the account binding guard and commit
+only after the before/after analysis. Memory deletion projects the environment,
+its bound domains and its edge policies before deleting anything. Clone
+environment cleanup already refuses while a custom domain is bound, so it
+never cascades one.
+
+DNS drift is different: it records that the customer's DNS no longer points at
+the platform. It always commits, like platform-tenant suspension, even when the
+withdrawn domain lets a wildcard fallback serve the hostname; refusing it would
+keep a domain the platform no longer controls bound to the old app. A tenant
+hostname's failed DNS check keeps its verification and changes no binding.
+
 ### Follow-up: bounded request decision evidence
 
 Ordinary response completion checks the attached budget's wall-clock expiry as
