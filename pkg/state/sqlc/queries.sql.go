@@ -63182,7 +63182,9 @@ SELECT g.id, g.account_id, g.credential_id, g.bucket_id, g.source_bucket_id, g.p
  AND s.account_id=c.account_id AND d.account_id=c.account_id AND s.org_id=d.org_id AND s.state='ready' AND d.state='ready'
  AND (s.backend_id,s.backend_fingerprint)=(d.backend_id,d.backend_fingerprint)
  AND left($4::text,length(g.prefix))=g.prefix
- AND NOT EXISTS(SELECT 1 FROM object_deletions WHERE bucket_id IN (s.id,d.id) AND state IN ('prepared','dispatched'))
+ -- Only a deletion of the source key fences the copy; the destination is an
+ -- ordinary write, fenced per key at admission (ADR-20261025115958).
+ AND NOT EXISTS(SELECT 1 FROM object_deletions WHERE bucket_id=s.id AND object_key=$4::text AND state IN ('prepared','dispatched'))
 `
 
 type ObjectCopySourceResolveParams struct {
@@ -63762,6 +63764,25 @@ type ObjectInventorySampleParams struct {
 func (q *Queries) ObjectInventorySample(ctx context.Context, db DBTX, arg ObjectInventorySampleParams) error {
 	_, err := db.Exec(ctx, objectInventorySample, arg.BucketID, arg.Token)
 	return err
+}
+
+const objectLifecycleDeletionActive = `-- name: ObjectLifecycleDeletionActive :one
+SELECT (EXISTS(SELECT 1 FROM object_deletions d WHERE d.bucket_id=$1::uuid AND d.lifecycle_scan_id=$2::uuid AND d.state IN ('prepared','dispatched'))
+ OR EXISTS(SELECT 1 FROM object_version_protection p WHERE p.bucket_id=$1::uuid AND p.state IN ('waiting','applying')))::boolean AS active
+`
+
+type ObjectLifecycleDeletionActiveParams struct {
+	BucketID pgtype.UUID
+	ScanID   pgtype.UUID
+}
+
+// A lifecycle scan pauses only for its own unsettled deletions and for a
+// version protection job in its bucket (ADR-20261025115958).
+func (q *Queries) ObjectLifecycleDeletionActive(ctx context.Context, db DBTX, arg ObjectLifecycleDeletionActiveParams) (bool, error) {
+	row := db.QueryRow(ctx, objectLifecycleDeletionActive, arg.BucketID, arg.ScanID)
+	var active bool
+	err := row.Scan(&active)
+	return active, err
 }
 
 const objectLifecycleMultipartAdmit = `-- name: ObjectLifecycleMultipartAdmit :execrows

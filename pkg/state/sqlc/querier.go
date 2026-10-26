@@ -4287,6 +4287,9 @@ type Querier interface {
 	// Give up a claim without publishing; attempt_at keeps the retry cadence.
 	ObjectInventoryRelease(ctx context.Context, db DBTX, arg ObjectInventoryReleaseParams) (int64, error)
 	ObjectInventorySample(ctx context.Context, db DBTX, arg ObjectInventorySampleParams) error
+	// A lifecycle scan pauses only for its own unsettled deletions and for a
+	// version protection job in its bucket (ADR-20261025115958).
+	ObjectLifecycleDeletionActive(ctx context.Context, db DBTX, arg ObjectLifecycleDeletionActiveParams) (bool, error)
 	ObjectLifecycleMultipartAdmit(ctx context.Context, db DBTX, arg ObjectLifecycleMultipartAdmitParams) (int64, error)
 	ObjectLifecycleMultipartList(ctx context.Context, db DBTX, arg ObjectLifecycleMultipartListParams) ([]ObjectStorageMultipartUpload, error)
 	ObjectLifecyclePolicyDue(ctx context.Context, db DBTX, limit int32) ([]pgtype.UUID, error)

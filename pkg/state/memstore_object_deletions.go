@@ -42,6 +42,25 @@ func (m *MemStore) activeDeletionLocked(bucket string) bool {
 	return false
 }
 
+var _ ObjectLifecycleDeletionActivityStore = (*MemStore)(nil)
+
+func (m *MemStore) HasActiveObjectLifecycleDeletion(ctx context.Context, bucket, scan string) (bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		return false, err
+	}
+	if m.activeVersionProtectionLocked(bucket) {
+		return true, nil
+	}
+	for _, j := range m.objectDeletions {
+		if j.BucketID == bucket && j.Lifecycle != nil && j.Lifecycle.ScanID == scan && deletionActive(j) {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
 // activeKeyDeletionLocked reports an unsettled deletion of key.
 func (m *MemStore) activeKeyDeletionLocked(bucket, key string) bool {
 	for _, j := range m.objectDeletions {
