@@ -577,6 +577,17 @@ for table in accounts apps instances_states.healthy; do
 done
 ok "row-count invariants passed (${ROW_COUNT_DIFFS})"
 
+# The drill restored to a quiesced boundary and just proved nothing was lost,
+# so it accepts the promoted timeline for object storage (ADR-20261025111015
+# amendment). A real restore leaves the fence closed until the reconcile.
+if psql_query "INSERT INTO object_storage_timeline_acceptance (singleton, timeline, accepted_by)
+  VALUES (true, upper(substring(pg_walfile_name(pg_current_wal_lsn()) FROM 1 FOR 8)), 'restore-drill')
+  ON CONFLICT (singleton) DO UPDATE SET timeline = EXCLUDED.timeline, accepted_at = now(), accepted_by = EXCLUDED.accepted_by" >/dev/null; then
+  ok "object storage timeline accepted after the lossless drill"
+else
+  warn "could not accept the object storage timeline; run gregalectl object-storage accept"
+fi
+
 if daemon_was_active schedd; then
   READY=0
   for i in $(seq 1 60); do

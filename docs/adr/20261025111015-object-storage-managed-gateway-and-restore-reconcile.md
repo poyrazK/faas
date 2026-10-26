@@ -82,3 +82,34 @@ Two operational gaps stand between managed object storage and GA:
   checks that a store which cannot list is unsupported, not empty.
 - `TestReconcileObjectStorageReportsRestoreDrift` runs the command's core
   against a catalog and a provider that disagree in both directions.
+
+## Amendment 1 (2026-10-26): the restore fences object storage
+
+`s3_enabled` is a row in the control-plane database. A restore brings it
+back as it was at the restore point, usually on, and with it every S3 key,
+copy source, compute binding and access grant revoked after that point. The
+runbook's `gregalectl object-storage hold` helps only when someone runs it.
+
+- **Decision.** Object storage serves only on an accepted PostgreSQL
+  timeline. `object_storage_timeline_acceptance` holds the timeline last
+  accepted; the S3 gateway and the public-read edge serve while
+  `s3_enabled` is on *and* the database runs on that timeline
+  (`runtimeconfig.ObjectStorageFence`, re-read every 5 s, closed until its
+  first read, last answer kept on a failed read). The documented restores
+  recover from the WAL archive and promote, which starts a new timeline, so
+  a restore fences object storage by itself until
+  `gregalectl object-storage accept`, after the reconcile and the
+  revocation review.
+- **Who accepts.** The first start of an apid that knows the fence accepts
+  the current timeline once (`bootstrap`), so later backups carry an
+  acceptance. A planned switchover loses nothing, and `postgres_promote.yml`
+  accepts the new timeline itself; after a failover, the operator accepts it
+  once the runbook's review is done. The restore drill accepts after it has
+  proved its restore lossless.
+- **Reading the timeline** needs no privilege:
+  `pg_walfile_name(pg_current_wal_lsn())` starts with it on a primary.
+- **Limits.** A database with no acceptance (a backup taken before this
+  release) is not fenced; the runbook's hold still covers it. A restore
+  that does not promote onto a new timeline is not detected.
+- **Copy sources.** The copy-time resolver also requires the source and
+  destination buckets to be of one organization, as granting already did.

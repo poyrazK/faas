@@ -45,7 +45,14 @@ type objectStorageReconcileBackend struct {
 
 func cmdObjectStorage(args []string) int {
 	if len(args) == 0 || args[0] == "--help" || args[0] == "-h" {
-		PrintUsage(os.Stderr, "usage: gregalectl object-storage reconcile|hold [flags]", dispatchObjectStorage)
+		PrintUsage(os.Stderr, "usage: gregalectl object-storage reconcile|hold|accept [flags]", dispatchObjectStorage)
+		return 0
+	}
+	if args[0] == "accept" {
+		if err := runObjectStorageAccept(args[1:]); err != nil {
+			fmt.Fprintf(os.Stderr, "gregalectl object-storage accept: %v\n", err)
+			return 3
+		}
 		return 0
 	}
 	if args[0] == "hold" {
@@ -156,6 +163,49 @@ func runObjectStorageHold(args []string) error {
 	}
 	_, _ = fmt.Fprintf(osStdout, "s3_enabled is false (version %d); S3 and public reads answer 503 until it is turned back on\n", version)
 	return nil
+}
+
+// runObjectStorageAccept accepts the PostgreSQL timeline the database runs
+// on for serving object storage (ADR-20261025111015 amendment). A restore
+// that promoted onto a new timeline fences the S3 gateway and public reads
+// until this runs, after the reconcile and the revocation review; a planned
+// promotion and the restore drill run it themselves.
+func runObjectStorageAccept(args []string) error {
+	fs := flag.NewFlagSet("object-storage accept", flag.ContinueOnError)
+	fs.SetOutput(os.Stderr)
+	dsn := fs.String("pg-dsn", "", "PostgreSQL DSN")
+	dbEnv := fs.String("db-env", "", "systemd env file containing DATABASE_URL")
+	by := fs.String("by", "", "who accepts, for the record (default: $SUDO_USER or $USER)")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	pool, err := openFleetSealPool(*dsn, *dbEnv)
+	if err != nil {
+		return err
+	}
+	defer pool.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	timeline, err := acceptObjectStorageTimeline(ctx, state.NewPgStore(pool), *by, os.Getenv)
+	if err != nil {
+		return err
+	}
+	_, _ = fmt.Fprintf(osStdout, "object storage serves on PostgreSQL timeline %s; s3_enabled still decides whether it serves at all\n", timeline)
+	return nil
+}
+
+// acceptObjectStorageTimeline records who accepted the current timeline.
+func acceptObjectStorageTimeline(ctx context.Context, store state.ObjectStorageTimelineStore, by string, getenv func(string) string) (string, error) {
+	for _, candidate := range []string{by, getenv("SUDO_USER"), getenv("USER")} {
+		if candidate = strings.TrimSpace(candidate); candidate != "" {
+			by = candidate
+			break
+		}
+	}
+	if strings.TrimSpace(by) == "" {
+		by = "gregalectl"
+	}
+	return store.AcceptObjectStorageTimeline(ctx, "gregalectl:"+by)
 }
 
 // objectStorageHoldStore writes the s3_enabled row.
