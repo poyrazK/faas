@@ -50,6 +50,7 @@ import (
 
 	"filippo.io/age"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/auth/middleware"
 	"github.com/onebox-faas/faas/pkg/logsanitize"
 	"github.com/onebox-faas/faas/pkg/secretbox"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -303,15 +304,20 @@ func (s *server) persistInstantiatedAlertRule(ctx context.Context, acct state.Ac
 	// otherwise get sliced mid-rune, producing invalid UTF-8 that
 	// Postgres rejects with SQLSTATE 22021 at INSERT time.
 	displayName := api.TruncateRunes(preset.DisplayName+" ("+app.Slug+")", api.AlertRuleNameMaxChars)
+	actor := acct
+	if a, _, ok := middleware.AccountFromCtx(ctx); ok {
+		actor = a
+	}
 	row, err := s.store.CreateAlertRuleIfUnderQuota(ctx, state.AlertRule{
-		AccountID:  acct.ID,
-		AppID:      app.ID,
-		Name:       displayName,
-		Enabled:    enabled,
-		Metric:     state.AlertMetric(preset.Metric),
-		Comparison: state.AlertComparison(preset.Comparison),
-		Threshold:  preset.Threshold,
-		WindowSpec: state.AlertWindowSpec(preset.WindowSpec),
+		AccountID:          acct.ID,
+		AppID:              app.ID,
+		CreatedByAccountID: actor.ID,
+		Name:               displayName,
+		Enabled:            enabled,
+		Metric:             state.AlertMetric(preset.Metric),
+		Comparison:         state.AlertComparison(preset.Comparison),
+		Threshold:          preset.Threshold,
+		WindowSpec:         state.AlertWindowSpec(preset.WindowSpec),
 		// Preset rows never carry a failure_source (the catalog's
 		// metrics are the closed vocabulary at pkg/api/alerts.go:66
 		// — none of them are failed_invocations).
