@@ -1606,22 +1606,61 @@ still in flight is waited for. Read-committed writers keep ADR-590's path.
 ### Amendment: public enforcement waits for the compute fleet (2026-10-26)
 
 "Compute must be upgraded before public enforcement" was left to deploy order,
-and deploy order does not guarantee it: gatewayd-public runs on the control
+and deploy order does not guarantee it. gatewayd-public runs on the control
 plane host and moves with the control-plane stage, before the compute
 gateways (docs/release-compatibility.md). On 2026-10-26 the rc.295
 control-plane stage put an enforcing public edge in front of rc.294 compute
-gateways, which never stamp `X-Faas-Traffic-Security`, and every successful
-application response became a 503 `traffic_revocation_unavailable`.
+gateways, which never stamp `X-Faas-Traffic-Security`. Every successful
+application response became a 503 `traffic_revocation_unavailable` from
+10:39 to 12:14 UTC, until the control plane was rolled back. The version-skew
+gate did not catch it, because it compares protos and guest JSON only and
+does not see HTTP headers between gateways.
 
-The public edge now decides from the fleet's own runtime observations. It reads
-the serving compute gateway roster (the observation membership above) every
-observation interval. Missing metadata refuses a successful response only while
-every serving gateway has a fresh observation with security-fence wiring. While
-any gateway has no observation (an N-1 daemon), reports without the wiring, or
-has a stale report (a node rolled back stops reporting), the edge accepts
-unstamped answers as it did before this fence. Stamped answers are still
-verified and enrolled, and malformed or ambiguous metadata still refuses. An
-empty roster (an edge in front of its own same-release gateway) keeps
-enforcement on. The edge keeps its last decision when the roster cannot be
-read, and starts enforcing until its first successful read. Each change of
-decision is logged with the gateways that lack the wiring.
+The public edge now decides from the fleet's own runtime observations, every
+observation interval (2 s):
+
+- **Members** are the gateways the edge may dial. With database discovery, or
+  as a compute-node edge, that is every active compute node with a gateway
+  target, the compute gateway pool's own rule with no role filter. A
+  single-host or split-box edge dials one gateway, named by `FAAS_NODE_NAME`
+  when set.
+- **Required** means every member has a fresh observation (above) with
+  security-fence wiring. Missing metadata then refuses a successful or
+  long-lived answer, as specified above.
+- **Otherwise** answers pass unverified, as before this fence. That covers a
+  member with no observation (an N-1 daemon, or a node the observation
+  roster's role filter excludes), one without the wiring, one with a stale or
+  retired report, and an edge with no members. A stamped value is dropped,
+  not verified, because an N-1 gateway does not strip a guest's copy and a
+  forged snapshot could otherwise fill the edge's scope and exchange bounds.
+  Compute gateways that have the fence still enforce it at their own
+  admission.
+- The edge starts unverified until its first roster read, and keeps its last
+  decision while the roster cannot be read.
+- Metrics: `gatewayd_public_traffic_security_enforced` (1 or 0),
+  `gatewayd_public_traffic_security_legacy_gateways`, and
+  `gatewayd_public_traffic_security_unverified_total`. Each change of
+  decision is logged with the gateways that lack the wiring.
+
+Bounds and limits:
+
+- **Rolling a compute node back from N to N-1.** gatewayd-internal retires its
+  observation on shutdown, so the edge stops requiring the snapshot within one
+  observation interval (about 2 s). A crash without retirement waits out
+  freshness (10 s) plus one interval. Answers that the restarting node gives
+  in that window can still be refused.
+- **Rolling the public edge back below the release that strips the snapshot
+  (rc.295)** while compute gateways stamp it lets the snapshot reach clients.
+  That exposes the app's own account, app and deployment IDs and their
+  revisions. Do not roll gatewayd-public below rc.295 once any compute
+  gateway runs rc.295 or later; roll compute back first (reverse deploy
+  order). Opt-in stamping, where the edge asks for the snapshot with a
+  request header, would remove the rule and is a follow-up.
+- **Unverified long-lived exchanges** are never enrolled at the edge.
+  Revocation cannot cut them at the public hop, and they outlive the switch
+  to required until they end. Compute gateways with the fence still cut
+  their side.
+- **Contract step.** The unverified path is deleted only after two
+  consecutive releases have run with every member reporting the wiring, and
+  not before rc.297. That is a separate change, with the release-compatibility
+  tests updated to match.

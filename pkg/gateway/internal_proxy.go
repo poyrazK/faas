@@ -129,9 +129,9 @@ func (d *tcpDialer) DialContext(ctx context.Context, _ string) (net.Conn, error)
 //
 // The zero value is unusable; construct via NewInternalReverseProxy.
 type InternalReverseProxy struct {
-	// trafficSecurityRequired reports whether every compute gateway behind
-	// this edge stamps the traffic security snapshot; nil means it does.
-	trafficSecurityRequired func() bool
+	// trafficSecurityPeers says whether every compute gateway behind this edge
+	// stamps the traffic security snapshot; nil means it does.
+	trafficSecurityPeers TrafficSecurityPeers
 
 	trafficRevocations  *trafficrevocation.Registry
 	Dialer              InternalDialer
