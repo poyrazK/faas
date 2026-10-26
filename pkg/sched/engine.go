@@ -5338,16 +5338,19 @@ func (e *Engine) ClaimUnplaced(ctx context.Context, appID string) error {
 	if err != nil {
 		return fmt.Errorf("sched: claim unplaced: lookup account: %w", err)
 	}
-	limits := api.MustLimitsFor(acct.Plan)
-	placement, err := e.choosePlacementLocked(ctx, Request{
-		AppID:          appID,
-		RAMMB:          app.RAMMB,
-		VCPU:           limits.VCPU,
-		CPUMillicores:  effectiveAppCPUMillicores(app),
-		MaxConcurrency: app.MaxConcurrency,
-	})
-	if err != nil {
-		return fmt.Errorf("sched: claim unplaced: choose: %w", err)
+	placement, ok := e.chooseOwnerByLoad(ctx, app)
+	if !ok {
+		limits := api.MustLimitsFor(acct.Plan)
+		placement, err = e.choosePlacementLocked(ctx, Request{
+			AppID:          appID,
+			RAMMB:          app.RAMMB,
+			VCPU:           limits.VCPU,
+			CPUMillicores:  effectiveAppCPUMillicores(app),
+			MaxConcurrency: app.MaxConcurrency,
+		})
+		if err != nil {
+			return fmt.Errorf("sched: claim unplaced: choose: %w", err)
+		}
 	}
 	if err := e.store.SetAppNodeID(ctx, appID, placement.NodeID); err != nil {
 		if errors.Is(err, state.ErrConflict) {

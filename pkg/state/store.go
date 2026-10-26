@@ -871,6 +871,13 @@ type ComputeNodeCPUUsageBatcher interface {
 	ComputeNodeUsedCPUMillicoresByNode(ctx context.Context, nodeIDs []string) (map[string]int64, error)
 }
 
+// AppOwnershipLoadReader reports how much app RAM each node already owns
+// (Σ apps.ram_mb over its non-deleted apps), so a new app's owner can be
+// chosen by load (ADR-20261026170000). PgStore and MemStore implement it.
+type AppOwnershipLoadReader interface {
+	OwnedAppRAMByNode(ctx context.Context) (map[string]int64, error)
+}
+
 // ManagedRealtimeEndpointStore is the optional persistence surface for
 // managed realtime endpoint resources. It is intentionally separate from
 // Store so narrow test doubles and older integrations remain source-

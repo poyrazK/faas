@@ -6240,6 +6240,19 @@ func (m *MemStore) ListOwnedCronsByNodeID(_ context.Context, nodeID string) ([]C
 	return out, nil
 }
 
+// OwnedAppRAMByNode mirrors PgStore.OwnedAppRAMByNode.
+func (m *MemStore) OwnedAppRAMByNode(_ context.Context) (map[string]int64, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	owned := make(map[string]int64)
+	for _, a := range m.apps {
+		if a.NodeID != "" && a.Status != AppDeleted {
+			owned[a.NodeID] += int64(a.RAMMB)
+		}
+	}
+	return owned, nil
+}
+
 // ListUnplacedApps mirrors pkg/state/pgstore.go: ListUnplacedApps.
 // Same predicate over the in-memory map; ordered by CreatedAt DESC
 // to match the SQL shape.
