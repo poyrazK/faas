@@ -1,0 +1,105 @@
+name: e2e-general
+
+# KVM-free acceptance of the general request path and of routes
+# (docs/ci-general-path.md): real apid, schedd, gatewayd-public and
+# gatewayd-internal against migrated Postgres, with a fake vmmd at the
+# production gRPC boundary.
+#
+# The mega tier (ci.yml) runs these tests nightly with every other cmd/e2e
+# test. This workflow runs them on pull requests that change Go code, so a
+# gateway that refuses every public request (#4153) or a routes regression
+# is visible before merge. It is a separate workflow, not a ci-light job:
+# the routes tests wait on wall-clock telemetry windows, and a failed
+# post-merge ci-light run fails automatic deploys (deploy_preflight.py).
+
+on:
+  pull_request:
+    paths:
+      - 'cmd/**'
+      - 'pkg/**'
+      - 'api/**'
+      - 'migrations/**'
+      - 'go.mod'
+      - 'go.sum'
+      - 'Makefile'
+      - '.github/workflows/e2e-general.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: e2e-general-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Keep in lock-step with ci.yml and go.mod's toolchain directive.
+  GO_VERSION: "1.26.10"
+
+jobs:
+  e2e-general:
+    name: "e2e-general (${{ matrix.suite }})"
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - suite: normal-path
+            run: '^TestE2E_NormalPath_'
+          # Three tests of about four minutes each: they wait for closed
+          # one-minute telemetry windows.
+          - suite: routes
+            run: '^TestE2E_Routes_'
+    services:
+      postgres:
+        image: mirror.gcr.io/library/postgres:16
+        env:
+          POSTGRES_USER: faas
+          POSTGRES_PASSWORD: faas
+          POSTGRES_DB: faas
+          POSTGRES_INITDB_ARGS: "-c max_locks_per_transaction=512"
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U faas -d faas"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgres://faas:faas@localhost:5432/faas?sslmode=disable
+      # Clone each test database from a once-migrated template instead of
+      # letting apid replay every migration per test (pkg/db/pgtest).
+      FAAS_PGTEST_TEMPLATE_DATABASE: "1"
+      E2E_GENERAL_RUN: ${{ matrix.run }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - id: cache-date
+        run: echo "date=$(date -u +%F)" >> "$GITHUB_OUTPUT"
+      # Restore only: boot-contract builds the same race-enabled cmd/e2e and
+      # daemons and saves go-light-boot on main once a day.
+      - name: restore Go build + test cache
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: go-light-boot-${{ runner.os }}-go${{ env.GO_VERSION }}-${{ hashFiles('go.sum') }}-${{ steps.cache-date.outputs.date }}
+          restore-keys: |
+            go-light-boot-${{ runner.os }}-go${{ env.GO_VERSION }}-${{ hashFiles('go.sum') }}-
+            go-light-boot-${{ runner.os }}-
+            go-e2e-${{ runner.os }}-
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: false
+      - name: install postgresql-client
+        run: |
+          set -euo pipefail
+          sudo find /etc/apt/sources.list.d -maxdepth 1 -type f \
+            \( -iname '*chrome*.list' -o -iname '*chrome*.sources' \
+               -o -iname '*microsoft*.list' -o -iname '*microsoft*.sources' \) -delete
+          sudo apt-get -o Acquire::Retries=3 update
+          sudo apt-get install -y postgresql-client
+      - name: ${{ matrix.suite }} acceptance
+        run: make e2e-general
