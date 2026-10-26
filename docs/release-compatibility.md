@@ -108,6 +108,22 @@ fleet runs that release. Rolling back past it means turning the variable off
 first. Every other request stays on HTTP/1.1, so an older gatewayd-public
 behind an h2c-enabled Caddy fails gRPC only.
 
+**Headers and trailers between gateways are part of the N±1 contract.**
+gatewayd-public runs on the control-plane host and moves with the
+control-plane stage, so for a whole rollout it sits in front of N-1 compute
+gateways. Rolling it back puts it in front of N ones. A receiver accepts the
+absence of a header that an N-1 sender never writes, and a sender must not
+emit a header that an N-1 receiver would pass to clients. On 2026-10-26 an
+rc.295 gatewayd-public required ADR-570's `X-Faas-Traffic-Security` snapshot,
+which rc.294 compute gateways never stamp. Every successful application
+response became a 503 from 10:39 to 12:14 UTC. The public edge now
+requires the snapshot only once every compute gateway it may dial reports the
+wiring (ADR-570, amendment of 2026-10-26).
+`TestPublicTrafficSecurityFollowsItsPeers` and
+`TestPublicProxyServesAPlainN1Answer` (`pkg/gateway`) hold the public hop to
+this. A new header requirement needs the same fleet gate or an opt-in
+negotiation, plus a case in those tests.
+
 ## Gate 1: version skew (CI, every pull request)
 
 `make version-skew-check` runs `scripts/ci/versionskew`, a Go tool. CI runs
@@ -444,3 +460,6 @@ The unit lanes enforce the rules above in their workflows:
   Neither is built.
 - The full release pipeline still has to enforce that no unit lags more than
   one release. The unit lanes do enforce it.
+- Gate 1 checks protos and guest JSON only. HTTP headers and trailers
+  between gatewayd-public and gatewayd-internal have no CI skew check; the
+  tests named under Deploy order are the guard.

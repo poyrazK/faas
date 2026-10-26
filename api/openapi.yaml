@@ -21466,7 +21466,9 @@ paths:
         combine with AND. A text search (`q`) covers at most 24 hours and
         answers 400 `log_search_window_too_large` beyond that; every search
         runs under a 5 second statement timeout and answers 503
-        `log_search_timeout` when it trips. Pass `next_cursor` back as
+        `log_search_timeout` when it trips. An account runs at most 2 log
+        reads at once; a read that waits over 2 seconds for one answers 429
+        `log_reads_busy` with Retry-After. Pass `next_cursor` back as
         `cursor` for the following page.
       parameters:
         - $ref: '#/components/parameters/LogSearchSince'
@@ -84192,7 +84194,7 @@ components:
         vcpu: { type: integer, minimum: 1, maximum: 4, description: "Plan-derived guest vCPU topology. Free/Hobby/Pro use 2; Scale uses 4. This is informational on account reads." }
         max_concurrency: { type: integer }
         deployed_apps: { type: integer }
-        preview_apps: { type: integer, description: "Maximum live pull-request preview apps, separate from production apps." }
+        preview_apps: { type: integer, description: "Maximum open PR preview environments, separate from production apps." }
         deploys_per_hour: { type: integer, minimum: 1, description: "Account-wide deployment admissions per fixed one-hour window." }
         developer_apps: { type: integer, description: "Maximum live `gregale dev` environments for this plan." }
         included_gb_hours: { type: integer, format: int64 }

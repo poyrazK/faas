@@ -13071,6 +13071,7 @@
       "pr_number",
       "repo_full_name",
       "root_app_id",
+      "setup_error",
       "updated_at"
     ],
     "kind": "operational"

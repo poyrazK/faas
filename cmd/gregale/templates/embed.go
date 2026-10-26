@@ -19,6 +19,7 @@ package templates
 
 import (
 	"archive/tar"
+	"bytes"
 	"compress/gzip"
 	"embed"
 	"fmt"
@@ -28,6 +29,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"text/template"
 
 	"github.com/onebox-faas/faas/pkg/api"
 )
@@ -40,6 +42,16 @@ import (
 //go:embed hello-node hello-python hello-go cron-example function-node function-python function-go function-node24 function-python313 function-rust event-worker queue-worker s3-uploader object-storage-node slack-bot rest-api-postgres rest-api-postgres-python cron-worker webhook-receiver ai-chat secret-reload-node customer-platform mcp-node mcp-go mcp-python customer-operation-export customer-operation-job-export customer-operation-workflow-export data-api data-api-starter durable-entity-node data-api-teams data-api-support-console auth
 //go:embed rest-api-postgres-python/runtime/*.py object-storage-python object-storage-python/runtime/*.py
 var FS embed.FS
+
+// agentsGuide is the AGENTS.md every materialized project receives, so a
+// coding agent finds the deploy, inspect and rollback contract without
+// reading the docs first. Its only field is the template name; README.md
+// stays the source for each template's own setup.
+//
+//go:embed agents.md.tmpl
+var agentsGuide string
+
+var agentsGuideTemplate = template.Must(template.New("AGENTS.md").Parse(agentsGuide))
 
 // GoToolchainVersion is the patched toolchain selected by Gregale's built-in
 // Go starters. Unlike a customer-owned go.mod, these generated modules are
@@ -339,7 +351,20 @@ func Materialize(name, dest string) error {
 			}
 		}
 	}
-	return nil
+	return writeAgentsGuide(name, dest)
+}
+
+// writeAgentsGuide adds AGENTS.md unless the destination already has one.
+func writeAgentsGuide(name, dest string) error {
+	target := filepath.Join(dest, "AGENTS.md")
+	if _, err := os.Stat(target); !os.IsNotExist(err) {
+		return err
+	}
+	var guide bytes.Buffer
+	if err := agentsGuideTemplate.Execute(&guide, struct{ Template string }{name}); err != nil {
+		return err
+	}
+	return os.WriteFile(target, guide.Bytes(), 0o644)
 }
 
 // TarGz materializes the template and writes a tar.gz to dest. The

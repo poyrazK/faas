@@ -4446,10 +4446,10 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 	// ObserveAppErrorsPurge convention.
 	previewJanitorOutcomes := prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: prefix + "_preview_janitor_outcomes_total",
-		Help: "Preview teardown cron outcomes (ADR-095 PR-C, issue #272), labelled by outcome ∈ {ok, failed, torn_down}. `ok` fires every tick the sweep ran cleanly (whether or not it tombstoned a row); `torn_down` fires per-row when a preview app reaches torn_down and is soft-deleted (the §12 teardown-rate panel sums this over 1h to chart PR-close cadence); `failed` is the tripwire for a SQL-level failure (alertable). Single-registry: registered on every daemon; only apid increments via ObservePreviewJanitor.",
+		Help: "Preview teardown cron outcomes (ADR-095 PR-C, issue #272), labelled by outcome ∈ {ok, failed, torn_down, row_failed}. `ok` fires every tick the sweep ran cleanly (whether or not it tombstoned a row); `torn_down` fires per-row when a preview app reaches torn_down and is soft-deleted (the §12 teardown-rate panel sums this over 1h to chart PR-close cadence); `failed` is the tripwire for a SQL-level failure of a whole sweep and `row_failed` for one preview that could not be claimed or torn down (both alertable). Single-registry: registered on every daemon; only apid increments via ObservePreviewJanitor.",
 	}, []string{"outcome"})
 	commonCollectors = append(commonCollectors, previewJanitorOutcomes)
-	for _, outcome := range []string{"ok", "failed", "torn_down"} {
+	for _, outcome := range []string{"ok", "failed", "torn_down", "row_failed"} {
 		previewJanitorOutcomes.WithLabelValues(outcome)
 	}
 	// ADR-067 / Tier A6: migrating-instance watchdog reconcile counter.

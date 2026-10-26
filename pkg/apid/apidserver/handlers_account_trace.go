@@ -152,7 +152,7 @@ func (s *server) addAccountTraceEvidence(ctx context.Context, accountID string, 
 		appSlugs[app.ID] = app.Slug
 		appIDs = append(appIDs, app.ID)
 	}
-	logEvents, hasMoreLogs, err := s.store.ListAccountTraceLogEvents(ctx, state.AccountTraceLogFilter{
+	logEvents, hasMoreLogs, err := s.logEvents().ListAccountTraceLogEvents(ctx, state.AccountTraceLogFilter{
 		AccountID: accountID, AppIDs: appIDs, TraceID: traceID,
 		Source: state.LogEventSourceHTTP, Since: since, Until: until, Limit: logLimit,
 	})

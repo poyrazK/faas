@@ -215,6 +215,8 @@ type PreviewListItem struct {
 	CreatedAt     time.Time
 	Hostname      string
 	DestroyAction string
+	// DestroyCSRF is the token the Tear down form posts with DestroyAction.
+	DestroyCSRF string
 }
 
 // PRPreviewEnvironmentView is the current-head, whole-PR status shown on the

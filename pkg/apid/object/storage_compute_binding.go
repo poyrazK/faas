@@ -312,7 +312,7 @@ func (s *Service) DeleteObjectStorageComputeBinding(w http.ResponseWriter, r *ht
 	if changed {
 		s.Host.NotifyRuntimeConfigChange(r.Context(), db.NotifySecretRotated, acct, app, "binding_revoked", credential.ManagedScope, "")
 	}
-	s.Host.EmitAudit(r.Context(), "object_storage.compute_binding_revoked", &acct.ID, map[string]any{"app_id": app.ID, "bucket_id": bucket.ID, "binding_id": credential.ID})
+	s.emitRevocation(r.Context(), "object_storage.compute_binding_revoked", acct.ID, map[string]any{"app_id": app.ID, "bucket_id": bucket.ID, "binding_id": credential.ID})
 	w.WriteHeader(http.StatusNoContent)
 }
 
