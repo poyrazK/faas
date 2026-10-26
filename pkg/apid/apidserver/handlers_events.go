@@ -29,6 +29,7 @@ import (
 	authmw "github.com/onebox-faas/faas/pkg/auth/middleware"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/session"
+	"github.com/onebox-faas/faas/pkg/sessioncookie"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -162,7 +163,7 @@ func (s *server) eventsHandler(log *slog.Logger) http.HandlerFunc {
 // which case the caller is implicitly admin). Returns the account,
 // key, and true; or false if neither auth path matched.
 func resolveEventsCaller(r *http.Request, s *server) (state.Account, *state.APIKey, bool) {
-	if c, err := r.Cookie(sessionCookie); err == nil && c.Value != "" {
+	if c, err := sessioncookie.Get(r); err == nil && c.Value != "" {
 		// Same session checks as every other cookie route: a live,
 		// unrevoked sessions row and completed MFA. The signature alone
 		// let revoked and mfa_pending sessions hold the account's event

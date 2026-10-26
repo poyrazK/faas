@@ -33,6 +33,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/githubdgrpc"
 	"github.com/onebox-faas/faas/pkg/httpsec"
 	"github.com/onebox-faas/faas/pkg/middleware"
+	"github.com/onebox-faas/faas/pkg/sessioncookie"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -236,7 +237,7 @@ var _ = githubdgrpc.Repo{}
 // re-runs sessionGithubLogin), so the wizard's "peek" path is
 // read-only by design.
 func peekSessionGithubLogin(s *server, r *http.Request) (string, bool) {
-	c, err := r.Cookie(sessionCookie)
+	c, err := sessioncookie.Get(r)
 	if err != nil || c.Value == "" {
 		return "", false
 	}
