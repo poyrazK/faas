@@ -7540,6 +7540,18 @@ type LayerArtifactRetention struct {
 	DeleteRequestedAt pgtype.Timestamptz
 }
 
+type LogArchiveErasure struct {
+	AccountID           pgtype.UUID
+	DeletionRequestedAt pgtype.Timestamptz
+	SnapshottedAt       pgtype.Timestamptz
+}
+
+type LogArchiveErasureInstance struct {
+	AccountID  pgtype.UUID
+	InstanceID pgtype.UUID
+	ErasedAt   pgtype.Timestamptz
+}
+
 type LogEvent struct {
 	ID            pgtype.UUID
 	OccurredAt    pgtype.Timestamptz
@@ -9220,6 +9232,13 @@ type ObjectBucket struct {
 	EnvironmentCloneSourceBucketID pgtype.UUID
 	EnvironmentCloneOperationID    pgtype.UUID
 	OrgID                          pgtype.UUID
+}
+
+type ObjectBucketCor struct {
+	BucketID  pgtype.UUID
+	Rules     []byte
+	Revision  int64
+	UpdatedAt pgtype.Timestamptz
 }
 
 type ObjectBucketEncryption struct {

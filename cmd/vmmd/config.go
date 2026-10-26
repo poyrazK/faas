@@ -123,6 +123,12 @@ type Config struct {
 	// that no extension endpoint is listening (ADR-20261025150000). Off by
 	// default; FAAS_INVOKE_HOOK_BACKOFF overrides TOML.
 	InvokeHookBackoff bool `toml:"invoke_hook_backoff"`
+	// BridgeStreamHeadroom lets vmmd open another HTTP/2 connection to an
+	// instance's stream bridge when one is at its stream cap instead of
+	// queueing requests, sizes the bridge's guest pool to that cap and
+	// shortens its guest dial timeout (ADR-20261026120000). Off by default;
+	// FAAS_BRIDGE_STREAM_HEADROOM overrides TOML.
+	BridgeStreamHeadroom bool `toml:"bridge_stream_headroom"`
 	// RequireSecretBinding refuses runtime secret envelopes that carry no
 	// account binding (ADR-20261023173624, contract step). Off by default;
 	// the seal_domains role turns it on once every stored envelope is
@@ -852,6 +858,13 @@ func LoadConfig(path string) (*Config, error) {
 			return nil, fmt.Errorf("vmmd: FAAS_RUNTIME_SECRET_BINDING_REQUIRED must be a boolean (got %q)", v)
 		}
 		c.RequireSecretBinding = required
+	}
+	if v := os.Getenv("FAAS_BRIDGE_STREAM_HEADROOM"); v != "" {
+		enabled, perr := strconv.ParseBool(v)
+		if perr != nil {
+			return nil, fmt.Errorf("vmmd: FAAS_BRIDGE_STREAM_HEADROOM must be a boolean (got %q)", v)
+		}
+		c.BridgeStreamHeadroom = enabled
 	}
 	if v := os.Getenv("FAAS_INVOKE_HOOK_BACKOFF"); v != "" {
 		enabled, perr := strconv.ParseBool(v)

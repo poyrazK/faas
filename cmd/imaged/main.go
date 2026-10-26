@@ -307,6 +307,18 @@ func (d runDeps) run(ctx context.Context, log *slog.Logger) error {
 		pullerOpts = append(pullerOpts, oci.WithBlobCache(blobCache))
 		log.Info("imaged: OCI blob cache enabled", "root", blobCache.Root(), "max_bytes", blobCacheMaxBytes)
 	}
+	// ADR-20261025114554: anonymous Docker Hub pulls go through the
+	// operator's mirrors first, since Docker Hub limits them per IP.
+	mirrors, err := api.ParseDockerHubMirrors(os.Getenv(api.DockerHubMirrorsEnv))
+	if err != nil {
+		return fmt.Errorf("imaged: %w", err)
+	}
+	if len(mirrors) > 0 {
+		pullerOpts = append(pullerOpts, oci.WithDockerHubMirrors(mirrors, func(mirror string, err error) {
+			log.Warn("imaged: Docker Hub mirror failed; trying the next source", "mirror", mirror, "err", err)
+		}))
+		log.Info("imaged: Docker Hub mirrors enabled", "mirrors", mirrors)
+	}
 	puller := oci.NewRegistryClient(pullerOpts...)
 	log.Info("imaged: oci puller ready", "timeout_s", int(ociPullTimeout().Seconds()))
 

@@ -27,6 +27,7 @@ func confirmProjectPlan(plan api.PlanResponse, excludeList []string, showAffecte
 		if !jsonOutput {
 			printPublicURLs(osStdout, plan.Workloads)
 			printUnsetEnvKeys(osStdout, plan.Workloads)
+			printDefaultMemoryServices(osStdout, plan)
 		}
 		return 0
 	}

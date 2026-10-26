@@ -28,8 +28,8 @@ func cmdReleaseGates(args []string) int {
 	case "rm", "delete":
 		return releaseGatesRemove(args[1:])
 	}
-	fmt.Fprintf(os.Stderr, "gregale release-gates: unknown subcommand %q\n", args[0])
-	return 1
+	printCommandValidation(os.Stderr, "gregale release-gates: unknown subcommand %q\n", args[0])
+	return unknownSubcommandChoices(os.Stderr, "release-gates", nestedCliCommand("release-gates"), args[0])
 }
 
 // releaseGatesApp resolves --app from the flag or the linked project.

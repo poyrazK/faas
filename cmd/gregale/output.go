@@ -314,18 +314,40 @@ func unknownSubcommandChoices(w io.Writer, path string, command cliCommand, got 
 
 // printSubcommandChoices lists the verbs a dispatcher accepts. An app slug in
 // the verb position gets the verb-first form: `projects environments h14p`
-// and `debug requests h14-py` named neither (Hunt 14 H14-42).
+// and `debug requests h14-py` named neither (Hunt 14 H14-42). Only a `list`
+// that takes an app gets it: `keys list h14-py` is no command (H14-64).
 func printSubcommandChoices(w io.Writer, path string, command cliCommand, got string) {
 	names := make([]string, 0, len(command.Subcommands))
-	hasList := false
+	listApp := ""
 	for _, sub := range command.Subcommands {
+		if slices.Contains(names, sub.Name) {
+			continue
+		}
 		names = append(names, sub.Name)
-		hasList = hasList || sub.Name == subList
+		if sub.Name == subList {
+			listApp = listAppForm(sub, got)
+		}
 	}
 	_, _ = fmt.Fprintf(w, "  Subcommands: %s\n", strings.Join(names, ", "))
-	if hasList && api.ValidAppSlug(got) && !commonVerbWord(got) {
-		_, _ = fmt.Fprintf(w, "  If %s is an app, the subcommand comes first: gregale %s list %s\n", got, path, got)
+	if listApp != "" && api.ValidAppSlug(got) && !commonVerbWord(got) {
+		_, _ = fmt.Fprintf(w, "  If %s is an app, the subcommand comes first: gregale %s list %s\n", got, path, listApp)
 	}
+}
+
+// listAppForm spells slug the way a `list` verb takes an app: positionally
+// when it declares an app positional, else with --app, else not at all.
+func listAppForm(list cliSub, slug string) string {
+	for _, positional := range list.Positionals {
+		if strings.Contains(positional, "app") || strings.Contains(positional, "slug") {
+			return slug
+		}
+	}
+	for _, f := range list.Flags {
+		if f.Name == "app" {
+			return "--app " + slug
+		}
+	}
+	return ""
 }
 
 // commonVerbWord is a verb another CLI would accept here (`alerts get`); it
