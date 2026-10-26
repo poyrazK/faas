@@ -5776,7 +5776,18 @@ func (v *JailerVMM) stageEphemeralWritableAsForOwner(ctx context.Context, owner 
 	} else if !errors.Is(err, syscall.EXDEV) {
 		return "", fmt.Errorf("link ephemeral writable %s: %w", src, err)
 	}
-	return v.bindImageForOwner(ctx, owner, root, src, name, instance, 0o006, false)
+	// The jail is tmpfs and builderd's scratch is on disk, so the image is
+	// bound, and a bind keeps the source's owner. The guest-disk sandbox
+	// edits a drive only as its jail uid (ADR-20261025090100), so hand this
+	// build's own scratch image to that uid, as the link above hands over the
+	// shared inode. builderd only removes it afterwards.
+	if err := os.Chmod(src, 0o600); err != nil {
+		return "", fmt.Errorf("chmod ephemeral writable %s: %w", src, err)
+	}
+	if err := chownJail(src, uid, gid); err != nil {
+		return "", err
+	}
+	return v.bindImageForOwner(ctx, owner, root, src, name, instance, 0, false)
 }
 
 // stageReadOnlyAs hardlinks a shared read-only image when possible and
