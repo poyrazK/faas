@@ -248,21 +248,27 @@ func TestReleaseGuardsDrillMetal(t *testing.T) {
 			api.SetReleaseApprovalPolicyRequest{RequiredApprovals: 1, AfterStage: 1, NotifyChannels: []string{channel}}, http.StatusOK, nil)
 
 		// A busy 50% stage gives the circuit breaker the samples to advance,
-		// so only the approval can hold the release there.
-		stop := od.sendTraffic(app, "/", 200*time.Millisecond)
-		candidate := od.deployLive(t, app, api.CreateDeploymentRequest{Image: v2, Canary: customCanary("50", "30s")})
-		waiting := og.waitApproval(t, candidate.ID, 3*time.Minute, api.ReleaseApprovalStateWaiting)
-		deadline := time.Now().Add(4 * time.Minute)
-		var rules []string
-		for !slices.Contains(rules, api.RolloutRuleHoldAwaitingApproval) {
-			if time.Now().After(deadline) {
-				stop()
-				t.Fatalf("hold rules = %v after 4m, want %s", rules, api.RolloutRuleHoldAwaitingApproval)
+		// so only the approval can hold the release there. The approval
+		// request goes out when the release reaches that hold.
+		deployHeld := func(image string) (state.Deployment, []string) {
+			t.Helper()
+			stop := od.sendTraffic(app, "/", 200*time.Millisecond)
+			defer stop()
+			dep := od.deployLive(t, app, api.CreateDeploymentRequest{Image: image, Canary: customCanary("50", "30s")})
+			og.waitApproval(t, dep.ID, 3*time.Minute, api.ReleaseApprovalStateWaiting)
+			deadline := time.Now().Add(4 * time.Minute)
+			var rules []string
+			for !slices.Contains(rules, api.RolloutRuleHoldAwaitingApproval) {
+				if time.Now().After(deadline) {
+					t.Fatalf("hold rules of %s = %v after 4m, want %s", dep.ID, rules, api.RolloutRuleHoldAwaitingApproval)
+				}
+				time.Sleep(5 * time.Second)
+				rules = od.holdRules(t, dep.ID)
 			}
-			time.Sleep(5 * time.Second)
-			rules = od.holdRules(t, candidate.ID)
+			return dep, rules
 		}
-		stop()
+		candidate, rules := deployHeld(v2)
+		waiting := og.waitApproval(t, candidate.ID, time.Minute, api.ReleaseApprovalStateWaiting)
 		held, _ := store.DeploymentByID(ctx, candidate.ID)
 		if held.TrafficPercent != 50 || held.RolloutState == "complete" {
 			t.Fatalf("waiting release = traffic:%d rollout:%q, want held at 50%%", held.TrafficPercent, held.RolloutState)
@@ -290,8 +296,7 @@ func TestReleaseGuardsDrillMetal(t *testing.T) {
 		}
 		t.Logf("DRILL approval_to_complete seconds=%.0f", time.Since(approvedAt).Seconds())
 
-		rejected := od.deployLive(t, app, api.CreateDeploymentRequest{Image: v3, Canary: customCanary("50", "30s")})
-		og.waitApproval(t, rejected.ID, 3*time.Minute, api.ReleaseApprovalStateWaiting)
+		rejected, _ := deployHeld(v3)
 		og.mustStatus(t, approverKey, http.MethodPost, "/v1/deployments/"+rejected.ID+"/approvals",
 			api.DecideReleaseApprovalRequest{Decision: api.ReleaseApprovalDecisionReject, Comment: "not this week"}, http.StatusOK, nil)
 		aborted := od.waitDeployment(t, rejected.ID, 3*time.Minute, func(dep state.Deployment) bool { return dep.RolloutState == "aborted" })
