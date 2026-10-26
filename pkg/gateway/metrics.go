@@ -2816,7 +2816,7 @@ func (m *Metrics) ObserveWAFInlineSkip(appID, reason string) {
 	if m == nil || m.wafInlineSkips == nil {
 		return
 	}
-	if reason != WAFInlineSkipBudget {
+	if reason != WAFInlineSkipBudget && reason != WAFInlineSkipAccountShare {
 		reason = WAFInlineSkipBusy
 	}
 	m.wafInlineSkips.WithLabelValues(appID, reason).Inc()
