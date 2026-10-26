@@ -140,7 +140,7 @@ func (s *Session) WriteFilesAfter(ctx context.Context, files []File, inspected m
 		if err := s.writeScratchFile(src, f.Data); err != nil {
 			return err
 		}
-		fmt.Fprintf(&script, "write %s %s\nsif %s mode 0100%o\nsif %s uid %d\nsif %s gid %d\n", src, f.Path, f.Path, mode, f.Path, uid, f.Path, gid)
+		fmt.Fprintf(&script, "write %s %s\nsif %s mode 0100%o\nsif %s uid %d\nsif %s gid %d\n", s.toolScratch(src), f.Path, f.Path, mode, f.Path, uid, f.Path, gid)
 		state[f.Path] = Entry{Kind: Regular, Mode: mode, UID: uid, GID: gid}
 		if _, ok := final[f.Path]; !ok {
 			order = append(order, f.Path)
@@ -158,7 +158,7 @@ func (s *Session) WriteFilesAfter(ctx context.Context, files []File, inspected m
 		return err
 	}
 	script.Write(probes.script)
-	got, err := s.applyScript(ctx, script.Bytes(), probes, nil, []string{in})
+	got, err := s.applyScript(ctx, script.Bytes(), probes, nil, []string{s.toolScratch(in)})
 	if err != nil {
 		return err
 	}
@@ -324,7 +324,7 @@ func (s *Session) treeRemovals(ctx context.Context, trees []string) ([]byte, err
 // may hold only debugfs's version banner, the probe markers' own "not found"
 // lines and, for paths in expectMissing, theirs.
 func (s *Session) applyScript(ctx context.Context, script []byte, probes *probeBatch, expectMissing map[string]bool, readDirs []string) (map[string]Entry, error) {
-	res, err := s.run(ctx, s.ed.debugfs, []string{"-w", "-f", "-", s.image}, script, runLimits{output: probes.output + 1<<20, readDirs: readDirs})
+	res, err := s.run(ctx, s.ed.debugfs, []string{"-w", "-f", "-", s.toolImage()}, script, runLimits{output: probes.output + 1<<20, readDirs: readDirs})
 	if err != nil {
 		return nil, fmt.Errorf("guestdisk: edit: %w", err)
 	}

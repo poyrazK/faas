@@ -1011,6 +1011,10 @@ serving-probe-test: ## Test the compute-node serving probe (ADR-20261023124955 Â
 cgroup-metrics-test: ## Test the per-slice cgroup metrics collector (ADR-20261023124955)
 	python3 scripts/ops/faas_cgroup_metrics_test.py
 
+.PHONY: postgres-activity-metrics-test
+postgres-activity-metrics-test: ## Test the control-plane PostgreSQL activity collector
+	python3 scripts/ops/faas_postgres_activity_metrics_test.py
+
 .PHONY: gcp-public-beta-policy-test
 gcp-public-beta-policy-test: ## Test the read-only GCP production policy and IAM transformer
 	python3 scripts/ops/gcp_public_beta_audit_test.py

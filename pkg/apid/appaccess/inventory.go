@@ -59,6 +59,26 @@ func VisibleAppsContext(ctx context.Context, store Store, actor state.Account, a
 	return visible, nil
 }
 
+// HiddenApps names the apps of an account's own list that VisibleApps
+// withholds from the request's principal, for a view whose store pages or
+// counts per-app rows itself: the view passes them down so hidden rows are
+// neither shown nor counted. Apps absent from the list (deleted ones) are not
+// hidden.
+func HiddenApps(r *http.Request, store Store, actor state.Account, apps []state.App) (map[string]bool, error) {
+	visible, err := VisibleApps(r, store, actor, apps)
+	if err != nil {
+		return nil, err
+	}
+	hidden := make(map[string]bool, len(apps)-len(visible))
+	for _, app := range apps {
+		hidden[app.ID] = true
+	}
+	for _, app := range visible {
+		delete(hidden, app.ID)
+	}
+	return hidden, nil
+}
+
 func VisibleBuilds(r *http.Request, store Store, actor state.Account, builds []state.Build) ([]state.Build, error) {
 	apps := make(map[string]state.App)
 	buildApps := make(map[string]string, len(builds))

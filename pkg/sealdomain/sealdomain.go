@@ -118,7 +118,7 @@ var registry = []Spec{
 		cols("outbound_integration_credentials", "authorization_sealed"),
 		cols("outbound_integration_credential_keys", "authorization_sealed"),
 	)},
-	{Domain: Build, Readers: []string{"imaged"}, Roles: computeOnly, Wired: true, Columns: join(
+	{Domain: Build, Readers: []string{"imaged", "vmmd"}, Roles: computeOnly, Wired: true, Columns: join(
 		cols("app_registry_credentials", "password_encrypted"),
 		cols("job_registry_credentials", "password_encrypted"),
 	)},
@@ -149,7 +149,7 @@ var registry = []Spec{
 		cols("app_webhooks", "secret_sealed"),
 		cols("commit_sources", "sealed_connection"),
 	)},
-	{Domain: Control, Readers: []string{"schedd"}, Roles: bothRoles, Columns: join(
+	{Domain: Control, Readers: []string{"schedd"}, Roles: bothRoles, Wired: true, Columns: join(
 		cols("cluster_signing_keys", "sealed_blob"),
 	)},
 	{Domain: Account, Readers: []string{"apid", "apid-clone-worker", "apid-data-pipeline-worker"}, Roles: cpOnly, Columns: join(

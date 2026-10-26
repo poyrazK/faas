@@ -3,6 +3,8 @@ package builderd
 import (
 	"testing"
 	"time"
+
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func TestBuilderSlotLogLineNamesTheQueueWait(t *testing.T) {
@@ -17,6 +19,24 @@ func TestBuilderSlotLogLineNamesTheQueueWait(t *testing.T) {
 	} {
 		if got := builderSlotLogLine("guaranteed", tc.wait); got != tc.want {
 			t.Errorf("builderSlotLogLine(%s) = %q, want %q", tc.wait, got, tc.want)
+		}
+	}
+}
+
+// TestBuilderQueueWaitReasonNamesTheSlotWait: the deploy stages booked a
+// builder-slot wait to "Source downloaded" (Hunt 12 H12-5).
+func TestBuilderQueueWaitReasonNamesTheSlotWait(t *testing.T) {
+	enqueued := time.Date(2026, 10, 26, 8, 0, 0, 0, time.UTC)
+	for _, tc := range []struct {
+		started time.Time
+		want    string
+	}{
+		{time.Time{}, ""},
+		{enqueued.Add(2 * time.Second), ""},
+		{enqueued.Add(192*time.Second + 300*time.Millisecond), "waited 3m12s for a builder slot"},
+	} {
+		if got := builderQueueWaitReason(state.Build{EnqueuedAt: enqueued, StartedAt: tc.started}); got != tc.want {
+			t.Errorf("started %s: %q, want %q", tc.started, got, tc.want)
 		}
 	}
 }

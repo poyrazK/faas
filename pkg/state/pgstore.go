@@ -10911,6 +10911,9 @@ func (s *PgStore) AppendDeploymentStage(ctx context.Context, id string, from, to
 		EndedAt:    &endedAt,
 		DurationMs: durMs,
 		Status:     stageHistoryStatusCompleted,
+		// A note on the closed stage, such as the builder-slot wait booked to
+		// source_download (Hunt 12 H12-5).
+		Reason: reason,
 	})
 	state.Current = to
 	state.CurrentStartedAt = &startedAt
@@ -11098,16 +11101,24 @@ func (s *PgStore) RetryDeploymentFromStage(ctx context.Context, failedID string,
 	if !stageNameClosedSet[fromStage] {
 		return Deployment{}, ErrInvalidArgument
 	}
+	return retryTrafficSerialization(ctx, func() (Deployment, error) {
+		return s.retryDeploymentFromStageOnce(ctx, failedID, fromStage)
+	})
+}
+
+// The retry takes the app's next revision, so its revision URL is a new
+// binding: the insert joins the shared binding guard (ADR-570).
+func (s *PgStore) retryDeploymentFromStageOnce(ctx context.Context, failedID string, fromStage StageName) (Deployment, error) {
 	// Step 2 — read the failed row.
 	src, err := s.DeploymentByID(ctx, failedID)
 	if err != nil {
 		return Deployment{}, err
 	}
-	tx, err := s.pool.Begin(ctx)
+	tx, err := s.beginAppTrafficMutation(ctx, src.AppID)
 	if err != nil {
 		return Deployment{}, err
 	}
-	defer func() { _ = tx.Rollback(ctx) }()
+	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
 	var deployable int
 	if err := tx.QueryRow(ctx, `select 1 from apps where id=$1 and status in ('active', 'evicted_cold') for update`, src.AppID).Scan(&deployable); err != nil {
 		return Deployment{}, mapErr(err)
@@ -11333,11 +11344,19 @@ func (s *PgStore) MarkAutoRollback(ctx context.Context, deploymentID, reason str
 //
 // Migration 00297 / Mega-C PR-2 / issue #961 leaf 8.
 func (s *PgStore) AutoRollbackDeploymentsTx(ctx context.Context, appID, currentDeploymentID string) (string, error) {
-	tx, err := s.pool.Begin(ctx)
+	return retryTrafficSerialization(ctx, func() (string, error) {
+		return s.autoRollbackDeploymentsOnce(ctx, appID, currentDeploymentID)
+	})
+}
+
+// The rollback target's revision URL serves again; the binding guard
+// (ADR-570) validates it before commit.
+func (s *PgStore) autoRollbackDeploymentsOnce(ctx context.Context, appID, currentDeploymentID string) (string, error) {
+	tx, err := s.beginAppTrafficMutation(ctx, appID)
 	if err != nil {
 		return "", err
 	}
-	defer tx.Rollback(ctx) //nolint:errcheck
+	defer tx.Rollback(context.WithoutCancel(ctx)) //nolint:errcheck
 
 	if err := pgLockProductionLifecycleApp(ctx, tx, appID); err != nil {
 		return "", err
@@ -11453,11 +11472,19 @@ func (s *PgStore) PrepareDeploymentRollback(ctx context.Context, appID, targetDe
 	if appID == "" || targetDeploymentID == "" {
 		return Deployment{}, ErrInvalidArgument
 	}
-	tx, err := s.pool.Begin(ctx)
+	return retryTrafficSerialization(ctx, func() (Deployment, error) {
+		return s.prepareDeploymentRollbackOnce(ctx, appID, targetDeploymentID)
+	})
+}
+
+// A superseded target's revision URL serves again, so the preparation joins
+// the shared binding guard (ADR-570) and commits only after its analysis.
+func (s *PgStore) prepareDeploymentRollbackOnce(ctx context.Context, appID, targetDeploymentID string) (Deployment, error) {
+	tx, err := s.beginAppTrafficMutation(ctx, appID)
 	if err != nil {
 		return Deployment{}, fmt.Errorf("state: prepare rollback begin: %w", err)
 	}
-	defer func() { _ = tx.Rollback(ctx) }()
+	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
 
 	var locked int
 	if err := tx.QueryRow(ctx, `select 1 from apps where id = $1 for update`, appID).Scan(&locked); err != nil {

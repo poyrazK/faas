@@ -57,6 +57,7 @@ alloy_journal_units:
   - faas-pg-basebackup-push.service
   - faas-pg-wal-prune.service
   - faas-postgres-connection-metrics.service
+  - faas-postgres-activity-metrics.service
   - faas-internal-mail-metrics.service
   - faas-internal-pki-metrics.service
   - faas-tenant-egress-firewall.service

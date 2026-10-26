@@ -332,7 +332,28 @@ func (w *Worker) resume(ctx context.Context, sw state.DatabaseSwitch) state.Data
 // the previous release live again if the target was switched in, then
 // cancels the cutover, whose cancellation revokes the staged credentials and
 // lifts the fence and the pins. The restored database is kept.
+//
+// An activation that committed first wins: the bindings already point at the
+// copy, so the switch finishes with the target live. The cutover is read
+// before the release is touched, and cancelling matches no activated
+// cutover, so an activation that commits between that read and the release
+// rollback makes the next attempt put the target back while the fence holds.
 func (w *Worker) abort(ctx context.Context, sw state.DatabaseSwitch) state.DatabaseSwitch {
+	var c managedpostgres.Cutover
+	var cutoverErr error
+	if sw.CutoverID != "" {
+		c, cutoverErr = w.Cutovers.Get(ctx, sw.AccountID, sw.CutoverID)
+		if cutoverErr != nil && !errors.Is(cutoverErr, managedpostgres.ErrNotFound) {
+			return w.retry(sw, errorCode(cutoverErr))
+		}
+		if cutoverErr == nil && c.State == managedpostgres.CutoverActivated {
+			if err := w.restoreTarget(ctx, sw); err != nil {
+				return w.retry(sw, errorCode(err))
+			}
+			sw.FailureCode, sw.FailureDetail = "", ""
+			return w.activated(sw)
+		}
+	}
 	if sw.ReleaseSwitchedAt != nil && sw.FromDeploymentID != "" {
 		live, err := w.Releases.LiveDeploymentForScope(ctx, sw.AppID, sw.Scope)
 		if err != nil && !errors.Is(err, state.ErrNotFound) {
@@ -348,27 +369,37 @@ func (w *Worker) abort(ctx context.Context, sw state.DatabaseSwitch) state.Datab
 			}
 		}
 	}
-	if sw.CutoverID != "" {
-		c, err := w.Cutovers.Get(ctx, sw.AccountID, sw.CutoverID)
-		if err != nil && !errors.Is(err, managedpostgres.ErrNotFound) {
-			return w.retry(sw, errorCode(err))
-		}
-		switch {
-		case err != nil:
-		case c.State == managedpostgres.CutoverActivated:
-			// The activation committed after all: finish the switch.
-			return w.activated(sw)
-		case c.State != managedpostgres.CutoverCancelled:
-			if c.State != managedpostgres.CutoverCancelling {
-				if _, err := w.Cutovers.Cancel(ctx, sw.AccountID, sw.CutoverID); err != nil {
-					return w.retry(sw, errorCode(err))
-				}
+	if sw.CutoverID != "" && cutoverErr == nil && c.State != managedpostgres.CutoverCancelled {
+		if c.State != managedpostgres.CutoverCancelling {
+			if _, err := w.Cutovers.Cancel(ctx, sw.AccountID, sw.CutoverID); err != nil {
+				return w.retry(sw, errorCode(err))
 			}
-			return w.wait(sw)
 		}
+		return w.wait(sw)
 	}
 	if sw.FailureCode == codeCancelled {
 		return w.finish(sw, state.DatabaseSwitchCancelled)
 	}
 	return w.finish(sw, state.DatabaseSwitchFailed)
+}
+
+// restoreTarget makes the target live again when an earlier abort attempt
+// rolled the release back before it saw the activation commit. Activation
+// leaves the fence in place, so no instance served the previous release.
+func (w *Worker) restoreTarget(ctx context.Context, sw state.DatabaseSwitch) error {
+	if sw.ReleaseSwitchedAt == nil || sw.FromDeploymentID == "" {
+		return nil
+	}
+	live, err := w.Releases.LiveDeploymentForScope(ctx, sw.AppID, sw.Scope)
+	if err != nil && !errors.Is(err, state.ErrNotFound) {
+		return err
+	}
+	if live.ID != sw.FromDeploymentID {
+		return nil
+	}
+	if _, err := w.Releases.PrepareDeploymentRollback(ctx, sw.AppID, sw.TargetDeploymentID); err != nil &&
+		!errors.Is(err, state.ErrRollbackTargetAlreadyLive) {
+		return err
+	}
+	return w.Releases.MarkDeploymentLive(ctx, sw.TargetDeploymentID)
 }
