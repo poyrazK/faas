@@ -73,12 +73,14 @@ func (phase trafficPhase) String() string {
 // text, event list, target roster or request body enters this record.
 type trafficDecisionSnapshot struct {
 	path, outcome, refusal, retryStop, limiterScope, cache, circuit string
-	phase                                                           trafficPhase
-	attempts                                                        int64
-	measured                                                        uint16
-	durations                                                       [trafficPhaseCount]int64
-	streamDetached                                                  bool
-	edgeResponse                                                    bool
+	// policyStage names which public routing check refused the request.
+	policyStage    string
+	phase          trafficPhase
+	attempts       int64
+	measured       uint16
+	durations      [trafficPhaseCount]int64
+	streamDetached bool
+	edgeResponse   bool
 }
 
 type trafficDecision struct {
@@ -207,6 +209,18 @@ func recordTrafficRefusal(ctx context.Context, reason string) {
 	mutateTrafficDecision(ctx, func(value *trafficDecisionSnapshot) { value.refusal = reason })
 }
 
+// recordTrafficPolicyStage records which public routing check refused a
+// request with policy_unavailable. The values are a fixed set.
+func recordTrafficPolicyStage(ctx context.Context, stage string) {
+	switch stage {
+	case "routing_read_timeout", "routing_owner_unverified", "routing_read_error", "routing_snapshot_invalid",
+		"routing_encode", "routing_host_pin_denied", "routing_empty_roster", "routing_no_selection":
+	default:
+		stage = "other"
+	}
+	mutateTrafficDecision(ctx, func(value *trafficDecisionSnapshot) { value.policyStage = stage })
+}
+
 func recordTrafficLimiter(ctx context.Context, scope string) {
 	switch scope {
 	case "account", "app", "tenant", "surface", "consumer", "rule":
@@ -306,7 +320,7 @@ func (value trafficDecisionSnapshot) attributes() []attribute.KeyValue {
 	if value.path == "" {
 		return nil
 	}
-	return []attribute.KeyValue{
+	attributes := []attribute.KeyValue{
 		attribute.String("gregale.traffic.decision_version", "v1"),
 		attribute.String("gregale.traffic.path", value.path),
 		attribute.String("gregale.traffic.phase", value.phase.String()),
@@ -325,6 +339,10 @@ func (value trafficDecisionSnapshot) attributes() []attribute.KeyValue {
 		attribute.Int64("gregale.traffic.capacity_wait_ms", value.durations[trafficCapacity]/int64(time.Millisecond)),
 		attribute.Int64("gregale.traffic.retry_backoff_ms", value.durations[trafficBackoff]/int64(time.Millisecond)),
 	}
+	if value.policyStage != "" {
+		attributes = append(attributes, attribute.String("gregale.traffic.policy_stage", value.policyStage))
+	}
+	return attributes
 }
 
 func (value trafficDecisionSnapshot) measuredPhases() string {

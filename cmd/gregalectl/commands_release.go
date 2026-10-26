@@ -974,10 +974,15 @@ func openPgPoolFromEnv(ctx context.Context) (*pgxpool.Pool, error) {
 }
 
 // readDatabaseEnvFile reads only DATABASE_URL from a systemd-style env file.
-// The file contents stay in memory; callers receive only the parsed value.
-// This is intentionally small rather than a shell parser: deploy-managed
-// files contain KEY=value lines, comments, and optional single/double quotes.
 func readDatabaseEnvFile(path string) (string, bool) {
+	return readEnvFileValue(path, "DATABASE_URL")
+}
+
+// readEnvFileValue reads one key from a systemd-style env file. The file
+// contents stay in memory; callers receive only the parsed value. This is
+// intentionally small rather than a shell parser: deploy-managed files
+// contain KEY=value lines, comments, and optional single/double quotes.
+func readEnvFileValue(path, name string) (string, bool) {
 	// path is the deploy-managed systemd environment file selected by the
 	// local release-install flow, not a customer upload path.
 	//nolint:forbidigo // vetted deploy-managed environment file.
@@ -994,7 +999,7 @@ func readDatabaseEnvFile(path string) (string, bool) {
 		}
 		line = strings.TrimPrefix(line, "export ")
 		key, value, ok := strings.Cut(line, "=")
-		if !ok || strings.TrimSpace(key) != "DATABASE_URL" {
+		if !ok || strings.TrimSpace(key) != name {
 			continue
 		}
 		value = strings.TrimSpace(value)
