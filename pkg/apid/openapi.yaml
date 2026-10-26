@@ -105138,6 +105138,10 @@ components:
         deployment_status: { type: string }
         rollout_state: { type: string }
         build_status: { type: string }
+        depends_on:
+          type: array
+          items: { type: string }
+          description: "The project services this one declares it calls (Compose depends_on), sorted. Omitted when none (ADR-20261026193018)."
 
     ProjectResponse:
       description: Project metadata with its workloads, exclusions, and latest reconciliation state.
