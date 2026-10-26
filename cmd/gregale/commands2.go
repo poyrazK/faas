@@ -6890,6 +6890,12 @@ func cmdLogsTail(args []string) int {
 // `event: end` or io.EOF, and surfaces a renderAPIError / printErr
 // path on the auth or attach errors that precede the SSE loop.
 func runLogs(ctx context.Context, slug, deployment string, filter api.LogFilter, archive *api.ArchiveLogSelector, follow bool, explain bool) int {
+	return runLogsExplainingMissingArchive(ctx, slug, deployment, filter, archive, follow, explain, "")
+}
+
+// runLogsExplainingMissingArchive is runLogs with the line printed when the
+// requested archive does not exist; empty keeps the generic archive-gap line.
+func runLogsExplainingMissingArchive(ctx context.Context, slug, deployment string, filter api.LogFilter, archive *api.ArchiveLogSelector, follow bool, explain bool, archiveMissing string) int {
 	client, err := authedClient()
 	if err != nil {
 		return printErr("Not logged in", err)
@@ -6964,9 +6970,12 @@ func runLogs(ctx context.Context, slug, deployment string, filter api.LogFilter,
 			if archive != nil {
 				reason := appLogsArchiveEndReason(e.Data)
 				if reason != "archive_complete" {
-					if jsonOutput {
+					switch {
+					case jsonOutput:
 						_ = writeJSONProblem(appLogsArchiveProblem(reason))
-					} else {
+					case reason == "archive_missing" && archiveMissing != "":
+						fmt.Fprintln(os.Stderr, archiveMissing)
+					default:
 						fmt.Fprintln(os.Stderr, appLogsArchiveMessage(reason))
 					}
 					if collector != nil && !jsonOutput {

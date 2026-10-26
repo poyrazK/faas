@@ -134,6 +134,14 @@ func cmdJobs(args []string) int {
 // server-side list. Output is either the complete pagination envelope
 // in JSON mode or a tabular row per job.
 func cmdJobsList(args []string) int {
+	// Jobs belong to the account, not to an app, so there is no --app filter;
+	// the flag package answered only "unknown flag --app" (Hunt 14 H14-63).
+	for _, arg := range args {
+		if arg == "--app" || strings.HasPrefix(arg, "--app=") || arg == "-app" || strings.HasPrefix(arg, "-app=") {
+			PrintUsage(os.Stderr, "gregale jobs list lists every job in the account; it has no --app filter. Inspect one job with `gregale jobs info <job>`.\nusage: gregale jobs list [--limit N] [--offset N] [--all]", "jobs")
+			return 1
+		}
+	}
 	fs := newFlagSet("jobs-list", flag.ContinueOnError)
 	limit := fs.Int("limit", 0, "page size (1..200; omit for server default 50)")
 	offset := fs.Int("offset", 0, "starting page offset")
