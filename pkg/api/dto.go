@@ -829,6 +829,11 @@ type UpsertDevSessionRequest struct {
 	// the app's development server, instead of the production build. Omitted
 	// turns watch mode off. Takes effect from the next developer build.
 	Watch *DevWatch `json:"watch,omitempty"`
+	// GoCommand builds `cmd/<GoCommand>` of the Go module at the source root
+	// (ADR-20261026120412), as a project service's build_go_command does.
+	// Omitted builds what the source builds by default. Takes effect from the
+	// next developer build.
+	GoCommand string `json:"go_command,omitempty"`
 }
 
 // DevWatch is a developer environment's watch-mode setting (ADR-1170).
@@ -891,6 +896,10 @@ type DevSessionResponse struct {
 	Buckets   []DevBucketResponse  `json:"buckets,omitempty"`
 	// Watch is the stored watch-mode setting (ADR-1170); omitted when off.
 	Watch *DevWatch `json:"watch,omitempty"`
+	// GoCommand is the stored Go command (ADR-20261026120412); omitted when
+	// none. A client that asked for one and finds it missing is talking to an
+	// API that ignores the request field.
+	GoCommand string `json:"go_command,omitempty"`
 }
 
 // RegisterScenarioTestRequest binds developer sessions to one isolated run.
