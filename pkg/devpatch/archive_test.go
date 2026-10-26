@@ -7,6 +7,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -146,19 +147,101 @@ func TestApplyRejectsEscapes(t *testing.T) {
 		}},
 		{name: "delete traversal", archive: func(t *testing.T) []byte { return tarGz(t) }, deleted: []string{"../victim"}},
 	}
+	applies := map[string]func(string, []byte, []string, int64) (ApplyResult, error){"Apply": Apply, "ApplyInPlace": ApplyInPlace}
 	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			dir := t.TempDir()
-			if tc.prepare != nil {
-				tc.prepare(t, dir)
+		for applyName, apply := range applies {
+			t.Run(tc.name+"/"+applyName, func(t *testing.T) {
+				dir := t.TempDir()
+				if tc.prepare != nil {
+					tc.prepare(t, dir)
+				}
+				if _, err := apply(dir, tc.archive(t), tc.deleted, 1<<20); err == nil {
+					t.Fatalf("%s accepted an escaping patch", applyName)
+				}
+				if _, err := os.Stat(filepath.Join(outside, "owned.js")); !errors.Is(err, os.ErrNotExist) {
+					t.Fatal("patch wrote outside the target directory")
+				}
+			})
+		}
+	}
+}
+
+// adr: 1170 — watch mode rewrites an existing file through its own inode,
+// because node --watch stops seeing a file once a new inode is renamed over it.
+func TestApplyInPlaceKeepsTheInode(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, "index.js")
+	if err := os.WriteFile(target, []byte("v1 and a longer tail"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	before, err := os.Stat(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	archive := tarGz(t, tarEntry{name: "index.js", body: "v2", mode: 0o644}, tarEntry{name: "src/new.js", body: "new", mode: 0o644})
+	result, err := ApplyInPlace(dir, archive, nil, 1<<20)
+	if err != nil || result.Written != 2 {
+		t.Fatalf("ApplyInPlace = %+v, %v", result, err)
+	}
+	after, err := os.Stat(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !os.SameFile(before, after) {
+		t.Fatal("ApplyInPlace replaced the inode of an existing file")
+	}
+	if body, _ := os.ReadFile(target); string(body) != "v2" || after.Mode().Perm() != 0o644 {
+		t.Fatalf("index.js = %q mode %v, want \"v2\" 0644", body, after.Mode().Perm())
+	}
+	if body, _ := os.ReadFile(filepath.Join(dir, "src", "new.js")); string(body) != "new" {
+		t.Fatalf("src/new.js = %q", body)
+	}
+	for _, sub := range []string{".", "src"} {
+		entries, _ := os.ReadDir(filepath.Join(dir, sub))
+		for _, entry := range entries {
+			if strings.HasPrefix(entry.Name(), ".gregale-patch-") {
+				t.Fatalf("staging file %s/%s left behind", sub, entry.Name())
 			}
-			if _, err := Apply(dir, tc.archive(t), tc.deleted, 1<<20); err == nil {
-				t.Fatal("Apply accepted an escaping patch")
-			}
-			if _, err := os.Stat(filepath.Join(outside, "owned.js")); !errors.Is(err, os.ErrNotExist) {
-				t.Fatal("patch wrote outside the target directory")
-			}
-		})
+		}
+	}
+	// Apply keeps ADR-740's staged rename: the restart that follows reads the
+	// new inode, and a half-written file is never visible.
+	if _, err := Apply(dir, tarGz(t, tarEntry{name: "index.js", body: "v3", mode: 0o644}), nil, 1<<20); err != nil {
+		t.Fatal(err)
+	}
+	if renamed, err := os.Stat(target); err != nil || os.SameFile(after, renamed) {
+		t.Fatalf("Apply kept the inode (err %v); want a staged rename", err)
+	}
+}
+
+func TestApplyInPlaceStagesLinkedTargets(t *testing.T) {
+	dir := t.TempDir()
+	outside := filepath.Join(t.TempDir(), "outside.js")
+	for path, body := range map[string]string{outside: "outside", filepath.Join(dir, "shared.js"): "shared"} {
+		if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.Link(filepath.Join(dir, "shared.js"), filepath.Join(dir, "hard.js")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(dir, "soft.js")); err != nil {
+		t.Fatal(err)
+	}
+	archive := tarGz(t, tarEntry{name: "hard.js", body: "hard v2", mode: 0o644}, tarEntry{name: "soft.js", body: "soft v2", mode: 0o644})
+	if _, err := ApplyInPlace(dir, archive, nil, 1<<20); err != nil {
+		t.Fatal(err)
+	}
+	for path, want := range map[string]string{
+		filepath.Join(dir, "hard.js"): "hard v2", filepath.Join(dir, "shared.js"): "shared",
+		filepath.Join(dir, "soft.js"): "soft v2", outside: "outside",
+	} {
+		if body, _ := os.ReadFile(path); string(body) != want {
+			t.Fatalf("%s = %q, want %q", path, body, want)
+		}
+	}
+	if info, err := os.Lstat(filepath.Join(dir, "soft.js")); err != nil || !info.Mode().IsRegular() {
+		t.Fatalf("soft.js is still a symlink (err %v)", err)
 	}
 }
 
