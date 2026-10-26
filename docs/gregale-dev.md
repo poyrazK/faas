@@ -73,6 +73,7 @@ live.
 ```sh
 gregale dev --once             # sync once, do not watch
 gregale dev --path apps/api    # select one workspace application
+gregale dev --go-command worker # build cmd/worker of the Go module at --path
 gregale dev --all              # run every deployable workspace application
 gregale dev --name payments    # choose the stable project identity
 gregale dev --stop             # tear down the project's environment
@@ -438,7 +439,10 @@ builds; the change applies from the next build.
 convention, or Compose member below `--path` (default: the current
 directory), using the same detection as `gregale start` and `gregale scan`.
 A Compose service counts when it builds from a source directory (`build:`);
-image-only services such as `postgres` or `redis` are not started. Each app gets its own
+image-only services such as `postgres` or `redis` are not started. In a Go
+module with several `cmd/<name>` commands and none at its root, each command
+is its own app, built from the module root with `--go-command <name>`
+([ADR-20261026120412](adr/20261026120412-dev-go-commands.md)). Each app gets its own
 developer environment, stable URL, and lease, named after its workload
 (`apps/api` becomes `api`). When the root has deployable members it is treated
 as the workspace container and not started; a root with no members is the
