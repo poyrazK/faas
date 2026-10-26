@@ -108,6 +108,11 @@ func (s *Service) writeReadErr(w http.ResponseWriter, ctx context.Context, app s
 		api.WriteProblem(w, api.ErrLogSearchTimeout())
 		return
 	}
+	if errors.Is(err, state.ErrLogReadBusy) {
+		w.Header().Set("Retry-After", "2")
+		api.WriteProblem(w, api.ErrLogReadBusy())
+		return
+	}
 	s.Host.Logger().WarnContext(ctx, "log search failed", "app_id", app.ID, "err", err)
 	api.WriteProblem(w, api.ErrCapacity("could not search logs"))
 }

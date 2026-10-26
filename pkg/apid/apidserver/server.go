@@ -158,6 +158,7 @@ type server struct {
 	appEvents                              appevents.Service  // ADR-977; Host wired in newServer
 	serviceMap                             servicemap.Service // ADR-1131; Host wired in newServer
 	logSearch                              logsearch.Service  // ADR-20261018083536; Host wired in newServer
+	logReads                               *logsearch.ReadLimiter
 	dashboards                             dashboards.Service // ADR-20261022173833; Host wired in newServer
 	incidents                              incidents.Service  // ADR-20261022193512; Host wired in newServer
 	// configGuardTelemetry overrides the store's request telemetry for
@@ -1555,6 +1556,7 @@ func newServerWithDeps(
 	}
 	s.platformFlagAdmin.Host = platformFlagAdminHost{s}
 	s.logSearch.Host = logSearchHost{s}
+	s.logReads = logsearch.NewReadLimiter(api.LogReadsInFlightPerAccount, api.LogReadsInFlightMax, api.LogReadSlotWait)
 	s.dashboards.Host = dashboardsHost{s}
 	s.incidents.Host = incidentsHost{s}
 	s.previews.Host = previewsHost{s}
