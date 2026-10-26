@@ -42,6 +42,7 @@ import (
 	mailpkg "github.com/onebox-faas/faas/pkg/mail"
 	"github.com/onebox-faas/faas/pkg/middleware"
 	"github.com/onebox-faas/faas/pkg/secretbox"
+	"github.com/onebox-faas/faas/pkg/sessioncookie"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -1001,8 +1002,7 @@ func (s *server) reissueSessionCookieWithStepUp(w http.ResponseWriter, r *http.R
 	if err != nil {
 		return err
 	}
-	http.SetCookie(w, &http.Cookie{
-		Name:     sessionCookie,
+	sessioncookie.Set(w, http.Cookie{
 		Value:    cookie,
 		Path:     "/",
 		HttpOnly: true,

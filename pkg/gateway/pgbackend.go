@@ -2897,6 +2897,23 @@ func (b *PGBackend) InvalidateEdgeRuleHosts(patterns []string) {
 	b.edgeRules.Reset()
 }
 
+// InvalidateEdgeRuleAccountHosts is InvalidateEdgeRuleHosts for a mutation
+// whose account is known (ADR-091 amendment 2026-10-26): sets that hold only
+// another account's rules are kept. Matchers without it fall back to
+// InvalidateEdgeRuleHosts.
+func (b *PGBackend) InvalidateEdgeRuleAccountHosts(accountID, appID string, patterns []string) {
+	if b.edgeRules == nil {
+		return
+	}
+	if matcher, ok := b.edgeRules.(interface {
+		InvalidateAccountHosts(string, string, []string)
+	}); ok {
+		matcher.InvalidateAccountHosts(accountID, appID, patterns)
+		return
+	}
+	b.InvalidateEdgeRuleHosts(patterns)
+}
+
 // BeginEdgeRuleConvergence forwards the prepare phase to matchers that support
 // the distributed policy barrier. Legacy matchers retain reset-only behavior.
 func (b *PGBackend) BeginEdgeRuleConvergence(accountID string, hosts []string, generation int64) {

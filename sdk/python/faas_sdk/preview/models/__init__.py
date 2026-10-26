@@ -5501,6 +5501,11 @@ from .seal_scenario_postgres_request import SealScenarioPostgresRequest
 from .search_app_log_events_source import SearchAppLogEventsSource
 from .seat_usage_response import SeatUsageResponse
 from .seat_usage_response_plan import SeatUsageResponsePlan
+from .secret_entry_request import SecretEntryRequest
+from .secret_entry_response import SecretEntryResponse
+from .secret_entry_status import SecretEntryStatus
+from .secret_entry_status_request import SecretEntryStatusRequest
+from .secret_entry_status_status import SecretEntryStatusStatus
 from .secret_file import SecretFile
 from .secret_finding import SecretFinding
 from .secret_finding_severity import SecretFindingSeverity
@@ -11385,6 +11390,11 @@ __all__ = (
     "SearchAppLogEventsSource",
     "SeatUsageResponse",
     "SeatUsageResponsePlan",
+    "SecretEntryRequest",
+    "SecretEntryResponse",
+    "SecretEntryStatus",
+    "SecretEntryStatusRequest",
+    "SecretEntryStatusStatus",
     "SecretFile",
     "SecretFinding",
     "SecretFindingSeverity",

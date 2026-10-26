@@ -285,24 +285,19 @@ func (g *gatewaydEdgeRules) SetLoadedGeneration(generation int64) {
 // amendment widens it again to include kind=maintenance.
 func (g *gatewaydEdgeRules) loadHostUncached(ctx context.Context, host string) (*gateway.HostEntry, error) {
 	generation := g.cache.Generation()
-	storeRules, err := g.store.MatchEdgeRulesForHost(ctx, host)
+	storeRules, owner, err := g.hostStoreRules(ctx, host)
 	if err != nil {
 		return nil, err
 	}
+	// An alias name is read the same way as host: for its owner when known.
 	storeRules, err = withAliasHostRules(storeRules, host, func(alias string) ([]state.EdgeRule, error) {
-		return g.store.MatchEdgeRulesForHost(ctx, alias)
+		rules, _, aliasErr := g.hostStoreRules(ctx, alias)
+		return rules, aliasErr
 	})
 	if err != nil {
 		return nil, err
 	}
 	appID := gateway.EdgeRuleApp(ctx)
-	if store, ok := g.store.(state.AppWideEdgeRuleStore); ok && appID != "" {
-		appWide, appErr := store.AppWideEdgeRules(ctx, appID)
-		if appErr != nil {
-			return nil, appErr
-		}
-		storeRules = state.MergeEdgeRulesInOrder(storeRules, appWide)
-	}
 	storeRules, err = g.environmentEdgeRules(ctx, host, storeRules)
 	if err != nil {
 		return nil, err
@@ -314,8 +309,36 @@ func (g *gatewaydEdgeRules) loadHostUncached(ctx context.Context, host string) (
 	if err := entry.SealPolicy(); err != nil {
 		return nil, err
 	}
+	entry.SetOwner(owner)
 	g.cache.PutIfGeneration(gateway.EdgeRuleCacheKey(host, appID), entry, generation)
 	return entry, nil
+}
+
+// hostStoreRules reads the rules a host's set compiles from, and the account
+// they were read for. ADR-091 amendment (2026-10-26): with the request's owner
+// known, only that account's rules and its app's "@app" rules are read; the
+// appliers drop every other account's rules anyway (OwnedEdgeRules), so
+// another tenant's "*" rules no longer ride along on every host's read. With
+// no owner (a request before host resolution), every account's rules covering
+// the host are read as before, and owner is "".
+func (g *gatewaydEdgeRules) hostStoreRules(ctx context.Context, host string) ([]state.EdgeRule, string, error) {
+	owner, appID := gateway.EdgeRuleOwner(ctx), gateway.EdgeRuleApp(ctx)
+	if store, ok := g.store.(state.OwnedEdgeRuleStore); ok && owner != "" {
+		rules, err := store.OwnedEdgeRulesForHost(ctx, host, owner, appID)
+		return rules, owner, err
+	}
+	rules, err := g.store.MatchEdgeRulesForHost(ctx, host)
+	if err != nil {
+		return nil, "", err
+	}
+	if store, ok := g.store.(state.AppWideEdgeRuleStore); ok && appID != "" {
+		appWide, appErr := store.AppWideEdgeRules(ctx, appID)
+		if appErr != nil {
+			return nil, "", appErr
+		}
+		rules = state.MergeEdgeRulesInOrder(rules, appWide)
+	}
+	return rules, "", nil
 }
 
 // Compilation uses only supplied rules and the compiler's preset reader. The
@@ -1095,6 +1118,16 @@ func (g *gatewaydEdgeRules) InvalidateHosts(patterns []string) {
 		return
 	}
 	g.cache.InvalidateHosts(patterns)
+}
+
+// InvalidateAccountHosts drops only the sets one account's mutation can have
+// changed: that account's (or every account's) sets for the hosts the
+// patterns cover, and for "@app" only appID's sets.
+func (g *gatewaydEdgeRules) InvalidateAccountHosts(accountID, appID string, patterns []string) {
+	if g == nil || g.cache == nil {
+		return
+	}
+	g.cache.InvalidateAccountHosts(accountID, appID, patterns)
 }
 
 // warnPathGlobErrs logs every path-glob parse error the loader

@@ -61,6 +61,11 @@ BEGIN
 	IF to_regclass('public.audit_log') IS NOT NULL THEN
 		REVOKE UPDATE, DELETE ON public.audit_log FROM faas_runtime;
 	END IF;
+	-- ADR-20261026163015: anchors seal the audit log; like it, they are
+	-- appended, never changed.
+	IF to_regclass('public.audit_log_anchors') IS NOT NULL THEN
+		REVOKE UPDATE, DELETE ON public.audit_log_anchors FROM faas_runtime;
+	END IF;
 END
 $$;
 -- Objects the next migrations create carry the same grants. Only objects the

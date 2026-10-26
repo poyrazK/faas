@@ -1119,6 +1119,9 @@ type MemStore struct {
 	// section that drops the accounts row, mirroring the PG
 	// atomicity contract.
 	auditLog []AuditLog
+	// auditLogAnchors mirrors audit_log_anchors in seq order
+	// (ADR-20261026163015).
+	auditLogAnchors []AuditLogAnchor
 	// deploymentAudit is the in-memory mirror of the deployment_audit
 	// table (migrations/00332_deployment_audit.sql, issue #976 /
 	// ADR-122 / SAFE-RELEASES-E.2). Same shape as the PG row; the
@@ -17449,6 +17452,24 @@ func (m *MemStore) ComputeNodeUsedMBByNode(ctx context.Context, nodeIDs []string
 	return used, nil
 }
 
+// ComputeNodeUsedVCPUByNode mirrors PgStore's fleet-wide guest vCPU
+// aggregate: each live instance's captured capacity_vcpu.
+func (m *MemStore) ComputeNodeUsedVCPUByNode(_ context.Context, nodeIDs []string) (map[string]int64, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	used := make(map[string]int64, len(nodeIDs))
+	for _, nodeID := range nodeIDs {
+		used[nodeID] = 0
+	}
+	for _, ins := range m.instances {
+		if _, ok := used[ins.NodeID]; !ok || !nodeUsageCounts(State(ins.State)) {
+			continue
+		}
+		used[ins.NodeID] += m.capacityInstanceResources[ins.ID].VCPU
+	}
+	return used, nil
+}
+
 // ComputeNodeUsedCPUMillicoresByNode mirrors PgStore's fleet-wide CPU
 // reservation aggregate for local tests and in-memory deployments.
 func (m *MemStore) ComputeNodeUsedCPUMillicoresByNode(_ context.Context, nodeIDs []string) (map[string]int64, error) {
@@ -26628,6 +26649,7 @@ func (m *MemStore) RemoveOrgMember(ctx context.Context, orgID, accountID string)
 	now := time.Now().UTC()
 	mem.RemovedAt = &now
 	m.setOrgMembershipLocked(k, mem)
+	m.pauseDepartedMemberIntegrationsLocked(orgID, accountID)
 	return nil
 }
 

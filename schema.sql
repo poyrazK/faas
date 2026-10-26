@@ -45,6 +45,24 @@ CREATE TYPE public.compute_node_lifecycle AS ENUM (
 
 
 --
+-- Name: account_may_see_org_resources(uuid, uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.account_may_see_org_resources(p_account uuid, p_org uuid) RETURNS boolean
+    LANGUAGE sql STABLE
+    AS $$
+    SELECT p_org IS NULL OR EXISTS (
+        SELECT 1 FROM orgs o
+         WHERE o.id = p_org
+           AND (o.personal_org
+                OR (NOT o.deleted_pending AND o.status <> 'deleted_pending'
+                    AND EXISTS (SELECT 1 FROM org_memberships m
+                                 WHERE m.org_id = o.id AND m.account_id = p_account AND m.removed_at IS NULL
+                                   AND m.role IN ('owner', 'admin', 'developer', 'viewer')))))
+$$;
+
+
+--
 -- Name: account_traffic_security_epoch_trigger(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -2254,6 +2272,7 @@ CREATE TABLE public.app_log_drains (
     enabled boolean DEFAULT true NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    created_by_account_id uuid,
     CONSTRAINT app_log_drains_kind_chk CHECK ((kind = ANY (ARRAY['http_json'::text, 'otlp'::text, 'datadog'::text]))),
     CONSTRAINT app_log_drains_target_url_len_chk CHECK (((char_length(target_url) >= 8) AND (char_length(target_url) <= 2048)))
 );
@@ -8037,7 +8056,8 @@ BEGIN
       JOIN apps a ON a.id = NEW.app_id AND a.account_id = h.account_id
      WHERE h.enabled
        AND ((h.scope = 'app' AND h.app_id = NEW.app_id)
-            OR (h.scope = 'account' AND h.app_id IS NULL))
+            OR (h.scope = 'account' AND h.app_id IS NULL
+                AND account_may_see_org_resources(h.account_id, a.org_id)))
        AND (event_name = ANY(h.event_filter)
             OR (h.scope = 'app' AND cardinality(h.event_filter) = 0));
     RETURN NEW;
@@ -8754,7 +8774,8 @@ BEGIN
       JOIN apps a ON a.id = NEW.app_id AND a.account_id = h.account_id
      WHERE h.enabled
        AND ((h.scope = 'app' AND h.app_id = NEW.app_id)
-            OR (h.scope = 'account' AND h.app_id IS NULL))
+            OR (h.scope = 'account' AND h.app_id IS NULL
+                AND account_may_see_org_resources(h.account_id, a.org_id)))
        AND (event_name = ANY(h.event_filter)
             OR (h.scope = 'app' AND cardinality(h.event_filter) = 0));
     RETURN NEW;
@@ -28377,6 +28398,7 @@ CREATE TABLE public.alert_rules (
     mcp_for_minutes integer DEFAULT 0 NOT NULL,
     mcp_readiness_scope text DEFAULT ''::text NOT NULL,
     log_query text,
+    created_by_account_id uuid,
     CONSTRAINT alert_rules_action_chk CHECK ((action = ANY (ARRAY['webhook'::text, 'rollback'::text, 'demote'::text, 'promote'::text]))),
     CONSTRAINT alert_rules_comparison_chk CHECK ((comparison = ANY (ARRAY['gt'::text, 'gte'::text, 'lt'::text, 'lte'::text, 'above_baseline'::text, 'below_baseline'::text]))),
     CONSTRAINT alert_rules_cooldown_chk CHECK (((cooldown_minutes >= 5) AND (cooldown_minutes <= 1440))),
@@ -30569,6 +30591,7 @@ CREATE TABLE public.app_webhooks (
     platform_tenant_id uuid,
     receiver_recovery_probe_delivery_id uuid,
     receiver_cooldown_until timestamp with time zone,
+    created_by_account_id uuid,
     CONSTRAINT app_webhooks_delivery_format_chk CHECK ((delivery_format = ANY (ARRAY['json'::text, 'cloudevents'::text, 'datadog'::text]))),
     CONSTRAINT app_webhooks_retry_policy_chk CHECK ((retry_policy = ANY (ARRAY['default'::text, 'aggressive'::text, 'none'::text]))),
     CONSTRAINT app_webhooks_scope_chk CHECK ((((scope = 'app'::text) AND (app_id IS NOT NULL) AND (platform_tenant_id IS NULL)) OR ((scope = 'account'::text) AND (app_id IS NULL) AND (platform_tenant_id IS NULL) AND ((cardinality(event_filter) >= 1) AND (cardinality(event_filter) <= 5)) AND (array_position(event_filter, NULL::text) IS NULL) AND (event_filter <@ ARRAY['deployment.live'::text, 'deployment.failed'::text, 'rollout.completed'::text, 'rollout.aborted'::text, 'environment.gitops.changed'::text])) OR ((scope = 'platform_tenant'::text) AND (app_id IS NULL) AND (platform_tenant_id IS NOT NULL) AND ((cardinality(event_filter) >= 1) AND (cardinality(event_filter) <= 8)) AND (array_lower(event_filter, 1) = 1) AND (array_position(event_filter, NULL::text) IS NULL) AND (event_filter <@ ARRAY['platform_tenant.statement.finalized'::text, 'platform_tenant.hostname.verified'::text, 'platform_tenant.surface.certificate.changed'::text, 'platform_tenant.surface.deployment.changed'::text, 'platform_tenant.customer.linked'::text, 'platform_tenant.customer.offboarded'::text, 'platform_tenant.reconciliation.applied'::text, 'operation.effect'::text]) AND ((cardinality(event_filter) < 2) OR (event_filter[1] <> event_filter[2])) AND ((cardinality(event_filter) < 3) OR ((event_filter[1] <> event_filter[3]) AND (event_filter[2] <> event_filter[3]))) AND ((cardinality(event_filter) < 4) OR ((event_filter[1] <> event_filter[4]) AND (event_filter[2] <> event_filter[4]) AND (event_filter[3] <> event_filter[4]))) AND ((cardinality(event_filter) < 5) OR ((event_filter[1] <> event_filter[5]) AND (event_filter[2] <> event_filter[5]) AND (event_filter[3] <> event_filter[5]) AND (event_filter[4] <> event_filter[5]))) AND ((cardinality(event_filter) < 6) OR ((event_filter[1] <> event_filter[6]) AND (event_filter[2] <> event_filter[6]) AND (event_filter[3] <> event_filter[6]) AND (event_filter[4] <> event_filter[6]) AND (event_filter[5] <> event_filter[6]))) AND ((cardinality(event_filter) < 7) OR ((event_filter[1] <> event_filter[7]) AND (event_filter[2] <> event_filter[7]) AND (event_filter[3] <> event_filter[7]) AND (event_filter[4] <> event_filter[7]) AND (event_filter[5] <> event_filter[7]) AND (event_filter[6] <> event_filter[7]))) AND ((cardinality(event_filter) < 8) OR ((event_filter[1] <> event_filter[8]) AND (event_filter[2] <> event_filter[8]) AND (event_filter[3] <> event_filter[8]) AND (event_filter[4] <> event_filter[8]) AND (event_filter[5] <> event_filter[8]) AND (event_filter[6] <> event_filter[8]) AND (event_filter[7] <> event_filter[8])))))),
@@ -31049,6 +31072,31 @@ CREATE TABLE public.audit_log (
     actor text,
     received_at timestamp with time zone DEFAULT now() NOT NULL,
     data jsonb
+);
+
+
+--
+-- Name: audit_log_anchors; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.audit_log_anchors (
+    seq bigint NOT NULL,
+    window_start timestamp with time zone NOT NULL,
+    window_end timestamp with time zone NOT NULL,
+    row_count bigint NOT NULL,
+    rows_digest text NOT NULL,
+    prev_mac text NOT NULL,
+    mac text NOT NULL,
+    key_id text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT audit_log_anchors_check CHECK ((window_end > window_start)),
+    CONSTRAINT audit_log_anchors_check1 CHECK (((seq = 1) = (prev_mac = ''::text))),
+    CONSTRAINT audit_log_anchors_key_id_check CHECK ((key_id ~ '^[0-9a-f]{16}$'::text)),
+    CONSTRAINT audit_log_anchors_mac_check CHECK ((mac ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT audit_log_anchors_prev_mac_check CHECK (((prev_mac = ''::text) OR (prev_mac ~ '^[0-9a-f]{64}$'::text))),
+    CONSTRAINT audit_log_anchors_row_count_check CHECK ((row_count >= 0)),
+    CONSTRAINT audit_log_anchors_rows_digest_check CHECK ((rows_digest ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT audit_log_anchors_seq_check CHECK ((seq > 0))
 );
 
 
@@ -57015,6 +57063,14 @@ ALTER TABLE ONLY public.audit_event_outbox
 
 
 --
+-- Name: audit_log_anchors audit_log_anchors_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.audit_log_anchors
+    ADD CONSTRAINT audit_log_anchors_pkey PRIMARY KEY (seq);
+
+
+--
 -- Name: audit_log audit_log_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -70876,6 +70932,13 @@ CREATE INDEX edge_rule_events_rule_time_idx ON public.edge_rule_events USING btr
 --
 
 CREATE INDEX edge_rule_hit_counts_app_bucket_idx ON public.edge_rule_hit_counts USING btree (app_id, bucket_start);
+
+
+--
+-- Name: edge_rules_account_enabled_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX edge_rules_account_enabled_idx ON public.edge_rules USING btree (account_id) WHERE enabled;
 
 
 --
@@ -84895,6 +84958,14 @@ ALTER TABLE ONLY public.alert_rules
 
 
 --
+-- Name: alert_rules alert_rules_created_by_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.alert_rules
+    ADD CONSTRAINT alert_rules_created_by_account_id_fkey FOREIGN KEY (created_by_account_id) REFERENCES public.accounts(id) ON DELETE SET NULL;
+
+
+--
 -- Name: alert_rules alert_rules_org_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -85991,6 +86062,14 @@ ALTER TABLE ONLY public.app_log_drains
 
 
 --
+-- Name: app_log_drains app_log_drains_created_by_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_log_drains
+    ADD CONSTRAINT app_log_drains_created_by_account_id_fkey FOREIGN KEY (created_by_account_id) REFERENCES public.accounts(id) ON DELETE SET NULL;
+
+
+--
 -- Name: app_mcp_readiness_policies app_mcp_readiness_policies_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -86500,6 +86579,14 @@ ALTER TABLE ONLY public.app_webhooks
 
 ALTER TABLE ONLY public.app_webhooks
     ADD CONSTRAINT app_webhooks_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: app_webhooks app_webhooks_created_by_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_webhooks
+    ADD CONSTRAINT app_webhooks_created_by_account_id_fkey FOREIGN KEY (created_by_account_id) REFERENCES public.accounts(id) ON DELETE SET NULL;
 
 
 --

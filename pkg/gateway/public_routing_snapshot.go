@@ -7,11 +7,14 @@ import (
 	"errors"
 	"net/http"
 	"sync"
+	"sync/atomic"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/lruutil"
 
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 type PublicRoutingInputs struct {
@@ -28,8 +31,12 @@ type PublicRoutingSnapshot struct {
 	HostDeploymentID, HostScope                                      string
 	HostChecked, HostAllowed, Async                                  bool
 	Weights                                                          []DeploymentWeightsRow
-	SelectedDeploymentID                                             string `json:"-"`
-	SelectionReason                                                  string `json:"-"`
+	// RosterScope is set when the production lane's roster came from the
+	// other production scope (a project app still on the legacy default
+	// scope); the selected deployment is admitted there.
+	RosterScope          string `json:",omitempty"`
+	SelectedDeploymentID string `json:"-"`
+	SelectionReason      string `json:"-"`
 }
 
 type PublicRoutingPinner func(context.Context, App, PublicRoutingInputs) (PublicRoutingSnapshot, error)
@@ -122,6 +129,7 @@ func (h *Handler) pinPublicRoutingPolicy(w http.ResponseWriter, r *http.Request,
 	if err == nil {
 		err = bounded.Err()
 	}
+	readErr := err != nil
 	if err == nil {
 		err = validatePublicRoutingSnapshot(source, app, inputs)
 	}
@@ -129,18 +137,15 @@ func (h *Handler) pinPublicRoutingPolicy(w http.ResponseWriter, r *http.Request,
 		if handleForwardRequestCancellation(w, r, true) {
 			return true
 		}
-		h.writeTrafficPolicyUnavailable(w, r)
-		return true
+		return h.refusePublicRouting(w, r, app, publicRoutingReadStage(err, readErr), err, nil)
 	}
 	encoded, err := json.Marshal(source)
 	if err != nil {
-		h.writeTrafficPolicyUnavailable(w, r)
-		return true
+		return h.refusePublicRouting(w, r, app, "routing_encode", err, nil)
 	}
 	var frozen PublicRoutingSnapshot
 	if err := json.Unmarshal(encoded, &frozen); err != nil {
-		h.writeTrafficPolicyUnavailable(w, r)
-		return true
+		return h.refusePublicRouting(w, r, app, "routing_encode", err, nil)
 	}
 	h.selectPublicRoutingDeployment(r, app, inputs, &frozen)
 	if frozen.SelectedDeploymentID == "" && !inputs.Async && frozen.ReleaseVerdict != "gone" && frozen.ReleaseVerdict != "conflict" &&
@@ -156,20 +161,89 @@ func (h *Handler) pinPublicRoutingPolicy(w http.ResponseWriter, r *http.Request,
 				"No deployment available", "The app has no routable deployment. Retry after a deployment is available."))
 			return true
 		}
-		h.writeTrafficPolicyUnavailable(w, r)
-		return true
+		return h.refusePublicRouting(w, r, app, publicRoutingSelectionStage(frozen), nil, &frozen)
 	}
 	proof, err := json.Marshal(struct {
 		Base    string
 		Routing json.RawMessage
 	}{TrafficPolicyRevision(r.Context()), encoded})
 	if err != nil {
-		h.writeTrafficPolicyUnavailable(w, r)
-		return true
+		return h.refusePublicRouting(w, r, app, "routing_encode", err, nil)
 	}
 	ctx := context.WithValue(r.Context(), publicRoutingSnapshotKey{}, frozen)
 	*r = *r.WithContext(context.WithValue(ctx, effectiveTrafficPolicyKey{}, policyDigest(proof)))
 	return false
+}
+
+// publicRoutingRefusalLogInterval bounds the refusal log to one line per
+// gateway per interval; the traffic decision records every refusal's stage.
+const publicRoutingRefusalLogInterval = 10 * time.Second
+
+type publicRoutingRefusalLog struct {
+	next       atomic.Int64 // unix nanoseconds before which lines are suppressed
+	suppressed atomic.Int64
+}
+
+// allow reports whether a line may be written now, and how many refusals
+// were not logged since the previous line.
+func (l *publicRoutingRefusalLog) allow(now time.Time) (bool, int64) {
+	next := l.next.Load()
+	if now.UnixNano() < next || !l.next.CompareAndSwap(next, now.Add(publicRoutingRefusalLogInterval).UnixNano()) {
+		l.suppressed.Add(1)
+		return false, 0
+	}
+	return true, l.suppressed.Swap(0)
+}
+
+// refusePublicRouting refuses with policy_unavailable, records the stage on
+// the traffic decision and logs the cause (rate-limited). The read error was
+// previously swallowed, so rc.296's refusals could not be attributed.
+func (h *Handler) refusePublicRouting(w http.ResponseWriter, r *http.Request, app App, stage string, err error, snapshot *PublicRoutingSnapshot) bool {
+	recordTrafficPolicyStage(r.Context(), stage)
+	if h.log != nil {
+		if ok, suppressed := h.publicRoutingRefusals.allow(time.Now()); ok {
+			attrs := []any{"app_id", app.ID, "stage", stage, "suppressed", suppressed}
+			if err != nil {
+				attrs = append(attrs, "err", err)
+			}
+			if snapshot != nil {
+				attrs = append(attrs, "weights", len(snapshot.Weights), "release_verdict", snapshot.ReleaseVerdict,
+					"host_checked", snapshot.HostChecked, "host_allowed", snapshot.HostAllowed,
+					"revision_checked", snapshot.RevisionChecked, "revision_allowed", snapshot.RevisionAllowed)
+			}
+			h.log.Warn("gateway: public routing refused with policy_unavailable", attrs...)
+		}
+	}
+	h.writeTrafficPolicyUnavailable(w, r)
+	return true
+}
+
+// publicRoutingReadStage classifies a refused routing read for the traffic
+// decision. readErr is false when the read succeeded and validation failed.
+func publicRoutingReadStage(err error, readErr bool) string {
+	switch {
+	case !readErr:
+		return "routing_snapshot_invalid"
+	case errors.Is(err, context.DeadlineExceeded):
+		return "routing_read_timeout"
+	case errors.Is(err, state.ErrNotFound):
+		return "routing_owner_unverified"
+	default:
+		return "routing_read_error"
+	}
+}
+
+// publicRoutingSelectionStage classifies a verified snapshot that selected
+// no deployment.
+func publicRoutingSelectionStage(snapshot PublicRoutingSnapshot) string {
+	switch {
+	case snapshot.HostChecked && !snapshot.HostAllowed:
+		return "routing_host_pin_denied"
+	case len(snapshot.Weights) == 0:
+		return "routing_empty_roster"
+	default:
+		return "routing_no_selection"
+	}
 }
 
 func validatePublicRoutingSnapshot(snapshot PublicRoutingSnapshot, app App, inputs PublicRoutingInputs) error {
@@ -184,6 +258,10 @@ func validatePublicRoutingSnapshot(snapshot PublicRoutingSnapshot, app App, inpu
 	}
 	if inputs.ResolveRelease && snapshot.ReleaseVerdict != "allowed" && snapshot.ReleaseVerdict != "gone" && snapshot.ReleaseVerdict != "conflict" {
 		return errors.New("missing public release verdict")
+	}
+	if snapshot.RosterScope != "" && (!state.IsProductionRoutingScope(inputs.Scope) || !state.IsProductionRoutingScope(snapshot.RosterScope) ||
+		snapshot.RosterScope == inputs.Scope || inputs.Scope == "" && snapshot.RosterScope == state.DefaultEnvScope) {
+		return errors.New("invalid public routing roster scope")
 	}
 	seen := make(map[string]bool, len(snapshot.Weights))
 	for _, weight := range snapshot.Weights {
@@ -232,6 +310,19 @@ func (h *Handler) selectPublicRoutingDeployment(r *http.Request, app App, inputs
 		snapshot.SelectedDeploymentID, _ = h.publicRoutingStride.pick(app, inputs.Scope, snapshot.Weights)
 		snapshot.SelectionReason = "weighted"
 	}
+}
+
+// admissionScope is the scope the selected deployment is admitted in. A
+// deployment picked from a roster read in the other production scope is
+// admitted in that scope, as the weighted picker's wakes were.
+func (s PublicRoutingSnapshot) admissionScope() string {
+	switch s.SelectionReason {
+	case "weighted", "version", "session":
+		if s.RosterScope != "" {
+			return s.RosterScope
+		}
+	}
+	return s.Scope
 }
 
 // Only the bounded per-app cursor is retained. Every choice uses the frozen

@@ -3,6 +3,7 @@ package mcpmanagement
 import (
 	"errors"
 	"reflect"
+	"strings"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -39,7 +40,7 @@ func (m *management) restorePlans() error {
 			continue
 		}
 		// Local deploy and env plans are memory-only (ADR-20261026141841).
-		if p.LocalSource != nil || p.EnvChange != nil || p.Action == "local_deploy" || p.Action == "env_change" {
+		if p.LocalSource != nil || p.EnvChange != nil || p.Provision != nil || p.Action == "local_deploy" || p.Action == "env_change" || strings.HasPrefix(p.Action, "provision_") {
 			return errors.New("stored local plan")
 		}
 		if id != p.ID || len(id) != 64 || p.APIBase != m.opts.APIBase || !m.appIDAllowed(p.AppID) || (p.Scope != api.DefaultEnvScope && (!api.ValidProjectEnvironmentSlug(p.Scope) || p.EnvironmentID == "" || p.ProjectID == "" || p.Project == "")) {
