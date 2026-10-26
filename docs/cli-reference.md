@@ -8924,7 +8924,7 @@ See also: [`deploy`](#deploy), [`deploys`](#deploys), [`deployment`](#deployment
 Examples:
 
 ```sh
-gregale deployments --app my-api --limit 10
+gregale deployments my-api --limit 10
 gregale deployments --app my-api --wide
 ```
 

@@ -2656,7 +2656,7 @@ var cliCommands = []cliCommand{
 		DocSlug: "deployments",
 		Short:   "List an app's deployments and manage named revision URLs",
 		Examples: []string{
-			"gregale deployments --app my-api --limit 10",
+			"gregale deployments my-api --limit 10",
 			"gregale deployments --app my-api --wide",
 		},
 		Subcommands: []cliSub{{
