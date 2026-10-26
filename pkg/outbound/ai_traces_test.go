@@ -439,6 +439,9 @@ func TestNewTraceparentTracesPastTheDayGoUntracked(t *testing.T) {
 		i.AIRequestLogEnabled = true
 		i.AITraceMaxCalls = limit(100)
 	})
+	if got := f.call(api.OutboundAITraceHeader, "known"); got.Code != http.StatusOK {
+		t.Fatalf("first call = %d", got.Code)
+	}
 	f.backend.mu.Lock()
 	f.backend.states["llm"].traceDayCount = api.OutboundAITracesPerDay
 	f.backend.mu.Unlock()
