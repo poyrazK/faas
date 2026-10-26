@@ -133,6 +133,7 @@ var routeExclude = map[string]bool{
 	"POST /dashboard/apps/{slug}/issues/{issue_id}/actions":                       true, // scoped HTML/CSRF adapter for the public issue action API
 	"POST /dashboard/apps/{slug}/issues/impact-alert-policy":                      true, // scoped HTML/CSRF adapter for issue impact alert policy updates
 	"POST /dashboard/apps/{slug}/issues/ownership-rules":                          true, // scoped HTML/CSRF adapter for issue ownership routing policy updates
+	"POST /dashboard/postgres/overage":                                            true, // session + CSRF adapter for PUT /v1/postgres/overage (ADR-20261025094915)
 	// Fixed-executor repair preview routes are documented in docs/data-repair.md;
 	// they are not part of the public SDK contract until native qualification.
 	"GET /v1/apps/{slug}/data-repair/review":                            true,
