@@ -57,6 +57,11 @@ type needsInput struct {
 const secretInputID = "secret_entry"
 
 func registerSecretEntry(s *mcp.Server, m *management) {
+	// A request starts a change the user completes, so a read-only connection
+	// (and read consent) never lists it.
+	if !m.opts.AllowWrites {
+		return
+	}
 	registerTool(s, m, "gregale_request_secret", "Ask the user to set a secret for an app on a one-time Gregale page; the value never passes through you. Opens the page in the client when it supports URL elicitation; otherwise give the user entry_url. Then call gregale_get_secret_request. Never ask the user to paste a secret into the conversation.", false, m.requestSecret)
 	register(s, m, "gregale_get_secret_request", "Check whether the user has set a secret requested with gregale_request_secret: pending, set or expired. Never returns the value.", m.getSecretRequest)
 }

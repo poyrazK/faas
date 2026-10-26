@@ -175,6 +175,7 @@ func newManagementServer(client *api.Client, opts Options) (*mcp.Server, *manage
 	registerReleases(s, m)
 	registerLocalReleases(s, m)
 	registerSecretEntry(s, m)
+	registerLocalProvisioning(s, m)
 	registerEnvironments(s, m)
 	registerContextCatalog(s, m)
 	registerLifecycle(s, m)
@@ -197,8 +198,11 @@ func registerTool[In any](s *mcp.Server, m *management, name, description string
 	mcp.AddTool(s, &mcp.Tool{Name: name, Description: description, Annotations: &mcp.ToolAnnotations{ReadOnlyHint: readOnly, DestructiveHint: &destructive, IdempotentHint: !readOnly}},
 		func(ctx context.Context, req *mcp.CallToolRequest, args In) (*mcp.CallToolResult, any, error) {
 			timeout := m.opts.Timeout
-			if name == "gregale_apply_local_deploy" {
+			switch name {
+			case "gregale_apply_local_deploy":
 				timeout = localDeployTimeout // the source upload
+			case "gregale_apply_provision":
+				timeout = provisionTimeout // a database can take minutes
 			}
 			ctx, cancel := context.WithTimeout(ctx, timeout)
 			defer cancel()

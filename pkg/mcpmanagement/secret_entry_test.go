@@ -63,7 +63,7 @@ func connectElicitingClient(t *testing.T, f *secretEntryAPI, action, version str
 	t.Helper()
 	backend := httptest.NewServer(http.HandlerFunc(f.serveHTTP))
 	t.Cleanup(backend.Close)
-	s, err := NewServer(api.NewClient(backend.URL, testToken), Options{APIBase: backend.URL, Token: testToken})
+	s, err := NewServer(api.NewClient(backend.URL, testToken), Options{APIBase: backend.URL, Token: testToken, AllowWrites: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -157,7 +157,11 @@ func TestRequestSecretGivesTheLinkWhenTheClientCannotOpenIt(t *testing.T) {
 	f := &secretEntryAPI{}
 	backend := httptest.NewServer(http.HandlerFunc(f.serveHTTP))
 	t.Cleanup(backend.Close)
-	cs, ctx := connectConfiguredTestServer(t, backend, Options{APIBase: backend.URL, Token: testToken}, "2026-07-28")
+	readOnly, ctx := connectConfiguredTestServer(t, backend, Options{APIBase: backend.URL, Token: testToken}, "2026-07-28")
+	if listedTools(t, ctx, readOnly)["gregale_request_secret"] {
+		t.Fatal("a read-only connection lists gregale_request_secret")
+	}
+	cs, ctx := connectConfiguredTestServer(t, backend, Options{APIBase: backend.URL, Token: testToken, AllowWrites: true}, "2026-07-28")
 	out := callTool(t, ctx, cs, "gregale_request_secret", map[string]any{"app": "alpha", "key": "STRIPE_KEY", "reason": "payments"}, false)
 	assertNoPrivateMaterial(t, out)
 	if stringField(t, out, "elicitation") != "unsupported" || stringField(t, out, "entry_url") != testEntryURL {

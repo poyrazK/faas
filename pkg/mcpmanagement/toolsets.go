@@ -20,6 +20,9 @@ const (
 	// ToolsetDiagnose adds request, performance, wake, trace and regression
 	// diagnostics.
 	ToolsetDiagnose = "diagnose"
+	// ToolsetProvision adds custom domains, buckets, managed PostgreSQL and
+	// crons on local connections (ADR-20261026174727).
+	ToolsetProvision = "provision"
 	// ToolsetAll lists every tool. It is the default.
 	ToolsetAll = "all"
 )
@@ -93,6 +96,13 @@ var toolsetOf = map[string]string{
 	"gregale_list_instances":                   ToolsetDiagnose,
 	"gregale_get_routes":                       ToolsetDiagnose,
 	"gregale_get_operational_summary":          ToolsetDiagnose,
+
+	"gregale_plan_domain":     ToolsetProvision,
+	"gregale_plan_bucket":     ToolsetProvision,
+	"gregale_plan_postgres":   ToolsetProvision,
+	"gregale_plan_cron":       ToolsetProvision,
+	"gregale_check_domain":    ToolsetProvision,
+	"gregale_apply_provision": ToolsetProvision,
 }
 
 // ParseToolsets reads a comma-separated toolset list such as "core,diagnose".
@@ -106,10 +116,10 @@ func ParseToolsets(spec string) ([]string, error) {
 		switch name = strings.TrimSpace(name); name {
 		case ToolsetAll:
 			return nil, nil
-		case ToolsetCore, ToolsetRelease, ToolsetDiagnose:
+		case ToolsetCore, ToolsetRelease, ToolsetDiagnose, ToolsetProvision:
 			seen[name] = true
 		default:
-			return nil, fmt.Errorf("unknown toolset %q; use core, release, diagnose or all", name)
+			return nil, fmt.Errorf("unknown toolset %q; use core, release, diagnose, provision or all", name)
 		}
 	}
 	out := make([]string, 0, len(seen))
