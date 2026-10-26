@@ -9676,6 +9676,13 @@ type ObjectStorageS3Credential struct {
 	IssuerAccessRevision pgtype.Int8
 }
 
+type ObjectStorageTimelineAcceptance struct {
+	Singleton  bool
+	Timeline   string
+	AcceptedAt pgtype.Timestamptz
+	AcceptedBy string
+}
+
 type ObjectStorageUploadGrant struct {
 	ID                 pgtype.UUID
 	BucketID           pgtype.UUID

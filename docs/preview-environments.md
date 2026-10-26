@@ -331,6 +331,8 @@ The root and existing production dependencies also start with a clean app
 environment: Gregale does not copy production environment values into PR
 previews. It injects the PR's declared internal service bindings after source
 scan. A new PR push clears environment values left on older preview rows.
+`gregale preview create` follows the same rule: the preview gets the
+production app's service binding URLs and none of its environment values.
 Configure preview-specific credentials separately before relying on a preview
 that needs external managed services; Gregale does not provision isolated
 databases or buckets for the PR.
