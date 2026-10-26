@@ -1730,3 +1730,6 @@ var ValidateAndPlanSidecars = validateAndPlanSidecars
 func StatusPageFromStore(ctx context.Context, promURL string, store state.Store) (StatusPage, error) {
 	return newStatusCacheWithStore(promURL, store, slog.Default()).Get(ctx)
 }
+
+// WriteExclusiveError maps a managed operation store error to its problem.
+var WriteExclusiveError = writeExclusiveError
