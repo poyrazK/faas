@@ -1747,6 +1747,10 @@ bounded per app to 50 distinct real routes + the reserved
 `__route_other__` overflow bucket (ADR-093 D2). The bounded
 admission set is the only thing standing between us and
 `O(paths)` Prometheus cardinality under wildcard path patterns.
+A route earns a label only once the app answers it with a status
+that shows the route exists, or when it is declared; scanner 404s
+and non-standard methods stay `__route_other__`
+(ADR-20261026143210).
 The in-memory reader is also exposed via the control listener at
 `GET /v1/internal/apps/{slug}/routes` (loopback-only, mTLS-free
 within the same box) and reverse-proxied by apid as
