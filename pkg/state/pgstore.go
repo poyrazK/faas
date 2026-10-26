@@ -2864,7 +2864,7 @@ func (s *PgStore) PreviewAppByProjectWorkload(ctx context.Context, accountID, pr
 		 where account_id = $1
 		   and project_id = $2
 		   and preview_pr_number = $3
-		   and workload_name = $4
+		   and translate(lower(workload_name), '_.', '--') = translate(lower($4), '_.', '--')
 		   and preview_of_slug is not null
 		   and status <> 'deleted'
 	`, accountID, projectID, previewPRNumber, workloadName)

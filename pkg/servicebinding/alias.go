@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"strings"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/gateway"
@@ -32,7 +31,7 @@ func NewAliasAllowed(store interface {
 			return false, nil
 		}
 		for _, binding := range caller.Manifest.ServiceBindings {
-			if strings.EqualFold(strings.TrimSpace(binding.Service), service) {
+			if api.SameServiceName(binding.Service, service) {
 				return true, nil
 			}
 		}

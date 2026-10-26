@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"slices"
-	"strings"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/gateway"
@@ -35,7 +34,7 @@ func newWakeAheadDeclared(store state.Store, resolve gateway.ServiceProxyResolve
 		}
 		var targets []string
 		for _, binding := range caller.Manifest.ServiceBindings {
-			service := strings.TrimSpace(binding.Service)
+			service := api.ServiceDNSName(binding.Service)
 			if service == "" {
 				continue
 			}

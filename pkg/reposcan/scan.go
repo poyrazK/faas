@@ -441,7 +441,7 @@ func Scan(fsys fs.FS) (Result, error) {
 		Workloads:         workloads,
 		Managed:           managed,
 		Tier:              highestTier,
-		Warnings:          warnings,
+		Warnings:          append(warnings, serviceNameWarnings(workloads)...),
 		DetectionWarnings: detectionWarnings,
 	}, nil
 }
