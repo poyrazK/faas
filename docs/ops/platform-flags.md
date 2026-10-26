@@ -162,6 +162,8 @@ flags in the table below release their capability; every other capability in
   | Dev Bridge native (`make native-dev-bridge-acceptance`) | `dev-bridge`, `projects`, `environments` |
   | Scenario restart native (`make native-scenario-restart-acceptance`) | `scenario-tests`, `developer-environments`, `projects` |
   | Profiling native (`scripts/ci/run-native-profiling-acceptance.sh`) | `continuous-profiling`, `traffic-profiles`, `route-requirements`, `route-insights` |
+  | Start native (`scripts/ci/run-native-start-acceptance.sh`) | `projects` |
+  | Release rehearsal native (`scripts/ci/run-native-rehearsal-acceptance.sh`) | `scenario-tests` |
 
 - **New routes.** A route must belong to a capability: add its path to that
   capability's `routes` in `pkg/productcap/catalog.json`.

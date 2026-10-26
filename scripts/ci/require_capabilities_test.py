@@ -77,7 +77,7 @@ class RequireCapabilitiesTest(unittest.TestCase):
                 self.assertTrue(ids, f"{script.name}: no capability ids in {line!r}")
                 for capability in ids:
                     self.assertIn(capability, parents, f"{script.name}: {capability} is not a catalog capability")
-        self.assertGreaterEqual(calls, 3, "the native acceptance runs no longer check their capabilities")
+        self.assertGreaterEqual(calls, 5, "the native acceptance runs no longer check their capabilities")
 
 
 if __name__ == "__main__":
