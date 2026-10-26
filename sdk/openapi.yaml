@@ -4878,6 +4878,38 @@ paths:
           description: Session cancelled.
         '404': {$ref: '#/components/responses/NotFound'}
         '409': {$ref: '#/components/responses/Conflict'}
+  /v1/uploads/{id}/commit:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: {type: string}
+        description: Upload session id to finalize (returned by POST /v1/uploads).
+    post:
+      parameters:
+        - $ref: '#/components/parameters/DeploymentAttemptID'
+      tags: [uploads]
+      operationId: commitUpload
+      summary: Finalize the session, validate the tarball, enqueue the build.
+      responses:
+        '201':
+          description: Deployment created.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/DeploymentResponse'}
+        '202':
+          description: Previously accepted upload deployment recovered by its submission receipt.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/DeploymentResponse'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409':
+          description: Upload session conflict or code application_standards_pending while inherited controls await persistence.
+          content:
+            application/problem+json:
+              schema: {$ref: '#/components/schemas/Problem'}
+        '410': {$ref: '#/components/responses/Gone'}
   /v1/apps/{slug}/rollouts/{id}/observation:
     get:
       operationId: getWorkerRolloutObservation
