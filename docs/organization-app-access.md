@@ -13,9 +13,19 @@ query parameter cannot change that ownership.
 | Secret writes/rotation | yes | yes | yes | no | no |
 | Security policy and trusted publishers | yes | yes | no | no | no |
 | Delete/restore an app | yes | yes | no | no | no |
+| Alert rules, log drains, webhooks and outbound bindings: read | yes | yes | yes | yes | no |
+| Alert rules, log drains and webhooks: create, change, delete; unbind an outbound integration | yes | yes | no | no | no |
 
 Secret reads return metadata, never values. Billing members can use the safe
 organization app inventory and existing billing surfaces.
+
+A company app's alert rules, log drains and webhooks send company data out of
+Gregale, so owners and admins govern them, whoever created the app; each one
+records the member who created it. The app creator's own account-wide alert
+rules and notification channels stay the creator's: other members neither
+see them through the app nor bind them to its rules. Binding an outbound
+integration stays with the app's creator, whose provider credential it uses.
+See ADR-20261026151103.
 
 Use an organization-bound API key when working on a teammate's app. Its scope
 must also permit the operation: a read key cannot deploy, even for an admin.
@@ -185,6 +195,16 @@ organization API keys (including rotation grace keys), deploy tokens for the
 organization's apps, and outstanding invitations to their email in the org, in
 one transaction. Personal sessions/credentials and other organizations' keys
 remain valid. Company applications and already accepted workloads keep running.
+
+The same transaction stops what the member set up on the company's apps
+(ADR-20261026151103): their webhook alert rules, log drains and app webhooks
+are paused; their alert rules that roll back, demote or promote keep doing so
+without their webhook; and their notification channels are unbound from the
+company apps' rules. An integration that predates authorship counts as the app
+creator's. Drains an application standard manages are left alone. The removal's
+activity entry says how many were paused, and an owner or admin re-points and
+re-enables them. Their account-scope release webhooks stop receiving the
+company's deployment, rollout and GitOps events.
 
 An in-flight shared-app or organization mutation must still hold its original
 membership revision when its database transaction begins. A change that already
