@@ -574,3 +574,35 @@ func TestPostgresMigrateStorage(t *testing.T) {
 		t.Fatalf("second run = %+v, %v; want nothing re-sealed", again, err)
 	}
 }
+
+// TestPostgresMigrateControl re-seals the cluster signing key row through
+// PostgreSQL (ADR 20261022111812) and finds it current on a second run.
+func TestPostgresMigrateControl(t *testing.T) {
+	store := openStore(t)
+	ctx := context.Background()
+	fleet, domain := mustIdentity(t), mustIdentity(t)
+	pemKey := []byte("-----BEGIN PRIVATE KEY-----\nMC4CAQAwBQYDK2VwBCIEIA==\n-----END PRIVATE KEY-----\n")
+	sealed, err := secretbox.SealBytes(fleet.Recipient(), "internal_svc", pemKey, 4096)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = store.DeleteClusterSigningKey(ctx)
+	if _, err := store.CreateClusterSigningKeyIfAbsent(ctx, state.ClusterSigningKey{KeyID: "abcdefghijklmnopqrstuv", PublicKeyPEM: "-----BEGIN PUBLIC KEY-----\nx\n-----END PUBLIC KEY-----\n", SealedBlob: sealed}); err != nil {
+		t.Fatal(err)
+	}
+	report, err := sealmigrate.MigrateControl(ctx, store, domain, []*age.X25519Identity{fleet})
+	if err != nil || report.Resealed != 1 {
+		t.Fatalf("report = %+v, %v; want the cluster key re-sealed", report, err)
+	}
+	got, err := store.LoadClusterSigningKey(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ns, plain, err := secretbox.OpenBytes(domain, got.SealedBlob); err != nil || ns != "internal_svc" || !bytes.Equal(plain, pemKey) {
+		t.Fatalf("domain open = %q, %v", ns, err)
+	}
+	again, err := sealmigrate.MigrateControl(ctx, store, domain, []*age.X25519Identity{fleet})
+	if err != nil || again.Current != 1 {
+		t.Fatalf("second run = %+v, %v; want current", again, err)
+	}
+}

@@ -16,6 +16,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/fleetseal"
+	"github.com/onebox-faas/faas/pkg/sealdomain"
 	"github.com/onebox-faas/faas/pkg/secretbox"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -93,6 +94,7 @@ func runFleetSealMigrate(args []string) error {
 	fs.SetOutput(os.Stderr)
 	fleetKey := fs.String("fleet-key", secretbox.DefaultFleetKeyPath, "fleet.age identity")
 	legacyDir := fs.String("legacy-host-dir", filepath.Dir(secretbox.DefaultHostKeyPath), "directory containing host.age and optional host.age.previous")
+	controlKey := fs.String("control-key", "", "control seal-domain identity (default: "+controlKeyDefault+" when it exists)")
 	dsn := fs.String("pg-dsn", "", "PostgreSQL DSN (default: FAAS_PG_DSN, DATABASE_URL, or deploy env)")
 	dbEnv := fs.String("db-env", "", "systemd env file containing DATABASE_URL")
 	jsonOut := fs.Bool("json", false, "emit JSON")
@@ -120,7 +122,11 @@ func runFleetSealMigrate(args []string) error {
 	if err := db.MigrateUp(ctx, pool); err != nil {
 		return fmt.Errorf("apply schema before fleet migration: %w", err)
 	}
-	report, err := fleetseal.Migrate(ctx, state.NewPgStore(pool), fleet, legacy)
+	control, err := loadFleetSealControlKey(*controlKey)
+	if err != nil {
+		return err
+	}
+	report, err := fleetseal.Migrate(ctx, state.NewPgStore(pool), fleet, legacy, control)
 	if err != nil {
 		return err
 	}
@@ -136,6 +142,7 @@ func runFleetSealVerify(args []string) error {
 	fs.SetOutput(os.Stderr)
 	fleetKey := fs.String("fleet-key", secretbox.DefaultFleetKeyPath, "staged fleet.age identity")
 	hostKey := fs.String("host-key", secretbox.DefaultHostKeyPath, "per-host host.age identity")
+	controlKey := fs.String("control-key", "", "control seal-domain identity (default: "+controlKeyDefault+" when it exists)")
 	dsn := fs.String("pg-dsn", "", "PostgreSQL DSN")
 	dbEnv := fs.String("db-env", "", "systemd env file containing DATABASE_URL")
 	metricsFile := fs.String("metrics-file", "", "optional node_exporter textfile output")
@@ -161,7 +168,11 @@ func runFleetSealVerify(args []string) error {
 	defer pool.Close()
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	report, err := fleetseal.Verify(ctx, state.NewPgStore(pool), fleet, host)
+	control, err := loadFleetSealControlKey(*controlKey)
+	if err != nil {
+		return err
+	}
+	report, err := fleetseal.Verify(ctx, state.NewPgStore(pool), fleet, host, control)
 	if metricErr := writeFleetSealMetric(*metricsFile, report, err == nil && report.Ready); metricErr != nil && err == nil {
 		err = metricErr
 	}
@@ -233,4 +244,25 @@ func writeFleetSealMetric(path string, report fleetseal.VerificationReport, read
 		return err
 	}
 	return os.Rename(tmpName, path)
+}
+
+// controlKeyDefault is where the seal_domains role stages the control
+// seal-domain identity (ADR 20261022111812).
+var controlKeyDefault = sealdomain.IdentityPath(sealdomain.DefaultDir, sealdomain.Control)
+
+// loadFleetSealControlKey loads the control seal-domain identities that open
+// a cluster key sealed to the domain. An explicit path must load; the
+// default is used only when the role staged it.
+func loadFleetSealControlKey(path string) ([]*age.X25519Identity, error) {
+	if path == "" {
+		if _, err := os.Stat(controlKeyDefault); err != nil {
+			return nil, nil
+		}
+		path = controlKeyDefault
+	}
+	ids, err := sealdomain.LoadReaderIdentities(path)
+	if err != nil {
+		return nil, fmt.Errorf("load control seal-domain identity: %w", err)
+	}
+	return ids, nil
 }
