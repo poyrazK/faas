@@ -20,6 +20,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/go-redis/v9"
+	"github.com/segmentio/kafka-go"
 
 	vmmdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/vmmd/v1"
 	"github.com/onebox-faas/faas/pkg/api"
@@ -160,6 +161,15 @@ var NewNodeCapacityTable = newNodeCapacityTable
 var NewNodePresenceTracker = newNodePresenceTracker
 var NewQueuePoller = newQueuePoller
 var NewRealtimePoller = newRealtimePoller
+
+type KafkaBrokerOp = kafkaBrokerOp
+
+// NewKafkaPollerWithReader is a kafka poller over reader instead of a
+// broker connection.
+func NewKafkaPollerWithReader(reader KafkaBrokerOp) TriggerSource {
+	return &kafkaPoller{reader: reader, batchMax: 100, inFlight: map[string]kafka.Message{},
+		open: map[int]map[int64]bool{}, settled: map[int][]kafka.Message{}}
+}
 
 type NATSBroker = natsBroker
 
