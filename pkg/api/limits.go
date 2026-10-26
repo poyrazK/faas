@@ -7056,10 +7056,14 @@ const (
 	// EdgePenaltyBoxMaxPerApp and EdgePenaltyBoxMaxEntries bound one
 	// gateway's boxes (and its pending rejection counts) per app and in
 	// total, so a flood from rotating addresses costs bounded memory and
-	// one app cannot push out another's boxes. A full app box drops its
-	// soonest-ending entry.
+	// one app cannot push out another's boxes. A full app drops its
+	// soonest-ending box; a full gateway drops the soonest-ending box of
+	// the app holding the most. EdgePenaltyHitsMaxPerApp bounds one app's
+	// pending counts; past it the app's new clients are refused but not
+	// counted.
 	EdgePenaltyBoxMaxPerApp  = 10000
 	EdgePenaltyBoxMaxEntries = 200000
+	EdgePenaltyHitsMaxPerApp = 10000
 
 	// --- ADR-20261021220456: attack mode ------------------------------
 
