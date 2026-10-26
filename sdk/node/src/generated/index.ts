@@ -1502,6 +1502,9 @@ export type { OAuthTokenExchangeResponse } from './models/OAuthTokenExchangeResp
 export type { ObjectBucket } from './models/ObjectBucket.js';
 export type { ObjectBucketAccessGrant } from './models/ObjectBucketAccessGrant.js';
 export type { ObjectBucketAccessGrantList } from './models/ObjectBucketAccessGrantList.js';
+export type { ObjectBucketCORS } from './models/ObjectBucketCORS.js';
+export type { ObjectBucketCORSRequest } from './models/ObjectBucketCORSRequest.js';
+export type { ObjectBucketCORSRule } from './models/ObjectBucketCORSRule.js';
 export type { ObjectBucketEncryption } from './models/ObjectBucketEncryption.js';
 export type { ObjectBucketEncryptionRequest } from './models/ObjectBucketEncryptionRequest.js';
 export type { ObjectBucketLifecycle } from './models/ObjectBucketLifecycle.js';
