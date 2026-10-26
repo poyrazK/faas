@@ -1730,3 +1730,7 @@ var ValidateAndPlanSidecars = validateAndPlanSidecars
 func StatusPageFromStore(ctx context.Context, promURL string, store state.Store) (StatusPage, error) {
 	return newStatusCacheWithStore(promURL, store, slog.Default()).Get(ctx)
 }
+
+// ResolveAndCheckEgress is the create-time egress check every outbound URL
+// (alert, log drain, webhook, channel) passes.
+var ResolveAndCheckEgress = resolveAndCheckEgress
