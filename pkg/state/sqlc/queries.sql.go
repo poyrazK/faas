@@ -82750,6 +82750,51 @@ func (q *Queries) ReadPublicRoutingOwner(ctx context.Context, db DBTX, arg ReadP
 	return verified, err
 }
 
+const readPublicRoutingProductionWeights = `-- name: ReadPublicRoutingProductionWeights :many
+WITH live AS (
+    SELECT id, traffic_percent, scope FROM deployments
+    WHERE app_id = $2::uuid AND scope IN ('production', 'default') AND status = 'live'
+      AND deleted_at IS NULL AND traffic_percent > 0
+)
+SELECT id, traffic_percent, scope FROM live
+WHERE scope = CASE WHEN EXISTS (SELECT 1 FROM live WHERE scope = 'production') THEN 'production' ELSE 'default' END
+ORDER BY id LIMIT $1::integer
+`
+
+type ReadPublicRoutingProductionWeightsParams struct {
+	RowLimit int32
+	AppID    pgtype.UUID
+}
+
+type ReadPublicRoutingProductionWeightsRow struct {
+	ID             pgtype.UUID
+	TrafficPercent int32
+	Scope          string
+}
+
+// ADR-570 production routing follows ProductionRoutingDeployments, as the
+// weighted picker does: the named production scope once it carries traffic,
+// otherwise the legacy default scope. One read returns the chosen lane.
+func (q *Queries) ReadPublicRoutingProductionWeights(ctx context.Context, db DBTX, arg ReadPublicRoutingProductionWeightsParams) ([]ReadPublicRoutingProductionWeightsRow, error) {
+	rows, err := db.Query(ctx, readPublicRoutingProductionWeights, arg.RowLimit, arg.AppID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ReadPublicRoutingProductionWeightsRow{}
+	for rows.Next() {
+		var i ReadPublicRoutingProductionWeightsRow
+		if err := rows.Scan(&i.ID, &i.TrafficPercent, &i.Scope); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const readPublicRoutingRelease = `-- name: ReadPublicRoutingRelease :many
 SELECT rs.id, member.deployment_id,
        EXISTS (

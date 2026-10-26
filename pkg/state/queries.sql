@@ -8547,6 +8547,19 @@ SELECT id, traffic_percent FROM deployments
 WHERE app_id = sqlc.arg(app_id)::uuid AND scope = sqlc.arg(scope)::text AND status = 'live' AND deleted_at IS NULL AND traffic_percent > 0
 ORDER BY id LIMIT sqlc.arg(row_limit)::integer;
 
+-- ADR-570 production routing follows ProductionRoutingDeployments, as the
+-- weighted picker does: the named production scope once it carries traffic,
+-- otherwise the legacy default scope. One read returns the chosen lane.
+-- name: ReadPublicRoutingProductionWeights :many
+WITH live AS (
+    SELECT id, traffic_percent, scope FROM deployments
+    WHERE app_id = sqlc.arg(app_id)::uuid AND scope IN ('production', 'default') AND status = 'live'
+      AND deleted_at IS NULL AND traffic_percent > 0
+)
+SELECT id, traffic_percent, scope FROM live
+WHERE scope = CASE WHEN EXISTS (SELECT 1 FROM live WHERE scope = 'production') THEN 'production' ELSE 'default' END
+ORDER BY id LIMIT sqlc.arg(row_limit)::integer;
+
 -- name: ReadPublicRoutingRelease :many
 SELECT rs.id, member.deployment_id,
        EXISTS (
