@@ -84,6 +84,8 @@ companion above is therefore public at that hostname, not only on loopback.
   it.
 - During a traffic-split rollout the hostname is routed only when every
   deployment carrying traffic declares that companion with the same port.
+- `gregale deploy --dry-run` lists companion changes against the live
+  deployment, and the hostname each companion port opens.
 
 Public listeners declared under `ports` follow the same pattern at
 `<app>--port-<name>.<apps domain>`; a listener marked `internal` gets no
