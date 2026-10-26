@@ -3120,11 +3120,23 @@ func ErrTrafficPolicyTooComplex(scope, unit string, limit, observed int64) *Prob
 		fmt.Sprintf("%s analysis reached %d %s, above the %d cap; no policy was changed", scope, observed, unit, limit)).
 		WithLimit(limit, observed).
 		WithDocs(docsBase + "/plans#edge-rules").
-		WithHint("Simplify host selectors, replace legacy rules with the supported API shape, or remove unused rules, then retry. Analysis could not verify the proposed policy within its limits.")
+		WithHint(trafficPolicyTooComplexHint(unit))
 	if unit == "bytes" {
 		problem = problem.WithByteLimit(limit, observed)
 	}
 	return problem
+}
+
+// trafficPolicyTooComplexHint tells a time ceiling apart from a size one. The
+// wall-clock and SQL time ceilings also trip on a busy control plane: a deploy
+// of an app with no edge rules was refused at 2002 ms during a rollout and
+// passed on retry (Hunt 14 H14-78), so "simplify your rules" was the wrong
+// first step.
+func trafficPolicyTooComplexHint(unit string) string {
+	if unit == "milliseconds" {
+		return "The policy check ran out of time before it finished, which can happen while the platform is busy. Retry in a few seconds; if it keeps failing, simplify host selectors or remove unused rules."
+	}
+	return "Simplify host selectors, replace legacy rules with the supported API shape, or remove unused rules, then retry. Analysis could not verify the proposed policy within its limits."
 }
 
 // ErrRequestUploadTimeout reports a stalled or too-slow inbound upload. The
