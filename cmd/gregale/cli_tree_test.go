@@ -87,6 +87,9 @@ func TestCliTreePathsFollowNamingRules(t *testing.T) {
 	}
 	for _, alias := range *main.CliTreeAliases {
 		path := strings.Fields(alias.New)
+		if path[0] == "admin" {
+			continue // operator tools keep their names (rule 7)
+		}
 		if len(path) > 3 {
 			t.Errorf("%q: at most three words come before the target", alias.New)
 		}
@@ -202,6 +205,9 @@ func TestCliTreeRewrite(t *testing.T) {
 		{"app listener list api", "app api tcp list"},
 		{"app listener create api --port 7000 --protocol udp", "app api udp add --port 7000"},
 		{"app listener delete --protocol=tcp api l1", "app api tcp delete l1"},
+		{"admin sites list", "sites list"},
+		{"admin postgres reconcile acct-1", "postgres reconcile acct-1"},
+		{"admin credit --reason x", "admin credit --reason x"},
 		{"dashboard list", "dashboards list"},
 		{"dashboard", "dashboard"},
 		{"--version", "--version"},
@@ -300,7 +306,9 @@ func cliTreeVerbViolations() []string {
 		}
 	}
 	for _, alias := range *main.CliTreeAliases {
-		walk(strings.Fields(alias.New), strings.Fields(alias.Old), 0)
+		if !strings.HasPrefix(alias.New, "admin ") {
+			walk(strings.Fields(alias.New), strings.Fields(alias.Old), 0)
+		}
 	}
 	lines := make([]string, 0, len(found))
 	for line := range found {

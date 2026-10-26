@@ -161,11 +161,9 @@ automation recovery-response-preview  # hyphenated recovery-response-preview, ve
 automation recovery-response-status  # hyphenated recovery-response-status, verb recovery-response-status
 automation recovery-retry-evidence  # hyphenated recovery-retry-evidence, verb recovery-retry-evidence
 automation recovery-retry-plan  # hyphenated recovery-retry-plan, verb recovery-retry-plan
-billing backfill-invoices  # hyphenated backfill-invoices, verb backfill-invoices
 billing budget-preview  # hyphenated budget-preview, verb budget-preview
 billing payment-method  # hyphenated payment-method, verb payment-method
 billing portal  # verb portal
-billing refresh-invoice  # hyphenated refresh-invoice, verb refresh-invoice
 billing usage object-storage  # hyphenated object-storage, verb object-storage
 bucket copy-sources  # hyphenated copy-sources
 bucket copy-sources grant  # hyphenated copy-sources
@@ -389,7 +387,6 @@ postgres compute-policy  # hyphenated compute-policy, verb compute-policy
 postgres compute-policy-status  # hyphenated compute-policy-status, verb compute-policy-status
 postgres overage  # verb overage
 postgres resize-status  # hyphenated resize-status, verb resize-status
-postgres usage-import  # hyphenated usage-import, verb usage-import
 preview customers migration diff  # more than three words
 preview customers migration review  # more than three words
 queue dead-letter  # hyphenated dead-letter, verb dead-letter

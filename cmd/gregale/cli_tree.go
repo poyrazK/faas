@@ -293,6 +293,23 @@ var cliTreeAliases = []cliTreeAlias{
 	{"config preset", "context presets"},
 	{"config upload-cache", "upload-cache"},
 	{"config", "config"},
+
+	// Operator tools live under the hidden admin command (rule 7) and keep
+	// their names; the naming rules cover the customer tree.
+	{"admin sites", "sites"},
+	{"admin data-repair", "data-repair"},
+	{"admin commit", "commit"},
+	{"admin entities", "entities"},
+	{"admin product", "product"},
+	{"admin tenant-surfaces", "tenant-surfaces"},
+	{"admin rollouts", "rollouts"},
+	{"admin github-webhook-secret", "github-webhook-secret"},
+	{"admin mail", "mail"},
+	{"admin postgres reconcile", "postgres reconcile"},
+	{"admin postgres usage-import", "postgres usage-import"},
+	{"admin postgres diagnostics", "postgres diagnostics"},
+	{"admin billing refresh-invoice", "billing refresh-invoice"},
+	{"admin billing backfill-invoices", "billing backfill-invoices"},
 }
 
 // cliTreeVerbSynonyms gives, for a standard verb, today's spellings that a
