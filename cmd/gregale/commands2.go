@@ -14,6 +14,7 @@ import (
 	"net/url"
 	"os"
 	"os/signal"
+	"path"
 	"path/filepath"
 	"regexp"
 	"slices"
@@ -1287,20 +1288,32 @@ func materializeCommittedGitSource(prov zeroConfigProvenance, selectedSourceDir,
 	}
 	defer func() { _ = os.Remove(tmpPath) }()
 
+	prefix := ""
 	switch {
 	case workspaceContextRoot != "":
 		err = gitArchiveHEAD(prov.Root, tmpPath)
 	case sourcePath == "":
 		err = gitArchiveHEAD(prov.Root, tmpPath)
 	default:
-		var relPath string
-		relPath, err = gitRelativePath(prov.Root, selectedSourceDir)
+		prefix, err = gitRelativePath(prov.Root, selectedSourceDir)
 		if err == nil {
-			err = gitArchiveHEADPath(prov.Root, relPath, tmpPath)
+			err = gitArchiveHEADPath(prov.Root, prefix, tmpPath)
 		}
 	}
 	if err != nil {
 		return "", "", nil, err
+	}
+	// Symlinks, submodules and Git LFS files become the bytes they stand
+	// for before anything reads the archive (ADR-20261026120000).
+	if prefix = path.Clean(filepath.ToSlash(prefix)); prefix == "." {
+		prefix = ""
+	}
+	warnings, err := normalizeGitArchive(gitArchiveSource{repoRoot: prov.Root, prefix: prefix, commit: "HEAD"}, tmpPath)
+	if err != nil {
+		return "", "", nil, fmt.Errorf("prepare committed source: %w", err)
+	}
+	for _, warning := range warnings {
+		PrintWarn(osStderr, "%s", warning)
 	}
 
 	archivePath, archiveRoot, cleanup, err := materializeDeployArchive(tmpPath)
@@ -3415,7 +3428,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 				return printErr("Could not prepare committed deploy source", buildOnlyErr)
 			}
 			gitArchiveBuildOnlyFiles = buildOnlyFiles
-			path, n, scanFindings, packErr := packGitArchive(gitArchivePath, planCapMB, secretScanMode, gitArchiveBuildOnlyFiles, gitArchiveExcludes...)
+			path, n, scanFindings, packErr := packGitArchive(gitArchivePath, planCapMB, secretScanMode, gitArchiveBuildOnlyFiles, dockerfileSource(sourceDir), gitArchiveExcludes...)
 			if packErr != nil {
 				return printErr("Could not pack committed HEAD", packErr)
 			}

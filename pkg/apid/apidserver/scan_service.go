@@ -59,6 +59,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/middleware"
 	"github.com/onebox-faas/faas/pkg/reconcile"
 	"github.com/onebox-faas/faas/pkg/reposcan"
+	"github.com/onebox-faas/faas/pkg/secretscan"
 	"github.com/onebox-faas/faas/pkg/sourcecontext"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/wire"
@@ -981,6 +982,15 @@ func (s *server) applyBuildsForAddedChangedOrdered(
 			out = append(out, res)
 			continue
 		}
+		// Each workload gets the accept-time stateless check a single-app
+		// deploy gets (ADR-20261026120000). Presence of the Dockerfile is
+		// the builder's call here, so only its contents are checked.
+		if prob := scanForStatefulShapeWithDockerfileAtRoot(staged, false, sourceApp.RootDir, app.Manifest.BuildDockerfile); prob != nil {
+			_ = os.Remove(staged)
+			res.Error = prob.Detail
+			out = append(out, res)
+			continue
+		}
 		rate, rateErr := s.consumeAccountDeployRate(ctx, acct, timeNow().UTC())
 		if rateErr != nil {
 			_ = os.Remove(staged)
@@ -1574,18 +1584,17 @@ func (s *server) scanService(
 	// serverSecretScanMaxBytes (1 MiB per file); it intentionally walks
 	// excluded/build/VCS directories too because a direct tarball upload
 	// must not be able to hide a secret by choosing a directory name.
+	// Only credential-format findings refuse the upload; heuristic ones
+	// are advisory (ADR-20261026120000). A refusal takes precedence over a
+	// walk error; a walk error otherwise fails closed with a 500.
 	secretFindings, ssErr := scanExtractedTreeSecrets(req.ScanDir)
-	if ssErr != nil && len(secretFindings) == 0 {
-		// Walk-level failure with no partial findings: surface as a
-		// 500 so the customer can retry. If we DO have findings, the
-		// 422 takes precedence — refusing the upload is more useful
-		// than a generic "scan failed" 500.
+	if blocking := secretscan.Blocking(secretFindings); len(blocking) > 0 {
+		return nil, state.Project{}, nil, nil, nil, nil, newSecretScanRejectionProblem(blocking)
+	}
+	if ssErr != nil {
 		return nil, state.Project{}, nil, nil, nil, nil, api.NewProblem(
 			http.StatusInternalServerError, api.CodeInternal,
 			"Secret scan failed", ssErr.Error())
-	}
-	if len(secretFindings) > 0 {
-		return nil, state.Project{}, nil, nil, nil, nil, newSecretScanRejectionProblem(secretFindings)
 	}
 
 	// Filter --only and --exclude against workload name. Deterministic

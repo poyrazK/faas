@@ -576,18 +576,21 @@ func TestPackDirToTarGz_ExcludesLinkedWorktreeGitFile(t *testing.T) {
 	}
 }
 
-func TestPackDirToTarGz_RejectsSymlink(t *testing.T) {
+// An in-tree symlink is packed as its target (ADR-20261026120000); one that
+// leaves the source directory is still refused.
+func TestPackDirToTarGz_RejectsEscapingSymlink(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("os.Symlink not supported on Windows")
 	}
 	dir := t.TempDir()
-	writeFile(t, dir, "real.txt", "hi")
-	if err := os.Symlink(filepath.Join(dir, "real.txt"), filepath.Join(dir, "link.txt")); err != nil {
+	outside := t.TempDir()
+	writeFile(t, outside, "real.txt", "hi")
+	if err := os.Symlink(filepath.Join(outside, "real.txt"), filepath.Join(dir, "link.txt")); err != nil {
 		t.Fatalf("symlink: %v", err)
 	}
 	dest := filepath.Join(t.TempDir(), "out.tar.gz")
-	if _, err := packDirToTarGz(dir, dest, defaultZeroConfigSourceCapMB, nil); err == nil {
-		t.Fatal("packDirToTarGz should reject a symlink, got nil error")
+	if _, err := packDirToTarGz(dir, dest, defaultZeroConfigSourceCapMB, nil); err == nil || !strings.Contains(err.Error(), "outside the source directory") {
+		t.Fatalf("packDirToTarGz with an escaping symlink: err = %v", err)
 	}
 }
 
@@ -632,8 +635,8 @@ func TestPackDirToTarGz_TotalSizeCap(t *testing.T) {
 	if err == nil {
 		t.Fatal("packDirToTarGz should reject total size > cap, got nil error")
 	}
-	if !strings.Contains(err.Error(), "zero-config cap") {
-		t.Errorf("expected friendly total-cap error; got %v", err)
+	if !strings.Contains(err.Error(), "3 MB upload limit") {
+		t.Errorf("expected friendly upload-limit error; got %v", err)
 	}
 }
 
@@ -660,9 +663,9 @@ func TestPackDirToTarGz_RejectsTooManyArchiveEntries(t *testing.T) {
 	}
 }
 
-// TestPackDirToTarGz_PerFileCap pins the per-file guard inside copyRegular: a
-// single file >= cap must be rejected while still being streamed, instead of
-// materialising the whole thing into the gzip writer first.
+// TestPackDirToTarGz_PerFileCap pins that a single incompressible file past
+// the plan's upload limit is refused while it streams: the compressed
+// writer stops at the limit instead of packing the whole file first.
 func TestPackDirToTarGz_PerFileCap(t *testing.T) {
 	if testing.Short() {
 		t.Skip("per-file cap test materialises a > cap file")
@@ -683,8 +686,8 @@ func TestPackDirToTarGz_PerFileCap(t *testing.T) {
 	if err == nil {
 		t.Fatal("packDirToTarGz should reject a single file > per-file cap, got nil")
 	}
-	if !strings.Contains(err.Error(), "per-file cap") {
-		t.Errorf("expected per-file cap error; got %v", err)
+	if !strings.Contains(err.Error(), "upload limit") {
+		t.Errorf("expected upload-limit error; got %v", err)
 	}
 }
 
@@ -713,11 +716,8 @@ func TestPackDirToTarGz_PerFileCapExactlyAtCap(t *testing.T) {
 		// though the per-file LimitReader allowed it. That's the
 		// downstream total-cap gate doing its job, not a per-file
 		// regression — assert the error is the total cap, not per-file.
-		if strings.Contains(err.Error(), "per-file cap") {
-			t.Fatalf("exactly-at-cap should not trip the per-file LimitReader; got %v", err)
-		}
-		if !strings.Contains(err.Error(), "zero-config cap") {
-			t.Fatalf("expected total-cap error; got %v", err)
+		if !strings.Contains(err.Error(), "upload limit") {
+			t.Fatalf("expected upload-limit error; got %v", err)
 		}
 		return
 	}
@@ -776,13 +776,14 @@ func TestAutoPackCwd_CleansUpOnError(t *testing.T) {
 		t.Skip("os.Symlink not supported on Windows")
 	}
 	dir := t.TempDir()
-	writeFile(t, dir, "real.txt", "hi")
-	if err := os.Symlink(filepath.Join(dir, "real.txt"), filepath.Join(dir, "link.txt")); err != nil {
+	outside := t.TempDir()
+	writeFile(t, outside, "real.txt", "hi")
+	if err := os.Symlink(filepath.Join(outside, "real.txt"), filepath.Join(dir, "link.txt")); err != nil {
 		t.Fatalf("symlink: %v", err)
 	}
 	path, _, _, err := autoPackCwd(dir, defaultZeroConfigSourceCapMB, nil)
 	if err == nil {
-		t.Fatal("expected error from autoPackCwd on symlink dir")
+		t.Fatal("expected error from autoPackCwd on an escaping symlink")
 	}
 	if path != "" {
 		t.Errorf("path = %q, want empty on error", path)

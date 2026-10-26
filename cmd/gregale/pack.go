@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -299,32 +300,102 @@ func globMatchSegments(parts, pattern []string) bool {
 // shouldExclude reports whether a slash-separated path relative to the
 // packed root (e.g. "node_modules/foo/index.js") should be omitted from
 // the archive. patterns is the parsed .gregaleignore list (nil/absent
-// → no project-level exclusions).
-//
-// Order of checks: defaults first (cheap map lookups, no allocation),
-// then .gregaleignore (per-entry glob walk). Defaults win over a
-// later negated .gregaleignore line — the customer's "include back
-// the dist/" un-exclude cannot revive a default-excluded build dir.
-// That matches the intent: defaults exist to keep the tarball under
-// the source cap, and unblocking them defeats that purpose.
+// → no project-level exclusions). See packRules.exclude for the order.
 func shouldExclude(relSlashPath string, isDir bool, patterns []gregaleignorePattern) bool {
-	base := relSlashPath
-	if i := strings.LastIndex(relSlashPath, "/"); i >= 0 {
-		base = relSlashPath[i+1:]
+	return packRules{patterns: patterns}.exclude(relSlashPath, isDir)
+}
+
+// buildOutputDirs are the default-excluded directories that hold build
+// output. A Dockerfile build commonly COPYs them (`COPY target/*.jar`,
+// `COPY dist/ ...`), so they ship by default when the source builds with a
+// Dockerfile (ADR-20261026120000).
+var buildOutputDirs = map[string]bool{"dist": true, ".next": true, "coverage": true, "target": true, ".cache": true}
+
+// packRules is the complete file-selection policy for one packed root.
+type packRules struct {
+	// patterns are .dockerignore (Dockerfile builds only, root-anchored as
+	// Docker reads them) followed by .gregaleignore; the last match wins.
+	patterns []gregaleignorePattern
+	// dockerfile keeps build-output directories by default.
+	dockerfile bool
+	// goVendor reports whether a vendor/ directory at rel holds Go module
+	// vendoring (vendor/modules.txt), which is source, not an install.
+	goVendor func(rel string) bool
+}
+
+// exclude applies, in order: .git (always excluded, cannot be re-included);
+// the default exclusions; then every pattern, the last match deciding, so a
+// negated line such as `!dist/` re-includes a default-excluded directory.
+// Before ADR-20261026120000 the defaults could not be overridden at all.
+func (r packRules) exclude(rel string, isDir bool) bool {
+	base := rel
+	if i := strings.LastIndex(rel, "/"); i >= 0 {
+		base = rel[i+1:]
 	}
+	if base == ".git" {
+		return true
+	}
+	excluded := false
 	if isDir {
-		if defaultExcludeDirs[base] {
-			return true
-		}
+		excluded = defaultExcludeDirs[base] &&
+			!(r.dockerfile && buildOutputDirs[base]) &&
+			!(base == "vendor" && r.goVendor != nil && r.goVendor(rel))
 	} else {
-		if defaultExcludeFiles[base] {
-			return true
+		excluded = defaultExcludeFiles[base] || strings.HasSuffix(base, ".pyc")
+	}
+	for _, p := range r.patterns {
+		if p.dirOnly && !isDir {
+			continue
 		}
-		if strings.HasSuffix(base, ".pyc") {
-			return true
+		if matchGregaleignoreOne(rel, p) {
+			excluded = !p.negate
 		}
 	}
-	return matchGregaleignore(relSlashPath, isDir, patterns)
+	return excluded
+}
+
+// dockerignoreFile is read for Dockerfile builds so the uploaded context
+// matches what `docker build` would send.
+const dockerignoreFile = ".dockerignore"
+
+// parseDockerignore parses .dockerignore with the .gregaleignore grammar.
+// Docker matches every pattern from the context root, so each one is
+// anchored; a leading "./" is dropped as Docker does.
+func parseDockerignore(data []byte) []gregaleignorePattern {
+	patterns := parseGregaleignore(data)
+	for i := range patterns {
+		patterns[i].anchor = true
+		for len(patterns[i].globSegments) > 1 && patterns[i].globSegments[0] == "." {
+			patterns[i].globSegments = patterns[i].globSegments[1:]
+		}
+	}
+	return patterns
+}
+
+// dockerfileSource reports whether dir builds with a Dockerfile: one at its
+// root, or a gregale.yaml build: section naming one.
+func dockerfileSource(dir string) bool {
+	if detectFramework(dir) == fwDocker {
+		return true
+	}
+	manifest, ok, err := gregalemanifest.Load(dir)
+	return err == nil && ok && manifest.Build != nil
+}
+
+// loadPackRules builds the policy for packing srcDir. dockerfile selects the
+// Dockerfile defaults; .dockerignore is read only then.
+func loadPackRules(srcDir string, dockerfile bool) packRules {
+	rules := packRules{dockerfile: dockerfile, goVendor: func(rel string) bool {
+		info, err := os.Lstat(filepath.Join(srcDir, filepath.FromSlash(rel), "modules.txt"))
+		return err == nil && info.Mode().IsRegular()
+	}}
+	if dockerfile {
+		if data, err := os.ReadFile(filepath.Join(srcDir, dockerignoreFile)); err == nil {
+			rules.patterns = parseDockerignore(data)
+		}
+	}
+	rules.patterns = append(rules.patterns, loadGregaleignore(srcDir)...)
+	return rules
 }
 
 // packExtraExcludeSet converts absolute customer paths (for example an
@@ -642,6 +713,9 @@ func (e *NestedMarkerHintError) Unwrap() error { return e.Err }
 func detectShape(srcDir string) shape {
 	if manifest, ok, err := gregalemanifest.Load(srcDir); err == nil && ok && manifest.Function != nil {
 		return shapeFunction
+	} else if err == nil && ok && manifest.Build != nil {
+		// A build: section names a Dockerfile anywhere under the root.
+		return shapeApp
 	}
 	entries, err := os.ReadDir(srcDir)
 	if err != nil {
@@ -792,7 +866,7 @@ const defaultZeroConfigSourceCapMB = 100
 //
 // The gzip→tar→walk shape mirrors cmd/gregale/templates/embed.go:TarGz.
 func packDirToTarGz(srcDir, destPath string, capMB int, envOverride map[string][]byte, extraExcludes ...string) (regularFileCount int, err error) {
-	return packDirToTarGzWithRoot(srcDir, destPath, capMB, envOverride, filepath.Base(srcDir), nil, extraExcludes...)
+	return packDirToTarGzWithRoot(srcDir, destPath, capMB, envOverride, filepath.Base(srcDir), nil, dockerfileSource(srcDir), extraExcludes...)
 }
 
 // packDirToTarGzFlat writes the directory contents relative to the archive
@@ -800,14 +874,21 @@ func packDirToTarGz(srcDir, destPath string, capMB int, envOverride map[string][
 // deploys use this shape so source_root is stable across Git HEAD archives and
 // working-tree archives: both describe paths from the repository root.
 func packDirToTarGzFlat(srcDir, destPath string, capMB int, envOverride map[string][]byte, extraExcludes ...string) (regularFileCount int, err error) {
-	return packDirToTarGzWithRoot(srcDir, destPath, capMB, envOverride, "", nil, extraExcludes...)
+	return packDirToTarGzWithRoot(srcDir, destPath, capMB, envOverride, "", nil, dockerfileSource(srcDir), extraExcludes...)
 }
 
 // packDirToTarGzWithRoot is the implementation shared by the legacy wrapped
 // packer and the flat repository-context packer. buildOnlyFiles contains
 // generated regular files keyed relative to srcDir. They are written only to
 // the archive and never materialized in the customer's source directory.
-func packDirToTarGzWithRoot(srcDir, destPath string, capMB int, envOverride map[string][]byte, archiveRoot string, buildOnlyFiles map[string][]byte, extraExcludes ...string) (regularFileCount int, err error) {
+// dockerfile selects the Dockerfile file-selection defaults (packRules).
+//
+// Two limits apply, the ones apid enforces (ADR-20261026120000): the packed
+// (compressed) archive may not exceed capMB, the plan's upload limit, and the
+// expanded source may not exceed api.SourceArchiveMaxExpandedBytes. Before,
+// the plan limit was applied to the uncompressed bytes, refusing sources the
+// server accepts.
+func packDirToTarGzWithRoot(srcDir, destPath string, capMB int, envOverride map[string][]byte, archiveRoot string, buildOnlyFiles map[string][]byte, dockerfile bool, extraExcludes ...string) (regularFileCount int, err error) {
 	// os.Getwd returns the shell's $PWD spelling, and WalkDir never descends
 	// into a symlinked root, so a project reached through a symlink packed
 	// as an empty archive. Callers already chose archiveRoot.
@@ -815,17 +896,17 @@ func packDirToTarGzWithRoot(srcDir, destPath string, capMB int, envOverride map[
 		srcDir = resolved
 	}
 
-	// Load .gregaleignore once (before the walk) so shouldExclude sees
-	// the same patterns for every entry. Missing file → nil → no
-	// project-level exclusions (defaults still apply).
-	gitignorePatterns := loadGregaleignore(srcDir)
+	// Load the file-selection rules once (before the walk) so every entry
+	// sees the same policy.
+	rules := loadPackRules(srcDir, dockerfile)
 	extraExcludeSet := packExtraExcludeSet(srcDir, extraExcludes)
 
 	f, err := os.Create(destPath)
 	if err != nil {
 		return 0, fmt.Errorf("create archive %s: %w", destPath, err)
 	}
-	gz := gzip.NewWriter(f)
+	capBytes := int64(capMB) * 1024 * 1024
+	gz := gzip.NewWriter(&capWriter{w: f, limit: capBytes})
 	tw := tar.NewWriter(gz)
 	defer func() {
 		// Defer must close in tar→gzip→file order so gzip's trailer flushes
@@ -838,56 +919,13 @@ func packDirToTarGzWithRoot(srcDir, destPath string, capMB int, envOverride map[
 
 	// Collect first, sort, then write — a deterministic archive order makes
 	// the output reproducible (same input → same bytes).
-	type entry struct {
-		abs  string
-		rel  string // slash-separated, relative to srcDir (no root prefix)
-		info os.FileInfo
-	}
-	var entries []entry
-	walkErr := filepath.WalkDir(srcDir, func(p string, d os.DirEntry, werr error) error {
-		if werr != nil {
-			return werr
-		}
-		if p == srcDir {
-			return nil
-		}
-		rel, rerr := filepath.Rel(srcDir, p)
-		if rerr != nil {
-			return rerr
-		}
-		relSlash := filepath.ToSlash(rel)
-		if extraExcludeSet[relSlash] {
-			if d.IsDir() {
-				return filepath.SkipDir
-			}
-			return nil
-		}
-		if shouldExclude(relSlash, d.IsDir(), gitignorePatterns) {
-			if d.IsDir() {
-				return filepath.SkipDir
-			}
-			return nil
-		}
-		info, ierr := d.Info()
-		if ierr != nil {
-			return ierr
-		}
-		mode := info.Mode()
-		if mode&os.ModeSymlink != 0 {
-			return fmt.Errorf("symlink %q is not allowed in source tarballs (apid rejects symlink entries) — remove the symlink or pass --tarball of an archive you built yourself", relSlash)
-		}
-		if !d.IsDir() && !mode.IsRegular() {
-			return fmt.Errorf("refusing to pack irregular file %q (device/socket/pipe)", relSlash)
-		}
-		entries = append(entries, entry{abs: p, rel: relSlash, info: info})
-		return nil
-	})
-	if walkErr != nil {
-		return 0, fmt.Errorf("walk %s: %w", srcDir, walkErr)
+	var entries []packEntry
+	if err := collectPackEntries(srcDir, srcDir, "", rules, extraExcludeSet, &entries, 0); err != nil {
+		return 0, fmt.Errorf("walk %s: %w", srcDir, err)
 	}
 
 	sort.Slice(entries, func(i, j int) bool { return entries[i].rel < entries[j].rel })
-	capBytes := int64(capMB) * 1024 * 1024
+	expandedCap := api.SourceArchiveMaxExpandedBytes
 	var totalUncompressed int64
 	existingEntries := make(map[string]bool, len(entries))
 	for _, e := range entries {
@@ -944,38 +982,31 @@ func packDirToTarGzWithRoot(srcDir, destPath string, capMB int, envOverride map[
 		// destinations — the secret-scan pass is per-archive.
 		if data, ok := envOverride[e.rel]; ok {
 			hdr.Size = int64(len(data))
-			if totalUncompressed > capBytes-hdr.Size {
-				return 0, fmt.Errorf("uncompressed source is over the %d MB zero-config cap; trim large files or pass --tarball of a hand-built archive", capMB)
+			if totalUncompressed > expandedCap-hdr.Size {
+				return 0, sourceExpandedLimitError()
 			}
 			if err := tw.WriteHeader(hdr); err != nil {
-				return 0, fmt.Errorf("write header %s: %w", hdr.Name, err)
+				return 0, packWriteError(capMB, hdr.Name, err)
 			}
 			if _, err := tw.Write(data); err != nil {
-				return 0, fmt.Errorf("write body %s: %w", hdr.Name, err)
+				return 0, packWriteError(capMB, hdr.Name, err)
 			}
 			totalUncompressed += hdr.Size
 			delete(envOverride, e.rel)
 			regularFileCount++
 			continue
 		}
-		if e.info.Size() > capBytes-totalUncompressed {
-			if e.info.Size() > capBytes {
-				return 0, fmt.Errorf("refusing to pack %s: %d bytes > %d MB per-file cap (untracked large file? pass --tarball of a hand-built archive)",
-					filepath.Base(e.abs), e.info.Size(), capMB)
-			}
-			return 0, fmt.Errorf("uncompressed source is over the %d MB zero-config cap; trim large files or pass --tarball of a hand-built archive", capMB)
+		if e.info.Size() > expandedCap-totalUncompressed {
+			return 0, sourceExpandedLimitError()
 		}
 		if err := tw.WriteHeader(hdr); err != nil {
-			return 0, fmt.Errorf("write header %s: %w", hdr.Name, err)
+			return 0, packWriteError(capMB, hdr.Name, err)
 		}
-		written, err := copyRegular(tw, e.abs, capMB)
+		written, err := copyRegular(tw, e.abs, expandedCap-totalUncompressed)
 		if err != nil {
-			return 0, err
+			return 0, packWriteError(capMB, hdr.Name, err)
 		}
 		totalUncompressed += written
-		if totalUncompressed > capBytes {
-			return 0, fmt.Errorf("uncompressed source is over the %d MB zero-config cap; trim large files or pass --tarball of a hand-built archive", capMB)
-		}
 		regularFileCount++
 	}
 
@@ -985,8 +1016,8 @@ func packDirToTarGzWithRoot(srcDir, destPath string, capMB int, envOverride map[
 	// app, while the remote framework detector requires it to select Go.
 	for _, rel := range virtualNames {
 		data := buildOnlyFiles[rel]
-		if int64(len(data)) > capBytes-totalUncompressed {
-			return 0, fmt.Errorf("uncompressed source is over the %d MB zero-config cap; trim large files or pass --tarball of a hand-built archive", capMB)
+		if int64(len(data)) > expandedCap-totalUncompressed {
+			return 0, sourceExpandedLimitError()
 		}
 		name := rel
 		if archiveRoot != "" {
@@ -1000,10 +1031,10 @@ func packDirToTarGzWithRoot(srcDir, destPath string, capMB int, envOverride map[
 			ModTime:  packEpoch,
 		}
 		if err := tw.WriteHeader(hdr); err != nil {
-			return 0, fmt.Errorf("write header %s: %w", hdr.Name, err)
+			return 0, packWriteError(capMB, hdr.Name, err)
 		}
 		if _, err := tw.Write(data); err != nil {
-			return 0, fmt.Errorf("write body %s: %w", hdr.Name, err)
+			return 0, packWriteError(capMB, hdr.Name, err)
 		}
 		totalUncompressed += hdr.Size
 		regularFileCount++
@@ -1013,20 +1044,133 @@ func packDirToTarGzWithRoot(srcDir, destPath string, capMB int, envOverride map[
 	// is idempotent — the defer above also calls them on any return path.
 	if err := tw.Close(); err != nil {
 		_ = gz.Close()
-		return 0, fmt.Errorf("close tar: %w", err)
+		return 0, packWriteError(capMB, "tar trailer", err)
 	}
 	if err := gz.Close(); err != nil {
-		return 0, fmt.Errorf("close gzip: %w", err)
+		return 0, packWriteError(capMB, "gzip trailer", err)
 	}
 	st, err := os.Stat(destPath)
 	if err != nil {
 		return 0, fmt.Errorf("stat packed tarball: %w", err)
 	}
 	if st.Size() > capBytes {
-		return 0, fmt.Errorf("packed cwd is %d MB, over the %d MB zero-config cap; trim large files or pass --tarball of a hand-built archive",
-			st.Size()/(1024*1024), capMB)
+		return 0, sourceUploadLimitError(capMB)
 	}
 	return regularFileCount, nil
+}
+
+// errPackedOverCap is returned by capWriter once the compressed archive
+// passes the plan's upload limit, so packing stops early.
+var errPackedOverCap = errors.New("packed source is over the upload limit")
+
+// capWriter fails a write that would take the packed archive past limit.
+type capWriter struct {
+	w       io.Writer
+	limit   int64
+	written int64
+}
+
+func (c *capWriter) Write(p []byte) (int, error) {
+	if c.written+int64(len(p)) > c.limit {
+		return 0, errPackedOverCap
+	}
+	n, err := c.w.Write(p)
+	c.written += int64(n)
+	return n, err
+}
+
+// packWriteError names the plan limit when the write failed on it.
+func packWriteError(capMB int, name string, err error) error {
+	if errors.Is(err, errPackedOverCap) {
+		return sourceUploadLimitError(capMB)
+	}
+	return fmt.Errorf("write %s: %w", name, err)
+}
+
+func sourceUploadLimitError(capMB int) error {
+	return fmt.Errorf("packed source is over your plan's %d MB upload limit; exclude large files in .gregaleignore (https://gregale.dev/docs/deploy-from-source#what-gets-uploaded)", capMB)
+}
+
+func sourceExpandedLimitError() error {
+	return fmt.Errorf("source expands to more than %d MB uncompressed, the limit on every plan; exclude large files in .gregaleignore (https://gregale.dev/docs/deploy-from-source#what-gets-uploaded)", api.SourceArchiveMaxExpandedBytes>>20)
+}
+
+// packEntry is one archive entry: rel is its archive name and abs the file
+// whose bytes it carries, which for a dereferenced symlink is the target.
+type packEntry struct {
+	abs  string
+	rel  string
+	info os.FileInfo
+}
+
+// collectPackEntries walks dir, whose archive path is rel ("" at the root).
+// A symlink inside the source tree is packed as the file or directory it
+// points to, because apid accepts regular files only (ADR-20261026120000);
+// one that leaves the tree, dangles or loops is an error naming the fix.
+func collectPackEntries(root, dir, rel string, rules packRules, extra map[string]bool, out *[]packEntry, depth int) error {
+	return filepath.WalkDir(dir, func(p string, d os.DirEntry, werr error) error {
+		if werr != nil {
+			return werr
+		}
+		if p == dir {
+			return nil
+		}
+		sub, err := filepath.Rel(dir, p)
+		if err != nil {
+			return err
+		}
+		relSlash := path.Join(rel, filepath.ToSlash(sub))
+		info, err := d.Info()
+		if err != nil {
+			return err
+		}
+		abs := p
+		if info.Mode()&os.ModeSymlink != 0 {
+			if abs, info, err = resolvePackSymlink(root, p, relSlash); err != nil {
+				return err
+			}
+		}
+		isDir := info.IsDir()
+		if extra[relSlash] || rules.exclude(relSlash, isDir) {
+			if d.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if !isDir && !info.Mode().IsRegular() {
+			return fmt.Errorf("refusing to pack irregular file %q (device/socket/pipe)", relSlash)
+		}
+		*out = append(*out, packEntry{abs: abs, rel: relSlash, info: info})
+		if isDir && abs != p {
+			if depth >= maxSymlinkHops {
+				return fmt.Errorf("symlink %q: too many nested directory links", relSlash)
+			}
+			return collectPackEntries(root, abs, relSlash, rules, extra, out, depth+1)
+		}
+		return nil
+	})
+}
+
+// resolvePackSymlink returns the target of the symlink at p when it stays
+// inside root and is a regular file or a directory that does not contain
+// the link itself.
+func resolvePackSymlink(root, p, rel string) (string, os.FileInfo, error) {
+	target, err := filepath.EvalSymlinks(p)
+	if err != nil {
+		return "", nil, fmt.Errorf("symlink %q does not resolve (%v); remove it or exclude it in .gregaleignore", rel, err)
+	}
+	inside, err := filepath.Rel(root, target)
+	if err != nil || inside == ".." || strings.HasPrefix(inside, ".."+string(filepath.Separator)) {
+		return "", nil, fmt.Errorf("symlink %q points outside the source directory (%s); copy the file into the source or exclude the link in .gregaleignore", rel, target)
+	}
+	info, err := os.Stat(target)
+	if err != nil {
+		return "", nil, fmt.Errorf("symlink %q: %w", rel, err)
+	}
+	if info.IsDir() && strings.HasPrefix(p+string(filepath.Separator), target+string(filepath.Separator)) {
+		return "", nil, fmt.Errorf("symlink %q points to a directory that contains it; exclude it in .gregaleignore", rel)
+	}
+	return target, info, nil
 }
 
 func sourceArchiveEntryLimitError(count int) error {
@@ -1039,34 +1183,22 @@ func sourceArchiveEntryLimitError(count int) error {
 // because the walked paths are customer-supplied (TOCTOU: a path Lstat'd as
 // regular during the walk could be swapped for a symlink before we read it).
 //
-// The stream is wrapped in a LimitReader at capMB so a single runaway file
-// (a 2 GB raw dataset committed by accident) aborts early with a clear
-// error instead of streaming gigabytes through gzip→tar. capMB is the
-// per-plan upload cap resolved by the caller from
-// api.MustLimitsFor(plan).SourceTarballMaxMB.
-func copyRegular(tw *tar.Writer, abs string, capMB int) (int64, error) {
+// The stream is wrapped in a LimitReader at maxBytes, the expanded-size
+// budget left, so a file that grew after the walk aborts with a clear error
+// instead of streaming gigabytes through gzip→tar.
+func copyRegular(tw *tar.Writer, abs string, maxBytes int64) (int64, error) {
 	f, err := openCustomerFile(abs)
 	if err != nil {
 		return 0, fmt.Errorf("open %s: %w", abs, err)
 	}
 	defer func() { _ = f.Close() }()
-	// Wrap the source in a LimitReader so a runaway file (a 2 GB raw
-	// dataset committed by accident) aborts with at most capBytes+1
-	// bytes streamed into the tar before we reject it. Reading +1
-	// disambiguates "file is exactly capBytes" (allowed) from "file is
-	// strictly larger" (rejected). The prior implementation did
-	// io.Copy(tw, f) without a cap and only checked the size after the
-	// entire file had already been streamed into gzip — a 2 GB file
-	// would pay the full CPU/IO cost before the error surfaced.
-	capBytes := int64(capMB) * 1024 * 1024
-	lr := io.LimitReader(f, capBytes+1)
-	n, err := io.Copy(tw, lr)
+	// Reading +1 disambiguates "exactly maxBytes" (allowed) from "larger".
+	n, err := io.Copy(tw, io.LimitReader(f, maxBytes+1))
 	if err != nil {
 		return n, fmt.Errorf("copy %s: %w", abs, err)
 	}
-	if n > capBytes {
-		return n, fmt.Errorf("refusing to pack %s: %d bytes > %d MB per-file cap (untracked large file? pass --tarball of a hand-built archive)",
-			filepath.Base(abs), n, capMB)
+	if n > maxBytes {
+		return n, sourceExpandedLimitError()
 	}
 	return n, nil
 }
@@ -1274,10 +1406,11 @@ func autoPackSource(detectDir, packDir string, flat bool, capMB int, envOverride
 	}
 
 	var n int
+	dockerfile := dockerfileSource(detectDir)
 	if flat {
-		n, err = packDirToTarGzWithRoot(packDir, path, capMB, envOverride, "", buildOnlyFiles, extraExcludes...)
+		n, err = packDirToTarGzWithRoot(packDir, path, capMB, envOverride, "", buildOnlyFiles, dockerfile, extraExcludes...)
 	} else {
-		n, err = packDirToTarGzWithRoot(packDir, path, capMB, envOverride, filepath.Base(packDir), buildOnlyFiles, extraExcludes...)
+		n, err = packDirToTarGzWithRoot(packDir, path, capMB, envOverride, filepath.Base(packDir), buildOnlyFiles, dockerfile, extraExcludes...)
 	}
 	if err != nil {
 		_ = os.Remove(path)

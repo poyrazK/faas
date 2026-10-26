@@ -74,6 +74,22 @@ func (s *server) capabilityAllowedFor(r *http.Request, acct state.Account) bool 
 	return s.capGate.Allowed(capabilityGateKey(r.Pattern, r), flagSubject(r, acct))
 }
 
+// deploymentBodyCapabilityAllowed decides POST /v1/apps/{slug}/deployments by
+// its body: the route belongs to the core apps capability, a multipart
+// source upload to source-deploy and an image deployment to
+// container-deployments (ADR-20261026120000). Either kill switch hides only
+// its own kind of deploy, before the app is resolved.
+func (s *server) deploymentBodyCapabilityAllowed(r *http.Request, acct state.Account) bool {
+	if s.capGate == nil {
+		return true
+	}
+	capability := "container-deployments"
+	if strings.HasPrefix(r.Header.Get("Content-Type"), "multipart/form-data") {
+		capability = "source-deploy"
+	}
+	return s.capGate.Enabled(capability, flagSubject(r, acct))
+}
+
 // capabilityGateKey is what the gate decides a request by: the matched
 // pattern for a specific route, the request path for a subtree pattern such
 // as "GET /dashboard/", whose handler dispatches many pages by path.

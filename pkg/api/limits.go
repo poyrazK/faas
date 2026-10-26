@@ -2385,6 +2385,15 @@ const (
 	// developer delta reconstruction so the optimization cannot accept an
 	// archive the canonical deployment path would reject.
 	SourceArchiveMaxEntries = 10_000
+	// SourceSpoolRetention keeps a deployment's spooled source archive and
+	// build log after its last write; `deploys retry` relies on the archive
+	// for this long. It matches builderd's default source_max_age for the
+	// object-store copy. Nothing an in-flight deployment still needs is
+	// removed, whatever its age (ADR-20261026120000).
+	SourceSpoolRetention = 24 * time.Hour
+	// SourceSpoolSweepInterval is the cadence of the spool sweeper on the
+	// apid, builderd and githubd hosts.
+	SourceSpoolSweepInterval = time.Hour
 	// SourceArchiveMaxExpandedBytes caps the summed declared size of a source
 	// archive's entries. The compressed upload cap alone admits a highly
 	// compressed archive that apid would inflate, at full CPU, on every pass

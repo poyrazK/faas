@@ -527,7 +527,24 @@
         "=/v1/apps/{}",
         "/v1/apps/{}/rename",
         "/v1/apps/{}/restore",
-        "/v1/deleted-apps"
+        "/v1/deleted-apps",
+        "/dashboard/apps/{}/deployment-submissions",
+        "/dashboard/apps/{}/deployments",
+        "/v1/apps/{}/deployment-submissions",
+        "=/v1/apps/{}/deployments",
+        "/v1/apps/{}/deployments/clear-obsolete",
+        "/v1/apps/{}/deployments/latest",
+        "/v1/apps/{}/deployments/{}/cancel",
+        "/v1/apps/{}/deployments/{}/response-check",
+        "/v1/apps/{}/deployments/{}/summary",
+        "=/v1/deployments",
+        "/v1/deployments/latest-by-app",
+        "/v1/deployments/response-check",
+        "=/v1/deployments/{}",
+        "/v1/deployments/{}/diff",
+        "/v1/deployments/{}/retry",
+        "/v1/deployments/{}/stages",
+        "/v1/deployments/{}/url"
       ],
       "cli": [
         "apps",
@@ -5190,30 +5207,16 @@
         "scale"
       ],
       "docs_url": "https://gregale.dev/docs/deploy-from-source",
-      "acceptance_test": "cmd/e2e/apply_project_e2e_test.go::TestApplyProject_DeploymentKindTarball",
+      "acceptance_test": "cmd/e2e/source_deploy_wake_metal_test.go::TestSourceDeployWakeMetal",
       "routes": [
-        "/dashboard/apps/{}/deployment-submissions",
-        "/dashboard/apps/{}/deployments",
-        "/v1/apps/{}/deployment-submissions",
-        "=/v1/apps/{}/deployments",
-        "/v1/apps/{}/deployments/clear-obsolete",
         "/v1/apps/{}/deployments/dev-source",
-        "/v1/apps/{}/deployments/latest",
         "/v1/apps/{}/deployments/source-tarball",
-        "/v1/apps/{}/deployments/{}/cancel",
-        "/v1/apps/{}/deployments/{}/response-check",
-        "/v1/apps/{}/deployments/{}/summary",
-        "=/v1/deployments",
-        "/v1/deployments/latest-by-app",
-        "/v1/deployments/response-check",
-        "=/v1/deployments/{}",
-        "/v1/deployments/{}/diff",
-        "/v1/deployments/{}/retry",
-        "/v1/deployments/{}/stages",
-        "/v1/deployments/{}/url",
         "=/v1/uploads",
         "=/v1/uploads/{}",
         "=/v1/uploads/{}/commit"
+      ],
+      "settings": [
+        "manifest.build"
       ]
     },
     {
