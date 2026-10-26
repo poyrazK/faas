@@ -8,6 +8,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 // DiscoveredRouteLimit bounds persistent per-app cardinality independently of
@@ -91,7 +93,7 @@ func discoveredRouteFor(event APIConsumerUsageEvent) string {
 	}
 	// Audit-enabled gateways predating the dedicated route field still have a
 	// normalized candidate. This also preserves the initial audit API tests.
-	if event.Audit != nil && event.Audit.RouteTemplate != discoveredRouteOverflow {
+	if event.Audit != nil && event.Audit.RouteTemplate != discoveredRouteOverflow && api.RouteDiscoverableStatus(event.Audit.HTTPStatus) {
 		return event.Audit.RouteTemplate
 	}
 	return ""
