@@ -469,6 +469,32 @@ identity opens none that is still valid.
   signed URLs are left as they are. The binding promotion revision bumps,
   as for outbound.
 
+## Implemented in the eighth slice: the control domain
+
+- **schedd** loads `domains/control.age` (and its `.previous`) through
+  `FAAS_SEAL_DOMAIN_CONTROL_IDENTITY_PATH` on control-plane and compute
+  hosts. It opens the cluster signing key with the control identity first,
+  then fleet and host, and keeps working with the control identity alone
+  once the contract step removes `fleet.age`. It exports
+  `faas_seal_domain_loaded{domain="control"}`, and a configured identity
+  that does not load fails startup.
+- **No writer and no write mode.** apid never writes the key. `gregalectl
+  fleet-seal migrate` creates it, sealed to fleet, only on a new fleet; it
+  moves into the domain only through `gregalectl seal-domain migrate
+  --domain control --readers-verified`, a compare-and-swap on the single
+  row.
+- **fleet-seal follows the domain.**
+  - `fleet-seal migrate` leaves a cluster key the control identity opens
+    where it is, instead of re-sealing it to fleet.
+  - `fleet-seal verify`, which node join runs before activation, opens it
+    with the control identity when the fleet key no longer does, and
+    reports `cluster_key_sealed_to`.
+  - Both read the staged `control.age` (`--control-key` overrides). The
+    join stages it first: `seal_domains` runs in `bootstrap.yml`, ahead of
+    the activation play.
+- **CD** stages the control identity on both node roles; it has no
+  recipient to stage, since nothing seals to it but the migration.
+
 ## Implemented: the alerting test-send relay
 
 Section 3 moves apid's alerting test sends behind meterd, ahead of the
@@ -498,9 +524,9 @@ Each domain's key pair is a pair of GitHub environment secrets:
 
 - `scripts/ci/seal_domain_vars.sh` writes the files a host role needs on the
   runner and points the `seal_domains` role at them:
-  - control plane: the `outbound`, `source`, `alerting` and `storage`
-    identities and every recipient;
-  - compute: the `runtime`, `build` and `edge` identities.
+  - control plane: the `outbound`, `source`, `alerting`, `storage` and
+    `control` identities and every recipient;
+  - compute: the `runtime`, `build`, `edge` and `control` identities.
 - The control-plane converges (the full one and the host-configuration
   lane) and the compute join run the role with those variables.
 - A join whose `seal-domain verify` fails leaves the node drained.

@@ -30,6 +30,7 @@ type edgeRuleScopedInvalidator interface {
 // response cache, whose entries are keyed by app and cannot be enumerated by
 // host pattern.
 func invalidateEdgeRuleScope(ctx context.Context, inv edgeRuleRepairInvalidator, appID string, hosts []string) {
+	hosts = withCanonicalHostPatterns(hosts)
 	scoped, ok := inv.(edgeRuleScopedInvalidator)
 	if !ok || len(hosts) == 0 {
 		inv.ResetEdgeRules()

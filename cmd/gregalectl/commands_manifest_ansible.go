@@ -203,6 +203,7 @@ func renderManifestAnsibleFiles(m *manifest.Manifest, outputDir string) ([]manif
 			return nil, fmt.Errorf("host %s schedd target: %w", host.Name, targetErr)
 		}
 		body := renderManifestHostVars(host, ansibleHost, targetURL, gatewaySynthTarget, hostScheddTarget, controlPlaneAPIDLoopback, privateHosts, overlayCIDRs, m.Overlay.Provider, m.DNS.Mode, m.PrivateDNS.Mode, m.PrivateDNS.Zone, postgresListenAddress, postgresAllowedCIDRs, computeAllowedCIDRs, controlPlaneAllowedCIDRs, m.Storage.FastRoot)
+		body += renderDomainLayoutVars(m.DNS)
 		if host.Role == roleControlPlane {
 			body += renderCustomDomainEdgeVars(m.PublicEdge.CustomDomains)
 			body += renderScheddListenVars(m)
@@ -614,6 +615,30 @@ func renderPublicListenAddr(host manifest.Host) string {
 // host: the public_edge Caddy block, the nftables 80/443 opening, apid's
 // customer DNS instructions and gatewayd-public's ask endpoint all key off
 // these variables.
+// renderDomainLayoutVars renders the apps domain the roles' apps-domain
+// drop-ins and public edge read, and the ADR-20261026100000 layout the
+// domain-layout drop-in reads. Nothing is rendered for an unset layout field,
+// so a manifest that sets only apps_domain keeps the shared layout.
+func renderDomainLayoutVars(d manifest.DNS) string {
+	var b strings.Builder
+	if d.AppsDomain != "" {
+		fmt.Fprintf(&b, "gatewayd_apps_domain: %q\n", d.AppsDomain)
+	}
+	if d.PlatformDomain != "" {
+		fmt.Fprintf(&b, "faas_platform_domain: %q\n", d.PlatformDomain)
+	}
+	if d.DeployDomain != "" {
+		fmt.Fprintf(&b, "faas_deploy_domain: %q\n", d.DeployDomain)
+	}
+	if len(d.AppsDomainAliases) > 0 {
+		fmt.Fprintf(&b, "faas_apps_domain_aliases: [%s]\n", quotedYAMLList(d.AppsDomainAliases))
+	}
+	if d.AppsDomainAliasMode != "" {
+		fmt.Fprintf(&b, "faas_apps_domain_alias_mode: %q\n", d.AppsDomainAliasMode)
+	}
+	return b.String()
+}
+
 func renderCustomDomainEdgeVars(c manifest.CustomDomainsEdge) string {
 	if !c.Enabled() {
 		return ""

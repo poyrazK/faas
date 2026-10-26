@@ -774,7 +774,9 @@ func (q *Queries) EventReceiptReplaySummaries(ctx context.Context, db DBTX, arg 
 }
 
 const eventReceiptReplayTarget = `-- name: EventReceiptReplayTarget :one
-SELECT a.id AS app_id FROM event_fanout_outbox o
+SELECT a.id AS app_id,
+       coalesce(o.recipient_progress -> (s.recipient->>'id') ->> 'delivery_id', '')::text AS delivery_id
+FROM event_fanout_outbox o
 CROSS JOIN LATERAL (
     SELECT recipient FROM jsonb_array_elements(coalesce(o.recipient_snapshot, '[]'::jsonb)) captured(recipient)
     UNION ALL
@@ -791,11 +793,16 @@ type EventReceiptReplayTargetParams struct {
 	SubscriptionID string
 }
 
-func (q *Queries) EventReceiptReplayTarget(ctx context.Context, db DBTX, arg EventReceiptReplayTargetParams) (pgtype.UUID, error) {
+type EventReceiptReplayTargetRow struct {
+	AppID      pgtype.UUID
+	DeliveryID string
+}
+
+func (q *Queries) EventReceiptReplayTarget(ctx context.Context, db DBTX, arg EventReceiptReplayTargetParams) (EventReceiptReplayTargetRow, error) {
 	row := db.QueryRow(ctx, eventReceiptReplayTarget, arg.OutboxID, arg.AccountID, arg.SubscriptionID)
-	var app_id pgtype.UUID
-	err := row.Scan(&app_id)
-	return app_id, err
+	var i EventReceiptReplayTargetRow
+	err := row.Scan(&i.AppID, &i.DeliveryID)
+	return i, err
 }
 
 const eventReceiptScope = `-- name: EventReceiptScope :one

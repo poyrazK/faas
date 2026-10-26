@@ -43,6 +43,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/gateway"
+	"github.com/onebox-faas/faas/pkg/hostidentity"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/wire"
 )
@@ -82,7 +83,7 @@ func (s *server) getDeploymentURL(w http.ResponseWriter, r *http.Request, acct s
 		writeJSON(w, http.StatusOK, resp)
 		return
 	}
-	suffix := wire.DeployWildcardSuffix
+	suffix := hostidentity.DeploySuffix()
 	if suffix == "" {
 		// Deployment-preview zone disabled on this platform. The
 		// 200 envelope carries Alive=false so the dashboard shows
@@ -118,14 +119,14 @@ func (s *server) getDeploymentURL(w http.ResponseWriter, r *http.Request, acct s
 
 // The preview host is platform-generated; request Host and customer URLs are never used.
 func (s *server) mcpReadinessPreview(ctx context.Context, app state.App, d state.Deployment) (string, error) {
-	if d.Status != state.DeployLive || !d.DeploymentPreviewActive() || wire.DeployWildcardSuffix == "" {
+	if d.Status != state.DeployLive || !d.DeploymentPreviewActive() || hostidentity.DeploySuffix() == "" {
 		return "", state.ErrConflict
 	}
 	ordinal, err := s.store.DeploymentOrdinal(ctx, app.ID, d.ID)
 	if err != nil {
 		return "", err
 	}
-	host := gateway.BuildDeploymentPreviewURL(wire.DeployWildcardSuffix, ordinal, app.Slug)
+	host := gateway.BuildDeploymentPreviewURL(hostidentity.DeploySuffix(), ordinal, app.Slug)
 	if host == "" {
 		return "", state.ErrConflict
 	}

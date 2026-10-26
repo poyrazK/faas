@@ -220,44 +220,12 @@ func (s *server) setAccountPlan(ctx context.Context, acct state.Account, plan ap
 	return nil
 }
 
+// obsAppDetail serves GET /v1/admin/obs/apps/{id}: one app's support view.
+// {id} is the app's UUID or its slug (handlers_admin_obs_app.go).
 func (s *server) obsAppDetail(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	if allowed, prob := s.adminAllows(acct); !allowed {
 		api.WriteProblem(w, prob)
 		return
-	}
-	appID := r.PathValue("id")
-	if _, err := uuid.Parse(appID); err != nil {
-		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Bad app id", "expected UUID"))
-		return
-	}
-	app, err := s.store.AppByID(r.Context(), appID)
-	if err != nil {
-		status := http.StatusInternalServerError
-		code := api.CodeInternal
-		if errors.Is(err, state.ErrNotFound) {
-			status = http.StatusNotFound
-			code = api.CodeNotFound
-		}
-		api.WriteProblem(w, api.NewProblem(status, code, "App not found", err.Error()))
-		return
-	}
-	deployments, err := s.store.ListDeploymentsForApp(r.Context(), app.ID, 100, 0)
-	if err != nil {
-		api.WriteProblem(w, api.ErrCapacity("could not list app deployments"))
-		return
-	}
-	instances, err := s.store.ListInstancesForApp(r.Context(), app.ID)
-	if err != nil {
-		api.WriteProblem(w, api.ErrCapacity("could not list app instances"))
-		return
-	}
-	invocations, err := s.store.ListInvocationsForApp(r.Context(), app.ID)
-	if err != nil {
-		api.WriteProblem(w, api.ErrCapacity("could not list app invocations"))
-		return
-	}
-	if len(invocations) > obsOpsActivityLimitMax {
-		invocations = invocations[:obsOpsActivityLimitMax]
 	}
 	rng := r.URL.Query().Get("range")
 	if rng == "" {
@@ -267,32 +235,22 @@ func (s *server) obsAppDetail(w http.ResponseWriter, r *http.Request, acct state
 		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "invalid range", fmt.Sprintf("range must be one of: %s", strings.Join(appmetrics.Ranges(), ", "))))
 		return
 	}
-	health, err := s.obsAppHealth(r.Context(), app, rng)
-	if err != nil {
-		api.WriteProblem(w, api.ErrCapacity("could not load app health"))
+	app, prob := s.obsLoadApp(r.Context(), r.PathValue("id"))
+	if prob != nil {
+		api.WriteProblem(w, prob)
 		return
 	}
-	writeJSON(w, http.StatusOK, api.ObsAppDetailResponse{
-		App: api.ObsAppDetail{
-			ID:             app.ID,
-			AccountID:      app.AccountID,
-			Slug:           app.Slug,
-			Type:           string(app.Type),
-			Runtime:        app.Runtime,
-			Status:         string(app.Status),
-			RAMMB:          app.RAMMB,
-			MaxConcurrency: app.MaxConcurrency,
-			MinInstances:   app.MinInstances,
-			CreatedAt:      app.CreatedAt,
-		},
-		Deployments: projectObsDeployments(deployments),
-		Instances:   projectObsInstances(instances, map[string]string{app.ID: app.Slug}, map[string]string{app.ID: app.AccountID}, s.nodeNames(r.Context())),
-		Invocations: projectObsInvocations(invocations, map[string]string{app.ID: app.Slug}, obsOpsActivityLimitMax),
-		Health:      health,
-	})
+	resp, prob := s.obsBuildAppDetail(r.Context(), app, rng)
+	if prob != nil {
+		api.WriteProblem(w, prob)
+		return
+	}
+	writeJSON(w, http.StatusOK, resp)
 }
 
-func (s *server) obsAppHealth(ctx context.Context, app state.App, rng string) (api.ObsAppHealth, error) {
+// obsAppHealth never fails the support view: Prometheus degradation shows
+// in Metrics.Source, and an error-group read failure in ErrorsUnavailable.
+func (s *server) obsAppHealth(ctx context.Context, app state.App, rng string) api.ObsAppHealth {
 	now := time.Now().UTC()
 	metrics, source := appmetrics.Fetch(ctx, s.promqlClient, s.log, app.ID, rng)
 	metrics.AppID = app.ID
@@ -300,19 +258,23 @@ func (s *server) obsAppHealth(ctx context.Context, app state.App, rng string) (a
 	metrics.Source = source
 	metrics.AsOf = now.Format(time.RFC3339Nano)
 	since := now.Add(-24 * time.Hour)
+	health := api.ObsAppHealth{
+		GeneratedAt:       now,
+		Metrics:           metrics,
+		Errors:            []api.AppErrorSummaryItem{},
+		ErrorsWindowStart: since,
+		ErrorsWindowEnd:   now,
+	}
 	rows, err := s.store.ListAppErrorGroups(ctx, buildAppErrorsSummaryParams(
 		app.AccountID, app.ID, since, now, nil, nil, nil, 10,
 	))
 	if err != nil {
-		return api.ObsAppHealth{}, err
+		s.log.Warn("obs app: error groups", "app_id", app.ID, "err", err)
+		health.ErrorsUnavailable = true
+		return health
 	}
-	return api.ObsAppHealth{
-		GeneratedAt:       now,
-		Metrics:           metrics,
-		Errors:            projectAppErrorSummaryRows(rows),
-		ErrorsWindowStart: since,
-		ErrorsWindowEnd:   now,
-	}, nil
+	health.Errors = projectAppErrorSummaryRows(rows)
+	return health
 }
 
 func (s *server) obsNodeDetail(w http.ResponseWriter, r *http.Request, acct state.Account) {
@@ -504,6 +466,7 @@ func projectObsInstances(rows []state.Instance, slugs, accounts, nodeNames map[s
 			RAMMB:         row.RAMMB,
 			StartedAt:     row.StartedAt,
 			LastRequestAt: row.LastRequestAt,
+			WakeID:        row.WakeID,
 		}
 		if !row.ParkedAt.IsZero() {
 			parked := row.ParkedAt

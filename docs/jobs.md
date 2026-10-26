@@ -14,6 +14,12 @@ until that artifact is `ready`; pull/build failures are exposed as
 image failure marks any queued tasks failed and settles their runs; new runs
 are rejected until `image_ref` is updated and materialization succeeds.
 
+`ram_mb` is the memory each task's VM gets. Omit it (or send 0) for the
+256 MB default; an explicit value must be at least 64 MB (`api.JobMinRAMMB`,
+the smallest guest that boots) and at most your plan's Job limit
+(`api.JobRAMMB`: Hobby 512 MB, Pro 2048 MB, Scale 4096 MB). Image runs follow
+the same rule.
+
 Image pulls may use account-owned private-registry credentials configured with
 `gregale jobs registry`; passwords are sealed at rest and never returned by
 the API. Imaged retries bounded pull/build failures across restarts, and

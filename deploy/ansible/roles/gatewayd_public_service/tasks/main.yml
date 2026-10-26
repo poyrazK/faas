@@ -121,6 +121,15 @@
     mode: "0644"
   notify: restart faas-gatewayd-public
 
+- name: gatewayd_public_service — install domain layout drop-in (ADR-20261026100000)
+  notify: restart faas-gatewayd-public
+  ansible.builtin.template:
+    src: ../../_shared/templates/99-faas-domain-layout.conf.j2
+    dest: /etc/systemd/system/faas-gatewayd-public.service.d/99-faas-domain-layout.conf
+    owner: root
+    group: root
+    mode: "0644"
+
 # ADR-1343: with the app edge on compute nodes, this control-plane edge also
 # listens on its private address for the routes those edges forward (public
 # object reads, uploads, OTLP) and trusts their single forwarded client

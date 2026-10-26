@@ -29,6 +29,9 @@ func TestCreateRejectsInvalidProcessAndRegistryAuth(t *testing.T) {
 		"relative workdir":     {body: api.CreateImageRunRequest{Image: "alpine", Workdir: "work"}, status: http.StatusBadRequest},
 		"workdir with NUL":     {body: api.CreateImageRunRequest{Image: "alpine", Workdir: "/a\x00b"}, status: http.StatusBadRequest},
 		"workdir too long":     {body: api.CreateImageRunRequest{Image: "alpine", Workdir: "/" + strings.Repeat("d", 4096)}, status: http.StatusBadRequest},
+		// Hunt 15: a guest this small cannot boot, so every attempt would fail.
+		"ram below the job minimum": {body: api.CreateImageRunRequest{Image: "alpine", RAMMB: api.JobMinRAMMB - 1}, status: http.StatusBadRequest},
+		"one megabyte of ram":       {body: api.CreateImageRunRequest{Image: "alpine", RAMMB: 1}, status: http.StatusBadRequest},
 		"registry auth without password": {body: api.CreateImageRunRequest{Image: "ghcr.io/acme/tool:1",
 			RegistryAuth: &api.ImageRunRegistryAuth{Username: "ci"}}, status: http.StatusBadRequest},
 		"registry auth without username": {body: api.CreateImageRunRequest{Image: "ghcr.io/acme/tool:1",

@@ -65,7 +65,7 @@ func (g *gatewaydEdgeRules) pinPublicRouteGraph(ctx context.Context, host string
 		}
 		var rules []state.EdgeRule
 		if claim.Source.CanSubstitute {
-			rules, err = reader.PublicHostAppEdgeRules(bounded, host, claim.AccountID, claim.AppID, true)
+			rules, err = publicHostAppEdgeRules(bounded, reader, host, claim.AccountID, claim.AppID, true)
 			if err != nil {
 				return err
 			}
@@ -125,7 +125,7 @@ func resolvePublicCompiledPolicy(ctx context.Context, reader state.PublicHostPol
 			if !claim.Source.CanSubstitute {
 				continue
 			}
-			rules, err := reader.PublicHostAppEdgeRules(ctx, host, claim.AccountID, claim.AppID, true)
+			rules, err := publicHostAppEdgeRules(ctx, reader, host, claim.AccountID, claim.AppID, true)
 			if err != nil {
 				return err
 			}
@@ -223,7 +223,7 @@ func verifyPublicRouteGraph(prior, fresh *gateway.HostEntry, account string) err
 // All reads happen before the compiled cache lookup, inside the app resolver's
 // transaction. Cache entries can save compilation, never replace a fresh read.
 func (g *gatewaydEdgeRules) compilePublicOwnerPolicy(ctx context.Context, reader state.PublicHostPolicyReader, host, account, appID string, source *gateway.PublicAppPolicySource) (*gateway.HostEntry, error) {
-	rules, err := reader.PublicHostAppEdgeRules(ctx, host, account, appID, false)
+	rules, err := publicHostAppEdgeRules(ctx, reader, host, account, appID, false)
 	if err != nil {
 		return nil, err
 	}
@@ -331,4 +331,16 @@ func (s *publicEdgeCompileStore) readPresets(ctx context.Context) error {
 		}
 	}
 	return nil
+}
+
+// publicHostAppEdgeRules is the snapshot's rule read for host, plus the rules
+// stored under host's alias names (ADR-20261026100000).
+func publicHostAppEdgeRules(ctx context.Context, reader state.PublicHostPolicyReader, host, account, appID string, routesOnly bool) ([]state.EdgeRule, error) {
+	rules, err := reader.PublicHostAppEdgeRules(ctx, host, account, appID, routesOnly)
+	if err != nil {
+		return nil, err
+	}
+	return withAliasHostRules(rules, host, func(alias string) ([]state.EdgeRule, error) {
+		return reader.PublicHostAppEdgeRules(ctx, alias, account, appID, routesOnly)
+	})
 }

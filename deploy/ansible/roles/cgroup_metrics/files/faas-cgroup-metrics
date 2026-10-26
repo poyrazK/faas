@@ -1,0 +1,224 @@
+#!/usr/bin/env python3
+"""Export per-slice cgroup v2 resource usage to node_exporter's textfile collector.
+
+ADR-20261023124955 §1 and §7. The control plane runs PostgreSQL, the
+control-plane daemons and the observability stack on two vCPUs, and nothing
+exported how much CPU, memory, IO or stall time each slice took. The
+measurement gate needs exactly those numbers, and operators need them every
+day to tell "PostgreSQL is busy" from "Prometheus is starving PostgreSQL".
+
+Reads only world-readable cgroup files for a fixed list of cgroups (glob
+patterns relative to the cgroup root). A pattern may name a slice the way
+systemd does: systemd nests "faas-obs.slice" under "faas.slice", so when the
+literal path matches nothing the parent slices are added
+(faas.slice/faas-obs.slice), and the label keeps the configured name. Tenant
+VM scopes are never listed:
+per-VM numbers come from vmmd, and a per-VM label would make cardinality
+grow with tenants.
+
+Configuration (environment, from /etc/faas/cgroup-metrics.env):
+  FAAS_CGROUP_METRICS_PATHS     space-separated glob patterns, e.g. "faas-obs.slice faas-obs.slice/*.service"
+  FAAS_CGROUP_METRICS_TEXTFILE  output path
+  FAAS_CGROUP_ROOT              cgroup v2 mount, default /sys/fs/cgroup
+"""
+
+import glob
+import os
+import sys
+import time
+from pathlib import Path
+
+DEFAULT_ROOT = "/sys/fs/cgroup"
+DEFAULT_TEXTFILE = "/var/lib/node_exporter/textfile_collector/cgroups.prom"
+MEMORY_EVENTS = ("low", "high", "max", "oom", "oom_kill")
+
+# name -> (type, help). Every name is a literal so the repository's
+# emitted-metric gate can see which metrics this collector produces.
+FAMILIES = {
+    "faas_cgroup_cpu_usage_seconds_total": ("counter", "CPU time consumed by the cgroup (cpu.stat usage_usec)."),
+    "faas_cgroup_cpu_throttled_seconds_total": ("counter", "Time the cgroup was throttled by its CPU quota (cpu.stat throttled_usec)."),
+    "faas_cgroup_memory_bytes": ("gauge", "Memory charged to the cgroup now (memory.current), page cache included."),
+    "faas_cgroup_memory_anon_bytes": ("gauge", "Anonymous memory in the cgroup (memory.stat anon)."),
+    "faas_cgroup_memory_file_bytes": ("gauge", "Page cache charged to the cgroup (memory.stat file)."),
+    "faas_cgroup_memory_peak_bytes": ("gauge", "Highest memory.current since the cgroup was created (memory.peak)."),
+    "faas_cgroup_memory_max_bytes": ("gauge", "The cgroup's hard memory limit (memory.max); absent when unlimited."),
+    "faas_cgroup_memory_high_bytes": ("gauge", "The cgroup's memory throttling threshold (memory.high); absent when unlimited."),
+    "faas_cgroup_memory_events_total": ("counter", "memory.events counters: high, max, oom and oom_kill events in the cgroup and its children."),
+    "faas_cgroup_io_bytes_total": ("counter", "Bytes read and written by the cgroup across all devices (io.stat)."),
+    "faas_cgroup_pressure_stall_seconds_total": ("counter", "Pressure stall time (PSI total): kind=some is time at least one task waited, kind=full time all tasks did."),
+    "faas_cgroup_metrics_last_run_timestamp_seconds": ("gauge", "Unix time the collector last wrote this file."),
+}
+
+
+def _read(path):
+    try:
+        return Path(path).read_text()
+    except OSError:
+        return None
+
+
+def _kv(text):
+    out = {}
+    for line in (text or "").splitlines():
+        parts = line.split()
+        if len(parts) == 2:
+            try:
+                out[parts[0]] = int(parts[1])
+            except ValueError:
+                pass
+    return out
+
+
+def _single(text):
+    if text is None:
+        return None
+    value = text.strip()
+    if value == "max" or not value:
+        return None
+    try:
+        return int(value)
+    except ValueError:
+        return None
+
+
+def _io(text):
+    read = write = 0
+    for line in (text or "").splitlines():
+        for field in line.split()[1:]:
+            key, _, value = field.partition("=")
+            if key == "rbytes":
+                read += int(value)
+            elif key == "wbytes":
+                write += int(value)
+    return read, write
+
+
+def _pressure(text):
+    """Return {(kind): total_seconds} from a PSI file."""
+    out = {}
+    for line in (text or "").splitlines():
+        parts = line.split()
+        if not parts or parts[0] not in ("some", "full"):
+            continue
+        for field in parts[1:]:
+            key, _, value = field.partition("=")
+            if key == "total":
+                out[parts[0]] = int(value) / 1e6
+    return out
+
+
+def systemd_parents(pattern):
+    """The parent slices systemd puts in front of a pattern's first slice.
+
+    "faas-cp-build.slice/x" lives at faas.slice/faas-cp.slice/faas-cp-build.slice/x;
+    a first component without a dash ("system.slice") has none.
+    """
+    first = pattern.split("/", 1)[0]
+    if not first.endswith(".slice") or "-" not in first:
+        return ""
+    parts = first[: -len(".slice")].split("-")
+    return "".join("-".join(parts[:i]) + ".slice/" for i in range(1, len(parts)))
+
+
+def collect(root, patterns):
+    """Return {metric_name: [(labels_dict, value), ...]} for the matched cgroups."""
+    root = Path(root)
+    seen = {}
+    for pattern in patterns:
+        parents = ""
+        matches = sorted(glob.glob(str(root / pattern)))
+        if not matches and systemd_parents(pattern):
+            parents = systemd_parents(pattern)
+            matches = sorted(glob.glob(str(root / (parents + pattern))))
+        for match in matches:
+            path = Path(match)
+            if path.is_dir() and (path / "cgroup.procs").exists() and path not in seen:
+                seen[path] = str(path.relative_to(root))[len(parents):]
+
+    samples = {name: [] for name in FAMILIES}
+    for path, label in seen.items():
+        cg = {"cgroup": label}
+        cpu = _kv(_read(path / "cpu.stat"))
+        if "usage_usec" in cpu:
+            samples["faas_cgroup_cpu_usage_seconds_total"].append((cg, cpu["usage_usec"] / 1e6))
+        if "throttled_usec" in cpu:
+            samples["faas_cgroup_cpu_throttled_seconds_total"].append((cg, cpu["throttled_usec"] / 1e6))
+
+        for name, filename in (
+            ("faas_cgroup_memory_bytes", "memory.current"),
+            ("faas_cgroup_memory_peak_bytes", "memory.peak"),
+            ("faas_cgroup_memory_max_bytes", "memory.max"),
+            ("faas_cgroup_memory_high_bytes", "memory.high"),
+        ):
+            value = _single(_read(path / filename))
+            if value is not None:
+                samples[name].append((cg, value))
+
+        stat = _kv(_read(path / "memory.stat"))
+        if "anon" in stat:
+            samples["faas_cgroup_memory_anon_bytes"].append((cg, stat["anon"]))
+        if "file" in stat:
+            samples["faas_cgroup_memory_file_bytes"].append((cg, stat["file"]))
+
+        events = _kv(_read(path / "memory.events"))
+        for event in MEMORY_EVENTS:
+            if event in events:
+                samples["faas_cgroup_memory_events_total"].append(({**cg, "event": event}, events[event]))
+
+        io_text = _read(path / "io.stat")
+        if io_text is not None:
+            read, write = _io(io_text)
+            samples["faas_cgroup_io_bytes_total"].append(({**cg, "direction": "read"}, read))
+            samples["faas_cgroup_io_bytes_total"].append(({**cg, "direction": "write"}, write))
+
+        for resource in ("cpu", "memory", "io"):
+            for kind, seconds in sorted(_pressure(_read(path / f"{resource}.pressure")).items()):
+                samples["faas_cgroup_pressure_stall_seconds_total"].append(
+                    ({**cg, "resource": resource, "kind": kind}, seconds)
+                )
+    return samples
+
+
+def _label(value):
+    return value.replace("\\", "\\\\").replace("\n", "\\n").replace('"', '\\"')
+
+
+def render(samples, now):
+    samples = dict(samples)
+    samples["faas_cgroup_metrics_last_run_timestamp_seconds"] = [({}, now)]
+    lines = []
+    for name, (kind, help_text) in FAMILIES.items():
+        rows = samples.get(name) or []
+        if not rows:
+            continue
+        lines.append(f"# HELP {name} {help_text}")
+        lines.append(f"# TYPE {name} {kind}")
+        for labels, value in rows:
+            rendered = ",".join(f'{k}="{_label(v)}"' for k, v in labels.items())
+            number = f"{value:.6f}".rstrip("0").rstrip(".") if isinstance(value, float) else str(value)
+            lines.append(f"{name}{{{rendered}}} {number}" if rendered else f"{name} {number}")
+    return "\n".join(lines) + "\n"
+
+
+def write_atomic(path, body):
+    path = Path(path)
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(body)
+    os.chmod(tmp, 0o644)
+    os.replace(tmp, path)
+
+
+def main(env=None, now=time.time):
+    env = os.environ if env is None else env
+    patterns = env.get("FAAS_CGROUP_METRICS_PATHS", "").split()
+    if not patterns:
+        print("cgroup-metrics: FAAS_CGROUP_METRICS_PATHS is empty", file=sys.stderr)
+        return 2
+    root = env.get("FAAS_CGROUP_ROOT", DEFAULT_ROOT)
+    target = env.get("FAAS_CGROUP_METRICS_TEXTFILE", DEFAULT_TEXTFILE)
+    write_atomic(target, render(collect(root, patterns), now()))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

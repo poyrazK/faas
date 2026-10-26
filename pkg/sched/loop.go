@@ -321,13 +321,11 @@ func (l *Loop) WithWatchdog(w *Watchdog) *Loop {
 // iteration. MainLoopBudget is its stall budget.
 //
 // ADR-191 moved Prime and the four reconcile arms onto the bounded work
-// pool, and its amendment moved the reaper tick, so the longest thing that
-// still runs on this goroutine is handleAppWake. That one stays inline deliberately: its error decides
-// whether the durable notification is acknowledged, and moving it off
-// the loop means re-plumbing outbox ack through the worker. EnsureWake
-// can legitimately cold-boot at ColdBootTimeout (35 s) plus admission,
-// so 60 s is the honest ceiling — down from the 180 s the loop needed
-// when a Scale-plan Prime ran here.
+// pool, and its amendments moved the reaper tick and then the explicit
+// app_wake and runtime_config_restart deliveries, which now claim and settle
+// their outbox rows on the worker (explicit_wake.go). No arm left on this
+// goroutine boots a VM in the normal case, so 60 s stays a generous ceiling
+// — down from the 180 s the loop needed when a Scale-plan Prime ran here.
 //
 // The prime path can still land inline when all four prime slots are
 // busy (workSpecs: overflowInline, because dropping strands a
@@ -1235,24 +1233,12 @@ func (l *Loop) Run(ctx context.Context) error {
 				// Defensive — wrapper guarantees open until ctx done.
 				return nil
 			}
-			if n.Channel == db.NotifyAppWake {
-				if err := l.handleAppWake(ctx, n); err != nil {
-					// Every schedd hears the wake and the owner serves it; the
-					// others logged a WARN for each explicit wake on a two-node
-					// production-us (Hunt 14 H14-30).
-					if errors.Is(err, ErrAppOwnedByAnotherNode) {
-						l.log.Debug("sched: explicit app wake left to the owning node", "err", err)
-						continue
-					}
-					l.log.Warn("sched: explicit app wake failed; leaving durable request pending", "err", err)
-					continue
-				}
-			} else if n.Channel == db.NotifyRuntimeConfigRestart {
-				if err := l.handleRuntimeConfigRestart(ctx, n); err != nil {
-					l.log.Warn("sched: runtime config restart failed; leaving durable request pending", "err", err)
-					continue
-				}
-			} else if n.Channel == db.NotifyPrivateNetworkAttachmentChanged {
+			if n.Channel == db.NotifyAppWake || n.Channel == db.NotifyRuntimeConfigRestart {
+				// Both boot VMs; the worker settles the durable row itself.
+				l.dispatchExplicitWake(ctx, n)
+				continue
+			}
+			if n.Channel == db.NotifyPrivateNetworkAttachmentChanged {
 				if err := l.HandleDurableNotification(ctx, n); err != nil {
 					l.log.Warn("sched: private network detach cleanup failed; leaving durable request pending", "err", err)
 					continue

@@ -34,6 +34,7 @@ import (
 	"path"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -124,8 +125,14 @@ func maskedBy(p string) string {
 // concurrent use, and nothing else may write the image while it is open: the
 // guest is stopped and no other session holds it.
 type Session struct {
-	ed      *Editor
-	image   string
+	ed    *Editor
+	image string
+	// img and scr hold the image and the scratch directory open for the
+	// sandboxed tool, which reaches them through inherited descriptors
+	// (toolImage, toolScratch): their paths may sit below directories the
+	// image owner cannot search, such as the jail base /srv/fc/jail (1700).
+	img     *os.File
+	scr     *os.File
 	size    int64
 	uid     int
 	gid     int
@@ -154,6 +161,37 @@ func (e *Editor) Open(image string) (*Session, error) {
 		return nil, errors.New("guestdisk: image owner unavailable")
 	}
 	uid, gid := int(st.Uid), int(st.Gid)
+	img, err := openImage(image, st)
+	if err != nil {
+		return nil, err
+	}
+	s, err := e.open(image, img, info.Size(), uid, gid)
+	if err != nil {
+		_ = img.Close()
+		return nil, err
+	}
+	return s, nil
+}
+
+// openImage opens image for the sandboxed tool to inherit. O_NONBLOCK keeps
+// a FIFO swapped in after the stat from blocking the open, and the identity
+// check refuses anything but the file that was checked.
+func openImage(image string, checked *syscall.Stat_t) (*os.File, error) {
+	f, err := os.OpenFile(image, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
+	if err != nil {
+		return nil, fmt.Errorf("guestdisk: open image: %w", err)
+	}
+	if info, err := f.Stat(); err == nil {
+		st, ok := info.Sys().(*syscall.Stat_t)
+		if ok && info.Mode().IsRegular() && st.Dev == checked.Dev && st.Ino == checked.Ino {
+			return f, nil
+		}
+	}
+	_ = f.Close()
+	return nil, fmt.Errorf("guestdisk: image %s changed while it was opened", image)
+}
+
+func (e *Editor) open(image string, img *os.File, size int64, uid, gid int) (*Session, error) {
 	if os.Geteuid() == 0 && e.cfg.Helper != "" {
 		for _, p := range []string{e.cfg.ScratchRoot, image} {
 			if masked := maskedBy(p); masked != "" {
@@ -180,17 +218,65 @@ func (e *Editor) Open(image string) (*Session, error) {
 			return nil, fmt.Errorf("guestdisk: hand scratch to %d:%d: %w", uid, gid, err)
 		}
 	}
+	scr, err := os.OpenFile(scratch, os.O_RDONLY|syscall.O_DIRECTORY|syscall.O_NOFOLLOW, 0)
+	if err != nil {
+		_ = os.RemoveAll(scratch)
+		return nil, fmt.Errorf("guestdisk: open scratch: %w", err)
+	}
 	var n [8]byte
 	if _, err := rand.Read(n[:]); err != nil {
+		_ = scr.Close()
 		_ = os.RemoveAll(scratch)
 		return nil, fmt.Errorf("guestdisk: nonce: %w", err)
 	}
-	return &Session{ed: e, image: image, size: info.Size(), uid: uid, gid: gid, scratch: scratch, nonce: hex.EncodeToString(n[:])}, nil
+	return &Session{ed: e, image: image, img: img, scr: scr, size: size, uid: uid, gid: gid, scratch: scratch, nonce: hex.EncodeToString(n[:])}, nil
+}
+
+// The sandboxed tool inherits the image as fd 3 and the session's scratch
+// directory as fd 4; a run's own extra files follow from fd 5.
+const (
+	toolImageFD   = 3
+	toolScratchFD = 4
+	toolExtraFD   = 5
+)
+
+func fdPath(fd int) string { return "/proc/self/fd/" + strconv.Itoa(fd) }
+
+func (s *Session) sandboxed() bool { return s.ed.cfg.Helper != "" }
+
+// toolImage is the image's path as the tool sees it.
+func (s *Session) toolImage() string {
+	if s.sandboxed() {
+		return fdPath(toolImageFD)
+	}
+	return s.image
+}
+
+// toolScratch is the path of p, inside the session's scratch directory, as
+// the tool sees it.
+func (s *Session) toolScratch(p string) string {
+	if !s.sandboxed() {
+		return p
+	}
+	rel, err := filepath.Rel(s.scratch, p)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, "../") {
+		panic(fmt.Sprintf("guestdisk: %s is outside the session's scratch directory", p))
+	}
+	if rel == "." {
+		return fdPath(toolScratchFD)
+	}
+	return fdPath(toolScratchFD) + "/" + filepath.ToSlash(rel)
 }
 
 // Close removes the session's scratch directory. The sandboxed tools have
 // exited by now, so nothing else writes there.
 func (s *Session) Close() error {
+	for _, f := range []**os.File{&s.img, &s.scr} {
+		if *f != nil {
+			_ = (*f).Close()
+			*f = nil
+		}
+	}
 	if s.scratch == "" {
 		return nil
 	}
@@ -219,7 +305,7 @@ func (s *Session) Prepare(ctx context.Context) (bool, error) {
 	if sb.compat&compatHasJournal == 0 {
 		return false, errors.New("guestdisk: image needs journal recovery but has no journal")
 	}
-	res, err := s.run(ctx, s.ed.e2fsck, []string{"-E", "journal_only", "-p", s.image}, nil, runLimits{output: 64 << 10})
+	res, err := s.run(ctx, s.ed.e2fsck, []string{"-E", "journal_only", "-p", s.toolImage()}, nil, runLimits{output: 64 << 10})
 	if err != nil {
 		return true, fmt.Errorf("guestdisk: replay journal: %w", err)
 	}
@@ -319,7 +405,7 @@ type runLimits struct {
 	fsize int64
 	// readDirs and writeDirs are scratch directories the tool may use.
 	readDirs, writeDirs []string
-	// extraFiles are inherited by the tool from fd 3 on.
+	// extraFiles are inherited by the tool from fd toolExtraFD on.
 	extraFiles []*os.File
 }
 
@@ -338,10 +424,11 @@ func (s *Session) run(ctx context.Context, tool string, args []string, stdin []b
 	var cmd *exec.Cmd
 	if s.ed.cfg.Helper == "" {
 		cmd = exec.CommandContext(ctx, tool, args...)
+		cmd.ExtraFiles = lim.extraFiles
 	} else {
 		helperArgs := []string{
 			"--uid", fmt.Sprint(s.uid), "--gid", fmt.Sprint(s.gid),
-			"--image", s.image, "--fsize", fmt.Sprint(lim.fsize),
+			"--image", s.toolImage(), "--fsize", fmt.Sprint(lim.fsize),
 		}
 		if s.ed.cfg.RequireLandlock {
 			helperArgs = append(helperArgs, "--require-landlock")
@@ -355,8 +442,8 @@ func (s *Session) run(ctx context.Context, tool string, args []string, stdin []b
 		helperArgs = append(helperArgs, "--", tool)
 		cmd = exec.CommandContext(ctx, s.ed.cfg.Helper, append(helperArgs, args...)...)
 		cmd.SysProcAttr = sandboxSysProcAttr()
+		cmd.ExtraFiles = append([]*os.File{s.img, s.scr}, lim.extraFiles...)
 	}
-	cmd.ExtraFiles = lim.extraFiles
 	cmd.Env = []string{"PATH=/usr/sbin:/usr/bin:/sbin:/bin", "LANG=C", "LC_ALL=C"}
 	cmd.Dir = "/"
 	cmd.WaitDelay = 2 * time.Second
