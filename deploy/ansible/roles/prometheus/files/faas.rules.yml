@@ -3835,7 +3835,7 @@ groups:
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasGithubRecoveryQueue.md"
 
       - alert: FaasPreviewJanitorFailing
-        expr: sum(increase(faas_preview_janitor_outcomes_total{outcome=~"failed|row_failed"}[30m])) > 0
+        expr: sum(increase(apid_preview_janitor_outcomes_total{outcome=~"failed|row_failed"}[30m])) > 0
         for: 15m
         labels:
           severity: warn
