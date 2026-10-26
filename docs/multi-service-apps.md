@@ -33,6 +33,19 @@ gregale deploy --repo octo/shop --ref main --project
 Add `--only api,web` or `--exclude worker` to deploy part of the project, and
 `--diff` to see the plan without changing anything.
 
+`gregale projects info` lists each service with its app, its latest deployment
+and the services it declares it calls:
+
+```text
+$ gregale projects info shop
+...
+  services:
+    NAME    APP          DEPLOYMENT  CALLS
+    web     shop-web     live        api, worker
+    api     shop-api     live        -
+    worker  shop-worker  failed      -
+```
+
 ## What becomes a service
 
 Gregale reads, in this order:
