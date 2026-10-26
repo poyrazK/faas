@@ -45499,17 +45499,23 @@ select i.id, i.app_id, i.account_id, i.source, i.state, i.payload, i.headers, i.
 		         and active.state='claimed' and active.claim_expires_at > $1
 		   )) < i.work_fairness_limit)
 		   and ($2::boolean or (i.due_at, i.id) > ($3::timestamptz, $4::uuid))
+		   and ($5::uuid is null or exists (
+		       select 1 from apps owner
+		        where owner.id = i.app_id
+		          and (owner.node_id is null or owner.node_id = $5::uuid)
+		   ))
 		 order by i.due_at, i.id
 		 for update skip locked
-		 limit $5::bigint
+		 limit $6::bigint
 `
 
 type ListDueInvocationRowsAfterParams struct {
-	NowAt      pgtype.Timestamptz
-	FirstPage  bool
-	AfterDueAt pgtype.Timestamptz
-	AfterID    pgtype.UUID
-	BatchLimit int64
+	NowAt       pgtype.Timestamptz
+	FirstPage   bool
+	AfterDueAt  pgtype.Timestamptz
+	AfterID     pgtype.UUID
+	OwnerNodeID pgtype.UUID
+	BatchLimit  int64
 }
 
 func (q *Queries) ListDueInvocationRowsAfter(ctx context.Context, db DBTX, arg ListDueInvocationRowsAfterParams) ([]Invocation, error) {
@@ -45518,6 +45524,7 @@ func (q *Queries) ListDueInvocationRowsAfter(ctx context.Context, db DBTX, arg L
 		arg.FirstPage,
 		arg.AfterDueAt,
 		arg.AfterID,
+		arg.OwnerNodeID,
 		arg.BatchLimit,
 	)
 	if err != nil {
