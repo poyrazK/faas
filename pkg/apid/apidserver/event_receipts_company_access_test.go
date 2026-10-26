@@ -99,7 +99,8 @@ func TestAccountEventReceiptsFollowCompanyAccess(t *testing.T) {
 		if r := e.Do(t, http.MethodGet, "/v1/events/receipt/replays?"+query, nil, nil); r.Code != http.StatusNotFound {
 			t.Fatalf("replays %s/%s = %d %s", c.id, c.app, r.Code, r.Body)
 		}
-		r := e.Do(t, http.MethodGet, "/v1/events/recipient-blocker?"+query, nil, nil)
+		guard := url.Values{"expected_accepted_at": {time.Now().UTC().Format(time.RFC3339Nano)}}.Encode()
+		r := e.Do(t, http.MethodGet, "/v1/events/recipient-blocker?"+query+"&"+guard, nil, nil)
 		var blocker api.EventRecipientBlockerResponse
 		if r.Code != http.StatusOK || json.Unmarshal(r.Body.Bytes(), &blocker) != nil || blocker.Reason != "receipt_unavailable" {
 			t.Fatalf("recipient blocker %s/%s = %d %s", c.id, c.app, r.Code, r.Body)
