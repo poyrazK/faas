@@ -140,7 +140,7 @@ var registry = []Spec{
 		cols("mcp_readiness_pagerduty_policies", "integration_key_sealed"),
 		cols("mcp_readiness_fallback_policies", "integration_key_sealed", "webhook_secret_sealed"),
 	)},
-	{Domain: Storage, Readers: []string{"s3-gatewayd"}, Roles: cpOnly, Columns: join(
+	{Domain: Storage, Readers: []string{"s3-gatewayd"}, Roles: cpOnly, Wired: true, Columns: join(
 		cols("object_storage_s3_credentials", "secret_sealed"),
 	)},
 	{Domain: Delivery, Readers: []string{"schedd"}, Roles: bothRoles, Columns: join(
