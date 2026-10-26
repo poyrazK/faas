@@ -4,6 +4,7 @@ package githubd
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -638,7 +639,7 @@ func TestUpsertPreviewComment_CreatesThenPatchesMarkedComment(t *testing.T) {
 				_, _ = w.Write([]byte(`[]`))
 				return
 			}
-			_, _ = w.Write([]byte(`[{"id":987,"body":"` + marker + `\nold"}]`))
+			_, _ = w.Write([]byte(`[{"id":987,"body":"` + marker + `\nold","user":{"type":"Bot"}}]`))
 		case http.MethodPost:
 			w.WriteHeader(http.StatusCreated)
 			_, _ = w.Write([]byte(`{"id":987}`))
@@ -674,6 +675,88 @@ func TestUpsertPreviewComment_CreatesThenPatchesMarkedComment(t *testing.T) {
 	}
 	if !strings.Contains(bodies[1], "new status") || !strings.Contains(bodies[3], "updated status") {
 		t.Fatalf("bodies = %v, want create and updated bodies", bodies)
+	}
+}
+
+// previewCommentServer serves pages of issue comments and records calls.
+func previewCommentServer(t *testing.T, pages map[string]string) (*ChecksAPI, *[]string) {
+	t.Helper()
+	var calls []string
+	fake := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls = append(calls, r.Method+" "+r.URL.Path+"?"+r.URL.Query().Get("page"))
+		w.Header().Set("Content-Type", "application/json")
+		switch r.Method {
+		case http.MethodGet:
+			body, ok := pages[r.URL.Query().Get("page")]
+			if !ok {
+				body = `[]`
+			}
+			_, _ = w.Write([]byte(body))
+		case http.MethodPost:
+			w.WriteHeader(http.StatusCreated)
+			_, _ = w.Write([]byte(`{"id":1}`))
+		default:
+			_, _ = w.Write([]byte(`{"id":1}`))
+		}
+	}))
+	t.Cleanup(fake.Close)
+	tokens := NewTokenCache(fakeFetcher(func(_ context.Context, _ int64) (string, time.Time, error) {
+		return "ghs_preview_token", time.Now().Add(time.Hour), nil
+	}), time.Minute)
+	c, err := NewChecksAPI(tokens, &singleHostClient{base: fake.Client(), api: fake.URL}, &fakeBindings{id: 99})
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.AppID = 7
+	return c, &calls
+}
+
+func TestUpsertPreviewComment_IgnoresForeignMarker(t *testing.T) {
+	marker := "<!-- gregale-preview:pr-42-demo-app -->"
+	c, calls := previewCommentServer(t, map[string]string{"1": `[
+		{"id":11,"body":"lgtm ` + marker + `","user":{"type":"User"}},
+		{"id":12,"body":"` + marker + `","user":{"type":"Bot"},"performed_via_github_app":{"id":8}}]`})
+	if err := c.UpsertPreviewComment(context.Background(), 99, "octo/api", 42, marker, "status"); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"GET /repos/octo/api/issues/42/comments?1", "POST /repos/octo/api/issues/42/comments?"}
+	if strings.Join(*calls, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("calls = %v, want a new comment, never an edit of a user's or another App's comment", *calls)
+	}
+}
+
+func TestUpsertPreviewComment_FindsOwnCommentOnLaterPage(t *testing.T) {
+	marker := "<!-- gregale-preview:pr-42-demo-app -->"
+	var page1 strings.Builder
+	page1.WriteString("[")
+	for i := 1; i <= previewCommentPageSize; i++ {
+		if i > 1 {
+			page1.WriteString(",")
+		}
+		fmt.Fprintf(&page1, `{"id":%d,"body":"chatter","user":{"type":"User"}}`, i)
+	}
+	page1.WriteString("]")
+	c, calls := previewCommentServer(t, map[string]string{
+		"1": page1.String(),
+		"2": `[{"id":555,"body":"` + marker + `","user":{"type":"Bot"},"performed_via_github_app":{"id":7}}]`,
+	})
+	if err := c.UpdatePreviewComment(context.Background(), 99, "octo/api", 42, marker, "status"); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"GET /repos/octo/api/issues/42/comments?1", "GET /repos/octo/api/issues/42/comments?2",
+		"PATCH /repos/octo/api/issues/comments/555?"}
+	if strings.Join(*calls, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("calls = %v, want the page-2 comment patched", *calls)
+	}
+}
+
+func TestUpdatePreviewComment_DoesNotCreate(t *testing.T) {
+	c, calls := previewCommentServer(t, nil)
+	if err := c.UpdatePreviewComment(context.Background(), 99, "octo/api", 42, "<!-- gregale-preview:pr-42-worker -->", "gone"); err != nil {
+		t.Fatal(err)
+	}
+	if len(*calls) != 1 || !strings.HasPrefix((*calls)[0], "GET ") {
+		t.Fatalf("calls = %v, want only the lookup", *calls)
 	}
 }
 

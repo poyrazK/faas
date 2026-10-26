@@ -417,6 +417,8 @@ const DevDiagImportFailure = devDiagImportFailure
 const DevDiagStartupCrash = devDiagStartupCrash
 const DevDiagUpstreamFailure = devDiagUpstreamFailure
 const DevEditToLiveTarget = devEditToLiveTarget
+const DevGroupDependsEnv = devGroupDependsEnv
+const DevGroupServiceEnv = devGroupServiceEnv
 const DevGroupWorkspaceEnv = devGroupWorkspaceEnv
 const DevPhaseBuild = devPhaseBuild
 const DevPhaseReady = devPhaseReady
@@ -546,6 +548,10 @@ var TestOnlyTTY = &testOnlyTTY
 var UpdateAppRequestCLISurfaces = &updateAppRequestCLISurfaces
 
 // Package-level funcs
+var ValidCLISlug = validCLISlug
+var CollectPreviewRouteReport = collectPreviewRouteReport
+var ErrPreviewNoProductionParent = errPreviewNoProductionParent
+var PreviewEnvironmentReviewNote = previewEnvironmentReviewNote
 var AddRouteMonitorSourceOwners = addRouteMonitorSourceOwners
 var AddSafeReleasePreview = addSafeReleasePreview
 var AddValidateParamFlags = addValidateParamFlags
@@ -967,6 +973,7 @@ var CmdPostgresList = cmdPostgresList
 var CmdPostgresReconcile = cmdPostgresReconcile
 var CmdPostgresResize = cmdPostgresResize
 var CmdPostgresUsage = cmdPostgresUsage
+var CmdPostgresOverage = cmdPostgresOverage
 var CmdPostgresUsageImport = cmdPostgresUsageImport
 var CmdPreview = cmdPreview
 var CmdPreviewCustomers = cmdPreviewCustomers
@@ -1208,6 +1215,9 @@ var DescribeRolloutDecision = describeRolloutDecision
 var DetectGithubSnippetEnv = detectGithubSnippetEnv
 var DevDiagnosticFromDeployment = devDiagnosticFromDeployment
 var DevDiagnosticFromError = devDiagnosticFromError
+var DevGroupDepends = devGroupDepends
+var DevGroupService = devGroupService
+var DevGroupServiceConfig = devGroupServiceConfig
 var DevGroupWorkspace = devGroupWorkspace
 var DevHistoryPatchNote = devHistoryPatchNote
 var DevPatchExplanation = devPatchExplanation
@@ -2465,3 +2475,21 @@ var PreviewCompanionsFromManifest = previewCompanionsFromManifest
 
 // FormatStageDuration is the live ticker's stage duration cell.
 var FormatStageDuration = formatStageDuration
+
+// dev --all and gregale dev Go commands (ADR-20261026120412).
+var DiscoverDevAllApps = discoverDevAllApps
+
+func DevAllChildArgs(app devAllApp, stop bool) []string {
+	return devAllOptions{stop: stop}.childArgs(app, false)
+}
+func DevAllSourceLabel(app devAllApp) string { return app.sourceLabel() }
+func CheckDevGoCommand(dir string, function bool, command string) error {
+	config := devSourceConfig{shape: shapeApp}
+	if function {
+		config.shape = shapeFunction
+	}
+	return checkDevGoCommand(dir, config, command)
+}
+func DevGoCommandRequest(command string) api.UpsertDevSessionRequest {
+	return withDevGoCommand(devSourceConfig{shape: shapeApp}.sessionRequest("", false, "", 0, nil), command)
+}

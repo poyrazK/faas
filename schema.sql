@@ -115,10 +115,23 @@ END $$;
 CREATE FUNCTION public.admission_reserve_node(p_node_id uuid, p_expected_generation bigint, p_ram_mb integer, p_counts boolean, p_overhead_mb integer) RETURNS void
     LANGUAGE plpgsql
     AS $$
+BEGIN
+    PERFORM admission_reserve_node(p_node_id, p_expected_generation, p_ram_mb, p_counts, p_overhead_mb, 100);
+END $$;
+
+
+--
+-- Name: admission_reserve_node(uuid, bigint, integer, boolean, integer, integer); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.admission_reserve_node(p_node_id uuid, p_expected_generation bigint, p_ram_mb integer, p_counts boolean, p_overhead_mb integer, p_reservation_percent integer) RETURNS void
+    LANGUAGE plpgsql
+    AS $$
 DECLARE
     node_lifecycle text;
     node_generation bigint;
     ceiling_mb bigint;
+    cap_mb bigint;
     used_mb bigint;
     resident_mb bigint;
 BEGIN
@@ -157,10 +170,12 @@ BEGIN
        AND i.node_id = p_node_id
        AND i.state IN ('waking','cold_booting','running','draining','warm');
     used_mb := used_mb + resident_mb;
-    IF ceiling_mb > 0 AND used_mb + p_ram_mb + p_overhead_mb > ceiling_mb THEN
+    cap_mb := ceiling_mb * greatest(100, least(coalesce(p_reservation_percent, 100), 200)) / 100;
+    IF ceiling_mb > 0 AND used_mb + p_ram_mb + p_overhead_mb > cap_mb THEN
         RAISE EXCEPTION 'node RAM headroom exhausted'
             USING ERRCODE = '23514', CONSTRAINT = 'instance_node_capacity',
-                  DETAIL = format('used_mb=%s admit_mb=%s ceiling_mb=%s', used_mb, p_ram_mb + p_overhead_mb, ceiling_mb);
+                  DETAIL = format('used_mb=%s admit_mb=%s ceiling_mb=%s cap_mb=%s',
+                                  used_mb, p_ram_mb + p_overhead_mb, ceiling_mb, cap_mb);
     END IF;
 END $$;
 
@@ -222,12 +237,25 @@ CREATE TABLE public.instances (
 CREATE FUNCTION public.admit_wake_instance(p_app_id uuid, p_deployment_id text, p_state text, p_ram_mb integer, p_node_id uuid, p_wake_id text, p_mode text, p_expected_generation bigint, p_counts boolean, p_overhead_mb integer, p_bind_recovery boolean, p_snapshot_id uuid, p_guard_generation bigint) RETURNS SETOF public.instances
     LANGUAGE plpgsql
     AS $$
+BEGIN
+    RETURN QUERY SELECT * FROM admit_wake_instance(p_app_id, p_deployment_id, p_state, p_ram_mb, p_node_id, p_wake_id, p_mode,
+        p_expected_generation, p_counts, p_overhead_mb, p_bind_recovery, p_snapshot_id, p_guard_generation, 100);
+END $$;
+
+
+--
+-- Name: admit_wake_instance(uuid, text, text, integer, uuid, text, text, bigint, boolean, integer, boolean, uuid, bigint, integer); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.admit_wake_instance(p_app_id uuid, p_deployment_id text, p_state text, p_ram_mb integer, p_node_id uuid, p_wake_id text, p_mode text, p_expected_generation bigint, p_counts boolean, p_overhead_mb integer, p_bind_recovery boolean, p_snapshot_id uuid, p_guard_generation bigint, p_reservation_percent integer) RETURNS SETOF public.instances
+    LANGUAGE plpgsql
+    AS $$
 DECLARE
     admitted instances%ROWTYPE;
     bound integer;
     current_generation bigint;
 BEGIN
-    PERFORM admission_reserve_node(p_node_id, p_expected_generation, p_ram_mb, p_counts, p_overhead_mb);
+    PERFORM admission_reserve_node(p_node_id, p_expected_generation, p_ram_mb, p_counts, p_overhead_mb, p_reservation_percent);
     INSERT INTO instances (app_id, deployment_id, state, ram_mb, node_id, wake_id, started_at, mode)
     VALUES (p_app_id, nullif(p_deployment_id, '')::uuid, p_state, p_ram_mb, p_node_id,
             CASE WHEN p_wake_id = '' THEN gen_random_uuid() ELSE p_wake_id::uuid END, now(), p_mode)
@@ -8431,6 +8459,37 @@ BEGIN
      AND s.status <> 'deleted'
   ON CONFLICT DO NOTHING;
   RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: enqueue_preview_teardown_github_update(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.enqueue_preview_teardown_github_update() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE
+    latest uuid;
+BEGIN
+    SELECT id INTO latest FROM deployments
+    WHERE app_id = NEW.id AND kind = 'preview'
+    ORDER BY created_at DESC, id DESC
+    LIMIT 1;
+    IF latest IS NOT NULL THEN
+        INSERT INTO github_check_updates (deployment_id)
+        VALUES (latest)
+        ON CONFLICT (deployment_id) DO UPDATE SET
+          generation = github_check_updates.generation + 1,
+          status = 'pending',
+          attempts = 0,
+          next_attempt_at = now(),
+          last_error = '',
+          processed_at = NULL,
+          updated_at = now();
+    END IF;
+    RETURN NULL;
 END;
 $$;
 
@@ -27191,6 +27250,40 @@ $$;
 
 
 --
+-- Name: sync_preview_access_gates(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.sync_preview_access_gates() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE
+    preview_id uuid;
+BEGIN
+    -- A preview runs unreviewed code on a guessable host; it keeps the
+    -- access and egress gates of the production app it previews.
+    FOR preview_id IN
+        UPDATE apps
+        SET require_authn = NEW.require_authn,
+            public_auth_mode = NEW.public_auth_mode,
+            public_auth_basic = NEW.public_auth_basic,
+            public_auth_ip_allowlist = NEW.public_auth_ip_allowlist,
+            consumer_auth_mode = NEW.consumer_auth_mode,
+            require_signed = NEW.require_signed,
+            egress_allowlist = NEW.egress_allowlist,
+            visibility = NEW.visibility
+        WHERE account_id = NEW.account_id
+          AND preview_of_slug = NEW.slug
+          AND status <> 'deleted'
+        RETURNING id
+    LOOP
+        PERFORM pg_notify('app_changed', preview_id::text);
+    END LOOP;
+    RETURN NULL;
+END;
+$$;
+
+
+--
 -- Name: trg_notify_trigger_ready(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -27970,6 +28063,29 @@ CREATE TABLE public.account_passwords (
     hash text NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL
 );
+
+
+--
+-- Name: account_spend_cap_holds; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.account_spend_cap_holds (
+    account_id uuid NOT NULL,
+    month date NOT NULL,
+    cap_cents bigint NOT NULL,
+    observed_cents bigint NOT NULL,
+    reached_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT account_spend_cap_holds_cap_cents_check CHECK ((cap_cents >= 0)),
+    CONSTRAINT account_spend_cap_holds_check CHECK ((observed_cents >= cap_cents)),
+    CONSTRAINT account_spend_cap_holds_month_check CHECK ((month = (date_trunc('month'::text, (month)::timestamp with time zone))::date))
+);
+
+
+--
+-- Name: TABLE account_spend_cap_holds; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.account_spend_cap_holds IS 'Accounts whose combined billable overage (compute plus live secondary meters) reached overage_cap_cents this UTC month. Written by meterd, read by schedd (ADR-20261026120843).';
 
 
 --
@@ -41942,6 +42058,24 @@ CREATE TABLE public.mail_suppressions (
 
 
 --
+-- Name: managed_postgres_account_overage; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.managed_postgres_account_overage (
+    subject_id uuid NOT NULL,
+    enabled boolean NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: TABLE managed_postgres_account_overage; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.managed_postgres_account_overage IS 'Whether a paid account runs its managed PostgreSQL databases past the monthly compute allowance, up to 2x, before suspension; written only by apid (ADR-20261025094915).';
+
+
+--
 -- Name: managed_postgres_accounting_reconciliations; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -45428,6 +45562,21 @@ CREATE TABLE public.object_storage_request_metrics (
 
 
 --
+-- Name: object_storage_timeline_acceptance; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.object_storage_timeline_acceptance (
+    singleton boolean DEFAULT true NOT NULL,
+    timeline text NOT NULL,
+    accepted_at timestamp with time zone DEFAULT now() NOT NULL,
+    accepted_by text NOT NULL,
+    CONSTRAINT object_storage_timeline_acceptance_accepted_by_check CHECK (((char_length(accepted_by) >= 1) AND (char_length(accepted_by) <= 128))),
+    CONSTRAINT object_storage_timeline_acceptance_singleton_check CHECK (singleton),
+    CONSTRAINT object_storage_timeline_acceptance_timeline_check CHECK ((timeline ~ '^[0-9A-F]{8}$'::text))
+);
+
+
+--
 -- Name: object_storage_upload_grants; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -47939,11 +48088,13 @@ CREATE TABLE public.pr_preview_sets (
     member_app_ids text[] NOT NULL,
     closed_at timestamp with time zone,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    setup_error text,
     CONSTRAINT pr_preview_sets_commit_sha_check CHECK ((commit_sha ~ '^[0-9a-f]{7,64}$'::text)),
     CONSTRAINT pr_preview_sets_installation_id_check CHECK ((installation_id > 0)),
     CONSTRAINT pr_preview_sets_member_app_ids_check CHECK ((cardinality(member_app_ids) > 0)),
     CONSTRAINT pr_preview_sets_pr_number_check CHECK ((pr_number > 0)),
-    CONSTRAINT pr_preview_sets_repo_full_name_check CHECK ((repo_full_name <> ''::text))
+    CONSTRAINT pr_preview_sets_repo_full_name_check CHECK ((repo_full_name <> ''::text)),
+    CONSTRAINT pr_preview_sets_setup_error_chk CHECK (((setup_error IS NULL) OR ((char_length(setup_error) >= 1) AND (char_length(setup_error) <= 1000))))
 );
 
 
@@ -53473,7 +53624,7 @@ CREATE TABLE public.scenario_test_members (
     chaos_generation uuid,
     CONSTRAINT scenario_test_members_chaos_rules_array_check CHECK ((jsonb_typeof(chaos_rules) = 'array'::text)),
     CONSTRAINT scenario_test_members_run_id_check CHECK ((run_id ~ '^[0-9a-f]{32}$'::text)),
-    CONSTRAINT scenario_test_members_workload_name_check CHECK ((workload_name ~ '^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$'::text))
+    CONSTRAINT scenario_test_members_service_name_check CHECK ((workload_name ~ '^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$'::text))
 );
 
 
@@ -55517,6 +55668,14 @@ ALTER TABLE ONLY public.account_deploy_rate_limits
 
 ALTER TABLE ONLY public.account_passwords
     ADD CONSTRAINT account_passwords_pkey PRIMARY KEY (account_id);
+
+
+--
+-- Name: account_spend_cap_holds account_spend_cap_holds_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.account_spend_cap_holds
+    ADD CONSTRAINT account_spend_cap_holds_pkey PRIMARY KEY (account_id);
 
 
 --
@@ -61888,6 +62047,14 @@ ALTER TABLE ONLY public.mail_suppressions
 
 
 --
+-- Name: managed_postgres_account_overage managed_postgres_account_overage_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_postgres_account_overage
+    ADD CONSTRAINT managed_postgres_account_overage_pkey PRIMARY KEY (subject_id);
+
+
+--
 -- Name: managed_postgres_accounting_reconciliations managed_postgres_accounting_r_backend_id_backend_fingerprin_key; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -63253,6 +63420,14 @@ ALTER TABLE ONLY public.object_storage_s3_credentials
 
 ALTER TABLE ONLY public.object_storage_s3_credentials
     ADD CONSTRAINT object_storage_s3_credentials_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: object_storage_timeline_acceptance object_storage_timeline_acceptance_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.object_storage_timeline_acceptance
+    ADD CONSTRAINT object_storage_timeline_acceptance_pkey PRIMARY KEY (singleton);
 
 
 --
@@ -72076,6 +72251,13 @@ CREATE INDEX instance_billing_intervals_range_idx ON public.instance_billing_int
 
 
 --
+-- Name: instance_quiet_pauses_ended_at; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX instance_quiet_pauses_ended_at ON public.instance_quiet_pauses USING btree (ended_at);
+
+
+--
 -- Name: instance_quiet_pauses_open; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -79073,6 +79255,13 @@ CREATE TRIGGER apps_notify_egress_allowlist_changed_trg AFTER UPDATE OF egress_a
 
 
 --
+-- Name: apps apps_preview_teardown_github_update; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER apps_preview_teardown_github_update AFTER UPDATE OF status ON public.apps FOR EACH ROW WHEN (((old.status IS DISTINCT FROM 'deleted'::text) AND (new.status = 'deleted'::text) AND (new.preview_of_slug IS NOT NULL) AND (COALESCE(new.preview_pr_number, 0) > 0))) EXECUTE FUNCTION public.enqueue_preview_teardown_github_update();
+
+
+--
 -- Name: apps apps_public_auth_ip_allowlist_cidr; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -79112,6 +79301,13 @@ CREATE CONSTRAINT TRIGGER apps_streaming_plan_account_guard_trg AFTER UPDATE OF 
 --
 
 CREATE TRIGGER apps_streaming_plan_app_guard_trg BEFORE INSERT OR UPDATE OF account_id, streaming_enabled ON public.apps FOR EACH ROW EXECUTE FUNCTION public.apps_streaming_plan_app_guard();
+
+
+--
+-- Name: apps apps_sync_preview_access_gates; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER apps_sync_preview_access_gates AFTER UPDATE OF require_authn, public_auth_mode, public_auth_basic, public_auth_ip_allowlist, consumer_auth_mode, require_signed, egress_allowlist, visibility ON public.apps FOR EACH ROW WHEN (((new.preview_of_slug IS NULL) AND (new.status <> 'deleted'::text) AND ((old.require_authn IS DISTINCT FROM new.require_authn) OR (old.public_auth_mode IS DISTINCT FROM new.public_auth_mode) OR (old.public_auth_basic IS DISTINCT FROM new.public_auth_basic) OR (old.public_auth_ip_allowlist IS DISTINCT FROM new.public_auth_ip_allowlist) OR (old.consumer_auth_mode IS DISTINCT FROM new.consumer_auth_mode) OR (old.require_signed IS DISTINCT FROM new.require_signed) OR (old.egress_allowlist IS DISTINCT FROM new.egress_allowlist) OR (old.visibility IS DISTINCT FROM new.visibility)))) EXECUTE FUNCTION public.sync_preview_access_gates();
 
 
 --
@@ -84584,6 +84780,14 @@ ALTER TABLE ONLY public.account_deploy_rate_limits
 
 ALTER TABLE ONLY public.account_passwords
     ADD CONSTRAINT account_passwords_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: account_spend_cap_holds account_spend_cap_holds_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.account_spend_cap_holds
+    ADD CONSTRAINT account_spend_cap_holds_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
 
 
 --
@@ -92448,6 +92652,14 @@ ALTER TABLE ONLY public.magic_link_tokens
 
 ALTER TABLE ONLY public.mail_suppressions
     ADD CONSTRAINT mail_suppressions_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: managed_postgres_account_overage managed_postgres_account_overage_subject_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_postgres_account_overage
+    ADD CONSTRAINT managed_postgres_account_overage_subject_id_fkey FOREIGN KEY (subject_id) REFERENCES public.resource_namespaces(id) ON DELETE CASCADE;
 
 
 --

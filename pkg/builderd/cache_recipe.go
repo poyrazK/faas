@@ -59,6 +59,9 @@ type BuildCacheRecipe struct {
 	// buildSecretScope). Omitted when the build mounts none, so every
 	// existing recipe key is unchanged.
 	BuildSecretScope string `json:"build_secret_scope,omitempty"`
+	// RegistryAuthScope partitions builds that pull with the app's registry
+	// credentials (see registryAuthScope). Omitted without them.
+	RegistryAuthScope string `json:"registry_auth_scope,omitempty"`
 	// AccountID partitions every build by the account that owns the app. The
 	// rest of the recipe describes the build's inputs, and its output comes
 	// from a builder VM the tenant controls: without the account, a tenant who

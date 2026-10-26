@@ -6,7 +6,7 @@ Alerts: `FaasEdgeWAFChecksSkipped`, `FaasEdgeWAFCheckSlow`,
 `FaasEdgeWAFCheckErrors`.
 Metrics: `gateway_waf_inline_checks_total{app,outcome}`,
 `gateway_waf_inline_skips_total{app,reason}`, `gateway_waf_inline_seconds`.
-Design: ADR-831 amendments 4, 10 and 12.
+Design: ADR-831 amendments 4, 10, 12 and 16.
 Severity: warn.
 
 ## Symptom
@@ -18,7 +18,10 @@ fails, lets the request through without a verdict.
 - **ChecksSkipped**: more than 0.1% of a gateway's checks found every check
   slot busy for the 1 ms wait (`reason="busy"`), the GA criterion W2. The node
   is short of CPU for its check load. `reason="budget"` skips are one app
-  using its inline budget, as under a flood, and do not fire this alert.
+  using its inline budget, as under a flood, and `reason="account_share"`
+  skips are one account's checks waiting behind other accounts' while it
+  held at least its share of the slots (ADR-831 amendment 16); neither fires
+  this alert.
 - **CheckSlow**: the p95 of `gateway_waf_inline_seconds`, which includes the
   slot wait, is above 2 ms (criterion W1). Every request a warn or block rule
   matches pays it.
@@ -47,9 +50,9 @@ journalctl -u faas-gatewayd-internal --since '-1d' --no-pager | grep -i 'in-path
 ## Check
 
 - **One app dominates the checks**: a flood on one app. Its `budget` skips
-  rise first; if `busy` skips follow, the flood is taking the node's slots
-  from every other app. A throttle rule or the pre-auth limit on that app is
-  the defence, not the WAF.
+  rise first; `account_share` skips mean its account's apps together hold
+  the node's slots, and other accounts are being served first. A throttle
+  rule or the pre-auth limit on that app is the defence, not the WAF.
 - **Load is spread and the node is busy**: compare CPU on the node
   (`node_cpu_seconds_total`) with the check rate. The slot count follows
   `GOMAXPROCS` (one per processor but one, 2 to 16); a node with a CPU quota

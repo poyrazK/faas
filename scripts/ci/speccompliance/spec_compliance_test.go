@@ -485,6 +485,7 @@ var routeExclude = map[string]bool{
 	"POST /dashboard/apps/{slug}/github/sync":                       true, // GitHub connection repair form; session-cookie + CSRF-only
 	"POST /dashboard/apps/{slug}/github/disconnect":                 true, // GitHub connection disconnect form; session-cookie + CSRF-only
 	"POST /dashboard/apps/{slug}/github/activity/retry":             true, // GitHub activity recovery form; session-cookie + CSRF-only
+	"POST /dashboard/apps/{slug}/preview/{previewSlug}/destroy":     true, // ADR-20261026090000 previews-page Tear down form; session-cookie + CSRF adapter for POST /v1/preview/{slug}/destroy
 	"GET /dashboard/apps/{slug}/data-api":                           true, // ADR-968 session-auth owner HTML workspace
 	"GET /dashboard/data":                                           true, // ADR-1591 session-auth connection onboarding HTML
 	"POST /dashboard/data":                                          true, // ADR-1591 account-bound CSRF form adapter
@@ -537,6 +538,7 @@ var routeExclude = map[string]bool{
 	"POST /dashboard/apps/{slug}/deployments/{id}/retry":            true, // HTML form, per-stage retry (ADR-117 §Production-ready follow-on C4); CSRF sealed envelope, no SDK twin
 	"POST /dashboard/apps/{slug}/alert-presets/{name}/enable":       true, // ADR-123 — dashboard form post; programatic enable is /v1 with SDK wrapper EnableAlertPreset
 	"GET /dashboard/apps/{slug}/changes":                            true, // ADR-751 HTML view of GET /v1/apps/{slug}/changes
+	"GET /dashboard/apps/{slug}/release-safety":                     true, // ADR-20261019071733 amd 1 HTML view of the freeze, gate, approval and schedule /v1 reads
 	"GET /dashboard/releases/{id}/approval":                         true, // ADR-20261020085706 HTML page over GET/POST /v1/deployments/{id}/approvals
 	"GET /dashboard/apps/{slug}/log-search":                         true, // ADR-20261018083536 HTML view of GET /v1/apps/{slug}/log-events
 	"GET /dashboard/dashboards":                                     true, // ADR-20261022173833 HTML view of GET /v1/dashboards

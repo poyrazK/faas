@@ -429,6 +429,14 @@ func run(ctx context.Context, log *slog.Logger) error {
 	// an operator explicitly enables H2C after both ends are configured.
 	// A compute edge can fall back to the TCP pool, so it defaults to off.
 	h2cEnabled := envBoolOr("FAAS_INTERNAL_H2C", upstreamMode == internalUpstreamUnix && edgeMode != edgeModeCompute)
+	// Require compute gateways' traffic security snapshots only while every
+	// gateway this edge may dial stamps them; N-1 gateways do not (ADR-570).
+	securityMembers := localTrafficSecurityMembers(os.Getenv("FAAS_NODE_NAME"))
+	if dynamicUpstream {
+		securityMembers = fleetTrafficSecurityMembers
+	}
+	trafficSecurityPeers := newTrafficSecurityPeers(ctx, pgStore, securityMembers, log)
+	go trafficSecurityPeers.run(ctx)
 	trustedIngressCIDRs, err := gateway.ParseTrustedIngressCIDRs(os.Getenv("FAAS_TRUSTED_INGRESS_CIDRS"))
 	if err != nil {
 		return fmt.Errorf("gatewayd-public: trusted ingress config: %w", err)
@@ -438,7 +446,8 @@ func run(ctx context.Context, log *slog.Logger) error {
 		internalURL,
 		log,
 		h2cEnabled,
-	).WithTrustedIngressCIDRs(trustedIngressCIDRs).WithTrafficRevocations(trafficRevocations)
+	).WithTrustedIngressCIDRs(trustedIngressCIDRs).WithTrafficRevocations(trafficRevocations).
+		WithTrafficSecurityPeers(trafficSecurityPeers)
 	// A dynamic dialer selects a different compute node per request. Do not
 	// let the transport pool an idle connection under the single logical
 	// gatewayd URL, otherwise a drained node could keep receiving traffic.
@@ -661,7 +670,14 @@ func run(ctx context.Context, log *slog.Logger) error {
 			return fmt.Errorf("gatewayd-public: compute edge routes: %w", err)
 		}
 	} else if publicStorageRegistry != nil {
-		rootHandler, err = publicObjectStorageRoot(pgStore, publicStorageRegistry, s3Flag.Load,
+		// Public reads wait out the same restore fence as the S3 gateway
+		// (ADR-20261025111015 amendment).
+		fence := runtimeconfig.NewObjectStorageFence(pgStore, log)
+		if err := fence.Check(runtimeCtx); err != nil {
+			log.Warn("gatewayd-public: initial object storage fence read failed", "err", err)
+		}
+		go fence.Run(runtimeCtx)
+		rootHandler, err = publicObjectStorageRoot(pgStore, publicStorageRegistry, func() bool { return s3Flag.Load() && fence.Open() },
 			domains, controlPlaneHandler, log)
 		if err != nil {
 			return err
@@ -728,7 +744,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 	// during graceful shutdown.
 	tlsAskReg := prometheus.NewRegistry()
 	controlMux := gateway.ControlMuxWithExtra(gatewayMetrics,
-		prometheus.Gatherers{opsMetrics.Registry(), budgetReg, tcpMetrics.Registry(), udpMetrics.Registry(), tlsAskReg, edgeMetricsSet.registry},
+		prometheus.Gatherers{opsMetrics.Registry(), budgetReg, tcpMetrics.Registry(), udpMetrics.Registry(), tlsAskReg, edgeMetricsSet.registry, trafficSecurityPeers.registry},
 		probe.ReadyFunc(), drainTracker)
 	installOnDemandTLSAsk(controlMux, pgStore, domains, tlsAskReg, log)
 	controlAddr := envOr("FAAS_PUBLIC_CONTROL_ADDR", defaultPublicControlAddr)

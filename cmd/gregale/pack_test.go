@@ -348,12 +348,14 @@ func TestFunctionGoTemplateIsDetectedAsFunctionAfterInit(t *testing.T) {
 		t.Fatalf("pack materialized function-go: %v", err)
 	}
 	defer func() { _ = os.Remove(archive) }()
-	if n != 3 {
-		t.Fatalf("packed function-go fileCount = %d, want 3 including build-only go.mod", n)
+	if n != 4 {
+		t.Fatalf("packed function-go fileCount = %d, want 4 including AGENTS.md and build-only go.mod", n)
 	}
 	entries := tarEntries(t, archive)
-	if want := filepath.Base(dir) + "/go.mod"; !entries[want] {
-		t.Fatalf("packed function-go archive missing %q; entries: %v", want, entries)
+	for _, name := range []string{"go.mod", "AGENTS.md"} {
+		if want := filepath.Base(dir) + "/" + name; !entries[want] {
+			t.Fatalf("packed function-go archive missing %q; entries: %v", want, entries)
+		}
 	}
 	if got := string(tarEntryBody(t, archive, "go.mod")); got != functionGoBuildModule {
 		t.Fatalf("packed function-go go.mod = %q, want %q", got, functionGoBuildModule)
@@ -450,11 +452,11 @@ func TestFunctionGoTemplateWorkspaceArchivePlacesBuildModuleBesideHandler(t *tes
 		t.Fatalf("pack workspace function-go: %v", err)
 	}
 	defer func() { _ = os.Remove(archive) }()
-	if n != 3 {
-		t.Fatalf("workspace function-go fileCount = %d, want 3 including build-only go.mod", n)
+	if n != 4 {
+		t.Fatalf("workspace function-go fileCount = %d, want 4 including AGENTS.md and build-only go.mod", n)
 	}
 	entries := tarEntries(t, archive)
-	for _, want := range []string{"services/worker/handler.go", "services/worker/README.md", "services/worker/go.mod"} {
+	for _, want := range []string{"services/worker/handler.go", "services/worker/README.md", "services/worker/AGENTS.md", "services/worker/go.mod"} {
 		if !entries[want] {
 			t.Errorf("workspace function-go archive missing %q; entries: %v", want, entries)
 		}

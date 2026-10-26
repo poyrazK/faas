@@ -139,6 +139,15 @@ type AccountPassword struct {
 	UpdatedAt pgtype.Timestamptz
 }
 
+// Accounts whose combined billable overage (compute plus live secondary meters) reached overage_cap_cents this UTC month. Written by meterd, read by schedd (ADR-20261026120843).
+type AccountSpendCapHold struct {
+	AccountID     pgtype.UUID
+	Month         pgtype.Date
+	CapCents      int64
+	ObservedCents int64
+	ReachedAt     pgtype.Timestamptz
+}
+
 type AccountSpendSnapshot struct {
 	ID          pgtype.UUID
 	AccountID   pgtype.UUID
@@ -7685,6 +7694,13 @@ type MailSuppression struct {
 	CreatedAt       pgtype.Timestamptz
 }
 
+// Whether a paid account runs its managed PostgreSQL databases past the monthly compute allowance, up to 2x, before suspension; written only by apid (ADR-20261025094915).
+type ManagedPostgresAccountOverage struct {
+	SubjectID pgtype.UUID
+	Enabled   bool
+	UpdatedAt pgtype.Timestamptz
+}
+
 type ManagedPostgresAccountingReconciliation struct {
 	AccountID          pgtype.UUID
 	ReconciliationID   pgtype.UUID
@@ -9660,6 +9676,13 @@ type ObjectStorageS3Credential struct {
 	IssuerAccessRevision pgtype.Int8
 }
 
+type ObjectStorageTimelineAcceptance struct {
+	Singleton  bool
+	Timeline   string
+	AcceptedAt pgtype.Timestamptz
+	AcceptedBy string
+}
+
 type ObjectStorageUploadGrant struct {
 	ID                 pgtype.UUID
 	BucketID           pgtype.UUID
@@ -11076,6 +11099,7 @@ type PrPreviewSet struct {
 	MemberAppIds   []string
 	ClosedAt       pgtype.Timestamptz
 	UpdatedAt      pgtype.Timestamptz
+	SetupError     pgtype.Text
 }
 
 type PrewarmIntent struct {

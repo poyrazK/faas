@@ -22,9 +22,12 @@
 //     NotifyAppDelete. Same audit + same notify as the janitor's
 //     teardown, so dashboards render preview destroy and janitor
 //     teardown identically.
+//   - A GitHub PR preview is torn down with its whole environment:
+//     every open preview of the same project and pull request.
 package apidserver
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net/http"
@@ -66,43 +69,88 @@ func (s *server) destroyPreview(w http.ResponseWriter, r *http.Request, acct sta
 		return
 	}
 
-	s.destroyPreviewApp(w, r, acct, app, "preview.destroyed_by_customer")
+	if s.tearDownPreviewEnvironment(w, r, acct, app, "preview.destroyed_by_customer") {
+		w.WriteHeader(http.StatusNoContent)
+	}
 }
 
-// destroyPreviewApp applies the shared preview tombstone ordering used by
-// both GitHub previews and CLI-managed developer sessions.
+// destroyPreviewApp tears down one CLI-managed developer session.
 func (s *server) destroyPreviewApp(w http.ResponseWriter, r *http.Request, acct state.Account, app state.App, auditKind string) {
+	if s.tearDownPreviewApp(w, r, acct, app, auditKind) {
+		w.WriteHeader(http.StatusNoContent)
+	}
+}
+
+// tearDownPreviewEnvironment tears down every open member of app's GitHub
+// PR preview environment. The members of one project and pull request are
+// reserved and built together, so destroying one workload alone would
+// leave its siblings serving and holding the environment's preview
+// allowance. It writes a problem and returns false on the first failure.
+func (s *server) tearDownPreviewEnvironment(w http.ResponseWriter, r *http.Request, acct state.Account, app state.App, auditKind string) bool {
+	members, err := s.previewEnvironmentMembers(r.Context(), app)
+	if err != nil {
+		s.log.ErrorContext(r.Context(), "destroy preview: list environment", "app", app.ID, "err", err)
+		api.WriteProblem(w, api.ErrCapacity("list preview environment"))
+		return false
+	}
+	for _, member := range members {
+		if !s.tearDownPreviewApp(w, r, acct, member, auditKind) {
+			return false
+		}
+	}
+	return true
+}
+
+// previewEnvironmentMembers returns the open previews of app's project and
+// pull request, app last. A developer session and a legacy preview without
+// a project are environments of one.
+func (s *server) previewEnvironmentMembers(ctx context.Context, app state.App) ([]state.App, error) {
+	if app.PreviewPrNumber <= 0 || app.ProjectID == "" {
+		return []state.App{app}, nil
+	}
+	previews, err := s.store.ListPreviewsForAccount(ctx, app.AccountID)
+	if err != nil {
+		return nil, err
+	}
+	members := make([]state.App, 0, len(previews))
+	for _, preview := range previews {
+		if preview.ID == app.ID || preview.ProjectID != app.ProjectID || preview.PreviewPrNumber != app.PreviewPrNumber ||
+			preview.PreviewPrState == state.PreviewPrStateTearingDown || preview.PreviewPrState == state.PreviewPrStateTornDown {
+			continue
+		}
+		members = append(members, preview)
+	}
+	return append(members, app), nil
+}
+
+// tearDownPreviewApp applies the shared preview tombstone ordering used by
+// GitHub previews and CLI-managed developer sessions. A row that vanished
+// concurrently already satisfies the request. It writes a problem and
+// returns false on failure.
+func (s *server) tearDownPreviewApp(w http.ResponseWriter, r *http.Request, acct state.Account, app state.App, auditKind string) bool {
 	if err := s.cleanupDevSessionBuckets(r.Context(), app); err != nil {
 		object.BucketProblem(w, err)
-		return
+		return false
 	}
 	if err := s.cleanupDevPostgres(r.Context(), app); err != nil {
 		managedPostgresProblem(w, err)
-		return
+		return false
 	}
 	if _, err := s.store.SetPreviewPrState(r.Context(), app.ID, state.PreviewPrStateTornDown); err != nil {
 		if errors.Is(err, state.ErrNotFound) {
-			// Race: the row vanished between loadApp and the
-			// tombstone. Treat as success — the customer's
-			// intent ("destroy this preview") is satisfied by
-			// the deletion. Return 204 to keep the wire stable
-			// (no 404 surprise after a successful POST).
-			w.WriteHeader(http.StatusNoContent)
-			return
+			return true
 		}
 		s.log.ErrorContext(r.Context(), "destroy preview: set torn_down", "app", app.ID, "err", err)
 		api.WriteProblem(w, api.ErrCapacity("set preview torn_down"))
-		return
+		return false
 	}
 	if _, err := s.store.SoftDeleteAppCascade(r.Context(), app.ID); err != nil {
 		if errors.Is(err, state.ErrNotFound) {
-			// Same race as above.
-			w.WriteHeader(http.StatusNoContent)
-			return
+			return true
 		}
 		s.log.ErrorContext(r.Context(), "destroy preview: soft delete", "app", app.ID, "err", err)
 		api.WriteProblem(w, api.ErrCapacity("soft delete preview"))
-		return
+		return false
 	}
 
 	// Notify AFTER both writes succeed — schedd's subscriber
@@ -136,5 +184,5 @@ func (s *server) destroyPreviewApp(w http.ResponseWriter, r *http.Request, acct 
 		"parent_slug", app.PreviewOfSlug,
 		"pr_number", app.PreviewPrNumber,
 		"account", acct.ID)
-	w.WriteHeader(http.StatusNoContent)
+	return true
 }

@@ -76,6 +76,29 @@ func TestRegistry_ControlIsWiredToScheddAlone(t *testing.T) {
 	}
 }
 
+func TestRegistry_DeliveryIsWiredToScheddAlone(t *testing.T) {
+	s, ok := sealdomain.Lookup(sealdomain.Delivery)
+	if !ok || !s.Wired {
+		t.Fatalf("delivery domain = %+v, %v; want wired", s, ok)
+	}
+	if len(s.Readers) != 1 || s.Readers[0] != "schedd" {
+		t.Fatalf("delivery readers = %v, want [schedd]", s.Readers)
+	}
+	if len(s.Roles) != 2 {
+		t.Fatalf("delivery roles = %v; schedd runs on both node roles", s.Roles)
+	}
+	// apid both seals and opens a managed workflow's plan, so the plan
+	// belongs to apid's domain, not to schedd's.
+	for _, c := range s.Columns {
+		if c.Table == "agent_execution_workflows" {
+			t.Fatalf("delivery owns %s, which only apid opens", c)
+		}
+	}
+	if got := sealdomain.ReaderDomains("apid"); containsDomain(got, sealdomain.Delivery) {
+		t.Fatalf("apid reads %v; it must only seal delivery values", got)
+	}
+}
+
 func TestRegistry_StorageIsWiredToS3GatewaydAlone(t *testing.T) {
 	s, ok := sealdomain.Lookup(sealdomain.Storage)
 	if !ok || !s.Wired {
@@ -143,13 +166,16 @@ func TestRegistry_EdgeIsWiredToGatewaydInternalAlone(t *testing.T) {
 	}
 }
 
-func TestRegistry_BuildIsWiredToImagedAlone(t *testing.T) {
+// imaged opens registry passwords to pull images; vmmd opens them into a
+// builder VM's Docker config for its base-image pulls (ADR-20261026090000).
+// Both run on compute nodes, where root already holds the build identity.
+func TestRegistry_BuildIsWiredToImagedAndVmmd(t *testing.T) {
 	s, ok := sealdomain.Lookup(sealdomain.Build)
 	if !ok || !s.Wired {
 		t.Fatalf("build domain = %+v, %v; want wired", s, ok)
 	}
-	if len(s.Readers) != 1 || s.Readers[0] != "imaged" {
-		t.Fatalf("build readers = %v, want [imaged]", s.Readers)
+	if len(s.Readers) != 2 || s.Readers[0] != "imaged" || s.Readers[1] != "vmmd" {
+		t.Fatalf("build readers = %v, want [imaged vmmd]", s.Readers)
 	}
 	if got := sealdomain.ReaderDomains("apid"); containsDomain(got, sealdomain.Build) {
 		t.Fatalf("apid reads %v; it must only seal registry passwords", got)

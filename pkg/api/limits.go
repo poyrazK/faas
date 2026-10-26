@@ -430,6 +430,11 @@ const DeploymentResponseCheckPreflightTimeout = 5 * time.Second
 const OperationBusinessConditionsMax = 16
 const OperationBusinessConditionDescriptionMaxBytes = 1024
 
+// ManagedPostgresOverageCeilingMultiplier is how far past the plan's monthly
+// compute allowance a paid account with overage on may run its managed
+// PostgreSQL databases before the cap suspends them (ADR-20261025094915).
+const ManagedPostgresOverageCeilingMultiplier = 2
+
 // Bounded recovery of explicitly requested PostgreSQL cutover retirements.
 const ManagedPostgresCutoverDrainBatchMax = 32
 const ManagedPostgresCutoverDrainTimeout = 20 * time.Second
@@ -2847,6 +2852,14 @@ const (
 // dispatching), including retained replay descendants. ADR-614.
 type EventDeliveryLimits struct{ PerConsumer, PerApp, PerAccount int }
 
+// EventPublishLimits bound how fast an account publishes events
+// (ADR-20261026140000). Every publication path counts each event once (a
+// batch counts every event it carries) against a token bucket refilled at
+// PerSecond. Burst is at least EventPublishBatchMaxEvents so a full batch can
+// pass. Buckets are per apid or vmmd process; storage budgets
+// (EventStorageLimits) still bound the sustained rate.
+type EventPublishLimits struct{ PerSecond, Burst int }
+
 // EventStorageLimits bounds retained customer event envelopes and immutable
 // recipient snapshots per account, including settled receipts. ADR-615.
 // SettledRetentionSeconds is how long a settled receipt is kept: it bounds
@@ -2971,13 +2984,17 @@ type Limits struct {
 	// allowances wait for exporters that classify reads and writes.
 	ObjectStorage   ObjectStoragePlanLimits
 	EventDeliveries EventDeliveryLimits
+	EventPublish    EventPublishLimits
 	Operations      OperationPlanLimits
 	Plan            Plan
 
 	// Deploy-time quotas (enforced by apid before work happens, spec §4.2).
 	DeployedApps int // max apps in state active|evicted_cold
-	// PreviewApps caps live PR preview apps separately from production apps.
-	// A preview lease is temporary and never consumes a DeployedApps slot.
+	// PreviewApps caps open PR preview environments (the open previews of one
+	// project and pull request) separately from production apps. One
+	// environment holds at most DeployedApps workloads; a closed pull
+	// request's preview holds none (ADR-20261026090000). A preview lease is
+	// temporary and never consumes a DeployedApps slot.
 	PreviewApps int
 	// OutboundRequestsPerDayMax (ADR-257) caps the customer-selected daily
 	// request limit on any one managed outbound integration. It is a policy
@@ -4636,6 +4653,7 @@ var planLimits = map[Plan]Limits{
 		// Hobby so a customer mid-upgrade sees the cap before the
 		// plan flips. Deadline defaults to 5m, retention to 1d.
 		EventDeliveries:                   EventDeliveryLimits{64, 256, 1024},
+		EventPublish:                      EventPublishLimits{5, 100},
 		EventStorage:                      EventStorageLimits{4096, 8 << 20, 86400},
 		MaxAsyncInvocationsPerAccount:     100,
 		MaxAsyncInvocationDeadlineSeconds: 300,
@@ -5044,6 +5062,7 @@ var planLimits = map[Plan]Limits{
 		// ADR-134 PR-B: Hobby 1k / 1h / 7d. Matches the doubling
 		// from Free's 100/5m/1d.
 		EventDeliveries:                   EventDeliveryLimits{256, 1024, 4096},
+		EventPublish:                      EventPublishLimits{20, 200},
 		EventStorage:                      EventStorageLimits{131072, 256 << 20, 259200},
 		MaxAsyncInvocationsPerAccount:     1000,
 		MaxAsyncInvocationDeadlineSeconds: 3600,
@@ -5486,6 +5505,7 @@ var planLimits = map[Plan]Limits{
 		// ADR-134 PR-B: Pro 10k / 6h / 30d. Decadal bumps from
 		// Hobby track the Doubling pattern (1k->10k, 1h->6h, 7d->30d).
 		EventDeliveries:                   EventDeliveryLimits{1024, 4096, 16384},
+		EventPublish:                      EventPublishLimits{100, 1000},
 		EventStorage:                      EventStorageLimits{1048576, 2 << 30, 604800},
 		MaxAsyncInvocationsPerAccount:     10000,
 		MaxAsyncInvocationDeadlineSeconds: 21600,
@@ -5893,6 +5913,7 @@ var planLimits = map[Plan]Limits{
 		// pattern); 90d retention matches the audit-grade trace
 		// retention target.
 		EventDeliveries:                   EventDeliveryLimits{4096, 16384, 65536},
+		EventPublish:                      EventPublishLimits{500, 5000},
 		EventStorage:                      EventStorageLimits{8388608, 16 << 30, 1209600},
 		MaxAsyncInvocationsPerAccount:     100000,
 		MaxAsyncInvocationDeadlineSeconds: 86400,
@@ -6619,7 +6640,8 @@ const (
 	WakeFailoverMaxAlternates = 2
 	// WakeFailoverMinRemainingMs is the least of the wake's deadline that
 	// must remain for an alternate attempt to start. The coordinated wake
-	// runs under the WakeQueueTTLSeconds hold, so failover never extends it.
+	// runs under schedd's leader budget (the cold-boot budget plus admission,
+	// at least the WakeQueueTTLSeconds hold), so failover never extends it.
 	WakeFailoverMinRemainingMs = 2000
 
 	// BaseGenerationReadinessCheckIntervalSeconds is how old vmmd's verdict
@@ -6972,6 +6994,12 @@ const (
 	// 1 ms, so 500 ms/s is roughly 500 checked requests per second.
 	EdgeWAFInlineMsPerAppPerSecond = 500
 	EdgeWAFInlineMsPerAppBurst     = 1000
+	// EdgeWAFInlineAccountSharePercent is the share of the node's check
+	// slots (at least one) an account's waiting checks are served first
+	// for (ADR-831 amendment 16). An account may use every free slot, but a
+	// freed slot goes first to an account below its share, so one account's
+	// flood cannot make other accounts' block rules skip as busy.
+	EdgeWAFInlineAccountSharePercent = 50
 	// EdgeWAFDefaultParanoiaLevel and MaxEdgeWAFParanoiaLevel bound the
 	// OWASP CRS paranoia level a rule may select.
 	EdgeWAFDefaultParanoiaLevel = 1
@@ -7052,10 +7080,14 @@ const (
 	// EdgePenaltyBoxMaxPerApp and EdgePenaltyBoxMaxEntries bound one
 	// gateway's boxes (and its pending rejection counts) per app and in
 	// total, so a flood from rotating addresses costs bounded memory and
-	// one app cannot push out another's boxes. A full app box drops its
-	// soonest-ending entry.
+	// one app cannot push out another's boxes. A full app drops its
+	// soonest-ending box; a full gateway drops the soonest-ending box of
+	// the app holding the most. EdgePenaltyHitsMaxPerApp bounds one app's
+	// pending counts; past it the app's new clients are refused but not
+	// counted.
 	EdgePenaltyBoxMaxPerApp  = 10000
 	EdgePenaltyBoxMaxEntries = 200000
+	EdgePenaltyHitsMaxPerApp = 10000
 
 	// --- ADR-20261021220456: attack mode ------------------------------
 
@@ -11363,6 +11395,18 @@ const (
 	TrafficSecurityMaxScopes        = 4_096
 	TrafficSecurityMaxRequestScopes = 16
 	TrafficSecurityMaxHeaderBytes   = 4096
+	// TrafficSecurityOutageGrace is how long a gateway keeps admitting from,
+	// and keeps admitted traffic on, the security generations it last
+	// verified while the store cannot be read (ADR-20261026160000, owner
+	// decision 2026-10-26). A store outage refuses new and cancels admitted
+	// traffic only after this; a revocation written meanwhile cannot land in
+	// an unreachable store anyway.
+	TrafficSecurityOutageGrace = 5 * time.Minute
+	// TrafficSecurityWarmScopeTTL keeps a scope refreshed in the background
+	// after its last request ends, so the app's next request admits without a
+	// store read. Warm scopes share TrafficSecurityMaxScopes with active ones
+	// and give way to them least recently used first.
+	TrafficSecurityWarmScopeTTL = 10 * time.Minute
 	// Runtime feature observations are small fleet snapshots, independent of
 	// request accounting and policy-revision convergence.
 	TrafficRuntimeObservationInterval  = 2 * time.Second
@@ -12506,6 +12550,12 @@ const (
 	RouteHealthPooledMaxSpan = 30 * time.Minute
 )
 
+// RouteAnalyticsQueryTimeout bounds each routes analytics read over retained
+// request telemetry (route advice, the awake report and the insights
+// evaluator that reuses them): Postgres cancels the statement past it and the
+// caller is told to narrow the window (ADR-20261026143210).
+const RouteAnalyticsQueryTimeout = 10 * time.Second
+
 // RouteAdvice bounds the route advisor (ADR-976): it reads retained request
 // telemetry for the busiest RouteAdviceMaxRoutes routes and only suggests a
 // rule for a route with at least RouteAdviceMinRequests in the window.
@@ -12591,7 +12641,8 @@ const (
 	MCPWakeHistoryTimeMaxBytes                    = 64
 	WakeHistoryPageDefault                        = 20
 	WakeHistoryPageMax                            = 100
-	AccountTraceWakesMax                          = 32 // wakes one account trace lookup reads to show each request's restore
+	AccountTraceWakesMax                          = 32  // wakes one account trace lookup reads to show each request's restore
+	AccountTraceThawsMax                          = 256 // frozen-VM thaws one account trace lookup reads for those wakes (Hunt 12 H12-49)
 	WakeHistoryCursorMaxBytes                     = 2048
 	MCPWakeHistoryCursorMaxBytes                  = 8192
 	MCPProfileFunctionsDefault                    = 10
@@ -14099,6 +14150,18 @@ const (
 	LogSearchStatementTimeout = 5 * time.Second
 	// LogSavedSearchesPerApp caps an app's saved searches (slice D).
 	LogSavedSearchesPerApp = 25
+)
+
+// Log reads in flight. Each ledger read holds one of an apid's database
+// connections for up to LogSearchStatementTimeout, so an apid runs at most
+// LogReadsInFlightPerAccount of one account's log reads (searches, facets,
+// log widgets, log pages, trace lookups) at once and LogReadsInFlightMax in
+// all, leaving the rest of its pool to every other request. A read that
+// finds no slot within LogReadSlotWait is refused as busy (429).
+const (
+	LogReadsInFlightPerAccount = 2
+	LogReadsInFlightMax        = 4
+	LogReadSlotWait            = 2 * time.Second
 )
 
 // Alert log context (ADR-20261022172052): a firing app alert reads the log

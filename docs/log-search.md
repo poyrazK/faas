@@ -122,6 +122,10 @@ my-api: 1284 events from 2026-10-17T12:00:00Z to 2026-10-18T12:00:00Z
   A longer window is rejected with `log_search_window_too_large`.
 - Each search has 5 seconds to finish. If it runs out, you get
   `log_search_timeout`: narrow the window or add a filter.
+- An account runs at most 2 log reads at once: searches, counts, dashboard
+  log widgets and trace lookups share them. A read that waits more than
+  2 seconds for one gets `429 log_reads_busy` with `Retry-After`; retry, or
+  run fewer searches in parallel.
 
 The API is `GET /v1/apps/{slug}/log-events` and
 `GET /v1/apps/{slug}/log-events/facets`; see the API reference.
