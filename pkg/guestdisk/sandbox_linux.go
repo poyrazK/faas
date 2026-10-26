@@ -9,6 +9,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"syscall"
 	"unsafe"
 
@@ -125,6 +126,9 @@ func confine(spec helperSpec) error {
 		if err := maskHostPaths(); err != nil {
 			return err
 		}
+		if err := exposeSessionPaths(spec); err != nil {
+			return err
+		}
 		if err := dropTo(spec.uid, spec.gid); err != nil {
 			return err
 		}
@@ -166,6 +170,129 @@ func maskHostPaths() error {
 		if err := unix.Mount("tmpfs", dir, "tmpfs", unix.MS_RDONLY|unix.MS_NOSUID|unix.MS_NODEV|unix.MS_NOEXEC, "size=4k,mode=0755"); err != nil {
 			return fmt.Errorf("mask %s: %w", dir, err)
 		}
+	}
+	return nil
+}
+
+// exposeSessionPaths makes the image and the session's scratch directories
+// reachable by uid/gid at their own paths. They live under the jail root,
+// which admits only root (/srv/fc/jail is a mode-1700 tmpfs), and the tool
+// and the Landlock rules open them after dropTo. In this private mount
+// namespace each topmost ancestor the identity cannot search is covered with
+// a tmpfs holding only the session's paths, bound back from descriptors
+// opened before the cover, so the tool sees nothing else below it.
+func exposeSessionPaths(spec helperSpec) error {
+	paths := append(append([]string{spec.image}, spec.readDirs...), spec.writeDirs...)
+	covers := map[string][]string{}
+	seen := map[string]bool{}
+	for _, p := range paths {
+		// A /proc/self/fd path is a descriptor vmmd handed over (build
+		// output), reachable whatever its directory's mode.
+		if seen[p] || strings.HasPrefix(p, "/proc/") {
+			continue
+		}
+		seen[p] = true
+		cover, err := unsearchableAncestor(p, spec.uid, spec.gid)
+		if err != nil {
+			return err
+		}
+		if cover != "" {
+			covers[cover] = append(covers[cover], p)
+		}
+	}
+	fds := map[string]int{}
+	defer func() {
+		for _, fd := range fds {
+			_ = unix.Close(fd)
+		}
+	}()
+	for _, ps := range covers {
+		for _, p := range ps {
+			fd, err := unix.Open(p, unix.O_PATH|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
+			if err != nil {
+				return fmt.Errorf("open %s: %w", p, err)
+			}
+			fds[p] = fd
+		}
+	}
+	for cover, ps := range covers {
+		if err := unix.Mount("tmpfs", cover, "tmpfs", unix.MS_NOSUID|unix.MS_NODEV|unix.MS_NOEXEC, "size=64k,mode=0711"); err != nil {
+			return fmt.Errorf("cover %s: %w", cover, err)
+		}
+		for _, p := range ps {
+			if err := bindBack(cover, p, fds[p]); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+// unsearchableAncestor returns the topmost directory above p that uid/gid
+// cannot search, or "" when every one admits it. Supplementary groups are
+// dropped before the tool runs, so only gid counts.
+func unsearchableAncestor(p string, uid, gid int) (string, error) {
+	for i := 1; i < len(p); i++ {
+		if p[i] != '/' {
+			continue
+		}
+		dir := p[:i]
+		var st unix.Stat_t
+		if err := unix.Stat(dir, &st); err != nil {
+			return "", fmt.Errorf("stat %s: %w", dir, err)
+		}
+		if !searchableBy(st, uid, gid) {
+			return dir, nil
+		}
+	}
+	return "", nil
+}
+
+func searchableBy(st unix.Stat_t, uid, gid int) bool {
+	switch {
+	case int(st.Uid) == uid:
+		return st.Mode&0o100 != 0
+	case int(st.Gid) == gid:
+		return st.Mode&0o010 != 0
+	default:
+		return st.Mode&0o001 != 0
+	}
+}
+
+// bindBack recreates p's directories below cover, searchable but not
+// listable, and binds the original p (held as fd) over a placeholder there.
+func bindBack(cover, p string, fd int) error {
+	var st unix.Stat_t
+	if err := unix.Fstat(fd, &st); err != nil {
+		return fmt.Errorf("stat %s: %w", p, err)
+	}
+	rel := strings.Split(strings.TrimPrefix(p, cover+"/"), "/")
+	dir := cover
+	for _, part := range rel[:len(rel)-1] {
+		dir = filepath.Join(dir, part)
+		if err := os.Mkdir(dir, 0o711); err != nil && !errors.Is(err, os.ErrExist) {
+			return fmt.Errorf("recreate %s: %w", dir, err)
+		}
+		if err := os.Chmod(dir, 0o711); err != nil {
+			return fmt.Errorf("recreate %s: %w", dir, err)
+		}
+	}
+	switch st.Mode & unix.S_IFMT {
+	case unix.S_IFDIR:
+		if err := os.Mkdir(p, 0o700); err != nil && !errors.Is(err, os.ErrExist) {
+			return fmt.Errorf("placeholder %s: %w", p, err)
+		}
+	case unix.S_IFREG:
+		f, err := os.OpenFile(p, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+		if err != nil {
+			return fmt.Errorf("placeholder %s: %w", p, err)
+		}
+		_ = f.Close()
+	default:
+		return fmt.Errorf("%s is neither a directory nor a regular file", p)
+	}
+	if err := unix.Mount(fmt.Sprintf("/proc/self/fd/%d", fd), p, "", unix.MS_BIND, ""); err != nil {
+		return fmt.Errorf("bind %s: %w", p, err)
 	}
 	return nil
 }
