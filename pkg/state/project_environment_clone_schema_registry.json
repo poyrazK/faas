@@ -27,6 +27,17 @@
     "kind": "account_identity"
   },
   {
+    "table": "account_spend_cap_holds",
+    "columns": [
+      "account_id",
+      "month",
+      "cap_cents",
+      "observed_cents",
+      "reached_at"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "alert_test_sends",
     "columns": [
       "id",
