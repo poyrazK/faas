@@ -186,6 +186,7 @@ sql:
       - "pkg/state/data_repair_rehearsal_queries.sql"
       - "pkg/state/deployment_dependency_queries.sql"
       - "pkg/state/deployment_watchdog_queries.sql"
+      - "pkg/state/source_spool_queries.sql"
       - "pkg/state/dev_source_patch_queries.sql"
       - "pkg/state/edge_rule_replay_retention_queries.sql"
       - "pkg/state/email_verification_queries.sql"

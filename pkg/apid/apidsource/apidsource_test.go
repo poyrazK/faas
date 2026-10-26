@@ -312,6 +312,33 @@ func TestEnqueue_ExplicitDockerfileOverridesLanguageProfile(t *testing.T) {
 	}
 }
 
+// A gregale.yaml build: section reaches Enqueue as a Dockerfile path; it
+// selects the Docker pipeline whatever the deployment's provenance kind
+// (ADR-20261026120000).
+func TestEnqueue_DockerfilePathSelectsDockerForGitHubDeploys(t *testing.T) {
+	st := state.NewMemStore()
+	app := mustSeedApp(t, st)
+	srcPath, srcBytes := stageSource(t, t.TempDir())
+	result, err := Enqueue(context.Background(), st, &recordingNotifier{}, EnqueueParams{
+		AppID: app.ID, Kind: state.DeploymentKindGitHub, DockerfilePath: "docker/Dockerfile.prod",
+		SourcePath: srcPath, SourceBytes: srcBytes, LogSpool: t.TempDir(), Log: quietLogger(),
+	})
+	if err != nil {
+		t.Fatalf("Enqueue: %v", err)
+	}
+	dep, err := st.DeploymentByID(context.Background(), result.DeploymentID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var profile frameworkprofile.Profile
+	if err := json.Unmarshal(dep.InferredProfile, &profile); err != nil {
+		t.Fatalf("decode inferred profile: %v", err)
+	}
+	if profile.Framework != "docker" || profile.DockerfilePath != "docker/Dockerfile.prod" {
+		t.Fatalf("profile = %+v, want docker with the selected Dockerfile", profile)
+	}
+}
+
 func TestEnqueue_ReportsPrivacySafeSourceDetectionTiming(t *testing.T) {
 	st := state.NewMemStore()
 	app := mustSeedApp(t, st)

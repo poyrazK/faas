@@ -4976,12 +4976,21 @@ LIMIT 100;
 -- status IN ('committed', 'cancelled', 'expired') — leaving
 -- as a follow-up ADR rather than conflated into PR-1's
 -- migration slot 533.
-SELECT id, part_path
-FROM upload_sessions
-WHERE status IN ('committed', 'cancelled', 'expired')
-  AND part_path <> ''
-  AND last_patched_at < now() - INTERVAL '1 hour'
-ORDER BY last_patched_at ASC
+--
+-- ADR-20261026120000: on a single-box install the committed .part IS the
+-- build source, so it is kept while its deployment is in flight (a build
+-- may queue for hours) and for the 24h source-retention window that
+-- `deploys retry` relies on. Cancelled and expired parts keep the 1h grace.
+SELECT s.id, s.part_path
+FROM upload_sessions s
+WHERE s.status IN ('committed', 'cancelled', 'expired')
+  AND s.part_path <> ''
+  AND s.last_patched_at < now() - CASE WHEN s.status = 'committed' THEN INTERVAL '24 hours' ELSE INTERVAL '1 hour' END
+  AND NOT EXISTS (
+      SELECT 1 FROM deployments d
+      WHERE d.id::text = s.deployment_id
+        AND d.status IN ('pending', 'building', 'imaging', 'snapshotting'))
+ORDER BY s.last_patched_at ASC
 LIMIT 100;
 
 -- name: ClearUploadSessionPartPath :exec

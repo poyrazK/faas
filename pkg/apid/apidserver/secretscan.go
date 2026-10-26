@@ -27,6 +27,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/secretscan"
@@ -150,22 +151,41 @@ func scanSourceTarballSecrets(sourcePath string, limits api.Limits) *api.Problem
 	}
 	defer func() { _ = os.RemoveAll(scanDir) }()
 
+	// Only credential-format findings refuse the source; heuristic ones are
+	// reported by the built image's per-deployment scan (ADR-20261026120000).
 	findings, err := scanExtractedTreeSecrets(scanDir)
-	if err != nil && len(findings) == 0 {
-		return api.NewProblem(http.StatusInternalServerError, api.CodeInternal,
-			"Secret scan failed", err.Error())
-	}
-	if len(findings) > 0 {
-		return newSecretScanRejectionProblem(findings)
+	if blocking := secretscan.Blocking(findings); len(blocking) > 0 {
+		return newSecretScanRejectionProblem(blocking)
 	}
 	if err != nil {
-		// Partial findings are still actionable, but do not silently
-		// convert a walk error into an accepted source when no finding
-		// happened to be in the unreadable portion.
+		// Do not silently convert a walk error into an accepted source:
+		// the unreadable portion may hold a credential.
 		return api.NewProblem(http.StatusInternalServerError, api.CodeInternal,
 			"Secret scan failed", err.Error())
 	}
 	return nil
+}
+
+// secretScanProblemSummary renders a scan rejection as one line for
+// transports without the RFC 7807 envelope (the githubd bridge's gRPC
+// status). It names at most three findings by file, line and provider;
+// snippets stay out of logs and check runs.
+func secretScanProblemSummary(p *api.Problem) string {
+	if len(p.SecretFindings) == 0 {
+		return p.Detail
+	}
+	parts := make([]string, 0, 3)
+	for i, f := range p.SecretFindings {
+		if i == 3 {
+			break
+		}
+		parts = append(parts, fmt.Sprintf("%s:%d (%s)", f.File, f.Line, f.Provider))
+	}
+	more := ""
+	if extra := len(p.SecretFindings) - len(parts); extra > 0 {
+		more = fmt.Sprintf(" and %d more", extra)
+	}
+	return fmt.Sprintf("%s: %s%s; %s", p.Title, strings.Join(parts, ", "), more, p.SecretHint)
 }
 
 // newSecretScanRejectionProblem builds the 422 envelope for an
