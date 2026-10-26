@@ -2,7 +2,7 @@
 // /proc paths are not exercised here — they need real AF_VSOCK + a
 // customer app, which lives in the //go:build metal suite. This
 // file pins the local glue: address parsing, log truncation,
-// ladder-mode selection, /proc/net/tcp parsing.
+// /proc/net/tcp parsing.
 //
 // Run on every platform: characterize_linux.go is gated `//go:build linux`
 // (it references AF_VSOCK + /proc, which don't exist on darwin), so
@@ -17,8 +17,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-
-	"github.com/onebox-faas/faas/pkg/api"
 )
 
 func TestHexIPToString_IPv4(t *testing.T) {
@@ -79,58 +77,6 @@ func TestTruncateLog(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			if got := truncateLog(tc.in, tc.n); got != tc.want {
 				t.Errorf("truncateLog(%q, %d) = %q, want %q", tc.in, tc.n, got, tc.want)
-			}
-		})
-	}
-}
-
-func TestChoosePortNormMode(t *testing.T) {
-	// manifest.EffectivePort() falls back to DefaultAppPort (8080)
-	// when Port==0; matching the observed bind yields mode=none
-	// (rung 1 of the ladder satisfied the customer at build time).
-	cases := []struct {
-		name     string
-		wantPort int
-		manifest api.AppManifest
-		observed int
-		want     PortNormMode
-	}{
-		{
-			name:     "manifest 8080, observed 8080 → none",
-			manifest: api.AppManifest{Port: 8080},
-			observed: 8080,
-			want:     PortNormNone,
-		},
-		{
-			name:     "manifest zero (default 8080), observed 8080 → none",
-			manifest: api.AppManifest{},
-			observed: 8080,
-			want:     PortNormNone,
-		},
-		{
-			name:     "manifest 3000, observed 3000 → none",
-			manifest: api.AppManifest{Port: 3000},
-			observed: 3000,
-			want:     PortNormNone,
-		},
-		{
-			name:     "manifest 8080, observed 5000 → dnat",
-			manifest: api.AppManifest{Port: 8080},
-			observed: 5000,
-			want:     PortNormDNAT,
-		},
-		{
-			name:     "manifest zero, observed 8001 → dnat",
-			manifest: api.AppManifest{},
-			observed: 8001,
-			want:     PortNormDNAT,
-		},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			if got := choosePortNormMode(tc.manifest, tc.observed); got != tc.want {
-				t.Errorf("choosePortNormMode(%+v, %d) = %q, want %q",
-					tc.manifest, tc.observed, got, tc.want)
 			}
 		})
 	}
@@ -310,37 +256,10 @@ func TestProbeListening_NoChildEarlyOut(t *testing.T) {
 	}
 }
 
-func TestContainsNat(t *testing.T) {
-	cases := []struct {
-		in   string
-		want bool
-	}{
-		{"nat\nfilter\n", true},
-		{"\nfilter\nraw\n", false},
-		{"", false},
-		{"nat1234\n", false}, // exact-line match, not prefix
-		{"nat\n", true},
-	}
-	for _, tc := range cases {
-		if got := containsNat([]byte(tc.in)); got != tc.want {
-			t.Errorf("containsNat(%q) = %v, want %v", tc.in, got, tc.want)
-		}
-	}
-}
-
 func TestPortNormMode_StringValues(t *testing.T) {
-	// The metric label maps 1:1 to the string. Lock the values so a
-	// refactor doesn't silently rename a metric series and break
-	// dashboards.
-	cases := map[PortNormMode]string{
-		PortNormNone:    "none",
-		PortNormDNAT:    "dnat",
-		PortNormForward: "forward",
-	}
-	for mode, want := range cases {
-		if string(mode) != want {
-			t.Errorf("PortNormMode(%v) = %q, want %q", mode, string(mode), want)
-		}
+	// The host validates port_norm_mode against these wire values.
+	if PortNormNone != "none" {
+		t.Errorf("PortNormNone = %q, want \"none\"", PortNormNone)
 	}
 }
 

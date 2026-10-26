@@ -63,8 +63,8 @@ func cmdBucket(args []string) int {
 	if len(args) > 0 && args[0] != "reconcile" {
 		// Unknown subcommands used to fall through to the capacity parser and
 		// print `bucket reconcile` usage (H9-141).
-		printCommandValidation(osStderr, "unknown bucket subcommand %q; run `gregale bucket --help`\n", args[0])
-		return 1
+		printCommandValidation(osStderr, "unknown bucket subcommand %q\n", args[0])
+		return unknownSubcommandChoices(osStderr, "bucket", nestedCliCommand("bucket"), args[0])
 	}
 	return cmdBucketCapacity(args)
 }

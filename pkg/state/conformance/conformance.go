@@ -123,6 +123,7 @@ func Run(t *testing.T, open Open) {
 		{"rehearsal_apps_receive_no_account_events", testRehearsalAppsReceiveNoAccountEvents},
 		{"usage_rollup_merges_minutes", testUsageRollup},
 		{"archived_logs_are_scoped_to_the_owning_app", testInstanceLogsOwnedByApp},
+		{"account_erasure_snapshots_archived_log_instances", testLogArchiveErasure},
 		{"invalid_instance_state_is_rejected", testInvalidInstanceState},
 		{"live_state_readers_count_running_instances", testLiveStateReaders},
 		{"live_instance_list_follows_app_ownership", testLiveInstanceListOwnership},

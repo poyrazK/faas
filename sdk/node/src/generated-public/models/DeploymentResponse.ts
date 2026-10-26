@@ -5,6 +5,7 @@
 import type { AppReleaseReview } from './AppReleaseReview.js';
 import type { BuildPlan } from './BuildPlan.js';
 import type { DatabaseSwitch } from './DatabaseSwitch.js';
+import type { DeploymentCompanion } from './DeploymentCompanion.js';
 import type { DeploymentConfigurationStatus } from './DeploymentConfigurationStatus.js';
 import type { DeploymentHealthcheck } from './DeploymentHealthcheck.js';
 import type { DeploymentLivenessProbe } from './DeploymentLivenessProbe.js';
@@ -206,6 +207,10 @@ export type DeploymentResponse = {
    * Validated workflow definitions persisted with this immutable deployment revision.
    */
   workflows?: Array<WorkflowSpec>;
+  /**
+   * Companions this deployment carries: name, image, port and size. Environment values and secret grants are never included.
+   */
+  companions?: Array<DeploymentCompanion>;
   /**
    * Durable non-secret deployment evidence captured after readiness, including the resolved API profile, artifact identity, and post-readiness smoke result.
    */

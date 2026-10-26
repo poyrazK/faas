@@ -8,6 +8,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+
+	"github.com/onebox-faas/faas/pkg/eventcontract"
 )
 
 // DiscoveredRouteLimit bounds persistent per-app cardinality independently of
@@ -38,6 +40,7 @@ type discoveredRouteCloudEvent struct {
 	DataContentType string                   `json:"datacontenttype"`
 	Data            discoveredRouteEventData `json:"data"`
 	AccountID       string                   `json:"accountid"`
+	Producer        string                   `json:"producer,omitempty"`
 }
 
 type discoveredRouteNotice struct {
@@ -65,7 +68,7 @@ func apiRouteDiscoveredPayloads(accountID, appID, route string, firstSeen time.T
 	envelope := discoveredRouteCloudEvent{
 		SpecVersion: "1.0", ID: eventID, Source: discoveredRouteEventSource,
 		Type: discoveredRouteEventType, Time: firstSeen, DataContentType: "application/json",
-		Data: eventData, AccountID: accountID,
+		Data: eventData, AccountID: accountID, Producer: eventcontract.AppProducer(appID),
 	}
 	eventPayload, err = json.Marshal(envelope)
 	if err != nil {

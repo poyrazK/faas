@@ -22,6 +22,7 @@ type contractTestStore interface {
 	state.AppWorkPolicyStore
 	state.AuditEventOutboxStore
 	state.ComputeNodeCPUUsageBatcher
+	state.ComputeNodeReadinessStore
 	state.ComputeNodeUsageBatcher
 	state.DeploymentAliasStore
 	state.DeploymentHostingFailureStore
@@ -35,6 +36,7 @@ type contractTestStore interface {
 	state.EventFanoutReplayStore
 	state.EventReceiptAcceptanceStore
 	state.EventReceiptReplayStore
+	state.EventReceiptScopeStore
 	state.EventReceiptStore
 	state.EventReplayPreviewStore
 	state.EventStorageUsageStore

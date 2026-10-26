@@ -413,6 +413,62 @@ identity opens none that is still valid.
 - **Rehearsal object credentials** (behind `FAAS_REHEARSAL_OBJECT_FIXTURES`,
   stored in a jsonb document) stay on the fleet key in this slice.
 
+## Implemented in the sixth slice: the alerting domain
+
+- **meterd** loads `domains/alerting.age` (and its `.previous`) through
+  `FAAS_SEAL_DOMAIN_ALERTING_IDENTITY_PATH`, a `LoadCredential` drop-in from
+  the `seal_domains` role on control-plane and single-box hosts. A
+  configured identity that does not load fails startup. meterd exports
+  `faas_seal_domain_loaded{domain="alerting"}`.
+- **One identity list** opens every alerting value: the alerting domain
+  first, then the fleet and host identities. It covers alert rule webhooks,
+  notification channels (alerts and financial budgets), MCP readiness
+  deliveries and relayed test sends.
+- **apid seals the six writers** to `FAAS_SEAL_DOMAIN_ALERTING_RECIPIENT_PATH`
+  under `FAAS_SEAL_DOMAIN_ALERTING_WRITES`:
+  - an alert rule's webhook secret (create, update, rotate, preset enable);
+  - a notification channel's destination;
+  - the MCP readiness PagerDuty and fallback keys.
+
+  The MCP PagerDuty acknowledgement signing secret is an `account` column
+  and stays as it is. Tests apid cannot open go through the relay below.
+- **Re-seal:** `gregalectl seal-domain migrate --domain alerting
+  --readers-verified` re-seals the five columns with compare-and-swap
+  writes on a control-plane host. Each value keeps its namespace, including
+  the legacy `alert_rule` one the evaluator still opens. Open MCP readiness
+  incidents keep copies of their route's key in `delivery_routing` (jsonb);
+  those are not re-sealed and age out with the incidents.
+
+## Implemented in the seventh slice: the storage domain
+
+- **s3-gatewayd** loads `domains/storage.age` (and its `.previous`) through
+  `FAAS_SEAL_DOMAIN_STORAGE_IDENTITY_PATH` on control-plane hosts, opens S3
+  credentials with it ahead of the fleet and host identities, and exports
+  `faas_seal_domain_loaded{domain="storage"}`.
+- **The startup rekey stays out of the domain.** s3-gatewayd re-seals every
+  credential whose `kid` is not its current key when it starts. Two rules
+  keep that from undoing the domain or moving rows into it ungated:
+  - it skips any credential the storage identity opens;
+  - apid files a credential under the fleet recipient's key id while the
+    credential still opens with the fleet key (write modes empty, `fleet`
+    and `dual`), and under the domain's only in `domain` mode
+    (`sealdomain.KeyID`).
+
+  A gateway without the domain still refuses to start over a credential it
+  cannot open, so `readers_verified` must cover every s3-gatewayd and its
+  previous release.
+- **apid seals all eight writers** to `FAAS_SEAL_DOMAIN_STORAGE_RECIPIENT_PATH`
+  under `FAAS_SEAL_DOMAIN_STORAGE_WRITES`: customer credentials, compute
+  bindings and their rotation, signed URLs, and the project environment
+  clone, shared binding and clone checkpoint credentials.
+- **Re-seal:** `gregalectl seal-domain migrate --domain storage
+  --readers-verified` re-seals every active credential, signed URLs
+  included, to the domain alone under the domain's key id. Its
+  compare-and-swap is on the ciphertext, not the key id, because a binding
+  rotation replaces a secret in place. Revoked credentials and expired
+  signed URLs are left as they are. The binding promotion revision bumps,
+  as for outbound.
+
 ## Implemented: the alerting test-send relay
 
 Section 3 moves apid's alerting test sends behind meterd, ahead of the
@@ -442,8 +498,8 @@ Each domain's key pair is a pair of GitHub environment secrets:
 
 - `scripts/ci/seal_domain_vars.sh` writes the files a host role needs on the
   runner and points the `seal_domains` role at them:
-  - control plane: the `outbound` and `source` identities and every
-    recipient;
+  - control plane: the `outbound`, `source`, `alerting` and `storage`
+    identities and every recipient;
   - compute: the `runtime`, `build` and `edge` identities.
 - The control-plane converges (the full one and the host-configuration
   lane) and the compute join run the role with those variables.

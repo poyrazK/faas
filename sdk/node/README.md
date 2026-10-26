@@ -2291,6 +2291,11 @@ grouping still uses `presenceScope: 'principal'` within each scope independently
 
 ## Batch event publication
 
+Events are a preview capability: the default `@gregale/sdk-node` entry does not
+export the event operations. Import them from the preview entry, for example
+`import { EventsService } from '@gregale/sdk-node/preview'`, then call
+`EventsService.publishEvent({ requestBody: { source, id, type, data } })`.
+
 `EventsService.publishEventBatch({ requestBody: { events } })` accepts 1–100
 stable-id envelopes in at most 1 MiB. Inspect every `results` entry: HTTP 200
 can include rejected or unknown items. Retry with the original source/id/content;

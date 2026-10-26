@@ -122,7 +122,7 @@ func (s *linuxNativeSession) Prepare(ctx context.Context, artifacts Artifacts, f
 	if err := writeEvidence(s.directory, "fixture.json", fixtureRaw); err != nil {
 		return err
 	}
-	for _, name := range []string{"vmmd", "vmmd-jail-helper"} {
+	for _, name := range []string{"vmmd", "vmmd-jail-helper", "vmmd-guestdisk"} {
 		result, err := nativeCommand(prepare, s.goBinary, []string{"build", "-o", filepath.Join(s.directory, "bin", name), "./cmd/" + name}, s.source, s.environment("0"))
 		persistErr := errors.Join(writeEvidence(s.config.OutputDirectory, name+"-build.stdout", result.Stdout), writeEvidence(s.config.OutputDirectory, name+"-build.stderr", result.Stderr))
 		if err != nil || result.ExitCode != 0 || persistErr != nil {

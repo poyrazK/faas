@@ -93,11 +93,14 @@ type Loop struct {
 	// through the GatewaySynth interface.
 	gatewayHTTPClient *http.Client
 	gatewayBaseURL    string
-	// triggerPollers caches one triggerSource per trigger id. The
-	// cache is invalidated by NotifyTriggerChanged (commit #16);
-	// for now we never rebuild within a process lifetime.
-	triggerPollersMu sync.Mutex
-	triggerPollers   map[string]triggerSource
+	// triggerPollers caches one triggerSource per trigger id.
+	// triggerPollerConfigs holds the fingerprint of the config each
+	// poller was built from: a changed trigger (credentials, topic, URL)
+	// gets a new poller, and a trigger no longer enabled has its poller
+	// closed on the next tick.
+	triggerPollersMu     sync.Mutex
+	triggerPollers       map[string]triggerSource
+	triggerPollerConfigs map[string]string
 	// queuePushLanes holds each push-queue trigger's lane allowance
 	// (ADR-972). In memory and per schedd; a restart ramps from one lane.
 	queuePushLanes queuePushLaneAllowance
@@ -4293,8 +4296,15 @@ func (l *Loop) runWorkflowsDispatchTick(ctx context.Context) {
 			l.log.Warn("schedd: workflow schedule tick failed", "error_type", logsanitize.Field(fmt.Sprintf("%T", err)))
 		}
 	})
+	// The base slots are offered every tick. A further slot is offered only
+	// while every lower slot is still busy, so an idle scheduler polls as
+	// before and capacity grows by one slot a tick under load (ADR-20261025232118).
+	busy := 0
 	for slot := range api.WorkflowDispatchSlots {
-		l.submitWork(workWorkflowDispatch, fmt.Sprintf("%d", slot), func() {
+		if slot >= api.WorkflowDispatchBaseSlots && busy < slot {
+			break
+		}
+		outcome := l.workPool().submit(workWorkflowDispatch, fmt.Sprintf("%d", slot), func() {
 			orch := l.workflowOrch
 			if orch == nil {
 				orch = NewWorkflowOrchestrator(l.engine.Store(), nil, l.audit, nil, l.log)
@@ -4304,6 +4314,12 @@ func (l *Loop) runWorkflowsDispatchTick(ctx context.Context) {
 				l.log.Warn("schedd: workflow dispatch tick failed", "err", err)
 			}
 		})
+		if outcome == "coalesced" {
+			busy++
+		}
+	}
+	if l.workflowOrch != nil {
+		l.workflowOrch.metrics.SetDispatchSlots(busy, api.WorkflowDispatchSlots)
 	}
 }
 

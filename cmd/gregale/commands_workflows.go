@@ -60,12 +60,8 @@ func cmdWorkflows(args []string) int {
 	case "events":
 		return cmdWorkflowsEvents(rest)
 	default:
-		PrintUsage(os.Stderr, fmt.Sprintf("unknown workflows subcommand: %s", subcommand), "workflows")
-		if parent, ok := lookupCliCommand("workflows"); ok {
-			sug, _ := suggestSubcommand(subcommand, parent)
-			maybeSuggestSub(sug)
-		}
-		return 1
+		printCommandValidation(os.Stderr, "unknown workflows subcommand %q\n", subcommand)
+		return unknownSubcommandChoices(os.Stderr, "workflows", nestedCliCommand("workflows"), subcommand)
 	}
 }
 

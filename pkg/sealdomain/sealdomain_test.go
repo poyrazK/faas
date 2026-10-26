@@ -63,6 +63,58 @@ func TestRegistry_SourceIsWiredToGithubdAlone(t *testing.T) {
 	}
 }
 
+func TestRegistry_StorageIsWiredToS3GatewaydAlone(t *testing.T) {
+	s, ok := sealdomain.Lookup(sealdomain.Storage)
+	if !ok || !s.Wired {
+		t.Fatalf("storage domain = %+v, %v; want wired", s, ok)
+	}
+	if len(s.Readers) != 1 || s.Readers[0] != "s3-gatewayd" {
+		t.Fatalf("storage readers = %v, want [s3-gatewayd]", s.Readers)
+	}
+	if containsDomain(sealdomain.ReaderDomains("apid"), sealdomain.Storage) {
+		t.Fatal("apid reads the storage domain; it must only seal S3 credentials")
+	}
+}
+
+func TestKeyID(t *testing.T) {
+	newRecipient := func() *age.X25519Recipient {
+		id, err := age.GenerateX25519Identity()
+		if err != nil {
+			t.Fatal(err)
+		}
+		return id.Recipient()
+	}
+	domain, fleet := newRecipient(), newRecipient()
+	for name, tc := range map[string]struct {
+		recipients []*age.X25519Recipient
+		want       string
+	}{
+		"fleet alone":        {[]*age.X25519Recipient{fleet}, fleet.String()},
+		"dual keeps fleet":   {[]*age.X25519Recipient{domain, fleet}, fleet.String()},
+		"domain alone":       {[]*age.X25519Recipient{domain}, domain.String()},
+		"nothing to seal to": {nil, ""},
+	} {
+		if got := sealdomain.KeyID(tc.recipients, fleet); got != tc.want {
+			t.Errorf("%s: KeyID = %q, want %q", name, got, tc.want)
+		}
+	}
+}
+
+func TestRegistry_AlertingIsWiredToMeterdAlone(t *testing.T) {
+	s, ok := sealdomain.Lookup(sealdomain.Alerting)
+	if !ok || !s.Wired {
+		t.Fatalf("alerting domain = %+v, %v; want wired", s, ok)
+	}
+	if len(s.Readers) != 1 || s.Readers[0] != "meterd" {
+		t.Fatalf("alerting readers = %v, want [meterd]", s.Readers)
+	}
+	// apid seals alerting values and sends the tests it cannot open
+	// through meterd (ADR 20261022111812, section 3).
+	if containsDomain(sealdomain.ReaderDomains("apid"), sealdomain.Alerting) {
+		t.Fatal("apid reads the alerting domain; it must only seal alerting values")
+	}
+}
+
 func TestRegistry_EdgeIsWiredToGatewaydInternalAlone(t *testing.T) {
 	s, ok := sealdomain.Lookup(sealdomain.Edge)
 	if !ok || !s.Wired {

@@ -491,6 +491,9 @@ func (s *PgStore) ClaimNextDueWorkflowRun(ctx context.Context) (*WorkflowRun, er
 		if err := recoverWorkflowStepsTx(ctx, tx, run.ID); err != nil {
 			return nil, fmt.Errorf("pgstore: recover stale workflow steps: %w", err)
 		}
+	} else {
+		dueAt := run.ScheduledFor
+		run.ClaimedDueAt = &dueAt
 	}
 	if err := syncOperationWorkflowTx(ctx, tx, run.ID); err != nil {
 		return nil, err
