@@ -3579,15 +3579,17 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 				Store:     deps.pgStore,
 				Log:       log,
 				Ops:       nil,
+				Traffic:   deps.trafficRevocations,
 			},
 			archive: &ArchiveLogsHandler{
-				Auth:   deps.authMw,
-				S3:     deps.archiveS3,
-				Bucket: deps.archiveBucket,
-				Store:  deps.pgStore,
-				Scope:  deps.pgStore,
-				Log:    log,
-				Ops:    nil,
+				Auth:    deps.authMw,
+				S3:      deps.archiveS3,
+				Bucket:  deps.archiveBucket,
+				Store:   deps.pgStore,
+				Scope:   deps.pgStore,
+				Log:     log,
+				Ops:     nil,
+				Traffic: deps.trafficRevocations,
 			},
 		})
 		logsHandler = logsMux
@@ -3676,15 +3678,15 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if deps.authMw != nil && deps.pgStore != nil && deps.nodeCache != nil {
 		attachMux := http.NewServeMux()
 		attachMux.Handle("GET /v1/apps/{slug}/tasks/{id}/attach",
-			&AppTaskAttachHandler{Auth: deps.authMw, Targets: deps.pgStore, Nodes: deps.nodeCache.cache, Log: log})
+			&AppTaskAttachHandler{Auth: deps.authMw, Targets: deps.pgStore, Nodes: deps.nodeCache.cache, Log: log, Traffic: deps.trafficRevocations})
 		// ADR-1330: an interactive image run's task uses the same session.
 		attachMux.Handle("GET /v1/jobs/{name}/runs/{id}/tasks/{idx}/attach",
-			&JobTaskAttachHandler{Auth: deps.authMw, Targets: deps.pgStore, Nodes: deps.nodeCache.cache, Log: log})
+			&JobTaskAttachHandler{Auth: deps.authMw, Targets: deps.pgStore, Nodes: deps.nodeCache.cache, Log: log, Traffic: deps.trafficRevocations})
 		apidHandler = appTaskAttachCarveOut{attach: attachMux, next: apidHandler}
 		// ADR-1163: live job task output follows the task VM on its node.
 		logsMux := http.NewServeMux()
 		logsMux.Handle("GET /v1/jobs/{name}/runs/{id}/tasks/{idx}/logs/stream",
-			&JobTaskLogsHandler{Auth: deps.authMw, Targets: deps.pgStore, Nodes: deps.nodeCache.cache, Log: log})
+			&JobTaskLogsHandler{Auth: deps.authMw, Targets: deps.pgStore, Nodes: deps.nodeCache.cache, Log: log, Traffic: deps.trafficRevocations})
 		apidHandler = jobTaskLogsCarveOut{logs: logsMux, next: apidHandler}
 	}
 
