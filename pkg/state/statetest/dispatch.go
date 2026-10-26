@@ -146,6 +146,7 @@ var memDispatched = map[string]bool{
 	"PruneWorkflowRecoveryHistory":                            true,
 	"PublishOwnedInstanceRuntime":                             true,
 	"QueueBindingByID":                                        true,
+	"QueueDepthForBindingInScope":                             true,
 	"QueueStateForBinding":                                    true,
 	"ReadBindingApplicationAdoption":                          true,
 	"ReadBindingPromotionRevision":                            true,
@@ -1088,6 +1089,15 @@ func (s *Mem) QueueStateForBinding(p0 context.Context, p1 string, p2 string) (st
 		return o.QueueStateForBinding(p0, p1, p2)
 	}
 	return s.MemStore.QueueStateForBinding(p0, p1, p2)
+}
+
+func (s *Mem) QueueDepthForBindingInScope(p0 context.Context, p1 string, p2 string, p3 string, p4 int) (int, error) {
+	if o, ok := s.over.(interface {
+		QueueDepthForBindingInScope(context.Context, string, string, string, int) (int, error)
+	}); ok {
+		return o.QueueDepthForBindingInScope(p0, p1, p2, p3, p4)
+	}
+	return s.MemStore.QueueDepthForBindingInScope(p0, p1, p2, p3, p4)
 }
 
 func (s *Mem) ReadBindingApplicationAdoption(p0 context.Context, p1 string, p2 string, p3 []state.BindingAdoptionSelector) ([]state.BindingApplicationAdoptionRow, error) {
@@ -3140,6 +3150,7 @@ var storeDispatched = map[string]bool{
 	"ListRequestTelemetryByPlatformTenant":          true,
 	"MarkSnapshotStale":                             true,
 	"Ping":                                          true,
+	"QueueDepthInScope":                             true,
 	"QueueStateInScope":                             true,
 	"ReapExpiredUploadSessions":                     true,
 	"RecordAppSecretDelivery":                       true,
@@ -3406,6 +3417,15 @@ func (s *Store) QueueStateInScope(p0 context.Context, p1 string, p2 string) (sta
 		return o.QueueStateInScope(p0, p1, p2)
 	}
 	return s.Store.QueueStateInScope(p0, p1, p2)
+}
+
+func (s *Store) QueueDepthInScope(p0 context.Context, p1 string, p2 string, p3 int) (int, error) {
+	if o, ok := s.over.(interface {
+		QueueDepthInScope(context.Context, string, string, int) (int, error)
+	}); ok {
+		return o.QueueDepthInScope(p0, p1, p2, p3)
+	}
+	return s.Store.QueueDepthInScope(p0, p1, p2, p3)
 }
 
 func (s *Store) ReapExpiredUploadSessions(p0 context.Context) ([]sqlc.ReapExpiredUploadSessionsRow, error) {
