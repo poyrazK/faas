@@ -84,9 +84,41 @@ func (g *gatewaydEdgeRules) finishHostLoad(ctx context.Context, host, cacheKey s
 	close(done)
 	g.loadMu.Unlock()
 	if err != nil {
-		return g.lastKnownHost(cacheKey, err)
+		known, knownErr := g.lastKnownHost(cacheKey, err)
+		if ctx.Err() == nil {
+			if knownErr == nil {
+				g.metrics.ObserveEdgeRuleLoad("last_known")
+			} else {
+				g.metrics.ObserveEdgeRuleLoad("failed")
+			}
+		}
+		return known, knownErr
 	}
+	g.metrics.ObserveEdgeRuleLoad("loaded")
 	return entry, nil
+}
+
+// EdgePolicyAvailable implements gateway.EdgePolicyAvailability: it reports
+// false only when the host's rules can be neither read nor served from the
+// last-known set, so the handler refuses the request once, before any rule
+// kind runs (ADR-091 amendment 2026-10-26). A pinned or cached set answers
+// without a read; otherwise the read it starts fills the cache the kinds use.
+func (g *gatewaydEdgeRules) EdgePolicyAvailable(ctx context.Context, host string) bool {
+	if g == nil || g.cache == nil {
+		return true
+	}
+	key := gateway.EdgeRuleCacheKey(host, gateway.EdgeRuleApp(ctx))
+	if _, ok := gateway.PinnedHostPolicy(ctx, key); ok {
+		return true
+	}
+	if _, ok := gateway.PinnedHostPolicy(ctx, host); ok && key != host {
+		return true
+	}
+	if g.cache.HasHost(key) {
+		return true
+	}
+	_, err := g.loadHost(ctx, host)
+	return err == nil
 }
 
 func (g *gatewaydEdgeRules) now() time.Time {

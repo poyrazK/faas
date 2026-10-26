@@ -22,6 +22,11 @@ func TestNodeAdmissionPostgres(t *testing.T) {
 	runNodeAdmissionTests(t, func(t *testing.T) nodeAdmissionTestStore { s, _ := lifecycleCompletionPGStore(t); return s })
 }
 
+func TestNodeVCPUUsagePostgres(t *testing.T) {
+	s, _ := lifecycleCompletionPGStore(t)
+	checkNodeVCPUUsage(t, s)
+}
+
 func TestNodeAdmissionPostgresRawWriterGuard(t *testing.T) {
 	s, pool := lifecycleCompletionPGStore(t)
 	app, dep := completionApplication(t, s)

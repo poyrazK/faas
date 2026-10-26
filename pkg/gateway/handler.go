@@ -3129,6 +3129,25 @@ func (h *Handler) jwtEmit(ctx context.Context, kind, outcome, ruleID, fromHost s
 	}
 }
 
+// EdgePolicyAvailability is implemented by edge-rule matchers whose reads can
+// fail (ADR-091 amendment 2026-10-26). EdgePolicyAvailable reports false only
+// when the host's rules can be neither read nor served from a last-known set.
+type EdgePolicyAvailability interface {
+	EdgePolicyAvailable(ctx context.Context, host string) bool
+}
+
+// applyEdgePolicyAvailability refuses the request with 503 when the matcher
+// cannot say which rules apply to the host. Returns true if it wrote the
+// response.
+func (h *Handler) applyEdgePolicyAvailability(w http.ResponseWriter, r *http.Request) bool {
+	avail, ok := h.edgeRules.(EdgePolicyAvailability)
+	if !ok || avail.EdgePolicyAvailable(r.Context(), hostname(r.Host)) {
+		return false
+	}
+	h.rejectUnavailableEdgeRule(w, r, "policy", "unavailable", "edge_policy_unavailable")
+	return true
+}
+
 func (h *Handler) rejectUnavailableEdgeRule(w http.ResponseWriter, r *http.Request, kind, ruleID, reason string) {
 	api.WriteProblem(w, api.NewProblem(http.StatusServiceUnavailable, api.CodeCapacity,
 		"Edge security unavailable", "a configured edge security dependency is temporarily unavailable"))
@@ -6358,6 +6377,16 @@ haveApp:
 	// here, once the app is known and before the first edge gate.
 	if m := edgeRuleMatchContextFrom(r.Context()); m != nil {
 		m.aiCrawlersUnreleased = !h.edgeFeatureReleased(platformflags.EdgeAICrawlers, app)
+	}
+	// ADR-091 amendment (2026-10-26): a host whose rules can be neither read
+	// nor served from the last-known set is refused here, once, before any
+	// rule kind runs. The kinds below would each treat the failed read as no
+	// rule (only kind=jwt failed closed), so the refusal no longer depends on
+	// the JWT gate running after the IP, geo and maintenance gates.
+	if h.applyEdgePolicyAvailability(w, r) {
+		h.metrics.ObserveEdgeRejection(app.ID, "policy_unavailable", rec.status)
+		h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
+		return
 	}
 	// ADR-20261022105846: a client a rule's penalty box holds is refused
 	// before any other gate.

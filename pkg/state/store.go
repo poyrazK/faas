@@ -876,6 +876,13 @@ type ComputeNodeCPUUsageBatcher interface {
 	ComputeNodeUsedCPUMillicoresByNode(ctx context.Context, nodeIDs []string) (map[string]int64, error)
 }
 
+// ComputeNodeVCPUUsageBatcher is the optional fleet-wide guest vCPU view used
+// by placement: each live instance's capacity_vcpu, grouped by node. Like the
+// CPU view it counts instances every scheduler placed, not only this one's.
+type ComputeNodeVCPUUsageBatcher interface {
+	ComputeNodeUsedVCPUByNode(ctx context.Context, nodeIDs []string) (map[string]int64, error)
+}
+
 // AppOwnershipLoadReader reports how much app RAM each node already owns
 // (Σ apps.ram_mb over its non-deleted apps), so a new app's owner can be
 // chosen by load (ADR-20261026170000). PgStore and MemStore implement it.

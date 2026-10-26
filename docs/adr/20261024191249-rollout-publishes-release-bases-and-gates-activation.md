@@ -1,6 +1,9 @@
 # ADR 20261024191249 · A rolled node publishes every runtime base its release configures, and is not activated until its vmmd can adopt them
 
-- **Status:** proposed (2026-10-24)
+- **Status:** proposed (2026-10-24); amended by
+  [ADR-20261026181418](20261026181418-generation-addressed-runtime-base-keys.md)
+  (each generation has its own shared keys; the `legacy` verdict, which the
+  pre-stage republishes; production-us 2026-10-26, rc.296)
 - **Date:** 2026-10-24
 - **Amends:** [ADR-20261024085817](20261024085817-rollout-base-generation-and-drain-completion.md)
   (the pre-stage behind the drain barrier, and the rescue that never
@@ -262,9 +265,13 @@ activates the node only after the play succeeds.
 ## Follow-ups
 
 1. Generation-addressed runtime base keys (ADR-20261024085817 option b),
-   which close the N-1 cache-miss gap and the rollback asymmetry.
+   which close the N-1 cache-miss gap and the rollback asymmetry. Done in
+   ADR-20261026181418.
 2. Make the `join-node` budget scale with the bases a release changes, or
    publish changed bases in a dedicated serialized step before the first
    activation, instead of a fixed 70 minutes for every node.
 3. Gate the deploy-time staging of a runtime base on an N-1 node, so a
-   deploy cannot republish an older generation during a rollout.
+   deploy cannot republish an older generation during a rollout. Superseded
+   by ADR-20261026181418: on production-us (2026-10-26) an rc.294 deploy did
+   exactly this, and a release's code cannot gate a release that shipped
+   before it. Generation keys make the republish harmless instead.
