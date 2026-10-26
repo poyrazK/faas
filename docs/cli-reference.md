@@ -9344,13 +9344,17 @@ gregale deploy --path packages/api --source=worktree
 
 ### deploy check
 
-Check project prerequisites without uploading or submitting
+Check local source, an image or project prerequisites before deploying
 
-`gregale deploy check --project [--project-slug <SLUG>] [--path <DIR>] [--source <MODE>] [--worktree] [--environment <ENV>] [--from <ENV>] [--expected-state <SHA256>] [--atomic] [--add-services] [--verify] [--workers] [--worker-health] [--migrate] [--progressive] [--stabilize] [--sync-config] [--config-file <PATH>] [--secrets-file <PATH>]`
+`gregale deploy check [--project] [--image <REF>] [--registry-user <USER>] [--registry-password-stdin] [--strict] [--project-slug <SLUG>] [--path <DIR>] [--source <MODE>] [--worktree] [--environment <ENV>] [--from <ENV>] [--expected-state <SHA256>] [--atomic] [--add-services] [--verify] [--workers] [--worker-health] [--migrate] [--progressive] [--stabilize] [--sync-config] [--config-file <PATH>] [--secrets-file <PATH>]`
 
 | Flag | Meaning | |
 |---|---|---|
-| `--project` | check the complete project | required |
+| `--project` | check the complete project&#39;s release prerequisites |  |
+| `--image <REF>` | without --project: inspect this Linux/amd64 image without downloading layers |  |
+| `--registry-user <USER>` | without --project: registry username; requires --registry-password-stdin |  |
+| `--registry-password-stdin` | without --project: read the registry password or token from stdin |  |
+| `--strict` | without --project: exit 1 on warnings |  |
 | `--project-slug <SLUG>` | project slug (defaults to linked context or selected directory) |  |
 | `--path <DIR>` | selected source directory |  |
 | `--source <MODE>` | local source policy (default auto) | one of `auto` · `head` · `worktree` |
@@ -9373,10 +9377,14 @@ Check project prerequisites without uploading or submitting
 Examples:
 
 ```sh
+gregale deploy check
+gregale deploy check --image ghcr.io/acme/api:1.2 --strict
 gregale deploy check --project --json
 gregale deploy check --project --atomic --verify
 gregale deploy check --project --project-slug shop --from staging --environment production --sync-config --verify
 ```
+
+Without --project, checks local source or an image, as `gregale doctor` does; with --project, checks the project&#39;s release prerequisites against current state.
 
 ### deploy resolve-contract
 
