@@ -8800,6 +8800,21 @@ type ManagedRealtimeWorkerHeartbeat struct {
 	Lost         bool
 }
 
+type McpBridgeLease struct {
+	Bridge    string
+	Holder    string
+	Epoch     int64
+	ExpiresAt pgtype.Timestamptz
+}
+
+type McpBridgeState struct {
+	Bridge    string
+	Namespace string
+	Sealed    []byte
+	Epoch     int64
+	UpdatedAt pgtype.Timestamptz
+}
+
 type McpCatalogMonitor struct {
 	AppID     pgtype.UUID
 	AccountID pgtype.UUID

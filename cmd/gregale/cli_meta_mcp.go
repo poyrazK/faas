@@ -58,6 +58,7 @@ func mcpCLICommand() cliCommand {
 			{Name: "resource-url", Short: "public HTTPS URL ending in /mcp (required for HTTP)", Value: "URL"},
 			{Name: "oauth-onboarding", Short: "remote onboarding (default browser)", Value: "MODE", ClosedSet: []string{"browser", "api-key"}},
 			{Name: "state-file", Short: "private encrypted remote state file", Value: "PATH"},
+			{Name: "state-postgres", Short: "keep remote state in Postgres under the named bridge lease", Value: "BRIDGE"},
 			{Name: "admin-socket", Short: "optional owner-protected Unix socket for listing and revoking HTTP grants", Value: "PATH"},
 			{Name: "metrics-listen", Short: "optional literal loopback IP:port for private management MCP Prometheus metrics", Value: "ADDR"},
 			{Name: "state-key-file", Short: "independent private 32-byte state encryption key file", Value: "PATH"},

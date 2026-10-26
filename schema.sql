@@ -44083,6 +44083,39 @@ CREATE TABLE public.managed_realtime_worker_heartbeats (
 
 
 --
+-- Name: mcp_bridge_leases; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.mcp_bridge_leases (
+    bridge text NOT NULL,
+    holder text NOT NULL,
+    epoch bigint NOT NULL,
+    expires_at timestamp with time zone NOT NULL,
+    CONSTRAINT mcp_bridge_leases_bridge_check CHECK ((bridge ~ '^[a-z0-9][a-z0-9-]{0,62}$'::text)),
+    CONSTRAINT mcp_bridge_leases_epoch_check CHECK ((epoch > 0)),
+    CONSTRAINT mcp_bridge_leases_expires_at_check CHECK (isfinite(expires_at)),
+    CONSTRAINT mcp_bridge_leases_holder_check CHECK ((holder ~ '^[0-9a-f]{32}$'::text))
+);
+
+
+--
+-- Name: mcp_bridge_state; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.mcp_bridge_state (
+    bridge text NOT NULL,
+    namespace text NOT NULL,
+    sealed bytea NOT NULL,
+    epoch bigint NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT mcp_bridge_state_epoch_check CHECK ((epoch > 0)),
+    CONSTRAINT mcp_bridge_state_namespace_check CHECK (((octet_length(namespace) >= 1) AND (octet_length(namespace) <= 256))),
+    CONSTRAINT mcp_bridge_state_sealed_check CHECK (((octet_length(sealed) >= 29) AND (octet_length(sealed) <= 33554432))),
+    CONSTRAINT mcp_bridge_state_updated_at_check CHECK (isfinite(updated_at))
+);
+
+
+--
 -- Name: mcp_catalog_monitors; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -62820,6 +62853,22 @@ ALTER TABLE ONLY public.managed_realtime_worker_heartbeats
 
 ALTER TABLE ONLY public.managed_realtime_worker_heartbeats
     ADD CONSTRAINT managed_realtime_worker_heartbeats_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: mcp_bridge_leases mcp_bridge_leases_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.mcp_bridge_leases
+    ADD CONSTRAINT mcp_bridge_leases_pkey PRIMARY KEY (bridge);
+
+
+--
+-- Name: mcp_bridge_state mcp_bridge_state_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.mcp_bridge_state
+    ADD CONSTRAINT mcp_bridge_state_pkey PRIMARY KEY (bridge, namespace);
 
 
 --
@@ -93556,6 +93605,14 @@ ALTER TABLE ONLY public.managed_realtime_worker_credentials
 
 ALTER TABLE ONLY public.managed_realtime_worker_heartbeats
     ADD CONSTRAINT managed_realtime_worker_heartbeats_group_id_fkey FOREIGN KEY (group_id) REFERENCES public.managed_realtime_consumer_groups(id) ON DELETE CASCADE;
+
+
+--
+-- Name: mcp_bridge_state mcp_bridge_state_bridge_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.mcp_bridge_state
+    ADD CONSTRAINT mcp_bridge_state_bridge_fkey FOREIGN KEY (bridge) REFERENCES public.mcp_bridge_leases(bridge) ON DELETE CASCADE;
 
 
 --
