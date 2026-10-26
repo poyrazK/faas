@@ -99,9 +99,12 @@ func (s *server) resolveScenarioTestMembers(w http.ResponseWriter, r *http.Reque
 	workJSON, _ := scenarioManagedWorkEnrollment(req)
 	coldJSON, _, _ := api.ScenarioColdStartEnrollment(req)
 	resumeJSON, _, _ := api.ScenarioSuspendResumeEnrollment(req)
+	// A plain namespace (`gregale dev --all`) names members by any service
+	// name; rehearsal enrollments keep slugs (ADR-20261026105459).
+	plain := req.WebhookMode == "" && req.NetworkMode == "" && simulationJSON == "" && workJSON == "" && coldJSON == "" && resumeJSON == ""
 	members := make([]state.ScenarioTestMember, 0, len(req.Members))
 	for _, spec := range req.Members {
-		if !validSlug(spec.Workload) || !validSlug(spec.AppSlug) {
+		if (plain && !api.ValidServiceName(spec.Workload)) || (!plain && !validSlug(spec.Workload)) || !validSlug(spec.AppSlug) {
 			api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Invalid workload", "workload and app_slug must be valid slugs"))
 			return nil
 		}

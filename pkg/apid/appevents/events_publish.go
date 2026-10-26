@@ -12,6 +12,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/httpkit"
 	"github.com/onebox-faas/faas/pkg/db"
+	"github.com/onebox-faas/faas/pkg/eventcontract"
 	"github.com/onebox-faas/faas/pkg/events"
 	"github.com/onebox-faas/faas/pkg/logsanitize"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -42,10 +43,17 @@ func (s *Service) PublishEvent(w http.ResponseWriter, r *http.Request, acct stat
 		api.WriteProblem(w, api.ErrValidation("gregale.* sources are reserved for platform events"))
 		return
 	}
+	if _, reserved := eventcontract.AppSource(envelope.Source); reserved {
+		api.WriteProblem(w, AppSourceReservedProblem())
+		return
+	}
 	if !s.ValidateEventSchemaForIngress(w, r, acct.ID, envelope) {
 		return
 	}
 	producer, problem := s.accountProducer(r.Context(), acct)
+	if problem == nil {
+		problem = s.PublishRateProblem(acct, 1)
+	}
 	if problem != nil {
 		api.WriteProblem(w, problem)
 		return

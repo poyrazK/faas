@@ -1049,6 +1049,19 @@ Apply the retention-health migration before upgrading binaries. Remove the new
 alert rules and downgrade binaries before rolling it back. See
 [ADR-912](adr/912-event-retention-health.md).
 
+### Publish rate
+
+An account publishes at most its plan's rate of events per second: 5 on Free,
+20 on Hobby, 100 on Pro and 500 on Scale, with bursts of 100, 200, 1,000 and
+5,000 events. Every path counts each event once: `POST /v1/events:publish`,
+each event of `POST /v1/events:publish-batch`, `POST
+/v1/apps/{slug}/events:publish`, the platform-tenant route and publishes from
+an app's runtime. Past the rate a request accepts nothing and answers `429
+event_publish_rate_limited` with the limit, the number of events it carried and
+`Retry-After`; retry the same events, with the same ids, after that delay. The
+rate is kept per API process, and the plan's retained event storage still bounds
+the sustained rate. See [ADR 20261026140000](adr/20261026140000-event-app-sources-and-publish-rate.md).
+
 ### Batch event publishing
 
 Use `POST /v1/events:publish-batch` to publish 1–100 events in one request
@@ -3086,7 +3099,7 @@ gregale events publish-app my-app --file event.json --json
 {"key":"order-123-created","type":"order.created","data":{"order_id":"123"}}
 ```
 
-The owned application provides a stable namespace. Keys are exact, case-sensitive printable ASCII without spaces (1..256 bytes); the complete request is limited to 1 MiB. Optional `time` and `schemaversion` follow the existing event contract. The server derives `source=app.<canonical app UUID>` and `id=key.<SHA-256 hex of key>`. Configure subscriptions and schemas against this source. Ordinary account subscriptions can distribute it to several consumers; the producer app does not restrict recipient selection.
+The owned application provides a stable namespace. Keys are exact, case-sensitive printable ASCII without spaces (1..256 bytes); the complete request is limited to 1 MiB. Optional `time` and `schemaversion` follow the existing event contract. The server derives `source=app.<canonical app UUID>` and `id=key.<SHA-256 hex of key>`. Configure subscriptions and schemas against this source. Only the app publishes from it: `POST /v1/events:publish`, `:publish-batch` and the platform-tenant route refuse `app.<UUID>` sources in any UUID spelling (400), and an app's runtime may use only its own, so subscribers can trust the source as the app's word. Ordinary account subscriptions can distribute it to several consumers; the producer app does not restrict recipient selection.
 
 The response contains `app_id`, `source`, `duplicate`, and an ordinary `receipt`. Repeating the same app/key with identical normalized type, schema version and JSON data returns the original receipt and accepted_at, without another fanout or storage charge. Changed content returns 409. Concurrent submissions use the same atomic publication path, so only one identity is accepted. Occurrence time and trace metadata preserve the first publication and do not change duplicate comparison. Retained matching requests are recognized before current schema rules, including schemas registered after initial publication.
 

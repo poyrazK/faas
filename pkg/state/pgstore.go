@@ -5504,11 +5504,25 @@ func (s *PgStore) deleteProjectEnvironmentWithCleanup(
 	leaseToken string,
 	leaseDuration time.Duration,
 ) (ProjectEnvironmentCleanupJob, error) {
-	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
+	return retryTrafficSerialization(ctx, func() (ProjectEnvironmentCleanupJob, error) {
+		return s.deleteProjectEnvironmentOnce(ctx, accountID, projectID, slug, resources, leaseToken, leaseDuration)
+	})
+}
+
+// The environment's bound custom domains cascade with it, which can expose a
+// foreign wildcard fallback, so the delete joins the binding guard (ADR-570).
+func (s *PgStore) deleteProjectEnvironmentOnce(
+	ctx context.Context,
+	accountID, projectID, slug string,
+	resources ProjectEnvironmentCleanupResources,
+	leaseToken string,
+	leaseDuration time.Duration,
+) (ProjectEnvironmentCleanupJob, error) {
+	tx, err := s.beginAccountAppTrafficMutation(ctx, accountID, "")
 	if err != nil {
 		return ProjectEnvironmentCleanupJob{}, fmt.Errorf("state: begin project environment delete: %w", err)
 	}
-	defer func() { _ = tx.Rollback(ctx) }()
+	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
 
 	var projectSlug string
 	var protected bool

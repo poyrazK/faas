@@ -1501,6 +1501,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		// event envelope as POST /v1/events:publish. A missing database is the
 		// expected default-local development posture, so the endpoint reports
 		// a bounded transport error instead of accepting an unverifiable event.
+		guestRate := &guestEventRate{}
 		recv.WithEventPublisher(func(publishCtx context.Context, instance string, body []byte) error {
 			if store == nil || pool == nil {
 				return errors.New("event publish persistence is not configured")
@@ -1509,7 +1510,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			if identityErr != nil {
 				return identityErr
 			}
-			envelope, err := normalizeGuestEvent(publishCtx, store, accountID, body, time.Now().UTC())
+			envelope, err := normalizeGuestEvent(publishCtx, store, appID, accountID, body, time.Now().UTC())
 			if err != nil {
 				return err
 			}
@@ -1518,6 +1519,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			// A capture-only rehearsal keeps its ordinary network, but its
 			// events still belong to its run (ADR-20261020090000).
 			if captured, err := captureGuestEvent(publishCtx, store, appID, "", accountID, envelope); captured || err != nil {
+				return err
+			}
+			if err := guestRate.allow(publishCtx, store, accountID); err != nil {
 				return err
 			}
 			payload, err := json.Marshal(envelope)
@@ -1538,7 +1542,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			if store == nil {
 				return errors.New("rehearsal event capture persistence is not configured")
 			}
-			envelope, err := normalizeGuestEvent(captureCtx, store, accountID, body, time.Now().UTC())
+			envelope, err := normalizeGuestEvent(captureCtx, store, appID, accountID, body, time.Now().UTC())
 			if err != nil {
 				return err
 			}
