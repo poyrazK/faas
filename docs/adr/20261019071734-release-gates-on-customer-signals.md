@@ -1,6 +1,6 @@
 # ADR-20261019071734 · Release gates on customer signals
 
-- **Status:** proposed
+- **Status:** accepted (shipped in PR 5034, 2026-10-20); n2 metal drill passed 2026-10-26 (canary abort and post-release rollback)
 - **Date:** 2026-10-19
 - **Amends:** [ADR-1446](1446-safe-releases-by-default.md) and [ADR-1447](1447-explained-rollout-decisions.md) (the canary circuit breaker), [ADR-1445](1445-post-release-watch.md) (the post-release watch)
 - **Uses:** SLOs (`app_slos`), captured errors (`app_errors`), custom metrics ([ADR-202](202-custom-application-metrics.md), [ADR-745](745-custom-metric-history.md))
