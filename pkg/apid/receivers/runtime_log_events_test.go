@@ -44,7 +44,7 @@ func newRuntimeLogFixture(t *testing.T) (*RuntimeLogEventsReceiver, *runtimeLogF
 	t.Helper()
 	app := state.App{ID: uuid.NewString(), AccountID: uuid.NewString(), Slug: "shop"}
 	store := &runtimeLogFakeStore{ledger: state.NewMemStore(), apps: map[string]state.App{app.ID: app}}
-	return NewRuntimeLogEventsReceiver(store, true, nil, discardLogger()), store, app
+	return NewRuntimeLogEventsReceiver(store, RuntimeLogGate{}, nil, discardLogger()), store, app
 }
 
 func runtimeLine(appID, id, level, message string) *apidpb.RuntimeLogEvent {
@@ -143,7 +143,7 @@ func TestRecordRuntimeLogEventsRefusals(t *testing.T) {
 	for i := range tooMany {
 		tooMany[i] = runtimeLine(app.ID, uuid.NewString(), "error", "boom")
 	}
-	disabled := NewRuntimeLogEventsReceiver(store, false, nil, discardLogger())
+	disabled := NewRuntimeLogEventsReceiver(store, RuntimeLogGate{Active: func() bool { return false }}, nil, discardLogger())
 	one := []*apidpb.RuntimeLogEvent{runtimeLine(app.ID, "vm-1:1", "error", "boom")}
 	for name, tc := range map[string]struct {
 		receiver *RuntimeLogEventsReceiver
@@ -163,5 +163,32 @@ func TestRecordRuntimeLogEventsRefusals(t *testing.T) {
 				t.Fatalf("code = %v (%v), want %v", status.Code(err), err, tc.want)
 			}
 		})
+	}
+}
+
+// adr: 20261024222102 — lines of an account log search is not released to
+// are dropped without a ledger write, and each app is decided once per batch.
+func TestRecordRuntimeLogEventsSkipsUnreleasedAccounts(t *testing.T) {
+	_, store, app := newRuntimeLogFixture(t)
+	decisions := 0
+	r := NewRuntimeLogEventsReceiver(store, RuntimeLogGate{Released: func(_ context.Context, got state.App) bool {
+		decisions++
+		return got.ID != app.ID
+	}}, nil, discardLogger())
+	resp, err := r.RecordRuntimeLogEvents(context.Background(), &apidpb.RecordRuntimeLogEventsRequest{Events: []*apidpb.RuntimeLogEvent{
+		runtimeLine(app.ID, "vm-1:1", "error", "boom"),
+		runtimeLine(app.ID, "vm-1:2", "warn", "slow"),
+	}})
+	if err != nil {
+		t.Fatalf("record: %v", err)
+	}
+	if resp.GetInserted() != 0 || resp.GetRejected() != 2 {
+		t.Fatalf("response = %+v, want 0 inserted, 2 rejected", resp)
+	}
+	if rows := ledgerRows(t, store, app); len(rows) != 0 {
+		t.Fatalf("ledger rows = %d, want none", len(rows))
+	}
+	if decisions != 1 {
+		t.Fatalf("release decisions = %d, want one per app per batch", decisions)
 	}
 }

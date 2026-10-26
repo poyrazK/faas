@@ -37,6 +37,7 @@ const (
 	runtimeLogRejected    = "rejected"
 	runtimeLogRateLimited = "rate_limited"
 	runtimeLogDBError     = "db_error"
+	runtimeLogNotReleased = "not_released"
 )
 
 // runtimeLogIDMaxBytes is the ledger's instance_id and source_event_id bound.
@@ -48,27 +49,43 @@ type RuntimeLogEventsStore interface {
 	InsertLogEvent(ctx context.Context, event state.LogEvent) (state.LogEvent, error)
 }
 
+// RuntimeLogGate decides which runtime lines are indexed (ADR-20261024222102),
+// since indexing lines nobody can search is cost without value. Active is the
+// operator switch (FAAS_LOG_SEARCH_ENABLED): while it reports false the RPC
+// answers Unavailable and vmmd pauses. Released decides an app's account by
+// the log-search capability flag; lines of an account log search is not
+// released to are counted and dropped. A nil func allows.
+type RuntimeLogGate struct {
+	Active   func() bool
+	Released func(ctx context.Context, app state.App) bool
+}
+
 // RuntimeLogEventsReceiver is process-wide: both listeners that carry
 // SpansWriter register the same receiver, so one limiter covers the account.
 type RuntimeLogEventsReceiver struct {
 	apidpb.UnimplementedLogEventsServer
 	store    RuntimeLogEventsStore
-	enabled  bool
+	gate     RuntimeLogGate
 	limiter  *peraccount.Limiter
 	redactor *redact.Redactor
 	outcomes *prometheus.CounterVec
 	log      *slog.Logger
 }
 
-// NewRuntimeLogEventsReceiver builds the receiver. enabled follows
-// FAAS_LOG_SEARCH_ENABLED: indexing lines nobody can search is cost without
-// value. reg may be nil in tests.
-func NewRuntimeLogEventsReceiver(store RuntimeLogEventsStore, enabled bool, reg prometheus.Registerer, log *slog.Logger) *RuntimeLogEventsReceiver {
+// runtimeLogApp is one app's account and release decision, looked up once
+// per batch.
+type runtimeLogApp struct {
+	accountID string // "" when the app is unknown
+	released  bool
+}
+
+// NewRuntimeLogEventsReceiver builds the receiver. reg may be nil in tests.
+func NewRuntimeLogEventsReceiver(store RuntimeLogEventsStore, gate RuntimeLogGate, reg prometheus.Registerer, log *slog.Logger) *RuntimeLogEventsReceiver {
 	if log == nil {
 		log = slog.Default()
 	}
 	r := &RuntimeLogEventsReceiver{
-		store: store, enabled: enabled, limiter: peraccount.NewLimiter(),
+		store: store, gate: gate, limiter: peraccount.NewLimiter(),
 		redactor: redact.New(api.RuntimeLogEventMessageMaxBytes), log: log,
 		outcomes: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "apid_runtime_log_events_total",
@@ -94,7 +111,7 @@ func RegisterRuntimeLogEventsReceiver(s *grpc.Server, r *RuntimeLogEventsReceive
 // rate-limited lines are counted, not returned, so one bad line never drops
 // its batch; a database failure fails the batch so vmmd pauses.
 func (r *RuntimeLogEventsReceiver) RecordRuntimeLogEvents(ctx context.Context, req *apidpb.RecordRuntimeLogEventsRequest) (*apidpb.RecordRuntimeLogEventsResponse, error) {
-	if !r.enabled {
+	if r.gate.Active != nil && !r.gate.Active() {
 		return nil, status.Error(codes.Unavailable, "runtime log events are disabled")
 	}
 	events := req.GetEvents()
@@ -102,9 +119,9 @@ func (r *RuntimeLogEventsReceiver) RecordRuntimeLogEvents(ctx context.Context, r
 		return nil, status.Errorf(codes.InvalidArgument, "batch of %d exceeds %d events", len(events), api.RuntimeLogEventsBatchMax)
 	}
 	resp := &apidpb.RecordRuntimeLogEventsResponse{}
-	accounts := map[string]string{} // app id → account id, "" when unknown
+	apps := map[string]runtimeLogApp{}
 	for _, ev := range events {
-		outcome := r.record(ctx, ev, accounts)
+		outcome := r.record(ctx, ev, apps)
 		r.outcomes.WithLabelValues(outcome).Inc()
 		switch outcome {
 		case runtimeLogInserted:
@@ -122,28 +139,32 @@ func (r *RuntimeLogEventsReceiver) RecordRuntimeLogEvents(ctx context.Context, r
 	return resp, nil
 }
 
-func (r *RuntimeLogEventsReceiver) record(ctx context.Context, ev *apidpb.RuntimeLogEvent, accounts map[string]string) string {
+func (r *RuntimeLogEventsReceiver) record(ctx context.Context, ev *apidpb.RuntimeLogEvent, apps map[string]runtimeLogApp) string {
 	event, ok := runtimeLogEvent(ev)
 	if !ok {
 		return runtimeLogRejected
 	}
-	accountID, seen := accounts[event.AppID]
+	decided, seen := apps[event.AppID]
 	if !seen {
 		app, err := r.store.AppByID(ctx, event.AppID)
 		switch {
 		case err == nil:
-			accountID = app.AccountID
+			decided = runtimeLogApp{accountID: app.AccountID, released: r.gate.Released == nil || r.gate.Released(ctx, app)}
 		case errors.Is(err, state.ErrNotFound):
 		default:
 			r.log.Warn("runtime log events: app lookup failed", "app_id", event.AppID, "err", err)
 			return runtimeLogDBError
 		}
-		accounts[event.AppID] = accountID
+		apps[event.AppID] = decided
 	}
-	account, err := uuid.Parse(accountID)
+	account, err := uuid.Parse(decided.accountID)
 	if err != nil {
 		return runtimeLogRejected
 	}
+	if !decided.released {
+		return runtimeLogNotReleased
+	}
+	accountID := decided.accountID
 	if taken, _ := r.limiter.Take(account, api.RuntimeLogEventsPerAccountMinute); !taken {
 		return runtimeLogRateLimited
 	}

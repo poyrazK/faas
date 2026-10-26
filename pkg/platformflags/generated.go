@@ -71,6 +71,8 @@ var consumerAttributes = map[string][]Attribute{
 	"schedd":            {AttributePlan, AttributeOrg},
 	"githubd":           nil,
 	"gatewayd-internal": nil,
+	// meterd reads the account and app of a firing alert (ADR-20261024222102).
+	"meterd": {AttributePlan, AttributeOrg},
 }
 
 // ConsumerAttributes is the set of attributes every consumer supplies.
