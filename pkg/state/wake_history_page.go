@@ -25,7 +25,10 @@ type WakeHistoryRecord struct {
 	InstanceID, AppID, WakeID, State string
 	StartedAt, BootAt, CompletedAt   time.Time
 	BootData                         json.RawMessage
-	HasMeta                          bool
+	// CompletedData is the first wake.boot_completed payload, which carries
+	// the method vmmd actually ran (Hunt 12 H12-49); nil until completion.
+	CompletedData json.RawMessage
+	HasMeta       bool
 }
 
 func (s *PgStore) ListAppWakeHistoryPage(ctx context.Context, appID string, since, until time.Time, after WakeHistoryPosition, limit int) ([]WakeHistoryRecord, error) {
@@ -41,7 +44,7 @@ func (s *PgStore) ListAppWakeHistoryPage(ctx context.Context, appID string, sinc
 	}
 	out := make([]WakeHistoryRecord, 0, len(rows))
 	for _, r := range rows {
-		out = append(out, WakeHistoryRecord{InstanceID: r.InstanceID, AppID: r.AppID, WakeID: r.WakeID, State: r.State, StartedAt: r.StartedAt.Time, BootData: r.BootData, BootAt: r.BootAt.Time, CompletedAt: r.CompletedAt.Time, HasMeta: r.HasMeta})
+		out = append(out, WakeHistoryRecord{InstanceID: r.InstanceID, AppID: r.AppID, WakeID: r.WakeID, State: r.State, StartedAt: r.StartedAt.Time, BootData: r.BootData, BootAt: r.BootAt.Time, CompletedAt: r.CompletedAt.Time, CompletedData: r.CompletedData, HasMeta: r.HasMeta})
 	}
 	return out, nil
 }
@@ -94,6 +97,7 @@ func (m *MemStore) fillWakeHistoryMetaLocked(r *WakeHistoryRecord) {
 		}
 		if e.Kind == "wake.boot_completed" && (r.CompletedAt.IsZero() || e.At.Before(r.CompletedAt)) {
 			r.CompletedAt = e.At
+			r.CompletedData = append(json.RawMessage(nil), e.Data...)
 		}
 	}
 }
@@ -125,7 +129,7 @@ func (s *PgStore) ListWakeHistoryByWakeIDs(ctx context.Context, appIDs, wakeIDs 
 	}
 	out := make([]WakeHistoryRecord, 0, len(rows))
 	for _, r := range rows {
-		out = append(out, WakeHistoryRecord{InstanceID: r.InstanceID, AppID: r.AppID, WakeID: r.WakeID, State: r.State, StartedAt: r.StartedAt.Time, BootData: r.BootData, BootAt: r.BootAt.Time, CompletedAt: r.CompletedAt.Time, HasMeta: r.HasMeta})
+		out = append(out, WakeHistoryRecord{InstanceID: r.InstanceID, AppID: r.AppID, WakeID: r.WakeID, State: r.State, StartedAt: r.StartedAt.Time, BootData: r.BootData, BootAt: r.BootAt.Time, CompletedAt: r.CompletedAt.Time, CompletedData: r.CompletedData, HasMeta: r.HasMeta})
 	}
 	return out, nil
 }
