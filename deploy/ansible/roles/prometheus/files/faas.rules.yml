@@ -5308,6 +5308,29 @@ groups:
           description: "The usage ledger is enabled but apid has not completed a full provider usage sweep for more than 15m. New database reservations fail closed while observations are stale; check the usage collector, provider API, and apid database connectivity."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasManagedPostgresDegraded.md"
 
+      # ADR-20261025094915: the compute cap sweep runs after every usage sweep
+      # (5m by default). Its timestamp moves only when no account failed, so
+      # this also fires when quota writes keep failing.
+      - alert: FaasManagedPostgresCapEnforcementStale
+        expr: |
+          apid_managed_postgres_usage_policy_enabled == 1
+          and on(job, instance)
+          max by (job, instance) (apid_managed_postgres_cap_enforcement_mode{mode=~"shadow|on"}) == 1
+          and on(job, instance)
+          (
+            apid_managed_postgres_cap_last_sweep_timestamp_seconds == 0
+            or time() - apid_managed_postgres_cap_last_sweep_timestamp_seconds > 2700
+          )
+        for: 15m
+        labels:
+          severity: warn
+          component: apid
+          family: managed_postgres
+        annotations:
+          summary: "Managed PostgreSQL compute caps are not being enforced"
+          description: "apid has not completed a compute cap sweep without a failed account for more than 45m. Running databases keep the quotas last written, so a stalled sweep neither lifts nor imposes a suspension; check the usage collector, the provider API and apid_managed_postgres_cap_accounts{state=\"failed\"}."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasManagedPostgresDegraded.md"
+
       - alert: FaasManagedPostgresUsageCollectionDeferred
         expr: faas_managed_postgres_usage_deferred:rate15m > 0
         for: 10m
