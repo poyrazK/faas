@@ -169,6 +169,8 @@
       when: faas_cp_converge_roles | default(none) is none or 'postgres' in faas_cp_converge_roles
     - role: postgres_capacity
       when: faas_cp_converge_roles | default(none) is none or 'postgres_capacity' in faas_cp_converge_roles
+    - role: postgres_metrics
+      when: faas_cp_converge_roles | default(none) is none or 'postgres_metrics' in faas_cp_converge_roles
     - role: pgbouncer
       when:
         - faas_pgbouncer_enabled | default(false) | bool

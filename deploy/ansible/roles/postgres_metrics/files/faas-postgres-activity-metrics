@@ -1,0 +1,292 @@
+#!/usr/bin/env python3
+"""Export what the control-plane PostgreSQL is doing, for node_exporter.
+
+The connection collector next to this one covers connections, WAL archiving
+and the standby slot. This one answers which query, which daemon on which
+host and which table the database is busy with: until now that took psql
+on the production host.
+
+Sections, each independent; a failing section is reported and skipped:
+
+- database: transactions, block reads and hits, tuples, deadlocks, temp
+  bytes and size of the faas database;
+- activity: client backends by application_name (each daemon sets one),
+  client host and state; waiting backends by wait-event type; the oldest
+  transaction, the longest running query, and the longest idle-in-
+  transaction session;
+- checkpoints: timed and requested checkpoints, their write and sync time,
+  and buffers written by checkpoints, the background writer and backends;
+- tables: the 10 tables with the most dead tuples and the 10 with the most
+  sequentially read tuples (labels stay bounded on a 1,000-table schema);
+- statements: the 20 statements with the most total execution time, from
+  pg_stat_statements in the postgres database (#5072). Only normalized
+  DML text is exported as a label; utility statements, which can carry
+  literals such as passwords, are never exported.
+
+Configuration (environment): FAAS_PG_METRICS_DB (default faas),
+FAAS_PG_METRICS_STATEMENTS_DB (default postgres), FAAS_PG_METRICS_TEXTFILE.
+"""
+
+import os
+import re
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+DEFAULT_TEXTFILE = "/var/lib/node_exporter/textfile_collector/faas_postgres_activity.prom"
+SEP = "\x1f"
+TOP_STATEMENTS = 20
+TOP_TABLES = 10
+MAX_APPLICATIONS = 30
+QUERY_LABEL_CHARS = 160
+NAME_RE = re.compile(r"^[A-Za-z0-9_.:-]{1,48}$")
+DML_RE = re.compile(r"^\s*(select|insert|update|delete|with)\b", re.IGNORECASE)
+
+FAMILIES = {
+    "faas_postgres_xact_commit_total": ("counter", "Transactions committed in the faas database."),
+    "faas_postgres_xact_rollback_total": ("counter", "Transactions rolled back in the faas database."),
+    "faas_postgres_blocks_read_total": ("counter", "Blocks read from disk (or the OS cache) in the faas database."),
+    "faas_postgres_blocks_hit_total": ("counter", "Blocks found in shared_buffers in the faas database."),
+    "faas_postgres_tuples_total": ("counter", "Tuples by operation (returned, fetched, inserted, updated, deleted)."),
+    "faas_postgres_deadlocks_total": ("counter", "Deadlocks detected in the faas database."),
+    "faas_postgres_temp_bytes_total": ("counter", "Bytes written to temporary files by queries."),
+    "faas_postgres_database_size_bytes": ("gauge", "Size of the faas database."),
+    "faas_postgres_backends": ("gauge", "Client backends by application_name, client host and state."),
+    "faas_postgres_backends_waiting": ("gauge", "Active client backends waiting, by wait-event type (Lock, LWLock, IO, ...)."),
+    "faas_postgres_oldest_transaction_seconds": ("gauge", "Age of the oldest open transaction."),
+    "faas_postgres_longest_query_seconds": ("gauge", "Run time of the longest active query."),
+    "faas_postgres_idle_in_transaction_max_seconds": ("gauge", "Longest time a session has sat idle inside a transaction."),
+    "faas_postgres_checkpoints_total": ("counter", "Checkpoints by kind (timed, requested)."),
+    "faas_postgres_checkpoint_seconds_total": ("counter", "Time checkpoints spent by phase (write, sync)."),
+    "faas_postgres_buffers_written_total": ("counter", "Buffers written by checkpoints, the background writer and backends."),
+    "faas_postgres_table_dead_tuples": ("gauge", "Dead tuples in the busiest tables."),
+    "faas_postgres_table_live_tuples": ("gauge", "Live tuples in the busiest tables."),
+    "faas_postgres_table_seq_scans_total": ("counter", "Sequential scans on the busiest tables."),
+    "faas_postgres_table_seq_tuples_read_total": ("counter", "Tuples read by sequential scans on the busiest tables."),
+    "faas_postgres_table_index_scans_total": ("counter", "Index scans on the busiest tables."),
+    "faas_postgres_statement_calls_total": ("counter", "Calls of the top statements by total execution time."),
+    "faas_postgres_statement_exec_seconds_total": ("counter", "Execution time of the top statements."),
+    "faas_postgres_statement_rows_total": ("counter", "Rows returned or affected by the top statements."),
+    "faas_postgres_statement_blocks_read_total": ("counter", "Shared blocks read from disk by the top statements."),
+    "faas_postgres_statement_info": ("gauge", "Normalized text of a top statement, joined on queryid."),
+    "faas_postgres_statement_stats_reset_timestamp_seconds": ("gauge", "Unix time pg_stat_statements was last reset."),
+    "faas_postgres_activity_metrics_errors": ("gauge", "1 when a collector section failed on the last run."),
+    "faas_postgres_activity_metrics_last_run_timestamp_seconds": ("gauge", "Unix time the collector last wrote this file."),
+}
+
+SECTIONS = ("database", "activity", "checkpoints", "tables", "statements")
+
+
+def run_psql(db, sql):
+    out = subprocess.run(
+        ["psql", "-X", "-q", "-d", db, "-At", "-F", SEP, "-v", "ON_ERROR_STOP=1", "-c", sql],
+        capture_output=True, text=True, timeout=20, check=True,
+    ).stdout
+    return [line.split(SEP) for line in out.splitlines() if line]
+
+
+def _num(value):
+    return float(value) if value not in ("", None) else 0.0
+
+
+def collect_database(q, db):
+    rows = q(db, """
+SELECT xact_commit, xact_rollback, blks_read, blks_hit, tup_returned, tup_fetched,
+       tup_inserted, tup_updated, tup_deleted, deadlocks, temp_bytes, pg_database_size(datname)
+FROM pg_stat_database WHERE datname = current_database()""")
+    if not rows:
+        return {}
+    r = [_num(v) for v in rows[0]]
+    out = {
+        "faas_postgres_xact_commit_total": [({}, r[0])],
+        "faas_postgres_xact_rollback_total": [({}, r[1])],
+        "faas_postgres_blocks_read_total": [({}, r[2])],
+        "faas_postgres_blocks_hit_total": [({}, r[3])],
+        "faas_postgres_tuples_total": [({"op": op}, r[i]) for i, op in enumerate(
+            ("returned", "fetched", "inserted", "updated", "deleted"), start=4)],
+        "faas_postgres_deadlocks_total": [({}, r[9])],
+        "faas_postgres_temp_bytes_total": [({}, r[10])],
+        "faas_postgres_database_size_bytes": [({}, r[11])],
+    }
+    return out
+
+
+def _bounded(name, seen):
+    """application_name is set by each daemon; anything else, or past the
+    cap, collapses into "other" so the label stays bounded."""
+    if not NAME_RE.match(name):
+        return "other"
+    if name not in seen and len(seen) >= MAX_APPLICATIONS:
+        return "other"
+    seen.add(name)
+    return name
+
+
+def collect_activity(q, db):
+    rows = q(db, """
+SELECT COALESCE(NULLIF(application_name, ''), 'unknown'), COALESCE(host(client_addr), 'local'),
+       COALESCE(state, 'unknown'), COALESCE(wait_event_type, 'none'), count(*)
+FROM pg_stat_activity
+WHERE datname = current_database() AND backend_type = 'client backend' AND pid <> pg_backend_pid()
+GROUP BY 1, 2, 3, 4 ORDER BY 5 DESC""")
+    backends, waiting, seen = {}, {}, set()
+    for app, client, state, wait, count in rows:
+        key = (_bounded(app, seen), client if NAME_RE.match(client) else "other", state)
+        backends[key] = backends.get(key, 0) + _num(count)
+        if state == "active" and wait != "none":
+            waiting[wait] = waiting.get(wait, 0) + _num(count)
+    ages = q(db, """
+SELECT COALESCE(max(extract(epoch FROM now() - xact_start)), 0),
+       COALESCE(max(extract(epoch FROM now() - query_start)) FILTER (WHERE state = 'active'), 0),
+       COALESCE(max(extract(epoch FROM now() - state_change)) FILTER (WHERE state LIKE 'idle in transaction%'), 0)
+FROM pg_stat_activity
+WHERE datname = current_database() AND backend_type = 'client backend' AND pid <> pg_backend_pid()""")
+    a = [_num(v) for v in ages[0]] if ages else [0.0, 0.0, 0.0]
+    return {
+        "faas_postgres_backends": [({"application": k[0], "client": k[1], "state": k[2]}, v) for k, v in sorted(backends.items())],
+        "faas_postgres_backends_waiting": [({"wait_event_type": k}, v) for k, v in sorted(waiting.items())],
+        "faas_postgres_oldest_transaction_seconds": [({}, a[0])],
+        "faas_postgres_longest_query_seconds": [({}, a[1])],
+        "faas_postgres_idle_in_transaction_max_seconds": [({}, a[2])],
+    }
+
+
+def collect_checkpoints(q, db):
+    # PostgreSQL 16 keeps checkpoint counters in pg_stat_bgwriter.
+    rows = q(db, """
+SELECT checkpoints_timed, checkpoints_req, checkpoint_write_time, checkpoint_sync_time,
+       buffers_checkpoint, buffers_clean, buffers_backend
+FROM pg_stat_bgwriter""")
+    if not rows:
+        return {}
+    r = [_num(v) for v in rows[0]]
+    return {
+        "faas_postgres_checkpoints_total": [({"kind": "timed"}, r[0]), ({"kind": "requested"}, r[1])],
+        "faas_postgres_checkpoint_seconds_total": [({"phase": "write"}, r[2] / 1000), ({"phase": "sync"}, r[3] / 1000)],
+        "faas_postgres_buffers_written_total": [({"by": "checkpoint"}, r[4]), ({"by": "bgwriter"}, r[5]), ({"by": "backend"}, r[6])],
+    }
+
+
+def collect_tables(q, db):
+    rows = q(db, f"""
+(SELECT relname, n_dead_tup, n_live_tup, seq_scan, seq_tup_read, COALESCE(idx_scan, 0)
+ FROM pg_stat_user_tables ORDER BY n_dead_tup DESC LIMIT {TOP_TABLES})
+UNION
+(SELECT relname, n_dead_tup, n_live_tup, seq_scan, seq_tup_read, COALESCE(idx_scan, 0)
+ FROM pg_stat_user_tables ORDER BY seq_tup_read DESC LIMIT {TOP_TABLES})""")
+    out = {name: [] for name in (
+        "faas_postgres_table_dead_tuples", "faas_postgres_table_live_tuples",
+        "faas_postgres_table_seq_scans_total", "faas_postgres_table_seq_tuples_read_total",
+        "faas_postgres_table_index_scans_total")}
+    for relname, dead, live, seq, seq_read, idx in sorted(rows):
+        if not NAME_RE.match(relname):
+            continue
+        t = {"table": relname}
+        out["faas_postgres_table_dead_tuples"].append((t, _num(dead)))
+        out["faas_postgres_table_live_tuples"].append((t, _num(live)))
+        out["faas_postgres_table_seq_scans_total"].append((t, _num(seq)))
+        out["faas_postgres_table_seq_tuples_read_total"].append((t, _num(seq_read)))
+        out["faas_postgres_table_index_scans_total"].append((t, _num(idx)))
+    return out
+
+
+def statement_label(text):
+    """Collapse whitespace, cut to a label-sized prefix, and refuse anything
+    that is not plain DML or mentions a password."""
+    text = " ".join(text.split())
+    if not DML_RE.match(text) or "password" in text.lower():
+        return None
+    return text[:QUERY_LABEL_CHARS]
+
+
+def collect_statements(q, statements_db, db):
+    rows = q(statements_db, f"""
+SELECT queryid, calls, total_exec_time, rows, shared_blks_read,
+       left(regexp_replace(query, '\\s+', ' ', 'g'), 400)
+FROM pg_stat_statements
+WHERE dbid = (SELECT oid FROM pg_database WHERE datname = '{db}') AND toplevel
+ORDER BY total_exec_time DESC LIMIT {TOP_STATEMENTS * 3}""")
+    out = {name: [] for name in (
+        "faas_postgres_statement_calls_total", "faas_postgres_statement_exec_seconds_total",
+        "faas_postgres_statement_rows_total", "faas_postgres_statement_blocks_read_total",
+        "faas_postgres_statement_info")}
+    kept = 0
+    for queryid, calls, total_ms, nrows, blks_read, text in rows:
+        label = statement_label(text)
+        if label is None or not re.match(r"^-?\d+$", queryid):
+            continue
+        qid = {"queryid": queryid}
+        out["faas_postgres_statement_calls_total"].append((qid, _num(calls)))
+        out["faas_postgres_statement_exec_seconds_total"].append((qid, _num(total_ms) / 1000))
+        out["faas_postgres_statement_rows_total"].append((qid, _num(nrows)))
+        out["faas_postgres_statement_blocks_read_total"].append((qid, _num(blks_read)))
+        out["faas_postgres_statement_info"].append(({"queryid": queryid, "query": label}, 1))
+        kept += 1
+        if kept == TOP_STATEMENTS:
+            break
+    reset = q(statements_db, "SELECT COALESCE(extract(epoch FROM stats_reset), 0) FROM pg_stat_statements_info")
+    if reset:
+        out["faas_postgres_statement_stats_reset_timestamp_seconds"] = [({}, _num(reset[0][0]))]
+    return out
+
+
+def _label(value):
+    return value.replace("\\", "\\\\").replace("\n", "\\n").replace('"', '\\"')
+
+
+def _value(v):
+    return str(int(v)) if float(v).is_integer() else f"{v:.6f}"
+
+
+def render(samples, errors, now):
+    samples = dict(samples)
+    samples["faas_postgres_activity_metrics_errors"] = [({"section": s}, 1 if s in errors else 0) for s in SECTIONS]
+    samples["faas_postgres_activity_metrics_last_run_timestamp_seconds"] = [({}, int(now))]
+    lines = []
+    for name, (kind, help_text) in FAMILIES.items():
+        rows = samples.get(name) or []
+        if not rows:
+            continue
+        lines += [f"# HELP {name} {help_text}", f"# TYPE {name} {kind}"]
+        for labels, value in rows:
+            rendered = ",".join(f'{k}="{_label(str(v))}"' for k, v in labels.items())
+            lines.append(f"{name}{{{rendered}}} {_value(value)}" if rendered else f"{name} {_value(value)}")
+    return "\n".join(lines) + "\n"
+
+
+def collect(q=run_psql, env=None):
+    env = os.environ if env is None else env
+    db = env.get("FAAS_PG_METRICS_DB", "faas")
+    statements_db = env.get("FAAS_PG_METRICS_STATEMENTS_DB", "postgres")
+    if not NAME_RE.match(db) or not NAME_RE.match(statements_db):
+        raise ValueError("database names must be plain identifiers")
+    samples, errors = {}, set()
+    for section, fn in (
+        ("database", lambda: collect_database(q, db)),
+        ("activity", lambda: collect_activity(q, db)),
+        ("checkpoints", lambda: collect_checkpoints(q, db)),
+        ("tables", lambda: collect_tables(q, db)),
+        ("statements", lambda: collect_statements(q, statements_db, db)),
+    ):
+        try:
+            samples.update(fn())
+        except (subprocess.SubprocessError, OSError, ValueError, IndexError) as err:
+            errors.add(section)
+            print(f"postgres-activity-metrics: {section}: {err}", file=sys.stderr)
+    return samples, errors
+
+
+def main(q=run_psql, env=None, now=time.time):
+    env = os.environ if env is None else env
+    samples, errors = collect(q, env)
+    path = Path(env.get("FAAS_PG_METRICS_TEXTFILE", DEFAULT_TEXTFILE))
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(render(samples, errors, now()))
+    os.chmod(tmp, 0o644)
+    os.replace(tmp, path)
+    return 1 if errors else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

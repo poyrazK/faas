@@ -1,0 +1,34 @@
+---
+# postgres_metrics: what the control-plane PostgreSQL is doing (queries,
+# daemons and hosts holding backends, locks, transactions, tables), exported
+# to node_exporter's textfile collector. A separate role from `postgres`, so
+# changing the collector never touches the stateful-service role the release
+# lanes treat specially (scripts/ci/release_units.json).
+
+- name: postgres_metrics — install the activity collector
+  ansible.builtin.copy:
+    src: faas-postgres-activity-metrics
+    dest: /usr/local/bin/faas-postgres-activity-metrics
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: postgres_metrics — install service and timer
+  ansible.builtin.copy:
+    src: "{{ item }}"
+    dest: "/etc/systemd/system/{{ item }}"
+    owner: root
+    group: root
+    mode: "0644"
+  loop:
+    - faas-postgres-activity-metrics.service
+    - faas-postgres-activity-metrics.timer
+  notify: daemon-reload postgres metrics
+
+- name: postgres_metrics — enable the timer
+  ansible.builtin.systemd:
+    name: faas-postgres-activity-metrics.timer
+    enabled: true
+    state: started
+    daemon_reload: true
+  failed_when: false
