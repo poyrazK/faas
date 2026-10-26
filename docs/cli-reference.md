@@ -18574,6 +18574,31 @@ Cache an app&#39;s responses at the edge, or purge them
 
 `gregale cache [<subcommand>]`
 
+### cache set
+
+Cache a route&#39;s responses
+
+`gregale cache set [--method <METHOD>] [--app <SLUG>] [--host <HOST>] [--stale-while-revalidate <DURATION>] [--stale-if-error <DURATION>] [--vary-on <HEADER>] [--priority <N>] <path> for <duration>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--method <METHOD>` | HTTP method to cache (default GET) | one of `GET` · `HEAD` |
+| `--app <SLUG>` | app slug (defaults to linked project context) |  |
+| `--host <HOST>` | hostname override |  |
+| `--stale-while-revalidate <DURATION>` | serve stale while refreshing |  |
+| `--stale-if-error <DURATION>` | serve stale when the origin fails |  |
+| `--vary-on <HEADER>` | header included in the cache key | one of `Accept-Language` · `Accept-Encoding` |
+| `--priority <N>` | match priority (lower wins) |  |
+
+Examples:
+
+```sh
+gregale cache set /blog/* for 10m --app my-api
+gregale cache set /api/feed for 30s --method HEAD
+```
+
+`cache GET` and `cache HEAD` remain accepted; set names the method with --method.
+
 ### cache GET
 
 Cache GET responses for a route

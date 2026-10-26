@@ -32,6 +32,8 @@ func cmdCache(args []string) int {
 	switch strings.ToUpper(args[0]) {
 	case "GET", "HEAD":
 		return cmdCacheDeclare(args)
+	case "SET":
+		return cmdCacheSet(args[1:])
 	case "PURGE":
 		return cmdCachePurge(args[1:])
 	default:
@@ -43,6 +45,35 @@ func cmdCache(args []string) int {
 		}
 		return unknownSubcommandChoices(os.Stderr, "cache", nestedCliCommand("cache"), args[0])
 	}
+}
+
+const cacheSetUsage = "usage: gregale cache set <path> for <duration> [--method GET|HEAD] [--app SLUG] [--host HOST] [--stale-while-revalidate DURATION] [--stale-if-error DURATION] [--vary-on HEADER] [--priority N]"
+
+// cmdCacheSet is `cache GET|HEAD` with the method as a flag
+// (ADR-20261026145832: a value is not a verb).
+func cmdCacheSet(args []string) int {
+	method := httpMethodGet
+	rest := make([]string, 0, len(args))
+	for i := 0; i < len(args); i++ {
+		name, value, hasValue := strings.Cut(args[i], "=")
+		if name != "--method" && name != "-method" {
+			rest = append(rest, args[i])
+			continue
+		}
+		if !hasValue {
+			if i+1 >= len(args) {
+				PrintUsage(os.Stderr, cacheSetUsage, "cache")
+				return 1
+			}
+			i++
+			value = args[i]
+		}
+		method = strings.ToUpper(value)
+	}
+	if method != httpMethodGet && method != httpMethodHead {
+		return printErr("Invalid cache method", fmt.Errorf("--method must be GET or HEAD; got %q", method))
+	}
+	return cmdCacheDeclare(append([]string{method}, rest...))
 }
 
 func cmdCachePurge(args []string) int {

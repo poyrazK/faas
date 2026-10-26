@@ -6588,6 +6588,15 @@ var cliCommands = []cliCommand{
 		DocSlug: "cache",
 		Short:   "Cache an app's responses at the edge, or purge them",
 		Subcommands: []cliSub{
+			{Name: "set", Common: true, Short: "Cache a route's responses", Notes: []string{"`cache GET` and `cache HEAD` remain accepted; set names the method with --method."}, Examples: []string{"gregale cache set /blog/* for 10m --app my-api", "gregale cache set /api/feed for 30s --method HEAD"}, Positionals: []string{"<path>", "for", "<duration>"}, Flags: []cliFlag{
+				{Name: "method", Short: "HTTP method to cache (default GET)", Value: "METHOD", ClosedSet: []string{"GET", "HEAD"}},
+				{Name: "app", Short: "app slug (defaults to linked project context)", Value: "SLUG"},
+				{Name: "host", Short: "hostname override", Value: "HOST"},
+				{Name: "stale-while-revalidate", Short: "serve stale while refreshing", Value: "DURATION"},
+				{Name: "stale-if-error", Short: "serve stale when the origin fails", Value: "DURATION"},
+				{Name: "vary-on", Short: "header included in the cache key", Value: "HEADER", ClosedSet: []string{"Accept-Language", "Accept-Encoding"}},
+				{Name: "priority", Short: "match priority (lower wins)", Value: "N"},
+			}},
 			{Name: "GET", Short: "Cache GET responses for a route", Positionals: []string{"<path>", "for", "<duration>"}, Flags: []cliFlag{
 				{Name: "app", Short: "app slug (defaults to linked project context)", Value: "SLUG"},
 				{Name: "host", Short: "hostname override", Value: "HOST"},
