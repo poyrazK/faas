@@ -155,7 +155,7 @@ func TestCreatePreviewDoesNotCopyProductionEnv(t *testing.T) {
 	if _, err := store.CreateAppIfUnderQuota(context.Background(), state.App{AccountID: (*e.Acct()).ID, Slug: "acme",
 		Type: state.AppTypeApp, RAMMB: 128, MaxConcurrency: 1, Status: state.AppActive,
 		Manifest: state.AppManifest{
-			Env: map[string]string{"DATABASE_URL": "postgres://prod", "GREGALE_SERVICE_BILLING_URL": "http://stale"},
+			Env:             map[string]string{"DATABASE_URL": "postgres://prod", "GREGALE_SERVICE_BILLING_URL": "http://stale"},
 			ServiceBindings: []api.AppServiceBinding{{Binding: "GREGALE_SERVICE_BILLING_URL", Service: "billing"}},
 		},
 	}, api.MustLimitsFor(api.PlanPro)); err != nil {
