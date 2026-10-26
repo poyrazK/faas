@@ -486,6 +486,7 @@ type MemStore struct {
 	// egressFlows is the ADR-371 egress flow log.
 	egressFlows               []EgressFlowRecord
 	accounts                  map[string]Account
+	spendCapHolds             map[string]SpendCapHold
 	orgResourcePolicies       map[string]Account
 	freeQuotaSuspended        map[string]bool
 	accountDeployRates        map[string]accountDeployRateRow
