@@ -1003,6 +1003,10 @@ systemd-hardening-check: ## Static release gate for production systemd isolation
 canary-artifact-retention-test: ## Test bounded validation-artifact inventory, safety proofs, and cleanup
 	python3 scripts/ops/faas_canary_artifacts_test.py
 
+.PHONY: serving-probe-test
+serving-probe-test: ## Test the compute-node serving probe (ADR-20261023124955 §5)
+	python3 scripts/ops/faas_serving_probe_test.py
+
 .PHONY: gcp-public-beta-policy-test
 gcp-public-beta-policy-test: ## Test the read-only GCP production policy and IAM transformer
 	python3 scripts/ops/gcp_public_beta_audit_test.py

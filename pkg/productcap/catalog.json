@@ -2954,7 +2954,7 @@
         "pro",
         "scale"
       ],
-      "docs_url": "/docs/datadog",
+      "docs_url": "/docs/logs#log-drains",
       "acceptance_test": "cmd/gregale/commands_log_drains_test.go::TestCmdLogDrainsListJSON",
       "routes": [
         "/dashboard/apps/{}/log-drains",
@@ -2989,7 +2989,7 @@
       "id": "logs",
       "name": "Logs",
       "category": "observability",
-      "description": "View, search, tail and archive app logs.",
+      "description": "View, tail, filter and archive app logs.",
       "maturity": "ga",
       "plans": [
         "free",
@@ -2997,7 +2997,7 @@
         "pro",
         "scale"
       ],
-      "docs_url": "/docs/cli",
+      "docs_url": "/docs/logs",
       "acceptance_test": "pkg/api/client_test.go::TestStreamAppLogs_HappyPath",
       "routes": [
         "/dashboard/apps/{}/logs",

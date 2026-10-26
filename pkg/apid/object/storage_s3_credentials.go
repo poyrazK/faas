@@ -76,8 +76,8 @@ func (s *Service) CreateObjectS3Credential(w http.ResponseWriter, r *http.Reques
 		BucketProblem(w, objectstorage.ErrInvalid)
 		return
 	}
-	recipient := s.Host.SecretRecipient()
-	if recipient == nil {
+	recipients, kid, err := s.Host.StorageCredentialRecipients()
+	if err != nil {
 		BucketProblem(w, objectstorage.ErrUnavailable)
 		return
 	}
@@ -86,14 +86,14 @@ func (s *Service) CreateObjectS3Credential(w http.ResponseWriter, r *http.Reques
 		BucketProblem(w, objectstorage.ErrUnavailable)
 		return
 	}
-	sealed, err := secretbox.SealBytes(recipient, s3gateway.CredentialSecretNamespace, []byte(secretAccessKey), 64)
+	sealed, err := secretbox.SealBytesTo(recipients, s3gateway.CredentialSecretNamespace, []byte(secretAccessKey), 64)
 	if err != nil {
 		BucketProblem(w, objectstorage.ErrUnavailable)
 		return
 	}
 	credential, err := store.CreateObjectS3Credential(r.Context(), state.ObjectS3Credential{
 		ID: uuid.NewString(), AccountID: acct.ID, BucketID: bucket.ID,
-		AccessKeyID: accessKeyID, SecretSealed: sealed, KID: recipient.String(),
+		AccessKeyID: accessKeyID, SecretSealed: sealed, KID: kid,
 		Label: req.Label, Permission: req.Permission, Status: state.ObjectS3CredentialStatusActive,
 	}, api.MaxObjectS3CredentialsPerBucket)
 	if err != nil {

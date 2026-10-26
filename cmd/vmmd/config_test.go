@@ -1081,6 +1081,43 @@ func TestLoadConfig_RestoreReseedThreadSwitch(t *testing.T) {
 	}
 }
 
+// adr: 20261026120000 — the bridge stream headroom switch is off by default;
+// TOML can enable it and FAAS_BRIDGE_STREAM_HEADROOM overrides TOML.
+func TestLoadConfig_BridgeStreamHeadroomSwitch(t *testing.T) {
+	cfg, err := LoadConfig(filepath.Join(t.TempDir(), "missing.toml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.BridgeStreamHeadroom {
+		t.Fatal("bridge stream headroom must default to off")
+	}
+	path := filepath.Join(t.TempDir(), "vmmd.toml")
+	if err := os.WriteFile(path, []byte("bridge_stream_headroom = true\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		env     string
+		enabled bool
+	}{{"", true}, {"1", true}, {"0", false}, {"false", false}} {
+		t.Run("env="+tc.env, func(t *testing.T) {
+			if tc.env != "" {
+				t.Setenv("FAAS_BRIDGE_STREAM_HEADROOM", tc.env)
+			}
+			cfg, err := LoadConfig(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if cfg.BridgeStreamHeadroom != tc.enabled {
+				t.Fatalf("BridgeStreamHeadroom = %v, want %v", cfg.BridgeStreamHeadroom, tc.enabled)
+			}
+		})
+	}
+	t.Setenv("FAAS_BRIDGE_STREAM_HEADROOM", "sometimes")
+	if _, err := LoadConfig(path); err == nil || !strings.Contains(err.Error(), "FAAS_BRIDGE_STREAM_HEADROOM") {
+		t.Fatalf("invalid FAAS_BRIDGE_STREAM_HEADROOM error = %v, want named validation error", err)
+	}
+}
+
 // adr: 20261025150000 — the invoke-hook backoff is off by default; TOML can
 // enable it and FAAS_INVOKE_HOOK_BACKOFF overrides TOML in either direction.
 func TestLoadConfig_InvokeHookBackoffSwitch(t *testing.T) {

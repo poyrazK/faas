@@ -1,0 +1,123 @@
+# Workflow dispatch saturation and lag, and job dispatch failures (Hunt 13
+# H13-10/H13-11). Customer limits must never fire the jobs backlog alert.
+rule_files:
+- ../../../deploy/ansible/roles/prometheus/files/faas.rules.yml
+evaluation_interval: 1m
+tests:
+- name: every workflow dispatch slot busy fires after 10m
+  interval: 1m
+  input_series:
+  - series: workflow_dispatch_slots_busy{job="schedd",instance="a"}
+    values: 32x30
+  - series: workflow_dispatch_slots{job="schedd",instance="a"}
+    values: 32x30
+  alert_rule_test:
+  - eval_time: 8m
+    alertname: FaasWorkflowDispatchSaturated
+    exp_alerts: []
+  - eval_time: 12m
+    alertname: FaasWorkflowDispatchSaturated
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: schedd
+        family: workflow_dispatch
+        public_status: internal
+        job: schedd
+        instance: a
+      exp_annotations:
+        summary: Every workflow dispatch slot on a has been busy for 10m
+        description: Every one of the 32 workflow dispatch slots on a has stayed busy for 10m. Slots wait on customer step handlers, so due runs, including other customers' runs, wait for a slot.
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasWorkflowsAndJobs.md
+- name: a free workflow dispatch slot stays quiet
+  interval: 1m
+  input_series:
+  - series: workflow_dispatch_slots_busy{job="schedd",instance="a"}
+    values: 32x10 31 32x19
+  - series: workflow_dispatch_slots{job="schedd",instance="a"}
+    values: 32x30
+  alert_rule_test:
+  - eval_time: 14m
+    alertname: FaasWorkflowDispatchSaturated
+    exp_alerts: []
+- name: late claims fire the lag alert
+  interval: 1m
+  input_series:
+  - series: workflow_dispatch_lag_seconds_bucket{job="schedd",instance="a",plan="unknown",le="10"}
+    values: 0x30
+  - series: workflow_dispatch_lag_seconds_bucket{job="schedd",instance="a",plan="unknown",le="60"}
+    values: 0x30
+  - series: workflow_dispatch_lag_seconds_bucket{job="schedd",instance="a",plan="unknown",le="300"}
+    values: 0+1x30
+  - series: workflow_dispatch_lag_seconds_bucket{job="schedd",instance="a",plan="unknown",le="+Inf"}
+    values: 0+1x30
+  - series: workflow_dispatch_lag_seconds_count{job="schedd",instance="a",plan="unknown"}
+    values: 0+1x30
+  alert_rule_test:
+  - eval_time: 17m
+    alertname: FaasWorkflowDispatchLagHigh
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: schedd
+        family: workflow_dispatch
+        public_status: internal
+      exp_annotations:
+        summary: Due workflow runs are claimed more than 60s late (p95)
+        description: The p95 delay between a workflow run's scheduled_for and schedd claiming it has been over 60s for 10m. Sleeps wake late, events resume late and retries run late.
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasWorkflowsAndJobs.md
+- name: a few late claims are not enough for the lag alert
+  interval: 1m
+  input_series:
+  - series: workflow_dispatch_lag_seconds_bucket{job="schedd",instance="a",plan="unknown",le="60"}
+    values: 0x30
+  - series: workflow_dispatch_lag_seconds_bucket{job="schedd",instance="a",plan="unknown",le="300"}
+    values: 0+0.2x30
+  - series: workflow_dispatch_lag_seconds_bucket{job="schedd",instance="a",plan="unknown",le="+Inf"}
+    values: 0+0.2x30
+  - series: workflow_dispatch_lag_seconds_count{job="schedd",instance="a",plan="unknown"}
+    values: 0+0.2x30
+  alert_rule_test:
+  - eval_time: 25m
+    alertname: FaasWorkflowDispatchLagHigh
+    exp_alerts: []
+- name: platform job dispatch failures fire after 15m
+  interval: 1m
+  input_series:
+  - series: schedd_job_dispatch_total{job="schedd",instance="a",result="node_capacity"}
+    values: 0+60x30
+  - series: schedd_job_dispatch_total{job="schedd",instance="a",result="started"}
+    values: 0+5x30
+  alert_rule_test:
+  - eval_time: 14m
+    alertname: FaasJobsQueueBacklog
+    exp_alerts: []
+  - eval_time: 17m
+    alertname: FaasJobsQueueBacklog
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: schedd
+        family: job_dispatch
+        public_status: internal
+        job: schedd
+        instance: a
+      exp_annotations:
+        summary: schedd on a has failed to start ready job tasks for 15m
+        description: Ready job tasks kept failing to start for 15m because of node capacity, an unavailable compute authority or a wake error. Customer concurrency caps, spend caps, budgets and capability flags are not counted.
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasJobsQueueBacklog.md
+- name: customer limits never fire the jobs backlog alert
+  interval: 1m
+  input_series:
+  - series: schedd_job_dispatch_total{job="schedd",instance="a",result="account_capacity"}
+    values: 0+60x30
+  - series: schedd_job_dispatch_total{job="schedd",instance="a",result="spend_cap"}
+    values: 0+1x30
+  - series: schedd_job_dispatch_total{job="schedd",instance="a",result="capability"}
+    values: 0+1x30
+  - series: schedd_job_dispatch_total{job="schedd",instance="a",result="node_capacity"}
+    values: 0x30
+  alert_rule_test:
+  - eval_time: 25m
+    alertname: FaasJobsQueueBacklog
+    exp_alerts: []

@@ -30215,6 +30215,36 @@ components:
         env_hint: {type: string, example: DATABASE_URL}
         source: {type: string}
         image: {type: string}
+        provision:
+          $ref: '#/components/schemas/PlanManagedProvision'
+        not_provisioned_reason:
+          type: string
+          enum: [unavailable, plan, quota, unsupported, configured, not_referenced]
+          description: "Why apply does not provide a Compose postgres service (ADR-20261025111824). Omitted for other datastores and when provision is set."
+    PlanManagedProvision:
+      description: "The managed PostgreSQL database a project apply creates or reuses for a Compose postgres service, and the service keys it binds (ADR-20261025111824)."
+      type: object
+      required: [database, bindings]
+      properties:
+        database: {type: string, example: shop-db}
+        existing:
+          type: boolean
+          description: "True when a database with this name already exists and is reused."
+        postgres_major:
+          type: integer
+          example: 17
+          description: "The database's PostgreSQL major: the Compose image's, or the nearest newer one the platform offers."
+        bindings:
+          type: array
+          items:
+            $ref: '#/components/schemas/PlanManagedBinding'
+    PlanManagedBinding:
+      description: "One service key bound to the database a project apply provides (ADR-20261025111824)."
+      type: object
+      required: [workload, env_key]
+      properties:
+        workload: {type: string}
+        env_key: {type: string, example: DATABASE_URL}
     PlanAffectedApp:
       description: |
         One row of the ADR-124 blast-radius partition. action is closed-

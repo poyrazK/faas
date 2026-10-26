@@ -103,6 +103,7 @@ func boot() error {
 		return fmt.Errorf("pivot_root: %w", err)
 	}
 	guestStage("pivot")
+	prepareGuestRuntime(slog.Default())
 	if _, markerErr := fullRootfsMarkerPresent("/"); markerErr != nil {
 		return fmt.Errorf("inspect full-rootfs marker after pivot: %w", markerErr)
 	}
@@ -535,7 +536,11 @@ func runAppWithRAMAndWorkloadEnv(m api.AppManifest, secrets, apiEnv map[string]s
 
 func runAppWithSecretStartup(m api.AppManifest, secrets, apiEnv map[string]string, sup *Supervisor, ramMB int, workloadEnv map[string]string, snapshot *runtimeSecretSnapshot, projection *runtimeSecretProjection, processSecrets *runtimeSecretsState, cpuMillicoresOpt ...int) error {
 	argv := m.Entrypoint
-	env := BuildEnvWithSecrets(os.Environ(), m, secrets, apiEnv)
+	credential, err := processCredential("", m.EffectiveUser())
+	if err != nil {
+		return fmt.Errorf("run app: %w", err)
+	}
+	env := withDefaultPath(BuildEnvWithSecrets(os.Environ(), m, secrets, apiEnv))
 	// Issue #460 / ADR-053 (PR-C): stamp PORT=<m.EffectivePort()>
 	// onto the exec'd env so the runner shim can bind the
 	// per-deployment override port. Appended AFTER
@@ -549,7 +554,7 @@ func runAppWithSecretStartup(m api.AppManifest, secrets, apiEnv map[string]strin
 	// keeping the live edit here means the precedence assertion
 	// tests the exact code path the production execve uses.
 	env = StampOverridePortEnv(env, m.EffectivePort())
-	env = StampDefaultHomeEnv(env)
+	env = StampDefaultHomeEnv(env, workloadHome(credential.Uid, credential.Gid))
 	env = StampWorkloadIdentityEnv(env)
 	env = StampEventPublishEnv(env)
 	env = StampOutboundRelayEnv(env)
@@ -594,6 +599,9 @@ func runAppWithSecretStartup(m api.AppManifest, secrets, apiEnv map[string]strin
 	argv0 := resolveWorkloadCommandPath("/", argv[0], env)
 	cmd := exec.Command(argv0, argv[1:]...)
 	cmd.Dir = m.EffectiveWorkingDir()
+	if err := ensureWorkingDir(cmd.Dir, credential.Uid, credential.Gid); err != nil {
+		return fmt.Errorf("run app: prepare working directory: %w", err)
+	}
 	cmd.Env = env
 	// ADR-051 Phase 4 Slice A PR-B: tee the customer's stdout/stderr
 	// into the supervisor's ring buffer so the characterize probe can
@@ -606,10 +614,6 @@ func runAppWithSecretStartup(m api.AppManifest, secrets, apiEnv map[string]strin
 	var output io.Writer = os.Stdout
 	if sup != nil {
 		output = io.MultiWriter(os.Stdout, sup.LogBuffer())
-	}
-	credential, err := processCredential("", m.EffectiveUser())
-	if err != nil {
-		return fmt.Errorf("run app: %w", err)
 	}
 	outputPipe, err := newWorkloadOutputPipe(output, int(credential.Uid), int(credential.Gid))
 	if err != nil {
@@ -2674,12 +2678,14 @@ func pivotInto(root string) error {
 	for _, mnt := range []struct{ src, dst, fs string }{
 		{"proc", "/proc", "proc"},
 		{"sysfs", "/sys", "sysfs"},
-		{"tmpfs", "/tmp", "tmpfs"},
 	} {
 		_ = os.MkdirAll(mnt.dst, 0o755)
 		if err := syscall.Mount(mnt.src, mnt.dst, mnt.fs, 0, ""); err != nil {
 			slog.Default().Warn("post-pivot mount failed", "dst", mnt.dst, "err", err)
 		}
+	}
+	if err := mountGuestTmp(); err != nil {
+		slog.Default().Warn("post-pivot mount failed", "dst", guestTmpDir, "err", err)
 	}
 	// A fresh devtmpfs lacks the /dev/fd and /dev/std{in,out,err} links
 	// images expect from a container runtime (nginx logs to /dev/stderr).
