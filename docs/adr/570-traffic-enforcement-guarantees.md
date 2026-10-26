@@ -1033,6 +1033,20 @@ revision URL. The revision and alias namespaces stay reserved after withdrawal,
 so those writers cannot publish a fallback and stay outside the global binding
 serialization.
 
+### Follow-up: GitOps and release-addition publication
+
+Environment GitOps workload creation and candidate preparation, and safe
+project releases that reserve a new service, publish a primary hostname or a
+revision URL. Their PostgreSQL writers begin through the account binding guard
+before taking the GitOps lease or release-submission locks, commit only after
+the before/after analysis, and retry a serialization failure with a fresh
+snapshot. Memory candidate preparation stages every new row, including its
+revision, and analyzes the staged set before publishing any candidate, build
+or graph; memory app creation already analyzes each new app. Refusals keep the
+lease, submission, reservation and candidate intent unchanged. Promotion
+visibility, environment policy writes and verification/environment
+withdrawals remain separate follow-ups.
+
 ### Follow-up: bounded request decision evidence
 
 Ordinary response completion checks the attached budget's wall-clock expiry as
