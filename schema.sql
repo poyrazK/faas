@@ -776,6 +776,23 @@ $$;
 
 
 --
+-- Name: app_runtime_generation_on_project_environment_secrets(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.app_runtime_generation_on_project_environment_secrets() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE member uuid;
+BEGIN
+    FOR member IN SELECT id FROM apps WHERE project_id = NEW.project_id ORDER BY id LOOP
+        PERFORM app_runtime_generation_bump(member);
+    END LOOP;
+    RETURN NULL;
+END;
+$$;
+
+
+--
 -- Name: app_runtime_generation_on_project_environments(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -78279,6 +78296,13 @@ CREATE TRIGGER app_runtime_generation_envs AFTER INSERT OR DELETE OR UPDATE ON p
 
 
 --
+-- Name: project_environment_secrets app_runtime_generation_project_environment_secrets; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER app_runtime_generation_project_environment_secrets AFTER UPDATE ON public.project_environment_secrets FOR EACH ROW WHEN (((old.ciphertext IS DISTINCT FROM new.ciphertext) OR (old.kid IS DISTINCT FROM new.kid))) EXECUTE FUNCTION public.app_runtime_generation_on_project_environment_secrets();
+
+
+--
 -- Name: project_environments app_runtime_generation_project_environments; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -78290,6 +78314,13 @@ CREATE TRIGGER app_runtime_generation_project_environments AFTER DELETE OR UPDAT
 --
 
 CREATE TRIGGER app_runtime_generation_release_members AFTER INSERT OR DELETE OR UPDATE ON public.project_release_members FOR EACH ROW EXECUTE FUNCTION public.app_runtime_generation_on_app_row();
+
+
+--
+-- Name: deployment_release_secret_snapshots app_runtime_generation_release_secret_snapshots; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER app_runtime_generation_release_secret_snapshots AFTER UPDATE ON public.deployment_release_secret_snapshots FOR EACH ROW WHEN ((old.values_json IS DISTINCT FROM new.values_json)) EXECUTE FUNCTION public.app_runtime_generation_on_deployment_row();
 
 
 --

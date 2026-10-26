@@ -129,12 +129,37 @@
       when: faas_cp_converge_roles | default(none) is none or 'internal_pki_renewal' in faas_cp_converge_roles
     - role: canary_artifact_retention
       when: faas_cp_converge_roles | default(none) is none or 'canary_artifact_retention' in faas_cp_converge_roles
+    # ADR-20261023124955 §2: the log pipeline's fleet-PKI feature leaves,
+    # before Prometheus, Grafana, Loki and Promtail read them.
+    - role: platform_logs_pki
+      when:
+        - faas_obs_logs_enabled | default(false) | bool
+        - faas_cp_converge_roles | default(none) is none or 'platform_logs_pki' in faas_cp_converge_roles
     - role: alertmanager
       when: faas_cp_converge_roles | default(none) is none or 'alertmanager' in faas_cp_converge_roles
     - role: prometheus
       when: faas_cp_converge_roles | default(none) is none or 'prometheus' in faas_cp_converge_roles
     - role: grafana
       when: faas_cp_converge_roles | default(none) is none or 'grafana' in faas_cp_converge_roles
+    # ADR-20261023124955 §2: Loki and the control plane's own Promtail, in
+    # faas-obs.slice. Off until the operator sets faas_obs_logs_enabled with
+    # faas_obs_loki_address, the bucket and the TLS material (docs/ops/logs.md).
+    - role: loki
+      when:
+        - faas_obs_logs_enabled | default(false) | bool
+        - faas_cp_converge_roles | default(none) is none or 'loki' in faas_cp_converge_roles
+    # ADR-20261023185953: Alloy ships the journal; promtail stays selectable
+    # for one release as the rollback (faas_obs_log_shipper: promtail).
+    - role: alloy
+      when:
+        - faas_obs_logs_enabled | default(false) | bool
+        - faas_obs_log_shipper | default('alloy') == 'alloy'
+        - faas_cp_converge_roles | default(none) is none or 'alloy' in faas_cp_converge_roles
+    - role: promtail
+      when:
+        - faas_obs_logs_enabled | default(false) | bool
+        - faas_obs_log_shipper | default('alloy') == 'promtail'
+        - faas_cp_converge_roles | default(none) is none or 'promtail' in faas_cp_converge_roles
     # Control-plane-only:
     - role: postgres
       when: faas_cp_converge_roles | default(none) is none or 'postgres' in faas_cp_converge_roles
@@ -264,6 +289,18 @@
     - role: builderd_service
     - role: compute_only_service
     - role: profiled_service
+    # ADR-20261023124955 §2: ship this node's platform journal to Loki on the
+    # control plane, with a Promtail leaf issued by the control plane's CA.
+    - role: platform_logs_pki
+      when: faas_obs_logs_enabled | default(false) | bool
+    - role: alloy
+      when:
+        - faas_obs_logs_enabled | default(false) | bool
+        - faas_obs_log_shipper | default('alloy') == 'alloy'
+    - role: promtail
+      when:
+        - faas_obs_logs_enabled | default(false) | bool
+        - faas_obs_log_shipper | default('alloy') == 'promtail'
     - role: log_archive
     - role: optional_credentials
     - role: role_convergence

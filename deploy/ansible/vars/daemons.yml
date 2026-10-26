@@ -39,6 +39,8 @@ faas_control_plane_observability_units:
   - prometheus.service
   - alertmanager.service
   - grafana-server.service
+  # ADR-20261023124955 §2: Loki runs on the control plane only.
+  - loki.service
 
 # probe: systemd (is-active fallback) | unix (socket path fallback) | tcp
 # (host:port fallback). readyz_url is the dependency-aware HTTP gate and is

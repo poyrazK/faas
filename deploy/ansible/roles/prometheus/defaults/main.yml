@@ -66,18 +66,18 @@ prom_compute_promtail_discovery_url: "http://127.0.0.1:9101/v1/internal/metrics/
 # Loki transport and mTLS credentials. Keep both local and compute Promtail
 # scrapes absent until then; otherwise a valid no-Loki deployment starts with
 # permanently down targets.
-prom_promtail_enabled: false
+prom_promtail_enabled: "{{ faas_obs_logs_enabled | default(false) | bool }}"
 
-# Optional dedicated Loki meta-monitoring target. The provider supplies the
-# observability host address and mTLS files; an empty target keeps the normal
-# control-plane bootstrap connection-free when the observability overlay is
-# not enabled.
-prom_loki_metrics_target: ""
+# Loki meta-monitoring (ADR-20261023124955 §2). Loki runs on this control
+# plane at faas_obs_loki_address once faas_obs_logs_enabled is set; an empty
+# target keeps the bootstrap connection-free until then.
+prom_loki_metrics_target: "{{ (faas_obs_loki_address | default('')) if (faas_obs_logs_enabled | default(false) | bool) else '' }}"
 prom_loki_metrics_port: 3100
-prom_loki_metrics_server_name: ""
-prom_loki_metrics_ca_file: /etc/faas/secrets/loki/tls/ca.crt
-prom_loki_metrics_client_cert_file: /etc/faas/secrets/loki/tls/prometheus.crt
-prom_loki_metrics_client_key_file: /etc/faas/secrets/loki/tls/prometheus.key
+prom_loki_metrics_server_name: "{{ faas_obs_loki_server_name | default('loki.faas', true) }}"
+# Fleet-PKI feature leaf issued by the platform_logs_pki role.
+prom_loki_metrics_ca_file: /etc/faas/tls/ca/ca.crt
+prom_loki_metrics_client_cert_file: /etc/faas/tls/prometheus/loki-client.crt
+prom_loki_metrics_client_key_file: /etc/faas/tls/prometheus/loki-client.key
 
 # Alertmanager — loopback-only (operator dials the bridge to reach it).
 # Wired into prometheus.yml.j2 via the `alerting:` block. The role
