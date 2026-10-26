@@ -1765,3 +1765,9 @@ var WriteExclusiveError = writeExclusiveError
 // ResolveAndCheckEgress is the create-time egress check every outbound URL
 // (alert, log drain, webhook, channel) passes.
 var ResolveAndCheckEgress = resolveAndCheckEgress
+
+// PlanDowngradeProblemForTest runs the pre-downgrade quota check (Hunt 17
+// H17-4) for a subject the HTTP route would resolve, such as an organization.
+func (r *server) PlanDowngradeProblemForTest(ctx context.Context, subject state.Account, target api.Plan) *api.Problem {
+	return r.planDowngradeProblem(ctx, subject, target)
+}
