@@ -180,6 +180,12 @@ func FormatStageDuration(durationMs int64, status, reason string) string {
 		// completed / pending — always render the duration so the
 		// column is never blank.
 		d := time.Duration(durationMs) * time.Millisecond
+		// A completed stage may carry a note, such as the builder-slot
+		// wait booked to source_download, which read as a 192 s
+		// download (Hunt 12 H12-5).
+		if status == stageStatusCompleted && reason != "" {
+			return fmt.Sprintf("%.1fs (%s)", d.Seconds(), reason)
+		}
 		return fmt.Sprintf("%.1fs", d.Seconds())
 	}
 }

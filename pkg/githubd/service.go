@@ -18,7 +18,6 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
-	"os"
 	"strings"
 	"time"
 
@@ -1148,11 +1147,7 @@ func previewHostnameForSlug(slug string) string {
 	if slug == "" {
 		return ""
 	}
-	domain := strings.Trim(strings.TrimSpace(os.Getenv("FAAS_APPS_DOMAIN")), ".")
-	if domain == "" || domain == "apps.gregale.dev" {
-		domain = "gregale.dev"
-	}
-	return slug + "." + domain
+	return slug + "." + AppsDomain()
 }
 
 // dashboardDestroyPreviewURL derives the customer-facing dashboard
@@ -1170,11 +1165,7 @@ func dashboardDestroyPreviewURL(parentSlug, previewSlug string) string {
 	if parentSlug == "" || previewSlug == "" {
 		return ""
 	}
-	domain := strings.Trim(strings.TrimSpace(os.Getenv("FAAS_APPS_DOMAIN")), ".")
-	if domain == "" || domain == "apps.gregale.dev" {
-		domain = "gregale.dev"
-	}
-	return "https://" + domain + "/dashboard/apps/" + parentSlug + "/preview/" + previewSlug + "/destroy"
+	return "https://" + PlatformDomain() + "/dashboard/apps/" + parentSlug + "/preview/" + previewSlug + "/destroy"
 }
 
 // previewCommentOnce stamps apps.preview_destroy_commented_at

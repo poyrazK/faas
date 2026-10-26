@@ -1632,6 +1632,8 @@ export type { ObsRuleCoverageTotals } from './models/ObsRuleCoverageTotals.js';
 export type { ObsRuleHealthItem } from './models/ObsRuleHealthItem.js';
 export type { ObsRuleHealthResponse } from './models/ObsRuleHealthResponse.js';
 export type { ObsRuleHealthTotals } from './models/ObsRuleHealthTotals.js';
+export type { ObsWakeEvent } from './models/ObsWakeEvent.js';
+export type { ObsWakeTimeline } from './models/ObsWakeTimeline.js';
 export type { OCIHealthcheckTiming } from './models/OCIHealthcheckTiming.js';
 export type { OIDCExchangeRequest } from './models/OIDCExchangeRequest.js';
 export type { OIDCExchangeResponse } from './models/OIDCExchangeResponse.js';

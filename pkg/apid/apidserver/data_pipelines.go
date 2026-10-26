@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 
+	"fmt"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/onebox-faas/faas/pkg/api"
 	pipelineapi "github.com/onebox-faas/faas/pkg/apid/datapipelines"
@@ -16,6 +17,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/daemonenv"
 	"github.com/onebox-faas/faas/pkg/datapipeline"
 	"github.com/onebox-faas/faas/pkg/db"
+	"github.com/onebox-faas/faas/pkg/hostidentity"
 	"github.com/onebox-faas/faas/pkg/managedpostgres"
 	"github.com/onebox-faas/faas/pkg/role"
 	"github.com/onebox-faas/faas/pkg/secretbox"
@@ -132,7 +134,13 @@ func runDataPipelineWorker(ctx context.Context, log *slog.Logger) error {
 	if err != nil {
 		return err
 	}
-	srv := newServer(state.NewPgStore(pool), log, cfg.GetAppsDomain(os.Getenv), pgNotifier{pool: pool, log: log})
+	domains, err := cfg.Domains(os.Getenv)
+	if err != nil {
+		return fmt.Errorf("data pipelines: %w", err)
+	}
+	hostidentity.Configure(domains)
+	srv := newServer(state.NewPgStore(pool), log, cfg.GetAppsDomain(os.Getenv), pgNotifier{pool: pool, log: log}).
+		WithPlatformDomain(platformDomainFromConfig(cfg, os.Getenv))
 	srv.WithManagedPostgres(service, reconciler, bindings, bindingReconciler, usage, health)
 	if err = srv.configureDataPipelines(*cfg, pool); err != nil {
 		return err

@@ -10461,6 +10461,7 @@ func (m *MemStore) AppendDeploymentStage(_ context.Context, id string, from, to 
 		EndedAt:    &endedAt,
 		DurationMs: durMs,
 		Status:     stageHistoryStatusCompleted,
+		Reason:     reason, // PgStore parity (Hunt 12 H12-5)
 	})
 	state.Current = to
 	state.CurrentStartedAt = &startedAt

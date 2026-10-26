@@ -70,6 +70,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/eventretention"
 	"github.com/onebox-faas/faas/pkg/events"
 	"github.com/onebox-faas/faas/pkg/grace"
+	"github.com/onebox-faas/faas/pkg/hostidentity"
 	"github.com/onebox-faas/faas/pkg/httpsec"
 	"github.com/onebox-faas/faas/pkg/internalmail"
 
@@ -690,6 +691,14 @@ func run(ctx context.Context, log *slog.Logger) error {
 	if _, err := api.CustomDomainAddresses(); err != nil {
 		return fmt.Errorf("apid: %w", err)
 	}
+	// ADR-20261026100000: the deployment-preview host builders read the
+	// process-wide layout; a bad alias list fails the start, not a request.
+	domains, err := cfg.Domains(deps.getenv)
+	if err != nil {
+		return fmt.Errorf("apid: %w", err)
+	}
+	hostidentity.Configure(domains)
+	ownedDomainsFunc = domains.OwnedDomains
 
 	pool, err := db.OpenWithAppName(ctx, cfg.DBURL, "faas-apid")
 	if err != nil {
@@ -1511,6 +1520,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	}
 	srv := newServerWithDeps(store, log, cfg.GetAppsDomain(deps.getenv), deps.notif(), stripeSecret, mailer, githubd, sessions, nil, deps.loginTTL, dpaPathFromEnv(deps.getenv)).
 		WithCLIAuthURLBase(cfg.GetCLIAuthURLBase(deps.getenv)).
+		WithPlatformDomain(platformDomainFromConfig(cfg, deps.getenv)).
 		WithCompanionImages(cfg.CompanionImages).
 		WithWorkflowRuntimeEnabled(workflowsEnabledFromEnv(deps.getenv)).
 		WithExecutionAPIEnabled(executionAPIEnabledFromEnv(deps.getenv)).

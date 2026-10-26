@@ -1,5 +1,5 @@
 -- migration-compat: expand
--- filename: 20261026071352761_managed_postgres_account_overage.sql
+-- filename: 20261026122057626_managed_postgres_account_overage.sql
 
 -- ADR-20261025094915 decision 2: a paid account may let its managed
 -- PostgreSQL databases keep running past the plan's monthly compute

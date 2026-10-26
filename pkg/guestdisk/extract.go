@@ -95,8 +95,8 @@ func (s *Session) DumpFiles(ctx context.Context, dir, dest string, b DumpBudget)
 	target := dest
 	lim := runLimits{output: 1 << 20, writeDirs: []string{dest}}
 	if s.ed.cfg.Helper != "" {
-		// The child's first extra descriptor is fd 3.
-		target = "/proc/self/fd/3"
+		// The child's first extra descriptor of this run.
+		target = fdPath(toolExtraFD)
 		lim.writeDirs = []string{target}
 		lim.extraFiles = []*os.File{d}
 	}
@@ -104,7 +104,7 @@ func (s *Session) DumpFiles(ctx context.Context, dir, dest string, b DumpBudget)
 	for _, f := range files {
 		fmt.Fprintf(&script, "dump %s %s\n", Quote(dir+"/"+f.rel), Quote(target+"/"+base+"/"+f.rel))
 	}
-	res, err := s.run(ctx, s.ed.debugfs, []string{"-f", "-", s.image}, script.Bytes(), lim)
+	res, err := s.run(ctx, s.ed.debugfs, []string{"-f", "-", s.toolImage()}, script.Bytes(), lim)
 	if err != nil {
 		return "", fmt.Errorf("guestdisk: dump %s: %w", dir, err)
 	}

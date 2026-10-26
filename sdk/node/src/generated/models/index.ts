@@ -1629,6 +1629,8 @@ export type { ObsRuleCoverageTotals } from './ObsRuleCoverageTotals.js';
 export type { ObsRuleHealthItem } from './ObsRuleHealthItem.js';
 export type { ObsRuleHealthResponse } from './ObsRuleHealthResponse.js';
 export type { ObsRuleHealthTotals } from './ObsRuleHealthTotals.js';
+export type { ObsWakeEvent } from './ObsWakeEvent.js';
+export type { ObsWakeTimeline } from './ObsWakeTimeline.js';
 export type { OpenAPIContractAddition } from './OpenAPIContractAddition.js';
 export type { OpenAPIContractBreak } from './OpenAPIContractBreak.js';
 export type { OpenAPIContractDiffResponse } from './OpenAPIContractDiffResponse.js';

@@ -219,3 +219,40 @@ Tests: `TestHeartbeat_FailureThreshold`,
 `TestLostVMsAreDestroyedWhenTheNodeAnswers`, `TestLostVMDestroyFailureIsRetried`,
 `TestLiveVMReapDestroysVMsWhoseRowIsNotLive`, `TestLiveVMReapRetriesAFailedDestroy`,
 `TestManagerAppInstanceIDsListsOnlyOrdinaryAppVMs`.
+
+## Amendment (2026-10-26): explicit wakes leave the select goroutine
+
+Decision 2 left one VM-booting arm on `Loop.Run`'s select goroutine: the
+durable `app_wake` handoff (an API or webhook wake), together with
+`runtime_config_restart`. Each could hold the goroutine for a whole wake
+(the cold-boot budget plus admission). Meanwhile the reaper, cron, the
+watchdog and every other notification on that schedd waited, and N explicit
+wakes ran one after another. They stayed inline only because their error
+decided whether the outbox row was acknowledged.
+
+Both now run on the work pool (`app_wake`: 8 slots, `runtime_config_restart`:
+4, both `overflowDrop`, coalesced per outbox row) and settle their own row:
+
+1. **Owner first.** Every schedd hears the broadcast. A schedd that does not
+   own the app returns before it touches the row, as the inline arm did.
+   Claiming first would let a peer fail the row into retry backoff while
+   the owner waited.
+2. **Fenced delivery.** The owner delivers through
+   `db.DeliverNotificationForNode`, the renewable claim imaged already uses
+   (ADR-464). The claim is renewed for the length of the boot, so the replay
+   worker no longer delivers the same row a second time once the 5 s wakeup
+   grace passes, which the inline arm allowed. Success completes the row,
+   a failure enters the outbox's bounded retry, and a deferred
+   runtime-config refresh is deferred. Ownership that moves between the
+   check and the handler releases the row untouched (`ErrNotificationNotOwned`).
+3. **Overflow.** A delivery the pool cannot take stays pending, and the
+   replay worker delivers it after the grace period (≤ about 7 s later).
+
+Unchanged: the replay worker, its handler and the private-network arms. A
+peer's replay worker can still claim and fail a foreign app's row. Mapping
+that to `ErrNotificationNotOwned` would stop its drain pass behind the
+foreign row, so it needs per-node targeting of these rows first (follow-up).
+
+Tests: `TestExplicitAppWakeLeavesTheLoopGoroutine`,
+`TestExplicitAppWakeLeavesAnotherNodesApp`,
+`TestExplicitAppWakeSettlesItsOutboxRow`.
