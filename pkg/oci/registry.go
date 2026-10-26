@@ -67,6 +67,10 @@ type RegistryClient struct {
 	blobHC *http.Client
 	// stallTimeout is the longest one blob body read may wait for data.
 	stallTimeout time.Duration
+	// dockerHubMirrors serve anonymous Docker Hub pulls before Docker Hub
+	// itself (WithDockerHubMirrors); onMirrorFallback hears each failure.
+	dockerHubMirrors []string
+	onMirrorFallback func(mirror string, err error)
 }
 
 // compile-time assertion the client satisfies the puller seam imaged consumes.
@@ -276,11 +280,7 @@ var imageManifestMediaTypes = []string{
 // confirmed to exist; a tag reference is resolved to the digest the registry
 // currently serves. Satisfies Puller.
 func (c *RegistryClient) PullDigest(ctx context.Context, ref string) (string, error) {
-	r, err := ParseReference(ref)
-	if err != nil {
-		return "", err
-	}
-	return c.resolveDigest(ctx, r)
+	return c.PullDigestWithAuth(ctx, ref, nil)
 }
 
 // PullDigestWithAuth is the AuthPuller variant (issue #461 / ADR-062).
@@ -290,7 +290,9 @@ func (c *RegistryClient) PullDigestWithAuth(ctx context.Context, ref string, aut
 	if err != nil {
 		return "", err
 	}
-	return c.resolveDigestWithAuth(ctx, r, auth)
+	return viaDockerHubMirrors(ctx, c, r, auth, func(at Reference) (string, error) {
+		return c.resolveDigestWithAuth(ctx, at, auth)
+	})
 }
 
 // imageManifest is the subset of an OCI / Docker image manifest we consume.
@@ -319,26 +321,7 @@ type imageManifest struct {
 // issue #6: a no-Cmd image was previously fetching dozens of MB before
 // imaged's manifest validation even ran).
 func (c *RegistryClient) PullImageConfig(ctx context.Context, ref string) (ImageConfig, error) {
-	r, err := ParseReference(ref)
-	if err != nil {
-		return ImageConfig{}, err
-	}
-	m, _, err := c.fetchManifest(ctx, r)
-	if err != nil {
-		return ImageConfig{}, err
-	}
-	if m.Config.Digest == "" {
-		return ImageConfig{}, fmt.Errorf("oci: %s manifest has no config descriptor", r.String())
-	}
-	cfgBytes, err := c.fetchBlob(ctx, r, m.Config.Digest)
-	if err != nil {
-		return ImageConfig{}, fmt.Errorf("oci: fetch image config %s: %w", r.String(), err)
-	}
-	cfg, err := parseImageConfig(cfgBytes)
-	if err != nil {
-		return ImageConfig{}, fmt.Errorf("oci: parse image config %s: %w", r.String(), err)
-	}
-	return cfg, nil
+	return c.PullImageConfigWithAuth(ctx, ref, nil)
 }
 
 // PullImageConfigWithAuth is the AuthPuller variant (issue #461 /
@@ -348,6 +331,12 @@ func (c *RegistryClient) PullImageConfigWithAuth(ctx context.Context, ref string
 	if err != nil {
 		return ImageConfig{}, err
 	}
+	return viaDockerHubMirrors(ctx, c, r, auth, func(at Reference) (ImageConfig, error) {
+		return c.pullImageConfig(ctx, at, auth)
+	})
+}
+
+func (c *RegistryClient) pullImageConfig(ctx context.Context, r Reference, auth *BasicAuth) (ImageConfig, error) {
 	m, _, err := c.fetchManifestWithAuth(ctx, r, auth)
 	if err != nil {
 		return ImageConfig{}, err
@@ -383,46 +372,7 @@ func (c *RegistryClient) PullImageConfigWithAuth(ctx context.Context, ref string
 // and pays for a stable, self-contained PullLayers interface that doesn't
 // require the caller to thread an image config through.
 func (c *RegistryClient) PullLayers(ctx context.Context, ref string) (PullLayersResult, error) {
-	r, err := ParseReference(ref)
-	if err != nil {
-		return PullLayersResult{}, err
-	}
-	m, manifestBytes, err := c.fetchManifest(ctx, r)
-	if err != nil {
-		return PullLayersResult{}, err
-	}
-	if m.Config.Digest == "" {
-		return PullLayersResult{}, fmt.Errorf("oci: %s manifest has no config descriptor", r.String())
-	}
-	cfgBytes, err := c.fetchBlob(ctx, r, m.Config.Digest)
-	if err != nil {
-		return PullLayersResult{}, fmt.Errorf("oci: fetch image config %s: %w", r.String(), err)
-	}
-	cfg, err := parseImageConfig(cfgBytes)
-	if err != nil {
-		return PullLayersResult{}, fmt.Errorf("oci: parse image config %s: %w", r.String(), err)
-	}
-
-	// Open each layer as a streaming ReadCloser. We do NOT eagerly read.
-	layers := make([]io.ReadCloser, 0, len(m.Layers))
-	for i, layer := range m.Layers {
-		rc, err := c.fetchBlobStream(ctx, r, layer.Digest)
-		if err != nil {
-			// Close any we already opened so a partial result doesn't leak.
-			for _, l := range layers {
-				_ = l.Close()
-			}
-			return PullLayersResult{}, fmt.Errorf("oci: fetch layer %d (%s) of %s: %w", i, layer.Digest, r.String(), err)
-		}
-		layers = append(layers, rc)
-	}
-
-	// The manifest digest is sha256(content) of the manifest body bytes — not
-	// the layer blobs, which would be wildly different sizes per arch.
-	sum := sha256.Sum256(manifestBytes)
-	digest := digestAlgo + hex.EncodeToString(sum[:])
-
-	return PullLayersResult{Layers: layers, Config: cfg, Digest: digest}, nil
+	return c.PullLayersWithAuth(ctx, ref, nil)
 }
 
 // PullLayersWithAuth is the AuthPuller variant (issue #461 / ADR-062).
@@ -432,6 +382,12 @@ func (c *RegistryClient) PullLayersWithAuth(ctx context.Context, ref string, aut
 	if err != nil {
 		return PullLayersResult{}, err
 	}
+	return viaDockerHubMirrors(ctx, c, r, auth, func(at Reference) (PullLayersResult, error) {
+		return c.pullLayers(ctx, at, auth)
+	})
+}
+
+func (c *RegistryClient) pullLayers(ctx context.Context, r Reference, auth *BasicAuth) (PullLayersResult, error) {
 	m, manifestBytes, err := c.fetchManifestWithAuth(ctx, r, auth)
 	if err != nil {
 		return PullLayersResult{}, err
@@ -470,17 +426,11 @@ func (c *RegistryClient) PullLayersWithAuth(ctx context.Context, ref string, aut
 	return PullLayersResult{Layers: layers, Config: cfg, Digest: digest}, nil
 }
 
-// fetchManifest performs the authenticated GET on a manifest URL and parses
-// it. Returns (imageManifest, raw manifest body bytes, err). Shared by
+// fetchManifestWithAuth performs the GET on a manifest URL and parses it.
+// Returns (imageManifest, raw manifest body bytes, err). Shared by
 // PullImageConfig (cheap path) and PullLayers (full path), so the two can't
-// drift in manifest-acceptance rules.
-func (c *RegistryClient) fetchManifest(ctx context.Context, r Reference) (imageManifest, []byte, error) {
-	return c.fetchManifestWithAuth(ctx, r, nil)
-}
-
-// fetchManifestWithAuth is the AuthPuller variant of fetchManifest
-// (issue #461 / ADR-062). The `auth` value is forwarded to the
-// realm endpoint on a 401 challenge.
+// drift in manifest-acceptance rules. The `auth` value is forwarded to the
+// realm endpoint on a 401 challenge (issue #461 / ADR-062).
 func (c *RegistryClient) fetchManifestWithAuth(ctx context.Context, r Reference, auth *BasicAuth) (imageManifest, []byte, error) {
 	resolved, err := c.resolveImageManifest(ctx, r, auth)
 	return resolved.manifest, resolved.body, err
@@ -591,13 +541,9 @@ func (c *RegistryClient) fetchManifestJSONWithAuthLimit(ctx context.Context, url
 	return body, resp.Header.Get("Content-Type"), nil
 }
 
-// fetchBlob fetches a blob by digest and returns its full body. Used for the
-// small image-config blob (manifests cap at 8 MiB; configs are usually < 64 KiB).
-func (c *RegistryClient) fetchBlob(ctx context.Context, r Reference, digest string) ([]byte, error) {
-	return c.fetchBlobWithAuth(ctx, r, digest, nil)
-}
-
-// fetchBlobWithAuth is the AuthPuller variant of fetchBlob.
+// fetchBlobWithAuth fetches a blob by digest and returns its full body. Used
+// for the small image-config blob (manifests cap at 8 MiB; configs are
+// usually < 64 KiB).
 func (c *RegistryClient) fetchBlobWithAuth(ctx context.Context, r Reference, digest string, auth *BasicAuth) ([]byte, error) {
 	_, rc, err := c.openBlobWithAuth(ctx, r, digest, auth)
 	if err != nil {
@@ -614,13 +560,8 @@ func (c *RegistryClient) fetchBlobWithAuth(ctx context.Context, r Reference, dig
 	return body, nil
 }
 
-// fetchBlobStream opens a blob as a streaming ReadCloser. The caller is
-// responsible for closing it; the body is not buffered.
-func (c *RegistryClient) fetchBlobStream(ctx context.Context, r Reference, digest string) (io.ReadCloser, error) {
-	return c.fetchBlobStreamWithAuth(ctx, r, digest, nil)
-}
-
-// fetchBlobStreamWithAuth is the AuthPuller variant of fetchBlobStream.
+// fetchBlobStreamWithAuth opens a blob as a streaming ReadCloser. The caller
+// is responsible for closing it; the body is not buffered.
 func (c *RegistryClient) fetchBlobStreamWithAuth(ctx context.Context, r Reference, digest string, auth *BasicAuth) (io.ReadCloser, error) {
 	_, body, err := c.openBlobWithAuth(ctx, r, digest, auth)
 	if err != nil {
@@ -781,12 +722,8 @@ func (c *RegistryClient) baseURL(r Reference) string {
 	return c.scheme + "://" + host
 }
 
-func (c *RegistryClient) resolveDigest(ctx context.Context, r Reference) (string, error) {
-	return c.resolveDigestWithAuth(ctx, r, nil)
-}
-
-// resolveDigestWithAuth is the AuthPuller variant of resolveDigest.
-// `auth == nil` is the anonymous path (issue #461 / ADR-062).
+// resolveDigestWithAuth resolves r to its manifest digest. `auth == nil` is
+// the anonymous path (issue #461 / ADR-062).
 func (c *RegistryClient) resolveDigestWithAuth(ctx context.Context, r Reference, auth *BasicAuth) (string, error) {
 	if r.Digest != "" {
 		body, _, err := c.fetchManifestJSONWithAuth(ctx, c.baseURL(r)+"/v2/"+r.Repository+"/manifests/"+r.Digest, auth)

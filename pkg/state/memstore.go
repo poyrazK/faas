@@ -432,6 +432,7 @@ type MemStore struct {
 	objectWriteAdmissions       map[string]objectWriteAdmission
 	objectCapacityJobs          map[string]ObjectCapacityReconciliation
 	objectBucketVersioning      map[string]ObjectBucketVersioning
+	objectBucketCORS            map[string]api.ObjectBucketCORS
 	objectBucketEncryption      map[string]ObjectBucketEncryption
 	objectBucketObjectLock      map[string]ObjectBucketObjectLock
 	objectVersionProtection     map[string]ObjectVersionProtection
@@ -1136,6 +1137,9 @@ type MemStore struct {
 	// per-app shape unchanged. (M7 fix; the previous shape was wrong.)
 	usage        []usageMinute
 	usageByMonth []Usage
+	// logArchiveErasures mirrors log_archive_erasures and its instance rows,
+	// keyed by account ID.
+	logArchiveErasures map[string]*memLogArchiveErasure
 	// apiConsumerUsage mirrors the durable per-(app, consumer, minute)
 	// aggregate. apiConsumerUsageEvents is the idempotency ledger: an
 	// event is applied at most once even when the gateway retries a
@@ -23574,6 +23578,7 @@ func (m *MemStore) DeleteAccount(ctx context.Context, id string) error {
 		}
 	}
 	m.usageByMonth = keptMonth
+	delete(m.logArchiveErasures, id)
 	for deploymentID, deployment := range m.deployments {
 		if deployment.DeployedByUserID == id {
 			deployment.DeployedByUserID = ""

@@ -453,6 +453,7 @@ type Engine struct {
 	// nil, see pkg/wire/metrics.go).
 	ops                *wire.OpsMetrics
 	jobFlexibleMetrics *wire.JobFlexibleMetrics
+	jobDispatchMetrics *wire.JobDispatchMetrics
 
 	// wakeLimiter is the per-app + per-account admission-rate
 	// throttle (ADR-099 PR-0 / ADR-080 Risk #1). nil is a no-op —
@@ -1038,6 +1039,11 @@ func (e *Engine) WithWorkerScaleInStabilization(window time.Duration) *Engine {
 
 func (e *Engine) WithJobFlexibleMetrics(metrics *wire.JobFlexibleMetrics) *Engine {
 	e.jobFlexibleMetrics = metrics
+	return e
+}
+
+func (e *Engine) WithJobDispatchMetrics(metrics *wire.JobDispatchMetrics) *Engine {
+	e.jobDispatchMetrics = metrics
 	return e
 }
 

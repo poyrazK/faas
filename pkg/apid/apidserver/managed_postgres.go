@@ -244,6 +244,12 @@ func loadManagedPostgresCapEnforcer(registry *managedpostgres.Registry, store ma
 	return managedpostgres.NewCapEnforcer(registry, store, options)
 }
 
+// configureManagedPostgresCapMode records the compute cap enforcement mode for
+// the usage views. loadManagedPostgres already refused an invalid value.
+func (s *server) configureManagedPostgresCapMode(getenv func(string) string) {
+	s.managedPostgresCapMode, _ = managedpostgres.ParseCapEnforcementMode(getenv(managedpostgres.CapEnforcementEnv))
+}
+
 func managedPostgresUsageCeilings(limits api.ManagedPostgresPlanLimits) managedpostgres.UsageCeilings {
 	if limits.DatabasesMax <= 0 {
 		return managedpostgres.UsageCeilings{}

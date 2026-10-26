@@ -25,6 +25,10 @@ func cmdPlatformTenants(args []string) int {
 	if handled, code := cmdPlatformTenantPlans(verb, args[1:]); handled {
 		return code
 	}
+	if _, known := platformTenantVerbUsage[verb]; !known && !strings.HasPrefix(verb, "-") {
+		printCommandValidation(os.Stderr, "unknown platform-tenants subcommand %q\n", verb)
+		return unknownSubcommandChoices(os.Stderr, "platform-tenants", nestedCliCommand("platform-tenants"), verb)
+	}
 	fs := newFlagSet("platform-tenants-"+verb, flag.ContinueOnError)
 	id := fs.String("id", "", "platform tenant UUID")
 	externalRef := fs.String("external-ref", "", "stable customer reference")

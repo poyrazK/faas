@@ -1065,6 +1065,7 @@ func (h *Handler) runDeployScan(ctx context.Context, app state.App, dep state.De
 		return verifiedScanFailure(app.SecurityPolicy, "scan handler is not wired")
 	}
 	start := time.Now()
+	ctx, timing := withScanTiming(ctx)
 	be, err := h.storageFor()
 	if err != nil {
 		// storageFor only errors when h.appsRoot is empty /
@@ -1109,7 +1110,9 @@ func (h *Handler) runDeployScan(ctx context.Context, app state.App, dep state.De
 		return verifiedScanFailure(app.SecurityPolicy, "scan staging failed: "+err.Error())
 	}
 	defer cleanup()
+	markScanPhase(ctx, "stage")
 	artifactDigest, artifactErr := digestScanArtifact(scanDir)
+	markScanPhase(ctx, "digest")
 	if artifactErr != nil {
 		h.log.Warn("imaged: hash scan artifact", "deployment", dep.ID, "app", app.Slug, "err", artifactErr)
 		if app.SecurityPolicy == api.AppSecurityPolicyEnforce {
@@ -1185,10 +1188,12 @@ func (h *Handler) runDeployScan(ctx context.Context, app state.App, dep state.De
 	} {
 		h.ops.ObserveDeployScanVulns(app.Slug, sev, n)
 	}
-	h.log.Info("imaged: per-deploy scan stamped",
+	markScanPhase(ctx, "record")
+	h.log.Info("imaged: per-deploy scan stamped", append([]any{
 		"deployment", dep.ID, "app", app.Slug,
 		"critical", result.SeverityCounts.Critical, "high", result.SeverityCounts.High,
-		"medium", result.SeverityCounts.Medium, "low", result.SeverityCounts.Low, "unknown", result.SeverityCounts.Unknown)
+		"medium", result.SeverityCounts.Medium, "low", result.SeverityCounts.Low, "unknown", result.SeverityCounts.Unknown,
+	}, timing.attrs()...)...)
 	return checkVerifiedScanGate(app.SecurityPolicy, dep, "complete", result)
 }
 

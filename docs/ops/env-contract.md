@@ -83,11 +83,13 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_BRIDGED_ROLE` | bridged, shared | `envfile` |  |  | `` | optional control-plane relay; delivered by dev-bridge.env |
 | `FAAS_BRIDGE_DROP_TO_UID` | vmmd-stream-bridge, shared | `internal` |  |  | `` | set by vmmd for a bridge unit (FAAS_INSTANCE_BRIDGE_UNIT=1), which systemd starts as root because User= refuses a uid with no account; the bridge drops to this uid before reading anything (pkg/bridgeproc) |
 | `FAAS_BRIDGE_EXPECT_UID` | vmmd-stream-bridge, shared | `internal` |  |  | `` | set by vmmd for an unprivileged bridge; the bridge exits unless it runs as this uid with no capability (pkg/bridgeproc) |
+| `FAAS_BRIDGE_GUEST_HEADROOM` | vmmd-stream-bridge, shared | `internal` |  |  | `` | set to 1 by vmmd when bridge_stream_headroom is on: the bridge keeps one idle guest connection per accepted stream (100) and dials the guest with a 5 s timeout (ADR-20261026120000) |
 | `FAAS_BRIDGE_HEADERS` | vmmd-stream-bridge | `internal` |  |  | `` | set by vmmd for the per-request stream-bridge subprocess |
 | `FAAS_BRIDGE_HOST` | vmmd-stream-bridge | `internal` |  |  | `` | set by vmmd for the per-request stream-bridge subprocess |
 | `FAAS_BRIDGE_METHOD` | vmmd-stream-bridge | `internal` |  |  | `` | set by vmmd for the per-request stream-bridge subprocess |
 | `FAAS_BRIDGE_PARENT_PID` | vmmd-stream-bridge, shared | `internal` |  |  | `` | set by vmmd for an unprivileged bridge; the bridge exits with that process (pkg/bridgeproc) |
 | `FAAS_BRIDGE_PROTOCOL` | vmmd-stream-bridge, shared | `default` |  |  | `` | rollback lever, see docs/ops/h2c-rollback.md |
+| `FAAS_BRIDGE_STREAM_HEADROOM` | vmmd | `default` |  |  | `` | optional boolean switch: vmmd opens another HTTP/2 connection to a bridge at its 100-stream cap instead of queueing requests, and starts bridges with FAAS_BRIDGE_GUEST_HEADROOM=1 (ADR-20261026120000); production default is off |
 | `FAAS_BRIDGE_UNPRIVILEGED` | vmmd, shared | `dropin` |  |  | `` | 1 runs each instance's bridges as its own bridge uid with no capability (connection-survival ADR slice 1a); ansible vmmd_bridge_unprivileged, default off |
 | `FAAS_BRIDGE_URL` | vmmd-stream-bridge | `internal` |  |  | `` | set by vmmd for the per-request stream-bridge subprocess |
 | `FAAS_BROKER_EGRESS_IFNAME` | schedd | `default` |  |  | `` |  |
@@ -179,6 +181,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_DNS_PROVIDER` | gatewayd-public, shared | `default` |  |  | `` |  |
 | `FAAS_DNS_PROVIDER_SEALED` | gatewayd-public | `default` |  |  | `` |  |
 | `FAAS_DNS_ZONE` | gatewayd-public | `default` |  |  | `` |  |
+| `FAAS_DOCKER_HUB_MIRRORS` | builderd, imaged, shared | `dropin` |  |  | `` | ADR-20261025114554 comma-separated Docker Hub mirror hosts (for example mirror.gcr.io) tried before Docker Hub for anonymous pulls; set faas_docker_hub_mirrors in the inventory. Empty pulls from Docker Hub directly; an invalid list fails startup |
 | `FAAS_DOMAIN_DOCTOR_ENABLED` | apid, shared | `runtime-config` |  |  | `` |  |
 | `FAAS_DOMAIN_DOCTOR_TTL_SECONDS` | apid | `runtime-config` |  |  | `` |  |
 | `FAAS_DPA_PATH` | apid | `unit` |  |  | `` |  |

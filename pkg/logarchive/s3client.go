@@ -1,7 +1,8 @@
 // s3client.go — minimal hand-rolled S3-compatible client (issue
-// #562). PUT and GET only; no list, no multipart, no presigned
-// URLs. The shipper's needs are narrow: gzip one file, ship it,
-// retrieve on `?after=7d`. Hand-rolling avoids the
+// #562). PUT and GET, plus list and delete for account erasure
+// (s3client_erase.go); no multipart, no presigned URLs. The
+// shipper's needs are narrow: gzip one file, ship it, retrieve on
+// `?after=7d`. Hand-rolling avoids the
 // aws-sdk-go-v2 vendor tree (50+ transitive deps, ~5 MB binary
 // growth) and keeps the signing surface auditable in one place.
 //
@@ -345,12 +346,19 @@ func (c *S3Client) sign(req *http.Request, payloadHash string) error {
 	}
 
 	host := req.URL.Host
-	contentType := req.Header.Get("Content-Type")
-	canonicalHeaders := "content-type:" + contentType + "\n" +
-		"host:" + host + "\n" +
+	// Sign only headers the request carries: a store recomputes the
+	// signature from the request's own headers, and some (MinIO, Ceph RGW)
+	// refuse a request that lacks a signed header. Bodyless GET, LIST and
+	// DELETE requests have no Content-Type.
+	canonicalHeaders, signedHeaders := "", ""
+	if contentType := req.Header.Get("Content-Type"); contentType != "" {
+		canonicalHeaders = "content-type:" + contentType + "\n"
+		signedHeaders = "content-type;"
+	}
+	canonicalHeaders += "host:" + host + "\n" +
 		"x-amz-content-sha256:" + payloadHash + "\n" +
 		"x-amz-date:" + amzDate + "\n"
-	signedHeaders := "content-type;host;x-amz-content-sha256;x-amz-date"
+	signedHeaders += "host;x-amz-content-sha256;x-amz-date"
 
 	canonicalURI := req.URL.EscapedPath()
 	if canonicalURI == "" {
