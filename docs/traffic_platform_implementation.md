@@ -4433,3 +4433,22 @@ Evidence: `TestMemTrafficEnvironmentRemoval` and
 wildcard's oversized policy serve the bound host, keep environment and domain
 intent, and succeed after repair. `TestMemTrafficDNSDriftWithdrawal` and
 `TestPgTrafficDNSDriftWithdrawal` show drift committing in the same topology.
+
+## Promotion visibility and GitOps environment policies — 2026-10-26
+
+`PublishProjectEnvironmentPromotionReleaseSet` and
+`RollbackProjectEnvironmentPromotionReleaseSet` project promoted settings,
+including visibility, onto production apps; both now begin through the account
+binding guard. The memory writer analyzes apps whose visibility changes before
+publishing anything. A GitOps apply whose reviewed plan changes environment
+edge policies runs inside the binding guard; its memory twin analyzes the
+staged policies first.
+
+Evidence: `TestMemTrafficPromotionVisibility` refuses an internal-to-public
+projection under an oversized legacy primary-host policy and ignores
+settings-only and non-production changes. The guarded PostgreSQL paths pass
+`TestPgPromotionActivatesAndRestoresWorkloadSettings`,
+`TestPgPromotionRollbackRejectsConcurrentWorkloadEdit` and
+`TestRealEnvironmentGitOpsAdoptionAndEnforcement` (memory and PostgreSQL),
+which applies a workload policy through the GitOps worker. No dedicated
+PostgreSQL refusal fixture exists for these two writers.

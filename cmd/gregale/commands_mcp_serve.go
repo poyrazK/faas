@@ -31,6 +31,7 @@ type mcpServeOptions struct {
 	onboarding    string
 	stateFile     string
 	stateKeyFile  string
+	toolsets      []string
 }
 
 func parseMCPServeOptions(args []string) (mcpServeOptions, error) {
@@ -47,9 +48,15 @@ func parseMCPServeOptions(args []string) (mcpServeOptions, error) {
 	fs.StringVar(&opts.onboarding, "oauth-onboarding", "browser", "remote onboarding: browser sign-in or explicit api-key fallback")
 	fs.StringVar(&opts.stateFile, "state-file", "", "private encrypted remote state file for restart-safe connections")
 	fs.StringVar(&opts.stateKeyFile, "state-key-file", "", "independent private file with the 32-byte state encryption key")
+	tools := fs.String("tools", mcpmanagement.ToolsetAll, "toolsets to list, comma-separated: core, release, diagnose or all")
 	if err := fs.Parse(args); err != nil {
 		return opts, err
 	}
+	toolsets, err := mcpmanagement.ParseToolsets(*tools)
+	if err != nil {
+		return opts, err
+	}
+	opts.toolsets = toolsets
 	if fs.NArg() != 0 || (opts.transport != "stdio" && opts.transport != "streamable-http") || opts.timeout <= 0 || opts.timeout > time.Minute {
 		return opts, errors.New("use --transport stdio or streamable-http and a positive --timeout up to 1m; no positional arguments are accepted")
 	}
@@ -114,6 +121,7 @@ func serveMCPStdio(ctx context.Context, opts mcpServeOptions) error {
 	s, err := mcpmanagement.NewServer(c, mcpmanagement.Options{
 		Lifecycle: opts.lifecycle, Telemetry: opts.telemetry, Profile: connection.Profile, APIBase: connection.APIBase,
 		Version: wire.Version, Token: c.Token(), Timeout: opts.timeout, AllowWrites: opts.allowWrites,
+		LocalCLI: mcpLocalCLI(connection.Profile, connection.APIBase, c.Token()), Toolsets: opts.toolsets,
 	})
 	if err != nil {
 		return err
@@ -126,7 +134,7 @@ func serveMCPHTTP(ctx context.Context, opts mcpServeOptions) error {
 		opts.lifecycle = mcpmanagement.NewLifecycle()
 	}
 	connection := effectiveConnectionContext()
-	handlerOptions := mcpmanagement.HTTPOptions{Lifecycle: opts.lifecycle, Telemetry: opts.telemetry, AuditLogger: slog.New(slog.NewJSONHandler(osStderr, nil)), Onboarding: opts.onboarding, APIBase: connection.APIBase, ResourceURL: opts.resourceURL, RedirectURIs: opts.redirects, Version: wire.Version, Timeout: opts.timeout, AllowWrites: opts.allowWrites}
+	handlerOptions := mcpmanagement.HTTPOptions{Lifecycle: opts.lifecycle, Telemetry: opts.telemetry, AuditLogger: slog.New(slog.NewJSONHandler(osStderr, nil)), Onboarding: opts.onboarding, APIBase: connection.APIBase, ResourceURL: opts.resourceURL, RedirectURIs: opts.redirects, Version: wire.Version, Timeout: opts.timeout, AllowWrites: opts.allowWrites, Toolsets: opts.toolsets}
 	if opts.stateFile != "" {
 		store, err := mcpmanagement.OpenStateStore(opts.stateFile, opts.stateKeyFile)
 		if err != nil {

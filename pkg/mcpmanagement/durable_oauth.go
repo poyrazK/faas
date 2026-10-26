@@ -102,7 +102,7 @@ func (r *remoteServer) restoreOAuth() error {
 		}
 		if record.Active {
 			var err error
-			g.server, g.management, err = newManagementServer(client, Options{Lifecycle: r.opts.Lifecycle, Telemetry: r.opts.Telemetry, auditLogger: r.opts.AuditLogger, accountID: g.accountID, grantID: g.id, Profile: "oauth", APIBase: r.opts.APIBase, Version: r.opts.Version, Timeout: r.opts.Timeout, AllowWrites: r.opts.AllowWrites && slices.Contains(g.scopes, scopeWrite), AllowedApps: g.allowedApps, Environments: g.environments, planStore: r.opts.StateStore, planNamespace: id})
+			g.server, g.management, err = newManagementServer(client, Options{Lifecycle: r.opts.Lifecycle, Telemetry: r.opts.Telemetry, auditLogger: r.opts.AuditLogger, accountID: g.accountID, grantID: g.id, Profile: "oauth", APIBase: r.opts.APIBase, Version: r.opts.Version, Timeout: r.opts.Timeout, AllowWrites: r.opts.AllowWrites && slices.Contains(g.scopes, scopeWrite), AllowedApps: g.allowedApps, Environments: g.environments, planStore: r.opts.StateStore, planNamespace: id, Toolsets: r.opts.Toolsets})
 			if err != nil {
 				return err
 			}
