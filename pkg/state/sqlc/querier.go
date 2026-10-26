@@ -5406,6 +5406,11 @@ type Querier interface {
 	ReadPublicRoutingOwner(ctx context.Context, db DBTX, arg ReadPublicRoutingOwnerParams) (bool, error)
 	ReadPublicRoutingRelease(ctx context.Context, db DBTX, arg ReadPublicRoutingReleaseParams) ([]ReadPublicRoutingReleaseRow, error)
 	ReadPublicRoutingRevision(ctx context.Context, db DBTX, arg ReadPublicRoutingRevisionParams) (bool, error)
+	// imaged's hosting smoke verifies a candidate before MarkDeploymentLive, so
+	// the candidate is still snapshotting. The smoke always uses the app's own
+	// host, whatever the candidate's environment, so no scope applies; the smoke
+	// challenge already binds the app and deployment.
+	ReadPublicRoutingSmokeCandidate(ctx context.Context, db DBTX, arg ReadPublicRoutingSmokeCandidateParams) (bool, error)
 	ReadPublicRoutingWeights(ctx context.Context, db DBTX, arg ReadPublicRoutingWeightsParams) ([]ReadPublicRoutingWeightsRow, error)
 	ReadQueueCanary(ctx context.Context, db DBTX, arg ReadQueueCanaryParams) (ReadQueueCanaryRow, error)
 	ReadQueueLeaseReceipt(ctx context.Context, db DBTX, invocationID pgtype.UUID) (InvocationQueueLeaseReceipt, error)

@@ -8578,6 +8578,16 @@ SELECT EXISTS (
       AND scope = sqlc.arg(scope)::text AND status IN ('ready', 'snapshot_ready', 'live') AND deleted_at IS NULL
 )::boolean AS allowed;
 
+-- imaged's hosting smoke verifies a candidate before MarkDeploymentLive, so
+-- the candidate is still snapshotting. The smoke always uses the app's own
+-- host, whatever the candidate's environment, so no scope applies; the smoke
+-- challenge already binds the app and deployment.
+-- name: ReadPublicRoutingSmokeCandidate :one
+SELECT EXISTS (
+    SELECT 1 FROM deployments WHERE id = sqlc.arg(deployment_id)::uuid AND app_id = sqlc.arg(app_id)::uuid
+      AND status IN ('snapshotting', 'live') AND deleted_at IS NULL
+)::boolean AS allowed;
+
 -- ADR-570: public host policy reads are credential-minimal and transaction-scoped.
 -- name: ReadPublicHostApp :one
 SELECT (jsonb_build_object(
