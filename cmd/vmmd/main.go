@@ -727,7 +727,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	}
 	registryIdentities := append(append([]*age.X25519Identity(nil), buildIdentities...), hostIdentities...)
 	hostIdentities = append(runtimeIdentities, hostIdentities...)
-	sealdomain.RegisterLoaded(ops.Registry(), sealdomain.Runtime, len(runtimeIdentities) > 0)
+	sealdomain.RegisterLoadedDomains(ops.Registry(), map[sealdomain.Domain]bool{sealdomain.Runtime: len(runtimeIdentities) > 0, sealdomain.Build: len(buildIdentities) > 0})
 	log.Info("vmmd: unseal identities loaded", "runtime_domain", len(runtimeIdentities) > 0, "identities", len(hostIdentities))
 
 	// Issue #98 / ADR-028: vmmd self-registers in compute_nodes
@@ -1260,7 +1260,6 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	})
 	mgr.SetHostIdentities(hostIdentities)
 	mgr.SetRegistryIdentities(registryIdentities)
-	sealdomain.RegisterLoaded(ops.Registry(), sealdomain.Build, len(buildIdentities) > 0)
 	mgr.RequireSecretBinding(cfg.RequireSecretBinding)
 	sealdomain.RegisterBindingRequired(ops.Registry(), cfg.RequireSecretBinding)
 	if cfg.RequireSecretBinding {
