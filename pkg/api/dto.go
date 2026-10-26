@@ -7403,6 +7403,9 @@ type PlanWorkload struct {
 	// options (ADR-20261019142544); argument values stay out of plans.
 	BuildTarget string   `json:"build_target,omitempty"`
 	BuildArgs   []string `json:"build_args,omitempty"`
+	// GoCommand is the `cmd/<name>` main package a service of a multi-command
+	// Go module builds from the module root (ADR-20261025134512).
+	GoCommand string `json:"go_command,omitempty"`
 	// SecretFiles are the Compose secrets written to /run/secrets
 	// (ADR-20261023090000); they name app secrets, never values.
 	SecretFiles []SecretFile `json:"secret_files,omitempty"`

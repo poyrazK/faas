@@ -30045,6 +30045,10 @@ components:
           type: array
           items: {type: string}
           description: "Names of the Compose build.args passed to the Dockerfile build, sorted. Values are not returned."
+        go_command:
+          type: string
+          example: api
+          description: "The cmd/<name> main package this service builds from the root of a Go module with several commands (ADR-20261025134512)."
         secret_files:
           type: array
           items:

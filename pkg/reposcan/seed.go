@@ -112,6 +112,7 @@ type workloadSeed struct {
 	rootDir             string
 	dockerfile          string
 	dockerfileBuild     *api.DockerfileBuildOptions
+	goCommand           string
 	image               string
 	healthcheck         *api.ComposeHealthcheck
 	imageProcess        *api.ComposeProcess

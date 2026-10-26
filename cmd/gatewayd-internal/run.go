@@ -4518,10 +4518,20 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			}
 		}
 	}
+	// Claim both control sockets here, not in their serving goroutines: a
+	// hand-off successor's readiness (below) closes every socket its
+	// predecessor passed that nothing has claimed yet, and a later bind of the
+	// same address fails while the predecessor still holds it. That race
+	// restarted gatewayd-internal on fsn-3 on 2026-10-25 (bind 0.0.0.0:9097:
+	// address already in use).
+	ctrlListener, err := gateway.ListenControl(ctrlAddr)
+	if err != nil {
+		return fmt.Errorf("gatewayd: control listen %s: %w", ctrlAddr, err)
+	}
 	go func() {
 		log.Info("gatewayd control listening", "addr", ctrlAddr)
 		// A hand-off ends handoffCtx: the successor answers /metrics and probes.
-		if err := gateway.RunControlServer(handoffCtx, ctrlAddr, controlMux); err != nil {
+		if err := gateway.ServeControl(handoffCtx, ctrlListener, controlMux); err != nil {
 			errc <- err
 		}
 	}()
@@ -4531,9 +4541,13 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			apps = appsControl
 		}
 		privateMux := newPrivateControlMux(apps, http.HandlerFunc(responseChecker.Capabilities))
+		privateListener, err := gateway.ListenControl(addr)
+		if err != nil {
+			return fmt.Errorf("gatewayd: private control listen %s: %w", addr, err)
+		}
 		go func() {
 			log.Info("gatewayd private control listening", "addr", addr)
-			if err := gateway.RunControlServer(handoffCtx, addr, privateMux); err != nil {
+			if err := gateway.ServeControl(handoffCtx, privateListener, privateMux); err != nil {
 				errc <- err
 			}
 		}()
