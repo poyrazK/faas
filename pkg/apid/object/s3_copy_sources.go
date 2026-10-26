@@ -155,6 +155,6 @@ func (s *Service) DeleteObjectS3CopySource(w http.ResponseWriter, r *http.Reques
 		BucketProblem(w, err)
 		return
 	}
-	s.Host.EmitAudit(r.Context(), "object_storage.copy_source_revoked", &acct.ID, map[string]any{"bucket_id": b.ID, "credential_id": r.PathValue("credential"), "source_bucket_id": id.String()})
+	s.emitRevocation(r.Context(), "object_storage.copy_source_revoked", acct.ID, map[string]any{"bucket_id": b.ID, "credential_id": r.PathValue("credential"), "source_bucket_id": id.String()})
 	w.WriteHeader(http.StatusNoContent)
 }
