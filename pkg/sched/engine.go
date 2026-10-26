@@ -2365,6 +2365,7 @@ func (e *Engine) ensureWake(ctx context.Context, appID, deploymentID string, wak
 	if e == nil || e.wakeCoord == nil {
 		return CoordOutcome{}, fmt.Errorf("sched: EnsureWake: engine not fully constructed")
 	}
+	markPreWake(ctx, preWakeEnsureStarted)
 	// Multi-host safety cluster PR-5 / audit F4 (Layer 1 — owner gate):
 	// refuse the wake if the app is owned by another schedd in the
 	// fleet. This is the SAME check that lives in
@@ -2407,6 +2408,7 @@ func (e *Engine) ensureWake(ctx context.Context, appID, deploymentID string, wak
 		}
 		selected.admissionChecked = true
 	}
+	markPreWake(ctx, preWakeEnvironmentReady)
 	ctx = withWakeEnvironment(ctx, selected)
 	coordinatorKey := selected.coordinatorKey()
 	call, isLeader, err := e.wakeCoord.Enter(coordinatorKey, e.wakeFanoutForEnvironment(selected))
@@ -2420,6 +2422,7 @@ func (e *Engine) ensureWake(ctx context.Context, appID, deploymentID string, wak
 		e.wakeCoord.Release(coordinatorKey, call)
 		return out, nil
 	}
+	markPreWake(ctx, preWakeLeader)
 	// Leader path: run e.Wake on a detached ctx bounded by the
 	// coordinator's TTL so a cancelled triggering request cannot kill
 	// the in-flight boot. The deferred Complete is the single
@@ -3950,7 +3953,7 @@ func (e *Engine) admitAndDispatchOnce(ctx context.Context, appID, deploymentID, 
 	// stays consistent.
 	startedAt := time.Now().UTC()
 	bootInput := bootInput{
-		preRPC:    events.NewPreRPCTimings(wakeStartedFrom(ctx), wakeStarted, locked, admitStarted, admitted, startedAt),
+		preRPC:    preRPCWithPreWake(ctx, events.NewPreRPCTimings(wakeStartedFrom(ctx), wakeStarted, locked, admitStarted, admitted, startedAt), wakeStarted),
 		insID:     ins.ID,
 		appID:     appID,
 		appType:   app.Type,
