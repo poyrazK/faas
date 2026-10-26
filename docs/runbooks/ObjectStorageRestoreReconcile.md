@@ -93,8 +93,14 @@ owner's sign-off.
 6. Rerun the reconcile until it exits 0, or until every remaining finding has
    a recorded decision. Then run it once more with `ACCEPT=1`, which lists the
    findings without stopping.
-7. Re-apply the revocations the restore undid (next section), then turn
-   `s3_enabled` back on.
+7. Re-apply the revocations the restore undid (next section), then accept
+   the restored database's PostgreSQL timeline and turn `s3_enabled` back
+   on. The restore promoted onto a new timeline, which fences the S3 gateway
+   and public reads until it is accepted (ADR-20261025111015 amendment 1):
+
+   ```bash
+   sudo gregalectl object-storage accept --db-env /etc/faas/sealed.env
+   ```
 
 ## Revocations undone by the restore
 

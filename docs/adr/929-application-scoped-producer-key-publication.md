@@ -24,3 +24,17 @@ Retention follows existing receipts: settled routing becomes eligible for prunin
 ## Consequences
 
 Producer retries can recover a durable original receipt with only the original app and key. Independent consumers keep existing retry/replay/dead-letter behavior. Subscriptions and schemas use the generated app.UUID source. App deletion removes this ingress route; retained receipts remain accessible through existing account receipt APIs. Builds, vet, SDK generation and lint verify integration; no tests are added or run under the user's standing instruction.
+
+## Amendment 2026-10-26: the app's source is the app's own
+
+The `app.<app UUID>` namespace became a trust signal after this ADR: the Auth
+app publishes `auth.workflow.start` only after checking `workflow:start`, and
+its docs tell workflows to subscribe from its source. Because any account key
+could publish an `app.<UUID>` source through `POST /v1/events:publish`, anyone
+in the account could start those workflows without the check.
+[ADR 20261026140000](20261026140000-event-app-sources-and-publish-rate.md)
+reserves the namespace: only the app's producer route, the app's own runtime
+and server-side app publication (commit relay) publish there. The account
+routes and the platform-tenant route refuse `app.<UUID>` sources in any UUID
+spelling. "Account-scoped legacy publication of the same source/ID" above no
+longer applies.

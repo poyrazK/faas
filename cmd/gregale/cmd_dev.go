@@ -287,7 +287,7 @@ func runDevWatchLoop(ctx context.Context, sourceDir string, previous [sha256.Siz
 	}
 }
 
-const devUsage = "usage: gregale dev [--path DIR] [--all] [--name PROJECT] [--env-file PATH] [--service-override-file PATH] [--bucket NAME] [--once|--stop] [--no-logs] [--open] [--postgres [--postgres-region REGION] [--postgres-seed CMD [--reseed]]] [--ttl DURATION] [--debug [--debug-port N]] [--watch [--watch-command CMD]]"
+const devUsage = "usage: gregale dev [--path DIR] [--all] [--name PROJECT] [--env-file PATH] [--service-override-file PATH] [--bucket NAME] [--once|--stop] [--no-logs] [--open] [--postgres [--postgres-region REGION] [--postgres-seed CMD [--reseed]]] [--ttl DURATION] [--debug [--debug-port N]] [--watch [--watch-command CMD]] [--go-command NAME]"
 
 // cmdDev provides the preview-like inner loop for local source: reserve one
 // stable remote environment, upload the dirty working tree, then redeploy when
@@ -337,6 +337,7 @@ func cmdDev(args []string) int {
 	all := fs.Bool("all", false, "run one developer loop per deployable workspace app below --path")
 	watch := fs.Bool("watch", false, "run the app's development server with hot reload instead of the production build (ADR-1170)")
 	watchCommand := fs.String("watch-command", "", "development server command for --watch (default: the dev script or the detected framework's server)")
+	goCommand := fs.String("go-command", "", "build cmd/NAME of the Go module at --path, for a module with several commands")
 	if err := fs.Parse(args); err != nil {
 		PrintUsage(osStderr, devUsage, "dev")
 		return 1
@@ -378,6 +379,9 @@ func cmdDev(args []string) int {
 	}
 	if *all && *watchCommand != "" {
 		return printErr("Invalid flags", fmt.Errorf("--watch-command cannot be combined with --all; set dev.watch.command in each app's gregale.yaml"))
+	}
+	if *goCommand != "" && (*stop || *all || !api.ValidGoCommand(*goCommand)) {
+		return printErr("Invalid --go-command", fmt.Errorf("name one cmd/ directory, without --stop or --all (dev --all selects each command itself)"))
 	}
 	if *debugPort < 1 || *debugPort > 65535 {
 		return printErr("Invalid --debug-port", fmt.Errorf("use a port between 1 and 65535"))
@@ -530,6 +534,9 @@ func cmdDev(args []string) int {
 	if code := checkDevSource(sourceDir, config); code != 0 {
 		return code
 	}
+	if err := checkDevGoCommand(sourceDir, config, *goCommand); err != nil {
+		return printErr("Invalid --go-command", err)
+	}
 	if !jsonOutput {
 		PrintProgress(osStdout, "Source: %s; connection: %s; isolated developer session: %s", sourceDir, currentProfile(), project)
 	}
@@ -546,9 +553,12 @@ func cmdDev(args []string) int {
 		// Before the first sync, so a config edit ships with it.
 		devWatchNotes = prepareDevWatchSource(sourceDir, !jsonOutput && !nonInteractive && stdinIsTTY() && stdoutIsTTY(), osStdin, osStdout)
 	}
-	session, err := upsertDevSession(client, project, config.sessionRequest(workspaceID, *withPostgres, *postgresRegion, lease, devWatch, buckets...))
+	session, err := upsertDevSession(client, project, withDevGoCommand(config.sessionRequest(workspaceID, *withPostgres, *postgresRegion, lease, devWatch, buckets...), *goCommand))
 	if err != nil {
 		return printErr("Could not create developer environment", err)
+	}
+	if session.GoCommand != *goCommand {
+		return printErr("Could not select the Go command", errDevGoCommandUnsupported(*goCommand))
 	}
 	if group != "" {
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
@@ -784,7 +794,7 @@ func cmdDev(args []string) int {
 			if err != nil {
 				return err
 			}
-			refreshed, refreshErr := upsertDevSession(client, project, config.sessionRequest(workspaceID, *withPostgres, *postgresRegion, lease, devWatch, requests...))
+			refreshed, refreshErr := upsertDevSession(client, project, withDevGoCommand(config.sessionRequest(workspaceID, *withPostgres, *postgresRegion, lease, devWatch, requests...), *goCommand))
 			if refreshErr == nil {
 				session = refreshed
 			}

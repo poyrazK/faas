@@ -50,3 +50,21 @@ func (s *Service) accountProducer(ctx context.Context, acct state.Account) (stri
 func eventProducerRole(role state.OrgRole) bool {
 	return role == state.OrgRoleOwner || role == state.OrgRoleAdmin || role == state.OrgRoleDeveloper
 }
+
+// AppSourceReservedProblem refuses an `app.<app id>` source on a route that
+// does not speak for that app. The namespace belongs to the app's producer
+// route and its own runtime (ADR-929, as amended 2026-10-26): consumers such
+// as the Auth app's workflow starts trust it as the app's word.
+func AppSourceReservedProblem() *api.Problem {
+	return api.ErrValidation("app.<app id> sources are reserved for that app's own events; publish them with POST /v1/apps/{slug}/events:publish or from the app's runtime")
+}
+
+// PublishRateProblem charges n events to the account's publish rate
+// (ADR-20261026140000).
+func (s *Service) PublishRateProblem(acct state.Account, n int) *api.Problem {
+	limits, ok := api.LimitsFor(acct.Plan)
+	if !ok {
+		return nil
+	}
+	return s.Host.PublishLimiter().PublishRateProblem(acct.ID, limits.EventPublish, n)
+}

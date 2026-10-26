@@ -8,6 +8,8 @@ mkdir -p -- "${evidence_root}"
 evidence="$(mktemp -d "${evidence_root}/run-XXXXXXXX")"
 echo "Native Start evidence: ${evidence}"
 python3 "${repo_root}/scripts/ci/start-native.py" --check-runner
+# Capability flags (ADR-20261023115741) must release what this run exercises.
+python3 "${repo_root}/scripts/ci/require-capabilities.py" --api "${FAAS_API:?set the acceptance API URL}" --token-env FAAS_TOKEN projects
 command -v flock >/dev/null
 command -v git >/dev/null
 go_tool="${GO:-go}"

@@ -358,6 +358,11 @@ gregale approvals status <deployment>
 gregale approvals off
 ```
 
+A production release is one to the default scope or to the project's
+`production` environment (`--environment production`); both serve the app's
+production traffic, so the policy gates both. Other environments and scopes
+are not gated.
+
 The release starts its canary as usual. At the stage the policy names
 (`--after-stage`, default 1), it waits. `gregale deploy` shows the wait and
 the approve command. The canary still judges the waiting stage, so a

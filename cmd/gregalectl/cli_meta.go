@@ -291,6 +291,7 @@ var cliCommands = []cliCommand{
 		Subcommands: []cliSub{
 			{Name: "reconcile", Short: "List each backend's Gregale buckets and report catalog disagreements, read-only (exit 4 on findings)", Flags: []cliFlag{{Name: "config", Short: "provider registry JSON"}, {Name: "provider-env", Short: "provider credential env file"}, {Name: "pg-dsn", Short: "PostgreSQL DSN"}, {Name: "db-env", Short: "file containing DATABASE_URL"}, {Name: "json", Short: "emit structured JSON"}}},
 			{Name: "hold", Short: "Turn s3_enabled off directly in the database, without apid, right after a restore", Flags: []cliFlag{{Name: "pg-dsn", Short: "PostgreSQL DSN"}, {Name: "db-env", Short: "file containing DATABASE_URL"}}},
+			{Name: "accept", Short: "Accept the database's PostgreSQL timeline for serving S3 after a restore has been reconciled", Flags: []cliFlag{{Name: "pg-dsn", Short: "PostgreSQL DSN"}, {Name: "db-env", Short: "file containing DATABASE_URL"}, {Name: "by", Short: "who accepts, for the record"}}},
 		},
 	},
 	{
@@ -300,7 +301,7 @@ var cliCommands = []cliCommand{
 		Subcommands: []cliSub{
 			{Name: "init", Short: "Create <domain>.age and <domain>.age.pub", Flags: []cliFlag{{Name: "domain", Short: "seal domain"}, {Name: "dir", Short: "domain identity directory"}, {Name: "force", Short: "coordinated identity replacement"}, {Name: "json", Short: "emit structured JSON"}}},
 			{Name: "verify", Short: "Prove this node's domain identity opens the domain probe", Flags: []cliFlag{{Name: "domain", Short: "seal domain"}, {Name: "dir", Short: "domain identity directory"}, {Name: "publish", Short: "write the probe when the domain has none"}, {Name: "pg-dsn", Short: "PostgreSQL DSN"}, {Name: "db-env", Short: "file containing DATABASE_URL"}, {Name: "metrics-file", Short: "node_exporter textfile output"}, {Name: "recipient-only", Short: "check the staged recipient against the published probe"}, {Name: "json", Short: "emit structured JSON"}}},
-			{Name: "migrate", Short: "Re-seal a domain's stored envelopes", Flags: []cliFlag{{Name: "domain", Short: "seal domain (outbound, runtime, source, build, edge, alerting, storage or control)"}, {Name: "dir", Short: "domain identity directory"}, {Name: "fleet-key", Short: "fleet.age identity"}, {Name: "host-key", Short: "legacy host.age identity"}, {Name: "readers-verified", Short: "every reader holds the domain identity"}, {Name: "pg-dsn", Short: "PostgreSQL DSN"}, {Name: "db-env", Short: "file containing DATABASE_URL"}, {Name: "json", Short: "emit structured JSON"}}},
+			{Name: "migrate", Short: "Re-seal a domain's stored envelopes", Flags: []cliFlag{{Name: "domain", Short: "seal domain (outbound, runtime, source, build, edge, alerting, storage, control or delivery)"}, {Name: "dir", Short: "domain identity directory"}, {Name: "fleet-key", Short: "fleet.age identity"}, {Name: "host-key", Short: "legacy host.age identity"}, {Name: "readers-verified", Short: "every reader holds the domain identity"}, {Name: "pg-dsn", Short: "PostgreSQL DSN"}, {Name: "db-env", Short: "file containing DATABASE_URL"}, {Name: "json", Short: "emit structured JSON"}}},
 		},
 	},
 	{

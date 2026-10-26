@@ -2512,3 +2512,21 @@ func CliPathChildren(words []string) []CliTreeChild {
 	}
 	return children
 }
+
+// dev --all and gregale dev Go commands (ADR-20261026120412).
+var DiscoverDevAllApps = discoverDevAllApps
+
+func DevAllChildArgs(app devAllApp, stop bool) []string {
+	return devAllOptions{stop: stop}.childArgs(app, false)
+}
+func DevAllSourceLabel(app devAllApp) string { return app.sourceLabel() }
+func CheckDevGoCommand(dir string, function bool, command string) error {
+	config := devSourceConfig{shape: shapeApp}
+	if function {
+		config.shape = shapeFunction
+	}
+	return checkDevGoCommand(dir, config, command)
+}
+func DevGoCommandRequest(command string) api.UpsertDevSessionRequest {
+	return withDevGoCommand(devSourceConfig{shape: shapeApp}.sessionRequest("", false, "", 0, nil), command)
+}

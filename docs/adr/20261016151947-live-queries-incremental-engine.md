@@ -358,8 +358,16 @@ is a later step.
   1. livequeryd opens the legacy and the bound form, and refuses a blob
      bound to another database (`livekeys.KeyNamespaceOpens`,
      `livekeys.LoginNamespaceOpens`).
-  2. apid seals the bound form, and existing rows are re-sealed (keys
-     rotated, logins re-issued).
+  2. apid seals the bound form, and an operator re-seals existing rows with
+     `livequeryd -reseal` on a hub host. That is the only place whose
+     identity opens them. Each row's plaintext is sealed again, unchanged,
+     to the same recipient, with a compare-and-swap on the old seal. The
+     2026-10-23 plan to rotate keys and re-issue logins is dropped: rotating
+     a key issues a secret that only the API response shows, so the
+     customer's deployed secret would retire after the overlap. Re-issuing a
+     login changes its password. A row that is bound to another database,
+     doesn't open, or holds another key's secret is reported and left as it
+     is (amended 2026-10-26).
   3. livequeryd stops opening the legacy form.
 - Limits (`pkg/api/limits.go`):
   - SQL up to 32 KiB, 256 parameters of 16 KiB each (as Neon);
