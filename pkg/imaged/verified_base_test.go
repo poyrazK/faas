@@ -30,7 +30,14 @@ func (p *baseResolutionPuller) ResolveImage(_ context.Context, _ string, _ *oci.
 }
 func verifiedBaseFixture(t *testing.T, mode string) (*Handler, *state.MemStore, *baseResolutionPuller, *recordingRunner, string) {
 	t.Helper()
-	layer := gzTar(t, map[string]string{"usr/share/source": "contents"})
+	return verifiedBaseFixtureOf(t, mode, "contents")
+}
+
+// verifiedBaseFixtureOf builds the fixture from an image whose one layer
+// holds contents, so two calls with different contents are two generations.
+func verifiedBaseFixtureOf(t *testing.T, mode, contents string) (*Handler, *state.MemStore, *baseResolutionPuller, *recordingRunner, string) {
+	t.Helper()
+	layer := gzTar(t, map[string]string{"usr/share/source": contents})
 	diff := imagechain.Digest(layerPlainBytes(t, layer))
 	if mode == "wrong DiffID" {
 		diff = imagechain.Digest([]byte("other"))

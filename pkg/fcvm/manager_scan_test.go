@@ -16,6 +16,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"strings"
@@ -60,7 +61,7 @@ func (m *memStorage) Get(_ context.Context, key string) (io.ReadCloser, error) {
 	}
 	b, ok := m.blobs[key]
 	if !ok {
-		return nil, errors.New("fcvm-test: storage miss")
+		return nil, fmt.Errorf("fcvm-test: storage miss: %w", storage.ErrNotFound)
 	}
 	return io.NopCloser(bytes.NewReader(b)), nil
 }

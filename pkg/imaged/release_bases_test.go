@@ -1,7 +1,8 @@
 package imaged
 
-// adr: 20261024191249 — the rollout pre-stage publishes every runtime base
-// the candidate configures, whoever owns the apps on it.
+// adr: 20261024191249, 20261026181418 — the rollout pre-stage publishes every
+// runtime base the candidate configures, whoever owns the apps on it, under
+// the generation's own keys.
 
 import (
 	"bytes"
@@ -64,6 +65,16 @@ func TestReleaseBasePlan(t *testing.T) {
 				Staged:      []string{RuntimePython312},
 				Current:     []string{"", RuntimeNode24},
 				Unpublished: []string{RuntimeNode22, RuntimeGo124, RuntimeGo124Alpine, RuntimePython313},
+			}},
+		// ADR-20261026181418: a node on a release before generation keys can
+		// restage the logical key before this node first boots the base.
+		{name: "a generation published only under the legacy key is published under its own",
+			verdicts: map[string]string{"": BaseAdoptionLegacy, RuntimeNode22: BaseAdoptionPublished, RuntimePython312: BaseAdoptionLegacy,
+				RuntimeGo124: BaseAdoptionCached, RuntimeGo124Alpine: BaseAdoptionUnpublished, RuntimeNode24: BaseAdoptionStale, RuntimePython313: BaseAdoptionPublished},
+			want: ReleaseBasesResult{
+				Staged:      []string{"", RuntimePython312, RuntimeNode24},
+				Current:     []string{RuntimeNode22, RuntimeGo124, RuntimePython313},
+				Unpublished: []string{RuntimeGo124Alpine},
 			}},
 		{name: "an unreadable shared store fails the pre-stage", verdicts: verdicts(), judgeErr: errors.New("registry unavailable"), wantErr: true},
 	}
