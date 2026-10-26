@@ -1015,6 +1015,24 @@ Creation refusals use the existing traffic-policy problems and preserve pending
 rows and activity. Remaining writer/resolver coverage, path agreement, real
 fleet/store/load/recovery, staging and native VM/network acceptance remain open.
 
+### Follow-up: rollback and retry revision revival
+
+Rollback preparation (plain, checked and alert-triggered historical),
+automatic rollback and retry-from-stage can make a revision URL serve that the
+current projection does not contain: a superseded target returns to a serving
+status, or a retry takes the app's next revision. Each joins the shared app
+binding guard and commits only after the before/after analysis, retrying a
+serialization failure with a fresh snapshot. The revived or new hostname has
+zero legacy allowance. Memory writers analyze the proposed target before
+publishing any rollback, retry or preparation state. Refusals use the existing
+traffic-policy problems and preserve deployment, rollback and activity intent.
+
+Service-rollout abort, rollout recovery and the remaining terminal deployment
+writers change traffic weights among already-serving rows or withdraw a
+revision URL. The revision and alias namespaces stay reserved after withdrawal,
+so those writers cannot publish a fallback and stay outside the global binding
+serialization.
+
 ### Follow-up: bounded request decision evidence
 
 Ordinary response completion checks the attached budget's wall-clock expiry as

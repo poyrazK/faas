@@ -23,7 +23,9 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/appaccess"
 	"github.com/onebox-faas/faas/pkg/apid/httpkit"
+	"github.com/onebox-faas/faas/pkg/auth/middleware"
 	"github.com/onebox-faas/faas/pkg/logsanitize"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -428,6 +430,19 @@ func (s *Service) ListEdgeRulesForApp(w http.ResponseWriter, r *http.Request, ac
 // the CLI uses it for `gregale edge-rules list`.
 func (s *Service) ListEdgeRules(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	rules, err := s.Host.Store().ListEdgeRulesForAccount(r.Context(), acct.ID)
+	if err != nil {
+		api.WriteProblem(w, api.ErrCapacity("could not list edge rules"))
+		return
+	}
+	// Company apps and their creator's personal apps share AccountID, so the
+	// account's rules are filtered to the apps this caller may still see: a
+	// removed creator or a key bound to one app or org sees only those, as
+	// the other account-wide lists do.
+	actor := acct
+	if a, _, ok := middleware.AccountFromContext(r); ok {
+		actor = a
+	}
+	rules, err = appaccess.VisibleResources(r, s.Host.Store(), actor, rules, func(rule state.EdgeRule) string { return rule.AppID })
 	if err != nil {
 		api.WriteProblem(w, api.ErrCapacity("could not list edge rules"))
 		return

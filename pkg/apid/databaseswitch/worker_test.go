@@ -48,9 +48,13 @@ type fakeCutovers struct {
 	now         func() time.Time
 	cutover     managedpostgres.Cutover
 	activateErr error
-	fenced      bool
-	resumed     bool
-	calls       []string
+	// committed makes a failed Activate commit anyway, as another worker's
+	// activation would; beforeCancel runs as Cancel starts.
+	committed    bool
+	beforeCancel func()
+	fenced       bool
+	resumed      bool
+	calls        []string
 }
 
 func (f *fakeCutovers) Prepare(_ context.Context, r managedpostgres.PrepareCutoverRequest) (managedpostgres.Cutover, error) {
@@ -76,6 +80,12 @@ func (f *fakeCutovers) Verify(context.Context, string, string) (managedpostgres.
 
 func (f *fakeCutovers) Cancel(context.Context, string, string) (managedpostgres.Cutover, error) {
 	f.calls = append(f.calls, "cancel")
+	if f.beforeCancel != nil {
+		f.beforeCancel()
+	}
+	if f.cutover.State == managedpostgres.CutoverActivated {
+		return managedpostgres.Cutover{}, managedpostgres.ErrConflict // an activated cutover is final
+	}
 	f.cutover.State = managedpostgres.CutoverCancelled
 	f.fenced = false
 	return f.cutover, nil
@@ -90,6 +100,9 @@ func (f *fakeCutovers) Fence(context.Context, string, string) (managedpostgres.C
 func (f *fakeCutovers) Activate(context.Context, managedpostgres.CutoverActivation) (managedpostgres.ActivatedCutover, error) {
 	f.calls = append(f.calls, "activate")
 	if f.activateErr != nil {
+		if f.committed {
+			f.cutover.State = managedpostgres.CutoverActivated
+		}
 		return managedpostgres.ActivatedCutover{}, f.activateErr
 	}
 	f.cutover.State = managedpostgres.CutoverActivated
@@ -425,5 +438,37 @@ func TestDatabaseSwitchFinishesAnActivationThatCommittedBeforeACrash(t *testing.
 	}
 	if sw.ActivatedAt == nil || !h.cutovers.resumed {
 		t.Fatalf("got %+v", sw)
+	}
+}
+
+// An abort racing an activation that committed must not leave the previous
+// release serving the restored database: the switch finishes with the target
+// live, whether the commit landed before the abort began or between its read
+// of the cutover and its release rollback.
+func TestDatabaseSwitchAbortLosingToAnActivationKeepsTheTargetLive(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		setup func(*harness)
+	}{
+		{"committed before the abort", func(h *harness) { h.cutovers.committed = true }},
+		{"committed during the abort", func(h *harness) {
+			h.cutovers.beforeCancel = func() { h.cutovers.cutover.State = managedpostgres.CutoverActivated }
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newHarness(t)
+			h.databases.target.State = managedpostgres.StateReady
+			h.runUntil(state.DatabaseSwitchDraining, 12)
+			h.completeDrain()
+			h.cutovers.activateErr = &managedpostgres.ActivationBlockedError{Code: managedpostgres.ActivationBindingsChanged}
+			tc.setup(h)
+			sw := h.runUntil(state.DatabaseSwitchCompleted, 10)
+			if h.releases.live["default"] != sw.TargetDeploymentID {
+				t.Fatalf("live = %s, want the target %s (marked %v)", h.releases.live["default"], sw.TargetDeploymentID, h.releases.marked)
+			}
+			if sw.ActivatedAt == nil || !h.cutovers.resumed || sw.FailureCode != "" {
+				t.Fatalf("got %+v", sw)
+			}
+		})
 	}
 }

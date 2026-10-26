@@ -82,11 +82,19 @@ The "Control plane resources" Grafana dashboard plots all of it.
     after confirming the host has the headroom. Every byte comes out of what
     PostgreSQL and the page cache can use.
 - **Memory near limit in `faas-cp.slice`:** a control-plane daemon is
-  leaking or holding a large batch. Record its memory trend from the
-  dashboard and its recent journal first, because platform daemons expose no
-  pprof endpoint today. Then restart only that service. Raise
+  leaking or holding a large batch. Before restarting it, capture where the
+  memory is (ADR-20261023200002):
+
+  ```bash
+  sudo gregalectl debug pprof --daemon <daemon> --profile heap --gc
+  sudo gregalectl debug pprof --daemon <daemon> --profile goroutine --debug 2
+  ```
+
+  Open the profile with `go tool pprof`. Then restart only that service. Raise
   `faas_cp_slice_memory_max` only when the spec §13 budget allows it.
 - **PostgreSQL CPU stall:**
+  - If a platform daemon is the competitor, record what it is doing first:
+    `sudo gregalectl debug pprof --daemon <daemon> --profile cpu --seconds 30`.
   - Move or pause GitHub runner jobs if they are the competitor.
   - Otherwise look for the heavy statement in `pg_stat_statements` and the
     daemon issuing it.

@@ -1332,7 +1332,7 @@ var cliCommands = []cliCommand{
 		// writer landed.
 		Name:    dispatchDebug,
 		DocSlug: "debug",
-		Short:   "Operator-side smoke harness for the OTel spans writer (debug otel-smoke; ADR-127 PR-D)",
+		Short:   "Operator debugging: the OTel spans writer smoke (otel-smoke) and daemon profiles (pprof)",
 		Subcommands: []cliSub{
 			{
 				Name:  subDebugOtel,
@@ -1343,6 +1343,20 @@ var cliCommands = []cliCommand{
 					{Name: "expected-spans", Short: "expected accepted_spans value from the handler response (default 3)"},
 					{Name: "timeout", Short: "HTTP timeout for the gatewayd-public round-trip (default 10s)"},
 					{Name: "json", Short: "emit structured JSON to stdout (overrides human summary)"},
+				},
+			},
+			{
+				Name:  subDebugPprof,
+				Short: "Capture a Go profile from a platform daemon on this host (root; ADR-20261023200002)",
+				Flags: []cliFlag{
+					{Name: "daemon", Short: "daemon to profile (schedd, apid, vmmd, gatewayd-internal, …)"},
+					{Name: "pid", Short: "the daemon's pid, when two generations run (see --list)"},
+					{Name: "profile", Short: "cpu, trace, heap, allocs, goroutine, threadcreate, block or mutex (default heap)"},
+					{Name: "seconds", Short: "cpu and trace: how long to record (1..60; default 30)"},
+					{Name: "debug", Short: "named profiles: 0 binary, 1 or 2 text (goroutine 2 = full dump)"},
+					{Name: "gc", Short: "heap: run a GC first so the profile shows live memory"},
+					{Name: "o", Short: "output file (default <daemon>-<profile>-<time>.<ext>)"},
+					{Name: "list", Short: "list the daemons serving profiles on this host"},
 				},
 			},
 		},

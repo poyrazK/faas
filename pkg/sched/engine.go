@@ -2129,7 +2129,7 @@ func (e *Engine) restartApp(ctx context.Context, appID, wakeID string, refreshRu
 	}
 	if !e.ownsApp(app) {
 		if refreshRuntimeConfig {
-			return CoordOutcome{}, fmt.Errorf("sched: runtime config restart: app %s is owned by node %s", appID, app.NodeID)
+			return CoordOutcome{}, fmt.Errorf("sched: runtime config restart: app %s is owned by node %s: %w", appID, app.NodeID, ErrAppOwnedByAnotherNode)
 		}
 		return CoordOutcome{}, nil
 	}
@@ -2432,8 +2432,8 @@ func (e *Engine) ensureWake(ctx context.Context, appID, deploymentID string, wak
 		return out, nil
 	}
 	markPreWake(ctx, preWakeLeader)
-	// Leader path: run e.Wake on a detached ctx bounded by the
-	// coordinator's TTL so a cancelled triggering request cannot kill
+	// Leader path: run e.Wake on a detached ctx bounded by
+	// wakeLeaderBudget so a cancelled triggering request cannot kill
 	// the in-flight boot. The deferred Complete is the single
 	// decrement site for all five completion paths inside e.Wake.
 	//
@@ -2441,10 +2441,10 @@ func (e *Engine) ensureWake(ctx context.Context, appID, deploymentID string, wak
 	// correlation values. Using context.Background here dropped the request ID
 	// after the gateway -> schedd gRPC hop, so queue/admit/boot events could not
 	// be joined to the customer-visible x-faas-request-id. The wake still
-	// outlives the triggering request and remains bounded by the coordinator TTL.
+	// outlives the triggering request and remains bounded by wakeLeaderBudget.
 	//
 	//nolint:contextcheck // detachment is the coordinated-wake invariant.
-	leaderCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), e.wakeCoord.TTL())
+	leaderCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), e.wakeLeaderBudget())
 	defer cancel()
 	// The coordinator deliberately detaches from the triggering request, but
 	// preserves the restart correlation id while doing so.
@@ -3525,6 +3525,7 @@ func (e *Engine) admitAndDispatchOnce(ctx context.Context, appID, deploymentID, 
 		PrioritizeSnapshotLocality: deploymentSmoke && snapshotLocalityKnown,
 		PreferredRegion:            preferredRegion,
 		ExcludeNodeIDs:             excludedWakeNodes(ctx),
+		SpreadReplicas:             spreadsReplicas(ctx, trigger),
 		ownerApp:                   &app,
 	}
 	var placement Placement
@@ -5123,7 +5124,29 @@ func (e *Engine) choosePlacementLocked(ctx context.Context, r Request) (Placemen
 	if err != nil {
 		return Placement{}, err
 	}
-	return snapshot.choose(r)
+	return snapshot.choose(e.withAppInstances(r))
+}
+
+// spreadsReplicas reports whether an admission keeps away from the app's other
+// instances (ADR-20261026140000): service replicas, whose desired count is a
+// failure-isolation contract, and minimum-instance floors, which keep capacity
+// warm. A cold burst keeps its snapshot locality instead, because a local
+// restore takes well under a second and a remote one many seconds.
+func spreadsReplicas(ctx context.Context, trigger string) bool {
+	switch trigger {
+	case TriggerServiceReplica, TriggerFloor, TriggerFloorDep:
+		return true
+	}
+	return isServiceReplicaPlacementSpread(ctx)
+}
+
+// withAppInstances supplies a spreading request with the app's live instances
+// per node.
+func (e *Engine) withAppInstances(r Request) Request {
+	if r.SpreadReplicas && r.AppInstancesByNode == nil && e.ledger != nil {
+		r.AppInstancesByNode = e.ledger.AppInstancesByNode(r.AppID)
+	}
+	return r
 }
 
 // chooseRestorePlacementLocked snapshots local restore pressure, selects a
@@ -5133,6 +5156,7 @@ func (e *Engine) choosePlacementLocked(ctx context.Context, r Request) (Placemen
 // fallback if the coordinator is temporarily unavailable.
 func (e *Engine) chooseRestorePlacementLocked(ctx context.Context, r Request) (Placement, func(), error) {
 	r.restorePressureAware = !r.PrioritizeSnapshotLocality
+	r = e.withAppInstances(r)
 	snapshot, err := e.loadPlacementSnapshot(ctx, r)
 	if err != nil {
 		return Placement{}, nil, err
