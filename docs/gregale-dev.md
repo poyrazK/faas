@@ -434,9 +434,11 @@ builds; the change applies from the next build.
 
 ## Run every app in a workspace
 
-`gregale dev --all` starts one developer loop per deployable workspace or
-convention member below `--path` (default: the current directory), using the
-same detection as `gregale start` and `gregale scan`. Each app gets its own
+`gregale dev --all` starts one developer loop per deployable workspace,
+convention, or Compose member below `--path` (default: the current
+directory), using the same detection as `gregale start` and `gregale scan`.
+A Compose service counts when it builds from a source directory (`build:`);
+image-only services such as `postgres` or `redis` are not started. Each app gets its own
 developer environment, stable URL, and lease, named after its workload
 (`apps/api` becomes `api`). When the root has deployable members it is treated
 as the workspace container and not started; a root with no members is the
@@ -464,16 +466,34 @@ environment budget: an app whose environment already exists reuses its slot,
 and the command fails with the shortfall when the new environments would not
 fit.
 
-Developer environments are not wired to each other. A call to
-`<service>.svc.gregale` from a developer environment targets the account's
-deployed app of that name (subject to its preview service-call policy), not the
-sibling developer environment, because developer sessions are not part of a
-project preview scope. Point an app at a
-sibling with that sibling's printed developer URL through your app's own
-configuration, or use [Dev Bridge](dev-bridge.md) against a named development
-environment.
-
 Developer environments have a separate per-plan quota from production apps and
 pull-request previews. They are still backed by the same preview lifecycle and
 lease; `gregale dev status` reports the account-wide budget so a local
 workspace cannot unexpectedly block a deploy or PR preview.
+
+### Call the other apps
+
+The apps started by one `gregale dev --all` call each other by name, the same
+way deployed project services do:
+
+```sh
+curl http://api.internal:10081/health      # the api app's developer environment
+curl http://api.svc.gregale:10081/health    # the same
+```
+
+Each app is named after its developer project (`apps/api` is `api`). A call by
+name reaches only the apps of the same `gregale dev --all` and never a deployed
+app: a name that is not running in the group fails instead of reaching
+production. Call a deployed service through its public URL. An app whose name
+is shorter than 3 characters (for example `ui`) cannot be called by name; the
+CLI says so when it starts, and that app runs outside the group, like a single
+`gregale dev`. Developer environments get no `GREGALE_SERVICE_<NAME>_URL`
+variables, so use the `.internal` names in code. See
+[ADR-20261025121530](adr/20261025121530-dev-all-namespace.md).
+
+The group's environments belong to the `--all` root: running
+`gregale dev --path apps/api` on its own starts a separate environment outside
+the group, whose `<service>.svc.gregale` calls reach the account's deployed
+app of that name (subject to its preview service-call policy). Environments
+left by a `dev --all` from an older CLI are not reused and expire with their
+lease.
