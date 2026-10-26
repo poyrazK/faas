@@ -8,18 +8,30 @@ from attrs import field as _attrs_field
 
 from ..types import UNSET, Unset
 
-T = TypeVar("T", bound="DeploymentResponseCompanionsItem")
+T = TypeVar("T", bound="DeploymentCompanion")
 
 
 @_attrs_define
-class DeploymentResponseCompanionsItem:
+class DeploymentCompanion:
+    """One companion of a deployment: identity, image, port and size. Environment values and secret grants are never
+    included.
+
+    """
+
     name: str
+    """Companion name."""
     image: str | Unset = UNSET
+    """Digest-pinned image reference."""
     preset: str | Unset = UNSET
+    """Built-in preset the companion uses, when any."""
     type_: str | Unset = UNSET
+    """init or sidecar."""
     port: int | Unset = UNSET
+    """Declared port; it also opens the public <app>--<name> hostname."""
     ram_mb: int | Unset = UNSET
+    """Reserved RAM in MB."""
     primary_ingress: bool | Unset = UNSET
+    """Whether the companion receives the app's public traffic."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -76,7 +88,7 @@ class DeploymentResponseCompanionsItem:
 
         primary_ingress = d.pop("primary_ingress", UNSET)
 
-        deployment_response_companions_item = cls(
+        deployment_companion = cls(
             name=name,
             image=image,
             preset=preset,
@@ -86,8 +98,8 @@ class DeploymentResponseCompanionsItem:
             primary_ingress=primary_ingress,
         )
 
-        deployment_response_companions_item.additional_properties = d
-        return deployment_response_companions_item
+        deployment_companion.additional_properties = d
+        return deployment_companion
 
     @property
     def additional_keys(self) -> list[str]:

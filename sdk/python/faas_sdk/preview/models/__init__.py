@@ -1257,6 +1257,7 @@ from .deployment_change import DeploymentChange
 from .deployment_change_after_type_3 import DeploymentChangeAfterType3
 from .deployment_change_before_type_3 import DeploymentChangeBeforeType3
 from .deployment_change_field import DeploymentChangeField
+from .deployment_companion import DeploymentCompanion
 from .deployment_configuration_status import DeploymentConfigurationStatus
 from .deployment_cron_activation_status import DeploymentCronActivationStatus
 from .deployment_cron_activation_status_reason import DeploymentCronActivationStatusReason
@@ -1290,7 +1291,6 @@ from .deployment_response_canary_preset import DeploymentResponseCanaryPreset
 from .deployment_response_check_capabilities import DeploymentResponseCheckCapabilities
 from .deployment_response_check_request import DeploymentResponseCheckRequest
 from .deployment_response_check_result import DeploymentResponseCheckResult
-from .deployment_response_companions_item import DeploymentResponseCompanionsItem
 from .deployment_response_deployed_via_type_1 import DeploymentResponseDeployedViaType1
 from .deployment_response_deployed_via_type_2_type_1 import DeploymentResponseDeployedViaType2Type1
 from .deployment_response_deployed_via_type_3_type_1 import DeploymentResponseDeployedViaType3Type1
@@ -7407,6 +7407,7 @@ __all__ = (
     "DeploymentChangeAfterType3",
     "DeploymentChangeBeforeType3",
     "DeploymentChangeField",
+    "DeploymentCompanion",
     "DeploymentConfigurationStatus",
     "DeploymentCronActivationStatus",
     "DeploymentCronActivationStatusReason",
@@ -7440,7 +7441,6 @@ __all__ = (
     "DeploymentResponseCheckCapabilities",
     "DeploymentResponseCheckRequest",
     "DeploymentResponseCheckResult",
-    "DeploymentResponseCompanionsItem",
     "DeploymentResponseDeployedViaType1",
     "DeploymentResponseDeployedViaType2Type1",
     "DeploymentResponseDeployedViaType3Type1",

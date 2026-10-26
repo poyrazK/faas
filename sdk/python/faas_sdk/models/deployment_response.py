@@ -51,13 +51,13 @@ if TYPE_CHECKING:
     from ..models.app_release_review import AppReleaseReview
     from ..models.build_plan import BuildPlan
     from ..models.database_switch import DatabaseSwitch
+    from ..models.deployment_companion import DeploymentCompanion
     from ..models.deployment_configuration_status import DeploymentConfigurationStatus
     from ..models.deployment_healthcheck import DeploymentHealthcheck
     from ..models.deployment_liveness_probe import DeploymentLivenessProbe
     from ..models.deployment_promotion_hold import DeploymentPromotionHold
     from ..models.deployment_readiness_probe import DeploymentReadinessProbe
     from ..models.deployment_release import DeploymentRelease
-    from ..models.deployment_response_companions_item import DeploymentResponseCompanionsItem
     from ..models.deployment_response_hosting_receipt_type_0 import DeploymentResponseHostingReceiptType0
     from ..models.deployment_response_override_env_secret_refs import DeploymentResponseOverrideEnvSecretRefs
     from ..models.deployment_stage_state import DeploymentStageState
@@ -232,7 +232,7 @@ class DeploymentResponse:
     nil for image deploys."""
     workflows: list[WorkflowSpec] | Unset = UNSET
     """Validated workflow definitions persisted with this immutable deployment revision."""
-    companions: list[DeploymentResponseCompanionsItem] | Unset = UNSET
+    companions: list[DeploymentCompanion] | Unset = UNSET
     """Companions this deployment carries: name, image, port and size. Environment values and secret grants are
     never included."""
     hosting_receipt: DeploymentResponseHostingReceiptType0 | None | Unset = UNSET
@@ -829,13 +829,13 @@ class DeploymentResponse:
         from ..models.app_release_review import AppReleaseReview
         from ..models.build_plan import BuildPlan
         from ..models.database_switch import DatabaseSwitch
+        from ..models.deployment_companion import DeploymentCompanion
         from ..models.deployment_configuration_status import DeploymentConfigurationStatus
         from ..models.deployment_healthcheck import DeploymentHealthcheck
         from ..models.deployment_liveness_probe import DeploymentLivenessProbe
         from ..models.deployment_promotion_hold import DeploymentPromotionHold
         from ..models.deployment_readiness_probe import DeploymentReadinessProbe
         from ..models.deployment_release import DeploymentRelease
-        from ..models.deployment_response_companions_item import DeploymentResponseCompanionsItem
         from ..models.deployment_response_hosting_receipt_type_0 import DeploymentResponseHostingReceiptType0
         from ..models.deployment_response_override_env_secret_refs import DeploymentResponseOverrideEnvSecretRefs
         from ..models.deployment_stage_state import DeploymentStageState
@@ -1244,11 +1244,11 @@ class DeploymentResponse:
                 workflows.append(workflows_item)
 
         _companions = d.pop("companions", UNSET)
-        companions: list[DeploymentResponseCompanionsItem] | Unset = UNSET
+        companions: list[DeploymentCompanion] | Unset = UNSET
         if _companions is not UNSET:
             companions = []
             for companions_item_data in _companions:
-                companions_item = DeploymentResponseCompanionsItem.from_dict(companions_item_data)
+                companions_item = DeploymentCompanion.from_dict(companions_item_data)
 
                 companions.append(companions_item)
 

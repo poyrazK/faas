@@ -92314,6 +92314,19 @@ components:
         error_code: { type: string }
         error: { type: string }
 
+    DeploymentCompanion:
+      type: object
+      description: "One companion of a deployment: identity, image, port and size. Environment values and secret grants are never included."
+      required: [name]
+      properties:
+        name: { type: string, description: "Companion name." }
+        image: { type: string, description: "Digest-pinned image reference." }
+        preset: { type: string, description: "Built-in preset the companion uses, when any." }
+        type: { type: string, description: "init or sidecar." }
+        port: { type: integer, description: "Declared port; it also opens the public <app>--<name> hostname." }
+        ram_mb: { type: integer, description: "Reserved RAM in MB." }
+        primary_ingress: { type: boolean, description: "Whether the companion receives the app's public traffic." }
+
     DeploymentResponse:
       description: "One deployment: id, app, source ref, build status, commit SHA, and lifecycle timestamps. The optional `has_overrides` and `override_*` fields are the persisted echo of the create-time overrides object (issue #460 / ADR-053); they round-trip via `GET /v1/apps/{slug}/deployments/{id}` so a customer can audit what their last deploy pinned. Env values are NEVER echoed — only the keys (`override_env_keys`); env_secrets refs ARE echoed because the ref shape is non-secret by design."
       type: object
@@ -92524,17 +92537,7 @@ components:
         companions:
           type: array
           description: "Companions this deployment carries: name, image, port and size. Environment values and secret grants are never included."
-          items:
-            type: object
-            required: [name]
-            properties:
-              name: { type: string }
-              image: { type: string }
-              preset: { type: string }
-              type: { type: string }
-              port: { type: integer }
-              ram_mb: { type: integer }
-              primary_ingress: { type: boolean }
+          items: { $ref: '#/components/schemas/DeploymentCompanion' }
         hosting_receipt:
           type: [object, "null"]
           additionalProperties: true

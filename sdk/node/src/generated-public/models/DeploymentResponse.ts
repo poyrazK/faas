@@ -5,6 +5,7 @@
 import type { AppReleaseReview } from './AppReleaseReview.js';
 import type { BuildPlan } from './BuildPlan.js';
 import type { DatabaseSwitch } from './DatabaseSwitch.js';
+import type { DeploymentCompanion } from './DeploymentCompanion.js';
 import type { DeploymentConfigurationStatus } from './DeploymentConfigurationStatus.js';
 import type { DeploymentHealthcheck } from './DeploymentHealthcheck.js';
 import type { DeploymentLivenessProbe } from './DeploymentLivenessProbe.js';
@@ -209,15 +210,7 @@ export type DeploymentResponse = {
   /**
    * Companions this deployment carries: name, image, port and size. Environment values and secret grants are never included.
    */
-  companions?: Array<{
-    name: string;
-    image?: string;
-    preset?: string;
-    type?: string;
-    port?: number;
-    ram_mb?: number;
-    primary_ingress?: boolean;
-  }>;
+  companions?: Array<DeploymentCompanion>;
   /**
    * Durable non-secret deployment evidence captured after readiness, including the resolved API profile, artifact identity, and post-readiness smoke result.
    */
