@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -88,4 +89,40 @@ func decisionLogField(t *testing.T, logs []byte, key string) string {
 		}
 	}
 	return ""
+}
+
+// The refusal names its cause in one log line per interval, so a read error
+// that rc.296 swallowed identifies itself; a burst does not flood the log.
+func TestPublicRoutingRefusalLogsCauseRateLimited(t *testing.T) {
+	h, backend, _ := newTestHandler(t)
+	var logs bytes.Buffer
+	h.log = slog.New(slog.NewJSONHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	h.backend = &publicSnapshotBackend{fakeBackend: backend}
+	h.WithPublicRoutingPolicy(func(_ context.Context, app App, inputs PublicRoutingInputs) (PublicRoutingSnapshot, error) {
+		return publicSnapshotFixture(app, inputs), errors.New("routing read: SQLSTATE 57014")
+	})
+	for range 3 {
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "http://"+backend.host+"/", nil))
+		if rec.Code != http.StatusServiceUnavailable {
+			t.Fatalf("status=%d", rec.Code)
+		}
+	}
+	var lines []map[string]any
+	for _, line := range bytes.Split(bytes.TrimSpace(logs.Bytes()), []byte("\n")) {
+		var row map[string]any
+		if err := json.Unmarshal(line, &row); err != nil {
+			t.Fatal(err)
+		}
+		if row["msg"] == "gateway: public routing refused with policy_unavailable" {
+			lines = append(lines, row)
+		}
+	}
+	if len(lines) != 1 || lines[0]["stage"] != "routing_read_error" || lines[0]["err"] != "routing read: SQLSTATE 57014" || lines[0]["app_id"] != backend.app.ID {
+		t.Fatalf("refusal log lines = %+v; want one naming the read error", lines)
+	}
+	h.publicRoutingRefusals.next.Store(0)
+	if ok, suppressed := h.publicRoutingRefusals.allow(time.Now()); !ok || suppressed != 2 {
+		t.Fatalf("after the interval: allow=%v suppressed=%d, want true 2", ok, suppressed)
+	}
 }

@@ -7,6 +7,8 @@ import (
 	"errors"
 	"net/http"
 	"sync"
+	"sync/atomic"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/lruutil"
 
@@ -131,21 +133,15 @@ func (h *Handler) pinPublicRoutingPolicy(w http.ResponseWriter, r *http.Request,
 		if handleForwardRequestCancellation(w, r, true) {
 			return true
 		}
-		recordTrafficPolicyStage(r.Context(), publicRoutingReadStage(err, readErr))
-		h.writeTrafficPolicyUnavailable(w, r)
-		return true
+		return h.refusePublicRouting(w, r, app, publicRoutingReadStage(err, readErr), err, nil)
 	}
 	encoded, err := json.Marshal(source)
 	if err != nil {
-		recordTrafficPolicyStage(r.Context(), "routing_encode")
-		h.writeTrafficPolicyUnavailable(w, r)
-		return true
+		return h.refusePublicRouting(w, r, app, "routing_encode", err, nil)
 	}
 	var frozen PublicRoutingSnapshot
 	if err := json.Unmarshal(encoded, &frozen); err != nil {
-		recordTrafficPolicyStage(r.Context(), "routing_encode")
-		h.writeTrafficPolicyUnavailable(w, r)
-		return true
+		return h.refusePublicRouting(w, r, app, "routing_encode", err, nil)
 	}
 	h.selectPublicRoutingDeployment(r, app, inputs, &frozen)
 	if frozen.SelectedDeploymentID == "" && !inputs.Async && frozen.ReleaseVerdict != "gone" && frozen.ReleaseVerdict != "conflict" &&
@@ -161,22 +157,61 @@ func (h *Handler) pinPublicRoutingPolicy(w http.ResponseWriter, r *http.Request,
 				"No deployment available", "The app has no routable deployment. Retry after a deployment is available."))
 			return true
 		}
-		recordTrafficPolicyStage(r.Context(), publicRoutingSelectionStage(frozen))
-		h.writeTrafficPolicyUnavailable(w, r)
-		return true
+		return h.refusePublicRouting(w, r, app, publicRoutingSelectionStage(frozen), nil, &frozen)
 	}
 	proof, err := json.Marshal(struct {
 		Base    string
 		Routing json.RawMessage
 	}{TrafficPolicyRevision(r.Context()), encoded})
 	if err != nil {
-		recordTrafficPolicyStage(r.Context(), "routing_encode")
-		h.writeTrafficPolicyUnavailable(w, r)
-		return true
+		return h.refusePublicRouting(w, r, app, "routing_encode", err, nil)
 	}
 	ctx := context.WithValue(r.Context(), publicRoutingSnapshotKey{}, frozen)
 	*r = *r.WithContext(context.WithValue(ctx, effectiveTrafficPolicyKey{}, policyDigest(proof)))
 	return false
+}
+
+// publicRoutingRefusalLogInterval bounds the refusal log to one line per
+// gateway per interval; the traffic decision records every refusal's stage.
+const publicRoutingRefusalLogInterval = 10 * time.Second
+
+type publicRoutingRefusalLog struct {
+	next       atomic.Int64 // unix nanoseconds before which lines are suppressed
+	suppressed atomic.Int64
+}
+
+// allow reports whether a line may be written now, and how many refusals
+// were not logged since the previous line.
+func (l *publicRoutingRefusalLog) allow(now time.Time) (bool, int64) {
+	next := l.next.Load()
+	if now.UnixNano() < next || !l.next.CompareAndSwap(next, now.Add(publicRoutingRefusalLogInterval).UnixNano()) {
+		l.suppressed.Add(1)
+		return false, 0
+	}
+	return true, l.suppressed.Swap(0)
+}
+
+// refusePublicRouting refuses with policy_unavailable, records the stage on
+// the traffic decision and logs the cause (rate-limited). The read error was
+// previously swallowed, so rc.296's refusals could not be attributed.
+func (h *Handler) refusePublicRouting(w http.ResponseWriter, r *http.Request, app App, stage string, err error, snapshot *PublicRoutingSnapshot) bool {
+	recordTrafficPolicyStage(r.Context(), stage)
+	if h.log != nil {
+		if ok, suppressed := h.publicRoutingRefusals.allow(time.Now()); ok {
+			attrs := []any{"app_id", app.ID, "stage", stage, "suppressed", suppressed}
+			if err != nil {
+				attrs = append(attrs, "err", err)
+			}
+			if snapshot != nil {
+				attrs = append(attrs, "weights", len(snapshot.Weights), "release_verdict", snapshot.ReleaseVerdict,
+					"host_checked", snapshot.HostChecked, "host_allowed", snapshot.HostAllowed,
+					"revision_checked", snapshot.RevisionChecked, "revision_allowed", snapshot.RevisionAllowed)
+			}
+			h.log.Warn("gateway: public routing refused with policy_unavailable", attrs...)
+		}
+	}
+	h.writeTrafficPolicyUnavailable(w, r)
+	return true
 }
 
 // publicRoutingReadStage classifies a refused routing read for the traffic
