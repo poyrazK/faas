@@ -2129,7 +2129,7 @@ func (e *Engine) restartApp(ctx context.Context, appID, wakeID string, refreshRu
 	}
 	if !e.ownsApp(app) {
 		if refreshRuntimeConfig {
-			return CoordOutcome{}, fmt.Errorf("sched: runtime config restart: app %s is owned by node %s", appID, app.NodeID)
+			return CoordOutcome{}, fmt.Errorf("sched: runtime config restart: app %s is owned by node %s: %w", appID, app.NodeID, ErrAppOwnedByAnotherNode)
 		}
 		return CoordOutcome{}, nil
 	}
