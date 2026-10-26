@@ -5255,7 +5255,7 @@ func (m *MemStore) PreviewAppByProjectWorkload(_ context.Context, accountID, pro
 	defer m.mu.Unlock()
 	for _, app := range m.apps {
 		if app.AccountID == accountID && app.ProjectID == projectID &&
-			app.PreviewPrNumber == previewPRNumber && app.WorkloadName == workloadName &&
+			app.PreviewPrNumber == previewPRNumber && api.SameServiceName(app.WorkloadName, workloadName) &&
 			app.PreviewOfSlug != "" && app.Status != AppDeleted {
 			return app, nil
 		}
@@ -5263,7 +5263,7 @@ func (m *MemStore) PreviewAppByProjectWorkload(_ context.Context, accountID, pro
 	return App{}, ErrNotFound
 }
 
-// ProjectAppByWorkload mirrors PgStore: a case-folded production alias in
+// ProjectAppByWorkload mirrors PgStore: a service-name production alias in
 // the owner's project, ErrConflict when two apps share it.
 func (m *MemStore) ProjectAppByWorkload(_ context.Context, accountID, projectID, name string) (App, error) {
 	m.mu.Lock()
@@ -5271,7 +5271,7 @@ func (m *MemStore) ProjectAppByWorkload(_ context.Context, accountID, projectID,
 	var found App
 	for _, app := range m.apps {
 		if app.AccountID != accountID || app.ProjectID == "" || app.ProjectID != projectID ||
-			app.PreviewOfSlug != "" || app.Status == AppDeleted || !strings.EqualFold(app.WorkloadName, name) {
+			app.PreviewOfSlug != "" || app.Status == AppDeleted || !api.SameServiceName(app.WorkloadName, name) {
 			continue
 		}
 		if found.ID != "" {
@@ -6249,6 +6249,19 @@ func (m *MemStore) ListOwnedCronsByNodeID(_ context.Context, nodeID string) ([]C
 		}
 	}
 	return out, nil
+}
+
+// OwnedAppRAMByNode mirrors PgStore.OwnedAppRAMByNode.
+func (m *MemStore) OwnedAppRAMByNode(_ context.Context) (map[string]int64, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	owned := make(map[string]int64)
+	for _, a := range m.apps {
+		if a.NodeID != "" && a.Status != AppDeleted {
+			owned[a.NodeID] += int64(a.RAMMB)
+		}
+	}
+	return owned, nil
 }
 
 // ListUnplacedApps mirrors pkg/state/pgstore.go: ListUnplacedApps.
@@ -17448,6 +17461,24 @@ func (m *MemStore) ComputeNodeUsedMBByNode(ctx context.Context, nodeIDs []string
 			return nil, err
 		}
 		used[nodeID] = value
+	}
+	return used, nil
+}
+
+// ComputeNodeUsedVCPUByNode mirrors PgStore's fleet-wide guest vCPU
+// aggregate: each live instance's captured capacity_vcpu.
+func (m *MemStore) ComputeNodeUsedVCPUByNode(_ context.Context, nodeIDs []string) (map[string]int64, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	used := make(map[string]int64, len(nodeIDs))
+	for _, nodeID := range nodeIDs {
+		used[nodeID] = 0
+	}
+	for _, ins := range m.instances {
+		if _, ok := used[ins.NodeID]; !ok || !nodeUsageCounts(State(ins.State)) {
+			continue
+		}
+		used[ins.NodeID] += m.capacityInstanceResources[ins.ID].VCPU
 	}
 	return used, nil
 }

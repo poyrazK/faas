@@ -72784,6 +72784,32 @@ func (q *Queries) QueueAutomaticRouteCheck(ctx context.Context, db DBTX, arg Que
 	return err
 }
 
+const queueBindingHasInFlight = `-- name: QueueBindingHasInFlight :one
+select exists (
+  select 1 from invocations i join queue_bindings b on b.app_id=i.app_id and b.account_id=i.account_id
+  where b.id=$1::uuid and b.app_id=$2::uuid
+    and ($3::text is null or i.deployment_scope=$3::text)
+    and i.source='queue' and i.state='dispatching' and i.lease_expires_at > now()
+    and (b.deployment_scope='' or i.deployment_scope=b.deployment_scope)
+    and (i.queue_binding_id=b.id or (b.deployment_scope='' and i.queue_binding_id is null and i.queue_name=b.queue_name))
+)::boolean as in_flight
+`
+
+type QueueBindingHasInFlightParams struct {
+	BindingID       pgtype.UUID
+	AppID           pgtype.UUID
+	DeploymentScope pgtype.Text
+}
+
+// Whether QueueStateForBinding would count any in-flight message, without
+// counting the backlog.
+func (q *Queries) QueueBindingHasInFlight(ctx context.Context, db DBTX, arg QueueBindingHasInFlightParams) (bool, error) {
+	row := db.QueryRow(ctx, queueBindingHasInFlight, arg.BindingID, arg.AppID, arg.DeploymentScope)
+	var in_flight bool
+	err := row.Scan(&in_flight)
+	return in_flight, err
+}
+
 const queueBindingHistoryByID = `-- name: QueueBindingHistoryByID :one
 select id, account_id, app_id, name, queue_name, mode, workload_class, enabled, max_concurrency, retry_policy, created_at, updated_at, retired_at, deployment_scope, environment_id, org_id from queue_bindings where id=$1
 and app_id=$2 and account_id=$3
@@ -73464,6 +73490,75 @@ func (q *Queries) QueueConsumerUpdateTrigger(ctx context.Context, db DBTX, arg Q
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const queueDepthForBinding = `-- name: QueueDepthForBinding :one
+with b as (
+  select id, account_id, queue_name, deployment_scope from queue_bindings
+  where id=$4::uuid and app_id=$1::uuid
+)
+select
+  (select count(*) from (
+     select 1 from invocations i, b
+     where i.app_id=$1::uuid and i.queue_binding_id=b.id and i.account_id=b.account_id
+       and i.source='queue' and i.state in ('pending','dispatching')
+       and ($2::text is null or i.deployment_scope=$2::text)
+       and (b.deployment_scope='' or i.deployment_scope=b.deployment_scope)
+     limit $3::integer) own)::bigint
+  + (select count(*) from (
+     select 1 from invocations i, b
+     where b.deployment_scope='' and i.app_id=$1::uuid and i.queue_binding_id is null
+       and i.queue_name=b.queue_name and i.account_id=b.account_id
+       and i.source='queue' and i.state in ('pending','dispatching')
+       and ($2::text is null or i.deployment_scope=$2::text)
+     limit $3::integer) legacy)::bigint as depth
+`
+
+type QueueDepthForBindingParams struct {
+	AppID           pgtype.UUID
+	DeploymentScope pgtype.Text
+	RowLimit        int32
+	BindingID       pgtype.UUID
+}
+
+// QueueStateForBinding's depth up to row_limit per branch: the binding's own
+// messages, then legacy unassigned work under its name. Each branch reads an
+// index range and stops at the limit; the caller clamps the sum.
+func (q *Queries) QueueDepthForBinding(ctx context.Context, db DBTX, arg QueueDepthForBindingParams) (int32, error) {
+	row := db.QueryRow(ctx, queueDepthForBinding,
+		arg.AppID,
+		arg.DeploymentScope,
+		arg.RowLimit,
+		arg.BindingID,
+	)
+	var depth int32
+	err := row.Scan(&depth)
+	return depth, err
+}
+
+const queueDepthInScope = `-- name: QueueDepthInScope :one
+select count(*)::bigint as depth from (
+  select 1 from invocations
+  where app_id=$1::uuid and deployment_scope=$2::text
+    and source='queue' and state in ('pending','dispatching')
+  limit $3::integer
+) bounded
+`
+
+type QueueDepthInScopeParams struct {
+	AppID           pgtype.UUID
+	DeploymentScope string
+	RowLimit        int32
+}
+
+// QueueStateInScope's depth, counted only up to row_limit: worker scaling
+// needs no more than the depth that saturates the pool (ADR-20261022105723
+// amendment 2026-10-24).
+func (q *Queries) QueueDepthInScope(ctx context.Context, db DBTX, arg QueueDepthInScopeParams) (int64, error) {
+	row := db.QueryRow(ctx, queueDepthInScope, arg.AppID, arg.DeploymentScope, arg.RowLimit)
+	var depth int64
+	err := row.Scan(&depth)
+	return depth, err
 }
 
 const queueExpiredApplicationStandardExceptions = `-- name: QueueExpiredApplicationStandardExceptions :one

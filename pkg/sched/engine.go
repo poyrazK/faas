@@ -4979,6 +4979,27 @@ func (e *Engine) nodeCPUUsageForNodes(ctx context.Context, nodes []state.Compute
 	return used
 }
 
+// nodeVCPUUsageForNodes is the store's fleet-wide guest vCPU booking per
+// node, for the same reason as nodeCPUUsageForNodes: another owner's
+// instances on a shared node are not in this schedd's ledger. A store without
+// the aggregate, or a failed read, leaves placement on the ledger alone.
+func (e *Engine) nodeVCPUUsageForNodes(ctx context.Context, nodes []state.ComputeNode) map[string]int64 {
+	batcher, ok := e.store.(state.ComputeNodeVCPUUsageBatcher)
+	if !ok || len(nodes) == 0 {
+		return nil
+	}
+	ids := make([]string, 0, len(nodes))
+	for _, node := range nodes {
+		ids = append(ids, node.ID)
+	}
+	used, err := batcher.ComputeNodeUsedVCPUByNode(ctx, ids)
+	if err != nil {
+		e.log.Warn("sched: placement: bulk compute node used_vcpu read failed", "err", err)
+		return nil
+	}
+	return used
+}
+
 // choosePlacement picks a compute_node for the next wake using the
 // pure ChoosePlacement chooser (placement.go). It loads the live
 // fleet from the store and the per-node used_mb aggregate, both
@@ -5091,20 +5112,20 @@ func (e *Engine) loadPlacementSnapshotFresh(ctx context.Context, r Request) (pla
 	}
 	// One pass over the fleet — use fresh vmmd capacity where available, and
 	// resolve all misses through one bulk store aggregate (Tier A1). The
-	// ledger's per-node UsedVCPU remains an independent local reservation view.
-	// The memory and CPU aggregates are independent reads (ADR-1741).
-	var usedMB, usedCPUMillicores map[string]int64
+	// memory, CPU and vCPU aggregates are independent reads (ADR-1741).
+	var usedMB, usedCPUMillicores, fleetVCPU map[string]int64
 	concurrently(
 		func() { usedMB = e.nodeUsageForNodes(ctx, nodes) },
 		func() { usedCPUMillicores = e.nodeCPUUsageForNodes(ctx, nodes) },
+		func() { fleetVCPU = e.nodeVCPUUsageForNodes(ctx, nodes) },
 	)
 	usedVCPU := make(map[string]int64, len(nodes))
 	for _, n := range nodes {
-		// Tier A2: per-node vCPU is ledger-authoritative. The chooser
-		// uses this to enforce compute_nodes.vcpu_budget per node;
-		// absent or zero is treated as 0 by the chooser (the
-		// per-node budget is the gate, not the absolute number).
-		usedVCPU[n.ID] = int64(e.ledger.EffectiveVCPUForNode(n.ID, n.VCPUBudget))
+		// Tier A2: the chooser enforces compute_nodes.vcpu_budget per node
+		// against the larger of this ledger's booking and the store's
+		// fleet-wide one, which also counts other owners' instances on a
+		// shared node; absent or zero is treated as 0 by the chooser.
+		usedVCPU[n.ID] = int64(e.ledger.EffectiveFleetVCPUForNode(n.ID, fleetVCPU[n.ID], n.VCPUBudget))
 		// ADR-1151: under quiet pause admission both CPU gates count only
 		// active instances, as Admit does; without it these are bookings.
 		usedCPUMillicores[n.ID] = e.ledger.EffectiveCPUMillicoresForNode(n.ID, usedCPUMillicores[n.ID], cpuBudgetMillicores(n))
@@ -5338,16 +5359,19 @@ func (e *Engine) ClaimUnplaced(ctx context.Context, appID string) error {
 	if err != nil {
 		return fmt.Errorf("sched: claim unplaced: lookup account: %w", err)
 	}
-	limits := api.MustLimitsFor(acct.Plan)
-	placement, err := e.choosePlacementLocked(ctx, Request{
-		AppID:          appID,
-		RAMMB:          app.RAMMB,
-		VCPU:           limits.VCPU,
-		CPUMillicores:  effectiveAppCPUMillicores(app),
-		MaxConcurrency: app.MaxConcurrency,
-	})
-	if err != nil {
-		return fmt.Errorf("sched: claim unplaced: choose: %w", err)
+	placement, ok := e.chooseOwnerByLoad(ctx, app)
+	if !ok {
+		limits := api.MustLimitsFor(acct.Plan)
+		placement, err = e.choosePlacementLocked(ctx, Request{
+			AppID:          appID,
+			RAMMB:          app.RAMMB,
+			VCPU:           limits.VCPU,
+			CPUMillicores:  effectiveAppCPUMillicores(app),
+			MaxConcurrency: app.MaxConcurrency,
+		})
+		if err != nil {
+			return fmt.Errorf("sched: claim unplaced: choose: %w", err)
+		}
 	}
 	if err := e.store.SetAppNodeID(ctx, appID, placement.NodeID); err != nil {
 		if errors.Is(err, state.ErrConflict) {

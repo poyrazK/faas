@@ -248,6 +248,8 @@ What to expect:
   resumes as it was.
 - **The restore point must be inside the database's restore window**,
   otherwise the request is refused before anything changes.
+- **An account runs at most three switches at once.** A fourth is refused
+  with `database_switches_active` (429) until one finishes or is cancelled.
 
 After a switch, rolling back to a release whose migration it undid is refused
 with `rollback_target_database_restored`, and automated rollbacks cannot go
@@ -257,9 +259,10 @@ rollbacks no longer list the undone release commands as crossed.
 `gregale rollback switches my-api` lists an app's switches and `gregale
 rollback switch my-api <id> --wait` follows one. The API is
 `"restore_databases": true` on `POST /v1/apps/{slug}/rollback` (it needs
-`"acknowledge_releases": true` and the `postgres:manage` scope), then
+`"acknowledge_releases": true`, the `postgres:manage` scope and a verified
+email, like a database restore), then
 `GET /v1/apps/{slug}/database-switches/{id}` and
-`POST /v1/apps/{slug}/database-switches/{id}/cancel`.
+`POST /v1/apps/{slug}/database-switches/{id}/cancel` (also `postgres:manage`).
 
 ## Release gates
 

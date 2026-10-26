@@ -72685,6 +72685,13 @@ CREATE INDEX invocations_dispatching_due_idx ON public.invocations USING btree (
 
 
 --
+-- Name: invocations_drain_due_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX invocations_drain_due_idx ON public.invocations USING btree (due_at, id) WHERE ((state = 'pending'::text) AND ((source <> 'queue'::text) OR ((queue_name = ''::text) AND (queue_binding_id IS NULL))));
+
+
+--
 -- Name: invocations_due_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -72731,6 +72738,20 @@ CREATE INDEX invocations_platform_tenant_idx ON public.invocations USING btree (
 --
 
 CREATE INDEX invocations_queue_binding_scope_idx ON public.invocations USING btree (app_id, queue_binding_id, deployment_scope, state, created_at) WHERE ((source = 'queue'::text) AND (state = ANY (ARRAY['pending'::text, 'dispatching'::text, 'dead_letter'::text])));
+
+
+--
+-- Name: invocations_queue_lease_binding_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX invocations_queue_lease_binding_idx ON public.invocations USING btree (app_id, queue_binding_id, due_at, created_at, id) WHERE ((source = 'queue'::text) AND (state = 'pending'::text) AND (queue_binding_id IS NOT NULL));
+
+
+--
+-- Name: invocations_queue_lease_name_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX invocations_queue_lease_name_idx ON public.invocations USING btree (app_id, queue_name, due_at, created_at, id) WHERE ((source = 'queue'::text) AND (state = 'pending'::text) AND (queue_binding_id IS NULL));
 
 
 --
