@@ -65,7 +65,8 @@ def sync_detailed(
     allowance is not billed until managed PostgreSQL has invoicing.
 
     Args:
-        body (ManagedPostgresOverageRequest):
+        body (ManagedPostgresOverageRequest): Turn an account's managed PostgreSQL compute overage
+            on or off (ADR-20261025094915).
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -98,7 +99,8 @@ def sync(
     allowance is not billed until managed PostgreSQL has invoicing.
 
     Args:
-        body (ManagedPostgresOverageRequest):
+        body (ManagedPostgresOverageRequest): Turn an account's managed PostgreSQL compute overage
+            on or off (ADR-20261025094915).
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -126,7 +128,8 @@ async def asyncio_detailed(
     allowance is not billed until managed PostgreSQL has invoicing.
 
     Args:
-        body (ManagedPostgresOverageRequest):
+        body (ManagedPostgresOverageRequest): Turn an account's managed PostgreSQL compute overage
+            on or off (ADR-20261025094915).
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -157,7 +160,8 @@ async def asyncio(
     allowance is not billed until managed PostgreSQL has invoicing.
 
     Args:
-        body (ManagedPostgresOverageRequest):
+        body (ManagedPostgresOverageRequest): Turn an account's managed PostgreSQL compute overage
+            on or off (ADR-20261025094915).
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

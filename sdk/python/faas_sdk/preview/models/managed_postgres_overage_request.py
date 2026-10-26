@@ -10,6 +10,8 @@ T = TypeVar("T", bound="ManagedPostgresOverageRequest")
 
 @_attrs_define
 class ManagedPostgresOverageRequest:
+    """Turn an account's managed PostgreSQL compute overage on or off (ADR-20261025094915)."""
+
     enabled: bool
 
     def to_dict(self) -> dict[str, Any]:
