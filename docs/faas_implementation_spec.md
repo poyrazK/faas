@@ -1997,6 +1997,14 @@ same values, so rules and panels aggregate with `max`. Alerts are `warn`
 |---|---|---|---|
 | `apid_idempotency_key_reused_total` | `route` | `pkg/apid/apidserver/idempotency_metrics.go` | Requests refused with `422 idempotency_key_reused` because their key was bound to a different request. `route` is the matched route pattern (`POST /v1/apps/{slug}/inbox`). A rising route names a client that reuses keys. |
 
+### 12.11 Public-edge traffic security enforcement (ADR-570, amendment of 2026-10-26)
+
+| Metric name | Labels | Producer | Semantics |
+|---|---|---|---|
+| `gatewayd_public_traffic_security_enforced` | — | `cmd/gatewayd-public/traffic_security_peers.go` | 1 while every compute gateway this edge may dial freshly reports traffic-security wiring and the edge requires the `X-Faas-Traffic-Security` snapshot. 0 while a gateway predates it (N-1), lacks the wiring, or its report is stale or retired, and answers pass unverified. Expect 0 during a rollout; a 0 that outlives one, with every node on the same release, means a gateway stopped reporting. |
+| `gatewayd_public_traffic_security_legacy_gateways` | — | same | How many gateways the edge may dial lack a fresh wiring report. |
+| `gatewayd_public_traffic_security_unverified_total` | — | same, through `pkg/gateway` `TrafficSecurityPeers.Unverified` | Answers forwarded without snapshot verification (a stamped value from such a fleet is dropped, never trusted). |
+
 ---
 
 ## 13. RAM budget ledger (enforced as systemd slices)

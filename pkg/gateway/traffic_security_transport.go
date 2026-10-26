@@ -40,10 +40,31 @@ type publicTrafficSecurity struct {
 	registry *trafficrevocation.Registry
 	cancel   context.CancelCauseFunc
 	release  func()
+	// peers is non-nil only while a compute gateway behind this edge predates
+	// the snapshot header (release N-1); answers then pass unverified.
+	peers TrafficSecurityPeers
+}
+
+// TrafficSecurityPeers reports whether every compute gateway an edge may dial
+// stamps the traffic security snapshot, and counts answers the edge forwards
+// without verifying one.
+type TrafficSecurityPeers interface {
+	Required() bool
+	Unverified()
 }
 
 func (p *InternalReverseProxy) WithTrafficRevocations(registry *trafficrevocation.Registry) *InternalReverseProxy {
 	p.trafficRevocations = registry
+	return p
+}
+
+// WithTrafficSecurityPeers makes the snapshot header mandatory only while
+// peers reports that every compute gateway stamps it. Release N of the public
+// edge runs beside N-1 compute gateways during a rollout
+// (docs/release-compatibility.md); refusing their unstamped answers turned
+// every successful response into a 503 (2026-10-26, rc.295, 10:39–12:14 UTC).
+func (p *InternalReverseProxy) WithTrafficSecurityPeers(peers TrafficSecurityPeers) *InternalReverseProxy {
+	p.trafficSecurityPeers = peers
 	return p
 }
 
@@ -53,6 +74,9 @@ func (p *InternalReverseProxy) publicTrafficContext(parent context.Context) (con
 	}
 	ctx, cancel := reqbudget.WithCancellationFence(parent)
 	owner := &publicTrafficSecurity{registry: p.trafficRevocations, cancel: cancel}
+	if p.trafficSecurityPeers != nil && !p.trafficSecurityPeers.Required() {
+		owner.peers = p.trafficSecurityPeers
+	}
 	ctx = context.WithValue(ctx, publicTrafficSecurityKey{}, owner)
 	return ctx, func() {
 		if owner.release != nil {
@@ -73,6 +97,12 @@ func bindPublicTrafficSecurity(r *http.Request, resp *http.Response) error {
 	}
 	if len(values) == 0 && resp.StatusCode >= http.StatusBadRequest && !isLongLivedResponse(resp.StatusCode, resp.Header) {
 		return nil // No owner exists for a pre-admission platform error.
+	}
+	if owner.peers != nil {
+		// An N-1 gateway stamps nothing and does not strip a guest's copy, so
+		// any value here is untrusted: drop it and forward as N-1 did.
+		owner.peers.Unverified()
+		return nil
 	}
 	if len(values) != 1 {
 		return trafficrevocation.ErrUnavailable

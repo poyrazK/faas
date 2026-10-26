@@ -139,7 +139,7 @@ func gatewayTrafficWriteResult(n int64, err error) error {
 	return nil
 }
 
-func (s *PgStore) ListServingGatewayTrafficRuntime(ctx context.Context) ([]ServingGatewayTrafficRuntime, error) {
+func (s *pgCore) ListServingGatewayTrafficRuntime(ctx context.Context) ([]ServingGatewayTrafficRuntime, error) {
 	rows, err := sqlc.New().ListServingGatewayTrafficRuntime(ctx, s.pool, api.TrafficRuntimeObservationMaxNodes+1)
 	if err != nil {
 		return nil, fmt.Errorf("list gateway traffic observations: %w", err)
