@@ -231,7 +231,7 @@ column, not a `deleted_at` timestamp).
 Source: `cmd/apid/preview_janitor.go`,
 `pkg/state/pgstore.go::ListPreviewsForTeardown + SetPreviewPrState +
 SoftDeleteAppCascade`, `pkg/wire/metrics.go::previewJanitorOutcomes`.
-Metric: `faas_preview_janitor_outcomes_total{outcome="ok|failed|torn_down|row_failed"}`.
+Metric: `apid_preview_janitor_outcomes_total{outcome="ok|failed|torn_down|row_failed"}`.
 Alert: `FaasPreviewJanitorFailing` fires when a sweep (`failed`) or one preview
 (`row_failed`) keeps failing for 15 minutes.
 
@@ -245,7 +245,7 @@ Alert: `FaasPreviewJanitorFailing` fires when a sweep (`failed`) or one preview
   `apps.status='active'` (the janitor's two writes
   interrupted by a crash; the recovery sweep on the next tick
   must finish the tombstone — see ADR-095 §"PR-C corrections").
-- `faas_preview_janitor_outcomes_total{outcome="failed"}` is
+- `apid_preview_janitor_outcomes_total{outcome="failed"}` is
   increasing — a tick is failing every 5 minutes; `row_failed` increasing —
   one preview cannot be claimed or torn down (look for `preview janitor: claim
   teardown failed` or `tombstone failed` with its `app_id`).
@@ -371,7 +371,7 @@ will reap the instance.
 ### Silence
 
 Janitor failure is per-tick — a single failure logs a Warn
-and is observed via `faas_preview_janitor_outcomes_total
+and is observed via `apid_preview_janitor_outcomes_total
 {outcome="failed"}`. The cron continues to the next tick.
 There is no fleet alert yet; rely on the customer's support
 ticket for the signal.

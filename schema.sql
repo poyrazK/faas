@@ -31030,6 +31030,31 @@ CREATE TABLE public.audit_log (
 
 
 --
+-- Name: audit_log_anchors; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.audit_log_anchors (
+    seq bigint NOT NULL,
+    window_start timestamp with time zone NOT NULL,
+    window_end timestamp with time zone NOT NULL,
+    row_count bigint NOT NULL,
+    rows_digest text NOT NULL,
+    prev_mac text NOT NULL,
+    mac text NOT NULL,
+    key_id text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT audit_log_anchors_check CHECK ((window_end > window_start)),
+    CONSTRAINT audit_log_anchors_check1 CHECK (((seq = 1) = (prev_mac = ''::text))),
+    CONSTRAINT audit_log_anchors_key_id_check CHECK ((key_id ~ '^[0-9a-f]{16}$'::text)),
+    CONSTRAINT audit_log_anchors_mac_check CHECK ((mac ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT audit_log_anchors_prev_mac_check CHECK (((prev_mac = ''::text) OR (prev_mac ~ '^[0-9a-f]{64}$'::text))),
+    CONSTRAINT audit_log_anchors_row_count_check CHECK ((row_count >= 0)),
+    CONSTRAINT audit_log_anchors_rows_digest_check CHECK ((rows_digest ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT audit_log_anchors_seq_check CHECK ((seq > 0))
+);
+
+
+--
 -- Name: automatic_route_checks; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -56966,6 +56991,14 @@ ALTER TABLE ONLY public.audit_event_outbox
 
 ALTER TABLE ONLY public.audit_event_outbox
     ADD CONSTRAINT audit_event_outbox_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: audit_log_anchors audit_log_anchors_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.audit_log_anchors
+    ADD CONSTRAINT audit_log_anchors_pkey PRIMARY KEY (seq);
 
 
 --

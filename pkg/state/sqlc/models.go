@@ -1898,6 +1898,18 @@ type AuditLog struct {
 	Data         []byte
 }
 
+type AuditLogAnchor struct {
+	Seq         int64
+	WindowStart pgtype.Timestamptz
+	WindowEnd   pgtype.Timestamptz
+	RowCount    int64
+	RowsDigest  string
+	PrevMac     string
+	Mac         string
+	KeyID       string
+	CreatedAt   pgtype.Timestamptz
+}
+
 type AutomaticRouteCheck struct {
 	DeploymentID       pgtype.UUID
 	AppID              pgtype.UUID
