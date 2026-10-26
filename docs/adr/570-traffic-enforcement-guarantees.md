@@ -1667,6 +1667,13 @@ observation interval (2 s):
   forged snapshot could otherwise fill the edge's scope and exchange bounds.
   Compute gateways that have the fence still enforce it at their own
   admission.
+- **N-1 streams.** An N-1 gateway marks a stream only with
+  `Streaming-Status: streaming|upgrade-bypass`, the rule its own edge used. It
+  never sends the long-lived session header. While answers pass unverified,
+  the edge also treats such an answer as long-lived when it carries neither
+  the session header nor a compute response deadline, which every N gateway
+  writes. Without this rule, every SSE or streaming answer from an N-1 node
+  was cut at the public request budget.
 - The edge starts unverified until its first roster read, and keeps its last
   decision while the roster cannot be read.
 - Metrics: `gatewayd_public_traffic_security_enforced` (1 or 0),

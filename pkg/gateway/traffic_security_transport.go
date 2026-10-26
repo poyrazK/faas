@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/realtime"
 	"github.com/onebox-faas/faas/pkg/reqbudget"
 	"github.com/onebox-faas/faas/pkg/trafficrevocation"
@@ -83,6 +84,29 @@ func (p *InternalReverseProxy) publicTrafficContext(parent context.Context) (con
 			owner.release()
 		}
 		cancel(nil)
+	}
+}
+
+// isUnverifiedPeerStream reports a stream from an N-1 compute gateway. That
+// release marks a stream only with Streaming-Status, the rule its own edge
+// used, and sends none of the response controls (session, deadline) an N
+// gateway writes. Only an answer this edge forwards unverified, while a gateway
+// it may dial predates the snapshot, may use the old rule; otherwise the edge
+// cut every SSE answer from that node at the request budget.
+func isUnverifiedPeerStream(r *http.Request, resp *http.Response) bool {
+	owner, _ := r.Context().Value(publicTrafficSecurityKey{}).(*publicTrafficSecurity)
+	if owner == nil || owner.peers == nil ||
+		len(resp.Header.Values(trafficResponseSessionHeader)) != 0 || len(resp.Header.Values(trafficResponseDeadlineHeader)) != 0 {
+		return false
+	}
+	if resp.StatusCode != http.StatusSwitchingProtocols && (resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusBadRequest) {
+		return false
+	}
+	switch strings.ToLower(strings.TrimSpace(resp.Header.Get(api.StreamingStatusHeader))) {
+	case string(api.StreamingStatusStreaming), string(api.StreamingStatusUpgradeBypass):
+		return true
+	default:
+		return false
 	}
 }
 
