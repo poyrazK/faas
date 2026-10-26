@@ -3958,8 +3958,8 @@
       "id": "pr-previews",
       "name": "Pull-request previews",
       "category": "delivery",
-      "description": "Create an isolated, reviewable API URL for a pull request.",
-      "maturity": "beta",
+      "description": "Every pull request gets an isolated preview environment with its own URL, PR comment and GitHub status, torn down after the PR closes.",
+      "maturity": "ga",
       "plans": [
         "free",
         "hobby",
@@ -3967,7 +3967,7 @@
         "scale"
       ],
       "docs_url": "/docs/preview-environments",
-      "acceptance_test": "pkg/dashboard/preview_panel_test.go::TestRender_AppDetail_PreviewPanel_Shape",
+      "acceptance_test": "cmd/e2e/github_webhook_deploy_e2e_test.go::TestE2E_GitHubWebhookEnqueuesDeployments",
       "consumers": [
         "githubd"
       ],

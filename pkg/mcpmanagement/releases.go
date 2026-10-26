@@ -50,6 +50,10 @@ type releasePlan struct {
 	Reason                  string                             `json:"reason"`
 	TrafficEffect           string                             `json:"traffic_effect"`
 	ExpiresAt               time.Time                          `json:"expires_at"`
+	LocalSource             *localSourcePlan                   `json:"local_source,omitempty"`
+	EnvChange               *envChangePlan                     `json:"env_change,omitempty"`
+	localReceipt            any
+	localInFlight           bool
 	appHash                 [32]byte
 	latestID                string
 	attempted               bool
@@ -80,7 +84,7 @@ type applyArgs struct {
 type waitArgs struct {
 	App          string `json:"app" jsonschema:"Gregale app slug"`
 	DeploymentID string `json:"deployment_id" jsonschema:"Exact deployment ID to observe"`
-	WaitSeconds  int    `json:"wait_seconds,omitempty" jsonschema:"Bounded wait from 1 to 45 seconds; default 20. Poll again if still pending"`
+	WaitSeconds  int    `json:"wait_seconds,omitempty" jsonschema:"Wait from 1 to 45 seconds; default 20"`
 	Project      string `json:"project,omitempty" jsonschema:"Project slug required with a named environment"`
 	Environment  string `json:"environment,omitempty" jsonschema:"Registered named environment; omit for default"`
 }
@@ -90,7 +94,7 @@ func registerReleases(s *mcp.Server, m *management) {
 	register(s, m, "gregale_plan_source_deploy", "Review a connected GitHub source deployment. Resolve a branch once to an exact commit, pin repository/installation identities and target configuration, then apply with gregale_apply_deploy at zero traffic for request mode. For service/worker specify rollout_mode and apply with gregale_apply_workload_rollout; activation follows native handoff/consumer replacement after build. Repository configuration declarations are not imported.", m.planSourceDeploy)
 	register(s, m, "gregale_plan_deploy", "Preview an immutable image deployment in the default or an explicitly selected named project environment. Plan pins account, environment identity, configuration revision and current release for 15 minutes. Apply stages at zero traffic; promotion is separate.", m.planDeploy)
 	register(s, m, "gregale_plan_rollback", "Preview a checked rollback to an exact retained release. Apply requires writes enabled and unchanged current release; Gregale enforces integrity and binding checks.", m.planRollback)
-	register(s, m, "gregale_wait_deployment", "Wait briefly for one deployment lifecycle. Live service images remain pending until native handoff finishes. Live worker images do not confirm consumer replacement. Live request revisions at zero traffic are staged. Timeout returns pending; poll the same ID.", m.waitDeployment)
+	register(s, m, "gregale_wait_deployment", "Wait up to 45 seconds for a deployment to settle; a timeout returns pending, so poll the same ID. A live revision at 0% traffic is staged, not serving. Service and worker releases stay pending until their handoff finishes.", m.waitDeployment)
 	if !m.opts.AllowWrites {
 		return
 	}
@@ -306,6 +310,9 @@ func (m *management) applyDeploy(ctx context.Context, args applyArgs) (any, erro
 	p, err := m.checkedPlan(ctx, args.PlanID, "deploy")
 	if err != nil {
 		return nil, err
+	}
+	if p.LocalSource != nil {
+		return nil, invalid("invalid_plan", "local source plans apply with gregale_apply_local_deploy")
 	}
 	if p.result != nil {
 		return releaseResult(p, p.result), nil

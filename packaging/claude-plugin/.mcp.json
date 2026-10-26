@@ -2,7 +2,7 @@
   "mcpServers": {
     "gregale": {
       "command": "gregale",
-      "args": ["mcp", "serve", "--transport", "stdio"]
+      "args": ["mcp", "serve", "--transport", "stdio", "--tools", "core"]
     }
   }
 }

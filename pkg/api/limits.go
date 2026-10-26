@@ -6994,6 +6994,12 @@ const (
 	// 1 ms, so 500 ms/s is roughly 500 checked requests per second.
 	EdgeWAFInlineMsPerAppPerSecond = 500
 	EdgeWAFInlineMsPerAppBurst     = 1000
+	// EdgeWAFInlineAccountSharePercent is the share of the node's check
+	// slots (at least one) an account's waiting checks are served first
+	// for (ADR-831 amendment 16). An account may use every free slot, but a
+	// freed slot goes first to an account below its share, so one account's
+	// flood cannot make other accounts' block rules skip as busy.
+	EdgeWAFInlineAccountSharePercent = 50
 	// EdgeWAFDefaultParanoiaLevel and MaxEdgeWAFParanoiaLevel bound the
 	// OWASP CRS paranoia level a rule may select.
 	EdgeWAFDefaultParanoiaLevel = 1
