@@ -8,7 +8,7 @@
 //     returns; a canary keeps being judged by its gates across a meterd restart;
 //   - the slo and custom_metric gate kinds (ADR-20261019071734 and its
 //     amendment 1: a custom_metric gate reads the metric's history);
-//   - an alert rule rolling a completed release back (ADR-604);
+//   - an error-rate alert rolling a completed release back (ADR-604, ADR-605);
 //   - the critical-route canary guard in abort mode (ADR-458).
 //
 // Database-restoring rollbacks (ADR-20261023181931) are not drilled here: the
@@ -74,7 +74,7 @@ func TestReleaseGuardsGADrillMetal(t *testing.T) {
 	v1 := registry.AddImage("library/ga-v1", v1Img)
 	v2 := image("library/ga-v2")
 	reject422 := image("library/ga-reject-422", "-reject-api", "422")
-	// Slower than a 30 ms latency SLO, but under the circuit breaker's and
+	// Slower than a 25 ms latency SLO, but under the circuit breaker's and
 	// the post-release watch's 100 ms latency delta.
 	slow := image("library/ga-slow", "-delay-root", "70ms")
 	failAPI := image("library/ga-fail-api", "-fail-api")
@@ -241,7 +241,7 @@ func TestReleaseGuardsGADrillMetal(t *testing.T) {
 		stable := d.deployLive(t, app, api.CreateDeploymentRequest{Image: v1})
 		d.waitServing(t, app, time.Minute)
 		g.mustStatus(t, d.key, http.MethodPost, "/v1/apps/"+app+"/slos",
-			api.CreateSLORequest{Name: "fast", SLI: "latency", LatencyThresholdMS: 30, ObjectivePct: 99, WindowDays: 7}, http.StatusCreated, nil)
+			api.CreateSLORequest{Name: "fast", SLI: "latency", LatencyThresholdMS: 25, ObjectivePct: 99, WindowDays: 7}, http.StatusCreated, nil)
 		g.mustStatus(t, d.key, http.MethodPost, "/v1/apps/"+app+"/release-gates",
 			api.CreateReleaseGateRequest{Name: "fast_enough", Kind: "slo", SLO: "fast", MaxBurnRate: 10}, http.StatusCreated, nil)
 		stop := d.sendTraffic(app, "/", 100*time.Millisecond)
@@ -294,7 +294,7 @@ func TestReleaseGuardsGADrillMetal(t *testing.T) {
 		d.waitDeployment(t, stable.ID, 2*time.Minute, func(dep state.Deployment) bool { return dep.TrafficPercent == 100 })
 	})
 
-	t.Run("an alert on p95 latency rolls a completed release back", func(t *testing.T) {
+	t.Run("an error-rate alert rolls a completed release back", func(t *testing.T) {
 		if !realProm {
 			t.Skip("no prometheus binary: alert rules evaluate PromQL")
 		}
@@ -303,28 +303,50 @@ func TestReleaseGuardsGADrillMetal(t *testing.T) {
 		openPublicURL(t, d, d.key, app)
 		stable := d.deployLive(t, app, api.CreateDeploymentRequest{Image: v1})
 		d.waitServing(t, app, time.Minute)
-		action, window := "rollback", 900
-		g.mustStatus(t, d.key, http.MethodPost, "/v1/apps/"+app+"/alerts", api.CreateAlertRuleRequest{
+		action, window, cooldown := "rollback", 900, api.AlertRuleCooldownMinMinutes
+		// apid refuses a post-deploy window on a rule that could never roll a
+		// completed release back (ADR-605 amendment 1).
+		_, status := doReq(t, h, d.key, http.MethodPost, "/v1/apps/"+app+"/alerts", api.CreateAlertRuleRequest{
 			Name: "slow", Metric: "latency_p95_ms", Comparison: "gt", Threshold: 40, WindowSpec: "5m",
+			Action: &action, PostDeployRollbackWindowSeconds: &window, ChannelIDs: []string{mail.ID}})
+		if status != http.StatusBadRequest {
+			t.Fatalf("latency rule with a post-deploy window: status=%d, want 400", status)
+		}
+		g.mustStatus(t, d.key, http.MethodPost, "/v1/apps/"+app+"/alerts", api.CreateAlertRuleRequest{
+			Name: "failing", Metric: "error_rate_pct", Comparison: "gt", Threshold: 10, WindowSpec: "5m", CooldownMinutes: &cooldown,
 			Action: &action, PostDeployRollbackWindowSeconds: &window, ChannelIDs: []string{mail.ID}}, http.StatusCreated, nil)
-		stop := d.sendTraffic(app, "/", 100*time.Millisecond)
-		defer stop()
+		// Healthy traffic first, so the rule's 5m window is still mostly
+		// healthy at cutover. The release then fails one request in six and
+		// the windowed rate crosses 10% about three minutes later, leaving the
+		// fire full minutes of the release's own evidence (ADR-605).
+		stopRoot := d.sendTraffic(app, "/", 100*time.Millisecond)
+		defer stopRoot()
+		stopAPI := d.sendTraffic(app, "/api", 500*time.Millisecond)
+		defer stopAPI()
+		time.Sleep(3 * time.Minute)
 		started := time.Now()
-		release := d.deployLive(t, app, api.CreateDeploymentRequest{Image: slow, Canary: &api.CanaryPresetSpec{Preset: "none"}})
+		// Off: the post-release watch (ADR-1445) would roll the release back
+		// on its own 5xx regression before the alert fires.
+		watch := false
+		release := d.deployLive(t, app, api.CreateDeploymentRequest{Image: failAPI, Canary: &api.CanaryPresetSpec{Preset: "none"}, RollbackOn5xx: &watch})
 		d.waitDeployment(t, release.ID, 2*time.Minute, func(dep state.Deployment) bool {
 			return dep.TrafficPercent == 100 && dep.RolloutState == "complete"
 		})
-		d.waitDeployment(t, stable.ID, 12*time.Minute, func(dep state.Deployment) bool {
+		restored := d.waitDeployment(t, stable.ID, 12*time.Minute, func(dep state.Deployment) bool {
 			return dep.Status == state.DeployLive && dep.TrafficPercent == 100
 		})
 		var rollbacks []api.AlertRollback
 		g.mustStatus(t, d.key, http.MethodGet, "/v1/apps/"+app+"/alert-rollbacks", nil, http.StatusOK, &rollbacks)
-		i := slices.IndexFunc(rollbacks, func(r api.AlertRollback) bool { return r.CandidateDeploymentID == release.ID })
+		i := slices.IndexFunc(rollbacks, func(r api.AlertRollback) bool { return r.CandidateDeploymentID == release.ID && r.Historical })
 		if i < 0 {
-			t.Fatalf("alert rollbacks = %+v, want one for release %s", rollbacks, release.ID)
+			t.Fatalf("alert rollbacks = %+v, want a historical one for release %s", rollbacks, release.ID)
 		}
-		t.Logf("DRILL alert_rollback seconds=%.0f status=%s historical=%v observed=%.0f",
-			time.Since(started).Seconds(), rollbacks[i].Status, rollbacks[i].Historical, rollbacks[i].ObservedValue)
+		r := rollbacks[i]
+		t.Logf("DRILL alert_rollback seconds=%.0f status=%s observed=%.1f evidence=%+v restored=%s",
+			time.Since(started).Seconds(), r.Status, r.ObservedValue, r.DeploymentEvidence, restored.ID)
+		if e := r.DeploymentEvidence; e == nil || e.Status != "breached" || e.ErrorRatePct <= 10 {
+			t.Fatalf("historical rollback evidence = %+v, want the release's own error rate breaching 10%%", e)
+		}
 	})
 
 	t.Run("a critical route regression aborts the canary", func(t *testing.T) {
@@ -337,12 +359,13 @@ func TestReleaseGuardsGADrillMetal(t *testing.T) {
 		g.mustStatus(t, d.key, http.MethodPut, "/v1/apps/"+app+"/route-health/gate", api.SetRouteHealthGateRequest{
 			Mode: "enforce", OnRegression: "abort", ExpectedRevision: &zero,
 			Routes: []api.RouteHealthRoute{{Method: http.MethodGet, Path: "/api"}}}, http.StatusOK, nil)
-		// /api is a small share of the traffic, so the candidate's overall
-		// error rate stays under the circuit breaker's 5% floor and only the
-		// route guard sees the regression.
+		// /api is a small share of the traffic (about 2.5% once request
+		// latency slows the root loop), so the candidate's overall error rate
+		// stays under the circuit breaker's 5% floor and only the route guard
+		// sees the regression. At 2 s spacing the breaker won at 3/45.
 		stopRoot := d.sendTraffic(app, "/", 100*time.Millisecond)
 		defer stopRoot()
-		stopAPI := d.sendTraffic(app, "/api", 2*time.Second)
+		stopAPI := d.sendTraffic(app, "/api", 5*time.Second)
 		defer stopAPI()
 		started := time.Now()
 		candidate := d.deployLive(t, app, api.CreateDeploymentRequest{Image: failAPI, Canary: customCanary("50", "10m")})
