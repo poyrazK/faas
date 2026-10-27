@@ -81,7 +81,7 @@ func (b *PostgresBackend) Admit(ctx context.Context, spec AdmissionSpec) (Decisi
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	policy, err := readAdmissionPolicy(ctx, tx, integrationID, bindingAppID)
+	policy, err := readAdmissionPolicy(ctx, tx, integrationID, bindingAppID, spec.AgentRun)
 	if err != nil {
 		return Decision{}, err
 	}
@@ -246,7 +246,7 @@ type admissionPolicy struct {
 // account first, then an explicit binding, then the integration, matching
 // binding-policy writes and preventing a stale resolver snapshot from
 // bypassing a completed update.
-func readAdmissionPolicy(ctx context.Context, tx pgx.Tx, integrationID, bindingAppID uuid.UUID) (admissionPolicy, error) {
+func readAdmissionPolicy(ctx context.Context, tx pgx.Tx, integrationID, bindingAppID uuid.UUID, agentRun bool) (admissionPolicy, error) {
 	batch := &pgx.Batch{}
 	batch.Queue(`
 		SELECT now(), account.plan, integration.owner_kind
@@ -275,19 +275,21 @@ func readAdmissionPolicy(ctx context.Context, tx pgx.Tx, integrationID, bindingA
 		 WHERE id = $1
 		 FOR SHARE`, integrationID)
 	results := tx.SendBatch(ctx, batch)
-	policy, err := scanAdmissionPolicy(results, bindingAppID)
+	policy, err := scanAdmissionPolicy(results, bindingAppID, agentRun)
 	if closeErr := results.Close(); err == nil {
 		err = closeErr
 	}
 	return policy, err
 }
 
-func scanAdmissionPolicy(results pgx.BatchResults, bindingAppID uuid.UUID) (admissionPolicy, error) {
+func scanAdmissionPolicy(results pgx.BatchResults, bindingAppID uuid.UUID, agentRun bool) (admissionPolicy, error) {
 	var policy admissionPolicy
 	if err := results.QueryRow().Scan(&policy.now, &policy.plan, &policy.ownerKind); err != nil {
 		return policy, err
 	}
-	if policy.ownerKind == "customer" && bindingAppID == uuid.Nil {
+	// An app's call always names its binding, whose budget it must not
+	// skip. An agent run's call has no binding: its run grant authorized it.
+	if policy.ownerKind == "customer" && bindingAppID == uuid.Nil && !agentRun {
 		return policy, fmt.Errorf("%w: customer integration admission requires a binding app ID", ErrInvalidIntegration)
 	}
 	if bindingAppID != uuid.Nil {

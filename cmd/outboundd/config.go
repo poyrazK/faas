@@ -16,8 +16,12 @@ import (
 )
 
 type Config struct {
-	WorkflowOutboundEnabled bool   `toml:"workflow_outbound_enabled"`
-	ListenAddr              string `toml:"listen_addr"`
+	WorkflowOutboundEnabled bool `toml:"workflow_outbound_enabled"`
+	// AgentRunsEnabled serves agent run relay calls (ADR-20261027090010 §7): the run's
+	// lease, its version's integrations and its spend cap are checked on
+	// every request. Off by default; agent run calls are then refused.
+	AgentRunsEnabled bool   `toml:"agent_runs_enabled"`
+	ListenAddr       string `toml:"listen_addr"`
 	// MetricsAddr is the private bind address for the operator-only
 	// Prometheus endpoint. Keep it loopback unless a firewall explicitly
 	// restricts the scrape network.

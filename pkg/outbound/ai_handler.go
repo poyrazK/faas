@@ -302,6 +302,7 @@ func (h *Handler) recordSettledAIUsage(ctx context.Context, integration Integrat
 	usage, outcome, cost, timeToFirstByte := settled.usage, settled.outcome, settled.cost, settled.timeToFirstByte
 	h.Metrics.ObserveAIUsage(metricIntegrationID, outcome, usage, timeToFirstByte)
 	h.Metrics.ObserveAICost(metricIntegrationID, cost)
+	h.settleAgentRunSpend(ctx, settlement.leaseID, cost, metricIntegrationID)
 	span.SetAttributes(aiSpanAttributes(integration.AIProvider, outcome, usage, timeToFirstByte)...)
 	if cost > 0 {
 		span.SetAttributes(attribute.Int64("gregale.ai.cost_millicents", cost))

@@ -21,19 +21,30 @@ type RelayIdentityVerifier interface {
 	VerifyExecutionRelay(rawToken string) (ExecutionIdentity, error)
 }
 
-// relayPrincipal is the verified caller of one relay connection: an app, or
-// a Run with the integrations its scheduler grant named.
+// AgentRunRelayIdentityVerifier authenticates an agent run's relay
+// assertion (ADR-20261027090010 §7). It is optional so relay verifiers that predate
+// agent runs keep working; without it agent run connections are refused.
+type AgentRunRelayIdentityVerifier interface {
+	VerifyAgentRunRelay(rawToken string) (AgentRunIdentity, error)
+}
+
+// relayPrincipal is the verified caller of one relay connection: an app, a
+// Run with the integrations its scheduler grant named, or an agent run.
 type relayPrincipal struct {
 	recorderRequestID     string
 	rehearsalRunID        string
 	app                   WorkloadIdentity
 	execution             *ExecutionIdentity
 	executionIntegrations map[string]struct{}
+	agentRun              *AgentRunIdentity
 }
 
 func (p relayPrincipal) accountID() string {
-	if p.execution != nil {
+	switch {
+	case p.execution != nil:
 		return p.execution.AccountID
+	case p.agentRun != nil:
+		return p.agentRun.AccountID
 	}
 	return p.app.AccountID
 }
@@ -46,7 +57,7 @@ func withRelayPrincipal(ctx context.Context, principal relayPrincipal) context.C
 
 func relayPrincipalFromContext(ctx context.Context) (relayPrincipal, bool) {
 	principal, ok := ctx.Value(relayPrincipalKey{}).(relayPrincipal)
-	return principal, ok && (principal.execution != nil || principal.app.AppID != "")
+	return principal, ok && (principal.execution != nil || principal.agentRun != nil || principal.app.AppID != "")
 }
 
 const (
@@ -64,7 +75,16 @@ func withRelayIdentity(ctx context.Context, identity WorkloadIdentity) context.C
 // Requests on the ordinary listener and Run relays never carry one.
 func relayIdentityFromContext(ctx context.Context) (WorkloadIdentity, bool) {
 	principal, ok := relayPrincipalFromContext(ctx)
-	return principal.app, ok && principal.execution == nil && principal.rehearsalRunID == ""
+	return principal.app, ok && principal.execution == nil && principal.agentRun == nil && principal.rehearsalRunID == ""
+}
+
+// relayAgentRunFromContext returns the verified agent run of a relay request.
+func relayAgentRunFromContext(ctx context.Context) (AgentRunIdentity, bool) {
+	principal, ok := relayPrincipalFromContext(ctx)
+	if !ok || principal.agentRun == nil {
+		return AgentRunIdentity{}, false
+	}
+	return *principal.agentRun, true
 }
 
 // relayExecutionFromContext returns the verified Run of a relay request.
@@ -211,9 +231,22 @@ func readRelayPrincipal(conn net.Conn, verifier RelayIdentityVerifier) (relayPri
 	if preamble.RecorderRequestID != "" {
 		return relayPrincipal{}, errors.New("outbound relay: recorder requests require rehearsal identity")
 	}
-	if identity, appErr := verifier.VerifyRelay(preamble.Assertion); appErr == nil && len(preamble.ExecutionIntegrations) == 0 {
+	identity, appErr := verifier.VerifyRelay(preamble.Assertion)
+	switch {
+	case appErr == nil && len(preamble.ExecutionIntegrations) == 0:
 		principal = relayPrincipal{app: identity}
-	} else {
+	case len(preamble.ExecutionIntegrations) == 0:
+		// Not an app: only an agent run's assertion carries no grant list.
+		runVerifier, ok := verifier.(AgentRunRelayIdentityVerifier)
+		if !ok {
+			return relayPrincipal{}, errors.Join(appErr, errors.New("outbound relay: agent run relays are not supported"))
+		}
+		run, runErr := runVerifier.VerifyAgentRunRelay(preamble.Assertion)
+		if runErr != nil {
+			return relayPrincipal{}, errors.Join(appErr, runErr)
+		}
+		principal = relayPrincipal{agentRun: &run}
+	default:
 		execution, execErr := verifier.VerifyExecutionRelay(preamble.Assertion)
 		if execErr != nil {
 			return relayPrincipal{}, errors.Join(appErr, execErr)

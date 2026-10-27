@@ -205,6 +205,13 @@ func run(ctx context.Context, log *slog.Logger) error {
 	handler.IdentityVerifier = identityVerifier
 	handler.ExecutionIdentityVerifier = executionIdentityVerifier
 	handler.ExecutionAuthorizer = executionAuthorizer
+	if cfg.AgentRunsEnabled {
+		agentRuns, err := outbound.NewPostgresAgentRuns(pool)
+		if err != nil {
+			return err
+		}
+		handler.AgentRunAuthorizer, handler.AgentRunSpend = agentRuns, agentRuns
+	}
 	if cfg.WorkflowOutboundEnabled || os.Getenv("FAAS_WORKFLOW_OUTBOUND_ENABLED") == "1" {
 		authorizer, err := outbound.NewPostgresWorkflowAuthorizer(pool)
 		if err != nil {
@@ -217,6 +224,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 		return fmt.Errorf("outboundd: register metrics: %w", err)
 	}
 	handler.Metrics = outboundMetrics
+	handler.Log = log
 	handler.MaxBodyBytes = cfg.MaxBodyBytes
 	// ADR-1700: the gate and rollout are the live ai_gateway platform flag.
 	handler.AIGatewayFlags = aiGatewayFlags

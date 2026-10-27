@@ -6,6 +6,7 @@ import (
 	"crypto/subtle"
 	"errors"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -43,6 +44,8 @@ var hopByHopHeaders = map[string]struct{}{
 // Handler is an explicit request-aware outbound gateway. A request to
 // /i/{integrationID}/path is sent only to that integration's configured origin.
 type Handler struct {
+	// Log, when set, records failures the caller only sees as a generic 503.
+	Log                       *slog.Logger
 	SimulationHandler         http.Handler
 	Resolver                  Resolver
 	Backend                   Backend
@@ -55,9 +58,13 @@ type Handler struct {
 	IdentityVerifier          IdentityVerifier
 	ExecutionIdentityVerifier ExecutionIdentityVerifier
 	ExecutionAuthorizer       ExecutionAuthorizer
-	WorkflowAuthorizer        WorkflowAuthorizer
-	workflowClient            *http.Client
-	CredentialResolver        ManagedCredentialResolver
+	// AgentRunAuthorizer and AgentRunSpend serve agent run relays (ADR-20261027090010
+	// §7); without them agent run calls are refused.
+	AgentRunAuthorizer AgentRunAuthorizer
+	AgentRunSpend      AgentRunSpendLedger
+	WorkflowAuthorizer WorkflowAuthorizer
+	workflowClient     *http.Client
+	CredentialResolver ManagedCredentialResolver
 	// Routes resolves AI fallback routes (ADR-990); nil disables /r/.
 	Routes               RouteResolver
 	managedAuthorization map[string]string
@@ -273,7 +280,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	var workflowIdentity *WorkflowIdentity
 	var executionIdentity ExecutionIdentity
 	var isExecution bool
-	if !isReplay && !isInternal && !isQualification {
+	agentRun, isAgentRun := relayAgentRunFromContext(r.Context())
+	if !isReplay && !isInternal && !isQualification && !isAgentRun {
 		if workflowIdentity, ok = h.callerWorkflowIdentity(w, r, integration, path); !ok {
 			return
 		}
@@ -281,6 +289,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	var agentRunGrant AgentRunGrant
 	appID := ""
 	// callerInstance is the calling app instance a verified workload
 	// identity names, which attributes AI calls to its deployment (ADR
@@ -291,6 +300,11 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		principalID = "replay:" + replay.replayID
 	} else if isInternal {
 		principalID = internal.caller + ":" + internal.accountID
+	} else if isAgentRun {
+		if agentRunGrant, ok = h.authorizeAgentRun(w, r, agentRun, integration); !ok {
+			return
+		}
+		principalID = AgentRunPrincipalPrefix + agentRun.RunID
 	} else if isQualification {
 		appID = qualification.appID
 		principalID = "qualification:" + qualification.requestID
@@ -328,7 +342,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var allowedRoute bool
-	if isExecution || isReplay || isInternal {
+	if isExecution || isAgentRun || isReplay || isInternal {
 		allowedRoute = integration.AllowsRequest(r.Method, path)
 	} else {
 		allowedRoute = integration.AllowsAppRequest(appID, r.Method, path)
@@ -470,9 +484,13 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		RetryBudgetPerMinute:           integration.RetryBudgetPerMinute,
 		LeaseTTL:                       integration.RequestTimeout,
 		PolicyRevision:                 integration.PolicyRevision,
+		AgentRun:                       isAgentRun,
 	}
 	decision, err := h.Backend.Admit(r.Context(), spec)
 	if err != nil {
+		if h.Log != nil {
+			h.Log.Warn("outbound: admission failed", "integration_id", metricIntegrationID, "principal", principalID, "err", err)
+		}
 		h.Metrics.ObserveAdmission(metricIntegrationID, "error")
 		h.Metrics.ObserveRejection(metricIntegrationID, "backend_unavailable")
 		writeProblem(w, http.StatusServiceUnavailable, "outbound_admission_unavailable", "Outbound admission is temporarily unavailable", "1")
@@ -516,6 +534,14 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.Metrics.DecInFlight(metricIntegrationID)
 		_ = h.Backend.Release(context.WithoutCancel(ctx), integration.ID, decision.LeaseID)
 	}()
+	if isAgentRun {
+		if !h.reserveAgentRunSpend(ctx, w, agentRun, agentRunGrant, integration, aiPlan, decision.LeaseID, requestTimeout, metricIntegrationID) {
+			return
+		}
+		// Settlement, deferred later, runs first and turns the reservation
+		// into spend; this frees it when nothing settled.
+		defer h.releaseAgentRunSpend(context.WithoutCancel(ctx), decision.LeaseID, metricIntegrationID)
+	}
 	if batch != nil {
 		// The batch's reservation is stored before the provider sees the
 		// batch, so no batch the provider runs is ever uncounted.
