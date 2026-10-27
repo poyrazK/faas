@@ -341,12 +341,12 @@ func TestDataAPITypesInputValidators(t *testing.T) {
 			if (code == 0) != supported {
 				t.Fatalf("code=%d supported=%v", code, supported)
 			}
-			var request api.CreateAppTaskRequest
-			if err := json.Unmarshal(f.sawBody, &request); err != nil {
+			var contract api.CreateDataAPIContractTaskRequest
+			if err := json.Unmarshal(f.sawBody, &contract); err != nil {
 				t.Fatal(err)
 			}
-			if strings.Join(request.Command, " ") != "node /app/types.mjs --validators" || request.TimeoutSeconds != 60 || request.MaxOutputBytes != api.AppTaskDefaultMaxOutputBytes {
-				t.Fatalf("unexpected task: %+v", request)
+			if request := contract.Kind.Request(); f.sawPath != "/v1/apps/notes/data-api/contract-tasks" || strings.Join(request.Command, " ") != "node /app/types.mjs --validators" || request.TimeoutSeconds != 60 || request.MaxOutputBytes != api.AppTaskDefaultMaxOutputBytes {
+				t.Fatalf("unexpected task: %s %+v", f.sawPath, request)
 			}
 			got, _ := os.ReadFile(output)
 			want := "original"
