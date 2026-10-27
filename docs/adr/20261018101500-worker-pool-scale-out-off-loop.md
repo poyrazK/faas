@@ -104,3 +104,41 @@
   3, `TestWorkerFrozenThawMetal` on n2 (2026-10-21) took a frozen worker
   from the send to RUNNING in 685–815 ms before it and 159–350 ms after
   (ADR-20261019103000).
+
+## Amendment 2026-10-27 — one scaling declaration, honored everywhere
+
+An end-to-end review of the worker path found three ways a worker's scaling
+declaration was lost before the pool reconcile read it:
+
+- **`worker.scale` on a repository deploy.** The CLI turned the block's
+  metric into the app's scaling policy, apid's source deploys (repository and
+  GitHub) did not. Such a worker ran at `worker.scale.min` forever: with
+  `min: 0` it never started. The CLI's policy also carried zero cooldowns,
+  which the API refuses, so the CLI path failed at its scaling step.
+  `gregalemanifest.(*Manifest).ScalingPolicyRequest` is now the one rule: the
+  scaling block, with a worker block that names a metric taking its bounds and
+  target, cooldowns defaulted as the scaling block's are. The CLI deploy, the
+  diff preview and apid's source deploys all apply it.
+- **`gregale workers scale` defaulted to `queue_lag`.** Only external broker
+  pollers report lag, so for Gregale queues the reconcile had no signal and
+  failed every tick. The default is now the queue metric the app's policy
+  already uses, else `queue_depth`.
+- **`lifecycle` plus `scaling`.** The documented form leaves the worker
+  replica bounds unset, and the pool's floor came only from them (default 1),
+  so `min_instances: 0` never scaled to zero. With no worker replica bounds,
+  the floor is now the policy's `min_instances` when the policy scales on a
+  worker signal (`queue_depth`, `queue_lag` or a custom metric); otherwise it
+  stays 1, since a zero floor with no signal would never start a worker.
+
+The same review found the backlog unobservable and expensive to observe:
+
+- **Queue gauges read the whole backlog every second.** The targets trigger
+  read each binding's full `QueueStateForBinding` on every 1 s tick, for
+  gauges the pool reconcile does not use. Gauges now refresh every 30 s per
+  app through `QueueBindingTelemetry`, whose counts stop at 100,000. A
+  queue-scaled app outside the pool reconcile still reads every tick, bounded
+  to target × (instance cap + 1) + 1, which every scaling formula saturates.
+- **No customer alert on a growing backlog.** `queue_depth` alerts read the
+  gateway's wake-hold queue. `queue_backlog` and `queue_oldest_age_seconds`
+  read the schedd queue gauges, which now cover every worker app, not only
+  queue-scaled ones. Both are app-scoped and webhook-only.

@@ -4969,6 +4969,11 @@ type Querier interface {
 	// counting the backlog.
 	QueueBindingHasInFlight(ctx context.Context, db DBTX, arg QueueBindingHasInFlightParams) (bool, error)
 	QueueBindingHistoryByID(ctx context.Context, db DBTX, arg QueueBindingHistoryByIDParams) (QueueBinding, error)
+	// QueueStateForBinding's figures for gauges and alerts without a
+	// backlog-sized read: each count stops at row_limit, and the oldest pending
+	// message is the first one due in the lease indexes
+	// (ADR-20261018101500 amendment 2026-10-27).
+	QueueBindingTelemetry(ctx context.Context, db DBTX, arg QueueBindingTelemetryParams) (QueueBindingTelemetryRow, error)
 	// Admission holds the parent app lock, also required by release publication.
 	// Read committed authority without reversing the publisher's release/app lock order.
 	QueueCanaryManagedAuthority(ctx context.Context, db DBTX, arg QueueCanaryManagedAuthorityParams) (QueueCanaryManagedAuthorityRow, error)

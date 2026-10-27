@@ -1817,6 +1817,30 @@ func (s WorkerScaleSpec) ToAPI() *api.WorkerScaling {
 	}
 }
 
+// ScalingPolicyRequest is the app scaling policy the manifest asks for: the
+// scaling block, with a worker block that names a metric taking its bounds
+// and target. The CLI and apid's source deploys both apply it, so a worker
+// deployed from a repository scales like one deployed from a laptop
+// (ADR-20261018101500 amendment 2026-10-27). Cooldowns default as the
+// scaling block's do, because the API refuses zero cooldowns.
+func (m *Manifest) ScalingPolicyRequest() *api.ScalingPolicy {
+	if m == nil {
+		return nil
+	}
+	policy := m.Scaling.ToAPI()
+	if m.Worker == nil || m.Worker.Scale.Metric == "" {
+		return policy
+	}
+	if policy == nil {
+		policy = &api.ScalingPolicy{ScaleOutCooldownS: defaultScaleOutCooldownS, ScaleInCooldownS: defaultScaleInCooldownS}
+	}
+	scale := m.Worker.Scale
+	policy.MinInstances, policy.MaxInstances = scale.Min, scale.Max
+	policy.Targets = nil
+	policy.Target = &api.ScalingTarget{Metric: scale.Metric, Name: scale.Name, Value: scale.Target}
+	return policy
+}
+
 // Validate checks worker configuration syntax and constraints.
 func (w *WorkerSpec) Validate() error {
 	if w == nil {
