@@ -67,7 +67,7 @@ func TestOldHostEdgeRulesApplyToTheCanonicalHost(t *testing.T) {
 		t.Fatal(err)
 	}
 	inv := &recordingScopedInvalidator{}
-	invalidateEdgeRuleScope(ctx, inv, shop.ID, []string{"shop.gregale.dev"})
+	invalidateEdgeRuleScope(ctx, inv, "", shop.ID, []string{"shop.gregale.dev"})
 	if !slices.Contains(inv.hosts, "shop.gregale.app") {
 		t.Fatalf("invalidated hosts = %v, want the canonical host too", inv.hosts)
 	}

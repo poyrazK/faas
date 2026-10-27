@@ -103,6 +103,40 @@ var routeActions = map[string]authz.OrgAction{
 	"PUT /v1/workflows/runs/{id}/callbacks/{callback_id}/webhook-binding":    authz.OrgActionManageAppSecrets,
 	"DELETE /v1/workflows/runs/{id}/callbacks/{callback_id}/webhook-binding": authz.OrgActionManageAppSecrets,
 
+	// Company-app integrations (ADR-20261026151103): the organization, not
+	// only the app's creator, governs where a company app's alerts, logs and
+	// events go. Members read them; owners and admins create, change and
+	// remove them, since each sends company data to a destination outside
+	// Gregale. The handlers keep the creator's account-wide alert rules and
+	// notification channels to the creator. Binding an outbound integration
+	// spends the creator's provider credential, so only unbinding is shared.
+	"GET /v1/apps/{slug}/alerts":                                  authz.OrgActionReadApp,
+	"POST /v1/apps/{slug}/alerts":                                 authz.OrgActionManageAppSecurity,
+	"GET /v1/apps/{slug}/alerts/{id}":                             authz.OrgActionReadApp,
+	"PATCH /v1/apps/{slug}/alerts/{id}":                           authz.OrgActionManageAppSecurity,
+	"DELETE /v1/apps/{slug}/alerts/{id}":                          authz.OrgActionManageAppSecurity,
+	"POST /v1/apps/{slug}/alerts/{id}/rotate-secret":              authz.OrgActionManageAppSecurity,
+	"GET /v1/apps/{slug}/alerts/{id}/deliveries":                  authz.OrgActionReadApp,
+	"GET /v1/apps/{slug}/log-drains":                              authz.OrgActionReadApp,
+	"POST /v1/apps/{slug}/log-drains":                             authz.OrgActionManageAppSecurity,
+	"GET /v1/apps/{slug}/log-drains/{id}":                         authz.OrgActionReadApp,
+	"GET /v1/apps/{slug}/log-drains/{id}/health":                  authz.OrgActionReadApp,
+	"GET /v1/apps/{slug}/log-drains/{id}/analytics":               authz.OrgActionReadApp,
+	"PATCH /v1/apps/{slug}/log-drains/{id}":                       authz.OrgActionManageAppSecurity,
+	"DELETE /v1/apps/{slug}/log-drains/{id}":                      authz.OrgActionManageAppSecurity,
+	"GET /v1/apps/{slug}/webhooks":                                authz.OrgActionReadApp,
+	"POST /v1/apps/{slug}/webhooks":                               authz.OrgActionManageAppSecurity,
+	"GET /v1/apps/{slug}/webhooks/{id}":                           authz.OrgActionReadApp,
+	"PATCH /v1/apps/{slug}/webhooks/{id}":                         authz.OrgActionManageAppSecurity,
+	"DELETE /v1/apps/{slug}/webhooks/{id}":                        authz.OrgActionManageAppSecurity,
+	"POST /v1/apps/{slug}/webhooks/{id}/rotate-secret":            authz.OrgActionManageAppSecurity,
+	"GET /v1/apps/{slug}/webhooks/{id}/health":                    authz.OrgActionReadApp,
+	"GET /v1/apps/{slug}/webhooks/{id}/deliveries":                authz.OrgActionReadApp,
+	"GET /v1/apps/{slug}/webhooks/{id}/deliveries/{did}/attempts": authz.OrgActionReadApp,
+	"POST /v1/apps/{slug}/webhooks/{id}/deliveries/{did}/retry":   authz.OrgActionManageAppSecurity,
+	"GET /v1/apps/{slug}/outbound-bindings":                       authz.OrgActionReadApp,
+	"DELETE /v1/apps/{slug}/outbound-bindings/{integration}":      authz.OrgActionManageAppSecurity,
+
 	// Session-only dashboard and GitHub install routes (Authorize, called
 	// from the dashboard session gate). Their reads take OrgActionReadApp
 	// (see dashboardRead); writes with a /v1 twin take the twin's action, and
@@ -116,6 +150,10 @@ var routeActions = map[string]authz.OrgAction{
 	"POST /dashboard/apps/{slug}/secrets/{key}/rotate":           authz.OrgActionManageAppSecrets,
 	"POST /dashboard/apps/{slug}/secret-references":              authz.OrgActionManageAppSecrets,
 	"POST /dashboard/apps/{slug}/secret-references/{key}/delete": authz.OrgActionManageAppSecrets,
+	// Team triage (ADR-1456–1498): members claim and acknowledge incidents;
+	// the handlers require the deploy-write scope.
+	"POST /dashboard/apps/{slug}/issues/{issue_id}/triage":                              authz.OrgActionDeployApp,
+	"POST /dashboard/apps/{slug}/issues/tracker-notifications/triage/{notification_id}": authz.OrgActionDeployApp,
 }
 
 // dashboardRead reports a read of a session-only dashboard app page, which

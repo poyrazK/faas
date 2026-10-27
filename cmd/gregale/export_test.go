@@ -2513,6 +2513,10 @@ func CliPathChildren(words []string) []CliTreeChild {
 	return children
 }
 
+// gregale logs --project (ADR-20261026190244).
+var RunProjectLogs = runProjectLogs
+var ProjectLogJSON = projectLogJSON
+
 // dev --all and gregale dev Go commands (ADR-20261026120412).
 var DiscoverDevAllApps = discoverDevAllApps
 
@@ -2532,3 +2536,10 @@ func DevGoCommandRequest(command string) api.UpsertDevSessionRequest {
 }
 
 var NormalizeTreeFlags = normalizeTreeFlags
+
+// Bucket CORS CLI (ADR-20261025202805).
+var (
+	DecodeBucketCORSFile = decodeBucketCORSFile
+	ValidBucketCORSArgs  = validBucketCORSArgs
+	RunBucketCORS        = runBucketCORS
+)

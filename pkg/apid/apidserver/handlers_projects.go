@@ -210,6 +210,19 @@ func (s *server) loadProject(w http.ResponseWriter, r *http.Request, acct state.
 	return project, true
 }
 
+// projectWorkloadDependencies are the services an app's declared bindings
+// name: its Compose depends_on within the project (ADR-20261026193018).
+func projectWorkloadDependencies(app state.App) []string {
+	var out []string
+	for _, binding := range app.Manifest.ServiceBindings {
+		if service := binding.Service; service != "" && !slices.Contains(out, service) {
+			out = append(out, service)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
 func (s *server) projectResponse(r *http.Request, acct state.Account, project state.Project) (api.ProjectResponse, *api.Problem) {
 	apps, err := s.store.AppsForProject(r.Context(), acct.ID, project.ID)
 	if err != nil {
@@ -226,7 +239,8 @@ func (s *server) projectResponse(r *http.Request, acct state.Account, project st
 	}
 	var latest time.Time
 	for _, app := range apps {
-		workload := api.ProjectWorkloadResponse{Slug: app.Slug, WorkloadName: app.WorkloadName, Status: string(app.Status)}
+		workload := api.ProjectWorkloadResponse{Slug: app.Slug, WorkloadName: app.WorkloadName, Status: string(app.Status),
+			DependsOn: projectWorkloadDependencies(app)}
 		deployment, deployErr := s.store.LatestDeployment(r.Context(), app.ID)
 		if deployErr == nil {
 			workload.DeploymentStatus = string(deployment.Status)

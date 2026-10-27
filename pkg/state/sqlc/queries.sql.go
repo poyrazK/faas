@@ -15109,6 +15109,8 @@ FROM app_webhooks h JOIN accounts a ON a.id = h.account_id
 WHERE h.account_id = $4::uuid AND h.scope = 'account' AND h.enabled
   AND 'environment.gitops.changed' = ANY(h.event_filter)
   AND a.status = 'active' AND a.abuse_hold_at IS NULL
+  AND account_may_see_org_resources(h.account_id, (SELECT p.org_id FROM environment_git_sources g
+      JOIN projects p ON p.id = g.project_id WHERE g.id = $5::uuid))
 ON CONFLICT (source_event_id, webhook_id) WHERE source_event_id IS NOT NULL DO NOTHING
 `
 
@@ -15117,14 +15119,19 @@ type EnqueueEnvironmentGitNotificationParams struct {
 	Payload   []byte
 	NowAt     pgtype.Timestamptz
 	AccountID pgtype.UUID
+	SourceID  pgtype.UUID
 }
 
+// A company project keeps its creator's account; the account's webhooks get
+// its notifications only while the account may still see the project's
+// organization (ADR-20261026151103).
 func (q *Queries) EnqueueEnvironmentGitNotification(ctx context.Context, db DBTX, arg EnqueueEnvironmentGitNotificationParams) error {
 	_, err := db.Exec(ctx, enqueueEnvironmentGitNotification,
 		arg.EventID,
 		arg.Payload,
 		arg.NowAt,
 		arg.AccountID,
+		arg.SourceID,
 	)
 	return err
 }
@@ -30623,11 +30630,11 @@ func (q *Queries) InsertComputeNodeHeartbeat(ctx context.Context, db DBTX, arg I
 
 const insertCustomerAlertRule = `-- name: InsertCustomerAlertRule :one
 INSERT INTO alert_rules(account_id,app_id,name,enabled,metric,comparison,threshold,window_spec,failure_source,event_subscription_id,
- edge_rule_id,action,webhook_url,webhook_secret_sealed,cooldown_minutes,state,post_deploy_rollback_window_seconds,custom_metric_name,slo_id,synthetic_check_id,mcp_min_calls,mcp_for_minutes,mcp_readiness_scope,log_query)
+ edge_rule_id,action,webhook_url,webhook_secret_sealed,cooldown_minutes,state,post_deploy_rollback_window_seconds,custom_metric_name,slo_id,synthetic_check_id,mcp_min_calls,mcp_for_minutes,mcp_readiness_scope,log_query,created_by_account_id)
 VALUES($1,$2,$3,$4,$5,$6,
  $7,$8,$9,$10,$11,$12,$13,
- $14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24)
-RETURNING id, account_id, app_id, name, enabled, metric, comparison, threshold, window_spec, failure_source, webhook_url, webhook_secret_sealed, cooldown_minutes, state, last_fired_at, last_evaluated_at, created_at, updated_at, org_id, action, post_deploy_rollback_window_seconds, event_subscription_id, edge_rule_id, custom_metric_name, slo_id, synthetic_check_id, mcp_min_calls, mcp_for_minutes, mcp_readiness_scope, log_query
+ $14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25)
+RETURNING id, account_id, app_id, name, enabled, metric, comparison, threshold, window_spec, failure_source, webhook_url, webhook_secret_sealed, cooldown_minutes, state, last_fired_at, last_evaluated_at, created_at, updated_at, org_id, action, post_deploy_rollback_window_seconds, event_subscription_id, edge_rule_id, custom_metric_name, slo_id, synthetic_check_id, mcp_min_calls, mcp_for_minutes, mcp_readiness_scope, log_query, created_by_account_id
 `
 
 type InsertCustomerAlertRuleParams struct {
@@ -30655,6 +30662,7 @@ type InsertCustomerAlertRuleParams struct {
 	McpForMinutes                   int32
 	McpReadinessScope               string
 	LogQuery                        pgtype.Text
+	CreatedByAccountID              pgtype.UUID
 }
 
 func (q *Queries) InsertCustomerAlertRule(ctx context.Context, db DBTX, arg InsertCustomerAlertRuleParams) (AlertRule, error) {
@@ -30683,6 +30691,7 @@ func (q *Queries) InsertCustomerAlertRule(ctx context.Context, db DBTX, arg Inse
 		arg.McpForMinutes,
 		arg.McpReadinessScope,
 		arg.LogQuery,
+		arg.CreatedByAccountID,
 	)
 	var i AlertRule
 	err := row.Scan(
@@ -30716,6 +30725,7 @@ func (q *Queries) InsertCustomerAlertRule(ctx context.Context, db DBTX, arg Inse
 		&i.McpForMinutes,
 		&i.McpReadinessScope,
 		&i.LogQuery,
+		&i.CreatedByAccountID,
 	)
 	return i, err
 }
@@ -43745,7 +43755,7 @@ func (q *Queries) ListCronsForApp(ctx context.Context, db DBTX, appID pgtype.UUI
 }
 
 const listCustomerAlertRulesByPreset = `-- name: ListCustomerAlertRulesByPreset :many
-SELECT r.id, r.account_id, r.app_id, r.name, r.enabled, r.metric, r.comparison, r.threshold, r.window_spec, r.failure_source, r.webhook_url, r.webhook_secret_sealed, r.cooldown_minutes, r.state, r.last_fired_at, r.last_evaluated_at, r.created_at, r.updated_at, r.org_id, r.action, r.post_deploy_rollback_window_seconds, r.event_subscription_id, r.edge_rule_id, r.custom_metric_name, r.slo_id, r.synthetic_check_id, r.mcp_min_calls, r.mcp_for_minutes, r.mcp_readiness_scope, r.log_query FROM alert_rules r WHERE r.account_id=$1 AND r.app_id=$2
+SELECT r.id, r.account_id, r.app_id, r.name, r.enabled, r.metric, r.comparison, r.threshold, r.window_spec, r.failure_source, r.webhook_url, r.webhook_secret_sealed, r.cooldown_minutes, r.state, r.last_fired_at, r.last_evaluated_at, r.created_at, r.updated_at, r.org_id, r.action, r.post_deploy_rollback_window_seconds, r.event_subscription_id, r.edge_rule_id, r.custom_metric_name, r.slo_id, r.synthetic_check_id, r.mcp_min_calls, r.mcp_for_minutes, r.mcp_readiness_scope, r.log_query, r.created_by_account_id FROM alert_rules r WHERE r.account_id=$1 AND r.app_id=$2
  AND r.name LIKE (SELECT p.display_name||' (%' FROM alert_presets p WHERE p.name=$3)
  ORDER BY r.created_at DESC LIMIT 2
 `
@@ -43796,6 +43806,7 @@ func (q *Queries) ListCustomerAlertRulesByPreset(ctx context.Context, db DBTX, a
 			&i.McpForMinutes,
 			&i.McpReadinessScope,
 			&i.LogQuery,
+			&i.CreatedByAccountID,
 		); err != nil {
 			return nil, err
 		}
@@ -43808,7 +43819,7 @@ func (q *Queries) ListCustomerAlertRulesByPreset(ctx context.Context, db DBTX, a
 }
 
 const listCustomerAlertRulesForAccount = `-- name: ListCustomerAlertRulesForAccount :many
-SELECT id, account_id, app_id, name, enabled, metric, comparison, threshold, window_spec, failure_source, webhook_url, webhook_secret_sealed, cooldown_minutes, state, last_fired_at, last_evaluated_at, created_at, updated_at, org_id, action, post_deploy_rollback_window_seconds, event_subscription_id, edge_rule_id, custom_metric_name, slo_id, synthetic_check_id, mcp_min_calls, mcp_for_minutes, mcp_readiness_scope, log_query FROM alert_rules WHERE account_id=$1 ORDER BY created_at DESC
+SELECT id, account_id, app_id, name, enabled, metric, comparison, threshold, window_spec, failure_source, webhook_url, webhook_secret_sealed, cooldown_minutes, state, last_fired_at, last_evaluated_at, created_at, updated_at, org_id, action, post_deploy_rollback_window_seconds, event_subscription_id, edge_rule_id, custom_metric_name, slo_id, synthetic_check_id, mcp_min_calls, mcp_for_minutes, mcp_readiness_scope, log_query, created_by_account_id FROM alert_rules WHERE account_id=$1 ORDER BY created_at DESC
 `
 
 func (q *Queries) ListCustomerAlertRulesForAccount(ctx context.Context, db DBTX, accountID pgtype.UUID) ([]AlertRule, error) {
@@ -43851,6 +43862,7 @@ func (q *Queries) ListCustomerAlertRulesForAccount(ctx context.Context, db DBTX,
 			&i.McpForMinutes,
 			&i.McpReadinessScope,
 			&i.LogQuery,
+			&i.CreatedByAccountID,
 		); err != nil {
 			return nil, err
 		}
@@ -45886,23 +45898,24 @@ func (q *Queries) ListEgressCircuitCandidates(ctx context.Context, db DBTX, samp
 }
 
 const listEnabledAppLogDrainsWithStandardBinding = `-- name: ListEnabledAppLogDrainsWithStandardBinding :many
-SELECT d.id, d.app_id, d.account_id, d.kind, d.target_url, d.auth_header_sealed, d.enabled, d.created_at, d.updated_at,coalesce(application_standard_log_binding(d.app_id,d.id),'null'::jsonb)::jsonb AS standard_binding
+SELECT d.id, d.app_id, d.account_id, d.kind, d.target_url, d.auth_header_sealed, d.enabled, d.created_at, d.updated_at, d.created_by_account_id,coalesce(application_standard_log_binding(d.app_id,d.id),'null'::jsonb)::jsonb AS standard_binding
 FROM app_log_drains d WHERE d.enabled
  AND NOT EXISTS (SELECT 1 FROM scenario_test_action_policies p WHERE p.app_id=d.app_id)
 ORDER BY d.created_at,d.id
 `
 
 type ListEnabledAppLogDrainsWithStandardBindingRow struct {
-	ID               pgtype.UUID
-	AppID            pgtype.UUID
-	AccountID        pgtype.UUID
-	Kind             string
-	TargetUrl        string
-	AuthHeaderSealed []byte
-	Enabled          bool
-	CreatedAt        pgtype.Timestamptz
-	UpdatedAt        pgtype.Timestamptz
-	StandardBinding  []byte
+	ID                 pgtype.UUID
+	AppID              pgtype.UUID
+	AccountID          pgtype.UUID
+	Kind               string
+	TargetUrl          string
+	AuthHeaderSealed   []byte
+	Enabled            bool
+	CreatedAt          pgtype.Timestamptz
+	UpdatedAt          pgtype.Timestamptz
+	CreatedByAccountID pgtype.UUID
+	StandardBinding    []byte
 }
 
 // A rehearsal-enrolled app's candidate output never leaves for a customer
@@ -45926,6 +45939,7 @@ func (q *Queries) ListEnabledAppLogDrainsWithStandardBinding(ctx context.Context
 			&i.Enabled,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.CreatedByAccountID,
 			&i.StandardBinding,
 		); err != nil {
 			return nil, err
@@ -45988,7 +46002,7 @@ func (q *Queries) ListEnabledCrons(ctx context.Context, db DBTX) ([]ListEnabledC
 }
 
 const listEnabledCustomerAlertRules = `-- name: ListEnabledCustomerAlertRules :many
-SELECT id, account_id, app_id, name, enabled, metric, comparison, threshold, window_spec, failure_source, webhook_url, webhook_secret_sealed, cooldown_minutes, state, last_fired_at, last_evaluated_at, created_at, updated_at, org_id, action, post_deploy_rollback_window_seconds, event_subscription_id, edge_rule_id, custom_metric_name, slo_id, synthetic_check_id, mcp_min_calls, mcp_for_minutes, mcp_readiness_scope, log_query FROM alert_rules WHERE enabled=true ORDER BY account_id
+SELECT id, account_id, app_id, name, enabled, metric, comparison, threshold, window_spec, failure_source, webhook_url, webhook_secret_sealed, cooldown_minutes, state, last_fired_at, last_evaluated_at, created_at, updated_at, org_id, action, post_deploy_rollback_window_seconds, event_subscription_id, edge_rule_id, custom_metric_name, slo_id, synthetic_check_id, mcp_min_calls, mcp_for_minutes, mcp_readiness_scope, log_query, created_by_account_id FROM alert_rules WHERE enabled=true ORDER BY account_id
 `
 
 func (q *Queries) ListEnabledCustomerAlertRules(ctx context.Context, db DBTX) ([]AlertRule, error) {
@@ -46031,6 +46045,7 @@ func (q *Queries) ListEnabledCustomerAlertRules(ctx context.Context, db DBTX) ([
 			&i.McpForMinutes,
 			&i.McpReadinessScope,
 			&i.LogQuery,
+			&i.CreatedByAccountID,
 		); err != nil {
 			return nil, err
 		}
@@ -47841,7 +47856,7 @@ func (q *Queries) ListMCPDestinationEvents(ctx context.Context, db DBTX, arg Lis
 }
 
 const listMCPNotificationRules = `-- name: ListMCPNotificationRules :many
-SELECT id, account_id, app_id, name, enabled, metric, comparison, threshold, window_spec, failure_source, webhook_url, webhook_secret_sealed, cooldown_minutes, state, last_fired_at, last_evaluated_at, created_at, updated_at, org_id, action, post_deploy_rollback_window_seconds, event_subscription_id, edge_rule_id, custom_metric_name, slo_id, synthetic_check_id, mcp_min_calls, mcp_for_minutes, mcp_readiness_scope, log_query FROM alert_rules WHERE account_id=$1 AND app_id=$2
+SELECT id, account_id, app_id, name, enabled, metric, comparison, threshold, window_spec, failure_source, webhook_url, webhook_secret_sealed, cooldown_minutes, state, last_fired_at, last_evaluated_at, created_at, updated_at, org_id, action, post_deploy_rollback_window_seconds, event_subscription_id, edge_rule_id, custom_metric_name, slo_id, synthetic_check_id, mcp_min_calls, mcp_for_minutes, mcp_readiness_scope, log_query, created_by_account_id FROM alert_rules WHERE account_id=$1 AND app_id=$2
  AND metric='mcp_readiness_unhealthy' AND action='webhook'
  AND ($3::text='' OR mcp_readiness_scope='' OR mcp_readiness_scope=$3)
  AND ($4::uuid IS NULL OR id>$4)
@@ -47902,6 +47917,7 @@ func (q *Queries) ListMCPNotificationRules(ctx context.Context, db DBTX, arg Lis
 			&i.McpForMinutes,
 			&i.McpReadinessScope,
 			&i.LogQuery,
+			&i.CreatedByAccountID,
 		); err != nil {
 			return nil, err
 		}
@@ -53391,7 +53407,7 @@ func (q *Queries) LockApplicationStandardApprovalProjects(ctx context.Context, d
 }
 
 const lockApplicationStandardDrainRows = `-- name: LockApplicationStandardDrainRows :many
-SELECT id, app_id, account_id, kind, target_url, auth_header_sealed, enabled, created_at, updated_at FROM app_log_drains WHERE app_id = $1::uuid ORDER BY id FOR UPDATE NOWAIT
+SELECT id, app_id, account_id, kind, target_url, auth_header_sealed, enabled, created_at, updated_at, created_by_account_id FROM app_log_drains WHERE app_id = $1::uuid ORDER BY id FOR UPDATE NOWAIT
 `
 
 func (q *Queries) LockApplicationStandardDrainRows(ctx context.Context, db DBTX, appID pgtype.UUID) ([]AppLogDrain, error) {
@@ -53413,6 +53429,7 @@ func (q *Queries) LockApplicationStandardDrainRows(ctx context.Context, db DBTX,
 			&i.Enabled,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.CreatedByAccountID,
 		); err != nil {
 			return nil, err
 		}
@@ -72746,6 +72763,32 @@ func (q *Queries) QueueAutomaticRouteCheck(ctx context.Context, db DBTX, arg Que
 	return err
 }
 
+const queueBindingHasInFlight = `-- name: QueueBindingHasInFlight :one
+select exists (
+  select 1 from invocations i join queue_bindings b on b.app_id=i.app_id and b.account_id=i.account_id
+  where b.id=$1::uuid and b.app_id=$2::uuid
+    and ($3::text is null or i.deployment_scope=$3::text)
+    and i.source='queue' and i.state='dispatching' and i.lease_expires_at > now()
+    and (b.deployment_scope='' or i.deployment_scope=b.deployment_scope)
+    and (i.queue_binding_id=b.id or (b.deployment_scope='' and i.queue_binding_id is null and i.queue_name=b.queue_name))
+)::boolean as in_flight
+`
+
+type QueueBindingHasInFlightParams struct {
+	BindingID       pgtype.UUID
+	AppID           pgtype.UUID
+	DeploymentScope pgtype.Text
+}
+
+// Whether QueueStateForBinding would count any in-flight message, without
+// counting the backlog.
+func (q *Queries) QueueBindingHasInFlight(ctx context.Context, db DBTX, arg QueueBindingHasInFlightParams) (bool, error) {
+	row := db.QueryRow(ctx, queueBindingHasInFlight, arg.BindingID, arg.AppID, arg.DeploymentScope)
+	var in_flight bool
+	err := row.Scan(&in_flight)
+	return in_flight, err
+}
+
 const queueBindingHistoryByID = `-- name: QueueBindingHistoryByID :one
 select id, account_id, app_id, name, queue_name, mode, workload_class, enabled, max_concurrency, retry_policy, created_at, updated_at, retired_at, deployment_scope, environment_id, org_id from queue_bindings where id=$1
 and app_id=$2 and account_id=$3
@@ -73426,6 +73469,75 @@ func (q *Queries) QueueConsumerUpdateTrigger(ctx context.Context, db DBTX, arg Q
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const queueDepthForBinding = `-- name: QueueDepthForBinding :one
+with b as (
+  select id, account_id, queue_name, deployment_scope from queue_bindings
+  where id=$4::uuid and app_id=$1::uuid
+)
+select
+  (select count(*) from (
+     select 1 from invocations i, b
+     where i.app_id=$1::uuid and i.queue_binding_id=b.id and i.account_id=b.account_id
+       and i.source='queue' and i.state in ('pending','dispatching')
+       and ($2::text is null or i.deployment_scope=$2::text)
+       and (b.deployment_scope='' or i.deployment_scope=b.deployment_scope)
+     limit $3::integer) own)::bigint
+  + (select count(*) from (
+     select 1 from invocations i, b
+     where b.deployment_scope='' and i.app_id=$1::uuid and i.queue_binding_id is null
+       and i.queue_name=b.queue_name and i.account_id=b.account_id
+       and i.source='queue' and i.state in ('pending','dispatching')
+       and ($2::text is null or i.deployment_scope=$2::text)
+     limit $3::integer) legacy)::bigint as depth
+`
+
+type QueueDepthForBindingParams struct {
+	AppID           pgtype.UUID
+	DeploymentScope pgtype.Text
+	RowLimit        int32
+	BindingID       pgtype.UUID
+}
+
+// QueueStateForBinding's depth up to row_limit per branch: the binding's own
+// messages, then legacy unassigned work under its name. Each branch reads an
+// index range and stops at the limit; the caller clamps the sum.
+func (q *Queries) QueueDepthForBinding(ctx context.Context, db DBTX, arg QueueDepthForBindingParams) (int32, error) {
+	row := db.QueryRow(ctx, queueDepthForBinding,
+		arg.AppID,
+		arg.DeploymentScope,
+		arg.RowLimit,
+		arg.BindingID,
+	)
+	var depth int32
+	err := row.Scan(&depth)
+	return depth, err
+}
+
+const queueDepthInScope = `-- name: QueueDepthInScope :one
+select count(*)::bigint as depth from (
+  select 1 from invocations
+  where app_id=$1::uuid and deployment_scope=$2::text
+    and source='queue' and state in ('pending','dispatching')
+  limit $3::integer
+) bounded
+`
+
+type QueueDepthInScopeParams struct {
+	AppID           pgtype.UUID
+	DeploymentScope string
+	RowLimit        int32
+}
+
+// QueueStateInScope's depth, counted only up to row_limit: worker scaling
+// needs no more than the depth that saturates the pool (ADR-20261022105723
+// amendment 2026-10-24).
+func (q *Queries) QueueDepthInScope(ctx context.Context, db DBTX, arg QueueDepthInScopeParams) (int64, error) {
+	row := db.QueryRow(ctx, queueDepthInScope, arg.AppID, arg.DeploymentScope, arg.RowLimit)
+	var depth int64
+	err := row.Scan(&depth)
+	return depth, err
 }
 
 const queueExpiredApplicationStandardExceptions = `-- name: QueueExpiredApplicationStandardExceptions :one
@@ -75850,6 +75962,9 @@ SELECT (jsonb_build_object(
     'deployment_submission_receipts_deployment_id_fkey', (SELECT count(*) FROM deployment_submission_receipts WHERE deployment_id = $1::uuid),
     'project_worker_job_evidence_deployment_id_fkey', (SELECT count(*) FROM project_worker_job_evidence WHERE deployment_id = $1::uuid),
     'project_worker_release_pins_deployment_id_fkey', (SELECT count(*) FROM project_worker_release_pins WHERE deployment_id = $1::uuid),
+    -- Database-restoring rollbacks (ADR-20261023181931) record both releases.
+    'release_database_switches_from_deployment_id_fkey', (SELECT count(*) FROM release_database_switches WHERE from_deployment_id = $1::uuid),
+    'release_database_switches_target_deployment_id_fkey', (SELECT count(*) FROM release_database_switches WHERE target_deployment_id = $1::uuid),
     -- Preview command runtimes (financial previews) hold a deployment while preparing or active.
     'financial_preview_command_runtimes_deployment_id_fkey', (SELECT count(*) FROM financial_preview_command_runtimes WHERE deployment_id = $1::uuid AND phase <> 'retired')
 ))::jsonb AS borrowers
@@ -76400,7 +76515,7 @@ func (q *Queries) ReadCronActivationDeployment(ctx context.Context, db DBTX, arg
 }
 
 const readCustomerAlertRule = `-- name: ReadCustomerAlertRule :one
-SELECT id, account_id, app_id, name, enabled, metric, comparison, threshold, window_spec, failure_source, webhook_url, webhook_secret_sealed, cooldown_minutes, state, last_fired_at, last_evaluated_at, created_at, updated_at, org_id, action, post_deploy_rollback_window_seconds, event_subscription_id, edge_rule_id, custom_metric_name, slo_id, synthetic_check_id, mcp_min_calls, mcp_for_minutes, mcp_readiness_scope, log_query FROM alert_rules WHERE id=$1
+SELECT id, account_id, app_id, name, enabled, metric, comparison, threshold, window_spec, failure_source, webhook_url, webhook_secret_sealed, cooldown_minutes, state, last_fired_at, last_evaluated_at, created_at, updated_at, org_id, action, post_deploy_rollback_window_seconds, event_subscription_id, edge_rule_id, custom_metric_name, slo_id, synthetic_check_id, mcp_min_calls, mcp_for_minutes, mcp_readiness_scope, log_query, created_by_account_id FROM alert_rules WHERE id=$1
 `
 
 func (q *Queries) ReadCustomerAlertRule(ctx context.Context, db DBTX, id pgtype.UUID) (AlertRule, error) {
@@ -76437,6 +76552,7 @@ func (q *Queries) ReadCustomerAlertRule(ctx context.Context, db DBTX, id pgtype.
 		&i.McpForMinutes,
 		&i.McpReadinessScope,
 		&i.LogQuery,
+		&i.CreatedByAccountID,
 	)
 	return i, err
 }
@@ -82732,6 +82848,51 @@ func (q *Queries) ReadPublicRoutingOwner(ctx context.Context, db DBTX, arg ReadP
 	return verified, err
 }
 
+const readPublicRoutingProductionWeights = `-- name: ReadPublicRoutingProductionWeights :many
+WITH live AS (
+    SELECT id, traffic_percent, scope FROM deployments
+    WHERE app_id = $2::uuid AND scope IN ('production', 'default') AND status = 'live'
+      AND deleted_at IS NULL AND traffic_percent > 0
+)
+SELECT id, traffic_percent, scope FROM live
+WHERE scope = CASE WHEN EXISTS (SELECT 1 FROM live WHERE scope = 'production') THEN 'production' ELSE 'default' END
+ORDER BY id LIMIT $1::integer
+`
+
+type ReadPublicRoutingProductionWeightsParams struct {
+	RowLimit int32
+	AppID    pgtype.UUID
+}
+
+type ReadPublicRoutingProductionWeightsRow struct {
+	ID             pgtype.UUID
+	TrafficPercent int32
+	Scope          string
+}
+
+// ADR-570 production routing follows ProductionRoutingDeployments, as the
+// weighted picker does: the named production scope once it carries traffic,
+// otherwise the legacy default scope. One read returns the chosen lane.
+func (q *Queries) ReadPublicRoutingProductionWeights(ctx context.Context, db DBTX, arg ReadPublicRoutingProductionWeightsParams) ([]ReadPublicRoutingProductionWeightsRow, error) {
+	rows, err := db.Query(ctx, readPublicRoutingProductionWeights, arg.RowLimit, arg.AppID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ReadPublicRoutingProductionWeightsRow{}
+	for rows.Next() {
+		var i ReadPublicRoutingProductionWeightsRow
+		if err := rows.Scan(&i.ID, &i.TrafficPercent, &i.Scope); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const readPublicRoutingRelease = `-- name: ReadPublicRoutingRelease :many
 SELECT rs.id, member.deployment_id,
        EXISTS (
@@ -82799,6 +82960,29 @@ type ReadPublicRoutingRevisionParams struct {
 
 func (q *Queries) ReadPublicRoutingRevision(ctx context.Context, db DBTX, arg ReadPublicRoutingRevisionParams) (bool, error) {
 	row := db.QueryRow(ctx, readPublicRoutingRevision, arg.DeploymentID, arg.AppID, arg.Scope)
+	var allowed bool
+	err := row.Scan(&allowed)
+	return allowed, err
+}
+
+const readPublicRoutingSmokeCandidate = `-- name: ReadPublicRoutingSmokeCandidate :one
+SELECT EXISTS (
+    SELECT 1 FROM deployments WHERE id = $1::uuid AND app_id = $2::uuid
+      AND status IN ('snapshotting', 'live') AND deleted_at IS NULL
+)::boolean AS allowed
+`
+
+type ReadPublicRoutingSmokeCandidateParams struct {
+	DeploymentID pgtype.UUID
+	AppID        pgtype.UUID
+}
+
+// imaged's hosting smoke verifies a candidate before MarkDeploymentLive, so
+// the candidate is still snapshotting. The smoke always uses the app's own
+// host, whatever the candidate's environment, so no scope applies; the smoke
+// challenge already binds the app and deployment.
+func (q *Queries) ReadPublicRoutingSmokeCandidate(ctx context.Context, db DBTX, arg ReadPublicRoutingSmokeCandidateParams) (bool, error) {
+	row := db.QueryRow(ctx, readPublicRoutingSmokeCandidate, arg.DeploymentID, arg.AppID)
 	var allowed bool
 	err := row.Scan(&allowed)
 	return allowed, err
@@ -99699,7 +99883,7 @@ UPDATE alert_rules SET mcp_min_calls=coalesce($1::integer,mcp_min_calls),
  webhook_secret_sealed=coalesce($11::bytea,webhook_secret_sealed),
  cooldown_minutes=coalesce($12::integer,cooldown_minutes),
  post_deploy_rollback_window_seconds=coalesce($13::integer,post_deploy_rollback_window_seconds),updated_at=now()
-WHERE id=$14 RETURNING id, account_id, app_id, name, enabled, metric, comparison, threshold, window_spec, failure_source, webhook_url, webhook_secret_sealed, cooldown_minutes, state, last_fired_at, last_evaluated_at, created_at, updated_at, org_id, action, post_deploy_rollback_window_seconds, event_subscription_id, edge_rule_id, custom_metric_name, slo_id, synthetic_check_id, mcp_min_calls, mcp_for_minutes, mcp_readiness_scope, log_query
+WHERE id=$14 RETURNING id, account_id, app_id, name, enabled, metric, comparison, threshold, window_spec, failure_source, webhook_url, webhook_secret_sealed, cooldown_minutes, state, last_fired_at, last_evaluated_at, created_at, updated_at, org_id, action, post_deploy_rollback_window_seconds, event_subscription_id, edge_rule_id, custom_metric_name, slo_id, synthetic_check_id, mcp_min_calls, mcp_for_minutes, mcp_readiness_scope, log_query, created_by_account_id
 `
 
 type UpdateCustomerAlertRuleParams struct {
@@ -99768,6 +99952,7 @@ func (q *Queries) UpdateCustomerAlertRule(ctx context.Context, db DBTX, arg Upda
 		&i.McpForMinutes,
 		&i.McpReadinessScope,
 		&i.LogQuery,
+		&i.CreatedByAccountID,
 	)
 	return i, err
 }

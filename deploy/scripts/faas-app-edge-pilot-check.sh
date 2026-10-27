@@ -52,7 +52,7 @@ sudo -u postgres psql -d postgres -XAtF "	" -c "select queryid, calls from pg_st
 edge_counters() {
   local node
   for node in $COMPUTE_NODES; do
-    remote "$node" "curl -fsS --max-time 5 http://127.0.0.1:9092/metrics | awk -v node=$node '
+    remote "$node" "curl -fsS --max-time 5 http://127.0.0.1:9109/metrics | awk -v node=$node '
       /^gatewayd_public_edge_local_fallback_total/ { f += \$NF }
       /^gatewayd_public_edge_misdirected_total/ { m += \$NF }
       END { print node, f + 0, m + 0 }'"
