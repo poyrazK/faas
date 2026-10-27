@@ -1775,6 +1775,12 @@ var WriteExclusiveError = writeExclusiveError
 // (alert, log drain, webhook, channel) passes.
 var ResolveAndCheckEgress = resolveAndCheckEgress
 
+// PlanDowngradeProblemForTest runs the pre-downgrade quota check (Hunt 17
+// H17-4) for a subject the HTTP route would resolve, such as an organization.
+func (r *server) PlanDowngradeProblemForTest(ctx context.Context, subject state.Account, target api.Plan) *api.Problem {
+	return r.planDowngradeProblem(ctx, subject, target)
+}
+
 // RequestBillingMailOutboxesForTest selects the three webhook billing-mail
 // outboxes without configuring one, so a delivery that reaches an outbox
 // fails closed with 503 (Hunt 17 H17-3).

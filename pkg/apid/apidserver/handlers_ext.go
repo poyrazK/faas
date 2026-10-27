@@ -5131,6 +5131,10 @@ func (s *server) changePlan(w http.ResponseWriter, r *http.Request, acct state.A
 	// Free while Polar continues charging the previous paid subscription. The
 	// provider webhook is the only source of truth for the eventual local plan.
 	if acct.Plan != plan {
+		if problem := s.planDowngradeProblem(r.Context(), acct, plan); problem != nil {
+			api.WriteProblem(w, problem)
+			return
+		}
 		billingAcct, identityErr := s.accountForActiveBillingProvider(r.Context(), acct)
 		if identityErr != nil {
 			api.WriteProblem(w, api.ErrCapacity("billing identity temporarily unavailable"))
