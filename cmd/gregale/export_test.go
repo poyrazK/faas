@@ -1152,6 +1152,7 @@ var CorrelateRouteMonitorIncidentSourceAuto = correlateRouteMonitorIncidentSourc
 var CoveragePolicy = coveragePolicy
 var CreateDevSetupManifest = createDevSetupManifest
 var CreateDurableProjectVerification = createDurableProjectVerification
+var CreateOrFetchApp = createOrFetchApp
 var CreateTestAsyncRoutes = createTestAsyncRoutes
 var CurrentUploadOffset = currentUploadOffset
 var CustomerCliCommands = customerCliCommands

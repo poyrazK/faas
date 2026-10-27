@@ -1077,6 +1077,11 @@ func cmdAppScale(slug string, args []string) int {
 		return jsonOut(writeJSON(updated))
 	}
 	printAppSettingsReceipt(slug, *environment, req)
+	if explicit["min"] && *min > 0 && updated.Status == "evicted_cold" {
+		// A parked app keeps parked until a real wake (H5-54), so the floor
+		// does not start an instance on its own (Hunt 14 H14-94).
+		PrintOK(osStdout, "%s", parkedMinInstancesNote(slug, *min))
+	}
 	if explicit["min"] && *min > 0 {
 		// Silent on Whoami failure (mid-rotation token, transient
 		// API blip). The cost echo is a transparency affordance;
@@ -1087,6 +1092,12 @@ func cmdAppScale(slug string, args []string) int {
 		}
 	}
 	return 0
+}
+
+// parkedMinInstancesNote tells the owner that a floor set on a parked app
+// waits for the next wake.
+func parkedMinInstancesNote(slug string, floor int) string {
+	return fmt.Sprintf("App is parked; the floor of %d starts holding after its next wake. Run gregale wake %s to start it now.", floor, slug)
 }
 
 // cmdAppRename swaps an app's slug atomically. The server validates the
