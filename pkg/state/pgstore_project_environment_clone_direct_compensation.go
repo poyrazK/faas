@@ -54,6 +54,27 @@ func ProjectEnvironmentCloneIsDirectlyCompensable(op ProjectEnvironmentCloneOper
 	return true
 }
 
+// Failure codes of a clone the coordinator ended itself because it could not
+// finish (ADR-20261024123122, ADR-20261024224230). Only such a clone is
+// compensated directly; any other compensating clone may hold checkpoint
+// artifacts that need their own retirement proofs.
+const (
+	CloneFailureTargetDeployment = "target_deployment_failed"
+	CloneFailureTargetDatabase   = "target_database_failed"
+	CloneFailureSourceChanged    = "source_changed_during_capture"
+	CloneFailureDeadline         = "clone_deadline_exceeded"
+)
+
+// ProjectEnvironmentCloneFailedDirectly reports whether the coordinator ended
+// this directly compensable clone itself.
+func ProjectEnvironmentCloneFailedDirectly(op ProjectEnvironmentCloneOperation) bool {
+	switch op.ErrorCode {
+	case CloneFailureTargetDeployment, CloneFailureTargetDatabase, CloneFailureSourceChanged, CloneFailureDeadline:
+		return ProjectEnvironmentCloneIsDirectlyCompensable(op)
+	}
+	return false
+}
+
 // ProjectEnvironmentCloneHasManagedDatabases reports whether the operation
 // restores managed databases for its target.
 func ProjectEnvironmentCloneHasManagedDatabases(op ProjectEnvironmentCloneOperation) bool {
@@ -80,7 +101,7 @@ func (s *PgStore) directCloneCompensationTx(ctx context.Context, l ProjectEnviro
 	if err != nil {
 		return err
 	}
-	if op.Status != CloneOperationCompensating || !ProjectEnvironmentCloneIsDirectlyCompensable(op) {
+	if op.Status != CloneOperationCompensating || !ProjectEnvironmentCloneFailedDirectly(op) {
 		return ErrConflict
 	}
 	if err := authorizeCloneObjectMutationTx(ctx, tx, op, &l); err != nil {

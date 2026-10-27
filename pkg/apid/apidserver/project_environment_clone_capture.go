@@ -67,7 +67,7 @@ func captureProjectEnvironmentClone(ctx context.Context, store projectEnvironmen
 		}
 		resources = append(resources, captured...)
 	}
-	if !cloneCoordinatorResourcesEqual(op.Resources, resources) && !cloneCoordinatorResourcesEqual(op.Resources, resources[:configured]) {
+	if len(op.Resources) != 0 && !cloneCoordinatorResourcesEqual(op.Resources, resources) && !cloneCoordinatorResourcesEqual(op.Resources, resources[:configured]) {
 		return lease, state.ErrConflict
 	}
 	updated, err := store.AdvanceProjectEnvironmentCloneOperation(ctx, op.AccountID, op.ProjectID, op.ID, op.Status, state.CloneOperationCopying, op.Revision, resources, "")

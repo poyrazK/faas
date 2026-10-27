@@ -161,6 +161,8 @@ func newCloneSourceFixture(t *testing.T, data cloneSourceData, fences bool) clon
 	}
 	notifier := &clonePrimeNotifier{}
 	srv := newServer(store, slog.New(slog.NewTextHandler(io.Discard, nil)), "gregale.dev", notifier)
+	// The fixture's data point is already past; restore without the settle.
+	srv.cloneDataPointSettle = 0
 	f := cloneCoordinatorFixture{srv: srv, store: store, pool: pool, notifier: notifier}
 	point := time.Now().UTC().Add(-time.Second).Truncate(time.Microsecond)
 	for _, slug := range []string{"coordinator-api", "coordinator-jobs"} {

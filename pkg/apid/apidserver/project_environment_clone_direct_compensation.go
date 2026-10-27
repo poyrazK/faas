@@ -42,13 +42,13 @@ func directCloneFailure(op state.ProjectEnvironmentCloneOperation, stepErr error
 	}
 	switch {
 	case errors.Is(stepErr, errCloneTargetDeploymentFailed):
-		return "target_deployment_failed"
+		return state.CloneFailureTargetDeployment
 	case errors.Is(stepErr, errCloneTargetDatabaseFailed):
-		return "target_database_failed"
+		return state.CloneFailureTargetDatabase
 	case errors.Is(stepErr, state.ErrProjectEnvironmentCloneSourceChanged):
-		return "source_changed_during_capture"
+		return state.CloneFailureSourceChanged
 	case !op.CreatedAt.IsZero() && now.Sub(op.CreatedAt) > deadline:
-		return "clone_deadline_exceeded"
+		return state.CloneFailureDeadline
 	}
 	return ""
 }

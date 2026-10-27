@@ -172,10 +172,12 @@ func (s *server) processProjectEnvironmentCloneLease(ctx context.Context, store 
 		if cloneCoordinatorHasCommonCheckpoint(lease.Operation) {
 			return s.completeProjectEnvironmentCloneCompensation(ctx, lease)
 		}
-		// A clone that recorded no database or bucket holds no fence, snapshot,
-		// copy target or restore; the capture may have failed before its data
-		// point. Removing its target is all that is left.
-		if state.ProjectEnvironmentCloneIsDirectlyCompensable(lease.Operation) && !state.ProjectEnvironmentCloneHasManagedDatabases(lease.Operation) {
+		// A clone the coordinator ended itself was admitted without a data
+		// checkpoint, so it holds no fence, snapshot, copy target or fork; it
+		// removes only its target deployments, bindings, restored databases and
+		// environment. Any other compensating clone retires its checkpoint
+		// artifacts first.
+		if state.ProjectEnvironmentCloneFailedDirectly(lease.Operation) {
 			return s.compensateDirectProjectEnvironmentClone(ctx, lease)
 		}
 		lease, err = s.abandonProjectEnvironmentCloneConfigurationFence(ctx, lease)
@@ -209,9 +211,6 @@ func (s *server) processProjectEnvironmentCloneLease(ctx context.Context, store 
 		lease, _, err = s.cleanupProjectEnvironmentClonePostgresSnapshots(ctx, lease)
 		if err != nil {
 			return lease, err
-		}
-		if state.ProjectEnvironmentCloneIsDirectlyCompensable(lease.Operation) {
-			return s.compensateDirectProjectEnvironmentClone(ctx, lease)
 		}
 		return lease, errCloneCompensationUnavailable
 	case state.CloneOperationCopying, state.CloneOperationPublishing:
