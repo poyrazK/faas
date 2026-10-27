@@ -1,0 +1,55 @@
+name: edge-store
+
+# The edge daemons run on state.EdgeStore, not the whole store
+# (docs/adr/20261021092138-edge-store-blast-radius.md): a daemon that
+# reaches *state.PgStore or state.Store through an interface value carries
+# every store method's name, so every store change would rebuild it and
+# redeploy the edge lane. scripts/ci/check_edge_store.sh links each edge
+# daemon with -ldflags=-dumpdep and fails, naming the referrers, when one
+# reaches either type. Any Go change can bring them back through an import,
+# so it runs on every one.
+
+on:
+  pull_request:
+    paths:
+      - "**/*.go"
+      - go.mod
+      - go.sum
+      - Makefile
+      - scripts/ci/check_edge_store.sh
+      - .github/workflows/edge-store.yml
+
+concurrency:
+  group: edge-store-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  guard:
+    name: edge daemons stay off the whole store
+    # The release-units build cache (release-units.yml) was written on this
+    # image with the release recipe, so the links below reuse its packages.
+    runs-on: ubuntu-22.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - name: Restore the release build cache
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: go-unit-build-${{ runner.os }}-${{ hashFiles('go.mod', 'go.sum') }}-
+          restore-keys: |
+            go-unit-build-${{ runner.os }}-${{ hashFiles('go.mod', 'go.sum') }}-
+
+      - name: Link the edge daemons and check what they reach
+        run: scripts/ci/check_edge_store.sh gatewayd-public

@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"bytes"
@@ -7,26 +7,27 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
 func managedCLIInventory() api.AppBindingInventoryItem {
-	return api.AppBindingInventoryItem{Type: api.BindingTypeService, Name: "billing", Binding: "BILLING_URL", Scope: "production", State: "enforced", Transport: "https", VerificationStatus: "unsupported", ServiceTargetDeploymentID: uuid.NewString(), ServiceContext: &api.ServiceBindingInventoryContext{Source: "environment_release", CallerDeploymentID: pinnedBindingDeployment, TargetApp: "git-billing", TargetAppID: uuid.NewString(), ReleaseID: uuid.NewString(), Revision: strings.Repeat("a", 64), RoutingStatus: "resolved", RoutingReason: "active_reviewed_release", VerificationReason: api.ManagedServiceVerificationUnsupported}}
+	return api.AppBindingInventoryItem{Type: api.BindingTypeService, Name: "billing", Binding: "BILLING_URL", Scope: "production", State: "enforced", Transport: "https", VerificationStatus: "unsupported", ServiceTargetDeploymentID: uuid.NewString(), ServiceContext: &api.ServiceBindingInventoryContext{Source: "environment_release", CallerDeploymentID: main.PinnedBindingDeployment, TargetApp: "git-billing", TargetAppID: uuid.NewString(), ReleaseID: uuid.NewString(), Revision: strings.Repeat("a", 64), RoutingStatus: "resolved", RoutingReason: "active_reviewed_release", VerificationReason: api.ManagedServiceVerificationUnsupported}}
 }
 
 func TestBindingsInventoryDeploymentSelection(t *testing.T) {
-	resetJSONOut(t)
+	main.ResetJSONOut(t)
 	f := newAllProbePreviewFixture(t)
 	f.inventory.Bindings = []api.AppBindingInventoryItem{managedCLIInventory()}
 	f.inventory.ServiceBindingSource = "environment_release"
 	t.Setenv("FAAS_API", f.server.URL)
 	t.Setenv("FAAS_TOKEN", "fp_test_x")
 	var output bytes.Buffer
-	old := osStdout
-	osStdout = &output
-	t.Cleanup(func() { osStdout = old })
-	args := []string{"bindings", "api", "--deployment", pinnedBindingDeployment, "--json"}
-	if code := run(args); code != 0 {
+	old := (*main.OsStdout)
+	(*main.OsStdout) = &output
+	t.Cleanup(func() { (*main.OsStdout) = old })
+	args := []string{"bindings", "api", "--deployment", main.PinnedBindingDeployment, "--json"}
+	if code := main.Run(args); code != 0 {
 		t.Fatalf("code=%d output=%s", code, &output)
 	}
 	var got api.AppBindingInventory
@@ -38,35 +39,35 @@ func TestBindingsInventoryDeploymentSelection(t *testing.T) {
 	}
 	f.inventory.ServiceBindingSource = ""
 	output.Reset()
-	if code := run(args); code == 0 {
+	if code := main.Run(args); code == 0 {
 		t.Fatal("old server did not confirm the service namespace contract")
 	}
 	f.inventory.ServiceBindingSource = "environment_release"
 	f.inventory.RequestedDeploymentID = ""
 	output.Reset()
-	if code := run(args); code == 0 {
+	if code := main.Run(args); code == 0 {
 		t.Fatal("server ignored deployment selector")
 	}
 }
 
 func TestManagedServiceProbesBlockedBeforeAdmission(t *testing.T) {
 	for _, args := range [][]string{
-		{"verify", "api", "--all", "--deployment", pinnedBindingDeployment, "--require-complete", "--dry-run", "--json"},
-		{"verify", "api", "billing", "--deployment", pinnedBindingDeployment, "--json"},
+		{"verify", "api", "--all", "--deployment", main.PinnedBindingDeployment, "--require-complete", "--dry-run", "--json"},
+		{"verify", "api", "billing", "--deployment", main.PinnedBindingDeployment, "--json"},
 	} {
 		t.Run(strings.Join(args, " "), func(t *testing.T) {
-			resetJSONOut(t)
-			stderr, restoreStderr := captureStderr(t)
+			main.ResetJSONOut(t)
+			stderr, restoreStderr := main.CaptureStderr(t)
 			defer restoreStderr()
 			f := newAllProbePreviewFixture(t)
 			f.inventory.Bindings = []api.AppBindingInventoryItem{managedCLIInventory()}
 			t.Setenv("FAAS_API", f.server.URL)
 			t.Setenv("FAAS_TOKEN", "fp_test_x")
 			var output bytes.Buffer
-			old := osStdout
-			osStdout = &output
-			t.Cleanup(func() { osStdout = old })
-			if code := run(append([]string{"bindings"}, args...)); code == 0 {
+			old := (*main.OsStdout)
+			(*main.OsStdout) = &output
+			t.Cleanup(func() { (*main.OsStdout) = old })
+			if code := main.Run(append([]string{"bindings"}, args...)); code == 0 {
 				t.Fatalf("managed service probe passed: %s", &output)
 			}
 			if !strings.Contains(output.String()+stderr.String(), api.ManagedServiceVerificationUnsupported) {

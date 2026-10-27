@@ -40,6 +40,18 @@ func (c *Client) PreviewEnvironmentGitPlan(ctx context.Context, project, environ
 	return out, err
 }
 
+func (c *Client) PreviewEnvironmentGitPromotion(ctx context.Context, project, environment string, request PreviewEnvironmentGitPromotionRequest) (PreviewEnvironmentGitPromotionResponse, error) {
+	var out PreviewEnvironmentGitPromotionResponse
+	err := c.do(ctx, http.MethodPost, environmentGitOpsPath(project, environment)+"/promotion-plan", request, &out)
+	return out, err
+}
+
+func (c *Client) PreviewEnvironmentGitRollback(ctx context.Context, project, environment string, request PreviewEnvironmentGitRollbackRequest) (PreviewEnvironmentGitRollbackResponse, error) {
+	var out PreviewEnvironmentGitRollbackResponse
+	err := c.do(ctx, http.MethodPost, environmentGitOpsPath(project, environment)+"/rollback-plan", request, &out)
+	return out, err
+}
+
 func (c *Client) ApproveEnvironmentGitRevision(ctx context.Context, project, environment string, request ApproveEnvironmentGitRevisionRequest) (ApproveEnvironmentGitRevisionResponse, error) {
 	var out ApproveEnvironmentGitRevisionResponse
 	err := c.do(ctx, http.MethodPost, environmentGitOpsPath(project, environment)+"/revisions/approve", request, &out)
@@ -84,5 +96,15 @@ func (c *Client) ClaimEnvironmentFieldOwnership(ctx context.Context, request Env
 func (c *Client) ReleaseEnvironmentFieldOwnership(ctx context.Context, request EnvironmentFieldOwnershipRequest) (EnvironmentFieldOwnershipResponse, error) {
 	var out EnvironmentFieldOwnershipResponse
 	err := c.do(ctx, http.MethodDelete, "/v1/environment-field-ownership", request, &out)
+	return out, err
+}
+
+func (c *Client) ListEnvironmentGitReleases(ctx context.Context, project, environment string, request ListEnvironmentGitReleasesRequest) (ListEnvironmentGitReleasesResponse, error) {
+	var out ListEnvironmentGitReleasesResponse
+	query := url.Values{"target_commit_sha": {request.TargetCommitSHA}}
+	if request.Before != "" {
+		query.Set("before", request.Before)
+	}
+	err := c.do(ctx, http.MethodGet, environmentGitOpsPath(project, environment)+"/releases?"+query.Encode(), nil, &out)
 	return out, err
 }

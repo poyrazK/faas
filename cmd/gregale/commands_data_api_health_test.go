@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"context"
@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -82,11 +83,11 @@ func TestDataAPIHealthReportSeparatesCurrentChecksAndRecentFailures(t *testing.T
 				case "pool-timeouts":
 					body = strings.ReplaceAll(body, `"timeouts_total":0`, `"timeouts_total":9`)
 				case "pool-missing":
-					body = strings.ReplaceAll(body, `,"pool":`+dataAPIHealthPoolFixture(api.DataAPIMaxPoolConnections), ``)
+					body = strings.ReplaceAll(body, `,"pool":`+dataAPIHealthPoolFixture(api.DataAPIDefaultPoolConnections), ``)
 				case "pool-invalid":
 					body = strings.ReplaceAll(body, `"waiting":0`, `"waiting":"private-response-secret"`)
 				case "pool-unknown":
-					body = strings.ReplaceAll(body, dataAPIHealthPoolFixture(api.DataAPIMaxPoolConnections), `{"state":"unknown","reason":"timeout","checked_at":"2026-10-16T10:00:00Z"}`)
+					body = strings.ReplaceAll(body, dataAPIHealthPoolFixture(api.DataAPIDefaultPoolConnections), `{"state":"unknown","reason":"timeout","checked_at":"2026-10-16T10:00:00Z"}`)
 				}
 				if scenario == "engine-exit" {
 					body = strings.ReplaceAll(strings.ReplaceAll(body, `"engine":"reachable"`, `"engine":"unreachable"`), `"sql":"unready"`, `"sql":"unknown"`)
@@ -115,12 +116,12 @@ func TestDataAPIHealthReportSeparatesCurrentChecksAndRecentFailures(t *testing.T
 							value.Databases[0].State = "over_budget"
 							*value.Databases[0].Capacity.UsableConnections = 6
 						}
-						writeJSONTest(w, value)
+						main.WriteJSONTest(w, value)
 						return
 					}
-					writeJSONTest(w, api.DataAPIConnectionBudgets{Version: 1, App: "notes", State: "not_applicable", Databases: []api.ManagedPostgresConnectionBudget{}})
+					main.WriteJSONTest(w, api.DataAPIConnectionBudgets{Version: 1, App: "notes", State: "not_applicable", Databases: []api.ManagedPostgresConnectionBudget{}})
 				case "/v1/apps/notes":
-					writeJSONTest(w, api.AppResponse{Slug: "notes", CanonicalURL: serving.URL})
+					main.WriteJSONTest(w, api.AppResponse{Slug: "notes", CanonicalURL: serving.URL})
 				case "/v1/apps/notes/logs":
 					if scenario == "logs-unavailable" {
 						http.Error(w, "private-stream-secret", http.StatusForbidden)
@@ -179,14 +180,14 @@ func TestDataAPIHealthReportSeparatesCurrentChecksAndRecentFailures(t *testing.T
 			defer management.Close()
 			t.Setenv("FAAS_API", management.URL)
 			t.Setenv("FAAS_TOKEN", "owner-test-token")
-			stdout, stderr, restore := swapIO(t)
+			stdout, stderr, restore := main.SwapIO(t)
 			defer restore()
 			args := []string{"--json", "data-api", "health", "notes", "--since", "15m"}
 			if scenario == "deadline" {
 				args = append(args, "--timeout", "250ms")
 			}
-			code := run(args)
-			var report dataAPIHealthReport
+			code := main.Run(args)
+			var report main.DataAPIHealthReport
 			if err := json.Unmarshal([]byte(stdout.String()), &report); err != nil {
 				t.Fatalf("report: %v, stdout=%s stderr=%s", err, stdout.String(), stderr())
 			}
@@ -244,14 +245,16 @@ func TestDataAPIHealthRejectsUnsafeAndInconsistentResponses(t *testing.T) {
 		strings.ReplaceAll(valid, `"ready":true`, `"ready":false`),
 		strings.ReplaceAll(valid, `"database":"reachable"`, `"database":"unknown"`),
 		strings.ReplaceAll(valid, `"active":0`, `"active":3`),
-		strings.ReplaceAll(valid, `"capacity":2`, `"capacity":1`),
+		// adr: 20261021180534 — pools take 1 to 8 connections.
+		strings.ReplaceAll(valid, `"capacity":2`, `"capacity":9`),
+		strings.ReplaceAll(valid, `"capacity":2`, `"capacity":0`),
 		strings.ReplaceAll(valid, `"queued":0`, `"queued":9`),
 		strings.ReplaceAll(valid, `"active":0,`, ``),
 		valid + strings.Repeat(" ", api.DataAPIHealthMaxBytes),
 		`private-upstream-error`,
 	} {
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = fmt.Fprint(w, body) }))
-		probe := probeDataAPIHealth(context.Background(), server.Client(), server.URL, false)
+		probe := main.ProbeDataAPIHealth(context.Background(), server.Client(), server.URL, false)
 		server.Close()
 		if probe.State != "invalid" || probe.Checks != nil || probe.Admission != nil {
 			t.Fatalf("accepted unsafe response: %+v", probe)
@@ -264,7 +267,7 @@ func TestDataAPIHealthProbeDeadline(t *testing.T) {
 	defer server.Close()
 	ctx, cancel := context.WithTimeout(context.Background(), 25*time.Millisecond)
 	defer cancel()
-	if probe := probeDataAPIHealth(ctx, server.Client(), server.URL, false); probe.State != "unreachable" {
+	if probe := main.ProbeDataAPIHealth(ctx, server.Client(), server.URL, false); probe.State != "unreachable" {
 		t.Fatalf("deadline: %+v", probe)
 	}
 }

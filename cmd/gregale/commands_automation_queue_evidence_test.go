@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"encoding/json"
@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -19,8 +20,8 @@ func TestAutomationQueueEvidenceCLI(t *testing.T) {
 		}
 		_ = json.NewEncoder(w).Encode(api.WorkflowRecoveryAutomaticQueue{Entries: []api.WorkflowRecoveryAutomaticQueueEntry{{WaitCategory: "policy", WaitReason: "automatic_paused", Evidence: &api.WorkflowRecoveryQueueEvidence{Diagnosis: api.WorkflowRetryEvidenceDiagnosis{EvidenceKind: "parent", RunID: "run", ResumeCount: 1, Reason: "terminal_outcome_not_saved", Repairable: true}, EvidenceURL: "/evidence/parent", CLICommand: "gregale automations recovery-retry-evidence --app consumer --parent"}}}})
 	})
-	out := captureAutomationStdout(t)
-	if code := cmdAutomationsRecoveryPolicy([]string{"--app", "consumer", "--queue"}); code != 0 {
+	out := main.CaptureAutomationStdout(t)
+	if code := main.CmdAutomationsRecoveryPolicy([]string{"--app", "consumer", "--queue"}); code != 0 {
 		t.Fatal(code)
 	}
 	for _, want := range []string{"Wait: policy", "automatic_paused", "generation 1", "repairable true", "--parent", "/evidence/parent"} {

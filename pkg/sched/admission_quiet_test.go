@@ -1,6 +1,6 @@
 // adr: 1151 — under quiet pause admission the vCPU and CPU gates count only
 // active instances, and every booking stays within the overcommit cap.
-package sched
+package sched_test
 
 import (
 	"errors"
@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/sched"
 )
 
 const (
@@ -18,8 +19,8 @@ const (
 )
 
 // quietReq books 2 vCPU and 1000 millicores on node n1.
-func quietReq(i int) Request {
-	return Request{
+func quietReq(i int) sched.Request {
+	return sched.Request{
 		Instance: fmt.Sprintf("q%d", i), AppID: fmt.Sprintf("a%d", i), Plan: api.PlanScale,
 		RAMMB: 128, VCPU: 2, CPUMillicores: 1000, MaxConcurrency: 20, NodeID: "n1",
 		NodeCeilingMB: 1 << 20, VCPUBudget: quietVCPUBudget, CPUBudgetMillicores: quietCPUBudget,
@@ -37,10 +38,10 @@ func (f *fakeQuietSample) read(string) (map[string]struct{}, time.Time, bool) {
 	return f.paused, f.asOf, f.ok
 }
 
-func newQuietLedger(s *fakeQuietSample) (*NodeLedger, *measuredClock) {
+func newQuietLedger(s *fakeQuietSample) (*sched.NodeLedger, *measuredClock) {
 	clock := &measuredClock{t: time.Unix(1_800_000_000, 0)}
-	l := NewNodeLedger()
-	l.now = clock.now
+	l := sched.NewNodeLedger()
+	(*l.Now()) = clock.now
 	if s != nil {
 		l.EnableQuietPauseAdmission(s.read)
 	}
@@ -62,7 +63,7 @@ func TestQuietEffective(t *testing.T) {
 		{booked: 24, discount: 24, budget: 8, want: 8}, // all paused, at the cap
 		{booked: 10, discount: 4, budget: 0, want: 10}, // no budget: bookings
 	} {
-		if got := quietEffective(tc.booked, tc.discount, tc.budget); got != tc.want {
+		if got := sched.QuietEffective(tc.booked, tc.discount, tc.budget); got != tc.want {
 			t.Errorf("quietEffective(%d, %d, %d) = %d, want %d", tc.booked, tc.discount, tc.budget, got, tc.want)
 		}
 	}

@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
+	"github.com/jackc/pgerrcode"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/onebox-faas/faas/pkg/api"
@@ -16,22 +18,33 @@ func (s *PgStore) CloneProjectEnvironment(ctx context.Context, clone ProjectEnvi
 }
 
 func (s *PgStore) cloneProjectEnvironment(ctx context.Context, clone ProjectEnvironmentClone, limits api.Limits, lease *ProjectEnvironmentCloneLease) (ProjectEnvironment, ProjectEnvironmentCloneResult, error) {
-	// A source write or another clone can commit while this transaction waits
-	// for its locks. Retry the whole snapshot, including quota and owner checks.
-	for attempt := 0; ; attempt++ {
+	for {
 		created, result, err := s.cloneProjectEnvironmentOnce(ctx, clone, limits, lease)
-		var pgErr *pgconn.PgError
-		if attempt >= 2 || !errors.As(err, &pgErr) || pgErr.Code != "40001" {
-			return created, result, err
+		if err == nil {
+			return created, result, nil
 		}
-		if err := ctx.Err(); err != nil {
+		if ctx.Err() != nil {
+			return ProjectEnvironment{}, ProjectEnvironmentCloneResult{}, ctx.Err()
+		}
+		var pgErr *pgconn.PgError
+		if !errors.As(err, &pgErr) || pgErr.Code != pgerrcode.SerializationFailure {
 			return ProjectEnvironment{}, ProjectEnvironmentCloneResult{}, err
+		}
+		// A source/runtime writer can commit after the policy snapshot starts.
+		// The failed attempt has rolled back and released its session and pool
+		// connection. Retry the complete clone with a fresh guarded snapshot.
+		timer := time.NewTimer(api.TrafficPolicyMutationLockRetry)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return ProjectEnvironment{}, ProjectEnvironmentCloneResult{}, ctx.Err()
+		case <-timer.C:
 		}
 	}
 }
 
 func (s *PgStore) cloneProjectEnvironmentOnce(ctx context.Context, clone ProjectEnvironmentClone, limits api.Limits, lease *ProjectEnvironmentCloneLease) (ProjectEnvironment, ProjectEnvironmentCloneResult, error) {
-	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.RepeatableRead})
+	tx, err := s.beginTrafficPolicyMutation(ctx, uuidToPgtype(clone.AccountID))
 	if err != nil {
 		return ProjectEnvironment{}, ProjectEnvironmentCloneResult{}, fmt.Errorf("state: begin project environment clone: %w", err)
 	}
@@ -162,6 +175,9 @@ func (s *PgStore) cloneProjectEnvironmentOnce(ctx context.Context, clone Project
 	if err != nil {
 		return ProjectEnvironment{}, ProjectEnvironmentCloneResult{}, err
 	}
+	if err := validateClonedEnvironmentPolicyProjections(ctx, tx, clone); err != nil {
+		return ProjectEnvironment{}, ProjectEnvironmentCloneResult{}, err
+	}
 	if lease != nil {
 		if err := saveCloneMaterializationTx(ctx, tx, lease.Operation, created); err != nil {
 			return ProjectEnvironment{}, ProjectEnvironmentCloneResult{}, err
@@ -178,6 +194,19 @@ func (s *PgStore) cloneProjectEnvironmentOnce(ctx context.Context, clone Project
 		return ProjectEnvironment{}, ProjectEnvironmentCloneResult{}, fmt.Errorf("state: commit project environment clone: %w", mapProjectCloneSnapshotErr(err))
 	}
 	return created, result, nil
+}
+
+func validateClonedEnvironmentPolicyProjections(ctx context.Context, tx pgx.Tx, clone ProjectEnvironmentClone) error {
+	oversized, err := sqlc.New().FindOversizedClonedEnvironmentPolicy(ctx, tx, sqlc.FindOversizedClonedEnvironmentPolicyParams{
+		AccountID: uuidToPgtype(clone.AccountID), ProjectID: uuidToPgtype(clone.ProjectID),
+		EnvironmentSlug: clone.TargetSlug, MaxBytes: api.TrafficPolicyMaxContractBytes})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("state: validate cloned traffic policies: %w", mapErr(err))
+	}
+	return checkTrafficProjectionSize(oversized.Scope, oversized.Observed)
 }
 
 func checkPreparedProjectEnvironmentBindings(ctx context.Context, tx pgx.Tx, clone ProjectEnvironmentClone) error {
@@ -405,6 +434,15 @@ func copyProjectEnvironmentRows(ctx context.Context, tx pgx.Tx, clone ProjectEnv
 		return result, nil
 	}
 	if clone.capturedValues == nil {
+		// ADR-1139. A durable clone refuses a source with shared secrets at
+		// capture until it can capture them.
+		projectSecretsCopied, err := sqlc.New().CopyProjectEnvironmentSecrets(ctx, tx, sqlc.CopyProjectEnvironmentSecretsParams{
+			AccountID: mustPgUUID(clone.AccountID), ProjectID: mustPgUUID(clone.ProjectID), SourceSlug: clone.SourceSlug, TargetSlug: clone.TargetSlug,
+		})
+		if err != nil {
+			return result, mapErr(err)
+		}
+		result.ProjectSecretsCopied = int(projectSecretsCopied)
 		refsCopied, err := sqlc.New().CopyProjectEnvironmentSecretReferences(ctx, tx, sqlc.CopyProjectEnvironmentSecretReferencesParams{
 			AccountID: mustPgUUID(clone.AccountID), ProjectID: mustPgUUID(clone.ProjectID), SourceSlug: clone.SourceSlug, TargetSlug: clone.TargetSlug,
 		})

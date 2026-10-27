@@ -21,11 +21,14 @@
 package apidserver
 
 import (
+	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/trafficproblem"
 	"github.com/onebox-faas/faas/pkg/logsanitize"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -123,6 +126,13 @@ func (s *server) createSurfaceUnderQuotas(
 	if !certKind.Valid() {
 		return state.TenantSurface{}, nil, api.ErrTenantSurfaceCertKindInvalid(string(certKind))
 	}
+	for _, h := range req.Hostnames {
+		if hn := strings.ToLower(strings.TrimSpace(h)); hn != "" {
+			if problem := s.tenantHostnameProblem(ctx, hn); problem != nil {
+				return state.TenantSurface{}, nil, problem
+			}
+		}
+	}
 	surf, err := s.store.CreateTenantSurfaceIfUnderQuota(ctx, state.CreateTenantSurfaceParams{
 		AccountID: acct.ID,
 		AppID:     app.ID,
@@ -138,21 +148,92 @@ func (s *server) createSurfaceUnderQuotas(
 		if hn == "" {
 			continue
 		}
-		created, err := s.store.CreateTenantHostnameIfUnderQuota(ctx, state.CreateTenantHostnameParams{
-			SurfaceID:      surf.ID,
-			Hostname:       hn,
-			ChallengeToken: randomToken(16),
-		}, limits)
+		created, err := s.createTenantHostname(ctx, surf, hn, limits)
 		if err != nil {
 			// Best-effort cleanup: roll back the surface so the
 			// caller doesn't see a half-created row. Soft-delete
-			// is the same path PR-A's Txn-aware caller uses.
+			// is the same path PR-A's Txn-aware caller uses. The
+			// hostnames added so far go too: on a deleted surface
+			// they would keep their names reserved with no API
+			// left to remove them.
+			for _, added := range hostnames {
+				_ = s.store.DeleteTenantHostname(ctx, added.Hostname)
+			}
 			_ = s.store.DeleteTenantSurface(ctx, surf.ID)
 			return state.TenantSurface{}, nil, hostnameCreateProblem(err, acct.Plan, surf.ID)
 		}
 		hostnames = append(hostnames, created)
 	}
 	return surf, hostnames, nil
+}
+
+// createTenantHostname attaches hostname to surf. A name another account
+// holds unverified moves to surf once surf's account has published its
+// takeover token at _faas-verify.<hostname>; until then the conflict is a
+// *claimPendingError naming that record (ADR-20261020090500).
+func (s *server) createTenantHostname(ctx context.Context, surf state.TenantSurface, hostname string, limits api.Limits) (state.TenantHostname, error) {
+	in := state.CreateTenantHostnameParams{SurfaceID: surf.ID, Hostname: hostname, ChallengeToken: randomToken(16)}
+	h, err := s.store.CreateTenantHostnameIfUnderQuota(ctx, in, limits)
+	if !errors.Is(err, state.ErrConflict) {
+		return h, err
+	}
+	takeover, ok := s.store.(state.TenantHostnameClaimTakeover)
+	if !ok {
+		return h, err
+	}
+	holderAccount := ""
+	holder, herr := s.store.GetTenantHostnameByName(ctx, hostname)
+	switch {
+	case errors.Is(herr, state.ErrNotFound):
+		// The lookup hides rows on deleted surfaces. Such a row routes
+		// nothing, and the store releases it on proof whoever held it.
+	case herr != nil || holder.Verified():
+		return h, err
+	default:
+		holderSurface, serr := s.store.GetTenantSurfaceByID(ctx, holder.SurfaceID)
+		if serr != nil || holderSurface.AccountID == surf.AccountID {
+			return h, err
+		}
+		holderAccount = holderSurface.AccountID
+	}
+	token := state.ClaimTakeoverToken(state.ClaimKindTenantHostname, surf.AccountID, hostname)
+	if !checkTXT(ctx, hostname, token) {
+		return state.TenantHostname{}, &claimPendingError{name: hostname, record: state.CustomDomainChallengeName(hostname), token: token}
+	}
+	in.ChallengeToken = token
+	if h, err = takeover.TakeOverTenantHostnameClaim(ctx, in, limits); err != nil {
+		return h, err
+	}
+	s.audit.Emit(ctx, "tenant_hostname.claim_taken_over", &surf.AccountID, map[string]any{"hostname": h.Hostname, "surface_id": surf.ID})
+	if holderAccount != "" {
+		s.audit.Emit(ctx, "tenant_hostname.claim_released", &holderAccount, map[string]any{
+			"hostname": h.Hostname, "surface_id": holder.SurfaceID, "reason": "dns_proof_by_another_account",
+		})
+	}
+	return h, nil
+}
+
+// tenantHostnameProblem refuses a hostname that cannot be a tenant hostname:
+// not a lowercase DNS name of at least two labels, or below a wildcard custom
+// domain (ADR-167). Both creation paths, a surface with hostnames and an added
+// hostname, check it; the surface path used to skip both checks.
+func (s *server) tenantHostnameProblem(ctx context.Context, hostname string) *api.Problem {
+	if !state.ValidPlatformTenantHostname(hostname) {
+		return api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Invalid hostname",
+			fmt.Sprintf("%q is not a DNS hostname of at least two labels", hostname))
+	}
+	ws, ok := s.store.(state.CustomDomainWildcardStore)
+	if !ok {
+		return nil
+	}
+	wildcard, err := ws.WildcardDomainForHost(ctx, hostname)
+	if err == nil {
+		return api.ErrWildcardDomainTenantSurfaceOverlap(wildcard.Domain, hostname)
+	}
+	if !errors.Is(err, state.ErrNotFound) {
+		return api.ErrCapacity("could not check wildcard-domain overlap")
+	}
+	return nil
 }
 
 // surfaceCreateProblem maps a CreateTenantSurfaceIfUnderQuota
@@ -183,9 +264,16 @@ func surfaceCreateProblem(err error, plan api.Plan) *api.Problem {
 // from the per-surface quota trip.
 func hostnameCreateProblem(err error, plan api.Plan, surfaceID string) *api.Problem {
 	var qe *state.TenantHostnameQuotaError
+	var pending *claimPendingError
 	switch {
+	case errors.As(err, &qe) && qe.Pending:
+		return api.ErrTenantHostnamePendingQuota(plan, surfaceID, qe.Limit, qe.Observed)
 	case errors.As(err, &qe):
 		return api.ErrTenantHostnameQuota(plan, surfaceID, qe.Limit, qe.Observed)
+	case errors.As(err, &pending):
+		problem := api.NewProblem(http.StatusConflict, api.CodeTenantHostnameAlreadyClaimed, "Hostname claimed", pending.Error())
+		problem.Hint = pending.hint()
+		return problem
 	case errors.Is(err, state.ErrConflict):
 		return api.NewProblem(http.StatusConflict, api.CodeTenantHostnameAlreadyClaimed,
 			"Hostname claimed", "this hostname is already attached to another surface")
@@ -193,7 +281,7 @@ func hostnameCreateProblem(err error, plan api.Plan, surfaceID string) *api.Prob
 		return api.NewProblem(http.StatusNotFound, api.CodeValidation,
 			"Surface missing", "parent surface not found")
 	default:
-		return api.ErrCapacity("could not add tenant hostname")
+		return trafficproblem.TenantBinding(err, api.ErrCapacity("could not add tenant hostname"))
 	}
 }
 
@@ -235,25 +323,34 @@ func (s *server) listTenantSurfaces(w http.ResponseWriter, r *http.Request, acct
 }
 
 // getTenantSurface — GET /v1/apps/{slug}/tenant-surfaces/{id}.
-// Single surface + its hostnames. The id is a UUID; we
-// re-resolve through the store so we can apply the
-// AccountID == acct.ID check (the surface row carries
-// AccountID; we don't need to hop through the app again).
-// Soft-deleted surfaces return 404 — the route is read-only
-// for active surfaces; the cert history / audit trail stay
+// tenantSurfaceForSlug loads the active surface {id} of the {slug} app.
+// Matching AccountID alone is not enough: an organization's company apps
+// and their creator's personal apps share AccountID, and appaccess
+// authorized the caller for {slug} only, so a removed creator or an
+// app-bound key must not reach another app's surface through it.
+// Soft-deleted surfaces return 404 — the cert history / audit trail stay
 // in the DB but the API hides them.
+func (s *server) tenantSurfaceForSlug(w http.ResponseWriter, r *http.Request, acct state.Account) (state.TenantSurface, bool) {
+	app, ok := s.loadApp(w, r, acct, r.PathValue("slug"))
+	if !ok {
+		return state.TenantSurface{}, false
+	}
+	surf, err := s.store.GetTenantSurfaceByID(r.Context(), r.PathValue("id"))
+	if err != nil || surf.AccountID != acct.ID || surf.AppID != app.ID || surf.Status == state.SurfaceStatusDeleted {
+		s.notFound(w, "no such surface")
+		return state.TenantSurface{}, false
+	}
+	return surf, true
+}
+
+// Single surface + its hostnames.
 func (s *server) getTenantSurface(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	if !s.runtimeBool(runtimeConfigTenantSurfaces, api.TenantSurfacesEnabled()) {
 		api.WriteProblem(w, api.ErrTenantSurfacesNotEnabled())
 		return
 	}
-	if _, ok := s.loadApp(w, r, acct, r.PathValue("slug")); !ok {
-		return
-	}
-	id := r.PathValue("id")
-	surf, err := s.store.GetTenantSurfaceByID(r.Context(), id)
-	if err != nil || surf.AccountID != acct.ID || surf.Status == state.SurfaceStatusDeleted {
-		s.notFound(w, "no such surface")
+	surf, ok := s.tenantSurfaceForSlug(w, r, acct)
+	if !ok {
 		return
 	}
 	hostnames, herr := s.store.ListTenantHostnamesForSurface(r.Context(), surf.ID)
@@ -267,45 +364,19 @@ func (s *server) getTenantSurface(w http.ResponseWriter, r *http.Request, acct s
 // deleteTenantSurface — DELETE /v1/apps/{slug}/tenant-surfaces/{id}.
 // Soft-delete (PR-A: DeleteTenantSurface flips status to 'deleted'
 // so the audit + cert_history paths keep referencing the row).
-// We also cascade-delete the hostnames — the surface is gone
-// from a routing perspective; orphan hostnames serve no
-// purpose and trip the UQ on a future re-add. The notify fires
-// so gatewayd drops any in-flight cert work. Soft-deleted
-// surfaces are NOT re-deletable (404 — same as missing).
+// The authorized surface and hostname reservations are removed atomically.
+// Soft-deleted surfaces are not re-deletable (404, as for a missing row).
 func (s *server) deleteTenantSurface(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	if !s.runtimeBool(runtimeConfigTenantSurfaces, api.TenantSurfacesEnabled()) {
 		api.WriteProblem(w, api.ErrTenantSurfacesNotEnabled())
 		return
 	}
-	if _, ok := s.loadApp(w, r, acct, r.PathValue("slug")); !ok {
+	surf, ok := s.tenantSurfaceForSlug(w, r, acct)
+	if !ok {
 		return
 	}
-	id := r.PathValue("id")
-	surf, err := s.store.GetTenantSurfaceByID(r.Context(), id)
-	if err != nil || surf.AccountID != acct.ID || surf.Status == state.SurfaceStatusDeleted {
-		s.notFound(w, "no such surface")
-		return
-	}
-	// Cascade hostnames first so a future re-add of the same
-	// hostname to a new surface doesn't trip ErrConflict. The
-	// first failure (list OR per-row delete) is propagated to
-	// the caller as a 500 — a partial-cascade leaves orphan
-	// hostname rows that block the re-add via the global UQ
-	// (migrations/00243:99). Surface is NOT deleted if the
-	// cascade fails; the operator can retry the DELETE.
-	hostnames, err := s.store.ListTenantHostnamesForSurface(r.Context(), surf.ID)
-	if err != nil {
-		api.WriteProblem(w, api.ErrCapacity("could not list tenant hostnames for cascade"))
-		return
-	}
-	for _, h := range hostnames {
-		if err := s.store.DeleteTenantHostname(r.Context(), h.Hostname); err != nil {
-			api.WriteProblem(w, api.ErrCapacity("could not cascade delete tenant hostname"))
-			return
-		}
-	}
-	if err := s.store.DeleteTenantSurface(r.Context(), surf.ID); err != nil {
-		api.WriteProblem(w, api.ErrCapacity("could not delete tenant surface"))
+	if problem := s.deleteTenantSurfaceIntent(r.Context(), surf.ID, acct.ID); problem != nil {
+		api.WriteProblem(w, problem)
 		return
 	}
 	// No explicit notify: the trigger at migrations/00243:127-145
@@ -333,13 +404,8 @@ func (s *server) addTenantHostname(w http.ResponseWriter, r *http.Request, acct 
 		api.WriteProblem(w, api.ErrTenantSurfacesNotEnabled())
 		return
 	}
-	if _, ok := s.loadApp(w, r, acct, r.PathValue("slug")); !ok {
-		return
-	}
-	id := r.PathValue("id")
-	surf, err := s.store.GetTenantSurfaceByID(r.Context(), id)
-	if err != nil || surf.AccountID != acct.ID || surf.Status == state.SurfaceStatusDeleted {
-		s.notFound(w, "no such surface")
+	surf, ok := s.tenantSurfaceForSlug(w, r, acct)
+	if !ok {
 		return
 	}
 	var req api.AddTenantHostnameRequest
@@ -358,20 +424,11 @@ func (s *server) addTenantHostname(w http.ResponseWriter, r *http.Request, acct 
 		api.WriteProblem(w, api.ErrCapacity("unknown plan"))
 		return
 	}
-	if ws, ok := s.store.(state.CustomDomainWildcardStore); ok {
-		if wildcard, werr := ws.WildcardDomainForHost(r.Context(), hostname); werr == nil {
-			api.WriteProblem(w, api.ErrWildcardDomainTenantSurfaceOverlap(wildcard.Domain, hostname))
-			return
-		} else if !errors.Is(werr, state.ErrNotFound) {
-			api.WriteProblem(w, api.ErrCapacity("could not check wildcard-domain overlap"))
-			return
-		}
+	if problem := s.tenantHostnameProblem(r.Context(), hostname); problem != nil {
+		api.WriteProblem(w, problem)
+		return
 	}
-	h, err := s.store.CreateTenantHostnameIfUnderQuota(r.Context(), state.CreateTenantHostnameParams{
-		SurfaceID:      surf.ID,
-		Hostname:       hostname,
-		ChallengeToken: randomToken(16),
-	}, limits)
+	h, err := s.createTenantHostname(r.Context(), surf, hostname, limits)
 	if err != nil {
 		api.WriteProblem(w, hostnameCreateProblem(err, acct.Plan, surf.ID))
 		return
@@ -397,7 +454,8 @@ func (s *server) removeTenantHostname(w http.ResponseWriter, r *http.Request, ac
 		api.WriteProblem(w, api.ErrTenantSurfacesNotEnabled())
 		return
 	}
-	if _, ok := s.loadApp(w, r, acct, r.PathValue("slug")); !ok {
+	app, ok := s.loadApp(w, r, acct, r.PathValue("slug"))
+	if !ok {
 		return
 	}
 	surfID := r.PathValue("id")
@@ -412,12 +470,12 @@ func (s *server) removeTenantHostname(w http.ResponseWriter, r *http.Request, ac
 		return
 	}
 	surf, err := s.store.GetTenantSurfaceByID(r.Context(), surfID)
-	if err != nil || surf.AccountID != acct.ID {
+	if err != nil || surf.AccountID != acct.ID || surf.AppID != app.ID {
 		s.notFound(w, "no such hostname")
 		return
 	}
-	if err := s.store.DeleteTenantHostname(r.Context(), hostname); err != nil {
-		api.WriteProblem(w, api.ErrCapacity("could not delete tenant hostname"))
+	if problem := s.deleteTenantHostnameIntent(r.Context(), hostname, surfID); problem != nil {
+		api.WriteProblem(w, problem)
 		return
 	}
 	// No explicit notify: the trigger at migrations/00243:127-145
@@ -486,4 +544,32 @@ func hostnameStrings(hostnames []state.TenantHostname) []string {
 		out[i] = h.Hostname
 	}
 	return out
+}
+
+func (s *server) deleteTenantSurfaceIntent(ctx context.Context, surface, account string) *api.Problem {
+	removal, ok := s.store.(state.TenantSurfaceRemovalOwnerStore)
+	if !ok {
+		return api.ErrCapacity("atomic tenant surface removal is unavailable")
+	}
+	if err := removal.DeleteTenantSurfaceWithHostnames(ctx, surface, account); err != nil {
+		if errors.Is(err, state.ErrNotFound) {
+			return api.NewProblem(http.StatusNotFound, api.CodeValidation, "Surface missing", "no such surface")
+		}
+		return trafficproblem.TenantBinding(err, api.ErrCapacity("could not delete tenant surface"))
+	}
+	return nil
+}
+
+func (s *server) deleteTenantHostnameIntent(ctx context.Context, hostname, surface string) *api.Problem {
+	removal, ok := s.store.(state.TenantHostnameRemovalOwnerStore)
+	if !ok {
+		return api.ErrCapacity("owner-bound tenant hostname removal is unavailable")
+	}
+	if err := removal.DeleteTenantHostnameForSurface(ctx, hostname, surface); err != nil {
+		if errors.Is(err, state.ErrNotFound) {
+			return api.NewProblem(http.StatusNotFound, api.CodeValidation, "Hostname missing", "no such hostname")
+		}
+		return trafficproblem.TenantBinding(err, api.ErrCapacity("could not delete tenant hostname"))
+	}
+	return nil
 }

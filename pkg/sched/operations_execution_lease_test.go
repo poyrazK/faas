@@ -1,5 +1,5 @@
 // adr: 521 — losing a claim cancels dispatch without repeating uncertain effects.
-package sched
+package sched_test
 
 import (
 	"context"
@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/state/statetest"
 )
@@ -42,7 +43,7 @@ func TestDrainOperationLeaseLossRequiresReconciliation(t *testing.T) {
 	}{{"claim-lost", nil}, {"database-unavailable", errors.New("injected database outage")}} {
 		t.Run(test.name, func(t *testing.T) {
 			store := &lostOperationLeaseStore{MemStore: state.NewMemStore(), err: test.err}
-			acct, app, dep := seedApp(t, statetest.NewMem(store), api.PlanPro, 256, 5)
+			acct, app, dep := sched.SeedApp(t, statetest.NewMem(store), api.PlanPro, 256, 5)
 			ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 			defer cancel()
 			def, err := store.MemStore.PutOperationDefinition(ctx, state.OperationDefinition{AccountID: acct.ID, OperationDefinitionResponse: api.OperationDefinitionResponse{
@@ -61,8 +62,8 @@ func TestDrainOperationLeaseLossRequiresReconciliation(t *testing.T) {
 				t.Fatal(err)
 			}
 			handler := new(interruptedOperationHandler)
-			engine := newEngine(t, statetest.NewMem(store), &fakeVMM{}, &fakeNotifier{}, "1.10.0")
-			drain := NewDrain(statetest.NewMem(store), engine, WithDrainGatewaySynth(handler), WithDrainWakeLease(1))
+			engine := sched.XNewEngine(t, statetest.NewMem(store), &sched.FakeVMM{}, &sched.FakeNotifier{}, "1.10.0")
+			drain := sched.NewDrain(statetest.NewMem(store), engine, sched.WithDrainGatewaySynth(handler), sched.WithDrainWakeLease(1))
 			drain.Tick(ctx)
 			current, err := store.MemStore.OperationByID(ctx, acct.ID, tenant.ID, op.ID)
 			if err != nil || current.State != api.OperationRequiresReconciliation || handler.calls.Load() != 1 {
@@ -116,7 +117,7 @@ func TestDrainOperationInstanceBindingPrecedesHandler(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			store := &rejectedOperationStampStore{MemStore: state.NewMemStore(), err: test.err}
 			store.reject.Store(true)
-			acct, app, dep := seedApp(t, statetest.NewMem(store), api.PlanPro, 256, 5)
+			acct, app, dep := sched.SeedApp(t, statetest.NewMem(store), api.PlanPro, 256, 5)
 			ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 			defer cancel()
 			def, err := store.MemStore.PutOperationDefinition(ctx, state.OperationDefinition{AccountID: acct.ID, OperationDefinitionResponse: api.OperationDefinitionResponse{
@@ -135,8 +136,8 @@ func TestDrainOperationInstanceBindingPrecedesHandler(t *testing.T) {
 				t.Fatal(err)
 			}
 			handler := &boundOperationHandler{store: store.MemStore}
-			engine := newEngine(t, statetest.NewMem(store), &fakeVMM{}, &fakeNotifier{}, "1.10.0")
-			drain := NewDrain(statetest.NewMem(store), engine, WithDrainGatewaySynth(handler), WithDrainRetryAfter(1))
+			engine := sched.XNewEngine(t, statetest.NewMem(store), &sched.FakeVMM{}, &sched.FakeNotifier{}, "1.10.0")
+			drain := sched.NewDrain(statetest.NewMem(store), engine, sched.WithDrainGatewaySynth(handler), sched.WithDrainRetryAfter(1))
 			drain.Tick(ctx)
 			current, err := store.MemStore.OperationByID(ctx, acct.ID, tenant.ID, op.ID)
 			inv, invErr := store.MemStore.InvocationByID(ctx, op.CurrentInvocationID)

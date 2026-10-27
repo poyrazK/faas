@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import TYPE_CHECKING, Any, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar, cast
 
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
@@ -28,6 +28,9 @@ class CapabilitiesResponse:
     """The serving control plane and state backend support atomic deployment-guarded parking. Older servers omit
     this field, which means unsupported. This is a preflight signal, not a cluster-wide health guarantee; always use
     the conditional parking endpoint, including in mixed-version fleets."""
+    hidden_capabilities: list[str] | Unset = UNSET
+    """Catalog capabilities, internal ones included, whose platform flag is off for this account. Clients hide
+    their commands and links. Omitted when nothing is hidden and by servers without the capability gate."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -42,6 +45,10 @@ class CapabilitiesResponse:
 
         conditional_parking = self.conditional_parking
 
+        hidden_capabilities: list[str] | Unset = UNSET
+        if not isinstance(self.hidden_capabilities, Unset):
+            hidden_capabilities = self.hidden_capabilities
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -53,6 +60,8 @@ class CapabilitiesResponse:
         )
         if conditional_parking is not UNSET:
             field_dict["conditional_parking"] = conditional_parking
+        if hidden_capabilities is not UNSET:
+            field_dict["hidden_capabilities"] = hidden_capabilities
 
         return field_dict
 
@@ -74,11 +83,14 @@ class CapabilitiesResponse:
 
         conditional_parking = d.pop("conditional_parking", UNSET)
 
+        hidden_capabilities = cast(list[str], d.pop("hidden_capabilities", UNSET))
+
         capabilities_response = cls(
             registry_version=registry_version,
             plan=plan,
             capabilities=capabilities,
             conditional_parking=conditional_parking,
+            hidden_capabilities=hidden_capabilities,
         )
 
         capabilities_response.additional_properties = d

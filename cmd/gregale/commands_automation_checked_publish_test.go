@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"crypto/sha256"
@@ -14,30 +14,31 @@ import (
 	"testing"
 	"time"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
 func TestAutomationCheckedPublish(t *testing.T) {
 	for _, mode := range []string{"success", "coverage_success", "human_success", "unchanged", "assertion", "incomplete", "invalid", "issues", "simulation_error", "initial_version", "local_mismatch", "changed_version", "changed_definition", "changed_input", "recheck_error", "conflict", "forbidden", "lost_response", "server_check_error", "policy_coverage"} {
 		t.Run(mode, func(t *testing.T) {
-			resetJSONOut(t)
+			main.ResetJSONOut(t)
 			successful := mode == "success" || mode == "coverage_success" || mode == "human_success" || mode == "unchanged"
-			jsonOutput = mode != "human_success"
-			output := captureAutomationStdout(t)
-			definitionYAML := automationDefinitionYAML
+			(*main.JsonOutput) = mode != "human_success"
+			output := main.CaptureAutomationStdout(t)
+			definitionYAML := main.AutomationDefinitionYAML
 			if mode == "coverage_success" || mode == "policy_coverage" {
 				definitionYAML += "    when: {ref: input.ok, op: exists, value: true}\n"
 			}
-			definitionPath := writeAutomationFixture(t, definitionYAML)
+			definitionPath := main.WriteAutomationFixture(t, definitionYAML)
 			suitePath := filepath.Join(t.TempDir(), "scenarios.yaml")
 			if err := os.WriteFile(suitePath, []byte("definition: "+definitionPath+"\nscenarios:\n  - name: sample\n    require_complete: false\n    expect:\n      record: {state: mocked}\n"), 0600); err != nil {
 				t.Fatal(err)
 			}
-			scenarios, err := loadAutomationScenarios(suitePath)
+			scenarios, err := main.LoadAutomationScenarios(suitePath)
 			if err != nil {
 				t.Fatal(err)
 			}
-			draft := api.AutomationResponse{Name: "paid-invoice", Version: 7, Draft: scenarios[0].request.Definition}
+			draft := api.AutomationResponse{Name: "paid-invoice", Version: 7, Draft: (*scenarios[0].Request()).Definition}
 			draft.Draft.Steps = append([]api.WorkflowStepSpec(nil), draft.Draft.Steps...)
 			if mode == "human_success" || mode == "unchanged" {
 				published := draft.Draft
@@ -48,7 +49,7 @@ func TestAutomationCheckedPublish(t *testing.T) {
 				draft.Published, draft.PublishedVersion = &published, 5
 			}
 			if mode == "local_mismatch" {
-				scenarios[0].request.Definition.Steps[0].Path = "/other"
+				(*scenarios[0].Request()).Definition.Steps[0].Path = "/other"
 			}
 			var mu sync.Mutex
 			var calls []string
@@ -123,8 +124,8 @@ func TestAutomationCheckedPublish(t *testing.T) {
 					if err := json.NewDecoder(r.Body).Decode(&request); err != nil || request.ExpectedVersion != 7 || len(request.Scenarios) != 1 || len(request.Scenarios[0].Expectations) != 1 {
 						t.Errorf("invalid server check request: %+v %v", request, err)
 					}
-					checked := automationCheckedPublishReport{CheckedVersion: 7, DefinitionHash: fmt.Sprintf("%x", sha256.Sum256(mustJSONForCheck(draft.Draft))), Checks: automationCheckReport{Scenarios: []automationScenarioResult{{Name: "sample", Passed: true, DefinitionValid: true, Complete: true}}}}
-					serverEvidence := automationPublicationEvidence(checked, time.Now())
+					checked := main.AutomationCheckedPublishReport{CheckedVersion: 7, DefinitionHash: fmt.Sprintf("%x", sha256.Sum256(mustJSONForCheck(draft.Draft))), Checks: main.AutomationCheckReport{Scenarios: []main.AutomationScenarioResult{{Name: "sample", Passed: true, DefinitionValid: true, Complete: true}}}}
+					serverEvidence := main.AutomationPublicationEvidence(checked, time.Now())
 					serverEvidence.ServerVerified = true
 					_ = json.NewEncoder(w).Encode(api.CheckAutomationPublicationResponse{Receipt: "server-receipt", ExpiresAt: time.Now().Add(time.Minute), Evidence: *serverEvidence})
 				case strings.HasSuffix(r.URL.Path, "/publish"):
@@ -178,9 +179,9 @@ func TestAutomationCheckedPublish(t *testing.T) {
 			if successful {
 				t.Setenv("FAAS_API", server.URL)
 				t.Setenv("FAAS_TOKEN", "token")
-				code = cmdAutomationsPublish([]string{"--app", "billing", "--name", "paid-invoice", "--expected-version", "7", "--take-over-manifest", "--scenarios", suitePath})
+				code = main.CmdAutomationsPublish([]string{"--app", "billing", "--name", "paid-invoice", "--expected-version", "7", "--take-over-manifest", "--scenarios", suitePath})
 			} else {
-				code = publishAutomationWithScenarios(client, "billing", "paid-invoice", 7, true, scenarios)
+				code = main.PublishAutomationWithScenarios(client, "billing", "paid-invoice", 7, true, scenarios)
 			}
 			wantExit := 1
 			if successful {
@@ -216,8 +217,8 @@ func TestAutomationCheckedPublish(t *testing.T) {
 			if strings.Contains(output.String(), "private-scenario-value") {
 				t.Fatal("report leaked sample or service detail")
 			}
-			if len(wantCalls) > 1 && jsonOutput {
-				var report automationCheckedPublishReport
+			if len(wantCalls) > 1 && (*main.JsonOutput) {
+				var report main.AutomationCheckedPublishReport
 				if err := json.Unmarshal(output.Bytes(), &report); err != nil {
 					t.Fatal(err)
 				}
@@ -255,10 +256,10 @@ func TestAutomationCheckedPublish(t *testing.T) {
 }
 
 func TestCheckedPublishRejectsEmptyScenarioPath(t *testing.T) {
-	resetJSONOut(t)
-	fake := authedFakeAPI(t, `{}`, 200)
-	if code := cmdAutomationsPublish([]string{"--app", "billing", "--name", "paid-invoice", "--expected-version", "7", "--scenarios", ""}); code != 1 || fake.sawMethod != "" {
-		t.Fatalf("exit=%d request=%s", code, fake.sawMethod)
+	main.ResetJSONOut(t)
+	fake := main.AuthedFakeAPI(t, `{}`, 200)
+	if code := main.CmdAutomationsPublish([]string{"--app", "billing", "--name", "paid-invoice", "--expected-version", "7", "--scenarios", ""}); code != 1 || (*fake.SawMethod()) != "" {
+		t.Fatalf("exit=%d request=%s", code, (*fake.SawMethod()))
 	}
 }
 

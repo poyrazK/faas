@@ -18,16 +18,16 @@ T = TypeVar("T", bound="ServiceWakeAheadResponse")
 
 @_attrs_define
 class ServiceWakeAheadResponse:
-    """An app's service wake-ahead opt-in (ADR-977)."""
+    """An app's service wake-ahead opt-in."""
 
     slug: str
     enabled: bool
-    """Whether a cold wake of this app also wakes the services it is measured to call."""
+    """Whether a cold wake of this app also wakes the services it declares or is measured to call."""
     updated_at: datetime.datetime | Unset = UNSET
     """Omitted until the opt-in is first changed."""
     learned: ServiceWakeAheadLearned | Unset = UNSET
-    """What the gateways measured for this caller app (ADR-1152): its top service edges and what wake-ahead did
-    over the evidence window. Present on GET; source is unavailable when gateway metrics cannot be read."""
+    """What the gateways measured for this caller app: its top service edges and what wake-ahead did over the
+    evidence window. Present on GET; source is unavailable when gateway metrics cannot be read."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

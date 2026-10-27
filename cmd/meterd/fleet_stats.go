@@ -26,11 +26,12 @@ func tlsForService(cfg *tls.Config, serverName string) *tls.Config {
 }
 
 // fleetNodeSource is deliberately narrower than state.Store. Meterd only
-// needs active-node discovery and the physical instance view to fan telemetry
-// in and expose gaps; tests can therefore model a split fleet without a DB.
+// needs active-node discovery and the physical view of the instances admitted
+// or serving on each node to fan telemetry in and expose gaps; tests can
+// therefore model a split fleet without a DB.
 type fleetNodeSource interface {
 	ActiveComputeNodes(context.Context) ([]state.ComputeNode, error)
-	ListInstancesOnNodeID(context.Context, string) ([]state.Instance, error)
+	ListActiveInstancesOnNodeID(context.Context, string) ([]state.Instance, error)
 }
 
 type fleetStatsMetrics struct {
@@ -183,7 +184,7 @@ func (p *fleetStatsParker) ListInstanceStats(ctx context.Context) ([]scheddgrpc.
 
 	missing := 0
 	for nodeID := range active {
-		instances, listErr := p.nodes.ListInstancesOnNodeID(ctx, nodeID)
+		instances, listErr := p.nodes.ListActiveInstancesOnNodeID(ctx, nodeID)
 		if listErr != nil {
 			p.metrics.failures.WithLabelValues("instances").Inc()
 			continue

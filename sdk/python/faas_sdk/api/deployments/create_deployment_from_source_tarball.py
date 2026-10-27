@@ -17,10 +17,14 @@ def _get_kwargs(
     *,
     body: CreateDeploymentFromSourceTarballBody,
     idempotency_key: str | Unset = UNSET,
+    deployment_attempt_id: str | Unset = UNSET,
 ) -> dict[str, Any]:
     headers: dict[str, Any] = {}
     if not isinstance(idempotency_key, Unset):
         headers["Idempotency-Key"] = idempotency_key
+
+    if not isinstance(deployment_attempt_id, Unset):
+        headers["Deployment-Attempt-ID"] = deployment_attempt_id
 
     _kwargs: dict[str, Any] = {
         "method": "post",
@@ -103,22 +107,23 @@ def sync_detailed(
     client: AuthenticatedClient | Client,
     body: CreateDeploymentFromSourceTarballBody,
     idempotency_key: str | Unset = UNSET,
+    deployment_attempt_id: str | Unset = UNSET,
 ) -> Response[DeploymentResponse | Problem]:
     r"""Create a deployment from a CLI-uploaded local tarball (zero-config).
 
-     Zero-config deploy path (issue #961 / Mega-A PR-1, ADR-115).
+     Zero-config deploy path.
     This multipart endpoint is deprecated for new clients. Use the
     resumable upload session endpoints under `/v1/uploads` for progress,
     retry-safe chunking, and commit deduplication; this route remains
     available during the migration window.
     The CLI uploads a gzipped tar via the `tarball` form field and
     an optional informational `{repo, ref}` JSON sidecar. The CLI
-    binary is the trust root: apid does NOT consult
+    binary is the trust root: The API does NOT consult
     `github_installations` and does NOT attempt a server-side git
     fetch.
 
     Distinct from the source-ref path
-    (`POST /v1/apps/{slug}/deployments/source-ref`, ADR-092) which
+    (`POST /v1/apps/{slug}/deployments/source-ref`) which
     resolves the GitHub install and pins the tarball to a 40-char
     SHA. The source-ref handler is unchanged; this is a parallel
     trust path for first-deploy customers without the GitHub App
@@ -135,7 +140,7 @@ def sync_detailed(
           informational. Operators relying on source-pinning MUST
           use the source-ref path instead.
 
-    Lifecycle (issue #1182 fix): the refactored zero-config
+    Lifecycle (fix): the refactored zero-config
     CLI path runs `POST /v1/apps` (CreateApp) BEFORE this endpoint,
     so a brand-new slug gets a 201 from CreateApp and a 202 from
     this endpoint. A direct hit on this endpoint with a slug that
@@ -154,6 +159,7 @@ def sync_detailed(
     Args:
         slug (str):
         idempotency_key (str | Unset):
+        deployment_attempt_id (str | Unset):
         body (CreateDeploymentFromSourceTarballBody):
 
     Raises:
@@ -168,6 +174,7 @@ def sync_detailed(
         slug=slug,
         body=body,
         idempotency_key=idempotency_key,
+        deployment_attempt_id=deployment_attempt_id,
     )
 
     response = client.get_httpx_client().request(
@@ -183,22 +190,23 @@ def sync(
     client: AuthenticatedClient | Client,
     body: CreateDeploymentFromSourceTarballBody,
     idempotency_key: str | Unset = UNSET,
+    deployment_attempt_id: str | Unset = UNSET,
 ) -> DeploymentResponse | Problem | None:
     r"""Create a deployment from a CLI-uploaded local tarball (zero-config).
 
-     Zero-config deploy path (issue #961 / Mega-A PR-1, ADR-115).
+     Zero-config deploy path.
     This multipart endpoint is deprecated for new clients. Use the
     resumable upload session endpoints under `/v1/uploads` for progress,
     retry-safe chunking, and commit deduplication; this route remains
     available during the migration window.
     The CLI uploads a gzipped tar via the `tarball` form field and
     an optional informational `{repo, ref}` JSON sidecar. The CLI
-    binary is the trust root: apid does NOT consult
+    binary is the trust root: The API does NOT consult
     `github_installations` and does NOT attempt a server-side git
     fetch.
 
     Distinct from the source-ref path
-    (`POST /v1/apps/{slug}/deployments/source-ref`, ADR-092) which
+    (`POST /v1/apps/{slug}/deployments/source-ref`) which
     resolves the GitHub install and pins the tarball to a 40-char
     SHA. The source-ref handler is unchanged; this is a parallel
     trust path for first-deploy customers without the GitHub App
@@ -215,7 +223,7 @@ def sync(
           informational. Operators relying on source-pinning MUST
           use the source-ref path instead.
 
-    Lifecycle (issue #1182 fix): the refactored zero-config
+    Lifecycle (fix): the refactored zero-config
     CLI path runs `POST /v1/apps` (CreateApp) BEFORE this endpoint,
     so a brand-new slug gets a 201 from CreateApp and a 202 from
     this endpoint. A direct hit on this endpoint with a slug that
@@ -234,6 +242,7 @@ def sync(
     Args:
         slug (str):
         idempotency_key (str | Unset):
+        deployment_attempt_id (str | Unset):
         body (CreateDeploymentFromSourceTarballBody):
 
     Raises:
@@ -249,6 +258,7 @@ def sync(
         client=client,
         body=body,
         idempotency_key=idempotency_key,
+        deployment_attempt_id=deployment_attempt_id,
     ).parsed
 
 
@@ -258,22 +268,23 @@ async def asyncio_detailed(
     client: AuthenticatedClient | Client,
     body: CreateDeploymentFromSourceTarballBody,
     idempotency_key: str | Unset = UNSET,
+    deployment_attempt_id: str | Unset = UNSET,
 ) -> Response[DeploymentResponse | Problem]:
     r"""Create a deployment from a CLI-uploaded local tarball (zero-config).
 
-     Zero-config deploy path (issue #961 / Mega-A PR-1, ADR-115).
+     Zero-config deploy path.
     This multipart endpoint is deprecated for new clients. Use the
     resumable upload session endpoints under `/v1/uploads` for progress,
     retry-safe chunking, and commit deduplication; this route remains
     available during the migration window.
     The CLI uploads a gzipped tar via the `tarball` form field and
     an optional informational `{repo, ref}` JSON sidecar. The CLI
-    binary is the trust root: apid does NOT consult
+    binary is the trust root: The API does NOT consult
     `github_installations` and does NOT attempt a server-side git
     fetch.
 
     Distinct from the source-ref path
-    (`POST /v1/apps/{slug}/deployments/source-ref`, ADR-092) which
+    (`POST /v1/apps/{slug}/deployments/source-ref`) which
     resolves the GitHub install and pins the tarball to a 40-char
     SHA. The source-ref handler is unchanged; this is a parallel
     trust path for first-deploy customers without the GitHub App
@@ -290,7 +301,7 @@ async def asyncio_detailed(
           informational. Operators relying on source-pinning MUST
           use the source-ref path instead.
 
-    Lifecycle (issue #1182 fix): the refactored zero-config
+    Lifecycle (fix): the refactored zero-config
     CLI path runs `POST /v1/apps` (CreateApp) BEFORE this endpoint,
     so a brand-new slug gets a 201 from CreateApp and a 202 from
     this endpoint. A direct hit on this endpoint with a slug that
@@ -309,6 +320,7 @@ async def asyncio_detailed(
     Args:
         slug (str):
         idempotency_key (str | Unset):
+        deployment_attempt_id (str | Unset):
         body (CreateDeploymentFromSourceTarballBody):
 
     Raises:
@@ -323,6 +335,7 @@ async def asyncio_detailed(
         slug=slug,
         body=body,
         idempotency_key=idempotency_key,
+        deployment_attempt_id=deployment_attempt_id,
     )
 
     response = await client.get_async_httpx_client().request(**kwargs)
@@ -336,22 +349,23 @@ async def asyncio(
     client: AuthenticatedClient | Client,
     body: CreateDeploymentFromSourceTarballBody,
     idempotency_key: str | Unset = UNSET,
+    deployment_attempt_id: str | Unset = UNSET,
 ) -> DeploymentResponse | Problem | None:
     r"""Create a deployment from a CLI-uploaded local tarball (zero-config).
 
-     Zero-config deploy path (issue #961 / Mega-A PR-1, ADR-115).
+     Zero-config deploy path.
     This multipart endpoint is deprecated for new clients. Use the
     resumable upload session endpoints under `/v1/uploads` for progress,
     retry-safe chunking, and commit deduplication; this route remains
     available during the migration window.
     The CLI uploads a gzipped tar via the `tarball` form field and
     an optional informational `{repo, ref}` JSON sidecar. The CLI
-    binary is the trust root: apid does NOT consult
+    binary is the trust root: The API does NOT consult
     `github_installations` and does NOT attempt a server-side git
     fetch.
 
     Distinct from the source-ref path
-    (`POST /v1/apps/{slug}/deployments/source-ref`, ADR-092) which
+    (`POST /v1/apps/{slug}/deployments/source-ref`) which
     resolves the GitHub install and pins the tarball to a 40-char
     SHA. The source-ref handler is unchanged; this is a parallel
     trust path for first-deploy customers without the GitHub App
@@ -368,7 +382,7 @@ async def asyncio(
           informational. Operators relying on source-pinning MUST
           use the source-ref path instead.
 
-    Lifecycle (issue #1182 fix): the refactored zero-config
+    Lifecycle (fix): the refactored zero-config
     CLI path runs `POST /v1/apps` (CreateApp) BEFORE this endpoint,
     so a brand-new slug gets a 201 from CreateApp and a 202 from
     this endpoint. A direct hit on this endpoint with a slug that
@@ -387,6 +401,7 @@ async def asyncio(
     Args:
         slug (str):
         idempotency_key (str | Unset):
+        deployment_attempt_id (str | Unset):
         body (CreateDeploymentFromSourceTarballBody):
 
     Raises:
@@ -403,5 +418,6 @@ async def asyncio(
             client=client,
             body=body,
             idempotency_key=idempotency_key,
+            deployment_attempt_id=deployment_attempt_id,
         )
     ).parsed

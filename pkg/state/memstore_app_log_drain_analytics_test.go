@@ -1,21 +1,22 @@
-package state
+package state_test
 
 import (
+	"github.com/onebox-faas/faas/pkg/state"
 	"testing"
 	"time"
 )
 
 func TestMemStoreAppLogDrainDeliveryAnalyticsRollsUpAndPrunes(t *testing.T) {
 	store, ctx, account, app := appLogDrainFixture(t)
-	drain, err := store.CreateAppLogDrain(ctx, AppLogDrain{
-		AppID: app.ID, AccountID: account.ID, Kind: AppLogDrainKindHTTPJSON,
+	drain, err := store.CreateAppLogDrain(ctx, state.AppLogDrain{
+		AppID: app.ID, AccountID: account.ID, Kind: state.AppLogDrainKindHTTPJSON,
 		TargetURL: "https://logs.example/analytics-state", Enabled: true,
 	})
 	if err != nil {
 		t.Fatalf("CreateAppLogDrain: %v", err)
 	}
 	now := time.Now().UTC()
-	for _, health := range []AppLogDrainHealth{
+	for _, health := range []state.AppLogDrainHealth{
 		{DrainID: drain.ID, DeliveredTotal: 2, UpdatedAt: now.Add(-2 * time.Hour)},
 		{DrainID: drain.ID, DeliveredTotal: 5, UpdatedAt: now.Add(-time.Hour)},
 	} {

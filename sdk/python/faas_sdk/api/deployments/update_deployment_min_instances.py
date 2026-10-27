@@ -92,8 +92,7 @@ def sync_detailed(
 ) -> Response[DeploymentResponse | Problem]:
     """Set the per-deployment cold-wake floor.
 
-     Update the deployment's min_instances (issue #557 closure /
-    ADR-072). The only mutable field on a deployment post-create;
+     Update the deployment's min_instances (closure). The only mutable field on a deployment post-create;
     image / digest / overrides / sidecars stay immutable (a new
     deployment is the canonical way to change them). Pass
     min_instances=0 to inherit from the parent app's floor.
@@ -131,8 +130,7 @@ def sync(
 ) -> DeploymentResponse | Problem | None:
     """Set the per-deployment cold-wake floor.
 
-     Update the deployment's min_instances (issue #557 closure /
-    ADR-072). The only mutable field on a deployment post-create;
+     Update the deployment's min_instances (closure). The only mutable field on a deployment post-create;
     image / digest / overrides / sidecars stay immutable (a new
     deployment is the canonical way to change them). Pass
     min_instances=0 to inherit from the parent app's floor.
@@ -165,8 +163,7 @@ async def asyncio_detailed(
 ) -> Response[DeploymentResponse | Problem]:
     """Set the per-deployment cold-wake floor.
 
-     Update the deployment's min_instances (issue #557 closure /
-    ADR-072). The only mutable field on a deployment post-create;
+     Update the deployment's min_instances (closure). The only mutable field on a deployment post-create;
     image / digest / overrides / sidecars stay immutable (a new
     deployment is the canonical way to change them). Pass
     min_instances=0 to inherit from the parent app's floor.
@@ -202,8 +199,7 @@ async def asyncio(
 ) -> DeploymentResponse | Problem | None:
     """Set the per-deployment cold-wake floor.
 
-     Update the deployment's min_instances (issue #557 closure /
-    ADR-072). The only mutable field on a deployment post-create;
+     Update the deployment's min_instances (closure). The only mutable field on a deployment post-create;
     image / digest / overrides / sidecars stay immutable (a new
     deployment is the canonical way to change them). Pass
     min_instances=0 to inherit from the parent app's floor.

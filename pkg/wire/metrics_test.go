@@ -682,6 +682,17 @@ func TestOpsMetrics_ObserveWakePhase(t *testing.T) {
 		`schedd_wake_rpc_duration_seconds_count{app="",phase="rpc_call"} 0`,
 		`schedd_wake_rpc_duration_seconds_count{app="",phase="rpc_to_running"} 0`,
 		`schedd_wake_rpc_duration_seconds_count{app="",phase="resume"} 0`,
+		// The EnsureWake split of the work before Engine.Wake.
+		`schedd_wake_rpc_duration_seconds_count{app="",phase="pre_wake_authorize"} 0`,
+		`schedd_wake_rpc_duration_seconds_count{app="",phase="pre_wake_environment"} 0`,
+		`schedd_wake_rpc_duration_seconds_count{app="",phase="pre_wake_coordinate"} 0`,
+		`schedd_wake_rpc_duration_seconds_count{app="",phase="pre_wake_transition"} 0`,
+		// The pre-RPC split of the work before admit_to_rpc.
+		`schedd_wake_rpc_duration_seconds_count{app="",phase="before_admission"} 0`,
+		`schedd_wake_rpc_duration_seconds_count{app="",phase="lock_wait"} 0`,
+		`schedd_wake_rpc_duration_seconds_count{app="",phase="reads"} 0`,
+		`schedd_wake_rpc_duration_seconds_count{app="",phase="admit"} 0`,
+		`schedd_wake_rpc_duration_seconds_count{app="",phase="post_admit"} 0`,
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("missing line %q in:\n%s", want, body)

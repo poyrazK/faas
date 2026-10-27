@@ -1,4 +1,4 @@
-// adr: 373 — DNS-gated egress hook to the local vmmd.
+// adr: 373 — DNS-gated egress hook to the local vmmd; 20261026150000 — bound database ports.
 package main
 
 import (
@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"net/netip"
+	"strings"
 	"testing"
 	"time"
 
@@ -30,7 +31,7 @@ func (c *recordingResolvedEgressClient) AllowResolvedEgress(_ context.Context, i
 func TestAllowResolvedEgressRequest(t *testing.T) {
 	cli := &recordingResolvedEgressClient{}
 	addrs := []netip.Addr{netip.MustParseAddr("198.51.100.10"), netip.MustParseAddr("2001:db8::1")}
-	if err := allowResolvedEgress(context.Background(), cli, "10.100.0.7", addrs, 90*time.Second); err != nil {
+	if err := allowResolvedEgress(context.Background(), cli, "10.100.0.7", addrs, 90*time.Second, 0); err != nil {
 		t.Fatal(err)
 	}
 	if cli.req.GetSourceIp() != "10.100.0.7" || cli.req.GetTtlSeconds() != 90 || len(cli.req.GetAddresses()) != 2 ||
@@ -38,11 +39,11 @@ func TestAllowResolvedEgressRequest(t *testing.T) {
 		t.Fatalf("request = %+v", cli.req)
 	}
 	cli.err = status.Error(codes.Unimplemented, "old vmmd")
-	if err := allowResolvedEgress(context.Background(), cli, "10.100.0.7", addrs, time.Minute); err != nil {
+	if err := allowResolvedEgress(context.Background(), cli, "10.100.0.7", addrs, time.Minute, 0); err != nil {
 		t.Fatalf("an older vmmd must not be an error: %v", err)
 	}
 	cli.err = errors.New("unavailable")
-	if err := allowResolvedEgress(context.Background(), cli, "10.100.0.7", addrs, time.Minute); err == nil {
+	if err := allowResolvedEgress(context.Background(), cli, "10.100.0.7", addrs, time.Minute, 0); err == nil {
 		t.Fatal("a real failure must surface")
 	}
 }
@@ -97,11 +98,11 @@ func TestResolvedEgressHookUsesTheLocalNodeID(t *testing.T) {
 	nodes := &namedNodes{ids: map[string]string{name: id}}
 	rec := &recordingResolvedEgressClient{}
 	clients := &vmmdByID{clients: map[string]*recordingResolvedEgressClient{id: rec}}
-	hook := newResolvedEgressHook(clients, newLocalNodeID(nodes, name))
+	hook := newResolvedEgressHook(clients, newLocalNodeID(nodes, name), nil, nil)
 	addrs := []netip.Addr{netip.MustParseAddr("104.20.22.46")}
 
 	for i := 0; i < 3; i++ {
-		if err := hook(context.Background(), "10.100.0.2:9186", addrs, time.Minute); err != nil {
+		if err := hook(context.Background(), "10.100.0.2:9186", "api.example.com", addrs, time.Minute); err != nil {
 			t.Fatalf("query %d: %v", i, err)
 		}
 	}
@@ -119,19 +120,79 @@ func TestResolvedEgressHookUsesTheLocalNodeID(t *testing.T) {
 
 	// A missing client forgets the id, so a re-registered node is re-resolved.
 	delete(clients.clients, id)
-	if err := hook(context.Background(), "10.100.0.2:1", addrs, time.Minute); err == nil {
+	if err := hook(context.Background(), "10.100.0.2:1", "api.example.com", addrs, time.Minute); err == nil {
 		t.Fatal("an unavailable local vmmd must surface")
 	}
 	clients.clients[id] = rec
-	if err := hook(context.Background(), "10.100.0.2:1", addrs, time.Minute); err != nil {
+	if err := hook(context.Background(), "10.100.0.2:1", "api.example.com", addrs, time.Minute); err != nil {
 		t.Fatal(err)
 	}
 	if nodes.calls != 2 {
 		t.Fatalf("name resolved %d times after a miss, want 2", nodes.calls)
 	}
 
-	unknown := newResolvedEgressHook(clients, newLocalNodeID(nodes, "fsn-9.faas"))
-	if err := unknown(context.Background(), "10.100.0.2:1", addrs, time.Minute); err == nil {
+	unknown := newResolvedEgressHook(clients, newLocalNodeID(nodes, "fsn-9.faas"), nil, nil)
+	if err := unknown(context.Background(), "10.100.0.2:1", "api.example.com", addrs, time.Minute); err == nil {
 		t.Fatal("an unregistered node name must surface")
+	}
+}
+
+type egressEndpoints struct {
+	rows  []state.ManagedPostgresEgressEndpoint
+	err   error
+	reads int
+}
+
+func (e *egressEndpoints) ManagedPostgresEgressEndpoints(context.Context) ([]state.ManagedPostgresEgressEndpoint, error) {
+	e.reads++
+	return e.rows, e.err
+}
+
+// ADR-20261026150000: a bound database's name carries its port for the bound
+// app only; other names never resolve the caller.
+func TestResolvedEgressHookOpensBoundDatabasePorts(t *testing.T) {
+	const name, id = "fsn-2.faas", "da3fb5d2-b517-47cb-921f-b4212378a35d"
+	rec := &recordingResolvedEgressClient{}
+	clients := &vmmdByID{clients: map[string]*recordingResolvedEgressClient{id: rec}}
+	endpoints := &egressEndpoints{rows: []state.ManagedPostgresEgressEndpoint{{AppID: "app-bound", Host: "ep-1-pooler.example.com", Port: 5432}}}
+	index := newDatabaseEgressIndex(endpoints)
+	clock := time.Unix(1000, 0)
+	index.now = func() time.Time { return clock }
+	callers := map[string]string{"10.100.0.2": "app-bound", "10.100.0.3": "app-other"}
+	resolved := 0
+	resolveCaller := func(_ context.Context, remote string) (string, error) {
+		resolved++
+		host, _, _ := strings.Cut(remote, ":")
+		return callers[host], nil
+	}
+	hook := newResolvedEgressHook(clients, newLocalNodeID(&namedNodes{ids: map[string]string{name: id}}, name), index, resolveCaller)
+	addrs := []netip.Addr{netip.MustParseAddr("198.51.100.20")}
+	for _, tc := range []struct {
+		remote, name string
+		port         uint32
+	}{
+		{"10.100.0.2:1", "ep-1-pooler.example.com", 5432},
+		{"10.100.0.3:1", "ep-1-pooler.example.com", 0}, // another app's database
+		{"10.100.0.2:1", "api.example.com", 0},         // not a database
+	} {
+		if err := hook(context.Background(), tc.remote, tc.name, addrs, time.Minute); err != nil {
+			t.Fatal(err)
+		}
+		if rec.req.GetDatabasePort() != tc.port {
+			t.Fatalf("%s from %s: database port %d, want %d", tc.name, tc.remote, rec.req.GetDatabasePort(), tc.port)
+		}
+	}
+	if resolved != 2 || endpoints.reads != 1 {
+		t.Fatalf("caller resolutions %d (want 2, database names only), index reads %d (want 1)", resolved, endpoints.reads)
+	}
+	// A failed refresh keeps the previous index until the next interval.
+	clock = clock.Add(databaseEgressIndexRefresh)
+	endpoints.err = errors.New("database down")
+	if got := index.lookup(context.Background(), "ep-1-pooler.example.com"); got["app-bound"] != 5432 || endpoints.reads != 2 {
+		t.Fatalf("lookup after a failed refresh = %v (reads %d)", got, endpoints.reads)
+	}
+	index.lookup(context.Background(), "ep-1-pooler.example.com")
+	if endpoints.reads != 2 {
+		t.Fatal("a failed refresh must back off until the next interval")
 	}
 }

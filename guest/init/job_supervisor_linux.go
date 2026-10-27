@@ -93,12 +93,16 @@ func RunJob(log *slog.Logger) error {
 			LeaseToken: manifest.LeaseToken,
 		}, log)
 	}
+	proc, failure := prepareJobProcess(*manifest, secrets, log)
+	if failure != nil {
+		return shipAndPoweroff(*failure, log)
+	}
 	if manifest.Interactive != nil {
 		if manifest.StartHeld || manifest.Interactive.AttachTimeoutSec <= 0 {
 			log.Error("runJob: invalid interactive manifest")
 			return shipAndPoweroff(JobExitPayload{ExitCode: 75, ErrorClass: "infra", LeaseToken: manifest.LeaseToken}, log)
 		}
-		return runInteractiveJob(*manifest, buildEnvForJobWithSecrets(*manifest, secrets), log)
+		return runInteractiveJob(*manifest, proc, log)
 	}
 	if manifest.StartHeld {
 		control, err := listenJobStartGate(log)
@@ -124,20 +128,16 @@ func RunJob(log *slog.Logger) error {
 			}
 			return shipAndPoweroff(payload, log)
 		}
-		env := buildEnvForJobWithSecrets(*manifest, secrets)
-		payload := superviseJobCommandWithSignals(*manifest, env, jobTerminationGrace, log, os.Stdout, os.Stderr, control.signals)
+		payload := superviseJobCommandWithSignals(*manifest, proc, jobTerminationGrace, log, os.Stdout, os.Stderr, control.signals)
 		return shipAndPoweroff(payload, log)
 	}
-
-	// Build merged env (systemEnv ⊕ job.Env ⊕ jobEnvBaseline).
-	env := buildEnvForJobWithSecrets(*manifest, secrets)
-	return runViaOSExec(*manifest, env, log)
+	return runViaOSExec(*manifest, proc, log)
 }
 
 // runViaOSExec keeps guest-init alive as PID 1, supervises the workload, ships
 // its terminal result, and powers the VM off.
-func runViaOSExec(m JobManifest, env []string, log *slog.Logger) error {
-	payload := superviseJobCommand(m, env, jobTerminationGrace, log)
+func runViaOSExec(m JobManifest, proc jobProcess, log *slog.Logger) error {
+	payload := superviseJobCommandWithSignals(m, proc, jobTerminationGrace, log, os.Stdout, os.Stderr, nil)
 	return shipAndPoweroff(payload, log)
 }
 
@@ -150,17 +150,17 @@ func superviseJobCommand(m JobManifest, env []string, grace time.Duration, log *
 // tests can provide bounded in-memory writers without redirecting process-wide
 // stdout/stderr.
 func superviseJobCommandWithOutput(m JobManifest, env []string, grace time.Duration, log *slog.Logger, stdout, stderr io.Writer) JobExitPayload {
-	return superviseJobCommandWithSignals(m, env, grace, log, stdout, stderr, nil)
+	return superviseJobCommandWithSignals(m, guestJobProcess(m, env), grace, log, stdout, stderr, nil)
 }
 
-func superviseJobCommandWithSignals(m JobManifest, env []string, grace time.Duration, log *slog.Logger, stdout, stderr io.Writer, controlSignals chan os.Signal) JobExitPayload {
+func superviseJobCommandWithSignals(m JobManifest, proc jobProcess, grace time.Duration, log *slog.Logger, stdout, stderr io.Writer, controlSignals chan os.Signal) JobExitPayload {
 	// The guest's stdout and stderr are inherited by guest-init from the
 	// serial console. vmmd already routes that console into the per-instance
 	// customer log ring, so inheriting both streams makes job output available
 	// through the normal logs API. Keep the streams separate here only until
 	// they cross the guest console boundary; the host deliberately merges them
 	// in arrival order, matching the app-runtime log contract.
-	return superviseJobCommandWithStdio(m, env, grace, log, consoleJobStdio{stdout: stdout, stderr: stderr}, controlSignals)
+	return superviseJobCommandWithStdio(m, proc, grace, log, consoleJobStdio{stdout: stdout, stderr: stderr}, controlSignals)
 }
 
 // jobStdio wires a job command's standard streams: attach before Start,
@@ -192,7 +192,7 @@ func (c consoleJobStdio) attach(cmd *exec.Cmd) error {
 func (consoleJobStdio) started() {}
 func (consoleJobStdio) finish()  {}
 
-func superviseJobCommandWithStdio(m JobManifest, env []string, grace time.Duration, log *slog.Logger, stdio jobStdio, controlSignals chan os.Signal) JobExitPayload {
+func superviseJobCommandWithStdio(m JobManifest, proc jobProcess, grace time.Duration, log *slog.Logger, stdio jobStdio, controlSignals chan os.Signal) JobExitPayload {
 	if log == nil {
 		log = slog.Default()
 	}
@@ -205,10 +205,17 @@ func superviseJobCommandWithStdio(m JobManifest, env []string, grace time.Durati
 		defer closeControl()
 	}
 
-	cmd := exec.Command(m.Command[0], m.Command[1:]...)
-	cmd.Env = env
+	cmd := exec.Command(proc.Argv[0], proc.Argv[1:]...)
+	cmd.Env = proc.Env
+	cmd.Dir = proc.Dir
 	defer stdio.finish()
-	if err := stdio.attach(cmd); err != nil {
+	err := stdio.attach(cmd)
+	if err == nil && proc.Credential != nil {
+		// stdio chooses the process group or session; the identity is the
+		// image's USER or the -u override (ADR-1790).
+		cmd.SysProcAttr.Credential = proc.Credential
+	}
+	if err != nil {
 		log.Error("runJob: attach command stdio", "err", err)
 		return JobExitPayload{
 			ExitCode:           126,
@@ -218,7 +225,7 @@ func superviseJobCommandWithStdio(m JobManifest, env []string, grace time.Durati
 		}
 	}
 	if err := cmd.Start(); err != nil {
-		log.Error("runJob: os/exec start", "err", err, "command", m.Command[0])
+		log.Error("runJob: os/exec start", "err", err, "command", proc.Argv[0])
 		exitCode := int32(126)
 		if errors.Is(err, os.ErrNotExist) {
 			exitCode = 127
@@ -435,6 +442,15 @@ func waitForJobStart(started <-chan struct{}, signals <-chan os.Signal, timeout 
 }
 
 func listenJobCancellation(signals chan<- os.Signal, log *slog.Logger) func() {
+	return listenControlSignals(signals, isJobCancelSignal, log)
+}
+
+// listenControlSignals accepts host-initiated cancel frames on the job control
+// port and delivers each allowed signal to signals. Jobs use it for
+// cancellation; runSignalHandlers uses it so a worker's stop signal reaches
+// guest-init, because signalling the Firecracker host process never reaches
+// the guest (Hunt 14 H14-59).
+func listenControlSignals(signals chan<- os.Signal, allow func(syscall.Signal) bool, log *slog.Logger) func() {
 	fd, err := unix.Socket(unix.AF_VSOCK, unix.SOCK_STREAM|unix.SOCK_CLOEXEC, 0)
 	if err != nil {
 		log.Debug("job cancel vsock unavailable", "err", err)
@@ -462,13 +478,27 @@ func listenJobCancellation(signals chan<- os.Signal, log *slog.Logger) func() {
 				_ = unix.Close(raw)
 				continue
 			}
-			go handleJobCancellation(raw, signals)
+			go handleControlSignal(raw, signals, allow)
 		}
 	}()
 	return func() { _ = unix.Close(fd) }
 }
 
-func handleJobCancellation(fd int, signals chan<- os.Signal) {
+// isJobCancelSignal is the set a job accepts over the control port.
+func isJobCancelSignal(sig syscall.Signal) bool {
+	switch sig {
+	case syscall.SIGTERM, syscall.SIGINT, syscall.SIGQUIT, syscall.SIGHUP:
+		return true
+	}
+	return false
+}
+
+// isWorkloadStopSignal adds the stop signals a worker manifest may declare.
+func isWorkloadStopSignal(sig syscall.Signal) bool {
+	return isJobCancelSignal(sig) || sig == syscall.SIGUSR1 || sig == syscall.SIGUSR2
+}
+
+func handleControlSignal(fd int, signals chan<- os.Signal, allow func(syscall.Signal) bool) {
 	f := os.NewFile(uintptr(fd), "job-cancel")
 	if f == nil {
 		_ = unix.Close(fd)
@@ -493,9 +523,7 @@ func handleJobCancellation(fd int, signals chan<- os.Signal) {
 		return
 	}
 	sig := syscall.Signal(binary.BigEndian.Uint32(frame[4:]))
-	switch sig {
-	case syscall.SIGTERM, syscall.SIGINT, syscall.SIGQUIT, syscall.SIGHUP:
-	default:
+	if !allow(sig) {
 		_, _ = unix.Write(fd, []byte{VsockJobControlAckError})
 		return
 	}
@@ -695,86 +723,57 @@ func shipExitEnvelope(payload JobExitPayload, log *slog.Logger) error {
 	binary.BigEndian.PutUint32(hdr[4:8], uint32(len(body)))
 	frame := append(hdr[:], body...)
 
-	addr := &unix.SockaddrVM{
-		CID:  unix.VMADDR_CID_HOST,
-		Port: VsockJobExitPort,
+	// Retry until acknowledged, for jobExitShipBudget: a vmmd restart can
+	// leave no listener for a few seconds before its successor re-binds.
+	attempts, err := retryJobExit(jobExitShipBudget, time.Now, time.Sleep, func(i int) error {
+		err := shipExitOnce(frame)
+		if err != nil {
+			log.Warn("job-exit vsock attempt", "err", err, "attempt", i)
+		}
+		return err
+	})
+	if err != nil {
+		log.Error("job-exit all attempts failed", "attempts", attempts)
+		return fmt.Errorf("job-exit all attempts failed: %w", err)
 	}
-	const attempts = 3
-	backoffs := []time.Duration{100 * time.Millisecond, 250 * time.Millisecond, 500 * time.Millisecond}
-	var lastErr error
-	for i := 0; i < attempts; i++ {
-		sock, sockErr := unix.Socket(unix.AF_VSOCK, unix.SOCK_STREAM|unix.SOCK_CLOEXEC, 0)
-		if sockErr != nil {
-			lastErr = sockErr
-			log.Warn("job-exit vsock socket", "err", sockErr, "attempt", i)
-			if i < attempts-1 {
-				time.Sleep(backoffs[i])
-			}
-			continue
-		}
-		// Bound connect, write, and ack wait. A missing host listener must not
-		// keep PID 1 alive beyond the scheduler's reaper window.
-		if timeoutErr := setSockTimeout(sock, unix.SO_SNDTIMEO, 1500*time.Millisecond); timeoutErr != nil {
-			lastErr = timeoutErr
-			log.Warn("job-exit vsock send timeout", "err", timeoutErr, "attempt", i)
-			_ = unix.Close(sock)
-			if i < attempts-1 {
-				time.Sleep(backoffs[i])
-			}
-			continue
-		}
-		if timeoutErr := setSockTimeout(sock, unix.SO_RCVTIMEO, 1500*time.Millisecond); timeoutErr != nil {
-			lastErr = timeoutErr
-			log.Warn("job-exit vsock receive timeout", "err", timeoutErr, "attempt", i)
-			_ = unix.Close(sock)
-			if i < attempts-1 {
-				time.Sleep(backoffs[i])
-			}
-			continue
-		}
-		if connectErr := unix.Connect(sock, addr); connectErr != nil {
-			lastErr = connectErr
-			log.Warn("job-exit vsock connect", "err", connectErr, "attempt", i)
-			_ = unix.Close(sock)
-			if i < attempts-1 {
-				time.Sleep(backoffs[i])
-			}
-			continue
-		}
-		if writeErr := writeJobExitFrame(sock, frame); writeErr != nil {
-			lastErr = writeErr
-			log.Warn("job-exit vsock write", "err", writeErr, "attempt", i)
-			_ = unix.Close(sock)
-			if i < attempts-1 {
-				time.Sleep(backoffs[i])
-			}
-			continue
-		}
-		var ack [1]byte
-		n, readErr := unix.Read(sock, ack[:])
-		_ = unix.Close(sock)
-		ackValue := ack[0]
-		if readErr != nil || n != 1 || ackValue != 0 {
-			if readErr != nil {
-				lastErr = fmt.Errorf("read ack: %w", readErr)
-			} else {
-				lastErr = fmt.Errorf("invalid ack n=%d value=%d", n, ackValue)
-			}
-			log.Warn("job-exit vsock ack", "err", lastErr, "attempt", i)
-			if i < attempts-1 {
-				time.Sleep(backoffs[i])
-			}
-			continue
-		}
-		log.Info("job-exit shipped",
-			"exit_code", payload.ExitCode,
-			"error_class", payload.ErrorClass,
-			"signal", payload.Signal,
-			"attempt", i+1)
-		return nil
+	log.Info("job-exit shipped",
+		"exit_code", payload.ExitCode,
+		"error_class", payload.ErrorClass,
+		"signal", payload.Signal,
+		"attempt", attempts)
+	return nil
+}
+
+// shipExitOnce makes one connect, write and ack wait. Connect, write and the
+// ack wait are each bounded, so a missing host listener costs one bounded
+// attempt.
+func shipExitOnce(frame []byte) error {
+	sock, err := unix.Socket(unix.AF_VSOCK, unix.SOCK_STREAM|unix.SOCK_CLOEXEC, 0)
+	if err != nil {
+		return fmt.Errorf("socket: %w", err)
 	}
-	log.Error("job-exit all attempts failed", "attempts", attempts)
-	return fmt.Errorf("job-exit all attempts failed: %w", lastErr)
+	defer func() { _ = unix.Close(sock) }()
+	if err := setSockTimeout(sock, unix.SO_SNDTIMEO, 1500*time.Millisecond); err != nil {
+		return fmt.Errorf("send timeout: %w", err)
+	}
+	if err := setSockTimeout(sock, unix.SO_RCVTIMEO, 1500*time.Millisecond); err != nil {
+		return fmt.Errorf("receive timeout: %w", err)
+	}
+	if err := unix.Connect(sock, &unix.SockaddrVM{CID: unix.VMADDR_CID_HOST, Port: VsockJobExitPort}); err != nil {
+		return fmt.Errorf("connect: %w", err)
+	}
+	if err := writeJobExitFrame(sock, frame); err != nil {
+		return fmt.Errorf("write: %w", err)
+	}
+	var ack [1]byte
+	n, err := unix.Read(sock, ack[:])
+	switch {
+	case err != nil:
+		return fmt.Errorf("read ack: %w", err)
+	case n != 1 || ack[0] != 0:
+		return fmt.Errorf("invalid ack n=%d value=%d", n, ack[0])
+	}
+	return nil
 }
 
 func writeJobExitFrame(fd int, frame []byte) error {

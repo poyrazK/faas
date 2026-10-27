@@ -1,0 +1,33 @@
+[Unit]
+Description=Export per-slice cgroup resource usage for node_exporter (ADR-20261023124955)
+ConditionPathExists=/etc/faas/cgroup-metrics.env
+
+[Service]
+Type=oneshot
+# A transient unprivileged user: cgroup files are world-readable and the only
+# write is the .prom file in the node_exporter textfile directory.
+DynamicUser=yes
+User=faas-cgroup-metrics
+SupplementaryGroups=node_exporter
+EnvironmentFile=/etc/faas/cgroup-metrics.env
+ExecStart=/usr/local/sbin/faas-cgroup-metrics
+TimeoutStartSec=20
+UMask=0022
+# Accounted in the observability slice it helps watch.
+Slice=faas-obs.slice
+CPUQuota=10%
+MemoryMax=48M
+NoNewPrivileges=yes
+PrivateTmp=yes
+PrivateDevices=yes
+PrivateNetwork=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadOnlyPaths=/etc/faas
+ProtectKernelModules=yes
+ProtectKernelTunables=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_UNIX
+RestrictNamespaces=yes
+LockPersonality=yes
+ReadWritePaths=/var/lib/node_exporter/textfile_collector

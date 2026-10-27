@@ -4,7 +4,7 @@ import {readFileSync} from 'node:fs';
 import {resolve} from 'node:path';
 import {createServer} from 'node:http';
 import {once} from 'node:events';
-import {AppsService, FaaSClient, type AppOperationalSummary} from '../src/index.js';
+import {AppsService, FaaSClient, type AppOperationalSummary} from '../src/preview.js';
 
 test('summary preserves unknown health, blocked recovery and unavailable sources', async (t) => {
   const summary: AppOperationalSummary = JSON.parse(readFileSync(resolve('../../tests/fixtures/app-operational-summary.json'), 'utf8'));

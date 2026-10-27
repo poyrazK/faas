@@ -1,5 +1,5 @@
 // adr: 1618
-package main
+package main_test
 
 import (
 	"bytes"
@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"github.com/onebox-faas/faas/cmd/gregale"
 )
 
 func TestMCPServeSubprocess(t *testing.T) {
@@ -25,20 +26,20 @@ func TestMCPServeSubprocess(t *testing.T) {
 	}
 	for i, arg := range os.Args {
 		if arg == "--" {
-			os.Exit(run(os.Args[i+1:]))
+			os.Exit(main.Run(os.Args[i+1:]))
 		}
 	}
 	os.Exit(1)
 }
 
 func TestMCPServeStdioUsesSelectedProfile(t *testing.T) {
-	setupConnectionProfiles(t)
+	main.SetupConnectionProfiles(t)
 	// TestMain recognizes this basename and preserves the helper's HOME.
 	// Keep the fixture aligned with its XDG path and the native macOS path.
-	sandbox := filepath.Join(t.TempDir(), cliTestHomePrefix+"mcp")
+	sandbox := filepath.Join(t.TempDir(), main.CliTestHomePrefix+"mcp")
 	t.Setenv("HOME", sandbox)
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(sandbox, ".config"))
-	token := testAPIKey('m')
+	token := main.TestAPIKey('m')
 	t.Setenv("FAAS_TOKEN", token)
 	t.Setenv("FAAS_API", "")
 	var requests atomic.Int32
@@ -58,7 +59,7 @@ func TestMCPServeStdioUsesSelectedProfile(t *testing.T) {
 		}
 	}))
 	defer backend.Close()
-	if err := saveCLIConfig(cliConfig{APIBase: "https://unused.example", Profiles: map[string]connectionProfile{"staging": {APIBase: backend.URL}}}); err != nil {
+	if err := main.SaveCLIConfig(main.CliConfig{APIBase: "https://unused.example", Profiles: map[string]main.ConnectionProfile{"staging": {APIBase: backend.URL}}}); err != nil {
 		t.Fatal(err)
 	}
 	executable, err := os.Executable()
@@ -79,8 +80,17 @@ func TestMCPServeStdioUsesSelectedProfile(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = session.Close() })
 	tools, err := session.ListTools(ctx, nil)
-	if err != nil || len(tools.Tools) != 49 || requests.Load() != 0 {
+	// 49 read tools, the local deploy and env plans (ADR-20261026141841), and
+	// the provisioning plans and domain check (ADR-20261026174727).
+	if err != nil || len(tools.Tools) != 56 || requests.Load() != 0 {
 		t.Fatalf("discovery=%+v error=%v requests=%d", tools, err, requests.Load())
+	}
+	listed := map[string]bool{}
+	for _, tool := range tools.Tools {
+		listed[tool.Name] = true
+	}
+	if !listed["gregale_plan_local_deploy"] || !listed["gregale_plan_env_change"] {
+		t.Fatal("a local stdio connection did not list the local deploy and env plans")
 	}
 	result, err := session.CallTool(ctx, &mcp.CallToolParams{Name: "gregale_context", Arguments: map[string]any{}})
 	if err != nil || result.IsError {
@@ -99,30 +109,30 @@ func TestMCPServeStdioUsesSelectedProfile(t *testing.T) {
 }
 
 func TestMCPServeRejectsInvalidStartupWithoutProtocolOutput(t *testing.T) {
-	setupConnectionProfiles(t)
+	main.SetupConnectionProfiles(t)
 	for _, args := range [][]string{
 		{"--transport", "http"}, {"--timeout", "0s"}, {"--timeout", "2m"}, {"unexpected"}, {"--unknown"},
 	} {
 		var stdout bytes.Buffer
-		if code := captureStdoutSwap(t, &stdout, func() int { return cmdMCPServe(args) }); code != 1 || stdout.Len() != 0 {
+		if code := main.CaptureStdoutSwap(t, &stdout, func() int { return main.CmdMCPServe(args) }); code != 1 || stdout.Len() != 0 {
 			t.Fatalf("args=%v exit=%d stdout=%q", args, code, stdout.String())
 		}
 	}
 	var stdout bytes.Buffer
-	if code := captureStdoutSwap(t, &stdout, func() int { return cmdMCPServe(nil) }); code != 2 || stdout.Len() != 0 {
+	if code := main.CaptureStdoutSwap(t, &stdout, func() int { return main.CmdMCPServe(nil) }); code != 2 || stdout.Len() != 0 {
 		t.Fatalf("missing credential: exit=%d stdout=%q", code, stdout.String())
 	}
 }
 
 func TestMCPServeRemoteNeedsNoHostCredential(t *testing.T) {
-	setupConnectionProfiles(t)
-	opts, err := parseMCPServeOptions([]string{"--transport", "streamable-http", "--listen", "127.0.0.1:0", "--resource-url", "https://management.example/mcp", "--oauth-redirect-uri", "https://client.example/callback", "--oauth-redirect-uri", "http://127.0.0.1/callback"})
-	if err != nil || opts.allowWrites || len(opts.redirects) != 2 {
+	main.SetupConnectionProfiles(t)
+	opts, err := main.ParseMCPServeOptions([]string{"--transport", "streamable-http", "--listen", "127.0.0.1:0", "--resource-url", "https://management.example/mcp", "--oauth-redirect-uri", "https://client.example/callback", "--oauth-redirect-uri", "http://127.0.0.1/callback"})
+	if err != nil || (*opts.AllowWrites()) || len((*opts.Redirects())) != 2 {
 		t.Fatalf("remote options=%+v error=%v", opts, err)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	if err := serveMCPHTTP(ctx, opts); !errors.Is(err, context.Canceled) {
+	if err := main.ServeMCPHTTP(ctx, opts); !errors.Is(err, context.Canceled) {
 		t.Fatalf("remote startup without CLI login=%v", err)
 	}
 }
@@ -132,8 +142,8 @@ func TestMCPServeWriteOptionIsExplicit(t *testing.T) {
 		args   []string
 		writes bool
 	}{{nil, false}, {[]string{"--allow-writes"}, true}, {[]string{"--allow-writes=false"}, false}} {
-		opts, err := parseMCPServeOptions(tc.args)
-		if err != nil || opts.allowWrites != tc.writes {
+		opts, err := main.ParseMCPServeOptions(tc.args)
+		if err != nil || (*opts.AllowWrites()) != tc.writes {
 			t.Fatalf("write options=%+v error=%v", opts, err)
 		}
 	}
@@ -147,12 +157,12 @@ func TestMCPServeRemoteStateAndOnboardingOptions(t *testing.T) {
 		{"--state-file", "state", "--state-key-file", "key"},
 		{"--oauth-onboarding", "api-key"},
 	} {
-		if _, err := parseMCPServeOptions(args); err == nil {
+		if _, err := main.ParseMCPServeOptions(args); err == nil {
 			t.Fatalf("invalid remote options accepted: %v", args)
 		}
 	}
-	opts, err := parseMCPServeOptions([]string{"--transport", "streamable-http", "--state-file", "state", "--state-key-file", "key"})
-	if err != nil || opts.onboarding != "browser" || opts.stateFile != "state" || opts.allowWrites {
+	opts, err := main.ParseMCPServeOptions([]string{"--transport", "streamable-http", "--state-file", "state", "--state-key-file", "key"})
+	if err != nil || (*opts.Onboarding()) != "browser" || (*opts.StateFile()) != "state" || (*opts.AllowWrites()) {
 		t.Fatalf("remote state options=%+v err=%v", opts, err)
 	}
 }

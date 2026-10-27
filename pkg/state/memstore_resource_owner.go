@@ -25,6 +25,7 @@ func (m *MemStore) appResourceAccountLocked(app App) (Account, bool) {
 	if exists && !org.Personal && org.ResourceOwnershipEnabled {
 		owner := m.orgResourceAccountLocked(org)
 		owner.ID = app.AccountID
+		_, owner.AsyncQuotaPooled = m.orgAsyncQuotaPooled[org.ID]
 		return owner, true
 	}
 	owner, ok := m.accounts[app.AccountID]
@@ -137,6 +138,18 @@ func (m *MemStore) accountOwnershipErasureBlockedLocked(accountID string) bool {
 	if !shared {
 		return false
 	}
+	// Rehearsal evidence follows its run; only a fixture that still holds a
+	// database or bucket blocks erasure (ADR-20261022155043).
+	for _, r := range m.scenarioPostgres {
+		if r.AccountID == accountID && r.Status != "complete" && r.Status != "deleted" {
+			return true
+		}
+	}
+	for _, r := range m.scenarioObjects {
+		if r.AccountID == accountID && r.Status != "complete" && r.Status != "deleted" {
+			return true
+		}
+	}
 	// These stores are outside the core app lifecycle. PostgreSQL additionally
 	// checks the complete migration inventory of identity-bound child tables.
 	for _, r := range m.objectBuckets {
@@ -212,8 +225,9 @@ func (m *MemStore) activateOrgResourceOwnershipLocked(org Org) Org {
 		return org
 	}
 	// Billing writers validate this before changing any mutable identity fields.
+	// Async reservations stay on their namespace counters (see
+	// poolOrgAsyncReservationsLocked).
 	org.ResourceOwnershipEnabled = true
-	m.adoptQueueReservationsLocked(org)
 	if m.objectOrgOwnedFrom == nil {
 		m.objectOrgOwnedFrom = make(map[string]time.Time)
 	}
@@ -225,9 +239,6 @@ func (m *MemStore) activateOrgResourceOwnershipLocked(org Org) Org {
 func (m *MemStore) validateObjectBillingAdoptionLocked(org Org) error {
 	if org.Personal || org.ResourceOwnershipEnabled || org.Plan != api.PlanFree && (org.ProviderCustomerID == "" || org.StripeSubscriptionItem == "") {
 		return nil
-	}
-	if err := m.validateQueueReservationsForAdoptionLocked(org); err != nil {
-		return err
 	}
 	for _, b := range m.objectBuckets {
 		if m.objectBucketOrgLocked(b).ID != org.ID {

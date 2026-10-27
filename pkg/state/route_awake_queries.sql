@@ -54,3 +54,63 @@ FROM filtered f
 LEFT JOIN top_routes t ON t.route = f.route AND t.method = f.method
 GROUP BY f.minute, COALESCE(t.route, ''), COALESCE(t.method, '')
 ORDER BY f.minute, COALESCE(t.route, ''), COALESCE(t.method, '');
+
+-- name: RouteAwakeSourceMinutes :many
+-- Wakes and keep-alives that are not customer requests (ADR-1199), per minute
+-- and source: synthetic route probes the app answered without a 5xx or an
+-- auth rejection (ADR-847; probe observations are pruned after a day), and
+-- scheduled prewarms that admitted instances.
+SELECT s.minute::timestamptz AS minute, s.source::text AS source, SUM(s.events)::bigint AS events
+FROM (
+    SELECT date_trunc('minute', o.window_start) AS minute, 'route_probe' AS source,
+           (o.requests - o.server_errors - o.unauthenticated)::bigint AS events
+    FROM route_probe_observations o
+    WHERE o.app_id = sqlc.arg(app_id)
+      AND o.account_id = sqlc.arg(account_id)
+      AND o.window_start >= sqlc.arg(since_at)
+      AND o.window_start < sqlc.arg(until_at)
+    UNION ALL
+    SELECT date_trunc('minute', p.fired_at) AS minute, 'prewarm' AS source, p.admitted_count::bigint AS events
+    FROM prewarm_intents p
+    WHERE p.app_id = sqlc.arg(app_id)
+      AND p.account_id = sqlc.arg(account_id)
+      AND p.fired_at >= sqlc.arg(since_at)
+      AND p.fired_at < sqlc.arg(until_at)
+      AND p.admitted_count > 0
+) s
+WHERE s.events > 0
+GROUP BY s.minute, s.source
+ORDER BY s.minute, s.source;
+
+-- name: RouteAwakeWorkMinutes :many
+-- Deliveries schedd made to the app (ADR-20261022184757), per minute and
+-- source: how many were running and how many started. Cron firings are keyed
+-- by cron job and queue deliveries by queue. A delivery runs from received_at
+-- to completed_at; one still running ends at until_at, and none counts for
+-- more than max_minutes.
+WITH work AS MATERIALIZED (
+    SELECT i.source, i.queue_name, i.cron_id, i.received_at,
+           LEAST(COALESCE(i.completed_at, sqlc.arg(until_at)::timestamptz), sqlc.arg(until_at)::timestamptz,
+                 i.received_at + make_interval(mins => sqlc.arg(max_minutes)::int)) AS ended_at
+    FROM invocations i
+    WHERE i.app_id = sqlc.arg(app_id)
+      AND i.account_id = sqlc.arg(account_id)
+      AND i.received_at IS NOT NULL
+      AND i.received_at >= sqlc.arg(since_at)::timestamptz - make_interval(mins => sqlc.arg(max_minutes)::int)
+      AND i.received_at < sqlc.arg(until_at)::timestamptz
+)
+SELECT gs.minute::timestamptz AS minute,
+       w.source::text AS source,
+       COALESCE(w.cron_id::text, NULLIF(w.queue_name, ''), '')::text AS detail,
+       COALESCE(MAX(c.schedule), '')::text AS cron_schedule,
+       COALESCE(MAX(left(CASE WHEN cardinality(c.command) > 0 THEN array_to_string(c.command, ' ') ELSE c.path END, 200)), '')::text AS cron_target,
+       count(*)::bigint AS running,
+       count(*) FILTER (WHERE gs.minute = date_trunc('minute', w.received_at))::bigint AS started
+FROM work w
+LEFT JOIN crons c ON c.id = w.cron_id
+CROSS JOIN LATERAL generate_series(
+    date_trunc('minute', GREATEST(w.received_at, sqlc.arg(since_at)::timestamptz)),
+    date_trunc('minute', w.ended_at), interval '1 minute') AS gs(minute)
+WHERE w.ended_at >= sqlc.arg(since_at)::timestamptz
+GROUP BY gs.minute, w.source, COALESCE(w.cron_id::text, NULLIF(w.queue_name, ''), '')
+ORDER BY 1, 2, 3;

@@ -33,11 +33,14 @@ import (
 	"github.com/onebox-faas/faas/pkg/fcvm/leakcheck"
 	"github.com/onebox-faas/faas/pkg/fcvm/logbuf"
 	"github.com/onebox-faas/faas/pkg/fcvm/netstats"
+	"github.com/onebox-faas/faas/pkg/financial"
 	"github.com/onebox-faas/faas/pkg/grpcerr"
+	"github.com/onebox-faas/faas/pkg/leaser"
 	"github.com/onebox-faas/faas/pkg/privatenetwork"
-	"github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/sched/flowcount"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/storage"
+	"github.com/onebox-faas/faas/pkg/storagekey"
 	pkgtrace "github.com/onebox-faas/faas/pkg/trace"
 	"github.com/onebox-faas/faas/pkg/vmmdmount"
 	"github.com/onebox-faas/faas/pkg/wire"
@@ -274,9 +277,15 @@ type Server struct {
 	ops   *wire.OpsMetrics
 	fcVer string
 	log   *slog.Logger
+	// baseReadiness answers Ping's base generation report (ADR-20261022184531).
+	baseReadiness *CachedBaseGenerationReadiness
 	// diverged (ADR-740) lists instances that were served a developer live
 	// patch; their snapshot captures are refused. nil disables the guard.
 	diverged *DivergedInstances
+	// adoptionReportOn and adoptionReport serve AdoptionReport (vmmd
+	// restart adoption ADR §3); see WithAdoptionReport.
+	adoptionReportOn bool
+	adoptionReport   *AdoptionReport
 	// events (issue #517 / PR-C / ADR-064) is the wake-timeline
 	// fan-out. vmmd is the corroborating-observation source for
 	// wake.boot_observed at the gRPC server boundary and
@@ -307,6 +316,17 @@ type Server struct {
 	// constructors; production cmd/vmmd uses
 	// NewWithCPUAndNetAndActivity.
 	activity *activity.ActivityTracker
+	// inflightTraces holds each in-flight HTTP forward's traceparent for
+	// InflightRequestTrace (ADR-1138).
+	inflightTraces inflightTraces
+	// invokeHooks skips per-request invoke events for instances whose guest
+	// has no extension endpoint (ADR-20261025150000) while
+	// invokeHookBackoffOn is set (vmmd invoke_hook_backoff, default off).
+	invokeHooks         invokeHookBackoff
+	invokeHookBackoffOn bool
+	// bridgeStreamHeadroom is vmmd's bridge_stream_headroom switch
+	// (ADR-20261026120000); every stream bridge manager takes it.
+	bridgeStreamHeadroom bool
 	// identitySigner mints execution-only assertions for the scheduler's
 	// outbound relay. Tokens are sent only over the vmmd↔schedd stream.
 	identitySigner *workloadidentity.Signer
@@ -403,7 +423,11 @@ func NewWithCPUAndNetAndActivity(vmm VmmdAPI, ops *wire.OpsMetrics, fcVer string
 		// never exported. Tests that don't assert metrics use this path.
 		ops = wire.NewOpsMetrics("vmmd_test")
 	}
-	return &Server{vmm: vmm, ops: ops, fcVer: fcVer, log: log, cpuCache: cpu, netCache: net, activity: act, migrations: newMigrationTracker(), streamBridges: newStreamBridgeManager(log)}
+	s := &Server{vmm: vmm, ops: ops, fcVer: fcVer, log: log, cpuCache: cpu, netCache: net, activity: act, migrations: newMigrationTracker(), streamBridges: newStreamBridgeManager(log)}
+	if j, ok := vmm.(instanceBridgeJournal); ok {
+		s.streamBridges.journal = j
+	}
+	return s
 }
 
 // WithEvents (issue #517 / PR-C / ADR-064) wires the wake-timeline
@@ -476,7 +500,7 @@ func (s *Server) WithExecutionIdentitySigner(signer *workloadidentity.Signer) *S
 // common lease interface. Durable storage is preferred when configured so
 // callers retain lease state across vmmd restarts; the hot tracker remains the
 // compatibility fallback for in-memory/unit-test fixtures.
-func (s *Server) MigrationLeaser() sched.Leaser[any] {
+func (s *Server) MigrationLeaser() leaser.Leaser[any] {
 	if s == nil {
 		return nil
 	}
@@ -487,6 +511,36 @@ func (s *Server) MigrationLeaser() sched.Leaser[any] {
 		return nil
 	}
 	return NewMigrationLeaser(s.migrations)
+}
+
+// WithBridgeStreamHeadroom turns on the ADR-20261026120000 bridge
+// settings for the bridges this server starts from now on.
+func (s *Server) WithBridgeStreamHeadroom(on bool) *Server {
+	if s != nil {
+		s.bridgeStreamHeadroom = on
+		if s.streamBridges != nil {
+			s.streamBridges.headroom.Store(on)
+		}
+	}
+	return s
+}
+
+// newBridgeManager builds a stream bridge manager carrying this server's
+// bridge settings.
+func (s *Server) newBridgeManager() *streamBridgeManager {
+	m := newStreamBridgeManager(s.log)
+	m.headroom.Store(s.bridgeStreamHeadroom)
+	return m
+}
+
+// WithInvokeHookBackoff turns on the ADR-20261025150000 backoff: an instance
+// whose guest answered that no extension endpoint is listening gets no
+// per-request invoke events for extension.InvokeUnavailableBackoff.
+func (s *Server) WithInvokeHookBackoff(on bool) *Server {
+	if s != nil {
+		s.invokeHookBackoffOn = on
+	}
+	return s
 }
 
 // WithFlowCounter wires the compute-side conntrack reader used by Stats.
@@ -664,6 +718,7 @@ func (s *Server) CreateFromSnapshot(ctx context.Context, req *vmmdpb.CreateFromS
 		s.incWakeFailure(ctx, "snapshot_restore_err")
 		return nil, grpcerr.ToStatus(toProblem(err))
 	}
+	wr.NodeID = s.nodeID
 	wakeCtx, wakeSpan := newWakeSpan(ctx, "restore", wr)
 	// issue #517 / PR-C / ADR-064 — emit wake.boot_observed at
 	// the gRPC server boundary. Schedd is the canonical emit site;
@@ -694,14 +749,14 @@ func (s *Server) wakeWithBridgePrewarm(ctx context.Context, wr fcvm.WakeRequest,
 		return s.vmm.Wake(ctx, wr)
 	}
 	if s.streamBridges == nil {
-		s.streamBridges = newStreamBridgeManager(s.log)
+		s.streamBridges = s.newBridgeManager()
 	}
 	inst, err := fastVMM.WakeWithNetworkReady(ctx, wr, func(ready fcvm.WakeNetworkReady) {
-		s.streamBridges.prewarm(ctx, &vmmdpb.ForwardHTTPRequestInit{
+		s.prewarmStreamBridge(withPublicTarget(ctx, ready.PublicTarget), &vmmdpb.ForwardHTTPRequestInit{
 			Instance:    ready.Instance,
 			Port:        uint32(wr.Port),
 			AppProtocol: appProtocol,
-		}, ready.Netns)
+		}, ready)
 	})
 	if err != nil {
 		s.forgetForwarding(ctx, wr.Instance)
@@ -730,6 +785,7 @@ func (s *Server) CreateColdBoot(ctx context.Context, req *vmmdpb.CreateColdBootR
 		s.incWakeFailure(ctx, "mem_backend_err")
 		return nil, grpcerr.ToStatus(toProblem(err))
 	}
+	wr.NodeID = s.nodeID
 	wakeCtx, wakeSpan := newWakeSpan(ctx, "cold_boot", wr)
 	// issue #517 / PR-C / ADR-064 — emit wake.boot_observed at
 	// the gRPC server boundary. Same canonical-site pairing as
@@ -818,13 +874,14 @@ func (s *Server) jobColdBoot(ctx context.Context, req *vmmdpb.JobColdBootRequest
 		go s.serveInteractiveJob(context.WithoutCancel(ctx), interactiveVMM, req.GetInstance(), attach, boot.Interactive, boot.TaskTimeoutSec)
 	}
 	return &vmmdpb.JobColdBootResponse{
-		Instance:    inst.Lease.Instance,
-		NodeId:      boot.NodeID,
-		Netns:       inst.Lease.Netns,
-		HostIp:      inst.Lease.HostIP.String(),
-		GuestUid:    int32(inst.Lease.UID),
-		StartHeld:   startHeld,
-		Interactive: attach != nil,
+		Instance:     inst.Lease.Instance,
+		NodeId:       boot.NodeID,
+		Netns:        inst.Lease.Netns,
+		HostIp:       inst.Lease.HostIP.String(),
+		GuestUid:     int32(inst.Lease.UID),
+		StartHeld:    startHeld,
+		Interactive:  attach != nil,
+		ImageProcess: boot.ImageProcess,
 	}, nil
 }
 
@@ -1098,10 +1155,21 @@ func (s *Server) WarmSnapshot(ctx context.Context, req *vmmdpb.WarmSnapshotReque
 		s.ops.Observe(op, time.Since(start), err)
 		return nil, grpcerr.ToStatus(err)
 	}
-	info, err := s.vmm.WarmSnapshot(ctx, req.GetInstance(), fcvm.SnapshotSpec{
+	spec := fcvm.SnapshotSpec{
 		StorageKey:        req.GetStorageKey(),
 		VMStateStorageKey: req.GetVmstateStorageKey(),
-	})
+	}
+	var sealedKey []byte
+	if captureID := req.GetSealCaptureId(); captureID != "" {
+		store, sealed, err := s.sealCaptureStorage(captureID)
+		if err != nil {
+			s.ops.Observe(op, time.Since(start), err)
+			return nil, grpcerr.ToStatus(api.NewProblem(int(codes.FailedPrecondition), api.CodeValidation,
+				"Cannot seal crash capture", err.Error()).WithDocs(wire.DocsBaseURL + "/vmmd#warm-snapshot"))
+		}
+		spec.Storage, sealedKey = store, sealed
+	}
+	info, err := s.vmm.WarmSnapshot(ctx, req.GetInstance(), spec)
 	s.ops.Observe(op, time.Since(start), err)
 	if err != nil {
 		return nil, grpcerr.ToStatus(toProblem(err))
@@ -1110,8 +1178,23 @@ func (s *Server) WarmSnapshot(ctx context.Context, req *vmmdpb.WarmSnapshotReque
 		MemBytes:     info.MemBytes,
 		VmstateBytes: info.VMStateBytes,
 		StoredBytes:  info.StoredBytes,
+		SealedKey:    sealedKey,
 		Capture:      info.Capture.ToProto(),
 	}, nil
+}
+
+// captureSealer is the optional ADR-733 capability of the VMM: a backend
+// that publishes a crash capture only as encrypted twins.
+type captureSealer interface {
+	SealCaptureStorage(captureID string) (storage.StorageBackend, []byte, error)
+}
+
+func (s *Server) sealCaptureStorage(captureID string) (storage.StorageBackend, []byte, error) {
+	sealer, ok := s.vmm.(captureSealer)
+	if !ok {
+		return nil, nil, errors.New("this vmmd cannot encrypt crash captures")
+	}
+	return sealer.SealCaptureStorage(captureID)
 }
 
 // ResumeWarmInstance resumes a paused warm-pool VM in place. The scheduler
@@ -1230,6 +1313,38 @@ func (s *Server) DeleteWarmSnapshot(ctx context.Context, req *vmmdpb.DeleteWarmS
 	return &vmmdpb.DeleteWarmSnapshotResponse{Deleted: true}, nil
 }
 
+// RetireNativeRuntimeSnapshotObject removes one object of a native runtime
+// capture on imaged's behalf (ADR 20261022184951 amendment 1). imaged owns
+// the collection decision; vmmd, the tree's only writer, does the removal.
+func (s *Server) RetireNativeRuntimeSnapshotObject(ctx context.Context, req *vmmdpb.RetireNativeRuntimeSnapshotObjectRequest) (*vmmdpb.RetireNativeRuntimeSnapshotObjectResponse, error) {
+	const op = "RetireNativeRuntimeSnapshotObject"
+	start := time.Now()
+	retirer, ok := s.vmm.(interface {
+		RetireNativeRuntimeSnapshotObject(context.Context, string) error
+	})
+	if !ok {
+		err := api.NewProblem(int(codes.Unimplemented), api.CodeNotImplemented,
+			"Native runtime snapshot retirement unavailable", "vmmd does not expose native runtime snapshot retirement")
+		s.ops.Observe(op, time.Since(start), err)
+		return nil, grpcerr.ToStatus(err)
+	}
+	err := retirer.RetireNativeRuntimeSnapshotObject(ctx, req.GetStorageKey())
+	s.ops.Observe(op, time.Since(start), err)
+	switch {
+	case err == nil:
+		return &vmmdpb.RetireNativeRuntimeSnapshotObjectResponse{}, nil
+	case errors.Is(err, storage.ErrInvalidKey):
+		return nil, grpcerr.ToStatus(api.NewProblem(int(codes.InvalidArgument), api.CodeValidation,
+			"Not a native runtime snapshot object", err.Error()))
+	case errors.Is(err, fcvm.ErrNativeRuntimeSnapshotRootUnset):
+		// To imaged this vmmd is one without the RPC: keep the row, retry.
+		return nil, grpcerr.ToStatus(api.NewProblem(int(codes.Unimplemented), api.CodeNotImplemented,
+			"Native runtime snapshot root unavailable", err.Error()))
+	default:
+		return nil, grpcerr.ToStatus(toProblem(err))
+	}
+}
+
 // FrameworkReady is the vmmd-side receipt of the guest-init "framework
 // ready" vsock DGRAM (port 1027, msg=4) signal (issue #470, PR
 // #470-FU-B). The handler:
@@ -1312,6 +1427,7 @@ func (s *Server) FrameworkReady(ctx context.Context, req *vmmdpb.FrameworkReadyR
 // unbounded across the vmmd process lifetime. issue #279.
 func (s *Server) Destroy(ctx context.Context, req *vmmdpb.DestroyRequest) (*vmmdpb.DestroyResponse, error) {
 	const op = "Destroy"
+	ctx = withIncomingCorrelation(ctx)
 	start := time.Now()
 	exportDir := s.exportDirFor(req.GetInstance())
 	var code int
@@ -1478,10 +1594,17 @@ func (s *Server) Stats(ctx context.Context, _ *vmmdpb.StatsRequest) (*vmmdpb.Sta
 			}
 		}
 		row.OpenConns = openConns[inst]
+		row.EgressCircuitEnforcement = s.egressCircuitEnforcement(inst)
+		row.HttpAdmissionEnforcement = s.httpAdmissionEnforcement(inst)
 		row.FlowSummaries = flowSummariesToProto(flowTelemetry.summaries[inst])
 		resp.Instances = append(resp.Instances, row)
 	}
 	resp.TotalResidentBytes = wrapperspb.Int64(total)
+	if InstanceBridgeUnitsEnabled() {
+		if b, ok := instanceBridgeResidentBytes(); ok {
+			resp.InstanceBridgeResidentBytes = wrapperspb.Int64(b)
+		}
+	}
 	return resp, nil
 }
 
@@ -1660,17 +1783,26 @@ func buildInstanceStatsRow(
 // both gRPC socket reachability and that vmmd's goroutine
 // scheduler is responsive enough to schedule this handler. Idempotent
 // + side-effect free; no backing Manager call.
-func (s *Server) Ping(_ context.Context, _ *vmmdpb.PingRequest) (*vmmdpb.PingResponse, error) {
+func (s *Server) Ping(ctx context.Context, _ *vmmdpb.PingRequest) (*vmmdpb.PingResponse, error) {
 	const op = "Ping"
 	start := time.Now()
 	defer func() { s.ops.Observe(op, time.Since(start), nil) }()
-	return &vmmdpb.PingResponse{
+	resp := &vmmdpb.PingResponse{
 		FcVersion:                          s.fcVer,
 		ServerTime:                         timestamppb.Now(),
 		SupportsSecretAliases:              true,
 		SupportsImageHealthcheck:           true,
 		SupportsImageHealthcheckMonitoring: true,
-	}, nil
+	}
+	// ADR-20261022184531: schedd's heartbeat marks a node that cannot adopt
+	// its configured base generation degraded. The report is cached; Ping
+	// never waits for shared storage.
+	for _, base := range s.baseReadiness.Report(ctx) {
+		resp.BaseGenerations = append(resp.BaseGenerations, &vmmdpb.BaseGenerationReadiness{
+			BaseKey: base.BaseKey, Generation: base.Generation, Adoptable: base.Adoptable, Reason: base.Reason,
+		})
+	}
+	return resp, nil
 }
 
 // UpdateEgressAllowlist (ADR-031 + ADR-033, tier-2 PR-B) walks the
@@ -2034,7 +2166,7 @@ func (s *Server) SeccompStatus(ctx context.Context, req *vmmdpb.SeccompStatusReq
 //     a misbehaving caller or a leaked token from another
 //     `faas`-group member cannot read arbitrary storage bytes
 //     through vmmd's loopback mount; the allow-list is the
-//     host-arch + sibling-arch set from sched.IsParentBaseKey).
+//     host-arch + sibling-arch set from storagekey.IsParentBase).
 //  3. vmm.MountParentExt4 returns vmmdmount.ErrNotFound →
 //     NotFound (the storage backend has no such key — the
 //     load-bearing wire code for imaged's pre-staging checks).
@@ -2056,8 +2188,8 @@ func (s *Server) MountParentExt4ReadOnly(ctx context.Context, req *vmmdpb.MountP
 	// Allow-list check (review finding #4): only the canonical
 	// parent-base storage keys may be loopback-mounted. The set
 	// is per-arch (host + sibling for heterogenous clusters);
-	// see sched.IsParentBaseKey.
-	if !sched.IsParentBaseKey(req.GetStorageKey()) {
+	// see storagekey.IsParentBase.
+	if !storagekey.IsParentBase(req.GetStorageKey()) {
 		err := api.NewProblem(int(codes.InvalidArgument), api.CodeValidation,
 			"storage_key not in allow-list",
 			"only the canonical parent base ext4 key may be mounted").
@@ -2098,7 +2230,7 @@ func (s *Server) MaterializeParentExt4(ctx context.Context, req *vmmdpb.Material
 		s.ops.Observe(op, time.Since(start), err)
 		return nil, grpcerr.ToStatus(err)
 	}
-	if !sched.IsParentBaseKey(req.GetStorageKey()) {
+	if !storagekey.IsParentBase(req.GetStorageKey()) {
 		err := api.NewProblem(int(codes.InvalidArgument), api.CodeValidation,
 			"storage_key not in allow-list",
 			"only the canonical parent base ext4 key may be materialized").
@@ -2336,6 +2468,17 @@ func toProblem(err error) *api.Problem {
 	if err == nil {
 		return nil
 	}
+	if errors.Is(err, fcvm.ErrFunctionWarmCapture) {
+		return api.NewProblem(500, api.CodeInternal,
+			"Function warm capture failed", "function checkpoint or resource recovery did not complete; retire the source VM before replacing it")
+	}
+	if errors.Is(err, financial.ErrComputeUnavailable) || errors.Is(err, financial.ErrComputeFence) {
+		return api.NewProblem(503, "financial_compute_unavailable", "Compute admission unavailable", "The VM compute authority or stable execution attempt could not be verified.")
+	}
+	if errors.Is(err, financial.ErrComputeBudget) {
+		return api.NewProblem(402, "financial_budget_held", "Compute budget held", "The workload cannot reserve its next compute execution window.")
+	}
+
 	if errors.Is(err, fcvm.ErrAppAdmissionFenced) {
 		return api.NewProblem(409, api.CodeDatabaseCutoverFenced,
 			"Database cutover in progress", "app admission is fenced for a managed PostgreSQL cutover")

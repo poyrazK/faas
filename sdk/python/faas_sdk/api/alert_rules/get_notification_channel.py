@@ -66,7 +66,7 @@ def sync_detailed(
     *,
     client: AuthenticatedClient | Client,
 ) -> Response[NotificationChannelResponse | Problem]:
-    """Get one notification channel (ADR-749)
+    """Get one notification channel
 
      Returns one channel with its last delivery outcome.
 
@@ -97,7 +97,7 @@ def sync(
     *,
     client: AuthenticatedClient | Client,
 ) -> NotificationChannelResponse | Problem | None:
-    """Get one notification channel (ADR-749)
+    """Get one notification channel
 
      Returns one channel with its last delivery outcome.
 
@@ -123,7 +123,7 @@ async def asyncio_detailed(
     *,
     client: AuthenticatedClient | Client,
 ) -> Response[NotificationChannelResponse | Problem]:
-    """Get one notification channel (ADR-749)
+    """Get one notification channel
 
      Returns one channel with its last delivery outcome.
 
@@ -152,7 +152,7 @@ async def asyncio(
     *,
     client: AuthenticatedClient | Client,
 ) -> NotificationChannelResponse | Problem | None:
-    """Get one notification channel (ADR-749)
+    """Get one notification channel
 
      Returns one channel with its last delivery outcome.
 

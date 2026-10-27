@@ -1,5 +1,5 @@
 // adr: 20261017223000
-package main
+package main_test
 
 import (
 	"bytes"
@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -26,7 +27,7 @@ func TestInspectWorkerRecoveryShowsObservationAndAppRetryScope(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var output bytes.Buffer
-			renderInspectWorkerRecovery(&output, tc.recovery)
+			main.RenderInspectWorkerRecovery(&output, tc.recovery)
 			for _, want := range tc.wants {
 				if !strings.Contains(output.String(), want) {
 					t.Fatalf("missing %q in %s", want, output.String())
@@ -35,7 +36,7 @@ func TestInspectWorkerRecoveryShowsObservationAndAppRetryScope(t *testing.T) {
 		})
 	}
 	var old bytes.Buffer
-	renderInspectWorkerRecovery(&old, nil)
+	main.RenderInspectWorkerRecovery(&old, nil)
 	if old.Len() != 0 {
 		t.Fatalf("older server invented worker evidence: %s", old.String())
 	}
@@ -43,14 +44,14 @@ func TestInspectWorkerRecoveryShowsObservationAndAppRetryScope(t *testing.T) {
 
 func TestInspectWatchWorkerRecoveryReportsChangesWithoutClockChurn(t *testing.T) {
 	now := time.Now().UTC()
-	before := inspectSummary{Operational: &api.AppOperationalSummary{Recovery: api.AppOperationalRecovery{
+	before := main.InspectSummary{Operational: &api.AppOperationalSummary{Recovery: api.AppOperationalRecovery{
 		Workers: &api.AppWorkerRecovery{Available: true, Eligible: true, Status: "ready", UpdatedAt: &now, NextAttemptAt: &now,
 			Pools: []api.AppWorkerPoolObservation{{Scope: "staging", Desired: 1, Running: 1, ObservedAt: now}, {Scope: "default", ObservedAt: now}}}}}}
 	encoded, err := json.Marshal(before)
 	if err != nil {
 		t.Fatal(err)
 	}
-	var after inspectSummary
+	var after main.InspectSummary
 	if err := json.Unmarshal(encoded, &after); err != nil {
 		t.Fatal(err)
 	}
@@ -60,7 +61,7 @@ func TestInspectWatchWorkerRecoveryReportsChangesWithoutClockChurn(t *testing.T)
 	for i := range after.Operational.Recovery.Workers.Pools {
 		after.Operational.Recovery.Workers.Pools[i].ObservedAt = later
 	}
-	changes, err := inspectWatchChanges(&before, after)
+	changes, err := main.InspectWatchChanges(&before, after)
 	if err != nil || len(changes) != 0 {
 		t.Fatalf("observation clocks caused an update: %v %v", changes, err)
 	}
@@ -68,7 +69,7 @@ func TestInspectWatchWorkerRecoveryReportsChangesWithoutClockChurn(t *testing.T)
 		t.Fatal("watch comparison mutated the live observation")
 	}
 	after.Operational.Recovery.Workers.Pools[0].Running = 0
-	changes, err = inspectWatchChanges(&before, after)
+	changes, err = main.InspectWatchChanges(&before, after)
 	if err != nil || len(changes) == 0 {
 		t.Fatalf("missing worker transition hidden: %v %v", changes, err)
 	}
@@ -86,7 +87,7 @@ func TestInspectWorkerAdmissionBlockersShowLimitsCooldownAndStaleness(t *testing
 			{Code: "retry_cooldown", ObservedAt: now, RetryAt: &retry},
 		}}}}
 	var output bytes.Buffer
-	renderInspectWorkerRecovery(&output, recovery)
+	main.RenderInspectWorkerRecovery(&output, recovery)
 	for _, want := range []string{"admission blocker: account_worker_limit", "used=0 limit=3", "resource=cpu_millicores requested=1000",
 		"· stale", "retry after " + retry.Format(time.RFC3339), "draining workers hold slots", "app-wide retry deadline"} {
 		if !strings.Contains(output.String(), want) {
@@ -95,7 +96,7 @@ func TestInspectWorkerAdmissionBlockersShowLimitsCooldownAndStaleness(t *testing
 	}
 	recovery.Pools[0].Blockers = nil
 	output.Reset()
-	renderInspectWorkerRecovery(&output, recovery)
+	main.RenderInspectWorkerRecovery(&output, recovery)
 	if !strings.Contains(output.String(), "admission blockers: not observed") {
 		t.Fatalf("old response invented a cause: %s", output.String())
 	}
@@ -106,7 +107,7 @@ func TestInspectWatchWorkerAdmissionRetainsMeaningfulChanges(t *testing.T) {
 	now := time.Now().UTC()
 	used, limit := int64(3), int64(3)
 	retry := now.Add(time.Minute)
-	before := inspectSummary{Operational: &api.AppOperationalSummary{Recovery: api.AppOperationalRecovery{Workers: &api.AppWorkerRecovery{
+	before := main.InspectSummary{Operational: &api.AppOperationalSummary{Recovery: api.AppOperationalRecovery{Workers: &api.AppWorkerRecovery{
 		Available: true, Failures: 1, Status: "waiting_capacity", Pools: []api.AppWorkerPoolObservation{{Scope: "default", Desired: 1,
 			Blockers: []api.WorkerAdmissionBlocker{
 				{Code: "account_worker_limit", ObservedAt: now, Resource: "replicas", Used: &used, Limit: &limit},
@@ -134,12 +135,12 @@ func TestInspectWatchWorkerAdmissionRetainsMeaningfulChanges(t *testing.T) {
 		{"clear", func(p *api.AppWorkerPoolObservation) { p.Blockers = nil }, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			var after inspectSummary
+			var after main.InspectSummary
 			if err := json.Unmarshal(encoded, &after); err != nil {
 				t.Fatal(err)
 			}
 			tc.change(&after.Operational.Recovery.Workers.Pools[0])
-			changes, err := inspectWatchChanges(&before, after)
+			changes, err := main.InspectWatchChanges(&before, after)
 			if err != nil || (len(changes) > 0) != tc.want {
 				t.Fatalf("changes=%v want=%v err=%v", changes, tc.want, err)
 			}

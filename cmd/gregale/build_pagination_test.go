@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"encoding/json"
@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -16,7 +17,7 @@ func TestBuildPaginationContract(t *testing.T) {
 	for _, machine := range []bool{false, true} {
 		for _, mode := range []string{"page", "all", "empty", "empty-page", "api-error", "repeat", "cycle"} {
 			t.Run(fmt.Sprintf("json=%t/%s", machine, mode), func(t *testing.T) {
-				setupCLIRegression(t)
+				main.SetupCLIRegression(t)
 				start, next := "queued|start + token", "timestamp|next + token"
 				var cursors []string
 				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -55,7 +56,7 @@ func TestBuildPaginationContract(t *testing.T) {
 				}))
 				defer server.Close()
 				t.Setenv("FAAS_API", server.URL)
-				t.Setenv("FAAS_TOKEN", testAPIKey('a'))
+				t.Setenv("FAAS_TOKEN", main.TestAPIKey('a'))
 				command := []string{"build", "list", "--app", "demo", "--status", "queued", "--before", "ignored", "--cursor", start, "--limit", "2"}
 				all := mode != "page" && mode != "empty-page"
 				if all {
@@ -64,7 +65,7 @@ func TestBuildPaginationContract(t *testing.T) {
 				if machine {
 					command = append(command, "--json")
 				}
-				code, out, errOut := capturePreviewRun(t, command)
+				code, out, errOut := main.CapturePreviewRun(t, command)
 				wantCursors := []string{start}
 				if mode == "all" || mode == "api-error" {
 					wantCursors = append(wantCursors, next)
@@ -84,7 +85,7 @@ func TestBuildPaginationContract(t *testing.T) {
 						t.Fatalf("exit=%d stdout=%s stderr=%s", code, out, errOut)
 					}
 					if machine {
-						assertOneProblem(t, errOut)
+						main.AssertOneProblem(t, errOut)
 					}
 					return
 				}
@@ -148,7 +149,7 @@ func TestBuildPaginationContract(t *testing.T) {
 func TestBuildPaginationLimitsAndAliases(t *testing.T) {
 	for _, limit := range []int{0, -1, 1, 200, 201} {
 		t.Run(fmt.Sprint(limit), func(t *testing.T) {
-			setupCLIRegression(t)
+			main.SetupCLIRegression(t)
 			calls := 0
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				calls++
@@ -159,13 +160,13 @@ func TestBuildPaginationLimitsAndAliases(t *testing.T) {
 			}))
 			defer server.Close()
 			t.Setenv("FAAS_API", server.URL)
-			t.Setenv("FAAS_TOKEN", testAPIKey('a'))
-			code, out, errOut := capturePreviewRun(t, []string{"build", "list", "--cursor", "ignored", "--before", "legacy", "--limit", fmt.Sprint(limit), "--all", "--json"})
+			t.Setenv("FAAS_TOKEN", main.TestAPIKey('a'))
+			code, out, errOut := main.CapturePreviewRun(t, []string{"build", "list", "--cursor", "ignored", "--before", "legacy", "--limit", fmt.Sprint(limit), "--all", "--json"})
 			if limit < 1 || limit > 200 {
 				if code != 1 || calls != 0 || out != "" {
 					t.Fatalf("exit=%d calls=%d stdout=%s", code, calls, out)
 				}
-				assertOneProblem(t, errOut)
+				main.AssertOneProblem(t, errOut)
 			} else if code != 0 || calls != 1 || strings.TrimSpace(out) != "[]" || errOut != "" {
 				t.Fatalf("exit=%d calls=%d stdout=%s stderr=%s", code, calls, out, errOut)
 			}
@@ -174,14 +175,14 @@ func TestBuildPaginationLimitsAndAliases(t *testing.T) {
 }
 
 func TestBuildPaginationFinalPageAndHelp(t *testing.T) {
-	setupCLIRegression(t)
+	main.SetupCLIRegression(t)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(api.BuildListResponse{Items: []api.BuildResponse{}})
 	}))
 	defer server.Close()
 	t.Setenv("FAAS_API", server.URL)
-	t.Setenv("FAAS_TOKEN", testAPIKey('a'))
-	code, out, errOut := capturePreviewRun(t, []string{"build", "list", "--json"})
+	t.Setenv("FAAS_TOKEN", main.TestAPIKey('a'))
+	code, out, errOut := main.CapturePreviewRun(t, []string{"build", "list", "--json"})
 	if code != 0 || errOut != "" {
 		t.Fatalf("exit=%d stderr=%s", code, errOut)
 	}
@@ -195,7 +196,7 @@ func TestBuildPaginationFinalPageAndHelp(t *testing.T) {
 	if _, ok := envelope["next_before"]; ok {
 		t.Fatal("final page has next_before")
 	}
-	code, out, errOut = capturePreviewRun(t, []string{"build", "list", "--help"})
+	code, out, errOut = main.CapturePreviewRun(t, []string{"build", "list", "--help"})
 	if code != 0 {
 		t.Fatalf("help exit=%d stderr=%s", code, errOut)
 	}

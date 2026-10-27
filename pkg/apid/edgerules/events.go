@@ -20,6 +20,8 @@ import (
 const (
 	edgeRuleEventsDefaultLimit = 50
 	edgeRuleEventsMaxLimit     = 200
+	// edgeRuleEventsMaxRequestID matches edge_rule_events_request_id_check.
+	edgeRuleEventsMaxRequestID = 128
 )
 
 // parseEdgeRuleEventsSince accepts a Go duration ("90m", "24h") or whole
@@ -57,14 +59,17 @@ func parseEdgeRuleEventsCursor(raw string) (time.Time, int64, error) {
 // EdgeRuleEventsQuery validates the query string against the plan window.
 func EdgeRuleEventsQuery(r *http.Request, plan api.Plan, appID string, now time.Time) (state.EdgeRuleEventQuery, *api.Problem) {
 	q := r.URL.Query()
-	out := state.EdgeRuleEventQuery{AppID: appID, RuleID: q.Get("rule"), Outcome: q.Get("outcome"), Limit: edgeRuleEventsDefaultLimit}
+	out := state.EdgeRuleEventQuery{AppID: appID, RuleID: q.Get("rule"), Outcome: q.Get("outcome"), RequestID: q.Get("request_id"), Limit: edgeRuleEventsDefaultLimit}
 	if out.RuleID != "" {
 		if _, err := uuid.Parse(out.RuleID); err != nil {
 			return out, api.ErrValidation("rule must be an edge rule id")
 		}
 	}
+	if len(out.RequestID) > edgeRuleEventsMaxRequestID {
+		return out, api.ErrValidation(fmt.Sprintf("request_id must be at most %d bytes", edgeRuleEventsMaxRequestID))
+	}
 	if out.Outcome != "" && !state.IsEdgeRuleEventOutcome(out.Outcome) {
-		return out, api.ErrValidation("outcome must be matched, logged, detected, warned or blocked")
+		return out, api.ErrValidation("outcome must be matched, logged, detected, warned, blocked, challenged, rejected, solved, failed or boxed")
 	}
 	since, err := parseEdgeRuleEventsSince(q.Get("since"))
 	if err != nil {
@@ -87,7 +92,7 @@ func EdgeRuleEventsQuery(r *http.Request, plan api.Plan, appID string, now time.
 	return out, nil
 }
 
-// GET /v1/apps/{slug}/edge-rules/events?rule=&outcome=&since=&limit=&cursor=
+// GET /v1/apps/{slug}/edge-rules/events?rule=&outcome=&request_id=&since=&limit=&cursor=
 func (s *Service) ListEdgeRuleEvents(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	app, ok := s.Host.LoadApp(w, r, acct, r.PathValue("slug"))
 	if !ok {

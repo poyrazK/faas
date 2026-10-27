@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -17,11 +18,76 @@ import (
 	"github.com/onebox-faas/faas/pkg/billing/paddleinvoice"
 )
 
-// fakePaddle keeps transactions like Paddle Billing would.
+// fakePaddle keeps transactions, and customers' addresses and businesses,
+// like Paddle Billing would.
 type fakePaddle struct {
 	mu      sync.Mutex
 	created []map[string]any
 	status  map[string]string // transaction ID -> GET response
+	// addresses are customers' active addresses; billed records the
+	// address each transaction was billed with (ADR-20261019100333), and
+	// billedBusiness its business (ADR-20261020120000).
+	addresses      map[string]string
+	billed         map[string]string
+	billedBusiness map[string]string
+	// entities holds addresses and businesses written through the API by
+	// "customer/kind"; writes counts POSTs and PATCHes.
+	entities map[string][]map[string]any
+	writes   int
+}
+
+// customerEntity serves /customers/{id}/addresses and /businesses, newest
+// created first, except a customer's address preset in addresses. Like
+// Paddle, it orders lists only by ID.
+func (f *fakePaddle) customerEntity(w http.ResponseWriter, r *http.Request) bool {
+	parts := strings.Split(strings.TrimPrefix(r.URL.Path, "/customers/"), "/")
+	if !strings.HasPrefix(r.URL.Path, "/customers/") || len(parts) < 2 || (parts[1] != "addresses" && parts[1] != "businesses") {
+		return false
+	}
+	if _, preset := f.addresses[parts[0]]; preset && parts[1] == "addresses" && r.Method == http.MethodGet {
+		return false
+	}
+	if f.entities == nil {
+		f.entities = map[string][]map[string]any{}
+	}
+	key, prefix := parts[0]+"/"+parts[1], map[string]string{"addresses": "add_", "businesses": "biz_"}[parts[1]]
+	var body map[string]any
+	_ = json.NewDecoder(r.Body).Decode(&body)
+	f.writes += map[string]int{http.MethodPost: 1, http.MethodPatch: 1}[r.Method]
+	stamp := time.Date(2026, 10, 1, 0, 0, f.writes, 0, time.UTC).Format(time.RFC3339)
+	switch {
+	case r.Method == http.MethodGet && len(parts) == 2:
+		if order := r.URL.Query().Get("order_by"); order != "" && order != "id[ASC]" && order != "id[DESC]" {
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = fmt.Fprint(w, `{"error":{"type":"request_error","code":"bad_request","detail":"Invalid request."}}`)
+			return true
+		}
+		items := slices.Clone(f.entities[key])
+		slices.Reverse(items)
+		raw, _ := json.Marshal(items)
+		_, _ = fmt.Fprintf(w, `{"data":%s}`, raw)
+	case r.Method == http.MethodPost && len(parts) == 2:
+		body["id"], body["status"], body["updated_at"] = fmt.Sprintf("%s%d", prefix, f.writes), "active", stamp
+		f.entities[key] = append(f.entities[key], body)
+		raw, _ := json.Marshal(body)
+		_, _ = fmt.Fprintf(w, `{"data":%s}`, raw)
+	case r.Method == http.MethodPatch && len(parts) == 3:
+		for _, entity := range f.entities[key] {
+			if entity["id"] == parts[2] {
+				for field, value := range body {
+					entity[field] = value
+				}
+				entity["updated_at"] = stamp
+				raw, _ := json.Marshal(entity)
+				_, _ = fmt.Fprintf(w, `{"data":%s}`, raw)
+				return true
+			}
+		}
+		w.WriteHeader(http.StatusNotFound)
+	default:
+		w.WriteHeader(http.StatusNotFound)
+	}
+	return true
 }
 
 func (f *fakePaddle) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -30,6 +96,9 @@ func (f *fakePaddle) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if !strings.HasPrefix(r.Header.Get("Authorization"), "Bearer pdl_sdbx_apikey_") || r.Header.Get("Paddle-Version") != "1" {
 		w.WriteHeader(http.StatusForbidden)
 		_, _ = fmt.Fprint(w, `{"error":{"code":"forbidden","detail":"bad key"}}`)
+		return
+	}
+	if f.customerEntity(w, r) {
 		return
 	}
 	switch {
@@ -46,16 +115,64 @@ func (f *fakePaddle) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		_, _ = fmt.Fprintf(w, `{"data":[%s]}`, strings.Join(data, ","))
 	case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/transactions/"):
-		body, ok := f.status[strings.TrimPrefix(r.URL.Path, "/transactions/")]
+		id := strings.TrimPrefix(r.URL.Path, "/transactions/")
+		body, ok := f.status[id]
+		if !ok {
+			body, ok = f.transaction(id)
+		}
 		if !ok {
 			w.WriteHeader(http.StatusNotFound)
 			_, _ = fmt.Fprint(w, `{"error":{"code":"not_found","detail":"no such entity"}}`)
 			return
 		}
 		_, _ = fmt.Fprint(w, body)
+	case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/customers/") && strings.HasSuffix(r.URL.Path, "/addresses"):
+		customer := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/customers/"), "/addresses")
+		if address, ok := f.addresses[customer]; ok && r.URL.Query().Get("status") == "active" {
+			_, _ = fmt.Fprintf(w, `{"data":[{"id":%q}]}`, address)
+			return
+		}
+		_, _ = fmt.Fprint(w, `{"data":[]}`)
+	case r.Method == http.MethodPatch && strings.HasPrefix(r.URL.Path, "/transactions/"):
+		id := strings.TrimPrefix(r.URL.Path, "/transactions/")
+		var body struct {
+			AddressID  string `json:"address_id"`
+			BusinessID string `json:"business_id"`
+			Status     string `json:"status"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		if body.Status != "billed" || body.AddressID == "" {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		if f.billed == nil {
+			f.billed = map[string]string{}
+		}
+		f.billed[id] = body.AddressID
+		if f.billedBusiness == nil {
+			f.billedBusiness = map[string]string{}
+		}
+		f.billedBusiness[id] = body.BusinessID
+		_, _ = fmt.Fprintf(w, `{"data":{"id":%q,"status":"billed"}}`, id)
 	default:
 		w.WriteHeader(http.StatusNotFound)
 	}
+}
+
+// transaction answers GET for a created transaction: a draft until it is
+// billed.
+func (f *fakePaddle) transaction(id string) (string, bool) {
+	for i := range f.created {
+		if fmt.Sprintf("txn_%d", i+1) != id {
+			continue
+		}
+		status := "draft"
+		if _, billed := f.billed[id]; billed {
+			status = "billed"
+		}
+		return fmt.Sprintf(`{"data":{"id":%q,"status":%q,"currency_code":"EUR","details":{"totals":{"grand_total":"0","balance":"0"}}}}`, id, status), true
+	}
+	return "", false
 }
 
 // fakeLago keeps one-off invoices like Lago would. failCreate stores the
@@ -275,5 +392,53 @@ func TestStatementInvoiceExportsToPaddleAndLago(t *testing.T) {
 	if got := listInvoices(t, f, "paid"); len(got.Invoices) != 1 || got.Invoices[0].Provider != "lago" ||
 		got.Invoices[0].HostedInvoiceURL != "https://lago.example.com/inv-2" || got.Invoices[0].DashboardURL != "" {
 		t.Fatalf("paid = %+v", got)
+	}
+}
+
+// adr: 20261019100333 — a Paddle connection set to send bills each exported
+// transaction with the customer's address so Paddle emails it; a customer
+// without an address leaves the draft, and exporting again bills it once.
+func TestStatementInvoicePaddleSend(t *testing.T) {
+	f := newBillingRunFixture(t)
+	paddle := &fakePaddle{status: map[string]string{}, addresses: map[string]string{}}
+	paddleSrv := httptest.NewServer(paddle)
+	defer paddleSrv.Close()
+	(*f.e.S()).StatementInvoices().Paddle = &paddleinvoice.Client{BaseURL: paddleSrv.URL, HTTP: paddleSrv.Client()}
+
+	if res := f.e.Do(t, http.MethodPut, "/v1/account/billing-connections/paddle", api.PutBillingConnectionRequest{
+		SecretKey: "pdl_sdbx_apikey_01abcdWXYZ", Collection: "send", DaysUntilDue: 14}, nil); res.Code != http.StatusOK ||
+		!strings.Contains(res.Body.String(), `"collection":"send"`) {
+		t.Fatalf("connect paddle send: %d %s", res.Code, res.Body)
+	}
+	apidserver.MustSeedApp(t, f.e, "paddled")
+	if res := f.e.Do(t, http.MethodPost, "/v1/apps/paddled/rate-cards", api.CreateAPIConsumerRateCardRequest{
+		Currency: "EUR", PriceMillicentsPerUnit: 1250, EffectiveFrom: &f.month}, nil); res.Code != http.StatusCreated {
+		t.Fatalf("rate card: %d %s", res.Code, res.Body)
+	}
+	sent := f.consumer(t, "paddled", "ctm_01sent", 300, "")
+	path := finalizedMonthStatement(t, f, "paddled", sent.ID)
+
+	res := f.e.Do(t, http.MethodPost, path, api.CreateStatementInvoiceRequest{Provider: "paddle"}, nil)
+	if res.Code != http.StatusUnprocessableEntity || !strings.Contains(res.Body.String(), "no address") {
+		t.Fatalf("export without an address: %d %s, want 422", res.Code, res.Body)
+	}
+	if len(paddle.created) != 1 || len(paddle.billed) != 0 {
+		t.Fatalf("transactions = %d, billed = %v", len(paddle.created), paddle.billed)
+	}
+	terms := paddle.created[0]["billing_details"].(map[string]any)["payment_terms"].(map[string]any)
+	if terms["frequency"] != float64(14) || paddle.created[0]["collection_mode"] != "manual" {
+		t.Fatalf("transaction = %v", paddle.created[0])
+	}
+
+	paddle.addresses["ctm_01sent"] = "add_01sent"
+	export := exportStatement(t, f, path, api.CreateStatementInvoiceRequest{Provider: "paddle"}, http.StatusOK)
+	if export.Collection != "send" || export.InvoiceID != "txn_1" || export.Status != "completed" ||
+		paddle.billed["txn_1"] != "add_01sent" || len(paddle.created) != 1 {
+		t.Fatalf("sent export = %+v, billed = %v, transactions = %d", export, paddle.billed, len(paddle.created))
+	}
+	paddle.billed["txn_1"] = "billed once"
+	if replay := exportStatement(t, f, path, api.CreateStatementInvoiceRequest{Provider: "paddle"}, http.StatusOK); replay.InvoiceID != "txn_1" ||
+		paddle.billed["txn_1"] != "billed once" {
+		t.Fatalf("replay = %+v, billed = %v", replay, paddle.billed)
 	}
 }

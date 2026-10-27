@@ -35,18 +35,22 @@ class FinancialBudgetSpec:
     scope: FinancialBudgetScope
     """Authoritative account or resource identity; resource ids must belong to the account."""
     currency: FinancialBudgetSpecCurrency
+    """New writes require USD; EUR is retained only for historical policy responses."""
     meters: list[FinancialBudgetSpecMetersItem]
-    """Sorted meter names; strict mode covers compute only."""
+    """Sorted meter names; strict account net_usage may combine compute and egress under one paid limit; app/job
+    strict covers compute only. object_storage is priced from the live object-storage estimate and only monitored
+    account budgets may select it."""
     basis: FinancialBudgetSpecBasis
     """Net usage after the shared account allowance or gross usage before it; strict resource scopes require gross
     usage."""
     limit_millicents: int
     notify_millicents: list[int]
-    """Increasing nonnegative thresholds at or below the limit."""
+    """Increasing nonnegative thresholds at or below the limit. Strict compute requires an empty array; configure a
+    separate monitored policy for alerts."""
     mode: FinancialBudgetSpecMode
     action: FinancialBudgetSpecAction
     drain_seconds: int
-    """Notify uses zero; stopping targets drain before the deadline."""
+    """Notify and strict app compute use zero; monitored stopping targets drain before the deadline."""
     resume_rule: FinancialBudgetSpecResumeRule
     enabled: bool
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)

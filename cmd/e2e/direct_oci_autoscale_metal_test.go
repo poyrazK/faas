@@ -74,9 +74,12 @@ func TestDirectOCIAutoscaleScaleToZeroMetal(t *testing.T) {
 		t.Fatalf("create deployment: status=%d body=%s", status, body)
 	}
 	depID := parseImageDeployment(t, body)
-	deployCtx, deployCancel := context.WithTimeout(context.Background(), 90*time.Second)
+	// This file sorts first in the containers lane, so its deployment is the
+	// lane's first full-rootfs image: on a native host its imaging phases ran
+	// about 2.5x slower than the warm direct-OCI tests' (~45 s to live).
+	deployCtx, deployCancel := context.WithTimeout(context.Background(), 165*time.Second)
 	defer deployCancel()
-	dep, err := e2etest.WaitForDeploymentLive(deployCtx, t, pool, depID, 75*time.Second)
+	dep, err := e2etest.WaitForDeploymentLive(deployCtx, t, pool, depID, 150*time.Second)
 	if err != nil {
 		h.DumpLogs(t)
 		t.Fatalf("direct OCI deployment did not reach live: %v", err)
@@ -91,6 +94,11 @@ func TestDirectOCIAutoscaleScaleToZeroMetal(t *testing.T) {
 		t.Fatalf("enable RPS autoscale: status=%d body=%s", status, raw)
 	}
 
+	// A deployment goes live parked on its priming snapshot: wake one
+	// instance so the burst below measures a running app.
+	if err := directOCIGatewayRequest(h.HTTPClient(), gatewayAppURL(h, "oci-autoscale"), "oci-autoscale.apps.test.example"); err != nil {
+		t.Fatalf("initial wake request: %v", err)
+	}
 	initialCtx, initialCancel := context.WithTimeout(context.Background(), 35*time.Second)
 	defer initialCancel()
 	if _, err := e2etest.WaitForInstanceState(initialCtx, t, pool, appID, state.StateRunning, 30*time.Second); err != nil {

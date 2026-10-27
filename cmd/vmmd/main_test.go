@@ -471,7 +471,7 @@ func TestRun_RestartInventoryCancellation(t *testing.T) {
 				capCheck:    nopCapCheck(),
 				detectFC:    func(context.Context) (string, error) { return "1.7.0-test", nil },
 				loadHostKey: load, loadHostKeys: nopHostKeysDep(t), writeRecipient: write,
-				recoverResources: func(context.Context, *fcvm.Manager, string, string, *slog.Logger) (*fcvm.ResourceJournal, error) {
+				recoverResources: func(context.Context, *fcvm.Manager, string, fcvm.ResourceJournalConfig, *slog.Logger) (*fcvm.ResourceJournal, error) {
 					if tc.name != "inventory cancellation without parent" {
 						cancel()
 					}

@@ -30,6 +30,7 @@ import (
 	"context"
 	"errors"
 	"net"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -123,6 +124,17 @@ var caaLookupFunc = func(ctx context.Context, domain string) ([]string, error) {
 // comparison. Production reads from config.GetAppsDomain();
 // tests inject a constant.
 var appsDomainFunc = func() string { return "" }
+
+// ownedDomainsFunc returns every domain Gregale owns (ADR-20261026100000).
+// run() wires the configured layout; a CNAME to any of their apexes still
+// reaches the edge, so a custom domain created under an earlier apps domain
+// is not reported as drifted after the apps domain moves.
+var ownedDomainsFunc = func() []string { return nil }
+
+// isOwnedApex reports whether target is the apex of an owned domain.
+func isOwnedApex(target string) bool {
+	return slices.ContainsFunc(ownedDomainsFunc(), func(domain string) bool { return strings.EqualFold(domain, target) })
+}
 
 // --- The five probes -----------------------------------------
 
@@ -226,10 +238,10 @@ func checkPointsToGregale(ctx context.Context, domain string) ProbeResult {
 	// Strip the trailing dot (LookupCNAME returns "target.")
 	// and compare case-insensitively.
 	target := strings.TrimSuffix(cname, ".")
-	if strings.EqualFold(target, expected) {
+	if strings.EqualFold(target, expected) || isOwnedApex(target) {
 		return ProbeResult{
 			Status:     probeOK,
-			Detail:     "CNAME → " + expected,
+			Detail:     "CNAME → " + strings.ToLower(target),
 			Observed:   cname,
 			ObservedAt: now,
 		}

@@ -42,6 +42,7 @@ import (
 	mailpkg "github.com/onebox-faas/faas/pkg/mail"
 	"github.com/onebox-faas/faas/pkg/middleware"
 	"github.com/onebox-faas/faas/pkg/secretbox"
+	"github.com/onebox-faas/faas/pkg/sessioncookie"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -122,12 +123,14 @@ func (s *server) mfaEnroll(w http.ResponseWriter, r *http.Request, acct state.Ac
 		return
 	}
 	// mfaRecipient stays nil when apid boots without an age identity;
-	// calling it panicked (a recovered 500) instead of reporting 503.
+	// calling it panicked (a recovered 500) instead of reporting 503. The
+	// TOTP secret is an account value (ADR 20261022111812).
 	var rec *age.X25519Recipient
 	if mfaRecipient != nil {
 		rec = mfaRecipient()
 	}
-	if rec == nil {
+	recipients, err := accountRecipients(rec)
+	if err != nil {
 		api.WriteProblem(w, api.NewProblem(http.StatusServiceUnavailable, api.CodeCapacity,
 			"MFA unavailable", "host age key not loaded — refusing to seal TOTP secret"))
 		return
@@ -158,7 +161,7 @@ func (s *server) mfaEnroll(w http.ResponseWriter, r *http.Request, acct state.Ac
 		return
 	}
 
-	sealed, err := secretbox.Seal(rec, secretbox.Envelope{"MFA_SECRET": secret})
+	sealed, err := secretbox.SealTo(recipients, secretbox.Envelope{"MFA_SECRET": secret})
 	if err != nil {
 		s.log.Error("mfa.enroll.seal", "err", err.Error())
 		api.WriteProblem(w, api.ErrCapacity("could not seal TOTP secret"))
@@ -279,11 +282,20 @@ func (s *server) mfaVerify(w http.ResponseWriter, r *http.Request, acct state.Ac
 	if secret == "" {
 		return // readSealedSecret wrote the problem
 	}
-	if !auth.VerifyCode(secret, req.Totp) {
+	reason, err := s.acceptTOTP(r.Context(), acct.ID, secret, req.Totp)
+	if err != nil {
+		s.log.Error("mfa.verify.accept_step", "err", err.Error())
+		api.WriteProblem(w, api.ErrCapacity("could not verify the code"))
+		return
+	}
+	if reason != "" {
 		s.totp.fail(acct.ID, time.Now())
-		s.audit.Emit(r.Context(), "account.mfa_verify_failed", &acct.ID, map[string]any{"reason": "code_mismatch"})
-		api.WriteProblem(w, api.NewProblem(http.StatusUnauthorized, api.CodeMFAInvalidCode,
-			"Invalid code", "the TOTP code did not match"))
+		s.audit.Emit(r.Context(), "account.mfa_verify_failed", &acct.ID, map[string]any{"reason": reason})
+		detail := "the TOTP code did not match"
+		if reason == totpCodeReplayed {
+			detail = api.MFACodeReusedDetail
+		}
+		api.WriteProblem(w, api.NewProblem(http.StatusUnauthorized, api.CodeMFAInvalidCode, "Invalid code", detail))
 		return
 	}
 	s.totp.reset(acct.ID)
@@ -711,8 +723,8 @@ func (s *server) mfaDisableEmailLink(r *http.Request, raw []byte) string {
 		scheme = schemeHTTPS
 	}
 	host := r.Host
-	if s.domain != "" && s.domain != domainUnset {
-		host = s.domain
+	if platform := s.platformHost(); platform != "" && platform != domainUnset {
+		host = platform
 		scheme = schemeHTTPS
 	}
 	return fmt.Sprintf("%s://%s/v1/account/mfa/disable-email/confirm?token=%s", scheme, host, base64.RawURLEncoding.EncodeToString(raw))
@@ -801,6 +813,39 @@ func (s *server) disableByRecoveryCode(w http.ResponseWriter, r *http.Request, a
 //
 // (The helper shape mirrors readAppSecret in handlers_secrets.go
 // — same idea, separate seal key/value.)
+// TOTP failure reasons, as acceptTOTP returns them and the audit row
+// records them.
+const (
+	totpCodeMismatch = "code_mismatch"
+	totpCodeReplayed = "code_replayed"
+)
+
+// acceptTOTP verifies code against secret and spends its time step, so a
+// code that granted a session cannot grant another within its validity
+// window (RFC 6238 §5.2). It returns "" on success, or the failure reason
+// for the audit row: totpCodeMismatch or totpCodeReplayed. Both answer
+// 401 and count against the account's guesses; a replay also tells the
+// caller to wait for the next code. That reveals nothing a guesser can
+// use: a replay is reached only with the right code for a spent step.
+func (s *server) acceptTOTP(ctx context.Context, accountID, secret, code string) (string, error) {
+	step, ok := auth.VerifyCodeStep(secret, code, time.Now())
+	if !ok {
+		return totpCodeMismatch, nil
+	}
+	recorder, ok := s.store.(state.TOTPStepRecorder)
+	if !ok {
+		return "", errors.New("totp step recorder unavailable")
+	}
+	accepted, err := recorder.AcceptTOTPStep(ctx, accountID, step)
+	if err != nil {
+		return "", err
+	}
+	if !accepted {
+		return totpCodeReplayed, nil
+	}
+	return "", nil
+}
+
 func readSealedSecret(s *server, w http.ResponseWriter, r *http.Request, accountID string) string {
 	encrypted, err := s.store.ReadMFASecret(r.Context(), accountID)
 	if err != nil {
@@ -827,7 +872,7 @@ func readSealedSecret(s *server, w http.ResponseWriter, r *http.Request, account
 	// entry point. Fall back to the single-identity accessor so
 	// pre-rotation test harnesses (and any caller that hasn't
 	// migrated to LoadHostKeys) keep working.
-	idents := s.mfaHostIdentities()
+	idents := accountIdentities()
 	if len(idents) == 0 {
 		api.WriteProblem(w, api.NewProblem(http.StatusServiceUnavailable, api.CodeCapacity,
 			"MFA unavailable", "host age identity not loaded — refusing to unseal"))
@@ -959,8 +1004,7 @@ func (s *server) reissueSessionCookieWithStepUp(w http.ResponseWriter, r *http.R
 	if err != nil {
 		return err
 	}
-	http.SetCookie(w, &http.Cookie{
-		Name:     sessionCookie,
+	sessioncookie.Set(w, http.Cookie{
 		Value:    cookie,
 		Path:     "/",
 		HttpOnly: true,

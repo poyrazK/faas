@@ -133,6 +133,7 @@ from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
     from ..models.after_restore_hook import AfterRestoreHook
+    from ..models.app_deploy_settings_condition import AppDeploySettingsCondition
     from ..models.before_checkpoint_hook import BeforeCheckpointHook
     from ..models.declared_route import DeclaredRoute
     from ..models.pre_auth_rate_limit_config import PreAuthRateLimitConfig
@@ -155,12 +156,19 @@ T = TypeVar("T", bound="UpdateAppRequest")
 class UpdateAppRequest:
     """Partial update — every field is optional; omitted fields are unchanged."""
 
+    deploy_settings_condition: AppDeploySettingsCondition | Unset = UNSET
+    """Atomic preconditions for single-app lifecycle/scaling recovery. The app must retain this identity and its
+    newest deployment must be the expected live deployment. Every targeted field must still match its observed
+    value, including targeted fields omitted from the partial update because they already match the desired value.
+    Checked in the same transaction as the update. A conflict returns 409 deploy_settings_conflict with field names,
+    without setting values. Cannot be combined with environment edits or other app fields. Ordinary updates can omit
+    this object."""
     profiling: ProfilingConfig | Unset = UNSET
-    """Opt-in sampled CPU profiling baked into each deployment (ADR-819)."""
+    """Opt-in sampled CPU profiling baked into each deployment."""
     tracing: TracingConfig | Unset = UNSET
-    """Opt-in zero-config request tracing baked into each deployment (ADR-958). Managed runtimes export database,
-    cache and HTTP client spans to the debugger without an API key or code changes; apps that configure their own
-    OTel exporter are left untouched."""
+    """Opt-in zero-config request tracing baked into each deployment. Managed runtimes export database, cache and
+    HTTP client spans to the debugger without an API key or code changes; apps that configure their own OTel
+    exporter are left untouched."""
     visibility: (
         None
         | Unset
@@ -170,14 +178,14 @@ class UpdateAppRequest:
     ) = UNSET
     """Change the app's public edge exposure. Omit for no change; internal visibility is available on every plan."""
     allowed_service_callers: list[str] | None | Unset = UNSET
-    """Standalone target policy (ADR-267). Omit to keep unchanged, [] to deny all, an array to replace, or null to
-    restore same-account access. Project-managed and preview apps reject this PATCH."""
+    """Standalone target policy. Omit to keep unchanged, [] to deny all, an array to replace, or null to restore
+    same-account access. Project-managed and preview apps reject this PATCH."""
     allowed_service_call_scopes: None | ServiceCallerScopes | Unset = UNSET
-    """Replace standalone target-side per-caller method/path grants (ADR-278). Omit to keep unchanged, null to
-    clear, or an object (including {}) to replace. Project-managed and preview apps reject this PATCH."""
+    """Replace standalone target-side per-caller method/path grants. Omit to keep unchanged, null to clear, or an
+    object (including {}) to replace. Project-managed and preview apps reject this PATCH."""
     service_binding_targets: list[str] | None | Unset = UNSET
-    """Replace standalone outbound target app slugs (ADR-269). Omit or null to keep unchanged; [] clears all
-    bindings. Project-managed and preview apps reject non-null changes."""
+    """Replace standalone outbound target app slugs. Omit or null to keep unchanged; [] clears all bindings.
+    Project-managed and preview apps reject non-null changes."""
     service_reliability: None | ServiceReliabilityPolicies | Unset = UNSET
     """Replace standalone dependency timeout and retry policies. Omit to keep unchanged; null or {} clears.
     Project-managed and preview apps reject this PATCH."""
@@ -188,7 +196,7 @@ class UpdateAppRequest:
         | UpdateAppRequestServiceBindingPolicyType2Type1
         | UpdateAppRequestServiceBindingPolicyType3Type1
     ) = UNSET
-    """Set standalone caller authorization (ADR-269). Omit or null to keep unchanged; account restores same-account
+    """Set standalone caller authorization. Omit or null to keep unchanged; account restores same-account
     reachability; declared enforces the bound target list. Project-managed and preview apps reject non-null changes.
    """
     service_binding_transport: (
@@ -238,10 +246,10 @@ class UpdateAppRequest:
     """Optional loopback callback for new terminal init snapshots. A failure aborts capture. Enabling it disables
     warm snapshots; snapshot reuse skips the callback."""
     pause: UpdateAppRequestPause | Unset = UNSET
-    """When the platform may pause the app's VM (ADR-1151): between_requests pauses it between requests and freezes
-    it at the idle timeout, when_idle freezes it at the idle timeout, never parks it as before. Omitted uses the
-    default: between_requests for functions, when_idle for request-mode apps. Worker, service and job execution
-    modes accept only never. Omit to preserve; an empty string restores the default."""
+    """When the platform may pause the app's VM: between_requests pauses it between requests and freezes it at the
+    idle timeout, when_idle freezes it at the idle timeout, never parks it as before. Omitted uses the default:
+    between_requests for functions, when_idle for request-mode apps. Worker, service and job execution modes accept
+    only never. Omit to preserve; an empty string restores the default."""
     startup_deadline_s: int | None | Unset = UNSET
     """Upper bound on time-to-ready in seconds. Omit for no change; 0 uses the plan default."""
     stop_grace_period_s: int | None | Unset = UNSET
@@ -257,9 +265,8 @@ class UpdateAppRequest:
     request_timeout_s: int | None | Unset = UNSET
     """Per-app request wall-clock timeout in seconds. 0 inherits the plan/type default."""
     function_concurrency: int | None | Unset = UNSET
-    """Changes how many requests one Node or Python function worker serves at once (ADR-1342). 0 or 1 restores one
-    request per worker; capped by the plan's concurrency_per_vm. Existing functions pick up the change on their next
-    deploy."""
+    """Changes how many requests one Node or Python function worker serves at once. 0 or 1 restores one request per
+    worker; capped by the plan's concurrency_per_vm. Existing functions pick up the change on their next deploy."""
     request_rate_limit_rps: int | None | Unset = UNSET
     """Runtime override for the app-wide edge rate-limit refill rate. 0 restores the plan default; positive values
     may only tighten the plan ceiling. Does not create a deployment."""
@@ -267,10 +274,9 @@ class UpdateAppRequest:
     """Runtime override for the app-wide edge rate-limit burst capacity. 0 restores the plan default; positive
     values may only tighten the plan ceiling. Does not create a deployment."""
     service_replicas: ServiceReplicas | Unset = UNSET
-    """Per-deployment replica scaffold for execution_mode='service' (ADR-137 §Decision 3, M-2 + M-4 workstream E).
-    Replica count is bounded by ServiceReplicasMax per plan (Hobby 3, Pro 5, Scale 20), and desired must also fit
-    the app's max_concurrency ceiling. min ≤ desired ≤ max must hold. Foundation here; rolling-deploy / rollback /
-    image-digest pinning semantics land in M-4."""
+    """Per-deployment replica scaffold for execution_mode='service'. Replica count is bounded by ServiceReplicasMax
+    per plan (Hobby 3, Pro 5, Scale 20), and desired must also fit the app's max_concurrency ceiling. min ≤ desired
+    ≤ max must hold. Foundation here; rolling-deploy / rollback / image-digest pinning semantics land."""
     worker_replicas: WorkerScaling | Unset = UNSET
     """Queue-driven or custom-metric autoscaling policy for execution_mode='worker'. Supports scale-to-zero when
     min=0."""
@@ -313,16 +319,16 @@ class UpdateAppRequest:
         | UpdateAppRequestReleasePolicyType2Type1
         | UpdateAppRequestReleasePolicyType3Type1
     ) = UNSET
-    """Set the default rollout for production releases (ADR-1446, ADR-1450). Omit for no change."""
+    """Set the default rollout for production releases. Omit for no change."""
     release_probe_paths: list[str] | None | Unset = UNSET
-    """Replace the paths the default rollout probe checks (ADR-1449). An empty list restores /. Omit for no change."""
+    """Replace the paths the default rollout probe checks. An empty list restores /. Omit for no change."""
     min_instances: int | None | Unset = UNSET
     egress_allowlist: list[str] | Unset = UNSET
     """v4 or v6 CIDR allowlist; empty array clears to chain-default-accept."""
     egress_ports: list[int] | Unset = UNSET
-    """Replaces the app's extra TCP egress ports (ADR-361). Pro and Scale only, capped per plan. SMTP, remote-
-    administration, SMB, IRC, well-known mining and DNS ports are refused; 80 and 443 are always allowed and are
-    dropped from the stored list. An empty array clears the extra ports."""
+    """Replaces the app's extra TCP egress ports. Pro and Scale only, capped per plan. SMTP, remote-administration,
+    SMB, IRC, well-known mining and DNS ports are refused; 80 and 443 are always allowed and are dropped from the
+    stored list. An empty array clears the extra ports."""
     autoscale_target_rps: int | None | Unset = UNSET
     """Per-instance RPS target for the reactive scale-up trigger. 0 = disable. Hobby/Pro/Scale only. Values < 0 are
     422 invalid_autoscale_target_rps."""
@@ -330,13 +336,12 @@ class UpdateAppRequest:
     """Per-instance CPU% target (1..100, 0 = disable) for the reactive scale-up trigger. Pro/Scale only. Values
     outside [1, 100] (other than 0) are 422 invalid_autoscale_target_cpu_pct."""
     streaming_enabled: bool | None | Unset = UNSET
-    """Per-app streaming flag (issue #471). Omitted → no change. Free PATCHing true is 403
-    plan_streaming_not_allowed."""
+    """Per-app streaming flag. Omitted → no change. Free PATCHing true is 403 plan_streaming_not_allowed."""
     websocket_enabled: bool | None | Unset = UNSET
-    """Per-app raw-bytes Upgrade bridge flag (issue #676 / ADR-080). Omitted → no change. Free PATCHing true is 403
+    """Per-app raw-bytes Upgrade bridge flag. Omitted → no change. Free PATCHing true is 403
     plan_websocket_not_allowed."""
     route_metrics_enabled: bool | None | Unset = UNSET
-    """Per-app per-route observability flag (ADR-093). Omitted → no change. Free PATCHing true is 403
+    """Per-app per-route observability flag. Omitted → no change. Free PATCHing true is 403
     plan_route_metrics_not_allowed."""
     only_allow_declared_routes: bool | None | Unset = UNSET
     """Enable or disable gateway-side rejection of paths not declared by the app. Enabling requires declared_routes
@@ -345,31 +350,30 @@ class UpdateAppRequest:
     """Replace the explicit route contract. An empty array clears it and makes the gateway use the imported OpenAPI
     document."""
     maintenance_mode: bool | None | Unset = UNSET
-    """Coarse per-app maintenance toggle (ADR-091 amendment). Omitted → no change. PATCH true pins the app for
-    maintenance (every request 503 + Retry-After); PATCH false restores normal handling. Free-tier allowed; no plan
-    gate. The apps_maintenance_mode_notify trigger (migration 00237) fires pg_notify on flip."""
+    """Coarse per-app maintenance toggle. Omitted → no change. PATCH true pins the app for maintenance (every
+    request 503 + Retry-After); PATCH false restores normal handling. Free-tier allowed; no plan gate. The
+    apps_maintenance_mode_notify trigger fires pg_notify on flip."""
     app_protocol: UpdateAppRequestAppProtocol | Unset = UNSET
-    """Per-app wire-protocol selector (ADR-124). Closed set {http1, http2, grpc}. Omit for no change; set
-    explicitly to opt in (http2/grpc) or reset to 'http1'. Free customers PATCHing 'grpc' are rejected with 403
+    """Per-app wire-protocol selector. Closed set {http1, http2, grpc}. Omit for no change; set explicitly to opt
+    in (http2/grpc) or reset to 'http1'. Free customers PATCHing 'grpc' are rejected with 403
     plan_app_protocol_grpc_not_allowed."""
     scaling_policy: None | ScalingPolicy | Unset = UNSET
     """Per-app scaling policy. Omitted → no change. Non-null → atomic full-overwrite of the jsonb column."""
     require_signed: bool | None | Unset = UNSET
     """DEPRECATED on this surface. The customer PATCH /v1/apps/{slug} endpoint silently drops require_signed; the
-    operator endpoint PATCH /v1/apps/{slug}/security is the only path that flips the flag (issue #472 / ADR-054).
-    The field is parsed for backwards compatibility but never persisted from this endpoint."""
+    operator endpoint PATCH /v1/apps/{slug}/security is the only path that flips the flag. The field is parsed for
+    backwards compatibility but never persisted from this endpoint."""
     warm_snapshot_enabled: bool | None | Unset = UNSET
-    """Per-app two-tier snapshot flag (issue #470 / ADR-055). Omitted → no change. PATCH-true on Free/Hobby is
-    rejected with 403 plan_warm_snapshot_not_allowed."""
+    """Per-app two-tier snapshot flag. Omitted → no change. PATCH-true on Free/Hobby is rejected with 403
+    plan_warm_snapshot_not_allowed."""
     warm_snapshot_min_requests: int | None | Unset = UNSET
-    """Per-app request-count threshold for warm-tier capture (issue #470 / ADR-055). Range [1, 100]. Omitted → no
-    change."""
+    """Per-app request-count threshold for warm-tier capture. Range [1, 100]. Omitted → no change."""
     warm_snapshot_min_ms: int | None | Unset = UNSET
-    """Per-app time-since-first-ready threshold for warm-tier capture, milliseconds (issue #470 / ADR-055). Range
-    [100, 60000]. Omitted → no change."""
+    """Per-app time-since-first-ready threshold for warm-tier capture, milliseconds. Range [100, 60000]. Omitted →
+    no change."""
     warm_pool_size: int | None | Unset = UNSET
-    """Desired paused warm-pool size (issue #1056 / ADR-074). Omitted → no change; zero explicitly disables the
-    pool. Non-zero values require Hobby+ and may not exceed max_concurrency."""
+    """Desired paused warm-pool size. Omitted → no change; zero explicitly disables the pool. Non-zero values
+    require Hobby+ and may not exceed max_concurrency."""
     eviction_priority: (
         None
         | Unset
@@ -377,14 +381,14 @@ class UpdateAppRequest:
         | UpdateAppRequestEvictionPriorityType2Type1
         | UpdateAppRequestEvictionPriorityType3Type1
     ) = UNSET
-    """Per-app eviction tier (issue #475). 'best_effort' (default) keeps the pre-#475 LRU-by-last_request_at reaper
-    behaviour; 'reserved' protects the app from cross-account RAM-pressure eviction (every best_effort candidate is
-    drained before any reserved is parked). Plan-gated upstream: Free PATCH 'reserved' returns 402
+    """Per-app eviction tier. 'best_effort' (default) keeps the pre-#475 LRU-by-last_request_at reaper behaviour;
+    'reserved' protects the app from cross-account RAM-pressure eviction (every best_effort candidate is drained
+    before any reserved is parked). Plan-gated upstream: Free PATCH 'reserved' returns 402
     plan_eviction_priority_reserved_not_allowed. Per-account cap (Hobby 1, Pro 2, Scale 4): 422
     plan_eviction_priority_reserved_quota when exhausted. Omitted → no change."""
     require_authn: bool | None | Unset = UNSET
-    """Per-deployment token-gate flag (issue #560). Omitted → no change. PATCH-true on Free/Hobby is rejected with
-    403 plan_require_authn_not_allowed."""
+    """Per-deployment token-gate flag. Omitted → no change. PATCH-true on Free/Hobby is rejected with 403
+    plan_require_authn_not_allowed."""
     consumer_auth_mode: (
         None
         | Unset
@@ -398,14 +402,14 @@ class UpdateAppRequest:
     """Require verified platform tenant identity on app traffic. Omit for no change; true requires a linked
     consumer key, verified tenant surface, or opted-in JWT rule. Available on Hobby and above."""
     public_auth: None | PublicAuthBlock | Unset = UNSET
-    """Per-app public-URL auth configuration (issue #477 / ADR-077). Omitted → no change. When present, mode is the
-    closed enum {open, bearer, basic}; basic_user + basic_pass are required when mode='basic' and the apid seal step
-    encrypts them under the APP_BASIC_AUTH secretbox namespace before persistence."""
+    """Per-app public-URL auth configuration. Omitted → no change. When present, mode is the closed enum {open,
+    bearer, basic}; basic_user + basic_pass are required when mode='basic' and the API seal step encrypts them under
+    the APP_BASIC_AUTH secretbox namespace before persistence."""
     overflow_node: None | str | Unset = UNSET
-    """Per-app preferred spill target for cross-node pressure rebalance (Tier A10 / ADR-088). Wire form is the
-    human-readable compute_nodes.name; apid resolves to UUID server-side. Tri-state: omitted → no change; empty
-    string → clear (back to A9 fallback); non-empty → resolve name → UUID via Store.ComputeNodeByName and persist
-    the UUID. 404 on unknown name; 422 on inactive node."""
+    """Per-app preferred spill target for cross-node pressure rebalance. Wire form is the human-readable
+    compute_nodes.name; the API resolves to UUID server-side. Tri-state: omitted → no change; empty string → clear
+    (back to A9 fallback); non-empty → resolve name → UUID via Store.ComputeNodeByName and persist the UUID. 404 on
+    unknown name; 422 on inactive node."""
     cors_default_enabled: bool | None | Unset = UNSET
     cors_default_origins: list[str] | Unset = UNSET
     expected_service_binding_fingerprint: str | Unset = UNSET
@@ -420,6 +424,10 @@ class UpdateAppRequest:
         from ..models.scaling_policy import ScalingPolicy
         from ..models.service_caller_scopes import ServiceCallerScopes
         from ..models.service_reliability_policies import ServiceReliabilityPolicies
+
+        deploy_settings_condition: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.deploy_settings_condition, Unset):
+            deploy_settings_condition = self.deploy_settings_condition.to_dict()
 
         profiling: dict[str, Any] | Unset = UNSET
         if not isinstance(self.profiling, Unset):
@@ -914,6 +922,8 @@ class UpdateAppRequest:
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update({})
+        if deploy_settings_condition is not UNSET:
+            field_dict["deploy_settings_condition"] = deploy_settings_condition
         if profiling is not UNSET:
             field_dict["profiling"] = profiling
         if tracing is not UNSET:
@@ -1062,6 +1072,7 @@ class UpdateAppRequest:
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         from ..models.after_restore_hook import AfterRestoreHook
+        from ..models.app_deploy_settings_condition import AppDeploySettingsCondition
         from ..models.before_checkpoint_hook import BeforeCheckpointHook
         from ..models.declared_route import DeclaredRoute
         from ..models.pre_auth_rate_limit_config import PreAuthRateLimitConfig
@@ -1077,6 +1088,13 @@ class UpdateAppRequest:
         from ..models.workload_port import WorkloadPort
 
         d = dict(src_dict)
+        _deploy_settings_condition = d.pop("deploy_settings_condition", UNSET)
+        deploy_settings_condition: AppDeploySettingsCondition | Unset
+        if isinstance(_deploy_settings_condition, Unset):
+            deploy_settings_condition = UNSET
+        else:
+            deploy_settings_condition = AppDeploySettingsCondition.from_dict(_deploy_settings_condition)
+
         _profiling = d.pop("profiling", UNSET)
         profiling: ProfilingConfig | Unset
         if isinstance(_profiling, Unset):
@@ -2166,6 +2184,7 @@ class UpdateAppRequest:
         expected_service_binding_fingerprint = d.pop("expected_service_binding_fingerprint", UNSET)
 
         update_app_request = cls(
+            deploy_settings_condition=deploy_settings_condition,
             profiling=profiling,
             tracing=tracing,
             visibility=visibility,

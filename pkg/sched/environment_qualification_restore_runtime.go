@@ -83,6 +83,9 @@ func (e *Engine) WithEnvironmentWorkloadQualificationRestoreRuntime(ctx context.
 	if err != nil || !dep.EnvironmentWorkloadHeld() || app.RAMMB != original.Execution.RAMMB {
 		return fmt.Errorf("qualification restore app, deployment or RAM changed: %w", errors.Join(state.ErrConflict, err))
 	}
+	if err := e.checkFinancialBudgetAdmission(ctx, app, dep.ID); err != nil {
+		return err
+	}
 	if err := securityQuarantineErr(dep); err != nil {
 		return err
 	}
@@ -112,7 +115,7 @@ func (e *Engine) WithEnvironmentWorkloadQualificationRestoreRuntime(ctx context.
 		return err
 	}
 	wakeID := uuid.NewString()
-	admission, err := restoreAdmission.CreateEnvironmentQualificationRestore(nodePlacementContext(ctx, placement), claimed, state.EnvironmentWorkloadQualificationPlacement{
+	admission, err := restoreAdmission.CreateEnvironmentQualificationRestore(e.nodePlacementContext(ctx, placement), claimed, state.EnvironmentWorkloadQualificationPlacement{
 		NodeID: placement.NodeID, WakeID: wakeID, RAMMB: app.RAMMB,
 	})
 	if err != nil {

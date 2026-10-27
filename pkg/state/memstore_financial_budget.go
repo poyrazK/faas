@@ -2,6 +2,7 @@ package state
 
 import (
 	"context"
+	"slices"
 	"sort"
 	"time"
 
@@ -21,7 +22,49 @@ func (m *MemStore) ValidateFinancialBudgetScope(_ context.Context, account strin
 	if _, ok := m.billingResourceAccountLocked(account); !ok {
 		return ErrNotFound
 	}
+	spec = m.resolveFinancialBudgetScopeLocked(spec)
 	return m.financialBudgetScopeOwnedLocked(account, spec)
+}
+
+// The memory adapter uses compact UUID keys for some legacy resources. Resolve
+// equivalent UUID spellings to the actual key before applying ownership checks.
+func (m *MemStore) resolveFinancialBudgetScopeLocked(p financial.BudgetSpec) financial.BudgetSpec {
+	match := func(id string) bool {
+		a, e1 := uuid.Parse(id)
+		b, e2 := uuid.Parse(p.Scope.ID)
+		return e1 == nil && e2 == nil && a == b
+	}
+	switch p.Scope.Kind {
+	case "app":
+		for id := range m.apps {
+			if match(id) {
+				p.Scope.ID = id
+				break
+			}
+		}
+	case "job":
+		for id := range m.jobs {
+			if match(id) {
+				p.Scope.ID = id
+				break
+			}
+		}
+	case "project":
+		for id := range m.projects {
+			if match(id) {
+				p.Scope.ID = id
+				break
+			}
+		}
+	case "environment":
+		for id := range m.projectEnvironments {
+			if match(id) {
+				p.Scope.ID = id
+				break
+			}
+		}
+	}
+	return p
 }
 
 func (m *MemStore) financialBudgetScopeOwnedLocked(account string, p financial.BudgetSpec) error {
@@ -60,6 +103,7 @@ func (m *MemStore) financialBudgetScopeOwnedLocked(account string, p financial.B
 }
 
 func (m *MemStore) CreateFinancialBudget(_ context.Context, account, id, actor string, spec financial.BudgetSpec) (FinancialBudget, error) {
+	spec = NormalizeFinancialBudgetSpec(spec)
 	if !validFinancialBudgetMutation(account, id, actor, 0) || ValidateFinancialBudgetSpec(spec) != nil {
 		return FinancialBudget{}, ErrInvalidArgument
 	}
@@ -68,6 +112,7 @@ func (m *MemStore) CreateFinancialBudget(_ context.Context, account, id, actor s
 	if _, ok := m.billingResourceAccountLocked(account); !ok {
 		return FinancialBudget{}, ErrNotFound
 	}
+	spec = m.resolveFinancialBudgetScopeLocked(spec)
 	if err := m.financialBudgetScopeOwnedLocked(account, spec); err != nil {
 		return FinancialBudget{}, err
 	}
@@ -83,6 +128,10 @@ func (m *MemStore) CreateFinancialBudget(_ context.Context, account, id, actor s
 	if count >= api.FinancialBudgetsPerAccount {
 		return FinancialBudget{}, ErrFinancialBudgetLimit
 	}
+	compute := newMemComputeTxn(m, account)
+	if err := memFinancialComputeActivation(compute, spec, false); err != nil {
+		return FinancialBudget{}, err
+	}
 	if m.financialBudgets == nil {
 		m.financialBudgets = map[string]FinancialBudget{}
 		m.financialBudgetRevisions = map[string][]FinancialBudgetRevision{}
@@ -90,10 +139,12 @@ func (m *MemStore) CreateFinancialBudget(_ context.Context, account, id, actor s
 	now := time.Now().UTC()
 	p := FinancialBudget{ID: id, AccountID: account, Revision: 1, Spec: cloneFinancialBudgetSpec(spec), CreatedAt: now, UpdatedAt: now}
 	m.recordFinancialBudgetLocked(p, actor, "created")
+	compute.commit()
 	return cloneFinancialBudget(p), nil
 }
 
 func (m *MemStore) UpdateFinancialBudget(_ context.Context, account, id string, expected int64, actor string, spec financial.BudgetSpec) (FinancialBudget, error) {
+	spec = NormalizeFinancialBudgetSpec(spec)
 	if expected < 1 || !validFinancialBudgetMutation(account, id, actor, expected) || ValidateFinancialBudgetSpec(spec) != nil {
 		return FinancialBudget{}, ErrInvalidArgument
 	}
@@ -106,12 +157,48 @@ func (m *MemStore) UpdateFinancialBudget(_ context.Context, account, id string, 
 	if p.Revision != expected || p.DeletedAt != nil {
 		return FinancialBudget{}, ErrConflict
 	}
+	spec = m.resolveFinancialBudgetScopeLocked(spec)
 	if err := m.financialBudgetScopeOwnedLocked(account, spec); err != nil {
+		return FinancialBudget{}, err
+	}
+	compute := newMemComputeTxn(m, account)
+	continuing := p.Spec.Enabled && financial.StrictCompute(p.Spec) && p.Spec.Scope == spec.Scope && slices.Equal(p.Spec.Meters, spec.Meters)
+	if err := memFinancialComputeActivation(compute, spec, continuing); err != nil {
 		return FinancialBudget{}, err
 	}
 	p.Spec, p.Revision, p.UpdatedAt = cloneFinancialBudgetSpec(spec), p.Revision+1, time.Now().UTC()
 	m.recordFinancialBudgetLocked(p, actor, "updated")
+	compute.commit()
 	return cloneFinancialBudget(p), nil
+}
+
+func memFinancialComputeActivation(t *memFinancialComputeTxn, spec financial.BudgetSpec, continuing bool) error {
+	if !spec.Enabled || spec.Mode != "strict" {
+		return nil
+	}
+	if !financial.StrictCompute(spec) {
+		return ErrInvalidArgument
+	}
+	if !continuing {
+		if err := t.initialize(financial.ComputeScopeKey(spec.Scope), true); err != nil {
+			return err
+		}
+		if financial.StrictAppCompute(spec) {
+			if err := computeClearEnvironmentOnly(t, spec.Scope.ID, financial.ComputeMonth(t.now)); err != nil {
+				return err
+			}
+		}
+	}
+	if financial.StrictAccountEgress(spec) && !continuing {
+		if err := t.initializeEgress(); err != nil {
+			return err
+		}
+	}
+	b, err := t.book(financial.ComputeScopeKey(spec.Scope), financial.ComputeMonth(t.now))
+	if err == nil {
+		b.Committed, b.Reserved, err = computePolicyMoney(b, spec)
+	}
+	return validateComputePolicyFunding(b, err, continuing, spec.LimitMillicents)
 }
 
 func (m *MemStore) DeleteFinancialBudget(_ context.Context, account, id string, expected int64, actor string) (FinancialBudget, error) {

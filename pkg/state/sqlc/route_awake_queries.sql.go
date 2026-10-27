@@ -157,3 +157,155 @@ func (q *Queries) RouteAwakeRouteMinutes(ctx context.Context, db DBTX, arg Route
 	}
 	return items, nil
 }
+
+const routeAwakeSourceMinutes = `-- name: RouteAwakeSourceMinutes :many
+SELECT s.minute::timestamptz AS minute, s.source::text AS source, SUM(s.events)::bigint AS events
+FROM (
+    SELECT date_trunc('minute', o.window_start) AS minute, 'route_probe' AS source,
+           (o.requests - o.server_errors - o.unauthenticated)::bigint AS events
+    FROM route_probe_observations o
+    WHERE o.app_id = $1
+      AND o.account_id = $2
+      AND o.window_start >= $3
+      AND o.window_start < $4
+    UNION ALL
+    SELECT date_trunc('minute', p.fired_at) AS minute, 'prewarm' AS source, p.admitted_count::bigint AS events
+    FROM prewarm_intents p
+    WHERE p.app_id = $1
+      AND p.account_id = $2
+      AND p.fired_at >= $3
+      AND p.fired_at < $4
+      AND p.admitted_count > 0
+) s
+WHERE s.events > 0
+GROUP BY s.minute, s.source
+ORDER BY s.minute, s.source
+`
+
+type RouteAwakeSourceMinutesParams struct {
+	AppID     pgtype.UUID
+	AccountID pgtype.UUID
+	SinceAt   pgtype.Timestamptz
+	UntilAt   pgtype.Timestamptz
+}
+
+type RouteAwakeSourceMinutesRow struct {
+	Minute pgtype.Timestamptz
+	Source string
+	Events int64
+}
+
+// Wakes and keep-alives that are not customer requests (ADR-1199), per minute
+// and source: synthetic route probes the app answered without a 5xx or an
+// auth rejection (ADR-847; probe observations are pruned after a day), and
+// scheduled prewarms that admitted instances.
+func (q *Queries) RouteAwakeSourceMinutes(ctx context.Context, db DBTX, arg RouteAwakeSourceMinutesParams) ([]RouteAwakeSourceMinutesRow, error) {
+	rows, err := db.Query(ctx, routeAwakeSourceMinutes,
+		arg.AppID,
+		arg.AccountID,
+		arg.SinceAt,
+		arg.UntilAt,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []RouteAwakeSourceMinutesRow{}
+	for rows.Next() {
+		var i RouteAwakeSourceMinutesRow
+		if err := rows.Scan(&i.Minute, &i.Source, &i.Events); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const routeAwakeWorkMinutes = `-- name: RouteAwakeWorkMinutes :many
+WITH work AS MATERIALIZED (
+    SELECT i.source, i.queue_name, i.cron_id, i.received_at,
+           LEAST(COALESCE(i.completed_at, $2::timestamptz), $2::timestamptz,
+                 i.received_at + make_interval(mins => $3::int)) AS ended_at
+    FROM invocations i
+    WHERE i.app_id = $4
+      AND i.account_id = $5
+      AND i.received_at IS NOT NULL
+      AND i.received_at >= $1::timestamptz - make_interval(mins => $3::int)
+      AND i.received_at < $2::timestamptz
+)
+SELECT gs.minute::timestamptz AS minute,
+       w.source::text AS source,
+       COALESCE(w.cron_id::text, NULLIF(w.queue_name, ''), '')::text AS detail,
+       COALESCE(MAX(c.schedule), '')::text AS cron_schedule,
+       COALESCE(MAX(left(CASE WHEN cardinality(c.command) > 0 THEN array_to_string(c.command, ' ') ELSE c.path END, 200)), '')::text AS cron_target,
+       count(*)::bigint AS running,
+       count(*) FILTER (WHERE gs.minute = date_trunc('minute', w.received_at))::bigint AS started
+FROM work w
+LEFT JOIN crons c ON c.id = w.cron_id
+CROSS JOIN LATERAL generate_series(
+    date_trunc('minute', GREATEST(w.received_at, $1::timestamptz)),
+    date_trunc('minute', w.ended_at), interval '1 minute') AS gs(minute)
+WHERE w.ended_at >= $1::timestamptz
+GROUP BY gs.minute, w.source, COALESCE(w.cron_id::text, NULLIF(w.queue_name, ''), '')
+ORDER BY 1, 2, 3
+`
+
+type RouteAwakeWorkMinutesParams struct {
+	SinceAt    pgtype.Timestamptz
+	UntilAt    pgtype.Timestamptz
+	MaxMinutes int32
+	AppID      pgtype.UUID
+	AccountID  pgtype.UUID
+}
+
+type RouteAwakeWorkMinutesRow struct {
+	Minute       pgtype.Timestamptz
+	Source       string
+	Detail       string
+	CronSchedule string
+	CronTarget   string
+	Running      int64
+	Started      int64
+}
+
+// Deliveries schedd made to the app (ADR-20261022184757), per minute and
+// source: how many were running and how many started. Cron firings are keyed
+// by cron job and queue deliveries by queue. A delivery runs from received_at
+// to completed_at; one still running ends at until_at, and none counts for
+// more than max_minutes.
+func (q *Queries) RouteAwakeWorkMinutes(ctx context.Context, db DBTX, arg RouteAwakeWorkMinutesParams) ([]RouteAwakeWorkMinutesRow, error) {
+	rows, err := db.Query(ctx, routeAwakeWorkMinutes,
+		arg.SinceAt,
+		arg.UntilAt,
+		arg.MaxMinutes,
+		arg.AppID,
+		arg.AccountID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []RouteAwakeWorkMinutesRow{}
+	for rows.Next() {
+		var i RouteAwakeWorkMinutesRow
+		if err := rows.Scan(
+			&i.Minute,
+			&i.Source,
+			&i.Detail,
+			&i.CronSchedule,
+			&i.CronTarget,
+			&i.Running,
+			&i.Started,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}

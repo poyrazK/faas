@@ -13,7 +13,7 @@ import (
 
 const deadLetterReplayCandidateIDs = `-- name: DeadLetterReplayCandidateIDs :many
 SELECT id::text FROM production_dead_letter_events
-WHERE account_id=$1::uuid AND replayed_at IS NULL
+WHERE account_id=$1::uuid AND replayed_at IS NULL AND source<>'event_route'
   AND ($2::uuid IS NULL OR app_id=$2::uuid)
   AND ($3::uuid IS NULL OR id=$3::uuid)
 ORDER BY last_failed_at DESC,id DESC LIMIT $4::integer
@@ -26,6 +26,8 @@ type DeadLetterReplayCandidateIDsParams struct {
 	CandidateLimit  int32
 }
 
+// event_route entries cannot be replayed (DeadLetterReplayable), so they never
+// take a page from replay-all.
 func (q *Queries) DeadLetterReplayCandidateIDs(ctx context.Context, db DBTX, arg DeadLetterReplayCandidateIDsParams) ([]string, error) {
 	rows, err := db.Query(ctx, deadLetterReplayCandidateIDs,
 		arg.AccountID,

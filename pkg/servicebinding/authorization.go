@@ -24,7 +24,7 @@ type AuthorizationStore interface {
 
 // NewAuthorizer enforces the same-account boundary between a
 // calling workload and the service it names (ADR-168), then applies the
-// caller's opt-in declared-binding policy.
+// caller's declared or project binding policy.
 //
 // Ids are shape-checked before they reach the store. `apps.id` is a uuid
 // column, so a malformed id can never name an app — but passing one through
@@ -111,7 +111,10 @@ func NewAuthorizer(store AuthorizationStore) gateway.ServiceProxyAuthorizer {
 				return gateway.ServiceCaller{}, err
 			}
 			if projectID != "" {
-				policyStore, ok := store.(state.GitHubDeployPolicyStore)
+				// Pinned policy views carry only the read half of the store.
+				policyStore, ok := store.(interface {
+					GetGitHubDeployPolicy(context.Context, string, string) (state.GitHubDeployPolicy, error)
+				})
 				if !ok {
 					return gateway.ServiceCaller{}, errors.New("preview service policy storage is unavailable")
 				}
@@ -142,11 +145,15 @@ func NewAuthorizer(store AuthorizationStore) gateway.ServiceProxyAuthorizer {
 		if projectAliases && target.WorkloadName != "" {
 			bindingTarget = target.WorkloadName
 		}
-		if caller.Manifest.EffectiveServiceBindingPolicy() == api.ServiceBindingPolicyDeclared {
+		// The project policy needs no declaration for a service in the caller's
+		// own project (ADR-20261022111119); every other target falls through to
+		// the declared check.
+		policy := caller.Manifest.EffectiveServiceBindingPolicy()
+		if policy == api.ServiceBindingPolicyDeclared || (policy == api.ServiceBindingPolicyProject && !projectAliases) {
 			declared := false
 			for _, binding := range caller.Manifest.ServiceBindings {
-				if strings.EqualFold(strings.TrimSpace(binding.Service), strings.TrimSpace(bindingTarget)) ||
-					strings.EqualFold(strings.TrimSpace(binding.Service), strings.TrimSpace(legacyBindingTarget)) {
+				if api.SameServiceName(binding.Service, bindingTarget) ||
+					api.SameServiceName(binding.Service, legacyBindingTarget) {
 					declared = true
 					break
 				}
@@ -160,24 +167,45 @@ func NewAuthorizer(store AuthorizationStore) gateway.ServiceProxyAuthorizer {
 		if !ok {
 			configured, ok = caller.Manifest.ServiceReliability[strings.ToLower(strings.TrimSpace(bindingTarget))]
 		}
+		for name, policy := range caller.Manifest.ServiceReliability {
+			if !ok && api.SameServiceName(name, bindingTarget) {
+				configured, ok = policy, true
+			}
+		}
 		if ok {
 			if configured.Validate() != nil {
 				return gateway.ServiceCaller{}, gateway.ErrServiceProxyBindingDenied
 			}
 			reliability = &configured
 		}
-		if target.Manifest.AllowedServiceCallers != nil {
-			logicalCaller := caller.Slug
+		logicalCaller := caller.Slug
+		if callerIsTest {
+			logicalCaller = callerTest.Workload
+		}
+		if caller.PreviewOfSlug != "" && !callerIsTest {
+			logicalCaller = caller.PreviewOfSlug
+		}
+		// names reports whether a target-side caller list entry names this
+		// caller. The slug check reads the store, so it runs only for a match.
+		names := func(name string) (bool, error) {
+			name = strings.TrimSpace(name)
+			if projectAliases && caller.WorkloadName != "" && api.SameServiceName(name, caller.WorkloadName) {
+				return true, nil
+			}
+			if !api.SameServiceName(name, logicalCaller) {
+				return false, nil
+			}
 			if callerIsTest {
-				logicalCaller = callerTest.Workload
+				return true, nil
 			}
-			if caller.PreviewOfSlug != "" && !callerIsTest {
-				logicalCaller = caller.PreviewOfSlug
-			}
+			return slugNamesCaller(ctx, store, caller, target, logicalCaller)
+		}
+		if target.Manifest.AllowedServiceCallers != nil {
 			allowed := false
 			for _, name := range *target.Manifest.AllowedServiceCallers {
-				if strings.EqualFold(name, logicalCaller) || projectAliases && caller.WorkloadName != "" && strings.EqualFold(name, caller.WorkloadName) {
-					allowed = true
+				if allowed, err = names(name); err != nil {
+					return gateway.ServiceCaller{}, err
+				} else if allowed {
 					break
 				}
 			}
@@ -191,21 +219,22 @@ func NewAuthorizer(store AuthorizationStore) gateway.ServiceProxyAuthorizer {
 			if err != nil {
 				return gateway.ServiceCaller{}, gateway.ErrServiceProxyCallerDenied
 			}
-			logicalCaller := caller.Slug
-			if callerIsTest {
-				logicalCaller = callerTest.Workload
-			}
-			if caller.PreviewOfSlug != "" && !callerIsTest {
-				logicalCaller = caller.PreviewOfSlug
-			}
-			scope, allowed := scopes[strings.ToLower(strings.TrimSpace(logicalCaller))]
-			if !allowed && projectAliases && caller.WorkloadName != "" {
-				scope, allowed = scopes[strings.ToLower(strings.TrimSpace(caller.WorkloadName))]
+			allowed := false
+			for _, name := range []string{logicalCaller, caller.WorkloadName} {
+				scope, ok := scopes[api.ServiceDNSName(name)]
+				if !ok || name == "" {
+					continue
+				}
+				if allowed, err = names(name); err != nil {
+					return gateway.ServiceCaller{}, err
+				} else if allowed {
+					callScope = &scope
+					break
+				}
 			}
 			if !allowed {
 				return gateway.ServiceCaller{}, gateway.ErrServiceProxyCallerDenied
 			}
-			callScope = &scope
 		}
 		// The caller row is already loaded; carrying its preview identity out
 		// saves the hop a third store read for a fact we have in hand.
@@ -219,6 +248,28 @@ func NewAuthorizer(store AuthorizationStore) gateway.ServiceProxyAuthorizer {
 			Reliability:    reliability,
 		}, nil
 	}
+}
+
+// slugNamesCaller reports whether a caller's slug still names it to target.
+// A project target's caller list names repository services. A member whose
+// name is held as a slug elsewhere has a project-prefixed slug
+// (ADR-20261022120205), so the app holding the bare name must not inherit
+// that member's grant. Without a project, or for the caller's own service
+// name, the slug is the caller's.
+func slugNamesCaller(ctx context.Context, store AuthorizationStore, caller, target state.App, slug string) (bool, error) {
+	if target.ProjectID == "" || caller.ProjectID == target.ProjectID && api.SameServiceName(caller.WorkloadName, slug) {
+		return true, nil
+	}
+	member, err := state.ProjectMemberByWorkload(ctx, store, target.AccountID, target.ProjectID, slug)
+	switch {
+	case errors.Is(err, state.ErrNotFound):
+		return true, nil
+	case errors.Is(err, state.ErrConflict):
+		return false, nil
+	case err != nil:
+		return false, fmt.Errorf("check target caller list: %w", err)
+	}
+	return strings.EqualFold(member.Slug, slug), nil
 }
 
 // previewCallerProjectID preserves policy enforcement for preview rows created

@@ -1,4 +1,4 @@
-package state
+package state_test
 
 import (
 	"context"
@@ -8,15 +8,16 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func TestCustomDomainExpiredClaimReclaimAndChallengeCAS(t *testing.T) {
 	ctx := context.Background()
-	store := NewMemStore()
+	store := state.NewMemStore()
 	firstAccount, _ := store.CreateAccount(ctx, "domain-first@example.test", api.PlanScale)
 	secondAccount, _ := store.CreateAccount(ctx, "domain-second@example.test", api.PlanScale)
-	firstApp, _ := store.CreateApp(ctx, App{AccountID: firstAccount.ID, Slug: "domain-first"})
-	secondApp, _ := store.CreateApp(ctx, App{AccountID: secondAccount.ID, Slug: "domain-second"})
+	firstApp, _ := store.CreateApp(ctx, state.App{AccountID: firstAccount.ID, Slug: "domain-first"})
+	secondApp, _ := store.CreateApp(ctx, state.App{AccountID: secondAccount.ID, Slug: "domain-second"})
 
 	const domain = "reclaim.example.test"
 	first, err := store.CreateCustomDomainIfUnderQuota(ctx, domain, firstApp.ID, "old-token", 100, 500)
@@ -26,15 +27,14 @@ func TestCustomDomainExpiredClaimReclaimAndChallengeCAS(t *testing.T) {
 	if first.VerificationExpiresAt.IsZero() {
 		t.Fatal("fresh pending claim has no expiry")
 	}
-	if _, err := store.CreateCustomDomainIfUnderQuota(ctx, domain, secondApp.ID, "new-token", 100, 500); !errors.Is(err, ErrConflict) {
+	if _, err := store.CreateCustomDomainIfUnderQuota(ctx, domain, secondApp.ID, "new-token", 100, 500); !errors.Is(err, state.ErrConflict) {
 		t.Fatalf("active cross-account claim error = %v, want ErrConflict", err)
 	}
-
-	store.mu.Lock()
-	expired := store.domains[domain]
+	(*store.Mu()).Lock()
+	expired := (*store.Domains())[domain]
 	expired.VerificationExpiresAt = time.Now().Add(-time.Minute)
-	store.domains[domain] = expired
-	store.mu.Unlock()
+	(*store.Domains())[domain] = expired
+	(*store.Mu()).Unlock()
 
 	reclaimed, err := store.CreateCustomDomainIfUnderQuota(ctx, domain, secondApp.ID, "new-token", 100, 500)
 	if err != nil {
@@ -49,22 +49,21 @@ func TestCustomDomainExpiredClaimReclaimAndChallengeCAS(t *testing.T) {
 	if matched, err := store.MarkDomainVerifiedIfChallenge(ctx, domain, "new-token"); err != nil || !matched {
 		t.Fatalf("new challenge matched=%v err=%v, want verification", matched, err)
 	}
-
-	store.mu.Lock()
-	verified := store.domains[domain]
+	(*store.Mu()).Lock()
+	verified := (*store.Domains())[domain]
 	verified.VerificationExpiresAt = time.Now().Add(-time.Hour)
-	store.domains[domain] = verified
-	store.mu.Unlock()
-	if _, err := store.CreateCustomDomainIfUnderQuota(ctx, domain, firstApp.ID, "third-token", 100, 500); !errors.Is(err, ErrConflict) {
+	(*store.Domains())[domain] = verified
+	(*store.Mu()).Unlock()
+	if _, err := store.CreateCustomDomainIfUnderQuota(ctx, domain, firstApp.ID, "third-token", 100, 500); !errors.Is(err, state.ErrConflict) {
 		t.Fatalf("verified domain replacement error = %v, want ErrConflict", err)
 	}
 }
 
 func TestCustomDomainRetryDoesNotExtendOwnership(t *testing.T) {
 	ctx := context.Background()
-	store := NewMemStore()
+	store := state.NewMemStore()
 	account, _ := store.CreateAccount(ctx, "domain-retry@example.test", api.PlanScale)
-	app, _ := store.CreateApp(ctx, App{AccountID: account.ID, Slug: "domain-retry"})
+	app, _ := store.CreateApp(ctx, state.App{AccountID: account.ID, Slug: "domain-retry"})
 	domain, err := store.CreateCustomDomainIfUnderQuota(ctx, "retry.example.test", app.ID, "token", 100, 500)
 	if err != nil {
 		t.Fatal(err)
@@ -83,19 +82,19 @@ func TestCustomDomainRetryDoesNotExtendOwnership(t *testing.T) {
 
 func TestCustomDomainExpiredReclaimHasSingleWinner(t *testing.T) {
 	ctx := context.Background()
-	store := NewMemStore()
+	store := state.NewMemStore()
 	account, _ := store.CreateAccount(ctx, "domain-race@example.test", api.PlanScale)
-	seedApp, _ := store.CreateApp(ctx, App{AccountID: account.ID, Slug: "domain-race-seed"})
+	seedApp, _ := store.CreateApp(ctx, state.App{AccountID: account.ID, Slug: "domain-race-seed"})
 	_, _ = store.CreateCustomDomainIfUnderQuota(ctx, "race.example.test", seedApp.ID, "seed", 100, 500)
-	store.mu.Lock()
-	expired := store.domains["race.example.test"]
+	(*store.Mu()).Lock()
+	expired := (*store.Domains())["race.example.test"]
 	expired.VerificationExpiresAt = time.Now().Add(-time.Minute)
-	store.domains[expired.Domain] = expired
-	store.mu.Unlock()
+	(*store.Domains())[expired.Domain] = expired
+	(*store.Mu()).Unlock()
 
-	apps := make([]App, 2)
+	apps := make([]state.App, 2)
 	for i, slug := range []string{"domain-race-one", "domain-race-two"} {
-		apps[i], _ = store.CreateApp(ctx, App{AccountID: account.ID, Slug: slug})
+		apps[i], _ = store.CreateApp(ctx, state.App{AccountID: account.ID, Slug: slug})
 	}
 	start := make(chan struct{})
 	results := make(chan error, 2)
@@ -117,7 +116,7 @@ func TestCustomDomainExpiredReclaimHasSingleWinner(t *testing.T) {
 		switch {
 		case err == nil:
 			wins++
-		case errors.Is(err, ErrConflict):
+		case errors.Is(err, state.ErrConflict):
 			conflicts++
 		default:
 			t.Fatalf("unexpected race error: %v", err)

@@ -168,6 +168,28 @@ func TestNotReadyProblemUsesPerAppTimeout(t *testing.T) {
 	}
 }
 
+// The probe reaches the app through the host's :8080 forward, but the app
+// was asked to listen on its own port; the failure names that port, in the
+// "on :N got ECONNREFUSED" form the CLI reads.
+func TestNotReadyProblemNamesTheAppPort(t *testing.T) {
+	v := &JailerVMM{readyTimeout: 30 * time.Second}
+	for _, tc := range []struct {
+		lease Lease
+		want  string
+	}{
+		{Lease{Instance: "i", AppPort: 3000}, "on :3000 got ECONNREFUSED"},
+		{Lease{Instance: "i"}, "on :8080 got ECONNREFUSED"},
+	} {
+		if p := v.notReadyProblem(tc.lease, "", 2); !strings.Contains(p.Detail, tc.want) {
+			t.Errorf("TCP detail = %q, want %q", p.Detail, tc.want)
+		}
+		p := v.healthcheckNotReadyProblem(tc.lease, "/healthz", readinessObservation{connRefused: 2}, time.Second)
+		if !strings.Contains(p.Detail, "GET /healthz "+tc.want) {
+			t.Errorf("HTTP detail = %q, want %q", p.Detail, tc.want)
+		}
+	}
+}
+
 func TestProvisionRewritesPathsIntoChroot(t *testing.T) {
 	// provision hardlinks images into the chroot and rewrites config paths to
 	// their in-chroot basenames — the jailed firecracker sees only these.
@@ -392,11 +414,11 @@ func TestCopyFile(t *testing.T) {
 	}
 }
 
-// TestCopyTreeCopiesRealTreeAndDropsSymlinks — copyTree exports untrusted
+// TestMoveTreeMovesRealTreeAndDropsSymlinks — moveTree exports untrusted
 // builder output as root. Real directories and regular files keep their
 // layout and modes; a symlink is dropped rather than recreated, because a
 // recreated link hands builderd a path into the host.
-func TestCopyTreeCopiesRealTreeAndDropsSymlinks(t *testing.T) {
+func TestMoveTreeMovesRealTreeAndDropsSymlinks(t *testing.T) {
 	src := t.TempDir()
 	dst := filepath.Join(t.TempDir(), "out")
 	if err := os.MkdirAll(filepath.Join(src, "usr", "bin"), 0o755); err != nil {
@@ -412,8 +434,8 @@ func TestCopyTreeCopiesRealTreeAndDropsSymlinks(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := copyTree(src, dst, 0); err != nil {
-		t.Fatalf("copyTree: %v", err)
+	if err := moveTree(src, dst, 0); err != nil {
+		t.Fatalf("moveTree: %v", err)
 	}
 	info, err := os.Stat(filepath.Join(dst, "usr", "bin", "node"))
 	if err != nil || info.Mode().Perm() != 0o755 {
@@ -2346,6 +2368,39 @@ func TestWaitReady_HealthcheckRefusedIsAppNotListening(t *testing.T) {
 	}
 	if strings.Contains(p.Detail, "answered") {
 		t.Fatalf("refused probes reported as answers: %q", p.Detail)
+	}
+}
+
+// A raw TCP echo service accepted every probe after it bound :5432, yet the
+// wake failed "got ECONNREFUSED ... the app never listened": only the probes
+// before the bind were counted (container qualification, 2026-10-26).
+func TestHealthcheckNonHTTPReplyIsNotReportedAsNeverListened(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	t.Cleanup(func() { _ = ln.Close() })
+	go func() {
+		for {
+			conn, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			go func() {
+				defer conn.Close()
+				buf := make([]byte, 512)
+				n, _ := conn.Read(buf)
+				_, _ = conn.Write(append([]byte("tcp-echo:"), buf[:n]...))
+			}()
+		}
+	}()
+	_, transportErr, probeErr := healthcheckProbeResult(context.Background(), &http.Client{Timeout: 2 * time.Second}, ln.Addr().String(), "/healthz")
+	if probeErr != nil || !isNonHTTPReply(transportErr) {
+		t.Fatalf("probe of a raw TCP echo = (%v, %v), want a non-HTTP reply", transportErr, probeErr)
+	}
+	p := (&JailerVMM{}).healthcheckNotReadyProblem(Lease{Instance: "i", AppPort: 5432}, "/healthz", readinessObservation{connRefused: 107, nonHTTP: 40}, 30*time.Second)
+	if p.Code != api.CodeAppStartupTimeout || !strings.Contains(p.Detail, "GET /healthz on :5432 but answered without HTTP") || strings.Contains(p.Detail, "never listened") {
+		t.Fatalf("problem = %+v", p)
 	}
 }
 

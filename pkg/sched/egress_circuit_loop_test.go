@@ -1,5 +1,5 @@
 // adr: 201
-package sched
+package sched_test
 
 import (
 	"context"
@@ -9,15 +9,16 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/circuit"
 	"github.com/onebox-faas/faas/pkg/netns"
+	"github.com/onebox-faas/faas/pkg/sched"
 )
 
-func loopFixture(t *testing.T, read EgressCircuitCandidateReader) (*EgressCircuitLoop, *EgressCircuitBreaker, *fakeApplier, *time.Time) {
+func loopFixture(t *testing.T, read sched.EgressCircuitCandidateReader) (*sched.EgressCircuitLoop, *sched.EgressCircuitBreaker, *fakeApplier, *time.Time) {
 	t.Helper()
 	clock := time.Date(2026, 9, 21, 12, 0, 0, 0, time.UTC)
 	applier := &fakeApplier{}
-	b := NewEgressCircuitBreaker(applier, staticResolver("203.0.113.9"), quietLog()).
+	b := sched.NewEgressCircuitBreaker(applier, staticResolver("203.0.113.9"), sched.QuietLog()).
 		WithClock(func() time.Time { return clock })
-	l := NewEgressCircuitLoop(b, read, 30*time.Second, 0, quietLog()).
+	l := sched.NewEgressCircuitLoop(b, read, 30*time.Second, 0, sched.QuietLog()).
 		WithClock(func() time.Time { return clock })
 	return l, b, applier, &clock
 }
@@ -28,8 +29,8 @@ func loopFixture(t *testing.T, read EgressCircuitCandidateReader) (*EgressCircui
 func TestEgressLoopDoesNotRefoldTheSameProbeRow(t *testing.T) {
 	up := testUpstream()
 	sampled := time.Date(2026, 9, 21, 11, 59, 45, 0, time.UTC)
-	read := func(context.Context) ([]EgressCircuitCandidate, error) {
-		return []EgressCircuitCandidate{{Upstream: up, OK: false, Sampled: sampled}}, nil
+	read := func(context.Context) ([]sched.EgressCircuitCandidate, error) {
+		return []sched.EgressCircuitCandidate{{Upstream: up, OK: false, Sampled: sampled}}, nil
 	}
 	l, b, applier, _ := loopFixture(t, read)
 	ctx := context.Background()
@@ -52,8 +53,8 @@ func TestEgressLoopDoesNotRefoldTheSameProbeRow(t *testing.T) {
 func TestEgressLoopFoldsSuccessiveProbeRows(t *testing.T) {
 	up := testUpstream()
 	sampled := time.Date(2026, 9, 21, 11, 59, 45, 0, time.UTC)
-	read := func(context.Context) ([]EgressCircuitCandidate, error) {
-		return []EgressCircuitCandidate{{Upstream: up, OK: false, Sampled: sampled}}, nil
+	read := func(context.Context) ([]sched.EgressCircuitCandidate, error) {
+		return []sched.EgressCircuitCandidate{{Upstream: up, OK: false, Sampled: sampled}}, nil
 	}
 	l, b, applier, clock := loopFixture(t, read)
 	ctx := context.Background()
@@ -79,8 +80,8 @@ func TestEgressLoopSkipsStaleProbes(t *testing.T) {
 	up := testUpstream()
 	// Sampled ten minutes before the loop's clock; maxAge defaults to 4×30s.
 	stale := time.Date(2026, 9, 21, 11, 50, 0, 0, time.UTC)
-	read := func(context.Context) ([]EgressCircuitCandidate, error) {
-		return []EgressCircuitCandidate{{Upstream: up, OK: false, Sampled: stale}}, nil
+	read := func(context.Context) ([]sched.EgressCircuitCandidate, error) {
+		return []sched.EgressCircuitCandidate{{Upstream: up, OK: false, Sampled: stale}}, nil
 	}
 	l, b, applier, _ := loopFixture(t, read)
 
@@ -98,8 +99,8 @@ func TestEgressLoopSkipsStaleProbes(t *testing.T) {
 // An upstream with no probe at all must never be broken.
 func TestEgressLoopSkipsUnprobedUpstreams(t *testing.T) {
 	up := testUpstream()
-	read := func(context.Context) ([]EgressCircuitCandidate, error) {
-		return []EgressCircuitCandidate{{Upstream: up, OK: false}}, nil
+	read := func(context.Context) ([]sched.EgressCircuitCandidate, error) {
+		return []sched.EgressCircuitCandidate{{Upstream: up, OK: false}}, nil
 	}
 	l, b, applier, _ := loopFixture(t, read)
 
@@ -115,7 +116,7 @@ func TestEgressLoopSkipsUnprobedUpstreams(t *testing.T) {
 }
 
 func TestEgressLoopSurfacesReadErrors(t *testing.T) {
-	read := func(context.Context) ([]EgressCircuitCandidate, error) {
+	read := func(context.Context) ([]sched.EgressCircuitCandidate, error) {
 		return nil, errors.New("postgres down")
 	}
 	l, _, _, _ := loopFixture(t, read)
@@ -127,27 +128,27 @@ func TestEgressLoopSurfacesReadErrors(t *testing.T) {
 // One app's vmmd being unreachable must not stop the rest of the fleet from
 // converging.
 func TestEgressLoopContinuesPastOneFailingApp(t *testing.T) {
-	bad := EgressUpstream{AppID: "app-bad", Hash: "aaaa", Host: "db1.example", Port: 5432}
-	good := EgressUpstream{AppID: "app-good", Hash: "bbbb", Host: "db2.example", Port: 5432}
+	bad := sched.EgressUpstream{AppID: "app-bad", Hash: "aaaa", Host: "db1.example", Port: 5432}
+	good := sched.EgressUpstream{AppID: "app-good", Hash: "bbbb", Host: "db2.example", Port: 5432}
 	sampled := time.Date(2026, 9, 21, 11, 59, 45, 0, time.UTC)
 
 	var observed []string
 	failing := &perAppFailApplier{failFor: "app-bad", seen: &observed}
 	clock := time.Date(2026, 9, 21, 12, 0, 0, 0, time.UTC)
-	b := NewEgressCircuitBreaker(failing, staticResolver("203.0.113.9"), quietLog()).
+	b := sched.NewEgressCircuitBreaker(failing, staticResolver("203.0.113.9"), sched.QuietLog()).
 		WithClock(func() time.Time { return clock })
-	read := func(context.Context) ([]EgressCircuitCandidate, error) {
-		return []EgressCircuitCandidate{
+	read := func(context.Context) ([]sched.EgressCircuitCandidate, error) {
+		return []sched.EgressCircuitCandidate{
 			{Upstream: bad, OK: false, Sampled: sampled},
 			{Upstream: good, OK: false, Sampled: sampled},
 		}, nil
 	}
-	l := NewEgressCircuitLoop(b, read, 30*time.Second, 0, quietLog()).
+	l := sched.NewEgressCircuitLoop(b, read, 30*time.Second, 0, sched.QuietLog()).
 		WithClock(func() time.Time { return clock })
 
 	for i := 0; i < 3; i++ {
-		if err := l.Tick(context.Background()); err != nil {
-			t.Fatalf("Tick: %v", err)
+		if err := l.Tick(context.Background()); err == nil {
+			t.Fatal("Tick acknowledged success despite the failing app")
 		}
 		sampled = sampled.Add(30 * time.Second)
 		clock = clock.Add(30 * time.Second)
@@ -183,21 +184,52 @@ func TestEgressLoopForgetsRetiredCandidates(t *testing.T) {
 	up := testUpstream()
 	sampled := time.Date(2026, 9, 21, 11, 59, 45, 0, time.UTC)
 	present := true
-	read := func(context.Context) ([]EgressCircuitCandidate, error) {
+	read := func(context.Context) ([]sched.EgressCircuitCandidate, error) {
 		if !present {
 			return nil, nil
 		}
-		return []EgressCircuitCandidate{{Upstream: up, OK: true, Sampled: sampled}}, nil
+		return []sched.EgressCircuitCandidate{{Upstream: up, OK: true, Sampled: sampled}}, nil
 	}
 	l, _, _, _ := loopFixture(t, read)
 
 	_ = l.Tick(context.Background())
-	if len(l.seen) != 1 {
-		t.Fatalf("seen = %v, want one tracked key", l.seen)
+	if len((*l.Seen())) != 1 {
+		t.Fatalf("seen = %v, want one tracked key", (*l.Seen()))
 	}
 	present = false
 	_ = l.Tick(context.Background())
-	if len(l.seen) != 0 {
-		t.Fatalf("seen = %v, want empty once the candidate retires", l.seen)
+	if len((*l.Seen())) != 0 {
+		t.Fatalf("seen = %v, want empty once the candidate retires", (*l.Seen()))
+	}
+}
+
+// adr: 20261023115741 — an app whose account has egress circuit breaking off
+// gets no circuits: the loop clears what it had and installs nothing new.
+func TestEgressLoopClearsAppsTheCapabilityRefuses(t *testing.T) {
+	up := testUpstream()
+	sampled := time.Date(2026, 9, 21, 11, 59, 45, 0, time.UTC)
+	read := func(context.Context) ([]sched.EgressCircuitCandidate, error) {
+		return []sched.EgressCircuitCandidate{{Upstream: up, OK: false, Sampled: sampled}}, nil
+	}
+	l, _, applier, clock := loopFixture(t, read)
+	allowed := true
+	l.WithAppAllowed(func(context.Context, string) bool { return allowed })
+	ctx := context.Background()
+	for i := 0; i < 3; i++ {
+		if err := l.Tick(ctx); err != nil {
+			t.Fatalf("Tick: %v", err)
+		}
+		sampled = sampled.Add(30 * time.Second)
+		*clock = clock.Add(30 * time.Second)
+	}
+	if applier.opened() != 1 || len(applier.last()) == 0 {
+		t.Fatalf("pushes = %v, want the circuit enforced while the capability is on", applier.pushes)
+	}
+	allowed = false
+	if err := l.Tick(ctx); err != nil {
+		t.Fatalf("Tick: %v", err)
+	}
+	if got := applier.last(); len(got) != 0 {
+		t.Fatalf("last push = %v, want the app's circuits cleared once its capability is off", got)
 	}
 }

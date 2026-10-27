@@ -50,6 +50,9 @@ import (
 // substitution individually so the per-host rendering can't regress
 // to a hard-coded default.
 type HostPolicy struct {
+	// PublicForwarding retains the native-recovery socket generation guard
+	// across host-policy reloads. Legacy nodes keep their original ruleset.
+	PublicForwarding bool
 	// BridgeName is the root-ns bridge that all per-instance veth host-sides
 	// enslave to (set up by pkg/fcvm/manager.go via the TenantBridge constant
 	// in this package). MUST equal `TenantBridge`.
@@ -295,6 +298,11 @@ type PrivateInputAllowRule struct {
 	Source netip.Prefix
 	Ports  []int
 }
+
+// tenantHairpinTCPPorts are the public-edge ports a guest may open on any
+// host address, so an app can call a platform app through a public hostname
+// that resolves to this node (ADR-20261020123000).
+var tenantHairpinTCPPorts = []int{80, 443}
 
 // DefaultHostPolicy is the platform-wide host nftables policy. Source of
 // truth for the deny-lists per spec §11. Do not inline these values
@@ -606,7 +614,15 @@ func (h HostPolicy) Render() string {
 	b.WriteString("    type filter hook input priority 0; policy drop;\n")
 	b.WriteString("    ct state established,related accept\n")
 	b.WriteString("    iif lo accept\n")
-	fmt.Fprintf(&b, "    iifname %q accept\n", h.BridgeName)
+	// A guest reaches the host only where platform services listen: the
+	// bridge subnet (its one host address is the bridge IP; the per-netns
+	// chain narrows the ports), the public edge for hairpin calls, and
+	// ICMP. The drop keeps bridge traffic from the public and source-CIDR
+	// rules below (spec §11, ADR-20261020123000).
+	fmt.Fprintf(&b, "    iifname %q ip daddr %s accept\n", h.BridgeName, h.MasqueradeCIDR)
+	fmt.Fprintf(&b, "    iifname %q tcp dport { %s } accept\n", h.BridgeName, joinInts(tenantHairpinTCPPorts, ","))
+	fmt.Fprintf(&b, "    iifname %q meta l4proto { icmp, ipv6-icmp } accept\n", h.BridgeName)
+	fmt.Fprintf(&b, "    iifname %q drop\n", h.BridgeName)
 	fmt.Fprintf(&b, "    tcp dport { %s } accept     # sshd + gatewayd-public public listener\n", allowPorts)
 	for _, r := range h.PrivateInputAllowRules {
 		family := "ip"
@@ -775,6 +791,9 @@ func (h HostPolicy) Render() string {
 	}
 	b.WriteString("  }\n")
 	b.WriteString("}\n")
+	if h.PublicForwarding {
+		b.WriteString(publicForwardPolicyRender())
+	}
 	return b.String()
 }
 

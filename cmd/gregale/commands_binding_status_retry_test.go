@@ -1,7 +1,8 @@
-package main
+package main_test
 
 import (
 	"encoding/json"
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 	"net/http"
 	"net/http/httptest"
@@ -106,7 +107,7 @@ func TestBindingStatusReadRetryCLI(t *testing.T) {
 					args = []string{"projects", "environments", "release-sets", "verification-runs", "resume", "project", "production", id}
 				}
 				args = append(args, "--status-read-retries", retry, "--poll-interval", "1ms", "--json")
-				code, out, stderr := captureBindingCLI(t, server.URL, args...)
+				code, out, stderr := main.CaptureBindingCLI(t, server.URL, args...)
 				expectedReads, expectedCode, expectedCompletes := 1, 1, 0
 				if retry == "1" {
 					expectedReads, expectedCode, expectedCompletes = 2, 0, 1

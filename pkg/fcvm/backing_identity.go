@@ -103,9 +103,39 @@ func (m *Manager) resolveBackingFile(key string) (string, error) {
 		return "", fmt.Errorf("%w: resolve %q: %w", ErrSnapshotBackingUnverified, key, err)
 	}
 	if !local {
-		return "", fmt.Errorf("%w: %q is not cached locally", ErrSnapshotBackingUnverified, key)
+		return "", fmt.Errorf("%w: %q %w", ErrSnapshotBackingUnverified, key, errBackingNotCached)
 	}
 	return path, nil
+}
+
+// errBackingNotCached marks a logical image key that resolves to no file in
+// this node's cache.
+var errBackingNotCached = errors.New("is not cached locally")
+
+// fetchBackingFile is resolveBackingFile for a restore that is about to
+// attach the image: a logical key missing from this node's cache is read
+// through the storage backend first, which installs it in the cache, and then
+// identified as usual. Without the fetch the restore refused and cold-booted,
+// and the cold boot fetched the very same base anyway: on production-us
+// (rc.288, 2026-10-21) a wake whose base had been evicted from fsn-2's cache
+// took 6.7 s (base 0.8 s, app layer 3.5 s, boot 1.3 s) where fetching the
+// base and restoring takes about 1 s. A fetched image that differs from the
+// capture's is still refused by the identity comparison.
+func (m *Manager) fetchBackingFile(ctx context.Context, key string) (string, error) {
+	path, err := m.resolveBackingFile(key)
+	if !errors.Is(err, errBackingNotCached) {
+		return path, err
+	}
+	// The node cache installs a durable fill before Get returns, so the file
+	// resolves without reading the stream; the fill must not be deferred.
+	rc, getErr := m.storage.Get(storage.WithDurableCacheFill(ctx), key)
+	if getErr != nil {
+		return "", fmt.Errorf("%w: fetch %q: %w", ErrSnapshotBackingUnverified, key, getErr)
+	}
+	if closeErr := rc.Close(); closeErr != nil {
+		return "", fmt.Errorf("%w: fetch %q: %w", ErrSnapshotBackingUnverified, key, closeErr)
+	}
+	return m.resolveBackingFile(key)
 }
 
 // fileDigest returns "sha256:<hex>" for path, hashing each file version once
@@ -177,11 +207,17 @@ func (m *Manager) PrimeBackingDigests(ctx context.Context) {
 
 // currentBacking identifies the kernel and base a wake would attach now.
 func (m *Manager) currentBacking(baseKey string) (BackingIdentity, error) {
-	kernelPath, err := m.resolveBackingFile(m.paths.Kernel)
+	return m.identifyBacking(baseKey, m.resolveBackingFile)
+}
+
+// identifyBacking identifies the kernel and base, resolving each key with
+// resolve.
+func (m *Manager) identifyBacking(baseKey string, resolve func(string) (string, error)) (BackingIdentity, error) {
+	kernelPath, err := resolve(m.paths.Kernel)
 	if err != nil {
 		return BackingIdentity{}, err
 	}
-	basePath, err := m.resolveBackingFile(baseKey)
+	basePath, err := resolve(baseKey)
 	if err != nil {
 		return BackingIdentity{}, err
 	}
@@ -222,6 +258,12 @@ func (m *Manager) rememberInstanceBacking(instance, baseKey string) {
 // writeSnapshotBacking stores the running VM's identity next to a capture.
 // Best-effort: a capture without it is refused at restore and cold-boots.
 func (m *Manager) writeSnapshotBacking(ctx context.Context, instance, memKey string) {
+	m.writeSnapshotBackingTo(ctx, m.storage, instance, memKey)
+}
+
+// writeSnapshotBackingTo writes the identity through store (a sealed
+// capture's encrypting backend, or the shared one).
+func (m *Manager) writeSnapshotBackingTo(ctx context.Context, store storage.StorageBackend, instance, memKey string) {
 	if !m.backingEnabled() {
 		return
 	}
@@ -238,7 +280,7 @@ func (m *Manager) writeSnapshotBacking(ctx context.Context, instance, memKey str
 	if err != nil {
 		return
 	}
-	if err := m.storage.Put(ctx, key, bytes.NewReader(body)); err != nil {
+	if err := store.Put(ctx, key, bytes.NewReader(body)); err != nil {
 		m.log.Warn("write snapshot backing identity", "instance", instance, "key", key, "err", err)
 	}
 }
@@ -254,7 +296,18 @@ func (m *Manager) verifySnapshotBacking(ctx context.Context, snap *Snapshot, bas
 	if key == "" {
 		return fmt.Errorf("%w: no backing identity location for %q", ErrSnapshotBackingUnverified, snap.StorageKey)
 	}
-	rc, err := m.storage.Get(ctx, key)
+	store := m.storage
+	if snap.Storage != nil {
+		store = snap.Storage
+	} else if native, ok := m.vmm.(interface {
+		nativeRuntimeSnapshotStore(string) storage.StorageBackend
+	}); ok {
+		// A native runtime capture's sidecar lives in the tree only vmmd writes.
+		if b := native.nativeRuntimeSnapshotStore(key); b != nil {
+			store = b
+		}
+	}
+	rc, err := store.Get(ctx, key)
 	if err != nil {
 		return fmt.Errorf("%w: read %s: %w", ErrSnapshotBackingUnverified, key, err)
 	}
@@ -264,7 +317,7 @@ func (m *Manager) verifySnapshotBacking(ctx context.Context, snap *Snapshot, bas
 	if decodeErr != nil || !recorded.complete() {
 		return fmt.Errorf("%w: invalid identity at %s", ErrSnapshotBackingUnverified, key)
 	}
-	current, err := m.currentBacking(baseKey)
+	current, err := m.identifyBacking(baseKey, func(key string) (string, error) { return m.fetchBackingFile(ctx, key) })
 	if err != nil {
 		return err
 	}

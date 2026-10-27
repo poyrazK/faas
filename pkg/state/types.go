@@ -129,6 +129,10 @@ type DeploymentStatus string
 type DeploymentOutcomeCounts struct {
 	Succeeded int
 	Failed    int
+	// FailedAccounts counts the distinct accounts behind Failed, so public
+	// status can tell one tenant's failing apps from a platform-wide problem
+	// (Hunt 14 H14-22).
+	FailedAccounts int
 }
 
 // LatestDeploymentOutcome is the last platform-attributable terminal
@@ -449,10 +453,15 @@ type Account struct {
 	// value is never returned by AccountByID or used as a human principal.
 	ResourceOrgID            string
 	ResourceOwnershipEnabled bool
-	ID                       string
-	Email                    string
-	Plan                     api.Plan
-	Status                   AccountStatus
+	// AsyncQuotaPooled is set on a resource projection once the organization's
+	// async reservations moved to its own counter. Until then a company app's
+	// reservations stay on its storage namespace's counter, which the
+	// previous release also decrements (ADR-202610171908).
+	AsyncQuotaPooled bool
+	ID               string
+	Email            string
+	Plan             api.Plan
+	Status           AccountStatus
 	// ProviderCustomerID is the per-account `cus_…` returned by Stripe when
 	// the customer signs up (spec §4.7). The unique index makes it a
 	// stable webhook lookup key.
@@ -921,8 +930,12 @@ type APIConsumerRateCard struct {
 	// starts.
 	BaseFeeMillicentsPerMonth int64
 	MinimumMillicentsPerMonth int64
-	EffectiveFrom             time.Time
-	CreatedAt                 time.Time
+	// ProrateMonthlyFees scales the fee and minimum of a consumer's first
+	// month by the share of it left after the consumer was created
+	// (ADR-1325).
+	ProrateMonthlyFees bool
+	EffectiveFrom      time.Time
+	CreatedAt          time.Time
 }
 
 // MonthlyFees reports whether the card charges a base fee or a minimum.
@@ -1018,17 +1031,31 @@ type PlatformTenantRateCard struct {
 	// RouteWeights charge a request on a route that many units (ADR-1307);
 	// unlisted routes count 1. Surface and JWT-rule requests are weighted
 	// by their own route (ADR-1310).
-	RouteWeights  map[string]int64
-	EffectiveFrom time.Time
-	CreatedAt     time.Time
+	RouteWeights map[string]int64
+	// BaseFeeMillicentsPerMonth and MinimumMillicentsPerMonth are a fixed
+	// monthly charge and a minimum monthly usage charge per tenant
+	// (ADR-1322), taken from the card in force when the tenant's month
+	// starts; ProrateMonthlyFees scales them in the tenant's first month
+	// (ADR-1325).
+	BaseFeeMillicentsPerMonth int64
+	MinimumMillicentsPerMonth int64
+	ProrateMonthlyFees        bool
+	EffectiveFrom             time.Time
+	CreatedAt                 time.Time
 }
 
 // MonthlyPricing reports whether statements must re-price whole months:
 // the card prices usage by its position in the tenant's UTC month, weights
-// routes, or prices compute or response size (ADR-1310), none of which
-// per-minute request coverage deltas can express.
+// routes, prices compute or response size (ADR-1310) or app-reported
+// units, or charges monthly fees (ADR-1322), none of which per-minute
+// request coverage deltas can express.
 func (c PlatformTenantRateCard) MonthlyPricing() bool {
-	return c.IncludedUnitsPerMonth > 0 || len(c.Tiers) > 0 || len(c.RouteWeights) > 0 || !c.PricesRequests()
+	return c.IncludedUnitsPerMonth > 0 || len(c.Tiers) > 0 || len(c.RouteWeights) > 0 || !c.PricesRequests() || c.MonthlyFees()
+}
+
+// MonthlyFees reports whether the card charges a base fee or a minimum.
+func (c PlatformTenantRateCard) MonthlyFees() bool {
+	return c.BaseFeeMillicentsPerMonth > 0 || c.MinimumMillicentsPerMonth > 0
 }
 
 // PricesRequests reports whether the card counts requests rather than
@@ -1942,14 +1969,29 @@ type AppManifest struct {
 	// edits and retries select the same build strategy.
 	ProjectSourceSHA256 string `json:"project_source_sha256,omitempty"`
 	BuildDockerfile     string `json:"build_dockerfile,omitempty"`
+	// DockerfileBuild is the Compose build.args and build.target for the
+	// Dockerfile build (ADR-20261019142544); project-managed like
+	// BuildDockerfile and captured per deployment at enqueue.
+	DockerfileBuild *api.DockerfileBuildOptions `json:"dockerfile_build,omitempty"`
+	// BuildGoCommand selects the `cmd/<name>` main package a Railpack build
+	// of a multi-command Go module compiles (ADR-20261025134512);
+	// project-managed like BuildDockerfile.
+	BuildGoCommand string `json:"build_go_command,omitempty"`
 	// ProjectImage preserves declared image intent (including a mutable tag).
 	// Each deployment resolves and pins its own immutable source. Command
 	// replaces the image CMD, retaining its ENTRYPOINT; nil inherits CMD.
-	ProjectImage                string                  `json:"project_image,omitempty"`
-	ProjectImageCommand         []string                `json:"project_image_command,omitempty"`
-	ProjectImagePort            int                     `json:"project_image_port,omitempty"`
-	ProjectImageHealthcheck     *api.ComposeHealthcheck `json:"project_image_healthcheck,omitempty"`
-	ProjectDependencyConditions map[string]string       `json:"project_dependency_conditions,omitempty"`
+	ProjectImage            string                  `json:"project_image,omitempty"`
+	ProjectImageCommand     []string                `json:"project_image_command,omitempty"`
+	ProjectImagePort        int                     `json:"project_image_port,omitempty"`
+	ProjectImageHealthcheck *api.ComposeHealthcheck `json:"project_image_healthcheck,omitempty"`
+	// ProjectImageProcess is the Compose entrypoint, user, working_dir and
+	// stop contract for the image (ADR-1337); nil inherits the image's.
+	ProjectImageProcess         *api.ComposeProcess `json:"project_image_process,omitempty"`
+	ProjectDependencyConditions map[string]string   `json:"project_dependency_conditions,omitempty"`
+	// ProjectSecretFiles are a Compose service's secrets, written to
+	// /run/secrets in its main workload (ADR-20261023090000). imaged copies
+	// them into the guest manifest; they name app secrets, never values.
+	ProjectSecretFiles []api.SecretFile `json:"project_secret_files,omitempty"`
 	// ServiceBindings is the authoritative declared projection of Compose
 	// depends_on edges or standalone service_binding_targets. Keeping it beside
 	// generated service URLs makes it inspectable without parsing env text.
@@ -2054,7 +2096,7 @@ func (m AppManifest) EffectivePreviewServiceCallsPolicy() api.PreviewServiceCall
 // app rows to persist a non-empty contract.
 func (m AppManifest) IsZero() bool {
 	return len(m.PublicBuildURLs) == 0 && m.Entrypoint == nil && m.Env == nil && m.ProjectSourceSHA256 == "" &&
-		m.BuildDockerfile == "" && m.ProjectImage == "" && m.ProjectImageCommand == nil && m.ProjectImagePort == 0 && m.ProjectImageHealthcheck == nil && len(m.ProjectDependencyConditions) == 0 && len(m.ServiceBindings) == 0 && len(m.ServiceReliability) == 0 && m.ServiceBindingPolicy == "" && m.ServiceBindingTransport == "" && m.PreviewServiceCallsPolicy == "" && m.AllowedServiceCallers == nil && m.AllowedServiceCallScopes == nil && m.WorkingDir == "" &&
+		m.BuildDockerfile == "" && m.DockerfileBuild == nil && m.BuildGoCommand == "" && m.ProjectImage == "" && m.ProjectImageCommand == nil && m.ProjectImagePort == 0 && m.ProjectImageHealthcheck == nil && m.ProjectImageProcess == nil && len(m.ProjectDependencyConditions) == 0 && len(m.ProjectSecretFiles) == 0 && len(m.ServiceBindings) == 0 && len(m.ServiceReliability) == 0 && m.ServiceBindingPolicy == "" && m.ServiceBindingTransport == "" && m.PreviewServiceCallsPolicy == "" && m.AllowedServiceCallers == nil && m.AllowedServiceCallScopes == nil && m.WorkingDir == "" &&
 		m.Port == 0 && len(m.Ports) == 0 && m.Healthz == "" && m.User == "" &&
 		m.ExecutionMode == "" && m.RestartPolicy == "" && m.AfterRestore == nil && m.BeforeCheckpoint == nil && m.Pause == "" && m.Profiling == nil && m.Tracing == nil &&
 		m.StartupDeadlineS == 0 && m.MaxRetries == 0 && m.RequestTimeoutS == 0 && m.FunctionConcurrency == 0 &&
@@ -2071,11 +2113,15 @@ func mergeProjectManagedManifest(existing, desired AppManifest) AppManifest {
 	}
 	existing.ProjectSourceSHA256 = desired.ProjectSourceSHA256
 	existing.BuildDockerfile = desired.BuildDockerfile
+	existing.DockerfileBuild = desired.DockerfileBuild.Clone()
+	existing.BuildGoCommand = desired.BuildGoCommand
 	existing.ProjectImage = desired.ProjectImage
 	existing.ProjectImageCommand = desired.ProjectImageCommand
 	existing.ProjectImagePort = desired.ProjectImagePort
 	existing.ProjectImageHealthcheck = desired.ProjectImageHealthcheck.Clone()
+	existing.ProjectImageProcess = desired.ProjectImageProcess.Clone()
 	existing.ProjectDependencyConditions = maps.Clone(desired.ProjectDependencyConditions)
+	existing.ProjectSecretFiles = api.CloneSecretFiles(desired.ProjectSecretFiles)
 	existing.ServiceBindings = append([]api.AppServiceBinding(nil), desired.ServiceBindings...)
 	existing.ServiceReliability = desired.ServiceReliability
 	existing.ServiceBindingPolicy = desired.ServiceBindingPolicy
@@ -2185,6 +2231,11 @@ type ScalingPolicy struct {
 	// WakeMaxQueueWaitSeconds is an optional per-app cold-wake wait budget.
 	// Zero means the gateway uses the plan-derived default.
 	WakeMaxQueueWaitSeconds int
+	// PerInstanceConcurrency is how many requests one instance serves at
+	// once (ADR-20261022203523). Zero means the plan's concurrency_per_vm;
+	// readers resolve it through api.Limits.PerInstanceConcurrency, which
+	// also clamps a value a plan downgrade left above the bound.
+	PerInstanceConcurrency int
 	// Timezone is the IANA zone every schedule's cron is evaluated in
 	// (ADR-198). Empty means UTC. One zone per app rather than one per
 	// schedule: a business has a working day, not a working day per rule.
@@ -2313,6 +2364,7 @@ func (p ScalingPolicy) MarshalJSON() ([]byte, error) {
 		MaxQueueDepth           int               `json:"max_queue_depth,omitempty"`
 		WakeMaxQueueDepth       int               `json:"wake_max_queue_depth,omitempty"`
 		WakeMaxQueueWaitSeconds int               `json:"wake_max_queue_wait_seconds,omitempty"`
+		PerInstanceConcurrency  int               `json:"per_instance_concurrency,omitempty"`
 		Timezone                string            `json:"timezone,omitempty"`
 		Schedules               []ScalingSchedule `json:"schedules,omitempty"`
 	}
@@ -2340,6 +2392,7 @@ func (p *ScalingPolicy) UnmarshalJSON(data []byte) error {
 		MaxQueueDepth           int               `json:"max_queue_depth,omitempty"`
 		WakeMaxQueueDepth       int               `json:"wake_max_queue_depth,omitempty"`
 		WakeMaxQueueWaitSeconds int               `json:"wake_max_queue_wait_seconds,omitempty"`
+		PerInstanceConcurrency  int               `json:"per_instance_concurrency,omitempty"`
 		Timezone                string            `json:"timezone,omitempty"`
 		Schedules               []ScalingSchedule `json:"schedules,omitempty"`
 	}
@@ -2444,6 +2497,11 @@ func (m AppManifest) MarshalJSON() ([]byte, error) {
 
 // Deployment is one attempt to ship a version of an app.
 type Deployment struct {
+	// submissionAttemptID is creation-only metadata, never copied onto the wire.
+	submissionAttemptID  string
+	releaseWorkerAttempt string
+	releaseConfigAttempt string
+	retryDeploymentID    string
 	// BuildDependencies is trusted APID admission input, captured atomically in
 	// a separate durable gate before the build can enter the queue.
 	BuildDependencies []DeploymentDependencyPin `json:"-"`
@@ -3253,6 +3311,8 @@ const (
 type CustomDomain struct {
 	Domain string
 	AppID  string
+	// RedirectAppID mirrors the legacy redirect FK used by app purge.
+	RedirectAppID string `json:"-"`
 	// EnvironmentID is empty for the legacy application-wide route. A
 	// non-empty value binds the hostname to one project environment.
 	EnvironmentID    string
@@ -3278,6 +3338,15 @@ type CustomDomain struct {
 
 // Verified reports whether the TXT challenge has been satisfied.
 func (d CustomDomain) Verified() bool { return !d.VerifiedAt.IsZero() }
+
+// ClaimLive reports whether the row still reserves its hostname: it is
+// verified, or its verification deadline has not passed. An expired challenge
+// is not an ownership record; it must not shadow a broader route, deny a
+// certificate or block another reservation. A zero deadline predates the
+// column and never expires.
+func (d CustomDomain) ClaimLive(now time.Time) bool {
+	return d.Verified() || d.VerificationExpiresAt.IsZero() || d.VerificationExpiresAt.After(now)
+}
 
 // DomainDoctorObservation (ADR-120) is the dns_poller's
 // view of a per-domain probe pass. The struct mirrors the
@@ -3331,6 +3400,24 @@ type Cron struct {
 	SkipIfRunning   bool   // skip a scheduled fire while a prior cron run is active
 	CreatedAt       time.Time
 	LastFiredAt     time.Time // zero until first fire; updated by MarkCronFired
+	// ScheduleAnchorAt is when the schedule last took effect: a schedule or
+	// timezone change, an enable, or a lifted suspension (ADR-20261026201726).
+	// Zero until then. See ScheduleCursor.
+	ScheduleAnchorAt time.Time
+}
+
+// ScheduleCursor is the instant after which the cron's next boundary
+// falls: LastFiredAt (CreatedAt before the first fire), or ScheduleAnchorAt
+// when that is later (ADR-20261026201726).
+func (c Cron) ScheduleCursor() time.Time {
+	cursor := c.LastFiredAt
+	if cursor.IsZero() {
+		cursor = c.CreatedAt
+	}
+	if c.ScheduleAnchorAt.After(cursor) {
+		cursor = c.ScheduleAnchorAt
+	}
+	return cursor
 }
 
 const CronSuspendedNoLiveDeployment = "no_live_deployment"
@@ -3393,7 +3480,7 @@ type FireNowRequest struct {
 	AccountID    string
 	RequestedAt  time.Time
 	Status       FireNowStatus
-	InvocationID *string // nil while pending/running; set on terminal
+	InvocationID *string // set once an HTTP fire queues its invocation (ADR-20261026201726)
 	OperationID  *string // set when this cron fire was admitted as managed work
 	TaskID       *string // nil for HTTP crons; set when a command-cron task is queued
 	Error        *string // nil until status=failed
@@ -3572,10 +3659,14 @@ const (
 	AlertMetricWorkflowWaitingAge     AlertMetric = "workflow_waiting_age_seconds"
 	AlertMetricWorkflowDueAge         AlertMetric = "workflow_due_age_seconds"
 	// ADR-746: guest log lines vmmd classified as error / warn in the window.
-	AlertMetricLogErrorLines   AlertMetric = "log_error_lines"
-	AlertMetricLogWarnLines    AlertMetric = "log_warn_lines"
-	AlertMetricEdgeRuleHits    AlertMetric = "edge_rule_hits"     // ADR-1192
-	AlertMetricEdgeRuleLogHits AlertMetric = "edge_rule_log_hits" // ADR-1192
+	AlertMetricLogErrorLines    AlertMetric = "log_error_lines"
+	AlertMetricLogWarnLines     AlertMetric = "log_warn_lines"
+	AlertMetricEdgeRuleHits     AlertMetric = "edge_rule_hits"     // ADR-1192
+	AlertMetricEdgeRuleLogHits  AlertMetric = "edge_rule_log_hits" // ADR-1192
+	AlertMetricEdgeRuleActivity AlertMetric = "edge_rule_activity" // ADR-1192 amendment
+	// AlertMetricRouteInsightsDetected counts the app's route insights that
+	// became active in the window (ADR-20261020161310).
+	AlertMetricRouteInsightsDetected AlertMetric = "route_insights_detected"
 	// AlertMetricSLOBurnRate is the customer-facing ADR-082 API
 	// availability burn-rate signal. The evaluator combines the 1h
 	// 14.4x and 6h 6x Google SRE windows into one effective value.
@@ -3583,6 +3674,9 @@ const (
 	// AlertMetricCustomMetric watches one ADR-202 pushed metric, named by
 	// AlertRule.CustomMetricName (ADR-745).
 	AlertMetricCustomMetric AlertMetric = "custom_metric"
+	// AlertMetricLogSearchMatches counts an app's log events matching
+	// AlertRule.LogQuery within the window (ADR-20261018083536).
+	AlertMetricLogSearchMatches AlertMetric = "log_search_matches"
 	// ADR-747: rules on one customer SLO, named by AlertRule.SLOID.
 	AlertMetricSLOBudgetBurn      AlertMetric = "slo_budget_burn"
 	AlertMetricSLOBudgetRemaining AlertMetric = "slo_budget_remaining_pct"
@@ -3791,25 +3885,30 @@ type AlertRule struct {
 	ID                              string
 	AccountID                       string
 	AppID                           string // empty = account-wide
-	Name                            string
-	Enabled                         bool
-	Metric                          AlertMetric
-	Comparison                      AlertComparison
-	Threshold                       float64
-	WindowSpec                      AlertWindowSpec
-	FailureSource                   AlertFailureSource // empty unless Metric == failed_invocations
-	CustomMetricName                string             // empty unless Metric == custom_metric (ADR-745)
-	SLOID                           string             // set only for the ADR-747 SLO metrics
-	SyntheticCheckID                string             // set only for the ADR-748 synthetic check metrics
-	Action                          AlertAction        // issue #976 / ADR-122 / SAFE-RELEASES-B
-	WebhookURL                      string
-	WebhookSecretSealed             []byte // age/X25519 ciphertext; never logged
-	CooldownMinutes                 int
-	State                           AlertState
-	LastFiredAt                     time.Time // zero until first fire
-	LastEvaluatedAt                 time.Time
-	CreatedAt                       time.Time
-	UpdatedAt                       time.Time
+	// CreatedByAccountID is the member who created the rule
+	// (ADR-20261026151103); empty for a rule older than the column, which
+	// only the app's creator could create.
+	CreatedByAccountID  string
+	Name                string
+	Enabled             bool
+	Metric              AlertMetric
+	Comparison          AlertComparison
+	Threshold           float64
+	WindowSpec          AlertWindowSpec
+	FailureSource       AlertFailureSource // empty unless Metric == failed_invocations
+	CustomMetricName    string             // empty unless Metric == custom_metric (ADR-745)
+	LogQuery            string             // canonical log search filters; set only for log_search_matches
+	SLOID               string             // set only for the ADR-747 SLO metrics
+	SyntheticCheckID    string             // set only for the ADR-748 synthetic check metrics
+	Action              AlertAction        // issue #976 / ADR-122 / SAFE-RELEASES-B
+	WebhookURL          string
+	WebhookSecretSealed []byte // age/X25519 ciphertext; never logged
+	CooldownMinutes     int
+	State               AlertState
+	LastFiredAt         time.Time // zero until first fire
+	LastEvaluatedAt     time.Time
+	CreatedAt           time.Time
+	UpdatedAt           time.Time
 }
 
 // AlertDelivery is one delivery attempt record. IdempotencyKey is
@@ -3905,6 +4004,9 @@ type AppWebhookEvent string
 
 const (
 	AppWebhookEventConsumerUsageThreshold                  AppWebhookEvent = "consumer.usage_threshold"
+	AppWebhookEventConsumerSignedUp                        AppWebhookEvent = "consumer.signed_up"
+	AppWebhookEventConsumerPlanChanged                     AppWebhookEvent = "consumer.plan_changed"
+	AppWebhookEventConsumerClosed                          AppWebhookEvent = "consumer.closed"
 	AppWebhookEventAutomationPaused                        AppWebhookEvent = "automation.paused"
 	AppWebhookEventRealtimeConsumerGroupLagExceeded        AppWebhookEvent = "realtime.consumer_group.lag_exceeded"
 	AppWebhookEventRealtimeConsumerGroupLagRecovered       AppWebhookEvent = "realtime.consumer_group.lag_recovered"
@@ -3957,6 +4059,8 @@ const (
 	AppWebhookEventPlatformTenantStatementFinalized        AppWebhookEvent = "platform_tenant.statement.finalized"
 	AppWebhookEventDebugRegressionDetected                 AppWebhookEvent = "debug.regression.detected"
 	AppWebhookEventDebugRegressionResolved                 AppWebhookEvent = "debug.regression.resolved"
+	AppWebhookEventRouteInsightDetected                    AppWebhookEvent = "routes.insight.detected"
+	AppWebhookEventRouteInsightResolved                    AppWebhookEvent = "routes.insight.resolved"
 	AppWebhookEventRouteMonitorViolated                    AppWebhookEvent = "routes.monitor.violated"
 	AppWebhookEventRouteMonitorEscalated                   AppWebhookEvent = "routes.monitor.escalated"
 	AppWebhookEventRouteMonitorRecovered                   AppWebhookEvent = "routes.monitor.recovered"
@@ -3965,6 +4069,8 @@ const (
 	AppWebhookEventRouteHealthResumed                      AppWebhookEvent = "routes.health.resumed"
 	AppWebhookEventProfileRouteRegressed                   AppWebhookEvent = "profile.route_regressed"
 	AppWebhookEventProfileRouteRecovered                   AppWebhookEvent = "profile.route_recovered"
+	AppWebhookEventProfileCaptureReady                     AppWebhookEvent = "profile.capture_ready"
+	AppWebhookEventProfileCaptureOOMLinked                 AppWebhookEvent = "profile.capture_oom_linked"
 	AppWebhookEventRouteRequirementsChanged                AppWebhookEvent = "routes.requirements.changed"
 	AppWebhookEventRouteRequirementsViolated               AppWebhookEvent = "routes.requirements.violated"
 	AppWebhookEventRouteRequirementsRecovered              AppWebhookEvent = "routes.requirements.recovered"
@@ -3981,6 +4087,7 @@ const (
 	AppWebhookEventRecoveryExecutionFinished               AppWebhookEvent = "event_recovery.execution_finished"
 	AppWebhookEventWorkflowFinished                        AppWebhookEvent = "workflow.finished"
 	AppWebhookEventOutboundAIBudgetThreshold               AppWebhookEvent = "outbound.ai_budget.threshold"
+	AppWebhookEventOutboundAIQualityDrift                  AppWebhookEvent = "outbound.ai_quality.drift"
 	AppWebhookEventRecoveryQueueBlocked                    AppWebhookEvent = "automation.recovery_queue_blocked"
 	AppWebhookEventRecoveryHealthAlert                     AppWebhookEvent = "automation.recovery_health_alert"
 	AppWebhookEventRecoveryHealthRecovered                 AppWebhookEvent = "automation.recovery_health_recovered"
@@ -4013,6 +4120,7 @@ var AllAppWebhookEvents = []AppWebhookEvent{
 	AppWebhookEventRealtimeInboxAcknowledged,
 	AppWebhookEventRealtimeInboxGap,
 	AppWebhookEventProfileRouteRegressed, AppWebhookEventProfileRouteRecovered,
+	AppWebhookEventProfileCaptureReady, AppWebhookEventProfileCaptureOOMLinked,
 	AppWebhookEventCronFired,
 	AppWebhookEventCronFiredManually,
 	AppWebhookEventAppCreated,
@@ -4035,10 +4143,16 @@ var AllAppWebhookEvents = []AppWebhookEvent{
 	AppWebhookEventBudgetThreshold,
 	AppWebhookEventUsageStatementFinalized,
 	AppWebhookEventConsumerUsageThreshold,
+	AppWebhookEventConsumerSignedUp,
+	AppWebhookEventConsumerPlanChanged,
+	AppWebhookEventConsumerClosed,
 	AppWebhookEventOutboundAIBudgetThreshold,
+	AppWebhookEventOutboundAIQualityDrift,
 	AppWebhookEventPlatformTenantStatementFinalized,
 	AppWebhookEventDebugRegressionDetected,
 	AppWebhookEventDebugRegressionResolved,
+	AppWebhookEventRouteInsightDetected,
+	AppWebhookEventRouteInsightResolved,
 	AppWebhookEventRouteMonitorViolated,
 	AppWebhookEventRouteMonitorEscalated,
 	AppWebhookEventRouteMonitorRecovered,
@@ -4170,8 +4284,11 @@ type AppWebhook struct {
 	RetryPolicy      AppWebhookRetryPolicy
 	DeliveryFormat   AppWebhookDeliveryFormat
 	Enabled          bool
-	CreatedAt        time.Time
-	UpdatedAt        time.Time
+	// CreatedByAccountID is the member who created an app-scope webhook
+	// (ADR-20261026151103). It is written on create only.
+	CreatedByAccountID string
+	CreatedAt          time.Time
+	UpdatedAt          time.Time
 }
 
 // ManagedRealtimeEndpoint is the durable control-plane description of one
@@ -4203,6 +4320,12 @@ type ManagedRealtimeEndpoint struct {
 	Enabled                    bool
 	CreatedAt                  time.Time
 	UpdatedAt                  time.Time
+	// Slug names the endpoint within its app so gregale.yaml can declare it
+	// (ADR-20261019102657). Empty for endpoints created without one.
+	Slug string
+	// ChannelRules authorize channels from verified token claims without the
+	// authorize callback (ADR-20261019102657).
+	ChannelRules []api.RealtimeChannelRule
 }
 
 type UpdateManagedRealtimeEndpointParams struct {
@@ -4226,6 +4349,10 @@ type UpdateManagedRealtimeEndpointParams struct {
 	MaxMessageBytes                 *int64
 	MaxConnectionAgeSeconds         *int64
 	Enabled                         *bool
+	// Slug replaces the endpoint's slug; an empty value removes it.
+	Slug *string
+	// ChannelRules replaces the endpoint's channel rules.
+	ChannelRules *[]api.RealtimeChannelRule
 }
 
 type ManagedRealtimeEndpointQuotaScope string
@@ -4515,6 +4642,19 @@ type Invocation struct {
 	// ExclusiveClaim is short-lived schedd-to-gateway capability metadata. It
 	// is never stored in the invocation ledger or exposed by the customer API.
 	ExclusiveClaim *exclusivework.Claim `json:"-"`
+	// WorkflowOperation is set only by the gateway's workflow resolver, from
+	// the execution ledger, for a step of an Operation-linked run. gatewayd
+	// renders the guest's Operation headers from it; persisted envelopes and
+	// unlinked workflow steps can never assert them.
+	WorkflowOperation *WorkflowOperationStep `json:"-"`
+	// AdmissionMaxPending is the producer's per-app cap on pending work of
+	// this Source, enforced inside the enqueue transaction (0 = uncapped).
+	// It is admission input only, never persisted or customer-authored.
+	AdmissionMaxPending int `json:"-"`
+	// AdmissionMaxBacklogBytes is the producer's per-account cap on pending
+	// queue payload bytes (ADR-20261022105723; 0 = uncapped). Like
+	// AdmissionMaxPending it is admission input only.
+	AdmissionMaxBacklogBytes int64 `json:"-"`
 	// Host-to-host operation metadata is trusted protocol state, never persisted or guest-authored.
 	OperationResultVersion     int    `json:"-"`
 	ManagedOperationID         string `json:"-"`
@@ -4534,6 +4674,7 @@ type Invocation struct {
 	PlatformTenantID string `json:"platform_tenant_id,omitempty"`
 	InstanceID       string `json:"instance_id,omitempty"`
 	// ResolvedDeploymentID proves the release member that handled synthetic dispatch.
+	WorkerJobEvidence    bool             `json:"-"`
 	ResolvedDeploymentID string           `json:"-"`
 	Source               InvocationSource `json:"source"`
 	// EnvironmentID is authenticated operational ownership, never request intent.
@@ -5238,7 +5379,19 @@ const (
 	// (ADR-137) the run-to-completion RestartPolicy default 'no'
 	// applies; billed at standard rate while RUNNING.
 	InstanceModeJob InstanceMode = "job"
+	// InstanceModeFork tags a production fork (ADR-732): a quarantined
+	// restore of an app capture that never serves traffic. It bills like
+	// a live instance, counts toward the RAM ceiling but not
+	// max_concurrency, is never routed, never idle-reaped, parked,
+	// snapshotted or drained, and is destroyed only by the fork
+	// coordinator at its TTL.
+	InstanceModeFork InstanceMode = "fork"
 )
+
+// IsFork reports whether mode is the ADR-732 production-fork mode. Every
+// path that routes to, counts, parks or snapshots instances must skip
+// these rows.
+func IsFork(mode string) bool { return mode == string(InstanceModeFork) }
 
 // MirrorRule (issue #72 / ADR-125) is the customer-intent row
 // that links a live source_deployment to a live mirror_deployment.
@@ -5541,6 +5694,71 @@ type ComputeNode struct {
 	// nil on a never-recovered node. The DB CHECK constraint
 	// (00582) rejects values outside this closed set.
 	LastRecoveryOutcome *string
+	// CPUTemplate is the Firecracker CPU template vmmd boots guests with,
+	// and CPUModel the host CPU signature (fcvm.HostCPU.Signature). vmmd
+	// writes both at registration; empty means "not reported", a vmmd from
+	// before ADR-20261024225612.
+	CPUTemplate string
+	CPUModel    string
+	// Readiness is what schedd's heartbeat last proved about the node
+	// (ADR-20261022184531). Placement prefers ready nodes; Lifecycle stays
+	// the authority for operator and recovery states.
+	Readiness NodeReadiness
+	// ReadinessReason says why a node is not ready; nil when it is.
+	ReadinessReason *string
+}
+
+// NodeReadiness is whether a compute node has proven it can take a wake
+// (ADR-20261022184531). The values mirror compute_nodes_readiness_chk.
+type NodeReadiness string
+
+const (
+	// NodeReadinessReady: the node answers its heartbeat and its vmmd can
+	// adopt its configured base generations. Rows default to ready.
+	NodeReadinessReady NodeReadiness = "ready"
+	// NodeReadinessDegraded: the node answers but has proven it cannot serve
+	// a wake. Placement uses it only when no ready node fits.
+	NodeReadinessDegraded NodeReadiness = "degraded"
+	// NodeReadinessUnavailable and NodeReadinessDraining mirror lifecycle.
+	NodeReadinessUnavailable NodeReadiness = "unavailable"
+	NodeReadinessDraining    NodeReadiness = "draining"
+)
+
+// Valid reports whether r is one of the values the column admits.
+func (r NodeReadiness) Valid() bool {
+	switch r {
+	case NodeReadinessReady, NodeReadinessDegraded, NodeReadinessUnavailable, NodeReadinessDraining:
+		return true
+	}
+	return false
+}
+
+// EffectiveReadiness is the node's readiness with lifecycle applied: a node
+// that lifecycle keeps out of placement reads unavailable or draining even
+// before the heartbeat writes it, and a row with no readiness reads ready.
+func (n ComputeNode) EffectiveReadiness() NodeReadiness {
+	switch n.Lifecycle {
+	case NodeLifecycleDraining, NodeLifecycleForceDraining, NodeLifecycleMaintenance:
+		return NodeReadinessDraining
+	case NodeLifecycleUnavailable, NodeLifecycleRetired:
+		return NodeReadinessUnavailable
+	}
+	if n.Lifecycle == "" && !n.Active {
+		return NodeReadinessUnavailable
+	}
+	if n.Readiness == "" {
+		return NodeReadinessReady
+	}
+	return n.Readiness
+}
+
+// ComputeNodeReadinessStore records a node's proven readiness. schedd's
+// heartbeat is the only writer (ADR-20261022184531).
+type ComputeNodeReadinessStore interface {
+	// SetComputeNodeReadiness writes readiness and reason (empty clears it)
+	// and reports whether either changed. Only a change fires
+	// compute_node_changed, so an unchanged verdict costs no notification.
+	SetComputeNodeReadiness(ctx context.Context, nodeID string, readiness NodeReadiness, reason string) (bool, error)
 }
 
 // NodeLifecycle is the compute-node controller state. Constants mirror the
@@ -6294,6 +6512,9 @@ type CreditLedgerEntry struct {
 // lifecycle fields are stored as an app-owned manifest patch alongside the
 // existing resource and scaling settings.
 type UpdateAppParams struct {
+	// Explicit policy writes relinquish a previous deploy's ownership even at the same value.
+	TouchDeploymentPolicies           bool
+	DeploySettingsGuard               *DeploySettingsGuard
 	ExpectedServiceBindingFingerprint string
 	// Visibility is the app edge exposure policy. SetVisibility distinguishes
 	// an explicit public reset from an omitted field.
@@ -6702,6 +6923,12 @@ type Snapshot struct {
 	Stale                           bool
 	DeletePending                   bool
 	CreatedAt                       time.Time
+	// CPUTemplate and CPUModel are the capturing node's CPU identity
+	// (ADR-20261024225612): a templated snapshot restores on any node
+	// class the template supports, a template-less one only on the same
+	// CPUModel. Both empty identifies a legacy row.
+	CPUTemplate string
+	CPUModel    string
 }
 
 // Snapshot tier constants (issue #470 / ADR-055). Use these rather
@@ -7498,6 +7725,9 @@ type ProjectEnvironmentApproval struct {
 	ExpiresAt         time.Time
 	ConsumedAt        *time.Time
 	CreatedAt         time.Time
+	// ApprovedByAccountID is who gave the approval; "" for approvals made
+	// before it was recorded (ADR-20261020085706 amendment 2).
+	ApprovedByAccountID string
 }
 
 // ProjectEnvironmentConfig is one immutable, canonical non-secret
@@ -7518,6 +7748,14 @@ type ProjectEnvironmentConfig struct {
 // project-environment promotion. The operation remains available after the
 // request ends so a caller can inspect or resume a partial promotion.
 type ProjectEnvironmentPromotion struct {
+	Approval         *PromotionApprovalIntent
+	ConsumedApproval *ProjectEnvironmentApproval
+	// Admission-only policy. Durable progress belongs to the health store.
+	ReleaseSecrets               map[string]map[string]string
+	Workers                      bool
+	Migrate                      bool
+	ResolveServiceBindings       bool
+	HealthPolicy                 *api.ProjectPromotionHealthPolicy
 	ID                           string
 	AccountID                    string
 	ProjectID                    string
@@ -7559,6 +7797,8 @@ type ProjectEnvironmentPromotion struct {
 	// actual snapshots atomically with creation; callers cannot supply payloads.
 	SourceFeatureFlagsHash         string
 	PreviousTargetFeatureFlagsHash string
+	// Preview identity; the store captures the private configuration itself.
+	ReleaseConfigurationHash string
 }
 
 // ProjectEnvironmentPromotionWorkload is one checkpoint within a promotion.
@@ -7924,6 +8164,12 @@ const (
 	// Limits.EdgeRulesWAFPerApp (Free 0 / Hobby 0 / Pro 5 / Scale 20). See
 	// migrations/20261009172820417_edge_rules_kind_waf.sql.
 	EdgeRuleKindWAF EdgeRuleKind = "waf"
+	// EdgeRuleKindChallenge asks browsers on matched routes to solve a
+	// proof of work and carry a signed pass before the request reaches the
+	// app (ADR-831 amendment 7). Quota via Limits.EdgeRulesChallengePerApp
+	// (Free 0 / Hobby 3 / Pro 10 / Scale 25). See
+	// migrations/20261019134529781_edge_rules_kind_challenge.sql.
+	EdgeRuleKindChallenge EdgeRuleKind = "challenge"
 )
 
 // IsValid reports whether k is a closed-set kind. New kinds land via
@@ -7937,7 +8183,7 @@ func (k EdgeRuleKind) IsValid() bool {
 		EdgeRuleKindMaintenance, EdgeRuleKindThrottle, EdgeRuleKindGeo,
 		EdgeRuleKindBudget, EdgeRuleKindCache, EdgeRuleKindRespond,
 		EdgeRuleKindRetry, EdgeRuleKindCircuitBreaker, EdgeRuleKindAsync,
-		EdgeRuleKindWAF:
+		EdgeRuleKindWAF, EdgeRuleKindChallenge:
 		return true
 	}
 	return false
@@ -8085,7 +8331,9 @@ type EdgeRuleIPAction struct {
 //     enforced as a sanity floor — MaxBodyBytes > plan cap is a
 //     create-time 422 from pkg/api/dto.go.
 type EdgeRuleValidateAction struct {
-	Schema              json.RawMessage `json:"schema"`
+	// Schema is absent for a parameter-only rule. Rows written before
+	// omitempty store "schema": null; the gateway reads that as absent.
+	Schema              json.RawMessage `json:"schema,omitempty"`
 	ContentTypes        []string        `json:"content_types,omitempty"`
 	ApplyWhileStreaming bool            `json:"apply_while_streaming,omitempty"`
 	RejectOnUnknown     bool            `json:"reject_on_unknown_fields,omitempty"`
@@ -8184,6 +8432,7 @@ type EdgeRuleGeoAction struct {
 // apid-Validate.
 type EdgeRuleBudgetAction struct {
 	BudgetMs            int    `json:"budget_ms"`
+	TotalDeadlineMs     int    `json:"total_deadline_ms,omitempty"`
 	AllowOverrideHeader string `json:"allow_override_header,omitempty"`
 }
 
@@ -8307,7 +8556,11 @@ type EdgeRuleAsyncAction struct {
 // gatewayd matcher only reads Kind + the kind-specific subset it
 // needs.
 type EdgeRuleAction struct {
-	Kind     EdgeRuleKind            `json:"kind"`
+	Kind EdgeRuleKind `json:"kind"`
+	// Penalty is the rule's penalty box (ADR-20261022105846). It is
+	// kind-independent, so it sits beside the kind payloads; ip, geo,
+	// throttle and waf (block) rules may carry one.
+	Penalty  *EdgeRulePenalty        `json:"penalty,omitempty"`
 	Route    *EdgeRuleRouteAction    `json:"route,omitempty"`
 	Rewrite  *EdgeRuleRewriteAction  `json:"rewrite,omitempty"`
 	Redirect *EdgeRuleRedirectAction `json:"redirect,omitempty"`
@@ -8387,6 +8640,27 @@ type EdgeRuleAction struct {
 	Async *EdgeRuleAsyncAction `json:"async,omitempty"`
 	// WAF carries the kind=waf scoring knobs (ADR-831 step 1).
 	WAF *EdgeRuleWAFAction `json:"waf,omitempty"`
+	// Challenge carries the kind=challenge work and pass knobs (ADR-831
+	// amendment 7).
+	Challenge *EdgeRuleChallengeAction `json:"challenge,omitempty"`
+}
+
+// EdgeRulePenalty is the stored penalty box; values are the effective ones
+// api.EdgeRulePenalty.Validate wrote.
+type EdgeRulePenalty struct {
+	Seconds       int `json:"seconds"`
+	After         int `json:"after"`
+	WithinSeconds int `json:"within_seconds"`
+}
+
+// EdgeRuleChallengeAction is the stored kind=challenge payload. Values are
+// the effective ones written by api.EdgeRuleChallengeAction.Validate.
+type EdgeRuleChallengeAction struct {
+	Difficulty     int `json:"difficulty,omitempty"`
+	PassTTLSeconds int `json:"pass_ttl_seconds,omitempty"`
+	// MaxDifficulty caps raising the difficulty under attack (ADR-831
+	// amendment 8); zero keeps it fixed.
+	MaxDifficulty int `json:"max_difficulty,omitempty"`
 }
 
 // EdgeRuleWAFAction is the stored kind=waf payload (ADR-831 step 1). Values
@@ -8441,7 +8715,8 @@ type EdgeRule struct {
 	AccountID string
 	AppID     string
 	// ManifestKey is a private stable ownership key for edge rules applied
-	// from deployment manifests. It is empty for manually managed rules.
+	// from deployment manifests, or EdgeRuleAttackModeKey for the app's
+	// attack-mode rule. It is empty for manually managed rules.
 	ManifestKey  string
 	MatchHost    string
 	MatchPath    string
@@ -8497,6 +8772,18 @@ const (
 // EdgeRuleExpired reports whether the rule's expiry has passed at now.
 func (r EdgeRule) EdgeRuleExpired(now time.Time) bool {
 	return r.ExpiresAt != nil && !now.Before(*r.ExpiresAt)
+}
+
+// EdgeRuleAttackModeKey is the ownership key (manifest_key) of an app's
+// attack-mode rule (ADR-20261021220456): one app-wide challenge rule the
+// attack-mode switch creates, extends and removes. The unique (app_id,
+// manifest_key) index keeps it to one per app. It is outside the plan's
+// rule quotas and a rule-set rollback leaves it as it is.
+const EdgeRuleAttackModeKey = "attack-mode"
+
+// AttackMode reports whether r is its app's attack-mode rule.
+func (r EdgeRule) AttackMode() bool {
+	return r.ManifestKey == EdgeRuleAttackModeKey
 }
 
 // CorsPreset is the in-memory row mirrored from cors_presets (issue
@@ -9367,8 +9654,11 @@ type AppLogDrain struct {
 	TargetURL        string
 	AuthHeaderSealed []byte
 	Enabled          bool
-	CreatedAt        time.Time
-	UpdatedAt        time.Time
+	// CreatedByAccountID is the member who created the drain
+	// (ADR-20261026151103). It is written on create only.
+	CreatedByAccountID string
+	CreatedAt          time.Time
+	UpdatedAt          time.Time
 }
 
 // AppLogDrainHealth is the durable, customer-safe delivery snapshot for one
@@ -9460,4 +9750,15 @@ type UDPListener struct {
 	Enabled      bool
 	CreatedAt    time.Time
 	UpdatedAt    time.Time
+}
+
+// WorkflowOperationStep is the ledger-derived identity of one Operation-linked
+// workflow step dispatch: what the guest needs to prove its step to apid.
+type WorkflowOperationStep struct {
+	OperationID string
+	RunID       string
+	StepName    string
+	Generation  int
+	Attempt     int
+	Capability  string
 }

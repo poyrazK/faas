@@ -1,48 +1,49 @@
-package state
+package state_test
 
 import (
 	"context"
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func TestMemStoreListInstancesForLifecycleReconciliation(t *testing.T) {
 	ctx := context.Background()
-	store := NewMemStore()
+	store := state.NewMemStore()
 	account, err := store.CreateAccount(ctx, "lifecycle@example.com", api.PlanPro)
 	if err != nil {
 		t.Fatalf("CreateAccount: %v", err)
 	}
-	app, err := store.CreateApp(ctx, App{AccountID: account.ID, Slug: "lifecycle", NodeID: "node-a"})
+	app, err := store.CreateApp(ctx, state.App{AccountID: account.ID, Slug: "lifecycle", NodeID: "node-a"})
 	if err != nil {
 		t.Fatalf("CreateApp: %v", err)
 	}
-	other, err := store.CreateApp(ctx, App{AccountID: account.ID, Slug: "other", NodeID: "node-b"})
+	other, err := store.CreateApp(ctx, state.App{AccountID: account.ID, Slug: "other", NodeID: "node-b"})
 	if err != nil {
 		t.Fatalf("CreateApp other: %v", err)
 	}
-	var deployments []Deployment
+	var deployments []state.Deployment
 	for _, appID := range []string{app.ID, app.ID, other.ID} {
-		deployment, err := store.CreateDeployment(ctx, Deployment{AppID: appID, Kind: DeploymentKindImage})
+		deployment, err := store.CreateDeployment(ctx, state.Deployment{AppID: appID, Kind: state.DeploymentKindImage})
 		if err != nil {
 			t.Fatal(err)
 		}
 		deployments = append(deployments, deployment)
 	}
 
-	deletedInstance, err := store.CreateInstance(ctx, app.ID, deployments[0].ID, string(StateRunning), 128, "node-a", "")
+	deletedInstance, err := store.CreateInstance(ctx, app.ID, deployments[0].ID, string(state.StateRunning), 128, "node-a", "")
 	if err != nil {
 		t.Fatalf("CreateInstance deleted app: %v", err)
 	}
-	if _, err := store.CreateInstance(ctx, app.ID, deployments[1].ID, string(StateParked), 128, "node-a", ""); err != nil {
+	if _, err := store.CreateInstance(ctx, app.ID, deployments[1].ID, string(state.StateParked), 128, "node-a", ""); err != nil {
 		t.Fatalf("CreateInstance parked: %v", err)
 	}
-	if _, err := store.CreateInstance(ctx, other.ID, deployments[2].ID, string(StateRunning), 128, "node-b", ""); err != nil {
+	if _, err := store.CreateInstance(ctx, other.ID, deployments[2].ID, string(state.StateRunning), 128, "node-b", ""); err != nil {
 		t.Fatalf("CreateInstance other: %v", err)
 	}
-	deleted := AppDeleted
-	if _, err := store.UpdateApp(ctx, app.ID, UpdateAppParams{Status: &deleted}); err != nil {
+	deleted := state.AppDeleted
+	if _, err := store.UpdateApp(ctx, app.ID, state.UpdateAppParams{Status: &deleted}); err != nil {
 		t.Fatalf("UpdateApp deleted: %v", err)
 	}
 
@@ -67,7 +68,7 @@ func TestMemStoreListInstancesForLifecycleReconciliation(t *testing.T) {
 	if err := store.MarkAccountDeletionPending(ctx, account.ID); err != nil {
 		t.Fatalf("MarkAccountDeletionPending: %v", err)
 	}
-	if err := store.UpdateInstanceState(ctx, deletedInstance.ID, string(StateEvictingAccountDeleting)); err != nil {
+	if err := store.UpdateInstanceState(ctx, deletedInstance.ID, string(state.StateEvictingAccountDeleting)); err != nil {
 		t.Fatalf("UpdateInstanceState evicting: %v", err)
 	}
 	rows, err = store.ListInstancesForLifecycleReconciliation(ctx, "node-a", 10)

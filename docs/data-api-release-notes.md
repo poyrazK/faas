@@ -3,6 +3,107 @@
 This change completes the current core Data API development slice. It does not
 publish artifacts or establish hosted staging acceptance.
 
+## Hosted engine fixes: TLS roots and snapshot-safe sessions
+
+[ADR 20261026131131](adr/20261026131131-data-api-hosted-tls-roots-and-snapshot-sessions.md)
+fixes two faults that only a hosted database exposes:
+
+- **Remote databases.** PostgREST now verifies the database with Node's root
+  store; before, `sslmode=verify-full` without a root file refused every
+  remote database and the first deploy never became ready.
+- **Wakes.** The runtime stops PostgREST before a snapshot and starts it after
+  a restore, and requests wait for it, so the first request after a wake no
+  longer fails on a dead captured session. `data-api create` and `data-api
+  deploy` register the hooks.
+
+## Managed databases reachable on every plan
+
+[ADR 20261026150000](adr/20261026150000-managed-database-binding-egress.md):
+a managed PostgreSQL binding opens its database's port to that database's own
+addresses for the bound app, on every plan, so `data-api create` works on
+Hobby. Other destinations on 5432 still need Pro or Scale egress ports.
+
+## Row-level security required for signed-in requests
+
+[ADR 20261026140223](adr/20261026140223-data-api-requires-row-level-security.md):
+signed-in requests reach only RLS tables and security-invoker views (target,
+embeddings and computed relationships); others answer `403 rls_required`.
+Owners exempt intentionally shared relations with `data-api configure
+--allow-without-rls`, or `allow_without_rls` in the dev config.
+
+## Public reads, server keys, aggregates, single-app projects and Python/Go clients
+
+[ADR 20261018170742](adr/20261018170742-data-api-access-modes-and-clients.md)
+closes five product gaps, all opt-in:
+
+- **Public reads.** `--public-read` lists relations that anonymous `GET`/`HEAD`
+  requests may read. Startup requires RLS tables or security-invoker views.
+  Embeddings must also be listed, and every anonymous client is rate limited.
+- **Public RPCs.** `--public-rpc` lists approved `STABLE` or `IMMUTABLE`
+  functions that anonymous callers may call by `GET`, which PostgREST runs
+  read-only. An anonymous `POST` returns `405 public_rpc_requires_get`.
+  Embeddings must be publicly readable, and the shared anonymous rate limit
+  and edge cache apply.
+- **Anonymous SDK clients.** `createDataClient({ url, anonymous: true })` sends
+  no `Authorization` header when there is no token, so `@gregale/data` serves
+  public reads and `rpc(name, args, { get: true })` public RPCs with generated
+  types. Without the option, a missing token still throws.
+- **Usage and monthly caps.** `data-api usage` shows requests by access kind,
+  rejections, errors, rows and bytes per hour or day. `configure
+  --monthly-caps requests=N,anonymous=N` refuses requests past an owner cap
+  with `429 data_api_monthly_cap_reached` until the next UTC month. The runtime
+  reports under workload identity, and report ids keep snapshot restores from
+  double counting.
+- **Python and Go client parity.** Generated clients opt in to anonymous
+  access explicitly (`anonymous=True`, `Anonymous: true`), call public RPCs
+  with GET (`get=True`, `WithGET()`) and page with keysets (`page`/`Page`,
+  `cursor_from`/`CursorFrom`). Go updates set columns to NULL with `SetNull`
+  and decode embedded relations with `GetInto`. Aggregate selects keep their
+  types in the TypeScript SDK.
+- **Edge-cached public reads.** `configure --public-read-cache 30s` lets the
+  gateway cache serve canonical anonymous reads. Responses are tagged per
+  relation so `gregale cache purge --tag data-api:api.products` invalidates
+  precisely. Every other response stays `no-store`.
+- **Server keys.** `data-api server-key create|list|revoke` manages two
+  hash-only rotation slots for trusted backends. RLS still applies, keys are
+  refused when sent with an `Origin` header, and `X-Gregale-Subject` acts for
+  one user.
+- **Scoped server keys.** `server-key create --read-only --relations ...
+  --rpcs ... --no-subjects` restricts a key. Anything outside its permissions
+  returns `403 server_key_permission_denied` before SQL, and RLS still applies.
+- **Aggregates.** `--aggregates` enables PostgREST aggregates and requires the
+  SQL deadline, so expensive queries are cancelled inside PostgreSQL.
+- **Single-app projects.** `--migrations` and `data-api deploy` run migrations
+  as the Data API app's own release task, using a release-only
+  `MIGRATION_DATABASE_URL`.
+- **Python and Go clients.** `data-api types --language python|go` renders
+  standard-library clients from the fingerprinted contract, offline with
+  `--snapshot-file`.
+
+- **Live reads.** `gregale data-api live enable` connects a Data API to
+  realtime. `@gregale/data/live` then keeps a read current for signed-in
+  users, visitors on public relations and server keys, with RLS deciding each
+  row. Live reads verify tokens exactly as the Data API does. Accounts get
+  them through the `live_queries` platform flag.
+- **Engine pool and server-key limits.** `data-api configure --pool N` runs
+  up to eight engine connections per instance instead of two, and connection
+  budgets follow the reported pools. Server keys keep a slot free for users
+  by default: their requests past it wait briefly in order, then answer 429.
+  `--server-key-concurrency` and `--server-key-rate-limit` are optional.
+  Upgrade the CLI before changing the pool.
+- **File storage.** `gregale data-api storage enable` binds a bucket and turns
+  storage on. Files stream through the Data API, and RLS policies on
+  `storage_objects` decide every upload, download and removal, so file lists
+  are ordinary queries and live reads. `@gregale/data` adds
+  `createStorageClient`.
+
+Every request now carries a gateway-owned `gregale_access` claim (`user`,
+`anonymous` or `server`) for policies. Logs and `data-api diagnostics` report
+access kinds and the server-key slot, never subjects, addresses or keys.
+Runtime tests cover anonymous, server-key and claim-spoofing paths. Clientgen
+tests type-check the generated Go and run both clients end to end against a
+fake API. Hosted acceptance remains open, as for the rest of the Data API.
+
 ## Database connection-budget preflight
 
 New read-only management endpoints report a database-wide canonical connection

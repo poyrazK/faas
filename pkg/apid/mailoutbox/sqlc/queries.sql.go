@@ -1700,6 +1700,8 @@ JOIN accounts a ON a.id=d.mail_failure_account_id
 WHERE d.status='failed' AND d.deleted_at IS NULL AND d.mail_failed_at>=c.started_at
     AND d.mail_failed_at>clock_timestamp()-make_interval(secs=>$3::integer)
     AND NOT EXISTS(SELECT 1 FROM platform_mail_deployment_observations r WHERE r.deployment_id=d.id AND r.failure_revision=d.mail_failure_revision)
+    -- A rehearsal candidate's failed deploy is run evidence, not mail (ADR-20261019180000).
+    AND NOT EXISTS(SELECT 1 FROM scenario_test_action_policies p WHERE p.app_id=d.app_id)
 ORDER BY d.mail_failed_at,d.id LIMIT $4
 `
 
@@ -4242,9 +4244,15 @@ func (q *Queries) SavePendingMFAEnrollment(ctx context.Context, db DBTX, arg Sav
 }
 
 const scheduleDeletion = `-- name: ScheduleDeletion :one
-UPDATE accounts SET status='deleted_pending',deletion_requested_at=coalesce(deletion_requested_at,clock_timestamp())
-WHERE id=$1 AND status IN ('active','deleted_pending') RETURNING id,email,deletion_requested_at
+UPDATE accounts SET status='deleted_pending',deletion_requested_at=coalesce(deletion_requested_at,clock_timestamp()),
+    deletion_includes_managed_postgres=deletion_includes_managed_postgres OR $1::boolean
+WHERE id=$2 AND status IN ('active','deleted_pending') RETURNING id,email,deletion_requested_at
 `
+
+type ScheduleDeletionParams struct {
+	IncludeManagedPostgres bool
+	ID                     pgtype.UUID
+}
 
 type ScheduleDeletionRow struct {
 	ID                  pgtype.UUID
@@ -4252,26 +4260,32 @@ type ScheduleDeletionRow struct {
 	DeletionRequestedAt pgtype.Timestamptz
 }
 
-func (q *Queries) ScheduleDeletion(ctx context.Context, db DBTX, id pgtype.UUID) (ScheduleDeletionRow, error) {
-	row := db.QueryRow(ctx, scheduleDeletion, id)
+func (q *Queries) ScheduleDeletion(ctx context.Context, db DBTX, arg ScheduleDeletionParams) (ScheduleDeletionRow, error) {
+	row := db.QueryRow(ctx, scheduleDeletion, arg.IncludeManagedPostgres, arg.ID)
 	var i ScheduleDeletionRow
 	err := row.Scan(&i.ID, &i.Email, &i.DeletionRequestedAt)
 	return i, err
 }
 
 const scheduleNonpaymentDeletionAccount = `-- name: ScheduleNonpaymentDeletionAccount :one
-UPDATE accounts SET status='deleted_pending',suspended_reason=NULL,deletion_requested_at=clock_timestamp()
-WHERE id=$1 AND status='suspended' AND deletion_requested_at IS NULL
+UPDATE accounts SET status='deleted_pending',suspended_reason=NULL,deletion_requested_at=clock_timestamp(),
+    deletion_includes_managed_postgres=$1::boolean
+WHERE id=$2 AND status='suspended' AND deletion_requested_at IS NULL
 RETURNING billing_mail_revision,deletion_requested_at
 `
+
+type ScheduleNonpaymentDeletionAccountParams struct {
+	IncludeManagedPostgres bool
+	ID                     pgtype.UUID
+}
 
 type ScheduleNonpaymentDeletionAccountRow struct {
 	BillingMailRevision int64
 	DeletionRequestedAt pgtype.Timestamptz
 }
 
-func (q *Queries) ScheduleNonpaymentDeletionAccount(ctx context.Context, db DBTX, id pgtype.UUID) (ScheduleNonpaymentDeletionAccountRow, error) {
-	row := db.QueryRow(ctx, scheduleNonpaymentDeletionAccount, id)
+func (q *Queries) ScheduleNonpaymentDeletionAccount(ctx context.Context, db DBTX, arg ScheduleNonpaymentDeletionAccountParams) (ScheduleNonpaymentDeletionAccountRow, error) {
+	row := db.QueryRow(ctx, scheduleNonpaymentDeletionAccount, arg.IncludeManagedPostgres, arg.ID)
 	var i ScheduleNonpaymentDeletionAccountRow
 	err := row.Scan(&i.BillingMailRevision, &i.DeletionRequestedAt)
 	return i, err

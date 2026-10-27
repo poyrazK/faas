@@ -1,0 +1,337 @@
+// adr: 1337
+package reposcan
+
+import (
+	"reflect"
+	"strings"
+	"testing"
+	"testing/fstest"
+
+	"github.com/onebox-faas/faas/pkg/api"
+)
+
+func scanCompose(t *testing.T, body string, extra ...string) (Result, error) {
+	t.Helper()
+	files := fstest.MapFS{"compose.yaml": &fstest.MapFile{Data: []byte(body)}}
+	for i := 0; i+1 < len(extra); i += 2 {
+		files[extra[i]] = &fstest.MapFile{Data: []byte(extra[i+1])}
+	}
+	return Scan(files)
+}
+
+// strs keeps an empty entrypoint non-nil: it must encode as [] (cleared), not
+// null (inherited), in the frozen deployment contract.
+func strs(values ...string) *[]string {
+	if values == nil {
+		values = []string{}
+	}
+	return &values
+}
+func secs(value int) *int { return &value }
+
+func TestComposeImageProcessDiscovery(t *testing.T) {
+	for _, tc := range []struct {
+		name, declaration string
+		want              *api.ComposeProcess
+	}{
+		{"absent", "", nil},
+		{"entrypoint list", `entrypoint: [tini, --]`, &api.ComposeProcess{Entrypoint: strs("tini", "--")}},
+		{"entrypoint words", `entrypoint: /usr/bin/env node`, &api.ComposeProcess{Entrypoint: strs("/usr/bin/env", "node")}},
+		{"entrypoint cleared with command", "entrypoint: []\n    command: [node, server.js]", &api.ComposeProcess{Entrypoint: strs()}},
+		{"entrypoint empty string with command", "entrypoint: \"\"\n    command: [node, server.js]", &api.ComposeProcess{Entrypoint: strs()}},
+		{"user name", `user: node`, &api.ComposeProcess{User: "node"}},
+		{"user id", `user: 1000`, &api.ComposeProcess{User: "1000"}},
+		{"user and group", `user: "1000:1000"`, &api.ComposeProcess{User: "1000:1000"}},
+		{"working_dir", `working_dir: /srv/app`, &api.ComposeProcess{WorkingDir: "/srv/app"}},
+		{"stop_signal short name", `stop_signal: INT`, &api.ComposeProcess{StopSignal: "SIGINT"}},
+		{"stop_signal number", `stop_signal: "15"`, &api.ComposeProcess{StopSignal: "SIGTERM"}},
+		{"stop_grace_period", `stop_grace_period: 1m30s`, &api.ComposeProcess{StopGracePeriodS: secs(90)}},
+		{"stop_grace_period rounds up", `stop_grace_period: 1500ms`, &api.ComposeProcess{StopGracePeriodS: secs(2)}},
+		{"interpolated", "user: ${APP_USER}\n    working_dir: ${APP_DIR:-/app}", &api.ComposeProcess{User: "app", WorkingDir: "/app"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			body := "services:\n  web:\n    image: nginx:1.27\n    ports: [80]\n    " + tc.declaration + "\n"
+			result, err := scanCompose(t, body, ".env", "APP_USER=app\n")
+			if err != nil || len(result.Workloads) != 1 {
+				t.Fatalf("scan = %+v, %v", result, err)
+			}
+			if got := result.Workloads[0].ImageProcess; !reflect.DeepEqual(got, tc.want) {
+				t.Fatalf("process = %#v; want %#v", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestComposeImageProcessRejectsMalformedDeclaration(t *testing.T) {
+	for _, tc := range []struct{ declaration, want string }{
+		{`entrypoint: "sh -c 'echo hi'"`, "list form"},
+		{`entrypoint: echo $$HOME`, "list form"},
+		{`entrypoint: []`, "also set command"},
+		{`entrypoint: [3]`, "entrypoint arguments must be strings"},
+		{`entrypoint: {a: b}`, "entrypoint must be"},
+		{`entrypoint: ["", run]`, "entrypoint must name an executable"},
+		{`user: "a b"`, "user must be"},
+		{`user: ":staff"`, "user must be"},
+		{`user: ""`, "user must be"},
+		{`working_dir: app`, "working_dir must be"},
+		{`working_dir: /srv/../app`, "working_dir must be"},
+		{`stop_signal: SIGKILL`, "stop_signal"},
+		{`stop_signal: SIGWINCH`, "stop_signal"},
+		{`stop_grace_period: 30`, "stop_grace_period"},
+		{`stop_grace_period: 500ms`, "stop_grace_period"},
+		{`stop_grace_period: 10m`, "stop_grace_period"},
+		{`stop_grace_period: soon`, "stop_grace_period"},
+	} {
+		t.Run(tc.declaration, func(t *testing.T) {
+			body := "services:\n  web:\n    image: nginx:1.27\n    " + tc.declaration + "\n"
+			_, err := scanCompose(t, body)
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("err = %v; want it to mention %q", err, tc.want)
+			}
+		})
+	}
+}
+
+// A built service takes the Compose process overrides (ADR-20261022160000):
+// the entrypoint joins its start command and the rest is carried for imaged.
+func TestComposeBuildServiceProcess(t *testing.T) {
+	for _, tc := range []struct {
+		name, declaration string
+		command           []string
+		shell             bool
+		process           *api.ComposeProcess
+	}{
+		{"user, working_dir and stop contract", "user: node\n    working_dir: /srv/app\n    stop_signal: INT\n    stop_grace_period: 20s",
+			nil, false, &api.ComposeProcess{User: "node", WorkingDir: "/srv/app", StopSignal: "SIGINT", StopGracePeriodS: secs(20)}},
+		{"entrypoint without command replaces the process", "entrypoint: [tini, --, node, server.js]",
+			[]string{"tini", "--", "node", "server.js"}, false, nil},
+		{"entrypoint then exec command", "entrypoint: [tini, --]\n    command: [node, server.js]\n    user: \"1000\"",
+			[]string{"tini", "--", "node", "server.js"}, false, &api.ComposeProcess{User: "1000"}},
+		{"entrypoint then shell command", "entrypoint: [tini, --]\n    command: npm run start -- --port 8080",
+			[]string{"tini -- npm run start -- --port 8080"}, true, nil},
+		{"entrypoint words are quoted", "entrypoint: [\"/opt/my app/run\", --flag]\n    command: serve",
+			[]string{"'/opt/my app/run' --flag serve"}, true, nil},
+		{"empty entrypoint keeps the command", "entrypoint: []\n    command: [node, server.js]",
+			[]string{"node", "server.js"}, false, nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			body := "services:\n  api:\n    build: .\n    ports: [\"8080:8080\"]\n    " + tc.declaration + "\n"
+			result, err := scanCompose(t, body, "Dockerfile", "FROM node:22\n")
+			if err != nil || len(result.Workloads) != 1 {
+				t.Fatalf("scan = %+v, %v", result, err)
+			}
+			workload := result.Workloads[0]
+			if !reflect.DeepEqual(workload.Command, tc.command) || workload.CommandShell != tc.shell {
+				t.Fatalf("command = %q shell=%v; want %q shell=%v", workload.Command, workload.CommandShell, tc.command, tc.shell)
+			}
+			if !reflect.DeepEqual(workload.ImageProcess, tc.process) {
+				t.Fatalf("process = %#v; want %#v", workload.ImageProcess, tc.process)
+			}
+			for _, warning := range result.Warnings {
+				if strings.Contains(warning, "process overrides") {
+					t.Fatalf("unexpected warning %q", warning)
+				}
+			}
+		})
+	}
+	if _, err := scanCompose(t, "services:\n  api:\n    build: .\n    entrypoint: []\n", "Dockerfile", "FROM node:22\n"); err == nil ||
+		!strings.Contains(err.Error(), "also set command") {
+		t.Fatalf("an empty entrypoint without a command was accepted: %v", err)
+	}
+}
+
+func TestComposeEnvFileKeys(t *testing.T) {
+	envFile := "# comment\n\nexport DATABASE_URL=postgres://db\nAPI_TOKEN='quoted value'\nFEATURE_FLAG\nPORT=8080 # trailing\n"
+	for _, tc := range []struct {
+		name, declaration string
+		files             []string
+		want              []string
+		warning           string
+	}{
+		{"string path", "env_file: app.env", []string{"app.env", envFile},
+			[]string{"API_TOKEN", "DATABASE_URL", "FEATURE_FLAG", "LOG_LEVEL", "PORT"}, ""},
+		{"list merged with environment", "env_file: [app.env, ./more.env]", []string{"app.env", envFile, "more.env", "LOG_LEVEL=debug\nEXTRA=1\n"},
+			[]string{"API_TOKEN", "DATABASE_URL", "EXTRA", "FEATURE_FLAG", "LOG_LEVEL", "PORT"}, ""},
+		{"missing required file", "env_file: .env.production", nil,
+			[]string{"LOG_LEVEL"}, "env_file .env.production is not in the source"},
+		{"missing optional file", "env_file: [{path: .env.local, required: false}]", nil,
+			[]string{"LOG_LEVEL"}, ""},
+		{"long form present", "env_file: [{path: app.env, format: raw}]", []string{"app.env", "ONLY_KEY=1\n"},
+			[]string{"LOG_LEVEL", "ONLY_KEY"}, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			body := "services:\n  web:\n    image: nginx:1.27\n    ports: [80]\n    environment: {LOG_LEVEL: info}\n    " + tc.declaration + "\n"
+			result, err := scanCompose(t, body, tc.files...)
+			if err != nil || len(result.Workloads) != 1 {
+				t.Fatalf("scan = %+v, %v", result, err)
+			}
+			if got := result.Workloads[0].EnvKeys; !reflect.DeepEqual(got, tc.want) {
+				t.Fatalf("env keys = %q; want %q", got, tc.want)
+			}
+			if tc.warning != "" && !containsWarning(result.Warnings, tc.warning) {
+				t.Fatalf("warnings %q lack %q", result.Warnings, tc.warning)
+			}
+			for _, warning := range result.Warnings {
+				if strings.Contains(warning, "postgres://") || strings.Contains(warning, "quoted value") {
+					t.Fatalf("warning leaked an env value: %q", warning)
+				}
+			}
+		})
+	}
+}
+
+func TestComposeEnvFileRejectsMalformedDeclaration(t *testing.T) {
+	for _, tc := range []struct {
+		declaration string
+		files       []string
+		want        string
+	}{
+		{"env_file: [{path: app.env, required: maybe}]", nil, "required must be a boolean"},
+		{"env_file: [{path: app.env, format: json}]", nil, "format"},
+		{"env_file: {path: app.env}", nil, "env_file must be"},
+	} {
+		t.Run(tc.declaration, func(t *testing.T) {
+			body := "services:\n  web:\n    image: nginx:1.27\n    " + tc.declaration + "\n"
+			_, err := scanCompose(t, body, tc.files...)
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("err = %v; want it to mention %q", err, tc.want)
+			}
+		})
+	}
+}
+
+// An env_file outside the uploaded source is valid Compose the scan cannot
+// read; it was ignored before ADR-1337, so it must warn, not fail the scan.
+func TestComposeEnvFileOutsideSourceWarns(t *testing.T) {
+	for _, path := range []string{"../secrets.env", "/etc/app.env"} {
+		t.Run(path, func(t *testing.T) {
+			body := "services:\n  web:\n    image: nginx:1.27\n    environment: [PORT]\n    env_file: " + path + "\n"
+			result, err := scanCompose(t, body)
+			if err != nil {
+				t.Fatalf("scan failed: %v", err)
+			}
+			found := false
+			for _, warning := range result.Warnings {
+				if strings.Contains(warning, path) && strings.Contains(warning, "outside the source") {
+					found = true
+				}
+			}
+			if !found {
+				t.Fatalf("warnings = %q; want one naming %s as outside the source", result.Warnings, path)
+			}
+		})
+	}
+}
+
+func TestComposeUnsupportedKeysWarn(t *testing.T) {
+	body := `services:
+  web:
+    image: nginx:1.27
+    ports: [80]
+    container_name: web
+    platform: linux/amd64
+    init: true
+    x-team: storefront
+    volumes: [./data:/data]
+    deploy: {replicas: 3, restart_policy: {condition: any}}
+    restart: always
+    labels: {tier: web}
+    configs: [app_config]
+    networks: [front]
+    mystery: 1
+  api:
+    build:
+      context: .
+      args: {NODE_ENV: production}
+      target: runtime
+      cache_from: [api:latest]
+    platform: linux/arm64
+  db:
+    image: postgres:16
+    volumes: [pgdata:/var/lib/postgresql/data]
+`
+	result, err := scanCompose(t, body, "Dockerfile", "FROM node:22 AS runtime\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"web: volumes ignored: persistent volumes and bind mounts are not supported",
+		"web: deploy.restart_policy ignored: the platform starts, parks and restarts services itself",
+		"web: restart ignored: the platform starts, parks and restarts services itself",
+		"web: labels ignored: container labels are not used",
+		"web: configs ignored: Compose configs are not mounted",
+		"web: networks ignored: services reach each other through depends_on service bindings",
+		"web: mystery ignored: not supported by Gregale",
+		"api: build.cache_from ignored: the builder uses only build.context, build.dockerfile, build.args, build.target and build.secrets",
+		"api: platform ignored: services run on linux/amd64",
+	} {
+		if !containsWarning(result.Warnings, want) {
+			t.Errorf("warnings lack %q", want)
+		}
+	}
+	for _, quiet := range []string{"container_name", "web: platform", "init", "x-team", "db: volumes", "build.args", "build.target"} {
+		for _, warning := range result.Warnings {
+			if strings.Contains(warning, quiet+" ignored") {
+				t.Errorf("unexpected warning %q", warning)
+			}
+		}
+	}
+}
+
+func TestEnvFileKeysDotenvSyntax(t *testing.T) {
+	for _, tc := range []struct {
+		name, body string
+		keys       []string
+		problems   []string
+	}{
+		{"plain, empty and bare", "A=1\nB=\nC\n", []string{"A", "B", "C"}, nil},
+		{"comments, blanks and export", "# head\n\n  export D=4\nE=5 # trailing comment\n", []string{"D", "E"}, nil},
+		{"double-quoted with spaces and escapes", `F="a b \"quoted\" # not a comment"` + "\nG=after\n", []string{"F", "G"}, nil},
+		{"single-quoted with spaces and escaped quote", `H='it\'s fine'` + "\nI=after\n", []string{"H", "I"}, nil},
+		{"multi-line double-quoted value", "J=\"line one\nNOT_A_KEY=inside\nlast line\"\nK=after\n", []string{"J", "K"}, nil},
+		{"multi-line single-quoted value", "L='-----BEGIN KEY-----\nabc=def\n-----END KEY-----'\nM=after\n", []string{"L", "M"}, nil},
+		{"CRLF line endings", "N=1\r\nO=\"x\r\ny\"\r\nP=2\r\n", []string{"N", "O", "P"}, nil},
+		{"malformed lines are skipped", "Q=1\n1BAD=x\n=nokey\nWITH SPACE=y\nR=2\n", []string{"Q", "R"},
+			[]string{"line 2: invalid variable declaration skipped", "line 3: invalid variable declaration skipped", "line 4: invalid variable declaration skipped"}},
+		{"unterminated quote is reported and the rest still read", "S=\"never closed\nT=1\n", []string{"S", "T"},
+			[]string{"line 1: unterminated quoted value"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			keys, problems := envFileKeys([]byte(tc.body))
+			if !reflect.DeepEqual(keys, tc.keys) {
+				t.Fatalf("keys = %q; want %q", keys, tc.keys)
+			}
+			if len(problems) != len(tc.problems) {
+				t.Fatalf("problems = %q; want %q", problems, tc.problems)
+			}
+			for i, want := range tc.problems {
+				if !strings.HasPrefix(problems[i], want) {
+					t.Fatalf("problem %d = %q; want prefix %q", i, problems[i], want)
+				}
+			}
+		})
+	}
+}
+
+func TestComposeEnvFileMalformedLineWarns(t *testing.T) {
+	body := "services:\n  web:\n    image: nginx:1.27\n    ports: [80]\n    env_file: app.env\n"
+	result, err := scanCompose(t, body, "app.env", "GOOD=1\n2BAD=x\nALSO_GOOD=2\n")
+	if err != nil || len(result.Workloads) != 1 {
+		t.Fatalf("scan = %+v, %v; a malformed env_file line must not fail the scan", result, err)
+	}
+	if got := result.Workloads[0].EnvKeys; !reflect.DeepEqual(got, []string{"ALSO_GOOD", "GOOD"}) {
+		t.Fatalf("env keys = %q", got)
+	}
+	if want := "web: env_file app.env line 2: invalid variable declaration skipped"; !containsWarning(result.Warnings, want) {
+		t.Fatalf("warnings %q lack %q", result.Warnings, want)
+	}
+}
+
+func containsWarning(warnings []string, want string) bool {
+	for _, warning := range warnings {
+		if strings.Contains(warning, want) {
+			return true
+		}
+	}
+	return false
+}

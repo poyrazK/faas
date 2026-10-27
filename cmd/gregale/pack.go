@@ -1114,7 +1114,7 @@ func resolveDeployShape(srcDir string, explicitFunction, explicitApp, jsonOutput
 		if compose := composeFileIn(srcDir); compose != "" {
 			return shapeUnknown, "", "", &NestedMarkerHintError{
 				Dir:  filepath.Base(srcDir),
-				Hint: fmt.Sprintf("Hint: %s is a Compose project. Deploy it with `gregale deploy --project`.", compose),
+				Hint: fmt.Sprintf("Hint: %s is a Compose project. Deploy all its services with `gregale deploy --project`.", compose),
 				Err:  baseErr,
 			}
 		}
@@ -1130,7 +1130,7 @@ func resolveDeployShape(srcDir string, explicitFunction, explicitApp, jsonOutput
 				Dir: filepath.Base(srcDir),
 				Hint: fmt.Sprintf(
 					"Hint: found app markers under subdirectories of %s — this looks like a workspace (monorepo). "+
-						"Run `gregale scan --path .` to decompose it into per-app plans, then apply them individually.",
+						"Deploy all its services as one project with `gregale deploy --project`.",
 					filepath.Base(srcDir)),
 				Err: baseErr,
 			}
@@ -1380,7 +1380,7 @@ func runPackPreflight(srcDir string, skipDoctorScan bool) []string {
 // the failed wake. Returns the whycopy hint string when the
 // pattern is found; empty otherwise.
 func preflightLoopbackBind(srcDir string) string {
-	sources := scanSource(srcDir, loopbackBindRegex, 1)
+	sources := scanLoopbackBinds(srcDir, 1)
 	if len(sources) == 0 {
 		return ""
 	}

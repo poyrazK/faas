@@ -32,7 +32,7 @@ type QueueBindingCanary struct {
 	CompletedAt  *time.Time `json:"completed_at,omitempty"`
 }
 
-func (c *Client) CreateQueueBindingCanary(ctx context.Context, app string, req CreateQueueBindingCanaryRequest) (QueueBindingCanary, error) {
+func (c *PreviewClient) CreateQueueBindingCanary(ctx context.Context, app string, req CreateQueueBindingCanaryRequest) (QueueBindingCanary, error) {
 	var out QueueBindingCanary
 	if !req.PublishConsent {
 		return out, fmt.Errorf("explicit queue publication consent is required")
@@ -40,12 +40,12 @@ func (c *Client) CreateQueueBindingCanary(ctx context.Context, app string, req C
 	err := c.do(ctx, http.MethodPost, "/v1/apps/"+url.PathEscape(app)+"/bindings/queue-canaries", req, &out)
 	return out, err
 }
-func (c *Client) GetQueueBindingCanary(ctx context.Context, app, id string) (QueueBindingCanary, error) {
+func (c *PreviewClient) GetQueueBindingCanary(ctx context.Context, app, id string) (QueueBindingCanary, error) {
 	var out QueueBindingCanary
 	err := c.do(ctx, http.MethodGet, "/v1/apps/"+url.PathEscape(app)+"/bindings/queue-canaries/"+url.PathEscape(id), nil, &out)
 	return out, err
 }
-func (c *Client) CancelQueueBindingCanary(ctx context.Context, app, id string) (QueueBindingCanary, error) {
+func (c *PreviewClient) CancelQueueBindingCanary(ctx context.Context, app, id string) (QueueBindingCanary, error) {
 	var out QueueBindingCanary
 	err := c.do(ctx, http.MethodDelete, "/v1/apps/"+url.PathEscape(app)+"/bindings/queue-canaries/"+url.PathEscape(id), nil, &out)
 	return out, err

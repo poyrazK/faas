@@ -7,8 +7,6 @@ import (
 	"context"
 	"errors"
 	"os"
-	"path/filepath"
-	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -187,8 +185,7 @@ func TestColdBootRecoveryPostgresPublicationSerialization(t *testing.T) {
 }
 
 func TestColdBootRecoveryPostgresMigrationDown(t *testing.T) {
-	_, source, _, _ := runtime.Caller(0)
-	data, err := os.ReadFile(filepath.Join(filepath.Dir(source), "../../migrations/20261017100000001_operator_cold_boot_recovery.sql"))
+	data, err := os.ReadFile("../../migrations/20261017100000001_operator_cold_boot_recovery.sql")
 	if err != nil {
 		t.Fatal(err)
 	}

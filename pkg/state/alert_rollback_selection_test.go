@@ -1,4 +1,4 @@
-package state
+package state_test
 
 import (
 	"strings"
@@ -7,18 +7,19 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func TestAlertRollbackSelectionFailsClosed(t *testing.T) {
 	now := time.Now().UTC()
-	base := alertRollbackFacts{RuleID: uuid.NewString(), AccountID: uuid.NewString(), AppID: uuid.NewString(), Enabled: true, Action: AlertActionRollback, Metric: AlertMetricErrorRate, Name: "error rate"}
+	base := state.AlertRollbackFacts{RuleID: uuid.NewString(), AccountID: uuid.NewString(), AppID: uuid.NewString(), Enabled: true, Action: state.AlertActionRollback, Metric: state.AlertMetricErrorRate, Name: "error rate"}
 	base.AppAccountID = base.AccountID
-	candidate := alertRollbackDeployment{ID: uuid.NewString(), AppID: base.AppID, Status: DeployLive, Scope: "default", TrafficPercent: 25, CanaryTotalSteps: 4, CanaryStep: 1, RolloutState: "rolling_out", CreatedAt: now}
-	predecessor := alertRollbackDeployment{ID: uuid.NewString(), AppID: base.AppID, Status: DeployLive, Scope: "default", TrafficPercent: 75, CreatedAt: now.Add(-time.Minute)}
+	candidate := state.AlertRollbackDeployment{ID: uuid.NewString(), AppID: base.AppID, Status: state.DeployLive, Scope: "default", TrafficPercent: 25, CanaryTotalSteps: 4, CanaryStep: 1, RolloutState: "rolling_out", CreatedAt: now}
+	predecessor := state.AlertRollbackDeployment{ID: uuid.NewString(), AppID: base.AppID, Status: state.DeployLive, Scope: "default", TrafficPercent: 75, CreatedAt: now.Add(-time.Minute)}
 	for _, scenario := range []string{"exact pair", "multiple canaries", "multiple recipients", "newer recipient", "completed candidate", "account wide", "foreign account", "service", "pre-auth", "automation backlog"} {
 		t.Run(scenario, func(t *testing.T) {
 			f := base
-			f.Deployments = []alertRollbackDeployment{candidate, predecessor}
+			f.Deployments = []state.AlertRollbackDeployment{candidate, predecessor}
 			switch scenario {
 			case "multiple canaries":
 				d := candidate
@@ -41,12 +42,12 @@ func TestAlertRollbackSelectionFailsClosed(t *testing.T) {
 			case "service":
 				f.Service = true
 			case "automation backlog":
-				f.Metric = AlertMetricWorkflowDueAge
+				f.Metric = state.AlertMetricWorkflowDueAge
 			case "pre-auth":
-				f.Metric = AlertMetricPreAuthTargetThreshold
+				f.Metric = state.AlertMetricPreAuthTargetThreshold
 			}
 			fire := uuid.NewString()
-			r := captureAlertRollback(strings.ReplaceAll(fire, "-", ""), f, 42, now)
+			r := state.CaptureAlertRollback(strings.ReplaceAll(fire, "-", ""), f, 42, now)
 			if r.ID != fire {
 				t.Fatalf("noncanonical fire UUID %s", r.ID)
 			}
@@ -59,23 +60,23 @@ func TestAlertRollbackSelectionFailsClosed(t *testing.T) {
 			}
 		})
 	}
-	m := NewMemStore()
-	m.captureAlertRollbackLocked(uuid.NewString(), AlertRule{Action: AlertActionRollback, Metric: AlertMetricPreAuthTargetThreshold}, 42, now)
-	if len(m.alertRollbacks) != 0 {
+	m := state.NewMemStore()
+	m.CaptureAlertRollbackLocked(uuid.NewString(), state.AlertRule{Action: state.AlertActionRollback, Metric: state.AlertMetricPreAuthTargetThreshold}, 42, now)
+	if len((*m.AlertRollbacks())) != 0 {
 		t.Fatal("pre-auth metric enqueued deployment mutation")
 	}
 }
 
 func TestAlertServiceRollbackSelectionAndCompletionGuards(t *testing.T) {
 	now := time.Now().UTC()
-	f := alertRollbackFacts{RuleID: uuid.NewString(), AccountID: uuid.NewString(), AppID: uuid.NewString(), Enabled: true, Service: true, Action: AlertActionRollback, Metric: AlertMetricErrorRate}
+	f := state.AlertRollbackFacts{RuleID: uuid.NewString(), AccountID: uuid.NewString(), AppID: uuid.NewString(), Enabled: true, Service: true, Action: state.AlertActionRollback, Metric: state.AlertMetricErrorRate}
 	f.AppAccountID = f.AccountID
-	p := alertRollbackDeployment{ID: uuid.NewString(), AppID: f.AppID, Scope: "default", Status: DeployLive, TrafficPercent: 0, CreatedAt: now.Add(-time.Minute)}
-	c := alertRollbackDeployment{ID: uuid.NewString(), AppID: f.AppID, Scope: "default", Status: DeployLive, TrafficPercent: 100, RolloutState: "rolling_out", CreatedAt: now, PredecessorID: p.ID}
+	p := state.AlertRollbackDeployment{ID: uuid.NewString(), AppID: f.AppID, Scope: "default", Status: state.DeployLive, TrafficPercent: 0, CreatedAt: now.Add(-time.Minute)}
+	c := state.AlertRollbackDeployment{ID: uuid.NewString(), AppID: f.AppID, Scope: "default", Status: state.DeployLive, TrafficPercent: 100, RolloutState: "rolling_out", CreatedAt: now, PredecessorID: p.ID}
 	for _, scenario := range []string{"retained zero weight", "unrelated zero weight", "missing pin", "unpinned zero weight", "newer predecessor", "other serving row", "multiple services"} {
 		t.Run(scenario, func(t *testing.T) {
 			facts := f
-			facts.Deployments = []alertRollbackDeployment{c, p}
+			facts.Deployments = []state.AlertRollbackDeployment{c, p}
 			switch scenario {
 			case "unrelated zero weight", "other serving row":
 				d := p
@@ -95,7 +96,7 @@ func TestAlertServiceRollbackSelectionAndCompletionGuards(t *testing.T) {
 				d.ID, d.Scope = uuid.NewString(), "prod"
 				facts.Deployments = append(facts.Deployments, d)
 			}
-			r := captureAlertRollback(uuid.NewString(), facts, 42, now)
+			r := state.CaptureAlertRollback(uuid.NewString(), facts, 42, now)
 			valid := scenario == "retained zero weight" || scenario == "unrelated zero weight"
 			if valid && (r.Status != "pending" || r.PredecessorDeploymentID != p.ID || !r.Service) || !valid && r.Status != "failed" {
 				t.Fatalf("selection %+v", r)
@@ -106,7 +107,7 @@ func TestAlertServiceRollbackSelectionAndCompletionGuards(t *testing.T) {
 		t.Run(scenario, func(t *testing.T) {
 			fire := uuid.NewString()
 			r := api.AlertRollback{ID: fire, AppID: f.AppID, Service: true, ServiceRequestID: fire, CandidateDeploymentID: c.ID, PredecessorDeploymentID: p.ID, Scope: "default", Status: "pending"}
-			h := ServiceRolloutHandoff{Action: "abort", Phase: "complete", PredecessorDeploymentID: p.ID, AcknowledgedAt: &now, CompletedAt: &now, BindingsCheck: &api.ServiceRolloutBindingGate{RequestID: fire, Action: "abort", DeploymentID: p.ID, Status: "passed", AuditID: "12"}}
+			h := state.ServiceRolloutHandoff{Action: "abort", Phase: "complete", PredecessorDeploymentID: p.ID, AcknowledgedAt: &now, CompletedAt: &now, BindingsCheck: &api.ServiceRolloutBindingGate{RequestID: fire, Action: "abort", DeploymentID: p.ID, Status: "passed", AuditID: "12"}}
 			switch scenario {
 			case "missing acknowledgement":
 				h.AcknowledgedAt = nil
@@ -117,7 +118,7 @@ func TestAlertServiceRollbackSelectionAndCompletionGuards(t *testing.T) {
 			case "replacement request":
 				h.BindingsCheck.RequestID = uuid.NewString()
 			}
-			got := projectAlertServiceRollback(r, Deployment{AppID: f.AppID, ID: c.ID, Scope: "default", Status: DeploySuperseded, RolloutState: "aborted", ServiceRolloutHandoff: h}, Deployment{ID: p.ID, AppID: f.AppID, Scope: "default", Status: DeployLive, TrafficPercent: 100})
+			got := state.ProjectAlertServiceRollback(r, state.Deployment{AppID: f.AppID, ID: c.ID, Scope: "default", Status: state.DeploySuperseded, RolloutState: "aborted", ServiceRolloutHandoff: h}, state.Deployment{ID: p.ID, AppID: f.AppID, Scope: "default", Status: state.DeployLive, TrafficPercent: 100})
 			if scenario == "matching completion" && got.Status != "complete" || scenario != "matching completion" && got.Status != "failed" {
 				t.Fatalf("completion guard %+v", got)
 			}

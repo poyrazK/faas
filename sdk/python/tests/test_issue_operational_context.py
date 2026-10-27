@@ -3,8 +3,7 @@ from datetime import UTC, datetime
 from urllib.error import URLError
 
 import pytest
-
-from faas_sdk.issues import IssueReporter
+from faas_sdk.preview.issues import IssueReporter
 
 
 def test_context_is_bounded_and_copied_before_retry():
@@ -68,10 +67,10 @@ def test_server_symbolication_requires_explicit_grouping_before_startup():
 
 
 def test_generated_context_and_artifact_contracts():
-    from faas_sdk.api.apps.list_issues import _get_kwargs
-    from faas_sdk.models.issue_event import IssueEvent
-    from faas_sdk.models.issue_occurrence import IssueOccurrence
-    from faas_sdk.models.publish_issue_source_maps_request import PublishIssueSourceMapsRequest
+    from faas_sdk.preview.api.apps.list_issues import _get_kwargs
+    from faas_sdk.preview.models.issue_event import IssueEvent
+    from faas_sdk.preview.models.issue_occurrence import IssueOccurrence
+    from faas_sdk.preview.models.publish_issue_source_maps_request import PublishIssueSourceMapsRequest
 
     event = {
         "event_id": "11111111-1111-4111-8111-111111111111",

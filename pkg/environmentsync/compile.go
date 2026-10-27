@@ -15,6 +15,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/cronexpr"
+	"github.com/onebox-faas/faas/pkg/sourcecontext"
 )
 
 var immutableImageRE = regexp.MustCompile(`^[^\s]+@sha256:[a-f0-9]{64}$`)
@@ -36,6 +37,11 @@ func Compile(input api.EnvironmentDefinition) (DesiredState, error) {
 	}
 	if d.APIVersion != APIVersion || !api.ValidProjectSlug(d.Project) || !api.ValidProjectEnvironmentSlug(d.Environment) {
 		return DesiredState{}, fmt.Errorf("definition needs api_version %q and valid project/environment slugs", APIVersion)
+	}
+	if d.RecoveryRetention != nil {
+		if err := d.RecoveryRetention.Validate(); err != nil {
+			return DesiredState{}, err
+		}
 	}
 	if d.Workloads == nil {
 		return DesiredState{}, fmt.Errorf("environment definition must explicitly declare its workloads map")
@@ -142,6 +148,9 @@ func compileWorkload(resource, name string, w *api.EnvironmentWorkload, workload
 			return nil, fmt.Errorf("job_smoke: %w", err)
 		}
 		w.JobSmoke.Command = slices.Clone(w.JobSmoke.Command)
+	}
+	if w.Schedule != nil && w.Source != nil && w.Source.BuildArtifactID != "" && w.Source.Kind != "source" && w.Source.Kind != "dockerfile" {
+		return nil, fmt.Errorf("scheduled build artifact reuse requires source or dockerfile code")
 	}
 	if w.Schedule != nil {
 		var runtimeFields map[string]json.RawMessage
@@ -335,6 +344,28 @@ func normalizeJobSchedule(schedule *api.EnvironmentJobSchedule) error {
 }
 
 func normalizeSource(source *api.EnvironmentWorkloadSource) error {
+	if source.ReuseUnchangedBuild {
+		if source.Kind == "image" {
+			return fmt.Errorf("unchanged build reuse requires a Git source")
+		}
+		if source.BuildContext == "" {
+			source.BuildContext = "."
+		}
+		if !validRelativePath(source.BuildContext) {
+			return fmt.Errorf("build_context must stay within the Git tree")
+		}
+		source.BuildContext = path.Clean(source.BuildContext)
+		if _, err := sourcecontext.Normalize(source.BuildContext); err != nil {
+			return fmt.Errorf("invalid build_context: %w", err)
+		}
+	} else if source.BuildContext != "" {
+		return fmt.Errorf("build_context requires reuse_unchanged_build")
+	}
+	if source.BuildArtifactID != "" || source.BuildArtifactHash != "" {
+		if source.Kind == "image" || !api.ValidEnvironmentBuildArtifactReference(source.BuildArtifactID, source.BuildArtifactHash) {
+			return fmt.Errorf("source build artifact requires a canonical ID and SHA256 input hash")
+		}
+	}
 	if source.Kind == "" {
 		source.Kind = "source"
 	}
@@ -357,6 +388,9 @@ func normalizeSource(source *api.EnvironmentWorkloadSource) error {
 			return fmt.Errorf("source directory must stay within the Git tree and cannot include an image")
 		}
 		source.Directory = path.Clean(source.Directory)
+		if source.ReuseUnchangedBuild && source.BuildContext != "." && source.Directory != source.BuildContext && !strings.HasPrefix(source.Directory, source.BuildContext+"/") {
+			return fmt.Errorf("source directory must be within build_context")
+		}
 		if source.Kind == "dockerfile" && source.Dockerfile == "" {
 			source.Dockerfile = "Dockerfile"
 		}

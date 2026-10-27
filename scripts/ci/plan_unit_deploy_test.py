@@ -24,7 +24,7 @@ S3 = {"lane": CP, "version": "unit-" + "d" * 40, "services": [
 BRIDGED = {"lane": CP, "version": "unit-" + "9" * 40, "services": [{"name": "bridged", "optional": True}]}
 PUBLIC = {"lane": "edge", "version": "unit-" + "e" * 40, "services": [
     {"name": "gatewayd-public", "host": CP, "readyz": "http://127.0.0.1:9092/readyz"},
-    {"name": "gatewayd-public-edge", "host": NODE, "optional": True, "readyz": "http://127.0.0.1:9092/readyz"}]}
+    {"name": "gatewayd-public-edge", "host": NODE, "optional": True, "readyz": "http://127.0.0.1:9109/readyz"}]}
 INTERNAL = {"lane": "edge", "version": "unit-" + "f" * 40, "services": [
     {"name": "gatewayd-internal", "host": NODE, "readyz": "http://127.0.0.1:9090/readyz"}]}
 
@@ -159,7 +159,7 @@ class EdgeLaneTest(unittest.TestCase):
         self.assertEqual(got["units"], ["gatewayd-internal", "gatewayd-public"])
         self.assertEqual(got["only"], ["gatewayd-internal"])
         self.assertEqual(got["verify"], ["gatewayd-internal=http://127.0.0.1:9090/readyz",
-                                         "?gatewayd-public-edge=http://127.0.0.1:9092/readyz"])
+                                         "?gatewayd-public-edge=http://127.0.0.1:9109/readyz"])
         self.assertEqual(got["gate"], [["--unit", "gatewayd-internal"], ["--unit", "gatewayd-public"]])
         self.assertEqual(set(got["replace"]), {"bin/gatewayd-internal", "bin/gatewayd-public", "bin/deployctl",
                                                "unit-versions.json"})
@@ -270,6 +270,81 @@ class DataStepTest(unittest.TestCase):
         # slice 1 formula, so a rerun of an older release reuses its overlay.
         self.assertEqual(pud.overlay_id(BASE, T2, {"apid": "unit-a"}),
                          pud.hashlib.sha1(f"{pud.KIND_RELEASE}/1\n{BASE}\n{T2}\napid=unit-a\n".encode()).hexdigest())
+
+
+def coded(unit, code, base, version=None):
+    """unit with the code digests affected_units.py --code records."""
+    out = dict(unit, code_digest=code * 64, base_code_digest=base * 64)
+    if version:
+        out["version"] = version
+    return out
+
+
+def with_codes(host, codes):
+    host = copy.deepcopy(host)
+    host["unit_versions"]["unit_code"] = {name: c * 64 for name, c in codes.items()}
+    return host
+
+
+class CodeTest(unittest.TestCase):
+    """A unit restarts only where the host runs other code (Selection by code)."""
+
+    def test_full_release_host_restarts_only_units_whose_code_changed(self):
+        rel = release(apid=coded(APID, "1", "1"), meterd=coded(METERD, "2", "0"))
+        got = cp_plan(rel, full_host())
+        self.assertEqual(got["units"], ["meterd"])
+        self.assertEqual(got["kept"], ["apid"])
+        self.assertEqual(set(got["replace"]), {"bin/meterd", "bin/deployctl", "unit-versions.json"})
+        record = got["unit_versions"]
+        # apid keeps running the base binary, so nothing records it.
+        self.assertEqual(record["units"], {"meterd": METERD["version"]})
+        self.assertEqual(record["unit_lanes"], {"meterd": CP})
+        self.assertEqual(record["unit_code"], {"meterd": "2" * 64})
+
+    def test_same_code_under_a_newer_version_keeps_the_host_binary_and_record(self):
+        host = with_codes(overlay_host({"apid": "unit-" + "7" * 40, "meterd": METERD["version"]},
+                                       replaced=("apid", "meterd")), {"apid": "1", "meterd": "2"})
+        rel = release(apid=coded(APID, "1", "0"), meterd=coded(METERD, "3", "0"))
+        got = cp_plan(rel, host)
+        self.assertEqual(got["units"], ["meterd"])
+        record = got["unit_versions"]
+        self.assertEqual(record["units"]["apid"], "unit-" + "7" * 40)
+        self.assertEqual(record["unit_code"], {"apid": "1" * 64, "meterd": "3" * 64})
+
+    def test_nothing_restarts_when_the_host_runs_every_units_code(self):
+        host = with_codes(overlay_host({"apid": "unit-" + "7" * 40}), {"apid": "1"})
+        rel = release(apid=coded(APID, "1", "0"), meterd=coded(METERD, "2", "2"))
+        self.assertEqual(cp_plan(rel, host)["action"], "converge")
+        self.assertEqual(cp_plan(release(meterd=coded(METERD, "2", "2")), full_host())["action"], "none")
+
+    def test_revert_to_base_code_restarts_a_unit_an_earlier_release_replaced(self):
+        host = with_codes(overlay_host({"apid": "unit-" + "7" * 40}), {"apid": "1"})
+        got = cp_plan(release(apid=coded(APID, "0", "0")), host)
+        self.assertEqual(got["units"], ["apid"])
+        self.assertEqual(got["unit_versions"]["units"]["apid"], APID["version"])
+        self.assertEqual(got["unit_versions"]["unit_code"]["apid"], "0" * 64)
+
+    def test_records_without_digests_fall_back_to_versions(self):
+        host = overlay_host({"apid": APID["version"], "meterd": "unit-" + "7" * 40}, replaced=("apid", "meterd"))
+        rel = release(apid=coded(APID, "1", "0"), meterd=coded(METERD, "2", "0"))
+        got = cp_plan(rel, host)
+        self.assertEqual(got["units"], ["meterd"])
+        # The same version is the same build: its digest is learnt.
+        self.assertEqual(got["unit_versions"]["unit_code"], {"apid": "1" * 64, "meterd": "2" * 64})
+
+    def test_releases_without_digests_fall_back_to_versions(self):
+        host = with_codes(overlay_host({"apid": "unit-" + "7" * 40}), {"apid": "1"})
+        got = cp_plan(release(), host)
+        self.assertEqual(got["units"], ["apid", "meterd"])
+        self.assertNotIn("unit_code", got["unit_versions"])
+
+    def test_edge_order_check_sees_a_control_plane_that_runs_the_code(self):
+        # cd-edge-units plans the control-plane lane to check deploy order:
+        # an older unit version with the same code is in place.
+        host = with_codes(overlay_host({"apid": "unit-" + "7" * 40}), {"apid": "1"})
+        rel = release(apid=coded(APID, "1", "0"))
+        rel["units"]["gatewayd-public"] = coded(PUBLIC, "5", "0")
+        self.assertNotEqual(cp_plan(rel, host)["action"], "deploy")
 
 
 if __name__ == "__main__":

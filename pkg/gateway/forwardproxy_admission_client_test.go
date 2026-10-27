@@ -50,6 +50,11 @@ func (*fakeVmmdClient) ResolveServiceCaller(context.Context, *vmmdpb.ResolveServ
 	return nil, status.Error(codes.Unimplemented, "gateway forwarding fake does not authenticate service callers")
 }
 
+// ADR-1138: forwarding fixtures name no in-flight request trace.
+func (*fakeVmmdClient) InflightRequestTrace(context.Context, *vmmdpb.InflightRequestTraceRequest, ...grpc.CallOption) (*vmmdpb.InflightRequestTraceResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "gateway forwarding fake does not track request traces")
+}
+
 func (*fakeVmmdClient) RestoreManagedServiceProbe(context.Context, *vmmdpb.RestoreAppTaskRequest, ...grpc.CallOption) (*vmmdpb.RestoreAppTaskResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "gateway forwarding fake does not launch managed service probes")
 }
@@ -68,6 +73,14 @@ func (*fakeVmmdClient) ExecuteOperatorPark(context.Context, *vmmdpb.ExecuteOpera
 
 func (*fakeVmmdClient) RetireMigrationAdoption(context.Context, *vmmdpb.RetireMigrationAdoptionRequest, ...grpc.CallOption) (*vmmdpb.RetireMigrationAdoptionResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "gateway forwarding fake does not retire migration adoptions")
+}
+
+func (*fakeVmmdClient) AdoptionReport(context.Context, *vmmdpb.AdoptionReportRequest, ...grpc.CallOption) (*vmmdpb.AdoptionReportResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "gateway forwarding fake does not report vmmd restart adoption")
+}
+
+func (*fakeVmmdClient) AdoptionInventory(context.Context, *vmmdpb.AdoptionInventoryRequest, ...grpc.CallOption) (*vmmdpb.AdoptionInventoryResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "gateway forwarding fake does not list adoption inventory")
 }
 
 var _ vmmdpb.VmmdClient = (*fakeVmmdClient)(nil)

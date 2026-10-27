@@ -2,7 +2,7 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
-import { decodeDurableEntitySchemaCall, decodeDurableEntityHandlerRequest, type DurableEntityStateSchema, DURABLE_ENTITY_MAX_TRANSITION_BYTES } from '../src/index.js';
+import { decodeDurableEntitySchemaCall, decodeDurableEntityHandlerRequest, type DurableEntityStateSchema, DURABLE_ENTITY_MAX_TRANSITION_BYTES } from '../src/preview.js';
 
 type Counter = { count: number };
 function counter(value: unknown): Counter {

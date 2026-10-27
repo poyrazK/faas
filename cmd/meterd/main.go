@@ -60,10 +60,12 @@ import (
 	"github.com/onebox-faas/faas/pkg/mail"
 	"github.com/onebox-faas/faas/pkg/meter"
 	"github.com/onebox-faas/faas/pkg/promql"
+	"github.com/onebox-faas/faas/pkg/releasemetrics"
 	"github.com/onebox-faas/faas/pkg/role"
 	"github.com/onebox-faas/faas/pkg/runtimeconfig"
 	"github.com/onebox-faas/faas/pkg/safedeploy"
 	"github.com/onebox-faas/faas/pkg/scheddgrpc"
+	"github.com/onebox-faas/faas/pkg/sealdomain"
 	"github.com/onebox-faas/faas/pkg/secretbox"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/trace"
@@ -1043,6 +1045,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		Mailer:                      mailer,
 		Notif:                       pn,
 		Log:                         log,
+		Registerer:                  ops.Registry(),
 	})
 
 	// Per-daemon Prometheus registry (ADR-015) — built unconditionally
@@ -1174,9 +1177,23 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		appsDomain = "gregale.dev" // apid's default for unset deployments
 	}
 	go runSyntheticChecks(ctx, store, appsDomain, log)
-	evaluator := buildAlertEvaluatorWithPromQL(deps, store, log, ops, promClient)
+	// ADR 20261022111812: once the seal_domains role stages the alerting
+	// domain, its identity opens alert secrets, channel destinations and MCP
+	// readiness provider keys ahead of the fleet and host identities.
+	alertingIdentities, err := loadAlertingSealDomain(deps.getenv)
+	if err != nil {
+		return err
+	}
+	sealdomain.RegisterLoaded(ops.Registry(), sealdomain.Alerting, len(alertingIdentities) > 0)
+	log.Info("alerting seal domain", "domain_identity", len(alertingIdentities) > 0)
+	evaluator := buildAlertEvaluatorWithPromQL(deps, store, log, ops, promClient, alertingIdentities...)
 	// ADR-749: deliver alerts to Slack, PagerDuty and email channels.
 	evaluator.SetChannels(newAlertChannelSender(mailer), newAlertChannelCounter(ops.Registry()))
+	// ADR 20261022111812: apid relays the test sends it cannot open here;
+	// meterd holds the alerting key.
+	go runAlertTestSends(ctx, evaluator, log)
+	// ADR-20261022172052: firing app alerts carry what the log ledger shows.
+	evaluator.SetLogContext(deps.getenv("FAAS_LOG_SEARCH_ENABLED") == "1")
 	// ADR-747: record customer SLO budget hours from Prometheus.
 	go runSLORollup(ctx, store, promClient, log)
 	// ADR-098 PR-C: connection-aware upstream probe + partition
@@ -1211,6 +1228,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			}
 			return nil
 		}, log)
+	watcher.Daemon = "meterd" // ADR-1700 apply receipts
 	if err := watcher.Reconcile(runtimeCtx); err != nil {
 		log.Warn("meterd: initial runtime config reconcile failed", "err", err)
 	}
@@ -1233,6 +1251,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	loop := meter.NewLoop(store, cpu, parker, pusher, pn, mailer, dunning, residency, evaluator, deps.now, log, mc, ops).
 		WithQuotaWarnings(func() bool { return deps.getenv(internalmail.QuotaWarningOutboxEnableEnv) == "1" }, quotaWarningCommands).
 		WithBillingEnabled(billingMode.Enabled()).
+		WithFinancialBudgets().
 		WithEgress(egress).
 		WithProbe(probe).
 		WithPartitionCreate(gatedPartitionCreate).
@@ -1265,6 +1284,14 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	}
 	rec := reconciler.New(provName, store, pusher, log, recRegistry).WithMode(billingMode)
 	go rec.Loop(ctx, mc.ReconcileInterval)
+	// ADR-20261019193600: the ledger dual run compares the financial ledger with the
+	// pusher's receipts on the same cadence. Read-only.
+	ledgerProvider := ""
+	if billingMode.Enabled() {
+		ledgerProvider = provName // with billing off there are no receipts to compare
+	}
+	ledgerRec := meter.NewLedgerReconciler(meter.NewPusher(store, pusher, log, deps.now, ops), ledgerProvider, recRegistry)
+	go ledgerRec.Loop(ctx, mc.ReconcileInterval)
 
 	// ADR-049 §B.3: snapshot/app-layer storage rollup. The store
 	// interface (pkg/meter/storage.go) is a narrow projection over
@@ -1278,6 +1305,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// ADR-049 §B.4: 13-month retention DELETE cron. The pool
 	// satisfies the retentionExecer contract.
 	go meter.RetentionLoop(ctx, poolAdapter{pool}, mc.RetentionInterval, log)
+	// ADR-20261023171905: the quiet pause ledger keeps
+	// api.QuietPauseLedgerRetentionDays.
+	go meter.QuietPauseRetentionLoop(ctx, store, mc.RetentionInterval, log)
 	// ADR-371: egress flow log rows are kept api.EgressFlowLogRetentionDays.
 	go meter.RetentionLoopEgressFlowLog(ctx, poolAdapter{pool}, time.Hour, log)
 
@@ -1486,6 +1516,26 @@ func stuckAfterFromEnvMeterd(getenv func(string) string, log *slog.Logger) time.
 	return d
 }
 
+// runAlertTestSends sends the test sends apid relays (ADR 20261022111812,
+// section 3), checking for new ones every second; apid waits for the result.
+func runAlertTestSends(ctx context.Context, e *alerts.Evaluator, log *slog.Logger) {
+	if e == nil {
+		return
+	}
+	tick := time.NewTicker(time.Second)
+	defer tick.Stop()
+	for {
+		if _, err := e.RunTestSendsOnce(ctx); err != nil && ctx.Err() == nil {
+			log.Warn("meterd: alert test sends", "err", err)
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-tick.C:
+		}
+	}
+}
+
 // buildAlertEvaluator wires the alert-evaluator (issue #396 /
 // ADR-045 PR 4). Returns nil if neither FAAS_PROMETHEUS_URL nor
 // FAAS_HOST_AGE_IDENTITY_PATH is configured — the dev loop runs
@@ -1513,7 +1563,7 @@ func buildPromQLClient(deps runDeps) appmetrics.PromQL {
 	return promql.NewClient(promURL, nil)
 }
 
-func buildAlertEvaluatorWithPromQL(deps runDeps, store state.Store, log *slog.Logger, ops *wire.OpsMetrics, promClient appmetrics.PromQL) *alerts.Evaluator {
+func buildAlertEvaluatorWithPromQL(deps runDeps, store state.Store, log *slog.Logger, ops *wire.OpsMetrics, promClient appmetrics.PromQL, alerting ...*age.X25519Identity) *alerts.Evaluator {
 	identityPath := deps.getenv("FAAS_HOST_AGE_IDENTITY_PATH")
 	if promClient == nil && identityPath == "" {
 		log.Warn("meterd: alert evaluator disabled — both FAAS_PROMETHEUS_URL and FAAS_HOST_AGE_IDENTITY_PATH unset; running with five ticks")
@@ -1556,6 +1606,18 @@ func buildAlertEvaluatorWithPromQL(deps runDeps, store state.Store, log *slog.Lo
 		}
 	}
 
+	if len(alerting) > 0 {
+		var legacy []*age.X25519Identity
+		switch {
+		case identitiesLoader != nil:
+			legacy = identitiesLoader()
+		case identityLoader != nil:
+			legacy = []*age.X25519Identity{identityLoader()}
+		}
+		readers := alertingReaders(alerting, legacy)
+		identitiesLoader = func() []*age.X25519Identity { return readers }
+	}
+
 	dispatcher := webhookout.NewDispatcher(webhookout.DispatcherOptions{})
 	auditor := audit.New(store, log, ops, "meterd")
 	return alerts.NewEvaluator(alerts.EvaluatorOptions{
@@ -1567,7 +1629,18 @@ func buildAlertEvaluatorWithPromQL(deps runDeps, store state.Store, log *slog.Lo
 		Dispatcher: dispatcher,
 		Log:        log,
 		Ops:        ops,
+		// A nil ops (unit wiring) leaves release metrics off.
+		ReleaseMetrics: releaseMetricsFor(ops),
 	})
+}
+
+// releaseMetricsFor registers the release guard metrics on meterd's
+// registry (ADR-20261020085706 amendment 1).
+func releaseMetricsFor(ops *wire.OpsMetrics) *releasemetrics.Metrics {
+	if ops == nil {
+		return nil
+	}
+	return releasemetrics.New(ops.Registry())
 }
 
 // buildUpstreamProbe (ADR-098 PR-C) wires the connection-aware
@@ -1715,6 +1788,16 @@ func (a *safedeployStoreAdapter) SafedeployStampRollout(ctx context.Context, id 
 
 func (a *safedeployStoreAdapter) AppendDeploymentAudit(ctx context.Context, entry state.DeploymentAudit) (int64, error) {
 	return a.store.AppendDeploymentAudit(ctx, entry)
+}
+
+// LatestRolloutHold lets the orchestrator tell a release waiting for
+// approval from a stuck one (ADR-20261020085706).
+func (a *safedeployStoreAdapter) LatestRolloutHold(ctx context.Context, deploymentID string) (json.RawMessage, error) {
+	holds, ok := a.store.(state.RolloutDecisionStore)
+	if !ok {
+		return nil, nil
+	}
+	return holds.LatestRolloutHold(ctx, deploymentID)
 }
 
 // func(ctx context.Context) signature so Loop.WithPartitionCreate

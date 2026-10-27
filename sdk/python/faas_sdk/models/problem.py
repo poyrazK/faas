@@ -12,6 +12,8 @@ if TYPE_CHECKING:
     from ..models.binding_check_report import BindingCheckReport
     from ..models.field_error import FieldError
     from ..models.log_excerpt import LogExcerpt
+    from ..models.release_approval_status import ReleaseApprovalStatus
+    from ..models.release_freeze import ReleaseFreeze
     from ..models.release_restore_point import ReleaseRestorePoint
     from ..models.rollback_crossed_release import RollbackCrossedRelease
     from ..models.secret_finding import SecretFinding
@@ -51,7 +53,7 @@ class Problem:
     title: str
     status: int
     code: str
-    """Stable machine-readable error code. See StatusForCode in pkg/api/errors.go."""
+    """Stable machine-readable error code. See StatusForCode."""
     current_sequence: int | Unset = UNSET
     """Observed channel head on realtime_sequence_conflict."""
     condition_field: str | Unset = UNSET
@@ -69,10 +71,13 @@ class Problem:
     passed report does not independently establish application readiness or credential use. Optional application
     acknowledgements are version-bound self-attestations."""
     crossed_releases: list[RollbackCrossedRelease] | Unset = UNSET
-    """rollback_crosses_release: release commands the rollback would not undo (ADR-1448)."""
+    """rollback_crosses_release: release commands the rollback would not undo."""
     restore_points: list[ReleaseRestorePoint] | Unset = UNSET
-    """rollback_crosses_release: how to restore each managed PostgreSQL database to before those releases
-    (ADR-1448)."""
+    """rollback_crosses_release: how to restore each managed PostgreSQL database to before those releases."""
+    freezes: list[ReleaseFreeze] | Unset = UNSET
+    """release_frozen: the freezes refusing the release."""
+    release_approval: ReleaseApprovalStatus | Unset = UNSET
+    """A release's approval state."""
     type_: str | Unset = UNSET
     instance: str | Unset = UNSET
     """URI reference identifying this problem occurrence when supplied by the caller."""
@@ -109,9 +114,8 @@ class Problem:
     """
     secret_findings: list[SecretFinding] | Unset = UNSET
     """Per-line secret-scan detail. Populated by 422 sites with
-    `code: secret_scan_strict` (cmd/apid/secretscan.go
-    server-side scan rejection; cmd/gregale printErr
-    --secret-scan=strict client-side rejection). The shape
+    `code: secret_scan_strict` (the server-side scan rejection,
+    and the CLI's `--secret-scan=strict` client-side rejection). The shape
     is shared with the on-disk `SecretScanResult` so a
     programmatic consumer can render the same UI for both
     rejection paths. Optional + omitempty.
@@ -126,8 +130,7 @@ class Problem:
     """
     hint: str | Unset = UNSET
     """Single short next-action line lifted from the
-    `pkg/whycopy` catalog (error-explanations cluster,
-    spec §6.4 amendment 1). Populated by the 9 cluster-
+    error-explanation catalog. Populated by the 9 cluster-
     owned RFC 7807 codes (app_not_listening,
     app_loopback_bound, app_arch_mismatch,
     env_var_missing, app_healthz_unauthorized,
@@ -140,15 +143,14 @@ class Problem:
     """
     why: str | Unset = UNSET
     """Human-readable cause with the observed value templated
-    in (error-explanations cluster, spec §6.4 amendment 1).
+    in (error-explanations cluster).
     Distinct from `detail`: `detail` is the platform's
     machine-stable message; `why` is the customer-facing
-    explanation. Multi-line (≤512 bytes per `pkg/whycopy`
-    catalog row). Optional + omitempty.
+    explanation. Multi-line (≤512 bytes per catalog row). Optional + omitempty.
     """
     fix: str | Unset = UNSET
     """Prescriptive remediation (1-3 lines, error-explanations
-    cluster, spec §6.4 amendment 1). Distinct from `hint`:
+    cluster). Distinct from `hint`:
     `hint` is a single line, `fix` is the bulleted
     remediation list. The CLI renders this as
     `→ fix: <fix>` with literal newlines preserved so the
@@ -156,7 +158,7 @@ class Problem:
     """
     relevant_logs: list[LogExcerpt] | Unset = UNSET
     """Per-line log excerpts that explain the failure (error-
-    explanations cluster, spec §6.4 amendment 1). The
+    explanations cluster). The
     detection site attaches the last N log lines that
     caused the failure (capped at 20 entries × 512 bytes
     each per CLI tripwire). The CLI renders the first 5
@@ -208,6 +210,17 @@ class Problem:
             for restore_points_item_data in self.restore_points:
                 restore_points_item = restore_points_item_data.to_dict()
                 restore_points.append(restore_points_item)
+
+        freezes: list[dict[str, Any]] | Unset = UNSET
+        if not isinstance(self.freezes, Unset):
+            freezes = []
+            for freezes_item_data in self.freezes:
+                freezes_item = freezes_item_data.to_dict()
+                freezes.append(freezes_item)
+
+        release_approval: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.release_approval, Unset):
+            release_approval = self.release_approval.to_dict()
 
         type_ = self.type_
 
@@ -315,6 +328,10 @@ class Problem:
             field_dict["crossed_releases"] = crossed_releases
         if restore_points is not UNSET:
             field_dict["restore_points"] = restore_points
+        if freezes is not UNSET:
+            field_dict["freezes"] = freezes
+        if release_approval is not UNSET:
+            field_dict["release_approval"] = release_approval
         if type_ is not UNSET:
             field_dict["type"] = type_
         if instance is not UNSET:
@@ -363,6 +380,8 @@ class Problem:
         from ..models.binding_check_report import BindingCheckReport
         from ..models.field_error import FieldError
         from ..models.log_excerpt import LogExcerpt
+        from ..models.release_approval_status import ReleaseApprovalStatus
+        from ..models.release_freeze import ReleaseFreeze
         from ..models.release_restore_point import ReleaseRestorePoint
         from ..models.rollback_crossed_release import RollbackCrossedRelease
         from ..models.secret_finding import SecretFinding
@@ -418,6 +437,22 @@ class Problem:
                 restore_points_item = ReleaseRestorePoint.from_dict(restore_points_item_data)
 
                 restore_points.append(restore_points_item)
+
+        _freezes = d.pop("freezes", UNSET)
+        freezes: list[ReleaseFreeze] | Unset = UNSET
+        if _freezes is not UNSET:
+            freezes = []
+            for freezes_item_data in _freezes:
+                freezes_item = ReleaseFreeze.from_dict(freezes_item_data)
+
+                freezes.append(freezes_item)
+
+        _release_approval = d.pop("release_approval", UNSET)
+        release_approval: ReleaseApprovalStatus | Unset
+        if isinstance(_release_approval, Unset):
+            release_approval = UNSET
+        else:
+            release_approval = ReleaseApprovalStatus.from_dict(_release_approval)
 
         type_ = d.pop("type", UNSET)
 
@@ -525,6 +560,8 @@ class Problem:
             bindings_check=bindings_check,
             crossed_releases=crossed_releases,
             restore_points=restore_points,
+            freezes=freezes,
+            release_approval=release_approval,
             type_=type_,
             instance=instance,
             detail=detail,

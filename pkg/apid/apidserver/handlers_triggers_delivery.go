@@ -7,6 +7,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/db"
+	"github.com/onebox-faas/faas/pkg/platformflags"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
@@ -22,15 +23,16 @@ func triggerDeliveryOrDefault(delivery string) string {
 
 // requestedTriggerDelivery validates a requested delivery mode for the kind;
 // nil means record delivery. Batch delivery is a preview until
-// FAAS_TRIGGER_BATCH_DELIVERY_PREVIEW_ENABLED=1.
-func (s *server) requestedTriggerDelivery(kind api.TriggerKind, requested *string) (string, *api.Problem) {
+// FAAS_TRIGGER_BATCH_DELIVERY_PREVIEW_ENABLED=1, or until the
+// trigger_batch_delivery platform flag (ADR-1700) includes the account.
+func (s *server) requestedTriggerDelivery(subject platformflags.Subject, kind api.TriggerKind, requested *string) (string, *api.Problem) {
 	if requested == nil {
 		return api.TriggerDeliveryRecord, nil
 	}
 	if err := api.ValidateTriggerDelivery(kind, *requested); err != nil {
 		return "", api.NewProblem(http.StatusUnprocessableEntity, "trigger_invalid_config", "Invalid trigger delivery", err.Error())
 	}
-	if *requested == api.TriggerDeliveryBatch && !s.triggerBatchDeliveryEnabled {
+	if *requested == api.TriggerDeliveryBatch && !s.platformFlagOr(platformflags.TriggerBatchDelivery, subject, s.triggerBatchDeliveryEnabled) {
 		return "", api.NewProblem(http.StatusUnprocessableEntity, "trigger_invalid_config", "Invalid trigger delivery",
 			"delivery: batch is a preview that is not enabled on this platform; use delivery: record")
 	}

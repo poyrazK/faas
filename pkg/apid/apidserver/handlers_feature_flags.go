@@ -11,11 +11,17 @@ import (
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/flags"
+	"github.com/onebox-faas/faas/pkg/platformflags"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/workloadidentity"
 )
 
-var errFlagsWorkloadIdentity = errors.New("flags: invalid workload identity")
+var (
+	errFlagsWorkloadIdentity = errors.New("flags: invalid workload identity")
+	// errFlagsNotReleased means the customer_flags platform flag (ADR-1700)
+	// does not include the workload's account.
+	errFlagsNotReleased = errors.New("flags: not enabled for this account")
+)
 
 type updateFeatureFlagsRequest struct {
 	ExpectedVersion *int64       `json:"expected_version"`
@@ -38,11 +44,15 @@ func (s *server) featureFlagScope(w http.ResponseWriter, r *http.Request, acct s
 		api.WriteProblem(w, api.NewProblem(http.StatusForbidden, api.CodeForbidden, "Account key required", "project-wide flags require an account-scoped credential"))
 		return state.FeatureFlagScope{}, nil, false
 	}
-	if !s.featureFlagsEnabled {
+	if !s.platformFlagFor(platformflags.CustomerFlags, flagSubject(r, acct)) {
 		// Without a hint the CLI falls back to its generic 403 advice to
 		// check the profile and credentials, which this is not (hunt #9 H9-43).
+		hint := "Feature flags are not enabled on this Gregale installation; an operator must qualify them first. Your credentials are not the cause."
+		if s.platformFlagOn(platformflags.CustomerFlags) {
+			hint = "Feature flags are not enabled for this account yet; an operator releases them account by account. Your credentials are not the cause."
+		}
 		api.WriteProblem(w, api.NewProblem(http.StatusForbidden, api.CodeForbidden, "Flags unavailable", "feature flags require operator qualification").
-			WithHint("Feature flags are not enabled on this Gregale installation; an operator must qualify them first. Your credentials are not the cause."))
+			WithHint(hint))
 		return state.FeatureFlagScope{}, nil, false
 	}
 	project, ok := s.loadProject(w, r, acct)
@@ -234,6 +244,9 @@ func (s *server) runtimeFeatureFlagScope(r *http.Request) (state.FeatureFlagScop
 	if environment == "" || environment == "default" {
 		environment = "production"
 	}
+	if !s.platformFlagFor(platformflags.CustomerFlags, appFlagSubject(acct, app)) {
+		return state.FeatureFlagScope{}, errFlagsNotReleased
+	}
 	env, err := s.store.ProjectEnvironmentBySlug(r.Context(), acct.ID, app.ProjectID, environment)
 	if err != nil {
 		return state.FeatureFlagScope{}, err
@@ -241,11 +254,15 @@ func (s *server) runtimeFeatureFlagScope(r *http.Request) (state.FeatureFlagScop
 	return state.FeatureFlagScope{AccountID: acct.ID, ProjectID: app.ProjectID, EnvironmentID: env.ID}, nil
 }
 func (s *server) runtimeFeatureFlags(w http.ResponseWriter, r *http.Request) {
-	if !s.featureFlagsEnabled {
+	if !s.platformFlagOn(platformflags.CustomerFlags) {
 		api.WriteProblem(w, api.NewProblem(http.StatusForbidden, api.CodeForbidden, "Flags unavailable", "feature flags require operator qualification"))
 		return
 	}
 	scope, err := s.runtimeFeatureFlagScope(r)
+	if errors.Is(err, errFlagsNotReleased) {
+		api.WriteProblem(w, api.NewProblem(http.StatusForbidden, api.CodeForbidden, "Flags unavailable", "feature flags are not enabled for this account"))
+		return
+	}
 	if err != nil {
 		api.WriteProblem(w, api.NewProblem(http.StatusUnauthorized, api.CodeUnauthorized, "Workload identity required", "a live workload token for gregale:flags is required"))
 		return

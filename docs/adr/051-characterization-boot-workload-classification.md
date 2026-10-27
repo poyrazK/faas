@@ -219,3 +219,64 @@ private TCP service on 5432 could be characterized as HTTP on 5432 (H10-56).
 Readiness then probed the TCP port and every later cold boot timed out.
 Snapshot restores do not characterize, so only cold boots of apps that never
 bind their expected port pay the grace.
+
+## Amendment (2026-10-22): no probe requests with side effects
+
+Owner decision after production-us Hunt 12 (H12-6). The L7 probes are
+requests into the customer's process, so they must not act on it:
+
+- There is no GraphQL probe. It POSTed an introspection query to the app's
+  `/`, which a handler that acts on POSTs (a webhook receiver, a queue
+  consumer) processes like any other request. `graphql` only refined `http`
+  on the host, which still accepts it from older guests. The OpenAPI
+  `GET /openapi.json` capture (ADR-122) stays.
+- A function's cold boot skips the L7 probes. Its runner hands every request
+  to the customer's handler: during a queue worker's deploy prime the handler
+  processed two probe requests as jobs. vmmd adds `faas.runner=function`
+  (`api.FunctionRunnerBootArg`) to the kernel command line when the wake has a
+  runner runtime, and guest-init reports the bind without probing.
+- The HTTP/2-preface gRPC probe runs only when the HTTP/1.1 probe got no
+  HTTP/1.x answer (H11-5): an HTTP/1 server logged it as a protocol error.
+
+## Amendment (2026-10-22): the observed class moves the boot's config proof
+
+A cold boot publishes its instance with a config proof (ADR-531): the
+fingerprint of the deployment's runtime configuration it booted with. The
+workload class is part of that configuration, and the class is only known
+after the boot, so recording an observed class that differs from the scan
+hint left the booting instance's proof stale for good. Every later check
+of it failed: a frozen thaw refused it as `config_changed`, the frozen
+worker tier stopped it instead of freezing it (ADR-20261019103000), and
+warm-pool promotion and the ADR-1740 fast path discarded it. On n2 the first
+worker of every new worker app paid for this.
+
+schedd now records the class with `RecordObservedWorkloadClass`. In one
+transaction it takes the secret writers' lock order (the environment, then
+the app exclusively), checks that the instance's proof still matches the
+configuration (nothing changed since the publication), writes the class,
+and moves that proof to the fingerprint the configuration gives with the new
+class. When something else changed in between, it writes the class and
+leaves the proof stale, so a real configuration change is never adopted by
+a VM that did not boot with it. The secret fence is unaffected. A
+deployment pinned to a project environment workload spec never had the
+problem: its fingerprint hashes the spec's settings, not the app row's
+class.
+
+## Amendment (2026-10-25): the in-guest port ladder is retired
+
+The host no longer dials a fixed `:8080`. Since #1892 it routes the
+readiness probe and traffic to the deployment's port
+(`AppManifest.EffectivePort()`, which source inference sets to 3000 for a
+Node app), and ADR-1170 keeps production images on the listen-on-`$PORT`
+contract; guest-init always injects `PORT`. The ladder's later rungs had
+stopped reaching the probe: guests ship no `iptables`, and the fallback
+forwarder listened on `127.0.0.1:8080`, which the host never dials, while
+holding that loopback port inside the guest. guest-init no longer installs
+either and always reports `port_norm_mode: "none"`; hosts still accept
+`dnat` and `forward` from older guests.
+
+An app that listens, but not on the routed port, now fails readiness with
+`app_not_listening` naming both ports and the fix: listen on `$PORT`, or
+declare the port (`hosting.port` in gregale.yaml, `overrides.port` for an
+image deployment). Before, the failure said the app never listened.
+Watch-mode development images keep the ADR-1170 bridge.

@@ -1,5 +1,5 @@
 // adr: 1291
-package state
+package state_test
 
 import (
 	"context"
@@ -13,14 +13,15 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
-func seedLiveVerification(t *testing.T, store Store) (App, Deployment, Automation, api.AutomationTestSuite) {
+func seedLiveVerification(t *testing.T, store state.Store) (state.App, state.Deployment, state.Automation, api.AutomationTestSuite) {
 	t.Helper()
-	app, dep := seedWorkflowSchedule(t, store, "allow")
-	author := store.(AutomationStore)
-	draft := mutateForTest(t, author, app.ID, "live-cases", "save", 0, automationDraft("live-cases", "/handler", ""), false)
-	draft = mutateForTest(t, author, app.ID, draft.Name, "publish", draft.Version, nil, false)
+	app, dep := state.SeedWorkflowSchedule(t, store, "allow")
+	author := store.(state.AutomationStore)
+	draft := state.MutateForTest(t, author, app.ID, "live-cases", "save", 0, state.AutomationDraft("live-cases", "/handler", ""), false)
+	draft = state.MutateForTest(t, author, app.ID, draft.Name, "publish", draft.Version, nil, false)
 	count := 2
 	suite := api.AutomationTestSuite{Cases: []api.AutomationTestCase{{Name: "real main", Simulation: api.AutomationTestInputs{
 		Input: json.RawMessage(`{"id":9007199254740993,"private":"PRIVATE-INPUT"}`), MockOutputs: map[string]json.RawMessage{"main": json.RawMessage(`"PRIVATE-MOCK"`)}},
@@ -30,28 +31,28 @@ func seedLiveVerification(t *testing.T, store Store) (App, Deployment, Automatio
 	return app, dep, draft, suite
 }
 
-func liveStartRequest(draft Automation, dep Deployment) api.StartAutomationLiveVerificationRequest {
+func liveStartRequest(draft state.Automation, dep state.Deployment) api.StartAutomationLiveVerificationRequest {
 	return api.StartAutomationLiveVerificationRequest{ExpectedVersion: draft.Version, ExpectedPublishedVersion: draft.PublishedVersion,
 		ExpectedDeploymentID: dep.ID, CaseName: "real main", ConfirmRealActions: true}
 }
 
-func finishLiveRun(t *testing.T, store Store, runID string, output json.RawMessage, attempt int) {
+func finishLiveRun(t *testing.T, store state.Store, runID string, output json.RawMessage, attempt int) {
 	t.Helper()
-	if err := store.CreateWorkflowSteps(t.Context(), runID, []*WorkflowStep{{RunID: runID, StepName: "main", Status: WorkflowStepStatusPending}}); err != nil {
+	if err := store.CreateWorkflowSteps(t.Context(), runID, []*state.WorkflowStep{{RunID: runID, StepName: "main", Status: state.WorkflowStepStatusPending}}); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.MarkWorkflowStepStatus(t.Context(), runID, "main", WorkflowStepStatusSucceeded, attempt, output, nil); err != nil {
+	if err := store.MarkWorkflowStepStatus(t.Context(), runID, "main", state.WorkflowStepStatusSucceeded, attempt, output, nil); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.MarkWorkflowRunStatus(t.Context(), runID, WorkflowRunStatusSucceeded, json.RawMessage(`"PRIVATE-RUN-OUTPUT"`), nil); err != nil {
+	if err := store.MarkWorkflowRunStatus(t.Context(), runID, state.WorkflowRunStatusSucceeded, json.RawMessage(`"PRIVATE-RUN-OUTPUT"`), nil); err != nil {
 		t.Fatal(err)
 	}
 }
 
 func TestAutomationLiveVerificationProvenanceAndReports(t *testing.T) {
-	workflowScheduleStores(t, func(t *testing.T, store Store) {
+	state.WorkflowScheduleStores(t, func(t *testing.T, store state.Store) {
 		app, dep, draft, suite := seedLiveVerification(t, store)
-		live := store.(AutomationLiveStore)
+		live := store.(state.AutomationLiveStore)
 		req, key := liveStartRequest(draft, dep), uuid.NewString()
 		view, replayed, err := live.StartAutomationLiveVerification(t.Context(), app.ID, draft.Name, key, req, true)
 		if err != nil || replayed || view.Outdated || view.Report != nil || view.RunStatus != "pending" {
@@ -80,12 +81,12 @@ func TestAutomationLiveVerificationProvenanceAndReports(t *testing.T) {
 		if err != nil || !restored.Report.Steps[0].Passed {
 			t.Fatal("retained report aliased caller memory", err)
 		}
-		before, _ := store.(AutomationStore).ListAutomations(t.Context(), app.ID)
+		before, _ := store.(state.AutomationStore).ListAutomations(t.Context(), app.ID)
 		if before[0].Version != draft.Version || !before[0].UpdatedAt.Truncate(time.Microsecond).Equal(draft.UpdatedAt.Truncate(time.Microsecond)) {
 			t.Fatal("verification advanced automation intent")
 		}
 		suite.Cases[0].Live.Expectations[0].Output = json.RawMessage(`"PRIVATE-NEW-EXPECTATION"`)
-		draft = saveSuiteForTest(t, store.(AutomationStore), app.ID, draft, &suite)
+		draft = saveSuiteForTest(t, store.(state.AutomationStore), app.ID, draft, &suite)
 		old, err := live.CheckAutomationLiveVerification(t.Context(), app.ID, draft.Name, view.RunID)
 		if err != nil || !old.Outdated || !old.Report.Passed {
 			t.Fatal("edited assertions replaced the frozen live test", err)
@@ -96,13 +97,13 @@ func TestAutomationLiveVerificationProvenanceAndReports(t *testing.T) {
 		}
 		changed := req
 		changed.ExpectedVersion = draft.Version
-		if _, _, err := live.StartAutomationLiveVerification(t.Context(), app.ID, draft.Name, key, changed, true); !errors.Is(err, ErrWorkflowRunIdempotencyConflict) {
+		if _, _, err := live.StartAutomationLiveVerification(t.Context(), app.ID, draft.Name, key, changed, true); !errors.Is(err, state.ErrWorkflowRunIdempotencyConflict) {
 			t.Fatal("same key accepted a different request", err)
 		}
-		if _, err := live.GetAutomationLiveVerification(t.Context(), uuid.NewString(), draft.Name, view.RunID); !errors.Is(err, ErrNotFound) {
+		if _, err := live.GetAutomationLiveVerification(t.Context(), uuid.NewString(), draft.Name, view.RunID); !errors.Is(err, state.ErrNotFound) {
 			t.Fatal("cross-app report read succeeded", err)
 		}
-		if _, err := live.GetAutomationLiveVerification(t.Context(), app.ID, "other", view.RunID); !errors.Is(err, ErrNotFound) {
+		if _, err := live.GetAutomationLiveVerification(t.Context(), app.ID, "other", view.RunID); !errors.Is(err, state.ErrNotFound) {
 			t.Fatal("cross-automation report read succeeded", err)
 		}
 		cancelled, cancel := context.WithCancel(t.Context())
@@ -110,8 +111,8 @@ func TestAutomationLiveVerificationProvenanceAndReports(t *testing.T) {
 		if _, err := live.CheckAutomationLiveVerification(cancelled, app.ID, draft.Name, view.RunID); !errors.Is(err, context.Canceled) {
 			t.Fatal("cancelled check persisted observations", err)
 		}
-		draft = saveSuiteForTest(t, store.(AutomationStore), app.ID, draft, nil)
-		if _, err := live.GetAutomationLiveVerification(t.Context(), app.ID, draft.Name, view.RunID); !errors.Is(err, ErrNotFound) {
+		draft = saveSuiteForTest(t, store.(state.AutomationStore), app.ID, draft, nil)
+		if _, err := live.GetAutomationLiveVerification(t.Context(), app.ID, draft.Name, view.RunID); !errors.Is(err, state.ErrNotFound) {
 			t.Fatal("clear retained frozen live data", err)
 		}
 		if _, err := store.GetWorkflowRun(t.Context(), view.RunID); err != nil {
@@ -121,9 +122,9 @@ func TestAutomationLiveVerificationProvenanceAndReports(t *testing.T) {
 }
 
 func TestAutomationLiveVerificationAdmissionFencesAndIdempotency(t *testing.T) {
-	workflowScheduleStores(t, func(t *testing.T, store Store) {
+	state.WorkflowScheduleStores(t, func(t *testing.T, store state.Store) {
 		app, dep, draft, _ := seedLiveVerification(t, store)
-		live := store.(AutomationLiveStore)
+		live := store.(state.AutomationLiveStore)
 		req := liveStartRequest(draft, dep)
 		for _, tc := range []struct {
 			name string
@@ -146,7 +147,7 @@ func TestAutomationLiveVerificationAdmissionFencesAndIdempotency(t *testing.T) {
 		if _, _, err := live.StartAutomationLiveVerification(t.Context(), app.ID, draft.Name, uuid.NewString(), req, false); err == nil {
 			t.Fatal("disabled runtime admitted a run")
 		}
-		runs, _, _ := store.ListWorkflowRuns(t.Context(), app.ID, ListWorkflowRunsOpts{})
+		runs, _, _ := store.ListWorkflowRuns(t.Context(), app.ID, state.ListWorkflowRunsOpts{})
 		if len(runs) != 0 {
 			t.Fatal("rejected starts left real runs")
 		}
@@ -177,7 +178,7 @@ func TestAutomationLiveVerificationAdmissionFencesAndIdempotency(t *testing.T) {
 				t.Fatal("concurrent replay admitted multiple runs")
 			}
 		}
-		runs, _, _ = store.ListWorkflowRuns(t.Context(), app.ID, ListWorkflowRunsOpts{})
+		runs, _, _ = store.ListWorkflowRuns(t.Context(), app.ID, state.ListWorkflowRunsOpts{})
 		if len(runs) != 1 {
 			t.Fatal("concurrent requests consumed multiple run slots")
 		}
@@ -190,27 +191,27 @@ func TestAutomationLiveVerificationAdmissionFencesAndIdempotency(t *testing.T) {
 }
 
 func TestAutomationLiveVerificationChangedTargetsAndResume(t *testing.T) {
-	workflowScheduleStores(t, func(t *testing.T, store Store) {
+	state.WorkflowScheduleStores(t, func(t *testing.T, store state.Store) {
 		app, dep, draft, _ := seedLiveVerification(t, store)
-		live := store.(AutomationLiveStore)
+		live := store.(state.AutomationLiveStore)
 		req := liveStartRequest(draft, dep)
 		view, _, err := live.StartAutomationLiveVerification(t.Context(), app.ID, draft.Name, uuid.NewString(), req, true)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if err := store.CreateWorkflowSteps(t.Context(), view.RunID, []*WorkflowStep{{StepName: "main"}}); err != nil {
+		if err := store.CreateWorkflowSteps(t.Context(), view.RunID, []*state.WorkflowStep{{StepName: "main"}}); err != nil {
 			t.Fatal(err)
 		}
 		run, err := store.ClaimNextDueWorkflowRun(t.Context())
 		if err != nil || run.ID != view.RunID {
 			t.Fatal("claim live fixture", err)
 		}
-		failResumeRun(t, store, run, "main")
+		state.FailResumeRun(t, store, run, "main")
 		checked, err := live.CheckAutomationLiveVerification(t.Context(), app.ID, draft.Name, view.RunID)
 		if err != nil || checked.Report == nil || checked.Report.Passed || !checked.ReportCurrent {
 			t.Fatal("failure report", err)
 		}
-		if _, _, _, err := store.(WorkflowResumeStore).ResumeWorkflowRun(t.Context(), resumeOptions(run, app, 0)); err != nil {
+		if _, _, _, err := store.(state.WorkflowResumeStore).ResumeWorkflowRun(t.Context(), state.ResumeOptions(run, app, 0)); err != nil {
 			t.Fatal(err)
 		}
 		resumed, err := live.GetAutomationLiveVerification(t.Context(), app.ID, draft.Name, view.RunID)
@@ -220,26 +221,26 @@ func TestAutomationLiveVerificationChangedTargetsAndResume(t *testing.T) {
 		if _, err := store.ClaimNextDueWorkflowRun(t.Context()); err != nil {
 			t.Fatal(err)
 		}
-		ctx := WithWorkflowRunGeneration(t.Context(), view.RunID, 1)
+		ctx := state.WithWorkflowRunGeneration(t.Context(), view.RunID, 1)
 		if _, err := store.StartWorkflowStep(ctx, view.RunID, "main", 2, run.Input); err != nil {
 			t.Fatal(err)
 		}
-		if err := store.MarkWorkflowStepStatus(ctx, view.RunID, "main", WorkflowStepStatusSucceeded, 2, json.RawMessage(`null`), nil); err != nil {
+		if err := store.MarkWorkflowStepStatus(ctx, view.RunID, "main", state.WorkflowStepStatusSucceeded, 2, json.RawMessage(`null`), nil); err != nil {
 			t.Fatal(err)
 		}
-		if err := store.MarkWorkflowRunStatus(ctx, view.RunID, WorkflowRunStatusSucceeded, nil, nil); err != nil {
+		if err := store.MarkWorkflowRunStatus(ctx, view.RunID, state.WorkflowRunStatusSucceeded, nil, nil); err != nil {
 			t.Fatal(err)
 		}
 		checked, err = live.CheckAutomationLiveVerification(t.Context(), app.ID, draft.Name, view.RunID)
 		if err != nil || !checked.Report.Passed || !checked.ReportCurrent || checked.Report.ResumeCount != 1 {
 			t.Fatal("resumed report", err)
 		}
-		draft = mutateForTest(t, store.(AutomationStore), app.ID, draft.Name, "publish", draft.Version, nil, false)
+		draft = state.MutateForTest(t, store.(state.AutomationStore), app.ID, draft.Name, "publish", draft.Version, nil, false)
 		changed, err := live.GetAutomationLiveVerification(t.Context(), app.ID, draft.Name, view.RunID)
 		if err != nil || !changed.Outdated {
 			t.Fatal("new publication left current evidence", err)
 		}
-		newDep, err := store.CreateDeployment(t.Context(), Deployment{AppID: app.ID, Kind: DeploymentKindImage, Status: DeployPending, ImageDigest: "sha256:live-new", Workflows: json.RawMessage(`[]`)})
+		newDep, err := store.CreateDeployment(t.Context(), state.Deployment{AppID: app.ID, Kind: state.DeploymentKindImage, Status: state.DeployPending, ImageDigest: "sha256:live-new", Workflows: json.RawMessage(`[]`)})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -251,16 +252,16 @@ func TestAutomationLiveVerificationChangedTargetsAndResume(t *testing.T) {
 			t.Fatal("deployment freshness", err)
 		}
 		stale := liveStartRequest(draft, dep)
-		if _, _, err := live.StartAutomationLiveVerification(t.Context(), app.ID, draft.Name, uuid.NewString(), stale, true); !errors.Is(err, ErrAutomationVersionConflict) {
+		if _, _, err := live.StartAutomationLiveVerification(t.Context(), app.ID, draft.Name, uuid.NewString(), stale, true); !errors.Is(err, state.ErrAutomationVersionConflict) {
 			t.Fatal("old deployment admitted", err)
 		}
 	})
 }
 
 func TestAutomationLiveVerificationUsesNormalRunQuotaAndPlan(t *testing.T) {
-	workflowScheduleStores(t, func(t *testing.T, store Store) {
+	state.WorkflowScheduleStores(t, func(t *testing.T, store state.Store) {
 		app, dep, draft, _ := seedLiveVerification(t, store)
-		live := store.(AutomationLiveStore)
+		live := store.(state.AutomationLiveStore)
 		req := liveStartRequest(draft, dep)
 		if err := store.UpdateAccountPlan(t.Context(), app.AccountID, api.PlanFree); err != nil {
 			t.Fatal(err)
@@ -272,7 +273,7 @@ func TestAutomationLiveVerificationUsesNormalRunQuotaAndPlan(t *testing.T) {
 			t.Fatal(err)
 		}
 		for range api.PlanHobby.WorkflowMaxConcurrentRuns() {
-			r := &WorkflowRun{AppID: app.ID, DeploymentID: dep.ID, WorkflowName: draft.Name, DefinitionSnapshot: draft.Published}
+			r := &state.WorkflowRun{AppID: app.ID, DeploymentID: dep.ID, WorkflowName: draft.Name, DefinitionSnapshot: draft.Published}
 			if err := store.CreateWorkflowRun(t.Context(), r); err != nil {
 				t.Fatal(err)
 			}
@@ -288,32 +289,32 @@ func TestAutomationLiveVerificationUsesNormalRunQuotaAndPlan(t *testing.T) {
 }
 
 func TestAutomationLiveVerificationLoopTargetsAndCancellation(t *testing.T) {
-	workflowScheduleStores(t, func(t *testing.T, store Store) {
+	state.WorkflowScheduleStores(t, func(t *testing.T, store state.Store) {
 		app, dep, draft, suite := seedLiveVerification(t, store)
-		author := store.(AutomationStore)
+		author := store.(state.AutomationStore)
 		def := api.WorkflowSpec{Name: draft.Name, Steps: []api.WorkflowStepSpec{{Name: "batch", ForEach: &api.WorkflowForEachSpec{Items: "input.items", Action: api.WorkflowForEachActionSpec{Path: "/handle"}}}}}
 		raw, _ := json.Marshal(def)
-		draft = mutateForTest(t, author, app.ID, draft.Name, "save", draft.Version, raw, false)
-		draft = mutateForTest(t, author, app.ID, draft.Name, "publish", draft.Version, nil, false)
+		draft = state.MutateForTest(t, author, app.ID, draft.Name, "save", draft.Version, raw, false)
+		draft = state.MutateForTest(t, author, app.ID, draft.Name, "publish", draft.Version, nil, false)
 		index, count, parent := 0, 1, "batch"
 		suite.Cases[0].Simulation.Input = json.RawMessage(`{"items":[7]}`)
 		suite.Cases[0].Live = &api.AutomationLiveTest{Expectations: []api.AutomationLiveExpectation{{Step: "batch/action", Loop: parent, ItemIndex: &index, State: "succeeded", Output: json.RawMessage(`null`), AttemptCount: &count}}}
 		draft = saveSuiteForTest(t, author, app.ID, draft, &suite)
-		live := store.(AutomationLiveStore)
+		live := store.(state.AutomationLiveStore)
 		view, _, err := live.StartAutomationLiveVerification(t.Context(), app.ID, draft.Name, uuid.NewString(), liveStartRequest(draft, dep), true)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if err := store.CreateWorkflowSteps(t.Context(), view.RunID, []*WorkflowStep{{StepName: "batch"}, {StepName: api.WorkflowForEachItemName(parent, index), ForEachParent: &parent, ForEachIndex: &index}}); err != nil {
+		if err := store.CreateWorkflowSteps(t.Context(), view.RunID, []*state.WorkflowStep{{StepName: "batch"}, {StepName: api.WorkflowForEachItemName(parent, index), ForEachParent: &parent, ForEachIndex: &index}}); err != nil {
 			t.Fatal(err)
 		}
-		if err := store.MarkWorkflowStepStatus(t.Context(), view.RunID, "batch", WorkflowStepStatusSucceeded, 0, json.RawMessage(`"PRIVATE-AGGREGATE"`), nil); err != nil {
+		if err := store.MarkWorkflowStepStatus(t.Context(), view.RunID, "batch", state.WorkflowStepStatusSucceeded, 0, json.RawMessage(`"PRIVATE-AGGREGATE"`), nil); err != nil {
 			t.Fatal(err)
 		}
-		if err := store.MarkWorkflowStepStatus(t.Context(), view.RunID, api.WorkflowForEachItemName(parent, index), WorkflowStepStatusSucceeded, 1, json.RawMessage(`null`), nil); err != nil {
+		if err := store.MarkWorkflowStepStatus(t.Context(), view.RunID, api.WorkflowForEachItemName(parent, index), state.WorkflowStepStatusSucceeded, 1, json.RawMessage(`null`), nil); err != nil {
 			t.Fatal(err)
 		}
-		if err := store.MarkWorkflowRunStatus(t.Context(), view.RunID, WorkflowRunStatusSucceeded, nil, nil); err != nil {
+		if err := store.MarkWorkflowRunStatus(t.Context(), view.RunID, state.WorkflowRunStatusSucceeded, nil, nil); err != nil {
 			t.Fatal(err)
 		}
 		checked, err := live.CheckAutomationLiveVerification(t.Context(), app.ID, draft.Name, view.RunID)
@@ -327,7 +328,7 @@ func TestAutomationLiveVerificationLoopTargetsAndCancellation(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if err := store.CreateWorkflowSteps(t.Context(), cancelled.RunID, []*WorkflowStep{{StepName: "batch"}}); err != nil {
+		if err := store.CreateWorkflowSteps(t.Context(), cancelled.RunID, []*state.WorkflowStep{{StepName: "batch"}}); err != nil {
 			t.Fatal(err)
 		}
 		if _, err := store.CancelWorkflowRun(t.Context(), cancelled.RunID, "PRIVATE-CANCEL-REASON"); err != nil {

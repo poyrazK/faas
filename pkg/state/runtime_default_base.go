@@ -3,17 +3,13 @@ package state
 // adr: 435. Full-rootfs images still boot a distinct shared drive0.
 
 import (
-	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/imagechain"
+	"github.com/onebox-faas/faas/pkg/storagekey"
 )
 
 // RuntimeBaseKeyForArch is shared by producer validation and scheduler wiring.
 func RuntimeBaseKeyForArch(runtime, arch string) string {
-	if runtime == "" {
-		return "base/base-" + arch + ".ext4"
-	}
-	runtime = api.FunctionBaseRuntime(runtime)
-	return "base/runner-" + runtime + "-" + arch + ".ext4"
+	return storagekey.BaseForArch(runtime, arch)
 }
 
 func checkRegistryRuntimeDefaultBase(in DeploymentRegistryRootfsInput, base BaseImageProducer, runtime string) error {

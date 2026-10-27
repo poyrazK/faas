@@ -13,7 +13,10 @@ import (
 	"net"
 	"sort"
 	"strings"
+	"sync"
 	"time"
+
+	"golang.org/x/time/rate"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/fcvm"
@@ -75,11 +78,48 @@ type runtimeSecretReloadAckStore interface {
 	RecordAppSecretRuntimeReloadAck(context.Context, state.AppSecretRuntimeReloadAckResult) (int, error)
 }
 
+// runtimeConfigLimiter holds each instance to api.RuntimeConfigRequestsPerSecond
+// on the runtime-config port. The listener already bounds concurrent streams;
+// this bounds their rate, since every request reads the database and may open
+// sealed secrets, and the guest controls the socket.
+type runtimeConfigLimiter struct {
+	mu      sync.Mutex
+	buckets map[string]*runtimeConfigBucket
+}
+
+type runtimeConfigBucket struct {
+	limiter *rate.Limiter
+	last    time.Time
+}
+
+func (l *runtimeConfigLimiter) allow(instance string, now time.Time) bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.buckets == nil {
+		l.buckets = map[string]*runtimeConfigBucket{}
+	}
+	b := l.buckets[instance]
+	if b == nil {
+		if len(l.buckets) >= 4096 {
+			for id, idle := range l.buckets {
+				if now.Sub(idle.last) > time.Minute {
+					delete(l.buckets, id)
+				}
+			}
+		}
+		b = &runtimeConfigBucket{limiter: rate.NewLimiter(rate.Limit(api.RuntimeConfigRequestsPerSecond), api.RuntimeConfigRequestBurst)}
+		l.buckets[instance] = b
+	}
+	b.last = now
+	return b.limiter.AllowN(now, 1)
+}
+
 type runtimeConfigReceiver struct {
-	ctx   context.Context
-	log   *slog.Logger
-	mgr   *fcvm.Manager
-	store runtimeConfigStore
+	ctx     context.Context
+	log     *slog.Logger
+	mgr     *fcvm.Manager
+	store   runtimeConfigStore
+	limiter runtimeConfigLimiter
 	// ADR-740: serving a developer live patch marks the instance so vmmd
 	// never snapshots it; delivery also needs the operator flag.
 	diverged        *vmmdgrpc.DivergedInstances
@@ -103,6 +143,11 @@ func (r *runtimeConfigReceiver) handleQualificationRestoreStream(ctx context.Con
 func (r *runtimeConfigReceiver) handleGuestStream(instance string, conn net.Conn) (string, error) {
 	if err := conn.SetDeadline(time.Now().Add(5 * time.Second)); err != nil {
 		return "read", fmt.Errorf("runtime config set deadline: %w", err)
+	}
+	if !r.limiter.allow(instance, time.Now()) {
+		// "overload" keeps a throttled guest from degrading vmmd readiness.
+		_ = writeRuntimeConfigResponse(conn, runtimeConfigResponse{Error: "rate_limited"})
+		return "overload", errors.New("runtime config: instance over its request rate")
 	}
 	body, err := readRuntimeConfigRequestFrame(conn)
 	if err != nil {
@@ -310,7 +355,7 @@ func loadRuntimeSecretsForWorkloadIfChanged(ctx context.Context, store runtimeSe
 	if knownRevision != "" && knownRevision == selection.Revision {
 		return runtimeConfigResponse{Revision: selection.Revision, Unchanged: true}, nil
 	}
-	secrets, err := mgr.UnsealRuntimeSecrets(selection.Entries)
+	secrets, err := mgr.UnsealRuntimeSecrets(selection.Entries, accountID)
 	if err != nil {
 		return runtimeConfigResponse{}, fmt.Errorf("unseal runtime secrets: %w", err)
 	}
@@ -530,8 +575,10 @@ func loadRuntimeConfig(ctx context.Context, store runtimeConfigStore, deployment
 	if snapshot.AccountID != accountID || snapshot.AppID != appID || snapshot.DeploymentID != deploymentID || api.ValidateScope(snapshot.Scope) != nil {
 		return runtimeConfigResponse{}, errors.New("runtime config store returned a mismatched deployment identity")
 	}
-	response := runtimeConfigResponse{Env: make(map[string]string, len(snapshot.Values))}
-	for _, row := range snapshot.Values {
+	response := runtimeConfigResponse{Env: make(map[string]string, len(snapshot.Inherited)+len(snapshot.Values))}
+	// ADR-1136: shared project configuration, below the app's own values (the
+	// store already left out the keys the app sets itself), as at boot.
+	for _, row := range append(append([]state.AppEnv(nil), snapshot.Inherited...), snapshot.Values...) {
 		if row.AccountID != accountID || row.AppID != appID || row.Scope != snapshot.Scope || api.ValidateEnvKey(row.Key) != nil {
 			return runtimeConfigResponse{}, errors.New("runtime config store returned a mismatched value identity")
 		}

@@ -19,7 +19,7 @@
 // The sink collects every LogFrame the engine emits; the test
 // asserts on the instance-id set + frame mix.
 
-package sched
+package sched_test
 
 import (
 	"context"
@@ -31,6 +31,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -44,7 +45,7 @@ import (
 type deploymentFilterFakeVMM struct {
 	mu                sync.Mutex
 	dials             []recordedDial
-	perInstanceStream map[string]LogStream
+	perInstanceStream map[string]sched.LogStream
 }
 
 type recordedDial struct {
@@ -55,7 +56,7 @@ type recordedDial struct {
 	Follow         bool
 }
 
-func (r *deploymentFilterFakeVMM) Logs(ctx context.Context, nodeID, instanceID string, sinceSeq int64, sinceWrittenAt time.Time, follow bool) (LogStream, error) {
+func (r *deploymentFilterFakeVMM) Logs(ctx context.Context, nodeID, instanceID string, sinceSeq int64, sinceWrittenAt time.Time, follow bool) (sched.LogStream, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.dials = append(r.dials, recordedDial{
@@ -66,12 +67,12 @@ func (r *deploymentFilterFakeVMM) Logs(ctx context.Context, nodeID, instanceID s
 		Follow:         follow,
 	})
 	if r.perInstanceStream == nil {
-		return &fakeLogStream{}, nil
+		return &sched.FakeLogStream{}, nil
 	}
 	if s, ok := r.perInstanceStream[nodeID+"/"+instanceID]; ok {
 		return s, nil
 	}
-	return &fakeLogStream{}, nil
+	return &sched.FakeLogStream{}, nil
 }
 
 func (r *deploymentFilterFakeVMM) dialed() []recordedDial {
@@ -82,21 +83,21 @@ func (r *deploymentFilterFakeVMM) dialed() []recordedDial {
 	return out
 }
 
-func (r *deploymentFilterFakeVMM) CreateColdBoot(context.Context, string, string, AppSpec) (*WakeOutcome, error) {
-	return &WakeOutcome{}, nil
+func (r *deploymentFilterFakeVMM) CreateColdBoot(context.Context, string, string, sched.AppSpec) (*sched.WakeOutcome, error) {
+	return &sched.WakeOutcome{}, nil
 }
-func (r *deploymentFilterFakeVMM) CreateFromSnapshot(context.Context, string, string, AppSpec, SnapshotRef) (*WakeOutcome, error) {
-	return &WakeOutcome{}, nil
+func (r *deploymentFilterFakeVMM) CreateFromSnapshot(context.Context, string, string, sched.AppSpec, sched.SnapshotRef) (*sched.WakeOutcome, error) {
+	return &sched.WakeOutcome{}, nil
 }
-func (r *deploymentFilterFakeVMM) PauseAndSnapshot(context.Context, string, string, string, string, string, bool) (SnapshotBytes, error) {
-	return SnapshotBytes{}, nil
+func (r *deploymentFilterFakeVMM) PauseAndSnapshot(context.Context, string, string, string, string, string, bool) (sched.SnapshotBytes, error) {
+	return sched.SnapshotBytes{}, nil
 }
 
 // WarmSnapshot (issue #470 / PR #470-FU-A) is the logs-filter
 // test's no-op seam — the logs stream path doesn't fire warm
 // captures.
-func (r *deploymentFilterFakeVMM) WarmSnapshot(context.Context, string, string, string, string) (SnapshotBytes, error) {
-	return SnapshotBytes{}, nil
+func (r *deploymentFilterFakeVMM) WarmSnapshot(context.Context, string, string, string, string) (sched.SnapshotBytes, error) {
+	return sched.SnapshotBytes{}, nil
 }
 func (r *deploymentFilterFakeVMM) Destroy(context.Context, string, string) error { return nil }
 
@@ -105,10 +106,10 @@ func (r *deploymentFilterFakeVMM) Destroy(context.Context, string, string) error
 // sequence. Test fakes default to no-op + nil —
 // the engine's per-mode dispatch lives in
 // pkg/sched/engine_stop_pgtest_test.go (commit 6).
-func (r *deploymentFilterFakeVMM) StopInstance(_ context.Context, _ string, _, _ int32) (*StopInstanceOutcome, error) {
+func (r *deploymentFilterFakeVMM) StopInstance(_ context.Context, _ string, _, _ int32) (*sched.StopInstanceOutcome, error) {
 	return nil, nil
 }
-func (r *deploymentFilterFakeVMM) StopInstanceOnNode(_ context.Context, _, _ string, _, _ int32) (*StopInstanceOutcome, error) {
+func (r *deploymentFilterFakeVMM) StopInstanceOnNode(_ context.Context, _, _ string, _, _ int32) (*sched.StopInstanceOutcome, error) {
 	return nil, nil
 }
 
@@ -119,11 +120,11 @@ func (r *deploymentFilterFakeVMM) StopInstanceOnNode(_ context.Context, _, _ str
 func (r *deploymentFilterFakeVMM) FrameworkReady(context.Context, string, string, int64) error {
 	return nil
 }
-func (r *deploymentFilterFakeVMM) Ping(context.Context, string) (*PingOutcome, error) {
-	return &PingOutcome{FcVersion: "1.10.0"}, nil
+func (r *deploymentFilterFakeVMM) Ping(context.Context, string) (*sched.PingOutcome, error) {
+	return &sched.PingOutcome{FcVersion: "1.10.0"}, nil
 }
-func (r *deploymentFilterFakeVMM) Stats(context.Context, string) (*StatsSnapshot, error) {
-	return &StatsSnapshot{}, nil
+func (r *deploymentFilterFakeVMM) Stats(context.Context, string) (*sched.StatsSnapshot, error) {
+	return &sched.StatsSnapshot{}, nil
 }
 func (r *deploymentFilterFakeVMM) UpdateEgressAllowlist(context.Context, string, string, []netip.Prefix, []int) error {
 	return nil
@@ -133,11 +134,11 @@ func (r *deploymentFilterFakeVMM) UpdateStaticEgressIP(context.Context, string, 
 }
 
 // Tier A5 (ADR-066) — logs filter tests don't drive migration.
-func (r *deploymentFilterFakeVMM) PrepareLiveMigration(context.Context, string, string, string) (LiveMigrationPrepare, error) {
-	return LiveMigrationPrepare{}, nil
+func (r *deploymentFilterFakeVMM) PrepareLiveMigration(context.Context, string, string, string) (sched.LiveMigrationPrepare, error) {
+	return sched.LiveMigrationPrepare{}, nil
 }
-func (r *deploymentFilterFakeVMM) AdoptMigratedInstance(context.Context, string, string, AppSpec, string, string, string) (LiveMigrationAdopt, error) {
-	return LiveMigrationAdopt{}, nil
+func (r *deploymentFilterFakeVMM) AdoptMigratedInstance(context.Context, string, string, sched.AppSpec, string, string, string) (sched.LiveMigrationAdopt, error) {
+	return sched.LiveMigrationAdopt{}, nil
 }
 func (r *deploymentFilterFakeVMM) AcknowledgeMigration(context.Context, string, string, string) error {
 	return nil
@@ -154,22 +155,22 @@ func (r *deploymentFilterFakeVMM) CancelLiveMigration(context.Context, string, s
 // lifecycle (avoids the "wg.Wait hangs because the test forgot to
 // close" trap that whitebox tests around this engine seam hit).
 type programmableLogStream struct {
-	lines chan LogLine
+	lines chan sched.LogLine
 	once  sync.Once
 }
 
-func newProgrammableLogStream(lines ...LogLine) *programmableLogStream {
-	ch := make(chan LogLine, len(lines))
+func newProgrammableLogStream(lines ...sched.LogLine) *programmableLogStream {
+	ch := make(chan sched.LogLine, len(lines))
 	for _, l := range lines {
 		ch <- l
 	}
 	return &programmableLogStream{lines: ch}
 }
 
-func (s *programmableLogStream) Recv() (LogLine, error) {
+func (s *programmableLogStream) Recv() (sched.LogLine, error) {
 	l, ok := <-s.lines
 	if !ok {
-		return LogLine{}, io.EOF
+		return sched.LogLine{}, io.EOF
 	}
 	return l, nil
 }
@@ -184,11 +185,11 @@ func (s *programmableLogStream) close() {
 // per-instance goroutine fan-out.
 type frameSink struct {
 	mu     sync.Mutex
-	frames []LogFrame
+	frames []sched.LogFrame
 }
 
-func (s *frameSink) sink() LogFrameSink {
-	return func(f LogFrame) error {
+func (s *frameSink) sink() sched.LogFrameSink {
+	return func(f sched.LogFrame) error {
 		s.mu.Lock()
 		defer s.mu.Unlock()
 		s.frames = append(s.frames, f)
@@ -196,10 +197,10 @@ func (s *frameSink) sink() LogFrameSink {
 	}
 }
 
-func (s *frameSink) snapshot() []LogFrame {
+func (s *frameSink) snapshot() []sched.LogFrame {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	out := make([]LogFrame, len(s.frames))
+	out := make([]sched.LogFrame, len(s.frames))
 	copy(out, s.frames)
 	return out
 }
@@ -220,7 +221,7 @@ func TestEngineStreamAppLogs_DeploymentFilterScopesFanout(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	store := state.NewMemStore()
-	_, app, _ := seedApp(t, store, api.PlanHobby, 256, 5)
+	_, app, _ := sched.SeedApp(t, store, api.PlanHobby, 256, 5)
 
 	// Seed three live instances on the local node, each pinned to
 	// a different DeploymentID. The default CreateDeployment from
@@ -257,13 +258,13 @@ func TestEngineStreamAppLogs_DeploymentFilterScopesFanout(t *testing.T) {
 	streamB := newProgrammableLogStream()
 	streamC := newProgrammableLogStream()
 	vmm := &deploymentFilterFakeVMM{
-		perInstanceStream: map[string]LogStream{
+		perInstanceStream: map[string]sched.LogStream{
 			state.DefaultLocalNodeName + "/" + insA.ID: streamA,
 			state.DefaultLocalNodeName + "/" + insB.ID: streamB,
 			state.DefaultLocalNodeName + "/" + insC.ID: streamC,
 		},
 	}
-	eng := newEngine(t, store, vmm, &fakeNotifier{}, "1.10.0")
+	eng := sched.XNewEngine(t, store, vmm, &sched.FakeNotifier{}, "1.10.0")
 	sink := &frameSink{}
 	wantSince := time.Date(2026, 8, 1, 12, 0, 0, 0, time.UTC)
 	done := make(chan error, 1)
@@ -326,22 +327,22 @@ func TestEngineStreamAppLogs_OneShotReturnsAfterReplay(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	store := state.NewMemStore()
-	_, app, _ := seedApp(t, store, api.PlanHobby, 256, 5)
+	_, app, _ := sched.SeedApp(t, store, api.PlanHobby, 256, 5)
 	ins, err := store.CreateInstance(ctx, app.ID, "", string(state.StateRunning), 256, state.DefaultLocalNodeName, "")
 	if err != nil {
 		t.Fatalf("CreateInstance: %v", err)
 	}
 	stream := newProgrammableLogStream(
-		LogLine{Seq: 1, Stream: "stdout", Line: "alpha"},
-		LogLine{Seq: 2, Stream: "stderr", Line: "beta"},
+		sched.LogLine{Seq: 1, Stream: "stdout", Line: "alpha"},
+		sched.LogLine{Seq: 2, Stream: "stderr", Line: "beta"},
 	)
 	stream.close()
 	vmm := &deploymentFilterFakeVMM{
-		perInstanceStream: map[string]LogStream{
+		perInstanceStream: map[string]sched.LogStream{
 			state.DefaultLocalNodeName + "/" + ins.ID: stream,
 		},
 	}
-	eng := newEngine(t, store, vmm, &fakeNotifier{}, "1.10.0")
+	eng := sched.XNewEngine(t, store, vmm, &sched.FakeNotifier{}, "1.10.0")
 	sink := &frameSink{}
 	done := make(chan error, 1)
 	go func() {
@@ -379,7 +380,7 @@ func TestEngineStreamAppLogs_GapForwardedFromVMM(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	store := state.NewMemStore()
-	_, app, _ := seedApp(t, store, api.PlanHobby, 256, 5)
+	_, app, _ := sched.SeedApp(t, store, api.PlanHobby, 256, 5)
 	ins, err := store.CreateInstance(ctx, app.ID, "", string(state.StateRunning), 256, state.DefaultLocalNodeName, "")
 	if err != nil {
 		t.Fatalf("CreateInstance: %v", err)
@@ -387,16 +388,16 @@ func TestEngineStreamAppLogs_GapForwardedFromVMM(t *testing.T) {
 
 	headAt := time.Date(2026, 8, 1, 12, 30, 0, 0, time.UTC)
 	stream := newProgrammableLogStream(
-		LogLine{IsGap: true, GapToWrittenAt: headAt, GapReason: "seq_below_retained"},
-		LogLine{Seq: 7, Stream: "stdout", Line: "first", WrittenAt: headAt.Add(time.Second)},
-		LogLine{Seq: 8, Stream: "stdout", Line: "second", WrittenAt: headAt.Add(2 * time.Second)},
+		sched.LogLine{IsGap: true, GapToWrittenAt: headAt, GapReason: "seq_below_retained"},
+		sched.LogLine{Seq: 7, Stream: "stdout", Line: "first", WrittenAt: headAt.Add(time.Second)},
+		sched.LogLine{Seq: 8, Stream: "stdout", Line: "second", WrittenAt: headAt.Add(2 * time.Second)},
 	)
 	vmm := &deploymentFilterFakeVMM{
-		perInstanceStream: map[string]LogStream{
+		perInstanceStream: map[string]sched.LogStream{
 			state.DefaultLocalNodeName + "/" + ins.ID: stream,
 		},
 	}
-	eng := newEngine(t, store, vmm, &fakeNotifier{}, "1.10.0")
+	eng := sched.XNewEngine(t, store, vmm, &sched.FakeNotifier{}, "1.10.0")
 	sink := &frameSink{}
 	done := make(chan error, 1)
 	go func() {
@@ -461,9 +462,9 @@ func TestEngineStreamAppLogs_AttachesInstanceCreatedAfterFollowStarts(t *testing
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	store := state.NewMemStore()
-	_, app, _ := seedApp(t, store, api.PlanHobby, 256, 5)
-	vmm := &deploymentFilterFakeVMM{perInstanceStream: make(map[string]LogStream)}
-	eng := newEngine(t, store, vmm, &fakeNotifier{}, "1.10.0")
+	_, app, _ := sched.SeedApp(t, store, api.PlanHobby, 256, 5)
+	vmm := &deploymentFilterFakeVMM{perInstanceStream: make(map[string]sched.LogStream)}
+	eng := sched.XNewEngine(t, store, vmm, &sched.FakeNotifier{}, "1.10.0")
 	sink := &frameSink{}
 	done := make(chan error, 1)
 	go func() {
@@ -473,7 +474,7 @@ func TestEngineStreamAppLogs_AttachesInstanceCreatedAfterFollowStarts(t *testing
 	// A follow stream can begin while the app is parked. A later wake creates
 	// a new instance ID; schedd must discover its vmmd ring without requiring
 	// the customer to restart `gregale logs --follow`.
-	stream := newProgrammableLogStream(LogLine{Seq: 1, Stream: "stderr", Line: "after wake", WrittenAt: time.Now()})
+	stream := newProgrammableLogStream(sched.LogLine{Seq: 1, Stream: "stderr", Line: "after wake", WrittenAt: time.Now()})
 	// A cold-booting instance is already discoverable. Hold the fake's dial
 	// lock until its ring is registered so an early reader cannot get the
 	// fake's default EOF stream and permanently miss the real fixture stream.

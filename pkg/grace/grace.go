@@ -158,6 +158,8 @@ func (g *Grace) RunOnce(ctx context.Context) error {
 		return err
 	}
 	cutoff := g.p.Now().Add(-state.DeletionGraceDuration())
+	deferred := 0
+	defer func() { g.metrics.setAccountsDeferred(deferred) }()
 	for _, acct := range rows {
 		if acct.Status != state.AccountDeletedPending {
 			continue
@@ -171,6 +173,7 @@ func (g *Grace) RunOnce(ctx context.Context) error {
 		if g.p.BeforeAccountDelete != nil {
 			if err := g.p.BeforeAccountDelete(ctx, acct); err != nil {
 				g.p.Log.Warn("grace: external cleanup deferred", "account", acct.ID, "err", err)
+				deferred++
 				continue
 			}
 		}
@@ -304,6 +307,15 @@ func (g *Grace) RunAppsOnce(ctx context.Context) error {
 		}
 		if err := g.p.Store.DeleteAppPermanently(ctx, app.ID); err != nil {
 			if errors.Is(err, state.ErrNotFound) {
+				continue
+			}
+			if errors.Is(err, state.ErrConflict) {
+				// A live bucket, managed PostgreSQL binding or unsettled
+				// multipart write still holds the app. That is a wait, not a
+				// failure; logging it as one every minute buried real purge
+				// errors (Hunt 11 H11-21).
+				g.metrics.failure("retained_resources")
+				g.p.Log.Debug("grace: app hard delete waits for retained resources", "app", app.ID)
 				continue
 			}
 			g.metrics.failure("delete_database")

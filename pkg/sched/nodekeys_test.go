@@ -17,7 +17,7 @@
 // White-box (package sched) so the test can construct a
 // NodeKeyRegistry without re-exporting the loader interface.
 
-package sched
+package sched_test
 
 import (
 	"context"
@@ -33,6 +33,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/db"
+	"github.com/onebox-faas/faas/pkg/sched"
 )
 
 // stubLoader is a NodeKeyLoader backed by an in-memory slice +
@@ -40,7 +41,7 @@ import (
 // load counter (one Load per Refresh per Run notify).
 type stubLoader struct {
 	mu    sync.Mutex
-	rows  []NodeKeyRow
+	rows  []sched.NodeKeyRow
 	loads atomic.Int64
 	// failOnNextLoad, if non-nil, makes the next Load call
 	// return the wrapped error and clears the flag. Tests use
@@ -49,7 +50,7 @@ type stubLoader struct {
 	failOnNextLoad error
 }
 
-func (s *stubLoader) LoadNodeKeys(_ context.Context) ([]NodeKeyRow, error) {
+func (s *stubLoader) LoadNodeKeys(_ context.Context) ([]sched.NodeKeyRow, error) {
 	s.loads.Add(1)
 	s.mu.Lock()
 	err := s.failOnNextLoad
@@ -80,7 +81,7 @@ func (silentLog) Info(string, ...any) {}
 
 // generateP256Row returns a parseable NodeKeyRow for a fresh
 // ECDSA P-256 key. Test helper.
-func generateP256Row(t *testing.T) (*ecdsa.PrivateKey, NodeKeyRow) {
+func generateP256Row(t *testing.T) (*ecdsa.PrivateKey, sched.NodeKeyRow) {
 	t.Helper()
 	priv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
@@ -91,11 +92,11 @@ func generateP256Row(t *testing.T) (*ecdsa.PrivateKey, NodeKeyRow) {
 		t.Fatalf("MarshalPKIXPublicKey: %v", err)
 	}
 	pemBytes := pem.EncodeToMemory(&pem.Block{Type: "PUBLIC KEY", Bytes: der})
-	keyID, err := KeyIDForPublicKey(&priv.PublicKey)
+	keyID, err := sched.KeyIDForPublicKey(&priv.PublicKey)
 	if err != nil {
 		t.Fatalf("KeyIDForPublicKey: %v", err)
 	}
-	return priv, NodeKeyRow{ComputeNodeID: "node-1", KeyID: keyID, PublicKeyPEM: string(pemBytes)}
+	return priv, sched.NodeKeyRow{ComputeNodeID: "node-1", KeyID: keyID, PublicKeyPEM: string(pemBytes)}
 }
 
 // TestNodeKeyRegistry_RefreshAndLookup pins the happy path:
@@ -103,8 +104,8 @@ func generateP256Row(t *testing.T) (*ecdsa.PrivateKey, NodeKeyRow) {
 // by key_id, and an unknown key_id returns (nil, false).
 func TestNodeKeyRegistry_RefreshAndLookup(t *testing.T) {
 	_, row := generateP256Row(t)
-	loader := &stubLoader{rows: []NodeKeyRow{row}}
-	reg := NewNodeKeyRegistry(loader, silentLog{})
+	loader := &stubLoader{rows: []sched.NodeKeyRow{row}}
+	reg := sched.NewNodeKeyRegistry(loader, silentLog{})
 
 	// Pre-Refresh: the registry is empty.
 	if _, ok := reg.PublicKey(row.KeyID); ok {
@@ -141,8 +142,8 @@ func TestNodeKeyRegistry_RejectsKeyIDSharedAcrossNodes(t *testing.T) {
 	_, row := generateP256Row(t)
 	other := row
 	other.ComputeNodeID = "node-2"
-	reg := NewNodeKeyRegistry(&stubLoader{}, silentLog{})
-	if got := reg.ReplaceAll([]NodeKeyRow{row, other}); got != 0 {
+	reg := sched.NewNodeKeyRegistry(&stubLoader{}, silentLog{})
+	if got := reg.ReplaceAll([]sched.NodeKeyRow{row, other}); got != 0 {
 		t.Fatalf("ReplaceAll accepted %d keys, want 0 for conflicting ownership", got)
 	}
 	if _, ok := reg.PublicKeyForNode(row.ComputeNodeID, row.KeyID); ok {
@@ -161,11 +162,11 @@ func TestNodeKeyRegistry_RejectsKeyIDSharedAcrossNodes(t *testing.T) {
 // signature verification for every healthy vmmd.
 func TestNodeKeyRegistry_ReplaceAllSkipsUnparseableRows(t *testing.T) {
 	_, good := generateP256Row(t)
-	loader := &stubLoader{rows: []NodeKeyRow{
+	loader := &stubLoader{rows: []sched.NodeKeyRow{
 		good,
 		{ComputeNodeID: "node-1", KeyID: "bad", PublicKeyPEM: "not a pem block"},
 	}}
-	reg := NewNodeKeyRegistry(loader, silentLog{})
+	reg := sched.NewNodeKeyRegistry(loader, silentLog{})
 	n, err := reg.Refresh(context.Background())
 	if err != nil {
 		t.Fatalf("Refresh: %v", err)
@@ -185,8 +186,8 @@ func TestNodeKeyRegistry_ReplaceAllSkipsUnparseableRows(t *testing.T) {
 // vmmd's signature verification.
 func TestNodeKeyRegistry_RefreshKeepsLastKnownGoodOnError(t *testing.T) {
 	_, row := generateP256Row(t)
-	loader := &stubLoader{rows: []NodeKeyRow{row}}
-	reg := NewNodeKeyRegistry(loader, silentLog{})
+	loader := &stubLoader{rows: []sched.NodeKeyRow{row}}
+	reg := sched.NewNodeKeyRegistry(loader, silentLog{})
 
 	// Initial Refresh populates the map.
 	if _, err := reg.Refresh(context.Background()); err != nil {
@@ -212,8 +213,8 @@ func TestNodeKeyRegistry_RefreshKeepsLastKnownGoodOnError(t *testing.T) {
 // loop exits cleanly on channel close.
 func TestNodeKeyRegistry_RunTriggersRefresh(t *testing.T) {
 	_, row := generateP256Row(t)
-	loader := &stubLoader{rows: []NodeKeyRow{row}}
-	reg := NewNodeKeyRegistry(loader, silentLog{})
+	loader := &stubLoader{rows: []sched.NodeKeyRow{row}}
+	reg := sched.NewNodeKeyRegistry(loader, silentLog{})
 
 	// Initial Refresh.
 	if _, err := reg.Refresh(context.Background()); err != nil {
@@ -272,7 +273,7 @@ func TestNodeKeyRegistry_RunTriggersRefresh(t *testing.T) {
 // the nil check would panic in tests that don't wire the
 // registry.
 func TestNodeKeyRegistry_RunNilReceiver(t *testing.T) {
-	var reg *NodeKeyRegistry
+	var reg *sched.NodeKeyRegistry
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	go func() { done <- reg.Run(ctx, make(chan db.Notification)) }()

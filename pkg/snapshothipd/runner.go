@@ -135,9 +135,32 @@ func (r *Runner) validate() error {
 	}
 }
 
+// replicaReconciler is the optional store probe behind idle ticks:
+// state.PgStore reconciles and reports in one read whether a claim could find
+// a job. A store without it reconciles and claims on every tick.
+type replicaReconciler interface {
+	ReconcileSnapshotReplicas(ctx context.Context, nodeID string) (added int, claimable bool, err error)
+}
+
 func (r *Runner) runTick(ctx context.Context) {
-	r.reconcile(ctx)
-	r.runWorkTick(ctx)
+	reconciler, ok := r.store.(replicaReconciler)
+	if !ok {
+		r.reconcile(ctx)
+		r.runWorkTick(ctx)
+		return
+	}
+	added, claimable, err := reconciler.ReconcileSnapshotReplicas(ctx, r.nodeID)
+	if err != nil {
+		// Fail open: a failed probe must not hide claimable work.
+		r.log.Warn("snapshothipd: reconcile failed", "node_id", r.nodeID, "err", err)
+		claimable = true
+	}
+	if added > 0 {
+		r.log.Info("snapshothipd: snapshot replica jobs enqueued", "node_id", r.nodeID, "count", added)
+	}
+	if claimable {
+		r.runWorkTick(ctx)
+	}
 }
 
 func (r *Runner) reconcile(ctx context.Context) {

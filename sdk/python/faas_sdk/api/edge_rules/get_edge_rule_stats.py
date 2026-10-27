@@ -16,6 +16,7 @@ def _get_kwargs(
     slug: str,
     *,
     window: GetEdgeRuleStatsWindow | Unset = "24h",
+    series: bool | Unset = False,
 ) -> dict[str, Any]:
 
     params: dict[str, Any] = {}
@@ -25,6 +26,8 @@ def _get_kwargs(
         json_window = window
 
     params["window"] = json_window
+
+    params["series"] = series
 
     params = {k: v for k, v in params.items() if v is not UNSET and v is not None}
 
@@ -89,10 +92,11 @@ def sync_detailed(
     *,
     client: AuthenticatedClient | Client,
     window: GetEdgeRuleStatsWindow | Unset = "24h",
+    series: bool | Unset = False,
 ) -> Response[EdgeRuleStatsResponse | Problem]:
     """Per-rule match counts for an app over a window.
 
-     ADR-960. Gateways count each rule's matches (matched for enforced
+     Gateways count each rule's matches (matched for enforced
     rules, logged for log-mode rules), at most once per rule per request,
     and flush them into hourly buckets once a minute; buckets are kept
     for 14 days. Rules with no matches in the window are omitted.
@@ -100,6 +104,7 @@ def sync_detailed(
     Args:
         slug (str):
         window (GetEdgeRuleStatsWindow | Unset):  Default: '24h'.
+        series (bool | Unset):  Default: False.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -112,6 +117,7 @@ def sync_detailed(
     kwargs = _get_kwargs(
         slug=slug,
         window=window,
+        series=series,
     )
 
     response = client.get_httpx_client().request(
@@ -126,10 +132,11 @@ def sync(
     *,
     client: AuthenticatedClient | Client,
     window: GetEdgeRuleStatsWindow | Unset = "24h",
+    series: bool | Unset = False,
 ) -> EdgeRuleStatsResponse | Problem | None:
     """Per-rule match counts for an app over a window.
 
-     ADR-960. Gateways count each rule's matches (matched for enforced
+     Gateways count each rule's matches (matched for enforced
     rules, logged for log-mode rules), at most once per rule per request,
     and flush them into hourly buckets once a minute; buckets are kept
     for 14 days. Rules with no matches in the window are omitted.
@@ -137,6 +144,7 @@ def sync(
     Args:
         slug (str):
         window (GetEdgeRuleStatsWindow | Unset):  Default: '24h'.
+        series (bool | Unset):  Default: False.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -150,6 +158,7 @@ def sync(
         slug=slug,
         client=client,
         window=window,
+        series=series,
     ).parsed
 
 
@@ -158,10 +167,11 @@ async def asyncio_detailed(
     *,
     client: AuthenticatedClient | Client,
     window: GetEdgeRuleStatsWindow | Unset = "24h",
+    series: bool | Unset = False,
 ) -> Response[EdgeRuleStatsResponse | Problem]:
     """Per-rule match counts for an app over a window.
 
-     ADR-960. Gateways count each rule's matches (matched for enforced
+     Gateways count each rule's matches (matched for enforced
     rules, logged for log-mode rules), at most once per rule per request,
     and flush them into hourly buckets once a minute; buckets are kept
     for 14 days. Rules with no matches in the window are omitted.
@@ -169,6 +179,7 @@ async def asyncio_detailed(
     Args:
         slug (str):
         window (GetEdgeRuleStatsWindow | Unset):  Default: '24h'.
+        series (bool | Unset):  Default: False.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -181,6 +192,7 @@ async def asyncio_detailed(
     kwargs = _get_kwargs(
         slug=slug,
         window=window,
+        series=series,
     )
 
     response = await client.get_async_httpx_client().request(**kwargs)
@@ -193,10 +205,11 @@ async def asyncio(
     *,
     client: AuthenticatedClient | Client,
     window: GetEdgeRuleStatsWindow | Unset = "24h",
+    series: bool | Unset = False,
 ) -> EdgeRuleStatsResponse | Problem | None:
     """Per-rule match counts for an app over a window.
 
-     ADR-960. Gateways count each rule's matches (matched for enforced
+     Gateways count each rule's matches (matched for enforced
     rules, logged for log-mode rules), at most once per rule per request,
     and flush them into hourly buckets once a minute; buckets are kept
     for 14 days. Rules with no matches in the window are omitted.
@@ -204,6 +217,7 @@ async def asyncio(
     Args:
         slug (str):
         window (GetEdgeRuleStatsWindow | Unset):  Default: '24h'.
+        series (bool | Unset):  Default: False.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -218,5 +232,6 @@ async def asyncio(
             slug=slug,
             client=client,
             window=window,
+            series=series,
         )
     ).parsed

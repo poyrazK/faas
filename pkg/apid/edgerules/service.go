@@ -11,6 +11,7 @@ import (
 	"context"
 	"log/slog"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/httpkit"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/promql"
@@ -33,11 +34,17 @@ type Host interface {
 	Notifier() Notifier
 	// PromQL is nil when no Prometheus endpoint is configured.
 	PromQL() *promql.Client
+	// PlatformFlagEnabled decides a platform flag (ADR-1700) for acct.
+	PlatformFlagEnabled(flagKey string, acct state.Account) bool
 }
 
 // Service is the edge rules surface.
 type Service struct {
 	Host Host
+
+	// SettingCheck refuses an edge rule kind whose capability is not released
+	// to the account (ADR-20261023115741); nil allows every kind.
+	SettingCheck func(acct state.Account, kind string) *api.Problem
 
 	// FleetRequired is true on named multi-box control planes. Those
 	// deployments must see at least one active serving gateway before a

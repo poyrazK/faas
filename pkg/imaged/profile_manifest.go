@@ -48,7 +48,13 @@ func applySourceProfile(manifest api.AppManifest, dep state.Deployment) api.AppM
 // safe fallback for a valid source tree whose exporter leaves both OCI command
 // fields empty.
 func manifestFromLocalOCIConfig(config oci.Config, dep state.Deployment) (api.AppManifest, error) {
-	if len(config.Entrypoint) == 0 && len(config.Cmd) == 0 {
+	if command, ok := configuredStartCommand(dep); ok {
+		// gregale.yaml's hosting.start is the customer's explicit command, so
+		// it replaces whatever the image carries; a Railpack build with no
+		// detected start keeps the base image's CMD (python3), which exits at
+		// once on an empty stdin (Hunt 12 H12-29).
+		config.Entrypoint, config.Cmd = nil, command
+	} else if len(config.Entrypoint) == 0 && len(config.Cmd) == 0 {
 		if command, ok := profileStartCommand(dep); ok {
 			config.Cmd = command
 		}
@@ -65,10 +71,7 @@ func manifestFromLocalOCIConfig(config oci.Config, dep state.Deployment) (api.Ap
 // the same precedence used by source-built apps.
 func manifestFromImageConfigWithApp(config oci.ImageConfig, app state.App) (api.AppManifest, error) {
 	if app.Manifest.ProjectImage != "" {
-		if app.Manifest.ProjectImageCommand != nil {
-			config.Cmd = append([]string(nil), app.Manifest.ProjectImageCommand...)
-		}
-		return manifestFromImageConfig(config)
+		return manifestFromImageConfig(applyComposeProcess(config, app.Manifest.ProjectImageProcess, app.Manifest.ProjectImageCommand))
 	}
 	if len(config.Entrypoint) == 0 && len(config.Cmd) == 0 {
 		if start := strings.TrimSpace(app.StartCommand); start != "" {
@@ -116,12 +119,39 @@ func manifestFromImageConfigWithDeployment(config oci.ImageConfig, app state.App
 		return api.AppManifest{}, fmt.Errorf("imaged: frozen image command: %w", err)
 	}
 	if command != nil {
-		if command.Cmd != nil {
-			config.Cmd = slices.Clone(command.Cmd)
-		}
-		return manifestFromImageConfig(config)
+		return manifestFromImageConfig(applyComposeProcess(config, command.Process, command.Cmd))
 	}
 	return manifestFromImageConfigWithApp(config, app)
+}
+
+// applyComposeProcess applies a project image's Compose command and process
+// overrides (ADR-1337) to its OCI config. A nil cmd keeps the image CMD. An
+// entrypoint override drops the image CMD, as `docker run --entrypoint` and
+// Compose do, so cmd becomes the only arguments.
+func applyComposeProcess(config oci.ImageConfig, process *api.ComposeProcess, cmd []string) oci.ImageConfig {
+	if cmd != nil {
+		config.Cmd = slices.Clone(cmd)
+	}
+	if process == nil {
+		return config
+	}
+	if process.Entrypoint != nil {
+		config.Entrypoint = slices.Clone(*process.Entrypoint)
+		config.Cmd = slices.Clone(cmd)
+	}
+	if process.User != "" {
+		config.User = process.User
+	}
+	if process.WorkingDir != "" {
+		config.WorkingDir = process.WorkingDir
+	}
+	if process.StopSignal != "" {
+		config.StopSignal = process.StopSignal
+	}
+	if process.StopGracePeriodS != nil {
+		config.StopGracePeriodS = *process.StopGracePeriodS
+	}
+	return config
 }
 
 // applyAppStartCommand enforces the documented app-level command override.
@@ -140,6 +170,15 @@ func profileStartCommand(dep state.Deployment) ([]string, bool) {
 		return nil, false
 	}
 	return shellCommand(profile.StartCommand), true
+}
+
+// configuredStartCommand is the deployment's explicit hosting.start command.
+func configuredStartCommand(dep state.Deployment) ([]string, bool) {
+	profile, ok := persistedProfile(dep)
+	if !ok || !profile.StartFromConfig || strings.TrimSpace(profile.StartCommand) == "" {
+		return nil, false
+	}
+	return shellCommand(strings.TrimSpace(profile.StartCommand)), true
 }
 
 func shellCommand(command string) []string {

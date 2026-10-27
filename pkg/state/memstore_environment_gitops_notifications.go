@@ -20,17 +20,35 @@ func (m *MemStore) environmentGitNotificationLocked(memory *environmentGitOpsMem
 		return err
 	}
 	memory.notifications = next
-	if eventID == "" || !m.accounts[memory.source.AccountID].MayDeploy() {
-		return nil
+	m.enqueueEnvironmentGitNotificationLocked(memory, environmentGitNotificationEvent{id: eventID, body: payload}, now)
+	return nil
+}
+
+func (m *MemStore) environmentGitRolloutNotificationLocked(memory *environmentGitOpsMemory, evidence *EnvironmentWorkloadActivationEvidence, runID string, now time.Time) error {
+	next, events, err := prepareEnvironmentGitRolloutNotifications(memory.notifications, memory.source, memory.revisions[memory.source.ApprovedRevisionID],
+		m.projects[memory.source.ProjectID].Slug, runID, evidence, now)
+	if err != nil {
+		return err
+	}
+	memory.notifications = next
+	for _, event := range events {
+		m.enqueueEnvironmentGitNotificationLocked(memory, event, now)
+	}
+	return nil
+}
+
+func (m *MemStore) enqueueEnvironmentGitNotificationLocked(memory *environmentGitOpsMemory, event environmentGitNotificationEvent, now time.Time) {
+	if event.id == "" || !m.accounts[memory.source.AccountID].MayDeploy() {
+		return
 	}
 	for _, hook := range m.appWebhooks {
-		if hook.AccountID != memory.source.AccountID || hook.Scope != AppWebhookScopeAccount || !hook.Enabled || !slices.Contains(hook.EventFilter, string(AppWebhookEventEnvironmentGitOpsChanged)) {
+		if hook.AccountID != memory.source.AccountID || hook.Scope != AppWebhookScopeAccount || !hook.Enabled || !slices.Contains(hook.EventFilter, string(AppWebhookEventEnvironmentGitOpsChanged)) ||
+			!m.accountMaySeeOrgLocked(hook.AccountID, m.projects[memory.source.ProjectID].OrgID) {
 			continue
 		}
 		id := newID()
 		m.appWebhookDeliveries[id] = AppWebhookDelivery{ID: id, WebhookID: hook.ID, AccountID: hook.AccountID,
-			Event: AppWebhookEventEnvironmentGitOpsChanged, Payload: slices.Clone(payload), Status: AppWebhookDeliveryPending,
+			Event: AppWebhookEventEnvironmentGitOpsChanged, Payload: slices.Clone(event.body), Status: AppWebhookDeliveryPending,
 			NextAttemptAt: now, CreatedAt: now, UpdatedAt: now}
 	}
-	return nil
 }

@@ -20,7 +20,7 @@
 // explicitly set, not the flag defaults — that's the bug class Tier C
 // surfaced for cmdAlertUpdate and that Tier D has to carry forward.
 
-package main
+package main_test
 
 import (
 	"bytes"
@@ -29,34 +29,35 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
 // --- leaf 1: cmdDeploymentSetMinInstances ---
 
 func TestTierD_DeploymentSetMinInstances_NoArgsExitsOne(t *testing.T) {
-	resetJSONOut(t)
-	authedFakeAPI(t, "", http.StatusOK)
-	if code := cmdDeploymentSetMinInstances(nil); code != 1 {
+	main.ResetJSONOut(t)
+	main.AuthedFakeAPI(t, "", http.StatusOK)
+	if code := main.CmdDeploymentSetMinInstances(nil); code != 1 {
 		t.Fatalf("exit = %d, want 1", code)
 	}
 }
 
 func TestTierD_DeploymentSetMinInstances_HappyPath(t *testing.T) {
-	resetJSONOut(t)
+	main.ResetJSONOut(t)
 	body := `{"id":"0123456789abcdef0123456789abcdef","min_instances":2}`
-	f := authedFakeAPI(t, body, http.StatusOK)
-	if code := cmdDeploymentSetMinInstances([]string{
+	f := main.AuthedFakeAPI(t, body, http.StatusOK)
+	if code := main.CmdDeploymentSetMinInstances([]string{
 		"--min", "2", "0123456789abcdef0123456789abcdef",
 	}); code != 0 {
 		t.Fatalf("exit = %d, want 0", code)
 	}
-	if f.sawMethod != "PATCH" || f.sawPath != "/v1/deployments/0123456789abcdef0123456789abcdef" {
-		t.Errorf("route = %s %s, want PATCH /v1/deployments/<id>", f.sawMethod, f.sawPath)
+	if (*f.SawMethod()) != "PATCH" || (*f.SawPath()) != "/v1/deployments/0123456789abcdef0123456789abcdef" {
+		t.Errorf("route = %s %s, want PATCH /v1/deployments/<id>", (*f.SawMethod()), (*f.SawPath()))
 	}
 	var got map[string]any
-	if err := json.Unmarshal(f.sawBody, &got); err != nil {
-		t.Fatalf("decode body: %v; raw=%s", err, string(f.sawBody))
+	if err := json.Unmarshal((*f.SawBody()), &got); err != nil {
+		t.Fatalf("decode body: %v; raw=%s", err, string((*f.SawBody())))
 	}
 	if got["min_instances"] != float64(2) {
 		t.Errorf("min_instances = %v, want 2", got["min_instances"])
@@ -64,30 +65,30 @@ func TestTierD_DeploymentSetMinInstances_HappyPath(t *testing.T) {
 }
 
 func TestTierD_DeploymentSetMinInstances_OmittedMinDoesNotPatch(t *testing.T) {
-	resetJSONOut(t)
-	f := authedFakeAPI(t, `{}`, http.StatusOK)
-	if code := cmdDeploymentSetMinInstances([]string{"0123456789abcdef0123456789abcdef"}); code != 1 {
+	main.ResetJSONOut(t)
+	f := main.AuthedFakeAPI(t, `{}`, http.StatusOK)
+	if code := main.CmdDeploymentSetMinInstances([]string{"0123456789abcdef0123456789abcdef"}); code != 1 {
 		t.Fatalf("exit = %d, want 1", code)
 	}
-	if f.sawMethod != "" {
-		t.Fatalf("unexpected request: %s %s", f.sawMethod, f.sawPath)
+	if (*f.SawMethod()) != "" {
+		t.Fatalf("unexpected request: %s %s", (*f.SawMethod()), (*f.SawPath()))
 	}
 }
 
 func TestTierD_DeploymentSetMinInstances_ExplicitZeroPatches(t *testing.T) {
-	resetJSONOut(t)
+	main.ResetJSONOut(t)
 	body := `{"id":"0123456789abcdef0123456789abcdef","min_instances":0}`
-	f := authedFakeAPI(t, body, http.StatusOK)
-	if code := cmdDeploymentSetMinInstances([]string{
+	f := main.AuthedFakeAPI(t, body, http.StatusOK)
+	if code := main.CmdDeploymentSetMinInstances([]string{
 		"0123456789abcdef0123456789abcdef", "--min", "0",
 	}); code != 0 {
 		t.Fatalf("exit = %d, want 0", code)
 	}
-	if f.sawMethod != "PATCH" {
-		t.Fatalf("method = %q, want PATCH", f.sawMethod)
+	if (*f.SawMethod()) != "PATCH" {
+		t.Fatalf("method = %q, want PATCH", (*f.SawMethod()))
 	}
 	var got map[string]any
-	if err := json.Unmarshal(f.sawBody, &got); err != nil {
+	if err := json.Unmarshal((*f.SawBody()), &got); err != nil {
 		t.Fatalf("decode body: %v", err)
 	}
 	if got["min_instances"] != float64(0) {
@@ -96,45 +97,45 @@ func TestTierD_DeploymentSetMinInstances_ExplicitZeroPatches(t *testing.T) {
 }
 
 func TestTierD_DeploymentSetMinInstances_NegativeDoesNotPatch(t *testing.T) {
-	resetJSONOut(t)
-	f := authedFakeAPI(t, `{}`, http.StatusOK)
-	if code := cmdDeploymentSetMinInstances([]string{
+	main.ResetJSONOut(t)
+	f := main.AuthedFakeAPI(t, `{}`, http.StatusOK)
+	if code := main.CmdDeploymentSetMinInstances([]string{
 		"--min", "-1", "0123456789abcdef0123456789abcdef",
 	}); code != 1 {
 		t.Fatalf("exit = %d, want 1", code)
 	}
-	if f.sawMethod != "" {
-		t.Fatalf("unexpected request: %s %s", f.sawMethod, f.sawPath)
+	if (*f.SawMethod()) != "" {
+		t.Fatalf("unexpected request: %s %s", (*f.SawMethod()), (*f.SawPath()))
 	}
 }
 
 // --- leaf 2: cmdWakeTimeline ---
 
 func TestTierD_WakeTimeline_NoArgsExitsOne(t *testing.T) {
-	resetJSONOut(t)
-	if code := cmdWakeTimeline(nil); code != 1 {
+	main.ResetJSONOut(t)
+	if code := main.CmdWakeTimeline(nil); code != 1 {
 		t.Fatalf("exit = %d, want 1", code)
 	}
 }
 
 func TestTierD_WakeTimeline_HappyPath(t *testing.T) {
-	resetJSONOut(t)
+	main.ResetJSONOut(t)
 	body := `{"wake_id":"w-1","app_id":"a-1","events":[],"limit":50}`
-	f := authedFakeAPI(t, body, http.StatusOK)
-	if code := cmdWakeTimeline([]string{"demo", "w-1"}); code != 0 {
+	f := main.AuthedFakeAPI(t, body, http.StatusOK)
+	if code := main.CmdWakeTimeline([]string{"demo", "w-1"}); code != 0 {
 		t.Fatalf("exit = %d, want 0", code)
 	}
-	if f.sawMethod != "GET" || f.sawPath != "/v1/apps/demo/wakes/w-1/timeline" {
-		t.Errorf("route = %s %s, want GET /v1/apps/demo/wakes/w-1/timeline", f.sawMethod, f.sawPath)
+	if (*f.SawMethod()) != "GET" || (*f.SawPath()) != "/v1/apps/demo/wakes/w-1/timeline" {
+		t.Errorf("route = %s %s, want GET /v1/apps/demo/wakes/w-1/timeline", (*f.SawMethod()), (*f.SawPath()))
 	}
 }
 
 func TestTierD_WakeTimeline_BadLimitExitsOne(t *testing.T) {
-	resetJSONOut(t)
-	authedFakeAPI(t, "", http.StatusOK)
+	main.ResetJSONOut(t)
+	main.AuthedFakeAPI(t, "", http.StatusOK)
 	// wakeTimelineMaxLimit = 1000; 1001 must fast-fail before the
 	// server-side gate so a CLI typo costs zero latency.
-	if code := cmdWakeTimeline([]string{"--limit", "1001", "demo", "w-1"}); code != 1 {
+	if code := main.CmdWakeTimeline([]string{"--limit", "1001", "demo", "w-1"}); code != 1 {
 		t.Fatalf("exit = %d, want 1", code)
 	}
 }
@@ -142,45 +143,45 @@ func TestTierD_WakeTimeline_BadLimitExitsOne(t *testing.T) {
 // --- leaves 3-5: cmdRegistry dispatcher ---
 
 func TestTierD_RegistryList_NoAppFlagExitsOne(t *testing.T) {
-	resetJSONOut(t)
-	authedFakeAPI(t, "", http.StatusOK)
-	if code := cmdRegistryList(nil); code != 1 {
+	main.ResetJSONOut(t)
+	main.AuthedFakeAPI(t, "", http.StatusOK)
+	if code := main.CmdRegistryList(nil); code != 1 {
 		t.Fatalf("exit = %d, want 1", code)
 	}
 }
 
 func TestTierD_RegistryList_HappyPath(t *testing.T) {
-	resetJSONOut(t)
+	main.ResetJSONOut(t)
 	body := `{"credentials":[{"registry":"docker.io","username":"u","created_at":"2026-08-07T00:00:00Z","updated_at":"2026-08-07T00:00:00Z"}],"quota_max":5,"count":1}`
-	f := authedFakeAPI(t, body, http.StatusOK)
-	if code := cmdRegistryList([]string{"--app", "demo"}); code != 0 {
+	f := main.AuthedFakeAPI(t, body, http.StatusOK)
+	if code := main.CmdRegistryList([]string{"--app", "demo"}); code != 0 {
 		t.Fatalf("exit = %d, want 0", code)
 	}
-	if f.sawMethod != "GET" || f.sawPath != "/v1/apps/demo/registry-credentials" {
-		t.Errorf("route = %s %s, want GET /v1/apps/demo/registry-credentials", f.sawMethod, f.sawPath)
+	if (*f.SawMethod()) != "GET" || (*f.SawPath()) != "/v1/apps/demo/registry-credentials" {
+		t.Errorf("route = %s %s, want GET /v1/apps/demo/registry-credentials", (*f.SawMethod()), (*f.SawPath()))
 	}
 }
 
 func TestTierD_RegistrySet_HappyPath(t *testing.T) {
-	resetJSONOut(t)
+	main.ResetJSONOut(t)
 	body := `{"registry":"docker.io","username":"u","created_at":"2026-08-07T00:00:00Z","updated_at":"2026-08-07T00:00:00Z"}`
-	f := authedFakeAPI(t, body, http.StatusOK)
-	if code := cmdRegistrySet([]string{
+	f := main.AuthedFakeAPI(t, body, http.StatusOK)
+	if code := main.CmdRegistrySet([]string{
 		"--app", "demo", "--registry", "docker.io",
 		"--user", "u", "--password", "p",
 	}); code != 0 {
 		t.Fatalf("exit = %d, want 0", code)
 	}
-	if f.sawMethod != "PUT" || f.sawPath != "/v1/apps/demo/registry-credentials" {
-		t.Errorf("route = %s %s, want PUT /v1/apps/demo/registry-credentials", f.sawMethod, f.sawPath)
+	if (*f.SawMethod()) != "PUT" || (*f.SawPath()) != "/v1/apps/demo/registry-credentials" {
+		t.Errorf("route = %s %s, want PUT /v1/apps/demo/registry-credentials", (*f.SawMethod()), (*f.SawPath()))
 	}
 	// Body must carry the four required fields; the password is
 	// plaintext at the CLI boundary only — the SDK ships it to the
 	// API and the server seals it. The CLI never echoes the
 	// plaintext back (registry_auth.go contract).
 	var got map[string]any
-	if err := json.Unmarshal(f.sawBody, &got); err != nil {
-		t.Fatalf("decode body: %v; raw=%s", err, string(f.sawBody))
+	if err := json.Unmarshal((*f.SawBody()), &got); err != nil {
+		t.Fatalf("decode body: %v; raw=%s", err, string((*f.SawBody())))
 	}
 	if got["registry"] != "https://docker.io" {
 		t.Errorf("registry = %v, want https://docker.io", got["registry"])
@@ -194,21 +195,21 @@ func TestTierD_RegistrySet_HappyPath(t *testing.T) {
 }
 
 func TestTierD_RegistrySet_PasswordStdinDoesNotEcho(t *testing.T) {
-	resetJSONOut(t)
+	main.ResetJSONOut(t)
 	body := `{"registry":"docker.io","username":"u","created_at":"2026-08-07T00:00:00Z","updated_at":"2026-08-07T00:00:00Z"}`
-	f := authedFakeAPI(t, body, http.StatusOK)
-	oldIn, oldOut, oldErr := osStdin, osStdout, osStderr
+	f := main.AuthedFakeAPI(t, body, http.StatusOK)
+	oldIn, oldOut, oldErr := (*main.OsStdin), (*main.OsStdout), (*main.OsStderr)
 	var stdout, stderr bytes.Buffer
-	osStdin = strings.NewReader("stdin-only-registry-token\n")
-	osStdout, osStderr = &stdout, &stderr
-	t.Cleanup(func() { osStdin, osStdout, osStderr = oldIn, oldOut, oldErr })
-	if code := cmdRegistrySet([]string{
+	(*main.OsStdin) = strings.NewReader("stdin-only-registry-token\n")
+	(*main.OsStdout), (*main.OsStderr) = &stdout, &stderr
+	t.Cleanup(func() { (*main.OsStdin), (*main.OsStdout), (*main.OsStderr) = oldIn, oldOut, oldErr })
+	if code := main.CmdRegistrySet([]string{
 		"--app", "demo", "--registry", "docker.io", "--user", "u", "--password-stdin",
 	}); code != 0 {
 		t.Fatalf("exit = %d, want 0", code)
 	}
 	var got map[string]any
-	if err := json.Unmarshal(f.sawBody, &got); err != nil {
+	if err := json.Unmarshal((*f.SawBody()), &got); err != nil {
 		t.Fatal(err)
 	}
 	if got["password"] != "stdin-only-registry-token" {
@@ -220,14 +221,14 @@ func TestTierD_RegistrySet_PasswordStdinDoesNotEcho(t *testing.T) {
 }
 
 func TestTierD_RegistrySetDocumentedVerbAndHTTPSInput(t *testing.T) {
-	resetJSONOut(t)
+	main.ResetJSONOut(t)
 	body := `{"registry":"ghcr.io","username":"u","created_at":"2026-08-07T00:00:00Z","updated_at":"2026-08-07T00:00:00Z"}`
-	f := authedFakeAPI(t, body, http.StatusOK)
-	if code := cmdRegistry([]string{"set", "--app", "demo", "--registry", "https://ghcr.io", "--user", "u", "--password", "p"}); code != 0 {
+	f := main.AuthedFakeAPI(t, body, http.StatusOK)
+	if code := main.CmdRegistry([]string{"set", "--app", "demo", "--registry", "https://ghcr.io", "--user", "u", "--password", "p"}); code != 0 {
 		t.Fatalf("registry set exit = %d", code)
 	}
 	var got map[string]any
-	if err := json.Unmarshal(f.sawBody, &got); err != nil {
+	if err := json.Unmarshal((*f.SawBody()), &got); err != nil {
 		t.Fatal(err)
 	}
 	if got["registry"] != "https://ghcr.io" {
@@ -241,9 +242,9 @@ func TestTierD_RegistrySetDocumentedVerbAndHTTPSInput(t *testing.T) {
 // server-side regex change is mirrored at the CLI without further
 // coordination.
 func TestTierD_RegistrySet_BadRegistryHostExitsOne(t *testing.T) {
-	resetJSONOut(t)
-	authedFakeAPI(t, "", http.StatusOK)
-	if code := cmdRegistrySet([]string{
+	main.ResetJSONOut(t)
+	main.AuthedFakeAPI(t, "", http.StatusOK)
+	if code := main.CmdRegistrySet([]string{
 		"--app", "demo", "--registry", "BadHost",
 		"--user", "u", "--password", "p",
 	}); code != 1 {
@@ -252,44 +253,44 @@ func TestTierD_RegistrySet_BadRegistryHostExitsOne(t *testing.T) {
 }
 
 func TestTierD_RegistryRm_HappyPath(t *testing.T) {
-	resetJSONOut(t)
-	f := authedFakeAPI(t, "", http.StatusNoContent)
-	if code := cmdRegistryRm([]string{"--app", "demo", "--registry", "docker.io"}); code != 0 {
+	main.ResetJSONOut(t)
+	f := main.AuthedFakeAPI(t, "", http.StatusNoContent)
+	if code := main.CmdRegistryRm([]string{"--app", "demo", "--registry", "docker.io"}); code != 0 {
 		t.Fatalf("exit = %d, want 0", code)
 	}
 	// fakeAPI captures only r.URL.Path; the ?registry= query is
 	// appended by the SDK after the path is captured. We assert
 	// the path matches and rely on the SDK-level test
 	// (registry_auth_test.go) to pin the query-param shape.
-	if f.sawMethod != "DELETE" || f.sawPath != "/v1/apps/demo/registry-credentials" {
-		t.Errorf("route = %s %s, want DELETE /v1/apps/demo/registry-credentials", f.sawMethod, f.sawPath)
+	if (*f.SawMethod()) != "DELETE" || (*f.SawPath()) != "/v1/apps/demo/registry-credentials" {
+		t.Errorf("route = %s %s, want DELETE /v1/apps/demo/registry-credentials", (*f.SawMethod()), (*f.SawPath()))
 	}
 }
 
 // --- leaf 6: cmdAppSecurity ---
 
 func TestTierD_AppSecurity_NoArgsExitsOne(t *testing.T) {
-	resetJSONOut(t)
+	main.ResetJSONOut(t)
 	// Empty slug → usage error path (mirrors cmdAppScale's empty-slug
 	// gate; cmdAppDispatch routes here with args[0] as the slug).
-	if code := cmdAppSecurity("", nil); code != 1 {
+	if code := main.CmdAppSecurity("", nil); code != 1 {
 		t.Fatalf("exit = %d, want 1", code)
 	}
 }
 
 func TestTierD_AppSecurity_HappyPath(t *testing.T) {
-	resetJSONOut(t)
+	main.ResetJSONOut(t)
 	body := `{"require_signed":true}`
-	f := authedFakeAPI(t, body, http.StatusOK)
-	if code := cmdAppSecurity("demo", []string{"--require-signed=true"}); code != 0 {
+	f := main.AuthedFakeAPI(t, body, http.StatusOK)
+	if code := main.CmdAppSecurity("demo", []string{"--require-signed=true"}); code != 0 {
 		t.Fatalf("exit = %d, want 0", code)
 	}
-	if f.sawMethod != "PATCH" || f.sawPath != "/v1/apps/demo/security" {
-		t.Errorf("route = %s %s, want PATCH /v1/apps/demo/security", f.sawMethod, f.sawPath)
+	if (*f.SawMethod()) != "PATCH" || (*f.SawPath()) != "/v1/apps/demo/security" {
+		t.Errorf("route = %s %s, want PATCH /v1/apps/demo/security", (*f.SawMethod()), (*f.SawPath()))
 	}
 	var got map[string]any
-	if err := json.Unmarshal(f.sawBody, &got); err != nil {
-		t.Fatalf("decode body: %v; raw=%s", err, string(f.sawBody))
+	if err := json.Unmarshal((*f.SawBody()), &got); err != nil {
+		t.Fatalf("decode body: %v; raw=%s", err, string((*f.SawBody())))
 	}
 	if got["require_signed"] != true {
 		t.Errorf("require_signed = %v, want true", got["require_signed"])
@@ -297,27 +298,27 @@ func TestTierD_AppSecurity_HappyPath(t *testing.T) {
 }
 
 func TestTierD_AppSecurity_PostureReadOnly(t *testing.T) {
-	resetJSONOut(t)
+	main.ResetJSONOut(t)
 	body := `{"app_id":"a1","slug":"demo","profile":"public","score":45,"findings":[{"code":"anonymous_access","severity":"high","title":"open","detail":"open","remediation":"set auth"}]}`
-	f := authedFakeAPI(t, body, http.StatusOK)
-	if code := cmdAppSecurity("demo", []string{"--posture"}); code != 0 {
+	f := main.AuthedFakeAPI(t, body, http.StatusOK)
+	if code := main.CmdAppSecurity("demo", []string{"--posture"}); code != 0 {
 		t.Fatalf("exit = %d, want 0", code)
 	}
-	if f.sawMethod != "GET" || f.sawPath != "/v1/apps/demo/security" {
-		t.Errorf("route = %s %s, want GET /v1/apps/demo/security", f.sawMethod, f.sawPath)
+	if (*f.SawMethod()) != "GET" || (*f.SawPath()) != "/v1/apps/demo/security" {
+		t.Errorf("route = %s %s, want GET /v1/apps/demo/security", (*f.SawMethod()), (*f.SawPath()))
 	}
 }
 
 // production-us hunt #4 (H4-40): a bare `app <slug> security` sent an empty
 // PATCH and printed "security updated". Without a mutation flag it reads.
 func TestTierD_AppSecurity_BareIsRead(t *testing.T) {
-	resetJSONOut(t)
-	f := authedFakeAPI(t, `{"app_id":"a1","slug":"demo","profile":"public","score":90,"findings":[]}`, http.StatusOK)
-	if code := cmdAppSecurity("demo", nil); code != 0 {
+	main.ResetJSONOut(t)
+	f := main.AuthedFakeAPI(t, `{"app_id":"a1","slug":"demo","profile":"public","score":90,"findings":[]}`, http.StatusOK)
+	if code := main.CmdAppSecurity("demo", nil); code != 0 {
 		t.Fatalf("exit = %d, want 0", code)
 	}
-	if f.sawMethod != "GET" {
-		t.Fatalf("bare security sent %s %s, want a read-only GET", f.sawMethod, f.sawPath)
+	if (*f.SawMethod()) != "GET" {
+		t.Fatalf("bare security sent %s %s, want a read-only GET", (*f.SawMethod()), (*f.SawPath()))
 	}
 }
 
@@ -327,15 +328,15 @@ func TestTierD_AppSecurity_BareIsRead(t *testing.T) {
 // "True", "TRUE", …) is intentionally NOT exposed here — the handler
 // enforces the strict literal too, so we mirror it for consistency.
 func TestTierD_AppSecurity_FalseFlagWorks(t *testing.T) {
-	resetJSONOut(t)
+	main.ResetJSONOut(t)
 	body := `{"require_signed":false}`
-	f := authedFakeAPI(t, body, http.StatusOK)
-	if code := cmdAppSecurity("demo", []string{"--require-signed=false"}); code != 0 {
+	f := main.AuthedFakeAPI(t, body, http.StatusOK)
+	if code := main.CmdAppSecurity("demo", []string{"--require-signed=false"}); code != 0 {
 		t.Fatalf("exit = %d, want 0", code)
 	}
 	var got map[string]any
-	if err := json.Unmarshal(f.sawBody, &got); err != nil {
-		t.Fatalf("decode body: %v; raw=%s", err, string(f.sawBody))
+	if err := json.Unmarshal((*f.SawBody()), &got); err != nil {
+		t.Fatalf("decode body: %v; raw=%s", err, string((*f.SawBody())))
 	}
 	if got["require_signed"] != false {
 		t.Errorf("require_signed = %v, want false", got["require_signed"])
@@ -343,9 +344,9 @@ func TestTierD_AppSecurity_FalseFlagWorks(t *testing.T) {
 }
 
 func TestTierD_AppSecurity_BadLiteralExitsOne(t *testing.T) {
-	resetJSONOut(t)
-	authedFakeAPI(t, "", http.StatusOK)
-	if code := cmdAppSecurity("demo", []string{"--require-signed=yes"}); code != 1 {
+	main.ResetJSONOut(t)
+	main.AuthedFakeAPI(t, "", http.StatusOK)
+	if code := main.CmdAppSecurity("demo", []string{"--require-signed=yes"}); code != 1 {
 		t.Fatalf("exit = %d, want 1 (strict literal gate)", code)
 	}
 }
@@ -353,28 +354,28 @@ func TestTierD_AppSecurity_BadLiteralExitsOne(t *testing.T) {
 // --- leaf 7: cmdOrgsUpdate ---
 
 func TestTierD_OrgsUpdate_NoOrgFlagExitsOne(t *testing.T) {
-	resetJSONOut(t)
-	authedFakeAPI(t, "", http.StatusOK)
-	if code := cmdOrgsUpdate(nil); code != 1 {
+	main.ResetJSONOut(t)
+	main.AuthedFakeAPI(t, "", http.StatusOK)
+	if code := main.CmdOrgsUpdate(nil); code != 1 {
 		t.Fatalf("exit = %d, want 1", code)
 	}
 }
 
 func TestTierD_OrgsUpdate_BadPlanExitsOne(t *testing.T) {
-	resetJSONOut(t)
-	authedFakeAPI(t, "", http.StatusOK)
-	if code := cmdOrgsUpdate([]string{"--org", "acme", "--plan", "platinum"}); code != 1 {
+	main.ResetJSONOut(t)
+	main.AuthedFakeAPI(t, "", http.StatusOK)
+	if code := main.CmdOrgsUpdate([]string{"--org", "acme", "--plan", "platinum"}); code != 1 {
 		t.Fatalf("exit = %d, want 1 (Plan.Valid gate)", code)
 	}
 }
 
 func TestTierD_OrgsUpdate_NoFieldsExitsOne(t *testing.T) {
-	resetJSONOut(t)
-	authedFakeAPI(t, "", http.StatusOK)
+	main.ResetJSONOut(t)
+	main.AuthedFakeAPI(t, "", http.StatusOK)
 	// --org supplied, but no --name / --plan — the leaf must
 	// fast-fail so the operator doesn't send a PATCH body of
 	// `{}` (which the handler would 400 anyway, but slower).
-	if code := cmdOrgsUpdate([]string{"--org", "acme"}); code != 1 {
+	if code := main.CmdOrgsUpdate([]string{"--org", "acme"}); code != 1 {
 		t.Fatalf("exit = %d, want 1 (no fields)", code)
 	}
 }
@@ -386,20 +387,20 @@ func TestTierD_OrgsUpdate_NoFieldsExitsOne(t *testing.T) {
 // Go's flag.Parse silently drops --min and the server gets
 // min_instances:0 — silently resetting the cold-wake floor.
 func TestTierD_DeploymentSetMinInstances_FlagAfterPositional(t *testing.T) {
-	resetJSONOut(t)
+	main.ResetJSONOut(t)
 	body := `{"id":"0123456789abcdef0123456789abcdef","min_instances":5}`
-	f := authedFakeAPI(t, body, http.StatusOK)
-	if code := cmdDeploymentSetMinInstances([]string{
+	f := main.AuthedFakeAPI(t, body, http.StatusOK)
+	if code := main.CmdDeploymentSetMinInstances([]string{
 		"0123456789abcdef0123456789abcdef", "--min", "5",
 	}); code != 0 {
 		t.Fatalf("exit = %d, want 0", code)
 	}
-	if f.sawMethod != "PATCH" || f.sawPath != "/v1/deployments/0123456789abcdef0123456789abcdef" {
-		t.Errorf("route = %s %s, want PATCH /v1/deployments/<id>", f.sawMethod, f.sawPath)
+	if (*f.SawMethod()) != "PATCH" || (*f.SawPath()) != "/v1/deployments/0123456789abcdef0123456789abcdef" {
+		t.Errorf("route = %s %s, want PATCH /v1/deployments/<id>", (*f.SawMethod()), (*f.SawPath()))
 	}
 	var got map[string]any
-	if err := json.Unmarshal(f.sawBody, &got); err != nil {
-		t.Fatalf("decode body: %v; raw=%s", err, string(f.sawBody))
+	if err := json.Unmarshal((*f.SawBody()), &got); err != nil {
+		t.Fatalf("decode body: %v; raw=%s", err, string((*f.SawBody())))
 	}
 	if got["min_instances"] != float64(5) {
 		t.Fatalf("min_instances = %v, want 5 (silent flag-drop would yield 0)", got["min_instances"])
@@ -413,16 +414,16 @@ func TestTierD_DeploymentSetMinInstances_FlagAfterPositional(t *testing.T) {
 // splitArgsForFlags the limit/since/all flags after the two
 // positionals are silently dropped.
 func TestTierD_WakeTimeline_FlagAfterPositional(t *testing.T) {
-	resetJSONOut(t)
+	main.ResetJSONOut(t)
 	body := `{"wake_id":"w-1","app_id":"a-1","events":[],"limit":5}`
-	f := authedFakeAPI(t, body, http.StatusOK)
-	if code := cmdWakeTimeline([]string{
+	f := main.AuthedFakeAPI(t, body, http.StatusOK)
+	if code := main.CmdWakeTimeline([]string{
 		"demo", "w-1", "--limit", "5",
 	}); code != 0 {
 		t.Fatalf("exit = %d, want 0", code)
 	}
-	if f.sawMethod != "GET" || f.sawPath != "/v1/apps/demo/wakes/w-1/timeline" {
-		t.Errorf("route = %s %s, want GET /v1/apps/demo/wakes/w-1/timeline", f.sawMethod, f.sawPath)
+	if (*f.SawMethod()) != "GET" || (*f.SawPath()) != "/v1/apps/demo/wakes/w-1/timeline" {
+		t.Errorf("route = %s %s, want GET /v1/apps/demo/wakes/w-1/timeline", (*f.SawMethod()), (*f.SawPath()))
 	}
 }
 
@@ -430,18 +431,18 @@ func TestTierD_WakeTimeline_FlagAfterPositional(t *testing.T) {
 // pointer-shape fix: a name-only update must NOT carry plan in the
 // body. Same regression class as Tier C's cmdAlertUpdate pin.
 func TestTierD_OrgsUpdate_NameOnlyDoesNotResendPlan(t *testing.T) {
-	resetJSONOut(t)
+	main.ResetJSONOut(t)
 	body := `{"slug":"acme","name":"Acme Inc.","plan":"pro"}`
-	f := authedFakeAPI(t, body, http.StatusOK)
-	if code := cmdOrgsUpdate([]string{"--org", "acme", "--name", "Acme Inc."}); code != 0 {
+	f := main.AuthedFakeAPI(t, body, http.StatusOK)
+	if code := main.CmdOrgsUpdate([]string{"--org", "acme", "--name", "Acme Inc."}); code != 0 {
 		t.Fatalf("exit = %d, want 0", code)
 	}
-	if f.sawMethod != "PATCH" || f.sawPath != "/v1/orgs/acme" {
-		t.Errorf("route = %s %s, want PATCH /v1/orgs/acme", f.sawMethod, f.sawPath)
+	if (*f.SawMethod()) != "PATCH" || (*f.SawPath()) != "/v1/orgs/acme" {
+		t.Errorf("route = %s %s, want PATCH /v1/orgs/acme", (*f.SawMethod()), (*f.SawPath()))
 	}
 	var got map[string]any
-	if err := json.Unmarshal(f.sawBody, &got); err != nil {
-		t.Fatalf("decode body: %v; raw=%s", err, string(f.sawBody))
+	if err := json.Unmarshal((*f.SawBody()), &got); err != nil {
+		t.Fatalf("decode body: %v; raw=%s", err, string((*f.SawBody())))
 	}
 	if got["name"] != "Acme Inc." {
 		t.Errorf("name = %v, want \"Acme Inc.\"", got["name"])
@@ -452,15 +453,15 @@ func TestTierD_OrgsUpdate_NameOnlyDoesNotResendPlan(t *testing.T) {
 }
 
 func TestTierD_OrgsUpdate_PlanOnlyHappyPath(t *testing.T) {
-	resetJSONOut(t)
+	main.ResetJSONOut(t)
 	body := `{"slug":"acme","plan":"scale"}`
-	f := authedFakeAPI(t, body, http.StatusOK)
-	if code := cmdOrgsUpdate([]string{"--org", "acme", "--plan", "scale"}); code != 0 {
+	f := main.AuthedFakeAPI(t, body, http.StatusOK)
+	if code := main.CmdOrgsUpdate([]string{"--org", "acme", "--plan", "scale"}); code != 0 {
 		t.Fatalf("exit = %d, want 0", code)
 	}
 	var got map[string]any
-	if err := json.Unmarshal(f.sawBody, &got); err != nil {
-		t.Fatalf("decode body: %v; raw=%s", err, string(f.sawBody))
+	if err := json.Unmarshal((*f.SawBody()), &got); err != nil {
+		t.Fatalf("decode body: %v; raw=%s", err, string((*f.SawBody())))
 	}
 	if got["plan"] != "scale" {
 		t.Errorf("plan = %v, want scale", got["plan"])
@@ -473,19 +474,19 @@ func TestTierD_OrgsUpdate_PlanOnlyHappyPath(t *testing.T) {
 // --- leaves 8-10: cmdDelayedTask dispatcher ---
 
 func TestTierD_DelayedTaskAdd_NoAppFlagExitsOne(t *testing.T) {
-	resetJSONOut(t)
-	authedFakeAPI(t, "", http.StatusOK)
-	if code := cmdDelayedTaskAdd(nil); code != 1 {
+	main.ResetJSONOut(t)
+	main.AuthedFakeAPI(t, "", http.StatusOK)
+	if code := main.CmdDelayedTaskAdd(nil); code != 1 {
 		t.Fatalf("exit = %d, want 1", code)
 	}
 }
 
 func TestTierD_DelayedTaskAdd_BadScheduledAtExitsOne(t *testing.T) {
-	resetJSONOut(t)
-	authedFakeAPI(t, "", http.StatusOK)
+	main.ResetJSONOut(t)
+	main.AuthedFakeAPI(t, "", http.StatusOK)
 	// not-an-RFC3339 string — must fast-fail before authedClient()
 	// so a typo costs zero latency.
-	if code := cmdDelayedTaskAdd([]string{
+	if code := main.CmdDelayedTaskAdd([]string{
 		"--app", "demo", "--scheduled-at", "tomorrow",
 	}); code != 1 {
 		t.Fatalf("exit = %d, want 1 (RFC3339 gate)", code)
@@ -497,9 +498,9 @@ func TestTierD_DelayedTaskAdd_BadScheduledAtExitsOne(t *testing.T) {
 // (handlers_delayed_task.go::invalid_scheduled_at) — mirror at the
 // CLI so a wrong --scheduled-at value never hits the wire.
 func TestTierD_DelayedTaskAdd_PastTimestampExitsOne(t *testing.T) {
-	resetJSONOut(t)
-	authedFakeAPI(t, "", http.StatusOK)
-	if code := cmdDelayedTaskAdd([]string{
+	main.ResetJSONOut(t)
+	main.AuthedFakeAPI(t, "", http.StatusOK)
+	if code := main.CmdDelayedTaskAdd([]string{
 		"--app", "demo", "--scheduled-at", "2020-01-01T00:00:00Z",
 	}); code != 1 {
 		t.Fatalf("exit = %d, want 1 (past-timestamp gate)", code)
@@ -507,22 +508,22 @@ func TestTierD_DelayedTaskAdd_PastTimestampExitsOne(t *testing.T) {
 }
 
 func TestTierD_DelayedTaskAdd_HappyPath(t *testing.T) {
-	resetJSONOut(t)
+	main.ResetJSONOut(t)
 	body := `{"id":"0123456789abcdef0123456789abcdef","scheduled_at":"2030-01-01T00:00:00Z"}`
-	f := authedFakeAPI(t, body, http.StatusOK)
-	if code := cmdDelayedTaskAdd([]string{
+	f := main.AuthedFakeAPI(t, body, http.StatusOK)
+	if code := main.CmdDelayedTaskAdd([]string{
 		"--app", "demo",
 		"--scheduled-at", "2030-01-01T00:00:00Z",
 		"--payload", `{"hello":"world"}`,
 	}); code != 0 {
 		t.Fatalf("exit = %d, want 0", code)
 	}
-	if f.sawMethod != "POST" || f.sawPath != "/v1/apps/demo/delayed-tasks" {
-		t.Errorf("route = %s %s, want POST /v1/apps/demo/delayed-tasks", f.sawMethod, f.sawPath)
+	if (*f.SawMethod()) != "POST" || (*f.SawPath()) != "/v1/apps/demo/delayed-tasks" {
+		t.Errorf("route = %s %s, want POST /v1/apps/demo/delayed-tasks", (*f.SawMethod()), (*f.SawPath()))
 	}
 	var got map[string]any
-	if err := json.Unmarshal(f.sawBody, &got); err != nil {
-		t.Fatalf("decode body: %v; raw=%s", err, string(f.sawBody))
+	if err := json.Unmarshal((*f.SawBody()), &got); err != nil {
+		t.Fatalf("decode body: %v; raw=%s", err, string((*f.SawBody())))
 	}
 	if got["scheduled_at"] != "2030-01-01T00:00:00Z" {
 		t.Errorf("scheduled_at = %v, want 2030-01-01T00:00:00Z", got["scheduled_at"])
@@ -533,9 +534,9 @@ func TestTierD_DelayedTaskAdd_HappyPath(t *testing.T) {
 }
 
 func TestTierD_DelayedTaskAdd_RelativeDelayAndStableIdempotencyKey(t *testing.T) {
-	resetJSONOut(t)
-	f := authedFakeAPI(t, `{"id":"0123456789abcdef0123456789abcdef","scheduled_at":"2030-01-01T00:00:00Z","state":"pending"}`, http.StatusOK)
-	if code := cmdDelayedTaskAdd([]string{
+	main.ResetJSONOut(t)
+	f := main.AuthedFakeAPI(t, `{"id":"0123456789abcdef0123456789abcdef","scheduled_at":"2030-01-01T00:00:00Z","state":"pending"}`, http.StatusOK)
+	if code := main.CmdDelayedTaskAdd([]string{
 		"--app", "demo", "--delay", "30m", "--path", "/remind",
 		"--idempotency-key", "invoice-123-reminder",
 		"--work-policy", "reminders", "--work-key", `"invoice-123"`,
@@ -543,11 +544,11 @@ func TestTierD_DelayedTaskAdd_RelativeDelayAndStableIdempotencyKey(t *testing.T)
 	}); code != 0 {
 		t.Fatalf("exit = %d, want 0", code)
 	}
-	if got := f.sawHeader.Get("Idempotency-Key"); got != "invoice-123-reminder" {
+	if got := (*f.SawHeader()).Get("Idempotency-Key"); got != "invoice-123-reminder" {
 		t.Fatalf("Idempotency-Key = %q", got)
 	}
 	var got map[string]any
-	if err := json.Unmarshal(f.sawBody, &got); err != nil {
+	if err := json.Unmarshal((*f.SawBody()), &got); err != nil {
 		t.Fatal(err)
 	}
 	if got["delay_seconds"] != float64(1800) || got["path"] != "/remind" {
@@ -566,13 +567,13 @@ func TestTierD_DelayedTaskAdd_RelativeDelayAndStableIdempotencyKey(t *testing.T)
 // production-us hunt #4: `delayed-task add --app <slug> 20s` is the spelling
 // the help prints, and the parser rejected it as an unexpected positional.
 func TestTierD_DelayedTaskAdd_PositionalDuration(t *testing.T) {
-	resetJSONOut(t)
-	f := authedFakeAPI(t, `{"id":"0123456789abcdef0123456789abcdef","scheduled_at":"2030-01-01T00:00:00Z","state":"pending"}`, http.StatusOK)
-	if code := cmdDelayedTaskAdd([]string{"--app", "demo", "20s", "--path", "/delayed"}); code != 0 {
+	main.ResetJSONOut(t)
+	f := main.AuthedFakeAPI(t, `{"id":"0123456789abcdef0123456789abcdef","scheduled_at":"2030-01-01T00:00:00Z","state":"pending"}`, http.StatusOK)
+	if code := main.CmdDelayedTaskAdd([]string{"--app", "demo", "20s", "--path", "/delayed"}); code != 0 {
 		t.Fatalf("exit = %d, want 0", code)
 	}
 	var got map[string]any
-	if err := json.Unmarshal(f.sawBody, &got); err != nil {
+	if err := json.Unmarshal((*f.SawBody()), &got); err != nil {
 		t.Fatal(err)
 	}
 	if got["delay_seconds"] != float64(20) || got["path"] != "/delayed" {
@@ -583,16 +584,16 @@ func TestTierD_DelayedTaskAdd_PositionalDuration(t *testing.T) {
 		{"--app", "demo", "20s", "--scheduled-at", "2030-01-01T00:00:00Z"},
 		{"--app", "demo", "20s", "30s"},
 	} {
-		if code := cmdDelayedTaskAdd(args); code != 1 {
+		if code := main.CmdDelayedTaskAdd(args); code != 1 {
 			t.Fatalf("cmdDelayedTaskAdd(%q) = %d, want 1: a positional duration cannot combine with other timing", args, code)
 		}
 	}
 }
 
 func TestTierD_DelayedTaskAdd_FullInvocationOptions(t *testing.T) {
-	resetJSONOut(t)
-	f := authedFakeAPI(t, `{"id":"0123456789abcdef0123456789abcdef","scheduled_at":"2030-01-01T00:00:00Z","state":"pending"}`, http.StatusOK)
-	if code := cmdDelayedTaskAdd([]string{
+	main.ResetJSONOut(t)
+	f := main.AuthedFakeAPI(t, `{"id":"0123456789abcdef0123456789abcdef","scheduled_at":"2030-01-01T00:00:00Z","state":"pending"}`, http.StatusOK)
+	if code := main.CmdDelayedTaskAdd([]string{
 		"--app", "demo", "--delay", "30m", "--method", "PUT", "--path", "/remind",
 		"--header", "x-correlation-id: corr-123", "--header", "X-Tenant:acme",
 		"--max-attempts", "4", "--retry-base-seconds", "1.5", "--retry-max-seconds", "30", "--retry-jitter-seconds", "0.2",
@@ -601,7 +602,7 @@ func TestTierD_DelayedTaskAdd_FullInvocationOptions(t *testing.T) {
 		t.Fatalf("exit = %d, want 0", code)
 	}
 	var got map[string]any
-	if err := json.Unmarshal(f.sawBody, &got); err != nil {
+	if err := json.Unmarshal((*f.SawBody()), &got); err != nil {
 		t.Fatal(err)
 	}
 	headers, _ := got["headers"].(map[string]any)
@@ -622,7 +623,7 @@ func TestTierD_DelayedTaskAdd_FullInvocationOptions(t *testing.T) {
 }
 
 func TestTierD_DelayedTaskAdd_RejectsInvalidExtendedOptions(t *testing.T) {
-	resetJSONOut(t)
+	main.ResetJSONOut(t)
 	for _, args := range [][]string{
 		{"--app", "demo", "--delay", "30m", "--header", "X-Test:one", "--header", "x-test:two"},
 		{"--app", "demo", "--delay", "30m", "--retention", "1500ms"},
@@ -630,59 +631,59 @@ func TestTierD_DelayedTaskAdd_RejectsInvalidExtendedOptions(t *testing.T) {
 		{"--app", "demo", "--delay", "30m", "--retry-base-seconds", "NaN"},
 		{"--app", "demo", "--delay", "30m", "--retry-base-seconds", "10", "--retry-max-seconds", "5"},
 	} {
-		if code := cmdDelayedTaskAdd(args); code != 1 {
+		if code := main.CmdDelayedTaskAdd(args); code != 1 {
 			t.Fatalf("cmdDelayedTaskAdd(%v) = %d, want 1", args, code)
 		}
 	}
 }
 
 func TestTierD_DelayedTaskList_HappyPath(t *testing.T) {
-	resetJSONOut(t)
-	f := authedFakeAPI(t, `{"tasks":[]}`, http.StatusOK)
-	if code := cmdDelayedTaskList([]string{"--app", "demo", "--limit", "10"}); code != 0 {
+	main.ResetJSONOut(t)
+	f := main.AuthedFakeAPI(t, `{"tasks":[]}`, http.StatusOK)
+	if code := main.CmdDelayedTaskList([]string{"--app", "demo", "--limit", "10"}); code != 0 {
 		t.Fatalf("exit = %d, want 0", code)
 	}
-	if f.sawMethod != "GET" || f.sawPath != "/v1/apps/demo/delayed-tasks" {
-		t.Fatalf("route = %s %s", f.sawMethod, f.sawPath)
+	if (*f.SawMethod()) != "GET" || (*f.SawPath()) != "/v1/apps/demo/delayed-tasks" {
+		t.Fatalf("route = %s %s", (*f.SawMethod()), (*f.SawPath()))
 	}
 }
 
 func TestTierD_DelayedTaskGet_NoArgExitsOne(t *testing.T) {
-	resetJSONOut(t)
-	if code := cmdDelayedTaskGet(nil); code != 1 {
+	main.ResetJSONOut(t)
+	if code := main.CmdDelayedTaskGet(nil); code != 1 {
 		t.Fatalf("exit = %d, want 1", code)
 	}
 }
 
 func TestTierD_DelayedTaskGet_BadIDExitsOne(t *testing.T) {
-	resetJSONOut(t)
-	authedFakeAPI(t, "", http.StatusOK)
-	if code := cmdDelayedTaskGet([]string{"not-a-uuid"}); code != 1 {
+	main.ResetJSONOut(t)
+	main.AuthedFakeAPI(t, "", http.StatusOK)
+	if code := main.CmdDelayedTaskGet([]string{"not-a-uuid"}); code != 1 {
 		t.Fatalf("exit = %d, want 1 (32-hex gate)", code)
 	}
 }
 
 func TestTierD_DelayedTaskGet_HappyPath(t *testing.T) {
-	resetJSONOut(t)
+	main.ResetJSONOut(t)
 	body := `{"id":"0123456789abcdef0123456789abcdef","scheduled_at":"2030-01-01T00:00:00Z","state":"pending"}`
-	f := authedFakeAPI(t, body, http.StatusOK)
-	if code := cmdDelayedTaskGet([]string{"0123456789abcdef0123456789abcdef"}); code != 0 {
+	f := main.AuthedFakeAPI(t, body, http.StatusOK)
+	if code := main.CmdDelayedTaskGet([]string{"0123456789abcdef0123456789abcdef"}); code != 0 {
 		t.Fatalf("exit = %d, want 0", code)
 	}
-	if f.sawMethod != "GET" || f.sawPath != "/v1/delayed-tasks/0123456789abcdef0123456789abcdef" {
-		t.Errorf("route = %s %s, want GET /v1/delayed-tasks/<id>", f.sawMethod, f.sawPath)
+	if (*f.SawMethod()) != "GET" || (*f.SawPath()) != "/v1/delayed-tasks/0123456789abcdef0123456789abcdef" {
+		t.Errorf("route = %s %s, want GET /v1/delayed-tasks/<id>", (*f.SawMethod()), (*f.SawPath()))
 	}
 }
 
 // production-us hunt #9: a dead_letter task printed only id, scheduled_at
 // and state; the attempts and the error that explain it needed --json.
 func TestTierD_DelayedTaskGet_ShowsWhyATaskDeadLettered(t *testing.T) {
-	resetJSONOut(t)
+	main.ResetJSONOut(t)
 	body := `{"id":"0123456789abcdef0123456789abcdef","scheduled_at":"2030-01-01T00:00:00Z","state":"dead_letter","method":"GET","path":"/status/503","attempts":3,"last_error":"invoke: application or gateway returned retryable HTTP 503","created_at":"2029-12-31T23:59:58Z","completed_at":"2030-01-01T00:00:09Z"}`
-	authedFakeAPI(t, body, http.StatusOK)
-	out, restore := captureStdout(t)
+	main.AuthedFakeAPI(t, body, http.StatusOK)
+	out, restore := main.CaptureStdout(t)
 	defer restore()
-	if code := cmdDelayedTaskGet([]string{"0123456789abcdef0123456789abcdef"}); code != 0 {
+	if code := main.CmdDelayedTaskGet([]string{"0123456789abcdef0123456789abcdef"}); code != 0 {
 		t.Fatalf("exit = %d, want 0", code)
 	}
 	for _, want := range []string{"dead_letter", "GET /status/503", "attempts:      3", "retryable HTTP 503", "completed_at:  2030-01-01T00:00:09Z"} {
@@ -693,36 +694,36 @@ func TestTierD_DelayedTaskGet_ShowsWhyATaskDeadLettered(t *testing.T) {
 }
 
 func TestTierD_DelayedTaskCancel_NoArgExitsOne(t *testing.T) {
-	resetJSONOut(t)
-	if code := cmdDelayedTaskCancel(nil); code != 1 {
+	main.ResetJSONOut(t)
+	if code := main.CmdDelayedTaskCancel(nil); code != 1 {
 		t.Fatalf("exit = %d, want 1", code)
 	}
 }
 
 func TestTierD_DelayedTaskCancel_HappyPath(t *testing.T) {
-	resetJSONOut(t)
-	f := authedFakeAPI(t, `{"id":"0123456789abcdef0123456789abcdef","scheduled_at":"2030-01-01T00:00:00Z","state":"cancelled"}`, http.StatusOK)
-	if code := cmdDelayedTaskCancel([]string{"0123456789abcdef0123456789abcdef"}); code != 0 {
+	main.ResetJSONOut(t)
+	f := main.AuthedFakeAPI(t, `{"id":"0123456789abcdef0123456789abcdef","scheduled_at":"2030-01-01T00:00:00Z","state":"cancelled"}`, http.StatusOK)
+	if code := main.CmdDelayedTaskCancel([]string{"0123456789abcdef0123456789abcdef"}); code != 0 {
 		t.Fatalf("exit = %d, want 0", code)
 	}
-	if f.sawMethod != "DELETE" || f.sawPath != "/v1/delayed-tasks/0123456789abcdef0123456789abcdef" {
-		t.Errorf("route = %s %s, want DELETE /v1/delayed-tasks/<id>", f.sawMethod, f.sawPath)
+	if (*f.SawMethod()) != "DELETE" || (*f.SawPath()) != "/v1/delayed-tasks/0123456789abcdef0123456789abcdef" {
+		t.Errorf("route = %s %s, want DELETE /v1/delayed-tasks/<id>", (*f.SawMethod()), (*f.SawPath()))
 	}
 }
 
 // spec: delayed task cancellation reports the authoritative terminal state.
 func TestTierD_DelayedTaskCancel_CompletedIsNotReportedCancelled(t *testing.T) {
-	resetJSONOut(t)
-	f := authedFakeAPI(t, `{"id":"0123456789abcdef0123456789abcdef","scheduled_at":"2030-01-01T00:00:00Z","state":"completed"}`, http.StatusOK)
+	main.ResetJSONOut(t)
+	f := main.AuthedFakeAPI(t, `{"id":"0123456789abcdef0123456789abcdef","scheduled_at":"2030-01-01T00:00:00Z","state":"completed"}`, http.StatusOK)
 	var stderr bytes.Buffer
-	oldErr := osStderr
-	osStderr = &stderr
-	t.Cleanup(func() { osStderr = oldErr })
-	if code := cmdDelayedTaskCancel([]string{"0123456789abcdef0123456789abcdef"}); code != 1 {
+	oldErr := (*main.OsStderr)
+	(*main.OsStderr) = &stderr
+	t.Cleanup(func() { (*main.OsStderr) = oldErr })
+	if code := main.CmdDelayedTaskCancel([]string{"0123456789abcdef0123456789abcdef"}); code != 1 {
 		t.Fatalf("exit = %d, want 1", code)
 	}
-	if f.sawMethod != "DELETE" {
-		t.Fatalf("method = %s, want DELETE", f.sawMethod)
+	if (*f.SawMethod()) != "DELETE" {
+		t.Fatalf("method = %s, want DELETE", (*f.SawMethod()))
 	}
 	if !strings.Contains(stderr.String(), "completed") || !strings.Contains(stderr.String(), "execution was not cancelled") {
 		t.Fatalf("stderr misreported result: %q", stderr.String())
@@ -732,44 +733,44 @@ func TestTierD_DelayedTaskCancel_CompletedIsNotReportedCancelled(t *testing.T) {
 // --- NoTokenExitsTwo gates (one per new family) ---
 
 func TestTierD_RegistryList_NoTokenExitsTwo(t *testing.T) {
-	resetJSONOut(t)
+	main.ResetJSONOut(t)
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	t.Setenv("FAAS_TOKEN", "")
-	f := newFakeAPI(t, "", http.StatusOK)
-	if code := cmdRegistryList([]string{"--app", "demo"}); code != 2 {
+	f := main.NewFakeAPI(t, "", http.StatusOK)
+	if code := main.CmdRegistryList([]string{"--app", "demo"}); code != 2 {
 		t.Fatalf("exit = %d, want 2 (auth)", code)
 	}
-	if f.sawMethod != "" {
-		t.Errorf("no network call expected without token; saw %s %s", f.sawMethod, f.sawPath)
+	if (*f.SawMethod()) != "" {
+		t.Errorf("no network call expected without token; saw %s %s", (*f.SawMethod()), (*f.SawPath()))
 	}
 }
 
 func TestTierD_DelayedTaskGet_NoTokenExitsTwo(t *testing.T) {
-	resetJSONOut(t)
+	main.ResetJSONOut(t)
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	t.Setenv("FAAS_TOKEN", "")
-	f := newFakeAPI(t, "", http.StatusOK)
-	if code := cmdDelayedTaskGet([]string{"0123456789abcdef0123456789abcdef"}); code != 2 {
+	f := main.NewFakeAPI(t, "", http.StatusOK)
+	if code := main.CmdDelayedTaskGet([]string{"0123456789abcdef0123456789abcdef"}); code != 2 {
 		t.Fatalf("exit = %d, want 2 (auth)", code)
 	}
-	if f.sawMethod != "" {
-		t.Errorf("no network call expected without token; saw %s %s", f.sawMethod, f.sawPath)
+	if (*f.SawMethod()) != "" {
+		t.Errorf("no network call expected without token; saw %s %s", (*f.SawMethod()), (*f.SawPath()))
 	}
 }
 
 func TestTierD_WakeTimeline_NoTokenExitsTwo(t *testing.T) {
-	resetJSONOut(t)
+	main.ResetJSONOut(t)
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	t.Setenv("FAAS_TOKEN", "")
-	f := newFakeAPI(t, "", http.StatusOK)
-	if code := cmdWakeTimeline([]string{"demo", "w-1"}); code != 2 {
+	f := main.NewFakeAPI(t, "", http.StatusOK)
+	if code := main.CmdWakeTimeline([]string{"demo", "w-1"}); code != 2 {
 		t.Fatalf("exit = %d, want 2 (auth)", code)
 	}
-	if f.sawMethod != "" {
-		t.Errorf("no network call expected without token; saw %s %s", f.sawMethod, f.sawPath)
+	if (*f.SawMethod()) != "" {
+		t.Errorf("no network call expected without token; saw %s %s", (*f.SawMethod()), (*f.SawPath()))
 	}
 }
 
@@ -782,7 +783,7 @@ func TestTierD_WakeTimeline_NoTokenExitsTwo(t *testing.T) {
 // future regex change on the server side must flow through here or
 // the CLI gate and the SDK gate drift apart.
 func TestTierD_RegistryHostRe_AccessorReturnsSameRegex(t *testing.T) {
-	resetJSONOut(t)
+	main.ResetJSONOut(t)
 	re := api.RegistryHostRe()
 	if re == nil {
 		t.Fatal("RegistryHostRe returned nil; accessor must mirror the SDK-internal regex")

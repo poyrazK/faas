@@ -71,6 +71,18 @@ func ApplicationAuthEnabled(accountID string) bool {
 	return false
 }
 
+// APIMonetizationEnabled reports whether FAAS_API_MONETIZATION_ENABLED turns
+// API monetization on (ADR-20261018090210). It is only the bootstrap value:
+// daemons follow the persisted api_monetization_enabled runtime setting once
+// it exists, and the CLI shows monetization commands only while it is set.
+func APIMonetizationEnabled() bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv("FAAS_API_MONETIZATION_ENABLED"))) {
+	case "1", "true", "yes", "on":
+		return true
+	}
+	return false
+}
+
 // PrivateNetworkEnabled reports whether the provider-neutral private-network
 // attachment API and schedd's provider-neutral runtime reconciler are live. It
 // is intentionally default-off so operators can stage the configured network
@@ -264,4 +276,81 @@ func CustomDomainAddresses() ([]netip.Addr, error) {
 		out = append(out, addr.Unmap())
 	}
 	return out, nil
+}
+
+// OperationSchedulesEnabled reports whether Operation schedules
+// (ADR-20261018161833) are available to accountID. Default off:
+// FAAS_OPERATION_SCHEDULES_ACCOUNTS, a comma-separated list of account
+// UUIDs, names the accounts that see the schedule routes and whose schedules
+// fire. Read at every call.
+func OperationSchedulesEnabled(accountID string) bool {
+	return accountListed(os.Getenv("FAAS_OPERATION_SCHEDULES_ACCOUNTS"), accountID)
+}
+
+// PerInstanceConcurrencyEnabled reports whether accountID may set
+// scaling_policy.per_instance_concurrency (ADR-20261022203523). Default off
+// until the owner has tested it on production:
+// FAAS_PER_INSTANCE_CONCURRENCY_ACCOUNTS is a comma-separated list of account
+// UUIDs, or "*" for every account. Read at every call. The gateway and schedd
+// honour whatever value is stored; apid is the only writer, so the gate is
+// complete at write time.
+func PerInstanceConcurrencyEnabled(accountID string) bool {
+	list := os.Getenv("FAAS_PER_INSTANCE_CONCURRENCY_ACCOUNTS")
+	return strings.TrimSpace(list) == "*" || accountListed(list, accountID)
+}
+
+// AccountDeletionManagedPostgresEnabled reports whether accountID may delete
+// its account together with its personal managed PostgreSQL databases
+// (ADR-20261024150500). Default off until launch:
+// FAAS_ACCOUNT_DELETION_MANAGED_POSTGRES_ACCOUNTS is a comma-separated list of
+// account UUIDs, or "*" for every account. For any other account the option
+// is answered like an absent field. Read at every call.
+func AccountDeletionManagedPostgresEnabled(accountID string) bool {
+	list := os.Getenv("FAAS_ACCOUNT_DELETION_MANAGED_POSTGRES_ACCOUNTS")
+	return strings.TrimSpace(list) == "*" || accountListed(list, accountID)
+}
+
+// NonpaymentDeletionIncludesManagedPostgres reports whether a non-payment
+// deletion includes the account's managed PostgreSQL databases
+// (ADR-20261024150500). On by default; the operator kill switch
+// FAAS_NONPAYMENT_DELETION_MANAGED_POSTGRES=off keeps such accounts suspended
+// and blocked instead. Read at every call by apid and meterd.
+func NonpaymentDeletionIncludesManagedPostgres() bool {
+	return !strings.EqualFold(strings.TrimSpace(os.Getenv("FAAS_NONPAYMENT_DELETION_MANAGED_POSTGRES")), "off")
+}
+
+func accountListed(list, accountID string) bool {
+	for _, id := range strings.Split(list, ",") {
+		if id = strings.TrimSpace(id); id != "" && id == accountID {
+			return true
+		}
+	}
+	return false
+}
+
+// OperationChildrenEnabled reports whether child Operations
+// (ADR-20261018183000) are available to accountID. Default off:
+// FAAS_OPERATION_CHILDREN_ACCOUNTS, a comma-separated list of account UUIDs,
+// names the accounts whose running Operations may start children and that
+// see the children routes. Read at every call.
+func OperationChildrenEnabled(accountID string) bool {
+	return accountListed(os.Getenv("FAAS_OPERATION_CHILDREN_ACCOUNTS"), accountID)
+}
+
+// OperationConcurrencyEnabled reports whether per-customer Operation
+// concurrency (ADR-20261018210500) is available to accountID. Default off:
+// FAAS_OPERATION_CONCURRENCY_ACCOUNTS, a comma-separated list of account
+// UUIDs, names the accounts whose policies queue work and that see the
+// concurrency routes. Read at every call.
+func OperationConcurrencyEnabled(accountID string) bool {
+	return accountListed(os.Getenv("FAAS_OPERATION_CONCURRENCY_ACCOUNTS"), accountID)
+}
+
+// OperationApprovalInputsEnabled reports whether approval input forms
+// (ADR-20261019001500) are available to accountID. Default off:
+// FAAS_OPERATION_APPROVAL_INPUTS_ACCOUNTS, a comma-separated list of account
+// UUIDs, names the accounts whose decisions may carry input and that see the
+// form routes. Read at every call.
+func OperationApprovalInputsEnabled(accountID string) bool {
+	return accountListed(os.Getenv("FAAS_OPERATION_APPROVAL_INPUTS_ACCOUNTS"), accountID)
 }

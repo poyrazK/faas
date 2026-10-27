@@ -1,5 +1,5 @@
 // adr: 421
-package sched
+package sched_test
 
 import (
 	"context"
@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/state/statetest"
 )
@@ -21,7 +22,7 @@ func TestOwnershipRecoverySweepSurvivesErrorsWithoutNotifications(t *testing.T) 
 	recovered := make(chan struct{})
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	reb := NewRebalancer(func(ctx context.Context, source string) error {
+	reb := sched.NewRebalancer(func(ctx context.Context, source string) error {
 		if source != "" {
 			t.Errorf("periodic sweep source=%q", source)
 		}
@@ -67,7 +68,7 @@ func (s *stalledOwnershipStore) ListOrphanedAppsPage(ctx context.Context, _, _ i
 func TestOwnershipRecoveryCoalescesHintsAndCancelsStalledStore(t *testing.T) {
 	store, _, destination, _ := rebalanceTestOwners(t)
 	stalled := &stalledOwnershipStore{Store: store, entered: make(chan struct{})}
-	e := newEngine(t, statetest.NewStore(stalled), &fakeVMM{}, &fakeNotifier{}, "1.10.0").WithOwnerNodeID(destination.ID)
+	e := sched.XNewEngine(t, statetest.NewStore(stalled), &sched.FakeVMM{}, &sched.FakeNotifier{}, "1.10.0").WithOwnerNodeID(destination.ID)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	done := make(chan error, 1)
@@ -125,7 +126,7 @@ func TestOwnershipRecoveryFairPagesSkipOversizedApps(t *testing.T) {
 	if err := store.SetComputeNodeActive(ctx, source.ID, false); err != nil {
 		t.Fatal(err)
 	}
-	e := newRebalanceEngine(t, store, destination.ID, &fakeNotifier{}).WithRebalanceConfig(60, 1)
+	e := newRebalanceEngine(t, store, destination.ID, &sched.FakeNotifier{}).WithRebalanceConfig(60, 1)
 	for range 3 {
 		if err := e.RebalanceOrphanedApps(ctx, ""); err != nil {
 			t.Fatal(err)
@@ -182,7 +183,7 @@ func TestOwnershipRecoverySourceScopedBeforeBatchLimit(t *testing.T) {
 	}
 	// Bypass only fixture cooldown; production still uses the fenced transfer.
 	store.SetAppReassignedAtForTest(ctx, last.ID, time.Now().Add(-time.Hour))
-	e := newRebalanceEngine(t, store, destination.ID, &fakeNotifier{}).WithRebalanceConfig(60, 1)
+	e := newRebalanceEngine(t, store, destination.ID, &sched.FakeNotifier{}).WithRebalanceConfig(60, 1)
 	if err := e.RebalanceOrphanedApps(ctx, other.ID); err != nil {
 		t.Fatal(err)
 	}
@@ -200,7 +201,7 @@ func TestOwnershipRecoveryUnavailableSchedulerCannotClaimOnStartup(t *testing.T)
 			t.Fatal(err)
 		}
 	}
-	e := newRebalanceEngine(t, store, destination.ID, &fakeNotifier{})
+	e := newRebalanceEngine(t, store, destination.ID, &sched.FakeNotifier{})
 	if err := e.RebalanceOrphanedApps(ctx, ""); err != nil {
 		t.Fatal(err)
 	}
@@ -247,8 +248,8 @@ func exerciseOwnershipRecoveryHostLoss(t *testing.T, store state.Store, reopen f
 	if err := store.SetComputeNodeActive(ctx, destination.ID, false); err != nil {
 		t.Fatal(err)
 	}
-	origin := newEngine(t, store, &fakeVMM{}, &fakeNotifier{}, "1.10.0").WithOwnerNodeID(source.ID)
-	origin.serviceReconcileSubmit = func(context.Context, string) {}
+	origin := sched.XNewEngine(t, store, &sched.FakeVMM{}, &sched.FakeNotifier{}, "1.10.0").WithOwnerNodeID(source.ID)
+	(*origin.ServiceReconcileSubmit()) = func(context.Context, string) {}
 	for i := range 60 {
 		desired := 2
 		if i == 59 {
@@ -275,8 +276,8 @@ func exerciseOwnershipRecoveryHostLoss(t *testing.T, store state.Store, reopen f
 			t.Fatal(err)
 		}
 		seedOwnershipRecoveryReplicas(t, origin, dep.ID, desired)
-		rows, err := listServiceReplicas(ctx, store, app.ID, dep.ID)
-		if err != nil || classifyServiceReplicas(rows).ready != desired {
+		rows, err := sched.ListServiceReplicas(ctx, store, app.ID, dep.ID)
+		if err != nil || sched.ClassifyServiceReplicas(rows).ReadyCount() != desired {
 			t.Fatalf("initial replicas for %d: %+v, %v", i, rows, err)
 		}
 		services = append(services, service{app.ID, dep.ID, desired})
@@ -301,8 +302,8 @@ func exerciseOwnershipRecoveryHostLoss(t *testing.T, store state.Store, reopen f
 	if _, err := store.UpsertComputeNodeFromOperator(ctx, destination); err != nil {
 		t.Fatal(err)
 	}
-	notif := &fakeNotifier{}
-	e := newEngine(t, store, &fakeVMM{}, notif, "1.10.0").WithOwnerNodeID(destination.ID)
+	notif := &sched.FakeNotifier{}
+	e := sched.XNewEngine(t, store, &sched.FakeVMM{}, notif, "1.10.0").WithOwnerNodeID(destination.ID)
 	if err := e.RebalanceOrphanedApps(ctx, ""); err != nil {
 		t.Fatal(err)
 	}
@@ -313,9 +314,9 @@ func exerciseOwnershipRecoveryHostLoss(t *testing.T, store state.Store, reopen f
 		}
 	}
 	store = reopen()
-	e = newEngine(t, store, &fakeVMM{}, notif, "1.10.0").WithOwnerNodeID(destination.ID)
-	loop := NewLoop(nil, e, testLog())
-	t.Cleanup(loop.workPool().drain)
+	e = sched.XNewEngine(t, store, &sched.FakeVMM{}, notif, "1.10.0").WithOwnerNodeID(destination.ID)
+	loop := sched.NewLoop(nil, e, sched.TestLog())
+	t.Cleanup(loop.WorkPool().Drain)
 	destination.AdmissionCeilingMB = api.RAMAdmissionCeilingMB
 	destination.VCPUBudget = 512
 	if _, err := store.UpsertComputeNodeFromOperator(ctx, destination); err != nil {
@@ -325,24 +326,24 @@ func exerciseOwnershipRecoveryHostLoss(t *testing.T, store state.Store, reopen f
 		if err := e.RebalanceOrphanedApps(ctx, ""); err != nil {
 			t.Fatal(err)
 		}
-		loop.workPool().drain()
+		loop.WorkPool().Drain()
 	}
 	// Saturated service submissions stay discoverable by the durable sweep.
 	for range 12 {
-		loop.runServiceRecovery(ctx)
-		loop.workPool().drain()
+		loop.RunServiceRecovery(ctx)
+		loop.WorkPool().Drain()
 	}
 	for _, s := range services {
 		app, err := store.AppByID(ctx, s.app)
 		if err != nil || app.NodeID != destination.ID {
 			t.Fatalf("orphan not recovered: %+v %v", app, err)
 		}
-		rows, err := listServiceReplicas(ctx, store, s.app, s.dep)
+		rows, err := sched.ListServiceReplicas(ctx, store, s.app, s.dep)
 		if err != nil {
 			t.Fatal(err)
 		}
-		status := classifyServiceReplicas(rows)
-		if status.ready != s.desired || status.managed() != s.desired {
+		status := sched.ClassifyServiceReplicas(rows)
+		if (*status.Ready()) != s.desired || status.Managed() != s.desired {
 			ledger, _ := store.ServiceRecoveryByApp(ctx, s.app)
 			t.Fatalf("recovered replicas for %s: %+v want=%d ledger=%+v rows=%+v", s.app, status, s.desired, ledger, rows)
 		}
@@ -355,7 +356,7 @@ func exerciseOwnershipRecoveryHostLoss(t *testing.T, store state.Store, reopen f
 	if countRebalancedNotifies(notif) != 60 {
 		t.Fatalf("routing invalidations=%d, want exactly 60", countRebalancedNotifies(notif))
 	}
-	if origin.ledger.ResidentRAM() != 0 {
+	if (*origin.XLedger()).ResidentRAM() != 0 {
 		t.Fatal("old owner admission reservation leaked")
 	}
 }
@@ -363,12 +364,12 @@ func exerciseOwnershipRecoveryHostLoss(t *testing.T, store state.Store, reopen f
 // The fixture starts 120 replicas in rapid succession. Concurrent lifecycle
 // work may hold the input fence; retry only that typed refusal, through the
 // production admission path, under a short deadline.
-func seedOwnershipRecoveryReplicas(t *testing.T, e *Engine, deploymentID string, desired int) {
+func seedOwnershipRecoveryReplicas(t *testing.T, e *sched.Engine, deploymentID string, desired int) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
 	defer cancel()
 	for {
-		err := e.convergeServiceReplicasToTarget(ctx, deploymentID, desired, true)
+		err := e.ConvergeServiceReplicasToTarget(ctx, deploymentID, desired, true)
 		if err == nil {
 			return
 		}

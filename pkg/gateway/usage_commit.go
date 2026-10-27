@@ -10,6 +10,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	authmw "github.com/onebox-faas/faas/pkg/auth/middleware"
 	"github.com/onebox-faas/faas/pkg/usageoutbox"
 )
@@ -62,7 +63,8 @@ type usageEventInput struct {
 	// consumer and tenant-source requests (ADR-1308, ADR-1310); zero
 	// elsewhere.
 	computeMS, responseBytes int64
-	// meterUnits are the units the app reported (ADR-1318).
+	// meterUnits are the units the app reported (ADR-1318), billed for
+	// consumers and tenant surfaces and JWT rules (ADR-1319).
 	meterUnits map[string]int64
 }
 
@@ -91,12 +93,12 @@ func (h *Handler) usageEvent(r *http.Request, in usageEventInput) usageoutbox.Ev
 		event.BillingRoute = billingRouteFrom(r)
 		if billableUnits > 0 {
 			event.ComputeMS, event.ResponseBytes = max(in.computeMS, 0), max(in.responseBytes, 0)
-			if event.ConsumerID != "" && len(in.meterUnits) > 0 {
+			if len(in.meterUnits) > 0 {
 				event.MeterUnits = in.meterUnits
 			}
 		}
 	}
-	if h.requestAuditEnabled || h.apiDiscoveryEnabled {
+	if (h.requestAuditEnabled || h.apiDiscoveryEnabled) && api.RouteDiscoverableStatus(in.status) {
 		event.DiscoveredRoute = auditRouteFrom(r)
 		if event.DiscoveredRoute == otherRouteLabel {
 			event.DiscoveredRoute = ""
@@ -254,13 +256,15 @@ func usageCommitFrom(ctx context.Context) *usageCommit {
 
 // armUsageCommit holds a monetized request's final response bytes until its
 // usage is durable (ADR-1505). Called just before the request is forwarded;
-// anonymous and audit-only traffic keeps the observe-time append.
+// anonymous and audit-only traffic, and all traffic while API monetization
+// is off (ADR-20261018090210), keeps the observe-time append.
 func (h *Handler) armUsageCommit(r *http.Request, target Target) {
 	holder, _ := r.Context().Value(usageCommitKey{}).(*usageCommitHolder)
-	if holder == nil || h.usageOutbox == nil || isRouteProbe(r.Context()) || r.Context().Value(suppressFinancialUsageKey{}) == true {
+	accountID, appID := accountIDFromContext(r.Context()), appIDFromContext(r.Context())
+	if holder == nil || h.usageOutbox == nil || !h.APIMonetizationEnabledFor(accountID.String()) || isRouteProbe(r.Context()) ||
+		r.Context().Value(suppressFinancialUsageKey{}) == true {
 		return
 	}
-	accountID, appID := accountIDFromContext(r.Context()), appIDFromContext(r.Context())
 	attr := requestUsageAttribution(r)
 	if accountID == uuid.Nil || appID == uuid.Nil || !attr.financial() {
 		return

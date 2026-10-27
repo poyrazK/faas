@@ -308,6 +308,8 @@ func (p *preparedNetworkPool) fill() {
 		nc.EgressConnRate, nc.EgressConnBurst = policy.egressConnRate, policy.egressConnBurst
 		nc.EgressDestConnRate, nc.EgressDestConnBurst = policy.egressDestConnRate, policy.egressDestConnBurst
 		nc.DNSGated = !p.m.dnsGatingOff // every prepared namespace serves a tenant (ADR-373)
+		nc.DatabaseEgress = true        // and may bind a managed database (ADR 20261026150000)
+		nc.EgressCircuitEnabled = p.m.egressCircuitEnabled
 		e := preparedNetworkEntry{lease: lease, config: nc, policy: policy}
 		ctx, cancel := context.WithTimeout(p.ctx, preparedNetworkTimeout)
 		if j := p.m.resourceJournal; j != nil {
@@ -388,8 +390,10 @@ func (p *preparedNetworkPool) discard(e preparedNetworkEntry) {
 	}
 }
 
-func (m *Manager) acquireWakeNetwork(req WakeRequest) (Lease, *preparedNetworkEntry, error) {
-	if p := m.preparedNetworks; p != nil {
+// strictEgress skips the pool: a prewarmed namespace has already sent
+// unfinanced control traffic, so a byte-funded attempt builds its own.
+func (m *Manager) acquireWakeNetwork(req WakeRequest, strictEgress bool) (Lease, *preparedNetworkEntry, error) {
+	if p := m.preparedNetworks; p != nil && !strictEgress {
 		if policy, ok := m.preparedPolicy(req); ok {
 			if entry := p.claim(req.Instance, policy); entry != nil {
 				return entry.lease, entry, nil
@@ -401,6 +405,11 @@ func (m *Manager) acquireWakeNetwork(req WakeRequest) (Lease, *preparedNetworkEn
 }
 
 func (m *Manager) setupWakeNetwork(ctx context.Context, nc netns.Config, prepared *preparedNetworkEntry) (bool, error) {
+	if nc.EgressBudgetBytes > 0 && prepared != nil {
+		// A prewarmed namespace has already sent unfinanced control traffic.
+		// Retire it rather than adopting it into a strict byte-funded attempt.
+		return false, errors.New("strict egress cannot adopt a prepared namespace")
+	}
 	if prepared != nil {
 		if err := m.checkpointPreparedNamespace(nc); err != nil {
 			return false, err
@@ -462,6 +471,9 @@ func preparedNetworkDiffersOnlyInPort(prepared, requested netns.Config) bool {
 func applyTenantEgressPolicy(nc *netns.Config, plan api.Plan, extra []uint16) {
 	nc.EgressPorts = tenantEgressPorts(plan, extra)
 	nc.DNSGated = true
+	// Bound managed databases open their own port on every plan (ADR
+	// 20261026150000); the set stays empty for apps without one.
+	nc.DatabaseEgress = true
 	if lim, ok := api.LimitsFor(plan); ok {
 		nc.EgressConnRate, nc.EgressConnBurst = lim.EgressNewConnPerSecond, lim.EgressNewConnBurst
 		nc.EgressDestConnRate, nc.EgressDestConnBurst = lim.EgressNewConnPerDestPerSecond, lim.EgressNewConnPerDestBurst

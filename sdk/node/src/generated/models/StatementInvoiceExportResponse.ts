@@ -4,7 +4,7 @@
 /* eslint-disable */
 import type { BillingProvider } from './BillingProvider.js';
 /**
- * A finalized statement's invoice in the account's billing provider (ADR-1502, ADR-1507).
+ * A finalized statement's invoice in the account's billing provider.
  */
 export type StatementInvoiceExportResponse = {
   statement_id: string;
@@ -23,18 +23,18 @@ export type StatementInvoiceExportResponse = {
   amount_minor: number;
   livemode: boolean;
   /**
-   * What the provider was asked to do with the invoice when the export began (ADR-1311).
+   * What the provider was asked to do with the invoice when the export began.
    */
   collection?: 'none' | 'send' | 'charge';
   /**
-   * Whether Stripe Tax calculated this invoice's tax (ADR-1313).
+   * Whether Stripe Tax calculated this invoice's tax.
    */
   automatic_tax?: boolean;
   created_at: string;
   completed_at?: string;
-  source_kind?: 'app_consumer' | 'platform_tenant';
+  source_kind?: 'app_consumer' | 'platform_tenant' | 'product_control';
   /**
-   * The provider invoice's status as last read by Gregale (ADR-1504, ADR-1507); deleted means the provider no longer has it. Absent until the first sync.
+   * The provider invoice's status as last read by Gregale; deleted means the provider no longer has it. Absent until the first sync.
    */
   payment_status?: 'draft' | 'open' | 'paid' | 'void' | 'uncollectible' | 'deleted';
   amount_paid_minor?: number;

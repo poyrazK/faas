@@ -8,6 +8,7 @@ import type { BillingRetryResponse } from '../models/BillingRetryResponse.js';
 import type { BillingStatusResponse } from '../models/BillingStatusResponse.js';
 import type { CreateFinancialBudgetRequest } from '../models/CreateFinancialBudgetRequest.js';
 import type { DeleteFinancialBudgetRequest } from '../models/DeleteFinancialBudgetRequest.js';
+import type { FinancialBudgetChannelsResponse } from '../models/FinancialBudgetChannelsResponse.js';
 import type { FinancialBudgetHistoryResponse } from '../models/FinancialBudgetHistoryResponse.js';
 import type { FinancialBudgetListResponse } from '../models/FinancialBudgetListResponse.js';
 import type { FinancialBudgetPreviewRequest } from '../models/FinancialBudgetPreviewRequest.js';
@@ -17,6 +18,7 @@ import type { FinancialCostsResponse } from '../models/FinancialCostsResponse.js
 import type { FinancialForecastResponse } from '../models/FinancialForecastResponse.js';
 import type { InvoiceHistoryBackfillResponse } from '../models/InvoiceHistoryBackfillResponse.js';
 import type { InvoiceRefreshResponse } from '../models/InvoiceRefreshResponse.js';
+import type { SetFinancialBudgetChannelsRequest } from '../models/SetFinancialBudgetChannelsRequest.js';
 import type { UpdateFinancialBudgetRequest } from '../models/UpdateFinancialBudgetRequest.js';
 import type { CancelablePromise } from '../core/CancelablePromise.js';
 import { OpenAPI } from '../core/OpenAPI.js';
@@ -162,7 +164,7 @@ export class BillingService {
         401: `code: unauthorized`,
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         422: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
-        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        503: `Generic 503 envelope. Used by the API capacity gate (e.g.
         host age recipient not loaded → registry credential PUT
         returns 503 instead of accepting plaintext).
         `,
@@ -200,7 +202,7 @@ export class BillingService {
         401: `code: unauthorized`,
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         422: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
-        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        503: `Generic 503 envelope. Used by the API capacity gate (e.g.
         host age recipient not loaded → registry credential PUT
         returns 503 instead of accepting plaintext).
         `,
@@ -221,7 +223,7 @@ export class BillingService {
         400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
         401: `code: unauthorized`,
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
-        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        503: `Generic 503 envelope. Used by the API capacity gate (e.g.
         host age recipient not loaded → registry credential PUT
         returns 503 instead of accepting plaintext).
         `,
@@ -229,12 +231,12 @@ export class BillingService {
     });
   }
   /**
-   * Save an account-owned budget draft with atomic revision audit.
+   * Save a budget policy with atomic revision audit and supported activation checks.
    * Requires admin scope and session MFA. Idempotency-Key is required (1..255 bytes).
    * It fixes creation identity beyond replay-cache retention. Reusing an operation
-   * identity cannot overwrite a changed or deleted policy. Set enabled=false:
-   * activation currently returns 422 financial_budget_activation_unavailable.
-   * Saving a draft creates no holds, decisions, notifications or workload changes.
+   * identity cannot overwrite a changed or deleted policy. Disabled policies are drafts.
+   * Activation supports monitored notify, monitored compute-only stop_previews, and strict app/job gross compute or account net compute (optionally combined with egress) suspend_workloads with zero drain and no alert thresholds. Other enabled responses return 422 financial_budget_activation_unavailable. Strict activation requires quiet covered workloads, complete accounting and capable native owners; unavailable authority returns 422 financial_compute_not_ready.
+   * Disabled drafts create no notifications or workload changes. Active notification policies never stop workloads.
    *
    * @returns FinancialBudgetResponse Saved draft with revision 1; retries retain its identity.
    * @throws ApiError
@@ -264,7 +266,7 @@ export class BillingService {
         404: `code: not_found`,
         409: `code: conflict`,
         422: `Invalid policy count or financial_budget_activation_unavailable; no policy mutation occurred.`,
-        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        503: `Generic 503 envelope. Used by the API capacity gate (e.g.
         host age recipient not loaded → registry credential PUT
         returns 503 instead of accepting plaintext).
         `,
@@ -296,7 +298,7 @@ export class BillingService {
         401: `code: unauthorized`,
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
-        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        503: `Generic 503 envelope. Used by the API capacity gate (e.g.
         host age recipient not loaded → registry credential PUT
         returns 503 instead of accepting plaintext).
         `,
@@ -304,11 +306,11 @@ export class BillingService {
     });
   }
   /**
-   * Replace a budget draft at its expected revision.
+   * Replace a budget policy at its expected revision.
    * Requires admin scope, session MFA and Idempotency-Key. expected_revision
-   * must match the current policy; stale edits return 409. Set enabled=false:
-   * activation remains unavailable. Scope ownership and action eligibility are
-   * revalidated. Payment, security and user holds are independent of this intent.
+   * must match the current policy; stale edits return 409. Monitored notify and compute-only stop_previews
+   * policies can activate, along with strict app/job gross compute or account net compute (optionally combined with egress) suspend_workloads with zero drain and no alert thresholds. A limit below committed and reserved funding returns 422 financial_compute_budget_too_low. Other policies remain disabled drafts.
+   * Scope ownership and action eligibility are revalidated. Payment, security and user holds are independent of this intent.
    *
    * @returns FinancialBudgetResponse Updated draft and incremented revision.
    * @throws ApiError
@@ -346,7 +348,7 @@ export class BillingService {
         404: `code: not_found`,
         409: `code: conflict`,
         422: `financial_budget_activation_unavailable; the existing policy revision is unchanged.`,
-        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        503: `Generic 503 envelope. Used by the API capacity gate (e.g.
         host age recipient not loaded → registry credential PUT
         returns 503 instead of accepting plaintext).
         `,
@@ -391,7 +393,7 @@ export class BillingService {
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
         409: `code: conflict`,
-        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        503: `Generic 503 envelope. Used by the API capacity gate (e.g.
         host age recipient not loaded → registry credential PUT
         returns 503 instead of accepting plaintext).
         `,
@@ -437,7 +439,95 @@ export class BillingService {
         401: `code: unauthorized`,
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
-        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        503: `Generic 503 envelope. Used by the API capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * List the notification channels a budget's threshold alerts also go to.
+   * Requires usage:read and session MFA. Each channel
+   * reports its latest delivery outcome. Alerts always go to the account
+   * email; channels are in addition to it. Deleted or foreign policies
+   * return 404.
+   *
+   * @returns FinancialBudgetChannelsResponse Bound channels in name order; empty when only the account email is used.
+   * @throws ApiError
+   */
+  public static getFinancialBudgetChannels({
+    id,
+  }: {
+    /**
+     * Stable identity of a live account-owned budget policy.
+     */
+    id: string,
+  }): CancelablePromise<FinancialBudgetChannelsResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/billing/budgets/{id}/channels',
+      path: {
+        'id': id,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        503: `Generic 503 envelope. Used by the API capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Replace the notification channels a budget's threshold alerts also go to.
+   * Requires admin scope, session MFA and Idempotency-Key.
+   * Every id must be one of the account's notification channels, at most 5,
+   * without duplicates. Each threshold alert is delivered once per channel
+   * and retried with backoff for up to 12 attempts. A channel added later
+   * receives a threshold already crossed this month when it is next
+   * re-evaluated. Removing a channel holds its pending deliveries; deleting
+   * the channel discards them. Does not change the policy revision.
+   *
+   * @returns FinancialBudgetChannelsResponse The budget's channels after the replacement.
+   * @throws ApiError
+   */
+  public static setFinancialBudgetChannels({
+    id,
+    idempotencyKey,
+    requestBody,
+  }: {
+    /**
+     * Stable identity of a live account-owned budget policy.
+     */
+    id: string,
+    /**
+     * Retry key for this replacement.
+     */
+    idempotencyKey: string,
+    requestBody: SetFinancialBudgetChannelsRequest,
+  }): CancelablePromise<FinancialBudgetChannelsResponse> {
+    return __request(OpenAPI, {
+      method: 'PUT',
+      url: '/v1/billing/budgets/{id}/channels',
+      path: {
+        'id': id,
+      },
+      headers: {
+        'Idempotency-Key': idempotencyKey,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        422: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        503: `Generic 503 envelope. Used by the API capacity gate (e.g.
         host age recipient not loaded → registry credential PUT
         returns 503 instead of accepting plaintext).
         `,
@@ -477,7 +567,7 @@ export class BillingService {
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
         422: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
-        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        503: `Generic 503 envelope. Used by the API capacity gate (e.g.
         host age recipient not loaded → registry credential PUT
         returns 503 instead of accepting plaintext).
         `,
@@ -584,8 +674,7 @@ export class BillingService {
    * portal URL. Otherwise it renders the operator's
    * `FAAS_BILLING_PORTAL_URL` template.
    *
-   * The response also carries a `payment_method` block (issue
-   * #242) — the card-on-file summary (brand, last-4, expiry).
+   * The response also carries a `payment_method` block — the card-on-file summary (brand, last-4, expiry).
    * The CLI's `faas billing payment-method` renders from this
    * field; the dashboard's billing page does the same. The
    * field is omitempty so no-card-on-file responses stay clean.

@@ -47,8 +47,12 @@ func renderWakeAhead(w io.Writer, s api.ServiceWakeAheadResponse) {
 	if !s.Enabled {
 		_, _ = fmt.Fprintf(w, "Service wake-ahead is off for %s: services it calls wake only when called.\n", s.Slug)
 	} else {
-		_, _ = fmt.Fprintf(w, "Service wake-ahead is on for %s: when it wakes, Gregale also starts the services it is measured to call soon after waking.\n", s.Slug)
+		_, _ = fmt.Fprintf(w, "Service wake-ahead is on for %s: when it wakes, Gregale also starts the services it declares (depends_on) until measurements show which it calls soon after waking.\n", s.Slug)
 		_, _ = fmt.Fprintln(w, "Those services run, and are billed, from that moment; an unused one parks again after its idle timeout.")
+		if s.UpdatedAt == "" {
+			// A server reports the project default as on only when never set.
+			_, _ = fmt.Fprintf(w, "This is the default for a service in a project under the project service policy; `gregale wake-ahead %s off` turns it off.\n", s.Slug)
+		}
 	}
 	if s.Learned != nil {
 		renderWakeAheadLearned(w, *s.Learned)

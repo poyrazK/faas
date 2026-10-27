@@ -95,7 +95,13 @@ func (v *JailerVMM) observedRuntimeSnapshotConsumptionAt(ctx context.Context, le
 	proof := runtimeadmission.SnapshotConsumption{Version: runtimeadmission.SnapshotRestoreVersion, CaptureToken: observed.CaptureToken,
 		EvidenceHash: observed.EvidenceHash, Memory: observed.Memory, VMState: observed.VMState, PrivateDrive: observed.PrivateDrive, MappedMemoryBytes: observed.Memory.Bytes}
 	evidence := runtimeadmission.SnapshotRestoreEvidence{Version: runtimeadmission.SnapshotRestoreVersion, CaptureToken: plan.request.Binding.SnapshotCaptureToken, FCVersion: plan.request.Snapshot.FCVersion, Capture: plan.request.Capture}
-	if err := proof.CheckEvidence(plan.request.Binding, drives, plan.keepPaused, evidence, clock); err != nil || ctx.Err() != nil {
+	var proofErr error
+	if g := plan.request.FunctionMigration; g != nil {
+		proofErr = g.CheckConsumption(plan.request.Binding, drives, plan.keepPaused, proof, clock)
+	} else {
+		proofErr = proof.CheckEvidence(plan.request.Binding, drives, plan.keepPaused, evidence, clock)
+	}
+	if err := proofErr; err != nil || ctx.Err() != nil {
 		return runtimeadmission.ArtifactConsumption{}, runtimeadmission.SnapshotConsumption{}, errors.Join(err, ctx.Err())
 	}
 	return drives, proof, nil

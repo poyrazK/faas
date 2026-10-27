@@ -19,6 +19,8 @@ if TYPE_CHECKING:
     from ..models.create_edge_rule_request_match_headers import CreateEdgeRuleRequestMatchHeaders
     from ..models.edge_rule_async_action import EdgeRuleAsyncAction
     from ..models.edge_rule_budget_action import EdgeRuleBudgetAction
+    from ..models.edge_rule_cache_action import EdgeRuleCacheAction
+    from ..models.edge_rule_challenge_action import EdgeRuleChallengeAction
     from ..models.edge_rule_circuit_breaker_action import EdgeRuleCircuitBreakerAction
     from ..models.edge_rule_cors_action import EdgeRuleCORSAction
     from ..models.edge_rule_geo_action import EdgeRuleGeoAction
@@ -28,6 +30,7 @@ if TYPE_CHECKING:
     from ..models.edge_rule_limit_action import EdgeRuleLimitAction
     from ..models.edge_rule_maintenance_action import EdgeRuleMaintenanceAction
     from ..models.edge_rule_match_expr import EdgeRuleMatchExpr
+    from ..models.edge_rule_penalty import EdgeRulePenalty
     from ..models.edge_rule_redirect_action import EdgeRuleRedirectAction
     from ..models.edge_rule_respond_action import EdgeRuleRespondAction
     from ..models.edge_rule_retry_action import EdgeRuleRetryAction
@@ -46,12 +49,14 @@ class CreateEdgeRuleRequest:
     """Body shape for POST /v1/apps/{slug}/edge-rules."""
 
     match_host: str
-    """Exact host, glob (`*`, `*.example.com`), or `@app` for every hostname the app serves (ADR-1191). Other
-    values starting with `@` are reserved."""
+    """Exact host, glob (`*`, `*.example.com`), or `@app` for every hostname the app serves. Other values starting
+    with `@` are reserved."""
     kind: CreateEdgeRuleRequestKind
     action: (
         EdgeRuleAsyncAction
         | EdgeRuleBudgetAction
+        | EdgeRuleCacheAction
+        | EdgeRuleChallengeAction
         | EdgeRuleCircuitBreakerAction
         | EdgeRuleCORSAction
         | EdgeRuleGeoAction
@@ -78,7 +83,7 @@ class CreateEdgeRuleRequest:
     priority: int | Unset = 100
     enabled: bool | Unset = True
     validate_mode: CreateEdgeRuleRequestValidateMode | Unset = "block"
-    """Top-level source of truth for kind=validate (ADR-128).
+    """Top-level source of truth for kind=validate.
     Omitted == 'block' (the SQL-side default).
     """
     name: str | Unset = UNSET
@@ -88,28 +93,45 @@ class CreateEdgeRuleRequest:
     expires_at: datetime.datetime | Unset = UNSET
     """Optional time after which the gateway stops applying the new rule."""
     match: EdgeRuleMatchExpr | Unset = UNSET
-    """ADR-962 match condition, ANDed with the rule's fixed selectors. A node
+    """Match condition, ANDed with the rule's fixed selectors. A node
     is exactly one of all, any, not, or a field/op leaf. Fields: method,
-    path, host, client_ip, country, asn (ADR-966: the client IP's
-    autonomous system, e.g. 13335 or AS13335), ua_family (ADR-973: the
+    path, host, client_ip, country, asn (the client IP's
+    autonomous system, e.g. 13335 or AS13335), ua_family (the
     User-Agent's family, one of browser, mobile, bot, tool, other),
-    verified_bot (ADR-973: a known crawler confirmed by forward-confirmed
-    reverse DNS of the client IP, one of googlebot, bingbot, applebot,
-    yandexbot, baiduspider, yahoo, petalbot; absent otherwise),
-    header:<name>, cookie:<name>, query:<name>. ua_family and
-    verified_bot take eq, ne, in, not_in, exists, missing. Ops: eq, ne, in, not_in, prefix, suffix, contains,
-    exists, missing, regex (RE2), cidr (client_ip only), in_list (ADR-963:
-    list names an account list whose kind fits the field). Depth at most 4,
+    verified_bot (a known crawler confirmed by its operator's
+    published IP ranges or forward-confirmed reverse DNS of the client
+    IP, one of googlebot, bingbot, applebot, yandexbot, baiduspider,
+    yahoo, petalbot; absent otherwise), ai_crawler (the AI crawler the User-Agent claims, such as gptbot, claudebot,
+    ccbot, perplexitybot, bytespider), ai_crawler_purpose (that
+    crawler's purpose: training, search or assistant),
+    verified_ai_crawler (the claimed AI crawler when the client IP is
+    in its operator's published ranges; only crawlers that publish
+    ranges can verify), header:<name>, cookie:<name>, query:<name>.
+    ua_family, verified_bot and the AI crawler fields take eq, ne, in,
+    not_in, exists, missing. Ops: eq, ne, in, not_in, prefix, suffix, contains,
+    exists, missing, regex (RE2), cidr (client_ip only), in_list (list names an account list whose kind fits the
+    field). Depth at most 4,
     at most 32 nodes, 64 values per leaf, values and regexes at most 256
     bytes. An untrusted client IP, or its unknown country or ASN, is absent.
     """
     mode: CreateEdgeRuleRequestMode | Unset = UNSET
     """Start the rule enforced (default) or in log mode, where it is only matched and counted."""
+    penalty: EdgeRulePenalty | Unset = UNSET
+    """A rule's penalty box. Once the rule has refused
+    the same client `after` times within `within_seconds`, every request
+    from that client to the app is refused with 403 `penalty_box` and
+    Retry-After for `seconds`, whichever rule or path it targets. The
+    client is its IP address (an IPv6 client is its /64). Boxes are held
+    in each gateway node's memory. Allowed on ip, geo, throttle and waf
+    (block mode) rules; editing the rule's penalty away, disabling it or
+    putting it in log mode releases its clients.
+    """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         from ..models.edge_rule_async_action import EdgeRuleAsyncAction
         from ..models.edge_rule_budget_action import EdgeRuleBudgetAction
+        from ..models.edge_rule_cache_action import EdgeRuleCacheAction
         from ..models.edge_rule_circuit_breaker_action import EdgeRuleCircuitBreakerAction
         from ..models.edge_rule_cors_action import EdgeRuleCORSAction
         from ..models.edge_rule_geo_action import EdgeRuleGeoAction
@@ -125,6 +147,7 @@ class CreateEdgeRuleRequest:
         from ..models.edge_rule_route_action import EdgeRuleRouteAction
         from ..models.edge_rule_throttle_action import EdgeRuleThrottleAction
         from ..models.edge_rule_validate_action import EdgeRuleValidateAction
+        from ..models.edge_rule_waf_action import EdgeRuleWAFAction
 
         match_host = self.match_host
 
@@ -157,6 +180,8 @@ class CreateEdgeRuleRequest:
             action = self.action.to_dict()
         elif isinstance(self.action, EdgeRuleBudgetAction):
             action = self.action.to_dict()
+        elif isinstance(self.action, EdgeRuleCacheAction):
+            action = self.action.to_dict()
         elif isinstance(self.action, EdgeRuleRespondAction):
             action = self.action.to_dict()
         elif isinstance(self.action, EdgeRuleRetryAction):
@@ -164,6 +189,8 @@ class CreateEdgeRuleRequest:
         elif isinstance(self.action, EdgeRuleCircuitBreakerAction):
             action = self.action.to_dict()
         elif isinstance(self.action, EdgeRuleAsyncAction):
+            action = self.action.to_dict()
+        elif isinstance(self.action, EdgeRuleWAFAction):
             action = self.action.to_dict()
         else:
             action = self.action.to_dict()
@@ -202,6 +229,10 @@ class CreateEdgeRuleRequest:
         if not isinstance(self.mode, Unset):
             mode = self.mode
 
+        penalty: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.penalty, Unset):
+            penalty = self.penalty.to_dict()
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -233,6 +264,8 @@ class CreateEdgeRuleRequest:
             field_dict["match"] = match
         if mode is not UNSET:
             field_dict["mode"] = mode
+        if penalty is not UNSET:
+            field_dict["penalty"] = penalty
 
         return field_dict
 
@@ -241,6 +274,8 @@ class CreateEdgeRuleRequest:
         from ..models.create_edge_rule_request_match_headers import CreateEdgeRuleRequestMatchHeaders
         from ..models.edge_rule_async_action import EdgeRuleAsyncAction
         from ..models.edge_rule_budget_action import EdgeRuleBudgetAction
+        from ..models.edge_rule_cache_action import EdgeRuleCacheAction
+        from ..models.edge_rule_challenge_action import EdgeRuleChallengeAction
         from ..models.edge_rule_circuit_breaker_action import EdgeRuleCircuitBreakerAction
         from ..models.edge_rule_cors_action import EdgeRuleCORSAction
         from ..models.edge_rule_geo_action import EdgeRuleGeoAction
@@ -250,6 +285,7 @@ class CreateEdgeRuleRequest:
         from ..models.edge_rule_limit_action import EdgeRuleLimitAction
         from ..models.edge_rule_maintenance_action import EdgeRuleMaintenanceAction
         from ..models.edge_rule_match_expr import EdgeRuleMatchExpr
+        from ..models.edge_rule_penalty import EdgeRulePenalty
         from ..models.edge_rule_redirect_action import EdgeRuleRedirectAction
         from ..models.edge_rule_respond_action import EdgeRuleRespondAction
         from ..models.edge_rule_retry_action import EdgeRuleRetryAction
@@ -269,6 +305,8 @@ class CreateEdgeRuleRequest:
         ) -> (
             EdgeRuleAsyncAction
             | EdgeRuleBudgetAction
+            | EdgeRuleCacheAction
+            | EdgeRuleChallengeAction
             | EdgeRuleCircuitBreakerAction
             | EdgeRuleCORSAction
             | EdgeRuleGeoAction
@@ -393,7 +431,7 @@ class CreateEdgeRuleRequest:
             try:
                 if not isinstance(data, dict):
                     raise TypeError()
-                action_type_13 = EdgeRuleRespondAction.from_dict(data)
+                action_type_13 = EdgeRuleCacheAction.from_dict(data)
 
                 return action_type_13
             except (TypeError, ValueError, AttributeError, KeyError):
@@ -401,7 +439,7 @@ class CreateEdgeRuleRequest:
             try:
                 if not isinstance(data, dict):
                     raise TypeError()
-                action_type_14 = EdgeRuleRetryAction.from_dict(data)
+                action_type_14 = EdgeRuleRespondAction.from_dict(data)
 
                 return action_type_14
             except (TypeError, ValueError, AttributeError, KeyError):
@@ -409,7 +447,7 @@ class CreateEdgeRuleRequest:
             try:
                 if not isinstance(data, dict):
                     raise TypeError()
-                action_type_15 = EdgeRuleCircuitBreakerAction.from_dict(data)
+                action_type_15 = EdgeRuleRetryAction.from_dict(data)
 
                 return action_type_15
             except (TypeError, ValueError, AttributeError, KeyError):
@@ -417,16 +455,32 @@ class CreateEdgeRuleRequest:
             try:
                 if not isinstance(data, dict):
                     raise TypeError()
-                action_type_16 = EdgeRuleAsyncAction.from_dict(data)
+                action_type_16 = EdgeRuleCircuitBreakerAction.from_dict(data)
 
                 return action_type_16
             except (TypeError, ValueError, AttributeError, KeyError):
                 pass
+            try:
+                if not isinstance(data, dict):
+                    raise TypeError()
+                action_type_17 = EdgeRuleAsyncAction.from_dict(data)
+
+                return action_type_17
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            try:
+                if not isinstance(data, dict):
+                    raise TypeError()
+                action_type_18 = EdgeRuleWAFAction.from_dict(data)
+
+                return action_type_18
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
             if not isinstance(data, dict):
                 raise TypeError()
-            action_type_17 = EdgeRuleWAFAction.from_dict(data)
+            action_type_19 = EdgeRuleChallengeAction.from_dict(data)
 
-            return action_type_17
+            return action_type_19
 
         action = _parse_action(d.pop("action"))
 
@@ -477,6 +531,13 @@ class CreateEdgeRuleRequest:
         else:
             mode = check_create_edge_rule_request_mode(_mode)
 
+        _penalty = d.pop("penalty", UNSET)
+        penalty: EdgeRulePenalty | Unset
+        if isinstance(_penalty, Unset):
+            penalty = UNSET
+        else:
+            penalty = EdgeRulePenalty.from_dict(_penalty)
+
         create_edge_rule_request = cls(
             match_host=match_host,
             kind=kind,
@@ -492,6 +553,7 @@ class CreateEdgeRuleRequest:
             expires_at=expires_at,
             match=match,
             mode=mode,
+            penalty=penalty,
         )
 
         create_edge_rule_request.additional_properties = d

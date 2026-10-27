@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"bytes"
@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/openapidiff"
 	"github.com/onebox-faas/faas/pkg/routerequirements"
@@ -41,7 +42,7 @@ func servePreviewRequestReport(t *testing.T, before, after string, captured bool
 		}
 		switch r.URL.Path {
 		case "/v1/preview/pr-42-api":
-			writeJSONTest(w, api.PreviewResourceResponse{
+			main.WriteJSONTest(w, api.PreviewResourceResponse{
 				App: api.AppResponse{ID: "preview-id", Slug: "pr-42-api", PreviewOfSlug: "api"}, Parent: &api.AppResponse{ID: "parent-id", Slug: "api"},
 				LatestDeployment: &api.DeploymentResponse{ID: "candidate", AppID: "preview-id", Status: "live"}, ProductionDeployment: &api.DeploymentResponse{ID: "baseline", AppID: "parent-id", Status: "live"},
 			})
@@ -50,25 +51,25 @@ func servePreviewRequestReport(t *testing.T, before, after string, captured bool
 				http.NotFound(w, r)
 				return
 			}
-			writePreviewReportDoc(t, w, "baseline", before)
+			main.WritePreviewReportDoc(t, w, "baseline", before)
 		case "/v1/apps/pr-42-api/deployments/candidate/openapi":
-			writePreviewReportDoc(t, w, "candidate", after)
+			main.WritePreviewReportDoc(t, w, "candidate", after)
 		case "/v1/apps/api/deployments/baseline/route-policy":
-			writePreviewPolicySnapshotTest(w, "baseline", "parent-id", []api.EdgeRuleResponse{})
+			main.WritePreviewPolicySnapshotTest(w, "baseline", "parent-id", []api.EdgeRuleResponse{})
 		case "/v1/apps/pr-42-api/deployments/candidate/route-policy":
-			writePreviewPolicySnapshotTest(w, "candidate", "preview-id", []api.EdgeRuleResponse{})
+			main.WritePreviewPolicySnapshotTest(w, "candidate", "preview-id", []api.EdgeRuleResponse{})
 		case "/v1/apps/pr-42-api/openapi/preview":
-			writeJSONTest(w, api.AppOpenAPIPolicyPreviewResponse{Routes: []api.AppOpenAPIPolicyPreviewRoute{{Path: "/checkout", Method: "post", Rules: []api.AppOpenAPIPolicyPreviewRule{}}}})
+			main.WriteJSONTest(w, api.AppOpenAPIPolicyPreviewResponse{Routes: []api.AppOpenAPIPolicyPreviewRoute{{Path: "/checkout", Method: "post", Rules: []api.AppOpenAPIPolicyPreviewRule{}}}})
 		case "/v1/apps/api/edge-rules", "/v1/apps/pr-42-api/edge-rules":
-			writeJSONTest(w, []api.EdgeRuleResponse{})
+			main.WriteJSONTest(w, []api.EdgeRuleResponse{})
 		case "/v1/apps/api/analytics", "/v1/apps/pr-42-api/analytics":
 			id := "baseline"
 			if strings.Contains(r.URL.Path, "pr-42-api") {
 				id = "candidate"
 			}
-			data := previewReportAnalytics(id, 100, 40)
+			data := main.PreviewReportAnalytics(id, 100, 40)
 			data.Routes[0].Route, data.Routes[0].Method = "POST /checkout", "POST"
-			writeJSONTest(w, data)
+			main.WriteJSONTest(w, data)
 		default:
 			t.Errorf("unexpected request: %s", r.URL.Path)
 			http.NotFound(w, r)
@@ -83,9 +84,9 @@ func previewRequestReceipts(t *testing.T) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "receipts.json")
 	start := time.Now().UTC()
-	receipts := []testRunReceipt{{Engine: "real-vm", AppSlug: "pr-42-api", DeploymentID: "candidate", Profile: "warm", Status: "passed", StartedAt: start, FinishedAt: start.Add(time.Second),
-		Requests: []testHTTPRequestEvidence{{Method: "POST", Path: "/checkout?token=private-query", Passed: true}}}}
-	if err := writeTestReport(path, receipts); err != nil {
+	receipts := []main.TestRunReceipt{{Engine: "real-vm", AppSlug: "pr-42-api", DeploymentID: "candidate", Profile: "warm", Status: "passed", StartedAt: start, FinishedAt: start.Add(time.Second),
+		Requests: []main.TestHTTPRequestEvidence{{Method: "POST", Path: "/checkout?token=private-query", Passed: true}}}}
+	if err := main.WriteTestReport(path, receipts); err != nil {
 		t.Fatal(err)
 	}
 	return path
@@ -110,26 +111,26 @@ func TestPreviewRequestCompatibilityCommandGates(t *testing.T) {
 		{"unknown incomplete gate", "--fail-on-incomplete", "incomplete", "unknown", map[string]any{"type": "string"}, map[string]any{"type": "string", "pattern": "private-pattern"}, 1},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			resetJSONOut(t)
-			setPreviewTestAuth(t)
+			main.ResetJSONOut(t)
+			main.SetPreviewTestAuth(t)
 			reads := servePreviewRequestReport(t, previewRequestDocument(t, test.before), previewRequestDocument(t, test.after), true)
 			var out bytes.Buffer
-			old := osStdout
-			osStdout = &out
-			t.Cleanup(func() { osStdout = old })
-			jsonOutput = true
+			old := (*main.OsStdout)
+			(*main.OsStdout) = &out
+			t.Cleanup(func() { (*main.OsStdout) = old })
+			(*main.JsonOutput) = true
 			args := []string{"report", "pr-42-api", "--test-report", previewRequestReceipts(t)}
 			if test.gate != "" {
 				args = append(args, test.gate)
 			}
-			if code := cmdPreview(args); code != test.code {
+			if code := main.CmdPreview(args); code != test.code {
 				t.Fatalf("exit = %d, want %d; %s", code, test.code, out.String())
 			}
-			var report previewRouteReport
+			var report main.PreviewRouteReport
 			if err := json.Unmarshal(out.Bytes(), &report); err != nil {
 				t.Fatal(err)
 			}
-			row := findPreviewReportRoute(t, report, "POST /checkout")
+			row := main.FindPreviewReportRoute(t, report, "POST /checkout")
 			if report.Version != 7 || report.SourceImpact != nil || report.Outcome != test.outcome || report.Requests.Status != "available" || row.RequestCompatibility == nil || row.RequestCompatibility.Status != test.status || len(row.Breaks) != 0 || !row.RequestContractChanged {
 				t.Fatalf("report = %+v; route = %+v", report, row)
 			}
@@ -153,39 +154,39 @@ func TestPreviewRequestCompatibilityCommandGates(t *testing.T) {
 }
 
 func TestPreviewRequestComparisonNeedsCapturedDocuments(t *testing.T) {
-	resetJSONOut(t)
-	setPreviewTestAuth(t)
+	main.ResetJSONOut(t)
+	main.SetPreviewTestAuth(t)
 	doc := previewRequestDocument(t, map[string]any{"type": "string"})
 	servePreviewRequestReport(t, doc, doc, false)
 	var out bytes.Buffer
-	old := osStdout
-	osStdout = &out
-	t.Cleanup(func() { osStdout = old })
-	jsonOutput = true
-	if code := cmdPreview([]string{"report", "pr-42-api", "--test-report", previewRequestReceipts(t), "--fail-on-request-breaking"}); code != 0 {
+	old := (*main.OsStdout)
+	(*main.OsStdout) = &out
+	t.Cleanup(func() { (*main.OsStdout) = old })
+	(*main.JsonOutput) = true
+	if code := main.CmdPreview([]string{"report", "pr-42-api", "--test-report", previewRequestReceipts(t), "--fail-on-request-breaking"}); code != 0 {
 		t.Fatalf("missing evidence triggered a known-break gate: %s", out.String())
 	}
-	var report previewRouteReport
+	var report main.PreviewRouteReport
 	if err := json.Unmarshal(out.Bytes(), &report); err != nil {
 		t.Fatal(err)
 	}
-	row := findPreviewReportRoute(t, report, "POST /checkout")
+	row := main.FindPreviewReportRoute(t, report, "POST /checkout")
 	if report.Outcome != "incomplete" || report.Requests.Status != "unavailable" || row.RequestCompatibility != nil || row.Change != "unknown" || row.RouteSource == "captured_deployment_contract" {
 		t.Fatalf("current route established request compatibility: %+v", report)
 	}
 }
 
 func TestPreviewRequestComparisonLimitDiscardsPartialFindings(t *testing.T) {
-	before := previewReportSpec(t, previewReportBefore)
-	after := previewReportSpec(t, previewReportAfter)
+	before := main.PreviewReportSpec(t, main.PreviewReportBefore)
+	after := main.PreviewReportSpec(t, main.PreviewReportAfter)
 	for index := 0; index <= api.RequestCompatibilityMaxRoutes; index++ {
 		path := fmt.Sprintf("/limit/%d", index)
 		item := &openapidiff.PathItem{Methods: map[string]*openapidiff.Operation{"get": {Raw: map[string]any{}}}}
 		before.Paths[path], after.Paths[path] = item, item
 	}
-	rows, evidence := comparePreviewContractsWithRequests(before, after)
-	report := previewRouteReport{Requests: evidence, Routes: rows}
-	if evidence.Status != "unavailable" || previewReportHasRequestBreaks(report) || !previewReportHasBreaks(report) {
+	rows, evidence := main.ComparePreviewContractsWithRequests(before, after)
+	report := main.PreviewRouteReport{Requests: evidence, Routes: rows}
+	if evidence.Status != "unavailable" || main.PreviewReportHasRequestBreaks(report) || !main.PreviewReportHasBreaks(report) {
 		t.Fatalf("bounded comparison certified partial inputs or lost response breaks: %+v", evidence)
 	}
 	for _, row := range rows {
@@ -197,15 +198,15 @@ func TestPreviewRequestComparisonLimitDiscardsPartialFindings(t *testing.T) {
 
 func TestPreviewRequestOutcomePreservesOtherKnownFindings(t *testing.T) {
 	for _, outcome := range []string{"breaking_changes", "test_failures", "policy_violations"} {
-		report := previewRouteReport{Outcome: outcome, Requests: previewReportEvidence{Status: "available"}, Routes: []previewReportRoute{{RequestCompatibility: &openapidiff.RequestRoute{Status: "breaking"}}}}
-		finishPreviewRequestComparison(&report)
+		report := main.PreviewRouteReport{Outcome: outcome, Requests: main.PreviewReportEvidence{Status: "available"}, Routes: []main.PreviewReportRoute{{RequestCompatibility: &openapidiff.RequestRoute{Status: "breaking"}}}}
+		main.FinishPreviewRequestComparison(&report)
 		if report.Outcome != outcome {
 			t.Fatalf("request comparison hid %s: %s", outcome, report.Outcome)
 		}
 	}
-	report := previewRouteReport{Outcome: "no_findings", Requests: previewReportEvidence{Status: "available"}, Routes: []previewReportRoute{{Method: "POST", Path: "/checkout", RouteSource: "captured_deployment_contract", RequestCompatibility: &openapidiff.RequestRoute{Status: "breaking", Complete: false}, TestProfiles: []previewReportTest{{Passed: 1}}}}}
-	finishPreviewRequestComparison(&report)
-	prioritizePreviewRouteReview(&report)
+	report := main.PreviewRouteReport{Outcome: "no_findings", Requests: main.PreviewReportEvidence{Status: "available"}, Routes: []main.PreviewReportRoute{{Method: "POST", Path: "/checkout", RouteSource: "captured_deployment_contract", RequestCompatibility: &openapidiff.RequestRoute{Status: "breaking", Complete: false}, TestProfiles: []main.PreviewReportTest{{Passed: 1}}}}}
+	main.FinishPreviewRequestComparison(&report)
+	main.PrioritizePreviewRouteReview(&report)
 	if report.Outcome != "request_breaking_changes" || len(report.ReviewPriorities) != 1 || report.ReviewPriorities[0].Priority != "blocker" || !containsPreviewRequestReason(report.ReviewPriorities[0].Reasons, "request_comparison_unknown") {
 		t.Fatal(report)
 	}
@@ -221,24 +222,24 @@ func containsPreviewRequestReason(reasons []string, want string) bool {
 }
 
 func TestPreviewRequestReviewPrioritiesAndSourceEvidence(t *testing.T) {
-	row := func(path, status string, complete bool, count int64) previewReportRoute {
-		return previewReportRoute{Method: "POST", Path: path, RouteSource: "captured_deployment_contract", RequestCompatibility: &openapidiff.RequestRoute{Status: status, Complete: complete}, BaselineTraffic: &previewReportTraffic{Requests: count}, TestProfiles: []previewReportTest{{Passed: 1}}}
+	row := func(path, status string, complete bool, count int64) main.PreviewReportRoute {
+		return main.PreviewReportRoute{Method: "POST", Path: path, RouteSource: "captured_deployment_contract", RequestCompatibility: &openapidiff.RequestRoute{Status: status, Complete: complete}, BaselineTraffic: &main.PreviewReportTraffic{Requests: count}, TestProfiles: []main.PreviewReportTest{{Passed: 1}}}
 	}
-	report := previewRouteReport{Outcome: "request_breaking_changes", Requests: previewReportEvidence{Status: "available"}, Routes: []previewReportRoute{
+	report := main.PreviewRouteReport{Outcome: "request_breaking_changes", Requests: main.PreviewReportEvidence{Status: "available"}, Routes: []main.PreviewReportRoute{
 		row("/unknown", "unknown", false, 1000), row("/small-break", "breaking", true, 1), row("/large-break", "breaking", true, 100), row("/widening", "no_supported_breaks", true, 9999),
 	}}
-	prioritizePreviewRouteReview(&report)
+	main.PrioritizePreviewRouteReview(&report)
 	if len(report.ReviewPriorities) != 3 || report.ReviewPriorities[0].Path != "/large-break" || report.ReviewPriorities[1].Path != "/small-break" || report.ReviewPriorities[2].Priority != "needs_evidence" {
 		t.Fatal(report.ReviewPriorities)
 	}
-	report = previewRouteReport{Outcome: "no_findings", Requests: previewReportEvidence{Status: "available"}, Routes: []previewReportRoute{row("/widening", "no_supported_breaks", true, 1)}}
-	report.Routes[0].SourceImpact = &previewRouteSource{Change: "direct"}
-	prioritizePreviewRouteReview(&report)
+	report = main.PreviewRouteReport{Outcome: "no_findings", Requests: main.PreviewReportEvidence{Status: "available"}, Routes: []main.PreviewReportRoute{row("/widening", "no_supported_breaks", true, 1)}}
+	report.Routes[0].SourceImpact = &main.PreviewRouteSource{Change: "direct"}
+	main.PrioritizePreviewRouteReview(&report)
 	if report.Outcome != "review_required" || len(report.ReviewPriorities) != 1 {
 		t.Fatalf("request widening hid independent source review: %+v", report)
 	}
 	report.Requirements = &routerequirements.PreviewReport{Report: routerequirements.Report{Routes: []routerequirements.RouteResult{{Method: "POST", Path: "/widening", Status: "violated"}}}}
-	prioritizePreviewRouteReview(&report)
+	main.PrioritizePreviewRouteReview(&report)
 	if report.ReviewPriorities[0].Priority != "blocker" {
 		t.Fatal(report.ReviewPriorities)
 	}
@@ -246,13 +247,13 @@ func TestPreviewRequestReviewPrioritiesAndSourceEvidence(t *testing.T) {
 
 func TestPreviewRequestFindingsRenderWithoutSchemaValues(t *testing.T) {
 	field := "currency|<script>"
-	before := previewReportSpec(t, previewRequestDocument(t, map[string]any{"type": "object", "properties": map[string]any{field: map[string]any{"type": "string", "enum": []any{"private-a", "private-b"}}}}))
-	after := previewReportSpec(t, previewRequestDocument(t, map[string]any{"type": "object", "properties": map[string]any{field: map[string]any{"type": "string", "enum": []any{"private-a"}}}, "required": []any{field}}))
-	rows, evidence := comparePreviewContractsWithRequests(before, after)
-	report := previewRouteReport{Outcome: "request_breaking_changes", Requests: evidence, Routes: rows}
-	prioritizePreviewRouteReview(&report)
+	before := main.PreviewReportSpec(t, previewRequestDocument(t, map[string]any{"type": "object", "properties": map[string]any{field: map[string]any{"type": "string", "enum": []any{"private-a", "private-b"}}}}))
+	after := main.PreviewReportSpec(t, previewRequestDocument(t, map[string]any{"type": "object", "properties": map[string]any{field: map[string]any{"type": "string", "enum": []any{"private-a"}}}, "required": []any{field}}))
+	rows, evidence := main.ComparePreviewContractsWithRequests(before, after)
+	report := main.PreviewRouteReport{Outcome: "request_breaking_changes", Requests: evidence, Routes: rows}
+	main.PrioritizePreviewRouteReview(&report)
 	var out bytes.Buffer
-	renderPreviewRouteReport(&out, report, true)
+	main.RenderPreviewRouteReport(&out, report, true)
 	if strings.Contains(out.String(), "private-") || strings.Contains(out.String(), "<script>") || strings.Contains(out.String(), "; )") || !strings.Contains(out.String(), "Request contract findings") || !strings.Contains(out.String(), "blocker") || !strings.Contains(out.String(), "This request field became required.") {
 		t.Fatalf("unsafe or incomplete request output: %s", out.String())
 	}

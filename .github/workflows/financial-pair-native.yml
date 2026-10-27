@@ -1,0 +1,73 @@
+name: financial-pair-native
+
+# These hosts and their SSH/SQL configuration are provisioned separately.
+# A GitHub-hosted runner or a single nested-KVM node cannot qualify this lane.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: financial-native-dedicated-pair
+  cancel-in-progress: false
+
+jobs:
+  qualify:
+    if: github.ref == 'refs/heads/main'
+    runs-on: [self-hosted, linux, x64, gregale-financial-pair]
+    # Covers serial build/test caps plus host restoration and evidence upload.
+    timeout-minutes: 360
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: Stage exact source and pinned toolchain
+        env:
+          SOURCE_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          [[ "$(git rev-parse HEAD)" == "$SOURCE_SHA" ]]
+          root="/var/tmp/faas-native-e2e-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-pair"
+          # A new run path prevents stale PASS records from a previous attempt.
+          sudo mkdir -- "$root"
+          sudo mkdir -- "$root/source" "$root/tools"
+          git archive "$SOURCE_SHA" | sudo tar -x -C "$root/source"
+          printf '%s\n' "$SOURCE_SHA" | sudo tee "$root/source/.faas-e2e-source-sha" >/dev/null
+          bash scripts/ci/package-go-toolchain.sh "$(go env GOROOT)" "$RUNNER_TEMP/financial-go.tar.gz"
+          sudo mkdir "$root/tools/go"
+          sudo tar -xzf "$RUNNER_TEMP/financial-go.tar.gz" -C "$root/tools/go"
+      - name: Run the guarded physical pair
+        env:
+          SOURCE_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          run_id="${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-pair"
+          root="/var/tmp/faas-native-e2e-$run_id"
+          sudo env FAAS_E2E_SOURCE_SHA="$SOURCE_SHA" FAAS_E2E_RUN_ID="$run_id" \
+            FAAS_E2E_GO="$root/tools/go/bin/go" FAAS_E2E_TRANSFER_ROOT="$root" \
+            bash "$root/source/scripts/ci/run-native-financial-pair.sh"
+      - name: Collect qualification evidence
+        if: always()
+        run: |
+          root="/var/tmp/faas-native-e2e-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-pair"
+          sudo cp -a "$root/financial-pair-evidence" "$RUNNER_TEMP/financial-pair-evidence"
+          sudo chown -R "$(id -u):$(id -g)" "$RUNNER_TEMP/financial-pair-evidence"
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        if: always()
+        with:
+          name: financial-native-pair-${{ github.sha }}
+          path: ${{ runner.temp }}/financial-pair-evidence/
+          if-no-files-found: error
+          retention-days: 14
+      - name: Remove successful controller staging after upload
+        if: success()
+        run: |
+          root="/var/tmp/faas-native-e2e-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-pair"
+          [[ "$root" =~ ^/var/tmp/faas-native-e2e-[0-9]+-[0-9]+-pair$ ]]
+          sudo rm -rf -- "$root"

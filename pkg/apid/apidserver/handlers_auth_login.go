@@ -46,6 +46,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/httpsec"
 	mailpkg "github.com/onebox-faas/faas/pkg/mail"
 	"github.com/onebox-faas/faas/pkg/middleware"
+	"github.com/onebox-faas/faas/pkg/sessioncookie"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -316,11 +317,11 @@ func (s *server) sendPasswordResetEmail(ctx context.Context, r *http.Request, ac
 		scheme = schemeHTTPS
 	}
 	host := r.Host
-	if s.domain != "" && s.domain != domainUnset {
+	if platform := s.platformHost(); platform != "" && platform != domainUnset {
 		// Use the configured domain verbatim — the email link should
 		// always point at the canonical hostname, not the loopback
 		// the request arrived on.
-		host = s.domain
+		host = platform
 		scheme = schemeHTTPS
 	}
 	link := fmt.Sprintf("%s://%s%s?token=%s", scheme, host, resetTokenPath, base64.RawURLEncoding.EncodeToString(raw))
@@ -787,15 +788,14 @@ func (s *server) revokePreVerificationCredentials(ctx context.Context, accountID
 // (handlers_auth_login.go), the email+password ladder reserved
 // for issue #2 / PR #2 once IAM-3 lands.
 func (s *server) issueSessionCookie(w http.ResponseWriter, r *http.Request, acct state.Account) {
-	cookie, _, err := s.issueDashboardSession(r.Context(), r, acct.ID, mfaSessionPending(acct), "password")
+	cookie, _, err := s.issueDashboardSession(r.Context(), r, acct.ID, s.sessionMFAPending(acct), "password")
 	if err != nil {
 		s.log.Error("auth.session_issue", "err", err)
 		api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError,
 			"internal_error", "Internal Error", "failed to issue session"))
 		return
 	}
-	http.SetCookie(w, &http.Cookie{
-		Name:     sessionCookie,
+	sessioncookie.Set(w, http.Cookie{
 		Value:    cookie,
 		Path:     "/",
 		HttpOnly: true,
@@ -1013,6 +1013,17 @@ func (s *server) postV1AuthSignupMagicLink(w http.ResponseWriter, r *http.Reques
 // row so a SOC 2 auditor can answer "who minted this key from which
 // UA" without joining through Loki (R2 risk).
 func (s *server) mintAndWriteV1AuthJSON(w http.ResponseWriter, r *http.Request, acct state.Account, requestEmail string) {
+	// A password alone never yields an operator key (ADR 20261023214253):
+	// operators mint keys from an MFA-completed session via POST /v1/keys.
+	if s.isOperator(acct) {
+		s.audit.Emit(r.Context(), "auth.mfa_gate_hit", &acct.ID, map[string]any{
+			"path":   r.URL.Path,
+			"method": r.Method,
+		})
+		api.WriteProblem(w, api.NewProblem(http.StatusForbidden, api.CodeMFARequired, "MFA required",
+			"operator accounts cannot get an API key with a password; sign in with gregalectl auth login, or create a key from the dashboard"))
+		return
+	}
 	plaintext, hash, err := api.GenerateAPIKey()
 	if err != nil {
 		s.log.Error("v1auth_signup.generate_key", "err", err)
@@ -1112,8 +1123,8 @@ func (s *server) sendMagicLinkEmail(ctx context.Context, r *http.Request, acct s
 		scheme = schemeHTTPS
 	}
 	host := r.Host
-	if s.domain != "" && s.domain != domainUnset {
-		host = s.domain
+	if platform := s.platformHost(); platform != "" && platform != domainUnset {
+		host = platform
 		scheme = schemeHTTPS
 	}
 	link := fmt.Sprintf("%s://%s%s?token=%s", scheme, host, magicLinkPath, base64.RawURLEncoding.EncodeToString(raw))
@@ -1150,8 +1161,8 @@ func (s *server) sendEmailVerification(ctx context.Context, r *http.Request, acc
 		scheme = schemeHTTPS
 	}
 	host := r.Host
-	if s.domain != "" && s.domain != domainUnset {
-		host = s.domain
+	if platform := s.platformHost(); platform != "" && platform != domainUnset {
+		host = platform
 		scheme = schemeHTTPS
 	}
 	link := fmt.Sprintf("%s://%s%s?token=%s", scheme, host, emailVerificationPath, base64.RawURLEncoding.EncodeToString(raw))

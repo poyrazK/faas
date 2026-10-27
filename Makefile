@@ -1,5 +1,5 @@
 # Gregale FaaS — build & ops entrypoints (spec §Commands).
-# Go 1.26 with the patched 1.26.9 toolchain, pinned in go.mod and CI. One binary per cmd/ dir.
+# Go 1.26 with the patched 1.26.10 toolchain, pinned in go.mod and CI. One binary per cmd/ dir.
 
 GO      ?= go
 GOOS    ?= $(shell $(GO) env GOOS)
@@ -8,19 +8,29 @@ export GOOS GOARCH
 TLS_CUTOVER_MODE ?= dry-run
 PKGS    := ./...
 COVERAGE_DIR := coverage
-DAEMONS := apid profiled bridged gatewayd-public gatewayd-internal realtimed s3-gatewayd maild mail-report mail-metrics mail-feedback mailctl schedd vmmd vmmd-jail-helper vmmd-raw-bridge vmmd-tcp-bridge vmmd-udp-bridge vmmd-stream-bridge builderd imaged meterd githubd outboundd hostage-gen
+DAEMONS := apid profiled bridged gatewayd-public gatewayd-internal realtimed s3-gatewayd livequeryd maild mail-report mail-metrics mail-feedback mailctl schedd vmmd vmmd-jail-helper vmmd-guestdisk vmmd-raw-bridge vmmd-tcp-bridge vmmd-udp-bridge vmmd-stream-bridge builderd imaged meterd githubd outboundd hostage-gen
 GOVULNCHECK_VERSION ?= 1.7.0
 # gregale is the customer-facing CLI; gregalectl is the
 # operator-only companion CLI (issue #911 / ADR-110 PR-6.5).
 # Both are built into ./bin by `make build`.
 CLIS := gregale gregalectl
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
-LDFLAGS := -X github.com/onebox-faas/faas/pkg/wire.Version=$(VERSION)
+# An uncommitted checkout cannot claim a revision's qualification. Release
+# builders using a verified source archive can supply SOURCE_REVISION explicitly.
+SOURCE_REVISION ?= $(shell if test -z "$$(git status --porcelain 2>/dev/null)"; then git rev-parse HEAD 2>/dev/null || echo unknown; else echo unknown; fi)
+LDFLAGS := -X github.com/onebox-faas/faas/pkg/wire.Version=$(VERSION) -X github.com/onebox-faas/faas/pkg/wire.GitSHA=$(SOURCE_REVISION)
 # Release artifacts must not contain host-specific source paths or automatic
 # VCS metadata. The release workflow supplies VERSION from the tag commit;
 # these flags make the bytes independent of the runner checkout path and
 # whether the checkout has a .git directory.
 GO_BUILD_FLAGS := -trimpath -buildvcs=false
+# Build tags of every daemon build. grpcnotrace drops gRPC's
+# golang.org/x/net/trace, whose html/template pages make the linker keep every
+# exported method of every type a daemon converts to an interface (all ~6,000
+# store methods), so a query change rewrote every daemon's code. No daemon
+# serves the pages or sets grpc.EnableTracing
+# (docs/adr/20261020160744-daemon-blast-radius.md). Comma-separated.
+DAEMON_TAGS := metal,grpcnotrace
 # Keep the build target's cgo setting separate from the test environment.
 # `make test` needs the host default for race-enabled tests, while release
 # binaries are always static.
@@ -33,14 +43,27 @@ BUILD_CGO_ENABLED ?= 0
 # together with the soft heap limit (ADR-982). GO_TEST applies both; a
 # GOMEMLIMIT already in the environment wins. Packages that never approach
 # the limit are unaffected.
+#
+# GO_DEV_GOFLAGS is the one flag set of every local compile: GO_TEST,
+# test-changed, lint and lint-changed pass it as GOFLAGS, and `make go-env`
+# makes it the machine default for a bare go build/vet/test, gopls and
+# golangci-lint. The Go build cache keys every package on its exact flags, its
+# toolchain and, without -trimpath, its absolute directory, so each difference
+# stores a full second copy of the dependency graph. On a machine where many
+# checkouts share one GOCACHE, -trimpath lets checkouts of the same commit
+# share their packages, and one flag set keeps tests and lint from compiling
+# everything twice. Locate source files relative to the package directory
+# (go test's working directory) or with e2etest.CallerDir: under -trimpath
+# runtime.Caller names a file by its import path (`make trimpath-check`).
 TEST_HEAVY_PKGS ?= pkg/apid/apidserver pkg/apid/apidserver_test pkg/state pkg/state_test pkg/sched cmd/gregale
-TEST_GCFLAGS ?= '-gcflags=all=-dwarf=false' $(foreach p,$(TEST_HEAVY_PKGS),'-gcflags=github.com/onebox-faas/faas/$(p)=-c=1 -dwarf=false')
+GO_DEV_GOFLAGS ?= -trimpath -gcflags=all=-dwarf=false $(foreach p,$(TEST_HEAVY_PKGS),"-gcflags=github.com/onebox-faas/faas/$(p)=-c=1 -dwarf=false")
+GO_DEV_ENV = GOFLAGS='$(GO_DEV_GOFLAGS)'
 GO_TEST_MEMLIMIT ?= $(if $(GOMEMLIMIT),$(GOMEMLIMIT),6GiB)
 # Test binaries link without DWARF: measured ~75% less link CPU and 15-18%
 # smaller binaries for apidserver and sched. Set GO_TEST_LDFLAGS= to debug a
 # test binary with delve.
 GO_TEST_LDFLAGS ?= -ldflags=-w
-GO_TEST = GOMEMLIMIT=$(GO_TEST_MEMLIMIT) $(GO) test $(TEST_GCFLAGS) $(GO_TEST_LDFLAGS)
+GO_TEST = $(GO_DEV_ENV) GOMEMLIMIT=$(GO_TEST_MEMLIMIT) $(GO) test $(GO_TEST_LDFLAGS)
 BINDIR  := bin
 # Always use the repository's Ansible configuration.  Ansible only discovers
 # ansible.cfg from the current directory (or its parents); the playbook lives
@@ -103,6 +126,11 @@ bench-platform-tenant-coverage: ## Measure 90-day, two-app statement coverage re
 	@test -n "$$DATABASE_URL" || (echo "DATABASE_URL not set — set it to a disposable PostgreSQL database"; exit 1)
 	@GO="$(GO)" sh scripts/bench-platform-tenant-coverage.sh
 
+.PHONY: bench-event-substrate
+bench-event-substrate: ## Measure event publish, fanout, drain and webhook delivery on disposable PostgreSQL (V12); FAAS_EVENT_SUBSTRATE_BENCH_DIR writes JSON
+	@test -n "$$DATABASE_URL" || (echo "DATABASE_URL not set — set it to a disposable PostgreSQL database"; exit 1)
+	@GO="$(GO)" sh scripts/bench-event-substrate.sh
+
 .PHONY: help
 help: ## List targets
 	@grep -hE '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | \
@@ -136,7 +164,7 @@ build: guest-runners ## Build every daemon + CLIs + guest init + function runner
 	@mkdir -p $(BINDIR)
 	@for d in $(DAEMONS); do \
 	  echo "building $$d"; \
-	  CGO_ENABLED=$(BUILD_CGO_ENABLED) $(GO) build $(GO_BUILD_FLAGS) -tags metal -ldflags '$(LDFLAGS) -s -w' -o $(BINDIR)/$$d ./cmd/$$d || exit 1; \
+	  CGO_ENABLED=$(BUILD_CGO_ENABLED) $(GO) build $(GO_BUILD_FLAGS) -tags $(DAEMON_TAGS) -ldflags '$(LDFLAGS) -s -w' -o $(BINDIR)/$$d ./cmd/$$d || exit 1; \
 	done
 	@for c in $(CLIS); do \
 	  echo "building $$c (CLI)"; \
@@ -175,7 +203,7 @@ guest-runners: ## Build function-runner shims into ./bin/runners/<runtime>/faas-
 build-release-batch: ## Build the complete static release binary set in batched Go invocations
 	@mkdir -p $(BINDIR) $(BINDIR)/runners
 	@echo "building release daemons (batched)"
-	@CGO_ENABLED=$(BUILD_CGO_ENABLED) $(GO) build $(GO_BUILD_FLAGS) -tags metal \
+	@CGO_ENABLED=$(BUILD_CGO_ENABLED) $(GO) build $(GO_BUILD_FLAGS) -tags $(DAEMON_TAGS) \
 	  -ldflags '$(LDFLAGS) -s -w' -o $(BINDIR)/ $(addprefix ./cmd/,$(DAEMONS))
 	@echo "building release CLIs (batched)"
 	@CGO_ENABLED=$(BUILD_CGO_ENABLED) $(GO) build $(GO_BUILD_FLAGS) \
@@ -207,7 +235,7 @@ build-release-unit: ## Build one release binary: UNIT=<cmd> VERSION=unit-<commit
 	@case " $(DAEMONS) $(CLIS) " in *" $(UNIT) "*) ;; *) echo "UNIT=$(UNIT) is not a release binary"; exit 2;; esac
 	@case "$(VERSION)" in unit-*) ;; *) echo "VERSION=$(VERSION) must be unit-<commit>"; exit 2;; esac
 	@mkdir -p $(BINDIR)
-	@CGO_ENABLED=$(BUILD_CGO_ENABLED) $(GO) build $(GO_BUILD_FLAGS) $(if $(filter $(UNIT),$(DAEMONS)),-tags metal) \
+	@CGO_ENABLED=$(BUILD_CGO_ENABLED) $(GO) build $(GO_BUILD_FLAGS) $(if $(filter $(UNIT),$(DAEMONS)),-tags $(DAEMON_TAGS)) \
 	  -ldflags '$(LDFLAGS) -s -w' -o $(BINDIR)/$(UNIT) ./cmd/$(UNIT)
 
 # M1 gRPC codegen (ADR-013). Generated *.pb.go is COMMITTED — do not run
@@ -305,9 +333,26 @@ test: grafana-mirror-check ## Unit tests — must pass on any machine, no KVM ne
 test-apid: ## apidserver tests with bounded compiler memory (ADR-982); RUN='^TestX' narrows, RACE=1 adds -race
 	$(GO_TEST) -count=1 $(if $(RACE),-race) $(if $(RUN),-run '$(RUN)') ./pkg/apid/apidserver/
 
+.PHONY: monetization-sandbox
+monetization-sandbox: ## API monetization end to end against real Stripe/Paddle/Lago sandboxes; keys in GREGALE_SANDBOX_* (docs/ops/api-monetization-release.md)
+	$(GO_TEST) -count=1 -tags monetization_sandbox -timeout=20m -v -run '^TestMonetizationSandbox' ./pkg/apid/apidserver/
+
+.PHONY: product-control-provider-qualification
+product-control-provider-qualification: ## Qualify Product Control exports against real Stripe test mode, Paddle sandbox and a Lago test org; set FAAS_QUALIFY_* (docs/ops/product-control.md)
+	$(GO_TEST) -count=1 -v -run '^TestProductControlProviderQualification$$' ./pkg/apid/apidserver/
+
 .PHONY: test-changed
 test-changed: ## Vet + test only what your change affects (ci-light's selection vs origin/main); RACE=1, BASE=<ref>, VET=importers|0, DRY_RUN=1
-	@LDFLAGS=$(GO_TEST_LDFLAGS) GOMEMLIMIT=$(GO_TEST_MEMLIMIT) GO=$(GO) bash scripts/test-changed.sh $(TEST_GCFLAGS)
+	@$(GO_DEV_ENV) LDFLAGS=$(GO_TEST_LDFLAGS) GOMEMLIMIT=$(GO_TEST_MEMLIMIT) GO=$(GO) bash scripts/test-changed.sh
+
+.PHONY: go-env
+go-env: ## Machine setup (once, owner's call): bare go/gopls/golangci-lint use GO_DEV_GOFLAGS and go.mod's toolchain, so every checkout shares one GOCACHE copy
+	$(GO) env -w GOFLAGS='$(GO_DEV_GOFLAGS)' GOTOOLCHAIN=$$(sed -n 's/^toolchain //p' go.mod)+auto
+	@$(GO) env GOFLAGS GOTOOLCHAIN
+
+.PHONY: trimpath-check
+trimpath-check: ## Static gate: no runtime.Caller(0) to find source files (module-relative under -trimpath; see GO_DEV_GOFLAGS)
+	@bash scripts/ci/check_trimpath_safe.sh $(CURDIR)
 
 .PHONY: clean-tmp
 clean-tmp: ## Free disk: remove go-build work dirs idle >2h in $$TMPDIR (left by killed builds); never clears the shared GOCACHE
@@ -329,12 +374,16 @@ check-state-coverage: ## Assert exact pkg/state package coverage ≥ STATE_EXACT
 coverage-checker-test: ## Exercise coverage block union and exact-package gates without Go or Postgres
 	python3 -m unittest discover -s .claude/ci -p test_coverage_floor.py
 
+.PHONY: daemon-deps-check
+daemon-deps-check: ## Fail when a release binary links a package scripts/ci/daemon_deps.json forbids (ADR-1650 unit blast radius)
+	python3 scripts/ci/check_daemon_deps.py
+
 .PHONY: memstore-stubs-check
 memstore-stubs-check: ## Fail pure nil-return MemStore methods that can make tests vacuous (issue #1529 / PR-2b)
 	bash scripts/ci/check_memstore_stubs.sh
 
 .PHONY: fix-has-test-check
-fix-has-test-check: ## Require fix-shaped pull requests to change a Go regression test (issue #1529 / PR-4a)
+fix-has-test-check: ## Require fix-shaped pull requests to change a regression test (Go, shell, or SDK test file; issue #1529 / PR-4a)
 	bash scripts/ci/check_fix_has_test.sh
 
 .PHONY: fix-has-test-check-test
@@ -387,6 +436,16 @@ release-safety-check-test: ## Unit tests of the version-skew check, migration li
 	python3 scripts/ci/slo_gate_test.py
 	$(GO) test -count=1 ./scripts/ci/versionskew
 
+.PHONY: agent-eval-test
+agent-eval-test: ## Unit tests of the coding-agent eval harness; runs no agents (ADR-20261026152009)
+	python3 scripts/agent-eval/agent_eval_test.py
+
+AGENT_EVAL_AGENTS ?= claude
+AGENT_EVAL_TOOLSETS ?= core,all
+.PHONY: agent-eval
+agent-eval: ## Run coding agents against Gregale tasks; deploys real apps, needs GREGALE_EVAL_TOKEN (AGENT_EVAL_AGENTS, AGENT_EVAL_TOOLSETS, AGENT_EVAL_TASKS, AGENT_EVAL_REPEAT)
+	python3 scripts/agent-eval/agent_eval.py run --agents $(AGENT_EVAL_AGENTS) --toolsets $(AGENT_EVAL_TOOLSETS) $(if $(AGENT_EVAL_TASKS),--tasks $(AGENT_EVAL_TASKS)) --repeat $(or $(AGENT_EVAL_REPEAT),1)
+
 .PHONY: text-encoding-check-test
 text-encoding-check-test: ## Exercise the text-encoding gate against fixture trees in both directions
 	bash scripts/ci/check_text_encoding_test.sh
@@ -398,6 +457,20 @@ shell-quoting-check-test: ## Exercise the shell-quoting gate against fixture tre
 .PHONY: deploy-action-head-check
 deploy-action-head-check: ## Verify stale branch and invalid release-tag pushes cannot submit Action deployments
 	@bash scripts/ci/test_deploy_action_head.sh
+
+.PHONY: cli-install-check
+cli-install-check: ## Hermetic curl installer tests and the cli-channel pointer job (ADR-20261025092617)
+	@bash scripts/install_test.sh
+	@python3 scripts/ci/cli_channel_test.py
+	@bash scripts/ci/advance-cli-channel_test.sh
+
+.PHONY: deploy-action-cli-check
+deploy-action-cli-check: ## Verify the deploy Action unpacks and checks the gzip-compressed vendored CLI
+	@bash scripts/ci/deploy_action_cli_test.sh
+
+.PHONY: verify-action-ref-contents-check
+verify-action-ref-contents-check: ## Verify release.yml's Contents API check accepts a pinned ref that vendors the bare CLI
+	@bash scripts/ci/verify-action-ref-contents_test.sh
 
 .PHONY: environment-preflight-action-check
 environment-preflight-action-check: ## Verify the OIDC capability and promotion gate contract in the environment preflight Action
@@ -543,8 +616,30 @@ test-metal: ## Integration tests tagged //go:build metal — needs KVM + root (R
 	@set -eu; helper_dir=$$(mktemp -d); trap 'rm -rf "$$helper_dir"' EXIT; \
 	  CGO_ENABLED=$(BUILD_CGO_ENABLED) $(GO) build $(GO_BUILD_FLAGS) -o "$$helper_dir/vmmd" ./cmd/vmmd; \
 	  CGO_ENABLED=0 $(GO) build -o "$$helper_dir/vmmd-jail-helper" ./cmd/vmmd-jail-helper; \
+	  CGO_ENABLED=0 $(GO) build -o "$$helper_dir/vmmd-guestdisk" ./cmd/vmmd-guestdisk; \
 	  if [ -n "$${RUN_REGEX:-}" ]; then set -- -run "$$RUN_REGEX"; else set --; fi; \
-	  FAAS_TEST_VMMD_BINARY="$$helper_dir/vmmd" $(GO) test -tags metal -race -count=1 $(RUN_ARGS) "$$@" $(PKGS)
+	  FAAS_TEST_VMMD_BINARY="$$helper_dir/vmmd" $(GO) test -tags "$${FAAS_METAL_TEST_TAGS:-metal}" -race -count=1 $(RUN_ARGS) "$$@" $(PKGS)
+
+.PHONY: test-function-background-native
+test-function-background-native: ## Strict Node execution lifetime/capture/thaw gate on the isolated native KVM host (ADR-20261018030610)
+	@test "$$(id -u)" = 0 || (echo "requires root on the isolated native KVM acceptance host" >&2; exit 1)
+	@test -c /dev/kvm || (echo "/dev/kvm missing; native qualification cannot skip" >&2; exit 1)
+	@test -r /etc/faas/builder-acceptance-host || (echo "requires the designated isolated acceptance host" >&2; exit 1)
+	@set -eu; helper_dir=$$(mktemp -d); trap 'rm -rf "$$helper_dir"' EXIT; \
+	  CGO_ENABLED=0 $(GO) build -tags metal,function_background_native -o "$$helper_dir/guest-init" ./guest/init; \
+	  CGO_ENABLED=0 $(GO) build -tags metal,function_background_native -o "$$helper_dir/node22-runner" ./guest/runners/node22; \
+	  CGO_ENABLED=0 $(GO) build -tags metal,function_background_native -o "$$helper_dir/node24-runner" ./guest/runners/node24; \
+	  FAAS_GUEST_INIT="$$helper_dir/guest-init" FAAS_E2E_FUNCTION_RUNNER_NODE22="$$helper_dir/node22-runner" \
+	  FAAS_E2E_FUNCTION_RUNNER_NODE24="$$helper_dir/node24-runner" \
+	  FAAS_REQUIRE_FUNCTION_BACKGROUND_METAL=1 $(GO) test -tags metal,function_background_native \
+	  -race -count=1 -v -run '^TestFunction(Background|ResourcesPostgres|MigrationAdmissionPostgres)Metal$$' -timeout 90m ./cmd/e2e
+	$(MAKE) leakcheck
+
+.PHONY: test-function-migration-native
+test-function-migration-native: ## Guarded Node22/24 migration, replies and coordinator restart on native KVM hosts (ADR-20261018030616)
+	@test -n "$${FAAS_FUNCTION_MIGRATION_NATIVE_CONFIG:-}" || (echo "FAAS_FUNCTION_MIGRATION_NATIVE_CONFIG must name the isolated two-host fixture" >&2; exit 1)
+	@test -n "$${FAAS_FUNCTION_MIGRATION_NATIVE_EVIDENCE:-}" || (echo "FAAS_FUNCTION_MIGRATION_NATIVE_EVIDENCE must name a new private directory outside this checkout" >&2; exit 1)
+	python3 scripts/ci/function-migration-native.py --config "$$FAAS_FUNCTION_MIGRATION_NATIVE_CONFIG" --out "$$FAAS_FUNCTION_MIGRATION_NATIVE_EVIDENCE"
 
 .PHONY: test-metal-builder
 test-metal-builder: ## Native KVM builder acceptance — requires staged release assets and root
@@ -557,6 +652,7 @@ test-metal-builder: ## Native KVM builder acceptance — requires staged release
 	@set -eu; helper_dir=$$(mktemp -d); trap 'rm -rf "$$helper_dir"' EXIT; \
 	  CGO_ENABLED=$(BUILD_CGO_ENABLED) $(GO) build $(GO_BUILD_FLAGS) -o "$$helper_dir/vmmd" ./cmd/vmmd; \
 	  CGO_ENABLED=0 $(GO) build -o "$$helper_dir/vmmd-jail-helper" ./cmd/vmmd-jail-helper; \
+	  CGO_ENABLED=0 $(GO) build -o "$$helper_dir/vmmd-guestdisk" ./cmd/vmmd-guestdisk; \
 	  FAAS_TEST_VMMD_BINARY="$$helper_dir/vmmd" FAAS_METAL_BUILD_ACCEPTANCE=1 \
 	  $(GO) test -tags metal -race -count=1 -run '^TestMetalBuilderAcceptance$$' \
 	  -v -timeout "$${METAL_BUILDER_TIMEOUT:-30m}" ./pkg/fcvm
@@ -576,12 +672,19 @@ e2e: ## End-to-end tests in cmd/e2e (needs Postgres reachable; metal subset via 
 	# reruns + cold-cache cold-runner edge cases.
 	$(GO) test -race -count=1 -timeout=20m ./cmd/e2e/...
 
+# E2E_GENERAL_RUN narrows e2e-general to one group (the e2e-general workflow
+# runs the two groups as separate jobs).
+E2E_GENERAL_RUN ?= ^TestE2E_(NormalPath|Routes)_
+
 .PHONY: e2e-general
-e2e-general: ## Focused KVM-free general-path acceptance gate (real daemons + Postgres; needs DATABASE_URL).
+e2e-general: ## Focused KVM-free general-path and routes acceptance gate (real daemons + Postgres; needs DATABASE_URL).
 	@command -v psql >/dev/null 2>&1 || (echo "psql not on PATH; e2e-general needs DATABASE_URL set to a reachable Postgres" ; exit 1)
 	@test -n "$$DATABASE_URL" || (echo "DATABASE_URL not set; set it to a reachable Postgres to run e2e-general" ; exit 1)
+	@test -z "$$FAAS_SKIP_PG_TESTS" || (echo "Unset FAAS_SKIP_PG_TESTS; e2e-general refuses a skipped run" ; exit 1)
 	@psql "$$DATABASE_URL" -v ON_ERROR_STOP=1 -Atqc 'select 1' >/dev/null || (echo "Postgres is not reachable; e2e-general refuses a green no-op run" ; exit 1)
-	$(GO) test -race -count=1 -timeout=12m -run '^TestE2E_NormalPath_' ./cmd/e2e/...
+	# The routes tests wait for closed one-minute telemetry windows (about
+	# four minutes each).
+	$(GO) test -race -count=1 -timeout=30m -run '$(E2E_GENERAL_RUN)' ./cmd/e2e/...
 
 .PHONY: e2e-start
 e2e-start: ## Gregale start acceptance: real CLI/daemons/Postgres, simulated build and VM boundary (Linux, no KVM).
@@ -646,6 +749,8 @@ lint-drill: ## Static lint of restore, backup-retention, and TLS drill scripts
 	bash deploy/scripts/faas-pg-wal-prune_test.sh
 	bash deploy/scripts/faas-pg-backup-contract-preflight_test.sh
 	bash deploy/scripts/faas-check-compute-edges_test.sh
+	bash deploy/scripts/faas-app-edge-pilot-check_test.sh
+	bash deploy/scripts/cloudflare-app-edge-tunnel_test.sh
 	bash deploy/ansible/roles/cp_state_backup/files/faas-cp-state-backup_test.sh
 
 .PHONY: m8-evidence-check
@@ -845,14 +950,28 @@ ha-write-redirect-drill: ## Tier A9 / ADR-089: standby write-redirect drill on t
 	  echo "  interactive pass; the bash block above is the manual form."; \
 	  exit 0'
 
+.PHONY: lint-changed
+lint-changed: ## golangci-lint only what your change touches (ci-light's selection vs origin/main) + teststorecheck + sealdomaincheck; BASE=<ref>, DRY_RUN=1
+	@$(GO_DEV_ENV) GO=$(GO) bash scripts/lint-changed.sh
+
 .PHONY: lint
-lint: egress-check lint-incompatible-mods image-validate sealed-env-scope-check runbook-sql-check text-encoding-check shell-quoting-check adr-number-uniqueness-check check-durable-entity-sdk-contract check-binding-runner-sync ## golangci-lint via go tool (matches CI version v2.14.0) + repository policy gates
+lint: egress-check lint-incompatible-mods image-validate sealed-env-scope-check seal-domain-scope-check runbook-sql-check text-encoding-check shell-quoting-check adr-number-uniqueness-check trimpath-check check-durable-entity-sdk-contract check-binding-runner-sync ## golangci-lint via go tool (matches CI version v2.14.0) + repository policy gates
 	@python3 scripts/ci/check_gosec_baseline.py
-	@GO="$(GO)" python3 scripts/ci/lint_go_shard.py --shard 1 --shards 1 -- $(GO) tool golangci-lint
+	@$(GO_DEV_ENV) GO="$(GO)" python3 scripts/ci/lint_go_shard.py --shard 1 --shards 1 -- $(GO) tool golangci-lint
 
 .PHONY: runbook-sql-check
 runbook-sql-check: ## Reject mutating SQL in normal operator docs; emergency recipes live under docs/break-glass
 	@python3 scripts/ci/check_runbook_mutating_sql.py
+
+.PHONY: committed-binaries-check
+committed-binaries-check: ## Reject committed ELF/Mach-O/PE executables outside the justified allowlist (ADR-131)
+	@python3 scripts/ci/check_committed_binaries_test.py
+	@python3 scripts/ci/check_committed_binaries.py
+
+.PHONY: action-pin-check
+action-pin-check: ## Require third-party GitHub Actions pinned to a commit SHA (`owner/repo@<sha> # vN`)
+	@python3 scripts/ci/check_action_pins_test.py
+	@python3 scripts/ci/check_action_pins.py
 
 .PHONY: postmortem
 postmortem: ## Create docs/postmortems/YYYY-MM-DD-NAME.md from the post-mortem template (NAME required)
@@ -923,6 +1042,22 @@ systemd-hardening-check: ## Static release gate for production systemd isolation
 canary-artifact-retention-test: ## Test bounded validation-artifact inventory, safety proofs, and cleanup
 	python3 scripts/ops/faas_canary_artifacts_test.py
 
+.PHONY: serving-probe-test
+serving-probe-test: ## Test the compute-node serving probe (ADR-20261023124955 §5)
+	python3 scripts/ops/faas_serving_probe_test.py
+
+.PHONY: cgroup-metrics-test
+cgroup-metrics-test: ## Test the per-slice cgroup metrics collector (ADR-20261023124955)
+	python3 scripts/ops/faas_cgroup_metrics_test.py
+
+.PHONY: postgres-activity-metrics-test
+postgres-activity-metrics-test: ## Test the control-plane PostgreSQL activity collector
+	python3 scripts/ops/faas_postgres_activity_metrics_test.py
+
+.PHONY: obs-gate-test
+obs-gate-test: ## Test the observability go/no-go check (ADR-20261023124955 §7)
+	python3 scripts/ops/obs_gate_test.py
+
 .PHONY: gcp-public-beta-policy-test
 gcp-public-beta-policy-test: ## Test the read-only GCP production policy and IAM transformer
 	python3 scripts/ops/gcp_public_beta_audit_test.py
@@ -939,6 +1074,10 @@ otlp-unit-check: ## Verify every instrumented daemon loads the operator-owned OT
 .PHONY: sealed-env-scope-check
 sealed-env-scope-check: ## Static gate: /etc/faas/sealed.env is loaded only by faas-apid.service (issue #585, ADR-127)
 	@bash scripts/ci/check_sealed_env_scope.sh $(CURDIR)
+
+.PHONY: seal-domain-scope-check
+seal-domain-scope-check: ## Static gate: private age identities, direct identity loaders and unsealed bytea columns only shrink (ADR 20261022111812)
+	@$(GO) run ./scripts/ci/sealdomaincheck -root $(CURDIR)
 
 .PHONY: text-encoding-check
 text-encoding-check: ## Static gate: no JSON built with fmt %q, no free text truncated with a byte slice
@@ -1013,6 +1152,7 @@ ansible-syntax-check: ## Validate the bare-metal Ansible playbooks with the prod
 	$(ANSIBLE_PLAYBOOK) -i $(ANSIBLE_INVENTORY) deploy/ansible/postgres_promote.yml --syntax-check
 	$(ANSIBLE_PLAYBOOK) -i $(ANSIBLE_INVENTORY) deploy/ansible/standby_takeover.yml --syntax-check
 	$(ANSIBLE_PLAYBOOK) -i $(ANSIBLE_INVENTORY) deploy/ansible/cp_state_restore.yml --syntax-check
+	$(ANSIBLE_PLAYBOOK) -i $(ANSIBLE_INVENTORY) deploy/ansible/object_storage_reconcile.yml --syntax-check
 
 .PHONY: ansible-lint
 ansible-lint: ## Lint deploy/ansible at the production profile (config: deploy/ansible/.ansible-lint) — ADR-143
@@ -1035,9 +1175,9 @@ env-contract-check: ## Every FAAS_* a daemon reads is declared + delivered; docs
 verify-fleet: ## Strict post-activation verification: every required daemon enabled, active, probe-answering; gregalectl doctor — ADR-143
 	$(ANSIBLE_PLAYBOOK) -i $(ANSIBLE_INVENTORY) deploy/ansible/verify.yml
 
-.PHONY: bootstrap-observability
-bootstrap-observability: ## Deploy the off-host Loki backend and FaaS Promtail shippers
-	$(ANSIBLE_PLAYBOOK) -i $(ANSIBLE_INVENTORY) deploy/ansible/site.yml
+.PHONY: object-storage-reconcile
+object-storage-reconcile: ## After a PostgreSQL restore: compare the object bucket catalog with each provider, read-only; ACCEPT=1 once findings are handled (ADR 20261025111015)
+	$(ANSIBLE_PLAYBOOK) -i $(ANSIBLE_INVENTORY) deploy/ansible/object_storage_reconcile.yml $(if $(ACCEPT),-e faas_object_storage_reconcile_accept=true)
 
 .PHONY: manifest-scale-check
 manifest-scale-check: ## Validate manifest/Ansible generation at 1, 10, 100, and 1000 compute nodes
@@ -1230,7 +1370,7 @@ sqlc-check: sqlc ## CI gate: verify checked-in sqlc output matches what would be
 	  cp pkg/productemail/queries.sql pkg/productemail/schema.sql "$$tmp/pkg/productemail/"; \
 	  mkdir -p "$$tmp/pkg/ci/db"; \
 	  cp pkg/ci/db/*.sql "$$tmp/pkg/ci/db/"; \
-	  for source_package in pkg/state/realtimettl pkg/state/realtimebulk pkg/state/livekeys pkg/state/orgaccess pkg/state/resourceownership pkg/state/appquota pkg/state/scenariopg pkg/state/scenariopgfault pkg/state/scenarioobj pkg/rehearsalpg/runtime pkg/managedpostgres/credentialprobe; do \
+	  for source_package in pkg/state/realtimettl pkg/state/realtimebulk pkg/state/livekeys pkg/state/dataapiusage pkg/state/orgaccess pkg/state/resourceownership pkg/state/appquota pkg/state/scenariopg pkg/state/scenariopgfault pkg/state/scenarioobj pkg/rehearsalpg/runtime pkg/managedpostgres/credentialprobe; do \
 	    mkdir -p "$$tmp/$$source_package"; \
 	    cp "$$source_package/queries.sql" "$$source_package/schema.sql" "$$tmp/$$source_package/"; \
 	  done; \
@@ -1244,10 +1384,12 @@ sqlc-check: sqlc ## CI gate: verify checked-in sqlc output matches what would be
 	  cp pkg/managedpostgres/copycontents/queries.sql pkg/managedpostgres/copycontents/schema.sql "$$tmp/pkg/managedpostgres/copycontents/"; \
 	  cp pkg/managedpostgres/copydatabases/queries.sql pkg/managedpostgres/copydatabases/maintenance.sql pkg/managedpostgres/copydatabases/verification.sql pkg/managedpostgres/copydatabases/verification_retries.sql pkg/managedpostgres/copydatabases/schema.sql "$$tmp/pkg/managedpostgres/copydatabases/"; \
 	  cp pkg/managedpostgres/credentialdelivery/probe_queries.sql pkg/managedpostgres/credentialdelivery/probe_schema.sql "$$tmp/pkg/managedpostgres/credentialdelivery/"; \
+	  mkdir -p "$$tmp/pkg/e2etest/migrationprobe"; \
+	  cp pkg/e2etest/migrationprobe/queries.sql pkg/e2etest/migrationprobe/schema.sql "$$tmp/pkg/e2etest/migrationprobe/"; \
 	  mkdir -p "$$tmp/pkg/managedpostgres/connectioncapacity"; \
 	  cp pkg/managedpostgres/connectioncapacity/queries.sql pkg/managedpostgres/connectioncapacity/schema.sql "$$tmp/pkg/managedpostgres/connectioncapacity/"; \
 	  (cd "$$tmp" && $(SQLC) generate); \
-	  for package in pkg/apid/mailoutbox/sqlc pkg/internalmail/sqlc pkg/productemail/sqlc pkg/ci/db/sqlc pkg/state/realtimettl/sqlc pkg/state/realtimebulk/sqlc pkg/state/livekeys/sqlc pkg/state/orgaccess/sqlc pkg/state/resourceownership/sqlc pkg/state/appquota/sqlc pkg/state/scenariopg/sqlc pkg/state/scenariopgfault/sqlc pkg/state/scenarioobj/sqlc pkg/rehearsalpg/runtime/sqlc pkg/state/sqlc pkg/db/migrationsqlc pkg/managedpostgres/connectionfence/sqlc pkg/managedpostgres/copyinventory/sqlc pkg/managedpostgres/copyroles/sqlc pkg/managedpostgres/copydatabases/sqlc pkg/managedpostgres/copycontents/sqlc pkg/managedpostgres/credentialdelivery/sqlc pkg/managedpostgres/credentialprobe/sqlc pkg/managedpostgres/connectioncapacity/sqlc pkg/connectioncapacity/sqlc pkg/datapipeline/sqlc; do \
+	  for package in pkg/apid/mailoutbox/sqlc pkg/internalmail/sqlc pkg/productemail/sqlc pkg/ci/db/sqlc pkg/state/realtimettl/sqlc pkg/state/realtimebulk/sqlc pkg/state/livekeys/sqlc pkg/state/orgaccess/sqlc pkg/state/resourceownership/sqlc pkg/state/appquota/sqlc pkg/state/scenariopg/sqlc pkg/state/scenariopgfault/sqlc pkg/state/scenarioobj/sqlc pkg/rehearsalpg/runtime/sqlc pkg/state/sqlc pkg/db/migrationsqlc pkg/managedpostgres/connectionfence/sqlc pkg/managedpostgres/copyinventory/sqlc pkg/managedpostgres/copyroles/sqlc pkg/managedpostgres/copydatabases/sqlc pkg/managedpostgres/copycontents/sqlc pkg/managedpostgres/credentialdelivery/sqlc pkg/managedpostgres/credentialprobe/sqlc pkg/managedpostgres/connectioncapacity/sqlc pkg/connectioncapacity/sqlc pkg/datapipeline/sqlc pkg/e2etest/migrationprobe/sqlc; do \
 	    diff -r "$$package" "$$tmp/$$package" || \
 	      { echo "sqlc-check: generated $$package is out of sync; run 'make sqlc-generate' and commit the diff"; exit 1; }; \
 	  done
@@ -1385,6 +1527,23 @@ capabilities-check: ## Verify the product capability registry and generated matr
 	@$(GO) run ./cmd/capabilities-md > /tmp/faas-capabilities.md
 	@cmp -s /tmp/faas-capabilities.md docs/capabilities.md || (echo "docs/capabilities.md is stale; run 'make capabilities-md'"; diff -u docs/capabilities.md /tmp/faas-capabilities.md || true; exit 1)
 	@echo "capabilities-check: OK"
+
+.PHONY: capability-coverage-check
+capability-coverage-check: ## CI gate: every customer entry point maps to a row of docs/ga-capability-inventory.md (ADR-20261023115741)
+	@python3 -I scripts/ga/capability_coverage_test.py
+	@python3 -I scripts/ga/capability_coverage.py
+	@python3 -I scripts/ci/require_capabilities_test.py
+
+.PHONY: sdk-spec
+sdk-spec: ## Regenerate sdk/openapi.yaml, the GA and beta spec the SDKs are generated from (ADR-20261023115741)
+	@$(GO) run ./cmd/sdk-spec > sdk/openapi.yaml
+	@echo "sdk-spec: sdk/openapi.yaml regenerated; run 'make sdk-gen-node sdk-gen-python'"
+
+.PHONY: sdk-spec-check
+sdk-spec-check: ## Verify sdk/openapi.yaml matches api/openapi.yaml and the product catalog
+	@$(GO) run ./cmd/sdk-spec > /tmp/faas-sdk-openapi.yaml
+	@cmp -s /tmp/faas-sdk-openapi.yaml sdk/openapi.yaml || (echo "sdk/openapi.yaml is stale; run 'make sdk-spec' and regenerate the SDKs"; exit 1)
+	@echo "sdk-spec-check: OK"
 
 .PHONY: standards-md
 standards-md: ## Regenerate the standards compatibility matrix from the standards registry
@@ -1585,6 +1744,10 @@ sdk-gen: ## (re)generate every generated SDK + assert clean diff vs HEAD
 pre-pr: ## Pre-PR drift check: every regenerate-and-diff gate that runs in CI
 	@echo "==> pre-pr: capabilities-check (product registry ↔ generated matrix)"
 	@$(MAKE) capabilities-check
+	@echo "==> pre-pr: capability-coverage-check (entry points ↔ capability inventory)"
+	@$(MAKE) capability-coverage-check
+	@echo "==> pre-pr: sdk-spec-check (sdk/openapi.yaml ↔ spec + catalog)"
+	@$(MAKE) sdk-spec-check
 	@echo "==> pre-pr: pricing-check (plan limits ↔ customer pricing)"
 	@$(MAKE) pricing-check
 	@echo "==> pre-pr: docs-links-check (docs URLs ↔ customer pages)"
@@ -1652,8 +1815,14 @@ test-environment-gitops-core: ## Strict contract, planner, worker, and real Post
 	@GREGALE_GITOPS_ACCEPTANCE=1 $(GO) test -p 1 ./pkg/environmentsync/... ./pkg/environmentgitops ./pkg/gregalemanifest -count=1
 
 .PHONY: test-environment-gitops-native
-test-environment-gitops-native: ## Isolated native API/worker/queue/guest acceptance with strict pass and leak gates.
+test-environment-gitops-native: ## Isolated native API/worker/queue and source scheduled-Job acceptance with strict pass and leak gates.
 	@GO="$(GO)" bash scripts/test-environment-gitops-native.sh
+
+.PHONY: test-environment-gitops-report
+test-environment-gitops-report: ## Test structured native acceptance evidence; no KVM or database required.
+	@python3 scripts/gitops_native_report_test.py
+	@python3 scripts/ci/gitops_native_ci_test.py
+	@bash -n scripts/ci/run-gitops-native-acceptance.sh
 
 .PHONY: test-environment-gitops-controls
 test-environment-gitops-controls: test-environment-gitops-core ## API/CLI/dashboard review workflows and SDK contracts; does not replace native runtime acceptance.

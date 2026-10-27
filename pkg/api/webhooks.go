@@ -28,6 +28,10 @@ import (
 // from secret managers, rejects megabyte uploads.
 const AppWebhookSecretMaxBytes = 256
 
+// AppWebhookSecretNamespace is the secretbox namespace an app webhook's
+// signing secret is sealed under; schedd's dispatcher accepts no other.
+const AppWebhookSecretNamespace = "APP_WEBHOOK"
+
 // AppWebhookSecretMasked is the literal returned in every response
 // shape that carries the webhook_secret field. Never echo the
 // plaintext back to the customer — same posture as
@@ -101,6 +105,7 @@ var AllowedAppWebhookEvents = []string{
 	"realtime.message.read",
 	"realtime.inbox.acknowledged", "realtime.inbox.gap", "realtime.inbox.fallback_required",
 	"profile.route_regressed", "profile.route_recovered",
+	"profile.capture_ready", "profile.capture_oom_linked",
 	"operation.effect",
 	"app.parked", "app.woken",
 	"app.health.changed",
@@ -110,12 +115,17 @@ var AllowedAppWebhookEvents = []string{
 	"operation.finished",
 	"usage_statement.finalized",
 	"consumer.usage_threshold",
+	"consumer.signed_up",
+	"consumer.plan_changed",
+	"consumer.closed",
 	"outbound.ai_budget.threshold",
+	"outbound.ai_quality.drift",
 	"debug.regression.detected", "debug.regression.resolved",
 	"routes.requirements.changed", "routes.requirements.violated",
 	"routes.requirements.recovered",
 	"routes.health.blocked", "routes.health.resumed", "routes.health.aborted",
 	"routes.monitor.violated", "routes.monitor.escalated", "routes.monitor.recovered",
+	"routes.insight.detected", "routes.insight.resolved",
 	"issue.created", "issue.assigned", "issue.resolved", "issue.reopened", "issue.ignored", "issue.regressed", "issue.impact_threshold_reached", "issue.frequency_threshold_reached", "issue.compound_threshold_reached", "issue.tracker_sync.attention", "issue.tracker_sync.recovered",
 	"workflow.finished", "automation.paused",
 	"event_recovery.completed", "event_recovery.cancelled", "event_recovery.expired", "event_recovery.execution_finished",
@@ -260,21 +270,26 @@ type APIConsumerUsageStatementFinalizedWebhookPayload struct {
 // PlatformTenantStatementFinalizedWebhookPayload is the cross-app billing
 // snapshot emitted once a platform tenant statement becomes payable.
 type PlatformTenantStatementFinalizedWebhookPayload struct {
-	PlatformTenantID string                                `json:"platform_tenant_id"`
-	ExternalRef      string                                `json:"external_ref"`
-	StatementID      string                                `json:"statement_id"`
-	Revision         int                                   `json:"revision"`
-	Status           string                                `json:"status"`
-	PeriodStart      time.Time                             `json:"period_start"`
-	PeriodEnd        time.Time                             `json:"period_end"`
-	Currency         string                                `json:"currency"`
-	BillableUnits    int64                                 `json:"billable_units"`
-	UnpricedUnits    int64                                 `json:"unpriced_units"`
-	AmountMillicents int64                                 `json:"amount_millicents"`
-	Priced           bool                                  `json:"priced"`
-	Lines            []PlatformTenantStatementLineResponse `json:"lines"`
-	AsOf             time.Time                             `json:"as_of"`
-	FinalizedAt      time.Time                             `json:"finalized_at"`
+	PlatformTenantID string    `json:"platform_tenant_id"`
+	ExternalRef      string    `json:"external_ref"`
+	StatementID      string    `json:"statement_id"`
+	Revision         int       `json:"revision"`
+	Status           string    `json:"status"`
+	PeriodStart      time.Time `json:"period_start"`
+	PeriodEnd        time.Time `json:"period_end"`
+	Currency         string    `json:"currency"`
+	BillableUnits    int64     `json:"billable_units"`
+	UnpricedUnits    int64     `json:"unpriced_units"`
+	AmountMillicents int64     `json:"amount_millicents"`
+	// CreditAppliedMillicents and AmountDueMillicents split the amount into
+	// prepaid credit and what is left to invoice (ADR-20261019100331).
+	CreditAppliedMillicents int64                                 `json:"credit_applied_millicents"`
+	AmountDueMillicents     int64                                 `json:"amount_due_millicents"`
+	Priced                  bool                                  `json:"priced"`
+	Lines                   []PlatformTenantStatementLineResponse `json:"lines"`
+	Fees                    []APIConsumerStatementFeeResponse     `json:"fees"`
+	AsOf                    time.Time                             `json:"as_of"`
+	FinalizedAt             time.Time                             `json:"finalized_at"`
 }
 
 // PlatformTenantHostnameVerifiedWebhookPayload records the ownership check

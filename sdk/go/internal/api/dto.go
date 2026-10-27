@@ -492,6 +492,7 @@ type ServiceBindingPolicy string
 const (
 	ServiceBindingPolicyAccount  ServiceBindingPolicy = "account"
 	ServiceBindingPolicyDeclared ServiceBindingPolicy = "declared"
+	ServiceBindingPolicyProject  ServiceBindingPolicy = "project"
 )
 
 type PreviewServiceCallsPolicy string
@@ -769,6 +770,9 @@ type CapabilitiesResponse struct {
 	RegistryVersion    int                `json:"registry_version"`
 	Plan               string             `json:"plan"`
 	Capabilities       []CapabilityStatus `json:"capabilities"`
+	// HiddenCapabilities are the capabilities whose platform flag is off for
+	// this account; omitted when nothing is hidden and by older servers.
+	HiddenCapabilities []string `json:"hidden_capabilities,omitempty"`
 }
 
 // AccountLimits is the read-only copy of api.Limits that survives
@@ -1265,6 +1269,9 @@ type ManagedPostgresUsageResponse struct {
 	StorageByteSecondsRemaining int64      `json:"storage_byte_seconds_remaining"`
 	HistoryByteSeconds          int64      `json:"history_byte_seconds"`
 	EgressBytes                 int64      `json:"egress_bytes"`
+	ComputeAllowanceUnitSeconds int64      `json:"compute_allowance_unit_seconds,omitempty"`
+	ComputeCeilingUnitSeconds   int64      `json:"compute_ceiling_unit_seconds,omitempty"`
+	ComputeCapState             string     `json:"compute_cap_state,omitempty"`
 }
 
 // ValidateAppConfig checks a requested app config against its plan caps (spec

@@ -14,10 +14,11 @@ import (
 
 var _ ObjectStorageAccountingStore = (*PgStore)(nil)
 var _ ObjectStorageBillingStore = (*PgStore)(nil)
+var _ ObjectInventoryReleaser = (*PgStore)(nil)
 
 func objectUsageTime(t time.Time) pgtype.Timestamptz { return pgtype.Timestamptz{Time: t, Valid: true} }
 
-func (s *PgStore) ObjectUsage(ctx context.Context, account string, now time.Time) (ObjectUsageSnapshot, error) {
+func (s *pgCore) ObjectUsage(ctx context.Context, account string, now time.Time) (ObjectUsageSnapshot, error) {
 	return readObjectUsage(ctx, s.pool, account, ObjectStoragePeriod(now))
 }
 
@@ -71,6 +72,7 @@ func readObjectUsageForPeriod(ctx context.Context, db sqlc.DBTX, account string,
 			MultipartBytes: r.MultipartBytes, InventoryScope: r.InventoryScope.String, BaselineBytes: r.BaselineBytes.Int64, BaselineKeys: r.BaselineKeys.Int64, GrantedBytes: r.GrantedBytes.Int64, GrantedKeys: r.GrantedKeys.Int64,
 			ObservedBytes: r.ObservedBytes.Int64, ObservedKeys: r.ObservedKeys.Int64, ObservedAt: r.ObservedAt.Time, AttemptAt: r.AttemptAt.Time, LeaseUntil: r.InventoryLeaseUntil.Time, Token: r.Token.String,
 			RequestCount: r.GatewayRequestCount, EgressBytes: r.GatewayEgressBytes, GatewayMetricsKnown: true,
+			StoredByteHours: r.GatewayStoredByteHours, StorageMeteredThrough: r.GatewayStorageThrough.Time,
 		})
 	}
 	reports, err := q.ObjectUsageReports(ctx, db, sqlc.ObjectUsageReportsParams{AccountID: mustPgUUID(account), PeriodStart: objectUsageTime(periodStart)})
@@ -91,10 +93,10 @@ func objectReportFromSQL(r sqlc.ObjectStorageUsageReport) api.ObjectStorageUsage
 	return api.ObjectStorageUsageReport{AccountID: pgUUIDString(r.AccountID), BackendID: r.BackendID, BackendFingerprint: r.BackendFingerprint, Source: r.Source, PeriodStart: r.PeriodStart.Time, ObservedAt: r.ObservedAt.Time, StoredByteHours: r.StoredByteHours, RequestCount: r.RequestCount, EgressBytes: r.EgressBytes, CostMillicents: r.CostMillicents}
 }
 
-func (s *PgStore) AdmitObjectURL(ctx context.Context, account, bucket, key string, size int64, put bool, p api.ObjectStoragePolicy) error {
+func (s *pgCore) AdmitObjectURL(ctx context.Context, account, bucket, key string, size int64, put bool, p api.ObjectStoragePolicy) error {
 	return s.admitObjectURL(ctx, account, bucket, key, size, put, p, "")
 }
-func (s *PgStore) admitObjectURL(ctx context.Context, account, bucket, key string, size int64, put bool, p api.ObjectStoragePolicy, token string) error {
+func (s *pgCore) admitObjectURL(ctx context.Context, account, bucket, key string, size int64, put bool, p api.ObjectStoragePolicy, token string) error {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return err
@@ -155,7 +157,8 @@ func admitObjectWriteSourceTx(ctx context.Context, tx pgx.Tx, account, bucket, k
 		return err
 	}
 	if put {
-		fenced, e := q.ObjectCapacityFenced(ctx, tx, mustPgUUID(bucket))
+		// Only a deletion of this key fences the write (ADR-20261025115958).
+		fenced, e := q.ObjectCapacityFencedForKey(ctx, tx, sqlc.ObjectCapacityFencedForKeyParams{BucketID: mustPgUUID(bucket), ObjectKey: key})
 		if e != nil {
 			return e
 		}
@@ -190,7 +193,7 @@ func admitObjectWriteSourceTx(ctx context.Context, tx pgx.Tx, account, bucket, k
 	return nil
 }
 
-func (s *PgStore) RecordObjectUsageReport(ctx context.Context, r api.ObjectStorageUsageReport) error {
+func (s *pgCore) RecordObjectUsageReport(ctx context.Context, r api.ObjectStorageUsageReport) error {
 	r = normalizeObjectReport(r)
 	if !validObjectReport(r, time.Now()) {
 		return ErrConflict
@@ -246,7 +249,7 @@ func (s *PgStore) RecordObjectUsageReport(ctx context.Context, r api.ObjectStora
 	return tx.Commit(ctx)
 }
 
-func (s *PgStore) DueObjectInventories(ctx context.Context, limit int32) ([]ObjectBucket, error) {
+func (s *pgCore) DueObjectInventories(ctx context.Context, limit int32) ([]ObjectBucket, error) {
 	if limit < 1 || limit > 100 {
 		return nil, ErrConflict
 	}
@@ -261,7 +264,7 @@ func (s *PgStore) DueObjectInventories(ctx context.Context, limit int32) ([]Obje
 	return out, nil
 }
 
-func (s *PgStore) ClaimObjectInventory(ctx context.Context, bucket, token string) error {
+func (s *pgCore) ClaimObjectInventory(ctx context.Context, bucket, token string) error {
 	if token == "" {
 		return ErrConflict
 	}
@@ -275,7 +278,21 @@ func (s *PgStore) ClaimObjectInventory(ctx context.Context, bucket, token string
 	return nil
 }
 
-func (s *PgStore) FinishObjectInventory(ctx context.Context, bucket, token string, bytes, objects int64) error {
+func (s *pgCore) ReleaseObjectInventory(ctx context.Context, bucket, token string) error {
+	if token == "" {
+		return ErrConflict
+	}
+	n, err := sqlc.New().ObjectInventoryRelease(ctx, s.pool, sqlc.ObjectInventoryReleaseParams{BucketID: mustPgUUID(bucket), Token: token})
+	if err != nil {
+		return err
+	}
+	if n != 1 {
+		return ErrConflict
+	}
+	return nil
+}
+
+func (s *pgCore) FinishObjectInventory(ctx context.Context, bucket, token string, bytes, objects int64) error {
 	if token == "" || bytes < 0 || objects < 0 || bytes > api.MaxObjectStoragePolicyValue || objects > api.MaxObjectStoragePolicyValue {
 		return ErrConflict
 	}

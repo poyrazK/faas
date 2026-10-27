@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createServer} from 'node:http';
 import {once} from 'node:events';
-import {AppsService,FaaSClient,type IssueTeam} from '../src/index.js';
+import {AppsService,FaaSClient,type IssueTeam} from '../src/preview.js';
 
 test('team roster, shared inbox and bulk assignment retain the team target',async(t)=>{
  const teamID='11111111-1111-4111-8111-111111111111';

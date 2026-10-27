@@ -348,6 +348,42 @@ is a later step.
   database's key, and the key ring refuses a payload that names another
   database. Rotation keeps the previous key until a retirement time (default
   overlap 24 hours). Removing a key revokes its outstanding seals at once.
+- **At-rest binding (amendment, 2026-10-23).** A live key and a live login
+  are sealed to livequeryd's recipient under a fixed namespace (`livequery`,
+  `livequery-login`), which binds neither to its database: a blob copied onto
+  another database's row would open there, and livequeryd would serve one
+  database's login or key under another's ID. The namespace is bound to the
+  database ID (`livequery:<database>`, `livequery-login:<database>`) over
+  three releases, as N±1 requires:
+  1. livequeryd opens the legacy and the bound form, and refuses a blob
+     bound to another database (`livekeys.KeyNamespaceOpens`,
+     `livekeys.LoginNamespaceOpens`).
+  2. apid seals the bound form, and an operator re-seals existing rows with
+     `livequeryd -reseal` on a hub host. That is the only place whose
+     identity opens them. Each row's plaintext is sealed again, unchanged,
+     to the same recipient, with a compare-and-swap on the old seal. The
+     2026-10-23 plan to rotate keys and re-issue logins is dropped: rotating
+     a key issues a secret that only the API response shows, so the
+     customer's deployed secret would retire after the overlap. Re-issuing a
+     login changes its password. A row that is bound to another database,
+     doesn't open, or holds another key's secret is reported and left as it
+     is (amended 2026-10-26).
+     Amended 2026-10-27 (security audit): the re-seal seals to the loaded
+     identity's own recipient, never to the `recipient` column, which a
+     database writer could point at their own key; a row naming any other
+     recipient is refused, and the compare-and-swap includes the recipient.
+     A login whose plaintext another row also holds is refused on both rows:
+     a legacy blob names no database, so a copy of one database's login onto
+     another is told apart only that way.
+  3. livequeryd stops opening the legacy form.
+- **What the binding does not stop (2026-10-27).** age envelopes do not
+  authenticate their sender and livequeryd's recipient is public, so a
+  database writer can seal a new, correctly bound key or login for any
+  database, or move a whole key row (same key ID, new database) before the
+  re-seal. The binding stops copying one database's ciphertext onto
+  another's row; it does not make the rows authorization material a writer
+  cannot forge. That needs a MAC over the key ID, database and blob under a
+  key apid and livequeryd share, which is follow-up work.
 - Limits (`pkg/api/limits.go`):
   - SQL up to 32 KiB, 256 parameters of 16 KiB each (as Neon);
   - a sealed payload up to 48 KiB;
@@ -481,8 +517,8 @@ is a later step.
   - a bake-off against Neon Realtime on the same application.
 - **Later, each with its own ADR:**
   - standby execution;
-  - Neon-backed databases (a replication consumer keeps a Neon compute awake,
-    so it must connect only while Neon reports the compute active);
+  - Neon-backed databases are no longer deferred: see *Scale to zero,
+    built*;
   - bring-your-own Postgres.
 
 ### Phase 0 result (2026-10-16)
@@ -794,9 +830,8 @@ Phase 0 did not cover:
     Overlap 0 and disable revoke at once.
   - **Eligibility.** A backend runs live queries only when its configuration
     names a hub (`live_hub_url`, with `{database_id}` substituted).
-    Configuration refuses one on Neon backends, so on main today no
-    production database can enable them. The native provider (ADR-1027) will
-    set it.
+    Neon backends may name one (2026-10-18, see *Scale to zero, built*);
+    the native provider (ADR-1027) will set it too.
   - **livequeryd's keys.** livequeryd reads its database's sealed keys from
     the control plane, over a read-only connection (`-keys-dsn-file`). It
     opens them with its age identity (`-keys-identity`) and replaces the
@@ -985,6 +1020,299 @@ Phase 0 did not cover:
   - One gap remains: while some account is listed, an unauthenticated
     request to a live path gets the 401 that any authenticated route gives,
     not the unregistered 404.
+- **Scale to zero, built** (2026-10-18).
+  - **Release.** A hub with no transaction to apply for
+    `Config.ReleaseAfter` (livequeryd `-release-after`) does three things:
+    - writes its checkpoint;
+    - closes the capture;
+    - resets the pool (`Engine.Release`).
+
+    No connection to the database stays open. The slot-lag poll pauses
+    too.
+  - **Serving while released.**
+    - Subscribers keep their results, since nothing can change them while
+      nothing commits.
+    - A subscriber to a held result with identical arguments joins from
+      memory (`Engine.Join`) and receives it at once.
+    - Unsubscribes, renewals and expiry need no database.
+  - **Resume.** `Engine.Resume` attaches a new capture on the slot.
+    - Transactions the last round applied stream again and are skipped.
+    - A slot lost meanwhile (`Capture.Created`) resets every member, so each
+      result is read again and sent whole.
+    - Triggers:
+      - `Config.Awake`, polled every `AwakeEvery`, reports the database
+        running;
+      - `Hub.Wake` is called (the hook for schedd on native databases);
+      - a subscription needs the database: a new query, new arguments, or
+        any RLS-mode read.
+  - **Neon.** `-awake neon` reads the endpoint's `current_state` from the
+    Neon API:
+    - `active`, `init`, `starting` and `resuming` count as running;
+    - `idle` and `stopping` do not;
+    - anything else, or an error, changes nothing, because reconnecting
+      would itself wake the compute.
+
+    The registry now accepts `live_hub_url` on Neon backends.
+  - **Native.** `-release-after` refuses to start without `-awake`, so a
+    native hub does not release until schedd's park and wake reach it
+    through `Hub.Wake`.
+  - **Tests.**
+    - The engine releases (empty pool, inactive slot), joins from memory,
+      and resumes exactly after commits made meanwhile; a lost slot is
+      read again whole.
+    - The hub releases after the quiet period and serves a held result
+      without reconnecting. It resumes through the probe, a new
+      subscription and `Wake`, catching up each time (`-race`).
+    - The differential oracle adds release and resume cycles under
+      concurrent writers (`LIVEQUERY_ORACLE_RELEASE_PERCENT`, default 8):
+      8 seeds with 12 cycles, some on a lost slot, and 0 divergences.
+    - Neon probe states and flag validation.
+  - **Deployment** (2026-10-19). The `livequeryd_service` Ansible role runs
+    one hub per control plane:
+    - The unit is an `OptionalRegistry` entry, generated like s3-gatewayd's.
+    - The role's drop-in holds the database's flags and loads its secrets
+      as systemd credentials.
+    - The role wires apid's recipient. Accounts are released by the
+      `live_queries` platform flag (ADR-1700), not by the role.
+    - nftables opens the hub port to compute nodes.
+    - cd-controlplane restarts the hub only where it is configured.
+    - livequeryd gained `-database-url-file`, `/readyz`, systemd readiness
+      and watchdog pings, and serves `/<database_id>/live`.
+
+    A backend's `live_hub_url` still names one hub, so each backend can
+    serve one live database until livequeryd hosts several.
+  - **Several databases per process** (2026-10-20). `-databases-file` lists
+    the databases one livequeryd serves:
+    - Each database has its own hub, slot, checkpoint
+      (`<checkpoint-dir>/<id>.checkpoint`), live keys and `/<id>/live` route,
+      which lifts the limit of one live database per backend.
+    - Replication slot names are unique per PostgreSQL server, not per
+      database, so a database's slot defaults to `gregale_live_<id>`, and two
+      entries that name one slot on one server are refused at start.
+    - The process, listener, SQL parser and control-plane connection are
+      shared.
+    - A database that cannot be opened, or whose hub stops on an error, is
+      retried with backoff (one second, doubling, at most a minute). It
+      answers 503 meanwhile, which realtimed retries, and the others keep
+      serving.
+    - The process is ready once it listens. `GET /databases`,
+      `livequery_hub_up` and `livequery_hub_restarts_total` show each
+      database's state.
+    - Metrics carry a `database` label; `livequery_engine_memory_bytes`
+      stays one process-wide series.
+    - A session that reaches a hub as it stops now closes, so realtimed
+      reconnects to the next hub instead of waiting.
+    - The Ansible role takes `faas_livequeryd_databases`, with one credential
+      per connection string. A deploy fails unless every database is served.
+    - The flags for one database remain for development.
+  - **Alerts and dashboard** (2026-10-20). The `live_queries` alert family
+    warns, without paging, while live queries are a preview:
+    - the hub is down, or a database is not served or keeps restarting;
+    - a released hub cannot reconnect;
+    - slot lag passes 1 GiB, or a slot is lost;
+    - live keys cannot be read;
+    - commit-to-delta p95 exceeds 1 s;
+    - a slow connection is cut off;
+    - realtimed's hub connections keep dropping.
+
+    Each alert has a promtool fixture showing it firing and staying quiet,
+    and triage is in `docs/runbooks/FaasLiveQueries.md`. The live-queries
+    Grafana dashboard shows each database's state, latency, slot lag,
+    resumes and keys, and realtimed's side.
+  - **First-result latency** (2026-10-20). `TestBenchFirstResult` times each
+    step from a subscription to its first result. The cold start measured in
+    tests at 8–12 s came from two causes, and neither was the engine's
+    round:
+    - **The SQL parser.** `go-pgquery` is libpg_query compiled to
+      WebAssembly. The first parse in a process compiles it to native code:
+      6–8 s, against under 1 ms for each later parse. livequeryd now starts
+      that compile when it starts (`livequery.WarmParser`), so a subscriber
+      who arrives later does not wait. A checkpoint restore still waits,
+      because it compiles every query.
+
+      wazero's on-disk compilation cache would cut a restart's compile to
+      about 1.3 s. go-pgquery does not expose its runtime configuration, so
+      using the cache means carrying a patched copy of it. That is left as
+      a decision.
+    - **Slot creation.** Creating a slot waits for every transaction running
+      on the server to finish. It took 40 ms on an idle server, and as long
+      as the longest open transaction otherwise. It happens once per
+      database; reopening an existing slot took 90 ms.
+
+    The rest of the path:
+    - compiling a further query: 16–80 ms;
+    - the first round, which includes the initial read: 85–250 ms.
+
+    The round's marker was also slow on a database with `synchronous_commit
+    = off`: its commit did not flush, so every round waited for the WAL
+    writer (287 ms against 1.2 ms). The marker statement now sets
+    `synchronous_commit` on for its own transaction
+    (`TestRoundsDoNotWaitForTheWALWriter`).
+  - **Discovered databases and live logins** (2026-10-21). livequeryd learns
+    the databases it serves from the control plane, instead of an operator
+    listing each one.
+    - **Live login.** When live queries are enabled, apid asks the database's
+      provider (`managedpostgres.LiveLoginIssuer`) to prepare it and issue a
+      login. As the owner, the provider:
+      - installs the schema-change log and creates the publication;
+      - creates `gregale_live_<scope>`: `LOGIN NOINHERIT REPLICATION`, reading
+        the `public`, `api` and `gregale_live` schemas and writing nothing;
+      - grants it `SET` without inheritance on the database's read-only,
+        read-write and Data API binding logins, and on ones created later,
+        so a live query reads as its app.
+    - **Storage.** apid seals the login's connection string to livequeryd's
+      recipient (namespace `livequery-login`) and stores it in
+      `managed_postgres_live_logins`. The row also holds the slot
+      (`gregale_live_<database id>`) and how to wake-check the database
+      (`neon:<project>/<endpoint>`). Issuing runs while the database row is
+      locked and only when live queries are off, because issuing gives the
+      login a new password.
+    - **Disable.** apid revokes the login first: `NOLOGIN`, its sessions
+      ended, the slot dropped, then the role. If revoking fails, nothing is
+      removed.
+    - **Discovery.** `-discover-backends` reads the live databases of those
+      backends that have a login, every 15 s by default:
+      - new ones start, ones whose login changed restart, and ones gone stop,
+        with their series and checkpoint removed;
+      - a failed read keeps the current set;
+      - `-discover-release-after` lets discovered Neon databases scale to
+        zero.
+    - **Without a live-login provider**, live queries still turn on, and an
+      operator lists the database (`-databases-file`).
+    - **Unverified on Neon.** It is not yet known whether the owner login may
+      grant `REPLICATION`, create event triggers and a publication `FOR ALL
+      TABLES`, and end the live login's sessions. Stock PostgreSQL needs a
+      superuser for each; the production test settles them.
+  - **Fleet-PKI leaves** (2026-10-19). Hub and realtimed authenticate with
+    leaves of the internal CA:
+    - livequeryd's server leaf is `livequeryd.faas`;
+    - realtimed's client leaf is `realtimed.faas`.
+
+    They are *feature leaves* (`pkg/pki/feature.go`): a host carries them
+    only when the feature is on. No host role requires them, which avoids
+    the rc.255 failure, where leaves added to the required set broke
+    rollouts of hosts that lacked them.
+
+    How they are issued, used and renewed:
+    - `gregalectl pki issue-feature` issues them on the CA's host. The
+      compute node's leaf is staged there and copied over.
+    - `pki metrics` reports their expiry, and `pki_renew.yml` renews them.
+    - livequeryd's `-client-name` admits only realtimed's leaf, so no other
+      fleet identity can carry RLS claims.
+    - realtimed verifies hubs as `livequeryd.faas`
+      (`FAAS_REALTIME_LIVE_TLS_SERVER_NAME`).
+  - **Unverified on Neon:** logical replication on the project, event
+    triggers for the schema-change log, and slot persistence across a
+    suspend.
+
+- **Data API parity** (2026-10-18, with ADR-20261018170742).
+  - **Claims.** The Data API gateway now owns `gregale_access` and the other
+    `gregale_*` claims, overwriting whatever an identity provider's token
+    carries. RLS-mode sessions do the same: the hub removes the gateway-owned
+    claims from the verified claims and sets `gregale_access` to `user`, so a
+    policy on `gregale_access` returns the same rows live and over REST. The
+    canonical claim text still sorts keys and drops volatile claims, so plan
+    groups are unchanged for tokens that never carried `gregale_*` claims.
+  - **Typed reads.** `liveRead` takes its row type from a generated-contract
+    query (`LiveReadRow`). It returns `parseDataAPIRow`, which decodes
+    PostgreSQL text the way PostgREST encodes JSON: integer, `numeric` and
+    float types become numbers (non-finite values stay strings),
+    `timestamp`/`timestamptz` become ISO 8601 strings, arrays are parsed
+    element by element, and JSON is parsed. Embedded resources already arrive
+    as JSON. Composite top-level columns stay text, because the frame carries
+    no field names; their generated object type does not hold live. Sealed
+    queries keep `parseLiveRow`.
+  - **Not yet:** anonymous live reads of public relations and server-key
+    subscriptions. Both need a realtime endpoint that admits them without an
+    `oidc_jwt` connection, and the Data API's public-read allowlist and key
+    hashes, which live only in the app's sealed secrets today, delivered to
+    realtimed.
+  - The SDK's live module stays unexported and unpacked until launch.
+
+- **Anonymous and server-key reads** (2026-10-19, with ADR-20261018170742
+  and ADR-20261019102108).
+  - **Frames.** A Data API read may carry `anonymous: true` or a
+    `server_key` (with an optional `subject`) instead of a user's token.
+    `access` (`anonymous` or `server`) is set only by realtimed, like `role`
+    and `claims`; a client that sends it is refused.
+  - **Settings.** The Data API runtime reports its access settings with its
+    usage reports, after start, after a restore and hourly. They hold its
+    exposed schemas, its public-read allowlist and its server-key hashes with
+    permissions, never a key. apid stores the latest per app
+    (`data_api_access_configs`) and puts them on the app's live routes
+    (`LiveRoute.DataAPIAccess`). Deleting `DATA_API_USAGE_URL` forgets them,
+    so live reads never follow settings the runtime can no longer report.
+  - **Admission.** The live proxy in realtimed admits these reads. An
+    anonymous read may name only public relations, and embedded relations are
+    checked recursively from the parsed read. A server key must match a
+    slot's hash, compared in constant time, and stay within the key's
+    relation and subject permissions. The proxy then replaces the credential
+    with the Data API gateway's claims (`gregale_access` `anonymous`, or
+    `server` with `gregale_server_key` and `sub`), set to expire after
+    `LiveQueryKeySessionMax` (1 h). The key never reaches the hub. A renewal
+    re-runs admission against the current settings with the subscription's
+    read, so a revoked key or a narrowed allowlist takes effect within an hour.
+    A renewal that changes the access kind is a `renew_mismatch`.
+  - **The hub** accepts claims for these kinds only in exactly that shape, and
+    only from realtimed. Row-level security still decides every row.
+  - **Connections.** v2 previously required OIDC (or a ticket). An endpoint
+    without OIDC now accepts v2 when it has live routes, as a live-only
+    connection: live frames are admitted frame by frame, and channel frames
+    answer `live_only_connection`. Server keys are refused on connections
+    whose upgrade carried an `Origin` header, as the REST gateway refuses them
+    from browsers.
+  - **SDK.** `connection.query({ database, anonymous: true, ...liveRead(q) })`
+    and `{ serverKey, subject }`; exactly one credential, enforced by types.
+  - **Tests:** frame validation; admission unit tests; a proxy session
+    against a recording hub, showing the key stays in realtimed and renewals
+    re-check; realtimed's pass-through, client-set access kinds and
+    browser-origin refusal; live-only connections; and a full path on
+    PostgreSQL where a visitor without a session sees only published rows,
+    follows a new one, and is refused orders that a server key reads.
+
+- **Data API live reads for customers** (2026-10-20). This amends the
+  rollout gate above for Data API reads. Sealed queries stay an operator
+  preview.
+  - **What customers get.** `@gregale/data` exports `./live` and
+    `./live/react`, with React as an optional peer, and packs `dist/live`.
+    `liveSocket(url)` opens the realtime v2 subprotocol, carrying no
+    credential. `gregale data-api live enable|status` appears in customer
+    help and the CLI reference, and `docs/data-api.md#live-reads` documents
+    it. `gregale postgres live` stays out of customer help.
+  - **What still gates access.** The `live_queries` platform flag (ADR-1700)
+    still decides which accounts get live routes. The live API routes stay
+    out of the public OpenAPI spec and generated SDKs. Opening the flag to
+    everyone is the launch step, after testing on production. Outside it,
+    `data-api live` reports that live queries are not available and changes
+    nothing.
+  - **One command.** `data-api live enable` finds the Data API's database
+    through its `data_api` binding. It enables live queries there, discarding
+    the issued secret (Data API reads do not use it), and turns usage
+    reporting on with a fresh restart. It then creates a realtime endpoint on
+    the Data API app with auth mode `none`. Each step runs only if missing.
+  - **Token settings travel with the access settings.** The runtime adds
+    `auth` (issuer, JWKS URL, audience) to its reported access settings. apid
+    validates them like a realtime endpoint's OIDC settings, and realtimed's
+    JWKS client keeps its egress guard. realtimed verifies an RLS-mode
+    read's token with the settings of the Data API serving that database,
+    using the runtime's algorithms (RS256, ES256). It falls back to the
+    endpoint's OIDC policy only when no route reports them. A live read
+    therefore accepts exactly the tokens a REST read does, and the endpoint
+    needs no OIDC settings of its own.
+  - **No app callbacks for live-only connections.** realtimed skips the
+    connect and disconnect callbacks for live-only connections: they carry
+    no identity for the app to judge, and each frame brings its own
+    credential. A Data API runtime answers no realtime callbacks, so its
+    endpoint must use auth mode `none`. Other connections to it still ask
+    the app and are refused; `data-api live status` warns about any other
+    mode.
+  - **Tests:** access-setting validation (non-HTTPS, private JWKS, missing or
+    oversized audience); the runtime's report; realtimed verifying a user's
+    live read with the reported issuer on a live-only connection while the
+    app refuses every connection it is asked about; the CLI against a fake
+    API, where a first enable makes three writes and a second makes none,
+    the status warning and the rollout refusal; the SDK's package exports,
+    pack contents and `liveSocket`.
 
 ## Consequences
 

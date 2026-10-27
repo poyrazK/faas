@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"net/http"
@@ -6,6 +6,7 @@ import (
 	"slices"
 	"testing"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -16,16 +17,19 @@ func ownerFixtureServer(t *testing.T, taskID, ruleID string, deleted *int) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/delayed-tasks/"+taskID:
-			writeJSONTest(w, api.DelayedTaskResponse{ID: taskID, AppID: "app-web", State: "completed"})
+			main.WriteJSONTest(w, api.DelayedTaskResponse{ID: taskID, AppID: "app-web", State: "completed"})
+		case r.Method == http.MethodDelete && r.URL.Path == "/v1/delayed-tasks/"+taskID:
+			*deleted++
+			main.WriteJSONTest(w, api.DelayedTaskResponse{ID: taskID, AppID: "app-web", State: "cancelled"})
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/edge-rules/"+ruleID:
-			writeJSONTest(w, api.EdgeRuleResponse{ID: ruleID, AppID: "app-web"})
+			main.WriteJSONTest(w, api.EdgeRuleResponse{ID: ruleID, AppID: "app-web"})
 		case r.Method == http.MethodDelete && r.URL.Path == "/v1/edge-rules/"+ruleID:
 			*deleted++
 			w.WriteHeader(http.StatusNoContent)
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/apps/web":
-			writeJSONTest(w, api.AppResponse{ID: "app-web", Slug: "web"})
+			main.WriteJSONTest(w, api.AppResponse{ID: "app-web", Slug: "web"})
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/apps/other":
-			writeJSONTest(w, api.AppResponse{ID: "app-other", Slug: "other"})
+			main.WriteJSONTest(w, api.AppResponse{ID: "app-other", Slug: "other"})
 		default:
 			http.NotFound(w, r)
 		}
@@ -39,31 +43,61 @@ func ownerFixtureServer(t *testing.T, taskID, ruleID string, deleted *int) {
 // --app <slug>` and `edge-rules rm <id> --app <slug>` were refused outright;
 // --app now checks the owner.
 func TestOwnerScopedGetAndRm(t *testing.T) {
-	resetJSONOut(t)
+	main.ResetJSONOut(t)
 	const taskID = "3081e8fe-e18a-44ed-b7c4-e38dd7d822e7"
 	const ruleID = "37f7d80e-4471-46c1-b4cf-0e7fb765adb6"
 	deleted := 0
 	ownerFixtureServer(t, taskID, ruleID, &deleted)
-	_, restore := captureStdout(t)
+	_, restore := main.CaptureStdout(t)
 	defer restore()
-	if code := cmdDelayedTaskGet([]string{taskID, "--app", "web"}); code != 0 {
+	if code := main.CmdDelayedTaskGet([]string{taskID, "--app", "web"}); code != 0 {
 		t.Fatalf("delayed-task get --app web exit = %d", code)
 	}
-	if code := cmdDelayedTaskGet([]string{taskID, "--app", "other"}); code == 0 {
+	if code := main.CmdDelayedTaskGet([]string{taskID, "--app", "other"}); code == 0 {
 		t.Fatal("delayed-task get accepted a task owned by another app")
 	}
-	if code := cmdEdgeRulesRm([]string{ruleID, "--app", "other", "--yes"}); code == 0 || deleted != 0 {
+	if code := main.CmdEdgeRulesRm([]string{ruleID, "--app", "other", "--yes"}); code == 0 || deleted != 0 {
 		t.Fatalf("edge-rules rm deleted another app's rule: exit=%d deleted=%d", code, deleted)
 	}
-	if code := cmdEdgeRulesRm([]string{ruleID, "--app", "web", "--yes"}); code != 0 || deleted != 1 {
+	if code := main.CmdEdgeRulesRm([]string{ruleID, "--app", "web", "--yes"}); code != 0 || deleted != 1 {
 		t.Fatalf("edge-rules rm --app web: exit=%d deleted=%d", code, deleted)
+	}
+}
+
+// TestDelayedTaskCancelOwnerFlag pins Hunt 11 H11-18: `delayed-task cancel
+// <id> --app <slug>` was refused with a bare usage line although add, list
+// and get take --app. --app now checks the owner before cancelling.
+func TestDelayedTaskCancelOwnerFlag(t *testing.T) {
+	main.ResetJSONOut(t)
+	const taskID = "3081e8fe-e18a-44ed-b7c4-e38dd7d822e7"
+	tests := []struct {
+		name        string
+		args        []string
+		wantOK      bool
+		wantDeletes int
+	}{
+		{"other app's task is not cancelled", []string{taskID, "--app", "other"}, false, 0},
+		{"owner app cancels", []string{"--app", "web", taskID}, true, 1},
+		{"no --app cancels", []string{taskID}, true, 1},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			deleted := 0
+			ownerFixtureServer(t, taskID, "37f7d80e-4471-46c1-b4cf-0e7fb765adb6", &deleted)
+			_, restore := main.CaptureStdout(t)
+			defer restore()
+			code := main.CmdDelayedTaskCancel(tt.args)
+			if (code == 0) != tt.wantOK || deleted != tt.wantDeletes {
+				t.Fatalf("cancel %q: exit=%d deleted=%d, want ok=%t deleted=%d", tt.args, code, deleted, tt.wantOK, tt.wantDeletes)
+			}
+		})
 	}
 }
 
 // TestWithoutConfirmationFlags pins H10-130: version-delete counted --yes as
 // a fifth argument.
 func TestWithoutConfirmationFlags(t *testing.T) {
-	got := withoutConfirmationFlags([]string{"--yes", "app", "-q", "bucket", "key", "--quiet", "version"})
+	got := main.WithoutConfirmationFlags([]string{"--yes", "app", "-q", "bucket", "key", "--quiet", "version"})
 	if want := []string{"app", "bucket", "key", "version"}; !slices.Equal(got, want) {
 		t.Fatalf("got %q, want %q", got, want)
 	}

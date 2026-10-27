@@ -1,6 +1,6 @@
 import { createServer } from 'node:http';
 import { formatEventAcknowledgmentPreparationMetrics,
-  EVENT_ACKNOWLEDGMENT_PREPARATION_PROMETHEUS_CONTENT_TYPE } from '@gregale/sdk-node';
+  EVENT_ACKNOWLEDGMENT_PREPARATION_PROMETHEUS_CONTENT_TYPE } from '@gregale/sdk-node/preview';
 
 /** Application-owned example. Bind to loopback as documented; never attach to delivery ingress. */
 export function createPreparationMetricsServer(metrics) {

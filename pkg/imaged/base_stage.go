@@ -16,9 +16,9 @@ import (
 	"github.com/onebox-faas/faas/pkg/imagechain"
 	"github.com/onebox-faas/faas/pkg/oci"
 	"github.com/onebox-faas/faas/pkg/rootfs"
-	"github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/storage"
+	"github.com/onebox-faas/faas/pkg/storagekey"
 	"github.com/onebox-faas/faas/pkg/wire"
 )
 
@@ -127,6 +127,9 @@ func (h *Handler) ensureBaseExt4(
 	be, err := h.storageFor()
 	if err != nil {
 		return BaseStageResult{}, fmt.Errorf("imaged: storageFor for base stage: %w", err)
+	}
+	if err := checkBaseGenerationRoute(be, baseKey, ref); err != nil {
+		return BaseStageResult{}, err
 	}
 	guestInitDigest, err := guestInitBinaryDigest(h.guestInitPath)
 	if err != nil {
@@ -1001,7 +1004,7 @@ func (h *Handler) scanSidecarSourceCurrent(ctx context.Context, be storage.Stora
 type RuntimeBaseRef struct {
 	// Runtime is the apps.runtime constant the function deploy stores
 	// in the database (e.g. "node24"). It is also the base key's path
-	// component: sched.BaseKeyForArch(runtime, arch) →
+	// component: storagekey.BaseForArch(runtime, arch) →
 	// "base/runner-<runtime>-<arch>.ext4".
 	Runtime string
 	// Ref is the default OCI ref for the runtime base. The `:latest`
@@ -1159,9 +1162,9 @@ func (h *Handler) EnsureBases(ctx context.Context, arch string, refs []RuntimeBa
 				return nil, err
 			}
 		}
-		baseKey := sched.BaseKeyForArch(row.Runtime, arch)
-		digestKey := sched.BaseDigestKeyForArch(row.Runtime, arch)
-		outImage := sched.BaseKeyForArch(row.Runtime, arch) // LocalStorageBackend joins under FAAS_STORAGE_ROOT
+		baseKey := storagekey.BaseForArch(row.Runtime, arch)
+		digestKey := storagekey.BaseDigestForArch(row.Runtime, arch)
+		outImage := storagekey.BaseForArch(row.Runtime, arch) // LocalStorageBackend joins under FAAS_STORAGE_ROOT
 		// ADR-053: when the row declares a parent runtime, pass its
 		// resolved OCI ref + StorageBackend key so EnsureBaseExt4
 		// can take the parent-ref branch. The parent row's
@@ -1183,7 +1186,7 @@ func (h *Handler) EnsureBases(ctx context.Context, arch string, refs []RuntimeBa
 		}
 		parentBaseKey := ""
 		if row.ParentRef != "" {
-			parentBaseKey = sched.BaseKeyForArch(RuntimeDebianParent, arch)
+			parentBaseKey = storagekey.BaseForArch(RuntimeDebianParent, arch)
 		}
 		res, err := h.EnsureBaseExt4(ctx, ref, baseKey, digestKey, outImage, parentRef, parentBaseKey)
 		if err != nil {
@@ -1228,9 +1231,9 @@ func (h *Handler) EnsureMinimalBase(ctx context.Context, arch string, envLookup 
 	}
 	result := results[0]
 	return BaseStageResult{
-		OutImage:     sched.BaseKeyForArch("", arch),
+		OutImage:     storagekey.BaseForArch("", arch),
 		Producer:     result.Producer,
-		StorageKey:   sched.BaseKeyForArch("", arch),
+		StorageKey:   storagekey.BaseForArch("", arch),
 		ConfigDigest: result.ConfigDigest,
 		Skipped:      result.Skipped,
 	}, nil
@@ -1290,7 +1293,7 @@ func (h *Handler) EnsureRuntimeBase(ctx context.Context, runtime, arch string, e
 	}
 	last := results[len(results)-1]
 	return BaseStageResult{
-		StorageKey:   sched.BaseKeyForArch(last.Runtime, arch),
+		StorageKey:   storagekey.BaseForArch(last.Runtime, arch),
 		Producer:     last.Producer,
 		ConfigDigest: last.ConfigDigest,
 		Skipped:      last.Skipped,

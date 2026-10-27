@@ -7,6 +7,10 @@
  */
 export type ProjectScanRequest = {
   /**
+   * JSON-encoded ProjectReleaseConfigRequest for atomic-config-verify; contains only non-secret workload variables.
+   */
+  release_config?: string;
+  /**
    * Preserve repository service identities and suggest project-prefixed app names. Requires no_triggers and no repository push binding; apply repeats the reviewed setting.
    */
   migration?: boolean;
@@ -47,5 +51,9 @@ export type ProjectScanRequest = {
    * Override the customer identity policy for selected workloads in this scan/apply pair (Hobby and above). Omitted uses Compose declarations and preserves existing app policy. Apply must repeat the same override as scan.
    */
   platform_tenant_required?: boolean;
+  /**
+   * Apply only: release frozen apps to production anyway; the reason is audited.
+   */
+  override_freeze?: string;
 };
 

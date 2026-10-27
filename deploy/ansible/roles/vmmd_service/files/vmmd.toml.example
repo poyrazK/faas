@@ -6,6 +6,8 @@
 # Dedicated native acceptance is required before enabling broadly.
 # Default: false
 # native_process_recovery = true
+# Native-recovery public bridges require nftables 1.1.3+, Linux 6.13+ and
+# faas_public_forwarding: true in the matching nftables role inventory.
 
 # native_snapshot_publication_root: EXPERIMENTAL persistent, root-owned 0700
 # directory outside the jail and image-staging roots. It stores immutable
@@ -14,6 +16,56 @@
 # restore, qualification polling, or activation.
 # Default: "" (disabled)
 # native_snapshot_publication_root = "/var/lib/faas/vmmd-publications"
+
+# native_runtime_capture: EXPERIMENTAL. Run ordinary park and warm captures
+# through the native producer instead of refusing them (ADR 20261022184951).
+# Requires native_process_recovery = true, native_snapshot_publication_root,
+# native_image_staging_root and native_runtime_snapshot_root. Leave off until
+# native capture acceptance passes.
+# Default: false
+# native_runtime_capture = true
+
+# native_runtime_snapshot_root: the tree native runtime captures publish to.
+# vmmd must be its only writer: a directory owned by vmmd's uid with no group
+# write and no access for others, on ext4/XFS/Btrfs. The compute role creates
+# /srv/fc/native-snap as 2750 root:faas so imaged and schedd can read it.
+# Keep it set after turning native_runtime_capture off; restores and imaged's
+# collection still need the snapshots it holds.
+# Default: "" (disabled)
+# native_runtime_snapshot_root = "/srv/fc/native-snap"
+
+# native_launch_owner_records: publish ordinary native launches as version-3
+# records that name this vmmd incarnation, so a restarted vmmd can prove the
+# old one exited and clean up its VMs (ADR-2026101710 Amendment 1). Without it,
+# a crashed vmmd's native VMs stay quarantined. vmmd binaries without a
+# version-3 reader refuse the journal, so enable this only once every compute
+# node and any rollback target can read it. Requires native_process_recovery.
+# Default: false
+# native_launch_owner_records = true
+
+# adoption_record: write version-7 adoption blocks into the resource journal
+# (vmmd restart adoption ADR, slice 1). Shadow only: nothing adopts yet, and
+# startup classifies records in a dry run either way. vmmd binaries without a
+# version-7 reader refuse the journal, so enable this only once every compute
+# node and any rollback target can read it. Ignored with
+# native_process_recovery.
+# Default: false
+# adoption_record = true
+
+# adopt_running_vms: EXPERIMENTAL. At startup, adopt running guests whose
+# adoption records prove ownership instead of quarantining them, so a vmmd
+# restart keeps them (vmmd restart adoption ADR, slice 2). Anything not
+# proven, or outside what this release rebuilds, stays quarantined as
+# before. Requires adoption_record = true; not with native_process_recovery.
+# Default: false
+# adopt_running_vms = true
+
+# adopt_admitted_runtimes: EXPERIMENTAL. Also adopt guests booted under an
+# application standard's runtime-admission receipt; schedd re-binds their
+# admission to the new vmmd (ADR-595 extension). Off, they are refused at
+# adoption and re-admitted fresh. Requires adopt_running_vms = true.
+# Default: false
+# adopt_admitted_runtimes = true
 
 # socket_path: unix-domain socket path. Mode 0660, group 'faas' (ADR-015).
 # Default: /run/faas/vmmd.sock
@@ -45,6 +97,25 @@
 # Default: false
 # disable_restore_prefetch = false
 
+# restore_reseed_thread: boot app VMs whose Node processes answer the restore
+# reseed barrier (ADR-680) from the preload addon's native thread instead of
+# their event loop (ADR-20261024105607). The resume hook still waits for every
+# process to reseed OpenSSL; Math.random and Node's RNG caches adopt the
+# restore before their next value. Only later cold boots and the snapshots
+# they capture change. FAAS_RESTORE_RESEED_THREAD overrides.
+# Default: false
+# restore_reseed_thread = false
+
+# cpu_template: the Firecracker CPU template every guest boots with
+# (ADR-20261024225612). Use one value for the whole cell. "T2CL" lets a cell
+# mix Intel Cascade Lake and Ice Lake nodes and restore snapshots across them;
+# "T2S" covers Skylake + Cascade Lake, "C3"/"T2" Skylake through Ice Lake,
+# "T2A" AMD Milan. vmmd refuses to start on a CPU the template does not list.
+# Turning a template on or off makes every app cold-boot once. Empty boots
+# with the host's CPUID. FAAS_CPU_TEMPLATE overrides.
+# Default: ""
+# cpu_template = "T2CL"
+
 # quiet_pause: pause an eligible instance's vCPUs between requests and resume
 # it when the next one arrives (ADR-957). The instance stays RUNNING and
 # billed; a paused VM uses no host CPU. schedd decides which instances are
@@ -52,6 +123,15 @@
 # of it. FAAS_QUIET_PAUSE overrides.
 # Default: false
 # quiet_pause = false
+
+# quiet_pause_observe: run quiet pause in observe mode (ADR-1151). vmmd
+# measures the pauses it would make on this node (vmmd_quiet_pause_observed_*:
+# count, durations, billable MB-seconds by plan) and pauses nothing; probes,
+# admission and the pause ledger see running instances. Use it to measure a
+# node's traffic before turning quiet_pause on. quiet_pause wins when both
+# are set. FAAS_QUIET_PAUSE_OBSERVE overrides.
+# Default: false
+# quiet_pause_observe = false
 
 # kernel_path: path to the Firecracker-compatible kernel image. The daemon
 # refuses to start if this file does not exist. Default: /srv/fc/base/vmlinux-6.1

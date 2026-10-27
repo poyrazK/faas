@@ -165,7 +165,7 @@ func TestHostPolicyRenderBridgeNameParam(t *testing.T) {
 	p := DefaultHostPolicy
 	p.BridgeName = "custom-bridge"
 	out := p.Render()
-	if !strings.Contains(out, `iifname "custom-bridge" accept`) {
+	if !strings.Contains(out, `iifname "custom-bridge" ip daddr 10.100.0.0/16 accept`) || !strings.Contains(out, `iifname "custom-bridge" drop`) {
 		t.Error("input chain did not pick up the BridgeName substitution")
 	}
 	if !strings.Contains(out, `iifname "custom-bridge" oifname "eth0" accept`) {
@@ -504,6 +504,17 @@ func TestHostPolicyMasqueradeChainAppendsV6Sibling(t *testing.T) {
 // "postrouting".
 func TestHostPolicyPostroutingIsLastChain(t *testing.T) {
 	out := DefaultHostPolicy.Render()
+	// This ordering belongs to the primary tenant table. The independent
+	// public-forward generation guard has its own output hook/table.
+	start := strings.Index(out, "table inet faas {\n")
+	if start < 0 {
+		t.Fatal("primary tenant table missing")
+	}
+	end := strings.Index(out[start:], "\n}\n")
+	if end < 0 {
+		t.Fatal("primary tenant table unterminated")
+	}
+	out = out[start : start+end+3]
 	wantOrder := []string{"chain input {", "chain forward {", "chain output {", "chain postrouting {"}
 	last := -1
 	for _, w := range wantOrder {
@@ -997,5 +1008,41 @@ func TestHostPolicyStaticEgressRulesMultiple(t *testing.T) {
 		if !strings.Contains(out, want) {
 			t.Errorf("expected audit comment %q in rendered output:\n%s", want, out)
 		}
+	}
+}
+
+// A guest reaches the host only where platform services listen: the bridge
+// subnet, the public edge on 80/443, and ICMP. Bridge traffic is dropped
+// before the public and source-CIDR rules, which would otherwise admit it
+// to any listener on the node's own addresses (spec §11,
+// ADR-20261020123000).
+func TestHostPolicyInputAdmitsGuestsOnlyToBridgeServicesAndEdge(t *testing.T) {
+	p := DefaultHostPolicy
+	p.PrivateInputAllowRules = []PrivateInputAllowRule{{Source: netip.MustParsePrefix("10.0.0.0/8"), Ports: []int{5432}}}
+	out := p.Render()
+	start := strings.Index(out, "chain input {")
+	end := strings.Index(out, "chain forward {")
+	if start < 0 || end < start {
+		t.Fatalf("input chain not found:\n%s", out)
+	}
+	input := out[start:end]
+	if strings.Contains(input, "iifname \"br-tenants\" accept\n") {
+		t.Fatalf("input chain still admits every packet from the tenant bridge:\n%s", input)
+	}
+	want := []string{
+		`iifname "br-tenants" ip daddr 10.100.0.0/16 accept`,
+		`iifname "br-tenants" tcp dport { 80,443 } accept`,
+		`iifname "br-tenants" meta l4proto { icmp, ipv6-icmp } accept`,
+		`iifname "br-tenants" drop`,
+		`tcp dport { 22,80,443 } accept`,
+		`ip saddr 10.0.0.0/8 tcp dport { 5432 } accept`,
+	}
+	at := 0
+	for _, rule := range want {
+		i := strings.Index(input[at:], rule)
+		if i < 0 {
+			t.Fatalf("input chain lacks %q after offset %d, in order:\n%s", rule, at, input)
+		}
+		at += i + len(rule)
 	}
 }

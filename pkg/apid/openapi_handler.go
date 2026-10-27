@@ -41,13 +41,20 @@ func OpenAPIYAML() []byte { return openapiYAML }
 // share the result across requests. This package is also linked into vmmd's
 // jail mount helper: eager YAML conversion added about 82 ms to every helper
 // process on the SSD compute node, even though it never serves this endpoint.
-var (
-	openapiJSONOnce sync.Once
-	openapiJSON     []byte
-)
+// Indexed like publicSpecs.
+var openapiJSON [4]struct {
+	once sync.Once
+	body []byte
+}
 
+// Swagger UI is vendored (pkg/apid/docsassets, served by apid) so the page
+// needs no third-party script or style host. The paths repeat docsassets'
+// constants instead of importing it, which would link 1.6 MB of browser code
+// into every binary that uses this package; a test keeps them equal.
 const (
 	swaggerUIDistVersion = "5.17.14"
+	swaggerUIBundlePath  = "/docs/assets/swagger-ui-bundle-5.17.14.js"
+	swaggerUICSSPath     = "/docs/assets/swagger-ui-5.17.14.css"
 	swaggerUIBundleSRI   = "sha384-wmyclcVGX/WhUkdkATwhaK1X1JtiNrr2EoYJ+diV3vj4v6OC5yCeSu+yW13SYJep"
 	swaggerUICSSSRI      = "sha384-wxLW6kwyHktdDGr6Pv1zgm/VGJh99lfUbzSn6HNHBENZlCN7W602k9VkGdxuFvPn"
 )
@@ -68,19 +75,102 @@ func mustMarshalJSON(yamlBytes []byte) []byte {
 	return body
 }
 
-func openAPIJSONBytes() []byte {
-	openapiJSONOnce.Do(func() {
-		openapiJSON = mustMarshalJSON(PublicOpenAPIYAML())
+func openAPIJSONBytes() []byte { return openAPIJSONBytesFor(Visibility{}) }
+
+func openAPIJSONBytesFor(v Visibility) []byte {
+	spec := &openapiJSON[v.index()]
+	spec.once.Do(func() {
+		spec.body = mustMarshalJSON(PublicOpenAPIYAMLFor(v))
 	})
-	return openapiJSON
+	return spec.body
 }
 
 // OpenAPIJSONSHA256 returns the hex SHA-256 checksum of the exact bytes served
 // by GET /v1/openapi.json. The docs page publishes this value so clients and
 // CI can verify that Swagger UI is rendering the deployed document.
-func OpenAPIJSONSHA256() string {
-	sum := sha256.Sum256(openAPIJSONBytes())
+func OpenAPIJSONSHA256() string { return openAPIJSONSHA256For(Visibility{}) }
+
+func openAPIJSONSHA256For(v Visibility) string {
+	sum := sha256.Sum256(openAPIJSONBytesFor(v))
 	return hex.EncodeToString(sum[:])
+}
+
+// OpenAPI serves the anonymous spec and API reference. Monetization reports
+// whether API monetization is released (ADR-20261018090210) and
+// RealtimePreview whether every account sees the realtime preview
+// (ADR-20261019102657); both are read per request, and nil keeps the feature
+// hidden. Hidden returns the paths to leave out, those of capabilities off by
+// default (ADR-20261023115741), with a key naming that set; nil hides none.
+// ServeOpenAPISpec, ServeOpenAPISpecJSON and ServeDocs are the variants that
+// publish none of these.
+type OpenAPI struct {
+	Monetization    func() bool
+	RealtimePreview func() bool
+	Hidden          func() (key string, hide func(path string) bool)
+}
+
+func (o OpenAPI) visibility() Visibility {
+	return Visibility{
+		Monetization:    o.Monetization != nil && o.Monetization(),
+		RealtimePreview: o.RealtimePreview != nil && o.RealtimePreview(),
+	}
+}
+
+// servedSpec is one served variant of the spec.
+type servedSpec struct {
+	yaml, json []byte
+	sha        string
+}
+
+// maxServedSpecs bounds the variants kept; flags change rarely, so a full
+// cache is simply dropped.
+const maxServedSpecs = 16
+
+var servedSpecs struct {
+	sync.Mutex
+	byKey map[string]*servedSpec
+}
+
+func (o OpenAPI) spec() *servedSpec {
+	v := o.visibility()
+	var key string
+	var hide func(string) bool
+	if o.Hidden != nil {
+		key, hide = o.Hidden()
+	}
+	if hide == nil {
+		return &servedSpec{yaml: PublicOpenAPIYAMLFor(v), json: openAPIJSONBytesFor(v), sha: openAPIJSONSHA256For(v)}
+	}
+	cacheKey := fmt.Sprintf("%d\x00%s", v.index(), key)
+	servedSpecs.Lock()
+	defer servedSpecs.Unlock()
+	if spec, ok := servedSpecs.byKey[cacheKey]; ok {
+		return spec
+	}
+	if servedSpecs.byKey == nil || len(servedSpecs.byKey) >= maxServedSpecs {
+		servedSpecs.byKey = map[string]*servedSpec{}
+	}
+	spec := &servedSpec{yaml: FilterSpec(openapiYAML, hide, v)}
+	spec.json = mustMarshalJSON(spec.yaml)
+	sum := sha256.Sum256(spec.json)
+	spec.sha = hex.EncodeToString(sum[:])
+	servedSpecs.byKey[cacheKey] = spec
+	return spec
+}
+
+// ServeYAML handles GET /v1/openapi.yaml like ServeOpenAPISpec.
+func (o OpenAPI) ServeYAML(w http.ResponseWriter, _ *http.Request) {
+	writeOpenAPIYAML(w, o.spec().yaml)
+}
+
+// ServeJSON handles GET /v1/openapi.json like ServeOpenAPISpecJSON.
+func (o OpenAPI) ServeJSON(w http.ResponseWriter, _ *http.Request) {
+	writeOpenAPIJSON(w, o.spec().json)
+}
+
+// ServeDocs handles the API reference like the package-level ServeDocs.
+func (o OpenAPI) ServeDocs(w http.ResponseWriter, r *http.Request) {
+	serveDocs(w, r, o.spec().sha)
 }
 
 // ServeOpenAPISpec handles GET /v1/openapi.yaml. Anonymous; emits
@@ -88,10 +178,14 @@ func OpenAPIJSONSHA256() string {
 // don't pin a stale spec. Serves PublicOpenAPIYAML, which omits
 // operator-only preview routes.
 func ServeOpenAPISpec(w http.ResponseWriter, _ *http.Request) {
+	writeOpenAPIYAML(w, PublicOpenAPIYAML())
+}
+
+func writeOpenAPIYAML(w http.ResponseWriter, body []byte) {
 	w.Header().Set("Content-Type", "application/yaml; charset=utf-8")
 	w.Header().Set("Cache-Control", "public, max-age=300")
 	w.WriteHeader(http.StatusOK)
-	_, _ = w.Write(PublicOpenAPIYAML())
+	_, _ = w.Write(body)
 }
 
 // ServeOpenAPISpecJSON handles GET /v1/openapi.json. Anonymous; serves
@@ -105,7 +199,10 @@ func ServeOpenAPISpec(w http.ResponseWriter, _ *http.Request) {
 // equivalent JSON. See openapi_handler_test.go for the locked-in
 // round-trip property.
 func ServeOpenAPISpecJSON(w http.ResponseWriter, _ *http.Request) {
-	body := openAPIJSONBytes()
+	writeOpenAPIJSON(w, openAPIJSONBytes())
+}
+
+func writeOpenAPIJSON(w http.ResponseWriter, body []byte) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.Header().Set("Cache-Control", "public, max-age=300")
 	w.WriteHeader(http.StatusOK)
@@ -118,8 +215,11 @@ func ServeOpenAPISpecJSON(w http.ResponseWriter, _ *http.Request) {
 // Swagger UI (persistAuthorization=false); the server never receives or logs
 // a token from this page.
 func ServeDocs(w http.ResponseWriter, r *http.Request) {
+	serveDocs(w, r, OpenAPIJSONSHA256())
+}
+
+func serveDocs(w http.ResponseWriter, r *http.Request, checksum string) {
 	nonce := httpsec.NonceFromContext(r.Context())
-	checksum := OpenAPIJSONSHA256()
 	inlineScript := `window.addEventListener("load", function () {
   window.ui = SwaggerUIBundle({
     url: "/v1/openapi.json",
@@ -140,18 +240,19 @@ func ServeDocs(w http.ResponseWriter, r *http.Request) {
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="gregale-openapi-sha256" content="%s">
+  <meta name="gregale-swagger-ui-version" content="%s">
   <title>Gregale API reference</title>
-  <link rel="stylesheet" href="https://unpkg.com/swagger-ui-dist@%s/swagger-ui.css"
+  <link rel="stylesheet" href="%s"
     integrity="%s" crossorigin="anonymous">
 </head>
 <body>
   <div id="swagger-ui"></div>
-  <script src="https://unpkg.com/swagger-ui-dist@%s/swagger-ui-bundle.js"
+  <script src="%s"
     integrity="%s" crossorigin="anonymous" defer></script>
   <script%s>%s</script>
 </body>
 </html>
-`, checksum, swaggerUIDistVersion, swaggerUICSSSRI, swaggerUIDistVersion, swaggerUIBundleSRI, nonceAttribute(nonce), inlineScript)
+`, checksum, swaggerUIDistVersion, swaggerUICSSPath, swaggerUICSSSRI, swaggerUIBundlePath, swaggerUIBundleSRI, nonceAttribute(nonce), inlineScript)
 }
 
 func nonceAttribute(nonce string) string {

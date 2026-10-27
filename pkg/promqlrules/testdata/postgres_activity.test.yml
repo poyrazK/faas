@@ -1,0 +1,155 @@
+# Control-plane PostgreSQL activity (faas-postgres-activity-metrics,
+# role postgres_metrics). Each warn alert fires on its condition and stays
+# quiet on the healthy neighbour of it.
+
+rule_files:
+  - ../../../deploy/ansible/roles/prometheus/files/faas.rules.yml
+
+evaluation_interval: 30s
+
+tests:
+  - interval: 30s
+    name: "an old transaction and an idle-in-transaction session warn"
+    input_series:
+      - series: 'faas_postgres_oldest_transaction_seconds{job="node",instance="cp"}'
+        values: '30x10 720x30'
+      - series: 'faas_postgres_idle_in_transaction_max_seconds{job="node",instance="cp"}'
+        values: '0x10 400x30'
+    alert_rule_test:
+      - eval_time: 4m
+        alertname: FaasPostgresLongTransaction
+        exp_alerts: []
+      - eval_time: 12m
+        alertname: FaasPostgresLongTransaction
+        exp_alerts:
+          - exp_labels:
+              severity: warn
+              component: postgres
+              family: postgres_activity
+              public_status: internal
+            exp_annotations:
+              summary: "A PostgreSQL transaction has been open for 12m 0s"
+              description: "The oldest open transaction in the faas database is over 10 minutes old. It holds back vacuum on every table it touched and may hold locks other daemons queue behind. The application and client of the session are on the PostgreSQL dashboard (backends by daemon); end it with pg_terminate_backend only after checking what it is."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasPostgresActivity.md"
+      - eval_time: 12m
+        alertname: FaasPostgresIdleInTransaction
+        exp_alerts:
+          - exp_labels:
+              severity: warn
+              component: postgres
+              family: postgres_activity
+              public_status: internal
+            exp_annotations:
+              summary: "A PostgreSQL session has sat idle in a transaction for 6m 40s"
+              description: "A client opened a transaction and has done nothing in it for over 5 minutes, usually a daemon that leaked a transaction on an error path. Find it in pg_stat_activity (state = 'idle in transaction') by application_name."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasPostgresActivity.md"
+
+  - interval: 30s
+    name: "lock waits warn after 10 minutes; other waits do not"
+    input_series:
+      - series: 'faas_postgres_backends_waiting{job="node",instance="cp",wait_event_type="Lock"}'
+        values: '2x10 8x40'
+      - series: 'faas_postgres_backends_waiting{job="node",instance="cp",wait_event_type="LWLock"}'
+        values: '30x50'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: FaasPostgresLockWaits
+        exp_alerts: []
+      - eval_time: 20m
+        alertname: FaasPostgresLockWaits
+        exp_alerts:
+          - exp_labels:
+              severity: warn
+              component: postgres
+              family: postgres_activity
+              public_status: internal
+            exp_annotations:
+              summary: "8 PostgreSQL backends are waiting on locks"
+              description: "More than 5 active backends have been waiting on heavyweight locks for 10 minutes. Requests that need those rows are stalled. Look for a long or idle-in-transaction session holding the lock (pg_locks joined to pg_stat_activity)."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasPostgresActivity.md"
+
+  - interval: 30s
+    name: "a deadlock warns until it leaves the 15-minute window"
+    input_series:
+      - series: 'faas_postgres_deadlocks_total{job="node",instance="cp"}'
+        values: '0x10 1x50'
+    alert_rule_test:
+      - eval_time: 7m
+        alertname: FaasPostgresDeadlocks
+        exp_alerts:
+          - exp_labels:
+              severity: warn
+              component: postgres
+              family: postgres_activity
+              public_status: internal
+              job: node
+              instance: cp
+            exp_annotations:
+              summary: "PostgreSQL detected a deadlock in the faas database"
+              description: "PostgreSQL aborted at least one transaction to break a deadlock in the last 15 minutes. The PostgreSQL log names both statements; two daemons are taking the same locks in opposite orders."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasPostgresActivity.md"
+      - eval_time: 25m
+        alertname: FaasPostgresDeadlocks
+        exp_alerts: []
+
+  - interval: 30s
+    name: "a low cache hit ratio warns only under real read volume"
+    input_series:
+      # 90% hits, 6,000 reads/30 s (200/s).
+      - series: 'faas_postgres_blocks_hit_total{job="node",instance="cp"}'
+        values: '0+54000x150'
+      - series: 'faas_postgres_blocks_read_total{job="node",instance="cp"}'
+        values: '0+6000x150'
+    alert_rule_test:
+      - eval_time: 70m
+        alertname: FaasPostgresCacheHitRatioLow
+        exp_alerts:
+          - exp_labels:
+              severity: warn
+              component: postgres
+              family: postgres_activity
+              public_status: internal
+            exp_annotations:
+              summary: "PostgreSQL serves under 95% of blocks from shared_buffers"
+              description: "Over 30 minutes, more than 5% of block reads missed shared_buffers while reads were frequent. Either the working set outgrew shared_buffers or a query started scanning a large table; the top statements by blocks read on the PostgreSQL dashboard show which."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasPostgresActivity.md"
+
+  - interval: 30s
+    name: "a stalled or failing collector warns"
+    input_series:
+      - series: 'faas_postgres_activity_metrics_last_run_timestamp_seconds{job="node",instance="cp"}'
+        values: '0+30x20 600x40'
+      - series: 'faas_postgres_activity_metrics_errors{job="node",instance="cp",section="statements"}'
+        values: '0x5 1x50'
+      - series: 'faas_postgres_activity_metrics_errors{job="node",instance="cp",section="database"}'
+        values: '0x55'
+    alert_rule_test:
+      - eval_time: 21m
+        alertname: FaasPostgresActivityMetricsStale
+        exp_alerts:
+          - exp_labels:
+              severity: warn
+              component: postgres
+              family: postgres_activity
+              public_status: internal
+              job: node
+              instance: cp
+            exp_annotations:
+              summary: "The PostgreSQL activity collector has not written for over 5 minutes"
+              description: "faas-postgres-activity-metrics has stopped, so the postgres_activity alerts and the PostgreSQL dashboard are stale. Check systemctl status faas-postgres-activity-metrics.timer and journalctl -u faas-postgres-activity-metrics."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasPostgresActivity.md"
+      - eval_time: 21m
+        alertname: FaasPostgresActivityMetricsFailing
+        exp_alerts:
+          - exp_labels:
+              severity: warn
+              component: postgres
+              family: postgres_activity
+              public_status: internal
+              job: node
+              instance: cp
+              section: statements
+            exp_annotations:
+              summary: "The PostgreSQL activity collector's statements section is failing"
+              description: "One section of faas-postgres-activity-metrics has failed on every run for 15 minutes, so its series are missing. journalctl -u faas-postgres-activity-metrics names the error; a statements failure usually means pg_stat_statements is not loaded in the postgres database."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasPostgresActivity.md"

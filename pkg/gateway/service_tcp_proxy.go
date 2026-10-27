@@ -21,6 +21,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/chaos"
 	"github.com/onebox-faas/faas/pkg/tcpmetrics"
+	"github.com/onebox-faas/faas/pkg/wire"
 )
 
 // ErrServiceTCPTargetUnavailable reports a target that exists but refuses
@@ -228,6 +229,11 @@ func (p *ServiceTCPProxy) serve(ctx context.Context, conn net.Conn, session *tcp
 	if err != nil {
 		return "", "release", err
 	}
+	if check := p.cfg.Services.admitRuntime; check != nil {
+		if err := check(ctx, target.AppID, deploymentID); err != nil {
+			return "", "budget_admission", err
+		}
+	}
 	conn, cleanup, err := p.chaosConn(ctx, conn, callerAppID, target, int(dst.Port()))
 	if err != nil {
 		return "", "chaos_unavailable", err
@@ -315,7 +321,8 @@ func (p *ServiceTCPProxy) forward(ctx context.Context, conn net.Conn, caller Ser
 		if reason != "" {
 			return "", reason, woke, err
 		}
-		endpoint, ok := services.pick(target.AppID, endpoints)
+		endpoint, ok, eligible := services.pickForAttempt(target.AppID, endpoints)
+		services.recordEndpointPick(ctx, ok, eligible, len(endpoints))
 		if !ok {
 			return "", "no_replica", woke, nil
 		}
@@ -328,7 +335,7 @@ func (p *ServiceTCPProxy) forward(ctx context.Context, conn net.Conn, caller Ser
 		}
 		hop := serviceEndpointTarget(target.AppID, endpoint)
 		hop.Port = port
-		err = p.cfg.Forward(ctx, conn, hop, target.IdleTimeout)
+		err = p.cfg.Forward(wire.WithPrivateForward(ctx), conn, hop, target.IdleTimeout)
 		if errors.Is(err, ErrTCPGuestUnreachable) {
 			frozen := instanceFrozenRefusal(err)
 			if frozen {

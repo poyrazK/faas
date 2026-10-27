@@ -3,8 +3,11 @@ package gateway
 import (
 	"context"
 	"errors"
+	"slices"
 	"sync"
 	"time"
+
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 // WakeGate holds requests during a cold wake (spec §4.1 wake-blocking). When an
@@ -19,6 +22,11 @@ import (
 // gate — HTTP/1.1, HTTP/2 cleartext, or in-process goroutines all hit
 // the same single-flight map. Operators upgrading the public→internal
 // hop to H2C (issue #675) do not lose coalescing semantics.
+//
+// Route priority (ADR-20261018181846): with a classifier, a full queue admits
+// a request that outranks a waiter by turning away the newest waiter of the
+// lowest lower class, and a successful wake releases critical waiters first,
+// then normal, then bulk, RoutePriorityWakeReleaseStagger apart.
 type WakeGate struct {
 	mu       sync.Mutex
 	inflight map[string]*wakeCall
@@ -34,6 +42,33 @@ type WakeGate struct {
 	// metrics observes how long each caller waited in the queue. Optional;
 	// nil keeps the gate usable in unit tests that don't wire metrics.
 	metrics *Metrics
+	// classifier orders waiters by route priority. nil keeps the gate
+	// first-come, first-served. releaseStagger separates the release of
+	// each lower class.
+	classifier     wakeClassifier
+	releaseStagger time.Duration
+}
+
+// wakeClassifier classifies wake waiters by route priority. With wait false
+// it must not block, and reports false when it cannot classify yet.
+type wakeClassifier interface {
+	classifyWake(ctx context.Context, appID, accountID string, reqs []routePriorityRequest, wait bool) ([]routePriority, bool)
+}
+
+// wakeWaiter is one request held behind a wake.
+type wakeWaiter struct {
+	req    routePriorityRequest
+	leader bool
+	// released is closed when the waiter may proceed after a successful
+	// wake; displaced when a higher class took its place.
+	released     chan struct{}
+	displaced    chan struct{}
+	displacedErr error
+}
+
+func newWakeWaiter(ctx context.Context) *wakeWaiter {
+	req, _ := ctx.Value(routePriorityRequestKey{}).(routePriorityRequest)
+	return &wakeWaiter{req: req, released: make(chan struct{}), displaced: make(chan struct{})}
 }
 
 // SetMetrics attaches a *Metrics so Wait can observe the per-caller wait
@@ -42,6 +77,7 @@ type WakeGate struct {
 func (g *WakeGate) SetMetrics(m *Metrics) { g.metrics = m }
 
 type wakeCall struct {
+	target    string
 	done      chan struct{}
 	err       error
 	waiters   int
@@ -53,10 +89,18 @@ type wakeCall struct {
 	// SetQueueDepth call site (bounded cardinality).
 	accountID string
 	plan      string
+	// queue holds every waiter, the leader first; len(queue) == waiters.
+	queue []*wakeWaiter
 }
 
 // ErrQueueFull is returned when the per-app waiter cap is exceeded (→ 503).
 var ErrQueueFull = errors.New("gateway: wake queue full")
+
+// A caller queued behind another cohort must retry its own admission, rather
+// than treating that cohort's success or failure as its own result.
+var errWakeTargetChanged = errors.New("gateway: another deployment wake completed")
+
+type wakeTargetKey struct{}
 
 // ErrBootstrapAborted (ADR-098 C7) is returned when the detached-leader
 // goroutine aborts under the bootstrap cap (queue empty AND no live
@@ -73,7 +117,7 @@ func NewWakeGate(capacity int, ttl time.Duration) *WakeGate {
 	if ttl <= 0 {
 		ttl = 30 * time.Second
 	}
-	return &WakeGate{inflight: map[string]*wakeCall{}, cap: capacity, ttl: ttl}
+	return &WakeGate{inflight: map[string]*wakeCall{}, cap: capacity, ttl: ttl, releaseStagger: api.RoutePriorityWakeReleaseStagger}
 }
 
 // Wait ensures an instance for appID is awake, coalescing concurrent callers onto
@@ -157,9 +201,14 @@ func (g *WakeGate) WaitWithPolicy(
 		}
 	}()
 
+	w := newWakeWaiter(ctx)
 	g.mu.Lock()
+	target, _ := ctx.Value(wakeTargetKey{}).(string)
+	if call, ok := g.inflight[appID]; ok && call.completed && call.target != target {
+		delete(g.inflight, appID)
+	}
 	if call, ok := g.inflight[appID]; ok {
-		if call.waiters >= policy.MaxWaiters {
+		if call.waiters >= policy.MaxWaiters && !g.displaceFor(ctx, appID, call, w, policy) {
 			depth := call.waiters
 			g.mu.Unlock()
 			g.notifyChange(appID, call.accountID, call.plan, depth)
@@ -169,24 +218,34 @@ func (g *WakeGate) WaitWithPolicy(
 				RetryAfter: policy.MaxWait,
 			}
 		}
-		call.waiters++
+		g.join(call, w)
 		depth := call.waiters
 		g.mu.Unlock()
 		g.notifyChange(appID, call.accountID, call.plan, depth)
+		if depth == 2 && g.classifier != nil {
+			// A second request is waiting: load the app's priorities while
+			// the instance boots, so the release can order the waiters.
+			g.classifier.classifyWake(ctx, appID, call.accountID, nil, false)
+		}
 		observed = true
 		// Hold the followers' reference until await returns; release on exit.
-		err := g.awaitWithPolicy(ctx, call, policy)
-		g.release(appID, call)
+		err := g.awaitWithPolicy(ctx, call, w, policy)
+		g.release(appID, call, w)
 		// ctx.Err() is also "didn't wait for an ensure result" — skip
 		// the metric on cancellation so a hung client's cancellation
 		// doesn't pollute the wake-latency histogram.
 		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 			observed = false
 		}
+		var waitTimeout *WakeQueueWaitTimeoutError
+		if target != "" && call.target != target && ctx.Err() == nil && !errors.As(err, &waitTimeout) {
+			return errWakeTargetChanged
+		}
 		return err
 	}
 
-	call := &wakeCall{done: make(chan struct{}), waiters: 1, accountID: accountID, plan: policy.Plan}
+	w.leader = true
+	call := &wakeCall{done: make(chan struct{}), waiters: 1, accountID: accountID, plan: policy.Plan, target: target, queue: []*wakeWaiter{w}}
 	g.inflight[appID] = call
 	g.mu.Unlock()
 	g.notifyChange(appID, accountID, policy.Plan, 1)
@@ -199,8 +258,8 @@ func (g *WakeGate) WaitWithPolicy(
 		// Treat the leader itself as a waiter so release() can drop the
 		// entry; a follower that arrives later increments waiters to 2 then
 		// drops to 1 after await; both leader and follower call release().
-		_ = g.awaitWithPolicy(ctx, call, policy)
-		g.release(appID, call)
+		_ = g.awaitWithPolicy(ctx, call, w, policy)
+		g.release(appID, call, w)
 		return nil
 	}
 
@@ -307,12 +366,72 @@ func (g *WakeGate) WaitWithPolicy(
 	}()
 
 	observed = true
-	err := g.awaitWithPolicy(ctx, call, policy)
-	g.release(appID, call)
+	err := g.awaitWithPolicy(ctx, call, w, policy)
+	g.release(appID, call, w)
 	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 		observed = false
 	}
 	return err
+}
+
+// join adds w to call. A waiter that arrives after the wake finished is
+// released at once.
+func (g *WakeGate) join(call *wakeCall, w *wakeWaiter) {
+	call.waiters++
+	call.queue = append(call.queue, w)
+	if call.completed {
+		close(w.released)
+	}
+}
+
+// displaceFor is called with g.mu held on a full queue and returns with it
+// held. It classifies the newcomer and the waiters, which may read the app's
+// priorities, and turns away the newest waiter of the lowest class below the
+// newcomer's; the leader never moves. It reports whether w may join.
+func (g *WakeGate) displaceFor(ctx context.Context, appID string, call *wakeCall, w *wakeWaiter, policy WakeAdmissionPolicy) bool {
+	if g.classifier == nil || call.completed {
+		return false
+	}
+	waiting := slices.Clone(call.queue)
+	reqs := make([]routePriorityRequest, 0, len(waiting)+1)
+	for _, waiter := range waiting {
+		reqs = append(reqs, waiter.req)
+	}
+	reqs = append(reqs, w.req)
+	g.mu.Unlock()
+	classes, ok := g.classifier.classifyWake(ctx, appID, call.accountID, reqs, true)
+	g.mu.Lock()
+	if g.inflight[appID] != call || call.completed {
+		return false
+	}
+	if call.waiters < policy.MaxWaiters {
+		return true // a waiter left while the priorities were read
+	}
+	if !ok || len(classes) != len(reqs) {
+		return false
+	}
+	class := classes[len(classes)-1]
+	victim := -1
+	for i := len(waiting) - 1; i >= 0; i-- {
+		if waiting[i].leader || classes[i] <= class || !slices.Contains(call.queue, waiting[i]) {
+			continue
+		}
+		if victim < 0 || classes[i] > classes[victim] {
+			victim = i
+		}
+	}
+	if victim < 0 {
+		g.metrics.IncRoutePriorityWake(appID, class.String(), "rejected")
+		return false
+	}
+	displaced := waiting[victim]
+	call.queue = slices.DeleteFunc(call.queue, func(q *wakeWaiter) bool { return q == displaced })
+	call.waiters--
+	displaced.displacedErr = &WakeQueueFullError{Depth: call.waiters + 1, Limit: policy.MaxWaiters, RetryAfter: policy.MaxWait}
+	close(displaced.displaced)
+	g.metrics.IncRoutePriorityWake(appID, classes[victim].String(), "displaced")
+	g.metrics.IncRoutePriorityWake(appID, class.String(), "displacing")
+	return true
 }
 
 // complete publishes the result and drops a wake whose waiters already left.
@@ -321,13 +440,66 @@ func (g *WakeGate) WaitWithPolicy(
 // wake's result while preserving coalescing until its remaining waiters drain.
 func (g *WakeGate) complete(appID string, call *wakeCall, err error) {
 	g.mu.Lock()
-	defer g.mu.Unlock()
 	call.err = err
 	call.completed = true
 	if call.waiters == 0 && g.inflight[appID] == call {
 		delete(g.inflight, appID)
 	}
+	waiting := slices.Clone(call.queue)
 	close(call.done)
+	g.mu.Unlock()
+	g.releaseWaiters(appID, call.accountID, waiting, err)
+}
+
+// releaseWaiters lets the waiters of a finished wake proceed, one route
+// priority class at a time, releaseStagger apart.
+func (g *WakeGate) releaseWaiters(appID, accountID string, waiting []*wakeWaiter, err error) {
+	for i, group := range g.releaseOrder(appID, accountID, waiting, err) {
+		open := func() {
+			for _, w := range group {
+				close(w.released)
+			}
+		}
+		if i == 0 {
+			open()
+			continue
+		}
+		time.AfterFunc(time.Duration(i)*g.releaseStagger, open)
+	}
+}
+
+// releaseOrder groups waiters by class, critical first. A failed wake, a lone
+// waiter, or priorities that are not loaded yet release everyone together.
+func (g *WakeGate) releaseOrder(appID, accountID string, waiting []*wakeWaiter, err error) [][]*wakeWaiter {
+	if err != nil || len(waiting) < 2 || g.classifier == nil {
+		return [][]*wakeWaiter{waiting}
+	}
+	reqs := make([]routePriorityRequest, len(waiting))
+	for i, w := range waiting {
+		reqs[i] = w.req
+	}
+	classes, ok := g.classifier.classifyWake(context.Background(), appID, accountID, reqs, false)
+	if !ok || len(classes) != len(waiting) {
+		return [][]*wakeWaiter{waiting}
+	}
+	var byClass [routePriorityBulk + 1][]*wakeWaiter
+	for i, w := range waiting {
+		class := min(max(classes[i], routePriorityCritical), routePriorityBulk)
+		byClass[class] = append(byClass[class], w)
+	}
+	var out [][]*wakeWaiter
+	for class, group := range byClass {
+		if len(group) == 0 {
+			continue
+		}
+		if len(out) > 0 {
+			for range group {
+				g.metrics.IncRoutePriorityWake(appID, routePriority(class).String(), "released_later")
+			}
+		}
+		out = append(out, group)
+	}
+	return out
 }
 
 // InflightWaiters returns the current waiter count for appID (0 if none). For
@@ -391,11 +563,15 @@ func (g *WakeGate) InflightFollowers(appID string) int {
 // and no other follower is still waiting, removes the entry. Done on the
 // leader's path AND every follower's path so a completed wake is observable to
 // every concurrent caller regardless of arrival order.
-func (g *WakeGate) release(appID string, call *wakeCall) {
+func (g *WakeGate) release(appID string, call *wakeCall, w *wakeWaiter) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
+	if !slices.Contains(call.queue, w) {
+		return // displaced: its place was already given up
+	}
+	call.queue = slices.DeleteFunc(call.queue, func(q *wakeWaiter) bool { return q == w })
 	call.waiters--
-	if call.completed && call.waiters == 0 {
+	if call.completed && call.waiters == 0 && g.inflight[appID] == call {
 		delete(g.inflight, appID)
 	}
 	depth := 0
@@ -418,7 +594,7 @@ func (g *WakeGate) notifyChange(appID, accountID, plan string, depth int) {
 	}
 }
 
-func (g *WakeGate) await(ctx context.Context, call *wakeCall) error {
+func (g *WakeGate) await(ctx context.Context, call *wakeCall, w *wakeWaiter) error {
 	// Prefer caller cancellation when both signals are already ready. A bare
 	// select chooses randomly in that case, which can report a completed wake
 	// (and record queue latency) for a request that was cancelled before it
@@ -428,19 +604,35 @@ func (g *WakeGate) await(ctx context.Context, call *wakeCall) error {
 	}
 	select {
 	case <-call.done:
-		if err := ctx.Err(); err != nil {
-			return err
-		}
+	case <-w.displaced:
+		return w.displacedErr
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+	select {
+	case <-w.displaced:
+		return w.displacedErr // turned away just before the wake finished
+	default:
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if call.err != nil {
 		return call.err
+	}
+	// A successful wake releases higher route priority classes first.
+	select {
+	case <-w.released:
+		return nil
 	case <-ctx.Done():
 		return ctx.Err()
 	}
 }
 
-func (g *WakeGate) awaitWithPolicy(ctx context.Context, call *wakeCall, policy WakeAdmissionPolicy) error {
+func (g *WakeGate) awaitWithPolicy(ctx context.Context, call *wakeCall, w *wakeWaiter, policy WakeAdmissionPolicy) error {
 	waitCtx, cancel := context.WithTimeout(ctx, policy.MaxWait)
 	defer cancel()
-	err := g.await(waitCtx, call)
+	err := g.await(waitCtx, call, w)
 	if errors.Is(err, context.DeadlineExceeded) && ctx.Err() == nil {
 		return &WakeQueueWaitTimeoutError{RetryAfter: policy.MaxWait}
 	}

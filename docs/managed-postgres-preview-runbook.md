@@ -247,11 +247,36 @@ when verification fails. Worker restarts repeat verification before readiness.
 
 ## Account deletion
 
-The account status transition is blocked while any managed database is not a
-provider-confirmed `deleted` tombstone. Ask the customer to delete the
-database and wait for reconciliation. The final deletion transaction removes
-only deleted managed-Postgres metadata and usage rows; it never erases an
-active provider resource as a shortcut.
+An account deletion can include the account's personal managed databases
+([ADR-20261024150500](adr/20261024150500-account-deletion-includes-managed-postgres.md)).
+Personal means the ones the account created in its personal organization or in
+an organization without resource ownership. Company-owned databases are never
+included.
+
+- **Non-payment deletion** always includes them, unless the operator sets
+  `FAAS_NONPAYMENT_DELETION_MANAGED_POSTGRES=off` on apid and meterd. With the
+  kill switch off, such an account stays suspended and counts in
+  `meterd_dunning_deletion_blocked_accounts`
+  ([`FaasDunningDeletionBlocked`](runbooks/FaasDunningDeletionBlocked.md)).
+- **Self-service** includes them only when the customer asks
+  (`include_managed_postgres_databases=true`, `--include-postgres-databases`, or
+  the dashboard checkbox). Until launch, only accounts listed in
+  `FAAS_ACCOUNT_DELETION_MANAGED_POSTGRES_ACCOUNTS` see the option. Without it,
+  the deletion is refused with `409 account_deletion_managed_postgres_databases`
+  until the customer deletes each database.
+
+Nothing is deleted when the account enters `deleted_pending`, so an account
+restored or paid back during the 30-day grace keeps its databases and loses the
+opt-in. When the grace ends, apid's grace sweep deletes the bindings and then
+the databases through the normal lifecycle. It retries every tick and logs
+`grace: external cleanup deferred` until every database is a provider-confirmed
+`deleted` tombstone. A database with a restore descendant waits for the
+descendant, and one held by an environment clone waits for the hold.
+
+The final deletion transaction then removes only deleted managed-Postgres
+metadata and usage rows. It never erases an active provider resource as a
+shortcut. Never delete the rows or provider projects by hand, and never disable
+the guard trigger.
 
 ## Billing evidence
 
@@ -456,13 +481,14 @@ Live queries are invisible to customers until launch.
   - the OpenAPI spec and the generated Go, Node and Python SDKs (the live
     routes are in the spec-compliance and sdk-coverage `routeExclude`
     lists);
-  - customer CLI help and the CLI reference, since `gregale postgres` is
-    operator-only;
-  - the `@gregale/data` package, which neither exports nor packs
-    `dist/live` and has no README section for it.
-- **Launch** means setting `*`, then restoring the spec entries, generated
-  SDKs, the `./live` exports with the React peer dependency, and the README
-  section from commits `4196fef625` and `b860a62753`.
+  - customer CLI help and the CLI reference for `gregale postgres live`,
+    since `gregale postgres` is operator-only.
+- **Already released** (2026-10-20, Data API reads only): `gregale data-api
+  live enable|status` in customer help, and `@gregale/data/live` with
+  `./live/react` and its README section. Outside the rollout, `data-api live`
+  reports that live queries are not available.
+- **Launch** means setting `*`, then restoring the spec entries and the
+  generated SDKs.
 - Removing an account from the list hides the routes and stops new live
   subscriptions within the 30-second endpoint reconciler. Sessions already
   open keep their subscriptions until they close; disable the database's
@@ -479,13 +505,28 @@ Live queries are invisible to customers until launch.
    example `"wss://live.fsn-1.internal:9480/{database_id}/live"`. apid
    substitutes the database ID, and realtimed connects there.
    - Backends without `live_hub_url` answer `live_queries_unsupported`.
-   - Configuration refuses `live_hub_url` on `neon` backends, because a
-     replication consumer would keep their computes awake.
+   - On `neon` backends, run livequeryd with `-release-after` and
+     `-awake neon` (step 4). Otherwise its replication connection keeps
+     each database's compute awake.
    - The fingerprint excludes `live_hub_url`, so adding it moves no
      database.
 3. Apply migration `20261017121336518_managed_postgres_live_keys` before
    deploying the apid that serves the routes.
-4. Run livequeryd with these flags:
+4. Run livequeryd with these flags. The `livequeryd_service` Ansible role
+   does this on the control plane (`faas_livequeryd_managed: true`; see its
+   README): it passes secrets as systemd credentials, wires apid's recipient
+   file, and opens the hub port to compute nodes. It issues the hub's mTLS
+   server leaf from the fleet CA; `faas_realtime_live_tls_managed: true` on
+   compute hosts gives realtimed its client leaf, and `pki_renew.yml` renews
+   both. Which accounts see live queries is the `live_queries` platform flag
+   (ADR-1700). One livequeryd serves every database the role lists in
+   `faas_livequeryd_databases` (`-databases-file`), each at
+   `/<database_id>/live`. With `faas_livequeryd_discover_backends`, it also
+   serves every live database of those backends whose provider issued a live
+   login when live queries were enabled (the Neon provider does), with no
+   listing. The flags below serve a single database, for development.
+   - `-database-url-file`: a file holding the database connection string
+     (`-database-url` puts its password in the process list);
    - `-keys-dsn-file`: a file holding a read-only control-plane connection
      string;
    - `-keys-identity`: the age identity, mode 0400;
@@ -496,6 +537,34 @@ Live queries are invisible to customers until launch.
    revocations reach open subscriptions within that. The metrics
    `livequery_keys` and `livequery_key_refreshes_total{result}` show the
    ring and its reads.
+
+   **Scale to zero.** With `-release-after 5m`, a hub with no transaction
+   to apply for five minutes checkpoints and closes every connection to
+   the database (replication and pooled), so the database can park or
+   suspend.
+   - Subscribers keep their results. A new subscriber to a result the hub
+     holds is served without the database.
+   - The hub reconnects, and catches up exactly from the slot, when:
+     - `-awake` reports the database running again;
+     - a subscription needs a result it does not hold (an RLS-mode read
+       always does, because it compiles against the catalog).
+   - `-awake neon` polls the Neon API every `-awake-every` (5 seconds) with
+     `-neon-api-key-file`, `-neon-project` and `-neon-endpoint`. Commits made
+     while released reach subscribers within that interval.
+   - A native database's wake will come from schedd, which is not wired to
+     livequeryd yet, so `-release-after` refuses to start without `-awake`.
+   - Metrics: `livequery_released` (1 while released),
+     `livequery_releases_total`, and `livequery_resumes_total{reason}`
+     (`database_active`, `subscription`, `woken`, `failed`).
+   - The slot-lag metric is not read while released, because reading it
+     would wake the database.
+
+   **Neon prerequisites, not yet verified on a Neon database:**
+   - logical replication enabled for the project;
+   - the schema-change log's event triggers (`-install`), which need a role
+     allowed to create them;
+   - the slot surviving a suspend and resume. A lost slot is recovered by
+     reading every result again.
 5. Give realtimed `FAAS_REALTIME_LIVE_TLS_CA_FILE`. When livequeryd sets
    `-client-ca`, also give it `FAAS_REALTIME_LIVE_TLS_CERT_FILE` and
    `FAAS_REALTIME_LIVE_TLS_KEY_FILE`. Roll realtimed out before apid.

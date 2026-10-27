@@ -29,15 +29,17 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/capdecl/runtimecheck"
 	"github.com/onebox-faas/faas/pkg/daemonunit"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/durableentity/validatorbundle"
 	"github.com/onebox-faas/faas/pkg/events"
 	"github.com/onebox-faas/faas/pkg/role"
-	"github.com/onebox-faas/faas/pkg/sched"
+	"github.com/onebox-faas/faas/pkg/runtimeconfig"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/storage"
+	"github.com/onebox-faas/faas/pkg/storagekey"
 	"github.com/onebox-faas/faas/pkg/trace"
 	"github.com/onebox-faas/faas/pkg/wire"
 
@@ -219,14 +221,21 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if err != nil {
 		return fmt.Errorf("builderd: vmmd driver: %w", err)
 	}
+	// ADR-20261025114554: every builder's BuildKit daemon tries the
+	// operator's Docker Hub mirrors before Docker Hub.
+	mirrors, err := api.ParseDockerHubMirrors(os.Getenv(api.DockerHubMirrorsEnv))
+	if err != nil {
+		return fmt.Errorf("builderd: %w", err)
+	}
 	if d, ok := driver.(*builderdpkg.VMMDriver); ok {
 		d.WithBuilderBaseDigest(builderBaseDigestPath)
+		d.WithDockerHubMirrors(mirrors)
 	}
 	if c, ok := driver.(*builderdpkg.VMMDriver); ok {
 		defer func() { _ = c.Close() }()
 	}
 
-	store := state.NewPgStore(pool)
+	store := state.NewPgStore(pool, state.WithTrafficAppsDomain(cfg.GetAppsDomain(os.Getenv)))
 	notif := dbNotifier{pool: pool}
 	resid := deps.newResidentProbe(ctx, cfg.ScheddMetricsURL)
 	// Single OpsMetrics for the daemon: builderd both records build
@@ -285,6 +294,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		return err
 	}
 	b.WithBuildPublisher(publisher)
+	startReleasePauseWatcher(ctx, store, pool, b, log)
 	notifCh, err := db.SubscribeWithReconnect(ctx, pool, builderNotificationChannels(), log)
 	if err != nil {
 		return err
@@ -524,7 +534,7 @@ func resolveBuilderBasePath(configured string, sourceStorage storage.StorageBack
 	if sourceStorage == nil {
 		return configured, nil
 	}
-	key := sched.BaseKey("builder")
+	key := storagekey.Base("builder")
 	if resolver, ok := sourceStorage.(storage.LocalPathResolver); ok {
 		path, local, err := resolver.LocalPath(key)
 		if err != nil {
@@ -566,7 +576,7 @@ func resolveBuilderBaseDigestPath(ctx context.Context, sourceStorage storage.Sto
 	if !ok {
 		return "", nil
 	}
-	key := sched.BaseDigestKey("builder")
+	key := storagekey.BaseDigest("builder")
 	path, local, err := resolver.LocalPath(key)
 	if err != nil {
 		return "", fmt.Errorf("builderd: resolve builder base digest sidecar %q: %w", key, err)
@@ -740,4 +750,33 @@ type dbNotifier struct{ pool *pgxpool.Pool }
 
 func (d dbNotifier) Notify(ctx context.Context, channel, payload string) error {
 	return db.Notify(ctx, d.pool, channel, payload)
+}
+
+// startReleasePauseWatcher follows the break-glass release pause (ADR
+// 20261022140000): while it is on, builderd claims no queued build. A failed
+// first read leaves builds flowing; the watcher keeps retrying.
+func startReleasePauseWatcher(ctx context.Context, store *state.PgStore, pool *pgxpool.Pool, b *builderdpkg.Builderd, log *slog.Logger) {
+	paused := runtimeconfig.NewBoolFlag(false)
+	b.WithReleasePause(paused.Load)
+	watcher := runtimeconfig.New(store, pool, []string{runtimeconfig.KeyPlatformReleasePause},
+		func(_ context.Context, _ string, value json.RawMessage, _ int64) error {
+			on, err := runtimeconfig.Bool(value)
+			if err != nil {
+				return err
+			}
+			if on != paused.Load() {
+				log.Warn("builderd: break-glass release pause changed", "paused", on)
+			}
+			paused.Store(on)
+			return nil
+		}, log)
+	watcher.Daemon = "builderd"
+	if err := watcher.Reconcile(ctx); err != nil {
+		log.Warn("builderd: initial release pause read failed; claiming builds", "err", err)
+	}
+	go func() {
+		if err := watcher.Run(ctx); err != nil && !runtimeconfig.IsContextDone(err) {
+			log.Error("builderd: release pause watcher exited", "err", err)
+		}
+	}()
 }

@@ -36,12 +36,7 @@ func (m *MemStore) prepareOperationWorkflowLocked(op *Operation, inv Invocation,
 	if err != nil {
 		return WorkflowRun{}, nil, err
 	}
-	active := 0
-	for _, run := range m.workflowRuns {
-		if run.AppID == op.AppID && workflowGuardRunActive(run.Status) {
-			active++
-		}
-	}
+	active := m.workflowAdmissionLocked(op.AppID, plan.WorkflowMaxParkedRuns())
 	if active >= plan.WorkflowMaxConcurrentRuns() {
 		return WorkflowRun{}, nil, NewOperationLimitError("workflow_active_runs", int64(plan.WorkflowMaxConcurrentRuns()), int64(active+1))
 	}
@@ -95,8 +90,19 @@ func (m *MemStore) syncOperationWorkflowLocked(runID string) error {
 		return err
 	}
 	events = append(events, publishWorkflowArtifacts(&op, run, m.workflowSteps[runID], false, time.Now().UTC())...)
+	usageChanged := false
+	if op.Usage != nil {
+		usage, err := m.workflowOperationUsageLocked(run)
+		if err != nil {
+			return err
+		}
+		usageChanged = refreshWorkflowOperationUsage(&op, usage)
+	}
 	m.saveOperationWorkflowExecutionLocked(op, run)
 	if len(events) == 0 {
+		if usageChanged {
+			m.operationMemoryLocked().operations[op.ID] = op
+		}
 		return nil
 	}
 	if op.State.Terminal() {

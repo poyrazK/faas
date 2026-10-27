@@ -24,6 +24,9 @@ func (e *Engine) ReserveDataRepairRehearsal(ctx context.Context, t state.DataRep
 	if !account.Active() || !api.MustLimitsFor(account.Plan).Operations.Allowed {
 		return core.RehearsalFrame{}, state.ErrConflict
 	}
+	if err := state.CheckFinancialBudgetAdmissionForScope(ctx, e.store, app, t.Scope.Environment, "", e.financialBudgetNow()); err != nil {
+		return core.RehearsalFrame{}, err
+	}
 	node, err := e.store.ComputeNodeByID(ctx, nodeID)
 	if err != nil {
 		return core.RehearsalFrame{}, err
@@ -46,7 +49,7 @@ func (e *Engine) reserveDataRepairFrame(ctx context.Context, f core.RehearsalFra
 	if err != nil {
 		return err
 	}
-	return e.ledger.Admit(Request{Instance: f.TaskID, AppID: f.Scope.AppID, Plan: f.Plan, RAMMB: api.DataRepairSandboxMemoryMB, VCPU: api.DataRepairSandboxVCPUs, CPUMillicores: api.DataRepairSandboxCPUMillicores, Kind: KindDataRepairRehearsal, NodeID: f.NodeID, NodeCeilingMB: node.AdmissionCeilingMB, VCPUBudget: node.VCPUBudget, CPUBudgetMillicores: int(cpuBudgetMillicores(node)), AllowCPUOvercommitRecovery: recovery})
+	return e.ledger.Admit(Request{Instance: f.TaskID, AppID: f.Scope.AppID, Plan: f.Plan, RAMMB: api.DataRepairSandboxMemoryMB, VCPU: api.DataRepairSandboxVCPUs, CPUMillicores: api.DataRepairSandboxCPUMillicores, Kind: KindDataRepairRehearsal, NodeID: f.NodeID, NodeCeilingMB: node.AdmissionCeilingMB, VCPUBudget: node.VCPUBudget, CPUBudgetMillicores: int(cpuBudgetMillicores(node)), AllowResidentRecovery: recovery})
 }
 
 func (e *Engine) ReleaseDataRepairRehearsal(id string) { e.ledger.Release(id) }

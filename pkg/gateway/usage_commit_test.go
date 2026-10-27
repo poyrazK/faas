@@ -61,7 +61,7 @@ func newUsageCommitFixture(t *testing.T, method string, maxBytes int64, consumer
 	if err != nil {
 		t.Fatal(err)
 	}
-	h := &Handler{usageOutbox: q, log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	h := &Handler{usageOutbox: q, apiMonetization: monetizationOn, log: slog.New(slog.NewTextHandler(io.Discard, nil))}
 	acct, app := uuid.New(), uuid.New()
 	r := httptest.NewRequest(method, "/items", nil)
 	r = withAppAndAccount(r, acct, app)
@@ -175,7 +175,7 @@ func TestUsageCommitOnlyGuardsBillableResponses(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	h := &Handler{usageOutbox: q, log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	h := &Handler{usageOutbox: q, apiMonetization: monetizationOn, log: slog.New(slog.NewTextHandler(io.Discard, nil))}
 	r := withAppAndAccount(httptest.NewRequest(http.MethodGet, "/items", nil), uuid.New(), uuid.New())
 	r = r.WithContext(authmw.WithConsumer(r.Context(), authmw.ConsumerIdentity{ID: uuid.NewString()}))
 	holder := &usageCommitHolder{}

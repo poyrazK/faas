@@ -29,6 +29,13 @@ type MCPOAuthRetirementStore interface {
 	RecoverMCPOAuthRetirement(context.Context, string, string, api.MCPOAuthRetirementAction) (api.MCPOAuthRetirement, error)
 }
 
+// MCPOAuthRetirementReader names the app a retirement record belongs to, so
+// a recovery action can be refused for a company app the caller may no
+// longer see. An unknown record, or another account's, is ErrNotFound.
+type MCPOAuthRetirementReader interface {
+	MCPOAuthRetirementAppID(ctx context.Context, account, id string) (string, error)
+}
+
 func retirementBinding(c *api.MCPCatalogObserverOAuthConfig) string {
 	if c == nil {
 		return ""
@@ -414,6 +421,30 @@ func recoverRetirement(r *api.MCPOAuthRetirement, action api.MCPOAuthRetirementA
 	retirementEvent(r, action.Action, at)
 	return nil
 }
+func (s *PgStore) MCPOAuthRetirementAppID(ctx context.Context, account, id string) (string, error) {
+	if _, err := uuid.Parse(id); err != nil {
+		return "", ErrNotFound
+	}
+	data, err := sqlc.New().ReadMCPOAuthRetirement(ctx, s.pool, sqlc.ReadMCPOAuthRetirementParams{ID: mustPgUUID(id), AccountID: mustPgUUID(account)})
+	if err != nil {
+		return "", mapErr(err)
+	}
+	var r api.MCPOAuthRetirement
+	if err = json.Unmarshal(data, &r); err != nil {
+		return "", err
+	}
+	return r.AppID, nil
+}
+func (m *MemStore) MCPOAuthRetirementAppID(_ context.Context, account, id string) (string, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, entry := range m.mcpOAuthRetirements {
+		if entry.AccountID == account && entry.Record.ID == id {
+			return entry.Record.AppID, nil
+		}
+	}
+	return "", ErrNotFound
+}
 func (s *PgStore) RecoverMCPOAuthRetirement(ctx context.Context, account, id string, action api.MCPOAuthRetirementAction) (api.MCPOAuthRetirement, error) {
 	out, err := s.editRetirement(ctx, account, id, func(r *api.MCPOAuthRetirement, _ bool, at time.Time) error { return recoverRetirement(r, action, at) })
 	return api.MCPOAuthRetirementPublic(out), err
@@ -600,6 +631,11 @@ func applyRetirementView(view *api.MCPCatalogMonitorSnapshot, r api.MCPOAuthReti
 	}
 }
 func (m *MemStore) retireDeletedAppLocked(app App, at time.Time) error {
+	for _, dep := range m.deployments {
+		if dep.AppID == app.ID && m.recoveryProtectedDeploymentLocked(dep.ID) {
+			return ErrConflict
+		}
+	}
 	root, ok := m.mcpCatalogMonitors[app.ID]
 	if !ok || m.mcpCatalogMonitorOwners[app.ID] != app.AccountID {
 		return nil

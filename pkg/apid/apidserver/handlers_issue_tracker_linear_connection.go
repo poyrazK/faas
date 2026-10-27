@@ -2,7 +2,6 @@ package apidserver
 
 import (
 	"context"
-	"filippo.io/age"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/issuetrackers"
 	"github.com/onebox-faas/faas/pkg/issuetracker"
@@ -56,17 +55,16 @@ func (s *server) updateIssueTrackerLinearConnection(w http.ResponseWriter, r *ht
 			return
 		}
 	}
-	var recipient *age.X25519Recipient
-	if setSecretRecipient != nil {
-		recipient = setSecretRecipient()
-	}
+	// The Linear credential is an account value (ADR 20261022111812); no
+	// recipient leaves the connection unsealable, which configuration reports.
+	recipients, _ := accountRecipients(hostSecretRecipient())
 	verifier := s.nativeLinearVerifier
 	if verifier == nil {
 		verifier = issuetracker.NewClient(nil)
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), time.Duration(api.IssueTrackerRequestTimeoutSeconds)*time.Second)
 	defer cancel()
-	out, err := issuetrackers.ConfigureLinearConnection(ctx, store, verifier, recipient, acct.ID, app.ID, in)
+	out, err := issuetrackers.ConfigureLinearConnection(ctx, store, verifier, recipients, acct.ID, app.ID, in)
 	if err != nil {
 		writeNativeIssueTrackerError(w, err)
 		return

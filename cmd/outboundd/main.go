@@ -12,13 +12,13 @@ import (
 	"os"
 	"time"
 
-	"filippo.io/age"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apidgrpc"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/gateway"
 	"github.com/onebox-faas/faas/pkg/outbound"
-	"github.com/onebox-faas/faas/pkg/secretbox"
+	"github.com/onebox-faas/faas/pkg/platformflags"
+	"github.com/onebox-faas/faas/pkg/sealdomain"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/trace"
 	"github.com/onebox-faas/faas/pkg/wire"
@@ -123,8 +123,12 @@ func run(ctx context.Context, log *slog.Logger) error {
 	if err != nil {
 		return err
 	}
-	if err := ValidateAIGateway(configured, cfg.AIGateway(os.Getenv)); err != nil {
+	aiGatewayFlags, err := startPlatformFlags(ctx, cfg, pool, log)
+	if err != nil {
 		return err
+	}
+	if ids := AIIntegrationsWhileGatewayOff(configured, aiGatewayFlags.Snapshot().GloballyEnabled(platformflags.AIGateway)); len(ids) > 0 {
+		log.Warn("outbound AI gateway is off; these operator AI integrations return 503 until the ai_gateway platform flag is on", "integrations", ids)
 	}
 	identityVerifier, err := cfg.IdentityVerifier(configured)
 	if err != nil {
@@ -172,19 +176,30 @@ func run(ctx context.Context, log *slog.Logger) error {
 	if err := handler.SetManagedAuthorizations(managedAuthorizations); err != nil {
 		return fmt.Errorf("outboundd: managed provider authorization: %w", err)
 	}
-	identityPath := os.Getenv("FAAS_FLEET_AGE_IDENTITY_PATH")
-	if identityPath != "" {
-		identity, err := secretbox.LoadHostKey(identityPath)
+	// ADR 20261022111812: customer credentials open with the outbound seal
+	// domain identity once the seal_domains role stages it, and with the
+	// fleet identity (and either one's previous twin) until the re-seal
+	// moves every row to the domain.
+	domainPath := os.Getenv("FAAS_SEAL_DOMAIN_OUTBOUND_IDENTITY_PATH")
+	fleetPath := os.Getenv("FAAS_FLEET_AGE_IDENTITY_PATH")
+	domainLoaded, err := outboundSealDomainLoaded(domainPath)
+	if err != nil {
+		return err
+	}
+	sealdomain.RegisterLoaded(ops.Registry(), sealdomain.Outbound, domainLoaded)
+	if domainPath != "" || fleetPath != "" {
+		identities, err := sealdomain.LoadReaderIdentities(domainPath, fleetPath)
 		if err != nil {
-			return fmt.Errorf("outboundd: load fleet credential identity: %w", err)
+			return fmt.Errorf("outboundd: load customer credential identities: %w", err)
 		}
-		credentialResolver, err := outbound.NewPostgresSealedCredentialResolver(pool, []*age.X25519Identity{identity}, customerCredentialIDs)
+		credentialResolver, err := outbound.NewPostgresSealedCredentialResolver(pool, identities, customerCredentialIDs)
 		if err != nil {
 			return fmt.Errorf("outboundd: customer credential resolver: %w", err)
 		}
 		handler.CredentialResolver = credentialResolver
+		log.Info("outbound customer credential identities loaded", "domain_identity", domainLoaded, "identities", len(identities))
 	} else if needCustomerCredentials {
-		return errors.New("outboundd: customer-sealed credentials require FAAS_FLEET_AGE_IDENTITY_PATH")
+		return errors.New("outboundd: customer-sealed credentials require FAAS_SEAL_DOMAIN_OUTBOUND_IDENTITY_PATH or FAAS_FLEET_AGE_IDENTITY_PATH")
 	}
 	handler.SimulationHandler = &outbound.SimulationHandler{Store: state.NewPgStore(pool)}
 	handler.IdentityVerifier = identityVerifier
@@ -203,12 +218,11 @@ func run(ctx context.Context, log *slog.Logger) error {
 	}
 	handler.Metrics = outboundMetrics
 	handler.MaxBodyBytes = cfg.MaxBodyBytes
-	handler.AIGatewayEnabled = cfg.AIGateway(os.Getenv)
-	if handler.AIGatewayRollout, err = cfg.AIGatewayRollout(os.Getenv); err != nil {
-		return fmt.Errorf("outboundd: %w", err)
-	}
-	log.Info("outbound AI gateway release gate", "enabled", handler.AIGatewayEnabled,
-		"rollout_accounts", len(handler.AIGatewayRollout), "rollout_limited", handler.AIGatewayRollout != nil)
+	// ADR-1700: the gate and rollout are the live ai_gateway platform flag.
+	handler.AIGatewayFlags = aiGatewayFlags
+	_, flagVersion, _ := aiGatewayFlags.Snapshot().Definition(platformflags.AIGateway)
+	log.Info("outbound AI gateway release gate", "enabled", aiGatewayFlags.Snapshot().GloballyEnabled(platformflags.AIGateway),
+		"platform_flag_version", flagVersion)
 	// ADR-990: AI fallback routes are served on relay connections.
 	if handler.Routes, err = outbound.NewPostgresRouteResolver(pool); err != nil {
 		return err
@@ -227,6 +241,16 @@ func run(ctx context.Context, log *slog.Logger) error {
 	go batchWorker.Run(ctx)
 	evaluationWorker := &outbound.AIEvaluationWorker{Store: backend, Handler: handler, Log: log}
 	go evaluationWorker.Run(ctx)
+	// ADR 20261021171712: sampled calls are scored by the integration's
+	// judge model, and quality drift alerts are checked.
+	onlineEvaluationWorker := &outbound.AIOnlineEvaluationWorker{Store: backend, Handler: handler, Log: log}
+	go onlineEvaluationWorker.Run(ctx)
+	driftWorker := &outbound.AIQualityDriftWorker{Store: backend, Metrics: outboundMetrics, Log: log}
+	go driftWorker.Run(ctx)
+	// ADR-20261019152416: enforced GitOps candidates cannot reach the gateway,
+	// so their outbound bindings are probed here and receipted for activation.
+	qualificationWorker := &outbound.QualificationProbeWorker{Store: state.NewPgStore(pool), Handler: handler, Log: log}
+	go qualificationWorker.Run(ctx)
 	relayHandler := outbound.WithSimulationRelay(trace.HTTPHandler("outboundd-relay", handler), handler.SimulationHandler)
 	shutdownRelay, err := startRelay(ctx, cfg, pool, relayHandler, identityVerifier, outboundMetrics, log)
 	if err != nil {

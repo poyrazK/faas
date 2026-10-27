@@ -89,16 +89,16 @@ func (s *PgStore) ClaimNextProjectEnvironmentQueueDelivery(ctx context.Context, 
 		}
 		return ProjectEnvironmentQueueDelivery{}, ErrNotFound
 	}
-	if account.ResourceOwnershipEnabled {
+	if account.AsyncQuotaPooled {
 		if err := ensureQueueAsyncQuotaDB(ctx, tx, account); err != nil {
 			return ProjectEnvironmentQueueDelivery{}, err
 		}
 	}
 	if err := q.EnsureEnvironmentQueueDeliveryQuota(ctx, tx, sqlc.EnsureEnvironmentQueueDeliveryQuotaParams{
-		AccountID: mustPgUUID(account.ResourceOwnerID()), MaxInflight: int32(limits.MaxAsyncInvocationsPerAccount)}); err != nil {
+		AccountID: mustPgUUID(account.AsyncQuotaSubjectID()), MaxInflight: int32(limits.MaxAsyncInvocationsPerAccount)}); err != nil {
 		return ProjectEnvironmentQueueDelivery{}, err
 	}
-	if _, err := q.ReserveEnvironmentQueueDeliveryQuota(ctx, tx, mustPgUUID(account.ResourceOwnerID())); err != nil {
+	if _, err := q.ReserveEnvironmentQueueDeliveryQuota(ctx, tx, mustPgUUID(account.AsyncQuotaSubjectID())); err != nil {
 		if errors.Is(mapErr(err), ErrNotFound) {
 			return ProjectEnvironmentQueueDelivery{}, ErrQuotaExceeded
 		}

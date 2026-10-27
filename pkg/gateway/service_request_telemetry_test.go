@@ -261,6 +261,84 @@ func TestServiceRequestObservationMarksActualWake(t *testing.T) {
 	}
 }
 
+// A call that restored its target names the wake it started or joined, and
+// carries the runtime's reported execution time, so the trace view can split
+// the hop into restore and app time.
+func TestServiceRequestObservationCarriesWakeAndGuestEvidence(t *testing.T) {
+	accountID, appID := uuid.NewString(), uuid.NewString()
+	provider := &serviceProxyProvider{snapshot: ServiceEndpointsSnapshot{AppID: appID}}
+	recorder := NewRequestTelemetryRecorder(RequestTelemetryConfig{Enabled: true}, nopLog())
+	handler := &Handler{requestTelemetry: recorder}
+	var observed []ServiceRequestObservation
+	proxy := NewServiceProxy(ServiceProxyConfig{
+		Provider: provider,
+		Resolve: func(context.Context, string, string) (ServiceTarget, bool, error) {
+			return ServiceTarget{AppID: appID}, true, nil
+		},
+		Authorize: func(context.Context, string, string) (ServiceCaller, error) {
+			return ServiceCaller{AppID: "caller", AccountID: accountID}, nil
+		},
+		Wake: func(ctx context.Context, _ string) error {
+			recordServiceWakeID(ctx, "wake-1")
+			recordServiceWakeID(ctx, "wake-2") // the first wake is the call's
+			provider.snapshot.Endpoints = []ServiceEndpoint{{InstanceID: "woken-instance", NodeID: "node-1", Port: 8080}}
+			return nil
+		},
+		ObserveRequest: func(r *http.Request, o ServiceRequestObservation) {
+			observed = append(observed, o)
+			handler.RecordServiceRequest(r, o)
+		},
+		Forward: func(Target) http.Handler {
+			return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				recordGuestExecutionEvidence(r.Context(), "X-Faas-Guest-Duration-Ms", "42")
+				recordGuestExecutionEvidence(r.Context(), "X-Faas-Guest-Runtime", "node22")
+				recordForwardedFirstByte(r.Context())
+				w.WriteHeader(200)
+			})
+		},
+	})
+	for range 2 {
+		req := httptest.NewRequest("GET", "/v1/internal/services/worker/", nil)
+		req.Header.Set(ServiceProxyCallerAppHeader, "caller")
+		proxy.ServeHTTP(httptest.NewRecorder(), req)
+	}
+	if len(observed) != 2 || observed[0].WakeID != "wake-1" || observed[0].Guest.DurationMS != 42 || observed[0].Guest.Runtime != "node22" {
+		t.Fatalf("cold call observation = %+v", observed)
+	}
+	if observed[1].ColdBoot || observed[1].WakeID != "" || observed[1].Guest.DurationMS != 42 {
+		t.Fatalf("warm call must carry guest evidence but no wake: %+v", observed[1])
+	}
+	rows := recorder.DrainBatch(10)
+	if len(rows) != 2 || rows[0].WakeID != "wake-1" || rows[0].GuestDurationMS != 42 || rows[0].GuestRuntime != "node22" || rows[1].WakeID != "" {
+		t.Fatalf("rows = %+v", rows)
+	}
+}
+
+// ADR-1138: an inferred trace id must never merge with a propagated one, or
+// the row would carry the wrong mark.
+func TestCollapseKeepsInferredTracesApart(t *testing.T) {
+	base := RequestTelemetryRow{AccountID: uuid.New(), AppID: uuid.New(), Route: otherRouteLabel, Method: "GET", Status: http.StatusOK,
+		TraceID: "4bf92f3577b34da6a3ce929d0e0e4736", ReceivedAt: time.Unix(1_800_000_000, 0), Count: 1}
+	inferred := base
+	inferred.TraceInferred = true
+	out := collapseRequestTelemetry([]RequestTelemetryRow{base, inferred, inferred})
+	if len(out) != 2 || out[0].TraceInferred || out[0].Count != 1 || !out[1].TraceInferred || out[1].Count != 2 {
+		t.Fatalf("collapsed = %+v", out)
+	}
+}
+
+func TestServiceWakeRecorderNeedsAServiceCall(t *testing.T) {
+	recordServiceWakeID(context.Background(), "wake-1") // no recorder: a no-op
+	if got := serviceWakeIDFrom(context.Background()); got != "" {
+		t.Fatalf("wake id without a recorder = %q", got)
+	}
+	r := withServiceWakeRecorder(httptest.NewRequest("GET", "/", nil))
+	recordServiceWakeID(r.Context(), "")
+	if got := serviceWakeIDFrom(r.Context()); got != "" {
+		t.Fatalf("an empty wake id was recorded: %q", got)
+	}
+}
+
 func TestServiceRequestObservationOnRealUpgradeSocketBeforeDisconnect(t *testing.T) {
 	appID := uuid.NewString()
 	observed := make(chan ServiceRequestObservation, 1)

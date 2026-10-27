@@ -25,11 +25,14 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/crashcrypt"
 	"github.com/onebox-faas/faas/pkg/events"
 	"github.com/onebox-faas/faas/pkg/extension"
 	"github.com/onebox-faas/faas/pkg/fcvm/logbuf"
+	"github.com/onebox-faas/faas/pkg/guestdisk"
 	"github.com/onebox-faas/faas/pkg/guestmemproto"
 	"github.com/onebox-faas/faas/pkg/jailsetup"
+	"github.com/onebox-faas/faas/pkg/resumetimingproto"
 	"github.com/onebox-faas/faas/pkg/runtimeadmission"
 	"github.com/onebox-faas/faas/pkg/runtimepolicyproto"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -57,6 +60,9 @@ type JailerVMM struct {
 	nativeRecovery                *nativeProcessRecoveryRuntime // opt-in, configured before admission
 	nativeImageStagingRoot        string                        // opt-in persistent disk claims; configure before native recovery
 	nativeSnapshotPublicationRoot string                        // opt-in immutable capture intent; configure before native recovery
+	nativeRuntimeCapture          bool                          // ADR 20261022184951: native park/warm capture; requires native recovery
+	nativeRuntimeSnapshots        *storage.LocalStorageBackend  // ADR 20261022184951 amendment 1: the tree only vmmd writes
+	nativeLaunchOwners            bool                          // ADR-2026101710 amendment 1: version-three launch records name this vmmd
 	chrootBase                    string                        // /srv/fc/jail
 	fcName                        string                        // chroot dir name jailer derives from the exec-file basename
 	readyTimeout                  time.Duration                 // WAKING/cold-boot readiness budget (spec §6)
@@ -77,9 +83,15 @@ type JailerVMM struct {
 	// freePageReporting attaches a free-page-reporting balloon to every cold
 	// boot (ADR-907).
 	freePageReporting bool
+	// cpuTemplate is the Firecracker CPU template every boot uses
+	// (ADR-20261024225612). Empty boots with the host's CPUID.
+	cpuTemplate string
 	// pmemBase holds the per-account base copies attached as pmem (ADR-908);
 	// nil keeps drive0 on virtio-blk.
 	pmemBase *pmemBaseStore
+	// restoreReseedThread boots app VMs with the thread-mode reseed barrier
+	// client (ADR-20261024105607).
+	restoreReseedThread bool
 	// preBoot tracks which pre-boot files each instance's drive and each
 	// captured drive already hold, so an unchanged restore skips the loop
 	// mount (see preboot_skip.go).
@@ -98,6 +110,9 @@ type JailerVMM struct {
 	// the executable across filesystems on every wake. Older bundles use vmmd.
 	mountHelperMu   sync.Mutex
 	mountHelperPath string
+	// guestDisk is the sandboxed editor every drive read and write goes
+	// through (ADR-20261025090100).
+	guestDisk guestDiskState
 
 	// fences records the cgroup fence written for each live VM so
 	// RepairCgroupFences can restore it (cgroup_fence.go). fenceMu is never
@@ -119,6 +134,15 @@ type JailerVMM struct {
 	// listeners here closes the race where a fast guest sends its characterization
 	// or job-exit frame before the corresponding wait RPC starts.
 	guestVsockListeners map[guestVsockListenerKey]*net.UnixListener
+	// jobExits are the receivers on job-exit listeners, kept after the
+	// payload arrives so WaitJobExit can be called again.
+	jobExits    map[string]*jobExitReceiver
+	jobExitSink func(instance string, payload JobExitPayload)
+	// fdStoreMu orders the listener store's messages with storedJobExits:
+	// the job-exit listeners currently in the store, by instance.
+	fdStoreMu      sync.Mutex
+	listenerStore  ListenerStore
+	storedJobExits map[string]*net.UnixListener
 	// Private restored channels have their own callbacks and live producer
 	// authority. They never borrow daemon serving handlers or the CID index.
 	nativeRestoreChannels map[string]*nativeQualificationRestoreChannels
@@ -131,6 +155,8 @@ type JailerVMM struct {
 	// bind VMADDR_CID_HOST, so daemon-wide AF_VSOCK listeners are not a valid
 	// transport on the supported nested-virtualization topology.
 	guestVsockStreamHandlers map[uint32]GuestVsockStreamHandler
+	guestVsockLeaseHandlers  map[uint32]func(Lease, net.Conn) (string, error)
+	functionPauseBarrier     func(string) error
 	guestVsockObserver       GuestVsockTransportObserver
 	// characterizationReceipts coordinate the receiver started during boot
 	// with Manager.Wake's later WaitCharacterizationReport call. A single
@@ -143,6 +169,11 @@ type JailerVMM struct {
 	// the probe within the readyTimeout deadline.
 	hcClient *http.Client
 	recs     map[string]*instanceRecord // instance -> per-process bookkeeping (M6 builder VMs)
+	// consoleOpens are console files Restore and boot start creating before
+	// startJailer takes them (console_file.go). consoleLogDir overrides
+	// /var/log/faas in tests.
+	consoleOpens  map[string]*consoleFileOpen
+	consoleLogDir string
 	// rings is the per-instance log ring buffer (issue #254 / Move 4).
 	// Created in Boot/Restore before startJailer so cmd.Stdout can be wired
 	// to the ring's writer; closed in Kill/DestroyWithExport so the byte
@@ -194,6 +225,9 @@ type JailerVMM struct {
 	// over a path while a running VM still holds the old inode, and the next
 	// boot must bind the new file rather than fail.
 	bindSourceModes map[bindSourceKey]bindSourceMode
+	// fileConsole launches guests with their console file as stdout and
+	// stderr (console_file.go). Guarded by mu.
+	fileConsole bool
 	// wakePhaseMetrics is the vmmd wake registry (ADR-098 C11), shared with
 	// the Manager. Optional; every observation site is nil-safe.
 	wakePhaseMetrics *WakePhaseMetrics
@@ -231,6 +265,9 @@ type ephemeralBind struct {
 	target     *resourceFileIdentity // Placeholder behind the bind, before mounting.
 	tracked    bool                  // Image bind intent; TUN in the child namespace is separate.
 	released   bool                  // Permission reference released; journal retirement may still fail.
+	// adopted marks a bind a previous vmmd made (adoption ADR §2): it lives
+	// only in that vmmd's mount namespace, invisible here.
+	adopted bool
 }
 
 // bindSourceKey names one bound source file: its path and the inode that was
@@ -275,7 +312,7 @@ type restoreTimingBreakdown struct {
 	// reported on stdout. TunSetupJailMs minus this is process-spawn cost.
 	TunSetupJailWorkUs int64
 	CgroupFenceMs      int64
-	// StagePreBootFilesMs is the single loop-mount session that writes
+	// StagePreBootFilesMs is the single drive session that writes
 	// secrets.env / env.json / resolver / workload files onto drive1
 	// (ADR-192). It was folded into StageSnapshotMs before, which made the
 	// two-syscall mem/vmstate bind look expensive.
@@ -301,6 +338,14 @@ type restoreTimingBreakdown struct {
 	WaitReadyMs      int64
 	TotalMs          int64
 	ResolveArtifacts []restoreArtifactTiming
+	// JournalSyncMs and JournalLockWaitMs are this wake's ADR-473 resource
+	// journal cost across all phases, from the lease intent to readiness:
+	// the fsyncs of its JournalCommits record commits, and the time those
+	// commits waited behind other wakes' commits. They overlap the staging
+	// phases above. Operator-only, like the TUN subphases.
+	JournalSyncMs     int64
+	JournalLockWaitMs int64
+	JournalCommits    int
 }
 
 // restoreArtifactTiming attributes one restore input to where its bytes came
@@ -372,6 +417,9 @@ type instanceRecord struct {
 	exited      bool          // set by the watchdog when cmd.Wait completes
 	exitCode    int           // captured from cmd.Wait's ProcessState.ExitCode()
 	done        chan struct{} // closed by the watchdog; readers <-done to wake
+	// fileConsole marks a guest whose stdout and stderr are its console
+	// file, not a pipe into vmmd (console_file.go).
+	fileConsole bool
 }
 
 // ringWriter is a thin io.Writer that forwards every Write call to the
@@ -397,6 +445,9 @@ type customerConsoleWriter struct {
 	mu      sync.Mutex
 	ring    *logbuf.Ring
 	pending []byte
+	// initPanic is set while the kernel prints its "Attempted to kill init"
+	// panic dump, which ends with "Rebooting in N seconds..".
+	initPanic bool
 }
 
 func (w *customerConsoleWriter) Write(p []byte) (int, error) {
@@ -439,7 +490,7 @@ func (w *customerConsoleWriter) Flush() error {
 
 // commitLocked filters one complete line and writes it to the ring.
 func (w *customerConsoleWriter) commitLocked(line []byte) error {
-	if firecrackerControlLine(line) || guestInitStageLine(line) || guestInitPlatformLine(line) || benignGuestKernelLine(line) {
+	if w.dropInitPanicLocked(line) || firecrackerControlLine(line) || guestInitStageLine(line) || guestInitPlatformLine(line) || benignGuestKernelLine(line) || functionRunnerStartupLine(line) {
 		return nil
 	}
 	// The guest serial console's tty turns every '\n' into "\r\n"
@@ -451,6 +502,73 @@ func (w *customerConsoleWriter) commitLocked(line []byte) error {
 	}
 	_, err := w.ring.Write("stdout", line)
 	return err
+}
+
+// functionRunnerStartupLine matches the function runner shim's two startup
+// lines, e.g. "2026/10/25 02:29:10 go124 runner: serving on :8080 (handler=
+// /app/handler, ...)" and "... h2c-listener: listening on :8080 (H2C-capable)".
+// They opened every function cold boot's customer log on production-us rc.294
+// (Hunt 14 H14-28). The runner's handler errors stay customer-visible.
+func functionRunnerStartupLine(line []byte) bool {
+	text := strings.TrimSpace(string(line))
+	const stamp = len("2006/01/02 15:04:05 ")
+	if len(text) <= stamp || text[4] != '/' || text[7] != '/' || text[10] != ' ' || text[13] != ':' || text[16] != ':' || text[19] != ' ' {
+		return false
+	}
+	msg := text[stamp:]
+	if strings.HasPrefix(msg, "h2c-listener: listening on ") {
+		return true
+	}
+	runtime, rest, ok := strings.Cut(msg, " runner: serving on ")
+	return ok && rest != "" && runtime != "" && !strings.ContainsAny(runtime, " \t")
+}
+
+// dropInitPanicLocked drops the kernel's panic dump after guest-init (PID 1)
+// exits: "Kernel panic - not syncing: Attempted to kill init!", a register
+// and call-trace dump, then "Rebooting in 1 seconds..". On production-us
+// rc.294 a crash-looping app put 25 such lines in its customer log (Hunt 14
+// H14-26). guest-init's own reason line, e.g. "guest-init: app crash-looped
+// after 3 restart(s)", comes first and stays; the unfiltered console file
+// keeps the dump for operators.
+func (w *customerConsoleWriter) dropInitPanicLocked(line []byte) bool {
+	message, ok := kernelConsoleMessage(line)
+	if !ok {
+		return false
+	}
+	if strings.HasPrefix(message, "Kernel panic - not syncing: Attempted to kill init!") {
+		w.initPanic = true
+		return true
+	}
+	if !w.initPanic {
+		return false
+	}
+	if strings.HasPrefix(message, "Rebooting in ") {
+		w.initPanic = false
+	}
+	return true
+}
+
+// kernelConsoleMessage returns the message of a dmesg-formatted console line
+// such as "[ 6744.209731] Kernel panic - not syncing: ...".
+func kernelConsoleMessage(line []byte) (string, bool) {
+	text := strings.TrimSpace(string(line))
+	if !strings.HasPrefix(text, "[") {
+		return "", false
+	}
+	end := strings.IndexByte(text, ']')
+	if end < 0 {
+		return "", false
+	}
+	stamp := strings.TrimSpace(text[1:end])
+	if stamp == "" {
+		return "", false
+	}
+	for _, r := range stamp {
+		if (r < '0' || r > '9') && r != '.' {
+			return "", false
+		}
+	}
+	return strings.TrimSpace(text[end+1:]), true
 }
 
 // guestInitStageLine matches guest-init's internal boot-progress markers
@@ -479,6 +597,10 @@ var guestInitPlatformMessages = []string{
 	// ended every job task log, its attempt being the vsock retry rather than
 	// the task attempt the log header names (hunt #10).
 	"job-exit ", "job cancel ",
+	// App-task exec listener: "INFO fork exec listener started
+	// vsock_port=1034" opened every cold boot's customer log on
+	// production-us rc.294 (Hunt 14 H14-27).
+	"fork exec listener ",
 }
 
 // guestInitPlatformLine matches a default-slog line ("2006/01/02 15:04:05
@@ -608,6 +730,16 @@ func firecrackerControlLine(line []byte) bool {
 		"api request took",
 		"snapshot/load",
 		"snapshot load",
+		// Firecracker 1.17 net device before the guest driver binds it:
+		// "Net: The device is not yet activated. Spurious event received: 3".
+		// It reached every job task's customer log on production-us
+		// (Hunt 12).
+		"spurious event received",
+		// Firecracker's API thread waking the VMM loop with nothing queued:
+		// "Got a spurious notification from api thread". It reached a
+		// queue worker's customer log on production-us rc.294 (Hunt 14
+		// H14-5).
+		"spurious notification from api thread",
 	} {
 		if strings.Contains(body, marker) {
 			return true
@@ -737,22 +869,66 @@ func (v *JailerVMM) WithSlowSubscriberCallback(cb func()) *JailerVMM {
 	return v
 }
 
-// WithLogCommitCallback observes newly received app log lines. App identity
-// comes from the scheduler's correlation envelope captured before guest startup.
+// WithLogCommitCallback adds an observer of newly received app log lines;
+// observers run in the order they were added, so independent consumers (MCP
+// protocol metrics, ADR-746 line counts) never displace each other. App
+// identity comes from the scheduler's correlation envelope captured before
+// guest startup.
 func (v *JailerVMM) WithLogCommitCallback(cb func(appID string, line logbuf.Line)) *JailerVMM {
+	if cb == nil {
+		return v
+	}
 	v.mu.Lock()
+	if prev := v.committedLine; prev != nil {
+		next := cb
+		cb = func(appID string, line logbuf.Line) {
+			prev(appID, line)
+			next(appID, line)
+		}
+	}
 	v.committedLine = cb
 	v.mu.Unlock()
 	return v
 }
 
-// WithInstanceLogObserver installs bounded, non-blocking lifecycle and log callbacks.
-// Identities come from host context. Stop must be idempotent.
+// WithInstanceLogObserver adds bounded, non-blocking lifecycle and log
+// callbacks; observers run in the order they were added. Identities come from
+// host context. Stop must be idempotent.
 func (v *JailerVMM) WithInstanceLogObserver(cb func(string, string, string) (func(logbuf.Line), func())) *JailerVMM {
+	if cb == nil {
+		return v
+	}
 	v.mu.Lock()
+	if prev := v.instanceLogObserver; prev != nil {
+		cb = chainInstanceLogObservers(prev, cb)
+	}
 	v.instanceLogObserver = cb
 	v.mu.Unlock()
 	return v
+}
+
+func chainInstanceLogObservers(first, second func(string, string, string) (func(logbuf.Line), func())) func(string, string, string) (func(logbuf.Line), func()) {
+	return func(appID, deploymentID, instance string) (func(logbuf.Line), func()) {
+		observeFirst, stopFirst := first(appID, deploymentID, instance)
+		observeSecond, stopSecond := second(appID, deploymentID, instance)
+		observe := func(line logbuf.Line) {
+			if observeFirst != nil {
+				observeFirst(line)
+			}
+			if observeSecond != nil {
+				observeSecond(line)
+			}
+		}
+		stop := func() {
+			if stopFirst != nil {
+				stopFirst()
+			}
+			if stopSecond != nil {
+				stopSecond()
+			}
+		}
+		return observe, stop
+	}
 }
 
 // WithInstancePauseObserver reports successful host pause/resume transitions.
@@ -1127,7 +1303,7 @@ func (v *JailerVMM) BootColdBoot(ctx context.Context, l Lease, spec ColdBootSpec
 	if spec.SkipReady {
 		return v.bootNoWait(ctx, l, BuildColdBootConfig(spec, l.Slot), spec.Workloads, spec.SecretsEnvJSON, spec.APIEnvJSON, spec.ServiceDiscoveryIP, spec.AppTask, nil)
 	}
-	if err = v.boot(ctx, l, BuildColdBootConfig(spec, l.Slot), false, spec.HealthcheckPath, spec.HealthcheckGRPC, spec.HealthcheckGRPCService, spec.ImageHealthcheckRequired, spec.StartupDeadlineS, spec.ExecutionMode, spec.Workloads, spec.SecretsEnvJSON, spec.APIEnvJSON, spec.ServiceDiscoveryIP, spec.AppTask, nil, &breakdown); err != nil {
+	if err = v.boot(ctx, l, BuildColdBootConfig(spec, l.Slot), false, spec.HealthcheckPath, spec.HealthcheckGRPC, spec.HealthcheckGRPCService, spec.ImageHealthcheckRequired, spec.StartupDeadlineS, spec.ExecutionMode, spec.WorkerPushDelivery, spec.Workloads, spec.SecretsEnvJSON, spec.APIEnvJSON, spec.ServiceDiscoveryIP, spec.AppTask, nil, &breakdown); err != nil {
 		return err
 	}
 	breakdown.TotalMs = time.Since(t0).Milliseconds()
@@ -1137,7 +1313,7 @@ func (v *JailerVMM) BootColdBoot(ctx context.Context, l Lease, spec ColdBootSpec
 }
 
 func (v *JailerVMM) bootNoWait(ctx context.Context, l Lease, cfg VMConfig, workloads []WorkloadSpec, secretsEnvJSON, apiEnvJSON []byte, serviceDiscoveryIP string, appTask bool, jobManifest *JobManifest) error {
-	return v.boot(ctx, l, cfg, true, "", false, "", false, 0, "", workloads, secretsEnvJSON, apiEnvJSON, serviceDiscoveryIP, appTask, jobManifest, nil)
+	return v.boot(ctx, l, cfg, true, "", false, "", false, 0, "", false, workloads, secretsEnvJSON, apiEnvJSON, serviceDiscoveryIP, appTask, jobManifest, nil)
 }
 
 // Boot provisions the chroot, starts the jailed firecracker with a full config,
@@ -1162,10 +1338,10 @@ func (v *JailerVMM) Boot(ctx context.Context, l Lease, cfg VMConfig, healthcheck
 	if err := v.prepareJournalLaunch(l); err != nil {
 		return err
 	}
-	return v.boot(ctx, l, cfg, false, healthcheckPath, false, "", false, 0, "", nil, nil, nil, "", false, nil, nil)
+	return v.boot(ctx, l, cfg, false, healthcheckPath, false, "", false, 0, "", false, nil, nil, nil, "", false, nil, nil)
 }
 
-func (v *JailerVMM) boot(ctx context.Context, l Lease, cfg VMConfig, skipReady bool, healthcheckPath string, healthcheckGRPC bool, healthcheckGRPCService string, imageHealthcheckRequired bool, startupDeadlineS int, executionMode string, workloads []WorkloadSpec, secretsEnvJSON, apiEnvJSON []byte, serviceDiscoveryIP string, appTask bool, jobManifest *JobManifest, breakdown *coldBootTimingBreakdown) (err error) {
+func (v *JailerVMM) boot(ctx context.Context, l Lease, cfg VMConfig, skipReady bool, healthcheckPath string, healthcheckGRPC bool, healthcheckGRPCService string, imageHealthcheckRequired bool, startupDeadlineS int, executionMode string, workerPushDelivery bool, workloads []WorkloadSpec, secretsEnvJSON, apiEnvJSON []byte, serviceDiscoveryIP string, appTask bool, jobManifest *JobManifest, breakdown *coldBootTimingBreakdown) (err error) {
 	if err := v.ensureNativeLaunch(ctx, l); err != nil {
 		return err
 	}
@@ -1174,6 +1350,8 @@ func (v *JailerVMM) boot(ctx context.Context, l Lease, cfg VMConfig, skipReady b
 		return err
 	}
 	v.cancelStartupCPUBoostTail(l.Instance)
+	discardConsole := v.preopenConsoleFile(l.Instance)
+	defer discardConsole()
 	bootStartedAt := time.Now()
 	root, err := v.mkChrootForOwner(ctx, stagingOwner, l.Instance)
 	if err != nil {
@@ -1188,7 +1366,9 @@ func (v *JailerVMM) boot(ctx context.Context, l Lease, cfg VMConfig, skipReady b
 	_ = v.registerLeaseRing(ctx, l)
 
 	cfg = v.withBalloon(cfg)
+	cfg = v.withCPUTemplate(cfg)
 	cfg = v.withPmemBase(l, cfg)
+	cfg = v.withRestoreReseedMode(l, cfg)
 	cfg = withBlockRateLimit(l, cfg)
 	jailed, err := v.provisionForOwner(ctx, stagingOwner, root, cfg, l.UID, l.GID, l.Instance)
 	if err != nil {
@@ -1220,7 +1400,7 @@ func (v *JailerVMM) boot(ctx context.Context, l Lease, cfg VMConfig, skipReady b
 		return err
 	}
 	if !l.IsBuilder && cfg.VsockDevice != nil {
-		if err = v.prepareRegisteredGuestVsockListeners(l); err != nil {
+		if err = v.prepareRegisteredGuestVsockListenersForWake(ctx, l); err != nil {
 			return fmt.Errorf("vmm: prepare platform guest receivers: %w", err)
 		}
 	}
@@ -1304,7 +1484,7 @@ func (v *JailerVMM) boot(ctx context.Context, l Lease, cfg VMConfig, skipReady b
 			}
 		}
 		readinessStartedAt := time.Now()
-		err = v.waitApplicationReady(ctx, l, healthcheckPath, healthcheckGRPC, healthcheckGRPCService, startupDeadlineS, executionMode, imageHealthcheckRequired, characterization)
+		err = v.waitApplicationReady(ctx, l, healthcheckPath, healthcheckGRPC, healthcheckGRPCService, startupDeadlineS, executionMode, workerPushDelivery, imageHealthcheckRequired, characterization)
 		if err != nil {
 			return fmt.Errorf("vmm: readiness: %w", err)
 		}
@@ -1371,21 +1551,18 @@ func (v *JailerVMM) preparesWakeStateBeforeBoot() bool { return true }
 // received its config yet, so this is the last safe point for secrets, API env,
 // per-sidecar env overrides, and the sidecar roster.
 // stagePreBootFiles writes every per-instance file the guest expects on
-// drive1 in ONE loop-mount session (ADR-192). Before this, secrets.env,
-// env.json, the service resolver, each sidecar env override, the main
-// manifest and the roster mounted and unmounted the layer on their own, so
-// an app with secrets plus API env paid two to three ext4 mount +
-// journal-flush cycles on every restore — the dominant cost inside the
-// restore breakdown's stage window on the production SSD nodes. The
-// per-file writers are shared with the public Stage* methods, which keep
-// their single-file mount for the legacy Manager path and for tests.
+// drive1 in ONE drive session (ADR-192): secrets.env, env.json, the service
+// resolver, each sidecar env override, the main manifest and the roster.
+// The session edits the drive in the vmmd-guestdisk sandbox; the host
+// kernel never mounts it (ADR-20261025090100). The public Stage* methods
+// keep one session per file for the legacy Manager path and for tests.
 func (v *JailerVMM) stagePreBootFiles(instance string, workloads []WorkloadSpec, secretsEnvJSON, apiEnvJSON []byte, serviceDiscoveryIP string, appTask bool) error {
 	_, err := v.stagePreBootFilesUnless(instance, "", workloads, secretsEnvJSON, apiEnvJSON, serviceDiscoveryIP, appTask)
 	return err
 }
 
-// stagePreBootFilesUnless writes the pre-boot files, or skips the loop mount
-// when captureKey's drive is known to already hold byte-identical files
+// stagePreBootFilesUnless writes the pre-boot files, or skips the drive
+// session when captureKey's drive is known to already hold identical files
 // (restore only; cold boot passes ""). It reports whether it skipped.
 func (v *JailerVMM) stagePreBootFilesUnless(instance, captureKey string, workloads []WorkloadSpec, secretsEnvJSON, apiEnvJSON []byte, serviceDiscoveryIP string, appTask bool, measured ...*preBootStageTimings) (bool, error) {
 	if len(measured) > 0 && measured[0] != nil {
@@ -1431,26 +1608,33 @@ func (v *JailerVMM) stagePreBootFilesUnlessForOwner(ctx context.Context, owner n
 		return false, err
 	}
 	learn, present := v.nativeRecovery == nil && v.preBoot.learnable(captureKey), false
-	err = v.driveStagingSession(ctx, owner, instance, drive1, "faas-vmm-preboot-", func(mountRoot string) error {
-		if learn {
-			started := time.Now()
-			present = preBootFilesPresent(mountRoot, writers)
-			timings.Check = time.Since(started)
-			if present {
-				return nil
-			}
-
-		}
+	err = v.editDrive(ctx, owner, instance, drive1, func(img driveImage) error {
 		started := time.Now()
-		defer func() { timings.Write = time.Since(started) }()
-		for _, w := range writers {
-			if err := w.write(mountRoot); err != nil {
-				return fmt.Errorf("%s: %w", w.what, err)
-			}
-			timings.FilesWritten++
+		paths := make([]string, len(writers))
+		for i, w := range writers {
+			paths[i] = w.path
 		}
+		var reads map[string]int64
+		if learn {
+			reads = presentReads(writers)
+		}
+		layout, err := inspectDrive(ctx, img, paths, reads)
+		timings.Check = time.Since(started)
+		if err != nil {
+			return fmt.Errorf("inspect drive: %w", err)
+		}
+		if learn && driveFilesPresent(layout, writers) {
+			present = true
+			return nil
+		}
+		started = time.Now()
+		defer func() { timings.Write = time.Since(started) }()
+		if err := stageDriveFiles(ctx, img, layout, writers); err != nil {
+			return err
+		}
+		timings.FilesWritten = len(writers)
 		return nil
-	}, &timings.loopMountTimings)
+	}, &timings.Replay)
 	if err != nil {
 		return false, err
 	}
@@ -1463,40 +1647,20 @@ func (v *JailerVMM) stagePreBootFilesUnlessForOwner(ctx context.Context, owner n
 	return false, nil
 }
 
-// preBootFileWriter is one deferred write against a mounted drive1. what is
-// the operation label the caller wraps errors with, matching the messages
-// the previous one-mount-per-file implementation produced. path, want and
-// mode describe the file the write leaves behind (path before full-rootfs
-// resolution), so a restore can tell the drive already holds it.
-type preBootFileWriter struct {
-	what  string
-	write func(mountRoot string) error
-	path  string
-	want  []byte
-	mode  os.FileMode
-	// same, when set, decides whether a file already on the drive is as
-	// good as writing want; otherwise it must equal want byte for byte.
-	same func(got []byte) bool
-}
-
 // preBootFileWriters validates inputs and projects byte caps BEFORE any
-// mount, so a rejected payload never costs a loop mount — the same posture
+// drive session, so a rejected payload never costs one — the same posture
 // the individual Stage* methods always had. Order is preserved from the
 // previous implementation: secrets, API env, resolver, app-task marker,
 // sidecar env overrides, main manifest, roster.
-func preBootFileWriters(workloads []WorkloadSpec, secretsEnvJSON, apiEnvJSON []byte, serviceDiscoveryIP string, appTask bool, serviceCAPEM ...[]byte) ([]preBootFileWriter, string, error) {
-	var writers []preBootFileWriter
+func preBootFileWriters(workloads []WorkloadSpec, secretsEnvJSON, apiEnvJSON []byte, serviceDiscoveryIP string, appTask bool, serviceCAPEM ...[]byte) ([]driveFile, string, error) {
+	var writers []driveFile
 	digest := newPreBootDigest()
 	if len(secretsEnvJSON) > 0 {
 		digest.add("secrets.env", secretsEnvJSON)
-		writers = append(writers, preBootFileWriter{what: "stage secrets.env", write: func(mp string) error {
-			return writeSecretsEnv(mp, secretsEnvJSON)
-		}, path: secretsEnvPath, want: secretsEnvJSON, mode: 0o400})
+		writers = append(writers, secretsEnvFile(secretsEnvJSON))
 	}
 	if len(apiEnvJSON) > 0 {
-		writer := preBootFileWriter{what: "stage env.json", write: func(mp string) error {
-			return writeAPIEnv(mp, apiEnvJSON)
-		}, path: apiEnvPath, want: apiEnvJSON, mode: 0o400}
+		writer := apiEnvFile(apiEnvJSON)
 		if stable, err := placementStableAPIEnv(apiEnvJSON); err == nil {
 			digest.add("env.json", stable)
 			writer.same = func(got []byte) bool {
@@ -1514,26 +1678,20 @@ func preBootFileWriters(workloads []WorkloadSpec, secretsEnvJSON, apiEnvJSON []b
 			return nil, "", fmt.Errorf("stage service resolver: %w", err)
 		}
 		digest.add("resolv.conf", []byte(ip.String()))
-		writers = append(writers, preBootFileWriter{what: "stage service resolver", write: func(mp string) error {
-			return writeServiceDiscoveryResolver(mp, ip)
-		}, path: serviceDiscoveryResolverPath, want: serviceDiscoveryResolverContents(ip), mode: serviceDiscoveryResolverMode})
+		writers = append(writers, driveFile{what: "stage service resolver", path: serviceDiscoveryResolverPath, want: serviceDiscoveryResolverContents(ip), mode: serviceDiscoveryResolverMode})
 		if len(serviceCAPEM) > 0 && len(serviceCAPEM[0]) > 0 {
 			ca := serviceCAPEM[0]
 			if len(ca) > 64*1024 {
 				return nil, "", errors.New("service proxy CA bundle exceeds 64 KiB")
 			}
 			digest.add("service-proxy-ca.crt", ca)
-			writers = append(writers, preBootFileWriter{what: "stage service proxy CA", write: func(mp string) error {
-				return writeServiceProxyCA(mp, ca)
-			}, path: serviceProxyCAPath, want: ca, mode: 0o444})
+			writers = append(writers, driveFile{what: "stage service proxy CA", path: serviceProxyCAPath, want: ca, mode: 0o444})
 		}
 	}
 	if appTask {
 		digest.add("app-task.json", nil)
 		marker := []byte(`{"kind":"app_task","version":1}`)
-		writers = append(writers, preBootFileWriter{what: "stage app task marker", write: func(mp string) error {
-			return writeDriveFile(mp, appTaskMarkerPath, marker, 0o400, "app-task.json")
-		}, path: appTaskMarkerPath, want: marker, mode: 0o400})
+		writers = append(writers, driveFile{what: "stage app task marker", path: appTaskMarkerPath, want: marker, mode: 0o400, keepAttrs: true})
 	}
 	if len(workloads) > 1 {
 		// Sidecar drives are deliberately read-only. Image defaults and the
@@ -1549,151 +1707,42 @@ func preBootFileWriters(workloads []WorkloadSpec, secretsEnvJSON, apiEnvJSON []b
 			}
 			name, blob := workload.Name, workload.preparedEnvJSON
 			digest.add("workload-env:"+name, blob)
-			writers = append(writers, preBootFileWriter{what: "stage workload " + name + " env", write: func(mp string) error {
-				return writeWorkloadEnv(mp, name, blob)
-			}, path: filepath.Join(workloadEnvPath, name, "env.json"), want: blob, mode: 0o400})
+			writers = append(writers, workloadEnvFile(name, blob))
 		}
 		manifest, err := marshalWorkloadManifest(workloads[0])
 		if err != nil {
 			return nil, "", fmt.Errorf("stage main workload manifest: %w", err)
 		}
 		digest.add("workload.json", manifest)
-		writers = append(writers, preBootFileWriter{what: "stage main workload manifest", write: func(mp string) error {
-			return writeDriveFile(mp, workloadManifestPath, manifest, 0o400, "workload.json")
-		}, path: workloadManifestPath, want: manifest, mode: 0o400})
+		writers = append(writers, driveFile{what: "stage main workload manifest", path: workloadManifestPath, want: manifest, mode: 0o400, keepAttrs: true})
 		roster, err := marshalWorkloadRoster(workloads[0], workloads[1:])
 		if err != nil {
 			return nil, "", fmt.Errorf("stage workload roster: %w", err)
 		}
 		digest.add("workloads.json", roster)
-		writers = append(writers, preBootFileWriter{what: "stage workload roster", write: func(mp string) error {
-			return writeDriveFile(mp, workloadRosterPath, roster, 0o400, "workloads.json")
-		}, path: workloadRosterPath, want: roster, mode: 0o400})
+		writers = append(writers, driveFile{what: "stage workload roster", path: workloadRosterPath, want: roster, mode: 0o400, keepAttrs: true})
 	}
 	return writers, digest.sum(), nil
 }
 
-// openDriveRoot opens a mounted drive as an os.Root and returns target
-// relative to it. The drive is tenant-writable — the guest writes it at
-// runtime and the customer image seeds it — while vmmd writes it as root on
-// the host. Every write therefore resolves through os.Root: a symlink that
-// leaves the mount fails the write instead of redirecting it onto a host
-// path.
-func openDriveRoot(mountRoot, target string) (*os.Root, string, error) {
-	rel, err := filepath.Rel(mountRoot, target)
-	if err != nil || rel == "." || rel == ".." || strings.HasPrefix(rel, "../") {
-		return nil, "", fmt.Errorf("drive path %q is outside mount %q", target, mountRoot)
-	}
-	root, err := os.OpenRoot(mountRoot)
-	if err != nil {
-		return nil, "", fmt.Errorf("open drive root: %w", err)
-	}
-	return root, rel, nil
+// secretsEnvFile, apiEnvFile and workloadEnvFile rewrite an existing
+// regular file in place, keeping its owner and mode as the mounted-drive
+// writers' O_TRUNC rewrite did; anything else at the path is replaced.
+func secretsEnvFile(blob []byte) driveFile {
+	return driveFile{what: "stage secrets.env", path: secretsEnvPath, want: blob, mode: 0o400, keepAttrs: true}
 }
 
-// clearNonRegular removes a symlink or other non-regular entry at rel so the
-// write that follows creates a fresh file rather than following a link the
-// tenant planted, even one that stays inside the drive.
-func clearNonRegular(root *os.Root, rel string) error {
-	info, err := root.Lstat(rel)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil
-		}
-		return err
-	}
-	if info.Mode().IsRegular() {
-		return nil
-	}
-	return root.Remove(rel)
+func apiEnvFile(blob []byte) driveFile {
+	return driveFile{what: "stage env.json", path: apiEnvPath, want: blob, mode: 0o400, keepAttrs: true}
 }
 
-// writeDriveFile writes one file beneath a mounted drive, resolving the
-// full-rootfs marker the same way every Stage* method always has.
-func writeDriveFile(mountRoot, optimizedPath string, blob []byte, mode os.FileMode, label string) error {
-	target, err := stagedDrivePath(mountRoot, optimizedPath)
-	if err != nil {
-		return err
-	}
-	root, rel, err := openDriveRoot(mountRoot, target)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = root.Close() }()
-	if err := root.MkdirAll(filepath.Dir(rel), 0o755); err != nil {
-		return fmt.Errorf("mkdir %s: %w", strings.TrimPrefix(filepath.Dir(optimizedPath), "upper/"), err)
-	}
-	if err := clearNonRegular(root, rel); err != nil {
-		return fmt.Errorf("write %s: %w", label, err)
-	}
-	if err := root.WriteFile(rel, blob, mode); err != nil {
-		return fmt.Errorf("write %s: %w", label, err)
-	}
-	return nil
-}
-
-func writeSecretsEnv(mountRoot string, blob []byte) error {
-	return writeDriveFile(mountRoot, secretsEnvPath, blob, 0o400, "secrets.env")
-}
-
-func writeAPIEnv(mountRoot string, blob []byte) error {
-	return writeDriveFile(mountRoot, apiEnvPath, blob, 0o400, "env.json")
-}
-
-func writeWorkloadEnv(mountRoot, workloadName string, blob []byte) error {
-	base, err := stagedDrivePath(mountRoot, workloadEnvPath)
-	if err != nil {
-		return err
-	}
-	root, rel, err := openDriveRoot(mountRoot, filepath.Join(base, workloadName, "env.json"))
-	if err != nil {
-		return err
-	}
-	defer func() { _ = root.Close() }()
-	if err := root.MkdirAll(filepath.Dir(rel), 0o755); err != nil {
-		return fmt.Errorf("mkdir workload env: %w", err)
-	}
-	if err := clearNonRegular(root, rel); err != nil {
-		return fmt.Errorf("write workload env: %w", err)
-	}
-	if err := root.WriteFile(rel, blob, 0o400); err != nil {
-		return fmt.Errorf("write workload env: %w", err)
-	}
-	return nil
+func workloadEnvFile(name string, blob []byte) driveFile {
+	return driveFile{what: "stage workload " + name + " env", path: filepath.Join(workloadEnvPath, name, "env.json"), want: blob, mode: 0o400, keepAttrs: true}
 }
 
 const serviceDiscoveryResolverPath = "upper/etc/resolv.conf"
 
 const serviceProxyCAPath = "upper/etc/faas/service-proxy-ca.crt"
-
-func writeServiceProxyCA(mountRoot string, ca []byte) error {
-	target, err := stagedDrivePath(mountRoot, serviceProxyCAPath)
-	if err != nil {
-		return err
-	}
-	root, err := os.OpenRoot(mountRoot)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = root.Close() }()
-	rel, err := filepath.Rel(mountRoot, target)
-	if err != nil {
-		return err
-	}
-	if err := root.MkdirAll(filepath.Dir(rel), 0o755); err != nil {
-		return fmt.Errorf("create service CA directory: %w", err)
-	}
-	// Remove a prior file first: Root.WriteFile truncates an existing inode
-	// and would otherwise follow a guest-planted symlink. Root confines every
-	// path component to this mounted drive, including malicious parents.
-	if err := root.Remove(rel); err != nil && !os.IsNotExist(err) {
-		return fmt.Errorf("replace service CA: %w", err)
-	}
-	if err := root.WriteFile(rel, ca, 0o444); err != nil {
-		return fmt.Errorf("write service CA: %w", err)
-	}
-	return root.Chmod(rel, 0o444)
-}
 
 const appTaskMarkerPath = "upper/etc/faas/app-task.json"
 
@@ -1703,28 +1752,6 @@ func parseServiceDiscoveryIP(bridgeIP string) (netip.Addr, error) {
 		return netip.Addr{}, fmt.Errorf("invalid private bridge address %q", bridgeIP)
 	}
 	return ip, nil
-}
-
-func writeServiceDiscoveryResolver(mountRoot string, ip netip.Addr) error {
-	target, err := stagedDrivePath(mountRoot, serviceDiscoveryResolverPath)
-	if err != nil {
-		return err
-	}
-	root, rel, err := openDriveRoot(mountRoot, target)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = root.Close() }()
-	if err := root.MkdirAll(filepath.Dir(rel), 0o755); err != nil {
-		return fmt.Errorf("mkdir resolver directory: %w", err)
-	}
-	if err := root.Remove(rel); err != nil && !os.IsNotExist(err) {
-		return fmt.Errorf("remove existing resolver file: %w", err)
-	}
-	if err := root.WriteFile(rel, serviceDiscoveryResolverContents(ip), serviceDiscoveryResolverMode); err != nil {
-		return fmt.Errorf("write resolver file: %w", err)
-	}
-	return nil
 }
 
 const serviceDiscoveryResolverMode os.FileMode = 0o644
@@ -1953,6 +1980,8 @@ func (v *JailerVMM) Restore(ctx context.Context, l Lease, spec RestoreSpec) (err
 		return err
 	}
 	v.cancelStartupCPUBoostTail(l.Instance)
+	discardConsole := v.preopenConsoleFile(l.Instance)
+	defer discardConsole()
 	// Start the breakdown before any chroot or storage work. The manager's
 	// RestoreMs already covers this full method; keeping the detailed log on
 	// the same boundary makes its total_ms comparable to that field and keeps
@@ -1976,6 +2005,16 @@ func (v *JailerVMM) Restore(ctx context.Context, l Lease, spec RestoreSpec) (err
 	}()
 
 	tMemStateResolveStart := time.Now()
+	// ADR-733 sealed capture: decrypt memory, vmstate and the private drive
+	// into this instance's tracked staging files (removed with the VM) and
+	// restore from those, so plaintext never enters the shared store or the
+	// node's read-through cache.
+	memKey, stateKey, sealedDrive := spec.StorageKey, spec.VMStateStorageKey, ""
+	if spec.Storage != nil {
+		if memKey, stateKey, sealedDrive, err = v.openSealedCapture(ctx, l.Instance, spec); err != nil {
+			return err
+		}
+	}
 	// #96 / ADR-025 axis 2 — materialise the mem blob from the configured
 	// StorageBackend into a vmmd-allocated tmp file. After slice 3 the
 	// staging tmp path is purely internal: no caller-supplied MemPath is
@@ -1983,7 +2022,7 @@ func (v *JailerVMM) Restore(ctx context.Context, l Lease, spec RestoreSpec) (err
 	// /srv/fc/snap and the resolution is essentially a stat; the OCI
 	// driver streams the bytes over HTTP. Tmp cleanup happens via the
 	// deferred Kill (chroot lives on tmpfs and disappears with it).
-	memSrc, memTiming, err := v.resolveRestoreBlobForInputs(ctx, l, spec, "mem", spec.StorageKey, spec.VMStatePath)
+	memSrc, memTiming, err := v.resolveRestoreBlobForInputs(ctx, l, spec, "mem", memKey, spec.VMStatePath)
 	if err != nil {
 		return err
 	}
@@ -2012,7 +2051,7 @@ func (v *JailerVMM) Restore(ctx context.Context, l Lease, spec RestoreSpec) (err
 	// backend surfaced no file for this key). It adds only the source and
 	// byte attribution that mem and vmstate previously lacked.
 	stateSrc, stateTiming, gerr := v.resolveRestoreBlobForInputs(
-		ctx, l, spec, "vmstate", spec.VMStateStorageKey, spec.VMStatePath)
+		ctx, l, spec, "vmstate", stateKey, spec.VMStatePath)
 	if gerr != nil {
 		return gerr
 	}
@@ -2054,10 +2093,14 @@ func (v *JailerVMM) Restore(ctx context.Context, l Lease, spec RestoreSpec) (err
 		{artifact: "base", key: spec.BaseKey, errorContext: "vmm: stage base"},
 	}
 	snapshotDriveKey := state.SnapshotDriveKey(state.Snapshot{StorageKey: spec.StorageKey})
+	restoreDriveKey := snapshotDriveKey
+	if sealedDrive != "" {
+		restoreDriveKey = sealedDrive
+	}
 	if len(spec.Workloads) == 0 {
 		mainKey := spec.LayerKey
 		if snapshotDriveKey != "" {
-			mainKey = snapshotDriveKey
+			mainKey = restoreDriveKey
 		}
 		artifacts = append(artifacts, restoreArtifactSpec{
 			artifact: "main", key: mainKey, errorContext: "vmm: stage layer",
@@ -2067,7 +2110,7 @@ func (v *JailerVMM) Restore(ctx context.Context, l Lease, spec RestoreSpec) (err
 			artifact := "main"
 			key := workload.StorageKey
 			if i == 0 && snapshotDriveKey != "" {
-				key = snapshotDriveKey
+				key = restoreDriveKey
 			}
 			if i > 0 {
 				artifact = fmt.Sprintf("sidecar:%s", workload.Name)
@@ -2126,7 +2169,7 @@ func (v *JailerVMM) Restore(ctx context.Context, l Lease, spec RestoreSpec) (err
 	// cannot escape quota accounting by writing past its read-only
 	// boundary).
 	for i := 1; i < len(resolvedWorkloads); i++ {
-		if _, err := v.stageReadOnlyAsForOwner(ctx, stagingOwner, root, resolvedWorkloads[i], snapshotRestoreSidecarName(spec, i, resolvedWorkloads[i]), l.Instance); err != nil {
+		if _, err := v.stageReadOnlyAsForOwner(ctx, stagingOwner, root, resolvedWorkloads[i], restoreSidecarDriveName(i), l.Instance); err != nil {
 			return fmt.Errorf("vmm: stage sidecar %d: %w", i-1, err)
 		}
 	}
@@ -2134,13 +2177,13 @@ func (v *JailerVMM) Restore(ctx context.Context, l Lease, spec RestoreSpec) (err
 	if err := v.pinVerifiedSnapshotDrives(ctx, l, root, spec); err != nil {
 		return fmt.Errorf("vmm: pin protected restore drives: %w", err)
 	}
-	// The pre-boot write loop-mounts drive1 (a clone already bound into the
-	// jail) on a private host mountpoint; nothing staged next — the snapshot
+	// The pre-boot write edits drive1 (a clone already bound into the jail)
+	// in the vmmd-guestdisk sandbox; nothing staged next — the snapshot
 	// binds, chroot ownership, vsock listeners, mount helper, TUN source —
 	// touches drive1, so the write runs alongside them. It is joined before
-	// startJailer: the jailer's mount namespace must never copy an in-flight
-	// loop mount. Native recovery journals every staging step in order, so it
-	// keeps the serial path.
+	// startJailer: the VM must not boot on a drive still being edited. Native
+	// recovery journals every staging step in order, so it keeps the serial
+	// path.
 	var preBootTimings preBootStageTimings
 	var preBootSkipped bool
 	var preBootErr error
@@ -2161,7 +2204,7 @@ func (v *JailerVMM) Restore(ctx context.Context, l Lease, spec RestoreSpec) (err
 	if v.nativeRecovery == nil {
 		go runPreBoot()
 		// Every return below (including errors) waits for the write, so the
-		// deferred Kill never unmounts drive1 under an active loop session.
+		// deferred Kill never removes drive1 under an active edit session.
 		defer func() { <-preBootDone }()
 	} else {
 		runPreBoot()
@@ -2192,7 +2235,7 @@ func (v *JailerVMM) Restore(ctx context.Context, l Lease, spec RestoreSpec) (err
 		return err
 	}
 	if !l.IsBuilder {
-		if err = v.prepareRegisteredGuestVsockListeners(l); err != nil {
+		if err = v.prepareRegisteredGuestVsockListenersForWake(ctx, l); err != nil {
 			return fmt.Errorf("vmm: prepare platform guest receivers: %w", err)
 		}
 	}
@@ -2211,6 +2254,16 @@ func (v *JailerVMM) Restore(ctx context.Context, l Lease, spec RestoreSpec) (err
 		}
 	}
 	tPreBootJoined := time.Now()
+	if l.Quarantine {
+		// ADR-732: the capture's drive still holds the secrets files the
+		// original boot wrote. Remove them from this fork's private copy
+		// before resume so a later process start cannot reload them. It edits
+		// drive1, so it runs only after the pre-boot write joined and, like it,
+		// before startJailer.
+		if err := v.scrubForkSecrets(ctx, stagingOwner, l.Instance); err != nil {
+			return fmt.Errorf("vmm: scrub fork secrets: %w", err)
+		}
+	}
 
 	// Start firecracker with only the API socket, then load + resume.
 	// Move 4 (issue #254): register the per-instance ring BEFORE
@@ -2267,13 +2320,18 @@ func (v *JailerVMM) Restore(ctx context.Context, l Lease, spec RestoreSpec) (err
 		// startJailer), so the UDS is live by the time /snapshot/load
 		// completes. Trigger the resume hook now to re-seed entropy and step
 		// the clock before the app can bind :8080 (spec §11 V6).
-		if err = v.TriggerResumeHook(ctx, l, time.Now().UnixNano()); err != nil {
+		if spec.verifiedSnapshot != nil && spec.verifiedSnapshot.request.FunctionMigration != nil {
+			err = v.triggerResumeHookOnce(ctx, l, time.Now().UnixNano(), nil)
+		} else {
+			err = v.TriggerResumeHook(ctx, l, time.Now().UnixNano())
+		}
+		if err != nil {
 			return fmt.Errorf("vmm: resume hook: %w", err)
 		}
 	}
 	tResume := time.Now()
 	if !spec.KeepPaused && !spec.SkipReady {
-		if err = v.waitApplicationReady(ctx, l, spec.HealthcheckPath, spec.HealthcheckGRPC, spec.HealthcheckGRPCService, spec.StartupDeadlineS, "", spec.ImageHealthcheckRequired, nil); err != nil {
+		if err = v.waitApplicationReady(ctx, l, spec.HealthcheckPath, spec.HealthcheckGRPC, spec.HealthcheckGRPCService, spec.StartupDeadlineS, "", false, spec.ImageHealthcheckRequired, nil); err != nil {
 			return fmt.Errorf("vmm: readiness after restore: %w", err)
 		}
 	}
@@ -2338,6 +2396,10 @@ func (v *JailerVMM) Restore(ctx context.Context, l Lease, spec RestoreSpec) (err
 		// the near-zero gap Manager marked when it started it.
 		breakdown.Prepare.SetupNetworkMs = networkSetup.Milliseconds()
 	}
+	journalTiming := v.resourceJournal.takeTiming(l.Instance)
+	breakdown.JournalSyncMs = journalTiming.Sync.Milliseconds()
+	breakdown.JournalLockWaitMs = journalTiming.LockWait.Milliseconds()
+	breakdown.JournalCommits = journalTiming.Commits
 	v.observeRestoreArtifacts(breakdown.ResolveArtifacts)
 	v.wakePhaseMetrics.ObserveRestorePhases(breakdown)
 	v.emitRestoreBreakdown(ctx, l, tDone, breakdown)
@@ -2359,10 +2421,9 @@ func (v *JailerVMM) Restore(ctx context.Context, l Lease, spec RestoreSpec) (err
 		"stage_pre_boot_files_ms", breakdown.StagePreBootFilesMs,
 		"stage_pre_boot_files_skipped", preBootSkipped,
 		"pre_boot_prepare_us", preBootTimings.Prepare.Microseconds(),
-		"pre_boot_mount_ms", preBootTimings.Mount.Milliseconds(),
+		"pre_boot_replay_ms", preBootTimings.Replay.Milliseconds(),
 		"pre_boot_check_us", preBootTimings.Check.Microseconds(),
 		"pre_boot_write_us", preBootTimings.Write.Microseconds(),
-		"pre_boot_unmount_ms", preBootTimings.Unmount.Milliseconds(),
 		"pre_boot_files_total", preBootTimings.FilesTotal,
 		"pre_boot_files_written", preBootTimings.FilesWritten,
 		"stage_snapshot_ms", breakdown.StageSnapshotMs,
@@ -2379,6 +2440,9 @@ func (v *JailerVMM) Restore(ctx context.Context, l Lease, spec RestoreSpec) (err
 		"load_snapshot_ms", breakdown.LoadSnapshotMs,
 		"resume_hook_ms", breakdown.ResumeHookMs,
 		"wait_ready_ms", breakdown.WaitReadyMs,
+		"journal_sync_ms", breakdown.JournalSyncMs,
+		"journal_lock_wait_ms", breakdown.JournalLockWaitMs,
+		"journal_commits", breakdown.JournalCommits,
 		"total_ms", breakdown.TotalMs,
 	)
 	return nil
@@ -2447,11 +2511,35 @@ func (v *JailerVMM) RegisterGuestVsockStreamHandler(port uint32, handler GuestVs
 	if v.guestVsockStreamHandlers == nil {
 		v.guestVsockStreamHandlers = make(map[uint32]GuestVsockStreamHandler)
 	}
-	if _, exists := v.guestVsockStreamHandlers[port]; exists {
+	if _, exists := v.guestVsockStreamHandlers[port]; exists || v.guestVsockLeaseHandlers[port] != nil {
 		v.mu.Unlock()
 		return fmt.Errorf("guest vsock handler already registered on port %d", port)
 	}
 	v.guestVsockStreamHandlers[port] = handler
+	observer := v.guestVsockObserver
+	v.mu.Unlock()
+	if observer != nil {
+		observer(port, "", nil)
+	}
+	return nil
+}
+
+// Lease-scoped receivers capture the boot/restore process generation before
+// accepting traffic. A delayed connection cannot bind to a later VM with the
+// same allocator slot and instance ID.
+func (v *JailerVMM) registerGuestVsockLeaseHandler(port uint32, handler func(Lease, net.Conn) (string, error)) error {
+	if v == nil || port == 0 || handler == nil {
+		return errors.New("invalid lease-scoped guest receiver")
+	}
+	v.mu.Lock()
+	if v.guestVsockStreamHandlers[port] != nil || v.guestVsockLeaseHandlers[port] != nil {
+		v.mu.Unlock()
+		return errors.New("guest receiver port already registered")
+	}
+	if v.guestVsockLeaseHandlers == nil {
+		v.guestVsockLeaseHandlers = make(map[uint32]func(Lease, net.Conn) (string, error))
+	}
+	v.guestVsockLeaseHandlers[port] = handler
 	observer := v.guestVsockObserver
 	v.mu.Unlock()
 	if observer != nil {
@@ -2473,7 +2561,34 @@ func (v *JailerVMM) notifyGuestVsockTransport(port uint32, failureKind string, e
 // instance. A preparation failure aborts boot/restore and marks the daemon
 // unhealthy; serving a VM without its platform channels would make lifecycle
 // and identity behavior silently incomplete.
-func (v *JailerVMM) prepareRegisteredGuestVsockListeners(l Lease) error {
+// GuestVsockStreamOrigin is fixed when a VM listener is prepared. It is never
+// read from a guest frame or looked up through a replacement Manager entry.
+type GuestVsockStreamOrigin struct{ AppID, WakeID, NodeID string }
+type guestVsockOriginConn struct {
+	net.Conn
+	origin GuestVsockStreamOrigin
+}
+
+func GuestVsockOrigin(conn net.Conn) (GuestVsockStreamOrigin, bool) {
+	identified, ok := conn.(*guestVsockOriginConn)
+	if !ok {
+		return GuestVsockStreamOrigin{}, false
+	}
+	return identified.origin, true
+}
+
+// GuestVsockOriginConnForTest binds origin to conn as a prepared listener
+// does, for receivers tested without a VM.
+func GuestVsockOriginConnForTest(conn net.Conn, origin GuestVsockStreamOrigin) net.Conn {
+	return &guestVsockOriginConn{Conn: conn, origin: origin}
+}
+
+func (v *JailerVMM) prepareRegisteredGuestVsockListenersForWake(ctx context.Context, l Lease) error {
+	fields, _ := wire.FromContext(ctx)
+	return v.prepareRegisteredGuestVsockListeners(l, GuestVsockStreamOrigin{AppID: fields.AppID, WakeID: fields.WakeID, NodeID: fields.NodeID})
+}
+
+func (v *JailerVMM) prepareRegisteredGuestVsockListeners(l Lease, origins ...GuestVsockStreamOrigin) error {
 	if v.nativeRecovery != nil {
 		path, err := v.nativeRecovery.journal.qualifications("").restores().path(l.Instance)
 		if err == nil {
@@ -2486,6 +2601,9 @@ func (v *JailerVMM) prepareRegisteredGuestVsockListeners(l Lease) error {
 	handlers := make(map[uint32]GuestVsockStreamHandler, len(v.guestVsockStreamHandlers))
 	for port, handler := range v.guestVsockStreamHandlers {
 		handlers[port] = handler
+	}
+	for port, handler := range v.guestVsockLeaseHandlers {
+		handlers[port] = func(_ string, conn net.Conn) (string, error) { return handler(l, conn) }
 	}
 	v.mu.Unlock()
 	for port, handler := range handlers {
@@ -2500,6 +2618,12 @@ func (v *JailerVMM) prepareRegisteredGuestVsockListeners(l Lease) error {
 			return fmt.Errorf("prepare guest vsock receiver port %d: %w", port, err)
 		}
 		v.notifyGuestVsockTransport(port, "", nil)
+		if len(origins) > 0 {
+			origin, original := origins[0], handler
+			handler = func(instance string, conn net.Conn) (string, error) {
+				return original(instance, &guestVsockOriginConn{Conn: conn, origin: origin})
+			}
+		}
 		go v.serveGuestVsockStreams(l.Instance, port, ln, handler)
 	}
 	return nil
@@ -2647,6 +2771,7 @@ func (v *JailerVMM) closeGuestVsockListeners(instance string) {
 		}
 	}
 	delete(v.characterizationReceipts, instance)
+	delete(v.jobExits, instance)
 	v.mu.Unlock()
 	for port, ln := range listeners {
 		if ln != nil {
@@ -2711,19 +2836,37 @@ const (
 // resume request.
 var ErrGuestLacksRestoreReseed = errors.New("vmm: restored guest-init lacks the userspace RNG reseed barrier (ADR-687)")
 
-func readResumeCapabilities(conn net.Conn) error {
+// readResumeCapabilities reads the capability byte after an OK ack and, when
+// the guest announces it, the guest-side timing frame (ADR-022 amendment).
+// The timings are advisory: a malformed frame costs the diagnostics, never
+// the restore, so it returns nil timings rather than an error.
+func readResumeCapabilities(conn net.Conn) (*resumetimingproto.Timings, error) {
 	_ = conn.SetReadDeadline(time.Now().Add(resumeCapabilityWait))
 	caps := make([]byte, 1)
 	if _, err := io.ReadFull(conn, caps); err != nil || caps[0]&resumeCapUserspaceReseed == 0 {
-		return ErrGuestLacksRestoreReseed
+		return nil, ErrGuestLacksRestoreReseed
 	}
-	return nil
+	if caps[0]&resumetimingproto.CapTimings == 0 {
+		return nil, nil
+	}
+	timings, err := resumetimingproto.ReadFrame(conn)
+	if err != nil {
+		slog.Default().Debug("resume hook: guest timing frame unreadable", "err", err)
+		return nil, nil
+	}
+	return &timings, nil
 }
 
 // extensionHookMsgEvent is the host-initiated lifecycle notification type.
 // It shares the resume listener's CONNECT handshake and is consumed by the
 // guest extension bridge (guest/init/listen_resume_linux.go).
 const extensionHookMsgEvent uint32 = 3
+
+// extensionHookAckUnavailable is the guest's answer when no extension
+// endpoint accepted the event (guest/init VsockExtensionAckUnavailable,
+// ADR-20261025150000). TriggerExtensionHook reports it as
+// extension.ErrUnavailable so callers can stop sending per-request events.
+const extensionHookAckUnavailable byte = 16
 
 const beforeCheckpointHookMsg uint32 = 5
 const beforeCheckpointHookAckFailed byte = 14
@@ -2966,6 +3109,7 @@ func (v *JailerVMM) triggerResumeHookObservedWithPeer(ctx context.Context, l Lea
 	if _, err := io.ReadFull(conn, ack[:]); err != nil {
 		return fmt.Errorf("vmm: read resume ack: %w", err)
 	}
+	acked := time.Now()
 	ackValue := ack[0]
 	if ackValue != 0 {
 		if ackValue == resumeHookAckAfterRestore {
@@ -2976,7 +3120,8 @@ func (v *JailerVMM) triggerResumeHookObservedWithPeer(ctx context.Context, l Lea
 		}
 		return fmt.Errorf("vmm: resume hook failed (ack=%d)", ackValue)
 	}
-	if err := readResumeCapabilities(conn); err != nil {
+	guest, err := readResumeCapabilities(conn)
+	if err != nil {
 		return err
 	}
 	if validatePeer != nil {
@@ -2994,11 +3139,46 @@ func (v *JailerVMM) triggerResumeHookObservedWithPeer(ctx context.Context, l Lea
 	}
 	// Keep host transport setup separate from waiting for the guest hook.
 	// Durations and the lease ID are sufficient; never log the entropy payload.
-	slog.Default().Info("resume hook timing", "instance", l.Instance,
+	ackWait := acked.Sub(sent)
+	attrs := []any{"instance", l.Instance,
 		"connect_ms", connected.Sub(started).Milliseconds(),
 		"write_ms", sent.Sub(connected).Milliseconds(),
-		"ack_ms", time.Since(sent).Milliseconds(), "attempts", attempts)
+		"ack_ms", ackWait.Milliseconds(), "attempts", attempts}
+	if guest != nil {
+		attrs = append(attrs, resumeGuestTimingAttrs(*guest, ackWait)...)
+		v.wakePhaseMetrics.ObserveResumeGuestStages(*guest, ackWait)
+	}
+	slog.Default().Info("resume hook timing", attrs...)
 	return nil
+}
+
+// resumeGuestOutside is the part of the host's ack wait the guest did not
+// account for: vsock transport both ways and the time before guest-init's
+// handler ran at all (vCPU resume, guest scheduling, faulting guest-init back
+// in). Host and guest durations come from separate monotonic clocks, so a
+// small negative difference is clamped to zero.
+func resumeGuestOutside(t resumetimingproto.Timings, ackWait time.Duration) time.Duration {
+	return max(ackWait-time.Duration(t.TotalUs)*time.Microsecond, 0)
+}
+
+// resumeGuestTimingAttrs renders the guest's resume stages for the
+// "resume hook timing" record.
+func resumeGuestTimingAttrs(t resumetimingproto.Timings, ackWait time.Duration) []any {
+	return []any{
+		"guest_total_us", t.TotalUs,
+		"guest_outside_us", resumeGuestOutside(t, ackWait).Microseconds(),
+		"guest_read_us", t.ReadUs,
+		"guest_entropy_us", t.EntropyUs,
+		"guest_hwrng_us", t.HWRNGUs,
+		"guest_clock_us", t.ClockUs,
+		"guest_uuid_marker_us", t.UUIDMarkerUs,
+		"guest_userspace_reseed_us", t.UserspaceReseedUs,
+		"guest_reseed_clients", t.ReseedClients,
+		"guest_reseed_slowest_us", t.ReseedSlowestUs,
+		"guest_reseed_slowest_runtime", t.ReseedSlowestRuntime,
+		"guest_profiles_us", t.ProfilesUs,
+		"guest_after_restore_us", t.AfterRestoreUs,
+	}
 }
 
 // TriggerBeforeCheckpoint is a fail-closed barrier before a terminal init
@@ -3168,8 +3348,11 @@ func (v *JailerVMM) TriggerExtensionHook(ctx context.Context, l Lease, phase str
 						ack := []byte{0}
 						if _, err = io.ReadFull(conn, ack); err == nil {
 							_ = conn.Close()
-							if ack[0] == 0 {
+							switch ack[0] {
+							case 0:
 								return nil
+							case extensionHookAckUnavailable:
+								return fmt.Errorf("vmm: guest has no extension endpoint: %w", extension.ErrUnavailable)
 							}
 							return fmt.Errorf("vmm: extension hook rejected (ack=%d)", ack[0])
 						}
@@ -3376,6 +3559,13 @@ func (v *JailerVMM) SnapshotKeepAlive(ctx context.Context, l Lease, spec Snapsho
 		// This legacy path creates memory/state files before drive export.
 		// Native capture requires its original output/publication session;
 		// refuse before hooks, pause, file creation or failed-capture deletion.
+		// Ordinary protocol-1 park and warm captures may instead run the
+		// native producer (ADR 20261022184951); migration and admitted
+		// protocol-2 captures keep this refusal.
+		if v.nativeRuntimeCaptureEnabled() && spec.nativeRuntime != nil && spec.admittedParent.Binding.ProtocolVersion == 0 &&
+			spec.admittedGrant == nil && spec.functionMigration == nil && spec.functionMigrationGrant == nil && spec.Storage == nil {
+			return v.captureNativeRuntimeSnapshot(ctx, l, spec)
+		}
 		return SnapshotInfo{}, fmt.Errorf("native recovery: snapshot publication producer is unavailable: %w", state.ErrConflict)
 	}
 	capture, err := v.beginNativeSnapshot(ctx, l, spec)
@@ -3458,11 +3648,24 @@ func (v *JailerVMM) SnapshotKeepAlive(ctx context.Context, l Lease, spec Snapsho
 	// the guest resumes; restoring against the deployment's pristine layer can
 	// otherwise surface filesystem corruption (for example EBADMSG while
 	// reading a CA bundle) after the first scaled/restored instance.
+	// spec.Storage (ADR-733 sealed captures) replaces the shared backend
+	// for this capture's objects and disables every local-path shortcut,
+	// so nothing is published or measured outside it.
+	store := v.storage
+	if spec.Storage != nil {
+		store = spec.Storage
+	}
+	publishedPath := func(key, fallback string) string {
+		if spec.Storage != nil {
+			return fallback
+		}
+		return v.publishedLocalPath(key, fallback)
+	}
 	driveKey := state.SnapshotDriveKey(state.Snapshot{StorageKey: spec.StorageKey})
 	var frozenDrivePath string
 	var driveBytes, driveWritten int64
 	if driveKey != "" {
-		if v.storage == nil {
+		if store == nil {
 			return SnapshotInfo{}, errors.New("vmm: snapshot private drive requires storage backend")
 		}
 		var freezeErr error
@@ -3518,7 +3721,7 @@ func (v *JailerVMM) SnapshotKeepAlive(ctx context.Context, l Lease, spec Snapsho
 	// publication of a new snapshot. Force the StorageBackend.Put path so
 	// the shared registry receives the blob. Explicit local-prefix routing
 	// still remains functional because Put dispatches the key normally.
-	if spec.StorageKey != "" && v.storage != nil && !storage.IsRemoteBackendKind(os.Getenv("FAAS_STORAGE_BACKEND")) {
+	if spec.StorageKey != "" && spec.Storage == nil && v.storage != nil && !storage.IsRemoteBackendKind(os.Getenv("FAAS_STORAGE_BACKEND")) {
 		if resolver, ok := v.storage.(storage.LocalPathResolver); ok {
 			if localPath, pathOK, pathErr := resolver.LocalPath(spec.StorageKey); pathErr != nil {
 				return SnapshotInfo{}, fmt.Errorf("vmm: resolve snapshot mem path: %w", pathErr)
@@ -3558,7 +3761,7 @@ func (v *JailerVMM) SnapshotKeepAlive(ctx context.Context, l Lease, spec Snapsho
 	// vmstate through the legacy path because the key is empty.
 	var stateBytes int64
 	vmstateSrcInChroot := filepath.Join(root, stateName)
-	if spec.VMStateStorageKey != "" && v.storage != nil {
+	if spec.VMStateStorageKey != "" && store != nil {
 		// nolint:forbidigo // vmstateSrcInChroot is the chroot-resident
 		// tmp Firecracker just wrote; not a customer-supplied location,
 		// so the openCustomerFile guard does not apply.
@@ -3566,7 +3769,7 @@ func (v *JailerVMM) SnapshotKeepAlive(ctx context.Context, l Lease, spec Snapsho
 		if oerr != nil {
 			return SnapshotInfo{}, fmt.Errorf("vmm: open snapshot vmstate for publish: %w", oerr)
 		} else {
-			if perr := v.storage.Put(ctx, spec.VMStateStorageKey, f); perr != nil {
+			if perr := store.Put(ctx, spec.VMStateStorageKey, f); perr != nil {
 				_ = f.Close()
 				return SnapshotInfo{}, fmt.Errorf("vmm: publish snapshot vmstate: %w", perr)
 			}
@@ -3587,7 +3790,7 @@ func (v *JailerVMM) SnapshotKeepAlive(ctx context.Context, l Lease, spec Snapsho
 		}
 	}
 
-	if spec.StorageKey != "" && v.storage != nil && !memPublishedLocally {
+	if spec.StorageKey != "" && store != nil && !memPublishedLocally {
 		// nolint:forbidigo // memTmpPath is a vmmd-allocated tmp under
 		// os.TempDir(); not a customer-supplied location, so the
 		// openCustomerFile guard does not apply.
@@ -3595,7 +3798,7 @@ func (v *JailerVMM) SnapshotKeepAlive(ctx context.Context, l Lease, spec Snapsho
 		if oerr != nil {
 			return SnapshotInfo{}, fmt.Errorf("vmm: open snapshot mem for publish: %w", oerr)
 		} else {
-			if perr := v.storage.Put(ctx, spec.StorageKey, f); perr != nil {
+			if perr := store.Put(ctx, spec.StorageKey, f); perr != nil {
 				_ = f.Close()
 				return SnapshotInfo{}, fmt.Errorf("vmm: publish snapshot mem: %w", perr)
 			}
@@ -3609,7 +3812,7 @@ func (v *JailerVMM) SnapshotKeepAlive(ctx context.Context, l Lease, spec Snapsho
 		if oerr != nil {
 			return SnapshotInfo{}, fmt.Errorf("vmm: open snapshot private drive for publish: %w", oerr)
 		}
-		if perr := v.storage.Put(ctx, driveKey, f); perr != nil {
+		if perr := store.Put(ctx, driveKey, f); perr != nil {
 			_ = f.Close()
 			return SnapshotInfo{}, fmt.Errorf("vmm: publish snapshot private drive: %w", perr)
 		}
@@ -3624,16 +3827,16 @@ func (v *JailerVMM) SnapshotKeepAlive(ctx context.Context, l Lease, spec Snapsho
 	// A backend without a local representation falls back to logical bytes,
 	// which is conservative and keeps mixed-version rollouts truthful.
 	if memPublishedPath == "" {
-		memPublishedPath = v.publishedLocalPath(spec.StorageKey, memTmpPath)
+		memPublishedPath = publishedPath(spec.StorageKey, memTmpPath)
 	}
 	statePublishedPath := spec.VMStatePath
 	if spec.VMStateStorageKey != "" {
-		statePublishedPath = v.publishedLocalPath(spec.VMStateStorageKey, vmstateSrcInChroot)
+		statePublishedPath = publishedPath(spec.VMStateStorageKey, vmstateSrcInChroot)
 	}
 	storedBytes := allocatedBytesOrLogical(memPublishedPath, memBytes) +
 		allocatedBytesOrLogical(statePublishedPath, stateBytes)
 	if driveKey != "" {
-		storedBytes += snapshotDriveStoredBytes(driveWritten, v.publishedLocalPath(driveKey, frozenDrivePath), driveBytes)
+		storedBytes += snapshotDriveStoredBytes(driveWritten, publishedPath(driveKey, frozenDrivePath), driveBytes)
 	}
 	logSnapshotMemory(l.Instance, memBytes, memContent, storedBytes, guestMem, guestMemErr)
 
@@ -4088,8 +4291,9 @@ func signalAndKillRace(cmd *exec.Cmd, doneCh <-chan struct{}, signal syscall.Sig
 // DestroyWithExport is the build-VM teardown path (M6 / spec §4.5). It blocks
 // until the firecracker child exits (capped by v.destroyWait — default 10m,
 // comfortable above spec §1 BuildTimeoutSeconds), captures the exit code, and
-// only if exportDir != "" loopback-mounts the chroot-local drive1 to copy out
-// /etc/faas/build-done.json and /build/out/* before removing the chroot.
+// only if exportDir != "" reads /etc/faas/build-done.json and /build/out/*
+// off the chroot-local drive1 (sandboxed, never mounted) before removing the
+// chroot.
 //
 // Ordinary app VMs with exportDir="" are killed immediately, matching
 // Manager.Destroy's contract. Builder records wait for completion even when
@@ -4181,12 +4385,12 @@ exited:
 		return exitCode, fmt.Errorf("vmm: process exit unconfirmed for %s: %w", l.Instance, waitErr)
 	}
 
-	// 2. Artifact export (build VMs only). Loopback-mount the chroot-local
-	//    drive1.ext4 and copy out /etc/faas/build-done.json + /build/out/*.
-	//    The mount uses root privileges (vmmd is the only root component, §11).
+	// 2. Artifact export (build VMs only). Read /etc/faas/build-done.json and
+	//    /build/out/* off the chroot-local drive1 in the vmmd-guestdisk
+	//    sandbox; the drive is never mounted (ADR-20261025090100).
 	var exportErr error
 	if exportDir != "" {
-		if err := v.exportBuildArtifacts(l.Instance, exportDir); err != nil {
+		if err := v.exportBuildArtifacts(ctx, l.Instance, exportDir); err != nil {
 			// Retain the export error, but release the dead VM's resources
 			// before returning it.
 			exportErr = fmt.Errorf("vmm: export build artifacts: %w", err)
@@ -4272,14 +4476,20 @@ func consoleShowsBuilderReady(path string) bool {
 }
 
 func consoleContains(path, marker string) bool {
+	return bytes.Contains(consoleTail(path), []byte(marker))
+}
+
+// consoleTail returns the last 16 KiB of a serial console file, or nil when it
+// cannot be read.
+func consoleTail(path string) []byte {
 	f, err := os.Open(path)
 	if err != nil {
-		return false
+		return nil
 	}
 	defer func() { _ = f.Close() }()
 	info, err := f.Stat()
 	if err != nil {
-		return false
+		return nil
 	}
 	const tailBytes int64 = 16 * 1024
 	offset := info.Size() - tailBytes
@@ -4288,9 +4498,9 @@ func consoleContains(path, marker string) bool {
 	}
 	buf := make([]byte, info.Size()-offset)
 	if _, err := f.ReadAt(buf, offset); err != nil && !errors.Is(err, io.EOF) {
-		return false
+		return nil
 	}
-	return bytes.Contains(buf, []byte(marker))
+	return buf
 }
 
 // WaitBuilderReady waits for a KeepWarm builder to finish a successful build
@@ -4395,13 +4605,12 @@ func (v *JailerVMM) InstancePID(instance string) (int, bool) {
 	return cmd.Process.Pid, true
 }
 
-// exportBuildArtifacts loopback-mounts the chroot-local drive1 image and
-// copies /etc/faas/build-done.json and /build/out/* into exportDir. Files
-// larger than exportMaxBytes are skipped + counted as failures (best-effort
-// — never blocks the caller). vmmd is the only root component, so the mount
-// is fine; the chroot-local drive1.ext4 is owned by root after provision
-// (pkg/fcvm/vmm.go:stageWritable).
-func (v *JailerVMM) exportBuildArtifacts(instance, exportDir string) (retErr error) {
+// exportBuildArtifacts copies /etc/faas/build-done.json and /build/out/*
+// from the builder's drive1 into exportDir. Untrusted build code ran as root
+// and wrote that drive, so it is read in the vmmd-guestdisk sandbox and never
+// mounted on the host (ADR-20261025090100). Files larger than exportMaxBytes
+// are skipped (best-effort — never blocks the caller).
+func (v *JailerVMM) exportBuildArtifacts(ctx context.Context, instance, exportDir string) (retErr error) {
 	if v.nativeRecovery != nil {
 		return errors.New("native recovery: artifact export producer provenance is not implemented")
 	}
@@ -4421,97 +4630,83 @@ func (v *JailerVMM) exportBuildArtifacts(instance, exportDir string) (retErr err
 	if err != nil {
 		return err
 	}
-	mp, err := os.MkdirTemp("", "faas-vmm-export-")
-	if err != nil {
-		return fmt.Errorf("mkdir mountpoint: %w", err)
-	}
-	defer func() { _ = os.RemoveAll(mp) }()
-
-	// Export is read-only: the guest has already synced the upperdir before
-	// powering off. Mount ro,noload first so a dirty ext4 journal cannot make
-	// the host block in rw journal replay while the builder queue is waiting.
-	// A plain read-only mount remains a compatibility fallback for images whose
-	// filesystem features reject noload.
-	//
-	// The drive was written by untrusted build code running as root in the
-	// guest, so the mount is also nodev,nosuid,noexec: a device node the
-	// build created (the host's NVMe, /dev/zero) must not become a live
-	// device when vmmd, as root, reads the export.
-	if out, mountErr := exec.Command("mount", "-o", "loop,ro,noload,nodev,nosuid,noexec", drive1, mp).CombinedOutput(); mountErr != nil {
-		if roOut, roErr := exec.Command("mount", "-o", "loop,ro,nodev,nosuid,noexec", drive1, mp).CombinedOutput(); roErr != nil {
-			return fmt.Errorf("mount loop: ro,noload=%w (%s); ro=%w (%s)", mountErr, bytes.TrimSpace(out), roErr, bytes.TrimSpace(roOut))
-		}
-	}
-	defer func() { _ = exec.Command("umount", mp).Run() }()
-
-	// build-done.json is the canonical manifest builderd reads.
-	if data, ok := readBuildDone(mp); ok {
-		if err := os.WriteFile(filepath.Join(exportDir, "build-done.json"), data, 0o644); err != nil {
-			return fmt.Errorf("write build-done.json: %w", err)
-		}
-	} // else: VM died before guest-init wrote it (or it is not a bounded
-	// regular file) — caller falls back to exit-code class.
-
-	// /build/out/ holds the produced OCI tarball. Walk + copy with the size
-	// cap enforced. A build that overruns the cap is logged as infra failure
-	// via the caller's classification (no error returned — best-effort).
-	if srcOut, ok := buildOutDir(mp); ok {
-		dstOut := filepath.Join(exportDir, "build", "out")
-		if err := os.MkdirAll(dstOut, 0o755); err != nil {
-			return fmt.Errorf("mkdir out: %w", err)
-		}
-		return copyTree(srcOut, dstOut, v.exportMax())
-	}
-	return nil
+	// The export outlives a cancelled caller: builderd waits for the files.
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), buildExportTimeout)
+	defer cancel()
+	return v.editDrive(ctx, nativeLaunchRecord{}, instance, drive1, func(img driveImage) error {
+		return exportBuildDrive(ctx, img, exportDir, v.exportMax())
+	}, nil)
 }
+
+// buildExportTimeout bounds reading a builder drive's outputs.
+const buildExportTimeout = 10 * time.Minute
 
 // maxBuildDoneBytes bounds the guest-written build-done.json manifest (exit
 // code, failure class, and a log tail).
 const maxBuildDoneBytes = 1 << 20
 
-// buildDoneRel is build-done.json's path on the mounted builder drive.
-const buildDoneRel = "upper/etc/faas/build-done.json"
+// Builder drives use the optimized layout: their files live below /upper.
+const (
+	buildDoneImagePath = "/upper/etc/faas/build-done.json"
+	buildOutImagePath  = "/upper/build/out"
+)
 
-// readBuildDone reads the guest-written build manifest from the mounted
-// builder drive. Untrusted build code wrote the drive and vmmd reads it as
-// root, so the path resolves through os.Root and must name a bounded regular
-// file: a link to a host file, or to an endless device such as /dev/zero,
-// is never read.
-func readBuildDone(mountRoot string) ([]byte, bool) {
-	root, err := os.OpenRoot(mountRoot)
+// exportBuildDrive is the drive half of exportBuildArtifacts.
+func exportBuildDrive(ctx context.Context, img driveImage, exportDir string, maxBytes int64) error {
+	probe := append(imageComponents(buildDoneImagePath), imageComponents(buildOutImagePath)...)
+	entries, err := img.Inspect(ctx, probe, map[string]guestdisk.Read{buildDoneImagePath: {Max: maxBuildDoneBytes}})
 	if err != nil {
-		return nil, false
+		return fmt.Errorf("inspect builder drive: %w", err)
 	}
-	defer func() { _ = root.Close() }()
-	info, err := root.Lstat(buildDoneRel)
-	if err != nil || !info.Mode().IsRegular() || info.Size() > maxBuildDoneBytes {
-		return nil, false
-	}
-	f, err := root.Open(buildDoneRel)
-	if err != nil {
-		return nil, false
-	}
-	defer func() { _ = f.Close() }()
-	data, err := io.ReadAll(io.LimitReader(f, maxBuildDoneBytes+1))
-	if err != nil || len(data) > maxBuildDoneBytes {
-		return nil, false
-	}
-	return data, true
-}
-
-// buildOutDir returns the mounted drive's upper/build/out when every path
-// component is a real directory. A symlinked component would start the
-// export walk inside a host directory.
-func buildOutDir(mountRoot string) (string, bool) {
-	dir := mountRoot
-	for _, part := range []string{"upper", "build", "out"} {
-		dir = filepath.Join(dir, part)
-		info, err := os.Lstat(dir)
-		if err != nil || !info.IsDir() {
-			return "", false
+	// build-done.json is the canonical manifest builderd reads. Without it
+	// (the VM died before guest-init wrote it, or it is not a bounded regular
+	// file) the caller falls back to the exit-code class.
+	if realDirs(entries, buildDoneImagePath) {
+		if e := entries[buildDoneImagePath]; e.Kind == guestdisk.Regular && e.Data != nil {
+			if err := os.WriteFile(filepath.Join(exportDir, "build-done.json"), e.Data, 0o644); err != nil {
+				return fmt.Errorf("write build-done.json: %w", err)
+			}
 		}
 	}
-	return dir, true
+	// /build/out holds the produced OCI tarball. A symlinked component would
+	// start the export inside another directory, so every component must be
+	// a real directory.
+	if !realDirs(entries, buildOutImagePath) || entries[buildOutImagePath].Kind != guestdisk.Directory {
+		return nil
+	}
+	// Dump next to the export, on its filesystem: an output can be several
+	// GiB, too large for the tmpfs session scratch. The dump is planned from
+	// a listing and held to the export budgets before anything is written:
+	// sparse files and hard links take no room on the drive the build wrote
+	// but would be written at full size.
+	staging := filepath.Join(exportDir, ".guestdisk-dump")
+	if err := os.Mkdir(staging, 0o700); err != nil {
+		return fmt.Errorf("mkdir export staging: %w", err)
+	}
+	defer func() { _ = os.RemoveAll(staging) }()
+	src, err := img.DumpFiles(ctx, buildOutImagePath, staging, guestdisk.DumpBudget{FileBytes: maxBytes, TotalBytes: api.MaxExportedTreeBytes, Entries: api.MaxExportedTreeEntries})
+	if errors.Is(err, guestdisk.ErrDumpBudget) {
+		return fmt.Errorf("%w: %w", errExportBudget, err)
+	}
+	if err != nil {
+		return fmt.Errorf("dump build output: %w", err)
+	}
+	dstOut := filepath.Join(exportDir, "build", "out")
+	if err := os.MkdirAll(dstOut, 0o755); err != nil {
+		return fmt.Errorf("mkdir out: %w", err)
+	}
+	return moveTree(src, dstOut, maxBytes)
+}
+
+// realDirs reports whether every parent of p is a real directory.
+func realDirs(entries map[string]guestdisk.Entry, p string) bool {
+	comps := imageComponents(p)
+	for _, dir := range comps[:len(comps)-1] {
+		if entries[dir].Kind != guestdisk.Directory {
+			return false
+		}
+	}
+	return true
 }
 
 func handoffBuildExportOwnership(exportDir string) error {
@@ -4607,6 +4802,29 @@ func sidecarDriveImageName(idx int) string {
 	return fmt.Sprintf("sidecar-%d.ext4", idx)
 }
 
+// coldBootReadOnlyDriveName is the jail name provisionForOwner stages
+// read-only config drive i under. i counts virtio-blk drives with the base
+// as drive 0, also when a pmem base takes its place, so a sidecar's name
+// does not depend on the base device.
+func coldBootReadOnlyDriveName(i int, d Drive) string {
+	if i == 0 {
+		return stableReadOnlyName(d.PathOnHost, baseImageName)
+	}
+	if strings.HasPrefix(d.DriveID, DriveSidecarPrefix) {
+		return sidecarDriveImageName(i - 1)
+	}
+	return filepath.Base(d.PathOnHost)
+}
+
+// restoreSidecarDriveName is the jail name a restore stages workload i's
+// drive under. A Firecracker snapshot records each drive by the name cold
+// boot gave it, and workload i is config drive i+1, so this must match
+// coldBootReadOnlyDriveName(i+1, …): staging under any other name makes
+// every restore of an app with a companion fail and fall back to cold boot.
+func restoreSidecarDriveName(i int) string {
+	return sidecarDriveImageName(i)
+}
+
 // workloadManifestPath is the in-guest location guest-init reads to
 // discover a workload's runtime shape (issue #463 / ADR-069 / PR-B).
 // Each sidecar drive carries /etc/faas/workload.json (the manifest
@@ -4634,56 +4852,12 @@ const secretsEnvPath = "upper/etc/faas/secrets.env"
 // manifest_env > os.environ".
 const apiEnvPath = "upper/etc/faas/env.json"
 
-// stagedDrivePath selects the on-disk contract location for drive1. The
-// optimized two-drive artifact stores mutable runtime files below /upper;
-// full-rootfs artifacts are already mounted as the guest's root and therefore
-// receive the same files directly under /. The marker is written only by the
-// platform builder, so a malformed value fails closed instead of silently
-// writing state to a path guest-init will never read.
-func stagedDrivePath(mountRoot, optimizedPath string) (string, error) {
-	// The marker lives on the tenant-writable drive, so it resolves through
-	// os.Root like every write: a symlinked parent directory cannot point
-	// the read at a host file.
-	root, err := os.OpenRoot(mountRoot)
-	if err != nil {
-		return "", fmt.Errorf("open drive root: %w", err)
-	}
-	defer func() { _ = root.Close() }()
-	marker := strings.TrimPrefix(api.FullRootfsMarkerPath, "/")
-	info, err := root.Lstat(marker)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return filepath.Join(mountRoot, optimizedPath), nil
-		}
-		return "", fmt.Errorf("inspect full-rootfs marker: %w", err)
-	}
-	if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
-		return "", fmt.Errorf("full-rootfs marker is not a regular file")
-	}
-	if info.Size() != int64(len(api.FullRootfsMarkerValue)) {
-		return "", fmt.Errorf("invalid full-rootfs marker payload")
-	}
-	data, err := root.ReadFile(marker)
-	if err != nil {
-		return "", fmt.Errorf("read full-rootfs marker: %w", err)
-	}
-	if string(data) != api.FullRootfsMarkerValue {
-		return "", fmt.Errorf("invalid full-rootfs marker payload")
-	}
-	return filepath.Join(mountRoot, strings.TrimPrefix(optimizedPath, "upper/")), nil
-}
-
-// StageSecretsEnv loopback-mounts drive1 (the per-app layer, the only fs
-// the VM can write at runtime), writes /etc/faas/secrets.env with mode
-// 0400, and umounts. The plaintext is read off the chroot-local image
-// only for the duration of this call. vmmd is the only root component,
-// so the loopback mount is permitted by the §11 threat model.
-//
-// Mirrors exportBuildArtifacts (read side) — same chroot layout, same
-// mountpoint-handling pattern, write-vs-read swap. The function is a no-op
-// when jsonBlob is empty: no file is written, no mount attempted. This
-// short-circuit is what lets an app with zero secrets proceed without any
-// extra mount/umount cost.
+// StageSecretsEnv writes /etc/faas/secrets.env with mode 0400 onto drive1
+// (the per-app layer, the only fs the VM can write at runtime) in one
+// sandboxed drive session (ADR-20261025090100). The plaintext passes through
+// the session's private scratch directory only for the duration of this
+// call. The function is a no-op when jsonBlob is empty: no file is written
+// and no session opened, so an app with zero secrets pays nothing.
 func (v *JailerVMM) StageSecretsEnv(instance string, jsonBlob []byte) error {
 	ctx, cancel := v.driveStagingContext()
 	defer cancel()
@@ -4698,18 +4872,15 @@ func (v *JailerVMM) StageSecretsEnv(instance string, jsonBlob []byte) error {
 	if err != nil {
 		return err
 	}
-	return v.driveStagingSession(ctx, owner, instance, drive1, "faas-vmm-secrets-", func(mp string) error {
-		return writeSecretsEnv(mp, jsonBlob)
-	})
+	return v.stageDriveFile(ctx, owner, instance, drive1, secretsEnvFile(jsonBlob))
 }
 
 // StageAPIEnv is the plaintext sibling of StageSecretsEnv (issue #395 /
 // ADR-045). Writes /etc/faas/env.json on drive1 (a JSON map of key→value)
-// for guest-init to merge into the process env at boot. Same loopback-
-// mount dance as StageSecretsEnv (loop mount drive1 → write file →
-// umount), but the payload is plaintext by contract — no host key
-// needed, no unseal step. Empty jsonBlob short-circuits to a no-op so
-// apps without API env rows skip the mount/umount cycle entirely.
+// for guest-init to merge into the process env at boot, in the same kind of
+// drive session as StageSecretsEnv, but the payload is plaintext by
+// contract — no host key needed, no unseal step. Empty jsonBlob
+// short-circuits to a no-op so apps without API env rows skip the session.
 //
 // File mode 0o400 mirrors StageSecretsEnv's read-only posture even
 // though the contents are non-sensitive — the guest-init process is the
@@ -4729,9 +4900,7 @@ func (v *JailerVMM) StageAPIEnv(instance string, jsonBlob []byte) error {
 	if err != nil {
 		return err
 	}
-	return v.driveStagingSession(ctx, owner, instance, drive1, "faas-vmm-apienv-", func(mp string) error {
-		return writeAPIEnv(mp, jsonBlob)
-	})
+	return v.stageDriveFile(ctx, owner, instance, drive1, apiEnvFile(jsonBlob))
 }
 
 // workloadEnvPath is the per-sidecar override file written to the main
@@ -4760,9 +4929,7 @@ func (v *JailerVMM) StageWorkloadEnv(instance, workloadName string, jsonBlob []b
 	if err != nil {
 		return err
 	}
-	return v.driveStagingSession(ctx, owner, instance, drive1, "faas-vmm-workload-env-", func(mp string) error {
-		return writeWorkloadEnv(mp, workloadName, jsonBlob)
-	})
+	return v.stageDriveFile(ctx, owner, instance, drive1, workloadEnvFile(workloadName, jsonBlob))
 }
 
 func validWorkloadName(name string) bool {
@@ -4794,9 +4961,10 @@ func validWorkloadName(name string) bool {
 // driveIdx = -1 and we'll point at drive1 (the legacy
 // single-workload path) instead of the sidecarLeaf naming convention.
 //
-// The drive is loopback-mounted rw, the file is written with mode
-// 0o400 (read-only for the in-guest workloads), and umount runs in
-// a defer. The compatibility manifest captures command and port
+// The file is written with mode 0o400 (read-only for the in-guest
+// workloads) in a sandboxed drive session. Sidecar drives are shared
+// read-only artifacts, so only the main workload's drive1 (driveIdx -1) can
+// be stamped. The compatibility manifest captures command and port
 // from the WorkloadSpec that schedd sent on the wake wire; vmmd
 // trusts the wire as it trusts every other wake-field (the gRPC
 // server runs on a unix socket reachable only by the faas group;
@@ -4808,19 +4976,14 @@ func (v *JailerVMM) StageWorkloadManifest(instance string, driveIdx int, w Workl
 	if err != nil {
 		return err
 	}
-	if v.nativeRecovery != nil && driveIdx >= 0 {
-		return errors.New("native loop mount: cannot write a shared read-only sidecar image")
+	if driveIdx >= 0 {
+		return errors.New("vmm: cannot write a shared read-only sidecar image")
 	}
-	if driveIdx < 0 {
-		// Main workload: stamp on drive1 (the legacy path).
-		drive1, err := v.resolveDriveImage(instance)
-		if err != nil {
-			return err
-		}
-		return v.writeWorkloadManifestForOwner(ctx, owner, instance, drive1, w)
+	drive1, err := v.resolveDriveImage(instance)
+	if err != nil {
+		return err
 	}
-	drive := filepath.Join(v.chrootRoot(instance), sidecarDriveImageName(driveIdx))
-	return v.writeWorkloadManifestForOwner(ctx, owner, instance, drive, w)
+	return v.writeWorkloadManifestForOwner(ctx, owner, instance, drive1, w)
 }
 
 func (v *JailerVMM) writeWorkloadManifestForOwner(ctx context.Context, owner nativeLaunchRecord, instance, drive string, w WorkloadSpec) error {
@@ -4831,14 +4994,12 @@ func (v *JailerVMM) writeWorkloadManifestForOwner(ctx context.Context, owner nat
 	if err != nil {
 		return err
 	}
-	return v.driveStagingSession(ctx, owner, instance, drive, "faas-vmm-workload-", func(mp string) error {
-		return writeDriveFile(mp, workloadManifestPath, blob, 0o400, "workload.json")
-	})
+	return v.stageDriveFile(ctx, owner, instance, drive, driveFile{what: "write workload.json", path: workloadManifestPath, want: blob, mode: 0o400, keepAttrs: true})
 }
 
 // marshalWorkloadManifest projects the byte cap and marshals the
-// compatibility manifest. It runs BEFORE any mount so an oversized payload
-// never costs a loop device.
+// compatibility manifest. It runs BEFORE any drive session so an oversized
+// payload never costs one.
 func marshalWorkloadManifest(w WorkloadSpec) ([]byte, error) {
 	// Pre-marshal byte cap projection (PR-B review finding #7).
 	// Marshalling an unbounded Name field before checking size
@@ -5063,10 +5224,9 @@ type workloadRoster struct {
 // single-workload path (no roster) is a guest-init fallback — boot
 // routes to runAppWithEnv unchanged.
 //
-// We mount drive1 once, write both the roster file and verify the
-// per-drive main manifest is in place (StageWorkloadManifest
-// stamps drive1 too with the main spec; that's the operator-visibility
-// affordance for debugging tools, the orchestrator ignores it).
+// StageWorkloadManifest stamps drive1 with the main spec too; that is the
+// operator-visibility affordance for debugging tools, the orchestrator
+// ignores it.
 //
 // sidecars may be nil/empty — boot runs the legacy path. Caller
 // filters out the main workload before passing.
@@ -5085,13 +5245,11 @@ func (v *JailerVMM) StageWorkloadRoster(instance string, main WorkloadSpec, side
 	if err != nil {
 		return err
 	}
-	return v.driveStagingSession(ctx, owner, instance, drive1, "faas-vmm-roster-", func(mp string) error {
-		return writeDriveFile(mp, workloadRosterPath, blob, 0o400, "workloads.json")
-	})
+	return v.stageDriveFile(ctx, owner, instance, drive1, driveFile{what: "write workloads.json", path: workloadRosterPath, want: blob, mode: 0o400, keepAttrs: true})
 }
 
 // marshalWorkloadRoster projects the byte cap and marshals the deployment
-// roster before any mount is taken.
+// roster before any drive session opens.
 func marshalWorkloadRoster(main WorkloadSpec, sidecars []WorkloadSpec) ([]byte, error) {
 	// Pre-marshal byte cap projection (PR-B review finding #7).
 	// Cap runs BEFORE json.Marshal — matches the posture
@@ -5194,48 +5352,64 @@ func (v *JailerVMM) destroyWaitFor(exportDir string, buildTimeoutSec int) time.D
 	return wait
 }
 
-// copyTree copies a directory tree from src to dst, skipping any single file
-// whose size exceeds maxBytes. Best-effort by design — partial copies are OK
-// for a build that overshot the cap.
-func copyTree(src, dst string, maxBytes int64) error {
+// errExportBudget stops an export whose tree passes the total budget.
+var errExportBudget = errors.New("vmm: build output exceeds the export budget")
+
+// moveTree moves an untrusted dump's directories and regular files into dst.
+// Builder output is an OCI tarball plus BuildKit's local cache: directories
+// and regular files only. Symlinks, device nodes, FIFOs and sockets the
+// untrusted build created are dropped (recreating a link hands builderd a
+// path into the host), as is any file over maxBytes. The whole tree is also
+// held to api.MaxExportedTreeBytes and api.MaxExportedTreeEntries: the build
+// wrote the drive, so sparse files and hard links can each pass the per-file
+// cap while together they would fill the host. The dump already enforced the
+// same budgets before writing; this is the second check. Nothing writes the
+// dump any more: the sandboxed tool has exited, and so has the builder VM
+// that shares its uid.
+func moveTree(src, dst string, maxBytes int64) error {
+	return moveTreeWithin(src, dst, maxBytes, api.MaxExportedTreeBytes, api.MaxExportedTreeEntries)
+}
+
+func moveTreeWithin(src, dst string, maxBytes, maxTotalBytes int64, maxEntries int) error {
+	var totalBytes int64
+	entries := 0
 	return filepath.WalkDir(src, func(path string, d os.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
+		}
+		if entries++; entries > maxEntries {
+			return fmt.Errorf("%w: more than %d entries", errExportBudget, maxEntries)
 		}
 		rel, err := filepath.Rel(src, path)
 		if err != nil {
 			return err
 		}
 		target := filepath.Join(dst, rel)
-		if d.IsDir() {
-			if err := os.MkdirAll(target, 0o755); err != nil {
-				return err
-			}
-			info, err := d.Info()
-			if err != nil {
-				return err
-			}
-			return os.Chmod(target, info.Mode().Perm())
-		}
-		if !d.Type().IsRegular() {
-			// Builder output is an OCI tarball plus BuildKit's local
-			// cache — directories and regular files only. Symlinks, device
-			// nodes, FIFOs and sockets the untrusted build created are
-			// dropped: recreating a link hands builderd a path into the
-			// host, and opening a device node reads it as root.
-			return nil
-		}
 		info, err := d.Info()
 		if err != nil {
 			return err
 		}
-		if maxBytes > 0 && info.Size() > maxBytes {
-			return nil // skip the oversize file
+		switch {
+		case d.IsDir():
+			if err := os.MkdirAll(target, 0o755); err != nil {
+				return err
+			}
+			return os.Chmod(target, info.Mode().Perm())
+		case d.Type().IsRegular():
+			if maxBytes > 0 && info.Size() > maxBytes {
+				return nil // skip the oversize file
+			}
+			// Apparent size: a sparse or linked file counts at full size.
+			if totalBytes += info.Size(); totalBytes > maxTotalBytes {
+				return fmt.Errorf("%w: more than %d bytes", errExportBudget, maxTotalBytes)
+			}
+			if err := os.Rename(path, target); err != nil {
+				return err
+			}
+			return os.Chmod(target, info.Mode().Perm())
+		default:
+			return nil
 		}
-		if err := copyFile(path, target); err != nil {
-			return err
-		}
-		return os.Chmod(target, info.Mode().Perm())
 	})
 }
 
@@ -5296,6 +5470,7 @@ func (v *JailerVMM) mkChrootLegacy(instance string) (string, error) {
 // this call so the lookup here is always non-nil. Firecracker writes its
 // own stderr only on configuration errors; that stream remains discarded
 // to avoid mixing error noise into the customer's log tail.
+
 func (v *JailerVMM) startJailer(ctx context.Context, l Lease, extraFCArgs ...string) error {
 	if err := v.prepareJournalLaunch(l); err != nil {
 		return err
@@ -5357,11 +5532,11 @@ func (v *JailerVMM) startJailer(ctx context.Context, l Lease, extraFCArgs ...str
 	}
 	isolateLifecycleChild(cmd)
 	ring := v.ringFor(l.Instance)
-	consolePath := filepath.Join("/var/log/faas", "vm-"+l.Instance+".console")
-	var consoleFile *os.File
-	if f, openErr := os.OpenFile(consolePath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o640); openErr == nil {
-		consoleFile = f
-	}
+	consolePath := v.consoleLogPath(l.Instance)
+	consoleFile := v.takeConsoleFile(l.Instance)
+	// Adoption ADR §2: a file console is Firecracker's own stdout, so the
+	// guest's console does not depend on this vmmd staying alive.
+	fileConsole := v.fileConsoleEnabled() && consoleFile != nil
 	stdout := io.Discard
 	var consoleWriter *customerConsoleWriter
 	if ring != nil {
@@ -5372,7 +5547,10 @@ func (v *JailerVMM) startJailer(ctx context.Context, l Lease, extraFCArgs ...str
 		consoleWriter = &customerConsoleWriter{ring: ring}
 		stdout = consoleWriter
 	}
-	if consoleFile != nil {
+	if fileConsole {
+		// Firecracker writes the file itself; tailConsole feeds the ring.
+		stdout = consoleFile
+	} else if consoleFile != nil {
 		stdout = io.MultiWriter(stdout, consoleFile)
 	}
 	cmd.Stdout = stdout
@@ -5407,9 +5585,18 @@ func (v *JailerVMM) startJailer(ctx context.Context, l Lease, extraFCArgs ...str
 	}
 	v.mu.Lock()
 	v.proc[l.Instance] = cmd
-	rec := &instanceRecord{cmd: cmd, consolePath: consolePath, isBuilder: l.IsBuilder, done: make(chan struct{})}
+	rec := &instanceRecord{cmd: cmd, consolePath: consolePath, isBuilder: l.IsBuilder, done: make(chan struct{}), fileConsole: fileConsole}
 	v.recs[l.Instance] = rec
 	v.mu.Unlock()
+	if fileConsole {
+		// The child holds its own descriptor; vmmd's copy is not needed.
+		_ = consoleFile.Close()
+		consoleFile = nil
+		if consoleWriter != nil {
+			go tailConsole(consolePath, 0, consoleWriter, consoleWriter.Flush, rec.done)
+			consoleWriter = nil // the tail flushes it once the process exits
+		}
+	}
 	if rec.isBuilder {
 		go watchBuilderGuestHalt(rec.consolePath, rec.done, 250*time.Millisecond, func() {
 			v.killProcess(l.Instance)
@@ -5544,14 +5731,7 @@ func (v *JailerVMM) provisionForOwner(ctx context.Context, owner nativeLaunchRec
 		var name string
 		var err error
 		if d.IsReadOnly {
-			name = filepath.Base(d.PathOnHost)
-			if i == 0 {
-				name = stableReadOnlyName(d.PathOnHost, baseImageName)
-			}
-			if i > 0 && strings.HasPrefix(d.DriveID, DriveSidecarPrefix) {
-				name = sidecarDriveImageName(i - 1)
-			}
-			name, err = v.stageReadOnlyAsForOwner(ctx, owner, root, d.PathOnHost, name, instanceID)
+			name, err = v.stageReadOnlyAsForOwner(ctx, owner, root, d.PathOnHost, coldBootReadOnlyDriveName(i, d), instanceID)
 		} else if cfg.EphemeralWritable {
 			name, err = v.stageEphemeralWritableAsForOwner(ctx, owner, root, d.PathOnHost, layerImageName, uid, gid, instanceID)
 		} else {
@@ -5596,7 +5776,18 @@ func (v *JailerVMM) stageEphemeralWritableAsForOwner(ctx context.Context, owner 
 	} else if !errors.Is(err, syscall.EXDEV) {
 		return "", fmt.Errorf("link ephemeral writable %s: %w", src, err)
 	}
-	return v.bindImageForOwner(ctx, owner, root, src, name, instance, 0o006, false)
+	// The jail is tmpfs and builderd's scratch is on disk, so the image is
+	// bound, and a bind keeps the source's owner. The guest-disk sandbox
+	// edits a drive only as its jail uid (ADR-20261025090100), so hand this
+	// build's own scratch image to that uid, as the link above hands over the
+	// shared inode. builderd only removes it afterwards.
+	if err := os.Chmod(src, 0o600); err != nil {
+		return "", fmt.Errorf("chmod ephemeral writable %s: %w", src, err)
+	}
+	if err := chownJail(src, uid, gid); err != nil {
+		return "", err
+	}
+	return v.bindImageForOwner(ctx, owner, root, src, name, instance, 0, false)
 }
 
 // stageReadOnlyAs hardlinks a shared read-only image when possible and
@@ -6163,6 +6354,17 @@ func (v *JailerVMM) unmountBindMounts(instance string) error {
 	v.mu.Unlock()
 	for i := len(binds) - 1; i >= 0; i-- {
 		b := binds[i]
+		if b.adopted && b.mount != nil {
+			// The mount lives on in any process still in the namespace that
+			// made it; the source keeps its widened mode until none remains.
+			held, err := mountNamespaceHeld("/proc", b.mount.Namespace)
+			if err != nil {
+				return err
+			}
+			if held {
+				return errors.New("adopted bind is still mounted in the previous vmmd's namespace; retaining ownership")
+			}
+		}
 		if b.tracked {
 			current, err := resourceMountAt(b.mountpoint)
 			if err != nil {
@@ -6430,6 +6632,8 @@ func (v *JailerVMM) waitReadyWithProbe(ctx context.Context, l Lease, healthcheck
 				seen.lastStatus = status
 			case isConnRefusedErr(transportErr):
 				seen.connRefused++
+			case isNonHTTPReply(transportErr):
+				seen.nonHTTP++
 			}
 		}
 		select {
@@ -6474,7 +6678,7 @@ func grpcHealthcheckNotReadyProblem(l Lease, service string, responseCount int, 
 // as readiness; request and service modes may not. A terminal startup exit
 // fails fast with the captured log tail instead of waiting for a misleading
 // TCP timeout.
-func (v *JailerVMM) waitReadyOrCharacterized(ctx context.Context, l Lease, healthcheckPath string, healthcheckGRPC bool, healthcheckGRPCService string, startupDeadlineS int, executionMode string, receipt *characterizationReceipt) error {
+func (v *JailerVMM) waitReadyOrCharacterized(ctx context.Context, l Lease, healthcheckPath string, healthcheckGRPC bool, healthcheckGRPCService string, startupDeadlineS int, executionMode string, workerPushDelivery bool, receipt *characterizationReceipt) error {
 	readyCtx, cancelReady := context.WithCancel(ctx)
 	defer cancelReady()
 	readyCh := make(chan error, 1)
@@ -6515,7 +6719,7 @@ func (v *JailerVMM) waitReadyOrCharacterized(ctx context.Context, l Lease, healt
 				}
 			}
 			if receiptReceived && receipt.err == nil {
-				if terminal, outcomeErr := characterizationBootOutcome(receipt.report, executionMode); terminal {
+				if terminal, outcomeErr := characterizationBootOutcome(receipt.report, executionMode, workerPushDelivery); terminal {
 					return outcomeErr
 				}
 				if mismatchErr := characterizationReadinessMismatch(receipt.report, executionMode, err); mismatchErr != nil {
@@ -6523,6 +6727,9 @@ func (v *JailerVMM) waitReadyOrCharacterized(ctx context.Context, l Lease, healt
 				}
 				if loopbackErr := loopbackBindProblem(receipt.report, err); loopbackErr != nil {
 					return loopbackErr
+				}
+				if portErr := portMismatchProblem(receipt.report, l.AppPort, err); portErr != nil {
+					return portErr
 				}
 			}
 			return err
@@ -6538,7 +6745,7 @@ func (v *JailerVMM) waitReadyOrCharacterized(ctx context.Context, l Lease, healt
 				}
 				continue
 			}
-			if terminal, outcomeErr := characterizationBootOutcome(receipt.report, executionMode); terminal {
+			if terminal, outcomeErr := characterizationBootOutcome(receipt.report, executionMode, workerPushDelivery); terminal {
 				return outcomeErr
 			}
 		case <-ctx.Done():
@@ -6552,7 +6759,7 @@ func (v *JailerVMM) waitReadyOrCharacterized(ctx context.Context, l Lease, healt
 	}
 }
 
-func characterizationBootOutcome(report api.CharacterizationReport, executionMode string) (bool, error) {
+func characterizationBootOutcome(report api.CharacterizationReport, executionMode string, workerPushDelivery bool) (bool, error) {
 	if report.ObservedPort == 0 && report.ExitCode > 0 {
 		tail := []rune(strings.TrimSpace(report.LogTail))
 		if len(tail) > 4096 {
@@ -6578,7 +6785,14 @@ func characterizationBootOutcome(report api.CharacterizationReport, executionMod
 		switch report.ObservedClass {
 		case "worker":
 			return true, nil
-		case "job", "http", "graphql", "grpc":
+		case "http":
+			// Push deliveries are private HTTP POSTs to the worker's port,
+			// so a push-bound worker's listener is its delivery contract.
+			if workerPushDelivery {
+				return true, nil
+			}
+			return true, executionModeConflict(executionMode, report)
+		case "job", "graphql", "grpc":
 			return true, executionModeConflict(executionMode, report)
 		}
 	case api.ExecutionModeJob:
@@ -6624,6 +6838,26 @@ func loopbackBindProblem(report api.CharacterizationReport, readinessErr error) 
 	return api.NewProblem(422, api.CodeAppLoopbackBound, "app bound to loopback",
 		fmt.Sprintf("startup_phase=handler_boot: the app listens on %s, which the gateway cannot reach; bind 0.0.0.0 (or ::) instead (%s)",
 			strings.Join(report.ListeningAddrs, ", "), readinessErr))
+}
+
+// portMismatchProblem names the port an app listens on when readiness found
+// nothing on the port the host routes to. Production apps listen on $PORT
+// (ADR-1170); since ADR-051's 2026-10-25 amendment no guest rescues another
+// port, and "the app never listened" alone sent customers looking for a
+// crash. Characterization reports the routed port whenever the app listens
+// on it, so a different observed port means the app does not. The detail
+// leaves out the probe's "on :N got ECONNREFUSED (... deadline=...)" text:
+// the CLI reads that as an app that started too slowly and rewrites the hint.
+func portMismatchProblem(report api.CharacterizationReport, appPort int, readinessErr error) error {
+	if appPort <= 0 {
+		appPort = api.DefaultAppPort
+	}
+	if p := api.AsProblem(readinessErr); p == nil || p.Code != api.CodeAppNotListening || report.ObservedPort <= 0 || report.ObservedPort == appPort {
+		return nil
+	}
+	return api.NewProblem(422, api.CodeAppNotListening, "app listens on a different port",
+		fmt.Sprintf("startup_phase=handler_boot: the app listens on port %d, but this deployment routes to port %d ($PORT). Listen on $PORT, or declare port %d: hosting.port in gregale.yaml, or overrides.port for an image deployment",
+			report.ObservedPort, appPort, report.ObservedPort))
 }
 
 // loopbackListenAddr reports a host:port bound to a loopback address. An
@@ -6797,6 +7031,15 @@ func workloadOutputTail(lines []string, max int) string {
 	return string(tail)
 }
 
+// guestAppPort is the port the host routes the app's traffic and readiness
+// probe to: the deployment's port, or api.DefaultAppPort.
+func (l Lease) guestAppPort() int {
+	if l.AppPort < 1 || l.AppPort > 65535 {
+		return api.DefaultAppPort
+	}
+	return l.AppPort
+}
+
 // notReadyProblem shapes the deadline-expired error from the TCP
 // probe path. When every probe hit ECONNREFUSED, the kernel is
 // telling us nothing is listening — the canonical
@@ -6804,12 +7047,9 @@ func workloadOutputTail(lines []string, max int) string {
 // landed), we fall through to app_startup_timeout (the app may be
 // booting, but we waited the full window).
 //
-// The port literal "8080" mirrors waitReady's hard-coded addr —
-// ADR-009 fixes the readiness probe on 8080 regardless of the
-// deployment's per-app override (the override only affects the
-// HTTP GET path on healthcheckPath != ""). The whycopy catalog's
-// Observed renderer templates the port into the Why field so the
-// customer sees the literal ":8080" in the failure response.
+// The detail names the routed port in the "on :N got ECONNREFUSED"
+// form the CLI reads to explain a startup deadline. It used to say
+// ":8080" whatever port the deployment routed to.
 func (v *JailerVMM) notReadyProblem(l Lease, healthcheckPath string, connRefusedCount int, timeout ...time.Duration) *api.Problem {
 	readyTimeout := v.readyTimeout
 	if len(timeout) > 0 && timeout[0] > 0 {
@@ -6818,8 +7058,8 @@ func (v *JailerVMM) notReadyProblem(l Lease, healthcheckPath string, connRefused
 	if connRefusedCount > 0 {
 		return api.NewProblem(422, api.CodeAppNotListening,
 			"no process listening on $PORT",
-			fmt.Sprintf("startup_phase=handler_boot: readiness probe dialed :8080 and got ECONNREFUSED (refused_count=%d, deadline=%s, instance=%s)",
-				connRefusedCount, readyTimeout, l.Instance))
+			fmt.Sprintf("startup_phase=handler_boot: readiness probe on :%d got ECONNREFUSED (refused_count=%d, deadline=%s, instance=%s)",
+				l.guestAppPort(), connRefusedCount, readyTimeout, l.Instance))
 	}
 	return api.NewProblem(422, api.CodeAppStartupTimeout,
 		"app did not become ready in time",
@@ -6828,10 +7068,19 @@ func (v *JailerVMM) notReadyProblem(l Lease, healthcheckPath string, connRefused
 
 // readinessObservation summarizes the HTTP readiness probes of one wake.
 // responses counts real HTTP answers; connRefused counts probes nothing
-// accepted. A transport failure is never an answer (H4-21: a crashed app was
-// reported as "answered 348 readiness probes without a 2xx").
+// accepted; nonHTTP counts connections the app accepted and answered with
+// bytes that are not HTTP. A transport failure is never an answer (H4-21: a
+// crashed app was reported as "answered 348 readiness probes without a 2xx").
 type readinessObservation struct {
-	responses, lastStatus, connRefused int
+	responses, lastStatus, connRefused, nonHTTP int
+}
+
+// isNonHTTPReply reports a probe the app accepted and answered with something
+// other than an HTTP response, such as a raw TCP service's own protocol.
+// net/http reports these as "malformed HTTP response", "... status code" or
+// "... version".
+func isNonHTTPReply(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "malformed HTTP ")
 }
 
 // healthcheckNotReadyProblem distinguishes a reachable handler returning an
@@ -6844,11 +7093,19 @@ func (v *JailerVMM) healthcheckNotReadyProblem(l Lease, healthcheckPath string, 
 			fmt.Sprintf("startup_phase=handler_healthcheck: guest %s answered %d readiness probes at %s without a 2xx response (last status %d) before %s",
 				l.Instance, seen.responses, healthcheckPath, seen.lastStatus, readyTimeout))
 	}
+	// Checked before connRefused: the refusals came before the app bound
+	// its port, so "never listened" would be false.
+	if seen.nonHTTP > 0 {
+		return api.NewProblem(422, api.CodeAppStartupTimeout,
+			"app did not answer its HTTP healthcheck",
+			fmt.Sprintf("startup_phase=handler_healthcheck: guest %s accepted %d readiness probes GET %s on :%d but answered without HTTP before %s; a raw TCP service declares that port as a TCP listener and sets no health path",
+				l.Instance, seen.nonHTTP, healthcheckPath, l.guestAppPort(), readyTimeout))
+	}
 	if seen.connRefused > 0 {
 		return api.NewProblem(422, api.CodeAppNotListening,
 			"no process listening on $PORT",
-			fmt.Sprintf("startup_phase=handler_boot: readiness probe GET %s on :8080 got ECONNREFUSED (refused_count=%d, deadline=%s, instance=%s); the app never listened or exited during startup",
-				healthcheckPath, seen.connRefused, readyTimeout, l.Instance))
+			fmt.Sprintf("startup_phase=handler_boot: readiness probe GET %s on :%d got ECONNREFUSED (refused_count=%d, deadline=%s, instance=%s); the app never listened or exited during startup",
+				healthcheckPath, l.guestAppPort(), seen.connRefused, readyTimeout, l.Instance))
 	}
 	return api.NewProblem(422, api.CodeAppStartupTimeout,
 		"app did not become ready in time",
@@ -7459,6 +7716,23 @@ func (e *fcAPIError) Error() string {
 }
 
 func (v *JailerVMM) apiCall(ctx context.Context, method, instance, path string, body any) error {
+	if method == http.MethodPatch && path == "/vm" && v.functionPauseBarrier != nil {
+		data, err := json.Marshal(body)
+		if err != nil {
+			return err
+		}
+		var change struct {
+			State string `json:"state"`
+		}
+		if err := json.Unmarshal(data, &change); err != nil {
+			return err
+		}
+		if change.State == "Paused" {
+			if err := v.functionPauseBarrier(instance); err != nil {
+				return err
+			}
+		}
+	}
 	return v.apiCallWithClient(ctx, v.fcClient(instance), method, path, body)
 }
 
@@ -7589,9 +7863,7 @@ func (v *JailerVMM) stageWritableAsForOwner(ctx context.Context, owner nativeLau
 	if instance == "" {
 		return stageWritableAs(root, src, name, uid, gid)
 	}
-	clone, cloned, err := reflinkCloneTempWithCreator(src, instance, func(dir, pattern string) (*os.File, error) {
-		return v.newMaterialisedFile(instance, dir, pattern, "clone")
-	}, v.removeMaterialisedFile)
+	clone, cloned, err := v.reflinkWritableClone(src, instance)
 	if err != nil {
 		return "", fmt.Errorf("reflink writable %s: %w", src, err)
 	}
@@ -7739,8 +8011,9 @@ func (v *JailerVMM) materializeFromStorage(ctx context.Context, instanceID, key 
 		return key, nil // nil storage: key IS the direct host path (builderd path-through mode)
 	}
 	// A wake reads what it fetched from the page cache; the node cache
-	// makes the fill durable and installs it after the wake has it.
-	rc, err := v.storage.Get(storage.WithDeferredCacheDurability(ctx), key)
+	// makes the fill durable and installs it after the wake has it. A native
+	// runtime capture is read from the tree only vmmd writes.
+	rc, err := v.snapshotStore(key).Get(storage.WithDeferredCacheDurability(ctx), key)
 	if err != nil {
 		return "", fmt.Errorf("vmm: storage get %q: %w", key, err)
 	}
@@ -7765,6 +8038,56 @@ func (v *JailerVMM) materializeFromStorage(ctx context.Context, instanceID, key 
 	if err := tmp.Close(); err != nil {
 		err = errors.Join(err, v.removeMaterialisedFile(tmpPath))
 		return "", fmt.Errorf("vmm: close tmp for %q: %w", key, err)
+	}
+	return tmpPath, nil
+}
+
+// openSealedCapture decrypts a sealed capture's memory, vmstate and private
+// drive through spec.Storage into tracked staging files and returns their
+// absolute paths, which restore resolution passes through unchanged. The
+// drive is optional: a capture taken without one has no twin.
+func (v *JailerVMM) openSealedCapture(ctx context.Context, instanceID string, spec RestoreSpec) (mem, vmstate, drive string, err error) {
+	if mem, err = v.materializeSealed(ctx, instanceID, spec.Storage, spec.StorageKey); err != nil {
+		return "", "", "", err
+	}
+	if vmstate, err = v.materializeSealed(ctx, instanceID, spec.Storage, spec.VMStateStorageKey); err != nil {
+		return "", "", "", err
+	}
+	if key := state.SnapshotDriveKey(state.Snapshot{StorageKey: spec.StorageKey}); key != "" {
+		drive, err = v.materializeSealed(ctx, instanceID, spec.Storage, key)
+		if storage.IsNotFound(err) {
+			return mem, vmstate, "", nil
+		}
+		if err != nil {
+			return "", "", "", err
+		}
+	}
+	return mem, vmstate, drive, nil
+}
+
+// materializeSealed copies key's plaintext from store into a staging file
+// tracked for instanceID and removed when it is killed.
+func (v *JailerVMM) materializeSealed(ctx context.Context, instanceID string, store storage.StorageBackend, key string) (string, error) {
+	if key == "" {
+		return "", fmt.Errorf("vmm: sealed capture is missing a storage key")
+	}
+	rc, err := store.Get(ctx, key)
+	if err != nil {
+		return "", fmt.Errorf("vmm: open sealed %q: %w", key, err)
+	}
+	defer func() { _ = rc.Close() }()
+	tmp, err := v.newMaterialisedFile(instanceID, "", "faas-sealed-*.bin", "materialised")
+	if err != nil {
+		return "", fmt.Errorf("vmm: create tmp for sealed %q: %w", key, err)
+	}
+	tmpPath := tmp.Name()
+	// Sparse: memory and the private drive are mostly zero pages.
+	if _, err := crashcrypt.CopySparse(tmp, rc); err != nil {
+		_ = tmp.Close()
+		return "", errors.Join(fmt.Errorf("vmm: decrypt %q: %w", key, err), v.removeMaterialisedFile(tmpPath))
+	}
+	if err := tmp.Close(); err != nil {
+		return "", errors.Join(fmt.Errorf("vmm: close tmp for sealed %q: %w", key, err), v.removeMaterialisedFile(tmpPath))
 	}
 	return tmpPath, nil
 }
@@ -7831,11 +8154,12 @@ func (v *JailerVMM) probeRestoreLocalPath(key string) (string, string, bool, err
 	if key == "" || filepath.IsAbs(key) || v.storage == nil {
 		return "", "", false, nil
 	}
-	if resolver, ok := v.storage.(storage.LocalPathSourceResolver); ok {
+	store := v.snapshotStore(key)
+	if resolver, ok := store.(storage.LocalPathSourceResolver); ok {
 		path, source, local, err := resolver.LocalPathWithSource(key)
 		return path, string(source), local, err
 	}
-	if resolver, ok := v.storage.(storage.LocalPathResolver); ok {
+	if resolver, ok := store.(storage.LocalPathResolver); ok {
 		path, local, err := resolver.LocalPath(key)
 		if err != nil || !local {
 			return path, "", local, err
@@ -7983,6 +8307,42 @@ func (v *JailerVMM) trackMaterialised(instanceID, tmpPath string) {
 	v.mu.Lock()
 	v.materialisedTmp[instanceID] = append(v.materialisedTmp[instanceID], tmpPath)
 	v.mu.Unlock()
+}
+
+// reflinkWritableClone takes the journaled CoW clone of src for instance, or
+// reports false when the filesystem cannot reflink. The probe file is then
+// released in full, asset included: a record that names a file which is
+// gone makes a restarted vmmd refuse the guest at adoption.
+func (v *JailerVMM) reflinkWritableClone(src, instance string) (string, bool, error) {
+	return reflinkCloneTempWithCreator(src, instance, func(dir, pattern string) (*os.File, error) {
+		return v.newMaterialisedFile(instance, dir, pattern, "clone")
+	}, func(path string) error { return v.releaseMaterialisedFile(instance, path) })
+}
+
+// releaseMaterialisedFile removes one owned staged file now, as teardown's
+// sweep would: the file, its journal asset and its tracking.
+func (v *JailerVMM) releaseMaterialisedFile(instanceID, path string) error {
+	if err := v.removeMaterialisedFile(path); err != nil {
+		return err
+	}
+	if err := v.retireResourceAsset(instanceID, path); err != nil {
+		return err
+	}
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	delete(v.materialisedIdentity, path)
+	kept := v.materialisedTmp[instanceID][:0]
+	for _, p := range v.materialisedTmp[instanceID] {
+		if p != path {
+			kept = append(kept, p)
+		}
+	}
+	if len(kept) == 0 {
+		delete(v.materialisedTmp, instanceID)
+	} else {
+		v.materialisedTmp[instanceID] = kept
+	}
+	return nil
 }
 
 // sweepMaterialised retains paths that could not be removed for teardown retry.

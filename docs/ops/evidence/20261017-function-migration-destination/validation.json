@@ -1,0 +1,148 @@
+{
+  "base": "d76c4ee3a974b59755f020c6b4bf7a4e2be6583f",
+  "go": "go version go1.26.9 linux/amd64",
+  "GOMAXPROCS": 2,
+  "GOFLAGS": "-mod=readonly -p=1",
+  "portable_checks": [
+    {
+      "check": "policy",
+      "command": "make adr-number-uniqueness-check sealed-env-scope-check runbook-sql-check shell-quoting-check text-encoding-check",
+      "exit_code": 0,
+      "log_sha256": "d9840aa8ffd2f4362ce48d063e57d6f7d3db991cceb15645218131e49109f2d3"
+    },
+    {
+      "check": "docs",
+      "command": "go run ./cmd/docs-links-check && python3 -m unittest discover -s scripts/ops -p check_live_docs_test.py",
+      "exit_code": 0,
+      "log_sha256": "e7799c00067fe68ad8db2be2f22088f81f35bf65213dbce97feda8b7d625c95c"
+    },
+    {
+      "check": "workflow_syntax",
+      "command": "actionlint .github/workflows/function-backends.yml",
+      "exit_code": 0,
+      "log_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "check": "lint_default",
+      "command": [
+        "/workspace/faas-env/cache/go-build/a3/a38b073006734922287a2db753f2469c73c5526161481050e15daa5c6debb551-d/golangci-lint",
+        "run",
+        "--new-from-rev=d76c4ee3a974b59755f020c6b4bf7a4e2be6583f",
+        "--timeout",
+        "20m",
+        "./pkg/runtimeadmission",
+        "./pkg/state",
+        "./pkg/fcvm",
+        "./pkg/sched",
+        "./pkg/vmmdgrpc"
+      ],
+      "exit_code": 0,
+      "log_sha256": "e92606b0bf483111dff0a120c315ea165821348f31365020e2468a0059095c47"
+    },
+    {
+      "check": "lint_qualification",
+      "command": [
+        "/workspace/faas-env/cache/go-build/a3/a38b073006734922287a2db753f2469c73c5526161481050e15daa5c6debb551-d/golangci-lint",
+        "run",
+        "--new-from-rev=d76c4ee3a974b59755f020c6b4bf7a4e2be6583f",
+        "--timeout",
+        "20m",
+        "--build-tags=metal,function_background_native",
+        "./pkg/runtimeadmission",
+        "./pkg/fcvm",
+        "./pkg/sched",
+        "./pkg/vmmdgrpc"
+      ],
+      "exit_code": 0,
+      "log_sha256": "e92606b0bf483111dff0a120c315ea165821348f31365020e2468a0059095c47"
+    },
+    {
+      "check": "lint_fcvm_final",
+      "command": [
+        "/workspace/faas-env/cache/go-build/a3/a38b073006734922287a2db753f2469c73c5526161481050e15daa5c6debb551-d/golangci-lint",
+        "run",
+        "--new-from-rev=d76c4ee3a974b59755f020c6b4bf7a4e2be6583f",
+        "--timeout",
+        "20m",
+        "./pkg/fcvm"
+      ],
+      "exit_code": 0,
+      "log_sha256": "e92606b0bf483111dff0a120c315ea165821348f31365020e2468a0059095c47"
+    },
+    {
+      "check": "docs_after_final_report",
+      "command": "go run ./cmd/docs-links-check",
+      "exit_code": 0,
+      "log_sha256": "38dc2058b857694ce40bc9964f996dfd21aaed5781ef6f801fb51d196e258056"
+    }
+  ],
+  "completed_final_commands": [
+    {
+      "check": "lint_fcvm_final",
+      "command": [
+        "/workspace/faas-env/cache/go-build/a3/a38b073006734922287a2db753f2469c73c5526161481050e15daa5c6debb551-d/golangci-lint",
+        "run",
+        "--new-from-rev=d76c4ee3a974b59755f020c6b4bf7a4e2be6583f",
+        "--timeout",
+        "20m",
+        "./pkg/fcvm"
+      ],
+      "exit_code": 0,
+      "GOMEMLIMIT": "7GiB"
+    },
+    {
+      "check": "runtime_default",
+      "command": [
+        "go",
+        "test",
+        "-race",
+        "./pkg/runtimeadmission",
+        "./pkg/fcvm",
+        "./pkg/sched",
+        "./pkg/vmmdgrpc",
+        "-run",
+        "^Test(Function(Migration|Destination|Resource|Execution)|NativeSnapshot|RuntimeConfigMigration|MigrationCommit|MigrationHarness)",
+        "-count=1",
+        "-timeout=8m",
+        "-json"
+      ],
+      "exit_code": 0,
+      "GOMEMLIMIT": "5GiB"
+    },
+    {
+      "check": "runtime_qualification",
+      "command": [
+        "go",
+        "test",
+        "-race",
+        "-tags",
+        "metal,function_background_native",
+        "./pkg/runtimeadmission",
+        "./pkg/fcvm",
+        "./pkg/sched",
+        "./pkg/vmmdgrpc",
+        "-run",
+        "^Test(Function(Migration|Destination|Resource|Execution)|NativeSnapshot|RuntimeConfigMigration|MigrationCommit|MigrationHarness)",
+        "-count=1",
+        "-timeout=8m",
+        "-json"
+      ],
+      "exit_code": 0,
+      "GOMEMLIMIT": "5GiB"
+    },
+    {
+      "check": "native_compile_and_prerequisites_driver",
+      "command": [
+        "python3",
+        "/tmp/function-destination-native-checks.py"
+      ],
+      "exit_code": 0,
+      "GOMEMLIMIT": "5GiB"
+    }
+  ],
+  "native_execution_qualified": false,
+  "excluded_iterations": [
+    "disk-full/intermediate schema and scope failures corrected before final state run",
+    "preliminary lint timeout; superseded by completed zero-issue runs"
+  ]
+}

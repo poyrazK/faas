@@ -22,9 +22,12 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"sync/atomic"
+	"unicode/utf8"
 
 	"github.com/onebox-faas/faas/pkg/api"
 )
@@ -164,14 +167,11 @@ func RenderDocsRow(w io.Writer, url string) {
 }
 
 // RenderHintRow is the error-explanations cluster (spec §6.4
-// amendment 1) hint renderer. Emits a single-line "💡 hint: <hint>"
-// row between Detail and Why in the APIError render. The 💡
-// glyph is in the central glyph table that the tripwire
-// TestLintTripwire_NoGlyphLiteralOutsideOutput pins to output.go
-// (lint_tripwires_test.go:138) — no other file in the package
-// may use 💡 verbatim. When Enabled() is false the row collapses
-// to "  hint: <hint>" so script consumers that grep on the
-// literal "hint:" still match.
+// amendment 1) hint renderer. Emits a single-line "hint: <hint>"
+// row between Detail and Why in the APIError render. The row has no
+// glyph in either mode: UX §3.2 allows only ✓ ✗ → ! and no emoji,
+// and none of those four means "hint". Script consumers that grep on
+// the literal "hint:" match the same text in pipes and terminals.
 //
 // The hint is the single short next-action line from the
 // pkg/whycopy catalog — one line, ≤200 bytes (the CLI tripwire in
@@ -179,10 +179,6 @@ func RenderDocsRow(w io.Writer, url string) {
 // ceiling on the catalog side, so this renderer never has to
 // truncate).
 func RenderHintRow(w io.Writer, hint string) {
-	if Enabled() {
-		_, _ = fmt.Fprintf(w, "  💡 hint: %s\n", hint)
-		return
-	}
 	_, _ = fmt.Fprintf(w, "  hint: %s\n", hint)
 }
 
@@ -283,6 +279,7 @@ func printCommandValidation(w io.Writer, format string, args ...any) {
 // shape as flag validation when --json is active, while retaining the legacy
 // text diagnostic and typo hint for interactive use.
 func printUnknownSubcommand(w io.Writer, path string, command cliCommand, got string) int {
+	command = visibleSubcommands(path, command)
 	detail := fmt.Sprintf("gregale %s: unknown subcommand %q", path, got)
 	suggestion, ok := suggestSubcommand(got, command)
 	if ok && jsonOutput && !jsonUsageHelp {
@@ -292,7 +289,111 @@ func printUnknownSubcommand(w io.Writer, path string, command cliCommand, got st
 	if ok && !jsonOutput {
 		maybeSuggestSub(suggestion)
 	}
+	if !ok && !jsonOutput && len(command.Subcommands) > 0 {
+		printSubcommandChoices(w, path, command, got)
+	}
 	return 1
+}
+
+// unknownSubcommandChoices follows a dispatcher's own "unknown … subcommand"
+// line: a typo gets "Did you mean", anything else the verbs and, for an app
+// slug, the verb-first form. `alerts get` named no verb on production-us
+// rc.294 (Hunt 14 H14-51). It returns the dispatcher's exit code, 1.
+func unknownSubcommandChoices(w io.Writer, path string, command cliCommand, got string) int {
+	if jsonOutput {
+		return 1
+	}
+	command = visibleSubcommands(path, command)
+	if suggestion, ok := suggestSubcommand(got, command); ok {
+		_, _ = fmt.Fprintf(w, "  Did you mean %q?\n", suggestion)
+		return 1
+	}
+	if len(command.Subcommands) > 0 {
+		printSubcommandChoices(w, path, command, got)
+	}
+	return 1
+}
+
+// visibleSubcommands drops the subcommands whose capability is hidden for
+// the account, so choices and suggestions never name a command the CLI then
+// refuses: `app h14-py idle` listed security, network and static-egress-ip on
+// production-us rc.297 (Hunt 14 H14-89).
+func visibleSubcommands(path string, command cliCommand) cliCommand {
+	view := offlineCapabilityView()
+	subs := make([]cliSub, 0, len(command.Subcommands))
+	for _, sub := range command.Subcommands {
+		if !view.hidesPath(path + " " + sub.Name) {
+			subs = append(subs, sub)
+		}
+	}
+	command.Subcommands = subs
+	return command
+}
+
+// printSubcommandChoices lists the verbs a dispatcher accepts. An app slug in
+// the verb position gets the verb-first form: `projects environments h14p`
+// and `debug requests h14-py` named neither (Hunt 14 H14-42). Only a `list`
+// that takes an app gets it: `keys list h14-py` is no command (H14-64).
+func printSubcommandChoices(w io.Writer, path string, command cliCommand, got string) {
+	names := make([]string, 0, len(command.Subcommands))
+	listApp := ""
+	for _, sub := range command.Subcommands {
+		if slices.Contains(names, sub.Name) {
+			continue
+		}
+		names = append(names, sub.Name)
+		if sub.Name == subList {
+			listApp = listAppForm(sub, got)
+		}
+	}
+	_, _ = fmt.Fprintf(w, "  Subcommands: %s\n", strings.Join(names, ", "))
+	if listApp != "" && api.ValidAppSlug(got) && !commonVerbWord(got) {
+		_, _ = fmt.Fprintf(w, "  If %s is an app, the subcommand comes first: gregale %s list %s\n", got, path, listApp)
+	}
+}
+
+// listAppForm spells slug the way a `list` verb takes an app: positionally
+// when it declares an app positional, else with --app, else not at all.
+func listAppForm(list cliSub, slug string) string {
+	for _, positional := range list.Positionals {
+		if strings.Contains(positional, "app") || strings.Contains(positional, "slug") {
+			return slug
+		}
+	}
+	for _, f := range list.Flags {
+		if f.Name == "app" {
+			return "--app " + slug
+		}
+	}
+	return ""
+}
+
+// commonVerbWord is a verb another CLI would accept here (`alerts get`); it
+// is a mistyped verb, not an app slug in the verb position.
+func commonVerbWord(word string) bool {
+	switch word {
+	case "get", "show", "describe", "view", "ls", "delete", "del", "remove", "create", "new", "edit", "set", "help", "status", "logs":
+		return true
+	}
+	return false
+}
+
+// nestedCliCommand returns the subcommands under `name path...` (for example
+// `projects environments`) in the shape printUnknownSubcommand takes.
+func nestedCliCommand(name string, path ...string) cliCommand {
+	top, _ := lookupCliCommand(name)
+	subs := top.Subcommands
+	for _, step := range path {
+		var next []cliSub
+		for _, sub := range subs {
+			if sub.Name == step || slices.Contains(sub.Aliases, step) {
+				next = sub.Subcommands
+				break
+			}
+		}
+		subs = next
+	}
+	return cliCommand{Name: name, Subcommands: subs}
 }
 
 // PrintUsage emits a one-line "usage:" hint followed by a "Docs:" line
@@ -307,6 +408,9 @@ func PrintUsage(w io.Writer, usage, topic string) {
 // PrintUsage remains the public call site so the doc-slug audit can continue
 // checking literal command topics.
 func printUsage(w io.Writer, usage, topic string) {
+	if flagHelpPrinted {
+		return
+	}
 	if jsonOutput && !jsonUsageHelp {
 		_ = writeJSONProblemWithExit(w, api.Problem{
 			Type:    docsSiteURL + "/errors/invalid-request",
@@ -318,8 +422,122 @@ func printUsage(w io.Writer, usage, topic string) {
 		}, 1)
 		return
 	}
-	_, _ = fmt.Fprintf(w, "%s\n", usage)
+	_, _ = fmt.Fprintf(w, "%s\n", compactUsage(usage))
 	_, _ = fmt.Fprintf(w, "  Docs: %s\n", docsURLForTopic(topic))
+}
+
+// usageSynopsisLimit bounds the usage line printed after a bad invocation.
+// Longer synopses list every flag on one line; --help groups and explains
+// them. JSON problems keep the full synopsis for scripts.
+const usageSynopsisLimit = 160
+
+var (
+	usageCommandWord = regexp.MustCompile(`^[a-z][a-z0-9-]*$`)
+	usagePlaceholder = regexp.MustCompile(`^(<[^<>|\[\]]+>|[A-Z][A-Z0-9_]*)$`)
+	usageVerbChoice  = regexp.MustCompile(`^[<\[(]?[a-z][a-z0-9-]*\|`)
+)
+
+// compactUsage shortens an over-long synopsis to its command path and
+// leading positionals, then names the --help command that lists every
+// option. The pointer stops at the first placeholder so it always runs as
+// typed. Lines after the first, such as the specific error, are kept.
+func compactUsage(usage string) string {
+	first, rest, hasRest := strings.Cut(usage, "\n")
+	if utf8.RuneCountInString(first) <= usageSynopsisLimit {
+		return usage
+	}
+	const prefix = "usage: gregale "
+	body, ok := strings.CutPrefix(first, prefix)
+	if !ok {
+		return usage
+	}
+	// A trailing "; <prose>" after the synopsis says what was wrong; keep it.
+	note := ""
+	if i := strings.LastIndex(body, "; "); i >= 0 && !strings.ContainsAny(body[i+2:], "[]<>|") {
+		body, note = body[:i], body[i+2:]
+	}
+	fields := strings.Fields(body)
+	var synopsis, helpPath []string
+	i := 0
+	for ; i < len(fields); i++ {
+		field := fields[i]
+		if usageCommandWord.MatchString(field) {
+			synopsis = append(synopsis, field)
+			if len(synopsis) == len(helpPath)+1 {
+				helpPath = append(helpPath, field)
+			}
+			continue
+		}
+		if !usagePlaceholder.MatchString(field) {
+			break
+		}
+		synopsis = append(synopsis, field)
+	}
+	if len(helpPath) == 0 {
+		return usage
+	}
+	remaining := strings.Join(fields[i:], " ")
+	hasFlags := strings.Contains(remaining, "--")
+	switch {
+	case remaining == "":
+	case usageVerbChoice.MatchString(remaining) && strings.HasPrefix(remaining, "<"):
+		synopsis = append(synopsis, "<command>")
+	case usageVerbChoice.MatchString(remaining):
+		synopsis = append(synopsis, "[command]")
+	case !hasFlags:
+		synopsis = append(synopsis, "...")
+	}
+	// Required flags often carry the error itself ("jobs add" without
+	// --image prints this line), so keep them when they fit.
+	if required := requiredUsageFlags(fields[i:]); len(required) > 0 {
+		withRequired := append(append([]string{}, synopsis...), required...)
+		if utf8.RuneCountInString(prefix+strings.Join(withRequired, " ")+" [flags]") <= usageSynopsisLimit {
+			synopsis = withRequired
+		}
+	}
+	if hasFlags {
+		synopsis = append(synopsis, "[flags]")
+	}
+	out := prefix + strings.Join(synopsis, " ")
+	if note != "" {
+		out += "\n  " + note
+	}
+	out += "\n  All options: gregale " + strings.Join(helpPath, " ") + " --help"
+	if hasRest {
+		out += "\n" + rest
+	}
+	return out
+}
+
+var (
+	usageCleanFlag = regexp.MustCompile(`^--[a-z0-9][a-z0-9-]*$`)
+	usageFlagValue = regexp.MustCompile(`^([A-Z][A-Z0-9_]*|<[^<>|\[\]]+>|[a-z0-9-]+(\|[a-z0-9-]+)+)$`)
+)
+
+// requiredUsageFlags returns the flags (with their values) that a synopsis
+// lists outside any [optional] or (alternative) group, up to the first
+// "|" separating alternative command forms.
+func requiredUsageFlags(tokens []string) []string {
+	var required []string
+	depth := 0
+	for i := 0; i < len(tokens); i++ {
+		token := tokens[i]
+		if depth == 0 && token == "|" {
+			break
+		}
+		if depth == 0 && usageCleanFlag.MatchString(token) {
+			required = append(required, token)
+			if i+1 < len(tokens) && usageFlagValue.MatchString(tokens[i+1]) {
+				required = append(required, tokens[i+1])
+				i++
+			}
+			continue
+		}
+		opened := strings.Count(token, "[") + strings.Count(token, "(")
+		closed := strings.Count(token, "]") + strings.Count(token, ")")
+		depth = max(0, depth+opened-closed)
+	}
+	return required
 }
 
 // LiveTicker is a per-command redraw buffer for tabular progress UI

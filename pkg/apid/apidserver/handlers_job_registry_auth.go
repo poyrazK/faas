@@ -1,6 +1,7 @@
 package apidserver
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"time"
@@ -92,54 +93,60 @@ func (s *server) setJobRegistryCredential(w http.ResponseWriter, r *http.Request
 		return
 	}
 	req.Registry = host
-	if prob := req.Validate(); prob != nil {
+	row, prob := s.storeJobRegistryCredential(r.Context(), acct, job, req)
+	if prob != nil {
 		api.WriteProblem(w, prob)
 		return
 	}
+	writeJSON(w, http.StatusOK, toJobRegistryCredentialResponse(row))
+}
+
+// storeJobRegistryCredential validates, seals and upserts one job registry
+// credential. req.Registry must already be a normalized host. Image runs
+// (ADR-1790) store their registry_auth on the runner job through it, so both
+// paths share the plan gate, quota, seal and audit. The password never
+// reaches a log line or the audit payload.
+func (s *server) storeJobRegistryCredential(ctx context.Context, acct state.Account, job state.Job, req api.PutJobRegistryCredentialRequest) (state.JobRegistryCredential, *api.Problem) {
+	if prob := req.Validate(); prob != nil {
+		return state.JobRegistryCredential{}, prob
+	}
 	limits := api.MustLimitsFor(acct.Plan)
 	if limits.RegistryCredentialMax == 0 {
-		api.WriteProblem(w, api.ErrPlanJobRegistryCredentialsNotAllowed(acct.Plan))
-		return
+		return state.JobRegistryCredential{}, api.ErrPlanJobRegistryCredentialsNotAllowed(acct.Plan)
 	}
-	store, ok := s.jobRegistryCredentialStore(w)
+	store, ok := s.store.(state.JobRegistryCredentialStore)
 	if !ok {
-		return
+		return state.JobRegistryCredential{}, api.ErrCapacity("job registry credentials are unavailable")
 	}
-	count, exists, err := store.JobRegistryCredentialQuotaCheck(r.Context(), acct.ID, job.ID, host)
+	host := req.Registry
+	count, exists, err := store.JobRegistryCredentialQuotaCheck(ctx, acct.ID, job.ID, host)
 	if err != nil {
-		api.WriteProblem(w, api.ErrCapacity("could not check job registry credential quota"))
-		return
+		return state.JobRegistryCredential{}, api.ErrCapacity("could not check job registry credential quota")
 	}
 	if !exists && count >= limits.RegistryCredentialMax {
-		api.WriteProblem(w, api.ErrPlanJobRegistryCredentialQuota(limits, count))
-		return
+		return state.JobRegistryCredential{}, api.ErrPlanJobRegistryCredentialQuota(limits, count)
 	}
-	recipient := hostSecretRecipient()
-	if recipient == nil {
-		api.WriteProblem(w, api.ErrCapacity("host age recipient not loaded — refusing to seal"))
-		return
+	recipients, err := registryCredentialRecipients()
+	if err != nil {
+		return state.JobRegistryCredential{}, api.ErrCapacity("host age recipient not loaded — refusing to seal")
 	}
-	ciphertext, err := secretbox.SealBytes(recipient, "registry_creds", []byte(req.Password), api.MaxRegistryPasswordBytes)
+	ciphertext, err := secretbox.SealBytesTo(recipients, "registry_creds", []byte(req.Password), api.MaxRegistryPasswordBytes)
 	if err != nil {
 		if prob := api.AsProblem(err); prob != nil {
-			api.WriteProblem(w, prob)
-		} else {
-			api.WriteProblem(w, api.ErrCapacity("could not seal job registry credential"))
+			return state.JobRegistryCredential{}, prob
 		}
-		return
+		return state.JobRegistryCredential{}, api.ErrCapacity("could not seal job registry credential")
 	}
-	if err := store.UpsertJobRegistryCredential(r.Context(), acct.ID, job.ID, host, req.Username, ciphertext); err != nil {
-		api.WriteProblem(w, api.ErrCapacity("could not persist job registry credential"))
-		return
+	if err := store.UpsertJobRegistryCredential(ctx, acct.ID, job.ID, host, req.Username, ciphertext); err != nil {
+		return state.JobRegistryCredential{}, api.ErrCapacity("could not persist job registry credential")
 	}
-	row, err := store.GetJobRegistryCredential(r.Context(), acct.ID, job.ID, host)
+	row, err := store.GetJobRegistryCredential(ctx, acct.ID, job.ID, host)
 	if err != nil {
-		api.WriteProblem(w, api.ErrCapacity("could not read back job registry credential"))
-		return
+		return state.JobRegistryCredential{}, api.ErrCapacity("could not read back job registry credential")
 	}
 	s.log.Info("job registry credential set", "job", job.ID, "account", acct.ID, "registry", logsanitize.Field(host), "username", logsanitize.Field(req.Username))
-	s.audit.Emit(r.Context(), "job_registry_credential.set", &acct.ID, map[string]any{"job_id": job.ID, "registry": host, "username": req.Username})
-	writeJSON(w, http.StatusOK, toJobRegistryCredentialResponse(row))
+	s.audit.Emit(ctx, "job_registry_credential.set", &acct.ID, map[string]any{"job_id": job.ID, "registry": host, "username": req.Username})
+	return row, nil
 }
 
 func (s *server) deleteJobRegistryCredential(w http.ResponseWriter, r *http.Request, acct state.Account) {

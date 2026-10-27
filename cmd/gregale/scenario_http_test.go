@@ -1,9 +1,10 @@
-package main
+package main_test
 
 import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -37,24 +38,24 @@ func TestNativeTestHTTPWorkflowCapturesAndChecksAcrossPhases(t *testing.T) {
 		}
 	}))
 	defer server.Close()
-	requests := []testHTTPRequest{{
+	requests := []main.TestHTTPRequest{{
 		Name: "submit", As: "buyer", Method: "POST", Path: "/exports", JSON: map[string]any{"run": "${run.id}"},
-		Expect:  testHTTPExpect{Status: 202, ContentType: "application/json", JSON: map[string]any{"/export/owner": "buyer"}},
+		Expect:  main.TestHTTPExpect{Status: 202, ContentType: "application/json", JSON: map[string]any{"/export/owner": "buyer"}},
 		Capture: map[string]string{"export_id": "/export/id", "worker_invocation_id": "/invocation"},
 	}}
-	checks := []testHTTPRequest{{Name: "forbidden-read", As: "other", Method: "GET", Path: "/exports/${steps.submit.export_id}", Expect: testHTTPExpect{Status: 403}}}
-	scenario := testScenario{Consumers: []testConsumer{{Name: "buyer"}, {Name: "other"}}, Requests: requests, Checks: checks,
-		WaitFor: testWaitFor{Invocations: []testInvocationOutput{{Service: "worker", TriggerKey: "worker_invocation_id"}}}}
-	if err := validateTestHTTPRequests(scenario); err != nil {
+	checks := []main.TestHTTPRequest{{Name: "forbidden-read", As: "other", Method: "GET", Path: "/exports/${steps.submit.export_id}", Expect: main.TestHTTPExpect{Status: 403}}}
+	scenario := main.TestScenario{Consumers: []main.TestConsumer{{Name: "buyer"}, {Name: "other"}}, Requests: requests, Checks: checks,
+		WaitFor: main.TestWaitFor{Invocations: []main.TestInvocationOutput{{Service: "worker", TriggerKey: "worker_invocation_id"}}}}
+	if err := main.ValidateTestHTTPRequests(scenario); err != nil {
 		t.Fatal(err)
 	}
 	captures := map[string]string{}
 	env := []string{"GREGALE_TEST_CONSUMER_BUYER_KEY=buyer-key", "GREGALE_TEST_CONSUMER_OTHER_KEY=other-key"}
-	before, err := runTestHTTPRequests(context.Background(), server.URL, "run-123", env, requests, captures)
+	before, err := main.RunTestHTTPRequests(context.Background(), server.URL, "run-123", env, requests, captures)
 	if err != nil || len(before) != 1 || !before[0].Passed || before[0].Status != 202 || captures["worker_invocation_id"] != "inv-123" {
 		t.Fatalf("before wait = (%+v, %+v, %v)", before, captures, err)
 	}
-	after, err := runTestHTTPRequests(context.Background(), server.URL, "run-123", env, checks, captures)
+	after, err := main.RunTestHTTPRequests(context.Background(), server.URL, "run-123", env, checks, captures)
 	if err != nil || len(after) != 1 || !after[0].Passed || after[0].Status != 403 {
 		t.Fatalf("after wait = (%+v, %v)", after, err)
 	}
@@ -70,33 +71,33 @@ func TestNativeTestHTTPWorkflowRejectsUnexpectedStatusAndRedirect(t *testing.T) 
 		w.WriteHeader(http.StatusFound)
 	}))
 	defer server.Close()
-	steps := []testHTTPRequest{{Name: "redirect", Method: "GET", Path: "/start", Expect: testHTTPExpect{Status: 200}}}
-	evidence, err := runTestHTTPRequests(context.Background(), server.URL, "run-123", nil, steps, map[string]string{})
+	steps := []main.TestHTTPRequest{{Name: "redirect", Method: "GET", Path: "/start", Expect: main.TestHTTPExpect{Status: 200}}}
+	evidence, err := main.RunTestHTTPRequests(context.Background(), server.URL, "run-123", nil, steps, map[string]string{})
 	if err == nil || len(evidence) != 1 || evidence[0].Status != 302 || evidence[0].Passed {
 		t.Fatalf("redirect = (%+v, %v)", evidence, err)
 	}
 }
 
 func TestNativeTestHTTPManifestValidationRejectsUnsafeOrUnknownReferences(t *testing.T) {
-	base := testScenario{Requests: []testHTTPRequest{{Name: "first", Method: "GET", Path: "/health", Expect: testHTTPExpect{Status: 200}}}}
+	base := main.TestScenario{Requests: []main.TestHTTPRequest{{Name: "first", Method: "GET", Path: "/health", Expect: main.TestHTTPExpect{Status: 200}}}}
 	cases := []struct {
 		name string
-		edit func(*testScenario)
+		edit func(*main.TestScenario)
 	}{
-		{"absolute URL", func(s *testScenario) { s.Requests[0].Path = "https://elsewhere.example/" }},
-		{"unknown capture", func(s *testScenario) { s.Requests[0].Path = "/${steps.missing.id}" }},
-		{"duplicate step", func(s *testScenario) { s.Checks = append(s.Checks, s.Requests[0]) }},
-		{"bad pointer", func(s *testScenario) { s.Requests[0].Capture = map[string]string{"id": "id"} }},
-		{"unknown consumer", func(s *testScenario) { s.Requests[0].As = "missing" }},
-		{"missing status", func(s *testScenario) { s.Requests[0].Expect.Status = 0 }},
-		{"external redirect host", func(s *testScenario) { s.Requests[0].Path = "//elsewhere.example/" }},
+		{"absolute URL", func(s *main.TestScenario) { s.Requests[0].Path = "https://elsewhere.example/" }},
+		{"unknown capture", func(s *main.TestScenario) { s.Requests[0].Path = "/${steps.missing.id}" }},
+		{"duplicate step", func(s *main.TestScenario) { s.Checks = append(s.Checks, s.Requests[0]) }},
+		{"bad pointer", func(s *main.TestScenario) { s.Requests[0].Capture = map[string]string{"id": "id"} }},
+		{"unknown consumer", func(s *main.TestScenario) { s.Requests[0].As = "missing" }},
+		{"missing status", func(s *main.TestScenario) { s.Requests[0].Expect.Status = 0 }},
+		{"external redirect host", func(s *main.TestScenario) { s.Requests[0].Path = "//elsewhere.example/" }},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			scenario := base
-			scenario.Requests = append([]testHTTPRequest(nil), base.Requests...)
+			scenario.Requests = append([]main.TestHTTPRequest(nil), base.Requests...)
 			tc.edit(&scenario)
-			if err := validateTestHTTPRequests(scenario); err == nil {
+			if err := main.ValidateTestHTTPRequests(scenario); err == nil {
 				t.Fatal("invalid HTTP step was accepted")
 			}
 		})
@@ -132,7 +133,7 @@ paths:
       parameters: [{name: q, in: query, required: true, schema: {type: string}}]
       responses: {'200': {description: OK}}
 `)
-	steps, skipped, err := scaffoldTestHTTPRequests(spec)
+	steps, skipped, err := main.ScaffoldTestHTTPRequests(spec)
 	if err != nil || len(steps) != 1 || skipped != 4 || steps[0].Path != "/health" || steps[0].Expect.Status != 200 || steps[0].Expect.ContentType != "application/json" {
 		t.Fatalf("scaffold = (%+v, %d, %v)", steps, skipped, err)
 	}
@@ -142,20 +143,20 @@ paths:
 	if err := os.WriteFile(specPath, spec, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if code := cmdTestInit([]string{"--from", specPath, "--project", "demo-api", "--output", manifestPath}); code != 0 {
+	if code := main.CmdTestInit([]string{"--from", specPath, "--project", "demo-api", "--output", manifestPath}); code != 0 {
 		t.Fatalf("test init exit = %d", code)
 	}
-	scenarios, _, err := readTestManifest(manifestPath)
+	scenarios, _, err := main.ReadTestManifest(manifestPath)
 	if err != nil || len(scenarios["api-smoke"].Requests) != 1 || len(scenarios["api-smoke"].Command) != 0 {
 		t.Fatalf("generated manifest = (%+v, %v)", scenarios, err)
 	}
 	if err := os.WriteFile(filepath.Join(dir, "handler.js"), []byte("exports.handler = async () => ({ statusCode: 200, body: '{}' });\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if code := cmdTest([]string{"--validate", "--manifest", manifestPath}); code != 0 {
+	if code := main.CmdTest([]string{"--validate", "--manifest", manifestPath}); code != 0 {
 		t.Fatalf("generated manifest failed CLI validation with exit %d", code)
 	}
-	if code := cmdTestInit([]string{"--from", specPath, "--project", "demo-api", "--output", manifestPath}); code == 0 {
+	if code := main.CmdTestInit([]string{"--from", specPath, "--project", "demo-api", "--output", manifestPath}); code == 0 {
 		t.Fatal("test init overwrote an existing manifest")
 	}
 }
@@ -166,8 +167,62 @@ func TestOpenAPITestScaffoldCapsManifestSteps(t *testing.T) {
 	for i := 0; i < 101; i++ {
 		_, _ = fmt.Fprintf(&document, "  /route-%03d:\n    get:\n      responses: {'200': {description: OK}}\n", i)
 	}
-	steps, skipped, err := scaffoldTestHTTPRequests([]byte(document.String()))
+	steps, skipped, err := main.ScaffoldTestHTTPRequests([]byte(document.String()))
 	if err != nil || len(steps) != 100 || skipped != 1 {
 		t.Fatalf("large scaffold = (%d steps, %d skipped, %v)", len(steps), skipped, err)
+	}
+}
+
+// In a monorepo the OpenAPI document sits in its workload directory; the
+// scaffold used to write `source: .` (the repository root, holding several
+// workloads), so `gregale test --validate` failed until it was edited by hand.
+func TestCmdTestInitDefaultsSourceToTheDocumentsWorkload(t *testing.T) {
+	spec := []byte(`openapi: 3.1.0
+info: {title: Gateway, version: 1.0.0}
+paths:
+  /healthz:
+    get:
+      security: []
+      responses: {'200': {description: OK}}
+`)
+	for _, tc := range []struct {
+		name, specDir, source, want string
+		marker                      bool
+	}{
+		{name: "document inside a workload", specDir: "services/gateway", marker: true, want: "./services/gateway"},
+		{name: "document outside any workload", specDir: "docs", want: "."},
+		{name: "document beside the manifest", specDir: ".", marker: true, want: "."},
+		{name: "explicit source wins", specDir: "services/gateway", marker: true, source: "./services/other", want: "./services/other"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			dir := filepath.Join(root, tc.specDir)
+			if err := os.MkdirAll(dir, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if tc.marker {
+				if err := os.WriteFile(filepath.Join(dir, "Dockerfile"), []byte("FROM scratch\n"), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			specPath, manifestPath := filepath.Join(dir, "openapi.json"), filepath.Join(root, "gregale-test.yaml")
+			if err := os.WriteFile(specPath, spec, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			args := []string{"--from", specPath, "--project", "pulse-mesh", "--output", manifestPath}
+			if tc.source != "" {
+				args = append(args, "--source", tc.source)
+			}
+			if code := main.CmdTestInit(args); code != 0 {
+				t.Fatalf("test init exit = %d", code)
+			}
+			body, err := os.ReadFile(manifestPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(string(body), "source: "+tc.want+"\n") {
+				t.Fatalf("manifest source, want %q:\n%s", tc.want, body)
+			}
+		})
 	}
 }

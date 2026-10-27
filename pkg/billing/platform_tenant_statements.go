@@ -82,7 +82,8 @@ func BuildPlatformTenantStatement(accountID, tenantID string, start, end, asOf t
 // immutable revision's private coverage.
 func BuildPlatformTenantStatementFromDelta(accountID, tenantID string, start, end, asOf time.Time,
 	revision int, priorStatus state.APIConsumerUsageStatementStatus, usageDelta []state.APIConsumerUsageBucket,
-	cardsByApp map[string][]state.APIConsumerRateCard, tenantCards []state.PlatformTenantRateCard) (state.PlatformTenantStatementInput, error) {
+	cardsByApp map[string][]state.APIConsumerRateCard, tenantCards []state.PlatformTenantRateCard,
+	opts ...QuoteOptions) (state.PlatformTenantStatementInput, error) {
 	in := state.PlatformTenantStatementInput{AccountID: accountID, TenantID: tenantID,
 		PeriodStart: start, PeriodEnd: end, AsOf: asOf, Revision: revision, PriorStatus: priorStatus}
 	bySubject := map[string][]state.APIConsumerUsageBucket{}
@@ -111,7 +112,7 @@ func BuildPlatformTenantStatementFromDelta(accountID, tenantID string, start, en
 		buckets := bySubject[key]
 		sort.Slice(buckets, func(i, j int) bool { return buckets[i].WindowStart.Before(buckets[j].WindowStart) })
 		appID, consumerID, surfaceID, jwtRuleID := buckets[0].AppID, buckets[0].ConsumerKey, buckets[0].SurfaceID, buckets[0].JWTAuthorizationRuleID
-		quote, err := QuotePlatformTenantUsage(cardsByApp[appID], tenantCards, buckets)
+		quote, err := QuotePlatformTenantUsage(cardsByApp[appID], tenantCards, buckets, opts...)
 		if err != nil {
 			if errors.Is(err, ErrMixedAPIConsumerRateCardCurrency) {
 				return in, ErrMixedTenantCurrency

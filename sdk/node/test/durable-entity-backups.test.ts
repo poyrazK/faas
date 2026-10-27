@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { once } from 'node:events';
 import { createServer } from 'node:http';
 import test from 'node:test';
-import { FaaSClient, listDurableEntityBackups, getDurableEntityBackup, previewDurableEntityRestore } from '../src/index.js';
+import { FaaSClient, listDurableEntityBackups, getDurableEntityBackup, previewDurableEntityRestore } from '../src/preview.js';
 
 test('backup reads preserve selectors and preview sends no restore mutation', async t => {
   let calls = 0;

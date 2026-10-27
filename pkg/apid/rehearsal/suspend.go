@@ -15,10 +15,10 @@ func ValidateSuspendResume(req api.RegisterScenarioTestRequest, enabled, running
 		return api.ErrValidation(err.Error())
 	}
 	if !enabled {
-		return api.ErrCapacity("The operator must qualify and enable contained suspend/resume rehearsals")
+		return api.ErrRehearsalNotEnabled("Contained suspend/resume rehearsal")
 	}
 	if req.SuspendResume.ManagedJob() && !runningEnabled {
-		return api.ErrCapacity("The operator must qualify and enable running-job suspend/resume rehearsals")
+		return api.ErrRehearsalNotEnabled("Running-job suspend/resume rehearsal")
 	}
 	return nil
 }

@@ -9,7 +9,6 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
-	"runtime"
 	"strings"
 	"testing"
 
@@ -49,7 +48,7 @@ FROM pg_proc WHERE pronamespace=current_schema()::regnamespace AND prokind='f' A
 		return value
 	}
 	wantFunctions := fingerprint("")
-	// 20261018003100003_org_resource_lifecycle later rewrote the capacity
+	// 20261019190114207_org_resource_lifecycle_online later rewrote the capacity
 	// projection to read app_resource_accounts. Issued migrations are
 	// append-only, so replaying 004 itself restores its own projection: check
 	// everything else, then put the current projection back so the older 003
@@ -60,8 +59,7 @@ FROM pg_proc WHERE pronamespace=current_schema()::regnamespace AND prokind='f' A
 	if err := pool.QueryRow(t.Context(), `SELECT pg_get_functiondef(to_regprocedure('service_capacity_snapshot()'))`).Scan(&currentProjection); err != nil {
 		t.Fatal(err)
 	}
-	_, thisFile, _, _ := runtime.Caller(0)
-	directory := filepath.Join(filepath.Dir(thisFile), "..", "..", "migrations")
+	directory := filepath.Join("..", "..", "migrations")
 	files := []string{
 		"20261017090000001_operator_restart_execution.sql",
 		"20261017100000001_operator_cold_boot_recovery.sql",

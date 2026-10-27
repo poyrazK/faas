@@ -15,7 +15,7 @@
 - **Consequences:**
   - **No proration.** A consumer created mid-month pays the full base fee and minimum for that month; a revoked consumer pays for each month it existed in. Operators wanting proration use a trial or a free card for the first month.
   - **Spend caps and quotes.** Spend caps (ADR-1306) and quotes count usage charges only. Fees are fixed and billed by statements.
-  - **App consumers only.** Customer-wide (platform tenant) cards do not charge fees; their statement lines are per subject and unit price.
+  - **App consumers only.** Customer-wide (platform tenant) cards do not charge fees; their statement lines are per subject and unit price. *Superseded by ADR-1322: tenant cards charge fees; ADR-1325 adds opt-in first-month proration.*
   - **Included units stay on the card.** "Including 100,000 requests" is the card's allowance (ADR-950), independent of the fee.
 - **Rejected alternatives:**
   - Treating the base fee as prepaid usage would duplicate prepaid credit (ADR-1306), which already does that.

@@ -1,12 +1,19 @@
 from typing import Literal
 
-EdgeRuleEventResponseOutcome = Literal["blocked", "detected", "logged", "matched", "warned"]
+EdgeRuleEventResponseOutcome = Literal[
+    "blocked", "boxed", "challenged", "detected", "failed", "logged", "matched", "rejected", "solved", "warned"
+]
 
 EDGE_RULE_EVENT_RESPONSE_OUTCOME_VALUES: set[EdgeRuleEventResponseOutcome] = {
     "blocked",
+    "boxed",
+    "challenged",
     "detected",
+    "failed",
     "logged",
     "matched",
+    "rejected",
+    "solved",
     "warned",
 }
 

@@ -83,6 +83,39 @@ startup) still appear in your runtime logs as before.
 To keep your logs out of Gregale, set `OTEL_LOGS_EXPORTER=none`, or point
 `OTEL_EXPORTER_OTLP_LOGS_ENDPOINT` at your own collector.
 
+## Following a request across services
+
+`gregale trace <trace-id>` shows every retained request of one trace across
+your apps, with the logs, queued invocations and spans linked to it. The trace
+id is on each request in `gregale debug requests get`.
+
+```text
+MATCHES
+  public-api · GET /checkout · HTTP 200 · 920 ms · telemetry row …
+  billing · POST other · HTTP 200 · 900 ms · telemetry row …
+      woke by restore in 610 ms (wake …) · app ≈270 ms · other ≈20 ms
+```
+
+A call to another service joins the trace when the calling code forwards the
+`traceparent` header of the request it is handling. With tracing on, the
+Node.js and Python instrumentation does this for the HTTP clients it supports.
+
+When the caller forwards nothing, Gregale links the call itself if the calling
+instance is serving exactly one request at that moment. The hop is shown as
+"trace linked by Gregale" and returned with `trace_inferred: true`, so it can
+be told apart from propagated context. An instance serving several requests at
+once (or holding a WebSocket or TCP session) is not linked, because Gregale
+cannot tell which request made the call; forward `traceparent` yourself for
+busy services. A call made by background work while exactly one request is in
+flight is linked to that request.
+
+For a request that found its app parked, the line under it says how the app
+was woken (restored from a snapshot or cold booted) and how long the instance
+took to become ready. When the app's runtime reports its own execution time,
+as the managed function runtimes do, that is shown as app time, and the rest
+(routing, queueing and the network) as other. Latencies are kept rounded up to
+10 ms below 1 s and more coarsely above, so the split is approximate.
+
 ## What is traced
 
 On the managed Node.js (22, 24) and Python (3.12, 3.13) runtimes, Gregale
@@ -97,8 +130,56 @@ loads OpenTelemetry auto-instrumentation for you:
 
 Filesystem, DNS and raw socket activity is not traced.
 
-Other apps (Go, Dockerfile builds and container images) can export spans with
-any OpenTelemetry SDK they already include. Inside the app, the standard
+### Go
+
+Go apps are compiled, so nothing can be loaded into them at start. The Go
+SDK's `tracing` package gives the same request, HTTP client and database
+spans without an OpenTelemetry dependency:
+
+```go
+import "github.com/poyrazK/faas/sdk/go/preview/tracing"
+
+func main() {
+	shutdown := tracing.Start()
+	defer shutdown(context.Background())
+
+	http.DefaultTransport = tracing.Transport(http.DefaultTransport)
+	db, err := tracing.Open("pgx", os.Getenv("DATABASE_URL"), "postgresql")
+	if err != nil {
+		log.Fatal(err)
+	}
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /orders/{id}", func(w http.ResponseWriter, r *http.Request) {
+		rows, err := db.QueryContext(r.Context(), "SELECT id FROM orders WHERE id = $1", r.PathValue("id"))
+		...
+	})
+	log.Fatal(http.ListenAndServe(":"+os.Getenv("PORT"), tracing.Handler(mux)))
+}
+```
+
+- `tracing.Handler` records each request and continues the trace the gateway
+  started, so the spans attach to the request in the debugger. Wrap the
+  router, and the span is named after the matched route (`GET /orders/{id}`).
+- `tracing.Transport` records outgoing HTTP calls and passes the trace on in a
+  `traceparent` header. URLs are recorded without query strings or
+  credentials.
+- `tracing.Open` (or `tracing.WrapConnector` with `sql.OpenDB`) records every
+  query run with a context, for any `database/sql` driver. The last argument
+  names the database: `postgresql`, `mysql`, `sqlite` and so on.
+- `tracing.StartSpan(ctx, "name")` records your own operations.
+
+Pass the request's context to outgoing calls (`http.NewRequestWithContext`,
+`QueryContext`, `ExecContext`); a call made with `context.Background()`
+starts a new trace and does not appear under the request. For functions, wrap
+the handler you pass to `function.Serve`: `function.Serve(tracing.Handler(mux))`.
+
+The package does nothing unless `tracing.enabled` is on for the app, so the
+same binary runs unchanged locally and in tests.
+
+### Other apps
+
+Dockerfile builds, container images and Go apps that already use OpenTelemetry
+can export spans with the SDK they include. Inside the app, the standard
 OTLP/HTTP endpoint `http://127.0.0.1:4318/v1/traces` accepts them; Gregale
 sets the standard `OTEL_EXPORTER_OTLP_TRACES_*` variables so most SDKs need no
 configuration.

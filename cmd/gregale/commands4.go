@@ -26,8 +26,11 @@ import (
 func cmdAccount(args []string) int {
 	parent, _ := lookupCliCommand("account")
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale account {export|delete|restore|status|dpa|slo|stripe|billing-run|invoices}", "account")
+		PrintUsage(os.Stderr, releasedUsage("account", "usage: gregale account {export|delete|restore|status|dpa|slo|billing-connection|billing-run|invoices}"), "account")
 		return 1
+	}
+	if hiddenMonetizationVerb("account", args[0]) {
+		return unknownAccountSubcommand(parent, args[0])
 	}
 	switch args[0] {
 	case "export":
@@ -60,11 +63,13 @@ func cmdAccount(args []string) int {
 		// (issue #696 / ADR-082). Account-wide SLO rollup.
 		return cmdAccountSLO(args[1:])
 	default:
-		sug, _ := suggestSubcommand(args[0], parent)
-		fmt.Fprintf(os.Stderr, "gregale account: unknown subcommand %q\n", args[0])
-		maybeSuggestSub(sug)
-		return 1
+		return unknownAccountSubcommand(parent, args[0])
 	}
+}
+
+func unknownAccountSubcommand(parent cliCommand, name string) int {
+	printCommandValidation(os.Stderr, "gregale account: unknown subcommand %q\n", name)
+	return unknownSubcommandChoices(os.Stderr, "account", parent, name)
 }
 
 // cmdAccountExport downloads the GDPR export bundle. Default output
@@ -102,6 +107,11 @@ func cmdAccountDelete(args []string) int {
 	quiet := fs.Bool("q", false, "suppress confirmation prompt")
 	fs.BoolVar(quiet, "quiet", false, "confirm deletion without prompting")
 	fs.BoolVar(quiet, "yes", false, "confirm deletion without prompting")
+	// ADR-20261024150500 dark launch: a hidden flag. It parses, but stays out
+	// of help, completions, man pages and the generated reference until
+	// FAAS_ACCOUNT_DELETION_MANAGED_POSTGRES_ACCOUNTS admits every account;
+	// apid ignores it for an unlisted account.
+	includeDatabases := fs.Bool("include-postgres-databases", false, "also delete your managed PostgreSQL databases when the grace period ends")
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
@@ -119,6 +129,9 @@ func cmdAccountDelete(args []string) int {
 		fmt.Fprintf(os.Stderr,
 			"This will schedule your account for permanent deletion in 30 days. "+
 				"You can cancel with `gregale account restore` before the deadline.\n")
+		if *includeDatabases {
+			fmt.Fprintf(os.Stderr, "Your managed PostgreSQL databases will be deleted with the account when the 30 days end.\n")
+		}
 		if !requireTyped("delete my account") {
 			return 1
 		}
@@ -129,9 +142,13 @@ func cmdAccountDelete(args []string) int {
 	nonce := make([]byte, 16)
 	_, _ = rand.Read(nonce)
 	key := "cli-delete-" + hex.EncodeToString(nonce)
-	resp, err := client.DeleteAccount(context.Background(), key)
+	deleteAccount := client.DeleteAccount
+	if *includeDatabases {
+		deleteAccount = client.DeleteAccountIncludingManagedPostgres
+	}
+	resp, err := deleteAccount(context.Background(), key)
 	if err != nil {
-		return printErr("Delete failed", err)
+		return printErr("Could not delete account", err)
 	}
 	PrintOK(osStdout, "Account scheduled for deletion")
 	fmt.Printf("  status:       %s\n", resp.Status)
@@ -224,5 +241,8 @@ func cmdAccountDPA(args []string) int {
 	if _, err := osStdout.Write(body); err != nil {
 		return printErr("Write failed", err)
 	}
+	// The public template keeps its {{...}} placeholders; say so rather than
+	// let them read as a rendering failure. stderr keeps a redirect clean.
+	_, _ = fmt.Fprintln(osStderr, "This is the DPA template: its {{...}} placeholders are completed in the agreement you sign.")
 	return 0
 }

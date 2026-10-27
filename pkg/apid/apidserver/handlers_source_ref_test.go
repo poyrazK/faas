@@ -686,8 +686,8 @@ release:
 		t.Fatalf("status = %d, want 202; body=%s", rec.Code, rec.Body)
 	}
 	crons, err := e.store.ListCronsForApp(context.Background(), e.appID)
-	if err != nil || len(crons) != 1 {
-		t.Fatalf("crons = %d, err=%v; want one archive-declared cron", len(crons), err)
+	if err != nil || len(crons) != 0 {
+		t.Fatalf("crons = %d, err=%v; want none before deployment readiness", len(crons), err)
 	}
 	triggers, err := e.store.ListTriggersForApp(context.Background(), e.appID)
 	if err != nil || len(triggers) != 1 || triggers[0].Slug != "jobs" {
@@ -696,6 +696,15 @@ release:
 	deps, err := e.store.ListDeploymentsForApp(context.Background(), e.appID, 0, 0)
 	if err != nil || len(deps) != 1 {
 		t.Fatalf("deployments = %d, err=%v; want one", len(deps), err)
+	}
+	if err := e.store.UpdateDeploymentStatus(t.Context(), deps[0].ID, state.DeployLive, ""); err != nil {
+		t.Fatal(err)
+	}
+	if changes, err := e.store.ReconcileDeploymentCrons(t.Context()); err != nil || len(changes) != 1 {
+		t.Fatalf("activation changes=%v err=%v", changes, err)
+	}
+	if crons, err := e.store.ListCronsForApp(t.Context(), e.appID); err != nil || len(crons) != 1 {
+		t.Fatalf("ready crons=%v err=%v", crons, err)
 	}
 	if !bytes.Contains(deps[0].Workflows, []byte("process_order")) {
 		t.Fatalf("workflows = %s, want archive workflow", deps[0].Workflows)
@@ -880,6 +889,90 @@ func TestSourceRef_ScalingRollsBackWhenAcceptanceFails(t *testing.T) {
 	deps, _ := e.store.ListDeploymentsForApp(context.Background(), e.appID, 0, 0)
 	if len(deps) != 0 {
 		t.Fatalf("deployment count = %d, want 0 after acceptance failure", len(deps))
+	}
+}
+
+// A git or API deploy applies gregale.yaml lifecycle hooks as the CLI does;
+// before this the server dropped them, so a starter deployed from git ran with
+// neither its snapshot drain nor its restore reconnect.
+func TestSourceRef_AppliesArchiveLifecycleHooks(t *testing.T) {
+	e := newSourceRefTestServer(t, api.PlanPro, "x", 7777)
+	manifest := `lifecycle:
+  before_checkpoint:
+    path: /internal/before-checkpoint
+    timeout_ms: 2000
+  after_restore:
+    path: /internal/after-restore
+    timeout_ms: 2000
+`
+	live, err := e.store.CreateDeployment(context.Background(), state.Deployment{
+		AppID: e.appID, Kind: state.DeploymentKindImage, Status: state.DeployLive,
+		ImageDigest: "sha256:deadbeefcafebabe1234567890abcdef1234567890abcdef1234567890abcdef",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := range 2 { // A repeat deploy with the same hooks is a no-op update.
+		snapshot, err := e.store.CreateSnapshot(context.Background(), state.Snapshot{
+			DeploymentID: live.ID, Tier: state.SnapshotTierInit, FCVersion: "test", StorageKey: []string{"snap/init-first", "snap/init-repeat"}[i],
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		e.gh.streamBody = nopReadCloser{bytes.NewReader(buildSourceRefTarGzWithManifest(t, manifest))}
+		rec := e.post(t, "/v1/apps/x/deployments/source-ref", api.SourceRefDeployRequest{
+			Repo: "onebox-faas/hello", Ref: "0123456789abcdef0123456789abcdef01234567",
+		})
+		if rec.Code != http.StatusAccepted {
+			t.Fatalf("deploy %d: status = %d, want 202; body=%s", i, rec.Code, rec.Body)
+		}
+		// Adding before_checkpoint retires snapshots captured without it, as
+		// PATCH does; an unchanged hook keeps the current capture.
+		latest, err := e.store.LatestSnapshotForTier(context.Background(), live.ID, state.SnapshotTierInit)
+		if reusable := err == nil && latest.ID == snapshot.ID; reusable != (i == 1) {
+			t.Fatalf("deploy %d: snapshot reusable = %v (err=%v)", i, reusable, err)
+		}
+	}
+	updated, err := e.store.AppByID(context.Background(), e.appID)
+	if err != nil {
+		t.Fatalf("AppByID: %v", err)
+	}
+	if hook := updated.Manifest.BeforeCheckpoint; hook == nil || hook.Path != "/internal/before-checkpoint" || hook.TimeoutMS != 2000 {
+		t.Fatalf("before_checkpoint = %+v, want the archive hook", hook)
+	}
+	if hook := updated.Manifest.AfterRestore; hook == nil || hook.Path != "/internal/after-restore" || hook.TimeoutMS != 2000 {
+		t.Fatalf("after_restore = %+v, want the archive hook", hook)
+	}
+}
+
+func TestSourceRef_LifecycleRollsBackWhenAcceptanceFails(t *testing.T) {
+	e := newSourceRefTestServer(t, api.PlanPro, "x", 7777)
+	prior, err := e.store.AppByID(context.Background(), e.appID)
+	if err != nil {
+		t.Fatalf("AppByID: %v", err)
+	}
+	seeded := prior.Manifest
+	seeded.AfterRestore = &api.AfterRestoreHook{Path: "/old-restore", TimeoutMS: 1000}
+	if _, err := e.store.UpdateApp(context.Background(), e.appID, state.UpdateAppParams{Manifest: &seeded}); err != nil {
+		t.Fatalf("seed prior hook: %v", err)
+	}
+	e.gh.streamBody = nopReadCloser{bytes.NewReader(buildSourceRefTarGzWithManifest(t, `lifecycle:
+  after_restore:
+    path: /internal/after-restore
+    timeout_ms: 2000
+`))}
+	rec := e.post(t, "/v1/apps/x/deployments/source-ref", api.SourceRefDeployRequest{
+		Repo: "onebox-faas/hello", Ref: "0123456789abcdef0123456789abcdef01234567", Tag: "not-a-valid-tag",
+	})
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d, want 422; body=%s", rec.Code, rec.Body)
+	}
+	updated, err := e.store.AppByID(context.Background(), e.appID)
+	if err != nil {
+		t.Fatalf("AppByID: %v", err)
+	}
+	if hook := updated.Manifest.AfterRestore; hook == nil || hook.Path != "/old-restore" || hook.TimeoutMS != 1000 {
+		t.Fatalf("after_restore after rollback = %+v, want the prior hook", hook)
 	}
 }
 

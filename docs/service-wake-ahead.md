@@ -16,25 +16,38 @@ gregale wake-ahead public-api off
 ```
 
 The API is `GET` and `PUT /v1/apps/{slug}/service-wake-ahead` with
-`{"enabled": true}`. The setting is off by default and takes effect within 30
-seconds.
+`{"enabled": true}`. Changes take effect within 30 seconds.
+
+Wake-ahead is **on by default** for a service in a project under the `project`
+service policy, the default for new project services, because those services
+call their siblings without declaring them
+([ADR-20261025105812](adr/20261025105812-wake-ahead-default-for-project-services.md)).
+It is off by default for every other app and for PR previews. Your own choice
+always wins: `gregale wake-ahead <app> off` turns the default off for that app.
+`GET` reports the effective setting; an empty `updated_at` means the app is on
+its default.
 
 ## What gets woken
 
-Gregale only wakes services it has measured your app calling:
+Gregale wakes the services your app declares until it has measured which ones
+your app really calls, and from then on only those:
 
 - After each cold wake of the app, the calls and private TCP connections it
   makes to other services in the next 10 seconds are recorded. A connection
   is recorded when it opens, however long it then stays open.
-- A service is woken ahead once the app has woken at least 20 times, called the
-  service after at least half of those wakes, and found the service parked on
-  at least half of those calls.
+- Until the app has woken 20 times, the services it declares in `depends_on`
+  are woken ahead, in the order they are declared. Only services the app is
+  allowed to call count; see [internal services](networking.md#internal-services).
+- From the 20th wake, a service is woken ahead only if the app called it after
+  at least half of those wakes and found it parked on at least half of those
+  calls, whether it is declared or not. A declared service your app rarely
+  calls after waking stops being woken ahead.
 - At most three services are woken ahead per wake, and only ones that are not
-  already running. A service woken ahead can wake its own measured services,
-  two levels deep.
+  already running. A service woken ahead can wake its own services, two levels
+  deep, if it has wake-ahead on too.
 
-Calls from PR preview apps are not used. Measurement happens in each gateway
-and starts again after the gateway restarts.
+PR preview apps neither learn nor wake services ahead. Measurement happens in
+each gateway and is kept when the gateway restarts.
 
 ## What was measured
 
@@ -47,14 +60,15 @@ gateways measured for your app, whether wake-ahead is on or off:
 - over the last 24 hours, how many wake-aheads were started, used (your app
   called the service while it was still fresh), unused or failed.
 
-Measurements live in each gateway's memory and rebuild after a restart. When
-gateway metrics cannot be read, the block says so.
+Measurements live in each gateway and are kept when it restarts. When gateway
+metrics cannot be read, the block says so.
 
 ## Limits and cost
 
 - A service woken ahead runs, and is billed like any running instance, from the
   moment it is woken. If it is not called, it parks again after its idle
-  timeout.
+  timeout. Before the first 20 wakes, a declared service your app does not call
+  after waking is woken anyway and counts as `unused`.
 - Wake-ahead goes through the same admission as any wake: your plan's
   concurrency limit and the platform RAM ceiling apply, and a request that
   arrives for the service joins the restore already under way.

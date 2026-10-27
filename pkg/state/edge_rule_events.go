@@ -24,18 +24,35 @@ const (
 	EdgeRuleEventBlocked  = "blocked"
 )
 
+// Outcomes of kind=challenge events (ADR-831 amendment 7 follow-up): the
+// challenge page served, a non-browser request refused, a solution that
+// earned a pass, and one that was refused.
+const (
+	EdgeRuleEventChallenged = "challenged"
+	EdgeRuleEventRejected   = "rejected"
+	EdgeRuleEventSolved     = "solved"
+	EdgeRuleEventFailed     = "failed"
+)
+
+// EdgeRuleEventBoxed is a client put in a penalty box by the rule's
+// rejections (ADR-20261022105846 amendment 2), recorded from the request
+// that tipped it in.
+const EdgeRuleEventBoxed = "boxed"
+
 // IsEdgeRuleEventOutcome reports whether outcome is a stored event outcome.
 func IsEdgeRuleEventOutcome(outcome string) bool {
 	switch outcome {
-	case EdgeRuleHitMatched, EdgeRuleHitLogged, EdgeRuleEventDetected, EdgeRuleEventWarned, EdgeRuleEventBlocked:
+	case EdgeRuleHitMatched, EdgeRuleHitLogged, EdgeRuleEventDetected, EdgeRuleEventWarned, EdgeRuleEventBlocked,
+		EdgeRuleEventChallenged, EdgeRuleEventRejected, EdgeRuleEventSolved, EdgeRuleEventFailed, EdgeRuleEventBoxed:
 		return true
 	}
 	return false
 }
 
-// EdgeRuleEvent is one sampled rule match or kind=waf detection. Outcome is
-// EdgeRuleHitMatched, EdgeRuleHitLogged or a detection outcome; the WAF*
-// fields are set on detections only. ID is assigned by the store.
+// EdgeRuleEvent is one sampled rule match, kind=waf detection or
+// kind=challenge outcome. Outcome is EdgeRuleHitMatched, EdgeRuleHitLogged
+// or one of the outcomes above; the WAF* fields are set on detections only.
+// ID is assigned by the store.
 type EdgeRuleEvent struct {
 	ID         int64
 	RuleID     string
@@ -55,16 +72,18 @@ type EdgeRuleEvent struct {
 	WAFScore      int
 }
 
-// EdgeRuleEventQuery selects an app's events newest first. RuleID and
-// Outcome filter when set; BeforeAt/BeforeID continue a page (exclusive).
+// EdgeRuleEventQuery selects an app's events newest first. RuleID, Outcome
+// and RequestID filter when set; BeforeAt/BeforeID continue a page
+// (exclusive).
 type EdgeRuleEventQuery struct {
-	AppID    string
-	RuleID   string
-	Outcome  string
-	Since    time.Time
-	BeforeAt time.Time
-	BeforeID int64
-	Limit    int
+	AppID     string
+	RuleID    string
+	Outcome   string
+	RequestID string
+	Since     time.Time
+	BeforeAt  time.Time
+	BeforeID  int64
+	Limit     int
 }
 
 // EdgeRuleEventStore is the ADR-964 capability; apid and gatewayd
@@ -118,9 +137,12 @@ func (s *PgStore) RecordEdgeRuleEvents(ctx context.Context, events []EdgeRuleEve
 }
 
 func (s *PgStore) ListEdgeRuleEvents(ctx context.Context, q EdgeRuleEventQuery) ([]EdgeRuleEvent, error) {
-	var ruleArg, outcomeArg, beforeArg any
+	var ruleArg, outcomeArg, beforeArg, requestArg any
 	if q.RuleID != "" {
 		ruleArg = q.RuleID
+	}
+	if q.RequestID != "" {
+		requestArg = q.RequestID
 	}
 	if q.Outcome != "" {
 		outcomeArg = q.Outcome
@@ -137,8 +159,9 @@ func (s *PgStore) ListEdgeRuleEvents(ctx context.Context, q EdgeRuleEventQuery) 
 		  and ($3::uuid is null or rule_id = $3)
 		  and ($4::text is null or outcome = $4)
 		  and ($5::timestamptz is null or (occurred_at, id) < ($5, $6))
+		  and ($8::text is null or request_id = $8)
 		order by occurred_at desc, id desc
-		limit $7`, q.AppID, q.Since.UTC(), ruleArg, outcomeArg, beforeArg, q.BeforeID, q.Limit)
+		limit $7`, q.AppID, q.Since.UTC(), ruleArg, outcomeArg, beforeArg, q.BeforeID, q.Limit, requestArg)
 	if err != nil {
 		return nil, fmt.Errorf("state: list edge-rule events: %w", err)
 	}
@@ -201,6 +224,7 @@ func (m *MemStore) ListEdgeRuleEvents(_ context.Context, q EdgeRuleEventQuery) (
 		case e.AppID != q.AppID, e.OccurredAt.Before(q.Since),
 			q.RuleID != "" && e.RuleID != q.RuleID,
 			q.Outcome != "" && e.Outcome != q.Outcome,
+			q.RequestID != "" && e.RequestID != q.RequestID,
 			!q.BeforeAt.IsZero() && !edgeRuleEventBefore(e, q.BeforeAt.UTC(), q.BeforeID):
 			continue
 		}

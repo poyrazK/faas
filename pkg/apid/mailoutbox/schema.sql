@@ -1,6 +1,6 @@
 -- Minimal projections of platform-owned and maild-owned read dependencies.
 -- This is sqlc input, not an independently applied account migration.
-CREATE TABLE accounts (id uuid PRIMARY KEY,email text NOT NULL,status text NOT NULL,plan text NOT NULL DEFAULT 'free',provider_customer_id text,stripe_subscription_item text,last_quota_warning_at timestamptz,deletion_requested_at timestamptz,email_verified_at timestamptz,abuse_hold_at timestamptz,mfa_enrolled_at timestamptz,mfa_recovery_codes_hash bytea[],mfa_secret_encrypted bytea,mfa_required boolean NOT NULL DEFAULT false,past_due_at timestamptz,suspended_reason text);
+CREATE TABLE accounts (id uuid PRIMARY KEY,email text NOT NULL,status text NOT NULL,plan text NOT NULL DEFAULT 'free',provider_customer_id text,stripe_subscription_item text,last_quota_warning_at timestamptz,deletion_requested_at timestamptz,email_verified_at timestamptz,abuse_hold_at timestamptz,mfa_enrolled_at timestamptz,mfa_recovery_codes_hash bytea[],mfa_secret_encrypted bytea,mfa_required boolean NOT NULL DEFAULT false,past_due_at timestamptz,suspended_reason text,deletion_includes_managed_postgres boolean NOT NULL DEFAULT false);
 CREATE TABLE email_verification_tokens(token_hash bytea PRIMARY KEY,account_id uuid NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,expires_at timestamptz NOT NULL,consumed_at timestamptz,created_at timestamptz NOT NULL DEFAULT now());
 CREATE TABLE account_passwords(account_id uuid PRIMARY KEY REFERENCES accounts(id) ON DELETE CASCADE,hash text NOT NULL,updated_at timestamptz NOT NULL DEFAULT now());
 CREATE TABLE login_tokens(token_hash bytea PRIMARY KEY,account_id uuid NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,expires_at timestamptz NOT NULL,consumed_at timestamptz);
@@ -19,6 +19,7 @@ CREATE TABLE internal_mail_messages (id uuid PRIMARY KEY,namespace text NOT NULL
 CREATE TABLE internal_mail_recipients (id uuid PRIMARY KEY,namespace text NOT NULL,message_id uuid NOT NULL);
 
 CREATE TABLE usage_minutes(account_id uuid NOT NULL,minute timestamptz NOT NULL,mb_seconds bigint NOT NULL);
+CREATE TABLE scenario_test_action_policies(app_id uuid PRIMARY KEY REFERENCES apps(id) ON DELETE CASCADE);
 
 -- apid owns this durable notification intent and handoff state. maild has
 -- metadata-only read access through its existing private operator routes.
@@ -936,3 +937,22 @@ CREATE TABLE IF NOT EXISTS platform_mail_deployment_observations (
     CHECK(disposition='queued' OR intent_id IS NULL)
 );
 CREATE INDEX IF NOT EXISTS platform_mail_deployment_observations_account_idx ON platform_mail_deployment_observations(account_id);
+
+SET LOCAL lock_timeout = '5s';
+ALTER TABLE platform_mail_deployment_fences DROP CONSTRAINT platform_mail_deployment_fences_scope_check;
+ALTER TABLE platform_mail_deployment_fences ADD CONSTRAINT platform_mail_deployment_fences_scope_check
+    CHECK(scope ~ '^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$');
+ALTER TABLE platform_mail_producer_outbox DROP CONSTRAINT platform_mail_producer_outbox_deployment_failure_check;
+ALTER TABLE platform_mail_producer_outbox ADD CONSTRAINT platform_mail_producer_outbox_deployment_failure_check CHECK (
+    (template='deployment_failed' AND deployment_failure_id IS NOT NULL AND deployment_failure_app_id IS NOT NULL
+        AND deployment_failure_scope IS NOT NULL AND deployment_failure_scope ~ '^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$'
+        AND deployment_failure_revision IS NOT NULL AND deployment_failure_revision>0
+        AND deployment_failure_account_revision IS NOT NULL AND deployment_failure_account_revision>0
+        AND deployment_failure_app_revision IS NOT NULL AND deployment_failure_app_revision>0
+        AND deployment_failure_success_revision IS NOT NULL AND deployment_failure_success_revision>=0
+        AND deployment_failure_at IS NOT NULL AND isfinite(deployment_failure_at))
+    OR (template<>'deployment_failed' AND deployment_failure_id IS NULL AND deployment_failure_app_id IS NULL
+        AND deployment_failure_scope IS NULL AND deployment_failure_revision IS NULL AND deployment_failure_account_revision IS NULL
+        AND deployment_failure_app_revision IS NULL AND deployment_failure_success_revision IS NULL AND deployment_failure_at IS NULL)
+);
+

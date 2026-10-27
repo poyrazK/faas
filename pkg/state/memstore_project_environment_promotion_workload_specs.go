@@ -6,11 +6,12 @@ import (
 )
 
 func (m *MemStore) CreateDeploymentForEnvironmentPromotion(ctx context.Context, deployment Deployment, input ProjectEnvironmentPromotionWorkloadSpecInput) (Deployment, error) {
+	deployment = promotionDeploymentCreationMetadata(deployment)
 	created, _, err := m.createDeployment(ctx, deployment, nil, &input)
 	return created, err
 }
 
-func (m *MemStore) ProjectEnvironmentPromotionWorkloadSpec(_ context.Context, accountID, promotionID, appID string) (ProjectEnvironmentPromotionWorkloadSpec, error) {
+func (m *MemStore) ProjectEnvironmentPromotionWorkloadSpec(ctx context.Context, accountID, promotionID, appID string) (ProjectEnvironmentPromotionWorkloadSpec, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	promotion, ok := m.projectEnvironmentPromotions[promotionID]
@@ -60,6 +61,9 @@ func (m *MemStore) preparePromotionWorkloadSpecLocked(app App, environment strin
 		!promotion.SyncConfig || !promotion.ReleaseGraphMode || promotion.Status != "running" || promotion.TargetReleaseSetID != "" {
 		return invalid(ErrConflict)
 	}
+	if h := m.promotionHealth[promotion.ID]; h != nil && (h.Phase != "migrating" && h.Phase != "preflight" && h.Phase != "cutover" || !m.clock().Before(h.Deadline)) {
+		return invalid(ErrConflict)
+	}
 	matched := false
 	var previousDeploymentID string
 	for _, workload := range m.projectEnvironmentPromotionWorkloads[promotion.ID] {
@@ -67,6 +71,9 @@ func (m *MemStore) preparePromotionWorkloadSpecLocked(app App, environment strin
 			matched = true
 			previousDeploymentID = workload.PreviousTargetDeploymentID
 		}
+	}
+	if _, pinned := m.releaseEnvironmentPins[input.SourceDeploymentID]; pinned && m.promotionReleaseConfigurations[promotion.ID].Hash == "" {
+		return ProjectEnvironmentWorkloadSpec{}, ProjectEnvironmentPromotionWorkloadSpec{}, ErrReleaseConfigurationTransferUnsupported
 	}
 	source, exists := m.deployments[input.SourceDeploymentID]
 	if !matched || !exists || source.AppID != app.ID || source.Scope != promotion.FromEnvironment || source.Status != DeployLive {
@@ -105,6 +112,9 @@ func (m *MemStore) preparePromotionWorkloadSpecLocked(app App, environment strin
 		return invalid(ErrConflict)
 	}
 	settings, err := WorkloadSettingsForPromotion(sourceSettings, targetSettings)
+	if m.promotionReleaseConfigurations[promotion.ID].Hash != "" {
+		settings, err = SnapshotWorkloadSettingsForPromotion(sourceSettings, targetSettings, m.promotionReleaseConfigurations[promotion.ID].DestinationConfig != nil)
+	}
 	if err != nil {
 		return invalid(err)
 	}

@@ -1,7 +1,8 @@
-package main
+package main_test
 
 import (
 	"bytes"
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -55,13 +56,13 @@ func TestHelpDocumentsAuditCommandContracts(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.path, func(t *testing.T) {
-			resetJSONOut(t)
+			main.ResetJSONOut(t)
 			var stdout, stderr bytes.Buffer
-			oldOut, oldErr := osStdout, osStderr
-			osStdout, osStderr = &stdout, &stderr
-			t.Cleanup(func() { osStdout, osStderr = oldOut, oldErr })
+			oldOut, oldErr := (*main.OsStdout), (*main.OsStderr)
+			(*main.OsStdout), (*main.OsStderr) = &stdout, &stderr
+			t.Cleanup(func() { (*main.OsStdout), (*main.OsStderr) = oldOut, oldErr })
 			args := append(strings.Fields(tc.path), "--help")
-			if code := run(args); code != 0 {
+			if code := main.Run(args); code != 0 {
 				t.Fatalf("help exit=%d stdout=%q stderr=%q", code, stdout.String(), stderr.String())
 			}
 			for _, want := range tc.want {

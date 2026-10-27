@@ -23,7 +23,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/apptaskproto"
 )
 
-func runInteractiveJob(m JobManifest, env []string, log *slog.Logger) error {
+func runInteractiveJob(m JobManifest, proc jobProcess, log *slog.Logger) error {
 	signals := make(chan os.Signal, 4)
 	osSignal.Notify(signals, syscall.SIGTERM, syscall.SIGINT, syscall.SIGQUIT, syscall.SIGHUP)
 	defer osSignal.Stop(signals)
@@ -46,7 +46,7 @@ func runInteractiveJob(m JobManifest, env []string, log *slog.Logger) error {
 		}
 		return shipAndPoweroff(payload, log)
 	}
-	return shipAndPoweroff(serveInteractiveJobSession(conn, m, env, signals, log), log)
+	return shipAndPoweroff(serveInteractiveJobSession(conn, m, proc, signals, log), log)
 }
 
 // acceptJobSession waits for the host's session connection. It returns no
@@ -88,14 +88,14 @@ func acceptJobSession(ln net.Listener, window time.Duration, signals <-chan os.S
 // serveInteractiveJobSession runs the job command for one session and
 // returns the exit receipt. A request that never starts the command (a
 // batch request, or one that fails validation) is an infrastructure failure.
-func serveInteractiveJobSession(conn net.Conn, m JobManifest, env []string, signals <-chan os.Signal, log *slog.Logger) JobExitPayload {
+func serveInteractiveJobSession(conn net.Conn, m JobManifest, proc jobProcess, signals <-chan os.Signal, log *slog.Logger) JobExitPayload {
 	defer func() { _ = conn.Close() }()
 	var payload *JobExitPayload
 	batch := func(context.Context, apptaskproto.Request, *apptaskproto.OutputWriter, *apptaskproto.OutputWriter) (apptaskproto.Result, error) {
 		return appTaskInfraFailure("interactive_required", "this task accepts only an interactive session", 2), nil
 	}
 	interactive := func(ctx context.Context, session *apptaskproto.InteractiveSession) (apptaskproto.Result, error) {
-		result := superviseInteractiveJob(ctx, m, env, session, signals, log)
+		result := superviseInteractiveJob(ctx, m, proc, session, signals, log)
 		payload = &result
 		return jobSessionResult(result), nil
 	}
@@ -110,28 +110,31 @@ func serveInteractiveJobSession(conn net.Conn, m JobManifest, env []string, sign
 	return *payload
 }
 
-func superviseInteractiveJob(ctx context.Context, m JobManifest, env []string, session *apptaskproto.InteractiveSession, signals <-chan os.Signal, log *slog.Logger) JobExitPayload {
+func superviseInteractiveJob(ctx context.Context, m JobManifest, proc jobProcess, session *apptaskproto.InteractiveSession, signals <-chan os.Signal, log *slog.Logger) JobExitPayload {
 	stop := make(chan os.Signal, 4)
 	done := make(chan struct{})
 	defer close(done)
 	go forwardJobSessionSignals(ctx, signals, stop, done)
 	var stdio jobStdio = &jobPipeStdio{session: session}
 	if session.Request.TTY {
-		stdio = &jobTTYStdio{session: session}
+		stdio = &jobTTYStdio{session: session, credential: proc.Credential}
 	}
-	return superviseJobCommandWithStdio(m, env, jobTerminationGrace, log, stdio, stop)
+	return superviseJobCommandWithStdio(m, proc, jobTerminationGrace, log, stdio, stop)
 }
 
 // jobTTYStdio runs the command on a fresh pseudo-terminal whose master is
 // relayed to the session.
 type jobTTYStdio struct {
 	session       *apptaskproto.InteractiveSession
+	credential    *syscall.Credential
 	master, slave *os.File
 	outputDone    chan struct{}
 }
 
 func (s *jobTTYStdio) attach(cmd *exec.Cmd) error {
-	master, slave, err := openAppTaskPTY(nil)
+	// The slave belongs to the process identity so programs that reopen
+	// their terminal by name keep working after the credential drop.
+	master, slave, err := openAppTaskPTY(s.credential)
 	if err != nil {
 		return err
 	}

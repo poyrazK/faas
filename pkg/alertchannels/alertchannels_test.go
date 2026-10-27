@@ -72,6 +72,49 @@ func TestSlackAndEmailContent(t *testing.T) {
 	}
 }
 
+// adr: 20261020161310 — notes (the route insights behind an alert) reach
+// every channel; a message without notes renders as before.
+func TestNotesReachEveryChannel(t *testing.T) {
+	msg := fire()
+	msg.Notes = []string{"GET /health keeps the app awake.", "GET /catalog is safe to cache for 300s."}
+	if text := SlackPayload(msg)["text"].(string); strings.Contains(text, "/health") {
+		t.Fatalf("slack fallback text carries notes: %q", text)
+	}
+	section := SlackPayload(msg)["blocks"].([]map[string]any)[0]["text"].(map[string]any)["text"].(string)
+	_, body := EmailContent(msg)
+	for _, note := range msg.Notes {
+		if !strings.Contains(section, "• "+note) || !strings.Contains(body, "- "+note) {
+			t.Fatalf("note %q missing: slack %q email %q", note, section, body)
+		}
+	}
+	details := PagerDutyPayload(strings.Repeat("a", 32), msg)["payload"].(map[string]any)["custom_details"].(map[string]any)
+	if notes, _ := details["notes"].([]string); len(notes) != 2 {
+		t.Fatalf("pagerduty details = %v", details)
+	}
+	plain := PagerDutyPayload(strings.Repeat("a", 32), fire())["payload"].(map[string]any)["custom_details"].(map[string]any)
+	if _, ok := plain["notes"]; ok {
+		t.Fatal("a message without notes must not add a notes field")
+	}
+}
+
+// A log note names the route a visitor requested, and a rule name or
+// summary is free text: none of it may form a Slack mention or link.
+func TestSlackPayloadEscapesMentionsAndLinks(t *testing.T) {
+	msg := fire()
+	msg.RuleName = "<!here> errors"
+	msg.Notes = []string{"Logs in the window: 3 errors (most errors on /<!channel> <https://evil.example|Re-login>: 3)"}
+	payload := SlackPayload(msg)
+	section := payload["blocks"].([]map[string]any)[0]["text"].(map[string]any)["text"].(string)
+	for _, text := range []string{payload["text"].(string), section} {
+		if strings.ContainsAny(text, "<>") {
+			t.Fatalf("slack text keeps raw angle brackets: %q", text)
+		}
+	}
+	if !strings.Contains(section, "&lt;!channel&gt; &lt;https://evil.example|Re-login&gt;") || !strings.Contains(section, "&lt;!here&gt; errors") {
+		t.Fatalf("slack section = %q, want the note and rule name escaped", section)
+	}
+}
+
 func TestPostJSONRetriesTransientAndStopsOnConfigErrors(t *testing.T) {
 	var calls atomic.Int32
 	codes := []int{503, 429, 200}

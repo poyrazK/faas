@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import datetime
 from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any, TypeVar, cast
 
@@ -21,12 +22,12 @@ class UploadDeployOptions:
     """Deployment metadata persisted with the upload session and applied at commit."""
 
     healthcheck: DeploymentHealthcheck | Unset = UNSET
-    """Startup healthcheck shape on the deploy-time override object (issue #460 /
-    ADR-053). Exactly one of `path` (HTTP) or `grpc` (standard gRPC health
+    """Startup healthcheck shape on the deploy-time override object. Exactly one of `path` (HTTP) or `grpc`
+    (standard gRPC health
     Check) selects the startup admission action. The gRPC probe uses the
     app's published port; an empty service checks overall server health.
 
-    Validation rules (enforced in `pkg/api/dto.go::CreateDeploymentOverrides.Validate`):
+    Validation rules (enforced):
     - Exactly one of `path` and `grpc` must be set.
     - `path`, when set, must start with `/`.
     - `grpc.service` is optional and limited to 256 characters.
@@ -44,7 +45,7 @@ class UploadDeployOptions:
     scope: str | Unset = UNSET
     """Named environment scope applied when the upload is committed; omitted uses default."""
     source_url: str | Unset = UNSET
-    """Informational repository provenance URL; never fetched by apid."""
+    """Informational repository provenance URL; never fetched by the API."""
     commit_sha: str | Unset = UNSET
     """Lowercase hexadecimal Git commit identifier."""
     environment: str | Unset = UNSET
@@ -66,6 +67,15 @@ class UploadDeployOptions:
     """Create this deployment without temporary startup CPU headroom; omitted or null keeps the default boost."""
     no_triggers: bool | Unset = UNSET
     """Skip reconciling trigger declarations from the uploaded gregale manifest at commit time."""
+    override_freeze: str | Unset = UNSET
+    """Commit this upload to production while a deploy freeze is active; the reason is audited with the freezes it
+    overrode."""
+    release_at: datetime.datetime | Unset = UNSET
+    """Build this upload now, keep it live without traffic, and start its production rollout at this time; deploy
+    freezes are checked at that time."""
+    release_notify: list[str] | Unset = UNSET
+    """Slack or email notification channels told when this upload, scheduled with release_at, starts or cannot
+    start."""
 
     def to_dict(self) -> dict[str, Any]:
         healthcheck: dict[str, Any] | Unset = UNSET
@@ -131,6 +141,16 @@ class UploadDeployOptions:
 
         no_triggers = self.no_triggers
 
+        override_freeze = self.override_freeze
+
+        release_at: str | Unset = UNSET
+        if not isinstance(self.release_at, Unset):
+            release_at = self.release_at.isoformat()
+
+        release_notify: list[str] | Unset = UNSET
+        if not isinstance(self.release_notify, Unset):
+            release_notify = self.release_notify
+
         field_dict: dict[str, Any] = {}
 
         field_dict.update({})
@@ -172,6 +192,12 @@ class UploadDeployOptions:
             field_dict["disable_startup_cpu_boost"] = disable_startup_cpu_boost
         if no_triggers is not UNSET:
             field_dict["no_triggers"] = no_triggers
+        if override_freeze is not UNSET:
+            field_dict["override_freeze"] = override_freeze
+        if release_at is not UNSET:
+            field_dict["release_at"] = release_at
+        if release_notify is not UNSET:
+            field_dict["release_notify"] = release_notify
 
         return field_dict
 
@@ -260,6 +286,17 @@ class UploadDeployOptions:
 
         no_triggers = d.pop("no_triggers", UNSET)
 
+        override_freeze = d.pop("override_freeze", UNSET)
+
+        _release_at = d.pop("release_at", UNSET)
+        release_at: datetime.datetime | Unset
+        if isinstance(_release_at, Unset):
+            release_at = UNSET
+        else:
+            release_at = datetime.datetime.fromisoformat(_release_at)
+
+        release_notify = cast(list[str], d.pop("release_notify", UNSET))
+
         upload_deploy_options = cls(
             healthcheck=healthcheck,
             runtime=runtime,
@@ -280,6 +317,9 @@ class UploadDeployOptions:
             rollback_on_5xx=rollback_on_5xx,
             disable_startup_cpu_boost=disable_startup_cpu_boost,
             no_triggers=no_triggers,
+            override_freeze=override_freeze,
+            release_at=release_at,
+            release_notify=release_notify,
         )
 
         return upload_deploy_options

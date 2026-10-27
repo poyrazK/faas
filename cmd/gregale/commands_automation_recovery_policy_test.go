@@ -1,7 +1,8 @@
-package main
+package main_test
 
 import (
 	"encoding/json"
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 	"net/http"
 	"os"
@@ -52,12 +53,12 @@ func TestAutomationRecoveryPolicyConfigure(t *testing.T) {
 				}
 				_ = json.NewEncoder(w).Encode(api.WorkflowRecoveryPolicyResponse{AppID: inspectorAppID, Version: 3, Policy: req.Policy, Status: "monitoring"})
 			})
-			captureAutomationStdout(t)
+			main.CaptureAutomationStdout(t)
 			args := []string{"--app", "consumer"}
 			if scenario != "get" {
 				args = append(args, "--file", path)
 			}
-			code := cmdAutomationsRecoveryPolicy(args)
+			code := main.CmdAutomationsRecoveryPolicy(args)
 			if scenario == "automatic" {
 				if code == 0 || calls != 0 {
 					t.Fatal("automatic policy submitted")
@@ -97,14 +98,14 @@ func TestAutomationRecoveryPolicyReviewExport(t *testing.T) {
 					t.Fatalf("unexpected path=%s", r.URL.Path)
 				}
 			})
-			captureAutomationStdout(t)
+			main.CaptureAutomationStdout(t)
 			path := filepath.Join(t.TempDir(), "prepared.json")
-			code := cmdAutomationsRecoveryPolicyReviews([]string{"--app", "consumer", "--review", review.ID, "--plan-out", path})
+			code := main.CmdAutomationsRecoveryPolicyReviews([]string{"--app", "consumer", "--review", review.ID, "--plan-out", path})
 			if scenario == "export" {
 				if code != 0 {
 					t.Fatalf("export=%d", code)
 				}
-				saved, err := readAutomationResponsePlan(path)
+				saved, err := main.ReadAutomationResponsePlan(path)
 				if err != nil || saved.Actions[0].Cancellation.RequestID != p.Actions[0].Cancellation.RequestID {
 					t.Fatalf("saved=%+v %v", saved, err)
 				}
@@ -146,7 +147,7 @@ func TestAutomationRecoveryPolicyReviewLifecycle(t *testing.T) {
 					_ = json.NewEncoder(w).Encode(api.WorkflowRecoveryPolicyReview{ID: p.JobID, ReviewDecision: &api.WorkflowRecoveryReviewDecision{Decision: req.Decision}})
 				}
 			})
-			captureAutomationStdout(t)
+			main.CaptureAutomationStdout(t)
 			args := []string{"--app", "consumer", "--review", p.JobID}
 			if operation == "status" {
 				args = append(args, "--status")
@@ -163,7 +164,7 @@ func TestAutomationRecoveryPolicyReviewLifecycle(t *testing.T) {
 					args = []string{"--app", "consumer", "--decision", "approved", "--reason", "reviewed incident"}
 				}
 			}
-			code := cmdAutomationsRecoveryPolicyReviews(args)
+			code := main.CmdAutomationsRecoveryPolicyReviews(args)
 			invalid := operation == "missing_reason" || operation == "missing_review"
 			if invalid {
 				if code == 0 || calls != 0 {

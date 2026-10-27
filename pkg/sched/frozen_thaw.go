@@ -10,6 +10,7 @@ import (
 	vmmdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/vmmd/v1"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/events"
+	"github.com/onebox-faas/faas/pkg/functionlifetime"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -58,6 +59,13 @@ func (e *Engine) promoteFrozenInstanceLocked(ctx context.Context, app state.App,
 	production := reaperProductionScope(values.Snapshot.Scope)
 	if _, _, refused := e.wakeServingCapacity(app, limits, dep.ID, environmentKey, production).refusal(); refused {
 		// The ordinary admission gate owns the capacity result.
+		return WakeResult{}, false, nil
+	}
+	// Frozen time is not billed and a thaw starts billing again, so a thaw
+	// honours the account's spend cap like any wake (ADR-1162, Hunt 18). It
+	// ran before the request gates; the ordinary gate answers the refusal
+	// and the reaper parks the frozen VMs.
+	if e.spendCapReached(ctx, app.AccountID) {
 		return WakeResult{}, false, nil
 	}
 	thawer, ok := e.vmm.(FrozenVMM)
@@ -114,8 +122,8 @@ type frozenCandidate struct {
 
 // frozenCandidates lists the deployment's frozen rows, newest first, with
 // the wake's preferred instance (WithPreferredInstance) ahead of the rest.
-// Rows whose shape no longer matches the app, or whose node is gone or
-// stale, are parked. Each node is read once however many candidates it holds.
+// Rows whose shape no longer matches the app, or whose node is gone, stale
+// or leaving (draining, maintenance), are parked. Each node is read once however many candidates it holds.
 func (e *Engine) frozenCandidates(ctx context.Context, app state.App, dep state.Deployment) ([]frozenCandidate, error) {
 	instances, err := e.store.ListInstancesForApp(ctx, app.ID)
 	if err != nil {
@@ -138,6 +146,13 @@ func (e *Engine) frozenCandidates(ctx context.Context, app state.App, dep state.
 		}
 		if candidate.nodeMissing || candidate.haveNode && e.frozenNodeRowUnreachable(candidate.node) {
 			e.parkFrozenLocked(ctx, ins, "node_restart")
+			continue
+		}
+		// A node that no longer admits work must not take a VM back into
+		// service: a thaw there keeps the drain waiting on it
+		// (ADR-20261024085817). The wake then places a fresh instance.
+		if candidate.haveNode && nodeLeaving(candidate.node) {
+			e.parkFrozenLocked(ctx, ins, parkReasonNodeDraining)
 			continue
 		}
 		candidate.ins = ins
@@ -258,9 +273,9 @@ func (e *Engine) thawFrozenVM(ctx context.Context, thawer FrozenVMM, plan frozen
 	frozen := plan.frozen
 	timing.rpcStarted = time.Now()
 	thawCtx, cancel := context.WithTimeout(ctx, frozenRPCTimeout)
-	// An app that declared after_restore reconnects its clients after the
-	// time it spent frozen, as it does after a restore.
-	req := ThawRequest{ImageHealthcheckRequired: imageHealthcheckRequiredFromDep(plan.dep), RunAfterRestore: plan.app.Manifest.AfterRestore != nil}
+	// Declared callbacks and qualified automatic resources reconnect their
+	// clients after the time spent frozen, as they do after a restore.
+	req := ThawRequest{ImageHealthcheckRequired: imageHealthcheckRequiredFromDep(plan.dep), RunAfterRestore: plan.app.Manifest.AfterRestore != nil || plan.app.Type == state.AppTypeFunction && functionlifetime.NativeNode(plan.app.Runtime)}
 	result, thawErr := thawer.ThawInstance(thawCtx, e.nodeForRoute(frozen.NodeID), frozen.ID, req)
 	cancel()
 	timing.rpcEnded = time.Now()

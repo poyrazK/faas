@@ -27,6 +27,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/extension"
+	"github.com/onebox-faas/faas/pkg/functionlifetime"
 	"github.com/onebox-faas/faas/pkg/overlaymetadata"
 	"golang.org/x/sys/unix"
 )
@@ -102,6 +103,7 @@ func boot() error {
 		return fmt.Errorf("pivot_root: %w", err)
 	}
 	guestStage("pivot")
+	prepareGuestRuntime(slog.Default())
 	if _, markerErr := fullRootfsMarkerPresent("/"); markerErr != nil {
 		return fmt.Errorf("inspect full-rootfs marker after pivot: %w", markerErr)
 	}
@@ -168,6 +170,10 @@ func boot() error {
 		if err := startOutboundRelay(slog.Default()); err != nil {
 			slog.Default().Warn("outbound relay unavailable", "err", err)
 		}
+		// ADR-732: host-only channel for commands in a quarantined fork.
+		if err := startForkExecListener(slog.Default()); err != nil {
+			slog.Default().Warn("fork exec listener unavailable", "err", err)
+		}
 	}
 	// Job VMs (issue #1184 Workstream A / ADR-099) are
 	// single-shot: load /etc/faas/job.json, exec the customer's
@@ -225,7 +231,7 @@ func boot() error {
 	if extensionHooks != nil {
 		if err := listenResumeHookWithExtension(slog.Default(),
 			func() { extensionHooks.emit(extension.PhasePostRestore) },
-			func(req extensionHookRequest) { extensionHooks.emitWithMetadata(req.Phase, req.Metadata) },
+			func(req extensionHookRequest) error { return extensionHooks.emitWithMetadata(req.Phase, req.Metadata) },
 			func() error {
 				cfg := afterRestore.Load()
 				if cfg == nil {
@@ -307,7 +313,7 @@ func boot() error {
 	if err != nil {
 		return err
 	}
-	if err := startProfileBridge(manifest.Profiling, slog.Default()); err != nil {
+	if err := startProfileBridge(manifest.Profiling, manifest.ProfilingOnDemand, slog.Default()); err != nil {
 		slog.Default().Warn("profile bridge unavailable", "err", err)
 	}
 	if err := startTraceBridge(manifest.Tracing, slog.Default()); err != nil {
@@ -318,6 +324,13 @@ func boot() error {
 	}
 	if manifest.BeforeCheckpoint != nil {
 		beforeCheckpoint.Store(&beforeCheckpointRuntime{hook: *manifest.BeforeCheckpoint, port: manifest.EffectivePort()})
+	}
+	if functionlifetime.NativeQualificationBuild {
+		proxy, err := startFunctionExecutionProxy(lookupUID(manifest.EffectiveUser()))
+		if err != nil {
+			return fmt.Errorf("function lifetime proxy: %w", err)
+		}
+		functionExecutions.Store(proxy)
 	}
 	// Bind before starting the workload and grant only its configured group
 	// access to the local signal socket. The runner does not inherit root UID.
@@ -340,6 +353,16 @@ func boot() error {
 	if secErr != nil {
 		// Don't surface the value, just the fact that the file failed.
 		slog.Default().Warn("secrets.env could not be loaded; proceeding without secrets", "err_kind", errorKind(secErr))
+	}
+	// Compose secrets declared as files (ADR-20261023090000) belong to the
+	// main workload, which runs from this root in both the single-workload
+	// and roster paths.
+	secretFiles, err := newSecretFileWriter("", manifest, slog.Default())
+	if err != nil {
+		return err
+	}
+	if err := secretFiles.write(secrets); err != nil {
+		return err
 	}
 
 	// Issue #395 / ADR-045: read /etc/faas/env.json (plaintext JSON
@@ -513,7 +536,11 @@ func runAppWithRAMAndWorkloadEnv(m api.AppManifest, secrets, apiEnv map[string]s
 
 func runAppWithSecretStartup(m api.AppManifest, secrets, apiEnv map[string]string, sup *Supervisor, ramMB int, workloadEnv map[string]string, snapshot *runtimeSecretSnapshot, projection *runtimeSecretProjection, processSecrets *runtimeSecretsState, cpuMillicoresOpt ...int) error {
 	argv := m.Entrypoint
-	env := BuildEnvWithSecrets(os.Environ(), m, secrets, apiEnv)
+	credential, err := processCredential("", m.EffectiveUser())
+	if err != nil {
+		return fmt.Errorf("run app: %w", err)
+	}
+	env := withDefaultPath(BuildEnvWithSecrets(os.Environ(), m, secrets, apiEnv))
 	// Issue #460 / ADR-053 (PR-C): stamp PORT=<m.EffectivePort()>
 	// onto the exec'd env so the runner shim can bind the
 	// per-deployment override port. Appended AFTER
@@ -527,12 +554,12 @@ func runAppWithSecretStartup(m api.AppManifest, secrets, apiEnv map[string]strin
 	// keeping the live edit here means the precedence assertion
 	// tests the exact code path the production execve uses.
 	env = StampOverridePortEnv(env, m.EffectivePort())
-	env = StampDefaultHomeEnv(env)
+	env = StampDefaultHomeEnv(env, workloadHome(credential.Uid, credential.Gid))
 	env = StampWorkloadIdentityEnv(env)
 	env = StampEventPublishEnv(env)
 	env = StampOutboundRelayEnv(env)
 	env = StampRuntimeConfigEnv(env)
-	env = stampProfileEnv(env, m.Profiling)
+	env = stampProfileEnv(env, m.Profiling, m.ProfilingOnDemand)
 	env = stampTracingEnv(env, m.Tracing)
 	env = StampSecretsFileEnv(env, m.SecretReloadSignal != "")
 	env = StampRestoreReseedEnv(env)
@@ -572,6 +599,9 @@ func runAppWithSecretStartup(m api.AppManifest, secrets, apiEnv map[string]strin
 	argv0 := resolveWorkloadCommandPath("/", argv[0], env)
 	cmd := exec.Command(argv0, argv[1:]...)
 	cmd.Dir = m.EffectiveWorkingDir()
+	if err := ensureWorkingDir(cmd.Dir, credential.Uid, credential.Gid); err != nil {
+		return fmt.Errorf("run app: prepare working directory: %w", err)
+	}
 	cmd.Env = env
 	// ADR-051 Phase 4 Slice A PR-B: tee the customer's stdout/stderr
 	// into the supervisor's ring buffer so the characterize probe can
@@ -584,10 +614,6 @@ func runAppWithSecretStartup(m api.AppManifest, secrets, apiEnv map[string]strin
 	var output io.Writer = os.Stdout
 	if sup != nil {
 		output = io.MultiWriter(os.Stdout, sup.LogBuffer())
-	}
-	credential, err := processCredential("", m.EffectiveUser())
-	if err != nil {
-		return fmt.Errorf("run app: %w", err)
 	}
 	outputPipe, err := newWorkloadOutputPipe(output, int(credential.Uid), int(credential.Gid))
 	if err != nil {
@@ -640,8 +666,17 @@ func runAppWithSecretStartup(m api.AppManifest, secrets, apiEnv map[string]strin
 		return err
 	}
 	defer retireGeneration()
+	oomKillsBefore, oomKillsKnown := readVMStatOOMKills(procVMStat)
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("run %v: %w", argv, err)
+	}
+	if proxy := functionExecutions.Load(); proxy != nil {
+		if err := proxy.bind(cmd.Process.Pid); err != nil {
+			_ = cmd.Process.Kill()
+			_ = cmd.Wait()
+			return err
+		}
+		defer proxy.retire(cmd.Process.Pid)
 	}
 	outputPipe.closeWriter()
 	retireImageReadiness := installImageReadinessRuntime(cmd, m, func() []string {
@@ -679,6 +714,9 @@ func runAppWithSecretStartup(m api.AppManifest, secrets, apiEnv map[string]strin
 			defer oomCancel()
 			werr := WatchOOM(oomCtx, mainLeaf, ramMB,
 				func(peakMB, pMB int) {
+					// ADR-1155: the host destroys the instance on this report,
+					// so a running capture first returns its heap checkpoints.
+					flushProfileCaptureOnOOM(api.ProfileCaptureOOMFlushTimeout, peakMB)
 					if eerr := EmitWorkloadOOM(oomCtx, peakMB, pMB); eerr != nil {
 						slog.Default().Warn("EmitWorkloadOOM failed",
 							"peak_mb", peakMB, "plan_mb", pMB, "err", eerr)
@@ -695,7 +733,29 @@ func runAppWithSecretStartup(m api.AppManifest, secrets, apiEnv map[string]strin
 		// 1s poll tick on next wake.
 		defer func() { oomCancel() }()
 	}
+	// ADR-1155: report memory pressure so the control plane can capture the
+	// heap before an OOM kill. Only deployments with on-demand profiling
+	// have collectors to capture from.
+	if m.ProfilingOnDemand {
+		pressureCtx, pressureCancel := context.WithCancel(context.Background())
+		go WatchMemoryPressure(pressureCtx, "/proc/meminfo", profileCollectorsActive, EmitMemoryPressure, slog.Default())
+		defer pressureCancel()
+	}
+	// ADR-1155: a Go application serving net/http/pprof is profiled through
+	// that endpoint, labelled with this run's process, when the deployment
+	// names its port and the profile bridge is running.
+	if bridge := activeProfileBridge(); bridge != nil && m.Profiling != nil && m.Profiling.PprofPort > 0 {
+		scrapeCtx, scrapeCancel := context.WithCancel(context.Background())
+		go runPprofScraper(scrapeCtx, bridge, m.Profiling.PprofPort, cmd.Process.Pid, slog.Default())
+		defer scrapeCancel()
+	}
 	if err := cmd.Wait(); err != nil {
+		if oomKilled(err, oomKillsBefore, oomKillsKnown, func() (uint64, bool) { return readVMStatOOMKills(procVMStat) }) {
+			// ADR-1155: a capture running when the app was OOM-killed returns
+			// its heap checkpoints marked with the kill. The supervisor still
+			// restarts the app; nothing waits on the reply here.
+			go flushProfileCaptureOnOOM(api.ProfileCaptureOOMFlushTimeout, guestMemTotalMB())
+		}
 		return fmt.Errorf("run %v: %w", argv, err)
 	}
 	return nil
@@ -1112,23 +1172,38 @@ func runBuildOnce(m api.BuildManifest) error {
 	}
 	guestStage("runc-preflight")
 
+	buildkitArgs := []string{
+		"--debug",
+		"--rootless",
+		"--root", buildkitRoot,
+		"--addr", "unix:///run/buildkit/buildkitd.sock",
+		"--oci-worker-binary", "/usr/local/bin/runc",
+		// The builder drive is deliberately 28 GiB. The image includes
+		// fuse-overlayfs and the guest kernel has FUSE built in; use the
+		// rootless COW snapshotter so committing a layer does not scan/copy the
+		// complete native snapshot tree after every RUN instruction.
+		"--oci-worker-snapshotter", "fuse-overlayfs",
+		"--oci-worker-net", "host",
+	}
+	// ADR-20261025114554: BuildKit tries the operator's Docker Hub mirrors
+	// before Docker Hub, which limits anonymous pulls per IP.
+	if len(m.DockerHubMirrors) > 0 {
+		config, err := buildkitMirrorConfig(m.DockerHubMirrors)
+		if err != nil {
+			return writeAndPoweroff(m, fmt.Errorf("buildkit mirror config: %w", err), "")
+		}
+		if err := os.MkdirAll(filepath.Dir(buildkitConfigPath), 0o755); err != nil {
+			return writeAndPoweroff(m, fmt.Errorf("buildkit config dir: %w", err), "")
+		}
+		if err := os.WriteFile(buildkitConfigPath, []byte(config), 0o644); err != nil {
+			return writeAndPoweroff(m, fmt.Errorf("write buildkit config: %w", err), "")
+		}
+		buildkitArgs = append(buildkitArgs, "--config", buildkitConfigPath)
+	}
 	var buildkitLog bytes.Buffer
 	bk := exec.Command(
 		"/usr/bin/unshare",
-		rootlessBuildkitUnshareArgs(
-			"/usr/local/bin/buildkitd",
-			"--debug",
-			"--rootless",
-			"--root", buildkitRoot,
-			"--addr", "unix:///run/buildkit/buildkitd.sock",
-			"--oci-worker-binary", "/usr/local/bin/runc",
-			// The builder drive is deliberately 28 GiB. The image includes
-			// fuse-overlayfs and the guest kernel has FUSE built in; use the
-			// rootless COW snapshotter so committing a layer does not scan/copy the
-			// complete native snapshot tree after every RUN instruction.
-			"--oci-worker-snapshotter", "fuse-overlayfs",
-			"--oci-worker-net", "host",
-		)...,
+		rootlessBuildkitUnshareArgs(append([]string{"/usr/local/bin/buildkitd"}, buildkitArgs...)...)...,
 	)
 	// Keep the daemon and its rootless worker tree in a private process group so
 	// the timeout path can terminate BuildKit descendants before powering off.
@@ -1208,6 +1283,9 @@ func runBuildOnce(m api.BuildManifest) error {
 	if m.Framework != api.FrameworkDockerfile && strings.TrimSpace(m.RuntimeBaseRef) == "" {
 		return finish(fmt.Errorf("missing runtime_base_ref for %s build", m.Framework), "")
 	}
+	if err := checkGoCommand(m); err != nil {
+		return finish(err, "")
+	}
 	var restoreRailpackConfig func() error
 	if m.Framework != api.FrameworkDockerfile {
 		var err error
@@ -1215,6 +1293,14 @@ func runBuildOnce(m api.BuildManifest) error {
 		if err != nil {
 			return finish(fmt.Errorf("prepare Railpack runtime base: %w", err), "")
 		}
+	}
+
+	secretEnv, secretErr := buildSecretEnv(m)
+	if secretErr != nil {
+		if restoreRailpackConfig != nil {
+			_ = restoreRailpackConfig()
+		}
+		return finish(secretErr, "")
 	}
 
 	// 3. Pick the build command.
@@ -1246,13 +1332,13 @@ func runBuildOnce(m api.BuildManifest) error {
 	// contract through the patched buildctl client. Five minutes is still a
 	// bounded liveness check and the build wall-clock timeout remains the outer
 	// safety limit.
-	cmd.Env = builderEnv(
+	cmd.Env = append(builderEnv(
 		"USER=root",
 		"HOME=/root",
 		"TMPDIR=/tmp",
 		"BUILDKIT_HOST=unix:///run/buildkit/buildkitd.sock",
 		"BUILDKIT_SESSION_HEALTH_TIMEOUT_MS=300000",
-	)
+	), secretEnv...)
 	var buf bytes.Buffer
 	cmd.Stdout = io.MultiWriter(os.Stdout, &buf)
 	cmd.Stderr = io.MultiWriter(os.Stderr, &buf)
@@ -1687,7 +1773,7 @@ func railpackRuntimePackage(runtime string) (string, string) {
 	case "python313":
 		return "python", "3.13"
 	case "go124", "go124-alpine":
-		return "go", "1.24"
+		return "go", api.GoBuildToolchain
 	default:
 		return "", ""
 	}
@@ -1760,6 +1846,23 @@ func buildArgv(m api.BuildManifest) []string {
 		if m.DockerfilePath != "" {
 			argv = append(argv, "--opt", "filename="+m.DockerfilePath)
 		}
+		if m.DockerfileBuild != nil && m.DockerfileBuild.Target != "" {
+			argv = append(argv, "--opt", "target="+m.DockerfileBuild.Target)
+		}
+		// Compose build arguments (ADR-20261019142544); a reviewed public
+		// build URL of the same name replaces the argument.
+		for _, key := range m.DockerfileBuild.ArgNames() {
+			if _, reviewed := m.PublicBuildURLs[key]; !reviewed {
+				argv = append(argv, "--opt", "build-arg:"+key+"="+m.DockerfileBuild.Args[key])
+			}
+		}
+		// Build secrets (ADR-20261022185329): buildctl reads each value from
+		// its own environment, set by runBuildOnce; argv carries names only.
+		if m.DockerfileBuild != nil {
+			for i, secret := range m.DockerfileBuild.Secrets {
+				argv = append(argv, "--secret", "id="+secret.ID+",env="+buildSecretEnvName(i))
+			}
+		}
 		for _, key := range publicBuildURLKeys(m.PublicBuildURLs) {
 			argv = append(argv, "--opt", "build-arg:"+key+"="+m.PublicBuildURLs[key])
 		}
@@ -1784,6 +1887,8 @@ func buildArgv(m api.BuildManifest) []string {
 		"--plan-out", shellQuote(planPath),
 		"--info-out", shellQuote(infoPath),
 	}, " ")
+	goCommand, goCommandEnv := railpackGoCommand(m)
+	prepare += goCommand
 	if len(m.PublicBuildURLs) > 0 || m.BuildDependencyDigest != "" {
 		prepare += " && " + dependencyInputsHelperEnv + "=" + publicBuildURLsHelperValue + " /proc/1/exe " + shellQuote(planPath)
 	}
@@ -1795,6 +1900,12 @@ func buildArgv(m api.BuildManifest) []string {
 		"--local", "context=" + shellQuote(contextDir),
 		"--local", "dockerfile=" + shellQuote(planDir),
 	}, " ")
+	if goCommandEnv != "" {
+		// Railpack lists each --env value as a plan secret its steps mount,
+		// and BuildKit refuses a build whose secret is missing.
+		build += " --secret id=" + railpackGoBinEnv + ",env=" + railpackGoBinEnv
+		prepare = goCommandEnv + prepare
+	}
 	if m.DependencyCacheImport {
 		build += " --import-cache " + shellQuote("type=local,src=/build/cache")
 	}
@@ -2057,6 +2168,52 @@ func tailOf(data []byte, n int) string {
 	return string(data[len(data)-n:])
 }
 
+// dockerfileBuildAcknowledgement is the digest of the Compose build arguments
+// and target this guest applied (ADR-20261019142544). Only buildArgv's
+// Dockerfile branch applies them, so other builds acknowledge none and
+// builderd refuses an artifact built without options it sent.
+func dockerfileBuildAcknowledgement(m api.BuildManifest) string {
+	if m.Framework != api.FrameworkDockerfile {
+		return ""
+	}
+	return m.DockerfileBuild.SHA256()
+}
+
+// railpackGoBinEnv is Railpack's selector for the `cmd/<name>` main package
+// of a Go module (ADR-20261025134512).
+const railpackGoBinEnv = "RAILPACK_GO_BIN"
+
+// railpackGoCommand returns the `railpack prepare` flag that selects the
+// manifest's Go command and the shell export that hands BuildKit the same
+// value, or two empty strings. checkGoCommand has already refused a command
+// this build cannot honour.
+func railpackGoCommand(m api.BuildManifest) (prepareFlag, export string) {
+	if m.GoCommand == "" || m.Framework == api.FrameworkDockerfile {
+		return "", ""
+	}
+	return " --env " + shellQuote(railpackGoBinEnv+"="+m.GoCommand), "export " + railpackGoBinEnv + "=" + shellQuote(m.GoCommand) + "; "
+}
+
+// checkGoCommand refuses a Go command the build cannot honour, rather than
+// building the module's default command under the selected service's name.
+func checkGoCommand(m api.BuildManifest) error {
+	if m.GoCommand == "" {
+		return nil
+	}
+	if m.Framework == api.FrameworkDockerfile || m.DevWatchCommand != "" || !api.ValidGoCommand(m.GoCommand) {
+		return fmt.Errorf("go command %q cannot be built by this %s build", m.GoCommand, m.Framework)
+	}
+	return nil
+}
+
+// goCommandAcknowledgement is the Go command a successful build compiled.
+func goCommandAcknowledgement(m api.BuildManifest) string {
+	if checkGoCommand(m) != nil {
+		return ""
+	}
+	return m.GoCommand
+}
+
 // writeBuildDone writes /etc/faas/build-done.json (vmmd's Destroy loopback-
 // mounts the chroot drive1 to copy it out). Warm builders call this while the
 // guest remains alive; ordinary builders call it immediately before poweroff.
@@ -2078,6 +2235,8 @@ func writeBuildDone(m api.BuildManifest, runErr error, logTail string) {
 	}
 	if runErr == nil {
 		done.PublicBuildURLsSHA256 = api.PublicBuildURLsSHA256(m.PublicBuildURLs)
+		done.DockerfileBuildSHA256 = dockerfileBuildAcknowledgement(m)
+		done.GoCommand = goCommandAcknowledgement(m)
 		done.BuildDependencyDigest = m.BuildDependencyDigest
 		done.DependencyCacheUnchanged = m.DependencyCache && dependencyCacheKept(m.OutDir)
 		sourceMap, watchErr := devWatchSourceMap(m, buildDevPatchSourceMap(m, readBuildPlan))
@@ -2566,12 +2725,14 @@ func pivotInto(root string) error {
 	for _, mnt := range []struct{ src, dst, fs string }{
 		{"proc", "/proc", "proc"},
 		{"sysfs", "/sys", "sysfs"},
-		{"tmpfs", "/tmp", "tmpfs"},
 	} {
 		_ = os.MkdirAll(mnt.dst, 0o755)
 		if err := syscall.Mount(mnt.src, mnt.dst, mnt.fs, 0, ""); err != nil {
 			slog.Default().Warn("post-pivot mount failed", "dst", mnt.dst, "err", err)
 		}
+	}
+	if err := mountGuestTmp(); err != nil {
+		slog.Default().Warn("post-pivot mount failed", "dst", guestTmpDir, "err", err)
 	}
 	// A fresh devtmpfs lacks the /dev/fd and /dev/std{in,out,err} links
 	// images expect from a container runtime (nginx logs to /dev/stderr).
@@ -2630,9 +2791,11 @@ func runCharacterizationForSup(sup *Supervisor, manifest api.AppManifest) {
 		log = slog.New(slog.NewTextHandler(io.Discard, nil))
 	}
 	args := RunArgs{
-		Manifest:   manifest,
-		AppPID:     func() int { return sup.LastAppPID() },
-		ExitStatus: func() (int, bool) { return sup.LastExitStatus() },
+		Manifest:       manifest,
+		ProvenWorker:   bootProvenWorker(),
+		FunctionRunner: bootFunctionRunner(),
+		AppPID:         func() int { return sup.LastAppPID() },
+		ExitStatus:     func() (int, bool) { return sup.LastExitStatus() },
 		RingBufferTail: func() string {
 			// Populated from the supervisor's ring buffer (Slice A
 			// PR-B). The buffer is allocated lazily on the first

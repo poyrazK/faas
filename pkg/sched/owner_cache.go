@@ -32,6 +32,12 @@ type ownerEntry struct {
 	valueReads runtimeDeploymentInputs
 	// An entry exists only for an app whose database cutover barrier was
 	// clear at its generation; raising the barrier moves the generation.
+
+	// teamOrg marks an app of a team organization at this generation: the
+	// cache serves it nothing, and the entry only spares the next wake the
+	// reads that found out (moving the app to another organization moves
+	// the generation).
+	teamOrg bool
 }
 
 // ownerCache holds one entry per app this schedd woke, dropped when the app's
@@ -135,15 +141,13 @@ var errNoOwnerEntry = errors.New("sched: app has no owner cache entry")
 // workload-retirement gate's verdict from a thaw ticket or an owner cache
 // entry instead of reading it first: both were issued only while the gate
 // passed, and a retirement moves the generation their guarded writes check.
+// A coordinated wake's selection is production's too (ADR-1740 amendment
+// 2026-10-21); a step that decides from fresh reads runs the gate first.
 func (e *Engine) gateGuardedByGeneration(ctx context.Context, appID, deploymentID string) bool {
 	if !e.frozenFastPath.Load() && !e.ownerCacheEnabled.Load() {
 		return false
 	}
-	if deploymentID != "" || ScopeFrom(ctx) != "" || ctx.Value(ownerCacheBypassKey{}) != nil {
-		return false
-	}
-	_, selected := wakeEnvironmentFrom(ctx)
-	return !selected
+	return deploymentID == "" && ScopeFrom(ctx) == "" && ctx.Value(ownerCacheBypassKey{}) == nil
 }
 
 type deferredWorkloadGateKey struct{}
@@ -235,18 +239,34 @@ func withoutOwnerCache(ctx context.Context) context.Context {
 }
 
 // ownerEntryForAdmission returns the app's entry for an ordinary production
-// admission: no explicit deployment, no scope, no coordinated wake
-// selection, cache on and not bypassed. A failed load falls back to the
+// admission: no explicit deployment, no scope, cache on and not bypassed.
+// A coordinated wake (EnsureWake, the gateway's path) is served only when
+// its selection is the entry's production deployment, environment and
+// account (ADR-1741 amendment 2026-10-21). A failed load falls back to the
 // ordinary reads, which report the error the wake path always reported.
 func (e *Engine) ownerEntryForAdmission(ctx context.Context, appID, deploymentID string) (ownerEntry, bool) {
 	if deploymentID != "" || ScopeFrom(ctx) != "" || ctx.Value(ownerCacheBypassKey{}) != nil {
 		return ownerEntry{}, false
 	}
-	if _, selected := wakeEnvironmentFrom(ctx); selected {
+	entry, err := e.ownerEntryFor(ctx, appID)
+	if err != nil {
 		return ownerEntry{}, false
 	}
-	entry, err := e.ownerEntryFor(ctx, appID)
-	return entry, err == nil
+	if selected, ok := wakeEnvironmentFrom(ctx); ok && !entry.serves(selected) {
+		e.observeOwnerCache("selection")
+		return ownerEntry{}, false
+	}
+	return entry, true
+}
+
+// serves reports whether a coordinated wake's selection is the one this
+// entry holds. The selection was read moments ago; when it differs, the
+// entry is stale or the selection is not production's, and the wake decides
+// from its own reads.
+func (entry ownerEntry) serves(selected wakeEnvironment) bool {
+	return selected.app.ID == entry.app.ID && selected.deployment.ID == entry.dep.ID &&
+		selected.account.ID == entry.acct.ID && selected.owner.Scope == entry.scaling.Scope &&
+		selected.owner.EnvironmentID == entry.scaling.EnvironmentID
 }
 
 // ownerEntryFor returns the app's entry, loading it on a miss. It serves
@@ -256,6 +276,10 @@ func (e *Engine) ownerEntryFor(ctx context.Context, appID string) (ownerEntry, e
 		return ownerEntry{}, errNoOwnerEntry
 	}
 	if entry, ok := e.owners.lookup(appID); ok {
+		if entry.teamOrg {
+			e.observeOwnerCache("organization")
+			return ownerEntry{}, errNoOwnerEntry
+		}
 		e.observeOwnerCache("hit")
 		return entry, nil
 	}
@@ -265,7 +289,34 @@ func (e *Engine) ownerEntryFor(ctx context.Context, appID string) (ownerEntry, e
 		return ownerEntry{}, err
 	}
 	e.owners.store(entry)
+	if entry.teamOrg {
+		e.observeOwnerCache("organization")
+		return ownerEntry{}, errNoOwnerEntry
+	}
 	return entry, nil
+}
+
+// generationAccount returns the account a wake of app is admitted under, as
+// state.AppResourceAccount does, when the app's runtime generation covers
+// every change to it: an app outside any organization, or in a personal one,
+// is admitted under its own accounts row. A team organization's status, plan
+// and abuse hold live on the organization's row, which moves no generation,
+// so teamOrg is true and such an app keeps the ordinary reads (ADR-1741
+// amendment 2026-10-22).
+func (e *Engine) generationAccount(ctx context.Context, app state.App) (acct state.Account, teamOrg bool, err error) {
+	if app.OrgID != "" {
+		org, err := e.store.OrgByID(ctx, app.OrgID)
+		if err != nil {
+			return state.Account{}, false, fmt.Errorf("sched: organization: %w", err)
+		}
+		// A personal organization whose owner is not the app's account is
+		// refused by AppResourceAccount; the ordinary path reports it.
+		if !org.Personal || org.PersonalOwnerAccountID == nil || *org.PersonalOwnerAccountID != app.AccountID {
+			return state.Account{}, true, nil
+		}
+	}
+	acct, err = e.store.AccountByID(ctx, app.AccountID)
+	return acct, false, err
 }
 
 // loadOwnerEntry reads the app's generation first, then everything a
@@ -289,14 +340,17 @@ func (e *Engine) loadOwnerEntry(ctx context.Context, appID string) (ownerEntry, 
 	if err != nil {
 		return ownerEntry{}, fmt.Errorf("sched: owner cache: app: %w", err)
 	}
+	acct, teamOrg, err := e.generationAccount(ctx, app)
+	if err != nil {
+		return ownerEntry{}, fmt.Errorf("sched: owner cache: account: %w", err)
+	}
+	if teamOrg {
+		return ownerEntry{generation: generation, app: app, teamOrg: true}, nil
+	}
 	// Only a passing standards check is cached; a refusal is re-read so
 	// its error stays the ordinary path's.
 	if err := e.checkApplicationStandardAdmission(ctx, app); err != nil {
 		return ownerEntry{}, err
-	}
-	acct, err := e.store.AccountByID(ctx, app.AccountID)
-	if err != nil {
-		return ownerEntry{}, fmt.Errorf("sched: owner cache: account: %w", err)
 	}
 	limits, ok := api.LimitsFor(acct.Plan)
 	if !acct.Active() || !ok {

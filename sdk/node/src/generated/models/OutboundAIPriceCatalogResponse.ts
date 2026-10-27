@@ -4,7 +4,7 @@
 /* eslint-disable */
 import type { OutboundAIPriceEntry } from './OutboundAIPriceEntry.js';
 /**
- * One provider's built-in AI price catalog (ADR-994), generated from LiteLLM's MIT-licensed price data. model_prefix holds the catalog model name.
+ * One provider's built-in AI price catalog, generated from LiteLLM's MIT-licensed price data. model_prefix holds the catalog model name.
  */
 export type OutboundAIPriceCatalogResponse = {
   ai_provider: string;
@@ -14,13 +14,19 @@ export type OutboundAIPriceCatalogResponse = {
   source: string;
   generated: string;
   /**
-   * USD per EUR used for the conversion, as a decimal string.
+   * ISO 4217 currency of every catalog price: the billing currency, USD. Absent from responses of older releases.
    */
-  usd_per_eur: string;
+  currency?: string;
   /**
-   * Source and date of the exchange rate.
+   * Deprecated: always 1, since the catalog is in US dollars.
+   * @deprecated
    */
-  fx_source: string;
+  usd_per_eur?: string;
+  /**
+   * Deprecated: names no exchange rate.
+   * @deprecated
+   */
+  fx_source?: string;
   entries: Array<OutboundAIPriceEntry>;
 };
 

@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/functionlifetime"
 	"github.com/onebox-faas/faas/pkg/oci"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -212,6 +213,10 @@ func applyAppLifecycle(manifest api.AppManifest, app state.App) api.AppManifest 
 	}
 	manifest.ExecutionMode = app.Manifest.ExecutionMode
 	manifest.RestartPolicy = app.Manifest.RestartPolicy
+	// Compose secrets the main workload reads from /run/secrets
+	// (ADR-20261023090000); like service URLs, they come from the app's
+	// project-reconciled manifest.
+	manifest.SecretFiles = api.CloneSecretFiles(app.Manifest.ProjectSecretFiles)
 	manifest.AfterRestore = nil
 	if app.Manifest.AfterRestore != nil {
 		hook := *app.Manifest.AfterRestore
@@ -221,6 +226,9 @@ func applyAppLifecycle(manifest api.AppManifest, app state.App) api.AppManifest 
 	if app.Manifest.BeforeCheckpoint != nil {
 		hook := *app.Manifest.BeforeCheckpoint
 		manifest.BeforeCheckpoint = &hook
+	}
+	if app.Type == state.AppTypeFunction {
+		functionlifetime.ConfigureResources(&manifest, app.Runtime)
 	}
 	manifest.StartupDeadlineS = app.Manifest.StartupDeadlineS
 	manifest.MaxRetries = app.Manifest.MaxRetries

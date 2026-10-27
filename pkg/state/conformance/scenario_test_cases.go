@@ -148,6 +148,24 @@ func testScenarioTestNamespace(t *testing.T, fx *Fixture) {
 			t.Fatalf("strict counter lost: %+v", match)
 		}
 	}
+	// One batch may name a counter more than once; both entries count.
+	repeated := chaos.InjectionBatch{RunID: runID, CallerApp: callerApp.ID, Generation: strictLease.Generation, RuleID: chaos.RuleID(strictRule), Count: 3}
+	if err := s.RecordScenarioTestChaosInjections(ctx, []chaos.InjectionBatch{repeated, repeated}); err != nil {
+		t.Fatalf("record repeated counter: %v", err)
+	}
+	evidence, err = s.ScenarioTestChaosMatchEvidence(ctx, accountID, runID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, match := range evidence.Matches {
+		want := int64(2)
+		if match.RuleID == chaos.RuleID(strictRule) {
+			want = 8
+		}
+		if match.Count != want {
+			t.Fatalf("repeated counter: %+v, want %d", match, want)
+		}
+	}
 	strictRule.CorrelationScope = "fedcba9876543210"
 	strictPlan.Rules = []chaos.Rule{strictRule}
 	replacement, err := s.SetScenarioTestChaosPlan(ctx, accountID, runID, strictPlan)

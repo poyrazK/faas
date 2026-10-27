@@ -54,6 +54,11 @@ func (*stubVmmdClient) ResolveServiceCaller(context.Context, *vmmdpb.ResolveServ
 	return nil, status.Error(codes.Unimplemented, "gateway forwarding stub does not authenticate service callers")
 }
 
+// ADR-1138: forwarding fixtures name no in-flight request trace.
+func (*stubVmmdClient) InflightRequestTrace(context.Context, *vmmdpb.InflightRequestTraceRequest, ...grpc.CallOption) (*vmmdpb.InflightRequestTraceResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "gateway forwarding stub does not track request traces")
+}
+
 func (*stubVmmdClient) RestoreManagedServiceProbe(context.Context, *vmmdpb.RestoreAppTaskRequest, ...grpc.CallOption) (*vmmdpb.RestoreAppTaskResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "gateway forwarding stub does not launch managed service probes")
 }
@@ -72,6 +77,14 @@ func (*stubVmmdClient) ExecuteOperatorPark(context.Context, *vmmdpb.ExecuteOpera
 
 func (*stubVmmdClient) RetireMigrationAdoption(context.Context, *vmmdpb.RetireMigrationAdoptionRequest, ...grpc.CallOption) (*vmmdpb.RetireMigrationAdoptionResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "gateway forwarding stub does not retire migration adoptions")
+}
+
+func (*stubVmmdClient) AdoptionReport(context.Context, *vmmdpb.AdoptionReportRequest, ...grpc.CallOption) (*vmmdpb.AdoptionReportResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "gateway forwarding stub does not report vmmd restart adoption")
+}
+
+func (*stubVmmdClient) AdoptionInventory(context.Context, *vmmdpb.AdoptionInventoryRequest, ...grpc.CallOption) (*vmmdpb.AdoptionInventoryResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "gateway forwarding stub does not list adoption inventory")
 }
 
 var _ vmmdpb.VmmdClient = (*stubVmmdClient)(nil)

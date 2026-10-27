@@ -118,7 +118,7 @@ func cmdWakeTimeline(args []string) int {
 	if jsonOutput {
 		return jsonOut(writeJSON(page))
 	}
-	renderWakeTimelinePageWithOptions(osStdout, page, *verbose)
+	renderWakeTimelinePageWithOptions(osStdout, slug, page, *verbose)
 	if page.NextCursor != "" {
 		_, _ = fmt.Fprintf(osStdout, "... more — pass --since %s\n", page.NextCursor)
 	}
@@ -145,7 +145,7 @@ func cmdWakeTimelineAll(ctx context.Context, client *api.Client, slug, wakeID st
 				}
 			}
 		} else {
-			renderWakeTimelinePageWithOptions(osStdout, page, verbose)
+			renderWakeTimelinePageWithOptions(osStdout, slug, page, verbose)
 		}
 		if page.NextCursor == "" || len(page.Events) == 0 {
 			return 0
@@ -165,15 +165,20 @@ func cmdWakeTimelineAll(ctx context.Context, client *api.Client, slug, wakeID st
 // present) so operators can answer "why did this instance start?"
 // without leaving the CLI. Pre-ADR-123 events render as before.
 func renderWakeTimelinePage(w io.Writer, p api.WakeTimelineResponse) {
-	renderWakeTimelinePageWithOptions(w, p, false)
+	renderWakeTimelinePageWithOptions(w, "", p, false)
 }
 
-func renderWakeTimelinePageWithOptions(w io.Writer, p api.WakeTimelineResponse, verbose bool) {
-	_, _ = fmt.Fprintf(w, "wake %s app %s limit %d:\n", p.WakeID, p.AppID, p.Limit)
+func renderWakeTimelinePageWithOptions(w io.Writer, slug string, p api.WakeTimelineResponse, verbose bool) {
+	app := p.AppID
+	if slug != "" {
+		// The UUID alone named no app the customer typed (Hunt 12 H12-55).
+		app = slug + " (" + p.AppID + ")"
+	}
+	_, _ = fmt.Fprintf(w, "wake %s app %s limit %d:\n", p.WakeID, app, p.Limit)
 	renderSummaryHeader(w, p.Events)
 	renderWakeTimingSummary(w, p.Events)
 	for _, ev := range p.Events {
-		_, _ = fmt.Fprintf(w, "  %s  %-9s  %s\n", ev.At, ev.Actor, ev.Kind)
+		_, _ = fmt.Fprintf(w, "  %s  %-9s  %s\n", timelineColumnTime(ev.At), ev.Actor, ev.Kind)
 		if ctx := renderContextSuffix(ev); ctx != "" {
 			_, _ = fmt.Fprintf(w, "        %s\n", ctx)
 		}
@@ -184,11 +189,46 @@ func renderWakeTimelinePageWithOptions(w io.Writer, p api.WakeTimelineResponse, 
 			if breakdown := renderColdBootBreakdown(ev); breakdown != "" {
 				_, _ = fmt.Fprintf(w, "        %s\n", breakdown)
 			}
+			if breakdown := renderPreWakeBreakdown(ev); breakdown != "" {
+				_, _ = fmt.Fprintf(w, "        %s\n", breakdown)
+			}
+			if breakdown := renderPreRPCBreakdown(ev); breakdown != "" {
+				_, _ = fmt.Fprintf(w, "        %s\n", breakdown)
+			}
 			if breakdown := renderPostRPCBreakdown(ev); breakdown != "" {
 				_, _ = fmt.Fprintf(w, "        %s\n", breakdown)
 			}
 		}
 	}
+}
+
+// renderPreWakeBreakdown renders schedd's EnsureWake steps before the wake
+// itself starts. Older events omit them.
+func renderPreWakeBreakdown(ev api.WakeTimelineEvent) string {
+	if ev.Kind != "wake.boot_started" {
+		return ""
+	}
+	return renderSchedSpans(ev, "pre-wake", []struct{ key, label string }{
+		{"pre_wake_authorize_ms", "authorize"},
+		{"pre_wake_environment_ms", "environment"},
+		{"pre_wake_coordinate_ms", "coordinate"},
+		{"pre_wake_transition_ms", "transition"},
+	})
+}
+
+// renderPreRPCBreakdown renders schedd's steps from the start of the wake to
+// the vmmd RPC. Older events omit them.
+func renderPreRPCBreakdown(ev api.WakeTimelineEvent) string {
+	if ev.Kind != "wake.boot_started" {
+		return ""
+	}
+	return renderSchedSpans(ev, "pre-rpc", []struct{ key, label string }{
+		{"pre_rpc_before_admission_ms", "before_admission"},
+		{"pre_rpc_lock_wait_ms", "lock_wait"},
+		{"pre_rpc_reads_ms", "reads"},
+		{"pre_rpc_admit_ms", "admit"},
+		{"pre_rpc_post_admit_ms", "post_admit"},
+	})
 }
 
 // renderPostRPCBreakdown renders schedd's steps between the vmmd RPC
@@ -197,14 +237,20 @@ func renderPostRPCBreakdown(ev api.WakeTimelineEvent) string {
 	if ev.Kind != "wake.boot_completed" {
 		return ""
 	}
-	parts := []string{}
-	for _, f := range []struct{ key, label string }{
+	return renderSchedSpans(ev, "post-rpc", []struct{ key, label string }{
 		{"post_rpc_pre_commit_ms", "pre_commit"},
 		{"post_rpc_stamp_join_ms", "stamp_join"},
 		{"post_rpc_lock_wait_ms", "lock_wait"},
 		{"post_rpc_publish_ms", "publish"},
 		{"post_rpc_finalize_ms", "finalize"},
-	} {
+	})
+}
+
+// renderSchedSpans renders the spans an event carries as "<prefix> a=1ms ...",
+// or "" when it carries none.
+func renderSchedSpans(ev api.WakeTimelineEvent, prefix string, fields []struct{ key, label string }) string {
+	parts := []string{}
+	for _, f := range fields {
 		if ms, ok := timelineMillis(ev.Data[f.key]); ok {
 			parts = append(parts, fmt.Sprintf("%s=%dms", f.label, ms))
 		}
@@ -212,7 +258,7 @@ func renderPostRPCBreakdown(ev api.WakeTimelineEvent) string {
 	if len(parts) == 0 {
 		return ""
 	}
-	return "post-rpc " + strings.Join(parts, " ")
+	return prefix + " " + strings.Join(parts, " ")
 }
 
 // renderWakeTimingSummary renders the stable, customer-useful subset of wake
@@ -580,6 +626,17 @@ func timelineMillis(v any) (int64, bool) {
 	default:
 		return 0, false
 	}
+}
+
+// timelineColumnTime prints an event time at a fixed width: RFC3339Nano
+// drops trailing zeros, so "…24.8436Z" pushed its row out of the column
+// (Hunt 14 H14-64).
+func timelineColumnTime(s string) string {
+	t := timelineTime(s)
+	if t.IsZero() {
+		return s
+	}
+	return t.UTC().Format("2006-01-02T15:04:05.000000Z")
 }
 
 func timelineTime(s string) time.Time {

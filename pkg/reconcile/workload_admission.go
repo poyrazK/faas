@@ -37,6 +37,11 @@ func validatePlatformTenantPolicy(plan api.Plan, workloads []reposcan.Workload) 
 func ProjectImageLifecycleAdmissionReasons(plan api.Plan, workloads []reposcan.Workload) []string {
 	var reasons []string
 	for _, workload := range workloads {
+		reasons = append(reasons, composeResourcesAdmissionReasons(plan, workload)...)
+		// Built services carry Compose process overrides too (ADR-20261022160000).
+		if err := workload.ImageProcess.ValidatePlan(plan); err != nil {
+			reasons = append(reasons, fmt.Sprintf("workload %q: image process: %s", workload.Name, err))
+		}
 		mode := scanExecutionMode(workload)
 		if workload.Image == "" && mode == "" {
 			continue
@@ -89,6 +94,18 @@ func WorkloadAdmissionReasonsWithManaged(workloads []reposcan.Workload, managed 
 		}
 		if err := workload.ImageHealthcheck.Validate(); err != nil {
 			reasons = append(reasons, fmt.Sprintf("workload %q has an invalid image healthcheck: %s", workload.Name, err))
+		}
+		if err := workload.ImageProcess.Validate(); err != nil {
+			reasons = append(reasons, fmt.Sprintf("workload %q has an invalid image process: %s", workload.Name, err))
+		}
+		if err := workload.DockerfileBuild.Validate(); err != nil {
+			reasons = append(reasons, fmt.Sprintf("workload %q has invalid build options: %s", workload.Name, err))
+		}
+		if err := api.ValidateSecretFiles(workload.SecretFiles); err != nil {
+			reasons = append(reasons, fmt.Sprintf("workload %q has invalid secret files: %s", workload.Name, err))
+		}
+		if workload.Image != "" && !workload.DockerfileBuild.IsZero() {
+			reasons = append(reasons, fmt.Sprintf("workload %q is a prebuilt image; build options apply only to Dockerfile builds", workload.Name))
 		}
 		if api.IsReservedAppSlug(slug) {
 			// Do not strand a project that already owns a reserved collision:

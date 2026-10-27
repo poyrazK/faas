@@ -1,4 +1,4 @@
-package main
+package main_test
 
 // commands_decompose_warn_test.go — unit tests for the ADR-124
 // ship-blocker #4 PrintWarn hook in printPlanText. The warn fires
@@ -25,6 +25,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -55,18 +56,18 @@ func TestPrintPlanText_WarnsOnDestructiveExclude(t *testing.T) {
 	// Pin the TTY seam so the glyph assertion is deterministic
 	// regardless of sibling-test state (jsonOutput / noColorVal
 	// can leak across the gregale package's many tests).
-	prevTTY := testOnlyTTY
-	prevJSON := jsonOutput
+	prevTTY := (*main.TestOnlyTTY)
+	prevJSON := (*main.JsonOutput)
 	on := true
-	testOnlyTTY = &on
-	jsonOutput = false
+	(*main.TestOnlyTTY) = &on
+	(*main.JsonOutput) = false
 	t.Cleanup(func() {
-		testOnlyTTY = prevTTY
-		jsonOutput = prevJSON
+		(*main.TestOnlyTTY) = prevTTY
+		(*main.JsonOutput) = prevJSON
 	})
 
 	var buf bytes.Buffer
-	exit := printPlanText(&buf, basePlan(), []string{"checkout-web"}, false)
+	exit := main.PrintPlanText(&buf, basePlan(), []string{"checkout-web"}, false)
 	if exit != 0 {
 		t.Fatalf("printPlanText exit code: got %d, want 0", exit)
 	}
@@ -89,7 +90,7 @@ func TestPrintPlanText_WarnsOnDestructiveExclude(t *testing.T) {
 // surfacing the partition + warning would double-up.
 func TestPrintPlanText_NoWarnOnShowAffected(t *testing.T) {
 	var buf bytes.Buffer
-	exit := printPlanText(&buf, basePlan(), []string{"checkout-web"}, true)
+	exit := main.PrintPlanText(&buf, basePlan(), []string{"checkout-web"}, true)
 	if exit != 0 {
 		t.Fatalf("printPlanText exit code: got %d, want 0", exit)
 	}
@@ -109,7 +110,7 @@ func TestPrintPlanText_NoWarnWithoutExclude(t *testing.T) {
 	plan.Removed = []string{"checkout-api"}
 
 	var buf bytes.Buffer
-	exit := printPlanText(&buf, plan, nil, false)
+	exit := main.PrintPlanText(&buf, plan, nil, false)
 	if exit != 0 {
 		t.Fatalf("printPlanText exit code: got %d, want 0", exit)
 	}
@@ -128,7 +129,7 @@ func TestPrintPlanText_NoWarnWhenRemovedEmpty(t *testing.T) {
 	plan.Removed = nil // --exclude did not drop any apps
 
 	var buf bytes.Buffer
-	exit := printPlanText(&buf, plan, []string{"checkout-web"}, false)
+	exit := main.PrintPlanText(&buf, plan, []string{"checkout-web"}, false)
 	if exit != 0 {
 		t.Fatalf("printPlanText exit code: got %d, want 0", exit)
 	}
@@ -149,7 +150,7 @@ func TestPrintPlanText_WarnCountReflectsPlanRemoved(t *testing.T) {
 	plan.Removed = []string{"alpha", "beta", "delta"}
 
 	var buf bytes.Buffer
-	exit := printPlanText(&buf, plan, []string{"unrelated"}, false)
+	exit := main.PrintPlanText(&buf, plan, []string{"unrelated"}, false)
 	if exit != 0 {
 		t.Fatalf("printPlanText exit code: got %d, want 0", exit)
 	}
@@ -183,7 +184,7 @@ func rescuePlan() api.PlanResponse {
 // signal in a workloads table the operator isn't reading yet.
 func TestPrintPlanText_RendersRescueLine(t *testing.T) {
 	var buf bytes.Buffer
-	exit := printPlanText(&buf, rescuePlan(), []string{"checkout-api"}, false)
+	exit := main.PrintPlanText(&buf, rescuePlan(), []string{"checkout-api"}, false)
 	if exit != 0 {
 		t.Fatalf("printPlanText exit code: got %d, want 0", exit)
 	}
@@ -224,7 +225,7 @@ func TestPrintPlanText_NoRescueLineWhenCanApplyFalseButNotRescued(t *testing.T) 
 	plan.CanApplyReasons = []string{"plan_apps_over_limit"}
 
 	var buf bytes.Buffer
-	exit := printPlanText(&buf, plan, []string{"checkout-api"}, false)
+	exit := main.PrintPlanText(&buf, plan, []string{"checkout-api"}, false)
 	if exit != 0 {
 		t.Fatalf("printPlanText exit code: got %d, want 0", exit)
 	}
@@ -248,12 +249,13 @@ func TestPrintPlanText_BlockedPlanRetainsDetails(t *testing.T) {
 		Name: "api", RootDir: "services/api", Class: "http",
 		ServiceBindingPolicy:      api.ServiceBindingPolicyDeclared,
 		PreviewServiceCallsPolicy: api.PreviewServiceCallsDeny,
+		Visibility:                api.AppVisibilityInternal,
 	}}
 	plan.Managed = []api.PlanManaged{{Name: "db", Kind: "postgres", EnvHint: "DATABASE_URL", Image: "postgres:17"}}
 	plan.Warnings = []string{"ignored unsupported field"}
 
 	var buf bytes.Buffer
-	if exit := printPlanTextWithExplain(&buf, plan, nil, false, true); exit != 0 {
+	if exit := main.PrintPlanTextWithExplain(&buf, plan, nil, false, true); exit != 0 {
 		t.Fatalf("exit = %d, want 0", exit)
 	}
 	out := buf.String()
@@ -261,7 +263,7 @@ func TestPrintPlanText_BlockedPlanRetainsDetails(t *testing.T) {
 		"can_apply: false",
 		"reason: apps over plan limit",
 		"reason: duplicate workload slug",
-		"Workloads:", "services/api", "class=http", "service_policy=declared", "preview_calls=deny",
+		"Workloads:", "services/api", "class=http", "service_policy=declared", "preview_calls=deny", "visibility=internal",
 		"Managed (not provisioned):", "DATABASE_URL", "postgres:17",
 		"Warnings:", "ignored unsupported field",
 	} {
@@ -280,7 +282,7 @@ func TestPrintPlanText_BlockedShowAffectedAndExplain(t *testing.T) {
 	plan.Unaffected = []api.PlanAffectedApp{{Slug: "existing", ID: "app-1", Action: "noop"}}
 
 	var buf bytes.Buffer
-	if exit := printPlanTextWithExplain(&buf, plan, nil, true, true); exit != 0 {
+	if exit := main.PrintPlanTextWithExplain(&buf, plan, nil, true, true); exit != 0 {
 		t.Fatalf("exit = %d, want 0", exit)
 	}
 	out := buf.String()
@@ -299,7 +301,7 @@ func TestPrintPlanText_BlockedShowAffectedAndExplain(t *testing.T) {
 // table is the post-rescue fingerprint of "render continued".
 func TestPrintPlanText_NoEarlyReturnWhenRescued(t *testing.T) {
 	var buf bytes.Buffer
-	exit := printPlanText(&buf, rescuePlan(), []string{"checkout-api"}, false)
+	exit := main.PrintPlanText(&buf, rescuePlan(), []string{"checkout-api"}, false)
 	if exit != 0 {
 		t.Fatalf("printPlanText exit code: got %d, want 0", exit)
 	}
@@ -317,7 +319,7 @@ func TestPrintPlanText_NoEarlyReturnWhenRescued(t *testing.T) {
 // produce identical output shape.
 func TestPrintPlanText_NoRescueLineOnHappyPath(t *testing.T) {
 	var buf bytes.Buffer
-	exit := printPlanText(&buf, basePlan(), nil, false)
+	exit := main.PrintPlanText(&buf, basePlan(), nil, false)
 	if exit != 0 {
 		t.Fatalf("printPlanText exit code: got %d, want 0", exit)
 	}
@@ -348,7 +350,7 @@ func TestPlanProblem_GateBlocked(t *testing.T) {
 	plan.GateRescuedByExclude = false
 	plan.CanApplyReasons = []string{"plan_apps_over_limit", "plan_crons_over_limit"}
 
-	p := planProblem(plan)
+	p := main.PlanProblem(plan)
 	if p.Status != 403 {
 		t.Errorf("planProblem Status: got %d, want 403", p.Status)
 	}
@@ -379,7 +381,7 @@ func TestPlanProblem_PreservesExistingOrdering(t *testing.T) {
 	plan.CanApplyPreExclude = false
 	plan.CanApplyReasons = []string{"some_other_reason"}
 
-	p := planProblem(plan)
+	p := main.PlanProblem(plan)
 	if p.Code != api.CodePlanCronsNotAllowed {
 		t.Errorf("CronsNotAllowed branch lost to GateBlocked; got code %q, want %q",
 			p.Code, api.CodePlanCronsNotAllowed)
@@ -391,7 +393,7 @@ func TestPlanProblem_PreservesExistingOrdering(t *testing.T) {
 	plan.CanApplyPreExclude = false
 	plan.CanApplyReasons = []string{"some_other_reason"}
 
-	p = planProblem(plan)
+	p = main.PlanProblem(plan)
 	if p.Code != api.CodePlanLimitApps {
 		t.Errorf("OverApps branch lost to GateBlocked; got code %q, want %q",
 			p.Code, api.CodePlanLimitApps)

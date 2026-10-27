@@ -12,6 +12,16 @@ import (
 )
 
 func (e *Engine) checkApplicationStandardAdmission(ctx context.Context, app state.App) error {
+	if err := e.checkFinancialBudgetAdmission(ctx, app, ""); err != nil {
+		return err
+	}
+	return e.checkApplicationStandardEnrollment(ctx, app)
+}
+
+// checkApplicationStandardEnrollment is checkApplicationStandardAdmission
+// without its budget check, for a caller that checks the budget for the
+// deployment it admits (a superset of the check without one).
+func (e *Engine) checkApplicationStandardEnrollment(ctx context.Context, app state.App) error {
 	if app.OrgID == "" { // Legacy unowned MemStore fixtures have no enrollment.
 		return nil
 	}
@@ -40,6 +50,9 @@ func (e *Engine) checkCapturedApplicationStandardAdmission(ctx context.Context, 
 // checkedCapturedApplicationStandardAdmission also returns the capture it
 // checked; read is false for an app outside an organization, which has none.
 func (e *Engine) checkedCapturedApplicationStandardAdmission(ctx context.Context, id string, app state.App, account state.Account, deployment state.Deployment) (state.InstanceApplicationStandardAdmission, bool, error) {
+	if err := e.checkFinancialBudgetAdmission(ctx, app, deployment.ID); err != nil {
+		return state.InstanceApplicationStandardAdmission{}, false, err
+	}
 	if app.OrgID == "" {
 		return state.InstanceApplicationStandardAdmission{}, false, nil
 	}
@@ -57,6 +70,14 @@ func (e *Engine) checkedCapturedApplicationStandardAdmission(ctx context.Context
 func applicationStandardRuntimeProblem(err error) error {
 	if !errors.Is(err, state.ErrApplicationStandardsPending) && !errors.Is(err, state.ErrApplicationStandardRuntimeStale) && !errors.Is(err, state.ErrApplicationStandardRuntimeBusy) {
 		return err
+	}
+	if errors.Is(err, state.ErrApplicationStandardRuntimeBusy) && !errors.Is(err, state.ErrApplicationStandardsPending) && !errors.Is(err, state.ErrApplicationStandardRuntimeStale) {
+		// A busy fence means another operation on the app held its runtime
+		// state; nothing about its standards changed. The old wording sent a
+		// customer whose deploy hit a busy fence looking for a policy update
+		// (Hunt 14 H14-32).
+		return errors.Join(err, api.NewProblem(http.StatusConflict, api.CodeApplicationStandardsPending,
+			"Runtime state busy", "Another operation on this app was updating its runtime state. Retry the request; it is safe to repeat."))
 	}
 	return errors.Join(err, api.NewProblem(http.StatusConflict, api.CodeApplicationStandardsPending,
 		"Application standards pending", "Application standards changed during startup. Retry the request once the policy update has finished."))

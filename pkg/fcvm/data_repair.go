@@ -95,7 +95,7 @@ func readDataRepairRecord(path string) (dataRepairRecord, error) {
 		return r, core.ErrConflict
 	}
 	_, producerPresent := fields["native_producer"]
-	if producerPresent != (r.Version == 2) || r.Version == 2 && (r.NativeProducer.validate() != nil || r.NativeGeneration == "") {
+	if producerPresent != (r.Version == 2) || r.Version == 2 && (r.NativeProducer.Protocol != nativeRepairProducerProtocol || r.NativeProducer.validate() != nil || r.NativeGeneration == "") {
 		return r, core.ErrConflict
 	}
 	if r.NativeGeneration != "" && (!canonicalNativeHelperID(r.NativeGeneration) || !canonicalNativeHelperID(r.NativeBootID) || r.NativeLease.Instance != r.Frame.TaskID || !r.NativeLease.Networkless) {
@@ -233,6 +233,17 @@ func (m *Manager) verifyDataRepairImages(f core.RehearsalFrame) error {
 // physical VM is networkless and has no app/deployment identity or secret files.
 // Its result is discarded unless durable revocation and cleanup both succeed.
 func (m *Manager) RunDataRepairRehearsal(parent context.Context, f core.RehearsalFrame, in core.RehearsalInput) (evidence core.Evidence, result error) {
+	if m == nil {
+		return evidence, core.ErrInvalid
+	}
+	// This producer has no ordinary app funding frame. Consult the original
+	// app before native recovery, task claims or allocation can begin.
+	if err := m.checkFinancialComputeBypass(parent, f.Scope.AppID); err != nil {
+		return evidence, err
+	}
+	if err := m.rejectRehearsalExecution(parent, f.Scope.AppID); err != nil {
+		return evidence, err
+	}
 	path, err := m.dataRepairPath(parent, f)
 	if err != nil {
 		return evidence, err

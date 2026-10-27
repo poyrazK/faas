@@ -67,6 +67,9 @@ func (e *Engine) WithEnvironmentWorkloadQualificationRuntime(ctx context.Context
 	if err != nil || !dep.EnvironmentWorkloadHeld() {
 		return errors.Join(state.ErrConflict, err)
 	}
+	if err := e.checkFinancialBudgetAdmission(ctx, app, dep.ID); err != nil {
+		return err
+	}
 	if err := securityQuarantineErr(dep); err != nil {
 		return err
 	}
@@ -92,7 +95,7 @@ func (e *Engine) WithEnvironmentWorkloadQualificationRuntime(ctx context.Context
 	if err != nil {
 		return fmt.Errorf("preflight qualification service listener: %w", err)
 	}
-	admission, err := admitter.CreateEnvironmentWorkloadQualificationInstance(nodePlacementContext(ctx, placement), claimed, state.EnvironmentWorkloadQualificationPlacement{
+	admission, err := admitter.CreateEnvironmentWorkloadQualificationInstance(e.nodePlacementContext(ctx, placement), claimed, state.EnvironmentWorkloadQualificationPlacement{
 		NodeID: placement.NodeID, WakeID: uuid.NewString(), RAMMB: app.RAMMB})
 	if err != nil {
 		return fmt.Errorf("admit qualification instance: %w", err)
@@ -165,6 +168,7 @@ func (e *Engine) WithEnvironmentWorkloadQualificationRuntime(ctx context.Context
 	if err := e.prepareQualificationServiceBindings(ctx, claimed, placement.NodeID, &prepared.Spec); err != nil {
 		return fmt.Errorf("prepare qualification service bindings: %w", err)
 	}
+	prepared.Spec.WorkerPushDelivery = qualificationWorkerPushDelivery(claimed)
 	var configDigest string
 	if ctx.Value(qualificationGraphContextKey{}) == claimed.GraphID {
 		configDigest, err = fcvm.QualificationAPIEnvSHA256(prepared.Spec.APIEnv)

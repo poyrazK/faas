@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 )
@@ -20,7 +21,22 @@ type TenantRequestBudgetDecision struct {
 	Limit             int64
 	Observed          int64
 	RetryAfterSeconds int64
+	// OverdueDueAt is the due date of the invoice holding the tenant when
+	// Scope is TenantBudgetScopeOverdue (ADR-1324).
+	OverdueDueAt time.Time
+	// SpendCurrency is the cap's currency when Scope is
+	// TenantBudgetScopeSpendCap; Limit is the cap and Observed the month's
+	// amount due (ADR-20261019100331).
+	SpendCurrency string
 }
+
+// TenantBudgetScopeOverdue refuses a tenant held for an overdue invoice
+// (ADR-1324).
+const TenantBudgetScopeOverdue = "overdue"
+
+// TenantBudgetScopeSpendCap refuses a tenant past its monthly spend cap
+// (ADR-20261019100331).
+const TenantBudgetScopeSpendCap = "spend_cap"
 
 type suppressFinancialUsageKey struct{}
 
@@ -51,10 +67,24 @@ func (h *Handler) enforceTenantRequestBudget(w http.ResponseWriter, r *http.Requ
 		h.denyTenantBudgetUnavailable(w, r, rec, app)
 		return false
 	}
-	if decision.Allowed {
+	// Overdue holds and spend caps are API monetization: while it is off the
+	// tenant is served (ADR-20261018090210). They refused before its budget
+	// was counted, so this request does not use budget.
+	monetized := decision.Scope == TenantBudgetScopeOverdue || decision.Scope == TenantBudgetScopeSpendCap
+	if decision.Allowed || monetized && !h.APIMonetizationEnabledFor(app.AccountID) {
 		return true
 	}
+	recordTrafficLimiter(r.Context(), "tenant")
+	recordTrafficRefusal(r.Context(), "rate_limited")
 	suppressFinancialUsage(r)
+	if decision.Scope == TenantBudgetScopeOverdue {
+		h.denyTenantOverdue(w, r, rec, app, decision.OverdueDueAt)
+		return false
+	}
+	if decision.Scope == TenantBudgetScopeSpendCap {
+		h.denyTenantSpendCap(w, r, rec, app, decision)
+		return false
+	}
 	if decision.RetryAfterSeconds < 1 {
 		decision.RetryAfterSeconds = 1
 	}
@@ -66,7 +96,33 @@ func (h *Handler) enforceTenantRequestBudget(w http.ResponseWriter, r *http.Requ
 	return false
 }
 
+// denyTenantOverdue refuses a tenant whose exported invoice is unpaid past
+// its account's rule (ADR-1324) until it is paid or voided.
+func (h *Handler) denyTenantOverdue(w http.ResponseWriter, r *http.Request, rec *statusRecorder, app App, dueAt time.Time) {
+	detail := "the platform customer has an overdue invoice"
+	if !dueAt.IsZero() {
+		detail += " due " + dueAt.UTC().Format(time.RFC3339)
+	}
+	api.WriteProblem(w, api.NewProblem(http.StatusPaymentRequired, api.CodeTenantInvoiceOverdue,
+		"Customer invoice overdue", detail))
+	h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
+}
+
+// denyTenantSpendCap refuses a tenant whose month to date passed its
+// spend cap (ADR-20261019100331); it resumes when credit or a raised cap
+// lifts it, or next month.
+func (h *Handler) denyTenantSpendCap(w http.ResponseWriter, r *http.Request, rec *statusRecorder, app App, decision TenantRequestBudgetDecision) {
+	w.Header().Set("x-faas-rate-limit-scope", "platform-tenant-spend-cap")
+	detail := "the platform customer's monthly spend cap is " + strconv.FormatInt(decision.Limit, 10) + " " + decision.SpendCurrency +
+		" millicents; requests resume next month or once credit or a higher cap covers the amount due"
+	api.WriteProblem(w, api.NewProblem(http.StatusPaymentRequired, api.CodeTenantSpendCapReached, "Customer spend cap reached", detail).
+		WithLimit(decision.Limit, decision.Observed))
+	h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
+}
+
 func (h *Handler) denyTenantBudgetUnavailable(w http.ResponseWriter, r *http.Request, rec *statusRecorder, app App) {
+	recordTrafficLimiter(r.Context(), "tenant")
+	recordTrafficRefusal(r.Context(), "rate_limit_unavailable")
 	suppressFinancialUsage(r)
 	api.WriteProblem(w, api.NewProblem(http.StatusServiceUnavailable, "tenant_request_budget_unavailable",
 		"Customer request budget unavailable", "request admission could not be verified"))

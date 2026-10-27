@@ -1,9 +1,11 @@
-package state
+package state_test
 
 import (
+	"context"
 	"encoding/json"
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/state"
 	"strings"
 	"testing"
 	"time"
@@ -13,14 +15,14 @@ func TestMCPConnectionHealthClassificationAndPagination(t *testing.T) {
 	at := time.Now().UTC()
 	future := at.Add(time.Hour)
 	expired := at.Add(-time.Minute)
-	rows := []mcpHealthRow{
+	rows := []state.McpHealthRow{
 		{AppID: "app", AppSlug: "app", Role: "reader", Guided: true, Enabled: true, OAuthState: "reauthorization_required"},
 		{AppID: "app", AppSlug: "app", Role: "writer", Enabled: true, JournalState: "failed"},
 		{AppID: "app", AppSlug: "app", Role: "paused", Enabled: true, Paused: true, OAuthState: "connected", ExpiresAt: &expired},
 		{AppID: "app", AppSlug: "app", Role: "unknown", JournalState: "reauthorization_required", JournalOutcome: "issuance_unknown"},
 		{AppID: "deleted", AppSlug: "deleted", Role: "reader", RetirementID: "retired", RetirementState: "held", RetainUntil: &future, AppDeleted: true},
 	}
-	result := connectionHealthSnapshot(rows, true, 0, at)
+	result := state.ConnectionHealthSnapshot(rows, true, 0, at)
 	if result.TotalIssues != 4 || result.Counts["reauthorization_required"] != 1 || result.Counts["renewal_failed"] != 1 || result.Counts["retirement_expiring"] != 1 || result.Counts["issuance_unknown"] != 1 {
 		t.Fatal("wrong connection health counts", result.Counts)
 	}
@@ -35,14 +37,14 @@ func TestMCPConnectionHealthClassificationAndPagination(t *testing.T) {
 	}
 	original := result.Fingerprints["renewal_failed"]
 	rows[1].LeaseUntil = &future
-	if connectionHealthSnapshot(rows, true, 0, at.Add(time.Second)).Fingerprints["renewal_failed"] != original {
+	if state.ConnectionHealthSnapshot(rows, true, 0, at.Add(time.Second)).Fingerprints["renewal_failed"] != original {
 		t.Fatal("poll timestamps changed incident identity")
 	}
 	for i := 0; i < 60; i++ {
-		rows = append(rows, mcpHealthRow{AppID: uuid.NewString(), AppSlug: "app", Role: "reader", OAuthState: "reauthorization_required"})
+		rows = append(rows, state.McpHealthRow{AppID: uuid.NewString(), AppSlug: "app", Role: "reader", OAuthState: "reauthorization_required"})
 	}
-	first := connectionHealthSnapshot(rows, true, 0, at)
-	second := connectionHealthSnapshot(rows, true, first.NextOffset, at)
+	first := state.ConnectionHealthSnapshot(rows, true, 0, at)
+	second := state.ConnectionHealthSnapshot(rows, true, first.NextOffset, at)
 	if len(first.Items) != api.MCPConnectionHealthPageSize || first.NextOffset == 0 || len(second.Items) == 0 || first.TotalIssues != 64 || first.Counts["reauthorization_required"] != 61 {
 		t.Fatal("page truncated counts")
 	}
@@ -51,14 +53,14 @@ func TestMCPConnectionHealthClassificationAndPagination(t *testing.T) {
 	}
 }
 func TestMCPConnectionHealthIncompleteAndTenantIsolation(t *testing.T) {
-	m := NewMemStore()
-	m.mcpCatalogMonitors = map[string]api.MCPCatalogMonitorSnapshot{}
-	m.mcpCatalogMonitorOwners = map[string]string{}
+	m := state.NewMemStore()
+	(*m.McpCatalogMonitors()) = map[string]api.MCPCatalogMonitorSnapshot{}
+	(*m.McpCatalogMonitorOwners()) = map[string]string{}
 	for i := 0; i <= api.MCPConnectionHealthSourceLimit; i++ {
 		id := uuid.NewString()
-		m.apps[id] = App{ID: id, AccountID: "account", Slug: "app"}
-		m.mcpCatalogMonitorOwners[id] = "account"
-		m.mcpCatalogMonitors[id] = api.MCPCatalogMonitorSnapshot{Config: api.MCPCatalogMonitorConfig{Revision: uuid.NewString(), Observer: &api.MCPCatalogObserverConfig{OAuth: &api.MCPCatalogObserverOAuthConfig{}}}, OAuthLifecycle: &api.MCPCatalogOAuthLifecycle{CredentialState: "reconnect_required"}}
+		(*m.Apps())[id] = state.App{ID: id, AccountID: "account", Slug: "app"}
+		(*m.McpCatalogMonitorOwners())[id] = "account"
+		(*m.McpCatalogMonitors())[id] = api.MCPCatalogMonitorSnapshot{Config: api.MCPCatalogMonitorConfig{Revision: uuid.NewString(), Observer: &api.MCPCatalogObserverConfig{OAuth: &api.MCPCatalogObserverOAuthConfig{}}}, OAuthLifecycle: &api.MCPCatalogOAuthLifecycle{CredentialState: "reconnect_required"}}
 	}
 	snapshot, err := m.MCPConnectionHealth(t.Context(), "account", "", 0, time.Now())
 	if err != nil || snapshot.Complete || snapshot.TotalIssues != api.MCPConnectionHealthSourceLimit {
@@ -68,11 +70,51 @@ func TestMCPConnectionHealthIncompleteAndTenantIsolation(t *testing.T) {
 	if err != nil || !other.Complete || other.TotalIssues != 0 {
 		t.Fatal("health crossed account ownership", err)
 	}
-	for id := range m.apps {
+	for id := range *m.Apps() {
 		filtered, e := m.MCPConnectionHealth(t.Context(), "account", id, 0, time.Now())
 		if e != nil || !filtered.Complete || filtered.TotalIssues != 1 {
 			t.Fatal("app filter failed", e)
 		}
 		break
+	}
+}
+
+// healthOnlyStore reads connection health but cannot leave apps out.
+type healthOnlyStore struct{ store *state.MemStore }
+
+func (h healthOnlyStore) MCPConnectionHealth(ctx context.Context, account, app string, offset int, at time.Time) (api.MCPConnectionHealthSnapshot, error) {
+	return h.store.MCPConnectionHealth(ctx, account, app, offset, at)
+}
+
+// A hidden app's issues are neither listed nor counted, so the counts and
+// fingerprints describe only what the caller is shown.
+func TestMCPConnectionHealthVisibleLeavesHiddenAppsUncounted(t *testing.T) {
+	m := state.NewMemStore()
+	(*m.McpCatalogMonitors()) = map[string]api.MCPCatalogMonitorSnapshot{}
+	(*m.McpCatalogMonitorOwners()) = map[string]string{}
+	company, own := uuid.NewString(), uuid.NewString()
+	for _, id := range []string{company, own} {
+		(*m.Apps())[id] = state.App{ID: id, AccountID: "account", Slug: id}
+		(*m.McpCatalogMonitorOwners())[id] = "account"
+		(*m.McpCatalogMonitors())[id] = api.MCPCatalogMonitorSnapshot{Config: api.MCPCatalogMonitorConfig{Revision: uuid.NewString(), Observer: &api.MCPCatalogObserverConfig{OAuth: &api.MCPCatalogObserverOAuthConfig{}}}, OAuthLifecycle: &api.MCPCatalogOAuthLifecycle{CredentialState: "reconnect_required"}}
+	}
+	ctx, now := t.Context(), time.Now()
+	hidden := map[string]bool{company: true}
+	all, err := m.MCPConnectionHealth(ctx, "account", "", 0, now)
+	if err != nil || all.TotalIssues != 2 {
+		t.Fatalf("unfiltered health = %d issues, %v", all.TotalIssues, err)
+	}
+	shown, err := state.VisibleMCPConnectionHealth(ctx, m, "account", "", hidden, 0, now)
+	if err != nil || !shown.Complete || shown.TotalIssues != 1 || shown.Counts["reauthorization_required"] != 1 || len(shown.Items) != 1 || shown.Items[0].AppID != own {
+		t.Fatalf("visible health = %+v, %v; want only the own app's issue", shown, err)
+	}
+	if shown.Fingerprints["reauthorization_required"] == all.Fingerprints["reauthorization_required"] {
+		t.Fatal("a hidden app's issue still shapes the incident fingerprint")
+	}
+	if _, err := state.VisibleMCPConnectionHealth(ctx, healthOnlyStore{m}, "account", "", hidden, 0, now); err == nil {
+		t.Fatal("a store that cannot leave hidden apps out answered anyway")
+	}
+	if got, err := state.VisibleMCPConnectionHealth(ctx, healthOnlyStore{m}, "account", "", nil, 0, now); err != nil || got.TotalIssues != 2 {
+		t.Fatalf("nothing hidden = %d issues, %v", got.TotalIssues, err)
 	}
 }

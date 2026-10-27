@@ -33,6 +33,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/apid/object"
 	"github.com/onebox-faas/faas/pkg/cronexpr"
 	"github.com/onebox-faas/faas/pkg/db"
+	"github.com/onebox-faas/faas/pkg/financial"
 	"github.com/onebox-faas/faas/pkg/logsanitize"
 	"github.com/onebox-faas/faas/pkg/objectstorage"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -759,9 +760,8 @@ func (s *server) buildJob(acct state.Account, req api.CreateJobRequest) (state.J
 	if ramMB == 0 {
 		ramMB = api.JobDefaultRAMMB
 	}
-	if ramMB < 0 {
-		return state.Job{}, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
-			"Invalid ram_mb", "ram_mb must be positive")
+	if prob := api.ValidateJobRAMMB(ramMB); prob != nil {
+		return state.Job{}, prob
 	}
 	if cap := api.JobRAMMB[idx]; ramMB > cap {
 		return state.Job{}, api.ErrJobQuota(acct.Plan, "ram_mb", cap, ramMB)
@@ -885,6 +885,8 @@ func (s *server) createJob(w http.ResponseWriter, r *http.Request, acct state.Ac
 	}
 	if err != nil {
 		switch {
+		case errors.Is(err, financial.ErrComputeUnavailable):
+			api.WriteProblem(w, api.NewProblem(http.StatusUnprocessableEntity, "financial_compute_not_ready", "Job compute authority unavailable", "The compute authority could not be verified. Retry after native compute owners are ready."))
 		case errors.Is(err, state.ErrJobQuotaExceeded):
 			var qe *state.JobQuotaError
 			if errors.As(err, &qe) {
@@ -950,9 +952,8 @@ func (s *server) updateJob(w http.ResponseWriter, r *http.Request, acct state.Ac
 	// customer can raise a field above the previous value.
 	idx := acct.Plan.PlanIndex()
 	if req.RAMMB != nil {
-		if *req.RAMMB <= 0 {
-			api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
-				"Invalid ram_mb", "ram_mb must be positive"))
+		if prob := api.ValidateJobRAMMB(*req.RAMMB); prob != nil {
+			api.WriteProblem(w, prob)
 			return
 		}
 		if cap := api.JobRAMMB[idx]; *req.RAMMB > cap {

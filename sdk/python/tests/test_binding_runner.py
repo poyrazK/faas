@@ -8,7 +8,7 @@ from pathlib import Path
 import httpx
 import pytest
 
-from faas_sdk import (
+from faas_sdk.preview import (
     BindingVerificationRecoveryError,
     arun_binding_verification,
     arun_project_binding_verification,
@@ -396,8 +396,9 @@ def test_async_stop_during_admission_resumes_committed_resource(task_cancel):
 @pytest.mark.parametrize("asynchronous", [False, True])
 @pytest.mark.parametrize("fault", ["budget_after_admit", "capacity"])
 def test_budget_backpressure_with_wrapped_client(asynchronous, fault):
-    from faas_sdk import FaaSClient, FaaSClientOptions, RetryOptions
     from faas_sdk._rfc7807 import FaasProblemError
+
+    from faas_sdk import FaaSClient, FaaSClientOptions, RetryOptions
 
     f = Fixture({"actions": ["probe", "queue-canary"], "graph": True, "fault": fault})
     client = FaaSClient(
@@ -539,7 +540,7 @@ def test_async_cancellation_during_diagnostics_is_immediate(task_cancel):
 
 
 def test_sync_stop_during_diagnostics_and_total_timeout(monkeypatch):
-    from faas_sdk import _binding_runner_diagnostics as helpers
+    from faas_sdk.preview import _binding_runner_diagnostics as helpers
 
     monkeypatch.setattr(helpers, "DIAGNOSTICS_TIMEOUT", 0.08)
     for stop in [False, True]:
@@ -721,7 +722,9 @@ def test_pending_acknowledgment(graph, asynchronous, mode):
     for member in members:
         member["steps"][0]["plan"].update(type="postgres", name="database", binding="DATABASE_URL", scope="production")
     if mode == "deadline":
-        f.root["expires_at"] = (datetime.now(UTC) + timedelta(milliseconds=150)).isoformat()
+        # Long enough that the first server answer arrives before expiry on a
+        # loaded runner; the runner must still time out waiting afterwards.
+        f.root["expires_at"] = (datetime.now(UTC) + timedelta(seconds=1)).isoformat()
         for member in members:
             member["expires_at"] = f.root["expires_at"]
     completed, observed = [], []

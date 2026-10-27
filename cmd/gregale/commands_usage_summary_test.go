@@ -1,7 +1,7 @@
 // Tests for the `gregale usage summary [--month YYYY-MM]` subcommand.
 // Mirrors the `commands_crons_update_test.go` shape: httptest.NewServer
 // fake + t.Setenv + osStdout swap.
-package main
+package main_test
 
 import (
 	"bytes"
@@ -13,6 +13,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -43,7 +44,7 @@ func TestCmdUsageSummary_HappyPath_Default(t *testing.T) {
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
 
-	if code := cmdUsageSummary(nil); code != 0 {
+	if code := main.CmdUsageSummary(nil); code != 0 {
 		t.Errorf("summary default = %d, want 0", code)
 	}
 	if *gotPath != "/v1/usage/summary" {
@@ -64,7 +65,7 @@ func TestCmdUsageSummary_HappyPath_ExplicitMonth(t *testing.T) {
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
 
-	if code := cmdUsageSummary([]string{"--month", "2026-06"}); code != 0 {
+	if code := main.CmdUsageSummary([]string{"--month", "2026-06"}); code != 0 {
 		t.Errorf("summary explicit month = %d, want 0", code)
 	}
 	if *gotPath != "/v1/usage/summary" {
@@ -78,7 +79,7 @@ func TestCmdUsageSummary_HappyPath_ExplicitMonth(t *testing.T) {
 // --- client-side rejections -------------------------------------------------
 
 func TestCmdUsageSummary_UnknownFlag(t *testing.T) {
-	if code := cmdUsageSummary([]string{"--bogus"}); code != 1 {
+	if code := main.CmdUsageSummary([]string{"--bogus"}); code != 1 {
 		t.Errorf("unknown flag = %d, want 1", code)
 	}
 }
@@ -88,7 +89,7 @@ func TestCmdUsageSummary_Unauthenticated(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("HOME", dir)
 	t.Setenv("XDG_CONFIG_HOME", dir)
-	if code := cmdUsageSummary(nil); code == 0 {
+	if code := main.CmdUsageSummary(nil); code == 0 {
 		t.Error("summary without token must fail")
 	}
 }
@@ -110,7 +111,7 @@ func TestCmdUsageSummary_BadMonth(t *testing.T) {
 
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
-	if code := cmdUsageSummary([]string{"--month", "not-a-month"}); code == 0 {
+	if code := main.CmdUsageSummary([]string{"--month", "not-a-month"}); code == 0 {
 		t.Error("summary with bad month must fail")
 	}
 }
@@ -130,18 +131,18 @@ func TestCmdUsageSummary_JSON_IndentedScalar(t *testing.T) {
 	defer srv.Close()
 
 	var stdout bytes.Buffer
-	oldOut := osStdout
-	osStdout = &stdout
-	defer func() { osStdout = oldOut }()
+	oldOut := (*main.OsStdout)
+	(*main.OsStdout) = &stdout
+	defer func() { (*main.OsStdout) = oldOut }()
 
-	resetJSONOutput()
-	t.Cleanup(resetJSONOutput)
-	jsonOutput = true
+	main.ResetJSONOutput()
+	t.Cleanup(main.ResetJSONOutput)
+	(*main.JsonOutput) = true
 
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
 
-	if code := cmdUsageSummary(nil); code != 0 {
+	if code := main.CmdUsageSummary(nil); code != 0 {
 		t.Fatalf("summary json = %d, want 0", code)
 	}
 	out := stdout.String()
@@ -179,14 +180,14 @@ func TestCmdUsageSummary_HumanMultiLine(t *testing.T) {
 	defer srv.Close()
 
 	var stdout bytes.Buffer
-	oldOut := osStdout
-	osStdout = &stdout
-	defer func() { osStdout = oldOut }()
+	oldOut := (*main.OsStdout)
+	(*main.OsStdout) = &stdout
+	defer func() { (*main.OsStdout) = oldOut }()
 
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
 
-	if code := cmdUsageSummary(nil); code != 0 {
+	if code := main.CmdUsageSummary(nil); code != 0 {
 		t.Fatalf("summary = %d, want 0", code)
 	}
 	out := stdout.String()
@@ -214,7 +215,7 @@ func TestCmdUsageSummary_HumanMultiLine(t *testing.T) {
 // surfaces the change.
 func TestRenderUsageSummary_PinsColumnLayout(t *testing.T) {
 	var buf bytes.Buffer
-	renderUsageSummary(&buf, api.UsageSummaryResponse{
+	main.RenderUsageSummary(&buf, api.UsageSummaryResponse{
 		Month:           "2026-07",
 		UsedGBHours:     12.345,
 		IncludedGBHours: 5,
@@ -277,7 +278,7 @@ func TestCmdUsage_NoPositional_DispatchesToList(t *testing.T) {
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
 
-	if code := cmdUsage(nil); code != 0 {
+	if code := main.CmdUsage(nil); code != 0 {
 		t.Errorf("cmdUsage no positional = %d, want 0", code)
 	}
 	if gotPath != "/v1/usage" {
@@ -312,7 +313,7 @@ func TestCmdUsage_FlagLeading_DispatchesToList(t *testing.T) {
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
 
-	if code := cmdUsage([]string{"--month", "2026-06"}); code != 0 {
+	if code := main.CmdUsage([]string{"--month", "2026-06"}); code != 0 {
 		t.Errorf("cmdUsage --month 2026-06 = %d, want 0", code)
 	}
 	if gotPath != "/v1/usage" {
@@ -340,7 +341,7 @@ func TestCmdUsage_UnknownSubcommand_ReturnsOne(t *testing.T) {
 	os.Stderr = w
 	defer func() { os.Stderr = prev }()
 
-	if code := cmdUsage([]string{"bogus"}); code != 1 {
+	if code := main.CmdUsage([]string{"bogus"}); code != 1 {
 		t.Errorf("cmdUsage bogus = %d, want 1", code)
 	}
 	_ = w.Close()
@@ -374,7 +375,7 @@ func TestCmdUsage_SummarySubcommand_DispatchesToSummary(t *testing.T) {
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
 
-	if code := cmdUsage([]string{"summary"}); code != 0 {
+	if code := main.CmdUsage([]string{"summary"}); code != 0 {
 		t.Errorf("cmdUsage summary = %d, want 0", code)
 	}
 	if gotPath != "/v1/usage/summary" {
@@ -384,11 +385,13 @@ func TestCmdUsage_SummarySubcommand_DispatchesToSummary(t *testing.T) {
 
 // --- run() dispatch --------------------------------------------------------
 
-// TestCmdUsageList_HumanEgressColumn pins the ADR-046 egress column
+// TestCmdUsageList_HumanEgressColumn pins the ADR-046 traffic column
 // on the per-app usage list. When TXBytes or NetTxBytes is non-zero
-// the human-mode line gains a trailing `· egress X.XXX GB (tx A.AA
-// / net B.BB)` segment. When both are zero the original 4-field
-// line is preserved (no trailing noise on a fresh account).
+// the human-mode line gains a trailing `· responses A.AA GB · outbound
+// B.BB GB` segment. When both are zero the original 4-field line is
+// preserved (no trailing noise on a fresh account). Hunt 14 H14-95: the
+// old "egress X GB (tx … / net …)" printed net as egress, which showed
+// 0.000 GB for an app that served 0.69 GB of responses over the bridge.
 func TestCmdUsageList_HumanEgressColumn(t *testing.T) {
 	cases := []struct {
 		name    string
@@ -400,19 +403,17 @@ func TestCmdUsageList_HumanEgressColumn(t *testing.T) {
 			name: "zero egress omits column",
 			tx:   0, net: 0,
 			wantSub: []string{"a1 —", "1 · 0.000", "included 5", "App — requests"},
-			// The header row says "egress" once; the row should NOT
-			// contain a per-row egress column. The combined marker
-			// "egress X.XXX GB" only appears when a row has a
-			// non-zero egress cell.
-			wantNot: []string{"egress 0.000 GB"},
+			// The header names the traffic column once; a row prints
+			// it only when a counter is non-zero.
+			wantNot: []string{"responses 0.00 GB"},
 		},
 		{
-			// 2.0 GiB net is canonical egress; 1.5 GiB tx is its diagnostic
-			// payload subset and remains visible only in the split.
+			// Both counters are labelled; neither is called egress.
 			// Conversion: float64(bytes) / (1024*1024*1024).
 			name: "non-zero egress prints column",
 			tx:   1610612736, net: 2147483648,
-			wantSub: []string{"a1 —", "1 · 0.000", "included 5", "egress 2.000 GB", "tx 1.50", "net 2.00"},
+			wantSub: []string{"a1 —", "1 · 0.000", "included 5", "traffic (not billed)", "responses 1.50 GB · outbound 2.00 GB"},
+			wantNot: []string{"egress", "(tx "},
 		},
 	}
 	for _, tc := range cases {
@@ -426,14 +427,14 @@ func TestCmdUsageList_HumanEgressColumn(t *testing.T) {
 			defer srv.Close()
 
 			var stdout bytes.Buffer
-			oldOut := osStdout
-			osStdout = &stdout
-			defer func() { osStdout = oldOut }()
+			oldOut := (*main.OsStdout)
+			(*main.OsStdout) = &stdout
+			defer func() { (*main.OsStdout) = oldOut }()
 
 			t.Setenv("FAAS_API", srv.URL)
 			t.Setenv("FAAS_TOKEN", "fp_live_x")
 
-			if code := cmdUsageList(nil); code != 0 {
+			if code := main.CmdUsageList(nil); code != 0 {
 				t.Fatalf("list = %d, want 0", code)
 			}
 			out := stdout.String()
@@ -471,7 +472,7 @@ func TestRun_DispatchUsageSummary(t *testing.T) {
 	t.Setenv("HOME", dir)
 	t.Setenv("XDG_CONFIG_HOME", dir)
 
-	if code := run([]string{"usage", "summary"}); code != 0 {
+	if code := main.Run([]string{"usage", "summary"}); code != 0 {
 		t.Errorf("run usage summary = %d, want 0", code)
 	}
 }

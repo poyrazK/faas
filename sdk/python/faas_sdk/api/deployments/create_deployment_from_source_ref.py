@@ -17,10 +17,14 @@ def _get_kwargs(
     *,
     body: SourceRefDeployRequest,
     idempotency_key: str | Unset = UNSET,
+    deployment_attempt_id: str | Unset = UNSET,
 ) -> dict[str, Any]:
     headers: dict[str, Any] = {}
     if not isinstance(idempotency_key, Unset):
         headers["Idempotency-Key"] = idempotency_key
+
+    if not isinstance(deployment_attempt_id, Unset):
+        headers["Deployment-Attempt-ID"] = deployment_attempt_id
 
     _kwargs: dict[str, Any] = {
         "method": "post",
@@ -108,12 +112,13 @@ def sync_detailed(
     client: AuthenticatedClient | Client,
     body: SourceRefDeployRequest,
     idempotency_key: str | Unset = UNSET,
+    deployment_attempt_id: str | Unset = UNSET,
 ) -> Response[DeploymentResponse | Problem]:
     """Create a deployment from a Git source-ref (headless).
 
-     Headless deploy path (issue #739 / DEPLOY-PROV-4 / ADR-092).
+     Headless deploy path.
     Resolves the GitHub install bound to the caller's account,
-    fetches the (repo, ref) tarball via the githubd bridge, spools
+    fetches the (repo, ref) tarball via the GitHub bridge, spools
     it under the per-plan SourceTarballMaxMB cap, validates shape,
     and enqueues a build (Kind=DeploymentKindGitHub) pinned to
     the resolved 40-char commit SHA.
@@ -129,8 +134,9 @@ def sync_detailed(
     Args:
         slug (str):
         idempotency_key (str | Unset):
-        body (SourceRefDeployRequest): JSON body for POST /v1/apps/{slug}/deployments/source-ref
-            (DEPLOY-PROV-4 / ADR-092, issue #739). The headless CI deploy
+        deployment_attempt_id (str | Unset):
+        body (SourceRefDeployRequest): JSON body for POST /v1/apps/{slug}/deployments/source-ref.
+            The headless CI deploy
             path: `repo` resolves to an install-token-bound fetch, `ref` is
             the customer's chosen input (branch / tag / SHA — server
             resolves to a 40-char SHA before stamping the deployment row).
@@ -147,6 +153,7 @@ def sync_detailed(
         slug=slug,
         body=body,
         idempotency_key=idempotency_key,
+        deployment_attempt_id=deployment_attempt_id,
     )
 
     response = client.get_httpx_client().request(
@@ -162,12 +169,13 @@ def sync(
     client: AuthenticatedClient | Client,
     body: SourceRefDeployRequest,
     idempotency_key: str | Unset = UNSET,
+    deployment_attempt_id: str | Unset = UNSET,
 ) -> DeploymentResponse | Problem | None:
     """Create a deployment from a Git source-ref (headless).
 
-     Headless deploy path (issue #739 / DEPLOY-PROV-4 / ADR-092).
+     Headless deploy path.
     Resolves the GitHub install bound to the caller's account,
-    fetches the (repo, ref) tarball via the githubd bridge, spools
+    fetches the (repo, ref) tarball via the GitHub bridge, spools
     it under the per-plan SourceTarballMaxMB cap, validates shape,
     and enqueues a build (Kind=DeploymentKindGitHub) pinned to
     the resolved 40-char commit SHA.
@@ -183,8 +191,9 @@ def sync(
     Args:
         slug (str):
         idempotency_key (str | Unset):
-        body (SourceRefDeployRequest): JSON body for POST /v1/apps/{slug}/deployments/source-ref
-            (DEPLOY-PROV-4 / ADR-092, issue #739). The headless CI deploy
+        deployment_attempt_id (str | Unset):
+        body (SourceRefDeployRequest): JSON body for POST /v1/apps/{slug}/deployments/source-ref.
+            The headless CI deploy
             path: `repo` resolves to an install-token-bound fetch, `ref` is
             the customer's chosen input (branch / tag / SHA — server
             resolves to a 40-char SHA before stamping the deployment row).
@@ -202,6 +211,7 @@ def sync(
         client=client,
         body=body,
         idempotency_key=idempotency_key,
+        deployment_attempt_id=deployment_attempt_id,
     ).parsed
 
 
@@ -211,12 +221,13 @@ async def asyncio_detailed(
     client: AuthenticatedClient | Client,
     body: SourceRefDeployRequest,
     idempotency_key: str | Unset = UNSET,
+    deployment_attempt_id: str | Unset = UNSET,
 ) -> Response[DeploymentResponse | Problem]:
     """Create a deployment from a Git source-ref (headless).
 
-     Headless deploy path (issue #739 / DEPLOY-PROV-4 / ADR-092).
+     Headless deploy path.
     Resolves the GitHub install bound to the caller's account,
-    fetches the (repo, ref) tarball via the githubd bridge, spools
+    fetches the (repo, ref) tarball via the GitHub bridge, spools
     it under the per-plan SourceTarballMaxMB cap, validates shape,
     and enqueues a build (Kind=DeploymentKindGitHub) pinned to
     the resolved 40-char commit SHA.
@@ -232,8 +243,9 @@ async def asyncio_detailed(
     Args:
         slug (str):
         idempotency_key (str | Unset):
-        body (SourceRefDeployRequest): JSON body for POST /v1/apps/{slug}/deployments/source-ref
-            (DEPLOY-PROV-4 / ADR-092, issue #739). The headless CI deploy
+        deployment_attempt_id (str | Unset):
+        body (SourceRefDeployRequest): JSON body for POST /v1/apps/{slug}/deployments/source-ref.
+            The headless CI deploy
             path: `repo` resolves to an install-token-bound fetch, `ref` is
             the customer's chosen input (branch / tag / SHA — server
             resolves to a 40-char SHA before stamping the deployment row).
@@ -250,6 +262,7 @@ async def asyncio_detailed(
         slug=slug,
         body=body,
         idempotency_key=idempotency_key,
+        deployment_attempt_id=deployment_attempt_id,
     )
 
     response = await client.get_async_httpx_client().request(**kwargs)
@@ -263,12 +276,13 @@ async def asyncio(
     client: AuthenticatedClient | Client,
     body: SourceRefDeployRequest,
     idempotency_key: str | Unset = UNSET,
+    deployment_attempt_id: str | Unset = UNSET,
 ) -> DeploymentResponse | Problem | None:
     """Create a deployment from a Git source-ref (headless).
 
-     Headless deploy path (issue #739 / DEPLOY-PROV-4 / ADR-092).
+     Headless deploy path.
     Resolves the GitHub install bound to the caller's account,
-    fetches the (repo, ref) tarball via the githubd bridge, spools
+    fetches the (repo, ref) tarball via the GitHub bridge, spools
     it under the per-plan SourceTarballMaxMB cap, validates shape,
     and enqueues a build (Kind=DeploymentKindGitHub) pinned to
     the resolved 40-char commit SHA.
@@ -284,8 +298,9 @@ async def asyncio(
     Args:
         slug (str):
         idempotency_key (str | Unset):
-        body (SourceRefDeployRequest): JSON body for POST /v1/apps/{slug}/deployments/source-ref
-            (DEPLOY-PROV-4 / ADR-092, issue #739). The headless CI deploy
+        deployment_attempt_id (str | Unset):
+        body (SourceRefDeployRequest): JSON body for POST /v1/apps/{slug}/deployments/source-ref.
+            The headless CI deploy
             path: `repo` resolves to an install-token-bound fetch, `ref` is
             the customer's chosen input (branch / tag / SHA — server
             resolves to a 40-char SHA before stamping the deployment row).
@@ -304,5 +319,6 @@ async def asyncio(
             client=client,
             body=body,
             idempotency_key=idempotency_key,
+            deployment_attempt_id=deployment_attempt_id,
         )
     ).parsed

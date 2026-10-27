@@ -6,11 +6,11 @@ Environment GitOps is an implementation preview under [ADR-568](adr/568-environm
 
 | Area | Implemented | Remaining before complete environment enforcement |
 | --- | --- | --- |
-| Git source | Immutable definition review, approval, polling and separate source freshness; PostgreSQL serving-graph outage and reviewed rollback journey | Dedicated native outage/rollback acceptance for live workloads; workload deletion remains unsupported |
-| Ownership and adoption | Reviewed adoption plans, stable resource identities, stale-plan rejection, scoped ownership guards and same-repository GitHub build provenance; GitLab.com OAuth source identity for report mode | GitLab protected-branch evidence and workload provenance; incomplete or conflicting GitHub provenance |
+| Git source | Immutable definition review, approval, polling and separate source freshness; PostgreSQL serving-graph outage and reviewed rollback journey; reviewed workload retirement retaining original identities and accepted work | Dedicated native outage/rollback acceptance for live workloads |
+| Ownership and adoption | Reviewed adoption plans, stable resource identities, stale-plan rejection, scoped ownership guards and same-repository GitHub build provenance; GitLab.com OAuth source identity, protected-branch review evidence and project/commit-bound source builds | Dedicated native GitLab workload acceptance; incomplete or conflicting build provenance |
 | Drift reporting | Opt-in continuous reports against the last approved definition, durable runs and restart recovery; PostgreSQL apid acceptance for an API/worker/queue graph through a source outage and controller restart | Live report-mode qualification on a deployed control plane |
-| Workload preparation | Held image, pinned source, function and job candidates; frozen identity and reviewed contract for each active owned queue binding; atomic private workload reservations; same-repository inherited GitHub source, Dockerfile and function intent; private HTTP/HTTPS service graphs and standalone HTTP graphs | Dedicated Linux acceptance with configured node-local service proxies and unsupported source-provider provenance |
-| Qualification, activation and serving | Immutable attempt-bound guest API-env acknowledgement, restored framework-ready, capture, restore and smoke receipts; HTTP candidates use explicitly owned `runtime.healthz` and `runtime.port`; push and pull workers plus HTTP functions can use bounded reviewed `queue_smoke` payloads; jobs use reviewed argv, timeout, variables and scoped secret references with version-fresh runtime receipts and a sanitized exit receipt; request/service routes and named push-worker, pull-worker and HTTP-function consumers have separate serving receipts; request/service, queue-backed workers and scheduled Jobs can pin request/service targets inside the reviewed graph and release; image-only schedules get a durable paused Gregale Job binding and post-activation scheduled-run proof | Dedicated Linux acceptance; Job queue bindings remain unsupported |
+| Workload preparation | Held image, pinned source, function and job candidates; frozen identity and reviewed contract for each active owned queue binding; atomic private workload reservations; same-repository inherited GitHub source, Dockerfile and function intent; private HTTP/HTTPS service graphs and standalone HTTP graphs | Dedicated Linux acceptance with configured node-local service proxies; unsupported or unverified source-provider provenance |
+| Qualification, activation and serving | Immutable attempt-bound guest API-env acknowledgement, restored framework-ready, capture, restore and smoke receipts; HTTP candidates use explicitly owned `runtime.healthz` and `runtime.port`; push and pull workers plus HTTP functions can use bounded reviewed `queue_smoke` payloads; jobs use reviewed argv, timeout, variables and scoped secret references with version-fresh runtime receipts and a sanitized exit receipt; request/service routes and named push-worker, pull-worker and HTTP-function consumers have separate serving receipts; request/service, queue-backed workers and scheduled Jobs can pin request/service targets inside the reviewed graph and release; image and reviewed source/Dockerfile schedules get a durable paused Gregale Job binding and post-activation scheduled-run proof | Dedicated Linux acceptance; Job queue bindings remain unsupported |
 | Native execution | Fenced journals, persistent disk staging and publication intent, original-process API control, exclusive four-object capture, durable writer receipts, private Manager restore orchestration, version-checked load, verified anonymous restore inputs, private load/resume/entropy-hook and process-bound restored platform channels; restore-target config/runtime receipts and receipt-gated route selection in both stores; native-retired and native-effects-absent proofs; schedd's periodic, node-bound abandoned-execution recovery; smoke-authorized conditional GCS retirement with durable host tombstones and an opt-in vmmd retry loop | Dedicated Linux capture/restore acceptance; production qualification polling remains gated until those pass |
 | Enforcement | Transactional ownership, override and execution fences; lease-bound activation and serving of supported request/service graphs including pinned scoped service bindings, push and pull workers, queue-bound HTTP functions, and scheduled Jobs with a successful post-activation occurrence | Production qualification polling remains gated; dedicated Linux acceptance and unsupported production execution adapters |
 
@@ -19,11 +19,91 @@ Approved Git content, observed intent, qualification, activation and serving sta
 An immutable `source.kind: image` may set `source.full_rootfs: true` when the image is not layered on Gregale's runtime base. The choice is part of the reviewed source contract and is frozen with the candidate deployment; other source kinds reject it. Omitting the field keeps the existing dispatch policy, including inherited settings on adopted workloads.
 For an adopted workload with live deployments, a conflicting inherited full-rootfs setting blocks preparation until the live deployment policy and reviewed source agree.
 
-The PostgreSQL journey serves an API and queue worker, observes a Git source outage without losing that serving evidence, applies a reviewed queue-contract change, then rolls back to the earlier approved revision. The rollback must obtain fresh preparation, qualification, activation, route and queue-serving evidence; an accepted pending invocation keeps its binding identity throughout. These receipts are submitted through state APIs, so dedicated native guest and live-adapter acceptance remains required. Removing the worker in a rollback is still blocked by the unavailable workload-pruning adapter.
+The PostgreSQL journey serves an API and queue worker, observes a Git source outage without losing that serving evidence, applies a reviewed queue-contract change, then rolls back to the earlier approved revision. The rollback must obtain fresh preparation, qualification, activation, route and queue-serving evidence; an accepted pending invocation keeps its binding identity throughout. These receipts are submitted through state APIs, so dedicated native guest and live-adapter acceptance remains required. Removing the worker requires reviewed retained workload retirement under ADR-1331.
 
 The opt-in apid reporter has a separate PostgreSQL journey for API variables, routes and policies alongside a worker queue binding. It retains durable drift reports across a Git source outage and controller restart while leaving console values and the queue contract unchanged. This validates report mode, not live workload activation or enforcement.
 
+## Wait for a merged commit to serve
+
+After normal review, approval and merge, CI can wait for recorded serving proof
+for that exact merged commit:
+
+    gregale projects environments gitops wait shop production \
+      --commit "$MERGED_SHA" --timeout 15m --json
+
+The commit must be a full lowercase 40-character SHA from the environment's
+bound repository. Use the merged commit, which can differ from the proposal head
+after a squash or merge commit. A project_environments:read credential suffices.
+This command only reads status; normal controllers and approval policy must
+perform the rollout separately.
+
+Success requires the requested commit's current approved graph, exact source,
+environment, generation, intent and definition identities, complete artifact
+preparation, qualification, activation and whole-graph serving, complete member
+progress and fresh verified source checks. An old serving release, a polled
+branch head, a completed build or historical applied revision cannot pass.
+Scheduled Jobs require the successful current post-activation occurrence.
+Missing or contradictory evidence remains unproven. Older APIs without the
+current graph's commit identity cannot satisfy the wait; upgrade both API and CLI.
+
+The wait pins the initial source binding. Once it observes the requested graph,
+it also pins that approved revision and generation. Binding or approval changes
+end as superseded. Before observing the target graph, a different commit remains
+waiting; the command does not infer commit ancestry or whether the target
+previously deployed. Normal intent changes can progress only with fresh evidence
+for the same approval.
+
+Text mode prints changed progress and workload actions to stderr, with a final
+receipt on stdout. Explicit --json and global JSON emit one final JSON receipt
+without progress text for rollout outcomes. Request, validation and output
+errors use the normal CLI error channel. The overall deadline defaults to 15m and is bounded at
+24h. --poll-interval defaults to 2s and accepts 1s–1m; each read is bounded by 30s
+and the remaining deadline. Transient transport, rate-limit and server failures
+retry within that budget. Permanent request/authentication/scope errors stop.
+
+| Exit | Outcome |
+| --- | --- |
+| 0 | Requested commit has current serving proof |
+| 1 | Invalid request, permanent API error or output error |
+| 2 | Current rollout failed, or reconciliation is inactive/report-only |
+| 3 | Deadline expired without success |
+| 4 | Source binding or observed target approval was superseded |
+| 130 | Interrupted; server work is unaffected |
+
+Timeout receipts describe the last observation, not a fresh readiness guarantee.
+Inspect current blockers with gitops explain and rerun with the same explicit
+commit if appropriate. Neither waiting nor its exit code grants deployment
+authority or enables production gates. Exclusive native VM/leak acceptance
+remains pending. See [ADR-20261017190812](adr/20261017190812-gitops-wait-for-serving-commit.md) and the
+[post-merge CI examples](../examples/gitops-ci/README.md#wait-after-merge).
+
 ## Try review and reporting
+
+Use `gregale projects environments gitops explain shop production` for a
+read-only explanation of the current recorded state, or add `--json` for
+automation. The existing status API includes the same assessment under
+`explanation`, and the GitOps dashboard shows its workload progress and actions.
+Observed Git commits, approved revision IDs, historical applied revision IDs,
+and currently proven serving revision IDs are shown separately. They are not
+interchangeable: an applied ID alone never establishes current serving.
+
+Each current graph member reports artifact/build preparation, qualification,
+active release membership and serving proof. Stages are `complete`, `pending`,
+`failed` or `unknown`. A recorded successful build does not satisfy native smoke
+or a scheduled occurrence. Individual serving remains unknown until the exact
+whole graph has current convergence evidence; this does not assert that every
+individual workload has stopped. Missing candidate rows or missing current
+graphs stay unknown rather than becoming ready. Stale generation, revision,
+environment or intent evidence is excluded.
+
+Source freshness requires recent polling and verification timestamps; absent
+or future timestamps remain unknown. A provider outage can coexist with valid
+serving proof, which is reported as degraded. Report mode explicitly records
+drift without applying it. Blockers name a responsible customer, controller or
+operator and a safe next action. Unrecognized upstream error text is redacted.
+Reading an explanation returns exit status zero even when progress is blocked;
+automation must inspect the diagnostic status. This command neither retries
+work nor approves, adopts, activates, rolls back or enables production gates.
 
 Use an existing GitHub-linked project and registered environment. Start in `report` mode with manual approval and pruning disabled:
 
@@ -52,12 +132,22 @@ gregale projects environments gitops review shop staging \
   --commit "$REVIEWED_COMMIT" > revision-review.json
 ```
 
-GitLab.com sources currently support reporting, manual approval, and
-`prune=false` only. Gregale verifies the connected account's access, the
-canonical GitLab project path and numeric ID, and the immutable commit before
-reading a bounded archive. A source outage or OAuth disconnect is reported
-separately; it does not discard the last approved revision. GitLab
-protected-branch approval and workload enforcement are not qualified yet.
+GitLab.com supports manual approval or `approval_policy: protected_branch`.
+The automatic profile requires GitLab Premium/Ultimate policy API access, one
+project-wide approval rule, approvals reset on push, and author/committer
+approvals and per-MR overrides disabled. Every matching branch rule must deny
+direct pushes and force pushes. Missing or unsupported evidence blocks automatic
+approval; manual report mode remains available. Review evidence binds the latest
+MR diff and its approving humans to the exact merged definition. See
+[ADR-20261017190801](adr/20261017190801-gitlab-reviewed-gitops.md) for the supported profile.
+
+Source/Dockerfile/function candidates use the approved GitLab commit and the
+same archive checks as GitHub. Their provenance also includes the immutable
+numeric project ID and canonical path; another provider or project cannot be
+adopted through a matching repository name. Uploader-supplied source URLs do
+not establish trust: unverified tarball baselines remain blocked. Existing
+image workloads can be adopted and then rebuilt from the reviewed GitLab source.
+Production qualification and enforcement remain gated on exclusive native acceptance.
 
 `REVIEWED_COMMIT` must be a complete immutable commit SHA. Inspect the returned definition digest and generation before approving its receipt:
 
@@ -131,7 +221,7 @@ be service-binding targets. A
 scheduled Job can activate from the reviewed graph, but the graph is not
 reported serving until that exact active Job completes a successful scheduled
 occurrence after release publication.
-For image-only Job workloads with reviewed variables and environment-scoped
+For image or reviewed source/Dockerfile Job workloads with reviewed variables and environment-scoped
 secret references, but without queue bindings or unsupported runtime overrides, apply now
 creates or reconciles a deterministic, paused Gregale `jobs` record and stores
 its ID on the scoped workload intent. Database checks require that link to
@@ -189,6 +279,21 @@ service-bound Jobs may target only request/service
 workloads in the same graph and release. Dedicated Linux acceptance still gates
 production qualification polling and enforcement.
 
+Source/Dockerfile schedules use the same exact-commit archive verification and
+held builder candidates as services for both GitHub and GitLab. Source-backed schedules require an explicit reviewed `runtime.entrypoint` argv
+(for example, `["/usr/local/bin/node", "/app/report.js"]`), separate from
+`job_smoke.command`. Each Job remains paused through build and qualification. Participating apps
+retain the existing release-set requirement to opt into revision retention
+(`revision_pin_ttl_seconds`) before activation. Release activation binds its exact
+qualified deployment layer; occurrences reuse that layer without fetching source
+or rebuilding. Internal `gregale-source://` and `gregale-deployment:` identities
+are source/deployment references, not OCI images or content digests. OCI
+materializer APIs cannot publish them. Schedd verifies frozen source provenance,
+layer identity and the active release before boot and before releasing the held
+command. A changed artifact increments the schedule revision. Serving still
+requires a matching successful occurrence after activation. See
+[ADR-20261017190802](adr/20261017190802-gitops-source-scheduled-jobs.md).
+
 At scheduled execution, schedd requires the VM client's explicit held-start
 release capability before booting a managed Job. It persists the Job's runtime
 network identity and rechecks captured variables, secret references and secret
@@ -232,7 +337,307 @@ Before adoption, unmanaged edits can change the plan hash while the managed
 intent counter remains zero. The hash includes the actual observed fields;
 candidate plans always require a fresh request and grant no write authority.
 
-## Receive drift and source notifications
+## Prepare a promotion proposal
+
+Preview an immutable image promotion from a currently proven serving release:
+
+```sh
+gregale projects environments gitops promotion-plan shop production \
+  --from staging --target-commit "$TARGET_COMMIT" --fail-on-blocked \
+  > promotion-plan.json
+```
+
+`TARGET_COMMIT` identifies the commit containing the production manifest. The
+planner verifies that manifest through the production binding and reads both
+environments on one database snapshot. The output identifies the approved source
+commit, graph, active release and selected deployments. Export requires current
+source verification and matching qualification, activation and serving evidence.
+Both environments must belong to the same project and verified provider
+repository. Missing or incompatible artifact evidence is an explicit blocker.
+
+Immutable image sources and retained signed source-build artifacts can be proposed. Production
+variables, secret references, runtime settings, routes, policies, schedules,
+queue/service bindings, app mappings and additional workloads are preserved.
+The proposal and target field plan omit configuration values and secret-reference
+targets. Source, Dockerfile and function promotion requires explicit matching
+`app` mappings and the same source recipe/runner. The proposal adds
+`build_artifact_id` and `build_artifact_hash`, selecting the existing signed
+application-layer producer. The target manifest commit is distinct from the
+original code commit shown in the artifact evidence.
+
+On normal Git approval, the reference pins the retained layer before preparation.
+Preparation rechecks current publisher trust and base lineage, then creates a
+held target candidate with the same code bytes and no new build. Configuration,
+secret aliases and qualification belong to the target. Revoked publishers,
+missing/deleting artifacts, changed recipes and cross-app reuse are rejected.
+Source and Dockerfile scheduled Jobs support these references with explicit matching
+app mappings and schedules on both origin and target. Target cron/timezone,
+production argv, smoke command and configuration remain unchanged. Sidecars and
+function schedules remain unsupported. See [ADR-20261017190804](adr/20261017190804-gitops-built-artifact-reuse.md)
+and [ADR-20261017190808](adr/20261017190808-gitops-scheduled-job-artifact-promotion-and-rollback.md).
+
+For example, a reviewed production source can pin the producer returned by the
+promotion plan (use the actual ID/hash, not these placeholders):
+
+```yaml
+workloads:
+  api:
+    app: shop-api
+    source:
+      kind: source
+      directory: apps/api
+      build_artifact_id: <producer UUID>
+      build_artifact_hash: <producer input SHA256>
+    variables:
+      MODE: production
+```
+
+Pins retain code and provenance; they do not copy snapshots or grant serving
+permission. Fresh target qualification and activation are still required. Full
+native VM/leak acceptance remains pending on an exclusive physical x86_64 host.
+
+For automatic reuse across approved commits, opt into an isolated build context:
+
+```yaml
+source:
+  kind: source
+  directory: workspace/apps/api
+  reuse_unchanged_build: true
+  build_context: workspace
+```
+
+The builder receives only `workspace`, with repository-relative paths preserved.
+Put all shared libraries and lockfiles inside that context. Configuration in
+`environments/` can change without changing the build bytes. Omitting
+`build_context` selects the entire repository, including the manifest. Contexts
+currently support regular files and directories; links and special files inside
+them are rejected. Opting in accepts reuse of the previous dependency resolution
+for unchanged inputs; a hit does not prove network dependency freshness.
+
+Reuse requires an exact context and recipe match, the current builder/base, and
+an approved signed export from the same mapped app. Missing, revoked, corrupt or
+stale evidence causes a normal build. Each commit still gets its own held
+candidate, current provenance and signature, target conversion and fresh
+qualification. `gitops explain` reports the recorded cache decision; it does not
+turn a cache hit into serving proof. This optimization uses the node-local cache.
+An explicit artifact pin takes precedence. See [ADR-20261017190809](adr/20261017190809-gitops-unchanged-build-context-reuse.md).
+
+Review the plan and reuse its `plan_hash` in a fresh request before exporting:
+
+```sh
+gregale projects environments gitops promotion-plan shop production \
+  --from staging --target-commit "$TARGET_COMMIT" \
+  --expected-plan-hash "$REVIEWED_PLAN_HASH" --format manifest \
+  --manifest environments/production.yaml > proposed-production.json
+```
+
+Manifest export checks the complete local base digest before changing any source
+contract, then verifies the proposed digest. It emits canonical JSON, which is
+also valid YAML; formatting and comments are normalized. The command writes only
+to stdout. Review and commit the resulting manifest through the usual Git flow.
+`--format patch` exports an RFC 6902 proposal envelope instead. Apply that
+envelope's operations only after checking its `base_definition_digest` against
+the parsed target manifest. Both export formats require the reviewed hash and
+refuse blocked proposals. JSON/Markdown previews can use `--fail-on-blocked` to
+print the assessment and exit 2; invalid or stale observations exit 1.
+
+Release, artifact, binding, ownership or target intent changes invalidate a saved
+observation. Neither a proposal nor its hash authorizes deployment. Target review
+and fresh environment-specific qualification remain required; production
+enforcement and dedicated native acceptance retain their existing gates. See
+[ADR-20261017190803](adr/20261017190803-gitops-promotion-proposals.md).
+
+### Open a promotion pull or merge request
+
+After reviewing a `promotion-plan`, use its hash and the current target branch
+commit to preview a draft proposal:
+
+```sh
+gregale projects environments gitops promotion-pr shop production \
+  --from staging --target-commit "$TARGET_COMMIT" \
+  --expected-plan-hash "$REVIEWED_PLAN_HASH"
+```
+
+Add `--yes` to create the draft PR/MR and `--json` for its portable receipt:
+
+```sh
+gregale projects environments gitops promotion-pr shop production \
+  --from staging --target-commit "$TARGET_COMMIT" \
+  --expected-plan-hash "$REVIEWED_PLAN_HASH" --yes --json
+```
+
+Authenticate `gh` for GitHub.com or `glab` for GitLab.com first, using an account
+allowed to create repository branches and pull/merge requests. Gregale's platform
+credential needs only the existing GitOps read scope. The repository, manifest
+path and base branch come from the verified target binding. Tag bindings are
+unsupported; the target commit must still be that branch's exact head.
+
+The command checks a fresh plan and target binding before writing. It commits
+only the reviewed workload source replacements, preserves target configuration,
+and includes origin release, selected artifact provenance and qualification
+requirements in the draft description. YAML comments outside replaced source
+nodes are retained; YAML formatting can normalize. JSON output remains canonical
+JSON. Neither the local working tree nor its Git index is used.
+
+Retries use a branch derived from the complete plan hash. A matching open draft
+returns its existing URL; a valid branch left by an interrupted attempt can
+finish opening the draft. Closed, merged, edited, ambiguous or foreign requests,
+unexpected files/ancestry and changed proposal branches are rejected. The command
+never overwrites a branch or automatically retries an uncertain write. If a
+request times out, retry the exact command. If the target base or reviewed plan
+changed, request and review a new plan. A proposal branch or draft can remain
+after a race; it is not deleted automatically.
+
+Creating the draft does not merge, approve or deploy it, pin artifacts, or extend
+retention. Normal Git review/approval, current artifact trust and fresh target
+qualification, activation and serving evidence remain required. Use `rollback-pr`
+below for retained-release recovery with its own reviewed rollback plan.
+Native acceptance and production execution gates remain unchanged. See
+[ADR-20261017190810](adr/20261017190810-gitops-promotion-review-requests.md).
+
+## Prepare a reviewed code rollback
+
+Optionally protect recovery artifacts through reviewed Git intent:
+
+```yaml
+recovery_retention:
+  releases: 3
+  seconds: 86400
+  max_bytes: 536870912
+```
+
+The policy takes effect at approval. It protects the newest completed serving
+releases, including the active served release, within all three bounds. Limits
+are five releases, seven days and 1 GiB per source; account byte reservations
+across sources are capped at 2 GiB. Main and sidecar keys are deduplicated within
+each release and conservatively charged again across releases. A budget that
+cannot fit the newest release protects no release; older smaller releases do not
+skip ahead. Protected storage remains part of ordinary storage accounting.
+
+The catalog reports the effective approved policy and total charged bytes across
+all pages. Each row shows artifact protection separately from rollback eligibility
+and routing compatibility. The newest served release has no deadline while it
+is current. Once a newer release first completes serving, the replaced release
+stays protected for `seconds` from that moment, so a long-running release is
+still recoverable right after a bad deploy. Listing, retrying or gateway handoffs
+never renew a deadline. Count and byte bounds, policy reduction/removal, or
+explicit source detachment can release protection earlier. Suspension preserves it. Existing trust checks and fresh target
+qualification remain mandatory. Approval cannot resurrect an artifact claimed
+by garbage collection, and protected provenance cannot be erased by cleanup.
+See [ADR-20261017190807](adr/20261017190807-gitops-bounded-recovery-retention.md).
+
+Find retained releases and current eligibility for your target manifest:
+
+```sh
+gregale projects environments gitops releases shop production \
+  --target-commit "$TARGET_COMMIT"
+```
+
+Add `--json` for automation, or `--before UUID` using `next_before` for older
+history. A successful listing exits zero even when releases are blocked; automation
+must inspect each release's `eligibility` and `blocking_reasons`. The GitOps
+dashboard offers the same explicit recovery check. Each page
+verifies the target commit once and assesses all releases on one database snapshot
+using the rollback planner. Only completed serving history of the current binding
+is listed; expired release compatibility windows remain visible. The release
+window is a routing deadline, not an artifact retention guarantee. Listing grants
+no pins or execution authority. Blockers explain current artifact trust, mapping,
+source freshness and ownership failures. Request a fresh individual plan before
+reviewing/exporting. See [ADR-20261017190806](adr/20261017190806-gitops-recovery-catalog.md).
+
+Select a release previously served by this Git source in this environment. The read-only plan identifies its manifest commit, graph, exact
+image/build artifact and historical serving time:
+
+```sh
+gregale projects environments gitops rollback-plan shop production \
+  --to-release "$RELEASE_ID" --target-commit "$TARGET_COMMIT" --fail-on-blocked
+```
+
+Review the result, then request a fresh observation with its `plan_hash` before
+exporting a patch or manifest:
+
+```sh
+gregale projects environments gitops rollback-plan shop production \
+  --to-release "$RELEASE_ID" --target-commit "$TARGET_COMMIT" \
+  --expected-plan-hash "$REVIEWED_PLAN_HASH" --format patch > rollback-plan.json
+```
+
+`TARGET_COMMIT` contains the current target manifest, not the old code commit.
+`--format manifest --manifest environments/production.yaml` validates the complete
+local base digest and writes canonical JSON to stdout. Patch output carries the
+base digest and source test/replace operations; verify the full base digest
+before applying it. JSON and Markdown previews can report blockers; exports refuse
+a blocked or changed plan. `--fail-on-blocked` exits 2 for a printed blocked plan.
+
+Only compatible workload sources change. Current configuration, variables,
+secret references, routes, policy, queue/service bindings, schedules and additional
+workloads are preserved. Removed workloads and changed app mappings block export.
+Source/Dockerfile/function reuse requires compatible recipes and explicit matching
+app mappings. Missing, revoked or subsequently replaced artifacts block recovery. Preview does not pin
+artifacts or guarantee indefinite retention. Normal Git approval retains selected
+build artifacts under the existing GC fence before preparation.
+
+Historical serving receipts are selection evidence, not current readiness.
+Rollback requires normal Git review and fresh qualification/activation/serving;
+it does not restore data or undo database migrations. Scheduled Jobs can select
+retained signed source/Dockerfile artifacts for future runs, preserving the target
+schedule, command and configuration. Every promoted or recovered release needs
+fresh Job qualification and a successful post-activation occurrence; completed
+executions are never replayed or reused as proof. Schedd rechecks current publisher
+trust before boot and before releasing the held command. Unscheduled Jobs and
+sidecars remain excluded. Native VM/leak acceptance and production gates remain
+unchanged. See [ADR-20261017190805](adr/20261017190805-gitops-reviewed-rollback-proposals.md) and
+[ADR-20261017190808](adr/20261017190808-gitops-scheduled-job-artifact-promotion-and-rollback.md).
+
+### Open a recovery pull or merge request
+
+Choose an eligible release from `gitops releases`, then review its fresh
+`rollback-plan`. Preview the recovery draft with that plan's hash:
+
+```sh
+gregale projects environments gitops rollback-pr shop production \
+  --to-release "$RELEASE_ID" --target-commit "$TARGET_COMMIT" \
+  --expected-plan-hash "$REVIEWED_ROLLBACK_HASH"
+```
+
+Add `--yes` to create the draft PR/MR, and `--json` for a receipt that includes
+the selected `release_set_id`:
+
+```sh
+gregale projects environments gitops rollback-pr shop production \
+  --to-release "$RELEASE_ID" --target-commit "$TARGET_COMMIT" \
+  --expected-plan-hash "$REVIEWED_ROLLBACK_HASH" --yes --json
+```
+
+The release UUID is required; the command never chooses a release automatically.
+Use an authenticated `gh` or `glab` session as described for `promotion-pr`.
+Repository, manifest and branch come from the active target binding, and the
+target commit must still be the branch's exact head. Promotion hashes cannot
+authorize a recovery proposal. A fresh rollback observation checks the selected
+historical release, current release, artifact eligibility and current target
+intent before each write. A changed observation requires a fresh reviewed plan.
+
+The draft identifies the historical serving time/graph, code provenance and
+current target base. It changes only compatible workload source contracts while
+preserving current configuration, secret references, routes, policies, schedules,
+commands and bindings. Normal Git review/approval, current artifact trust and
+fresh target qualification, activation and serving evidence remain required.
+Creating the draft does not pin artifacts or extend their retention.
+
+Retries use `gregale-rollback-<plan hash>` and recover a matching open request or
+valid branch left by an interrupted attempt. Closed/merged, edited, foreign or
+ambiguous requests and changed branches are rejected. No branch is overwritten,
+request reopened or uncertain write retried automatically. A race can leave a
+branch or draft; inspect it and retry the same command only while its reviewed
+plan and base remain current.
+
+Recovery does not restore data or undo database migrations. Completed Jobs are
+never replayed; scheduled Jobs require fresh qualification and a successful
+post-activation occurrence for future runs. Production execution gates and
+exclusive native acceptance requirements remain unchanged. See
+[ADR-20261017190811](adr/20261017190811-gitops-rollback-review-requests.md).
+
+## Receive drift, source and rollout notifications
 
 Subscribe an account receiver explicitly to `environment.gitops.changed`:
 
@@ -260,6 +665,41 @@ shortened payloads. Baselines and all receiver deliveries commit together and
 survive restart and report pruning. Existing retries, receiver controls and
 account quotas apply. Native qualification and enforcement keep their gates.
 
+The independent `rollout` axis reports whole-environment outcomes:
+
+| Status | Meaning |
+| --- | --- |
+| `serving` | The exact approved commit has current complete preparation, qualification, activation and serving evidence for every workload, plus fresh successful source verification. |
+| `failed` | A current graph or workload has recorded failure for that exact approved revision. |
+| `superseded` | A pending rollout was replaced by another approval or stopped by a source control change. The payload identifies the previous rollout. |
+
+The controller assesses rollout outcomes when a current reconciliation report
+finishes. It uses the same evidence rules as `gitops wait`; a completed build or
+historical applied revision is insufficient, and scheduled Jobs need the current
+post-activation occurrence. Stale reports cannot notify. Report mode does not
+start rollouts. Pending progress stays quiet. Each failure and serving outcome
+is emitted at most once per approval generation, surviving controller restart
+and missing or flapping evidence. A failed rollout can later notify serving
+recovery. A completed outcome is not subsequently reported as superseded.
+This is rollout completion feedback, not continuous availability monitoring or
+a guarantee that every transient failure was observed. The shared assessor
+currently supports full 40-character Git SHAs; other Git identities stay
+unassessed.
+
+Rollout payloads add `definition_digest`, `graph_id` and `plan_hash` when known.
+Failures include up to 100 mapped `diagnostics` with stable codes, an affected
+workload where known, and operator guidance. Unknown errors use
+`unrecognized_blocker`; upstream messages and build logs never enter these
+details. Pending supersession preserves the previous revision's last observed
+generation and intent, rather than borrowing the new revision's identity.
+Approval/control changes, the notification baseline and all receiver deliveries
+commit atomically. No migration or separate notification worker is required.
+
+Deliveries are signed and **at least once**. Deduplicate retries using the
+payload's `transition_id`; all receivers for one outcome share that ID. New
+receivers receive future outcomes without replaying already recorded ones.
+See [ADR-20261017190813](adr/20261017190813-gitops-rollout-outcome-notifications.md).
+
 ## Isolated enforcement acceptance
 
 The real apid enforcement worker can run only in an isolated development
@@ -283,15 +723,28 @@ It intentionally has no serving candidate. Dedicated native x86_64 KVM
 capture, restore, guest, gateway and rollback acceptance is still required
 before production qualification polling or enforcement can be enabled.
 
-The opt-in native graph journey now includes an image API and a push worker
-with a reviewed queue binding. It requires an isolated designated x86_64 KVM
-host, a disposable PostgreSQL database, the qualified kernel and generic base,
-and guest-init built from the same checkout. Run it with
-`make test-environment-gitops-native` after setting `DATABASE_URL`,
-`FAAS_TEST_KERNEL`, `FAAS_TEST_MINIMAL_BASE_PATH`, `FAAS_GUEST_INIT`, and
-`GREGALE_GITOPS_NATIVE_HOST_CLASS=native`. The guarded runner requires a clean
+The opt-in native graph journey includes an image API and a push worker
+with a reviewed queue binding for each of GitHub and GitLab. It requires an
+isolated designated x86_64 KVM
+host, a disposable PostgreSQL database, a qualified kernel, guest-init built
+from the same checkout, and registry access to three pinned base images. Run
+`make test-environment-gitops-native` with `DATABASE_URL`, `FAAS_TEST_KERNEL`,
+`FAAS_GUEST_INIT`, `GREGALE_GITOPS_NATIVE_HOST_CLASS=native`, and these explicit
+`repository@sha256:...` image references:
+
+- `GREGALE_GITOPS_NATIVE_BUILDER_REF`: the real builder image with Railpack and BuildKit.
+- `GREGALE_GITOPS_NATIVE_SOURCE_RUNTIME_REF`: the matching Node source runtime base.
+- `GREGALE_GITOPS_NATIVE_DOCKERFILE_RUNTIME_REF`: the minimal runtime base for the scratch Dockerfile fixture and full-rootfs image workloads.
+
+Imaged stages these through its verified base-producer path in private test
+storage. No supplied ext4 is imported as image provenance. Each checkout and
+temporary volume needs at least 32 GiB free for base conversion, builder drives,
+exports and compilation. The guarded runner requires a clean
 checkout, refuses active Gregale services, checks leaks before and after, and
-requires the named metal test to pass rather than skip. Set the host class to
+builds fresh daemon/fixture binaries rather than reusing a caller's prebuilt
+directory. It
+requires both named metal tests, both providers and every required scenario
+to pass rather than skip. Set the host class to
 `nested-diagnostic` only for troubleshooting; that result cannot qualify a
 production gate. A passing journey must prove API serving through the gateway,
 a completed scoped customer queue delivery for each applied generation, and
@@ -301,16 +754,100 @@ prove mixed-graph serving; it never waits for an applied revision before
 admitting that first customer message.
 
 The resilience cases inject source unavailability through the real githubd RPC
-client, restart apid during that outage and while an image pull is held, and
+client or GitLab.com HTTPS client, restart apid during that outage and while an
+image pull is held, and
 supersede the held revision through HTTP review and approval. A later case
 restarts schedd after activation with an accepted customer delivery in flight.
 The reviewed rollback must obtain a fresh graph and native qualification at a
 new generation, preserve accepted queue identities, and serve another customer
 delivery before convergence. Slow gateway requests continue throughout these
 transitions; a failed request or a response from the superseded image fails the
-journey. The guarded runner allows up to 90 minutes and retains its pre-run and
+journey. The guarded runner allows up to 300 minutes for the complete provider
+and source-kind matrix and retains its pre-run and
 post-run leak checks. These cases still require execution on the exclusive
 native host; no passing dedicated native result has been established.
+
+### Native source-backed scheduled Jobs
+
+The same guarded runner additionally requires
+`TestEnvironmentGitOpsSourceJobsNativeMetal` for GitHub and GitLab, each with
+`source` and `dockerfile` workloads. These use the real builder microVM,
+imaged, native Job qualification, release activation, scheduler cron admission,
+guest command and durable task logs. The real builder base is staged by imaged
+from its pinned reference, with the checkout's guest-init. Shared host artifacts
+remain unchanged. GitLab's fixture proxy, private CA and OAuth keys apply only
+to apid; builder and image downloads keep their normal transport trust.
+The source fixture uses Railpack Node; the
+Dockerfile fixture copies a checkout-built static customer executable through
+BuildKit inside the builder VM. Real source builds may need their normal tool
+and runtime downloads on the exclusive acceptance node.
+
+Each case requires a paused schedule during the first build, successful native
+smoke qualification and then an actual scheduled occurrence. Guest output must
+contain that build's commit and the occurrence's own run ID exactly once;
+qualification smoke output cannot substitute for this proof. A second
+occurrence reuses the exact deployment layer without adding a build. Restarting
+schedd and apid between completed occurrences must preserve the Job identity,
+schedule revision, cursor and artifact. Another case restarts apid with a source
+build in progress, supersedes it through HTTP review/approval, and rejects any
+scheduled run or serving receipt for the superseded commit. Reviewed rollback
+requires a fresh candidate, qualification graph and successful occurrence.
+These cases do not claim recovery of an in-flight scheduled Job after a
+scheduler crash.
+
+This harness has not established a passing exclusive native result. Local
+archive/report tests and metal-tagged compilation do not qualify the native
+execution or leak gates. Production settings remain unchanged.
+
+### Native qualification evidence
+
+The runner creates a new private directory outside the checkout and always
+writes `report.json`, including on a blocked preflight or failed journey. Set
+`GREGALE_GITOPS_NATIVE_REPORT_DIR` to a new directory path to choose the location;
+an existing run is never overwritten. The report and raw logs have private
+permissions. `make test-environment-gitops-report` validates this evidence
+contract without a VM or database.
+
+The `gregale.dev/gitops-native-acceptance/v2` report binds the run to a clean
+commit, host OS/architecture/kernel and virtualization observation, pinned Go,
+Firecracker/jailer and PostgreSQL client versions, and SHA-256/size fingerprints
+of the kernel and guest-init, plus all three pinned base-image references.
+It rechecks these inputs
+after execution and fingerprints the private JSON event stream and diagnostic
+logs. The JSON does not contain database URLs, OAuth credentials, fixture paths,
+or raw test output.
+
+For both providers it requires structured Go test pass events for baseline
+serving, source outage/restart, held-revision supersession, scheduler restart
+with accepted work, reviewed rollback, override repair and retirement/recovery.
+It also requires every provider/source-kind case for source Job qualification,
+artifact reuse, scheduler restart, held-build supersession and rollback.
+A missing scenario, skip, failure, malformed/contradictory event stream, nonzero
+runner exit, changed inputs, or failed leak check prevents a pass. Human-readable
+`PASS` strings are not evidence. The post-run leak observation also runs when an
+attempt is interrupted; it never removes host resources to make the gate pass.
+
+`result: passed` and `native_acceptance_passed: true` require an exclusive native
+host and the complete matrix. `diagnostic_passed` always leaves native acceptance
+false. This is a local operator record, not a signed attestation or production
+authorization; no production gate consumes it or changes automatically.
+
+Provider boundaries are local fixtures. GitLab uses the fixed production HTTPS
+origin with a daemon-scoped loopback CONNECT proxy and test CA, plus sealed
+account OAuth credentials and immutable project/commit archive reads. TLS
+verification remains enabled; the proxy cannot dial arbitrary origins. All
+journeys use manual approval. Live GitHub/GitLab access and protected-MR
+review qualification remain outside this local-fixture coverage. The v2
+`coverage` object lists image workloads and both source-backed Job kinds;
+`source_scheduled_jobs_passed` can become true only with the complete successful
+exclusive native matrix. Older image-only v1 reports cannot qualify this matrix.
+The report still grants no production authorization.
+
+The manual [GitOps native CI lane](ops/gitops-native-ci.md) runs this complete
+matrix on an exclusive runner at the exact `main` dispatch commit. It verifies
+the private v2 record against the raw events and artifact fingerprints before
+publishing a sanitized CI summary. The lane still requires an eligible host;
+adding the workflow does not establish an executed native acceptance pass.
 
 ## Next implementation steps
 

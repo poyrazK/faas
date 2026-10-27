@@ -228,7 +228,15 @@ func tenantStatementInvoiceSource(ctx context.Context, acct state.Account, tenan
 	if statement.Status != state.APIConsumerUsageStatementFinalized {
 		return statementInvoiceSource{}, notFinalizedProblem()
 	}
-	invoice, err := billing.TenantStatementInvoice(statement)
+	// Tenant cards name each line's unit (ADR-1319).
+	var cards []state.PlatformTenantRateCard
+	if cardStore, ok := statements.(state.PlatformTenantRateCardStore); ok {
+		var err error
+		if cards, err = cardStore.ListPlatformTenantRateCards(ctx, acct.ID, tenant.ID); err != nil {
+			return statementInvoiceSource{}, api.ErrInternal("could not load platform tenant rate cards")
+		}
+	}
+	invoice, err := billing.TenantStatementInvoice(statement, cards...)
 	if err != nil {
 		return statementInvoiceSource{}, statementInvoiceProblem(err)
 	}

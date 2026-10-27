@@ -48,7 +48,7 @@ func newFairUseNode(t *testing.T, cfg Config) *fairUseNode {
 func (n *fairUseNode) endpoint(t *testing.T, account string, limit int) string {
 	t.Helper()
 	id := uuid.NewString()
-	if err := n.m.RegisterEndpoint(Endpoint{ID: id, AppID: "app", AccountID: account, AccountMaxConnections: limit,
+	if err := n.m.RegisterEndpoint(Endpoint{Preview: true, ID: id, AppID: "app", AccountID: account, AccountMaxConnections: limit,
 		Authorize: func(context.Context, *http.Request) (string, error) { return "", nil }}); err != nil {
 		t.Fatal(err)
 	}
@@ -85,6 +85,27 @@ func (n *fairUseNode) waitOpen(t *testing.T, want int) {
 	}
 }
 
+// waitAccountOpen waits for an account's connections on this node. A closed
+// connection leaves Snapshot before its handler releases the account's
+// allowance, so waitOpen alone can return before the allowance is free.
+func (n *fairUseNode) waitAccountOpen(t *testing.T, account string, want int64) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		var got int64
+		if value, ok := n.m.accounts.Load(account); ok {
+			got = value.(*accountConnections).local.Load()
+		}
+		if got == want {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("account connections = %d, want %d", got, want)
+		}
+		time.Sleep(time.Millisecond)
+	}
+}
+
 func TestAccountConnectionLimitSpansEndpoints(t *testing.T) {
 	node := newFairUseNode(t, Config{MaxConnections: 100})
 	account := uuid.NewString()
@@ -110,6 +131,7 @@ func TestAccountConnectionLimitSpansEndpoints(t *testing.T) {
 	// Closing a connection frees the allowance.
 	_ = held[0].Close()
 	node.waitOpen(t, 3)
+	node.waitAccountOpen(t, account, 2)
 	if _, status, _ := node.dial(t, second); status != http.StatusSwitchingProtocols {
 		t.Fatalf("connection after a close refused with %d", status)
 	}
@@ -171,18 +193,19 @@ func TestAccountNodeShareLimit(t *testing.T) {
 }
 
 // adr: 1323 — without FairUse an account limit is carried and counts are
-// synced, but nothing is refused, and the node keeps its earlier connection
-// default.
+// synced, but the plan allowance is not enforced, and the node keeps its
+// earlier connection default. The per-node account share holds either way
+// (amendment 2026-10-24).
 func TestFairUseOff(t *testing.T) {
 	account := uuid.NewString()
 	syncer := &fakeConnectionSyncer{remote: []state.RealtimeAccountConnections{{AccountID: account, Connections: 50}}}
-	m := NewManager(Config{MaxConnections: 2, ConnectionSync: syncer, ConnectionSyncInterval: time.Hour}, NopHooks{})
+	m := NewManager(Config{MaxConnections: 4, ConnectionSync: syncer, ConnectionSyncInterval: time.Hour}, NopHooks{})
 	server := httptest.NewServer(m.Handler())
 	t.Cleanup(func() { _ = m.Close(); server.Close() })
 	node := &fairUseNode{m: m, server: server}
 	ep := node.endpoint(t, account, 1)
 	m.syncConnections(t.Context())
-	for range 2 { // past the account limit, the remote count and the node share
+	for range 2 { // past the account limit and the remote count, up to the node share
 		if _, status, _ := node.dial(t, ep); status != http.StatusSwitchingProtocols {
 			t.Fatalf("connection past an unenforced account limit refused with %d", status)
 		}
@@ -194,6 +217,14 @@ func TestFairUseOff(t *testing.T) {
 	syncer.mu.Unlock()
 	if len(last) != 1 || last[0].Connections != 2 || m.Stats().AccountLimitRefusals+m.Stats().AccountNodeLimitRefusals != 0 {
 		t.Fatalf("reported %+v with stats %+v, want 2 synced and no refusals", last, m.Stats())
+	}
+	// The node share (half of 4) still holds without FairUse: one account
+	// cannot take every slot on the node.
+	if _, status, problem := node.dial(t, ep); status != http.StatusTooManyRequests || problem.Code != api.CodeRealtimeConnectionLimit {
+		t.Fatalf("connection past the node share = %d %+v, want 429 %s", status, problem, api.CodeRealtimeConnectionLimit)
+	}
+	if m.Stats().AccountNodeLimitRefusals != 1 || m.Stats().AccountLimitRefusals != 0 {
+		t.Fatalf("stats %+v, want one node-share refusal", m.Stats())
 	}
 	for fairUse, want := range map[bool]int{false: api.RealtimeNodeConnectionsWithoutFairUse, true: api.RealtimeNodeConnectionsDefault} {
 		if got := (Config{FairUse: fairUse}).withDefaults().MaxConnections; got != want {

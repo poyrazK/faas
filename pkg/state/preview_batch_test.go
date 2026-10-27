@@ -1,4 +1,4 @@
-package state
+package state_test
 
 import (
 	"context"
@@ -6,37 +6,38 @@ import (
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func TestMemStorePRPreviewBatchAtomicQuotaAndRetry(t *testing.T) {
 	ctx := context.Background()
-	store := NewMemStore()
+	store := state.NewMemStore()
 	account, err := store.CreateAccount(ctx, "preview-batch@example.test", api.PlanHobby)
 	if err != nil {
 		t.Fatal(err)
 	}
 	for _, slug := range []string{"api", "worker", "db"} {
-		if _, err := store.CreateApp(ctx, App{AccountID: account.ID, Slug: slug, Status: AppActive}); err != nil {
+		if _, err := store.CreateApp(ctx, state.App{AccountID: account.ID, Slug: slug, Status: state.AppActive}); err != nil {
 			t.Fatal(err)
 		}
 	}
 	// A preview's project must exist and belong to the same owner (#4882
 	// made MemStore enforce this, as PostgreSQL's foreign key always did).
-	project, err := store.CreateProject(ctx, Project{AccountID: account.ID, Slug: "previews"})
+	project, err := store.CreateProject(ctx, state.Project{AccountID: account.ID, Slug: "previews"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	limits := api.Limits{DeployedApps: 5, PreviewApps: 2}
-	previews := []App{
-		{AccountID: account.ID, ProjectID: project.ID, Slug: "pr-42-api", PreviewOfSlug: "api", PreviewPrNumber: 42, Status: AppActive},
-		{AccountID: account.ID, ProjectID: project.ID, Slug: "pr-42-db", PreviewOfSlug: "db", PreviewPrNumber: 42, Status: AppActive},
-		{AccountID: account.ID, ProjectID: project.ID, Slug: "pr-42-worker", PreviewOfSlug: "worker", PreviewPrNumber: 42, Status: AppActive},
+	limits := api.Limits{DeployedApps: 2, PreviewApps: 2} // one environment holds at most two workloads
+	previews := []state.App{
+		{AccountID: account.ID, ProjectID: project.ID, Slug: "pr-42-api", PreviewOfSlug: "api", PreviewPrNumber: 42, Status: state.AppActive},
+		{AccountID: account.ID, ProjectID: project.ID, Slug: "pr-42-db", PreviewOfSlug: "db", PreviewPrNumber: 42, Status: state.AppActive},
+		{AccountID: account.ID, ProjectID: project.ID, Slug: "pr-42-worker", PreviewOfSlug: "worker", PreviewPrNumber: 42, Status: state.AppActive},
 	}
-	if _, err := store.CreatePRPreviewAppsIfUnderQuota(ctx, previews, limits); !errors.Is(err, ErrQuotaExceeded) {
+	if _, err := store.CreatePRPreviewAppsIfUnderQuota(ctx, previews, limits); !errors.Is(err, state.ErrQuotaExceeded) {
 		t.Fatalf("over-quota batch = %v, want quota error", err)
 	}
 	for _, app := range previews {
-		if _, err := store.AppBySlug(ctx, app.Slug); !errors.Is(err, ErrNotFound) {
+		if _, err := store.AppBySlug(ctx, app.Slug); !errors.Is(err, state.ErrNotFound) {
 			t.Fatalf("partial preview %q after rollback: %v", app.Slug, err)
 		}
 	}
@@ -44,7 +45,7 @@ func TestMemStorePRPreviewBatchAtomicQuotaAndRetry(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.CreatePRPreviewAppsIfUnderQuota(ctx, previews, limits); !errors.Is(err, ErrQuotaExceeded) {
+	if _, err := store.CreatePRPreviewAppsIfUnderQuota(ctx, previews, limits); !errors.Is(err, state.ErrQuotaExceeded) {
 		t.Fatalf("retry with one preserved preview = %v, want quota error", err)
 	}
 	kept, err := store.AppBySlug(ctx, root.Slug)
@@ -52,16 +53,16 @@ func TestMemStorePRPreviewBatchAtomicQuotaAndRetry(t *testing.T) {
 		t.Fatalf("preexisting preview was not preserved: (%+v, %v)", kept, err)
 	}
 	for _, app := range previews[1:] {
-		if _, err := store.AppBySlug(ctx, app.Slug); !errors.Is(err, ErrNotFound) {
+		if _, err := store.AppBySlug(ctx, app.Slug); !errors.Is(err, state.ErrNotFound) {
 			t.Fatalf("partial sibling %q after retry: %v", app.Slug, err)
 		}
 	}
 	// Increasing the cap makes the same batch succeed without replacing root.
-	created, err := store.CreatePRPreviewAppsIfUnderQuota(ctx, previews, api.Limits{DeployedApps: 5, PreviewApps: 3})
+	created, err := store.CreatePRPreviewAppsIfUnderQuota(ctx, previews, api.Limits{DeployedApps: 3, PreviewApps: 3})
 	if err != nil || len(created) != len(previews) || created[0].ID != root.ID {
 		t.Fatalf("idempotent batch = (%+v, %v)", created, err)
 	}
-	if _, err := store.CreatePRPreviewAppsIfUnderQuota(ctx, previews, api.Limits{DeployedApps: 5, PreviewApps: 3}); err != nil {
+	if _, err := store.CreatePRPreviewAppsIfUnderQuota(ctx, previews, api.Limits{DeployedApps: 3, PreviewApps: 3}); err != nil {
 		t.Fatalf("full-capacity retry: %v", err)
 	}
 }

@@ -46,7 +46,7 @@ var edgeRuleKindVocab = []string{
 	"route", "rewrite", "redirect", "headers", "cors", "jwt", "ip",
 	"validate", "limit", "geo", "maintenance", "throttle", "budget",
 	"cache", "respond", "retry", "circuit_breaker", "waf",
-	"async",
+	"async", "challenge",
 }
 
 // edgeRuleJWTAlgVocab is the closed `algorithm` set for kind=jwt.
@@ -79,7 +79,7 @@ func isEdgeRuleKind(k string) bool {
 func cmdEdgeRules(args []string) int {
 	parent, _ := lookupCliCommand("edge-rules")
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale edge-rules <list|summary|trace|recipes|recipe|create|get|update|rm|history|rollback|stats|events> [args]", "edge-rules")
+		PrintUsage(os.Stderr, "usage: gregale edge-rules <list|summary|attack-mode|trace|recipes|recipe|suggest|create|get|update|rm|history|rollback|stats|review|events|waf-review|waf-exclude> [args]", "edge-rules")
 		return 1
 	}
 	switch args[0] {
@@ -87,20 +87,30 @@ func cmdEdgeRules(args []string) int {
 		return cmdEdgeRulesList(args[1:])
 	case "summary":
 		return cmdEdgeRulesSummary(args[1:])
+	case "attack-mode":
+		return cmdEdgeRulesAttackMode(args[1:])
 	case "history":
 		return cmdEdgeRulesHistory(args[1:])
 	case "rollback":
 		return cmdEdgeRulesRollback(args[1:])
 	case "stats":
 		return cmdEdgeRulesStats(args[1:])
+	case "review":
+		return cmdEdgeRulesReview(args[1:])
 	case "events":
 		return cmdEdgeRulesEvents(args[1:])
+	case "waf-review":
+		return cmdEdgeRulesWAFReview(args[1:])
+	case "waf-exclude":
+		return cmdEdgeRulesWAFExclude(args[1:])
 	case "trace":
 		return cmdEdgeRulesTrace(args[1:])
 	case "recipes":
 		return cmdEdgeRulesRecipes(args[1:])
 	case "recipe":
 		return cmdEdgeRulesRecipe(args[1:])
+	case "suggest":
+		return cmdEdgeRulesSuggest(args[1:])
 	case subCreate:
 		return cmdEdgeRulesCreate(args[1:])
 	case subGet:
@@ -111,10 +121,7 @@ func cmdEdgeRules(args []string) int {
 		return cmdEdgeRulesRm(args[1:])
 	}
 	printCommandValidation(os.Stderr, "unknown edge-rules subcommand %q\n", args[0])
-	if sug, _ := suggestSubcommand(args[0], parent); sug != "" {
-		maybeSuggestSub(sug)
-	}
-	return 1
+	return unknownSubcommandChoices(os.Stderr, "edge-rules", parent, args[0])
 }
 
 // cmdEdgeRulesList lists edge rules for the current account or for
@@ -124,7 +131,7 @@ func cmdEdgeRules(args []string) int {
 func cmdEdgeRulesList(args []string) int {
 	fs := newFlagSet("edge-rules list", flag.ContinueOnError)
 	slug := fs.String("app", "", "filter to a single app slug")
-	kind := fs.String("kind", "", "filter to a single kind (route|rewrite|redirect|headers|cors|jwt|ip|validate|limit|geo|throttle|budget|cache|respond|retry|circuit_breaker|async|waf)")
+	kind := fs.String("kind", "", "filter to a single kind (route|rewrite|redirect|headers|cors|jwt|ip|validate|limit|geo|throttle|budget|cache|respond|retry|circuit_breaker|async|waf|challenge)")
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
@@ -178,6 +185,10 @@ func cmdEdgeRulesList(args []string) int {
 		if it.Name != "" {
 			label = "  " + truncate(it.Name, 40)
 		}
+		// ADR-20261023113721: the edge does not enforce unreleased features.
+		if len(it.UnreleasedFeatures) > 0 {
+			label += "  (not enforced, not yet available: " + strings.Join(it.UnreleasedFeatures, ", ") + ")"
+		}
 		_, _ = fmt.Fprintf(osStdout, "%-36s %-12s %-9d %-32s %s  [%s]%s\n",
 			it.ID, it.Kind, it.Priority, truncate(it.MatchHost, 32), it.MatchPath, enabled, label)
 	}
@@ -207,7 +218,7 @@ func warnTemplatedEdgeRulePaths(w io.Writer, items []api.EdgeRuleResponse) {
 func cmdEdgeRulesCreate(args []string) int {
 	fs := newFlagSet("edge-rules create", flag.ContinueOnError)
 	slug := fs.String("app", "", "app slug (required)")
-	kind := fs.String("kind", "", "rule kind: route|rewrite|redirect|headers|cors|jwt|ip|validate|limit|geo|throttle|budget|cache|respond|retry|circuit_breaker|async|waf (required)")
+	kind := fs.String("kind", "", "rule kind: route|rewrite|redirect|headers|cors|jwt|ip|validate|limit|geo|throttle|budget|cache|respond|retry|circuit_breaker|async|waf|challenge (required)")
 	matchHost := fs.String("match-host", "", "host to match (required; @app covers every host the app serves)")
 	matchPath := fs.String("match-path", "/", "path glob to match (default / covers only the root; /** covers every path)")
 	var matchMethods multiFlag
@@ -222,6 +233,9 @@ func cmdEdgeRulesCreate(args []string) int {
 	expiresAt := fs.String("expires-at", "", "stop applying the rule at this RFC 3339 time")
 	matchCondition := fs.String("match", "", "match condition (ADR-962 JSON, @file, or -)")
 	ruleMode := fs.String("mode", "", "enforce (default) or log: a log-mode rule only counts matches (ADR-960)")
+	penaltyFor := fs.Duration("penalty-for", 0, "kind=ip|geo|throttle|waf (block): block a client this rule keeps refusing from the whole app for this long, 1m to 24h (ADR-20261022105846)")
+	penaltyAfter := fs.Int("penalty-after", 0, "with --penalty-for: refusals that box the client (default 1)")
+	penaltyWithin := fs.Duration("penalty-within", 0, "with --penalty-for: window the refusals count in (default 1m)")
 
 	// route
 	routeTarget := fs.String("route-target-slug", "", "kind=route: target app slug (required)")
@@ -274,7 +288,7 @@ func cmdEdgeRulesCreate(args []string) int {
 	var jwtClaims multiFlag
 	fs.Var(&jwtClaims, "jwt-required-claim", "kind=jwt: required claim (Name=Value; repeat)")
 	jwtTenantExternalRefClaim := fs.String("jwt-platform-tenant-external-ref-claim", "", "kind=jwt: verified custom claim containing the platform tenant external_ref")
-	jwtRequireExp := fs.Bool("jwt-require-exp", false, "kind=jwt: reject tokens without an exp claim")
+	jwtRequireExp := fs.Bool("jwt-require-exp", true, "kind=jwt: reject tokens without an exp claim (default true; =false accepts them)")
 	jwtAuth := unreleasedStringFlag(fs, "jwt-auth", "kind=jwt: Auth app whose tokens to require (sets issuer, JWKS URL, audience, ES256 and exp)")
 
 	// ip
@@ -320,15 +334,17 @@ func cmdEdgeRulesCreate(args []string) int {
 	// cache (ADR-122 §Decision). Per-route TTL primitive.
 	// max-age-seconds is the fresh window (default 60); stale-
 	// if-error-seconds is the post-fresh window where stale
-	// entries may serve on origin failure (default 300). Both
-	// are server-capped (3600 and 300 respectively — see
+	// entries may serve on origin failure (default 300; 0
+	// disables it). apid stores 0 as "disabled" rather than
+	// defaulting it, so the default lives in the flag: absent
+	// sends 300, an explicit 0 disables. Both are server-capped (3600 and 300 respectively — see
 	// pkg/api.ResponseCacheMaxAgeMaxSeconds /
 	// ResponseCacheStaleIfErrorMaxSeconds); the CLI does the
 	// structural checks so the user gets the same error locally.
 	var cacheVaryOn, cacheMethods multiFlag
 	cacheMaxAge := fs.Int("cache-max-age-seconds", 0, "kind=cache: fresh window in seconds (default 60; max 3600)")
 	cacheStaleWhileRevalidate := fs.Int("cache-stale-while-revalidate-seconds", 0, "kind=cache: serve stale while a background refresh runs (default 0; max 300)")
-	cacheStaleIfError := fs.Int("cache-stale-if-error-seconds", 0, "kind=cache: stale-on-error window in seconds (default 300; max 300)")
+	cacheStaleIfError := fs.Int("cache-stale-if-error-seconds", api.ResponseCacheDefaultStaleIfErrorSeconds, "kind=cache: stale-on-error window in seconds (default 300; 0 disables; max 300)")
 	fs.Var(&cacheVaryOn, "cache-vary-on", "kind=cache: header to vary on (Accept-Language|Accept-Encoding; repeat)")
 	fs.Var(&cacheMethods, "cache-methods", "kind=cache: cacheable method (GET|HEAD; repeat; default GET,HEAD)")
 
@@ -337,7 +353,8 @@ func cmdEdgeRulesCreate(args []string) int {
 	// a kind=budget rule with no budget is a silent no-op. The
 	// override header defaults to api.RequestBudgetDefaultOverrideHeader
 	// server-side when left empty.
-	budgetMs := fs.Int("budget-ms", 0, "kind=budget: per-request wall-clock budget in ms (>0; max 30000)")
+	budgetMs := fs.Int("budget-ms", 0, "kind=budget: execution budget in ms (>0; at most the plan ceiling)")
+	totalDeadlineMs := fs.Int("total-deadline-ms", 0, "kind=budget: optional total deadline from public ingress in ms (includes upload, wake and queue)")
 	budgetOverrideHeader := fs.String("budget-allow-override-header", "", "kind=budget: header that may override budget-ms per request (default x-faas-budget-ms)")
 
 	// retry (ADR-201 §1). Replay a request that died in transport
@@ -359,6 +376,7 @@ func cmdEdgeRulesCreate(args []string) int {
 	circuitOpenSeconds := fs.Int("circuit-open-seconds", 0, "kind=circuit_breaker: first open interval before a half-open probe (default 5; max 3600)")
 	circuitMaxOpenSeconds := fs.Int("circuit-max-open-seconds", 0, "kind=circuit_breaker: ceiling the backoff grows toward (default 60; must be >= open-seconds)")
 	wafFlags := addEdgeRuleWAFFlags(fs)
+	challengeFlags := addEdgeRuleChallengeFlags(fs)
 
 	// maintenance (ADR-091 D20 / issue #881). Per-route 503 with a
 	// Retry-After. Both fields are optional — a bare maintenance rule
@@ -376,7 +394,7 @@ func cmdEdgeRulesCreate(args []string) int {
 	validateMode := fs.String("validate-mode", api.ValidateModeBlock, "kind=validate: invalid-request behavior (block|observe|warn; default block)")
 	var validateContentTypes multiFlag
 	fs.Var(&validateContentTypes, "validate-content-type", "kind=validate: accepted application media type (repeat; e.g. application/json)")
-	validateMaxBodyBytes := fs.Int("validate-max-body-bytes", 0, "kind=validate: optional request body cap in bytes (0=plan default)")
+	validateMaxBodyBytes := fs.Int("validate-max-body-bytes", 0, "kind=validate: optional request body cap in bytes (0=25 MiB or the plan cap, whichever is lower)")
 	validateApplyWhileStreaming := fs.Bool("validate-apply-while-streaming", false, "kind=validate: also validate streaming requests")
 	validateRejectUnknownFields := fs.Bool("validate-reject-unknown-fields", false, "kind=validate: reject fields not declared by the schema")
 	validateParams := addValidateParamFlags(fs)
@@ -490,6 +508,7 @@ func cmdEdgeRulesCreate(args []string) int {
 		CacheVaryOn:                       cacheVaryOn,
 		CacheMethods:                      cacheMethods,
 		BudgetMs:                          *budgetMs,
+		TotalDeadlineMs:                   *totalDeadlineMs,
 		BudgetOverrideHeader:              *budgetOverrideHeader,
 		RetryMaxAttempts:                  *retryMaxAttempts,
 		RetryAllowNonIdempotent:           *retryAllowNonIdempotent,
@@ -507,6 +526,9 @@ func cmdEdgeRulesCreate(args []string) int {
 		WAFAnomalyThreshold:               *wafFlags.anomalyThreshold,
 		WAFExcludeRules:                   *wafFlags.excludeRules,
 		WAFInspectBodyBytes:               *wafFlags.inspectBodyBytes,
+		ChallengeDifficulty:               *challengeFlags.difficulty,
+		ChallengePassTTLSeconds:           *challengeFlags.passTTLSeconds,
+		ChallengeMaxDifficulty:            *challengeFlags.maxDifficulty,
 		MaintenanceRetryAfter:             *maintenanceRetryAfter,
 		MaintenanceMessage:                *maintenanceMessage,
 		RespondStatus:                     *respondStatus,
@@ -558,13 +580,18 @@ func cmdEdgeRulesCreate(args []string) int {
 		return printErr("Invalid --mode", fmt.Errorf("%s", prob.Detail))
 	}
 	req.Mode = *ruleMode
+	penalty, penaltyErr := edgeRulePenaltyFromFlags(*penaltyFor, *penaltyAfter, *penaltyWithin)
+	if penaltyErr != nil {
+		return printErr("Invalid penalty", penaltyErr)
+	}
+	req.Penalty = penalty
 	client, err := authedClient()
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
 	out, err := client.CreateEdgeRule(context.Background(), *slug, req)
 	if err != nil {
-		return printErr("Create failed", err)
+		return printErr("Could not create edge rule", err)
 	}
 	if jsonOutput {
 		return jsonOut(writeJSON(out))
@@ -649,7 +676,7 @@ func cmdEdgeRulesGet(args []string) int {
 // passed with empty value" (send zero value). The triple-state
 // enabled flag is tracked via an enabledSet boolean.
 func cmdEdgeRulesUpdate(args []string) int {
-	flags, positional := splitArgsForFlags(args, "enable", "disable", "clear-match-headers", "cors-allow-credentials", "validate-apply-while-streaming", "validate-reject-unknown-fields", "retry-allow-non-idempotent", "jwt-require-exp", "clear-expiry", "clear-match", "template")
+	flags, positional := splitArgsForFlags(args, "enable", "disable", "clear-match-headers", "cors-allow-credentials", "validate-apply-while-streaming", "validate-reject-unknown-fields", "retry-allow-non-idempotent", "jwt-require-exp", "clear-expiry", "clear-match", "clear-penalty", "template")
 	args = append(flags, positional...)
 	fs := newFlagSet("edge-rules update", flag.ContinueOnError)
 	matchHost := fs.String("match-host", "", "new host to match")
@@ -668,6 +695,10 @@ func cmdEdgeRulesUpdate(args []string) int {
 	expiresAt := fs.String("expires-at", "", "stop applying the rule at this RFC 3339 time")
 	matchCondition := fs.String("match", "", "match condition (ADR-962 JSON, @file, or -)")
 	ruleMode := fs.String("mode", "", "enforce (default) or log: a log-mode rule only counts matches (ADR-960)")
+	penaltyFor := fs.Duration("penalty-for", 0, "kind=ip|geo|throttle|waf (block): block a client this rule keeps refusing from the whole app for this long, 1m to 24h (ADR-20261022105846)")
+	penaltyAfter := fs.Int("penalty-after", 0, "with --penalty-for: refusals that box the client (default 1)")
+	penaltyWithin := fs.Duration("penalty-within", 0, "with --penalty-for: window the refusals count in (default 1m)")
+	clearPenalty := fs.Bool("clear-penalty", false, "remove the rule's penalty box, releasing the clients it holds")
 	clearExpiry := fs.Bool("clear-expiry", false, "remove the rule's expiry")
 	clearMatch := fs.Bool("clear-match", false, "remove the rule's match condition")
 	// Per-kind action re-marshaling on PATCH. PATCHing the action
@@ -711,7 +742,7 @@ func cmdEdgeRulesUpdate(args []string) int {
 	var jwtClaims multiFlag
 	fs.Var(&jwtClaims, "jwt-required-claim", "kind=jwt: required claim")
 	jwtTenantExternalRefClaim := fs.String("jwt-platform-tenant-external-ref-claim", "", "kind=jwt: verified custom claim containing the platform tenant external_ref")
-	jwtRequireExp := fs.Bool("jwt-require-exp", false, "kind=jwt: reject tokens without an exp claim")
+	jwtRequireExp := fs.Bool("jwt-require-exp", true, "kind=jwt: reject tokens without an exp claim (default true; =false accepts them)")
 	var ipAllow, ipDeny multiFlag
 	fs.Var(&ipAllow, "ip-allow", "kind=ip: allow CIDR")
 	fs.Var(&ipDeny, "ip-deny", "kind=ip: deny CIDR")
@@ -743,18 +774,21 @@ func cmdEdgeRulesUpdate(args []string) int {
 
 	// cache (ADR-122 §Decision). Mirror of the create-side
 	// flags. Same closed-set + cap semantics — the CLI does
-	// structural checks, the server enforces the ceiling.
+	// structural checks, the server enforces the ceiling. Any
+	// cache flag rebuilds the whole action, so stale-if-error
+	// defaults to 300 here too; 0 would silently disable it.
 	var cacheVaryOn, cacheMethods multiFlag
 	cacheMaxAge := fs.Int("cache-max-age-seconds", 0, "kind=cache: new fresh window in seconds (max 3600)")
 	cacheStaleWhileRevalidate := fs.Int("cache-stale-while-revalidate-seconds", 0, "kind=cache: new stale-while-revalidate window in seconds (max 300)")
-	cacheStaleIfError := fs.Int("cache-stale-if-error-seconds", 0, "kind=cache: new stale-on-error window in seconds (max 300)")
+	cacheStaleIfError := fs.Int("cache-stale-if-error-seconds", api.ResponseCacheDefaultStaleIfErrorSeconds, "kind=cache: new stale-on-error window in seconds (default 300; 0 disables; max 300)")
 	fs.Var(&cacheVaryOn, "cache-vary-on", "kind=cache: header to vary on (Accept-Language|Accept-Encoding; repeat)")
 	fs.Var(&cacheMethods, "cache-methods", "kind=cache: cacheable method (GET|HEAD; repeat)")
 
 	// budget + maintenance (ADR-093 / ADR-091 D20). Mirror of the
 	// create-side flags; same structural checks run in
 	// buildEdgeRuleAction for both paths.
-	budgetMs := fs.Int("budget-ms", 0, "kind=budget: new per-request wall-clock budget in ms (>0; max 30000)")
+	budgetMs := fs.Int("budget-ms", 0, "kind=budget: new execution budget in ms (>0; at most the plan ceiling)")
+	totalDeadlineMs := fs.Int("total-deadline-ms", 0, "kind=budget: optional total deadline from public ingress in ms (includes upload, wake and queue)")
 	budgetOverrideHeader := fs.String("budget-allow-override-header", "", "kind=budget: header that may override budget-ms per request (default x-faas-budget-ms)")
 
 	// retry (ADR-201 §1). Replay a request that died in transport
@@ -776,6 +810,7 @@ func cmdEdgeRulesUpdate(args []string) int {
 	circuitOpenSeconds := fs.Int("circuit-open-seconds", 0, "kind=circuit_breaker: first open interval before a half-open probe (default 5; max 3600)")
 	circuitMaxOpenSeconds := fs.Int("circuit-max-open-seconds", 0, "kind=circuit_breaker: ceiling the backoff grows toward (default 60; must be >= open-seconds)")
 	wafFlags := addEdgeRuleWAFFlags(fs)
+	challengeFlags := addEdgeRuleChallengeFlags(fs)
 
 	maintenanceRetryAfter := fs.Int("maintenance-retry-after-seconds", 0, "kind=maintenance: new Retry-After hint in seconds (>=0; max 86400)")
 	maintenanceMessage := fs.String("maintenance-message", "", "kind=maintenance: new operator message (<=512 bytes)")
@@ -785,7 +820,7 @@ func cmdEdgeRulesUpdate(args []string) int {
 	validateMode := fs.String("validate-mode", "", "kind=validate: invalid-request behavior (block|observe|warn)")
 	var validateContentTypes multiFlag
 	fs.Var(&validateContentTypes, "validate-content-type", "kind=validate: accepted application media type (repeat; e.g. application/json)")
-	validateMaxBodyBytes := fs.Int("validate-max-body-bytes", 0, "kind=validate: request body cap in bytes (0=plan default)")
+	validateMaxBodyBytes := fs.Int("validate-max-body-bytes", 0, "kind=validate: request body cap in bytes (0=25 MiB or the plan cap, whichever is lower)")
 	validateApplyWhileStreaming := fs.Bool("validate-apply-while-streaming", false, "kind=validate: also validate streaming requests")
 	validateRejectUnknownFields := fs.Bool("validate-reject-unknown-fields", false, "kind=validate: reject fields not declared by the schema")
 	validateParams := addValidateParamFlags(fs)
@@ -857,6 +892,14 @@ func cmdEdgeRulesUpdate(args []string) int {
 		mode := *ruleMode
 		req.Mode = &mode
 	}
+	penalty, perr := edgeRulePenaltyFromFlags(*penaltyFor, *penaltyAfter, *penaltyWithin)
+	if perr != nil {
+		return printErr("Invalid penalty", perr)
+	}
+	if penalty != nil && *clearPenalty {
+		return printErr("Invalid flags", fmt.Errorf("--clear-penalty cannot be combined with --penalty-for"))
+	}
+	req.Penalty, req.ClearPenalty = penalty, *clearPenalty
 	if visited["validate-mode"] {
 		if err := validateEdgeRuleValidateMode(*validateMode); err != nil {
 			return printErr("Invalid --validate-mode", err)
@@ -964,6 +1007,7 @@ func cmdEdgeRulesUpdate(args []string) int {
 			CacheVaryOn:                       cacheVaryOn,
 			CacheMethods:                      cacheMethods,
 			BudgetMs:                          *budgetMs,
+			TotalDeadlineMs:                   *totalDeadlineMs,
 			BudgetOverrideHeader:              *budgetOverrideHeader,
 			RetryMaxAttempts:                  *retryMaxAttempts,
 			RetryAllowNonIdempotent:           *retryAllowNonIdempotent,
@@ -981,6 +1025,9 @@ func cmdEdgeRulesUpdate(args []string) int {
 			WAFAnomalyThreshold:               *wafFlags.anomalyThreshold,
 			WAFExcludeRules:                   *wafFlags.excludeRules,
 			WAFInspectBodyBytes:               *wafFlags.inspectBodyBytes,
+			ChallengeDifficulty:               *challengeFlags.difficulty,
+			ChallengePassTTLSeconds:           *challengeFlags.passTTLSeconds,
+			ChallengeMaxDifficulty:            *challengeFlags.maxDifficulty,
 			MaintenanceRetryAfter:             *maintenanceRetryAfter,
 			MaintenanceMessage:                *maintenanceMessage,
 			RespondStatus:                     *respondStatus,
@@ -1012,7 +1059,7 @@ func cmdEdgeRulesUpdate(args []string) int {
 	}
 	out, err := client.UpdateEdgeRule(context.Background(), id, req)
 	if err != nil {
-		return printErr("Update failed", err)
+		return printErr("Could not update edge rule", err)
 	}
 	if jsonOutput {
 		return jsonOut(writeJSON(out))
@@ -1062,7 +1109,7 @@ func cmdEdgeRulesRm(args []string) int {
 		}
 	}
 	if err := client.DeleteEdgeRule(context.Background(), id); err != nil {
-		return printErr("Delete failed", err)
+		return printErr("Could not delete edge rule", err)
 	}
 	if jsonOutput {
 		return jsonOut(writeJSON(map[string]string{"id": id, "status": "deleted"}))
@@ -1107,6 +1154,11 @@ type edgeRuleActionInputs struct {
 	WAFAnomalyThreshold int
 	WAFExcludeRules     string
 	WAFInspectBodyBytes int
+	// challenge (ADR-831 amendments 7 and 8). All optional; zero applies
+	// the default (a fixed difficulty for ChallengeMaxDifficulty).
+	ChallengeDifficulty     int
+	ChallengePassTTLSeconds int
+	ChallengeMaxDifficulty  int
 	// rewrite
 	RewriteFrom, RewriteTo string
 	// redirect
@@ -1177,6 +1229,7 @@ type edgeRuleActionInputs struct {
 	// is a silent no-op — the worst shape for a safety primitive.
 	// BudgetOverrideHeader is optional; empty means the runtime uses
 	// api.RequestBudgetDefaultOverrideHeader (`x-faas-budget-ms`).
+	TotalDeadlineMs      int
 	BudgetMs             int
 	BudgetOverrideHeader string
 	// maintenance (ADR-091 D20). Per-route 503 + Retry-After. Both
@@ -1296,7 +1349,7 @@ func buildEdgeRuleAction(kind string, in edgeRuleActionInputs) (json.RawMessage,
 			Algorithms:                     in.JWTAlgorithms,
 			RequiredClaims:                 claims,
 			PlatformTenantExternalRefClaim: in.JWTPlatformTenantExternalRefClaim,
-			RequireExp:                     in.JWTRequireExp,
+			RequireExp:                     &in.JWTRequireExp,
 		}
 		if err := a.Validate(); err != nil {
 			return nil, errToError(err)
@@ -1404,8 +1457,9 @@ func buildEdgeRuleAction(kind string, in edgeRuleActionInputs) (json.RawMessage,
 		//
 		//   - max_age_seconds: server default 60 when 0;
 		//     ceiling 3600
-		//   - stale_if_error_seconds: server default 300 when
-		//     0; ceiling 300
+		//   - stale_if_error_seconds: 0 disables stale-on-error
+		//     (the server does not default it; the flags do);
+		//     ceiling 300
 		//   - vary_on: closed subset of {Accept-Language,
 		//     Accept-Encoding}; empty list = no vary
 		//   - methods: closed subset of {GET, HEAD}; empty
@@ -1417,7 +1471,7 @@ func buildEdgeRuleAction(kind string, in edgeRuleActionInputs) (json.RawMessage,
 			return nil, fmt.Errorf("cache action: max_age_seconds must be in [0, %d] (0 = use default 60); got %d", api.ResponseCacheMaxAgeMaxSeconds, in.CacheMaxAgeSeconds)
 		}
 		if in.CacheStaleIfErrorSeconds < 0 || in.CacheStaleIfErrorSeconds > api.ResponseCacheStaleIfErrorMaxSeconds {
-			return nil, fmt.Errorf("cache action: stale_if_error_seconds must be in [0, %d] (0 = use default 300); got %d", api.ResponseCacheStaleIfErrorMaxSeconds, in.CacheStaleIfErrorSeconds)
+			return nil, fmt.Errorf("cache action: stale_if_error_seconds must be in [0, %d] (0 disables stale-on-error); got %d", api.ResponseCacheStaleIfErrorMaxSeconds, in.CacheStaleIfErrorSeconds)
 		}
 		if in.CacheStaleWhileRevalidateSeconds < 0 || in.CacheStaleWhileRevalidateSeconds > api.ResponseCacheStaleWhileRevalidateMaxSeconds {
 			return nil, fmt.Errorf("cache action: stale_while_revalidate_seconds must be in [0, %d]; got %d", api.ResponseCacheStaleWhileRevalidateMaxSeconds, in.CacheStaleWhileRevalidateSeconds)
@@ -1439,18 +1493,14 @@ func buildEdgeRuleAction(kind string, in edgeRuleActionInputs) (json.RawMessage,
 			VaryOn:                      in.CacheVaryOn,
 			Methods:                     in.CacheMethods,
 		}
-		// CLI-side defaults for fields the user omitted
-		// (flag == 0). The server's EdgeRuleCacheAction.Validate
-		// intentionally does NOT default these — 0 means
-		// "disable stale-on-error" per the spec, so a server-
-		// side default would make that documented semantic
-		// unreachable. We default here so omitting the flag
-		// still gives the user the friendly 300-s default.
+		// CLI-side default for max_age_seconds (flag == 0). The
+		// server's EdgeRuleCacheAction.Validate does NOT default
+		// stale_if_error_seconds — 0 means "disable stale-on-error"
+		// per the spec. Its 300-s default lives in the flag
+		// definitions instead, so omitting the flag still gives 300
+		// while an explicit 0 reaches the server and disables it.
 		if a.MaxAgeSeconds == 0 {
 			a.MaxAgeSeconds = api.ResponseCacheDefaultMaxAgeSeconds
-		}
-		if a.StaleIfErrorSeconds == 0 {
-			a.StaleIfErrorSeconds = api.ResponseCacheDefaultStaleIfErrorSeconds
 		}
 		return marshalAction(a)
 	case "budget":
@@ -1470,6 +1520,7 @@ func buildEdgeRuleAction(kind string, in edgeRuleActionInputs) (json.RawMessage,
 		}
 		a := api.EdgeRuleBudgetAction{
 			BudgetMs:            in.BudgetMs,
+			TotalDeadlineMs:     in.TotalDeadlineMs,
 			AllowOverrideHeader: in.BudgetOverrideHeader,
 		}
 		if err := a.Validate(); err != nil {
@@ -1544,6 +1595,8 @@ func buildEdgeRuleAction(kind string, in edgeRuleActionInputs) (json.RawMessage,
 		return marshalAction(a)
 	case "waf":
 		return buildEdgeRuleWAFAction(in)
+	case "challenge":
+		return buildEdgeRuleChallengeAction(in)
 	case "validate":
 		a := api.EdgeRuleValidateAction{
 			Schema:                in.ValidateSchema,
@@ -1838,6 +1891,7 @@ func anyKindFlagVisited(visited map[string]bool) bool {
 		"async-max-attempts", "async-retry-base-seconds", "async-retry-max-seconds",
 		"async-retry-jitter-seconds", "async-max-age-seconds",
 		"waf-mode", "waf-paranoia-level", "waf-anomaly-threshold", "waf-exclude-rules", "waf-inspect-body-bytes",
+		"challenge-difficulty", "challenge-pass-ttl", "challenge-max-difficulty",
 		"rewrite-from", "rewrite-to",
 		"redirect-status", "redirect-to", "redirect-header", "template",
 		"headers-request-add", "headers-request-set", "headers-request-remove",
@@ -1857,7 +1911,7 @@ func anyKindFlagVisited(visited map[string]bool) bool {
 		"geo-allow", "geo-deny",
 		"cache-max-age-seconds", "cache-stale-while-revalidate-seconds", "cache-stale-if-error-seconds",
 		"cache-vary-on", "cache-methods",
-		"budget-ms", "budget-allow-override-header",
+		"budget-ms", "total-deadline-ms", "budget-allow-override-header",
 		"retry-max-attempts", "retry-allow-non-idempotent", "retry-min-remaining-ms", "retry-backoff-ms",
 		"retry-budget-percent", "retry-budget-min-retries",
 		"maintenance-retry-after-seconds", "maintenance-message",
@@ -1897,4 +1951,24 @@ func parseEdgeRuleExpiry(in time.Duration, at string, now time.Time) (*time.Time
 		return &t, nil
 	}
 	return nil, nil
+}
+
+// edgeRulePenaltyFromFlags builds a rule's penalty box from --penalty-for,
+// --penalty-after and --penalty-within (ADR-20261022105846), or nil when
+// --penalty-for is unset. The server applies the defaults and bounds.
+func edgeRulePenaltyFromFlags(forDur time.Duration, after int, within time.Duration) (*api.EdgeRulePenalty, error) {
+	if forDur == 0 {
+		if after != 0 || within != 0 {
+			return nil, fmt.Errorf("--penalty-after and --penalty-within need --penalty-for")
+		}
+		return nil, nil
+	}
+	if forDur%time.Second != 0 || within%time.Second != 0 {
+		return nil, fmt.Errorf("--penalty-for and --penalty-within must be whole seconds")
+	}
+	p := &api.EdgeRulePenalty{Seconds: int(forDur / time.Second), After: after, WithinSeconds: int(within / time.Second)}
+	if prob := p.Validate(); prob != nil {
+		return nil, fmt.Errorf("%s", prob.Detail)
+	}
+	return p, nil
 }

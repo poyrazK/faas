@@ -106,6 +106,15 @@
     mode: "0644"
   notify: restart faas-gatewayd-internal
 
+- name: gatewayd_internal_service — install domain layout drop-in (ADR-20261026100000)
+  notify: restart faas-gatewayd-internal
+  ansible.builtin.template:
+    src: ../../_shared/templates/99-faas-domain-layout.conf.j2
+    dest: /etc/systemd/system/faas-gatewayd-internal.service.d/99-faas-domain-layout.conf
+    owner: root
+    group: root
+    mode: "0644"
+
 - name: gatewayd_internal_service — create realtimed drop-in directory
   ansible.builtin.file:
     path: /etc/systemd/system/faas-realtimed.service.d
@@ -137,6 +146,10 @@
     system: true
     create_home: false
     password: "*"
+
+- name: gatewayd_internal_service — live-query client leaf for realtimed
+  ansible.builtin.include_tasks: live_tls.yml
+  when: (faas_realtime_live_tls_managed | default(false) | string | lower) in ['true', 'yes', 'on', '1']
 
 # The callback spool contains customer payloads and callback bearer tokens.
 # Keep it on the host boot disk and private to the realtimed service user.

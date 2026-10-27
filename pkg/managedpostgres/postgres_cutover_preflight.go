@@ -43,7 +43,7 @@ func (s *PostgresStore) RequestCutoverPreflight(ctx context.Context, account, id
 	if err != nil {
 		return CutoverPreflight{}, mapPostgresError(err)
 	}
-	if c.State == string(CutoverCancelling) || c.State == string(CutoverCancelled) {
+	if c.State == string(CutoverCancelling) || CutoverState(c.State).Closed() {
 		return CutoverPreflight{}, ErrConflict
 	}
 	if err = q.RequestManagedPostgresCutoverPreflight(ctx, tx, sqlc.RequestManagedPostgresCutoverPreflightParams{ID: id, Now: healthTimestamp(now)}); err != nil {

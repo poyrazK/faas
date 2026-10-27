@@ -17,5 +17,9 @@ export type CapabilitiesResponse = {
   registry_version: number;
   plan: 'free' | 'hobby' | 'pro' | 'scale';
   capabilities: Array<CapabilityStatus>;
+  /**
+   * Catalog capabilities, internal ones included, whose platform flag is off for this account. Clients hide their commands and links. Omitted when nothing is hidden and by servers without the capability gate.
+   */
+  hidden_capabilities?: Array<string>;
 };
 

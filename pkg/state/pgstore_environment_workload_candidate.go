@@ -70,11 +70,18 @@ func (s *PgStore) PrepareEnvironmentGitOpsImageCandidates(ctx context.Context, l
 }
 
 func (s *PgStore) PrepareEnvironmentGitOpsCandidates(ctx context.Context, lease EnvironmentGitOpsLease, reviewed environmentsync.Plan, artifacts map[string]EnvironmentWorkloadSourceArtifact) ([]EnvironmentWorkloadCandidate, error) {
-	tx, err := s.gitOpsEffectTx(ctx, lease)
+	return retryTrafficSerialization(ctx, func() ([]EnvironmentWorkloadCandidate, error) {
+		return s.prepareEnvironmentGitOpsCandidatesOnce(ctx, lease, reviewed, artifacts)
+	})
+}
+
+// Each new candidate takes its app's next revision URL.
+func (s *PgStore) prepareEnvironmentGitOpsCandidatesOnce(ctx context.Context, lease EnvironmentGitOpsLease, reviewed environmentsync.Plan, artifacts map[string]EnvironmentWorkloadSourceArtifact) ([]EnvironmentWorkloadCandidate, error) {
+	tx, err := s.gitOpsBindingEffectTx(ctx, lease)
 	if err != nil {
 		return nil, err
 	}
-	defer func() { _ = tx.Rollback(ctx) }()
+	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
 	q := sqlc.New()
 	inputs, snapshot, revision, err := s.environmentCandidateInputsTx(ctx, tx, lease, reviewed)
 	if err != nil {
@@ -92,16 +99,22 @@ func (s *PgStore) PrepareEnvironmentGitOpsCandidates(ctx context.Context, lease 
 		id, err := q.EnvironmentGitOpsCandidateByInput(ctx, tx, sqlc.EnvironmentGitOpsCandidateByInputParams{
 			SourceID: lease.Source.ID, Generation: strconv.FormatInt(lease.Source.Generation, 10), Resource: frozen.Resource, PlanHash: reviewed.Hash})
 		if errors.Is(err, pgx.ErrNoRows) {
-			input, err = attachCandidateSource(input, artifacts, snapshot.Plan)
+			if frozen.Source.BuildArtifactID != "" {
+				input, err = attachBuiltArtifactTx(ctx, tx, input, snapshot.Plan)
+			} else {
+				input, err = attachCandidateSource(input, artifacts, snapshot.Plan)
+			}
 			if err != nil {
 				return nil, err
 			}
 			id, err = q.CreateEnvironmentGitOpsWorkloadCandidate(ctx, tx, sqlc.CreateEnvironmentGitOpsWorkloadCandidateParams{
 				AppID: mustPgUUID(input.AppID), Scope: input.Scope, Kind: string(input.Kind), Image: input.ImageDigest, CommitSha: input.CommitSHA, Runtime: []byte(input.EnvironmentWorkloadRuntime),
 				SourcePath: input.SourcePath, SourceRoot: input.SourceRoot, SourceSha256: input.SourceSHA256, SourceBytes: input.SourceBytes, SourceUrl: input.SourceURL})
-			if err == nil && input.Kind != DeploymentKindImage {
+			if err == nil && frozen.Source.BuildArtifactID != "" {
+				err = q.MaterializeEnvironmentBuildArtifact(ctx, tx, id)
+			} else if err == nil && input.Kind != DeploymentKindImage {
 				err = q.CreateEnvironmentGitOpsSourceBuild(ctx, tx, sqlc.CreateEnvironmentGitOpsSourceBuildParams{
-					DeploymentID: id, BuildID: mustPgUUID(input.BuildID), SourceBytes: input.SourceBytes, LogPath: artifacts[frozen.Resource].LogPath})
+					DeploymentID: id, BuildID: mustPgUUID(input.BuildID), Kind: string(input.Kind), SourceBytes: input.SourceBytes, LogPath: artifacts[frozen.Resource].LogPath})
 			}
 			if err == nil && input.Kind == DeploymentKindImage {
 				payload, _ := json.Marshal(map[string]string{"app_id": input.AppID, "to": pgUUIDString(id), "deployment_id": pgUUIDString(id), "kind": string(input.Kind)})
@@ -156,7 +169,7 @@ func (s *PgStore) EnvironmentGitOpsSourceRequests(ctx context.Context, lease Env
 	}
 	var requests []EnvironmentWorkloadSourceRequest
 	for _, input := range inputs {
-		if input.Kind == DeploymentKindImage {
+		if input.Kind == DeploymentKindImage || candidateFrozenInputs(input).Source.BuildArtifactID != "" {
 			continue
 		}
 		frozen := candidateFrozenInputs(input)

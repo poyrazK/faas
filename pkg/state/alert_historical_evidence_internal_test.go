@@ -1,4 +1,4 @@
-package state
+package state_test
 
 import (
 	"encoding/json"
@@ -9,17 +9,18 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func TestHistoricalAlertEvidenceSampleSurvivesReceiptRoundTrip(t *testing.T) {
 	fired := time.Date(2026, 10, 5, 18, 10, 45, 0, time.UTC)
-	facts := alertRollbackFacts{Metric: AlertMetricErrorRate, Comparison: AlertGt, Threshold: 5, WindowSpec: AlertWindow5m}
+	facts := state.AlertRollbackFacts{Metric: state.AlertMetricErrorRate, Comparison: state.AlertGt, Threshold: 5, WindowSpec: state.AlertWindow5m}
 	for _, zone := range []*time.Location{time.UTC, time.FixedZone("runner-utc", 0), time.FixedZone("runner-local", 3*60*60)} {
 		t.Run(zone.String(), func(t *testing.T) {
 			r := api.AlertRollback{Historical: true, CandidateDeploymentID: uuid.NewString(), FiredAt: fired}
-			r.DeploymentEvidence = newHistoricalAlertEvidence(r, facts, fired.Add(-4*time.Minute))
+			r.DeploymentEvidence = state.NewHistoricalAlertEvidence(r, facts, fired.Add(-4*time.Minute))
 			last := r.DeploymentEvidence.WindowEnd.Add(-time.Minute).In(zone)
-			got, qualified := qualifyHistoricalAlertEvidence(r, 20, 2, &last, true, fired)
+			got, qualified := state.QualifyHistoricalAlertEvidence(r, 20, 2, &last, true, fired)
 			if !qualified || got.DeploymentEvidence.LastSampleAt == nil || got.DeploymentEvidence.LastSampleAt.Location() != time.UTC || !got.DeploymentEvidence.LastSampleAt.Equal(last) {
 				t.Fatalf("sample timestamp was not preserved in UTC: %+v", got.DeploymentEvidence)
 			}
@@ -42,7 +43,7 @@ func TestHistoricalAlertEvidenceSampleSurvivesReceiptRoundTrip(t *testing.T) {
 func TestHistoricalAlertEvidenceBoundaries(t *testing.T) {
 	fired := time.Date(2026, 10, 5, 18, 10, 45, 0, time.UTC)
 	cutover := fired.Add(-4 * time.Minute)
-	facts := alertRollbackFacts{Metric: AlertMetricErrorRate, Comparison: AlertGt, Threshold: 5, WindowSpec: AlertWindow5m}
+	facts := state.AlertRollbackFacts{Metric: state.AlertMetricErrorRate, Comparison: state.AlertGt, Threshold: 5, WindowSpec: state.AlertWindow5m}
 	for _, test := range []struct {
 		name               string
 		requests, failures int64
@@ -62,13 +63,13 @@ func TestHistoricalAlertEvidenceBoundaries(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			r := api.AlertRollback{ID: uuid.NewString(), Historical: true, CandidateDeploymentID: uuid.NewString(), FiredAt: fired, Status: "pending"}
-			r.DeploymentEvidence = newHistoricalAlertEvidence(r, facts, cutover)
+			r.DeploymentEvidence = state.NewHistoricalAlertEvidence(r, facts, cutover)
 			e := r.DeploymentEvidence
 			if !e.WindowStart.Equal(cutover.Truncate(time.Minute).Add(time.Minute)) || !e.WindowEnd.Equal(fired.Add(-30*time.Second).Truncate(time.Minute)) {
 				t.Fatalf("unclosed or cutover minutes included: %+v", e)
 			}
 			last := e.WindowEnd.Add(-time.Minute)
-			got, qualified := qualifyHistoricalAlertEvidence(r, test.requests, test.failures, &last, test.available, fired.Add(test.shift))
+			got, qualified := state.QualifyHistoricalAlertEvidence(r, test.requests, test.failures, &last, test.available, fired.Add(test.shift))
 			if got.Status != test.status || got.Code != test.code || qualified != (test.code == "") {
 				t.Fatalf("decision %+v qualified=%t", got, qualified)
 			}
@@ -80,7 +81,7 @@ func TestHistoricalAlertEvidenceBoundaries(t *testing.T) {
 	for _, change := range []string{"gte", "negative threshold", "nan threshold", "lower comparison", "unknown window", "other metric", "partial minute"} {
 		t.Run(change, func(t *testing.T) {
 			r := api.AlertRollback{Historical: true, FiredAt: fired, CandidateDeploymentID: uuid.NewString()}
-			e := newHistoricalAlertEvidence(r, facts, cutover)
+			e := state.NewHistoricalAlertEvidence(r, facts, cutover)
 			r.DeploymentEvidence = e
 			switch change {
 			case "gte":
@@ -96,17 +97,17 @@ func TestHistoricalAlertEvidenceBoundaries(t *testing.T) {
 			case "other metric":
 				e.Metric = "request_count"
 			case "partial minute":
-				r.DeploymentEvidence = newHistoricalAlertEvidence(r, facts, fired.Add(-10*time.Second))
+				r.DeploymentEvidence = state.NewHistoricalAlertEvidence(r, facts, fired.Add(-10*time.Second))
 			}
 			// NaN cannot be serialized into a receipt, and is refused by rule validation.
 			if change == "nan threshold" {
-				if historicalAlertEvidenceSupported(e) {
+				if state.HistoricalAlertEvidenceSupported(e) {
 					t.Fatal("NaN supported")
 				}
 				return
 			}
 			last := e.WindowEnd.Add(-time.Minute)
-			got, qualified := qualifyHistoricalAlertEvidence(r, 20, 1, &last, true, fired)
+			got, qualified := state.QualifyHistoricalAlertEvidence(r, 20, 1, &last, true, fired)
 			if change == "gte" {
 				if !qualified {
 					t.Fatalf("gte boundary rejected %+v", got)

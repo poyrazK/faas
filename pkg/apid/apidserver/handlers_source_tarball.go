@@ -62,6 +62,11 @@ type sidecarPayload struct {
 	MCPTaskMigrationOverride bool                       `json:"mcp_task_migration_override,omitempty"`
 	Healthcheck              *api.DeploymentHealthcheck `json:"healthcheck,omitempty"`
 	NoTriggers               bool                       `json:"no_triggers,omitempty"`
+	// OverrideFreeze is api.CreateDeploymentRequest.OverrideFreeze.
+	OverrideFreeze string `json:"override_freeze,omitempty"`
+	// ReleaseAt and ReleaseNotify are api.CreateDeploymentRequest's.
+	ReleaseAt     string   `json:"release_at,omitempty"`
+	ReleaseNotify []string `json:"release_notify,omitempty"`
 }
 
 // fieldNameTarball is the multipart field name on both
@@ -130,6 +135,10 @@ func (s *server) handleSourceTarballDeploy(w http.ResponseWriter, r *http.Reques
 			"Bad multipart", err.Error()))
 		return
 	}
+	if _, sent := r.MultipartForm.Value["overrides"]; sent {
+		api.WriteProblem(w, multipartOverridesProblem())
+		return
+	}
 
 	tarballFile, _, err := r.FormFile(fieldNameTarball)
 	if err != nil {
@@ -149,7 +158,7 @@ func (s *server) handleSourceTarballDeploy(w http.ResponseWriter, r *http.Reques
 			return
 		}
 	}
-	rolloutReq := &api.CreateDeploymentRequest{Environment: sidecar.Environment, TrafficPercent: sidecar.TrafficPercent, Canary: sidecar.Canary, RollbackOn5xx: sidecar.RollbackOn5xx, DisableStartupCPUBoost: sidecar.DisableStartupCPUBoost, MCPTaskMigrationOverride: sidecar.MCPTaskMigrationOverride}
+	rolloutReq := &api.CreateDeploymentRequest{Environment: sidecar.Environment, TrafficPercent: sidecar.TrafficPercent, Canary: sidecar.Canary, RollbackOn5xx: sidecar.RollbackOn5xx, DisableStartupCPUBoost: sidecar.DisableStartupCPUBoost, MCPTaskMigrationOverride: sidecar.MCPTaskMigrationOverride, OverrideFreeze: sidecar.OverrideFreeze, ReleaseAt: sidecar.ReleaseAt, ReleaseNotify: sidecar.ReleaseNotify}
 	rolloutReq.Overrides = sourceHealthcheckOverrides(sidecar.Healthcheck)
 	healthOverrides, healthProblem := validateOverrides(rolloutReq, limits, acct.Plan)
 	if healthProblem != nil {
@@ -160,7 +169,16 @@ func (s *server) handleSourceTarballDeploy(w http.ResponseWriter, r *http.Reques
 		api.WriteProblem(w, prob)
 		return
 	}
+	sched, prob := s.releaseFreezeOrSchedule(r, acct, app, rolloutReq)
+	if prob != nil {
+		api.WriteProblem(w, prob)
+		return
+	}
 	release.ApplyDefault(r.Context(), s.store, s.log, app, acct.Plan, rolloutReq)
+	if ap := s.releaseApprovalCanaryProblem(r.Context(), app, rolloutReq); ap != nil {
+		api.WriteProblem(w, ap)
+		return
+	}
 	if prob := validateDeploymentTrafficOptions(rolloutReq, acct.Plan); prob != nil {
 		api.WriteProblem(w, prob)
 		return
@@ -169,6 +187,7 @@ func (s *server) handleSourceTarballDeploy(w http.ResponseWriter, r *http.Reques
 		api.WriteProblem(w, prob)
 		return
 	}
+	sched.park(rolloutReq)
 	rollout, rolloutProblem := buildDeploymentForInsert(app, rolloutReq, healthOverrides, limits, acct.Plan)
 	if rolloutProblem != nil {
 		api.WriteProblem(w, rolloutProblem)
@@ -255,7 +274,10 @@ func (s *server) handleSourceTarballDeploy(w http.ResponseWriter, r *http.Reques
 	if !s.admitCanaryDeployment(w, r, rollout) {
 		return
 	}
-	stagedManifest, manifestProblem = s.applySourceRefManifest(r.Context(), acct, app, manifest, rollout.Scope, !sidecar.NoTriggers)
+	stagedManifest, manifestProblem = s.stageSourceDeploymentManifest(r, acct, app, manifest, rollout, !sidecar.NoTriggers)
+	if stagedManifest.cronIntent != nil {
+		r = r.WithContext(state.ContextWithDeploymentSubmission(r.Context(), stagedManifest.cronIntent.SessionID))
+	}
 	if manifestProblem != nil {
 		api.WriteProblem(w, manifestProblem)
 		return
@@ -322,9 +344,13 @@ func (s *server) handleSourceTarballDeploy(w http.ResponseWriter, r *http.Reques
 
 	s.auditLocalTarballDeploy(r, acct, app, res, sidecar, spoolBytes, ann)
 
-	d, err := s.store.LatestDeployment(r.Context(), app.ID)
+	d, err := s.store.DeploymentByID(r.Context(), res.DeploymentID)
 	if err != nil {
 		api.WriteProblem(w, api.ErrCapacity("could not read deployment"))
+		return
+	}
+	if prob := s.recordReleaseSchedule(r, acct, app, d, sched); prob != nil {
+		api.WriteProblem(w, prob)
 		return
 	}
 	writeJSON(w, http.StatusAccepted, s.deploymentResponse(r.Context(), d, app))

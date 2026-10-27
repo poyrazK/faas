@@ -2,9 +2,11 @@ package billing
 
 import (
 	"errors"
+	"slices"
 	"testing"
 	"time"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -68,15 +70,119 @@ func TestTenantStatementInvoiceRoundingAndCurrency(t *testing.T) {
 	if inv, err = TenantStatementInvoice(statement); err != nil || inv.TotalMinor != 1 || inv.RoundingMinor != -1 {
 		t.Fatalf("rounding invoice = %+v err=%v, want total 1 with a -1 rounding item", inv, err)
 	}
-	statement.Currency = "JPY"
+	statement.Currency = "CLF"
 	if _, err := TenantStatementInvoice(statement); !errors.Is(err, ErrInvoiceCurrencyUnsupported) {
-		t.Fatalf("JPY err = %v", err)
+		t.Fatalf("four-decimal CLF err = %v", err)
 	}
 	statement.Currency, statement.AmountMillicents = "EUR", 999
 	if _, err := TenantStatementInvoice(statement); !errors.Is(err, ErrStatementNotInvoiceable) {
 		t.Fatalf("total mismatch err = %v", err)
 	}
-	if got := millicentsToCents(-1500); got != -2 {
-		t.Fatalf("millicentsToCents(-1500) = %d, want -2", got)
+	if got := (MinorUnit{Exponent: 2, Step: 1}).FromMillicents(-1500); got != -2 {
+		t.Fatalf("FromMillicents(-1500) = %d, want -2", got)
+	}
+}
+
+// adr: 20261018212918
+func TestProductControlStatementInvoiceLinesAndRounding(t *testing.T) {
+	line := func(feature, revision, plan string, price, succeeded, failed, waived int64) api.ProductBillingLine {
+		return api.ProductBillingLine{Feature: feature, Revision: revision, Plan: plan, UnitPriceMillicents: price,
+			Starts: succeeded + failed + waived, Succeeded: succeeded, Failed: failed, Waived: waived, AmountMillicents: succeeded * price}
+	}
+	doc := api.ProductBillingDocument{Kind: "statement", Currency: "EUR", AmountMillicents: 3*1500 + 1500, Snapshot: &api.ProductBillingReview{Lines: []api.ProductBillingLine{
+		line("export", "rev-a", "starter", 1500, 2, 4, 1),
+		line("export", "rev-b", "starter", 1500, 1, 0, 0), // same price, newer catalog revision: shares the line
+		line("export", "rev-b", "pro", 1500, 1, 0, 0),
+		line("validate", "rev-b", "pro", 0, 7, 0, 0),
+		line("export", "rev-b", "pro", 9000, 0, 3, 0), // failures only: not invoiced
+	}}}
+	inv, err := ProductControlStatementInvoice(doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []StatementInvoiceLine{
+		{Label: "successful export runs on plan pro", Units: 1, PriceMillicentsPerUnit: 1500, AmountMillicents: 1500, AmountMinor: 2},
+		{Label: "successful export runs on plan starter", Units: 3, PriceMillicentsPerUnit: 1500, AmountMillicents: 4500, AmountMinor: 5},
+		{Label: "successful validate runs on plan pro", Units: 7},
+	}
+	if len(inv.Lines) != len(want) {
+		t.Fatalf("lines = %+v", inv.Lines)
+	}
+	for i := range want {
+		if inv.Lines[i] != want[i] {
+			t.Fatalf("line %d = %+v, want %+v", i, inv.Lines[i], want[i])
+		}
+	}
+	// 1.5 and 4.5 cents round to 2 and 5; the 6-cent total needs a -1 rounding item.
+	if inv.Currency != "EUR" || inv.TotalMinor != 6 || inv.RoundingMinor != -1 {
+		t.Fatalf("invoice = %+v", inv)
+	}
+	credit := api.ProductBillingDocument{Kind: "credit_note", Currency: "EUR", AmountMillicents: -1500}
+	if _, err := ProductControlStatementInvoice(credit); !errors.Is(err, ErrStatementNotInvoiceable) {
+		t.Fatalf("credit note err = %v", err)
+	}
+	if _, err := ProductControlStatementInvoice(api.ProductBillingDocument{Kind: "statement", Currency: "EUR"}); !errors.Is(err, ErrStatementNotInvoiceable) {
+		t.Fatalf("statement without snapshot err = %v", err)
+	}
+	mismatch := doc
+	mismatch.AmountMillicents++
+	if _, err := ProductControlStatementInvoice(mismatch); !errors.Is(err, ErrStatementNotInvoiceable) {
+		t.Fatalf("total mismatch err = %v", err)
+	}
+	empty := api.ProductBillingDocument{Kind: "statement", Currency: "EUR", Snapshot: &api.ProductBillingReview{Lines: []api.ProductBillingLine{line("export", "rev-a", "starter", 1500, 0, 2, 0)}}}
+	if _, err := ProductControlStatementInvoice(empty); !errors.Is(err, ErrStatementNotInvoiceable) {
+		t.Fatalf("statement without successes err = %v", err)
+	}
+	doc.Currency = "CLF"
+	if _, err := ProductControlStatementInvoice(doc); !errors.Is(err, ErrInvoiceCurrencyUnsupported) {
+		t.Fatalf("four-decimal CLF err = %v", err)
+	}
+}
+
+// adr: 20261021154511 — included starts are admitted at price 0, so their
+// successes get a no-charge line beside the paid overage of the same
+// feature; the plan fee is its own base fee item naming the plan and any
+// proration; a month that charges nothing is not invoiced.
+func TestProductControlStatementInvoiceFeesAndIncludedStarts(t *testing.T) {
+	included := api.ProductBillingLine{Feature: "export", Plan: "starter", Starts: 100, Succeeded: 96, Failed: 4}
+	overage := api.ProductBillingLine{Feature: "export", Plan: "starter", UnitPriceMillicents: 20000, Starts: 12, Succeeded: 10, Failed: 2, AmountMillicents: 200000}
+	joined := time.Date(2026, 10, 21, 0, 0, 0, 0, time.UTC)
+	fee := api.ProductBillingFee{Plan: "starter", Revision: "r1", MonthlyFeeMillicents: 2900000, AmountMillicents: 1029032, ProratedFrom: &joined}
+	doc := api.ProductBillingDocument{Kind: "statement", Currency: "EUR", AmountMillicents: 200000 + 1029032,
+		Snapshot: &api.ProductBillingReview{Lines: []api.ProductBillingLine{included, overage}, Fees: []api.ProductBillingFee{fee}}}
+	inv, err := ProductControlStatementInvoice(doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []StatementInvoiceLine{
+		{Label: "successful export runs on plan starter", Units: 96},
+		{Label: "successful export runs on plan starter", Units: 10, PriceMillicentsPerUnit: 20000, AmountMillicents: 200000, AmountMinor: 200},
+		{Label: "Monthly fee for plan starter, prorated from 2026-10-21", Fee: state.StatementFeeBase, AmountMillicents: 1029032, AmountMinor: 1029},
+	}
+	if len(inv.Lines) != len(want) || inv.TotalMinor != 1229 || inv.RoundingMinor != 0 {
+		t.Fatalf("invoice = %+v", inv)
+	}
+	for _, line := range want {
+		if !slices.Contains(inv.Lines, line) {
+			t.Fatalf("invoice %+v misses %+v", inv.Lines, line)
+		}
+	}
+	doc.AmountMillicents, doc.Snapshot.Lines, doc.Snapshot.Fees = 0, []api.ProductBillingLine{included}, nil
+	if _, err := ProductControlStatementInvoice(doc); !errors.Is(err, ErrStatementNotInvoiceable) {
+		t.Fatalf("statement charging nothing err = %v", err)
+	}
+	fee.ProratedFrom, fee.AmountMillicents = nil, 2900000
+	doc.AmountMillicents, doc.Snapshot.Fees = 2900000, []api.ProductBillingFee{fee}
+	if inv, err := ProductControlStatementInvoice(doc); err != nil || len(inv.Lines) != 2 || inv.TotalMinor != 2900 {
+		t.Fatalf("fee-only month = %+v %v", inv, err)
+	}
+	// adr: 20261021195901 — a fee that excludes a trial says so.
+	trialStart, trialEnd := time.Date(2026, 11, 1, 0, 0, 0, 0, time.UTC), time.Date(2026, 11, 4, 0, 0, 0, 0, time.UTC)
+	fee.AmountMillicents, fee.TrialStartsAt, fee.TrialEndsAt = 2610000, &trialStart, &trialEnd
+	doc.AmountMillicents, doc.Snapshot.Fees = 2610000, []api.ProductBillingFee{fee}
+	inv, err = ProductControlStatementInvoice(doc)
+	trialFee := StatementInvoiceLine{Label: "Monthly fee for plan starter, excluding the free trial from 2026-11-01 to 2026-11-04", Fee: state.StatementFeeBase, AmountMillicents: 2610000, AmountMinor: 2610}
+	if err != nil || !slices.Contains(inv.Lines, trialFee) {
+		t.Fatalf("trial fee invoice = %+v %v", inv, err)
 	}
 }

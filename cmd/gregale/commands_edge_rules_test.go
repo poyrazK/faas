@@ -4,7 +4,7 @@
 // + osStdout swap. Per-kind builders are exercised via the public
 // cmdEdgeRulesCreate leaves; the JSON path uses jsonOutput=true +
 // the writeJSON/writeNDJSON envelope.
-package main
+package main_test
 
 import (
 	"bytes"
@@ -16,6 +16,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -37,7 +38,7 @@ const edgeRuleTestAccountID = "acc_0123456789abcdef0123456789abcdef"
 // to false explicitly so prior subtests don't leak.
 func resetJSONEnv(t *testing.T) {
 	t.Helper()
-	resetJSONOutput()
+	main.ResetJSONOutput()
 }
 
 // sampleEdgeRuleResponse builds a fully-populated EdgeRuleResponse
@@ -77,11 +78,11 @@ func TestCmdEdgeRulesList_HappyPath_ThreeRows(t *testing.T) {
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
 
 	var stdout bytes.Buffer
-	oldOut := osStdout
-	osStdout = &stdout
-	defer func() { osStdout = oldOut }()
+	oldOut := (*main.OsStdout)
+	(*main.OsStdout) = &stdout
+	defer func() { (*main.OsStdout) = oldOut }()
 
-	if code := cmdEdgeRulesList([]string{}); code != 0 {
+	if code := main.CmdEdgeRulesList([]string{}); code != 0 {
 		t.Errorf("list = %d, want 0", code)
 	}
 	body := stdout.String()
@@ -104,11 +105,11 @@ func TestCmdEdgeRulesList_EmptySentinel(t *testing.T) {
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
 
 	var stdout bytes.Buffer
-	oldOut := osStdout
-	osStdout = &stdout
-	defer func() { osStdout = oldOut }()
+	oldOut := (*main.OsStdout)
+	(*main.OsStdout) = &stdout
+	defer func() { (*main.OsStdout) = oldOut }()
 
-	if code := cmdEdgeRulesList([]string{}); code != 0 {
+	if code := main.CmdEdgeRulesList([]string{}); code != 0 {
 		t.Errorf("list empty = %d, want 0", code)
 	}
 	if !strings.Contains(stdout.String(), "(no edge rules)") {
@@ -118,8 +119,8 @@ func TestCmdEdgeRulesList_EmptySentinel(t *testing.T) {
 
 func TestCmdEdgeRulesList_JSON_Envelope(t *testing.T) {
 	resetJSONEnv(t)
-	jsonOutput = true
-	defer func() { jsonOutput = false }()
+	(*main.JsonOutput) = true
+	defer func() { (*main.JsonOutput) = false }()
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_ = json.NewEncoder(w).Encode([]api.EdgeRuleResponse{
@@ -131,7 +132,7 @@ func TestCmdEdgeRulesList_JSON_Envelope(t *testing.T) {
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
 
-	if code := cmdEdgeRulesList([]string{}); code != 0 {
+	if code := main.CmdEdgeRulesList([]string{}); code != 0 {
 		t.Errorf("list --json = %d, want 0", code)
 	}
 }
@@ -147,7 +148,7 @@ func TestCmdEdgeRulesList_BadKind_NoServerCall(t *testing.T) {
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
 
-	if code := cmdEdgeRulesList([]string{"--kind", "bogus"}); code == 0 {
+	if code := main.CmdEdgeRulesList([]string{"--kind", "bogus"}); code == 0 {
 		t.Errorf("expected non-zero exit on bad --kind")
 	}
 	if called {
@@ -168,7 +169,7 @@ func TestCmdEdgeRulesCreate_BadKind_NoServerCall(t *testing.T) {
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
 
-	code := cmdEdgeRulesCreate([]string{
+	code := main.CmdEdgeRulesCreate([]string{
 		"--app", edgeRuleTestAppSlug,
 		"--kind", "bogus",
 		"--match-host", "x.example.com",
@@ -193,7 +194,7 @@ func TestCmdEdgeRulesCreate_Route_HappyPath(t *testing.T) {
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
 
-	code := cmdEdgeRulesCreate([]string{
+	code := main.CmdEdgeRulesCreate([]string{
 		"--app", edgeRuleTestAppSlug,
 		"--kind", "route",
 		"--match-host", "x.example.com",
@@ -225,7 +226,7 @@ func TestCmdEdgeRulesCreate_AsyncExecutionPolicy(t *testing.T) {
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
 
-	code := cmdEdgeRulesCreate([]string{
+	code := main.CmdEdgeRulesCreate([]string{
 		"--app", edgeRuleTestAppSlug,
 		"--kind", "async",
 		"--match-host", "x.example.com",
@@ -286,7 +287,7 @@ func TestCmdEdgeRulesCreate_HappyPaths_AllKinds(t *testing.T) {
 				"--match-host", "x.example.com",
 			}
 			args = append(args, c.args...)
-			if code := cmdEdgeRulesCreate(args); code != 0 {
+			if code := main.CmdEdgeRulesCreate(args); code != 0 {
 				t.Errorf("create %s = %d, want 0", c.kind, code)
 			}
 		})
@@ -328,9 +329,9 @@ func TestCmdEdgeRulesCreate_ValidateSupportsInlineFileAndStdin(t *testing.T) {
 			t.Setenv("FAAS_API", srv.URL)
 			t.Setenv("FAAS_TOKEN", "fp_live_x")
 
-			oldStdin := osStdin
-			osStdin = strings.NewReader(tc.stdin)
-			t.Cleanup(func() { osStdin = oldStdin })
+			oldStdin := (*main.OsStdin)
+			(*main.OsStdin) = strings.NewReader(tc.stdin)
+			t.Cleanup(func() { (*main.OsStdin) = oldStdin })
 
 			args := []string{
 				"--app", edgeRuleTestAppSlug,
@@ -344,7 +345,7 @@ func TestCmdEdgeRulesCreate_ValidateSupportsInlineFileAndStdin(t *testing.T) {
 				"--validate-apply-while-streaming",
 				"--validate-reject-unknown-fields",
 			}
-			if code := cmdEdgeRulesCreate(args); code != 0 {
+			if code := main.CmdEdgeRulesCreate(args); code != 0 {
 				t.Fatalf("create validate = %d, want 0", code)
 			}
 			if got.Kind != "validate" || got.ValidateMode != api.ValidateModeWarn {
@@ -381,7 +382,7 @@ func TestCmdEdgeRulesCreate_ValidateRejectsOversizedSchemaBeforeRequest(t *testi
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
 
 	tooLarge := strings.Repeat(" ", api.MaxEdgeRuleValidateSchemaBytes+1)
-	if code := cmdEdgeRulesCreate([]string{
+	if code := main.CmdEdgeRulesCreate([]string{
 		"--app", edgeRuleTestAppSlug,
 		"--kind", "validate",
 		"--match-host", "x.example.com",
@@ -396,8 +397,8 @@ func TestCmdEdgeRulesCreate_ValidateRejectsOversizedSchemaBeforeRequest(t *testi
 
 func TestCmdEdgeRulesCreate_JSON_Envelope(t *testing.T) {
 	resetJSONEnv(t)
-	jsonOutput = true
-	defer func() { jsonOutput = false }()
+	(*main.JsonOutput) = true
+	defer func() { (*main.JsonOutput) = false }()
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_ = json.NewEncoder(w).Encode(sampleEdgeRuleResponse(edgeRuleTestID))
@@ -407,7 +408,7 @@ func TestCmdEdgeRulesCreate_JSON_Envelope(t *testing.T) {
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
 
-	code := cmdEdgeRulesCreate([]string{
+	code := main.CmdEdgeRulesCreate([]string{
 		"--app", edgeRuleTestAppSlug,
 		"--kind", "route",
 		"--match-host", "x.example.com",
@@ -429,7 +430,7 @@ func TestCmdEdgeRulesCreate_BadCIDR_NoServerCall(t *testing.T) {
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
 
-	code := cmdEdgeRulesCreate([]string{
+	code := main.CmdEdgeRulesCreate([]string{
 		"--app", edgeRuleTestAppSlug,
 		"--kind", "ip",
 		"--match-host", "x.example.com",
@@ -454,7 +455,7 @@ func TestCmdEdgeRulesCreate_BadJWTAlgorithm_NoServerCall(t *testing.T) {
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
 
-	code := cmdEdgeRulesCreate([]string{
+	code := main.CmdEdgeRulesCreate([]string{
 		"--app", edgeRuleTestAppSlug,
 		"--kind", "jwt",
 		"--match-host", "x.example.com",
@@ -483,11 +484,11 @@ func TestCmdEdgeRulesGet_HappyPath(t *testing.T) {
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
 
 	var stdout bytes.Buffer
-	oldOut := osStdout
-	osStdout = &stdout
-	defer func() { osStdout = oldOut }()
+	oldOut := (*main.OsStdout)
+	(*main.OsStdout) = &stdout
+	defer func() { (*main.OsStdout) = oldOut }()
 
-	if code := cmdEdgeRulesGet([]string{edgeRuleTestID}); code != 0 {
+	if code := main.CmdEdgeRulesGet([]string{edgeRuleTestID}); code != 0 {
 		t.Errorf("get = %d, want 0", code)
 	}
 	body := stdout.String()
@@ -501,8 +502,8 @@ func TestCmdEdgeRulesGet_HappyPath(t *testing.T) {
 
 func TestCmdEdgeRulesGet_JSON_Envelope(t *testing.T) {
 	resetJSONEnv(t)
-	jsonOutput = true
-	defer func() { jsonOutput = false }()
+	(*main.JsonOutput) = true
+	defer func() { (*main.JsonOutput) = false }()
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_ = json.NewEncoder(w).Encode(sampleEdgeRuleResponse(edgeRuleTestID))
@@ -512,7 +513,7 @@ func TestCmdEdgeRulesGet_JSON_Envelope(t *testing.T) {
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
 
-	if code := cmdEdgeRulesGet([]string{edgeRuleTestID}); code != 0 {
+	if code := main.CmdEdgeRulesGet([]string{edgeRuleTestID}); code != 0 {
 		t.Errorf("get --json = %d, want 0", code)
 	}
 }
@@ -531,7 +532,7 @@ func TestCmdEdgeRulesUpdate_EnableFlag_SendsTruePointer(t *testing.T) {
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
 
-	if code := cmdEdgeRulesUpdate([]string{edgeRuleTestID, "--enable"}); code != 0 {
+	if code := main.CmdEdgeRulesUpdate([]string{edgeRuleTestID, "--enable"}); code != 0 {
 		t.Errorf("update --enable = %d, want 0", code)
 	}
 	if gotBody.Enabled == nil {
@@ -559,7 +560,7 @@ func TestCmdEdgeRulesUpdate_PriorityZero_SendsPointer(t *testing.T) {
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
 
-	if code := cmdEdgeRulesUpdate([]string{"--priority", "0", edgeRuleTestID}); code != 0 {
+	if code := main.CmdEdgeRulesUpdate([]string{"--priority", "0", edgeRuleTestID}); code != 0 {
 		t.Errorf("update --priority 0 = %d, want 0", code)
 	}
 	if gotBody.Priority == nil {
@@ -584,7 +585,7 @@ func TestCmdEdgeRulesUpdate_PriorityOmitted_NoPointer(t *testing.T) {
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
 
-	if code := cmdEdgeRulesUpdate([]string{"--enable", edgeRuleTestID}); code != 0 {
+	if code := main.CmdEdgeRulesUpdate([]string{"--enable", edgeRuleTestID}); code != 0 {
 		t.Errorf("update no-priority = %d, want 0", code)
 	}
 	if gotBody.Priority != nil {
@@ -607,7 +608,7 @@ func TestCmdEdgeRulesUpdate_ValidateActionAndTopLevelMode(t *testing.T) {
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
 
-	if code := cmdEdgeRulesUpdate([]string{
+	if code := main.CmdEdgeRulesUpdate([]string{
 		edgeRuleTestID,
 		"--kind", "validate",
 		"--validate-schema", schema,
@@ -646,7 +647,7 @@ func TestCmdEdgeRulesUpdate_ValidateModeOnlyLeavesActionAlone(t *testing.T) {
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
 
-	if code := cmdEdgeRulesUpdate([]string{edgeRuleTestID, "--kind", "validate", "--validate-mode", api.ValidateModeObserve}); code != 0 {
+	if code := main.CmdEdgeRulesUpdate([]string{edgeRuleTestID, "--kind", "validate", "--validate-mode", api.ValidateModeObserve}); code != 0 {
 		t.Fatalf("update validate mode = %d, want 0", code)
 	}
 	if gotBody.ValidateMode == nil || *gotBody.ValidateMode != api.ValidateModeObserve {
@@ -668,7 +669,7 @@ func TestCmdEdgeRulesUpdate_MutuallyExclusiveFlags(t *testing.T) {
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
 
-	code := cmdEdgeRulesUpdate([]string{"--enable", "--disable", edgeRuleTestID})
+	code := main.CmdEdgeRulesUpdate([]string{"--enable", "--disable", edgeRuleTestID})
 	if code == 0 {
 		t.Errorf("expected non-zero exit on --enable + --disable")
 	}
@@ -694,7 +695,7 @@ func TestCmdEdgeRulesRm_QuietBypass_HappyPath(t *testing.T) {
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
 
-	if code := cmdEdgeRulesRm([]string{edgeRuleTestID, "--quiet"}); code != 0 {
+	if code := main.CmdEdgeRulesRm([]string{edgeRuleTestID, "--quiet"}); code != 0 {
 		t.Errorf("rm --quiet = %d, want 0", code)
 	}
 	if !called {
@@ -715,11 +716,11 @@ func TestCmdEdgeRulesRm_CancelledByRequireTyped_NoServerCall(t *testing.T) {
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
 
-	oldIn := osStdin
-	osStdin = strings.NewReader("no, don't delete it\n")
-	defer func() { osStdin = oldIn }()
+	oldIn := (*main.OsStdin)
+	(*main.OsStdin) = strings.NewReader("no, don't delete it\n")
+	defer func() { (*main.OsStdin) = oldIn }()
 
-	if code := cmdEdgeRulesRm([]string{edgeRuleTestID}); code == 0 {
+	if code := main.CmdEdgeRulesRm([]string{edgeRuleTestID}); code == 0 {
 		t.Errorf("expected non-zero exit on cancel")
 	}
 	if called {
@@ -730,7 +731,7 @@ func TestCmdEdgeRulesRm_CancelledByRequireTyped_NoServerCall(t *testing.T) {
 // --- helpers ----------------------------------------------------------------
 
 func TestBuildEdgeRuleAction_Headers_ConflictDetected(t *testing.T) {
-	_, err := buildEdgeRuleAction("headers", edgeRuleActionInputs{
+	_, err := main.BuildEdgeRuleAction("headers", main.EdgeRuleActionInputs{
 		HeadersReqAdd: []string{"X-Foo:bar"},
 		HeadersReqSet: []string{"X-Foo:baz"},
 	})
@@ -740,7 +741,7 @@ func TestBuildEdgeRuleAction_Headers_ConflictDetected(t *testing.T) {
 }
 
 func TestBuildEdgeRuleAction_JWT_BadAlgorithm(t *testing.T) {
-	_, err := buildEdgeRuleAction("jwt", edgeRuleActionInputs{
+	_, err := main.BuildEdgeRuleAction("jwt", main.EdgeRuleActionInputs{
 		JWTIssuer:     "https://issuer.example.com",
 		JWTJWKS:       "https://issuer.example.com/.well-known/jwks.json",
 		JWTAlgorithms: []string{"BOGUS256"},
@@ -751,7 +752,7 @@ func TestBuildEdgeRuleAction_JWT_BadAlgorithm(t *testing.T) {
 }
 
 func TestBuildEdgeRuleAction_IP_BadCIDR(t *testing.T) {
-	_, err := buildEdgeRuleAction("ip", edgeRuleActionInputs{
+	_, err := main.BuildEdgeRuleAction("ip", main.EdgeRuleActionInputs{
 		IPAllow: []string{"not-a-cidr"},
 	})
 	if err == nil {
@@ -760,7 +761,7 @@ func TestBuildEdgeRuleAction_IP_BadCIDR(t *testing.T) {
 }
 
 func TestBuildEdgeRuleAction_Throttle_ConsumerID(t *testing.T) {
-	raw, err := buildEdgeRuleAction("throttle", edgeRuleActionInputs{
+	raw, err := main.BuildEdgeRuleAction("throttle", main.EdgeRuleActionInputs{
 		ThrottleRPS:     10,
 		ThrottleBurst:   20,
 		ThrottleKeyBy:   api.ThrottleKeyByConsumerID,
@@ -782,7 +783,7 @@ func TestBuildEdgeRuleAction_Throttle_ConsumerID(t *testing.T) {
 }
 
 func TestBuildEdgeRuleAction_Throttle_CountryAndStrictMissingKey(t *testing.T) {
-	raw, err := buildEdgeRuleAction("throttle", edgeRuleActionInputs{
+	raw, err := main.BuildEdgeRuleAction("throttle", main.EdgeRuleActionInputs{
 		ThrottleRPS:              10,
 		ThrottleBurst:            20,
 		ThrottleKeyBy:            api.ThrottleKeyByCountry,
@@ -811,8 +812,9 @@ func TestBuildEdgeRuleAction_Throttle_CountryAndStrictMissingKey(t *testing.T) {
 // header only applies when a kind=budget rule exists, that left the
 // 3 s RequestBudgetDefault unescapable for every customer.
 func TestBuildEdgeRuleAction_Budget_Marshals(t *testing.T) {
-	raw, err := buildEdgeRuleAction("budget", edgeRuleActionInputs{
+	raw, err := main.BuildEdgeRuleAction("budget", main.EdgeRuleActionInputs{
 		BudgetMs:             10000,
+		TotalDeadlineMs:      15000,
 		BudgetOverrideHeader: "X-My-Budget",
 	})
 	if err != nil {
@@ -825,6 +827,9 @@ func TestBuildEdgeRuleAction_Budget_Marshals(t *testing.T) {
 	if got.BudgetMs != 10000 {
 		t.Errorf("budget_ms = %d, want 10000", got.BudgetMs)
 	}
+	if got.TotalDeadlineMs != 15000 {
+		t.Errorf("total_deadline_ms = %d, want 15000", got.TotalDeadlineMs)
+	}
 	if got.AllowOverrideHeader != "X-My-Budget" {
 		t.Errorf("allow_override_header = %q, want X-My-Budget", got.AllowOverrideHeader)
 	}
@@ -832,7 +837,7 @@ func TestBuildEdgeRuleAction_Budget_Marshals(t *testing.T) {
 
 func TestBuildEdgeRuleAction_Budget_RejectsNonPositive(t *testing.T) {
 	for _, ms := range []int{0, -1} {
-		if _, err := buildEdgeRuleAction("budget", edgeRuleActionInputs{BudgetMs: ms}); err == nil {
+		if _, err := main.BuildEdgeRuleAction("budget", main.EdgeRuleActionInputs{BudgetMs: ms}); err == nil {
 			t.Errorf("budget_ms=%d: expected error (a no-budget rule is a silent no-op)", ms)
 		}
 	}
@@ -842,14 +847,14 @@ func TestBuildEdgeRuleAction_Budget_RejectsNonPositive(t *testing.T) {
 // plan's own ceiling clamps it again at request time.
 func TestBuildEdgeRuleAction_Budget_RejectsOverCeiling(t *testing.T) {
 	over := int(api.RequestBudgetPlanMax.Milliseconds()) + 1
-	if _, err := buildEdgeRuleAction("budget", edgeRuleActionInputs{BudgetMs: over}); err == nil {
+	if _, err := main.BuildEdgeRuleAction("budget", main.EdgeRuleActionInputs{BudgetMs: over}); err == nil {
 		t.Errorf("budget_ms=%d: expected error above the %s ceiling", over, api.RequestBudgetPlanMax)
 	}
 }
 
 func TestBuildEdgeRuleAction_Budget_RejectsBadOverrideHeader(t *testing.T) {
 	// Not an RFC 7230 token — a space would break header parsing.
-	_, err := buildEdgeRuleAction("budget", edgeRuleActionInputs{
+	_, err := main.BuildEdgeRuleAction("budget", main.EdgeRuleActionInputs{
 		BudgetMs:             3000,
 		BudgetOverrideHeader: "not a token",
 	})
@@ -861,13 +866,13 @@ func TestBuildEdgeRuleAction_Budget_RejectsBadOverrideHeader(t *testing.T) {
 // Maintenance carries two optional fields, so the bare rule (no
 // flags) is the valid "hard down, no hint" shape and must marshal.
 func TestBuildEdgeRuleAction_Maintenance_BareRuleIsValid(t *testing.T) {
-	if _, err := buildEdgeRuleAction("maintenance", edgeRuleActionInputs{}); err != nil {
+	if _, err := main.BuildEdgeRuleAction("maintenance", main.EdgeRuleActionInputs{}); err != nil {
 		t.Fatalf("buildEdgeRuleAction(maintenance) = %v, want nil", err)
 	}
 }
 
 func TestBuildEdgeRuleAction_Maintenance_RejectsNegativeRetryAfter(t *testing.T) {
-	_, err := buildEdgeRuleAction("maintenance", edgeRuleActionInputs{MaintenanceRetryAfter: -1})
+	_, err := main.BuildEdgeRuleAction("maintenance", main.EdgeRuleActionInputs{MaintenanceRetryAfter: -1})
 	if err == nil {
 		t.Errorf("expected error on negative retry_after_seconds")
 	}
@@ -875,7 +880,7 @@ func TestBuildEdgeRuleAction_Maintenance_RejectsNegativeRetryAfter(t *testing.T)
 
 func TestBuildEdgeRuleAction_Validate_UsesDTOAndPreservesSchema(t *testing.T) {
 	schema := json.RawMessage(`{"type":"object","required":["name"],"properties":{"name":{"type":"string","minLength":2}}}`)
-	raw, err := buildEdgeRuleAction("validate", edgeRuleActionInputs{
+	raw, err := main.BuildEdgeRuleAction("validate", main.EdgeRuleActionInputs{
 		ValidateSchema:              schema,
 		ValidateContentTypes:        []string{"application/json"},
 		ValidateMaxBodyBytes:        2048,
@@ -904,8 +909,8 @@ func TestBuildEdgeRuleAction_Validate_UsesDTOAndPreservesSchema(t *testing.T) {
 // with a reason that is not "unknown kind" — otherwise the vocab and
 // the builder have drifted apart again.
 func TestBuildEdgeRuleAction_EveryVocabKindIsHandled(t *testing.T) {
-	for _, kind := range edgeRuleKindVocab {
-		if _, err := buildEdgeRuleAction(kind, edgeRuleActionInputs{}); err != nil {
+	for _, kind := range *main.EdgeRuleKindVocab {
+		if _, err := main.BuildEdgeRuleAction(kind, main.EdgeRuleActionInputs{}); err != nil {
 			if strings.Contains(err.Error(), "unknown kind") {
 				t.Errorf("kind %q is in edgeRuleKindVocab but has no case in buildEdgeRuleAction", kind)
 			}
@@ -931,10 +936,10 @@ func TestWarnRootOnlyProtectiveRule(t *testing.T) {
 	}
 	for _, tc := range cases {
 		var stderr bytes.Buffer
-		old := osStderr
-		osStderr = &stderr
-		warnRootOnlyProtectiveRule(tc.kind, tc.pathGiven)
-		osStderr = old
+		old := (*main.OsStderr)
+		(*main.OsStderr) = &stderr
+		main.WarnRootOnlyProtectiveRule(tc.kind, tc.pathGiven)
+		(*main.OsStderr) = old
 		got := strings.Contains(stderr.String(), "covers only the root path")
 		if got != tc.warn {
 			t.Errorf("kind=%s pathGiven=%v: warned=%v, want %v (stderr %q)", tc.kind, tc.pathGiven, got, tc.warn, stderr.String())

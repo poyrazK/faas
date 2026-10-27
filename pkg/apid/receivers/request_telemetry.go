@@ -423,7 +423,9 @@ func (r *requestTelemetryReceiver) HandleOne(ctx context.Context, req *apidpb.In
 	}
 
 	// ---- 3. Per-account token bucket check ----
-	taken, retryAfter := r.limiter.Take(accountID, limits.DebugTelemetryRequestsPerMinute)
+	// Each row is charged to its app as well, so one busy app cannot use
+	// up its siblings' rows (ADR-20261026143210 amendment 1).
+	taken, retryAfter := r.limiter.TakeForApp(accountID, appID, limits.DebugTelemetryRequestsPerMinute)
 	if !taken {
 		out.Outcome = rtOutcomeRateLimited
 		out.RetryAfterMs = retryAfter
@@ -496,6 +498,7 @@ func (r *requestTelemetryReceiver) HandleOne(ctx context.Context, req *apidpb.In
 		Country:                     country,
 		WakeID:                      pgtype.Text{String: req.GetWakeId(), Valid: req.GetWakeId() != ""},
 		InstanceID:                  pgtype.Text{String: req.GetInstanceId(), Valid: req.GetInstanceId() != ""},
+		TraceInferred:               req.GetTraceInferred() && req.GetTraceId() != "", // ADR-1138: only meaningful on a trace id
 		GuestDurationMs:             int32(req.GetGuestDurationMs()),
 		GuestCpuTimeMs:              int32(req.GetGuestCpuTimeMs()),
 		GuestPeakRssMb:              int32(req.GetGuestPeakRssMb()),

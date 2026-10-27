@@ -905,6 +905,11 @@ func TestPgStore_EdgeRuleModeAndHitCounts(t *testing.T) {
 	if got[enforced.ID].Matched != 6 || got[logged.ID].Logged != 10 {
 		t.Fatalf("24h stats = %+v, want matched 6 and logged 10", stats)
 	}
+	// adr: 20261020105001 — the hourly series lists each bucket, oldest first.
+	series, err := s.EdgeRuleHitSeriesForApp(ctx, app, old)
+	if err != nil || len(series) != 3 || series[0].RuleID != enforced.ID || series[0].Hits != 100 || !series[0].Bucket.Equal(old.Truncate(time.Hour)) {
+		t.Fatalf("series = %+v, %v; want the old bucket first then this hour's two", series, err)
+	}
 	if n, err := s.PruneEdgeRuleHitCounts(ctx, now.Add(-24*time.Hour)); err != nil || n != 1 {
 		t.Fatalf("prune removed %d, %v; want 1 expired bucket", n, err)
 	}

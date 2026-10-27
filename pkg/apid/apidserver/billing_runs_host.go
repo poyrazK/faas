@@ -8,6 +8,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/billingruns"
+	"github.com/onebox-faas/faas/pkg/apid/product"
 	"github.com/onebox-faas/faas/pkg/billing"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -121,6 +122,22 @@ func (h billingRunsHost) FinalizeTenantStatement(ctx context.Context, acct state
 func (h billingRunsHost) ExportTenantStatement(ctx context.Context, acct state.Account, tenant state.PlatformTenant,
 	statement state.PlatformTenantStatement, provider string) (state.StatementInvoiceExport, *api.Problem) {
 	return h.s.statementInvoices.ExportPlatformTenant(ctx, acct, tenant, statement, provider, "")
+}
+
+func (h billingRunsHost) ProductControlEnabled() bool { return h.s.productControl.Enabled }
+
+func (h billingRunsHost) FinalizeProductStatement(ctx context.Context, acct state.Account, scope state.ProductBillingScope,
+	reviewHash string) (api.ProductBillingDocument, *api.Problem) {
+	doc, err := h.s.productControl.FinalizeStatement(ctx, acct, scope, reviewHash)
+	if err != nil {
+		return doc, product.BillingProblem(err)
+	}
+	return doc, nil
+}
+
+func (h billingRunsHost) ExportProductStatement(ctx context.Context, acct state.Account, scope state.ProductBillingScope,
+	documentID, provider string) (api.StatementInvoiceExportResponse, *api.Problem) {
+	return h.s.productControl.ExportStatement(ctx, acct, scope, documentID, provider, "")
 }
 
 func (h billingRunsHost) SendEmail(ctx context.Context, to, subject, body, messageID string) error {

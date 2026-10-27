@@ -120,7 +120,8 @@ func (s *Service) ListOverdueHolds(w http.ResponseWriter, r *http.Request, acct 
 	httpkit.WriteJSON(w, http.StatusOK, out)
 }
 
-// Start recomputes overdue holds every api.ConsumerOverdueCheckInterval.
+// Start recomputes consumer and tenant overdue holds every
+// api.ConsumerOverdueCheckInterval.
 func (s *Service) Start(ctx context.Context, log *slog.Logger) {
 	if _, ok := s.Host.Store().(state.APIConsumerOverdueStore); !ok {
 		return
@@ -129,8 +130,8 @@ func (s *Service) Start(ctx context.Context, log *slog.Logger) {
 		ticker := time.NewTicker(api.ConsumerOverdueCheckInterval)
 		defer ticker.Stop()
 		for {
-			if err := s.SyncOverdueOnce(ctx); err != nil && ctx.Err() == nil {
-				log.Warn("consumer overdue check failed", "err", err)
+			if err := s.tick(ctx); err != nil && ctx.Err() == nil {
+				log.Warn("overdue check failed", "err", err)
 			}
 			select {
 			case <-ctx.Done():
@@ -141,9 +142,13 @@ func (s *Service) Start(ctx context.Context, log *slog.Logger) {
 	}()
 }
 
-// SyncOverdueOnce places and lifts holds from the exported invoices'
-// payment status (ADR-1504) and audits each change.
+// SyncOverdueOnce places and lifts consumer and tenant holds from the
+// exported invoices' payment status (ADR-1504) and audits each change.
 func (s *Service) SyncOverdueOnce(ctx context.Context) error {
+	return errors.Join(s.syncConsumerOverdueOnce(ctx), s.syncTenantOverdueOnce(ctx))
+}
+
+func (s *Service) syncConsumerOverdueOnce(ctx context.Context) error {
 	store, ok := s.Host.Store().(state.APIConsumerOverdueStore)
 	if !ok {
 		return nil
@@ -153,10 +158,16 @@ func (s *Service) SyncOverdueOnce(ctx context.Context) error {
 		return fmt.Errorf("sync overdue holds: %w", err)
 	}
 	for _, h := range placed {
+		if !s.released(h.AccountID) {
+			continue
+		}
 		s.Host.Audit(ctx, "api_consumer.overdue_blocked", h.AccountID, map[string]any{"app_id": h.AppID, "consumer_id": h.ConsumerID,
 			"export_id": h.ExportID, "due_at": h.DueAt})
 	}
 	for _, h := range lifted {
+		if !s.released(h.AccountID) {
+			continue
+		}
 		s.Host.Audit(ctx, "api_consumer.overdue_unblocked", h.AccountID, map[string]any{"app_id": h.AppID, "consumer_id": h.ConsumerID,
 			"export_id": h.ExportID})
 	}

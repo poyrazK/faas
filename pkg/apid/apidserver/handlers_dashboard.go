@@ -36,6 +36,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/dashboard/stages"
 	"github.com/onebox-faas/faas/pkg/dashboard/views"
 	"github.com/onebox-faas/faas/pkg/gateway"
+	"github.com/onebox-faas/faas/pkg/hostidentity"
 	"github.com/onebox-faas/faas/pkg/httpsec"
 	"github.com/onebox-faas/faas/pkg/meter"
 	"github.com/onebox-faas/faas/pkg/middleware"
@@ -527,6 +528,9 @@ func appURLForDomain(slug, domain string) string {
 func (s *server) renderAppsList(w http.ResponseWriter, r *http.Request, log *slog.Logger, acct state.Account) {
 	ctx := r.Context()
 	apps, err := s.store.ListApps(ctx, acct.ID)
+	if err == nil {
+		apps, _, err = s.visibleAccountApps(r, acct, apps)
+	}
 	if err != nil {
 		renderProblem(w, log, err)
 		return
@@ -914,9 +918,10 @@ func (s *server) renderAppDetail(w http.ResponseWriter, r *http.Request, log *sl
 	operational := s.appOperationalSummary(ctx, acct, app)
 	appCosts := s.dashboardAppCosts(ctx, log, acct, app, costMonth, costMonthNotice)
 	page := dashboard.Page{Title: app.Slug, Body: "app_detail", Account: dashboardAccountView(view, appCount), Data: dashboard.AppDetailData{
+		AnnouncedCaptures:  s.announcedProfileCaptures(ctx, log, acct, app),
 		ProductControlURL:  s.productControlConsoleURL(app.Slug),
 		ProfilingAvailable: s.profileBackend != nil && api.MustLimitsFor(acct.Plan).Profiling.Enabled,
-		ApplicationAuth:    api.ApplicationAuthEnabled(acct.ID),
+		ApplicationAuth:    s.applicationAuthEnabled(appFlagSubject(acct, app)),
 		Operational:        &operational,
 		App:                appRow,
 		AppCosts:           appCosts,
@@ -973,6 +978,7 @@ func (s *server) renderAppDetail(w http.ResponseWriter, r *http.Request, log *sl
 		// plans without request-telemetry retention.
 		RequestAnalytics: s.fetchDashboardRequestAnalytics(ctx, log, app, acct, analyticsGroupBy, analyticsRoute, analyticsMethod),
 		DiscoveredRoutes: s.fetchDashboardDiscoveredRoutes(ctx, log, acct, app),
+		RouteInsights:    s.fetchDashboardRouteInsights(ctx, log, w, r, acct, app),
 		// Issue #396 / ADR-045 PR 4 — best-effort alert-rule
 		// snapshot. Failure is non-fatal: a Postgres blip on the
 		// alert_rules read renders the panel's warning empty-state
@@ -1143,6 +1149,7 @@ func (s *server) fetchDashboardMetrics(ctx context.Context, log *slog.Logger, ap
 		ColdStartPct: resp.ColdStartPct,
 		WakeP95MS:    resp.WakeP95MS,
 	}
+	view.WakeP95Unavailable = resp.WakeSamples != nil && *resp.WakeSamples < api.FleetWakeP95MinSamples
 	if resp.CacheHitRatePct != nil {
 		view.CacheHitRatePct = *resp.CacheHitRatePct
 		view.CacheHitRateAvailable = true
@@ -1812,8 +1819,9 @@ func (s *server) renderAccount(w http.ResponseWriter, r *http.Request, log *slog
 		appCount = 0
 	}
 	data := dashboard.AccountData{
-		Keys:       keyItems,
-		ShowDelete: view.Status != state.AccountDeletedPending,
+		Keys:                      keyItems,
+		ShowDelete:                view.Status != state.AccountDeletedPending,
+		ShowDeleteManagedPostgres: api.AccountDeletionManagedPostgresEnabled(acct.ID),
 		// A deletion dunning scheduled is cancelled by paying, not by
 		// the Restore button (the store refuses it).
 		ShowRestore: view.Status == state.AccountDeletedPending && view.PastDueAt == nil,
@@ -2944,6 +2952,9 @@ func (s *server) renderDeploymentDetail(w http.ResponseWriter, r *http.Request, 
 		App:        dashboard.AppListItem{Slug: app.Slug},
 		Deployment: dashboardDeploymentItem(dep),
 	}
+	if dep.ErrorCode == api.CodeAppRuntimeOOM {
+		data.OOMCaptureURL = s.oomProfileCaptureURL(r.Context(), acct, app, dep)
+	}
 	// Keep the dashboard's failure explanation aligned with the API/CLI
 	// projection: the persisted profile is the source of truth for the
 	// inferred runtime, start command, port, and health path. This remains
@@ -3057,7 +3068,7 @@ func (s *server) renderDeploymentDetail(w http.ResponseWriter, r *http.Request, 
 	alive := dep.DeploymentPreviewActive()
 	preview := dashboard.DeploymentPreviewURL{Alive: alive}
 	if alive {
-		suffix := wire.DeployWildcardSuffix
+		suffix := hostidentity.DeploySuffix()
 		if suffix != "" {
 			ord, ordErr := s.store.DeploymentOrdinal(ctx, app.ID, dep.ID)
 			if ordErr == nil {
@@ -3716,7 +3727,7 @@ func (s *server) renderDomainDoctor(w http.ResponseWriter, r *http.Request, log 
 			"Gregale could not complete the domain checks right now.",
 		).WithHeader("Retry-After", "30").
 			WithHint("Wait a moment, then run the domain check again.").
-			WithDocs("https://gregale.dev/docs/domains/doctor"))
+			WithDocs("https://gregale.dev/docs/domains#doctor"))
 		return
 	}
 	view := dashboard.DomainDoctorView{

@@ -494,6 +494,25 @@ type Trigger struct {
 	// direct test/integration callers safe.
 	admissionMu      sync.Mutex
 	admissionBackoff map[string]admissionBackoffState
+
+	// Worker pools reconcile in background runs, one per account at a time
+	// (ADR-20261018101500); workerRunning holds the accounts with a run in progress.
+	// workerWakes holds, per account with a run in progress, the apps
+	// WakeWorkerPool queued for that run.
+	workerRunMu   sync.Mutex
+	workerRunning map[string]bool
+	workerWakes   map[string]map[string]state.App
+	workerRuns    sync.WaitGroup
+
+	// workerApps holds the queue-driven worker pool apps the last tick saw,
+	// by app id, for WakeWorkerPool.
+	workerAppsMu sync.Mutex
+	workerApps   map[string]state.App
+
+	// oversubscribedLogged rate-limits the per-app oversubscription warning
+	// (ADR-20261022203523).
+	oversubscribedMu     sync.Mutex
+	oversubscribedLogged map[string]time.Time
 }
 
 // Options is the functional-options bag for New(). All fields are
@@ -718,6 +737,12 @@ func (t *Trigger) Tick(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("targets: list apps: %w", err)
 	}
+	var workerPools workerPoolRuns
+	workerApps := map[string]state.App{}
+	defer func() {
+		t.rememberWorkerPoolApps(workerApps)
+		t.startWorkerPoolRuns(ctx, workerPools)
+	}()
 	for _, app := range apps {
 		// A parked or suspended app is not scaled: the reaper parks whatever
 		// a target admits for it (H5-54).
@@ -730,7 +755,18 @@ func (t *Trigger) Tick(ctx context.Context) error {
 		// `target` to a one-element list, so reading either field directly
 		// misses half the fleet.
 		declared := policy.EffectiveTargets()
-		if len(declared) == 0 {
+		perInstance := implicitPerInstanceTarget(app)
+		if len(declared) == 0 && perInstance == 0 {
+			if app.ProjectID != "" && app.Manifest.ExecutionMode == api.ExecutionModeWorker {
+				if pool, ok := t.engine.(ScopedWorkerPoolEngine); ok && !t.admissionBackoffActive(app.ID, now) {
+					if err := pool.ReconcileWorkerPools(ctx, app.ID, workerPoolTriggerTargets); err != nil {
+						t.recordAdmissionFailure(app.ID, now)
+						t.log.Warn("targets: reconcile graph worker", "app_id", app.ID, "err", err)
+					} else {
+						t.clearAdmissionBackoff(app.ID)
+					}
+				}
+			}
 			continue
 		}
 		// This trigger owns the two axes it can observe. rps and cpu are
@@ -739,6 +775,9 @@ func (t *Trigger) Tick(ctx context.Context) error {
 		// and the second arbitrates against the concurrency the first
 		// raised. Across a tick pair that is the max over all signals.
 		inflightTarget, haveInflightTarget := policy.TargetFor(api.ScalingMetricConcurrentRequests)
+		if !haveInflightTarget && perInstance > 0 {
+			inflightTarget, haveInflightTarget = float64(perInstance), true
+		}
 		queueTarget, haveQueueTarget := policy.TargetFor(api.ScalingMetricQueueDepth)
 		queueLagTarget, haveQueueLagTarget := policy.TargetFor(api.ScalingMetricQueueLag)
 		// ADR-202: custom targets are keyed by NAME, so they cannot be
@@ -750,6 +789,9 @@ func (t *Trigger) Tick(ctx context.Context) error {
 		workerWorkload := app.WorkloadClass == state.WorkloadClassWorker || app.Manifest.ExecutionMode == api.ExecutionModeWorker
 		if workerWorkload && (haveQueueTarget || haveQueueLagTarget || len(customTargets) > 0) {
 			if pool, ok := t.engine.(ScopedWorkerPoolEngine); ok {
+				if haveQueueTarget || haveQueueLagTarget {
+					workerApps[app.ID] = app
+				}
 				// Keep queue gauges for visibility. These aggregate
 				// observations never authorize a scoped mutation. Custom
 				// worker metrics are read by ReconcileWorkerPools, which
@@ -771,12 +813,7 @@ func (t *Trigger) Tick(ctx context.Context) error {
 				if t.admissionBackoffActive(app.ID, now) {
 					continue
 				}
-				if err := pool.ReconcileWorkerPools(ctx, app.ID, workerPoolTriggerTargets); err != nil {
-					t.recordAdmissionFailure(app.ID, now)
-					t.log.Warn("targets: reconcile worker environments failed", "app_id", app.ID, "err", err)
-				} else {
-					t.clearAdmissionBackoff(app.ID)
-				}
+				workerPools.add(pool, app)
 				continue
 			}
 		}
@@ -817,6 +854,7 @@ func (t *Trigger) Tick(ctx context.Context) error {
 				// immediately scale.
 				if n, ok := t.instats.MaxInflightForApp(app.ID); ok {
 					t.ring.Observe(now, app.ID, n)
+					t.noteOversubscribed(app, n, now)
 				}
 				perInst, haveInflight = t.ring.AppMaxInflight(app.ID, now)
 			}
@@ -1045,6 +1083,52 @@ func (t *Trigger) Tick(ctx context.Context) error {
 	}
 	return nil
 }
+
+// implicitPerInstanceTarget is the concurrent_requests target an app's
+// declared per_instance_concurrency implies (ADR-20261022203523), or 0.
+//
+// The gateway enforces per_instance_concurrency per gateway process: with k
+// gateways in front of an app, one instance can hold up to k×N requests, and
+// each gateway's burst admission sees only its own share of the demand. The
+// vmmd that hosts an instance counts every gateway's forwards, so its
+// in-flight reading is the fleet-wide signal that corrects both: scaling on
+// it as a concurrent_requests target of N adds instances until no instance
+// holds more than N. A declared concurrent_requests target wins. Worker
+// workloads serve no HTTP requests and imply nothing.
+func implicitPerInstanceTarget(app state.App) int {
+	if app.ScalingPolicy == nil || app.ScalingPolicy.PerInstanceConcurrency <= 0 ||
+		app.WorkloadClass == state.WorkloadClassWorker || app.Manifest.ExecutionMode == api.ExecutionModeWorker {
+		return 0
+	}
+	return app.ScalingPolicy.PerInstanceConcurrency
+}
+
+// noteOversubscribed logs, at most once per app per
+// oversubscribedLogInterval, that an instance holds more requests than the
+// app's declared per_instance_concurrency. Only several gateways admitting
+// to one instance can cause it, since each enforces the limit locally.
+func (t *Trigger) noteOversubscribed(app state.App, inflight int64, now time.Time) {
+	limit := implicitPerInstanceTarget(app)
+	if limit == 0 || inflight <= int64(limit) {
+		return
+	}
+	t.oversubscribedMu.Lock()
+	if last, ok := t.oversubscribedLogged[app.ID]; ok && now.Sub(last) < oversubscribedLogInterval {
+		t.oversubscribedMu.Unlock()
+		return
+	}
+	if t.oversubscribedLogged == nil {
+		t.oversubscribedLogged = map[string]time.Time{}
+	}
+	t.oversubscribedLogged[app.ID] = now
+	t.oversubscribedMu.Unlock()
+	t.log.Warn("targets: per-instance concurrency oversubscribed across gateways",
+		"app_id", app.ID, "inflight", inflight, "per_instance_concurrency", limit)
+}
+
+// oversubscribedLogInterval bounds the oversubscription warning to one line
+// per app per minute.
+const oversubscribedLogInterval = time.Minute
 
 // customTargetsOf returns the app's ADR-202 targets. Separate from
 // ScalingPolicy.TargetFor because custom targets are keyed by name and an app

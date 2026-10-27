@@ -18,5 +18,9 @@ export type DevSessionResponse = {
    */
   buckets?: Array<DevBucketResponse>;
   watch?: DevWatch;
+  /**
+   * The stored Go command; omitted when none.
+   */
+  go_command?: string;
 };
 

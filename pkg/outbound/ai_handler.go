@@ -101,6 +101,9 @@ func observeAIResponse(integration Integration, r *http.Request, resp *http.Resp
 		observer = newAIUsageObserver(integration.AIProvider, resp.Header.Get("Content-Type"), time.Now)
 	}
 	observer.applyHeaders(resp.Header)
+	if !cacheHit {
+		observer.quality = newAIQuality(plan, ai)
+	}
 	_, replaying := replayPrincipalFromContext(r.Context())
 	_, internal := internalPrincipalFromContext(r.Context())
 	if integration.AIRequestLogEnabled && integration.AIRequestLogContent && !replaying && !internal && !cacheHit {
@@ -129,6 +132,9 @@ type aiSettlement struct {
 	// X-Gregale-AI-Tags (ADR-1436).
 	endUser string
 	tags    []string
+	// traceID is the call's AI trace when its integration records traces
+	// (ADR 20261020202035).
+	traceID string
 	// reserve and billable let a billable call whose usage cannot be read
 	// settle at its admission estimate instead of zero (ADR-996).
 	reserve  aiReservation
@@ -145,6 +151,13 @@ type aiSettlement struct {
 	codeGB int64
 	// leaseID keys the settlement (ADR-1120).
 	leaseID string
+	// callID is the call's ID, returned in X-Gregale-AI-Call and used as
+	// its request-log entry ID (ADR 20261021171712); empty lets the store
+	// choose one.
+	callID string
+	// instanceID is the calling app instance, when a verified workload
+	// identity names it (ADR 20261022153155).
+	instanceID string
 	// route places a route attempt in its route, and moderation is the
 	// call's moderation result (ADR-1340).
 	route      routeAttempt
@@ -256,6 +269,37 @@ func (h *Handler) settleAIUsage(ctx context.Context, integration Integration, ap
 		usage, cost = estimated, estimatedCost
 		span.SetAttributes(attribute.Bool("gregale.ai.usage_estimated", true))
 	}
+	settled := settledAIUsage{usage: usage, outcome: outcome, cost: cost, timeToFirstByte: timeToFirstByte, capture: observer.capture}
+	if outcome != AIUsageOutcomeError {
+		settled.toolCalls, settled.toolSignature = observer.toolCalls()
+	}
+	if outcome == AIUsageOutcomeKnown {
+		settled.qualityFlags = observer.qualityFlags()
+	}
+	h.recordSettledAIUsage(ctx, integration, appID, settlement, settled, span, metricIntegrationID)
+}
+
+// settledAIUsage is one call's usage as it is recorded.
+type settledAIUsage struct {
+	usage           AIUsage
+	outcome         AIUsageOutcome
+	cost            int64
+	timeToFirstByte time.Duration
+	capture         *aiContentCapture
+	// toolCalls and toolSignature are the tool calls the response requested
+	// (ADR 20261020202035).
+	toolCalls     []string
+	toolSignature []byte
+	// qualityFlags mark what went wrong with an answer (ADR 20261021171712).
+	qualityFlags []string
+}
+
+// recordSettledAIUsage counts and writes one call's settled usage: metrics,
+// span attributes, the usage rollup, the request log and the log export.
+// Ordinary calls and realtime responses (ADR 20261019072722) share it.
+func (h *Handler) recordSettledAIUsage(ctx context.Context, integration Integration, appID string, settlement aiSettlement,
+	settled settledAIUsage, span oteltrace.Span, metricIntegrationID string) {
+	usage, outcome, cost, timeToFirstByte := settled.usage, settled.outcome, settled.cost, settled.timeToFirstByte
 	h.Metrics.ObserveAIUsage(metricIntegrationID, outcome, usage, timeToFirstByte)
 	h.Metrics.ObserveAICost(metricIntegrationID, cost)
 	span.SetAttributes(aiSpanAttributes(integration.AIProvider, outcome, usage, timeToFirstByte)...)
@@ -287,16 +331,30 @@ func (h *Handler) settleAIUsage(ctx context.Context, integration Integration, ap
 	case caller == "":
 		caller = AIUsageCallerRuns
 	}
+	instanceID := ""
+	if caller == appID {
+		instanceID = settlement.instanceID
+	}
 	record := AIUsageRecord{
 		IntegrationID: integration.ID, Caller: caller, Outcome: outcome, Usage: usage, CostMillicents: cost,
 		EndUser: settlement.endUser, Tags: settlement.tags, LeaseID: settlement.leaseID,
 		PromptCacheSavedMillicents: promptCacheSavedMillicents(integration, usage, cost),
+		TraceID:                    settlement.traceID, ToolCalls: settled.toolCalls, ToolSignature: settled.toolSignature,
+		CallID: settlement.callID, QualityFlags: settled.qualityFlags, InstanceID: instanceID,
+	}
+	if timeToFirstByte > 0 {
+		ttfb := timeToFirstByte.Milliseconds()
+		record.TTFBMS = &ttfb
+	}
+	for _, flag := range settled.qualityFlags {
+		h.Metrics.ObserveAIQualityFlag(metricIntegrationID, flag)
 	}
 	if integration.AIRequestLogEnabled {
 		record.Log = newAIRequestLog(settlement, timeToFirstByte, time.Now())
-		if observer.capture != nil {
-			record.Log.Content = observer.capture.finish()
+		if settled.capture != nil {
+			record.Log.Content = settled.capture.finish()
 		}
+		record.EvaluationSampled = sampleForOnlineEvaluation(integration, record)
 	}
 	if settlement.route.tracked {
 		record.Route = aiRouteAttemptFor(settlement.route, outcome, timeToFirstByte)
@@ -359,7 +417,7 @@ func promptCacheSavedMillicents(integration Integration, usage AIUsage, cost int
 		return 0
 	}
 	plain := usage
-	plain.CachedInputTokens, plain.CacheWriteTokens = 0, 0
+	plain.CachedInputTokens, plain.CacheWriteTokens, plain.CachedInputAudioTokens = 0, 0, 0
 	return aiCallCostMillicents(integration, plain) - cost
 }
 

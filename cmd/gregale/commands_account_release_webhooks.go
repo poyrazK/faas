@@ -102,7 +102,7 @@ func cmdAccountReleaseWebhooks(args []string) int {
 	case "list":
 		rows, err := client.ListAccountReleaseWebhooks(ctx)
 		if err != nil {
-			return printErr("Request failed", err)
+			return printErr("Could not list release webhooks", err)
 		}
 		if jsonOutput {
 			return jsonOut(writeJSON(rows))
@@ -125,7 +125,7 @@ func cmdAccountReleaseWebhooks(args []string) int {
 			RetryPolicy: *policy, DeliveryFormat: *format,
 		})
 		if err != nil {
-			return printErr("Create failed", err)
+			return printErr("Could not create release webhook", err)
 		}
 		if jsonOutput {
 			if generated {
@@ -177,7 +177,7 @@ func cmdAccountReleaseWebhooks(args []string) int {
 		}
 		row, err := client.UpdateAccountReleaseWebhook(ctx, ids[0], req)
 		if err != nil {
-			return printErr("Update failed", err)
+			return printErr("Could not update release webhook", err)
 		}
 		if jsonOutput {
 			return jsonOut(writeJSON(row))
@@ -185,7 +185,7 @@ func cmdAccountReleaseWebhooks(args []string) int {
 		PrintOK(osStdout, "Updated account release receiver %s", row.ID)
 	case "rm":
 		if err := client.DeleteAccountReleaseWebhook(ctx, ids[0]); err != nil {
-			return printErr("Delete failed", err)
+			return printErr("Could not delete release webhook", err)
 		}
 		if jsonOutput {
 			return jsonOut(writeJSON(map[string]any{"id": ids[0], "removed": true}))
@@ -194,7 +194,7 @@ func cmdAccountReleaseWebhooks(args []string) int {
 	case "deliveries":
 		page, err := client.ListAccountReleaseWebhookDeliveries(ctx, ids[0], api.ListAppWebhookDeliveriesOptions{PageSize: *pageSize, PageToken: *pageToken})
 		if err != nil {
-			return printErr("Request failed", err)
+			return printErr("Could not list release webhook deliveries", err)
 		}
 		if jsonOutput {
 			return jsonOut(writeJSON(page))

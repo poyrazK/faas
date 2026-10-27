@@ -13,6 +13,7 @@ from ..models.rollout_decision_rule import RolloutDecisionRule, check_rollout_de
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
+    from ..models.release_gate_result import ReleaseGateResult
     from ..models.rollout_decision_sample import RolloutDecisionSample
     from ..models.rollout_decision_signals import RolloutDecisionSignals
 
@@ -22,8 +23,8 @@ T = TypeVar("T", bound="RolloutDecision")
 
 @_attrs_define
 class RolloutDecision:
-    """Evidence behind one decision about a rollout (ADR-1447): why a canary stage advanced, is held, or was aborted.
-    Aggregates only; no request payloads, routes, URLs or customer text.
+    """Evidence behind one decision about a rollout: why a canary stage advanced, is held, or was aborted. Aggregates only;
+    no request payloads, routes, URLs or customer text.
 
     """
 
@@ -47,9 +48,11 @@ class RolloutDecision:
     """One side's aggregates over the observation window. Request counts are organic requests; probe counts are
     reported separately."""
     probes_included: bool | Unset = UNSET
-    """The 5xx sample included synthetic probes of the app (ADR-1446)."""
+    """The 5xx sample included synthetic probes of the app."""
     signals: RolloutDecisionSignals | Unset = UNSET
     """The candidate's OOM kills and both sides' liveness-driven restarts over the window."""
+    gates: list[ReleaseGateResult] | Unset = UNSET
+    """The release gates judged with this decision."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -91,6 +94,13 @@ class RolloutDecision:
         if not isinstance(self.signals, Unset):
             signals = self.signals.to_dict()
 
+        gates: list[dict[str, Any]] | Unset = UNSET
+        if not isinstance(self.gates, Unset):
+            gates = []
+            for gates_item_data in self.gates:
+                gates_item = gates_item_data.to_dict()
+                gates.append(gates_item)
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -118,11 +128,14 @@ class RolloutDecision:
             field_dict["probes_included"] = probes_included
         if signals is not UNSET:
             field_dict["signals"] = signals
+        if gates is not UNSET:
+            field_dict["gates"] = gates
 
         return field_dict
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.release_gate_result import ReleaseGateResult
         from ..models.rollout_decision_sample import RolloutDecisionSample
         from ..models.rollout_decision_signals import RolloutDecisionSignals
 
@@ -183,6 +196,15 @@ class RolloutDecision:
         else:
             signals = RolloutDecisionSignals.from_dict(_signals)
 
+        _gates = d.pop("gates", UNSET)
+        gates: list[ReleaseGateResult] | Unset = UNSET
+        if _gates is not UNSET:
+            gates = []
+            for gates_item_data in _gates:
+                gates_item = ReleaseGateResult.from_dict(gates_item_data)
+
+                gates.append(gates_item)
+
         rollout_decision = cls(
             kind=kind,
             rule=rule,
@@ -197,6 +219,7 @@ class RolloutDecision:
             stable=stable,
             probes_included=probes_included,
             signals=signals,
+            gates=gates,
         )
 
         rollout_decision.additional_properties = d

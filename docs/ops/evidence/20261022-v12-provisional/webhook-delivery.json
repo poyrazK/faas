@@ -1,0 +1,27 @@
+{
+  "benchmark": "webhook-delivery",
+  "host": {
+    "arch": "amd64",
+    "cpus": 2,
+    "go": "go1.26.10",
+    "hostname": "gregale-internal-test-1.us-east1-b.c.gregale-prod.internal",
+    "os": "linux"
+  },
+  "stages": [
+    {
+      "name": "webhook",
+      "items": 1000,
+      "seconds": 6.411642122,
+      "per_second": 155.96628460729923,
+      "latency_ms": {
+        "p50": 6056.491221,
+        "p95": 6566.870741,
+        "p99": 6594.493426,
+        "max": 6648.122285
+      },
+      "note": "64 subscribers; tick 5s, claim cap 32, max in flight 64, receiver 0 ms; latency is enqueue to receiver, backlog enqueued before the dispatcher started"
+    }
+  ],
+  "started_at": "2026-10-22T16:57:27.936664607Z",
+  "version": 1
+}

@@ -363,6 +363,9 @@ func (e *Engine) Current(id string) (d Delta, ok bool) {
 // Pending reports whether a round has work: decoded transactions waiting
 // for a snapshot, or events the slot has delivered.
 func (e *Engine) Pending() bool {
+	if e.capture == nil {
+		return false // released: nothing streams until Resume
+	}
 	return len(e.pending) > 0 || len(e.capture.Events()) > 0
 }
 
@@ -421,6 +424,9 @@ type changeSet struct {
 
 // Round runs one snapshot-aligned maintenance round and returns the deltas.
 func (e *Engine) Round(ctx context.Context) ([]Delta, error) {
+	if e.capture == nil {
+		return nil, ErrReleased
+	}
 	if err := e.refreshDeps(ctx); err != nil {
 		return nil, err
 	}
@@ -444,10 +450,14 @@ func (e *Engine) Round(ctx context.Context) ([]Delta, error) {
 	// The walsender sends only flushed WAL, and a non-transactional message
 	// alone waits for the WAL writer (wal_writer_delay, 200 ms by default).
 	// Taking a transaction ID makes the statement commit, which flushes the
-	// marker at once; decoding skips the empty transaction.
+	// marker at once; decoding skips the empty transaction. The commit
+	// flushes only with synchronous_commit on, so the statement sets it for
+	// its own transaction: a database tuned with synchronous_commit = off
+	// otherwise made every round wait for the WAL writer (287 ms against
+	// 1 ms measured).
 	var refText string
 	if err := e.pool.QueryRow(ctx,
-		"SELECT pg_snapshot_xmax(pg_current_snapshot())::text FROM pg_logical_emit_message(false, $1, $2), pg_current_xact_id()",
+		"SELECT pg_snapshot_xmax(pg_current_snapshot())::text FROM set_config('synchronous_commit', 'on', true), pg_logical_emit_message(false, $1, $2), pg_current_xact_id()",
 		MarkerPrefix, marker).Scan(&refText); err != nil {
 		return nil, fmt.Errorf("livequery: emit round marker: %w", err)
 	}

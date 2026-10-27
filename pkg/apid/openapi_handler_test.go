@@ -204,7 +204,8 @@ func TestServeDocs_UsesExactSpecAndPinnedAssets(t *testing.T) {
 		`<div id="swagger-ui"></div>`,
 		`url: "/v1/openapi.json"`,
 		`persistAuthorization: false`,
-		`swagger-ui-dist@5.17.14/`,
+		`href="/docs/assets/swagger-ui-5.17.14.css"`,
+		`src="/docs/assets/swagger-ui-bundle-5.17.14.js"`,
 		`integrity="sha384-wmyclcVGX/WhUkdkATwhaK1X1JtiNrr2EoYJ+diV3vj4v6OC5yCeSu+yW13SYJep"`,
 		`integrity="sha384-wxLW6kwyHktdDGr6Pv1zgm/VGJh99lfUbzSn6HNHBENZlCN7W602k9VkGdxuFvPn"`,
 		`nonce="` + nonce + `"`,
@@ -235,11 +236,11 @@ func TestOpenAPIJSONLazyInitialization(t *testing.T) {
 		}
 		return
 	}
-	if openapiJSON != nil {
+	if openapiJSON[0].body != nil || openapiJSON[1].body != nil {
 		t.Fatal("JSON was converted during package initialization")
 	}
 	ServeOpenAPISpec(httptest.NewRecorder(), httptest.NewRequest("GET", "/v1/openapi.yaml", nil))
-	if openapiJSON != nil {
+	if openapiJSON[0].body != nil || openapiJSON[1].body != nil {
 		t.Fatal("serving YAML unnecessarily converted the JSON spec")
 	}
 	const clients = 8

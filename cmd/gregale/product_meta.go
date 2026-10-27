@@ -10,7 +10,7 @@ func productCLIManifest() []cliSub {
 			{Name: "recoveries", Short: "Read scoped notification recovery receipts; never resumes sending", Flags: []cliFlag{app, {Name: "tenant", Value: "UUID", Short: "optional customer platform tenant"}, {Name: "cursor", Value: "CURSOR", Short: "next recovery history cursor"}}},
 			{Name: "opt-outs", Short: "Read scoped notification opt-out receipts", Flags: []cliFlag{app, {Name: "tenant", Value: "UUID", Short: "optional customer platform tenant"}, {Name: "cursor", Value: "CURSOR", Short: "next opt-out history cursor"}}},
 			{Name: "list", Short: "Read retained queue totals and one page of safe delivery diagnostics", Flags: []cliFlag{app, {Name: "tenant", Value: "UUID", Short: "optional customer platform tenant"}, {Name: "status", Value: "STATUS", Short: "all, queued, leased, captured, provider_accepted, delivered, bounced, complained, failed or cancelled"}, {Name: "cursor", Value: "CURSOR", Short: "next email history cursor"}}},
-			{Name: "retry", Short: "Requeue one eligible provider rejection with its remaining budget and deadline", Flags: []cliFlag{app, {Name: "tenant", Value: "UUID", Req: true, Short: "expected customer platform tenant"}, {Name: "delivery", Value: "UUID", Req: true, Short: "delivery reference from email history"}, {Name: "attempt", Value: "N", Req: true, Short: "observed failed attempt; preserve these values for lost-response retries"}}},
+			{Name: "retry", Short: "Requeue one eligible provider rejection", Notes: []string{"Keeps its remaining budget and deadline."}, Flags: []cliFlag{app, {Name: "tenant", Value: "UUID", Req: true, Short: "expected customer platform tenant"}, {Name: "delivery", Value: "UUID", Req: true, Short: "delivery reference from email history"}, {Name: "attempt", Value: "N", Req: true, Short: "observed failed attempt; preserve these values for lost-response retries"}}},
 		}},
 		{Name: "team-policy", Short: "Review which workspace roles team managers may manage", Subcommands: []cliSub{
 			{Name: "inspect", Short: "Read the current team role delegation", Flags: []cliFlag{app}},
@@ -44,15 +44,23 @@ func productCLIManifest() []cliSub {
 			{Name: "onboard", Short: "Review customer setup, then confirm the saved review safely", Flags: productOnboardingCLIFlags(app)},
 			{Name: "onboarding", Short: "Read retained setup and observed customer activation progress", Flags: []cliFlag{app, {Name: "id", Value: "UUID", Req: true, Short: "onboarding receipt UUID"}}},
 			{Name: "list", Short: "List one page of assigned customers", Flags: []cliFlag{app, {Name: "cursor", Value: "CURSOR", Short: "next page cursor"}}},
-			{Name: "overview", Short: "Observe readiness, guided activation and unresolved work for assigned customers", Flags: []cliFlag{app, {Name: "cursor", Value: "UUID", Short: "next customer page cursor"}}},
-			{Name: "activity", Short: "Read one page of retained customer setup, plan, work and billing history", Flags: []cliFlag{app, {Name: "tenant", Value: "UUID", Req: true, Short: "customer platform tenant"}, {Name: "cursor", Value: "CURSOR", Short: "next activity page cursor"}}},
+			{Name: "overview", Short: "Observe readiness, activation and open work for assigned customers", Flags: []cliFlag{app, {Name: "cursor", Value: "UUID", Short: "next customer page cursor"}}},
+			{Name: "activity", Short: "Read a page of customer setup, plan, work and billing history", Flags: []cliFlag{app, {Name: "tenant", Value: "UUID", Req: true, Short: "customer platform tenant"}, {Name: "cursor", Value: "CURSOR", Short: "next activity page cursor"}}},
 			{Name: "assign", Short: "Assign a revisioned plan or pause new starts", Flags: []cliFlag{app, revision, {Name: "tenant", Value: "UUID", Req: true, Short: "customer platform tenant"}, {Name: "plan", Value: "NAME", Req: true, Short: "product plan"}, {Name: "auth-org", Value: "UUID", Short: "Application Auth organization (empty unlinks login)"}, {Name: "suspended", Bool: true, Short: "pause new feature starts"}}},
 		}},
 		{Name: "quote", Short: "Read current customer price and allowance before confirming a run", Flags: []cliFlag{app, {Name: "feature", Value: "NAME", Req: true, Short: "assigned feature"}}},
 		{Name: "start", Short: "Start an entitled feature using a tenant credential", Flags: []cliFlag{app, {Name: "quote", Value: "HASH", Req: true, Short: "confirmed quote hash; preserve for retries"}, {Name: "feature", Value: "NAME", Req: true, Short: "assigned feature"}, {Name: "input", Value: "PATH", Req: true, Short: "input JSON file"}, {Name: "key", Value: "KEY", Req: true, Short: "stable idempotency key; preserve it across retries"}}},
 		{Name: "explain", Short: "Trace an accepted run's entitlement, binding, execution and charge", Positionals: []string{"<operation-id>"}, Flags: []cliFlag{app, {Name: "after", Value: "N", Short: "execution generation cursor (default 0)"}}},
 		{Name: "usage", Short: "Read outcome usage and start allowances", Flags: usage},
-		{Name: "statements", Short: "Review and finalize charges, issue credit notes, and record invoice handoffs", Subcommands: productBillingCLIManifest(app)},
+		{Name: "statements", Short: "Review and finalize charges, credit notes and invoice handoffs", Subcommands: productBillingCLIManifest(app)},
+		{Name: "billing", Short: "Configure collection policy for exported statements", Subcommands: []cliSub{
+			{Name: "overdue-policy", Short: "Refuse new starts from customers whose exported invoice is overdue", Subcommands: []cliSub{
+				{Name: "inspect", Short: "Read the overdue policy and the customers it holds", Flags: []cliFlag{app}},
+				{Name: "set", Short: "Hold customers whose invoice is overdue by this many days", Flags: []cliFlag{app,
+					{Name: "block-overdue-after-days", Value: "N", Req: true, Short: "0 to 365; 0 holds as soon as an invoice is past due"}}},
+				{Name: "clear", Short: "Remove the overdue policy and lift its holds", Flags: []cliFlag{app}},
+			}},
+		}},
 	}
 }
 
@@ -82,9 +90,14 @@ func productBillingCLIManifest(app cliFlag) []cliSub {
 		{Name: "review", Short: "Review charges, unresolved runs, and the confirmation hash", Flags: []cliFlag{app, tenant, period, self}},
 		{Name: "receipts", Short: "List one page of retained billing receipts", Flags: []cliFlag{app, tenant, period, cursor}},
 		{Name: "finalize", Short: "Freeze a reviewed, resolved, closed UTC month", Flags: []cliFlag{app, tenant, period, {Name: "review-hash", Value: "HASH", Req: true, Short: "confirmed review hash; preserve for retries"}}},
-		{Name: "waive", Short: "Permanently waive an unresolved run's charge; does not cancel execution", Flags: []cliFlag{app, tenant, period, operation, reason}},
+		{Name: "waive", Short: "Permanently waive an unresolved run's charge", Notes: []string{"Does not cancel execution."}, Flags: []cliFlag{app, tenant, period, operation, reason}},
 		{Name: "credit", Short: "Issue a credit note against a finalized successful run", Flags: []cliFlag{app, tenant, period, operation, reason, {Name: "id", Value: "UUID", Req: true, Short: "stable credit note ID; preserve for retries"}, {Name: "amount-millicents", Value: "N", Req: true, Short: "positive credit amount"}}},
 		{Name: "handoff", Short: "Record one invoice reference for a statement or credit note", Flags: []cliFlag{app, tenant, period, document, {Name: "invoice-id", Value: "REFERENCE", Req: true, Short: "stable external invoice or credit note reference"}}},
 		{Name: "handoff-status", Short: "Recover the retained invoice handoff after a lost response", Flags: []cliFlag{app, tenant, period, document}},
+		{Name: "export", Short: "Invoice a finalized statement in Stripe, Paddle or Lago", Notes: []string{"The invoice becomes the statement's handoff."}, Flags: []cliFlag{app, tenant, period,
+			{Name: "document", Value: "UUID", Req: true, Short: "finalized statement"},
+			{Name: "provider", Value: "NAME", Req: true, Short: "connected billing provider: stripe, paddle or lago"},
+			{Name: "customer", Value: "ID", Short: "provider customer ID (default the tenant's external reference)"}}},
+		{Name: "export-status", Short: "Read a statement's exported invoice and its payment status", Flags: []cliFlag{app, tenant, period, document}},
 	}
 }

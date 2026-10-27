@@ -13,7 +13,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/environmentsync"
 )
 
-func observedWorkloadSource(app gitOpsIntentApp, repository string) (*api.EnvironmentWorkloadSource, string, string) {
+func observedWorkloadSource(app gitOpsIntentApp, binding EnvironmentGitSourceSpec) (*api.EnvironmentWorkloadSource, string, string) {
 	if app.WorkloadIntent != nil && app.WorkloadIntent.Source != nil {
 		source := *app.WorkloadIntent.Source
 		return &source, app.WorkloadIntent.SourceRevision, ""
@@ -31,11 +31,21 @@ func observedWorkloadSource(app gitOpsIntentApp, repository string) (*api.Enviro
 			imageSource = candidate
 		case DeploymentKindGitHub:
 			repo, _, ok := inheritedGitHubSource(baseline)
-			if !ok || repository == "" || !strings.EqualFold(repo, repository) {
+			matches := baseline.Kind == DeploymentKindGitHub && binding.Provider != "gitlab" && ok && binding.Repository != "" && strings.EqualFold(repo, binding.Repository)
+			if !matches {
 				return nil, "", "live GitHub source provenance is incomplete or belongs to another repository"
 			}
 			if app.Type == AppTypeFunction && app.Manifest.BuildDockerfile != "" {
 				return nil, "", "live function has conflicting Dockerfile build metadata"
+			}
+			// A scoped source selection carries no build arguments or target
+			// (ADR-20261019142544); inheriting it would silently drop them.
+			if !app.Manifest.DockerfileBuild.IsZero() {
+				return nil, "", "live Dockerfile build arguments or target require a reviewed scoped import"
+			}
+			// Nor does it carry a Go command selection (ADR-20261025134512).
+			if app.Manifest.BuildGoCommand != "" {
+				return nil, "", "live Go command selection requires a reviewed scoped import"
 			}
 			if gitCommit != "" && gitCommit != baseline.CommitSHA {
 				return nil, "", "live GitHub deployments disagree on source revision"
@@ -140,14 +150,14 @@ func environmentGitOpsScheduledJobUnsupported(app gitOpsIntentApp, intent Enviro
 	}
 	source := intent.Source
 	if source == nil {
-		source, _, _ = observedWorkloadSource(app, "")
+		source, _, _ = observedWorkloadSource(app, EnvironmentGitSourceSpec{})
 	}
-	if source == nil || source.Kind != "image" || source.Image == "" {
-		return "environment_scheduled_job_requires_immutable_image_source"
+	if source == nil || (source.Kind != "image" && source.Kind != "source" && source.Kind != "dockerfile") {
+		return "environment_scheduled_job_requires_verified_source"
 	}
 	if _, err := environmentsync.Compile(api.EnvironmentDefinition{APIVersion: environmentsync.APIVersion,
 		Project: "scheduled-job", Environment: "scheduled-job", Workloads: map[string]api.EnvironmentWorkload{"job": {Source: source}}}); err != nil {
-		return "environment_scheduled_job_requires_immutable_image_source"
+		return "environment_scheduled_job_requires_verified_source"
 	}
 	if !plan.JobsAllowed() || api.JobMaxPerAccount[plan.PlanIndex()] <= 0 || api.JobRAMMB[plan.PlanIndex()] <= 0 || api.JobTaskTimeoutSec[plan.PlanIndex()] <= 0 {
 		return "environment_scheduled_job_plan_not_supported"
@@ -161,8 +171,19 @@ func environmentGitOpsScheduledJobUnsupported(app gitOpsIntentApp, intent Enviro
 	if strings.TrimSpace(app.StartCommand) != "" {
 		return "environment_scheduled_job_start_command_unsupported"
 	}
+	commandIntent := intent
+	commandIntent.Source = source
+	if source.Kind != "image" {
+		// A source schedule must declare reviewed production argv in this
+		// definition; an omitted/unmanaged old entrypoint is not authority.
+		commandIntent.Runtime = nil
+		_ = json.Unmarshal(workload.Runtime, &commandIntent.Runtime)
+	}
+	if _, ok := EnvironmentGitOpsJobCommand(commandIntent); !ok {
+		return "environment_scheduled_job_command_required"
+	}
 	for key, raw := range intent.Runtime {
-		if key == "execution_mode" || bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
+		if key == "execution_mode" || key == "entrypoint" || bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
 			continue
 		}
 		return "environment_scheduled_job_runtime_field_unsupported"
@@ -187,7 +208,7 @@ func observeGitOpsWorkloadIntent(out *EnvironmentGitOpsObservation, snapshot git
 			wantedSource = true
 		}
 	}
-	source, sourceRevision, reason := observedWorkloadSource(baselineApp, snapshot.Repository)
+	source, sourceRevision, reason := observedWorkloadSource(baselineApp, snapshot.GitSource)
 	if wantedSource && source != nil && reason == "" {
 		_, err := environmentsync.Compile(api.EnvironmentDefinition{APIVersion: environmentsync.APIVersion,
 			Project: snapshot.Project, Environment: snapshot.Environment,
@@ -219,6 +240,8 @@ func observeGitOpsWorkloadIntent(out *EnvironmentGitOpsObservation, snapshot git
 	if row.SourceRevision != "" {
 		value, _ := json.Marshal(row.SourceRevision)
 		out.State.Fields = append(out.State.Fields, environmentsync.Field{Resource: resource, Path: "source_revision", Value: value})
+	} else if source != nil && source.BuildArtifactID != "" {
+		out.State.Fields = append(out.State.Fields, environmentsync.Field{Resource: resource, Path: "source_revision", Value: json.RawMessage("null")})
 	} else if source != nil && source.Kind != "image" && sourceRevision != "" {
 		value, _ := json.Marshal(sourceRevision)
 		out.State.Fields = append(out.State.Fields, environmentsync.Field{Resource: resource, Path: "source_revision", Value: value})
@@ -272,7 +295,7 @@ func observeGitOpsWorkloadIntent(out *EnvironmentGitOpsObservation, snapshot git
 	}
 	if workload.Source != nil {
 		row.Source = workload.Source
-		if workload.Source.Kind == "image" {
+		if workload.Source.Kind == "image" || workload.Source.BuildArtifactID != "" {
 			row.SourceRevision = ""
 		}
 	}

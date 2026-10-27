@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"bytes"
@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/hosting/cisetup"
 )
@@ -19,7 +20,7 @@ func TestSitesCISetupExportsOnceAndPreflightsLocally(t *testing.T) {
 	dir := t.TempDir()
 	site := api.HostingSite{ID: reviewSiteID, AccountID: "account", DurableRouting: true, Status: "active"}
 	tr := api.HostingOIDCTrust{ID: reviewReleaseID, SiteID: site.ID, AccountID: site.AccountID, HostingOIDCTrustRules: api.HostingOIDCTrustRules{RepositoryOwnerID: "123", RepositoryID: "456", Repository: "org/site", Ref: "refs/heads/main", WorkflowRef: "org/site/.github/workflows/preview.yml@refs/heads/main", EventName: "push"}}
-	recipe := hostingCISetupRecipe{SiteID: site.ID, TrustID: tr.ID, Config: api.HostingCISetupConfig{APIBase: "https://api.gregale.dev", ActionCommit: strings.Repeat("a", 40), CheckoutCommit: strings.Repeat("b", 40), PrepareAction: "./.github/actions/prepare", CLIPath: "./bin/gregale", CLISHA256: strings.Repeat("c", 64), OutputPath: "dist", PreviewTTLSeconds: 3600, WaitTimeoutSeconds: 120}}
+	recipe := main.HostingCISetupRecipe{SiteID: site.ID, TrustID: tr.ID, Config: api.HostingCISetupConfig{APIBase: "https://api.gregale.dev", ActionCommit: strings.Repeat("a", 40), CheckoutCommit: strings.Repeat("b", 40), PrepareAction: "./.github/actions/prepare", CLIPath: "./bin/gregale", CLISHA256: strings.Repeat("c", 64), OutputPath: "dist", PreviewTTLSeconds: 3600, WaitTimeoutSeconds: 120}}
 	raw, _ := json.Marshal(recipe)
 	config := filepath.Join(dir, "setup.json")
 	if err := os.WriteFile(config, raw, 0600); err != nil {
@@ -41,19 +42,19 @@ func TestSitesCISetupExportsOnceAndPreflightsLocally(t *testing.T) {
 		_ = json.NewEncoder(w).Encode(out)
 	})
 	var output bytes.Buffer
-	old := osStdout
-	osStdout = &output
-	t.Cleanup(func() { osStdout = old })
+	old := (*main.OsStdout)
+	(*main.OsStdout) = &output
+	t.Cleanup(func() { (*main.OsStdout) = old })
 	args := []string{"ci-setup", "--config", config, "--out", filepath.Join(dir, "review.yml")}
 	t.Setenv("FAAS_FRONTEND_HOSTING_CI_SETUP_ENABLED", "")
-	if cmdSites(args) == 0 || calls != 0 {
+	if main.CmdSites(args) == 0 || calls != 0 {
 		t.Fatal("default off")
 	}
 	t.Setenv("FAAS_FRONTEND_HOSTING_CI_SETUP_ENABLED", "1")
-	if cmdSites(args) != 0 || calls != 1 {
+	if main.CmdSites(args) != 0 || calls != 1 {
 		t.Fatal("export", output.String())
 	}
-	if cmdSites(args) == 0 || calls != 2 {
+	if main.CmdSites(args) == 0 || calls != 2 {
 		t.Fatal("overwrote export")
 	}
 	workflow, _ := os.ReadFile(filepath.Join(dir, "review.yml"))
@@ -78,14 +79,14 @@ func TestSitesCISetupExportsOnceAndPreflightsLocally(t *testing.T) {
 	}
 	args = []string{"ci-preflight", "--config", config, "--repo-root", dir}
 	output.Reset()
-	if cmdSites(args) != 0 {
+	if main.CmdSites(args) != 0 {
 		t.Fatal("preflight", output.String())
 	}
 	if err := os.WriteFile(filename, []byte(strings.Replace(string(workflow), "id-token: write", "id-token: read", 1)+"# LOCAL_SECRET\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
 	output.Reset()
-	if cmdSites(args) == 0 || strings.Contains(output.String(), "LOCAL_SECRET") {
+	if main.CmdSites(args) == 0 || strings.Contains(output.String(), "LOCAL_SECRET") {
 		t.Fatal("drift/secret", output.String())
 	}
 	if err := os.Remove(filename); err != nil {
@@ -99,7 +100,7 @@ func TestSitesCISetupExportsOnceAndPreflightsLocally(t *testing.T) {
 		t.Fatal(err)
 	}
 	output.Reset()
-	if cmdSites(args) == 0 {
+	if main.CmdSites(args) == 0 {
 		t.Fatal("symlink escaped repository")
 	}
 }
@@ -112,7 +113,7 @@ func TestSitesCISetupRejectsMalformedRecipesBeforeNetworking(t *testing.T) {
 		if err := os.WriteFile(config, []byte(raw), 0600); err != nil {
 			t.Fatal(err)
 		}
-		if cmdSites([]string{"ci-setup", "--config", config, "--out", config + ".yml"}) == 0 || calls != 0 {
+		if main.CmdSites([]string{"ci-setup", "--config", config, "--out", config + ".yml"}) == 0 || calls != 0 {
 			t.Fatal("malformed recipe reached API")
 		}
 	}

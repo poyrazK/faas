@@ -5,8 +5,8 @@ from uuid import UUID
 import httpx
 import pytest
 
-from faas_sdk.api.apps import list_binding_verification_runs
-from faas_sdk.api.projects import list_project_binding_verification_runs
+from faas_sdk.preview.api.apps import list_binding_verification_runs
+from faas_sdk.preview.api.projects import list_project_binding_verification_runs
 from faas_sdk.client import Client
 
 

@@ -32,6 +32,7 @@
 # (2026-10-08).
 # Refreshed 2026-10-10 for independently duplicated merged main @ c761890061: ADR-686 and ADR-911.
 # Removed stale ADR-680; earlier branch-owned route/billing renumbering is retained.
+# Refreshed 2026-10-19 for independently duplicated merged main @ b3d5ac1c7b: ADR-1321, ADR-1322 and ADR-1324.
 021
 022
 031
@@ -212,3 +213,23 @@
 1258
 1259
 1260
+1321
+1322
+1324
+20261019120000
+20261019180000
+# Refreshed 2026-10-23 for independently duplicated merged main @ cac93bb2f5 (#4726):
+# ADR-732 and ADR-733 (production forks, crash snapshots) collide with #4313's
+# observed app health and scoped health diagnostics.
+732
+733
+# Refreshed 2026-10-24 for independently duplicated merged main @ 1d0748e45c:
+# ADR-20261017 (#5209 vmmd restart adoption, #5220 connection survival) collides
+# with #4879's node event acknowledgment worker.
+20261017
+# Refreshed 2026-10-27 for independently duplicated merged main @ 683279581a:
+# ADR-20261026090000 (#5516 builder private base images) collides with #5521's PR
+# preview environments GA; ADR-20261026140000 (#5514 replica spread) collides
+# with #5541's event app sources and publish rate.
+20261026090000
+20261026140000

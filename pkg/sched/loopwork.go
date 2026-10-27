@@ -61,8 +61,16 @@ const (
 	workReaper               workKind = "reaper"
 	workRehearsalFault       workKind = "rehearsal_worker_fault"
 	workRehearsalSuspend     workKind = "rehearsal_suspend_resume"
+	workRehearsalSweep       workKind = "rehearsal_sweep"
 	workWorkerRecovery       workKind = "worker_recovery"
 	workWorkerRecoverySweep  workKind = "worker_recovery_sweep"
+	// workAdoptionReport applies restarted vmmds' adoption reports.
+	workAdoptionReport workKind = "adoption_report"
+	// workAppWake and workRuntimeConfigRestart deliver the durable app_wake
+	// and runtime_config_restart handoffs, which boot VMs (ADR-191
+	// amendment 2026-10-26).
+	workAppWake              workKind = "app_wake"
+	workRuntimeConfigRestart workKind = "runtime_config_restart"
 )
 
 // workKinds is the iteration order for metric pre-instantiation.
@@ -70,7 +78,8 @@ var workKinds = []workKind{
 	workServiceRecovery, workServiceRecoverySweep,
 	workPrime, workRestart, workAppReconcile, workDeploymentReconcile, workJobCancel, workJobDispatch, workPrimeRecovery,
 	workWorkflowDispatch, workWorkflowSchedules, workTriggerDispatch, workQueuePushDispatch, workEventFanout,
-	workReaper, workRehearsalFault, workRehearsalSuspend, workWorkerRecovery, workWorkerRecoverySweep,
+	workReaper, workAdoptionReport, workRehearsalFault, workRehearsalSuspend, workRehearsalSweep, workWorkerRecovery, workWorkerRecoverySweep,
+	workAppWake, workRuntimeConfigRestart,
 }
 
 // overflowPolicy decides what submit does when a kind has no free slot.
@@ -132,6 +141,19 @@ var workSpecs = map[workKind]workSpec{
 	workReaper:           {slots: 1, overflow: overflowDrop},
 	workRehearsalFault:   {slots: 1, overflow: overflowDrop},
 	workRehearsalSuspend: {slots: 1, overflow: overflowDrop},
+	// The rehearsal listing sweep runs off the loop goroutine (ADR-20261019120000);
+	// its durable rows make the next trigger tick a safe retry.
+	workRehearsalSweep: {slots: 1, overflow: overflowDrop},
+	// One pass at a time; a tick during a pass coalesces, and an
+	// unapplied report is fetched again on the next tick.
+	workAdoptionReport: {slots: 1, overflow: overflowDrop},
+	// Explicit wakes and runtime-config restarts each hold a slot for a
+	// whole boot. The wake coordinator merges wakes of one app, so the
+	// slots bound cross-app fan-out. A dropped delivery stays pending in
+	// the notification outbox and its replay worker delivers it after the
+	// wakeup grace period.
+	workAppWake:              {slots: 8, overflow: overflowDrop},
+	workRuntimeConfigRestart: {slots: 4, overflow: overflowDrop},
 }
 
 // workPool runs bounded, coalesced, off-loop tasks for Loop.

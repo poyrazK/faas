@@ -10,6 +10,7 @@ Type=notify
 User=faas-schedd
 Group=faas
 ExecStartPre=+/usr/bin/install -d -o faas-schedd -g faas -m 0770 /var/lib/faas/oci-tmp
+ExecStartPre=+/usr/bin/install -d -o faas-schedd -g faas -m 0700 /var/lib/faas/schedd
 ExecStartPre=/opt/faas/current/bin/schedd-brokerq-apply
 ExecStart=/opt/faas/current/bin/schedd --config /etc/faas/schedd.toml
 Restart=on-failure
@@ -35,6 +36,7 @@ Environment=FAAS_CI_DISPATCH_ENABLED=0
 Environment=FAAS_CI_TRANSPORT_ENABLED=0
 Environment=FAAS_CI_RUNTIME_URL=
 Environment=FAAS_WORKFLOWS_ENABLED=1
+Environment=FAAS_PREWARM_ENABLED=1
 LoadCredential=fleet.age:/etc/faas/secrets/fleet.age
 LoadCredential=host.age:/etc/faas/secrets/host.age
 LoadCredential=faas_sign_pub:/etc/faas/secrets/sign-pub.pem

@@ -119,6 +119,8 @@ func UnitApid() daemonunit.Unit {
 			{Key: "FAAS_STATUSPAGE_PATH", Value: "/etc/faas/statuspage/index.html"},
 			{Key: "FAAS_DPA_PATH", Value: "/etc/faas/dpa.md"},
 			{Key: "FAAS_REALTIME_SOCKET", Value: "/run/faas/realtimed.sock"},
+			// Realtime fair use (ADR-1323), set on every realtime node too.
+			{Key: "FAAS_REALTIME_FAIR_USE_ENABLED", Value: "1"},
 			{Key: "FAAS_APP_TASK_API_ENABLED", Value: "0"},
 			{Key: "FAAS_EXECUTION_API_ENABLED", Value: "0"},
 			{Key: "FAAS_CI_INTERNAL_ENABLED", Value: "0"},
@@ -142,6 +144,7 @@ func UnitApid() daemonunit.Unit {
 			{Name: "faas_host_age_identity", Path: "/etc/faas/secrets/host.age"},
 			{Name: "faas_host_age_identity_previous", Path: "/etc/faas/secrets/host.age.previous", Optional: true},
 			{Name: "faas_fleet_age_identity", Path: "/etc/faas/secrets/fleet.age"},
+			{Name: "faas_fleet_age_identity_previous", Path: "/etc/faas/secrets/fleet.age.previous", Optional: true},
 			{Name: "faas_fleet_age_recipient", Path: "/etc/faas/secrets/fleet.age.pub"},
 			{Name: "faas_host_age_recipient", Path: "/etc/faas/secrets/host.age.pub"},
 			{Name: "faas_host_hmac_key", Path: "/etc/faas/secrets/host.hmac.key"},

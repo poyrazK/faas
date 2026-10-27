@@ -63,7 +63,8 @@ const jobRunSelectCols = `id, job_id, account_id, trigger_kind, env_overrides, t
        coalesce(image_storage_key_snapshot, ''), ram_mb_snapshot,
        effective_env_snapshot, source_run_id,
        coalesce(input_manifest_uri, ''), coalesce(input_manifest_sha256, ''), failure_rules, coalesce(occurrence_id::text, ''), start_deadline_at,
-       coalesce(exclusive_operation_id::text, ''), coalesce(exclusive_generation, 0)`
+       coalesce(exclusive_operation_id::text, ''), coalesce(exclusive_generation, 0),
+       coalesce(process_user, ''), coalesce(process_workdir, '')`
 
 // jobTaskSelectCols is the canonical column order for job_tasks.
 // Includes exit_code + next_attempt_at (00571), lease_token +
@@ -126,7 +127,7 @@ func scanJobRunCols(scan func(...any) error) (JobRun, error) {
 		&r.ImageRefSnapshot, &r.ImageResolvedDigestSnapshot,
 		&r.ImageStorageKeySnapshot, &r.RAMMBSnapshot, &effectiveEnv,
 		&r.SourceRunID, &r.InputManifestURI, &r.InputManifestSHA256, &r.FailureRules, &r.OccurrenceID, &r.StartDeadlineAt,
-		&r.ExclusiveOperationID, &r.ExclusiveGeneration); err != nil {
+		&r.ExclusiveOperationID, &r.ExclusiveGeneration, &r.ProcessUser, &r.ProcessWorkdir); err != nil {
 		return JobRun{}, err
 	}
 	if len(envOverrides) > 0 {
@@ -248,14 +249,26 @@ func (s *PgStore) JobCreate(ctx context.Context, accountID, name, kind, imageRef
 	if len(envOverrides) == 0 {
 		envOverrides = json.RawMessage("{}")
 	}
-	row := s.pool.QueryRow(ctx,
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return Job{}, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if err := financialComputeJobCreationAllowed(ctx, tx, accountID); err != nil {
+		return Job{}, err
+	}
+	row := tx.QueryRow(ctx,
 		`insert into jobs (account_id, kind, name, image_ref, ram_mb,
 		                  task_timeout_s, max_parallelism, retry_max,
 		                  env_overrides, command)
 		 values ($1::uuid, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10)
 		 returning `+jobSelectCols,
 		accountID, kind, name, imageRef, ramMB, taskTimeoutSec, maxParallelism, retryMax, []byte(envOverrides), command)
-	return scanJob(row)
+	created, err := scanJob(row)
+	if err != nil {
+		return Job{}, err
+	}
+	return created, tx.Commit(ctx)
 }
 
 // JobGetByID returns ErrNotFound when the row is missing OR when it
@@ -460,7 +473,8 @@ func (s *PgStore) JobListPendingImageMaterialization(ctx context.Context, limit 
 	rows, err := s.pool.Query(ctx,
 		`select `+jobSelectCols+` from jobs
 		  where status <> 'deleted'
-		    and image_materialization_status = 'pending'
+		    and image_ref NOT LIKE 'gregale-source://%'
+		   and image_materialization_status = 'pending'
 		    and (image_materialization_next_attempt_at is null or image_materialization_next_attempt_at <= now())
 		    and (image_materialization_lease_until is null or image_materialization_lease_until <= now())
 		  order by updated_at asc, id asc
@@ -489,6 +503,7 @@ func (s *PgStore) JobClaimImageMaterialization(ctx context.Context, id, owner st
 		   updated_at = now()
 		 where id = $1::uuid
 		   and status <> 'deleted'
+		   and image_ref NOT LIKE 'gregale-source://%'
 		   and image_materialization_status = 'pending'
 		   and (image_materialization_next_attempt_at is null or image_materialization_next_attempt_at <= now())
 		   and (image_materialization_lease_until is null or image_materialization_lease_until <= now())
@@ -515,7 +530,8 @@ func (s *PgStore) JobClaimPendingImageMaterialization(ctx context.Context, limit
 		`with candidates as (
 			select id as candidate_id from jobs
 			 where status <> 'deleted'
-			   and image_materialization_status = 'pending'
+			   and image_ref NOT LIKE 'gregale-source://%'
+		   and image_materialization_status = 'pending'
 			   and (image_materialization_next_attempt_at is null or image_materialization_next_attempt_at <= now())
 			   and (image_materialization_lease_until is null or image_materialization_lease_until <= now())
 			 order by updated_at asc, id asc
@@ -548,6 +564,7 @@ func (s *PgStore) JobRenewImageMaterializationLease(ctx context.Context, id, sou
 		`update jobs set image_materialization_lease_until = clock_timestamp() + $5::interval,
 		        updated_at = now()
 		 where id = $1::uuid and image_ref = $2 and status <> 'deleted'
+		   and image_ref NOT LIKE 'gregale-source://%'
 		   and image_materialization_status = 'pending'
 		   and image_materialization_attempts = $4
 		   and image_materialization_lease_owner = $3
@@ -642,6 +659,7 @@ func (s *PgStore) JobPublishImageMaterialization(ctx context.Context, id, source
 		   image_materialization_lease_until = null,
 		   updated_at = now()
 		 where id = $1::uuid and image_ref = $2 and status <> 'deleted'
+		   and image_ref NOT LIKE 'gregale-source://%'
 		   and image_materialization_status = 'pending'
 		   and image_materialization_attempts = $4
 		   and image_materialization_lease_owner = $3
@@ -883,6 +901,9 @@ func (s *PgStore) JobRunCreate(ctx context.Context, jobID, accountID, triggerKin
 	if len(inputs) > 0 && len(inputs) != tasks {
 		return JobRun{}, nil, fmt.Errorf("state: input count %d must equal tasks %d", len(inputs), tasks)
 	}
+	if err := validateJobRunProcess(opts); err != nil {
+		return JobRun{}, nil, err
+	}
 	if err := validateJobRunAttach(opts, tasks, retryMaxOverride); err != nil {
 		return JobRun{}, nil, err
 	}
@@ -927,7 +948,8 @@ func (s *PgStore) JobRunCreate(ctx context.Context, jobID, accountID, triggerKin
 		                       image_ref_snapshot, image_resolved_digest_snapshot,
 		                       image_storage_key_snapshot, ram_mb_snapshot,
 		                       effective_env_snapshot, input_manifest_uri,
-						input_manifest_sha256, failure_rules, exclusive_operation_id, exclusive_generation)
+						input_manifest_sha256, failure_rules, exclusive_operation_id, exclusive_generation,
+		                       process_user, process_workdir)
 		 select coalesce(nullif($19, '')::uuid, gen_random_uuid()), j.id, $2::uuid, $3, $4::jsonb, $5,
 		        coalesce($6, j.max_parallelism), coalesce($7, j.retry_max),
 		        coalesce($8, j.task_timeout_s),
@@ -936,7 +958,8 @@ func (s *PgStore) JobRunCreate(ctx context.Context, jobID, accountID, triggerKin
 		        $10, $11, $12, $13, $14, nullif($15, ''),
 		        j.image_ref, j.image_resolved_digest, j.image_storage_key,
 		        j.ram_mb, j.env_overrides || $4::jsonb,
-		        nullif($16, ''), nullif($17, ''), coalesce($18::jsonb, j.failure_rules), nullif($20, '')::uuid, nullif($21::bigint, 0)
+		        nullif($16, ''), nullif($17, ''), coalesce($18::jsonb, j.failure_rules), nullif($20, '')::uuid, nullif($21::bigint, 0),
+		        nullif($22, ''), nullif($23, '')
 		   from jobs j
 		  where j.id = $1::uuid
 		    and j.account_id = $2::uuid
@@ -946,7 +969,8 @@ func (s *PgStore) JobRunCreate(ctx context.Context, jobID, accountID, triggerKin
 		tasks, parallelism, retryMaxOverride, taskTimeoutOverride, commandArgs,
 		executionClass, eligibleAt, latestStartAt, failurePolicy,
 		manifestVersion, inputDigest, inputManifestURI, inputManifestSHA256,
-		policyJSON(opts.FailureRules), runID, exclusiveOperationID, exclusiveGeneration)
+		policyJSON(opts.FailureRules), runID, exclusiveOperationID, exclusiveGeneration,
+		opts.ProcessUser, opts.ProcessWorkdir)
 	run, err := scanJobRun(row)
 	if err != nil {
 		// mapErr unwraps FK violations + ErrNoRows to ErrNotFound.
@@ -1112,14 +1136,16 @@ func (s *PgStore) JobRunReplayFailed(ctx context.Context, sourceRunID, accountID
 		job_id, account_id, trigger_kind, env_overrides, tasks, parallelism,
 		retry_max, task_timeout_s, command, failure_policy, input_manifest_version,
 		input_digest, image_ref_snapshot, image_resolved_digest_snapshot,
-		image_storage_key_snapshot, ram_mb_snapshot, effective_env_snapshot, source_run_id, failure_rules)
+		image_storage_key_snapshot, ram_mb_snapshot, effective_env_snapshot, source_run_id, failure_rules,
+		process_user, process_workdir)
 		values ($1::uuid,$2::uuid,'manual',$3::jsonb,$4,$5,$6,$7,$8,$9,$10,
-			nullif($11,''),$12,$13,$14,$15,$16::jsonb,$17::uuid,$18::jsonb)
+			nullif($11,''),$12,$13,$14,$15,$16::jsonb,$17::uuid,$18::jsonb,nullif($19,''),nullif($20,''))
 		returning `+jobRunSelectCols,
 		job.ID, accountID, []byte(source.EnvOverrides), len(failed), source.Parallelism,
 		retryMax, timeout, command, source.FailurePolicy, manifestVersion, digest,
 		job.ImageRef, job.ImageResolvedDigest, job.ImageStorageKey, ramMB,
-		[]byte(effectiveEnv), sourceRunID, policyJSON(source.FailureRules)))
+		[]byte(effectiveEnv), sourceRunID, policyJSON(source.FailureRules),
+		source.ProcessUser, source.ProcessWorkdir))
 	if err != nil {
 		return JobRun{}, nil, err
 	}
@@ -1641,6 +1667,10 @@ func (s *PgStore) JobTaskClaimBatch(ctx context.Context, limit int) ([]JobTask, 
 		        and (failed.work_decision->>'action' = 'fail_partition' OR
  ((failed.work_decision is null or failed.work_decision->>'action' = 'retry') and failed.attempt > coalesce(r.retry_max, j.retry_max)))))
 		    and (job_tasks.next_attempt_at is null or job_tasks.next_attempt_at <= now())
+		    and not exists (
+		      -- ADR-20261018210500: a queued customer Operation waits for apid's releaser.
+		      select 1 from customer_operations o join customer_operation_queue q on q.operation_id = o.id
+		      where o.job_run_id = job_tasks.run_id)
 			and (r.execution_class = 'standard' or
 			         (r.eligible_at <= now() and r.latest_start_at > now()))
 		    and (r.start_deadline_at is null or r.start_deadline_at >= now() or exists (

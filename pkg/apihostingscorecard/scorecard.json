@@ -26,7 +26,7 @@
       "capabilities": ["custom-domains", "openapi-contract-preview", "streaming-and-grpc"],
       "targets": [{"metric": "ratio", "operator": "gte", "value": 100, "unit": "percent"}],
       "evidence": [
-        {"kind": "test", "locator": "pkg/gateway/allowlist_test.go::TestOnDemandAllowlist_CustomDomainTakesPrecedence"},
+        {"kind": "test", "locator": "cmd/gatewayd-internal/custom_domain_acceptance_test.go::TestCustomDomainAcceptance"},
         {"kind": "test", "locator": "pkg/openapidiff/preview_test.go::TestBuildRoutePolicyPreview"},
         {"kind": "test", "locator": "pkg/apid/apidserver/handler_app_openapi_test.go::TestGetAppOpenAPIPolicyPreview_ReadOnly"},
         {"kind": "test", "locator": "pkg/gateway/forwardproxy_test.go::TestRawStreamReverseProxy_RemoteWakeNode"}
@@ -56,6 +56,278 @@
       "evidence": [
         {"kind": "test", "locator": "pkg/apid/apidserver/handlers_application_messaging_test.go::TestSendAppMessageEnqueuesCloudEvent"},
         {"kind": "test", "locator": "pkg/apid/apidserver/handlers_application_messaging_test.go::TestDeliverAppEventEnqueuesRegisteredWebhook"}
+      ]
+    },
+    {
+      "id": "capability-acceptance-account",
+      "name": "Capability acceptance: account",
+      "category": "security",
+      "description": "Each released account capability passes its catalogued acceptance test before it is offered to an account (ADR-20261023115741).",
+      "capabilities": ["account", "api-keys", "gdpr", "notification-emails", "orgs"],
+      "targets": [{"metric": "ratio", "operator": "gte", "value": 100, "unit": "percent"}],
+      "evidence": [
+        {"kind": "test", "locator": "pkg/apid/apidserver/account_prehijack_test.go::TestMagicLinkFromSignupEndpointSignsIn"},
+        {"kind": "test", "locator": "pkg/apid/apidserver/handlers_account_test.go::TestDashboardAccountExport_ReturnsAttachment"},
+        {"kind": "test", "locator": "pkg/apid/apidserver/handlers_mfa_test.go::TestMFARecover_SendsBurnEmail"},
+        {"kind": "test", "locator": "pkg/apid/apidserver/handlers_org_test.go::TestOrgUUID_Pin"},
+        {"kind": "test", "locator": "pkg/apid/apidserver/handlers_scopes_test.go::TestMintKeyScopes"}
+      ]
+    },
+    {
+      "id": "capability-acceptance-async",
+      "name": "Capability acceptance: async",
+      "category": "reliability",
+      "description": "Each released async capability passes its catalogued acceptance test before it is offered to an account (ADR-20261023115741).",
+      "capabilities": ["account-release-webhooks", "async-invocations", "crons", "dead-letter-queues", "event-acknowledgments", "event-delivery-controls", "event-recoveries", "event-replays", "event-schemas", "event-subscriptions", "event-triggers", "events", "execution-workflows", "failed-events-console", "jobs", "operation-approvals", "operation-artifacts", "operation-children", "operation-concurrency", "operation-effects", "operation-milestones", "operation-recovery", "operation-schedules", "operation-signals", "operations", "outbound-webhooks", "queue-bindings", "queue-pull-leases", "queues", "work-policies", "workflow-insights", "workflow-recovery", "workflow-schedules", "workflows"],
+      "targets": [{"metric": "ratio", "operator": "gte", "value": 100, "unit": "percent"}],
+      "evidence": [
+        {"kind": "test", "locator": "cmd/e2e/cron_e2e_test.go::TestE2E_Cron_FiresOnScheduleAndOnDemand"},
+        {"kind": "test", "locator": "cmd/e2e/events_fanout_e2e_test.go::TestE2E_EventFanout_MatchesFiltersAndIsolatesAccounts"},
+        {"kind": "test", "locator": "cmd/e2e/workflows_e2e_test.go::TestE2E_Workflows_Lifecycle"},
+        {"kind": "test", "locator": "cmd/gregale/customer_operations_signal_test.go::TestCustomerOperationSignal"},
+        {"kind": "test", "locator": "pkg/apid/apidserver/event_acknowledgment_acceptance_test.go::TestEventAcknowledgmentLifecycle"},
+        {"kind": "test", "locator": "pkg/apid/apidserver/event_delivery_controls_acceptance_test.go::TestEventDeliveryControlsPauseAndResume"},
+        {"kind": "test", "locator": "pkg/apid/apidserver/handlers_account_release_webhooks_test.go::TestAccountReleaseWebhooks_CRUDAndScope"},
+        {"kind": "test", "locator": "pkg/apid/apidserver/handlers_dashboard_failed_events_test.go::TestDashboardFailedEvents_PaginatesAtPageSize"},
+        {"kind": "test", "locator": "pkg/apid/apidserver/handlers_dashboard_jobs_test.go::TestParseAppJobsPath"},
+        {"kind": "test", "locator": "pkg/apid/apidserver/handlers_dead_letter_test.go::TestUnifiedDeadLetter_QueueListInspectAndReplay"},
+        {"kind": "test", "locator": "pkg/apid/apidserver/handlers_event_replay_preview_test.go::TestEventReplayPreviewAPIReadScopes"},
+        {"kind": "test", "locator": "pkg/apid/apidserver/handlers_event_schemas_test.go::TestEventSchemaRegistrationAndPublishValidation"},
+        {"kind": "test", "locator": "pkg/apid/apidserver/handlers_event_subscriptions_test.go::TestListEventSubscriptions_CrossAccountIsNotVisible"},
+        {"kind": "test", "locator": "pkg/apid/apidserver/handlers_event_workflow_recovery_test.go::TestWorkflowRecoveryJobHTTP"},
+        {"kind": "test", "locator": "pkg/apid/apidserver/handlers_executions_test.go::TestExecutionWorkflowSummariesRespectKeyFamilyBoundaries"},
+        {"kind": "test", "locator": "pkg/apid/apidserver/handlers_ext_test.go::TestAsyncInvoke_AcceptedWithId"},
+        {"kind": "test", "locator": "pkg/apid/apidserver/handlers_ext_test.go::TestListCrons_HappyPath"},
+        {"kind": "test", "locator": "pkg/apid/apidserver/handlers_ext_test.go::TestQueueReceive_TimeoutReturns204"},
+        {"kind": "test", "locator": "pkg/apid/apidserver/handlers_keyed_invocation_replay_test.go::TestKeyedInvocationReplayIndependentEventRecovery"},
+        {"kind": "test", "locator": "pkg/apid/apidserver/handlers_platform_tenant_workflow_schedules_test.go::TestPlatformTenantSelfWorkflowScheduleOverrides"},
+        {"kind": "test", "locator": "pkg/apid/apidserver/handlers_queue_bindings_test.go::TestHTTPFunctionPushQueueBinding"},
+        {"kind": "test", "locator": "pkg/apid/apidserver/handlers_queue_environment_test.go::TestQueueEnvironmentHTTPRejectsSharedKeyedWorkPolicy"},
+        {"kind": "test", "locator": "pkg/apid/apidserver/handlers_queues_read_test.go::TestQueuePeek_HappyPath"},
+        {"kind": "test", "locator": "pkg/apid/apidserver/handlers_triggers_caps_test.go::TestTriggerRetryPolicyRoundTripsAndUpdates"},
+        {"kind": "test", "locator": "pkg/apid/apidserver/handlers_workflow_recovery_policy_test.go::TestWorkflowRecoveryPolicyHTTP"},
+        {"kind": "test", "locator": "pkg/apid/apidserver/operations_approval_inputs_test.go::TestOperationApprovalFormsAreHiddenUntilAllowlisted"},
+        {"kind": "test", "locator": "pkg/apid/apidserver/operations_children_test.go::TestOperationChildrenPlanLimit"},
+        {"kind": "test", "locator": "pkg/apid/apidserver/operations_signals_test.go::TestOperationSignalRoutes"},
+        {"kind": "test", "locator": "pkg/operations/acceptance/artifacts_test.go::TestPgOperationArtifacts"},
+        {"kind": "test", "locator": "pkg/operations/acceptance/recovery_test.go::TestPgOperationRecovery"},
+        {"kind": "test", "locator": "pkg/operations/milestones_test.go::TestMilestoneContracts"},
+        {"kind": "test", "locator": "pkg/state/operation_concurrency_test.go::TestOperationConcurrencyPolicies"},
+        {"kind": "test", "locator": "pkg/state/operation_schedules_test.go::TestOperationScheduleChanges"},
+        {"kind": "test", "locator": "pkg/webhook/dispatcher_test.go::TestDispatch_HeaderShape"},
+        {"kind": "test", "locator": "pkg/webhook/operation_effect_compatibility_test.go::TestDispatcher_OrdinaryOutboxOperationEffectType"}
+      ]
+    },
+    {
+      "id": "capability-acceptance-billing",
+      "name": "Capability acceptance: billing",
+      "category": "resources",
+      "description": "Each released billing capability passes its catalogued acceptance test before it is offered to an account (ADR-20261023115741).",
+      "capabilities": ["app-costs", "billing", "billing-focus-export", "billing-forecast", "budgets"],
+      "targets": [{"metric": "ratio", "operator": "gte", "value": 100, "unit": "percent"}],
+      "evidence": [
+        {"kind": "test", "locator": "cmd/gregale/commands_app_costs_test.go::TestAppCostsCLIUsesStableAppIdentityAndFiltersAccountReport"},
+        {"kind": "test", "locator": "pkg/apid/apidserver/handlers_billing_invoice_details_test.go::TestFOCUSArtifactLimitProblem"},
+        {"kind": "test", "locator": "pkg/apid/apidserver/handlers_change_plan_test.go::TestGetBillingPortal"},
+        {"kind": "test", "locator": "pkg/apid/apidserver/handlers_financial_budgets_test.go::TestFinancialBudgetCRUD"},
+        {"kind": "test", "locator": "pkg/financial/forecast_test.go::TestForecastMeterUnavailable"}
+      ]
+    },
+    {
+      "id": "capability-acceptance-data",
+      "name": "Capability acceptance: data",
+      "category": "resources",
+      "description": "Each released data capability passes its catalogued acceptance test before it is offered to an account (ADR-20261023115741).",
+      "capabilities": ["ai-access-tokens", "ai-content-policy", "ai-request-replay", "ai-routes", "ai-usage-limits", "application-auth", "bucket-access-grants", "bucket-cors", "bucket-encryption", "data-api", "durable-entities", "entity-backups", "entity-quotas", "entity-registry", "entity-sessions", "live-queries", "managed-postgres", "multipart-uploads", "object-lifecycle", "object-protection", "object-storage-compute", "object-versioning", "org-postgres", "outbound-integrations", "postgres-bindings", "postgres-compute-policy", "postgres-cutovers", "postgres-restore", "realtime", "realtime-access", "realtime-channels", "realtime-connections", "realtime-occupancy", "realtime-publishers", "realtime-push", "realtime-tickets", "realtime-workers", "s3-credentials", "signed-urls"],
+      "targets": [{"metric": "ratio", "operator": "gte", "value": 100, "unit": "percent"}],
+      "evidence": [
+        {"kind": "test", "locator": "cmd/gregale/commands_bucket_versioning_test.go::TestBucketVersioningCLI"},
+        {"kind": "test", "locator": "cmd/gregale/commands_data_api_sync_test.go::TestDataAPISyncJourney"},
+        {"kind": "test", "locator": "cmd/gregale/commands_postgres_egress_test.go::TestPostgresBindingDeliveryGuidance"},
+        {"kind": "test", "locator": "cmd/gregale/commands_realtime_usage_test.go::TestPrintRealtimeUsage"},
+        {"kind": "test", "locator": "pkg/apid/apidserver/application_auth_flag_test.go::TestApplicationAuthScreensAppearOnlyWhereItIsOn"},
+        {"kind": "test", "locator": "pkg/apid/apidserver/durable_entities_test.go::TestDurableEntityAPIScopeAndAuthentication"},
+        {"kind": "test", "locator": "pkg/apid/apidserver/handlers_account_test.go::TestRestoreAccount_HappyPath"},
+        {"kind": "test", "locator": "pkg/apid/apidserver/handlers_managed_postgres_compute_policy_test.go::TestManagedPostgresComputePolicyRoutesAndReplay"},
+        {"kind": "test", "locator": "pkg/apid/apidserver/handlers_object_bucket_object_lock_test.go::TestBucketObjectLockAuthorityPG"},
+        {"kind": "test", "locator": "pkg/apid/apidserver/handlers_object_compute_triggers_test.go::TestObjectComputeTriggerAPIMem"},
+        {"kind": "test", "locator": "pkg/apid/apidserver/handlers_object_storage_multipart_test.go::TestObjectMultipartLayout"},
+        {"kind": "test", "locator": "pkg/apid/apidserver/handlers_object_storage_test.go::TestObjectS3CredentialLifecycle"},
+        {"kind": "test", "locator": "pkg/apid/apidserver/handlers_outbound_ai_content_test.go::TestOutboundAIContentPolicy"},
+        {"kind": "test", "locator": "pkg/apid/apidserver/handlers_outbound_ai_content_test.go::TestOutboundAIReplay"},
+        {"kind": "test", "locator": "pkg/apid/apidserver/handlers_outbound_ai_phase3_test.go::TestOutboundAIRouteFormats"},
+        {"kind": "test", "locator": "pkg/apid/apidserver/handlers_outbound_ai_phase9_test.go::TestOutboundAIAccessTokensAndEvaluationsRoutes"},
+        {"kind": "test", "locator": "pkg/apid/apidserver/handlers_outbound_ai_test.go::TestCreateOutboundIntegrationRejectsInvalidAIPolicy"},
+        {"kind": "test", "locator": "pkg/apid/apidserver/handlers_realtime_access_test.go::TestRealtimeAccessPreviewRequiresOIDCAndPreservesSessionCutoff"},
+        {"kind": "test", "locator": "pkg/apid/apidserver/handlers_realtime_connections_test.go::TestManagedRealtimeConnectionOperationsRouteToOwner"},
+        {"kind": "test", "locator": "pkg/apid/apidserver/handlers_registry_auth_test.go::TestRegistryAuth_HTTPSRequired"},
+        {"kind": "test", "locator": "pkg/apid/apidserver/handlers_slos_test.go::TestSLOLifecycle"},
+        {"kind": "test", "locator": "pkg/apid/apidserver/object_signed_url_test.go::TestObjectSignedURLE2EPG"},
+        {"kind": "test", "locator": "pkg/apid/apidserver/org_managed_postgres_pg_test.go::TestOrgManagedPostgresPostgresHTTP"},
+        {"kind": "test", "locator": "pkg/apid/livequeries/service_test.go::TestLiveQueriesLogins"},
+        {"kind": "test", "locator": "pkg/apid/managedrealtime/handlers_tickets_test.go::TestRevokeRealtimeTicketHandlers"},
+        {"kind": "test", "locator": "pkg/apid/receivers/realtime_occupancy_test.go::TestOccupancyOperationRPC"},
+        {"kind": "test", "locator": "pkg/dashboard/tls_cutover_test.go::TestReadTLSCutoverState"},
+        {"kind": "test", "locator": "pkg/durableentity/socket/quota_migration_test.go::TestQuotaMigrationPlanResumeVerifyAndFencing"},
+        {"kind": "test", "locator": "pkg/managedpostgres/service_test.go::TestCreateIsIdempotentAndPersistsPlacement"},
+        {"kind": "test", "locator": "pkg/objectstorage/snapshot_test.go::TestCaptureObjectManifestSelectsPointInTimeAcrossPages"},
+        {"kind": "test", "locator": "pkg/outbound/ai_usage_test.go::TestAIUsageOutcome"},
+        {"kind": "test", "locator": "pkg/s3gateway/bucket_cors_test.go::TestGatewayBucketCORS"},
+        {"kind": "test", "locator": "pkg/state/object_bucket_access_test.go::TestObjectBucketAccessMem"},
+        {"kind": "test", "locator": "pkg/state/object_bucket_encryption_test.go::TestObjectBucketEncryptionPG"},
+        {"kind": "test", "locator": "pkg/state/pgstore_managed_realtime_channel_routes_test.go::TestPgStoreManagedRealtimeChannelRouteSnapshot"},
+        {"kind": "test", "locator": "pkg/state/pgstore_realtime_credentials_test.go::TestPgStoreRealtimePublisherCredentialPublishes"},
+        {"kind": "test", "locator": "pkg/state/pgstore_realtime_credentials_test.go::TestPgStoreRealtimeWorkerCredentialScopesOperations"},
+        {"kind": "test", "locator": "pkg/tcpd/supervisor_test.go::TestSupervisorRecreationCancelsPreviousIdentitySessions"}
+      ]
+    },
+    {
+      "id": "capability-acceptance-delivery",
+      "name": "Capability acceptance: delivery",
+      "category": "delivery",
+      "description": "Each released delivery capability passes its catalogued acceptance test before it is offered to an account (ADR-20261023115741).",
+      "capabilities": ["alert-rollbacks", "apps", "builds", "deploy-diff", "deploy-freezes", "deploy-overrides", "deploy-queue-controls", "deploy-scans", "deploy-tokens", "deployment-aliases", "environment-clones", "environment-gitops", "environment-promotions", "environment-release-sets", "environments", "gitlab-deploys", "projects", "registry-credentials", "release-approvals", "release-commands", "release-gates", "rollback", "scheduled-releases", "service-migration", "source-ref-deploys", "starter-templates", "stateless-contract", "traffic-mirroring"],
+      "targets": [{"metric": "ratio", "operator": "gte", "value": 100, "unit": "percent"}],
+      "evidence": [
+        {"kind": "test", "locator": "cmd/gregale/commands_scheduled_releases_test.go::TestScheduledReleaseLines"},
+        {"kind": "test", "locator": "cmd/gregale/deploy_preflight_test.go::TestDeployPreflightRepoSourcePreservesRef"},
+        {"kind": "test", "locator": "pkg/alerts/release_approvals_test.go::TestEvaluator_DeliversReleaseApprovalEvents"},
+        {"kind": "test", "locator": "pkg/apid/apidserver/handlers_build_test.go::TestGetBuild_OK"},
+        {"kind": "test", "locator": "pkg/apid/apidserver/handlers_deploy_tokens_test.go::TestDeployTokenBearer_BoundToItsApp"},
+        {"kind": "test", "locator": "pkg/apid/apidserver/handlers_deployment_aliases_test.go::TestDeploymentAliasesCRUD"},
+        {"kind": "test", "locator": "pkg/apid/apidserver/handlers_environment_gitops_test.go::TestEnvironmentGitOpsHTTPScopedConfigWorkflow"},
+        {"kind": "test", "locator": "pkg/apid/apidserver/handlers_ext_test.go::TestRollbackApp_HappyPath"},
+        {"kind": "test", "locator": "pkg/apid/apidserver/handlers_job_registry_auth_test.go::TestJobRegistryCredentialsRoundTrip"},
+        {"kind": "test", "locator": "pkg/apid/apidserver/handlers_mirror_test.go::TestMirrorCreate_RangeCheck"},
+        {"kind": "test", "locator": "pkg/apid/apidserver/handlers_project_environment_promotion_test.go::TestProjectEnvironmentPromotionBlockedWhilePastDue"},
+        {"kind": "test", "locator": "pkg/apid/apidserver/handlers_project_release_sets_test.go::TestPublishProjectReleaseSetRequiresCompleteLiveGraph"},
+        {"kind": "test", "locator": "pkg/apid/apidserver/handlers_projects_test.go::TestProjectEnvironmentCloneCopiesScopedStateAtomically"},
+        {"kind": "test", "locator": "pkg/apid/apidserver/handlers_source_ref_test.go::TestSourceRef_IDOR"},
+        {"kind": "test", "locator": "pkg/apid/apidserver/handlers_source_ref_test.go::TestSourceRef_PinsProcfileReleaseCommand"},
+        {"kind": "test", "locator": "pkg/apid/apidserver/handlers_templates_test.go::TestListTemplates_ReturnsAllNames"},
+        {"kind": "test", "locator": "pkg/apid/apidserver/handlers_test.go::TestCreateApp_ExplicitCPU"},
+        {"kind": "test", "locator": "pkg/apid/apidserver/project_image_test.go::TestProjectComposeImageScanAndApply"},
+        {"kind": "test", "locator": "pkg/apid/apidserver/release_guards_test.go::TestReleaseFreezeRefusesProductionReleasesUntilOverriddenOrLifted"},
+        {"kind": "test", "locator": "pkg/apid/apidserver/release_guards_test.go::TestReleaseGatesRoundTripAndValidate"},
+        {"kind": "test", "locator": "pkg/deploydiff/render_text_test.go::TestKindOrder"},
+        {"kind": "test", "locator": "pkg/environmentsync/pgintegration/store_test.go::TestEnvironmentGitOpsApprovalAndScope"},
+        {"kind": "test", "locator": "pkg/fcvm/stateless_advisory_test.go::TestForwardStatelessAdvisory_AppendsRow"},
+        {"kind": "test", "locator": "pkg/gitlabsource/oauth_test.go::TestGitLabOAuthAuthorizationExchangeAndRefresh"},
+        {"kind": "test", "locator": "pkg/gregalemanifest/manifest_test.go::TestLoad_DevProfile"},
+        {"kind": "test", "locator": "pkg/imaged/secretscan_pure_test.go::TestWithSecretScanFindings_ScannedAtUTC"},
+        {"kind": "test", "locator": "pkg/state/alert_rollback_selection_test.go::TestAlertRollbackSelectionFailsClosed"},
+        {"kind": "test", "locator": "pkg/state/deployment_queue_controls_pg_test.go::TestPg_CancelDeploymentTx_Pending_Happy"}
+      ]
+    },
+    {
+      "id": "capability-acceptance-developer",
+      "name": "Capability acceptance: developer",
+      "category": "activation",
+      "description": "Each released developer capability passes its catalogued acceptance test before it is offered to an account (ADR-20261023115741).",
+      "capabilities": ["cli", "dashboard", "docs-and-trust", "management-mcp", "openapi-spec", "sdks"],
+      "targets": [{"metric": "ratio", "operator": "gte", "value": 100, "unit": "percent"}],
+      "evidence": [
+        {"kind": "test", "locator": "cmd/gatewayd-public/main_test.go::TestInstallPublicStaticRoutes_SecurityTxt"},
+        {"kind": "test", "locator": "cmd/gregale/main_test.go::TestRunExitCodes"},
+        {"kind": "test", "locator": "pkg/apid/apidserver/handlers_dashboard_test.go::TestDashboardManifestView"},
+        {"kind": "test", "locator": "pkg/apid/openapi_handler_test.go::TestServeOpenAPISpecJSON_Shape"},
+        {"kind": "test", "locator": "pkg/mcpmanagement/server_test.go::TestManagementMCPJourney"},
+        {"kind": "test", "locator": "sdk/go/preview/application_standard_assignments_test.go::TestApplicationStandardSDKAssignmentInventory"}
+      ]
+    },
+    {
+      "id": "capability-acceptance-edge",
+      "name": "Capability acceptance: edge",
+      "category": "security",
+      "description": "Each released edge capability passes its catalogued acceptance test before it is offered to an account (ADR-20261023115741).",
+      "capabilities": ["app-access-control", "async-routes", "cors-presets", "domain-doctor", "edge-protection", "edge-rule-history", "edge-rule-lists", "edge-rule-suggestions", "edge-rule-trace", "edge-rules", "egress-allowlist", "grpc", "private-networks", "security-headers", "session-affinity", "static-egress-ip", "tcp-listeners", "tenant-surfaces", "udp-listeners", "wildcard-domains"],
+      "targets": [{"metric": "ratio", "operator": "gte", "value": 100, "unit": "percent"}],
+      "evidence": [
+        {"kind": "test", "locator": "cmd/gatewayd-internal/async_routes_test.go::TestAsyncRouteEnqueuerCapturesProjectRelease"},
+        {"kind": "test", "locator": "cmd/gatewayd-internal/edge_rules_app_wide_test.go::TestAppWideEdgeRules"},
+        {"kind": "test", "locator": "cmd/gatewayd-internal/tenant_surfaces_routing_test.go::TestPgRouter_TenantSurfaceRouted"},
+        {"kind": "test", "locator": "pkg/api/limits_test.go::TestWildcardDomainsAllowedIsProPlus"},
+        {"kind": "test", "locator": "pkg/apid/apidserver/handlers_apps_static_egress_ip_test.go::TestStaticEgressIP_DeleteClears"},
+        {"kind": "test", "locator": "pkg/apid/apidserver/handlers_cors_presets_test.go::TestGetCorsPreset_HappyPath"},
+        {"kind": "test", "locator": "pkg/apid/apidserver/handlers_dashboard_edge_rules_test.go::TestDashboardEdgeRuleTraceShowsRetryPolicy"},
+        {"kind": "test", "locator": "pkg/apid/apidserver/handlers_dashboard_edge_rules_test.go::TestDashboardSecurityHeadersCreatesStandardRule"},
+        {"kind": "test", "locator": "pkg/apid/apidserver/handlers_doctor_test.go::TestGetDomainDoctor_IDOR"},
+        {"kind": "test", "locator": "pkg/apid/apidserver/handlers_edge_protection_test.go::TestAppEdgeProtectionSummarizesPerAppCounters"},
+        {"kind": "test", "locator": "pkg/apid/apidserver/handlers_edge_rule_events_test.go::TestEdgeRuleEventsAPI"},
+        {"kind": "test", "locator": "pkg/apid/apidserver/handlers_edge_rule_lists_test.go::TestEdgeRuleListLifecycle"},
+        {"kind": "test", "locator": "pkg/apid/apidserver/handlers_edge_rule_suggestions_test.go::TestEdgeRuleSuggestionsRoute"},
+        {"kind": "test", "locator": "pkg/apid/apidserver/handlers_ext_test.go::TestGetApp_SurfacesRequireAuthn"},
+        {"kind": "test", "locator": "pkg/apid/apidserver/handlers_tcp_listener_tls_test.go::TestTCPListenerTLSAPI"},
+        {"kind": "test", "locator": "pkg/apid/apidserver/handlers_udp_listeners_test.go::TestUDPListenerAPI"},
+        {"kind": "test", "locator": "pkg/gateway/forwardproxy_grpc_duplex_test.go::TestGRPCDuplexThroughPublicAndForwarderHTTPHops"},
+        {"kind": "test", "locator": "pkg/gateway/session_affinity_test.go::TestWakeCarriesSessionAffinityHint"},
+        {"kind": "test", "locator": "pkg/state/app_egress_allowlist_test.go::TestUpdateApp_WithEgressAllowlist"},
+        {"kind": "test", "locator": "pkg/state/private_networks_test.go::TestValidatePrivateNetworkCIDR"}
+      ]
+    },
+    {
+      "id": "capability-acceptance-observability",
+      "name": "Capability acceptance: observability",
+      "category": "observability",
+      "description": "Each released observability capability passes its catalogued acceptance test before it is offered to an account (ADR-20261023115741).",
+      "capabilities": ["alert-presets", "alerts", "app-health", "audit-log", "custom-metrics", "debug", "debug-dependencies", "debug-regressions", "issue-alert-policies", "issue-ingest", "issue-ownership", "issue-saved-views", "issue-split-rules", "issue-trackers", "log-drains", "logs", "metrics", "notification-channels", "production-debugger", "status-page", "tracing", "wake-timeline"],
+      "targets": [{"metric": "ratio", "operator": "gte", "value": 100, "unit": "percent"}],
+      "evidence": [
+        {"kind": "test", "locator": "cmd/gregale/commands_log_drains_test.go::TestCmdLogDrainsListJSON"},
+        {"kind": "test", "locator": "cmd/e2e/logs_archive_metal_test.go::TestLogsLiveAndArchivedMetal"},
+        {"kind": "test", "locator": "pkg/api/custom_metrics_validation_test.go::TestCustomMetricsPlanGate"},
+        {"kind": "test", "locator": "pkg/apid/apidserver/handlers_admin_obs_regression_test.go::TestObsRegressionFailedJob"},
+        {"kind": "test", "locator": "pkg/apid/apidserver/handlers_alert_presets_channels_test.go::TestAlertPresetDeliversToChannels"},
+        {"kind": "test", "locator": "pkg/apid/apidserver/handlers_alerts_channels_test.go::TestAlertRuleChannels"},
+        {"kind": "test", "locator": "pkg/apid/apidserver/handlers_app_health_history_test.go::TestAppHealthHistoryAPI"},
+        {"kind": "test", "locator": "pkg/apid/apidserver/handlers_audit_test.go::TestListAuditEvents_LivenessKinds"},
+        {"kind": "test", "locator": "pkg/apid/apidserver/handlers_debug_dependency_deployments_test.go::TestBuildDebugDependencyDeploymentComparison"},
+        {"kind": "test", "locator": "pkg/apid/apidserver/handlers_debug_running_test.go::TestDebugRunning_IsPlanGated"},
+        {"kind": "test", "locator": "pkg/apid/apidserver/handlers_issue_compound_alerts_test.go::TestIssueCompoundAlertsHTTPAndDashboardPostgres"},
+        {"kind": "test", "locator": "pkg/apid/apidserver/handlers_issue_saved_views_test.go::TestIssueSavedViewsAndSymbolicatedOwnershipRoutes"},
+        {"kind": "test", "locator": "pkg/apid/apidserver/handlers_issue_teams_test.go::TestIssueTeamManagementRoutingAndInbox"},
+        {"kind": "test", "locator": "pkg/apid/apidserver/handlers_issue_tracker_native_test.go::TestNativeIssueLinearConnectionScopesSealsAndDisconnects"},
+        {"kind": "test", "locator": "pkg/apid/apidserver/handlers_issues_security_test.go::TestIssueOTLPThroughProductionRouter"},
+        {"kind": "test", "locator": "pkg/apid/apidserver/handlers_issues_split_rules_test.go::TestIssueSplitRuleCreationSerializesWithCaptures"},
+        {"kind": "test", "locator": "pkg/apid/apidserver/handlers_metrics_test.go::TestAppMetrics_HappyPath"},
+        {"kind": "test", "locator": "pkg/apid/apidserver/handlers_notification_channels_test.go::TestNotificationChannelLifecycle"},
+        {"kind": "test", "locator": "pkg/apid/apidserver/handlers_pgstore_test.go::TestPGHandler_DebuggerRequestAndRegressionReadPaths"},
+        {"kind": "test", "locator": "pkg/apid/apidserver/handlers_selected_trace_test.go::TestSelectedAppTraceRoute"},
+        {"kind": "test", "locator": "pkg/apid/apidserver/handlers_wake_timeline_page_test.go::TestWakeTimelineKeysetAPI"},
+        {"kind": "test", "locator": "pkg/apid/apidserver/status_test.go::TestStatusHistoryRollup"}
+      ]
+    },
+    {
+      "id": "capability-acceptance-runtime",
+      "name": "Capability acceptance: runtime",
+      "category": "reliability",
+      "description": "Each released runtime capability passes its catalogued acceptance test before it is offered to an account (ADR-20261023115741).",
+      "capabilities": ["app-tasks", "autoscaling", "autoscaling-targets", "developer-environments", "env-vars", "function-runtimes", "health-probes", "instances", "mcp-catalog-monitor", "mcp-oauth", "mcp-readiness-monitoring", "mcp-tasks", "park-and-wake", "reserved-concurrency", "resource-sizing", "runtime-binary", "runtime-go", "secrets", "service-bindings", "service-wake-ahead", "snapshot-lifecycle-hooks", "wake-page", "warm-pool", "workload-identity"],
+      "targets": [{"metric": "ratio", "operator": "gte", "value": 100, "unit": "percent"}],
+      "evidence": [
+        {"kind": "test", "locator": "cmd/vmmd/workload_identity_config_test.go::TestLoadWorkloadIdentitySigner"},
+        {"kind": "test", "locator": "pkg/api/deploy_validation_test.go::TestFunctionBinaryRuntime"},
+        {"kind": "test", "locator": "pkg/apid/apidserver/handlers_alerts_test.go::TestCreateMCPTaskAgeAlert_NotificationOnly"},
+        {"kind": "test", "locator": "pkg/apid/apidserver/handlers_app_tasks_test.go::TestAppTaskAPIGateEnv"},
+        {"kind": "test", "locator": "pkg/apid/apidserver/handlers_dashboard_instances_test.go::TestParseAppInstancesPath"},
+        {"kind": "test", "locator": "pkg/apid/apidserver/handlers_dashboard_mcp_alerts_test.go::TestMCPReadinessAlertScopeAPIRoundTrip"},
+        {"kind": "test", "locator": "pkg/apid/apidserver/handlers_dashboard_mcp_oauth_test.go::TestDashboardMCPOAuthRenewalRecovery"},
+        {"kind": "test", "locator": "pkg/apid/apidserver/handlers_dev_test.go::TestDevSessionGetIsReadOnly"},
+        {"kind": "test", "locator": "pkg/apid/apidserver/handlers_ext_test.go::TestUpdateAppAutoscaleDisableZero"},
+        {"kind": "test", "locator": "pkg/apid/apidserver/handlers_lifecycle_test.go::TestAppAfterRestoreLifecycleRoundTrip"},
+        {"kind": "test", "locator": "pkg/apid/apidserver/handlers_mcp_catalog_monitor_test.go::TestMCPCatalogMonitorHTTPRoles"},
+        {"kind": "test", "locator": "pkg/apid/apidserver/handlers_secrets_test.go::TestSecrets_PutGetDeleteRoundTrip"},
+        {"kind": "test", "locator": "pkg/apid/apidserver/service_binding_plan_test.go::TestServiceBindingPlanAPI"},
+        {"kind": "test", "locator": "pkg/builderd/profile_test.go::TestFunctionRuntimeFramework"},
+        {"kind": "test", "locator": "pkg/fcvm/readiness_test.go::TestReadinessProbeConfigDefaultsAndOverrides"},
+        {"kind": "test", "locator": "pkg/gateway/wake_page_test.go::TestAcceptsWakePageRequiresNavigationWhenFetchMetadataPresent"},
+        {"kind": "test", "locator": "pkg/sched/warm_pool_test.go::TestWarmPoolResumePhaseMetric"},
+        {"kind": "test", "locator": "pkg/state/memstore_test.go::TestAppEnvUpsertListDelete"},
+        {"kind": "test", "locator": "pkg/state/memstore_test.go::TestEvictionPriorityOrBestEffort"},
+        {"kind": "test", "locator": "pkg/state/observed_workload_class_contract_test.go::TestMemRecordObservedWorkloadClass"},
+        {"kind": "test", "locator": "pkg/state/pgstore_prewarm_test.go::TestPgStorePrewarmLifecycle"},
+        {"kind": "test", "locator": "pkg/state/pgstore_test.go::TestPg_UpdateApp_AutoscaleTargets"},
+        {"kind": "test", "locator": "pkg/state/service_wake_ahead_pg_test.go::TestServiceWakeAheadStore"}
       ]
     },
     {
@@ -124,6 +396,93 @@
       "capabilities": ["durable-inbound-webhooks"],
       "targets": [{"metric": "ratio", "operator": "gte", "value": 100, "unit": "percent"}],
       "evidence": [{"kind": "test", "locator": "pkg/apid/apidserver/handlers_inbound_webhooks_test.go::TestInboundWebhookAcceptsDurablyAndDeduplicatesProviderRetries"}]
+    },
+    {
+      "id": "edge-ai-crawler-controls-preview",
+      "name": "AI crawler controls release qualification",
+      "category": "security",
+      "description": "AI crawler conditions match the User-Agent claim and purpose and, for operators that publish ranges, verify it; the published ranges refresh and expire; the recipe blocks or challenges by purpose; the summary counts each crawler; and the edge_ai_crawlers platform flag makes the conditions absent and unconfigurable for accounts it leaves out (ADR-20261022083601, ADR-20261024082000).",
+      "capabilities": ["edge-ai-crawler-controls"],
+      "targets": [{"metric": "ratio", "operator": "gte", "value": 100, "unit": "percent"}],
+      "evidence": [
+        {"kind": "test", "locator": "pkg/api/edge_ai_crawlers_test.go::TestEdgeRuleMatchAICrawlerFields"},
+        {"kind": "test", "locator": "pkg/api/edge_ai_crawlers_release_test.go::TestEdgeRuleMatchAICrawlerFieldsUnreleased"},
+        {"kind": "test", "locator": "pkg/apid/edgerules/release_ai_crawlers_test.go::TestAICrawlerConditionsNeedTheirFlag"},
+        {"kind": "test", "locator": "pkg/gateway/edge_ai_crawlers_flag_test.go::TestEdgeRuleMatchInputAICrawlersUnreleased"},
+        {"kind": "test", "locator": "pkg/apid/crawlerranges/refresh_test.go::TestRefresherKeepsPreviousRangesOnBadFeeds"},
+        {"kind": "runbook", "locator": "docs/security.md"}
+      ]
+    },
+    {
+      "id": "edge-attack-mode-preview",
+      "name": "Attack mode release qualification",
+      "category": "security",
+      "description": "Attack mode switches on for a bounded time, extends and ends on its own, stays outside quotas and rollbacks, refuses PATCH, and is switched on only while both edge_attack_mode and edge_challenge include the account; withdrawing edge_attack_mode leaves an active attack mode inert (ADR-20261021220456, ADR-20261024082000).",
+      "capabilities": ["edge-attack-mode"],
+      "targets": [{"metric": "ratio", "operator": "gte", "value": 100, "unit": "percent"}],
+      "evidence": [
+        {"kind": "test", "locator": "pkg/apid/edgerules/attack_mode_test.go::TestAttackModeOnExtendOff"},
+        {"kind": "test", "locator": "pkg/apid/edgerules/attack_mode_test.go::TestAttackModeNeedsItsFlags"},
+        {"kind": "test", "locator": "pkg/gateway/edge_attack_mode_flag_test.go::TestEdgeAttackModeFlag"},
+        {"kind": "test", "locator": "pkg/apid/apidserver/handlers_dashboard_edge_attack_mode_test.go::TestDashboardEdgeAttackMode"},
+        {"kind": "runbook", "locator": "docs/security.md"}
+      ]
+    },
+    {
+      "id": "edge-browser-challenge-ga",
+      "name": "Browser challenge (generally available)",
+      "category": "security",
+      "description": "A browser navigation on a challenged route solves the page and passes on its pass while a script is refused with 403 challenge_required, verified credentials and crawlers pass, the browser's solver agrees with the gateway, raised difficulty is capped and falls back, and the edge_challenge platform flag makes rules inert for accounts it leaves out (ADR-831 amendments 7-8, ADR-20261023113721, ADR-20261024082000).",
+      "capabilities": ["edge-browser-challenge"],
+      "targets": [{"metric": "ratio", "operator": "gte", "value": 100, "unit": "percent"}, {"metric": "p95", "operator": "lte", "value": 2000, "unit": "milliseconds"}, {"metric": "ratio", "operator": "gte", "value": 90, "unit": "percent"}],
+      "evidence": [
+        {"kind": "test", "locator": "cmd/e2e/edge_rules_challenge_e2e_test.go::TestEdgeRulesChallenge_E2E"},
+        {"kind": "test", "locator": "pkg/gateway/edge_rules_challenge_test.go::TestApplyEdgeRuleChallenge"},
+        {"kind": "test", "locator": "pkg/gateway/edge_rules_challenge_test.go::TestChallengeSolveRoundTrip"},
+        {"kind": "test", "locator": "pkg/gateway/edge_rules_challenge_solver_test.go::TestChallengeSolverJS"},
+        {"kind": "test", "locator": "pkg/gateway/edge_rules_challenge_load_test.go::TestChallengeLoadRaisesAndLowers"},
+        {"kind": "test", "locator": "pkg/gateway/edge_feature_flags_test.go::TestEdgeChallengeFlag"},
+        {"kind": "test", "locator": "pkg/edgeruletrace/unreleased_test.go::TestSimulateUnreleasedChallengeRule"},
+        {"kind": "runbook", "locator": "docs/security.md"}
+      ]
+    },
+    {
+      "id": "edge-penalty-box-preview",
+      "name": "Edge penalty box release qualification",
+      "category": "security",
+      "description": "A rule with a penalty boxes a client after its threshold of policy refusals and refuses it on every path with 403 penalty_box and Retry-After, lets it go when the rule loses its penalty, stays within its per-app and per-gateway caps, and the edge_penalty_box platform flag stops boxing for accounts it leaves out (ADR-20261022105846, ADR-20261023113721, ADR-20261024082000).",
+      "capabilities": ["edge-penalty-box"],
+      "targets": [{"metric": "ratio", "operator": "gte", "value": 100, "unit": "percent"}, {"metric": "p95", "operator": "lte", "value": 1000, "unit": "milliseconds"}],
+      "evidence": [
+        {"kind": "test", "locator": "pkg/gateway/edge_penalty_box_test.go::TestPenaltyBoxRefusesBoxedClientAcrossPaths"},
+        {"kind": "test", "locator": "pkg/gateway/edge_penalty_box_test.go::TestPenaltyBoxThresholdWindowAndExpiry"},
+        {"kind": "test", "locator": "pkg/gateway/edge_penalty_box_test.go::TestPenaltyBoxPerAppCap"},
+        {"kind": "test", "locator": "pkg/apid/edgerules/penalty_test.go::TestCreateValidatesAndStoresPenalty"},
+        {"kind": "test", "locator": "pkg/gateway/edge_feature_flags_test.go::TestEdgePenaltyBoxFlag"},
+        {"kind": "test", "locator": "cmd/gatewayd-internal/penalty_box_share_test.go::TestPenaltyBoxSharedAcrossGateways"},
+        {"kind": "test", "locator": "pkg/state/edge_penalty_boxes_test.go::TestPgStore_EdgePenaltyBoxes"},
+        {"kind": "runbook", "locator": "docs/security.md"}
+      ]
+    },
+    {
+      "id": "edge-waf-blocking-ga",
+      "name": "WAF warn and block (generally available)",
+      "category": "security",
+      "description": "On the reference compute node the in-path check stays within 2 ms at p95 and skips at most 0.1% of checks at 100-500 req/s, detects the CRS regression corpus with no benign request flagged beyond the documented ones, fails open, and the edge_waf_blocking platform flag inspects warn and block rules as observe for accounts it leaves out (ADR-831 amendments 4-12, ADR-20261023113721, ADR-20261024082000).",
+      "capabilities": ["edge-waf-blocking"],
+      "targets": [{"metric": "p95", "operator": "lte", "value": 2, "unit": "milliseconds"}, {"metric": "ratio", "operator": "lte", "value": 0.1, "unit": "percent"}, {"metric": "ratio", "operator": "gte", "value": 100, "unit": "percent"}],
+      "evidence": [
+        {"kind": "test", "locator": "cmd/e2e/edge_rules_waf_load_e2e_test.go::TestEdgeWAFInlineLoad_E2E"},
+        {"kind": "test", "locator": "pkg/gateway/edge_rules_waf_test.go::TestApplyEdgeRuleWAFInline"},
+        {"kind": "test", "locator": "pkg/edgewaf/inline_test.go::TestCheckInline"},
+        {"kind": "test", "locator": "pkg/edgewaf/ftw_test.go::TestCRSRegressionCorpus"},
+        {"kind": "test", "locator": "pkg/edgewaf/benign_test.go::TestBenignCorpus"},
+        {"kind": "test", "locator": "pkg/gateway/edge_feature_flags_test.go::TestEdgeWAFBlockingFlag"},
+        {"kind": "test", "locator": "pkg/edgewaf/slot_model_test.go::TestInlineSlotModel"},
+        {"kind": "test", "locator": "pkg/edgewaf/inline_test.go::TestCheckInlineWaitsForASlot"},
+        {"kind": "test", "locator": "pkg/gateway/edge_rules_waf_test.go::TestApplyEdgeRuleWAFInlineCountsSkipReasons"},
+        {"kind": "runbook", "locator": "docs/security.md"}
+      ]
     },
     {
       "id": "first-healthy-api",
@@ -195,7 +554,49 @@
       "evidence": [
         {"kind": "test", "locator": "pkg/githubdgrpc/handlers_round_trip_test.go::TestCreateDeploymentFromPush_HappyPath"},
         {"kind": "test", "locator": "pkg/dashboard/preview_panel_test.go::TestRender_AppDetail_PreviewPanel_Shape"},
-        {"kind": "test", "locator": "cmd/e2e/preview_e2e_test.go::TestPreview_E2E_HappyPath_PreviewAppsByParent"}
+        {"kind": "test", "locator": "cmd/e2e/preview_e2e_test.go::TestPreview_E2E_HappyPath_PreviewAppsByParent"},
+        {"kind": "test", "locator": "cmd/e2e/github_webhook_deploy_e2e_test.go::TestE2E_GitHubWebhookEnqueuesDeployments"},
+        {"kind": "test", "locator": "pkg/apid/apidserver/preview_environment_ga_test.go::TestCreatePreviewDoesNotCopyProductionEnv"}
+      ]
+    },
+    {
+      "id": "production-debugging",
+      "name": "Production forks and crash snapshots",
+      "category": "observability",
+      "description": "A crash capture, manual capture or live capture opens only as a quarantined fork that is never routed, cannot open outbound flows, runs commands only inside the fork, keeps captures encrypted at rest, and is destroyed at its TTL with no leaked resources (ADR-732, ADR-733).",
+      "capabilities": [
+        "crash-snapshots",
+        "production-forks"
+      ],
+      "targets": [
+        {
+          "metric": "ratio",
+          "operator": "gte",
+          "value": 100,
+          "unit": "percent"
+        }
+      ],
+      "evidence": [
+        {
+          "kind": "test",
+          "locator": "cmd/e2e/crash_snapshot_metal_test.go::TestCrashSnapshotMetal"
+        },
+        {
+          "kind": "test",
+          "locator": "cmd/e2e/crash_snapshot_sdk_metal_test.go::TestCrashSnapshotSDKMetal"
+        },
+        {
+          "kind": "test",
+          "locator": "cmd/e2e/fork_metal_test.go::TestForkMetal"
+        },
+        {
+          "kind": "test",
+          "locator": "cmd/e2e/live_fork_metal_test.go::TestLiveForkMetal"
+        },
+        {
+          "kind": "runbook",
+          "locator": "docs/runbooks/FaasCrashSnapshots.md"
+        }
       ]
     },
     {
@@ -298,7 +699,7 @@
       "capabilities": ["firecracker-isolation", "scale-to-zero"],
       "targets": [{"metric": "p95", "operator": "lte", "value": 350, "unit": "milliseconds"}],
       "evidence": [
-        {"kind": "test", "locator": "pkg/gateway/handler_test.go::TestColdWakeReturns200AndHeader"},
+        {"kind": "test", "locator": "cmd/e2e/park_wake_cycle_e2e_test.go::TestE2E_ParkWakeCycle_RestoresTheSnapshotItJustWrote"},
         {"kind": "test", "locator": "cmd/e2e/source_deploy_wake_metal_test.go::TestSourceDeployWakeMetal"},
         {"kind": "test", "locator": "cmd/e2e/catalog_runtime_metal_test.go::TestCatalogRuntimeParityMetal"},
         {"kind": "test", "locator": "cmd/e2e/direct_oci_autoscale_metal_test.go::TestDirectOCIAutoscaleScaleToZeroMetal"}
@@ -320,7 +721,7 @@
       "description": "Background workflows preserve plan policy and complete their lifecycle without leaking platform state.",
       "capabilities": ["workflows-and-jobs"],
       "targets": [{"metric": "ratio", "operator": "gte", "value": 100, "unit": "percent"}],
-      "evidence": [{"kind": "test", "locator": "cmd/e2e/workflows_e2e_test.go::TestE2E_Workflows_Lifecycle"}]
+      "evidence": [{"kind": "test", "locator": "cmd/e2e/workflows_e2e_test.go::TestE2E_Workflows_Lifecycle"}, {"kind": "test", "locator": "cmd/e2e/workflows_execution_e2e_test.go::TestE2E_Workflows_DeclarativeStepsRunThroughTheGateway"}, {"kind": "test", "locator": "cmd/e2e/workflows_execution_e2e_test.go::TestE2E_Workflows_CodeFirstRunResumesAcrossSleepAndEvent"}]
     }
   ]
 }

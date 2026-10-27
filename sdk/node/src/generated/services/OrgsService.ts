@@ -45,6 +45,8 @@ import type { OrgMemberResponse } from '../models/OrgMemberResponse.js';
 import type { OrgPlanResponse } from '../models/OrgPlanResponse.js';
 import type { OrgResponse } from '../models/OrgResponse.js';
 import type { PatchOrgRequest } from '../models/PatchOrgRequest.js';
+import type { Preview } from '../models/Preview.js';
+import type { PreviewList } from '../models/PreviewList.js';
 import type { RevokeApplicationStandardExceptionRequest } from '../models/RevokeApplicationStandardExceptionRequest.js';
 import type { RotateOrgAPIKeyRequest } from '../models/RotateOrgAPIKeyRequest.js';
 import type { RotateOrgAPIKeyResponse } from '../models/RotateOrgAPIKeyResponse.js';
@@ -59,7 +61,7 @@ export class OrgsService {
   /**
    * List API keys minted against the active org.
    * Returns every key the org owns (active + grace + revoked).
-   * Mirrors `GET /v1/keys`; PR 6's canonical path. The `org_id`
+   * Mirrors `GET /v1/keys`; the canonical path. The `org_id`
    * on every row will match `{slug}` because the store filters
    * server-side on the loaded membership.
    *
@@ -131,9 +133,8 @@ export class OrgsService {
   }
   /**
    * Fetch a single API key by id (org-scoped).
-   * Lookup mirror of `GET /v1/keys/{id}` (the legacy path does not
-   * exist by id in pre-PR-6 — this path is the canonical single-key
-   * read). The response is the standard `APIKeyResponse` (no
+   * Lookup mirror of `GET /v1/keys/{id}`; this path is the canonical
+   * single-key read. The response is the standard `APIKeyResponse` (no
    * plaintext). Cross-org probes collapse to 404.
    *
    * @returns APIKeyResponse Single API key.
@@ -175,8 +176,7 @@ export class OrgsService {
    * Revoke an API key (org-scoped).
    * Soft-delete mirror of `DELETE /v1/keys/{id}`. Status flips to
    * 'revoked'; subsequent bearer-auth attempts hit `ErrAPIKeyRevoked`
-   * (401 unauthenticated). The audit row carries `org_id` (PR 6
-   * closes the ADR-061 §E "audit scoped to org" gap).
+   * (401 unauthenticated). The audit row carries `org_id`.
    *
    * @returns void
    * @throws ApiError
@@ -290,7 +290,7 @@ export class OrgsService {
    * `^[a-z0-9][a-z0-9-]{1,30}[a-z0-9]$` (3..32 chars); name is
    * trimmed-non-empty (1..256 chars). Personal orgs cannot be
    * created via this endpoint — every account already has a
-   * personal org (PR 3 backfill / migration 00099).
+   * personal org (backfill).
    *
    * @returns OrgResponse The new shared org.
    * @throws ApiError
@@ -339,8 +339,7 @@ export class OrgsService {
    * Returns the org row + the caller's role on the org. Authz:
    * any active member of the org (`org.view`); non-members see
    * 403 `org_role_forbidden`. Unknown slugs are 404
-   * `org_not_found` (IDOR-safe — same wire shape as the
-   * pkg/authz.LoadOrg middleware).
+   * `org_not_found` (IDOR-safe — the same wire shape as every org route).
    *
    * @returns OrgResponse The org + the caller's role.
    * @throws ApiError
@@ -350,8 +349,7 @@ export class OrgsService {
   }: {
     /**
      * Org slug. Lowercase letters, digits, hyphens; must start
-     * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern`
-     * in `pkg/api/errors.go` exactly so the spec drift gate
+     * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern` exactly so the spec drift gate
      * (`make spec-check`) stays green.
      *
      */
@@ -396,8 +394,7 @@ export class OrgsService {
   }: {
     /**
      * Org slug. Lowercase letters, digits, hyphens; must start
-     * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern`
-     * in `pkg/api/errors.go` exactly so the spec drift gate
+     * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern` exactly so the spec drift gate
      * (`make spec-check`) stays green.
      *
      */
@@ -422,7 +419,7 @@ export class OrgsService {
         `,
         404: `code: not_found`,
         409: `\`409 Conflict\` — the target org is the caller's personal
-        org (created by the PR 3 backfill); personal orgs cannot be soft-deleted.
+        org (created by the backfill); personal orgs cannot be soft-deleted.
         immutable and cannot be modified by PATCH. Stable code
         \`org_personal_immutable\`.
         `,
@@ -452,8 +449,7 @@ export class OrgsService {
   }: {
     /**
      * Org slug. Lowercase letters, digits, hyphens; must start
-     * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern`
-     * in `pkg/api/errors.go` exactly so the spec drift gate
+     * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern` exactly so the spec drift gate
      * (`make spec-check`) stays green.
      *
      */
@@ -509,8 +505,7 @@ export class OrgsService {
   }: {
     /**
      * Org slug. Lowercase letters, digits, hyphens; must start
-     * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern`
-     * in `pkg/api/errors.go` exactly so the spec drift gate
+     * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern` exactly so the spec drift gate
      * (`make spec-check`) stays green.
      *
      */
@@ -575,8 +570,7 @@ export class OrgsService {
   }: {
     /**
      * Org slug. Lowercase letters, digits, hyphens; must start
-     * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern`
-     * in `pkg/api/errors.go` exactly so the spec drift gate
+     * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern` exactly so the spec drift gate
      * (`make spec-check`) stays green.
      *
      */
@@ -626,8 +620,7 @@ export class OrgsService {
   }: {
     /**
      * Org slug. Lowercase letters, digits, hyphens; must start
-     * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern`
-     * in `pkg/api/errors.go` exactly so the spec drift gate
+     * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern` exactly so the spec drift gate
      * (`make spec-check`) stays green.
      *
      */
@@ -670,8 +663,7 @@ export class OrgsService {
   }: {
     /**
      * Org slug. Lowercase letters, digits, hyphens; must start
-     * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern`
-     * in `pkg/api/errors.go` exactly so the spec drift gate
+     * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern` exactly so the spec drift gate
      * (`make spec-check`) stays green.
      *
      */
@@ -724,8 +716,7 @@ export class OrgsService {
   }: {
     /**
      * Org slug. Lowercase letters, digits, hyphens; must start
-     * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern`
-     * in `pkg/api/errors.go` exactly so the spec drift gate
+     * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern` exactly so the spec drift gate
      * (`make spec-check`) stays green.
      *
      */
@@ -783,8 +774,7 @@ export class OrgsService {
   }: {
     /**
      * Org slug. Lowercase letters, digits, hyphens; must start
-     * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern`
-     * in `pkg/api/errors.go` exactly so the spec drift gate
+     * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern` exactly so the spec drift gate
      * (`make spec-check`) stays green.
      *
      */
@@ -842,8 +832,7 @@ export class OrgsService {
   }: {
     /**
      * Org slug. Lowercase letters, digits, hyphens; must start
-     * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern`
-     * in `pkg/api/errors.go` exactly so the spec drift gate
+     * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern` exactly so the spec drift gate
      * (`make spec-check`) stays green.
      *
      */
@@ -901,8 +890,7 @@ export class OrgsService {
   }: {
     /**
      * Org slug. Lowercase letters, digits, hyphens; must start
-     * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern`
-     * in `pkg/api/errors.go` exactly so the spec drift gate
+     * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern` exactly so the spec drift gate
      * (`make spec-check`) stays green.
      *
      */
@@ -957,8 +945,7 @@ export class OrgsService {
   }: {
     /**
      * Org slug. Lowercase letters, digits, hyphens; must start
-     * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern`
-     * in `pkg/api/errors.go` exactly so the spec drift gate
+     * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern` exactly so the spec drift gate
      * (`make spec-check`) stays green.
      *
      */
@@ -1000,8 +987,7 @@ export class OrgsService {
   }: {
     /**
      * Org slug. Lowercase letters, digits, hyphens; must start
-     * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern`
-     * in `pkg/api/errors.go` exactly so the spec drift gate
+     * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern` exactly so the spec drift gate
      * (`make spec-check`) stays green.
      *
      */
@@ -1046,8 +1032,7 @@ export class OrgsService {
   }: {
     /**
      * Org slug. Lowercase letters, digits, hyphens; must start
-     * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern`
-     * in `pkg/api/errors.go` exactly so the spec drift gate
+     * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern` exactly so the spec drift gate
      * (`make spec-check`) stays green.
      *
      */
@@ -1107,8 +1092,7 @@ export class OrgsService {
   }: {
     /**
      * Org slug. Lowercase letters, digits, hyphens; must start
-     * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern`
-     * in `pkg/api/errors.go` exactly so the spec drift gate
+     * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern` exactly so the spec drift gate
      * (`make spec-check`) stays green.
      *
      */
@@ -1168,8 +1152,7 @@ export class OrgsService {
   }: {
     /**
      * Org slug. Lowercase letters, digits, hyphens; must start
-     * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern`
-     * in `pkg/api/errors.go` exactly so the spec drift gate
+     * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern` exactly so the spec drift gate
      * (`make spec-check`) stays green.
      *
      */
@@ -1217,8 +1200,7 @@ export class OrgsService {
   }: {
     /**
      * Org slug. Lowercase letters, digits, hyphens; must start
-     * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern`
-     * in `pkg/api/errors.go` exactly so the spec drift gate
+     * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern` exactly so the spec drift gate
      * (`make spec-check`) stays green.
      *
      */
@@ -1280,8 +1262,7 @@ export class OrgsService {
   }: {
     /**
      * Org slug. Lowercase letters, digits, hyphens; must start
-     * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern`
-     * in `pkg/api/errors.go` exactly so the spec drift gate
+     * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern` exactly so the spec drift gate
      * (`make spec-check`) stays green.
      *
      */
@@ -1343,8 +1324,7 @@ export class OrgsService {
   }: {
     /**
      * Org slug. Lowercase letters, digits, hyphens; must start
-     * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern`
-     * in `pkg/api/errors.go` exactly so the spec drift gate
+     * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern` exactly so the spec drift gate
      * (`make spec-check`) stays green.
      *
      */
@@ -1394,8 +1374,7 @@ export class OrgsService {
   }: {
     /**
      * Org slug. Lowercase letters, digits, hyphens; must start
-     * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern`
-     * in `pkg/api/errors.go` exactly so the spec drift gate
+     * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern` exactly so the spec drift gate
      * (`make spec-check`) stays green.
      *
      */
@@ -1450,8 +1429,7 @@ export class OrgsService {
   }: {
     /**
      * Org slug. Lowercase letters, digits, hyphens; must start
-     * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern`
-     * in `pkg/api/errors.go` exactly so the spec drift gate
+     * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern` exactly so the spec drift gate
      * (`make spec-check`) stays green.
      *
      */
@@ -1507,8 +1485,7 @@ export class OrgsService {
   }: {
     /**
      * Org slug. Lowercase letters, digits, hyphens; must start
-     * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern`
-     * in `pkg/api/errors.go` exactly so the spec drift gate
+     * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern` exactly so the spec drift gate
      * (`make spec-check`) stays green.
      *
      */
@@ -1562,8 +1539,7 @@ export class OrgsService {
   }: {
     /**
      * Org slug. Lowercase letters, digits, hyphens; must start
-     * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern`
-     * in `pkg/api/errors.go` exactly so the spec drift gate
+     * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern` exactly so the spec drift gate
      * (`make spec-check`) stays green.
      *
      */
@@ -1612,8 +1588,7 @@ export class OrgsService {
   }: {
     /**
      * Org slug. Lowercase letters, digits, hyphens; must start
-     * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern`
-     * in `pkg/api/errors.go` exactly so the spec drift gate
+     * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern` exactly so the spec drift gate
      * (`make spec-check`) stays green.
      *
      */
@@ -1656,8 +1631,7 @@ export class OrgsService {
   }: {
     /**
      * Org slug. Lowercase letters, digits, hyphens; must start
-     * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern`
-     * in `pkg/api/errors.go` exactly so the spec drift gate
+     * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern` exactly so the spec drift gate
      * (`make spec-check`) stays green.
      *
      */
@@ -1711,8 +1685,7 @@ export class OrgsService {
   }: {
     /**
      * Org slug. Lowercase letters, digits, hyphens; must start
-     * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern`
-     * in `pkg/api/errors.go` exactly so the spec drift gate
+     * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern` exactly so the spec drift gate
      * (`make spec-check`) stays green.
      *
      */
@@ -1761,8 +1734,7 @@ export class OrgsService {
   }: {
     /**
      * Org slug. Lowercase letters, digits, hyphens; must start
-     * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern`
-     * in `pkg/api/errors.go` exactly so the spec drift gate
+     * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern` exactly so the spec drift gate
      * (`make spec-check`) stays green.
      *
      */
@@ -1808,8 +1780,7 @@ export class OrgsService {
   }: {
     /**
      * Org slug. Lowercase letters, digits, hyphens; must start
-     * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern`
-     * in `pkg/api/errors.go` exactly so the spec drift gate
+     * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern` exactly so the spec drift gate
      * (`make spec-check`) stays green.
      *
      */
@@ -1852,8 +1823,7 @@ export class OrgsService {
   }: {
     /**
      * Org slug. Lowercase letters, digits, hyphens; must start
-     * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern`
-     * in `pkg/api/errors.go` exactly so the spec drift gate
+     * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern` exactly so the spec drift gate
      * (`make spec-check`) stays green.
      *
      */
@@ -1902,7 +1872,7 @@ export class OrgsService {
    * boundary). Each row carries the joined `account.email`
    * so the dashboard can render `bob@acme.com` without a
    * second round-trip. Removed rows do NOT count toward the
-   * member cap (per ADR-061 §B).
+   * member cap.
    *
    * @returns MemberListResponse The active member list.
    * @throws ApiError
@@ -1912,8 +1882,7 @@ export class OrgsService {
   }: {
     /**
      * Org slug. Lowercase letters, digits, hyphens; must start
-     * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern`
-     * in `pkg/api/errors.go` exactly so the spec drift gate
+     * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern` exactly so the spec drift gate
      * (`make spec-check`) stays green.
      *
      */
@@ -1944,7 +1913,7 @@ export class OrgsService {
    * Mints a 32-byte plaintext token, hashes it via SHA-256 for
    * storage, and returns the plaintext ONCE in the response.
    * The token expires after 14 days; admins can revoke earlier by
-   * row ID via `DELETE /v1/orgs/{slug}/invitations/{invitation_id}` (PR 7 owns
+   * row ID via `DELETE /v1/orgs/{slug}/invitations/{invitation_id}` (owns
    * the accept surface too — see
    * `POST /v1/invitations/{token}/accept`). Role cannot be
    * `owner`; transfer-ownership is the only path to owner.
@@ -1959,8 +1928,7 @@ export class OrgsService {
   }: {
     /**
      * Org slug. Lowercase letters, digits, hyphens; must start
-     * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern`
-     * in `pkg/api/errors.go` exactly so the spec drift gate
+     * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern` exactly so the spec drift gate
      * (`make spec-check`) stays green.
      *
      */
@@ -1993,7 +1961,7 @@ export class OrgsService {
         Stable codes \`org_role_forbidden\` | \`org_invitation_cap_exceeded\`.
         `,
         409: `\`409 Conflict\` — the target org is the caller's personal
-        org (created by the PR 3 backfill); personal orgs are immutable on POST /members (invite).
+        org (created by the backfill); personal orgs are immutable on POST /members (invite).
         immutable and cannot be modified by PATCH. Stable code
         \`org_personal_immutable\`.
         `,
@@ -2006,11 +1974,136 @@ export class OrgsService {
     });
   }
   /**
+   * List the platform previews the organization can join.
+   * Like `GET /v1/previews`, for the organization: `joined` is the
+   * company's opt-in, and `enabled` is decided for you acting under the
+   * company. Previews released per account only are not listed. Requires
+   * `org.view`.
+   *
+   * @returns PreviewList The previews the organization can join or already joined.
+   * @throws ApiError
+   */
+  public static listOrgPreviews({
+    slug,
+  }: {
+    /**
+     * Org slug. Lowercase letters, digits, hyphens; must start
+     * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern` exactly so the spec drift gate
+     * (`make spec-check`) stays green.
+     *
+     */
+    slug: string,
+  }): CancelablePromise<PreviewList> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/orgs/{slug}/previews',
+      path: {
+        'slug': slug,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        403: `\`org_role_forbidden\`: you are not a member of the organization.`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Join a platform preview for the organization.
+   * Opts the organization in: every member gets the preview while acting
+   * for the company, if their plan is eligible. Requires
+   * `org.manage_previews` (owner or admin).
+   *
+   * @returns Preview The preview after the organization joined.
+   * @throws ApiError
+   */
+  public static joinOrgPreview({
+    slug,
+    key,
+  }: {
+    /**
+     * Org slug. Lowercase letters, digits, hyphens; must start
+     * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern` exactly so the spec drift gate
+     * (`make spec-check`) stays green.
+     *
+     */
+    slug: string,
+    /**
+     * Platform preview key, as GET /v1/previews lists it.
+     */
+    key: string,
+  }): CancelablePromise<Preview> {
+    return __request(OpenAPI, {
+      method: 'PUT',
+      url: '/v1/orgs/{slug}/previews/{key}',
+      path: {
+        'slug': slug,
+        'key': key,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        403: `\`org_role_forbidden\` or \`preview_plan_not_eligible\`.`,
+        404: `\`preview_not_offered\`, or the organization does not exist.`,
+        409: `\`preview_full\`, \`preview_org_unsupported\` (the preview is released per account only) or a concurrent change.`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Leave a platform preview for the organization.
+   * Removes the organization's opt-in. Requires `org.manage_previews` (owner or admin).
+   * @returns Preview The preview after the organization left.
+   * @throws ApiError
+   */
+  public static leaveOrgPreview({
+    slug,
+    key,
+  }: {
+    /**
+     * Org slug. Lowercase letters, digits, hyphens; must start
+     * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern` exactly so the spec drift gate
+     * (`make spec-check`) stays green.
+     *
+     */
+    slug: string,
+    /**
+     * Platform preview key, as GET /v1/previews lists it.
+     */
+    key: string,
+  }): CancelablePromise<Preview> {
+    return __request(OpenAPI, {
+      method: 'DELETE',
+      url: '/v1/orgs/{slug}/previews/{key}',
+      path: {
+        'slug': slug,
+        'key': key,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        403: `\`org_role_forbidden\`: only an owner or admin can leave for the organization.`,
+        404: `\`preview_not_offered\` (not a platform preview), or the organization does not exist.`,
+        409: `\`preview_org_unsupported\`.`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
    * Change a member's role.
    * Owner-only (`org.change_role`). Role cannot be `owner` on
    * this endpoint; transfer-ownership is the only path to owner.
-   * The exactly-one-owner invariant lives in
-   * `pkg/state::UpdateOrgMemberRole`'s tx; demoting the last
+   * The exactly-one-owner invariant lives::UpdateOrgMemberRole`'s tx; demoting the last
    * active owner surfaces as 409 `org_last_owner`.
    *
    * @returns OrgMemberResponse The updated member row.
@@ -2023,8 +2116,7 @@ export class OrgsService {
   }: {
     /**
      * Org slug. Lowercase letters, digits, hyphens; must start
-     * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern`
-     * in `pkg/api/errors.go` exactly so the spec drift gate
+     * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern` exactly so the spec drift gate
      * (`make spec-check`) stays green.
      *
      */
@@ -2064,8 +2156,7 @@ export class OrgsService {
         409: `\`409 Conflict\` — caller attempted to demote or remove
         the only remaining active owner of the org. The
         exactly-one-owner invariant lives on the
-        \`org_memberships_one_owner_idx\` partial unique index
-        (migration 00099). Stable code \`org_last_owner\`.
+        \`org_memberships_one_owner_idx\` partial unique index. Stable code \`org_last_owner\`.
         `,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
@@ -2091,8 +2182,7 @@ export class OrgsService {
   }: {
     /**
      * Org slug. Lowercase letters, digits, hyphens; must start
-     * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern`
-     * in `pkg/api/errors.go` exactly so the spec drift gate
+     * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern` exactly so the spec drift gate
      * (`make spec-check`) stays green.
      *
      */
@@ -2129,8 +2219,7 @@ export class OrgsService {
         409: `\`409 Conflict\` — caller attempted to remove (DELETE) the only
         the only remaining active owner of the org. The
         exactly-one-owner invariant lives on the
-        \`org_memberships_one_owner_idx\` partial unique index
-        (migration 00099). Stable code \`org_last_owner\`.
+        \`org_memberships_one_owner_idx\` partial unique index. Stable code \`org_last_owner\`.
         `,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
@@ -2146,8 +2235,7 @@ export class OrgsService {
    * demotes the caller to admin via `Store.TransferOrgOwnership`
    * (a single PostgreSQL tx with `FOR UPDATE` locks on both
    * rows). The exactly-one-owner invariant is enforced by the
-   * partial unique `org_memberships_one_owner_idx`
-   * (migration 00099). The new owner must already be an active
+   * partial unique `org_memberships_one_owner_idx`. The new owner must already be an active
    * member of the org.
    *
    * @returns OrgResponse The org (post-transfer).
@@ -2159,8 +2247,7 @@ export class OrgsService {
   }: {
     /**
      * Org slug. Lowercase letters, digits, hyphens; must start
-     * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern`
-     * in `pkg/api/errors.go` exactly so the spec drift gate
+     * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern` exactly so the spec drift gate
      * (`make spec-check`) stays green.
      *
      */
@@ -2198,7 +2285,7 @@ export class OrgsService {
    * (email, role, org slug, expires_at) without consuming the
    * token. Used by the dashboard to render "you've been invited
    * to Acme Inc. as developer" without forcing the invitee
-   * to accept yet. PR 7 added the accept surface at
+   * to accept yet. added the accept surface at
    * `POST /v1/invitations/{token}/accept`.
    *
    * @returns OrgInvitationResponse The pending invitation.
@@ -2236,13 +2323,12 @@ export class OrgsService {
    * Accept an invitation token (consume + add as member).
    * Consumes the invitation via `Store.ConsumeOrgInvitation` —
    * the load-bearing tx stamps `consumed_at`, inserts the active
-   * membership, and reads the live member cap (PR 2 cap-in-tx
-   * back-stop; documents at `pkg/state/memstore.go`). Two audit
-   * rows fire post-mutation per ADR-035: `org.invitation.accepted`
+   * membership, and reads the live member cap (cap-in-tx
+   * back-stop; documents). Two audit
+   * rows fire post-mutation: `org.invitation.accepted`
    * (invitation-side record) and `org.member.added` (member-side
    * record). The bearer must have a valid session or API key but
-   * no `X-Active-Org` — the invitation IS how they get one. PR 8
-   * adds step-up at accept time.
+   * no `X-Active-Org` — the invitation IS how they get one. adds step-up at accept time.
    *
    * @returns OrgMemberResponse The new membership row.
    * @throws ApiError
@@ -2275,8 +2361,12 @@ export class OrgsService {
       },
       errors: {
         401: `code: unauthorized`,
-        403: `\`403 Forbidden\` — the org is at the member cap. Stable
-        code \`org_member_cap_exceeded\`.
+        403: `\`403 Forbidden\` — the org is at the member cap (stable code
+        \`org_member_cap_exceeded\`), the caller has no fresh step-up
+        (\`step_up_required\`), or the accepting account has not
+        verified its email address (\`email_verification_required\`).
+        The invitation's email match binds acceptance to the invitee
+        only for a verified address.
         `,
         409: `\`409 Conflict\` — the bearer is already an active member
         of the target org. The wire detail carries the
@@ -2314,8 +2404,7 @@ export class OrgsService {
   }: {
     /**
      * Org slug. Lowercase letters, digits, hyphens; must start
-     * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern`
-     * in `pkg/api/errors.go` exactly so the spec drift gate
+     * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern` exactly so the spec drift gate
      * (`make spec-check`) stays green.
      *
      */
@@ -2356,10 +2445,9 @@ export class OrgsService {
    * Seat usage visibility for the active org.
    * Returns `{used, limit, plan}` from `Store.CountActiveOrgMembers`
    * (the same row the cap-in-tx inside `ConsumeOrgInvitation`
-   * reads). `limit` comes from `org.Plan.OrgMembersMax()` — the
+   * reads). `limit` comes from `org.Plan.OrgMembersMax` — the
    * `free` plan returns `0` to render "personal org only" in the
-   * dashboard rather than "0 of 0 used". Visibility-only; PR 9
-   * ships the per-seat pricing cut-over per ADR-061 §"Out of
+   * dashboard rather than "0 of 0 used". Visibility-only; ships the per-seat pricing cut-over §"Out of
    * scope". Every role may read (gated by `org.view`).
    *
    * @returns SeatUsageResponse The seat usage.
@@ -2370,8 +2458,7 @@ export class OrgsService {
   }: {
     /**
      * Org slug. Lowercase letters, digits, hyphens; must start
-     * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern`
-     * in `pkg/api/errors.go` exactly so the spec drift gate
+     * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern` exactly so the spec drift gate
      * (`make spec-check`) stays green.
      *
      */
@@ -2405,14 +2492,13 @@ export class OrgsService {
    * opaque (base64-url-of-JSON) compound key `(created_at,
    * id)`; `?before=<cursor>` partitions the next page so
    * the row at the boundary is visited exactly once even
-   * under random UUIDs (PR-9 cursor upgrade). Default limit
-   * 25, max 100 (per the strict-mode pagination contract at
-   * issue #393). Every role may read (gated by `org.view`,
+   * under random UUIDs. Default limit
+   * 25, max 100 (the strict-mode pagination contract).
+   * Every role may read (gated by `org.view`,
    * the same access model as GET /v1/orgs/{slug}/members).
-   * PR-8 ships the surface so the dashboard can render a
-   * "Pending invitations" table next to the "Members"
-   * table. Each render emits one `org.invitation.viewed`
-   * audit row (success-only, per ADR-035).
+   * The dashboard renders it as a "Pending invitations" table
+   * next to the "Members" table. Each successful render emits one
+   * `org.invitation.viewed` audit row.
    *
    * @returns InvitationListResponse The page of invitations.
    * @throws ApiError
@@ -2424,8 +2510,7 @@ export class OrgsService {
   }: {
     /**
      * Org slug. Lowercase letters, digits, hyphens; must start
-     * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern`
-     * in `pkg/api/errors.go` exactly so the spec drift gate
+     * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern` exactly so the spec drift gate
      * (`make spec-check`) stays green.
      *
      */
@@ -2437,7 +2522,7 @@ export class OrgsService {
      * encoded by the server in `next_before`). Pass the
      * prior response's `next_before` unchanged. Omit on
      * the first page. Malformed cursors return 400 with
-     * the stable code `invalid_cursor` (PR-9).
+     * the stable code `invalid_cursor`.
      *
      */
     before?: string,
@@ -2484,8 +2569,7 @@ export class OrgsService {
   }: {
     /**
      * Org slug. Lowercase letters, digits, hyphens; must start
-     * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern`
-     * in `pkg/api/errors.go` exactly so the spec drift gate
+     * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern` exactly so the spec drift gate
      * (`make spec-check`) stays green.
      *
      */
@@ -2521,8 +2605,7 @@ export class OrgsService {
   }: {
     /**
      * Org slug. Lowercase letters, digits, hyphens; must start
-     * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern`
-     * in `pkg/api/errors.go` exactly so the spec drift gate
+     * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern` exactly so the spec drift gate
      * (`make spec-check`) stays green.
      *
      */
@@ -2567,8 +2650,7 @@ export class OrgsService {
   }: {
     /**
      * Org slug. Lowercase letters, digits, hyphens; must start
-     * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern`
-     * in `pkg/api/errors.go` exactly so the spec drift gate
+     * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern` exactly so the spec drift gate
      * (`make spec-check`) stays green.
      *
      */
@@ -2620,8 +2702,7 @@ export class OrgsService {
   }: {
     /**
      * Org slug. Lowercase letters, digits, hyphens; must start
-     * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern`
-     * in `pkg/api/errors.go` exactly so the spec drift gate
+     * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern` exactly so the spec drift gate
      * (`make spec-check`) stays green.
      *
      */
@@ -2662,8 +2743,7 @@ export class OrgsService {
   }: {
     /**
      * Org slug. Lowercase letters, digits, hyphens; must start
-     * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern`
-     * in `pkg/api/errors.go` exactly so the spec drift gate
+     * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern` exactly so the spec drift gate
      * (`make spec-check`) stays green.
      *
      */

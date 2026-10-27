@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"bytes"
@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/simpleapp"
 )
@@ -20,7 +21,7 @@ func TestResolveSimpleAppPlanUsesHostingOverrides(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "gregale.yaml"), []byte("hosting:\n  port: 9000\n  health: /ready\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	plan, err := resolveSimpleAppPlan(dir, "demo", "small", simpleapp.SourceDirectory, false, false)
+	plan, err := main.ResolveSimpleAppPlan(dir, "demo", "small", simpleapp.SourceDirectory, false, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -81,7 +82,7 @@ func TestResolveSimpleAppPlanUsesCanonicalFrameworkDefaults(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			plan, err := resolveSimpleAppPlan(dir, "demo", "", simpleapp.SourceDirectory, false, false)
+			plan, err := main.ResolveSimpleAppPlan(dir, "demo", "", simpleapp.SourceDirectory, false, false)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -93,7 +94,7 @@ func TestResolveSimpleAppPlanUsesCanonicalFrameworkDefaults(t *testing.T) {
 }
 
 func TestDeployPlanUsesCommittedProfileUnlessWorktreeSelected(t *testing.T) {
-	repo := initZeroConfigRepo(t)
+	repo := main.InitZeroConfigRepo(t)
 	packageJSON := `{"dependencies":{"express":"^5"},"scripts":{"start":"node server.js"}}`
 	if err := os.WriteFile(filepath.Join(repo, "package.json"), []byte(packageJSON), 0o644); err != nil {
 		t.Fatal(err)
@@ -112,7 +113,7 @@ func TestDeployPlanUsesCommittedProfileUnlessWorktreeSelected(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	withCwd(t, repo)
+	main.WithCwd(t, repo)
 	t.Setenv("FAAS_TOKEN", "")
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	// macOS ignores XDG_CONFIG_HOME; HOME isolates os.UserConfigDir there.
@@ -121,10 +122,10 @@ func TestDeployPlanUsesCommittedProfileUnlessWorktreeSelected(t *testing.T) {
 	runPlan := func(args ...string) string {
 		t.Helper()
 		var stdout, stderr bytes.Buffer
-		oldOut, oldErr := osStdout, osStderr
-		osStdout, osStderr = &stdout, &stderr
-		defer func() { osStdout, osStderr = oldOut, oldErr }()
-		if code := cmdDeployTarball(args); code != 0 {
+		oldOut, oldErr := (*main.OsStdout), (*main.OsStderr)
+		(*main.OsStdout), (*main.OsStderr) = &stdout, &stderr
+		defer func() { (*main.OsStdout), (*main.OsStderr) = oldOut, oldErr }()
+		if code := main.CmdDeployTarball(args); code != 0 {
 			t.Fatalf("cmdDeployTarball(%v) exit = %d, stderr=%q", args, code, stderr.String())
 		}
 		return stdout.String()
@@ -146,7 +147,7 @@ func TestResolveSimpleAppPlanRejectsFunctionShape(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "handler.js"), []byte("exports.handler = () => {}\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := resolveSimpleAppPlan(dir, "demo", "", simpleapp.SourceDirectory, false, false); err == nil || !strings.Contains(err.Error(), "gregale deploy --diff") {
+	if _, err := main.ResolveSimpleAppPlan(dir, "demo", "", simpleapp.SourceDirectory, false, false); err == nil || !strings.Contains(err.Error(), "gregale deploy --diff") {
 		t.Fatalf("error = %v, want function-path guidance", err)
 	}
 }
@@ -157,7 +158,7 @@ func TestRenderSimpleAppPlanExplainsEphemeralState(t *testing.T) {
 		t.Fatal(err)
 	}
 	var out bytes.Buffer
-	if code := renderSimpleAppPlan(&out, plan, false); code != 0 {
+	if code := main.RenderSimpleAppPlan(&out, plan, false); code != 0 {
 		t.Fatalf("render code = %d", code)
 	}
 	for _, want := range []string{"scale to zero", "ephemeral", "durable state", "No remote state changed"} {
@@ -173,7 +174,7 @@ func TestRenderSimpleAppPlanShowsTCPListenerReadinessForImage(t *testing.T) {
 		t.Fatal(err)
 	}
 	var out bytes.Buffer
-	if code := renderSimpleAppPlan(&out, plan, false); code != 0 {
+	if code := main.RenderSimpleAppPlan(&out, plan, false); code != 0 {
 		t.Fatalf("renderSimpleAppPlan exit = %d", code)
 	}
 	if !strings.Contains(out.String(), "listener:           :8080 · TCP listener readiness") {
@@ -191,7 +192,7 @@ func TestApplySimpleAppPlanToCreateRequestUsesResolvedDefaults(t *testing.T) {
 		t.Fatal(err)
 	}
 	req := api.CreateAppRequest{Slug: "demo"}
-	applySimpleAppPlanToCreateRequest(&req, plan)
+	main.ApplySimpleAppPlanToCreateRequest(&req, plan)
 	if req.Type != "app" || req.ExecutionMode != "request" || req.ResourceProfile != "small" || req.HealthPath != "/ready" {
 		t.Fatalf("request = %+v", req)
 	}
@@ -204,11 +205,11 @@ func TestApplyDeployLifecyclePreservesPlanDefaultsWhenFlagsOmitted(t *testing.T)
 		StartupDeadlineS: 30,
 		MaxRetries:       2,
 	}
-	applyDeployLifecycleToCreateRequest(&req, "", "", 0, 0)
+	main.ApplyDeployLifecycleToCreateRequest(&req, "", "", 0, 0)
 	if req.ExecutionMode != "request" || req.RestartPolicy != "on-failure" || req.StartupDeadlineS != 30 || req.MaxRetries != 2 {
 		t.Fatalf("omitted flags changed plan defaults: %+v", req)
 	}
-	applyDeployLifecycleToCreateRequest(&req, "service", "always", 45, 5)
+	main.ApplyDeployLifecycleToCreateRequest(&req, "service", "always", 45, 5)
 	if req.ExecutionMode != "service" || req.RestartPolicy != "always" || req.StartupDeadlineS != 45 || req.MaxRetries != 5 {
 		t.Fatalf("explicit flags not applied: %+v", req)
 	}
@@ -216,7 +217,7 @@ func TestApplyDeployLifecyclePreservesPlanDefaultsWhenFlagsOmitted(t *testing.T)
 
 // deploy --plan must reject a manifest the deploy itself rejects (H10-67).
 func TestDeployPlanRejectsInvalidManifest(t *testing.T) {
-	repo := initZeroConfigRepo(t)
+	repo := main.InitZeroConfigRepo(t)
 	for name, body := range map[string]string{
 		"package.json": `{"scripts":{"start":"node server.js"}}`,
 		"server.js":    "require('http').createServer((q, s) => s.end('ok')).listen(process.env.PORT || 3000)\n",
@@ -233,20 +234,54 @@ func TestDeployPlanRejectsInvalidManifest(t *testing.T) {
 			t.Fatalf("git %s: %v\n%s", strings.Join(args, " "), err, out)
 		}
 	}
-	withCwd(t, repo)
+	main.WithCwd(t, repo)
 	t.Setenv("FAAS_TOKEN", "")
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	t.Setenv("HOME", os.Getenv("XDG_CONFIG_HOME"))
 
 	var stdout, stderr bytes.Buffer
-	oldOut, oldErr := osStdout, osStderr
-	osStdout, osStderr = &stdout, &stderr
-	defer func() { osStdout, osStderr = oldOut, oldErr }()
-	code := cmdDeployTarball([]string{"--plan", "--name", "demo"})
+	oldOut, oldErr := (*main.OsStdout), (*main.OsStderr)
+	(*main.OsStdout), (*main.OsStderr) = &stdout, &stderr
+	defer func() { (*main.OsStdout), (*main.OsStderr) = oldOut, oldErr }()
+	code := main.CmdDeployTarball([]string{"--plan", "--name", "demo"})
 	if code == 0 || strings.Contains(stdout.String(), "Simple app plan") {
 		t.Fatalf("plan accepted an invalid manifest: exit=%d stdout=%q", code, stdout.String())
 	}
 	if !strings.Contains(stderr.String(), "max_instances must be >= 0") {
 		t.Fatalf("stderr does not explain the manifest error: %q", stderr.String())
+	}
+}
+
+// Defaults are marked on the rows they set instead of being repeated in a
+// list, and each target says where it came from only when that is not the
+// plain default.
+func TestRenderSimpleAppPlanMarksDefaultsInline(t *testing.T) {
+	plan, err := simpleapp.Resolve(simpleapp.Spec{Slug: "demo"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	preview := main.NewCLIPreview("local inference", "demo", "", "working tree", "", "No login or remote state checked.")
+	preview.AppSource, preview.EnvironmentSource = "source directory name", "default scope"
+	var out bytes.Buffer
+	if code := main.RenderSimpleAppPlan(&out, plan, false, preview); code != 0 {
+		t.Fatalf("render code = %d", code)
+	}
+	got := out.String()
+	for _, want := range []string{
+		"  App: demo (from source directory name)\n",
+		"  Environment: default\n",
+		"  execution:          request (default)\n",
+		"  scaling:            scale to zero (default)\n",
+		"  resources:          plan-default (default)\n",
+		"  Limits: No login or remote state checked.\n",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("output missing %q:\n%s", want, got)
+		}
+	}
+	for _, unwanted := range []string{"Connection selection", "Target selection", "defaults applied", "execution_mode=request"} {
+		if strings.Contains(got, unwanted) {
+			t.Errorf("output still contains %q:\n%s", unwanted, got)
+		}
 	}
 }

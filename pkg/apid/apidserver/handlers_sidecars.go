@@ -16,6 +16,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/frameworkprofile"
 	"github.com/onebox-faas/faas/pkg/logsanitize"
+	"github.com/onebox-faas/faas/pkg/sealdomain"
 	"github.com/onebox-faas/faas/pkg/secretbox"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -203,8 +204,13 @@ func validateAndPlanSidecarsWithImages(req *api.CreateDeploymentRequest, acct st
 	if p := req.Sidecars.ValidateWithMainDependencies(mainDependencies, limits); p != nil {
 		return p
 	}
-	mainPort := 0
-	if req.Overrides != nil {
+	// Without an explicit port the build decides the main workload's port
+	// (the image's single EXPOSE, gregale.yaml hosting.port or the detected
+	// framework), so 8080 is only a guess here (Hunt 14 H14-53). Companions
+	// are compared with each other now and with the main port by imaged once
+	// that port is known.
+	mainPort := -1
+	if req.Overrides != nil && req.Overrides.Port != 0 {
 		mainPort = req.Overrides.Port
 	}
 	return req.Sidecars.ValidatePortConflicts(mainPort)
@@ -319,7 +325,16 @@ func sealSidecarsForDeploy(ss api.Sidecars, limits api.Limits) ([]byte, *api.Pro
 	if len(ss) == 0 {
 		return []byte("[]"), nil
 	}
-	return sealSidecars(ss, setSidecarRecipient(), limits)
+	return sealSidecars(ss, sidecarRecipient(), limits)
+}
+
+// sidecarRecipient seals sidecar env for vmmd: the runtime seal domain in
+// domain mode (ADR 20261022111812), the fleet recipient otherwise.
+func sidecarRecipient() *age.X25519Recipient {
+	if runtimeWriteMode == sealdomain.WriteDomain {
+		return runtimeSecretRecipient()
+	}
+	return recipientOrNil(setSidecarRecipient)
 }
 
 // applyOverridesToDeployment marshals the validated
@@ -423,7 +438,7 @@ func buildDeploymentForInsert(app state.App, req *api.CreateDeploymentRequest, o
 		MCPTaskMigrationOverride: req.MCPTaskMigrationOverride,
 	}
 	if app.Manifest.ProjectImage != "" {
-		profile, err := frameworkprofile.CaptureImageRuntime(app.Manifest.ProjectImageCommand, app.Manifest.ProjectImageHealthcheck)
+		profile, err := frameworkprofile.CaptureImageRuntime(app.Manifest.ProjectImageCommand, app.Manifest.ProjectImageHealthcheck, app.Manifest.ProjectImageProcess)
 		if err != nil {
 			return state.Deployment{}, api.ErrCapacity("could not capture project image runtime")
 		}

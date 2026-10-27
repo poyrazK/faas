@@ -1,7 +1,8 @@
-package main
+package main_test
 
 import (
 	"encoding/xml"
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"os"
 	"path/filepath"
 	"strings"
@@ -29,31 +30,31 @@ func TestScenarioValidateChecksAllSourcesWithoutPlatform(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Setenv("FAAS_TOKEN", "")
-	if code := cmdTest([]string{"--validate", "--manifest", manifest}); code != 0 {
+	if code := main.CmdTest([]string{"--validate", "--manifest", manifest}); code != 0 {
 		t.Fatalf("valid manifest exit = %d", code)
 	}
 	if err := os.Remove(filepath.Join(dir, "worker", "package.json")); err != nil {
 		t.Fatal(err)
 	}
-	if code := cmdTest([]string{"--validate", "--manifest", manifest}); code == 0 {
+	if code := main.CmdTest([]string{"--validate", "--manifest", manifest}); code == 0 {
 		t.Fatal("missing worker manifest passed validation")
 	}
 }
 
 func TestScenarioJUnitDistinguishesEngineAndCleanupFailure(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "scenario.xml")
-	receipts := []testRunReceipt{
+	receipts := []main.TestRunReceipt{
 		{Scenario: "export", Profile: "simulated", Engine: "simulated", Attempt: 1, Status: "passed", DurationMS: 25},
 		{Scenario: "export", Profile: "restored", Engine: "real-vm", Attempt: 2, Status: "failed", Error: "restore used cold_boot", CleanupError: "destroy worker failed", DurationMS: 1500, StartedAt: time.Now().UTC()},
 	}
-	if err := writeTestJUnit(path, receipts); err != nil {
+	if err := main.WriteTestJUnit(path, receipts); err != nil {
 		t.Fatal(err)
 	}
 	data, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	var suite testJUnitSuite
+	var suite main.TestJUnitSuite
 	if err := xml.Unmarshal(data, &suite); err != nil {
 		t.Fatal(err)
 	}

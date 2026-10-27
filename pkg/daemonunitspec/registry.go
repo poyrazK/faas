@@ -143,7 +143,10 @@ var OptionalRegistry = []Entry{
 	{Name: "maild", Unit: UnitMaild, Role: RoleControlPlane, Critical: false, Lifecycle: Lifecycle{After: []string{"apid"}, Probe: ProbeUnix, ProbeTarget: "/run/faas/maild.sock"}},
 	// ADR-1343: the compute-node app edge, turned on per cell by the
 	// manifest's public_edge.compute_nodes.
-	{Name: "gatewayd-public-edge", Unit: UnitGatewaydPublicEdge, Role: RoleComputeOnly, Critical: false, Lifecycle: Lifecycle{After: []string{"gatewayd-internal"}, Probe: ProbeTCP, ProbeTarget: "127.0.0.1:8090", ReadyzURL: "http://127.0.0.1:9092/readyz"}},
+	// ADR-20261016151947: the live-query hub, configured per database by the
+	// livequeryd_service role.
+	{Name: "livequeryd", Unit: UnitLivequeryd, Role: RoleControlPlane, Critical: false, Lifecycle: Lifecycle{Probe: ProbeTCP, ProbeTarget: "127.0.0.1:9471", ReadyzURL: "http://127.0.0.1:9471/readyz"}},
+	{Name: "gatewayd-public-edge", Unit: UnitGatewaydPublicEdge, Role: RoleComputeOnly, Critical: false, Lifecycle: Lifecycle{After: []string{"gatewayd-internal"}, Probe: ProbeTCP, ProbeTarget: "127.0.0.1:8090", ReadyzURL: "http://127.0.0.1:" + ComputeEdgeControlPort + "/readyz"}},
 }
 
 // UnitEntries returns fresh registry storage containing both always-on and

@@ -37,6 +37,11 @@ type fakeStripe struct {
 	failNextFinalize bool
 	collection       map[string]string
 	finalized        map[string]string
+	// rejectCustomer is a customer invoice creation refuses (400), and
+	// invoiceKeys the idempotency keys invoice creations sent
+	// (ADR-20261019180000).
+	rejectCustomer string
+	invoiceKeys    []string
 }
 
 // setPayment sets what Stripe reports for an invoice's payment.
@@ -84,6 +89,12 @@ func (f *fakeStripe) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		f.payments[id] = fmt.Sprintf(`{"id":%q,"status":"open","amount_paid":0,"amount_remaining":4,"status_transitions":{"paid_at":null}}`, id)
 		_, _ = fmt.Fprintf(w, `{"id":%q,"status":"open"}`, id)
 	case r.Method == http.MethodPost && r.URL.Path == "/v1/invoices":
+		f.invoiceKeys = append(f.invoiceKeys, r.Header.Get("Idempotency-Key"))
+		if f.rejectCustomer != "" && r.PostForm.Get("customer") == f.rejectCustomer {
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = fmt.Fprint(w, `{"error":{"code":"resource_missing","message":"No such customer"}}`)
+			return
+		}
 		f.invoices++
 		id := fmt.Sprintf("in_%d", f.invoices)
 		if f.trackDrafts {

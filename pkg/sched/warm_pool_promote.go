@@ -61,6 +61,13 @@ func (e *Engine) promoteWarmInstanceLocked(ctx context.Context, app state.App, a
 			}
 			continue
 		}
+		// A draining node keeps no resident work (ADR-20261024085817).
+		if e.nodeLeavingByID(ins.NodeID) {
+			if e.discardWarmPromotion(ctx, ins, parkReasonNodeDraining) {
+				warmCount--
+			}
+			continue
+		}
 		candidates = append(candidates, ins)
 	}
 	defer func() { e.setWarmPoolSizeGauge(acct.Plan, warmCount) }()
@@ -167,6 +174,9 @@ func (e *Engine) promoteWarmInstanceLocked(ctx context.Context, app state.App, a
 			Netns: warm.Netns, HostIP: warm.HostIP, GuestUID: warm.GuestUID, Bookkeeping: bookkeeping,
 		})
 		if publishErr != nil {
+			if errors.Is(publishErr, state.ErrFinancialBudgetHeld) {
+				return WakeResult{}, true, errors.Join(publishErr, e.retireFinancialBudgetRuntime(ctx, warm))
+			}
 			e.ledger.Release(warm.ID)
 			if !errors.Is(publishErr, state.ErrConflict) {
 				if e.discardWarmPromotion(ctx, warm, "record_runtime_failed") {

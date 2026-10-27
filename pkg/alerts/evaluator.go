@@ -44,6 +44,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/appmetrics"
 	"github.com/onebox-faas/faas/pkg/audit"
 	"github.com/onebox-faas/faas/pkg/pagerduty"
+	"github.com/onebox-faas/faas/pkg/releasemetrics"
 	"github.com/onebox-faas/faas/pkg/secretbox"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/webhookout"
@@ -185,11 +186,20 @@ type Evaluator struct {
 	now          func() time.Time
 	log          *slog.Logger
 	ops          Ops
+
+	// testSendsPrunedAt is when RunTestSendsOnce last pruned abandoned test
+	// sends (ADR 20261022111812).
+	testSendsPrunedAt time.Time
+
 	// channels and its companions deliver to ADR-749 notification
 	// channels; nil disables channel delivery.
 	channels         ChannelSender
 	channelOutcome   func(kind, outcome string)
 	dashboardBaseURL string
+	// logContextEnabled attaches the ADR-20261022172052 log context to fires.
+	logContextEnabled bool
+	// releaseMetrics counts release notice deliveries; nil records nothing.
+	releaseMetrics *releasemetrics.Metrics
 
 	// anomaly caches ADR-744 baselines per rule; see anomaly.go.
 	anomaly anomalyState
@@ -264,6 +274,9 @@ type EvaluatorOptions struct {
 	// DashboardBaseURL ("https://gregale.dev") links notifications to the
 	// app dashboard; empty omits the link.
 	DashboardBaseURL string
+	// ReleaseMetrics counts release approval and schedule notice
+	// deliveries; nil records nothing.
+	ReleaseMetrics *releasemetrics.Metrics
 }
 
 // NewEvaluator returns a wired Evaluator. nil-coerced dependencies
@@ -300,6 +313,7 @@ func NewEvaluator(o EvaluatorOptions) *Evaluator {
 		channels:         o.Channels,
 		channelOutcome:   o.ChannelOutcome,
 		dashboardBaseURL: o.DashboardBaseURL,
+		releaseMetrics:   o.ReleaseMetrics,
 	}
 	if o.ActionExec != nil {
 		e.actionExec = o.ActionExec
@@ -326,7 +340,7 @@ func NewEvaluator(o EvaluatorOptions) *Evaluator {
 type Stats struct {
 	Evaluated           int // rules walked this tick (enabled list)
 	Fired               int // rules that crossed the threshold
-	Delivered           int // rules whose dispatch returned 2xx/3xx
+	Delivered           int // rules whose dispatch returned 2xx
 	Failed              int // rules whose dispatch hit a terminal/retry-exhausted state
 	SkippedDegraded     int // rules skipped because Prometheus returned a degraded source
 	SkippedInsufficient int // target-signal rules without enough selected failures
@@ -346,6 +360,9 @@ type Stats struct {
 	// by cmd/meterd). The webhook fan-out still fires; the side-
 	// effect just doesn't happen.
 	ActionSkipped int
+	// ReleaseApprovalNotices counts release approval events delivered to at
+	// least one channel this tick (ADR-20261020085706).
+	ReleaseApprovalNotices int
 }
 
 // RunOnce walks the enabled alert-rule list once and applies the
@@ -387,6 +404,7 @@ func (e *Evaluator) RunOnce(ctx context.Context) (Stats, error) {
 			e.retryMCPReadinessIncident(ctx, rule, e.now(), &stats)
 		}
 	}
+	stats.ReleaseApprovalNotices = e.deliverReleaseApprovalEvents(ctx, e.now())
 	return stats, nil
 }
 
@@ -548,7 +566,14 @@ func (e *Evaluator) evalRule(ctx context.Context, rule state.AlertRule, now time
 	if convergence != nil {
 		paths.mcpConvergence = convergence
 	}
-	payloadBytes, payloadMap, err := buildPayload(rule, observed, paths, e.anomalyPayload(rule, observed))
+	extra := e.anomalyPayload(rule, observed)
+	if lc, ok := e.readLogContext(ctx, rule, e.appSlug(ctx, rule.AppID), e.now()); ok {
+		if extra == nil {
+			extra = map[string]any{}
+		}
+		extra["log_context"] = lc.payload()
+	}
+	payloadBytes, payloadMap, err := buildPayload(rule, observed, paths, extra)
 	if err != nil {
 		e.log.Warn("alerts: marshal payload", "rule", rule.ID, "err", err)
 		return
@@ -883,8 +908,10 @@ func (e *Evaluator) observe(ctx context.Context, rule state.AlertRule) (float64,
 			value = snapshot.DueAgeSeconds
 		}
 		return value, compareFloat(value, rule.Comparison, rule.Threshold), ""
-	case state.AlertMetricEdgeRuleHits, state.AlertMetricEdgeRuleLogHits:
+	case state.AlertMetricEdgeRuleHits, state.AlertMetricEdgeRuleLogHits, state.AlertMetricEdgeRuleActivity:
 		return e.observeEdgeRuleHits(ctx, rule)
+	case state.AlertMetricRouteInsightsDetected:
+		return e.observeRouteInsights(ctx, rule)
 	case state.AlertMetricFailedInvocs:
 		// Postgres-backed. No Prometheus dependency; the
 		// per-rule source filter expands "any" to every alertable
@@ -1091,6 +1118,8 @@ func (e *Evaluator) observe(ctx context.Context, rule state.AlertRule) (float64,
 		return observed, compareFloat(observed, rule.Comparison, rule.Threshold), ""
 	case state.AlertMetricCustomMetric:
 		return e.observeCustomMetric(ctx, rule)
+	case state.AlertMetricLogSearchMatches:
+		return e.observeLogSearch(ctx, rule)
 	case state.AlertMetricSLOBudgetBurn, state.AlertMetricSLOBudgetRemaining:
 		return e.observeCustomSLO(ctx, rule)
 	case state.AlertMetricSyntheticConsecutiveFailures, state.AlertMetricSyntheticLatencyP95:
@@ -1307,6 +1336,9 @@ func buildPayload(rule state.AlertRule, observed float64, paths investigationPat
 	}
 	if rule.CustomMetricName != "" {
 		m["custom_metric_name"] = rule.CustomMetricName
+	}
+	if rule.LogQuery != "" {
+		m["log_query"] = rule.LogQuery
 	}
 	if rule.SLOID != "" {
 		m["slo_id"] = rule.SLOID

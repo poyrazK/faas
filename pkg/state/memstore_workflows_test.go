@@ -546,10 +546,10 @@ func TestMemStore_WorkflowAdmissionRecoveryAndCancel(t *testing.T) {
 		WorkflowName:       "recoverable",
 		DefinitionSnapshot: json.RawMessage(`{"steps":["first","second"]}`),
 	}
-	if _, err := ms.CreateWorkflowRunAdmitted(ctx, run, 0); !errors.Is(err, state.ErrWorkflowRunQuotaExceeded) {
+	if _, err := ms.CreateWorkflowRunAdmitted(ctx, run, 0, 0); !errors.Is(err, state.ErrWorkflowRunQuotaExceeded) {
 		t.Fatalf("zero quota error = %v, want ErrWorkflowRunQuotaExceeded", err)
 	}
-	active, err := ms.CreateWorkflowRunAdmitted(ctx, run, 1)
+	active, err := ms.CreateWorkflowRunAdmitted(ctx, run, 1, 0)
 	if err != nil || active != 1 {
 		t.Fatalf("CreateWorkflowRunAdmitted = (%d, %v), want (1, nil)", active, err)
 	}
@@ -559,7 +559,7 @@ func TestMemStore_WorkflowAdmissionRecoveryAndCancel(t *testing.T) {
 		WorkflowName:       "over-quota",
 		DefinitionSnapshot: json.RawMessage(`{}`),
 	}
-	if active, err := ms.CreateWorkflowRunAdmitted(ctx, overQuota, 1); active != 1 || !errors.Is(err, state.ErrWorkflowRunQuotaExceeded) {
+	if active, err := ms.CreateWorkflowRunAdmitted(ctx, overQuota, 1, 0); active != 1 || !errors.Is(err, state.ErrWorkflowRunQuotaExceeded) {
 		t.Fatalf("over-quota admission = (%d, %v), want (1, ErrWorkflowRunQuotaExceeded)", active, err)
 	}
 

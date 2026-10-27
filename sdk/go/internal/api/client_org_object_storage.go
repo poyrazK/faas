@@ -11,7 +11,7 @@ func orgObjectBucketsPath(organization, slug string) string {
 	return "/v1/orgs/" + url.PathEscape(organization) + "/apps/" + url.PathEscape(slug) + "/buckets"
 }
 
-func (c *Client) GetOrgObjectStorageUsage(ctx context.Context, organization string) (ObjectStorageUsageResponse, error) {
+func (c *PreviewClient) GetOrgObjectStorageUsage(ctx context.Context, organization string) (ObjectStorageUsageResponse, error) {
 	var out ObjectStorageUsageResponse
 	err := c.do(ctx, http.MethodGet, "/v1/orgs/"+url.PathEscape(organization)+"/object-storage-usage", nil, &out)
 	return out, err

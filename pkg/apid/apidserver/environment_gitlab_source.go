@@ -7,12 +7,15 @@ import (
 	"os"
 	"time"
 
+	"filippo.io/age"
+
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/gitlabsource"
 	"github.com/onebox-faas/faas/pkg/secretbox"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-const gitLabOAuthSecretNamespace = "gitlab-gitops-oauth"
+const gitLabOAuthSecretNamespace = api.GitLabOAuthSecretNamespace
 
 func gitLabOAuthConfig() gitlabsource.OAuthConfig {
 	return gitlabsource.OAuthConfig{
@@ -22,23 +25,40 @@ func gitLabOAuthConfig() gitlabsource.OAuthConfig {
 	}
 }
 
+// gitLabSealingReady reports whether apid can both seal and open GitLab
+// OAuth tokens.
+func gitLabSealingReady(ctx context.Context) bool {
+	_, err := accountRecipients(hostSecretRecipient())
+	return err == nil && len(gitLabIdentities(ctx)) > 0
+}
+
+// gitLabIdentities open GitLab OAuth tokens: the account domain first, then
+// the host identities GitLab opened them with before the domain.
+func gitLabIdentities(ctx context.Context) []*age.X25519Identity {
+	var legacy []*age.X25519Identity
+	if hostIdentitiesForUnseal != nil {
+		legacy = hostIdentitiesForUnseal(ctx)
+	}
+	return accountIdentitiesWith(legacy)
+}
+
+// sealGitLabTokens seals an account's GitLab OAuth tokens, an account value
+// (ADR 20261022111812).
 func sealGitLabTokens(tokens gitlabsource.Tokens) ([]byte, error) {
-	if setSecretRecipient == nil || hostSecretRecipient() == nil {
+	recipients, err := accountRecipients(hostSecretRecipient())
+	if err != nil {
 		return nil, fmt.Errorf("GitLab OAuth sealing unavailable")
 	}
 	data, err := json.Marshal(tokens)
 	if err != nil {
 		return nil, err
 	}
-	return secretbox.SealBytes(hostSecretRecipient(), gitLabOAuthSecretNamespace, data, 16384)
+	return secretbox.SealBytesTo(recipients, gitLabOAuthSecretNamespace, data, api.GitLabOAuthSecretMaxBytes)
 }
 
 func openGitLabTokens(ctx context.Context, sealed []byte) (gitlabsource.Tokens, error) {
 	var tokens gitlabsource.Tokens
-	if hostIdentitiesForUnseal == nil {
-		return tokens, fmt.Errorf("GitLab OAuth unsealing unavailable")
-	}
-	identities := hostIdentitiesForUnseal(ctx)
+	identities := gitLabIdentities(ctx)
 	if len(identities) == 0 {
 		return tokens, fmt.Errorf("GitLab OAuth unsealing unavailable")
 	}
@@ -105,4 +125,4 @@ func (s *server) gitLabTokenForAccount(ctx context.Context, accountID string) (s
 	return replacement.Access, nil
 }
 
-func (s *server) gitLabClient() gitlabsource.Client { return gitlabsource.Client{} }
+func (s *server) gitLabClient() gitlabsource.Client { return s.gitlab }

@@ -287,7 +287,10 @@ func TestPgCloneEnvironmentCleanupScopeColumnInventory(t *testing.T) {
 		"application_standard_assignments.scope", // ADR-595 hierarchy level (organization/project/application), not an environment.
 		"binding_verification_runs.scope",        // Retained verification evidence blocks deployment and scope cleanup.
 		"custom_domains.environment_id",
+		"customer_operation_approval_forms.scope",
+		"customer_operation_concurrency_policies.scope",
 		"customer_operation_definitions.scope",
+		"customer_operation_queue.scope",
 		"customer_operation_webhook_bindings.scope",
 		"customer_operation_workflow_states.scope",
 		"customer_workflow_readiness_subscriptions.scope",
@@ -310,6 +313,8 @@ func TestPgCloneEnvironmentCleanupScopeColumnInventory(t *testing.T) {
 		"environment_workload_retirements.environment_id", // ADR-1331: immutable retained retirement evidence; journal/source deletion guards prevent cleanup cascades.
 		"exclusive_work_keys.environment_id",
 		"feature_flag_versions.environment_id",
+		"financial_budget_stop_targets.environment_id",      // In-flight (requested/draining) budget stops block scope cleanup; enforced and failed ones are retained history.
+		"financial_preview_command_runtimes.environment_id", // Preparing/active preview runtimes block scope cleanup; retired rows are retained history.
 		"github_deploy_branches.scope",
 		"hosting_oidc_trusts.environment", // GitHub Actions OIDC environment claim, not a Gregale environment; its site FK is classified.
 		"hosting_sites.environment",       // Sites reference the environment through a composite foreign key.
@@ -357,12 +362,15 @@ func TestPgCloneEnvironmentCleanupScopeColumnInventory(t *testing.T) {
 		"project_environment_qualifications.environment_slug",
 		"project_environment_queue_runtime_sets.environment_id",
 		"project_environment_route_policies.environment_slug",
+		"project_environment_secrets.environment_slug", // ADR-1139: a trigger deletes them with the environment row.
 		"project_environment_workload_heads.environment_id",
 		"project_environment_workload_specs.environment_id",
 		"project_release_sets.environment_slug",
 		"project_release_stages.environment_slug", // Retained stages reference the environment through a composite foreign key.
 		"queue_bindings.deployment_scope",
 		"queue_bindings.environment_id",
+		"release_database_switches.scope",     // Database-restoring rollback evidence (ADR-20261023181931); app-scoped and retained.
+		"runtime_config_apply_receipts.scope", // Platform runtime-config scope (global/control_plane/daemon/node), not an environment.
 		"runtime_config_entries.scope",
 		"runtime_config_operations.scope",
 		"runtime_config_revisions.scope",

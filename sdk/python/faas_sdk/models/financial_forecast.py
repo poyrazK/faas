@@ -29,6 +29,8 @@ class FinancialForecast:
     reason: str | Unset = UNSET
     projected_quantity: int | Unset = UNSET
     projected_net_millicents: int | Unset = UNSET
+    projected_gross_millicents: int | Unset = UNSET
+    """Set only for account-level meters priced by more than one rate, such as object_storage."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -56,6 +58,8 @@ class FinancialForecast:
 
         projected_net_millicents = self.projected_net_millicents
 
+        projected_gross_millicents = self.projected_gross_millicents
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -77,6 +81,8 @@ class FinancialForecast:
             field_dict["projected_quantity"] = projected_quantity
         if projected_net_millicents is not UNSET:
             field_dict["projected_net_millicents"] = projected_net_millicents
+        if projected_gross_millicents is not UNSET:
+            field_dict["projected_gross_millicents"] = projected_gross_millicents
 
         return field_dict
 
@@ -107,6 +113,8 @@ class FinancialForecast:
 
         projected_net_millicents = d.pop("projected_net_millicents", UNSET)
 
+        projected_gross_millicents = d.pop("projected_gross_millicents", UNSET)
+
         financial_forecast = cls(
             method=method,
             available=available,
@@ -120,6 +128,7 @@ class FinancialForecast:
             reason=reason,
             projected_quantity=projected_quantity,
             projected_net_millicents=projected_net_millicents,
+            projected_gross_millicents=projected_gross_millicents,
         )
 
         financial_forecast.additional_properties = d

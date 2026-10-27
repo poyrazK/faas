@@ -1,5 +1,5 @@
 // adr: 20261016151947 — live-query enablement and the shown-once live secret.
-package main
+package main_test
 
 import (
 	"bytes"
@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -46,13 +47,13 @@ func TestCmdPostgresLive(t *testing.T) {
 	defer srv.Close()
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fixture")
-	priorOut, priorJSON := osStdout, jsonOutput
-	t.Cleanup(func() { osStdout, jsonOutput = priorOut, priorJSON })
+	priorOut, priorJSON := (*main.OsStdout), (*main.JsonOutput)
+	t.Cleanup(func() { (*main.OsStdout), (*main.JsonOutput) = priorOut, priorJSON })
 	var out bytes.Buffer
-	osStdout, jsonOutput = &out, false
+	(*main.OsStdout), (*main.JsonOutput) = &out, false
 
 	// Without --app the secret is printed once.
-	if code := cmdPostgres([]string{"live", "enable", "orders"}); code != 0 {
+	if code := main.CmdPostgres([]string{"live", "enable", "orders"}); code != 0 {
 		t.Fatal("enable", code)
 	}
 	if !strings.Contains(out.String(), "glsk1_first") || !strings.Contains(out.String(), "enabled") {
@@ -61,7 +62,7 @@ func TestCmdPostgresLive(t *testing.T) {
 
 	// With --app it is stored, not printed.
 	out.Reset()
-	if code := cmdPostgres([]string{"live", "rotate", "orders", "--overlap", "1h", "--app", "web"}); code != 0 {
+	if code := main.CmdPostgres([]string{"live", "rotate", "orders", "--overlap", "1h", "--app", "web"}); code != 0 {
 		t.Fatal("rotate", code)
 	}
 	if stored["GREGALE_LIVE_SECRET"] != "glsk1_rotated" || strings.Contains(out.String(), "glsk1_rotated") {
@@ -73,23 +74,23 @@ func TestCmdPostgresLive(t *testing.T) {
 
 	// JSON output drops a secret that was stored.
 	out.Reset()
-	jsonOutput = true
-	if code := cmdPostgres([]string{"live", "rotate", "orders", "--overlap", "1h", "--app", "web", "--env", "LIVE_KEY"}); code != 0 {
+	(*main.JsonOutput) = true
+	if code := main.CmdPostgres([]string{"live", "rotate", "orders", "--overlap", "1h", "--app", "web", "--env", "LIVE_KEY"}); code != 0 {
 		t.Fatal("rotate --json", code)
 	}
 	if stored["LIVE_KEY"] != "glsk1_rotated" || strings.Contains(out.String(), "glsk1_") {
 		t.Fatalf("json rotate printed %q", out.String())
 	}
-	jsonOutput = false
+	(*main.JsonOutput) = false
 
 	out.Reset()
-	if code := cmdPostgres([]string{"live", "disable", "orders"}); code != 0 || !strings.Contains(out.String(), "disabled") {
+	if code := main.CmdPostgres([]string{"live", "disable", "orders"}); code != 0 || !strings.Contains(out.String(), "disabled") {
 		t.Fatal("disable", code, out.String())
 	}
-	if code := cmdPostgres([]string{"live", "enable", "orders", "--overlap", "1h"}); code == 0 {
+	if code := main.CmdPostgres([]string{"live", "enable", "orders", "--overlap", "1h"}); code == 0 {
 		t.Fatal("enable accepted --overlap")
 	}
-	if code := cmdPostgres([]string{"live", "rotate", "orders", "--overlap", "200h"}); code == 0 {
+	if code := main.CmdPostgres([]string{"live", "rotate", "orders", "--overlap", "200h"}); code == 0 {
 		t.Fatal("rotate accepted an overlap past the limit")
 	}
 }

@@ -1753,6 +1753,7 @@ func TestShouldPersistObservedClassKeepsSuccessfulServerIdentity(t *testing.T) {
 		{name: "request server refinement persists", appType: state.AppTypeApp, executionMode: api.ExecutionModeRequest, observed: state.WorkloadClassGraphQL, want: true},
 		{name: "declared worker persists", appType: state.AppTypeApp, executionMode: api.ExecutionModeWorker, observed: state.WorkloadClassWorker, want: true},
 		{name: "function cannot become worker", appType: state.AppTypeFunction, executionMode: api.ExecutionModeWorker, observed: state.WorkloadClassWorker},
+		{name: "push worker listener keeps worker class", appType: state.AppTypeApp, executionMode: api.ExecutionModeWorker, observed: state.WorkloadClassHTTP},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -5074,6 +5075,11 @@ func TestEngineEnsureWake_RefusesForeignOwnedApp(t *testing.T) {
 	// owning box's logs.
 	if !strings.Contains(err.Error(), "box-a") || !strings.Contains(err.Error(), "box-b") {
 		t.Errorf("error = %q, must mention both owner box-a and box-b", err)
+	}
+	// The loop logs this expected refusal at debug, not as a failed wake
+	// (Hunt 14 H14-30).
+	if !errors.Is(err, ErrAppOwnedByAnotherNode) {
+		t.Errorf("error = %v, want ErrAppOwnedByAnotherNode", err)
 	}
 
 	// Refusal must happen BEFORE any vmm call — the gate is at

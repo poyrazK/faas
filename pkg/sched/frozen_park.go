@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/functionlifetime"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -36,13 +37,19 @@ func (e *Engine) parkFrozenLocked(ctx context.Context, frozen state.Instance, re
 		e.log.Warn("sched: frozen park: destroy", "instance", frozen.ID, "reason", reason, "err", err)
 	}
 	e.ledger.Release(frozen.ID)
-	if err := updateInstanceStateCAS(cleanupCtx, e.store, frozen.ID, string(state.StateFrozen), string(state.StateParked)); err != nil {
+	// A worker has no snapshot to wake from (ADR-138): it stops, and the
+	// pool cold-boots the next one (ADR-20261019103000).
+	next := state.StateParked
+	if !instanceModeUsesSnapshots(frozen.Mode) {
+		next = state.StateStopped
+	}
+	if err := updateInstanceStateCAS(cleanupCtx, e.store, frozen.ID, string(state.StateFrozen), string(next)); err != nil {
 		if !errors.Is(err, state.ErrConflict) {
 			e.log.Warn("sched: frozen park: park row", "instance", frozen.ID, "reason", reason, "err", err)
 		}
 		return
 	}
-	e.recordCommittedInstanceTransition(cleanupCtx, frozen, state.StateFrozen, state.StateParked, frozen.AppID, "frozen_park", reason)
+	e.recordCommittedInstanceTransition(cleanupCtx, frozen, state.StateFrozen, next, frozen.AppID, "frozen_park", reason)
 	e.observeFrozenPark(reason)
 }
 
@@ -75,12 +82,17 @@ func (e *Engine) frozenNodeRowUnreachable(node state.ComputeNode) bool {
 
 // freezeRefusal names why an idle RUNNING instance must park instead of
 // freezing, or returns "" when it may freeze. The caller holds the app lock.
-func (e *Engine) freezeRefusal(ctx context.Context, ins state.Instance) (string, error) {
+func (e *Engine) freezeRefusal(ctx context.Context, ins state.Instance, early bool) (string, error) {
 	app, err := e.store.AppByID(ctx, ins.AppID)
 	if err != nil {
 		return "", err
 	}
 	if app.Status != state.AppActive || !e.frozenTierAllows(app, ins.Mode, e.privateNetworkProjection(ctx, app).NetworkID) {
+		return "ineligible", nil
+	}
+	// An early freeze (ADR-20261021215353) stops timers before the idle
+	// timeout, which only between_requests workloads have agreed to.
+	if early && api.EffectivePause(app.Manifest.Pause, app.Type == state.AppTypeFunction) != api.PauseBetweenRequests {
 		return "ineligible", nil
 	}
 	if ins.RAMMB != app.RAMMB || e.runtimeConfigStale(ctx, ins) {
@@ -104,7 +116,10 @@ func (e *Engine) freezeRefusal(ctx context.Context, ins state.Instance) (string,
 	}
 	// A frozen VM is disposable only while the deployment has a snapshot
 	// to wake from (ADR-005); the first idle period after a deploy parks.
-	if _, ok := e.reusableSnapshot(ctx, dep.ID, state.SnapshotTierInit); !ok {
+	// The snapshot must restore on this node's CPU platform, so the first
+	// idle period on a new platform parks and captures one
+	// (ADR-20261024225612 amendment 1).
+	if _, ok := e.reusableSnapshotOn(ctx, dep.ID, state.SnapshotTierInit, ins.NodeID); !ok {
 		return "no_snapshot", nil
 	}
 	if e.warmCapturePending(ctx, app, ins, dep) {
@@ -113,22 +128,53 @@ func (e *Engine) freezeRefusal(ctx context.Context, ins state.Instance) (string,
 	if e.ledger.FrozenCountForNode(ins.NodeID) >= api.FrozenMaxPerNode {
 		return "node_full", nil
 	}
+	// A frozen VM stays resident; on a draining node the reaper's park
+	// moves the instance off instead (ADR-20261024085817).
+	if e.nodeLeavingByID(ins.NodeID) {
+		return parkReasonNodeDraining, nil
+	}
 	return "", nil
 }
 
 // warmCapturePending reports whether parking this instance would capture
 // the deployment's warm-tier snapshot (ADR-070), which only a RUNNING VM
 // can provide. Freezing it would starve that capture.
+//
+// It applies every gate captureWarmSnapshotLocked does. It used to skip the
+// minimum age and request count, so a function instance that served fewer
+// than warm_snapshot_min_requests (5) requests parked "to capture" a warm
+// snapshot the capture then refused, on every idle period: low-traffic
+// functions never froze (Hunt 12 H12-52).
 func (e *Engine) warmCapturePending(ctx context.Context, app state.App, ins state.Instance, dep state.Deployment) bool {
-	if !app.WarmSnapshotEnabled || ins.FrameworkReadyAt == nil || app.Manifest.BeforeCheckpoint != nil {
+	if !app.WarmSnapshotEnabled || !warmCaptureInstanceGatesOpen(app, ins, time.Now()) {
 		return false
 	}
 	acct, err := state.AppResourceAccount(ctx, e.store, app)
 	if err != nil || !acct.Plan.WarmSnapshotAllowed() {
 		return false
 	}
-	_, ok := e.reusableSnapshot(ctx, dep.ID, state.SnapshotTierWarm)
+	_, ok := e.reusableSnapshotOn(ctx, dep.ID, state.SnapshotTierWarm, ins.NodeID)
 	return !ok
+}
+
+// warmCaptureInstanceGatesOpen is the per-instance half of the warm-capture
+// gates (ADR-070, ADR-098 C10) shared by captureWarmSnapshotLocked and
+// warmCapturePending: no before-checkpoint hook (except on a qualified
+// native Node function) and no profiling, a framework-ready stamp at least
+// warm_snapshot_min_ms old, and at least warm_snapshot_min_requests
+// requests served.
+func warmCaptureInstanceGatesOpen(app state.App, ins state.Instance, now time.Time) bool {
+	qualifiedFunction := app.Type == "function" && functionlifetime.NativeNode(app.Runtime)
+	if app.Manifest.BeforeCheckpoint != nil && !qualifiedFunction || (app.Manifest.Profiling != nil && app.Manifest.Profiling.Enabled) {
+		return false
+	}
+	if ins.FrameworkReadyAt == nil {
+		return false
+	}
+	if app.WarmSnapshotMinMs > 0 && now.Sub(*ins.FrameworkReadyAt) < time.Duration(app.WarmSnapshotMinMs)*time.Millisecond {
+		return false
+	}
+	return app.WarmSnapshotMinRequests <= 0 || ins.RequestCount >= int64(app.WarmSnapshotMinRequests)
 }
 
 // frozenExpired reports whether a frozen instance has outlived FrozenTTL.

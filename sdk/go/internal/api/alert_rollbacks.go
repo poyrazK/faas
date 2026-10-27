@@ -59,12 +59,12 @@ type AlertRollbackDeploymentEvidence struct {
 	Code            string     `json:"code,omitempty"`
 }
 
-func (c *Client) ListAlertRollbacks(ctx context.Context, slug string) ([]AlertRollback, error) {
+func (c *PreviewClient) ListAlertRollbacks(ctx context.Context, slug string) ([]AlertRollback, error) {
 	out := []AlertRollback{}
 	err := c.do(ctx, http.MethodGet, "/v1/apps/"+url.PathEscape(slug)+"/alert-rollbacks", nil, &out)
 	return out, err
 }
-func (c *Client) GetAlertRollback(ctx context.Context, slug, id string) (AlertRollback, error) {
+func (c *PreviewClient) GetAlertRollback(ctx context.Context, slug, id string) (AlertRollback, error) {
 	var out AlertRollback
 	err := c.do(ctx, http.MethodGet, "/v1/apps/"+url.PathEscape(slug)+"/alert-rollbacks/"+url.PathEscape(id), nil, &out)
 	return out, err

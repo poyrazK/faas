@@ -11,6 +11,10 @@ import (
 // provider could not be reached; the request is safe to retry (ADR-1502).
 const CodeBillingProviderUnavailable = "billing_provider_unavailable"
 
+// CodeStatementInvoiceExportInProgress reports that another attempt is
+// exporting the statement; retry once it ends (ADR-20261019180000).
+const CodeStatementInvoiceExportInProgress = "statement_invoice_export_in_progress"
+
 // PutBillingConnectionRequest stores the account's own key for a billing
 // provider (ADR-1502, ADR-1507). Stripe takes a restricted key (rk_live_ or
 // rk_test_) with write access to invoices and invoice items, Paddle an API
@@ -20,8 +24,9 @@ type PutBillingConnectionRequest struct {
 	SecretKey string `json:"secret_key"`
 	APIURL    string `json:"api_url,omitempty"`
 	// Collection is what the provider does with exported invoices
-	// (ADR-1311): none (drafts, the default), send (Stripe only) or charge
-	// (Stripe and Lago). DaysUntilDue applies to send; default 30.
+	// (ADR-1311): none (drafts, the default), send (Stripe, and Paddle for
+	// customers with an address, ADR-20261019100333) or charge (Stripe and
+	// Lago). DaysUntilDue applies to send; default 30.
 	Collection   string `json:"collection,omitempty"`
 	DaysUntilDue int    `json:"days_until_due,omitempty"`
 	// AutomaticTax has Stripe calculate tax on exported invoices (ADR-1313;
@@ -161,4 +166,15 @@ func (c *Client) ExportPlatformTenantStatementInvoice(ctx context.Context, tenan
 func (c *Client) GetPlatformTenantStatementInvoice(ctx context.Context, tenantID, statementID string) (StatementInvoiceExportResponse, error) {
 	var out StatementInvoiceExportResponse
 	return out, c.do(ctx, "GET", "/v1/account/platform-tenants/"+tenantID+"/usage-statements/"+statementID+"/invoice", nil, &out)
+}
+
+// BillingProviderKeyMaxBytes bounds a stored billing provider key; real keys
+// are ~110 bytes.
+const BillingProviderKeyMaxBytes = 512
+
+// BillingProviderKeyNamespace is the secretbox namespace an account's
+// billing provider key is sealed under; it binds the ciphertext to its
+// provider and account.
+func BillingProviderKeyNamespace(provider, accountID string) string {
+	return "gregale.billing." + provider + "." + accountID
 }

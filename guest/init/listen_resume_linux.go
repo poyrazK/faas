@@ -13,10 +13,13 @@ import (
 	"os"
 	"strings"
 	"sync/atomic"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/extension"
 	"github.com/onebox-faas/faas/pkg/guestmemproto"
+	"github.com/onebox-faas/faas/pkg/profileproto"
+	"github.com/onebox-faas/faas/pkg/resumetimingproto"
 	"github.com/onebox-faas/faas/pkg/runtimepolicyproto"
 	"golang.org/x/sys/unix"
 )
@@ -59,6 +62,12 @@ const (
 	// not confirm its userspace RNG reseed (ADR-687). vmmd cold-boots instead
 	// of serving a process that may replay the snapshot's random values.
 	VsockResumeAckUserspaceReseed = 15
+	// VsockExtensionAckUnavailable answers an extension event that no
+	// extension endpoint accepted (ADR-20261025150000). vmmd then stops sending
+	// per-request invoke events to this instance for
+	// extension.InvokeUnavailableBackoff. Older hosts read it as a NACK of a
+	// best-effort hook and only log it at debug level.
+	VsockExtensionAckUnavailable = 16
 	// VsockResumeCapUserspaceReseed follows an OK ack when the reseed
 	// barrier ran (ADR-687). vmmd refuses a restore without it, which is how
 	// snapshots taken by an older guest-init retire themselves. Hosts that
@@ -155,7 +164,7 @@ func listenResumeHook(log *slog.Logger, onResume ...func()) error {
 	}, nil, nil)
 }
 
-func listenResumeHookWithExtension(log *slog.Logger, onResume func(), onExtension func(extensionHookRequest), onCritical func() error, onCPULimit ...func(int) error) error {
+func listenResumeHookWithExtension(log *slog.Logger, onResume func(), onExtension func(extensionHookRequest) error, onCritical func() error, onCPULimit ...func(int) error) error {
 	fd, err := unix.Socket(unix.AF_VSOCK, unix.SOCK_STREAM|unix.SOCK_CLOEXEC, 0)
 	if err != nil {
 		return fmt.Errorf("vsock socket: %w", err)
@@ -202,7 +211,7 @@ func acceptResumeConnsWith(fd int, log *slog.Logger, accept func(int, int) (int,
 	}
 }
 
-func acceptResumeConnsWithExtension(fd int, log *slog.Logger, accept func(int, int) (int, unix.Sockaddr, error), onResume func(), onExtension func(extensionHookRequest), onCritical func() error, onCPULimit ...func(int) error) {
+func acceptResumeConnsWithExtension(fd int, log *slog.Logger, accept func(int, int) (int, unix.Sockaddr, error), onResume func(), onExtension func(extensionHookRequest) error, onCritical func() error, onCPULimit ...func(int) error) {
 	defer func() { _ = unix.Close(fd) }()
 	for {
 		raw, _, err := accept(fd, unix.SOCK_CLOEXEC)
@@ -227,7 +236,24 @@ func acceptResumeConnsWithExtension(fd int, log *slog.Logger, accept func(int, i
 // CloseWrite promptly through to the guest side.
 // runResumeHookFn is RunResumeHook behind a seam: the kernel reseed and clock
 // step need root, but the userspace reseed barrier after them does not.
-var runResumeHookFn = RunResumeHook
+var runResumeHookFn = runResumeHookTimed
+
+// resumeAckFrame is a successful resume's ack. A guest that holds the
+// ADR-687 contract follows it with a capability byte; that byte also carries
+// resumetimingproto.CapTimings and the timing frame comes last, where a host
+// that reads only the capability byte never sees it. A guest that does not
+// hold the contract sends the bare ack, exactly as before.
+func resumeAckFrame(reseedContract bool, timings resumetimingproto.Timings) []byte {
+	ack := []byte{VsockResumeAckOK}
+	if !reseedContract {
+		return ack
+	}
+	framed, err := resumetimingproto.AppendFrame([]byte{VsockResumeAckOK, VsockResumeCapUserspaceReseed | resumetimingproto.CapTimings}, timings)
+	if err != nil {
+		return append(ack, VsockResumeCapUserspaceReseed)
+	}
+	return framed
+}
 
 func handleResumeConn(f *os.File, log *slog.Logger, onResume ...func()) {
 	handleResumeConnWithExtension(f, log, func() {
@@ -240,7 +266,7 @@ func handleResumeConn(f *os.File, log *slog.Logger, onResume ...func()) {
 	}, nil, nil)
 }
 
-func handleResumeConnWithExtension(f *os.File, log *slog.Logger, onResume func(), onExtension func(extensionHookRequest), onCritical func() error, onCPULimit ...func(int) error) {
+func handleResumeConnWithExtension(f *os.File, log *slog.Logger, onResume func(), onExtension func(extensionHookRequest) error, onCritical func() error, onCPULimit ...func(int) error) {
 	defer func() { _ = f.Close() }()
 
 	var hdr [8]byte
@@ -249,6 +275,7 @@ func handleResumeConnWithExtension(f *os.File, log *slog.Logger, onResume func()
 		resumeDiag(fmt.Sprintf("resume: read header err=%v", err))
 		return
 	}
+	received := time.Now()
 	msgType := binary.BigEndian.Uint32(hdr[:4])
 	if msgType == VsockExtensionMsgType {
 		handleExtensionConn(f, log, hdr[4:], onExtension)
@@ -264,6 +291,10 @@ func handleResumeConnWithExtension(f *os.File, log *slog.Logger, onResume func()
 	}
 	if msgType == guestmemproto.MessageType {
 		handleMemoryStatsConn(f, log, hdr[4:])
+		return
+	}
+	if msgType == profileproto.CaptureMessageType {
+		handleProfileCaptureConn(f, log, hdr[4:])
 		return
 	}
 	if msgType != VsockResumeMsgType {
@@ -328,8 +359,9 @@ func handleResumeConnWithExtension(f *os.File, log *slog.Logger, onResume func()
 		}
 		entropy = decoded
 	}
+	timings := resumetimingproto.Timings{ReadUs: time.Since(received).Microseconds()}
 
-	if err := runResumeHookFn(req.HostTimeUnixNano, entropy); err != nil {
+	if err := runResumeHookFn(req.HostTimeUnixNano, entropy, &timings); err != nil {
 		// Keep ACK=1 as the generic NACK for malformed/unknown failures, but
 		// preserve the failing stage on the wire for vmmd diagnostics. Every
 		// non-zero value remains a fail-closed NACK to older hosts.
@@ -356,28 +388,34 @@ func handleResumeConnWithExtension(f *os.File, log *slog.Logger, onResume func()
 	// without a refactor that breaks the test fixture.
 	// ADR-687: the kernel is reseeded; now every registered workload process
 	// must reseed its userspace generators before the instance can serve.
-	if err := reseedRestoredWorkloads(); err != nil {
+	stage := time.Now()
+	stats, err := reseedRestoredWorkloads()
+	if err != nil {
 		log.Error("vsock resume: userspace reseed failed", "err", err)
 		resumeDiag(fmt.Sprintf("resume: userspace reseed err=%v", err))
 		_, _ = f.Write([]byte{VsockResumeAckUserspaceReseed})
 		return
 	}
+	timings.UserspaceReseedUs = time.Since(stage).Microseconds()
+	timings.ReseedClients = stats.Clients
+	timings.ReseedSlowestUs, timings.ReseedSlowestRuntime = stats.Slowest.Microseconds(), stats.SlowestRuntime
+	stage = time.Now()
 	resumeGuestProfiles()
+	timings.ProfilesUs = time.Since(stage).Microseconds()
 	SetResumeTraceparent(req.Traceparent)
 	// The userspace reseed above runs first, so an application
 	// after_restore callback never sees the snapshot's random state.
 	if onCritical != nil {
+		stage = time.Now()
 		if err := onCritical(); err != nil {
 			log.Warn("application after_restore hook failed", "err", err)
 			_, _ = f.Write([]byte{VsockResumeAckAfterRestore})
 			return
 		}
+		timings.AfterRestoreUs = time.Since(stage).Microseconds()
 	}
-	ackFrame := []byte{VsockResumeAckOK}
-	if restoreReseedContractHolds() {
-		ackFrame = append(ackFrame, VsockResumeCapUserspaceReseed)
-	}
-	_, _ = f.Write(ackFrame)
+	timings.TotalUs = time.Since(received).Microseconds()
+	_, _ = f.Write(resumeAckFrame(restoreReseedContractHolds(), timings))
 	if warmBuilderEnabled.Load() {
 		signalWarmBuilderResume()
 	}
@@ -488,7 +526,7 @@ func handleAppCPULimitConn(f *os.File, log *slog.Logger, lengthHeader []byte, ap
 	_, _ = f.Write([]byte{VsockResumeAckOK})
 }
 
-func handleExtensionConn(f *os.File, log *slog.Logger, lengthHeader []byte, onExtension func(extensionHookRequest)) {
+func handleExtensionConn(f *os.File, log *slog.Logger, lengthHeader []byte, onExtension func(extensionHookRequest) error) {
 	bodyLen := binary.BigEndian.Uint32(lengthHeader)
 	if bodyLen == 0 || bodyLen > uint32(VsockExtensionMaxBodyBytes) {
 		log.Warn("vsock extension body length out of range", "len", bodyLen, "max", VsockExtensionMaxBodyBytes)
@@ -517,8 +555,9 @@ func handleExtensionConn(f *os.File, log *slog.Logger, lengthHeader []byte, onEx
 			return
 		}
 	}
-	if onExtension != nil {
-		onExtension(req)
+	ack := byte(VsockResumeAckOK)
+	if onExtension != nil && extension.IsUnavailable(onExtension(req)) {
+		ack = VsockExtensionAckUnavailable
 	}
-	_, _ = f.Write([]byte{VsockResumeAckOK})
+	_, _ = f.Write([]byte{ack})
 }

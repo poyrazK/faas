@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"encoding/json"
@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/devbridge"
 )
@@ -19,7 +20,7 @@ import (
 // adr: 379 — CLI inventory/status/revoke use account control reads without
 // requiring or printing laptop credentials; doctor always revokes its probe.
 func TestDevBridgeControlCommands(t *testing.T) {
-	stdout, restore := captureStdout(t)
+	stdout, restore := main.CaptureStdout(t)
 	defer restore()
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	// macOS ignores XDG_CONFIG_HOME; HOME isolates os.UserConfigDir there.
@@ -60,31 +61,31 @@ func TestDevBridgeControlCommands(t *testing.T) {
 	t.Setenv("FAAS_API", server.URL)
 	t.Setenv("FAAS_TOKEN", "test-api-token")
 	for _, args := range [][]string{{"list"}, {"status", session.ID}, {"revoke", session.ID}} {
-		if code := cmdDevBridge(args); code != 0 {
+		if code := main.CmdDevBridge(args); code != 0 {
 			t.Fatalf("%v returned %d", args, code)
 		}
 	}
-	oldJSON := jsonOutput
-	defer func() { jsonOutput = oldJSON }()
-	jsonOutput = true
-	if code := cmdDevBridge([]string{"status", session.ID}); code != 0 {
+	oldJSON := (*main.JsonOutput)
+	defer func() { (*main.JsonOutput) = oldJSON }()
+	(*main.JsonOutput) = true
+	if code := main.CmdDevBridge([]string{"status", session.ID}); code != 0 {
 		t.Fatalf("JSON status: %d", code)
 	}
-	jsonOutput = oldJSON
+	(*main.JsonOutput) = oldJSON
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer func() { _ = listener.Close() }()
 	port := strconv.Itoa(listener.Addr().(*net.TCPAddr).Port)
-	if code := cmdDevBridge([]string{"doctor", "payments", "--local-port", port}); code != 0 {
+	if code := main.CmdDevBridge([]string{"doctor", "payments", "--local-port", port}); code != 0 {
 		t.Fatalf("doctor returned %d", code)
 	}
 	if revokes.Load() != 2 {
 		t.Fatalf("doctor leaked its session: %d revocations", revokes.Load())
 	}
 	cleanupFails.Store(true)
-	if code := cmdDevBridge([]string{"doctor", "payments", "--local-port", port}); code == 0 {
+	if code := main.CmdDevBridge([]string{"doctor", "payments", "--local-port", port}); code == 0 {
 		t.Fatal("doctor cleanup failure reported success")
 	}
 	for _, want := range []string{"connected", session.ID, "Bridge revoked", "Relay: reachable", "\"activity\""} {

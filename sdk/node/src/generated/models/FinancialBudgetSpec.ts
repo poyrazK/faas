@@ -12,24 +12,27 @@ export type FinancialBudgetSpec = {
    */
   name: string;
   scope: FinancialBudgetScope;
-  currency: 'EUR';
   /**
-   * Sorted meter names; strict mode covers compute only.
+   * New writes require USD; EUR is retained only for historical policy responses.
    */
-  meters: Array<'compute' | 'egress'>;
+  currency: 'USD' | 'EUR';
+  /**
+   * Sorted meter names; strict account net_usage may combine compute and egress under one paid limit; app/job strict covers compute only. object_storage is priced from the live object-storage estimate and only monitored account budgets may select it.
+   */
+  meters: Array<'compute' | 'egress' | 'object_storage'>;
   /**
    * Net usage after the shared account allowance or gross usage before it; strict resource scopes require gross usage.
    */
   basis: 'net_usage' | 'gross_usage';
   limit_millicents: number;
   /**
-   * Increasing nonnegative thresholds at or below the limit.
+   * Increasing nonnegative thresholds at or below the limit. Strict compute requires an empty array; configure a separate monitored policy for alerts.
    */
   notify_millicents: Array<number>;
   mode: 'monitored' | 'strict';
   action: 'notify' | 'reject_traffic' | 'suspend_background' | 'stop_previews' | 'suspend_workloads';
   /**
-   * Notify uses zero; stopping targets drain before the deadline.
+   * Notify and strict app compute use zero; monitored stopping targets drain before the deadline.
    */
   drain_seconds: number;
   resume_rule: 'manual' | 'next_period';

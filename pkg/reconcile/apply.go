@@ -134,7 +134,8 @@ func (s *Service) applyActions(
 				app = ApplyScannedWorkloadToApp(app, action.Workload, availableServices)
 			}
 			mutations = append(mutations, state.ProjectReconcileMutation{Op: action.Op, App: app,
-				SetPlatformTenantRequired: action.Workload.PlatformTenantRequired != nil})
+				SetPlatformTenantRequired: action.Workload.PlatformTenantRequired != nil,
+				SetResources:              !action.Workload.Resources.IsZero()})
 		}
 		var desiredCrons []state.ProjectReconcileCron
 		if cronSpecs != nil {
@@ -325,7 +326,13 @@ func (s *Service) applyUpdate(
 	manifest.AllowedServiceCallScopes = a.Workload.AllowedServiceCallScopes
 	manifest.Ports = portsWithInternal(manifest.Ports, a.Workload.InternalPorts)
 	manifest.BuildDockerfile = a.Workload.Dockerfile
+	manifest.DockerfileBuild = a.Workload.DockerfileBuild.Clone()
+	manifest.BuildGoCommand = a.Workload.GoCommand
 	applyProjectImage(&manifest, a.Workload)
+	resourced := a.App
+	resourced.Manifest = manifest
+	declared := applyComposeResources(&resourced, a.Workload)
+	manifest = resourced.Manifest
 	workloadClass := workloadClassFromScan(a.Workload)
 	params := state.UpdateAppParams{
 		RootDir:                   &rootDir,
@@ -335,6 +342,9 @@ func (s *Service) applyUpdate(
 		Manifest:                  &manifest,
 		PlatformTenantRequired:    a.Workload.PlatformTenantRequired,
 		SetPlatformTenantRequired: a.Workload.PlatformTenantRequired != nil,
+	}
+	if declared {
+		params.RAMMB, params.CPUMillicores, params.MaxConcurrency = &resourced.RAMMB, &resourced.CPUMillicores, &resourced.MaxConcurrency
 	}
 	updated, err := s.Store.UpdateApp(ctx, a.App.ID, params)
 	if err != nil {
@@ -405,12 +415,21 @@ func workloadToDraftApp(project state.Project, w reposcan.Workload, startCmd str
 			PreAuthRateLimit: api.DefaultPreAuthRateLimit(plan),
 
 			BuildDockerfile: w.Dockerfile,
+			DockerfileBuild: w.DockerfileBuild.Clone(),
+			BuildGoCommand:  w.GoCommand,
 		},
 		RequireAuthn:           plan.RequireAuthnDefault(),
 		PublicAuthMode:         plan.PublicAuthModeDefault(),
 		PlatformTenantRequired: w.PlatformTenantRequired != nil && *w.PlatformTenantRequired,
+		// Create-only, like the auth defaults: an existing app keeps the
+		// visibility its owner set.
+		Visibility: reposcan.NewWorkloadVisibility(w),
 	}
 	applyProjectImage(&app.Manifest, w)
+	applyComposeResources(&app, w)
+	if app.RAMMB == 0 {
+		app.RAMMB = api.ProjectWorkloadDefaultRAMMB
+	}
 	return app
 }
 
@@ -438,7 +457,10 @@ func ApplyScannedWorkloadToApp(app state.App, w reposcan.Workload, available map
 	app.Manifest.AllowedServiceCallScopes = w.AllowedServiceCallScopes
 	app.Manifest.Ports = portsWithInternal(app.Manifest.Ports, w.InternalPorts)
 	app.Manifest.BuildDockerfile = w.Dockerfile
+	app.Manifest.DockerfileBuild = w.DockerfileBuild.Clone()
+	app.Manifest.BuildGoCommand = w.GoCommand
 	applyProjectImage(&app.Manifest, w)
+	applyComposeResources(&app, w)
 	return app
 }
 
@@ -446,14 +468,21 @@ func applyProjectImage(manifest *state.AppManifest, w reposcan.Workload) {
 	manifest.ProjectImage = w.Image
 	manifest.ProjectImageCommand = nil
 	manifest.ProjectImagePort = 0
-	manifest.ProjectImageHealthcheck = nil
+	manifest.ProjectImageProcess = nil
 	if manifest.ExecutionMode == "" {
 		manifest.ExecutionMode = scanExecutionMode(w)
 	}
+	// A Compose healthcheck applies to built images too (ADR-20261019195000),
+	// and so do the process overrides other than entrypoint, which the scan
+	// folds into a built service's command (ADR-20261022160000).
+	manifest.ProjectImageHealthcheck = w.ImageHealthcheck.Clone()
+	manifest.ProjectImageProcess = w.ImageProcess.Clone()
+	// Compose secrets become files for built and prebuilt images alike
+	// (ADR-20261023090000).
+	manifest.ProjectSecretFiles = api.CloneSecretFiles(w.SecretFiles)
 	if w.Image == "" {
 		return
 	}
-	manifest.ProjectImageHealthcheck = w.ImageHealthcheck.Clone()
 	manifest.ProjectImageCommand = append([]string(nil), w.Command...)
 	if w.CommandShell && len(w.Command) > 0 {
 		manifest.ProjectImageCommand = []string{"/bin/sh", "-c", w.Command[0]}

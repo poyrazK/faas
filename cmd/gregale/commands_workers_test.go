@@ -1,6 +1,6 @@
 // commands_workers_test.go — Tests for `gregale workers <list|status|logs|scale>` CLI surface.
 
-package main
+package main_test
 
 import (
 	"encoding/json"
@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -27,11 +28,11 @@ func TestCmdWorkers_NoArgsEmptyList(t *testing.T) {
 
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "test-token")
-	resetJSONOutput()
-	t.Cleanup(resetJSONOutput)
+	main.ResetJSONOutput()
+	t.Cleanup(main.ResetJSONOutput)
 
-	stdout, restore := captureStdout(t)
-	code := cmdWorkers([]string{})
+	stdout, restore := main.CaptureStdout(t)
+	code := main.CmdWorkers([]string{})
 	restore()
 
 	if code != 0 {
@@ -44,8 +45,8 @@ func TestCmdWorkers_NoArgsEmptyList(t *testing.T) {
 }
 
 func TestCmdWorkers_Help(t *testing.T) {
-	stdout, restore := captureStdout(t)
-	code := cmdWorkers([]string{"--help"})
+	stdout, restore := main.CaptureStdout(t)
+	code := main.CmdWorkers([]string{"--help"})
 	restore()
 
 	if code != 0 {
@@ -118,11 +119,11 @@ func TestCmdWorkersList_FiltersNonWorkersAndFormatsTable(t *testing.T) {
 
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "test-token")
-	resetJSONOutput()
-	t.Cleanup(resetJSONOutput)
+	main.ResetJSONOutput()
+	t.Cleanup(main.ResetJSONOutput)
 
-	stdout, restore := captureStdout(t)
-	code := cmdWorkersList([]string{})
+	stdout, restore := main.CaptureStdout(t)
+	code := main.CmdWorkersList([]string{})
 	restore()
 
 	if code != 0 {
@@ -191,19 +192,19 @@ func TestCmdWorkersList_JSON(t *testing.T) {
 
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "test-token")
-	resetJSONOutput()
-	t.Cleanup(resetJSONOutput)
-	jsonOutput = true
+	main.ResetJSONOutput()
+	t.Cleanup(main.ResetJSONOutput)
+	(*main.JsonOutput) = true
 
-	stdout, restore := captureStdout(t)
-	code := cmdWorkersList([]string{})
+	stdout, restore := main.CaptureStdout(t)
+	code := main.CmdWorkersList([]string{})
 	restore()
 
 	if code != 0 {
 		t.Fatalf("cmdWorkersList (json) = %d, want 0", code)
 	}
 
-	var res []WorkerPoolSummary
+	var res []main.WorkerPoolSummary
 	if err := json.Unmarshal(stdout.Bytes(), &res); err != nil {
 		t.Fatalf("invalid json output: %v, raw: %s", err, stdout.String())
 	}
@@ -276,12 +277,12 @@ func TestCmdWorkersStatus_DetailAndDLQWarning(t *testing.T) {
 
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "test-token")
-	resetJSONOutput()
-	t.Cleanup(resetJSONOutput)
+	main.ResetJSONOutput()
+	t.Cleanup(main.ResetJSONOutput)
 
-	stdout, restore := captureStdout(t)
-	code, stderr := runWithStderr(t, func() int {
-		return cmdWorkersStatus([]string{"billing-worker"})
+	stdout, restore := main.CaptureStdout(t)
+	code, stderr := main.RunWithStderr(t, func() int {
+		return main.CmdWorkersStatus([]string{"billing-worker"})
 	})
 	restore()
 
@@ -305,7 +306,7 @@ func TestCmdWorkersStatus_DetailAndDLQWarning(t *testing.T) {
 	if !strings.Contains(out, "Broker:     kafka") {
 		t.Errorf("missing broker line; got: %s", out)
 	}
-	if !strings.Contains(out, "DLQ:        12 dead-letter messages ⚠️") {
+	if !strings.Contains(out, "DLQ:        12 dead-letter messages (needs attention)") {
 		t.Errorf("missing DLQ warning in status; got: %s", out)
 	}
 	if !strings.Contains(out, "0192134a-0001-7000-8000-000000000001") {
@@ -336,11 +337,11 @@ func TestCmdWorkersStatus_RejectsNonWorker(t *testing.T) {
 
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "test-token")
-	resetJSONOutput()
-	t.Cleanup(resetJSONOutput)
+	main.ResetJSONOutput()
+	t.Cleanup(main.ResetJSONOutput)
 
-	code, stderr := runWithStderr(t, func() int {
-		return cmdWorkersStatus([]string{"web-app"})
+	code, stderr := main.RunWithStderr(t, func() int {
+		return main.CmdWorkersStatus([]string{"web-app"})
 	})
 
 	if code != 1 {
@@ -400,11 +401,11 @@ func TestCmdWorkersScale_UpdatesParameters(t *testing.T) {
 
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "test-token")
-	resetJSONOutput()
-	t.Cleanup(resetJSONOutput)
+	main.ResetJSONOutput()
+	t.Cleanup(main.ResetJSONOutput)
 
-	stdout, restore := captureStdout(t)
-	code := cmdWorkersScale([]string{
+	stdout, restore := main.CaptureStdout(t)
+	code := main.CmdWorkersScale([]string{
 		"my-worker",
 		"--min", "2",
 		"--max", "50",
@@ -472,11 +473,11 @@ func TestCmdWorkersScale_CustomMetricUpdatesScalingPolicy(t *testing.T) {
 	t.Cleanup(srv.Close)
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "test-token")
-	resetJSONOutput()
-	t.Cleanup(resetJSONOutput)
+	main.ResetJSONOutput()
+	t.Cleanup(main.ResetJSONOutput)
 
-	stdout, restore := captureStdout(t)
-	code := cmdWorkersScale([]string{"my-worker", "--metric", "custom", "--name", "mcp_tasks_outstanding", "--target", "4"})
+	stdout, restore := main.CaptureStdout(t)
+	code := main.CmdWorkersScale([]string{"my-worker", "--metric", "custom", "--name", "mcp_tasks_outstanding", "--target", "4"})
 	restore()
 	if code != 0 {
 		t.Fatalf("cmdWorkersScale(custom) = %d, want 0", code)
@@ -517,12 +518,12 @@ func TestCmdWorkersScale_RejectsInvalidBounds(t *testing.T) {
 
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "test-token")
-	resetJSONOutput()
-	t.Cleanup(resetJSONOutput)
+	main.ResetJSONOutput()
+	t.Cleanup(main.ResetJSONOutput)
 
 	// max < min
-	code, stderr := runWithStderr(t, func() int {
-		return cmdWorkersScale([]string{"my-worker", "--min", "10", "--max", "2"})
+	code, stderr := main.RunWithStderr(t, func() int {
+		return main.CmdWorkersScale([]string{"my-worker", "--min", "10", "--max", "2"})
 	})
 	if code != 1 {
 		t.Fatalf("cmdWorkersScale(max < min) = %d, want 1", code)
@@ -532,8 +533,8 @@ func TestCmdWorkersScale_RejectsInvalidBounds(t *testing.T) {
 	}
 
 	// invalid metric
-	code, stderr = runWithStderr(t, func() int {
-		return cmdWorkersScale([]string{"my-worker", "--metric", "invalid_metric"})
+	code, stderr = main.RunWithStderr(t, func() int {
+		return main.CmdWorkersScale([]string{"my-worker", "--metric", "invalid_metric"})
 	})
 	if code != 1 {
 		t.Fatalf("cmdWorkersScale(invalid metric) = %d, want 1", code)
@@ -544,16 +545,16 @@ func TestCmdWorkersScale_RejectsInvalidBounds(t *testing.T) {
 
 	// A newly selected custom metric must carry an explicit target; the old
 	// queue target is in unrelated units and should not silently be reused.
-	code, stderr = runWithStderr(t, func() int {
-		return cmdWorkersScale([]string{"my-worker", "--metric", "custom", "--name", "mcp_tasks_outstanding"})
+	code, stderr = main.RunWithStderr(t, func() int {
+		return main.CmdWorkersScale([]string{"my-worker", "--metric", "custom", "--name", "mcp_tasks_outstanding"})
 	})
 	if code != 1 || !strings.Contains(stderr, "--target is required") {
 		t.Errorf("custom metric without a target = %d, stderr %q", code, stderr)
 	}
 
 	// invalid stop signal
-	code, stderr = runWithStderr(t, func() int {
-		return cmdWorkersScale([]string{"my-worker", "--stop-signal", "SIGKILL"})
+	code, stderr = main.RunWithStderr(t, func() int {
+		return main.CmdWorkersScale([]string{"my-worker", "--stop-signal", "SIGKILL"})
 	})
 	if code != 1 {
 		t.Fatalf("cmdWorkersScale(invalid signal) = %d, want 1", code)
@@ -583,11 +584,11 @@ func TestCmdWorkersLogs_RejectsNonWorker(t *testing.T) {
 
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "test-token")
-	resetJSONOutput()
-	t.Cleanup(resetJSONOutput)
+	main.ResetJSONOutput()
+	t.Cleanup(main.ResetJSONOutput)
 
-	code, stderr := runWithStderr(t, func() int {
-		return cmdWorkersLogs([]string{"web-app"})
+	code, stderr := main.RunWithStderr(t, func() int {
+		return main.CmdWorkersLogs([]string{"web-app"})
 	})
 	if code != 1 {
 		t.Fatalf("cmdWorkersLogs(non-worker) = %d, want 1", code)
@@ -614,9 +615,78 @@ func TestWorkerReplicaBoundsMirrorScheduler(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			lo, hi := workerReplicaBounds(tt.app)
+			lo, hi := main.WorkerReplicaBounds(tt.app)
 			if lo != tt.wantLo || hi != tt.wantHi {
 				t.Fatalf("bounds = %d..%d, want %d..%d", lo, hi, tt.wantLo, tt.wantHi)
+			}
+		})
+	}
+}
+
+// `gregale workers list <app>` once ignored its argument and listed every
+// worker pool on the account.
+func TestCmdWorkersList_AppArgumentSelectsOnePool(t *testing.T) {
+	var instanceReads []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.URL.Path == "/v1/apps":
+			_ = json.NewEncoder(w).Encode([]api.AppResponse{
+				{ID: "app-orders", Slug: "order-worker", Status: "running", Manifest: api.AppManifest{ExecutionMode: api.ExecutionModeWorker}},
+				{ID: "app-emails", Slug: "email-worker", Status: "running", Manifest: api.AppManifest{ExecutionMode: api.ExecutionModeWorker}},
+				{ID: "app-web", Slug: "web-api", Status: "running", Manifest: api.AppManifest{ExecutionMode: api.ExecutionModeRequest}},
+			})
+		case strings.HasSuffix(r.URL.Path, "/instances"):
+			instanceReads = append(instanceReads, r.URL.Path)
+			_, _ = io.WriteString(w, `[]`)
+		case r.URL.Path == "/v1/triggers":
+			_, _ = io.WriteString(w, `[]`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	t.Setenv("FAAS_API", srv.URL)
+	t.Setenv("FAAS_TOKEN", "test-token")
+	main.ResetJSONOutput()
+	t.Cleanup(main.ResetJSONOutput)
+
+	for _, tc := range []struct {
+		name     string
+		args     []string
+		wantCode int
+		want     []string
+		reject   []string
+	}{
+		{name: "worker pool", args: []string{"email-worker"}, want: []string{"email-worker"}, reject: []string{"order-worker", "web-api"}},
+		{name: "no argument lists every pool", args: nil, want: []string{"email-worker", "order-worker"}, reject: []string{"web-api"}},
+		{name: "not a worker", args: []string{"web-api"}, wantCode: 1, want: []string{"web-api", "not a worker pool"}},
+		{name: "unknown app", args: []string{"missing"}, wantCode: 1, want: []string{"missing", "not found"}},
+		{name: "two apps", args: []string{"email-worker", "order-worker"}, wantCode: 1, want: []string{"usage: gregale workers [list] [<app> | --app <app>]"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			instanceReads = nil
+			stdout, restoreStdout := main.CaptureStdout(t)
+			stderr, restoreStderr := main.CaptureStderr(t)
+			code := main.CmdWorkersList(tc.args)
+			restoreStdout()
+			restoreStderr()
+			out := strings.ToLower(stdout.String() + stderr.String())
+			if code != tc.wantCode {
+				t.Fatalf("code = %d, want %d; output: %s", code, tc.wantCode, out)
+			}
+			for _, want := range tc.want {
+				if !strings.Contains(out, strings.ToLower(want)) {
+					t.Errorf("output lacks %q: %s", want, out)
+				}
+			}
+			for _, reject := range tc.reject {
+				if strings.Contains(out, reject) {
+					t.Errorf("output lists %q: %s", reject, out)
+				}
+			}
+			if len(tc.args) == 1 && len(instanceReads) > 1 {
+				t.Errorf("one selected pool read instances of %v", instanceReads)
 			}
 		})
 	}

@@ -38,6 +38,15 @@ Help is local and works without login or a valid saved connection. Shell
 completion, man pages, and the [CLI reference](cli-reference.md) always retain
 all options. `--all` expands help; it does not change deployment or app settings.
 
+Help, completion, man pages and command suggestions show the commands your
+account can use. Logged in, the CLI reads which features are released to your
+account (`gregale capabilities`) and keeps the answer for an hour; logged out,
+it shows generally available and beta commands. A command for a feature that
+is not released to your account answers like an unknown command. Ask support
+to join a preview, or use `gregale previews` for features open to sign-up.
+Regenerate shell completion after a preview is released to you. The
+[CLI reference](cli-reference.md) documents every command.
+
 Put the global `--json` (or `-j`) flag before a command's `--` separator.
 Arguments after the separator belong to the app command, including flags such
 as `--help` and `--json`:
@@ -104,15 +113,16 @@ Upgrading does not move or replace existing credentials.
 
 `profile use <name>` saves the active connection. The prefix option
 `gregale --profile <name> <command>` selects a connection for that command only.
-Put it **before the command**: some commands have their own `--profile` option
-for resource or test settings, and those options retain their meaning.
+Put it **before the command**: after the command, `--profile` keeps that
+command's own meaning, such as a test profile or the deprecated spelling of the
+RAM/CPU size (use `--size` instead).
 Arguments after `--` are forwarded unchanged.
 
 For example, this previews a deployment using the `staging` connection and the
-`small` RAM/CPU resource profile:
+`small` RAM/CPU size:
 
 ```bash
-gregale --profile staging deploy --profile small --dry-run
+gregale --profile staging deploy --size small --dry-run
 ```
 
 `FAAS_API` and `FAAS_TOKEN` still override the selected connection's endpoint

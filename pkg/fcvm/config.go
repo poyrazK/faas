@@ -104,6 +104,10 @@ type Machine struct {
 	VcpuCount  int  `json:"vcpu_count"`
 	MemSizeMib int  `json:"mem_size_mib"`
 	Smt        bool `json:"smt"`
+	// CPUTemplate is the static Firecracker CPU template, e.g. "T2CL"
+	// (ADR-20261024225612). Empty omits the field: the guest sees the
+	// host's CPUID. JailerVMM.WithCPUTemplate sets it at boot.
+	CPUTemplate string `json:"cpu_template,omitempty"`
 }
 
 type NetIface struct {
@@ -267,6 +271,18 @@ type ColdBootSpec struct {
 	// ExecutionMode constrains the host-derived characterization class. Empty
 	// preserves the legacy inference contract for older vmmd callers.
 	ExecutionMode string
+	// ProvenWorker boots a declared worker whose deployment already passed
+	// the full characterization window on this node with api.ProvenWorkerBootArg,
+	// so guest-init reports it after api.ProvenWorkerCharacterizationWindow
+	// (ADR-20261018101500).
+	ProvenWorker bool
+	// FunctionRunner boots a function's runner (WakeRequest.Runtime is set
+	// only for functions) with api.FunctionRunnerBootArg so guest-init skips
+	// characterization's L7 probes, which would run the customer's handler.
+	FunctionRunner bool
+	// WorkerPushDelivery lets a worker-mode app with a push queue binding
+	// bind its private delivery port at startup (WakeRequest field).
+	WorkerPushDelivery bool
 	// SkipReady suppresses readiness probing for builder VMs. Builder guests
 	// run a finite build and power off instead of binding port 8080.
 	// Networkless execution guests use the vsock execution protocol instead of
@@ -363,6 +379,11 @@ type JobColdBootSpec struct {
 	TaskIndex int
 	// Interactive holds the command until one client attaches (ADR-1330).
 	Interactive *JobInteractive
+	// ImageProcess runs the command with the image's ENV, USER and WORKDIR;
+	// ProcessUser and ProcessWorkdir override USER and WORKDIR (ADR-1790).
+	ImageProcess   bool
+	ProcessUser    string
+	ProcessWorkdir string
 }
 
 // BuildColdBootConfig assembles the Firecracker config for a cold boot. MMDS is
@@ -440,6 +461,12 @@ func BuildColdBootConfig(s ColdBootSpec, slot int) VMConfig {
 	bootArgs := withGuestTimer(coldBootArgs)
 	if s.Networkless {
 		bootArgs = withGuestTimer(executionBootArgs)
+	}
+	if s.ProvenWorker && s.ExecutionMode == api.ExecutionModeWorker {
+		bootArgs = strings.TrimSpace(bootArgs) + " " + api.ProvenWorkerBootArg
+	}
+	if s.FunctionRunner && !s.Networkless {
+		bootArgs = strings.TrimSpace(bootArgs) + " " + api.FunctionRunnerBootArg
 	}
 	return VMConfig{
 		BootSource:        BootSource{KernelImagePath: s.KernelKey, BootArgs: bootArgs},

@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"encoding/json"
@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/routecontract"
 )
 
@@ -36,7 +37,7 @@ func TestRoutesContractCheckLocalJSONAndDriftGate(t *testing.T) {
 		t.Fatal(err)
 	}
 	args := []string{"routes", "contract", "check", "my-api", "--openapi", openapiPath, "--base", "HEAD", "--head", "HEAD", "--path", dir, "--fail-on-drift", "--json"}
-	if code := run(args); code != 1 {
+	if code := main.Run(args); code != 1 {
 		t.Fatalf("confirmed drift exit=%d output=%s", code, out.String())
 	}
 	var report routecontract.Report
@@ -63,7 +64,7 @@ func TestRoutesContractCheckLocalJSONAndDriftGate(t *testing.T) {
 	}
 	incompleteArgs := []string{"routes", "contract", "check", "--openapi", openapiPath, "--base", "HEAD", "--path", dir, "--fail-on-drift", "--json"}
 	out.Reset()
-	if code := run(incompleteArgs); code != 0 {
+	if code := main.Run(incompleteArgs); code != 0 {
 		t.Fatalf("incomplete source was treated as confirmed drift: exit=%d output=%s", code, out.String())
 	}
 	if err := json.Unmarshal(out.Bytes(), &report); err != nil || report.Outcome != "incomplete" || report.Summary.Unknown == 0 || report.Summary.SourceOnly != 0 || report.Summary.ContractOnly != 0 {
@@ -71,7 +72,7 @@ func TestRoutesContractCheckLocalJSONAndDriftGate(t *testing.T) {
 	}
 	incompleteArgs = append(incompleteArgs[:len(incompleteArgs)-2], "--fail-on-incomplete", "--json")
 	out.Reset()
-	if code := run(incompleteArgs); code != 1 {
+	if code := main.Run(incompleteArgs); code != 1 {
 		t.Fatalf("--fail-on-incomplete exit=%d output=%s", code, out.String())
 	}
 }
@@ -80,7 +81,7 @@ func TestRenderRouteContractEscapesMarkdownAndControlContent(t *testing.T) {
 	out := captureImpactOutput(t)
 	report := routecontract.Report{App: "api\x1b[31m", Outcome: "drift", Status: "complete", Framework: "fastapi", OpenAPIFile: "spec|x.yaml",
 		Routes: []routecontract.Finding{{Method: "GET", ContractPath: "/[link](https://invalid)", Status: "contract_only", Reason: "<script>\nunknown"}}}
-	renderRouteContract(out, report, "markdown")
+	main.RenderRouteContract(out, report, "markdown")
 	if containsControl(out.String()) || containsAny(out.String(), "<script>", "[link](", "spec|x.yaml") {
 		t.Fatalf("Markdown rendering did not sanitize input: %s", out.String())
 	}

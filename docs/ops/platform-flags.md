@@ -1,0 +1,477 @@
+# Platform flags
+
+Platform flags release a Gregale platform feature to selected accounts
+without a deploy or a restart (ADR-1700). Use them for previews, canaries and
+staged rollouts: "turn the AI gateway on for these three design partners",
+"release customer Flags to 10% of Pro accounts", "switch it off everywhere
+now".
+
+They are not customer Flags (`docs/flags.md`), which a customer uses to
+release their own application's behavior to their own end users.
+
+## What a flag is
+
+Each flag is declared in `pkg/platformflags/catalog.go` and stored as a hot
+runtime-configuration row, `platform_flag.<key>`. Its value is a definition:
+
+```json
+{
+  "enabled": true,
+  "default": false,
+  "rules": [
+    { "id": "denied-accounts", "accounts": ["…uuid…"], "value": false },
+    { "id": "accounts", "accounts": ["…uuid…", "…uuid…"], "value": true },
+    { "id": "partners", "group": "design-partners", "value": true },
+    { "id": "rollout", "plans": ["pro", "scale"], "rollout": 1000, "value": true }
+  ]
+}
+```
+
+- `enabled` is the **kill switch**. `false` turns the feature off for every
+  account, whatever the rules or default say.
+- Rules run in order; the **first match decides**. `accounts`, `orgs`,
+  `group`, `plans` and `rollout` combine with AND. A rule needs at least one
+  of them and an explicit `value`, so a rule can deny as well as allow.
+- `orgs` targets companies (ADR 20261021080640). It matches the organization
+  a request acts under:
+  - the active organization (`/v1/orgs/{slug}/…`, `X-Active-Org`);
+  - the company project, app or managed Postgres database being used;
+  - the organization an API key belongs to.
+
+  The same person acting outside the company doesn't match. Use `accounts`
+  to target a person.
+- Not every flag can use every attribute. `gregalectl flags show` prints the
+  flag's `attributes`. A write that uses any other attribute is refused with
+  `409`, because that rule would never match where the flag is decided.
+  - `ai_gateway` refuses `orgs`, because outboundd doesn't know the calling
+    app's organization.
+  - `live_queries` refuses `plans` and `orgs`, because the realtime path
+    knows only the account.
+- `rollout` is in basis points of the accounts the rule's other constraints
+  admit: `1000` is 10%, `10000` is all. The bucket is a stable hash of the
+  flag key and account, so widening a rollout keeps every account already in
+  it.
+- `starts_at` and `ends_at` (RFC 3339, stored to the second in UTC) give a
+  rule a **schedule**: outside its window the rule is skipped, as if it were
+  absent. Either bound may be left out, and a rule may have a window and no
+  other constraint ("everyone from Monday 09:00 UTC"). The inspector names a
+  scheduled rule that would have matched but is not yet started or has ended.
+- An account no rule matches gets its **self-serve opt-in**, if it or its
+  company joined the preview (see [Self-serve previews](#self-serve-previews)),
+  and otherwise `default`.
+- Accounts are account UUIDs. Groups live in one shared row,
+  `platform_flag_groups`, so a list such as `design-partners` is maintained
+  once for every flag.
+
+A flag decides **release, never entitlement**. A Free account included by a
+flag still cannot use a capability its plan lacks; the inspector reports both.
+
+## Capability flags
+
+Every product capability has a flag (ADR-20261023115741). The hand-written
+flags in the table below release their capability; every other capability in
+`pkg/productcap/catalog.json` gets a generated flag whose key is its id with
+`-` replaced by `_` (`realtime`, `managed_postgres`, `route_insights`, …).
+`gregalectl flags list` shows them all.
+
+- **Default from the tier.** GA and beta capabilities are on for every
+  account. Preview and internal capabilities keep the kill switch on and are
+  off by default, so you release one with an `accounts`, `orgs`, `group`,
+  `plans` or `rollout` rule.
+- **What off means.** apid answers the capability's routes as if they did
+  not exist: `404 no such API route` under `/v1`, a plain 404 elsewhere, and
+  404 instead of 405 for a wrong method. With the kill switch off this happens
+  before authentication; otherwise it is decided per account. Dashboard links
+  to the capability disappear, and `GET /v1/capabilities` lists it as
+  unavailable.
+- **Core capabilities.** Sign-in, API keys, apps, billing, GDPR export and
+  deletion, the status page, docs, the CLI, the dashboard, the OpenAPI spec
+  and notification emails are core. Turning a core flag's kill switch or
+  default off is refused unless the write carries `--force`.
+- **Sub-features.** Large capabilities are split into sub-features with
+  their own flags (`parent=` in `gregalectl flags list`): for example
+  `realtime` has `realtime_channels`, `realtime_push`, `realtime_workers`,
+  `realtime_access`, `realtime_tickets` and more. A sub-feature is released
+  only while its parent is released too, so switching a parent off hides every
+  sub-feature under it.
+- **Always-on capabilities** (Firecracker isolation, scale-to-zero, the CLI,
+  the SDKs) have no flag.
+- **Enforcement.** `enforcement=routes` means apid hides the capability's
+  routes; `settings` means apid refuses the app fields, edge rule kinds,
+  runtimes, gregale.yaml blocks or wildcard domains that turn it on (with
+  `403 capability_not_released`); `daemons` means schedd, githubd,
+  gatewayd-internal or vmmd also stop its work outside apid (below); `handler` means
+  the flag's consumers decide it in code; `none` means the flag is not
+  enforced yet (VM behavior, or a CLI-side tool).
+- **Work outside apid.** Daemons follow the same decision, tier defaults
+  included, within a few seconds of a write:
+  - schedd defers the work of crons, delayed execution, async invocations,
+    durable inbound webhooks, queues, event triggers, jobs, workflows and
+    managed exclusive operations a minute at a time, without spending a
+    delivery attempt. The backlog runs when the flag is back on, so cancel
+    the work as well if the capability is off for good.
+  - `events` is the event bus's kill switch
+    ([ADR-20261027125625](../adr/20261027125625-events-kill-switch.md)).
+    Off platform-wide, schedd routes no receipts and runs no event recoveries
+    or backfills, and every customer publish path (the publish routes, the
+    platform-tenant route and in-guest publishing through vmmd) answers
+    `503 events_paused` with `Retry-After` instead of hiding. Off for an
+    account, that account's publishing is refused the same way and its
+    customer events wait a minute at a time. Server-side events (object
+    storage, inbound webhooks, commit relay) are still accepted and wait;
+    deliveries already admitted finish. Nothing accepted is lost: turning it
+    back on resumes routing.
+  - githubd ignores pushes (`github_deploys`) and pull-request previews
+    (`pr_previews`) and does not replay them later; closing a pull request
+    still tears its preview down.
+  - gatewayd-internal drops cache, async, retry and circuit-breaker edge rules
+    and stops traffic mirroring, session affinity and the wake page.
+    Restrictive edge rules (WAF, challenge, IP, JWT, geo, limits,
+    maintenance, headers, routing) keep enforcing while `edge_rules` or
+    `edge_protection` is off, so switching those off never opens an app.
+  - apid withdraws a realtime endpoint from realtimed while `realtime` is off
+    for its account, unless the endpoint carries live routes. Live queries
+    stop for clients through the `live_queries` flag; livequeryd keeps its
+    replication slot consumed.
+
+  Rules on a flag a daemon decides can target accounts only (schedd also
+  matches plans and organizations), because those daemons know only the
+  account. `gregalectl flags show --key <flag>` prints its consumers and
+  attributes.
+- **CLI.** The gregale CLI leaves a hidden capability's commands out of help,
+  completion, man pages and suggestions, using `hidden_capabilities` from
+  `GET /v1/capabilities` (cached for an hour per credential), and answers
+  them as unknown commands. Logged-out CLIs follow tier defaults. A customer
+  who was just released a preview sees it within the hour, or at once by
+  running the command, which reads the view again before refusing.
+- **Release a preview to one account:**
+
+  ```bash
+  gregalectl flags allow --key realtime --account-id <account-uuid> --reason "design partner" --yes
+  ```
+
+- **Bulk writes.** Use `--tier` or `--capability` in place of `--key` with
+  `enable`, `disable`, `allow`, `deny`, `revoke` and `default`. Each matching
+  flag is written separately; the summary line reports written and failed
+  writes.
+
+  ```bash
+  gregalectl flags allow --tier preview --account-id <account-uuid> --reason "design partner" --yes
+  gregalectl flags disable --capability realtime --reason "incident 412" --yes
+  gregalectl flags deny --capability object-protection --org-id <org-uuid> --reason "not yet" --yes
+  ```
+
+- **Native acceptance accounts.** Runs that exercise preview or internal
+  capabilities through a deployed API need them released to their account
+  first. Each run checks with `scripts/ci/require-capabilities.py` before it
+  starts and, when a capability is hidden, prints the `gregalectl flags allow`
+  commands to run and fails. The e2e harness and GitOps native boot their own
+  stack with `FAAS_CAPABILITY_FLAGS_RELEASE_ALL=1` and need nothing.
+
+  | Run | Capabilities |
+  |---|---|
+  | Dev Bridge native (`make native-dev-bridge-acceptance`) | `dev-bridge`, `projects`, `environments` |
+  | Scenario restart native (`make native-scenario-restart-acceptance`) | `scenario-tests`, `developer-environments`, `projects` |
+  | Profiling native (`scripts/ci/run-native-profiling-acceptance.sh`) | `continuous-profiling`, `traffic-profiles`, `route-requirements`, `route-insights` |
+  | Start native (`scripts/ci/run-native-start-acceptance.sh`) | `projects` |
+  | Release rehearsal native (`scripts/ci/run-native-rehearsal-acceptance.sh`) | `scenario-tests` |
+
+- **New routes.** A route must belong to a capability: add its path to that
+  capability's `routes` in `pkg/productcap/catalog.json`.
+  `TestEveryApidRouteHasACapability` fails until you do.
+- **Metrics.** `apid_capability_hidden_requests_total{capability,stage}` counts
+  hidden requests; `apid_capability_unmapped_requests_total` counts requests
+  to routes no capability owns (a catalog gap, released by default).
+
+## Current flags
+
+| Key | Releases | Consumers | Boot fallback |
+| --- | --- | --- | --- |
+| `ai_gateway` | AI gateway preview (ADR-998) | apid, outboundd | `ai_gateway_enabled`/`FAAS_AI_GATEWAY_ENABLED`, `ai_gateway_accounts`/`FAAS_AI_GATEWAY_ACCOUNTS` |
+| `customer_flags` | Customer Flags (ADR-377) | apid | `flags_enabled`/`FAAS_FLAGS_ENABLED` |
+| `application_auth` | Application Auth: the Auth screens and the `auth` credential mode (ADR-1190) | apid | `FAAS_APPLICATION_AUTH_ENABLED`, `FAAS_APPLICATION_AUTH_ACCOUNTS` |
+| `live_queries` | Live queries (ADR-20261016151947) | apid | `FAAS_LIVE_QUERIES_ACCOUNTS` |
+| `change_timeline` | App change timeline preview (ADR-751) | apid | `FAAS_CHANGE_TIMELINE_ENABLED` |
+| `anomaly_alerts` | Baseline alert comparisons (ADR-744) | apid | `FAAS_ANOMALY_ALERTS_ENABLED` |
+| `trigger_batch_delivery` | `delivery: batch` on triggers (ADR-1321) | apid | `FAAS_TRIGGER_BATCH_DELIVERY_PREVIEW_ENABLED` |
+| `api_monetization` | API monetization for selected accounts (ADR-20261020170649); the `api_monetization_enabled` switch releases it to everyone. See `docs/ops/api-monetization-release.md` | apid, gatewayd-internal | none |
+
+| `operation_schedules` | Operation schedules: routes and firing (ADR-20261018161833) | apid | `FAAS_OPERATION_SCHEDULES_ACCOUNTS` |
+| `operation_children` | Child Operations and cancellation cascade (ADR-20261018183000) | apid | `FAAS_OPERATION_CHILDREN_ACCOUNTS` |
+| `service_map` | Service map preview (ADR-1131) | apid | `FAAS_SERVICE_MAP_ENABLED` |
+| `guest_tracing` | In-guest request tracing setting (ADR-958) | apid | `FAAS_GUEST_TRACING_ENABLED` (vmmd's receiver still needs it on the node) |
+| `static_egress_ip` | Static egress IP management (ADR-119) | apid | `FAAS_STATIC_EGRESS_IP_ENABLED` |
+| `realtime_resume` | v2 resumable realtime protocol (ADR-369) | apid → realtimed | `FAAS_REALTIME_RESUME_PREVIEW_ENABLED` |
+| `realtime_tickets` | Realtime subscription tickets (ADR-1117) | apid → realtimed | `FAAS_REALTIME_TICKETS_PREVIEW_ENABLED` |
+| `realtime_access` | Realtime principal access revocation (ADR-1113) | apid → realtimed | `FAAS_REALTIME_ACCESS_PREVIEW_ENABLED` |
+| `realtime_occupancy` | Realtime channel occupancy (ADR-1324) | apid → realtimed | `FAAS_REALTIME_OCCUPANCY_PREVIEW_ENABLED` |
+| `realtime_preview` | Realtime preview: retained history and what builds on it, tickets, access controls, occupancy, usage, endpoint slugs and channel rules, the v2 protocol and SSE (ADR-20261019102657). The v2 protocol, tickets, access controls and occupancy also need their own flag above | apid → realtimed | `FAAS_REALTIME_PREVIEW_ACCOUNTS` |
+| `strict_budgets` | Strict compute and egress budgets (ADR-1750) | apid | none (off until an operator writes it) |
+| `edge_waf_blocking` | Warn and block modes of WAF edge rules (ADR-20261023113721) | apid, gatewayd-internal | none (off until an operator writes it) |
+| `edge_challenge` | Challenge edge rules, with difficulty escalation (ADR-20261023113721) | apid, gatewayd-internal | none (off until an operator writes it) |
+| `edge_penalty_box` | Edge rule penalties (ADR-20261023113721) | apid, gatewayd-internal | none (off until an operator writes it) |
+| `edge_attack_mode` | Attack mode, an app-wide managed challenge rule (ADR-20261021220456); switching it on also needs `edge_challenge` | apid, gatewayd-internal | none (off until an operator writes it) |
+| `edge_ai_crawlers` | The `ai_crawler`, `ai_crawler_purpose` and `verified_ai_crawler` conditions and the `control-ai-crawlers` recipe (ADR-20261022083601) | apid, gatewayd-internal | none (off until an operator writes it) |
+
+The environment and TOML values seed the flag at boot. Once an operator has
+written the flag, they are ignored, including after a restart.
+
+Every flag after `customer_flags` was added after its environment gate had
+shipped.
+Until an operator writes one of them, its existing gate still decides, and
+`FAAS_APPLICATION_AUTH_*` is still re-read on every call. The first operator
+write hands the decision to the flag.
+
+`live_queries` and `realtime_preview` have limits:
+
+- `live_queries` and `realtime_preview` are decided by account only, because
+  the realtime path knows only the account. Plan rules never match them.
+- Unless `live_queries` includes every account, the live-query routes stay
+  hidden from accounts outside it. Unless `realtime_preview` includes every
+  account, the served OpenAPI document leaves the realtime preview out.
+  realtimed applies a change to an account's endpoints within the 30 s
+  endpoint resync.
+
+The four realtime flags are decided by apid, which has no realtime node
+database pool to share.
+
+- **Delivery.** apid decides each endpoint's account and sends the decisions
+  with the endpoint's registration. The 30-second endpoint reconcile replays
+  every registration, so a change reaches realtime nodes within about 30
+  seconds and applies to new connections.
+- **Node switch.** A node's `FAAS_REALTIME_*_PREVIEW_ENABLED` stays a
+  capability: a preview is on only where the node enables it and the flag
+  allows the account.
+- **Before any operator write.** apid sends no decisions, so registrations
+  stay unchanged.
+- **Upgrade order.** Upgrade every realtime node before writing any of these
+  flags, because an older node refuses a registration that carries decisions.
+  Retained messages (`FAAS_REALTIME_RETAINED_PREVIEW_ENABLED`) stay an
+  environment switch.
+
+Turning `anomaly_alerts` off refuses only new or changed baseline rules.
+Existing rules keep evaluating. In the same way, turning
+`trigger_batch_delivery` off refuses only creating a batch trigger or switching
+one to batch. Triggers that already deliver in batches keep doing so.
+
+`strict_budgets` is off until an operator writes it. While it is off for an
+account, creating or enabling a strict (`suspend_workloads`) budget returns 422
+`financial_budget_activation_unavailable` ("Strict budgets not released").
+Strict budgets that are already enabled keep enforcing and stay editable, and
+disabling or deleting one always works. Monitored budgets and alerts are not
+gated. To release it to one account, run `flags enable` (the kill switch, with
+the default still off) and then `flags allow` for that account.
+
+`edge_waf_blocking`, `edge_challenge` and `edge_penalty_box` are off until an
+operator writes them, and unlike `strict_budgets` they are kill switches at
+the edge too. While one is off for an account:
+
+- apid refuses creating a rule that uses the feature (any challenge rule, a
+  WAF rule in warn or block mode, a rule with a penalty), and an update that
+  switches the feature on for a rule that did not already enforce it
+  (enabling the rule, leaving log mode, moving WAF to warn or block, adding a
+  penalty), with 422 `edge_feature_unavailable`. Other edits, disabling and
+  deleting always work.
+- gatewayd-internal stops enforcing rules that already exist: challenge rules
+  serve no page and the solve path goes to the app, warn and block WAF rules
+  are inspected as observe, and penalties neither box nor refuse anyone. The
+  rest of each rule keeps working (an `ip` rule with a penalty still refuses).
+
+The gateway decides per request, so turning a flag on or off takes effect as
+soon as the runtime-config watcher applies it (within its five-second repair
+interval if a notification is missed), without an edge-rule cache reset.
+Turning one on for an account that has inert rules makes them enforce at
+once. Release them the same way: `flags enable`, then `flags allow` per
+account, or `default` for everyone at launch.
+
+## Day-to-day commands
+
+Every write needs an operator session with a recent MFA step-up
+(`gregalectl auth step-up`), a reason and `--yes`. The CLI reads the flag and
+its version, edits it, validates it, and writes it back with that version; a
+concurrent edit fails with a conflict instead of being lost.
+
+```bash
+gregalectl flags list                                   # every flag, groups, convergence
+gregalectl flags show --key ai_gateway                  # definition + per-daemon receipts
+gregalectl flags account --account-id <uuid>            # every flag decided for one account
+gregalectl flags inspect --key ai_gateway --account-id <uuid>   # why on/off
+gregalectl flags inspect --key application_auth --account-id <uuid> --org-id <uuid>   # ... acting under a company
+
+gregalectl flags enable  --key ai_gateway --reason "open preview" --yes
+gregalectl flags allow   --key ai_gateway --account-id <uuid> --reason "design partner" --yes
+gregalectl flags deny    --key ai_gateway --account-id <uuid> --reason "abuse hold" --yes
+gregalectl flags revoke  --key ai_gateway --account-id <uuid> --reason "back to rollout" --yes
+gregalectl flags allow   --key application_auth --org-id <uuid> --reason "company pilot" --yes   # a whole company
+gregalectl flags rollout --key ai_gateway --percent 10 --plans pro,scale --reason "widen" --yes
+gregalectl flags default --key ai_gateway --value true --reason "general availability" --yes
+gregalectl flags disable --key ai_gateway --reason "incident 123" --yes   # kill switch
+gregalectl flags schedule --key ai_gateway --rule-id rollout --starts-at 2026-11-02T09:00:00Z --reason "launch day" --yes
+gregalectl flags schedule --key ai_gateway --rule-id rollout --starts-at none --ends-at none --reason "unschedule" --yes
+gregalectl flags inspect  --key ai_gateway --account-id <uuid> --at 2026-11-02T09:00:00Z   # decide as of a time
+
+gregalectl flags group-add --group design-partners --account-id <uuid> --reason "new partner" --yes
+gregalectl flags groups
+
+gregalectl flags history  --key ai_gateway
+gregalectl flags rollback --key ai_gateway --version 3 --reason "incident 123 resolved" --yes
+gregalectl flags set      --key ai_gateway --file flag.json --reason "reviewed change" --yes
+```
+
+`allow` and `deny` maintain two rules the CLI keeps first: `denied-accounts`
+then `accounts`. An explicit decision therefore always beats a group, plan or
+rollout rule; `revoke` removes the account from both.
+
+`schedule` sets or clears (`none`) a rule's window; a flag left empty keeps
+its current bound.
+
+The operator console's **Flags** page (`/operations/flags`) does the same
+through the same API.
+
+## Self-serve previews
+
+An operator can let customers join a preview themselves (ADR
+20261021080640):
+
+```bash
+gregalectl flags self-serve --key change_timeline --enabled true --plans pro,scale --reason "open preview" --yes
+gregalectl flags self-serve --key change_timeline --enabled true --max-subjects 200 --reason "cap the cohort" --yes
+gregalectl flags self-serve --key change_timeline --enabled false --reason "pause sign-ups" --yes
+```
+
+The definition's `self_serve` holds `enabled`, the eligible `plans` (empty
+means every plan) and `max_subjects` (accounts plus organizations, at most
+5,000; 0 means 5,000).
+
+Customers join and leave with `GET /v1/previews`, `PUT /v1/previews/{key}`
+and `DELETE /v1/previews/{key}`, or `gregale previews list|join|leave`. An
+organization owner or admin joins for the whole company with
+`/v1/orgs/{slug}/previews` or `--org`; members then get the preview while
+acting for the company. A flag decided where the organization is unknown
+(`ai_gateway`, `live_queries`, the two Operation flags) takes only account
+opt-ins.
+
+- Opt-ins live in their own hot row, `platform_flag_opt_ins.<key>`
+  (`{"accounts": [...], "orgs": [...]}`), so a customer joining never
+  rewrites the operator's definition. Every consumer receives it through the
+  existing watcher, with history and rollback. apid writes it on the
+  customer's behalf with the expected version, and the audit log records
+  `platform_flag.opt_in` and `platform_flag.opt_out` with the customer as the
+  actor.
+- Opt-ins decide after the rules: a `value: false` rule listed first still
+  excludes an opted-in account. `gregalectl flags deny` keeps working.
+- `--enabled false` stops new opt-ins and ignores existing ones without
+  deleting them. Customers can always leave.
+- A preview never grants a plan entitlement. A flag that releases a paid
+  capability (`ai_gateway`) must list only entitled plans; any other plan is
+  refused with `409`.
+- `gregalectl flags show` prints the opt-in counts, and `inspect` prints
+  `opt_in=account` or `opt_in=org` when an opt-in decided.
+
+## Automatic ramps
+
+A rollout can advance itself (ADR 20261021080640). Create the rollout first,
+then give it a ramp whose stages include the current percentage:
+
+```bash
+gregalectl flags rollout --key service_map --percent 1 --reason "start ramp" --yes
+gregalectl flags ramp --key service_map --stages 1,10,50,100 --interval 30m \
+  --max-5xx-percent 1 --min-requests 200 --on-breach rollback --reason "staged release" --yes
+gregalectl flags ramp --key service_map --resume --reason "fixed the regression" --yes
+gregalectl flags ramp --key service_map --remove --reason "hold at the current stage" --yes
+```
+
+Once a minute apid judges every unpaused ramp whose flag version is at least
+`interval` old. It reads the 5xx share of the flag's **health routes** from
+`apid_request_total` over that interval.
+
+- With fewer than `min-requests` requests, or without Prometheus, it holds.
+- Over the threshold it pauses, and with `rollback` it also returns one stage.
+- Otherwise it advances one stage.
+
+The write expects the flag's current version, so an operator change made
+meanwhile wins and restarts the interval. The row's revision records no actor
+and a reason naming the move. The audit log records
+`platform_flag.ramp_advance`, `ramp_pause` or `ramp_rollback` as
+`system:platform-flags-ramp`.
+
+A paused ramp waits for `--resume`. `flags show` prints each ramp's stage,
+settings and pause reason. Only flags whose catalog entry lists
+`HealthRoutes` can ramp; a ramp on any other flag is refused with `409`.
+The health series are not per cohort: a ramp judges the routes' overall
+health.
+
+## Retiring previews
+
+A preview flag carries a `RetireBy` date in its catalog entry: the day it
+should be released to everyone and its gate removed. `gregalectl flags list`
+prints `retire_by=` and, once the date has passed, `overdue=true`. apid
+exports `apid_platform_flag_retire_by_timestamp_seconds{flag}`, and
+`FaasPlatformFlagPastRetireBy` opens a ticket for an overdue flag
+([runbook](../runbooks/FaasPlatformFlagPastRetireBy.md)). Moving the date is a
+catalog change with its reason in the PR.
+
+## Propagation and convergence
+
+A write updates `runtime_config_entries`. apid applies it in the request and
+notifies `runtime_config_changed`. Every other consumer (outboundd today)
+re-reads the table on that notification and every five seconds, so a change
+is live everywhere within seconds even if a notification is lost.
+
+Each consumer records an **apply receipt** per daemon and host in
+`runtime_config_apply_receipts`. `gregalectl flags show` and the console list
+them, and each flag reports its consumers as:
+
+- **converged**: every instance of that daemon applied the current version;
+- **pending**: an instance has not reported the current version yet (or the
+  daemon has not reported at all);
+- **failed**: an instance could not apply the current version. It keeps
+  serving on its last valid value; the receipt names the error.
+
+A flag nobody has written yet shows every consumer as converged on its boot
+fallback.
+
+The shared watcher also reports receipts for the other hot runtime settings
+(HSTS, tenant surfaces, data placement, S3) in the daemons that consume them.
+
+## API
+
+| Route | Purpose |
+| --- | --- |
+| `GET /v1/admin/flags` | Every flag, its definition, version, receipts and convergence, plus the groups and which flags use each group |
+| `GET /v1/admin/flags/{key}` | One flag |
+| `GET /v1/admin/flags/{key}/decision?account_id=[&org_id=][&at=]` | Inspector: the decision, matching rule, reason and plan entitlement for one account, optionally under an organization and as of an RFC 3339 time |
+| `GET /v1/admin/accounts/{id}/flags` | Every flag decided for one account |
+| `PATCH /v1/admin/config/platform_flag.<key>` | Write a flag definition |
+| `PATCH /v1/admin/config/platform_flag_groups` | Write the groups |
+| `PATCH /v1/admin/config/platform_flag_opt_ins.<key>` | Write a preview's opt-ins (operators; customers use `/v1/previews`) |
+| `POST /v1/admin/config/{key}/rollback`, `GET …/revisions` | History and rollback, as for every runtime setting |
+
+The server rejects a rule that names an unknown group, and a groups write
+that removes a group a flag still uses, with `409`.
+
+## Adding a flag
+
+1. Add a `Spec` to `pkg/platformflags/catalog.go` with the capability, the
+   deciding ADR, its consumers, any legacy environment variables and, for a
+   preview, a `RetireBy` date.
+2. In each consumer, decide with `Set.Enabled(key, Subject{AccountID, Plan})`
+   and keep the plan entitlement check next to it. apid uses
+   `s.platformFlagEnabled`; another daemon runs a watcher through
+   `runtimeconfig.WithPlatformFlags` with `Daemon` set so it reports
+   receipts.
+3. If the gate replaces an environment variable, seed the flag from it at
+   boot and note that in the env contract.
+
+## Limits
+
+At most 32 rules per flag, 1,000 accounts and 1,000 organizations per rule,
+100 groups and 5,000 accounts per group, 5,000 opted-in accounts plus
+organizations per preview, and 2 to 10 ramp stages held 5 minutes to 7 days
+each (`pkg/api/limits.go`). Larger audiences belong in
+a group, a plan constraint or a rollout.
+
+`allow`, `deny` and `revoke` take exactly one of `--account-id` or
+`--org-id`. Their rules sit first, in this order: a person's deny, a person's
+allow, a company's deny, then a company's allow. A decision about a person
+therefore overrides one about their company.

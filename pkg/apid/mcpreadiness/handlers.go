@@ -27,20 +27,31 @@ type Handler struct {
 	FallbackSeal                 func(context.Context, string) ([]byte, *api.Problem)
 	Audit                        MaintenanceAudit
 	Identities                   func(context.Context) []*age.X25519Identity
-	Loader                       httpkit.AppLoader
-	Store                        state.Store
-	Endpoint                     func(context.Context, state.App, state.Deployment) (string, error)
-	Client                       *http.Client
+	// AccountIdentities open PagerDuty acknowledgement signing secrets, an
+	// account seal-domain value (ADR 20261022111812). They stay apart from
+	// Identities, whose first identity the catalog observer seals to.
+	AccountIdentities func(context.Context) []*age.X25519Identity
+	Loader            httpkit.AppLoader
+	Store             state.Store
+	Endpoint          func(context.Context, state.App, state.Deployment) (string, error)
+	Client            *http.Client
 }
 
 func New(store state.Store, endpoint func(context.Context, state.App, state.Deployment) (string, error), loader httpkit.AppLoader) *Handler {
-	// Probes dial customer deployments through the egress guard, never through
-	// a replaced process-wide transport. A replaced http.DefaultTransport must
-	// not panic apid's handler construction.
-	transport := &http.Transport{}
-	if base, ok := http.DefaultTransport.(*http.Transport); ok {
-		transport = base.Clone()
+	base, ok := http.DefaultTransport.(*http.Transport)
+	if !ok || base == nil {
+		// The process-wide default may be wrapped for tracing or another
+		// client. Keep the standard pooling/TLS defaults in an owned transport
+		// so that wrapper cannot replace the probe's egress dialer below.
+		base = &http.Transport{
+			ForceAttemptHTTP2:     true,
+			MaxIdleConns:          100,
+			IdleConnTimeout:       90 * time.Second,
+			TLSHandshakeTimeout:   10 * time.Second,
+			ExpectContinueTimeout: time.Second,
+		}
 	}
+	transport := base.Clone()
 	transport.Proxy = nil
 	transport.DialContext = oci.EgressDialContext(nil)
 	return &Handler{Store: store, Loader: loader, Endpoint: endpoint, Client: &http.Client{Transport: transport, Timeout: 30 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}}

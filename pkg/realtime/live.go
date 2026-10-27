@@ -35,13 +35,16 @@ type LiveQueries interface {
 // LiveRoute is where seals made with one live secret are served, and the
 // logins the endpoint's app reads as there: sealed queries as its
 // read-only (else read-write) binding, RLS-mode reads as its Data API
-// binding. An empty role refuses that mode.
+// binding. An empty role refuses that mode. DataAPIAccess is what the app's
+// Data API runtime last reported about access without a user token; without
+// it, anonymous and server-key reads are refused.
 type LiveRoute struct {
-	KID         string `json:"kid"`      // the secret's key ID
-	Database    string `json:"database"` // the database its seals name
-	URL         string `json:"url"`      // the hub, ws:// or wss://
-	SealedRole  string `json:"sealed_role,omitempty"`
-	DataAPIRole string `json:"data_api_role,omitempty"`
+	KID           string                   `json:"kid"`      // the secret's key ID
+	Database      string                   `json:"database"` // the database its seals name
+	URL           string                   `json:"url"`      // the hub, ws:// or wss://
+	SealedRole    string                   `json:"sealed_role,omitempty"`
+	DataAPIRole   string                   `json:"data_api_role,omitempty"`
+	DataAPIAccess *api.DataAPIAccessConfig `json:"data_api_access,omitempty"`
 }
 
 // validLiveRoutes checks an endpoint's live routes.
@@ -63,6 +66,11 @@ func validLiveRoutes(routes []LiveRoute) ([]LiveRoute, error) {
 		if len(r.SealedRole) > 63 || len(r.DataAPIRole) > 63 || strings.ContainsRune(r.SealedRole+r.DataAPIRole, 0) {
 			return nil, fmt.Errorf("realtime: live route %s: invalid role", r.KID)
 		}
+		if r.DataAPIAccess != nil {
+			if err := r.DataAPIAccess.Validate(); err != nil {
+				return nil, fmt.Errorf("realtime: live route %s: %w", r.KID, err)
+			}
+		}
 		seen[r.KID] = true
 	}
 	return append([]LiveRoute(nil), routes...), nil
@@ -76,15 +84,23 @@ func (m *Manager) verifyLiveToken(ctx context.Context, c *connection, data []byt
 	if err != nil {
 		return data, "", "" // the hub answers a malformed frame
 	}
-	if len(f.Claims) > 0 || f.Role != "" {
-		return nil, liveproto.CodeProtocol, "realtimed adds the claims and the role; send only the user's token"
+	if len(f.Claims) > 0 || f.Role != "" || f.Access != "" {
+		return nil, liveproto.CodeProtocol, "realtimed adds the claims, the role and the access kind; send only the user's token"
 	}
-	if !f.RLS() {
+	if f.ServerKey != "" && c.browser {
+		return nil, liveproto.CodeForbidden, "Data API server keys stay out of browsers; use the user's token or anonymous access"
+	}
+	if !f.RLS() || f.Anonymous || f.ServerKey != "" {
+		// Sealed queries carry their own capability; anonymous and server-key
+		// reads are admitted by the live proxy against the route's settings.
 		return data, "", ""
 	}
-	policy := c.endpointConfig().ClientAuth
+	policy, ok := dataAPITokenPolicy(c.liveRoutes(), f.Database)
+	if !ok {
+		policy = c.endpointConfig().ClientAuth
+	}
 	if policy.Mode != AuthModeOIDCJWT {
-		return nil, liveproto.CodeForbidden, "RLS-mode live queries need a realtime endpoint that verifies OIDC tokens"
+		return nil, liveproto.CodeForbidden, "RLS-mode live queries need the Data API's token settings (usage reporting on) or a realtime endpoint that verifies OIDC tokens"
 	}
 	verifier, ok := m.cfg.JWTAuthorizer.(ClaimsAuthorizer)
 	if !ok {
@@ -100,6 +116,20 @@ func (m *Manager) verifyLiveToken(ctx context.Context, c *connection, data []byt
 		return nil, liveproto.CodeInternal, "encode the verified frame"
 	}
 	return out, "", ""
+}
+
+// dataAPITokenPolicy returns how the Data API serving database verifies user
+// tokens, as its runtime last reported, so a live read accepts exactly the
+// tokens a REST read does. ok is false when no route reports it.
+func dataAPITokenPolicy(routes []LiveRoute, database string) (AuthPolicy, bool) {
+	for _, r := range routes {
+		if r.Database != database || r.DataAPIRole == "" || r.DataAPIAccess == nil || r.DataAPIAccess.Auth == nil {
+			continue
+		}
+		issuer, jwks, audience, algorithms := r.DataAPIAccess.Auth.Policy()
+		return AuthPolicy{Mode: AuthModeOIDCJWT, Issuer: issuer, JWKSURL: jwks, Audience: audience, Algorithms: algorithms}, true
+	}
+	return AuthPolicy{}, false
 }
 
 // endpointConfig returns the connection's endpoint as currently registered.
@@ -170,7 +200,8 @@ func (m *Manager) handleLive(ctx context.Context, c *connection, data []byte, su
 }
 
 // queueLive queues a live frame. Live frames count against the connection's
-// outbound budget like any other; a client too slow for them is closed.
+// outbound budget and its endpoint's delivered usage (ADR-1323) like any
+// other; a client too slow for them is closed.
 func (m *Manager) queueLive(ctx context.Context, c *connection, frame []byte) error {
 	err := m.queueOutbound(ctx, c, Message{Data: frame})
 	if errors.Is(err, ErrOutboundQueueFull) {
@@ -179,6 +210,7 @@ func (m *Manager) queueLive(ctx context.Context, c *connection, frame []byte) er
 	if err == nil {
 		m.sentMessages.Add(1)
 		m.sentBytes.Add(uint64(len(frame)))
+		c.state.usage.delivered(len(frame))
 	}
 	return err
 }

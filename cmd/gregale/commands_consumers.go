@@ -56,9 +56,13 @@ var consumerVerbPositionals = map[string][]string{
 	"billing-policy-set":    {"slug"},
 	"billing-policy-delete": {"slug"},
 	"overdue-holds":         {"slug"},
+	"signup":                {"slug"},
+	"signup-set":            {"slug"},
+	"signup-delete":         {"slug"},
+	"signups":               {"slug"},
 }
 
-const consumersUsage = "usage: gregale consumers <list|create|info|revoke|keys|key-create|key-revoke|usage|quote|completeness|rate-cards|rate-card-create|statements|statement-draft|statement-show|statement-finalize|statement-handoff|statement-export|plans|plan-create|plan-update|set-plan|plan-history|usage-alerts|credits|credit-grant|credit-void|spend-cap|spend-cap-set|spend-cap-delete|trial|trial-set|trial-end|billing-policy|billing-policy-set|billing-policy-delete|overdue-holds> <slug> [consumer-id] [id] [flags]"
+const consumersUsage = "usage: gregale consumers <list|create|info|revoke|keys|key-create|key-revoke|usage|quote|completeness|rate-cards|rate-card-create|statements|statement-draft|statement-show|statement-finalize|statement-handoff|statement-export|plans|plan-create|plan-update|set-plan|plan-history|usage-alerts|credits|credit-grant|credit-void|spend-cap|spend-cap-set|spend-cap-delete|trial|trial-set|trial-end|billing-policy|billing-policy-set|billing-policy-delete|overdue-holds|signup|signup-set|signup-delete|signups> <slug> [consumer-id] [id] [flags]"
 
 // consumerFlags holds every leaf flag; consumerVerbFlags decides which
 // verb may set which, so a misplaced flag is a usage error, not ignored.
@@ -77,11 +81,17 @@ type consumerFlags struct {
 	endsAt                               string
 	blockOverdueAfterDays                int
 	baseFeeMillicents, minimumMillicents int64
+	prorateMonthlyFees                   bool
 	tiers                                multiFlag
 	weights                              multiFlag
 	plan                                 string
 	maxPerMinute, maxPerMonth            int64
 	alertAt                              string
+	displayName, plans, keyScopes        string
+	termsURL, returnURL                  string
+	dailyLimit                           int
+	disabled                             bool
+	customerPlanChanges, customerClosing bool
 }
 
 var consumerVerbFlags = map[string][]string{
@@ -92,7 +102,7 @@ var consumerVerbFlags = map[string][]string{
 	"usage":              {"since", "until"},
 	"quote":              {"since", "until"},
 	"completeness":       {"period-start", "period-end", "month"},
-	"rate-card-create":   {"currency", "price-millicents", "included-units", "tier", "weight", "plan", "effective-from", "unit", "tier-mode", "base-fee-millicents", "minimum-millicents"},
+	"rate-card-create":   {"currency", "price-millicents", "included-units", "tier", "weight", "plan", "effective-from", "unit", "tier-mode", "base-fee-millicents", "minimum-millicents", "prorate-monthly-fees"},
 	"plan-create":        {"name", "max-requests-per-minute", "max-units-per-month", "alert-at"},
 	"plan-update":        {"plan", "max-requests-per-minute", "max-units-per-month", "alert-at"},
 	"set-plan":           {"plan", "effective-from"},
@@ -101,19 +111,20 @@ var consumerVerbFlags = map[string][]string{
 	"statement-export":   {"customer", "provider"},
 	"credit-grant":       {"currency", "amount-millicents", "expires", "note"},
 	"spend-cap-set":      {"currency", "monthly-cap-millicents"},
+	"signup-set":         {"display-name", "plans", "key-scopes", "terms-url", "return-url", "trial-days", "daily-limit", "disabled", "customer-plan-changes", "customer-closing"},
 }
 
 // cmdConsumers manages an app's API consumers and their monetization:
 // identities, keys, usage, rate cards, and usage statements.
 func cmdConsumers(args []string) int {
 	if len(args) == 0 {
-		PrintUsage(osStderr, consumersUsage, "consumers")
+		PrintUsage(osStderr, releasedUsage("consumers", consumersUsage), "consumers")
 		return 1
 	}
 	verb := args[0]
 	positionals, ok := consumerVerbPositionals[verb]
-	if !ok {
-		PrintUsage(osStderr, consumersUsage, "consumers")
+	if !ok || hiddenMonetizationVerb("consumers", verb) {
+		PrintUsage(osStderr, releasedUsage("consumers", consumersUsage), "consumers")
 		return 1
 	}
 	fs := newFlagSet("consumers "+verb, flag.ContinueOnError)
@@ -122,6 +133,27 @@ func cmdConsumers(args []string) int {
 	fs.StringVar(&f.name, "name", "", "consumer or key display name")
 	fs.StringVar(&f.scopes, "scopes", "write", "comma-separated key scopes: read, write, admin (key-create)")
 	fs.StringVar(&f.expires, "expires", "", "key or credit expiry, RFC3339 (key-create, credit-grant)")
+	fs.StringVar(&f.since, "since", "", "usage window start (RFC3339)")
+	fs.StringVar(&f.until, "until", "", "usage window end (RFC3339)")
+	if monetizationCLI() {
+		registerConsumerMonetizationFlags(fs, &f)
+	}
+	if err := parseInterspersed(fs, args[1:]); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return 0
+		}
+		return 1
+	}
+	if fs.NArg() != len(positionals) || !flagsWithin(fs, releasedVerbFlags("consumers", verb, consumerVerbFlags[verb])) {
+		PrintUsage(osStderr, consumerVerbUsage(verb, positionals), "consumers")
+		return 1
+	}
+	return runConsumers(verb, fs.Args(), f)
+}
+
+// registerConsumerMonetizationFlags defines the API monetization flags,
+// which do not exist until monetization is released (ADR-20261018090210).
+func registerConsumerMonetizationFlags(fs *flag.FlagSet, f *consumerFlags) {
 	fs.Int64Var(&f.amountMillicents, "amount-millicents", 0, "prepaid credit in millicents; 100000 = 1.00 (credit-grant)")
 	fs.Int64Var(&f.monthlyCapMillicents, "monthly-cap-millicents", -1, "monthly spend cap in millicents after prepaid credit; 0 allows prepaid usage only (spend-cap-set)")
 	fs.StringVar(&f.note, "note", "", "note shown with the credit (credit-grant)")
@@ -133,8 +165,7 @@ func cmdConsumers(args []string) int {
 	fs.StringVar(&f.tierMode, "tier-mode", "", "how --tier steps price a month: graduated (default) or volume (rate-card-create)")
 	fs.Int64Var(&f.baseFeeMillicents, "base-fee-millicents", 0, "fixed charge per consumer per UTC month; 100000 = 1.00 (rate-card-create)")
 	fs.Int64Var(&f.minimumMillicents, "minimum-millicents", 0, "minimum usage charge per consumer per UTC month, topped up when usage costs less (rate-card-create)")
-	fs.StringVar(&f.since, "since", "", "usage window start (RFC3339)")
-	fs.StringVar(&f.until, "until", "", "usage window end (RFC3339)")
+	fs.BoolVar(&f.prorateMonthlyFees, "prorate-monthly-fees", false, "scale the fee and minimum in a consumer's first month to the share left after it was created (rate-card-create)")
 	fs.StringVar(&f.currency, "currency", "", "ISO-4217 currency, e.g. EUR (rate-card-create)")
 	fs.Int64Var(&f.priceMillicents, "price-millicents", -1, "price per request in millicents; 100000 = 1.00 (rate-card-create)")
 	fs.Int64Var(&f.includedUnits, "included-units", 0, "free requests per consumer per UTC calendar month (rate-card-create)")
@@ -151,17 +182,15 @@ func cmdConsumers(args []string) int {
 	fs.Int64Var(&f.maxPerMinute, "max-requests-per-minute", -1, "plan limit: requests per consumer per minute; 0 is unlimited")
 	fs.Int64Var(&f.maxPerMonth, "max-units-per-month", -1, "plan limit: weighted units per consumer per UTC month; 0 is unlimited")
 	fs.StringVar(&f.alertAt, "alert-at", "", "comma-separated percentages of the monthly limit that fire consumer.usage_threshold webhooks; none clears")
-	if err := parseInterspersed(fs, args[1:]); err != nil {
-		if errors.Is(err, flag.ErrHelp) {
-			return 0
-		}
-		return 1
-	}
-	if fs.NArg() != len(positionals) || !flagsWithin(fs, consumerVerbFlags[verb]) {
-		PrintUsage(osStderr, consumerVerbUsage(verb, positionals), "consumers")
-		return 1
-	}
-	return runConsumers(verb, fs.Args(), f)
+	fs.StringVar(&f.displayName, "display-name", "", "name the sign-up page shows (signup-set)")
+	fs.StringVar(&f.plans, "plans", "", "comma-separated plan names customers choose from; default offers the app default plan (signup-set)")
+	fs.StringVar(&f.keyScopes, "key-scopes", "", "comma-separated scopes of the key a customer gets (signup-set; default write,billing)")
+	fs.StringVar(&f.termsURL, "terms-url", "", "https URL customers accept before signing up (signup-set)")
+	fs.StringVar(&f.returnURL, "return-url", "", "https URL the page links to after showing the key (signup-set)")
+	fs.IntVar(&f.dailyLimit, "daily-limit", 0, "sign-ups per UTC day; default 100, at most 1000 (signup-set)")
+	fs.BoolVar(&f.disabled, "disabled", false, "keep the settings but stop taking sign-ups (signup-set)")
+	fs.BoolVar(&f.customerPlanChanges, "customer-plan-changes", false, "let customers switch between the offered plans with their own key (signup-set)")
+	fs.BoolVar(&f.customerClosing, "customer-closing", false, "let customers close their account with their own key (signup-set)")
 }
 
 func consumerVerbUsage(verb string, positionals []string) string {
@@ -169,7 +198,7 @@ func consumerVerbUsage(verb string, positionals []string) string {
 	for _, p := range positionals {
 		usage += " <" + p + ">"
 	}
-	for _, name := range consumerVerbFlags[verb] {
+	for _, name := range releasedVerbFlags("consumers", verb, consumerVerbFlags[verb]) {
 		usage += " [--" + name + "]"
 	}
 	return usage
@@ -205,6 +234,9 @@ func buildConsumerRequest(verb string, f consumerFlags) (any, error) {
 		return req, err
 	}
 	if req, handled, err := buildConsumerControlRequest(verb, f); handled {
+		return req, err
+	}
+	if req, handled, err := buildConsumerSignupRequest(verb, f); handled {
 		return req, err
 	}
 	switch verb {
@@ -280,6 +312,7 @@ func buildAppRateCardRequest(f consumerFlags) (api.CreateAPIConsumerRateCardRequ
 	}
 	req.Unit, req.TierMode = strings.TrimSpace(f.unit), strings.TrimSpace(f.tierMode)
 	req.BaseFeeMillicentsPerMonth, req.MinimumMillicentsPerMonth = f.baseFeeMillicents, f.minimumMillicents
+	req.ProrateMonthlyFees = f.prorateMonthlyFees
 	req.RouteWeights, err = parseRouteWeights(f.weights)
 	return req, err
 }
@@ -437,6 +470,9 @@ func callConsumers(ctx context.Context, client *Client, verb string, args []stri
 	if out, handled, err := callConsumerControls(ctx, client, verb, args, request); handled {
 		return out, err
 	}
+	if out, handled, err := callConsumerSignup(ctx, client, verb, args, f, request); handled {
+		return out, err
+	}
 	switch verb {
 	case "list":
 		return client.ListAPIConsumers(ctx, slug)
@@ -524,8 +560,13 @@ func formatMillicents(currency string, millicents int64) string {
 		sign, millicents = "-", -millicents
 	}
 	fraction := strings.TrimRight(fmt.Sprintf("%05d", millicents%100000), "0")
-	for len(fraction) < 2 {
+	// Show at least the currency's own decimals (ADR-20261019100330).
+	digits, _ := api.CurrencyMinorExponent(currency)
+	for len(fraction) < digits {
 		fraction += "0"
+	}
+	if fraction == "" {
+		return fmt.Sprintf("%s %s%d", currency, sign, millicents/100000)
 	}
 	return fmt.Sprintf("%s %s%d.%s", currency, sign, millicents/100000, fraction)
 }
@@ -571,7 +612,7 @@ func consumerKeyStatus(k api.ConsumerKeyResponse) string {
 }
 
 func printConsumerBillingResult(tw *tabwriter.Writer, out any) error {
-	if printConsumerPlanResult(tw, out) || printConsumerCreditResult(tw, out) {
+	if printConsumerPlanResult(tw, out) || printConsumerCreditResult(tw, out) || printConsumerSignupResult(tw, out) {
 		return tw.Flush()
 	}
 	switch v := out.(type) {

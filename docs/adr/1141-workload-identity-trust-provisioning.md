@@ -68,3 +68,129 @@
 - **Rollback:** Clear `faas_workload_identity_source_dir` and delete the
   files; the next converge removes both drop-ins and issuance returns to
   `identity_not_configured`.
+
+## Amendment 2026-10-17 — tokens for booting instances
+
+vmmd minted a token only for an instance in its live map, which an instance
+enters when its boot returns. A guest's workload starts well before that: a
+worker is RUNNING only after guest-init has watched it for the whole
+`api.CharacterizationDeadline` (10 s). On n2 (`TestWorkerScaleFromZeroMetal`)
+a worker pool scaling from zero had its consumer process up about 2 s after
+the send, then refused every token request for about 10 s; the first lease
+came at a median 11.9 s, and 10 s of that was the window.
+
+vmmd now mints for an instance that is live or still booting
+(`fcvm.Manager.WorkloadTokenIdentity`). A wake fixes the app and account when
+it takes the lease, before the guest starts, and the token carries the same
+claims it would carry once the instance is live. Qualification restores record
+no identity and still get none. apid already accepts a `gregale:queues` token
+for an instance in `waking` or `cold_booting`, and refuses it once the
+instance leaves the live states, so a consumer whose boot fails cannot lease
+with the token it took. A token for another audience stays valid for its
+five-minute TTL either way; the code that asked for it is the app's own,
+booting or not.
+
+Only the token endpoint changes. The outbound relay (ADR-989) and in-guest
+event publishing still resolve live instances only.
+
+Measured on n2 with the same test after the change: the first lease came at a
+median 2.0 s (1.9–2.2 s over five cycles), about 1.7 s after the boot
+started, while RUNNING still came at 11.9 s. The test now fails if any worker
+takes its token after it is RUNNING. A burst still boots workers one at a
+time (first leases at 2.0, 13.9 and 25.6 s for three workers), because the
+pool admits the next worker only when the previous boot returns.
+
+## Amendment 2026-10-24 — booting instances call out too
+
+The 2026-10-17 amendment let a booting worker lease, but left the outbound
+relay (ADR-989) and in-guest event publishing on live instances only. A
+worker handles a leased message as soon as it has it, so a handler that
+called an outbound integration or published an event inside the boot window
+failed with "external action instance is not live": up to the 10 s
+`api.CharacterizationDeadline` on a deployment's first cold boot on a node,
+about 1 s after that (ADR-20261018101500).
+
+`fcvm.Manager.InstanceExternalActionIdentity`, the rule behind the relay,
+event publishing and workload tokens, now resolves a booting instance to the
+identity its wake fixed, with the same limits the token rule already had: a
+qualification restore carries no identity and gets nothing, and a wake that
+joined a contained rehearsal run, or whose app has one, is denied.
+`WorkloadTokenIdentity` is now that rule. A booting instance gets no
+simulation relay, because its containment run is installed only when it goes
+live (`InstanceRehearsalRelayIdentity` denies it while the app is in a
+simulation run). `InstanceIdentity` and other guest services stay live-only.
+
+outboundd verifies a relay assertion by signature and claims; nothing
+there depends on the instance being live. A boot that fails leaves at most
+the calls its own code made while booting, the same exposure the token rule
+accepted.
+
+The manifest can now turn issuance on. `gregalectl manifest ansible` never
+emitted `faas_workload_identity_source_dir`, so a manifest-converged fleet,
+the documented path, could enable workload identity only by editing
+generated host vars. A `workload_identity.source_dir` manifest field (an
+absolute controller path) now renders that variable for every control-plane
+and compute host; empty keeps issuance off. The production template carries
+it commented out until an operator generates the keys.
+## Amendment 2026-10-25 — tokens name their environment
+
+A security review found that every instance of an app received the subject
+`app:<app_id>`, whatever deployment scope (environment) it ran. Scopes are the
+`--env` of a deploy: a staging deployment of an app received exactly the
+token a production deployment did, so a cloud role whose trust policy names
+`app:<app_id>` accepted code that was only ever reviewed for staging. AWS IAM
+can condition a generic OIDC provider's trust on `sub` and `aud` alone, so a
+separate claim would not let customers tell the two apart there.
+
+- Guest tokens carry an `environment` claim: the scope of the deployment the
+  instance runs.
+- The subject stays `app:<app_id>` in the `default` scope and becomes
+  `app:<app_id>:env:<scope>` in any other. A trust policy written for the
+  default scope keeps working; one for a named scope names it.
+- vmmd reads the scope from the instance's deployment. When it cannot (no
+  deployment recorded, or the read fails), it refuses the request with
+  `environment_unavailable` rather than mint the default subject. A node with
+  no database keeps minting without the claim.
+- apid's verifier and outboundd accept either form when it agrees with the
+  token's `environment` claim. They ship with the control plane, before
+  vmmd mints the new form (docs/release-compatibility.md order).
+- vmmd's host-internal relay tokens (ADR-989) keep the plain subject.
+
+**Customer impact:** an app whose production runs in a named scope, rather
+than `default`, must update its trust policies to
+`app:<app_id>:env:<scope>`. Gregale is pre-GA, and the docs only ever showed
+the default scope.
+
+## Amendment 2026-10-27 — queue leases from production only
+
+Pull leases serve a queue's production binding only (the lease takes the
+unscoped binding), but the queue lease route accepted a `gregale:queues`
+token from any live instance of the app. A worker running a staging or
+preview deployment of the app, reviewed only for that stage, could therefore
+lease, settle and extend production messages, the cross-environment use the
+2026-10-25 amendment's `environment` claim exists to prevent.
+
+apid now accepts a queue token only when its `environment` claim, if present,
+and the scope of the instance's deployment are both the production lane:
+`production`, the default scope or no scope (`state.ProductionDeploymentScope`).
+Anything else is `401`. The deployment check also covers tokens minted before
+the claim existed. The workload path now also applies the per-account
+capability decision the API-key path applies (ADR-20261023115741).
+
+## Amendment 2026-10-27 — qualification candidates take no external action
+
+A held GitOps qualification candidate (ADR-568) cold-boots with its app's
+real identity, because the wake must name the app, deployment and account.
+Its code is not approved to act as the app (ADR-20261019152416: "no identity
+is minted for a held deployment"), but only qualification restores carried an
+empty identity: a cold-booted candidate could mint workload-identity tokens,
+call managed integrations through the outbound relay, and publish events to
+the account's bus, and the 2026-10-24 amendment extended that to its boot
+window. A security audit found it.
+
+- The booting record carries `qualification`, and a live instance its
+  `QualificationOnly`. `InstanceExternalActionIdentity` (tokens, relay,
+  events) and the rehearsal relay refuse both with
+  `ErrQualificationExternalActionDenied`; vmmd answers a token request with
+  `qualification_identity_unavailable`.
+- Read-only metadata keeps the ordinary `InstanceIdentity` path.

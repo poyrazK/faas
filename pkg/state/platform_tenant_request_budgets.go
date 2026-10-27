@@ -24,10 +24,32 @@ type PlatformTenantRequestBudget struct {
 
 type PlatformTenantBudgetDecision struct {
 	Allowed           bool
-	Scope             string // minute or day when denied
+	Scope             string // minute, day or overdue when denied
 	Limit             int64
 	Observed          int64
 	RetryAfterSeconds int64
+	// OverdueDueAt is the due date of the invoice that holds the tenant
+	// when Scope is overdue (ADR-1324).
+	OverdueDueAt time.Time
+	// SpendCurrency is the cap's currency when Scope is spend_cap; Limit is
+	// the cap and Observed the month's amount due (ADR-20261019100331).
+	SpendCurrency string
+}
+
+// PlatformTenantBudgetScopeOverdue denies a tenant held for an overdue
+// invoice (ADR-1324).
+const PlatformTenantBudgetScopeOverdue = "overdue"
+
+// PlatformTenantBudgetScopeSpendCap denies a tenant whose month to date
+// passed its spend cap at the last check (ADR-20261019100331).
+const PlatformTenantBudgetScopeSpendCap = "spend_cap"
+
+func spendCapTenantDecision(c PlatformTenantSpendCap) PlatformTenantBudgetDecision {
+	d := PlatformTenantBudgetDecision{Scope: PlatformTenantBudgetScopeSpendCap, Limit: c.MonthlyCapMillicents, SpendCurrency: c.Currency}
+	if c.AmountDueMillicents != nil {
+		d.Observed = *c.AmountDueMillicents
+	}
+	return d
 }
 
 // PlatformTenantRequestBudgetStore is deliberately separate from Store so
@@ -158,6 +180,14 @@ func (m *MemStore) AdmitPlatformTenantRequest(_ context.Context, accountID, tena
 	tenant, ok := m.platformTenants[tenantID]
 	if !ok || tenant.AccountID != accountID {
 		return PlatformTenantBudgetDecision{}, ErrNotFound
+	}
+	if hold, held := m.platformTenantOverdueHolds[tenantID]; held && hold.AccountID == accountID {
+		return overdueTenantDecision(hold.DueAt), nil
+	}
+	if spendCap, capped := m.platformTenantSpendCaps[tenantID]; capped && spendCap.AccountID == accountID {
+		if month, _ := creditMonth(time.Now()); spendCap.CappedIn(month) {
+			return spendCapTenantDecision(spendCap), nil
+		}
 	}
 	row, configured := m.platformTenantBudgets[tenantID]
 	if !configured || (row.MaxRequestsPerMinute == 0 && row.MaxRequestsPerDay == 0) {

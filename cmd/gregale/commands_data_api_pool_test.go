@@ -1,10 +1,11 @@
 // adr: 650 — pool failures remain partial observations, preserving readiness.
-package main
+package main_test
 
 import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -55,7 +56,7 @@ func TestDataAPIPoolValidationPreservesCoreHealthAndRedactsUnknownContent(t *tes
 			}
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write(content) }))
 			defer server.Close()
-			probe := probeDataAPIHealth(context.Background(), server.Client(), server.URL, false)
+			probe := main.ProbeDataAPIHealth(context.Background(), server.Client(), server.URL, false)
 			if probe.State != "ok" || probe.Ready == nil || !*probe.Ready || probe.Pool == nil || probe.Pool.State != scenario.state {
 				t.Fatalf("pool validation changed core readiness: %+v", probe)
 			}
@@ -73,15 +74,15 @@ func TestDataAPIPoolValidationPreservesCoreHealthAndRedactsUnknownContent(t *tes
 func TestDataAPIPoolTextOutputSeparatesGaugesAndCumulativeCounter(t *testing.T) {
 	for _, state := range []string{"observed", "unknown", "unsupported", "invalid"} {
 		t.Run(state, func(t *testing.T) {
-			stdout, _, restore := swapIO(t)
+			stdout, _, restore := main.SwapIO(t)
 			defer restore()
-			pool := &dataAPIHealthPool{State: state}
+			pool := &main.DataAPIHealthPool{State: state}
 			if state == "observed" {
-				pool = parseDataAPIHealthPool(json.RawMessage(dataAPIHealthPoolFixture(2)), 2)
+				pool = main.ParseDataAPIHealthPool(json.RawMessage(dataAPIHealthPoolFixture(2)), 2)
 			} else if state == "unknown" {
 				pool.Reason, pool.CheckedAt = "timeout", "2026-10-16T10:00:00Z"
 			}
-			if err := writeDataAPIPool(pool); err != nil {
+			if err := main.WriteDataAPIPool(pool); err != nil {
 				t.Fatal(err)
 			}
 			if !strings.Contains(stdout.String(), "Pool: ") || (state == "observed" && !strings.Contains(stdout.String(), "cumulative acquisition timeouts 0")) {
@@ -96,9 +97,9 @@ func TestDataAPIPoolTextOutputSeparatesGaugesAndCumulativeCounter(t *testing.T) 
 
 func TestDataAPIPoolCounterResetIsNotAHealthIncident(t *testing.T) {
 	for _, count := range []int{9, 0} {
-		pool := parseDataAPIHealthPool(json.RawMessage(strings.ReplaceAll(dataAPIHealthPoolFixture(2), `"timeouts_total":0`, fmt.Sprintf(`"timeouts_total":%d`, count))), 2)
-		report := &dataAPIHealthReport{}
-		describeDataAPIPool(report, pool)
+		pool := main.ParseDataAPIHealthPool(json.RawMessage(strings.ReplaceAll(dataAPIHealthPoolFixture(2), `"timeouts_total":0`, fmt.Sprintf(`"timeouts_total":%d`, count))), 2)
+		report := &main.DataAPIHealthReport{}
+		main.DescribeDataAPIPool(report, pool)
 		if report.Partial || len(report.CurrentFindings) != 0 {
 			t.Fatal("a cumulative counter or reset became a current incident")
 		}

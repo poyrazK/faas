@@ -1,4 +1,4 @@
-package sched
+package sched_test
 
 // drain_compile_test.go — compile-time guarantee the unified
 // invocations drain participates in the pkg/dispatch contract

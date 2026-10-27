@@ -11,7 +11,7 @@ import (
 
 // PolicyInvalidDetail explains a rejected AI policy; integration creation
 // in apidserver shares it.
-const PolicyInvalidDetail = "ai_provider must be openai, anthropic, gemini, azure_openai, bedrock or vertex; token limits (1 to 100,000,000,000), cost limits (1 to 1,000,000,000,000 millicents) and the request log require a provider; request_log_content requires the request log; log_export and allow_unmetered require a provider"
+const PolicyInvalidDetail = "ai_provider must be openai, anthropic, gemini, azure_openai, bedrock or vertex; token limits (1 to 100,000,000,000), cost limits (1 to 1,000,000,000,000 millicents) and the request log require a provider; request_log_content requires the request log; log_export and allow_unmetered require a provider; trace limits require a provider: trace_max_calls 1 to 1,000,000, trace_max_cost_millicents 1 to 1,000,000,000,000 and trace_max_repeated_tool_calls 1 to 1,000; online_evaluation needs request_log_content, a sample_percent of 1 to 100, a judge_integration_id naming one of the account's enabled AI integrations, a judge_model and a rubric of at most 1,000 bytes; quality_alerts requires a provider"
 
 func (s *Service) aiStore(w http.ResponseWriter) (state.OutboundAIStore, bool) {
 	store, ok := s.Host.Store().(state.OutboundAIStore)
@@ -52,13 +52,21 @@ func (s *Service) PutPolicy(w http.ResponseWriter, r *http.Request, acct state.A
 	if !ok {
 		return
 	}
-	err := store.SetOutboundAIPolicy(r.Context(), acct.ID, integrationID, state.OutboundAIPolicy{
+	policy := state.OutboundAIPolicy{
 		Provider: req.AIProvider, DailyTokenLimit: req.DailyTokenLimit,
 		DailyCostLimit: req.DailyCostLimitMillicents, MonthlyCostLimit: req.MonthlyCostLimitMillicents,
 		RequestLogEnabled: req.RequestLogEnabled, UserDailyTokenLimit: req.UserDailyTokenLimit,
 		UserDailyCostLimit: req.UserDailyCostLimitMillicents, RequestLogContent: req.RequestLogContent,
 		LogExport: req.LogExport, AllowUnmetered: req.AllowUnmetered, AutoPromptCache: req.AutoPromptCache,
-	})
+		TraceMaxCalls: req.TraceMaxCalls, TraceMaxCost: req.TraceMaxCostMillicents, TraceMaxRepeatedToolCalls: req.TraceMaxRepeatedToolCalls,
+		QualityAlerts: req.QualityAlerts,
+	}
+	if evaluation := req.OnlineEvaluation; evaluation != nil {
+		percent := evaluation.SamplePercent
+		policy.OnlineEvalPercent, policy.OnlineEvalJudgeIntegrationID = &percent, evaluation.JudgeIntegrationID
+		policy.OnlineEvalModel, policy.OnlineEvalRubric = evaluation.JudgeModel, evaluation.Rubric
+	}
+	err := store.SetOutboundAIPolicy(r.Context(), acct.ID, integrationID, policy)
 	s.writeResult(w, err, "customer outbound integration not found", PolicyInvalidDetail)
 }
 
@@ -105,6 +113,12 @@ func usageResponse(usage state.OutboundAIUsage) api.OutboundAIUsageResponse {
 			VideoSeconds: item.VideoSeconds, WebSearches: item.WebSearches, FileSearches: item.FileSearches,
 			CodeSessionGB: item.CodeSessionGB, CachedRequests: item.CachedRequests, CacheSavedMillicents: item.CacheSavedMillicents,
 			PromptCacheSavedMillicents: item.PromptCacheSavedMillicents,
+			InputAudioTokens:           item.InputAudioTokens, OutputAudioTokens: item.OutputAudioTokens,
+			TruncatedRequests: item.TruncatedRequests, RefusedRequests: item.RefusedRequests,
+			EmptyRequests: item.EmptyRequests, InvalidJSONRequests: item.InvalidJSONRequests,
+			ToolErrorRequests: item.ToolErrorRequests, GoodFeedback: item.GoodFeedback, BadFeedback: item.BadFeedback,
+			EvaluatedRequests: item.EvaluatedRequests, EvaluationScoreSum: item.EvaluationScoreSum,
+			EvaluationErrors: item.EvaluationErrors,
 		})
 	}
 	return out

@@ -1,5 +1,5 @@
 // adr: 429
-package main
+package main_test
 
 import (
 	"context"
@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -26,8 +27,8 @@ func TestRealVMScenarioCleanupPhaseReportsActualCleanupAfterFailure(t *testing.T
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			dir := t.TempDir()
-			writeSuiteTestFile(t, filepath.Join(dir, "package.json"), `{"name":"cleanup-test","scripts":{"start":"node server.js"}}`)
-			writeSuiteTestFile(t, filepath.Join(dir, "server.js"), "require('http').createServer((r,s)=>s.end('ok')).listen(8080);\n")
+			main.WriteSuiteTestFile(t, filepath.Join(dir, "package.json"), `{"name":"cleanup-test","scripts":{"start":"node server.js"}}`)
+			main.WriteSuiteTestFile(t, filepath.Join(dir, "server.js"), "require('http').createServer((r,s)=>s.end('ok')).listen(8080);\n")
 			destroyed, released := 0, 0
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				switch {
@@ -63,7 +64,7 @@ func TestRealVMScenarioCleanupPhaseReportsActualCleanupAfterFailure(t *testing.T
 				}
 			}))
 			defer server.Close()
-			receipt := runTestProfile(context.Background(), NewClient(server.URL, "synthetic-key"), "cleanup", testScenario{Project: "cleanup-api", Source: "."}, dir, "warm")
+			receipt := main.RunTestProfile(context.Background(), main.NewClient(server.URL, "synthetic-key"), "cleanup", main.TestScenario{Project: "cleanup-api", Source: "."}, dir, "warm")
 			if receipt.Status != "failed" || receipt.Error == "" || destroyed != 1 {
 				t.Fatalf("receipt=%+v destroy=%d", receipt, destroyed)
 			}
@@ -98,11 +99,11 @@ func TestWarmServiceEvidenceRejectsSameMinuteSmokeAndPlatformRejection(t *testin
 		{ID: "late-smoke", InstanceID: "selected", ColdBoot: true, ReceivedAt: cutoff.Add(-time.Millisecond).Format(time.RFC3339Nano)},
 		{ID: "old", InstanceID: "selected", ReceivedAt: cutoff.Add(time.Millisecond).Format(time.RFC3339Nano)},
 	}
-	row, ok := firstNewTestServiceRequest(requests, map[string]bool{"old": true}, cutoff)
+	row, ok := main.FirstNewTestServiceRequest(requests, map[string]bool{"old": true}, cutoff)
 	if !ok || row.ID != "real" {
 		t.Fatalf("accepted wrong evidence: %+v/%v", row, ok)
 	}
-	if _, ok := firstNewTestServiceRequest(requests[1:], map[string]bool{"old": true}, cutoff); ok {
+	if _, ok := main.FirstNewTestServiceRequest(requests[1:], map[string]bool{"old": true}, cutoff); ok {
 		t.Fatal("nonhandled or pretrigger request satisfied evidence")
 	}
 }

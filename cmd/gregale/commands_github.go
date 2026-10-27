@@ -33,7 +33,7 @@ func cmdGithub(args []string) int {
 		return cmdGithubDisconnect(args[1:])
 	default:
 		printCommandValidation(os.Stderr, "unknown github subcommand %q\n", args[0])
-		return 1
+		return unknownSubcommandChoices(os.Stderr, "github", nestedCliCommand("github"), args[0])
 	}
 }
 

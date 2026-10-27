@@ -43,10 +43,13 @@ func NewStoreEgressCircuitCandidateReader(store EgressCircuitCandidateStore, win
 		for _, r := range rows {
 			out = append(out, EgressCircuitCandidate{
 				Upstream: EgressUpstream{
-					AppID: r.AppID,
-					Hash:  r.HostRedactedHash,
-					Host:  r.Host,
-					Port:  r.Port,
+					AppID:            r.AppID,
+					Hash:             r.HostRedactedHash,
+					Host:             r.Host,
+					Port:             r.Port,
+					FailureThreshold: r.FailureThreshold,
+					MinSamples:       r.MinSamples,
+					OpenSeconds:      r.OpenSeconds,
 				},
 				OK:      r.OK,
 				Sampled: r.Sampled,

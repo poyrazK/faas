@@ -1,0 +1,1143 @@
+// export_test.go exposes unexported identifiers to the external test package
+// state_test (ADR-982). External tests compile as a separate unit from
+// the package and its internal tests, so `go test` never holds all of
+// state's tests in one compiler process. Package-level vars are exposed
+// as pointers ((*state.V)) and struct fields as pointer accessors
+// ((*x.F())) so tests can read and write them.
+//
+// When an external test needs another unexported identifier, add it here.
+
+package state
+
+import (
+	"context"
+	"encoding/json"
+	"sync"
+	"testing"
+	"time"
+
+	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/appstandards"
+	"github.com/onebox-faas/faas/pkg/exclusivework"
+	"github.com/onebox-faas/faas/pkg/rehearsalpg"
+	"github.com/onebox-faas/faas/pkg/runtimeadmission"
+	"github.com/onebox-faas/faas/pkg/state/sqlc"
+)
+
+// Package-level types
+type AlertRollbackDeployment = alertRollbackDeployment
+type AlertRollbackFacts = alertRollbackFacts
+type ApplicationStandardAssignmentRecord = applicationStandardAssignmentRecord
+type AutomationPublishReceipt = automationPublishReceipt
+type ContractTestStore = contractTestStore
+type DeploymentRuntimeArtifactIdentity = deploymentRuntimeArtifactIdentity
+type EffectFixture = effectFixture
+type EnvironmentRuntimeKey = environmentRuntimeKey
+type EnvironmentWorkloadIntentKey = environmentWorkloadIntentKey
+type GitOpsIntentApp = gitOpsIntentApp
+type GitOpsIntentSnapshot = gitOpsIntentSnapshot
+type GitOpsQueueIntent = gitOpsQueueIntent
+type GitOpsSecretBaseline = gitOpsSecretBaseline
+type GitOpsSourceBaseline = gitOpsSourceBaseline
+type LifecycleApprovalBinding = lifecycleApprovalBinding
+type McpHealthRow = mcpHealthRow
+type MemRecoveryReviewNotification = memRecoveryReviewNotification
+type MemWorkflowRecoveryResult = memWorkflowRecoveryResult
+type NativeArtifactTestStore = nativeArtifactTestStore
+type ObjectWriteAdmission = objectWriteAdmission
+type OrgAccountKey = orgAccountKey
+type PlanAdmissionCounter = planAdmissionCounter
+type ProductBillingFixture = productBillingFixture
+type ProductBillingTestStore = productBillingTestStore
+type ProductContractStore = productContractStore
+type ProductRunDetailsTestStore = productRunDetailsTestStore
+type ProfileAlertObservation = profileAlertObservation
+type ProfileAlertPlan = profileAlertPlan
+type ProjectCloneWorkloadRecord = projectCloneWorkloadRecord
+type PublishedEventIdentity = publishedEventIdentity
+type QueueCanaryRecord = queueCanaryRecord
+type QueueCanarySnapshot = queueCanarySnapshot
+type ReadinessDestinationDelivery = readinessDestinationDelivery
+type ReadinessIncidentEventRecord = readinessIncidentEventRecord
+type RecoveryOverviewManual = recoveryOverviewManual
+type RecoveryPolicyBudget = recoveryPolicyBudget
+type RecoveryPolicyCandidate = recoveryPolicyCandidate
+type ReleaseStageSnapshot = releaseStageSnapshot
+type RepairTestStore = repairTestStore
+type RouteHealthNotificationState = routeHealthNotificationState
+type RouteHealthStoredDecision = routeHealthStoredDecision
+type RuntimeCaptureFixture = runtimeCaptureFixture
+type RuntimeUpgradeGatewayHeartbeat = runtimeUpgradeGatewayHeartbeat
+type RuntimeUpgradeGatewayReceipt = runtimeUpgradeGatewayReceipt
+type ScanSourceRank = scanSourceRank
+type SecretKey = secretKey
+type SourceRootfsFixture = sourceRootfsFixture
+type StandardApprovalFixture = standardApprovalFixture
+type StandardConfigTestStore = standardConfigTestStore
+type StandardLocalIntentFixture = standardLocalIntentFixture
+type StandardRestoreFixture = standardRestoreFixture
+type StandardReviewAppSnapshot = standardReviewAppSnapshot
+type StandardReviewDrain = standardReviewDrain
+type StandardReviewEnrollment = standardReviewEnrollment
+type StandardReviewEnvironmentWorkload = standardReviewEnvironmentWorkload
+type StandardReviewSnapshot = standardReviewSnapshot
+type StandardRuntimeCaptureTestStore = standardRuntimeCaptureTestStore
+type StandardSnapshotPublicationTestStore = standardSnapshotPublicationTestStore
+type VerificationRunRecord = verificationRunRecord
+
+// Package-level consts
+const ActionCaptureTestRun = actionCaptureTestRun
+const EnvironmentQualificationFunctionQueuePolicyID = environmentQualificationFunctionQueuePolicyID
+const EnvironmentQualificationWorkerQueuePolicyID = environmentQualificationWorkerQueuePolicyID
+const GithubActionsOIDCIssuer = githubActionsOIDCIssuer
+const InstanceStateColdBooting = instanceStateColdBooting
+const InstanceStateRunning = instanceStateRunning
+const InstanceStateWaking = instanceStateWaking
+const ManagedRealtimeChannelRouteLimit = managedRealtimeChannelRouteLimit
+const MaxAPIConsumerUsageStatementExternalInvoiceIDBytes = maxAPIConsumerUsageStatementExternalInvoiceIDBytes
+const MaxLogEventFieldsBytes = maxLogEventFieldsBytes
+const MaxLogEventMessageRunes = maxLogEventMessageRunes
+const ScanSourceRankCompose = scanSourceRankCompose
+const ScanSourceRankConvention = scanSourceRankConvention
+const ScanSourceRankFly = scanSourceRankFly
+const ScanSourceRankK8s = scanSourceRankK8s
+const ScanSourceRankProcfile = scanSourceRankProcfile
+const ScanSourceRankRender = scanSourceRankRender
+const ScanSourceRankServerless = scanSourceRankServerless
+const ScanSourceRankSingle = scanSourceRankSingle
+const ScanSourceRankUnknown = scanSourceRankUnknown
+const ScanSourceRankWorkspace = scanSourceRankWorkspace
+const StageHistoryStatusCancelled = stageHistoryStatusCancelled
+
+// Package-level vars
+var ErrAutomaticPollingData = &errAutomaticPollingData
+var ErrMemStoreAppErrors = &errMemStoreAppErrors
+var ErrMemStoreB3AlertMetrics = &errMemStoreB3AlertMetrics
+var ErrMemStoreDataUpstreams = &errMemStoreDataUpstreams
+var ErrMemStoreRequestTelemetry = &errMemStoreRequestTelemetry
+var Transitions = &transitions
+
+// Package-level funcs
+var AddRecoveryPolicyChangeCandidates = addRecoveryPolicyChangeCandidates
+var AddWorkflowRecoveryAttention = addWorkflowRecoveryAttention
+var AdmitMemOperationCode = admitMemOperationCode
+var AdvanceRetirement = advanceRetirement
+var AllocatePrivateNetworkAddress = allocatePrivateNetworkAddress
+var AppHealthKey = appHealthKey
+var AppendLifecycleGateFindings = appendLifecycleGateFindings
+var ApplicationStandardBaseSettings = applicationStandardBaseSettings
+var ArtifactScanBaseBinding = artifactScanBaseBinding
+var ArtifactScanBaseFixture = artifactScanBaseFixture
+var ArtifactScanCurrentInputs = artifactScanCurrentInputs
+var ArtifactScanFixture = artifactScanFixture
+var ArtifactScanLifecycle = artifactScanLifecycle
+var ArtifactScanRefusals = artifactScanRefusals
+var ArtifactScanRenewal = artifactScanRenewal
+var ArtifactScanRenewalCurrentKey = artifactScanRenewalCurrentKey
+var ArtifactScanRenewalRejectsForeignApproval = artifactScanRenewalRejectsForeignApproval
+var AssertNativeBootUnpublished = assertNativeBootUnpublished
+var AssertNoRegistryRootfs = assertNoRegistryRootfs
+var AssertRenewalCallerAdmission = assertRenewalCallerAdmission
+var AssertStandardApprovalNoWrites = assertStandardApprovalNoWrites
+var AssertStandardCaptureHistory = assertStandardCaptureHistory
+var AssertStandardRestoreNoGrant = assertStandardRestoreNoGrant
+var AuthorizeProfileGate = authorizeProfileGate
+var AutomaticBlockedReceipt = automaticBlockedReceipt
+var AutomaticChild = automaticChild
+var AutomaticCreate = automaticCreate
+var AutomaticEvidenceReceipt = automaticEvidenceReceipt
+var AutomaticEvidenceTransition = automaticEvidenceTransition
+var AutomaticObservationFairness = automaticObservationFairness
+var AutomaticObservationFixture = automaticObservationFixture
+var AutomaticObservationLateReview = automaticObservationLateReview
+var AutomaticObservationLeaseFence = automaticObservationLeaseFence
+var AutomaticObservationLifecycle = automaticObservationLifecycle
+var AutomaticObservationNewRevision = automaticObservationNewRevision
+var AutomaticObservationReviewPrecedence = automaticObservationReviewPrecedence
+var AutomaticPollingFailureCode = automaticPollingFailureCode
+var AutomaticRepair = automaticRepair
+var AutomationDraft = automationDraft
+var AutomationReceiptHash = automationReceiptHash
+var BaseProducerFixture = baseProducerFixture
+var BaseProducerLifecycle = baseProducerLifecycle
+var BaseProducerRefusals = baseProducerRefusals
+var BaseScanResult = baseScanResult
+var BaselineHealth = baselineHealth
+var BeginOAuthRenewal = beginOAuthRenewal
+var BuildExportClaimSubstitution = buildExportClaimSubstitution
+var BuildExportFixture = buildExportFixture
+var BuildExportFixtureClaim = buildExportFixtureClaim
+var BuildExportKeyRotation = buildExportKeyRotation
+var BuildExportLifecycle = buildExportLifecycle
+var BuildExportOwnerErasure = buildExportOwnerErasure
+var BuildExportPublicationRow = buildExportPublicationRow
+var BuildRouteHealthHistory = buildRouteHealthHistory
+var CandidateBindingEvidenceDeadline = candidateBindingEvidenceDeadline
+var CanonicalMemUUID = canonicalMemUUID
+var CanonicalPublicEdgeMembers = canonicalPublicEdgeMembers
+var CanonicalStandardUUID = canonicalStandardUUID
+var CaptureAlertRollback = captureAlertRollback
+var CapturePollingAlertTx = capturePollingAlertTx
+var ChangeRevocation = changeRevocation
+var ChangedWorkloadIntents = changedWorkloadIntents
+var CheckGatewayEgress = checkGatewayEgress
+var CheckGatewayRequest = checkGatewayRequest
+var CheckObjectAdmission = checkObjectAdmission
+var CheckProductRetainedReceipt = checkProductRetainedReceipt
+var CheckpointClosedWorkloadBlocker = checkpointClosedWorkloadBlocker
+var CheckpointClosedWorkloadResource = checkpointClosedWorkloadResource
+var CheckpointCompensationReconciliation = checkpointCompensationReconciliation
+var CheckpointObjectCopySHA = checkpointObjectCopySHA
+var CheckpointObjectCredentialInputFixture = checkpointObjectCredentialInputFixture
+var CheckpointObjectCredentialInputs = checkpointObjectCredentialInputs
+var CheckpointObjectPublicationPlan = checkpointObjectPublicationPlan
+var CheckpointObjectValueFixture = checkpointObjectValueFixture
+var CheckpointObjectVerificationSHA = checkpointObjectVerificationSHA
+var CheckpointPgEndpointDatabaseValid = checkpointPgEndpointDatabaseValid
+var CheckpointPgEndpointHostValid = checkpointPgEndpointHostValid
+var CidrPrefixesToArray = cidrPrefixesToArray
+var CidrTextToPrefixes = cidrTextToPrefixes
+var ClaimMemWebhookDelivery = claimMemWebhookDelivery
+var ClaimObjectVersioning = claimObjectVersioning
+var ClampLogLimit = clampLogLimit
+var CloneApplicationStandardEnrollment = cloneApplicationStandardEnrollment
+var CloneArtifactScanResult = cloneArtifactScanResult
+var CloneBaseImageScan = cloneBaseImageScan
+var CloneCheckpointSHA = cloneCheckpointSHA
+var CloneMCPCatalogMonitor = cloneMCPCatalogMonitor
+var CloneOperation = cloneOperation
+
+func CloneProductBilling[T any](p0 T) T { return cloneProductBilling[T](p0) }
+
+var CloneQualificationRequest = cloneQualificationRequest
+var CloneRuntimeConfigInputs = cloneRuntimeConfigInputs
+var CloneSchemaCoverage = cloneSchemaCoverage
+var CloneVerificationRecord = cloneVerificationRecord
+var CloneWorkloadIntent = cloneWorkloadIntent
+var CompactEffectJSON = compactEffectJSON
+var ConnectionHealthSnapshot = connectionHealthSnapshot
+var ConsumedNativeReceipt = consumedNativeReceipt
+var ContextCanonicalID = contextCanonicalID
+var ControlRequest = controlRequest
+var CopyLifecycleApproval = copyLifecycleApproval
+var CreateFairDispatchTenant = createFairDispatchTenant
+var CreateRuntimeArtifactCapture = createRuntimeArtifactCapture
+var CronAppTaskRetryAt = cronAppTaskRetryAt
+var CrossedUsageAlertThresholds = crossedUsageAlertThresholds
+var DecidePlanAdmission = decidePlanAdmission
+var DecideProfileCanaryGate = decideProfileCanaryGate
+var DecodeInitialReview = decodeInitialReview
+var DecodeProfileCanaryHistoryCursor = decodeProfileCanaryHistoryCursor
+var DecodeRouteMonitorDeploymentBaseline = decodeRouteMonitorDeploymentBaseline
+var DerefPrefixes = derefPrefixes
+var DerefString = derefString
+var DerefStrings = derefStrings
+var DerefTime = derefTime
+var DrainPlanInventoryBlocker = drainPlanInventoryBlocker
+var DurableRecoveryEvents = durableRecoveryEvents
+var EdgeRuleKindQuota = edgeRuleKindQuota
+var EdgeRuleKindQuotaDenied = edgeRuleKindQuotaDenied
+var EdgeRuleKindQuotaExceeded = edgeRuleKindQuotaExceeded
+var EffectiveDeploymentMinInstances = effectiveDeploymentMinInstances
+var EffectiveMinInstances = effectiveMinInstances
+var EncodeProfileCanaryHistoryCursor = encodeProfileCanaryHistoryCursor
+var EncodeRouteMonitorDeploymentBaseline = encodeRouteMonitorDeploymentBaseline
+var EncodeRouteMonitorIncident = encodeRouteMonitorIncident
+var EntityOutboxFingerprint = entityOutboxFingerprint
+var EnvironmentGitOpsJobName = environmentGitOpsJobName
+var EnvironmentGitOpsScheduledJobMatches = environmentGitOpsScheduledJobMatches
+var EnvironmentGitOpsScheduledJobMembers = environmentGitOpsScheduledJobMembers
+var EnvironmentGitOpsScheduledJobRunMatches = environmentGitOpsScheduledJobRunMatches
+var EnvironmentGraphSupportsProductionServing = environmentGraphSupportsProductionServing
+var EnvironmentWorkloadHeldFlag = environmentWorkloadHeldFlag
+var EnvironmentWorkloadServingReceiptAcknowledged = environmentWorkloadServingReceiptAcknowledged
+var EqualWorkflowJSON = equalWorkflowJSON
+var EvaluateAutomationTestCase = evaluateAutomationTestCase
+var EvaluateRuntimeUpgradeGatewayMembership = evaluateRuntimeUpgradeGatewayMembership
+var EvaluateRuntimeUpgradeVerification = evaluateRuntimeUpgradeVerification
+var EvaluateWorkflowSchedule = evaluateWorkflowSchedule
+var ExpireMemOperationCode = expireMemOperationCode
+var FailAutomaticChild = failAutomaticChild
+var FailResumeRun = failResumeRun
+var FinishRecoveryReviewOutcome = finishRecoveryReviewOutcome
+var FinishRuntimeProducerInputs = finishRuntimeProducerInputs
+var FirstPrivateNetworkAddress = firstPrivateNetworkAddress
+var ForgetRecoveryPolicyReview = forgetRecoveryPolicyReview
+var FrozenCandidateInputsMatch = frozenCandidateInputsMatch
+var GithubActionsRepositoryFromSubject = githubActionsRepositoryFromSubject
+var GithubActionsRepositoryIdentityFromSubject = githubActionsRepositoryIdentityFromSubject
+var GuardStep = guardStep
+var HealthStatus = healthStatus
+var HelpFixture = helpFixture
+var HistoricalAlertEvidenceSupported = historicalAlertEvidenceSupported
+var InitialAutomaticBlockTransition = initialAutomaticBlockTransition
+var InitialAutomaticReview = initialAutomaticReview
+var InitialAutomaticReviewWithContext = initialAutomaticReviewWithContext
+var InitialManualAttentionTransition = initialManualAttentionTransition
+var InitialPolicyNextCursor = initialPolicyNextCursor
+var InitialReviewJobRequest = initialReviewJobRequest
+var InsertCustomerAlertRule = insertCustomerAlertRule
+var InsertProductOperationTx = insertProductOperationTx
+var InspectRecoveryReviewRetryOutcome = inspectRecoveryReviewRetryOutcome
+var IntOrZero = intOrZero
+var InvocationFromSQL = invocationFromSQL
+var IsOTelHex32 = isOTelHex32
+var IssueConsumedNativeFixture = issueConsumedNativeFixture
+var JsonOrEmpty = jsonOrEmpty
+var LifecycleApproval = lifecycleApproval
+var LifecycleEvent = lifecycleEvent
+var LifecycleMemoryConfiguration = lifecycleMemoryConfiguration
+var LockBaseImageProducerKeysShared = lockBaseImageProducerKeysShared
+var LockBuildExportPublication = lockBuildExportPublication
+var LockSourceBuildRootfsParents = lockSourceBuildRootfsParents
+var LockStandardReviewInputs = lockStandardReviewInputs
+var LogExcerptsJSON = logExcerptsJSON
+var MakeStandardReviewEnvironmentWorkload = makeStandardReviewEnvironmentWorkload
+var ManageNativeArtifactApp = manageNativeArtifactApp
+var ManagedProbeFixture = managedProbeFixture
+var ManagedQueueCanaryFixture = managedQueueCanaryFixture
+var ManualObservationFailureCode = manualObservationFailureCode
+var MapErr = mapErr
+var MatchHostPattern = matchHostPattern
+var MatchingLifecycleApproval = matchingLifecycleApproval
+var MemCoverageFixture = memCoverageFixture
+var MemCoverageFixtureOrg = memCoverageFixtureOrg
+var MemCoverageSlice4Fixture = memCoverageSlice4Fixture
+var MemCustomerOutboundOffer = memCustomerOutboundOffer
+var MemDeploymentFixture = memDeploymentFixture
+var MemLiveInstance = memLiveInstance
+var MemNewUUID = memNewUUID
+var MemOperationCodeFixture = memOperationCodeFixture
+var MemOutboundFixture = memOutboundFixture
+var MemSampleDelivery = memSampleDelivery
+var MemSampleWebhook = memSampleWebhook
+var MergeProjectManagedManifest = mergeProjectManagedManifest
+var MonthOverageCents = monthOverageCents
+var MustMaterializationJSON = mustMaterializationJSON
+var MustPgUUID = mustPgUUID
+var MustStandardLocalJSON = mustStandardLocalJSON
+var MutateForTest = mutateForTest
+var MutateInitialReview = mutateInitialReview
+var MutateInitialReviewWithContext = mutateInitialReviewWithContext
+var NativeArtifactAdvisoryFindings = nativeArtifactAdvisoryFindings
+var NativeArtifactAttempt = nativeArtifactAttempt
+var NativeArtifactComposedDatabaseLease = nativeArtifactComposedDatabaseLease
+var NativeArtifactEnforceFindings = nativeArtifactEnforceFindings
+var NativeArtifactFixture = nativeArtifactFixture
+var NativeArtifactGrantLease = nativeArtifactGrantLease
+var NativeArtifactMissingScan = nativeArtifactMissingScan
+var NativeArtifactMissingSignedProducer = nativeArtifactMissingSignedProducer
+var NativeArtifactPausedComposedFixture = nativeArtifactPausedComposedFixture
+var NativeArtifactPromotionRenewsApproval = nativeArtifactPromotionRenewsApproval
+var NativeArtifactReceipt = nativeArtifactReceipt
+var NativeArtifactSidecarLease = nativeArtifactSidecarLease
+var NativeBootTestAttempt = nativeBootTestAttempt
+var NativeComposedScanInput = nativeComposedScanInput
+var NativeConsumedInputs = nativeConsumedInputs
+var NativeConsumptionPublication = nativeConsumptionPublication
+var NativeFallbackConfig = nativeFallbackConfig
+var NewAttentionFixture = newAttentionFixture
+var NewCheckpointObjectCredentialReservation = newCheckpointObjectCredentialReservation
+var NewEffectFixture = newEffectFixture
+var NewHistoricalAlertEvidence = newHistoricalAlertEvidence
+var NewID = newID
+var NewMemStoreForTest = newMemStoreForTest
+var NewRecoveryReviewCompletion = newRecoveryReviewCompletion
+var NewRecoveryReviewNotification = newRecoveryReviewNotification
+var NewRetirement = newRetirement
+var NewRouteHealthReport = newRouteHealthReport
+var NewRuntimeCaptureFixture = newRuntimeCaptureFixture
+var NewRuntimeUpgradeVerification = newRuntimeUpgradeVerification
+var NewStandardApprovalFixture = newStandardApprovalFixture
+var NewStandardEgressFixture = newStandardEgressFixture
+var NewStandardLocalIntentFixture = newStandardLocalIntentFixture
+var NewStandardRuntimeRefresh = newStandardRuntimeRefresh
+var NewUUIDString = newUUIDString
+var NewWorkflowRecoveryAttention = newWorkflowRecoveryAttention
+var NextAutomaticPollingFailure = nextAutomaticPollingFailure
+var NextManualObservationFailure = nextManualObservationFailure
+var NilToEmpty = nilToEmpty
+var NormalizeLogEventForInsert = normalizeLogEventForInsert
+var NormalizeOrgActivity = normalizeOrgActivity
+var NormalizeStandardReviewEnvironmentWorkloads = normalizeStandardReviewEnvironmentWorkloads
+var NormalizeStandardReviewSnapshot = normalizeStandardReviewSnapshot
+var NormalizedDeploymentScope = normalizedDeploymentScope
+var NotNullEmptyJSONRaw = notNullEmptyJSONRaw
+var NullAppStatus = nullAppStatus
+var NullIfEmpty = nullIfEmpty
+var NullJSONRaw = nullJSONRaw
+var NullString = nullString
+var NullableInt = nullableInt
+var NullableJSON = nullableJSON
+var NullableOverridePort = nullableOverridePort
+var NullableStr = nullableStr
+var NullableTime = nullableTime
+var NullableTimestamptz = nullableTimestamptz
+var NullableTimestamptzPtr = nullableTimestamptzPtr
+var ObjectWriteReceiptPage = objectWriteReceiptPage
+var ObserveRecoveryExecutionHealth = observeRecoveryExecutionHealth
+var ObservedGitOpsSecretReferences = observedGitOpsSecretReferences
+var ObservedWorkloadSource = observedWorkloadSource
+var OidcExchangedTokenFromRow = oidcExchangedTokenFromRow
+var OperationCapabilityDigest = operationCapabilityDigest
+var OperationExecutionControl = operationExecutionControl
+var OperationRecoveryFingerprint = operationRecoveryFingerprint
+var OperationRecoveryInspection = operationRecoveryInspection
+var OperationWorkflowWindow = operationWorkflowWindow
+var PagerDutyConfig = pagerDutyConfig
+var ParseObjectWriteReceiptCursor = parseObjectWriteReceiptCursor
+var ParsePgUUID = parsePgUUID
+var PeriodicQueryEqual = periodicQueryEqual
+var PgAuthorizeProductionLifecycle = pgAuthorizeProductionLifecycle
+var PgRecordBlockedLifecycle = pgRecordBlockedLifecycle
+var PgtypeFromTime = pgtypeFromTime
+var PgtypeFromUUID = pgtypeFromUUID
+var PlatformTenantUsageBucketKey = platformTenantUsageBucketKey
+var PolicyChangeEvidence = policyChangeEvidence
+var PollInitialAutomatic = pollInitialAutomatic
+var PollingAlertReceipt = pollingAlertReceipt
+var PollingAlertTransition = pollingAlertTransition
+var PostgresTargetCompensationFixture = postgresTargetCompensationFixture
+var PrepareBaseImageScan = prepareBaseImageScan
+var PrepareBuildExportPublication = prepareBuildExportPublication
+var PrepareDeploymentArtifactScan = prepareDeploymentArtifactScan
+var PrepareDeploymentRuntimeScan = prepareDeploymentRuntimeScan
+var PrepareEnvironmentGitNotification = prepareEnvironmentGitNotification
+var PrepareRegistryVerification = prepareRegistryVerification
+var PrepareRuntimeArtifactIdentity = prepareRuntimeArtifactIdentity
+var PrepareSourceBuildRootfs = prepareSourceBuildRootfs
+var ProductActivityContract = productActivityContract
+var ProductBillingPGFixture = productBillingPGFixture
+var ProductControlContract = productControlContract
+var ProductIncludedStartsContract = productIncludedStartsContract
+var ProductDeploymentPilot = productDeploymentPilot
+var ProductHelpContract = productHelpContract
+var ProductNotificationAttention = productNotificationAttention
+var ProductNotificationBounds = productNotificationBounds
+var ProductNotificationContract = productNotificationContract
+var ProductOnboardingPreview = productOnboardingPreview
+var ProductOwnerHash = productOwnerHash
+var ProductPlansContract = productPlansContract
+var ProductRunDetailsContract = productRunDetailsContract
+var ProductRunDetailsLiveContract = productRunDetailsLiveContract
+var ProductWorkspaceActivityAttention = productWorkspaceActivityAttention
+var ProductWorkspaceActivityContract = productWorkspaceActivityContract
+var ProductWorkspaceActivityRemapping = productWorkspaceActivityRemapping
+var ProfileAlertKey = profileAlertKey
+var ProjectAlertServiceRollback = projectAlertServiceRollback
+var PromotionTestGrant = promotionTestGrant
+var PromotionTestParent = promotionTestParent
+var PtrOrEmpty = ptrOrEmpty
+var PtrTime = ptrTime
+var PublishNativeComposedScan = publishNativeComposedScan
+var PublishRenewedStandardScan = publishRenewedStandardScan
+var PublishRuntimeCaptureTestReceipt = publishRuntimeCaptureTestReceipt
+var PublishWorkflowEvent = publishWorkflowEvent
+var QualificationSmokeReceiptMatchesRequest = qualificationSmokeReceiptMatchesRequest
+var QualifyHistoricalAlertEvidence = qualifyHistoricalAlertEvidence
+var QueueCanaryStatus = queueCanaryStatus
+var QueueHealthFixtureLease = queueHealthFixtureLease
+var QueueHealthRun = queueHealthRun
+var QueueHealthRunning = queueHealthRunning
+var ReadinessDestinationViews = readinessDestinationViews
+var ReadinessMaintenanceIDs = readinessMaintenanceIDs
+var RecordOAuthRenewal = recordOAuthRenewal
+var RecoverRetirement = recoverRetirement
+var RecoveryAutomaticEvaluation = recoveryAutomaticEvaluation
+var RecoveryHealthCapture = recoveryHealthCapture
+var RecoveryHealthPayload = recoveryHealthPayload
+var RecoveryHealthTransition = recoveryHealthTransition
+var RecoveryHistoryExecution = recoveryHistoryExecution
+var RecoveryHistoryMatches = recoveryHistoryMatches
+var RecoveryHistoryPage = recoveryHistoryPage
+var RecoveryHistoryWindow = recoveryHistoryWindow
+var RecoveryNotificationEventID = recoveryNotificationEventID
+var RecoveryOverview = recoveryOverview
+var RecoveryOverviewDelivery = recoveryOverviewDelivery
+var RecoveryPolicyChangePreview = recoveryPolicyChangePreview
+
+func RecoveryPolicyClone[T any](p0 T) T { return recoveryPolicyClone[T](p0) }
+
+var RecoveryQueueFinish = recoveryQueueFinish
+var RecoveryReport = recoveryReport
+var RecoveryReviewNotificationID = recoveryReviewNotificationID
+var RegexpMatch = regexpMatch
+var RegisterConsumedNativeIdentity = registerConsumedNativeIdentity
+var RegistryImageChainPublication = registryImageChainPublication
+var RegistryImageChainRejectsTamperedMetadata = registryImageChainRejectsTamperedMetadata
+var RegistryRootfsCurrentKey = registryRootfsCurrentKey
+var RegistryRootfsDeletionLifecycle = registryRootfsDeletionLifecycle
+var RegistryRootfsFixture = registryRootfsFixture
+var RegistryRootfsLifecycle = registryRootfsLifecycle
+var RegistryRootfsRejectsSubstitution = registryRootfsRejectsSubstitution
+var RegistryVerificationFixture = registryVerificationFixture
+var RegistryVerificationFixtureWithChain = registryVerificationFixtureWithChain
+var RegistryVerificationPGStore = registryVerificationPGStore
+var ReleaseMemberForApp = releaseMemberForApp
+var RemoveAutomaticLiveRun = removeAutomaticLiveRun
+var ReplaceWorkflowDeployment = replaceWorkflowDeployment
+var RequestTelemetryLogEvent = requestTelemetryLogEvent
+var RequireKnownCloneSchema = requireKnownCloneSchema
+var ResolveStandardReviewedApp = resolveStandardReviewedApp
+var ResumeOptions = resumeOptions
+var RetirementJob = retirementJob
+var RetryCatalogOAuthRenewal = retryCatalogOAuthRenewal
+var RetryDeploymentInput = retryDeploymentInput
+
+func RetryRuntimeAdmissionBusy[T any](p0 context.Context, p1 func() (T, error)) (T, error) {
+	return retryRuntimeAdmissionBusy[T](p0, p1)
+}
+
+var RevocationDue = revocationDue
+var RouteHealthTransition = routeHealthTransition
+var RouteMonitorDeploymentBaseline = routeMonitorDeploymentBaseline
+var RouteMonitorEscalationNotification = routeMonitorEscalationNotification
+var RunAutomaticPolicy = runAutomaticPolicy
+var RuntimeArtifactBaseScanInput = runtimeArtifactBaseScanInput
+var RuntimeArtifactCaptureDoesNotBackfill = runtimeArtifactCaptureDoesNotBackfill
+var RuntimeArtifactCaptureProducerReplacement = runtimeArtifactCaptureProducerReplacement
+var RuntimeArtifactCaptureRenewal = runtimeArtifactCaptureRenewal
+var RuntimeArtifactCaptureSidecars = runtimeArtifactCaptureSidecars
+var RuntimeArtifactCaptureTwoDrives = runtimeArtifactCaptureTwoDrives
+var RuntimeArtifactFromSourceRootfs = runtimeArtifactFromSourceRootfs
+var RuntimeArtifactInputDatabaseDeadline = runtimeArtifactInputDatabaseDeadline
+var RuntimeArtifactInputRenewal = runtimeArtifactInputRenewal
+var RuntimeArtifactInputsSidecars = runtimeArtifactInputsSidecars
+var RuntimeArtifactInputsTwoDrives = runtimeArtifactInputsTwoDrives
+var RuntimeCapturePGStore = runtimeCapturePGStore
+var RuntimeCaptureTestBinding = runtimeCaptureTestBinding
+var RuntimeScanInputFixture = runtimeScanInputFixture
+var RuntimeScanLifecycle = runtimeScanLifecycle
+var RuntimeScanReplacement = runtimeScanReplacement
+var RuntimeUpgradeVerificationCheckpoint = runtimeUpgradeVerificationCheckpoint
+var SameMemUUID = sameMemUUID
+var SameStandardUUID = sameStandardUUID
+var SaveObserverOAuth = saveObserverOAuth
+var ScanAPIConsumerUsageStatementHandoffRow = scanAPIConsumerUsageStatementHandoffRow
+var ScanAppLogDrainHealth = scanAppLogDrainHealth
+var ScanPrivateNetwork = scanPrivateNetwork
+var ScanPrivateNetworkAddress = scanPrivateNetworkAddress
+var SeedAccount = seedAccount
+var SeedAutomaticRecoveryReview = seedAutomaticRecoveryReview
+var SeedEventWorkflow = seedEventWorkflow
+var SeedGuardRunWithSpec = seedGuardRunWithSpec
+var SeedInitialAutomatic = seedInitialAutomatic
+var SeedInitialReview = seedInitialReview
+var SeedInitialReviewWithContext = seedInitialReviewWithContext
+var SeedMemAccountReleaseHook = seedMemAccountReleaseHook
+var SeedOwnedWorkflowRouting = seedOwnedWorkflowRouting
+var SeedProductBilling = seedProductBilling
+var SeedRepairHealthOperation = seedRepairHealthOperation
+var SeedResumeRun = seedResumeRun
+var SeedWorkflowSchedule = seedWorkflowSchedule
+var SettleProductOperationTx = settleProductOperationTx
+var SimpleResumeSpec = simpleResumeSpec
+var SimulateAutomationTestSuite = simulateAutomationTestSuite
+var SimulateTest = simulateTest
+var SimulationLoopSpec = simulationLoopSpec
+var SimulationStep = simulationStep
+var SourceBuildRootfsFixture = sourceBuildRootfsFixture
+var SourceBuildRootfsFixtureRuntime = sourceBuildRootfsFixtureRuntime
+var SourceBuildRootfsLateIntent = sourceBuildRootfsLateIntent
+var SourceBuildRootfsLifecycle = sourceBuildRootfsLifecycle
+var SourceBuildRootfsMetadataMatches = sourceBuildRootfsMetadataMatches
+var SourceBuildRootfsOwnerErasure = sourceBuildRootfsOwnerErasure
+var SourceBuildRootfsSharedRuntime = sourceBuildRootfsSharedRuntime
+var SourceBuildRootfsSoftDeleteRestore = sourceBuildRootfsSoftDeleteRestore
+var SourceBuildRootfsSubstitution = sourceBuildRootfsSubstitution
+var SourceBuildRootfsSuperseded = sourceBuildRootfsSuperseded
+var SourceCompensationFixture = sourceCompensationFixture
+var SqrtFloat64 = sqrtFloat64
+var StageCanonicalID = stageCanonicalID
+var StandardArtifactRenewalBeforeBoot = standardArtifactRenewalBeforeBoot
+var StandardArtifactRenewalPromotion = standardArtifactRenewalPromotion
+var StandardArtifactRenewalRefusesUnsafe = standardArtifactRenewalRefusesUnsafe
+var StandardAutomaticBlockedRecovery = standardAutomaticBlockedRecovery
+var StandardAutomaticCreatorPlan = standardAutomaticCreatorPlan
+var StandardAutomaticDetach = standardAutomaticDetach
+var StandardAutomaticLeaseFencing = standardAutomaticLeaseFencing
+var StandardAutomaticOnboarding = standardAutomaticOnboarding
+var StandardAutomaticRestoreDefault = standardAutomaticRestoreDefault
+var StandardAutomaticReviewPrecedence = standardAutomaticReviewPrecedence
+var StandardAutomaticSetup = standardAutomaticSetup
+var StandardCapturedArtifactSourceHash = standardCapturedArtifactSourceHash
+var StandardConsumedRestoreReceipt = standardConsumedRestoreReceipt
+var StandardConsumerRosterInactiveLoggingOnly = standardConsumerRosterInactiveLoggingOnly
+var StandardConsumerRosterLifecycle = standardConsumerRosterLifecycle
+var StandardControlOperation = standardControlOperation
+var StandardControlOperationEqual = standardControlOperationEqual
+var StandardControlValueEqual = standardControlValueEqual
+var StandardEffectiveFields = standardEffectiveFields
+var StandardEgressExceptionDeadline = standardEgressExceptionDeadline
+var StandardEgressLifecycle = standardEgressLifecycle
+var StandardEgressPGError = standardEgressPGError
+var StandardEgressPending = standardEgressPending
+var StandardEgressReceipt = standardEgressReceipt
+var StandardEgressWrite = standardEgressWrite
+var StandardEnrollmentLifecycle = standardEnrollmentLifecycle
+var StandardExceptionConcurrent = standardExceptionConcurrent
+var StandardExceptionExpiry = standardExceptionExpiry
+var StandardExceptionLifecycle = standardExceptionLifecycle
+var StandardExceptionRefusals = standardExceptionRefusals
+var StandardExceptionRequest = standardExceptionRequest
+var StandardLocalIntentConcurrent = standardLocalIntentConcurrent
+var StandardLocalIntentLifecycle = standardLocalIntentLifecycle
+var StandardLocalIntentMaterialize = standardLocalIntentMaterialize
+var StandardLocalIntentPublisher = standardLocalIntentPublisher
+var StandardLocalIntentRefusals = standardLocalIntentRefusals
+var StandardLocalIntentRotateCompany = standardLocalIntentRotateCompany
+var StandardLogDeliveryDrain = standardLogDeliveryDrain
+var StandardLogDeliveryExceptionDeadline = standardLogDeliveryExceptionDeadline
+var StandardLogDeliveryInstance = standardLogDeliveryInstance
+var StandardLogDeliveryLifecycle = standardLogDeliveryLifecycle
+var StandardLogDeliveryPGError = standardLogDeliveryPGError
+var StandardLogDeliveryParentAuthority = standardLogDeliveryParentAuthority
+var StandardLogHealthPGError = standardLogHealthPGError
+var StandardLogInventoryCurrent = standardLogInventoryCurrent
+var StandardLogInventoryExceptionDeadline = standardLogInventoryExceptionDeadline
+var StandardLogInventoryLifecycle = standardLogInventoryLifecycle
+var StandardLogInventoryNode = standardLogInventoryNode
+var StandardLogInventoryPGError = standardLogInventoryPGError
+var StandardLogInventorySession = standardLogInventorySession
+var StandardLogInventoryWrite = standardLogInventoryWrite
+var StandardMaterializationLifecycle = standardMaterializationLifecycle
+var StandardMaterializationStale = standardMaterializationStale
+var StandardMaterializationWaveGate = standardMaterializationWaveGate
+var StandardMeasuredPromotionReceipt = standardMeasuredPromotionReceipt
+var StandardMeasuredSnapshotPromotion = standardMeasuredSnapshotPromotion
+var StandardNativeBootLifecycle = standardNativeBootLifecycle
+var StandardNativeBootRestart = standardNativeBootRestart
+var StandardNativeBootStolenState = standardNativeBootStolenState
+var StandardNativeRuntimeInputsMatch = standardNativeRuntimeInputsMatch
+var StandardObservationIdleSnapshots = standardObservationIdleSnapshots
+var StandardObservationLifecycle = standardObservationLifecycle
+var StandardObservationLoadLogging = standardObservationLoadLogging
+var StandardObservationPauseFence = standardObservationPauseFence
+var StandardObservationProviderLifecycle = standardObservationProviderLifecycle
+var StandardObservationStoredWaveBit = standardObservationStoredWaveBit
+var StandardOperationControlAuditCount = standardOperationControlAuditCount
+var StandardOperationControlAuthorization = standardOperationControlAuthorization
+var StandardOperationControlsLifecycle = standardOperationControlsLifecycle
+var StandardOperationPGStore = standardOperationPGStore
+var StandardOperationReviewedRollback = standardOperationReviewedRollback
+var StandardPausedHistoryCannotRecreateResidency = standardPausedHistoryCannotRecreateResidency
+var StandardPausedRestoreFixture = standardPausedRestoreFixture
+var StandardPgTime = standardPgTime
+var StandardPromotionInputChanged = standardPromotionInputChanged
+var StandardPromotionLifecycle = standardPromotionLifecycle
+var StandardPromotionRestart = standardPromotionRestart
+var StandardPublisherInheritance = standardPublisherInheritance
+var StandardPublisherRegistryAlias = standardPublisherRegistryAlias
+var StandardPublisherSourceAlias = standardPublisherSourceAlias
+var StandardReadOperation = standardReadOperation
+var StandardRestoreAuthority = standardRestoreAuthority
+var StandardRestoreFreshTargetRefusal = standardRestoreFreshTargetRefusal
+var StandardRestorePublicationRefusal = standardRestorePublicationRefusal
+var StandardRestoreRefusal = standardRestoreRefusal
+var StandardRestoreTestFixture = standardRestoreTestFixture
+var StandardReviewDigest = standardReviewDigest
+var StandardReviewStrings = standardReviewStrings
+var StandardRosterNode = standardRosterNode
+var StandardRosterRead = standardRosterRead
+var StandardRuntimeConfigPublication = standardRuntimeConfigPublication
+var StandardRuntimeInputsMatch = standardRuntimeInputsMatch
+var StandardSnapshotAck = standardSnapshotAck
+var StandardSnapshotCacheRow = standardSnapshotCacheRow
+var StandardSnapshotConsumptionPublication = standardSnapshotConsumptionPublication
+var StandardSnapshotFixture = standardSnapshotFixture
+var StandardSnapshotGet = standardSnapshotGet
+var StandardSnapshotLifecycle = standardSnapshotLifecycle
+var StandardSnapshotPolicyChange = standardSnapshotPolicyChange
+var StandardSnapshotRenewedApproval = standardSnapshotRenewedApproval
+var StandardSnapshotRestart = standardSnapshotRestart
+var StandardWorkerFairness = standardWorkerFairness
+var TenantSurfaceFixture = tenantSurfaceFixture
+var TestAutomaticRecoveryPolicy = testAutomaticRecoveryPolicy
+var TestRecoveryPreviewPolicy = testRecoveryPreviewPolicy
+var TierRank = tierRank
+var UnifiedDeadLetterEventID = unifiedDeadLetterEventID
+var UuidFromPgtype = uuidFromPgtype
+var ValidFinancialPrice = validFinancialPrice
+var ValidProjectEnvironmentEdgeRules = validProjectEnvironmentEdgeRules
+var ValidRuntimeUpgradeAcceptanceTime = validRuntimeUpgradeAcceptanceTime
+var ValidStandardRuntimeRefresh = validStandardRuntimeRefresh
+var ValidStoredFinancialPrice = validStoredFinancialPrice
+var ValidateAPIConsumerPlanAlerts = validateAPIConsumerPlanAlerts
+var ValidateAPIConsumerUsageStatementHandoffInput = validateAPIConsumerUsageStatementHandoffInput
+var ValidateAutomationTestSuite = validateAutomationTestSuite
+var ValidateCheckpointCaptureRetirementObservation = validateCheckpointCaptureRetirementObservation
+var ValidateCheckpointCaptureRetirementPlan = validateCheckpointCaptureRetirementPlan
+var ValidateCheckpointObjectCopyObservation = validateCheckpointObjectCopyObservation
+var ValidateCheckpointObjectCredentialReservation = validateCheckpointObjectCredentialReservation
+var ValidateCheckpointObjectCredentialValues = validateCheckpointObjectCredentialValues
+var ValidateCheckpointObjectRetirementObservation = validateCheckpointObjectRetirementObservation
+var ValidateCheckpointObjectVerificationObservation = validateCheckpointObjectVerificationObservation
+var ValidateCheckpointPostgresCopyRetirementObservation = validateCheckpointPostgresCopyRetirementObservation
+var ValidateCheckpointPostgresCopyRetirementPlan = validateCheckpointPostgresCopyRetirementPlan
+var ValidateCheckpointWorkloadRetirementObservation = validateCheckpointWorkloadRetirementObservation
+var ValidateCheckpointWorkloadRetirementPlan = validateCheckpointWorkloadRetirementPlan
+var ValidateCloneCheckpointAdoptionReceipt = validateCloneCheckpointAdoptionReceipt
+var ValidateCloneCheckpointAdoptionReceiptContents = validateCloneCheckpointAdoptionReceiptContents
+var ValidateCloneCheckpointReleasePlan = validateCloneCheckpointReleasePlan
+var ValidateCloneCheckpointReleasePlanContents = validateCloneCheckpointReleasePlanContents
+var ValidateCloneResourceTransition = validateCloneResourceTransition
+var ValidateDeployBranchMapping = validateDeployBranchMapping
+var ValidateGitOpsDesiredQueues = validateGitOpsDesiredQueues
+var ValidateOperationJobAuthority = validateOperationJobAuthority
+var ValidateOperationWorkflowStateBatch = validateOperationWorkflowStateBatch
+var ValidatePlatformTenantStatementInput = validatePlatformTenantStatementInput
+var ValidateProfileCanaryGatePolicy = validateProfileCanaryGatePolicy
+var ValidatePublicationReceipt = validatePublicationReceipt
+var ValidateQueueCanaryDispatch = validateQueueCanaryDispatch
+var ValidateReleaseStage = validateReleaseStage
+var ValidateRouteCodeEvidence = validateRouteCodeEvidence
+var ValidateRuntimeInstancePublication = validateRuntimeInstancePublication
+var ValidateStandardReviewHash = validateStandardReviewHash
+var ValidateWorkloadIntent = validateWorkloadIntent
+var VerificationReceiptFixture = verificationReceiptFixture
+var WaitStandardExceptionExpiry = waitStandardExceptionExpiry
+var WebhookEffect = webhookEffect
+var WebhookFixture = webhookFixture
+var WorkflowDiagnosticBlock = workflowDiagnosticBlock
+var WorkflowDiagnosticStepKinds = workflowDiagnosticStepKinds
+var WorkflowForEachMaxParallel = workflowForEachMaxParallel
+var WorkflowForEachNext = workflowForEachNext
+var WorkflowGuardStores = workflowGuardStores
+var WorkflowOperationEffectID = workflowOperationEffectID
+var WorkflowPreflightDiagnostics = workflowPreflightDiagnostics
+var WorkflowRecoveryAttentionRead = workflowRecoveryAttentionRead
+var WorkflowRecoveryExecution = workflowRecoveryExecution
+var WorkflowResumePlan = workflowResumePlan
+var WorkflowScheduleStores = workflowScheduleStores
+var WorkflowTenantEventRecipientID = workflowTenantEventRecipientID
+var XNewPgStore = newPgStore
+
+// Members of ApplicationStandardReviewPlan
+func (r *ApplicationStandardReviewPlan) ApprovalInputs() *appstandards.ApprovalInputs {
+	return &r.approvalInputs
+}
+
+// Members of DeploymentRuntimeProducerInputs
+func (r *DeploymentRuntimeProducerInputs) DeploymentRuntimeArtifactIdentity() *deploymentRuntimeArtifactIdentity {
+	return &r.deploymentRuntimeArtifactIdentity
+}
+
+// Members of DeploymentRuntimeScanInput
+func (r *DeploymentRuntimeScanInput) DeploymentRuntimeArtifactIdentity() *deploymentRuntimeArtifactIdentity {
+	return &r.deploymentRuntimeArtifactIdentity
+}
+
+// Members of InstanceApplicationStandardAdmission
+func (r *InstanceApplicationStandardAdmission) Inputs() *json.RawMessage { return &r.inputs }
+
+// Members of MemStore
+func (r *MemStore) Accounts() *map[string]Account                 { return &r.accounts }
+func (r *MemStore) AlertPresets() *map[string]AlertPreset         { return &r.alertPresets }
+func (r *MemStore) AlertRollbacks() *map[string]api.AlertRollback { return &r.alertRollbacks }
+func (r *MemStore) AppEnvironmentWorkloadIntents() *map[environmentWorkloadIntentKey]EnvironmentWorkloadIntent {
+	return &r.appEnvironmentWorkloadIntents
+}
+func (r *MemStore) AppTasks() *map[string]AppTask { return &r.appTasks }
+func (r *MemStore) AppWebhookDeliveryAttempts() *map[string][]AppWebhookDeliveryAttempt {
+	return &r.appWebhookDeliveryAttempts
+}
+func (r *MemStore) AppWebhookEventOutbox() *map[string]appWebhookOutboxEvent {
+	return &r.appWebhookEventOutbox
+}
+func (r *MemStore) AppWebhookReplayGenerations() *map[string]int {
+	return &r.appWebhookReplayGenerations
+}
+func (r *MemStore) AppWebhooks() *map[string]AppWebhook { return &r.appWebhooks }
+func (r *MemStore) ApplicationStandardAssignments() *map[string]applicationStandardAssignmentRecord {
+	return &r.applicationStandardAssignments
+}
+func (r *MemStore) ApplicationStandardEnrollments() *map[string]ApplicationStandardEnrollment {
+	return &r.applicationStandardEnrollments
+}
+func (r *MemStore) ApplicationStandardLogConsumerClosures() *map[string]ApplicationStandardLogConsumerClosure {
+	return &r.applicationStandardLogConsumerClosures
+}
+func (r *MemStore) ApplicationStandardLogHealth() *map[string]ApplicationStandardLogHealthObservation {
+	return &r.applicationStandardLogHealth
+}
+func (r *MemStore) Apps() *map[string]App                     { return &r.apps }
+func (r *MemStore) AuditLog() *[]AuditLog                     { return &r.auditLog }
+func (r *MemStore) BaseImageScans() *map[string]BaseImageScan { return &r.baseImageScans }
+func (r *MemStore) BindingVerificationRuns() *map[string]verificationRunRecord {
+	return &r.bindingVerificationRuns
+}
+func (r *MemStore) BuildExportPublications() *map[string]BuildExportPublication {
+	return &r.buildExportPublications
+}
+func (r *MemStore) Builds() *map[string]Build { return &r.builds }
+func (r *MemStore) ComputeNodeHeartbeats() *map[string][]ComputeNodeHeartbeat {
+	return &r.computeNodeHeartbeats
+}
+func (r *MemStore) ComputeNodeRuntimeHistory() *map[string]runtimeadmission.Identity {
+	return &r.computeNodeRuntimeHistory
+}
+func (r *MemStore) ComputeNodeRuntimeIncarnations() *map[string]string {
+	return &r.computeNodeRuntimeIncarnations
+}
+func (r *MemStore) ComputeNodeRuntimeProtocols() *map[string]uint32 {
+	return &r.computeNodeRuntimeProtocols
+}
+func (r *MemStore) ComputeNodes() *map[string]ComputeNode  { return &r.computeNodes }
+func (r *MemStore) ConsumerKeys() *map[string]ConsumerKey  { return &r.consumerKeys }
+func (r *MemStore) CorsPresets() *map[string]CorsPreset    { return &r.corsPresets }
+func (r *MemStore) DeadLetterPurged() *map[string]struct{} { return &r.deadLetterPurged }
+func (r *MemStore) DeploymentArtifactScans() *map[string]DeploymentArtifactScan {
+	return &r.deploymentArtifactScans
+}
+func (r *MemStore) DeploymentRuntimeScanCurrent() *map[string]string {
+	return &r.deploymentRuntimeScanCurrent
+}
+func (r *MemStore) DeploymentRuntimeScans() *map[string]DeploymentRuntimeScan {
+	return &r.deploymentRuntimeScans
+}
+func (r *MemStore) Deployments() *map[string]Deployment         { return &r.deployments }
+func (r *MemStore) Domains() *map[string]CustomDomain           { return &r.domains }
+func (r *MemStore) EntityOutboxAcceptances() *map[string]string { return &r.entityOutboxAcceptances }
+func (r *MemStore) EnvironmentRuntimeConfigChangedAt() *map[environmentRuntimeKey]time.Time {
+	return &r.environmentRuntimeConfigChangedAt
+}
+func (r *MemStore) EventFanout() *map[string]*PublishedEventWork          { return &r.eventFanout }
+func (r *MemStore) EventRecoveryJobs() *map[string]*memEventRecoveryJob   { return &r.eventRecoveryJobs }
+func (r *MemStore) EventSubscriptions() *map[string]EventSubscription     { return &r.eventSubscriptions }
+func (r *MemStore) EventWorkBindings() *map[string]EventWorkBinding       { return &r.eventWorkBindings }
+func (r *MemStore) Events() *[]Event                                      { return &r.events }
+func (r *MemStore) ExclusiveEffects() *map[string][]exclusiveStoredEffect { return &r.exclusiveEffects }
+func (r *MemStore) ExclusiveNow() *func() time.Time                       { return &r.exclusiveNow }
+func (r *MemStore) ExecutionPayloads() *map[string]executionPayload       { return &r.executionPayloads }
+func (r *MemStore) GraphVerificationRuns() *map[string]graphVerificationRecord {
+	return &r.graphVerificationRuns
+}
+func (r *MemStore) Idem() *map[string]idemEntry                  { return &r.idem }
+func (r *MemStore) InitialCompletionNext() *map[string]time.Time { return &r.initialCompletionNext }
+func (r *MemStore) InitialRecoveryReviews() *map[string]api.WorkflowInitialRecoveryReview {
+	return &r.initialRecoveryReviews
+}
+func (r *MemStore) InstanceApplicationStandardBootTokens() *map[string]string {
+	return &r.instanceApplicationStandardBootTokens
+}
+func (r *MemStore) InstanceApplicationStandardBoots() *map[string]instanceStandardBoot {
+	return &r.instanceApplicationStandardBoots
+}
+func (r *MemStore) InstanceApplicationStandardPromotions() *map[string]instanceStandardPromotion {
+	return &r.instanceApplicationStandardPromotions
+}
+func (r *MemStore) Instances() *map[string]Instance        { return &r.instances }
+func (r *MemStore) Invitations() *map[string]OrgInvitation { return &r.invitations }
+func (r *MemStore) Invocations() *map[string]Invocation    { return &r.invocations }
+func (r *MemStore) Invoices() *map[string]Invoice          { return &r.invoices }
+func (r *MemStore) JobMaterializationClaims() *map[string]jobMaterializationClaim {
+	return &r.jobMaterializationClaims
+}
+func (r *MemStore) JobRuns() *map[string]JobRun { return &r.jobRuns }
+func (r *MemStore) Jobs() *map[string]Job       { return &r.jobs }
+func (r *MemStore) Keys() *map[string]APIKey    { return &r.keys }
+func (r *MemStore) LifecycleApprovalSuccessors() *map[string]string {
+	return &r.lifecycleApprovalSuccessors
+}
+func (r *MemStore) LifecycleRecovery() *bool                    { return &r.lifecycleRecovery }
+func (r *MemStore) McpCatalogMonitorOwners() *map[string]string { return &r.mcpCatalogMonitorOwners }
+func (r *MemStore) McpCatalogMonitors() *map[string]api.MCPCatalogMonitorSnapshot {
+	return &r.mcpCatalogMonitors
+}
+func (r *MemStore) McpOAuthRetirements() *map[string]mcpRetirementEntry {
+	return &r.mcpOAuthRetirements
+}
+func (r *MemStore) McpReadiness() **memMCPReadiness               { return &r.mcpReadiness }
+func (r *MemStore) Memberships() *map[orgAccountKey]OrgMembership { return &r.memberships }
+func (r *MemStore) MirrorRules() *map[string]MirrorRule           { return &r.mirrorRules }
+func (r *MemStore) MirrorSlotLeases() *map[string]MirrorSlotLease { return &r.mirrorSlotLeases }
+func (r *MemStore) Mu() *sync.Mutex                               { return &r.mu }
+func (r *MemStore) NextProductionLifecycleReviewID() *int64 {
+	return &r.nextProductionLifecycleReviewID
+}
+func (r *MemStore) ObjectBuckets() *map[string]ObjectBucket { return &r.objectBuckets }
+func (r *MemStore) ObjectMultipartUploads() *map[string]ObjectMultipartUpload {
+	return &r.objectMultipartUploads
+}
+func (r *MemStore) ObjectUploadCompletions() *map[string]ObjectUploadCompletion {
+	return &r.objectUploadCompletions
+}
+func (r *MemStore) ObjectWriteAdmissions() *map[string]objectWriteAdmission {
+	return &r.objectWriteAdmissions
+}
+func (r *MemStore) OidcTrustPolicies() *map[string]OIDCTrustPolicy { return &r.oidcTrustPolicies }
+func (r *MemStore) OperationData() **operationMemory               { return &r.operationData }
+func (r *MemStore) OperatorAlertCollection() *OperatorAlertCollection {
+	return &r.operatorAlertCollection
+}
+func (r *MemStore) OperatorAlertCollectionOutcomes() *[]OperatorAlertCollectionOutcome {
+	return &r.operatorAlertCollectionOutcomes
+}
+func (r *MemStore) OrgActivityOutbox() *map[int64]orgActivityOutboxRow { return &r.orgActivityOutbox }
+func (r *MemStore) PaddleOverageMonths() *map[paddleOverageKey]struct{} {
+	return &r.paddleOverageMonths
+}
+func (r *MemStore) PlatformTenantUsage() *map[string]APIConsumerUsageBucket {
+	return &r.platformTenantUsage
+}
+func (r *MemStore) PlatformTenants() *map[string]PlatformTenant { return &r.platformTenants }
+func (r *MemStore) PrewarmIntents() *map[string]PrewarmIntent   { return &r.prewarmIntents }
+func (r *MemStore) PrivateNetworks() *map[string]PrivateNetwork { return &r.privateNetworks }
+func (r *MemStore) ProductionLifecycleHistory() *[]api.RouteLifecycleHistoryEntry {
+	return &r.productionLifecycleHistory
+}
+func (r *MemStore) ProfileDeploymentPolicies() *map[string]api.ProfileDeploymentPolicy {
+	return &r.profileDeploymentPolicies
+}
+func (r *MemStore) ProjectEnvironmentWorkloadDeploymentSpecs() *map[string]string {
+	return &r.projectEnvironmentWorkloadDeploymentSpecs
+}
+func (r *MemStore) ProjectEnvironmentWorkloadSpecs() *map[string]ProjectEnvironmentWorkloadSpec {
+	return &r.projectEnvironmentWorkloadSpecs
+}
+func (r *MemStore) ProjectReleaseSets() *map[string]ProjectReleaseSet { return &r.projectReleaseSets }
+func (r *MemStore) QueueBindingCanaries() *map[string]queueCanaryRecord {
+	return &r.queueBindingCanaries
+}
+func (r *MemStore) ReadinessAttention() *map[string]readinessAttentionRecord {
+	return &r.readinessAttention
+}
+func (r *MemStore) ReadinessIncidentEvents() *map[string]readinessIncidentEventRecord {
+	return &r.readinessIncidentEvents
+}
+func (r *MemStore) ReadinessIncidents() *map[string]readinessIncident { return &r.readinessIncidents }
+func (r *MemStore) RealtimeChannelRouteOverflow() *map[string]managedRealtimeChannelRouteOverflowState {
+	return &r.realtimeChannelRouteOverflow
+}
+func (r *MemStore) RecoveryPolicies() *map[string]*memWorkflowRecoveryPolicy {
+	return &r.recoveryPolicies
+}
+func (r *MemStore) RevisionPins() *map[string]time.Time { return &r.revisionPins }
+func (r *MemStore) RouteHealthHistory() *map[string][]routeHealthStoredDecision {
+	return &r.routeHealthHistory
+}
+func (r *MemStore) RouteLifecycleApprovals() *map[string]api.RouteLifecycleApproval {
+	return &r.routeLifecycleApprovals
+}
+func (r *MemStore) SafeReleaseWorkerLeaseUntil() *time.Time            { return &r.safeReleaseWorkerLeaseUntil }
+func (r *MemStore) ScenarioPostgres() *map[string]rehearsalpg.Resource { return &r.scenarioPostgres }
+func (r *MemStore) ScheduleOccurrences() *map[string]ScheduleOccurrence {
+	return &r.scheduleOccurrences
+}
+func (r *MemStore) Secrets() *map[secretKey]AppSecret      { return &r.secrets }
+func (r *MemStore) ServiceAddressCursors() *map[string]int { return &r.serviceAddressCursors }
+func (r *MemStore) ServiceAddressIndex() *map[string]int   { return &r.serviceAddressIndex }
+func (r *MemStore) ServiceCallerKeyHistory() *map[string]retiredServiceCallerKey {
+	return &r.serviceCallerKeyHistory
+}
+func (r *MemStore) Snapshots() *[]Snapshot                                 { return &r.snapshots }
+func (r *MemStore) SourceBuildRootfs() *map[string]SourceBuildRootfs       { return &r.sourceBuildRootfs }
+func (r *MemStore) StatusIncidents() *[]StatusIncident                     { return &r.statusIncidents }
+func (r *MemStore) StripeByCustomer() *map[string]string                   { return &r.stripeByCustomer }
+func (r *MemStore) TenantHostnames() *map[string]TenantHostname            { return &r.tenantHostnames }
+func (r *MemStore) TenantSurfaces() *map[string]TenantSurface              { return &r.tenantSurfaces }
+func (r *MemStore) TrustedSigners() *map[trustedSignerKey]AppTrustedSigner { return &r.trustedSigners }
+func (r *MemStore) UploadSessions() *map[string]sqlc.UploadSession         { return &r.uploadSessions }
+func (r *MemStore) Usage() *[]usageMinute                                  { return &r.usage }
+func (r *MemStore) WorkflowFailureEvidence() *map[string][]workflowFailureEvidence {
+	return &r.workflowFailureEvidence
+}
+func (r *MemStore) WorkflowResumes() *map[string][]WorkflowResume { return &r.workflowResumes }
+func (r *MemStore) WorkflowRunLeases() *map[string]time.Time      { return &r.workflowRunLeases }
+func (r *MemStore) WorkflowRuns() *map[string]WorkflowRun         { return &r.workflowRuns }
+func (r *MemStore) XUsageByMonth() *[]Usage                       { return &r.usageByMonth }
+func (r *MemStore) AppendAuditLogLocked(p0 AuditLog)              { r.appendAuditLogLocked(p0) }
+func (r *MemStore) AppendRouteHealthHistoryLocked(p0 string, p1 routeHealthStoredDecision) {
+	r.appendRouteHealthHistoryLocked(p0, p1)
+}
+func (r *MemStore) CaptureAlertRollbackLocked(p0 string, p1 AlertRule, p2 float64, p3 time.Time) {
+	r.captureAlertRollbackLocked(p0, p1, p2, p3)
+}
+func (r *MemStore) CapturePollingAlertLocked(p0 App, p1 *api.WorkflowRecoveryPollingWebhookPayload) (*api.WorkflowRecoveryPollingNotification, error) {
+	return r.capturePollingAlertLocked(p0, p1)
+}
+func (r *MemStore) CheckMCPReadinessLocked(p0 Deployment, p1 int) error {
+	return r.checkMCPReadinessLocked(p0, p1)
+}
+func (r *MemStore) ConsumeMCPReadinessOverrideLocked(p0 Deployment, p1 Deployment) {
+	r.consumeMCPReadinessOverrideLocked(p0, p1)
+}
+func (r *MemStore) EnsureServiceAddressIndexLocked(p0 *App) { r.ensureServiceAddressIndexLocked(p0) }
+func (r *MemStore) ForgetOperationLocked(p0 string)         { r.forgetOperationLocked(p0) }
+func (r *MemStore) InitializeApplicationStandardEnrollmentLocked(p0 App) error {
+	return r.initializeApplicationStandardEnrollmentLocked(p0)
+}
+func (r *MemStore) InsertProductOperationLocked(p0 Operation) { r.insertProductOperationLocked(p0) }
+func (r *MemStore) InsertRetirementLocked(p0 string, p1 api.MCPOAuthRetirement) error {
+	return r.insertRetirementLocked(p0, p1)
+}
+func (r *MemStore) LifecycleSuccessorBindingLocked(p0 api.RouteLifecycleApproval) string {
+	return r.lifecycleSuccessorBindingLocked(p0)
+}
+func (r *MemStore) OperationMemoryLocked() *operationMemory { return r.operationMemoryLocked() }
+func (r *MemStore) OperationRecoverySnapshotLocked(p0 string, p1 string) (operationRecoverySnapshot, error) {
+	return r.operationRecoverySnapshotLocked(p0, p1)
+}
+func (r *MemStore) PrepareProfileAlertsLocked(p0 profileAlertObservation) ([]profileAlertPlan, error) {
+	return r.prepareProfileAlertsLocked(p0)
+}
+func (r *MemStore) PublishProfileAlertsLocked(p0 profileAlertObservation, p1 []profileAlertPlan) {
+	r.publishProfileAlertsLocked(p0, p1)
+}
+func (r *MemStore) ReadinessMonitorJobsLocked() map[string]MCPReadinessMonitorJob {
+	return r.readinessMonitorJobsLocked()
+}
+func (r *MemStore) RecordLifecycleHistoryLocked(p0 Deployment, p1 api.RouteGateDecision, p2 bool, p3 string) {
+	r.recordLifecycleHistoryLocked(p0, p1, p2, p3)
+}
+func (r *MemStore) RecoveryExecutionHealthLocked(p0 context.Context, p1 string, p2 string, p3 time.Time) (*api.EventRecoveryExecutionHealth, error) {
+	return r.recoveryExecutionHealthLocked(p0, p1, p2, p3)
+}
+func (r *MemStore) RuntimeArtifactIdentityLocked(p0 App, p1 Deployment) (*deploymentRuntimeArtifactIdentity, error) {
+	return r.runtimeArtifactIdentityLocked(p0, p1)
+}
+func (r *MemStore) RuntimeProducerSetLocked(p0 App, p1 Deployment, p2 time.Time) (deploymentRuntimeArtifactIdentity, []runtimeProducerLease, error) {
+	return r.runtimeProducerSetLocked(p0, p1, p2)
+}
+func (r *MemStore) SaveOperationRecoveryDecisionLocked(p0 Operation, p1 api.OperationRecoveryRequest, p2 string, p3 time.Time, p4 time.Time) {
+	r.saveOperationRecoveryDecisionLocked(p0, p1, p2, p3, p4)
+}
+func (r *MemStore) SettleProductOperationLocked(p0 Operation) { r.settleProductOperationLocked(p0) }
+func (r *MemStore) StandardReviewSnapshotLocked(p0 context.Context, p1 string, p2 string, p3 ApplicationStandardReviewRequest) (standardReviewSnapshot, error) {
+	return r.standardReviewSnapshotLocked(p0, p1, p2, p3)
+}
+func (r *MemStore) WorkflowRecoveryAttentionLocked(p0 context.Context, p1 *memEventRecoveryJob, p2 time.Time) (api.WorkflowRecoveryExecutionAttention, error) {
+	return r.workflowRecoveryAttentionLocked(p0, p1, p2)
+}
+
+// Members of PGRateLimitBackend
+func (r *PGRateLimitBackend) Pool() **pgxpool.Pool { return &r.pool }
+
+// Members of PgStore
+func (r *PgStore) Pool() **orgAccessPool { return &r.pool }
+
+// Members of RuntimeSnapshotRecord
+func (r RuntimeSnapshotRecord) IdentityKey() string { return r.identityKey() }
+
+// Members of RuntimeUpgradeGatewayRoster
+func (r RuntimeUpgradeGatewayRoster) Sessions() []string { return r.sessions() }
+
+// Members of attentionFixture
+func (r *attentionFixture) Account() *Account                { return &r.account }
+func (r *attentionFixture) App() *App                        { return &r.app }
+func (r *attentionFixture) Now() *time.Time                  { return &r.now }
+func (r *attentionFixture) Outbox() *MCPReadinessOutboxStore { return &r.outbox }
+func (r *attentionFixture) Rule() *AlertRule                 { return &r.rule }
+func (r *attentionFixture) Act(p0 string, p1 api.MCPReadinessAttentionAction, p2 time.Time) api.MCPReadinessAttentionReceipt {
+	return r.act(p0, p1, p2)
+}
+func (r *attentionFixture) Claim(p0 time.Time, p1 bool) MCPReadinessDeliveryClaim {
+	return r.claim(p0, p1)
+}
+func (r *attentionFixture) Complete(p0 MCPReadinessDeliveryClaim, p1 time.Time, p2 AlertDeliveryStatus) {
+	r.complete(p0, p1, p2)
+}
+func (r *attentionFixture) Configure(p0 string, p1 time.Time, p2 int)     { r.configure(p0, p1, p2) }
+func (r *attentionFixture) Event(p0 string) api.MCPReadinessIncidentEvent { return r.event(p0) }
+func (r *attentionFixture) Observe(p0 time.Time, p1 bool, p2 string) MCPReadinessTransition {
+	return r.observe(p0, p1, p2)
+}
+func (r *attentionFixture) Request(p0 string, p1 string, p2 time.Time) api.MCPReadinessAttentionAction {
+	return r.request(p0, p1, p2)
+}
+func (r *attentionFixture) View(p0 string, p1 time.Time) api.MCPReadinessIncidentAttention {
+	return r.view(p0, p1)
+}
+
+// Members of effectFixture
+func (r *effectFixture) Account() *Account           { return &r.account }
+func (r *effectFixture) App() *App                   { return &r.app }
+func (r *effectFixture) AppHook() *AppWebhook        { return &r.appHook }
+func (r *effectFixture) Base() *Store                { return &r.base }
+func (r *effectFixture) Hook() *AppWebhook           { return &r.hook }
+func (r *effectFixture) Owners() *ExclusiveWorkStore { return &r.owners }
+func (r *effectFixture) Pool() **pgxpool.Pool        { return &r.pool }
+func (r *effectFixture) Tenant() *PlatformTenant     { return &r.tenant }
+func (r effectFixture) Claim(p0 *testing.T, p1 string) (ExclusiveOperation, exclusivework.Claim) {
+	return r.claim(p0, p1)
+}
+
+// Members of jobMaterializationClaim
+func (r *jobMaterializationClaim) LeaseUntil() *time.Time { return &r.leaseUntil }
+
+// Members of memMCPReadiness
+func (r *memMCPReadiness) Evidence() *map[string]api.MCPReadinessEvidence { return &r.evidence }
+func (r *memMCPReadiness) Monitors() *map[string]MCPReadinessMonitorJob   { return &r.monitors }
+
+// Members of operationMemory
+func (r *operationMemory) Blobs() *map[string]OperationResultBlob       { return &r.blobs }
+func (r *operationMemory) Definitions() *map[string]OperationDefinition { return &r.definitions }
+func (r *operationMemory) Events() *map[string][]api.OperationEvent     { return &r.events }
+func (r *operationMemory) Executions() *map[string]string               { return &r.executions }
+func (r *operationMemory) Generations() *map[string]int                 { return &r.generations }
+func (r *operationMemory) Operations() *map[string]Operation            { return &r.operations }
+func (r *operationMemory) Recoveries() *map[string]string               { return &r.recoveries }
+func (r *operationMemory) RecoveryDecisions() *map[string]api.OperationRecoveryDecision {
+	return &r.recoveryDecisions
+}
+func (r *operationMemory) Reports() *map[string]string { return &r.reports }
+
+// Members of operationRecoverySnapshot
+func (r *operationRecoverySnapshot) Op() *Operation { return &r.op }
+
+// Members of paddleOverageKey
+func (r *paddleOverageKey) AccountID() *string { return &r.accountID }
+
+// Members of productBillingFixture
+func (r *productBillingFixture) Ops() *map[string]Operation  { return &r.ops }
+func (r *productBillingFixture) Other() *ProductBillingScope { return &r.other }
+func (r *productBillingFixture) Scope() *ProductBillingScope { return &r.scope }
+func (r *productBillingFixture) Settle() *func(Operation)    { return &r.settle }
+
+// Members of productPilotResult
+func (r *productPilotResult) Operation() *Operation { return &r.operation }
+
+// Members of productPlanFixture
+func (r *productPlanFixture) Admission() *OperationAdmission { return &r.admission }
+func (r *productPlanFixture) Scope() *ProductPlanScope       { return &r.scope }
+
+// Members of retiredServiceCallerKey
+func (r *retiredServiceCallerKey) RetireAt() *time.Time { return &r.retireAt }
+
+// Members of runtimeCaptureFixture
+func (r *runtimeCaptureFixture) App() *App                                  { return &r.app }
+func (r *runtimeCaptureFixture) Dep() *Deployment                           { return &r.dep }
+func (r *runtimeCaptureFixture) NodeID() *string                            { return &r.nodeID }
+func (r *runtimeCaptureFixture) Owner() *CreateAccountWithPersonalOrgResult { return &r.owner }
+
+// Members of standardApprovalFixture
+func (r *standardApprovalFixture) Apps() *[]App                               { return &r.apps }
+func (r *standardApprovalFixture) Owner() *CreateAccountWithPersonalOrgResult { return &r.owner }
+func (r *standardApprovalFixture) Plan() *ApplicationStandardReviewPlan       { return &r.plan }
+
+// Members of standardAutomaticFixture
+func (r *standardAutomaticFixture) Owner() *CreateAccountWithPersonalOrgResult { return &r.owner }
+func (r *standardAutomaticFixture) Version() *ApplicationStandardVersion       { return &r.version }
+
+// Members of standardEgressFixture
+func (r *standardEgressFixture) Instance() *Instance                      { return &r.instance }
+func (r *standardEgressFixture) Node() *ComputeNode                       { return &r.node }
+func (r *standardEgressFixture) Target() *ApplicationStandardEgressTarget { return &r.target }
+
+// Members of standardLocalIntentFixture
+func (r *standardLocalIntentFixture) App() *App                                   { return &r.app }
+func (r *standardLocalIntentFixture) Company() *ApplicationStandardLogDestination { return &r.company }
+func (r *standardLocalIntentFixture) Enrollment() *ApplicationStandardEnrollment {
+	return &r.enrollment
+}
+func (r *standardLocalIntentFixture) Extra() *ApplicationStandardLogDestination   { return &r.extra }
+func (r *standardLocalIntentFixture) Owner() *CreateAccountWithPersonalOrgResult  { return &r.owner }
+func (r *standardLocalIntentFixture) Rotated() *ApplicationStandardLogDestination { return &r.rotated }
+
+// Members of workflowOperationWindow
+func (r *workflowOperationWindow) Deadline() *time.Time { return &r.deadline }
+func (r *workflowOperationWindow) Lease() *time.Time    { return &r.lease }
+
+var LiveServiceProxyIdentities = liveServiceProxyIdentities

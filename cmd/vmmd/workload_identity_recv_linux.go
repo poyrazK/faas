@@ -38,12 +38,13 @@ type workloadIdentityResponse struct {
 // listener association is the credential: a guest cannot request a token for
 // another app/account because the instance id is never supplied on the wire.
 type WorkloadIdentityReceiver struct {
-	ctx     context.Context
-	log     *slog.Logger
-	mgr     *fcvm.Manager
-	signer  *workloadidentity.Signer
-	now     func() time.Time
-	metrics *workloadIdentityMetrics
+	ctx         context.Context
+	log         *slog.Logger
+	mgr         *fcvm.Manager
+	signer      *workloadidentity.Signer
+	now         func() time.Time
+	metrics     *workloadIdentityMetrics
+	deployments workloadIdentityDeployments
 }
 
 // UseMetrics counts token request outcomes (ADR-1141).
@@ -51,6 +52,38 @@ func (r *WorkloadIdentityReceiver) UseMetrics(m *workloadIdentityMetrics) {
 	if r != nil {
 		r.metrics = m
 	}
+}
+
+// UseDeployments names each token's environment from the instance's
+// deployment scope. Without it (a node with no database) tokens carry no
+// environment, as before the ADR-1141 amendment of 2026-10-25.
+func (r *WorkloadIdentityReceiver) UseDeployments(d workloadIdentityDeployments) {
+	if r != nil {
+		r.deployments = d
+	}
+}
+
+// environment is the deployment scope instance runs. A configured receiver
+// refuses rather than guess: a token without the scope would carry the
+// default environment's subject, which a production trust policy accepts.
+func (r *WorkloadIdentityReceiver) environment(instance string) (string, error) {
+	if r.deployments == nil {
+		return "", nil
+	}
+	id := r.mgr.WorkloadTokenDeployment(instance)
+	if id == "" {
+		return "", errors.New("workload identity: instance runs no known deployment")
+	}
+	ctx, cancel := context.WithTimeout(r.ctx, 3*time.Second)
+	defer cancel()
+	dep, err := r.deployments.DeploymentByID(ctx, id)
+	if err != nil {
+		return "", fmt.Errorf("workload identity: read deployment %s: %w", id, err)
+	}
+	if dep.Scope == "" {
+		return workloadidentity.DefaultEnvironment, nil
+	}
+	return dep.Scope, nil
 }
 
 // StartWorkloadIdentityReceiver binds the host endpoint. A nil signer keeps
@@ -107,14 +140,22 @@ func (r *WorkloadIdentityReceiver) handleGuestStream(instance string, conn net.C
 	if r.mgr == nil {
 		return r.respond(conn, workloadIdentityInstanceNotFound, workloadIdentityResponse{Error: "instance_not_found"})
 	}
-	appID, accountID, err := r.mgr.InstanceExternalActionIdentity(r.ctx, instance)
+	appID, accountID, err := r.mgr.WorkloadTokenIdentity(r.ctx, instance)
 	if errors.Is(err, fcvm.ErrRehearsalExternalActionDenied) {
 		return r.respond(conn, workloadIdentityInvalidAudience, workloadIdentityResponse{Error: "rehearsal_identity_unavailable"})
+	}
+	if errors.Is(err, fcvm.ErrQualificationExternalActionDenied) {
+		return r.respond(conn, workloadIdentityInvalidAudience, workloadIdentityResponse{Error: "qualification_identity_unavailable"})
 	}
 	if err != nil || appID == "" || accountID == "" {
 		return r.respond(conn, workloadIdentityInstanceNotFound, workloadIdentityResponse{Error: "instance_not_found"})
 	}
-	tok, err := r.signer.Mint(r.now(), accountID, appID, instance, req.Audience)
+	environment, err := r.environment(instance)
+	if err != nil {
+		r.log.Warn("workload identity: environment unavailable", "instance", instance, "err", err)
+		return r.respond(conn, workloadIdentityEnvironmentUnavailable, workloadIdentityResponse{Error: "environment_unavailable"})
+	}
+	tok, err := r.signer.MintEnvironment(r.now(), accountID, appID, instance, environment, req.Audience)
 	if err != nil {
 		return r.respond(conn, workloadIdentityInvalidAudience, workloadIdentityResponse{Error: "invalid_audience"})
 	}

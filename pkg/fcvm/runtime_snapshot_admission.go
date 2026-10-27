@@ -43,6 +43,9 @@ func (m *Manager) CaptureAdmitted(ctx context.Context, grant runtimeadmission.Sn
 	info, ack, err := m.finishAdmittedSnapshot(flightCtx, g, inst, flight, info, err)
 	if err != nil {
 		releaseGate()
+		if g.Mode == "warm" && errors.Is(err, errWarmSnapshotAdmissionBusy) && !errors.Is(err, ErrFunctionWarmCapture) {
+			return SnapshotInfo{}, runtimeadmission.SnapshotAcknowledgment{}, err
+		}
 		return m.failedAdmittedSnapshot(ctx, inst.Lease.Instance, err)
 	}
 	return info, ack, nil
@@ -53,7 +56,8 @@ func (m *Manager) checkSnapshotGrantIdentity(g runtimeadmission.SnapshotGrant) e
 	if err != nil {
 		return err
 	}
-	if g.Parent.Binding.NodeID != identity.NodeID || g.Parent.Binding.Incarnation != identity.Incarnation || identity.ProtocolVersion < runtimeadmission.ArtifactProtocolVersion || g.FCVersion != m.fcVersion {
+	held := g.Parent.Binding.Incarnation == identity.Incarnation || m.AdmissionHeldFrom(g.Parent.Binding.InstanceID, g.Parent) != ""
+	if g.Parent.Binding.NodeID != identity.NodeID || !held || identity.ProtocolVersion < runtimeadmission.ArtifactProtocolVersion || g.FCVersion != m.fcVersion {
 		return runtimeadmission.ErrStale
 	}
 	return nil
@@ -96,12 +100,16 @@ func (m *Manager) consumeSnapshotGrant(g runtimeadmission.SnapshotGrant, flight 
 	if err := m.checkOwnedRuntimeEgressLocked(inst.runtimeAdmissionEgress, b.EgressRevision); err != nil {
 		return nil, err
 	}
+	m.ensureRuntimeAdmissionMapsLocked()
 	m.runtimeAdmissionTokens[g.Token] = time.Unix(0, g.ExpiresAtUnixNano)
 	m.runtimeAdmissionFlights[b.InstanceID] = flight
 	return inst, nil
 }
 
 func (m *Manager) checkAdmittedSnapshotSpecLocked(instance string, spec SnapshotSpec, parent runtimeadmission.Receipt) error {
+	if spec.functionMigrationGrant != nil {
+		return m.checkFunctionMigrationSnapshotLocked(instance, spec, parent)
+	}
 	g := spec.admittedGrant
 	flight := m.runtimeAdmissionFlights[instance]
 	if g == nil || flight == nil {

@@ -89,6 +89,11 @@ type JobManifest struct {
 	VsockJobExitMsgType int               `json:"vsock_job_exit_msg_type,omitempty"`
 	// Interactive mirrors pkg/fcvm/job_vmm.go::JobInteractive (ADR-1330).
 	Interactive *JobInteractive `json:"interactive,omitempty"`
+	// ImageProcess runs the command with the image's ENV, USER and WORKDIR;
+	// User and Workdir override them. Mirrors pkg/fcvm/job_vmm.go (ADR-1790).
+	ImageProcess bool   `json:"image_process,omitempty"`
+	User         string `json:"user,omitempty"`
+	Workdir      string `json:"workdir,omitempty"`
 }
 
 // JobInteractive holds the command until one attached session arrives on the
@@ -279,3 +284,39 @@ func mapExitToErrorClass(exitCode int32, signal int32) string { //nolint:unused 
 // pkg/fcvm/job_vmm.go::stageJobManifest. Drift here is a parse
 // error on first cold boot.
 const jobManifestPath = "etc/faas/job.json" //nolint:unused // opened by the Linux guest supervisor.
+
+// jobExitShipBudget is how long the supervisor retries its exit frame before
+// powering off unacknowledged. It spans a vmmd restart whose successor
+// re-binds the exit listener (vmmd restart adoption ADR, workload kinds); a
+// healthy host acknowledges the first attempt.
+const jobExitShipBudget = 60 * time.Second
+
+// jobExitMinAttempts keeps the three attempts guest-init always made, even on
+// a clock that jumps.
+const jobExitMinAttempts = 3
+
+// jobExitBackoff is the wait after failed attempt i: 100 ms doubling to 2 s.
+func jobExitBackoff(i int) time.Duration {
+	d := 100 * time.Millisecond
+	for ; i > 0 && d < 2*time.Second; i-- {
+		d *= 2
+	}
+	return min(d, 2*time.Second)
+}
+
+// retryJobExit runs attempt until it succeeds or the next try would start
+// after budget. It returns the number of attempts made and the last error.
+func retryJobExit(budget time.Duration, now func() time.Time, sleep func(time.Duration), attempt func(i int) error) (int, error) {
+	start := now()
+	var err error
+	for i := 0; ; i++ {
+		if err = attempt(i); err == nil {
+			return i + 1, nil
+		}
+		wait := jobExitBackoff(i)
+		if i+1 >= jobExitMinAttempts && now().Add(wait).Sub(start) > budget {
+			return i + 1, err
+		}
+		sleep(wait)
+	}
+}

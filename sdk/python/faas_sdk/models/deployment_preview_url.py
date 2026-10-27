@@ -16,8 +16,7 @@ T = TypeVar("T", bound="DeploymentPreviewURL")
 @_attrs_define
 class DeploymentPreviewURL:
     """Per-deployment preview URL read seam response.
-    Issue #976 / ADR-122 / SAFE-RELEASES-C.2.
-    Mirrors the api.DeploymentPreviewURL struct in pkg/api/dto.go.
+    Mirrors the api.DeploymentPreviewURL struct.
 
     """
 

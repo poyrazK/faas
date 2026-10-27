@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"fmt"
@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -17,14 +18,14 @@ func TestParkedLogsSelectionPicksNewestInstance(t *testing.T) {
 		{ID: "new", StartedAt: "2026-10-14T17:04:34Z", LastRequestAt: "2026-10-14T17:04:40Z"},
 		{ID: "unknown-start"},
 	}
-	ins, sel, ok := parkedLogsSelection(instances, time.Time{})
+	ins, sel, ok := main.ParkedLogsSelection(instances, time.Time{})
 	if !ok || ins.ID != "new" || sel.InstanceID != "new" || sel.Date != "2026-10-14" {
 		t.Fatalf("selection = %+v %+v %v, want the newest instance on 2026-10-14", ins, sel, ok)
 	}
-	if _, _, ok := parkedLogsSelection(instances, time.Date(2026, 10, 14, 18, 0, 0, 0, time.UTC)); ok {
+	if _, _, ok := main.ParkedLogsSelection(instances, time.Date(2026, 10, 14, 18, 0, 0, 0, time.UTC)); ok {
 		t.Fatal("an instance idle since before --since was selected")
 	}
-	if _, _, ok := parkedLogsSelection(nil, time.Time{}); ok {
+	if _, _, ok := main.ParkedLogsSelection(nil, time.Time{}); ok {
 		t.Fatal("selected an instance from an empty list")
 	}
 }
@@ -32,7 +33,7 @@ func TestParkedLogsSelectionPicksNewestInstance(t *testing.T) {
 // A parked app's logs show the newest instance's retained lines, filtered by
 // --grep, instead of only naming the archive flags (H10-72).
 func TestCmdLogsParkedAppShowsRetainedLogs(t *testing.T) {
-	resetJSONOut(t)
+	main.ResetJSONOut(t)
 	var archiveQuery string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
@@ -51,9 +52,9 @@ func TestCmdLogsParkedAppShowsRetainedLogs(t *testing.T) {
 	defer srv.Close()
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "test-token")
-	stdout, restoreOut := captureStdout(t)
-	stderr, restoreErr := captureStderr(t)
-	code := cmdLogs([]string{"myapp", "--grep", "boom"})
+	stdout, restoreOut := main.CaptureStdout(t)
+	stderr, restoreErr := main.CaptureStderr(t)
+	code := main.CmdLogs([]string{"myapp", "--grep", "boom"})
 	restoreErr()
 	restoreOut()
 	if code != 0 {
@@ -72,10 +73,10 @@ func TestCmdLogsParkedAppShowsRetainedLogs(t *testing.T) {
 
 func TestNormalizeLogsSinceRejectsFutureRuntimeTimestamp(t *testing.T) {
 	now := time.Date(2026, 10, 14, 19, 0, 0, 0, time.UTC)
-	if _, err := normalizeLogsSince("2030-01-01T00:00:00Z", "runtime", now); err == nil || !strings.Contains(err.Error(), "in the past") {
+	if _, err := main.NormalizeLogsSince("2030-01-01T00:00:00Z", "runtime", now); err == nil || !strings.Contains(err.Error(), "in the past") {
 		t.Fatalf("future runtime --since err = %v, want in-the-past error", err)
 	}
-	if got, err := normalizeLogsSince("2026-10-14T18:00:00Z", "runtime", now); err != nil || got == "" {
+	if got, err := main.NormalizeLogsSince("2026-10-14T18:00:00Z", "runtime", now); err != nil || got == "" {
 		t.Fatalf("past runtime --since = %q, %v", got, err)
 	}
 }
@@ -96,7 +97,7 @@ func TestParkedArchivePendingNote(t *testing.T) {
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
-			note := parkedArchivePendingNote(tc.ins, now)
+			note := main.ParkedArchivePendingNote(tc.ins, now)
 			if got := note != ""; got != tc.want {
 				t.Fatalf("note = %q, want present=%v", note, tc.want)
 			}

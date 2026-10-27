@@ -1,5 +1,5 @@
 // adr: 422
-package sched
+package sched_test
 
 import (
 	"context"
@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -94,22 +95,22 @@ func exerciseProtectedServiceMixedSlots(t *testing.T, store state.Store) {
 			t.Fatal(err)
 		}
 	}
-	e := newEngine(t, store, &fakeVMM{}, &fakeNotifier{}, "1.10.0").WithOwnerNodeID(fleet[0].ID)
+	e := sched.XNewEngine(t, store, &sched.FakeVMM{}, &sched.FakeNotifier{}, "1.10.0").WithOwnerNodeID(fleet[0].ID)
 	if err := e.SeedLedger(ctx); err != nil {
 		t.Fatal(err)
 	}
-	request := Request{AppID: small.ID, RAMMB: 128, VCPU: 4, CPUMillicores: 250}
-	if p, err := e.choosePlacementLocked(ctx, request); err != nil || p.NodeID != fleet[0].ID {
+	request := sched.Request{AppID: small.ID, RAMMB: 128, VCPU: 4, CPUMillicores: 250}
+	if p, err := e.ChoosePlacementLocked(ctx, request); err != nil || p.NodeID != fleet[0].ID {
 		t.Fatalf("ordinary placement did not expose the full-slot host: %+v %v", p, err)
 	}
-	if p, err := e.choosePlacementLocked(withServiceReplicaPlacementSpread(ctx), request); err != nil || p.NodeID != fleet[1].ID {
+	if p, err := e.ChoosePlacementLocked(sched.WithServiceReplicaPlacementSpread(ctx), request); err != nil || p.NodeID != fleet[1].ID {
 		t.Fatalf("service placement did not use spare slots: %+v %v", p, err)
 	}
-	if err := e.convergeServiceReplicasToTarget(ctx, smallDep.ID, 6, true); err != nil {
+	if err := e.ConvergeServiceReplicasToTarget(ctx, smallDep.ID, 6, true); err != nil {
 		t.Fatalf("mixed service recovery: %v", err)
 	}
-	rows, err := listServiceReplicas(ctx, store, small.ID, smallDep.ID)
-	if err != nil || classifyServiceReplicas(rows).ready != 6 {
+	rows, err := sched.ListServiceReplicas(ctx, store, small.ID, smallDep.ID)
+	if err != nil || sched.ClassifyServiceReplicas(rows).ReadyCount() != 6 {
 		t.Fatalf("mixed service target not restored: %+v %v", rows, err)
 	}
 }
@@ -143,8 +144,8 @@ func exerciseProtectedServiceRecovery(t *testing.T, store state.Store, reopen fu
 	if err != nil {
 		t.Fatal(err)
 	}
-	origin := newEngine(t, store, &fakeVMM{}, &fakeNotifier{}, "1.10.0").WithOwnerNodeID(fleet[0].ID)
-	origin.serviceReconcileSubmit = func(context.Context, string) {}
+	origin := sched.XNewEngine(t, store, &sched.FakeVMM{}, &sched.FakeNotifier{}, "1.10.0").WithOwnerNodeID(fleet[0].ID)
+	(*origin.ServiceReconcileSubmit()) = func(context.Context, string) {}
 	var apps []state.App
 	var deps []state.Deployment
 	for i := range 3 {
@@ -166,7 +167,7 @@ func exerciseProtectedServiceRecovery(t *testing.T, store state.Store, reopen fu
 		if err := store.MarkDeploymentLive(ctx, dep.ID); err != nil {
 			t.Fatal(err)
 		}
-		if err := origin.convergeServiceReplicasToTarget(ctx, dep.ID, desired, true); err != nil {
+		if err := origin.ConvergeServiceReplicasToTarget(ctx, dep.ID, desired, true); err != nil {
 			t.Fatal(err)
 		}
 		apps = append(apps, app)
@@ -196,36 +197,36 @@ func exerciseProtectedServiceRecovery(t *testing.T, store state.Store, reopen fu
 		}
 	}
 	store = reopen()
-	e := newEngine(t, store, &fakeVMM{}, &fakeNotifier{}, "1.10.0").WithOwnerNodeID(fleet[1].ID)
-	loop := NewLoop(nil, e, testLog())
-	t.Cleanup(loop.workPool().drain)
+	e := sched.XNewEngine(t, store, &sched.FakeVMM{}, &sched.FakeNotifier{}, "1.10.0").WithOwnerNodeID(fleet[1].ID)
+	loop := sched.NewLoop(nil, e, sched.TestLog())
+	t.Cleanup(loop.WorkPool().Drain)
 	if err := e.RebalanceOrphanedApps(ctx, ""); err != nil {
 		t.Fatal(err)
 	}
-	loop.workPool().drain()
+	loop.WorkPool().Drain()
 	for range 3 {
-		loop.runServiceRecovery(ctx)
-		loop.workPool().drain()
+		loop.RunServiceRecovery(ctx)
+		loop.WorkPool().Drain()
 	}
 	for i, a := range apps {
 		owner, err := store.AppByID(ctx, a.ID)
 		if err != nil || owner.NodeID != fleet[1].ID {
 			t.Fatalf("owner did not recover: %+v %v", owner, err)
 		}
-		rows, err := listServiceReplicas(ctx, store, a.ID, deps[i].ID)
+		rows, err := sched.ListServiceReplicas(ctx, store, a.ID, deps[i].ID)
 		if err != nil {
 			t.Fatal(err)
 		}
 		want := a.Manifest.ServiceReplicas.Desired
-		status := classifyServiceReplicas(rows)
-		if status.ready != want || status.managed() != want {
+		status := sched.ClassifyServiceReplicas(rows)
+		if (*status.Ready()) != want || status.Managed() != want {
 			t.Fatalf("service did not recover: %+v want=%d", status, want)
 		}
 	}
 	if r, err := store.ServiceCapacityProtection(ctx); err != nil || r.State != "degraded" || r.ReservedReplicas != 8 {
 		t.Fatalf("surviving capacity: %+v %v", r, err)
 	}
-	if origin.ledger.ResidentRAM() != 0 {
+	if (*origin.XLedger()).ResidentRAM() != 0 {
 		t.Fatal("lost host reservations leaked")
 	}
 }

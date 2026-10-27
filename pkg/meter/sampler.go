@@ -204,6 +204,12 @@ type Sampler struct {
 	// first.
 	caughtUp    []time.Time
 	jobCaughtUp []time.Time
+
+	// quietPause is the quiet_pause_unbilled mode (ADR-20261023171905):
+	// whether exact-residency minutes subtract the quiet-paused seconds the
+	// pause ledger proves. The zero value is off.
+	quietPause   QuietPauseMode
+	quietMetrics *quietPauseMetrics
 }
 
 // cpuBaseline is the per-instance baseline the sampler retains
@@ -485,6 +491,16 @@ func (s *Sampler) rollApps(ctx context.Context, observedAt, minute time.Time, ex
 			return nil, fmt.Errorf("meter: load instance billing residency: %w", err)
 		}
 	}
+	// ADR-20261023171905: the quiet-paused seconds the pause ledger proves
+	// for this minute. Like residency, they come from the ledger, so a
+	// caught-up minute subtracts exactly what a live roll would have.
+	var quietPaused map[string]state.QuietPausedSeconds
+	if exactResidency {
+		var err error
+		if quietPaused, err = s.quietPausedSeconds(ctx, minute); err != nil {
+			return nil, err
+		}
+	}
 	apps, err := s.store.ListAllApps(ctx)
 	if err != nil {
 		return nil, err
@@ -522,12 +538,22 @@ func (s *Sampler) rollApps(ctx context.Context, observedAt, minute time.Time, ex
 			planByAccount[a.ID] = a.Plan
 		}
 	}
+	floorHeld := newFloorHolders(s.store)
 	instancesByApp, err := s.billingWindowInstances(ctx, minute)
 	if err != nil {
 		return nil, err
 	}
 	var out []RolledRow
 	for _, app := range apps {
+		compute, hasCompute := s.store.(state.FinancialComputeStore)
+		computeCovered := false
+		if hasCompute {
+			var err error
+			computeCovered, err = compute.FinancialComputeAppManaged(ctx, app.AccountID, app.ID)
+			if err != nil {
+				return nil, err
+			}
+		}
 		if app.Status == state.AppDeleted && !exactResidency {
 			continue
 		}
@@ -591,9 +617,22 @@ func (s *Sampler) rollApps(ctx context.Context, observedAt, minute time.Time, ex
 			seconds := int64(60)
 			if exactResidency {
 				seconds = residentSeconds[ins.ID]
+				// A quiet-paused second is not a running second (§4.7,
+				// ADR-20261023171905). Subtracted before compute funding and
+				// the floor fill, so a floor still bills its paused capacity.
+				seconds = s.unbilledQuietSeconds(quietPaused, ins.ID,
+					string(planByAccount[meterAppSubject(app, planByAccount)]), seconds)
+			}
+			if computeCovered {
+				var err error
+				seconds, err = compute.FinancialComputeBillingSeconds(ctx, app.AccountID, app.ID, ins.ID, minute, seconds)
+				if err != nil {
+					return out, fmt.Errorf("meter: strict compute funding: %w", err)
+				}
 			}
 			// FROZEN is resident but unbilled (ADR-1151).
 			billableResident := state.State(ins.State).Billable()
+			billableResident = billableResident && seconds > 0
 			if exactResidency {
 				billableResident = seconds > 0
 			}
@@ -699,9 +738,24 @@ func (s *Sampler) rollApps(ctx context.Context, observedAt, minute time.Time, ex
 		// may an explicitly parked (evicted_cold) app: schedd leaves it parked
 		// and does not hold its floor (H5-54), so ADR-060's "schedd cannot
 		// provide the configured capacity" applies. Its real instances above
-		// stay billable.
-		if !app.FloorServed() {
+		// stay billable. Nor may an app of a suspended, abuse-held or deleting
+		// account: schedd parks or evicts all of them, so a reinstated account
+		// would otherwise be billed for floor capacity it never had (H16-5).
+		if !app.FloorServed() || !floorHeld.forApp(ctx, app) {
 			continue
+		}
+		subject := meterAppSubject(app, planByAccount)
+		// A strict app budget preempts the capacity floor. The retained book
+		// waives synthetic charges for its UTC month, including catch-up after
+		// policy deletion; only funded physical residency remains billable.
+		if computeCovered {
+			covered, err := compute.FinancialComputeFloorCovered(ctx, app.AccountID, app.ID, minute)
+			if err != nil {
+				return out, err
+			}
+			if covered {
+				continue
+			}
 		}
 		// PR-A (ADR-060, issue #515): per-app GB-h floor for
 		// ScalingPolicy.MinInstances. When the floor is set
@@ -814,16 +868,19 @@ func (s *Sampler) rollApps(ctx context.Context, observedAt, minute time.Time, ex
 				// mb_seconds is non-zero. Synthetic floors do not
 				// have live instances draining waitUntil tasks, so
 				// tail_seconds is 0 by construction.
-				if err := s.store.AppendUsage(ctx, app.AccountID, app.ID, instanceID, minute, mb, 0, 0, 0, 0, 0, 0, 0); err != nil {
+				// The billing subject, like live rows: a company app's floor is
+				// the company's, and the row's plan labels the metered metric.
+				if err := s.store.AppendUsage(ctx, subject, app.ID, instanceID, minute, mb, 0, 0, 0, 0, 0, 0, 0); err != nil {
 					return out, err
 				}
 				out = append(out, RolledRow{
 					InstanceID:     instanceID,
 					AppID:          app.ID,
-					AccountID:      app.AccountID,
+					AccountID:      subject,
 					Minute:         minute,
 					AdmissionMB:    billable,
 					MBSeconds:      mb,
+					Plan:           string(planByAccount[subject]),
 					SyntheticFloor: true,
 				})
 			}

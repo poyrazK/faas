@@ -31,7 +31,6 @@ package main
 import (
 	"context"
 	"errors"
-	"fmt"
 	"net/http"
 	"time"
 
@@ -129,18 +128,34 @@ func cmdDeployRepoSourceRefContextWithJSONWaitOptionsAndManifestAndRollout(ctx c
 		TrafficPercent:           ann.TrafficPercent,
 		Canary:                   ann.Canary,
 		MCPTaskMigrationOverride: ann.MCPTaskMigrationOverride,
+		OverrideFreeze:           ann.OverrideFreeze,
+		ReleaseAt:                ann.ReleaseAt,
+		ReleaseNotify:            ann.ReleaseNotify,
 		NoTriggers:               noTriggers,
 		RollbackOn5xx:            ann.RollbackOn5xx,
 		DisableStartupCPUBoost:   ann.DisableStartupCPUBoost,
 		Healthcheck:              ann.Healthcheck,
+	}
+	session, sessionLock, err := newSavedDeploySession(ctx, client, slug, app.ID, "", idempotencyKey, nil, waitForRollout, darkDeploy)
+	if err != nil {
+		return printErr("Could not save deploy session", err)
+	}
+	defer func() { _ = sessionLock.Close() }()
+	ctx = context.WithValue(ctx, deploySessionContextKey{}, session)
+	ctx = api.ContextWithDeploymentAttempt(ctx, session.record.AttemptID)
+	if !jsonOutput {
+		PrintProgress(osStderr, "Recovery: %s", session.resumeCommand())
 	}
 	deployCtx := ctx
 	if idempotencyKey != "" {
 		deployCtx = api.ContextWithIdempotencyKey(ctx, deployOperationIdempotencyKey(idempotencyKey, "source-ref"))
 	}
 	dep, err := client.DeployFromSourceRef(deployCtx, slug, req)
+	if saveErr := session.submitted(dep, err); saveErr != nil {
+		return session.failure("Could not save deployment outcome", "submission", errors.Join(err, saveErr))
+	}
 	if err != nil {
-		return printDeploySubmissionError("Source-ref submission failed", err, slug, idempotencyKey, "submission", dep.ID)
+		return session.failure("Source-ref submission failed", "submission", err)
 	}
 	if jsonOutput && !jsonWait {
 		// Issue #1182 §P1 follow-up: source-ref path has no
@@ -153,7 +168,7 @@ func cmdDeployRepoSourceRefContextWithJSONWaitOptionsAndManifestAndRollout(ctx c
 		// Commit pinning for the source-ref path is captured
 		// server-side; see docs/source-ref.md reproducibility
 		// section.
-		return jsonOut(writeJSON(newDeployReceipt(dep, nil, appURL, "")))
+		return jsonOut(writeJSON(sessionDeployReceipt(ctx, newDeployReceipt(dep, nil, appURL, ""))))
 	}
 	if !waitForDeploy {
 		renderQueuedDeployment(dep, appURL, darkDeploy)
@@ -206,7 +221,7 @@ func ensureSourceRefApp(ctx context.Context, client *Client, slug string, appPol
 	// owns it and the caller should choose a different name.
 	app, err := client.GetApp(ctx, slug)
 	if err != nil {
-		return api.AppResponse{}, fmt.Errorf("slug %q is already in use; pick a different --name", slug)
+		return api.AppResponse{}, slugInUseError(ctx, client, slug)
 	}
 	return configure(app)
 }

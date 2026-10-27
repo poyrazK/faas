@@ -1,7 +1,8 @@
-package main
+package main_test
 
 import (
 	"bytes"
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"strings"
 	"testing"
 )
@@ -31,7 +32,7 @@ func TestLeafHelpNamesPositionalArguments(t *testing.T) {
 		{"issues get", []string{"gregale issues get --app <SLUG> <issue-id>"}},
 		{"runs cancel", []string{"gregale runs cancel <id>"}},
 		{"config set", []string{"gregale config set <api-base|json> <value>"}},
-		{"cache purge", []string{"gregale cache purge <slug>"}},
+		{"cache purge", []string{"gregale cache purge [<slug>]"}},
 		{"platform-tenants link-consumer", []string{"--id <UUID>", "--consumer-id <UUID>"}},
 		{"orgs members", []string{"invite", "change-role"}},
 		{"orgs members invite", []string{"--org <SLUG>", "--email <ADDR>"}},
@@ -46,12 +47,12 @@ func TestLeafHelpNamesPositionalArguments(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.path, func(t *testing.T) {
-			resetJSONOut(t)
+			main.ResetJSONOut(t)
 			var stdout bytes.Buffer
-			oldOut := osStdout
-			osStdout = &stdout
-			t.Cleanup(func() { osStdout = oldOut })
-			if code := run(append(strings.Fields(tc.path), "--help")); code != 0 {
+			oldOut := (*main.OsStdout)
+			(*main.OsStdout) = &stdout
+			t.Cleanup(func() { (*main.OsStdout) = oldOut })
+			if code := main.Run(append(strings.Fields(tc.path), "--help")); code != 0 {
 				t.Fatalf("help exit = %d", code)
 			}
 			for _, want := range tc.want {

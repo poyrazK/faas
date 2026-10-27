@@ -9,28 +9,29 @@ import (
 )
 
 type Account struct {
-	ID                       pgtype.UUID
-	Email                    string
-	Status                   string
-	Plan                     string
-	ProviderCustomerID       pgtype.Text
-	StripeSubscriptionItem   pgtype.Text
-	LastQuotaWarningAt       pgtype.Timestamptz
-	DeletionRequestedAt      pgtype.Timestamptz
-	EmailVerifiedAt          pgtype.Timestamptz
-	AbuseHoldAt              pgtype.Timestamptz
-	MfaEnrolledAt            pgtype.Timestamptz
-	MfaRecoveryCodesHash     [][]byte
-	MfaSecretEncrypted       []byte
-	MfaRequired              bool
-	PastDueAt                pgtype.Timestamptz
-	SuspendedReason          pgtype.Text
-	PasswordResetRevision    int64
-	MfaRevision              int64
-	BillingMailRevision      int64
-	QuotaMailRevision        int64
-	SubscriptionMailRevision int64
-	DeploymentMailRevision   int64
+	ID                              pgtype.UUID
+	Email                           string
+	Status                          string
+	Plan                            string
+	ProviderCustomerID              pgtype.Text
+	StripeSubscriptionItem          pgtype.Text
+	LastQuotaWarningAt              pgtype.Timestamptz
+	DeletionRequestedAt             pgtype.Timestamptz
+	EmailVerifiedAt                 pgtype.Timestamptz
+	AbuseHoldAt                     pgtype.Timestamptz
+	MfaEnrolledAt                   pgtype.Timestamptz
+	MfaRecoveryCodesHash            [][]byte
+	MfaSecretEncrypted              []byte
+	MfaRequired                     bool
+	PastDueAt                       pgtype.Timestamptz
+	SuspendedReason                 pgtype.Text
+	DeletionIncludesManagedPostgres bool
+	PasswordResetRevision           int64
+	MfaRevision                     int64
+	BillingMailRevision             int64
+	QuotaMailRevision               int64
+	SubscriptionMailRevision        int64
+	DeploymentMailRevision          int64
 }
 
 type AccountPassword struct {
@@ -351,6 +352,10 @@ type PlatformMailProducerOutbox struct {
 	DeploymentFailureAppRevision     pgtype.Int8
 	DeploymentFailureSuccessRevision pgtype.Int8
 	DeploymentFailureAt              pgtype.Timestamptz
+}
+
+type ScenarioTestActionPolicy struct {
+	AppID pgtype.UUID
 }
 
 type Session struct {

@@ -19,6 +19,7 @@ ExecStart=/usr/local/bin/prometheus \
   --config.file=/etc/prometheus/prometheus.yml \
   --storage.tsdb.path={{ prom_data_dir }} \
   --storage.tsdb.retention.time={{ prom_retention_days }}d \
+  --storage.tsdb.retention.size={{ prom_retention_size }} \
   --enable-feature=exemplar-storage \
   --web.listen-address={{ prom_listen_addr }} \
   --web.console.libraries=/usr/share/prometheus/console_libraries \
@@ -33,6 +34,16 @@ ExecReload=/bin/kill -HUP $MAINPID
 Restart=on-failure
 RestartSec=5
 LimitNOFILE=65536
+# ADR-20261023124955 §1: the observability stack runs in its own capped
+# slice, which yields CPU and IO to PostgreSQL and the control-plane daemons.
+# The weight below only ranks Prometheus against its siblings there (Grafana
+# runs lower). MemoryHigh throttles instead of OOM-killing, so a head spike
+# never restarts Prometheus with a cold head; GOMEMLIMIT makes the Go runtime
+# collect before it reaches that point. The slice's MemoryMax is the fence.
+Slice=faas-obs.slice
+CPUWeight={{ prom_cpu_weight | default(100) }}
+MemoryHigh={{ prom_memory_high }}
+Environment=GOMEMLIMIT={{ prom_gomemlimit }}
 
 # Hardening (spec §11 baseline).
 NoNewPrivileges=true

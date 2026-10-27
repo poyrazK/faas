@@ -24,6 +24,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -741,5 +742,83 @@ func TestEnqueue_CommitsDeploymentActivityWithBuildQueue(t *testing.T) {
 	if err != nil || len(rows) != 1 || rows[0].Kind != "deploy.requested" || rows[0].SourceType != "deployment.requested" || rows[0].SourceID != result.DeploymentID ||
 		rows[0].DeploymentID == nil || *rows[0].DeploymentID != deploymentID {
 		t.Fatalf("deployment activity = (%#v, %v), want one event for %s", rows, err, result.DeploymentID)
+	}
+}
+
+// Compose build arguments and target are captured beside the Dockerfile path,
+// so a queued build keeps its plan's options (ADR-20261019142544).
+func TestEnqueue_CapturesDockerfileBuildOptions(t *testing.T) {
+	options := &api.DockerfileBuildOptions{Target: "runtime", Args: map[string]string{"NODE_ENV": "production"}}
+	for _, tc := range []struct {
+		name    string
+		options *api.DockerfileBuildOptions
+		want    *api.DockerfileBuildOptions
+	}{
+		{"declared options", options, options},
+		{"empty options", &api.DockerfileBuildOptions{}, nil},
+		{"no options", nil, nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			st := state.NewMemStore()
+			app := mustSeedApp(t, st)
+			srcPath, srcBytes := stageSource(t, t.TempDir())
+			result, err := Enqueue(context.Background(), st, &recordingNotifier{}, EnqueueParams{
+				AppID: app.ID, Kind: state.DeploymentKindDockerfile, SourcePath: srcPath, SourceBytes: srcBytes,
+				DockerfilePath: "Dockerfile.prod", DockerfileBuild: tc.options, LogSpool: t.TempDir(), Log: quietLogger(),
+			})
+			if err != nil {
+				t.Fatalf("Enqueue: %v", err)
+			}
+			dep, err := st.DeploymentByID(context.Background(), result.DeploymentID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var profile frameworkprofile.Profile
+			if err := json.Unmarshal(dep.InferredProfile, &profile); err != nil {
+				t.Fatalf("decode inferred profile: %v", err)
+			}
+			if profile.DockerfilePath != "Dockerfile.prod" || !reflect.DeepEqual(profile.DockerfileBuild, tc.want) {
+				t.Fatalf("profile = %+v, want Dockerfile.prod with %+v", profile, tc.want)
+			}
+			if tc.want == nil && strings.Contains(string(dep.InferredProfile), "dockerfile_build") {
+				t.Fatalf("profile without options encodes the key: %s", dep.InferredProfile)
+			}
+		})
+	}
+}
+
+// A built service's Compose user, working_dir and stop contract are frozen in
+// the profile for imaged (ADR-20261022160000).
+func TestEnqueue_CapturesBuildProcess(t *testing.T) {
+	grace := 20
+	process := &api.ComposeProcess{User: "node", WorkingDir: "/srv/app", StopSignal: "SIGINT", StopGracePeriodS: &grace}
+	for _, tc := range []struct {
+		name    string
+		process *api.ComposeProcess
+		want    *api.ComposeProcess
+	}{
+		{"declared", process, process},
+		{"none", nil, nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			st := state.NewMemStore()
+			app := mustSeedApp(t, st)
+			srcPath, srcBytes := stageSource(t, t.TempDir())
+			result, err := Enqueue(context.Background(), st, &recordingNotifier{}, EnqueueParams{
+				AppID: app.ID, Kind: state.DeploymentKindDockerfile, SourcePath: srcPath, SourceBytes: srcBytes,
+				DockerfilePath: "Dockerfile", ImageProcess: tc.process, LogSpool: t.TempDir(), Log: quietLogger(),
+			})
+			if err != nil {
+				t.Fatalf("Enqueue: %v", err)
+			}
+			dep, err := st.DeploymentByID(context.Background(), result.DeploymentID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var profile frameworkprofile.Profile
+			if err := json.Unmarshal(dep.InferredProfile, &profile); err != nil || !reflect.DeepEqual(profile.BuildProcess, tc.want) {
+				t.Fatalf("profile %s (%v); want build process %+v", dep.InferredProfile, err, tc.want)
+			}
+		})
 	}
 }

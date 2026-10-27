@@ -23,7 +23,7 @@
 // ledger/etc); we keep these tests tightly scoped to the
 // workload-OOM path and use a deliberately small MemStore +
 // fakeVMM, mirroring engine_liveness_test.go.
-package sched
+package sched_test
 
 import (
 	"context"
@@ -34,6 +34,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/events"
+	"github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/wire"
 )
@@ -57,19 +58,19 @@ import (
 func TestWorkloadOOM_AuditRowCountIsExactlyOne(t *testing.T) {
 	t.Parallel()
 	store := state.NewMemStore()
-	_, app, dep := seedApp(t, store, api.PlanPro, 512, 5)
-	vmm := &fakeVMM{}
+	_, app, dep := sched.SeedApp(t, store, api.PlanPro, 512, 5)
+	vmm := &sched.FakeVMM{}
 	ops := wire.NewOpsMetrics("schedd")
 	// Wire the events platform so the typed
 	// WorkloadOOMFailed event lands in the audit_events
 	// table. Without this WithEvents, the typed emit is a
 	// no-op (the engine's `if e.events != nil` guard
 	// skips it), and the test would observe 0 rows.
-	platform := events.NewPlatform("schedd", store, testLog(), ops, nil)
-	engine := newEngine(t, store, vmm, &fakeNotifier{}, "1.10.0").
+	platform := events.NewPlatform("schedd", store, sched.TestLog(), ops, nil)
+	engine := sched.XNewEngine(t, store, vmm, &sched.FakeNotifier{}, "1.10.0").
 		WithOpsMetrics(ops).
 		WithEvents(platform)
-	inst := runningInstance(t, store, app, dep, vmm, engine)
+	inst := sched.RunningInstance(t, store, app, dep, vmm, engine)
 
 	if err := engine.DestroyForWorkloadOOMFailure(context.Background(), inst.ID, 384, 256); err != nil {
 		t.Fatalf("DestroyForWorkloadOOMFailure: %v", err)
@@ -102,11 +103,11 @@ func TestWorkloadOOM_AuditRowCountIsExactlyOne(t *testing.T) {
 // source of truth, and the engine just wires it through.
 func TestWorkloadOOM_StampsAppRuntimeOOM(t *testing.T) {
 	store := state.NewMemStore()
-	_, app, dep := seedApp(t, store, api.PlanPro, 512, 5)
-	vmm := &fakeVMM{}
+	_, app, dep := sched.SeedApp(t, store, api.PlanPro, 512, 5)
+	vmm := &sched.FakeVMM{}
 	ops := wire.NewOpsMetrics("schedd")
-	engine := newEngine(t, store, vmm, &fakeNotifier{}, "1.10.0").WithOpsMetrics(ops)
-	inst := runningInstance(t, store, app, dep, vmm, engine)
+	engine := sched.XNewEngine(t, store, vmm, &sched.FakeNotifier{}, "1.10.0").WithOpsMetrics(ops)
+	inst := sched.RunningInstance(t, store, app, dep, vmm, engine)
 
 	if err := engine.DestroyForWorkloadOOMFailure(context.Background(), inst.ID, 384, 256); err != nil {
 		t.Fatalf("DestroyForWorkloadOOMFailure: %v", err)
@@ -146,10 +147,10 @@ func TestWorkloadOOM_StampsAppRuntimeOOM(t *testing.T) {
 // would persist on the next restore.
 func TestWorkloadOOM_StaleSnapOnDestroy(t *testing.T) {
 	store := state.NewMemStore()
-	_, app, dep := seedApp(t, store, api.PlanPro, 512, 5)
-	vmm := &fakeVMM{}
+	_, app, dep := sched.SeedApp(t, store, api.PlanPro, 512, 5)
+	vmm := &sched.FakeVMM{}
 	ops := wire.NewOpsMetrics("schedd")
-	engine := newEngine(t, store, vmm, &fakeNotifier{}, "1.10.0").WithOpsMetrics(ops)
+	engine := sched.XNewEngine(t, store, vmm, &sched.FakeNotifier{}, "1.10.0").WithOpsMetrics(ops)
 	// Seed a snapshot on the deployment — DestroyForWorkloadOOMFailure
 	// must flip stale=true.
 	_, err := store.CreateSnapshot(context.Background(), state.Snapshot{
@@ -167,7 +168,7 @@ func TestWorkloadOOM_StaleSnapOnDestroy(t *testing.T) {
 	if pre.Stale {
 		t.Errorf("snapshot.Stale = true pre-destroy, want false")
 	}
-	inst := runningInstance(t, store, app, dep, vmm, engine)
+	inst := sched.RunningInstance(t, store, app, dep, vmm, engine)
 
 	if err := engine.DestroyForWorkloadOOMFailure(context.Background(), inst.ID, 384, 256); err != nil {
 		t.Fatalf("DestroyForWorkloadOOMFailure: %v", err)
@@ -194,17 +195,17 @@ func TestWorkloadOOM_StaleSnapOnDestroy(t *testing.T) {
 // DestroyForWorkloadOOMFailure. Mirrors the liveness counter test.
 func TestWorkloadOOM_RestartCounterIncrement(t *testing.T) {
 	store := state.NewMemStore()
-	_, app, dep := seedApp(t, store, api.PlanPro, 512, 5)
-	vmm := &fakeVMM{}
+	_, app, dep := sched.SeedApp(t, store, api.PlanPro, 512, 5)
+	vmm := &sched.FakeVMM{}
 	ops := wire.NewOpsMetrics("schedd")
-	engine := newEngine(t, store, vmm, &fakeNotifier{}, "1.10.0").WithOpsMetrics(ops)
-	inst := runningInstance(t, store, app, dep, vmm, engine)
+	engine := sched.XNewEngine(t, store, vmm, &sched.FakeNotifier{}, "1.10.0").WithOpsMetrics(ops)
+	inst := sched.RunningInstance(t, store, app, dep, vmm, engine)
 	counter := ops.WorkloadOOMKills(app.ID, dep.ID)
-	before := readCounterValue(t, counter)
+	before := sched.ReadCounterValue(t, counter)
 	if err := engine.DestroyForWorkloadOOMFailure(context.Background(), inst.ID, 384, 256); err != nil {
 		t.Fatalf("DestroyForWorkloadOOMFailure: %v", err)
 	}
-	after := readCounterValue(t, counter)
+	after := sched.ReadCounterValue(t, counter)
 	if after != before+1 {
 		t.Errorf("counter delta = %v, want 1 (AC #3: increment on every destroy)", after-before)
 	}
@@ -223,10 +224,10 @@ func TestWorkloadOOM_RestartCounterIncrement(t *testing.T) {
 // path so the test has to seed the SID the right way.
 func TestWorkloadOOM_SkipsNonRunning(t *testing.T) {
 	store := state.NewMemStore()
-	_, app, dep := seedApp(t, store, api.PlanPro, 512, 5)
-	vmm := &fakeVMM{}
+	_, app, dep := sched.SeedApp(t, store, api.PlanPro, 512, 5)
+	vmm := &sched.FakeVMM{}
 	ops := wire.NewOpsMetrics("schedd")
-	engine := newEngine(t, store, vmm, &fakeNotifier{}, "1.10.0").WithOpsMetrics(ops)
+	engine := sched.XNewEngine(t, store, vmm, &sched.FakeNotifier{}, "1.10.0").WithOpsMetrics(ops)
 	// Create an instance in WARMING (not RUNNING) — the destroy
 	// path must skip the stamp + counter.
 	inst, err := store.CreateInstance(context.Background(), app.ID, dep.ID, string(state.StateWaking), 512, state.DefaultLocalNodeName, "")
@@ -234,14 +235,14 @@ func TestWorkloadOOM_SkipsNonRunning(t *testing.T) {
 		t.Fatalf("CreateInstance: %v", err)
 	}
 	counter := ops.WorkloadOOMKills(app.ID, dep.ID)
-	before := readCounterValue(t, counter)
+	before := sched.ReadCounterValue(t, counter)
 
 	if err := engine.DestroyForWorkloadOOMFailure(context.Background(), inst.ID, 384, 256); err != nil {
 		t.Fatalf("DestroyForWorkloadOOMFailure: %v", err)
 	}
 
 	// Counter must NOT have incremented.
-	after := readCounterValue(t, counter)
+	after := sched.ReadCounterValue(t, counter)
 	if after != before {
 		t.Errorf("counter delta = %v, want 0 (AC #4: non-RUNNING is skipped)", after-before)
 	}
@@ -268,9 +269,9 @@ func TestWorkloadOOM_SkipsNonRunning(t *testing.T) {
 func TestWorkloadOOM_NotFoundPropagates(t *testing.T) {
 	t.Parallel()
 	store := state.NewMemStore()
-	vmm := &fakeVMM{}
+	vmm := &sched.FakeVMM{}
 	ops := wire.NewOpsMetrics("schedd")
-	engine := newEngine(t, store, vmm, &fakeNotifier{}, "1.10.0").WithOpsMetrics(ops)
+	engine := sched.XNewEngine(t, store, vmm, &sched.FakeNotifier{}, "1.10.0").WithOpsMetrics(ops)
 
 	err := engine.DestroyForWorkloadOOMFailure(context.Background(), "i-missing", 384, 256)
 	if err == nil {

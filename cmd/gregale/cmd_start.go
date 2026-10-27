@@ -42,6 +42,9 @@ type startRunner struct {
 	reviewedSource      *startSourceSnapshot
 	projectUpdates      bool
 	cancelPendingUpload bool
+	// projectSource is a multi-service directory the user chose to deploy as
+	// one project instead of launching a single app.
+	projectSource string
 	// Use the same deploy implementation as deploy/dev. The local seam lets
 	// recovery tests observe acceptance without running a remote build.
 	deploy func(context.Context, []string, bool, ...deployExecution) int
@@ -121,6 +124,9 @@ func cmdStart(args []string) (code int) {
 		if code := runner.selectSource(); code != 0 {
 			return code
 		}
+		if runner.projectSource != "" {
+			return runner.deployProject()
+		}
 		// An input EOF may close source selection successfully without a path.
 		if runner.session.SourcePath == "" {
 			return 0
@@ -150,7 +156,7 @@ func (r *startRunner) authenticate() int {
 		}
 		PrintWarn(osStdout, "Your saved login has expired.")
 	}
-	ok, err := r.prompt.confirm(r.ctx, "Open your browser to sign in")
+	ok, err := r.prompt.confirmYes(r.ctx, "Open your browser to sign in")
 	if err != nil {
 		// Login is required: declining/EOF must stop the entire flow.
 		if errors.Is(err, context.Canceled) {
@@ -203,6 +209,17 @@ func startTemplateAllowed(name string) bool {
 func (r *startRunner) selectSource() int {
 	PrintProgress(osStdout, "2/4 · Find your app")
 	root := r.session.ScopePath
+	if n := projectWorkloadCount(root); n >= 2 {
+		choice, err := r.prompt.choose(r.ctx, fmt.Sprintf("This directory has %d services. What would you like to deploy?", n),
+			[]string{"All of them, as one project", "One service"}, 0)
+		if err != nil {
+			return startInputExit(err)
+		}
+		if choice == 0 {
+			r.projectSource = root
+			return 0
+		}
+	}
 	selected, err := r.selectProjectSource(root)
 	if err != nil {
 		return startInputExit(err)
@@ -269,17 +286,38 @@ func (r *startRunner) selectSource() int {
 	return 0
 }
 
+// projectWorkloadCount is how many services the project scanner finds in
+// root; with two or more, start offers to deploy them as one project.
+func projectWorkloadCount(root string) int {
+	scan, err := reposcan.Scan(os.DirFS(root))
+	if err != nil {
+		return 0
+	}
+	return len(scan.Workloads)
+}
+
+// deployProject hands a multi-service directory to the project deploy, which
+// shows the plan and asks for confirmation before creating anything.
+func (r *startRunner) deployProject() int {
+	PrintProgress(osStdout, "3/4 · Review the project plan")
+	return r.deploy(r.ctx, []string{"--project", "--path", r.projectSource}, false)
+}
+
 // projectSource is one deployable member of a workspace or convention-shaped
 // repository, below the scanned root.
 type projectSource struct {
-	Name    string // workload name from the scanner
-	RootDir string // slash-separated path relative to the scanned root
-	Path    string // absolute source directory
+	Name      string   // workload name from the scanner
+	RootDir   string   // slash-separated path relative to the scanned root
+	Path      string   // absolute source directory
+	DependsOn []string // services it declares it calls (Compose depends_on)
+	// GoCommand is the `cmd/<name>` a service of a multi-command Go module
+	// builds from the module root at Path (ADR-20261025134512).
+	GoCommand string
 }
 
-// discoverProjectSources lists the deployable workspace and convention members
-// below root. The root itself is never returned; callers decide whether a
-// deployable root is also a candidate.
+// discoverProjectSources lists the deployable workspace, convention and
+// source-built Compose members below root. The root itself is never
+// returned; callers decide whether a deployable root is also a candidate.
 func discoverProjectSources(root string) ([]projectSource, error) {
 	scan, err := reposcan.Scan(os.DirFS(root))
 	if err != nil {
@@ -288,13 +326,18 @@ func discoverProjectSources(root string) ([]projectSource, error) {
 	var sources []projectSource
 	seen := make(map[string]bool)
 	for _, workload := range scan.Workloads {
-		if workload.RootDir == "" || workload.RootDir == "." || (workload.Tier != reposcan.TierWorkspace && workload.Tier != reposcan.TierConvention) {
+		// Compose services count when they build from a source directory;
+		// an image-only service has no source to run. The commands of a Go
+		// module build from the root, each its own service.
+		if (workload.GoCommand == "" && (workload.RootDir == "" || workload.RootDir == ".")) ||
+			(workload.Tier != reposcan.TierWorkspace && workload.Tier != reposcan.TierConvention && workload.Tier != reposcan.TierCompose) {
 			continue
 		}
 		path := filepath.Join(root, filepath.FromSlash(workload.RootDir))
-		if !seen[path] && detectShape(path) != shapeUnknown {
-			seen[path] = true
-			sources = append(sources, projectSource{Name: workload.Name, RootDir: workload.RootDir, Path: path})
+		key := path + "\x00" + workload.GoCommand
+		if !seen[key] && detectShape(path) != shapeUnknown {
+			seen[key] = true
+			sources = append(sources, projectSource{Name: workload.Name, RootDir: workload.RootDir, Path: path, DependsOn: workload.DependsOn, GoCommand: workload.GoCommand})
 		}
 	}
 	return sources, nil
@@ -307,6 +350,9 @@ func (r *startRunner) selectProjectSource(root string) (string, error) {
 	}
 	var paths, labels []string
 	for _, source := range sources {
+		if source.GoCommand != "" {
+			continue // one command of a module launches with gregale deploy or dev --go-command
+		}
 		paths = append(paths, source.Path)
 		labels = append(labels, source.Name+" · "+source.RootDir)
 	}
@@ -455,6 +501,12 @@ func (r *startRunner) reviewLaunch(edit *startFileEdit) (int, bool) {
 			}
 		},
 		onQueued: func(dep api.DeploymentResponse) {
+			// An upload accepted behind a lost reply is known by ID alone. Keep
+			// the submission pending; recovery reads the deployment back and
+			// verifies its app and environment before the session adopts it.
+			if dep.AppID == "" {
+				return
+			}
 			expectedAppID := r.session.AppID
 			r.session.DeploymentID, r.session.AppID, r.session.Status = dep.ID, dep.AppID, dep.Status
 			r.session.Revision, r.lastRequest = dep.Revision, nil

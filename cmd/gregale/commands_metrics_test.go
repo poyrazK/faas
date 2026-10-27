@@ -4,7 +4,7 @@
 // records the request and returns the supplied payload, plus
 // t.Setenv for FAAS_API / FAAS_TOKEN, plus the osStdout seam for
 // human-mode assertions.
-package main
+package main_test
 
 import (
 	"bytes"
@@ -15,6 +15,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -48,11 +49,11 @@ func TestCmdMetrics_HappyPath_DefaultRange(t *testing.T) {
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
 
 	var stdout bytes.Buffer
-	oldOut := osStdout
-	osStdout = &stdout
-	defer func() { osStdout = oldOut }()
+	oldOut := (*main.OsStdout)
+	(*main.OsStdout) = &stdout
+	defer func() { (*main.OsStdout) = oldOut }()
 
-	if code := cmdMetrics([]string{"abc-123"}); code != 0 {
+	if code := main.CmdMetrics([]string{"abc-123"}); code != 0 {
 		t.Fatalf("metrics = %d, want 0", code)
 	}
 	if *gotPath != "/v1/apps/abc-123/metrics" {
@@ -88,7 +89,7 @@ func TestCmdMetrics_HappyPath_ExplicitRange(t *testing.T) {
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
 
-	if code := cmdMetrics([]string{"--range", "1h", "abc-123"}); code != 0 {
+	if code := main.CmdMetrics([]string{"--range", "1h", "abc-123"}); code != 0 {
 		t.Fatalf("metrics --range 1h = %d, want 0", code)
 	}
 	if *gotPath != "/v1/apps/abc-123/metrics" {
@@ -116,14 +117,14 @@ func TestCmdMetrics_DegradedSourceWarnsOnZeroes(t *testing.T) {
 	defer srv.Close()
 
 	var stdout bytes.Buffer
-	oldOut := osStdout
-	osStdout = &stdout
-	defer func() { osStdout = oldOut }()
+	oldOut := (*main.OsStdout)
+	(*main.OsStdout) = &stdout
+	defer func() { (*main.OsStdout) = oldOut }()
 
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
 
-	if code := cmdMetrics([]string{"abc-123"}); code != 0 {
+	if code := main.CmdMetrics([]string{"abc-123"}); code != 0 {
 		t.Fatalf("metrics = %d, want 0", code)
 	}
 	if !strings.Contains(stdout.String(), "degraded: prometheus unreachable") {
@@ -134,12 +135,12 @@ func TestCmdMetrics_DegradedSourceWarnsOnZeroes(t *testing.T) {
 // --- client-side rejections -------------------------------------------------
 
 func TestCmdMetrics_NoPositional(t *testing.T) {
-	previous := nonInteractive
-	nonInteractive = true
-	t.Cleanup(func() { nonInteractive = previous })
-	_, readStderr, restore := swapIO(t)
+	previous := (*main.NonInteractive)
+	(*main.NonInteractive) = true
+	t.Cleanup(func() { (*main.NonInteractive) = previous })
+	_, readStderr, restore := main.SwapIO(t)
 	defer restore()
-	if code := cmdMetrics(nil); code != 1 {
+	if code := main.CmdMetrics(nil); code != 1 {
 		t.Errorf("metrics bare = %d, want 1", code)
 	}
 	if !strings.Contains(readStderr(), "app target is required") {
@@ -148,9 +149,9 @@ func TestCmdMetrics_NoPositional(t *testing.T) {
 }
 
 func TestCmdMetrics_TooManyPositionals(t *testing.T) {
-	_, readStderr, restore := swapIO(t)
+	_, readStderr, restore := main.SwapIO(t)
 	defer restore()
-	if code := cmdMetrics([]string{"a", "b"}); code != 1 {
+	if code := main.CmdMetrics([]string{"a", "b"}); code != 1 {
 		t.Errorf("metrics a b = %d, want 1", code)
 	}
 	if !strings.Contains(readStderr(), "usage: gregale metrics") {
@@ -163,7 +164,7 @@ func TestCmdMetrics_Unauthenticated(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("HOME", dir)
 	t.Setenv("XDG_CONFIG_HOME", dir)
-	if code := cmdMetrics([]string{"abc-123"}); code == 0 {
+	if code := main.CmdMetrics([]string{"abc-123"}); code == 0 {
 		t.Error("metrics without token must fail")
 	}
 }
@@ -180,18 +181,18 @@ func TestCmdMetrics_JSON_SingleRecord(t *testing.T) {
 	defer srv.Close()
 
 	var stdout bytes.Buffer
-	oldOut := osStdout
-	osStdout = &stdout
-	defer func() { osStdout = oldOut }()
+	oldOut := (*main.OsStdout)
+	(*main.OsStdout) = &stdout
+	defer func() { (*main.OsStdout) = oldOut }()
 
-	resetJSONOutput()
-	t.Cleanup(resetJSONOutput)
-	jsonOutput = true
+	main.ResetJSONOutput()
+	t.Cleanup(main.ResetJSONOutput)
+	(*main.JsonOutput) = true
 
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
 
-	if code := cmdMetrics([]string{"abc-123"}); code != 0 {
+	if code := main.CmdMetrics([]string{"abc-123"}); code != 0 {
 		t.Fatalf("metrics json = %d, want 0", code)
 	}
 	out := stdout.String()
@@ -229,7 +230,7 @@ func TestRun_DispatchMetrics(t *testing.T) {
 	t.Setenv("HOME", dir)
 	t.Setenv("XDG_CONFIG_HOME", dir)
 
-	if code := run([]string{"metrics", "abc-123"}); code != 0 {
+	if code := main.Run([]string{"metrics", "abc-123"}); code != 0 {
 		t.Errorf("run metrics = %d, want 0", code)
 	}
 }
@@ -253,9 +254,9 @@ func serviceMapServer(t *testing.T, payload api.ServiceMapResponse) (*string, *s
 func captureMetricsStdout(t *testing.T) *bytes.Buffer {
 	t.Helper()
 	var stdout bytes.Buffer
-	oldOut := osStdout
-	osStdout = &stdout
-	t.Cleanup(func() { osStdout = oldOut })
+	oldOut := (*main.OsStdout)
+	(*main.OsStdout) = &stdout
+	t.Cleanup(func() { (*main.OsStdout) = oldOut })
 	return &stdout
 }
 
@@ -273,7 +274,7 @@ func TestCmdMetrics_Services_OmittedRangeDefersToServer(t *testing.T) {
 	})
 	stdout := captureMetricsStdout(t)
 
-	if code := cmdMetrics([]string{"--services"}); code != 0 {
+	if code := main.CmdMetrics([]string{"--services"}); code != 0 {
 		t.Fatalf("metrics --services = %d, want 0", code)
 	}
 	if *gotPath != "/v1/service-map" || *gotQuery != "" {
@@ -311,7 +312,7 @@ func TestCmdMetrics_Services_TCPSessions(t *testing.T) {
 	})
 	stdout := captureMetricsStdout(t)
 
-	if code := cmdMetrics([]string{"--services"}); code != 0 {
+	if code := main.CmdMetrics([]string{"--services"}); code != 0 {
 		t.Fatalf("metrics --services = %d, want 0", code)
 	}
 	out := stdout.String()
@@ -333,7 +334,7 @@ func TestCmdMetrics_Services_ExplicitRange(t *testing.T) {
 	_, gotQuery := serviceMapServer(t, api.ServiceMapResponse{Range: "24h", Source: "prometheus"})
 	stdout := captureMetricsStdout(t)
 
-	if code := cmdMetrics([]string{"--services", "--range", "24h"}); code != 0 {
+	if code := main.CmdMetrics([]string{"--services", "--range", "24h"}); code != 0 {
 		t.Fatalf("metrics --services --range 24h = %d, want 0", code)
 	}
 	if *gotQuery != "range=24h" {
@@ -348,7 +349,7 @@ func TestCmdMetrics_Services_DegradedSourceWarns(t *testing.T) {
 	serviceMapServer(t, api.ServiceMapResponse{Range: "1h", Source: "degraded: telemetry timeout"})
 	stdout := captureMetricsStdout(t)
 
-	if code := cmdMetrics([]string{"--services"}); code != 0 {
+	if code := main.CmdMetrics([]string{"--services"}); code != 0 {
 		t.Fatalf("metrics --services = %d, want 0", code)
 	}
 	if !strings.Contains(stdout.String(), "Prometheus is unavailable") {
@@ -362,8 +363,8 @@ func TestCmdMetrics_Services_RejectsAccountAndSlug(t *testing.T) {
 		{"--services", "abc-123"},
 		{"--services", "--app", "abc-123"},
 	} {
-		_, readStderr, restore := swapIO(t)
-		if code := cmdMetrics(args); code != 1 {
+		_, readStderr, restore := main.SwapIO(t)
+		if code := main.CmdMetrics(args); code != 1 {
 			t.Errorf("metrics %v = %d, want 1", args, code)
 		}
 		if !strings.Contains(readStderr(), "--services") {

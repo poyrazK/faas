@@ -3,7 +3,7 @@ module github.com/onebox-faas/faas
 go 1.26.0
 
 // Select the patched compiler independently of the language target.
-toolchain go1.26.9
+toolchain go1.26.10
 
 // Pinned to match the version CI runs (.github/workflows/ci.yml:
 // golangci-lint-action@v9 with version: v2.14.0). Update both together.
@@ -79,6 +79,7 @@ require (
 	google.golang.org/grpc v1.83.2
 	google.golang.org/protobuf v1.36.12
 	gopkg.in/yaml.v3 v3.0.1
+	rsc.io/binaryregexp v0.2.0
 )
 
 require (
@@ -151,7 +152,6 @@ require (
 	go.yaml.in/yaml/v3 v3.0.5 // indirect
 	golang.org/x/time v0.15.0 // indirect
 	google.golang.org/genproto v0.0.0-20260715232425-e75dac1f907d // indirect
-	rsc.io/binaryregexp v0.2.0 // indirect
 )
 
 require (
@@ -249,7 +249,7 @@ require (
 	github.com/go-viper/mapstructure/v2 v2.5.0 // indirect
 	github.com/go-xmlfmt/xmlfmt v1.1.3 // indirect
 	github.com/gobwas/glob v0.2.3 // indirect
-	github.com/godbus/dbus/v5 v5.2.2 // indirect
+	github.com/godbus/dbus/v5 v5.2.2
 	github.com/golangci/dupl v0.0.0-20260401084720-c99c5cf5c202 // indirect
 	github.com/golangci/go-printf-func-name v0.1.1 // indirect
 	github.com/golangci/gofmt v0.0.0-20260820135601-e84e05053792 // indirect

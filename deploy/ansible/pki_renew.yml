@@ -561,3 +561,42 @@
             - "{{ faas_pki_controller_stage }}/{{ inventory_hostname }}-candidate.tgz"
           become: false
           delegate_to: localhost
+
+# Live queries (ADR-20261016151947): livequeryd's server leaf and realtimed's
+# client leaf are fleet-PKI feature leaves, outside the required sets the
+# plays above renew. Each role reissues its leaf within 30 days of expiry and
+# restarts its daemon only when it did.
+- name: Renew live-query feature leaves
+  hosts: control_plane:compute_nodes
+  gather_facts: false
+  become: true
+  serial: 1
+  max_fail_percentage: 0
+  tasks:
+    - name: pki renewal — livequeryd's server leaf
+      ansible.builtin.include_role:
+        name: livequeryd_service
+        tasks_from: pki.yml
+      when: faas_livequeryd_managed | default(false) | bool
+
+    - name: pki renewal — realtimed's live client leaf
+      ansible.builtin.include_role:
+        name: gatewayd_internal_service
+        tasks_from: live_tls.yml
+      when: faas_realtime_live_tls_managed | default(false) | bool
+
+# Platform logs (ADR-20261023124955 §2): Loki's server leaf and the Promtail,
+# Prometheus and Grafana client leaves are fleet-PKI feature leaves too. The
+# role reissues a leaf within 30 days of expiry, restores each service's read
+# access and restarts only the services whose leaf changed.
+- name: Renew platform-log feature leaves
+  hosts: control_plane:compute_nodes
+  gather_facts: false
+  become: true
+  serial: 1
+  max_fail_percentage: 0
+  tasks:
+    - name: pki renewal — platform-log leaves
+      ansible.builtin.include_role:
+        name: platform_logs_pki
+      when: faas_obs_logs_enabled | default(false) | bool

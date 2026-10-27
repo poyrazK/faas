@@ -21,6 +21,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/events"
 	"github.com/onebox-faas/faas/pkg/fcvm/logbuf"
 	"github.com/onebox-faas/faas/pkg/frameworkready"
+	"github.com/onebox-faas/faas/pkg/guestdisk"
 	"github.com/onebox-faas/faas/pkg/netns"
 )
 
@@ -117,6 +118,9 @@ type fakeVMM struct {
 	// snapshotHook runs after Snapshot records the capture, outside v.mu,
 	// so a test can model JailerVMM.Snapshot killing Firecracker itself.
 	snapshotHook func(Lease)
+	// coldBootHook runs inside BootColdBoot, outside v.mu, while the guest
+	// would be starting: before readiness and live publication.
+	coldBootHook func(Lease)
 	killed       []string
 	// destroyWithExportHook runs inside DestroyWithExport before it returns.
 	destroyWithExportHook func()
@@ -310,7 +314,11 @@ func (v *fakeVMM) BootColdBoot(ctx context.Context, l Lease, spec ColdBootSpec) 
 	}
 	v.mu.Lock()
 	v.coldBootSpecs = append(v.coldBootSpecs, spec)
+	hook := v.coldBootHook
 	v.mu.Unlock()
+	if hook != nil {
+		hook(l)
+	}
 	// Mirror production: thread the per-deployment override
 	// readiness probe path through Boot. The fakeVMM's Boot
 	// discards the parameter (the test doesn't go through
@@ -420,6 +428,38 @@ func TestWakeBuilderRestoreSkipsAppReadiness(t *testing.T) {
 	mgr.mu.Unlock()
 	if frameworkRuns != 0 {
 		t.Fatalf("builder framework-ready loops = %d, want 0", frameworkRuns)
+	}
+}
+
+// adr: 508 — guest-init registers a secret-reload process before exec, and
+// readiness (hence live publication) waits on that process, so a booting
+// guest must already resolve to its Wake identity.
+func TestRuntimeSecretIdentityResolvesWhileBooting(t *testing.T) {
+	vmm := &fakeVMM{}
+	mgr := newTestManager(&fakeRunner{}, vmm)
+	type identity struct{ deployment, app, account string }
+	var during identity
+	var duringErr error
+	vmm.coldBootHook = func(l Lease) {
+		during.deployment, during.app, during.account, duringErr = mgr.InstanceRuntimeSecretIdentity(l.Instance)
+	}
+	if _, err := mgr.Wake(context.Background(), WakeRequest{
+		Instance: "secret-boot", DeploymentID: "deployment-1", AppID: "app-1", AccountID: "account-1",
+		BaseKey: "/base.ext4", LayerKey: "/layer.ext4", VcpuCount: 2, MemSizeMiB: 128, Plan: api.PlanHobby,
+	}); err != nil {
+		t.Fatalf("Wake: %v", err)
+	}
+	if want := (identity{"deployment-1", "app-1", "account-1"}); duringErr != nil || during != want {
+		t.Fatalf("identity while booting = %+v, %v; want %+v", during, duringErr, want)
+	}
+	_ = mgr.Destroy(context.Background(), "secret-boot")
+	mgr.mu.Lock()
+	mgr.waking["qualification"] = wakingInstance{} // markers without a Wake identity stay unresolvable
+	mgr.mu.Unlock()
+	for _, instance := range []string{"secret-boot", "qualification", "unknown"} {
+		if _, _, _, err := mgr.InstanceRuntimeSecretIdentity(instance); err == nil {
+			t.Fatalf("%s resolved a runtime secret identity", instance)
+		}
 	}
 }
 
@@ -1003,6 +1043,10 @@ func newTestManager(run Runner, vmm VMM) *Manager {
 // real /sys/fs/cgroup via the same helper, because the jailer writes
 // there regardless of what cgroupRoot is set to in this package.
 func TestMain(m *testing.M) {
+	// The test binary stands in for vmmd-guestdisk in real-drive tests.
+	if len(os.Args) > 1 && os.Args[1] == "--uid" {
+		os.Exit(guestdisk.SandboxMain(os.Args[1:]))
+	}
 	runNativeLaunchHelperFixture()
 	if os.Getenv("GREGALE_NATIVE_PRODUCER_FIXTURE") == "1" {
 		os.Exit(m.Run()) // The crash fixture does not touch cgroups.

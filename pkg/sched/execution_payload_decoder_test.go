@@ -1,7 +1,7 @@
 // adr: 171 — authenticated execution payloads stay bound to the scheduler's
 // selected host identity before one-shot dispatch.
 
-package sched
+package sched_test
 
 import (
 	"context"
@@ -12,6 +12,7 @@ import (
 	"filippo.io/age"
 
 	"github.com/onebox-faas/faas/pkg/executionpayload"
+	"github.com/onebox-faas/faas/pkg/sched"
 )
 
 func TestNewAgeExecutionPayloadDecoderUsesAuthenticatedEnvelope(t *testing.T) {
@@ -23,7 +24,7 @@ func TestNewAgeExecutionPayloadDecoderUsesAuthenticatedEnvelope(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	decode := NewAgeExecutionPayloadDecoder([]*age.X25519Identity{identity})
+	decode := sched.NewAgeExecutionPayloadDecoder([]*age.X25519Identity{identity})
 	if decode == nil {
 		t.Fatal("decoder is nil")
 	}
@@ -37,7 +38,7 @@ func TestNewAgeExecutionPayloadDecoderUsesAuthenticatedEnvelope(t *testing.T) {
 }
 
 func TestNewAgeExecutionPayloadDecoderRequiresIdentities(t *testing.T) {
-	if got := NewAgeExecutionPayloadDecoder(nil); got != nil {
+	if got := sched.NewAgeExecutionPayloadDecoder(nil); got != nil {
 		t.Fatal("nil identities produced an active decoder")
 	}
 }

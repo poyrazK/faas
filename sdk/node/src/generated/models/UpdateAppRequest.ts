@@ -3,6 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { AfterRestoreHook } from './AfterRestoreHook.js';
+import type { AppDeploySettingsCondition } from './AppDeploySettingsCondition.js';
 import type { BeforeCheckpointHook } from './BeforeCheckpointHook.js';
 import type { DeclaredRoute } from './DeclaredRoute.js';
 import type { PreAuthRateLimitConfig } from './PreAuthRateLimitConfig.js';
@@ -20,6 +21,7 @@ import type { WorkerScaling } from './WorkerScaling.js';
  * Partial update — every field is optional; omitted fields are unchanged.
  */
 export type UpdateAppRequest = {
+  deploy_settings_condition?: AppDeploySettingsCondition;
   profiling?: ProfilingConfig;
   tracing?: TracingConfig;
   /**
@@ -27,15 +29,15 @@ export type UpdateAppRequest = {
    */
   visibility?: 'public' | 'internal';
   /**
-   * Standalone target policy (ADR-267). Omit to keep unchanged, [] to deny all, an array to replace, or null to restore same-account access. Project-managed and preview apps reject this PATCH.
+   * Standalone target policy. Omit to keep unchanged, [] to deny all, an array to replace, or null to restore same-account access. Project-managed and preview apps reject this PATCH.
    */
   allowed_service_callers?: any[] | null;
   /**
-   * Replace standalone target-side per-caller method/path grants (ADR-278). Omit to keep unchanged, null to clear, or an object (including {}) to replace. Project-managed and preview apps reject this PATCH.
+   * Replace standalone target-side per-caller method/path grants. Omit to keep unchanged, null to clear, or an object (including {}) to replace. Project-managed and preview apps reject this PATCH.
    */
   allowed_service_call_scopes?: (ServiceCallerScopes | null);
   /**
-   * Replace standalone outbound target app slugs (ADR-269). Omit or null to keep unchanged; [] clears all bindings. Project-managed and preview apps reject non-null changes.
+   * Replace standalone outbound target app slugs. Omit or null to keep unchanged; [] clears all bindings. Project-managed and preview apps reject non-null changes.
    */
   service_binding_targets?: any[] | null;
   /**
@@ -43,7 +45,7 @@ export type UpdateAppRequest = {
    */
   service_reliability?: (ServiceReliabilityPolicies | null);
   /**
-   * Set standalone caller authorization (ADR-269). Omit or null to keep unchanged; account restores same-account reachability; declared enforces the bound target list. Project-managed and preview apps reject non-null changes.
+   * Set standalone caller authorization. Omit or null to keep unchanged; account restores same-account reachability; declared enforces the bound target list. Project-managed and preview apps reject non-null changes.
    */
   service_binding_policy?: 'account' | 'declared';
   /**
@@ -78,7 +80,7 @@ export type UpdateAppRequest = {
    */
   before_checkpoint?: BeforeCheckpointHook;
   /**
-   * When the platform may pause the app's VM (ADR-1151): between_requests pauses it between requests and freezes it at the idle timeout, when_idle freezes it at the idle timeout, never parks it as before. Omitted uses the default: between_requests for functions, when_idle for request-mode apps. Worker, service and job execution modes accept only never. Omit to preserve; an empty string restores the default.
+   * When the platform may pause the app's VM: between_requests pauses it between requests and freezes it at the idle timeout, when_idle freezes it at the idle timeout, never parks it as before. Omitted uses the default: between_requests for functions, when_idle for request-mode apps. Worker, service and job execution modes accept only never. Omit to preserve; an empty string restores the default.
    */
   pause?: 'between_requests' | 'when_idle' | 'never' | '';
   /**
@@ -106,7 +108,7 @@ export type UpdateAppRequest = {
    */
   request_timeout_s?: number | null;
   /**
-   * Changes how many requests one Node or Python function worker serves at once (ADR-1342). 0 or 1 restores one request per worker; capped by the plan's concurrency_per_vm. Existing functions pick up the change on their next deploy.
+   * Changes how many requests one Node or Python function worker serves at once. 0 or 1 restores one request per worker; capped by the plan's concurrency_per_vm. Existing functions pick up the change on their next deploy.
    */
   function_concurrency?: number | null;
   /**
@@ -174,11 +176,11 @@ export type UpdateAppRequest = {
    */
   revision_pin_ttl_seconds?: number | null;
   /**
-   * Set the default rollout for production releases (ADR-1446, ADR-1450). Omit for no change.
+   * Set the default rollout for production releases. Omit for no change.
    */
   release_policy?: 'safe' | 'fast' | 'immediate';
   /**
-   * Replace the paths the default rollout probe checks (ADR-1449). An empty list restores /. Omit for no change.
+   * Replace the paths the default rollout probe checks. An empty list restores /. Omit for no change.
    */
   release_probe_paths?: any[] | null;
   min_instances?: number | null;
@@ -187,7 +189,7 @@ export type UpdateAppRequest = {
    */
   egress_allowlist?: Array<string>;
   /**
-   * Replaces the app's extra TCP egress ports (ADR-361). Pro and Scale only, capped per plan. SMTP, remote-administration, SMB, IRC, well-known mining and DNS ports are refused; 80 and 443 are always allowed and are dropped from the stored list. An empty array clears the extra ports.
+   * Replaces the app's extra TCP egress ports. Pro and Scale only, capped per plan. SMTP, remote-administration, SMB, IRC, well-known mining and DNS ports are refused; 80 and 443 are always allowed and are dropped from the stored list. An empty array clears the extra ports.
    */
   egress_ports?: Array<number>;
   /**
@@ -199,15 +201,15 @@ export type UpdateAppRequest = {
    */
   autoscale_target_cpu_pct?: number | null;
   /**
-   * Per-app streaming flag (issue #471). Omitted → no change. Free PATCHing true is 403 plan_streaming_not_allowed.
+   * Per-app streaming flag. Omitted → no change. Free PATCHing true is 403 plan_streaming_not_allowed.
    */
   streaming_enabled?: boolean | null;
   /**
-   * Per-app raw-bytes Upgrade bridge flag (issue #676 / ADR-080). Omitted → no change. Free PATCHing true is 403 plan_websocket_not_allowed.
+   * Per-app raw-bytes Upgrade bridge flag. Omitted → no change. Free PATCHing true is 403 plan_websocket_not_allowed.
    */
   websocket_enabled?: boolean | null;
   /**
-   * Per-app per-route observability flag (ADR-093). Omitted → no change. Free PATCHing true is 403 plan_route_metrics_not_allowed.
+   * Per-app per-route observability flag. Omitted → no change. Free PATCHing true is 403 plan_route_metrics_not_allowed.
    */
   route_metrics_enabled?: boolean | null;
   /**
@@ -219,11 +221,11 @@ export type UpdateAppRequest = {
    */
   declared_routes?: Array<DeclaredRoute>;
   /**
-   * Coarse per-app maintenance toggle (ADR-091 amendment). Omitted → no change. PATCH true pins the app for maintenance (every request 503 + Retry-After); PATCH false restores normal handling. Free-tier allowed; no plan gate. The apps_maintenance_mode_notify trigger (migration 00237) fires pg_notify on flip.
+   * Coarse per-app maintenance toggle. Omitted → no change. PATCH true pins the app for maintenance (every request 503 + Retry-After); PATCH false restores normal handling. Free-tier allowed; no plan gate. The apps_maintenance_mode_notify trigger fires pg_notify on flip.
    */
   maintenance_mode?: boolean | null;
   /**
-   * Per-app wire-protocol selector (ADR-124). Closed set {http1, http2, grpc}. Omit for no change; set explicitly to opt in (http2/grpc) or reset to 'http1'. Free customers PATCHing 'grpc' are rejected with 403 plan_app_protocol_grpc_not_allowed.
+   * Per-app wire-protocol selector. Closed set {http1, http2, grpc}. Omit for no change; set explicitly to opt in (http2/grpc) or reset to 'http1'. Free customers PATCHing 'grpc' are rejected with 403 plan_app_protocol_grpc_not_allowed.
    */
   app_protocol?: 'http1' | 'http2' | 'grpc';
   /**
@@ -231,31 +233,31 @@ export type UpdateAppRequest = {
    */
   scaling_policy?: (null | ScalingPolicy);
   /**
-   * DEPRECATED on this surface. The customer PATCH /v1/apps/{slug} endpoint silently drops require_signed; the operator endpoint PATCH /v1/apps/{slug}/security is the only path that flips the flag (issue #472 / ADR-054). The field is parsed for backwards compatibility but never persisted from this endpoint.
+   * DEPRECATED on this surface. The customer PATCH /v1/apps/{slug} endpoint silently drops require_signed; the operator endpoint PATCH /v1/apps/{slug}/security is the only path that flips the flag. The field is parsed for backwards compatibility but never persisted from this endpoint.
    */
   require_signed?: boolean | null;
   /**
-   * Per-app two-tier snapshot flag (issue #470 / ADR-055). Omitted → no change. PATCH-true on Free/Hobby is rejected with 403 plan_warm_snapshot_not_allowed.
+   * Per-app two-tier snapshot flag. Omitted → no change. PATCH-true on Free/Hobby is rejected with 403 plan_warm_snapshot_not_allowed.
    */
   warm_snapshot_enabled?: boolean | null;
   /**
-   * Per-app request-count threshold for warm-tier capture (issue #470 / ADR-055). Range [1, 100]. Omitted → no change.
+   * Per-app request-count threshold for warm-tier capture. Range [1, 100]. Omitted → no change.
    */
   warm_snapshot_min_requests?: number | null;
   /**
-   * Per-app time-since-first-ready threshold for warm-tier capture, milliseconds (issue #470 / ADR-055). Range [100, 60000]. Omitted → no change.
+   * Per-app time-since-first-ready threshold for warm-tier capture, milliseconds. Range [100, 60000]. Omitted → no change.
    */
   warm_snapshot_min_ms?: number | null;
   /**
-   * Desired paused warm-pool size (issue #1056 / ADR-074). Omitted → no change; zero explicitly disables the pool. Non-zero values require Hobby+ and may not exceed max_concurrency.
+   * Desired paused warm-pool size. Omitted → no change; zero explicitly disables the pool. Non-zero values require Hobby+ and may not exceed max_concurrency.
    */
   warm_pool_size?: number | null;
   /**
-   * Per-app eviction tier (issue #475). 'best_effort' (default) keeps the pre-#475 LRU-by-last_request_at reaper behaviour; 'reserved' protects the app from cross-account RAM-pressure eviction (every best_effort candidate is drained before any reserved is parked). Plan-gated upstream: Free PATCH 'reserved' returns 402 plan_eviction_priority_reserved_not_allowed. Per-account cap (Hobby 1, Pro 2, Scale 4): 422 plan_eviction_priority_reserved_quota when exhausted. Omitted → no change.
+   * Per-app eviction tier. 'best_effort' (default) keeps the pre-#475 LRU-by-last_request_at reaper behaviour; 'reserved' protects the app from cross-account RAM-pressure eviction (every best_effort candidate is drained before any reserved is parked). Plan-gated upstream: Free PATCH 'reserved' returns 402 plan_eviction_priority_reserved_not_allowed. Per-account cap (Hobby 1, Pro 2, Scale 4): 422 plan_eviction_priority_reserved_quota when exhausted. Omitted → no change.
    */
   eviction_priority?: 'best_effort' | 'reserved';
   /**
-   * Per-deployment token-gate flag (issue #560). Omitted → no change. PATCH-true on Free/Hobby is rejected with 403 plan_require_authn_not_allowed.
+   * Per-deployment token-gate flag. Omitted → no change. PATCH-true on Free/Hobby is rejected with 403 plan_require_authn_not_allowed.
    */
   require_authn?: boolean | null;
   /**
@@ -267,11 +269,11 @@ export type UpdateAppRequest = {
    */
   platform_tenant_required?: boolean | null;
   /**
-   * Per-app public-URL auth configuration (issue #477 / ADR-077). Omitted → no change. When present, mode is the closed enum {open, bearer, basic}; basic_user + basic_pass are required when mode='basic' and the apid seal step encrypts them under the APP_BASIC_AUTH secretbox namespace before persistence.
+   * Per-app public-URL auth configuration. Omitted → no change. When present, mode is the closed enum {open, bearer, basic}; basic_user + basic_pass are required when mode='basic' and the API seal step encrypts them under the APP_BASIC_AUTH secretbox namespace before persistence.
    */
   public_auth?: (null | PublicAuthBlock);
   /**
-   * Per-app preferred spill target for cross-node pressure rebalance (Tier A10 / ADR-088). Wire form is the human-readable compute_nodes.name; apid resolves to UUID server-side. Tri-state: omitted → no change; empty string → clear (back to A9 fallback); non-empty → resolve name → UUID via Store.ComputeNodeByName and persist the UUID. 404 on unknown name; 422 on inactive node.
+   * Per-app preferred spill target for cross-node pressure rebalance. Wire form is the human-readable compute_nodes.name; the API resolves to UUID server-side. Tri-state: omitted → no change; empty string → clear (back to A9 fallback); non-empty → resolve name → UUID via Store.ComputeNodeByName and persist the UUID. 404 on unknown name; 422 on inactive node.
    */
   overflow_node?: string | null;
   cors_default_enabled?: boolean | null;

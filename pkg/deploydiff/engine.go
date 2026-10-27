@@ -50,6 +50,7 @@ func Compute(slug string, plan Plan, baseline Baseline, pending Pending) Diff {
 	diffBuildPlan(&out, baseline, pending)
 	diffRollout(&out, baseline.LatestDeployment, pending)
 	diffWorkflows(&out, baseline.LatestDeployment, pending.Workflows)
+	diffCompanions(&out, baseline, pending)
 
 	// 2. Per-scope env vars.
 	diffEnvByScope(&out, baseline.EnvByScope, pending.EnvByScope)
@@ -227,6 +228,11 @@ func diffBuildPlan(out *Diff, baseline Baseline, pending Pending) {
 				Before: AsAny(basePlan.Handler), After: AsAny(plan.Handler),
 			})
 		}
+		// Like framework and handler, an empty preview value means "not
+		// inferred from source", not "cleared". A Dockerfile preview defers
+		// its entrypoint, port and health contract to the image, so comparing
+		// unconditionally reported every unchanged Dockerfile deploy as
+		// "deployment.port 8080 → 0" and "deployment.health_path /healthz → \"\"".
 		for _, field := range []struct {
 			name, before, after string
 		}{
@@ -234,11 +240,11 @@ func diffBuildPlan(out *Diff, baseline Baseline, pending Pending) {
 			{"deployment.health_path", basePlan.HealthPath, plan.HealthPath},
 			{"deployment.config_file", basePlan.ConfigFile, plan.ConfigFile},
 		} {
-			if field.before != field.after {
+			if field.after != "" && field.before != field.after {
 				out.Changes = append(out.Changes, Change{Field: field.name, Kind: ChangeModify, Before: AsAny(field.before), After: AsAny(field.after)})
 			}
 		}
-		if basePlan.Port != plan.Port {
+		if plan.Port != 0 && basePlan.Port != plan.Port {
 			out.Changes = append(out.Changes, Change{Field: "deployment.port", Kind: ChangeModify, Before: AsAny(basePlan.Port), After: AsAny(plan.Port)})
 		}
 	}

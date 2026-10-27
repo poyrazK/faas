@@ -22,7 +22,7 @@ var envLiteral = regexp.MustCompile(`"(FAAS_[A-Z0-9_]+)"`)
 var daemonDirs = []string{
 	"cmd/apid", "cmd/bridged", "cmd/schedd", "cmd/vmmd", "cmd/imaged", "cmd/builderd",
 	"cmd/meterd", "cmd/githubd", "cmd/gatewayd-internal", "cmd/gatewayd-public", "cmd/s3-gatewayd", "cmd/maild", "cmd/mail-report", "cmd/mail-metrics", "cmd/mail-feedback",
-	"cmd/vmmd-stream-bridge", "cmd/vmmd-raw-bridge", "cmd/vmmd-tcp-bridge", "cmd/vmmd-udp-bridge", "cmd/realtimed", "cmd/profiled",
+	"cmd/vmmd-stream-bridge", "cmd/vmmd-raw-bridge", "cmd/vmmd-tcp-bridge", "cmd/vmmd-udp-bridge", "cmd/realtimed", "cmd/profiled", "cmd/outboundd",
 }
 
 func repoRoot(t *testing.T) string {
@@ -181,7 +181,7 @@ func TestEnvContract_Sorted(t *testing.T) {
 // sets it.
 func TestEnvContract_EveryReadIsDeclared(t *testing.T) {
 	root := repoRoot(t)
-	reads := scanLiterals(t, root, append(append([]string{}, daemonDirs...), "pkg", "guest"))
+	reads := scanLiterals(t, root, append(append([]string{}, daemonDirs...), "pkg", "guest", "internal"))
 	byName := EnvContractByName()
 	var missing []string
 	for name, files := range reads {
@@ -218,7 +218,7 @@ func TestEnvContract_EveryReadIsDeclared(t *testing.T) {
 // by something, so the doc never advertises a knob that does nothing.
 func TestEnvContract_NoStaleEntries(t *testing.T) {
 	root := repoRoot(t)
-	reads := scanLiterals(t, root, append(append([]string{}, daemonDirs...), "pkg", "guest"))
+	reads := scanLiterals(t, root, append(append([]string{}, daemonDirs...), "pkg", "guest", "internal"))
 	// Script consumers: shell under deploy/scripts, shell embedded in role
 	// tasks (postgres archive_command), and ExecStart lines in units.
 	scripts := readTree(t, root, []string{"deploy/scripts", "deploy/ansible/roles", "deploy/systemd"}, func(p string) bool {

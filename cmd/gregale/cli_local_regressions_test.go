@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"encoding/json"
@@ -8,12 +8,13 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
 func TestRunHelpAndVersionWithBrokenConfig(t *testing.T) {
-	setupConnectionProfiles(t)
-	path, err := cliConfigPath()
+	main.SetupConnectionProfiles(t)
+	path, err := main.CliConfigPath()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -26,26 +27,26 @@ func TestRunHelpAndVersionWithBrokenConfig(t *testing.T) {
 		{"version"}, {"--version"}, {"-v"}, {"--json", "version"},
 	} {
 		t.Run(strings.Join(args, " "), func(t *testing.T) {
-			stdout, stderr, restore := swapIO(t)
+			stdout, stderr, restore := main.SwapIO(t)
 			defer restore()
-			if code := run(args); code != 0 || stdout.Len() == 0 || stderr() != "" {
+			if code := main.Run(args); code != 0 || stdout.Len() == 0 || stderr() != "" {
 				t.Fatalf("exit=%d stdout=%q stderr=%q", code, stdout.String(), stderr())
 			}
 		})
 	}
 	// Operational commands must still reject the broken configuration.
-	_, stderr, restore := swapIO(t)
+	_, stderr, restore := main.SwapIO(t)
 	defer restore()
-	if code := run([]string{"whoami"}); code != 1 || !strings.Contains(stderr(), "Invalid connection profile") {
+	if code := main.Run([]string{"whoami"}); code != 1 || !strings.Contains(stderr(), "Invalid connection profile") {
 		t.Fatalf("whoami exit=%d stderr=%q", code, stderr())
 	}
 }
 
 func TestRunJSONErrorsWithUnavailableKeychain(t *testing.T) {
-	setupConnectionProfiles(t)
-	setFakeKeyring(t, withGetErr(errors.New("no D-Bus session")))
-	oldStdin := osStdin
-	t.Cleanup(func() { osStdin = oldStdin })
+	main.SetupConnectionProfiles(t)
+	main.SetFakeKeyring(t, main.WithGetErr(errors.New("no D-Bus session")))
+	oldStdin := (*main.OsStdin)
+	t.Cleanup(func() { (*main.OsStdin) = oldStdin })
 	dest := filepath.Join(t.TempDir(), "out")
 	for _, tc := range []struct {
 		name string
@@ -64,10 +65,10 @@ func TestRunJSONErrorsWithUnavailableKeychain(t *testing.T) {
 		{"doctor empty credential", []string{"doctor", "--image", "example.com/app", "--registry-user", "user", "--registry-password-stdin", "--json"}, 1},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			osStdin = strings.NewReader("")
-			stdout, stderr, restore := swapIO(t)
+			(*main.OsStdin) = strings.NewReader("")
+			stdout, stderr, restore := main.SwapIO(t)
 			defer restore()
-			code := run(tc.args)
+			code := main.Run(tc.args)
 			var problem struct {
 				api.Problem
 				ExitCode int `json:"exit_code"`
@@ -87,7 +88,7 @@ func TestRunJSONErrorsWithUnavailableKeychain(t *testing.T) {
 }
 
 func TestDoctorRejectsInvalidSourceDirectories(t *testing.T) {
-	setupConnectionProfiles(t)
+	main.SetupConnectionProfiles(t)
 	dir := t.TempDir()
 	file := filepath.Join(dir, "server.js")
 	if err := os.WriteFile(file, []byte("app.listen(3000)"), 0o600); err != nil {
@@ -108,9 +109,9 @@ func TestDoctorRejectsInvalidSourceDirectories(t *testing.T) {
 					t.Skip("this user can read mode-000 directories")
 				}
 			}
-			stdout, stderr, restore := swapIO(t)
+			stdout, stderr, restore := main.SwapIO(t)
 			defer restore()
-			code := run([]string{"doctor", path, "--strict", "--json"})
+			code := main.Run([]string{"doctor", path, "--strict", "--json"})
 			var problem api.Problem
 			if err := json.Unmarshal([]byte(stderr()), &problem); err != nil {
 				t.Fatalf("invalid error JSON: %v; %q", err, stderr())
@@ -123,9 +124,14 @@ func TestDoctorRejectsInvalidSourceDirectories(t *testing.T) {
 }
 
 func TestDoctorStrictFlagBeforeOrAfterSource(t *testing.T) {
-	setupConnectionProfiles(t)
+	main.SetupConnectionProfiles(t)
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "server.js"), []byte("app.listen(3000, '0.0.0.0');\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// A deployable Node app, so the only finding is the port warning (a bare
+	// server.js has no app marker and is a source error, H14-61).
+	if err := os.WriteFile(filepath.Join(dir, "package.json"), []byte(`{"name":"strict-order","scripts":{"start":"node server.js"}}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	for _, tc := range []struct {
@@ -137,10 +143,10 @@ func TestDoctorStrictFlagBeforeOrAfterSource(t *testing.T) {
 		{[]string{"doctor", dir, "--strict", "--json"}, 1},
 	} {
 		t.Run(strings.Join(tc.args, " "), func(t *testing.T) {
-			stdout, stderr, restore := swapIO(t)
+			stdout, stderr, restore := main.SwapIO(t)
 			defer restore()
-			code := run(tc.args)
-			var report doctorReport
+			code := main.Run(tc.args)
+			var report main.DoctorReport
 			if err := json.Unmarshal(stdout.Bytes(), &report); err != nil {
 				t.Fatalf("invalid report: %v; stdout=%q stderr=%q", err, stdout.String(), stderr())
 			}
@@ -152,13 +158,13 @@ func TestDoctorStrictFlagBeforeOrAfterSource(t *testing.T) {
 }
 
 func TestErrorRedactionDoesNotPrintCredentialDiagnostics(t *testing.T) {
-	setupConnectionProfiles(t)
-	setFakeKeyring(t, withGetErr(errors.New("no D-Bus session")))
-	token := testAPIKey('a')
-	writeLegacyToken(t, token)
-	_, stderr, restore := swapIO(t)
+	main.SetupConnectionProfiles(t)
+	main.SetFakeKeyring(t, main.WithGetErr(errors.New("no D-Bus session")))
+	token := main.TestAPIKey('a')
+	main.WriteLegacyToken(t, token)
+	_, stderr, restore := main.SwapIO(t)
 	defer restore()
-	if got := redactErrorText("credential " + token); got != "credential [REDACTED]" {
+	if got := main.RedactErrorText("credential " + token); got != "credential [REDACTED]" {
 		t.Fatalf("redaction=%q", got)
 	}
 	if stderr() != "" {

@@ -70,7 +70,7 @@ func TestMCPReadinessPagerDutyAcknowledgementIsolation(t *testing.T) {
 	}
 	a, b := seed("ack-isolation-a", strings.Repeat("s", 32)), seed("ack-isolation-b", strings.Repeat("t", 32))
 	h := mcpreadiness.New(store, nil, nil)
-	h.Identities = func(context.Context) []*age.X25519Identity { return []*age.X25519Identity{identity} }
+	h.AccountIdentities = func(context.Context) []*age.X25519Identity { return []*age.X25519Identity{identity} }
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /v1/webhooks/mcp-readiness/pagerduty/{id}", h.PagerDutyAcknowledgementWebhook)
 	post := func(receiver, target fixture, key, eventID string) int {

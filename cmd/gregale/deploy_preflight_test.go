@@ -1,17 +1,18 @@
-package main
+package main_test
 
 import (
 	"bytes"
 	"strings"
 	"testing"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/simpleapp"
 )
 
 func TestDeployPreflightSourceMakesDirtyCommitSelectionExplicit(t *testing.T) {
-	prov := &zeroConfigProvenance{SHA: "1234567890abcdef", Dirty: true}
-	source, changes := deployPreflightSource(prov, false, 3, "", "", "", "")
+	prov := &main.ZeroConfigProvenance{SHA: "1234567890abcdef", Dirty: true}
+	source, changes := main.DeployPreflightSource(prov, false, 3, "", "", "", "")
 	if source != "commit 1234567 (repository root)" {
 		t.Fatalf("source = %q, want commit 1234567 (repository root)", source)
 	}
@@ -21,8 +22,8 @@ func TestDeployPreflightSourceMakesDirtyCommitSelectionExplicit(t *testing.T) {
 }
 
 func TestDeployPreflightSourceNamesIncludedWorkingTreeChanges(t *testing.T) {
-	prov := &zeroConfigProvenance{SHA: "1234567890abcdef", Dirty: true}
-	source, changes := deployPreflightSource(prov, true, 1, "", "", "", "")
+	prov := &main.ZeroConfigProvenance{SHA: "1234567890abcdef", Dirty: true}
+	source, changes := main.DeployPreflightSource(prov, true, 1, "", "", "", "")
 	if source != "working tree at 1234567 (current directory)" {
 		t.Fatalf("source = %q", source)
 	}
@@ -32,7 +33,7 @@ func TestDeployPreflightSourceNamesIncludedWorkingTreeChanges(t *testing.T) {
 }
 
 func TestDeployPreflightSourceNamesSelectedRoot(t *testing.T) {
-	prov := &zeroConfigProvenance{SHA: "1234567890abcdef"}
+	prov := &main.ZeroConfigProvenance{SHA: "1234567890abcdef"}
 	for _, tc := range []struct {
 		worktree bool
 		path     string
@@ -42,7 +43,7 @@ func TestDeployPreflightSourceNamesSelectedRoot(t *testing.T) {
 		{true, "packages/api", "working tree at 1234567 (--path packages/api)"},
 		{false, "/private/source/api", "commit 1234567 (--path api)"},
 	} {
-		got, _ := deployPreflightSource(prov, tc.worktree, 0, "", "", "", tc.path)
+		got, _ := main.DeployPreflightSource(prov, tc.worktree, 0, "", "", "", tc.path)
 		if got != tc.want {
 			t.Errorf("source = %q, want %q", got, tc.want)
 		}
@@ -50,7 +51,7 @@ func TestDeployPreflightSourceNamesSelectedRoot(t *testing.T) {
 }
 
 func TestDeployPreflightRepoSourcePreservesRef(t *testing.T) {
-	got := deployPreflightRepoSource("onebox-faas/hello", "release/2026-q3")
+	got := main.DeployPreflightRepoSource("onebox-faas/hello", "release/2026-q3")
 	if want := "GitHub onebox-faas/hello · ref release/2026-q3"; got != want {
 		t.Fatalf("source = %q, want %q", got, want)
 	}
@@ -58,7 +59,7 @@ func TestDeployPreflightRepoSourcePreservesRef(t *testing.T) {
 
 func TestRenderDeployPreflightShowsActionableRuntimePlan(t *testing.T) {
 	var out bytes.Buffer
-	renderDeployPreflight(&out, deployPreflightSummary{
+	main.RenderDeployPreflight(&out, main.DeployPreflightSummary{
 		Slug:         "payments-api",
 		Source:       "commit 1234567",
 		LocalChanges: "2 local changes excluded; use --worktree to include them",
@@ -97,14 +98,14 @@ func TestDeployPreflightListenerShowsTCPReadinessForImage(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got, want := deployPreflightListener(nil, &plan), ":8080 · TCP listener readiness"; got != want {
+	if got, want := main.DeployPreflightListener(nil, &plan), ":8080 · TCP listener readiness"; got != want {
 		t.Fatalf("listener = %q, want %q", got, want)
 	}
 }
 
 func TestRenderDeployPreflightFunctionOmitsAppListener(t *testing.T) {
 	var out bytes.Buffer
-	renderDeployPreflight(&out, deployPreflightSummary{
+	main.RenderDeployPreflight(&out, main.DeployPreflightSummary{
 		Slug:   "image-resize",
 		Source: "template function-node",
 		BuildPlan: &api.BuildPlan{
@@ -130,7 +131,7 @@ func TestRenderDeployPreflightFunctionOmitsAppListener(t *testing.T) {
 func TestRenderDeployPreflightWorkerOmitsListener(t *testing.T) {
 	for _, mode := range []string{api.ExecutionModeWorker, api.ExecutionModeJob} {
 		var out bytes.Buffer
-		renderDeployPreflight(&out, deployPreflightSummary{
+		main.RenderDeployPreflight(&out, main.DeployPreflightSummary{
 			Slug:          "wk",
 			Source:        "working tree",
 			ExecutionMode: mode,
@@ -149,7 +150,7 @@ func TestRenderDeployPreflightWorkerOmitsListener(t *testing.T) {
 
 func TestRenderDeployPreflightShowsRemoteResolutionBoundary(t *testing.T) {
 	var out bytes.Buffer
-	renderDeployPreflight(&out, deployPreflightSummary{
+	main.RenderDeployPreflight(&out, main.DeployPreflightSummary{
 		Slug:              "hello",
 		Source:            "GitHub onebox-faas/hello · ref main",
 		RuntimeResolution: "detected remotely after checkout",
@@ -177,13 +178,40 @@ func TestRenderDeployPreflightShowsRemoteResolutionBoundary(t *testing.T) {
 // plan promised "health GET /healthz", which a gRPC server cannot answer.
 func TestDeployPreflightListenerShowsGRPCHealth(t *testing.T) {
 	build := &api.BuildPlan{Port: 3000, HealthPath: "/healthz"}
-	if got, want := deployPreflightListenerWith(build, nil, &api.DeploymentHealthcheck{GRPC: &api.DeploymentGRPCHealthcheck{}}), ":3000 · gRPC health"; got != want {
+	if got, want := main.DeployPreflightListenerWith(build, nil, &api.DeploymentHealthcheck{GRPC: &api.DeploymentGRPCHealthcheck{}}), ":3000 · gRPC health"; got != want {
 		t.Fatalf("listener = %q, want %q", got, want)
 	}
-	if got, want := deployPreflightListenerWith(build, nil, &api.DeploymentHealthcheck{GRPC: &api.DeploymentGRPCHealthcheck{Service: "h3.Echo"}}), ":3000 · gRPC health h3.Echo"; got != want {
+	if got, want := main.DeployPreflightListenerWith(build, nil, &api.DeploymentHealthcheck{GRPC: &api.DeploymentGRPCHealthcheck{Service: "h3.Echo"}}), ":3000 · gRPC health h3.Echo"; got != want {
 		t.Fatalf("listener = %q, want %q", got, want)
 	}
-	if got, want := deployPreflightListenerWith(build, nil, &api.DeploymentHealthcheck{Path: "/ready"}), ":3000 · health GET /ready"; got != want {
+	if got, want := main.DeployPreflightListenerWith(build, nil, &api.DeploymentHealthcheck{Path: "/ready"}), ":3000 · health GET /ready"; got != want {
 		t.Fatalf("listener = %q, want %q", got, want)
+	}
+}
+
+// H14-55 on rc.297: `deploy --app-protocol grpc` without a probe flag showed
+// "health GET /healthz" while schedd boots it with gRPC health readiness.
+func TestRenderDeployPreflightGRPCAppShowsGRPCHealth(t *testing.T) {
+	for _, tc := range []struct {
+		name, protocol string
+		hc             *api.DeploymentHealthcheck
+		want           string
+	}{
+		{"grpc without a probe flag", "grpc", nil, "listener:      :8080 · gRPC health"},
+		{"grpc with an explicit path", "grpc", &api.DeploymentHealthcheck{Path: "/ready"}, "listener:      :8080 · health GET /ready"},
+		{"http1 keeps the inferred path", "http1", nil, "listener:      :8080 · health GET /healthz"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var out bytes.Buffer
+			main.RenderDeployPreflight(&out, main.DeployPreflightSummary{
+				Slug: "h14-grpc", Source: "working tree",
+				BuildPlan:   &api.BuildPlan{Class: "app", Framework: "go", Port: 8080, HealthPath: "/healthz"},
+				AppProtocol: tc.protocol, Healthcheck: tc.hc,
+				Release: "standard · 100% after readiness",
+			})
+			if got := out.String(); !strings.Contains(got, tc.want) {
+				t.Fatalf("preflight missing %q in:\n%s", tc.want, got)
+			}
+		})
 	}
 }

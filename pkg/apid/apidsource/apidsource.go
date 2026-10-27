@@ -180,6 +180,7 @@ type EnqueueParams struct {
 	// ImageRef selects OCI materialization instead of a source build. Only
 	// trusted project callers set it after static workload admission.
 	ImageHealthcheck    *api.ComposeHealthcheck
+	ImageProcess        *api.ComposeProcess
 	ImageRef            string
 	ImagePort           int
 	ImageCommand        []string
@@ -190,8 +191,12 @@ type EnqueueParams struct {
 	// DockerfilePath is the explicit Dockerfile selected inside SourceRoot.
 	// It is captured in the deployment's immutable inferred profile.
 	DockerfilePath string
-	SourceURL      string
-	CommitSHA      string
+	// DockerfileBuild is the app's Compose build.args and build.target
+	// (ADR-20261019142544), captured in the inferred profile beside the
+	// Dockerfile path.
+	DockerfileBuild *api.DockerfileBuildOptions
+	SourceURL       string
+	CommitSHA       string
 	// GitHubSourceRef is populated when a GitHub deployment was resolved from
 	// a mutable branch (source-ref request or webhook push). Imaged rechecks
 	// it immediately before promotion.
@@ -544,6 +549,24 @@ func enqueueWithSourceStorage(ctx context.Context, store Store, notif Notifier, 
 				if runtimeProfile, ok := frameworkprofile.ProfileForFunctionRuntime(p.FunctionRuntime); ok {
 					profile = runtimeProfile
 				}
+			}
+			if !p.DockerfileBuild.IsZero() {
+				profile.DockerfileBuild = p.DockerfileBuild.Clone()
+			}
+			if !p.ImageProcess.IsZero() {
+				if err := p.ImageProcess.Validate(); err != nil {
+					return EnqueueResult{}, fmt.Errorf("apidsource.Enqueue: Compose process: %w", err)
+				}
+				profile.BuildProcess = p.ImageProcess.Clone()
+			}
+			// A Compose healthcheck on a built service is frozen like a
+			// prebuilt image's (ADR-20261019195000); imaged merges it onto
+			// the built image's HEALTHCHECK.
+			if p.ImageHealthcheck != nil {
+				if err := p.ImageHealthcheck.Validate(); err != nil {
+					return EnqueueResult{}, fmt.Errorf("apidsource.Enqueue: Compose healthcheck: %w", err)
+				}
+				profile.ImageHealthcheck = &frameworkprofile.ImageHealthcheck{Version: frameworkprofile.ImageHealthcheckVersion, Override: p.ImageHealthcheck.Clone()}
 			}
 			if inferredProfile, err = json.Marshal(profile); err != nil {
 				if p.Log != nil {

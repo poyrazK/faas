@@ -1,7 +1,10 @@
 # ADR-1741: schedd owner cache — per-app runtime generations and one guarded write per wake
 
 - Status: Proposed. Built behind schedd's `owner_cache` switch, off by
-  default.
+  default. Amended 2026-10-21 ("Amendment: coordinated wakes"): the cache
+  serves a coordinated wake whose selection is the entry's. Amended
+  2026-10-22 ("Amendment: team organizations"): the cache serves no app of
+  a team organization.
 - Date: 2026-10-16
 - Builds on: ADR-1740 (frozen fast path), ADR-1151 (pause tiers), the
   scaling roadmap's wake rule (zero control-plane round trips per request,
@@ -304,3 +307,54 @@ cache cold (the first wake after a change), a restore is 27 or 28 round trips.
    guard; their bookkeeping folds in.
 6. Canary on one node; compare `wake.thaw_breakdown`, boot latency and
    conflict rates with the uncached path.
+
+## Amendment: coordinated wakes (2026-10-21)
+
+The cache served only wakes without a coordinated wake selection. Every
+gateway wake has one: schedd's `EnsureWake` resolves the production
+deployment, its app settings, account and scaling owner before it enters
+the wake coordinator, and hands that selection to wake phase 1 and
+admission. With `FAAS_OWNER_CACHE=1` on production-us (rc.285,
+2026-10-21), `schedd_owner_cache_total` stayed 0 on every series, thaws and
+restores alike.
+
+- An admission (and wake phase 1, which uses the same rule) takes the
+  entry when the selection is the entry's app, production deployment,
+  account and scaling environment. Any other selection is counted as
+  `schedd_owner_cache_total{outcome="selection"}` and the wake decides from
+  its own reads, as before.
+- When the entry serves, it decides instead of the selection: admission
+  uses the entry under its generation guard and does not re-read the live
+  deployment, as an uncoordinated production wake does. Letting the
+  selection's branch win would have skipped both the barrier read (which
+  the entry stands in for) and the guard.
+- The selection being fresh does not make the entry fresh: the selection
+  names deployments and environments, not the settings the entry holds. A
+  change it does not show still moves the generation, and the admission
+  insert refuses the entry as before (`refused`, then a retry from fresh
+  reads).
+
+`EnsureWake`'s own reads before the coordinator (app, account, production
+deployment, scaling owner, budget) are not served from the cache. The app
+read decides ownership (`apps.node_id`), which the generation does not
+cover. (A wake a thaw ticket serves takes the rest of its selection from
+the ticket instead; see ADR-1740's amendment of 2026-10-22.)
+
+## Amendment: team organizations (2026-10-22)
+
+An entry read the app's own account (`AccountByID`). The ordinary path
+admits under `state.AppResourceAccount`, which for an app of a team
+organization takes the status, plan and abuse hold from the organization's
+row, and `orgs` moves no generation. An entry could therefore admit a
+suspended organization's app, or admit it under the member's plan.
+
+The cache now serves only apps outside any organization or in a personal
+one, whose resource account is their own accounts row. For an app of a
+team organization the load stops after the app read and keeps a marker at
+the app's generation, so later wakes skip the cache without repeating that
+load; moving the app to another organization moves the generation.
+`schedd_owner_cache_total{outcome="organization"}` counts those wakes.
+Adding generation triggers on `orgs` (status, plan, abuse hold, deletion,
+resource ownership, fanning out to the organization's apps) would let the
+cache serve them too.
+

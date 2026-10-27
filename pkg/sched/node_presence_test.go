@@ -1,5 +1,5 @@
 // adr: 419 — only fresh authoritative inventory may repair a missing service VM.
-package sched
+package sched_test
 
 import (
 	"context"
@@ -11,14 +11,15 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/db"
+	"github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/state/statetest"
 )
 
 func TestNodePresenceTrackerRequiresDistinctFreshReports(t *testing.T) {
 	now := time.Now().UTC()
-	tracker := newNodePresenceTracker()
-	inventory := NodeInstanceInventory{NodeID: "node-a", Complete: true, SampledAt: now}
+	tracker := sched.NewNodePresenceTracker()
+	inventory := sched.NodeInstanceInventory{NodeID: "node-a", Complete: true, SampledAt: now}
 	if _, ok := tracker.Observe(inventory, now); ok {
 		t.Fatal("first empty report confirmed absence")
 	}
@@ -30,7 +31,7 @@ func TestNodePresenceTrackerRequiresDistinctFreshReports(t *testing.T) {
 	if !ok {
 		t.Fatal("second distinct empty report did not confirm absence")
 	}
-	tracker.markReconciled(inventory.NodeID, observation.fingerprint)
+	tracker.MarkReconciled(inventory.NodeID, (*observation.Fingerprint()))
 	inventory.SampledAt = now.Add(2 * time.Second)
 	if _, ok := tracker.Observe(inventory, inventory.SampledAt); ok {
 		t.Fatal("reconciled report checked on every tick")
@@ -38,11 +39,11 @@ func TestNodePresenceTrackerRequiresDistinctFreshReports(t *testing.T) {
 }
 
 func TestNodePresenceTrackerPreservesInstanceIDBoundaries(t *testing.T) {
-	tracker := newNodePresenceTracker()
+	tracker := sched.NewNodePresenceTracker()
 	now := time.Now().UTC()
-	tracker.Observe(NodeInstanceInventory{NodeID: "n", Complete: true, InstanceIDs: []string{"a,b", "c"}, SampledAt: now}, now)
+	tracker.Observe(sched.NodeInstanceInventory{NodeID: "n", Complete: true, InstanceIDs: []string{"a,b", "c"}, SampledAt: now}, now)
 	next := now.Add(time.Second)
-	if _, ok := tracker.Observe(NodeInstanceInventory{NodeID: "n", Complete: true, InstanceIDs: []string{"a", "b,c"}, SampledAt: next}, next); ok {
+	if _, ok := tracker.Observe(sched.NodeInstanceInventory{NodeID: "n", Complete: true, InstanceIDs: []string{"a", "b,c"}, SampledAt: next}, next); ok {
 		t.Fatal("different process inventories counted as consecutive identical observations")
 	}
 }
@@ -62,15 +63,15 @@ func TestNodePresenceTrackerUnknownStaleAndInterruptedReportsResetConfirmation(t
 		{name: "interruption", complete: true, sampleOffset: 10 * time.Second, receiveOffset: 10 * time.Second},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			tracker := newNodePresenceTracker()
+			tracker := sched.NewNodePresenceTracker()
 			now := time.Now().UTC()
-			tracker.Observe(NodeInstanceInventory{NodeID: "n", Complete: true, SampledAt: now}, now)
-			_, ok := tracker.Observe(NodeInstanceInventory{NodeID: "n", Complete: tc.complete, InstanceIDs: tc.ids, SampledAt: now.Add(tc.sampleOffset)}, now.Add(tc.receiveOffset))
+			tracker.Observe(sched.NodeInstanceInventory{NodeID: "n", Complete: true, SampledAt: now}, now)
+			_, ok := tracker.Observe(sched.NodeInstanceInventory{NodeID: "n", Complete: tc.complete, InstanceIDs: tc.ids, SampledAt: now.Add(tc.sampleOffset)}, now.Add(tc.receiveOffset))
 			if ok {
 				t.Fatal("bad/interrupted inventory triggered reconciliation")
 			}
 			fresh := now.Add(tc.receiveOffset + time.Second)
-			if _, ok := tracker.Observe(NodeInstanceInventory{NodeID: "n", Complete: true, SampledAt: fresh}, fresh); ok && tc.name != "interruption" {
+			if _, ok := tracker.Observe(sched.NodeInstanceInventory{NodeID: "n", Complete: true, SampledAt: fresh}, fresh); ok && tc.name != "interruption" {
 				t.Fatal("first report after invalid inventory confirmed absence")
 			}
 		})
@@ -79,10 +80,10 @@ func TestNodePresenceTrackerUnknownStaleAndInterruptedReportsResetConfirmation(t
 
 type inventoryFixture struct {
 	store    *state.MemStore
-	engine   *Engine
-	vmm      *fakeVMM
-	notifier *fakeNotifier
-	work     *workPool
+	engine   *sched.Engine
+	vmm      *sched.FakeVMM
+	notifier *sched.FakeNotifier
+	work     *sched.WorkPool
 	now      time.Time
 	clock    atomic.Int64
 	instance state.Instance
@@ -92,28 +93,28 @@ func newInventoryFixture(t *testing.T, service bool) *inventoryFixture {
 	t.Helper()
 	ctx := context.Background()
 	store := state.NewMemStore()
-	_, app, dep := seedApp(t, store, api.PlanPro, 128, 5)
-	vmm := &fakeVMM{}
-	notifier := &fakeNotifier{}
-	engine := newEngine(t, store, vmm, notifier, "1.10.0")
+	_, app, dep := sched.SeedApp(t, store, api.PlanPro, 128, 5)
+	vmm := &sched.FakeVMM{}
+	notifier := &sched.FakeNotifier{}
+	engine := sched.XNewEngine(t, store, vmm, notifier, "1.10.0")
 	// Install the atomic clock before any VM work so asynchronous reconcile
 	// callbacks never observe engine.now being replaced.
 	f := &inventoryFixture{store: store, engine: engine, vmm: vmm, notifier: notifier, now: time.Now().UTC()}
 	f.clock.Store(f.now.UnixNano())
-	engine.now = func() time.Time { return time.Unix(0, f.clock.Load()) }
+	(*engine.Now()) = func() time.Time { return time.Unix(0, f.clock.Load()) }
 	var ins state.Instance
 	if service {
 		// Use the production submission path and finish bootstrap notifications
 		// before advancing fake time; no recovery callback may escape the fixture.
-		loop := NewLoop(nil, engine, testLog()).WithClock(engine.now)
-		f.work = loop.workPool()
-		t.Cleanup(f.work.drain)
+		loop := sched.NewLoop(nil, engine, sched.TestLog()).WithClock((*engine.Now()))
+		f.work = loop.WorkPool()
+		t.Cleanup(f.work.Drain)
 		manifest := state.AppManifest{ExecutionMode: api.ExecutionModeService, ServiceReplicas: &state.ServiceReplicas{Min: 1, Max: 1, Desired: 1}}
 		if _, err := store.UpdateApp(ctx, app.ID, state.UpdateAppParams{Manifest: &manifest}); err != nil {
 			t.Fatal(err)
 		}
-		engine.convergeServiceReplicas(ctx, dep.ID)
-		f.work.drain()
+		engine.ConvergeServiceReplicas(ctx, dep.ID)
+		f.work.Drain()
 		rows, err := store.ListInstancesForApp(ctx, app.ID)
 		if err != nil || len(rows) != 1 {
 			t.Fatalf("seed replicas=%v err=%v", rows, err)
@@ -128,7 +129,7 @@ func newInventoryFixture(t *testing.T, service bool) *inventoryFixture {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if err := engine.Ledger().Admit(Request{AppID: app.ID, Instance: ins.ID, NodeID: node.ID, RAMMB: 128, Plan: api.PlanPro, MaxConcurrency: 5}); err != nil {
+		if err := engine.Ledger().Admit(sched.Request{AppID: app.ID, Instance: ins.ID, NodeID: node.ID, RAMMB: 128, Plan: api.PlanPro, MaxConcurrency: 5}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -140,7 +141,7 @@ func newInventoryFixture(t *testing.T, service bool) *inventoryFixture {
 
 func (f *inventoryFixture) report(complete bool, ids ...string) {
 	f.clock.Store(f.now.UnixNano())
-	f.engine.ObserveNodeInventory(context.Background(), NodeInstanceInventory{NodeID: f.instance.NodeID, Complete: complete, InstanceIDs: ids, SampledAt: f.now})
+	f.engine.ObserveNodeInventory(context.Background(), sched.NodeInstanceInventory{NodeID: f.instance.NodeID, Complete: complete, InstanceIDs: ids, SampledAt: f.now})
 	f.now = f.now.Add(time.Second)
 }
 
@@ -157,7 +158,7 @@ func (f *inventoryFixture) assertState(t *testing.T, want state.State) state.Ins
 }
 
 func TestNodeInventoryRepairsOnlyMissingRunningInstances(t *testing.T) {
-	t.Setenv(NodeInventoryEnforceEnv, "1")
+	t.Setenv(sched.NodeInventoryEnforceEnv, "1")
 	for _, st := range []state.State{state.StateRunning, state.StateWaking, state.StateColdBooting, state.StateMigrating, state.StateSnapshotting, state.StateDraining} {
 		t.Run(string(st), func(t *testing.T) {
 			f := newInventoryFixture(t, false)
@@ -174,12 +175,12 @@ func TestNodeInventoryRepairsOnlyMissingRunningInstances(t *testing.T) {
 				if f.engine.Ledger().ResidentFor(row.ID) {
 					t.Fatal("dead VM still reserves capacity")
 				}
-				if f.vmm.destroys != 1 {
-					t.Fatalf("cleanup calls=%d, want 1", f.vmm.destroys)
+				if (*f.vmm.Destroys()) != 1 {
+					t.Fatalf("cleanup calls=%d, want 1", (*f.vmm.Destroys()))
 				}
 			} else {
 				f.assertState(t, st)
-				if f.vmm.destroys != 0 {
+				if (*f.vmm.Destroys()) != 0 {
 					t.Fatal("destroyed a transitioning VM")
 				}
 			}
@@ -188,7 +189,7 @@ func TestNodeInventoryRepairsOnlyMissingRunningInstances(t *testing.T) {
 }
 
 func TestNodeInventoryProtectsPresentAndFreshInstances(t *testing.T) {
-	t.Setenv(NodeInventoryEnforceEnv, "1")
+	t.Setenv(sched.NodeInventoryEnforceEnv, "1")
 	t.Run("present", func(t *testing.T) {
 		f := newInventoryFixture(t, false)
 		f.report(true, f.instance.ID)
@@ -211,33 +212,33 @@ func TestNodeInventoryProtectsPresentAndFreshInstances(t *testing.T) {
 }
 
 func TestNodeInventoryReportOnlyDoesNotDestroyOrMutate(t *testing.T) {
-	t.Setenv(NodeInventoryEnforceEnv, "")
+	t.Setenv(sched.NodeInventoryEnforceEnv, "")
 	f := newInventoryFixture(t, false)
 	f.report(true)
 	f.report(true)
 	f.assertState(t, state.StateRunning)
-	if f.vmm.destroys != 0 || !f.engine.Ledger().ResidentFor(f.instance.ID) {
+	if (*f.vmm.Destroys()) != 0 || !f.engine.Ledger().ResidentFor(f.instance.ID) {
 		t.Fatal("report-only changed host capacity")
 	}
 }
 
 func TestNodeInventoryCleanupFailureRetriesBeforeReplacement(t *testing.T) {
-	t.Setenv(NodeInventoryEnforceEnv, "1")
+	t.Setenv(sched.NodeInventoryEnforceEnv, "1")
 	f := newInventoryFixture(t, false)
-	f.vmm.destroyErr = errors.New("temporarily unavailable")
+	(*f.vmm.DestroyErr()) = errors.New("temporarily unavailable")
 	f.report(true)
 	f.report(true)
 	f.assertState(t, state.StateRunning)
 	if !f.engine.Ledger().ResidentFor(f.instance.ID) {
 		t.Fatal("released capacity before cleanup")
 	}
-	f.vmm.destroyErr = nil
+	(*f.vmm.DestroyErr()) = nil
 	f.report(true)
 	f.assertState(t, state.StateFailed)
 }
 
 func TestNodeInventoryServiceRecoversWithoutTrafficAndNotifiesRouting(t *testing.T) {
-	t.Setenv(NodeInventoryEnforceEnv, "1")
+	t.Setenv(sched.NodeInventoryEnforceEnv, "1")
 	f := newInventoryFixture(t, true)
 	f.report(true)
 	f.assertState(t, state.StateRunning)
@@ -249,7 +250,7 @@ func TestNodeInventoryServiceRecoversWithoutTrafficAndNotifiesRouting(t *testing
 	// RUNNING becomes visible before the recovery worker emits its route
 	// notification. Join that worker before advancing inventory time or
 	// asserting both invalidations. A row alone does not prove completion.
-	f.work.drain()
+	f.work.Drain()
 	deadline := time.Now().Add(3 * time.Second)
 	var replacement state.Instance
 	for time.Now().Before(deadline) {
@@ -283,18 +284,31 @@ func TestNodeInventoryServiceRecoversWithoutTrafficAndNotifiesRouting(t *testing
 	if live != 1 {
 		t.Fatalf("live replicas=%d, want exactly 1", live)
 	}
-	f.notifier.mu.Lock()
-	defer f.notifier.mu.Unlock()
+	// The worker commits RUNNING before publishing its route invalidation.
+	// Join that worker within the original recovery deadline before inspecting
+	// notifications; observing the row alone does not prove it has returned.
+	finished := make(chan struct{})
+	go func() {
+		f.work.Drain()
+		close(finished)
+	}()
+	select {
+	case <-finished:
+	case <-time.After(time.Until(deadline)):
+		t.Fatal("service recovery worker did not finish route invalidation notifications")
+	}
+	(*f.notifier.Mu()).Lock()
+	defer (*f.notifier.Mu()).Unlock()
 	failedNotified, replacementNotified := false, false
-	for _, event := range f.notifier.events {
-		if event.channel != db.NotifyInstanceChanged {
+	for _, event := range *f.notifier.Events() {
+		if (*event.Channel()) != db.NotifyInstanceChanged {
 			continue
 		}
 		var payload struct {
 			InstanceID string `json:"instance_id"`
 			State      string `json:"state"`
 		}
-		if err := json.Unmarshal([]byte(event.payload), &payload); err != nil {
+		if err := json.Unmarshal([]byte((*event.Payload())), &payload); err != nil {
 			t.Fatal(err)
 		}
 		if payload.InstanceID == dead.ID && payload.State == string(state.StateFailed) {
@@ -310,10 +324,10 @@ func TestNodeInventoryServiceRecoversWithoutTrafficAndNotifiesRouting(t *testing
 }
 
 func TestNodeInventoryRestartAndTelemetryLossDoNotCombineOldEvidence(t *testing.T) {
-	t.Setenv(NodeInventoryEnforceEnv, "1")
+	t.Setenv(sched.NodeInventoryEnforceEnv, "1")
 	f := newInventoryFixture(t, false)
 	f.report(true)
-	f.engine.nodePresence = newNodePresenceTracker()
+	(*f.engine.NodePresence()) = sched.NewNodePresenceTracker()
 	f.report(true)
 	f.assertState(t, state.StateRunning)
 	f.report(false)
@@ -325,7 +339,7 @@ func TestNodeInventoryRestartAndTelemetryLossDoNotCombineOldEvidence(t *testing.
 
 // A physical replica can live on a node different from its app's scheduler owner.
 func TestNodeInventoryUsesPhysicalPlacement(t *testing.T) {
-	t.Setenv(NodeInventoryEnforceEnv, "1")
+	t.Setenv(sched.NodeInventoryEnforceEnv, "1")
 	f := newInventoryFixture(t, false)
 	owner := "different-scheduler-owner"
 	if err := f.store.SetAppNodeID(context.Background(), f.instance.AppID, owner); err != nil {
@@ -338,7 +352,7 @@ func TestNodeInventoryUsesPhysicalPlacement(t *testing.T) {
 }
 
 func TestNodeInventoryDoesNotRepairAnotherSchedulersApp(t *testing.T) {
-	t.Setenv(NodeInventoryEnforceEnv, "1")
+	t.Setenv(sched.NodeInventoryEnforceEnv, "1")
 	f := newInventoryFixture(t, false)
 	if err := f.store.SetAppNodeID(context.Background(), f.instance.AppID, "another-owner"); err != nil {
 		t.Fatal(err)
@@ -346,7 +360,7 @@ func TestNodeInventoryDoesNotRepairAnotherSchedulersApp(t *testing.T) {
 	f.report(true)
 	f.report(true)
 	f.assertState(t, state.StateRunning)
-	if f.vmm.destroys != 0 || !f.engine.Ledger().ResidentFor(f.instance.ID) {
+	if (*f.vmm.Destroys()) != 0 || !f.engine.Ledger().ResidentFor(f.instance.ID) {
 		t.Fatal("changed host capacity for another scheduler's app")
 	}
 }
@@ -364,10 +378,10 @@ func (s *failingInventoryStore) FailRunningInstanceIfOwnedByNode(ctx context.Con
 }
 
 func TestNodeInventoryDatabaseFailureRetriesWithoutReleasingCapacity(t *testing.T) {
-	t.Setenv(NodeInventoryEnforceEnv, "1")
+	t.Setenv(sched.NodeInventoryEnforceEnv, "1")
 	f := newInventoryFixture(t, false)
 	store := &failingInventoryStore{MemStore: f.store, fail: true}
-	f.engine.store = statetest.NewMem(store)
+	(*f.engine.XStore()) = statetest.NewMem(store)
 	f.report(true)
 	f.report(true)
 	f.assertState(t, state.StateRunning)
@@ -380,16 +394,16 @@ func TestNodeInventoryDatabaseFailureRetriesWithoutReleasingCapacity(t *testing.
 }
 
 func TestNodeInventoryUnavailableCleanupDoesNotReleaseCapacity(t *testing.T) {
-	t.Setenv(NodeInventoryEnforceEnv, "1")
+	t.Setenv(sched.NodeInventoryEnforceEnv, "1")
 	f := newInventoryFixture(t, false)
-	f.engine.vmm = nil
+	(*f.engine.Vmm()) = nil
 	f.report(true)
 	f.report(true)
 	f.assertState(t, state.StateRunning)
 	if !f.engine.Ledger().ResidentFor(f.instance.ID) {
 		t.Fatal("released reservation without a cleanup owner")
 	}
-	f.engine.vmm = f.vmm
+	(*f.engine.Vmm()) = f.vmm
 	f.report(true)
 	f.assertState(t, state.StateFailed)
 }
@@ -406,29 +420,30 @@ func (s *restartingInventoryStore) InstanceByID(ctx context.Context, id string) 
 }
 
 func TestNodeInventoryRereadProtectsRestartedInstance(t *testing.T) {
-	t.Setenv(NodeInventoryEnforceEnv, "1")
+	t.Setenv(sched.NodeInventoryEnforceEnv, "1")
 	f := newInventoryFixture(t, false)
-	f.engine.store = statetest.NewMem(&restartingInventoryStore{MemStore: f.store, startedAt: f.now.Add(-time.Second)})
+	(*f.engine.XStore()) = statetest.NewMem(&restartingInventoryStore{MemStore: f.store, startedAt: f.now.Add(-time.Second)})
 	f.report(true)
 	f.report(true)
 	f.assertState(t, state.StateRunning)
-	if f.vmm.destroys != 0 {
+	if (*f.vmm.Destroys()) != 0 {
 		t.Fatal("destroyed an instance whose latest start is within startup grace")
 	}
 }
 
 func TestNodeInventorySupersededObservationCannotDestroyReappearedVM(t *testing.T) {
-	t.Setenv(NodeInventoryEnforceEnv, "1")
+	t.Setenv(sched.NodeInventoryEnforceEnv, "1")
 	f := newInventoryFixture(t, false)
+	(*
 	// A newer complete inventory changes the fingerprint while an older
 	// observation is waiting for its app lifecycle lock.
-	f.engine.nodePresence.Observe(NodeInstanceInventory{NodeID: f.instance.NodeID, Complete: true, SampledAt: f.now}, f.now)
-	observation, ok := f.engine.nodePresence.Observe(NodeInstanceInventory{NodeID: f.instance.NodeID, Complete: true, SampledAt: f.now.Add(time.Second)}, f.now.Add(time.Second))
+	f.engine.NodePresence()).Observe(sched.NodeInstanceInventory{NodeID: f.instance.NodeID, Complete: true, SampledAt: f.now}, f.now)
+	observation, ok := (*f.engine.NodePresence()).Observe(sched.NodeInstanceInventory{NodeID: f.instance.NodeID, Complete: true, SampledAt: f.now.Add(time.Second)}, f.now.Add(time.Second))
 	if !ok {
 		t.Fatal("fixture did not confirm absence")
 	}
-	f.engine.nodePresence.Observe(NodeInstanceInventory{NodeID: f.instance.NodeID, Complete: true, InstanceIDs: []string{f.instance.ID}, SampledAt: f.now.Add(2 * time.Second)}, f.now.Add(2*time.Second))
-	if f.engine.nodePresence.current(f.instance.NodeID, observation.fingerprint, f.now.Add(2*time.Second)) {
+	(*f.engine.NodePresence()).Observe(sched.NodeInstanceInventory{NodeID: f.instance.NodeID, Complete: true, InstanceIDs: []string{f.instance.ID}, SampledAt: f.now.Add(2 * time.Second)}, f.now.Add(2*time.Second))
+	if (*f.engine.NodePresence()).Current(f.instance.NodeID, (*observation.Fingerprint()), f.now.Add(2*time.Second)) {
 		t.Fatal("superseded empty report remains eligible for cleanup")
 	}
 }

@@ -7,6 +7,9 @@ import type { CreateManagedPostgresBindingRequest } from '../models/CreateManage
 import type { CreateManagedPostgresDatabaseRequest } from '../models/CreateManagedPostgresDatabaseRequest.js';
 import type { DataAPIConnectionBudgets } from '../models/DataAPIConnectionBudgets.js';
 import type { DataAPIRuntimeConnectionReport } from '../models/DataAPIRuntimeConnectionReport.js';
+import type { DataAPIUsage } from '../models/DataAPIUsage.js';
+import type { DataAPIUsageReport } from '../models/DataAPIUsageReport.js';
+import type { DataAPIUsageReportResponse } from '../models/DataAPIUsageReportResponse.js';
 import type { ManagedPostgresBinding } from '../models/ManagedPostgresBinding.js';
 import type { ManagedPostgresBindingList } from '../models/ManagedPostgresBindingList.js';
 import type { ManagedPostgresCapabilities } from '../models/ManagedPostgresCapabilities.js';
@@ -16,6 +19,8 @@ import type { ManagedPostgresCutover } from '../models/ManagedPostgresCutover.js
 import type { ManagedPostgresCutoverPreflight } from '../models/ManagedPostgresCutoverPreflight.js';
 import type { ManagedPostgresDatabase } from '../models/ManagedPostgresDatabase.js';
 import type { ManagedPostgresDatabaseList } from '../models/ManagedPostgresDatabaseList.js';
+import type { ManagedPostgresOverage } from '../models/ManagedPostgresOverage.js';
+import type { ManagedPostgresOverageRequest } from '../models/ManagedPostgresOverageRequest.js';
 import type { ManagedPostgresResize } from '../models/ManagedPostgresResize.js';
 import type { ManagedPostgresUsageResponse } from '../models/ManagedPostgresUsageResponse.js';
 import type { PrepareManagedPostgresCutoverRequest } from '../models/PrepareManagedPostgresCutoverRequest.js';
@@ -47,6 +52,38 @@ export class ManagedPostgresService {
       query: {
         'region': region,
       },
+    });
+  }
+  /**
+   * Show whether compute overage is on
+   * With overage on, a paid account's managed PostgreSQL databases keep running past the plan's monthly compute allowance until the ceiling, twice the allowance, and are then suspended. Off is the default; the databases are then suspended at the allowance. A cap never deletes a database.
+   * @returns ManagedPostgresOverage The account's overage setting and compute ceiling
+   * @returns Problem Authentication, plan or capability error
+   * @throws ApiError
+   */
+  public static getManagedPostgresOverage(): CancelablePromise<ManagedPostgresOverage | Problem> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/postgres/overage',
+    });
+  }
+  /**
+   * Turn compute overage on or off
+   * Paid plans only; Free stops at its allowance and answers 403 managed_postgres_not_in_plan. Turning overage off while past the allowance suspends the databases at the next cap sweep. Compute above the allowance is not billed until managed PostgreSQL has invoicing.
+   * @returns ManagedPostgresOverage The new overage setting and compute ceiling
+   * @returns Problem Validation, authentication, plan or capability error
+   * @throws ApiError
+   */
+  public static setManagedPostgresOverage({
+    requestBody,
+  }: {
+    requestBody: ManagedPostgresOverageRequest,
+  }): CancelablePromise<ManagedPostgresOverage | Problem> {
+    return __request(OpenAPI, {
+      method: 'PUT',
+      url: '/v1/postgres/overage',
+      body: requestBody,
+      mediaType: 'application/json',
     });
   }
   /**
@@ -544,6 +581,43 @@ export class ManagedPostgresService {
     });
   }
   /**
+   * Read Data API usage
+   * Usage that the app's Data API runtime reported, per hour or UTC day, with month-to-date totals that owner caps compare against. Counts come from the app's own runtime and are owner telemetry, not billing records. Apps created before usage reporting, or with it off, have no rows.
+   * @returns DataAPIUsage Zero-filled usage buckets, window totals and month-to-date totals
+   * @returns Problem App lookup, window validation or usage storage failure
+   * @throws ApiError
+   */
+  public static getAppDataApiUsage({
+    slug,
+    since,
+    granularity,
+  }: {
+    /**
+     * Data API app whose reported usage to read.
+     */
+    slug: string,
+    /**
+     * Lookback in whole hours or days, such as 24h, 7d or 30d (default 7d, at most 90d).
+     */
+    since?: string,
+    /**
+     * Bucket size; hour covers at most 48h. Defaults to hour up to 48h, else day.
+     */
+    granularity?: 'hour' | 'day',
+  }): CancelablePromise<DataAPIUsage | Problem> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/data-api/usage',
+      path: {
+        'slug': slug,
+      },
+      query: {
+        'since': since,
+        'granularity': granularity,
+      },
+    });
+  }
+  /**
    * List workload bindings for a database
    * @returns ManagedPostgresBindingList Bindings without credential material
    * @returns Problem Authentication or binding listing error
@@ -710,7 +784,34 @@ export class ManagedPostgresService {
         401: `code: unauthorized`,
         409: `code: conflict`,
         422: `Observation reporting is unsupported by this catalog adapter.`,
-        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        503: `Generic 503 envelope. Used by the API capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Report Data API usage deltas
+   * Private runtime surface. Requires a short-lived gregale:data-api:usage workload assertion; account, app and instance come from it, never from the body. Each report id is applied once, so retried or snapshot-duplicated reports add nothing. Hours must be aligned and at most 48 hours old. Owner API keys and application JWTs are not accepted.
+   * @returns DataAPIUsageReportResponse Report applied, or already applied; month-to-date totals for owner caps.
+   * @throws ApiError
+   */
+  public static reportDataApiUsage({
+    requestBody,
+  }: {
+    requestBody: DataAPIUsageReport,
+  }): CancelablePromise<DataAPIUsageReportResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/runtime/data-api/usage',
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        503: `Generic 503 envelope. Used by the API capacity gate (e.g.
         host age recipient not loaded → registry credential PUT
         returns 503 instead of accepting plaintext).
         `,

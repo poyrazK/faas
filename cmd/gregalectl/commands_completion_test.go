@@ -28,6 +28,10 @@ func TestCompletion_ManifestDrift(t *testing.T) {
 		"dispatchOperatorAuth":     "auth",
 		"dispatchHostAge":          "host-age",
 		"dispatchFleetSeal":        "fleet-seal",
+		"dispatchBreakGlass":       "break-glass",    // ADR 20261022140000 incident containment
+		"dispatchSealDomain":       "seal-domain",    // ADR 20261022111812 seal domains
+		"dispatchHoneytoken":       "honeytoken",     // ADR 20261024014500 honeytokens
+		"dispatchObjectStorage":    "object-storage", // ADR 20261025111015 restore reconcile
 		"dispatchPKI":              "pki",
 		"dispatchSignKeys":         "sign-keys",
 		"dispatchNodeKey":          "node-key",
@@ -44,6 +48,7 @@ func TestCompletion_ManifestDrift(t *testing.T) {
 		"dispatchAccounts":         "accounts",      // authenticated tenant support + lifecycle controls
 		"dispatchBilling":          "billing",       // operator billing catalog + reconciliation diagnostics
 		"dispatchConfig":           "config",        // zero-downtime runtime configuration controls
+		"dispatchFlags":            "flags",         // ADR-1700 platform flags
 		"dispatchAudit":            "audit",         // exact operator trace correlation
 		"dispatchBuilds":           "builds",        // P2c of operator-obs mega-PR (Commit 5c)
 		"dispatchJobs":             "jobs",          // cross-account job-run incident controls

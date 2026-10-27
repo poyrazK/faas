@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"bytes"
@@ -13,14 +13,15 @@ import (
 	"testing"
 	"time"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/mcphosting"
 )
 
 func TestMCPWatchReportsDriftAndRecovery(t *testing.T) {
-	oldOut, oldJSON := osStdout, jsonOutput
+	oldOut, oldJSON := (*main.OsStdout), (*main.JsonOutput)
 	var output bytes.Buffer
-	osStdout, jsonOutput = &output, true
-	t.Cleanup(func() { osStdout, jsonOutput = oldOut, oldJSON })
+	(*main.OsStdout), (*main.JsonOutput) = &output, true
+	t.Cleanup(func() { (*main.OsStdout), (*main.JsonOutput) = oldOut, oldJSON })
 
 	baselineCatalog := mcphosting.Catalog{
 		Capabilities: []string{"tools"},
@@ -36,27 +37,27 @@ func TestMCPWatchReportsDriftAndRecovery(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	gotCatalog, gotContract, err := recordMCPWatchUpdate(baseline, baseline, baselineCatalog, driftCatalog, "notification")
+	gotCatalog, gotContract, err := main.RecordMCPWatchUpdate(baseline, baseline, baselineCatalog, driftCatalog, "notification")
 	if err != nil {
 		t.Fatal(err)
 	}
-	var appeared mcpWatchEvent
+	var appeared main.McpWatchEvent
 	if err := json.Unmarshal(output.Bytes(), &appeared); err != nil || appeared.Event != "catalog_drift" || appeared.Trigger != "notification" || len(appeared.Diff.Changes) == 0 {
 		t.Fatalf("event=%+v err=%v output=%s", appeared, err, output.String())
 	}
 	output.Reset()
-	_, _, err = recordMCPWatchUpdate(baseline, gotContract, gotCatalog, baselineCatalog, "reconcile")
+	_, _, err = main.RecordMCPWatchUpdate(baseline, gotContract, gotCatalog, baselineCatalog, "reconcile")
 	if err != nil {
 		t.Fatal(err)
 	}
-	var cleared mcpWatchEvent
+	var cleared main.McpWatchEvent
 	if err := json.Unmarshal(output.Bytes(), &cleared); err != nil || cleared.Event != "catalog_drift_cleared" || cleared.Trigger != "reconcile" || len(cleared.Diff.Changes) != 0 {
 		t.Fatalf("event=%+v err=%v output=%s", cleared, err, output.String())
 	}
 }
 
 func TestMCPWatchCapabilityRefreshPreservesUnselectedCategories(t *testing.T) {
-	got := updateMCPWatchCapabilityNames([]string{"prompts", "resources"}, mcphosting.ServerCapabilities{
+	got := main.UpdateMCPWatchCapabilityNames([]string{"prompts", "resources"}, mcphosting.ServerCapabilities{
 		Tools: &mcphosting.ToolsCapability{},
 	}, mcphosting.CatalogNotificationFilter{ToolsListChanged: true})
 	want := []string{"prompts", "resources", "tools"}
@@ -66,10 +67,10 @@ func TestMCPWatchCapabilityRefreshPreservesUnselectedCategories(t *testing.T) {
 }
 
 func TestRunMCPWatchRefreshesOnNotificationAndReconnects(t *testing.T) {
-	oldOut, oldJSON := osStdout, jsonOutput
+	oldOut, oldJSON := (*main.OsStdout), (*main.JsonOutput)
 	var output bytes.Buffer
-	osStdout, jsonOutput = &output, true
-	t.Cleanup(func() { osStdout, jsonOutput = oldOut, oldJSON })
+	(*main.OsStdout), (*main.JsonOutput) = &output, true
+	t.Cleanup(func() { (*main.OsStdout), (*main.JsonOutput) = oldOut, oldJSON })
 	baselineCatalog := mcphosting.Catalog{
 		Capabilities: []string{"tools"},
 		Tools:        []mcphosting.Tool{{Name: "lookup", InputSchema: map[string]any{"type": "object"}}},
@@ -123,7 +124,7 @@ func TestRunMCPWatchRefreshesOnNotificationAndReconnects(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	go func() {
-		done <- runMCPWatch(ctx, client, baseline, baselineCatalog, baseline, mcphosting.CatalogNotificationFilter{ToolsListChanged: true}, time.Hour)
+		done <- main.RunMCPWatch(ctx, client, baseline, baselineCatalog, baseline, mcphosting.CatalogNotificationFilter{ToolsListChanged: true}, time.Hour)
 	}()
 	select {
 	case <-secondListen:
@@ -141,7 +142,7 @@ func TestRunMCPWatchRefreshesOnNotificationAndReconnects(t *testing.T) {
 		cancel()
 		t.Fatal("watch did not stop after context cancellation")
 	}
-	var event mcpWatchEvent
+	var event main.McpWatchEvent
 	if err := json.Unmarshal(bytes.TrimSpace(output.Bytes()), &event); err != nil || event.Event != "catalog_drift" || event.Trigger != string(mcphosting.CatalogToolsListChanged) || len(event.Diff.Changes) == 0 {
 		t.Fatalf("event=%+v err=%v output=%s", event, err, output.String())
 	}

@@ -1,8 +1,9 @@
-package main
+package main_test
 
 import (
 	"encoding/json"
 	"errors"
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -37,7 +38,7 @@ func TestJSONCommandReceipts(t *testing.T) {
 		{[]string{"realtime", "publish", "demo", "endpoint-1", "room-a", "--data", "hello"}, "POST", "/v1/apps/demo/realtime/endpoints/endpoint-1/channels/room-a/publish", `{"queued":3}`, "operation", "publish"},
 	} {
 		t.Run(tc.args[0], func(t *testing.T) {
-			resetJSONOut(t)
+			main.ResetJSONOut(t)
 			t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 			// macOS ignores XDG_CONFIG_HOME; HOME isolates os.UserConfigDir there.
 			t.Setenv("HOME", os.Getenv("XDG_CONFIG_HOME"))
@@ -54,9 +55,9 @@ func TestJSONCommandReceipts(t *testing.T) {
 			}))
 			defer server.Close()
 			t.Setenv("FAAS_API", server.URL)
-			out, stderr, restore := swapIO(t)
+			out, stderr, restore := main.SwapIO(t)
 			defer restore()
-			if code := run(append([]string{"--json"}, tc.args...)); code != 0 {
+			if code := main.Run(append([]string{"--json"}, tc.args...)); code != 0 {
 				t.Fatalf("exit=%d stderr=%s", code, stderr())
 			}
 			if requests != 1 || stderr() != "" {
@@ -79,7 +80,7 @@ func TestJSONCommandReceipts(t *testing.T) {
 }
 
 func TestJSONProjectContextLifecycle(t *testing.T) {
-	resetJSONOut(t)
+	main.ResetJSONOut(t)
 	t.Chdir(t.TempDir())
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	// macOS ignores XDG_CONFIG_HOME; HOME isolates os.UserConfigDir there.
@@ -94,20 +95,20 @@ func TestJSONProjectContextLifecycle(t *testing.T) {
 	}))
 	defer server.Close()
 	t.Setenv("FAAS_API", server.URL)
-	out, stderr, restore := swapIO(t)
+	out, stderr, restore := main.SwapIO(t)
 	defer restore()
 	for _, args := range [][]string{{"link", "review", "--app", "demo", "--no-gitignore"}, {"context"}} {
 		out.Reset()
-		if code := run(append([]string{"--json"}, args...)); code != 0 {
+		if code := main.Run(append([]string{"--json"}, args...)); code != 0 {
 			t.Fatalf("%s exit=%d stderr=%s", args[0], code, stderr())
 		}
-		var receipt projectContextReceipt
+		var receipt main.ProjectContextReceipt
 		if err := json.Unmarshal(out.Bytes(), &receipt); err != nil || receipt.Context.Project != "review" || receipt.Context.App != "demo" {
 			t.Fatalf("%s receipt=%+v err=%v", args[0], receipt, err)
 		}
 	}
 	out.Reset()
-	if code := run([]string{"--json", "unlink"}); code != 0 {
+	if code := main.Run([]string{"--json", "unlink"}); code != 0 {
 		t.Fatalf("unlink exit=%d stderr=%s", code, stderr())
 	}
 	var unlinked struct {
@@ -117,24 +118,24 @@ func TestJSONProjectContextLifecycle(t *testing.T) {
 	if err := json.Unmarshal(out.Bytes(), &unlinked); err != nil || unlinked.Linked || unlinked.Path == "" {
 		t.Fatalf("unlink receipt=%+v err=%v", unlinked, err)
 	}
-	if _, err := os.Stat(filepath.Join(projectContextDirName, projectContextFileName)); !errors.Is(err, os.ErrNotExist) {
+	if _, err := os.Stat(filepath.Join(main.ProjectContextDirName, main.ProjectContextFileName)); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("linked context remains: %v", err)
 	}
 }
 
 func TestJSONSignupAndLogoutReceipts(t *testing.T) {
-	resetJSONOut(t)
+	main.ResetJSONOut(t)
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	t.Setenv("FAAS_TOKEN", "")
 	t.Setenv("FAAS_JSON", "0")
-	setFakeKeyring(t)
+	main.SetFakeKeyring(t)
 	server, _ := fakeSignupServer(t, http.StatusOK, http.StatusOK)
 	t.Setenv("FAAS_API", server.URL)
-	pipeStdin(t, "alice@example.com\ncorrect-horse-battery-staple\n")
-	out, stderr, restore := swapIO(t)
+	main.PipeStdin(t, "alice@example.com\ncorrect-horse-battery-staple\n")
+	out, stderr, restore := main.SwapIO(t)
 	defer restore()
-	if code := run([]string{"--json", "signup", "--password-stdin"}); code != 0 {
+	if code := main.Run([]string{"--json", "signup", "--password-stdin"}); code != 0 {
 		t.Fatalf("signup exit=%d stderr=%s", code, stderr())
 	}
 	if !json.Valid(out.Bytes()) || strings.Contains(out.String(), signupPlaintext) {
@@ -148,7 +149,7 @@ func TestJSONSignupAndLogoutReceipts(t *testing.T) {
 		t.Fatalf("signup receipt=%+v err=%v", account, err)
 	}
 	out.Reset()
-	if code := run([]string{"--json", "signup", "--email-only", "alice@example.com"}); code != 0 {
+	if code := main.Run([]string{"--json", "signup", "--email-only", "alice@example.com"}); code != 0 {
 		t.Fatalf("magic-link signup exit=%d stderr=%s", code, stderr())
 	}
 	var magicLink struct {
@@ -161,7 +162,7 @@ func TestJSONSignupAndLogoutReceipts(t *testing.T) {
 	// credential, without needing a server-side revocation endpoint.
 	t.Setenv("FAAS_TOKEN", "test-token")
 	out.Reset()
-	if code := run([]string{"--json", "logout"}); code != 0 {
+	if code := main.Run([]string{"--json", "logout"}); code != 0 {
 		t.Fatalf("logout exit=%d stderr=%s", code, stderr())
 	}
 	var receipt map[string]bool
@@ -171,20 +172,20 @@ func TestJSONSignupAndLogoutReceipts(t *testing.T) {
 }
 
 func TestJSONUploadCacheDryRunReceipt(t *testing.T) {
-	resetJSONOut(t)
+	main.ResetJSONOut(t)
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	// macOS ignores XDG_CONFIG_HOME; HOME isolates os.UserConfigDir there.
 	t.Setenv("HOME", os.Getenv("XDG_CONFIG_HOME"))
 	t.Setenv("FAAS_JSON", "0")
-	out, stderr, restore := swapIO(t)
+	out, stderr, restore := main.SwapIO(t)
 	defer restore()
-	if code := run([]string{"--json", "upload-cache", "cleanup", "--dry-run"}); code != 0 {
+	if code := main.Run([]string{"--json", "upload-cache", "cleanup", "--dry-run"}); code != 0 {
 		t.Fatalf("exit=%d stderr=%s", code, stderr())
 	}
 	var receipt struct {
-		DryRun bool                     `json:"dry_run"`
-		Result uploadCacheCleanupResult `json:"result"`
+		DryRun bool                          `json:"dry_run"`
+		Result main.UploadCacheCleanupResult `json:"result"`
 	}
 	if err := json.Unmarshal(out.Bytes(), &receipt); err != nil || !receipt.DryRun || receipt.Result.Kept != 0 {
 		t.Fatalf("receipt=%+v err=%v", receipt, err)
@@ -192,14 +193,14 @@ func TestJSONUploadCacheDryRunReceipt(t *testing.T) {
 }
 
 func TestJSONManUnknownCommand(t *testing.T) {
-	resetJSONOut(t)
+	main.ResetJSONOut(t)
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	// macOS ignores XDG_CONFIG_HOME; HOME isolates os.UserConfigDir there.
 	t.Setenv("HOME", os.Getenv("XDG_CONFIG_HOME"))
 	t.Setenv("FAAS_JSON", "0")
-	out, stderr, restore := swapIO(t)
+	out, stderr, restore := main.SwapIO(t)
 	defer restore()
-	if code := run([]string{"--json", "man", "unknown-command"}); code != 1 {
+	if code := main.Run([]string{"--json", "man", "unknown-command"}); code != 1 {
 		t.Fatalf("exit=%d stderr=%s", code, stderr())
 	}
 	var problem struct {

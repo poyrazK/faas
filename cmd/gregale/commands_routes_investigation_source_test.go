@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"bytes"
@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/routeimpact"
 )
@@ -39,8 +40,8 @@ func investigationSourceHealth(opts api.RouteHealthInvestigationOptions) api.Rou
 func TestRouteInvestigationSourceImpactCorrelation(t *testing.T) {
 	for _, scenario := range []string{"matched", "parameter_names", "repository_mismatch", "health_revision_mismatch", "route_not_reported", "ambiguous_route", "evidence_truncated", "analysis_incomplete", "deployment_unavailable", "app_identity_mismatch", "human", "out"} {
 		t.Run(scenario, func(t *testing.T) {
-			resetJSONOut(t)
-			setPreviewTestAuth(t)
+			main.ResetJSONOut(t)
+			main.SetPreviewTestAuth(t)
 			opts := api.RouteHealthInvestigationOptions{Method: "POST", Path: "/checkout", StatusCode: 403}
 			source := investigationSourceFixture("POST", "/checkout")
 			if scenario == "parameter_names" {
@@ -89,7 +90,7 @@ func TestRouteInvestigationSourceImpactCorrelation(t *testing.T) {
 				calls = append(calls, r.URL.Path)
 				switch r.URL.Path {
 				case "/v1/apps/demo/route-health/deployments/" + healthCandidateID + "/investigation":
-					writeJSONTest(w, investigation)
+					main.WriteJSONTest(w, investigation)
 				case "/v1/deployments/" + healthCandidateID:
 					commit := strings.Repeat("b", 40)
 					appID := investigation.Report.AppID
@@ -99,13 +100,13 @@ func TestRouteInvestigationSourceImpactCorrelation(t *testing.T) {
 					if scenario == "app_identity_mismatch" {
 						appID = "99999999-9999-4999-8999-999999999999"
 					}
-					writeJSONTest(w, api.DeploymentResponse{ID: healthCandidateID, AppID: appID, CommitSHA: commit, SourceURL: "https://github.com/team/service", SourceRoot: "."})
+					main.WriteJSONTest(w, api.DeploymentResponse{ID: healthCandidateID, AppID: appID, CommitSHA: commit, SourceURL: "https://github.com/team/service", SourceRoot: "."})
 				case "/v1/deployments/" + investigation.Report.StableDeploymentID:
 					if scenario == "deployment_unavailable" {
 						w.WriteHeader(http.StatusServiceUnavailable)
 						return
 					}
-					writeJSONTest(w, api.DeploymentResponse{ID: investigation.Report.StableDeploymentID, AppID: investigation.Report.AppID, CommitSHA: strings.Repeat("a", 40), SourceURL: "https://github.com/team/service", SourceRoot: "."})
+					main.WriteJSONTest(w, api.DeploymentResponse{ID: investigation.Report.StableDeploymentID, AppID: investigation.Report.AppID, CommitSHA: strings.Repeat("a", 40), SourceURL: "https://github.com/team/service", SourceRoot: "."})
 				default:
 					t.Errorf("unexpected request %s", r.URL.Path)
 					http.NotFound(w, r)
@@ -114,9 +115,9 @@ func TestRouteInvestigationSourceImpactCorrelation(t *testing.T) {
 			defer server.Close()
 			t.Setenv("FAAS_API", server.URL)
 			var out bytes.Buffer
-			old := osStdout
-			osStdout = &out
-			t.Cleanup(func() { osStdout = old })
+			old := (*main.OsStdout)
+			(*main.OsStdout) = &out
+			t.Cleanup(func() { (*main.OsStdout) = old })
 			args := []string{"routes", "health", "investigate", "demo", "--deployment", healthCandidateID, "--route", opts.Method + " " + opts.Path, "--status", "403", "--source-impact", impactPath}
 			if scenario != "human" {
 				args = append(args, "--json")
@@ -124,7 +125,7 @@ func TestRouteInvestigationSourceImpactCorrelation(t *testing.T) {
 			if scenario == "out" {
 				args = append(args, "--out", filepath.Join(t.TempDir(), "investigation.json"))
 			}
-			if code := run(args); code != 0 {
+			if code := main.Run(args); code != 0 {
 				t.Fatalf("exit %d: %s", code, out.String())
 			}
 			if !strings.Contains(strings.Join(calls, "\n"), "/v1/deployments/") || len(calls) != 3 {
@@ -143,7 +144,7 @@ func TestRouteInvestigationSourceImpactCorrelation(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			var got routeInvestigationWithSource
+			var got main.RouteInvestigationWithSource
 			if err := json.Unmarshal(jsonBody, &got); err != nil {
 				t.Fatal(err)
 			}
@@ -178,7 +179,7 @@ func TestRouteInvestigationSourceImpactCorrelation(t *testing.T) {
 			if wantStatus == "matched" && (got.SourceCorrelation.Route == nil || got.SourceCorrelation.Route.AfterLocation == nil || got.SourceCorrelation.Route.AfterLocation.Line != 23) {
 				t.Fatal("matched source route lost handler location")
 			}
-			if scenario == "evidence_truncated" && (len(got.SourceCorrelation.Route.Evidence) != routeInvestigationSourceEvidenceLimit || !got.SourceCorrelation.Route.EvidenceTruncated) {
+			if scenario == "evidence_truncated" && (len(got.SourceCorrelation.Route.Evidence) != main.RouteInvestigationSourceEvidenceLimit || !got.SourceCorrelation.Route.EvidenceTruncated) {
 				t.Fatal("source evidence was not bounded")
 			}
 			if scenario != "evidence_truncated" && wantStatus == "matched" && len(got.SourceCorrelation.Route.Evidence) != 1 {
@@ -195,8 +196,8 @@ func TestRouteInvestigationSourceImpactCorrelation(t *testing.T) {
 }
 
 func TestRouteInvestigationRejectsInvalidSourceBeforeAPI(t *testing.T) {
-	resetJSONOut(t)
-	setPreviewTestAuth(t)
+	main.ResetJSONOut(t)
+	main.SetPreviewTestAuth(t)
 	impactPath := filepath.Join(t.TempDir(), "invalid-impact.json")
 	if err := os.WriteFile(impactPath, []byte(`{"version":99}`), 0600); err != nil {
 		t.Fatal(err)
@@ -208,7 +209,7 @@ func TestRouteInvestigationRejectsInvalidSourceBeforeAPI(t *testing.T) {
 	}))
 	defer server.Close()
 	t.Setenv("FAAS_API", server.URL)
-	if code := run([]string{"routes", "health", "investigate", "demo", "--deployment", healthCandidateID, "--route", "POST /checkout", "--source-impact", impactPath}); code != 1 {
+	if code := main.Run([]string{"routes", "health", "investigate", "demo", "--deployment", healthCandidateID, "--route", "POST /checkout", "--source-impact", impactPath}); code != 1 {
 		t.Fatalf("exit %d, want invalid source report", code)
 	}
 	if calls != 0 {
