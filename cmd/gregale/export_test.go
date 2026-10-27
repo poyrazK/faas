@@ -1454,6 +1454,13 @@ var OutputAlertRollback = outputAlertRollback
 var OwnMCPJournal = ownMCPJournal
 var PackDirToTarGz = packDirToTarGz
 var PackGitArchive = packGitArchive
+
+// NormalizeGitArchive normalizes a `git archive HEAD` of repoRoot taken at
+// prefix ("" for the whole tree).
+func NormalizeGitArchive(repoRoot, prefix, archivePath string) ([]string, error) {
+	return normalizeGitArchive(gitArchiveSource{repoRoot: repoRoot, prefix: prefix, commit: "HEAD"}, archivePath)
+}
+
 var ParkedArchivePendingNote = parkedArchivePendingNote
 var ParkedLogsSelection = parkedLogsSelection
 var ParkedWindowInstances = parkedWindowInstances
@@ -1734,6 +1741,7 @@ var RequireTyped = requireTyped
 var ResetJSONOut = resetJSONOut
 var ResetJSONOutput = resetJSONOutput
 var ResetNOColorCache = resetNOColorCache
+var ResetCapabilityView = resetCapabilityView
 var ResetStdoutTTYCache = resetStdoutTTYCache
 var ResolveDeployReleaseAt = resolveDeployReleaseAt
 var ResolveDeployRollbackOn5xx = resolveDeployRollbackOn5xx
