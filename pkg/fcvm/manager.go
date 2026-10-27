@@ -1301,6 +1301,7 @@ type Manager struct {
 	// leaf lock: it is never held while m.mu or a quietState lock is taken.
 	quietActivity QuietActivity
 	quietMetrics  *QuietPauseMetrics
+	quietObserve  bool
 	quietTick     time.Duration
 	quietMu       sync.Mutex
 	quietStates   map[string]*quietState

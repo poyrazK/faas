@@ -732,6 +732,7 @@ var EnvContract = []EnvVar{
 	{Name: "FAAS_PYROSCOPE_URL", Owners: []string{"apid", "profiled"}, Source: EnvSourceDefault, Note: "private tenant-enabled backend configured in /etc/faas/profiling.env"},
 	{Name: "FAAS_QUIET_PAUSE", Owners: []string{"vmmd"}, Source: EnvSourceDefault, Note: "optional boolean switch for ADR-1151 quiet pause between requests; production default is off"},
 	{Name: "FAAS_QUIET_PAUSE_LEDGER", Owners: []string{"schedd"}, Source: EnvSourceDefault, Note: "optional boolean switch recording this node's quiet pauses in the billing pause ledger (ADR-20261023171905); production default is off"},
+	{Name: "FAAS_QUIET_PAUSE_OBSERVE", Owners: []string{"vmmd"}, Source: EnvSourceDefault, Note: "optional boolean switch for ADR-1151 quiet pause observe mode: measures would-be pauses and pauses nothing; FAAS_QUIET_PAUSE wins when both are on; production default is off"},
 	{Name: "FAAS_QUIET_PAUSE_UNBILLED", Owners: []string{"meterd"}, Source: EnvSourceDefault, Note: "optional off, shadow or on: whether billed residency subtracts the quiet-paused seconds the pause ledger proves (ADR-20261023171905); production default is off"},
 	{Name: "FAAS_QUOTA_INTERVAL", Owners: []string{"meterd"}, Source: EnvSourceDefault},
 
