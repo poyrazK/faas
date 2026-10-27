@@ -103,6 +103,12 @@ where realtime holds real capacity on our servers:
   realtime node's connections, so one busy account cannot fill a node. This
   refusal names the per-node limit; retry with backoff, and new connections may
   land on another node.
+- **Resumable subscriptions** (v2 WebSocket channels, the inbox and SSE
+  streams) each read their channel's history from the control plane, so an
+  account holds at most 16 (Hobby), 64 (Pro) or 128 (Scale) of them on one
+  realtime node, and a connection at most 8. A refused subscription gets
+  `subscription_limit` (HTTP 429 for SSE); new connections may land on another
+  node.
 - **Retained history** is bounded per endpoint (24 hours, 1,024 messages per
   channel, 4 KiB per message).
 - **Functions triggered by channel messages** bill as normal compute.

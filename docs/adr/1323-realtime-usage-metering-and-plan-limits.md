@@ -143,3 +143,20 @@ tenant, was then refused.
   is refused like a full queue and counted as a node budget drop.
 - The bytes are counted per account (`accountConnections.outbound`) at the
   same points the node total is reserved and released.
+
+## Amendment (2026-10-27): resume subscriptions per plan
+
+Resume, inbox and SSE subscriptions each read their channel's history from the
+control plane at least every 5 seconds. A node holds at most 256 of them
+(`RealtimeResumeSubscriptionsPerNode`) and one account at most half of those
+(amendment of 2026-10-24). With fair use on, an account now holds at most its
+plan's share of one node: Hobby 16, Pro 64, Scale 128
+(`RealtimeLimits.ResumeSubscriptionsPerNode`). The node and per-connection
+bounds stay; the plan share only divides the node's history-read budget.
+
+realtimed learns the plan from the account connection allowance apid already
+sends with every endpoint (`RealtimeResumeSubscriptionsPerNodeFor`), so no new
+registration field is needed: realtime nodes refuse unknown fields, and a
+release upgrades apid before them. Plans' connection allowances must stay
+distinct; a test pins it. Without fair use only the node share applies.
+

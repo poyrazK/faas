@@ -318,12 +318,20 @@ func (m *Manager) resumeDirectMessageAck(ctx context.Context, c *connection, fra
 }
 
 // reserveResume takes one of the node's resume, inbox and SSE subscription
-// slots for account. An account holds at most RealtimeAccountNodeSharePercent
-// of them, as with connections: at 8 per connection, 32 connections of one
-// tenant otherwise took every slot on the node. A nil account (no endpoint
-// state) is held only to the node cap.
-func (m *Manager) reserveResume(account *accountConnections) bool {
+// slots for the endpoint's account. An account holds at most
+// RealtimeAccountNodeSharePercent of them, as with connections: at 8 per
+// connection, 32 connections of one tenant otherwise took every slot on the
+// node. With fair use its plan's allowance may be smaller (ADR-1323). A nil
+// state (no endpoint) is held only to the node cap.
+func (m *Manager) reserveResume(state *endpointState) bool {
+	var account *accountConnections
 	share := int64(max(1, maxResumeSubscriptions*api.RealtimeAccountNodeSharePercent/100))
+	if state != nil {
+		account = state.account
+		if allowance := int64(m.resumeAllowance(state)); allowance > 0 && allowance < share {
+			share = allowance
+		}
+	}
 	if account != nil {
 		for {
 			current := account.resume.Load()
@@ -347,6 +355,19 @@ func (m *Manager) reserveResume(account *accountConnections) bool {
 			return true
 		}
 	}
+}
+
+// resumeAllowance is the plan's resume subscriptions per node for the
+// endpoint's account, or 0 without fair use or an allowance from apid.
+func (m *Manager) resumeAllowance(state *endpointState) int {
+	if !m.cfg.FairUse {
+		return 0
+	}
+	endpoint := state.config.Load()
+	if endpoint == nil {
+		return 0
+	}
+	return api.RealtimeResumeSubscriptionsPerNodeFor(endpoint.AccountMaxConnections)
 }
 
 // releaseResume returns a slot reserveResume granted to account.
@@ -394,7 +415,7 @@ func (m *Manager) resumeSubscribe(ctx context.Context, c *connection, frame resu
 		count++
 	}
 	c.mu.RUnlock()
-	if exists || count >= maxResumePerConnection || !m.reserveResume(c.account()) {
+	if exists || count >= maxResumePerConnection || !m.reserveResume(c.state) {
 		m.queueResumeControl(ctx, c, resumeServerFrame{Type: "error", Channel: frame.Channel, Code: "subscription_limit"})
 		return
 	}

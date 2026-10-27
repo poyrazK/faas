@@ -53,7 +53,7 @@ func (m *Manager) resumeInboxSubscribe(ctx context.Context, c *connection, frame
 	c.mu.RLock()
 	occupied := c.inboxSub != nil || len(c.resumeSubs) >= maxResumePerConnection
 	c.mu.RUnlock()
-	if occupied || !m.reserveResume(c.account()) {
+	if occupied || !m.reserveResume(c.state) {
 		m.inboxError(ctx, c, frame.Consumer, "subscription_limit")
 		return
 	}

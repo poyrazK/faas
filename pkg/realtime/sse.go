@@ -149,7 +149,7 @@ func (m *Manager) serveSSE(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer m.release(node)
-	if !m.reserveResume(node.account) {
+	if !m.reserveResume(node) {
 		http.Error(w, "subscription limit reached", http.StatusTooManyRequests)
 		return
 	}
