@@ -23,6 +23,7 @@ type fakeHost struct {
 	store   *state.MemStore
 	apps    map[string]state.App // slug → app
 	sources *fakeSources
+	hidden  map[string]bool // app slugs the request's credential may not see
 }
 
 func (h fakeHost) Sources() Sources { return h.sources }
@@ -30,6 +31,14 @@ func (h fakeHost) Sources() Sources { return h.sources }
 func (h fakeHost) AppForAccount(_ context.Context, acct state.Account, slug string) (state.App, bool) {
 	app, ok := h.apps[slug]
 	return app, ok && app.AccountID == acct.ID
+}
+func (h fakeHost) ShowsDashboard(_ context.Context, _ state.Account, widgets []api.DashboardWidget) bool {
+	for _, w := range widgets {
+		if h.hidden[w.App] {
+			return false
+		}
+	}
+	return true
 }
 func (h fakeHost) Dashboards() state.DashboardStore { return h.store }
 func (h fakeHost) Logger() *slog.Logger             { return slog.New(slog.NewTextHandler(io.Discard, nil)) }
@@ -40,8 +49,9 @@ func newService(enabled bool) (*Service, state.Account) {
 	store := state.NewMemStore()
 	host := fakeHost{store: store, apps: map[string]state.App{
 		"shop":    {ID: uuid.NewString(), AccountID: acct.ID, Slug: "shop"},
+		"ops":     {ID: uuid.NewString(), AccountID: acct.ID, Slug: "ops"},
 		"foreign": {ID: uuid.NewString(), AccountID: other, Slug: "foreign"},
-	}, sources: &fakeSources{ledger: store}}
+	}, sources: &fakeSources{ledger: store}, hidden: map[string]bool{}}
 	return &Service{Host: host, Enabled: enabled}, acct
 }
 
@@ -120,5 +130,46 @@ func TestDashboardWidgetValidation(t *testing.T) {
 	off, acct := newService(false)
 	if w := call(t, off.List, acct, http.MethodGet, "", ""); w.Code != http.StatusServiceUnavailable {
 		t.Fatalf("gate off = %d, want 503", w.Code)
+	}
+}
+
+// A credential bound to one app or company sees only the dashboards whose
+// widgets all name apps it may see: the others' definitions (app slugs,
+// titles, log queries) read, change and delete as absent.
+func TestDashboardsHiddenFromAScopedCredential(t *testing.T) {
+	svc, acct := newService(true)
+	created := func(name, app string) string {
+		t.Helper()
+		w := call(t, svc.Create, acct, http.MethodPost, "", `{"name":"`+name+`","widgets":[{"title":"rps","kind":"app_metric","app":"`+app+`","metric":"request_count"}]}`)
+		var d api.Dashboard
+		if w.Code != http.StatusCreated || json.Unmarshal(w.Body.Bytes(), &d) != nil {
+			t.Fatalf("create %s = %d %s", name, w.Code, w.Body)
+		}
+		return d.ID
+	}
+	shop, ops := created("shop", "shop"), created("ops", "ops")
+	svc.Host.(fakeHost).hidden["ops"] = true
+
+	var list api.DashboardsResponse
+	if w := call(t, svc.List, acct, http.MethodGet, "", ""); w.Code != http.StatusOK || json.Unmarshal(w.Body.Bytes(), &list) != nil ||
+		len(list.Dashboards) != 1 || list.Dashboards[0].ID != shop {
+		t.Fatalf("list = %+v", list)
+	}
+	replace := `{"name":"ops","widgets":[{"title":"rps","kind":"app_metric","app":"shop","metric":"request_count"}]}`
+	for name, w := range map[string]*httptest.ResponseRecorder{
+		"get":     call(t, svc.Get, acct, http.MethodGet, ops, ""),
+		"data":    call(t, svc.Data, acct, http.MethodGet, ops, ""),
+		"replace": call(t, svc.Replace, acct, http.MethodPut, ops, replace),
+		"delete":  call(t, svc.Delete, acct, http.MethodDelete, ops, ""),
+	} {
+		if w.Code != http.StatusNotFound {
+			t.Errorf("%s of the hidden dashboard = %d %s, want 404", name, w.Code, w.Body)
+		}
+	}
+	if row, err := svc.Host.Dashboards().DashboardByID(t.Context(), acct.ID, ops); err != nil || !strings.Contains(string(row.Widgets), `"ops"`) {
+		t.Fatalf("hidden dashboard after refused writes = %+v, %v; want it unchanged", row, err)
+	}
+	if w := call(t, svc.Get, acct, http.MethodGet, shop, ""); w.Code != http.StatusOK {
+		t.Fatalf("get of the visible dashboard = %d", w.Code)
 	}
 }

@@ -105,3 +105,25 @@ callbacks on the node failed.
 
 With the flag off, realtimed therefore refuses an account at half of a node,
 not only at the node and endpoint caps.
+
+## Amendment (2026-10-26): fair use and the outbound budget are on in deploy
+
+The rollout kept both flags off until realtime had been tested end to end, so
+a release would not change realtime's behaviour. Off is not the safe state:
+the node default stays 10,000 connections, about 520 MB of idle connections
+at the measured ~52 KB each, while realtimed runs with `MemoryMax=512M`. A
+node near its own cap would be OOM-killed and drop every tenant's sockets.
+These flags are protections, not features.
+
+- The generated apid and realtimed units set `FAAS_REALTIME_FAIR_USE_ENABLED=1`,
+  and the realtimed unit sets `FAAS_REALTIME_OUTBOUND_BUDGET_ENABLED=1`.
+- Endpoint caps per plan were already enforced without the flag, so the change
+  adds the per-account connection allowance, the fleet-wide count and the
+  6,000 node default.
+- Production on 2026-10-26 had two realtime endpoints, both on one Scale test
+  account, and no open connections, so no account is over its allowance.
+- Mixed versions during a release stay safe: an apid with the flag sends an
+  allowance that a realtimed without it ignores, and a realtimed with the flag
+  and no allowance from apid applies only the node and endpoint caps.
+- Usage recording (`FAAS_REALTIME_USAGE_ENABLED`) stays off.
+

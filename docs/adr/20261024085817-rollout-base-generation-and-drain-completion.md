@@ -3,7 +3,10 @@
 - **Status:** proposed (2026-10-24); amended by
   [ADR-20261024191249](20261024191249-rollout-publishes-release-bases-and-gates-activation.md)
   (the pre-stage publishes every configured base, and activation waits for
-  adoption)
+  adoption) and by
+  [ADR-20261026181418](20261026181418-generation-addressed-runtime-base-keys.md)
+  (option (b): each generation has its own shared keys, which closes the
+  first two residual risks below)
 - **Date:** 2026-10-24
 - **Related:** ADR-005 (cold boot always works), ADR-137 (recovery arbiter),
   ADR-510 (snapshot backing identity), ADR-567 (runtime base convergence),
@@ -236,7 +239,9 @@ Combine (d) with (a) as a backstop, and make the drain bounded.
     node with the newer generation cached.
   - The play stages the new `runtime-bases.env` before the drain. An N-1 vmmd
     that restarts in that window starts with the candidate's generations.
-  - Option (b) closes all three.
+  - Option (b) closes all three. ADR-20261026181418 implements it for the
+    first two: each generation of a gated base has its own shared keys, and
+    a release reads and writes only its own.
 - Native acceptance: the arbiter now dispatches parks, so `make test-metal`
   and `make leakcheck` on a dedicated KVM host are owed before release. The
   macOS development host cannot run them.

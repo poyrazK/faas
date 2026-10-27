@@ -18,6 +18,10 @@ package imaged
 // bytes differ. A node only adopts a publication built from the same source
 // ref with the same guest-init it would build itself, so a rolling rollout
 // never hands an old daemon a newer PID 1.
+//
+// Since ADR-20261026181418 the cache routes the shared reads and writes of a
+// generation-gated base to its generation's own keys, so convergence reads the
+// publication of this daemon's generation and never another release's.
 
 import (
 	"bytes"
@@ -212,6 +216,12 @@ func (h *Handler) convergeBase(ctx context.Context, be storage.StorageBackend, b
 	// Adopt only a publication of the same recipe: the same immutable source
 	// ref built with this daemon's guest-init.
 	sidecar, err := readParent(ctx, be, staged.digestKey)
+	if errors.Is(err, storage.ErrNotFound) {
+		// Nothing published yet: a generation-routed base whose generation
+		// a release before ADR-20261026181418 staged only under the
+		// logical key. The cached copy stays until a stage publishes it.
+		return false, nil
+	}
 	if err != nil {
 		return false, fmt.Errorf("read base digest sidecar %q: %w", staged.digestKey, err)
 	}

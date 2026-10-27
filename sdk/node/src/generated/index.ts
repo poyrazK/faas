@@ -2878,6 +2878,10 @@ export type { ScopedRouteBudgetReport } from './models/ScopedRouteBudgetReport.j
 export type { SealScenarioObjectsRequest } from './models/SealScenarioObjectsRequest.js';
 export type { SealScenarioPostgresRequest } from './models/SealScenarioPostgresRequest.js';
 export type { SeatUsageResponse } from './models/SeatUsageResponse.js';
+export type { SecretEntryRequest } from './models/SecretEntryRequest.js';
+export type { SecretEntryResponse } from './models/SecretEntryResponse.js';
+export type { SecretEntryStatus } from './models/SecretEntryStatus.js';
+export type { SecretEntryStatusRequest } from './models/SecretEntryStatusRequest.js';
 export type { SecretFile } from './models/SecretFile.js';
 export type { SecretFinding } from './models/SecretFinding.js';
 export type { SecretKey } from './models/SecretKey.js';

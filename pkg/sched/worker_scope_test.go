@@ -470,11 +470,11 @@ type workerDemandFailureStore struct {
 	failScope string
 }
 
-func (s *workerDemandFailureStore) QueueStateInScope(ctx context.Context, appID, scope string) (state.QueueStats, error) {
+func (s *workerDemandFailureStore) QueueDepthInScope(ctx context.Context, appID, scope string, limit int) (int, error) {
 	if scope == s.failScope {
-		return state.QueueStats{}, errors.New("queue observation unavailable")
+		return 0, errors.New("queue observation unavailable")
 	}
-	return s.Store.QueueStateInScope(ctx, appID, scope)
+	return s.Store.QueueDepthInScope(ctx, appID, scope, limit)
 }
 
 func TestWorkerScopedDemandReadFailurePreservesAllPools(t *testing.T) {

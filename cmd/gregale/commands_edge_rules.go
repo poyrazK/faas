@@ -288,7 +288,7 @@ func cmdEdgeRulesCreate(args []string) int {
 	var jwtClaims multiFlag
 	fs.Var(&jwtClaims, "jwt-required-claim", "kind=jwt: required claim (Name=Value; repeat)")
 	jwtTenantExternalRefClaim := fs.String("jwt-platform-tenant-external-ref-claim", "", "kind=jwt: verified custom claim containing the platform tenant external_ref")
-	jwtRequireExp := fs.Bool("jwt-require-exp", false, "kind=jwt: reject tokens without an exp claim")
+	jwtRequireExp := fs.Bool("jwt-require-exp", true, "kind=jwt: reject tokens without an exp claim (default true; =false accepts them)")
 	jwtAuth := unreleasedStringFlag(fs, "jwt-auth", "kind=jwt: Auth app whose tokens to require (sets issuer, JWKS URL, audience, ES256 and exp)")
 
 	// ip
@@ -394,7 +394,7 @@ func cmdEdgeRulesCreate(args []string) int {
 	validateMode := fs.String("validate-mode", api.ValidateModeBlock, "kind=validate: invalid-request behavior (block|observe|warn; default block)")
 	var validateContentTypes multiFlag
 	fs.Var(&validateContentTypes, "validate-content-type", "kind=validate: accepted application media type (repeat; e.g. application/json)")
-	validateMaxBodyBytes := fs.Int("validate-max-body-bytes", 0, "kind=validate: optional request body cap in bytes (0=plan default)")
+	validateMaxBodyBytes := fs.Int("validate-max-body-bytes", 0, "kind=validate: optional request body cap in bytes (0=25 MiB or the plan cap, whichever is lower)")
 	validateApplyWhileStreaming := fs.Bool("validate-apply-while-streaming", false, "kind=validate: also validate streaming requests")
 	validateRejectUnknownFields := fs.Bool("validate-reject-unknown-fields", false, "kind=validate: reject fields not declared by the schema")
 	validateParams := addValidateParamFlags(fs)
@@ -742,7 +742,7 @@ func cmdEdgeRulesUpdate(args []string) int {
 	var jwtClaims multiFlag
 	fs.Var(&jwtClaims, "jwt-required-claim", "kind=jwt: required claim")
 	jwtTenantExternalRefClaim := fs.String("jwt-platform-tenant-external-ref-claim", "", "kind=jwt: verified custom claim containing the platform tenant external_ref")
-	jwtRequireExp := fs.Bool("jwt-require-exp", false, "kind=jwt: reject tokens without an exp claim")
+	jwtRequireExp := fs.Bool("jwt-require-exp", true, "kind=jwt: reject tokens without an exp claim (default true; =false accepts them)")
 	var ipAllow, ipDeny multiFlag
 	fs.Var(&ipAllow, "ip-allow", "kind=ip: allow CIDR")
 	fs.Var(&ipDeny, "ip-deny", "kind=ip: deny CIDR")
@@ -820,7 +820,7 @@ func cmdEdgeRulesUpdate(args []string) int {
 	validateMode := fs.String("validate-mode", "", "kind=validate: invalid-request behavior (block|observe|warn)")
 	var validateContentTypes multiFlag
 	fs.Var(&validateContentTypes, "validate-content-type", "kind=validate: accepted application media type (repeat; e.g. application/json)")
-	validateMaxBodyBytes := fs.Int("validate-max-body-bytes", 0, "kind=validate: request body cap in bytes (0=plan default)")
+	validateMaxBodyBytes := fs.Int("validate-max-body-bytes", 0, "kind=validate: request body cap in bytes (0=25 MiB or the plan cap, whichever is lower)")
 	validateApplyWhileStreaming := fs.Bool("validate-apply-while-streaming", false, "kind=validate: also validate streaming requests")
 	validateRejectUnknownFields := fs.Bool("validate-reject-unknown-fields", false, "kind=validate: reject fields not declared by the schema")
 	validateParams := addValidateParamFlags(fs)
@@ -1349,7 +1349,7 @@ func buildEdgeRuleAction(kind string, in edgeRuleActionInputs) (json.RawMessage,
 			Algorithms:                     in.JWTAlgorithms,
 			RequiredClaims:                 claims,
 			PlatformTenantExternalRefClaim: in.JWTPlatformTenantExternalRefClaim,
-			RequireExp:                     in.JWTRequireExp,
+			RequireExp:                     &in.JWTRequireExp,
 		}
 		if err := a.Validate(); err != nil {
 			return nil, errToError(err)
