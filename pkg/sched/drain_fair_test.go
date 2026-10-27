@@ -26,7 +26,9 @@ type fairDrainGateway struct {
 	peak    map[string]int
 }
 
-func (g *fairDrainGateway) SynthesizeRequest(context.Context, string, string, string) error { return nil }
+func (g *fairDrainGateway) SynthesizeRequest(context.Context, string, string, string) error {
+	return nil
+}
 
 func (g *fairDrainGateway) Invoke(ctx context.Context, _ string, inv state.Invocation) (state.Invocation, error) {
 	g.mu.Lock()
