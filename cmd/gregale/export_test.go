@@ -2543,3 +2543,17 @@ var (
 	ValidBucketCORSArgs  = validBucketCORSArgs
 	RunBucketCORS        = runBucketCORS
 )
+
+// TierDiscoverableFlags is discovery's flag filter under the logged-out tier
+// view (preview and internal capabilities hidden).
+func TierDiscoverableFlags(names, capabilities []string) []string {
+	flags := make([]cliFlag, len(names))
+	for i := range names {
+		flags[i] = cliFlag{Name: names[i], Capability: capabilities[i]}
+	}
+	var kept []string
+	for _, flag := range (capabilityView{tier: true}).discoverableFlags(flags) {
+		kept = append(kept, flag.Name)
+	}
+	return kept
+}

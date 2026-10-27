@@ -666,6 +666,9 @@ type cliTreeEntry struct {
 func cliTreeEntries(noun string) []cliTreeEntry {
 	var entries []cliTreeEntry
 	seen := map[string]bool{}
+	// A verb whose capability is hidden for the account is not listed, as
+	// in today's help (ADR-20261023115741).
+	view := discoveryCapabilityView()
 	add := func(name, short, runs string) {
 		if name == "" || seen[name] {
 			return
@@ -684,7 +687,7 @@ func cliTreeEntries(noun string) []cliTreeEntry {
 			continue
 		}
 		node, ok := lookupCliPath(old)
-		if !ok {
+		if !ok || view.hidesPath(alias.Old) {
 			continue
 		}
 		if len(path) > 1 {
@@ -695,7 +698,9 @@ func cliTreeEntries(noun string) []cliTreeEntry {
 			continue
 		}
 		for _, sub := range node.Subs {
-			add(cliTreeStandardVerb(sub.Name), sub.Short, alias.Old+" "+sub.Name)
+			if !view.hidesPath(alias.Old + " " + sub.Name) {
+				add(cliTreeStandardVerb(sub.Name), sub.Short, alias.Old+" "+sub.Name)
+			}
 		}
 	}
 	return entries

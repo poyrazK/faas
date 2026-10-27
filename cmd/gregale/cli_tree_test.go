@@ -2,6 +2,7 @@ package main_test
 
 import (
 	"os"
+	"path/filepath"
 	"regexp"
 	"slices"
 	"strings"
@@ -379,5 +380,30 @@ func TestCliTreeFlagSpellings(t *testing.T) {
 		if got := strings.Join(main.NormalizeTreeFlags(strings.Fields(tc.in)), " "); got != tc.want {
 			t.Errorf("%q normalized to %q, want %q", tc.in, got, tc.want)
 		}
+	}
+}
+
+// Tree help and gating follow the account's capabilities like today's
+// commands: a hidden capability's verbs are not listed, its paths answer
+// with the name the user typed, and a flag that reaches it is dropped.
+func TestCliTreeFollowsCapabilityVisibility(t *testing.T) {
+	t.Setenv("FAAS_CAPABILITY_FLAGS_RELEASE_ALL", "")
+	t.Setenv("FAAS_TOKEN", "")
+	t.Setenv("FAAS_COMPLETION_CACHE_PATH", filepath.Join(t.TempDir(), "cache.json"))
+
+	code, help, _ := runCLI(t, "alert")
+	if code != 0 || !listsCommand(help, "channel") {
+		t.Fatalf("alert help = %d, want the beta channel verb:\n%s", code, help)
+	}
+	for _, hidden := range []string{"incident", "slo", "check", "maintenance list"} {
+		if listsCommand(help, hidden) {
+			t.Errorf("logged-out alert help lists %q, whose capability is preview or internal:\n%s", hidden, help)
+		}
+	}
+	if code, _, stderr := runCLI(t, "alert", "incident", "list", "--help"); code == 0 || !strings.Contains(stderr, `unknown command "alert incident list"`) {
+		t.Errorf("alert incident list --help = %d %q, want an unknown command in the typed name", code, stderr)
+	}
+	if got := main.TierDiscoverableFlags([]string{"app", "at", "lock"}, []string{"", "delayed-execution", "operations"}); strings.Join(got, " ") != "app at" {
+		t.Errorf("tier discovery kept flags %v, want app and the beta delayed-execution flag only", got)
 	}
 }

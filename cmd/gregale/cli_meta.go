@@ -321,6 +321,11 @@ type cliFlag struct {
 	// Unreleased keeps a dark-launched flag out of every customer surface
 	// unless it is turned on (unreleased.go).
 	Unreleased bool
+	// Capability names the product capability a flag reaches when it is not
+	// the command's own (`crons add --at` reaches delayed tasks). Discovery
+	// drops the flag, and the command refuses it, while the capability is
+	// hidden for the account (ADR-20261026145832).
+	Capability string
 	// Common keeps this option visible in compact command help. Group labels
 	// organize expanded help without changing parser or completion behavior.
 	Common bool
