@@ -384,12 +384,19 @@ func TestReleaseGuardsGADrillMetal(t *testing.T) {
 		got := d.waitDeployment(t, candidate.ID, 8*time.Minute, func(dep state.Deployment) bool {
 			return dep.RolloutState == "aborted" || dep.RolloutState == "complete"
 		})
-		var report api.RouteHealthReport
-		g.mustStatus(t, d.key, http.MethodGet, "/v1/apps/"+app+"/route-health/deployments/"+candidate.ID, nil, http.StatusOK, &report)
-		t.Logf("DRILL route_guard seconds=%.0f state=%q reason=%q report=%s/%s", time.Since(started).Seconds(), got.RolloutState,
-			got.RolloutAbortedReason, report.Status, report.Reason)
-		if got.RolloutState != "aborted" || report.Status != "aborted" {
-			t.Fatalf("canary failing /api = state:%q reason:%q report:%+v, want aborted by the route guard", got.RolloutState, got.RolloutAbortedReason, report)
+		// The saved abort lives in the guard's history (ADR-458); the live
+		// report re-evaluates current windows, which the abort emptied.
+		var history api.RouteHealthHistoryPage
+		g.mustStatus(t, d.key, http.MethodGet, "/v1/apps/"+app+"/route-health/deployments/"+candidate.ID+"/history", nil, http.StatusOK, &history)
+		i := slices.IndexFunc(history.Entries, func(e api.RouteHealthHistoryEntry) bool { return e.Purpose == "abort" })
+		var abort api.RouteHealthHistoryEntry
+		if i >= 0 {
+			abort = history.Entries[i]
+		}
+		t.Logf("DRILL route_guard seconds=%.0f state=%q reason=%q abort=%s/%s share=%d->%d", time.Since(started).Seconds(), got.RolloutState,
+			got.RolloutAbortedReason, abort.Decision.Status, abort.Decision.Reason, abort.TrafficPercent, abort.RequestedTrafficPercent)
+		if got.RolloutState != "aborted" || i < 0 || abort.Decision.Status != "aborted" || abort.RequestedTrafficPercent != 0 {
+			t.Fatalf("canary failing /api = state:%q reason:%q history:%+v, want aborted by the route guard", got.RolloutState, got.RolloutAbortedReason, history.Entries)
 		}
 		d.waitDeployment(t, stable.ID, 2*time.Minute, func(dep state.Deployment) bool { return dep.TrafficPercent == 100 })
 	})
