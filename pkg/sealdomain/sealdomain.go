@@ -154,7 +154,12 @@ var registry = []Spec{
 	{Domain: Control, Readers: []string{"schedd"}, Roles: bothRoles, Wired: true, Columns: join(
 		cols("cluster_signing_keys", "sealed_blob"),
 	)},
-	{Domain: Account, Readers: []string{"apid", "apid-clone-worker", "apid-data-pipeline-worker"}, Roles: cpOnly, Columns: join(
+	// Account values are wired a group at a time (ADR 20261022111812):
+	// apid seals and opens the TOTP secrets, inbound webhook secrets,
+	// billing keys, workflow plans, PagerDuty acknowledgement secrets and
+	// GitLab, Slack and Linear credentials through the domain; the other
+	// columns stay on the fleet key until their slice.
+	{Domain: Account, Readers: []string{"apid", "apid-clone-worker", "apid-data-pipeline-worker"}, Roles: cpOnly, Wired: true, Columns: join(
 		cols("accounts", "mfa_secret_encrypted"),
 		// apid seals a managed workflow's plan and its workflow worker
 		// opens it; schedd never reads it.

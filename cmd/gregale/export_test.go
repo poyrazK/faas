@@ -1152,6 +1152,7 @@ var CorrelateRouteMonitorIncidentSourceAuto = correlateRouteMonitorIncidentSourc
 var CoveragePolicy = coveragePolicy
 var CreateDevSetupManifest = createDevSetupManifest
 var CreateDurableProjectVerification = createDurableProjectVerification
+var CreateOrFetchApp = createOrFetchApp
 var CreateTestAsyncRoutes = createTestAsyncRoutes
 var CurrentUploadOffset = currentUploadOffset
 var CustomerCliCommands = customerCliCommands
@@ -1340,6 +1341,7 @@ var InspectData = inspectData
 var InspectOpenAPI = inspectOpenAPI
 var InspectProductPilotHelp = inspectProductPilotHelp
 var InspectRecommendations = inspectRecommendations
+var InspectRuntime = inspectRuntime
 var InspectResources = inspectResources
 var InspectUnavailable = inspectUnavailable
 var InspectWatchChanges = inspectWatchChanges
@@ -2476,6 +2478,10 @@ var PreviewCompanionsFromManifest = previewCompanionsFromManifest
 // FormatStageDuration is the live ticker's stage duration cell.
 var FormatStageDuration = formatStageDuration
 
+// gregale logs --project (ADR-20261026190244).
+var RunProjectLogs = runProjectLogs
+var ProjectLogJSON = projectLogJSON
+
 // dev --all and gregale dev Go commands (ADR-20261026120412).
 var DiscoverDevAllApps = discoverDevAllApps
 
@@ -2493,3 +2499,10 @@ func CheckDevGoCommand(dir string, function bool, command string) error {
 func DevGoCommandRequest(command string) api.UpsertDevSessionRequest {
 	return withDevGoCommand(devSourceConfig{shape: shapeApp}.sessionRequest("", false, "", 0, nil), command)
 }
+
+// Bucket CORS CLI (ADR-20261025202805).
+var (
+	DecodeBucketCORSFile = decodeBucketCORSFile
+	ValidBucketCORSArgs  = validBucketCORSArgs
+	RunBucketCORS        = runBucketCORS
+)

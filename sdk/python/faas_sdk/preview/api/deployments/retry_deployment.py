@@ -90,9 +90,9 @@ def sync_detailed(
     client: AuthenticatedClient | Client,
     body: RetryDeploymentRequest,
 ) -> Response[DeploymentResponse | Problem]:
-    """Retry a failed deployment from a named stage (ADR-117 production-ready follow-on C2).
+    """Retry a failed deployment from a named stage (production-ready follow-on C2).
 
-     Closes the production-ready gap exposed by ADR-117 §C4: a
+     A
     deployment that fails partway is restorable via
     `POST /v1/deployments/{id}/retry` with a `from_stage` field.
     The deployment row is duplicated (NOT mutated); the new
@@ -101,8 +101,7 @@ def sync_detailed(
     timeline (and the CLI's `gregale deploys show <id>` summary)
     reflects the retry as a separate event.
 
-    The closed-6 vocabulary mirrors `state.AllStageNames`
-    (ADR-117); the API rejects unknown values with 400.
+    The closed-6 vocabulary mirrors `state.AllStageNames`; the API rejects unknown values with 400.
     Empty strings are rejected for the same reason.
 
     Auth chain mirrors `POST /v1/apps/{slug}/deployments`:
@@ -113,9 +112,8 @@ def sync_detailed(
     Args:
         id (str):
         body (RetryDeploymentRequest): Body for POST /v1/deployments/{id}/retry. Identifies the
-            stage the retry should resume from. The closed-6 vocabulary mirrors `state.AllStageNames`
-            (ADR-117); the API rejects unknown values with 400. Empty strings are rejected for the
-            same reason.
+            stage the retry should resume from. The closed-6 vocabulary mirrors `state.AllStageNames`;
+            the API rejects unknown values with 400. Empty strings are rejected for the same reason.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -143,9 +141,9 @@ def sync(
     client: AuthenticatedClient | Client,
     body: RetryDeploymentRequest,
 ) -> DeploymentResponse | Problem | None:
-    """Retry a failed deployment from a named stage (ADR-117 production-ready follow-on C2).
+    """Retry a failed deployment from a named stage (production-ready follow-on C2).
 
-     Closes the production-ready gap exposed by ADR-117 §C4: a
+     A
     deployment that fails partway is restorable via
     `POST /v1/deployments/{id}/retry` with a `from_stage` field.
     The deployment row is duplicated (NOT mutated); the new
@@ -154,8 +152,7 @@ def sync(
     timeline (and the CLI's `gregale deploys show <id>` summary)
     reflects the retry as a separate event.
 
-    The closed-6 vocabulary mirrors `state.AllStageNames`
-    (ADR-117); the API rejects unknown values with 400.
+    The closed-6 vocabulary mirrors `state.AllStageNames`; the API rejects unknown values with 400.
     Empty strings are rejected for the same reason.
 
     Auth chain mirrors `POST /v1/apps/{slug}/deployments`:
@@ -166,9 +163,8 @@ def sync(
     Args:
         id (str):
         body (RetryDeploymentRequest): Body for POST /v1/deployments/{id}/retry. Identifies the
-            stage the retry should resume from. The closed-6 vocabulary mirrors `state.AllStageNames`
-            (ADR-117); the API rejects unknown values with 400. Empty strings are rejected for the
-            same reason.
+            stage the retry should resume from. The closed-6 vocabulary mirrors `state.AllStageNames`;
+            the API rejects unknown values with 400. Empty strings are rejected for the same reason.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -191,9 +187,9 @@ async def asyncio_detailed(
     client: AuthenticatedClient | Client,
     body: RetryDeploymentRequest,
 ) -> Response[DeploymentResponse | Problem]:
-    """Retry a failed deployment from a named stage (ADR-117 production-ready follow-on C2).
+    """Retry a failed deployment from a named stage (production-ready follow-on C2).
 
-     Closes the production-ready gap exposed by ADR-117 §C4: a
+     A
     deployment that fails partway is restorable via
     `POST /v1/deployments/{id}/retry` with a `from_stage` field.
     The deployment row is duplicated (NOT mutated); the new
@@ -202,8 +198,7 @@ async def asyncio_detailed(
     timeline (and the CLI's `gregale deploys show <id>` summary)
     reflects the retry as a separate event.
 
-    The closed-6 vocabulary mirrors `state.AllStageNames`
-    (ADR-117); the API rejects unknown values with 400.
+    The closed-6 vocabulary mirrors `state.AllStageNames`; the API rejects unknown values with 400.
     Empty strings are rejected for the same reason.
 
     Auth chain mirrors `POST /v1/apps/{slug}/deployments`:
@@ -214,9 +209,8 @@ async def asyncio_detailed(
     Args:
         id (str):
         body (RetryDeploymentRequest): Body for POST /v1/deployments/{id}/retry. Identifies the
-            stage the retry should resume from. The closed-6 vocabulary mirrors `state.AllStageNames`
-            (ADR-117); the API rejects unknown values with 400. Empty strings are rejected for the
-            same reason.
+            stage the retry should resume from. The closed-6 vocabulary mirrors `state.AllStageNames`;
+            the API rejects unknown values with 400. Empty strings are rejected for the same reason.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -242,9 +236,9 @@ async def asyncio(
     client: AuthenticatedClient | Client,
     body: RetryDeploymentRequest,
 ) -> DeploymentResponse | Problem | None:
-    """Retry a failed deployment from a named stage (ADR-117 production-ready follow-on C2).
+    """Retry a failed deployment from a named stage (production-ready follow-on C2).
 
-     Closes the production-ready gap exposed by ADR-117 §C4: a
+     A
     deployment that fails partway is restorable via
     `POST /v1/deployments/{id}/retry` with a `from_stage` field.
     The deployment row is duplicated (NOT mutated); the new
@@ -253,8 +247,7 @@ async def asyncio(
     timeline (and the CLI's `gregale deploys show <id>` summary)
     reflects the retry as a separate event.
 
-    The closed-6 vocabulary mirrors `state.AllStageNames`
-    (ADR-117); the API rejects unknown values with 400.
+    The closed-6 vocabulary mirrors `state.AllStageNames`; the API rejects unknown values with 400.
     Empty strings are rejected for the same reason.
 
     Auth chain mirrors `POST /v1/apps/{slug}/deployments`:
@@ -265,9 +258,8 @@ async def asyncio(
     Args:
         id (str):
         body (RetryDeploymentRequest): Body for POST /v1/deployments/{id}/retry. Identifies the
-            stage the retry should resume from. The closed-6 vocabulary mirrors `state.AllStageNames`
-            (ADR-117); the API rejects unknown values with 400. Empty strings are rejected for the
-            same reason.
+            stage the retry should resume from. The closed-6 vocabulary mirrors `state.AllStageNames`;
+            the API rejects unknown values with 400. Empty strings are rejected for the same reason.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

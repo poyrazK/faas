@@ -13,8 +13,7 @@ import type { DiffPayload } from './DiffPayload.js';
 export type DiffResponse = {
   diff: DiffPayload;
   /**
-   * True if any break has severity "error". Mirrors
-   * [pkg/deploydiff.Diff.HasBlockingBreaks]. The exit-1
+   * True if any break has severity "error". The exit-1
    * input for CI gates.
    *
    */

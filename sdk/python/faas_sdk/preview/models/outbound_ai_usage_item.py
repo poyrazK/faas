@@ -19,7 +19,7 @@ class OutboundAIUsageItem:
     """
 
     caller: str
-    """App UUID, "runs" for stateless Runs, or "replay" for replayed calls (ADR-997)."""
+    """App UUID, "runs" for stateless Runs, or "replay" for replayed calls."""
     model: str
     """Provider-reported model; "other" collects models beyond the daily distinct-model cap and "unknown" covers
     responses without one."""
@@ -33,31 +33,31 @@ class OutboundAIUsageItem:
     cache_write_tokens: int
     output_tokens: int
     images: int
-    """Images billed per image (ADR-997)."""
+    """Images billed per image."""
     audio_seconds: int
     """Seconds of transcribed audio."""
     characters: int
     """Characters of speech input."""
     video_seconds: int
-    """Seconds of generated video (ADR-1432)."""
+    """Seconds of generated video."""
     web_searches: int
-    """Web searches as the provider bills them: per call, query or grounded prompt (ADR-1433)."""
+    """Web searches as the provider bills them: per call, query or grounded prompt."""
     file_searches: int
-    """File search calls (ADR-1433)."""
+    """File search calls."""
     code_session_gb: int
-    """GB of code-interpreter container sessions (ADR-1433)."""
+    """GB of code-interpreter container sessions."""
     cached_requests: int
-    """Requests the response cache served, with no tokens or cost (ADR-1440)."""
+    """Requests the response cache served, with no tokens or cost."""
     cache_saved_millicents: int
     """Provider cost the response cache avoided, priced from the cached responses at the current price list."""
     prompt_cache_saved_millicents: int
     """What provider prompt caching saved against plain input prices; negative when cache writes outweighed reads."""
     input_audio_tokens: int
-    """Audio part of input_tokens, priced at the audio input price (ADR 20261019072722)."""
+    """Audio part of input_tokens, priced at the audio input price."""
     output_audio_tokens: int
     """Audio part of output_tokens, priced at the audio output price."""
     truncated_requests: int
-    """Answered calls that stopped at the output-token limit (ADR 20261021171712)."""
+    """Answered calls that stopped at the output-token limit."""
     refused_requests: int
     """Answered calls the provider refused or filtered."""
     empty_requests: int
@@ -67,7 +67,7 @@ class OutboundAIUsageItem:
     tool_error_requests: int
     """Calls whose newest turn reported a failed tool."""
     good_feedback: int
-    """Calls rated good (ADR 20261021171712)."""
+    """Calls rated good."""
     bad_feedback: int
     """Calls rated bad."""
     evaluated_requests: int

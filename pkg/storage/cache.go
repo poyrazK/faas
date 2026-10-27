@@ -243,6 +243,10 @@ type LocalCacheBackend struct {
 	// Both are guarded by mu.
 	minFreeBytes int64
 	diskSpace    func(string) (free, total int64, err error)
+	// routes maps a generation-routed key to its name in the parent
+	// (cache_generation.go, ADR-20261026181418). Guarded by routesMu.
+	routesMu sync.RWMutex
+	routes   map[string]string
 }
 
 // SetMinFreeBytes makes the cache evict its oldest entries, beyond its byte
@@ -337,7 +341,7 @@ func (c *LocalCacheBackend) Exists(ctx context.Context, key string) (bool, error
 	if !ok {
 		return false, ErrExistenceUnsupported
 	}
-	return checker.Exists(ctx, key)
+	return checker.Exists(ctx, c.parentKey(key))
 }
 
 // cacheFileFor hashes the storage key into a path-safe
@@ -449,9 +453,10 @@ func (c *LocalCacheBackend) Put(ctx context.Context, key string, r io.Reader) er
 	// fall through to an uncached parent Put rather than failing a
 	// write the parent could have accepted. A broken cache must
 	// degrade this backend to a pass-through, never to an outage.
+	parentKey := c.parentKey(key)
 	tmp, tmpErr := c.spoolFile(dir)
 	if tmpErr != nil {
-		if err := c.parent.Put(ctx, key, r); err != nil {
+		if err := c.parent.Put(ctx, parentKey, r); err != nil {
 			return fmt.Errorf("storage: cache: put %q: parent: %w", key, err)
 		}
 		return nil
@@ -499,7 +504,7 @@ func (c *LocalCacheBackend) Put(ctx context.Context, key string, r io.Reader) er
 	if _, err := tmp.Seek(0, io.SeekStart); err != nil {
 		return fmt.Errorf("storage: cache: put %q: rewind spool: %w", key, err)
 	}
-	if err := c.parent.Put(ctx, key, tmp); err != nil {
+	if err := c.parent.Put(ctx, parentKey, tmp); err != nil {
 		return fmt.Errorf("storage: cache: put %q: parent: %w", key, err)
 	}
 
@@ -566,14 +571,14 @@ var errCacheBlobOversized = errors.New("storage: cache: blob exceeds maxBytes")
 // stale bytes. Cache hits and parent misses are file-backed so large
 // OCI layers never become a heap-sized byte slice.
 func (c *LocalCacheBackend) Get(ctx context.Context, key string) (io.ReadCloser, error) {
-	return c.get(ctx, key, c.refresh())
+	return c.fetch(ctx, key, c.parentKey(key), c.refresh())
 }
 
 // Refresh bypasses an existing local entry, reads the canonical parent, and
 // replaces the cache before returning it. Unlike the legacy environment seam,
 // this operation is scoped to one call and is safe for a live daemon.
 func (c *LocalCacheBackend) Refresh(ctx context.Context, key string) (io.ReadCloser, error) {
-	return c.get(ctx, key, true)
+	return c.fetch(ctx, key, c.parentKey(key), true)
 }
 
 // GetCanonical reads key from the canonical parent and leaves this node's
@@ -584,14 +589,16 @@ func (c *LocalCacheBackend) GetCanonical(ctx context.Context, key string) (io.Re
 	if err := validateKey(key); err != nil {
 		return nil, err
 	}
-	rc, err := c.parent.Get(ctx, key)
+	rc, err := c.parent.Get(ctx, c.parentKey(key))
 	if err != nil {
 		return nil, fmt.Errorf("storage: cache: get canonical %q: %w", key, err)
 	}
 	return rc, nil
 }
 
-func (c *LocalCacheBackend) get(ctx context.Context, key string, refresh bool) (io.ReadCloser, error) {
+// fetch serves key from this cache unless refresh is set, and otherwise reads
+// the parent's parentKey and installs it as key's entry.
+func (c *LocalCacheBackend) fetch(ctx context.Context, key, parentKey string, refresh bool) (io.ReadCloser, error) {
 	if err := validateKey(key); err != nil {
 		return nil, err
 	}
@@ -600,7 +607,7 @@ func (c *LocalCacheBackend) get(ctx context.Context, key string, refresh bool) (
 			return cached, nil
 		}
 	}
-	rc, err := c.parent.Get(ctx, key)
+	rc, err := c.parent.Get(ctx, parentKey)
 	if err != nil {
 		// A refresh is an explicit integrity operation (used when
 		// adopting a newly signed release). Never let the normal
@@ -794,7 +801,7 @@ func (c *LocalCacheBackend) Delete(ctx context.Context, key string) error {
 		return err
 	}
 	c.evictCache(key)
-	if err := c.parent.Delete(ctx, key); err != nil {
+	if err := c.parent.Delete(ctx, c.parentKey(key)); err != nil {
 		return fmt.Errorf("storage: cache: delete %q: parent: %w", key, err)
 	}
 	return nil

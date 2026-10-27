@@ -48,9 +48,10 @@ still need the whole bucket to be quiet.
    of its destination key.
 4. **Bucket-wide work still waits for every deletion.** Versioning, Object
    Lock and encryption configuration, capacity reconciliation, version
-   protection, inventory publication, cross-bucket copies and copy-source
-   grant changes, the write fence and bucket deletion keep refusing while any
-   deletion in the bucket is active.
+   protection, inventory publication, copy-source grant changes, the write
+   fence and bucket deletion keep refusing while any deletion in the bucket
+   is active. (Amendment 1 moved cross-bucket copies and lifecycle scans to
+   per-key fences.)
 5. **Deletions yield to inventory.** While a bucket's inventory claim is less
    than `api.ObjectInventoryDeletionYield` old, new deletions in that bucket
    are busy. After claiming, the inventory worker waits up to
@@ -61,6 +62,32 @@ still need the whole bucket to be quiet.
 6. **Bulk deletes run concurrently.** S3 `DeleteObjects` runs up to
    `api.ObjectDeletionBulkConcurrency` entries at once. Entries keep their
    request-derived IDs and the response keeps request order.
+
+## Amendment 1 (2026-10-26): cross-bucket copies and lifecycle scans
+
+The first version left two paths bucket-wide: a cross-bucket copy waited for
+every deletion in both buckets, and a lifecycle scan paused while any deletion
+in its bucket was active. Under steady customer deletes, both stalled for no
+per-key reason.
+
+7. **A cross-bucket copy waits only for a deletion of its source key.** Source
+   resolution (`ObjectCopySourceResolve`) and the receipt and multipart-part
+   triggers (`assert_object_copy_source_authority`) check the source bucket
+   for an active deletion of that exact key. The destination is an ordinary
+   write of its key, fenced by write admission (decision 3). Pending version
+   protection in either bucket still refuses the copy.
+8. **A lifecycle scan pauses only for its own deletions.** A scan cannot
+   re-list or advance its cursor while one of its own deletions is unsettled,
+   since a lost acknowledgment would leave the key's state unknown. It also
+   pauses while version protection runs in the bucket. A customer deletion of
+   another key no longer pauses it; a scan's deletion of a key that another
+   deletion holds is busy at admission, as any deletion of that key would be.
+   The check is `HasActiveObjectLifecycleDeletion`; a store without it falls
+   back to the bucket-wide check.
+
+Migration `20261026174634100` is expand-only: it narrows the function's
+deletion clause. An N-1 gateway still resolves sources bucket-wide, so a mixed
+fleet only loses concurrency.
 
 ## Consequences
 
@@ -90,3 +117,9 @@ still need the whole bucket to be quiet.
   releases its claim when the deletion does not settle.
 - Gateway test: a bulk delete runs entries concurrently and returns them in
   request order.
+- Amendment 1: `TestObjectCopyDeletionPerKey{Mem,PG}` resolve and admit a
+  copy while other keys are being deleted, and refuse a source key or
+  destination key that is being deleted. `TestObjectLifecycleDeletionScope{Mem,PG}`
+  show a customer deletion does not pause a scan and the scan's own deletion
+  does. The lifecycle worker's lost-acknowledgment and protection-recovery
+  tests still hold the scan while its own deletion is uncertain.

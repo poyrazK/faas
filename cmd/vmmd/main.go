@@ -81,15 +81,11 @@ func configuredRuntimeBaseGenerations(envLookup func(string) string) (map[string
 		envLookup = os.Getenv
 	}
 	// The rollout pre-stage publishes, and base-adoption-check gates on,
-	// this same list (ADR-20261024191249).
-	gated := imaged.GatedRuntimeBases()
-	out := make(map[string]string, len(gated))
-	for _, base := range gated {
-		ref, err := imaged.ResolveDeployBaseRef(base, envLookup)
-		if err != nil {
-			return nil, fmt.Errorf("vmmd: resolve runtime base generation %q: %w", base, err)
-		}
-		out[storagekey.BaseForArch(base, runtime.GOARCH)] = ref
+	// this same list (ADR-20261024191249), and imaged routes it to the same
+	// generation keys (ADR-20261026181418).
+	out, err := imaged.ConfiguredBaseGenerations(runtime.GOARCH, envLookup)
+	if err != nil {
+		return nil, fmt.Errorf("vmmd: %w", err)
 	}
 	return out, nil
 }
@@ -1041,6 +1037,15 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// Wake RPC contexts are canceled when the request returns and
 	// must not own either background activity.
 	mgr.WithLifecycleContext(ctx)
+	httpAdmissionEnabled, err := api.HTTPAdmissionEnabled(os.Getenv("FAAS_HTTP_ADMISSION"))
+	if err != nil {
+		return err
+	}
+	mgr.WithHTTPAdmission(httpAdmissionEnabled)
+	if !httpAdmissionEnabled {
+		// ADR-570 kill switch: an operator lifted the per-VM HTTP cap on this node.
+		slog.Warn("vmmd: FAAS_HTTP_ADMISSION=off; per-VM HTTP admission cap is not enforced on this node")
+	}
 	egressCircuitEnabled, err := api.EgressCircuitBreakerEnabled(os.Getenv("FAAS_EGRESS_CIRCUIT_BREAKER"))
 	if err != nil {
 		return err
@@ -1267,14 +1272,24 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	}
 	// ADR-1151 quiet pause: pause eligible instances between requests. schedd
 	// marks which instances are eligible; this flag lets an operator keep
-	// the whole node out of it.
-	if cfg.QuietPause {
+	// the whole node out of it. Observe mode measures the pauses instead of
+	// making them.
+	if cfg.QuietPause || cfg.QuietPauseObserve {
+		observe := !cfg.QuietPause
+		if cfg.QuietPause && cfg.QuietPauseObserve {
+			log.Warn("quiet_pause_observe ignored: quiet_pause is on and pauses instances")
+		}
 		mgr.WithQuietPause(fcvm.QuietPauseConfig{
 			Activity: activityTracker,
 			Metrics:  fcvm.NewQuietPauseMetrics(ops.Registry()),
+			Observe:  observe,
 		})
 		go mgr.RunQuietPause(ctx)
-		log.Info("quiet pause enabled (ADR-1151)")
+		if observe {
+			log.Info("quiet pause observe mode enabled (ADR-1151): measuring would-be pauses, pausing nothing")
+		} else {
+			log.Info("quiet pause enabled (ADR-1151)")
+		}
 	}
 	// ADR-1151 frozen tier: nothing is frozen until schedd calls
 	// FreezeInstance. The activity tracker lets a freeze refuse an instance
@@ -1298,6 +1313,13 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if err != nil {
 		return err
 	}
+	// ADR-20261026181418: read each gated base from the shared keys of the
+	// generation this release configures, never another release's copy.
+	routedBases, err := imaged.RouteBaseGenerations(storageBackend, baseGenerations)
+	if err != nil {
+		return fmt.Errorf("vmmd: %w", err)
+	}
+	log.Info("vmmd: runtime bases routed to their generation keys", "bases", routedBases)
 	mgr.WithBaseGenerations(baseGenerations)
 	// ADR-510: identify the kernel and cached bases in the background so the
 	// first restore after this start does not hash a base in its wake path.
@@ -1496,11 +1518,21 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		}
 		// Workstream B: the guest metadata event proxy sends only the
 		// caller-authored JSON over the instance-bound vsock stream. Resolve
-		// account identity from vmmd's live map and persist the same canonical
+		// account identity from vmmd's live or booting instance (ADR-1141
+		// amendment 2026-10-24) and persist the same canonical
 		// event envelope as POST /v1/events:publish. A missing database is the
 		// expected default-local development posture, so the endpoint reports
 		// a bounded transport error instead of accepting an unverifiable event.
 		guestRate := &guestEventRate{}
+		// ADR-20261027125625: the events flag pauses in-guest publishes too.
+		var guestEvents *guestEventGate
+		if store != nil && pool != nil {
+			gate, gateErr := startGuestEventGate(ctx, store, pool, log)
+			if gateErr != nil {
+				return gateErr
+			}
+			guestEvents = gate
+		}
 		recv.WithEventPublisher(func(publishCtx context.Context, instance string, body []byte) error {
 			if store == nil || pool == nil {
 				return errors.New("event publish persistence is not configured")
@@ -1518,6 +1550,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			// A capture-only rehearsal keeps its ordinary network, but its
 			// events still belong to its run (ADR-20261020090000).
 			if captured, err := captureGuestEvent(publishCtx, store, appID, "", accountID, envelope); captured || err != nil {
+				return err
+			}
+			if err := guestEvents.allow(publishCtx, store, appID); err != nil {
 				return err
 			}
 			if err := guestRate.allow(publishCtx, store, accountID); err != nil {

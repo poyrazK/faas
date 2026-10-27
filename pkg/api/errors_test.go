@@ -328,8 +328,8 @@ func TestErrBillingNotImplemented(t *testing.T) {
 	if p.Code != CodeBillingNotImplemented {
 		t.Errorf("Code = %q, want %q", p.Code, CodeBillingNotImplemented)
 	}
-	if !strings.Contains(p.DocsURL, "billing/providers") {
-		t.Errorf("DocsURL = %q, want /billing/providers", p.DocsURL)
+	if !strings.Contains(p.DocsURL, "/billing#providers") {
+		t.Errorf("DocsURL = %q, want /billing#providers", p.DocsURL)
 	}
 }
 
@@ -1138,5 +1138,35 @@ func TestErrSecretValueTooLargeDetail(t *testing.T) {
 	}
 	if got := ErrSecretValueTooLarge(Limits{Plan: PlanPro, SecretValueMaxBytes: 32768}, 40000).Detail; !strings.HasPrefix(got, "pro plan caps") {
 		t.Errorf("detail with plan = %q", got)
+	}
+}
+
+// A time ceiling trips on a busy control plane as well as on a complex
+// policy, so its hint leads with a retry; size ceilings keep the simplify
+// guidance (Hunt 14 H14-78).
+func TestErrTrafficPolicyTooComplexHintByUnit(t *testing.T) {
+	cases := []struct {
+		name, scope, unit string
+		wantRetryFirst    bool
+	}{
+		{"wall clock", "time", "milliseconds", true},
+		{"sql time", "database_time", "milliseconds", true},
+		{"automaton states", "states", "states", false},
+		{"metadata bytes", "metadata", "bytes", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			p := ErrTrafficPolicyTooComplex(tc.scope, tc.unit, 2000, 2002)
+			if p.Status != http.StatusUnprocessableEntity || p.Code != CodeTrafficPolicyTooComplex {
+				t.Fatalf("status/code = %d/%s, want 422/%s", p.Status, p.Code, CodeTrafficPolicyTooComplex)
+			}
+			retryFirst := strings.HasPrefix(p.Hint, "The policy check ran out of time")
+			if retryFirst != tc.wantRetryFirst {
+				t.Fatalf("hint = %q, want retry-first %v", p.Hint, tc.wantRetryFirst)
+			}
+			if !strings.Contains(p.Hint, "simplify") && !strings.Contains(p.Hint, "Simplify") {
+				t.Fatalf("hint = %q, want it to keep the simplify fallback", p.Hint)
+			}
+		})
 	}
 }

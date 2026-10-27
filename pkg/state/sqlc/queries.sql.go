@@ -63199,7 +63199,9 @@ SELECT g.id, g.account_id, g.credential_id, g.bucket_id, g.source_bucket_id, g.p
  AND s.account_id=c.account_id AND d.account_id=c.account_id AND s.org_id=d.org_id AND s.state='ready' AND d.state='ready'
  AND (s.backend_id,s.backend_fingerprint)=(d.backend_id,d.backend_fingerprint)
  AND left($4::text,length(g.prefix))=g.prefix
- AND NOT EXISTS(SELECT 1 FROM object_deletions WHERE bucket_id IN (s.id,d.id) AND state IN ('prepared','dispatched'))
+ -- Only a deletion of the source key fences the copy; the destination is an
+ -- ordinary write, fenced per key at admission (ADR-20261025115958).
+ AND NOT EXISTS(SELECT 1 FROM object_deletions WHERE bucket_id=s.id AND object_key=$4::text AND state IN ('prepared','dispatched'))
 `
 
 type ObjectCopySourceResolveParams struct {
@@ -63779,6 +63781,25 @@ type ObjectInventorySampleParams struct {
 func (q *Queries) ObjectInventorySample(ctx context.Context, db DBTX, arg ObjectInventorySampleParams) error {
 	_, err := db.Exec(ctx, objectInventorySample, arg.BucketID, arg.Token)
 	return err
+}
+
+const objectLifecycleDeletionActive = `-- name: ObjectLifecycleDeletionActive :one
+SELECT (EXISTS(SELECT 1 FROM object_deletions d WHERE d.bucket_id=$1::uuid AND d.lifecycle_scan_id=$2::uuid AND d.state IN ('prepared','dispatched'))
+ OR EXISTS(SELECT 1 FROM object_version_protection p WHERE p.bucket_id=$1::uuid AND p.state IN ('waiting','applying')))::boolean AS active
+`
+
+type ObjectLifecycleDeletionActiveParams struct {
+	BucketID pgtype.UUID
+	ScanID   pgtype.UUID
+}
+
+// A lifecycle scan pauses only for its own unsettled deletions and for a
+// version protection job in its bucket (ADR-20261025115958).
+func (q *Queries) ObjectLifecycleDeletionActive(ctx context.Context, db DBTX, arg ObjectLifecycleDeletionActiveParams) (bool, error) {
+	row := db.QueryRow(ctx, objectLifecycleDeletionActive, arg.BucketID, arg.ScanID)
+	var active bool
+	err := row.Scan(&active)
+	return active, err
 }
 
 const objectLifecycleMultipartAdmit = `-- name: ObjectLifecycleMultipartAdmit :execrows
@@ -72763,6 +72784,32 @@ func (q *Queries) QueueAutomaticRouteCheck(ctx context.Context, db DBTX, arg Que
 	return err
 }
 
+const queueBindingHasInFlight = `-- name: QueueBindingHasInFlight :one
+select exists (
+  select 1 from invocations i join queue_bindings b on b.app_id=i.app_id and b.account_id=i.account_id
+  where b.id=$1::uuid and b.app_id=$2::uuid
+    and ($3::text is null or i.deployment_scope=$3::text)
+    and i.source='queue' and i.state='dispatching' and i.lease_expires_at > now()
+    and (b.deployment_scope='' or i.deployment_scope=b.deployment_scope)
+    and (i.queue_binding_id=b.id or (b.deployment_scope='' and i.queue_binding_id is null and i.queue_name=b.queue_name))
+)::boolean as in_flight
+`
+
+type QueueBindingHasInFlightParams struct {
+	BindingID       pgtype.UUID
+	AppID           pgtype.UUID
+	DeploymentScope pgtype.Text
+}
+
+// Whether QueueStateForBinding would count any in-flight message, without
+// counting the backlog.
+func (q *Queries) QueueBindingHasInFlight(ctx context.Context, db DBTX, arg QueueBindingHasInFlightParams) (bool, error) {
+	row := db.QueryRow(ctx, queueBindingHasInFlight, arg.BindingID, arg.AppID, arg.DeploymentScope)
+	var in_flight bool
+	err := row.Scan(&in_flight)
+	return in_flight, err
+}
+
 const queueBindingHistoryByID = `-- name: QueueBindingHistoryByID :one
 select id, account_id, app_id, name, queue_name, mode, workload_class, enabled, max_concurrency, retry_policy, created_at, updated_at, retired_at, deployment_scope, environment_id, org_id from queue_bindings where id=$1
 and app_id=$2 and account_id=$3
@@ -73443,6 +73490,75 @@ func (q *Queries) QueueConsumerUpdateTrigger(ctx context.Context, db DBTX, arg Q
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const queueDepthForBinding = `-- name: QueueDepthForBinding :one
+with b as (
+  select id, account_id, queue_name, deployment_scope from queue_bindings
+  where id=$4::uuid and app_id=$1::uuid
+)
+select
+  (select count(*) from (
+     select 1 from invocations i, b
+     where i.app_id=$1::uuid and i.queue_binding_id=b.id and i.account_id=b.account_id
+       and i.source='queue' and i.state in ('pending','dispatching')
+       and ($2::text is null or i.deployment_scope=$2::text)
+       and (b.deployment_scope='' or i.deployment_scope=b.deployment_scope)
+     limit $3::integer) own)::bigint
+  + (select count(*) from (
+     select 1 from invocations i, b
+     where b.deployment_scope='' and i.app_id=$1::uuid and i.queue_binding_id is null
+       and i.queue_name=b.queue_name and i.account_id=b.account_id
+       and i.source='queue' and i.state in ('pending','dispatching')
+       and ($2::text is null or i.deployment_scope=$2::text)
+     limit $3::integer) legacy)::bigint as depth
+`
+
+type QueueDepthForBindingParams struct {
+	AppID           pgtype.UUID
+	DeploymentScope pgtype.Text
+	RowLimit        int32
+	BindingID       pgtype.UUID
+}
+
+// QueueStateForBinding's depth up to row_limit per branch: the binding's own
+// messages, then legacy unassigned work under its name. Each branch reads an
+// index range and stops at the limit; the caller clamps the sum.
+func (q *Queries) QueueDepthForBinding(ctx context.Context, db DBTX, arg QueueDepthForBindingParams) (int32, error) {
+	row := db.QueryRow(ctx, queueDepthForBinding,
+		arg.AppID,
+		arg.DeploymentScope,
+		arg.RowLimit,
+		arg.BindingID,
+	)
+	var depth int32
+	err := row.Scan(&depth)
+	return depth, err
+}
+
+const queueDepthInScope = `-- name: QueueDepthInScope :one
+select count(*)::bigint as depth from (
+  select 1 from invocations
+  where app_id=$1::uuid and deployment_scope=$2::text
+    and source='queue' and state in ('pending','dispatching')
+  limit $3::integer
+) bounded
+`
+
+type QueueDepthInScopeParams struct {
+	AppID           pgtype.UUID
+	DeploymentScope string
+	RowLimit        int32
+}
+
+// QueueStateInScope's depth, counted only up to row_limit: worker scaling
+// needs no more than the depth that saturates the pool (ADR-20261022105723
+// amendment 2026-10-24).
+func (q *Queries) QueueDepthInScope(ctx context.Context, db DBTX, arg QueueDepthInScopeParams) (int64, error) {
+	row := db.QueryRow(ctx, queueDepthInScope, arg.AppID, arg.DeploymentScope, arg.RowLimit)
+	var depth int64
+	err := row.Scan(&depth)
+	return depth, err
 }
 
 const queueExpiredApplicationStandardExceptions = `-- name: QueueExpiredApplicationStandardExceptions :one
@@ -75867,6 +75983,9 @@ SELECT (jsonb_build_object(
     'deployment_submission_receipts_deployment_id_fkey', (SELECT count(*) FROM deployment_submission_receipts WHERE deployment_id = $1::uuid),
     'project_worker_job_evidence_deployment_id_fkey', (SELECT count(*) FROM project_worker_job_evidence WHERE deployment_id = $1::uuid),
     'project_worker_release_pins_deployment_id_fkey', (SELECT count(*) FROM project_worker_release_pins WHERE deployment_id = $1::uuid),
+    -- Database-restoring rollbacks (ADR-20261023181931) record both releases.
+    'release_database_switches_from_deployment_id_fkey', (SELECT count(*) FROM release_database_switches WHERE from_deployment_id = $1::uuid),
+    'release_database_switches_target_deployment_id_fkey', (SELECT count(*) FROM release_database_switches WHERE target_deployment_id = $1::uuid),
     -- Preview command runtimes (financial previews) hold a deployment while preparing or active.
     'financial_preview_command_runtimes_deployment_id_fkey', (SELECT count(*) FROM financial_preview_command_runtimes WHERE deployment_id = $1::uuid AND phase <> 'retired')
 ))::jsonb AS borrowers
@@ -84278,7 +84397,7 @@ func (q *Queries) ReadServicePolicyActiveRelease(ctx context.Context, db DBTX, a
 }
 
 const readServicePolicyAppByID = `-- name: ReadServicePolicyAppByID :one
-SELECT id, account_id, slug, status, project_id, preview_of_slug,
+SELECT id, account_id, slug, workload_name, status, project_id, preview_of_slug,
        preview_pr_number, preview_pr_state, preview_expires_at, app_protocol, websocket_enabled,
        jsonb_strip_nulls(jsonb_build_object(
            'service_bindings', manifest->'service_bindings',
@@ -84295,6 +84414,7 @@ type ReadServicePolicyAppByIDRow struct {
 	ID               pgtype.UUID
 	AccountID        pgtype.UUID
 	Slug             string
+	WorkloadName     string
 	Status           string
 	ProjectID        pgtype.UUID
 	PreviewOfSlug    pgtype.Text
@@ -84314,6 +84434,7 @@ func (q *Queries) ReadServicePolicyAppByID(ctx context.Context, db DBTX, id pgty
 		&i.ID,
 		&i.AccountID,
 		&i.Slug,
+		&i.WorkloadName,
 		&i.Status,
 		&i.ProjectID,
 		&i.PreviewOfSlug,
@@ -84328,7 +84449,7 @@ func (q *Queries) ReadServicePolicyAppByID(ctx context.Context, db DBTX, id pgty
 }
 
 const readServicePolicyAppBySlug = `-- name: ReadServicePolicyAppBySlug :one
-SELECT id, account_id, slug, status, project_id, preview_of_slug,
+SELECT id, account_id, slug, workload_name, status, project_id, preview_of_slug,
        preview_pr_number, preview_pr_state, preview_expires_at, app_protocol, websocket_enabled,
        jsonb_strip_nulls(jsonb_build_object(
            'service_bindings', manifest->'service_bindings',
@@ -84345,6 +84466,7 @@ type ReadServicePolicyAppBySlugRow struct {
 	ID               pgtype.UUID
 	AccountID        pgtype.UUID
 	Slug             string
+	WorkloadName     string
 	Status           string
 	ProjectID        pgtype.UUID
 	PreviewOfSlug    pgtype.Text
@@ -84363,6 +84485,7 @@ func (q *Queries) ReadServicePolicyAppBySlug(ctx context.Context, db DBTX, slug 
 		&i.ID,
 		&i.AccountID,
 		&i.Slug,
+		&i.WorkloadName,
 		&i.Status,
 		&i.ProjectID,
 		&i.PreviewOfSlug,
@@ -84435,7 +84558,7 @@ func (q *Queries) ReadServicePolicyDeploymentWeights(ctx context.Context, db DBT
 }
 
 const readServicePolicyPreviewApp = `-- name: ReadServicePolicyPreviewApp :one
-SELECT id, account_id, slug, status, project_id, preview_of_slug,
+SELECT id, account_id, slug, workload_name, status, project_id, preview_of_slug,
        preview_pr_number, preview_pr_state, preview_expires_at, app_protocol, websocket_enabled,
        jsonb_strip_nulls(jsonb_build_object(
            'service_bindings', manifest->'service_bindings',
@@ -84446,7 +84569,8 @@ SELECT id, account_id, slug, status, project_id, preview_of_slug,
            'allowed_service_callers', manifest->'allowed_service_callers',
            'allowed_service_call_scopes', manifest->'allowed_service_call_scopes'))::jsonb AS manifest
 FROM apps WHERE account_id = $1::uuid AND project_id = $2::uuid
-  AND preview_pr_number = $3::integer AND workload_name = $4::text
+  AND preview_pr_number = $3::integer
+  AND translate(lower(workload_name), '_.', '--') = translate(lower($4::text), '_.', '--')
   AND preview_of_slug IS NOT NULL AND status <> 'deleted'
 `
 
@@ -84461,6 +84585,7 @@ type ReadServicePolicyPreviewAppRow struct {
 	ID               pgtype.UUID
 	AccountID        pgtype.UUID
 	Slug             string
+	WorkloadName     string
 	Status           string
 	ProjectID        pgtype.UUID
 	PreviewOfSlug    pgtype.Text
@@ -84484,6 +84609,7 @@ func (q *Queries) ReadServicePolicyPreviewApp(ctx context.Context, db DBTX, arg 
 		&i.ID,
 		&i.AccountID,
 		&i.Slug,
+		&i.WorkloadName,
 		&i.Status,
 		&i.ProjectID,
 		&i.PreviewOfSlug,
@@ -84570,7 +84696,7 @@ func (q *Queries) ReadServicePolicyReleaseCandidates(ctx context.Context, db DBT
 }
 
 const readServicePolicyTestApp = `-- name: ReadServicePolicyTestApp :one
-SELECT id, account_id, slug, status, project_id, preview_of_slug,
+SELECT id, account_id, slug, workload_name, status, project_id, preview_of_slug,
        preview_pr_number, preview_pr_state, preview_expires_at, app_protocol, websocket_enabled,
        jsonb_strip_nulls(jsonb_build_object(
            'service_bindings', manifest->'service_bindings',
@@ -84595,6 +84721,7 @@ type ReadServicePolicyTestAppRow struct {
 	ID               pgtype.UUID
 	AccountID        pgtype.UUID
 	Slug             string
+	WorkloadName     string
 	Status           string
 	ProjectID        pgtype.UUID
 	PreviewOfSlug    pgtype.Text
@@ -84613,6 +84740,7 @@ func (q *Queries) ReadServicePolicyTestApp(ctx context.Context, db DBTX, arg Rea
 		&i.ID,
 		&i.AccountID,
 		&i.Slug,
+		&i.WorkloadName,
 		&i.Status,
 		&i.ProjectID,
 		&i.PreviewOfSlug,
@@ -89029,6 +89157,17 @@ func (q *Queries) ReleaseConfigurationCandidateOwner(ctx context.Context, db DBT
 	var i ReleaseConfigurationCandidateOwnerRow
 	err := row.Scan(&i.AccountID, &i.ProjectID)
 	return i, err
+}
+
+const releaseEdgeRuleAccountMutationLock = `-- name: ReleaseEdgeRuleAccountMutationLock :one
+SELECT pg_advisory_unlock(hashtextextended('edge-rule-account:' || $1::text, 0))::boolean AS unlocked
+`
+
+func (q *Queries) ReleaseEdgeRuleAccountMutationLock(ctx context.Context, db DBTX, accountID string) (bool, error) {
+	row := db.QueryRow(ctx, releaseEdgeRuleAccountMutationLock, accountID)
+	var unlocked bool
+	err := row.Scan(&unlocked)
+	return unlocked, err
 }
 
 const releaseEdgeRuleMutationLock = `-- name: ReleaseEdgeRuleMutationLock :one
@@ -97493,6 +97632,32 @@ func (q *Queries) StageProjectReleaseConfiguration(ctx context.Context, db DBTX,
 	return err
 }
 
+const staleEdgeListenerNodes = `-- name: StaleEdgeListenerNodes :many
+SELECT name FROM compute_nodes
+WHERE active = true AND edge_listener_heartbeat_at < now() - $1::interval
+ORDER BY name
+`
+
+func (q *Queries) StaleEdgeListenerNodes(ctx context.Context, db DBTX, staleAfter pgtype.Interval) ([]string, error) {
+	rows, err := db.Query(ctx, staleEdgeListenerNodes, staleAfter)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []string{}
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return nil, err
+		}
+		items = append(items, name)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const stampCustomerOperationExecutionAttempt = `-- name: StampCustomerOperationExecutionAttempt :execrows
 WITH stamped AS (
   UPDATE invocations SET instance_id=$1::uuid
@@ -98801,6 +98966,15 @@ func (q *Queries) TouchCustomerOperationWorkflowStep(ctx context.Context, db DBT
 	return err
 }
 
+const touchEdgeListenerHeartbeat = `-- name: TouchEdgeListenerHeartbeat :exec
+UPDATE compute_nodes SET edge_listener_heartbeat_at = now() WHERE name = $1::text
+`
+
+func (q *Queries) TouchEdgeListenerHeartbeat(ctx context.Context, db DBTX, name string) error {
+	_, err := db.Exec(ctx, touchEdgeListenerHeartbeat, name)
+	return err
+}
+
 const touchEnvironmentGitOpsIntent = `-- name: TouchEnvironmentGitOpsIntent :exec
 UPDATE environment_git_sources SET intent_version = intent_version + 1, updated_at = now()
 WHERE id = $1::uuid
@@ -99320,6 +99494,17 @@ func (q *Queries) TriggerRecordIDByItemIdentifier(ctx context.Context, db DBTX, 
 	var id pgtype.UUID
 	err := row.Scan(&id)
 	return id, err
+}
+
+const tryEdgeRuleAccountMutationLock = `-- name: TryEdgeRuleAccountMutationLock :one
+SELECT pg_try_advisory_lock(hashtextextended('edge-rule-account:' || $1::text, 0))::boolean AS locked
+`
+
+func (q *Queries) TryEdgeRuleAccountMutationLock(ctx context.Context, db DBTX, accountID string) (bool, error) {
+	row := db.QueryRow(ctx, tryEdgeRuleAccountMutationLock, accountID)
+	var locked bool
+	err := row.Scan(&locked)
+	return locked, err
 }
 
 const tryEdgeRuleMutationLock = `-- name: TryEdgeRuleMutationLock :one

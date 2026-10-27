@@ -2659,6 +2659,9 @@ func (s *server) planRollback(r *http.Request, acct state.Account, app state.App
 			return rollbackPlan{}, api.ErrNoRollbackTargetWithCandidates(app.Slug, s.zeroTrafficRollbackCandidates(ctx, app.ID))
 		}
 	}
+	if problem := s.rollbackTargetApprovalProblem(ctx, app, target); problem != nil {
+		return rollbackPlan{}, problem
+	}
 	if policies, ok := s.store.(state.BindingReleasePolicyStore); ok {
 		policy, err := policies.GetBindingReleasePolicy(ctx, acct.ID, app.ID, target.Scope)
 		if err != nil {
@@ -2962,6 +2965,20 @@ func (s *server) enqueueExplicitAppWake(ctx context.Context, acct state.Account,
 // withdrawing old VMs and never captures their old process environment. The
 // fresh variant uses a durable notification so an accepted secret rotation
 // cannot be lost across a LISTEN interruption.
+// appRestartRefusal explains why a restart was refused. A parked app has
+// nothing running to restart, and its next wake already boots with the
+// current secrets and settings; `secrets set` pointed at restart --fresh and
+// got only "only an active app can be restarted" (Hunt 14 H14-83).
+func appRestartRefusal(app state.App) *api.Problem {
+	if app.Status == state.AppEvictedCold {
+		return api.NewProblem(http.StatusConflict, api.CodeConflict, "App is parked",
+			fmt.Sprintf("%s is parked, so nothing is running to restart; its next request or wake boots it with the current secrets and settings", app.Slug)).
+			WithHint("No restart is needed. To start it now, run gregale wake " + app.Slug + ".")
+	}
+	return api.NewProblem(http.StatusConflict, api.CodeConflict,
+		"App is not active", "only an active app can be restarted")
+}
+
 func (s *server) restartApp(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	fresh := false
 	if raw := r.URL.Query().Get("fresh"); raw != "" {
@@ -2977,8 +2994,7 @@ func (s *server) restartApp(w http.ResponseWriter, r *http.Request, acct state.A
 		return
 	}
 	if app.Status != state.AppActive {
-		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeConflict,
-			"App is not active", "only an active app can be restarted"))
+		api.WriteProblem(w, appRestartRefusal(app))
 		return
 	}
 	claimed, err := claimAppRestart(r.Context(), s.store, app.ID)
@@ -5118,6 +5134,10 @@ func (s *server) changePlan(w http.ResponseWriter, r *http.Request, acct state.A
 	// Free while Polar continues charging the previous paid subscription. The
 	// provider webhook is the only source of truth for the eventual local plan.
 	if acct.Plan != plan {
+		if problem := s.planDowngradeProblem(r.Context(), acct, plan); problem != nil {
+			api.WriteProblem(w, problem)
+			return
+		}
 		billingAcct, identityErr := s.accountForActiveBillingProvider(r.Context(), acct)
 		if identityErr != nil {
 			api.WriteProblem(w, api.ErrCapacity("billing identity temporarily unavailable"))
@@ -5843,7 +5863,7 @@ func (s *server) handleBillingEventWithOptions(ctx context.Context, ev billing.E
 			}
 		}
 	case billing.EventPaymentSucceeded:
-		return s.handleSuccessfulPayment(ctx, ev, acct, asyncBillingMail, providerName(s.billingProvider), s.accountRestoredRequested())
+		return s.handleSuccessfulPayment(ctx, ev, acct, asyncBillingMail, providerName(s.billingProvider), s.accountRestoredRequested() && !orgBillingSubject(acct))
 	case billing.EventSubscriptionUpdated:
 		if ev.SubscriptionID != "" {
 			if err := s.stampActiveBillingSubscription(ctx, acct, ev.SubscriptionID); err != nil {

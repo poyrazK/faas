@@ -110,7 +110,7 @@ def sync_detailed(
 ) -> Response[AppForkExecResponse | Problem]:
     """Run a command inside a running production fork.
 
-     Queues one command to run inside the running fork (ADR-732), in the
+     Queues one command to run inside the running fork, in the
     app's working directory and user, with its manifest environment and
     no secrets. The fork cannot reach the network. Poll the returned
     command for its exit code and the tail of its output. A command never
@@ -155,7 +155,7 @@ def sync(
 ) -> AppForkExecResponse | Problem | None:
     """Run a command inside a running production fork.
 
-     Queues one command to run inside the running fork (ADR-732), in the
+     Queues one command to run inside the running fork, in the
     app's working directory and user, with its manifest environment and
     no secrets. The fork cannot reach the network. Poll the returned
     command for its exit code and the tail of its output. A command never
@@ -195,7 +195,7 @@ async def asyncio_detailed(
 ) -> Response[AppForkExecResponse | Problem]:
     """Run a command inside a running production fork.
 
-     Queues one command to run inside the running fork (ADR-732), in the
+     Queues one command to run inside the running fork, in the
     app's working directory and user, with its manifest environment and
     no secrets. The fork cannot reach the network. Poll the returned
     command for its exit code and the tail of its output. A command never
@@ -238,7 +238,7 @@ async def asyncio(
 ) -> AppForkExecResponse | Problem | None:
     """Run a command inside a running production fork.
 
-     Queues one command to run inside the running fork (ADR-732), in the
+     Queues one command to run inside the running fork, in the
     app's working directory and user, with its manifest environment and
     no secrets. The fork cannot reach the network. Poll the returned
     command for its exit code and the tail of its output. A command never

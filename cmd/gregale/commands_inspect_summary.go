@@ -57,6 +57,10 @@ type inspectRuntimeSummary struct {
 	Source           string                  `json:"source,omitempty"`
 	Warnings         []inspectRuntimeWarning `json:"warnings,omitempty"`
 	Health           *inspectHealthSummary   `json:"health,omitempty"`
+	// fromImage marks a release deployed from a prebuilt OCI image, whose
+	// ENTRYPOINT/CMD is the start command and which has no source to detect
+	// a framework from.
+	fromImage bool
 }
 
 type inspectRuntimeWarning struct {
@@ -324,6 +328,7 @@ func inspectRuntime(app api.AppResponse, dep *api.DeploymentResponse, unavailabl
 	if dep == nil {
 		return out
 	}
+	out.fromImage = dep.Kind == "image"
 	if dep.BuildPlan != nil {
 		if dep.BuildPlan.Framework != "" {
 			out.Framework = dep.BuildPlan.Framework
@@ -604,7 +609,10 @@ func inspectRecommendations(summary inspectSummary) []inspectRecommendation {
 			"A newer zero-traffic deployment candidate failed; the serving release remains active.",
 			"Run `gregale inspect "+summary.App.Slug+" --errors` for candidate "+candidate.DeploymentID+" failure details.")
 	}
-	if summary.App.Type == "app" && (summary.Runtime.Framework == "" || summary.Runtime.Framework == "unknown") {
+	// An image deploy runs the image's own ENTRYPOINT/CMD: there is no source
+	// to detect a framework from and no Dockerfile to add, so a healthy nginx
+	// image led with "Review recommended" and Dockerfile advice (Hunt 14 H14-97).
+	if summary.App.Type == "app" && !summary.Runtime.fromImage && (summary.Runtime.Framework == "" || summary.Runtime.Framework == "unknown") {
 		add("framework_unknown", "warning", "Gregale could not identify the application framework.", "Set an explicit start command or Dockerfile.")
 	}
 	for _, warning := range summary.Runtime.Warnings {

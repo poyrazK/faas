@@ -43,7 +43,7 @@ T = TypeVar("T", bound="ScopedAppSecretResponse")
 @_attrs_define
 class ScopedAppSecretResponse:
     """Per-row shape for the nested `secrets_by_scope` response
-    (ADR-092 PR-B, mirror of ADR-090 D3's env_by_scope).
+    (the env_by_scope).
     Same posture as AppSecretResponse but with an explicit
     `scope` field that carries the scope name on the wire
     so a CLI / dashboard can render "scope: staging" without
@@ -62,11 +62,10 @@ class ScopedAppSecretResponse:
     """Opaque monotonic version of the runtime value."""
     delivery_status: ScopedAppSecretResponseDeliveryStatus
     kid: str | Unset = UNSET
-    """age-1... recipient string of the host identity that sealed this row (ADR-089). Empty for rows sealed before
-    migration 00166. Mirrors the `kid` field on the parent `AppSecretResponse` — see that schema for the cross-
-    reference."""
+    """age-1.. recipient string of the host identity that sealed this row. Empty for rows sealed before migration
+    00166. Mirrors the `kid` field on the parent `AppSecretResponse` — see that schema for the cross-reference."""
     value_hash: str | Unset = UNSET
-    """16-hex HMAC-SHA256(plaintext) keyed by the per-host host.hmac.key (ADR-117 PR-C). Empty for pre-PR-C rows."""
+    """16-hex HMAC-SHA256(plaintext) keyed by the per-host host.hmac.key. Empty for older rows."""
     delivered_version: int | Unset = UNSET
     """Newest version confirmed in a successfully started runtime."""
     last_delivery_attempt_at: datetime.datetime | Unset = UNSET

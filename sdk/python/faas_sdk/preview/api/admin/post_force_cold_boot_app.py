@@ -108,20 +108,20 @@ def sync_detailed(
     reason: str | Unset = UNSET,
     idempotency_key: str,
 ) -> Response[OperatorIntentAcceptedResponse | Problem]:
-    r"""Enqueue a force-cold-boot intent for an app's latest deployment (admin-only).
+    """Enqueue a force-cold-boot intent for an app's latest deployment (admin-only).
 
      Operator-side recovery primitive for the case where the
     live instance is fine but the snapshot backing the warm
     tier is suspected to be the carrier of a customer-reported
-    wedge. Per ADR-005 (\"snapshot of a wedged VM is a wedged
-    VM\"), the recovery action is `MarkSnapshotStale` on the
+    wedge. Because a snapshot of a wedged VM is a wedged
+    VM, the recovery action is `MarkSnapshotStale` on the
     deployment's latest warm + init snapshots — NOT a state-
     machine transition. The instance row is NOT mutated;
     the next customer Wake takes the cold-boot path through
     `engine.go::usableSnapshotForWake` returning `haveSnap=false`.
 
-    PR #1099 P2 redesign: apid writes a row to `operator_intents`
-    and emits `pg_notify('operator_intent', …)`; schedd is the
+    The API writes a row to `operator_intents`
+    and emits `pg_notify('operator_intent', …)`; the scheduler is the
     sole consumer and dispatches via
     `engine.ForceColdBootNextWake`. The handler returns 202
     Accepted with an intent_id; the operator polls
@@ -131,7 +131,7 @@ def sync_detailed(
     Requires `?confirm=true` as a tripwire. Optional
     `?reason=<slug>` defaults to `operator_force_cold_boot`.
 
-    ADR-1524: requires an MFA-verified operator session with step-up in
+    Requires an MFA-verified operator session with step-up in
     the last five minutes, admin scope, the operator allowlist and same
     origin. Bearer keys do not satisfy step-up. Requires one
     Idempotency-Key (1-255 visible ASCII characters), an empty body,
@@ -183,20 +183,20 @@ def sync(
     reason: str | Unset = UNSET,
     idempotency_key: str,
 ) -> OperatorIntentAcceptedResponse | Problem | None:
-    r"""Enqueue a force-cold-boot intent for an app's latest deployment (admin-only).
+    """Enqueue a force-cold-boot intent for an app's latest deployment (admin-only).
 
      Operator-side recovery primitive for the case where the
     live instance is fine but the snapshot backing the warm
     tier is suspected to be the carrier of a customer-reported
-    wedge. Per ADR-005 (\"snapshot of a wedged VM is a wedged
-    VM\"), the recovery action is `MarkSnapshotStale` on the
+    wedge. Because a snapshot of a wedged VM is a wedged
+    VM, the recovery action is `MarkSnapshotStale` on the
     deployment's latest warm + init snapshots — NOT a state-
     machine transition. The instance row is NOT mutated;
     the next customer Wake takes the cold-boot path through
     `engine.go::usableSnapshotForWake` returning `haveSnap=false`.
 
-    PR #1099 P2 redesign: apid writes a row to `operator_intents`
-    and emits `pg_notify('operator_intent', …)`; schedd is the
+    The API writes a row to `operator_intents`
+    and emits `pg_notify('operator_intent', …)`; the scheduler is the
     sole consumer and dispatches via
     `engine.ForceColdBootNextWake`. The handler returns 202
     Accepted with an intent_id; the operator polls
@@ -206,7 +206,7 @@ def sync(
     Requires `?confirm=true` as a tripwire. Optional
     `?reason=<slug>` defaults to `operator_force_cold_boot`.
 
-    ADR-1524: requires an MFA-verified operator session with step-up in
+    Requires an MFA-verified operator session with step-up in
     the last five minutes, admin scope, the operator allowlist and same
     origin. Bearer keys do not satisfy step-up. Requires one
     Idempotency-Key (1-255 visible ASCII characters), an empty body,
@@ -253,20 +253,20 @@ async def asyncio_detailed(
     reason: str | Unset = UNSET,
     idempotency_key: str,
 ) -> Response[OperatorIntentAcceptedResponse | Problem]:
-    r"""Enqueue a force-cold-boot intent for an app's latest deployment (admin-only).
+    """Enqueue a force-cold-boot intent for an app's latest deployment (admin-only).
 
      Operator-side recovery primitive for the case where the
     live instance is fine but the snapshot backing the warm
     tier is suspected to be the carrier of a customer-reported
-    wedge. Per ADR-005 (\"snapshot of a wedged VM is a wedged
-    VM\"), the recovery action is `MarkSnapshotStale` on the
+    wedge. Because a snapshot of a wedged VM is a wedged
+    VM, the recovery action is `MarkSnapshotStale` on the
     deployment's latest warm + init snapshots — NOT a state-
     machine transition. The instance row is NOT mutated;
     the next customer Wake takes the cold-boot path through
     `engine.go::usableSnapshotForWake` returning `haveSnap=false`.
 
-    PR #1099 P2 redesign: apid writes a row to `operator_intents`
-    and emits `pg_notify('operator_intent', …)`; schedd is the
+    The API writes a row to `operator_intents`
+    and emits `pg_notify('operator_intent', …)`; the scheduler is the
     sole consumer and dispatches via
     `engine.ForceColdBootNextWake`. The handler returns 202
     Accepted with an intent_id; the operator polls
@@ -276,7 +276,7 @@ async def asyncio_detailed(
     Requires `?confirm=true` as a tripwire. Optional
     `?reason=<slug>` defaults to `operator_force_cold_boot`.
 
-    ADR-1524: requires an MFA-verified operator session with step-up in
+    Requires an MFA-verified operator session with step-up in
     the last five minutes, admin scope, the operator allowlist and same
     origin. Bearer keys do not satisfy step-up. Requires one
     Idempotency-Key (1-255 visible ASCII characters), an empty body,
@@ -326,20 +326,20 @@ async def asyncio(
     reason: str | Unset = UNSET,
     idempotency_key: str,
 ) -> OperatorIntentAcceptedResponse | Problem | None:
-    r"""Enqueue a force-cold-boot intent for an app's latest deployment (admin-only).
+    """Enqueue a force-cold-boot intent for an app's latest deployment (admin-only).
 
      Operator-side recovery primitive for the case where the
     live instance is fine but the snapshot backing the warm
     tier is suspected to be the carrier of a customer-reported
-    wedge. Per ADR-005 (\"snapshot of a wedged VM is a wedged
-    VM\"), the recovery action is `MarkSnapshotStale` on the
+    wedge. Because a snapshot of a wedged VM is a wedged
+    VM, the recovery action is `MarkSnapshotStale` on the
     deployment's latest warm + init snapshots — NOT a state-
     machine transition. The instance row is NOT mutated;
     the next customer Wake takes the cold-boot path through
     `engine.go::usableSnapshotForWake` returning `haveSnap=false`.
 
-    PR #1099 P2 redesign: apid writes a row to `operator_intents`
-    and emits `pg_notify('operator_intent', …)`; schedd is the
+    The API writes a row to `operator_intents`
+    and emits `pg_notify('operator_intent', …)`; the scheduler is the
     sole consumer and dispatches via
     `engine.ForceColdBootNextWake`. The handler returns 202
     Accepted with an intent_id; the operator polls
@@ -349,7 +349,7 @@ async def asyncio(
     Requires `?confirm=true` as a tripwire. Optional
     `?reason=<slug>` defaults to `operator_force_cold_boot`.
 
-    ADR-1524: requires an MFA-verified operator session with step-up in
+    Requires an MFA-verified operator session with step-up in
     the last five minutes, admin scope, the operator allowlist and same
     origin. Bearer keys do not satisfy step-up. Requires one
     Idempotency-Key (1-255 visible ASCII characters), an empty body,

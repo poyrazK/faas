@@ -281,6 +281,39 @@ func TestNodeReservationAllowanceMemory(t *testing.T) {
 	checkReservationAllowance(t, state.NewMemStore())
 }
 
+// checkNodeVCPUUsage pins the fleet-wide vCPU view placement reads: every live
+// instance's captured vCPUs per node, whoever placed it; resident-free rows
+// count nothing.
+func checkNodeVCPUUsage(t *testing.T, s state.Store) {
+	t.Helper()
+	batcher, ok := s.(state.ComputeNodeVCPUUsageBatcher)
+	if !ok {
+		t.Fatalf("%T does not report fleet-wide vCPU usage", s)
+	}
+	app, dep := completionApplication(t, s)
+	a := completionNode(t, s, state.NodeLifecycleActive)
+	b := completionNode(t, s, state.NodeLifecycleActive)
+	for _, row := range []struct {
+		node  state.ComputeNode
+		state state.State
+	}{{a, state.StateWaking}, {a, state.StateRunning}, {b, state.StateColdBooting}, {b, state.StateParked}} {
+		if _, err := s.CreateInstanceWithMode(t.Context(), app, dep, string(row.state), 128, row.node.ID, uuid.NewString(), string(state.InstanceModeNormal)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	used, err := batcher.ComputeNodeUsedVCPUByNode(t.Context(), []string{a.ID, b.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if used[b.ID] <= 0 || used[a.ID] != 2*used[b.ID] {
+		t.Fatalf("vCPU usage = %v, want node a at twice node b's single live instance", used)
+	}
+}
+
+func TestNodeVCPUUsageMemory(t *testing.T) {
+	checkNodeVCPUUsage(t, state.NewMemStore())
+}
+
 func TestNodeAdmissionMemory(t *testing.T) {
 	runNodeAdmissionTests(t, func(*testing.T) nodeAdmissionTestStore { return state.NewMemStore() })
 }

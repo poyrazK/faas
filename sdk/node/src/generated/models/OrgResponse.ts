@@ -4,7 +4,7 @@
 /* eslint-disable */
 /**
  * Canonical org wire shape. RFC3339 timestamps; zero-time
- * serialises as empty string. Mirrors `pkg/api.OrgResponse`.
+ * serialises as empty string.
  *
  */
 export type OrgResponse = {

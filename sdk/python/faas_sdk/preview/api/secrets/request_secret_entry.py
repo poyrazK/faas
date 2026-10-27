@@ -99,8 +99,8 @@ def sync_detailed(
 
     Args:
         slug (str):
-        body (SecretEntryRequest): A secret the account owner is asked to enter on a one-time page
-            (ADR-20261026174727).
+        body (SecretEntryRequest): A secret the account owner is asked to enter on a one-time
+            page.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -132,8 +132,8 @@ def sync(
 
     Args:
         slug (str):
-        body (SecretEntryRequest): A secret the account owner is asked to enter on a one-time page
-            (ADR-20261026174727).
+        body (SecretEntryRequest): A secret the account owner is asked to enter on a one-time
+            page.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -160,8 +160,8 @@ async def asyncio_detailed(
 
     Args:
         slug (str):
-        body (SecretEntryRequest): A secret the account owner is asked to enter on a one-time page
-            (ADR-20261026174727).
+        body (SecretEntryRequest): A secret the account owner is asked to enter on a one-time
+            page.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -191,8 +191,8 @@ async def asyncio(
 
     Args:
         slug (str):
-        body (SecretEntryRequest): A secret the account owner is asked to enter on a one-time page
-            (ADR-20261026174727).
+        body (SecretEntryRequest): A secret the account owner is asked to enter on a one-time
+            page.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

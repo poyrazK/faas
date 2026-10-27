@@ -71,25 +71,24 @@ class AlertRuleResponse:
     """Immutable subscription selector. Required only for event consumer metrics; webhook action and windows up to
     24h are required."""
     edge_rule_id: UUID | Unset = UNSET
-    """ADR-1192. Immutable edge rule selector for edge_rule_hits, edge_rule_log_hits and edge_rule_activity; absent
-    means every rule of the app."""
+    """Immutable edge rule selector for edge_rule_hits, edge_rule_log_hits and edge_rule_activity; absent means
+    every rule of the app."""
     post_deploy_rollback_window_seconds: int | Unset = UNSET
     """Configured completed-release rollback eligibility window in seconds; 0 is disabled. Acceptance requires
     deployment-specific error_rate_pct evidence, a gt or gte comparison, and recorded predecessor lineage."""
     failure_source: AlertRuleResponseFailureSource | Unset = UNSET
     """Source dimension for failed_invocations; omit when metric is not failed_invocations (xor_chk)."""
     custom_metric_name: str | Unset = UNSET
-    """The pushed custom metric a custom_metric rule watches (ADR-745). Present only when metric is custom_metric."""
+    """The pushed custom metric a custom_metric rule watches. Present only when metric is custom_metric."""
     log_query: str | Unset = UNSET
-    """The canonical log search filters a log_search_matches rule counts (ADR-20261018083536). Present only when
-    metric is log_search_matches."""
+    """The canonical log search filters a log_search_matches rule counts. Present only when metric is
+    log_search_matches."""
     slo_id: UUID | Unset = UNSET
-    """The customer SLO an slo_budget_burn or slo_budget_remaining_pct rule watches (ADR-747); absent for other
-    metrics."""
+    """The customer SLO an slo_budget_burn or slo_budget_remaining_pct rule watches; absent for other metrics."""
     synthetic_check_id: UUID | Unset = UNSET
-    """The synthetic check a synthetic_check_* rule watches (ADR-748); absent for other metrics."""
+    """The synthetic check a synthetic_check_* rule watches; absent for other metrics."""
     channel_ids: list[UUID] | Unset = UNSET
-    """Notification channels (ADR-749) the rule delivers fires and resolves to."""
+    """Notification channels the rule delivers fires and resolves to."""
     last_fired_at: datetime.datetime | Unset = UNSET
     last_evaluated_at: datetime.datetime | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)

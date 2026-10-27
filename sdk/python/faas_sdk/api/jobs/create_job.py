@@ -97,7 +97,7 @@ def sync_detailed(
      Plan-tier gate (Free → 402 jobs_not_allowed) precedes
     per-plan cap clamping (RAM, task_timeout, parallelism,
     retry_max). The per-account JobMaxPerAccount quota is
-    enforced atomically (PR-A → PR-B style follow-up).
+    enforced atomically.
 
     Args:
         idempotency_key (str | Unset):
@@ -135,7 +135,7 @@ def sync(
      Plan-tier gate (Free → 402 jobs_not_allowed) precedes
     per-plan cap clamping (RAM, task_timeout, parallelism,
     retry_max). The per-account JobMaxPerAccount quota is
-    enforced atomically (PR-A → PR-B style follow-up).
+    enforced atomically.
 
     Args:
         idempotency_key (str | Unset):
@@ -168,7 +168,7 @@ async def asyncio_detailed(
      Plan-tier gate (Free → 402 jobs_not_allowed) precedes
     per-plan cap clamping (RAM, task_timeout, parallelism,
     retry_max). The per-account JobMaxPerAccount quota is
-    enforced atomically (PR-A → PR-B style follow-up).
+    enforced atomically.
 
     Args:
         idempotency_key (str | Unset):
@@ -204,7 +204,7 @@ async def asyncio(
      Plan-tier gate (Free → 402 jobs_not_allowed) precedes
     per-plan cap clamping (RAM, task_timeout, parallelism,
     retry_max). The per-account JobMaxPerAccount quota is
-    enforced atomically (PR-A → PR-B style follow-up).
+    enforced atomically.
 
     Args:
         idempotency_key (str | Unset):

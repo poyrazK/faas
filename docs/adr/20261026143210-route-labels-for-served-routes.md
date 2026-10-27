@@ -69,3 +69,31 @@ traffic promotion consults them.
   or gregale.yaml keeps them labelled.
 - Billing route labels for attributed consumer and tenant traffic are
   unchanged: that traffic carries credentials.
+
+## Amendment 1 (2026-10-27) · route evidence survives catch-all apps and busy siblings
+
+Two gaps from the consequences above stayed open after the first change.
+
+**A catch-all app could still fill its labels.** An app that answers every
+path with 200 establishes every probed path, so scanners filled its 50 labels
+and every real route after them stayed `__route_other__` until the gateway
+restarted. A full set now gives a new route the slot of its least recently
+seen label, but only once that label has gone `RouteLabelReuseAfterIdle`
+(1 h, pkg/api/limits.go) without a request on that gateway. A declared route
+is never replaced, and a label in use is never displaced. The replaced
+label's per-route series are deleted with it, so live series stay within the
+app's cap and the gateway's series budget (ADR-20261024154324); churn is at
+most one replacement per label per idle window. This replaces "labels stay
+non-evicting" above and ADR-093 D2's lifetime-of-the-daemon rule.
+
+**One busy app could starve its siblings' telemetry.** apid admits request
+telemetry rows against one token bucket per account
+(`DebugTelemetryRequestsPerMinute`). A busy app could take every token, so
+its sibling apps' rows were refused and their route monitor, canary guard and
+insights went blind. The bucket now also tracks each app's rows per minute.
+While the bucket is below `DebugTelemetryFairSharePressure` (half) of its
+capacity, an app that has already used its fair share of the minute
+(capacity divided by the apps active this minute or the last) yields; apps
+below their share keep the remaining tokens. The account total is unchanged,
+and an account with one active app is limited only by its bucket. A refused
+row is `RATE_LIMITED` as before.

@@ -3,7 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * POST /v1/orgs/{slug}/keys body. Mirrors `CreateKeyRequest` (PR 6 keeps them in lockstep) — label + optional scopes. Empty `scopes` defaults to `["admin"]` so existing callers preserve the legacy full-access behavior. See IAM-1, ADR-034 rev2.
+ * POST /v1/orgs/{slug}/keys body. Mirrors `CreateKeyRequest` (keeps them in lockstep) — label + optional scopes. Empty `scopes` defaults to `["admin"]` so existing callers preserve the legacy full-access behavior. rev2.
  */
 export type CreateOrgAPIKeyRequest = {
   label?: string;

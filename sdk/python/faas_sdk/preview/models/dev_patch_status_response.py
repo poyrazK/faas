@@ -15,7 +15,7 @@ T = TypeVar("T", bound="DevPatchStatusResponse")
 
 @_attrs_define
 class DevPatchStatusResponse:
-    """Delivery state of one developer live patch (ADR-740)."""
+    """Delivery state of one developer live patch."""
 
     generation: int
     state: DevPatchStatusResponseState

@@ -19,8 +19,8 @@ T = TypeVar("T", bound="CustomDomainResponse")
 @_attrs_define
 class CustomDomainResponse:
     """A custom domain binding: domain string, target app, optional project environment, verification status, and TLS
-    provisioning state. Issue #961 / Mega-A PR-3 adds `default`, `cert_not_after`, and `cert_sans` for the `gregale
-    domains set-default | verify | show` surface.
+    provisioning state. adds `default`, `cert_not_after`, and `cert_sans` for the `gregale domains set-default | verify
+    | show` surface.
 
     """
 
@@ -33,8 +33,7 @@ class CustomDomainResponse:
     verified_at: datetime.datetime | None | Unset = UNSET
     txt_record: None | str | Unset = UNSET
     default: bool | Unset = UNSET
-    """True when this domain is the app's default (issue #961 / Mega-A PR-3). Set via `gregale domains set-
-    default`."""
+    """True when this domain is the app's default. Set via `gregale domains set-default`."""
     cert_not_after: datetime.datetime | None | Unset = UNSET
     """Issued cert NotAfter (RFC3339 UTC). Populated on verified domains; the `gregale domains show` line below the
     cert expiry renders against this field."""
@@ -42,9 +41,9 @@ class CustomDomainResponse:
     """Cert subject alt names (DNSNames). Useful for the `gregale domains show` listing — if the customer's CNAME
     points at a CDN, the SANs reveal which CDN."""
     cert_status: None | str | Unset = UNSET
-    """Durable TLS lifecycle for the legacy custom domain (pending, issued, renewing, failed, or dns_drifted; issue
-    #1397 / F3). The show endpoint may temporarily return a live `dial_failed:<reason>` value when the probe cannot
-    reach the edge."""
+    """Durable TLS lifecycle for the legacy custom domain (pending, issued, renewing, failed, or dns_drifted). The
+    show endpoint may temporarily return a live `dial_failed:<reason>` value when the probe cannot reach the edge.
+   """
     cert_expires_at: datetime.datetime | None | Unset = UNSET
     """Durable certificate expiry timestamp recorded by the cert observer."""
     cert_last_error: None | str | Unset = UNSET
@@ -52,8 +51,8 @@ class CustomDomainResponse:
     dns_last_checked_at: datetime.datetime | None | Unset = UNSET
     """Timestamp of the most recent DNS verification/doctor probe."""
     dns_records: list[DNSRecordInstruction] | Unset = UNSET
-    """DNS records to publish (ADR-520): the TXT ownership proof and the routing CNAME, plus A/AAAA alternatives
-    for a zone apex when the platform publishes edge addresses."""
+    """DNS records to publish: the TXT ownership proof and the routing CNAME, plus A/AAAA alternatives for a zone
+    apex when the platform publishes edge addresses."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

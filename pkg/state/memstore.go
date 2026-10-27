@@ -1344,6 +1344,9 @@ type MemStore struct {
 	// CreateComputeNode to exercise the single-box path. Production
 	// (PgStore) gets the same row from migrations/00024_compute_nodes.
 	computeNodes map[string]ComputeNode
+	// edgeListenerHeartbeats mirrors compute_nodes.edge_listener_heartbeat_at,
+	// keyed by node name; nil until a gateway first reports.
+	edgeListenerHeartbeats map[string]time.Time
 	// computeNodeKeys is the in-memory mirror of compute_node_keys
 	// (migration 00076, ADR-053). Keyed by (nodeID, keyID) tuple
 	// joined by a NUL so the composite key stays string-typed for
@@ -5255,7 +5258,7 @@ func (m *MemStore) PreviewAppByProjectWorkload(_ context.Context, accountID, pro
 	defer m.mu.Unlock()
 	for _, app := range m.apps {
 		if app.AccountID == accountID && app.ProjectID == projectID &&
-			app.PreviewPrNumber == previewPRNumber && app.WorkloadName == workloadName &&
+			app.PreviewPrNumber == previewPRNumber && api.SameServiceName(app.WorkloadName, workloadName) &&
 			app.PreviewOfSlug != "" && app.Status != AppDeleted {
 			return app, nil
 		}
@@ -5263,7 +5266,7 @@ func (m *MemStore) PreviewAppByProjectWorkload(_ context.Context, accountID, pro
 	return App{}, ErrNotFound
 }
 
-// ProjectAppByWorkload mirrors PgStore: a case-folded production alias in
+// ProjectAppByWorkload mirrors PgStore: a service-name production alias in
 // the owner's project, ErrConflict when two apps share it.
 func (m *MemStore) ProjectAppByWorkload(_ context.Context, accountID, projectID, name string) (App, error) {
 	m.mu.Lock()
@@ -5271,7 +5274,7 @@ func (m *MemStore) ProjectAppByWorkload(_ context.Context, accountID, projectID,
 	var found App
 	for _, app := range m.apps {
 		if app.AccountID != accountID || app.ProjectID == "" || app.ProjectID != projectID ||
-			app.PreviewOfSlug != "" || app.Status == AppDeleted || !strings.EqualFold(app.WorkloadName, name) {
+			app.PreviewOfSlug != "" || app.Status == AppDeleted || !api.SameServiceName(app.WorkloadName, name) {
 			continue
 		}
 		if found.ID != "" {
@@ -6251,6 +6254,19 @@ func (m *MemStore) ListOwnedCronsByNodeID(_ context.Context, nodeID string) ([]C
 	return out, nil
 }
 
+// OwnedAppRAMByNode mirrors PgStore.OwnedAppRAMByNode.
+func (m *MemStore) OwnedAppRAMByNode(_ context.Context) (map[string]int64, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	owned := make(map[string]int64)
+	for _, a := range m.apps {
+		if a.NodeID != "" && a.Status != AppDeleted {
+			owned[a.NodeID] += int64(a.RAMMB)
+		}
+	}
+	return owned, nil
+}
+
 // ListUnplacedApps mirrors pkg/state/pgstore.go: ListUnplacedApps.
 // Same predicate over the in-memory map; ordered by CreatedAt DESC
 // to match the SQL shape.
@@ -7185,8 +7201,9 @@ func (m *MemStore) restoreAppLocked(ctx context.Context, id string, limits api.L
 	delete(m.appDeletionClaims, id)
 	for cronID, cron := range m.crons {
 		if cron.AppID == id && cron.SuspendedReason == CronSuspendedAppDeleted {
-			cron.SuspendedReason = ""
-			m.crons[cronID] = cron
+			restored := cron
+			restored.SuspendedReason = ""
+			m.crons[cronID] = anchorCronSchedule(cron, restored, time.Now())
 		}
 	}
 	return a, nil
@@ -13305,6 +13322,7 @@ func (m *MemStore) UpdateCronWithOptions(_ context.Context, id string, schedule,
 	if !ok {
 		return Cron{}, ErrNotFound
 	}
+	before := c
 	scheduleChanged := schedule != nil && c.Schedule != *schedule
 	timezoneChanged := timezone != nil && c.Timezone != *timezone
 	if schedule != nil {
@@ -13359,8 +13377,20 @@ func (m *MemStore) UpdateCronWithOptions(_ context.Context, id string, schedule,
 	if len(c.Command) == 0 {
 		m.invalidateDeploymentCronsLocked(c.AppID)
 	}
+	c = anchorCronSchedule(before, c, time.Now())
 	m.crons[id] = c
 	return c, nil
+}
+
+// anchorCronSchedule mirrors the crons trigger (ADR-20261026201726): a
+// schedule or timezone change, an enable, or a lifted suspension restarts
+// the schedule at now.
+func anchorCronSchedule(before, after Cron, now time.Time) Cron {
+	if after.Schedule != before.Schedule || after.Timezone != before.Timezone ||
+		(after.Enabled && !before.Enabled) || (after.SuspendedReason == "" && before.SuspendedReason != "") {
+		after.ScheduleAnchorAt = now.UTC()
+	}
+	return after
 }
 
 func (m *MemStore) DeleteCron(_ context.Context, id, appID string) error {
@@ -13536,7 +13566,63 @@ func (m *MemStore) GetFireNowRequest(_ context.Context, requestID string) (FireN
 	if !ok {
 		return FireNowRequest{}, ErrFireNowRequestNotFound
 	}
+	if r.InvocationID != nil {
+		if inv, ok := m.invocations[*r.InvocationID]; ok {
+			var lastError *string
+			if inv.LastError != "" {
+				lastError = &inv.LastError
+			}
+			return settleFireNowFromInvocation(r, inv.State, lastError, inv.CompletedAt), nil
+		}
+	}
 	return r, nil
+}
+
+// InsertFireNowRequestUnderCap mirrors the PgStore cap (ADR-20261026201726).
+func (m *MemStore) InsertFireNowRequestUnderCap(_ context.Context, cronID, accountID string, maxActive int, since time.Time) (string, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	active := 0
+	for _, r := range m.fireNowRequests {
+		if r.CronID != cronID || r.RequestedAt.Before(since) {
+			continue
+		}
+		switch {
+		case r.Status == FireNowStatusPending:
+			active++
+		case r.Status == FireNowStatusRunning && r.InvocationID == nil:
+			active++
+		case r.Status == FireNowStatusRunning:
+			if inv, ok := m.invocations[*r.InvocationID]; !ok || fireNowInvocationActive(inv.State) {
+				active++
+			}
+		}
+	}
+	if active >= maxActive {
+		return "", &FireNowCapError{Limit: maxActive, Observed: active}
+	}
+	id := uuid.NewString()
+	m.fireNowRequests[id] = FireNowRequest{
+		ID:          id,
+		CronID:      cronID,
+		AccountID:   accountID,
+		RequestedAt: time.Now().UTC(),
+		Status:      FireNowStatusPending,
+	}
+	return id, nil
+}
+
+// MarkFireNowRequestQueued mirrors the PgStore link (ADR-20261026201726).
+func (m *MemStore) MarkFireNowRequestQueued(_ context.Context, requestID, invocationID string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	r, ok := m.fireNowRequests[requestID]
+	if !ok || r.Status != FireNowStatusRunning {
+		return ErrFireNowRequestNotFound
+	}
+	r.InvocationID = &invocationID
+	m.fireNowRequests[requestID] = r
+	return nil
 }
 
 // Operator intent queue (PR #1099 P2 redesign / migrations/00431).
@@ -13886,8 +13972,9 @@ func (m *MemStore) reactivateCronsForAppLocked(appID string) int {
 		if cron.AppID != appID || cron.SuspendedReason != CronSuspendedNoLiveDeployment {
 			continue
 		}
-		cron.SuspendedReason = ""
-		m.crons[id] = cron
+		reactivated := cron
+		reactivated.SuspendedReason = ""
+		m.crons[id] = anchorCronSchedule(cron, reactivated, time.Now())
 		updated++
 	}
 	return updated
@@ -17448,6 +17535,24 @@ func (m *MemStore) ComputeNodeUsedMBByNode(ctx context.Context, nodeIDs []string
 			return nil, err
 		}
 		used[nodeID] = value
+	}
+	return used, nil
+}
+
+// ComputeNodeUsedVCPUByNode mirrors PgStore's fleet-wide guest vCPU
+// aggregate: each live instance's captured capacity_vcpu.
+func (m *MemStore) ComputeNodeUsedVCPUByNode(_ context.Context, nodeIDs []string) (map[string]int64, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	used := make(map[string]int64, len(nodeIDs))
+	for _, nodeID := range nodeIDs {
+		used[nodeID] = 0
+	}
+	for _, ins := range m.instances {
+		if _, ok := used[ins.NodeID]; !ok || !nodeUsageCounts(State(ins.State)) {
+			continue
+		}
+		used[ins.NodeID] += m.capacityInstanceResources[ins.ID].VCPU
 	}
 	return used, nil
 }
@@ -28566,6 +28671,9 @@ func (m *MemStore) ReplayDeadLetterEventForAccount(_ context.Context, accountID,
 		if ev.ID != eventID {
 			continue
 		}
+		if ev.ReplayedAt == nil && !DeadLetterReplayable(ev.Source) {
+			return DeadLetterEvent{}, ErrDeadLetterNotReplayable
+		}
 		if ev.AppID != "" {
 			return m.replayDeadLetterEventLocked(accountID, ev.AppID, eventID)
 		}
@@ -28585,7 +28693,7 @@ func (m *MemStore) ReplayDeadLetterEventsForAccount(_ context.Context, accountID
 	}
 	replayed := 0
 	for _, ev := range m.deadLetterEventsForAccountLocked(accountID) {
-		if replayed >= limit || ev.ReplayedAt != nil {
+		if replayed >= limit || ev.ReplayedAt != nil || !DeadLetterReplayable(ev.Source) {
 			continue
 		}
 		var err error
@@ -28748,6 +28856,8 @@ func (m *MemStore) replayDeadLetterEventLocked(accountID, appID, eventID string)
 		run.FinishedAt = nil
 		run.UpdatedAt = now
 		m.workflowRuns[run.ID] = run
+	case DeadLetterSourceEventRoute:
+		return DeadLetterEvent{}, ErrDeadLetterNotReplayable
 	default:
 		return DeadLetterEvent{}, ErrNotFound
 	}
@@ -28813,7 +28923,7 @@ func (m *MemStore) ReplayDeadLetterEvents(_ context.Context, accountID, appID st
 	events := m.deadLetterEventsLocked(appID)
 	replayed := 0
 	for _, ev := range events {
-		if replayed >= limit || ev.AccountID != accountID || ev.ReplayedAt != nil {
+		if replayed >= limit || ev.AccountID != accountID || ev.ReplayedAt != nil || !DeadLetterReplayable(ev.Source) {
 			continue
 		}
 		if _, err := m.replayDeadLetterEventLocked(accountID, appID, ev.ID); err != nil {

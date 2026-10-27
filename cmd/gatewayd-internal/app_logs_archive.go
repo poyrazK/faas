@@ -76,6 +76,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/logarchive"
 	"github.com/onebox-faas/faas/pkg/scheddgrpc"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/trafficrevocation"
 	"github.com/onebox-faas/faas/pkg/wire"
 )
 
@@ -161,6 +162,9 @@ type ArchiveLogsHandler struct {
 	Scope state.LogArchiveScopeStore
 	Log   *slog.Logger
 	Ops   *wire.OpsMetrics
+	// Traffic enrolls the read under the app's security scopes
+	// (admitPlatformTraffic); nil only in legacy fixtures.
+	Traffic *trafficrevocation.Registry
 
 	// Backstop is the SSE stream idle timeout. 0 = use the
 	// production default (10 minutes, mirroring
@@ -214,6 +218,11 @@ func (h *ArchiveLogsHandler) stream(w http.ResponseWriter, r *http.Request, acct
 	if !ok {
 		return
 	}
+	ctx, release, ok := admitPlatformTraffic(r.Context(), w, r, h.Traffic, w.Header(), acct.ID, app.ID)
+	if !ok {
+		return
+	}
+	defer release()
 	// Plan gate (issue #562 AC3). Unknown/off-plan customers get a
 	// clean 402 + CodePlanLogArchiveNotAllowed; Free is entitled to
 	// the one-day demo window.
@@ -255,7 +264,7 @@ func (h *ArchiveLogsHandler) stream(w http.ResponseWriter, r *http.Request, acct
 	}
 	apislogs.StartSSE(w)
 	flusher, _ := w.(http.Flusher)
-	h.serveArchiveWithAccount(r.Context(), w, flusher, app.ID, acct.ID, instance, day)
+	h.serveArchiveWithAccount(ctx, w, flusher, app.ID, acct.ID, instance, day)
 }
 
 // streamUnauth is the whitebox seam. Mirrors stream()'s body

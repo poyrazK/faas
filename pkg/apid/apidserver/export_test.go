@@ -316,6 +316,25 @@ var DeliveryWriteMode = &deliveryWriteMode
 var CommitConnectionRecipients = commitConnectionRecipients
 var ExecutionPayloadRecipients = executionPayloadRecipients
 var SealAppWebhookSecret = sealAppWebhookSecret
+var AccountDomainIdentities = &accountDomainIdentities
+var AccountWriteMode = &accountWriteMode
+var AccountRecipients = accountRecipients
+var AccountIdentities = accountIdentities
+var WorkflowPlanRecipients = workflowPlanRecipients
+var HoldsIdentityFor = holdsIdentityFor
+var SealInboundWebhookSigningSecret = sealInboundWebhookSigningSecret
+var SealGitLabTokens = sealGitLabTokens
+var OpenGitLabTokens = openGitLabTokens
+var OpenIssueSlackToken = openIssueSlackToken
+var VerifyInboundWebhook = verifyInboundWebhook
+var SealMCPPagerDutyWebhookSecret = sealMCPPagerDutyWebhookSecret
+
+// StatementInvoicesHostSecrets exposes the billing-key seal and open apid
+// gives statement invoices.
+func StatementInvoicesHostSecrets() (func(string, []byte, int) ([]byte, error), func([]byte) (string, []byte, error)) {
+	return statementInvoicesHost{}.SealSecret, statementInvoicesHost{}.OpenSecret
+}
+
 var SealPresetWebhookSecret = sealPresetWebhookSecret
 var SealMCPFallbackSecret = sealMCPFallbackSecret
 var SealMCPPagerDutyKey = sealMCPPagerDutyKey
@@ -1122,6 +1141,9 @@ func (r *server) GetDevBridgeActivity(p0 http.ResponseWriter, p1 *http.Request, 
 func (r *server) GetManagedPostgresDatabase(p0 http.ResponseWriter, p1 *http.Request, p2 state.Account) {
 	r.getManagedPostgresDatabase(p0, p1, p2)
 }
+func (r *server) GetProject(p0 http.ResponseWriter, p1 *http.Request, p2 state.Account) {
+	r.getProject(p0, p1, p2)
+}
 func (r *server) GetProjectEnvironmentApprovalStatus(p0 http.ResponseWriter, p1 *http.Request, p2 state.Account) {
 	r.getProjectEnvironmentApprovalStatus(p0, p1, p2)
 }
@@ -1771,3 +1793,19 @@ var WriteExclusiveError = writeExclusiveError
 // ResolveAndCheckEgress is the create-time egress check every outbound URL
 // (alert, log drain, webhook, channel) passes.
 var ResolveAndCheckEgress = resolveAndCheckEgress
+
+// PlanDowngradeProblemForTest runs the pre-downgrade quota check (Hunt 17
+// H17-4) for a subject the HTTP route would resolve, such as an organization.
+func (r *server) PlanDowngradeProblemForTest(ctx context.Context, subject state.Account, target api.Plan) *api.Problem {
+	return r.planDowngradeProblem(ctx, subject, target)
+}
+
+// RequestBillingMailOutboxesForTest selects the three webhook billing-mail
+// outboxes without configuring one, so a delivery that reaches an outbox
+// fails closed with 503 (Hunt 17 H17-3).
+func (r *server) RequestBillingMailOutboxesForTest() {
+	on := func() bool { return true }
+	r.paymentFailedOutboxRequested, r.accountRestoredOutboxRequested, r.subscriptionEndedOutboxRequested = on, on, on
+}
+
+var AppRestartRefusal = appRestartRefusal

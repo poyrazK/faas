@@ -91,7 +91,27 @@ func (f *routesFixture) respond(path string, status int, body string, headers ..
 // get sends one anonymous customer request through the public edge.
 func (f *routesFixture) get(t *testing.T, path string) (http.Header, []byte, int) {
 	t.Helper()
-	return doReqHeaders(t, f.h, f.host, http.MethodGet, path, nil)
+	return edgeRetry(t, http.MethodGet+" "+path, func() (http.Header, []byte, int) {
+		return doReqHeaders(t, f.h, f.host, http.MethodGet, path, nil)
+	})
+}
+
+// edgeRetry retries the gateway's transient 503 refusals that carry
+// Retry-After, as a client would (ADR-570): rate_limit_unavailable when the
+// shared rate allowance cannot be verified in time, which a loaded CI runner
+// hits, and traffic_policy_unavailable when a request races the edge policy
+// generation change that follows a rule write.
+func edgeRetry(t *testing.T, what string, do func() (http.Header, []byte, int)) (http.Header, []byte, int) {
+	t.Helper()
+	for attempt := 1; ; attempt++ {
+		headers, body, status := do()
+		transient := strings.Contains(string(body), `"rate_limit_unavailable"`) || strings.Contains(string(body), `"traffic_policy_unavailable"`)
+		if status != http.StatusServiceUnavailable || !transient || attempt == 10 {
+			return headers, body, status
+		}
+		t.Logf("%s: transient gateway refusal, retrying: %s", what, body)
+		time.Sleep(time.Second)
+	}
 }
 
 func (f *routesFixture) api(t *testing.T, method, path string, body any, out any) int {
@@ -462,11 +482,16 @@ func TestE2E_Routes_ProductionMonitorOpensIncident(t *testing.T) {
 // gatewayReqNoFatal sends background traffic; a failure is the caller's
 // assertion to make, not a reason to stop the generator from its goroutine.
 func gatewayReqNoFatal(f *routesFixture, path string) (int, []byte, error) {
+	return gatewayGetNoFatal(f, f.host, path)
+}
+
+// gatewayGetNoFatal is gatewayReqNoFatal for any app on the fixture's edge.
+func gatewayGetNoFatal(f *routesFixture, host, path string) (int, []byte, error) {
 	req, err := http.NewRequest(http.MethodGet, f.h.EdgeURL()+path, nil) //nolint:noctx // bounded by the client timeout
 	if err != nil {
 		return 0, nil, err
 	}
-	req.Host = f.host
+	req.Host = host
 	client := *f.h.HTTPClient()
 	client.Timeout = 10 * time.Second
 	resp, err := client.Do(req)

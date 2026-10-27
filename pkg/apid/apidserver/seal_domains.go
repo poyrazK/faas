@@ -1,6 +1,7 @@
 package apidserver
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -32,6 +33,10 @@ const (
 	envSealDomainStorageWrites     = "FAAS_SEAL_DOMAIN_STORAGE_WRITES"
 	envSealDomainDeliveryRecipient = "FAAS_SEAL_DOMAIN_DELIVERY_RECIPIENT_PATH"
 	envSealDomainDeliveryWrites    = "FAAS_SEAL_DOMAIN_DELIVERY_WRITES"
+	// apid reads the account domain itself, so it holds the identity, not
+	// a recipient file: the recipient is the identity's.
+	envSealDomainAccountIdentity = "FAAS_SEAL_DOMAIN_ACCOUNT_IDENTITY_PATH"
+	envSealDomainAccountWrites   = "FAAS_SEAL_DOMAIN_ACCOUNT_WRITES"
 	// envRuntimeSecretBinding turns on account-bound runtime envelopes
 	// (ADR-20261023173624): off (the default) or account. Unit
 	// configuration, like the write modes: a database writer must not be
@@ -121,6 +126,17 @@ var deliveryDomainRecipient func() *age.X25519Recipient
 // commit-source connections and execution payloads, which schedd opens.
 var deliveryWriteMode sealdomain.WriteMode
 
+// accountDomainIdentities are the account domain's identity and its
+// previous twin once the seal_domains role stages them; nil until then.
+// apid is the account domain's reader: it opens MFA secrets, inbound
+// webhook signing secrets, billing connection keys, managed workflow plans,
+// PagerDuty acknowledgement secrets and GitLab, Slack and Linear
+// credentials with them.
+var accountDomainIdentities []*age.X25519Identity
+
+// accountWriteMode picks the recipients of account values.
+var accountWriteMode sealdomain.WriteMode
+
 // runtimeDomainRecipient is the runtime domain's recipient once the
 // seal_domains role stages it; nil until then.
 var runtimeDomainRecipient func() *age.X25519Recipient
@@ -198,6 +214,10 @@ func loadSealDomains(getenv func(string) string, log *slog.Logger) error {
 		return fmt.Errorf("apid: delivery seal domain: %w", err)
 	}
 	log.Info("delivery seal domain", "write_mode", string(deliveryWriteMode), "domain_recipient_staged", deliveryDomainRecipient != nil, "recipients", len(deliveryRecipients))
+
+	if err := loadAccountDomain(getenv, log); err != nil {
+		return err
+	}
 
 	if runtimeDomainRecipient, runtimeWriteMode, err = loadDomainWriter(getenv, envSealDomainRuntimeRecipient, envSealDomainRuntimeWrites); err != nil {
 		return err
@@ -315,6 +335,103 @@ func executionPayloadRecipients() ([]*age.X25519Recipient, string, error) {
 	}
 	return recipients, sealdomain.KeyID(recipients, fleet), nil
 }
+
+// loadAccountDomain loads the account identity and write mode. A configured
+// identity that does not load, or domain mode without one, fails the boot.
+func loadAccountDomain(getenv func(string) string, log *slog.Logger) error {
+	mode, err := sealdomain.ParseWriteMode(getenv(envSealDomainAccountWrites))
+	if err != nil {
+		return fmt.Errorf("apid: %s: %w", envSealDomainAccountWrites, err)
+	}
+	var ids []*age.X25519Identity
+	if path := getenv(envSealDomainAccountIdentity); path != "" {
+		if ids, err = sealdomain.LoadReaderIdentities(path); err != nil {
+			return fmt.Errorf("apid: load account seal-domain identity: %w", err)
+		}
+	}
+	if mode == sealdomain.WriteDomain && len(ids) == 0 {
+		return fmt.Errorf("apid: %s=domain needs %s", envSealDomainAccountWrites, envSealDomainAccountIdentity)
+	}
+	accountDomainIdentities, accountWriteMode = ids, mode
+	log.Info("account seal domain", "write_mode", string(mode), "domain_identity", len(ids) > 0)
+	return nil
+}
+
+// accountDomainRecipient is the current account identity's recipient, nil
+// until the domain is staged.
+func accountDomainRecipient() *age.X25519Recipient {
+	if len(accountDomainIdentities) == 0 {
+		return nil
+	}
+	return accountDomainIdentities[0].Recipient()
+}
+
+// accountRecipients returns who an account value is sealed to: legacy (the
+// recipient the value's writer sealed to before the domain) alone until the
+// domain is staged, then the domain and legacy, then the domain alone.
+func accountRecipients(legacy *age.X25519Recipient) ([]*age.X25519Recipient, error) {
+	return sealdomain.Recipients(accountWriteMode, accountDomainRecipient(), legacy)
+}
+
+// accountIdentities opens account values: the account domain first, then
+// the fleet and host identities for values sealed before the domain. It is
+// for opening only; the fleet identity stays first in mfaIdentities, which
+// other domains' writers derive their current recipient from.
+func accountIdentities() []*age.X25519Identity {
+	var legacy []*age.X25519Identity
+	if mfaIdentities != nil {
+		legacy = mfaIdentities()
+	}
+	if len(legacy) == 0 && mfaIdentity != nil {
+		if id := mfaIdentity(); id != nil {
+			legacy = []*age.X25519Identity{id}
+		}
+	}
+	return accountIdentitiesWith(legacy)
+}
+
+// accountIdentitiesWith is accountIdentities for a reader that has its own
+// legacy identities: the account domain first, then legacy, each once.
+func accountIdentitiesWith(legacy []*age.X25519Identity) []*age.X25519Identity {
+	out := make([]*age.X25519Identity, 0, len(accountDomainIdentities)+len(legacy))
+	seen := map[string]bool{}
+	for _, id := range append(append([]*age.X25519Identity(nil), accountDomainIdentities...), legacy...) {
+		if id == nil || seen[id.Recipient().String()] {
+			continue
+		}
+		seen[id.Recipient().String()] = true
+		out = append(out, id)
+	}
+	return out
+}
+
+// workflowPlanRecipients returns who a managed workflow's plan is sealed to,
+// as accountRecipients does, and the key id stored beside it. apid's
+// workflow worker opens a plan only with the identity its key id names, so
+// the id stays the fleet recipient while the plan opens with it, and becomes
+// the domain's once only the domain opens it.
+func workflowPlanRecipients() ([]*age.X25519Recipient, string, error) {
+	legacy := hostSecretRecipient()
+	recipients, err := accountRecipients(legacy)
+	if err != nil {
+		return nil, "", err
+	}
+	return recipients, sealdomain.KeyID(recipients, legacy), nil
+}
+
+// holdsIdentityFor reports whether ids holds the identity of recipient kid.
+func holdsIdentityFor(ids []*age.X25519Identity, kid string) bool {
+	for _, id := range ids {
+		if id != nil && id.Recipient().String() == kid {
+			return true
+		}
+	}
+	return false
+}
+
+// accountIdentitiesFor is accountIdentities for a handler that takes the
+// request context.
+func accountIdentitiesFor(context.Context) []*age.X25519Identity { return accountIdentities() }
 
 // runtimeSecretRecipient is who app, project, release and binding secrets,
 // which vmmd opens at wake, are sealed to: the runtime domain in domain

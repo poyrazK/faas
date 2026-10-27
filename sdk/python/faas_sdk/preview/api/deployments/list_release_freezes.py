@@ -75,7 +75,7 @@ def sync_detailed(
     client: AuthenticatedClient | Client,
     app: str | Unset = UNSET,
 ) -> Response[ListReleaseFreezesResponse | Problem]:
-    """List deploy freezes (ADR-20261019071733).
+    """List deploy freezes.
 
      Unlifted freezes that have not ended: active and upcoming windows, weekly windows and after-rollback
     policies. `app` narrows the list to the freezes covering one app.
@@ -107,7 +107,7 @@ def sync(
     client: AuthenticatedClient | Client,
     app: str | Unset = UNSET,
 ) -> ListReleaseFreezesResponse | Problem | None:
-    """List deploy freezes (ADR-20261019071733).
+    """List deploy freezes.
 
      Unlifted freezes that have not ended: active and upcoming windows, weekly windows and after-rollback
     policies. `app` narrows the list to the freezes covering one app.
@@ -134,7 +134,7 @@ async def asyncio_detailed(
     client: AuthenticatedClient | Client,
     app: str | Unset = UNSET,
 ) -> Response[ListReleaseFreezesResponse | Problem]:
-    """List deploy freezes (ADR-20261019071733).
+    """List deploy freezes.
 
      Unlifted freezes that have not ended: active and upcoming windows, weekly windows and after-rollback
     policies. `app` narrows the list to the freezes covering one app.
@@ -164,7 +164,7 @@ async def asyncio(
     client: AuthenticatedClient | Client,
     app: str | Unset = UNSET,
 ) -> ListReleaseFreezesResponse | Problem | None:
-    """List deploy freezes (ADR-20261019071733).
+    """List deploy freezes.
 
      Unlifted freezes that have not ended: active and upcoming windows, weekly windows and after-rollback
     policies. `app` narrows the list to the freezes covering one app.

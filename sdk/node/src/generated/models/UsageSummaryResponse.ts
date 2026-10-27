@@ -5,7 +5,7 @@
 import type { DailyUsagePoint } from './DailyUsagePoint.js';
 import type { ExecutionUsageSummaryResponse } from './ExecutionUsageSummaryResponse.js';
 /**
- * Account-level monthly roll-up: included GB-hours, used, overage math, remaining balance, informational usage dimensions, and a trailing 30-day daily trend (issue #308). The GB-hours fields drive the overage math; the other dimensions are informational.
+ * Account-level monthly roll-up: included GB-hours, used, overage math, remaining balance, informational usage dimensions, and a trailing 30-day daily trend. The GB-hours fields drive the overage math; the other dimensions are informational.
  */
 export type UsageSummaryResponse = {
   month: string;
@@ -17,7 +17,7 @@ export type UsageSummaryResponse = {
    */
   overage_cents: number;
   /**
-   * Per-month CPU-hours (informational; not billed). issue #279 / PR-B.
+   * Per-month CPU-hours (informational; not billed).
    */
   used_cpu_hours?: number;
   /**
@@ -45,11 +45,11 @@ export type UsageSummaryResponse = {
    */
   egress_millicents_per_gb?: number;
   /**
-   * Per-month ingress GB (informational; not billed). Σ net_rx_bytes across all apps, converted to GB. ADR-048. Mirror of `used_egress_gb` for the inbound direction.
+   * Per-month ingress GB (informational; not billed). Σ net_rx_bytes across all apps, converted to GB. Mirror of `used_egress_gb` for the inbound direction.
    */
   used_ingress_gb?: number;
   /**
-   * Per-month sum of WAKE_RESTORE→WAKE_COLD_BOOT transitions across every app on the account (informational; not billed). ADR-048.
+   * Per-month sum of WAKE_RESTORE→WAKE_COLD_BOOT transitions across every app on the account (informational; not billed).
    */
   cold_boots?: number;
   /**
@@ -57,7 +57,7 @@ export type UsageSummaryResponse = {
    */
   executions?: ExecutionUsageSummaryResponse;
   /**
-   * Trailing 30 UTC calendar days, oldest first, grouped across the account. Empty when no daily rollup rows exist. issue #308.
+   * Trailing 30 UTC calendar days, oldest first, grouped across the account. Empty when no daily rollup rows exist.
    */
   daily?: Array<DailyUsagePoint>;
 };

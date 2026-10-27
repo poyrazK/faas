@@ -71,6 +71,7 @@ func Run(t *testing.T, open Open) {
 		{"release_approval_events_once_due_and_retried", testReleaseApprovalEvents},
 		{"scheduled_releases_one_pending_and_start_in_the_traffic_change", testScheduledReleases},
 		{"database_switches_one_active_leased_and_undone_releases", testDatabaseSwitches},
+		{"database_switch_cancel_hold_and_account_cap", testDatabaseSwitchCancelHoldAndAccountCap},
 		{"app_secret_revocation_ack_survives_secret_deletion", testAppSecretRevocationAckSurvivesDeletion},
 		{"custom_metrics_cap_applies_to_new_names_only", testCustomMetricsContract},
 		{"scaling_policy_survives_a_store_round_trip", testScalingPolicyRoundTrip},

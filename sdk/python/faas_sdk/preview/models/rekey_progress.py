@@ -31,7 +31,7 @@ class RekeyProgress:
     unreadable."""
     failed: int
     """Rows where the unseal step threw. A non-zero value warrants operator action (toggle FAAS_REKEY_ENABLED and
-    restart apid to retry)."""
+    restart the API to retry)."""
     last_id: str | Unset = UNSET
     """Resume cursor in (account_id|app_id|key) form. Empty when the walk has just started or finished a clean
     sweep."""

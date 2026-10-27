@@ -3,10 +3,10 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * Standalone per-route body-size cap (ADR-091 D24 / §4.1.2.13).
+ * Standalone per-route body-size cap.
  * The primitive for "POST /upload ≤ 5 MB, POST /users ≤ 1 MB,
  * POST /webhooks ≤ 2 MB" without shipping a JSON Schema. The
- * hot-path applier (§4.1.2.8c) installs `http.MaxBytesReader`
+ * hot-path applier installs a body-size limit
  * on the inbound body and short-circuits oversize requests
  * with 413 `request_too_large` — and, more importantly,
  * performs a Content-Length fast-path deny so a 30 MB body on
@@ -32,8 +32,7 @@
  * than the buffered cap would 413 every streaming request
  * for a body already accepted as buffered. Runtime
  * enforcement of this field is declared + clamped at
- * create-time but deferred at the §4.1.2.8c slot to a
- * follow-up PR (stated in ADR-091 D24 §6).
+ * create-time; it is not enforced yet.
  *
  */
 export type EdgeRuleLimitAction = {
@@ -50,8 +49,7 @@ export type EdgeRuleLimitAction = {
    * Optional streaming opt-in cap. 0 (default) = no
    * streaming carve-out; the buffered `max_body_bytes` is
    * the cap on both paths. Must be ≥ `max_body_bytes` when
-   * set. Runtime enforcement deferred to follow-up PR
-   * (ADR-091 D24 §6).
+   * set. Runtime enforcement deferred to follow-up PR.
    *
    */
   max_body_bytes_streaming?: number;

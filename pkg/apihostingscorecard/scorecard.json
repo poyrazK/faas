@@ -81,6 +81,7 @@
       "capabilities": ["account-release-webhooks", "async-invocations", "crons", "dead-letter-queues", "event-acknowledgments", "event-delivery-controls", "event-recoveries", "event-replays", "event-schemas", "event-subscriptions", "event-triggers", "events", "execution-workflows", "failed-events-console", "jobs", "operation-approvals", "operation-artifacts", "operation-children", "operation-concurrency", "operation-effects", "operation-milestones", "operation-recovery", "operation-schedules", "operation-signals", "operations", "outbound-webhooks", "queue-bindings", "queue-pull-leases", "queues", "work-policies", "workflow-insights", "workflow-recovery", "workflow-schedules", "workflows"],
       "targets": [{"metric": "ratio", "operator": "gte", "value": 100, "unit": "percent"}],
       "evidence": [
+        {"kind": "test", "locator": "cmd/e2e/cron_e2e_test.go::TestE2E_Cron_FiresOnScheduleAndOnDemand"},
         {"kind": "test", "locator": "cmd/e2e/events_fanout_e2e_test.go::TestE2E_EventFanout_MatchesFiltersAndIsolatesAccounts"},
         {"kind": "test", "locator": "cmd/e2e/workflows_e2e_test.go::TestE2E_Workflows_Lifecycle"},
         {"kind": "test", "locator": "cmd/gregale/customer_operations_signal_test.go::TestCustomerOperationSignal"},
@@ -273,7 +274,7 @@
       "targets": [{"metric": "ratio", "operator": "gte", "value": 100, "unit": "percent"}],
       "evidence": [
         {"kind": "test", "locator": "cmd/gregale/commands_log_drains_test.go::TestCmdLogDrainsListJSON"},
-        {"kind": "test", "locator": "pkg/api/client_test.go::TestStreamAppLogs_HappyPath"},
+        {"kind": "test", "locator": "cmd/e2e/logs_archive_metal_test.go::TestLogsLiveAndArchivedMetal"},
         {"kind": "test", "locator": "pkg/api/custom_metrics_validation_test.go::TestCustomMetricsPlanGate"},
         {"kind": "test", "locator": "pkg/apid/apidserver/handlers_admin_obs_regression_test.go::TestObsRegressionFailedJob"},
         {"kind": "test", "locator": "pkg/apid/apidserver/handlers_alert_presets_channels_test.go::TestAlertPresetDeliversToChannels"},

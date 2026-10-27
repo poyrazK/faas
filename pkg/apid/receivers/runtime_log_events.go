@@ -5,7 +5,10 @@
 // traces. vmmd classifies lines and enforces the per-app budget; apid derives
 // the account from the app, caps each account across nodes, redacts the line
 // and inserts a source=runtime ledger row. apid stays the only writer
-// (ADR-213).
+// (ADR-213). On the shared mTLS listener a line is accepted only for an
+// instance that runs on the node the caller's certificate names (ADR-958's
+// deferred binding), so no fleet certificate can write another node's apps'
+// logs.
 
 package receivers
 
@@ -29,6 +32,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/ratelimit/peraccount"
 	"github.com/onebox-faas/faas/pkg/redact"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/wire"
 )
 
 // Outcome labels for apid_runtime_log_events_total.
@@ -37,6 +41,7 @@ const (
 	runtimeLogRejected    = "rejected"
 	runtimeLogRateLimited = "rate_limited"
 	runtimeLogDBError     = "db_error"
+	runtimeLogForeignNode = "foreign_node"
 )
 
 // runtimeLogIDMaxBytes is the ledger's instance_id and source_event_id bound.
@@ -45,7 +50,14 @@ const runtimeLogIDMaxBytes = 256
 // RuntimeLogEventsStore is the Store subset the receiver needs.
 type RuntimeLogEventsStore interface {
 	AppByID(ctx context.Context, id string) (state.App, error)
+	InstanceByID(ctx context.Context, id string) (state.Instance, error)
 	InsertLogEvent(ctx context.Context, event state.LogEvent) (state.LogEvent, error)
+}
+
+// migrationInstanceStore also reads an instance's previous node, so lines a
+// source node sends while its instance migrates are still its own.
+type migrationInstanceStore interface {
+	MigrationInstanceByID(ctx context.Context, id string) (state.Instance, error)
 }
 
 // RuntimeLogEventsReceiver is process-wide: both listeners that carry
@@ -58,6 +70,7 @@ type RuntimeLogEventsReceiver struct {
 	redactor *redact.Redactor
 	outcomes *prometheus.CounterVec
 	log      *slog.Logger
+	nodes    wire.NodeIdentityResolver
 }
 
 // NewRuntimeLogEventsReceiver builds the receiver. enabled follows
@@ -77,6 +90,16 @@ func NewRuntimeLogEventsReceiver(store RuntimeLogEventsStore, enabled bool, reg 
 	}
 	if reg != nil {
 		reg.MustRegister(r.outcomes)
+	}
+	return r
+}
+
+// WithPeerNodes binds mutual-TLS callers to the compute node their
+// certificate names (multi-box apid's node verifier). Without it, or on a
+// local socket, lines are accepted for any app as before.
+func (r *RuntimeLogEventsReceiver) WithPeerNodes(nodes wire.NodeIdentityResolver) *RuntimeLogEventsReceiver {
+	if r != nil {
+		r.nodes = nodes
 	}
 	return r
 }
@@ -101,10 +124,15 @@ func (r *RuntimeLogEventsReceiver) RecordRuntimeLogEvents(ctx context.Context, r
 	if len(events) > api.RuntimeLogEventsBatchMax {
 		return nil, status.Errorf(codes.InvalidArgument, "batch of %d exceeds %d events", len(events), api.RuntimeLogEventsBatchMax)
 	}
+	node, err := r.peerNode(ctx)
+	if err != nil {
+		return nil, status.Errorf(codes.Unauthenticated, "runtime log events: %v", err)
+	}
 	resp := &apidpb.RecordRuntimeLogEventsResponse{}
 	accounts := map[string]string{} // app id → account id, "" when unknown
+	onNode := map[string]bool{}     // instance/app → runs on the caller's node
 	for _, ev := range events {
-		outcome := r.record(ctx, ev, accounts)
+		outcome := r.record(ctx, ev, accounts, node, onNode)
 		r.outcomes.WithLabelValues(outcome).Inc()
 		switch outcome {
 		case runtimeLogInserted:
@@ -122,10 +150,20 @@ func (r *RuntimeLogEventsReceiver) RecordRuntimeLogEvents(ctx context.Context, r
 	return resp, nil
 }
 
-func (r *RuntimeLogEventsReceiver) record(ctx context.Context, ev *apidpb.RuntimeLogEvent, accounts map[string]string) string {
+func (r *RuntimeLogEventsReceiver) record(ctx context.Context, ev *apidpb.RuntimeLogEvent, accounts map[string]string, node string, onNode map[string]bool) string {
 	event, ok := runtimeLogEvent(ev)
 	if !ok {
 		return runtimeLogRejected
+	}
+	if node != "" {
+		own, err := r.instanceOnNode(ctx, event, node, onNode)
+		if err != nil {
+			r.log.Warn("runtime log events: instance lookup failed", "instance_id", event.InstanceID, "err", err)
+			return runtimeLogDBError
+		}
+		if !own {
+			return runtimeLogForeignNode
+		}
 	}
 	accountID, seen := accounts[event.AppID]
 	if !seen {
@@ -159,6 +197,54 @@ func (r *RuntimeLogEventsReceiver) record(ctx context.Context, ev *apidpb.Runtim
 	}
 	return runtimeLogInserted
 }
+
+// peerNode is the compute node a mutual-TLS caller's certificate names, or
+// "" on a local socket or without a node resolver (single box).
+func (r *RuntimeLogEventsReceiver) peerNode(ctx context.Context) (string, error) {
+	if r.nodes == nil {
+		return "", nil
+	}
+	cn, err := wire.PeerCN(ctx)
+	if errors.Is(err, wire.ErrPeerCNUnavailable) {
+		return "", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	return r.nodes.NodeIDByCN(cn)
+}
+
+// instanceOnNode reports whether the line's instance belongs to its app and
+// runs on node, or ran there before it migrated. An unknown instance is
+// not the caller's.
+func (r *RuntimeLogEventsReceiver) instanceOnNode(ctx context.Context, event state.LogEvent, node string, onNode map[string]bool) (bool, error) {
+	key := event.InstanceID + "/" + event.AppID
+	if own, seen := onNode[key]; seen {
+		return own, nil
+	}
+	if !isUUID(event.InstanceID) {
+		onNode[key] = false
+		return false, nil
+	}
+	lookup := r.store.InstanceByID
+	if m, ok := r.store.(migrationInstanceStore); ok {
+		lookup = m.MigrationInstanceByID
+	}
+	inst, err := lookup(ctx, event.InstanceID)
+	if errors.Is(err, state.ErrNotFound) {
+		onNode[key] = false
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	own := inst.AppID == event.AppID &&
+		(inst.NodeID == node || inst.MigratedFromNodeID != nil && *inst.MigratedFromNodeID == node)
+	onNode[key] = own
+	return own, nil
+}
+
+func isUUID(s string) bool { return uuid.Validate(s) == nil }
 
 // runtimeLogEvent validates the wire shape vmmd owns, including the ledger
 // bounds a retry could never satisfy, so an insert error means the database.

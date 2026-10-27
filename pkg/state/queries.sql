@@ -8437,7 +8437,7 @@ WHERE id = sqlc.arg(id)::uuid AND status <> 'deleted' AND deleted_at IS NULL;
 
 -- ADR-570: minimal credential-free projection for one read-only service-policy snapshot.
 -- name: ReadServicePolicyAppByID :one
-SELECT id, account_id, slug, status, project_id, preview_of_slug,
+SELECT id, account_id, slug, workload_name, status, project_id, preview_of_slug,
        preview_pr_number, preview_pr_state, preview_expires_at, app_protocol, websocket_enabled,
        jsonb_strip_nulls(jsonb_build_object(
            'service_bindings', manifest->'service_bindings',
@@ -8450,7 +8450,7 @@ SELECT id, account_id, slug, status, project_id, preview_of_slug,
 FROM apps WHERE id = sqlc.arg(id)::uuid;
 
 -- name: ReadServicePolicyAppBySlug :one
-SELECT id, account_id, slug, status, project_id, preview_of_slug,
+SELECT id, account_id, slug, workload_name, status, project_id, preview_of_slug,
        preview_pr_number, preview_pr_state, preview_expires_at, app_protocol, websocket_enabled,
        jsonb_strip_nulls(jsonb_build_object(
            'service_bindings', manifest->'service_bindings',
@@ -8463,7 +8463,7 @@ SELECT id, account_id, slug, status, project_id, preview_of_slug,
 FROM apps WHERE slug = sqlc.arg(slug)::text AND status <> 'deleted';
 
 -- name: ReadServicePolicyPreviewApp :one
-SELECT id, account_id, slug, status, project_id, preview_of_slug,
+SELECT id, account_id, slug, workload_name, status, project_id, preview_of_slug,
        preview_pr_number, preview_pr_state, preview_expires_at, app_protocol, websocket_enabled,
        jsonb_strip_nulls(jsonb_build_object(
            'service_bindings', manifest->'service_bindings',
@@ -8474,11 +8474,12 @@ SELECT id, account_id, slug, status, project_id, preview_of_slug,
            'allowed_service_callers', manifest->'allowed_service_callers',
            'allowed_service_call_scopes', manifest->'allowed_service_call_scopes'))::jsonb AS manifest
 FROM apps WHERE account_id = sqlc.arg(account_id)::uuid AND project_id = sqlc.arg(project_id)::uuid
-  AND preview_pr_number = sqlc.arg(preview_pr_number)::integer AND workload_name = sqlc.arg(workload_name)::text
+  AND preview_pr_number = sqlc.arg(preview_pr_number)::integer
+  AND translate(lower(workload_name), '_.', '--') = translate(lower(sqlc.arg(workload_name)::text), '_.', '--')
   AND preview_of_slug IS NOT NULL AND status <> 'deleted';
 
 -- name: ReadServicePolicyTestApp :one
-SELECT id, account_id, slug, status, project_id, preview_of_slug,
+SELECT id, account_id, slug, workload_name, status, project_id, preview_of_slug,
        preview_pr_number, preview_pr_state, preview_expires_at, app_protocol, websocket_enabled,
        jsonb_strip_nulls(jsonb_build_object(
            'service_bindings', manifest->'service_bindings',
@@ -10757,6 +10758,20 @@ SELECT pg_try_advisory_lock(hashtextextended(sqlc.arg(app_id)::text, 0))::boolea
 -- name: ReleaseEdgeRuleMutationLock :one
 SELECT pg_advisory_unlock(hashtextextended(sqlc.arg(app_id)::text, 0))::boolean AS unlocked;
 
+-- name: TryEdgeRuleAccountMutationLock :one
+SELECT pg_try_advisory_lock(hashtextextended('edge-rule-account:' || sqlc.arg(account_id)::text, 0))::boolean AS locked;
+
+-- name: ReleaseEdgeRuleAccountMutationLock :one
+SELECT pg_advisory_unlock(hashtextextended('edge-rule-account:' || sqlc.arg(account_id)::text, 0))::boolean AS unlocked;
+
+-- name: TouchEdgeListenerHeartbeat :exec
+UPDATE compute_nodes SET edge_listener_heartbeat_at = now() WHERE name = sqlc.arg(name)::text;
+
+-- name: StaleEdgeListenerNodes :many
+SELECT name FROM compute_nodes
+WHERE active = true AND edge_listener_heartbeat_at < now() - sqlc.arg(stale_after)::interval
+ORDER BY name;
+
 -- name: ObserveEnvironmentGitOpsRuntime :many
 SELECT app_id, resource, environment_slug, required_at::timestamptz AS required_at, stale_residents, starting_residents, stale_snapshots
 FROM environment_gitops_runtime_targets t WHERE source_id = sqlc.arg(source_id)::uuid
@@ -12390,6 +12405,53 @@ where b.id=sqlc.arg(binding_id)::uuid and b.app_id=sqlc.arg(app_id)::uuid
   and (b.deployment_scope='' or i.deployment_scope=b.deployment_scope)
   and (i.queue_binding_id=b.id or (b.deployment_scope='' and i.queue_binding_id is null and i.queue_name=b.queue_name));
 
+-- name: QueueDepthInScope :one
+-- QueueStateInScope's depth, counted only up to row_limit: worker scaling
+-- needs no more than the depth that saturates the pool (ADR-20261022105723
+-- amendment 2026-10-24).
+select count(*)::bigint as depth from (
+  select 1 from invocations
+  where app_id=sqlc.arg(app_id)::uuid and deployment_scope=sqlc.arg(deployment_scope)::text
+    and source='queue' and state in ('pending','dispatching')
+  limit sqlc.arg(row_limit)::integer
+) bounded;
+
+-- name: QueueDepthForBinding :one
+-- QueueStateForBinding's depth up to row_limit per branch: the binding's own
+-- messages, then legacy unassigned work under its name. Each branch reads an
+-- index range and stops at the limit; the caller clamps the sum.
+with b as (
+  select id, account_id, queue_name, deployment_scope from queue_bindings
+  where id=sqlc.arg(binding_id)::uuid and app_id=sqlc.arg(app_id)::uuid
+)
+select
+  (select count(*) from (
+     select 1 from invocations i, b
+     where i.app_id=sqlc.arg(app_id)::uuid and i.queue_binding_id=b.id and i.account_id=b.account_id
+       and i.source='queue' and i.state in ('pending','dispatching')
+       and (sqlc.narg(deployment_scope)::text is null or i.deployment_scope=sqlc.narg(deployment_scope)::text)
+       and (b.deployment_scope='' or i.deployment_scope=b.deployment_scope)
+     limit sqlc.arg(row_limit)::integer) own)::bigint
+  + (select count(*) from (
+     select 1 from invocations i, b
+     where b.deployment_scope='' and i.app_id=sqlc.arg(app_id)::uuid and i.queue_binding_id is null
+       and i.queue_name=b.queue_name and i.account_id=b.account_id
+       and i.source='queue' and i.state in ('pending','dispatching')
+       and (sqlc.narg(deployment_scope)::text is null or i.deployment_scope=sqlc.narg(deployment_scope)::text)
+     limit sqlc.arg(row_limit)::integer) legacy)::bigint as depth;
+
+-- name: QueueBindingHasInFlight :one
+-- Whether QueueStateForBinding would count any in-flight message, without
+-- counting the backlog.
+select exists (
+  select 1 from invocations i join queue_bindings b on b.app_id=i.app_id and b.account_id=i.account_id
+  where b.id=sqlc.arg(binding_id)::uuid and b.app_id=sqlc.arg(app_id)::uuid
+    and (sqlc.narg(deployment_scope)::text is null or i.deployment_scope=sqlc.narg(deployment_scope)::text)
+    and i.source='queue' and i.state='dispatching' and i.lease_expires_at > now()
+    and (b.deployment_scope='' or i.deployment_scope=b.deployment_scope)
+    and (i.queue_binding_id=b.id or (b.deployment_scope='' and i.queue_binding_id is null and i.queue_name=b.queue_name))
+)::boolean as in_flight;
+
 -- name: QueueClaimActiveCount :one
 select count(*)::bigint from invocations i
 where i.app_id=sqlc.arg(app_id)::uuid and i.source='queue'
@@ -13117,7 +13179,9 @@ SELECT sqlc.embed(g), sqlc.embed(s) FROM object_storage_s3_credentials c
  AND s.account_id=c.account_id AND d.account_id=c.account_id AND s.org_id=d.org_id AND s.state='ready' AND d.state='ready'
  AND (s.backend_id,s.backend_fingerprint)=(d.backend_id,d.backend_fingerprint)
  AND left(sqlc.arg(object_key)::text,length(g.prefix))=g.prefix
- AND NOT EXISTS(SELECT 1 FROM object_deletions WHERE bucket_id IN (s.id,d.id) AND state IN ('prepared','dispatched'));
+ -- Only a deletion of the source key fences the copy; the destination is an
+ -- ordinary write, fenced per key at admission (ADR-20261025115958).
+ AND NOT EXISTS(SELECT 1 FROM object_deletions WHERE bucket_id=s.id AND object_key=sqlc.arg(object_key)::text AND state IN ('prepared','dispatched'));
 
 -- name: ObjectMultipartCopyPartBegin :exec
 INSERT INTO object_storage_multipart_part_grants(upload_id,part_number,max_bytes,cleanup_tracked,transfer_token,unsafe_until,source_bucket_id,source_copy_grant_id,source_subject_id,source_key)
@@ -20765,6 +20829,9 @@ SELECT (jsonb_build_object(
     'deployment_submission_receipts_deployment_id_fkey', (SELECT count(*) FROM deployment_submission_receipts WHERE deployment_id = sqlc.arg(deployment_id)::uuid),
     'project_worker_job_evidence_deployment_id_fkey', (SELECT count(*) FROM project_worker_job_evidence WHERE deployment_id = sqlc.arg(deployment_id)::uuid),
     'project_worker_release_pins_deployment_id_fkey', (SELECT count(*) FROM project_worker_release_pins WHERE deployment_id = sqlc.arg(deployment_id)::uuid),
+    -- Database-restoring rollbacks (ADR-20261023181931) record both releases.
+    'release_database_switches_from_deployment_id_fkey', (SELECT count(*) FROM release_database_switches WHERE from_deployment_id = sqlc.arg(deployment_id)::uuid),
+    'release_database_switches_target_deployment_id_fkey', (SELECT count(*) FROM release_database_switches WHERE target_deployment_id = sqlc.arg(deployment_id)::uuid),
     -- Preview command runtimes (financial previews) hold a deployment while preparing or active.
     'financial_preview_command_runtimes_deployment_id_fkey', (SELECT count(*) FROM financial_preview_command_runtimes WHERE deployment_id = sqlc.arg(deployment_id)::uuid AND phase <> 'retired')
 ))::jsonb AS borrowers;
@@ -26184,3 +26251,9 @@ RETURNING timeline;
 INSERT INTO object_storage_timeline_acceptance (singleton, timeline, accepted_by)
 VALUES (true, upper(substring(pg_walfile_name(pg_current_wal_lsn()) FROM 1 FOR 8)), 'bootstrap')
 ON CONFLICT (singleton) DO NOTHING;
+
+-- name: ObjectLifecycleDeletionActive :one
+-- A lifecycle scan pauses only for its own unsettled deletions and for a
+-- version protection job in its bucket (ADR-20261025115958).
+SELECT (EXISTS(SELECT 1 FROM object_deletions d WHERE d.bucket_id=sqlc.arg(bucket_id)::uuid AND d.lifecycle_scan_id=sqlc.arg(scan_id)::uuid AND d.state IN ('prepared','dispatched'))
+ OR EXISTS(SELECT 1 FROM object_version_protection p WHERE p.bucket_id=sqlc.arg(bucket_id)::uuid AND p.state IN ('waiting','applying')))::boolean AS active;

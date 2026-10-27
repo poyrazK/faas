@@ -27,6 +27,18 @@ func (s *server) PromotionApprovalProblemForTest(ctx context.Context, apps []sta
 	return s.promotionApprovalProblem(ctx, plan, toEnvironment)
 }
 
+// ProtectedPromotionApprovalProblemForTest holds a protected production
+// environment's promotion approval, given by approver, to the apps' policies
+// for a promotion by promoter (ADR-20261020085706 amendment 2).
+func (s *server) ProtectedPromotionApprovalProblemForTest(ctx context.Context, apps []state.App, toEnvironment, approver, promoter string) *api.Problem {
+	plan := projectEnvironmentPromotionPlan{Apps: map[string]state.App{}}
+	plan.Preview.ApprovalRequired = true
+	for _, app := range apps {
+		plan.Apps[app.Slug] = app
+	}
+	return s.protectedPromotionApprovalProblem(ctx, plan, toEnvironment, approver, promoter)
+}
+
 // RenderReleaseSafetyForTest renders the release safety dashboard page for
 // acct's app slug.
 func (s *server) RenderReleaseSafetyForTest(acct state.Account, slug string) *httptest.ResponseRecorder {

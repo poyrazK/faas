@@ -10,7 +10,7 @@ export class MetaService {
    * This spec, as YAML.
    * Machine-readable API description. Same bytes as
    * `api/openapi.yaml` at the repo HEAD; embedded at build time
-   * via `//go:embed` in `pkg/apid/openapi_handler.go`. No auth.
+   * via `//go:embed`. No auth.
    *
    * @returns string The OpenAPI 3.1 document for this API.
    * @throws ApiError

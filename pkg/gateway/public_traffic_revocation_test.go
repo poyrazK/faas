@@ -245,6 +245,7 @@ func TestPublicTrafficSecurityMetadataRefusals(t *testing.T) {
 			{"malformed", []string{"v1.invalid"}, 200, 503},
 			{"oversized", []string{strings.Repeat("a", api.TrafficSecurityMaxHeaderBytes+1)}, 200, 503},
 			{"excluded-on-app-path", []string{trafficSecurityRealtime}, 200, 503},
+			{"fence-off", []string{trafficSecurityFenceOff}, 200, 200},
 			{"pre-admission-error", nil, 403, 403},
 			{"unverified-redirect", nil, 302, 503},
 		} {

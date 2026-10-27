@@ -782,6 +782,8 @@ type Querier interface {
 	CutoverCheckedRollbackTarget(ctx context.Context, db DBTX, targetID pgtype.UUID) error
 	DataRepairHealthSnapshot(ctx context.Context, db DBTX, arg DataRepairHealthSnapshotParams) ([]byte, error)
 	DeactivateProjectReleaseSets(ctx context.Context, db DBTX, arg DeactivateProjectReleaseSetsParams) error
+	// event_route entries cannot be replayed (DeadLetterReplayable), so they never
+	// take a page from replay-all.
 	DeadLetterReplayCandidateIDs(ctx context.Context, db DBTX, arg DeadLetterReplayCandidateIDsParams) ([]string, error)
 	// issue #667 / ADR-078 — canonical "tail task reached terminal" path.
 	// Equivalent to BumpInstanceTailCount(ctx, id, -n) but kept as a
@@ -2459,6 +2461,8 @@ type Querier interface {
 	InsertReadinessNotification(ctx context.Context, db DBTX, arg InsertReadinessNotificationParams) error
 	InsertReadinessSubscription(ctx context.Context, db DBTX, arg InsertReadinessSubscriptionParams) (int64, error)
 	// ADR-20261023181931: rollbacks that restore the database.
+	// No row when the account already runs max_active unfinished switches
+	// (api.DatabaseSwitchesActivePerAccount).
 	InsertReleaseDatabaseSwitch(ctx context.Context, db DBTX, arg InsertReleaseDatabaseSwitchParams) (ReleaseDatabaseSwitch, error)
 	// ---------------------------------------------------------------------------
 	// ADR-127 / issue #477 — production debugger per-request telemetry
@@ -3347,6 +3351,7 @@ type Querier interface {
 	ListManagedPostgresCutoverCredentials(ctx context.Context, db DBTX, id string) ([]ManagedPostgresCutoverCredential, error)
 	ListManagedPostgresDrainPlanInventory(ctx context.Context, db DBTX, arg ListManagedPostgresDrainPlanInventoryParams) ([]ListManagedPostgresDrainPlanInventoryRow, error)
 	ListManagedPostgresDrainPlanMembers(ctx context.Context, db DBTX, arg ListManagedPostgresDrainPlanMembersParams) ([]ListManagedPostgresDrainPlanMembersRow, error)
+	ListManagedPostgresEgressEndpoints(ctx context.Context, db DBTX) ([]ListManagedPostgresEgressEndpointsRow, error)
 	ListManagedPostgresImportRecords(ctx context.Context, db DBTX, arg ListManagedPostgresImportRecordsParams) ([]ManagedPostgresUsage, error)
 	ListManagedPostgresLifecycleDatabases(ctx context.Context, db DBTX, accountID pgtype.UUID) ([]ManagedPostgresDatabase, error)
 	ListManagedPostgresLifecycleUsageDatabases(ctx context.Context, db DBTX, arg ListManagedPostgresLifecycleUsageDatabasesParams) ([]ManagedPostgresDatabase, error)
@@ -4303,6 +4308,9 @@ type Querier interface {
 	// Give up a claim without publishing; attempt_at keeps the retry cadence.
 	ObjectInventoryRelease(ctx context.Context, db DBTX, arg ObjectInventoryReleaseParams) (int64, error)
 	ObjectInventorySample(ctx context.Context, db DBTX, arg ObjectInventorySampleParams) error
+	// A lifecycle scan pauses only for its own unsettled deletions and for a
+	// version protection job in its bucket (ADR-20261025115958).
+	ObjectLifecycleDeletionActive(ctx context.Context, db DBTX, arg ObjectLifecycleDeletionActiveParams) (bool, error)
 	ObjectLifecycleMultipartAdmit(ctx context.Context, db DBTX, arg ObjectLifecycleMultipartAdmitParams) (int64, error)
 	ObjectLifecycleMultipartList(ctx context.Context, db DBTX, arg ObjectLifecycleMultipartListParams) ([]ObjectStorageMultipartUpload, error)
 	ObjectLifecyclePolicyDue(ctx context.Context, db DBTX, limit int32) ([]pgtype.UUID, error)
@@ -4957,6 +4965,9 @@ type Querier interface {
 	// A lost LISTEN hint still leaves replayable scheduler work after a crash.
 	QueueApplicationStandardRuntimeRefresh(ctx context.Context, db DBTX, arg QueueApplicationStandardRuntimeRefreshParams) error
 	QueueAutomaticRouteCheck(ctx context.Context, db DBTX, arg QueueAutomaticRouteCheckParams) error
+	// Whether QueueStateForBinding would count any in-flight message, without
+	// counting the backlog.
+	QueueBindingHasInFlight(ctx context.Context, db DBTX, arg QueueBindingHasInFlightParams) (bool, error)
 	QueueBindingHistoryByID(ctx context.Context, db DBTX, arg QueueBindingHistoryByIDParams) (QueueBinding, error)
 	// Admission holds the parent app lock, also required by release publication.
 	// Read committed authority without reversing the publisher's release/app lock order.
@@ -4983,10 +4994,25 @@ type Querier interface {
 	QueueConsumerRetireBinding(ctx context.Context, db DBTX, arg QueueConsumerRetireBindingParams) (QueueBinding, error)
 	QueueConsumerUpdateBinding(ctx context.Context, db DBTX, arg QueueConsumerUpdateBindingParams) (QueueBinding, error)
 	QueueConsumerUpdateTrigger(ctx context.Context, db DBTX, arg QueueConsumerUpdateTriggerParams) (int64, error)
+	// QueueStateForBinding's depth up to row_limit per branch: the binding's own
+	// messages, then legacy unassigned work under its name. Each branch reads an
+	// index range and stops at the limit; the caller clamps the sum.
+	QueueDepthForBinding(ctx context.Context, db DBTX, arg QueueDepthForBindingParams) (int32, error)
+	// QueueStateInScope's depth, counted only up to row_limit: worker scaling
+	// needs no more than the depth that saturates the pool (ADR-20261022105723
+	// amendment 2026-10-24).
+	QueueDepthInScope(ctx context.Context, db DBTX, arg QueueDepthInScopeParams) (int64, error)
 	QueueExpiredApplicationStandardExceptions(ctx context.Context, db DBTX, arg QueueExpiredApplicationStandardExceptionsParams) (int64, error)
 	QueueFinishDeliveryClaims(ctx context.Context, db DBTX, arg QueueFinishDeliveryClaimsParams) ([]string, error)
 	QueueInvocationForTriggerReceipt(ctx context.Context, db DBTX, recordID pgtype.UUID) (Invocation, error)
 	QueueLeaseActiveCount(ctx context.Context, db DBTX, arg QueueLeaseActiveCountParams) (int64, error)
+	// The binding's own messages and legacy messages under its name, each read in
+	// due order from its own index (invocations_queue_lease_binding_idx and
+	// _name_idx), so a lease reads about candidate_limit rows whatever the
+	// backlog, its own or another app's (ADR-20261022105723 amendment
+	// 2026-10-24). The due bound uses statement_timestamp(): it is stable, so it
+	// bounds the index range, where volatile clock_timestamp() left only a filter
+	// and the planner walked the global due index instead.
 	QueueLeaseCandidates(ctx context.Context, db DBTX, arg QueueLeaseCandidatesParams) ([]pgtype.UUID, error)
 	QueueLeaseClaimInvocation(ctx context.Context, db DBTX, arg QueueLeaseClaimInvocationParams) (Invocation, error)
 	QueueLeaseClock(ctx context.Context, db DBTX) (pgtype.Timestamptz, error)
@@ -5637,6 +5663,9 @@ type Querier interface {
 	//      until operator override; non-null is the TTL deadline)
 	RecordMailSuppression(ctx context.Context, db DBTX, arg RecordMailSuppressionParams) (bool, error)
 	RecordManagedPostgresCreationReceipt(ctx context.Context, db DBTX, arg RecordManagedPostgresCreationReceiptParams) (ManagedPostgresCreationReceipt, error)
+	// ADR-20261026150000: managed database endpoints, recorded when a credential
+	// is sealed, and the bound apps that may reach them.
+	RecordManagedPostgresDatabaseEndpoint(ctx context.Context, db DBTX, arg RecordManagedPostgresDatabaseEndpointParams) error
 	RecordManagedPostgresDiscoveredResource(ctx context.Context, db DBTX, arg RecordManagedPostgresDiscoveredResourceParams) (int64, error)
 	RecordManagedPostgresLifecycleResource(ctx context.Context, db DBTX, arg RecordManagedPostgresLifecycleResourceParams) (int64, error)
 	RecordManagedPostgresProviderResource(ctx context.Context, db DBTX, arg RecordManagedPostgresProviderResourceParams) (int64, error)
@@ -5728,6 +5757,7 @@ type Querier interface {
 	ReleaseCloneCheckpointObjectFence(ctx context.Context, db DBTX, arg ReleaseCloneCheckpointObjectFenceParams) (int64, error)
 	ReleaseCloneCheckpointPostgresFence(ctx context.Context, db DBTX, arg ReleaseCloneCheckpointPostgresFenceParams) (int64, error)
 	ReleaseConfigurationCandidateOwner(ctx context.Context, db DBTX, appID string) (ReleaseConfigurationCandidateOwnerRow, error)
+	ReleaseEdgeRuleAccountMutationLock(ctx context.Context, db DBTX, accountID string) (bool, error)
 	ReleaseEdgeRuleMutationLock(ctx context.Context, db DBTX, appID string) (bool, error)
 	ReleaseEnvironmentGitOpsField(ctx context.Context, db DBTX, arg ReleaseEnvironmentGitOpsFieldParams) error
 	ReleaseEnvironmentGitOpsLease(ctx context.Context, db DBTX, arg ReleaseEnvironmentGitOpsLeaseParams) (int64, error)
@@ -6160,6 +6190,9 @@ type Querier interface {
 	SavePromotionReleaseConfiguration(ctx context.Context, db DBTX, arg SavePromotionReleaseConfigurationParams) error
 	SaveReadinessSubscriptionWatches(ctx context.Context, db DBTX, arg SaveReadinessSubscriptionWatchesParams) (int64, error)
 	SaveRegressionActionReceipt(ctx context.Context, db DBTX, arg SaveRegressionActionReceiptParams) (int64, error)
+	// A cancel the API accepted while the step ran holds the switch in its
+	// cancellable phase: the drain's advance to switching is not saved and the
+	// switch is due at once, so the next step aborts it.
 	SaveReleaseDatabaseSwitch(ctx context.Context, db DBTX, arg SaveReleaseDatabaseSwitchParams) (ReleaseDatabaseSwitch, error)
 	// Saves the config proof a publication commits with. A wake's bookkeeping
 	// rides in the same statement, so it costs no round trip: the transition
@@ -6392,6 +6425,7 @@ type Querier interface {
 	StageMigrationContract(ctx context.Context, db DBTX, arg StageMigrationContractParams) (int64, error)
 	StageProjectReleaseCommand(ctx context.Context, db DBTX, arg StageProjectReleaseCommandParams) error
 	StageProjectReleaseConfiguration(ctx context.Context, db DBTX, arg StageProjectReleaseConfigurationParams) error
+	StaleEdgeListenerNodes(ctx context.Context, db DBTX, staleAfter pgtype.Interval) ([]string, error)
 	// The placement shares the fenced stamp (ADR-1195); an attempt keeps its first.
 	StampCustomerOperationExecutionAttempt(ctx context.Context, db DBTX, arg StampCustomerOperationExecutionAttemptParams) (int64, error)
 	StampDeadLetterEventReplay(ctx context.Context, db DBTX, arg StampDeadLetterEventReplayParams) error
@@ -6468,6 +6502,7 @@ type Querier interface {
 	ThawFrozenInstance(ctx context.Context, db DBTX, arg ThawFrozenInstanceParams) (ThawFrozenInstanceRow, error)
 	TouchCronActivation(ctx context.Context, db DBTX, arg TouchCronActivationParams) error
 	TouchCustomerOperationWorkflowStep(ctx context.Context, db DBTX, arg TouchCustomerOperationWorkflowStepParams) error
+	TouchEdgeListenerHeartbeat(ctx context.Context, db DBTX, name string) error
 	TouchEnvironmentGitOpsIntent(ctx context.Context, db DBTX, sourceID pgtype.UUID) error
 	TouchKeyLastUsed(ctx context.Context, db DBTX, id pgtype.UUID) error
 	TouchProjectSubmission(ctx context.Context, db DBTX, arg TouchProjectSubmissionParams) error
@@ -6552,6 +6587,7 @@ type Querier interface {
 	// as "skip the dead_letter insert; leave the record in
 	// poller.inFlight for the next tick to retry".
 	TriggerRecordIDByItemIdentifier(ctx context.Context, db DBTX, arg TriggerRecordIDByItemIdentifierParams) (pgtype.UUID, error)
+	TryEdgeRuleAccountMutationLock(ctx context.Context, db DBTX, accountID string) (bool, error)
 	TryEdgeRuleMutationLock(ctx context.Context, db DBTX, appID string) (bool, error)
 	TryLockApplicationStandardApprovalArtifactChildren(ctx context.Context, db DBTX, deploymentIds []pgtype.UUID) (bool, error)
 	TryLockApplicationStandardApprovalControls(ctx context.Context, db DBTX, appIds []pgtype.UUID) (bool, error)

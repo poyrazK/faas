@@ -27,6 +27,26 @@ func TrafficAuthoritativeHostPolicyEnabled(value string) (bool, error) {
 // EgressCircuitBreakerEnabled is shared by schedd and vmmd. An unset flag
 // defaults off; false/0 stay off, and malformed values fail startup rather
 // than silently enabling or disabling protection.
+// HTTPAdmissionEnabled parses vmmd's FAAS_HTTP_ADMISSION kill switch for the
+// ADR-570 per-VM HTTP admission cap. Empty keeps the cap on; "off"/"false"
+// lifts it while permits stay tracked for park and retirement cancellation.
+func HTTPAdmissionEnabled(value string) (bool, error) {
+	value = strings.TrimSpace(value)
+	switch strings.ToLower(value) {
+	case "":
+		return true, nil
+	case "on":
+		return true, nil
+	case "off":
+		return false, nil
+	}
+	enabled, err := strconv.ParseBool(value)
+	if err != nil {
+		return true, fmt.Errorf("FAAS_HTTP_ADMISSION must be on, off or a boolean")
+	}
+	return enabled, nil
+}
+
 func EgressCircuitBreakerEnabled(value string) (bool, error) {
 	value = strings.TrimSpace(value)
 	if value == "" {

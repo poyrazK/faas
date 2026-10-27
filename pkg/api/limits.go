@@ -1107,6 +1107,12 @@ const DatabaseSwitchSettleTimeout = 2 * time.Minute
 const DatabaseSwitchDrainTimeout = 10 * time.Minute
 const DatabaseSwitchListMax = 50
 
+// DatabaseSwitchesActivePerAccount is how many unfinished database switches
+// one account may run at once. The switch worker's queue is shared by every
+// tenant; the cap keeps one account's many apps from crowding out the
+// fenced switches of others, whose apps are down while they wait.
+const DatabaseSwitchesActivePerAccount = 3
+
 // Verified rollback outcomes (ADR-1446). apid resolves each plain rollback
 // every RollbackOutcomeCheckInterval: complete once the target serves,
 // failed when it leaves activation without serving or when
@@ -1148,6 +1154,16 @@ const SyncInvokeWaitSecondsFree = 5
 // invocation's retry policy. An invocation of an app whose request timeout is
 // longer is bounded by AsyncInvocationDispatchTimeout instead (ADR-1180).
 const GatewaySynthDispatchTimeout = 30 * time.Second
+
+// CronFireNowActivePerCron bounds the manual runs (POST /v1/crons/{id}/run)
+// one cron may have waiting or running at once; another request gets a 429
+// (ADR-20261026201726). Only requests made within CronFireNowActiveWindow
+// count, so a request whose run never settles cannot block manual runs for
+// good.
+const (
+	CronFireNowActivePerCron = 5
+	CronFireNowActiveWindow  = 15 * time.Minute
+)
 
 // New apps start with the pre-auth source limit in observe mode (ADR-829):
 // it records which sources would exceed this per-source rate without
@@ -9413,6 +9429,13 @@ func (p Plan) DebugTelemetryRetentionDays() int {
 	return l.DebugTelemetryRetentionDays
 }
 
+// DebugTelemetryFairSharePressure is the fraction of an account's telemetry
+// bucket below which an app that has used its fair share of the minute yields
+// to its sibling apps (ADR-20261026143210 amendment 1). The fair share is the
+// bucket's capacity divided by the apps that sent rows this minute or the
+// last; the account total is unchanged.
+const DebugTelemetryFairSharePressure = 0.5
+
 // DebugTelemetryRequestsPerMinute (ADR-127) returns the per-account
 // rate cap on the IncrementRequestTelemetry ingest RPC. Read by the
 // publisher at startup; per-record overflow returns outcome
@@ -9688,6 +9711,13 @@ func (p Plan) HealthPathWakesAllowed() bool {
 // not make this per-plan without a separate ADR (the §12 budget math
 // is global, not per-tenant).
 const RouteMetricsPerAppCap = 50
+
+// RouteLabelReuseAfterIdle is how long an admitted route label must go
+// without a request on a gateway before a newly established route may take
+// its place in a full set (ADR-20261026143210 amendment 1). Declared routes
+// keep their labels. A route seen within the window is never displaced, so an
+// app that answers every path cannot lose its live routes to one-off probes.
+const RouteLabelReuseAfterIdle = time.Hour
 
 // Per-route series at fleet scale (ADR-20261024154324). Every Hobby+ app opts
 // into per-route metrics, so each gatewayd-internal bounds its own export: at

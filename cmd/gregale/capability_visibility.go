@@ -147,6 +147,28 @@ func discoveryCapabilityView() capabilityView {
 	return capabilityViewMemo.view
 }
 
+// offlineCapabilityView is the run's discovery view when it is known, else
+// the cached account view, else the tier defaults. It never asks the API, so
+// an error path that lists verbs does not wait on it (Hunt 14 H14-89).
+func offlineCapabilityView() capabilityView {
+	capabilityViewMemo.Lock()
+	defer capabilityViewMemo.Unlock()
+	if capabilityViewMemo.set {
+		return capabilityViewMemo.view
+	}
+	if capabilityReleaseAll() {
+		return capabilityView{all: true}
+	}
+	token := loadTokenWithDiagnostics(io.Discard)
+	if token == "" {
+		return capabilityView{tier: true}
+	}
+	if hidden, _, ok := cachedHiddenCapabilities(token); ok {
+		return accountCapabilityView(hidden)
+	}
+	return capabilityView{tier: true}
+}
+
 func computeDiscoveryView() capabilityView {
 	if capabilityReleaseAll() {
 		return capabilityView{all: true}
@@ -214,6 +236,10 @@ func commandCapabilityPath(args []string) string {
 	return path
 }
 
+// localCommands never call the platform. A hidden capability leaves them out
+// of help like its other commands but does not refuse to run them.
+var localCommands = map[string]bool{"data-api dev": true}
+
 // hiddenCommand reports an invocation whose command is hidden, with its
 // path. A help request follows the discovery view. Running a command is
 // refused only when the cached account view hides it and a fresh read
@@ -226,6 +252,9 @@ func hiddenCommand(args []string, helpRequest bool) (string, bool) {
 	}
 	if helpRequest {
 		return path, discoveryCapabilityView().hides(capability)
+	}
+	if localCommands[path] {
+		return path, false
 	}
 	token := loadTokenWithDiagnostics(io.Discard)
 	if token == "" {
