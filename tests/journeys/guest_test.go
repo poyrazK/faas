@@ -30,9 +30,7 @@ func TestGuestGuarantees(t *testing.T) {
 		egress = jsonBody(t, r)
 		names := make([]string, 0, len(egress))
 		for name := range egress {
-			if name != "metadata_identity" {
-				names = append(names, name)
-			}
+			names = append(names, name)
 		}
 		sort.Strings(names)
 		for _, name := range names {
@@ -48,21 +46,11 @@ func TestGuestGuarantees(t *testing.T) {
 		}
 		t.Errorf("the app cannot open any public HTTPS connection (1.1.1.1, 8.8.8.8, api.github.com): outbound calls to APIs fail")
 	})
-	s.check("cloud_metadata_unreachable", func(t *testing.T) {
-		if egress == nil {
-			t.Skip("blocked: no /egress result")
-		}
-		id := field(egress, "metadata_identity")
-		t.Logf("169.254.169.254 identity: %s", compact(id))
-		if strings.EqualFold(str(id, "metadata_flavor"), "Google") {
-			t.Errorf("a tenant app reached the cloud provider's metadata server (Metadata-Flavor: Google): it could read the compute node's credentials")
-		}
-	})
 	s.check("denied_destinations", func(t *testing.T) {
 		if egress == nil {
 			t.Skip("blocked: no /egress result")
 		}
-		for _, name := range []string{"host_link_ssh", "private_10", "private_192", "smtp_25", "smtp_465", "smtp_587"} {
+		for _, name := range []string{"metadata", "host_link_ssh", "private_10", "private_192", "smtp_25", "smtp_465", "smtp_587"} {
 			if connected, _ := field(egress, name+".connected").(bool); connected {
 				t.Errorf("tenant egress reached %s (%s); it must be refused", name, str(egress, name+".target"))
 			}
