@@ -102,6 +102,7 @@ func TestCommandCapabilityPath(t *testing.T) {
 		{[]string{"debug", "bundle", "my-app", "req"}, "debug bundle", "production-debugger"},
 		{[]string{"debug", "coverage", "my-app"}, "debug coverage", "debug"},
 		{[]string{"app", "my-app", "security"}, "app security", "signed-deploys"},
+		{[]string{"app", "my-app", "routes"}, "app routes", "route-insights"},
 		{[]string{"deploy"}, "deploy", ""},
 	} {
 		path := main.CommandCapabilityPath(tc.args)

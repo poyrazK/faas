@@ -4699,6 +4699,7 @@
         "/v1/apps/{}/routes"
       ],
       "cli": [
+        "app routes",
         "routes",
         "routes insights"
       ]
