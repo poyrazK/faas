@@ -254,8 +254,49 @@ func (j *nativeSourceJobJourney) waitSourceApplied(t *testing.T, revision string
 				r.ImageStorageKeySnapshot, r.Command, r.EnvOverrides, r.EffectiveEnvSnapshot, r.FailureRules, r.InputManifestVersion,
 				r.InputDigest, r.InputManifestURI, r.InputManifestSHA256)
 		}
+		j.logServingProofSQL(ctx, t, job.ID)
 	})
 	j.waitApplied(t, revision, generation)
+}
+
+// logServingProofSQL reads, without writing, each database check the Job
+// graph's serving receipt depends on.
+func (j *nativeSourceJobJourney) logServingProofSQL(ctx context.Context, t *testing.T, jobID string) {
+	if j.pool == nil {
+		return
+	}
+	status, err := j.client.GetEnvironmentGitOps(ctx, j.project.Slug, "production")
+	if err != nil || status.WorkloadEvidence == nil || status.WorkloadEvidence.GraphID == "" {
+		t.Logf("serving proof: no graph: %v", err)
+		return
+	}
+	graphID := status.WorkloadEvidence.GraphID
+	query := func(label, sql string, args ...any) {
+		rows, err := j.pool.Query(ctx, sql, args...)
+		if err != nil {
+			t.Logf("serving proof %s: %v", label, err)
+			return
+		}
+		defer rows.Close()
+		for rows.Next() {
+			values, err := rows.Values()
+			t.Logf("serving proof %s: %v %v", label, values, err)
+		}
+	}
+	query("graph", `SELECT phase,generation,intent_version,revision_id::text,members::text FROM environment_workload_graphs WHERE id=$1::uuid`, graphID)
+	query("source", `SELECT mode,suspended,generation,intent_version,approved_revision_id::text FROM environment_git_sources WHERE id=$1::uuid`, j.source.ID)
+	query("receipt", `SELECT phase,release_set_id::text,expected_gateways,started_at,updated_at FROM environment_workload_serving_receipts WHERE graph_id=$1::uuid`, graphID)
+	query("releases", `SELECT id::text,active,environment_slug,created_at FROM project_release_sets WHERE project_id=$1::uuid ORDER BY created_at DESC LIMIT 3`, j.project.ID)
+	query("readiness", `SELECT r.id::text,environment_workload_scheduled_jobs_ready($1::uuid,r.id),
+		(SELECT count(*) FROM environment_workload_scheduled_job_acks($1::uuid,r.id)),
+		environment_workload_serving_ready_without_scheduled_jobs($1::uuid),environment_workload_serving_gateway_roster_ready($1::uuid),
+		environment_workload_serving_ready($1::uuid)
+		FROM project_release_sets r WHERE r.project_id=$2::uuid AND r.active`, graphID, j.project.ID)
+	query("artifact", `SELECT d.id::text,d.status,d.environment_workload_held,environment_workload_source_job_deployment_matches(j.id,d.id),
+		j.image_materialization_status,j.image_storage_key=d.rootfs_key
+		FROM jobs j JOIN deployments d ON j.image_resolved_digest='gregale-deployment:'||d.id::text WHERE j.id=$1::uuid`, jobID)
+	query("gitops job", `SELECT desired_generation,claimed_generation,next_attempt_at,lease_until,attempt_count FROM environment_gitops_jobs WHERE source_id=$1::uuid`, j.source.ID)
+	query("gitops runs", `SELECT status,error_code,started_at,completed_at,left(steps::text,800) FROM environment_gitops_runs WHERE source_id=$1::uuid ORDER BY started_at DESC LIMIT 4`, j.source.ID)
 }
 
 func (j *nativeSourceJobJourney) waitSourceOccurrence(t *testing.T, dep state.Deployment, seen map[string]bool) state.JobRun {

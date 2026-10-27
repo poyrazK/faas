@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
 	"github.com/onebox-faas/faas/pkg/e2etest"
@@ -56,6 +57,7 @@ type nativeSourceJobJourney struct {
 	nativeGitOpsJourney
 	kind, jobID string
 	binary      []byte
+	pool        *pgxpool.Pool // read-only serving diagnostics on failure
 }
 
 func runNativeSourceJob(t *testing.T, providerName, kind string) {
@@ -114,7 +116,7 @@ func runNativeSourceJob(t *testing.T, providerName, kind string) {
 		t.Fatal(err)
 	}
 	j := nativeSourceJobJourney{nativeGitOpsJourney: nativeGitOpsJourney{h: h, store: store, client: api.NewClient(h.APIDURL, key),
-		key: key, project: project, app: app, source: source, provider: provider}, kind: kind}
+		key: key, project: project, app: app, source: source, provider: provider}, kind: kind, pool: pool}
 	if kind == "dockerfile" {
 		j.binary = nativeSourceJobBinary(t)
 	}
