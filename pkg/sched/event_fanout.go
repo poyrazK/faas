@@ -828,7 +828,7 @@ func (l *Loop) admitEventRecipient(ctx context.Context, store state.PublishedEve
 }
 
 func (l *Loop) observeEventRoutingHealth(ctx context.Context) {
-	if l.ops == nil {
+	if l.ops == nil || !l.eventRoutingHealthDue(l.eventFanoutNow()) {
 		return
 	}
 	if store, ok := l.engine.store.(state.EventRoutingHealthStore); ok {
@@ -921,4 +921,19 @@ func (l *Loop) observeEventRoutingPause(routing bool) {
 	} else {
 		l.log.Warn("sched: event routing paused: the events capability is switched off platform-wide")
 	}
+}
+
+// eventRoutingHealthInterval bounds how often a node reads routing health
+// (ADR-614 amendment 2026-10-27). The read aggregates every unsettled receipt
+// on the platform, and sweeps run every few seconds and on every publish.
+const eventRoutingHealthInterval = 15 * time.Second
+
+// eventRoutingHealthDue reports whether the routing health gauges are due a
+// refresh at now, and records the refresh when they are.
+func (l *Loop) eventRoutingHealthDue(now time.Time) bool {
+	if !l.eventRoutingHealthAt.IsZero() && now.Sub(l.eventRoutingHealthAt) < eventRoutingHealthInterval {
+		return false
+	}
+	l.eventRoutingHealthAt = now
+	return true
 }

@@ -289,6 +289,10 @@ const XEventFanoutSafetyTick = eventFanoutSafetyTick
 
 func (l *Loop) XRunEventFanoutSweep(ctx context.Context) { l.runEventFanoutSweep(ctx) }
 
+// XEventRoutingHealthDue is the sweep's routing-health throttle.
+// adr: 614 — a node reads routing health at most every 15 s.
+func (l *Loop) XEventRoutingHealthDue(now time.Time) bool { return l.eventRoutingHealthDue(now) }
+
 // XRunEventFanoutSweepAt runs the sweep with the loop's clock at now.
 // adr: 20261027125625 — held recipients route once their wait has passed.
 func (l *Loop) XRunEventFanoutSweepAt(ctx context.Context, now time.Time) {

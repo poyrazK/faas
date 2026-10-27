@@ -130,6 +130,9 @@ type Loop struct {
 	eventFanoutLastPrune        time.Time
 	eventFanoutHistoryLastPrune time.Time
 	eventRecipientClaims        bool
+	// eventRoutingHealthAt is the last routing health read; the fanout sweep
+	// runs on one work-pool slot, so it needs no lock.
+	eventRoutingHealthAt time.Time
 	// eventRoutingPaused remembers the events kill switch state for its log.
 	eventRoutingPaused    bool
 	now                   func() time.Time
