@@ -13,8 +13,8 @@ observed and armed the live default deployment. The runtime remains preview
 and requires operator configuration. Deduplicate each handler's external
 effects using its `Idempotency-Key` header; retries reuse that key.
 
-Inspect admission with `gregale workflows schedules --app APP_SLUG`, and
-execution with `gregale workflows list --app APP_SLUG`. To pause new starts,
+Inspect admission with `gregale workflow schedules --app APP_SLUG`, and
+execution with `gregale workflow list --app APP_SLUG`. To pause new starts,
 set `trigger.enabled: false` and redeploy. Existing runs continue. Missed and
 quota/overlap-skipped minutes are not replayed.
 

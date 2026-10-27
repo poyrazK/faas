@@ -3,7 +3,7 @@
 Gregale bills the account that owns an app. Plan prices and included capacity are generated from the platform limits table in [Plans and pricing](plans.md).
 
 ```bash
-gregale usage --month 2026-09
+gregale billing usage --month 2026-09
 gregale billing status
 gregale billing portal
 ```
@@ -18,8 +18,8 @@ A spend cap is a hard ceiling on the overage an account is billed in a UTC
 calendar month. The included GB-RAM-hours are not counted against it.
 
 ```bash
-gregale overage-cap 500      # cap overage at $5.00 this month
-gregale overage-cap --clear  # remove the cap
+gregale billing spend-cap 500      # cap overage at $5.00 this month
+gregale billing spend-cap --clear  # remove the cap
 ```
 
 `POST /v1/account/overage-cap` with `{"overage_cap_cents": 500}` (or `null`
@@ -238,7 +238,7 @@ and email channels alert rules use;
 [ADR 20261019193500](adr/20261019193500-budget-alert-channels.md)):
 
 ```bash
-gregale channels list                                         # find channel IDs
+gregale alert channel list                                         # find channel IDs
 gregale billing budgets channels --set CHANNEL_ID,CHANNEL_ID POLICY_ID
 gregale billing budgets channels POLICY_ID                    # last delivery per channel
 gregale billing budgets channels --clear POLICY_ID
@@ -281,7 +281,7 @@ Object storage cannot be selected on app, job, project or environment budgets
 
 The amount is the live object-storage estimate: this month's stored
 GiB-months, requests and egress, priced with the same rates and plan
-allowance as `gregale usage object-storage` and month close. Gross is before the
+allowance as `gregale billing usage object-storage` and month close. Gross is before the
 allowance and net is after. apid refreshes it every five minutes, and an
 estimate more than 15 minutes old counts as stale. `GET /v1/billing/costs`
 shows it as the `object_storage` meter. Threshold and projected-overrun alerts
@@ -447,7 +447,7 @@ entire download with HTTP 409. No amounts or timestamps are guessed.
 
 ### Refresh invoice facts
 
-Use an ID from `gregale invoices` to refresh a locally stored invoice:
+Use an ID from `gregale billing invoices` to refresh a locally stored invoice:
 
 ```bash
 gregale billing refresh-invoice INVOICE_ID

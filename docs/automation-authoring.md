@@ -14,7 +14,7 @@ The app dashboard also offers starter forms and an advanced JSON editor, describ
 
 Open **Build and manage automations** in the app's Workflows section, or visit
 `/dashboard/apps/APP_SLUG/automations`. Choose one of the same four starters
-available through `gregale automations init`. Selection does not save a draft
+available through `gregale automation init`. Selection does not save a draft
 or start a run. Deploy the starter's handler routes and configure its required
 integrations or event sources separately.
 
@@ -204,7 +204,7 @@ qualification.
 
 ### Verify a deployed automation from CI
 
-`gregale automations live` exposes the same saved-case verification through the
+`gregale automation live` exposes the same saved-case verification through the
 CLI. Authenticate the CI job with `FAAS_TOKEN`; use `FAAS_API` when selecting a
 different control-plane endpoint.
 Use `live list --app billing --name paid-invoice --json` to read the current
@@ -215,7 +215,7 @@ its integrations before confirming real actions.
 Start one case against explicitly selected target versions:
 
 ```sh
-gregale automations live start --app billing --name paid-invoice \
+gregale automation live start --app billing --name paid-invoice \
   --case synthetic --expected-version 7 --expected-published-version 4 \
   --expected-deployment-id 00000000-0000-4000-8000-000000000002 \
   --idempotency-key deploy-42-synthetic --confirm-real-actions \
@@ -228,7 +228,7 @@ artifact before waiting; `.verification.run_id` identifies the admitted run.
 a current passing verdict in a later CI step, reconnect to that same run:
 
 ```sh
-gregale automations live wait --app billing --name paid-invoice \
+gregale automation live wait --app billing --name paid-invoice \
   --run RUN_UUID --timeout 10m --poll-interval 3s \
   --json > verification-result.json
 ```
@@ -274,7 +274,7 @@ against one frozen target. Each case can execute real actions. Review the cases
 and integrations before confirming them:
 
 ```sh
-gregale automations live suite --app billing --name paid-invoice \
+gregale automation live suite --app billing --name paid-invoice \
   --case happy --case expected-failure \
   --expected-version 7 --expected-published-version 4 \
   --expected-deployment-id 00000000-0000-4000-8000-000000000002 \
@@ -300,7 +300,7 @@ Only one CLI process may own that journal at a time.
 Continue the original suite explicitly:
 
 ```sh
-gregale automations live suite --resume suite-progress.json \
+gregale automation live suite --resume suite-progress.json \
   --confirm-real-actions --timeout 15m --json > suite-result.json
 ```
 
@@ -518,7 +518,7 @@ history or gate requires app-read scope.
 Discover existing names and their current evidence health with:
 
 ```sh
-gregale automations live baseline list --app billing --name paid-invoice --json
+gregale automation live baseline list --app billing --name paid-invoice --json
 ```
 
 The dashboard's **Named baselines** catalog shows each head, policy and target,
@@ -555,16 +555,16 @@ After explicitly running and checking a retained suite, promote it with a versio
 2 policy. Use a new UUID for each deliberate promotion, and preserve it for retries:
 
 ```sh
-gregale automations live baseline promote --app billing --name paid-invoice \
+gregale automation live baseline promote --app billing --name paid-invoice \
   --baseline-name production --suite 00000000-0000-4000-8000-000000000010 \
   --promotion-id 00000000-0000-4000-8000-000000000020 --expected-revision 0 \
   --expected-version 7 --expected-published-version 4 \
   --expected-deployment-id 00000000-0000-4000-8000-000000000002 \
   --policy automation-gate-policy.json --json
 
-gregale automations live baseline show --app billing --name paid-invoice \
+gregale automation live baseline show --app billing --name paid-invoice \
   --baseline-name production --json
-gregale automations live baseline history --app billing --name paid-invoice \
+gregale automation live baseline history --app billing --name paid-invoice \
   --baseline-name production --json
 ```
 
@@ -627,7 +627,7 @@ Add `--share` when creating a new CLI suite to retain its selection and run link
 in the app dashboard:
 
 ```sh
-gregale automations live suite --app billing --name paid-invoice \
+gregale automation live suite --app billing --name paid-invoice \
   --case happy --case expected-failure \
   --expected-version 7 --expected-published-version 4 \
   --expected-deployment-id 00000000-0000-4000-8000-000000000002 \
@@ -784,8 +784,8 @@ Customer Workflow Operations admission or establish KVM qualification.
 Create a local starter without logging in:
 
 ```sh
-gregale automations init --list
-gregale automations init --template scheduled-report --path daily-report
+gregale automation init --list
+gregale automation init --template scheduled-report --path daily-report
 ```
 
 The destination must be a new directory with an existing parent. The command
@@ -807,8 +807,8 @@ requires valid integration bindings even when provider responses are mocked.
 From the generated directory:
 
 ```sh
-gregale automations validate --app APP_SLUG --file automation.yaml
-gregale automations simulate --app APP_SLUG --file automation.yaml \
+gregale automation validate --app APP_SLUG --file automation.yaml
+gregale automation simulate --app APP_SLUG --file automation.yaml \
   --input-file sample-input.json --mock-outputs-file mock-outputs.json \
   --mock-attempts-file mock-attempts.json --require-complete
 ```
@@ -826,7 +826,7 @@ After reviewing the trace, follow the README instructions to apply and publish.
 Run the supplied starter scenarios together:
 
 ```sh
-gregale automations check --app billing --scenarios scenarios.yaml
+gregale automation check --app billing --scenarios scenarios.yaml
 ```
 
 A suite references one definition and sample files. All file paths are resolved
@@ -883,7 +883,7 @@ and request failures return 1. This makes the command suitable for CI.
 Attach the same suite to a publish command:
 
 ```sh
-gregale automations publish --app billing --name approval-flow \
+gregale automation publish --app billing --name approval-flow \
   --expected-version VERSION --scenarios scenarios.yaml
 ```
 
@@ -996,7 +996,7 @@ returns `409`; use a new key for a new run. The key remains reserved while its
 run is retained.
 
 ```sh
-gregale workflows run --app billing --input '{"invoice_id":"inv_42"}' \
+gregale workflow run --app billing --input '{"invoice_id":"inv_42"}' \
   --idempotency-key invoice-paid-inv_42 paid-invoice
 ```
 
@@ -1034,20 +1034,20 @@ The CLI accepts the same definition as YAML or JSON. Validate it before saving a
 draft, then pass the version returned by each write to the next command:
 
 ```sh
-gregale automations list --app billing
-gregale automations get --app billing --name paid-invoice
-gregale automations health --app billing --name paid-invoice
-gregale automations pause --app billing --name paid-invoice --expected-version 8
-gregale automations resume --app billing --name paid-invoice --expected-version 9
-gregale automations get --app billing --name paid-invoice --definition-out paid-invoice.json
-gregale automations get --app billing --name paid-invoice --definition-out published.json --published
-gregale automations revisions list --app billing --name paid-invoice
-gregale automations revisions show --app billing --name paid-invoice --revision 42
-gregale automations validate --app billing --file paid-invoice.yaml
-gregale automations apply --app billing --file paid-invoice.yaml --expected-version 0
-gregale automations publish --app billing --name paid-invoice --expected-version 1
-gregale automations restore --app billing --name paid-invoice --revision 42 --expected-version 47
-gregale automations delete --app billing --name paid-invoice --expected-version 48 --yes
+gregale automation list --app billing
+gregale automation get --app billing --name paid-invoice
+gregale automation health --app billing --name paid-invoice
+gregale automation pause --app billing --name paid-invoice --expected-version 8
+gregale automation resume --app billing --name paid-invoice --expected-version 9
+gregale automation get --app billing --name paid-invoice --definition-out paid-invoice.json
+gregale automation get --app billing --name paid-invoice --definition-out published.json --published
+gregale automation revisions list --app billing --name paid-invoice
+gregale automation revisions show --app billing --name paid-invoice --revision 42
+gregale automation validate --app billing --file paid-invoice.yaml
+gregale automation apply --app billing --file paid-invoice.yaml --expected-version 0
+gregale automation publish --app billing --name paid-invoice --expected-version 1
+gregale automation restore --app billing --name paid-invoice --revision 42 --expected-version 47
+gregale automation delete --app billing --name paid-invoice --expected-version 48 --yes
 ```
 
 List and get show the current version, publication version, ownership, and enabled
@@ -1078,7 +1078,7 @@ If the published automation took over a YAML-owned name, include
 `--restore-manifest` to allow the current YAML definition to own that name again:
 
 ```sh
-gregale automations delete --app billing --name paid-invoice --expected-version 48 --yes --restore-manifest
+gregale automation delete --app billing --name paid-invoice --expected-version 48 --yes --restore-manifest
 ```
 
 Pause automatic starts to stop future scheduled/event admissions. Existing runs
@@ -1098,8 +1098,8 @@ The CLI can narrow an app's run history by exact workflow name, status, and
 inclusive creation-time bounds:
 
 ```sh
-gregale workflows list --app billing --workflow-name paid-invoice --status failed
-gregale workflows list --app billing --created-after 2026-10-01T00:00:00Z \
+gregale workflow list --app billing --workflow-name paid-invoice --status failed
+gregale workflow list --app billing --created-after 2026-10-01T00:00:00Z \
   --created-before 2026-10-05T23:59:59Z --limit 50
 ```
 
@@ -1123,10 +1123,10 @@ Pending runs can include a retry or a previously parked run, so use
 intend to cancel, then repeat that exact selection with the explicit action:
 
 ```sh
-gregale workflows list --app billing --workflow-name paid-invoice --status pending
-gregale workflows cancel-queued-preview --app billing --workflow-name paid-invoice \
+gregale workflow list --app billing --workflow-name paid-invoice --status pending
+gregale workflow cancel-queued-preview --app billing --workflow-name paid-invoice \
   --run-id <run-id>
-gregale workflows cancel-queued --app billing --workflow-name paid-invoice \
+gregale workflow cancel-queued --app billing --workflow-name paid-invoice \
   --run-id <run-id> --yes
 ```
 
@@ -1155,8 +1155,8 @@ Get a bounded operational summary for one saved automation from the CLI, or use
 the API directly:
 
 ```sh
-gregale automations health --app billing --name paid-invoice
-gregale automations health --app billing --name paid-invoice \
+gregale automation health --app billing --name paid-invoice
+gregale automation health --app billing --name paid-invoice \
   --created-after 2026-10-01T00:00:00Z --created-before 2026-10-05T23:59:59Z
 ```
 
@@ -1340,7 +1340,7 @@ Run the same simulation from the CLI before saving or publishing. Provide the
 definition, sample input, and action mocks as separate files:
 
 ```sh
-gregale automations simulate --app billing --file paid-invoice.yaml \
+gregale automation simulate --app billing --file paid-invoice.yaml \
   --input-file sample-input.json --mock-outputs-file mock-outputs.json \
   --mock-attempts-file attempt-mocks.json
 ```
@@ -1831,9 +1831,9 @@ before rolling back application binaries.
 Inspect a deployed schedule before relying on its cadence or catch-up behavior:
 
 ```sh
-gregale workflows schedules preview --app billing --workflow nightly
+gregale workflow schedules preview --app billing --workflow nightly
 gregale --json workflows schedules preview --app billing --workflow nightly --count 8
-gregale workflows schedules preview --app billing --workflow nightly \
+gregale workflow schedules preview --app billing --workflow nightly \
   --at 2027-03-28T00:00:00Z --since 2027-03-27T00:00:00Z
 ```
 
@@ -1867,10 +1867,10 @@ See [ADR-645](adr/645-workflow-schedule-preview.md).
 Find runs for an existing automation without knowing a run ID:
 
 ```sh
-gregale automations runs --app billing --name approval-flow --status failed
-gregale automations runs --app billing --name approval-flow --status awaiting_event \
+gregale automation runs --app billing --name approval-flow --status failed
+gregale automation runs --app billing --name approval-flow --status awaiting_event \
   --created-after 2026-10-01T00:00:00Z --limit 25 --offset 0
-gregale automations diagnose --app billing --name approval-flow \
+gregale automation diagnose --app billing --name approval-flow \
   --run 00000000-0000-4000-8000-000000000001
 ```
 
@@ -1908,7 +1908,7 @@ include a general history command. Health JSON retains its existing API format.
 Inspect a run and preview its continuation before changing it:
 
 ```sh
-gregale workflows diagnose 00000000-0000-4000-8000-000000000001
+gregale workflow diagnose 00000000-0000-4000-8000-000000000001
 gregale --json workflows diagnose 00000000-0000-4000-8000-000000000001
 ```
 
@@ -1926,7 +1926,7 @@ valid plan can have temporary admission blockers, such as maintenance or a full
 active-run quota; its proposed reopened names remain visible.
 
 When the snapshot is eligible and has no blockers, the human CLI output includes
-a copyable `gregale workflows resume RUN_ID --expected-resume-count N` command
+a copyable `gregale workflow resume RUN_ID --expected-resume-count N` command
 using the observed resume count. Review the reopened steps before executing it.
 Diagnosis remains read-only and does not run the command. Blocked or ineligible
 snapshots do not offer a resume command, and JSON retains the existing snapshot
@@ -1983,9 +1983,9 @@ same if you repeat a request after a timeout, and use `workflows resumes` to
 inspect the continuation audit history:
 
 ```sh
-gregale workflows status 00000000-0000-4000-8000-000000000001
-gregale workflows resume 00000000-0000-4000-8000-000000000001 --expected-resume-count 0 --idempotency-key invoice-batch-resume-1
-gregale workflows resumes 00000000-0000-4000-8000-000000000001
+gregale workflow status 00000000-0000-4000-8000-000000000001
+gregale workflow resume 00000000-0000-4000-8000-000000000001 --expected-resume-count 0 --idempotency-key invoice-batch-resume-1
+gregale workflow resumes 00000000-0000-4000-8000-000000000001
 ```
 
 Successful actions and batch items retain their results. Failed actions receive
@@ -2021,7 +2021,7 @@ downgrading; export resume history before rolling the migration back.
 ## Admission history and reliability alerts
 
 Inspect the last 30 days of due schedule outcomes with
-`gregale workflows schedule-history --app reports --limit 100` or
+`gregale workflow schedule-history --app reports --limit 100` or
 `GET /v1/apps/{slug}/workflows/schedules/occurrences`. Both started and skipped
 minutes are retained, including `skipped_quota` and `skipped_overlap`; each
 started occurrence includes its run ID even after the run expires. History
@@ -2034,9 +2034,9 @@ Recover a selected skipped occurrence with a preview followed by an explicit
 replay:
 
 ```sh
-gregale workflows schedule-history replay-preview --app reports \
+gregale workflow schedule-history replay-preview --app reports \
   --occurrence-id 00000000-0000-4000-8000-000000000001
-gregale workflows schedule-history replay --app reports \
+gregale workflow schedule-history replay --app reports \
   --occurrence-id 00000000-0000-4000-8000-000000000001
 ```
 
@@ -2088,7 +2088,7 @@ and expired fires are not backfilled into history.
 The policy also applies to gaps caused by maintenance, runtime gates, or an
 unavailable tenant link. Tenant schedules inherit the owner's recovery policy
 while applying their own saved cadence and timezone. Tenants cannot change the
-policy or window. `gregale workflows schedules --app reports` and the schedule
+policy or window. `gregale workflow schedules --app reports` and the schedule
 inspection APIs show the effective policy and window.
 
 Update validators and scheduler workers before publishing catch-up options.
@@ -2117,8 +2117,8 @@ published YAML or dashboard automation. Configure a failure threshold, a
 minimum completed sample count, and an observation window:
 
 ```sh
-gregale automations failure-policy --app billing --name paid-invoice
-gregale automations failure-policy --app billing --name paid-invoice \
+gregale automation failure policy --app billing --name paid-invoice
+gregale automation failure policy --app billing --name paid-invoice \
   --enabled --expected-version 0 --failure-threshold 3 \
   --min-completed-runs 5 --window-seconds 300
 ```
@@ -2151,8 +2151,8 @@ its generation, pause reason, observed counts, latest 100 pause/resume
 transitions, and an advisory preview of retained work:
 
 ```sh
-gregale automations failure-policy --app billing --name paid-invoice
-gregale automations failure-resume --app billing --name paid-invoice \
+gregale automation failure policy --app billing --name paid-invoice
+gregale automation failure resume --app billing --name paid-invoice \
   --expected-generation 1
 ```
 
@@ -2181,7 +2181,7 @@ Inspect recovery candidates without clearing a pause, admitting events, moving
 schedule cursors or resuming runs:
 
 ```sh
-gregale automations recovery-preview --app billing --name paid-invoice \
+gregale automation recovery-preview --app billing --name paid-invoice \
   --from 2026-10-01T00:00:00Z --until 2026-10-02T00:00:00Z
 gregale --json automations recovery-preview --app billing --name paid-invoice \
   --from 2026-10-01T00:00:00Z --until 2026-10-02T00:00:00Z --limit 10
@@ -2227,7 +2227,7 @@ Use the run IDs and `expected_resume_count` values from recovery-preview to
 resume a bounded explicit selection:
 
 ```sh
-gregale automations recover --app billing --name paid-invoice \
+gregale automation recover --app billing --name paid-invoice \
   --run aaaaaaaa-0000-4000-8000-000000000001:2 \
   --run bbbbbbbb-0000-4000-8000-000000000001:5 \
   --idempotency-key invoice-outage-batch-1
@@ -2288,7 +2288,7 @@ app on Hobby or higher. It sends a signed webhook when at least one run has
 failed or died in the last five minutes, with a 30-minute default cooldown:
 
 ```sh
-printf '%s\n' "$ALERT_SECRET" | gregale alerts preset enable automation_failures \
+printf '%s\n' "$ALERT_SECRET" | gregale alert preset enable automation_failures \
   --app billing --webhook-url https://example.com/hooks/gregale --webhook-secret-stdin
 ```
 
@@ -2299,7 +2299,7 @@ deliveries. The same failure leaves the observation window after five minutes.
 A later failure can notify again once cooldown has elapsed. Clearing a breach
 returns the rule to `ok` without a separate recovery webhook. Customize the
 threshold, observation window and cooldown using the existing alert rule API or
-`gregale alerts update`. This is an aggregate notification policy rather than
+`gregale alert update`. This is an aggregate notification policy rather than
 one notification for every failed run.
 
 App-scoped workflow notifications include `app_id`, `workflow_runs_path`, and
@@ -2325,7 +2325,7 @@ app on Hobby or higher. It sends a signed webhook when an automation has been
 due for at least five minutes, with a 30-minute default cooldown:
 
 ```sh
-printf '%s\n' "$ALERT_SECRET" | gregale alerts preset enable automation_backlog \
+printf '%s\n' "$ALERT_SECRET" | gregale alert preset enable automation_backlog \
   --app billing --webhook-url https://example.com/hooks/gregale --webhook-secret-stdin
 ```
 
@@ -2339,7 +2339,7 @@ the rule to `ok` without a separate recovery webhook.
 
 To choose a different threshold, create a custom alert using
 `workflow_due_age_seconds`, comparison `gte`, and a threshold in seconds.
-After a notification, inspect `gregale automations health --app billing --name
+After a notification, inspect `gregale automation health --app billing --name
 AUTOMATION` for waiting reasons and `gregale workflows list --app billing` for
 the runs. Notifications contain aggregate values rather than run payloads or
 tenant identities. Apply the backlog-alert migration and update all evaluators
@@ -2378,7 +2378,7 @@ dispatch caps and fairness to apply consistently.
 ### Review draft changes before publishing
 
 ```sh
-gregale automations diff --app billing --name approval-flow
+gregale automation diff --app billing --name approval-flow
 ```
 
 This read-only command compares the saved draft with the published definition from
@@ -2513,9 +2513,9 @@ with `--scenarios`.
 ### Turn coverage hints into scenario starters
 
 ```sh
-gregale automations check --app billing --scenarios scenarios.yaml --suggest
+gregale automation check --app billing --scenarios scenarios.yaml --suggest
 # Optional new destination:
-gregale automations check --app billing --scenarios scenarios.yaml \
+gregale automation check --app billing --scenarios scenarios.yaml \
   --suggest --suggest-out review-scenarios.yaml
 ```
 
@@ -2548,8 +2548,8 @@ Coverage remains advisory by default. Opt in to a failing check or a publishing
 gate when unexcluded hints remain:
 
 ```sh
-gregale automations check --app billing --scenarios scenarios.yaml --require-coverage
-gregale automations publish --app billing --name approval-flow \
+gregale automation check --app billing --scenarios scenarios.yaml --require-coverage
+gregale automation publish --app billing --name approval-flow \
   --expected-version 7 --scenarios scenarios.yaml --require-coverage
 ```
 
@@ -2588,7 +2588,7 @@ passing scenarios, not production behavior or exhaustive output assertions.
 ### Published check evidence
 
 Publishing with `--scenarios` saves a server-verified check summary with the
-immutable published revision. Use `gregale automations revisions show` to inspect
+immutable published revision. Use `gregale automation revisions show` to inspect
 its checked draft version, definition hash, check time, scenario results, coverage
 status, and explicit exclusions. JSON output includes `check_evidence` when present.
 The server independently evaluates the submitted assertions and coverage, then
@@ -2612,9 +2612,9 @@ Apps can enforce checks for dashboard publication. The default `optional` policy
 Inspect and change the policy with:
 
 ```sh
-gregale automations publish-policy --app billing
-gregale automations publish-policy --app billing --mode coverage --expected-version 0
-gregale automations publish --app billing --name paid-invoice --expected-version 7 --scenarios scenarios.yaml
+gregale automation publish-policy --app billing
+gregale automation publish-policy --app billing --mode coverage --expected-version 0
+gregale automation publish --app billing --name paid-invoice --expected-version 7 --scenarios scenarios.yaml
 ```
 
 Changing the policy requires an admin credential and its current policy version. Publishing credentials with `deploy:write` can request checks and publish, but cannot weaken the policy. Checked CLI publishing also needs `apps:read` to read the draft and simulations. Changing a policy invalidates existing receipts, including when switching back to the previous mode.
@@ -2632,9 +2632,9 @@ The check endpoint accepts at most 32 scenarios, 24 MiB total and 3 MiB per simu
 Save an explicit reviewed selection without resuming any runs:
 
 ```sh
-gregale automations recover --app billing --name paid-invoice \
+gregale automation recover --app billing --name paid-invoice \
   --run RUN_UUID:2 --idempotency-key outage-batch-1 --plan-out recovery.json
-gregale automations recovery-plan --plan recovery.json --journal attempt-1.jsonl
+gregale automation recovery run --plan recovery.json --journal attempt-1.jsonl
 ```
 
 The versioned JSON plan pins the app identity, automation, original resume counts,
@@ -2662,10 +2662,10 @@ Save selected retained events whose captured automation recipient currently has
 one supported routing replay action:
 
 ```sh
-gregale automations event-recovery-plan --app billing --name paid-invoice \
+gregale automation event-recovery-plan --app billing --name paid-invoice \
   --source billing --event invoice-42 --event invoice-43 \
   --idempotency-key incident-1 --out event-recovery.json
-gregale automations event-recover --plan event-recovery.json --journal events-attempt-1.jsonl
+gregale automation event-recover --plan event-recovery.json --journal events-attempt-1.jsonl
 ```
 
 Export is read-only. The plan pins the app identity, published automation version,
@@ -2702,13 +2702,13 @@ Admission rules still apply when the queued recipient is processed.
 Submit a saved event plan as a server-managed job:
 
 ```sh
-gregale automations event-recovery-start --plan event-recovery.json --rate 5 --reason "invoice routing incident"
-gregale events recovery-status JOB_ID
-gregale events recovery-items JOB_ID
-gregale events recovery-pause JOB_ID --yes
-gregale events recovery-resume JOB_ID --yes
-gregale events recovery-rate JOB_ID --rate 2 --yes
-gregale events recovery-cancel JOB_ID --yes
+gregale automation event-recovery-start --plan event-recovery.json --rate 5 --reason "invoice routing incident"
+gregale event recovery get JOB_ID
+gregale event recovery items JOB_ID
+gregale event recovery pause JOB_ID --yes
+gregale event recovery resume JOB_ID --yes
+gregale event recovery update JOB_ID --rate 2 --yes
+gregale event recovery cancel JOB_ID --yes
 ```
 
 The job continues after the CLI disconnects. It protects pending retained receipts
@@ -2732,13 +2732,13 @@ workflow success. Saved **run** recovery plans can also be submitted with `recov
 Submit a reviewed saved run plan to continue recovery after the CLI disconnects:
 
 ```sh
-gregale automations recovery-start --plan recovery.json --rate 2 --reason "incident recovery"
-gregale events recovery-status JOB_ID
-gregale events recovery-items JOB_ID
-gregale events recovery-pause JOB_ID --yes
-gregale events recovery-resume JOB_ID --yes
-gregale events recovery-rate JOB_ID --rate 1 --yes
-gregale events recovery-cancel JOB_ID --yes
+gregale automation recovery create --plan recovery.json --rate 2 --reason "incident recovery"
+gregale event recovery get JOB_ID
+gregale event recovery items JOB_ID
+gregale event recovery pause JOB_ID --yes
+gregale event recovery resume JOB_ID --yes
+gregale event recovery update JOB_ID --rate 1 --yes
+gregale event recovery cancel JOB_ID --yes
 ```
 
 The plan's original run IDs, workflow name and resume counts are frozen. The server checks each count and safe continuation atomically with resume admission. Changed or unsafe runs are skipped; concurrency pressure leaves the item pending for a bounded retry. Cancelling stops pending admissions and preserves admitted resumes. Items expose `workflow_run_id` and `expected_resume_count`; `queued` means the resume was admitted, so inspect the workflow run for its execution outcome.
@@ -2764,15 +2764,15 @@ The payload includes outcome counts, `execution_finished_at`, and `items_url`, a
 Preview a terminal native recovery job's saved outcomes and current resume eligibility:
 
 ```sh
-gregale automations recovery-retry-plan --app worker --job JOB_ID
+gregale automation recovery-retry-plan --app worker --job JOB_ID
 ```
 
 Review the displayed positions, then save only the eligible failures you intend to retry:
 
 ```sh
-gregale automations recovery-retry-plan --app worker --job JOB_ID \
+gregale automation recovery-retry-plan --app worker --job JOB_ID \
   --position 2 --position 4 --key incident-retry-1 --plan-out retry.json
-gregale automations recovery-start --plan retry.json --rate 2
+gregale automation recovery create --plan retry.json --rate 2
 ```
 
 Preview and plan creation use read-only calls. Saving requires explicit positions, a key, and a new file. A target retains the resume count of the saved failed outcome; it never follows a newer resume. Succeeded, cancelled, unsaved, pruned, changed, or unsafe runs cannot be selected. The server verifies the parent result when creating the child and rechecks count and safety at admission. Changed or unsafe targets are skipped. Use a new key for a different reviewed selection; repeating the same retained request returns the existing job.
@@ -2783,21 +2783,21 @@ The retry preview now uses server-side preflight. It reports `eligible`, tempora
 
 API clients can use `GET /v1/event-recoveries/JOB_ID/preflight?retry=true` to review a terminal native parent's saved outcomes in one consistent read-only snapshot. `reviewed_count` counts parent items and `sample` contains all of them (at most 25); `pending_count` is zero in this view. Timing fields describe the parent job. Ordinary preflight also reports pending native workflow eligibility. Neither view reserves capacity or replaces the checks at durable creation and admission.
 
-Recovery execution deadlines and stalls are advisory. When submitting a reviewed native workflow recovery plan, use `--execution-deadline 1h --execution-stall 15m` on `gregale automations recovery-start` to select thresholds. The deadline includes scheduled and capacity waits; the stall threshold excludes those waits. Without flags, deadlines are disabled and stalls use 15 minutes. Health observes only the admitted generation, and `event_recovery.execution_attention` captures the first attention signal per job through the normal durable notification pipeline. Inspect the linked run diagnostics before explicitly cancelling or preparing another retry.
+Recovery execution deadlines and stalls are advisory. When submitting a reviewed native workflow recovery plan, use `--execution-deadline 1h --execution-stall 15m` on `gregale automation recovery create` to select thresholds. The deadline includes scheduled and capacity waits; the stall threshold excludes those waits. Without flags, deadlines are disabled and stalls use 15 minutes. Health observes only the admitted generation, and `event_recovery.execution_attention` captures the first attention signal per job through the normal durable notification pipeline. Inspect the linked run diagnostics before explicitly cancelling or preparing another retry.
 
-To resolve an execution attention finding, inspect `gregale automations recovery-health --app billing`. Its run and diagnostics links identify the admitted generation. Preview one cancellation with `gregale automations recovery-cancel-preview --app billing --job JOB --position 1 --resume-count 1 --reason 'provider incident'`. To apply that reviewed action, use `recovery-cancel` with the same arguments and `--yes`. The server rechecks the frozen generation at commit time; a newer resume is refused. Cancellation is cooperative and does not undo external effects. Successful actions appear in `gregale events recovery-history JOB` with the actor, reason and target generation. Use `recovery-retry-plan --app billing --job JOB` to review confirmed failed results after admission ends.
+To resolve an execution attention finding, inspect `gregale automation recovery health --app billing`. Its run and diagnostics links identify the admitted generation. Preview one cancellation with `gregale automation recovery-cancel-preview --app billing --job JOB --position 1 --resume-count 1 --reason 'provider incident'`. To apply that reviewed action, use `recovery-cancel` with the same arguments and `--yes`. The server rechecks the frozen generation at commit time; a newer resume is refused. Cancellation is cooperative and does not undo external effects. Successful actions appear in `gregale event recovery history JOB` with the actor, reason and target generation. Use `recovery-retry-plan --app billing --job JOB` to review confirmed failed results after admission ends.
 
 ### Saved recovery response plans
 
 Save a reviewed mixture of cancellations and retries from one native recovery job:
 
 ```sh
-gregale automations recovery-response-plan --app consumer --job JOB_UUID \
+gregale automation recovery-response-plan --app consumer --job JOB_UUID \
   --key incident-20261011 --reason 'provider incident' \
   --cancel-position 1 --retry-position 2 --plan-out response.json
-gregale automations recovery-response-preview --plan response.json
-gregale automations recovery-response-apply --plan response.json --yes
-gregale automations recovery-response-status --plan response.json
+gregale automation recovery-response-preview --plan response.json
+gregale automation recovery-response-apply --plan response.json --yes
+gregale automation recovery-response-status --plan response.json
 ```
 
 Positions are explicit and repeatable; a target can appear only once. Cancellation requires an admitted active generation. Retry requires a retained failed execution and unchanged eligible generation. Plan creation and preview do not apply actions. The saved file pins the app, parent job, run generations, reasons and action IDs; protect and review it before applying.
@@ -2808,7 +2808,7 @@ Reapply the same saved plan after interruption. Cancellation receipts retain the
 
 An app can opt into scheduled preparation of response plans from retained native recovery jobs. Policies match explicit workflow names and saved failures, stalls or deadline overruns. The initial mode is `preview`; operators still preview and apply exported plans explicitly.
 
-Inspect the current version with `gregale automations recovery-policy --app consumer`. Save this configuration as `policy.json`, using the version you observed (`0` for a new policy):
+Inspect the current version with `gregale automation recovery-policy --app consumer`. Save this configuration as `policy.json`, using the version you observed (`0` for a new policy):
 
 ```json
 {
@@ -2829,13 +2829,13 @@ Inspect the current version with `gregale automations recovery-policy --app cons
 ```
 
 ```sh
-gregale automations recovery-policy --app consumer --file policy.json
-gregale automations recovery-policy-reviews --app consumer
-gregale automations recovery-policy-reviews --app consumer \
+gregale automation recovery-policy --app consumer --file policy.json
+gregale automation recovery-policy-reviews --app consumer
+gregale automation recovery-policy-reviews --app consumer \
   --review REVIEW_UUID --plan-out prepared.json
-gregale automations recovery-response-preview --plan prepared.json
-gregale automations recovery-response-apply --plan prepared.json --yes
-gregale automations recovery-response-status --plan prepared.json
+gregale automation recovery-response-preview --plan prepared.json
+gregale automation recovery-response-apply --plan prepared.json --yes
+gregale automation recovery-response-status --plan prepared.json
 ```
 
 Policies are disabled by default and only `preview` mode is supported. A stale `expected_version` conflicts; read the policy before changing it. Set `enabled` to false to stop future preparation. Existing plans remain available for explicit application.
@@ -2849,9 +2849,9 @@ Reviews freeze settings and explain each matched target's prepared or suppressed
 Record an operator decision on a retained prepared plan:
 
 ```sh
-gregale automations recovery-policy-reviews --app consumer --review REVIEW_ID --decision approved --reason "Provider recovered; retry reviewed"
-gregale automations recovery-policy-reviews --app consumer --review REVIEW_ID --decision dismissed --reason "Incident resolved externally"
-gregale automations recovery-policy-reviews --app consumer --review REVIEW_ID --status
+gregale automation recovery-policy-reviews --app consumer --review REVIEW_ID --decision approved --reason "Provider recovered; retry reviewed"
+gregale automation recovery-policy-reviews --app consumer --review REVIEW_ID --decision dismissed --reason "Incident resolved externally"
+gregale automation recovery-policy-reviews --app consumer --review REVIEW_ID --status
 ```
 
 Use one operation per command. Decisions require a prepared plan and a reason.
@@ -2941,9 +2941,9 @@ remains manual.
 ```
 
 ```bash
-gregale automations recovery-policy --app consumer --file automatic-policy.json
-gregale automations recovery-policy --app consumer
-gregale automations recovery-policy-reviews --app consumer
+gregale automation recovery-policy --app consumer --file automatic-policy.json
+gregale automation recovery-policy --app consumer
+gregale automation recovery-policy-reviews --app consumer
 ```
 
 Automatic retries use the same exact-target, keyed child recovery path as manual
@@ -2976,9 +2976,9 @@ is never automatic.
 ### Inspecting and controlling the automatic retry queue
 
 ```sh
-gregale automations recovery-policy --app consumer --queue
-gregale automations recovery-policy --app consumer --control pause --reason "Investigating provider errors"
-gregale automations recovery-policy --app consumer --control resume --reason "Provider recovered"
+gregale automation recovery-policy --app consumer --queue
+gregale automation recovery-policy --app consumer --control pause --reason "Investigating provider errors"
+gregale automation recovery-policy --app consumer --control resume --reason "Provider recovered"
 ```
 
 The queue shows total pending retries, unresolved applied children, remaining hourly execution budget, cooldown expiry, and each returned action's last waiting reason. `outstanding` means final proof has not been recorded; it does not assert the child is running. Use `recovery-policy-reviews --app consumer --review REVIEW_ID --status` for live execution evidence. JSON output includes the observed policy, review IDs and policy versions. The first 100 entries are returned in review order; `truncated` indicates more retained entries. Charges survive policy changes and review pruning.
@@ -2989,10 +2989,10 @@ Pause stops preparation and automatic application while retaining the current po
 
 ### Suppressing a queued retry and receiving blocked-queue notifications
 
-Inspect `gregale automations recovery-policy --app consumer --queue`, then suppress one pending intent using the returned review, action and current policy version:
+Inspect `gregale automation recovery-policy --app consumer --queue`, then suppress one pending intent using the returned review, action and current policy version:
 
 ```sh
-gregale automations recovery-suppress --app consumer --review REVIEW_ID --action ACTION_ID --policy-version 4 --reason "Recovery handled externally"
+gregale automation recovery suppress --app consumer --review REVIEW_ID --action ACTION_ID --policy-version 4 --reason "Recovery handled externally"
 ```
 
 Suppression requires deploy write and MFA. It records the operator reason, trusted identity and timestamp on the retained action, and removes that intent from automatic execution. Repeating the same reason returns the original receipt while the policy version remains current. Changed reasons, stale versions and applied intents conflict. Manual recovery remains available. No child is cancelled, no execution slot is released for an unresolved applied child, and no spent budget is refunded. Inspect the retained review to read the suppression receipt; suppressed intents no longer appear in the pending queue.
@@ -3001,7 +3001,7 @@ Subscribe an app webhook to `automation.recovery_queue_blocked` to receive a his
 
 ### Queue age and last worker evaluation
 
-Use `gregale automations recovery-policy --app consumer --queue` to see when each retained retry was prepared, its age, the last execution-worker check, and how long the current observed wait has persisted. JSON queue entries expose `queued_at`, `queued_age_seconds`, optional `waiting_age_seconds`, and `action.last_evaluation` (`evaluated_at`, `reason`, optional `waiting_since`). Ages are whole nonnegative seconds relative to the response's `observed_at`; future timestamps from clock skew produce zero age.
+Use `gregale automation recovery-policy --app consumer --queue` to see when each retained retry was prepared, its age, the last execution-worker check, and how long the current observed wait has persisted. JSON queue entries expose `queued_at`, `queued_age_seconds`, optional `waiting_age_seconds`, and `action.last_evaluation` (`evaluated_at`, `reason`, optional `waiting_since`). Ages are whole nonnegative seconds relative to the response's `observed_at`; future timestamps from clock skew produce zero age.
 
 Queue age starts at frozen review preparation and includes time after child creation. Waiting age starts with the worker's first observation of the current consecutive reason, survives repeated checks and restarts, and resets when the reason changes. Reasons distinguish `hourly_budget`, `cooldown`, `execution_quota`, `evidence_unknown`, `outstanding_retry`, `admission_wait`, `execution_wait`, `retry_running` and `inspection_error`. Child creation, saved final proof and selected-intent worker suppression record `child_created`, `result_recorded` and `suppressed` without a waiting start. `retry_running` describes the last observed execution outcome; its wait measures time awaiting final proof.
 
@@ -3012,7 +3012,7 @@ These are historical observations. Reads, blocked-notification capture, policy r
 Save the proposed policy and the currently observed `expected_version` in the existing policy update JSON format, then inspect its impact:
 
 ```sh
-gregale automations recovery-policy --app consumer --file policy-update.json --preview
+gregale automation recovery-policy --app consumer --file policy-update.json --preview
 ```
 
 The CLI sends only `POST /v1/apps/{slug}/recovery-policy/change-preview`. This endpoint requires read access and MFA, and returns conflict if the configuration version changed. Version zero previews initial configuration without creating a policy. Preview never rewrites your file or advances the policy version, worker evaluations, scheduling cursors, budgets, retries or notifications. Apply the reviewed file separately with the same command without `--preview`; deploy write access, MFA and the existing version check still apply.
@@ -3025,7 +3025,7 @@ This sample describes retained recent evidence rather than all historical failur
 
 ### App recovery automation health
 
-Use `gregale automations health --app APP` to inspect recovery policy health, or
+Use `gregale automation health --app APP` to inspect recovery policy health, or
 add `--name NAME` for the existing named automation run statistics. App-wide
 health accepts `--stall-after-seconds SECONDS` (default 300; range 1–86400) and
 `--json`. This request-local threshold is not a saved notification setting.
@@ -3046,7 +3046,7 @@ Queue inspection is bounded. An incomplete sample without a known blocker
 reports unknown. `sample_last_progress_at` describes progress in retained queue
 entries only; it can disappear after completion and is not an app-wide last
 success. Healthy means no blocker observed, not proof of scheduler liveness.
-Use `gregale automations recovery-policy --app APP --queue` for individual
+Use `gregale automation recovery-policy --app APP --queue` for individual
 worker observations. No health read sends alerts, changes policy or releases
 an execution slot.
 
@@ -3086,7 +3086,7 @@ reason, observation times, queue counts and a health URL. Deduplicate by event
 ID and correlate by episode ID; historical deliveries can arrive after health
 changes or out of order.
 
-`gregale automations health --app APP` displays the saved monitor settings and
+`gregale automation health --app APP` displays the saved monitor settings and
 latest incident receipts. Its JSON response includes `queue.health_incident`.
 These reads do not advance monitoring. The monitor does not retry or cancel
 workflows, refund charges or release a child's slot. Because it runs in the
@@ -3094,7 +3094,7 @@ scheduler, complete scheduler outage requires a separate external heartbeat.
 
 ### Recovery history
 
-Use `gregale automations history --app APP` to connect retained review outcomes, operator controls, retry children, worker observations and health notification captures. Filter with `--workflow NAME`, `--run UUID`, or `--policy-version N`. `--created-after` and `--created-before` accept RFC3339 timestamps; the default window is seven days and the maximum is 30 days. Pages default to 25 entries and cap at 100. Pass `--after` the returned cursor with the same filters to continue; `--json` exports one page.
+Use `gregale automation history --app APP` to connect retained review outcomes, operator controls, retry children, worker observations and health notification captures. Filter with `--workflow NAME`, `--run UUID`, or `--policy-version N`. `--created-after` and `--created-before` accept RFC3339 timestamps; the default window is seven days and the maximum is 30 days. Pages default to 25 entries and cap at 100. Pass `--after` the returned cursor with the same filters to continue; `--json` exports one page.
 
 The timeline combines durable events (`durable: true` in JSON) and retained observations. New policy replacements preserve the accepted configuration, actor and reason. Automatic failure pauses, worker reason changes, incident openings/changes/closings and health notification captures preserve their original associations. `policy` contains the frozen configuration on `policy_changed` events; `episode_id` correlates incident events. `evaluation_reason` records the worker classification, while `reason` preserves the actual suppression cause. Result-recorded transitions retain the child outcome and its outcome reason. Repeated unchanged polls do not append events. Events survive removal of their source review/job and later health episodes.
 
@@ -3104,7 +3104,7 @@ Legacy policy, worker and health observation entries remain snapshots of the lat
 
 ### Recovery effectiveness report
 
-Run `gregale automations report --app APP --since 7d` to inspect observed retry
+Run `gregale automation report --app APP --since 7d` to inspect observed retry
 applications, successes, failures, cancellations, missing results and pauses.
 Use `--workflow NAME`, `--policy-version VERSION`, or RFC3339 `--created-after`
 and `--created-before` boundaries (maximum 30 days). `--since` accepts whole days
@@ -3123,7 +3123,7 @@ caused a recovery. Reading the report does not change automation state.
 
 ### Historical recovery policy evaluation
 
-Use `gregale automations recovery-policy-evaluate --app APP --file POLICY.json
+Use `gregale automation recovery-policy-evaluate --app APP --file POLICY.json
 --since 7d` to compare current configuration settings with a proposed policy
 against retained historical review decisions. The file uses the existing
 `{"expected_version": VERSION, "policy": {...}}` update shape; evaluation rejects
@@ -3180,8 +3180,8 @@ Recovery policy evaluation includes separately timed `later_eligibility` checks 
 List retained initial failures, then inspect one with live resume diagnostics:
 
 ```sh
-gregale automations failures --app billing --name invoice-flow
-gregale automations failure-recovery-plan --app billing --failure FAILURE_UUID
+gregale automation failure list --app billing --name invoice-flow
+gregale automation failure-recovery-plan --app billing --failure FAILURE_UUID
 ```
 
 The preview explains changed generations, missing runs, unsafe resumes, operation ownership and capacity blockers. The inbox is prospective and partial: evidence lasts 30 days and shares a 10,000-entry per-app limit across all captured failure generations. Use `--after` with the returned cursor to page through the inbox.
@@ -3189,8 +3189,8 @@ The preview explains changed generations, missing runs, unsafe resumes, operatio
 Save an eligible target and explicitly submit the reviewed plan:
 
 ```sh
-gregale automations failure-recovery-plan --app billing --failure FAILURE_UUID --key incident-42 --plan-out first-recovery.json
-gregale automations recovery-start --plan first-recovery.json --reason "Reviewed incident 42"
+gregale automation failure-recovery-plan --app billing --failure FAILURE_UUID --key incident-42 --plan-out first-recovery.json
+gregale automation recovery create --plan first-recovery.json --reason "Reviewed incident 42"
 ```
 
 Plan preparation does not create a job or resume the workflow. The plan retains the captured failure ID and expected generation zero. Creation and admission recheck retained evidence and generation; resume rechecks safety and capacity. A run that advances after review cannot be resumed by the stale plan. Keep the same plan/key when reconciling an uncertain submission. Inspect the returned native job and its execution results to distinguish admission from workflow completion. Submit these plans through `recovery-start`; the per-run journal executor cannot preserve their evidence checks.
@@ -3204,7 +3204,7 @@ Preview policies can opt in to `initial_failure`; this trigger requires explicit
 same `{ "expected_version": 0, "policy": { ... } }` format as `recovery-policy`:
 
 ```sh
-gregale automations failure-recovery-plan --app orders --failure FAILURE_UUID --policy candidate.json
+gregale automation failure-recovery-plan --app orders --failure FAILURE_UUID --policy candidate.json
 ```
 
 The command checks enabled state, trigger, workflow and failure-status filters
@@ -3222,11 +3222,11 @@ names and failure statuses. Preparation uses the saved version, rather than a
 candidate file:
 
 ```sh
-gregale automations failure-recovery-review --app orders --failure FAILURE_UUID --expected-policy-version 3
-gregale automations failure-recovery-reviews --app orders --limit 25
-gregale automations failure-recovery-review --app orders --review REVIEW_UUID
-gregale automations failure-recovery-review --app orders --review REVIEW_UUID --decision submit --reason 'Provider recovered; reviewed safe resume'
-gregale automations failure-recovery-review --app orders --review REVIEW_UUID --decision cancel --reason 'Handled manually'
+gregale automation failure-recovery-review --app orders --failure FAILURE_UUID --expected-policy-version 3
+gregale automation failure-recovery-reviews --app orders --limit 25
+gregale automation failure-recovery-review --app orders --review REVIEW_UUID
+gregale automation failure-recovery-review --app orders --review REVIEW_UUID --decision submit --reason 'Provider recovered; reviewed safe resume'
+gregale automation failure-recovery-review --app orders --review REVIEW_UUID --decision cancel --reason 'Handled manually'
 ```
 
 Submission and cancellation require a non-empty operator reason. A stale submission
@@ -3351,7 +3351,7 @@ Use the failure inbox and individual previews to inspect additional candidates.
 
 ### Preview automatic first recovery before enabling it
 
-Run `gregale automations recovery-policy --app SLUG --file policy.json --preview`
+Run `gregale automation recovery-policy --app SLUG --file policy.json --preview`
 with the proposed policy and its current `expected_version`. This command does
 not update the policy, prepare reviews, submit jobs or schedule notifications.
 Read-scoped credentials can use the preview; applying the file still requires
@@ -3430,7 +3430,7 @@ existing meaning. Saved-failure retry payloads omit `state` and
 Inspect a submitted automatic first-recovery review:
 
 ```sh
-gregale automations failure-recovery-evidence --app orders --review REVIEW_UUID
+gregale automation failure-recovery-evidence --app orders --review REVIEW_UUID
 ```
 
 The read-only diagnosis reports the frozen run and expected generation, available
@@ -3443,7 +3443,7 @@ cases remain blocked.
 Save verified proof with a stable request UUID and operator reason:
 
 ```sh
-gregale automations failure-recovery-evidence --app orders --review REVIEW_UUID \
+gregale automation failure-recovery-evidence --app orders --review REVIEW_UUID \
   --repair --request-id REQUEST_UUID --reason 'Restore verified terminal proof'
 ```
 
@@ -3475,7 +3475,7 @@ Automatic retries now have the same verified repair workflow as first recovery.
 Use the review and action IDs from the recovery queue:
 
 ```sh
-gregale automations recovery-retry-evidence --app orders \
+gregale automation recovery-retry-evidence --app orders \
   --review REVIEW_UUID --action ACTION_UUID
 ```
 
@@ -3487,7 +3487,7 @@ run cannot substitute for missing generation-two evidence.
 When diagnosis reports a repairable missing result:
 
 ```sh
-gregale automations recovery-retry-evidence --app orders \
+gregale automation recovery-retry-evidence --app orders \
   --review REVIEW_UUID --action ACTION_UUID --repair \
   --request-id REQUEST_UUID --reason 'Restore verified retry outcome'
 ```
@@ -3524,7 +3524,7 @@ A pending retry can be blocked when the parent's saved result is missing. Select
 its parent evidence explicitly:
 
 ```sh
-gregale automations recovery-retry-evidence --app orders \
+gregale automation recovery-retry-evidence --app orders \
   --review REVIEW_UUID --action ACTION_UUID --parent
 ```
 
@@ -3537,7 +3537,7 @@ When the exact retained parent terminal outcome is verifiable and its saved
 result is missing:
 
 ```sh
-gregale automations recovery-retry-evidence --app orders \
+gregale automation recovery-retry-evidence --app orders \
   --review REVIEW_UUID --action ACTION_UUID --parent --repair \
   --request-id REQUEST_UUID --reason 'Restore verified parent outcome'
 ```
@@ -3600,7 +3600,7 @@ All execution, policy and budget decisions still belong to the normal worker.
 
 ### Trace evidence repairs and alerts in automation history
 
-Use `gregale automations history --app orders`, optionally filtered by
+Use `gregale automation history --app orders`, optionally filtered by
 `--workflow`, `--run` and `--policy-version`, to follow evidence attention:
 
 - `retry_evidence_blocked` preserves a captured parent or child diagnosis.
@@ -3630,7 +3630,7 @@ changes no admission, slot or policy decision.
 
 ### Inspect current evidence from the retry queue
 
-`gregale automations recovery-policy --app orders --queue` now displays current
+`gregale automation recovery-policy --app orders --queue` now displays current
 parent or child evidence for returned retry entries. The API/SDK entry includes
 an optional `evidence` object with `diagnosis`, `evidence_url` and `cli_command`.
 The diagnosis identifies the exact run, generation, item, current reason,
@@ -3657,10 +3657,10 @@ proof, policy, quota and budgets.
 
 ### Inspect initial recovery evidence from the queue
 
-Initial recovery entries in `gregale automations recovery-policy --app orders
+Initial recovery entries in `gregale automation recovery-policy --app orders
 --queue` now include `initial_evidence`, alongside the retry-only `evidence`
 field. Its `stage`, `diagnosis`, `evidence_url` and `cli_command` point to the
-initial review and `gregale automations failure-recovery-evidence --app orders
+initial review and `gregale automation failure-recovery-evidence --app orders
 --review REVIEW_UUID` inspection command.
 
 A prepared review has no submitted recovery job. The diagnosis identifies its
@@ -3708,7 +3708,7 @@ migration before running the updated worker.
 
 ### Follow initial recovery lifecycle in shared history
 
-`gregale automations history --app orders` now records new initial-recovery
+`gregale automation history --app orders` now records new initial-recovery
 lifecycle transitions: `initial_recovery_prepared`,
 `initial_recovery_submitted`, `initial_recovery_cancelled`,
 `initial_recovery_expired`, `initial_recovery_stale` and
@@ -3748,7 +3748,7 @@ proof, as described below.
 
 ### Repairing manual initial recovery evidence
 
-The existing `gregale automations failure-recovery-evidence --app APP --review REVIEW`
+The existing `gregale automation failure-recovery-evidence --app APP --review REVIEW`
 command diagnoses submitted preview-mode initial recoveries as well as automatic
 initial recoveries. Add `--repair --request-id UUID --reason REASON` to save a
 missing result when the retained job, generation-one admission and completed run
@@ -3857,7 +3857,7 @@ Use **Retire this baseline** in the dashboard, review the name and revision, the
 confirm permanent retirement. Or use an explicit stable UUID from the CLI:
 
 ```bash
-gregale automations live baseline retire --app billing --name paid-invoice \
+gregale automation live baseline retire --app billing --name paid-invoice \
   --baseline-name production --retirement-id 00000000-0000-4000-8000-000000000012 \
   --expected-revision 3 --confirm-retirement --json
 ```
