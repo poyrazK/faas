@@ -145,6 +145,10 @@ func (s *server) createOutboundIntegration(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	requestPolicy := api.DefaultOutboundRequestPolicy()
+	if planPolicy, ok := api.AIOutboundRequestPolicyForPlan(acct.Plan); ok && req.AIProvider != "" {
+		// ADR 20261027132936: an AI integration starts at its plan's ceilings.
+		requestPolicy = planPolicy
+	}
 	if req.RequestPolicy != nil {
 		requestPolicy = *req.RequestPolicy
 	}

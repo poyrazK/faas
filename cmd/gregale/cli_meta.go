@@ -1012,6 +1012,12 @@ var cliCommands = []cliCommand{
 				{Name: "app", Short: "bound app slug", Req: true, Value: "slug"},
 				{Name: "daily-tokens", Short: "token limit, or none", Req: true, Value: "N"},
 			}},
+			{Name: "request-policy", Short: "Show or set an AI integration's rate, concurrency and timeout", Notes: []string{"Flags you omit keep their values. The timeout bounds the wait for a response's headers; a streamed answer may take longer."}, Positionals: []string{"<integration-id>"}, Flags: []cliFlag{
+				{Name: "rate", Short: "calls per second", Value: "N"},
+				{Name: "burst", Short: "calls above the rate allowed at once", Value: "N"},
+				{Name: "max-in-flight", Short: "calls in flight at once", Value: "N"},
+				{Name: "timeout", Short: "seconds to wait for a response's headers", Value: "SECONDS"},
+			}},
 			{Name: "guardrails", Short: "Set an app's per-minute limits, model allow-list and output cap", Notes: []string{"Flags you omit keep their values."}, Positionals: []string{"<integration-id>"}, Flags: []cliFlag{
 				{Name: "app", Short: "bound app slug", Req: true, Value: "slug"},
 				{Name: "rpm", Short: "admitted calls per UTC minute, or none", Value: "N"},

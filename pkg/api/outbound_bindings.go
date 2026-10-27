@@ -289,6 +289,22 @@ func DefaultOutboundRequestPolicy() OutboundRequestPolicy {
 	}
 }
 
+// AIOutboundRequestPolicyForPlan is the request policy an AI integration
+// created without one starts with: the plan's ceilings, with no retries,
+// response cache, circuit breaker or retry budget (ADR 20261027132936).
+func AIOutboundRequestPolicyForPlan(plan Plan) (OutboundRequestPolicy, bool) {
+	limits, ok := LimitsFor(plan)
+	if !ok || limits.OutboundRatePerSecondMax <= 0 {
+		return OutboundRequestPolicy{}, false
+	}
+	return OutboundRequestPolicy{
+		RatePerSecond:    limits.OutboundRatePerSecondMax,
+		Burst:            limits.OutboundBurstMax,
+		MaxInFlight:      limits.OutboundMaxInFlightMax,
+		RequestTimeoutMS: limits.OutboundRequestTimeoutMSMax,
+	}, true
+}
+
 // EffectiveOutboundRequestPolicyForPlan applies the current plan's safety
 // ceilings to a persisted policy. A plan downgrade therefore takes effect on
 // the next outbound admission without rewriting the configured policy.

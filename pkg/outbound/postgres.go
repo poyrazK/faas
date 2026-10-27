@@ -974,6 +974,25 @@ func (b *PostgresBackend) Release(ctx context.Context, integrationID, leaseID st
 	return err
 }
 
+// RenewLease moves a live lease's expiry to ttl from now (ADR
+// 20261027132936). An expired or released lease stays gone.
+func (b *PostgresBackend) RenewLease(ctx context.Context, integrationID, leaseID string, ttl time.Duration) error {
+	integrationUUID, err := uuid.Parse(integrationID)
+	if err != nil {
+		return fmt.Errorf("%w: integration id must be a UUID", ErrInvalidIntegration)
+	}
+	leaseUUID, err := uuid.Parse(leaseID)
+	if err != nil {
+		return fmt.Errorf("invalid outbound lease id: %w", err)
+	}
+	_, err = b.pool.Exec(ctx, `
+		UPDATE outbound_admission_leases SET expires_at = now() + make_interval(secs => $3)
+		 WHERE integration_id = $1 AND lease_id = $2 AND expires_at > now()`,
+		integrationUUID, leaseUUID, ttl.Seconds())
+	return err
+}
+
 var _ Backend = (*PostgresBackend)(nil)
+var _ LeaseRenewer = (*PostgresBackend)(nil)
 var _ CircuitBreakerBackend = (*PostgresBackend)(nil)
 var _ ProviderCooldownBackend = (*PostgresBackend)(nil)

@@ -5,6 +5,20 @@ import (
 	"testing"
 )
 
+func TestAIOutboundRequestPolicyForPlanIsThePlanCeiling(t *testing.T) {
+	for _, plan := range []Plan{PlanHobby, PlanPro, PlanScale} {
+		policy, ok := AIOutboundRequestPolicyForPlan(plan)
+		limits := MustLimitsFor(plan)
+		if !ok || !OutboundRequestPolicyAllowedForPlan(plan, policy) || policy.RequestTimeoutMS != limits.OutboundRequestTimeoutMSMax ||
+			policy.MaxInFlight != limits.OutboundMaxInFlightMax || policy.RatePerSecond != limits.OutboundRatePerSecondMax {
+			t.Fatalf("%s AI request policy = %+v, %t; want the plan's ceilings", plan, policy, ok)
+		}
+		if policy.RequestTimeoutMS <= DefaultOutboundRequestPolicy().RequestTimeoutMS {
+			t.Fatalf("%s AI request policy keeps the Free timeout: %+v", plan, policy)
+		}
+	}
+}
+
 func TestOutboundRequestPolicyPlanCeilings(t *testing.T) {
 	cases := []struct {
 		plan Plan

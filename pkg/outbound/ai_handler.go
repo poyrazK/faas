@@ -165,6 +165,9 @@ type aiSettlement struct {
 	// response is the response check's result, filled as the response is
 	// sent (ADR-1435); nil when the response is not checked.
 	response *aiResponseCheck
+	// requestModel is the model the call asked for; it prices an answer
+	// whose own model has no price (ADR 20261027132936).
+	requestModel string
 	// cacheHit marks a response the cache served (ADR-1440).
 	cacheHit bool
 }

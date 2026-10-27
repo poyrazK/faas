@@ -7,9 +7,11 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"net/http/httptrace"
 	"net/url"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
@@ -507,7 +509,15 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if requestTimeout <= 0 {
 		requestTimeout = integration.RequestTimeout
 	}
-	if requestTimeout > 0 {
+	// ADR 20261027132936: a billable AI call's request timeout bounds the
+	// wait for its response headers; its answer may take longer.
+	var aiCall *aiCallContext
+	if aiPlan != nil && aiPlan.endpoint.billable() && batch == nil && realtime == realtimeNone {
+		aiCall = newAICallContext(ctx, requestTimeout, time.Now())
+		defer aiCall.Close()
+		ctx = aiCall
+		defer h.renewAILease(integration.ID, decision.LeaseID, requestTimeout)()
+	} else if requestTimeout > 0 {
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithTimeout(ctx, requestTimeout)
 		defer cancel()
@@ -569,6 +579,18 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	dependencyCtx, dependencySpan := trace.StartSpan(ctx, dependencySpanName(integration), dependencySpanAttributes(integration, appID)...)
 	defer dependencySpan.End()
+	// ADR 20261027132936: a billable call the provider received settles
+	// even when its answer never comes back.
+	var requestSent atomic.Bool
+	if aiCall != nil {
+		dependencyCtx = httptrace.WithClientTrace(dependencyCtx, &httptrace.ClientTrace{
+			WroteRequest: func(info httptrace.WroteRequestInfo) {
+				if info.Err == nil {
+					requestSent.Store(true)
+				}
+			},
+		})
+	}
 	upstreamReq, err := http.NewRequestWithContext(dependencyCtx, r.Method, upstreamURL, r.Body)
 	if err != nil {
 		dependencySpan.RecordError(err)
@@ -735,9 +757,34 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	dependencySpan.SetAttributes(attribute.Int("gregale.outbound.attempt_count", attempts))
+	if aiCall != nil {
+		aiCall.headersArrived()
+	}
+	// aiSettlementFor is the settlement of this call's AI usage.
+	aiSettlementFor := func(status int, check *aiResponseCheck) aiSettlement {
+		settlement := aiSettlement{
+			status: status, attempts: attempts, started: upstreamStarted, routeID: routeIDFromContext(r.Context()),
+			endUser: aiEndUser, tags: aiTags, traceID: aiTrace, leaseID: decision.LeaseID, callID: aiCallID,
+			instanceID: callerInstance,
+			route:      routeAttemptFromContext(r.Context()),
+			moderation: moderation,
+			response:   check, cacheHit: cacheHit,
+		}
+		if aiPlan != nil {
+			settlement.reserve, settlement.billable = aiPlan.reserve, aiPlan.endpoint.billable()
+			settlement.media, settlement.characters = aiPlan.endpoint.media, aiPlan.facts.characters
+			settlement.videoSeconds, settlement.videoResolution = aiPlan.facts.videoSeconds, aiPlan.facts.videoResolution
+			settlement.codeGB = aiPlan.facts.tools.codeGB
+			settlement.requestModel = aiPlan.facts.model
+		}
+		return settlement
+	}
 	if err != nil {
 		dependencySpan.RecordError(err)
 		dependencySpan.SetStatus(codes.Error, "upstream request failed")
+		if status, unanswered := unansweredAIStatus(err); aiCall != nil && unanswered && requestSent.Load() {
+			h.settleUnansweredAICall(ctx, integration, appID, aiSettlementFor(status, nil), dependencySpan, metricIntegrationID)
+		}
 		var maxErr *http.MaxBytesError
 		if errors.As(err, &maxErr) {
 			writeProblem(w, http.StatusRequestEntityTooLarge, "outbound_request_too_large", "Outbound request body exceeds the gateway limit", "")
@@ -765,27 +812,23 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.finishBatchCreation(ctx, w, resp, batch, metricIntegrationID)
 		return
 	}
+	if aiCall != nil {
+		// ADR 20261027132936: a streamed answer ends after a long silence,
+		// and the answer may be written until the call's end.
+		if streamingMediaType(resp.Header.Get("Content-Type")) {
+			resp.Body = boundStreamIdle(resp.Body, aiCall, aiStreamIdleBound)
+		}
+		if deadline, ok := aiCall.Deadline(); ok {
+			_ = http.NewResponseController(w).SetWriteDeadline(deadline)
+		}
+	}
 	var responseCheck *aiResponseCheck
 	if responseCheckApplies(integration, r, aiPlan, resp, isReplay, isInternal) {
 		responseCheck = &aiResponseCheck{}
 	}
 	if aiObserver := observeAIResponse(integration, r, resp, cacheHit, aiReq, aiPlan); aiObserver != nil {
 		// Deferred so an aborted stream still settles the tokens it used.
-		settlement := aiSettlement{
-			status: resp.StatusCode, attempts: attempts, started: upstreamStarted, routeID: routeIDFromContext(r.Context()),
-			endUser: aiEndUser, tags: aiTags, traceID: aiTrace, leaseID: decision.LeaseID, callID: aiCallID,
-			instanceID: callerInstance,
-			route:      routeAttemptFromContext(r.Context()),
-			moderation: moderation,
-			response:   responseCheck, cacheHit: cacheHit,
-		}
-		if aiPlan != nil {
-			settlement.reserve, settlement.billable = aiPlan.reserve, aiPlan.endpoint.billable()
-			settlement.media, settlement.characters = aiPlan.endpoint.media, aiPlan.facts.characters
-			settlement.videoSeconds, settlement.videoResolution = aiPlan.facts.videoSeconds, aiPlan.facts.videoResolution
-			settlement.codeGB = aiPlan.facts.tools.codeGB
-		}
-		defer h.settleAIUsage(ctx, integration, appID, settlement, aiObserver, dependencySpan, metricIntegrationID)
+		defer h.settleAIUsage(ctx, integration, appID, aiSettlementFor(resp.StatusCode, responseCheck), aiObserver, dependencySpan, metricIntegrationID)
 	}
 	if responseCheck != nil && !h.applyResponseCheck(ctx, w, integration, aiPlan, resp, responseCheck, metricIntegrationID) {
 		return
