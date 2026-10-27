@@ -1197,6 +1197,11 @@ type Querier interface {
 	// in service order and rotates the account's consumers. A consumer with
 	// delivery controls contributes one recipient per batch, so its admission
 	// gate sees current counters before its next claim.
+	//
+	// The due test is index-shaped (ADR-614 amendment 2026-10-27): a recipient is
+	// due by its available_at, its delivery deadline or its lapsed lease, never by
+	// a per-row function, so recipients backing off are not read. A schema
+	// mismatch is fixed at capture and filtered on the recipient's first claim.
 	EventRecipientClaimBatch(ctx context.Context, db DBTX, arg EventRecipientClaimBatchParams) ([]EventRecipientClaimBatchRow, error)
 	EventRecipientFinish(ctx context.Context, db DBTX, arg EventRecipientFinishParams) (int64, error)
 	EventRecipientGuardedReplayReceipt(ctx context.Context, db DBTX, arg EventRecipientGuardedReplayReceiptParams) (EventRecipientGuardedReplayReceiptRow, error)

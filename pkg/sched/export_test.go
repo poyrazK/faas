@@ -86,6 +86,8 @@ const TriggerReasonPoisonRecord = triggerReasonPoisonRecord
 const WakeTierColdBootFallback = wakeTierColdBootFallback
 const WakeTierInit = wakeTierInit
 const MaxDuePagesPerTick = maxDuePagesPerTick
+const WorkAppReconcile = workAppReconcile
+const WorkEventFanout = workEventFanout
 const WorkReaper = workReaper
 
 // Package-level vars
@@ -211,6 +213,7 @@ var PrimeRunPlusFrameworkReady = primeRunPlusFrameworkReady
 var PrimeStartupExtension = primeStartupExtension
 var QuietEffective = quietEffective
 var QuietLog = quietLog
+var NewWorkPool = newWorkPool
 var QuietPauseAfterMS = quietPauseAfterMS
 var ReadCounterValue = readCounterValue
 var ReadGatewayDispatchResponse = readGatewayDispatchResponse
@@ -289,6 +292,10 @@ func (e *Engine) XWakeLeaderBudget() time.Duration { return e.wakeLeaderBudget()
 const XEventFanoutSafetyTick = eventFanoutSafetyTick
 
 func (l *Loop) XRunEventFanoutSweep(ctx context.Context) { l.runEventFanoutSweep(ctx) }
+
+// XEventRoutingHealthDue is the sweep's routing-health throttle.
+// adr: 614 — a node reads routing health at most every 15 s.
+func (l *Loop) XEventRoutingHealthDue(now time.Time) bool { return l.eventRoutingHealthDue(now) }
 
 // XRunEventFanoutSweepAt runs the sweep with the loop's clock at now.
 // adr: 20261027125625 — held recipients route once their wait has passed.
