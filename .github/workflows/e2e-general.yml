@@ -51,6 +51,10 @@ jobs:
           # one-minute telemetry windows.
           - suite: routes
             run: '^TestE2E_Routes_'
+          # A Compose project's services call each other by name, wake,
+          # stay inside their declared calls and keep a preview on its PR.
+          - suite: multi-service
+            run: '^TestE2E_MultiServiceProject_'
     services:
       postgres:
         image: mirror.gcr.io/library/postgres:16
