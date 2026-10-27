@@ -358,7 +358,7 @@ func (s *Service) RunObjectStorageAccounting(ctx context.Context) {
 	if s.Host.Ops() != nil {
 		s.Host.Ops().Registry().MustRegister(counter, pages, accruals)
 	}
-	var finalizedPeriod, estimatedAt time.Time
+	var finalizedPeriod, estimatedAt, progressAt time.Time
 	ticker := time.NewTicker(time.Minute)
 	defer ticker.Stop()
 	for {
@@ -397,6 +397,16 @@ func (s *Service) RunObjectStorageAccounting(ctx context.Context) {
 					finalizedPeriod = period
 					s.Host.Logger().Info("object storage billing period finalized", "period", period.Format("2006-01"), "accounts", len(records))
 				}
+			}
+			if now.Sub(progressAt) >= api.ObjectStorageProgressSweepInterval {
+				if stepped, err := s.deliverObjectStorageProgress(ctx, *s.Host.ObjectStorage().Pricing, now); err != nil {
+					if ctx.Err() == nil {
+						s.Host.Logger().Warn("object storage billing progress failed", "accounts", stepped, "err", err)
+					}
+				} else if stepped > 0 {
+					s.Host.Logger().Info("object storage billing progress delivered", "accounts", stepped)
+				}
+				progressAt = now
 			}
 		}
 		ticker.Reset(time.Minute)
@@ -451,4 +461,23 @@ func (s *Service) finalizeObjectStorageBilling(ctx context.Context, pricing api.
 		sink = candidate
 	}
 	return billing.FinalizeObjectStoragePeriods(ctx, storageBillingAccounts{store: runner}, runner, pricing, periodStart, now, sink)
+}
+
+// deliverObjectStorageProgress bills the open month's object storage in daily
+// steps, so a subscription that ends mid-month is billed for its storage up
+// to its last step (ADR-20261027093220). It does nothing while the sink is
+// off.
+func (s *Service) deliverObjectStorageProgress(ctx context.Context, pricing api.ObjectStoragePricing, now time.Time) (int, error) {
+	sink, ok := s.Host.BillingProvider().(billing.ObjectStorageLineItemSink)
+	if !ok {
+		return 0, nil
+	}
+	runner, ok := s.Host.Store().(interface {
+		state.ObjectStorageBillingStore
+		billing.ObjectStorageAccountSource
+	})
+	if !ok {
+		return 0, errors.New("object storage billing store is unavailable")
+	}
+	return billing.DeliverObjectStorageProgress(ctx, storageBillingAccounts{store: runner}, runner, pricing, now, sink)
 }

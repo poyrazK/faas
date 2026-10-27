@@ -2524,7 +2524,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// that path's validation, rate cap and outcome metrics.
 	var guestSpans *receivers.GuestSpansIngester
 	if deps.getenv("FAAS_OTEL_SPANS_WRITER_ENABLED") != "false" {
-		guestSpans = receivers.NewGuestSpansIngester(srv.store, sharedLimiter, log)
+		guestSpans = receivers.NewGuestSpansIngester(srv.store, sharedLimiter, log).WithLogs(srv.store)
 		guestSpansWriter := receivers.NewSpansWriterReceiver(srv.store, srv.ops, sharedLimiter, true)
 		go func() {
 			if err := guestSpans.Run(ctx, receivers.OtelFlushInterval(deps.getenv), guestSpansWriter.WriteSpansSummary); err != nil && ctx.Err() == nil {

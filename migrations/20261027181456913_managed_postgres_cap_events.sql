@@ -1,4 +1,4 @@
--- filename: 20261027130112452_managed_postgres_cap_events.sql
+-- filename: 20261027181456913_managed_postgres_cap_events.sql
 -- migration-compat: expand
 --
 -- ADR-20261025094915 decisions 7 and 8: the compute cap sweep records each

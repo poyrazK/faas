@@ -19166,6 +19166,16 @@ BEGIN
     AND EXISTS(SELECT 1 FROM object_buckets b WHERE b.org_id=NEW.id AND b.account_id=p.account_id)) THEN
    RAISE EXCEPTION 'remediate finalized current-period object billing before adoption' USING ERRCODE='23514';
   END IF;
+  INSERT INTO object_storage_billing_progress AS o
+         (provider,account_id,period_start,mode,delivered_millicents,pending_millicents,pending_fixed,credited_millicents,version)
+  SELECT p.provider,NEW.id,p.period_start,p.mode,0,0,false,LEAST(SUM(p.delivered_millicents+p.pending_millicents),1152921504606846976),1
+    FROM object_storage_billing_progress p
+   WHERE p.period_start=date_trunc('month',now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC' AND p.account_id<>NEW.id
+     AND EXISTS(SELECT 1 FROM object_buckets b WHERE b.org_id=NEW.id AND b.account_id=p.account_id)
+   GROUP BY p.provider,p.period_start,p.mode
+  ON CONFLICT (provider,account_id,period_start,mode) DO UPDATE
+     SET credited_millicents=LEAST(o.credited_millicents+EXCLUDED.credited_millicents,1152921504606846976),
+         version=o.version+1,updated_at=now();
   DELETE FROM object_storage_usage_heads h WHERE h.period_start>=date_trunc('month',now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC' AND
    (h.account_id=NEW.id OR EXISTS(SELECT 1 FROM object_buckets b WHERE b.org_id=NEW.id AND b.account_id=h.account_id));
  END IF;
@@ -45516,6 +45526,40 @@ CREATE TABLE public.object_storage_billing_periods (
 
 
 --
+-- Name: object_storage_billing_progress; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.object_storage_billing_progress (
+    provider text NOT NULL,
+    account_id uuid NOT NULL,
+    period_start timestamp with time zone NOT NULL,
+    mode text NOT NULL,
+    delivered_millicents bigint NOT NULL,
+    pending_millicents bigint NOT NULL,
+    pending_fixed boolean NOT NULL,
+    credited_millicents bigint DEFAULT 0 NOT NULL,
+    version bigint NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT object_storage_billing_progress_check CHECK (((NOT pending_fixed) OR (pending_millicents > 0))),
+    CONSTRAINT object_storage_billing_progress_check1 CHECK (((delivered_millicents + pending_millicents) <= '1152921504606846976'::bigint)),
+    CONSTRAINT object_storage_billing_progress_credited_millicents_check CHECK (((credited_millicents >= 0) AND (credited_millicents <= '1152921504606846976'::bigint))),
+    CONSTRAINT object_storage_billing_progress_delivered_millicents_check CHECK (((delivered_millicents >= 0) AND (delivered_millicents <= '1152921504606846976'::bigint))),
+    CONSTRAINT object_storage_billing_progress_mode_check CHECK ((mode = ANY (ARRAY['shadow'::text, 'live'::text]))),
+    CONSTRAINT object_storage_billing_progress_pending_millicents_check CHECK (((pending_millicents >= 0) AND (pending_millicents <= '1152921504606846976'::bigint))),
+    CONSTRAINT object_storage_billing_progress_period_start_check CHECK ((period_start = (date_trunc('month'::text, (period_start AT TIME ZONE 'UTC'::text)) AT TIME ZONE 'UTC'::text))),
+    CONSTRAINT object_storage_billing_progress_provider_check CHECK ((provider <> ''::text)),
+    CONSTRAINT object_storage_billing_progress_version_check CHECK ((version > 0))
+);
+
+
+--
+-- Name: TABLE object_storage_billing_progress; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.object_storage_billing_progress IS 'Object-storage charge delivered so far per provider, account, UTC month and mode. Written by apid in daily steps and at month close; meterd reserves live rows under the overage cap (ADR-20261027093220).';
+
+
+--
 -- Name: object_storage_bucket_usage; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -63512,6 +63556,14 @@ ALTER TABLE ONLY public.object_storage_billing_periods
 
 
 --
+-- Name: object_storage_billing_progress object_storage_billing_progress_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.object_storage_billing_progress
+    ADD CONSTRAINT object_storage_billing_progress_pkey PRIMARY KEY (provider, account_id, period_start, mode);
+
+
+--
 -- Name: object_storage_bucket_usage object_storage_bucket_usage_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -74588,6 +74640,13 @@ CREATE INDEX object_storage_billing_deliveries_account_period_idx ON public.obje
 --
 
 CREATE INDEX object_storage_billing_periods_account_period_idx ON public.object_storage_billing_periods USING btree (account_id, period_start DESC);
+
+
+--
+-- Name: object_storage_billing_progress_account_period_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX object_storage_billing_progress_account_period_idx ON public.object_storage_billing_progress USING btree (account_id, period_start);
 
 
 --
