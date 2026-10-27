@@ -199,8 +199,8 @@ func TestScaleToZero(t *testing.T) {
 }
 
 // TestMaintenanceAndAccess turns on maintenance mode, per-app token
-// authentication and basic auth, checks the edge enforces each, and turns
-// them off again (row 77).
+// authentication, basic auth and an IP allowlist, checks the edge enforces
+// each, and turns them off again (row 77).
 func TestMaintenanceAndAccess(t *testing.T) {
 	tg := needs(t, tierFull, true)
 	t.Parallel()
@@ -243,22 +243,18 @@ func TestMaintenanceAndAccess(t *testing.T) {
 		tg.ok(t, time.Minute, "app", slug, "--public-auth", "open")
 		expectVersion(t, base, "v1", time.Minute)
 	})
-}
-
-// TestImageDeploy deploys a digest-pinned public image without a build
-// (row 4). The image is the one production already serves for nginx.
-func TestImageDeploy(t *testing.T) {
-	tg := needs(t, tierFull, true)
-	t.Parallel()
-	slug := tg.app(t, "image")
-	receipt := tg.deploy(t, slug, "--image", probeImage)
-	appURL := strings.TrimRight(str(receipt, "app_url"), "/")
-	if appURL == "" {
-		appURL = tg.appURL(slug)
-	}
-	eventually(t, "the image serves its page", time.Minute, 2*time.Second, func() (bool, string) {
-		r := get(appURL + "/")
-		return r.status == http.StatusOK && strings.Contains(strings.ToLower(string(r.body)), "nginx"), r.String()
+	s.check("ip_allowlist", func(t *testing.T) {
+		// TEST-NET-1 (RFC 5737) never contains this machine, so the edge
+		// must refuse it; the all-addresses range must admit it again.
+		tg.ok(t, time.Minute, "app", slug, "--public-auth", "ip_allowlist", "--ip-allowlist", "192.0.2.0/24")
+		eventually(t, "request from outside the allowlist refused", time.Minute, 2*time.Second, func() (bool, string) {
+			r := get(base + "/")
+			return r.status == http.StatusForbidden || r.status == http.StatusUnauthorized, r.String()
+		})
+		tg.ok(t, time.Minute, "app", slug, "--public-auth", "ip_allowlist", "--ip-allowlist", "0.0.0.0/0")
+		expectVersion(t, base, "v1", time.Minute)
+		tg.ok(t, time.Minute, "app", slug, "--public-auth", "open")
+		expectVersion(t, base, "v1", time.Minute)
 	})
 }
 

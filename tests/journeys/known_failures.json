@@ -18,5 +18,10 @@
     "step": "TestServeAndObserve/runtime_logs",
     "bug": "gregale logs fails with 'Traffic security verification unavailable'; the first request after a deploy can get a false 429 app_concurrency_reached (observed 0 < limit 1)",
     "since": "2026-10-27"
+  },
+  {
+    "step": "TestPublicSurface/status_incidents",
+    "bug": "GET /v1/status/incidents answers 404 no such API route (the inventory lists it as the public incidents API)",
+    "since": "2026-10-26"
   }
 ]

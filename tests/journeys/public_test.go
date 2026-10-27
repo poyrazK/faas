@@ -52,6 +52,13 @@ func TestPublicSurface(t *testing.T) {
 			t.Fatalf("status API has no overall_status: %s", r)
 		}
 	})
+	t.Run("status_incidents", func(t *testing.T) {
+		r := get(tg.api + "/v1/status/incidents")
+		if r.status != http.StatusOK {
+			t.Fatalf("GET /v1/status/incidents: %s", r)
+		}
+		jsonBody(t, r)
+	})
 	t.Run("cli_status", func(t *testing.T) {
 		res := tg.runAs(t, "", time.Minute, "status")
 		if res.exit != 0 {

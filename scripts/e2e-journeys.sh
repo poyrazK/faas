@@ -35,6 +35,8 @@ usage: scripts/e2e-journeys.sh [flags]
                          builder drive, so lower this when sources change)
   --max-apps N           test apps held at once (default: the account's free app slots)
   --sweep-hours N        first delete e2ej- apps from runs older than N hours (default 3, 0 = off)
+  --github-repo O/N      fixture repository for TestGitHubDeploys (needs gh logged in and
+                         the account's Gregale GitHub App able to see it)
   --list                 list journeys and exit
 EOF
 }
@@ -50,6 +52,7 @@ out=''
 keep=0
 max_deploys=4
 max_apps=''
+github_repo="${GREGALE_E2E_GITHUB_REPO:-}"
 sweep_hours=3
 list=0
 
@@ -66,6 +69,7 @@ while (($#)); do
 	--keep) keep=1; shift ;;
 	--max-deploys) max_deploys="$2"; shift 2 ;;
 	--max-apps) max_apps="$2"; shift 2 ;;
+	--github-repo) github_repo="$2"; shift 2 ;;
 	--sweep-hours) sweep_hours="$2"; shift 2 ;;
 	--list) list=1; shift ;;
 	-h|--help) usage; exit 0 ;;
@@ -153,8 +157,9 @@ GREGALE_E2E_API="$api" \
 	GREGALE_E2E_KEEP="$keep" \
 	GREGALE_E2E_MAX_DEPLOYS="$max_deploys" \
 	GREGALE_E2E_MAX_APPS="$max_apps" \
+	GREGALE_E2E_GITHUB_REPO="$github_repo" \
 	GREGALE_E2E_SWEEP_HOURS="$( [[ "$sweep_hours" == 0 ]] || echo "$sweep_hours")" \
-	go test ./tests/journeys -count=1 -json -timeout 90m -parallel 32 -skip '^TestHarness' ${run_re:+-run "$run_re"} 2>&1 |
+	go test ./tests/journeys -count=1 -json -timeout 150m -parallel 32 -skip '^TestHarness' ${run_re:+-run "$run_re"} 2>&1 |
 	tee "$out/go-test.json" |
 	python3 -I tests/journeys/report.py --markdown "$out/report.md" \
 		--known tests/journeys/known_failures.json \

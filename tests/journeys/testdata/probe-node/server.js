@@ -14,6 +14,10 @@
 //                     caller-chosen target) and reports which connected
 //   GET  /entropy     16 fresh random bytes and the guest clock, to prove
 //                     restored instances reseed their RNG and step the clock
+//   GET  /ready       readiness for a gregale.yaml health override
+//   GET  /secret?key= presence and SHA-256 of an E2E_* secret from the live
+//                     reload snapshot (SIGHUP), else the environment
+//   GET  /ws          WebSocket: sends "hello <version>", then closes
 
 import http from "node:http";
 import net from "node:net";
@@ -23,6 +27,43 @@ import { readFileSync } from "node:fs";
 const version = readFileSync(new URL("./version.txt", import.meta.url), "utf8").trim();
 const started = Date.now();
 let cronHits = 0;
+
+// In-process secret reload (docs/secrets.md): on SIGHUP reread the atomic
+// snapshot, adopt its secrets map and acknowledge its revision.
+let liveSecrets = null;
+let liveRevision = "";
+process.on("SIGHUP", () => {
+  try {
+    const snapshot = JSON.parse(readFileSync(process.env.FAAS_SECRETS_SNAPSHOT_FILE, "utf8"));
+    liveSecrets = snapshot.secrets || {};
+    liveRevision = snapshot.revision || "";
+    console.log(`e2e-probe-reload revision=${liveRevision}`);
+    const endpoint = process.env.FAAS_SECRETS_RELOAD_ACK_ENDPOINT;
+    if (endpoint && liveRevision) {
+      fetch(endpoint, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          revision: liveRevision,
+          status: "applied",
+          generation: process.env.FAAS_SECRETS_RELOAD_GENERATION || "",
+        }),
+      }).then(
+        (r) => console.log(`e2e-probe-reload ack status=${r.status}`),
+        (err) => console.log(`e2e-probe-reload ack error=${err}`),
+      );
+    }
+  } catch (err) {
+    console.log(`e2e-probe-reload failed: ${err}`);
+  }
+});
+
+function secretValue(key) {
+  if (liveSecrets !== null) {
+    return { value: liveSecrets[key], source: "reload" };
+  }
+  return { value: process.env[key], source: "env" };
+}
 
 // Outbound targets for /egress. Tenant egress must refuse cloud metadata,
 // private ranges, the host side of the guest's link and mail submission
@@ -65,6 +106,20 @@ const server = http.createServer((req, res) => {
   switch (url.pathname) {
     case "/":
       return json(res, 200, { app: "gregale-e2e-probe", version, uptime_ms: Date.now() - started });
+    case "/ready":
+      return json(res, 200, { ready: true, port: Number(process.env.PORT) || 8080 });
+    case "/secret": {
+      const key = url.searchParams.get("key") || "";
+      if (!/^E2E_[A-Z0-9_]{1,40}$/.test(key)) {
+        return json(res, 400, { error: "key must match E2E_[A-Z0-9_]+" });
+      }
+      const { value, source } = secretValue(key);
+      if (value === undefined) {
+        return json(res, 200, { key, present: false, source, revision: liveRevision, pid: process.pid });
+      }
+      const sha256 = createHash("sha256").update(String(value)).digest("hex");
+      return json(res, 200, { key, present: true, sha256, source, revision: liveRevision, pid: process.pid });
+    }
     case "/healthz":
       if (version.startsWith("broken")) {
         return json(res, 503, { ok: false, version });
@@ -126,6 +181,24 @@ const server = http.createServer((req, res) => {
     default:
       return json(res, 404, { error: "not found" });
   }
+});
+
+// Minimal WebSocket endpoint (RFC 6455): handshake, one text frame, close.
+server.on("upgrade", (req, socket) => {
+  const url = new URL(req.url, "http://probe.invalid");
+  const key = req.headers["sec-websocket-key"];
+  if (url.pathname !== "/ws" || !key) {
+    socket.end("HTTP/1.1 400 Bad Request\r\n\r\n");
+    return;
+  }
+  const accept = createHash("sha1").update(key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11").digest("base64");
+  socket.write(
+    "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n" +
+      `Sec-WebSocket-Accept: ${accept}\r\n\r\n`,
+  );
+  const payload = Buffer.from(`hello ${version}`);
+  socket.write(Buffer.concat([Buffer.from([0x81, payload.length]), payload]));
+  socket.end(Buffer.from([0x88, 0x00]));
 });
 
 server.listen(Number(process.env.PORT) || 8080, () => {

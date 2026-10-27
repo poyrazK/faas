@@ -61,27 +61,11 @@ bound by the safe-rollout journey.
 
 ## Journeys
 
-| Test | Tier | Covers (GA inventory rows) |
-|---|---|---|
-| `TestPublicSurface` | smoke | API health, OpenAPI, status API and page, unknown-host 404, website, `security.txt` and the URLs it names (141, 159, 161) |
-| `TestDocsPages` | smoke | every page in `docs/customer-pages.json` answers 200 |
-| `TestAccountAndKeys` | smoke | `whoami` and limits, capabilities, usage, invoices; a scoped `apps:read` key reads, cannot mint an admin key, shows in the audit log, and is rejected once revoked (138, 140, 142, 144, 151) |
-| `TestTemplateDeploys` | smoke: `hello-node`, `function-node`; full: Python, Go, Node 24, Python 3.13 | template deploy, build, smoke-verified receipt, public URL or `gregale invoke` (2, 3, 9, 41) |
-| `TestServeAndObserve` | smoke (shared app) | serve and health, server-sent events, runtime logs, HTTP request logs; full adds metrics (2, 3, 64, 118, 121) |
-| `TestReleaseAndRollback` | smoke | redeploy with an immediate rollout, deployment history, rollback to the first revision (1, 24) |
-| `TestSecrets` | smoke | sealed secret delivered with a restart (checked by hash), `secrets list` hides the value; full adds `env history` (60, 61) |
-| `TestScaleToZero` | smoke | park, `ps` empty, wake on request (cold-wake time), `ps` lists it; full adds `wake --wait`, min instances, fresh restart (38, 42, 43, 46) |
-| `TestCronDelivery` | full (shared app) | `crons add` and `crons run` deliver a POST the app counts (92) |
-| `TestMaintenanceAndAccess` | full | maintenance 503, `--require-authn` 401, basic auth 401 without and 200 with credentials (77) |
-| `TestSafeReleaseZeroDowntime` | full | default safe redeploy while probing every second: no failed request (24, 38) |
-| `TestHealthGate` | full | a release whose `/healthz` answers 503 is refused and the previous release keeps serving (47) |
-| `TestDeleteAndRestore` | full | delete stops the URL, `apps restore` brings the app back and it serves (1) |
-| `TestImageDeploy` | full | digest-pinned public image deploys without a build and serves (4) |
-| `TestGuestGuarantees` | smoke (3 wakes) / full (10) | from inside the app: egress refused to metadata, private ranges, the host link and mail ports while public HTTPS works; every wake has fresh RNG output and a stepped clock; a 20-request burst on a parked app is served by one wake; wake p50/p95 and overhead over a warm request (40, §6.2 invariant 5, §11) |
-
-Not covered yet: per-app deploy tokens (API only, no CLI command, needs
-step-up auth); and flows that need outside systems: signup and password-reset
-emails, custom domains and TLS, GitHub push-to-deploy, billing checkout.
+`COVERAGE.md` maps every GA capability in `docs/ga-capability-inventory.md`
+to the journeys and steps that test it, and lists what is not covered.
+`scripts/e2e-journeys.sh --list` prints the journeys; `--github-repo`
+enables `TestGitHubDeploys` against a fixture repository the account's
+GitHub App installation can see (e.g. `poyrazK/gregale-e2e-fixture`).
 
 ## Known bugs, history and trends
 

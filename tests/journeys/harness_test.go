@@ -7,7 +7,9 @@
 package journeys
 
 import (
+	"archive/tar"
 	"bytes"
+	"compress/gzip"
 	"context"
 	"crypto/rand"
 	"encoding/json"
@@ -64,10 +66,11 @@ type target struct {
 	firstBuild   map[string]*sync.Once
 
 	// The shared probe is one v1 probe app that read-only journeys share.
-	sharedOnce sync.Once
-	sharedSlug string
-	sharedBase string
-	sharedErr  error
+	sharedOnce     sync.Once
+	sharedSlug     string
+	sharedBase     string
+	sharedDeployID string
+	sharedErr      error
 }
 
 // tgt is nil when GREGALE_E2E_API is unset; every journey then skips, so
@@ -359,11 +362,26 @@ func (tg *target) runAs(t *testing.T, token string, timeout time.Duration, args 
 // CLI scaffolds templates and writes link state relative to it.
 func (tg *target) exec(t *testing.T, token, dir string, timeout time.Duration, args ...string) cliResult {
 	t.Helper()
+	return tg.execIn(t, token, dir, "", timeout, args...)
+}
+
+// execStdin runs the CLI with the target's token and stdin, for flags such
+// as --password-stdin that keep a secret off the command line.
+func (tg *target) execStdin(t *testing.T, stdin string, timeout time.Duration, args ...string) cliResult {
+	t.Helper()
+	return tg.execIn(t, tg.token, tg.home, stdin, timeout, args...)
+}
+
+func (tg *target) execIn(t *testing.T, token, dir, stdin string, timeout time.Duration, args ...string) cliResult {
+	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, tg.cli, append([]string{"--non-interactive"}, args...)...)
 	cmd.Env = tg.cliEnv(token)
 	cmd.Dir = dir
+	if stdin != "" {
+		cmd.Stdin = strings.NewReader(stdin)
+	}
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
 	start := time.Now()
@@ -547,7 +565,8 @@ func (tg *target) sharedProbe(t *testing.T) (slug, base string) {
 		if tg.sharedBase == "" {
 			tg.sharedBase = tg.appURL(tg.sharedSlug)
 		}
-		tg.logDeployStages(t, str(receipt, "id"))
+		tg.sharedDeployID = str(receipt, "id")
+		tg.logDeployStages(t, tg.sharedDeployID)
 		tg.sharedErr = nil
 	})
 	if tg.sharedErr != nil {
@@ -624,6 +643,14 @@ func (tg *target) deleteShared() {
 // retried once, like deploy/scripts/production-release-acceptance.sh.
 func (tg *target) deploy(t *testing.T, slug string, args ...string) map[string]any {
 	t.Helper()
+	return tg.deployWith(t, slug, true, args...)
+}
+
+// deployWith is deploy for workloads with no public HTTP smoke (workers,
+// some crons): with smoke false it requires only a live, rollout-complete
+// receipt.
+func (tg *target) deployWith(t *testing.T, slug string, smoke bool, args ...string) map[string]any {
+	t.Helper()
 	full := append([]string{"deploy", "--name", slug, "--wait", "--timeout", deployLimit.String(),
 		"--yes", "--no-require-authn", "--reason", "e2e-journeys run " + tg.runID}, args...)
 	dir := t.TempDir()
@@ -654,7 +681,7 @@ func (tg *target) deploy(t *testing.T, slug string, args ...string) map[string]a
 		receipt["status"] = field(final, "status")
 	}
 	if str(receipt, "status") != "live" || str(receipt, "rollout_state") != "complete" ||
-		str(receipt, "hosting_receipt.smoke.status") != "verified" {
+		(smoke && str(receipt, "hosting_receipt.smoke.status") != "verified") {
 		t.Fatalf("deploy %s receipt is not live, rollout-complete and smoke-verified: %s", slug,
 			compact(map[string]any{"id": field(receipt, "id"), "status": field(receipt, "status"),
 				"rollout_state": field(receipt, "rollout_state"), "smoke": field(receipt, "hosting_receipt.smoke")}))
@@ -724,6 +751,115 @@ func probeSource(t *testing.T, version string) string {
 		t.Fatalf("write probe version: %v", err)
 	}
 	return dir
+}
+
+// --- API-only capabilities -------------------------------------------
+
+// scopedKey mints an API key for capabilities the CLI does not expose,
+// labelled e2ej-<run>-<name> and revoked when the journey ends.
+func (tg *target) scopedKey(t *testing.T, name string, scopes ...string) string {
+	t.Helper()
+	args := []string{"keys", "add", tg.slug(name)}
+	if len(scopes) > 0 {
+		args = append(args, "--scopes", strings.Join(scopes, ","))
+	}
+	res := tg.ok(t, time.Minute, args...)
+	key := apiKeyRe.FindString(string(res.stdout))
+	id := str(object(t, res.stdout), "id")
+	if key == "" || id == "" {
+		t.Fatalf("keys add printed no key or id")
+	}
+	t.Cleanup(func() { tg.run(t, time.Minute, "keys", "rm", id) })
+	return key
+}
+
+// apiCall sends one request to the public API with a bearer key.
+func (tg *target) apiCall(method, path string, body any, key string) httpResult {
+	var reader io.Reader
+	if body != nil {
+		b, err := json.Marshal(body)
+		if err != nil {
+			return httpResult{err: err}
+		}
+		reader = bytes.NewReader(b)
+	}
+	req, err := http.NewRequest(method, tg.api+path, reader)
+	if err != nil {
+		return httpResult{err: err}
+	}
+	req.Header.Set("Authorization", "Bearer "+key)
+	req.Header.Set("User-Agent", "gregale-e2e-journeys")
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	start := time.Now()
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return httpResult{err: err, elapsed: time.Since(start)}
+	}
+	defer resp.Body.Close()
+	b, err := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
+	return httpResult{status: resp.StatusCode, header: resp.Header, body: b, elapsed: time.Since(start), err: err}
+}
+
+// --- source variants -------------------------------------------------
+
+// probeVariant is probeSource plus extra files (a Dockerfile, a
+// gregale.yaml), so a variant has its own fixed source digest.
+func probeVariant(t *testing.T, version string, extra map[string]string) string {
+	t.Helper()
+	dir := probeSource(t, version)
+	for name, content := range extra {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o644); err != nil {
+			t.Fatalf("write %s: %v", name, err)
+		}
+	}
+	return dir
+}
+
+// tarball packs dir into a gzipped tar with fixed metadata, so the same
+// files always give the same archive digest (and a build-cache hit).
+func tarball(t *testing.T, dir string) string {
+	t.Helper()
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatalf("read %s: %v", dir, err)
+	}
+	names := make([]string, 0, len(entries))
+	for _, e := range entries {
+		names = append(names, e.Name())
+	}
+	sort.Strings(names)
+	out := filepath.Join(t.TempDir(), "source.tar.gz")
+	f, err := os.Create(out)
+	if err != nil {
+		t.Fatalf("create tarball: %v", err)
+	}
+	gz := gzip.NewWriter(f)
+	tw := tar.NewWriter(gz)
+	for _, name := range names {
+		b, err := os.ReadFile(filepath.Join(dir, name))
+		if err != nil {
+			t.Fatalf("read %s: %v", name, err)
+		}
+		hdr := &tar.Header{Name: name, Mode: 0o644, Size: int64(len(b)), ModTime: time.Unix(0, 0), Format: tar.FormatPAX}
+		if err := tw.WriteHeader(hdr); err != nil {
+			t.Fatalf("tar header: %v", err)
+		}
+		if _, err := tw.Write(b); err != nil {
+			t.Fatalf("tar write: %v", err)
+		}
+	}
+	if err := tw.Close(); err != nil {
+		t.Fatalf("close tar: %v", err)
+	}
+	if err := gz.Close(); err != nil {
+		t.Fatalf("close gzip: %v", err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatalf("close tarball: %v", err)
+	}
+	return out
 }
 
 // --- HTTP --------------------------------------------------------------
