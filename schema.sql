@@ -42590,6 +42590,20 @@ CREATE TABLE public.managed_postgres_cutovers (
 
 
 --
+-- Name: managed_postgres_database_endpoints; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.managed_postgres_database_endpoints (
+    database_id uuid NOT NULL,
+    host text NOT NULL,
+    port integer NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT managed_postgres_database_endpoints_host_check CHECK ((((length(host) >= 1) AND (length(host) <= 253)) AND (host ~ '^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$'::text))),
+    CONSTRAINT managed_postgres_database_endpoints_port_check CHECK (((port >= 1) AND (port <= 65535)))
+);
+
+
+--
 -- Name: managed_postgres_databases; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -62338,6 +62352,14 @@ ALTER TABLE ONLY public.managed_postgres_cutover_source_fences
 
 ALTER TABLE ONLY public.managed_postgres_cutovers
     ADD CONSTRAINT managed_postgres_cutovers_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: managed_postgres_database_endpoints managed_postgres_database_endpoints_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_postgres_database_endpoints
+    ADD CONSTRAINT managed_postgres_database_endpoints_pkey PRIMARY KEY (database_id, host, port);
 
 
 --
@@ -93037,6 +93059,14 @@ ALTER TABLE ONLY public.managed_postgres_cutovers
 
 ALTER TABLE ONLY public.managed_postgres_cutovers
     ADD CONSTRAINT managed_postgres_cutovers_target_database_id_fkey FOREIGN KEY (target_database_id) REFERENCES public.managed_postgres_databases(id) ON DELETE CASCADE;
+
+
+--
+-- Name: managed_postgres_database_endpoints managed_postgres_database_endpoints_database_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_postgres_database_endpoints
+    ADD CONSTRAINT managed_postgres_database_endpoints_database_id_fkey FOREIGN KEY (database_id) REFERENCES public.managed_postgres_databases(id) ON DELETE CASCADE;
 
 
 --

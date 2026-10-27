@@ -7998,6 +7998,13 @@ type ManagedPostgresDatabase struct {
 	OrgID                       pgtype.UUID
 }
 
+type ManagedPostgresDatabaseEndpoint struct {
+	DatabaseID pgtype.UUID
+	Host       string
+	Port       int32
+	UpdatedAt  pgtype.Timestamptz
+}
+
 type ManagedPostgresHealth struct {
 	DatabaseID         pgtype.UUID
 	AccountID          pgtype.UUID
