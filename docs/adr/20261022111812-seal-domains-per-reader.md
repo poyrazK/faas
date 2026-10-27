@@ -593,6 +593,25 @@ The second account slice moves the integration credentials apid holds:
   left for their sweep.
 - The namespaces the re-seal shares with the writers moved to `pkg/api`.
 
+## Implemented in the twelfth slice: product email
+
+The third account slice moves product email's sealed values:
+`product_control_email_subscriptions` (`grant_sealed`,
+`pause_recipient_sealed`) and `product_control_email_deliveries`
+(`recipient_sealed`, `unsubscribe_sealed`). They have their own SQL package
+but live in the main schema.
+
+- Every product email value is sealed and opened through apid's two
+  product email functions, so the slice changes those two: they seal to the
+  account recipients (with apid's own identity's recipient as legacy) and
+  open with the account identity first (`productemail.SealTo`).
+- Each value binds a token to the subscription or evidence id it was sealed
+  for. The re-seal keeps that envelope as it is and refuses an envelope of
+  another shape.
+- **Later slices:** managed realtime, data pipelines (with the data-pipeline
+  worker's identity) and project environment clones (with the clone
+  worker's identity).
+
 ## Implemented: the alerting test-send relay
 
 Section 3 moves apid's alerting test sends behind meterd, ahead of the
