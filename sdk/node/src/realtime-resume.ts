@@ -166,7 +166,7 @@ export interface RealtimeSignal {
 
 export interface RealtimeEphemeralRejection {
   channel: string;
-  code: 'presence_rate_limited' | 'signal_rate_limited' | 'signal_relay_unavailable' | 'occupancy_limit';
+  code: 'presence_rate_limited' | 'signal_rate_limited' | 'signal_relay_unavailable' | 'occupancy_limit' | 'presence_not_authorized';
 }
 
 /** A channel's subscriber count across every realtime node (ADR-1324). */
@@ -1234,7 +1234,8 @@ export async function consumeRealtimeChannels(options: ConsumeRealtimeChannelsOp
           case 'error':
             if (frame.code === 'history_read_failed' || frame.code === 'checkpoint_write_failed') break;
             if (frame.code === 'presence_rate_limited' || frame.code === 'signal_rate_limited' ||
-                frame.code === 'signal_relay_unavailable' || frame.code === 'occupancy_limit') {
+                frame.code === 'signal_relay_unavailable' || frame.code === 'occupancy_limit' ||
+                frame.code === 'presence_not_authorized') {
               await state.options.onEphemeralRejected?.({ channel, code: frame.code });
               break;
             }

@@ -119638,6 +119638,7 @@ components:
       properties:
         pattern: { type: string, minLength: 1, maxLength: 256, example: "org:{org_id}:room:*" }
         read: { type: boolean, description: "Must be true: a rule grants read access." }
+        presence: { type: boolean, description: "Also grants setting presence state and sending signals on the channel. Without it those go to the authorize callback with permission presence." }
 
     CreateManagedRealtimeEndpointRequest:
       type: object

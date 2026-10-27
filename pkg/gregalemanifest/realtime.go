@@ -44,17 +44,19 @@ type RealtimeEndpoint struct {
 }
 
 // RealtimeChannelRule grants a channel pattern such as "org:{org_id}:room:*"
-// to tokens whose claims fill its placeholders.
+// to tokens whose claims fill its placeholders. Presence also grants setting
+// presence state and sending signals.
 type RealtimeChannelRule struct {
-	Pattern string `yaml:"pattern" toml:"pattern"`
-	Read    bool   `yaml:"read" toml:"read"`
+	Pattern  string `yaml:"pattern" toml:"pattern"`
+	Read     bool   `yaml:"read" toml:"read"`
+	Presence bool   `yaml:"presence,omitempty" toml:"presence"`
 }
 
 // APIChannelRules converts the declared rules to their API form.
 func (e RealtimeEndpoint) APIChannelRules() []api.RealtimeChannelRule {
 	out := make([]api.RealtimeChannelRule, 0, len(e.Channels))
 	for _, rule := range e.Channels {
-		out = append(out, api.RealtimeChannelRule{Pattern: rule.Pattern, Read: rule.Read})
+		out = append(out, api.RealtimeChannelRule{Pattern: rule.Pattern, Read: rule.Read, Presence: rule.Presence})
 	}
 	return out
 }

@@ -59,6 +59,8 @@ test('grants channels through session-aware authorization and fails closed', asy
   assert.deepEqual(queries[2].args, ['realtime:read', `org/${org}/room/lobby`])
   assert.equal((await call({ ...event, permission: 'read_activity', channel: '__activity.x', activity_parent_channel: `org:${org}:room:lobby` })).status, 204)
   assert.deepEqual(queries[7].args, ['realtime:activity', `org/${org}/room/lobby`])
+  assert.equal((await call({ ...event, permission: 'presence' })).status, 204)
+  assert.deepEqual(queries[12].args, ['realtime:presence', `org/${org}/room/lobby`])
   allowed = false
   assert.equal((await call(event)).status, 403)
   allowed = 'error'

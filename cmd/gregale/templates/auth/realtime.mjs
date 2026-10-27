@@ -7,6 +7,8 @@ import { inSession } from './authz.mjs'
 // POST /realtime/authorize-channel here with a callback token sealed in this
 // app. The callback carries the verified token's subject and session_id.
 // Reuse the same session-aware authorization function as the Data API.
+// Permission "presence" (setting presence state and sending signals) is its
+// own action, realtime:presence, so reading a channel does not grant it.
 
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
@@ -43,12 +45,13 @@ export function createRealtimeAuthorizer({ pool, tokens }) {
       let event
       try { event = JSON.parse(Buffer.concat(chunks).toString('utf8')) } catch { return reply(400) }
       const activity = event?.permission === 'read_activity'
+      const action = activity ? 'realtime:activity' : event?.permission === 'presence' ? 'realtime:presence' : 'realtime:read'
       const resource = channelResource(activity ? event.activity_parent_channel || event.channel : event?.channel)
       if (event?.type !== 'realtime.authorize_channel' || typeof event.principal !== 'string' || !uuid.test(event.principal) ||
           typeof event.session_id !== 'string' || !uuid.test(event.session_id) || !resource) return reply(403)
       try {
         const { rows: [{ allowed }] } = await inSession(pool, { sub: event.principal, session_id: event.session_id }, client =>
-          client.query('SELECT gregale_auth.authorize($1, $2) AS allowed', [activity ? 'realtime:activity' : 'realtime:read', resource]))
+          client.query('SELECT gregale_auth.authorize($1, $2) AS allowed', [action, resource]))
         reply(allowed ? 204 : 403)
       } catch (err) {
         console.error(JSON.stringify({ level: 'error', event: 'realtime_authorize_failed', sqlstate: err?.code ?? null }))

@@ -225,10 +225,13 @@ type ManagedRealtimePrincipalReceiptResponse struct {
 // RealtimeChannelRule grants channels to verified tokens without the
 // authorize callback (ADR-20261019102657). Pattern is literal text,
 // {claim} placeholders that must equal the token's claim, and an optional
-// trailing "*" matching any suffix. "sub" is the token subject.
+// trailing "*" matching any suffix. "sub" is the token subject. Read lets a
+// connection subscribe; Presence also lets it set presence state and send
+// signals on the channel (ADR-369, amendment of 2026-10-27).
 type RealtimeChannelRule struct {
-	Pattern string `json:"pattern"`
-	Read    bool   `json:"read"`
+	Pattern  string `json:"pattern"`
+	Read     bool   `json:"read"`
+	Presence bool   `json:"presence,omitempty"`
 }
 
 // realtimeEndpointSlug matches the migration's CHECK on

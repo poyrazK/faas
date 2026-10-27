@@ -509,7 +509,10 @@ must implement `POST <callback_url>/realtime/authorize-channel`: Gregale sends
 `realtime.authorize_channel` with the verified principal, endpoint, channel,
 and `permission: "read"`, using the configured callback bearer credential.
 Any 2xx grants that channel for this connection; all other responses and
-callback failures deny it. To revoke a grant already in use, close the
+callback failures deny it. Setting presence state and sending signals on a
+channel ask again with `permission: "presence"`, with the same 30-second grant
+lifetime, so a callback can let members read a channel without letting them
+announce state or signal each other. To revoke a grant already in use, close the
 matching connection through the management API, or enable the
 [principal access controls preview](#principal-access-controls-preview).
 
@@ -536,6 +539,14 @@ group. The most recently changed state wins across devices; use the default
 connection scope when each device needs separate state. Principal scope
 requires a verified principal and fleet presence storage. Presence state is
 client-supplied and is not a verified user identity.
+
+Reading a channel lets a connection join its presence with an empty state.
+Setting a state (on subscribe or with a `presence` frame) and sending signals
+need the `presence` permission: a channel rule with `presence: true`, or the
+authorize callback answering `permission: "presence"`. Without it, a
+subscribe with a state joins with an empty state, and the server answers the
+state or signal with an `error` frame whose code is `presence_not_authorized`;
+the subscription stays open.
 
 ```json
 {"type":"subscribe","channel":"room-a","after":0,"state":{"status":"online"}}

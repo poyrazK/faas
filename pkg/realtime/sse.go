@@ -392,7 +392,7 @@ func (a *sseAuthorization) authorize(ctx context.Context) sseVerdict {
 	if verified != a.principal {
 		return sseDenied
 	}
-	if channelRulesAllow(&current, identity, a.channel) {
+	if channelRulesAllow(&current, identity, a.channel, false) {
 		return sseAllowed
 	}
 	parent, scope, err := api.ParseRealtimeActivityScope(a.channel)

@@ -6,6 +6,8 @@ from typing import Any, TypeVar
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
+from ..types import UNSET, Unset
+
 T = TypeVar("T", bound="RealtimeChannelRule")
 
 
@@ -19,12 +21,17 @@ class RealtimeChannelRule:
     pattern: str
     read: bool
     """Must be true: a rule grants read access."""
+    presence: bool | Unset = UNSET
+    """Also grants setting presence state and sending signals on the channel. Without it those go to the authorize
+    callback with permission presence."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         pattern = self.pattern
 
         read = self.read
+
+        presence = self.presence
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
@@ -34,6 +41,8 @@ class RealtimeChannelRule:
                 "read": read,
             }
         )
+        if presence is not UNSET:
+            field_dict["presence"] = presence
 
         return field_dict
 
@@ -44,9 +53,12 @@ class RealtimeChannelRule:
 
         read = d.pop("read")
 
+        presence = d.pop("presence", UNSET)
+
         realtime_channel_rule = cls(
             pattern=pattern,
             read=read,
+            presence=presence,
         )
 
         realtime_channel_rule.additional_properties = d
