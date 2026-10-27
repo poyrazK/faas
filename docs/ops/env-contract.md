@@ -348,6 +348,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_GEOIP_ASN_DB_PATH` | gatewayd-internal | `default` |  |  | `` | the geoip role stages the DB-IP ASN database at the code default (ADR-966); asn match conditions never match without it |
 | `FAAS_GEOIP_AUTO_REFRESH` | gatewayd-internal | `default` |  |  | `` | 0; the geoip role owns refresh through re-bootstrap |
 | `FAAS_GEOIP_DB_PATH` | gatewayd-internal | `default` |  |  | `` | the geoip role stages the DB-IP database at the code default (ADR-143); geo edge rules are no-ops without it |
+| `FAAS_GITHUBD_AUTOMATION_EVENTS` | githubd | `default` |  |  | `` | ADR-20261027090010 §9: 1 forwards pull_request deliveries to apid's bridge (FAAS_APID_GITHUBD_BRIDGE_SOCK) as gregale.github events; apid publishes them only for accounts the agents capability is released to; unset forwards none |
 | `FAAS_GITHUBD_LISTEN_ADDR` | githubd | `dropin` |  |  | `` | private mTLS gRPC listener for source-ref verification on compute-only hosts |
 | `FAAS_GITHUBD_LOOPBACK` | apid, gatewayd-internal, gatewayd-public | `default` |  |  | `` |  |
 | `FAAS_GITHUBD_ROLE` | githubd, shared | `dropin` |  |  | `` |  |

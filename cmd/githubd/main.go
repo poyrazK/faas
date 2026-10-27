@@ -19,6 +19,7 @@ import (
 	"crypto/rsa"
 	"encoding/json"
 	"errors"
+	"flag"
 	"fmt"
 	"log/slog"
 	"os"
@@ -67,9 +68,18 @@ type runDeps struct {
 	capCheck func() error
 }
 
+// githubdConfigPath is the --config path wire.Daemon parsed, so a unit or
+// harness can point githubd at its own TOML, like outboundd.
+func githubdConfigPath() string {
+	if f := flag.Lookup("config"); f != nil && strings.TrimSpace(f.Value.String()) != "" {
+		return f.Value.String()
+	}
+	return "/etc/faas/githubd.toml"
+}
+
 func defaultDeps() runDeps {
 	return runDeps{
-		configPath: "/etc/faas/githubd.toml",
+		configPath: githubdConfigPath(),
 		openDB: func(ctx context.Context, dsn string) (*pgxpool.Pool, error) {
 			return db.OpenWithAppName(ctx, dsn, "faas-githubd")
 		},
@@ -312,7 +322,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// when FAAS_APID_GITHUBD_BRIDGE_SOCK is empty, so
 	// the dispatcher stays safe on a dev box where the
 	// apid daemon isn't running.
-	webhookSvc.Enqueuer = NewApidEnqueuer(newApidBridgeClient(ctx, os.Getenv("FAAS_APID_GITHUBD_BRIDGE_SOCK"), nil, log), log)
+	apidBridge := newApidBridgeClient(ctx, os.Getenv("FAAS_APID_GITHUBD_BRIDGE_SOCK"), nil, log)
+	webhookSvc.Enqueuer = NewApidEnqueuer(apidBridge, log)
+	webhookSvc.AutomationEvents = newApidAutomationEvents(os.Getenv, apidBridge, log)
 	// A missing GitHub App credential must stop push dispatch before source
 	// fetch; the branch-head check is a production freshness boundary.
 	webhookSvc.BranchHeads = githubd.NewUnavailableBranchHeads()
@@ -401,6 +413,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 					WithStreamer(newSourceRefStreamer(installsAdapter, &tokenCacheAdapter{cache: tokens}, nil, log))
 				realSvc.BranchHeads = githubd.NewHTTPBranchHeads(tokens, deps.httpClient())
 				realSvc.CIPullRequests = githubd.NewHTTPCIPullRequests(tokens, deps.httpClient())
+				realSvc.IssueComments = githubd.NewHTTPIssueComments(tokens, deps.httpClient())
 				realSvc.CIChanges = githubd.NewHTTPCIChangedFiles(tokens, deps.httpClient())
 				realSvc.ProtectedBranches = githubd.NewHTTPProtectedBranches(tokens, deps.httpClient())
 				realSvc.ReviewedMerges = githubd.NewHTTPReviewedMerges(tokens, deps.httpClient())

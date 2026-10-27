@@ -427,6 +427,7 @@ var EnvContract = []EnvVar{
 	{Name: "FAAS_GEOIP_ASN_DB_PATH", Owners: []string{"gatewayd-internal"}, Source: EnvSourceDefault, Note: "the geoip role stages the DB-IP ASN database at the code default (ADR-966); asn match conditions never match without it"},
 	{Name: "FAAS_GEOIP_AUTO_REFRESH", Owners: []string{"gatewayd-internal"}, Source: EnvSourceDefault, Note: "0; the geoip role owns refresh through re-bootstrap"},
 	{Name: "FAAS_GEOIP_DB_PATH", Owners: []string{"gatewayd-internal"}, Source: EnvSourceDefault, Note: "the geoip role stages the DB-IP database at the code default (ADR-143); geo edge rules are no-ops without it"},
+	{Name: "FAAS_GITHUBD_AUTOMATION_EVENTS", Owners: []string{"githubd"}, Source: EnvSourceDefault, Default: "", Note: "ADR-20261027090010 §9: 1 forwards pull_request deliveries to apid's bridge (FAAS_APID_GITHUBD_BRIDGE_SOCK) as gregale.github events; apid publishes them only for accounts the agents capability is released to; unset forwards none"},
 	{Name: "FAAS_GITHUBD_LISTEN_ADDR", Owners: []string{"githubd"}, Source: EnvSourceDropin, Note: "private mTLS gRPC listener for source-ref verification on compute-only hosts"},
 	{Name: "FAAS_GITHUBD_LOOPBACK", Owners: []string{"apid", "gatewayd-internal", "gatewayd-public"}, Source: EnvSourceDefault},
 	{Name: "FAAS_GITHUBD_ROLE", Owners: []string{"githubd", "shared"}, Source: EnvSourceDropin},
