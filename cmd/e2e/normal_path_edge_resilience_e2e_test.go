@@ -20,11 +20,13 @@ import (
 	"google.golang.org/grpc/status"
 )
 
-// newNormalPathSiblings boots a Pro app with two RUNNING instances of one
-// deployment, both routable, and returns (first, second).
+// newNormalPathSiblings boots a Hobby app with two RUNNING instances of one
+// deployment, both routable, and returns (first, second). Hobby allows the
+// retry and circuit_breaker rules and two instances; a Pro app would put its
+// public routes behind the plan's default API-key gate.
 func newNormalPathSiblings(t *testing.T, slug string, env ...string) (*normalPathFixture, state.Instance, state.Instance) {
 	t.Helper()
-	f := newNormalPathFixtureWithPlanAndEnv(t, slug, api.PlanPro, env...)
+	f := newNormalPathFixtureWithPlanAndEnv(t, slug, api.PlanHobby, env...)
 	if f == nil {
 		return nil, state.Instance{}, state.Instance{}
 	}
