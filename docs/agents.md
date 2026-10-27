@@ -68,6 +68,24 @@ approval exits `1`; `--non-interactive` never approves on the agent's behalf.
 See [CLI configuration](cli-config.md) for the full contract, including
 pagination and profiles.
 
+## Connect a cloud agent
+
+Agents that run in the cloud, such as claude.ai, ChatGPT and hosted coding
+agents, connect to Gregale's hosted MCP server at
+`https://api.gregale.dev/mcp`. There's nothing to install:
+1. Add the URL as a connector.
+2. When the agent connects, sign in to Gregale and choose what it may do and
+   which apps it may use.
+
+The agent can then:
+- inspect and deploy apps, promote and roll back;
+- upload a project it wrote, or pass small projects as files;
+- ask you for secrets, and add domains, crons, buckets and databases, if you
+  allowed those.
+
+See
+[Connect a cloud agent to Gregale](mcp.md#connect-a-cloud-agent-to-gregale).
+
 ## Connect the management MCP server
 
 `gregale mcp serve` gives an agent Gregale's management tools over MCP. The

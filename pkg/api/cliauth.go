@@ -53,10 +53,30 @@ type CliAuthExchangeResponse struct {
 // Empty Purpose preserves the normal CLI login contract.
 type CliAuthCodeRequest struct {
 	Purpose string `json:"purpose,omitempty"`
+	// Scopes, with purpose "mcp" only, adds MCPGrantableScopes to apps:read.
+	Scopes []string `json:"scopes,omitempty"`
 }
 
 const CliAuthPurposeMCPRead = "mcp-read"
 const CliAuthPurposeMCPWrite = "mcp-write"
+
+// CliAuthPurposeMCP mints a code for apps:read plus the requested scopes
+// (ADR-20261026195952). The scope set is part of the code and its stored
+// hash, so neither the browser nor exchange can widen it.
+const CliAuthPurposeMCP = "mcp"
+
+// MCPGrantableScopes are the scopes an MCP consent may add to apps:read, in
+// the bit order of the code's scope digit. postgres:manage brings
+// postgres:read with it.
+var MCPGrantableScopes = []string{ScopeDeployWrite, ScopeSecretsRequest, ScopeStorageManage, ScopeManagedPostgresManage}
+
+// MintScopedMCPAuthCode mints a browser code for apps:read plus scopes, each
+// one of MCPGrantableScopes.
+func (c *Client) MintScopedMCPAuthCode(ctx context.Context, scopes []string) (CliAuthCodeResponse, error) {
+	var out CliAuthCodeResponse
+	err := c.do(ctx, "POST", "/v1/cli-auth/code", CliAuthCodeRequest{Purpose: CliAuthPurposeMCP, Scopes: scopes}, &out)
+	return out, err
+}
 
 // MintMCPAuthCode uses the existing dashboard sign-in and account-bound consent.
 func (c *Client) MintMCPAuthCode(ctx context.Context, writes bool) (CliAuthCodeResponse, error) {

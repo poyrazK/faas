@@ -40,6 +40,9 @@ type authorizationRequest struct {
 	Expires    time.Time
 	NativeCode string
 	NativeURL  string
+	// Capabilities are the extra scopes chosen before sign-in; the browser
+	// code carries exactly these (ADR-20261026195952).
+	Capabilities []string
 }
 
 type authorizationCode struct {
@@ -68,6 +71,7 @@ type oauthGrant struct {
 	credentialExpires     time.Time
 	environments          *EnvironmentConsent
 	availableEnvironments []EnvironmentGrant
+	capabilities          []string
 }
 
 func randomToken(prefix string) (string, error) {
