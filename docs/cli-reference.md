@@ -13692,6 +13692,38 @@ Inspect production requests and regressions
 
 `gregale debug [<subcommand>] [flags] <slug> [<request-id>]`
 
+### debug status
+
+One summary of health, release, regressions, and recent failures
+
+`gregale debug status [--since <DURATION>] <slug>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--since <DURATION>` | lookback window (default 1h) |  |
+
+Examples:
+
+```sh
+gregale debug status checkout-api
+```
+
+### debug rollout
+
+Explain why a release was rolled back or held, with request evidence
+
+`gregale debug rollout [--deployment-id <UUID>] <slug>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--deployment-id <UUID>` | deployment to explain (default: the newest canary rollout) |  |
+
+Examples:
+
+```sh
+gregale debug rollout checkout-api
+```
+
 ### debug requests
 
 Per-request telemetry and root-cause synthesis

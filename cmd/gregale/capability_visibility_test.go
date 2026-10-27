@@ -115,6 +115,16 @@ func TestCommandCapabilityPath(t *testing.T) {
 	}
 }
 
+// clearCapabilityReleaseAll turns off the test binary's show-everything
+// default so the test sees capability hiding. The last run's view stays
+// memoized, so the cleanup forgets it: a later test that calls a command
+// directly, without run, must not inherit a hidden capability.
+func clearCapabilityReleaseAll(t *testing.T) {
+	t.Helper()
+	t.Setenv("FAAS_CAPABILITY_FLAGS_RELEASE_ALL", "")
+	t.Cleanup(main.ResetCapabilityView)
+}
+
 // runCLI runs the CLI and returns its exit code, stdout and stderr.
 func runCLI(t *testing.T, args ...string) (int, string, string) {
 	t.Helper()
@@ -131,7 +141,7 @@ func listsCommand(help, name string) bool {
 }
 
 func TestLoggedOutHelpShowsTierDefaults(t *testing.T) {
-	t.Setenv("FAAS_CAPABILITY_FLAGS_RELEASE_ALL", "")
+	clearCapabilityReleaseAll(t)
 	t.Setenv("FAAS_TOKEN", "")
 	t.Setenv("FAAS_COMPLETION_CACHE_PATH", filepath.Join(t.TempDir(), "cache.json"))
 
@@ -149,7 +159,7 @@ func TestLoggedOutHelpShowsTierDefaults(t *testing.T) {
 	if _, script, _ := runCLI(t, "completion", "bash"); !strings.Contains(script, " realtime ") {
 		t.Fatal("bash completion must offer realtime once every capability is released")
 	}
-	t.Setenv("FAAS_CAPABILITY_FLAGS_RELEASE_ALL", "")
+	clearCapabilityReleaseAll(t)
 	if _, reference, _ := runCLI(t, "man", "--markdown"); !strings.Contains(reference, "realtime") {
 		t.Fatal("the generated reference must document every released command")
 	}
@@ -186,7 +196,7 @@ func TestAccountViewHidesCommandsAndRereadsBeforeRefusing(t *testing.T) {
 	api := &capabilitiesAPI{}
 	server := httptest.NewServer(api)
 	defer server.Close()
-	t.Setenv("FAAS_CAPABILITY_FLAGS_RELEASE_ALL", "")
+	clearCapabilityReleaseAll(t)
 	t.Setenv("FAAS_API", server.URL)
 	t.Setenv("FAAS_TOKEN", "test-token")
 	t.Setenv("FAAS_COMPLETION_CACHE_PATH", filepath.Join(t.TempDir(), "cache.json"))
@@ -224,7 +234,7 @@ func TestLocalCommandsRunWhileTheirCapabilityIsHidden(t *testing.T) {
 	api := &capabilitiesAPI{}
 	server := httptest.NewServer(api)
 	defer server.Close()
-	t.Setenv("FAAS_CAPABILITY_FLAGS_RELEASE_ALL", "")
+	clearCapabilityReleaseAll(t)
 	t.Setenv("FAAS_API", server.URL)
 	t.Setenv("FAAS_TOKEN", "test-token")
 	t.Setenv("FAAS_COMPLETION_CACHE_PATH", filepath.Join(t.TempDir(), "cache.json"))
@@ -248,7 +258,7 @@ func TestHiddenDebuggerSubcommandsLeaveDebugUsage(t *testing.T) {
 	api := &capabilitiesAPI{}
 	server := httptest.NewServer(api)
 	defer server.Close()
-	t.Setenv("FAAS_CAPABILITY_FLAGS_RELEASE_ALL", "")
+	clearCapabilityReleaseAll(t)
 	t.Setenv("FAAS_API", server.URL)
 	t.Setenv("FAAS_TOKEN", "test-token")
 	t.Setenv("FAAS_COMPLETION_CACHE_PATH", filepath.Join(t.TempDir(), "cache.json"))
@@ -281,7 +291,7 @@ func TestHiddenDebuggerSubcommandsLeaveDebugUsage(t *testing.T) {
 
 	api.setHidden()
 	t.Setenv("FAAS_COMPLETION_CACHE_PATH", filepath.Join(t.TempDir(), "cache2.json"))
-	if usage := debugUsageOutput(t, "debug"); !strings.Contains(usage, "<requests|coverage|dependencies|running|regressions|compare|bundle>") {
+	if usage := debugUsageOutput(t, "debug"); !strings.Contains(usage, "<status|rollout|requests|coverage|dependencies|running|regressions|compare|bundle>") {
 		t.Fatalf("debug usage with every capability shown = %q", usage)
 	}
 }

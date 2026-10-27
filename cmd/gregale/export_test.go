@@ -1741,6 +1741,7 @@ var RequireTyped = requireTyped
 var ResetJSONOut = resetJSONOut
 var ResetJSONOutput = resetJSONOutput
 var ResetNOColorCache = resetNOColorCache
+var ResetCapabilityView = resetCapabilityView
 var ResetStdoutTTYCache = resetStdoutTTYCache
 var ResolveDeployReleaseAt = resolveDeployReleaseAt
 var ResolveDeployRollbackOn5xx = resolveDeployRollbackOn5xx
