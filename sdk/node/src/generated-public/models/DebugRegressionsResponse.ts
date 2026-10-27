@@ -4,7 +4,7 @@
 /* eslint-disable */
 import type { DebugRegressionItem } from './DebugRegressionItem.js';
 /**
- * Response from GET /v1/apps/{slug}/debug/regressions (ADR-127 / PR-B).
+ * Response from GET /v1/apps/{slug}/debug/regressions.
  * `since` echoes the effective window applied.
  *
  */

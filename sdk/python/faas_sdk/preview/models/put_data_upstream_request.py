@@ -23,16 +23,16 @@ class PutDataUpstreamRequest:
     """
 
     kind: PutDataUpstreamRequestKind
-    """Closed vocabulary (ADR-098 §D1). Adding a new kind requires an ADR."""
+    """Closed vocabulary. Adding a new kind requires an ADR."""
     host: str
     """RFC 952/1123 hostname (no IPv4). Hashed server-side; the hashed form is what's persisted."""
     port: int
     scope: str | Unset = UNSET
-    """ADR-090 deployment-scope filter (1..40 chars, lowercase alnum + dash). Omitted = default scope."""
+    """Deployment-scope filter (1..40 chars, lowercase alnum + dash). Omitted = default scope."""
     deployment_scope: str | Unset = UNSET
-    """ADR-098 amendment (issue #954) widens the dedupe key to include `deployment_scope` so staging-vs-prod
-    upstreams don't collide on the same app. Same shape as `scope` (1..40 chars, lowercase alnum + dash). Omitted =
-    default scope, the migration's SQL DEFAULT stamp."""
+    """Widens the dedupe key to include `deployment_scope` so staging-vs-prod upstreams don't collide on the same
+    app. Same shape as `scope` (1..40 chars, lowercase alnum + dash). Omitted = default scope, the migration's SQL
+    DEFAULT stamp."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

@@ -47,8 +47,8 @@ class DebugRequestEvidenceResponse:
     critical_path: DebugRequestCriticalPath | Unset = UNSET
     """Bounded causal path reconstructed from retained span timing and parent links."""
     dependency_comparison: DebugDependencyDeploymentComparison | Unset = UNSET
-    """Dependency latency split by deployment (ADR-958): baseline_* fields describe the previous deployment,
-    current_* the compared one. Regressions first, then by current p95."""
+    """Dependency latency split by deployment: baseline_* fields describe the previous deployment, current_* the
+    compared one. Regressions first, then by current p95."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

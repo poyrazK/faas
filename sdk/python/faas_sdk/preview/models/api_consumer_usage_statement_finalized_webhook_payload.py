@@ -35,7 +35,7 @@ class APIConsumerUsageStatementFinalizedWebhookPayload:
     finalized_at: datetime.datetime
     currency: str | Unset = UNSET
     credit_applied_millicents: int | Unset = UNSET
-    """Prepaid credit drawn at finalization (ADR-1306)."""
+    """Prepaid credit drawn at finalization."""
     amount_due_millicents: int | Unset = UNSET
     """What is left to bill after prepaid credit."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)

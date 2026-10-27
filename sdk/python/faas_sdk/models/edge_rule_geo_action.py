@@ -13,16 +13,15 @@ T = TypeVar("T", bound="EdgeRuleGeoAction")
 
 @_attrs_define
 class EdgeRuleGeoAction:
-    """ISO 3166-1 alpha-2 country allow/deny evaluator (ADR-091
-    D21 / §4.1.2.8b). Mirrors `EdgeRuleIPAction` exactly: `allow`
+    """ISO 3166-1 alpha-2 country allow/deny evaluator. Mirrors `EdgeRuleIPAction` exactly: `allow`
     and `deny` are parallel ISO 3166-1 alpha-2 country-code
     lists; the matcher walks deny AFTER allow so a single-country
     deny wins even when the allow list is broad.
 
-    The match port is `gatewayd-internal` which consults a
+    The gateway consults a
     DB-IP Lite `.mmdb` file at request time to translate the
     trusted XFF client IP into a country code. Plan-tier quota
-    is enforced at apid-create time via `Limits.EdgeRulesGeoPerApp`
+    is enforced at the API-create time via `Limits.EdgeRulesGeoPerApp`
     (Free=1, Hobby=5, Pro=25, Scale=100) inside the same apps-row
     FOR UPDATE lock as the general edge-rule cap. Geo is NOT in
     IsPaidOnly — Free customers get one rule before they upgrade.

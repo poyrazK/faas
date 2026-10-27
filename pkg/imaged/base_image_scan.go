@@ -19,6 +19,18 @@ import (
 )
 
 func (h *Handler) ensureProducedBaseScan(ctx context.Context, be storage.StorageBackend, base state.BaseImageProducer, out string) (state.BaseImageScan, error) {
+	// A fresh complete scan of these exact producer bytes already vouches for
+	// them, so republish it without first invalidating the shared sidecar. The
+	// invalidation below is for a rebuilt or refreshed base; running it on
+	// every reuse made vmmd refuse every cold boot on the base, on every node,
+	// until the reload finished, and a transient store error (review busy)
+	// held the refusal for minutes (Hunt 14 H14-102).
+	if current, ok := h.reusableProducedBaseScan(ctx, be, base); ok {
+		if err := writeProducedBaseScanCompatibility(ctx, be, base.Input.Artifact.StorageKey, base.Input.SourceReference, out, current); err != nil {
+			return state.BaseImageScan{}, err
+		}
+		return current, nil
+	}
 	if err := writeProducedBaseScanCompatibility(ctx, be, base.Input.Artifact.StorageKey, base.Input.SourceReference, out, state.BaseImageScan{}); err != nil {
 		return state.BaseImageScan{}, err
 	}
@@ -30,6 +42,27 @@ func (h *Handler) ensureProducedBaseScan(ctx context.Context, be storage.Storage
 		return state.BaseImageScan{}, err
 	}
 	return value, nil
+}
+
+// reusableProducedBaseScan returns the stored scan that still vouches for this
+// producer's exact bytes: complete, not due for renewal, and the stored
+// artifact unchanged. The second read closes the window in which another
+// writer replaced the evidence during the artifact check.
+func (h *Handler) reusableProducedBaseScan(ctx context.Context, be storage.StorageBackend, base state.BaseImageProducer) (state.BaseImageScan, bool) {
+	store, ok := h.store.(state.BaseImageScanStore)
+	if !ok {
+		return state.BaseImageScan{}, false
+	}
+	expected := scanArtifactTarget{StorageKey: base.Input.Artifact.StorageKey, ArtifactIdentity: rootfs.ArtifactIdentity{Digest: base.Input.Artifact.Digest, Bytes: base.Input.Artifact.Bytes}}
+	current, err := store.GetFreshBaseImageScan(ctx, base.ID, base.InputHash)
+	if err != nil || current.Input.Status != "complete" || producedEvidenceRenewalDue(current.ScannedAt, current.ExpiresAt, time.Now().UTC()) || checkStoredScanArtifact(ctx, be, expected) != nil {
+		return state.BaseImageScan{}, false
+	}
+	again, err := store.GetFreshBaseImageScan(ctx, base.ID, base.InputHash)
+	if err != nil || again.ID != current.ID || again.Input.Status != "complete" {
+		return state.BaseImageScan{}, false
+	}
+	return again, true
 }
 
 func (h *Handler) loadOrRunProducedBaseScan(ctx context.Context, be storage.StorageBackend, base state.BaseImageProducer) (state.BaseImageScan, error) {

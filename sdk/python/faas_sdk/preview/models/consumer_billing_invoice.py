@@ -18,7 +18,7 @@ T = TypeVar("T", bound="ConsumerBillingInvoice")
 
 @_attrs_define
 class ConsumerBillingInvoice:
-    """The customer-facing view of a statement's exported invoice (ADR-1504)."""
+    """The customer-facing view of a statement's exported invoice."""
 
     amount_minor: int
     payment_status: ConsumerBillingInvoicePaymentStatus | Unset = UNSET

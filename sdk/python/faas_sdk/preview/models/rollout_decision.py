@@ -23,8 +23,8 @@ T = TypeVar("T", bound="RolloutDecision")
 
 @_attrs_define
 class RolloutDecision:
-    """Evidence behind one decision about a rollout (ADR-1447): why a canary stage advanced, is held, or was aborted.
-    Aggregates only; no request payloads, routes, URLs or customer text.
+    """Evidence behind one decision about a rollout: why a canary stage advanced, is held, or was aborted. Aggregates only;
+    no request payloads, routes, URLs or customer text.
 
     """
 
@@ -48,11 +48,11 @@ class RolloutDecision:
     """One side's aggregates over the observation window. Request counts are organic requests; probe counts are
     reported separately."""
     probes_included: bool | Unset = UNSET
-    """The 5xx sample included synthetic probes of the app (ADR-1446)."""
+    """The 5xx sample included synthetic probes of the app."""
     signals: RolloutDecisionSignals | Unset = UNSET
     """The candidate's OOM kills and both sides' liveness-driven restarts over the window."""
     gates: list[ReleaseGateResult] | Unset = UNSET
-    """The release gates judged with this decision (ADR-20261019071734)."""
+    """The release gates judged with this decision."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

@@ -18,10 +18,9 @@ T = TypeVar("T", bound="AppErrorsSummaryResponse")
 
 @_attrs_define
 class AppErrorsSummaryResponse:
-    """Grouped error summary returned by `GET /v1/apps/{slug}/errors/summary`
-    (ADR-096 / PR-B). One row per fingerprint over the
+    """Grouped error summary returned by `GET /v1/apps/{slug}/errors/summary`. One row per fingerprint over the
     requested `[since, until]` window. Distinct from
-    `AppSLOResponse` (ADR-082) which is the closed-set SLO
+    `AppSLOResponse` which is the closed-set SLO
     summary — the errors summary uses a continuous window
     with explicit RFC3339Nano stamps.
 

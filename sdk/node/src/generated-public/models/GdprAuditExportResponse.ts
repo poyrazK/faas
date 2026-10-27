@@ -3,7 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * One row of the customer's audit trail in the GDPR export bundle. Two row kinds live here: source=`gdpr` carries a self-service action (`export`, `delete`, `restore`); source=`event` carries a security event from the events table (IAM-4, ADR-035) with a `kind` and JSON `data` payload. The two are interleaved by timestamp descending.
+ * One row of the customer's audit trail in the GDPR export bundle. Two row kinds live here: source=`gdpr` carries a self-service action (`export`, `delete`, `restore`); source=`event` carries a security event from the events table with a `kind` and JSON `data` payload. The two are interleaved by timestamp descending.
  */
 export type GdprAuditExportResponse = {
   source: 'gdpr' | 'event';

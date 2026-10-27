@@ -16,7 +16,7 @@ export type CreateAPIConsumerPlanRequest = {
    */
   max_units_per_month?: number;
   /**
-   * Percentages of max_units_per_month at which a consumer.usage_threshold webhook fires, once per consumer per UTC month (ADR-849). Requires max_units_per_month.
+   * Percentages of max_units_per_month at which a consumer.usage_threshold webhook fires, once per consumer per UTC month. Requires max_units_per_month.
    */
   alert_thresholds_percent?: Array<number>;
 };

@@ -3,7 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * An env var envelope scoped to one named environment (ADR-090). The plaintext value never appears here.
+ * An env var envelope scoped to one named environment. The plaintext value never appears here.
  */
 export type ScopedAppEnvResponse = {
   scope: string;

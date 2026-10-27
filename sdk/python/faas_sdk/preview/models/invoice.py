@@ -18,7 +18,7 @@ T = TypeVar("T", bound="Invoice")
 
 @_attrs_define
 class Invoice:
-    """One persisted billing-provider invoice (issue #259). Money is
+    """One persisted billing-provider invoice. Money is
     integer cents in the provider's currency; EUR is the platform
     currency today, the field is preserved per-row so multi-currency
     support can land without a backfill. The PDF availability flag
@@ -26,7 +26,7 @@ class Invoice:
     provider-scoped and the customer fetches it from the
     Stripe/Paddle portal, not via this API. The hosted URL itself
     is not on the wire; the column exists in invoices.hosted_url
-    for PR-B audit only.
+    for audit only.
 
     """
 

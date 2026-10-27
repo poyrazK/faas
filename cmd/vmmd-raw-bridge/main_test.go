@@ -232,12 +232,8 @@ func TestBridge_DialRefused(t *testing.T) {
 // given path. Uses the standard `go build` from the cmd's parent
 // dir so the test suite doesn't depend on a pre-installed binary.
 func buildBridgeForTest(out string) error {
-	_, src, _, ok := runtime.Caller(0)
-	if !ok {
-		src = "."
-	}
-	srcDir := filepath.Dir(src)
-	cmd := exec.Command("go", "build", "-o", out, srcDir)
+	// go test runs in this package's directory.
+	cmd := exec.Command("go", "build", "-o", out, ".")
 	cmd.Stderr = os.Stderr
 	return cmd.Run()
 }

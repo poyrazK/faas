@@ -4,7 +4,7 @@
 /* eslint-disable */
 import type { OutboundAIRouteTargetStats } from './OutboundAIRouteTargetStats.js';
 /**
- * Each target's settled attempts since window_start, the window latency and cost routes judge (ADR-1434).
+ * Each target's settled attempts since window_start, the window latency and cost routes judge.
  */
 export type OutboundAIRouteStats = {
   strategy: 'ordered' | 'weighted' | 'latency' | 'cost';

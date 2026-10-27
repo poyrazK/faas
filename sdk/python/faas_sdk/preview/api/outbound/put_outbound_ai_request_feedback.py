@@ -95,15 +95,15 @@ def sync_detailed(
 ) -> Response[Any | Problem]:
     """Rate a logged AI call.
 
-     Requires MFA and deploy-write scope (ADR 20261021171712). Apps rate their own calls through the
-    gateway at /i/{integration}/_gregale/feedback; this rates any logged call on a person's behalf. A
-    later rating replaces the earlier one, and the call's daily usage counts the change.
+     Requires MFA and deploy-write scope. Apps rate their own calls through the gateway at
+    /i/{integration}/_gregale/feedback; this rates any logged call on a person's behalf. A later rating
+    replaces the earlier one, and the call's daily usage counts the change.
 
     Args:
         integration (UUID):
         request (UUID):
-        body (PutOutboundAIFeedbackRequest): A rating of one logged call (ADR 20261021171712). A
-            later rating replaces the earlier one.
+        body (PutOutboundAIFeedbackRequest): A rating of one logged call. A later rating replaces
+            the earlier one.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -135,15 +135,15 @@ def sync(
 ) -> Any | Problem | None:
     """Rate a logged AI call.
 
-     Requires MFA and deploy-write scope (ADR 20261021171712). Apps rate their own calls through the
-    gateway at /i/{integration}/_gregale/feedback; this rates any logged call on a person's behalf. A
-    later rating replaces the earlier one, and the call's daily usage counts the change.
+     Requires MFA and deploy-write scope. Apps rate their own calls through the gateway at
+    /i/{integration}/_gregale/feedback; this rates any logged call on a person's behalf. A later rating
+    replaces the earlier one, and the call's daily usage counts the change.
 
     Args:
         integration (UUID):
         request (UUID):
-        body (PutOutboundAIFeedbackRequest): A rating of one logged call (ADR 20261021171712). A
-            later rating replaces the earlier one.
+        body (PutOutboundAIFeedbackRequest): A rating of one logged call. A later rating replaces
+            the earlier one.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -170,15 +170,15 @@ async def asyncio_detailed(
 ) -> Response[Any | Problem]:
     """Rate a logged AI call.
 
-     Requires MFA and deploy-write scope (ADR 20261021171712). Apps rate their own calls through the
-    gateway at /i/{integration}/_gregale/feedback; this rates any logged call on a person's behalf. A
-    later rating replaces the earlier one, and the call's daily usage counts the change.
+     Requires MFA and deploy-write scope. Apps rate their own calls through the gateway at
+    /i/{integration}/_gregale/feedback; this rates any logged call on a person's behalf. A later rating
+    replaces the earlier one, and the call's daily usage counts the change.
 
     Args:
         integration (UUID):
         request (UUID):
-        body (PutOutboundAIFeedbackRequest): A rating of one logged call (ADR 20261021171712). A
-            later rating replaces the earlier one.
+        body (PutOutboundAIFeedbackRequest): A rating of one logged call. A later rating replaces
+            the earlier one.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -208,15 +208,15 @@ async def asyncio(
 ) -> Any | Problem | None:
     """Rate a logged AI call.
 
-     Requires MFA and deploy-write scope (ADR 20261021171712). Apps rate their own calls through the
-    gateway at /i/{integration}/_gregale/feedback; this rates any logged call on a person's behalf. A
-    later rating replaces the earlier one, and the call's daily usage counts the change.
+     Requires MFA and deploy-write scope. Apps rate their own calls through the gateway at
+    /i/{integration}/_gregale/feedback; this rates any logged call on a person's behalf. A later rating
+    replaces the earlier one, and the call's daily usage counts the change.
 
     Args:
         integration (UUID):
         request (UUID):
-        body (PutOutboundAIFeedbackRequest): A rating of one logged call (ADR 20261021171712). A
-            later rating replaces the earlier one.
+        body (PutOutboundAIFeedbackRequest): A rating of one logged call. A later rating replaces
+            the earlier one.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

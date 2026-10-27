@@ -69,7 +69,7 @@ def sync_detailed(
     *,
     client: AuthenticatedClient | Client,
 ) -> Response[Any | Problem]:
-    """Stop requiring release approvals (ADR-20261020085706).
+    """Stop requiring release approvals.
 
      Releases waiting for approval continue on the canary's next step.
 
@@ -100,7 +100,7 @@ def sync(
     *,
     client: AuthenticatedClient | Client,
 ) -> Any | Problem | None:
-    """Stop requiring release approvals (ADR-20261020085706).
+    """Stop requiring release approvals.
 
      Releases waiting for approval continue on the canary's next step.
 
@@ -126,7 +126,7 @@ async def asyncio_detailed(
     *,
     client: AuthenticatedClient | Client,
 ) -> Response[Any | Problem]:
-    """Stop requiring release approvals (ADR-20261020085706).
+    """Stop requiring release approvals.
 
      Releases waiting for approval continue on the canary's next step.
 
@@ -155,7 +155,7 @@ async def asyncio(
     *,
     client: AuthenticatedClient | Client,
 ) -> Any | Problem | None:
-    """Stop requiring release approvals (ADR-20261020085706).
+    """Stop requiring release approvals.
 
      Releases waiting for approval continue on the canary's next step.
 

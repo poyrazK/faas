@@ -4,7 +4,7 @@
 /* eslint-disable */
 import type { LogFacetCount } from './LogFacetCount.js';
 /**
- * Log event counts by facet over one window (ADR-20261018083536).
+ * Log event counts by facet over one window.
  */
 export type LogEventFacetsResponse = {
   /**

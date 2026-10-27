@@ -103,9 +103,9 @@ def sync_detailed(
 ) -> Response[OutboundAIEvaluation | Problem]:
     """Evaluate an AI route target before a canary.
 
-     Requires MFA and deploy-write scope. outboundd replays the route's first target's latest captured
-    OpenAI chat completions and Responses calls on the target and asks the judge model which answer is
-    better, in a random order (ADR-1431). The evaluation passes when losses and candidate errors are at
+     Requires MFA and deploy-write scope. The outbound gateway replays the route's first target's latest
+    captured OpenAI chat completions and Responses calls on the target and asks the judge model which
+    answer is better, in a random order. The evaluation passes when losses and candidate errors are at
     most max_loss_rate percent of the sample; a passing evaluation starts its canary, if it has one,
     unless the route already has an active canary or the target changed. Candidate and judge calls are
     metered and capped under the caller evaluation. The first target's integration needs
@@ -145,9 +145,9 @@ def sync(
 ) -> OutboundAIEvaluation | Problem | None:
     """Evaluate an AI route target before a canary.
 
-     Requires MFA and deploy-write scope. outboundd replays the route's first target's latest captured
-    OpenAI chat completions and Responses calls on the target and asks the judge model which answer is
-    better, in a random order (ADR-1431). The evaluation passes when losses and candidate errors are at
+     Requires MFA and deploy-write scope. The outbound gateway replays the route's first target's latest
+    captured OpenAI chat completions and Responses calls on the target and asks the judge model which
+    answer is better, in a random order. The evaluation passes when losses and candidate errors are at
     most max_loss_rate percent of the sample; a passing evaluation starts its canary, if it has one,
     unless the route already has an active canary or the target changed. Candidate and judge calls are
     metered and capped under the caller evaluation. The first target's integration needs
@@ -182,9 +182,9 @@ async def asyncio_detailed(
 ) -> Response[OutboundAIEvaluation | Problem]:
     """Evaluate an AI route target before a canary.
 
-     Requires MFA and deploy-write scope. outboundd replays the route's first target's latest captured
-    OpenAI chat completions and Responses calls on the target and asks the judge model which answer is
-    better, in a random order (ADR-1431). The evaluation passes when losses and candidate errors are at
+     Requires MFA and deploy-write scope. The outbound gateway replays the route's first target's latest
+    captured OpenAI chat completions and Responses calls on the target and asks the judge model which
+    answer is better, in a random order. The evaluation passes when losses and candidate errors are at
     most max_loss_rate percent of the sample; a passing evaluation starts its canary, if it has one,
     unless the route already has an active canary or the target changed. Candidate and judge calls are
     metered and capped under the caller evaluation. The first target's integration needs
@@ -222,9 +222,9 @@ async def asyncio(
 ) -> OutboundAIEvaluation | Problem | None:
     """Evaluate an AI route target before a canary.
 
-     Requires MFA and deploy-write scope. outboundd replays the route's first target's latest captured
-    OpenAI chat completions and Responses calls on the target and asks the judge model which answer is
-    better, in a random order (ADR-1431). The evaluation passes when losses and candidate errors are at
+     Requires MFA and deploy-write scope. The outbound gateway replays the route's first target's latest
+    captured OpenAI chat completions and Responses calls on the target and asks the judge model which
+    answer is better, in a random order. The evaluation passes when losses and candidate errors are at
     most max_loss_rate percent of the sample; a passing evaluation starts its canary, if it has one,
     unless the route already has an active canary or the target changed. Candidate and judge calls are
     metered and capped under the caller evaluation. The first target's integration needs

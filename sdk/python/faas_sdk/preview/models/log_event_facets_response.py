@@ -16,7 +16,7 @@ T = TypeVar("T", bound="LogEventFacetsResponse")
 
 @_attrs_define
 class LogEventFacetsResponse:
-    """Log event counts by facet over one window (ADR-20261018083536)."""
+    """Log event counts by facet over one window."""
 
     since: datetime.datetime
     """Facet window start after clamping to retention."""

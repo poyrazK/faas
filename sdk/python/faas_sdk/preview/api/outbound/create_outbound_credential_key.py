@@ -106,13 +106,13 @@ def sync_detailed(
 ) -> Response[Any | OutboundCredentialKey | Problem]:
     """Add an extra provider key to a customer-sealed integration.
 
-     Requires MFA and deploy-write scope (ADR-991). outboundd picks keys round-robin and moves a call to
+     Requires MFA and deploy-write scope. The outbound gateway picks keys round-robin and moves a call to
     the next key when one returns 429. At most 8 extra keys.
 
     Args:
         integration (UUID):
-        body (CreateOutboundCredentialKeyRequest): An extra provider key to seal for outboundd,
-            with a DNS-label label.
+        body (CreateOutboundCredentialKeyRequest): An extra provider key to seal for the outbound
+            gateway, with a DNS-label label.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -142,13 +142,13 @@ def sync(
 ) -> Any | OutboundCredentialKey | Problem | None:
     """Add an extra provider key to a customer-sealed integration.
 
-     Requires MFA and deploy-write scope (ADR-991). outboundd picks keys round-robin and moves a call to
+     Requires MFA and deploy-write scope. The outbound gateway picks keys round-robin and moves a call to
     the next key when one returns 429. At most 8 extra keys.
 
     Args:
         integration (UUID):
-        body (CreateOutboundCredentialKeyRequest): An extra provider key to seal for outboundd,
-            with a DNS-label label.
+        body (CreateOutboundCredentialKeyRequest): An extra provider key to seal for the outbound
+            gateway, with a DNS-label label.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -173,13 +173,13 @@ async def asyncio_detailed(
 ) -> Response[Any | OutboundCredentialKey | Problem]:
     """Add an extra provider key to a customer-sealed integration.
 
-     Requires MFA and deploy-write scope (ADR-991). outboundd picks keys round-robin and moves a call to
+     Requires MFA and deploy-write scope. The outbound gateway picks keys round-robin and moves a call to
     the next key when one returns 429. At most 8 extra keys.
 
     Args:
         integration (UUID):
-        body (CreateOutboundCredentialKeyRequest): An extra provider key to seal for outboundd,
-            with a DNS-label label.
+        body (CreateOutboundCredentialKeyRequest): An extra provider key to seal for the outbound
+            gateway, with a DNS-label label.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -207,13 +207,13 @@ async def asyncio(
 ) -> Any | OutboundCredentialKey | Problem | None:
     """Add an extra provider key to a customer-sealed integration.
 
-     Requires MFA and deploy-write scope (ADR-991). outboundd picks keys round-robin and moves a call to
+     Requires MFA and deploy-write scope. The outbound gateway picks keys round-robin and moves a call to
     the next key when one returns 429. At most 8 extra keys.
 
     Args:
         integration (UUID):
-        body (CreateOutboundCredentialKeyRequest): An extra provider key to seal for outboundd,
-            with a DNS-label label.
+        body (CreateOutboundCredentialKeyRequest): An extra provider key to seal for the outbound
+            gateway, with a DNS-label label.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

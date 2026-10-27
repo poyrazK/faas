@@ -18,7 +18,7 @@ T = TypeVar("T", bound="PlanManagedProvision")
 @_attrs_define
 class PlanManagedProvision:
     """The managed PostgreSQL database a project apply creates or reuses for a Compose postgres service, and the service
-    keys it binds (ADR-20261025111824).
+    keys it binds.
 
     """
 

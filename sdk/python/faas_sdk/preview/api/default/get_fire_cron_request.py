@@ -74,7 +74,7 @@ def sync_detailed(
     """Get fire-now request state
 
      Polling surface for the row that `POST /v1/crons/{id}/run`
-    inserted (issue #791 PR-D / ADR-090 §Sub-decision 7).
+    inserted (decision 7).
 
     Args:
         request_id (UUID):
@@ -106,7 +106,7 @@ def sync(
     """Get fire-now request state
 
      Polling surface for the row that `POST /v1/crons/{id}/run`
-    inserted (issue #791 PR-D / ADR-090 §Sub-decision 7).
+    inserted (decision 7).
 
     Args:
         request_id (UUID):
@@ -133,7 +133,7 @@ async def asyncio_detailed(
     """Get fire-now request state
 
      Polling surface for the row that `POST /v1/crons/{id}/run`
-    inserted (issue #791 PR-D / ADR-090 §Sub-decision 7).
+    inserted (decision 7).
 
     Args:
         request_id (UUID):
@@ -163,7 +163,7 @@ async def asyncio(
     """Get fire-now request state
 
      Polling surface for the row that `POST /v1/crons/{id}/run`
-    inserted (issue #791 PR-D / ADR-090 §Sub-decision 7).
+    inserted (decision 7).
 
     Args:
         request_id (UUID):

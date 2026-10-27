@@ -104,6 +104,10 @@ func (s *server) publishPlatformTenantSelfEvent(w http.ResponseWriter, r *http.R
 		api.WriteProblem(w, api.ErrPlanWorkflowsNotAllowed(acct.Plan))
 		return
 	}
+	if problem := s.eventsPausedProblem(acct, app); problem != nil {
+		api.WriteProblem(w, problem)
+		return
+	}
 	var req api.PublishEventRequest
 	if err := decodeJSON(r, &req); err != nil {
 		api.WriteProblem(w, api.ErrValidation("invalid JSON body"))

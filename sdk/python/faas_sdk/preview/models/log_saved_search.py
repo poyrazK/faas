@@ -12,7 +12,7 @@ T = TypeVar("T", bound="LogSavedSearch")
 
 @_attrs_define
 class LogSavedSearch:
-    """One app's named log search filters (ADR-20261018083536)."""
+    """One app's named log search filters."""
 
     name: str
     """Unique within the app."""
