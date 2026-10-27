@@ -216,6 +216,32 @@ func TestRequireAuthn_InvalidToken_401(t *testing.T) {
 	}
 }
 
+// TestRequireAuthn_WithBearerPublicAuth_Challenges is issue #2707's app: the
+// legacy gate and public_auth mode=bearer both set. Whichever gate answers,
+// a missing or invalid key gets its Bearer challenge.
+func TestRequireAuthn_WithBearerPublicAuth_Challenges(t *testing.T) {
+	for name, tc := range map[string]struct {
+		header, want string
+	}{
+		"missing key": {header: "", want: `Bearer realm="apps"`},
+		"invalid key": {header: "Bearer " + validKeyFormat("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"), want: `Bearer realm="apps", error="invalid_token"`},
+	} {
+		t.Run(name, func(t *testing.T) {
+			h, b, authn, _, _ := newRequireAuthnTestHandler(t, true, "acct-1")
+			b.app.PublicAuth.Mode = publicAuthModeBearer
+			authn.err = errors.New("unknown hash")
+			rec := httptest.NewRecorder()
+			h.ServeHTTP(rec, reqFor(t, tc.header))
+			if rec.Code != http.StatusUnauthorized {
+				t.Fatalf("status = %d, want 401", rec.Code)
+			}
+			if got := rec.Header().Get("WWW-Authenticate"); got != tc.want {
+				t.Errorf("WWW-Authenticate = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
 // TestRequireAuthn_ExpiredKey_401 — gated app + expired key →
 // 401 + an instances.authn_invalid audit row with
 // reason="expired". Pins that the state.ErrAPIKeyExpired →
