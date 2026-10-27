@@ -31369,6 +31369,16 @@ paths:
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
+        '503':
+          description: |
+            503 — `egress_circuit_disabled`: the request sets `enabled: true`
+            but this platform does not enforce egress circuit breakers yet,
+            so the breaker would never reject a connection. Turning a breaker
+            off is still accepted. `data_upstreams_disabled`: data placement
+            is not enabled on this cluster.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
 
   # ─── Deployments ──────────────────────────────────────────────────────────
 
