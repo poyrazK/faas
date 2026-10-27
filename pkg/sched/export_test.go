@@ -86,6 +86,8 @@ const TriggerReasonPoisonRecord = triggerReasonPoisonRecord
 const WakeTierColdBootFallback = wakeTierColdBootFallback
 const WakeTierInit = wakeTierInit
 const MaxDuePagesPerTick = maxDuePagesPerTick
+const WorkAppReconcile = workAppReconcile
+const WorkEventFanout = workEventFanout
 const WorkReaper = workReaper
 
 // Package-level vars
@@ -211,6 +213,7 @@ var PrimeRunPlusFrameworkReady = primeRunPlusFrameworkReady
 var PrimeStartupExtension = primeStartupExtension
 var QuietEffective = quietEffective
 var QuietLog = quietLog
+var NewWorkPool = newWorkPool
 var QuietPauseAfterMS = quietPauseAfterMS
 var ReadCounterValue = readCounterValue
 var ReadGatewayDispatchResponse = readGatewayDispatchResponse
