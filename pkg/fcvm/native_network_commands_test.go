@@ -366,7 +366,7 @@ func TestNativeNetworkPoliciesRejectStaleLiveGeneration(t *testing.T) {
 			case "circuit":
 				err = m.UpdateEgressCircuit(t.Context(), inst.AppID, []netns.EgressCircuitTarget{circuitTarget("203.0.113.9", 443)})
 			case "dns":
-				err = m.AllowResolvedEgress(t.Context(), inst.Net.HostIP, []netip.Addr{netip.MustParseAddr("1.2.3.4")}, time.Minute)
+				err = m.AllowResolvedEgress(t.Context(), inst.Net.HostIP, []netip.Addr{netip.MustParseAddr("1.2.3.4")}, time.Minute, 0)
 			}
 			if err == nil || !strings.Contains(err.Error(), "generation") || len(m.run.(*fakeRunner).commands) != 0 {
 				t.Fatalf("stale %s effect err=%v", operation, err)

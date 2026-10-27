@@ -1158,6 +1158,13 @@ checks, SQL preparation, full race suites and 99 selected nested metal tests.
 It includes the journal close/reopen regression and preserves failed attempts
 with their source revisions. Native lifecycle acceptance remains pending.
 
+A bound app reaches its database on every plan: when its guest resolves the
+database's host name, the platform opens that host's port (5432) to the
+answered addresses for the app's instances only
+([ADR-20261026150000](adr/20261026150000-managed-database-binding-egress.md)).
+Other destinations on that port stay closed unless the app declares it in its
+egress ports (Pro and Scale).
+
 The `gregale postgres` command is the supported customer entry point for the
 provider-neutral API:
 

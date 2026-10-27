@@ -10952,7 +10952,7 @@ Add an edge rule
 | `--route-target-slug <slug>` | kind=route: target app slug |  |
 | `--cache-max-age-seconds <N>` | kind=cache: fresh window (default 60; max 3600) |  |
 | `--cache-stale-while-revalidate-seconds <N>` | kind=cache: serve stale during a background refresh (max 300) |  |
-| `--budget-ms <MS>` | kind=budget: per-request wall-clock budget in ms (max 30000) |  |
+| `--budget-ms <MS>` | kind=budget: execution budget in ms (at most the plan ceiling: 30 s Free, 60 s Hobby, 5 min Pro, 15 min Scale) |  |
 | `--retry-max-attempts <N>` | kind=retry: total attempts including the original (default 2; max 3) |  |
 | `--circuit-failure-threshold <RATIO>` | kind=circuit_breaker: failure ratio that opens the app&#39;s instance-health breaker (default 0.5); the highest-priority rule tunes every instance, selectors do not partition it |  |
 | `--circuit-open-seconds <N>` | kind=circuit_breaker: first open interval (default 5) |  |
@@ -15963,7 +15963,7 @@ Deploy a single-app Data API with its migrations as the release task
 
 Change access, aggregates, usage reporting or caps
 
-`gregale data-api configure [--public-read <SCHEMA.RELATION[,...]>] [--no-public-read] [--public-rpc <SCHEMA.FUNCTION[,...]>] [--no-public-rpc] [--public-read-cache <DURATION|off>] [--usage-reporting <on|off>] [--monthly-caps <requests=N[,anonymous=N]|off>] [--aggregates <on|off>] [--pool <N|default>] [--server-key-concurrency <N|default>] [--server-key-rate-limit <N[,burst=M]|off>] [--scope <SCOPE>] [--no-restart] <name>`
+`gregale data-api configure [--public-read <SCHEMA.RELATION[,...]>] [--no-public-read] [--public-rpc <SCHEMA.FUNCTION[,...]>] [--no-public-rpc] [--allow-without-rls <SCHEMA.RELATION[,...]>] [--no-allow-without-rls] [--public-read-cache <DURATION|off>] [--usage-reporting <on|off>] [--monthly-caps <requests=N[,anonymous=N]|off>] [--aggregates <on|off>] [--pool <N|default>] [--server-key-concurrency <N|default>] [--server-key-rate-limit <N[,burst=M]|off>] [--scope <SCOPE>] [--no-restart] <name>`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -15971,6 +15971,8 @@ Change access, aggregates, usage reporting or caps
 | `--no-public-read` | disable anonymous reads |  |
 | `--public-rpc <SCHEMA.FUNCTION[,...]>` | approved STABLE or IMMUTABLE functions callable without a token by GET |  |
 | `--no-public-rpc` | disable anonymous RPC calls |  |
+| `--allow-without-rls <SCHEMA.RELATION[,...]>` | relations signed-in users may reach without row-level security |  |
+| `--no-allow-without-rls` | require row-level security on every relation again |  |
 | `--public-read-cache <DURATION|off>` | cache canonical public reads and RPC calls at the edge (max 1h) |  |
 | `--usage-reporting <on|off>` | report usage to the platform (on for new Data APIs) | one of `on` · `off` |
 | `--monthly-caps <requests=N[,anonymous=N]|off>` | monthly owner caps; reached caps answer 429 until the next UTC month |  |

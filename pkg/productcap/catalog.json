@@ -1819,7 +1819,7 @@
         "pro",
         "scale"
       ],
-      "docs_url": "/docs/edge-rule-trace",
+      "docs_url": "/docs/edge-rules#versions-and-rollback",
       "acceptance_test": "pkg/apid/apidserver/handlers_edge_rule_events_test.go::TestEdgeRuleEventsAPI",
       "parent": "edge-rules",
       "routes": [
@@ -1843,7 +1843,7 @@
         "pro",
         "scale"
       ],
-      "docs_url": "/docs/edge-rule-trace",
+      "docs_url": "/docs/edge-rules#lists",
       "acceptance_test": "pkg/apid/apidserver/handlers_edge_rule_lists_test.go::TestEdgeRuleListLifecycle",
       "parent": "edge-rules",
       "routes": [
@@ -1865,7 +1865,7 @@
         "pro",
         "scale"
       ],
-      "docs_url": "/docs/edge-rule-trace",
+      "docs_url": "/docs/edge-rules#testing-and-observing",
       "acceptance_test": "pkg/apid/apidserver/handlers_edge_rule_suggestions_test.go::TestEdgeRuleSuggestionsRoute",
       "parent": "edge-rules",
       "routes": [
@@ -1910,7 +1910,7 @@
         "pro",
         "scale"
       ],
-      "docs_url": "/docs/edge-rule-trace",
+      "docs_url": "/docs/edge-rules",
       "acceptance_test": "cmd/gatewayd-internal/edge_rules_app_wide_test.go::TestAppWideEdgeRules",
       "settings": [
         "app.maintenance_mode",
@@ -4973,7 +4973,7 @@
         "pro",
         "scale"
       ],
-      "docs_url": "/docs/edge-rule-trace",
+      "docs_url": "/docs/security#security-headers-on-your-app",
       "acceptance_test": "pkg/apid/apidserver/handlers_dashboard_edge_rules_test.go::TestDashboardSecurityHeadersCreatesStandardRule",
       "parent": "edge-rules",
       "routes": [
