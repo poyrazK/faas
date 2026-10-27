@@ -147,7 +147,7 @@ func (e *Engine) ResolveAppTaskRuntime(ctx context.Context, request AppTaskResto
 		apiEnv = appendRehearsalPlatformAPI(apiEnv)
 	}
 	privateNetwork := e.privateNetworkProjection(ctx, app)
-	healthcheckPath, healthcheckGRPC, healthcheckGRPCService := startupProbeForApp(dep, app.AppProtocol)
+	healthcheckPath, healthcheckGRPC, healthcheckGRPCService := startupProbeForApp(dep, app)
 	pinnedBase, err := e.deploymentBaseKey(ctx, app, dep, request.ArtifactKey)
 	if err != nil {
 		return ResolvedAppTaskRuntime{}, withAppTaskStage("base_layer", err)
