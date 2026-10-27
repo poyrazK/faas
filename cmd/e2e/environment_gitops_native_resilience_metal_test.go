@@ -218,14 +218,16 @@ func (j *nativeGitOpsJourney) waitStatus(t *testing.T, phase string, timeout tim
 	var last api.EnvironmentGitOpsStatusResponse
 	for {
 		j.checkTraffic(t)
-		var err error
-		last, err = j.client.GetEnvironmentGitOps(ctx, j.project.Slug, "production")
+		current, err := j.client.GetEnvironmentGitOps(ctx, j.project.Slug, "production")
 		if err != nil {
+			// A deadline inside the request must still report the last
+			// status that was actually read.
 			if ctx.Err() != nil {
 				t.Fatalf("%s timed out: source=%+v evidence=%+v", phase, last.Source, last.WorkloadEvidence)
 			}
 			t.Fatalf("%s status: %v", phase, err)
 		}
+		last = current
 		if ready(last) {
 			return last
 		}

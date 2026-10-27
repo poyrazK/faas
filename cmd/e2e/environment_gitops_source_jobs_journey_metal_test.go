@@ -3,6 +3,7 @@
 package e2e_test
 
 import (
+	"context"
 	"strings"
 	"testing"
 	"time"
@@ -39,7 +40,7 @@ func (j *nativeSourceJobJourney) runSourceJob(t *testing.T) {
 		firstGraph = activated.WorkloadEvidence.GraphID
 		initial = j.assertSourceArtifact(t, initial.ID, firstSHA, true)
 		j.waitSourceOccurrence(t, initial, seen)
-		j.waitApplied(t, first.Revision.ID, first.Source.Generation)
+		j.waitSourceApplied(t, first.Revision.ID, first.Source.Generation)
 		j.assertSourceBuildCount(t, 1)
 	}) {
 		return
@@ -96,7 +97,7 @@ func (j *nativeSourceJobJourney) runSourceJob(t *testing.T) {
 		j.waitSourceActivation(t, changed)
 		current = j.assertSourceArtifact(t, current.ID, nextSHA, true)
 		j.waitSourceOccurrence(t, current, seen)
-		j.waitApplied(t, changed.Revision.ID, changed.Source.Generation)
+		j.waitSourceApplied(t, changed.Revision.ID, changed.Source.Generation)
 		j.assertNoSupersededServing(t, held.Source.Generation)
 		j.assertNoSourceRuns(t, heldSHA)
 	}) {
@@ -117,7 +118,7 @@ func (j *nativeSourceJobJourney) runSourceJob(t *testing.T) {
 		}
 		candidate = j.assertSourceArtifact(t, candidate.ID, firstSHA, false)
 		j.waitSourceOccurrence(t, candidate, seen)
-		j.waitApplied(t, rollback.Revision.ID, rollback.Source.Generation)
+		j.waitSourceApplied(t, rollback.Revision.ID, rollback.Source.Generation)
 		j.assertNoSupersededServing(t, held.Source.Generation)
 		j.assertNoSourceRuns(t, heldSHA)
 	})
@@ -213,6 +214,47 @@ func (j *nativeSourceJobJourney) assertSourceArtifact(t *testing.T, deploymentID
 		}
 	}
 	return dep
+}
+
+// waitSourceApplied waits for the Job graph's serving receipt and, if it never
+// arrives, records the fields its scheduled-run proof compares; the test
+// database does not outlive the run.
+func (j *nativeSourceJobJourney) waitSourceApplied(t *testing.T, revision string, generation int64) {
+	t.Helper()
+	t.Cleanup(func() {
+		if !t.Failed() {
+			return
+		}
+		ctx := context.WithoutCancel(t.Context())
+		intent, err := j.store.EnvironmentWorkloadIntent(ctx, j.source.AccountID, j.app.ID, j.source.EnvironmentID)
+		if err != nil || intent.JobID == "" {
+			t.Logf("serving proof: no Job binding: %v", err)
+			return
+		}
+		job, err := j.store.JobGetByID(ctx, intent.JobID)
+		if err != nil {
+			t.Logf("serving proof: job: %v", err)
+			return
+		}
+		t.Logf("serving proof job: status=%s kind=%s rev=%d image=%s/%s/%s materialized=%s retry=%d timeout=%d par=%d ram=%d cmd=%q env=%s rules=%+v",
+			job.Status, job.Kind, job.ScheduleRevision, job.ImageRef, job.ImageResolvedDigest, job.ImageStorageKey, job.ImageMaterializationStatus,
+			job.RetryMax, job.TaskTimeoutS, job.MaxParallelism, job.RAMMB, job.Command, job.EnvOverrides, job.FailureRules)
+		occurrences, err := j.store.ScheduleOccurrenceListByJob(ctx, job.ID, 5, "")
+		t.Logf("serving proof occurrences (err=%v):", err)
+		for _, o := range occurrences {
+			t.Logf("  %+v", o)
+		}
+		runs, err := j.store.JobRunListByJob(ctx, job.ID, 5, 0)
+		t.Logf("serving proof runs (err=%v):", err)
+		for _, r := range runs {
+			t.Logf("  id=%s occ=%s trigger=%s status=%s created=%s started=%v finished=%v retry=%v timeout=%v par=%d tasks=%d class=%s policy=%s ram=%v image=%s/%s/%s cmd=%q env=%s effective=%s rules=%+v input=%d/%q/%q/%q",
+				r.ID, r.OccurrenceID, r.TriggerKind, r.AggregateStatus, r.CreatedAt, r.StartedAt, r.FinishedAt, r.RetryMax, r.TaskTimeoutS,
+				r.Parallelism, r.Tasks, r.ExecutionClass, r.FailurePolicy, r.RAMMBSnapshot, r.ImageRefSnapshot, r.ImageResolvedDigestSnapshot,
+				r.ImageStorageKeySnapshot, r.Command, r.EnvOverrides, r.EffectiveEnvSnapshot, r.FailureRules, r.InputManifestVersion,
+				r.InputDigest, r.InputManifestURI, r.InputManifestSHA256)
+		}
+	})
+	j.waitApplied(t, revision, generation)
 }
 
 func (j *nativeSourceJobJourney) waitSourceOccurrence(t *testing.T, dep state.Deployment, seen map[string]bool) state.JobRun {
