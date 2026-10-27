@@ -736,7 +736,7 @@ from the same checkout, and registry access to three pinned base images. Run
 `repository@sha256:...` image references:
 
 - `GREGALE_GITOPS_NATIVE_BUILDER_REF`: the real builder image with Railpack and BuildKit.
-- `GREGALE_GITOPS_NATIVE_SOURCE_RUNTIME_REF`: the matching Node source runtime base.
+- `GREGALE_GITOPS_NATIVE_SOURCE_RUNTIME_REF`: the minimal base the Railpack source Job builds FROM and boots, as a runtime-less Node app does in production. It must be a glibc base such as `base-minimal`: Jobs never use a shared runner base, and a musl runner such as `runner-node22` cannot run the glibc Node that Railpack installs.
 - `GREGALE_GITOPS_NATIVE_DOCKERFILE_RUNTIME_REF`: the minimal runtime base for the scratch Dockerfile fixture and full-rootfs image workloads.
 
 Imaged stages these through its verified base-producer path in private test

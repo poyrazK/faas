@@ -45,12 +45,14 @@ mode `0600` (no symlink), containing shell-quoted values:
 DATABASE_URL='postgres:///gitops_acceptance?host=/run/postgresql&user=gitops_acceptance'
 FAAS_TEST_KERNEL='/srv/fc/base/vmlinux-qualified'
 GREGALE_GITOPS_NATIVE_BUILDER_REF='registry.example/builder@sha256:<64 lowercase hex digits>'
-GREGALE_GITOPS_NATIVE_SOURCE_RUNTIME_REF='registry.example/node-runtime@sha256:<64 lowercase hex digits>'
+GREGALE_GITOPS_NATIVE_SOURCE_RUNTIME_REF='registry.example/minimal-runtime@sha256:<64 lowercase hex digits>'
 GREGALE_GITOPS_NATIVE_DOCKERFILE_RUNTIME_REF='registry.example/minimal-runtime@sha256:<64 lowercase hex digits>'
 ```
 
 Replace every placeholder with a verified image digest; tags and credential
-URLs are rejected. Configure registry access on the isolated host if needed.
+URLs are rejected. The source runtime must be a glibc minimal base such as
+`base-minimal`, not the musl `runner-node22`: the Railpack Job boots it as its
+minimal base (see `docs/environment-gitops.md`). Configure registry access on the isolated host if needed.
 The database must be disposable and allow the harness's schema creation and
 extensions. Its DSN stays in this host-owned file, never workflow inputs,
 command arguments, Actions output or uploaded artifacts. Use acceptance-only
