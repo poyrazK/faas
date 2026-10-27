@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -16,6 +17,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -23,6 +25,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/onebox-faas/faas/pkg/gateway"
+	"github.com/onebox-faas/faas/pkg/publicrouting"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -39,6 +42,19 @@ type fleetDaemonSpec struct {
 	Managed                                  bool
 	DNSUpstream                              string
 	RepairWithoutNotifications               bool
+	// DatabaseAddr routes the daemon's Postgres connections through a
+	// proxy the test can cut; RoutingGraceMS shortens the routing view's
+	// outage grace so the test can cross it.
+	DatabaseAddr   string
+	RoutingGraceMS int
+	// LogWarnings sends the daemon's warnings to stderr, which a failing
+	// test prints. CachedHostPolicy is the production default (no
+	// FAAS_TRAFFIC_AUTHORITATIVE_HOST_POLICY): hosts resolve from the route
+	// cache and ordinary requests route from the routing view.
+	LogWarnings, CachedHostPolicy bool
+	// BudgetAdmissionOff drops the financial budget check, a separate
+	// per-request Postgres read, so an outage test isolates routing.
+	BudgetAdmissionOff bool
 }
 
 type fleetDaemonReady struct {
@@ -76,6 +92,17 @@ func TestTrafficFleetDaemonProcess(t *testing.T) {
 		t.Fatal(err)
 	}
 	poolConfig.ConnConfig.Database = spec.Database
+	if spec.DatabaseAddr != "" {
+		host, port, err := net.SplitHostPort(spec.DatabaseAddr)
+		if err != nil {
+			t.Fatal(err)
+		}
+		portNumber, err := strconv.ParseUint(port, 10, 16)
+		if err != nil {
+			t.Fatal(err)
+		}
+		poolConfig.ConnConfig.Host, poolConfig.ConnConfig.Port, poolConfig.ConnConfig.Fallbacks = host, uint16(portNumber), nil
+	}
 	if spec.SearchPath != "" {
 		poolConfig.ConnConfig.RuntimeParams["search_path"] = spec.SearchPath
 	}
@@ -85,7 +112,11 @@ func TestTrafficFleetDaemonProcess(t *testing.T) {
 	}
 	defer pool.Close()
 	store, log := state.NewPgStore(pool), discardLogger()
-	router := pgRouter{store: store, appsSuffix: ".apps.gregale.dev", tenantSurfacesEnabled: func() bool { return false }}
+	if spec.LogWarnings {
+		log = slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelWarn}))
+	}
+	router := pgRouter{store: store, appsSuffix: ".apps.gregale.dev", tenantSurfacesEnabled: func() bool { return false },
+		cachedHostPolicy: spec.CachedHostPolicy}
 	metrics, cache := gateway.NewMetrics(), gateway.NewResponseCache()
 	matcher := newGatewaydEdgeRules(store, log, nil, metrics).withPublicHostRouter(router)
 	backend := gateway.NewPGBackend(router, gateway.NewFakeScheduler(""), log).
@@ -159,6 +190,13 @@ func TestTrafficFleetDaemonProcess(t *testing.T) {
 	defer listener.Close()
 	deps := defaultDeps()
 	deps.config, deps.pool, deps.pgStore = config, pool, store
+	deps.cachedHostPolicy = spec.CachedHostPolicy
+	if spec.BudgetAdmissionOff {
+		deps.financialBudgetAdmission = func(context.Context, gateway.App) error { return nil }
+	}
+	if spec.RoutingGraceMS > 0 {
+		deps.publicRoutingView = publicrouting.New(store).WithOutageGrace(time.Duration(spec.RoutingGraceMS) * time.Millisecond)
+	}
 	// Outer run() loads the operator key before runWithDeps. Exercise that
 	// same loader here; a configured deadline must not use a fixture signer.
 	deps.trafficDeadlines, err = loadTrafficDeadlineSigner(os.Getenv)
@@ -336,6 +374,25 @@ func startFleetDaemonDNS(t *testing.T, pool *pgxpool.Pool, apps []fleetDaemonApp
 
 func startFleetDaemonOptions(t *testing.T, pool *pgxpool.Pool, apps []fleetDaemonApp, nodeID, nodeName, usageSocket string, managed bool, dnsUpstream string, repairWithoutNotifications bool) *fleetDaemonProcess {
 	t.Helper()
+	return startFleetDaemonConfigured(t, pool, apps, nodeID, nodeName, usageSocket, fleetDaemonOptions{Managed: managed,
+		DNSUpstream: dnsUpstream, RepairWithoutNotifications: repairWithoutNotifications})
+}
+
+type fleetDaemonOptions struct {
+	Managed, RepairWithoutNotifications bool
+	DNSUpstream                         string
+	// LocalCounters selects process-local rate and retry counters, so a
+	// Postgres outage test isolates the reads it is about.
+	LocalCounters                 bool
+	DatabaseAddr                  string
+	RoutingGraceMS                int
+	LogWarnings, CachedHostPolicy bool
+	BudgetAdmissionOff            bool
+}
+
+func startFleetDaemonConfigured(t *testing.T, pool *pgxpool.Pool, apps []fleetDaemonApp, nodeID, nodeName, usageSocket string, options fleetDaemonOptions) *fleetDaemonProcess {
+	t.Helper()
+	managed, dnsUpstream, repairWithoutNotifications := options.Managed, options.DNSUpstream, options.RepairWithoutNotifications
 	dir := t.TempDir()
 	configPath := filepath.Join(dir, "gatewayd.toml")
 	// Omit ratelimit.mode deliberately: LoadConfig's production default must
@@ -344,11 +401,16 @@ func startFleetDaemonOptions(t *testing.T, pool *pgxpool.Pool, apps []fleetDaemo
 	if managed {
 		configuration += "service_proxy_listen = \"10.100.0.1:10080\"\n"
 	}
+	if options.LocalCounters {
+		configuration += "[ratelimit]\nmode = \"local\"\n"
+	}
 	if err := os.WriteFile(configPath, []byte(configuration), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	spec := fleetDaemonSpec{Database: pool.Config().ConnConfig.Database, SearchPath: pool.Config().ConnConfig.RuntimeParams["search_path"],
-		ConfigPath: configPath, NodeID: nodeID, Apps: apps, Managed: managed, DNSUpstream: dnsUpstream, RepairWithoutNotifications: repairWithoutNotifications}
+		ConfigPath: configPath, NodeID: nodeID, Apps: apps, Managed: managed, DNSUpstream: dnsUpstream, RepairWithoutNotifications: repairWithoutNotifications,
+		DatabaseAddr: options.DatabaseAddr, RoutingGraceMS: options.RoutingGraceMS, LogWarnings: options.LogWarnings,
+		CachedHostPolicy: options.CachedHostPolicy, BudgetAdmissionOff: options.BudgetAdmissionOff}
 	encoded, err := json.Marshal(spec)
 	if err != nil {
 		t.Fatal(err)
@@ -404,6 +466,12 @@ func startFleetDaemonOptions(t *testing.T, pool *pgxpool.Pool, apps []fleetDaemo
 	case <-time.After(10 * time.Second):
 		p.stop(t)
 		t.Fatal("fleet daemon readiness timed out")
+	}
+	if options.LocalCounters {
+		if p.ready.RateCounterMode != "local" || !p.ready.PolicySnapshot || !p.ready.SecurityRevocation {
+			t.Fatalf("actual local-counter daemon wiring = %+v", p.ready)
+		}
+		return p
 	}
 	if p.ready.RateCounterMode != "central" || p.ready.RetryCounterMode != "shared" || !p.ready.RetryEnabled ||
 		!p.ready.PolicySnapshot || !p.ready.SecurityRevocation || p.ready.RetryBackendID == "" || p.ready.ManagedHTTP != managed {
