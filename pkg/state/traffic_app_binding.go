@@ -59,7 +59,7 @@ func (s *PgStore) beginAccountAppTrafficMutation(ctx context.Context, account, a
 }
 
 func (s *PgStore) tryBeginAccountAppTrafficMutation(ctx context.Context, account, appID string) (pgx.Tx, error) {
-	tx, err := s.beginTrafficBinding(ctx, account, nil, appID)
+	tx, err := s.beginTrafficBinding(ctx, TrafficPolicyWriterAppBinding, account, nil, appID)
 	if err != nil {
 		return nil, appTrafficBindingError(err)
 	}
