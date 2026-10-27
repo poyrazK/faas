@@ -154,6 +154,30 @@ successful run is evidence that the selected provider meets Gregale's data
 contract, not evidence of billing, residency, lifecycle, or account-isolation
 behavior. Those launch gates still require their own provider-specific checks.
 
+Its subtests, each in its own `gregale-qual-*` bucket, check what the branded
+gateway relies on beyond that contract, where S3-compatible services most
+often differ:
+
+- **Conditional writes:** `If-None-Match: *` and `If-Match` on signed PUTs,
+  state objects and `CompleteMultipartUpload`, and
+  `x-amz-copy-source-if-match` on tracked copies. A provider that ignores a
+  condition turns a customer's conditional write into an overwrite.
+- **Multipart checksums:** CRC32 and CRC32C (composite and full-object),
+  CRC64NVME, SHA1 and SHA256. Customers' SDKs choose the algorithm and the S3
+  driver accepts all of them, so a provider that does not store and echo one
+  fails those uploads at completion.
+- **Versioning:** Enabled and Suspended, version listing with null versions
+  and delete markers, version reads and deletes, and the version inventory.
+- **Default encryption:** only when the backend declares `AES256` in
+  `encryption.algorithms`.
+- **Object Lock:** only when the qualification config sets
+  `object_lock.enabled`. It uses a legal hold and a 30-second GOVERNANCE
+  retention, so the bucket can always be cleaned up.
+
+A failing subtest names the unsupported behavior. Do not declare a capability
+the provider failed, and do not make the backend a default until every subtest
+passes or is skipped for a capability it does not declare.
+
 New signed URLs also require an explicit `accounting` policy, a complete
 inventory baseline, and fresh authoritative provider reports. See below;
 loading the registry and enabling the flag alone is no longer sufficient.
@@ -1098,7 +1122,9 @@ The example endpoint follows [OVH's endpoint guide](https://support.us.ovhcloud.
 R2 supports this subset, including CreateBucket, PutBucketCors, ListObjectsV2 and
 PutObject Content-MD5, with `auto` as its signing region; see
 [R2 S3 compatibility](https://developers.cloudflare.com/r2/api/s3/api/).
-These are configuration targets, not a claim of completed live-provider testing.
+These are configuration targets, not a claim of completed live-provider testing;
+[run the live provider qualification](#run-the-live-provider-qualification) before
+a backend serves customers.
 Other providers may require another factory while preserving the same Gregale
 API. Do not equate a common object-transfer protocol with identical IAM,
 retention or billing APIs.
