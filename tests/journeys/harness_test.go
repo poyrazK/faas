@@ -56,6 +56,14 @@ type target struct {
 	preflightOnce sync.Once
 	preflightErr  error
 	deploySlots   chan struct{} // bounds concurrent deploys (GREGALE_E2E_MAX_DEPLOYS)
+	maxApps       int           // GREGALE_E2E_MAX_APPS; 0 sizes appSlots from account headroom
+	appSlots      chan struct{} // bounds apps held at once; made by the preflight
+
+	// The shared probe is one v1 probe app that read-only journeys share.
+	sharedOnce sync.Once
+	sharedSlug string
+	sharedBase string
+	sharedErr  error
 }
 
 // tgt is nil when GREGALE_E2E_API is unset; every journey then skips, so
@@ -86,6 +94,7 @@ func TestMain(m *testing.M) {
 	}
 	code := m.Run()
 	if tgt != nil {
+		tgt.deleteShared()
 		_ = os.RemoveAll(tgt.home)
 	}
 	os.Exit(code)
@@ -128,19 +137,32 @@ func loadTarget(getenv func(string) string) (*target, error) {
 	if t.runID == "" {
 		t.runID = newRunID(time.Now())
 	}
-	maxDeploys := 2
-	if v := getenv("GREGALE_E2E_MAX_DEPLOYS"); v != "" {
-		n, err := strconv.Atoi(v)
-		if err != nil || n < 1 {
-			return nil, fmt.Errorf("GREGALE_E2E_MAX_DEPLOYS %q: want a positive integer", v)
-		}
-		maxDeploys = n
+	// Four at once: unchanged sources hit the build cache and skip the
+	// builder VM, so the 20 GiB builder drive no longer bounds them.
+	maxDeploys, err := positiveEnv(getenv, "GREGALE_E2E_MAX_DEPLOYS", 4)
+	if err != nil {
+		return nil, err
 	}
 	t.deploySlots = make(chan struct{}, maxDeploys)
+	if t.maxApps, err = positiveEnv(getenv, "GREGALE_E2E_MAX_APPS", 0); err != nil {
+		return nil, err
+	}
 	if _, ok := runTime(t.runID); !ok {
 		return nil, fmt.Errorf("GREGALE_E2E_RUN_ID %q: want 5 base36 minute digits plus one random character", t.runID)
 	}
 	return t, nil
+}
+
+func positiveEnv(getenv func(string) string, key string, def int) (int, error) {
+	v := getenv(key)
+	if v == "" {
+		return def, nil
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil || n < 1 {
+		return 0, fmt.Errorf("%s %q: want a positive integer", key, v)
+	}
+	return n, nil
 }
 
 // newRunID encodes the start minute so the sweeper can age apps without a
@@ -412,18 +434,16 @@ func compact(v any) string {
 // app registers an app slug for deletion when the test ends. With
 // GREGALE_E2E_KEEP=1 a failed journey keeps its app for debugging; the
 // sweeper removes it later.
+//
+// Each app holds one of the account's free deployed-app slots until it is
+// deleted; a journey waits here when the run already holds them all, so
+// parallel journeys fit any account.
 func (tg *target) app(t *testing.T, name string) string {
 	t.Helper()
-	tg.preflightOnce.Do(func() {
-		if os.Getenv("GREGALE_E2E_SKIP_PREFLIGHT") != "1" {
-			tg.preflightErr = tg.preflight()
-		}
-	})
-	if tg.preflightErr != nil {
-		t.Fatalf("preflight: %v", tg.preflightErr)
-	}
+	tg.acquireAppSlot(t)
 	slug := tg.slug(name)
 	t.Cleanup(func() {
+		defer func() { <-tg.appSlots }()
 		if tg.keep && t.Failed() {
 			t.Logf("keeping %s for debugging (GREGALE_E2E_KEEP=1)", slug)
 			return
@@ -434,6 +454,62 @@ func (tg *target) app(t *testing.T, name string) string {
 		}
 	})
 	return slug
+}
+
+func (tg *target) acquireAppSlot(t *testing.T) {
+	t.Helper()
+	tg.preflightOnce.Do(func() {
+		if os.Getenv("GREGALE_E2E_SKIP_PREFLIGHT") == "1" {
+			tg.appSlots = make(chan struct{}, max(tg.maxApps, 8))
+			return
+		}
+		tg.preflightErr = tg.preflight()
+	})
+	if tg.preflightErr != nil {
+		t.Fatalf("preflight: %v", tg.preflightErr)
+	}
+	start := time.Now()
+	tg.appSlots <- struct{}{}
+	if waited := time.Since(start); waited > time.Second {
+		t.Logf("waited %s for a free app slot", waited.Round(time.Second))
+	}
+}
+
+// sharedProbe returns the run's shared v1 probe app, deploying it on first
+// use. Journeys that use it may request it and read its logs, metrics and
+// crons, but must not change its configuration, version or lifecycle.
+func (tg *target) sharedProbe(t *testing.T) (slug, base string) {
+	t.Helper()
+	tg.sharedOnce.Do(func() {
+		// Set before deploying: a deploy failure exits this goroutine
+		// (t.Fatal) and later callers must still see an error.
+		tg.sharedErr = fmt.Errorf("the shared probe app failed to deploy in %s", t.Name())
+		tg.acquireAppSlot(t)
+		tg.sharedSlug = tg.slug("shared")
+		receipt := tg.deploy(t, tg.sharedSlug, "--path", probeSource(t, "v1"))
+		tg.sharedBase = strings.TrimRight(str(receipt, "app_url"), "/")
+		if tg.sharedBase == "" {
+			tg.sharedBase = tg.appURL(tg.sharedSlug)
+		}
+		tg.sharedErr = nil
+	})
+	if tg.sharedErr != nil {
+		t.Fatal(tg.sharedErr)
+	}
+	return tg.sharedSlug, tg.sharedBase
+}
+
+// deleteShared removes the shared probe once every journey has finished.
+func (tg *target) deleteShared() {
+	if tg.sharedSlug == "" {
+		return
+	}
+	cmd := exec.Command(tg.cli, "--non-interactive", "apps", "rm", tg.sharedSlug, "--yes")
+	cmd.Env = tg.cliEnv(tg.token)
+	cmd.Dir = tg.home
+	if out, err := cmd.CombinedOutput(); err != nil && !strings.Contains(string(out), "not_found") {
+		fmt.Fprintf(os.Stderr, "journeys: delete shared probe %s: %v: %s\n", tg.sharedSlug, err, tail(string(out), 300))
+	}
 }
 
 // deploy runs `gregale deploy --wait` and checks the receipt is live,
@@ -669,14 +745,10 @@ func (s *story) check(name string, fn func(t *testing.T)) {
 
 // --- preflight ---------------------------------------------------------
 
-// appsNeeded is how many apps a tier holds at its peak; keep it in step
-// with the journeys that call tg.app.
-var appsNeeded = map[string]int{tierSmoke: 3, tierFull: 8}
-
-// preflight runs before the first app is created and fails app journeys
-// when the account cannot hold the run's apps: a deployed-app limit hit
-// 20 minutes into a run reads like a platform bug. Journeys that create no
-// apps still run.
+// preflight runs before the first app is created. It sizes appSlots to the
+// account's free deployed-app slots (capped by GREGALE_E2E_MAX_APPS), so a
+// run never hits the plan's app limit mid-way; with no free slot at all it
+// fails the app journeys up front. Journeys that create no apps still run.
 func (tg *target) preflight() error {
 	who, err := tg.cliJSON("whoami")
 	if err != nil {
@@ -690,15 +762,29 @@ func (tg *target) preflight() error {
 		return fmt.Errorf("list apps: %w", err)
 	}
 	limit := int(num(who[0], "limits.deployed_apps"))
-	need := appsNeeded[tg.tier]
-	fmt.Fprintf(os.Stderr, "journeys: account %s plan=%s apps=%d/%d, this run needs %d\n",
-		str(who[0], "email"), str(who[0], "plan"), len(apps), limit, need)
-	if limit > 0 && len(apps)+need > limit {
-		return fmt.Errorf("account %s holds %d of %d deployed apps and this %s run needs %d more; "+
+	slots := appSlotCount(limit, len(apps), tg.maxApps)
+	fmt.Fprintf(os.Stderr, "journeys: account %s plan=%s apps=%d/%d; running up to %d test apps at once\n",
+		str(who[0], "email"), str(who[0], "plan"), len(apps), limit, slots)
+	if slots < 1 {
+		return fmt.Errorf("account %s holds %d of %d deployed apps, leaving no slot for a test app; "+
 			"use a dedicated test account or delete apps first (GREGALE_E2E_SKIP_PREFLIGHT=1 overrides)",
-			str(who[0], "email"), len(apps), limit, tg.tier, need)
+			str(who[0], "email"), len(apps), limit)
 	}
+	tg.appSlots = make(chan struct{}, slots)
 	return nil
+}
+
+// appSlotCount is how many test apps a run may hold at once: the account's
+// free slots, capped by maxApps when set. An unknown limit (0) means 8.
+func appSlotCount(limit, used, maxApps int) int {
+	free := 8
+	if limit > 0 {
+		free = limit - used
+	}
+	if maxApps > 0 && maxApps < free {
+		free = maxApps
+	}
+	return max(free, 0)
 }
 
 // cliJSON runs a read-only CLI command outside any test.

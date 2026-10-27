@@ -3,7 +3,8 @@
 // Zero dependencies so the build is fast and cannot fail on a registry.
 // Every route is deterministic so a journey can assert on it:
 //   GET  /            version baked into version.txt (proves which revision serves)
-//   GET  /healthz     readiness
+//   GET  /healthz     readiness; 503 when version.txt starts with "broken",
+//                     so a journey can deploy a release that never gets ready
 //   GET  /env?key=K   presence and SHA-256 of E2E_* variables, never the value
 //   GET  /log?marker= writes one runtime log line carrying the marker
 //   POST /cron        counts cron deliveries and logs them
@@ -29,6 +30,9 @@ const server = http.createServer((req, res) => {
     case "/":
       return json(res, 200, { app: "gregale-e2e-probe", version, uptime_ms: Date.now() - started });
     case "/healthz":
+      if (version.startsWith("broken")) {
+        return json(res, 503, { ok: false, version });
+      }
       return json(res, 200, { ok: true });
     case "/env": {
       const key = url.searchParams.get("key") || "";

@@ -159,6 +159,38 @@ func TestHarnessRetryableAbortOnlyForCapacity(t *testing.T) {
 	}
 }
 
+func TestHarnessAppSlotCount(t *testing.T) {
+	tests := []struct{ limit, used, maxApps, want int }{
+		{100, 87, 0, 13},  // free slots
+		{100, 87, 5, 5},   // capped
+		{100, 87, 50, 13}, // cap above free
+		{100, 100, 0, 0},  // full account
+		{100, 120, 0, 0},  // over the limit (grandfathered)
+		{0, 40, 0, 8},     // unknown limit
+	}
+	for _, tc := range tests {
+		if got := appSlotCount(tc.limit, tc.used, tc.maxApps); got != tc.want {
+			t.Errorf("appSlotCount(%d, %d, %d) = %d, want %d", tc.limit, tc.used, tc.maxApps, got, tc.want)
+		}
+	}
+}
+
+func TestHarnessPositiveEnv(t *testing.T) {
+	env := map[string]string{"A": "3", "B": "0", "C": "x"}
+	get := func(k string) string { return env[k] }
+	if n, err := positiveEnv(get, "A", 4); n != 3 || err != nil {
+		t.Errorf("A: %d, %v", n, err)
+	}
+	if n, err := positiveEnv(get, "MISSING", 4); n != 4 || err != nil {
+		t.Errorf("default: %d, %v", n, err)
+	}
+	for _, k := range []string{"B", "C"} {
+		if _, err := positiveEnv(get, k, 4); err == nil {
+			t.Errorf("%s: accepted %q", k, env[k])
+		}
+	}
+}
+
 func TestHarnessRedactHidesToken(t *testing.T) {
 	tg := &target{token: "fp_live_0123456789abcdef"}
 	if got := tg.redact("Authorization: Bearer fp_live_0123456789abcdef"); strings.Contains(got, "0123456789") {

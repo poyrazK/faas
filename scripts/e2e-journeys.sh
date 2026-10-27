@@ -8,7 +8,7 @@
 #
 #   scripts/e2e-journeys.sh                       # smoke tier, prod, your CLI login
 #   scripts/e2e-journeys.sh --tier full
-#   scripts/e2e-journeys.sh --run 'TestAppLifecycle'
+#   scripts/e2e-journeys.sh --run 'TestReleaseAndRollback|TestScaleToZero'
 #   scripts/e2e-journeys.sh --cli-version v0.1.18-rc.296
 #
 # See tests/journeys/README.md.
@@ -20,7 +20,7 @@ usage() {
 	cat <<'EOF'
 usage: scripts/e2e-journeys.sh [flags]
 
-  --tier smoke|full      smoke: core GA path, ~3 apps (default); full: every journey, ~8 apps
+  --tier smoke|full      smoke: core GA path (default); full: every journey
   --run REGEX            only journeys matching this go test -run expression
   --api URL              API origin (default https://api.gregale.dev, or $GREGALE_E2E_API)
   --apps-domain DOMAIN   app host suffix (default: the API host without "api.")
@@ -31,7 +31,9 @@ usage: scripts/e2e-journeys.sh [flags]
   --out DIR              where to write go-test.json and report.md
                          (default .e2e-journeys/<timestamp>)
   --keep                 keep the apps of failed journeys for debugging
-  --max-deploys N        concurrent deploys (default 2; each build reserves a 20 GiB drive)
+  --max-deploys N        concurrent deploys (default 4; a cache-miss build reserves a 20 GiB
+                         builder drive, so lower this when sources change)
+  --max-apps N           test apps held at once (default: the account's free app slots)
   --sweep-hours N        first delete e2ej- apps from runs older than N hours (default 3, 0 = off)
   --list                 list journeys and exit
 EOF
@@ -46,7 +48,8 @@ cli_version=''
 token_file=''
 out=''
 keep=0
-max_deploys=2
+max_deploys=4
+max_apps=''
 sweep_hours=3
 list=0
 
@@ -62,6 +65,7 @@ while (($#)); do
 	--out) out="$2"; shift 2 ;;
 	--keep) keep=1; shift ;;
 	--max-deploys) max_deploys="$2"; shift 2 ;;
+	--max-apps) max_apps="$2"; shift 2 ;;
 	--sweep-hours) sweep_hours="$2"; shift 2 ;;
 	--list) list=1; shift ;;
 	-h|--help) usage; exit 0 ;;
@@ -148,8 +152,9 @@ GREGALE_E2E_API="$api" \
 	GREGALE_E2E_TIER="$tier" \
 	GREGALE_E2E_KEEP="$keep" \
 	GREGALE_E2E_MAX_DEPLOYS="$max_deploys" \
+	GREGALE_E2E_MAX_APPS="$max_apps" \
 	GREGALE_E2E_SWEEP_HOURS="$( [[ "$sweep_hours" == 0 ]] || echo "$sweep_hours")" \
-	go test ./tests/journeys -count=1 -json -timeout 90m -parallel 8 -skip '^TestHarness' ${run_re:+-run "$run_re"} 2>&1 |
+	go test ./tests/journeys -count=1 -json -timeout 90m -parallel 32 -skip '^TestHarness' ${run_re:+-run "$run_re"} 2>&1 |
 	tee "$out/go-test.json" |
 	python3 -I tests/journeys/report.py --markdown "$out/report.md" \
 		--header "target: $api" --header "tier: $tier" --header "cli: $cli_reported" \

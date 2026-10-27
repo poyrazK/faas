@@ -2,6 +2,7 @@ package journeys
 
 import (
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -12,27 +13,15 @@ import (
 	"time"
 )
 
-// TestAppLifecycle walks one source-deployed app through a customer's
-// first day: deploy, serve, stream, logs, secrets, crons, maintenance,
-// park and wake, redeploy without downtime, rollback, delete and restore
-// (inventory rows 1, 2, 3, 24, 38, 42, 46, 60, 61, 64, 92, 118, 121).
-func TestAppLifecycle(t *testing.T) {
+// TestServeAndObserve serves, streams and observes the shared probe app:
+// HTTP, server-sent events, runtime and HTTP request logs, and metrics
+// (inventory rows 2, 3, 64, 118, 121).
+func TestServeAndObserve(t *testing.T) {
 	tg := needs(t, tierSmoke, true)
 	t.Parallel()
-	full := tg.tier == tierFull
-	slug := tg.app(t, "probe")
-	base := tg.appURL(slug)
-	// Only deploy, serve, redeploy and rollback block later steps: a flaky
-	// logs, secrets or park call must not hide whether rollback works.
+	slug, base := tg.sharedProbe(t)
 	s := newStory(t)
 
-	var v1 map[string]any
-	s.step("deploy_v1", func(t *testing.T) {
-		v1 = tg.deploy(t, slug, "--path", probeSource(t, "v1"))
-		if u := str(v1, "app_url"); u != "" {
-			base = strings.TrimRight(u, "/")
-		}
-	})
 	s.step("serve", func(t *testing.T) {
 		expectVersion(t, base, "v1", time.Minute)
 		if r := get(base + "/healthz"); r.status != http.StatusOK {
@@ -46,7 +35,6 @@ func TestAppLifecycle(t *testing.T) {
 			t.Fatalf("GET /sse: %s (content-type %q)", r, r.header.Get("Content-Type"))
 		}
 	})
-
 	marker := "m-" + tg.runID + "-" + randomHex(t, 8)
 	s.check("runtime_logs", func(t *testing.T) {
 		if r := get(base + "/log?marker=" + marker); r.status != http.StatusOK {
@@ -69,11 +57,54 @@ func TestAppLifecycle(t *testing.T) {
 			return strings.Contains(string(res.stdout), "/log"), "no /log request in output: " + tail(string(res.stdout), 300)
 		})
 	})
+	if tg.tier == tierFull {
+		s.check("metrics", func(t *testing.T) {
+			res := tg.ok(t, time.Minute, "metrics", slug, "--range", "15m")
+			if len(objects(t, res.stdout)) == 0 {
+				t.Fatal("gregale metrics printed nothing")
+			}
+		})
+	}
+}
 
-	s.check("secrets", func(t *testing.T) {
-		value := randomHex(t, 32)
-		sum := sha256.Sum256([]byte(value))
-		want := hex.EncodeToString(sum[:])
+// TestCronDelivery fires a cron on the shared probe app and checks the app
+// received the POST (inventory row 92).
+func TestCronDelivery(t *testing.T) {
+	tg := needs(t, tierFull, true)
+	t.Parallel()
+	slug, base := tg.sharedProbe(t)
+	created := object(t, tg.ok(t, 2*time.Minute, "crons", "add", "--app", slug,
+		"--schedule", "0 0 1 1 *", "--path", "/cron").stdout)
+	id := str(created, "id")
+	if id == "" {
+		t.Fatalf("crons add printed no id: %s", compact(created))
+	}
+	t.Cleanup(func() { tg.run(t, time.Minute, "crons", "rm", id) })
+	tg.ok(t, 2*time.Minute, "crons", "run", id)
+	eventually(t, "manual cron fire reaches the app", 2*time.Minute, 3*time.Second, func() (bool, string) {
+		r := get(base + "/cron-hits")
+		if r.status != http.StatusOK {
+			return false, r.String()
+		}
+		doc := jsonBody(t, r)
+		return num(doc, "hits") >= 1, "app counted " + compact(doc)
+	})
+	runs := tg.run(t, time.Minute, "crons", "runs", id)
+	t.Logf("crons runs: %s", tail(string(runs.stdout), 600))
+}
+
+// TestSecrets seals a secret, delivers it with a restart and checks the
+// app sees it while no CLI listing prints its value (rows 60, 61).
+func TestSecrets(t *testing.T) {
+	tg := needs(t, tierSmoke, true)
+	t.Parallel()
+	slug, base := tg.deployProbe(t, "secrets")
+	value := randomHex(t, 32)
+	sum := sha256.Sum256([]byte(value))
+	want := hex.EncodeToString(sum[:])
+	s := newStory(t)
+
+	s.step("set_and_deliver", func(t *testing.T) {
 		tg.ok(t, 5*time.Minute, "secrets", "set", "--app", slug, "E2E_SECRET="+value, "--restart")
 		eventually(t, "secret delivered to the app", 3*time.Minute, 3*time.Second, func() (bool, string) {
 			r := get(base + "/env?key=E2E_SECRET")
@@ -83,6 +114,8 @@ func TestAppLifecycle(t *testing.T) {
 			doc := jsonBody(t, r)
 			return str(doc, "sha256") == want, "app sees " + compact(doc)
 		})
+	})
+	s.check("list_hides_value", func(t *testing.T) {
 		listed := tg.ok(t, time.Minute, "secrets", "list", "--app", slug)
 		if !strings.Contains(string(listed.stdout), "E2E_SECRET") {
 			t.Errorf("secrets list does not show E2E_SECRET: %s", tail(string(listed.stdout), 300))
@@ -91,47 +124,29 @@ func TestAppLifecycle(t *testing.T) {
 			t.Errorf("secrets list printed the secret value")
 		}
 	})
-
-	if full {
-		s.check("cron_delivery", func(t *testing.T) {
-			created := object(t, tg.ok(t, time.Minute, "crons", "add", "--app", slug,
-				"--schedule", "0 0 1 1 *", "--path", "/cron").stdout)
-			id := str(created, "id")
-			if id == "" {
-				t.Fatalf("crons add printed no id: %s", compact(created))
+	if tg.tier == tierFull {
+		s.check("env_history", func(t *testing.T) {
+			res := tg.ok(t, time.Minute, "env", "history", "--app", slug)
+			if !strings.Contains(string(res.stdout), "E2E_SECRET") {
+				t.Errorf("env history does not mention E2E_SECRET: %s", tail(string(res.stdout), 400))
 			}
-			t.Cleanup(func() { tg.run(t, time.Minute, "crons", "rm", id) })
-			tg.ok(t, 2*time.Minute, "crons", "run", id)
-			eventually(t, "manual cron fire reaches the app", 2*time.Minute, 3*time.Second, func() (bool, string) {
-				r := get(base + "/cron-hits")
-				if r.status != http.StatusOK {
-					return false, r.String()
-				}
-				doc := jsonBody(t, r)
-				return num(doc, "hits") >= 1, "app counted " + compact(doc)
-			})
-			runs := tg.run(t, time.Minute, "crons", "runs", id)
-			t.Logf("crons runs: %s", tail(string(runs.stdout), 600))
-		})
-		s.check("maintenance_mode", func(t *testing.T) {
-			tg.ok(t, time.Minute, "app", slug, "--maintenance")
-			t.Cleanup(func() { tg.run(t, time.Minute, "app", slug, "--no-maintenance") })
-			eventually(t, "maintenance 503", time.Minute, 2*time.Second, func() (bool, string) {
-				r := get(base + "/")
-				return r.status == http.StatusServiceUnavailable && strings.Contains(string(r.body), "app_maintenance_mode"), r.String()
-			})
-			tg.ok(t, time.Minute, "app", slug, "--no-maintenance")
-			expectVersion(t, base, "v1", time.Minute)
-		})
-		s.check("metrics", func(t *testing.T) {
-			res := tg.ok(t, time.Minute, "metrics", slug, "--range", "15m")
-			if len(objects(t, res.stdout)) == 0 {
-				t.Fatal("gregale metrics printed nothing")
+			if strings.Contains(string(res.stdout), value) {
+				t.Errorf("env history printed the secret value")
 			}
 		})
 	}
+}
 
-	s.check("park_and_wake_on_request", func(t *testing.T) {
+// TestScaleToZero parks an app and wakes it by request and by command,
+// checks `gregale ps` agrees, and exercises min instances and a fresh
+// restart (rows 38, 42, 43, 46).
+func TestScaleToZero(t *testing.T) {
+	tg := needs(t, tierSmoke, true)
+	t.Parallel()
+	slug, base := tg.deployProbe(t, "scale")
+	s := newStory(t)
+
+	s.step("park_and_wake_on_request", func(t *testing.T) {
 		tg.ok(t, 2*time.Minute, "park", slug)
 		waitParked(t, tg, slug)
 		r := get(base + "/")
@@ -139,14 +154,7 @@ func TestAppLifecycle(t *testing.T) {
 			t.Fatalf("first request after park: %s", r)
 		}
 		t.Logf("metric wake_first_request_ms=%d", r.elapsed.Milliseconds())
-		for k, v := range r.header {
-			if strings.HasPrefix(strings.ToLower(k), "x-faas-") || strings.HasPrefix(strings.ToLower(k), "x-gregale-") {
-				t.Logf("wake response header %s: %s", k, strings.Join(v, ","))
-			}
-		}
 	})
-	// Separate from the wake itself so a ps mismatch does not block the
-	// redeploy and rollback steps.
 	s.check("ps_shows_woken_instance", func(t *testing.T) {
 		eventually(t, "`gregale ps` lists the woken instance", 30*time.Second, 2*time.Second, func() (bool, string) {
 			if get(base+"/").status != http.StatusOK {
@@ -156,71 +164,117 @@ func TestAppLifecycle(t *testing.T) {
 			return n > 0, fmt.Sprintf("app answers but ps lists %d live instance(s)", n)
 		})
 	})
-	if full {
-		s.check("manual_wake", func(t *testing.T) {
-			tg.ok(t, 2*time.Minute, "park", slug)
-			waitParked(t, tg, slug)
-			tg.ok(t, 3*time.Minute, "wake", slug, "--wait", "--timeout", "2m")
-			eventually(t, "`gregale ps` lists the woken instance", 30*time.Second, 2*time.Second, func() (bool, string) {
-				n := liveInstances(t, tg, slug)
-				return n > 0, fmt.Sprintf("`wake --wait` returned but ps lists %d live instance(s)", n)
-			})
-		})
+	if tg.tier != tierFull {
+		return
 	}
-
-	var probe *continuity
-	s.step("redeploy_v2", func(t *testing.T) {
-		if full {
-			probe = watchContinuity(base + "/")
-		}
-		defer func() {
-			if probe != nil {
-				probe.stop()
-			}
-		}()
-		tg.deploy(t, slug, "--path", probeSource(t, "v2"))
-		expectVersion(t, base, "v2", 2*time.Minute)
+	s.check("manual_wake", func(t *testing.T) {
+		tg.ok(t, 2*time.Minute, "park", slug)
+		waitParked(t, tg, slug)
+		tg.ok(t, 3*time.Minute, "wake", slug, "--wait", "--timeout", "2m")
+		eventually(t, "`gregale ps` lists the woken instance", 30*time.Second, 2*time.Second, func() (bool, string) {
+			n := liveInstances(t, tg, slug)
+			return n > 0, fmt.Sprintf("`wake --wait` returned but ps lists %d live instance(s)", n)
+		})
 	})
-	if full {
-		// Its own check so an availability gap is reported without
-		// blocking rollback.
-		s.check("zero_downtime_redeploy", func(t *testing.T) {
-			failed, total, byCode, samples := probe.result()
-			t.Logf("metric redeploy_probe_failures=%d", failed)
-			if failed > 0 {
-				t.Errorf("app was unavailable during redeploy: %d of %d probes failed %v; first: %s",
-					failed, total, byCode, strings.Join(samples, "; "))
-			}
+	s.check("min_instances", func(t *testing.T) {
+		shown := object(t, tg.ok(t, time.Minute, "app", slug, "--min", "1").stdout)
+		t.Cleanup(func() { tg.run(t, time.Minute, "app", slug, "--min", "0") })
+		if num(shown, "min_instances") != 1 {
+			t.Fatalf("--min 1 reads back as %s", compact(field(shown, "min_instances")))
+		}
+		eventually(t, "a warm instance under min 1", 2*time.Minute, 3*time.Second, func() (bool, string) {
+			n := liveInstances(t, tg, slug)
+			return n > 0, fmt.Sprintf("ps lists %d live instance(s)", n)
 		})
-	}
-	s.check("deployment_history", func(t *testing.T) {
-		doc := object(t, tg.ok(t, time.Minute, "deployments", "--app", slug).stdout)
-		items, _ := field(doc, "items").([]any)
-		if len(items) < 2 {
-			t.Fatalf("deployments lists %d revisions after two deploys", len(items))
+		if back := object(t, tg.ok(t, time.Minute, "app", slug, "--min", "0").stdout); num(back, "min_instances") != 0 {
+			t.Fatalf("--min 0 reads back as %s", compact(field(back, "min_instances")))
 		}
 	})
-	s.step("rollback_to_v1", func(t *testing.T) {
-		tg.ok(t, 12*time.Minute, "rollback", slug, "--to", str(v1, "id"),
-			"--reason", "e2e-journeys run "+tg.runID, "--wait", "--timeout", "10m")
+	s.check("fresh_restart", func(t *testing.T) {
+		tg.ok(t, 12*time.Minute, "app", slug, "restart", "--fresh", "--wait", "--timeout", "10m")
 		expectVersion(t, base, "v1", 2*time.Minute)
 	})
+}
 
-	if full {
-		s.check("delete_and_restore", func(t *testing.T) {
-			tg.ok(t, 2*time.Minute, "apps", "rm", slug, "--yes")
-			eventually(t, "deleted app stops serving", 2*time.Minute, 3*time.Second, func() (bool, string) {
-				r := get(base + "/")
-				return r.status == http.StatusNotFound, r.String()
-			})
-			tg.ok(t, 2*time.Minute, "apps", "restore", slug)
-			shown := object(t, tg.ok(t, time.Minute, "app", slug).stdout)
-			if str(shown, "slug") != slug {
-				t.Fatalf("restored app reads back as %s", compact(shown))
-			}
-			t.Logf("after restore: status=%s availability=%s", str(shown, "status"), str(shown, "deployment_availability"))
+// TestMaintenanceAndAccess turns on maintenance mode, per-app token
+// authentication and basic auth, checks the edge enforces each, and turns
+// them off again (row 77).
+func TestMaintenanceAndAccess(t *testing.T) {
+	tg := needs(t, tierFull, true)
+	t.Parallel()
+	slug, base := tg.deployProbe(t, "access")
+	t.Cleanup(func() {
+		tg.run(t, time.Minute, "app", slug, "--no-maintenance", "--no-require-authn", "--public-auth", "open")
+	})
+	s := newStory(t)
+
+	s.check("maintenance_mode", func(t *testing.T) {
+		tg.ok(t, time.Minute, "app", slug, "--maintenance")
+		eventually(t, "maintenance 503", time.Minute, 2*time.Second, func() (bool, string) {
+			r := get(base + "/")
+			return r.status == http.StatusServiceUnavailable && strings.Contains(string(r.body), "app_maintenance_mode"), r.String()
 		})
+		tg.ok(t, time.Minute, "app", slug, "--no-maintenance")
+		expectVersion(t, base, "v1", time.Minute)
+	})
+	s.check("require_authn", func(t *testing.T) {
+		tg.ok(t, time.Minute, "app", slug, "--require-authn")
+		eventually(t, "anonymous request refused", time.Minute, 2*time.Second, func() (bool, string) {
+			r := get(base + "/")
+			return r.status == http.StatusUnauthorized, r.String()
+		})
+		tg.ok(t, time.Minute, "app", slug, "--no-require-authn")
+		expectVersion(t, base, "v1", time.Minute)
+	})
+	s.check("basic_auth", func(t *testing.T) {
+		user, pass := "e2e", randomHex(t, 16)
+		tg.ok(t, time.Minute, "app", slug, "--public-auth", "basic", "--basic-user", user, "--basic-pass", pass)
+		eventually(t, "anonymous request refused", time.Minute, 2*time.Second, func() (bool, string) {
+			r := get(base + "/")
+			return r.status == http.StatusUnauthorized, r.String()
+		})
+		creds := base64.StdEncoding.EncodeToString([]byte(user + ":" + pass))
+		eventually(t, "basic credentials admitted", time.Minute, 2*time.Second, func() (bool, string) {
+			r := fetch(http.MethodGet, base+"/", map[string]string{"Authorization": "Basic " + creds})
+			return r.status == http.StatusOK, r.String()
+		})
+		tg.ok(t, time.Minute, "app", slug, "--public-auth", "open")
+		expectVersion(t, base, "v1", time.Minute)
+	})
+}
+
+// TestImageDeploy deploys a digest-pinned public image without a build
+// (row 4). The image is the one production already serves for nginx.
+func TestImageDeploy(t *testing.T) {
+	tg := needs(t, tierFull, true)
+	t.Parallel()
+	slug := tg.app(t, "image")
+	receipt := tg.deploy(t, slug, "--image", probeImage)
+	appURL := strings.TrimRight(str(receipt, "app_url"), "/")
+	if appURL == "" {
+		appURL = tg.appURL(slug)
 	}
+	eventually(t, "the image serves its page", time.Minute, 2*time.Second, func() (bool, string) {
+		r := get(appURL + "/")
+		return r.status == http.StatusOK && strings.Contains(strings.ToLower(string(r.body)), "nginx"), r.String()
+	})
+}
+
+// probeImage is a digest-pinned public image with a known-good deployment
+// on production (an unprivileged nginx listening on 8080).
+const probeImage = "docker.io/nginxinc/nginx-unprivileged@sha256:65e3e85dbaed8ba248841d9d58a899b6197106c23cb0ff1a132b7bfe0547e4c0"
+
+// deployProbe creates an app of its own for a journey that changes it and
+// deploys probe v1, returning its slug and base URL.
+func (tg *target) deployProbe(t *testing.T, name string) (slug, base string) {
+	t.Helper()
+	slug = tg.app(t, name)
+	receipt := tg.deploy(t, slug, "--path", probeSource(t, "v1"))
+	base = strings.TrimRight(str(receipt, "app_url"), "/")
+	if base == "" {
+		base = tg.appURL(slug)
+	}
+	return slug, base
 }
 
 func expectVersion(t *testing.T, base, version string, timeout time.Duration) {
