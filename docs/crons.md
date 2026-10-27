@@ -19,9 +19,9 @@ Disabled crons count toward both limits. A request over a limit gets
 ## Create a cron
 
 ```bash
-gregale crons add --app my-api --schedule "0 3 * * *" --path /jobs/nightly
-gregale crons add --app my-api --schedule "*/15 * * * *" --path /jobs/sync --timezone Europe/Istanbul
-gregale crons add --app my-api --interactive   # pick a path, preview run times, confirm
+gregale cron create --app my-api --schedule "0 3 * * *" --path /jobs/nightly
+gregale cron create --app my-api --schedule "*/15 * * * *" --path /jobs/sync --timezone Europe/Istanbul
+gregale cron create --app my-api --interactive   # pick a path, preview run times, confirm
 ```
 
 `--schedule` takes the standard five-field expression (minute, hour, day of
@@ -34,10 +34,10 @@ once at the first valid minute after it, and a fixed time that repeats when
 clocks fall back fires once. Interval schedules such as `*/30 * * * *` keep
 following the wall clock.
 
-Preview upcoming run times with `gregale crons next --app my-api`.
+Preview upcoming run times with `gregale cron next --app my-api`.
 
-Manage crons with `gregale crons list --app my-api`, `gregale crons info ID`,
-`gregale crons update ID`, and `gregale crons rm ID`. The same operations are
+Manage crons with `gregale cron list --app my-api`, `gregale cron get ID`,
+`gregale cron update ID`, and `gregale cron delete ID`. The same operations are
 available on `/v1/crons` in the API and as the `gregale_cron` Terraform
 resource.
 
@@ -65,7 +65,7 @@ Each run is a `POST` to the cron's path with an empty body and these headers:
 | Header | Value |
 |---|---|
 | `X-Faas-Invocation-Source` | `cron` |
-| `X-Faas-Invocation-Id` | the run's id, as shown by `gregale crons runs` |
+| `X-Faas-Invocation-Id` | the run's id, as shown by `gregale cron runs` |
 
 Gregale removes any `X-Faas-*` header a visitor sends, so a request carrying
 `X-Faas-Invocation-Source: cron` came from your cron. The cron's path is still
@@ -119,9 +119,9 @@ yourself stays disabled. Deleting an app suspends its crons with
 ## Run a cron now
 
 ```bash
-gregale crons run CRON_ID
-gregale crons run --app my-api --interactive      # pick a cron and follow the run
-gregale crons fire-now REQUEST_ID --wait          # follow a request you already made
+gregale cron run CRON_ID
+gregale cron run --app my-api --interactive      # pick a cron and follow the run
+gregale cron fire-now REQUEST_ID --wait          # follow a request you already made
 ```
 
 A manual run sends the same request as a scheduled run and does not move the
@@ -133,8 +133,8 @@ have five manual runs waiting or running at once; another request gets
 ## History and alerts
 
 ```bash
-gregale crons runs CRON_ID                 # newest first
-gregale crons runs CRON_ID --before CURSOR # older runs
+gregale cron runs CRON_ID                 # newest first
+gregale cron runs CRON_ID --before CURSOR # older runs
 ```
 
 Each run shows when it started, how long it took, its outcome (`success`,
@@ -145,7 +145,7 @@ period.
 To be told when runs fail, add an alert rule on failed cron invocations:
 
 ```bash
-gregale alerts add --app my-api --name "cron failures" --metric failed_invocations \
+gregale alert create --app my-api --name "cron failures" --metric failed_invocations \
   --failure-source cron --comparison gte --threshold 1 --window-spec 1h --channel OPS_SLACK_ID
 ```
 
@@ -163,7 +163,7 @@ need more control:
 - **Overlap**: `allow`, `skip` or `replace` a run that is still active.
 - **Missed runs**: `skip` or `coalesce_latest` the times a busy or unavailable
   scheduler passed, with each decision recorded and listed by
-  `gregale crons occurrences CRON_ID`.
+  `gregale cron occurrences CRON_ID`.
 - **Start deadline**: give up on a run that cannot start within N seconds.
 - **Failure rules**: map HTTP statuses or a reported `outcome_code` to
   `retry` or `fail_partition` (fail without retrying), and choose whether an
@@ -182,11 +182,11 @@ Use a command cron when a recurring task needs the app's deployment
 environment without an HTTP endpoint:
 
 ```bash
-gregale crons add --app APP_ID --schedule "0 2 * * *" \
+gregale cron create --app APP_ID --schedule "0 2 * * *" \
   --command bin/rebuild-index --arg=--incremental --timezone Europe/Istanbul
-gregale crons add --app APP_ID --schedule "0 4 * * 0" \
+gregale cron create --app APP_ID --schedule "0 4 * * 0" \
   --command "bin/cleanup --older-than 30d" --shell
-gregale crons runs CRON_ID
+gregale cron runs CRON_ID
 ```
 
 Command crons create one deployment-attached app task for each scheduled
@@ -222,15 +222,15 @@ Configure that code explicitly with `--failure-rules`; Gregale does not infer
 retry safety from an error message. The command receipt retains the code and
 classifier decision for inspection.
 
-Inspect outcomes with `gregale crons runs CRON_ID`. The history includes a run
+Inspect outcomes with `gregale cron runs CRON_ID`. The history includes a run
 id; for a command cron, inspect its captured stdout/stderr, exit status, and
-retry details on demand with `gregale crons runs CRON_ID --run TASK_ID`. Use
-`gregale crons run CRON_ID` to immediately run the cron's saved command on the
+retry details on demand with `gregale cron runs CRON_ID --run TASK_ID`. Use
+`gregale cron run CRON_ID` to immediately run the cron's saved command on the
 current live deployment without moving its schedule cursor.
 If `--skip-if-running` is configured and another run is still active, the
 manual request fails rather than overlapping it.
 Cancel a queued or active command-cron run with
-`gregale crons cancel CRON_ID TASK_ID`; an active task reports its cancellation
+`gregale cron cancel CRON_ID TASK_ID`; an active task reports its cancellation
 request while the worker stops it. Disabling a cron only prevents future fires.
 `gregale app APP_ID exec ...` remains the surface for an arbitrary one-off
 command.

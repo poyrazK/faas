@@ -123,7 +123,7 @@ definition and configure its ID:
 
 ```sh
 gregale customer-operations definitions get customer-export --app <slug> --deployment <deployment-uuid> --json
-gregale secrets set --app <slug> GREGALE_EXPORT_DEFINITION_ID=<definition-uuid>
+gregale env set --app <slug> GREGALE_EXPORT_DEFINITION_ID=<definition-uuid>
 ```
 
 When deploying a new immutable definition, deliberately update this selector for

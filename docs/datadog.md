@@ -57,7 +57,7 @@ and aborted rollouts are marked as errors and warnings.
 ## Delivery
 
 Logs use the same durable queue, retries and health reporting as any other log
-drain (`gregale log-drains health`), and events use the same retries and
+drain (`gregale logs drain health`), and events use the same retries and
 dead-letter queue as any other webhook. Both only ever send your key to the
 Datadog site you chose.
 

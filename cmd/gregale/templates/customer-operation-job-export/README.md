@@ -60,15 +60,15 @@ it to your registry. Use an approved, patched Node 22 base and pin its digest in
 that pipeline. Register the resulting immutable image digest:
 
 ```sh
-gregale jobs add customer-export-job --image <registry/image@sha256:digest> \
+gregale job create customer-export-job --image <registry/image@sha256:digest> \
   --command node,/app/job.mjs --ram 512 --timeout 180 --parallelism 1 \
   --env GREGALE_API_URL=https://<control-plane>
-gregale jobs info customer-export-job --json
+gregale job get customer-export-job --json
 ```
 
 The Job must be active and its image materialization status `ready` before its
 Operation definition can be admitted. For a private registry, set the sealed
-pull credential using `gregale jobs registry set ... --password-stdin`.
+pull credential using `gregale job registry set ... --password-stdin`.
 The manifest's `job` names this existing account-owned Job; source deployment
 does not create Jobs. Do not call `jobs run`, `retry` or `replay-failed` for this
 feature: customer submission and evidenced Operations recovery own its runs.
@@ -76,7 +76,7 @@ There is no recurring schedule and no automatic business retry.
 
 Reserve the app with `gregale deploy --create-only --template
 customer-operation-job-export --name <slug> --no-require-authn`. Set the public
-app selectors through `--secrets-file` or `gregale secrets set`:
+app selectors through `--secrets-file` or `gregale env set`:
 
 | App setting | Value |
 |---|---|
@@ -94,7 +94,7 @@ Deploy the SDK-equipped app source with your preview environment selector:
 ```sh
 gregale deploy --name <slug> --no-require-authn --secrets-file <app-settings-file>
 gregale customer-operations definitions get customer-export --app <slug> --deployment <deployment-uuid> --json
-gregale secrets set --app <slug> GREGALE_EXPORT_DEFINITION_ID=<definition-uuid>
+gregale env set --app <slug> GREGALE_EXPORT_DEFINITION_ID=<definition-uuid>
 gregale customer-operations doctor --app <slug> --deployment <deployment-uuid>
 ```
 

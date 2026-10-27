@@ -1,6 +1,6 @@
 # Reusable edge-rule trace scenarios
 
-`gregale edge-rules trace` accepts either individual request flags or a
+`gregale edge rule trace` accepts either individual request flags or a
 versioned JSON scenario. Scenario files make a trace easy to replay from a
 terminal, check into a private test repository, or share with a teammate.
 
@@ -13,7 +13,7 @@ headers/CORS replacement; other edge-rule kinds remain application-owned.
 Without the selector, the trace uses the app's current policy as before.
 
 ```sh
-gregale edge-rules trace --config trace.json
+gregale edge rule trace --config trace.json
 ```
 
 The version 1 format is:
@@ -42,7 +42,7 @@ The version 1 format is:
 The equivalent flags are:
 
 ```sh
-gregale edge-rules trace --app demo --project payments --environment staging \
+gregale edge rule trace --app demo --project payments --environment staging \
   --url https://replace-with-environment-host/submit --method POST
 ```
 

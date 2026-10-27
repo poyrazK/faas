@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -100,6 +101,7 @@ func TestAgentFacingCommandsExist(t *testing.T) {
 				if name == "" {
 					continue
 				}
+				name, next = todaysCommand(fields[i+1:], name, next)
 				command, ok := lookupCliCommand(name)
 				if !ok || command.Audience != cliAudienceCustomer {
 					t.Errorf("%s: `gregale %s` is not a customer command (in %q)", path, name, line)
@@ -156,6 +158,24 @@ func markdownCodeLines(t *testing.T, path string) []string {
 		lines = append(lines, strings.Split(match[1]+match[2], "\n")...)
 	}
 	return lines
+}
+
+// todaysCommand maps a command spelled in the command tree's names to the
+// command that runs it today (ADR-20261026145832), so the checks above
+// cover either spelling.
+func todaysCommand(fields []string, name, next string) (string, string) {
+	at := slices.Index(fields, name)
+	if at < 0 {
+		return name, next
+	}
+	path, err := rewriteCliTree(fields[at:])
+	if err != nil || len(path) == 0 || slices.Equal(path, fields[at:]) {
+		return name, next
+	}
+	if len(path) == 1 {
+		return path[0], ""
+	}
+	return path[0], path[1]
 }
 
 // commandAfterGlobals skips the global options agents are told to use and

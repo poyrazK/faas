@@ -10,7 +10,7 @@ Internal events (publishing, `event_triggers` subscriptions, acknowledgments
 and delivery controls) are a preview capability. Until it is released to your
 account, a deploy that declares `event_triggers` answers `403
 capability_not_released`. Run `gregale previews list` to see whether you can
-join it with `gregale previews join <key>`, or contact support for access.
+join it with `gregale feature join <key>`, or contact support for access.
 
 ```sh
 gregale init --template event-worker --path ./invoice-worker
@@ -28,17 +28,17 @@ Preview the account-wide route first; this checks the worker's filter without
 creating an event or invocation:
 
 ```sh
-gregale events preview billing.stripe invoice.paid \
+gregale event preview billing.stripe invoice.paid \
   --data '{"amount":150}'
 ```
 
 Then publish and inspect the reconciled subscription:
 
 ```sh
-gregale events publish billing.stripe invoice.paid \
+gregale event publish billing.stripe invoice.paid \
   --data '{"amount":150}'
-gregale invocations list --limit 10
-gregale events subscriptions invoice-worker
+gregale invocation list --limit 10
+gregale event subscription list invoice-worker
 ```
 
 The handler receives the full event envelope as its parsed JSON request body

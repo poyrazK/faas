@@ -21,7 +21,7 @@ the smallest guest that boots) and at most your plan's Job limit
 the same rule.
 
 Image pulls may use account-owned private-registry credentials configured with
-`gregale jobs registry`; passwords are sealed at rest and never returned by
+`gregale job registry`; passwords are sealed at rest and never returned by
 the API. Imaged retries bounded pull/build failures across restarts, and
 schedd does not dispatch a task until the job's ext4 artifact is ready.
 Each materialization attempt writes a unique `jobs/<job-id>__<attempt-id>.ext4`
@@ -49,22 +49,22 @@ fills its local cache. Job tasks use their own timeout and lease reaper during
 this phase; the shorter HTTP-app cold-boot watchdog does not apply.
 
 ```bash
-gregale jobs add nightly --image registry.example/nightly@sha256:DIGEST --timeout 900 --retries 2
-gregale jobs run nightly --tasks 10 --parallelism 3
-gregale jobs run nightly --tasks 10 --parallelism 3 --arg=--dataset --arg=2026-09
-gregale jobs run nightly --parallelism 2 --input=shard-a=s3://my-bucket/a --input=shard-b=s3://my-bucket/b
-gregale jobs run nightly --parallelism 2 --input-manifest-uri=obj://APP_ID/BUCKET_ID/inputs.json --input-manifest-sha256=sha256:DIGEST
-gregale jobs run nightly --tasks 20 --flexible --eligible-at=2026-10-01T00:00:00Z --latest-start-at=2026-10-01T04:00:00Z
-gregale jobs add nightly-export --image registry.example/exporter:v1 --schedule "0 3 * * *" --timezone Europe/Istanbul
-gregale jobs update nightly-export --schedule "30 3 * * *"
-gregale jobs update nightly-export --unschedule
-gregale jobs runs nightly
-gregale jobs tasks nightly RUN_ID
-gregale jobs attempts nightly RUN_ID 0
-gregale jobs retry nightly RUN_ID 0
-gregale jobs replay-failed nightly RUN_ID
-gregale jobs artifact-url nightly RUN_ID 0 result
-gregale jobs logs nightly RUN_ID 0 [--max-bytes N]
+gregale job create nightly --image registry.example/nightly@sha256:DIGEST --timeout 900 --retries 2
+gregale job run nightly --tasks 10 --parallelism 3
+gregale job run nightly --tasks 10 --parallelism 3 --arg=--dataset --arg=2026-09
+gregale job run nightly --parallelism 2 --input=shard-a=s3://my-bucket/a --input=shard-b=s3://my-bucket/b
+gregale job run nightly --parallelism 2 --input-manifest-uri=obj://APP_ID/BUCKET_ID/inputs.json --input-manifest-sha256=sha256:DIGEST
+gregale job run nightly --tasks 20 --flexible --eligible-at=2026-10-01T00:00:00Z --latest-start-at=2026-10-01T04:00:00Z
+gregale job create nightly-export --image registry.example/exporter:v1 --schedule "0 3 * * *" --timezone Europe/Istanbul
+gregale job update nightly-export --schedule "30 3 * * *"
+gregale job update nightly-export --unschedule
+gregale job runs nightly
+gregale job tasks nightly RUN_ID
+gregale job attempts nightly RUN_ID 0
+gregale job retry nightly RUN_ID 0
+gregale job replay-failed nightly RUN_ID
+gregale job artifact-url nightly RUN_ID 0 result
+gregale job logs nightly RUN_ID 0 [--max-bytes N]
 ```
 
 `--schedule` makes a job recurring: schedd creates one single-task run at
@@ -79,7 +79,7 @@ and recovery behavior for recurring Jobs and deployment-command Crons. For
 example:
 
 ```bash
-gregale jobs add customer-sync --image registry.example/sync:v1 \
+gregale job create customer-sync --image registry.example/sync:v1 \
   --schedule '*/5 * * * *' --timezone UTC \
   --schedule-policy '{"version":1,"overlap":"skip","start_deadline_seconds":120,"missed_runs":"skip"}'
 ```
@@ -93,9 +93,9 @@ task may start; the deadline no longer applies after any partition has started.
 On scheduler recovery, `missed_runs=coalesce_latest` records older due times
 as coalesced and considers the newest due time, while `skip` records stale due
 times without creating runs. These decisions retain their policy snapshot and
-reason and can be inspected with `gregale jobs occurrences <name>` or
+reason and can be inspected with `gregale job occurrences <name>` or
 `GET /v1/jobs/{name}/occurrences`. Command Crons expose the same occurrence
-history with `gregale crons occurrences <id>` and
+history with `gregale cron occurrences <id>` and
 `GET /v1/crons/{id}/occurrences`. HTTP request Crons also accept schedule
 policies and explicit failure rules. An HTTP handler can return a bounded
 business outcome code in `X-Gregale-Outcome-Code`; Gregale applies only the
@@ -126,8 +126,8 @@ HTTP/1.1 200 OK
 X-Gregale-Outcome-Code: upstream_unavailable
 ```
 
-Configure these rules with `gregale crons add --failure-rules JSON` or
-`gregale crons update --failure-rules JSON`. Exit-code matchers remain
+Configure these rules with `gregale cron create --failure-rules JSON` or
+`gregale cron update --failure-rules JSON`. Exit-code matchers remain
 specific to command Crons and Jobs.
 
 Command Crons use one task per occurrence and select the app's live deployment
@@ -136,10 +136,10 @@ structured `outcome_code`, which is evaluated with the same explicit failure
 rules as a job task:
 
 ```bash
-gregale crons add --app customer-api --schedule '*/5 * * * *' \
+gregale cron create --app customer-api --schedule '*/5 * * * *' \
   --command /app/bin/synchronize --schedule-policy \
   '{"version":1,"overlap":"replace","start_deadline_seconds":120,"missed_runs":"coalesce_latest"}'
-gregale crons occurrences CRON_ID
+gregale cron occurrences CRON_ID
 ```
 
 Cron overlap is scoped to that Cron. `replace` first requests cancellation of
@@ -150,7 +150,7 @@ the stop. Exit-code failure rules apply to command Crons; their bounded retry
 budget is per occurrence. Set the retry budget and classifier on the Cron:
 
 ```bash
-gregale crons update CRON_ID --retry-max 3 --failure-rules \
+gregale cron update CRON_ID --retry-max 3 --failure-rules \
   '{"version":1,"rules":[{"exit_codes":[65],"action":"fail_partition"}],"unmatched_failure":"retry","uncertain_outcome":"hold"}'
 ```
 
@@ -159,7 +159,7 @@ mappings or structured application outcome codes, plus the action for
 unmatched confirmed failures:
 
 ```bash
-gregale jobs update customer-sync --failure-rules \
+gregale job update customer-sync --failure-rules \
   '{"version":1,"rules":[{"exit_codes":[65],"action":"fail_partition"},{"outcome_codes":["invalid_record"],"action":"fail_partition"},{"outcome_codes":["upstream_unavailable"],"action":"retry"}],"unmatched_failure":"retry","uncertain_outcome":"hold"}'
 ```
 
@@ -167,10 +167,10 @@ gregale jobs update customer-sync --failure-rules \
 `fail_partition` retains its outcome and excludes it from automatic retries.
 When a Job partition classified `retry` has no attempt left, its final
 attempt records `dead_letter` (reason `retry_budget_exhausted`) and the run's
-dead-letter count rises. `gregale jobs retry` refuses a partition past its
-retry budget; re-run its input with `gregale jobs replay-failed JOB RUN_ID`.
+dead-letter count rises. `gregale job retry` refuses a partition past its
+retry budget; re-run its input with `gregale job replay-failed JOB RUN_ID`.
 For a command Cron, the bounded retry budget is per occurrence; for a Job, it
-is per partition. `gregale crons runs CRON_ID --run TASK_ID` shows the reported
+is per partition. `gregale cron runs CRON_ID --run TASK_ID` shows the reported
 outcome code and saved work decision.
 Outcome codes use lowercase letters, digits, `_`, `-`, or `.` and are limited
 to 64 bytes. A mapped outcome code is authoritative even if the command exits
@@ -281,7 +281,7 @@ fail, so it follows the configured retry policy. For an `obj://` artifact, call
 Gregale verifies the current object's size and SHA-256, then returns a
 five-minute signed URL. The caller needs job and storage read access. Check
 the downloaded checksum too, because an object can change after verification.
-`gregale jobs artifact-url` prints the signed URL and expected digest; add
+`gregale job artifact-url` prints the signed URL and expected digest; add
 the global JSON output option to retrieve the full signed request, including
 headers and expiry.
 Missing objects return 404; an object whose current bytes disagree with the
@@ -348,10 +348,10 @@ cancels the run. `--detach` prints the run id instead of waiting.
 Each image run is a one-task Job run with no retries. Gregale keeps a
 platform-managed runner job per image (named `ir-<hash>`), so the first run
 pulls the image and later runs start from the cached copy. `--pull always`
-pulls a moved tag again. Runner jobs do not appear in `gregale jobs list` and
+pulls a moved tag again. Runner jobs do not appear in `gregale job list` and
 do not count against your Job limit; inspect a run with
-`gregale jobs tasks ir-<hash> RUN_ID` and `gregale jobs logs ir-<hash> RUN_ID`,
-or delete a cached image with `gregale jobs rm ir-<hash>`.
+`gregale job tasks ir-<hash> RUN_ID` and `gregale job logs ir-<hash> RUN_ID`,
+or delete a cached image with `gregale job delete ir-<hash>`.
 
 Image runs use your plan's Job limits for memory, deadline (by default the
 plan's maximum) and concurrent tasks. Plans cache a limited number of images
@@ -405,7 +405,7 @@ The credential is stored sealed on the image's runner job and is used for
 that image's registry only. Every run that passes it refreshes it, so it
 survives the runner job being evicted from the image cache. Without it, a
 runner job's credential can still be managed with
-`gregale jobs registry set ir-<hash> ...`.
+`gregale job registry set ir-<hash> ...`.
 
 ### Interactive image runs
 

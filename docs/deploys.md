@@ -24,7 +24,7 @@ gregale deploy --image ghcr.io/acme/api@sha256:...
 ```
 
 Interrupted single-app deploys save a local session. Run
-`gregale deploy resume --app my-api`, or `gregale deploy resume SESSION_ID --json`,
+`gregale release resume --app my-api`, or `gregale release resume SESSION_ID --json`,
 to reconnect to the same accepted deployment and finish pending lifecycle/scaling
 settings without local source. Resume checks saved app identity and conflicting
 settings before writing. See [saved deploy recovery](cli/deploy.md#recover-an-interrupted-deployment).
@@ -56,7 +56,7 @@ secrets derive a key from the source and flags, so repeating an identical deploy
 returns the deployment already in progress or live. Branches, tags, short SHAs,
 and secret bundles use a fresh key per invocation; transport retries reuse it.
 A local wait timeout or interruption preserves accepted deployment configuration;
-resume with `gregale deployment wait <deployment-id>`. The server bounds every
+resume with `gregale release wait <deployment-id>`. The server bounds every
 deployment on its own: a build still waiting in the builder queue after 6 hours
 fails with `deployment_queue_timeout`, and a deployment with no build running
 that makes no progress for 3 hours fails with `deployment_stalled` (a running
@@ -141,7 +141,7 @@ the rollback is requested and prints its id:
 gregale rollback status my-api --operation <id> --wait
 ```
 
-See [`gregale deployments`](cli-reference.md#deployments) for deployment
+See [`gregale release list`](cli-reference.md#release-list) for deployment
 history and annotations.
 
 ## Releases that change the database
@@ -183,7 +183,7 @@ from that point without touching the current one; attach it when you have
 checked it. The point must be inside the database's restore window. To
 restore it and move the app to it as part of the rollback, see
 [Rollbacks that restore the database](#rollbacks-that-restore-the-database).
-`gregale deployment summary <id>` and `GET /v1/deployments/{id}` show a
+`gregale release summary <id>` and `GET /v1/deployments/{id}` show a
 deployment's release run as `release`: its status, start and finish times,
 and the databases it can migrate.
 
@@ -272,15 +272,15 @@ regress. Release gates add the signals only your app knows about
 
 ```bash
 # Abort or roll back when the release burns the checkout SLO 10x too fast.
-gregale release-gates add --name checkout-slo --slo checkout --max-burn-rate 10
+gregale release gate create --name checkout-slo --slo checkout --max-burn-rate 10
 # ...when it introduces a new error group with 3 or more events.
-gregale release-gates add --name no-new-errors --new-errors --min-events 3
+gregale release gate create --name no-new-errors --new-errors --min-events 3
 # ...when orders per minute average below 5.
-gregale release-gates add --name orders --metric orders_per_minute --below 5
+gregale release gate create --name orders --metric orders_per_minute --below 5
 # ...when its AI gateway calls cost 30% more each than the previous release's.
-gregale release-gates add --name ai-cost --ai cost_per_call --max-increase 30
+gregale release gate create --name ai-cost --ai cost_per_call --max-increase 30
 
-gregale release-gates list
+gregale release gate list
 gregale release-gates rm orders
 ```
 
@@ -315,13 +315,13 @@ not judged. A gate never holds a rollout on missing evidence.
 
 ## What changed between releases
 
-`gregale deployment diff` shows what a release changes compared with the
+`gregale release diff` shows what a release changes compared with the
 release that served before it
 ([ADR-20261021101117](adr/20261021101117-release-diff.md)):
 
 ```bash
-gregale deployment diff v42                 # against the release before it
-gregale deployment diff v42 --against v38   # against any release of the app
+gregale release diff v42                 # against the release before it
+gregale release diff v42 --against v38   # against any release of the app
 ```
 
 It reports:
@@ -338,7 +338,7 @@ It reports:
 A section shows as unknown when its history is gone: config history keeps
 the last 100 revisions per scope, and image releases have no build SBOM.
 The approval page and the "approval needed" message show the same
-comparison. `gregale deployment summary` remains the quick cockpit view:
+comparison. `gregale release summary` remains the quick cockpit view:
 rollout status, rollback target, and release fields against the previous
 deployment.
 
@@ -350,15 +350,15 @@ its first canary stage
 
 ```bash
 # Two owners or admins, other than the deployer, approve every release.
-gregale approvals require --approvals 2
+gregale release approval require --approvals 2
 # One person, developers included, within four hours.
-gregale approvals require --approvals 1 --approvers developer --timeout 4h
+gregale release approval require --approvals 1 --approvers developer --timeout 4h
 
-gregale approvals pending                 # releases waiting right now
-gregale approvals approve <deployment> --comment "canary looks clean"
-gregale approvals reject <deployment> --reason "checkout latency is up"
-gregale approvals status <deployment>
-gregale approvals off
+gregale release approval pending                 # releases waiting right now
+gregale release approve <deployment> --comment "canary looks clean"
+gregale release reject <deployment> --reason "checkout latency is up"
+gregale release approval status <deployment>
+gregale release approval off
 ```
 
 A production release is one to the default scope or to the project's
@@ -395,8 +395,8 @@ Who may approve:
 Tell people when a release waits, is approved or rejected, or times out:
 
 ```bash
-echo "https://hooks.slack.com/services/…" | gregale channels add --name releases --kind slack --secret-stdin
-gregale approvals require --approvals 2 --notify releases
+echo "https://hooks.slack.com/services/…" | gregale alert channel create --name releases --kind slack --secret-stdin
+gregale release approval require --approvals 2 --notify releases
 ```
 
 `--notify` takes up to five Slack or email channels; PagerDuty channels are
@@ -415,17 +415,17 @@ Releases need a canary to wait in. While the policy is on, a production
 release with `--rollout immediate` or `--traffic-percent` is refused with
 `release_approval_canary_required`. A release deployed with `--no-traffic`
 can't be given traffic by hand either; start it with
-`gregale scheduled-releases set <release> --at now`, which rolls it out
+`gregale release schedule set <release> --at now`, which rolls it out
 through a canary that waits for approval.
 
 Production means the `default` scope and a project's `production`
 environment, as for freezes. Releases that have no canary to wait in are
 refused the same way:
-- `gregale deploys retry` of a release that had no canary;
+- `gregale release retry` of a release that had no canary;
 - a project apply that would release the app;
 - a promotion into a `production` environment that is not protected.
 
-Protect the environment (`gregale projects environments protect <project>
+Protect the environment (`gregale environment protect <project>
 production`) and its promotion approval stands in for the app's policy.
 A GitOps source releases into `production` only once a person approved the
 revision in Gregale (approval policy `manual`); with `protected_branch` the
@@ -445,15 +445,15 @@ account, while it is active
 
 ```bash
 # Freeze one app for two hours, starting now.
-gregale freeze create --app my-api --for 2h --reason "incident 4711"
+gregale release freeze create --app my-api --for 2h --reason "incident 4711"
 # No releases from Friday 16:00 to Monday 08:00 (64 hours), Istanbul time, for every app.
-gregale freeze create --all-apps --weekly fri --at 16:00 --for 64h --tz Europe/Istanbul --reason "no weekend releases"
+gregale release freeze create --all-apps --weekly fri --at 16:00 --for 64h --tz Europe/Istanbul --reason "no weekend releases"
 # After Gregale rolls a release back on its own, freeze the app for an hour.
-gregale freeze create --app my-api --after-rollback 1h --reason "settle after automatic rollbacks"
+gregale release freeze create --app my-api --after-rollback 1h --reason "settle after automatic rollbacks"
 
-gregale freeze status --app my-api
-gregale freeze list
-gregale freeze lift <id>
+gregale release freeze status --app my-api
+gregale release freeze list
+gregale release freeze lift <id>
 ```
 
 While a freeze is active, every way of releasing to production is refused
@@ -462,7 +462,7 @@ with `release_frozen`, which names the freeze, its reason and its creator:
 - GitHub push deploys;
 - `gregale deploy --project`;
 - promotions into `production`;
-- `gregale deploys retry` and the dashboard's retry button. A retry can't
+- `gregale release retry` and the dashboard's retry button. A retry can't
   carry an override; deploy again with `--override-freeze` instead.
 
 A GitOps source managing the `production` environment keeps its sync
@@ -482,7 +482,7 @@ To release anyway, give a reason:
 
 ```bash
 gregale deploy --override-freeze "hotfix for incident 4711"
-gregale projects environments promote shop --from staging --to production --override-freeze "hotfix"
+gregale environment promote shop --from staging --to production --override-freeze "hotfix"
 ```
 
 The override is recorded in the audit log (`release.freeze_overridden`) with
@@ -517,11 +517,11 @@ gregale deploy --at 02:00 --release-notify releases
 # Other ways to say when: +2h, "2026-10-22 09:00" (local time), or an RFC 3339 time.
 gregale deploy --at "2026-10-22 09:00" --rollout fast
 
-gregale scheduled-releases list
-gregale scheduled-releases show v44 --app my-api
-gregale scheduled-releases set v44 --app my-api --at +30m   # move it
-gregale scheduled-releases set v44 --app my-api --at now    # start it on the next pass
-gregale scheduled-releases cancel v44 --app my-api
+gregale release schedule list
+gregale release schedule get v44 --app my-api
+gregale release schedule set v44 --app my-api --at +30m   # move it
+gregale release schedule set v44 --app my-api --at now    # start it on the next pass
+gregale release schedule cancel v44 --app my-api
 ```
 
 The build, readiness check and snapshot happen right away, so a broken build
@@ -548,9 +548,9 @@ Gregale waits for up to an hour past the scheduled time, then gives up
 schedule it again, or promote it by hand. `--release-notify` channels (Slack
 or email, up to five) hear when the release starts and when it can't.
 
-While a release waits for its time, `gregale traffic set` and `gregale
+While a release waits for its time, `gregale release traffic set` and `gregale
 traffic promote` refuse it with `release_scheduled`; move or cancel the
-schedule instead. `gregale traffic promote --deployment v44 --at 09:00`
+schedule instead. `gregale release traffic promote --deployment v44 --at 09:00`
 schedules a release you deployed with `--no-traffic`.
 
 A scheduled release is a production release of a request app: previews,
@@ -574,10 +574,10 @@ Use a revision anywhere a deployment ID is accepted:
 
 ```bash
 gregale rollback my-api --to v41
-gregale traffic set --app my-api --deployment v42 --percent 10
+gregale release traffic set --app my-api --deployment v42 --percent 10
 ```
 
-`gregale traffic status my-api` lists the live revisions and their weights.
+`gregale release traffic status my-api` lists the live revisions and their weights.
 Revision numbers are per app, so `v41` of one app is unrelated to `v41` of
 another. Numbers may skip values: preview deploys and retries consume them
 too.
@@ -598,7 +598,7 @@ command after readiness succeeds. For example:
 ✓ Staged v44 with 0% production traffic.
   Preview: https://deploy-44-my-api.gregale.dev
   Production remains on v43. https://my-api.gregale.dev
-  Promote: gregale traffic promote --app my-api --deployment v44 --if-serving v43
+  Promote: gregale release traffic promote --app my-api --deployment v44 --if-serving v43
 ```
 
 `--no-traffic` is the discoverable spelling for `--traffic-percent 0`. It is
@@ -608,7 +608,7 @@ preview zone is enabled) and `promotion_command` to the deployment receipt.
 When one revision owns all production traffic, the command includes
 `--if-serving` so promotion fails with `traffic_serving_changed` (409) if
 another release takes over before you promote. If traffic is split or the
-CLI cannot read current traffic, inspect `gregale traffic status APP` before
+CLI cannot read current traffic, inspect `gregale release traffic status APP` before
 promoting; the receipt omits `promotion_command` in that case.
 `--no-wait` returns once the dark deployment is queued, before a preview URL
 is guaranteed to be live.
@@ -635,7 +635,7 @@ deprecated. Preview how a ladder would behave against your app's recent
 traffic before deploying:
 
 ```bash
-gregale canary simulate my-api --canary-preset balanced
+gregale release canary simulate my-api --canary-preset balanced
 ```
 
 Promotion is health-gated. If an alert rule with a `rollback` or `demote`
@@ -671,7 +671,7 @@ the stage follows the rules below.
 At a terminal, `gregale deploy` follows the rollout live, printing each stage
 and why it advanced, until the release reaches 100% or is aborted. Press
 Ctrl-C to stop watching: the rollout keeps running, and
-`gregale deployment wait <id> --rollout` picks it up again. In CI, with
+`gregale release wait <id> --rollout` picks it up again. In CI, with
 `--json`, or with `--no-wait`, deploy returns once the candidate is live at
 1% and prints how to follow it; `--rollout safe` always waits for 100%.
 
@@ -718,7 +718,7 @@ aborted and traffic returns to the previous revision, even with no traffic.
 For 30 minutes after a release reaches 100%, Gregale keeps comparing it with
 the previous release's traffic from before the rollout. A clear 5xx or p95
 latency regression rolls it back automatically and records why on the
-deployment (`gregale deployment summary`). This also covers immediate
+deployment (`gregale release summary`). This also covers immediate
 releases, and anything the canary's share of traffic did not show. Releases
 deployed with `--rollback-on-5xx=false` are not watched.
 
@@ -738,7 +738,7 @@ deprecated `--canary-preset`) always wins over the default.
 Gregale records the evidence behind every rollout decision
 ([ADR-1447](adr/1447-explained-rollout-decisions.md)): the request, 5xx, probe,
 latency, OOM, and restart counts for both revisions, and which rule decided.
-`gregale deployment wait --rollout` prints why a stage is waiting and why each
+`gregale release wait --rollout` prints why a stage is waiting and why each
 stage advanced:
 
 ```text
@@ -746,7 +746,7 @@ Rollout held at 1% traffic (step 1/4): waiting for enough traffic to compare: th
 Rollout: 10% traffic · step 2/4 · rolling_out · advanced on synthetic probes: this release 0/30 probe 5xx, the current one 0/30
 ```
 
-`gregale deployment summary <id>` shows the latest decision and the current
+`gregale release summary <id>` shows the latest decision and the current
 hold. The API returns them as `rollout_decision` and `rollout_hold` on
 `GET /v1/deployments/{id}`; every decision is also in the deployment's audit
 timeline (`GET /v1/deployments/{id}/audit`). The `rollout.completed` and
@@ -825,7 +825,7 @@ returns `409 traffic_change_during_canary`. Advance or recover the rollout
 before applying a separate traffic split.
 
 A saved `gregale deploy` attempt can recover a lost acceptance reply with
-`gregale deploy resume SESSION_ID`. Image, multipart and source-ref submissions
+`gregale release resume SESSION_ID`. Image, multipart and source-ref submissions
 use a durable server receipt; resumable uploads use their committed upload
 receipt. Recovery reconnects to the original deployment without source files or
 another submission. Missing receipts leave acceptance uncertain; see
@@ -853,7 +853,7 @@ without configuration diagnostics retain their readiness-based wait behavior.
 
 Accepted project deploys now save a private recovery session before waiting,
 including when using `--no-wait`. The CLI prints a copyable
-`gregale deploy resume SESSION_ID` command. Project JSON receipts include
+`gregale release resume SESSION_ID` command. Project JSON receipts include
 `session_id`, `resume_command` and `recovery_saved`. Resume checks the original
 workload deployment IDs through readiness, rollout and cron activation without
 source files, manifests or secrets, and never creates another build. Successful
@@ -868,7 +868,7 @@ credential when resuming; sessions are isolated by that connection.
 
 Project deploy recovery also covers a lost apply response. The CLI saves an
 attempt before submission and prints its session/resume command on uncertain
-outcomes. `gregale deploy resume SESSION_ID` discovers accepted workloads through
+outcomes. `gregale release resume SESSION_ID` discovers accepted workloads through
 `GET /v1/project-submissions/{attempt_id}` and checks their original deployment
 IDs. It never repeats apply or uploads source. Interrupted submissions expose
 partial acceptance; unconfirmed workloads require inspection before an explicit
@@ -982,9 +982,9 @@ workers additionally require the existing atomic-worker admission gate. See
 Inspect or control a progressive attempt using its durable submission ID:
 
 ```sh
-gregale deploy status ATTEMPT_ID
-gregale deploy abort ATTEMPT_ID
-gregale deploy recover ATTEMPT_ID
+gregale release attempt get ATTEMPT_ID
+gregale release attempt cancel ATTEMPT_ID
+gregale release recover ATTEMPT_ID
 ```
 
 `status` shows the traffic stage, generation, blocking reason, latest control
@@ -1010,7 +1010,7 @@ gregale deploy --project --atomic --verify --progressive --stabilize --config-fi
 This keeps monitoring critical HTTP probes and real worker health for ten minutes
 after success. Workers still require `--workers --worker-health`. Existing revision
 retention must be at least 21 minutes. The deploy command returns on rollout
-success; use `gregale deploy status ATTEMPT_ID` to inspect the continuing watch.
+success; use `gregale release attempt get ATTEMPT_ID` to inspect the continuing watch.
 Two confirmed regressions can restore graph/config together while the baseline
 remains qualified and this attempt still owns production. Newer production intent
 stops the old monitor. Unknown health never authorizes rollback or becomes a
@@ -1029,7 +1029,7 @@ within its existing deadline. A complete failed baseline sample stops the attemp
 and preserves the current production graph. Inspect the existing task logs and
 database state before submitting another migration; schema changes are not
 reversed and the completed command is not replayed. The receipt exposes
-`release_command.baseline_verification`; `gregale deploy status
+`release_command.baseline_verification`; `gregale release attempt get
 <attempt-id>` also shows this checkpoint.
 
 Passing probes provides evidence for the configured paths, not a proof that every
@@ -1056,8 +1056,8 @@ Workers additionally require the existing worker/health flags.
 After rollout and stabilization succeed:
 
 ```sh
-gregale deploy status ATTEMPT_ID
-gregale deploy contract ATTEMPT_ID
+gregale release attempt get ATTEMPT_ID
+gregale release contract run ATTEMPT_ID
 ```
 
 Cleanup waits for expired retained versions and code pins, drained work, and old
@@ -1082,7 +1082,7 @@ checks the configured paths, not every SQL operation or externally managed work.
 
 ### Roll forward after failed or uncertain cleanup
 
-Inspect `gregale deploy status FAILED_ATTEMPT` and its cleanup task logs. Establish
+Inspect `gregale release attempt get FAILED_ATTEMPT` and its cleanup task logs. Establish
 that the original execution has stopped, inspect actual database state, and repair
 SQL explicitly if necessary. Keep that private operational evidence outside the
 deploy journal. An unknown task exit remains unknown after recovery.
@@ -1098,7 +1098,7 @@ instances to drain.
 Then record incident closure:
 
 ```bash
-gregale deploy resolve-contract FAILED_ATTEMPT \
+gregale release contract resolve FAILED_ATTEMPT \
   --replacement-attempt REPAIR_ATTEMPT \
   --database-state-checked --execution-quiescent \
   --evidence-hash SHA256_OF_PRIVATE_EVIDENCE
@@ -1173,7 +1173,7 @@ Use the existing environment promotion command to transfer a tested artifact and
 its pinned non-secret variables together:
 
 ```sh
-gregale projects environments promote my-project --from staging --to production --sync-config --yes --wait
+gregale environment promote my-project --from staging --to production --sync-config --yes --wait
 ```
 
 Both environments must have complete active HTTP release graphs. The preview
@@ -1207,8 +1207,8 @@ Both environments need active complete HTTP graphs, pinned configuration and
 at least 21 minutes of revision retention; at most five project probes apply.
 
 ```bash
-gregale projects environments preview shop --from staging --to production --sync-config --verify
-gregale projects environments promote shop --from staging --to production --sync-config --verify --yes --wait --progress --timeout 25m
+gregale environment preview shop --from staging --to production --sync-config --verify
+gregale environment promote shop --from staging --to production --sync-config --verify --yes --wait --progress --timeout 25m
 ```
 
 The server returns an accepted running operation. Two complete healthy rounds,
@@ -1217,7 +1217,7 @@ and configuration then cut over atomically, followed by two new healthy rounds
 before success. Probe requests preserve destination scope and customer auth.
 Use a dependency-checking application endpoint to test database access.
 
-Inspect `gregale projects environments status shop PROMOTION_ID --to production`
+Inspect `gregale environment status shop PROMOTION_ID --to production`
 for phase, verdict, deadline and bounded probe counts in JSON. Missing results,
 authentication failures and unexpected HTTP responses remain unknown health.
 Preflight has a ten-minute deadline and leaves the previous release active on
@@ -1251,8 +1251,8 @@ After native qualification, operators may enable
 Preview and submit with:
 
 ```sh
-gregale projects environments preview shop --from staging --to production --sync-config --verify --migrate
-gregale projects environments promote shop --from staging --to production --sync-config --verify --migrate --yes --wait --timeout 35m
+gregale environment preview shop --from staging --to production --sync-config --verify --migrate
+gregale environment promote shop --from staging --to production --sync-config --verify --migrate --yes --wait --timeout 35m
 ```
 
 `--migrate` explicitly asserts that the source release's single declared
@@ -1288,7 +1288,7 @@ SQL. Read the current health generation with `projects environments status`.
 If the expected expansion is present and compatible with both releases:
 
 ```sh
-gregale projects environments recover-migration shop PROMOTION_ID --to production \
+gregale environment recover-migration shop PROMOTION_ID --to production \
   --action resume --task-id TASK_ID --generation GENERATION \
   --database-state-checked --schema-compatible --evidence-sha256 EVIDENCE_SHA256 --wait
 ```
@@ -1304,7 +1304,7 @@ release without another migration, then complete a normal verified promotion int
 the same destination. Close the old incident against that repair promotion:
 
 ```sh
-gregale projects environments recover-migration shop PROMOTION_ID --to production \
+gregale environment recover-migration shop PROMOTION_ID --to production \
   --action resolve --replacement-promotion REPAIR_PROMOTION_ID \
   --task-id TASK_ID --generation GENERATION --database-state-checked \
   --evidence-sha256 EVIDENCE_SHA256 --wait
@@ -1333,8 +1333,8 @@ promotion health gate. Promote a complete pinned release containing HTTP service
 and existing production push-queue workers:
 
 ```sh
-gregale projects environments preview shop --from staging --to production --sync-config --verify --workers
-gregale projects environments promote shop --from staging --to production --sync-config --verify --workers --yes --wait
+gregale environment preview shop --from staging --to production --sync-config --verify --workers
+gregale environment promote shop --from staging --to production --sync-config --verify --workers --yes --wait
 ```
 
 Each production worker keeps its queue binding, consumer policy and credentials.
@@ -1379,14 +1379,14 @@ The admission flag defaults off pending native qualification. See
 
 ### Abort or recover an environment promotion
 
-Inspect `gregale projects environments status PROJECT PROMOTION --to ENV` for the
+Inspect `gregale environment status PROJECT PROMOTION --to ENV` for the
 health generation and available operator action. For a health-gated HTTP promotion,
 including supported production push workers:
 
 ```bash
-gregale projects environments abort shop PROMOTION_ID --to production --generation 7 --wait
+gregale environment abort shop PROMOTION_ID --to production --generation 7 --wait
 # After a blocked restoration and dependency repair, inspect status again:
-gregale projects environments recover shop PROMOTION_ID --to production --generation 12 --wait
+gregale environment recover shop PROMOTION_ID --to production --generation 12 --wait
 ```
 
 Before cutover, abort keeps the destination graph/configuration selected, retires
@@ -1451,7 +1451,7 @@ For a complete HTTP project, stage a destination-only secret rotation while
 promoting the tested artifacts:
 
 ```sh
-gregale projects environments promote shop \
+gregale environment promote shop \
   --from staging --to production --sync-config --verify --yes \
   --release-secrets-file production.json --wait
 ```

@@ -268,9 +268,9 @@ written to stdout, JSON output, or logs. Manage an existing compute binding
 from the CLI with:
 
 ```sh
-gregale bindings object-storage list my-api assets
-gregale bindings object-storage rotate my-api assets BINDING_ID --wait
-gregale bindings object-storage revoke my-api assets BINDING_ID
+gregale app binding object-storage list my-api assets
+gregale app binding object-storage rotate my-api assets BINDING_ID --wait
+gregale app binding object-storage revoke my-api assets BINDING_ID
 ```
 
 The bucket argument accepts its name or ID. The list command prints the
@@ -650,7 +650,7 @@ continuation markers. Resume using both returned markers. Listing requires a
 bucket read grant and request-budget admission.
 
 ```sh
-gregale bucket versions list <app> <bucket-id> --prefix 'reports/' --limit 100 --json
+gregale bucket version list <app> <bucket-id> --prefix 'reports/' --limit 100 --json
 gregale bucket download <app> <bucket-id> 'reports/report.txt' ./old-report.txt --version-id <public-version-id>
 ```
 
@@ -1446,10 +1446,10 @@ gregale bucket upload <app> <bucket-id> <key> <file> --content-type text/plain
 gregale bucket upload <app> <bucket-id> <key> <file> --resume <upload-id>
 gregale bucket download <app> <bucket-id> <key> <file>
 gregale bucket download <app> <bucket-id> <key> <file> --force
-gregale bucket uploads list <app> <bucket-id>
-gregale bucket uploads status <app> <bucket-id> <upload-id>
-gregale bucket uploads parts <app> <bucket-id> <upload-id>
-gregale usage object-storage
+gregale bucket multipart list <app> <bucket-id>
+gregale bucket multipart get <app> <bucket-id> <upload-id>
+gregale bucket multipart parts <app> <bucket-id> <upload-id>
+gregale billing usage object-storage
 ```
 
 Transfers stream regular files with a default thirty-minute deadline. Uploads
@@ -1595,9 +1595,9 @@ For buckets using tracked branded S3 PUTs/copies, S3 application upload routes o
 multipart completion, request an inventory and capacity reconciliation after deleting or shrinking objects:
 
 ```sh
-gregale bucket reconcile start <app> <bucket-id>
-gregale bucket reconcile status <app> <bucket-id> <job-id>
-gregale bucket reconcile cancel <app> <bucket-id> <job-id>
+gregale bucket inventory start <app> <bucket-id>
+gregale bucket inventory get <app> <bucket-id> <job-id>
+gregale bucket inventory cancel <app> <bucket-id> <job-id>
 ```
 
 The API equivalents are `POST /v1/apps/{slug}/buckets/{bucket}/capacity-reconciliations`
@@ -1751,7 +1751,7 @@ Use an owned public version UUID from ListObjectVersions or a write response:
 ```sh
 aws --endpoint-url "$GREGALE_S3_ENDPOINT" s3api delete-object \
   --bucket assets --key hello.txt --version-id <public-version-id>
-gregale bucket version-delete <app> <bucket-id> hello.txt <public-version-id>
+gregale bucket version delete <app> <bucket-id> hello.txt <public-version-id>
 ```
 
 The control endpoint is
@@ -1775,7 +1775,7 @@ DELETE, MFA and retention-bypass directives fail explicitly. Mutable `null`
 deletion and ordinary DELETE creating a marker use the durable
 admission/recovery implementation, including coordination with versioning changes.
 
-Acknowledged deletion leaves capacity reserved. Run `gregale bucket reconcile
+Acknowledged deletion leaves capacity reserved. Run `gregale bucket inventory
 start <app> <bucket-id>` to reclaim it through a verified all-version inventory.
 See [ADR-546](adr/546-immutable-s3-version-deletion.md) and
 [ADR-548](adr/548-immutable-deletion-inventory-coordination.md).
@@ -1784,8 +1784,8 @@ Durable ordinary, null and immutable deletion uses `POST
 /v1/apps/{slug}/buckets/{bucket}/objects/deletions` with an `id` UUID, `key`, and
 optional `version_id` set to `"null"` or an owned public version UUID. Reuse the same ID and payload for retries; read
 progress with `GET .../objects/deletions/{id}`. The CLI exposes
-`gregale bucket deletions start <app> <bucket-id> <key> <request-id> [version-id|null]`
-and `gregale bucket deletions status <app> <bucket-id> <request-id>`.
+`gregale bucket deletion create <app> <bucket-id> <key> <request-id> [version-id|null]`
+and `gregale bucket deletion get <app> <bucket-id> <request-id>`.
 S3 provider credentials must allow versioning discovery and deletion, plus
 version listing for Enabled marker preparation and recovery. See the
 [versioning API](https://docs.aws.amazon.com/AmazonS3/latest/API/API_GetBucketVersioning.html)
@@ -2050,12 +2050,12 @@ and [ADR-557](adr/557-branded-object-url-capabilities.md).
 
 ### Bucket default encryption
 
-Use `gregale bucket encryption status <app> <bucket-id>` to read the desired
+Use `gregale bucket encryption set status <app> <bucket-id>` to read the desired
 and verified default. Configure AES256 with
-`gregale bucket encryption AES256 <app> <bucket-id>`, or KMS with
-`gregale bucket encryption aws:kms <app> <bucket-id> <owned-key-ref> [true|false]`.
+`gregale bucket encryption set AES256 <app> <bucket-id>`, or KMS with
+`gregale bucket encryption set aws:kms <app> <bucket-id> <owned-key-ref> [true|false]`.
 `aws:kms:dsse` accepts an owned key reference without a bucket-key option.
-`gregale bucket encryption clear <app> <bucket-id>` removes the owned override.
+`gregale bucket encryption set clear <app> <bucket-id>` removes the owned override.
 The control API exposes GET, PUT and DELETE at
 `/v1/apps/{slug}/buckets/{bucket}/encryption`, with typed Go, Node and Python
 clients. Management requires `storage:manage` and matching bucket write
@@ -2166,11 +2166,11 @@ Go, Node and Python clients expose the capability, status and configuration
 methods. CLI examples:
 
 ```sh
-gregale bucket object-lock capabilities <app> <bucket-id>
-gregale bucket object-lock enable <app> <bucket-id>
-gregale bucket object-lock COMPLIANCE <app> <bucket-id> --days 7 --event-years 1
-gregale bucket object-lock status <app> <bucket-id>
-gregale bucket object-lock clear-default <app> <bucket-id>
+gregale bucket object-lock set capabilities <app> <bucket-id>
+gregale bucket object-lock set enable <app> <bucket-id>
+gregale bucket object-lock set COMPLIANCE <app> <bucket-id> --days 7 --event-years 1
+gregale bucket object-lock set status <app> <bucket-id>
+gregale bucket object-lock set clear-default <app> <bucket-id>
 ```
 
 [ADR-584](adr/584-durable-object-version-protection.md) adds the per-version
