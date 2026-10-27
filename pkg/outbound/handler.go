@@ -526,7 +526,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if aiPlan != nil && aiPlan.endpoint.billable() && batch == nil && realtime == realtimeNone {
 		aiCall = newAICallContext(ctx, requestTimeout, time.Now())
 		defer aiCall.Close()
-		ctx = aiCall
+		ctx = aiCall //nolint:contextcheck // aiCall is derived from ctx through context.WithDeadline and WithCancelCause.
 		defer h.renewAILease(integration.ID, decision.LeaseID, requestTimeout)()
 	} else if requestTimeout > 0 {
 		var cancel context.CancelFunc
