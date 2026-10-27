@@ -5149,7 +5149,7 @@ gregale app my-api --environment staging --ram 512
 
 Check serving health and readiness
 
-`gregale app <slug> health [--check] [--wait] [--timeout <DURATION>] [--poll-interval <DURATION>] [--history] [--limit <N>] [--before <CURSOR>] [--environment <SLUG>]`
+`gregale app <slug> health [--check] [--wait] [--timeout <DURATION>] [--poll-interval <DURATION>] [--history] [--limit <N>] [--before <CURSOR>] [--environment <SLUG>] [--explain] [--errors]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -5161,6 +5161,8 @@ Check serving health and readiness
 | `--limit <N>` | history page size |  |
 | `--before <CURSOR>` | history cursor |  |
 | `--environment <SLUG>` | assess this project environment instead of the default scope; excludes history options |  |
+| `--explain` | explain health from runtime, release, data and scaling (what inspect shows); stands alone |  |
+| `--errors` | explain the latest failed deployment (what inspect --errors shows); stands alone |  |
 
 Examples:
 
