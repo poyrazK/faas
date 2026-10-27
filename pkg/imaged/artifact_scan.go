@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path"
@@ -121,6 +122,15 @@ func (h *Handler) runProducedComponentScan(ctx context.Context, app state.App, d
 }
 
 func (h *Handler) readProducedArtifactScan(ctx context.Context, be storage.StorageBackend, expected scanArtifactTarget) (*ScanResult, string) {
+	result, failure, err := h.scanProducedArtifact(ctx, be, expected)
+	if failure != "" && h.log != nil {
+		// The failure alone is stored; a fail-closed artifact must also say why.
+		h.log.Warn("imaged: produced artifact scan failed", "key", expected.StorageKey, "failure", failure, "err", err)
+	}
+	return result, failure
+}
+
+func (h *Handler) scanProducedArtifact(ctx context.Context, be storage.StorageBackend, expected scanArtifactTarget) (*ScanResult, string, error) {
 	// Stage under the temp dir, not the apps root: the imaged units run with
 	// ProtectSystem=strict, never list the apps root as writable, and on
 	// production nodes it does not exist. Every produced scan failed with
@@ -130,22 +140,33 @@ func (h *Handler) readProducedArtifactScan(ctx context.Context, be storage.Stora
 	path, cleanup, err := stageProducedScanArtifact(ctx, be, os.TempDir(), expected)
 	if err != nil {
 		if errors.Is(err, errScanArtifactMismatch) {
-			return nil, "artifact_mismatch"
+			return nil, "artifact_mismatch", err
 		}
-		return nil, "artifact_read"
+		return nil, "artifact_read", err
 	}
 	defer cleanup()
 	result, err := h.runGrype(ctx, path)
 	if err != nil {
-		return nil, "scanner_unavailable"
+		return nil, "scanner_unavailable", err
 	}
 	if result == nil || result.ScannerName != "grype" || result.Error != "" || result.ScannedAt != "" {
-		return nil, "scanner_invalid"
+		return nil, "scanner_invalid", fmt.Errorf("unexpected scan result %+v", scanResultSummary(result))
 	}
-	if checkStagedScanArtifact(ctx, path, expected) != nil || checkStoredScanArtifact(ctx, be, expected) != nil {
-		return nil, "artifact_mismatch"
+	if err := checkStagedScanArtifact(ctx, path, expected); err != nil {
+		return nil, "artifact_mismatch", err
 	}
-	return result, ""
+	if err := checkStoredScanArtifact(ctx, be, expected); err != nil {
+		return nil, "artifact_mismatch", err
+	}
+	return result, "", nil
+}
+
+// scanResultSummary names what made a scan result invalid, without its findings.
+func scanResultSummary(result *ScanResult) map[string]string {
+	if result == nil {
+		return map[string]string{"result": "nil"}
+	}
+	return map[string]string{"scanner": result.ScannerName, "error": result.Error, "scanned_at": result.ScannedAt}
 }
 
 func (h *Handler) publishCompleteArtifactScan(ctx context.Context, app state.App, dep state.Deployment, in state.DeploymentArtifactScanInput, result *ScanResult) (bool, error) {
