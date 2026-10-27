@@ -37,7 +37,7 @@ func TestGitHubDeploys(t *testing.T) {
 	s := newStory(t)
 
 	s.step("bind", func(t *testing.T) {
-		tg.ok(t, 2*time.Minute, "github", "bind", slug, "--repo", repo, "--branch", "main")
+		tg.ok(t, 2*time.Minute, "github", "bind", slug, "--repo", repo, "--branch", "main", "--deploy-branches", "main=default")
 		eventually(t, "the binding is healthy", 2*time.Minute, 5*time.Second, func() (bool, string) {
 			res := tg.run(t, time.Minute, "github", "status", slug)
 			return res.exit == 0 && strings.Contains(string(res.stdout), repo), res.problem() + tail(string(res.stdout), 300)

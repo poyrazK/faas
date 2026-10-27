@@ -219,7 +219,8 @@ func TestDeployOverrides(t *testing.T) {
 // TestImageRegistryAndDeployTokens deploys a digest-pinned public image
 // without a build (row 4), manages a private-registry credential on it
 // without exposing the secret (row 15), and mints a per-app deploy token,
-// deploys with it and revokes it (row 13).
+// publishes the image with it the way CI does (image-published deployment,
+// row 4) and revokes it (row 13).
 func TestImageRegistryAndDeployTokens(t *testing.T) {
 	tg := needs(t, tierFull, true)
 	t.Parallel()
@@ -287,10 +288,12 @@ func TestImageRegistryAndDeployTokens(t *testing.T) {
 		if token == "" || id == "" {
 			t.Fatalf("deploy token response has no plaintext or id: %s", tg.redact(compact(doc)))
 		}
-		res := tg.exec(t, token, t.TempDir(), deployLimit+5*time.Minute, "deploy", "--name", slug, "--image", probeImage,
-			"--wait", "--timeout", deployLimit.String(), "--yes", "--no-require-authn", "--reason", "e2e-journeys deploy token")
+		// The documented CI flow (docs/image-published-deployments.md):
+		// publish the declared image digest with the app's deploy token.
+		res := tg.exec(t, token, t.TempDir(), deployLimit+5*time.Minute, "registry", "published",
+			"--app", slug, "--image", probeImage, "--wait")
 		if res.exit != 0 {
-			t.Fatalf("deploy with the app's deploy token: %s", res.problem())
+			t.Fatalf("registry published with the app's deploy token: %s", res.problem())
 		}
 		if other := tg.runAs(t, token, time.Minute, "apps"); other.exit == 0 {
 			t.Errorf("a deploy token could list the account's apps")
@@ -299,9 +302,8 @@ func TestImageRegistryAndDeployTokens(t *testing.T) {
 			t.Fatalf("revoke deploy token: %s", d)
 		}
 		eventually(t, "revoked deploy token refused", time.Minute, 3*time.Second, func() (bool, string) {
-			res := tg.exec(t, token, t.TempDir(), 2*time.Minute, "deploy", "--name", slug, "--image", probeImage,
-				"--no-wait", "--yes", "--no-require-authn", "--reason", "e2e-journeys revoked token")
-			return res.exit != 0, "revoked token still deploys"
+			res := tg.exec(t, token, t.TempDir(), 2*time.Minute, "registry", "published", "--app", slug, "--image", probeImage)
+			return res.exit != 0, "revoked token still publishes"
 		})
 	})
 }
