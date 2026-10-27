@@ -15502,6 +15502,11 @@ const (
 	WorkerRecoveryFailureCountMax         = 32
 	WorkerRecoveryConcurrentApps          = 8
 	WorkerRecoveryBatchSize               = 32
+	// A boot refused for a reason that repeats until the revision changes
+	// (execution mode conflict, wrong architecture, loopback bind,
+	// stateless-only violation) retries this rarely instead of every 300 s.
+	// A new deployment or configuration resets it at once (Hunt 14 H14-98).
+	WorkerRecoveryDeterministicRefusalHoldSeconds = 3600
 )
 
 // Pipeline limits are intentionally separate from Data API request limits.

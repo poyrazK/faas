@@ -899,6 +899,7 @@ func MarkPreWakeForTest(ctx context.Context) {
 }
 
 var LogVMMBootFailure = logVMMBootFailure
+var WorkerRecoveryRetryDelay = workerRecoveryRetryDelay
 
 // XRunCronHistoryRetention runs the hourly cron history sweep once.
 func (l *Loop) XRunCronHistoryRetention(ctx context.Context) { l.runCronHistoryRetention(ctx) }
