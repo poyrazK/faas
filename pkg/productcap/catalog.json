@@ -2981,6 +2981,9 @@
       "docs_url": "/docs/adr/20261018083536-customer-log-search",
       "operator_flag": "FAAS_LOG_SEARCH_ENABLED",
       "acceptance_test": "pkg/apid/logsearch/service_test.go::TestSearchPagesNewestFirst",
+      "consumers": [
+        "meterd"
+      ],
       "routes": [
         "/dashboard/apps/{}/log-search",
         "/v1/apps/{}/log-events",
