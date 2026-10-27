@@ -319,7 +319,7 @@ func unknownSubcommandChoices(w io.Writer, path string, command cliCommand, got 
 // refuses: `app h14-py idle` listed security, network and static-egress-ip on
 // production-us rc.297 (Hunt 14 H14-89).
 func visibleSubcommands(path string, command cliCommand) cliCommand {
-	view := discoveryCapabilityView()
+	view := offlineCapabilityView()
 	subs := make([]cliSub, 0, len(command.Subcommands))
 	for _, sub := range command.Subcommands {
 		if !view.hidesPath(path + " " + sub.Name) {
