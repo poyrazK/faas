@@ -171,7 +171,7 @@ func TestCapEnforcerSweep(t *testing.T) {
 		}
 		ceilings := map[string]int64{"acct-a": 18000, "acct-b": 18000, "acct-c": 18000, "acct-f": 18000}
 		enforcer, err := NewCapEnforcer(registry, store, CapEnforcerOptions{
-			Mode: mode, Now: func() time.Time { return now },
+			Mode: mode, Now: func() time.Time { return now }, Qualification: testCapQualification(backend),
 			Ceiling: func(_ context.Context, accountID string) (int64, error) { return ceilings[accountID], nil },
 		})
 		if err != nil {

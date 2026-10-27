@@ -8,7 +8,7 @@
 # VARS_FILE (created when missing).
 #
 #   control-plane  identities of the domains read there (outbound, source,
-#                  alerting, storage, control, delivery)
+#                  alerting, storage, control, delivery, account)
 #                  and the recipient of every domain (apid seals to it)
 #   compute        identities of the domains read there (runtime, build, edge,
 #                  control, delivery)
@@ -55,7 +55,7 @@ stage() { # KIND DOMAIN VALUE
   added+="faas_seal_domain_${domain}_${kind}_src: \"$file\""$'\n'
 }
 
-for domain in outbound source alerting storage control delivery runtime build edge; do
+for domain in outbound source alerting storage control delivery account runtime build edge; do
   upper=$(printf '%s' "$domain" | tr '[:lower:]' '[:upper:]')
   key_var="SEAL_DOMAIN_${upper}_AGE_KEY"
   pub_var="SEAL_DOMAIN_${upper}_AGE_RECIPIENT"
@@ -76,7 +76,7 @@ for domain in outbound source alerting storage control delivery runtime build ed
     control-plane/runtime | control-plane/build | control-plane/edge)
       stage recipient "$domain" "$pub"
       ;;
-    compute/runtime | compute/build | compute/edge | compute/control | compute/delivery | control-plane/control)
+    compute/runtime | compute/build | compute/edge | compute/control | compute/delivery | control-plane/control | control-plane/account)
       stage identity "$domain" "$key"
       ;;
   esac

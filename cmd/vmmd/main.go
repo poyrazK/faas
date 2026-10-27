@@ -1263,14 +1263,24 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	}
 	// ADR-1151 quiet pause: pause eligible instances between requests. schedd
 	// marks which instances are eligible; this flag lets an operator keep
-	// the whole node out of it.
-	if cfg.QuietPause {
+	// the whole node out of it. Observe mode measures the pauses instead of
+	// making them.
+	if cfg.QuietPause || cfg.QuietPauseObserve {
+		observe := !cfg.QuietPause
+		if cfg.QuietPause && cfg.QuietPauseObserve {
+			log.Warn("quiet_pause_observe ignored: quiet_pause is on and pauses instances")
+		}
 		mgr.WithQuietPause(fcvm.QuietPauseConfig{
 			Activity: activityTracker,
 			Metrics:  fcvm.NewQuietPauseMetrics(ops.Registry()),
+			Observe:  observe,
 		})
 		go mgr.RunQuietPause(ctx)
-		log.Info("quiet pause enabled (ADR-1151)")
+		if observe {
+			log.Info("quiet pause observe mode enabled (ADR-1151): measuring would-be pauses, pausing nothing")
+		} else {
+			log.Info("quiet pause enabled (ADR-1151)")
+		}
 	}
 	// ADR-1151 frozen tier: nothing is frozen until schedd calls
 	// FreezeInstance. The activity tracker lets a freeze refuse an instance

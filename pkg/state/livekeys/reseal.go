@@ -35,7 +35,7 @@ func (s *Store) SealedKeysAfter(ctx context.Context, after string, limit int) ([
 // key.Blob. It reports false when the key was rotated, revoked or re-sealed
 // meanwhile, and leaves the row as it is.
 func (s *Store) ResealKey(ctx context.Context, key Sealed, blob []byte) (bool, error) {
-	n, err := s.q.ResealLiveKey(ctx, s.pool, sqlc.ResealLiveKeyParams{SealedSecret: blob, Kid: key.ID, DatabaseID: key.DatabaseID, Previous: key.Blob})
+	n, err := s.q.ResealLiveKey(ctx, s.pool, sqlc.ResealLiveKeyParams{SealedSecret: blob, Kid: key.ID, DatabaseID: key.DatabaseID, Previous: key.Blob, Recipient: key.Recipient})
 	if err != nil {
 		return false, fmt.Errorf("livekeys: re-seal live key: %w", err)
 	}
@@ -59,7 +59,7 @@ func (s *Store) SealedLoginsAfter(ctx context.Context, after string, limit int) 
 // ResealLogin replaces login's seal with blob, only while the row still holds
 // login.Blob; see ResealKey.
 func (s *Store) ResealLogin(ctx context.Context, login Sealed, blob []byte) (bool, error) {
-	n, err := s.q.ResealLiveLogin(ctx, s.pool, sqlc.ResealLiveLoginParams{SealedLogin: blob, DatabaseID: login.DatabaseID, Previous: login.Blob})
+	n, err := s.q.ResealLiveLogin(ctx, s.pool, sqlc.ResealLiveLoginParams{SealedLogin: blob, DatabaseID: login.DatabaseID, Previous: login.Blob, Recipient: login.Recipient})
 	if err != nil {
 		return false, fmt.Errorf("livekeys: re-seal live login: %w", err)
 	}

@@ -239,9 +239,11 @@ func PersonalContext(ctx context.Context, store interface {
 
 // DeleteOrganization closes the organization only after provider cleanup. The
 // production trigger serializes this check with database reservations.
+// beforeDelete, when set, runs after the database check and immediately before
+// the organization closes; its problem keeps the organization open.
 func DeleteOrganization(ctx context.Context, store interface {
 	SoftDeleteOrg(context.Context, string) error
-}, service *managedpostgres.Service, org state.Org) *api.Problem {
+}, service *managedpostgres.Service, org state.Org, beforeDelete func(context.Context) *api.Problem) *api.Problem {
 	if service != nil {
 		rows, err := service.List(managedpostgres.WithOwnership(ctx, org.ID, org.ID), org.ID)
 		if err != nil {
@@ -249,6 +251,11 @@ func DeleteOrganization(ctx context.Context, store interface {
 		}
 		if len(rows) > 0 {
 			return organizationHasDatabases()
+		}
+	}
+	if beforeDelete != nil {
+		if problem := beforeDelete(ctx); problem != nil {
+			return problem
 		}
 	}
 	if err := store.SoftDeleteOrg(ctx, org.ID); err != nil {

@@ -1344,6 +1344,9 @@ type MemStore struct {
 	// CreateComputeNode to exercise the single-box path. Production
 	// (PgStore) gets the same row from migrations/00024_compute_nodes.
 	computeNodes map[string]ComputeNode
+	// edgeListenerHeartbeats mirrors compute_nodes.edge_listener_heartbeat_at,
+	// keyed by node name; nil until a gateway first reports.
+	edgeListenerHeartbeats map[string]time.Time
 	// computeNodeKeys is the in-memory mirror of compute_node_keys
 	// (migration 00076, ADR-053). Keyed by (nodeID, keyID) tuple
 	// joined by a NUL so the composite key stays string-typed for
@@ -28668,6 +28671,9 @@ func (m *MemStore) ReplayDeadLetterEventForAccount(_ context.Context, accountID,
 		if ev.ID != eventID {
 			continue
 		}
+		if ev.ReplayedAt == nil && !DeadLetterReplayable(ev.Source) {
+			return DeadLetterEvent{}, ErrDeadLetterNotReplayable
+		}
 		if ev.AppID != "" {
 			return m.replayDeadLetterEventLocked(accountID, ev.AppID, eventID)
 		}
@@ -28687,7 +28693,7 @@ func (m *MemStore) ReplayDeadLetterEventsForAccount(_ context.Context, accountID
 	}
 	replayed := 0
 	for _, ev := range m.deadLetterEventsForAccountLocked(accountID) {
-		if replayed >= limit || ev.ReplayedAt != nil {
+		if replayed >= limit || ev.ReplayedAt != nil || !DeadLetterReplayable(ev.Source) {
 			continue
 		}
 		var err error
@@ -28850,6 +28856,8 @@ func (m *MemStore) replayDeadLetterEventLocked(accountID, appID, eventID string)
 		run.FinishedAt = nil
 		run.UpdatedAt = now
 		m.workflowRuns[run.ID] = run
+	case DeadLetterSourceEventRoute:
+		return DeadLetterEvent{}, ErrDeadLetterNotReplayable
 	default:
 		return DeadLetterEvent{}, ErrNotFound
 	}
@@ -28915,7 +28923,7 @@ func (m *MemStore) ReplayDeadLetterEvents(_ context.Context, accountID, appID st
 	events := m.deadLetterEventsLocked(appID)
 	replayed := 0
 	for _, ev := range events {
-		if replayed >= limit || ev.AccountID != accountID || ev.ReplayedAt != nil {
+		if replayed >= limit || ev.AccountID != accountID || ev.ReplayedAt != nil || !DeadLetterReplayable(ev.Source) {
 			continue
 		}
 		if _, err := m.replayDeadLetterEventLocked(accountID, appID, ev.ID); err != nil {

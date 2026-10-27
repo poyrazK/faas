@@ -21,10 +21,15 @@ T = TypeVar("T", bound="DeadLetterEvent")
 
 @_attrs_define
 class DeadLetterEvent:
-    """One unified queue invocation, broker trigger, outbound webhook, job run, or workflow run dead-letter event."""
+    """One unified queue invocation, broker trigger, outbound webhook, job run, workflow run, or event routing failure
+    dead-letter event.
+
+    """
 
     id: str
     source: DeadLetterEventSource
+    """event_route is an event recipient whose routing failed and whose receipt was pruned; payload is the
+    published envelope, error_kind the failure_code, and it cannot be replayed."""
     source_id: str
     payload: DeadLetterEventPayload
     headers: DeadLetterEventHeaders

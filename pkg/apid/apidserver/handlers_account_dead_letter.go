@@ -96,9 +96,10 @@ func (a *deadLetterAccess) visibleEvent(ctx context.Context, eventID string) (st
 }
 
 // visibleEvents pages the account's dead letters and returns up to limit this
-// principal may see (only unreplayed ones when unreplayed is set). Collecting
-// before acting keeps the keyset cursor on rows a purge has not removed.
-func (a *deadLetterAccess) visibleEvents(ctx context.Context, limit int, unreplayed bool) ([]state.DeadLetterEvent, error) {
+// principal may see (only ones replay can redrive when replayable is set).
+// Collecting before acting keeps the keyset cursor on rows a purge has not
+// removed.
+func (a *deadLetterAccess) visibleEvents(ctx context.Context, limit int, replayable bool) ([]state.DeadLetterEvent, error) {
 	var out []state.DeadLetterEvent
 	before := ""
 	for range deadLetterAccountScanPages {
@@ -107,7 +108,7 @@ func (a *deadLetterAccess) visibleEvents(ctx context.Context, limit int, unrepla
 			return nil, err
 		}
 		for _, ev := range page {
-			if unreplayed && ev.ReplayedAt != nil {
+			if replayable && (ev.ReplayedAt != nil || !state.DeadLetterReplayable(ev.Source)) {
 				continue
 			}
 			if ok, err := a.visible(ctx, ev.AppID); err != nil {
@@ -209,7 +210,7 @@ func (s *server) replayAccountDeadLetterEvent(w http.ResponseWriter, r *http.Req
 			api.WriteProblem(w, accountDeadLetterNotFound(eventID))
 			return
 		}
-		s.ops.ObserveDLQReplay("account", "error")
+		s.ops.ObserveDLQReplay("account", deadLetterReplayFailure(err))
 		api.WriteProblem(w, appevents.EventDeliveryReplayProblem(err, "account dead-letter replay"))
 		return
 	}

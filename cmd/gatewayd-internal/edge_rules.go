@@ -78,14 +78,18 @@ type edgeRuleStore interface {
 // parse time (gateway_edge_rule_compile_error_total{kind}). nil
 // is safe — the compile helpers guard before incrementing.
 type gatewaydEdgeRules struct {
-	loadMu           sync.Mutex
-	loads            map[edgeLoadKey]chan struct{}
-	loadFailedUntil  map[string]time.Time // guarded by loadMu
-	clock            func() time.Time     // nil = time.Now (tests inject)
-	fenceMu          sync.Mutex
-	fences           map[edgeRuleFenceKey]edgeRuleFence
+	loadMu          sync.Mutex
+	loads           map[edgeLoadKey]chan struct{}
+	loadFailedUntil map[string]time.Time // guarded by loadMu
+	clock           func() time.Time     // nil = time.Now (tests inject)
+	fenceMu         sync.RWMutex
+	fences          map[edgeRuleFenceKey]edgeRuleFence
+	// fenceCount is len(fences), read without fenceMu so a request skips
+	// the fence scan while no mutation is converging.
+	fenceCount       atomic.Int64
 	store            edgeRuleStore
 	cache            *gateway.EdgeRuleCache
+	ownerSets        *edgeRuleOwnerSets
 	log              *slog.Logger
 	validate         validateCompiler
 	metrics          *gateway.Metrics
@@ -100,10 +104,20 @@ type gatewaydEdgeRules struct {
 }
 
 // edgeRuleFenceKey scopes a fence to the account whose mutation raised it;
-// an empty accountID applies to every app on a matching host.
+// an empty accountID applies to every app on a matching host. appID is set
+// only on an app-wide (@app) pattern, whose rules cover that app's hosts.
 type edgeRuleFenceKey struct {
 	pattern   string
 	accountID string
+	appID     string
+}
+
+func newEdgeRuleFenceKey(pattern, accountID, appID string) edgeRuleFenceKey {
+	key := edgeRuleFenceKey{pattern: strings.ToLower(strings.TrimSpace(pattern)), accountID: accountID}
+	if accountID != "" && api.IsEdgeRuleAppHosts(key.pattern) {
+		key.appID = appID
+	}
+	return key
 }
 
 type edgeRuleFence struct {
@@ -111,7 +125,11 @@ type edgeRuleFence struct {
 	expiresAt  time.Time
 }
 
-const edgeRuleFenceTTL = 30 * time.Second
+// edgeRuleFenceTTL bounds how long a crashed apid holds a host. A live
+// mutation gets every prepare acknowledgement within 3 s
+// (edgerules.EdgeRuleConvergenceTimeout) and publishes apply right after its
+// commit, so a fence normally ends well inside this.
+const edgeRuleFenceTTL = 10 * time.Second
 
 // validateCompiler is the surface compileValidateRules needs from
 // the cmd-side adapter (cmd/gatewayd-internal/edge_validate.go).
@@ -138,100 +156,120 @@ type validateCompiler interface {
 // gatewayd-internal Prometheus registry via run.go).
 func newGatewaydEdgeRules(store edgeRuleStore, log *slog.Logger, validate validateCompiler, metrics *gateway.Metrics) *gatewaydEdgeRules {
 	return &gatewaydEdgeRules{
-		store:    store,
-		cache:    gateway.NewEdgeRuleCache(gateway.EdgeRuleCacheCap),
-		log:      log,
-		validate: validate,
-		metrics:  metrics,
-		fences:   make(map[edgeRuleFenceKey]edgeRuleFence),
+		store:     store,
+		cache:     gateway.NewEdgeRuleCache(gateway.EdgeRuleCacheCap),
+		ownerSets: newEdgeRuleOwnerSets(),
+		log:       log,
+		validate:  validate,
+		metrics:   metrics,
+		fences:    make(map[edgeRuleFenceKey]edgeRuleFence),
 	}
 }
 
 // BeginConvergence fences the supplied hosts before the policy write. A TTL
 // prevents a crashed apid from leaving a hostname unavailable indefinitely.
 // accountID is the mutating rule's owner; "" fences every app on the hosts.
-func (g *gatewaydEdgeRules) BeginConvergence(accountID string, hosts []string, generation int64) {
+// appID narrows an app-wide (@app) fence to that app's hosts.
+func (g *gatewaydEdgeRules) BeginConvergence(accountID, appID string, hosts []string, generation int64) {
 	if g == nil || generation <= 0 {
 		return
 	}
 	now := time.Now()
 	hosts = withCanonicalHostPatterns(hosts)
 	g.fenceMu.Lock()
+	defer g.fenceMu.Unlock()
 	for _, host := range hosts {
-		host = strings.ToLower(strings.TrimSpace(host))
-		if host == "" {
+		key := newEdgeRuleFenceKey(host, accountID, appID)
+		if key.pattern == "" {
 			continue
 		}
-		key := edgeRuleFenceKey{pattern: host, accountID: accountID}
 		current, ok := g.fences[key]
 		if !ok || generation >= current.generation {
 			g.fences[key] = edgeRuleFence{generation: generation, expiresAt: now.Add(edgeRuleFenceTTL)}
 		}
 	}
-	count, newest := edgeRuleFenceStats(g.fences)
-	g.fenceMu.Unlock()
-	g.publishConvergenceMetrics(count, newest)
+	g.fencesChangedLocked()
 }
 
 // EndConvergence releases only fences at or below this generation. A delayed
 // apply from an older mutation cannot remove a newer mutation's fence.
-func (g *gatewaydEdgeRules) EndConvergence(accountID string, hosts []string, generation int64) {
+func (g *gatewaydEdgeRules) EndConvergence(accountID, appID string, hosts []string, generation int64) {
 	if g == nil || generation <= 0 {
 		return
 	}
 	hosts = withCanonicalHostPatterns(hosts)
 	g.fenceMu.Lock()
+	defer g.fenceMu.Unlock()
 	for _, host := range hosts {
-		key := edgeRuleFenceKey{pattern: strings.ToLower(strings.TrimSpace(host)), accountID: accountID}
+		key := newEdgeRuleFenceKey(host, accountID, appID)
 		if current, ok := g.fences[key]; ok && current.generation <= generation {
 			delete(g.fences, key)
 		}
 	}
-	count, newest := edgeRuleFenceStats(g.fences)
-	g.fenceMu.Unlock()
-	g.publishConvergenceMetrics(count, newest)
+	g.fencesChangedLocked()
 }
 
-// Converging is the request-path fail-closed check. ownerAccountID is the
-// account owning the app the host resolved to ("" when no app claims it).
+// Converging is the request-path fail-closed check. ownerAccountID and
+// ownerAppID name the app the host resolved to ("" when no app claims it).
 // A fence only holds the owner's traffic: request-time matching ignores
 // another account's rules (OwnedEdgeRules), so that account's mutation —
 // even on match_host "*" — cannot change this host's policy and must not
 // 503 it. Unclaimed hosts and unscoped fences keep the fleet-wide hold.
-func (g *gatewaydEdgeRules) Converging(host, ownerAccountID string) bool {
-	if g == nil {
+func (g *gatewaydEdgeRules) Converging(host, ownerAccountID, ownerAppID string) bool {
+	if g == nil || g.fenceCount.Load() == 0 {
 		return false
 	}
 	host = strings.ToLower(strings.TrimSpace(host))
 	now := time.Now()
+	held, expired := false, false
+	g.fenceMu.RLock()
+	for key, fence := range g.fences {
+		if !now.Before(fence.expiresAt) {
+			expired = true
+			continue
+		}
+		if edgeRuleFenceHolds(key, host, ownerAccountID, ownerAppID) {
+			held = true
+			break
+		}
+	}
+	g.fenceMu.RUnlock()
+	if expired {
+		g.dropExpiredFences(now)
+	}
+	return held
+}
+
+func edgeRuleFenceHolds(key edgeRuleFenceKey, host, ownerAccountID, ownerAppID string) bool {
+	if ownerAccountID != "" && key.accountID != "" && key.accountID != ownerAccountID {
+		return false
+	}
+	if api.IsEdgeRuleAppHosts(key.pattern) {
+		// ADR-1191: an app-wide rule covers only hosts its app serves, so
+		// its fence never holds an unclaimed host or another app's host.
+		return ownerAccountID != "" && (key.appID == "" || ownerAppID == "" || key.appID == ownerAppID)
+	}
+	matched, err := path.Match(key.pattern, host)
+	return err == nil && matched
+}
+
+func (g *gatewaydEdgeRules) dropExpiredFences(now time.Time) {
 	g.fenceMu.Lock()
-	ok := false
+	defer g.fenceMu.Unlock()
 	for key, fence := range g.fences {
 		if !now.Before(fence.expiresAt) {
 			delete(g.fences, key)
-			continue
-		}
-		if ownerAccountID != "" && key.accountID != "" && key.accountID != ownerAccountID {
-			continue
-		}
-		if api.IsEdgeRuleAppHosts(key.pattern) {
-			// ADR-1191: an app-wide rule covers only hosts an app serves, so
-			// its fence never holds an unclaimed host. The account check
-			// above already skipped other accounts' hosts.
-			if ownerAccountID != "" {
-				ok = true
-			}
-			continue
-		}
-		matched, err := path.Match(key.pattern, host)
-		if err == nil && matched {
-			ok = true
 		}
 	}
+	g.fencesChangedLocked()
+}
+
+// fencesChangedLocked refreshes the request-path fence count and the
+// convergence gauges. The caller holds fenceMu for writing.
+func (g *gatewaydEdgeRules) fencesChangedLocked() {
 	count, newest := edgeRuleFenceStats(g.fences)
-	g.fenceMu.Unlock()
+	g.fenceCount.Store(int64(count))
 	g.publishConvergenceMetrics(count, newest)
-	return ok
 }
 
 func edgeRuleFenceStats(fences map[edgeRuleFenceKey]edgeRuleFence) (int, int64) {
@@ -320,9 +358,16 @@ func (g *gatewaydEdgeRules) loadHostUncached(ctx context.Context, host string) (
 // appliers drop every other account's rules anyway (OwnedEdgeRules), so
 // another tenant's "*" rules no longer ride along on every host's read. With
 // no owner (a request before host resolution), every account's rules covering
-// the host are read as before, and owner is "".
+// the host are read as before, and owner is "". The owner's rules come from
+// its cached rule set when it has one (ADR-091 amendment 2026-10-27).
 func (g *gatewaydEdgeRules) hostStoreRules(ctx context.Context, host string) ([]state.EdgeRule, string, error) {
 	owner, appID := gateway.EdgeRuleOwner(ctx), gateway.EdgeRuleApp(ctx)
+	if owner != "" {
+		rules, ok, err := g.ownerStoreRules(ctx, host, owner, appID)
+		if err != nil || ok {
+			return rules, owner, err
+		}
+	}
 	if store, ok := g.store.(state.OwnedEdgeRuleStore); ok && owner != "" {
 		rules, err := store.OwnedEdgeRulesForHost(ctx, host, owner, appID)
 		return rules, owner, err
@@ -1110,14 +1155,17 @@ func (g *gatewaydEdgeRules) Reset() {
 		return
 	}
 	g.cache.Reset()
+	g.dropOwnerSets("")
 }
 
 // InvalidateHosts drops only the hosts a mutation's match_host patterns cover.
+// The mutation's account is unknown, so every owner rule set goes.
 func (g *gatewaydEdgeRules) InvalidateHosts(patterns []string) {
 	if g == nil || g.cache == nil {
 		return
 	}
 	g.cache.InvalidateHosts(patterns)
+	g.dropOwnerSets("")
 }
 
 // InvalidateAccountHosts drops only the sets one account's mutation can have
@@ -1128,6 +1176,15 @@ func (g *gatewaydEdgeRules) InvalidateAccountHosts(accountID, appID string, patt
 		return
 	}
 	g.cache.InvalidateAccountHosts(accountID, appID, patterns)
+	g.dropOwnerSets(accountID)
+}
+
+// dropOwnerSets runs after the cache invalidation it belongs to: that moved
+// the cache generation, so a load still in flight cannot cache its set.
+func (g *gatewaydEdgeRules) dropOwnerSets(accountID string) {
+	if g.ownerSets != nil {
+		g.ownerSets.drop(accountID)
+	}
 }
 
 // warnPathGlobErrs logs every path-glob parse error the loader
@@ -1269,6 +1326,10 @@ func compileRedirectRules(storeRules []state.EdgeRule) ([]gateway.EdgeRuleRedire
 		if status == 0 {
 			status = 302 // http.StatusFound — pkg/api Validate already enforced the {301,302,307,308} set
 		}
+		if name := reservedRedirectHeader(r.Action.Redirect.Headers); name != "" {
+			parseErrs = append(parseErrs, gateway.PathGlobError{RuleID: r.ID, Glob: "header_op", Err: fmt.Errorf("header %q is reserved", name)})
+			continue
+		}
 		toTemplate, headerTemplates, err := compileRedirectTemplates(r.Action.Redirect)
 		if err != nil {
 			parseErrs = append(parseErrs, gateway.PathGlobError{RuleID: r.ID, Glob: "template", Err: err})
@@ -1321,12 +1382,12 @@ func compileHeadersRules(storeRules []state.EdgeRule) ([]gateway.EdgeRuleHeaders
 		}
 		requestOps, err := convertHeaderOps(r.Action.Headers.RequestHeaders)
 		if err != nil {
-			parseErrs = append(parseErrs, gateway.PathGlobError{RuleID: r.ID, Glob: "template", Err: err})
+			parseErrs = append(parseErrs, gateway.PathGlobError{RuleID: r.ID, Glob: "header_op", Err: err})
 			continue
 		}
 		responseOps, err := convertHeaderOps(r.Action.Headers.ResponseHeaders)
 		if err != nil {
-			parseErrs = append(parseErrs, gateway.PathGlobError{RuleID: r.ID, Glob: "template", Err: err})
+			parseErrs = append(parseErrs, gateway.PathGlobError{RuleID: r.ID, Glob: "header_op", Err: err})
 			continue
 		}
 		out = append(out, gateway.EdgeRuleHeadersResolved{
@@ -2536,13 +2597,17 @@ func buildMatchHeadersMap(headers map[string]string) map[string]string {
 // convertHeaderOps copies a []state.EdgeRuleHeaderOp into the
 // gateway-side subset type. Same shape; the cmd-side copies
 // instead of importing state from pkg/gateway (pkg/gateway keeps
-// zero-dep-on-pkg/state).
+// zero-dep-on-pkg/state). A reserved name drops the rule: rules saved
+// before apid compared names case-sensitively can still hold "host".
 func convertHeaderOps(in []state.EdgeRuleHeaderOp) ([]gateway.EdgeRuleHeaderOp, error) {
 	if len(in) == 0 {
 		return nil, nil
 	}
 	out := make([]gateway.EdgeRuleHeaderOp, len(in))
 	for i, op := range in {
+		if api.EdgeRuleHeaderNameForbidden(op.Name) {
+			return nil, fmt.Errorf("header %q is reserved", op.Name)
+		}
 		out[i] = gateway.EdgeRuleHeaderOp{Name: op.Name, Value: op.Value, Action: op.Action}
 		if op.Template {
 			t, err := api.CompileEdgeRuleTemplate(op.Value, api.EdgeRuleTemplateHeader)
@@ -2553,6 +2618,17 @@ func convertHeaderOps(in []state.EdgeRuleHeaderOp) ([]gateway.EdgeRuleHeaderOp, 
 		}
 	}
 	return out, nil
+}
+
+// reservedRedirectHeader returns the first header a redirect rule may not
+// set, or "".
+func reservedRedirectHeader(headers map[string]string) string {
+	for name := range headers {
+		if api.EdgeRuleHeaderNameForbidden(name) {
+			return name
+		}
+	}
+	return ""
 }
 
 // compileRedirectTemplates compiles a templated redirect (ADR-968). A
