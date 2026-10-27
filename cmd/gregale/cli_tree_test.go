@@ -30,7 +30,7 @@ var cliTreeVerbs = []string{
 	"unprotect", "qualify", "reconcile", "reconnect", "refresh", "rehearse", "reopen", "require",
 	"resize", "resync", "retire", "revoke", "review", "scan", "split", "start", "stop", "subscribe",
 	"unsubscribe", "suggest", "suspend", "test", "track", "use", "validate", "override", "advise",
-	"reset",
+	"reset", "pull", "push",
 }
 
 // A path may end with a noun it lists or shows (`app instances`).
@@ -262,6 +262,69 @@ func TestCliTreeNounHelp(t *testing.T) {
 	code, _, stderr := runCLI(t, "release", "bogus")
 	if code == 0 || !strings.Contains(stderr, "gregale release --help") {
 		t.Errorf("gregale release bogus = %d %q, want an unknown command pointing at release help", code, stderr)
+	}
+}
+
+// Step 5 (the flip): a noun that is also today's command lists the tree's
+// verbs once the tree reshapes it, a subnoun only the tree has gets help of
+// its own, and a noun the tree passes through keeps today's fuller help.
+func TestCliTreeHelpForTodaysCommands(t *testing.T) {
+	enableEveryCLIFeature(t)
+	for _, tc := range []struct {
+		args       []string
+		want, lack []string
+	}{
+		{[]string{"env", "--help"}, []string{"set", "unset", "pull", "rollback"}, []string{"create", "clone-status"}},
+		{[]string{"help", "env"}, []string{"set", "push"}, nil},
+		{[]string{"mcp", "--help"}, []string{"serve", "connection", "server", "client"}, []string{"call", "task-get"}},
+		{[]string{"mcp", "client"}, []string{"tools", "call", "status"}, []string{"task-get"}},
+		{[]string{"release", "attempt", "--help"}, []string{"get", "cancel", "retry"}, nil},
+		{[]string{"app", "--help"}, []string{"list", "get", "update", "scale", "health", "listener"}, []string{"tcp", "udp"}},
+		{[]string{"bucket", "--help"}, []string{"multipart", "version", "inventory"}, []string{"uploads", "versions", "reconcile"}},
+	} {
+		code, stdout, stderr := runCLI(t, tc.args...)
+		if code != 0 {
+			t.Errorf("gregale %s = %d %q", strings.Join(tc.args, " "), code, stderr)
+			continue
+		}
+		for _, verb := range tc.want {
+			if !listsCommand(stdout, verb) {
+				t.Errorf("gregale %s does not list %q:\n%s", strings.Join(tc.args, " "), verb, stdout)
+			}
+		}
+		for _, verb := range tc.lack {
+			if listsCommand(stdout, verb) {
+				t.Errorf("gregale %s lists %q, which the tree renames or moves:\n%s", strings.Join(tc.args, " "), verb, stdout)
+			}
+		}
+	}
+	if _, stdout, _ := runCLI(t, "preview", "--help"); !strings.Contains(stdout, "gregale preview <create|") {
+		t.Errorf("preview --help must keep today's help:\n%s", stdout)
+	}
+	if _, stdout, _ := runCLI(t, "app", "--help", "--all"); !strings.Contains(stdout, "Access and security:") {
+		t.Errorf("app --help --all must list every option of today's app command:\n%s", stdout)
+	}
+}
+
+// Help reached through a tree path is spelled in that path.
+func TestCliTreeLeafHelpUsesTheTypedPath(t *testing.T) {
+	enableEveryCLIFeature(t)
+	for _, tc := range []struct {
+		args       []string
+		want, lack string
+	}{
+		{[]string{"env", "set", "--help"}, "gregale env set", "gregale secrets"},
+		{[]string{"cron", "get", "--help"}, "gregale cron get", "gregale crons"},
+		{[]string{"help", "release", "list"}, "gregale release list", "See also:"},
+		{[]string{"release", "canary", "--help"}, "gregale release canary", "gregale canary"},
+	} {
+		code, stdout, stderr := runCLI(t, tc.args...)
+		if code != 0 || !strings.Contains(stdout, tc.want) || strings.Contains(stdout, tc.lack) {
+			t.Errorf("gregale %s = %d %q, want %q and not %q:\n%s", strings.Join(tc.args, " "), code, stderr, tc.want, tc.lack, stdout)
+		}
+	}
+	if _, stdout, _ := runCLI(t, "crons", "info", "--help"); !strings.Contains(stdout, "gregale crons info") {
+		t.Errorf("today's path keeps today's spelling:\n%s", stdout)
 	}
 }
 

@@ -14,6 +14,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"regexp"
 	"slices"
 	"strings"
 
@@ -156,6 +157,13 @@ var cliTreeAliases = []cliTreeAlias{
 	{"env check", "secrets check"},
 	{"env ref", "secrets refs"},
 	{"env requirement", "secrets requirements"},
+	// Today's env verbs that sync variables; `env create` and
+	// `env clone-status` clone project environments and are not listed here.
+	{"env pull", "env pull"},
+	{"env push", "env push"},
+	{"env diff", "env diff"},
+	{"env history", "env history"},
+	{"env rollback", "env rollback"},
 	{"domain", "domains"},
 	{"edge rule", "edge-rules"},
 	{"edge rule-list", "edge-rule-lists"},
@@ -272,6 +280,7 @@ var cliTreeAliases = []cliTreeAlias{
 	{"alert", "alerts"},
 
 	// Agents. Hosting verbs and client verbs sit directly under `mcp` today.
+	{"mcp serve", "mcp serve"},
 	{"mcp connection", "mcp connections"},
 	{"mcp server", "mcp"},
 	{"mcp client tools", "mcp tools"},
@@ -325,6 +334,12 @@ var cliTreeAliases = []cliTreeAlias{
 	{"admin billing backfill-invoices", "billing backfill-invoices"},
 }
 
+// cliTreeShorts summarize tree paths whose command today does more than
+// the path names.
+var cliTreeShorts = map[string]string{
+	"mcp server": "Scaffold, deploy and check the MCP servers you host",
+}
+
 // cliTreeVerbSynonyms gives, for a standard verb, today's spellings that a
 // command may use instead (ADR-20261026145832 rule 3).
 var cliTreeVerbSynonyms = map[string][]string{
@@ -358,6 +373,7 @@ func lookupCliTreeNoun(name string) (cliTreeNoun, bool) {
 type cliTreeNode struct {
 	Short string
 	Subs  []cliSub
+	Flags []cliFlag
 	// AfterPositionals marks `app <slug> <verb>`-shaped families, whose next
 	// word is data rather than a verb.
 	AfterPositionals bool
@@ -372,13 +388,18 @@ func lookupCliPath(words []string) (cliTreeNode, bool) {
 	if !ok {
 		return cliTreeNode{}, false
 	}
-	node := cliTreeNode{Short: command.Short, Subs: command.Subcommands, AfterPositionals: command.SubcommandsAfterPositionals}
-	for _, word := range words[1:] {
+	return walkCliTreeNode(command, words[1:])
+}
+
+// walkCliTreeNode follows words from command through its verbs.
+func walkCliTreeNode(command cliCommand, words []string) (cliTreeNode, bool) {
+	node := cliTreeNode{Short: command.Short, Subs: command.Subcommands, Flags: command.Flags, AfterPositionals: command.SubcommandsAfterPositionals}
+	for _, word := range words {
 		sub, ok := findCliSubcommand(node.Subs, word)
 		if !ok {
 			return cliTreeNode{}, false
 		}
-		node = cliTreeNode{Short: sub.Short, Subs: sub.Subcommands, AfterPositionals: sub.SubcommandsAfterPositionals}
+		node = cliTreeNode{Short: sub.Short, Subs: sub.Subcommands, Flags: sub.Flags, AfterPositionals: sub.SubcommandsAfterPositionals}
 	}
 	return node, true
 }
@@ -610,7 +631,7 @@ func takeAppTarget(args []string) (string, []string, error) {
 }
 
 // rewriteCliTree applies rewriteTreePath to a command, or to the topic of
-// `gregale help <path>`. A request for a noun's own help is left for
+// `gregale help <path>`. A request for tree help is left for
 // cliTreeHelpTopic, so `gregale cron` lists the tree's verbs.
 func rewriteCliTree(args []string) ([]string, error) {
 	if _, ok := cliTreeHelpTopic(args); ok {
@@ -626,49 +647,134 @@ func rewriteCliTree(args []string) ([]string, error) {
 	return rewriteTreePath(args)
 }
 
-// cliTreeHelpTopic reports a request for a tree noun's help: the bare noun,
-// `<noun> --help`, or `help <noun>`. Nouns that are also today's commands
-// keep today's help until the flip (ADR-20261026145832 step 5).
-func cliTreeHelpTopic(args []string) (cliTreeNoun, bool) {
-	switch {
-	case len(args) == 2 && args[0] == "help":
-		return cliTreeNounOnly(args[1])
-	case len(args) == 1:
-		return cliTreeNounOnly(args[0])
-	case len(args) > 1 && hasHelpFlag(args[1:]) && len(leadingTreeWords(args)) == 1:
-		return cliTreeNounOnly(args[0])
-	}
-	return cliTreeNoun{}, false
+// cliTreeTopic is a path whose help lists the tree's verbs and subnouns: a
+// noun, or a subnoun only the tree has (`mcp client`).
+type cliTreeTopic struct {
+	Path  []string
+	Short string
 }
 
-// cliTreeNounOnly reports a tree noun that is not also one of today's
-// commands; only those get tree help today.
-func cliTreeNounOnly(name string) (cliTreeNoun, bool) {
-	noun, ok := lookupCliTreeNoun(name)
+// cliTreeHelpTopic reports a request for tree help: `help <topic>`,
+// `<topic> --help`, or a bare topic that is not also one of today's
+// commands, whose bare run keeps its meaning. `--help --all` asks for
+// every option, which today's command help lists.
+func cliTreeHelpTopic(args []string) (cliTreeTopic, bool) {
+	if len(args) > 1 && args[0] == "help" {
+		words := leadingTreeWords(args[1:])
+		if len(words) != len(args)-1 {
+			return cliTreeTopic{}, false
+		}
+		return lookupCliTreeTopic(words, true)
+	}
+	words := leadingTreeWords(args)
+	rest := args[len(words):]
+	for _, arg := range rest {
+		if arg != "--help" && arg != "-h" {
+			return cliTreeTopic{}, false
+		}
+	}
+	return lookupCliTreeTopic(words, len(rest) > 0)
+}
+
+// lookupCliTreeTopic returns the tree topic words name. A noun that only
+// passes today's command through (`preview`) keeps today's fuller help, and
+// a subnoun the tree maps to one of today's commands gets that command's.
+func lookupCliTreeTopic(words []string, help bool) (cliTreeTopic, bool) {
+	if len(words) == 0 {
+		return cliTreeTopic{}, false
+	}
+	noun, ok := lookupCliTreeNoun(words[0])
 	if !ok {
-		return cliTreeNoun{}, false
+		return cliTreeTopic{}, false
 	}
-	if _, old := lookupCliCommand(name); old {
-		return cliTreeNoun{}, false
+	today := oldPathDepth(words) == len(words)
+	if today && !help {
+		return cliTreeTopic{}, false
 	}
-	return noun, true
+	if len(words) == 1 {
+		if today && !cliTreeReshapes(noun.Name) {
+			return cliTreeTopic{}, false
+		}
+		return cliTreeTopic{Path: words, Short: noun.Short}, true
+	}
+	path := strings.Join(words, " ")
+	if today || !cliTreeHasPathUnder(path) {
+		return cliTreeTopic{}, false
+	}
+	for _, alias := range cliTreeAliases {
+		if alias.New == path {
+			return cliTreeTopic{}, false
+		}
+	}
+	return cliTreeTopic{Path: words, Short: "Commands under gregale " + path}, true
 }
 
-// cliTreeEntry is one verb or subnoun listed in a noun's help.
+// cliTreeReshapes reports a noun whose tree verbs differ from today's
+// command of the same name: it adds or renames verbs, or reorders `app`.
+func cliTreeReshapes(noun string) bool {
+	if noun == appSlugFallback {
+		return true
+	}
+	for _, alias := range cliTreeAliases {
+		if alias.New != alias.Old && strings.Fields(alias.New)[0] == noun {
+			return true
+		}
+	}
+	return false
+}
+
+func cliTreeHasPathUnder(path string) bool {
+	for _, alias := range cliTreeAliases {
+		if strings.HasPrefix(alias.New, path+" ") {
+			return true
+		}
+	}
+	return false
+}
+
+// cliTreeEntry is one verb or subnoun listed in a topic's help.
 type cliTreeEntry struct {
 	Name  string
 	Short string
 	Runs  string
 }
 
-// cliTreeEntries lists the verbs and subnouns under noun that this account
+// cliTreeDiscovery is the discoverable manifest, read once per help screen.
+type cliTreeDiscovery struct {
+	commands map[string]cliCommand
+}
+
+func newCliTreeDiscovery() cliTreeDiscovery {
+	commands := map[string]cliCommand{}
+	for _, command := range discoverableCliCommands() {
+		if cliCommandAvailable(command.Name) {
+			commands[command.Name] = command
+		}
+	}
+	return cliTreeDiscovery{commands: commands}
+}
+
+// node walks the discoverable customer manifest; a verb whose capability is
+// hidden for the account is not found, as in today's help
+// (ADR-20261023115741), and an operator command stays out of the tree.
+func (d cliTreeDiscovery) node(path string) (cliTreeNode, bool) {
+	words := strings.Fields(path)
+	command, ok := d.commands[words[0]]
+	if !ok || command.Audience != cliAudienceCustomer {
+		return cliTreeNode{}, false
+	}
+	return walkCliTreeNode(command, words[1:])
+}
+
+// cliTreeEntries lists the verbs and subnouns under prefix that this account
 // can see, with the command each one runs today.
-func cliTreeEntries(noun string) []cliTreeEntry {
+func cliTreeEntries(prefix []string) []cliTreeEntry {
+	return newCliTreeDiscovery().entries(prefix)
+}
+
+func (d cliTreeDiscovery) entries(prefix []string) []cliTreeEntry {
 	var entries []cliTreeEntry
 	seen := map[string]bool{}
-	// A verb whose capability is hidden for the account is not listed, as
-	// in today's help (ADR-20261023115741).
-	view := discoveryCapabilityView()
 	add := func(name, short, runs string) {
 		if name == "" || seen[name] {
 			return
@@ -676,41 +782,150 @@ func cliTreeEntries(noun string) []cliTreeEntry {
 		seen[name] = true
 		entries = append(entries, cliTreeEntry{Name: name, Short: short, Runs: runs})
 	}
+	// A verb with a tree name of its own is listed under that name only.
+	renamed := map[string]bool{}
+	for _, alias := range cliTreeAliases {
+		if alias.New != alias.Old {
+			renamed[alias.Old] = true
+		}
+	}
 	for _, alias := range cliTreeAliases {
 		path := strings.Fields(alias.New)
-		old := strings.Fields(alias.Old)
-		if path[0] != noun {
+		if len(path) < len(prefix) || !slices.Equal(path[:len(prefix)], prefix) {
 			continue
 		}
-		command, visible := lookupDiscoverableCommand(old[0])
-		if !visible || !cliCommandAvailable(command.Name) {
+		node, ok := d.node(alias.Old)
+		if !ok {
 			continue
 		}
-		node, ok := lookupCliPath(old)
-		if !ok || view.hidesPath(alias.Old) {
-			continue
-		}
-		if len(path) > 1 {
-			add(strings.Join(path[1:], " "), node.Short, alias.Old)
+		if len(path) > len(prefix) {
+			short := node.Short
+			if tree, ok := cliTreeShorts[alias.New]; ok {
+				short = tree
+			}
+			add(strings.Join(path[len(prefix):], " "), short, alias.Old)
 			continue
 		}
 		if node.AfterPositionals {
 			continue
 		}
 		for _, sub := range node.Subs {
-			if !view.hidesPath(alias.Old + " " + sub.Name) {
-				add(cliTreeStandardVerb(sub.Name), sub.Short, alias.Old+" "+sub.Name)
+			if old := alias.Old + " " + sub.Name; !renamed[old] {
+				add(cliTreeStandardVerb(sub.Name), sub.Short, old)
 			}
 		}
 	}
-	return entries
+	if slices.Equal(prefix, []string{appSlugFallback}) {
+		d.appEntries(add)
+	}
+	return groupCliTreeEntries(entries)
 }
 
-// printCliTreeHelp writes help for a tree noun.
-func printCliTreeHelp(w io.Writer, noun cliTreeNoun) {
-	_, _ = fmt.Fprintf(w, "%s\n\nUsage:\n  gregale %s <command> [flags]\n\nCommands:\n", noun.Short, noun.Name)
-	for _, entry := range cliTreeEntries(noun.Name) {
-		_, _ = fmt.Fprintf(w, "  %-22s %s\n", entry.Name, entry.Short)
+// appEntries lists today's `app <app> <verb>` verbs in the tree's
+// verb-first form (rewriteAppPath).
+func (d cliTreeDiscovery) appEntries(add func(name, short, runs string)) {
+	command, ok := d.commands[appSlugFallback]
+	if !ok {
+		return
 	}
-	_, _ = fmt.Fprintf(w, "\nRun 'gregale %s <command> --help' for command details.\nDocs: %s\n", noun.Name, docsURL)
+	add("get", "Show an app's settings and status", appSlugFallback)
+	add("update", "Change an app's settings", appSlugFallback)
+	for _, sub := range command.Subcommands {
+		runs := appSlugFallback + " " + sub.Name
+		if sub.Name == "tcp" || sub.Name == "udp" {
+			add("listener", "Manage TCP and UDP listeners (--protocol tcp|udp)", runs)
+			continue
+		}
+		add(cliTreeStandardVerb(sub.Name), sub.Short, runs)
+	}
+}
+
+// groupCliTreeEntries folds multi-word entries into their subnoun, so a noun
+// lists `client` once instead of every `client <verb>`.
+func groupCliTreeEntries(entries []cliTreeEntry) []cliTreeEntry {
+	single := map[string]bool{}
+	for _, entry := range entries {
+		if !strings.Contains(entry.Name, " ") {
+			single[entry.Name] = true
+		}
+	}
+	grouped := make([]cliTreeEntry, 0, len(entries))
+	at := map[string]int{}
+	for _, entry := range entries {
+		head, rest, multi := strings.Cut(entry.Name, " ")
+		switch {
+		case !multi:
+			grouped = append(grouped, entry)
+		case single[head]:
+		case at[head] > 0:
+			grouped[at[head]-1].Short += " · " + rest
+		default:
+			grouped = append(grouped, cliTreeEntry{Name: head, Short: rest, Runs: entry.Runs})
+			at[head] = len(grouped)
+		}
+	}
+	return grouped
+}
+
+// printCliTreeHelp writes help for a tree topic. A topic the tree maps to
+// one of today's commands also lists that command's own flags.
+func printCliTreeHelp(w io.Writer, topic cliTreeTopic) {
+	name := strings.Join(topic.Path, " ")
+	discovery := newCliTreeDiscovery()
+	_, _ = fmt.Fprintf(w, "%s\n\nUsage:\n  gregale %s <command> [flags]\n\nCommands:\n", topic.Short, name)
+	for _, entry := range discovery.entries(topic.Path) {
+		printHelpEntry(w, entry.Name, entry.Short)
+	}
+	for _, alias := range cliTreeAliases {
+		if alias.New != name {
+			continue
+		}
+		if node, ok := discovery.node(alias.Old); ok && len(node.Flags) > 0 {
+			printLocalHelpFlags(w, node.Flags, false)
+		}
+		break
+	}
+	_, _ = fmt.Fprintf(w, "\nRun 'gregale %s <command> --help' for command details.\nDocs: %s\n", name, docsURL)
+}
+
+// cliTreeHelpRename returns the path help shows in place of today's when
+// run() rewrote typed to args: today's path, with the verb it reached, and
+// the tree path typed in its place.
+func cliTreeHelpRename(typed, args []string) (from, to string, ok bool) {
+	if len(typed) > 0 && typed[0] == "help" && len(args) > 0 && args[0] == "help" {
+		typed, args = typed[1:], args[1:]
+	}
+	if slices.Equal(typed, args) {
+		return "", "", false
+	}
+	alias, used, ok := matchCliTreeAlias(typed)
+	if !ok {
+		return "", "", false
+	}
+	old := strings.Fields(alias.Old)
+	if len(args) < len(old) || !slices.Equal(args[:len(old)], old) {
+		return "", "", false
+	}
+	from, to = alias.Old, alias.New
+	if used < len(typed) && len(old) < len(args) && !strings.HasPrefix(typed[used], "-") && typed[used] != args[len(old)] {
+		from += " " + args[len(old)]
+		to += " " + typed[used]
+	}
+	return from, to, true
+}
+
+// renameHelpPath spells `gregale <from>` as `gregale <to>` in help text. Its
+// "See also" line goes: it points at today's names the tree replaces.
+func renameHelpPath(text, from, to string) string {
+	lines := strings.SplitAfter(text, "\n")
+	kept := lines[:0]
+	for _, line := range lines {
+		if !strings.HasPrefix(line, "See also: ") {
+			kept = append(kept, line)
+		}
+	}
+	pattern := regexp.MustCompile(regexp.QuoteMeta("gregale "+from) + `([^a-z0-9-]|$)`)
+	return pattern.ReplaceAllStringFunc(strings.Join(kept, ""), func(match string) string {
+		return "gregale " + to + strings.TrimPrefix(match, "gregale "+from)
+	})
 }
