@@ -28,6 +28,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/gregalemanifest"
 	"github.com/onebox-faas/faas/pkg/issues"
+	"github.com/onebox-faas/faas/pkg/reposcan"
 	"github.com/onebox-faas/faas/pkg/secretscan"
 	"github.com/onebox-faas/faas/pkg/simpleapp"
 	"github.com/onebox-faas/faas/pkg/whycopy"
@@ -3127,7 +3128,8 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	// A plain `gregale deploy` of a repository whose root is no single app
 	// but a Compose project or several service roots deploys the project.
 	// Nothing is created before the project plan is reviewed (or --yes).
-	if !projectRequested && !existingApp && len(executions) == 0 && developerSync == nil &&
+	// --plan shows the project's split itself (printDeployWorkloadPlan).
+	if !projectRequested && !existingApp && len(executions) == 0 && developerSync == nil && !*simplePlan &&
 		!deployFunction && !deployApp && deployRuntime == "" && deployHandler == "" &&
 		*image == "" && *tarball == "" && *templateName == "" && *repo == "" && sourceDir != "" {
 		if reason := multiServiceSource(sourceDir); reason != "" {
@@ -3279,6 +3281,14 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		sourceKind := simpleapp.SourceDirectory
 		if *image != "" {
 			sourceKind = simpleapp.SourceImage
+		}
+		// ADR-20261026145832: deploy --plan is the one local plan. A source
+		// with several workloads shows its split, as `scan` does, without
+		// login or upload.
+		if *image == "" {
+			if scan, scanErr := reposcan.Scan(os.DirFS(sourceDir)); scanErr == nil && len(scan.Workloads) > 1 {
+				return printDeployWorkloadPlan(scan)
+			}
 		}
 		// A plan must refuse what the deploy would refuse. The deploy runs
 		// these manifest checks only after login, so --plan used to print
