@@ -1,0 +1,11 @@
+{
+ "turns": [
+  {
+   "command": "echo WARM-1 && ls",
+   "mark": "WARM-1"
+  },
+  {
+   "text": "warm AGENT-MEM-DONE"
+  }
+ ]
+}
