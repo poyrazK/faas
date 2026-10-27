@@ -138,7 +138,8 @@ func TestFullRouteLabelSetReplacesOnlyIdleLabels(t *testing.T) {
 	}
 	s.lookup("GET /b") // b stays in use
 
-	clock.t = clock.t.Add(api.RouteLabelReuseAfterIdle)
+	// GET /a is now idle for longer than the window; GET /b is not.
+	clock.t = clock.t.Add(api.RouteLabelReuseAfterIdle - 10*time.Minute)
 	if got := s.admit("GET /c"); got != "GET /c" {
 		t.Fatalf("route after the idle window labelled %q, want its own label", got)
 	}
