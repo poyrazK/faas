@@ -55,7 +55,15 @@ func TestMetalMeasuredAdmissionDensity(t *testing.T) {
 		t.Skipf("firecracker version: %v", err)
 	}
 	fcvm.WithCgroupRootAtForTest(t, "/sys/fs/cgroup")
-	m := fcvm.NewManager(wire.ExecRunner{}, fcvm.NewMetalVMMForTest(t, 180*time.Second), fcvm.Paths{Kernel: kernel}, fcVersion, nil, nil)
+	vmm := fcvm.NewMetalVMMForTest(t, 180*time.Second)
+	// A node that also runs the native metal suites keeps their ownership
+	// journal under the jail root, and the legacy allocator refuses to start
+	// beside it. FAAS_TEST_NATIVE_PROCESS_RECOVERY=1 joins that journal, as
+	// those suites do.
+	if os.Getenv("FAAS_TEST_NATIVE_PROCESS_RECOVERY") == "1" {
+		vmm.WithNativeProcessRecovery()
+	}
+	m := fcvm.NewManager(wire.ExecRunner{}, vmm, fcvm.Paths{Kernel: kernel}, fcVersion, nil, nil)
 
 	var (
 		mu       sync.Mutex
