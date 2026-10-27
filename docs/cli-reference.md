@@ -6415,7 +6415,7 @@ Schedule a POST to an app path, or a deployment command
 | `--app <slug>` | app slug (interactive mode can use linked app or picker) |  |
 | `--schedule <EXPR>` | five-field cron expression (required unless interactive) |  |
 | `--path <PATH>` | path the cron sends a POST to (mutually exclusive with --command) |  |
-| `--command <EXEC>` | executable for a deployment command cron |  |
+| `--command <EXEC>` | executable for a deployment command cron (preview: needs app tasks) |  |
 | `--arg <ARG>` | append one command argument (repeatable) |  |
 | `--shell` | run --command as one shell string |  |
 | `--timeout-seconds <N>` | command timeout (default 600 seconds) |  |

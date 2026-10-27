@@ -410,64 +410,11 @@ gregale jobs add nightly-export --image registry.example/exporter:v1 --schedule 
 ```
 
 Use a scheduled job when work should run to completion in an isolated job
-environment; use an HTTP app cron when the schedule should make a request to an
-app route. Use a command cron when a recurring task needs the app's deployment
-environment without an HTTP endpoint:
-
-```bash
-gregale crons add --app APP_ID --schedule "0 2 * * *" \
-  --command bin/rebuild-index --arg=--incremental --timezone Europe/Istanbul
-gregale crons add --app APP_ID --schedule "0 4 * * 0" \
-  --command "bin/cleanup --older-than 30d" --shell
-gregale crons runs CRON_ID
-```
-
-Command crons create one deployment-attached app task for each scheduled
-occurrence and select the app's currently live deployment at fire time, so a
-later deployment automatically supplies the new command environment. The
-command runs with a 10-minute timeout and 1 MiB output limit by default; use
-`--timeout-seconds` and `--max-output-bytes` to adjust them. `--arg` is
-repeatable and preserves argument boundaries. `--shell` instead treats the
-single `--command` value as a shell string and cannot be combined with `--arg`.
-Use `--skip-if-running` to skip a firing while an earlier command task remains
-active. By default command failures are not retried. Set `--retry-max` to allow
-up to five additional attempts after a command fails or times out; retries use
-exponential backoff from `--retry-backoff-seconds` (default 60 seconds, capped
-at 24 hours). A cron run remains one logical history row while it waits for a
-retry, and its task receipt reports the attempt count and next retry time.
-Failure rules can classify an exit code or a structured `outcome_code` written
-to `GREGALE_OUTPUT_MANIFEST_PATH`; a mapped code can turn exit 0 into a
-permanent failure or a retry. Unmapped successful outcomes remain successful.
-Retries are at-least-once: a command may have produced side effects before it
-failed, so make retryable commands idempotent. A worker lease lost after
-dispatch is not automatically replayed because completion is uncertain.
-
-To report a business outcome independently of the process exit status, write
-a version-1 result manifest atomically before the command exits:
-
-```bash
-printf '%s\n' '{"version":1,"artifacts":[],"outcome_code":"invalid_record"}' \
-  > "$GREGALE_OUTPUT_MANIFEST_PATH.tmp"
-mv "$GREGALE_OUTPUT_MANIFEST_PATH.tmp" "$GREGALE_OUTPUT_MANIFEST_PATH"
-```
-
-Configure that code explicitly with `--failure-rules`; Gregale does not infer
-retry safety from an error message. The command receipt retains the code and
-classifier decision for inspection.
-
-Inspect outcomes with `gregale crons runs CRON_ID`. The history includes a run
-id; for a command cron, inspect its captured stdout/stderr, exit status, and
-retry details on demand with `gregale crons runs CRON_ID --run TASK_ID`. Use
-`gregale crons run CRON_ID` to immediately run the cron's saved command on the
-current live deployment without moving its schedule cursor.
-If `--skip-if-running` is configured and another run is still active, the
-manual request fails rather than overlapping it.
-Cancel a queued or active command-cron run with
-`gregale crons cancel CRON_ID TASK_ID`; an active task reports its cancellation
-request while the worker stops it. Disabling a cron only prevents future fires.
-`gregale app APP_ID exec ...` remains the surface for an arbitrary one-off
-command. Scheduled jobs create one task per occurrence and
-pick up the job's current configuration at fire time.
+environment, and an HTTP app cron when the schedule should make a request to
+an app route; see [Crons](crons). Command crons, which run a command from
+the app's deployment on a schedule, are in preview and documented there too.
+Scheduled jobs create one task per occurrence and pick up the job's current
+configuration at fire time.
 
 Handlers receive an event id and delivery attempt. Persist that id before applying side effects so retries are idempotent. Set explicit payload limits, timeouts, retry counts, and retention; route poison messages to a dead-letter destination for inspection and replay.
 

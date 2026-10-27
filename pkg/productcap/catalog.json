@@ -422,7 +422,7 @@
       "id": "app-tasks",
       "name": "App tasks",
       "category": "runtime",
-      "description": "Run a one-off command in a fresh VM built from an app's deployment.",
+      "description": "Run a one-off or scheduled (command cron) command in a fresh VM built from an app's deployment.",
       "maturity": "preview",
       "plans": [
         "free",
@@ -1044,7 +1044,7 @@
       "id": "crons",
       "name": "Crons",
       "category": "async",
-      "description": "Run HTTP requests or commands on a schedule.",
+      "description": "Send an HTTP request to an app on a schedule. Command crons run as app tasks and share their preview.",
       "maturity": "ga",
       "plans": [
         "hobby",
@@ -1052,7 +1052,7 @@
         "scale"
       ],
       "docs_url": "/docs/crons",
-      "acceptance_test": "pkg/apid/apidserver/handlers_ext_test.go::TestListCrons_HappyPath",
+      "acceptance_test": "cmd/e2e/cron_e2e_test.go::TestE2E_Cron_FiresOnScheduleAndOnDemand",
       "consumers": [
         "schedd"
       ],
