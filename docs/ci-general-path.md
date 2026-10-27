@@ -77,6 +77,14 @@ minutes:
 | `TestE2E_Routes_ProductionMonitorOpensIncident` | the production route monitor opens an incident from sustained 5xx on one route while another stays healthy |
 | `TestE2E_Routes_CanaryHealthGateHoldsRegressionAndAdvancesHealthy` | the canary guard compares candidate and stable per route, holds a regressed 50% canary with `route_health_blocked` and its history, and advances a healthy one to 100% with the gateway following |
 
+Multi-service projects have their own group. The test applies a Compose
+repository through `POST /v1/projects` and calls between its services through
+the real gateways:
+
+| Test | Regression class |
+| --- | --- |
+| `TestE2E_MultiServiceProject_ComposeServicesCallEachOtherByName` | a `billing_api` service is called `billing-api` (injected URL, imported Compose address and Postgres name lookup), the project lists what each service calls, a call wakes the parked service, a declared service cannot call an undeclared one, and a PR preview calls its own sibling |
+
 The tests seed a deployment after the source/build/image pipeline has produced
 its durable state. They must not become a second KVM suite. Add a scenario here
 when the bug is in daemon wiring, durable state propagation, routing, bridge
