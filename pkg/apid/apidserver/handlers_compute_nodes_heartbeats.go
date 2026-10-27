@@ -99,8 +99,9 @@ func (s *server) listComputeNodeHeartbeats(w http.ResponseWriter, r *http.Reques
 	limit := parseComputeNodeHeartbeatLimit(r)
 	rows, err := s.store.ListComputeNodeHeartbeats(r.Context(), node.ID, since, limit)
 	if err != nil {
+		logCustomerFailure(s.log, "List failed", err)
 		api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError, "internal",
-			"List failed", err.Error()))
+			"List failed", api.DetailServerFailure))
 		return
 	}
 	out := computeNodeHeartbeatsResponse{

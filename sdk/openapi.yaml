@@ -8159,9 +8159,14 @@ paths:
       tags: [crons]
       operationId: listCrons
       summary: List cron triggers.
+      parameters:
+        - name: slug
+          in: query
+          description: App slug or id. Lists only that app's crons; without it, every cron on the account's apps.
+          schema: {type: string}
       responses:
         '200':
-          description: Cron triggers on the account.
+          description: Cron triggers on the account, or on the app named by slug.
           content:
             application/json:
               schema:
@@ -8170,6 +8175,7 @@ paths:
               example:
                 - {"id": "0123456789abcdef0123456789abcdef", "app_id": "0123456789abcdef0123456789abcdef", "schedule": "*/5 * * * *", "path": "/cron", "enabled": true, "created_at": "2026-07-23T11:25:00Z", "last_fired_at": "2026-07-23T11:20:00Z"}
         '401': {$ref: '#/components/responses/Unauthorized'}
+        '404': {$ref: '#/components/responses/NotFound'}
         '429': {$ref: '#/components/responses/TooManyRequests'}
     post:
       tags: [crons]
@@ -28969,7 +28975,7 @@ components:
       properties:
         app_id: {type: string, description: "App id or slug.", example: "0123456789abcdef0123456789abcdef"}
         schedule: {type: string, example: "*/5 * * * *"}
-        path: {type: string, description: "HTTP target path; defaults to / and is mutually exclusive with command."}
+        path: {type: string, maxLength: 2048, description: "HTTP target path on the cron's own app; defaults to /, starts with a single /, may carry a query string, and is mutually exclusive with command."}
         command: {type: array, minItems: 1, maxItems: 64, items: {type: string, maxLength: 4096}, description: "Direct command argv; mutually exclusive with path."}
         command_shell: {type: boolean, default: false, description: "Interpret one command string through the app shell when true."}
         timeout_seconds: {type: integer, minimum: 0, maximum: 3600, description: "Per-fire command deadline; zero uses the 600-second default."}
@@ -28986,7 +28992,7 @@ components:
       type: object
       properties:
         schedule: {type: [string, "null"], example: "*/5 * * * *"}
-        path: {type: [string, "null"]}
+        path: {type: [string, "null"], maxLength: 2048, description: "HTTP target path on the cron's own app; starts with a single /."}
         enabled: {type: [boolean, "null"]}
         timezone: {type: [string, "null"], description: "IANA timezone; an empty value resets to UTC."}
         skip_if_running: {type: [boolean, "null"], description: "Enable or disable overlap skipping for scheduled fires."}

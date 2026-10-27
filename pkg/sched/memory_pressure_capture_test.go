@@ -131,7 +131,7 @@ func TestLinkOOMProfileCapture(t *testing.T) {
 	now := time.Now().UTC()
 	capture := api.ProfileCapture{ID: "11111111-1111-4111-8111-111111111111", Kinds: []string{api.ProfileKindHeap}, DurationSeconds: 10,
 		Trigger: api.ProfileCaptureTriggerMemoryPressure, CreatedAt: now.Add(-5 * time.Second), ExpiresAt: now.Add(api.ProfileCaptureRetention)}
-	if err := mem.QueueAutomaticProfileCapture(ctx, acct.ID, app.ID, capture, api.ProfileCaptureAutomaticMinInterval); err != nil {
+	if err := mem.QueueAutomaticProfileCapture(ctx, acct.ID, app.ID, capture, api.ProfileCaptureAutomaticMinInterval, api.MustLimitsFor(api.PlanPro).Profiling.CaptureStorageBytes); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := mem.ClaimProfileCapture(ctx, now); err != nil {

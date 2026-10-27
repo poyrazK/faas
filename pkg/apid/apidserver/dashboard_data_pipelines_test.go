@@ -713,6 +713,13 @@ func TestDashboardPipelinesConfiguresReadOnlyAppThroughExistingAppService(t *tes
 	if err != nil || configured.RequireAuthn || configured.PublicAuthMode != state.AppPublicAuthModeOpen || len(configured.EgressPorts) != 1 || configured.EgressPorts[0] != 5432 {
 		t.Fatalf("JWT app configuration was not applied: %+v %v", configured, err)
 	}
+	// Like the CLI's Data APIs, the runtime closes its SQL sessions before a snapshot.
+	if hook := configured.Manifest.BeforeCheckpoint; hook == nil || hook.Path != api.DataAPIBeforeCheckpointPath {
+		t.Fatalf("before-checkpoint hook = %+v", hook)
+	}
+	if hook := configured.Manifest.AfterRestore; hook == nil || hook.Path != api.DataAPIAfterRestorePath {
+		t.Fatalf("after-restore hook = %+v", hook)
+	}
 	foreign, err := (*e.Store()).CreateAccount(t.Context(), "foreign-pipeline-api@example.com", api.PlanPro)
 	if err != nil {
 		t.Fatal(err)

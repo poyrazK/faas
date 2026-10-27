@@ -193,13 +193,13 @@ func newDataAPISyncTestServer(t *testing.T, root, failure string) *dataAPISyncTe
 				status = "failed"
 			}
 			writeJSONTest(w, api.RuntimeConfigRestartStatusResponse{WakeID: "wake-1", Status: status})
-		case "POST /v1/apps/notes/tasks":
+		case "POST /v1/apps/notes/data-api/contract-tasks":
 			fixture.tasks.Add(1)
 			if fixture.health.Load() == 0 {
 				t.Error("type export preceded readiness")
 			}
-			var request api.CreateAppTaskRequest
-			if json.NewDecoder(r.Body).Decode(&request) != nil || strings.Join(request.Command, " ") != "node /app/types.mjs" || request.TimeoutSeconds != 60 || request.MaxOutputBytes != api.AppTaskDefaultMaxOutputBytes {
+			var request api.CreateDataAPIContractTaskRequest
+			if json.NewDecoder(r.Body).Decode(&request) != nil || request.Kind != api.DataAPIContractTypes {
 				t.Error("type export did not use the bounded private runtime task")
 			}
 			task := api.AppTaskResponse{ID: "task-1", DeploymentID: "live-1", Status: api.AppTaskStatusSucceeded, StdoutTail: dataAPISyncTestTypes}
@@ -212,7 +212,7 @@ func newDataAPISyncTestServer(t *testing.T, root, failure string) *dataAPISyncTe
 				task.Status = api.AppTaskStatusQueued
 			}
 			writeJSONTest(w, task)
-		case "GET /v1/apps/notes/tasks/task-1":
+		case "GET /v1/apps/notes/data-api/contract-tasks/task-1":
 			writeJSONTest(w, api.AppTaskResponse{ID: "task-1", DeploymentID: "live-1", Status: api.AppTaskStatusQueued})
 		default:
 			t.Errorf("unexpected management request: %s %s", r.Method, r.URL.Path)
