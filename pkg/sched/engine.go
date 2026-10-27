@@ -8016,15 +8016,15 @@ func (e *Engine) SeedLedger(ctx context.Context) error {
 				// including overlap and capacity above a subsequently lowered cap.
 				// This does not authorize new capacity: the rows are already
 				// resident, and the reconstructed count blocks normal admits.
-				AllowConcurrencyOverlap:    true,
-				AllowConcurrencyRecovery:   true,
-				NodeID:                     nodeID,
-				NodeCeilingMB:              loadCeiling(ctx, nodeID),
-				VCPUBudget:                 loadVCPUBudget(ctx, nodeID),
-				CPUBudgetMillicores:        loadCPUBudgetMillicores(ctx, nodeID),
-				AllowCPUOvercommitRecovery: true,
-				Kind:                       kind,
-				FrozenChargeMB:             api.MeasuredChargeFloorMB,
+				AllowConcurrencyOverlap:  true,
+				AllowConcurrencyRecovery: true,
+				NodeID:                   nodeID,
+				NodeCeilingMB:            loadCeiling(ctx, nodeID),
+				VCPUBudget:               loadVCPUBudget(ctx, nodeID),
+				CPUBudgetMillicores:      loadCPUBudgetMillicores(ctx, nodeID),
+				AllowResidentRecovery:    true,
+				Kind:                     kind,
+				FrozenChargeMB:           api.MeasuredChargeFloorMB,
 			}
 			// Preserve resident accounting even if scope recovery fails. Unknown
 			// scope cannot authorize an automatic rollout allowance.

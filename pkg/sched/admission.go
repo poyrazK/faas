@@ -359,12 +359,17 @@ type Request struct {
 	// legacy/unregistered test seams; production placement always supplies
 	// a positive value.
 	CPUBudgetMillicores int
-	// AllowCPUOvercommitRecovery lets startup reconstruction account for
-	// VMs that already existed before millicore admission was enabled. It
-	// never authorizes a new VM: recovery records the full overcommitted
-	// total so every subsequent normal admission remains blocked until the
-	// node falls back below its physical CPU budget.
-	AllowCPUOvercommitRecovery bool
+	// AllowResidentRecovery lets startup reconstruction account for VMs that
+	// are already resident past a node's bare RAM, vCPU or physical CPU
+	// budget: booked under measured admission's overcommit bound (ADR-909),
+	// quiet-pause admission (ADR-1151), or before millicore admission was
+	// enabled. SeedLedger runs before any node measurement exists, so without
+	// it every row past the bare ceiling was dropped and its app's
+	// concurrency undercounted (Hunt 18 H18-1). It never authorizes a new VM:
+	// recovery records the full overcommitted total so every subsequent
+	// normal admission remains blocked until the node falls back below its
+	// budget.
+	AllowResidentRecovery bool
 	// ownerApp is the wake's app, read moments ago or held by the owner
 	// cache under a generation the admission insert rechecks; placement's
 	// ownership check uses it instead of reading the app again (ADR-1741).
@@ -473,8 +478,10 @@ func (l *NodeLedger) Admit(r Request) error {
 	if r.Kind == KindJob && r.Flexible {
 		ramCeiling -= flexibleAppReserveRAMMB
 	}
-	if err := l.ramHeadroom_locked(r, node, ramCeiling); err != nil {
-		return err
+	if !r.AllowResidentRecovery {
+		if err := l.ramHeadroom_locked(r, node, ramCeiling); err != nil {
+			return err
+		}
 	}
 
 	// Per-node vCPU headroom (Tier A2, migration 00123). Replaces
@@ -496,7 +503,7 @@ func (l *NodeLedger) Admit(r Request) error {
 	}
 	quietVCPU, quietCPU := l.quietDiscount_locked(r.NodeID)
 	vcpuUsed := quietEffective(node.usedVCPU, quietVCPU, vcpuCeiling)
-	if vcpuUsed+r.VCPU > vcpuCeiling {
+	if vcpuUsed+r.VCPU > vcpuCeiling && !r.AllowResidentRecovery {
 		return explainAdmission(api.ErrCapacity(fmt.Sprintf(
 			"vCPU headroom: node %q busy %d + %d requested exceeds the %d per-node vCPU budget",
 			r.NodeID, vcpuUsed, r.VCPU, vcpuCeiling)), resourceBlocker("node_vcpu", "vcpu", int64(r.VCPU)))
@@ -519,7 +526,7 @@ func (l *NodeLedger) Admit(r Request) error {
 	cpuUsed := quietEffective(node.usedCPUMillicores, quietCPU, cpuCeiling)
 	if reservedCPU > 0 && r.CPUBudgetMillicores > 0 &&
 		cpuUsed+reservedCPU > cpuCeiling &&
-		!r.AllowCPUOvercommitRecovery {
+		!r.AllowResidentRecovery {
 		return explainAdmission(api.ErrCapacity(fmt.Sprintf(
 			"CPU headroom: node %q reserved %d millicores + %d requested (including temporary startup boost) exceeds the %d millicore physical CPU budget",
 			r.NodeID, cpuUsed, reservedCPU, cpuCeiling)), resourceBlocker("node_cpu", "cpu_millicores", int64(reservedCPU)))

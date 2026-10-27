@@ -274,3 +274,26 @@ books that instance at its full reservation until it has an RSS sample.
 and statement paths), `TestMeasuredAdmissionBooksPastTheCeiling`,
 `TestReservationAdmissionStopsAtTheCeiling` and
 `TestWakeReplacesANodeTheDurableReservationFindsFull`.
+
+## Amendment 2 — Startup recovery keeps rows past the bare ceiling (2026-10-26)
+
+**Problem (Hunt 18 H18-1).** A schedd restart rebuilds its ledger from the
+instances table (`SeedLedger`) before measured admission is enabled and
+before any node measurement exists, so every resident row was re-admitted
+against the node's bare ceiling. Rows past 1x, which measured admission
+books by design, failed that check and were skipped with a warning. Their
+apps' concurrency then undercounted, and the next wake booted an instance
+past `max_concurrency` (invariant §6.2-1); the node's RAM also undercounted
+until those instances parked.
+
+**Decision.** The recovery flag `AllowCPUOvercommitRecovery` becomes
+`AllowResidentRecovery` and skips the RAM and vCPU headroom checks as well
+as the physical CPU check. `SeedLedger`, financial preview command recovery
+and data-repair rehearsal recovery set it. It never authorizes a new VM:
+the ledger records the full resident total, so ordinary admissions on that
+node stay refused until a measurement arrives or the node drains under its
+bound. Quiet-pause admission (ADR-1151), which lets vCPU bookings pass the
+nominal budget, is covered the same way.
+
+**Validation.** `TestSeedLedgerKeepsResidentRowsPastTheBareCeiling` and
+`TestAdmit_ResidentRecoveryAccountsRAMAndVCPUWithoutAllowingGrowth`.
