@@ -52,7 +52,11 @@ Do not delete `managed_postgres_databases` rows or provider projects by hand,
 and do not disable the guard trigger: the guard is what stops a deletion from
 leaving a running database without an owner.
 
-- `managed_postgres_databases`: the databases must reach the provider-confirmed
+- `managed_postgres_databases`: non-payment deletion normally includes the
+  account's databases (ADR-20261024150500), so this reason means the operator
+  kill switch `FAAS_NONPAYMENT_DELETION_MANAGED_POSTGRES=off` is set on apid or
+  meterd. Remove it once the reason it was set is resolved; the next sweep then
+  includes the databases. While it stays set, the databases must reach the provider-confirmed
   `deleted` tombstone through the managed PostgreSQL lifecycle. Contact the
   customer, or follow the account's support process, so the databases are
   deleted (`gregale postgres delete`). The next hourly sweep then moves the

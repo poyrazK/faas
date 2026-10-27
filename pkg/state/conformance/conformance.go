@@ -70,6 +70,8 @@ func Run(t *testing.T, open Open) {
 		{"release_approvals_policy_and_one_decision_per_person", testReleaseApprovals},
 		{"release_approval_events_once_due_and_retried", testReleaseApprovalEvents},
 		{"scheduled_releases_one_pending_and_start_in_the_traffic_change", testScheduledReleases},
+		{"database_switches_one_active_leased_and_undone_releases", testDatabaseSwitches},
+		{"database_switch_cancel_hold_and_account_cap", testDatabaseSwitchCancelHoldAndAccountCap},
 		{"app_secret_revocation_ack_survives_secret_deletion", testAppSecretRevocationAckSurvivesDeletion},
 		{"custom_metrics_cap_applies_to_new_names_only", testCustomMetricsContract},
 		{"scaling_policy_survives_a_store_round_trip", testScalingPolicyRoundTrip},
@@ -88,6 +90,7 @@ func Run(t *testing.T, open Open) {
 		{"fire_now_claim_respects_node_ownership_and_handoff", testFireNowNodeOwnershipAndHandoff},
 		{"manual_command_cron_fire_now_is_idempotent_and_keeps_schedule_cursor", testManualCommandCronFireNow},
 		{"runtime_config_operation_claim_is_exactly_once", testRuntimeConfigOperationClaimIsExactlyOnce},
+		{"egress_circuit_desired_state_is_durable_or_explicitly_unsupported", testEgressCircuitDesiredState},
 		{"runtime_config_apply_receipts_never_regress", testRuntimeConfigApplyReceiptsNeverRegress},
 		{"trigger_record_claim_is_bounded_and_scoped", testTriggerRecordClaimIsBoundedAndScoped},
 		{"vmmd_upsert_preserves_operator_state", testVmmdUpsertPreservesOperatorState},
@@ -121,6 +124,7 @@ func Run(t *testing.T, open Open) {
 		{"rehearsal_apps_receive_no_account_events", testRehearsalAppsReceiveNoAccountEvents},
 		{"usage_rollup_merges_minutes", testUsageRollup},
 		{"archived_logs_are_scoped_to_the_owning_app", testInstanceLogsOwnedByApp},
+		{"account_erasure_snapshots_archived_log_instances", testLogArchiveErasure},
 		{"invalid_instance_state_is_rejected", testInvalidInstanceState},
 		{"live_state_readers_count_running_instances", testLiveStateReaders},
 		{"live_instance_list_follows_app_ownership", testLiveInstanceListOwnership},
@@ -145,6 +149,10 @@ func Run(t *testing.T, open Open) {
 		{"compute_node_service_address_readiness_is_sticky_and_clearable", testComputeNodeServiceAddressReady},
 		{"service_address_caller_is_gated_on_node_readiness", testServiceAddressCallerByHostIP},
 		{"removed_member_can_rejoin", testRemovedMemberCanRejoin},
+		{"account_release_webhook_follows_org_access", testAccountReleaseWebhookFollowsOrgAccess},
+		{"departed_member_integrations_pause", testDepartedMemberIntegrationsPause},
+		{"object_storage_timeline_fence", testObjectStorageTimelineFence},
+		{"audit_log_anchors_seal_and_verify", testAuditLogAnchors},
 		{"api_key_requires_scopes", testAPIKeyRequiresScopes},
 		{"login_token_single_use_and_expiry", testLoginTokenSingleUseAndExpiry},
 		{"email_verification_token_single_use_and_expiry", testEmailVerificationTokenSingleUseAndExpiry},
@@ -2336,6 +2344,38 @@ func testWorkflowRunCreateIdempotency(t *testing.T, fx *Fixture) {
 	}
 	if created != 1 || replayed != 1 {
 		t.Fatalf("concurrent create outcomes = created:%d replayed:%d, want one of each", created, replayed)
+	}
+
+	lookup, err := fx.Store.GetWorkflowRunByIdempotencyKey(fx.Ctx, fx.App.ID, "idempotent-create", key, fingerprint)
+	if err != nil || lookup == nil || lookup.ID != runID || lookup.AppID != fx.App.ID || lookup.WorkflowName != "idempotent-create" {
+		t.Fatalf("idempotency lookup = (%+v, %v), want original scoped run %s", lookup, err, runID)
+	}
+	var input map[string]string
+	if err := json.Unmarshal(lookup.Input, &input); err != nil || input["order_id"] != "same" {
+		t.Fatalf("idempotency lookup input = (%s, %v), want original input", lookup.Input, err)
+	}
+	changedFingerprint := append([]byte(nil), fingerprint...)
+	changedFingerprint[0] = 'x'
+	for _, tc := range []struct {
+		name, appID, workflowName, key string
+		fingerprint                    []byte
+		want                           error
+	}{
+		{"other app", uuid.NewString(), "idempotent-create", key, fingerprint, state.ErrWorkflowRunNotFound},
+		{"other workflow", fx.App.ID, "other-workflow", key, fingerprint, state.ErrWorkflowRunNotFound},
+		{"other key", fx.App.ID, "idempotent-create", "other-" + key, fingerprint, state.ErrWorkflowRunNotFound},
+		{"changed request", fx.App.ID, "idempotent-create", key, changedFingerprint, state.ErrWorkflowRunIdempotencyConflict},
+	} {
+		got, err := fx.Store.GetWorkflowRunByIdempotencyKey(fx.Ctx, tc.appID, tc.workflowName, tc.key, tc.fingerprint)
+		if !errors.Is(err, tc.want) || got != nil {
+			t.Fatalf("idempotency lookup (%s) = (%+v, %v), want nil and %v", tc.name, got, err, tc.want)
+		}
+	}
+	// A caller cannot alter the authoritative input through the returned value.
+	lookup.Input[0] = 'x'
+	unchanged, err := fx.Store.GetWorkflowRunByIdempotencyKey(fx.Ctx, fx.App.ID, "idempotent-create", key, fingerprint)
+	if err != nil || unchanged == nil || !json.Valid(unchanged.Input) {
+		t.Fatalf("idempotency lookup returned aliased input = (%+v, %v)", unchanged, err)
 	}
 
 	changedDefinition := &state.WorkflowRun{

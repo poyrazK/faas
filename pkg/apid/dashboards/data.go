@@ -51,7 +51,7 @@ func (s *Service) Data(w http.ResponseWriter, r *http.Request, acct state.Accoun
 // window, with bounded concurrency and a per-widget deadline. The API and
 // the dashboard page share it.
 func (s *Service) Read(ctx context.Context, acct state.Account, id string) (api.DashboardData, error) {
-	row, err := s.Host.Dashboards().DashboardByID(ctx, acct.ID, id)
+	row, err := s.dashboard(ctx, acct, id)
 	if err != nil {
 		return api.DashboardData{}, err
 	}
@@ -151,6 +151,9 @@ func resolveLogCount(ctx context.Context, src Sources, acct state.Account, app s
 	facets, err := src.LogEvents().FacetLogEvents(ctx, filter, 1)
 	if errors.Is(err, state.ErrLogSearchTimeout) {
 		return errors.New("the log count timed out; narrow the window or the filters")
+	}
+	if errors.Is(err, state.ErrLogReadBusy) {
+		return errors.New("too many log reads at once; refresh in a few seconds")
 	}
 	if err != nil {
 		return errors.New("logs unavailable")

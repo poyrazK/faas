@@ -14,15 +14,15 @@ T = TypeVar("T", bound="ProfilingConfig")
 
 @_attrs_define
 class ProfilingConfig:
-    """Opt-in sampled CPU profiling baked into each deployment (ADR-819)."""
+    """Opt-in sampled CPU profiling baked into each deployment."""
 
     enabled: bool
     window_seconds: int | Unset = 10
     kinds: list[ProfilingConfigKindsItem] | Unset = UNSET
-    """Continuous profile kinds (ADR-1155); defaults to cpu."""
+    """Continuous profile kinds; defaults to cpu."""
     pprof_port: int | Unset = UNSET
-    """Guest-local port where a Go application serves net/http/pprof (ADR-1155). The platform then collects CPU,
-    heap and goroutine profiles from it, so the application needs no Gregale SDK. 9191 and 4318 are reserved."""
+    """Guest-local port where a Go application serves net/http/pprof. The platform then collects CPU, heap and
+    goroutine profiles from it, so the application needs no Gregale SDK. 9191 and 4318 are reserved."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

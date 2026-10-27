@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createServer} from 'node:http';
 import {once} from 'node:events';
-import {DeploymentsService, FaaSClient, type DeploymentRuntimeResponse, type RuntimeUpgradePreviewResponse} from '../src/index.js';
+import {DeploymentsService, FaaSClient, type DeploymentRuntimeResponse, type RuntimeUpgradePreviewResponse} from '../src/preview.js';
 
 test('runtime reads preserve unknown provenance and encode preview targets without mutation', async (t) => {
   const target = 'candidate&literal=value';

@@ -72,9 +72,9 @@ def sync_detailed(
 ) -> Response[BuildProvenanceResponse | Problem]:
     r"""Get build provenance.
 
-     Returns the ADR-038 `build_provenance` row for a single build.
+     Returns the `build_provenance` row for a single build.
     Each successful build produces exactly one provenance row
-    (builderd's populator runs at the `markSucceeded` sites); the
+    (the build service's populator runs at the `markSucceeded` sites); the
     row is the customer-visible \"what ran?\" record: buildkit /
     railpack version, base / runner digests, source URL + commit
     SHA, plan, builder node ID, and the build's started_at /
@@ -82,7 +82,7 @@ def sync_detailed(
 
     A 404 with `code=build_provenance_not_found` is returned when
     the build exists but no provenance row landed (the populator
-    logs a WARN inside builderd on a failed INSERT — the build
+    logs a WARN inside the build service on a failed INSERT — the build
     itself still succeeded). A 404 with `code=not_found` is
     returned when no build row matches the id, or when the
     build's owning app belongs to a different account.
@@ -116,9 +116,9 @@ def sync(
 ) -> BuildProvenanceResponse | Problem | None:
     r"""Get build provenance.
 
-     Returns the ADR-038 `build_provenance` row for a single build.
+     Returns the `build_provenance` row for a single build.
     Each successful build produces exactly one provenance row
-    (builderd's populator runs at the `markSucceeded` sites); the
+    (the build service's populator runs at the `markSucceeded` sites); the
     row is the customer-visible \"what ran?\" record: buildkit /
     railpack version, base / runner digests, source URL + commit
     SHA, plan, builder node ID, and the build's started_at /
@@ -126,7 +126,7 @@ def sync(
 
     A 404 with `code=build_provenance_not_found` is returned when
     the build exists but no provenance row landed (the populator
-    logs a WARN inside builderd on a failed INSERT — the build
+    logs a WARN inside the build service on a failed INSERT — the build
     itself still succeeded). A 404 with `code=not_found` is
     returned when no build row matches the id, or when the
     build's owning app belongs to a different account.
@@ -155,9 +155,9 @@ async def asyncio_detailed(
 ) -> Response[BuildProvenanceResponse | Problem]:
     r"""Get build provenance.
 
-     Returns the ADR-038 `build_provenance` row for a single build.
+     Returns the `build_provenance` row for a single build.
     Each successful build produces exactly one provenance row
-    (builderd's populator runs at the `markSucceeded` sites); the
+    (the build service's populator runs at the `markSucceeded` sites); the
     row is the customer-visible \"what ran?\" record: buildkit /
     railpack version, base / runner digests, source URL + commit
     SHA, plan, builder node ID, and the build's started_at /
@@ -165,7 +165,7 @@ async def asyncio_detailed(
 
     A 404 with `code=build_provenance_not_found` is returned when
     the build exists but no provenance row landed (the populator
-    logs a WARN inside builderd on a failed INSERT — the build
+    logs a WARN inside the build service on a failed INSERT — the build
     itself still succeeded). A 404 with `code=not_found` is
     returned when no build row matches the id, or when the
     build's owning app belongs to a different account.
@@ -197,9 +197,9 @@ async def asyncio(
 ) -> BuildProvenanceResponse | Problem | None:
     r"""Get build provenance.
 
-     Returns the ADR-038 `build_provenance` row for a single build.
+     Returns the `build_provenance` row for a single build.
     Each successful build produces exactly one provenance row
-    (builderd's populator runs at the `markSucceeded` sites); the
+    (the build service's populator runs at the `markSucceeded` sites); the
     row is the customer-visible \"what ran?\" record: buildkit /
     railpack version, base / runner digests, source URL + commit
     SHA, plan, builder node ID, and the build's started_at /
@@ -207,7 +207,7 @@ async def asyncio(
 
     A 404 with `code=build_provenance_not_found` is returned when
     the build exists but no provenance row landed (the populator
-    logs a WARN inside builderd on a failed INSERT — the build
+    logs a WARN inside the build service on a failed INSERT — the build
     itself still succeeded). A 404 with `code=not_found` is
     returned when no build row matches the id, or when the
     build's owning app belongs to a different account.

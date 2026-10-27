@@ -3,7 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * Fresh observation of the desired scaling policy by the owning schedd. Active means the policy was loaded, not that a metric-driven replica target has been reached.
+ * Fresh observation of the desired scaling policy by the owning scheduler. Active means the policy was loaded, not that a metric-driven replica target has been reached.
  */
 export type RuntimePolicySchedulerStatus = {
   scope: 'app';

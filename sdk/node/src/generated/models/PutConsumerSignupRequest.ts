@@ -3,7 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * Self-service sign-up settings (ADR-20261021143000). Omitted fields take their defaults.
+ * Self-service sign-up settings. Omitted fields take their defaults.
  */
 export type PutConsumerSignupRequest = {
   /**
@@ -37,11 +37,11 @@ export type PutConsumerSignupRequest = {
    */
   daily_limit?: number;
   /**
-   * Let customers switch between plan_ids with their own key (ADR-20261021183000).
+   * Let customers switch between plan_ids with their own key.
    */
   customer_plan_changes?: boolean;
   /**
-   * Let customers close their account with their own key (ADR-20261021183000).
+   * Let customers close their account with their own key.
    */
   customer_closing?: boolean;
 };

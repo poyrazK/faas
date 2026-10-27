@@ -14,8 +14,7 @@ func realtimeScheduleResponse(row state.ManagedRealtimeSchedule) api.ManagedReal
 	return api.ManagedRealtimeScheduleResponse{TTLSeconds: row.TTLSeconds, ScheduleID: row.ID, Group: row.Group, Conditions: row.Conditions, OnConditionFailure: row.OnConditionFailure, SkippedOccurrences: row.SkippedOccurrences, SkipReason: row.SkipReason, IntervalSeconds: row.IntervalSeconds, MaxOccurrences: row.MaxOccurrences, EndAt: row.EndAt, InitialDeliverAt: row.InitialDeliverAt, Occurrence: row.Occurrence, CompletedOccurrences: row.CompletedOccurrences, MaxAttempts: row.MaxAttempts, BackoffSeconds: row.BackoffSeconds, Attempts: row.Attempts, CycleAttempts: row.CycleAttempts, NextAttemptAt: row.NextAttemptAt, LastAttemptAt: row.LastAttemptAt, Channel: row.Channel, DataBase64: base64.StdEncoding.EncodeToString(row.Data), Binary: row.Binary, Metadata: row.Metadata, DeliverAt: row.DeliverAt, Version: row.Version, Status: row.Status, Sequence: row.Sequence, LastError: row.LastError, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt}
 }
 func (s *Service) ManagedRealtimeSchedules(w http.ResponseWriter, r *http.Request, acct state.Account) {
-	if !s.HistoryPreviewEnabled {
-		httpkit.NotFound(w, "scheduled realtime publishing preview unavailable")
+	if s.previewUnavailable(w, acct.ID, s.HistoryPreviewEnabled, "scheduled realtime publishing preview unavailable") {
 		return
 	}
 	ep, _, ok := s.loadManagedRealtimeEndpoint(w, r, acct)

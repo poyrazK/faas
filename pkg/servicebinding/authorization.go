@@ -111,7 +111,10 @@ func NewAuthorizer(store AuthorizationStore) gateway.ServiceProxyAuthorizer {
 				return gateway.ServiceCaller{}, err
 			}
 			if projectID != "" {
-				policyStore, ok := store.(state.GitHubDeployPolicyStore)
+				// Pinned policy views carry only the read half of the store.
+				policyStore, ok := store.(interface {
+					GetGitHubDeployPolicy(context.Context, string, string) (state.GitHubDeployPolicy, error)
+				})
 				if !ok {
 					return gateway.ServiceCaller{}, errors.New("preview service policy storage is unavailable")
 				}
@@ -149,8 +152,8 @@ func NewAuthorizer(store AuthorizationStore) gateway.ServiceProxyAuthorizer {
 		if policy == api.ServiceBindingPolicyDeclared || (policy == api.ServiceBindingPolicyProject && !projectAliases) {
 			declared := false
 			for _, binding := range caller.Manifest.ServiceBindings {
-				if strings.EqualFold(strings.TrimSpace(binding.Service), strings.TrimSpace(bindingTarget)) ||
-					strings.EqualFold(strings.TrimSpace(binding.Service), strings.TrimSpace(legacyBindingTarget)) {
+				if api.SameServiceName(binding.Service, bindingTarget) ||
+					api.SameServiceName(binding.Service, legacyBindingTarget) {
 					declared = true
 					break
 				}
@@ -163,6 +166,11 @@ func NewAuthorizer(store AuthorizationStore) gateway.ServiceProxyAuthorizer {
 		configured, ok := caller.Manifest.ServiceReliability[strings.ToLower(strings.TrimSpace(legacyBindingTarget))]
 		if !ok {
 			configured, ok = caller.Manifest.ServiceReliability[strings.ToLower(strings.TrimSpace(bindingTarget))]
+		}
+		for name, policy := range caller.Manifest.ServiceReliability {
+			if !ok && api.SameServiceName(name, bindingTarget) {
+				configured, ok = policy, true
+			}
 		}
 		if ok {
 			if configured.Validate() != nil {
@@ -181,10 +189,10 @@ func NewAuthorizer(store AuthorizationStore) gateway.ServiceProxyAuthorizer {
 		// caller. The slug check reads the store, so it runs only for a match.
 		names := func(name string) (bool, error) {
 			name = strings.TrimSpace(name)
-			if projectAliases && caller.WorkloadName != "" && strings.EqualFold(name, caller.WorkloadName) {
+			if projectAliases && caller.WorkloadName != "" && api.SameServiceName(name, caller.WorkloadName) {
 				return true, nil
 			}
-			if !strings.EqualFold(name, logicalCaller) {
+			if !api.SameServiceName(name, logicalCaller) {
 				return false, nil
 			}
 			if callerIsTest {
@@ -213,7 +221,7 @@ func NewAuthorizer(store AuthorizationStore) gateway.ServiceProxyAuthorizer {
 			}
 			allowed := false
 			for _, name := range []string{logicalCaller, caller.WorkloadName} {
-				scope, ok := scopes[strings.ToLower(strings.TrimSpace(name))]
+				scope, ok := scopes[api.ServiceDNSName(name)]
 				if !ok || name == "" {
 					continue
 				}
@@ -249,7 +257,7 @@ func NewAuthorizer(store AuthorizationStore) gateway.ServiceProxyAuthorizer {
 // that member's grant. Without a project, or for the caller's own service
 // name, the slug is the caller's.
 func slugNamesCaller(ctx context.Context, store AuthorizationStore, caller, target state.App, slug string) (bool, error) {
-	if target.ProjectID == "" || caller.ProjectID == target.ProjectID && strings.EqualFold(caller.WorkloadName, slug) {
+	if target.ProjectID == "" || caller.ProjectID == target.ProjectID && api.SameServiceName(caller.WorkloadName, slug) {
 		return true, nil
 	}
 	member, err := state.ProjectMemberByWorkload(ctx, store, target.AccountID, target.ProjectID, slug)

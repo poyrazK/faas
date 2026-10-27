@@ -94,6 +94,7 @@ const (
 	releaseApprovalsFile             = "release_approvals.go"    // ADR-20261020085706 release approvals
 	releaseDiffFile                  = "release_diff.go"         // ADR-20261021101117 release diff
 	scheduledReleasesFile            = "scheduled_releases.go"   // ADR-20261021152201 scheduled releases
+	databaseSwitchFile               = "database_switch.go"      // ADR-20261023181931 rollbacks that restore the database
 	changeTimelineFile               = "change_timeline.go"      // ADR-751 app change timeline DTOs
 	customMetricSeriesFile           = "custom_metric_series.go" // ADR-745 custom metric history DTOs
 	operatorPlatformFlagsFile        = "operator_platform_flags.go"
@@ -132,6 +133,7 @@ var routeExclude = map[string]bool{
 	"POST /dashboard/apps/{slug}/issues/{issue_id}/actions":                       true, // scoped HTML/CSRF adapter for the public issue action API
 	"POST /dashboard/apps/{slug}/issues/impact-alert-policy":                      true, // scoped HTML/CSRF adapter for issue impact alert policy updates
 	"POST /dashboard/apps/{slug}/issues/ownership-rules":                          true, // scoped HTML/CSRF adapter for issue ownership routing policy updates
+	"POST /dashboard/postgres/overage":                                            true, // session + CSRF adapter for PUT /v1/postgres/overage (ADR-20261025094915)
 	// Fixed-executor repair preview routes are documented in docs/data-repair.md;
 	// they are not part of the public SDK contract until native qualification.
 	"GET /v1/apps/{slug}/data-repair/review":                            true,
@@ -422,6 +424,7 @@ var routeExclude = map[string]bool{
 	"GET /v1/admin/obs/incidents/{kind}/{id}/evidence":               true,
 	"GET /v1/admin/obs/incidents/platform_alert/recurrence":          true, // private retained-episode recurrence diagnostics
 	"GET /v1/admin/obs/incidents/platform_alert/response-times":      true, // private retained-episode response analytics
+	"GET /v1/admin/obs/wakes/{wake_id}":                              true, // private one-wake event timeline (gregalectl obs wake)
 	"GET /v1/admin/obs/notification-health":                          true, // private notification pipeline health
 	"GET /v1/admin/obs/collection-history":                           true, // private prospective collection evidence
 	"GET /v1/admin/obs/rule-health":                                  true, // private current alert-rule diagnostics
@@ -467,6 +470,7 @@ var routeExclude = map[string]bool{
 	"GET /login":                                                    true, // dashboard magic-link GET (HTML form, browser-only)
 	"POST /logout":                                                  true, // dashboard logout (HTML form, browser-only)
 	"GET /auth/verify":                                              true, // magic-link consume (legacy; PR #1 closed; kept for compat)
+	"POST /auth/verify":                                             true, // magic-link confirm page for a link reached from another site
 	"GET /oauth/callback":                                           true, // GitHub App install callback
 	"GET /oauth/code-callback":                                      true, // GitHub App user-to-server OAuth callback (PR-C)
 	"POST /v1/gitlab/connect":                                       true, // GitLab.com OAuth session + CSRF form
@@ -483,6 +487,7 @@ var routeExclude = map[string]bool{
 	"POST /dashboard/apps/{slug}/github/sync":                       true, // GitHub connection repair form; session-cookie + CSRF-only
 	"POST /dashboard/apps/{slug}/github/disconnect":                 true, // GitHub connection disconnect form; session-cookie + CSRF-only
 	"POST /dashboard/apps/{slug}/github/activity/retry":             true, // GitHub activity recovery form; session-cookie + CSRF-only
+	"POST /dashboard/apps/{slug}/preview/{previewSlug}/destroy":     true, // ADR-20261026090000 previews-page Tear down form; session-cookie + CSRF adapter for POST /v1/preview/{slug}/destroy
 	"GET /dashboard/apps/{slug}/data-api":                           true, // ADR-968 session-auth owner HTML workspace
 	"GET /dashboard/data":                                           true, // ADR-1591 session-auth connection onboarding HTML
 	"POST /dashboard/data":                                          true, // ADR-1591 account-bound CSRF form adapter
@@ -523,6 +528,7 @@ var routeExclude = map[string]bool{
 	"POST /dashboard/apps/{slug}/edge-rules/{id}/toggle":            true, // HTML form, edge-rule enabled toggle (issue #1397 G4)
 	"POST /dashboard/apps/{slug}/edge-rules/{id}/mode":              true, // HTML form, edge-rule enforce/log switch (ADR-960)
 	"POST /dashboard/apps/{slug}/edge-rules/{id}/delete":            true, // HTML form, edge-rule delete (issue #1397 G4)
+	"POST /dashboard/apps/{slug}/edge-rules/{id}/waf-exclusions":    true, // HTML form, WAF review exclude button (ADR-831 amendment 13)
 	"POST /dashboard/apps/{slug}/edge-rules/security-headers":       true, // HTML form, security-headers preset (issue #1397 G4)
 	"POST /dashboard/apps/{slug}/edge-rules/recipes":                true, // HTML form, protection recipe (ADR-986)
 	"POST /dashboard/apps/{slug}/edge-protection/attack-mode":       true, // HTML form, attack mode switch (ADR-20261021220456)
@@ -534,6 +540,7 @@ var routeExclude = map[string]bool{
 	"POST /dashboard/apps/{slug}/deployments/{id}/retry":            true, // HTML form, per-stage retry (ADR-117 §Production-ready follow-on C4); CSRF sealed envelope, no SDK twin
 	"POST /dashboard/apps/{slug}/alert-presets/{name}/enable":       true, // ADR-123 — dashboard form post; programatic enable is /v1 with SDK wrapper EnableAlertPreset
 	"GET /dashboard/apps/{slug}/changes":                            true, // ADR-751 HTML view of GET /v1/apps/{slug}/changes
+	"GET /dashboard/apps/{slug}/release-safety":                     true, // ADR-20261019071733 amd 1 HTML view of the freeze, gate, approval and schedule /v1 reads
 	"GET /dashboard/releases/{id}/approval":                         true, // ADR-20261020085706 HTML page over GET/POST /v1/deployments/{id}/approvals
 	"GET /dashboard/apps/{slug}/log-search":                         true, // ADR-20261018083536 HTML view of GET /v1/apps/{slug}/log-events
 	"GET /dashboard/dashboards":                                     true, // ADR-20261022173833 HTML view of GET /v1/dashboards
@@ -883,6 +890,7 @@ var dtoExclude = map[string]bool{
 	"ObsAppDetail":               true,
 	"ObsAppDetailResponse":       true,
 	"ObsAppHealth":               true,
+	"ObsAppSnapshot":             true, // obs app snapshot rows, same private surface
 	"ObsAuditActivityRow":        true,
 	// ADR-115 capacity PR (post-PR #1111): admin-only capacity
 	// snapshot shapes — same admin-only posture as the other
@@ -1647,6 +1655,7 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", "object_version_protection.go"),
 		filepath.Join(root, "pkg", "api", "object_write_protection.go"),
 		filepath.Join(root, "pkg", "api", "object_bucket_versioning.go"),
+		filepath.Join(root, "pkg", "api", "object_bucket_cors.go"),
 		filepath.Join(root, "pkg", "api", "object_bucket_encryption.go"),
 		filepath.Join(root, "pkg", "api", "object_s3_copy_sources.go"),
 		filepath.Join(root, "pkg", "api", "object_lifecycle.go"),
@@ -1710,6 +1719,7 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", "edge_protection.go"),                 // edge-protection summary (ADR-831 WAF section)
 		filepath.Join(root, "pkg", "api", "edge_rule_validate_params.go"),       // kind=validate parameter schemas
 		filepath.Join(root, "pkg", "api", "edge_rule_waf.go"),                   // kind=waf action (ADR-831)
+		filepath.Join(root, "pkg", "api", "edge_waf_review.go"),                 // WAF false-positive review (ADR-831 amendment 13)
 		filepath.Join(root, "pkg", "api", "edge_rule_recipe_suggestion_dto.go"), // suggested protections (ADR-20261020105000)
 		filepath.Join(root, "pkg", "api", "edge_rule_challenge.go"),             // kind=challenge action (ADR-831)
 		filepath.Join(root, "pkg", "api", "edge_attack_mode.go"),                // attack mode (ADR-20261021220456)
@@ -1767,6 +1777,7 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", "obs_rule_coverage.go"),
 		filepath.Join(root, "pkg", "api", "obs_recording_coverage.go"),
 		filepath.Join(root, "pkg", "api", "obs_input_health.go"),
+		filepath.Join(root, "pkg", "api", "obs_wake.go"),
 		filepath.Join(root, "pkg", "api", corsPresetsFile),
 		filepath.Join(root, "pkg", "api", canaryCustomStageFile),
 		filepath.Join(root, "pkg", "api", uploadSessionFile),
@@ -1838,6 +1849,7 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", releaseApprovalsFile),
 		filepath.Join(root, "pkg", "api", releaseDiffFile),
 		filepath.Join(root, "pkg", "api", scheduledReleasesFile),
+		filepath.Join(root, "pkg", "api", databaseSwitchFile),
 		filepath.Join(root, "pkg", "api", platformTenantsFile),
 		filepath.Join(root, "pkg", "api", platformTenantCredentialsFile),
 		filepath.Join(root, "pkg", "api", runtimePolicyFile),

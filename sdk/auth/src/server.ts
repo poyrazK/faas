@@ -1,6 +1,6 @@
 // @gregale/auth/server: verify application Auth access tokens in a Node,
 // Deno, Bun or edge backend and check permissions (ADR-1190). It follows the
-// same rules as the Go (sdk/go/auth) and Python (faas_sdk.auth) SDKs and
+// same rules as the Go (sdk/go/auth) and Python (faas_sdk.preview.auth) SDKs and
 // uses only WebCrypto and fetch.
 //
 //   const auth = createVerifier({ url: 'https://shop-auth.gregale.app' })

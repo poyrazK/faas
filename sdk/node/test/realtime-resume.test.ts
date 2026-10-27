@@ -10,7 +10,7 @@ import {
   type RealtimeChannelController,
   type RealtimeMessage,
   type RealtimeSocket,
-} from '../src/index.js';
+} from '../src/preview.js';
 
 class FakeSocket extends EventTarget implements RealtimeSocket {
   protocol = REALTIME_RESUME_SUBPROTOCOL;

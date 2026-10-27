@@ -12,8 +12,8 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/devbridge"
 	"github.com/onebox-faas/faas/pkg/gateway"
+	"github.com/onebox-faas/faas/pkg/hostidentity"
 	"github.com/onebox-faas/faas/pkg/state"
-	"github.com/onebox-faas/faas/pkg/wire"
 )
 
 func bridgeIdentityEqual(a, b string) bool {
@@ -37,7 +37,7 @@ func developmentBridgeAuthorization(store state.Store) func(*http.Request) *api.
 			devbridge.ClearCredentials(r.Header)
 			return nil
 		}
-		env, app, ok := gateway.EnvironmentIDsFromHost(wire.DeployWildcardSuffix, strings.Split(r.Host, ":")[0])
+		env, app, ok := gateway.EnvironmentIDsFromHost(hostidentity.DeploySuffix(), strings.Split(r.Host, ":")[0])
 		if !ok || len(authority.id) != 43 || len(authority.token) > 128 {
 			return bridgeDenied("use the selected development environment")
 		}
@@ -171,7 +171,7 @@ func developmentBridgeServiceForwarder(store state.Store, route http.Handler) ga
 			prefix := strings.TrimSuffix(r.URL.Path, path)
 			clone.URL.RawPath = strings.TrimPrefix(r.URL.EscapedPath(), prefix)
 		}
-		clone.Host = gateway.BuildEnvironmentHost(wire.DeployWildcardSuffix, env.ID, target.AppID)
+		clone.Host = gateway.BuildEnvironmentHost(hostidentity.DeploySuffix(), env.ID, target.AppID)
 		clone.URL.Host = clone.Host
 		devbridge.ClearCredentials(clone.Header)
 		clone.Header.Del(gateway.ServiceProxyCallerAppHeader)

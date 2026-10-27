@@ -91,9 +91,7 @@ func cmdWebhooks(args []string) int {
 		return cmdAccountReleaseWebhooks(args[1:])
 	}
 	printCommandValidation(os.Stderr, "unknown webhooks subcommand %q\n", args[0])
-	sug, _ := suggestSubcommand(args[0], parent)
-	maybeSuggestSub(sug)
-	return 1
+	return unknownSubcommandChoices(os.Stderr, "webhooks", parent, args[0])
 }
 
 func cmdWebhooksList(args []string) int {

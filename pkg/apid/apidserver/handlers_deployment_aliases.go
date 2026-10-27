@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/trafficproblem"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -72,7 +73,7 @@ func (s *server) setDeploymentAlias(w http.ResponseWriter, r *http.Request, acct
 		return
 	}
 	if err != nil {
-		api.WriteProblem(w, api.ErrCapacity("could not set deployment alias"))
+		api.WriteProblem(w, trafficproblem.Policy(err, api.ErrCapacity("could not set deployment alias")))
 		return
 	}
 	s.audit.Emit(r.Context(), "deployment_alias.set", &acct.ID, map[string]any{
@@ -99,7 +100,7 @@ func (s *server) deleteDeploymentAlias(w http.ResponseWriter, r *http.Request, a
 		s.notFound(w, "no such deployment alias")
 		return
 	} else if err != nil {
-		api.WriteProblem(w, api.ErrCapacity("could not delete deployment alias"))
+		api.WriteProblem(w, trafficproblem.Policy(err, api.ErrCapacity("could not delete deployment alias")))
 		return
 	}
 	s.audit.Emit(r.Context(), "deployment_alias.deleted", &acct.ID, map[string]any{

@@ -81,11 +81,10 @@
       ansible.builtin.systemd:
         daemon_reload: true
 
-    - name: Probe the managed-host bootstrap contract
+    - name: Probe for an existing managed compute host
       ansible.builtin.shell:
         cmd: |
           set -euo pipefail
-          test "$(cat /var/lib/faas/bootstrap/bootstrap-contract.sha256)" = "{{ faas_join_bootstrap_contract_sha256 }}"
           test -c /dev/kvm
           test -d /srv/fc
           mountpoint -q /srv/fc
@@ -109,28 +108,39 @@
       changed_when: false
       failed_when: false
 
+    - name: Read the recorded managed-host bootstrap contract
+      ansible.builtin.slurp:
+        src: /var/lib/faas/bootstrap/bootstrap-contract.sha256
+      register: faas_join_recorded_bootstrap_contract
+      failed_when: false
+
     - name: Select full bootstrap or managed-host rollout
       ansible.builtin.set_fact:
-        faas_join_bootstrap_contract_current: "{{ faas_join_managed_host_probe.rc == 0 }}"
+        faas_join_managed_host: "{{ faas_join_managed_host_probe.rc == 0 }}"
+        faas_join_bootstrap_contract_current: "{{ faas_join_managed_host_probe.rc == 0 and (faas_join_recorded_bootstrap_contract.content | default('') | b64decode | trim) == faas_join_bootstrap_contract_sha256 }}"
 
     - name: Report the managed-host rollout decision
       ansible.builtin.debug:
         msg: >-
           {{ 'Managed-host bootstrap contract is current; skipping OS and role convergence.'
              if faas_join_bootstrap_contract_current
-             else 'Managed-host bootstrap contract is absent or stale; running full convergence.' }}
+             else ('Managed-host bootstrap contract is stale; preparation skips role convergence, which activation runs before the drain.'
+                   if (faas_join_managed_host and (faas_join_rollout_phase | default('full')) == 'prepare')
+                   else 'Managed-host bootstrap contract is absent or stale; running full convergence.') }}
 
-    # The parallel preparation lane is intentionally narrower than node
-    # adoption. A host whose OS/role contract changed must use the existing
-    # serialized full convergence path rather than mutating serving daemons in
-    # parallel with its peers.
+    # The parallel preparation lane is narrower than node adoption: it never
+    # converges OS or roles (bootstrap.yml ends every host in prepare) and never
+    # touches serving daemons. A host whose OS/role contract changed is still
+    # prepared in parallel; its serialized activation converges roles before
+    # the drain (ADR-20261025095348). A fresh host has nothing serving to protect and
+    # takes the full serialized join path.
     - name: Require an existing managed host for non-disruptive rollout preparation
       ansible.builtin.assert:
         that:
-          - faas_join_bootstrap_contract_current | bool
+          - faas_join_managed_host | bool
         fail_msg: >-
-          Parallel rollout preparation requires a current managed-host
-          bootstrap contract; run the full serialized join path for this node.
+          Parallel rollout preparation requires an existing managed compute
+          host; run the full serialized join path for this node.
       when: (faas_join_rollout_phase | default('full')) == 'prepare'
 
     - name: Create bootstrap directories
@@ -669,6 +679,8 @@
         group: root
         mode: "0600"
         content: "{{ faas_join_bootstrap_contract_sha256 }}\n"
+      # Preparation skips role convergence, so it must not claim the contract.
+      when: (faas_join_rollout_phase | default('full')) != 'prepare'
 
 - name: Verify the signed release before promoting its operator CLI
   hosts: compute_nodes
@@ -880,6 +892,60 @@
           Environment=FAAS_COMPUTE_ADMISSION_CEILING_MB={{ faas_join_admission_ceiling_mb | default(faas_node_sizing.admission_ceiling_mb, true) }}
           Environment=FAAS_VCPU_BUDGET={{ faas_join_vcpu_budget | default((faas_join_tenant_vcpus | int) * 8, true) }}
 
+    # vmmd restart adoption switches (roles/vmmd_service/defaults/main.yml).
+    # Rendered on every run, not only on bootstrap convergence, so a host var
+    # change reaches the node with the next rollout; the adoption check below
+    # sees the same values. An off switch renders empty: vmmd.toml decides.
+    - name: Validate the vmmd restart adoption switches
+      ansible.builtin.assert:
+        that:
+          - not (vmmd_adopt_running_vms | default(false) | bool) or (vmmd_adoption_record | default(false) | bool)
+          - not (vmmd_adopt_admitted_runtimes | default(false) | bool) or (vmmd_adopt_running_vms | default(false) | bool)
+        fail_msg: >-
+          vmmd_adopt_running_vms needs vmmd_adoption_record, and
+          vmmd_adopt_admitted_runtimes needs vmmd_adopt_running_vms
+          (roles/vmmd_service/defaults/main.yml).
+
+    - name: Install the vmmd restart adoption switches
+      ansible.builtin.copy:
+        dest: /etc/systemd/system/faas-vmmd.service.d/zz-faas-adoption.conf
+        owner: root
+        group: root
+        mode: "0644"
+        content: |
+          [Service]
+          Environment=FAAS_VMMD_ADOPTION_RECORD={{ 'true' if (vmmd_adoption_record | default(false) | bool) else '' }}
+          Environment=FAAS_VMMD_ADOPT_RUNNING_VMS={{ 'true' if (vmmd_adopt_running_vms | default(false) | bool) else '' }}
+          Environment=FAAS_VMMD_ADOPT_ADMITTED_RUNTIMES={{ 'true' if (vmmd_adopt_admitted_runtimes | default(false) | bool) else '' }}
+
+    # Connection survival: the instance bridge switches, rendered the same way.
+    # An off switch sets nothing: vmmd's default (off) decides.
+    - name: Validate the instance bridge switches
+      ansible.builtin.assert:
+        that:
+          - not (vmmd_instance_bridge_unit | default(false) | bool) or (vmmd_bridge_unprivileged | default(false) | bool)
+        fail_msg: >-
+          vmmd_instance_bridge_unit needs vmmd_bridge_unprivileged
+          (roles/vmmd_service/defaults/main.yml).
+
+    - name: Install the instance bridge switches
+      ansible.builtin.copy:
+        dest: /etc/systemd/system/faas-vmmd.service.d/zz-faas-bridge.conf
+        owner: root
+        group: root
+        mode: "0644"
+        content: |
+          [Service]
+          {% if vmmd_bridge_unprivileged | default(false) | bool %}
+          Environment=FAAS_BRIDGE_UNPRIVILEGED=1
+          {% endif %}
+          {% if vmmd_instance_bridge_sessions | default(false) | bool %}
+          Environment=FAAS_INSTANCE_BRIDGE_SESSIONS=1
+          {% endif %}
+          {% if vmmd_instance_bridge_unit | default(false) | bool %}
+          Environment=FAAS_INSTANCE_BRIDGE_UNIT=1
+          {% endif %}
+
     # A fresh host has no /opt/faas/current yet, but release-bound base
     # preparation needs vmmd. Register the row as unavailable before the
     # temporary candidate vmmd starts so self-registration cannot make the
@@ -927,6 +993,15 @@
     # staging path while the serving release and vmmd are still available. A
     # new host receives a short-lived candidate vmmd override below; an
     # existing host keeps serving with its currently active release.
+    # Preparation skips role convergence, including supply_chain_scanners.
+    # Refresh the scanner database here, in parallel, so the pre-stage scans
+    # and activation's role pass find it current (ADR-20261025095348).
+    - name: Refresh the Grype vulnerability database during preparation
+      ansible.builtin.include_role:
+        name: supply_chain_scanners
+        tasks_from: grype_db
+      when: (faas_join_rollout_phase | default('full')) == 'prepare'
+
     - name: Create the release-bound runtime-base pre-stage directory
       ansible.builtin.file:
         path: "/opt/faas/prestage/{{ faas_join_release_git_sha }}"
@@ -934,6 +1009,7 @@
         owner: root
         group: root
         mode: "0755"
+      when: (faas_join_rollout_phase | default('full')) != 'activate'
 
     - name: Extract the signed candidate for runtime-base pre-staging
       ansible.builtin.unarchive:
@@ -942,12 +1018,14 @@
         remote_src: true
         owner: root
         group: root
+      when: (faas_join_rollout_phase | default('full')) != 'activate'
 
     - name: Inspect the active vmmd binary before runtime pre-stage
       ansible.builtin.stat:
         path: /opt/faas/current/bin/vmmd
         follow: true
       register: faas_join_active_vmmd
+      when: (faas_join_rollout_phase | default('full')) != 'activate'
 
     # ADR-20261024085817: the pre-stage adopts the candidate's runtime base
     # generations into this node's cache, and the serving vmmd refuses every
@@ -1015,7 +1093,11 @@
           - "{{ faas_join_inventory_name }}"
           - --pki-trust-only
       changed_when: true
-      when: not faas_join_active_vmmd.stat.exists
+      # The phase check comes first: activation from the top skips the vmmd
+      # inspection above, and Ansible stops at the first false condition.
+      when:
+        - (faas_join_rollout_phase | default('full')) != 'activate'
+        - not faas_join_active_vmmd.stat.exists
 
     - name: Bootstrap fresh-host vmmd from the verified release candidate
       ansible.builtin.copy:
@@ -1027,7 +1109,11 @@
           [Service]
           ExecStart=
           ExecStart=/opt/faas/prestage/{{ faas_join_release_git_sha }}/vmmd --config /etc/faas/vmmd.toml
-      when: not faas_join_active_vmmd.stat.exists
+      # The phase check comes first: activation from the top skips the vmmd
+      # inspection above, and Ansible stops at the first false condition.
+      when:
+        - (faas_join_rollout_phase | default('full')) != 'activate'
+        - not faas_join_active_vmmd.stat.exists
 
     - name: Install the runtime-base pre-stage one-shot
       ansible.builtin.copy:
@@ -1093,12 +1179,15 @@
           ProtectControlGroups=yes
           ReadOnlyPaths=/etc/faas /opt/faas/prestage/{{ faas_join_release_git_sha }}
           ReadWritePaths=/srv/fc/snap /srv/fc/base /srv/fc/base-staging /srv/fc/scans /srv/fc/sigs /var/log/faas /var/spool/faas /var/lib/faas/cache /var/lib/faas/grype /var/cache/faas/builds/.leases /dev/shm/faas-base-staging
+      when: (faas_join_rollout_phase | default('full')) != 'activate'
 
     - name: Reload systemd for runtime-base pre-staging
       ansible.builtin.systemd:
         daemon_reload: true
+      when: (faas_join_rollout_phase | default('full')) != 'activate'
 
     - name: Pre-stage release-bound runtime bases before draining the node
+      when: (faas_join_rollout_phase | default('full')) != 'activate'
       block:
         - name: Start the release-bound runtime-base pre-stage
           ansible.builtin.systemd:
@@ -1137,9 +1226,13 @@
       ansible.builtin.meta: end_play
       when: (faas_join_rollout_phase | default('full')) == 'prepare'
 
-    # --activate-prepared starts at this exact task. The release-bound marker
-    # is written only after signature verification and runtime-base pre-stage
-    # complete, so the serialized lane cannot drain a partially prepared node.
+    # --activate-prepared starts at this exact task when the node's bootstrap
+    # contract is current. When it is stale, activation runs the playbook from
+    # the top so bootstrap.yml converges roles serially, skips the pre-stage
+    # section it already completed, and reaches this task (ADR-20261025095348). The
+    # release-bound marker is written only after signature verification and
+    # runtime-base pre-stage complete, so the serialized lane cannot drain a
+    # partially prepared node.
     - name: Verify the prepared rollout marker
       ansible.builtin.command:
         argv:
@@ -1251,9 +1344,41 @@
           - adoption-check
           - --config
           - /etc/faas/vmmd.toml
+      # The candidate judges with the switches the restarted vmmd will run
+      # with (zz-faas-adoption.conf above), not only vmmd.toml's.
+      environment:
+        FAAS_VMMD_ADOPTION_RECORD: "{{ 'true' if (vmmd_adoption_record | default(false) | bool) else '' }}"
+        FAAS_VMMD_ADOPT_RUNNING_VMS: "{{ 'true' if (vmmd_adopt_running_vms | default(false) | bool) else '' }}"
+        FAAS_VMMD_ADOPT_ADMITTED_RUNTIMES: "{{ 'true' if (vmmd_adopt_admitted_runtimes | default(false) | bool) else '' }}"
       register: faas_join_adoption_check
       changed_when: false
       failed_when: faas_join_adoption_check.rc not in [0, 3]
+      when:
+        - (faas_join_existing_compute_node.rc | default(3)) == 0
+        - faas_join_active_vmmd.stat.exists
+        - not (faas_join_force_drain | default(false) | bool)
+
+    # The candidate adopting is not enough: the serving vmmd must hand its
+    # guests off. Only a vmmd with adopt_running_vms on sets the planned-
+    # restart notice that holds wakes and steers placement away while it
+    # restarts, and hands its bridge units over. A host just switched on
+    # (step 2 of the canary order) therefore drains once more; the rollout
+    # after it can skip the drain. Read from the running process: the unit's
+    # drop-ins already carry the candidate's switches.
+    - name: Read whether the serving vmmd hands its guests off
+      ansible.builtin.shell: |
+        set -euo pipefail
+        pid=$(systemctl show faas-vmmd -p MainPID --value)
+        if [ "${pid:-0}" -gt 0 ] && tr '\0' '\n' < "/proc/$pid/environ" |
+            grep -Eqx 'FAAS_VMMD_ADOPT_RUNNING_VMS=(1|t|T|true|TRUE|True)'; then
+          echo yes
+        else
+          echo no
+        fi
+      args:
+        executable: /bin/bash
+      register: faas_join_serving_vmmd_adopts
+      changed_when: false
       when:
         - (faas_join_existing_compute_node.rc | default(3)) == 0
         - faas_join_active_vmmd.stat.exists
@@ -1266,6 +1391,7 @@
       ansible.builtin.set_fact:
         faas_join_skip_drain: >-
           {{ (faas_join_adoption_check.rc | default(3)) == 0 and
+             (faas_join_serving_vmmd_adopts.stdout | default('no')) == 'yes' and
              not (faas_join_force_drain | default(false) | bool) and
              (faas_join_drain_base_generations.rc | default(0)) == 0 }}
 
@@ -1278,13 +1404,15 @@
              if (faas_join_drain_base_generations.rc | default(0)) in [3, 4] else
              'Draining: faas_join_force_drain is set.'
              if faas_join_force_drain | default(false) | bool else
+             'Draining: the serving vmmd does not hand its guests off (adopt_running_vms is off); the next rollout can skip the drain.'
+             if (faas_join_adoption_check.rc | default(3)) == 0 else
              'Draining: ' ~ ((faas_join_adoption_check.stdout | default('{}') | from_json).reason
              | default('the candidate cannot adopt every live guest', true)) }}
 
     - name: Gracefully drain the existing node before release installation
       when: >-
-        not (faas_join_skip_drain | bool) and (
-        (faas_join_rollout_phase | default('full')) == 'activate' or
+        not (faas_join_skip_drain | bool) and
+        ((faas_join_rollout_phase | default('full')) == 'activate' or
         (faas_join_existing_compute_node.rc | default(3)) == 0)
       block:
         - name: Begin graceful drain of the existing node before release installation

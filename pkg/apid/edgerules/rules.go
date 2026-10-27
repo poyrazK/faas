@@ -23,7 +23,9 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/appaccess"
 	"github.com/onebox-faas/faas/pkg/apid/httpkit"
+	"github.com/onebox-faas/faas/pkg/auth/middleware"
 	"github.com/onebox-faas/faas/pkg/logsanitize"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -432,6 +434,19 @@ func (s *Service) ListEdgeRules(w http.ResponseWriter, r *http.Request, acct sta
 		api.WriteProblem(w, api.ErrCapacity("could not list edge rules"))
 		return
 	}
+	// Company apps and their creator's personal apps share AccountID, so the
+	// account's rules are filtered to the apps this caller may still see: a
+	// removed creator or a key bound to one app or org sees only those, as
+	// the other account-wide lists do.
+	actor := acct
+	if a, _, ok := middleware.AccountFromContext(r); ok {
+		actor = a
+	}
+	rules, err = appaccess.VisibleResources(r, s.Host.Store(), actor, rules, func(rule state.EdgeRule) string { return rule.AppID })
+	if err != nil {
+		api.WriteProblem(w, api.ErrCapacity("could not list edge rules"))
+		return
+	}
 	out := make([]api.EdgeRuleResponse, 0, len(rules))
 	for _, rule := range rules {
 		out = append(out, s.RuleResponse(acct, rule))
@@ -472,7 +487,7 @@ func (s *Service) CreateEdgeRule(w http.ResponseWriter, r *http.Request, acct st
 	// The per-kind cap is enforced inside the store's
 	// CreateEdgeRuleIfUnderQuota FOR UPDATE lock and surfaced
 	// below via qe.PerKind / ErrPlanEdgeRuleKindQuotaReached.
-	if prob := planKindProblem(acct, req.Kind); prob != nil {
+	if prob := s.kindProblem(acct, req.Kind); prob != nil {
 		api.WriteProblem(w, prob)
 		return
 	}
@@ -625,7 +640,7 @@ func ActionFromBody(kind string, raw json.RawMessage) state.EdgeRuleAction {
 				Algorithms: a.Algorithms, RequiredClaims: a.RequiredClaims,
 				PlatformTenantExternalRefClaim: a.PlatformTenantExternalRefClaim,
 				MCP:                            a.MCP,
-				RequireExp:                     a.RequireExp,
+				RequireExp:                     a.RequiresExp(),
 			}
 		}
 	case state.EdgeRuleKindIP:
@@ -720,6 +735,7 @@ func ActionFromBody(kind string, raw json.RawMessage) state.EdgeRuleAction {
 			// apid-Validate.
 			out.Budget = &state.EdgeRuleBudgetAction{
 				BudgetMs:            a.BudgetMs,
+				TotalDeadlineMs:     a.TotalDeadlineMs,
 				AllowOverrideHeader: a.AllowOverrideHeader,
 			}
 		}

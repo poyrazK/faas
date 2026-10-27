@@ -7,8 +7,10 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/appaccess"
 	"github.com/onebox-faas/faas/pkg/apid/dashboards"
 	"github.com/onebox-faas/faas/pkg/appmetrics"
+	"github.com/onebox-faas/faas/pkg/auth/middleware"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -19,16 +21,59 @@ type dashboardsHost struct{ s *server }
 var _ dashboards.Host = dashboardsHost{}
 
 // AppForAccount resolves an app the account owns; deleted apps and other
-// accounts' apps read as absent.
+// accounts' apps read as absent. A widget names its app by slug, outside
+// appaccess.Wrap, so it applies the account inventories' rule: a company app
+// stays hidden from a creator who left the company or from a key bound to
+// another one.
 func (h dashboardsHost) AppForAccount(ctx context.Context, acct state.Account, slug string) (state.App, bool) {
 	if slug == "" {
 		return state.App{}, false
 	}
 	app, err := h.s.store.AppBySlug(ctx, slug)
-	if err != nil || app.AccountID != acct.ID {
+	if err != nil || app.AccountID != acct.ID || !accountViewAppVisible(ctx, h.s.store, h.s.log, acct, app) {
 		return state.App{}, false
 	}
 	return app, true
+}
+
+// ShowsDashboard hides a dashboard from a key bound to one app or company
+// unless every widget names an app that key may see: the definitions carry
+// app slugs, titles and log queries. A session and an account-wide key see
+// all of the account's dashboards; their widgets' data is still hidden per
+// app.
+func (h dashboardsHost) ShowsDashboard(ctx context.Context, acct state.Account, widgets []api.DashboardWidget) bool {
+	_, key, _ := middleware.AccountFromCtx(ctx)
+	if key == nil || key.AppID == "" && key.OrgID == "" {
+		return true
+	}
+	for _, w := range widgets {
+		if _, ok := h.AppForAccount(ctx, acct, w.App); !ok {
+			return false
+		}
+	}
+	return true
+}
+
+// accountViewAppVisible reports whether an account view (a dashboard widget
+// or an incident) may show app's data to the request's principal. A failed
+// read hides the app.
+func accountViewAppVisible(ctx context.Context, store appaccess.Store, log *slog.Logger, acct state.Account, app state.App) bool {
+	visible, err := accountViewApps(ctx, store, acct, []state.App{app})
+	if err != nil {
+		log.WarnContext(ctx, "account view: app access", "app_id", app.ID, "err", err)
+		return false
+	}
+	return len(visible) == 1
+}
+
+// accountViewApps keeps the apps of acct's list that an account view may
+// show to the request's principal (appaccess.VisibleAppsContext).
+func accountViewApps(ctx context.Context, store appaccess.Store, acct state.Account, apps []state.App) ([]state.App, error) {
+	actor := acct
+	if principal, _, ok := middleware.AccountFromCtx(ctx); ok {
+		actor = principal
+	}
+	return appaccess.VisibleAppsContext(ctx, store, actor, apps)
 }
 
 func (h dashboardsHost) Dashboards() state.DashboardStore { return h.s.store }
@@ -50,7 +95,7 @@ func (d dashboardSources) AppMetrics(ctx context.Context, acct state.Account, ap
 	return resp, nil
 }
 
-func (d dashboardSources) LogEvents() state.LogEventStore { return d.s.store }
+func (d dashboardSources) LogEvents() state.LogEventStore { return d.s.logEvents() }
 
 func (d dashboardSources) CustomMetricSeries(ctx context.Context, app state.App, name, rng string) api.CustomMetricSeriesResponse {
 	return d.s.customMetricSeries(ctx, app.ID, name, d.s.customMetricKind(ctx, app.ID, name), rng, time.Now().UTC())

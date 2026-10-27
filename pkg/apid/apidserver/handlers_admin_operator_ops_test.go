@@ -87,7 +87,7 @@ func TestObsTenantActivity_UnknownTenant(t *testing.T) {
 
 func TestObsAppDetail_RejectsBadID(t *testing.T) {
 	e := apidserver.NewObsEnv(t, api.ScopesAdminOnly, "ops@faas.dev", "ops@faas.dev")
-	rec := e.DoOperator(t, "GET", "/v1/admin/obs/apps/not-a-uuid", nil, nil)
+	rec := e.DoOperator(t, "GET", "/v1/admin/obs/apps/Not_A_Slug", nil, nil)
 	if rec.Code != 400 {
 		t.Fatalf("app detail: got status %d, want 400; body=%s", rec.Code, rec.Body.String())
 	}

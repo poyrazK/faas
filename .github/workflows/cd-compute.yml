@@ -705,6 +705,12 @@ jobs:
       SEAL_DOMAIN_RUNTIME_AGE_RECIPIENT: ${{ secrets.SEAL_DOMAIN_RUNTIME_AGE_RECIPIENT }}
       SEAL_DOMAIN_BUILD_AGE_KEY: ${{ secrets.SEAL_DOMAIN_BUILD_AGE_KEY }}
       SEAL_DOMAIN_BUILD_AGE_RECIPIENT: ${{ secrets.SEAL_DOMAIN_BUILD_AGE_RECIPIENT }}
+      SEAL_DOMAIN_EDGE_AGE_KEY: ${{ secrets.SEAL_DOMAIN_EDGE_AGE_KEY }}
+      SEAL_DOMAIN_EDGE_AGE_RECIPIENT: ${{ secrets.SEAL_DOMAIN_EDGE_AGE_RECIPIENT }}
+      SEAL_DOMAIN_CONTROL_AGE_KEY: ${{ secrets.SEAL_DOMAIN_CONTROL_AGE_KEY }}
+      SEAL_DOMAIN_CONTROL_AGE_RECIPIENT: ${{ secrets.SEAL_DOMAIN_CONTROL_AGE_RECIPIENT }}
+      SEAL_DOMAIN_DELIVERY_AGE_KEY: ${{ secrets.SEAL_DOMAIN_DELIVERY_AGE_KEY }}
+      SEAL_DOMAIN_DELIVERY_AGE_RECIPIENT: ${{ secrets.SEAL_DOMAIN_DELIVERY_AGE_RECIPIENT }}
 
     steps:
       - name: Check out the release source and Ansible roles
@@ -1036,7 +1042,7 @@ jobs:
             chmod 0600 "$ARTIFACT_DIR/ansible-vars.yml"
           fi
           # ADR 20261022111812: the join's seal_domains role stages the compute
-          # seal-domain identities (runtime, build) held as SEAL_DOMAIN_*
+          # seal-domain identities (runtime, build, edge, control) held as SEAL_DOMAIN_*
           # secrets and proves them before the node is activated.
           scripts/ci/seal_domain_vars.sh compute "$ARTIFACT_DIR/seal-domains" "$ARTIFACT_DIR/ansible-vars.yml"
           if [[ -n "${COMPUTE_BOX_AGE_KEY:-}" ]]; then

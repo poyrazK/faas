@@ -203,9 +203,11 @@ func renderManifestAnsibleFiles(m *manifest.Manifest, outputDir string) ([]manif
 			return nil, fmt.Errorf("host %s schedd target: %w", host.Name, targetErr)
 		}
 		body := renderManifestHostVars(host, ansibleHost, targetURL, gatewaySynthTarget, hostScheddTarget, controlPlaneAPIDLoopback, privateHosts, overlayCIDRs, m.Overlay.Provider, m.DNS.Mode, m.PrivateDNS.Mode, m.PrivateDNS.Zone, postgresListenAddress, postgresAllowedCIDRs, computeAllowedCIDRs, controlPlaneAllowedCIDRs, m.Storage.FastRoot)
+		body += renderDomainLayoutVars(m.DNS)
 		if host.Role == roleControlPlane {
 			body += renderCustomDomainEdgeVars(m.PublicEdge.CustomDomains)
 			body += renderScheddListenVars(m)
+			body += renderObjectStorageGatewayVars(m.ObjectStorage)
 			if standby := m.PostgreSQL.Standby; standby != nil {
 				// ADR-1344 §8: the primary admits replication from the
 				// standby's address and keeps its slot.
@@ -213,6 +215,7 @@ func renderManifestAnsibleFiles(m *manifest.Manifest, outputDir string) ([]manif
 			}
 		}
 		body += renderComputeEdgeVars(m.PublicEdge.ComputeNodes, host.Role, postgresListenAddress, computeAllowedCIDRs)
+		body += renderWorkloadIdentityVars(m.WorkloadIdentity)
 		if host.Role == roleComputeOnly && m.Egress.TenantGateway != nil {
 			gatewayVars, gwErr := renderTenantEgressGatewayVars(m.Egress.TenantGateway, canonicalComputeNodeName(host.Name, roleTemplating.Role(host.Role)))
 			if gwErr != nil {
@@ -272,6 +275,22 @@ func renderManifestAnsibleFiles(m *manifest.Manifest, outputDir string) ([]manif
 // control_plane_service role, which renders it into both schedd's
 // FAAS_SCHEDD_LISTEN_ADDR and faas-schedd.socket (ADR-1736). The renderer
 // writes the same bind into schedd.toml, so the three cannot disagree.
+// renderObjectStorageGatewayVars places s3-gatewayd under the playbooks when
+// the manifest manages it (ADR 20261025111015). Unmanaged emits nothing, so
+// an existing hand-run gateway is never started or stopped by a converge.
+func renderObjectStorageGatewayVars(o manifest.ObjectStorage) string {
+	if !o.Managed() {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("faas_object_storage_gateway_managed: true\n")
+	fmt.Fprintf(&b, "faas_object_storage_config_src: %q\n", o.ConfigSrc)
+	if o.ProviderEnvSrc != "" {
+		fmt.Fprintf(&b, "faas_object_storage_provider_env_src: %q\n", o.ProviderEnvSrc)
+	}
+	return b.String()
+}
+
 func renderScheddListenVars(m *manifest.Manifest) string {
 	if m.Daemons.Schedd == nil || m.Daemons.Schedd.Bind == "" {
 		return ""
@@ -597,6 +616,30 @@ func renderPublicListenAddr(host manifest.Host) string {
 // host: the public_edge Caddy block, the nftables 80/443 opening, apid's
 // customer DNS instructions and gatewayd-public's ask endpoint all key off
 // these variables.
+// renderDomainLayoutVars renders the apps domain the roles' apps-domain
+// drop-ins and public edge read, and the ADR-20261026100000 layout the
+// domain-layout drop-in reads. Nothing is rendered for an unset layout field,
+// so a manifest that sets only apps_domain keeps the shared layout.
+func renderDomainLayoutVars(d manifest.DNS) string {
+	var b strings.Builder
+	if d.AppsDomain != "" {
+		fmt.Fprintf(&b, "gatewayd_apps_domain: %q\n", d.AppsDomain)
+	}
+	if d.PlatformDomain != "" {
+		fmt.Fprintf(&b, "faas_platform_domain: %q\n", d.PlatformDomain)
+	}
+	if d.DeployDomain != "" {
+		fmt.Fprintf(&b, "faas_deploy_domain: %q\n", d.DeployDomain)
+	}
+	if len(d.AppsDomainAliases) > 0 {
+		fmt.Fprintf(&b, "faas_apps_domain_aliases: [%s]\n", quotedYAMLList(d.AppsDomainAliases))
+	}
+	if d.AppsDomainAliasMode != "" {
+		fmt.Fprintf(&b, "faas_apps_domain_alias_mode: %q\n", d.AppsDomainAliasMode)
+	}
+	return b.String()
+}
+
 func renderCustomDomainEdgeVars(c manifest.CustomDomainsEdge) string {
 	if !c.Enabled() {
 		return ""
@@ -618,6 +661,17 @@ const computeEdgePrivatePort = "8090"
 // compute node gets that listener as its target, and admits its peers' edges
 // to gatewayd-internal for the compute-pool fallback. Nothing is rendered
 // while the manifest leaves the edge off, so the roles' defaults remove it.
+// renderWorkloadIdentityVars hands every control-plane and compute host the
+// directory `gregalectl workload-identity init` wrote: control_plane_service
+// installs its JWKS, vmmd_service its signing key (ADR-1141 amendment
+// 2026-10-24). An empty source leaves issuance off.
+func renderWorkloadIdentityVars(w manifest.WorkloadIdentity) string {
+	if w.SourceDir == "" {
+		return ""
+	}
+	return fmt.Sprintf("faas_workload_identity_source_dir: %q\n", w.SourceDir)
+}
+
 func renderComputeEdgeVars(enabled bool, role, controlPlaneAddress string, computeCIDRs []string) string {
 	if !enabled || controlPlaneAddress == "" {
 		return ""

@@ -99,13 +99,17 @@ func (s *Service) queueNativeObjectInventory(ctx context.Context, accounting sta
 	}
 	// Advance the existing refresh cadence even when readiness later blocks the
 	// job, so an unsafe legacy grant cannot create a new job every sweep.
-	err = accounting.ClaimObjectInventory(ctx, b.ID, uuid.NewString())
+	token := uuid.NewString()
+	err = accounting.ClaimObjectInventory(ctx, b.ID, token)
 	if errors.Is(err, state.ErrConflict) {
 		return true, nil
 	}
 	if err != nil {
 		return true, err
 	}
+	// The claim only advances the cadence; release it so deletions do not
+	// wait for a listing that never runs (ADR-20261025115958).
+	releaseObjectInventory(ctx, accounting, b.ID, token)
 	_, err = capacity.RequestObjectCapacityReconciliation(ctx, b.AccountID, b.AppID, b.ID)
 	if errors.Is(err, state.ErrConflict) {
 		return true, nil

@@ -393,6 +393,10 @@ func (m *MemStore) ClaimNextDueWorkflowRun(ctx context.Context) (*WorkflowRun, e
 		chosen.Input = cloneWorkflowJSON(chosen.Input)
 		chosen.Output = cloneWorkflowJSON(chosen.Output)
 		chosen.DefinitionSnapshot = cloneWorkflowJSON(chosen.DefinitionSnapshot)
+		if priorStatus != WorkflowRunStatusRunning {
+			dueAt := chosen.ScheduledFor
+			chosen.ClaimedDueAt = &dueAt
+		}
 		return &chosen, nil
 	}
 	return nil, ErrNotFound
@@ -749,10 +753,13 @@ func (m *MemStore) CreateWorkflowSteps(_ context.Context, runID string, steps []
 func (m *MemStore) GetWorkflowSteps(_ context.Context, runID string) ([]*WorkflowStep, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	return m.workflowStepsLocked(runID), nil
+}
 
+func (m *MemStore) workflowStepsLocked(runID string) []*WorkflowStep {
 	stepsMap, ok := m.workflowSteps[runID]
 	if !ok {
-		return []*WorkflowStep{}, nil
+		return []*WorkflowStep{}
 	}
 
 	var steps []*WorkflowStep
@@ -785,7 +792,7 @@ func (m *MemStore) GetWorkflowSteps(_ context.Context, runID string) ([]*Workflo
 		return steps[i].CreatedAt.Before(steps[j].CreatedAt)
 	})
 
-	return steps, nil
+	return steps
 }
 
 // StartWorkflowStep persists the resolved input with the running transition.

@@ -95,7 +95,38 @@ healthy standby, fail over instead.
 4. Give the new host its own `host.age` (`gregalectl secrets init`), then
    re-seal the values sealed outside PostgreSQL for it
    (`docs/runbooks/FaasFleetSealDomain.md`).
-5. Run `make … bootstrap-control-plane`, restore PostgreSQL from the
-   off-host basebackups (`docs/runbooks/PostgresBackup.md`), then deploy the
-   release and repoint the compute nodes and public origin as in the failover
-   runbook.
+5. Run `make … bootstrap-control-plane`, then stop the S3 gateway before
+   PostgreSQL is restored: bootstrap starts it, and once the restored
+   database is up it would serve the restored catalog.
+
+   ```bash
+   sudo systemctl stop faas-s3-gatewayd
+   ```
+
+   Restore PostgreSQL from the off-host basebackups
+   (`docs/runbooks/PostgresBackup.md`). Before any other daemon starts
+   against it, turn S3 off in the database itself:
+
+   ```bash
+   sudo gregalectl object-storage hold --db-env /etc/faas/sealed.env
+   ```
+
+   `s3_enabled` lives in the database, so the restore brought it back as it
+   was at the restore point, usually on, and with it every S3 key, copy
+   source, compute binding and access grant revoked after that point. The
+   hold needs no apid. The restore also promoted the database onto a new
+   PostgreSQL timeline, which by itself fences the S3 gateway and public
+   reads (ADR-20261025111015 amendment 1); the hold covers a backup taken
+   before that fence existed. Then deploy the release and repoint the
+   compute nodes and public origin as in the failover runbook. S3 requests
+   and public bucket reads answer 503 until step 6 is done.
+6. Run `make ANSIBLE_INVENTORY=… object-storage-reconcile` and the
+   revocation review in `docs/runbooks/ObjectStorageRestoreReconcile.md`,
+   then accept the restored database's timeline and turn `s3_enabled` back
+   on. The restored bucket catalog is as old as the backup; buckets created
+   or deleted since then disagree with the providers, and revocations made
+   since then are undone.
+
+   ```bash
+   sudo gregalectl object-storage accept --db-env /etc/faas/sealed.env
+   ```

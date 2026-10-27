@@ -201,8 +201,8 @@ func cmdEvents(args []string) int {
 	case "replay-retryable":
 		return cmdEventsReplayRetryableFanoutFailures(args[1:])
 	default:
-		PrintUsage(os.Stderr, fmt.Sprintf("unknown events subcommand: %s", args[0]), "events")
-		return 1
+		printCommandValidation(os.Stderr, "unknown events subcommand %q\n", args[0])
+		return unknownSubcommandChoices(os.Stderr, "events", nestedCliCommand("events"), args[0])
 	}
 }
 

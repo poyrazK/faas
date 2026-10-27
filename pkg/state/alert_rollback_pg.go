@@ -110,11 +110,19 @@ func (s *PgStore) UpdateAlertRollback(ctx context.Context, r api.AlertRollback, 
 	return tx.Commit(ctx)
 }
 func (s *PgStore) CommitAlertRollback(ctx context.Context, r api.AlertRollback) (api.AlertRollback, error) {
-	tx, err := s.pool.Begin(ctx)
+	return retryTrafficSerialization(ctx, func() (api.AlertRollback, error) {
+		return s.commitAlertRollbackOnce(ctx, r)
+	})
+}
+
+// A historical rollback prepares its target, re-publishing that revision URL,
+// so the commit joins the shared binding guard (ADR-570).
+func (s *PgStore) commitAlertRollbackOnce(ctx context.Context, r api.AlertRollback) (api.AlertRollback, error) {
+	tx, err := s.beginAppTrafficMutation(ctx, r.AppID)
 	if err != nil {
 		return r, err
 	}
-	defer func() { _ = tx.Rollback(ctx) }()
+	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
 	if _, err = sqlc.New().LockCheckedRollbackApp(ctx, tx, sqlc.LockCheckedRollbackAppParams{AppID: mustPgUUID(r.AppID), AccountID: mustPgUUID(r.AccountID)}); err != nil {
 		return r, mapErr(err)
 	}

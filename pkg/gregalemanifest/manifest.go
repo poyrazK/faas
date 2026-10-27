@@ -769,8 +769,8 @@ type Trigger struct {
 	// kafka poller reconciles its broker offset with a
 	// dead-lettered record. Closed vocab: "commit" (default —
 	// broker offset advances; same as no field) and
-	// "seek-to-offset" (the kafka poller calls SetOffset so the
-	// next Poll re-fetches the same message). Empty string
+	// "seek-to-offset" (the kafka poller keeps the record and
+	// hands it back on every Poll; nothing past it commits). Empty string
 	// means "use the plan default"; per-kind validator at
 	// Validate() rejects anything outside the closed vocabulary
 	// so a YAML typo surfaces at load time rather than at
@@ -1493,6 +1493,9 @@ type Manifest struct {
 	Databases  []DatabaseDependency `yaml:"databases,omitempty"`
 	Buckets    []BucketDependency   `yaml:"buckets,omitempty"`
 	Worker     *WorkerSpec          `yaml:"worker,omitempty"`
+	// Realtime declares managed realtime endpoints by slug
+	// (ADR-20261019102657).
+	Realtime *RealtimeConfig `yaml:"realtime,omitempty"`
 }
 
 // ReleaseConfig declares a command that must succeed for the candidate
@@ -2162,6 +2165,9 @@ func (m *Manifest) ValidateForPlan(plan api.Plan) error {
 		return nil
 	}
 	if err := m.validateFunctions(plan); err != nil {
+		return err
+	}
+	if err := m.validateRealtime(); err != nil {
 		return err
 	}
 	if m.Profiling != nil {

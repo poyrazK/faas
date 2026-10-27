@@ -128,6 +128,9 @@ type QualificationReport struct {
 	ScaleToZeroUpdate    bool                         `json:"scale_to_zero_update"`
 	ComputePolicy        *ComputePolicyEvidence       `json:"compute_policy,omitempty"`
 	Resize               *ResizeEvidence              `json:"resize,omitempty"`
+	// ComputeCap is set only by a --compute-cap run, whose output is its own
+	// artifact (ADR-20261025094915); provisioning approvals never carry it.
+	ComputeCap *ComputeCapEvidence `json:"compute_cap,omitempty"`
 }
 
 // LifecycleQualificationReport contains the non-sensitive evidence from a
@@ -620,6 +623,9 @@ type QualificationOptions struct {
 	// resource with no settled usage yet. The failed check remains mandatory:
 	// the run returns ErrQualificationFailed and cannot authorize provisioning.
 	ContinueAfterUsageFailure bool
+	// ComputeCap also runs the compute cap probe (ADR-20261025094915
+	// decision 10) on the disposable resource.
+	ComputeCap bool
 }
 
 const defaultQualificationTimeout = 20 * time.Minute
@@ -862,6 +868,21 @@ func QualifyProvider(parent context.Context, provider Provider, options Qualific
 			probeErr = probe.Validate()
 		}
 		if !record("scale_to_zero_probe", probeErr) {
+			return report, resultErr
+		}
+	}
+	if options.ComputeCap {
+		prober, ok := provider.(ComputeCapProber)
+		if !ok {
+			record("compute_cap_probe", ErrUnsupported)
+			return report, resultErr
+		}
+		evidence, probeErr := prober.ProbeComputeCap(ctx, providerResourceID, material)
+		report.ComputeCap = &evidence
+		if probeErr == nil {
+			probeErr = evidence.Validate()
+		}
+		if !record("compute_cap_probe", probeErr) {
 			return report, resultErr
 		}
 	}

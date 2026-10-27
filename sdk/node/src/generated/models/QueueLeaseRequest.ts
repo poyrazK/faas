@@ -3,7 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * ADR-1140 pull lease. Zero values lease one message for the default visibility timeout (30s) and return at once.
+ * Pull lease. Zero values lease one message for the default visibility timeout (30s) and return at once.
  */
 export type QueueLeaseRequest = {
   /**

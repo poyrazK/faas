@@ -290,6 +290,13 @@ func (h *Handler) publishVerifiedBase(ctx context.Context, r verifiedBaseRequest
 }
 
 func (h *Handler) finishVerifiedBase(ctx context.Context, r verifiedBaseRequest, producer state.BaseImageProducer, configDigest string, skipped bool) (BaseStageResult, error) {
+	if skipped {
+		// ADR-20261026181418: the reuse was verified from this node's cache,
+		// which says nothing about the generation's shared key.
+		if err := h.publishReusedBase(ctx, r.be, r.key); err != nil {
+			return BaseStageResult{}, err
+		}
+	}
 	if err := h.writeBaseDigestSidecar(ctx, r.be, r.digestKey, configDigest, r.guestDigest, producer.Input.SourceReference); err != nil {
 		return BaseStageResult{}, err
 	}

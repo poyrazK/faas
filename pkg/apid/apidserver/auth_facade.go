@@ -66,14 +66,14 @@ func (s *server) auth(next accountHandler) http.HandlerFunc {
 // the wrapping because the spec §11 "10/min/IP" rule is a
 // middleware-level concern, not a per-daemon configuration detail.
 func (s *server) authLimited(next accountHandler) http.HandlerFunc {
-	pkgNext := middleware.AccountHandler(s.sameOriginSessionWrites(s.requireMFA(s.authorizeAppResource(next))))
+	pkgNext := middleware.AccountHandler(s.capabilityAllowed(s.sameOriginSessionWrites(s.requireMFA(s.authorizeAppResource(next)))))
 	return s.authMw.RequireLimited(pkgNext)
 }
 
 // Project publishing checks the human's verification before resolving the
 // project, so a missing resource cannot bypass the verification response.
 func (s *server) authVerifiedLimited(next accountHandler) http.HandlerFunc {
-	pkgNext := middleware.AccountHandler(s.sameOriginSessionWrites(s.requireMFA(s.requireVerifiedEmail(s.authorizeAppResource(next)))))
+	pkgNext := middleware.AccountHandler(s.capabilityAllowed(s.sameOriginSessionWrites(s.requireMFA(s.requireVerifiedEmail(s.authorizeAppResource(next))))))
 	return s.authMw.RequireLimited(pkgNext)
 }
 
@@ -84,8 +84,8 @@ func (s *server) authorizeAppResource(next accountHandler) accountHandler {
 }
 
 func (s *server) authorizeDashboardProject(next http.Handler, w http.ResponseWriter, r *http.Request, actor state.Account) {
-	if r.PathValue("slug") != "" && (strings.HasPrefix(r.URL.Path, "/dashboard/apps/") || strings.HasPrefix(r.URL.Path, "/v1/apps/")) {
-		s.authorizeDashboardApp(next, w, r, actor)
+	if slug := dashboardAppSlug(r); slug != "" {
+		s.authorizeDashboardApp(next, w, r, actor, slug)
 		return
 	}
 	if !strings.HasPrefix(r.URL.Path, "/dashboard/projects/") || r.PathValue("slug") == "" {
@@ -106,8 +106,8 @@ func (s *server) authorizeDashboardProject(next http.Handler, w http.ResponseWri
 // and then serves the original request: the handlers keep their
 // creator-scoped behaviour, now only for a creator who still holds the
 // route's permission.
-func (s *server) authorizeDashboardApp(next http.Handler, w http.ResponseWriter, r *http.Request, actor state.Account) {
-	app, err := s.store.AppBySlug(r.Context(), r.PathValue("slug"))
+func (s *server) authorizeDashboardApp(next http.Handler, w http.ResponseWriter, r *http.Request, actor state.Account, slug string) {
+	app, err := s.store.AppBySlug(r.Context(), slug)
 	if err != nil {
 		// Missing and foreign apps keep the handlers' own not-found answer.
 		next.ServeHTTP(w, r)
@@ -119,6 +119,30 @@ func (s *server) authorizeDashboardApp(next http.Handler, w http.ResponseWriter,
 		return
 	}
 	next.ServeHTTP(w, r)
+}
+
+// dashboardAppSlug names the app a session-only app route addresses, or ""
+// for any other route. Most carry {slug} in their pattern (the MCP actions
+// under /dashboard/mcp/apps/ too), but the "GET /dashboard/" subtree
+// dispatches the app pages (detail, logs, env, debug, jobs, ...) by path in
+// dashboardHandler, so there the slug is the first segment under
+// /dashboard/apps/. /dashboard/apps/new is the deploy wizard, not an app's
+// page.
+func dashboardAppSlug(r *http.Request) string {
+	if slug := r.PathValue("slug"); slug != "" {
+		for _, prefix := range []string{"/dashboard/apps/", "/dashboard/mcp/apps/", "/v1/apps/"} {
+			if strings.HasPrefix(r.URL.Path, prefix) {
+				return slug
+			}
+		}
+		return ""
+	}
+	rest, ok := strings.CutPrefix(r.URL.Path, "/dashboard/apps/")
+	if !ok || !strings.HasSuffix(r.Pattern, "/") || rest == "new" {
+		return ""
+	}
+	slug, _, _ := strings.Cut(rest, "/")
+	return slug
 }
 
 // sameOriginSessionWrites refuses a state-changing /v1 request that is
@@ -191,7 +215,7 @@ func (s *server) browserRequestFromTrustedOrigin(r *http.Request) bool {
 // customer app, unlike the <slug>.<domain> hosts this guard exists to stop.
 // Provider-admin mutations keep the narrower isTrustedAdminOrigin.
 func (s *server) isWebDashboardOrigin(origin *url.URL) bool {
-	base := strings.ToLower(strings.TrimSuffix(strings.TrimSpace(s.domain), "."))
+	base := strings.ToLower(strings.TrimSuffix(strings.TrimSpace(s.platformHost()), "."))
 	return base != "" && base != domainUnset && strings.EqualFold(origin.Scheme, "https") &&
 		strings.ToLower(origin.Hostname()) == base && origin.Port() == ""
 }
@@ -435,7 +459,7 @@ func (s *server) isTrustedAdminOrigin(origin *url.URL, r *http.Request) bool {
 	if originHost == requestHost {
 		return true
 	}
-	base := strings.ToLower(strings.TrimSpace(s.domain))
+	base := strings.ToLower(strings.TrimSpace(s.platformHost()))
 	return base != "" && originHost == "operations."+base
 }
 
@@ -623,12 +647,10 @@ func sessionFrom(r *http.Request) (state.Session, bool) {
 	return *sess, true
 }
 
-// clearSessionCookie evicts the faas_sid cookie on the client.
-// Bridges to pkg/auth's Middleware.ClearSessionCookie so the cookie
-// attribute set matches the issuer in handlers_auth.go (Path "/" +
-// Secure + SameSite=Lax). The cookie name reads from
-// pkg/auth.Middleware.SessionCookieName — default "faas_sid"; cmd/apid
-// never overrides the name so the default is what callers see.
+// clearSessionCookie evicts the session cookie on the client, under both
+// pkg/sessioncookie names. Bridges to pkg/auth's
+// Middleware.ClearSessionCookie so the cookie attribute set matches the
+// issuers (Path "/" + Secure + SameSite=Lax).
 func (s *server) clearSessionCookie(w http.ResponseWriter, _ *http.Request) {
 	s.authMw.ClearSessionCookie(w)
 }

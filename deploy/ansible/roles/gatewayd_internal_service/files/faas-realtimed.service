@@ -20,6 +20,8 @@ OOMPolicy=continue
 EnvironmentFile=-/etc/faas/secrets/realtimed/realtimed.env
 EnvironmentFile=-/etc/faas/otel.env
 Environment=FAAS_REALTIME_SOCKET=/run/faas/realtimed.sock
+Environment=FAAS_REALTIME_FAIR_USE_ENABLED=1
+Environment=FAAS_REALTIME_OUTBOUND_BUDGET_ENABLED=1
 NoNewPrivileges=yes
 ProtectSystem=strict
 ProtectHome=yes

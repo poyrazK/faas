@@ -110,11 +110,16 @@ def sync_detailed(
     projection; use each named component for its own convergence state.
     `active` requires fresh observations from every relevant serving
     consumer. The egress allowlist is replayed from current app state by
-    schedd if a notification is missed. Scheduler scaling `active` means
-    the owning schedd loaded the policy, not that the replica target was
+    the scheduler if a notification is missed. Scheduler scaling `active` means
+    the owning scheduler loaded the policy, not that the replica target was
     reached. This does not attest host-level firewall policy or guest
     configuration.
     `unverified` means no revision or no relevant serving fleet can be observed.
+    Gateway policy acknowledgements belong to the current process generation
+    and require a fresh serving report. Replacement clears convergence until
+    the new consumers replay. `traffic_runtime` reports compute gateway wiring
+    separately; fresh wiring does not prove request enforcement. The optional
+    `wait` applies to policy convergence only.
 
     Args:
         slug (str):
@@ -163,11 +168,16 @@ def sync(
     projection; use each named component for its own convergence state.
     `active` requires fresh observations from every relevant serving
     consumer. The egress allowlist is replayed from current app state by
-    schedd if a notification is missed. Scheduler scaling `active` means
-    the owning schedd loaded the policy, not that the replica target was
+    the scheduler if a notification is missed. Scheduler scaling `active` means
+    the owning scheduler loaded the policy, not that the replica target was
     reached. This does not attest host-level firewall policy or guest
     configuration.
     `unverified` means no revision or no relevant serving fleet can be observed.
+    Gateway policy acknowledgements belong to the current process generation
+    and require a fresh serving report. Replacement clears convergence until
+    the new consumers replay. `traffic_runtime` reports compute gateway wiring
+    separately; fresh wiring does not prove request enforcement. The optional
+    `wait` applies to policy convergence only.
 
     Args:
         slug (str):
@@ -211,11 +221,16 @@ async def asyncio_detailed(
     projection; use each named component for its own convergence state.
     `active` requires fresh observations from every relevant serving
     consumer. The egress allowlist is replayed from current app state by
-    schedd if a notification is missed. Scheduler scaling `active` means
-    the owning schedd loaded the policy, not that the replica target was
+    the scheduler if a notification is missed. Scheduler scaling `active` means
+    the owning scheduler loaded the policy, not that the replica target was
     reached. This does not attest host-level firewall policy or guest
     configuration.
     `unverified` means no revision or no relevant serving fleet can be observed.
+    Gateway policy acknowledgements belong to the current process generation
+    and require a fresh serving report. Replacement clears convergence until
+    the new consumers replay. `traffic_runtime` reports compute gateway wiring
+    separately; fresh wiring does not prove request enforcement. The optional
+    `wait` applies to policy convergence only.
 
     Args:
         slug (str):
@@ -262,11 +277,16 @@ async def asyncio(
     projection; use each named component for its own convergence state.
     `active` requires fresh observations from every relevant serving
     consumer. The egress allowlist is replayed from current app state by
-    schedd if a notification is missed. Scheduler scaling `active` means
-    the owning schedd loaded the policy, not that the replica target was
+    the scheduler if a notification is missed. Scheduler scaling `active` means
+    the owning scheduler loaded the policy, not that the replica target was
     reached. This does not attest host-level firewall policy or guest
     configuration.
     `unverified` means no revision or no relevant serving fleet can be observed.
+    Gateway policy acknowledgements belong to the current process generation
+    and require a fresh serving report. Replacement clears convergence until
+    the new consumers replay. `traffic_runtime` reports compute gateway wiring
+    separately; fresh wiring does not prove request enforcement. The optional
+    `wait` applies to policy convergence only.
 
     Args:
         slug (str):

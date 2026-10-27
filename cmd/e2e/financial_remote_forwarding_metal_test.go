@@ -10,6 +10,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"os/exec"
 	"path/filepath"
 	"sync"
 	"testing"
@@ -215,6 +216,7 @@ func financialRemoteExhaustion(t *testing.T, h *e2etest.Harness, record financia
 	after, err := netns.ReadVethRXBytes(record.Lease.VethHost)
 	payload, invalid := delivered.value()
 	if err != nil || invalid || payload == 0 || after < before+payload || after > uint64(lease.EgressGranted) {
+		financialNetnsEvidence(t, record)
 		t.Fatalf("remote exhaustion bytes: before=%d after=%d payload=%d granted=%d err=%v", before, after, payload, lease.EgressGranted, err)
 	}
 	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
@@ -222,6 +224,7 @@ func financialRemoteExhaustion(t *testing.T, h *e2etest.Harness, record financia
 	response := financialRemoteRequest(ctx, client, record.Lease.Instance)
 	final, err := netns.ReadVethRXBytes(record.Lease.VethHost)
 	if err != nil || len(response.body) != 0 || final != after {
+		financialNetnsEvidence(t, record)
 		t.Fatalf("exhausted response reopened credit: %d -> %d body=%d err=%v", after, final, len(response.body), err)
 	}
 	if financialSystemPhysicalAbsent(record) {
@@ -251,4 +254,19 @@ func (b *atomicRemoteBytes) value() (uint64, bool) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	return b.bytes, b.bad
+}
+
+// financialNetnsEvidence logs the attempt namespace's byte gates and links,
+// so an exhaustion failure shows whether the quota existed and what it saw.
+func financialNetnsEvidence(t *testing.T, record financialSystemRecord) {
+	t.Helper()
+	for _, argv := range [][]string{
+		{"ip", "netns", "exec", record.Lease.Netns, "nft", "list", "table", "netdev", "faas_budget"},
+		{"ip", "netns", "exec", record.Lease.Netns, "nft", "list", "table", "inet", "faas_budget"},
+		{"ip", "netns", "exec", record.Lease.Netns, "ip", "-s", "link"},
+		{"ip", "netns", "exec", record.Lease.Netns, "tc", "-s", "filter", "show", "dev", "tap0", "ingress"},
+	} {
+		out, err := exec.Command(argv[0], argv[1:]...).CombinedOutput()
+		t.Logf("evidence %v (err=%v):\n%s", argv[4:], err, out)
+	}
 }

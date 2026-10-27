@@ -37,7 +37,7 @@ type desiredRealtimeTrigger struct {
 // manifestRealtimeTriggers returns the realtime triggers declared for slug
 // and whether the manifest manages them. As for crons, declaring one opts
 // the app into replacement semantics and an explicit `triggers: []` clears it.
-func manifestRealtimeTriggers(m *gregalemanifest.Manifest, slug string) ([]desiredRealtimeTrigger, bool, error) {
+func manifestRealtimeTriggers(m *gregalemanifest.Manifest, slug string, endpoints map[string]string) ([]desiredRealtimeTrigger, bool, error) {
 	manage := m.Triggers != nil && len(m.Triggers) == 0
 	var out []desiredRealtimeTrigger
 	for _, t := range m.Triggers {
@@ -45,7 +45,19 @@ func manifestRealtimeTriggers(m *gregalemanifest.Manifest, slug string) ([]desir
 			continue
 		}
 		manage = true
-		raw, err := json.Marshal(t.Config)
+		config := t.Config
+		// An endpoint named by slug is one this deploy reconciled
+		// (ADR-20261019102657).
+		if ref, ok := t.Config["endpoint"].(string); ok {
+			id, found := endpoints[ref]
+			if !found {
+				return nil, false, fmt.Errorf("realtime trigger %q: endpoint %q is not declared for %s", t.Slug, ref, slug)
+			}
+			config = maps.Clone(t.Config)
+			delete(config, "endpoint")
+			config["endpoint_id"] = id
+		}
+		raw, err := json.Marshal(config)
 		if err != nil {
 			return nil, false, fmt.Errorf("realtime trigger %q config: %w", t.Slug, err)
 		}
@@ -64,8 +76,8 @@ func manifestRealtimeTriggers(m *gregalemanifest.Manifest, slug string) ([]desir
 // change in txn. The binding (endpoint, channel, group) is immutable, so a
 // changed binding is a remove and an add; deleting a trigger keeps its group's
 // messages, so a rollback can recreate it.
-func reconcileManifestRealtimeTriggers(ctx context.Context, client any, slug string, m *gregalemanifest.Manifest, txn *manifestCronTransaction) error {
-	desired, manage, err := manifestRealtimeTriggers(m, slug)
+func reconcileManifestRealtimeTriggers(ctx context.Context, client any, slug string, m *gregalemanifest.Manifest, txn *manifestCronTransaction, endpoints map[string]string) error {
+	desired, manage, err := manifestRealtimeTriggers(m, slug, endpoints)
 	if err != nil || !manage {
 		return err
 	}

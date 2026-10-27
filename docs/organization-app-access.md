@@ -13,9 +13,28 @@ query parameter cannot change that ownership.
 | Secret writes/rotation | yes | yes | yes | no | no |
 | Security policy and trusted publishers | yes | yes | no | no | no |
 | Delete/restore an app | yes | yes | no | no | no |
+| Alert rules, log drains, webhooks and outbound bindings: read | yes | yes | yes | yes | no |
+| Alert rules, log drains and webhooks: create, change, delete; unbind an outbound integration | yes | yes | no | no | no |
+| App credentials (consumer keys, inbound-webhook secrets, issue ingest tokens, realtime endpoint auth and publisher/worker credentials, AI access tokens): list, rotate, revoke | yes | yes | no | no | no |
 
 Secret reads return metadata, never values. Billing members can use the safe
 organization app inventory and existing billing surfaces.
+
+A company app's alert rules, log drains and webhooks send company data out of
+Gregale, so owners and admins govern them, whoever created the app; each one
+records the member who created it. The app creator's own account-wide alert
+rules and notification channels stay the creator's: other members neither
+see them through the app nor bind them to its rules. Binding an outbound
+integration stays with the app's creator, whose provider credential it uses.
+See ADR-20261026151103.
+
+A company app's credentials keep working after the member who minted them
+leaves, so owners and admins list, rotate and revoke them whoever created the
+app: API consumer keys, inbound-webhook signing secrets, issue ingest tokens,
+the realtime endpoint's client authentication and its publisher and worker
+credentials, and AI gateway access tokens (issuing an AI access token stays
+with the creator, whose provider credential it spends). See
+ADR-20261026151103 amendment 1.
 
 Use an organization-bound API key when working on a teammate's app. Its scope
 must also permit the operation: a read key cannot deploy, even for an admin.
@@ -186,6 +205,16 @@ organization's apps, and outstanding invitations to their email in the org, in
 one transaction. Personal sessions/credentials and other organizations' keys
 remain valid. Company applications and already accepted workloads keep running.
 
+The same transaction stops what the member set up on the company's apps
+(ADR-20261026151103): their webhook alert rules, log drains and app webhooks
+are paused; their alert rules that roll back, demote or promote keep doing so
+without their webhook; and their notification channels are unbound from the
+company apps' rules. An integration that predates authorship counts as the app
+creator's. Drains an application standard manages are left alone. The removal's
+activity entry says how many were paused, and an owner or admin re-points and
+re-enables them. Their account-scope release webhooks stop receiving the
+company's deployment, rollout and GitOps events.
+
 An in-flight shared-app or organization mutation must still hold its original
 membership revision when its database transaction begins. A change that already
 holds that lock finishes before removal; if removal commits first, the stale
@@ -207,7 +236,10 @@ commit-source, preview-status and deleted-app ID URLs also enforce current
 membership, while their legacy operations still require the creator to be
 owner/admin. So do routes that name a company app in the request body or query
 string, such as creating a cron, custom domain, release freeze, CORS preset,
-dev bridge or managed PostgreSQL cutover. Trigger URLs enforce membership too;
+dev bridge or managed PostgreSQL cutover. An open dev bridge keeps enforcing
+it: the relay rechecks its creator's organization access on every request and
+on open connections, so leaving the company ends the bridge at once. Trigger
+URLs enforce membership too;
 legacy `/v1/triggers` administration covers personal apps only, as described
 in [organization queues](organization-queues.md).
 

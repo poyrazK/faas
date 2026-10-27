@@ -16,10 +16,11 @@ import (
 )
 
 // admissionFunctionProbe remembers whether the database has the instance
-// admission functions (migration 20261018153840637, ADR-1741). A schedd
-// can start before its release's migrations run; until they do, admission
-// keeps its statement-by-statement transaction. A missing function is
-// probed again after a minute.
+// admission functions (migration 20261018153840637, ADR-1741) in the form
+// that takes a reservation allowance (migration 20261026090412734, ADR-909
+// amendment 1). A schedd can start before its release's migrations run;
+// until they do, admission keeps its statement-by-statement transaction. A
+// missing function is probed again after a minute.
 type admissionFunctionProbe struct {
 	mu        sync.Mutex
 	known, ok bool
@@ -39,8 +40,8 @@ func (s *PgStore) admissionFunctionsUsable(ctx context.Context) bool {
 		return p.ok
 	}
 	var ok bool
-	err := s.pool.QueryRow(ctx, `select to_regprocedure('admit_wake_instance(uuid,text,text,integer,uuid,text,text,bigint,boolean,integer,boolean,uuid,bigint)') is not null
-		and to_regprocedure('admission_reserve_node(uuid,bigint,integer,boolean,integer)') is not null
+	err := s.pool.QueryRow(ctx, `select to_regprocedure('admit_wake_instance(uuid,text,text,integer,uuid,text,text,bigint,boolean,integer,boolean,uuid,bigint,integer)') is not null
+		and to_regprocedure('admission_reserve_node(uuid,bigint,integer,boolean,integer,integer)') is not null
 		and to_regprocedure('snapshot_restore_pressure_acquire(text)') is not null
 		and to_regprocedure('publish_instance_on_generation(uuid,uuid,uuid,uuid,uuid,text,text,text,inet,integer,text,uuid,text,text,text,jsonb,text,text,boolean,text,timestamptz,jsonb,jsonb,boolean,jsonb,jsonb,bigint)') is not null`).Scan(&ok)
 	if err != nil {
@@ -72,8 +73,8 @@ func reserveNodeDB(ctx context.Context, tx pgx.Tx, nodeID, newState string, ramM
 	if bound {
 		expectedGeneration = &expected.Generation
 	}
-	_, err = tx.Exec(ctx, `select admission_reserve_node($1::uuid, $2::bigint, $3::integer, $4::boolean, $5::integer)`,
-		nodeID, expectedGeneration, ramMB, nodeUsageCounts(State(newState)), api.PerVMOverheadMB)
+	_, err = tx.Exec(ctx, `select admission_reserve_node($1::uuid, $2::bigint, $3::integer, $4::boolean, $5::integer, $6::integer)`,
+		nodeID, expectedGeneration, ramMB, nodeUsageCounts(State(newState)), api.PerVMOverheadMB, nodeReservationPercent(ctx, nodeID))
 	return admissionFunctionError(err, nodeID)
 }
 
@@ -121,9 +122,10 @@ func (s *PgStore) admitWakeInstance(ctx context.Context, appID, deploymentID, ne
 		select id, coalesce(app_id::text, ''), coalesce(deployment_id::text, ''), state, coalesce(netns,''), coalesce(guest_uid,0),
 		       coalesce(host(host_ip),''), ram_mb, started_at, last_request_at, parked_at, node_id, wake_id, framework_ready_at, tail_count, mode, request_count
 		  from admit_wake_instance($1::uuid, $2::text, $3::text, $4::integer, $5::uuid, $6::text, $7::text,
-		                           $8::bigint, $9::boolean, $10::integer, $11::boolean, $12::uuid, $13::bigint)`,
+		                           $8::bigint, $9::boolean, $10::integer, $11::boolean, $12::uuid, $13::bigint, $14::integer)`,
 			appID, deploymentID, newState, ramMB, nodeID, wakeID, mode,
-			expectedGeneration, nodeUsageCounts(State(newState)), api.PerVMOverheadMB, binding, snapshotID, guardGeneration)
+			expectedGeneration, nodeUsageCounts(State(newState)), api.PerVMOverheadMB, binding, snapshotID, guardGeneration,
+			nodeReservationPercent(ctx, nodeID))
 		inst, err := scanInstanceCols(row.Scan)
 		if err == nil {
 			return inst, nil

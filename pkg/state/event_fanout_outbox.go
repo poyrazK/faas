@@ -136,6 +136,10 @@ type PublishedEventRecipientProgress struct {
 	Retryable             bool       `json:"retryable,omitempty"`
 	LastError             string     `json:"last_error,omitempty"`
 	UpdatedAt             time.Time  `json:"updated_at"`
+	// DeliveryID is the delivery a re-accepted event routed to when an earlier
+	// acceptance's delivery still held the original identity
+	// (PublishedEventReacceptanceID). Empty means the original identity.
+	DeliveryID string `json:"delivery_id,omitempty"`
 }
 
 // EventFanoutFailure is a terminal routing failure recorded before an
@@ -637,6 +641,7 @@ type publishedEventIdentity struct {
 	AppID            string          `json:"appid,omitempty"`
 	PlatformTenantID string          `json:"platformtenantid,omitempty"`
 	TenantEventID    string          `json:"tenanteventid,omitempty"`
+	Producer         string          `json:"producer,omitempty"`
 }
 
 // appendEventFanoutAttemptLocked mirrors the durable attempt-history insert.
@@ -724,6 +729,10 @@ func (m *MemStore) enqueuePublishedEventLocked(subject *uuid.UUID, payload []byt
 		recipients = append(recipients, m.tenantWorkflowEventRecipientsLocked(subject.String(), event.AppID, event.PlatformTenantID, event.Source, event.Type)...)
 	} else {
 		recipients = append(recipients, m.workflowEventRecipientsLocked(subject.String(), event.Source, event.Type)...)
+		var err error
+		if recipients, err = m.recipientsInProducerReachLocked(subject.String(), event.Producer, recipients); err != nil {
+			return false, err
+		}
 	}
 	// ADR-20261021210000: an app enrolled in a rehearsal never receives the
 	// account's events, mirroring enqueue_event_fanout.
@@ -991,6 +1000,7 @@ func (m *MemStore) PruneSettledPublishedEvents(_ context.Context, now time.Time,
 		}
 		_, held := holds[work.ID]
 		if work.Delivered && work.DeliveredAt.Before(now.Add(-m.eventSettledRetentionLocked(memEventFanoutOwner(key)))) && !held {
+			m.captureEventRouteDeadLettersLocked(memEventFanoutOwner(key), work)
 			for _, recipient := range work.RecipientSnapshot {
 				m.loseSubscriptionExecutionCoverageLocked(recipient.ID, "receipt_deleted", time.Now().UTC())
 			}

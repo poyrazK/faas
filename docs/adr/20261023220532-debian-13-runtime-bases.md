@@ -135,8 +135,45 @@ move together.
 3. Release, once the n2 boot passes. New function deploys and
    shared-runtime Node apps use Debian 13.
 4. Audit `base-minimal` apps (step 3); PR moving `base-minimal`; release.
+   On a control-plane node with the storage environment loaded, run
+   `gregalectl audit base-libraries --db-env /etc/faas/compute-db.env`
+   (add `--include-superseded` to cover rollback targets). It lists every
+   live deployment that boots `base-minimal` and reports each ELF file in an
+   app or sidecar layer that needs one of the 13 dropped libraries without
+   shipping it. Exit 0 means every layer was read and none needs one; exit 1
+   lists findings and any layer it could not read. The 13 were confirmed on
+   2026-10-24: `libapt-pkg.so.6`, `libcom_err.so.2`, `libe2p.so.2`,
+   `libext2fs.so.2`, `libffi.so.8`, `libgcrypt.so.20`, `libgnutls.so.30`,
+   `libgpg-error.so.0`, `libidn2.so.0`, `libp11-kit.so.0`, `libss.so.2`,
+   `libtasn1.so.6` and `libunistring.so.2`. The check modelled the build stage
+   on `debian:12-slim` and `debian:13-slim`; its Debian 12 side matched the
+   published `base-minimal` exactly. Libraries an app opens by name at run
+   time (`dlopen`, `ctypes`) are outside the audit.
 5. The next nightly cve-check shows zero criticals on all four images; close
    the Debian 12 part of #5206.
+
+### Rollout record
+
+- **Step 2 n2 boot (2026-10-24):** `TestMetalRestoreUserspaceRNGDiffers`
+  passed 4/4 on the published `runner-node24@c1fc7466` and
+  `runner-python312@aa3ae08a`. Both booted in Firecracker with guest-init on
+  Debian 13 (glibc 2.41), and two restores of one snapshot served different
+  userspace RNG values.
+- **Step 3 audit (2026-10-24/25):** production had 114 live deployments on
+  `base-minimal` (96 source, 12 Dockerfile, 6 image), all in two
+  platform-owned accounts; 78 belong to active or evicted-cold apps and 36 to
+  deleted apps. A manual equivalent of `gregalectl audit base-libraries`
+  ran on `gregale-compute-1`: each layer was fetched from the artifact
+  bucket, mounted read-only (`ro,noload`), and every ELF binary's
+  `DT_NEEDED` list was compared with the 13 removed libraries, ignoring any
+  library the layer ships itself. All 78 active layers were scanned; none
+  needs a removed library. Of the deleted apps' layers, 21 were scanned
+  clean and 3 no longer exist in any store. Like the command, it does not
+  see libraries opened by name at run time.
+- **Step 3 image:** on Debian 13, `base-minimal` declares
+  `libc6 2.41-12+deb13u4` and its scan shows no criticals. Its loader link
+  `/lib64/ld-linux-x86-64.so.2` is relative in Debian 13, so it resolves to
+  the copied `/lib/x86_64-linux-gnu` loader.
 
 ## Consequences
 

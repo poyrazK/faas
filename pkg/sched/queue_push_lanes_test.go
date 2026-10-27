@@ -174,8 +174,8 @@ func (s undashedIDStore) QueueBindingByID(ctx context.Context, accountID, appID,
 	return s.MemStore.QueueBindingByID(ctx, undash(accountID), undash(appID), undash(id))
 }
 
-func (s undashedIDStore) QueueStateForBinding(ctx context.Context, appID, bindingID string) (state.QueueStats, error) {
-	return s.MemStore.QueueStateForBinding(ctx, undash(appID), undash(bindingID))
+func (s undashedIDStore) QueueDepthForBindingInScope(ctx context.Context, appID, bindingID, scope string, limit int) (int, error) {
+	return s.MemStore.QueueDepthForBindingInScope(ctx, undash(appID), undash(bindingID), scope, limit)
 }
 
 func undash(id string) string { return strings.ReplaceAll(id, "-", "") }

@@ -80,6 +80,9 @@ func (s *Service) readErrMessage(ctx context.Context, app state.App, err error) 
 	if errors.Is(err, state.ErrLogSearchTimeout) {
 		return "The search did not finish in time. Narrow the window or add a filter."
 	}
+	if errors.Is(err, state.ErrLogReadBusy) {
+		return "Too many log searches are running for this account. Try again in a few seconds."
+	}
 	s.Host.Logger().WarnContext(ctx, "log search page failed", "app_id", app.ID, "err", err)
 	return "Logs could not be searched right now."
 }

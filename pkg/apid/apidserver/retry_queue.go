@@ -10,6 +10,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/apidsource"
+	"github.com/onebox-faas/faas/pkg/apid/trafficproblem"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -29,6 +30,9 @@ func (s *server) enqueueRetry(ctx context.Context, app state.App, dep state.Depl
 	// A retry is a new release: an image retry needs no builder, so only
 	// this check holds it during the break-glass pause (ADR 20261022140000).
 	if p := s.platformReleasePauseProblem(); p != nil {
+		return state.Deployment{}, p
+	}
+	if p := s.retryReleaseProblem(ctx, app, dep); p != nil {
 		return state.Deployment{}, p
 	}
 	acct, err := state.AppResourceAccount(ctx, s.store, app)
@@ -63,17 +67,26 @@ func (s *server) enqueueRetry(ctx context.Context, app state.App, dep state.Depl
 			return state.Deployment{}, api.NewProblem(http.StatusConflict, api.CodeSourceInvalid,
 				"Retry source unavailable", "The original source archive is no longer available. Upload the source again to deploy.")
 		}
-		return state.Deployment{}, err
+		return state.Deployment{}, retryTrafficProblem(err)
 	}
 	created, err := s.store.DeploymentByID(ctx, result.DeploymentID)
 	created.BuildID = result.BuildID
 	return created, err
 }
 
+// A retry's new revision URL is a new binding (ADR-570); a refusal is the
+// customer's policy problem, not an internal error.
+func retryTrafficProblem(err error) error {
+	if problem := trafficproblem.Policy(err, nil); problem != nil {
+		return problem
+	}
+	return err
+}
+
 func (s *server) enqueueImageRetry(ctx context.Context, dep state.Deployment, from state.StageName, specs []api.OperationDefinitionSpec) (state.Deployment, error) {
 	created, err := s.store.RetryDeploymentFromStage(ctx, dep.ID, from)
 	if err != nil {
-		return state.Deployment{}, err
+		return state.Deployment{}, retryTrafficProblem(err)
 	}
 	if err := s.installRetryOperations(ctx, created, specs); err != nil {
 		_ = s.store.FailSourceDeployment(context.WithoutCancel(ctx), created.ID, "operation contract retry failed")

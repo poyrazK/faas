@@ -166,6 +166,8 @@ func run(args []string) int {
 		return cmdBreakGlass(args[1:])
 	case dispatchHoneytoken:
 		return cmdHoneytoken(args[1:])
+	case dispatchObjectStorage:
+		return cmdObjectStorage(args[1:])
 	case dispatchSealDomain:
 		return cmdSealDomain(args[1:])
 	case dispatchPKI:

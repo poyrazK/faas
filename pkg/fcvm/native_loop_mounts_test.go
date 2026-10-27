@@ -1,6 +1,7 @@
 //go:build linux || darwin
 
 // adr: 568 — drive writers remain fenced until mount and loop retirement is confirmed.
+// adr: 20261025090100 — staging no longer mounts; recovery still retires inherited mounts.
 package fcvm
 
 import (
@@ -13,58 +14,16 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 // This is a filesystem model, without loop devices or native acceptance proof.
 type nativeLoopBackendFixture struct {
 	mu          sync.Mutex
 	attachments map[string]bool
-	prepares    int
-	configured  int
-	mounted     int
 	retireErr   error
-	configure   func() error
 }
-
-type nativeLoopReservationFixture struct {
-	backend *nativeLoopBackendFixture
-	id      string
-}
-
-func (b *nativeLoopBackendFixture) Prepare(_, id string) (nativeLoopReservation, error) {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	b.prepares++
-	return &nativeLoopReservationFixture{backend: b, id: id}, nil
-}
-
-func (*nativeLoopReservationFixture) Device() nativeLoopDevice {
-	return nativeLoopDevice{Number: 7, Rdev: 99, Source: nativeLoopIdentity{Device: 17, Inode: 42}, Namespace: nativeLoopIdentity{Device: 19, Inode: 43}}
-}
-
-func (r *nativeLoopReservationFixture) Configure() error {
-	b := r.backend
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	if b.configure != nil {
-		if err := b.configure(); err != nil {
-			return err
-		}
-	}
-	b.configured++
-	b.attachments[r.id] = true
-	return nil
-}
-
-func (r *nativeLoopReservationFixture) Mount(point string) (uint64, error) {
-	b := r.backend
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	b.mounted++
-	return 123, os.MkdirAll(filepath.Join(point, "upper", "etc", "faas"), 0o755)
-}
-
-func (*nativeLoopReservationFixture) Close() error { return nil }
 
 func (b *nativeLoopBackendFixture) Retire(_ context.Context, record nativeLoopMountRecord, point string) error {
 	b.mu.Lock()
@@ -103,75 +62,39 @@ func nativeLoopJournalFixture(t *testing.T) (*nativeLoopMountJournal, nativeLaun
 	return &nativeLoopMountJournal{owner: j, backend: b}, owner, b
 }
 
-// ADR-192 diagnostics retain ADR-568's original-owner staging fence.
-func TestNativeLoopMountTimingsPreservePreparationAndRetirementBoundaries(t *testing.T) {
-	j, owner, b := nativeLoopJournalFixture(t)
-	const delay = 3 * time.Millisecond
-	b.configure = func() error { time.Sleep(delay); return nil }
-	timings := loopMountTimings{Mount: time.Hour, Unmount: time.Hour}
-	var mounted time.Duration
-	if err := j.session(t.Context(), owner, "/fixture.img", func(string) error {
-		if timings.Mount < delay || timings.Unmount != 0 {
-			t.Fatalf("writer lacks completed mount timing: %+v", timings)
+// legacyLoopMount leaves the durable frame and mountpoint an older vmmd's
+// staging session published for a live loop mount: what an upgraded node
+// inherits when that vmmd died mid-session.
+func legacyLoopMount(t *testing.T, j *nativeLoopMountJournal, owner nativeLaunchRecord, b *nativeLoopBackendFixture) nativeLoopMountRecord {
+	t.Helper()
+	record := nativeLoopMountRecord{ID: uuid.NewString(), Owner: owner,
+		Device: nativeLoopDevice{Number: 7, Rdev: 99, Source: nativeLoopIdentity{Device: 17, Inode: 42}, Namespace: nativeLoopIdentity{Device: 19, Inode: 43}}}
+	for _, path := range []string{filepath.Dir(j.root(owner.Generation)), j.root(owner.Generation), filepath.Dir(j.point(record))} {
+		if err := os.MkdirAll(path, 0o700); err != nil {
+			t.Fatal(err)
 		}
-		mounted = timings.Mount
-		time.Sleep(delay)
-		return nil
-	}, &timings); err != nil {
+	}
+	if err := j.write(owner, record); err != nil {
 		t.Fatal(err)
 	}
-	if timings.Mount != mounted || timings.Unmount <= 0 {
-		t.Fatalf("writer or cleanup altered mount attribution: %+v", timings)
-	}
-	retireLoopFixtureOwner(t, j, owner)
-	timings = loopMountTimings{Mount: time.Hour, Unmount: time.Hour}
-	if err := j.session(t.Context(), owner, "/fixture.img", func(string) error { t.Fatal("revoked timing request invoked writer"); return nil }, &timings); err == nil {
-		t.Fatal("diagnostic request bypassed original-owner revocation")
-	}
-	if timings.Unmount != 0 || timings.Mount == time.Hour {
-		t.Fatalf("rejected request retained stale command timing: %+v", timings)
-	}
-}
-
-func TestNativeLoopMountPublishesOwnershipBeforeAttachmentAndWrite(t *testing.T) {
-	j, owner, b := nativeLoopJournalFixture(t)
-	b.configure = func() error {
-		records, err := j.records(owner)
-		if err != nil || len(records) != 1 || records[0].Directory.Inode == 0 || records[0].MountID != 0 || records[0].Removed {
-			return errors.New("attachment preceded durable planned directory ownership")
-		}
-		return nil
-	}
-	if err := j.session(t.Context(), owner, "/fixture.img", func(point string) error {
-		records, err := j.records(owner)
-		if err != nil || len(records) != 1 || records[0].MountID != 123 || records[0].Removed || j.point(records[0]) != point {
-			t.Fatalf("writer preceded durable mount identity: %+v %v", records, err)
-		}
-		return nil
-	}); err != nil {
+	if err := os.Mkdir(j.point(record), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if b.configured != 1 || b.mounted != 1 {
-		t.Fatalf("configure=%d mount=%d", b.configured, b.mounted)
-	}
-	if err := j.requireRemoved(owner); err != nil {
-		t.Fatal(err)
-	}
-	retired := retireLoopFixtureOwner(t, j, owner)
-	if err := j.owner.confirmResourcesRemoved(t.Context(), retired); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := j.owner.replace(t.Context(), owner.Lease, owner.Generation, true); err != nil {
-		t.Fatal(err)
-	}
-	current, err := j.owner.records(t.Context())
+	identity, err := nativeLoopDirectoryIdentity(j.point(record))
 	if err != nil {
 		t.Fatal(err)
 	}
-	all, err := j.allRecords(t.Context(), current)
-	if err != nil || len(all) != 1 || !all[0].Removed {
-		t.Fatalf("immutable archive lost mount evidence: %+v %v", all, err)
+	record.Directory, record.MountID = identity, 123
+	if err := j.write(owner, record); err != nil {
+		t.Fatal(err)
 	}
+	if err := os.MkdirAll(filepath.Join(j.point(record), "upper", "etc", "faas"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	b.mu.Lock()
+	b.attachments[record.ID] = true
+	b.mu.Unlock()
+	return record
 }
 
 func retireLoopFixtureOwner(t *testing.T, j *nativeLoopMountJournal, owner nativeLaunchRecord) nativeLaunchRecord {
@@ -190,42 +113,32 @@ func retireLoopFixtureOwner(t *testing.T, j *nativeLoopMountJournal, owner nativ
 	return owner
 }
 
-func TestNativeLoopMountPublicationFailureNeverInvokesWriter(t *testing.T) {
-	for _, failAt := range []int{1, 2, 3} {
-		t.Run(string(rune('0'+failAt)), func(t *testing.T) {
-			j, owner, b := nativeLoopJournalFixture(t)
-			writes := 0
-			cause := errors.New("mount frame fsync failure")
-			j.writeValue = func(path string, record nativeLoopMountRecord) error {
-				writes++
-				if writes == failAt {
-					return cause
-				}
-				return writeNativeJournalValue(path, record)
-			}
-			called := false
-			if err := j.session(t.Context(), owner, "/fixture.img", func(string) error { called = true; return nil }); !errors.Is(err, cause) || called {
-				t.Fatalf("publication failure err=%v wrote=%v", err, called)
-			}
-			if failAt < 3 && b.configured != 0 {
-				t.Fatal("attachment preceded its complete ownership frame")
-			}
-			if err := j.requireRemoved(owner); err != nil {
-				t.Fatal("verified failure cleanup was not retained:", err)
-			}
-		})
+// A drive edit publishes no loop frame: there is nothing to recover after a
+// crash, and the owner can be released straight away.
+func TestNativeDriveEditLeavesNoLoopFrame(t *testing.T) {
+	j, owner, _ := nativeLoopJournalFixture(t)
+	if err := j.editSession(t.Context(), owner, func() error {
+		records, err := j.records(owner)
+		if err != nil || len(records) != 0 {
+			t.Fatalf("edit published loop frames: %+v %v", records, err)
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	retired := retireLoopFixtureOwner(t, j, owner)
+	if err := j.owner.confirmResourcesRemoved(t.Context(), retired); err != nil {
+		t.Fatal(err)
 	}
 }
 
-func TestNativeLoopMountUncertainCleanupBlocksEffectsAcknowledgementAndFallback(t *testing.T) {
+// An inherited mount fences every other host effect until recovery retires
+// it, exactly as when the old staging session itself was interrupted.
+func TestNativeLoopMountInheritedFrameBlocksEditsAndReleaseUntilRetired(t *testing.T) {
 	j, owner, b := nativeLoopJournalFixture(t)
-	cause := errors.New("busy mount")
-	b.retireErr = cause
-	if err := j.session(t.Context(), owner, "/fixture.img", func(string) error { return nil }); !errors.Is(err, cause) {
-		t.Fatal(err)
-	}
-	if err := j.session(t.Context(), owner, "/fixture.img", func(string) error { t.Fatal("uncertain mount admitted another writer"); return nil }); err == nil || b.prepares != 1 {
-		t.Fatal("uncertain cleanup admitted another attachment")
+	legacyLoopMount(t, j, owner, b)
+	if err := j.editSession(t.Context(), owner, func() error { t.Fatal("inherited mount admitted a drive edit"); return nil }); err == nil {
+		t.Fatal("inherited mount admitted a drive edit")
 	}
 	if ticket, err := j.owner.beginLaunch(t.Context(), owner.Lease); err == nil {
 		_ = ticket.close()
@@ -243,6 +156,8 @@ func TestNativeLoopMountUncertainCleanupBlocksEffectsAcknowledgementAndFallback(
 	if _, err := j.owner.replace(t.Context(), owner.Lease, owner.Generation, false); err == nil {
 		t.Fatal("restore fallback abandoned the old mount")
 	}
+	cause := errors.New("busy mount")
+	b.retireErr = cause
 	restarted := &nativeLoopMountJournal{owner: j.owner, backend: b}
 	if err := restarted.retireAll(t.Context(), retired); !errors.Is(err, cause) {
 		t.Fatal("restart forgot uncertain mount:", err)
@@ -257,13 +172,24 @@ func TestNativeLoopMountUncertainCleanupBlocksEffectsAcknowledgementAndFallback(
 	if err := j.owner.confirmResourcesRemoved(t.Context(), retired); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := j.owner.replace(t.Context(), owner.Lease, owner.Generation, true); err != nil {
+		t.Fatal(err)
+	}
+	current, err := j.owner.records(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	all, err := j.allRecords(t.Context(), current)
+	if err != nil || len(all) != 1 || !all[0].Removed {
+		t.Fatalf("immutable archive lost mount evidence: %+v %v", all, err)
+	}
 }
 
-func TestNativeLoopMountWriterLockPreventsRetirement(t *testing.T) {
+func TestNativeDriveEditLockPreventsRetirement(t *testing.T) {
 	j, owner, _ := nativeLoopJournalFixture(t)
 	entered, release, done := make(chan struct{}), make(chan struct{}), make(chan error, 1)
 	go func() {
-		done <- j.session(t.Context(), owner, "/fixture.img", func(string) error { close(entered); <-release; return nil })
+		done <- j.editSession(t.Context(), owner, func() error { close(entered); <-release; return nil })
 	}()
 	<-entered
 	ctx, cancel := context.WithTimeout(t.Context(), 100*time.Millisecond)
@@ -274,7 +200,7 @@ func TestNativeLoopMountWriterLockPreventsRetirement(t *testing.T) {
 		t.Fatal(err)
 	}
 	if !errors.Is(revokeErr, context.DeadlineExceeded) {
-		t.Fatal("stop overtook the live Go writer:", revokeErr)
+		t.Fatal("stop overtook the live drive edit:", revokeErr)
 	}
 	current, err := j.owner.read(owner.Lease.Instance)
 	if err != nil || current.Revoked {
@@ -282,10 +208,10 @@ func TestNativeLoopMountWriterLockPreventsRetirement(t *testing.T) {
 	}
 }
 
-func TestNativeLoopMountRejectsStaleAuthorizedAndMissingNativeAuthority(t *testing.T) {
+func TestNativeDriveEditRejectsStaleAuthorizedAndMissingNativeAuthority(t *testing.T) {
 	for _, kind := range []string{"stale", "authorized", "revoked", "no_backend"} {
 		t.Run(kind, func(t *testing.T) {
-			j, owner, b := nativeLoopJournalFixture(t)
+			j, owner, _ := nativeLoopJournalFixture(t)
 			switch kind {
 			case "stale":
 				retired := retireLoopFixtureOwner(t, j, owner)
@@ -306,7 +232,7 @@ func TestNativeLoopMountRejectsStaleAuthorizedAndMissingNativeAuthority(t *testi
 			case "no_backend":
 				j.backend = nil
 			}
-			if err := j.session(t.Context(), owner, "/fixture.img", func(string) error { t.Fatal("invalid owner reached writer"); return nil }); err == nil || b.prepares != 0 {
+			if err := j.editSession(t.Context(), owner, func() error { t.Fatal("invalid owner reached the editor"); return nil }); err == nil {
 				t.Fatal("invalid staging authority reached host effects")
 			}
 		})
@@ -314,13 +240,15 @@ func TestNativeLoopMountRejectsStaleAuthorizedAndMissingNativeAuthority(t *testi
 }
 
 func TestNativeLoopMountCorruptAndUnknownFramesRefuseInventory(t *testing.T) {
-	j, owner, _ := nativeLoopJournalFixture(t)
-	if err := j.session(t.Context(), owner, "/fixture.img", func(string) error { return nil }); err != nil {
+	j, owner, b := nativeLoopJournalFixture(t)
+	legacyLoopMount(t, j, owner, b)
+	retired := retireLoopFixtureOwner(t, j, owner)
+	if err := j.retireAll(t.Context(), retired); err != nil {
 		t.Fatal(err)
 	}
-	records, err := j.records(owner)
-	if err != nil {
-		t.Fatal(err)
+	records, err := j.records(retired)
+	if err != nil || len(records) != 1 {
+		t.Fatalf("records = %+v %v", records, err)
 	}
 	good, err := json.Marshal(records[0])
 	if err != nil {
@@ -347,7 +275,7 @@ func TestNativeLoopMountCorruptAndUnknownFramesRefuseInventory(t *testing.T) {
 	}
 }
 
-func TestNativeStagingMethodsUseNativeBackendAndRetainOriginalOwner(t *testing.T) {
+func TestNativeStagingMethodsEditUnderTheOriginalOwner(t *testing.T) {
 	_, v, _ := nativeManagerFixture(t)
 	// This test exercises fsync ordering under -race, rather than the
 	// manager fixture's deliberately short readiness deadline.
@@ -369,12 +297,7 @@ func TestNativeStagingMethodsUseNativeBackendAndRetainOriginalOwner(t *testing.T
 	}
 	b := &nativeLoopBackendFixture{attachments: make(map[string]bool)}
 	v.nativeRecovery.loopMounts = b
-	original := loopMountSession
-	loopMountSession = func(string, string, func(string) error, ...*loopMountTimings) error {
-		t.Fatal("native staging borrowed legacy mount runner")
-		return nil
-	}
-	t.Cleanup(func() { loopMountSession = original })
+	sessions, _ := fakeDriveImages(t)
 	for _, stage := range []func() error{
 		func() error { return v.StageSecretsEnv(l.Instance, []byte(`{"TOKEN":"test"}`)) },
 		func() error { return v.StageAPIEnv(l.Instance, []byte(`{"MODE":"test"}`)) },
@@ -388,14 +311,14 @@ func TestNativeStagingMethodsUseNativeBackendAndRetainOriginalOwner(t *testing.T
 			t.Fatal(err)
 		}
 	}
-	if b.mounted != 7 {
-		t.Fatalf("staging sessions=%d", b.mounted)
+	if *sessions != 7 {
+		t.Fatalf("staging sessions=%d", *sessions)
 	}
-	if err := v.StageWorkloadManifest(l.Instance, 0, WorkloadSpec{Name: "helper"}); err == nil || b.mounted != 7 {
+	if err := v.StageWorkloadManifest(l.Instance, 0, WorkloadSpec{Name: "helper"}); err == nil || *sessions != 7 {
 		t.Fatal("native staging wrote a shared read-only image")
 	}
-	if err := v.exportBuildArtifacts(l.Instance, filepath.Join(t.TempDir(), "exports")); err == nil {
-		t.Fatal("native export borrowed unjournaled mount/copy producers")
+	if err := v.exportBuildArtifacts(t.Context(), l.Instance, filepath.Join(t.TempDir(), "exports")); err == nil {
+		t.Fatal("native export borrowed unjournaled producers")
 	}
 	j := &nativeLoopMountJournal{owner: v.nativeRecovery.journal, backend: b}
 	retired := retireLoopFixtureOwner(t, j, owner)
@@ -405,7 +328,7 @@ func TestNativeStagingMethodsUseNativeBackendAndRetainOriginalOwner(t *testing.T
 	if _, err := j.owner.replace(t.Context(), l, owner.Generation, true); err != nil {
 		t.Fatal(err)
 	}
-	if err := v.stagePreBootFilesForOwner(t.Context(), owner, l.Instance, nil, nil, []byte(`{"MODE":"late"}`), "", false); err == nil || b.mounted != 7 {
+	if err := v.stagePreBootFilesForOwner(t.Context(), owner, l.Instance, nil, nil, []byte(`{"MODE":"late"}`), "", false); err == nil || *sessions != 7 {
 		t.Fatal("old boot staged the replacement drive")
 	}
 }

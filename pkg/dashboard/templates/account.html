@@ -25,7 +25,7 @@
     <nav>
       <a href="/dashboard/">Overview</a>
       <a href="/dashboard/apps">Apps</a>
-      <a href="/dashboard/postgres">PostgreSQL</a>
+      {{if $.On "managed-postgres"}}<a href="/dashboard/postgres">PostgreSQL</a>{{end}}
       <a href="/dashboard/usage">Usage</a>
       <a href="/dashboard/billing">Billing</a>
       <a href="/dashboard/pricing">Pricing</a>
@@ -145,6 +145,9 @@
             <p><strong>Delete account</strong> &mdash; schedules permanent deletion in 30 days. You can cancel within the grace period by clicking "Restore" below or running <code>gregale account restore</code>.</p>
             <form id="account-delete-form" method="POST" action="/dashboard/account/delete">
               <input type="hidden" name="csrf_token" value="{{.Data.DeleteConfirmToken}}">
+              {{if .Data.ShowDeleteManagedPostgres}}
+                <p><label><input type="checkbox" name="include_managed_postgres_databases" value="true"> Also delete my managed PostgreSQL databases when the 30 days end</label></p>
+              {{end}}
               <button type="submit" class="btn-danger">
                 Delete account
               </button>

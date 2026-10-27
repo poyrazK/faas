@@ -25,9 +25,7 @@ AppForkByID
 AppForkExecByID
 AppForkForApp
 AppForksDueForTeardown
-AppLogDrainByID
 AppLogDrainHealthByDrainID
-AppWebhookByID
 AppWebhookDeliveryByID
 AppendBuilderUsage
 AppendComputeNodeHeartbeat
@@ -234,7 +232,6 @@ GetTenantSurfaceByName
 GetUploadCommitOutcome
 GetUploadSession
 GetWorkflowEventsForRun
-GetWorkflowRunByIdempotencyKey
 GitHubBindingForApp
 GitHubInstallForAccount
 GithubInstallBindingForRepoBranch
@@ -245,7 +242,6 @@ HasStripePushHour
 IncInstanceRequestCount
 IncrementAppError
 InsertAppErrorRequest
-InsertAuditLog
 InsertDataUpstream
 InsertDataUpstreamProbe
 InsertMirrorResult

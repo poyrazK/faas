@@ -194,7 +194,7 @@ func (s *server) exportAccount(w http.ResponseWriter, r *http.Request, acct stat
 // returns the same envelope (status + scheduled_at + restore_until)
 // without re-stamping the timestamp or re-sending the email.
 func (s *server) deleteAccount(w http.ResponseWriter, r *http.Request, acct state.Account) {
-	fresh, err := s.scheduleDeletion(r.Context(), acct, "rest")
+	fresh, err := s.scheduleDeletion(r.Context(), acct, "rest", r.URL.Query().Get(includeManagedPostgresParam) == "true")
 	if err != nil {
 		api.WriteProblem(w, err)
 		return
@@ -212,7 +212,13 @@ func (s *server) deleteAccount(w http.ResponseWriter, r *http.Request, acct stat
 // "dashboard"); it's threaded through so the IAM-4 audit emit can
 // attribute the action to the right caller (the dashboard form vs
 // the REST DELETE).
-func (s *server) scheduleDeletion(ctx context.Context, acct state.Account, via string) (state.Account, *api.Problem) {
+//
+// includeDatabases is the customer's explicit request that the deletion include
+// their managed PostgreSQL databases (ADR-20261024150500). It is honoured only
+// for accounts in FAAS_ACCOUNT_DELETION_MANAGED_POSTGRES_ACCOUNTS; for any other
+// account it is ignored like the unknown option it is to them.
+func (s *server) scheduleDeletion(ctx context.Context, acct state.Account, via string, includeDatabases bool) (state.Account, *api.Problem) {
+	includeDatabases = includeDatabases && api.AccountDeletionManagedPostgresEnabled(acct.ID)
 	if acct.Status != state.AccountDeletedPending {
 		// The store only schedules an active account (a past_due one
 		// must not be re-armed into a self-service deletion). That
@@ -224,7 +230,14 @@ func (s *server) scheduleDeletion(ctx context.Context, acct state.Account, via s
 		if prob := s.sharedOrgOwnershipBlocksDeletion(ctx, acct.ID); prob != nil {
 			return acct, prob
 		}
-		outboxed, err := s.markDeletionPendingWithMail(ctx, acct.ID)
+		// A deleted customer must not keep paying (Hunt 17 H17-2). The
+		// subscription ends with its paid period; restoring the account
+		// within grace does not resume it.
+		if err := s.endSubscriptionForDeletion(ctx, acct); err != nil {
+			s.log.Error("account deletion: end billing subscription", "account", acct.ID, "err", err)
+			return acct, api.ErrCapacity("could not cancel the billing subscription; try again")
+		}
+		outboxed, err := s.markDeletionPendingWithMail(ctx, acct.ID, state.IncludingManagedPostgres(includeDatabases))
 		if err != nil {
 			return acct, deletionRefusedProblem(err)
 		}
@@ -264,9 +277,13 @@ func (s *server) scheduleDeletion(ctx context.Context, acct state.Account, via s
 			// form submission from a CLI/API DELETE — useful when
 			// a customer's session cookie was stolen and the
 			// attacker prefers the dashboard surface.
-			s.audit.Emit(ctx, "account.deletion_scheduled", &fresh.ID, map[string]any{
-				"via": via,
-			})
+			data := map[string]any{"via": via}
+			if includeDatabases {
+				// Only set when chosen, so the dark option never shows up
+				// in a customer's audit log before launch.
+				data["includes_managed_postgres"] = true
+			}
+			s.audit.Emit(ctx, "account.deletion_scheduled", &fresh.ID, data)
 		}
 		return fresh, nil
 	}
@@ -407,6 +424,11 @@ func deletionRefusedProblem(err error) *api.Problem {
 	}
 	return api.ErrCapacity("could not mark for deletion")
 }
+
+// includeManagedPostgresParam asks a self-service deletion to include the
+// account's managed PostgreSQL databases. Dark until launch: kept out of
+// OpenAPI, the SDKs and CLI help (ADR-20261024150500).
+const includeManagedPostgresParam = "include_managed_postgres_databases"
 
 func accountDeletionBlocked() *api.Problem {
 	return api.NewProblem(http.StatusConflict, api.CodeConflict,

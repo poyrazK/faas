@@ -17,6 +17,7 @@ if TYPE_CHECKING:
     from ..models.runtime_policy_component_status import RuntimePolicyComponentStatus
     from ..models.runtime_policy_node_status import RuntimePolicyNodeStatus
     from ..models.runtime_policy_scheduler_status import RuntimePolicySchedulerStatus
+    from ..models.traffic_runtime_status import TrafficRuntimeStatus
 
 
 T = TypeVar("T", bound="RuntimePolicyStatusResponse")
@@ -26,7 +27,8 @@ T = TypeVar("T", bound="RuntimePolicyStatusResponse")
 class RuntimePolicyStatusResponse:
     """Runtime policy status across gateway replicas, the owning scheduler, and live VM consumers. Each component reports
     its scoped desired revision. Gateway request policy filters app-row changes from the combined app-cache and traffic
-    projection; consumers use their existing acknowledged cursor.
+    projection. Gateway acknowledgements require the current process generation and a fresh serving report. Traffic
+    runtime reports wiring independently of convergence and enforcement; older API servers may omit it.
 
     """
 
@@ -58,11 +60,15 @@ class RuntimePolicyStatusResponse:
     """Fresh app-level host policy status for compute nodes currently hosting live instances of this app. This
     shape is used by the egress_allowlist and cpu_limit components."""
     scheduler_scaling: RuntimePolicySchedulerStatus
-    """Fresh observation of the desired scaling policy by the owning schedd. Active means the policy was loaded,
+    """Fresh observation of the desired scaling policy by the owning scheduler. Active means the policy was loaded,
     not that a metric-driven replica target has been reached."""
     mcp_convergence: MCPPolicyConvergenceSnapshot | Unset = UNSET
     """Account-scoped live gateway replay observation for an active HTTP deployment. Snapshot metadata only; token
     enforcement is not attested. Correlates retained admission evidence when available."""
+    traffic_runtime: TrafficRuntimeStatus | Unset = UNSET
+    """Fresh compute gateway wiring observations for the active serving roster. Reports expire after 10 seconds;
+    replacement, missing reports and readiness failure remove observations. Wiring does not prove backend health or
+    request enforcement. Node identities and process tokens are not exposed."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -100,6 +106,10 @@ class RuntimePolicyStatusResponse:
         if not isinstance(self.mcp_convergence, Unset):
             mcp_convergence = self.mcp_convergence.to_dict()
 
+        traffic_runtime: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.traffic_runtime, Unset):
+            traffic_runtime = self.traffic_runtime.to_dict()
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -123,6 +133,8 @@ class RuntimePolicyStatusResponse:
         )
         if mcp_convergence is not UNSET:
             field_dict["mcp_convergence"] = mcp_convergence
+        if traffic_runtime is not UNSET:
+            field_dict["traffic_runtime"] = traffic_runtime
 
         return field_dict
 
@@ -132,6 +144,7 @@ class RuntimePolicyStatusResponse:
         from ..models.runtime_policy_component_status import RuntimePolicyComponentStatus
         from ..models.runtime_policy_node_status import RuntimePolicyNodeStatus
         from ..models.runtime_policy_scheduler_status import RuntimePolicySchedulerStatus
+        from ..models.traffic_runtime_status import TrafficRuntimeStatus
 
         d = dict(src_dict)
         app_id = d.pop("app_id")
@@ -171,6 +184,13 @@ class RuntimePolicyStatusResponse:
         else:
             mcp_convergence = MCPPolicyConvergenceSnapshot.from_dict(_mcp_convergence)
 
+        _traffic_runtime = d.pop("traffic_runtime", UNSET)
+        traffic_runtime: TrafficRuntimeStatus | Unset
+        if isinstance(_traffic_runtime, Unset):
+            traffic_runtime = UNSET
+        else:
+            traffic_runtime = TrafficRuntimeStatus.from_dict(_traffic_runtime)
+
         runtime_policy_status_response = cls(
             app_id=app_id,
             desired_revision=desired_revision,
@@ -188,6 +208,7 @@ class RuntimePolicyStatusResponse:
             cpu_limit=cpu_limit,
             scheduler_scaling=scheduler_scaling,
             mcp_convergence=mcp_convergence,
+            traffic_runtime=traffic_runtime,
         )
 
         runtime_policy_status_response.additional_properties = d

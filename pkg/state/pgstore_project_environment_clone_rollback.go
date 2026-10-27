@@ -9,7 +9,16 @@ import (
 )
 
 func (s *PgStore) RollbackProjectEnvironmentClone(ctx context.Context, accountID, projectID, slug string) error {
-	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
+	_, err := retryTrafficSerialization(ctx, func() (struct{}, error) {
+		return struct{}{}, s.rollbackProjectEnvironmentCloneOnce(ctx, accountID, projectID, slug)
+	})
+	return err
+}
+
+// Deleting the environment cascades any custom domain bound to it, so the
+// compensation joins the binding guard (ADR-570).
+func (s *PgStore) rollbackProjectEnvironmentCloneOnce(ctx context.Context, accountID, projectID, slug string) error {
+	tx, err := s.beginAccountAppTrafficMutation(ctx, accountID, "")
 	if err != nil {
 		return fmt.Errorf("state: begin project environment clone rollback: %w", err)
 	}

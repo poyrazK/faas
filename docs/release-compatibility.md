@@ -37,24 +37,46 @@ Three consequences:
 
 ## Runtime base generations during a compute rollout
 
-A runtime base (`base/base-<arch>.ext4`, `base/runner-<runtime>-<arch>.ext4`)
-is one logical key in shared storage, and each node's cache commits one
-generation of it. A release-N-1 vmmd refuses every guest on a base whose
-cached generation is not the one in its environment. So a node must not
-adopt release N's generation while it still serves on N-1. `node_join.yml`
-runs `vmmd base-generation-check` and, when a release changes a generation,
-pre-stages it only behind the drain barrier and never re-activates a node
-whose cache has moved
-([ADR 20261024085817](adr/20261024085817-rollout-base-generation-and-drain-completion.md)).
-That pre-stage publishes every base the release configures that the node
-could not adopt, whoever owns the apps on it, and the play keeps the node
-drained until `vmmd base-adoption-check` confirms that its installed vmmd
-can adopt every configured base
-([ADR 20261024191249](adr/20261024191249-rollout-publishes-release-bases-and-gates-activation.md)).
-So the first node to roll publishes each changed base: from then on an N-1
-node refuses a changed base it has not cached, until it rolls, and a compute
-rollback across a generation change is not covered yet. Both wait for
-generation-addressed base keys.
+A node boots a runtime base (`base/base-<arch>.ext4`,
+`base/runner-<runtime>-<arch>.ext4`) under that logical key, and its cache
+commits one generation of it. A vmmd refuses every guest on a base whose
+cached generation is not the one in its environment.
+
+**Each generation has its own shared keys.** Shared storage keeps every
+generation of a base under `base/generations/<sha256(ref)>/…`, with its scan
+sidecar under `scans/generations/…`. imaged and vmmd route the base's reads
+and writes to the generation their release configures, so a release never
+reads or overwrites another release's generation, whichever node stages
+last. A vmmd whose cache holds another generation adopts its own from those
+keys. This covers a rollout in either direction and a compute rollback
+([ADR 20261026181418](adr/20261026181418-generation-addressed-runtime-base-keys.md)).
+
+That ADR followed production-us on 2026-10-26: rc.294's imaged on fsn-3
+restaged `base-minimal` under the one shared logical key after rc.296's
+pre-stage had published there, and fsn-2's rc.296 vmmd refused every cold
+boot.
+
+**Releases from before generation keys (expand step).** They read and write
+only the logical key.
+- A release with generation keys never writes that key, so an older node's
+  cache misses keep reading the older release's generation.
+- A release with generation keys falls back to the logical key only while
+  its scan names the configured generation.
+- Its rollout pre-stage republishes such a `legacy` base under the
+  generation's own keys before the node serves.
+- Older releases can still overwrite the logical key between themselves.
+- A rollback to an older release reads whatever generation the last of them
+  published there.
+
+**The rollout keeps its gates.**
+- `node_join.yml` runs `vmmd base-generation-check` and, when a release
+  changes a generation, pre-stages it behind the drain barrier
+  ([ADR 20261024085817](adr/20261024085817-rollout-base-generation-and-drain-completion.md)).
+- That pre-stage publishes every base the release configures that the node
+  could not adopt, whoever owns the apps on it.
+- The play keeps the node drained until `vmmd base-adoption-check` confirms
+  that its installed vmmd can adopt every configured base
+  ([ADR 20261024191249](adr/20261024191249-rollout-publishes-release-bases-and-gates-activation.md)).
 
 ## No downtime, no exceptions
 
@@ -107,6 +129,25 @@ listener; Caddy only starts sending gRPC that way when the operator sets
 fleet runs that release. Rolling back past it means turning the variable off
 first. Every other request stays on HTTP/1.1, so an older gatewayd-public
 behind an h2c-enabled Caddy fails gRPC only.
+
+**Headers and trailers between gateways are part of the N±1 contract.**
+gatewayd-public runs on the control-plane host and moves with the
+control-plane stage, so for a whole rollout it sits in front of N-1 compute
+gateways. Rolling it back puts it in front of N ones. A receiver accepts the
+absence of a header that an N-1 sender never writes, and a sender must not
+emit a header that an N-1 receiver would pass to clients. On 2026-10-26 an
+rc.295 gatewayd-public required ADR-570's `X-Faas-Traffic-Security` snapshot,
+which rc.294 compute gateways never stamp. Every successful application
+response became a 503 from 10:39 to 12:14 UTC. The public edge now
+requires the snapshot only once every compute gateway it may dial reports the
+wiring (ADR-570, amendment of 2026-10-26). A changed marker counts as well.
+rc.295 started recognising streams by a new session header, and without a
+fallback an SSE answer from an rc.294 node would have been cut at the request
+budget. `TestPublicTrafficSecurityFollowsItsPeers`,
+`TestPublicTrafficSecurityKeepsN1StreamsOpen` and
+`TestPublicProxyServesAPlainN1Answer` (`pkg/gateway`) hold the public hop to
+this. A new header requirement needs the same fleet gate or an opt-in
+negotiation, plus a case in those tests.
 
 ## Gate 1: version skew (CI, every pull request)
 
@@ -444,3 +485,6 @@ The unit lanes enforce the rules above in their workflows:
   Neither is built.
 - The full release pipeline still has to enforce that no unit lags more than
   one release. The unit lanes do enforce it.
+- Gate 1 checks protos and guest JSON only. HTTP headers and trailers
+  between gatewayd-public and gatewayd-internal have no CI skew check; the
+  tests named under Deploy order are the guard.

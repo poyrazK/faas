@@ -132,6 +132,7 @@ type triggerDispatchRecord struct {
 type triggerDispatchRequest struct {
 	InvocationID string                  `json:"invocation_id"`
 	AppID        string                  `json:"app_id"`
+	AccountID    string                  `json:"account_id,omitempty"`
 	Source       string                  `json:"source"`
 	TriggerID    string                  `json:"trigger_id"`
 	Records      []triggerDispatchRecord `json:"records"`
@@ -355,6 +356,7 @@ func (l *Loop) runTriggerTick(ctx context.Context) {
 		l.log.Warn("sched trigger tick: list", "err", err)
 		return
 	}
+	l.evictTriggerPollers(triggers)
 	if len(triggers) == 0 {
 		return
 	}
@@ -415,6 +417,11 @@ func (l *Loop) triggerPlanResolver(ctx context.Context) func(string) api.Plan {
 // apps get their per-plan WakeBurstPerApp + TriggerRecordsPerSecondPerApp
 // caps rather than collapsing to Free.
 func (l *Loop) dispatchOneTrigger(ctx context.Context, t sqlc.Trigger, store storeLike, planFor func(string) api.Plan) error {
+	// ADR-20261023115741: a trigger whose capability is off for the account
+	// is not polled; its records stay in the broker until the flag is on.
+	if !l.engine.appIDCapabilityAllowed(ctx, t.AppID.String(), triggerCapability(t.Kind)) {
+		return nil
+	}
 	var exclusiveBinding *state.ExclusiveTriggerBinding
 	if bindings, ok := store.(state.ExclusiveTriggerBindingStore); ok {
 		binding, bindingErr := bindings.ExclusiveTriggerBinding(ctx, t.AccountID.String(), "broker", t.ID.String())
@@ -429,9 +436,12 @@ func (l *Loop) dispatchOneTrigger(ctx context.Context, t sqlc.Trigger, store sto
 			return fmt.Errorf("load exclusive broker binding: %w", bindingErr)
 		}
 	}
-	// 1. Poller lookup. Cached on the Loop.
+	// 1. Poller lookup. Cached on the Loop. A poller that cannot be built
+	// (unreachable broker, credentials that do not open) is the trigger's
+	// health error too, so the customer sees it, not only the scheduler log.
 	poller, _, err := l.pollerForTrigger(t)
 	if err != nil {
+		l.recordTriggerConsumerHealth(ctx, store, t, PollResult{Error: err})
 		return err
 	}
 	if poller == nil {
@@ -1178,7 +1188,7 @@ func (l *Loop) settleTriggerDeadLetters(ctx context.Context, t sqlc.Trigger, pol
 	queue bool, claimedByID map[string]sqlc.TriggerRecord, dead terminalTriggerResults) {
 	var nacked map[string]bool
 	if queue {
-		nacked = l.nackTerminalItems(ctx, t, poller, dead.items, dead.reasons, nil)
+		nacked = l.nackTerminalQueueItems(ctx, t, poller, dead)
 	}
 	written := make(map[string]bool, len(dead.items))
 	for i, id := range dead.recordIDs {
@@ -1209,6 +1219,65 @@ func (l *Loop) settleTriggerDeadLetters(ctx context.Context, t sqlc.Trigger, pol
 	if !queue {
 		l.nackTerminalItems(ctx, t, poller, dead.items, dead.reasons, written)
 	}
+}
+
+// queueDeadLetterError is the last_error a dead-lettered queue invocation
+// keeps: its terminal reason and, when known, what the last attempt failed
+// with. The reason alone ("max_attempts") hid the handler's error from the
+// DLQ entry (Hunt 14 H14-6).
+func queueDeadLetterError(reason, lastError string) string {
+	lastError = strings.TrimSpace(lastError)
+	if lastError == "" || lastError == reason {
+		return reason
+	}
+	out := reason + ": " + lastError
+	if len(out) > queueRetryMaxLastErrorBytes {
+		out = strings.ToValidUTF8(out[:queueRetryMaxLastErrorBytes], "")
+	}
+	return out
+}
+
+// terminalErrorNacker dead-letters queue items with their last error; the
+// queue poller implements it.
+type terminalErrorNacker interface {
+	NackTerminalWithError(ctx context.Context, t sqlc.Trigger, ids []string, reason, lastError string) error
+}
+
+// nackTerminalQueueItems is nackTerminalItems for a queue poller: it groups
+// the items by reason and last error so each dead-lettered invocation keeps
+// what its last attempt failed with.
+func (l *Loop) nackTerminalQueueItems(ctx context.Context, t sqlc.Trigger, poller triggerSource, dead terminalTriggerResults) map[string]bool {
+	nacker, ok := poller.(terminalErrorNacker)
+	if !ok {
+		return l.nackTerminalItems(ctx, t, poller, dead.items, dead.reasons, nil)
+	}
+	type group struct {
+		reason, lastError string
+		items             []string
+	}
+	var groups []*group
+	index := map[[2]string]*group{}
+	for i, item := range dead.items {
+		key := [2]string{dead.reasons[i], dead.errors[i]}
+		g, found := index[key]
+		if !found {
+			g = &group{reason: key[0], lastError: key[1]}
+			index[key] = g
+			groups = append(groups, g)
+		}
+		g.items = append(g.items, item)
+	}
+	nacked := make(map[string]bool, len(dead.items))
+	for _, g := range groups {
+		if err := nacker.NackTerminalWithError(ctx, t, g.items, g.reason, g.lastError); err != nil {
+			l.log.Warn("sched trigger tick: poller nack (dlq)", "trigger_id", t.ID.String(), "reason", g.reason, "err", err)
+			continue
+		}
+		for _, item := range g.items {
+			nacked[item] = true
+		}
+	}
+	return nacked
 }
 
 // nackTerminalItems Nacks terminal items and returns those whose Nack
@@ -1287,6 +1356,7 @@ func buildDispatchEnvelope(t sqlc.Trigger, batch []SourceRecord) triggerDispatch
 	env := triggerDispatchRequest{
 		InvocationID: "trigger-" + t.ID.String(),
 		AppID:        t.AppID.String(),
+		AccountID:    t.AccountID.String(),
 		Source:       "esm",
 		TriggerID:    t.ID.String(),
 		Records:      recs,
@@ -2463,8 +2533,15 @@ func (l *Loop) pollerForTrigger(t sqlc.Trigger) (triggerSource, bool, error) {
 	if l.triggerPollers == nil {
 		l.triggerPollers = map[string]triggerSource{}
 	}
-	if p, ok := l.triggerPollers[t.ID.String()]; ok {
-		return p, true, nil
+	id, fingerprint := t.ID.String(), triggerPollerFingerprint(t)
+	if p, ok := l.triggerPollers[id]; ok {
+		if built, tracked := l.triggerPollerConfigs[id]; !tracked || built == fingerprint {
+			return p, true, nil
+		}
+		// The trigger changed since its poller was built: a rotated
+		// credential, a new topic or URL. Kafka joins its consumer group
+		// when the reader is built, so the old reader must leave.
+		l.closeTriggerPollerLocked(id)
 	}
 	pollerTrigger := t
 	openedConfig, err := triggerconfig.Open(api.TriggerKind(t.Kind), t.Config, l.triggerSecretIdentities)
@@ -2484,8 +2561,52 @@ func (l *Loop) pollerForTrigger(t sqlc.Trigger) (triggerSource, bool, error) {
 	if err != nil {
 		return nil, true, fmt.Errorf("construct %s trigger poller: %w", t.Kind, err)
 	}
-	l.triggerPollers[t.ID.String()] = src
+	l.triggerPollers[id] = src
+	if l.triggerPollerConfigs == nil {
+		l.triggerPollerConfigs = map[string]string{}
+	}
+	l.triggerPollerConfigs[id] = fingerprint
 	return src, true, nil
+}
+
+// triggerPollerFingerprint identifies the trigger config a poller is
+// built from (kind plus the stored, possibly sealed, config).
+func triggerPollerFingerprint(t sqlc.Trigger) string {
+	sum := sha256.Sum256(append([]byte(t.Kind+"\x00"), t.Config...))
+	return hex.EncodeToString(sum[:])
+}
+
+// closeTriggerPollerLocked closes and forgets a cached poller. Caller
+// holds triggerPollersMu.
+func (l *Loop) closeTriggerPollerLocked(id string) {
+	if p := l.triggerPollers[id]; p != nil {
+		if err := p.Close(); err != nil && l.log != nil {
+			l.log.Warn("sched trigger tick: close poller", "trigger_id", id, "err", err)
+		}
+	}
+	delete(l.triggerPollers, id)
+	delete(l.triggerPollerConfigs, id)
+}
+
+// evictTriggerPollers closes the pollers of triggers that are no longer
+// enabled (deleted, disabled, paused), so a Kafka reader leaves its
+// consumer group instead of holding partitions for the process lifetime.
+// Only pollers this loop built are evicted.
+func (l *Loop) evictTriggerPollers(enabled []sqlc.Trigger) {
+	l.triggerPollersMu.Lock()
+	defer l.triggerPollersMu.Unlock()
+	if len(l.triggerPollerConfigs) == 0 {
+		return
+	}
+	live := make(map[string]bool, len(enabled))
+	for i := range enabled {
+		live[enabled[i].ID.String()] = true
+	}
+	for id := range l.triggerPollerConfigs {
+		if !live[id] {
+			l.closeTriggerPollerLocked(id)
+		}
+	}
 }
 
 // BrokerLag implements BrokerLagReader on Loop. It queries active broker

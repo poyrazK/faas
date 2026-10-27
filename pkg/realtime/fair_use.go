@@ -28,6 +28,12 @@ type ConnectionSyncer interface {
 type accountConnections struct {
 	local  atomic.Int64
 	remote atomic.Int64
+	// resume counts the account's resume, inbox and SSE subscriptions on
+	// this node (reserveResume).
+	resume atomic.Int64
+	// outbound is the bytes queued for, or being written to, the account's
+	// connections on this node (reserveNodeOutbound).
+	outbound atomic.Int64
 }
 
 // connectionRefusal explains a refused reservation. A zero value means the

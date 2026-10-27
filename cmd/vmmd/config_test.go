@@ -1081,6 +1081,122 @@ func TestLoadConfig_RestoreReseedThreadSwitch(t *testing.T) {
 	}
 }
 
+// adr: 20261026120000 — the bridge stream headroom switch is off by default;
+// TOML can enable it and FAAS_BRIDGE_STREAM_HEADROOM overrides TOML.
+func TestLoadConfig_BridgeStreamHeadroomSwitch(t *testing.T) {
+	cfg, err := LoadConfig(filepath.Join(t.TempDir(), "missing.toml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.BridgeStreamHeadroom {
+		t.Fatal("bridge stream headroom must default to off")
+	}
+	path := filepath.Join(t.TempDir(), "vmmd.toml")
+	if err := os.WriteFile(path, []byte("bridge_stream_headroom = true\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		env     string
+		enabled bool
+	}{{"", true}, {"1", true}, {"0", false}, {"false", false}} {
+		t.Run("env="+tc.env, func(t *testing.T) {
+			if tc.env != "" {
+				t.Setenv("FAAS_BRIDGE_STREAM_HEADROOM", tc.env)
+			}
+			cfg, err := LoadConfig(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if cfg.BridgeStreamHeadroom != tc.enabled {
+				t.Fatalf("BridgeStreamHeadroom = %v, want %v", cfg.BridgeStreamHeadroom, tc.enabled)
+			}
+		})
+	}
+	t.Setenv("FAAS_BRIDGE_STREAM_HEADROOM", "sometimes")
+	if _, err := LoadConfig(path); err == nil || !strings.Contains(err.Error(), "FAAS_BRIDGE_STREAM_HEADROOM") {
+		t.Fatalf("invalid FAAS_BRIDGE_STREAM_HEADROOM error = %v, want named validation error", err)
+	}
+}
+
+// adr: 20261026113920 — volatile journal writes are off by default. The tmpfs
+// copies default to /run/faas/vmmd-resources, and to none when the journal is
+// moved, so a private test journal never reads another vmmd's copies.
+func TestLoadConfig_ResourceJournalVolatile(t *testing.T) {
+	missing := filepath.Join(t.TempDir(), "missing.toml")
+	for _, tc := range []struct {
+		name       string
+		env        map[string]string
+		wantDir    string
+		wantWrites bool
+		wantErr    string
+	}{
+		{name: "defaults", wantDir: "/run/faas/vmmd-resources"},
+		{name: "writes on", env: map[string]string{"FAAS_VMMD_RESOURCE_JOURNAL_VOLATILE_WRITES": "1"}, wantDir: "/run/faas/vmmd-resources", wantWrites: true},
+		{name: "moved journal has no copies", env: map[string]string{"FAAS_VMMD_RESOURCE_JOURNAL_DIR": "/tmp/private-journal"}},
+		{name: "moved journal with its own copies", env: map[string]string{"FAAS_VMMD_RESOURCE_JOURNAL_DIR": "/tmp/private-journal", "FAAS_VMMD_RESOURCE_JOURNAL_VOLATILE_DIR": "/run/private-copies"}, wantDir: "/run/private-copies"},
+		{name: "empty disables copies", env: map[string]string{"FAAS_VMMD_RESOURCE_JOURNAL_VOLATILE_DIR": ""}},
+		{name: "writes need copies", env: map[string]string{"FAAS_VMMD_RESOURCE_JOURNAL_VOLATILE_DIR": "", "FAAS_VMMD_RESOURCE_JOURNAL_VOLATILE_WRITES": "true"}, wantErr: "resource_journal_volatile_dir"},
+		{name: "relative copies", env: map[string]string{"FAAS_VMMD_RESOURCE_JOURNAL_VOLATILE_DIR": "run/copies"}, wantErr: "FAAS_VMMD_RESOURCE_JOURNAL_VOLATILE_DIR"},
+		{name: "invalid switch", env: map[string]string{"FAAS_VMMD_RESOURCE_JOURNAL_VOLATILE_WRITES": "sometimes"}, wantErr: "FAAS_VMMD_RESOURCE_JOURNAL_VOLATILE_WRITES"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			for k, v := range tc.env {
+				t.Setenv(k, v)
+			}
+			cfg, err := LoadConfig(missing)
+			if tc.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+					t.Fatalf("err = %v, want one naming %s", err, tc.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := cfg.resourceJournal(); got.VolatileDir != tc.wantDir || got.VolatileWrites != tc.wantWrites {
+				t.Fatalf("journal = %+v, want volatile dir %q writes %v", got, tc.wantDir, tc.wantWrites)
+			}
+		})
+	}
+}
+
+// adr: 20261025150000 — the invoke-hook backoff is off by default; TOML can
+// enable it and FAAS_INVOKE_HOOK_BACKOFF overrides TOML in either direction.
+func TestLoadConfig_InvokeHookBackoffSwitch(t *testing.T) {
+	cfg, err := LoadConfig(filepath.Join(t.TempDir(), "missing.toml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.InvokeHookBackoff {
+		t.Fatal("the invoke-hook backoff must default to off")
+	}
+	path := filepath.Join(t.TempDir(), "vmmd.toml")
+	if err := os.WriteFile(path, []byte("invoke_hook_backoff = true\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		env     string
+		enabled bool
+	}{{"", true}, {"1", true}, {"0", false}, {"false", false}} {
+		t.Run("env="+tc.env, func(t *testing.T) {
+			if tc.env != "" {
+				t.Setenv("FAAS_INVOKE_HOOK_BACKOFF", tc.env)
+			}
+			cfg, err := LoadConfig(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if cfg.InvokeHookBackoff != tc.enabled {
+				t.Fatalf("InvokeHookBackoff = %v, want %v", cfg.InvokeHookBackoff, tc.enabled)
+			}
+		})
+	}
+	t.Setenv("FAAS_INVOKE_HOOK_BACKOFF", "sometimes")
+	if _, err := LoadConfig(path); err == nil || !strings.Contains(err.Error(), "FAAS_INVOKE_HOOK_BACKOFF") {
+		t.Fatalf("invalid FAAS_INVOKE_HOOK_BACKOFF error = %v, want named validation error", err)
+	}
+}
+
 // adr: 908 — per-account pmem bases are on by default ("auto"); vmmd.toml
 // or the environment can name a directory or turn them off, and the
 // environment overrides TOML.

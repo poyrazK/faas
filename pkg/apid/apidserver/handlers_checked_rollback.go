@@ -13,6 +13,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/release"
+	"github.com/onebox-faas/faas/pkg/apid/trafficproblem"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/openapidiff"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -61,6 +62,9 @@ func (s *server) prepareCheckedRollback(ctx context.Context, acct state.Account,
 	if err != nil {
 		return empty, target, api.ErrRollbackTargetIneligible("select a superseded or zero-traffic live deployment of this app")
 	}
+	if problem := s.rollbackTargetApprovalProblem(ctx, app, target); problem != nil {
+		return empty, target, problem
+	}
 	if _, problem := s.rollbackReleaseGuard(ctx, app, target, req.AcknowledgeReleases); problem != nil {
 		return empty, target, problem
 	}
@@ -86,7 +90,7 @@ func (s *server) persistCheckedRollback(ctx context.Context, acct state.Account,
 		// operator log (production-us hunt #9: the first of two identical
 		// rollbacks failed after 16 s and nothing recorded why).
 		s.log.Error("checked rollback: persist", "app", app.ID, "target", target.ID, "expected_current", currentID, "err", err)
-		return operation, target, api.ErrCapacity("could not persist checked rollback")
+		return operation, target, trafficproblem.Policy(err, api.ErrCapacity("could not persist checked rollback"))
 	}
 	prepared, err := s.store.DeploymentByID(ctx, target.ID)
 	if err != nil {

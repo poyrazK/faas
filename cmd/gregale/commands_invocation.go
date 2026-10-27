@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/workpolicy"
@@ -120,6 +121,11 @@ func cmdInvoke(args []string) int {
 		}
 		if resp.Error != "" {
 			_, _ = fmt.Fprintln(os.Stderr, resp.Error)
+			// `invoke h14-py --path /` sent POST to a GET-only route and
+			// answered only the app's 405 page (Hunt 14 H14-64).
+			if *method == "" && strings.Contains(resp.Error, "HTTP 405") {
+				_, _ = fmt.Fprintln(os.Stderr, "invoke: the route refused the method; invoke sends POST unless --method is given (for example --method GET)")
+			}
 		}
 	}
 	// A synchronous invoke that came back `failed` is a failed smoke

@@ -166,7 +166,7 @@ func (e *Engine) bootFork(ctx context.Context, ins state.Instance, app state.App
 		CPUMillicores: int32(effectiveAppCPUMillicores(app)), EgressMbit: int32(limits.EgressMbit), //nolint:gosec // plan-bounded
 		StartupDeadlineS: startupDeadlineForApp(app, acct.Plan), ExecutionMode: executionModeForApp(app),
 		Plan: acct.Plan, AccountID: acct.ID, AppID: app.ID, DeploymentID: dep.ID,
-		Port: deploymentRuntimePort(dep), HealthcheckPath: healthcheckPathFromDep(dep),
+		Port: deploymentRuntimePort(dep), HealthcheckPath: healthcheckPathForApp(dep, app),
 		Runtime: app.Runtime, AppProtocol: app.AppProtocol,
 		Quarantine: true,
 	}

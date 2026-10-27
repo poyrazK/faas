@@ -11,6 +11,7 @@ import (
 
 var _ ObjectStorageAccountingStore = (*MemStore)(nil)
 var _ ObjectStorageBillingStore = (*MemStore)(nil)
+var _ ObjectInventoryReleaser = (*MemStore)(nil)
 
 func (m *MemStore) ObjectUsage(ctx context.Context, account string, now time.Time) (ObjectUsageSnapshot, error) {
 	m.mu.Lock()
@@ -193,7 +194,7 @@ func (m *MemStore) admitObjectURLLocked(account, bucket, key string, size int64,
 		return ErrNotFound
 	}
 	subject := m.objectBillingSubjectLocked(owned)
-	if put && (m.objectCapacityFencedLocked(bucket) || m.objectWriteKeyFencedLocked(bucket, key, token) || token == "" && m.objectBucketDefaultRequiresTrackingLocked(bucket)) {
+	if put && (m.objectCapacityFencedForKeyLocked(bucket, key) || m.objectWriteKeyFencedLocked(bucket, key, token) || token == "" && m.objectBucketDefaultRequiresTrackingLocked(bucket)) {
 		return ErrConflict
 	}
 	s := m.objectUsageLocked(subject, now)
@@ -279,7 +280,9 @@ func (m *MemStore) DueObjectInventories(ctx context.Context, limit int32) ([]Obj
 	out := []ObjectBucket{}
 	for _, b := range m.objectBuckets {
 		u := m.objectUsage[b.ID]
-		if !m.objectCapacityFencedLocked(b.ID) && b.State == "ready" && (u.AttemptAt.IsZero() || now.Sub(u.AttemptAt) > 5*time.Minute) && !u.LeaseUntil.After(now) {
+		// Active deletions do not block a claim: they yield to it and the
+		// worker waits for them before listing (ADR-20261025115958).
+		if !m.inventoryClaimFencedLocked(b.ID) && b.State == "ready" && (u.AttemptAt.IsZero() || now.Sub(u.AttemptAt) > 5*time.Minute) && !u.LeaseUntil.After(now) {
 			out = append(out, b)
 		}
 	}
@@ -301,7 +304,7 @@ func (m *MemStore) ClaimObjectInventory(ctx context.Context, bucket, token strin
 	}
 
 	u := m.objectUsage[bucket]
-	if m.objectCapacityFencedLocked(bucket) || token == "" || m.objectBuckets[bucket].State != "ready" || u.LeaseUntil.After(time.Now()) {
+	if m.inventoryClaimFencedLocked(bucket) || token == "" || m.objectBuckets[bucket].State != "ready" || u.LeaseUntil.After(time.Now()) {
 		return ErrConflict
 	}
 	u.Token = token
@@ -310,6 +313,26 @@ func (m *MemStore) ClaimObjectInventory(ctx context.Context, bucket, token strin
 	if m.objectUsage == nil {
 		m.objectUsage = map[string]ObjectBucketUsage{}
 	}
+	m.objectUsage[bucket] = u
+	return nil
+}
+
+func (m *MemStore) inventoryClaimFencedLocked(bucket string) bool {
+	return m.activeVersionProtectionLocked(bucket) || m.objectBucketTransitionLocked(bucket)
+}
+
+func (m *MemStore) ReleaseObjectInventory(ctx context.Context, bucket, token string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		return err
+	}
+
+	u, ok := m.objectUsage[bucket]
+	if !ok || token == "" || u.Token != token {
+		return ErrConflict
+	}
+	u.Token, u.LeaseUntil = "", time.Time{}
 	m.objectUsage[bucket] = u
 	return nil
 }

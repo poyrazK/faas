@@ -37,20 +37,20 @@ func TestEnsureJobWorkdir(t *testing.T) {
 	root := t.TempDir()
 	uid, gid := uint32(os.Getuid()), uint32(os.Getgid())
 	missing := filepath.Join(root, "a", "b")
-	if err := ensureJobWorkdir(missing, uid, gid); err != nil {
+	if err := ensureWorkingDir(missing, uid, gid); err != nil {
 		t.Fatalf("create missing workdir: %v", err)
 	}
 	if info, err := os.Stat(missing); err != nil || !info.IsDir() {
 		t.Fatalf("workdir = %v, %v", info, err)
 	}
-	if err := ensureJobWorkdir(root, uid, gid); err != nil {
+	if err := ensureWorkingDir(root, uid, gid); err != nil {
 		t.Fatalf("existing workdir: %v", err)
 	}
 	file := filepath.Join(root, "file")
 	if err := os.WriteFile(file, nil, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := ensureJobWorkdir(file, uid, gid); err == nil {
+	if err := ensureWorkingDir(file, uid, gid); err == nil {
 		t.Fatal("a regular file was accepted as the working directory")
 	}
 }

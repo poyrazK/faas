@@ -3,6 +3,7 @@ package main_test
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -14,6 +15,7 @@ import (
 	"testing"
 
 	"github.com/onebox-faas/faas/cmd/gregale"
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/mcphosting"
 	"github.com/onebox-faas/faas/pkg/secretscan"
 )
@@ -359,5 +361,38 @@ func TestMCPDiscoveryReportsRejectedTools(t *testing.T) {
 		if !strings.Contains(output.String(), `"rejected_tools"`) || !strings.Contains(output.String(), `"good"`) || !strings.Contains(output.String(), `"reason"`) {
 			t.Fatalf("incomplete %s receipt: %s", command, output.String())
 		}
+	}
+}
+
+// adr: 426 — failed protocol/auth verification closes public ingress.
+func TestMCPDeploymentVerificationFailureEnablesMaintenance(t *testing.T) {
+	oldOut, oldJSON := (*main.OsStdout), (*main.JsonOutput)
+	var output bytes.Buffer
+	(*main.OsStdout) = &output
+	(*main.JsonOutput) = true
+	t.Cleanup(func() { (*main.OsStdout) = oldOut; (*main.JsonOutput) = oldJSON })
+	mcp := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(404) }))
+	defer mcp.Close()
+	var maintenance atomic.Bool
+	control := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer operator-only" {
+			t.Error("control plane missing its own account credential")
+		}
+		if r.Method == http.MethodPatch {
+			var update api.UpdateAppRequest
+			_ = json.NewDecoder(r.Body).Decode(&update)
+			if update.MaintenanceMode != nil {
+				maintenance.Store(*update.MaintenanceMode)
+			}
+		}
+		_ = json.NewEncoder(w).Encode(api.AppResponse{Slug: "my-mcp", URL: mcp.URL})
+	}))
+	defer control.Close()
+	cfg := mcphosting.Config{Endpoint: "/mcp", Auth: mcphosting.AuthConfig{Mode: "open"}}
+	if code := main.FinishMCPDeploy(context.Background(), main.NewClient(control.URL, "operator-only"), "my-mcp", cfg, ""); code != 1 {
+		t.Fatalf("exit=%d", code)
+	}
+	if !maintenance.Load() || !strings.Contains(output.String(), "maintenance_enabled") {
+		t.Fatalf("failed deployment remains open: %s", output.String())
 	}
 }

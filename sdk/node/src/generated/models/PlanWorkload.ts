@@ -21,7 +21,7 @@ export type PlanWorkload = {
    */
   public_url?: string;
   /**
-   * Reviewed Gregale app name. Repository name, dependencies and configuration keys retain their original identity. Present for migration scans, existing allocations, and new workloads whose name cannot be a slug, which get the project-prefixed name (ADR-20261022120205).
+   * Reviewed Gregale app name. Repository name, dependencies and configuration keys retain their original identity. Present for migration scans, existing allocations, and new workloads whose name cannot be a slug, which get the project-prefixed name.
    */
   app_slug?: string;
   name: string;
@@ -30,7 +30,7 @@ export type PlanWorkload = {
    */
   platform_tenant_required?: boolean;
   /**
-   * Present when the app is or will be internal (no public route): an existing internal app, or a new Compose service without `ports:` (ADR-20261022131852). Omitted means public.
+   * Present when the app is or will be internal (no public route): an existing internal app, or a new Compose service without `ports:`. Omitted means public.
    */
   visibility?: 'internal';
   /**
@@ -51,7 +51,7 @@ export type PlanWorkload = {
    */
   image_process?: ComposeProcess;
   /**
-   * Dockerfile stage a source-built Compose service builds (build.target, ADR-20261019142544). Omitted builds the final stage.
+   * Dockerfile stage a source-built Compose service builds (build.target). Omitted builds the final stage.
    */
   build_target?: string;
   /**
@@ -59,7 +59,11 @@ export type PlanWorkload = {
    */
   build_args?: Array<string>;
   /**
-   * Compose secrets written to /run/secrets (ADR-20261023090000).
+   * The cmd/<name> main package this service builds from the root of a Go module with several commands.
+   */
+  go_command?: string;
+  /**
+   * Compose secrets written to /run/secrets.
    */
   secret_files?: Array<SecretFile>;
   resources?: ComposeResources;
@@ -73,7 +77,7 @@ export type PlanWorkload = {
    */
   depends_on_conditions?: Record<string, 'service_started' | 'service_healthy'>;
   /**
-   * Effective policy selected by Compose `x-gregale-service-policy` (`project`, `declared` or `account`). New project workloads default to `project` (ADR-20261022111119); existing workloads retain their persisted policy when the extension is omitted.
+   * Effective policy selected by Compose `x-gregale-service-policy` (`project`, `declared` or `account`). New project workloads default to `project`; existing workloads retain their persisted policy when the extension is omitted.
    */
   service_binding_policy?: ServiceBindingPolicy;
   /**
@@ -103,7 +107,7 @@ export type PlanWorkload = {
   schedule?: string;
   ports: Array<number>;
   /**
-   * KEYS only — never values; spec §11 forbids logging secrets
+   * KEYS only — never values; forbids logging secrets
    */
   env_keys?: Array<string>;
   /**
@@ -115,11 +119,11 @@ export type PlanWorkload = {
    */
   unset_env_keys?: Array<string>;
   /**
-   * For an unset_env_keys name with a Compose value, why that value is not imported (ADR-20261023085230). Never values.
+   * For an unset_env_keys name with a Compose value, why that value is not imported. Never values.
    */
   unset_env_key_reasons?: Record<string, 'not_opted_in' | 'secret' | 'service_address' | 'local_address' | 'interpolated' | 'host_value' | 'empty' | 'invalid'>;
   /**
-   * Compose environment names whose plain values apply will write, because the project sets x-gregale-env-import: true and they are unset (ADR-20261023085230). Names only.
+   * Compose environment names whose plain values apply will write, because the project sets x-gregale-env-import: true and they are unset. Names only.
    */
   imported_env_keys?: Array<string>;
   /**
@@ -128,11 +132,11 @@ export type PlanWorkload = {
   source?: string;
   tier?: 'single' | 'convention' | 'workspace' | 'compose' | 'unknown';
   /**
-   * ADR-124 blast-radius projection. create = workload is new to the account; update = existing app matches (root_dir, name).
+   * Blast-radius projection. create = workload is new to the account; update = existing app matches (root_dir, name).
    */
   action?: 'create' | 'update';
   /**
-   * ADR-124: app row ID the update targets. Empty iff action == create.
+   * App row ID the update targets. Empty iff action == create.
    */
   existing_app_id?: string;
   detected_by?: PlanDetectedBy;

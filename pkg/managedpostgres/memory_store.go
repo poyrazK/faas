@@ -14,6 +14,7 @@ import (
 type MemoryStore struct {
 	resizes                   map[string]ResizeOperation
 	cutovers                  map[string]Cutover
+	fences                    map[string]CutoverAdmissionFence
 	preflights                map[string]CutoverPreflight
 	health                    map[string]memoryHealthEntry
 	mu                        sync.Mutex
@@ -29,12 +30,14 @@ type MemoryStore struct {
 	usageProgress             map[usageProgressKey]UsageProgress
 	usageImports              map[string]usageImportReceipt
 	accountingReconciliations map[string]accountingReconciliationReceipt
+	overage                   map[string]bool
 }
 
 func NewMemoryStore() *MemoryStore {
 	return &MemoryStore{
 		resizes:                   map[string]ResizeOperation{},
 		cutovers:                  map[string]Cutover{},
+		fences:                    map[string]CutoverAdmissionFence{},
 		preflights:                map[string]CutoverPreflight{},
 		health:                    map[string]memoryHealthEntry{},
 		databases:                 map[string]Database{},
@@ -49,6 +52,7 @@ func NewMemoryStore() *MemoryStore {
 		usageProgress:             map[usageProgressKey]UsageProgress{},
 		usageImports:              map[string]usageImportReceipt{},
 		accountingReconciliations: map[string]accountingReconciliationReceipt{},
+		overage:                   map[string]bool{},
 	}
 }
 

@@ -233,7 +233,7 @@ func TestCmdInit_QueueWorkerQuickstartContract(t *testing.T) {
 		"gregale deploy --name orders-worker",
 		"gregale queue send orders-worker",
 		"gregale queue status orders-worker",
-		"gregale dlq orders-worker",
+		"gregale dlq list orders-worker",
 	}
 	last := -1
 	for _, step := range steps {

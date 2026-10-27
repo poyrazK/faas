@@ -7,8 +7,8 @@ with bounded admissions and concurrency. The host owns invocation, future
 scheduling and process lifetime; importing the SDK starts no recovery service.
 
 ```go
-progress, err := faas.RecoverEventAcknowledgmentIntents(ctx, db, client,
-    accountID, appID, faas.EventAcknowledgmentIntentRecoveryPassOptions{
+progress, err := preview.RecoverEventAcknowledgmentIntents(ctx, db, client,
+    accountID, appID, preview.EventAcknowledgmentIntentRecoveryPassOptions{
         MaxAttempts: 100,
         Concurrency: 4,
     })

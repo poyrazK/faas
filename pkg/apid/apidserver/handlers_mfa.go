@@ -42,6 +42,7 @@ import (
 	mailpkg "github.com/onebox-faas/faas/pkg/mail"
 	"github.com/onebox-faas/faas/pkg/middleware"
 	"github.com/onebox-faas/faas/pkg/secretbox"
+	"github.com/onebox-faas/faas/pkg/sessioncookie"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -122,12 +123,14 @@ func (s *server) mfaEnroll(w http.ResponseWriter, r *http.Request, acct state.Ac
 		return
 	}
 	// mfaRecipient stays nil when apid boots without an age identity;
-	// calling it panicked (a recovered 500) instead of reporting 503.
+	// calling it panicked (a recovered 500) instead of reporting 503. The
+	// TOTP secret is an account value (ADR 20261022111812).
 	var rec *age.X25519Recipient
 	if mfaRecipient != nil {
 		rec = mfaRecipient()
 	}
-	if rec == nil {
+	recipients, err := accountRecipients(rec)
+	if err != nil {
 		api.WriteProblem(w, api.NewProblem(http.StatusServiceUnavailable, api.CodeCapacity,
 			"MFA unavailable", "host age key not loaded — refusing to seal TOTP secret"))
 		return
@@ -158,7 +161,7 @@ func (s *server) mfaEnroll(w http.ResponseWriter, r *http.Request, acct state.Ac
 		return
 	}
 
-	sealed, err := secretbox.Seal(rec, secretbox.Envelope{"MFA_SECRET": secret})
+	sealed, err := secretbox.SealTo(recipients, secretbox.Envelope{"MFA_SECRET": secret})
 	if err != nil {
 		s.log.Error("mfa.enroll.seal", "err", err.Error())
 		api.WriteProblem(w, api.ErrCapacity("could not seal TOTP secret"))
@@ -720,8 +723,8 @@ func (s *server) mfaDisableEmailLink(r *http.Request, raw []byte) string {
 		scheme = schemeHTTPS
 	}
 	host := r.Host
-	if s.domain != "" && s.domain != domainUnset {
-		host = s.domain
+	if platform := s.platformHost(); platform != "" && platform != domainUnset {
+		host = platform
 		scheme = schemeHTTPS
 	}
 	return fmt.Sprintf("%s://%s/v1/account/mfa/disable-email/confirm?token=%s", scheme, host, base64.RawURLEncoding.EncodeToString(raw))
@@ -869,7 +872,7 @@ func readSealedSecret(s *server, w http.ResponseWriter, r *http.Request, account
 	// entry point. Fall back to the single-identity accessor so
 	// pre-rotation test harnesses (and any caller that hasn't
 	// migrated to LoadHostKeys) keep working.
-	idents := s.mfaHostIdentities()
+	idents := accountIdentities()
 	if len(idents) == 0 {
 		api.WriteProblem(w, api.NewProblem(http.StatusServiceUnavailable, api.CodeCapacity,
 			"MFA unavailable", "host age identity not loaded — refusing to unseal"))
@@ -1001,8 +1004,7 @@ func (s *server) reissueSessionCookieWithStepUp(w http.ResponseWriter, r *http.R
 	if err != nil {
 		return err
 	}
-	http.SetCookie(w, &http.Cookie{
-		Name:     sessionCookie,
+	sessioncookie.Set(w, http.Cookie{
 		Value:    cookie,
 		Path:     "/",
 		HttpOnly: true,

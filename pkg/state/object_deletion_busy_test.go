@@ -1,4 +1,5 @@
 // adr: 20261023223000
+// adr: 20261025115958
 
 package state_test
 
@@ -10,10 +11,10 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-// TestObjectDeletionBusy pins H9-S156: concurrent deletes of different keys
-// were refused as an undifferentiated conflict, which the gateway reported as
-// a provider outage. Short-lived contention is now ErrObjectBucketBusy, so
-// callers can wait for it, while ADR-547 still admits one deletion at a time.
+// TestObjectDeletionBusy pins H9-S156: concurrent deletes were refused as an
+// undifferentiated conflict, which the gateway reported as a provider outage.
+// Short-lived contention is now ErrObjectBucketBusy, so callers can wait for
+// it. A bucket admits one deletion per key (ADR-20261025115958).
 func TestObjectDeletionBusyMem(t *testing.T) { objectDeletionBusySuite(t, state.NewMemStore()) }
 func TestObjectDeletionBusyPG(t *testing.T) {
 	st, _ := pgStore(t)
@@ -28,13 +29,11 @@ func objectDeletionBusySuite(t *testing.T, st accountingStore) {
 	if err != nil || !created {
 		t.Fatal(first, err)
 	}
-	other := deletionCaptureInput(b)
-	other.Key = "other"
-	if _, created, err = d.BeginObjectDeletion(ctx, other, accountingPolicy()); !errors.Is(err, state.ErrObjectBucketBusy) || !errors.Is(err, state.ErrConflict) || created {
-		t.Fatal("second deletion was not busy", err)
+	if _, created, err = d.BeginObjectDeletion(ctx, deletionCaptureInput(b), accountingPolicy()); !errors.Is(err, state.ErrObjectBucketBusy) || !errors.Is(err, state.ErrConflict) || created {
+		t.Fatal("second deletion of the key was not busy", err)
 	}
 	// Writes keep their conflict: an uncertain deletion can fence for long.
-	if err = st.AdmitObjectURL(ctx, b.AccountID, b.ID, "new", 1, true, accountingPolicy()); !errors.Is(err, state.ErrConflict) || errors.Is(err, state.ErrObjectBucketBusy) {
+	if err = st.AdmitObjectURL(ctx, b.AccountID, b.ID, first.Key, 1, true, accountingPolicy()); !errors.Is(err, state.ErrConflict) || errors.Is(err, state.ErrObjectBucketBusy) {
 		t.Fatal("write during a deletion", err)
 	}
 
@@ -43,7 +42,9 @@ func objectDeletionBusySuite(t *testing.T, st accountingStore) {
 	if err = st.(state.ObjectCapacityStore).BeginObjectWrite(ctx, w.AccountID, w.ID, uuid.NewString(), "pending", 10, accountingPolicy()); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err = d.BeginObjectDeletion(ctx, deletionCaptureInput(w), accountingPolicy()); !errors.Is(err, state.ErrObjectBucketBusy) {
+	pending := deletionCaptureInput(w)
+	pending.Key = "pending"
+	if _, _, err = d.BeginObjectDeletion(ctx, pending, accountingPolicy()); !errors.Is(err, state.ErrObjectBucketBusy) {
 		t.Fatal("deletion beside a pending write was not busy", err)
 	}
 

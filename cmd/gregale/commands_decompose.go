@@ -91,7 +91,12 @@ func cmdScan(args []string) int {
 		PrintUsage(os.Stderr, "usage: gregale scan [--tarball P] [--path DIR] [--repo OWNER/NAME] [--repository OWNER/NAME --install-id N] [--production-branch BRANCH] [--show-affected] [--explain] [--exclude NAME,…]", "scan")
 		return 1
 	}
-	if rejectUnexpectedFlagArgs(fs) {
+	// `scan ./my-app` answered only "unexpected positional argument" on
+	// production-us rc.294 while `doctor ./my-app` takes the directory
+	// positionally (Hunt 14 H14-64).
+	if dir, ok := sourceDirPositional(fs); ok && *pathFlag == "" && *tarball == "" && *repo == "" {
+		*pathFlag = dir
+	} else if rejectUnexpectedFlagArgs(fs) {
 		return 1
 	}
 	projectSlugExplicit := false
@@ -612,8 +617,131 @@ func intersect(a, b []string) (bool, []string) {
 // same slugs). The single-section Workloads loop does not need
 // it: plan.Workloads is the post-filter set, so excluded slugs
 // never appear there.
+// planCreatedSlugs reports the app slugs the plan creates.
+func planCreatedSlugs(plan api.PlanResponse) map[string]bool {
+	creates := make(map[string]bool, len(plan.WillDeploy))
+	for _, affected := range plan.WillDeploy {
+		creates[affected.Slug] = affected.Action == "create"
+	}
+	return creates
+}
+
+// printDefaultMemoryServices names the new services that start with the
+// project default RAM because their Compose file declares no memory, which
+// is easy to miss: a standalone app gets the plan's RAM (Hunt 14 H14-36).
+//
+//nolint:errcheck // a failed write is handled like printPlanTextWithExplain's
+func printDefaultMemoryServices(w io.Writer, plan api.PlanResponse) {
+	creates := planCreatedSlugs(plan)
+	var names []string
+	for _, wl := range plan.Workloads {
+		if strings.HasSuffix(planWorkloadMemorySuffix(wl, creates[wl.AppSlug]), "(default)") {
+			names = append(names, wl.Name)
+		}
+	}
+	if len(names) == 0 {
+		return
+	}
+	sort.Strings(names)
+	fmt.Fprintf(w, "\nStarts with the default %d MB (no memory in the Compose file):\n", api.ProjectWorkloadDefaultRAMMB)
+	for _, name := range names {
+		fmt.Fprintf(w, "  - %s\n", name)
+	}
+	fmt.Fprintln(w, "  Node and Python services often need more. Set deploy.resources.limits.memory (or mem_limit),")
+	fmt.Fprintln(w, "  or run gregale app <slug> --ram <MB> after the deploy.")
+}
+
+// planWorkloadMemorySuffix names a workload's RAM in the plan: the Compose
+// memory when declared, the project default for a service the plan creates
+// (Hunt 14 H14-36), and nothing for an existing app, which keeps its RAM.
+func planWorkloadMemorySuffix(wl api.PlanWorkload, created bool) string {
+	switch {
+	case wl.Resources != nil && wl.Resources.MemoryMB > 0:
+		return fmt.Sprintf("  memory=%dMB", wl.Resources.MemoryMB)
+	case created:
+		return fmt.Sprintf("  memory=%dMB (default)", api.ProjectWorkloadDefaultRAMMB)
+	}
+	return ""
+}
+
 func printPlanText(w io.Writer, plan api.PlanResponse, excludeSet []string, showAffected bool) int {
 	return printPlanTextWithExplain(w, plan, excludeSet, showAffected, false)
+}
+
+// printManagedServices lists the datastores the repository declares: the
+// managed databases apply provides (ADR-20261025111824), then those it does
+// not, with the variable services expect.
+//
+//nolint:errcheck // a failed write is handled like printPlanTextWithExplain's
+func printManagedServices(w io.Writer, managed []api.PlanManaged) {
+	var provided, listed []api.PlanManaged
+	for _, m := range managed {
+		if m.Provision != nil {
+			provided = append(provided, m)
+		} else {
+			listed = append(listed, m)
+		}
+	}
+	if len(provided) > 0 {
+		fmt.Fprintln(w, "\nManaged PostgreSQL (provided by this deploy):")
+		for _, m := range provided {
+			verb := "creates"
+			if m.Provision.Existing {
+				verb = "reuses"
+			}
+			bindings := make([]string, 0, len(m.Provision.Bindings))
+			for _, b := range m.Provision.Bindings {
+				bindings = append(bindings, b.Workload+"."+b.EnvKey)
+			}
+			version := ""
+			if m.Provision.PostgresMajor != 0 {
+				version = fmt.Sprintf(" (PostgreSQL %d)", m.Provision.PostgresMajor)
+			}
+			fmt.Fprintf(w, "  - %-20s %s %s%s, bound to %s\n", m.Name, verb, m.Provision.Database, version, strings.Join(bindings, ", "))
+		}
+	}
+	if len(listed) > 0 {
+		fmt.Fprintln(w, "\nManaged (not provisioned):")
+		for _, m := range listed {
+			reason := ""
+			if text := managedNotProvidedText[m.NotProvisionedReason]; text != "" {
+				reason = "   (" + text + ")"
+			}
+			fmt.Fprintf(w, "  - %s [%s]   hint=%s   image=%s%s\n", m.Name, m.Kind, m.EnvHint, m.Image, reason)
+		}
+	}
+}
+
+// managedNotProvidedText renders the plan's not_provisioned_reason codes.
+var managedNotProvidedText = map[string]string{
+	"unavailable":    "managed PostgreSQL is not available to this account",
+	"plan":           "the plan does not include a managed database",
+	"quota":          "the plan's database limit is reached",
+	"unsupported":    "not supported as a managed database, or its PostgreSQL version is not offered",
+	"configured":     "every service already has its database configured",
+	"not_referenced": "no service uses it",
+	"permission":     "your organization role or key cannot create and bind databases (needs postgres:manage)",
+}
+
+// printPublicURLs names every workload the plan puts on the public edge, so
+// a reviewer sees which services the internet can reach before applying.
+//
+//nolint:errcheck // a failed write is handled like printPlanTextWithExplain's
+func printPublicURLs(w io.Writer, workloads []api.PlanWorkload) {
+	ws := make([]api.PlanWorkload, 0, len(workloads))
+	for _, wl := range workloads {
+		if wl.PublicURL != "" && wl.Visibility != api.AppVisibilityInternal {
+			ws = append(ws, wl)
+		}
+	}
+	if len(ws) == 0 {
+		return
+	}
+	sort.Slice(ws, func(i, j int) bool { return ws[i].Name < ws[j].Name })
+	fmt.Fprintln(w, "\nPublic on the internet:")
+	for _, wl := range ws {
+		fmt.Fprintf(w, "  - %-20s %s\n", wl.Name, wl.PublicURL)
+	}
 }
 
 // printUnsetEnvKeys lists, per workload, the runtime keys that will have no
@@ -666,7 +794,7 @@ func printUnsetEnvKeys(w io.Writer, workloads []api.PlanWorkload) {
 var envImportReasonText = map[string]string{
 	"not_opted_in":    "plain value in Compose",
 	"secret":          "looks like a secret",
-	"service_address": "Docker service address",
+	"service_address": "Docker address of a datastore or non-HTTP service",
 	"local_address":   "local address",
 	"interpolated":    "uses $ interpolation",
 	"host_value":      "read from the host",
@@ -768,7 +896,9 @@ func printPlanTextWithExplain(w io.Writer, plan api.PlanResponse, excludeSet []s
 	}
 	if showAffected {
 		printAffectedText(w, plan, excludeIdx)
+		printPublicURLs(w, plan.Workloads)
 		printUnsetEnvKeys(w, plan.Workloads)
+		printDefaultMemoryServices(w, plan)
 		if explain {
 			printPlanDetectionTrace(w, plan.Workloads)
 			printPlanDetectionWarnings(w, plan.DetectionWarnings)
@@ -781,7 +911,9 @@ func printPlanTextWithExplain(w io.Writer, plan api.PlanResponse, excludeSet []s
 		// future server-side refactor must not change CLI output.
 		ws := append([]api.PlanWorkload(nil), plan.Workloads...)
 		sort.Slice(ws, func(i, j int) bool { return ws[i].Name < ws[j].Name })
+		creates := planCreatedSlugs(plan)
 		for _, wl := range ws {
+			memorySuffix := planWorkloadMemorySuffix(wl, creates[wl.AppSlug])
 			schedSuffix := ""
 			if wl.Schedule != "" {
 				schedSuffix = " (cron: " + wl.Schedule + ")"
@@ -809,6 +941,8 @@ func printPlanTextWithExplain(w io.Writer, plan api.PlanResponse, excludeSet []s
 			imageSuffix := ""
 			if wl.Image != "" {
 				imageSuffix = "  image=" + wl.Image
+			} else if wl.GoCommand != "" {
+				imageSuffix = "  builds=cmd/" + wl.GoCommand
 			}
 			visibilitySuffix := ""
 			if wl.Visibility == api.AppVisibilityInternal {
@@ -820,20 +954,16 @@ func printPlanTextWithExplain(w io.Writer, plan api.PlanResponse, excludeSet []s
 			// appears in this loop, and no "(excluded)" tag is
 			// needed here. The show-affected branch (printAffectedText)
 			// renders the partition including Skipped.
-			fmt.Fprintf(w, "  - %-20s root=%-20s%s%s%s%s%s%s%s%s\n", wl.Name, wl.RootDir, schedSuffix, classSuffix, servicePolicySuffix, serviceTransportSuffix, previewPolicySuffix, tenantPolicySuffix, visibilitySuffix, imageSuffix)
+			fmt.Fprintf(w, "  - %-20s root=%-20s%s%s%s%s%s%s%s%s%s\n", wl.Name, wl.RootDir, schedSuffix, classSuffix, memorySuffix, servicePolicySuffix, serviceTransportSuffix, previewPolicySuffix, tenantPolicySuffix, visibilitySuffix, imageSuffix)
 			if explain {
 				printWorkloadDetectionTrace(w, wl)
 			}
 		}
 	}
-	if len(plan.Managed) > 0 {
-		fmt.Fprintln(w, "\nManaged (not provisioned):")
-		for _, m := range plan.Managed {
-			fmt.Fprintf(w, "  - %s [%s]   hint=%s   image=%s\n",
-				m.Name, m.Kind, m.EnvHint, m.Image)
-		}
-	}
+	printManagedServices(w, plan.Managed)
+	printPublicURLs(w, plan.Workloads)
 	printUnsetEnvKeys(w, plan.Workloads)
+	printDefaultMemoryServices(w, plan)
 	if len(plan.Warnings) > 0 {
 		fmt.Fprintln(w, "\nWarnings:")
 		for _, wn := range plan.Warnings {

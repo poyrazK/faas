@@ -11,17 +11,17 @@ import attrs
 import httpx
 import pytest
 
-from faas_sdk.api.apps import create_app, explain_app_service_binding, get_app, update_app
+from faas_sdk.preview.api.apps import create_app, explain_app_service_binding, get_app, update_app
 from faas_sdk.client import AuthenticatedClient
-from faas_sdk.models.app_response import AppResponse
-from faas_sdk.models.create_app_request import CreateAppRequest
-from faas_sdk.models.service_binding_explanation import ServiceBindingExplanation
-from faas_sdk.models.update_app_request import UpdateAppRequest
+from faas_sdk.preview.models.app_response import AppResponse
+from faas_sdk.preview.models.create_app_request import CreateAppRequest
+from faas_sdk.preview.models.service_binding_explanation import ServiceBindingExplanation
+from faas_sdk.preview.models.update_app_request import UpdateAppRequest
 
 
 def test_managed_service_receipt_context_is_typed():
-    from faas_sdk.models.binding_verification import BindingVerification
-    from faas_sdk.models.managed_service_probe_spec import ManagedServiceProbeSpec
+    from faas_sdk.preview.models.binding_verification import BindingVerification
+    from faas_sdk.preview.models.managed_service_probe_spec import ManagedServiceProbeSpec
 
     context = {
         "version": 1,
@@ -50,8 +50,8 @@ def test_managed_service_receipt_context_is_typed():
 
 
 def test_managed_service_inventory_preserves_frozen_context():
-    from faas_sdk.api.apps import get_app_binding_inventory
-    from faas_sdk.models.app_binding_inventory import AppBindingInventory
+    from faas_sdk.preview.api.apps import get_app_binding_inventory
+    from faas_sdk.preview.models.app_binding_inventory import AppBindingInventory
 
     caller = UUID("11111111-1111-4111-8111-111111111111")
     target = UUID("22222222-2222-4222-8222-222222222222")
@@ -175,7 +175,7 @@ CASES = json.loads((CONTRACTS / "cases.json").read_text())
 @pytest.mark.parametrize("name,schema", SCHEMAS.items())
 def test_declared_fields(name, schema):
     module_name = re.sub(r"(?<!^)(?=[A-Z])", "_", name).lower()
-    model = getattr(importlib.import_module(f"faas_sdk.models.{module_name}"), name)
+    model = getattr(importlib.import_module(f"faas_sdk.preview.models.{module_name}"), name)
     if "enum" in schema:
         assert list(get_args(model)) == schema["enum"]
         return

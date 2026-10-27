@@ -14,9 +14,15 @@ import (
 // snapshot of instance metadata so the policy is unit-tested without a clock or a
 // database; schedd calls them on its 10 s tick and under RAM pressure.
 
-// EvictionThresholdMB is the RAM level above which schedd starts evicting: 80% of
-// the 85% admission target (spec §4.3). Below it, nothing is evicted.
+// EvictionThresholdMB is the RAM level above which schedd starts evicting on
+// the reference box: 80% of its 47,600 MB admission ceiling (spec §4.3).
+// Below it, nothing is evicted. Nodes with their own ceiling (ADR-203) use
+// evictionThresholdFor; see SelectNodeEvictions.
 const EvictionThresholdMB = api.RAMAdmissionCeilingMB * 80 / 100 // 38,080
+
+// evictionThresholdFor is the RAM level above which schedd evicts on a node
+// with the given admission ceiling: 80% of it (spec §4.3).
+func evictionThresholdFor(ceilingMB int) int { return ceilingMB * 80 / 100 }
 
 // MinInstanceAge protects a freshly-woken instance from being reaped/evicted
 // before it has had a chance to serve (spec §4.3: never evict younger than 30 s).
@@ -761,6 +767,34 @@ func SelectEvictions(residentMB int, now time.Time, instances []InstanceInfo) []
 		}
 		evict = append(evict, in.Instance)
 		remaining -= in.evictionFreedMB()
+	}
+	return evict
+}
+
+// SelectNodeEvictions is RAM-pressure eviction under reservation admission,
+// per node. On every node whose reservations exceed 80% of its own admission
+// ceiling, it returns that node's instances to evict, in SelectEvictions'
+// order, until the node is back at or under that threshold. A node with the
+// reference ceiling evicts exactly as SelectEvictions does. A node without a
+// known ceiling is skipped.
+func SelectNodeEvictions(now time.Time, instances []InstanceInfo, reservedMB, ceilingMB map[string]int) []string {
+	remaining := make(map[string]int, len(reservedMB))
+	for node, reserved := range reservedMB {
+		if ceiling := ceilingMB[node]; ceiling > 0 && reserved > evictionThresholdFor(ceiling) {
+			remaining[node] = reserved
+		}
+	}
+	if len(remaining) == 0 {
+		return nil
+	}
+	var evict []string
+	for _, in := range evictionCandidates(now, instances) {
+		reserved, pressured := remaining[in.NodeID]
+		if !pressured || reserved <= evictionThresholdFor(ceilingMB[in.NodeID]) {
+			continue
+		}
+		evict = append(evict, in.Instance)
+		remaining[in.NodeID] = reserved - in.evictionFreedMB()
 	}
 	return evict
 }

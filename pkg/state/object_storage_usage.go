@@ -80,6 +80,19 @@ type ObjectStorageAccountingStore interface {
 	FinishObjectInventory(context.Context, string, string, int64, int64) error
 }
 
+// ObjectInventoryReleaser gives up an inventory claim without publishing it,
+// so deletions waiting for the claim continue at once (ADR-20261025115958).
+// The claim's attempt time stays, which keeps the retry cadence.
+type ObjectInventoryReleaser interface {
+	ReleaseObjectInventory(ctx context.Context, bucket, token string) error
+}
+
+// inventoryClaimYields reports an inventory claim young enough that new
+// deletions in its bucket wait for it (ADR-20261025115958).
+func inventoryClaimYields(u ObjectBucketUsage, now time.Time) bool {
+	return u.Token != "" && u.LeaseUntil.After(now) && now.Before(u.AttemptAt.Add(api.ObjectInventoryDeletionYield))
+}
+
 // ObjectStorageBillingStore is the persistence seam for month-close billing.
 // It is deliberately separate from ObjectStorageAccountingStore so existing
 // accounting test doubles and deployments can adopt billing independently.

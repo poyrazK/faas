@@ -4,7 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"strings"
+
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 type ProjectServiceReader interface {
@@ -16,12 +17,30 @@ type projectServiceLookup interface {
 	ProjectAppByWorkload(context.Context, string, string, string) (App, error)
 }
 
+// ProjectServiceLookupReader resolves a project alias with one indexed read.
+type ProjectServiceLookupReader interface {
+	ProjectAppByWorkload(context.Context, string, string, string) (App, error)
+	AppBySlug(context.Context, string) (App, error)
+}
+
 // AppByServiceName resolves a production project's repository aliases before
 // the established global app-slug fallback. Preview and scenario routing keep
 // their separate environment-aware owners.
 func AppByServiceName(ctx context.Context, reader ProjectServiceReader, caller App, service string) (App, error) {
 	if caller.ProjectID != "" && caller.PreviewOfSlug == "" {
 		app, err := ProjectMemberByWorkload(ctx, reader, caller.AccountID, caller.ProjectID, service)
+		if !errors.Is(err, ErrNotFound) {
+			return app, err
+		}
+	}
+	return reader.AppBySlug(ctx, service)
+}
+
+// AppByServiceLookup is AppByServiceName for readers that never load a whole
+// project inventory, such as the gateway's pinned service-policy view.
+func AppByServiceLookup(ctx context.Context, reader ProjectServiceLookupReader, caller App, service string) (App, error) {
+	if caller.ProjectID != "" && caller.PreviewOfSlug == "" {
+		app, err := reader.ProjectAppByWorkload(ctx, caller.AccountID, caller.ProjectID, service)
 		if !errors.Is(err, ErrNotFound) {
 			return app, err
 		}
@@ -48,7 +67,7 @@ func ProjectMemberByWorkload(ctx context.Context, store any, accountID, projectI
 	var target App
 	for _, app := range apps {
 		if app.AccountID == accountID && app.ProjectID == projectID &&
-			app.Status != AppDeleted && app.PreviewOfSlug == "" && strings.EqualFold(app.WorkloadName, name) {
+			app.Status != AppDeleted && app.PreviewOfSlug == "" && api.SameServiceName(app.WorkloadName, name) {
 			if target.ID != "" {
 				return App{}, fmt.Errorf("ambiguous project service: %w", ErrConflict)
 			}
@@ -70,7 +89,7 @@ func ProjectServiceDeploymentTargets(caller App, apps []App, deployments map[str
 		slug := binding.Service
 		matched := false
 		for _, app := range apps {
-			if caller.ProjectID != "" && app.AccountID == caller.AccountID && app.ProjectID == caller.ProjectID && app.PreviewOfSlug == "" && app.Status != AppDeleted && strings.EqualFold(app.WorkloadName, binding.Service) {
+			if caller.ProjectID != "" && app.AccountID == caller.AccountID && app.ProjectID == caller.ProjectID && app.PreviewOfSlug == "" && app.Status != AppDeleted && api.SameServiceName(app.WorkloadName, binding.Service) {
 				if matched {
 					return nil
 				}

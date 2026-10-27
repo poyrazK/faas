@@ -18,7 +18,16 @@ func (h logSearchHost) LoadApp(w http.ResponseWriter, r *http.Request, acct stat
 	return h.s.loadApp(w, r, acct, slug) //nolint:contextcheck // loadApp uses r.Context().
 }
 
-func (h logSearchHost) LogEvents() state.LogEventStore { return h.s.store }
+func (h logSearchHost) LogEvents() state.LogEventStore { return h.s.logEvents() }
+
+// logEvents is the store's log ledger behind apid's log-read slots
+// (api.LogReadsInFlightPerAccount): every customer log read goes through it.
+func (s *server) logEvents() state.LogEventStore {
+	if s.logReads == nil {
+		return s.store
+	}
+	return s.logReads.Limit(s.store)
+}
 
 func (h logSearchHost) SavedSearches() state.LogSavedSearchStore { return h.s.store }
 

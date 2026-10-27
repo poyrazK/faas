@@ -96,6 +96,10 @@ type LogEventFilter struct {
 // timeout; callers ask the customer to narrow the window or filters.
 var ErrLogSearchTimeout = errors.New("state: log search timed out")
 
+// ErrLogReadBusy reports a log read refused because the account, or apid
+// as a whole, already has its bounded number of log reads in flight.
+var ErrLogReadBusy = errors.New("state: too many log reads in flight")
+
 // LogEventFacetCount is one facet value and the summed occurrences of the
 // events carrying it.
 type LogEventFacetCount struct {

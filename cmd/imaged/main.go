@@ -230,7 +230,7 @@ func (d runDeps) run(ctx context.Context, log *slog.Logger) error {
 		return err
 	}
 
-	store := state.NewPgStore(pool)
+	store := state.NewPgStore(pool, state.WithTrafficAppsDomain(imgCfg.GetAppsDomain(getenv)))
 	// Register the same canonical OpenAPI projector as apid. imaged owns the
 	// snapshot_written → live transition, so the capture and the contract gate
 	// must be wired in this process too.
@@ -306,6 +306,18 @@ func (d runDeps) run(ctx context.Context, log *slog.Logger) error {
 		})
 		pullerOpts = append(pullerOpts, oci.WithBlobCache(blobCache))
 		log.Info("imaged: OCI blob cache enabled", "root", blobCache.Root(), "max_bytes", blobCacheMaxBytes)
+	}
+	// ADR-20261025114554: anonymous Docker Hub pulls go through the
+	// operator's mirrors first, since Docker Hub limits them per IP.
+	mirrors, err := api.ParseDockerHubMirrors(os.Getenv(api.DockerHubMirrorsEnv))
+	if err != nil {
+		return fmt.Errorf("imaged: %w", err)
+	}
+	if len(mirrors) > 0 {
+		pullerOpts = append(pullerOpts, oci.WithDockerHubMirrors(mirrors, func(mirror string, err error) {
+			log.Warn("imaged: Docker Hub mirror failed; trying the next source", "mirror", mirror, "err", err)
+		}))
+		log.Info("imaged: Docker Hub mirrors enabled", "mirrors", mirrors)
 	}
 	puller := oci.NewRegistryClient(pullerOpts...)
 	log.Info("imaged: oci puller ready", "timeout_s", int(ociPullTimeout().Seconds()))
@@ -728,6 +740,13 @@ func (d runDeps) run(ctx context.Context, log *slog.Logger) error {
 		return err
 	}
 	arch := imaged.BuilderArch()
+	// ADR-20261026181418: publish and read each gated runtime base under the
+	// shared keys of this release's generation, before anything stages one.
+	routedBases, err := h.RouteBaseGenerations(arch, getenv)
+	if err != nil {
+		return err
+	}
+	log.Info("imaged: runtime bases routed to their generation keys", "bases", routedBases)
 	basePath := builderBasePathFromEnv(arch)
 	// #96 / ADR-025 axis 2: EnsureBaseExt4 publishes via the StorageBackend
 	// under storagekey.BaseForArch / storagekey.BaseDigestForArch, partitioned

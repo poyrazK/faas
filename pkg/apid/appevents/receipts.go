@@ -84,6 +84,12 @@ func (s *Service) GetEventReceipt(w http.ResponseWriter, r *http.Request, acct s
 		return
 	}
 	receipt, err := store.EventReceipt(r.Context(), acct.ID, source, id, cursor, limit)
+	if err == nil {
+		var access *eventAccess
+		if access, err = s.eventAccess(r.Context(), acct); err == nil {
+			err = access.receipt(acct.ID, &receipt)
+		}
+	}
 	if err != nil {
 		s.WriteEventReceiptError(w, r, err)
 		return

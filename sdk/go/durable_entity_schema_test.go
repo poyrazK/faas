@@ -8,15 +8,15 @@ import (
 	"testing"
 	"time"
 
-	faas "github.com/poyrazK/faas/sdk/go"
+	"github.com/poyrazK/faas/sdk/go/preview"
 )
 
 type schemaCounter struct {
 	Count int `json:"count"`
 }
 
-func counterSchema() faas.DurableEntityStateSchema[schemaCounter] {
-	return faas.DurableEntityStateSchema[schemaCounter]{Version: 2, Initial: func() schemaCounter { return schemaCounter{} }, Validate: func(s schemaCounter) error {
+func counterSchema() preview.DurableEntityStateSchema[schemaCounter] {
+	return preview.DurableEntityStateSchema[schemaCounter]{Version: 2, Initial: func() schemaCounter { return schemaCounter{} }, Validate: func(s schemaCounter) error {
 		if s.Count < 0 {
 			return errors.New("negative count")
 		}
@@ -42,7 +42,7 @@ func TestSchemaUpgradeStaysLocalUntilVersionedTransition(t *testing.T) {
 	at := time.Date(2026, 10, 10, 12, 0, 0, 0, time.UTC)
 	request.State.AlarmAt = &at
 	body, _ := json.Marshal(request)
-	call, err := faas.DecodeDurableEntitySchemaCall[schemaCounter, map[string]any](body, counterSchema())
+	call, err := preview.DecodeDurableEntitySchemaCall[schemaCounter, map[string]any](body, counterSchema())
 	if err != nil || call.State.Count != 4 || call.Version != 7 || call.StoredSchemaVersion != 1 || !call.Migrated {
 		t.Fatal(call, err)
 	}
@@ -57,7 +57,7 @@ func TestSchemaUpgradeStaysLocalUntilVersionedTransition(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var result faas.DurableEntityTransition
+	var result preview.DurableEntityTransition
 	if json.Unmarshal(encoded, &result) != nil || result.AlarmAt == nil || !result.AlarmAt.Equal(at) || len(result.Outbox) != 1 || string(result.Data) != `{"schema_version":2,"data":{"count":5}}` {
 		t.Fatal(string(encoded))
 	}
@@ -67,7 +67,7 @@ func TestSchemaUpgradeStaysLocalUntilVersionedTransition(t *testing.T) {
 	schema := counterSchema()
 	schema.Migrations = nil
 	schema.Initial = func() schemaCounter { t.Fatal("initialized committed state"); return schemaCounter{} }
-	replay, err := faas.DecodeDurableEntitySchemaCall[schemaCounter, map[string]any](body, schema)
+	replay, err := preview.DecodeDurableEntitySchemaCall[schemaCounter, map[string]any](body, schema)
 	if err != nil || replay.Migrated || replay.State.Count != 5 {
 		t.Fatal(replay, err)
 	}
@@ -98,13 +98,13 @@ func TestSchemaRejectsRollbackMalformedAndIncompleteChain(t *testing.T) {
 				schema.Migrations[1] = func(json.RawMessage) (json.RawMessage, error) { return nil, errors.New("failed upgrade") }
 			case "oversized":
 				schema.Migrations[1] = func(json.RawMessage) (json.RawMessage, error) {
-					return json.Marshal(strings.Repeat("x", faas.DurableEntityHandlerMaxTransitionBytes))
+					return json.Marshal(strings.Repeat("x", preview.DurableEntityHandlerMaxTransitionBytes))
 				}
 			case "invalid-result":
 				schema.Migrations[1] = func(json.RawMessage) (json.RawMessage, error) { return json.RawMessage(`{"count":-1}`), nil }
 			}
 			body, _ := json.Marshal(request)
-			if _, err := faas.DecodeDurableEntitySchemaCall[schemaCounter, map[string]any](body, schema); err == nil {
+			if _, err := preview.DecodeDurableEntitySchemaCall[schemaCounter, map[string]any](body, schema); err == nil {
 				t.Fatal("unsafe migration accepted", kind)
 			}
 		})
@@ -114,7 +114,7 @@ func TestSchemaRejectsRollbackMalformedAndIncompleteChain(t *testing.T) {
 func TestSchemaInitialStateAndExplicitLegacyAdoption(t *testing.T) {
 	request := entityHandlerFixture(t)
 	body, _ := json.Marshal(request)
-	call, err := faas.DecodeDurableEntitySchemaCall[schemaCounter, map[string]any](body, counterSchema())
+	call, err := preview.DecodeDurableEntitySchemaCall[schemaCounter, map[string]any](body, counterSchema())
 	if err != nil || call.Migrated || call.State.Count != 0 || call.StoredSchemaVersion != 2 {
 		t.Fatal(call, err)
 	}
@@ -124,14 +124,14 @@ func TestSchemaInitialStateAndExplicitLegacyAdoption(t *testing.T) {
 	schema := counterSchema()
 	legacy := uint32(1)
 	schema.LegacyVersion = &legacy
-	call, err = faas.DecodeDurableEntitySchemaCall[schemaCounter, map[string]any](body, schema)
+	call, err = preview.DecodeDurableEntitySchemaCall[schemaCounter, map[string]any](body, schema)
 	if err != nil || !call.Migrated || call.State.Count != 6 {
 		t.Fatal(call, err)
 	}
 	schema.Version = 3
 	calls := 0
 	schema.Migrations[1] = func(raw json.RawMessage) (json.RawMessage, error) { calls++; return raw, nil }
-	if _, err := faas.DecodeDurableEntitySchemaCall[schemaCounter, map[string]any](body, schema); err == nil || calls != 0 {
+	if _, err := preview.DecodeDurableEntitySchemaCall[schemaCounter, map[string]any](body, schema); err == nil || calls != 0 {
 		t.Fatal("incomplete chain ran a callback", calls, err)
 	}
 }
@@ -153,7 +153,7 @@ func TestSchemaCapturesCompleteMigrationChainBeforeCallbacks(t *testing.T) {
 		state.Count++
 		return json.Marshal(state)
 	}
-	call, err := faas.DecodeDurableEntitySchemaCall[schemaCounter, map[string]any](body, schema)
+	call, err := preview.DecodeDurableEntitySchemaCall[schemaCounter, map[string]any](body, schema)
 	if err != nil || call.State.Count != 5 {
 		t.Fatal(call, err)
 	}
@@ -161,7 +161,7 @@ func TestSchemaCapturesCompleteMigrationChainBeforeCallbacks(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var result faas.DurableEntityTransition
+	var result preview.DurableEntityTransition
 	if json.Unmarshal(encoded, &result) != nil || string(result.Data) != `{"schema_version":3,"data":{"count":5}}` {
 		t.Fatal(string(encoded))
 	}

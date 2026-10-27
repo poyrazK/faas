@@ -48,7 +48,7 @@ func newFairUseNode(t *testing.T, cfg Config) *fairUseNode {
 func (n *fairUseNode) endpoint(t *testing.T, account string, limit int) string {
 	t.Helper()
 	id := uuid.NewString()
-	if err := n.m.RegisterEndpoint(Endpoint{ID: id, AppID: "app", AccountID: account, AccountMaxConnections: limit,
+	if err := n.m.RegisterEndpoint(Endpoint{Preview: true, ID: id, AppID: "app", AccountID: account, AccountMaxConnections: limit,
 		Authorize: func(context.Context, *http.Request) (string, error) { return "", nil }}); err != nil {
 		t.Fatal(err)
 	}
@@ -85,6 +85,27 @@ func (n *fairUseNode) waitOpen(t *testing.T, want int) {
 	}
 }
 
+// waitAccountOpen waits for an account's connections on this node. A closed
+// connection leaves Snapshot before its handler releases the account's
+// allowance, so waitOpen alone can return before the allowance is free.
+func (n *fairUseNode) waitAccountOpen(t *testing.T, account string, want int64) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		var got int64
+		if value, ok := n.m.accounts.Load(account); ok {
+			got = value.(*accountConnections).local.Load()
+		}
+		if got == want {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("account connections = %d, want %d", got, want)
+		}
+		time.Sleep(time.Millisecond)
+	}
+}
+
 func TestAccountConnectionLimitSpansEndpoints(t *testing.T) {
 	node := newFairUseNode(t, Config{MaxConnections: 100})
 	account := uuid.NewString()
@@ -110,6 +131,7 @@ func TestAccountConnectionLimitSpansEndpoints(t *testing.T) {
 	// Closing a connection frees the allowance.
 	_ = held[0].Close()
 	node.waitOpen(t, 3)
+	node.waitAccountOpen(t, account, 2)
 	if _, status, _ := node.dial(t, second); status != http.StatusSwitchingProtocols {
 		t.Fatalf("connection after a close refused with %d", status)
 	}

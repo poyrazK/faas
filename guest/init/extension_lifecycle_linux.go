@@ -31,18 +31,22 @@ func newExtensionLifecycle(log *slog.Logger) *extensionLifecycle {
 }
 
 func (l *extensionLifecycle) emit(phase extension.Phase) {
-	l.emitWithMetadata(phase, nil)
+	_ = l.emitWithMetadata(phase, nil)
 }
 
-func (l *extensionLifecycle) emitWithMetadata(phase extension.Phase, metadata map[string]string) {
+// emitWithMetadata returns the dispatch error, already logged, so the vsock
+// bridge can tell the host that no extension endpoint is listening.
+func (l *extensionLifecycle) emitWithMetadata(phase extension.Phase, metadata map[string]string) error {
 	if l == nil || l.dispatcher == nil {
-		return
+		return extension.ErrUnavailable
 	}
-	if err := l.dispatcher.Dispatch(context.Background(), phase, metadata); err != nil {
+	err := l.dispatcher.Dispatch(context.Background(), phase, metadata)
+	if err != nil {
 		if errors.Is(err, extension.ErrUnavailable) {
 			l.log.Debug("extension lifecycle hook unavailable", "phase", phase)
-			return
+		} else {
+			l.log.Warn("extension lifecycle hook failed", "phase", phase, "err", err)
 		}
-		l.log.Warn("extension lifecycle hook failed", "phase", phase, "err", err)
 	}
+	return err
 }

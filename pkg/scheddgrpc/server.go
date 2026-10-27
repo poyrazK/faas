@@ -564,7 +564,16 @@ func (s *Server) AdmitInstance(ctx context.Context, req *scheddpb.AdmitInstanceR
 	if req.GetBurstContinuation() {
 		engineCtx = sched.WithBurstContinuation(engineCtx)
 	}
-	res, err := s.engine.AdmitInstance(engineCtx, req.GetAppId(), req.GetDeploymentId(), req.GetScope(), req.GetTrigger())
+	// Request traffic un-parks an explicitly parked app through the
+	// EnsureWake lifecycle claim; plain admission left it evicted_cold and
+	// the reaper destroyed the waking VM.
+	admit := s.engine.AdmitInstance
+	if traffic, ok := s.engine.(interface {
+		AdmitTrafficInstance(context.Context, string, string, string, string) (sched.WakeResult, error)
+	}); ok {
+		admit = traffic.AdmitTrafficInstance
+	}
+	res, err := admit(engineCtx, req.GetAppId(), req.GetDeploymentId(), req.GetScope(), req.GetTrigger())
 	finishWakeSpan(wakeSpan, err)
 	s.ops.Observe(op, time.Since(start), err)
 	if err != nil {
@@ -600,6 +609,9 @@ func (s *Server) AdmitInstance(ctx context.Context, req *scheddpb.AdmitInstanceR
 // legacy wire — this method is additive per ADR-016.
 func (s *Server) EnsureWake(ctx context.Context, req *scheddpb.EnsureWakeRequest) (*scheddpb.EnsureWakeResponse, error) {
 	const op = "EnsureWake"
+	// The pre-wake clock starts before authorization so wake.boot_started
+	// accounts for the whole RPC up to Engine.Wake.
+	ctx = sched.WithEnsureWakeRPCStarted(ctx, time.Now())
 	if _, err := s.authorizeApp(ctx, req.GetAppId()); err != nil {
 		return nil, err
 	}
@@ -1417,6 +1429,15 @@ func (s *Server) ReportCapacity(stream scheddpb.Schedd_ReportCapacityServer) err
 				if err := sink(report.NodeID, report.SampledAt, time.Now(), telemetryRows); err != nil {
 					sendErr = err
 					return status.Error(codes.Unavailable, err.Error())
+				}
+			}
+		}
+		if v := msg.GetInstanceBridgeResidentBytes(); v != nil {
+			if provider, ok := s.engine.(interface {
+				InstanceBridgeSink() sched.InstanceBridgeSink
+			}); ok {
+				if sink := provider.InstanceBridgeSink(); sink != nil {
+					sink(report.NodeID, time.Now(), v.GetValue())
 				}
 			}
 		}

@@ -204,8 +204,13 @@ func validateAndPlanSidecarsWithImages(req *api.CreateDeploymentRequest, acct st
 	if p := req.Sidecars.ValidateWithMainDependencies(mainDependencies, limits); p != nil {
 		return p
 	}
-	mainPort := 0
-	if req.Overrides != nil {
+	// Without an explicit port the build decides the main workload's port
+	// (the image's single EXPOSE, gregale.yaml hosting.port or the detected
+	// framework), so 8080 is only a guess here (Hunt 14 H14-53). Companions
+	// are compared with each other now and with the main port by imaged once
+	// that port is known.
+	mainPort := -1
+	if req.Overrides != nil && req.Overrides.Port != 0 {
 		mainPort = req.Overrides.Port
 	}
 	return req.Sidecars.ValidatePortConflicts(mainPort)

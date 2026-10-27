@@ -306,14 +306,18 @@ func (r *startRunner) deployProject() int {
 // projectSource is one deployable member of a workspace or convention-shaped
 // repository, below the scanned root.
 type projectSource struct {
-	Name    string // workload name from the scanner
-	RootDir string // slash-separated path relative to the scanned root
-	Path    string // absolute source directory
+	Name      string   // workload name from the scanner
+	RootDir   string   // slash-separated path relative to the scanned root
+	Path      string   // absolute source directory
+	DependsOn []string // services it declares it calls (Compose depends_on)
+	// GoCommand is the `cmd/<name>` a service of a multi-command Go module
+	// builds from the module root at Path (ADR-20261025134512).
+	GoCommand string
 }
 
-// discoverProjectSources lists the deployable workspace and convention members
-// below root. The root itself is never returned; callers decide whether a
-// deployable root is also a candidate.
+// discoverProjectSources lists the deployable workspace, convention and
+// source-built Compose members below root. The root itself is never
+// returned; callers decide whether a deployable root is also a candidate.
 func discoverProjectSources(root string) ([]projectSource, error) {
 	scan, err := reposcan.Scan(os.DirFS(root))
 	if err != nil {
@@ -322,13 +326,18 @@ func discoverProjectSources(root string) ([]projectSource, error) {
 	var sources []projectSource
 	seen := make(map[string]bool)
 	for _, workload := range scan.Workloads {
-		if workload.RootDir == "" || workload.RootDir == "." || (workload.Tier != reposcan.TierWorkspace && workload.Tier != reposcan.TierConvention) {
+		// Compose services count when they build from a source directory;
+		// an image-only service has no source to run. The commands of a Go
+		// module build from the root, each its own service.
+		if (workload.GoCommand == "" && (workload.RootDir == "" || workload.RootDir == ".")) ||
+			(workload.Tier != reposcan.TierWorkspace && workload.Tier != reposcan.TierConvention && workload.Tier != reposcan.TierCompose) {
 			continue
 		}
 		path := filepath.Join(root, filepath.FromSlash(workload.RootDir))
-		if !seen[path] && detectShape(path) != shapeUnknown {
-			seen[path] = true
-			sources = append(sources, projectSource{Name: workload.Name, RootDir: workload.RootDir, Path: path})
+		key := path + "\x00" + workload.GoCommand
+		if !seen[key] && detectShape(path) != shapeUnknown {
+			seen[key] = true
+			sources = append(sources, projectSource{Name: workload.Name, RootDir: workload.RootDir, Path: path, DependsOn: workload.DependsOn, GoCommand: workload.GoCommand})
 		}
 	}
 	return sources, nil
@@ -341,6 +350,9 @@ func (r *startRunner) selectProjectSource(root string) (string, error) {
 	}
 	var paths, labels []string
 	for _, source := range sources {
+		if source.GoCommand != "" {
+			continue // one command of a module launches with gregale deploy or dev --go-command
+		}
 		paths = append(paths, source.Path)
 		labels = append(labels, source.Name+" · "+source.RootDir)
 	}

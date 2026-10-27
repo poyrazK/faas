@@ -1,6 +1,7 @@
 package approval
 
 import (
+	"context"
 	"testing"
 	"time"
 
@@ -50,6 +51,10 @@ func TestGated(t *testing.T) {
 		{name: "completed a rollout", policy: testPolicy(), app: app, edit: func(d *state.Deployment) { d.RolloutCompletedAt = &completed }},
 		{name: "serving release", policy: testPolicy(), app: app, edit: func(d *state.Deployment) { d.TrafficPercent = 100 }},
 		{name: "named scope", policy: testPolicy(), app: app, edit: func(d *state.Deployment) { d.Scope = "staging" }},
+		// The production environment's scope is the production lane, as for
+		// routing and release freezes: a release there waits like a default one.
+		{name: "production environment scope", policy: testPolicy(), app: app, edit: func(d *state.Deployment) { d.Scope = "production" }, want: true},
+		{name: "legacy empty scope", policy: testPolicy(), app: app, edit: func(d *state.Deployment) { d.Scope = "" }, want: true},
 		{name: "dark candidate", policy: testPolicy(), app: app, edit: func(d *state.Deployment) { d.TrafficPercent = 0; d.CanaryTotalSteps = 0 }, want: true},
 		{name: "worker app", policy: testPolicy(), app: state.App{ID: "app", Manifest: state.AppManifest{ExecutionMode: api.ExecutionModeWorker}}},
 	} {
@@ -178,6 +183,11 @@ func TestParkedNeedsCanary(t *testing.T) {
 	if !ParkedNeedsCanary(testPolicy(), app, parked) {
 		t.Fatal("a parked production release of an app with a policy needs a canary")
 	}
+	inProduction := parked
+	inProduction.Scope = "production"
+	if !ParkedNeedsCanary(testPolicy(), app, inProduction) {
+		t.Fatal("a parked release in the production environment's scope needs a canary too")
+	}
 	if ParkedNeedsCanary(nil, app, parked) {
 		t.Fatal("no policy, no requirement")
 	}
@@ -191,5 +201,57 @@ func TestParkedNeedsCanary(t *testing.T) {
 		if ParkedNeedsCanary(testPolicy(), app, d) {
 			t.Fatalf("%s needs no canary", name)
 		}
+	}
+}
+
+// releases is CanaryRequired's store: an app's policy and live deployments.
+type releases struct {
+	policy bool
+	live   map[string]bool // scope → a live deployment
+}
+
+func (r releases) ReleaseApprovalPolicy(context.Context, string) (state.ReleaseApprovalPolicy, error) {
+	if !r.policy {
+		return state.ReleaseApprovalPolicy{}, state.ErrNotFound
+	}
+	return *testPolicy(), nil
+}
+
+func (r releases) LiveDeploymentForScope(_ context.Context, _ string, scope string) (state.Deployment, error) {
+	if !r.live[scope] {
+		return state.Deployment{}, state.ErrNotFound
+	}
+	return state.Deployment{Scope: scope, Status: state.DeployLive}, nil
+}
+
+// A production release must wait in a canary whichever production scope it
+// names, and it is the app's first release only when no production scope has
+// one live.
+func TestCanaryRequired(t *testing.T) {
+	app := state.App{ID: "app", Slug: "shop"}
+	serving := releases{policy: true, live: map[string]bool{api.DefaultEnvScope: true}}
+	inProduction := releases{policy: true, live: map[string]bool{"production": true}}
+	for _, tc := range []struct {
+		name               string
+		store              releases
+		scope, environment string
+		want               bool
+	}{
+		{name: "default scope", store: serving, want: true},
+		{name: "production scope", store: serving, scope: "production", want: true},
+		{name: "production environment", store: serving, environment: "production", want: true},
+		{name: "production after production releases", store: inProduction, environment: "production", want: true},
+		{name: "default after production releases", store: inProduction, want: true},
+		{name: "named environment", store: serving, environment: "staging"},
+		{name: "named scope", store: serving, scope: "staging"},
+		{name: "first release", store: releases{policy: true}, scope: "production"},
+		{name: "no policy", store: releases{live: map[string]bool{api.DefaultEnvScope: true}}, scope: "production"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := CanaryRequired(context.Background(), tc.store, app, tc.scope, tc.environment)
+			if err != nil || got != tc.want {
+				t.Fatalf("CanaryRequired(%q, %q) = %v, %v; want %v", tc.scope, tc.environment, got, err, tc.want)
+			}
+		})
 	}
 }

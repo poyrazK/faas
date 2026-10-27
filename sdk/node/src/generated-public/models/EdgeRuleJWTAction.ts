@@ -1,0 +1,29 @@
+/* generated using openapi-typescript-codegen -- do not edit */
+/* istanbul ignore file */
+/* tslint:disable */
+/* eslint-disable */
+import type { MCPResourcePolicy } from './MCPResourcePolicy.js';
+/**
+ * Validates an inbound Bearer JWT against a JWKS endpoint. The
+ * algorithm allowlist is asymmetric-only and the selected JWK's
+ * `alg` metadata must match the JWT header; a JWK with `use=enc`
+ * is rejected (RFC 8725 §3.1, RFC 7517).
+ *
+ */
+export type EdgeRuleJWTAction = {
+  issuer: string;
+  audience?: Array<string>;
+  jwks_url: string;
+  algorithms: Array<'RS256' | 'RS384' | 'RS512' | 'ES256' | 'ES384' | 'ES512'>;
+  required_claims?: Record<string, string>;
+  mcp?: MCPResourcePolicy;
+  /**
+   * Optional verified custom JWT claim name whose exact value resolves to a platform tenant external_ref in the app owner's account. Supports namespaced claims. When set, unknown, suspended, or unavailable tenants are rejected before the request reaches the guest.
+   */
+  platform_tenant_external_ref_claim?: string;
+  /**
+   * Reject tokens that carry no `exp` claim. Defaults to true when omitted, because a token minted without `exp` never expires; set false to accept such tokens (`exp` is then validated only when present). Rules saved before this default keep their saved value, and responses show the field only when it is true.
+   */
+  require_exp?: boolean;
+};
+

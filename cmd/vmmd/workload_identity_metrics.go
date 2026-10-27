@@ -1,6 +1,18 @@
 package main
 
-import "github.com/prometheus/client_golang/prometheus"
+import (
+	"context"
+
+	"github.com/prometheus/client_golang/prometheus"
+
+	"github.com/onebox-faas/faas/pkg/state"
+)
+
+// workloadIdentityDeployments reads the deployment scope a token names as
+// its environment (ADR-1141 amendment 2026-10-25).
+type workloadIdentityDeployments interface {
+	DeploymentByID(ctx context.Context, id string) (state.Deployment, error)
+}
 
 // Workload-identity token request outcomes (ADR-1141). not_configured counts
 // apps asking a node that has no signing key: their queue leases, Flags and
@@ -11,6 +23,9 @@ const (
 	workloadIdentityInvalidAudience  = "invalid_audience"
 	workloadIdentityInstanceNotFound = "instance_not_found"
 	workloadIdentityInvalidRequest   = "invalid_request"
+	// environment_unavailable: the instance's deployment scope could not be
+	// read, so no token names an environment it might not run.
+	workloadIdentityEnvironmentUnavailable = "environment_unavailable"
 )
 
 type workloadIdentityMetrics struct {
@@ -23,7 +38,7 @@ func newWorkloadIdentityMetrics(reg prometheus.Registerer) *workloadIdentityMetr
 		Help: "Guest workload-identity token requests by result (ADR-1141).",
 	}, []string{"result"})}
 	for _, result := range []string{workloadIdentityMinted, workloadIdentityNotConfigured, workloadIdentityInvalidAudience,
-		workloadIdentityInstanceNotFound, workloadIdentityInvalidRequest} {
+		workloadIdentityInstanceNotFound, workloadIdentityInvalidRequest, workloadIdentityEnvironmentUnavailable} {
 		m.tokens.WithLabelValues(result)
 	}
 	if reg != nil {
