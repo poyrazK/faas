@@ -9429,6 +9429,13 @@ func (p Plan) DebugTelemetryRetentionDays() int {
 	return l.DebugTelemetryRetentionDays
 }
 
+// DebugTelemetryFairSharePressure is the fraction of an account's telemetry
+// bucket below which an app that has used its fair share of the minute yields
+// to its sibling apps (ADR-20261026143210 amendment 1). The fair share is the
+// bucket's capacity divided by the apps that sent rows this minute or the
+// last; the account total is unchanged.
+const DebugTelemetryFairSharePressure = 0.5
+
 // DebugTelemetryRequestsPerMinute (ADR-127) returns the per-account
 // rate cap on the IncrementRequestTelemetry ingest RPC. Read by the
 // publisher at startup; per-record overflow returns outcome
@@ -9704,6 +9711,13 @@ func (p Plan) HealthPathWakesAllowed() bool {
 // not make this per-plan without a separate ADR (the §12 budget math
 // is global, not per-tenant).
 const RouteMetricsPerAppCap = 50
+
+// RouteLabelReuseAfterIdle is how long an admitted route label must go
+// without a request on a gateway before a newly established route may take
+// its place in a full set (ADR-20261026143210 amendment 1). Declared routes
+// keep their labels. A route seen within the window is never displaced, so an
+// app that answers every path cannot lose its live routes to one-off probes.
+const RouteLabelReuseAfterIdle = time.Hour
 
 // Per-route series at fleet scale (ADR-20261024154324). Every Hobby+ app opts
 // into per-route metrics, so each gatewayd-internal bounds its own export: at
