@@ -20,7 +20,7 @@ type NonpaymentDeletionCommands interface {
 }
 
 func (d *Dunning) scheduleNonpaymentDeletion(ctx context.Context, acct state.Account) (bool, error) {
-	if d.p.NonpaymentDeletionRequested == nil || !d.p.NonpaymentDeletionRequested() {
+	if d.p.NonpaymentDeletionRequested == nil || !d.p.NonpaymentDeletionRequested() || orgDunningSubject(acct) {
 		return false, nil
 	}
 	if d.p.NonpaymentDeletionCommands == nil || acct.PastDueAt == nil {

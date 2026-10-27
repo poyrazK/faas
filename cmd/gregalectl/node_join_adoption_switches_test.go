@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"gopkg.in/yaml.v3"
 )
 
 var adoptionSwitchEnv = []string{"FAAS_VMMD_ADOPTION_RECORD", "FAAS_VMMD_ADOPT_RUNNING_VMS", "FAAS_VMMD_ADOPT_ADMITTED_RUNTIMES"}
@@ -43,6 +45,14 @@ func TestNodeJoinRendersTheAdoptionSwitches(t *testing.T) {
 	if nodeJoinTask(t, "Validate the vmmd restart adoption switches") == nil {
 		t.Fatal("node_join renders the switches without validating their order")
 	}
+	// The drain is skipped only when the serving vmmd hands its guests off.
+	if nodeJoinTask(t, "Read whether the serving vmmd hands its guests off") == nil {
+		t.Fatal("node_join does not read whether the serving vmmd adopts")
+	}
+	decide, _ := nodeJoinTask(t, "Decide whether this rollout restarts vmmd without draining")["ansible.builtin.set_fact"].(map[string]any)
+	if skip, _ := decide["faas_join_skip_drain"].(string); !strings.Contains(skip, "faas_join_serving_vmmd_adopts.stdout") {
+		t.Errorf("faas_join_skip_drain = %q ignores whether the serving vmmd hands off", skip)
+	}
 	// The switches are written before the drain decision asks the candidate.
 	playbook := nodeJoinPlaybook(t)
 	if strings.Index(playbook, "zz-faas-adoption.conf") > strings.Index(playbook, "- adoption-check") {
@@ -61,19 +71,27 @@ func TestVMMDServiceAdoptionSwitchesDefaultOff(t *testing.T) {
 			t.Errorf("vmmd_service defaults lack %q", v)
 		}
 	}
-	// Production step 1: the fleet writes adoption blocks, but adoption is a
-	// per-host canary, never a fleet-wide group var.
+	// Production: the fleet writes adoption blocks (step 1), and adoption is
+	// a per-node canary (step 2), never a fleet-wide switch.
 	fleet, err := os.ReadFile(filepath.Join("..", "..", "deploy", "ansible", "group_vars", "compute_nodes", "vmmd_adoption.yml"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(fleet), "\nvmmd_adoption_record: true\n") {
+	var vars map[string]any
+	if err := yaml.Unmarshal(fleet, &vars); err != nil {
+		t.Fatal(err)
+	}
+	if vars["vmmd_adoption_record"] != true {
 		t.Error("compute_nodes group vars do not turn adoption records on")
 	}
-	for _, v := range []string{"vmmd_adopt_running_vms:", "vmmd_adopt_admitted_runtimes:"} {
-		if strings.Contains(string(fleet), "\n"+v) {
-			t.Errorf("compute_nodes group vars set %s fleet-wide", v)
-		}
+	if adopt, _ := vars["vmmd_adopt_running_vms"].(string); !strings.Contains(adopt, "in vmmd_adoption_canary_nodes") {
+		t.Errorf("vmmd_adopt_running_vms = %v, want it limited to vmmd_adoption_canary_nodes", vars["vmmd_adopt_running_vms"])
+	}
+	if canary, _ := vars["vmmd_adoption_canary_nodes"].([]any); len(canary) != 1 {
+		t.Errorf("vmmd_adoption_canary_nodes = %v, want one canary node", vars["vmmd_adoption_canary_nodes"])
+	}
+	if _, set := vars["vmmd_adopt_admitted_runtimes"]; set {
+		t.Error("compute_nodes group vars set vmmd_adopt_admitted_runtimes")
 	}
 	template, err := os.ReadFile(filepath.Join(role, "templates", "99-faas-adoption.conf.j2"))
 	if err != nil {

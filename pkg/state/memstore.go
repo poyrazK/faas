@@ -1344,6 +1344,9 @@ type MemStore struct {
 	// CreateComputeNode to exercise the single-box path. Production
 	// (PgStore) gets the same row from migrations/00024_compute_nodes.
 	computeNodes map[string]ComputeNode
+	// edgeListenerHeartbeats mirrors compute_nodes.edge_listener_heartbeat_at,
+	// keyed by node name; nil until a gateway first reports.
+	edgeListenerHeartbeats map[string]time.Time
 	// computeNodeKeys is the in-memory mirror of compute_node_keys
 	// (migration 00076, ADR-053). Keyed by (nodeID, keyID) tuple
 	// joined by a NUL so the composite key stays string-typed for

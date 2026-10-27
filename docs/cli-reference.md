@@ -10982,7 +10982,7 @@ Add an edge rule
 | `--validate-schema <JSON|@FILE|->` | JSON Schema (inline JSON, @file, or - for stdin; max 64 KiB) |  |
 | `--validate-mode <MODE>` | invalid-request behavior (default block) | one of `block` · `observe` · `warn` |
 | `--validate-content-type <TYPE>` | accepted application media type (repeat; e.g. application/json) |  |
-| `--validate-max-body-bytes <N>` | optional body cap in bytes (0 = plan default) |  |
+| `--validate-max-body-bytes <N>` | optional body cap in bytes (0 = 25 MiB or the plan cap, whichever is lower) |  |
 | `--validate-apply-while-streaming` | also validate streaming requests |  |
 | `--validate-reject-unknown-fields` | reject fields not declared by the schema |  |
 | `--validate-path-template <TEMPLATE>` | OpenAPI path template for the path schema (match-path must use ?* for each placeholder) |  |
@@ -11034,7 +11034,7 @@ Add an edge rule
 | `--headers-response-set <NAME:VALUE>` | kind=headers: response header to set (repeatable) |  |
 | `--jwt-algorithm <ALG>` | kind=jwt: allowed signing algorithm (repeatable) |  |
 | `--jwt-audience <AUDIENCE>` | kind=jwt: required audience (repeatable) |  |
-| `--jwt-require-exp` | kind=jwt: reject tokens without an exp claim |  |
+| `--jwt-require-exp` | kind=jwt: reject tokens without an exp claim (default true; =false accepts them) |  |
 | `--jwt-required-claim <NAME=VALUE>` | kind=jwt: required claim (repeatable) |  |
 | `--name <NAME>` | operator-facing rule name (&lt;=100 chars) |  |
 | `--redirect-header <NAME:VALUE>` | kind=redirect: extra response header (repeatable) |  |
@@ -11156,7 +11156,7 @@ Update one edge rule
 | `--validate-schema <JSON|@FILE|->` | replacement body schema; an action update replaces the body schema and parameter schemas together (inline JSON, @file, or -; max 64 KiB) |  |
 | `--validate-mode <MODE>` | invalid-request behavior | one of `block` · `observe` · `warn` |
 | `--validate-content-type <TYPE>` | accepted application media type (repeat; e.g. application/json) |  |
-| `--validate-max-body-bytes <N>` | body cap in bytes (0 = plan default) |  |
+| `--validate-max-body-bytes <N>` | body cap in bytes (0 = 25 MiB or the plan cap, whichever is lower) |  |
 | `--validate-apply-while-streaming` | also validate streaming requests |  |
 | `--validate-reject-unknown-fields` | reject fields not declared by the schema |  |
 | `--validate-path-template <TEMPLATE>` | OpenAPI path template for the path schema (match-path must use ?* for each placeholder) |  |
@@ -11174,7 +11174,7 @@ Update one edge rule
 | `--description <TEXT>` | operator-facing description (&lt;=1000 chars) |  |
 | `--expires-at <RFC3339>` | stop applying the rule at this RFC 3339 time |  |
 | `--expires-in <DURATION>` | stop applying the rule after this duration (e.g. 2h) |  |
-| `--jwt-require-exp` | kind=jwt: reject tokens without an exp claim |  |
+| `--jwt-require-exp` | kind=jwt: reject tokens without an exp claim (default true; =false accepts them) |  |
 | `--name <NAME>` | operator-facing rule name (&lt;=100 chars) |  |
 
 Examples:

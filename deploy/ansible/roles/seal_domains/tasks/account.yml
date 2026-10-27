@@ -1,0 +1,69 @@
+---
+# The account domain (ADR 20261022111812). apid is both the writer and the
+# reader of account values, so it holds the identity itself: there is no
+# recipient file. The role installs the identity, restarts apid with it and
+# proves the probe; apid seals new values to the domain and the fleet key
+# until faas_seal_domain_account_writes is domain.
+- name: seal_domains — check the account domain settings
+  ansible.builtin.assert:
+    that:
+      - faas_box_role | default('single-box') in ['control-plane', 'single-box']
+      - faas_seal_domain_account_identity_src | length > 0
+      - faas_seal_domain_account_writes in ['', 'fleet', 'dual', 'domain']
+      - faas_seal_domain_account_writes != 'domain' or (faas_seal_domain_account_readers_verified | bool)
+    fail_msg: >-
+      The account seal domain runs where apid runs (a control-plane or
+      single-box host). Set faas_seal_domain_account_identity_src to the
+      account.age from `gregalectl seal-domain init --domain account`.
+      writes is '', fleet, dual or domain; domain needs
+      faas_seal_domain_account_readers_verified once every apid reports
+      faas_seal_domain_loaded{domain="account"} 1 and the previous release
+      left the rollback window.
+
+# 0400 root:root. systemd hands the identity to apid alone as a credential.
+- name: seal_domains — install the account domain identity
+  ansible.builtin.copy:
+    src: "{{ faas_seal_domain_account_identity_src }}"
+    dest: /etc/faas/secrets/domains/account.age
+    owner: root
+    group: root
+    mode: "0400"
+  no_log: true
+  notify: restart faas-apid for seal domains
+
+- name: seal_domains — create the apid drop-in directory for the account domain
+  ansible.builtin.file:
+    path: /etc/systemd/system/faas-apid.service.d
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: seal_domains — give apid the account domain identity
+  ansible.builtin.template:
+    src: 60-faas-seal-domain-account-reader.conf.j2
+    dest: /etc/systemd/system/faas-apid.service.d/60-faas-seal-domain-account.conf
+    owner: root
+    group: root
+    mode: "0644"
+  notify: restart faas-apid for seal domains
+
+- name: seal_domains — restart apid before proving the account domain
+  ansible.builtin.meta: flush_handlers
+
+- name: seal_domains — prove this node opens the account domain probe
+  ansible.builtin.command:
+    argv:
+      - /usr/local/bin/gregalectl
+      - seal-domain
+      - verify
+      - --domain
+      - account
+      - --publish
+      - --db-env
+      - "{{ faas_seal_domain_db_env }}"
+      - --metrics-file
+      - "{{ faas_seal_domain_textfile_dir }}/faas_seal_domain_account.prom"
+      - --json
+  register: faas_seal_domain_account_verify
+  changed_when: (faas_seal_domain_account_verify.stdout | from_json).probe_written | default(false)

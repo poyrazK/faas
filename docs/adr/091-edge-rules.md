@@ -1155,3 +1155,92 @@ Decision:
 Not changed: what a `match_host` may say. Restricting it to the account's
 hosts would break existing `*` rules, and with owned reads they no longer
 reach other tenants.
+
+## Amendment (2026-10-27): convergence that one gateway or tenant cannot stall; header, body and token defaults
+
+A second GA-readiness review found that the two-phase convergence protocol
+let one party stall others, and that three defaults were weaker than they
+looked.
+
+- **One silent gateway blocked every tenant's edits.** apid waited up to 3 s
+  per phase for every active compute node with a gateway URL, and then failed
+  the mutation. A stopped or hung gateway therefore failed every account's
+  rule writes until an operator deactivated its node.
+- **One process-wide mutex serialized every tenant.** Inside one apid, all
+  mutations queued behind a single mutex, so one slow convergence (up to
+  about 7 s) delayed every other account. Across apids only the per-app
+  advisory lock applied, which let two apps of one account run at once. Their
+  fences can cover the same host (`*.example.com` on app A, a custom domain of
+  app B), and a gateway drops a host's fence on the apply of the newest
+  generation. If the newer mutation applied first, the older one's fence was
+  gone before it committed, and a gateway could serve the old policy after
+  that commit until the older apply arrived.
+- **`@app` fences held the whole account.** A fence was keyed by
+  `(pattern, account)`, so an `@app` mutation returned 503 for every host of
+  every app of the account. Each request also took a global mutex, scanned all
+  fences and republished two gauges.
+- **Reserved header names were case-sensitive.** `host`, `content-length`,
+  `transfer-encoding` and `connection` passed validation; only the `x-faas-`
+  prefix was case-insensitive. Names and values were not checked as HTTP
+  fields.
+- **`kind=validate` buffered up to the plan's body cap.** With
+  `max_body_bytes` unset, the gateway read up to the plan cap into memory:
+  100 MB on Pro and 250 MB on Scale. That bypasses the 1 MiB spool-to-disk
+  admission. The spec (§4.1.2) already says an unset cap means the 25 MiB
+  platform cap.
+- **`kind=jwt` accepted tokens without `exp` by default.** Such a token never
+  expires.
+
+Decision:
+
+1. **The barrier waits for live gateways only.** Each gatewayd-internal stamps
+  `compute_nodes.edge_listener_heartbeat_at` (database clock; expand
+  migration `20261027001512347`) every 10 s from its pg_notify loop. A loop
+  that stops draining notifications therefore also stops stamping. apid
+  leaves out a node whose stamp is older than 30 s and logs that it did so. A
+  NULL stamp, from a gateway release older than the column, is still waited
+  for. A left-out gateway serves its cached sets for at most the 30 s rule
+  cache TTL after it recovers. If every gateway is left out, the existing "no
+  active serving gateways" refusal applies.
+2. **Mutations serialize per account.** The process-wide mutex is replaced by
+  per-account mutexes in each apid process, plus a PostgreSQL advisory lock
+  on `'edge-rule-account:' || account_id` that is taken before the existing
+  per-app lock, on the same connection. Other accounts no longer wait. The
+  app key is unchanged, so an apid from the previous release still contends
+  per app. GitOps batches take the same locks for every changed app.
+3. **Fences are narrower and cheap.** An `@app` fence carries the mutation's
+  app and holds only that app's hosts. A payload without an app, from an
+  older apid, keeps the account-wide hold. A request skips the fence scan
+  entirely when no fence exists, the scan takes a read lock, and the gauges
+  change only when the fence set changes. The fence TTL drops from 30 s to
+  10 s: a live mutation acknowledges prepare within 3 s and publishes apply
+  right after its commit, so the TTL only bounds how long a crashed apid can
+  hold a host.
+4. **Header ops are HTTP fields with case-insensitive reserved names.** apid
+  compares names in canonical form, requires a valid HTTP token name and
+  rejects control characters in values (`httpguts`), for header ops and
+  redirect headers alike. A template value is checked as written; its
+  expansions already drop control characters (ADR-968). The gateway drops a
+  stored rule that still names a reserved header, counted as a compile error,
+  instead of applying it.
+5. **`kind=validate` holds at most 25 MiB.** An unset or larger
+  `max_body_bytes` means `api.MaxRequestBodyBytes` (25 MiB), and never more
+  than the plan's own cap. The code now matches the spec.
+6. **`require_exp` defaults on.** A `kind=jwt` action that omits
+  `require_exp`, on create or when an update replaces the action, rejects
+  tokens without `exp`. An explicit `false` accepts them. Saved rules keep
+  their value. `gregale edge-rules create|update --jwt-require-exp` now
+  defaults to true (`--jwt-require-exp=false` opts out). Responses keep
+  reporting the field only when it is true.
+7. **An owner's rules are read once per account, not once per host.** With
+  the owner known, the gateway caches the owner's whole enabled rule set
+  (`OwnerEdgeRules`) for 30 s and filters it per host, so a new subdomain
+  under a wildcard rule costs no Postgres read. Filtering uses the matcher
+  that `MemStore` uses for parity with the SQL `LIKE`. A set holds at most
+  1,000 rules and all sets together at most 50,000; a larger owner keeps the
+  per-host read. The owner's mutation, an unscoped invalidation and a reset
+  drop the set. A load that overlaps any invalidation is not cached.
+  Compiled host entries remain per host.
+
+Not changed: response-cache invalidation for wildcard patterns (still a
+follow-up), and the per-gateway counting of `kind=throttle`.

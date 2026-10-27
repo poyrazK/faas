@@ -37,6 +37,12 @@
   ansible.builtin.include_tasks: control.yml
   when: faas_seal_domain_control_identity_src | length > 0
 
+- name: seal_domains — account domain
+  ansible.builtin.include_tasks: account.yml
+  when:
+    - faas_box_role | default('single-box') in ['control-plane', 'single-box']
+    - faas_seal_domain_account_identity_src | length > 0
+
 - name: seal_domains — delivery domain
   ansible.builtin.include_tasks: delivery.yml
   when: faas_seal_domain_delivery_identity_src | length > 0 or faas_seal_domain_delivery_recipient_src | length > 0

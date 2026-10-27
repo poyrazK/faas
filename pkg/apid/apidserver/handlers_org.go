@@ -21,6 +21,7 @@
 package apidserver
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"strings"
@@ -249,7 +250,23 @@ func (s *server) softDeleteOrg(w http.ResponseWriter, r *http.Request, acct stat
 	if !ok {
 		return
 	}
-	if problem := postgresaccess.DeleteOrganization(r.Context(), s.store, s.managedPostgres, org); problem != nil {
+	// A deleted organization must not keep paying (Hunt 17 H17-2), and
+	// organizations are never hard-deleted, so this is the only chance.
+	endBilling := func(ctx context.Context) *api.Problem {
+		subject, err := state.BillingResourceAccount(ctx, s.store, org.ID)
+		if errors.Is(err, state.ErrNotFound) {
+			return nil
+		}
+		if err == nil {
+			err = s.endSubscriptionForDeletion(ctx, subject)
+		}
+		if err != nil {
+			s.log.Error("org deletion: end billing subscription", "org", org.ID, "err", err)
+			return api.ErrCapacity("could not cancel the organization's billing subscription; try again")
+		}
+		return nil
+	}
+	if problem := postgresaccess.DeleteOrganization(r.Context(), s.store, s.managedPostgres, org, endBilling); problem != nil {
 		api.WriteProblem(w, problem)
 		return
 	}
