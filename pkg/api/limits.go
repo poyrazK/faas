@@ -374,6 +374,15 @@ const (
 	ApplicationStandardScanMaxMetadataBytes   = 256
 	ApplicationStandardScanMaxPathBytes       = 4096
 	ApplicationStandardScanMaxPaths           = 128
+
+	// A shared base is scanned once, when a node stages it and before the
+	// node serves it, so it may take longer than one artifact. A 2.3 GB base
+	// ext4 of npm-installed agent harnesses took longer than that: copying,
+	// extracting and scanning it overran ApplicationStandardArtifactScanTimeout
+	// on a native host, and a base whose scan does not complete stays
+	// fail-closed.
+	ApplicationStandardBaseScanTimeout = 20 * time.Minute
+
 	// Safety bounds for a complete filesystem projection handed to Grype.
 	// These are separate from the tenant's rootfs/disk entitlements.
 	ApplicationStandardRuntimeScanMaxBytes           int64 = 32 << 30
