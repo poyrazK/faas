@@ -44,6 +44,11 @@ realtime node and listing your account, then widen to `*`.
 | `FAAS_TRIGGER_BATCH_DELIVERY_PREVIEW_ENABLED` | apid | `delivery: batch` on triggers; off, apid refuses it with 422 (ADR-1321) |
 | `FAAS_TRIGGER_LEDGER_RETENTION_ENABLED` | schedd | the `trigger_records` reaper (default ages 7 days, 30 for dead letters) |
 
+The generated apid and realtimed units set `FAAS_REALTIME_FAIR_USE_ENABLED=1`
+and the realtimed unit sets `FAAS_REALTIME_OUTBOUND_BUDGET_ENABLED=1`: they are
+protections that keep realtimed inside its 512 MB `MemoryMax`, not previews
+(ADR-1323, amendment of 2026-10-26).
+
 Set a two-daemon flag on apid and on every realtime node. Realtime function
 triggers (ADR-1322) stay behind `FAAS_REALTIME_RETAINED_PREVIEW_ENABLED`, and
 the v2 protocol behind `FAAS_REALTIME_RESUME_PREVIEW_ENABLED`.

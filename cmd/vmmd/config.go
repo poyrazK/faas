@@ -131,6 +131,12 @@ type Config struct {
 	// Off by default; schedd decides which instances are eligible.
 	// FAAS_QUIET_PAUSE overrides TOML.
 	QuietPause bool `toml:"quiet_pause"`
+	// QuietPauseObserve runs quiet pause in observe mode: vmmd measures the
+	// pauses it would make (vmmd_quiet_pause_observed_*) and pauses nothing,
+	// so a node's traffic can be measured before quiet_pause is turned on.
+	// quiet_pause wins when both are set. Off by default.
+	// FAAS_QUIET_PAUSE_OBSERVE overrides TOML.
+	QuietPauseObserve bool `toml:"quiet_pause_observe"`
 	// InvokeHookBackoff stops per-request invoke extension events to an
 	// instance for extension.InvokeUnavailableBackoff after its guest reports
 	// that no extension endpoint is listening (ADR-20261025150000). Off by
@@ -859,6 +865,13 @@ func LoadConfig(path string) (*Config, error) {
 			return nil, fmt.Errorf("vmmd: FAAS_QUIET_PAUSE must be a boolean (got %q)", v)
 		}
 		c.QuietPause = enabled
+	}
+	if v := os.Getenv("FAAS_QUIET_PAUSE_OBSERVE"); v != "" {
+		enabled, perr := strconv.ParseBool(v)
+		if perr != nil {
+			return nil, fmt.Errorf("vmmd: FAAS_QUIET_PAUSE_OBSERVE must be a boolean (got %q)", v)
+		}
+		c.QuietPauseObserve = enabled
 	}
 	if v, ok := os.LookupEnv("FAAS_CPU_TEMPLATE"); ok {
 		c.CPUTemplate = strings.TrimSpace(v)

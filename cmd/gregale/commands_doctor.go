@@ -328,7 +328,7 @@ var loopbackBindRegex = regexp.MustCompile(
 // though the readiness probe passes. Detected here → customer
 // gets the fix BEFORE the failed wake.
 func doctorCheckLoopbackBind(path string) doctorCheck {
-	sources := scanSource(path, loopbackBindRegex, 5)
+	sources := scanLoopbackBinds(path, 5)
 	if len(sources) == 0 {
 		return doctorCheck{Name: "loopback-bind", Status: "ok"}
 	}
@@ -499,7 +499,25 @@ func scanSourceExtensions(root string, re *regexp.Regexp, maxHits int, extension
 	return scanSourceFiltered(root, re, maxHits, allowed)
 }
 
+// localOnlyMarker on a listener line declares it deliberately local, such as
+// the data-api template's development server in dev.mjs, which `doctor`
+// reported as app_loopback_bound although the deployed server.mjs binds
+// 0.0.0.0 (Hunt 14 H14-92). Only the loopback scan honours it.
+const localOnlyMarker = "gregale:local-only"
+
+// scanLoopbackBinds is scanSource for loopbackBindRegex, skipping lines that
+// carry localOnlyMarker.
+func scanLoopbackBinds(root string, maxHits int) []string {
+	return scanSourceSkipping(root, loopbackBindRegex, maxHits, nil, localOnlyMarker)
+}
+
 func scanSourceFiltered(root string, re *regexp.Regexp, maxHits int, extensions map[string]struct{}) []string {
+	return scanSourceSkipping(root, re, maxHits, extensions, "")
+}
+
+// scanSourceSkipping is scanSourceFiltered that also ignores lines containing
+// skip, when skip is not empty.
+func scanSourceSkipping(root string, re *regexp.Regexp, maxHits int, extensions map[string]struct{}, skip string) []string {
 	out := []string{}
 	patterns := loadGregaleignore(root)
 	_ = filepath.Walk(root, func(p string, info os.FileInfo, err error) error {
@@ -547,7 +565,7 @@ func scanSourceFiltered(root string, re *regexp.Regexp, maxHits int, extensions 
 		for scanner.Scan() {
 			lineNumber++
 			line := scanner.Text()
-			if !envRefCommentOnlyLine(line) && re.MatchString(line) {
+			if !envRefCommentOnlyLine(line) && re.MatchString(line) && (skip == "" || !strings.Contains(line, skip)) {
 				out = append(out, fmt.Sprintf("%s:%d", p, lineNumber))
 				break
 			}

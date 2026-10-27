@@ -16,7 +16,7 @@ class ObsHealthResponseTraceIdCompletenessRatio:
     in the window. Kinds with zero rows are seeded to
     1.0 (vacuous truth — see Store interface comment).
     Reads events (live), NOT audit_log (FK-free
-    post-deletion copy) — ADR-091 §3.7.4.
+    post-deletion copy).
 
         Example:
             {'force_park': 1.0, 'force_cold_boot': 1.0, 'force_restart': 1.0}

@@ -147,6 +147,28 @@ func discoveryCapabilityView() capabilityView {
 	return capabilityViewMemo.view
 }
 
+// offlineCapabilityView is the run's discovery view when it is known, else
+// the cached account view, else the tier defaults. It never asks the API, so
+// an error path that lists verbs does not wait on it (Hunt 14 H14-89).
+func offlineCapabilityView() capabilityView {
+	capabilityViewMemo.Lock()
+	defer capabilityViewMemo.Unlock()
+	if capabilityViewMemo.set {
+		return capabilityViewMemo.view
+	}
+	if capabilityReleaseAll() {
+		return capabilityView{all: true}
+	}
+	token := loadTokenWithDiagnostics(io.Discard)
+	if token == "" {
+		return capabilityView{tier: true}
+	}
+	if hidden, _, ok := cachedHiddenCapabilities(token); ok {
+		return accountCapabilityView(hidden)
+	}
+	return capabilityView{tier: true}
+}
+
 func computeDiscoveryView() capabilityView {
 	if capabilityReleaseAll() {
 		return capabilityView{all: true}
@@ -214,32 +236,79 @@ func commandCapabilityPath(args []string) string {
 	return path
 }
 
+// localCommands never call the platform. A hidden capability leaves them out
+// of help like its other commands but does not refuse to run them.
+var localCommands = map[string]bool{"data-api dev": true}
+
 // hiddenCommand reports an invocation whose command is hidden, with its
 // path. A help request follows the discovery view. Running a command is
 // refused only when the cached account view hides it and a fresh read
 // agrees, so a capability released a minute ago runs at once.
 func hiddenCommand(args []string, helpRequest bool) (string, bool) {
 	path := commandCapabilityPath(args)
-	capability := cliPathCapability(path)
-	if capability == "" || capabilityReleaseAll() {
+	if !helpRequest && localCommands[path] {
 		return path, false
 	}
+	return path, capabilityHiddenForRun(cliPathCapability(path), helpRequest)
+}
+
+// capabilityHiddenForRun reports whether capability is hidden for the
+// account: by the discovery view for help, and for a run only when the
+// cached view hides it and a fresh read agrees.
+func capabilityHiddenForRun(capability string, helpRequest bool) bool {
+	if capability == "" || capabilityReleaseAll() {
+		return false
+	}
 	if helpRequest {
-		return path, discoveryCapabilityView().hides(capability)
+		return discoveryCapabilityView().hides(capability)
 	}
 	token := loadTokenWithDiagnostics(io.Discard)
 	if token == "" {
-		return path, false
+		return false
 	}
 	cached, _, ok := cachedHiddenCapabilities(token)
 	if !ok || !slices.Contains(cached, capability) {
-		return path, false
+		return false
 	}
 	fresh, read := readHiddenCapabilities(token)
 	if !read {
-		return path, true
+		return true
 	}
-	return path, slices.Contains(fresh, capability)
+	return slices.Contains(fresh, capability)
+}
+
+// hiddenFlagArg returns the first flag in args whose manifest capability is
+// hidden for the account, for a refusal that reads like an unknown flag.
+func hiddenFlagArg(flags []cliFlag, args []string) (string, bool) {
+	for _, arg := range args {
+		if arg == "--" {
+			break
+		}
+		name, _, _ := strings.Cut(strings.TrimLeft(arg, "-"), "=")
+		if !strings.HasPrefix(arg, "-") || name == "" {
+			continue
+		}
+		for _, flag := range flags {
+			if flag.Name == name && flag.Capability != "" && capabilityHiddenForRun(flag.Capability, false) {
+				return "--" + name, true
+			}
+		}
+	}
+	return "", false
+}
+
+// discoverableFlags drops flags whose capability the view hides.
+func (v capabilityView) discoverableFlags(flags []cliFlag) []cliFlag {
+	if flags == nil {
+		return nil
+	}
+	kept := make([]cliFlag, 0, len(flags))
+	for _, flag := range flags {
+		if flag.Capability == "" || !v.hides(flag.Capability) {
+			kept = append(kept, flag)
+		}
+	}
+	return kept
 }
 
 // discoverableCliCommands is the manifest discovery surfaces read: the
@@ -255,6 +324,7 @@ func discoverableCliCommands() []cliCommand {
 		if view.hidesPath(command.Name) {
 			continue
 		}
+		command.Flags = view.discoverableFlags(command.Flags)
 		command.Subcommands = view.discoverableSubcommands(command.Name, command.Subcommands)
 		discoverable = append(discoverable, command)
 	}
@@ -271,6 +341,7 @@ func (v capabilityView) discoverableSubcommands(parent string, subs []cliSub) []
 		if v.hidesPath(path) {
 			continue
 		}
+		sub.Flags = v.discoverableFlags(sub.Flags)
 		sub.Subcommands = v.discoverableSubcommands(path, sub.Subcommands)
 		kept = append(kept, sub)
 	}

@@ -11,7 +11,7 @@ export type CreateJobRequest = {
   name: string;
   kind?: 'batch' | 'recurring';
   /**
-   * Optional five-field cron expression. When present, the job becomes recurring and schedd creates one single-task run per occurrence.
+   * Optional five-field cron expression. When present, the job becomes recurring and the scheduler creates one single-task run per occurrence.
    */
   schedule?: string;
   /**

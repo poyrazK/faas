@@ -90,7 +90,7 @@ def sync_detailed(
      Requires MFA and read scope. Each deployment with AI gateway calls in the last 14 days, latest call
     first, at most 50: its calls, provider errors, flagged answers, cost, tokens and mean time to first
     byte. Only calls made from the app's instances count; access tokens, Runs, replays and cached
-    responses do not (ADR 20261022153155).
+    responses do not.
 
     Args:
         slug (str):
@@ -124,7 +124,7 @@ def sync(
      Requires MFA and read scope. Each deployment with AI gateway calls in the last 14 days, latest call
     first, at most 50: its calls, provider errors, flagged answers, cost, tokens and mean time to first
     byte. Only calls made from the app's instances count; access tokens, Runs, replays and cached
-    responses do not (ADR 20261022153155).
+    responses do not.
 
     Args:
         slug (str):
@@ -153,7 +153,7 @@ async def asyncio_detailed(
      Requires MFA and read scope. Each deployment with AI gateway calls in the last 14 days, latest call
     first, at most 50: its calls, provider errors, flagged answers, cost, tokens and mean time to first
     byte. Only calls made from the app's instances count; access tokens, Runs, replays and cached
-    responses do not (ADR 20261022153155).
+    responses do not.
 
     Args:
         slug (str):
@@ -185,7 +185,7 @@ async def asyncio(
      Requires MFA and read scope. Each deployment with AI gateway calls in the last 14 days, latest call
     first, at most 50: its calls, provider errors, flagged answers, cost, tokens and mean time to first
     byte. Only calls made from the app's instances count; access tokens, Runs, replays and cached
-    responses do not (ADR 20261022153155).
+    responses do not.
 
     Args:
         slug (str):

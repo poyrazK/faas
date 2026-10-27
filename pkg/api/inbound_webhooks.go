@@ -18,6 +18,9 @@ func ValidStripeWorkflowCallbackMatch(eventType, objectID string) bool {
 const (
 	InboundWebhookTokenPrefix           = "gwh_"
 	InboundWebhookSigningSecretMaxBytes = 256
+	// InboundWebhookSecretNamespace is the secretbox namespace an inbound
+	// webhook endpoint's signing secret is sealed under.
+	InboundWebhookSecretNamespace       = "inbound_webhook"
 	InboundWebhookGenericSecretMinBytes = 32
 	InboundWebhookNameMaxBytes          = 63
 	InboundWebhookDeliveryPathMaxBytes  = 256

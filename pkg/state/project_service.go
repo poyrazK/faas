@@ -4,7 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"strings"
+
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 type ProjectServiceReader interface {
@@ -66,7 +67,7 @@ func ProjectMemberByWorkload(ctx context.Context, store any, accountID, projectI
 	var target App
 	for _, app := range apps {
 		if app.AccountID == accountID && app.ProjectID == projectID &&
-			app.Status != AppDeleted && app.PreviewOfSlug == "" && strings.EqualFold(app.WorkloadName, name) {
+			app.Status != AppDeleted && app.PreviewOfSlug == "" && api.SameServiceName(app.WorkloadName, name) {
 			if target.ID != "" {
 				return App{}, fmt.Errorf("ambiguous project service: %w", ErrConflict)
 			}
@@ -88,7 +89,7 @@ func ProjectServiceDeploymentTargets(caller App, apps []App, deployments map[str
 		slug := binding.Service
 		matched := false
 		for _, app := range apps {
-			if caller.ProjectID != "" && app.AccountID == caller.AccountID && app.ProjectID == caller.ProjectID && app.PreviewOfSlug == "" && app.Status != AppDeleted && strings.EqualFold(app.WorkloadName, binding.Service) {
+			if caller.ProjectID != "" && app.AccountID == caller.AccountID && app.ProjectID == caller.ProjectID && app.PreviewOfSlug == "" && app.Status != AppDeleted && api.SameServiceName(app.WorkloadName, binding.Service) {
 				if matched {
 					return nil
 				}

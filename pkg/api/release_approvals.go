@@ -117,8 +117,10 @@ func (r DecideReleaseApprovalRequest) Validate() error {
 }
 
 // ReleaseApprovalDecision is one person's decision on a release. Counted is
-// false for a decision that does not count toward the policy, such as the
-// deployer's own approval when self-approval is off.
+// false for a decision that does not count toward the policy: a rejection,
+// or the deployer's own approval recorded while the policy allowed
+// self-approval once it no longer does. A new self-approval under a policy
+// that forbids it is refused, not recorded.
 type ReleaseApprovalDecision struct {
 	Approver  string `json:"approver"`
 	Role      string `json:"role"`
@@ -196,6 +198,37 @@ func ErrReleaseApprovalParked(app, release string) *Problem {
 		fmt.Sprintf("%s requires release approvals, so %s cannot take traffic by hand.", app, release)).
 		WithHint(fmt.Sprintf("Start it through a canary that waits for approval: `gregale scheduled-releases set %s --app %s --at now`.", release, app)).
 		WithDocs(docsBase + "/deploys#scheduled-releases")
+}
+
+// ErrReleaseApprovalPromotionUnprotected refuses a promotion into an
+// unprotected production environment that would release an app requiring
+// approvals: a promotion has no canary to wait in, so only the protected
+// environment's promotion approval stands in for the app's policy.
+func ErrReleaseApprovalPromotionUnprotected(app, project, environment string) *Problem {
+	return NewProblem(http.StatusConflict, CodeReleaseApprovalCanaryRequired, "Release approvals need an approved promotion",
+		fmt.Sprintf("%s requires approvals for production releases, and this promotion would release it into %s without one.", app, environment)).
+		WithHint(fmt.Sprintf("Protect the environment so promotions into it need an approval (`gregale projects environments protect %s %s`), or remove the app's policy with `gregale approvals off --app %s`.", project, environment, app)).
+		WithDocs(docsBase + "/deploys#release-approvals")
+}
+
+// ErrReleaseApprovalPromotionInsufficient refuses a protected-environment
+// promotion for an app whose own policy asks more approvals than the
+// environment's one approval gives.
+func ErrReleaseApprovalPromotionInsufficient(app, environment string, required int) *Problem {
+	return NewProblem(http.StatusConflict, CodeReleaseApprovalCanaryRequired, "Release approvals need a canary",
+		fmt.Sprintf("%s requires %d approvals; the single approval of a promotion into %s cannot meet that.", app, required, environment)).
+		WithHint(fmt.Sprintf("Release %s with a canary so its approvers can approve it, or lower its required approvals with `gregale approvals`.", app)).
+		WithDocs(docsBase + "/deploys#release-approvals")
+}
+
+// ErrReleaseApprovalPromotionSelf refuses a protected-environment promotion
+// approved by its own promoter for an app whose policy forbids
+// self-approval.
+func ErrReleaseApprovalPromotionSelf(app, environment string) *Problem {
+	return NewProblem(http.StatusForbidden, CodeReleaseApprovalSelf, "Approve someone else's promotion",
+		fmt.Sprintf("%s does not allow self-approval, and this promotion into %s was approved by the person promoting it.", app, environment)).
+		WithHint("Ask another approver to approve this promotion, then promote with their approval.").
+		WithDocs(docsBase + "/deploys#release-approvals")
 }
 
 // ErrReleaseApprovalSelf refuses the deployer's own approval.

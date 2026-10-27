@@ -69,10 +69,10 @@ func readIssueSlackInteraction(r *http.Request, st state.IssueSlackInteractionSt
 	if err != nil {
 		return out, err
 	}
-	if !policy.Enabled || mfaIdentities == nil {
+	if !policy.Enabled || len(accountIdentities()) == 0 {
 		return out, state.ErrInvalidArgument
 	}
-	secret, err := issueslack.OpenSigningSecret(mfaIdentities(), policy.SecretSealed)
+	secret, err := issueslack.OpenSigningSecret(accountIdentities(), policy.SecretSealed)
 	if err != nil || !issueslack.VerifyInteraction(secret, r.Header.Get("X-Slack-Request-Timestamp"), r.Header.Get("X-Slack-Signature"), raw, time.Now()) {
 		return out, state.ErrInvalidArgument
 	}

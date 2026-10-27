@@ -7,6 +7,95 @@ does not mirror this list; customer-facing maturity belongs in the generated
 release or acceptance state changes, and keep older milestone notes clearly
 historical.
 
+## Crons GA blockers — 2026-10-26 (branch `fix/crons-ga-blockers`, not released)
+
+The 2026-10-26 crons GA review found four blockers; this branch fixes them
+([ADR-20261026201726](adr/20261026201726-cron-delivery-through-the-drain.md)):
+
+- HTTP cron fires and manual runs no longer wake the app or wait for it on
+  schedd's main loop. They queue a cron invocation that the invocation drain
+  delivers, so slow handlers cannot stall heartbeats, the reaper or other
+  tenants' crons. Plain HTTP crons keep one delivery attempt; manual runs
+  report their invocation's outcome and are capped at five active per cron.
+- `crons.schedule_anchor_at` restarts a schedule when it is edited, enabled
+  or unsuspended, so none of those fires the cron at once or replays passed
+  occurrences.
+- Command crons are scoped into the app-tasks preview (off in production).
+  Crons have a customer page, [docs/crons.md](crons.md).
+- Acceptance: `cmd/e2e/cron_e2e_test.go` (KVM-free, real apid, schedd and
+  gatewayd processes) proves a scheduled fire and a manual run reach the app
+  with the cron source header, and a visitor cannot forge that header.
+  PASS on the n2 test node on 2026-10-27 (76.6 s, revision a9e9c64e83; log
+  at `n2:/mnt/e2e-scratch/crons-ga/cron_e2e.log`). Unit and Postgres suites
+  for the cron, fire-now, drain and app-task paths pass; the five
+  `TestDrainSecurity*` failures are on main already.
+
+## Release guards — 2026-10-26
+
+Production releases can be held back by:
+
+- deploy freezes and release windows
+  ([ADR-20261019071733](adr/20261019071733-deploy-freezes-and-release-windows.md)),
+  shipped in #5034;
+- release gates on customer signals
+  ([ADR-20261019071734](adr/20261019071734-release-gates-on-customer-signals.md)),
+  shipped in #5034;
+- release approvals ([ADR-20261020085706](adr/20261020085706-release-approvals.md)),
+  shipped in #5126 with the release diff
+  ([ADR-20261021101117](adr/20261021101117-release-diff.md));
+- scheduled releases ([ADR-20261021152201](adr/20261021152201-scheduled-releases.md)),
+  shipped in #5126.
+
+Database-restoring rollbacks
+([ADR-20261023181931](adr/20261023181931-rollbacks-that-restore-the-database.md))
+shipped in #5305 behind the preview `postgres-restore` flag. All of these are
+preview capabilities except rollback (GA).
+
+Evidence: the n2 metal drill `TestReleaseGuardsDrillMetal`
+(`cmd/e2e/release_guards_drill_metal_test.go`) passed 5/5 on 2026-10-27 on
+main `461fd086f8`, which includes the release-guard gap fixes (#5568) and the
+ADR-570 hosting-smoke fix (#5574). It covered:
+
+- a freeze refusing a release, an audited override, and a release after the lift;
+- a canary gate abort (`abort_release_gate`) in 47 s;
+- a post-release gate rollback in 58 s, followed by the after-rollback freeze;
+- an approval hold, admin approval to completion in 26 s, and a rejection, with email notices;
+- a scheduled start 11 s after its time, and a schedule blocked by a freeze.
+
+Leakcheck was clean. An earlier run the same day, on a pre-ADR-570 base, also
+passed and also refused self-approval with `release_approval_self`. Runs on main
+before #5574 failed: the gateway refused imaged's hosting smoke of a
+`snapshotting` candidate with `policy_unavailable`.
+
+A release-tooling audit on 2026-10-26 closed these gaps (amendment 1 of the
+freeze and approval ADRs):
+
+- **Retries.** Retries meet freezes and the approval canary rule.
+- **GitOps activation.** Activation into `production` holds for a freeze, and
+  for an app that requires approvals unless the revision was approved in
+  Gregale.
+- **Promotions.** Promotions into an unprotected production environment refuse
+  apps that require approvals.
+- **Project applies.** Project applies refuse such apps too.
+- **Production environment.** A project's `production` environment counts as
+  production for approvals (#5538, which this work builds on).
+- **Runtime upgrades.** Runtime upgrade staging refuses frozen apps.
+- **`restore_databases`.** It is hidden while `postgres-restore` is off.
+- **Metrics.** The guards export `faas_release_*` metrics
+  (`pkg/releasemetrics`).
+- **Alerts.** Six `release_guards` alerts, with promtool fixtures and the
+  runbook `FaasReleaseGuards.md`.
+- **Dashboard.** `/dashboard/apps/{slug}/release-safety` shows freezes, gates,
+  approvals and schedules.
+
+Still open:
+
+- slo/custom-metric gates, real Slack/Resend delivery and the approval timeout
+  have not been drilled on metal;
+- no database switch has been drilled with a real provider restore;
+- runtime-upgrade cutover must also hold for freezes before customer admission
+  ships.
+
 ## Routes at public scale — 2026-10-24
 
 [ADR-20261024154324](adr/20261024154324-route-subsystems-at-public-scale.md)
@@ -41,9 +130,15 @@ its cache without reaching the app; and apid's production route monitor opens
 one incident from two sustained 5xx windows. The first runs also hit the
 ADR-570 regression where the public routing pinner refused every public request
 with the default `FAAS_TRAFFIC_AUTHORITATIVE_HOST_POLICY=false`, fixed by
-#5406; the passing runs carried an equivalent fix. Open: canary route health, route requirements and
-OpenAPI contract preview have no end-to-end test; six routes capabilities are
-`internal` and three `preview` (ADR-20261023115741).
+#5406; the passing runs carried an equivalent fix. Canary route health has
+its own end-to-end test (2026-10-26, n2, `cmd/e2e/routes_canary_e2e_test.go`):
+two apps at a 50% canary, an enforce-mode gate on two routes; the canary whose
+`/checkout` answers 500 is held with `route_health_blocked` and a blocked
+history entry, the healthy one advances to 100% and the gateway follows. The
+three routes tests and the general-path tests now run on pull requests that
+change Go code (`e2e-general` workflow, docs/ci-general-path.md). Open: route
+requirements and OpenAPI contract preview have no end-to-end test; six routes
+capabilities are `internal` and three `preview` (ADR-20261023115741).
 
 A follow-up review (2026-10-26,
 [ADR-20261026143210](adr/20261026143210-route-labels-for-served-routes.md))

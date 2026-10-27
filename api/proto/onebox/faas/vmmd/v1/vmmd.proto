@@ -3023,6 +3023,10 @@ message AllowResolvedEgressRequest {
   string source_ip = 1;
   repeated string addresses = 2;
   uint32 ttl_seconds = 3;
+  // database_port is non-zero when the answered name is one of the caller
+  // app's bound managed databases (ADR 20261026150000): vmmd also opens that
+  // TCP port to the addresses. An older resolver leaves it zero.
+  uint32 database_port = 4;
 }
 
 message AllowResolvedEgressAck {

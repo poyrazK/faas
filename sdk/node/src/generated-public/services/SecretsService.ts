@@ -12,6 +12,10 @@ import type { PutAppSecretReferenceRequest } from '../models/PutAppSecretReferen
 import type { PutAppSecretRequest } from '../models/PutAppSecretRequest.js';
 import type { RotateAppSecretRequest } from '../models/RotateAppSecretRequest.js';
 import type { RotateAppSecretResponse } from '../models/RotateAppSecretResponse.js';
+import type { SecretEntryRequest } from '../models/SecretEntryRequest.js';
+import type { SecretEntryResponse } from '../models/SecretEntryResponse.js';
+import type { SecretEntryStatus } from '../models/SecretEntryStatus.js';
+import type { SecretEntryStatusRequest } from '../models/SecretEntryStatusRequest.js';
 import type { CancelablePromise } from '../../generated/core/CancelablePromise.js';
 import { OpenAPI } from '../../generated/core/OpenAPI.js';
 import { request as __request } from '../../generated/core/request.js';
@@ -67,12 +71,12 @@ export class SecretsService {
      */
     slug: string,
     /**
-     * Env-var scope (ADR-090). A domain-valid slug (1..40 chars,
+     * Env-var scope. A domain-valid slug (1..40 chars,
      * lowercase alnum + dash, no leading/trailing dash) — e.g.
      * `default`, `staging`, `prod-eu`. Or the reserved sentinel
      * `__all__` on GET only, which returns the nested
      * `env_by_scope` response shape (every scope on the app).
-     * Omitted = `scope=default` (pre-PR-B behavior).
+     * Omitted = `scope=default` (legacy behaviour).
      *
      */
     scope?: string,
@@ -273,20 +277,19 @@ export class SecretsService {
      */
     requestBody: PutAppSecretRequest,
     /**
-     * `false` opts this env or secret write out of the config guard
-     * (ADR-1451): no guard opens, and a guard already watching the scope
+     * `false` opts this env or secret write out of the config guard: no guard opens, and a guard already watching the scope
      * closes as superseded. Omitted or `true` guards the change when the
      * scope has a live deployment.
      *
      */
     guard?: boolean,
     /**
-     * Env-var scope (ADR-090). A domain-valid slug (1..40 chars,
+     * Env-var scope. A domain-valid slug (1..40 chars,
      * lowercase alnum + dash, no leading/trailing dash) — e.g.
      * `default`, `staging`, `prod-eu`. Or the reserved sentinel
      * `__all__` on GET only, which returns the nested
      * `env_by_scope` response shape (every scope on the app).
-     * Omitted = `scope=default` (pre-PR-B behavior).
+     * Omitted = `scope=default` (legacy behaviour).
      *
      */
     scope?: string,
@@ -339,20 +342,19 @@ export class SecretsService {
      */
     key: string,
     /**
-     * `false` opts this env or secret write out of the config guard
-     * (ADR-1451): no guard opens, and a guard already watching the scope
+     * `false` opts this env or secret write out of the config guard: no guard opens, and a guard already watching the scope
      * closes as superseded. Omitted or `true` guards the change when the
      * scope has a live deployment.
      *
      */
     guard?: boolean,
     /**
-     * Env-var scope (ADR-090). A domain-valid slug (1..40 chars,
+     * Env-var scope. A domain-valid slug (1..40 chars,
      * lowercase alnum + dash, no leading/trailing dash) — e.g.
      * `default`, `staging`, `prod-eu`. Or the reserved sentinel
      * `__all__` on GET only, which returns the nested
      * `env_by_scope` response shape (every scope on the app).
-     * Omitted = `scope=default` (pre-PR-B behavior).
+     * Omitted = `scope=default` (legacy behaviour).
      *
      */
     scope?: string,
@@ -419,20 +421,19 @@ export class SecretsService {
      */
     requestBody: RotateAppSecretRequest,
     /**
-     * `false` opts this env or secret write out of the config guard
-     * (ADR-1451): no guard opens, and a guard already watching the scope
+     * `false` opts this env or secret write out of the config guard: no guard opens, and a guard already watching the scope
      * closes as superseded. Omitted or `true` guards the change when the
      * scope has a live deployment.
      *
      */
     guard?: boolean,
     /**
-     * Env-var scope (ADR-090). A domain-valid slug (1..40 chars,
+     * Env-var scope. A domain-valid slug (1..40 chars,
      * lowercase alnum + dash, no leading/trailing dash) — e.g.
      * `default`, `staging`, `prod-eu`. Or the reserved sentinel
      * `__all__` on GET only, which returns the nested
      * `env_by_scope` response shape (every scope on the app).
-     * Omitted = `scope=default` (pre-PR-B behavior).
+     * Omitted = `scope=default` (legacy behaviour).
      *
      */
     scope?: string,
@@ -468,16 +469,92 @@ export class SecretsService {
     });
   }
   /**
+   * Ask the signed-in account owner to enter a secret on a one-time page.
+   * @returns SecretEntryResponse Private bridge response; ticket and exchange_code must never be returned to an agent.
+   * @throws ApiError
+   */
+  public static requestSecretEntry({
+    slug,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    requestBody: SecretEntryRequest,
+  }): CancelablePromise<SecretEntryResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/secret-requests',
+      path: {
+        'slug': slug,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `code: capacity_unavailable — no host headroom.
+        Resource increases can return service_recovery_capacity_unavailable
+        when enabled bare-metal service protection needs more recovery headroom.
+        `,
+      },
+    });
+  }
+  /**
+   * Privately check whether the owner has set a requested secret; never returns the value.
+   * @returns SecretEntryStatus Pending or set.
+   * @throws ApiError
+   */
+  public static getSecretEntryStatus({
+    slug,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    requestBody: SecretEntryStatusRequest,
+  }): CancelablePromise<SecretEntryStatus> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/secret-requests/status',
+      path: {
+        'slug': slug,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        410: `code: upload_session_expired — the resumable-upload session has been swept by the reaper and cannot be appended to or committed. The CLI is expected to detect this on the first PATCH/COMMIT after expiry and mint a fresh session.`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
    * List every sealed secret across the caller's account.
    * Replaces the per-app fan-out from `/v1/apps/{slug}/secrets`
-   * with one account-scoped read (issue #393). Each row carries
+   * with one account-scoped read. Each row carries
    * the owning app's `app_id` and `app_slug` so the dashboard
    * can render "foo-app / DATABASE_URL" without a parallel
    * `/v1/apps` round-trip.
    *
    * **Plaintext never appears here** — only the age-sealed
    * envelope (base64). The plaintext value lives transiently in
-   * the PUT handler and never crosses the apid wire.
+   * the PUT handler and never crosses the API wire.
    *
    * Cursor: `?before=<slug>|<key>` — the (app_slug, key) pair,
    * pipe-separated. The SQL splits it back via `split_part`.

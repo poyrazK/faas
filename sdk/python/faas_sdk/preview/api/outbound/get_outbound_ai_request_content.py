@@ -91,9 +91,9 @@ def sync_detailed(
 ) -> Response[OutboundAIRequestContent | Problem]:
     """Read one logged AI call's captured bodies.
 
-     Requires MFA and read scope (ADR-996). Returns the start of the request and response bodies the
-    gateway sent and received when request_log_content was on. Captures are kept for 3 days; a call
-    without one is not found.
+     Requires MFA and read scope. Returns the start of the request and response bodies the gateway sent
+    and received when request_log_content was on. Captures are kept for 3 days; a call without one is
+    not found.
 
     Args:
         integration (UUID):
@@ -127,9 +127,9 @@ def sync(
 ) -> OutboundAIRequestContent | Problem | None:
     """Read one logged AI call's captured bodies.
 
-     Requires MFA and read scope (ADR-996). Returns the start of the request and response bodies the
-    gateway sent and received when request_log_content was on. Captures are kept for 3 days; a call
-    without one is not found.
+     Requires MFA and read scope. Returns the start of the request and response bodies the gateway sent
+    and received when request_log_content was on. Captures are kept for 3 days; a call without one is
+    not found.
 
     Args:
         integration (UUID):
@@ -158,9 +158,9 @@ async def asyncio_detailed(
 ) -> Response[OutboundAIRequestContent | Problem]:
     """Read one logged AI call's captured bodies.
 
-     Requires MFA and read scope (ADR-996). Returns the start of the request and response bodies the
-    gateway sent and received when request_log_content was on. Captures are kept for 3 days; a call
-    without one is not found.
+     Requires MFA and read scope. Returns the start of the request and response bodies the gateway sent
+    and received when request_log_content was on. Captures are kept for 3 days; a call without one is
+    not found.
 
     Args:
         integration (UUID):
@@ -192,9 +192,9 @@ async def asyncio(
 ) -> OutboundAIRequestContent | Problem | None:
     """Read one logged AI call's captured bodies.
 
-     Requires MFA and read scope (ADR-996). Returns the start of the request and response bodies the
-    gateway sent and received when request_log_content was on. Captures are kept for 3 days; a call
-    without one is not found.
+     Requires MFA and read scope. Returns the start of the request and response bodies the gateway sent
+    and received when request_log_content was on. Captures are kept for 3 days; a call without one is
+    not found.
 
     Args:
         integration (UUID):

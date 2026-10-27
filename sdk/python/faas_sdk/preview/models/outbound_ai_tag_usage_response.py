@@ -16,7 +16,7 @@ T = TypeVar("T", bound="OutboundAITagUsageResponse")
 
 @_attrs_define
 class OutboundAITagUsageResponse:
-    """One UTC day of AI usage by tag, most expensive first (ADR-1436)."""
+    """One UTC day of AI usage by tag, most expensive first."""
 
     usage_date: datetime.date
     tracked_tags: int

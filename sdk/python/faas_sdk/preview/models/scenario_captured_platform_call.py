@@ -17,10 +17,7 @@ T = TypeVar("T", bound="ScenarioCapturedPlatformCall")
 
 @_attrs_define
 class ScenarioCapturedPlatformCall:
-    """A workflow or realtime call an enrolled app requested through the run-local platform API. It was never performed
-    (ADR-20261021150000, ADR-20261021180000).
-
-    """
+    """A workflow or realtime call an enrolled app requested through the run-local platform API. It was never performed."""
 
     id: UUID
     workload: str

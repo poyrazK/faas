@@ -3,7 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * POST response from /v1/apps/{slug}/debug/requests/{req_id}/replay (ADR-127).
+ * POST response from /v1/apps/{slug}/debug/requests/{req_id}/replay.
  */
 export type DebugReplayResponse = {
   /**

@@ -99,8 +99,8 @@ def sync_detailed(
     """Start or replace an AI route's model canary.
 
      Requires MFA and deploy-write scope. The canary target receives the given share of the route's calls
-    first and is rolled back by outboundd when its error rate or time to first byte is worse than the
-    first target's by more than the margins (ADR-1340). Replacing a canary clears its counts.
+    first and is rolled back by the outbound gateway when its error rate or time to first byte is worse
+    than the first target's by more than the margins. Replacing a canary clears its counts.
 
     Args:
         route (UUID):
@@ -137,8 +137,8 @@ def sync(
     """Start or replace an AI route's model canary.
 
      Requires MFA and deploy-write scope. The canary target receives the given share of the route's calls
-    first and is rolled back by outboundd when its error rate or time to first byte is worse than the
-    first target's by more than the margins (ADR-1340). Replacing a canary clears its counts.
+    first and is rolled back by the outbound gateway when its error rate or time to first byte is worse
+    than the first target's by more than the margins. Replacing a canary clears its counts.
 
     Args:
         route (UUID):
@@ -170,8 +170,8 @@ async def asyncio_detailed(
     """Start or replace an AI route's model canary.
 
      Requires MFA and deploy-write scope. The canary target receives the given share of the route's calls
-    first and is rolled back by outboundd when its error rate or time to first byte is worse than the
-    first target's by more than the margins (ADR-1340). Replacing a canary clears its counts.
+    first and is rolled back by the outbound gateway when its error rate or time to first byte is worse
+    than the first target's by more than the margins. Replacing a canary clears its counts.
 
     Args:
         route (UUID):
@@ -206,8 +206,8 @@ async def asyncio(
     """Start or replace an AI route's model canary.
 
      Requires MFA and deploy-write scope. The canary target receives the given share of the route's calls
-    first and is rolled back by outboundd when its error rate or time to first byte is worse than the
-    first target's by more than the margins (ADR-1340). Replacing a canary clears its counts.
+    first and is rolled back by the outbound gateway when its error rate or time to first byte is worse
+    than the first target's by more than the margins. Replacing a canary clears its counts.
 
     Args:
         route (UUID):

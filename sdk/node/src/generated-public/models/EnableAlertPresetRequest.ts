@@ -20,7 +20,7 @@ export type EnableAlertPresetRequest = {
    */
   webhook_secret?: string;
   /**
-   * Notification channels (ADR-749) the instantiated rule delivers to; with at least one, the webhook fields may be omitted.
+   * Notification channels the instantiated rule delivers to; with at least one, the webhook fields may be omitted.
    */
   channel_ids?: Array<string>;
   /**

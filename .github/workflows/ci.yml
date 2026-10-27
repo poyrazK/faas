@@ -644,11 +644,13 @@ jobs:
     # Green runs on 2026-10-12/13 took 42-43 minutes; by 2026-10-19/20 they
     # took 58-60, and three of five full runs were cancelled at the old
     # 60-minute bound while apidserver tests were still passing. go test's
-    # own -timeout=45m below still catches a hung package. The TestPGClone*
+    # own -timeout below still catches a hung package. The TestPGClone*
     # suite runs in unit-tests-pg-1-pgclone instead: after #4499 its 317
     # sequential functions could not finish here in 100 minutes under these
-    # bounds.
-    timeout-minutes: 75
+    # bounds. On 2026-10-27 the apidserver package alone reached the old 45m
+    # package timeout (2705 s, run 40420329172) inside a 66-minute job, so
+    # the bounds are 60m and 90 minutes until apidserver gets its own shards.
+    timeout-minutes: 90
     permissions:
       contents: read
       id-token: write
@@ -763,7 +765,7 @@ jobs:
           # the aggregate still requires every complete state shard below.
           STATEPKG=$(go list ./pkg/state)
           COVERPKGS=$(printf '%s\n' "$PKGS" "$STATEPKG" | sort -u | paste -sd, -)
-          go test -json -race -count=1 -p 4 -timeout=45m -skip '^TestPGClone' -coverpkg="$COVERPKGS" -coverprofile=coverage/cover-shard1.out -covermode=atomic $PKGS
+          go test -json -race -count=1 -p 4 -timeout=60m -skip '^TestPGClone' -coverpkg="$COVERPKGS" -coverprofile=coverage/cover-shard1.out -covermode=atomic $PKGS
           python3 scripts/ci/normalize_go_cover_profile.py coverage/cover-shard1.out
 
       - name: application-standard ledger recovery tests
@@ -1016,7 +1018,20 @@ jobs:
             # Shard b alone runs the PostgreSQL native verdict, starter TLS,
             # fixture and GitOps compilation gates before its tests: about
             # 28 minutes on 2026-10-18 (20 on 2026-10-17), ahead of a ~20
-            # minute test step. 45 cancelled it mid-suite.
+            # minute test step. 45 cancelled it mid-suite. The gates moved to
+            # shard c when they reached 36 minutes (run 40420329172).
+            job_timeout_minutes: 60
+          - id: c
+            label: PostgreSQL native and starter gates
+            # Shard b's pre-test gates took 26 minutes on 2026-10-26 and 36 on
+            # 2026-10-27, which pushed its ~24-minute suite past the 60-minute
+            # budget (run 40420329172). They run here, beside it.
+            package_pattern: ''
+            coverage_file: ''
+            gitops_acceptance: false
+            state_coverage: false
+            gates: true
+            test_timeout: 30m
             job_timeout_minutes: 60
     # Keep main's bounded PostgreSQL budgets: 30 minutes for parity and
     # reconciliation, 20 minutes for CLI/daemons. The full state suite runs
@@ -1102,12 +1117,12 @@ jobs:
             go-pg-2-${{ matrix.id }}-${{ runner.os }}-go${{ env.GO_VERSION }}-${{ hashFiles('go.sum') }}-
             go-pg-2-${{ matrix.id }}-${{ runner.os }}-go${{ env.GO_VERSION }}-
       - name: Enable TLS for durable SQL credential acceptance
-        if: matrix.id == 'b'
+        if: matrix.id == 'b' || matrix.gates
         env:
           POSTGRES_SERVICE_CONTAINER: ${{ job.services.postgres.id }}
         run: bash scripts/ci/enable_postgres_tls.sh "$POSTGRES_SERVICE_CONTAINER"
       - name: PostgreSQL native verdict contracts
-        if: matrix.id == 'b'
+        if: matrix.gates
         run: |
           python3 scripts/ci/managed-postgres-native-verdict_test.py
           python3 scripts/ci/object-storage-native-verdict_test.py
@@ -1120,7 +1135,7 @@ jobs:
           go test -race -p 1 ./pkg/managedpostgres/guestqualification ./pkg/e2etest/postgresstarter ./pkg/e2etest/queuestarter ./pkg/e2etest/servicestarter ./pkg/e2etest/testdata/helloserver
           go test -race -p 1 ./pkg/e2etest -run '^Test(PostgresGuest|StorageGuest|QueueGuest|ServiceGuest)'
       - name: scoped PostgreSQL rehearsal fault and recovery (no KVM)
-        if: matrix.id == 'b'
+        if: matrix.gates
         env:
           FAAS_REHEARSAL_PG_TEST_ADMIN_URL: postgres://faas:faas@127.0.0.1:5433/gregale_rehearsal_admin?sslmode=disable
         run: >-
@@ -1128,19 +1143,19 @@ jobs:
           ./pkg/rehearsalpg/runtime ./pkg/rehearsalwork/acceptance
           -run 'TestPostgresFault|TestPostgresCollectorFailureAndCleanupFailureCannotPass'
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
-        if: matrix.id == 'b'
+        if: matrix.id == 'b' || matrix.gates
         with:
           node-version: '22'
       - name: queue worker safe completion canary
-        if: matrix.id == 'b'
+        if: matrix.gates
         run: go test -race -p 1 ./cmd/gregale/templates -run '^TestQueueWorkerStarter' -count=1
       - name: native M9 gate contracts (no KVM)
-        if: matrix.id == 'b'
+        if: matrix.gates
         run: |
           make test-native-m9-contracts
           go test -tags=metal -run '^$' ./tests/native/m9
       - name: generated PostgreSQL starter TLS recovery
-        if: matrix.id == 'b'
+        if: matrix.gates
         env:
           POSTGRES_SERVICE_CONTAINER: ${{ job.services.postgres.id }}
           GREGALE_POSTGRES_STARTER_TEST: '1'
@@ -1148,7 +1163,7 @@ jobs:
           docker cp "$POSTGRES_SERVICE_CONTAINER:/var/lib/postgresql/data/qualification-server.crt" "$RUNNER_TEMP/starter-postgres-ca.pem"
           NODE_EXTRA_CA_CERTS="$RUNNER_TEMP/starter-postgres-ca.pem" go test -race -p 2 ./cmd/gregale/templates -run '^TestPostgresStarterSQLRecovery$' -count=1 -v -timeout=180s
       - name: PostgreSQL fixture API and binding guest compilation (no KVM)
-        if: matrix.id == 'b'
+        if: matrix.gates
         env:
           GOFLAGS: '"-gcflags=github.com/onebox-faas/faas/pkg/apid/apidserver=-dwarf=false -c=1"'
           GOGC: 10
@@ -1158,17 +1173,17 @@ jobs:
           go test -race -p 1 -tags metal,managed_postgres_native ./pkg/apid/apidserver -run '^TestManagedPostgresFixturePublicRotation$' -count=1 -v -timeout=180s
           go test -race -p 1 -tags metal,managed_postgres_native,object_storage_native,queue_binding_native,managed_service_native -c -o "$RUNNER_TEMP/binding-native.test" ./cmd/e2e
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7
-        if: matrix.id == 'b'
+        if: matrix.id == 'b' || matrix.gates
         with:
           python-version: '3.12'
       - name: generated Python PostgreSQL starter TLS recovery
-        if: matrix.id == 'b'
+        if: matrix.gates
         run: bash scripts/ci/test_python_postgres_starter.sh "$RUNNER_TEMP/starter-postgres-ca.pem"
       # Moved from ci-light, which no longer builds cmd/e2e with extra tags.
       # The acceptance test skips unless GREGALE_GITOPS_ACCEPTANCE=1, so the
       # e2e shards never run it.
       - name: GitOps source approval and native graph compilation (no KVM)
-        if: matrix.id == 'b'
+        if: matrix.gates
         env:
           GOFLAGS: '"-gcflags=github.com/onebox-faas/faas/pkg/apid/apidserver=-dwarf=false -c=1"'
           GOGC: 10
@@ -1181,6 +1196,7 @@ jobs:
           go test -race -p 1 -tags metal -c -o "$RUNNER_TEMP/gitops-native.test" ./cmd/e2e
           rm -f "$RUNNER_TEMP/gitops-native.test"
       - name: unit tests (pg shard 2${{ matrix.id }})
+        if: matrix.package_pattern != ''
         env:
           GOGC: 10
           GOMEMLIMIT: 2GiB
@@ -1258,6 +1274,7 @@ jobs:
         run: make coverage-floor COVERDIR=coverage
 
       - name: upload to Codecov (pg shard 2${{ matrix.id }})
+        if: matrix.coverage_file != ''
         uses: codecov/codecov-action@a99c28d3f0da835de33ff2feb2e15691c7b9641f # v7
         with:
           files: coverage/${{ matrix.coverage_file }}
@@ -1359,7 +1376,7 @@ jobs:
           file "$RUNNER_TEMP/traffic-evidence/binaries/"*.test > "$RUNNER_TEMP/traffic-evidence/linux-compilation-types.txt"
       - name: SQLC reproducibility and traffic policy gates
         run: |
-          make sqlc-check runbook-sql-check text-encoding-check shell-quoting-check adr-number-uniqueness-check 2>&1 | tee "$RUNNER_TEMP/traffic-evidence/static-gates.log"
+          make sqlc-check runbook-sql-check text-encoding-check shell-quoting-check adr-number-uniqueness-check trimpath-check 2>&1 | tee "$RUNNER_TEMP/traffic-evidence/static-gates.log"
       - name: Verify PostgreSQL source remains isolated
         if: ${{ !cancelled() }}
         run: |
@@ -1417,8 +1434,10 @@ jobs:
     # Race compilation plus the scheduler suite can consume ten minutes.
     # Leave room for the coverage gate and upload after the tests pass.
     # The memory-bounded pkg/sched compile below roughly doubles that
-    # compile's time on a cold cache.
-    timeout-minutes: 30
+    # compile's time on a cold cache. Run 40446563363 spent 15 minutes
+    # compiling, 10 in tests and 4 in the wake-admission repeats and was
+    # cancelled at the old 30-minute budget.
+    timeout-minutes: 45
     permissions:
       contents: read
       id-token: write
@@ -3048,10 +3067,12 @@ jobs:
   e2e-shard1:
     name: e2e (shard 1 — 18 tests)
     runs-on: ubuntu-latest
-    # The test command has a 15m package timeout; leave runner cleanup
+    # The test command has a 22m package timeout; leave runner cleanup
     # headroom so slow shared runners fail with the test result instead of
-    # being cancelled by the job budget first.
-    timeout-minutes: 20
+    # being cancelled by the job budget first. The test steps took 10-18
+    # minutes on 2026-10-24..27 and shard 1 was cancelled at the old
+    # 20-minute budget (run 40431847901), so every shard has 30.
+    timeout-minutes: 30
     services:
       postgres:
         image: mirror.gcr.io/library/postgres:16
@@ -3138,12 +3159,12 @@ jobs:
       - name: e2e tests (shard 1)
         run: |
           E2E_RUN=$(go run ./scripts/ci/e2eshard -shard=1 -shards=4)
-          go test -race -count=1 -timeout=15m -run "$E2E_RUN" ./cmd/e2e/...
+          go test -race -count=1 -timeout=22m -run "$E2E_RUN" ./cmd/e2e/...
 
   e2e-shard2:
     name: e2e (shard 2 — 15 tests)
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
     services:
       postgres:
         image: mirror.gcr.io/library/postgres:16
@@ -3222,12 +3243,12 @@ jobs:
       - name: e2e tests (shard 2)
         run: |
           E2E_RUN=$(go run ./scripts/ci/e2eshard -shard=2 -shards=4)
-          go test -race -count=1 -timeout=15m -run "$E2E_RUN" ./cmd/e2e/...
+          go test -race -count=1 -timeout=22m -run "$E2E_RUN" ./cmd/e2e/...
 
   e2e-shard3:
     name: e2e (shard 3 — 24 tests)
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
     services:
       postgres:
         image: mirror.gcr.io/library/postgres:16
@@ -3306,12 +3327,12 @@ jobs:
       - name: e2e tests (shard 3)
         run: |
           E2E_RUN=$(go run ./scripts/ci/e2eshard -shard=3 -shards=4)
-          go test -race -count=1 -timeout=15m -run "$E2E_RUN" ./cmd/e2e/...
+          go test -race -count=1 -timeout=22m -run "$E2E_RUN" ./cmd/e2e/...
 
   e2e-shard4:
     name: e2e (shard 4 — 22 tests)
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
     services:
       postgres:
         image: mirror.gcr.io/library/postgres:16
@@ -3390,4 +3411,4 @@ jobs:
       - name: e2e tests (shard 4)
         run: |
           E2E_RUN=$(go run ./scripts/ci/e2eshard -shard=4 -shards=4)
-          go test -race -count=1 -timeout=15m -run "$E2E_RUN" ./cmd/e2e/...
+          go test -race -count=1 -timeout=22m -run "$E2E_RUN" ./cmd/e2e/...

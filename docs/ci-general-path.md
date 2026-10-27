@@ -66,16 +66,48 @@ The current contract is intentionally small and high-signal:
 | `TestE2E_NormalPath_AppProtocolMatrix` | `http1`, `http2`, and `grpc` selectors reach VMMD; gRPC trailers remain trailers |
 | `TestE2E_NormalPath_GuestHopByHopHeadersAreNotExposed` | guest connection-management headers are filtered at the customer response boundary |
 
+The routes product has its own group on the same harness, with request
+telemetry, per-route gateway metrics and apid's routes workers turned on. These
+tests wait for closed one-minute telemetry windows, so each takes about four
+minutes:
+
+| Test | Regression class |
+| --- | --- |
+| `TestE2E_Routes_DiscoveryInsightsAndCacheFix` | routes discovered from traffic, route advice and the awake report, an insight's cache fix served from the gateway cache, the route list through Prometheus when available |
+| `TestE2E_Routes_ProductionMonitorOpensIncident` | the production route monitor opens an incident from sustained 5xx on one route while another stays healthy |
+| `TestE2E_Routes_CanaryHealthGateHoldsRegressionAndAdvancesHealthy` | the canary guard compares candidate and stable per route, holds a regressed 50% canary with `route_health_blocked` and its history, and advances a healthy one to 100% with the gateway following |
+
+Multi-service projects have their own group. The test applies a Compose
+repository through `POST /v1/projects` and calls between its services through
+the real gateways:
+
+| Test | Regression class |
+| --- | --- |
+| `TestE2E_MultiServiceProject_ComposeServicesCallEachOtherByName` | a `billing_api` service is called `billing-api` (injected URL, imported Compose address and Postgres name lookup), the project lists what each service calls, a call wakes the parked service, a declared service cannot call an undeclared one, and a PR preview calls its own sibling |
+
 The tests seed a deployment after the source/build/image pipeline has produced
 its durable state. They must not become a second KVM suite. Add a scenario here
 when the bug is in daemon wiring, durable state propagation, routing, bridge
 framing, or restart/recovery behavior; add it to the native suite when the bug
 requires a real guest, jail, network namespace, image, or Firecracker lifecycle.
 
-All files under `cmd/e2e` are discovered by `scripts/ci/e2eshard`, so the
-`TestE2E_NormalPath_` cases are included automatically in the existing PR E2E
-shards. `make e2e-general` is the fast local feedback loop for this group; it
-does not replace the full sharded gate.
+All files under `cmd/e2e` are discovered by `scripts/ci/e2eshard`, so both
+groups run in the mega tier's E2E shards (`ci.yml`, nightly). The
+`e2e-general` workflow runs them on every pull request that changes Go code,
+migrations or the Makefile, as two jobs (`normal-path`, `routes`). It is not a
+`ci-light` job because a failed post-merge `ci-light` run fails automatic
+deploys, and the routes tests wait on wall-clock windows.
+
+`make e2e-general` runs both groups locally; `E2E_GENERAL_RUN` narrows it, for
+example `E2E_GENERAL_RUN='^TestE2E_Routes_' make e2e-general`. The daemons need
+Linux.
+
+The gateway answers `503` with `Retry-After` in two transient cases (ADR-570):
+`rate_limit_unavailable` when its shared rate allowance cannot be checked in
+time, which a loaded runner can hit, and `traffic_policy_unavailable` when a
+request races the edge policy change that follows a rule write. A test that
+needs every request answered retries both as a client would (`edgeRetry` in
+`cmd/e2e/routes_e2e_test.go`).
 
 The remaining general-path gaps are intentionally tracked rather than hidden:
 

@@ -16,9 +16,11 @@ gregale keys add coding-agent --scopes apps:read,deploy:write
 ```
 
 `apps:read` lets the agent inspect apps, deployments, logs and metrics.
-`deploy:write` lets it create apps, deploy and roll back. Add `secrets:write`
-only if the agent should set environment variables: `gregale env push` stores
-them through the secrets API. A key without `--scopes` is a full-access
+`deploy:write` lets it create apps, deploy, roll back, and add custom domains
+and crons. Add `secrets:write` only if the agent should set environment
+variables or ask you for secrets: `gregale env push` stores them through the
+secrets API. Add `storage:manage` for buckets, and `postgres:manage` with
+`postgres:read` for databases. A key without `--scopes` is a full-access
 `admin` key.
 
 Put the key in the agent's environment as `FAAS_TOKEN`. It overrides the
@@ -107,6 +109,7 @@ so list only the toolsets it needs:
 | `core` | Apps, deployments, logs, metrics, health and error groups; deploy a directory, set variables, promote and roll back. About a fifth of the full catalog. |
 | `release` | Image and Git source releases, service and worker rollouts, named environments, route budgets |
 | `diagnose` | Request, performance, wake, trace and regression diagnostics |
+| `provision` | Custom domains, buckets, managed PostgreSQL and crons |
 | `all` | Everything (the default) |
 
 Combine them with commas, for example `--tools core,diagnose`.
@@ -133,8 +136,21 @@ from a directory to a live app:
    `gregale_promote_deployment`.
 
 These tools run the `gregale` CLI on your machine, so they do exactly what the
-matching commands do. Secrets stay in the CLI: the agent asks you to run
-`gregale secrets set` and never handles the value.
+matching commands do.
+
+The agent never handles a secret value. With `--allow-writes`,
+`gregale_request_secret` opens a one-time Gregale page where you type the
+value; if the client can't open pages, the agent gives you the link. The value
+goes from your browser straight to Gregale, and the agent only learns that it
+was set. The page works only in your own signed-in session and expires after
+15 minutes.
+
+With `--tools core,provision` the agent can also attach a custom domain, add a
+bucket or a PostgreSQL database, and add a cron. Each is planned first and
+runs the matching `gregale domains add`, `add bucket`, `add postgres` or
+`crons add` command. For a domain it returns the DNS records you create at
+your DNS provider; `gregale_check_domain` reports when they verify. See
+[Provision a domain, data and crons](mcp.md#provision-a-domain-data-and-crons).
 
 ## Install the Claude Code plugin
 

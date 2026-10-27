@@ -33,35 +33,33 @@ class CreatePlatformTenantRateCardRequest:
     price_millicents_per_unit: int
     currency: str | Unset = "EUR"
     included_units_per_month: int | Unset = UNSET
-    """Free request units per tenant per UTC calendar month across every attributed app, consumed in minute order
-    (ADR-975). Statements for periods it prices must cover one calendar month."""
+    """Free request units per tenant per UTC calendar month across every attributed app, consumed in minute order.
+    Statements for periods it prices must cover one calendar month."""
     tiers: list[APIConsumerRateCardTier] | Unset = UNSET
-    """Optional graduated ladder counted per tenant per UTC calendar month across every attributed app (ADR-975).
-    Replaces price_millicents_per_unit and included_units_per_month; the last step's up_to is null."""
+    """Optional graduated ladder counted per tenant per UTC calendar month across every attributed app. Replaces
+    price_millicents_per_unit and included_units_per_month; the last step's up_to is null."""
     route_weights: CreatePlatformTenantRateCardRequestRouteWeights | Unset = UNSET
-    """Counts each request on a listed "METHOD /template" route as that many units (1..1000, at most 50 routes;
-    ADR-1307), including surface and JWT-rule requests (ADR-1310). Unlisted routes count 1. Statements for periods
-    it prices must cover one calendar month."""
+    """Counts each request on a listed "METHOD /template" route as that many units (1..1000, at most 50 routes),
+    including surface and JWT-rule requests. Unlisted routes count 1. Statements for periods it prices must cover
+    one calendar month."""
     effective_from: datetime.datetime | None | Unset = UNSET
     """UTC minute at which the version starts; omitted means the next UTC minute. Cannot be in the past once any
     tenant card has included units, tiers, route weights, monthly fees, or a unit other than requests."""
     unit: str | Unset = "request"
-    """What the card prices (ADR-1310, ADR-1319): requests; the compute seconds or response megabytes of billable
-    requests, rounded per subject minute; or app:<meter>, the units the app reports in its Gregale-Usage header.
-    Cards of different units price side by side; non-request cards take no route weights, are month-priced and
-    cannot be backdated."""
+    """What the card prices: requests; the compute seconds or response megabytes of billable requests, rounded per
+    subject minute; or app:<meter>, the units the app reports in its Gregale-Usage header. Cards of different units
+    price side by side; non-request cards take no route weights, are month-priced and cannot be backdated."""
     tier_mode: CreatePlatformTenantRateCardRequestTierMode | Unset = "graduated"
-    """How the tenant ladder prices a month (ADR-1309): graduated by each unit's position, or volume, every unit of
-    the month at the step the tenant's total reaches. volume needs tiers."""
+    """How the tenant ladder prices a month: graduated by each unit's position, or volume, every unit of the month
+    at the step the tenant's total reaches. volume needs tiers."""
     base_fee_millicents_per_month: int | Unset = UNSET
-    """Fixed charge per tenant per UTC month while this card is in force when the tenant's month starts (ADR-1322).
-    Statements for periods it prices must cover one calendar month."""
+    """Fixed charge per tenant per UTC month while this card is in force when the tenant's month starts. Statements
+    for periods it prices must cover one calendar month."""
     minimum_millicents_per_month: int | Unset = UNSET
-    """Minimum usage charge per tenant per UTC month for this card's unit; statements top up the difference
-    (ADR-1322)."""
+    """Minimum usage charge per tenant per UTC month for this card's unit; statements top up the difference."""
     prorate_monthly_fees: bool | Unset = False
     """Scale the base fee and minimum in the tenant's first month to the share of it left after the tenant was
-    created (ADR-1325)."""
+    created."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

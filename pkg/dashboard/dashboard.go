@@ -700,6 +700,9 @@ type FailedEventPageItem struct {
 	LastFailed  string
 	ReplayedAt  string
 	Status      string
+	// Replayable is false for an entry replay cannot redrive (event_route);
+	// it can only be discarded.
+	Replayable bool
 }
 
 // AppWebhooksData is the customer-facing projection for the per-app
@@ -3492,6 +3495,19 @@ type ManagedPostgresData struct {
 	Available bool
 	Error     string
 	Databases []ManagedPostgresDatabaseItem
+	// Overage is the compute overage form (ADR-20261025094915); nil hides it,
+	// as for Free plans and accounts without the postgres-overage capability.
+	Overage *ManagedPostgresOverageItem
+}
+
+// ManagedPostgresOverageItem backs the compute overage form on
+// /dashboard/postgres.
+type ManagedPostgresOverageItem struct {
+	Enabled        bool
+	AllowanceLabel string
+	CeilingLabel   string
+	ConfirmToken   string
+	Flash          string
 }
 
 // ManagedPostgresDatabaseItem is one database row on /dashboard/postgres.

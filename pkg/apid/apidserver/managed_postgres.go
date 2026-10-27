@@ -3,6 +3,7 @@ package apidserver
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"math"
 	"time"
@@ -246,6 +247,13 @@ func loadManagedPostgresCapEnforcer(registry *managedpostgres.Registry, store *m
 			}
 			return managedPostgresComputeCeiling(limits, overageOn), nil
 		},
+	}
+	if mode == managedpostgres.CapEnforcementOn {
+		qualification, err := managedpostgres.LoadComputeCapQualification(getenv(managedpostgres.CapQualificationPathEnv))
+		if err != nil {
+			return nil, fmt.Errorf("%s=on needs a readable %s: %w", managedpostgres.CapEnforcementEnv, managedpostgres.CapQualificationPathEnv, err)
+		}
+		options.Qualification = &qualification
 	}
 	if len(registerers) > 0 {
 		metrics, err := managedpostgres.NewCapMetrics(registerers[0], "apid", mode)

@@ -3,7 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * ADR-745 history of one pushed custom metric. Degraded responses carry null points.
+ * History of one pushed custom metric. Degraded responses carry null points.
  */
 export type CustomMetricSeriesResponse = {
   app_id: string;

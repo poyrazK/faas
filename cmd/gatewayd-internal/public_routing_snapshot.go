@@ -16,12 +16,26 @@ func newPublicRoutingPinner(store state.PublicRoutingSnapshotStore) gateway.Publ
 	return publicRoutingPinner(store, true)
 }
 
-// publicRoutingPinnerFor is the production wiring. With the default cached
-// host policy a host resolves from the route cache and carries no host-policy
-// snapshot to re-verify, so requiring one refused every public request. The
-// view still verifies the owner and pins the deployment roster.
+// publicRoutingPinnerFor is the exact read: one repeatable-read transaction
+// per request. With the default cached host policy a host resolves from the
+// route cache and carries no host-policy snapshot to re-verify, so requiring
+// one refused every public request. The view still verifies the owner and
+// pins the deployment roster.
 func publicRoutingPinnerFor(store state.PublicRoutingSnapshotStore, cachedHostPolicy bool) gateway.PublicRoutingPinner {
 	return publicRoutingPinner(store, !cachedHostPolicy)
+}
+
+// publicRoutingViewPinnerFor is the production wiring (ADR-20261027085556):
+// an ordinary request admits from the gateway's refreshed routing view, and a
+// pinned request keeps the exact read. The authoritative host policy
+// re-verifies the host in the same transaction as the roster, so it keeps the
+// exact read for every request.
+func publicRoutingViewPinnerFor(store state.PublicRoutingSnapshotStore, view gateway.PublicRoutingViewSource, cachedHostPolicy bool) gateway.PublicRoutingPinner {
+	exact := publicRoutingPinnerFor(store, cachedHostPolicy)
+	if !cachedHostPolicy || view == nil {
+		return exact
+	}
+	return gateway.NewViewPublicRoutingPinner(view, exact)
 }
 
 func publicRoutingPinner(store state.PublicRoutingSnapshotStore, verifyHostPolicy bool) gateway.PublicRoutingPinner {
@@ -44,6 +58,11 @@ func publicRoutingPinner(store state.PublicRoutingSnapshotStore, verifyHostPolic
 			if inputs.HostDeploymentID != "" {
 				result.HostChecked = true
 				var err error
+				if inputs.Smoke {
+					// The candidate is not live yet, and its scope need not be the host's.
+					result.HostAllowed, err = reader.PublicSmokeCandidateAllowed(ctx, app.ID, inputs.HostDeploymentID)
+					return err
+				}
 				result.HostAllowed, err = reader.PublicHostPinAllowed(ctx, app.ID, inputs.HostScope, inputs.HostDeploymentID)
 				return err
 			}
@@ -64,17 +83,39 @@ func publicRoutingPinner(store state.PublicRoutingSnapshotStore, verifyHostPolic
 			if inputs.Async {
 				return nil
 			}
-			rows, err := reader.PublicDeploymentWeights(ctx, app.ID, inputs.Scope)
+			rows, lane, err := publicRoutingRoster(ctx, reader, app.ID, inputs.Scope)
 			if err != nil {
 				return err
 			}
 			for _, row := range rows {
 				result.Weights = append(result.Weights, gateway.DeploymentWeightsRow{ID: row.ID, TrafficPercent: row.TrafficPercent})
 			}
+			if lane != "" && lane != normalizedRoutingScope(inputs.Scope) {
+				result.RosterScope = lane
+			}
 			return nil
 		})
 		return result, err
 	}
+}
+
+// publicRoutingRoster reads the weighted roster. The production lane follows
+// state.ProductionRoutingDeployments like the weighted picker, so a project
+// app still serving from the legacy default scope keeps its roster (rc.296
+// read only "production" for it and refused every request).
+func publicRoutingRoster(ctx context.Context, reader state.PublicRoutingPolicyReader, app, scope string) ([]state.ServiceDeploymentWeight, string, error) {
+	if state.IsProductionRoutingScope(scope) {
+		return reader.PublicProductionDeploymentWeights(ctx, app)
+	}
+	rows, err := reader.PublicDeploymentWeights(ctx, app, scope)
+	return rows, "", err
+}
+
+func normalizedRoutingScope(scope string) string {
+	if scope == "" {
+		return state.DefaultEnvScope
+	}
+	return scope
 }
 
 func readPublicReleaseSnapshot(ctx context.Context, reader state.PublicRoutingPolicyReader, app string, inputs gateway.PublicRoutingInputs, result *gateway.PublicRoutingSnapshot) error {

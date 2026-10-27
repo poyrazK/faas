@@ -60,7 +60,7 @@ func (e *Engine) prepareDeploymentPrimeBoot(ctx context.Context, app state.App, 
 		}
 	}
 	privateNetwork := e.privateNetworkProjection(ctx, app)
-	healthcheckGRPC, healthcheckGRPCService := healthcheckGRPCForApp(dep, app.AppProtocol)
+	healthcheckPath, healthcheckGRPC, healthcheckGRPCService := startupProbeForApp(dep, app)
 	pinnedBase, err := e.deploymentBaseKey(ctx, app, dep, primeLayer)
 	if err != nil {
 		result.RejectionReason = "prime_runtime_release_unavailable"
@@ -115,7 +115,7 @@ func (e *Engine) prepareDeploymentPrimeBoot(ctx context.Context, app state.App, 
 		// wakes. Without this field vmmd falls back to guest :8080 while the
 		// inferred profile starts Node/Python apps on their framework port.
 		Port:                     deploymentRuntimePort(dep),
-		HealthcheckPath:          healthcheckPathFromDep(dep),
+		HealthcheckPath:          healthcheckPath,
 		HealthcheckGRPC:          healthcheckGRPC,
 		HealthcheckGRPCService:   healthcheckGRPCService,
 		ImageHealthcheckRequired: imageHealthcheckRequiredFromDep(dep),

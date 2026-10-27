@@ -108,9 +108,9 @@ sealing customer secrets but can no longer open them.
 | `edge` | `domains/edge.age` | gatewayd-internal | compute | `apps.public_auth_basic`, `app_log_drains`, `application_standard_log_destinations`, rehearsal object credentials |
 | `alerting` | `domains/alerting.age` | meterd | control plane | `alert_rules`, `notification_channels`, `mcp_readiness_pagerduty_policies`, `mcp_readiness_fallback_policies` |
 | `storage` | `domains/storage.age` | s3-gatewayd | where s3-gatewayd runs | `object_storage_s3_credentials` |
-| `delivery` | `domains/delivery.age` | schedd | both | `execution_payloads`, `agent_execution_workflows.sealed_plan`, `app_webhooks`, trigger config envelopes, `commit_sources` |
+| `delivery` | `domains/delivery.age` | schedd | both | `execution_payloads`, `app_webhooks`, trigger config envelopes, `commit_sources` |
 | `control` | `domains/control.age` | schedd; `gregalectl` at node join | both | `cluster_signing_keys`, internal service keys (`internal_svc`, `cluster_svc`) |
-| `account` | `domains/account.age` | apid, apid clone worker, apid data-pipeline worker | control plane | `accounts.mfa_secret_encrypted`, `inbound_webhook_endpoints`, GitLab, Slack, Linear and MCP OAuth rows, `managed_realtime_*`, `project_environment_clone_*`, `data_pipeline_*`, `product_control_email_*`, `account_billing_connections`, `mcp_readiness_pagerduty_acknowledgements` |
+| `account` | `domains/account.age` | apid, apid clone worker, apid data-pipeline worker | control plane | `accounts.mfa_secret_encrypted`, `agent_execution_workflows.sealed_plan`, `inbound_webhook_endpoints`, GitLab, Slack, Linear and MCP OAuth rows, `managed_realtime_*`, `project_environment_clone_*`, `data_pipeline_*`, `product_control_email_*`, `account_billing_connections`, `mcp_readiness_pagerduty_acknowledgements` |
 
 Internal mail and livequeryd keep their existing dedicated identities and
 join the registry as the `mail`, `mail-verification` and `livequery` domains.
@@ -137,6 +137,8 @@ provider credentials, GitHub tokens or account material.
 | apid opens alert rule webhook secrets and notification channel targets for preset and test sends (`handlers_alert_presets.go`, `handlers_notification_channel_test_send.go`) | apid records a test-send request; meterd opens the target and sends it |
 | apid opens GitLab OAuth tokens (`environment_gitlab_source.go`) | stays in `account` for now; moving source fetches behind githubd is a follow-up |
 | the apid clone worker opens managed Postgres checkpoint material and seals a `DATABASE_URL` into `app_secrets` | unchanged: it opens `account` and seals to the `runtime` recipient |
+| apid's managed workflow worker opens the workflow plans apid sealed | unchanged: the plans belong to `account`, not `delivery`, since schedd never reads them |
+| apid opens a stored trigger config to keep its secret across an update (`MergeForUpdate`) | the merge keeps the stored ciphertext without opening it; until then trigger configs stay on the fleet key |
 
 ### 4. A registry and three ratchet gates keep it that way
 
@@ -495,6 +497,102 @@ identity opens none that is still valid.
 - **CD** stages the control identity on both node roles; it has no
   recipient to stage, since nothing seals to it but the migration.
 
+## Implemented in the ninth slice: the delivery domain
+
+- **schedd** loads `domains/delivery.age` (and its `.previous`) through
+  `FAAS_SEAL_DOMAIN_DELIVERY_IDENTITY_PATH` on control-plane and compute
+  hosts. Its webhook dispatcher, commit relay and execution payload decoder
+  open with the delivery identity first, then fleet and host. It exports
+  `faas_seal_domain_loaded{domain="delivery"}`, and a configured identity
+  that does not load fails startup.
+- **apid seals three kinds of value** to
+  `FAAS_SEAL_DOMAIN_DELIVERY_RECIPIENT_PATH` under
+  `FAAS_SEAL_DOMAIN_DELIVERY_WRITES`:
+  - app and account release webhook signing secrets (all four writers share
+    one helper);
+  - commit-source connections, whose fleet recipient must still be the
+    shared one (`FAAS_FLEET_AGE_RECIPIENT_PATH`), never a host's own;
+  - execution payloads: the API, the managed workflow worker's steps and
+    the durable restore validator.
+- **An execution payload's key id names the identity schedd opens it
+  with.** apid files a payload under the fleet recipient while the fleet
+  key still opens it, and under the domain's only in `domain` mode
+  (`sealdomain.KeyID`, as for storage). So a schedd that holds only the
+  fleet identity keeps opening dual-sealed payloads.
+- **Re-seal:** `gregalectl seal-domain migrate --domain delivery
+  --readers-verified` re-seals webhook secrets, connections and the
+  payloads of unfinished executions to the domain alone, each with a
+  compare-and-swap on its ciphertext; a payload moves to the domain's key
+  id with it. A finished execution's payload is left for retention to
+  delete. A connection's `credential_revision` is not bumped, since the
+  value did not change.
+- **Left out of the slice:**
+  - trigger config envelopes stay on the fleet key, because apid still
+    opens a stored config to merge an update (section 3);
+  - `agent_execution_workflows.sealed_plan` moves to the `account` row of
+    the registry: apid seals it and its own workflow worker opens it.
+
+## Implemented in the tenth slice: the account domain, core values
+
+The account domain is the last one, and the only one whose reader is apid
+itself. It covers 33 tables, so it ships in slices; each slice moves a group
+of columns, writers and readers together, so every release is consistent.
+This first slice covers the account's own values:
+`accounts.mfa_secret_encrypted`, `inbound_webhook_endpoints`,
+`account_billing_connections`, `agent_execution_workflows.sealed_plan` and
+`mcp_readiness_pagerduty_acknowledgements`.
+
+- **apid holds the identity**, not a recipient file: it loads
+  `domains/account.age` (and its `.previous`) through
+  `FAAS_SEAL_DOMAIN_ACCOUNT_IDENTITY_PATH` and seals to its recipient under
+  `FAAS_SEAL_DOMAIN_ACCOUNT_WRITES`. A configured identity that does not
+  load, or `domain` mode without one, fails the boot. apid exports
+  `faas_seal_domain_loaded{domain="account"}`.
+- **Each writer keeps its own legacy recipient** for the dual and fleet
+  modes: the MFA and billing writers the recipient of apid's own identity,
+  the others the fleet recipient. So the fleet mode writes what it wrote
+  before.
+- **Readers open with the account identity first**, through a dedicated
+  accessor. The fleet identity stays first in apid's shared identity list,
+  because other writers take their current recipient from it (the MCP
+  catalog seals refreshed OAuth tokens to it); prepending the account key
+  there would move other domains' values. The MCP readiness handler gets a
+  separate identity list for PagerDuty acknowledgements for the same reason.
+- **A workflow plan's key id names the identity the worker opens it with**:
+  the fleet recipient until `domain` mode, the domain's after
+  (`sealdomain.KeyID`), as for execution payloads.
+- **Re-seal:** `gregalectl seal-domain migrate --domain account
+  --readers-verified` re-seals the five kinds with a compare-and-swap on the
+  ciphertext; a plan's key id moves with it. Plans of finished workflows
+  are already cleared.
+- **Later slices:** product email (`product_control_email_*`, which has its
+  own SQL package), managed realtime, data pipelines (with the data-pipeline
+  worker's identity), and project environment clones (with the clone
+  worker's identity). Their columns stay on the fleet key until then.
+
+## Implemented in the eleventh slice: account integration credentials
+
+The second account slice moves the integration credentials apid holds:
+`gitlab_oauth_connections`, `issue_slack_installations`,
+`issue_slack_interaction_policies`, `issue_team_slack_destinations`,
+`issue_slack_oauth_flows`, `issue_tracker_linear_connections` and
+`issue_tracker_linear_oauth_flows`.
+
+- **Writers** seal to `accountRecipients(fleet)`: GitLab token storage and
+  rotation, the Slack OAuth service (workspace tokens, signing secrets and
+  consent flows), the dashboard's Slack bot token and signing secret forms,
+  and the Linear API key, OAuth credential and consent flow. The Slack and
+  Linear services take a list of recipients (`Recipients`); the
+  single-recipient helpers stay as wrappers.
+- **Readers** open with `accountIdentities()`: GitLab source fetches, Slack
+  delivery and routing, Slack interaction verification, the Linear OAuth
+  service, Linear webhook verification and native Linear creation.
+- **Re-seal:** `seal-domain migrate --domain account` covers the seven
+  kinds. A Linear connection holds an API key or an OAuth credential, so it
+  is re-sealed under whichever namespace it has. Expired consent flows are
+  left for their sweep.
+- The namespaces the re-seal shares with the writers moved to `pkg/api`.
+
 ## Implemented: the alerting test-send relay
 
 Section 3 moves apid's alerting test sends behind meterd, ahead of the
@@ -524,9 +622,11 @@ Each domain's key pair is a pair of GitHub environment secrets:
 
 - `scripts/ci/seal_domain_vars.sh` writes the files a host role needs on the
   runner and points the `seal_domains` role at them:
-  - control plane: the `outbound`, `source`, `alerting`, `storage` and
-    `control` identities and every recipient;
-  - compute: the `runtime`, `build`, `edge` and `control` identities.
+  - control plane: the `outbound`, `source`, `alerting`, `storage`,
+    `control`, `delivery` and `account` identities and every recipient
+    (`account` has none: apid holds its identity);
+  - compute: the `runtime`, `build`, `edge`, `control` and `delivery`
+    identities.
 - The control-plane converges (the full one and the host-configuration
   lane) and the compute join run the role with those variables.
 - A join whose `seal-domain verify` fails leaves the node drained.

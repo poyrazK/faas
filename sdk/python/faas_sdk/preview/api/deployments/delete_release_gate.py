@@ -71,7 +71,7 @@ def sync_detailed(
     *,
     client: AuthenticatedClient | Client,
 ) -> Response[Problem | ReleaseGate]:
-    """Remove a release gate (ADR-20261019071734).
+    """Remove a release gate.
 
      404 `release_gate_not_found` when the app has no gate with this name.
 
@@ -105,7 +105,7 @@ def sync(
     *,
     client: AuthenticatedClient | Client,
 ) -> Problem | ReleaseGate | None:
-    """Remove a release gate (ADR-20261019071734).
+    """Remove a release gate.
 
      404 `release_gate_not_found` when the app has no gate with this name.
 
@@ -134,7 +134,7 @@ async def asyncio_detailed(
     *,
     client: AuthenticatedClient | Client,
 ) -> Response[Problem | ReleaseGate]:
-    """Remove a release gate (ADR-20261019071734).
+    """Remove a release gate.
 
      404 `release_gate_not_found` when the app has no gate with this name.
 
@@ -166,7 +166,7 @@ async def asyncio(
     *,
     client: AuthenticatedClient | Client,
 ) -> Problem | ReleaseGate | None:
-    """Remove a release gate (ADR-20261019071734).
+    """Remove a release gate.
 
      404 `release_gate_not_found` when the app has no gate with this name.
 

@@ -80,7 +80,10 @@ bindings. Include every remote service that participates in a scoped call chain.
 There is no automatic expansion to unrelated project services.
 
 Sessions last one hour. Ctrl-C revokes the session; expiry also closes its
-connection. The CLI reconnects within the same lease, and a new attachment fences
+connection. A bridge into a company app also ends, within a second, when its
+creator leaves the company or loses the owner/admin role that created it, or the
+organization is suspended: the relay rechecks organization access on every
+request and on open connections. The CLI reconnects within the same lease, and a new attachment fences
 the old connection. Requests fail explicitly while disconnected and are never
 retried against the deployed service. Existing edge and remote-service request
 deadlines still apply when debugging through those hops. An interrupted request

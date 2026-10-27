@@ -21,8 +21,7 @@ class PromoteProjectEnvironmentRequest:
     approval_token: str | Unset = UNSET
     """Short-lived approval for a protected target environment."""
     override_freeze: str | Unset = UNSET
-    """Promote into production while a deploy freeze covers one of the apps; the reason is audited
-    (ADR-20261019071733)."""
+    """Promote into production while a deploy freeze covers one of the apps; the reason is audited."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

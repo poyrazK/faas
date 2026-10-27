@@ -46,7 +46,7 @@ class RouteInsight:
     """The fix that resolved the insight."""
     fix: RouteInsightFix | Unset = UNSET
     """The edge-rule change applying an active insight would make now, planned from its evidence and the app's
-    current rules (ADR-20261020161310). Absent when the platform has no fix; never in webhook payloads."""
+    current rules. Absent when the platform has no fix; never in webhook payloads."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

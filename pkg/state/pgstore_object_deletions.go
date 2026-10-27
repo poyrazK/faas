@@ -24,6 +24,18 @@ func (s *PgStore) HasActiveObjectDeletion(ctx context.Context, account, app, buc
 	return sqlc.New().ObjectDeletionActive(ctx, s.pool, mustPgUUID(bucket))
 }
 
+var _ ObjectLifecycleDeletionActivityStore = (*PgStore)(nil)
+
+func (s *PgStore) HasActiveObjectLifecycleDeletion(ctx context.Context, bucket, scan string) (bool, error) {
+	if _, e := uuid.Parse(bucket); e != nil {
+		return false, ErrNotFound
+	}
+	if _, e := uuid.Parse(scan); e != nil {
+		return false, ErrNotFound
+	}
+	return sqlc.New().ObjectLifecycleDeletionActive(ctx, s.pool, sqlc.ObjectLifecycleDeletionActiveParams{BucketID: mustPgUUID(bucket), ScanID: mustPgUUID(scan)})
+}
+
 func readDeletion(ctx context.Context, db sqlc.DBTX, id string) (ObjectDeletion, error) {
 	if _, e := uuid.Parse(id); e != nil {
 		return ObjectDeletion{}, ErrNotFound

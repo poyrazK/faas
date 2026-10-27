@@ -12,9 +12,13 @@ import (
 type PublicRoutingPolicyReader interface {
 	VerifyPublicRoutingOwner(context.Context, string, string, string) error
 	PublicDeploymentWeights(context.Context, string, string) ([]ServiceDeploymentWeight, error)
+	// PublicProductionDeploymentWeights reads the production lane's roster
+	// and names the scope it came from ("" when no deployment carries traffic).
+	PublicProductionDeploymentWeights(context.Context, string) ([]ServiceDeploymentWeight, string, error)
 	ResolvePublicProjectRelease(context.Context, string, string, string) (string, string, error)
 	PublicRevisionAllowed(context.Context, string, string, string) (bool, error)
 	PublicHostPinAllowed(context.Context, string, string, string) (bool, error)
+	PublicSmokeCandidateAllowed(context.Context, string, string) (bool, error)
 }
 
 type PublicRoutingSnapshotStore interface {
@@ -70,6 +74,23 @@ func (s servicePolicyReader) PublicDeploymentWeights(ctx context.Context, app, s
 	return weights, nil
 }
 
+func (s servicePolicyReader) PublicProductionDeploymentWeights(ctx context.Context, app string) ([]ServiceDeploymentWeight, string, error) {
+	rows, err := sqlc.New().ReadPublicRoutingProductionWeights(ctx, s.tx, sqlc.ReadPublicRoutingProductionWeightsParams{
+		AppID: uuidToPgtype(app), RowLimit: int32(api.TrafficPolicyMaxDeployments + 1)})
+	if err != nil {
+		return nil, "", err
+	}
+	if len(rows) > api.TrafficPolicyMaxDeployments {
+		return nil, "", errors.New("public routing deployment limit exceeded")
+	}
+	weights, lane := make([]ServiceDeploymentWeight, 0, len(rows)), ""
+	for _, row := range rows {
+		weights = append(weights, ServiceDeploymentWeight{ID: pgUUIDString(row.ID), TrafficPercent: int(row.TrafficPercent)})
+		lane = row.Scope
+	}
+	return weights, lane, nil
+}
+
 func (s servicePolicyReader) ResolvePublicProjectRelease(ctx context.Context, app, scope, requested string) (string, string, error) {
 	rows, err := sqlc.New().ReadPublicRoutingRelease(ctx, s.tx, sqlc.ReadPublicRoutingReleaseParams{
 		AppID: uuidToPgtype(app), Scope: normalizedDeploymentScope(scope), RequestedReleaseID: uuidToPgtype(requested)})
@@ -96,4 +117,11 @@ func (s servicePolicyReader) PublicRevisionAllowed(ctx context.Context, app, sco
 func (s servicePolicyReader) PublicHostPinAllowed(ctx context.Context, app, scope, deployment string) (bool, error) {
 	return sqlc.New().ReadPublicRoutingHostPin(ctx, s.tx, sqlc.ReadPublicRoutingHostPinParams{
 		AppID: uuidToPgtype(app), Scope: normalizedDeploymentScope(scope), DeploymentID: uuidToPgtype(deployment)})
+}
+
+// PublicSmokeCandidateAllowed reports whether a hosting smoke may reach the
+// deployment: the app's own snapshotting candidate, or a live deployment.
+func (s servicePolicyReader) PublicSmokeCandidateAllowed(ctx context.Context, app, deployment string) (bool, error) {
+	return sqlc.New().ReadPublicRoutingSmokeCandidate(ctx, s.tx, sqlc.ReadPublicRoutingSmokeCandidateParams{
+		AppID: uuidToPgtype(app), DeploymentID: uuidToPgtype(deployment)})
 }

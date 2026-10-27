@@ -50,7 +50,7 @@ class DebugTelemetryRequestItem:
     """W3C distributed-tracing identifier (32 hex chars), separate from request_id."""
     trace_inferred: bool | Unset = UNSET
     """True when Gregale linked this service call to its caller's trace because the caller sent no traceparent and
-    was serving exactly one request (ADR-1138): the trace id is inferred, not propagated."""
+    was serving exactly one request: the trace id is inferred, not propagated."""
     wake_id: str | Unset = UNSET
     """Opaque wake identifier when this request admitted a wake; omitted for warm requests."""
     instance_id: str | Unset = UNSET
@@ -72,7 +72,7 @@ class DebugTelemetryRequestItem:
     guest: DebugGuestExecutionEvidence | Unset = UNSET
     """Bounded, platform-owned runtime execution evidence. Omitted when the runner signal was unavailable."""
     profile_capture_id: UUID | Unset = UNSET
-    """Stack snapshot taken while this request was in flight (ADR-1155 slow_request capture), when one exists."""
+    """Stack snapshot taken while this request was in flight (slow_request capture), when one exists."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

@@ -63,9 +63,9 @@ def sync_detailed(
 ) -> Response[Problem | Trace]:
     """Retrieve a stored OpenTelemetry trace.
 
-     Issue #555. Returns the full span tree for a single trace_id
+     Returns the full span tree for a single trace_id
     (32-hex, the same as the request's `wake_id`). The trace is
-    sourced from the gatewayd-public in-memory ring (24h
+    sourced from the public edge in-memory ring (24h
     retention, 100k default cap). When no OTLP endpoint is set
     the ring is the only source — when OTLP is set, the ring
     still operates as the customer-facing query layer.
@@ -105,9 +105,9 @@ def sync(
 ) -> Problem | Trace | None:
     """Retrieve a stored OpenTelemetry trace.
 
-     Issue #555. Returns the full span tree for a single trace_id
+     Returns the full span tree for a single trace_id
     (32-hex, the same as the request's `wake_id`). The trace is
-    sourced from the gatewayd-public in-memory ring (24h
+    sourced from the public edge in-memory ring (24h
     retention, 100k default cap). When no OTLP endpoint is set
     the ring is the only source — when OTLP is set, the ring
     still operates as the customer-facing query layer.
@@ -142,9 +142,9 @@ async def asyncio_detailed(
 ) -> Response[Problem | Trace]:
     """Retrieve a stored OpenTelemetry trace.
 
-     Issue #555. Returns the full span tree for a single trace_id
+     Returns the full span tree for a single trace_id
     (32-hex, the same as the request's `wake_id`). The trace is
-    sourced from the gatewayd-public in-memory ring (24h
+    sourced from the public edge in-memory ring (24h
     retention, 100k default cap). When no OTLP endpoint is set
     the ring is the only source — when OTLP is set, the ring
     still operates as the customer-facing query layer.
@@ -182,9 +182,9 @@ async def asyncio(
 ) -> Problem | Trace | None:
     """Retrieve a stored OpenTelemetry trace.
 
-     Issue #555. Returns the full span tree for a single trace_id
+     Returns the full span tree for a single trace_id
     (32-hex, the same as the request's `wake_id`). The trace is
-    sourced from the gatewayd-public in-memory ring (24h
+    sourced from the public edge in-memory ring (24h
     retention, 100k default cap). When no OTLP endpoint is set
     the ring is the only source — when OTLP is set, the ring
     still operates as the customer-facing query layer.

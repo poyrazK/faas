@@ -76,6 +76,45 @@ func TestRegistry_ControlIsWiredToScheddAlone(t *testing.T) {
 	}
 }
 
+func TestRegistry_DeliveryIsWiredToScheddAlone(t *testing.T) {
+	s, ok := sealdomain.Lookup(sealdomain.Delivery)
+	if !ok || !s.Wired {
+		t.Fatalf("delivery domain = %+v, %v; want wired", s, ok)
+	}
+	if len(s.Readers) != 1 || s.Readers[0] != "schedd" {
+		t.Fatalf("delivery readers = %v, want [schedd]", s.Readers)
+	}
+	if len(s.Roles) != 2 {
+		t.Fatalf("delivery roles = %v; schedd runs on both node roles", s.Roles)
+	}
+	// apid both seals and opens a managed workflow's plan, so the plan
+	// belongs to apid's domain, not to schedd's.
+	for _, c := range s.Columns {
+		if c.Table == "agent_execution_workflows" {
+			t.Fatalf("delivery owns %s, which only apid opens", c)
+		}
+	}
+	if got := sealdomain.ReaderDomains("apid"); containsDomain(got, sealdomain.Delivery) {
+		t.Fatalf("apid reads %v; it must only seal delivery values", got)
+	}
+}
+
+func TestRegistry_AccountIsWiredToApidOnTheControlPlane(t *testing.T) {
+	s, ok := sealdomain.Lookup(sealdomain.Account)
+	if !ok || !s.Wired {
+		t.Fatalf("account domain = %+v, %v; want wired", s, ok)
+	}
+	if len(s.Roles) != 1 || s.Roles[0] != sealdomain.RoleControlPlane {
+		t.Fatalf("account roles = %v; a compute node never holds account material", s.Roles)
+	}
+	if got := sealdomain.ReaderDomains("apid"); !containsDomain(got, sealdomain.Account) {
+		t.Fatalf("apid reads %v; it opens account values", got)
+	}
+	if got := sealdomain.ReaderDomains("schedd"); containsDomain(got, sealdomain.Account) {
+		t.Fatalf("schedd reads %v; it must not open account values", got)
+	}
+}
+
 func TestRegistry_StorageIsWiredToS3GatewaydAlone(t *testing.T) {
 	s, ok := sealdomain.Lookup(sealdomain.Storage)
 	if !ok || !s.Wired {

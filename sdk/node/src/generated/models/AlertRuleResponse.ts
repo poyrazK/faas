@@ -25,7 +25,7 @@ export type AlertRuleResponse = {
    */
   event_subscription_id?: string;
   /**
-   * ADR-1192. Immutable edge rule selector for edge_rule_hits, edge_rule_log_hits and edge_rule_activity; absent means every rule of the app.
+   * Immutable edge rule selector for edge_rule_hits, edge_rule_log_hits and edge_rule_activity; absent means every rule of the app.
    */
   edge_rule_id?: string;
   /**
@@ -51,19 +51,19 @@ export type AlertRuleResponse = {
    */
   failure_source?: 'any' | 'cron' | 'queue' | 'delayed_task' | 'async_invoke' | 'inbound_webhook';
   /**
-   * The pushed custom metric a custom_metric rule watches (ADR-745). Present only when metric is custom_metric.
+   * The pushed custom metric a custom_metric rule watches. Present only when metric is custom_metric.
    */
   custom_metric_name?: string;
   /**
-   * The canonical log search filters a log_search_matches rule counts (ADR-20261018083536). Present only when metric is log_search_matches.
+   * The canonical log search filters a log_search_matches rule counts. Present only when metric is log_search_matches.
    */
   log_query?: string;
   /**
-   * The customer SLO an slo_budget_burn or slo_budget_remaining_pct rule watches (ADR-747); absent for other metrics.
+   * The customer SLO an slo_budget_burn or slo_budget_remaining_pct rule watches; absent for other metrics.
    */
   slo_id?: string;
   /**
-   * The synthetic check a synthetic_check_* rule watches (ADR-748); absent for other metrics.
+   * The synthetic check a synthetic_check_* rule watches; absent for other metrics.
    */
   synthetic_check_id?: string;
   /**
@@ -71,7 +71,7 @@ export type AlertRuleResponse = {
    */
   webhook_url: string;
   /**
-   * Notification channels (ADR-749) the rule delivers fires and resolves to.
+   * Notification channels the rule delivers fires and resolves to.
    */
   channel_ids?: Array<string>;
   /**

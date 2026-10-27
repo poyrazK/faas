@@ -70,7 +70,7 @@ def sync_detailed(
     *,
     client: AuthenticatedClient | Client,
 ) -> Response[Problem | list[SyntheticCheckResponse]]:
-    """List the app's synthetic checks (ADR-748)
+    """List the app's synthetic checks
 
      Returns every scheduled HTTP check defined on the app, name-ordered.
 
@@ -101,7 +101,7 @@ def sync(
     *,
     client: AuthenticatedClient | Client,
 ) -> Problem | list[SyntheticCheckResponse] | None:
-    """List the app's synthetic checks (ADR-748)
+    """List the app's synthetic checks
 
      Returns every scheduled HTTP check defined on the app, name-ordered.
 
@@ -127,7 +127,7 @@ async def asyncio_detailed(
     *,
     client: AuthenticatedClient | Client,
 ) -> Response[Problem | list[SyntheticCheckResponse]]:
-    """List the app's synthetic checks (ADR-748)
+    """List the app's synthetic checks
 
      Returns every scheduled HTTP check defined on the app, name-ordered.
 
@@ -156,7 +156,7 @@ async def asyncio(
     *,
     client: AuthenticatedClient | Client,
 ) -> Problem | list[SyntheticCheckResponse] | None:
-    """List the app's synthetic checks (ADR-748)
+    """List the app's synthetic checks
 
      Returns every scheduled HTTP check defined on the app, name-ordered.
 

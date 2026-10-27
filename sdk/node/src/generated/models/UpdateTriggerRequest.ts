@@ -20,7 +20,7 @@ export type UpdateTriggerRequest = {
   batch_window_ms?: number | null;
   max_attempts?: number | null;
   /**
-   * Switch between record and batch delivery; not available for cron or queue triggers (ADR-1321).
+   * Switch between record and batch delivery; not available for cron or queue triggers.
    */
   delivery?: 'record' | 'batch';
   /**
@@ -30,16 +30,14 @@ export type UpdateTriggerRequest = {
   payload_max_bytes?: number | null;
   /**
    * Kafka-only poison-record handling strategy. null/omitted
-   * means "leave unchanged" (the SQL coalesce() in
-   * pkg/state/pgstore.go::UpdateTrigger keeps the existing
+   * means "leave unchanged" (the SQL coalesce keeps the existing
    * value). Same semantics as the Trigger read shape.
    *
    */
   broker_poison_strategy?: 'commit' | 'seek-to-offset';
   /**
    * Optional record-level filter. nil means "leave
-   * unchanged" — the SQL coalesce() in
-   * pkg/state/pgstore.go::UpdateTrigger keeps the existing
+   * unchanged" — the SQL coalesce keeps the existing
    * value. Pass {} to clear an existing filter.
    *
    */

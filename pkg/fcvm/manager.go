@@ -38,6 +38,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/runtimeadmission"
 	"github.com/onebox-faas/faas/pkg/secretbox"
 	"github.com/onebox-faas/faas/pkg/storage"
+	"github.com/onebox-faas/faas/pkg/storagekey"
 	pkgtrace "github.com/onebox-faas/faas/pkg/trace"
 	"github.com/onebox-faas/faas/pkg/vmmdmount"
 	"github.com/onebox-faas/faas/pkg/wire"
@@ -681,6 +682,9 @@ type Instance struct {
 	// egress_resolved set expires (ADR-373), so repeated lookups of the
 	// same name skip the nft call until half the TTL has passed.
 	resolvedEgress map[netip.Addr]time.Time
+	// databaseEgress is when each address . port pair in this instance's
+	// egress_db set expires (ADR 20261026150000), on the same rule.
+	databaseEgress map[databaseEgressKey]time.Time
 	// TailCount (issue #667 / ADR-078) is the in-memory
 	// mirror of the per-instance `tail_count` SQL column.
 	// Incremented by the runner's WaitGroup each time a
@@ -860,6 +864,8 @@ type Manager struct {
 	// Forwarding permits belong to the live instance generation, not a gateway
 	// process. Cleanup drains them before recycling its network or lease.
 	httpForwards map[string]*httpForwardGeneration
+	// httpAdmissionDisabled is the FAAS_HTTP_ADMISSION=off kill switch.
+	httpAdmissionDisabled bool
 	// qualificationInstances owns isolated qualification targets without
 	// making them discoverable through serving lookups, CID routing, health
 	// loops, or app policy fan-out. Guarded by mu.
@@ -874,6 +880,9 @@ type Manager struct {
 	// egress_resolved set: a restored snapshot may reconnect to addresses
 	// its guest resolved before the snapshot.
 	appResolved map[string]map[netip.Addr]time.Time
+	// appDatabaseResolved is the same per app for bound managed databases'
+	// address . port pairs (ADR 20261026150000).
+	appDatabaseResolved map[string]map[databaseEgressKey]time.Time
 	// ADR-570: serialize circuit updates and pending-network registration so
 	// a wake cannot miss a policy change before it enters the live map.
 	egressCircuitMu           sync.Mutex
@@ -1300,6 +1309,7 @@ type Manager struct {
 	// leaf lock: it is never held while m.mu or a quietState lock is taken.
 	quietActivity QuietActivity
 	quietMetrics  *QuietPauseMetrics
+	quietObserve  bool
 	quietTick     time.Duration
 	quietMu       sync.Mutex
 	quietStates   map[string]*quietState
@@ -2981,6 +2991,9 @@ type wakingInstance struct {
 	appID        string
 	accountID    string
 	contained    bool // a rehearsal run contains it (ADR-20261017201005)
+	// qualification marks a held GitOps qualification candidate (ADR-568):
+	// it boots with its app's identity but takes no external action.
+	qualification bool
 }
 
 // WorkloadTokenIdentity resolves the identity a workload-identity token is
@@ -2988,38 +3001,11 @@ type wakingInstance struct {
 // before readiness (a worker is characterized for the whole
 // CharacterizationDeadline), and the identity is fixed when the wake starts,
 // so a queue consumer can lease while it boots (ADR-1141 amendment
-// 2026-10-17). Other guest services keep InstanceIdentity's live-only rule.
-//
-// A live instance goes through InstanceExternalActionIdentity. A booting one
-// gets the same rehearsal containment: no token while its app has a contained
-// run or the wake joined one.
+// 2026-10-17). It is the external-action rule, which the relay and event
+// publishing follow too (amendment 2026-10-24); InstanceIdentity stays
+// live-only.
 func (m *Manager) WorkloadTokenIdentity(ctx context.Context, instance string) (string, string, error) {
-	m.mu.Lock()
-	_, live := m.live[instance]
-	booting, waking := m.waking[instance]
-	m.mu.Unlock()
-	if live || !waking {
-		return m.InstanceExternalActionIdentity(ctx, instance)
-	}
-	if booting.appID == "" || booting.accountID == "" {
-		return "", "", fmt.Errorf("fcvm: WorkloadTokenIdentity %s: booting without an app identity", instance)
-	}
-	if booting.contained {
-		return "", "", ErrRehearsalExternalActionDenied
-	}
-	run, err := m.rehearsalNetworkRun(ctx, booting.appID)
-	if err != nil {
-		return "", "", err
-	}
-	if run != "" {
-		return "", "", ErrRehearsalExternalActionDenied
-	}
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if current, ok := m.waking[instance]; !ok || current != booting {
-		return "", "", fmt.Errorf("fcvm: WorkloadTokenIdentity %s: changed during policy read", instance)
-	}
-	return booting.appID, booting.accountID, nil
+	return m.InstanceExternalActionIdentity(ctx, instance)
 }
 
 // WorkloadTokenDeployment is the deployment a live or booting instance runs,
@@ -4740,7 +4726,8 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 	if m.waking == nil {
 		m.waking = make(map[string]wakingInstance)
 	}
-	m.waking[req.Instance] = wakingInstance{deploymentID: req.DeploymentID, appID: req.AppID, accountID: req.AccountID, contained: req.RehearsalRunID != ""}
+	m.waking[req.Instance] = wakingInstance{deploymentID: req.DeploymentID, appID: req.AppID, accountID: req.AccountID,
+		contained: req.RehearsalRunID != "", qualification: qualificationOnly}
 	m.mu.Unlock()
 	lease = m.beginProcessAttempt(lease)
 	m.beginFunctionExecutionBoot(lease, req)
@@ -5854,9 +5841,15 @@ func (m *Manager) readBaseScan(ctx context.Context, scanKey string) (baseScanSid
 	return scan, nil
 }
 
-// ensureBaseGeneration refreshes a stale logical runtime-base group before
-// admission. The marker makes the steady-state path a local file read; only a
-// release reference change streams the base from shared storage.
+// ensureBaseGeneration adopts the configured generation of a runtime base
+// group before admission. The marker makes the steady-state path a local file
+// read; only a release reference change streams the base from shared storage.
+// It adopts from the generation's own keys, which only releases configured for
+// that generation write, and falls back to the legacy logical keys only when
+// no release since ADR-20261026181418 published the generation. On
+// production-us (2026-10-26) an rc.294 imaged restaged the logical key with
+// its own generation after rc.296's pre-stage had published there, and every
+// rc.296 cold boot on fsn-2 was refused from then on.
 func (m *Manager) ensureBaseGeneration(ctx context.Context, baseKey, scanKey string) error {
 	expected := m.baseGenerations[baseKey]
 	if expected == "" {
@@ -5883,52 +5876,47 @@ func (m *Manager) ensureBaseGeneration(ctx context.Context, baseKey, scanKey str
 		m.log.Info("runtime base cache generation refresh started", "base_key", baseKey, "generation", expected)
 	}
 
-	// imaged publishes the scan sidecar after the base and digest sidecar.
-	// Read that commit marker first: once it names expected, the canonical
-	// parent already contains the complete generation. Pulling the large base
-	// before this check could otherwise race a release publication and combine
-	// the previous base with the new digest and scan sidecars.
-	scanCache, scanCacheKey, routeErr := storage.CacheBackendForKey(m.storage, scanKey)
-	if routeErr != nil {
-		return fmt.Errorf("resolve cache route for %q: %w", scanKey, routeErr)
-	}
-	if scanCache == nil || scanCache != baseCache {
-		return fmt.Errorf("runtime base group %q is not owned by one read-through cache", baseKey)
-	}
-	rc, refreshErr := scanCache.Refresh(ctx, scanCacheKey)
-	if refreshErr != nil {
-		return fmt.Errorf("refresh runtime base artifact %q: %w", scanKey, refreshErr)
-	}
-	if closeErr := rc.Close(); closeErr != nil {
-		return fmt.Errorf("close refreshed runtime base artifact %q: %w", scanKey, closeErr)
-	}
-	scan, err := m.readBaseScan(ctx, scanKey)
+	// The scan sidecar comes first: imaged publishes it after the base and
+	// digest sidecar, so once it names expected the rest of the group is
+	// complete. Pulling the large base before this check could otherwise race
+	// a publication and combine the previous base with the new sidecars.
+	logical, err := baseGroupCacheKeys(m.storage, baseCache, []string{scanKey, baseKey, baseKey + ".digest"})
 	if err != nil {
-		return fmt.Errorf("read refreshed scan sidecar: %w", err)
+		return err
 	}
-	if !scanNamesConfiguredBase(scan.Image, expected) {
-		return fmt.Errorf("refreshed scan generation %q does not match configured runtime base %q", scan.Image, expected)
+	generationKey := storagekey.BaseGeneration(baseKey, expected)
+	published, err := baseGroupCacheKeys(m.storage, baseCache, []string{wire.ScanKeyForBaseKey(generationKey), generationKey, generationKey + ".digest"})
+	if err != nil {
+		return err
 	}
-
-	keys := []string{baseKey, baseKey + ".digest"}
-	for _, key := range keys {
-		cache, relativeKey, routeErr := storage.CacheBackendForKey(m.storage, key)
-		if routeErr != nil {
-			return fmt.Errorf("resolve cache route for %q: %w", key, routeErr)
-		}
-		if cache == nil || cache != baseCache {
-			return fmt.Errorf("runtime base group %q is not owned by one read-through cache", baseKey)
-		}
-		rc, refreshErr := cache.Refresh(ctx, relativeKey)
+	source := "generation"
+	err = m.adoptBaseScan(ctx, baseCache, scanKey, logical[0], published[0], expected)
+	if errors.Is(err, storage.ErrNotFound) {
+		// No release since ADR-20261026181418 published this generation. A
+		// release before it may have, under the logical keys, which any
+		// release could overwrite: adopt them only while their scan names it.
+		source, published = "legacy", logical
+		err = m.adoptBaseScan(ctx, baseCache, scanKey, logical[0], logical[0], expected)
+	}
+	if err != nil {
+		return err
+	}
+	for i := 1; i < len(logical); i++ {
+		rc, refreshErr := baseCache.RefreshFrom(ctx, logical[i], published[i])
 		if refreshErr != nil {
-			return fmt.Errorf("refresh runtime base artifact %q: %w", key, refreshErr)
+			return fmt.Errorf("refresh runtime base artifact %q: %w", published[i], refreshErr)
 		}
 		if closeErr := rc.Close(); closeErr != nil {
-			return fmt.Errorf("close refreshed runtime base artifact %q: %w", key, closeErr)
+			return fmt.Errorf("close refreshed runtime base artifact %q: %w", published[i], closeErr)
 		}
 	}
-	if err := baseCache.MarkGeneration(baseCacheKey, expected); err != nil {
-		return fmt.Errorf("commit runtime base generation: %w", err)
+	// The base marker is the commit record; marking the sidecars first keeps
+	// the whole adopted group out of cache eviction, so a later read of the
+	// scan never falls through to another release's publication.
+	for _, key := range []string{logical[2], logical[0], logical[1]} {
+		if err := baseCache.MarkGeneration(key, expected); err != nil {
+			return fmt.Errorf("commit runtime base generation: %w", err)
+		}
 	}
 	// ADR-510: identify the refreshed base now, while this admission is
 	// already paying for the refresh, rather than in a later restore.
@@ -5938,7 +5926,7 @@ func (m *Manager) ensureBaseGeneration(ctx context.Context, baseKey, scanKey str
 		}
 	}
 	if m.log != nil {
-		m.log.Info("runtime base cache generation refresh completed", "base_key", baseKey, "generation", expected)
+		m.log.Info("runtime base cache generation refresh completed", "base_key", baseKey, "generation", expected, "source", source)
 	}
 	return nil
 }
@@ -5978,7 +5966,7 @@ func (m *Manager) bringUpScanCheck(ctx context.Context, baseKey string) error {
 	// have published a complete scan for the same base (H10-103 left a
 	// refusal cached on fsn-3 after fsn-2 rewrote it), so a refusal is
 	// re-checked once against the canonical copy before the boot fails.
-	if gateErr != nil && m.refreshCachedScan(ctx, scanKey) {
+	if gateErr != nil && m.refreshCachedScan(ctx, baseKey, scanKey) {
 		scan, readErr = m.readBaseScan(ctx, scanKey)
 		reason, gateErr = m.baseScanVerdict(baseKey, scanKey, scan, readErr)
 	}
@@ -6038,18 +6026,30 @@ func (m *Manager) baseScanVerdict(baseKey, scanKey string, scan baseScanSidecar,
 }
 
 // refreshCachedScan replaces this node's cached copy of scanKey with the
-// canonical object. It reports false when the key is not cache-backed or the
-// refresh fails, leaving the cached verdict in force.
-func (m *Manager) refreshCachedScan(ctx context.Context, scanKey string) bool {
+// canonical object: for a generation-gated base, its generation's own scan,
+// or the legacy logical scan when no release since ADR-20261026181418
+// published the generation and the legacy scan still names it. It reports
+// false when the key is not cache-backed or no such copy can be read, leaving
+// the cached verdict in force.
+func (m *Manager) refreshCachedScan(ctx context.Context, baseKey, scanKey string) bool {
 	cache, rel, err := storage.CacheBackendForKey(m.storage, scanKey)
 	if err != nil || cache == nil {
 		return false
 	}
-	rc, err := cache.Refresh(ctx, rel)
+	expected := m.baseGenerations[baseKey]
+	if expected == "" {
+		rc, err := cache.Refresh(ctx, rel)
+		return err == nil && rc.Close() == nil
+	}
+	published, err := baseGroupCacheKeys(m.storage, cache, []string{wire.ScanKeyForBaseKey(storagekey.BaseGeneration(baseKey, expected))})
 	if err != nil {
 		return false
 	}
-	return rc.Close() == nil
+	rc, err := cache.RefreshFrom(ctx, rel, published[0])
+	if errors.Is(err, storage.ErrNotFound) && m.legacyScanNames(ctx, cache, rel, expected) {
+		rc, err = cache.RefreshFrom(ctx, rel, rel)
+	}
+	return err == nil && rc.Close() == nil
 }
 
 // Park snapshots a running instance then destroys it, freeing all resident RAM

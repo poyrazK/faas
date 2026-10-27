@@ -85,9 +85,9 @@ def sync_detailed(
     client: AuthenticatedClient | Client,
     body: PostOTLPMetricsJsonBody,
 ) -> Response[PostOTLPMetricsResponse200 | Problem]:
-    """Ingest OTLP/HTTP metrics as custom metrics (ADR-745)
+    """Ingest OTLP/HTTP metrics as custom metrics
 
-     ADR-745 internal preview, enabled by `FAAS_CUSTOM_METRIC_HISTORY_ENABLED=1`;
+     Internal preview, enabled by `FAAS_CUSTOM_METRIC_HISTORY_ENABLED=1`;
     otherwise 503. Point an OpenTelemetry exporter's metrics endpoint here
     with a `metrics:write` API key as the bearer token.
 
@@ -129,9 +129,9 @@ def sync(
     client: AuthenticatedClient | Client,
     body: PostOTLPMetricsJsonBody,
 ) -> PostOTLPMetricsResponse200 | Problem | None:
-    """Ingest OTLP/HTTP metrics as custom metrics (ADR-745)
+    """Ingest OTLP/HTTP metrics as custom metrics
 
-     ADR-745 internal preview, enabled by `FAAS_CUSTOM_METRIC_HISTORY_ENABLED=1`;
+     Internal preview, enabled by `FAAS_CUSTOM_METRIC_HISTORY_ENABLED=1`;
     otherwise 503. Point an OpenTelemetry exporter's metrics endpoint here
     with a `metrics:write` API key as the bearer token.
 
@@ -168,9 +168,9 @@ async def asyncio_detailed(
     client: AuthenticatedClient | Client,
     body: PostOTLPMetricsJsonBody,
 ) -> Response[PostOTLPMetricsResponse200 | Problem]:
-    """Ingest OTLP/HTTP metrics as custom metrics (ADR-745)
+    """Ingest OTLP/HTTP metrics as custom metrics
 
-     ADR-745 internal preview, enabled by `FAAS_CUSTOM_METRIC_HISTORY_ENABLED=1`;
+     Internal preview, enabled by `FAAS_CUSTOM_METRIC_HISTORY_ENABLED=1`;
     otherwise 503. Point an OpenTelemetry exporter's metrics endpoint here
     with a `metrics:write` API key as the bearer token.
 
@@ -210,9 +210,9 @@ async def asyncio(
     client: AuthenticatedClient | Client,
     body: PostOTLPMetricsJsonBody,
 ) -> PostOTLPMetricsResponse200 | Problem | None:
-    """Ingest OTLP/HTTP metrics as custom metrics (ADR-745)
+    """Ingest OTLP/HTTP metrics as custom metrics
 
-     ADR-745 internal preview, enabled by `FAAS_CUSTOM_METRIC_HISTORY_ENABLED=1`;
+     Internal preview, enabled by `FAAS_CUSTOM_METRIC_HISTORY_ENABLED=1`;
     otherwise 503. Point an OpenTelemetry exporter's metrics endpoint here
     with a `metrics:write` API key as the bearer token.
 

@@ -75,7 +75,7 @@ def sync_detailed(
 ) -> Response[Problem | ProjectEnvironmentSharedSecretsResponse]:
     """List the secrets shared by every service of a project environment.
 
-     Metadata only (ADR-1139): key, version, sealing key id and value
+     Metadata only: key, version, sealing key id and value
     fingerprint. Values are write-only and never returned.
 
     Args:
@@ -110,7 +110,7 @@ def sync(
 ) -> Problem | ProjectEnvironmentSharedSecretsResponse | None:
     """List the secrets shared by every service of a project environment.
 
-     Metadata only (ADR-1139): key, version, sealing key id and value
+     Metadata only: key, version, sealing key id and value
     fingerprint. Values are write-only and never returned.
 
     Args:
@@ -140,7 +140,7 @@ async def asyncio_detailed(
 ) -> Response[Problem | ProjectEnvironmentSharedSecretsResponse]:
     """List the secrets shared by every service of a project environment.
 
-     Metadata only (ADR-1139): key, version, sealing key id and value
+     Metadata only: key, version, sealing key id and value
     fingerprint. Values are write-only and never returned.
 
     Args:
@@ -173,7 +173,7 @@ async def asyncio(
 ) -> Problem | ProjectEnvironmentSharedSecretsResponse | None:
     """List the secrets shared by every service of a project environment.
 
-     Metadata only (ADR-1139): key, version, sealing key id and value
+     Metadata only: key, version, sealing key id and value
     fingerprint. Values are write-only and never returned.
 
     Args:

@@ -86,6 +86,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/reqbudget"
 	"github.com/onebox-faas/faas/pkg/role"
 	"github.com/onebox-faas/faas/pkg/routeprobe"
+	"github.com/onebox-faas/faas/pkg/sealdomain"
 	"github.com/onebox-faas/faas/pkg/secretbox"
 	"github.com/onebox-faas/faas/pkg/state"
 	artifactstorage "github.com/onebox-faas/faas/pkg/storage"
@@ -1686,6 +1687,11 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// restart; calling WithDataPlacement after reconcile would overwrite it
 	// with the environment fallback on every boot.
 	srv.WithDataPlacement(dataPlacementEnabledFromEnv(deps.getenv))
+	egressCircuitEnforced, err := api.EgressCircuitBreakerEnabled(deps.getenv("FAAS_EGRESS_CIRCUIT_BREAKER"))
+	if err != nil {
+		return fmt.Errorf("apid: %w", err)
+	}
+	srv.WithEgressCircuitEnforcement(egressCircuitEnforced)
 	if err := srv.runtimeConfig.reconcile(ctx, store); err != nil {
 		return fmt.Errorf("apid: reconcile runtime config: %w", err)
 	}
@@ -2004,6 +2010,8 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if err := loadSealDomains(deps.getenv, log); err != nil {
 		return err
 	}
+	// ADR 20261022111812: apid reads the account domain.
+	sealdomain.RegisterLoaded(ops.Registry(), sealdomain.Account, len(accountDomainIdentities) > 0)
 
 	// MFA (IAM-2, issue #186): load the host age identity so
 	// /v1/account/mfa/confirm and /verify can unseal the TOTP
@@ -2529,6 +2537,11 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	var runtimeLogs *receivers.RuntimeLogEventsReceiver
 	if deps.getenv("FAAS_OTEL_SPANS_WRITER_ENABLED") != "false" {
 		runtimeLogs = receivers.NewRuntimeLogEventsReceiver(srv.store, deps.getenv("FAAS_LOG_SEARCH_ENABLED") == "1", srv.ops.Registry(), log)
+		// Multi-box: a node's vmmd/apid-client leaf names the node, so its
+		// lines must come from instances on that node.
+		if nodes, ok := nodeVerifier.(wire.NodeIdentityResolver); ok {
+			runtimeLogs.WithPeerNodes(nodes)
+		}
 	}
 	// H5-34: one gate across both telemetry listeners bounds their share of
 	// apid's database pool.

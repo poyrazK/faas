@@ -71,6 +71,7 @@ native_e2e_phase_files() {
       deploy_override_port_metal_test.go \
       deploy_wake_metal_test.go \
       safe_release_drill_metal_test.go \
+      release_guards_drill_metal_test.go \
       dev_loop_metal_test.go \
       direct_oci_autoscale_metal_test.go \
       direct_oci_fullrootfs_metal_test.go \
@@ -97,6 +98,7 @@ native_e2e_phase_files() {
     wake) printf '%s\n' \
       wake_timeline_metal_test.go \
       frozen_tier_metal_test.go \
+      quiet_pause_billing_metal_test.go \
       worker_frozen_metal_test.go \
       worker_scale_from_zero_metal_test.go \
       wake_platform_bench_metal_test.go \
@@ -128,7 +130,7 @@ native_e2e_phase_files() {
     # Response streaming and the h2c/gRPC inner leg (G19.3).
     streaming) printf '%s\n' streaming_metal_test.go bridge_h2c_terminator_metal_test.go function_streaming_metal_test.go instance_bridge_sessions_metal_test.go ;;
     # App log delivery (SSE).
-    logs) printf '%s\n' logs_e2e_test.go ;;
+    logs) printf '%s\n' logs_e2e_test.go logs_archive_metal_test.go ;;
     # Spec §11 ship-blocking fences. Small, and must never be skipped quietly.
     security) printf '%s\n' sec11_memory_max_e2e_test.go sec11_seccomp_e2e_test.go ;;
     # Multi-node control plane: recovery arbiter, drain, heartbeat drills.

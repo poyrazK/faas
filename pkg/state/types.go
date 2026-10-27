@@ -3400,6 +3400,24 @@ type Cron struct {
 	SkipIfRunning   bool   // skip a scheduled fire while a prior cron run is active
 	CreatedAt       time.Time
 	LastFiredAt     time.Time // zero until first fire; updated by MarkCronFired
+	// ScheduleAnchorAt is when the schedule last took effect: a schedule or
+	// timezone change, an enable, or a lifted suspension (ADR-20261026201726).
+	// Zero until then. See ScheduleCursor.
+	ScheduleAnchorAt time.Time
+}
+
+// ScheduleCursor is the instant after which the cron's next boundary
+// falls: LastFiredAt (CreatedAt before the first fire), or ScheduleAnchorAt
+// when that is later (ADR-20261026201726).
+func (c Cron) ScheduleCursor() time.Time {
+	cursor := c.LastFiredAt
+	if cursor.IsZero() {
+		cursor = c.CreatedAt
+	}
+	if c.ScheduleAnchorAt.After(cursor) {
+		cursor = c.ScheduleAnchorAt
+	}
+	return cursor
 }
 
 const CronSuspendedNoLiveDeployment = "no_live_deployment"
@@ -3462,7 +3480,7 @@ type FireNowRequest struct {
 	AccountID    string
 	RequestedAt  time.Time
 	Status       FireNowStatus
-	InvocationID *string // nil while pending/running; set on terminal
+	InvocationID *string // set once an HTTP fire queues its invocation (ADR-20261026201726)
 	OperationID  *string // set when this cron fire was admitted as managed work
 	TaskID       *string // nil for HTTP crons; set when a command-cron task is queued
 	Error        *string // nil until status=failed
@@ -3867,26 +3885,30 @@ type AlertRule struct {
 	ID                              string
 	AccountID                       string
 	AppID                           string // empty = account-wide
-	Name                            string
-	Enabled                         bool
-	Metric                          AlertMetric
-	Comparison                      AlertComparison
-	Threshold                       float64
-	WindowSpec                      AlertWindowSpec
-	FailureSource                   AlertFailureSource // empty unless Metric == failed_invocations
-	CustomMetricName                string             // empty unless Metric == custom_metric (ADR-745)
-	LogQuery                        string             // canonical log search filters; set only for log_search_matches
-	SLOID                           string             // set only for the ADR-747 SLO metrics
-	SyntheticCheckID                string             // set only for the ADR-748 synthetic check metrics
-	Action                          AlertAction        // issue #976 / ADR-122 / SAFE-RELEASES-B
-	WebhookURL                      string
-	WebhookSecretSealed             []byte // age/X25519 ciphertext; never logged
-	CooldownMinutes                 int
-	State                           AlertState
-	LastFiredAt                     time.Time // zero until first fire
-	LastEvaluatedAt                 time.Time
-	CreatedAt                       time.Time
-	UpdatedAt                       time.Time
+	// CreatedByAccountID is the member who created the rule
+	// (ADR-20261026151103); empty for a rule older than the column, which
+	// only the app's creator could create.
+	CreatedByAccountID  string
+	Name                string
+	Enabled             bool
+	Metric              AlertMetric
+	Comparison          AlertComparison
+	Threshold           float64
+	WindowSpec          AlertWindowSpec
+	FailureSource       AlertFailureSource // empty unless Metric == failed_invocations
+	CustomMetricName    string             // empty unless Metric == custom_metric (ADR-745)
+	LogQuery            string             // canonical log search filters; set only for log_search_matches
+	SLOID               string             // set only for the ADR-747 SLO metrics
+	SyntheticCheckID    string             // set only for the ADR-748 synthetic check metrics
+	Action              AlertAction        // issue #976 / ADR-122 / SAFE-RELEASES-B
+	WebhookURL          string
+	WebhookSecretSealed []byte // age/X25519 ciphertext; never logged
+	CooldownMinutes     int
+	State               AlertState
+	LastFiredAt         time.Time // zero until first fire
+	LastEvaluatedAt     time.Time
+	CreatedAt           time.Time
+	UpdatedAt           time.Time
 }
 
 // AlertDelivery is one delivery attempt record. IdempotencyKey is
@@ -4262,8 +4284,11 @@ type AppWebhook struct {
 	RetryPolicy      AppWebhookRetryPolicy
 	DeliveryFormat   AppWebhookDeliveryFormat
 	Enabled          bool
-	CreatedAt        time.Time
-	UpdatedAt        time.Time
+	// CreatedByAccountID is the member who created an app-scope webhook
+	// (ADR-20261026151103). It is written on create only.
+	CreatedByAccountID string
+	CreatedAt          time.Time
+	UpdatedAt          time.Time
 }
 
 // ManagedRealtimeEndpoint is the durable control-plane description of one
@@ -7700,6 +7725,9 @@ type ProjectEnvironmentApproval struct {
 	ExpiresAt         time.Time
 	ConsumedAt        *time.Time
 	CreatedAt         time.Time
+	// ApprovedByAccountID is who gave the approval; "" for approvals made
+	// before it was recorded (ADR-20261020085706 amendment 2).
+	ApprovedByAccountID string
 }
 
 // ProjectEnvironmentConfig is one immutable, canonical non-secret
@@ -8303,7 +8331,9 @@ type EdgeRuleIPAction struct {
 //     enforced as a sanity floor — MaxBodyBytes > plan cap is a
 //     create-time 422 from pkg/api/dto.go.
 type EdgeRuleValidateAction struct {
-	Schema              json.RawMessage `json:"schema"`
+	// Schema is absent for a parameter-only rule. Rows written before
+	// omitempty store "schema": null; the gateway reads that as absent.
+	Schema              json.RawMessage `json:"schema,omitempty"`
 	ContentTypes        []string        `json:"content_types,omitempty"`
 	ApplyWhileStreaming bool            `json:"apply_while_streaming,omitempty"`
 	RejectOnUnknown     bool            `json:"reject_on_unknown_fields,omitempty"`
@@ -9624,8 +9654,11 @@ type AppLogDrain struct {
 	TargetURL        string
 	AuthHeaderSealed []byte
 	Enabled          bool
-	CreatedAt        time.Time
-	UpdatedAt        time.Time
+	// CreatedByAccountID is the member who created the drain
+	// (ADR-20261026151103). It is written on create only.
+	CreatedByAccountID string
+	CreatedAt          time.Time
+	UpdatedAt          time.Time
 }
 
 // AppLogDrainHealth is the durable, customer-safe delivery snapshot for one

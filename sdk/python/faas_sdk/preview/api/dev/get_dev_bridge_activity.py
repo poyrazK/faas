@@ -76,8 +76,8 @@ def sync_detailed(
 ) -> Response[Any | DevBridgeActivity | Problem]:
     """Inspect recent connection and request metadata.
 
-     ADR-379 temporary API observer window. Queries, headers and bodies are excluded. Restart or bounded
-    eviction clears activity; observation never authorizes routing.
+     Temporary API observer window. Queries, headers and bodies are excluded. Restart or bounded eviction
+    clears activity; observation never authorizes routing.
 
     Args:
         id (str):
@@ -108,8 +108,8 @@ def sync(
 ) -> Any | DevBridgeActivity | Problem | None:
     """Inspect recent connection and request metadata.
 
-     ADR-379 temporary API observer window. Queries, headers and bodies are excluded. Restart or bounded
-    eviction clears activity; observation never authorizes routing.
+     Temporary API observer window. Queries, headers and bodies are excluded. Restart or bounded eviction
+    clears activity; observation never authorizes routing.
 
     Args:
         id (str):
@@ -135,8 +135,8 @@ async def asyncio_detailed(
 ) -> Response[Any | DevBridgeActivity | Problem]:
     """Inspect recent connection and request metadata.
 
-     ADR-379 temporary API observer window. Queries, headers and bodies are excluded. Restart or bounded
-    eviction clears activity; observation never authorizes routing.
+     Temporary API observer window. Queries, headers and bodies are excluded. Restart or bounded eviction
+    clears activity; observation never authorizes routing.
 
     Args:
         id (str):
@@ -165,8 +165,8 @@ async def asyncio(
 ) -> Any | DevBridgeActivity | Problem | None:
     """Inspect recent connection and request metadata.
 
-     ADR-379 temporary API observer window. Queries, headers and bodies are excluded. Restart or bounded
-    eviction clears activity; observation never authorizes routing.
+     Temporary API observer window. Queries, headers and bodies are excluded. Restart or bounded eviction
+    clears activity; observation never authorizes routing.
 
     Args:
         id (str):

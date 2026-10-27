@@ -1096,3 +1096,154 @@ the two is required.
 Rejected: coercing values inside the JSON Schema (custom keywords tie rules
 to one validator); validating cookies (session data, not API contract);
 treating a non-converting value as absent (it would hide malformed input).
+
+## Amendment (2026-10-26): rules load for the host's owner; unreadable policy refuses once
+
+A GA-readiness review of the cached rule path (production, unless
+`FAAS_TRAFFIC_AUTHORITATIVE_HOST_POLICY` turns on the ADR-570 snapshots) found
+two costs other tenants could impose, and one guarantee that held only by
+accident.
+
+- **Every read scanned every tenant's rules.** `MatchEdgeRulesForHost` matches
+  with `$1 LIKE replace(match_host, ...)`, which no index serves. It also
+  returns every account's rules whose `match_host` covers the host:
+  `match_host` may be `*` or any pattern, unchecked against the account's
+  hosts. So one account's `*` rules (up to 500 per app) were read and compiled
+  into the cached set of every host on the fleet, and the appliers then
+  dropped them (`OwnedEdgeRules`).
+- **One edit flushed the fleet.** A mutation drops the cached sets its
+  `match_host` patterns cover. A `*` or `@app` rule covers every host, so any
+  tenant's edit of one reloaded every host's rules on every gateway.
+- **An unreadable policy failed closed only by ordering.** With a host's
+  rules unreadable and no last-known set, every kind but `jwt` treated the
+  failed read as no rule. Requests were still refused, because `kind=jwt`
+  returns an "unavailable" rule for every host and its gate runs after the
+  IP, geo and maintenance gates. The refusal was counted as a JWT error, and
+  no metric showed a failed or stale read.
+
+Decision:
+
+1. **Rules are read for the host's owner.** When the request's owner is known
+  (as it is once the host resolves to an app), the loader reads
+  `OwnedEdgeRulesForHost(host, account, app)`: that account's enabled,
+  unexpired rules covering the host plus the app's `@app` rules, in
+  evaluation order, using the new `edge_rules_account_enabled_idx`
+  (migration `20261026095955220`). Without an owner it reads as before.
+  An alias name of the host (ADR-20261026100000) is read the same way.
+  Behaviour is unchanged, because the appliers applied only the owner's
+  rules already.
+2. **Invalidation is per account.** A cached set records the account it was
+  read for. The `edge_rule_changed` notification carries the mutating
+  account, and the gateway drops only that account's sets (and unowned ones)
+  for the covered hosts. For `@app`, it drops only the rule's app's sets. The
+  durable repair ledger has no account and keeps host scoping. Response-cache
+  invalidation is unchanged: a wildcard pattern still flushes it, because its
+  entries are keyed by app and an account's apps cannot be enumerated at the
+  gateway. That is a follow-up.
+3. **An unreadable policy is refused once, first.** The handler asks the
+  matcher whether the host's policy is available before any rule kind runs.
+  When it can be neither read nor served from a last-known set, the request
+  gets the existing `503 capacity_unavailable` ("Edge security
+  unavailable"), counted as `gateway_edge_rejections_total{kind="policy_unavailable"}`
+  and `gateway_edge_rule_apply_total{kind="policy"}`. The `kind=jwt`
+  unavailable rule stays as a second line.
+4. **Reads are counted.** `gateway_edge_rule_load_total{outcome}` counts
+  `loaded`, `last_known` (served the last compiled set) and `failed`
+  (nothing to serve). `FaasEdgeRuleLoadFailing` (warn, runbook
+  `docs/runbooks/FaasEdgeRuleLoadFailing.md`) fires while reads fail.
+
+Not changed: what a `match_host` may say. Restricting it to the account's
+hosts would break existing `*` rules, and with owned reads they no longer
+reach other tenants.
+
+## Amendment (2026-10-27): convergence that one gateway or tenant cannot stall; header, body and token defaults
+
+A second GA-readiness review found that the two-phase convergence protocol
+let one party stall others, and that three defaults were weaker than they
+looked.
+
+- **One silent gateway blocked every tenant's edits.** apid waited up to 3 s
+  per phase for every active compute node with a gateway URL, and then failed
+  the mutation. A stopped or hung gateway therefore failed every account's
+  rule writes until an operator deactivated its node.
+- **One process-wide mutex serialized every tenant.** Inside one apid, all
+  mutations queued behind a single mutex, so one slow convergence (up to
+  about 7 s) delayed every other account. Across apids only the per-app
+  advisory lock applied, which let two apps of one account run at once. Their
+  fences can cover the same host (`*.example.com` on app A, a custom domain of
+  app B), and a gateway drops a host's fence on the apply of the newest
+  generation. If the newer mutation applied first, the older one's fence was
+  gone before it committed, and a gateway could serve the old policy after
+  that commit until the older apply arrived.
+- **`@app` fences held the whole account.** A fence was keyed by
+  `(pattern, account)`, so an `@app` mutation returned 503 for every host of
+  every app of the account. Each request also took a global mutex, scanned all
+  fences and republished two gauges.
+- **Reserved header names were case-sensitive.** `host`, `content-length`,
+  `transfer-encoding` and `connection` passed validation; only the `x-faas-`
+  prefix was case-insensitive. Names and values were not checked as HTTP
+  fields.
+- **`kind=validate` buffered up to the plan's body cap.** With
+  `max_body_bytes` unset, the gateway read up to the plan cap into memory:
+  100 MB on Pro and 250 MB on Scale. That bypasses the 1 MiB spool-to-disk
+  admission. The spec (§4.1.2) already says an unset cap means the 25 MiB
+  platform cap.
+- **`kind=jwt` accepted tokens without `exp` by default.** Such a token never
+  expires.
+
+Decision:
+
+1. **The barrier waits for live gateways only.** Each gatewayd-internal stamps
+  `compute_nodes.edge_listener_heartbeat_at` (database clock; expand
+  migration `20261027001512347`) every 10 s from its pg_notify loop. A loop
+  that stops draining notifications therefore also stops stamping. apid
+  leaves out a node whose stamp is older than 30 s and logs that it did so. A
+  NULL stamp, from a gateway release older than the column, is still waited
+  for. A left-out gateway serves its cached sets for at most the 30 s rule
+  cache TTL after it recovers. If every gateway is left out, the existing "no
+  active serving gateways" refusal applies.
+2. **Mutations serialize per account.** The process-wide mutex is replaced by
+  per-account mutexes in each apid process, plus a PostgreSQL advisory lock
+  on `'edge-rule-account:' || account_id` that is taken before the existing
+  per-app lock, on the same connection. Other accounts no longer wait. The
+  app key is unchanged, so an apid from the previous release still contends
+  per app. GitOps batches take the same locks for every changed app.
+3. **Fences are narrower and cheap.** An `@app` fence carries the mutation's
+  app and holds only that app's hosts. A payload without an app, from an
+  older apid, keeps the account-wide hold. A request skips the fence scan
+  entirely when no fence exists, the scan takes a read lock, and the gauges
+  change only when the fence set changes. The fence TTL drops from 30 s to
+  10 s: a live mutation acknowledges prepare within 3 s and publishes apply
+  right after its commit, so the TTL only bounds how long a crashed apid can
+  hold a host.
+4. **Header ops are HTTP fields with case-insensitive reserved names.** apid
+  compares names in canonical form, requires a valid HTTP token name and
+  rejects control characters in values (`httpguts`), for header ops and
+  redirect headers alike. A template value is checked as written; its
+  expansions already drop control characters (ADR-968). The gateway drops a
+  stored rule that still names a reserved header, counted as a compile error,
+  instead of applying it.
+5. **`kind=validate` holds at most 25 MiB.** An unset or larger
+  `max_body_bytes` means `api.MaxRequestBodyBytes` (25 MiB), and never more
+  than the plan's own cap. The code now matches the spec.
+6. **`require_exp` defaults on.** A `kind=jwt` action that omits
+  `require_exp`, on create or when an update replaces the action, rejects
+  tokens without `exp`. An explicit `false` accepts them. Saved rules keep
+  their value. `gregale edge-rules create|update --jwt-require-exp` now
+  defaults to true (`--jwt-require-exp=false` opts out). Responses keep
+  reporting the field only when it is true.
+7. **An owner's rules are read once per account, not once per host.** With
+  the owner known, the gateway caches the owner's whole enabled rule set
+  (`OwnerEdgeRules`) for 30 s and filters it per host, so a new subdomain
+  under a wildcard rule costs no Postgres read. Filtering uses the matcher
+  that `MemStore` uses for parity with the SQL `LIKE`. A set holds at most
+  1,000 rules and all sets together at most 50,000; a larger owner keeps the
+  per-host read. The owner's mutation, an unscoped invalidation and a reset
+  drop the set. A load that overlaps any invalidation is not cached.
+  Compiled host entries remain per host.
+
+Not changed: response-cache invalidation for wildcard patterns (still a
+follow-up). (An earlier draft of this sentence also listed per-gateway
+counting of `kind=throttle`; that was wrong. In the default central rate-limit
+mode, throttle buckets are Postgres counters shared by every gateway. The
+customer reference is `docs/edge-rules.md`.)

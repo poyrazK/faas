@@ -613,6 +613,91 @@ groups:
           description: "Completed rollbacks took longer than 60 s at p95 over 6 h, measured from request to serving. Check snapshot restore, cold boot, and post-readiness smoke latency."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasSafeDeployRollout.md"
 
+  # Release guards (pkg/releasemetrics): scheduled releases, database
+  # switches, the post-release watch and approval notices. A worker that
+  # never ran on an instance exports no pass timestamp, so the stall alerts
+  # fire only for a worker that ran and stopped.
+  - name: faas_release_guards
+    interval: 30s
+    rules:
+      - alert: FaasReleaseWorkerStalled
+        expr: time() - faas_release_worker_last_pass_timestamp_seconds{worker!="approval_notices"} > 300
+        for: 5m
+        labels:
+          severity: warn
+          component: apid
+          family: release_guards
+          public_status: internal
+        annotations:
+          summary: "apid release worker {{ $labels.worker }} has not completed a pass for 5 minutes"
+          description: "The {{ $labels.worker }} worker on {{ $labels.instance }} last read its queue over 5 minutes ago. Due scheduled releases do not start, database switches do not advance, or completed releases are not watched until it recovers. Check apid's database access and logs."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasReleaseGuards.md"
+
+      - alert: FaasReleaseApprovalNoticesStalled
+        expr: time() - faas_release_worker_last_pass_timestamp_seconds{worker="approval_notices"} > 600
+        for: 5m
+        labels:
+          severity: warn
+          component: meterd
+          family: release_guards
+          public_status: internal
+        annotations:
+          summary: "meterd has not delivered release approval notices for 10 minutes"
+          description: "meterd's alert evaluator on {{ $labels.instance }} has not read the release approval outbox for over 10 minutes. Approvers are not told that releases wait for them; the releases still wait and time out on schedule."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasReleaseGuards.md"
+
+      - alert: FaasReleaseWorkerErrors
+        expr: increase(faas_release_worker_errors_total{worker!="approval_notices"}[15m]) > 5
+        for: 0m
+        labels:
+          severity: warn
+          component: apid
+          family: release_guards
+          public_status: internal
+        annotations:
+          summary: "Release worker {{ $labels.worker }} is failing repeatedly"
+          description: "{{ $labels.worker }} recorded more than 5 failed passes or items in 15 minutes on {{ $labels.instance }}. Failed items are retried; read the worker's warnings in the {{ $labels.job }} log."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasReleaseGuards.md"
+
+      - alert: FaasDatabaseSwitchFailed
+        expr: increase(faas_release_guard_decisions_total{guard="database_switch",outcome="failed"}[10m]) > 0 or (faas_release_guard_decisions_total{guard="database_switch",outcome="failed"} > 0 unless faas_release_guard_decisions_total{guard="database_switch",outcome="failed"} offset 10m)
+        for: 0m
+        labels:
+          severity: warn
+          component: apid
+          family: release_guards
+          public_status: internal
+        annotations:
+          summary: "A database-restoring rollback failed and was undone"
+          description: "A database switch (rollback --restore-databases) gave up: it put the previous release back, cancelled the cutover and lifted the fence, so the app serves as before on its source database. The restored copy is kept. Read the failure code in the app.database_switch_failed audit event."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasReleaseGuards.md"
+
+      - alert: FaasDatabaseSwitchAborting
+        expr: increase(faas_release_guard_decisions_total{guard="database_switch",outcome="aborting"}[10m]) > 0 or (faas_release_guard_decisions_total{guard="database_switch",outcome="aborting"} > 0 unless faas_release_guard_decisions_total{guard="database_switch",outcome="aborting"} offset 10m)
+        for: 0m
+        labels:
+          severity: warn
+          component: apid
+          family: release_guards
+          public_status: internal
+        annotations:
+          summary: "A database-restoring rollback is aborting"
+          description: "A database switch hit an error and is compensating: it releases the fence and keeps the source database. Watch it reach cancelled or failed with `gregale rollback switch`."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasReleaseGuards.md"
+
+      - alert: FaasReleaseApprovalNoticeDropped
+        expr: increase(faas_release_guard_decisions_total{guard="approval_notice",outcome="dropped"}[15m]) > 0 or (faas_release_guard_decisions_total{guard="approval_notice",outcome="dropped"} > 0 unless faas_release_guard_decisions_total{guard="approval_notice",outcome="dropped"} offset 15m)
+        for: 0m
+        labels:
+          severity: warn
+          component: meterd
+          family: release_guards
+          public_status: internal
+        annotations:
+          summary: "meterd gave up delivering a release approval notice"
+          description: "A release approval or schedule notice failed on every channel for all of its attempts. The approvers were not told; the release still waits. Check the channel's delivery errors in release_approval_events.last_error."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasReleaseGuards.md"
+
   - name: managed_realtime_channel_routing
     interval: 30s
     rules:
@@ -3750,7 +3835,7 @@ groups:
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasGithubRecoveryQueue.md"
 
       - alert: FaasPreviewJanitorFailing
-        expr: sum(increase(faas_preview_janitor_outcomes_total{outcome=~"failed|row_failed"}[30m])) > 0
+        expr: sum(increase(apid_preview_janitor_outcomes_total{outcome=~"failed|row_failed"}[30m])) > 0
         for: 15m
         labels:
           severity: warn
@@ -6223,6 +6308,24 @@ groups:
           summary: "meterd is billing quiet pauses the ledger could not prove"
           description: "More than 30 instance-minutes in 1h had an open quiet pause past its node's ledger watermark, so their uncovered pause time was billed. A schedd that stopped writing its node's ledger is the usual cause; see FaasQuietPauseLedgerWriteErrors and schedd_quiet_pause_ledger_watermark_seconds."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasQuietPauseBilling.md"
+      # The under-billing direction: meterd may only subtract pause time vmmd
+      # measured. Its seconds are floored per instance-minute and missed
+      # pauses are billed, so it normally reads a little under schedd's
+      # measurement; above it, the ledger proves pauses that did not happen.
+      # Shadow mode counts too, so the shadow week catches it before billing.
+      - alert: FaasQuietPauseUnbilledExceedsMeasured
+        expr: |
+          sum (increase(meterd_quiet_pause_unbilled_seconds_total[6h]))
+            > 1.05 * (sum (increase(schedd_quiet_pause_measured_seconds_total[6h])) or vector(0)) + 600
+        for: 30m
+        labels:
+          severity: warn
+          component: meterd
+          family: quiet_pause_billing
+        annotations:
+          summary: "meterd counted more quiet-paused time than vmmd measured"
+          description: "In 6h meterd subtracted (or, in shadow mode, would have subtracted) more quiet-paused seconds than vmmd measured on the nodes, by over 5% plus 10 minutes. The ledger is proving pauses that did not happen, so customers are or would be under-billed. Set quiet_pause_unbilled to shadow until it is explained."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasQuietPauseBilling.md"
 
   # ADR-1151 pause tiers: the frozen tier and quiet pause. Warnings while the
   # tiers are in canary; the dashboard is deploy/grafana/frozen-tier.json and
@@ -6538,6 +6641,39 @@ groups:
           summary: "Raw TCP idle timeouts are spiking"
           description: "The public gateway has reaped more than one raw TCP session per second for ten minutes. Check client keepalive behavior, the configured FAAS_TCPD_IDLE_TIMEOUT, and whether a downstream service is stalling."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasTCPIngress.md"
+
+  # ADR-570: the traffic controls fail closed. A store, revocation or node
+  # admission outage refuses customer requests with a 503, so each reason
+  # alerts on its own; customer-caused refusals (rate_limited, deadline,
+  # node_capacity) are not paging conditions.
+  - name: traffic_control
+    interval: 30s
+    rules:
+      - alert: FaasTrafficControlRefusing
+        expr: sum by (reason) (rate(gateway_traffic_refusals_total{job="gatewayd-internal",reason=~"policy_unavailable|security_unavailable|rate_limit_unavailable|node_admission_unavailable"}[5m])) > 0.2
+        for: 5m
+        labels:
+          severity: page
+          component: gatewayd-internal
+          family: traffic_control
+          public_status: internal
+        annotations:
+          summary: "Traffic controls are refusing requests ({{ $labels.reason }})"
+          description: "Gateways have refused more than 0.2 requests per second with {{ $labels.reason }} for five minutes. These refusals come from a fail-closed traffic control, not from the customer's app or limits."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasTrafficControl.md"
+
+      - alert: FaasPublicTrafficSecurityUnverified
+        expr: max by (job, instance) (gatewayd_public_traffic_security_enforced{job=~"gatewayd|gatewayd-public-edge"}) == 0
+        for: 30m
+        labels:
+          severity: warn
+          component: gatewayd-public
+          family: traffic_control
+          public_status: internal
+        annotations:
+          summary: "A public edge is passing responses without the revocation check"
+          description: "{{ $labels.instance }} has not enforced the traffic security fence for 30 minutes, so a revoked account, app or deployment can still receive responses through it. A gateway it dials lacks the fence wiring or has no fresh observation."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasTrafficControl.md"
 
   - name: retry_safety
     interval: 30s
@@ -7095,6 +7231,22 @@ groups:
           summary: "Edge rules of kind {{ $labels.kind }} are failing to compile"
           description: "gatewayd-internal dropped at least one {{ $labels.kind }} edge rule at load time in the last 10m. A shipped rule is broken and is not being enforced; the counter is cumulative, so this alert reads new ticks only."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasEdgeRuleCompileError.md"
+      # ADR-091 amendment (2026-10-26): a gateway could not read a host's
+      # edge rules. last_known: it serves the host's last compiled set, so
+      # rule edits do not apply; failed: it had none and refuses the host's
+      # requests with 503 until a read succeeds.
+      - alert: FaasEdgeRuleLoadFailing
+        expr: sum by (instance, outcome) (increase(gateway_edge_rule_load_total{outcome=~"failed|last_known"}[10m])) > 0
+        for: 5m
+        labels:
+          severity: warn
+          component: gatewayd-internal
+          family: edge_rules
+          public_status: internal
+        annotations:
+          summary: "{{ $labels.instance }} cannot read edge rules ({{ $labels.outcome }})"
+          description: "gateway_edge_rule_load_total{outcome=\"{{ $labels.outcome }}\"} kept rising on {{ $labels.instance }} for 5m. last_known: hosts get their last compiled rules and rule edits do not apply. failed: hosts with nothing compiled are refused with 503 Edge security unavailable."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasEdgeRuleLoadFailing.md"
       - alert: FaasEdgeRuleJWTFailures
         expr: sum(rate(gateway_edge_rule_match_total{kind="jwt",outcome="failed"}[5m])) * 60 > 5
         for: 5m

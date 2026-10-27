@@ -48,13 +48,13 @@ stages the keys on every host it joins or rebuilds.
   - `SEAL_DOMAIN_<DOMAIN>_AGE_RECIPIENT`: the contents of `<domain>.age.pub`.
 
   The control-plane CD then stages the `outbound`, `source`, `alerting`,
-  `storage` and `control` identities and every domain's recipient. The
-  compute join stages the `runtime`, `build`, `edge` and `control`
-  identities on each node it joins, and leaves the node drained if
-  `seal-domain verify` fails there. Before apid seals to a
-  domain, the role
-  checks that the staged recipient is the one readers published the probe
-  with, so a recipient from another pair stops the converge.
+  `storage`, `control`, `delivery` and `account` identities and every
+  domain's recipient. The compute join stages the `runtime`, `build`, `edge`,
+  `control` and `delivery` identities on each node it joins, and leaves the
+  node drained if `seal-domain verify` fails there. Before apid seals to a
+  domain, the role checks that the staged recipient is the one readers
+  published the probe with, so a recipient from another pair stops the
+  converge.
 - **Settings** (`faas_seal_domain_<domain>_writes` and
   `faas_seal_domain_<domain>_readers_verified`) go in `CP_ANSIBLE_VARS_B64`.
   CD re-renders the drop-ins from them on every converge, so a value set
@@ -1053,4 +1053,184 @@ Rollback: none by migration; the key stays domain-only. From now on:
   `SEAL_DOMAIN_CONTROL_*` secrets set, CD's join stages it, and the join's
   `fleet-seal verify` fails without it;
 - never roll schedd back past the first release that carried the control
+  reader.
+
+## 11. Delivery seal domain
+
+schedd is the only reader of app webhook signing secrets, commit-source
+connections and execution payloads; apid seals them. schedd runs on
+control-plane and compute hosts alike, so every host stages
+`delivery.age`, and the control plane also stages the recipient for apid.
+At the end of this stage only `delivery.age` opens them, except trigger
+configs, which stay on the fleet key for now (ADR 20261022111812, ninth
+slice).
+
+### 11a. Create the identity (operator machine)
+
+```bash
+gregalectl seal-domain init --domain delivery --dir ~/gregale-seal/<environment>
+```
+
+Store `delivery.age` with the other domain identities. If it is lost after
+11d, customers must set their webhook signing secrets and commit-source
+connections again, and queued executions fail.
+
+### 11b. Stage every schedd; seal to both keys
+
+Set the `SEAL_DOMAIN_DELIVERY_*` secrets (CD stages the identity on the
+control plane and on every compute join, and the recipient on the control
+plane), or add to the local variables file:
+
+```yaml
+faas_seal_domain_delivery_identity_src: /Users/<you>/gregale-seal/<environment>/delivery.age
+faas_seal_domain_delivery_recipient_src: /Users/<you>/gregale-seal/<environment>/delivery.age.pub
+```
+
+and converge the role on the control plane and on each compute host, one at
+a time. On every host the role installs `delivery.age`, restarts schedd and
+proves the probe, publishing it on the first host. On the control plane it
+then has apid seal new values to the domain and the fleet key, so the order
+of the converges does not matter.
+
+Check:
+
+- every host's `faas_seal_domain_delivery.prom` shows
+  `faas_seal_domain_ready{domain="delivery"} 1`;
+- `faas_seal_domain_loaded{domain="delivery"}` is 1 on every schedd, and
+  FaasSealDomainIdentityMissing does not fire;
+- schedd logs `"delivery seal domain"` with `"domain_identity":true`;
+- apid logs `"delivery seal domain"` with `"recipients":2`;
+- on a test app, rotate a webhook's signing secret and check that the next
+  delivery verifies; run an execution and check that it succeeds.
+
+Rollback: set `faas_seal_domain_delivery_writes: fleet` and converge the
+control plane. Values saved in the meantime also carry the fleet key, and
+payloads are filed under the fleet key id.
+
+### 11c. Wait out the rollback window
+
+Go on only when every schedd, on both node roles, reports
+`faas_seal_domain_loaded{domain="delivery"} 1`, and schedd's previous
+release (N-1) also carries the delivery reader. A compute node that joins
+later needs `delivery.age` before it is activated: with the
+`SEAL_DOMAIN_DELIVERY_*` secrets set, CD's join stages and verifies it;
+without them, stage it by hand before activating the node.
+
+### 11d. Seal to the domain only; re-seal stored values
+
+Add to the local variables file, and converge the control plane:
+
+```yaml
+faas_seal_domain_delivery_readers_verified: true
+faas_seal_domain_delivery_writes: domain
+```
+
+apid then logs `"write_mode":"domain"`. Re-seal on any host that holds
+`delivery.age` (its `gregalectl` must not be newer than the data release):
+
+```bash
+sudo gregalectl seal-domain migrate --domain delivery --readers-verified --db-env /etc/faas/compute-db.env
+```
+
+- Expect `0 failed`.
+- `changed concurrently` counts values a customer rotated during the run,
+  and payloads of executions that started meanwhile. Run the migration
+  again later.
+- A second run reports every row `current`.
+- Payloads of finished executions are not scanned; retention deletes them.
+- If `failed` is not 0, schedd cannot open those values today either:
+  their owners must set the webhook secret or connection again.
+
+Rotate the test webhook's secret again and check the next delivery
+verifies; run an execution.
+
+Rollback: set `faas_seal_domain_delivery_writes` back to empty and
+converge. Values re-sealed in this step stay domain-only, so:
+
+- never remove `delivery.age` from a host that runs schedd;
+- never roll schedd back past the first release that carried the delivery
+  reader.
+
+## 12. Account seal domain
+
+apid both seals and opens account values, so it holds `account.age` itself;
+there is no recipient file. It covers TOTP secrets, inbound webhook
+secrets, billing provider keys, managed workflow plans, PagerDuty
+acknowledgement secrets, and GitLab, Slack and Linear credentials. The other
+account columns (product email, managed realtime, data pipelines, project
+clones) stay on the fleet key until later releases (ADR 20261022111812,
+tenth and eleventh slices).
+
+### 12a. Create the identity (operator machine)
+
+```bash
+gregalectl seal-domain init --domain account --dir ~/gregale-seal/<environment>
+```
+
+Store `account.age` with the other domain identities. If it is lost after
+12d, every customer with MFA must enroll again; inbound webhooks, billing
+connections and GitLab, Slack and Linear connections must be set again; and
+queued managed workflows fail.
+
+### 12b. Stage apid; seal to both keys
+
+Set the `SEAL_DOMAIN_ACCOUNT_*` secrets (CD stages the identity on the
+control plane only), or add to the local variables file:
+
+```yaml
+faas_seal_domain_account_identity_src: /Users/<you>/gregale-seal/<environment>/account.age
+```
+
+and converge the role on the control plane. The role installs `account.age`,
+restarts apid with it and proves the probe. With
+`faas_seal_domain_account_writes` left empty, apid then seals new account
+values to the domain and the fleet key.
+
+Check:
+
+- `faas_seal_domain_account.prom` shows
+  `faas_seal_domain_ready{domain="account"} 1`;
+- `faas_seal_domain_loaded{domain="account"}` is 1 on every apid, and
+  FaasSealDomainIdentityMissing does not fire;
+- apid logs `"account seal domain"` with `"domain_identity":true`;
+- on a test account, enroll MFA and sign in with it; send a test delivery
+  to an inbound webhook; send a test issue to a connected Slack workspace.
+
+Rollback: set `faas_seal_domain_account_writes: fleet` and converge. Values
+saved in the meantime also carry the fleet key.
+
+### 12c. Wait out the rollback window
+
+Go on only when every apid reports `faas_seal_domain_loaded{domain="account"} 1`
+and apid's previous release (N-1) also carries the account reader.
+
+### 12d. Seal to the domain only; re-seal stored values
+
+Add to the local variables file, and converge the control plane:
+
+```yaml
+faas_seal_domain_account_readers_verified: true
+faas_seal_domain_account_writes: domain
+```
+
+apid then logs `"write_mode":"domain"`. Re-seal on the control-plane host:
+
+```bash
+sudo gregalectl seal-domain migrate --domain account --readers-verified --db-env /etc/faas/compute-db.env
+```
+
+- Expect `0 failed`.
+- `changed concurrently` counts values a customer changed during the run.
+  Run the migration again later.
+- A second run reports every row `current`.
+- If `failed` is not 0, apid cannot open those values today either: the
+  owners must set them again (MFA: enroll again).
+
+Sign in with MFA on the test account again.
+
+Rollback: set `faas_seal_domain_account_writes` back to empty and converge.
+Values re-sealed in this step stay domain-only, so:
+
+- never remove `account.age` from a control-plane host;
+- never roll apid back past the first release that carried the account
   reader.

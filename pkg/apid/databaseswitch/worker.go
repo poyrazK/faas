@@ -73,10 +73,31 @@ type Worker struct {
 	InvalidateSnapshots func(ctx context.Context, appID string) error
 	// AppChanged tells the gateway and schedd that the app changed.
 	AppChanged func(ctx context.Context, appID string)
+	// Ownership scopes a step's managed PostgreSQL calls to the app's
+	// organization, as the request that started the switch was; nil leaves
+	// the account's own scope.
+	Ownership func(ctx context.Context, sw state.DatabaseSwitch) (context.Context, error)
 	// Observe records audit rows for a step; nil records nothing.
 	Observe func(ctx context.Context, sw state.DatabaseSwitch, event Event)
-	Log     *slog.Logger
-	Now     func() time.Time
+	// Report feeds worker liveness metrics: true after each tick that could
+	// claim its due switches, false after a tick that could not and after
+	// each step that ended in a retry. nil reports nothing.
+	Report func(ok bool, at time.Time)
+	Log    *slog.Logger
+	Now    func() time.Time
+}
+
+func (w *Worker) ownership(ctx context.Context, sw state.DatabaseSwitch) (context.Context, error) {
+	if w.Ownership == nil {
+		return ctx, nil
+	}
+	return w.Ownership(ctx, sw)
+}
+
+func (w *Worker) report(ok bool, at time.Time) {
+	if w.Report != nil {
+		w.Report(ok, at)
+	}
 }
 
 func (w *Worker) now() time.Time {
@@ -115,9 +136,11 @@ func (w *Worker) Tick(ctx context.Context) {
 	if err != nil {
 		if ctx.Err() == nil {
 			w.log().Warn("database switch: claim due switches", "err", err)
+			w.report(false, now)
 		}
 		return
 	}
+	w.report(true, now)
 	for _, sw := range due {
 		if ctx.Err() != nil {
 			return
@@ -128,7 +151,17 @@ func (w *Worker) Tick(ctx context.Context) {
 
 // Advance runs one step of a leased switch and saves the result.
 func (w *Worker) Advance(ctx context.Context, sw state.DatabaseSwitch) state.DatabaseSwitch {
-	next := w.step(ctx, sw)
+	var next state.DatabaseSwitch
+	stepCtx, err := w.ownership(ctx, sw)
+	if err != nil {
+		w.log().Warn("database switch: app ownership", "switch", sw.ID, "app", sw.AppID, "err", err)
+		next = w.retry(sw, errorCode(err))
+	} else {
+		next = w.step(stepCtx, sw)
+	}
+	if next.LastErrorCode != "" && next.AttemptCount > sw.AttemptCount {
+		w.report(false, w.now())
+	}
 	saved, err := w.Store.SaveDatabaseSwitch(ctx, next, w.now())
 	if err != nil {
 		w.log().Warn("database switch: save progress", "switch", sw.ID, "phase", next.Phase, "err", err)

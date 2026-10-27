@@ -133,6 +133,7 @@ var routeExclude = map[string]bool{
 	"POST /dashboard/apps/{slug}/issues/{issue_id}/actions":                       true, // scoped HTML/CSRF adapter for the public issue action API
 	"POST /dashboard/apps/{slug}/issues/impact-alert-policy":                      true, // scoped HTML/CSRF adapter for issue impact alert policy updates
 	"POST /dashboard/apps/{slug}/issues/ownership-rules":                          true, // scoped HTML/CSRF adapter for issue ownership routing policy updates
+	"POST /dashboard/postgres/overage":                                            true, // session + CSRF adapter for PUT /v1/postgres/overage (ADR-20261025094915)
 	// Fixed-executor repair preview routes are documented in docs/data-repair.md;
 	// they are not part of the public SDK contract until native qualification.
 	"GET /v1/apps/{slug}/data-repair/review":                            true,
@@ -469,6 +470,7 @@ var routeExclude = map[string]bool{
 	"GET /login":                                                    true, // dashboard magic-link GET (HTML form, browser-only)
 	"POST /logout":                                                  true, // dashboard logout (HTML form, browser-only)
 	"GET /auth/verify":                                              true, // magic-link consume (legacy; PR #1 closed; kept for compat)
+	"POST /auth/verify":                                             true, // magic-link confirm page for a link reached from another site
 	"GET /oauth/callback":                                           true, // GitHub App install callback
 	"GET /oauth/code-callback":                                      true, // GitHub App user-to-server OAuth callback (PR-C)
 	"POST /v1/gitlab/connect":                                       true, // GitLab.com OAuth session + CSRF form
@@ -538,6 +540,7 @@ var routeExclude = map[string]bool{
 	"POST /dashboard/apps/{slug}/deployments/{id}/retry":            true, // HTML form, per-stage retry (ADR-117 §Production-ready follow-on C4); CSRF sealed envelope, no SDK twin
 	"POST /dashboard/apps/{slug}/alert-presets/{name}/enable":       true, // ADR-123 — dashboard form post; programatic enable is /v1 with SDK wrapper EnableAlertPreset
 	"GET /dashboard/apps/{slug}/changes":                            true, // ADR-751 HTML view of GET /v1/apps/{slug}/changes
+	"GET /dashboard/apps/{slug}/release-safety":                     true, // ADR-20261019071733 amd 1 HTML view of the freeze, gate, approval and schedule /v1 reads
 	"GET /dashboard/releases/{id}/approval":                         true, // ADR-20261020085706 HTML page over GET/POST /v1/deployments/{id}/approvals
 	"GET /dashboard/apps/{slug}/log-search":                         true, // ADR-20261018083536 HTML view of GET /v1/apps/{slug}/log-events
 	"GET /dashboard/dashboards":                                     true, // ADR-20261022173833 HTML view of GET /v1/dashboards

@@ -20,7 +20,7 @@ T = TypeVar("T", bound="ReleaseApprovalStatus")
 
 @_attrs_define
 class ReleaseApprovalStatus:
-    """A release's approval state (ADR-20261020085706)."""
+    """A release's approval state."""
 
     deployment_id: UUID
     app: str

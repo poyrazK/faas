@@ -241,7 +241,7 @@ func verifySealDomainRecipient(d sealdomain.Domain, dir, dsn, dbEnv string, json
 func runSealDomainMigrate(args []string) error {
 	fs := flag.NewFlagSet("seal-domain migrate", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
-	domainName := fs.String("domain", "", "seal domain to migrate (outbound, runtime, source, build, edge, alerting, storage or control)")
+	domainName := fs.String("domain", "", "seal domain to migrate (outbound, runtime, source, build, edge, alerting, storage, control, delivery or account)")
 	dir := fs.String("dir", sealdomain.DefaultDir, "directory holding <domain>.age")
 	fleetKey := fs.String("fleet-key", secretbox.DefaultFleetKeyPath, "fleet.age identity (its .previous twin is loaded when present)")
 	hostKey := fs.String("host-key", secretbox.DefaultHostKeyPath, "host.age identity for legacy rows (optional)")
@@ -267,9 +267,9 @@ func runSealDomainMigrate(args []string) error {
 		return runRuntimeBindingPass(*dsn, *dbEnv, *dir, *fleetKey, *hostKey, *jsonOut || jsonOutput)
 	}
 	switch d {
-	case sealdomain.Outbound, sealdomain.Runtime, sealdomain.Source, sealdomain.Build, sealdomain.Edge, sealdomain.Alerting, sealdomain.Storage, sealdomain.Control:
+	case sealdomain.Outbound, sealdomain.Runtime, sealdomain.Source, sealdomain.Build, sealdomain.Edge, sealdomain.Alerting, sealdomain.Storage, sealdomain.Control, sealdomain.Delivery, sealdomain.Account:
 	default:
-		return fmt.Errorf("domain %s is not wired in this release; only outbound, runtime, source, build, edge, alerting, storage and control migrate", d)
+		return fmt.Errorf("domain %s is not wired in this release; only outbound, runtime, source, build, edge, alerting, storage, control, delivery and account migrate", d)
 	}
 	fleet, err := secretbox.LoadHostKey(*fleetKey)
 	if err != nil {
@@ -296,6 +296,16 @@ func runSealDomainMigrate(args []string) error {
 	case sealdomain.Control:
 		if !*readersVerified {
 			return errors.New("the re-sealed cluster signing key no longer opens with the fleet identity: a schedd without the control identity cannot mint internal tokens, and fleet-seal verify fails on that node; pass --readers-verified once every schedd on both node roles reports faas_seal_domain_loaded{domain=\"control\"} 1 and the previous release left the rollback window")
+		}
+		report, err = migrateDomain(ctx, store, d, *dir, *fleetKey, *hostKey)
+	case sealdomain.Account:
+		if !*readersVerified {
+			return errors.New("re-sealed TOTP secrets, inbound webhook secrets, billing keys, workflow plans, PagerDuty acknowledgement secrets and GitLab, Slack and Linear credentials no longer open with the fleet identity: an apid without the account identity cannot sign customers in with MFA; pass --readers-verified once every apid reports faas_seal_domain_loaded{domain=\"account\"} 1 and the previous release left the rollback window")
+		}
+		report, err = migrateDomain(ctx, store, d, *dir, *fleetKey, *hostKey)
+	case sealdomain.Delivery:
+		if !*readersVerified {
+			return errors.New("re-sealed webhook secrets, commit-source connections and execution payloads no longer open with the fleet identity: a schedd without the delivery identity stops delivering them; pass --readers-verified once every schedd on both node roles reports faas_seal_domain_loaded{domain=\"delivery\"} 1 and the previous release left the rollback window")
 		}
 		report, err = migrateDomain(ctx, store, d, *dir, *fleetKey, *hostKey)
 	case sealdomain.Storage:
@@ -440,6 +450,10 @@ func migrateDomain(ctx context.Context, store *state.PgStore, d sealdomain.Domai
 		return sealmigrate.MigrateStorage(ctx, store, domain, legacy)
 	case sealdomain.Control:
 		return sealmigrate.MigrateControl(ctx, store, domain, legacy)
+	case sealdomain.Delivery:
+		return sealmigrate.MigrateDelivery(ctx, store, domain, legacy)
+	case sealdomain.Account:
+		return sealmigrate.MigrateAccount(ctx, store, domain, legacy)
 	}
 	return sealmigrate.MigrateOutbound(ctx, store, domain, legacy)
 }

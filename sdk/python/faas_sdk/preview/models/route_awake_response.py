@@ -19,8 +19,8 @@ T = TypeVar("T", bound="RouteAwakeResponse")
 
 @_attrs_define
 class RouteAwakeResponse:
-    """How long the app was awake in the window and which routes kept it awake (ADR-1187). Seconds are instance-seconds of
-    billed running time.
+    """How long the app was awake in the window and which routes kept it awake. Seconds are instance-seconds of billed
+    running time.
 
     """
 
@@ -43,8 +43,8 @@ class RouteAwakeResponse:
     day, deliveries already pruned by result retention, or telemetry the plan's rate cap dropped."""
     sources: list[RouteAwakeSource]
     """Awake time credited to causes other than customer requests, for minutes no request explains: route probes
-    and prewarms (ADR-1199), and cron, queue and other deliveries schedd made to the app, per cron job and per queue
-    (ADR-20261022184757)."""
+    and prewarms, and cron, queue and other deliveries the scheduler made to the app, per cron job and per queue.
+   """
     min_instances: int
     """The app's current minimum instance count; above zero the app never parks, so unattributed time is expected."""
     other_routes_seconds: int
@@ -55,7 +55,7 @@ class RouteAwakeResponse:
     wait_until_timeout_seconds: int | Unset = UNSET
     """The plan's waitUntil task timeout when the plan enables waitUntil. An instance parks no earlier than the
     later of the idle timeout and its last waitUntil task, so a request keeps the app awake for the longer of the
-    two (ADR-20261022184757)."""
+    two."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

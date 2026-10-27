@@ -15,7 +15,7 @@ T = TypeVar("T", bound="DebugReplayResponse")
 
 @_attrs_define
 class DebugReplayResponse:
-    """POST response from /v1/apps/{slug}/debug/requests/{req_id}/replay (ADR-127)."""
+    """POST response from /v1/apps/{slug}/debug/requests/{req_id}/replay."""
 
     status: DebugReplayResponseStatus
     mirror_invocation_id: None | Unset | UUID = UNSET

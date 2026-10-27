@@ -13,9 +13,10 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-// renderManagedPostgres renders the read-only customer overview. Mutations
+// renderManagedPostgres renders the customer overview. Database mutations
 // remain on the authenticated API/CLI surface so this page cannot accidentally
-// create a database without a dedicated form and CSRF contract.
+// create a database without a dedicated form and CSRF contract; the one form
+// here is the compute overage choice, with its own named CSRF action.
 func (s *server) renderManagedPostgres(w http.ResponseWriter, r *http.Request, log *slog.Logger, acct state.Account) {
 	data := dashboard.ManagedPostgresData{Available: s.managedPostgres != nil}
 	if s.managedPostgres == nil {
@@ -34,6 +35,7 @@ func (s *server) renderManagedPostgres(w http.ResponseWriter, r *http.Request, l
 			data.Databases = projectManagedPostgresDashboard(databases)
 			s.attachManagedPostgresBindings(r, log, acct.ID, &data)
 		}
+		s.attachManagedPostgresOverage(w, r, log, acct, &data)
 	}
 	view, _ := AccountFrom(r.Context())
 	appCount, _ := s.store.CountDeployedApps(r.Context(), acct.ID)

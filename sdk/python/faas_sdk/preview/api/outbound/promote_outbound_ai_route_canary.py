@@ -94,7 +94,7 @@ def sync_detailed(
     """Promote an AI route's model canary.
 
      Requires MFA and deploy-write scope. Moves the canary target to the front of the route, keeps the
-    other targets in order, and ends the canary (ADR-1340).
+    other targets in order, and ends the canary.
 
     Args:
         route (UUID):
@@ -126,7 +126,7 @@ def sync(
     """Promote an AI route's model canary.
 
      Requires MFA and deploy-write scope. Moves the canary target to the front of the route, keeps the
-    other targets in order, and ends the canary (ADR-1340).
+    other targets in order, and ends the canary.
 
     Args:
         route (UUID):
@@ -153,7 +153,7 @@ async def asyncio_detailed(
     """Promote an AI route's model canary.
 
      Requires MFA and deploy-write scope. Moves the canary target to the front of the route, keeps the
-    other targets in order, and ends the canary (ADR-1340).
+    other targets in order, and ends the canary.
 
     Args:
         route (UUID):
@@ -183,7 +183,7 @@ async def asyncio(
     """Promote an AI route's model canary.
 
      Requires MFA and deploy-write scope. Moves the canary target to the front of the route, keeps the
-    other targets in order, and ends the canary (ADR-1340).
+    other targets in order, and ends the canary.
 
     Args:
         route (UUID):

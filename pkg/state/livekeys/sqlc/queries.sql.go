@@ -369,6 +369,7 @@ func (q *Queries) LockLiveDatabase(ctx context.Context, db DBTX, arg LockLiveDat
 const resealLiveKey = `-- name: ResealLiveKey :execrows
 UPDATE managed_postgres_live_keys SET sealed_secret=$1::bytea
  WHERE kid=$2::text AND database_id=$3::text::uuid AND sealed_secret=$4::bytea
+   AND recipient=$5::text
 `
 
 type ResealLiveKeyParams struct {
@@ -376,16 +377,19 @@ type ResealLiveKeyParams struct {
 	Kid          string
 	DatabaseID   string
 	Previous     []byte
+	Recipient    string
 }
 
-// Replaces a key's seal only while it still holds the one the re-seal read,
-// so a key rotated or revoked meanwhile is left as it is.
+// Replaces a key's seal only while it still holds the one the re-seal read
+// and names the recipient the re-seal sealed to, so a key rotated, revoked
+// or redirected meanwhile is left as it is.
 func (q *Queries) ResealLiveKey(ctx context.Context, db DBTX, arg ResealLiveKeyParams) (int64, error) {
 	result, err := db.Exec(ctx, resealLiveKey,
 		arg.SealedSecret,
 		arg.Kid,
 		arg.DatabaseID,
 		arg.Previous,
+		arg.Recipient,
 	)
 	if err != nil {
 		return 0, err
@@ -396,17 +400,24 @@ func (q *Queries) ResealLiveKey(ctx context.Context, db DBTX, arg ResealLiveKeyP
 const resealLiveLogin = `-- name: ResealLiveLogin :execrows
 UPDATE managed_postgres_live_logins SET sealed_login=$1::bytea
  WHERE database_id=$2::text::uuid AND sealed_login=$3::bytea
+   AND recipient=$4::text
 `
 
 type ResealLiveLoginParams struct {
 	SealedLogin []byte
 	DatabaseID  string
 	Previous    []byte
+	Recipient   string
 }
 
 // Replaces a login's seal only while it still holds the one the re-seal read.
 func (q *Queries) ResealLiveLogin(ctx context.Context, db DBTX, arg ResealLiveLoginParams) (int64, error) {
-	result, err := db.Exec(ctx, resealLiveLogin, arg.SealedLogin, arg.DatabaseID, arg.Previous)
+	result, err := db.Exec(ctx, resealLiveLogin,
+		arg.SealedLogin,
+		arg.DatabaseID,
+		arg.Previous,
+		arg.Recipient,
+	)
 	if err != nil {
 		return 0, err
 	}

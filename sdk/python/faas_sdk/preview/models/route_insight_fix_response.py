@@ -33,7 +33,7 @@ class RouteInsightFixResponse:
     webhooks."""
     fix: RouteInsightFix
     """The edge-rule change applying an active insight would make now, planned from its evidence and the app's
-    current rules (ADR-20261020161310). Absent when the platform has no fix; never in webhook payloads."""
+    current rules. Absent when the platform has no fix; never in webhook payloads."""
     rule: EdgeRuleResponse
     """A customer-configurable edge rule. The `action` blob is a
     kind-tagged union — the shape varies by `kind`. See

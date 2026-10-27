@@ -410,64 +410,11 @@ gregale jobs add nightly-export --image registry.example/exporter:v1 --schedule 
 ```
 
 Use a scheduled job when work should run to completion in an isolated job
-environment; use an HTTP app cron when the schedule should make a request to an
-app route. Use a command cron when a recurring task needs the app's deployment
-environment without an HTTP endpoint:
-
-```bash
-gregale crons add --app APP_ID --schedule "0 2 * * *" \
-  --command bin/rebuild-index --arg=--incremental --timezone Europe/Istanbul
-gregale crons add --app APP_ID --schedule "0 4 * * 0" \
-  --command "bin/cleanup --older-than 30d" --shell
-gregale crons runs CRON_ID
-```
-
-Command crons create one deployment-attached app task for each scheduled
-occurrence and select the app's currently live deployment at fire time, so a
-later deployment automatically supplies the new command environment. The
-command runs with a 10-minute timeout and 1 MiB output limit by default; use
-`--timeout-seconds` and `--max-output-bytes` to adjust them. `--arg` is
-repeatable and preserves argument boundaries. `--shell` instead treats the
-single `--command` value as a shell string and cannot be combined with `--arg`.
-Use `--skip-if-running` to skip a firing while an earlier command task remains
-active. By default command failures are not retried. Set `--retry-max` to allow
-up to five additional attempts after a command fails or times out; retries use
-exponential backoff from `--retry-backoff-seconds` (default 60 seconds, capped
-at 24 hours). A cron run remains one logical history row while it waits for a
-retry, and its task receipt reports the attempt count and next retry time.
-Failure rules can classify an exit code or a structured `outcome_code` written
-to `GREGALE_OUTPUT_MANIFEST_PATH`; a mapped code can turn exit 0 into a
-permanent failure or a retry. Unmapped successful outcomes remain successful.
-Retries are at-least-once: a command may have produced side effects before it
-failed, so make retryable commands idempotent. A worker lease lost after
-dispatch is not automatically replayed because completion is uncertain.
-
-To report a business outcome independently of the process exit status, write
-a version-1 result manifest atomically before the command exits:
-
-```bash
-printf '%s\n' '{"version":1,"artifacts":[],"outcome_code":"invalid_record"}' \
-  > "$GREGALE_OUTPUT_MANIFEST_PATH.tmp"
-mv "$GREGALE_OUTPUT_MANIFEST_PATH.tmp" "$GREGALE_OUTPUT_MANIFEST_PATH"
-```
-
-Configure that code explicitly with `--failure-rules`; Gregale does not infer
-retry safety from an error message. The command receipt retains the code and
-classifier decision for inspection.
-
-Inspect outcomes with `gregale crons runs CRON_ID`. The history includes a run
-id; for a command cron, inspect its captured stdout/stderr, exit status, and
-retry details on demand with `gregale crons runs CRON_ID --run TASK_ID`. Use
-`gregale crons run CRON_ID` to immediately run the cron's saved command on the
-current live deployment without moving its schedule cursor.
-If `--skip-if-running` is configured and another run is still active, the
-manual request fails rather than overlapping it.
-Cancel a queued or active command-cron run with
-`gregale crons cancel CRON_ID TASK_ID`; an active task reports its cancellation
-request while the worker stops it. Disabling a cron only prevents future fires.
-`gregale app APP_ID exec ...` remains the surface for an arbitrary one-off
-command. Scheduled jobs create one task per occurrence and
-pick up the job's current configuration at fire time.
+environment, and an HTTP app cron when the schedule should make a request to
+an app route; see [Crons](crons). Command crons, which run a command from
+the app's deployment on a schedule, are in preview and documented there too.
+Scheduled jobs create one task per occurrence and pick up the job's current
+configuration at fire time.
 
 Handlers receive an event id and delivery attempt. Persist that id before applying side effects so retries are idempotent. Set explicit payload limits, timeouts, retry counts, and retention; route poison messages to a dead-letter destination for inspection and replay.
 
@@ -978,6 +925,31 @@ usage, the budgets and the window (`limits.settled_retention_seconds`).
 Unsettled receipts and receipts that a recovery or backfill holds are kept past
 the window.
 
+### Routing failures in the dead-letter queue
+
+A recipient whose routing fails for good (its retries run out, its delivery
+age expires, or its target is gone) never gets an invocation, so its failure
+lives on the event's receipt: `gregale events deliveries APP` lists it, and
+`gregale events replay` or `gregale events recover` route it again while the
+receipt is kept. When the receipt is pruned at the end of the settled-receipt
+window, each failed recipient moves to the dead-letter queue as an
+`event_route` entry, kept for 30 days from the failure like other dead letters
+([ADR-20261026163443](adr/20261026163443-event-routing-failures-in-the-dead-letter-queue.md)):
+
+- `payload` is the published event and `error_kind` its `failure_code`;
+  `error_detail` names the subscription, the event's source, id and type, when
+  it was accepted, the last error, the retry stop reason and `retryable`;
+  `retry_count` is the routing attempts. The origin is `event_subscription`, or
+  `event_workflow` for a workflow recipient.
+- The entry is listed under its app (`gregale dlq list APP`), or only in the
+  account view (`GET /v1/account/dlq`) when the app no longer exists.
+- It cannot be replayed, because the receipt is gone: replay answers
+  `409 dead_letter_not_replayable` and replay-all skips it. To deliver the
+  event, publish the payload again. A publication after the receipt is pruned
+  is accepted as a new delivery and reaches every subscription that matches it
+  now, not only the one that failed. Discard the entry with
+  `gregale dlq purge APP EVENT_ID`.
+
 ### Retention health and expiry alerts
 
 Inspect retained receipts and storage pressure before scheduling recovery:
@@ -1048,6 +1020,23 @@ holds can still cause receipts to be pruned before recovery.
 Apply the retention-health migration before upgrading binaries. Remove the new
 alert rules and downgrade binaries before rolling it back. See
 [ADR-912](adr/912-event-retention-health.md).
+
+### Pausing events
+
+Gregale can pause the event bus, platform-wide during an incident or for one
+account ([ADR-20261027125625](adr/20261027125625-events-kill-switch.md)).
+While it is paused:
+
+- Publishing answers `503 events_paused` with `Retry-After`, from
+  `POST /v1/events:publish`, `:publish-batch`, the app producer route, the
+  platform-tenant route and in-app publishing (the runtime's metadata endpoint
+  answers `503 event_publish_unavailable`). Nothing is accepted, so resend the
+  same events after the back-off; the SDK outbox does this for you.
+- Events already accepted are kept and wait to be routed; routing resumes when
+  the pause ends. Delivery-age limits keep counting while they wait.
+- Deliveries that already became invocations run as usual.
+- Object-storage notifications, inbound webhook automation and other events
+  Gregale publishes for you are still accepted and wait with the rest.
 
 ### Publish rate
 
@@ -1132,8 +1121,11 @@ before the recipient-snapshot migration continue using the previous routing
 behavior, which reads current subscriptions. The scheduler records a routing
 outcome for each captured candidate, so a transient enqueue error retries only
 that candidate. Retries are capped at 12; terminal routing failures remain on
-the outbox receipt and are logged by the scheduler. Once an invocation is
-enqueued, its handler retry and dead-letter lifecycle applies independently.
+the outbox receipt, are logged by the scheduler, and move to the dead-letter
+queue when the receipt is pruned (see
+[Routing failures in the dead-letter queue](#routing-failures-in-the-dead-letter-queue)).
+Once an invocation is enqueued, its handler retry and dead-letter lifecycle
+applies independently.
 
 Snapshot-backed application routing admits the invocation or work-policy
 cancellation and records success in one transaction. An expired routing worker

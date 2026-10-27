@@ -88,8 +88,8 @@ def sync_detailed(
 ) -> Response[EdgeAttackModeStatus | Problem]:
     """Switch attack mode on, or extend it.
 
-     Challenges every request to every host of the app until it ends
-    (ADR-20261021220456). Available on every plan, outside the plan's
+     Challenges every request to every host of the app until it ends. Available on every plan, outside
+    the plan's
     edge-rule quotas. The response returns once the serving gateways
     have applied it; `X-Faas-Edge-Rules-State: converging` with 503 means it
     was saved but not yet acknowledged. An empty body applies the
@@ -128,8 +128,8 @@ def sync(
 ) -> EdgeAttackModeStatus | Problem | None:
     """Switch attack mode on, or extend it.
 
-     Challenges every request to every host of the app until it ends
-    (ADR-20261021220456). Available on every plan, outside the plan's
+     Challenges every request to every host of the app until it ends. Available on every plan, outside
+    the plan's
     edge-rule quotas. The response returns once the serving gateways
     have applied it; `X-Faas-Edge-Rules-State: converging` with 503 means it
     was saved but not yet acknowledged. An empty body applies the
@@ -163,8 +163,8 @@ async def asyncio_detailed(
 ) -> Response[EdgeAttackModeStatus | Problem]:
     """Switch attack mode on, or extend it.
 
-     Challenges every request to every host of the app until it ends
-    (ADR-20261021220456). Available on every plan, outside the plan's
+     Challenges every request to every host of the app until it ends. Available on every plan, outside
+    the plan's
     edge-rule quotas. The response returns once the serving gateways
     have applied it; `X-Faas-Edge-Rules-State: converging` with 503 means it
     was saved but not yet acknowledged. An empty body applies the
@@ -201,8 +201,8 @@ async def asyncio(
 ) -> EdgeAttackModeStatus | Problem | None:
     """Switch attack mode on, or extend it.
 
-     Challenges every request to every host of the app until it ends
-    (ADR-20261021220456). Available on every plan, outside the plan's
+     Challenges every request to every host of the app until it ends. Available on every plan, outside
+    the plan's
     edge-rule quotas. The response returns once the serving gateways
     have applied it; `X-Faas-Edge-Rules-State: converging` with 503 means it
     was saved but not yet acknowledged. An empty body applies the

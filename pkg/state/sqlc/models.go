@@ -297,6 +297,7 @@ type AlertRule struct {
 	McpForMinutes                   int32
 	McpReadinessScope               string
 	LogQuery                        pgtype.Text
+	CreatedByAccountID              pgtype.UUID
 }
 
 type AlertRuleChannel struct {
@@ -1127,15 +1128,16 @@ type AppIssueTeamMember struct {
 }
 
 type AppLogDrain struct {
-	ID               pgtype.UUID
-	AppID            pgtype.UUID
-	AccountID        pgtype.UUID
-	Kind             string
-	TargetUrl        string
-	AuthHeaderSealed []byte
-	Enabled          bool
-	CreatedAt        pgtype.Timestamptz
-	UpdatedAt        pgtype.Timestamptz
+	ID                 pgtype.UUID
+	AppID              pgtype.UUID
+	AccountID          pgtype.UUID
+	Kind               string
+	TargetUrl          string
+	AuthHeaderSealed   []byte
+	Enabled            bool
+	CreatedAt          pgtype.Timestamptz
+	UpdatedAt          pgtype.Timestamptz
+	CreatedByAccountID pgtype.UUID
 }
 
 type AppLogDrainDeliveryAnalytic struct {
@@ -1591,6 +1593,7 @@ type AppWebhook struct {
 	PlatformTenantID                pgtype.UUID
 	ReceiverRecoveryProbeDeliveryID pgtype.UUID
 	ReceiverCooldownUntil           pgtype.Timestamptz
+	CreatedByAccountID              pgtype.UUID
 }
 
 type AppWebhookDelivery struct {
@@ -1905,6 +1908,18 @@ type AuditLog struct {
 	Actor        pgtype.Text
 	ReceivedAt   pgtype.Timestamptz
 	Data         []byte
+}
+
+type AuditLogAnchor struct {
+	Seq         int64
+	WindowStart pgtype.Timestamptz
+	WindowEnd   pgtype.Timestamptz
+	RowCount    int64
+	RowsDigest  string
+	PrevMac     string
+	Mac         string
+	KeyID       string
+	CreatedAt   pgtype.Timestamptz
 }
 
 type AutomaticRouteCheck struct {
@@ -2687,6 +2702,8 @@ type ComputeNode struct {
 	CpuModel        string
 	Readiness       string
 	ReadinessReason pgtype.Text
+	// Last time this node's gatewayd-internal edge-rule listener reported alive (database clock); NULL before its first report (ADR-091).
+	EdgeListenerHeartbeatAt pgtype.Timestamptz
 }
 
 type ComputeNodeHeartbeat struct {
@@ -2848,6 +2865,7 @@ type Cron struct {
 	SchedulePolicy        []byte
 	FailureRules          []byte
 	ScheduleRevision      int64
+	ScheduleAnchorAt      pgtype.Timestamptz
 }
 
 type CronFireNowRequest struct {
@@ -7981,6 +7999,13 @@ type ManagedPostgresDatabase struct {
 	OrgID                       pgtype.UUID
 }
 
+type ManagedPostgresDatabaseEndpoint struct {
+	DatabaseID pgtype.UUID
+	Host       string
+	Port       int32
+	UpdatedAt  pgtype.Timestamptz
+}
+
 type ManagedPostgresHealth struct {
 	DatabaseID         pgtype.UUID
 	AccountID          pgtype.UUID
@@ -11630,16 +11655,17 @@ type ProjectEnvironment struct {
 }
 
 type ProjectEnvironmentApproval struct {
-	ID                pgtype.UUID
-	AccountID         pgtype.UUID
-	ProjectSlug       string
-	EnvironmentSlug   string
-	PlanTokenHash     string
-	ApprovalTokenHash string
-	ExpiresAt         pgtype.Timestamptz
-	CreatedAt         pgtype.Timestamptz
-	TokenKind         string
-	ConsumedAt        pgtype.Timestamptz
+	ID                  pgtype.UUID
+	AccountID           pgtype.UUID
+	ProjectSlug         string
+	EnvironmentSlug     string
+	PlanTokenHash       string
+	ApprovalTokenHash   string
+	ExpiresAt           pgtype.Timestamptz
+	CreatedAt           pgtype.Timestamptz
+	TokenKind           string
+	ConsumedAt          pgtype.Timestamptz
+	ApprovedByAccountID pgtype.UUID
 }
 
 type ProjectEnvironmentCleanupJob struct {

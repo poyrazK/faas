@@ -175,6 +175,11 @@ type Manifest struct {
 	// (s3-gatewayd) under the playbooks (ADR 20261025111015). Absent keeps
 	// the gateway unmanaged; strict fleet verify then fails if one runs.
 	ObjectStorage ObjectStorage `yaml:"object_storage,omitempty"`
+
+	// WorkloadIdentity turns on workload-identity tokens (ADR-1141): the
+	// renderer hands its source directory to every control-plane and
+	// compute host, so the roles install the JWKS and the signing key.
+	WorkloadIdentity WorkloadIdentity `yaml:"workload_identity,omitempty"`
 }
 
 // ObjectStorage is the s3-gatewayd deployment contract for the control plane.
@@ -210,6 +215,23 @@ func (o ObjectStorage) validate() Errors {
 		errs = append(errs, Error{"object_storage.gateway", "must be managed when config_src or provider_env_src is set"})
 	}
 	return errs
+}
+
+// WorkloadIdentity names the directory `gregalectl workload-identity init`
+// wrote on the Ansible controller (ADR-1141 amendment 2026-10-24). Empty
+// leaves issuance off, which is the default.
+type WorkloadIdentity struct {
+	SourceDir string `yaml:"source_dir,omitempty"`
+}
+
+func (w WorkloadIdentity) validate() Errors {
+	if w.SourceDir == "" {
+		return nil
+	}
+	if !filepath.IsAbs(w.SourceDir) || strings.ContainsAny(w.SourceDir, "\"\\\n\r") {
+		return Errors{{"workload_identity.source_dir", "must be an absolute path on the Ansible controller, without quotes, backslashes or line breaks"}}
+	}
+	return nil
 }
 
 // Egress is the top-level egress-policy knob. PR scale-out
@@ -1079,6 +1101,7 @@ func (m *Manifest) Validate() Errors {
 	errs = append(errs, m.PKI.validate()...)
 	errs = append(errs, m.Egress.validate(m.Overlay.CIDR)...)
 	errs = append(errs, m.ObjectStorage.validate()...)
+	errs = append(errs, m.WorkloadIdentity.validate()...)
 	if len(errs) > 0 {
 		return errs
 	}

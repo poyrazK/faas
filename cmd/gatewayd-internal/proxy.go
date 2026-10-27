@@ -45,6 +45,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid"
+	"github.com/onebox-faas/faas/pkg/gateway"
 	"github.com/onebox-faas/faas/pkg/logsanitize"
 	"github.com/onebox-faas/faas/pkg/middleware"
 )
@@ -325,13 +326,20 @@ func (a *apidProxy) proxyToApid(w http.ResponseWriter, r *http.Request) {
 			if proto != "" {
 				pr.Out.Header.Set("X-Forwarded-Proto", proto)
 			}
-			// Pin X-Forwarded-For to the real client IP from
-			// pr.In's RemoteAddr — the gatewayd edge sees the
-			// customer's IP before the loopback hop. We
+			// Pin X-Forwarded-For to the real client IP. We
 			// overwrite (rather than append) so apid sees
 			// exactly one value, the contract its
 			// defaultClientIP predicate relies on (issue #89).
-			if host, _, err := net.SplitHostPort(pr.In.RemoteAddr); err == nil && host != "" {
+			// The customer is the single entry gatewayd-public
+			// pinned: this daemon is reached over a unix socket
+			// (or from a peer node's edge), so pr.In.RemoteAddr
+			// is gatewayd-public, not the customer. Reading only
+			// RemoteAddr left every login and key audit row
+			// with 127.0.0.1 (issue #2316). A direct caller with
+			// no forwarded entry falls back to its own address.
+			if ip, ok := gateway.TrustedClientIP(pr.In); ok {
+				pr.Out.Header.Set("X-Forwarded-For", ip.String())
+			} else if host, _, err := net.SplitHostPort(pr.In.RemoteAddr); err == nil && host != "" {
 				pr.Out.Header.Set("X-Forwarded-For", host)
 			}
 			// Mint x-faas-request-id (gateway.Handler does this

@@ -2,10 +2,13 @@ package main
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/prometheus/client_golang/prometheus"
 
 	"github.com/onebox-faas/faas/pkg/gateway"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -47,6 +50,9 @@ type edgeRuleHitCounter struct {
 	now     func() time.Time
 	dropped atomic.Int64
 
+	// skipped counts rows dropped at flush because an id is not a UUID.
+	skipped *prometheus.CounterVec
+
 	eventsMu      sync.Mutex
 	events        []gateway.EdgeRuleEvent
 	droppedEvents int64          // guarded by eventsMu
@@ -55,7 +61,59 @@ type edgeRuleHitCounter struct {
 }
 
 func newEdgeRuleHitCounter() *edgeRuleHitCounter {
-	return &edgeRuleHitCounter{pending: map[string]*edgeRuleHitCount{}, now: time.Now}
+	skipped := prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "gatewayd_edge_rule_telemetry_skipped_total",
+		Help: "ADR-960/964 edge-rule hit-count rows and events dropped at flush because their rule or app id is not a UUID, by kind (hit, event).",
+	}, []string{"kind"})
+	for _, kind := range []string{"hit", "event"} {
+		skipped.WithLabelValues(kind)
+	}
+	return &edgeRuleHitCounter{pending: map[string]*edgeRuleHitCount{}, now: time.Now, skipped: skipped}
+}
+
+// register adds the skipped-row counter to reg. A second daemon run in one
+// process (tests, ADR-1736 hand-off) reuses the registered counter.
+func (c *edgeRuleHitCounter) register(reg prometheus.Registerer) {
+	if reg == nil {
+		return
+	}
+	var already prometheus.AlreadyRegisteredError
+	if err := reg.Register(c.skipped); errors.As(err, &already) {
+		if existing, ok := already.ExistingCollector.(*prometheus.CounterVec); ok {
+			c.skipped = existing
+		}
+	}
+}
+
+// edgeRuleTelemetryIDsValid reports whether a row can be written. rule_id
+// and app_id are NOT NULL uuid columns and a batch is one insert, so a single
+// row with an empty id failed every hit and event flush on rc.296.
+func edgeRuleTelemetryIDsValid(ruleID, appID string) bool {
+	return isAppID(ruleID) && isAppID(appID)
+}
+
+// skipInvalid drops rows whose ids (rule, app) cannot be written, counts them
+// under kind and logs one example, so one bad row cannot fail the batch.
+func skipInvalid[T any](c *edgeRuleHitCounter, rows []T, kind string, ids func(T) (string, string), log *slog.Logger) []T {
+	valid := rows[:0]
+	var skipped int
+	var ruleID, appID string
+	for _, row := range rows {
+		rule, app := ids(row)
+		if edgeRuleTelemetryIDsValid(rule, app) {
+			valid = append(valid, row)
+			continue
+		}
+		skipped++
+		ruleID, appID = rule, app
+	}
+	if skipped > 0 {
+		c.skipped.WithLabelValues(kind).Add(float64(skipped))
+		if log != nil {
+			log.Warn("gatewayd: edge-rule telemetry rows without a valid rule or app id skipped", "kind", kind, "rows", skipped, "rule", ruleID, "app", appID)
+		}
+	}
+	return valid
 }
 
 func (c *edgeRuleHitCounter) RecordEdgeRuleHit(ruleID, appID string, logged bool) {
@@ -167,6 +225,7 @@ func (c *edgeRuleHitCounter) flushEvents(ctx context.Context, store state.EdgeRu
 	if dropped > 0 && log != nil {
 		log.Warn("gatewayd: edge-rule events dropped at the queue bound", "events", dropped)
 	}
+	events = skipInvalid(c, events, "event", func(e state.EdgeRuleEvent) (string, string) { return e.RuleID, e.AppID }, log)
 	if len(events) == 0 {
 		return
 	}
@@ -221,7 +280,7 @@ func (c *edgeRuleHitCounter) flush(ctx context.Context, store state.EdgeRuleHitS
 	if events, ok := store.(state.EdgeRuleEventStore); ok {
 		c.flushEvents(ctx, events, log)
 	}
-	hits := c.drain()
+	hits := skipInvalid(c, c.drain(), "hit", func(h state.EdgeRuleHit) (string, string) { return h.RuleID, h.AppID }, log)
 	if len(hits) == 0 {
 		return
 	}

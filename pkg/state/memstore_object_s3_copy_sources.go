@@ -122,7 +122,9 @@ func (m *MemStore) resolveObjectS3CopySourceLocked(account, credential, source, 
 	b, exists := m.objectBuckets[source]
 	if !ok || !validCopySourceCredential(parent) || parent.AccountID != account || parent.BucketID != c.BucketID || !granted || !exists ||
 		g.AccountID != account || !strings.HasPrefix(key, g.Prefix) || !compatibleCopySourceBuckets(m.objectBuckets[c.BucketID], b) ||
-		m.activeDeletionLocked(source) || m.activeDeletionLocked(c.BucketID) {
+		m.activeVersionProtectionLocked(source) || m.activeVersionProtectionLocked(c.BucketID) || m.activeKeyDeletionLocked(source, key) {
+		// Only a deletion of the source key fences the copy; the destination
+		// is an ordinary write, fenced per key at admission (ADR-20261025115958).
 		return ObjectS3CopySource{}, ObjectBucket{}, ErrNotFound
 	}
 	return g, b, nil

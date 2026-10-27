@@ -21,7 +21,7 @@ T = TypeVar("T", bound="CreateSyntheticCheckRequest")
 
 @_attrs_define
 class CreateSyntheticCheckRequest:
-    """Defines a scheduled HTTP check against the app (ADR-748)."""
+    """Defines a scheduled HTTP check against the app."""
 
     name: str
     """Unique per app."""

@@ -46,13 +46,13 @@ class PlanWorkload:
     app_slug: str | Unset = UNSET
     """Reviewed Gregale app name. Repository name, dependencies and configuration keys retain their original
     identity. Present for migration scans, existing allocations, and new workloads whose name cannot be a slug,
-    which get the project-prefixed name (ADR-20261022120205)."""
+    which get the project-prefixed name."""
     platform_tenant_required: bool | Unset = UNSET
     """Requested customer identity policy from Compose x-gregale-platform-tenant-required or the request override.
     Omitted preserves existing app policy; new apps default to false."""
     visibility: PlanWorkloadVisibility | Unset = UNSET
     """Present when the app is or will be internal (no public route): an existing internal app, or a new Compose
-    service without `ports:` (ADR-20261022131852). Omitted means public."""
+    service without `ports:`. Omitted means public."""
     dockerfile: str | Unset = UNSET
     image: str | Unset = UNSET
     """Normalized prebuilt OCI image for a workload without build. Tags are resolved and pinned by the image worker
@@ -63,21 +63,19 @@ class PlanWorkload:
     image settings. NONE disables the check. Durations retain nanosecond precision; positive durations must be at
     least 1ms."""
     image_process: ComposeProcess | Unset = UNSET
-    """Compose process overrides for a prebuilt image (ADR-1337). Omitted fields inherit the image's ENTRYPOINT,
-    USER, WORKDIR and stop settings."""
+    """Compose process overrides for a prebuilt image. Omitted fields inherit the image's ENTRYPOINT, USER, WORKDIR
+    and stop settings."""
     build_target: str | Unset = UNSET
-    """Dockerfile stage a source-built Compose service builds (build.target, ADR-20261019142544). Omitted builds
-    the final stage."""
+    """Dockerfile stage a source-built Compose service builds (build.target). Omitted builds the final stage."""
     build_args: list[str] | Unset = UNSET
     """Names of the Compose build.args passed to the Dockerfile build, sorted. Values are not returned."""
     go_command: str | Unset = UNSET
-    """The cmd/<name> main package this service builds from the root of a Go module with several commands
-    (ADR-20261025134512)."""
+    """The cmd/<name> main package this service builds from the root of a Go module with several commands."""
     secret_files: list[SecretFile] | Unset = UNSET
-    """Compose secrets written to /run/secrets (ADR-20261023090000)."""
+    """Compose secrets written to /run/secrets."""
     resources: ComposeResources | Unset = UNSET
-    """A Compose service's deploy.replicas and deploy.resources.limits, converted to app settings
-    (ADR-20261023120000). Omitted fields are undeclared and keep the app's own settings."""
+    """A Compose service's deploy.replicas and deploy.resources.limits, converted to app settings. Omitted fields
+    are undeclared and keep the app's own settings."""
     depends_on: list[str] | Unset = UNSET
     """Compose service dependencies. The apply path validates the graph, deploys in dependency order, and injects
     GREGALE_SERVICE_<NAME>_URL plus GREGALE_SERVICE_<NAME>_HTTPS_URL for workload dependencies."""
@@ -87,7 +85,7 @@ class PlanWorkload:
     service_binding_policy: ServiceBindingPolicy | Unset = UNSET
     """Caller-side authorization policy for internal service requests. `account` preserves same-account
     reachability; `declared` permits only targets present in the caller's service bindings; `project` also permits
-    every service in the caller's own project (ADR-20261022111119)."""
+    every service in the caller's own project."""
     service_reliability: ServiceReliabilityPolicies | Unset = UNSET
     """Map of declared target service names to caller-owned reliability policies. Only names in this app's service
     bindings may appear."""
@@ -107,28 +105,27 @@ class PlanWorkload:
     schedule: str | Unset = UNSET
     """cron expression when declared (CronJob, render, serverless)"""
     env_keys: list[str] | Unset = UNSET
-    """KEYS only — never values; spec §11 forbids logging secrets"""
+    """KEYS only — never values; forbids logging secrets"""
     required_env_keys: list[str] | Unset = UNSET
     """Explicit names from .gregale/required-secrets.json. Detected env_keys alone do not establish requirements."""
     unset_env_keys: list[str] | Unset = UNSET
     """Names from env_keys and required_env_keys that will have no value in the selected environment: not
     configured on the app and not provided by the platform. Names only, never values."""
     unset_env_key_reasons: PlanWorkloadUnsetEnvKeyReasons | Unset = UNSET
-    """For an unset_env_keys name with a Compose value, why that value is not imported (ADR-20261023085230). Never
-    values."""
+    """For an unset_env_keys name with a Compose value, why that value is not imported. Never values."""
     imported_env_keys: list[str] | Unset = UNSET
     """Compose environment names whose plain values apply will write, because the project sets x-gregale-env-
-    import: true and they are unset (ADR-20261023085230). Names only."""
+    import: true and they are unset. Names only."""
     source: str | Unset = UNSET
     """detector provenance, e.g. compose.yaml: api"""
     tier: PlanWorkloadTier | Unset = UNSET
     action: PlanWorkloadAction | Unset = UNSET
-    """ADR-124 blast-radius projection. create = workload is new to the account; update = existing app matches
-    (root_dir, name)."""
+    """Blast-radius projection. create = workload is new to the account; update = existing app matches (root_dir,
+    name)."""
     existing_app_id: str | Unset = UNSET
-    """ADR-124: app row ID the update targets. Empty iff action == create."""
+    """App row ID the update targets. Empty iff action == create."""
     detected_by: PlanDetectedBy | Unset = UNSET
-    """Structured detection trace for one workload (issue #742).
+    """Structured detection trace for one workload.
     `source` on PlanWorkload carries the same provenance as free
     text ("compose.yaml: api"); this is the machine-readable form
     so a client can branch on the detector without parsing it.

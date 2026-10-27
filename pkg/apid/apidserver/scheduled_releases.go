@@ -193,14 +193,14 @@ func (s *server) deploymentScheduleView(parent context.Context, d state.Deployme
 	return &view
 }
 
-// scheduledReleaseTrafficProblem refuses to give a release traffic by hand
+// scheduledTrafficProblem refuses to give a release traffic by hand
 // while it waits for its scheduled start.
-func (s *server) scheduledReleaseTrafficProblem(r *http.Request, d state.Deployment) *api.Problem {
+func (s *server) scheduledTrafficProblem(ctx context.Context, d state.Deployment) *api.Problem {
 	store, ok := s.scheduledReleases()
 	if !ok || !d.TrafficPercentExplicit || d.TrafficPercent != 0 {
 		return nil
 	}
-	sr, err := store.LatestScheduledRelease(r.Context(), d.ID)
+	sr, err := store.LatestScheduledRelease(ctx, d.ID)
 	if errors.Is(err, state.ErrNotFound) {
 		return nil
 	}

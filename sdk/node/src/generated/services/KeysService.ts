@@ -46,7 +46,7 @@ export class KeysService {
     requestBody,
   }: {
     /**
-     * Create a new API key for the authenticated account. Plaintext is returned exactly once in the 201 response and cannot be recovered later — store it immediately. See IAM-1, ADR-034 rev2 for the scope vocabulary.
+     * Create a new API key for the authenticated account. Plaintext is returned exactly once in the 201 response and cannot be recovered later — store it immediately. rev2 for the scope vocabulary.
      */
     requestBody: CreateKeyRequest,
   }): CancelablePromise<APIKeyResponse> {
@@ -98,7 +98,7 @@ export class KeysService {
   /**
    * Rotate an API key.
    * Mints a new key (status='active') and demotes the old key in
-   * a single transaction (issue #189 / IAM-5). The new key
+   * a single transaction. The new key
    * inherits the predecessor's label + scopes so the customer's
    * CI config does not need to chase a label change.
    *
@@ -150,7 +150,7 @@ export class KeysService {
   /**
    * List API keys minted against the active org.
    * Returns every key the org owns (active + grace + revoked).
-   * Mirrors `GET /v1/keys`; PR 6's canonical path. The `org_id`
+   * Mirrors `GET /v1/keys`; the canonical path. The `org_id`
    * on every row will match `{slug}` because the store filters
    * server-side on the loaded membership.
    *
@@ -222,9 +222,8 @@ export class KeysService {
   }
   /**
    * Fetch a single API key by id (org-scoped).
-   * Lookup mirror of `GET /v1/keys/{id}` (the legacy path does not
-   * exist by id in pre-PR-6 — this path is the canonical single-key
-   * read). The response is the standard `APIKeyResponse` (no
+   * Lookup mirror of `GET /v1/keys/{id}`; this path is the canonical
+   * single-key read. The response is the standard `APIKeyResponse` (no
    * plaintext). Cross-org probes collapse to 404.
    *
    * @returns APIKeyResponse Single API key.
@@ -266,8 +265,7 @@ export class KeysService {
    * Revoke an API key (org-scoped).
    * Soft-delete mirror of `DELETE /v1/keys/{id}`. Status flips to
    * 'revoked'; subsequent bearer-auth attempts hit `ErrAPIKeyRevoked`
-   * (401 unauthenticated). The audit row carries `org_id` (PR 6
-   * closes the ADR-061 §E "audit scoped to org" gap).
+   * (401 unauthenticated). The audit row carries `org_id`.
    *
    * @returns void
    * @throws ApiError

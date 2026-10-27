@@ -12,6 +12,8 @@
 #   BASE=<ref>   compare against <ref> instead of the merge base
 #   DRY_RUN=1    print the selection without running anything
 #   GOMEMLIMIT   set by `make lint-changed`
+#   GOFLAGS      set by `make lint-changed` to the Makefile's GO_DEV_GOFLAGS, so
+#                lint reuses the packages `make test-changed` compiled
 set -euo pipefail
 
 repo_root="$(git rev-parse --show-toplevel)"
@@ -44,6 +46,7 @@ for pkg in $lint_pkgs; do
 done
 "$go_bin" run ./scripts/ci/teststorecheck -base "$base" || failed+=(teststorecheck)
 "$go_bin" run ./scripts/ci/sealdomaincheck || failed+=(sealdomaincheck)
+bash scripts/ci/check_trimpath_safe.sh "$repo_root" || failed+=(trimpath-check)
 if ((${#failed[@]})); then
   echo "lint-changed: failed: ${failed[*]}" >&2
   exit 1

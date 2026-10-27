@@ -53,7 +53,7 @@ export class AuthService {
       mediaType: 'application/json',
       errors: {
         400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
-        401: `code: invalid_credentials — wrong email or password. Drafted for the dashboard auth surface (issue #165 PR #2, ADR-032).`,
+        401: `code: invalid_credentials — wrong email or password. Drafted for the dashboard auth surface.`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
@@ -88,7 +88,7 @@ export class AuthService {
       mediaType: 'application/json',
       errors: {
         400: `Password too weak (≥12 chars required).`,
-        401: `code: invalid_credentials — wrong email or password. Drafted for the dashboard auth surface (issue #165 PR #2, ADR-032).`,
+        401: `code: invalid_credentials — wrong email or password. Drafted for the dashboard auth surface.`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
@@ -130,11 +130,11 @@ export class AuthService {
   }
   /**
    * Programmatic signup (JSON-only, bearer-key CLI path).
-   * Issue #311 / `gregale signup` — JSON-only endpoint that
+   * `gregale signup` — JSON-only endpoint that
    * creates an account (or signs the caller in idempotently),
    * mints a fresh programmatic API key, and returns the
    * `ProgrammaticAuthResponse` payload. The CLI persists the
-   * plaintext via `saveToken()` without a dashboard round-trip.
+   * plaintext via `saveToken` without a dashboard round-trip.
    *
    * Anti-enumeration posture mirrors `/signup`:
    * - email unbound: create + set password + mint key.
@@ -159,7 +159,7 @@ export class AuthService {
       mediaType: 'application/json',
       errors: {
         400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
-        401: `code: invalid_credentials — wrong email or password. Drafted for the dashboard auth surface (issue #165 PR #2, ADR-032).`,
+        401: `code: invalid_credentials — wrong email or password. Drafted for the dashboard auth surface.`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
@@ -170,7 +170,7 @@ export class AuthService {
   }
   /**
    * Programmatic login (JSON-only, bearer-key CLI path).
-   * Issue #311 / `gregale login` mirror — JSON-only endpoint
+   * `gregale login` mirror — JSON-only endpoint
    * that authenticates an email + password and returns a
    * `ProgrammaticAuthResponse` payload. Same response shape as
    * `/v1/auth/signup` so the CLI can reuse its unmarshaler.
@@ -194,7 +194,7 @@ export class AuthService {
       mediaType: 'application/json',
       errors: {
         400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
-        401: `code: invalid_credentials — wrong email or password. Drafted for the dashboard auth surface (issue #165 PR #2, ADR-032).`,
+        401: `code: invalid_credentials — wrong email or password. Drafted for the dashboard auth surface.`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
@@ -205,7 +205,7 @@ export class AuthService {
   }
   /**
    * Magic-link signup (JSON-only, no password).
-   * Issue #311 / `gregale signup --email-only EMAIL` — emails
+   * `gregale signup --email-only EMAIL` — emails
    * a one-time signup link to the given address. Always
    * returns 200 with the same body regardless of whether the
    * email is bound, unbound, malformed, or missing in the
@@ -347,12 +347,12 @@ export class AuthService {
    * the state and verifier cookies, exchanges
    * the code at `oauth2.googleapis.com/token`, fetches the
    * userinfo, and verifies `email_verified=true` before
-   * minting a session (issue #165 PR #2, ADR-032).
+   * minting a session.
    *
    * Returns 503 `oauth_provider_unavailable` when the operator
    * did not configure Google sign-in on this host (both
    * `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` unset at
-   * boot, issue #419 / ADR-046). The same shape is returned
+   * boot). The same shape is returned
    * for the half-set case, which fails to boot.
    *
    * @returns void
@@ -365,12 +365,12 @@ export class AuthService {
       errors: {
         302: `Redirect to Google consent.`,
         500: `Google OAuth misconfigured at runtime. Defensive
-        catch — boot validation (ADR-046) should make this
+        catch — boot validation should make this
         unreachable in production.
         `,
         503: `Google sign-in not configured on this host. Operator
         must set both \`GOOGLE_CLIENT_ID\` and
-        \`GOOGLE_CLIENT_SECRET\` and restart apid (ADR-046).
+        \`GOOGLE_CLIENT_SECRET\` and restart the API.
         Surfaces as \`oauth_provider_unavailable\`.
         `,
       },
@@ -380,8 +380,7 @@ export class AuthService {
    * Google OAuth 2.0 callback.
    * Verifies state, exchanges the code, fetches the profile,
    * enforces RFC 7636 `S256` PKCE and `email_verified=true`, and signs the user in.
-   * Sub-first lookup against `oauth_links` enforces the §11
-   * anti-takeover invariant.
+   * Sub-first lookup against `oauth_links` enforces the anti-takeover invariant.
    *
    * @returns void
    * @throws ApiError
@@ -436,13 +435,12 @@ export class AuthService {
    * `/v1/auth/github/callback` and 302s to the GitHub consent
    * with `scope=read:user user:email` and an RFC 7636 `S256` PKCE
    * challenge. The callback requires
-   * a primary && verified email before minting a session
-   * (issue #165 PR #2, ADR-032).
+   * a primary && verified email before minting a session.
    *
    * Returns 503 `oauth_provider_unavailable` when the operator
    * did not configure GitHub sign-in on this host (both
    * `GITHUB_CLIENT_ID` and `GITHUB_CLIENT_SECRET` unset at
-   * boot, issue #419 / ADR-046).
+   * boot).
    *
    * @returns void
    * @throws ApiError
@@ -454,12 +452,12 @@ export class AuthService {
       errors: {
         302: `Redirect to GitHub consent.`,
         500: `GitHub OAuth misconfigured at runtime. Defensive
-        catch — boot validation (ADR-046) should make this
+        catch — boot validation should make this
         unreachable in production.
         `,
         503: `GitHub sign-in not configured on this host. Operator
         must set both \`GITHUB_CLIENT_ID\` and
-        \`GITHUB_CLIENT_SECRET\` and restart apid (ADR-046).
+        \`GITHUB_CLIENT_SECRET\` and restart the API.
         Surfaces as \`oauth_provider_unavailable\`.
         `,
       },
@@ -470,10 +468,9 @@ export class AuthService {
    * Verifies state, exchanges the code, fetches `/user` and
    * `/user/emails`, filters the primary && verified email,
    * enforces RFC 7636 `S256` PKCE, and signs the user in. Sub-first lookup against
-   * `oauth_links` enforces the §11 anti-takeover invariant.
+   * `oauth_links` enforces the anti-takeover invariant.
    *
-   * On success, `auth.login` is appended to the events table
-   * (ADR-035) with `method=github`, `email=<verified email>`,
+   * On success, `auth.login` is appended to the events table with `method=github`, `email=<verified email>`,
    * and `login=<GitHub username>` so the audit dashboard and
    * the corroborating slog line reference one identifier.
    *
@@ -543,8 +540,8 @@ export class AuthService {
   }
   /**
    * Sign-in OAuth capability signal for the dashboard.
-   * Returns the boot-resolved OAuth provider state for this apid
-   * host (issue #419 / ADR-046). The dashboard reads this on
+   * Returns the boot-resolved OAuth provider state for this API
+   * host. The dashboard reads this on
    * `/login` to decide whether to render the "Sign in with
    * Google" / "Sign in with GitHub" buttons.
    *
@@ -575,7 +572,7 @@ export class AuthService {
   /**
    * Log the current dashboard session out.
    * Revokes the calling session row in the `sessions` table
-   * (one row per dashboard login; ADR-039 / IAM-3) and
+   * (one row per dashboard login) and
    * clears the `faas_sid` cookie. Always 204 on success,
    * even if the row was already revoked (idempotent — the
    * cookie is cleared either way). Other sessions on the
@@ -687,7 +684,7 @@ export class AuthService {
   /**
    * List active sessions for the calling account.
    * Returns one `SessionInfo` row per active login (one row
-   * per dashboard login; ADR-039 / IAM-3). Newest first. The
+   * per dashboard login). Newest first. The
    * row whose `id` matches the calling cookie's `sid` is
    * flagged `current_session: true`. Revoked rows are NOT
    * returned; the `audit-events` endpoint is the timeline
@@ -849,7 +846,7 @@ export class AuthService {
   }
   /**
    * Exchange an IdP-issued JWT for a short-lived deploy bearer
-   * ADR-101 / issue #270. CI runners that have an IdP-issued OIDC
+   * CI runners that have an IdP-issued OIDC
    * JWT (e.g. GitHub Actions `ACTIONS_ID_TOKEN_REQUEST_TOKEN`,
    * GitLab CI, CircleCI) call this endpoint to exchange it for a
    * short-lived opaque bearer (5 min TTL, `fp_oidc_<48 hex>` prefix).
@@ -868,8 +865,8 @@ export class AuthService {
    * `(account_id, issuer_url)` pair so customers do not have to
    * configure the dashboard before their first CI deploy.
    *
-   * The AuthLimit surface is the shared per-IP bucket (spec §11
-   * 10/min/IP) — high-volume CI runners may hit the cap; long-lived
+   * The AuthLimit surface is the shared per-IP bucket
+   * (10/min/IP) — high-volume CI runners may hit the cap; long-lived
    * deploy tokens remain the escape hatch.
    *
    * The endpoint also accepts the RFC 8693 OAuth 2.0 Token Exchange
@@ -916,7 +913,7 @@ export class AuthService {
    * `SameSite=Lax` alone does not protect it from a customer app
    * hosted under `*.gregale.dev`.
    *
-   * Proof of presence (ADR-140), decided by what the account has:
+   * Proof of presence, decided by what the account has:
    *
    * - A step-up verified within the last 5 minutes
    * (`POST /v1/account/mfa/verify`) is accepted as-is.

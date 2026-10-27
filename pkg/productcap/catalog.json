@@ -422,7 +422,7 @@
       "id": "app-tasks",
       "name": "App tasks",
       "category": "runtime",
-      "description": "Run a one-off command in a fresh VM built from an app's deployment.",
+      "description": "Run a one-off or scheduled (command cron) command in a fresh VM built from an app's deployment.",
       "maturity": "preview",
       "plans": [
         "free",
@@ -815,6 +815,9 @@
       "routes": [
         "/v1/apps/{}/buckets/{}/cors",
         "/v1/orgs/{}/apps/{}/buckets/{}/cors"
+      ],
+      "cli": [
+        "bucket cors"
       ]
     },
     {
@@ -1041,7 +1044,7 @@
       "id": "crons",
       "name": "Crons",
       "category": "async",
-      "description": "Run HTTP requests or commands on a schedule.",
+      "description": "Send an HTTP request to an app on a schedule. Command crons run as app tasks and share their preview.",
       "maturity": "ga",
       "plans": [
         "hobby",
@@ -1049,7 +1052,7 @@
         "scale"
       ],
       "docs_url": "/docs/crons",
-      "acceptance_test": "pkg/apid/apidserver/handlers_ext_test.go::TestListCrons_HappyPath",
+      "acceptance_test": "cmd/e2e/cron_e2e_test.go::TestE2E_Cron_FiresOnScheduleAndOnDemand",
       "consumers": [
         "schedd"
       ],
@@ -1188,6 +1191,7 @@
         "/replacement.js",
         "/resolution.js",
         "/sources.js",
+        "=/v1/events",
         "/validation.js",
         "/verification.js"
       ]
@@ -1816,7 +1820,7 @@
         "pro",
         "scale"
       ],
-      "docs_url": "/docs/edge-rule-trace",
+      "docs_url": "/docs/edge-rules#versions-and-rollback",
       "acceptance_test": "pkg/apid/apidserver/handlers_edge_rule_events_test.go::TestEdgeRuleEventsAPI",
       "parent": "edge-rules",
       "routes": [
@@ -1840,7 +1844,7 @@
         "pro",
         "scale"
       ],
-      "docs_url": "/docs/edge-rule-trace",
+      "docs_url": "/docs/edge-rules#lists",
       "acceptance_test": "pkg/apid/apidserver/handlers_edge_rule_lists_test.go::TestEdgeRuleListLifecycle",
       "parent": "edge-rules",
       "routes": [
@@ -1862,7 +1866,7 @@
         "pro",
         "scale"
       ],
-      "docs_url": "/docs/edge-rule-trace",
+      "docs_url": "/docs/edge-rules#testing-and-observing",
       "acceptance_test": "pkg/apid/apidserver/handlers_edge_rule_suggestions_test.go::TestEdgeRuleSuggestionsRoute",
       "parent": "edge-rules",
       "routes": [
@@ -1907,7 +1911,7 @@
         "pro",
         "scale"
       ],
-      "docs_url": "/docs/edge-rule-trace",
+      "docs_url": "/docs/edge-rules",
       "acceptance_test": "cmd/gatewayd-internal/edge_rules_app_wide_test.go::TestAppWideEdgeRules",
       "settings": [
         "app.maintenance_mode",
@@ -2377,6 +2381,10 @@
       ],
       "docs_url": "/docs/event-driven",
       "acceptance_test": "cmd/e2e/events_fanout_e2e_test.go::TestE2E_EventFanout_MatchesFiltersAndIsolatesAccounts",
+      "consumers": [
+        "schedd",
+        "vmmd"
+      ],
       "routes": [
         "/dashboard/apps/{}/event-deliveries",
         "/dashboard/apps/{}/events",
@@ -2997,7 +3005,7 @@
         "scale"
       ],
       "docs_url": "/docs/logs",
-      "acceptance_test": "pkg/api/client_test.go::TestStreamAppLogs_HappyPath",
+      "acceptance_test": "cmd/e2e/logs_archive_metal_test.go::TestLogsLiveAndArchivedMetal",
       "routes": [
         "/dashboard/apps/{}/logs",
         "/v1/apps/{}/logs",
@@ -3925,6 +3933,7 @@
       "acceptance_test": "pkg/apid/apidserver/handlers_managed_postgres_overage_test.go::TestManagedPostgresOverageRoutes",
       "parent": "managed-postgres",
       "routes": [
+        "/dashboard/postgres/overage",
         "/v1/postgres/overage"
       ],
       "cli": [
@@ -3972,6 +3981,7 @@
         "githubd"
       ],
       "routes": [
+        "/dashboard/apps/{}/preview",
         "/dashboard/apps/{}/previews",
         "/dashboard/previews",
         "/v1/apps/{}/previews",
@@ -4061,6 +4071,11 @@
         "/v1/apps/{}/debug/compare",
         "/v1/apps/{}/debug/critical-paths",
         "/v1/apps/{}/debug/requests"
+      ],
+      "cli": [
+        "debug bundle",
+        "debug compare",
+        "debug requests"
       ]
     },
     {
@@ -4124,6 +4139,7 @@
         "app.version_affinity_managed_cookie"
       ],
       "routes": [
+        "/dashboard/apps/{}/release-safety",
         "/dashboard/apps/{}/rollouts",
         "/dashboard/releases",
         "/dashboard/safe-releases",
@@ -4688,6 +4704,7 @@
         "/v1/apps/{}/routes"
       ],
       "cli": [
+        "app routes",
         "routes",
         "routes insights"
       ]
@@ -4940,6 +4957,7 @@
         "/dashboard/apps/{}/secret-revocations",
         "/dashboard/apps/{}/secrets",
         "/v1/apps/{}/secret-references",
+        "/v1/apps/{}/secret-requests",
         "/v1/apps/{}/secret-revocations",
         "/v1/apps/{}/secrets",
         "/v1/secrets"
@@ -4960,7 +4978,7 @@
         "pro",
         "scale"
       ],
-      "docs_url": "/docs/edge-rule-trace",
+      "docs_url": "/docs/security#security-headers-on-your-app",
       "acceptance_test": "pkg/apid/apidserver/handlers_dashboard_edge_rules_test.go::TestDashboardSecurityHeadersCreatesStandardRule",
       "parent": "edge-rules",
       "routes": [
@@ -5120,6 +5138,7 @@
         "/v1/apps/{}/trusted_signers"
       ],
       "cli": [
+        "app security",
         "trusted-publishers"
       ]
     },
@@ -5450,6 +5469,9 @@
         "/dashboard/apps/{}/profiles",
         "/v1/apps/{}/profiles",
         "/v1/deployments/{}/canary/profile-gate"
+      ],
+      "cli": [
+        "canary gate"
       ]
     },
     {
@@ -5588,7 +5610,7 @@
         "pro",
         "scale"
       ],
-      "docs_url": "/docs/cli/deploy",
+      "docs_url": "/docs/workers",
       "acceptance_test": "cmd/e2e/worker_pool_e2e_test.go::TestE2E_WorkerPool_ScalesWithQueueDepthAndStabilizesScaleIn",
       "settings": [
         "app.execution_mode=worker",
