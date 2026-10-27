@@ -1,4 +1,4 @@
--- filename: 20261027220000000_events_at_brin_idx.sql
+-- filename: 20261027225845842_events_at_brin_idx.sql
 -- migration-compat: expand
 -- Bug hunt 2026-10-27 O9: the daily events retention deletes rows older
 -- than a cutoff, and none of the events table's 18 indexes leads with at,
