@@ -422,6 +422,9 @@ type server struct {
 	dashboardExportLimiter *middleware.Limiter
 	// securityMail caps sign-in mail per account (security_mail_limit.go).
 	securityMail *securityMailLimiter
+	// signups caps self-service accounts per address and network a day
+	// (signup_network_limit.go).
+	signups *signupNetworkLimiter
 	// exportsInFlight holds the account IDs with a REST export bundle being
 	// built: one at a time per account.
 	exportsInFlight sync.Map
@@ -1447,6 +1450,7 @@ func newServerWithDeps(
 		cliAuthSubmitLimiter:   cliAuthSubmitLimiter,
 		dashboardExportLimiter: dashboardExportLimiter,
 		securityMail:           newSecurityMailLimiter(),
+		signups:                newSignupNetworkLimiter(),
 		domainCreateLimiter:    domainCreateLimiter,
 		audit:                  aud,
 		runtimeConfig:          newRuntimeConfigManager(nil),

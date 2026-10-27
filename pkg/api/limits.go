@@ -78,6 +78,13 @@ const (
 	SecurityMailTrackedAccountsMax = 100_000
 )
 
+// Self-service accounts (password and magic-link sign-up) one client
+// address, and one network (IPv4 /24, IPv6 /48), may create per day.
+const (
+	SignupAccountsPerAddressPerDay = 10
+	SignupAccountsPerNetworkPerDay = 50
+)
+
 // PasswordHashConcurrency caps the Argon2id password hashes (64 MiB each)
 // one process computes at once; the rest wait for a slot.
 const PasswordHashConcurrency = 3

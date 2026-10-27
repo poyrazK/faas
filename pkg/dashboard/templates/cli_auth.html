@@ -42,7 +42,9 @@
       font-size: 0.75rem; color: var(--muted);
     }
     .code {
+      display: block; width: 100%;
       font-family: var(--mono); font-size: 1rem; letter-spacing: 0.06em;
+      color: var(--fg); background: var(--bg);
       border: 1px solid var(--line); border-radius: 6px;
       padding: 0.6rem 0.75rem; margin: 0 0 1.5rem;
       word-break: break-all;
@@ -103,11 +105,22 @@
         {{end}}
       </p>
 
+      {{if index .Data "MCP"}}
       <p class="code-label">Authorization code</p>
       <div class="code">{{index .Data "Code"}}</div>
+      {{else}}
+      <p class="errorbox">Only continue if you ran <code>gregale login</code> yourself, just now, on a computer you control. Anyone who sent you this link gets access to your account if you approve it.</p>
+      {{end}}
 
       <form method="POST" action="/cli-auth">
+        {{if index .Data "MCP"}}
         <input type="hidden" name="code" value="{{index .Data "Code"}}">
+        {{else}}
+        {{/* The code is typed, never pre-filled: a link alone cannot
+            authorize someone else's terminal (device-code phishing). */}}
+        <label class="code-label" for="code">Code shown in your terminal</label>
+        <input class="code" id="code" name="code" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="ABCD-1234" required>
+        {{end}}
         {{/* CSRF guard. The csrf_token value is a sealed envelope bound to
             (action="cli-auth", subject=<account id>); the faas_csrf cookie
             carries the same value, and postCliAuthPage verifies both after

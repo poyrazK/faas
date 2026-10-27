@@ -165,13 +165,17 @@ func (s *server) postSignup(w http.ResponseWriter, r *http.Request) {
 		// email will return state.ErrConflict; we collapse to the
 		// sign-in path so the duplicate caller signs in (idempotent)
 		// rather than learning "this email is taken".
-		res, createErr := s.store.CreateAccountWithPersonalOrg(r.Context(), state.CreateAccountWithPersonalOrgParams{
+		res, createErr := s.createSignupAccount(r, state.CreateAccountWithPersonalOrgParams{
 			Email:                    email,
 			Plan:                     api.PlanFree,
 			RequireEmailVerification: true,
 		})
 		created := res.Account
 		if createErr != nil {
+			if errors.Is(createErr, errSignupNetworkCap) {
+				writeSignupNetworkCap(w)
+				return
+			}
 			if errors.Is(createErr, state.ErrConflict) {
 				// Concurrent signup. Re-issue the verify path so
 				// the response shape matches the post-create path.
@@ -884,12 +888,16 @@ func (s *server) postV1AuthSignup(w http.ResponseWriter, r *http.Request) {
 		// concurrent signup returns ErrConflict which we collapse to
 		// the idempotent sign-in path so the duplicate caller never
 		// learns "this email is taken".
-		res, createErr := s.store.CreateAccountWithPersonalOrg(r.Context(), state.CreateAccountWithPersonalOrgParams{
+		res, createErr := s.createSignupAccount(r, state.CreateAccountWithPersonalOrgParams{
 			Email:                    email,
 			Plan:                     api.PlanFree,
 			RequireEmailVerification: true,
 		})
 		if createErr != nil {
+			if errors.Is(createErr, errSignupNetworkCap) {
+				writeSignupNetworkCap(w)
+				return
+			}
 			if errors.Is(createErr, state.ErrConflict) {
 				existing, ok := s.verifyPasswordOrPad(r.Context(), email, password)
 				if !ok {
@@ -991,7 +999,7 @@ func (s *server) postV1AuthSignupMagicLink(w http.ResponseWriter, r *http.Reques
 			// the dashboard verify page lands the user on a logged-in
 			// session for a fresh address. Mirrors the same shape as
 			// postForgotPassword (mailer fires only on a real hit).
-			res, createErr := s.store.CreateAccountWithPersonalOrg(r.Context(), state.CreateAccountWithPersonalOrgParams{
+			res, createErr := s.createSignupAccount(r, state.CreateAccountWithPersonalOrgParams{
 				Email:                    email,
 				Plan:                     api.PlanFree,
 				RequireEmailVerification: true,

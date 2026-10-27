@@ -254,15 +254,20 @@ func (h *cliAuthHandlers) renderCliAuthPage(w http.ResponseWriter, r *http.Reque
 	})
 
 	title := "Authorize CLI session"
+	// A CLI code is typed from the terminal, never carried from the link
+	// into the form, so a link someone sent cannot authorize their
+	// terminal. MCP codes arrive through the bridge's own OAuth redirect.
+	shownCode := ""
 	if isMCPAuthCode(raw) {
 		title = "Authorize MCP connection"
+		shownCode = raw
 	}
 	page := dashboard.Page{
 		Title:   title,
 		Body:    "cli_auth",
 		Account: dashboardAccountView(acct, 0),
 		Data: map[string]any{
-			"Code":         raw,
+			"Code":         shownCode,
 			"CSRFToken":    token,
 			"AccountEmail": acct.Email,
 			"MCP":          isMCPAuthCode(raw),
