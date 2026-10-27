@@ -5230,6 +5230,9 @@ func cmdCrons(args []string) int {
 		return cmdCronsNext(args[1:])
 	case subList:
 		if rest, oneOff := takeBoolFlag(args[1:], "one-off"); oneOff {
+			if delayedTasksHidden() {
+				return unknownCronFlag("--one-off")
+			}
 			return cmdDelayedTaskList(rest)
 		}
 		fs := newFlagSet("crons-list", flag.ContinueOnError)
@@ -5274,6 +5277,9 @@ func cmdCrons(args []string) int {
 		return 0
 	case subAdd:
 		if oneOff, ok := cronOneOffArgs(args[1:]); ok {
+			if delayedTasksHidden() {
+				return unknownCronFlag("--at")
+			}
 			return cmdCronsAddOneOff(args[1:], oneOff)
 		}
 		fs := newFlagSet("crons-add", flag.ContinueOnError)
@@ -5391,6 +5397,9 @@ func cmdCrons(args []string) int {
 		return cmdCronsUpdate(args[1:])
 	case subInfo:
 		if rest, oneOff := takeBoolFlag(args[1:], "one-off"); oneOff {
+			if delayedTasksHidden() {
+				return unknownCronFlag("--one-off")
+			}
 			return cmdDelayedTaskGet(rest)
 		}
 		return cmdCronsInfo(args[1:])
@@ -5399,7 +5408,7 @@ func cmdCrons(args []string) int {
 	case "occurrences":
 		return cmdCronsOccurrences(args[1:])
 	case "cancel":
-		if cronCancelsOneOff(args[1:]) {
+		if cronCancelsOneOff(args[1:]) && !delayedTasksHidden() {
 			return cmdDelayedTaskCancel(args[1:])
 		}
 		return cmdCronsCancel(args[1:])

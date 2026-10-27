@@ -11,6 +11,18 @@ import (
 	"strings"
 )
 
+// delayedTasksHidden reports that the delayed-execution capability, which
+// owns `delayed-task`, is hidden for the account (ADR-20261023115741); the
+// one-off forms then behave as if they did not exist.
+func delayedTasksHidden() bool {
+	_, hidden := hiddenCommand([]string{"delayed-task"}, false)
+	return hidden
+}
+
+func unknownCronFlag(flag string) int {
+	return printErr("Unknown flag", fmt.Errorf("gregale: unknown flag %s; run 'gregale crons --help' for its options", flag))
+}
+
 // cronRecurringFlags only make sense for a recurring cron.
 var cronRecurringFlags = []string{
 	"schedule", "interactive", "command", "arg", "shell", "timeout-seconds", "max-output-bytes",
