@@ -218,28 +218,37 @@ func runRealImageCase(t *testing.T, h *e2etest.Harness, pool *pgxpool.Pool, key 
 	}
 	t.Logf("%s live after %s", tc.image, time.Since(started).Round(time.Second))
 	host := tc.slug + ".apps.test.example"
-	served, status := doGetWithHost(t, h.HTTPClient(), gatewayAppURL(h, tc.slug), host, 2*time.Minute)
-	if status != http.StatusOK {
-		t.Fatalf("GET: status=%d body=%s", status, served)
-	}
-	tc.check(t, served)
+	tc.check(t, getOK(t, h, host, "GET"))
 
-	// Park to zero and wake from the snapshot: the environment must survive
-	// a restore, not only a cold boot.
-	if _, status := doReq(t, h, key, http.MethodPost, "/v1/apps/"+tc.slug+"/park", nil); status != http.StatusNoContent {
-		t.Fatalf("park: status=%d", status)
-	}
-	parkCtx, parkCancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	// Scale to zero by idle timeout, as customers' apps do, and wake from the
+	// snapshot: the environment must survive a restore, not only a cold boot.
+	setAppIdleTimeout(t, h, key, tc.slug, api.IdleTimeoutFloorSeconds)
+	parkCtx, parkCancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer parkCancel()
-	if _, err := e2etest.WaitForInstanceState(parkCtx, t, pool, appID, state.StateParked, 110*time.Second); err != nil {
-		t.Fatalf("did not park: %v", err)
+	if _, err := e2etest.WaitForInstanceState(parkCtx, t, pool, appID, state.StateParked, 290*time.Second); err != nil {
+		t.Fatalf("did not scale to zero: %v", err)
 	}
-	woken, status := doGetWithHost(t, h.HTTPClient(), gatewayAppURL(h, tc.slug), host, 2*time.Minute)
-	if status != http.StatusOK {
-		t.Fatalf("wake GET: status=%d body=%s", status, woken)
-	}
-	tc.check(t, woken)
+	woke := time.Now()
+	tc.check(t, getOK(t, h, host, "wake GET"))
+	t.Logf("%s served after waking in %s", tc.image, time.Since(woke).Round(time.Millisecond))
 	if _, status := doReq(t, h, key, http.MethodPost, "/v1/apps/"+tc.slug+"/park", nil); status != http.StatusNoContent {
 		t.Fatalf("cleanup park: status=%d", status)
+	}
+}
+
+// getOK GETs the app through the gateway until it answers 200, retrying a
+// gateway 502 for up to 30 s: busybox nc serves one connection at a time.
+func getOK(t *testing.T, h *e2etest.Harness, host, what string) []byte {
+	t.Helper()
+	deadline := time.Now().Add(30 * time.Second)
+	for {
+		body, status := doGetWithHost(t, h.HTTPClient(), gatewayAppURL(h, ""), host, 2*time.Minute)
+		if status == http.StatusOK {
+			return body
+		}
+		if status != http.StatusBadGateway || time.Now().After(deadline) {
+			t.Fatalf("%s: status=%d body=%s", what, status, body)
+		}
+		time.Sleep(time.Second)
 	}
 }
