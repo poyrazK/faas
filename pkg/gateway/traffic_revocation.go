@@ -71,6 +71,33 @@ func AdmitSyntheticTraffic(ctx context.Context, registry *trafficrevocation.Regi
 	return ctx, cleanup, nil
 }
 
+// AdmitPlatformResponse enrolls a compute-owned platform response (a log read
+// or stream, an attach session, the dev debug tunnel) under its owner's
+// security scopes. Those handlers sit beside the application handler, but
+// the public hop proxies them like application traffic and refuses a
+// successful response without the security snapshot (ADR-570). It stamps
+// the snapshot into header, the response's or a WebSocket upgrade's, or
+// writes the refusal and returns ok=false. The context ends with the
+// revocation as its cause (TrafficRevocation) when a scope is revoked;
+// release ends the enrollment once the response is complete.
+func AdmitPlatformResponse(ctx context.Context, w http.ResponseWriter, r *http.Request, registry *trafficrevocation.Registry, header http.Header, scopes ...trafficrevocation.Scope) (context.Context, func(), bool) {
+	if registry == nil { // Optional only for legacy in-process fixtures.
+		return ctx, func() {}, true
+	}
+	ctx, release, err := AdmitSyntheticTraffic(ctx, registry, scopes...)
+	if err != nil {
+		writeTrafficRevocationError(w, r, err)
+		return nil, nil, false
+	}
+	stampTrafficSecurity(ctx, header)
+	return ctx, release, true
+}
+
+// TrafficRevocation reports the security revocation that ended ctx, or nil.
+func TrafficRevocation(ctx context.Context) error {
+	return trafficRevocationCause(ctx)
+}
+
 func (e *trafficEnrollment) addBaseline(ctx context.Context, scopes []trafficrevocation.Scope, baseline map[trafficrevocation.Scope]trafficrevocation.State) error {
 	e.mu.Lock()
 	defer e.mu.Unlock()
