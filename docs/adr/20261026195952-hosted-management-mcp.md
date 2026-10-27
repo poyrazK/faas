@@ -62,11 +62,18 @@ unchanged.
 
 ### 2. A platform daemon on the control plane
 
-The hosted bridge is `gregale mcp serve --transport streamable-http` in a new
-hosted mode, deployed by its own Ansible role as a systemd service on the
-control plane. It runs as an unprivileged user under systemd sandboxing:
-private `/tmp`, read-only system, no new privileges, memory and task caps. It
-reaches apid on loopback.
+The hosted bridge is `gregale mcp serve --transport streamable-http --hosted`,
+the optional `faas-mcp-bridge` unit of the daemon unit spec. The
+control_plane_service role installs it and starts it only where
+`faas_mcp_bridge_enabled` is set and the state key exists. Releases update and
+restart it while the role's marker drop-in is in place. It runs:
+- as its own user, `faas-mcp-bridge`, with its own runtime database role;
+- under systemd sandboxing: a private `/tmp`, a read-only system, no new
+  privileges, and memory and task caps;
+- against apid on loopback (`--api-base`).
+
+Because the unit runs the `gregale` binary, that binary moves from the tool
+lane to the control-plane lane, and a CLI release restarts the bridge.
 
 ### 3. State in Postgres under a lease (active + standby)
 
@@ -80,15 +87,19 @@ reaches apid on loopback.
 - **Losing the lease.** An instance that loses it disables access, as the file
   store does on a storage failure, and exits. It can never overwrite its
   successor's state.
-- **Standby.** The standby control plane (ADR-1344) has the service installed
-  and stopped. Takeover starts it after the database is promoted. It acquires
-  the lease with a new epoch, and connections and unexpired plans carry on.
+- **Standby.** The bridge follows the control-plane failover runbook
+  (ADR-1344): after the database is promoted, the new primary's bootstrap and
+  deploy start it like every control-plane daemon. It acquires the lease with
+  a new epoch, and connections and unexpired plans carry on. A stalled old
+  instance cannot write once its lease lapses.
 - **No failover beyond the control plane's.** The bridge cannot be more
   available than the apid it calls, so it adds no election of its own.
 - **Self-hosted bridges** keep the file store.
 
-The state key is a sealed platform secret delivered as a private file, as other
-control-plane keys are. Postgres holds only ciphertext.
+The state key is 32 random bytes in `/etc/faas/secrets/mcp-bridge/state.key`.
+The unit loads it as a systemd credential, and control-plane state staging
+copies it to the standby with the rest of `/etc/faas/secrets`. Postgres holds
+only ciphertext.
 
 ### 4. Who can connect
 

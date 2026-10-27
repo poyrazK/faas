@@ -1,5 +1,60 @@
 # Gregale management and MCP hosting
 
+## Connect a cloud agent to Gregale
+
+Agents that run in the cloud connect to Gregale's hosted MCP server, with
+nothing to install (ADR-20261026195952):
+
+```text
+https://api.gregale.dev/mcp
+```
+
+- **claude.ai and the Claude apps:** add it as a custom connector.
+- **ChatGPT:** add it as a connector.
+- **Claude Code:** `claude mcp add --transport http gregale https://api.gregale.dev/mcp`.
+
+The client opens a Gregale page to connect:
+1. Choose what the agent may do. Inspection is always included. With write
+   access you can also allow it to:
+   - ask you for secrets;
+   - create buckets;
+   - create PostgreSQL databases.
+2. Sign in to Gregale and authorize the connection.
+3. Review the account, choose which apps the agent may use, and connect.
+
+The connection issues an eight-hour credential that refreshes while the
+agent uses it. Revoke it from your account's API keys page; its label is
+`mcp-login`. An account can have 10 connections at a time.
+
+The hosted server lists the `core` and `provision` toolsets. A connection
+sees only the tools its consent covers:
+
+| Consent | Tools |
+|---|---|
+| Inspection | Apps, deployments, logs, metrics, health, error groups |
+| Write access | Deploys, promotion, rollback, custom domains, crons |
+| Ask me for secrets | `gregale_request_secret`, `gregale_get_secret_request` |
+| Buckets | `gregale_plan_bucket` |
+| PostgreSQL | `gregale_plan_postgres` |
+
+A cloud agent deploys code it wrote in one of three ways:
+- **Upload:** `gregale_create_source_upload` returns a one-time URL and a
+  `curl` command. The URL is valid for 15 minutes and capped at the plan's
+  source size. Run the command in the project directory, then call
+  `gregale_plan_upload_deploy` with the `upload_id`.
+- **Inline files:** pass up to 200 text files, 96 KiB in total, as `files` to
+  `gregale_plan_upload_deploy`. This works in chat apps that have no shell.
+- **GitHub:** `gregale_plan_source_deploy` deploys a commit from a connected
+  repository.
+
+Then call `gregale_apply_upload_deploy` with the `plan_id`. Like a local
+deploy:
+- a new app goes live;
+- a serving app is staged at 0% until `gregale_promote_deployment`.
+
+Uploads may contain only regular files and directories. Links, devices and
+anything named `.git` are refused.
+
 ## Connect a local agent to Gregale
 
 `gregale mcp serve` exposes Gregale management tools over stdio, with writes
@@ -1944,6 +1999,42 @@ journal preserves environment plans, original approval credentials and request
 keys. Whole-project promotion/status/rollback requires consent for every current
 workload in both source and target; a partially selected project can still inspect
 its consented workload inventory.
+
+## Run the hosted MCP server
+
+Operators enable `https://api.<platform domain>/mcp` on the control plane
+(ADR-20261026195952). It is off by default.
+
+1. Create the state key once, and keep a copy. Losing it signs every
+   connected agent out.
+
+   ```sh
+   install -d -m 0700 /etc/faas/secrets/mcp-bridge
+   head -c 32 /dev/urandom > /etc/faas/secrets/mcp-bridge/state.key
+   chmod 0600 /etc/faas/secrets/mcp-bridge/state.key
+   ```
+
+2. Set `faas_mcp_bridge_enabled: true` for the control plane and converge.
+   - `control_plane_service` installs and starts `faas-mcp-bridge`.
+   - `gatewayd_public_service` routes the bridge's paths on the `api.` host
+     to `127.0.0.1:8787`.
+   - Releases update and restart the server while its role marker is in
+     place.
+
+The server is `gregale mcp serve --hosted`:
+- **State:** connections, grants and plans are kept in Postgres as encrypted
+  rows under a lease. A stale process can't overwrite them.
+- **Failover:** after a control-plane takeover, the standby's bootstrap and
+  deploy start the server again. Connected agents keep their grants; open
+  streams reconnect.
+- **Clients:** the unit allows Claude's and ChatGPT's published OAuth
+  callbacks plus loopback clients. Override `ExecStart` in a drop-in to
+  change the list.
+- **Bounds:**
+  - 2,000 each of clients, pending sign-ins, codes and grants;
+  - 10 grants per account;
+  - 20 client registrations per address per hour;
+  - 2 waiting uploads per account.
 
 ## Connect a remote agent with OAuth
 

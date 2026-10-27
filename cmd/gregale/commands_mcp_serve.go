@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/db"
+	"github.com/onebox-faas/faas/pkg/hostidentity"
 	"github.com/onebox-faas/faas/pkg/mcpmanagement"
 	"github.com/onebox-faas/faas/pkg/wire"
 )
@@ -152,6 +153,11 @@ func serveMCPHTTP(ctx context.Context, opts mcpServeOptions) error {
 		opts.lifecycle = mcpmanagement.NewLifecycle()
 	}
 	connection := effectiveConnectionContext()
+	if opts.hosted && opts.resourceURL == "" {
+		// The platform's API host, resolved as the daemons do
+		// (FAAS_PLATFORM_DOMAIN, else FAAS_APPS_DOMAIN; ADR-20261026195952).
+		opts.resourceURL = "https://api." + hostidentity.Configured().Platform + "/mcp"
+	}
 	if opts.apiBase != "" {
 		// The hosted unit names apid's loopback listener (ADR-20261026195952).
 		connection.APIBase = strings.TrimRight(opts.apiBase, "/")
