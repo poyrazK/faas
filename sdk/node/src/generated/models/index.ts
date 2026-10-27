@@ -463,6 +463,7 @@ export type { CreateConsumerSignupResponse } from './CreateConsumerSignupRespons
 export type { CreateCorsPresetRequest } from './CreateCorsPresetRequest.js';
 export type { CreateCronRequest } from './CreateCronRequest.js';
 export type { CreateCustomDomainRequest } from './CreateCustomDomainRequest.js';
+export type { CreateDataAPIContractTaskRequest } from './CreateDataAPIContractTaskRequest.js';
 export type { CreateDataConnectionRequest } from './CreateDataConnectionRequest.js';
 export type { CreateDataPipelineRequest } from './CreateDataPipelineRequest.js';
 export type { CreateDeployTokenRequest } from './CreateDeployTokenRequest.js';

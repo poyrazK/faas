@@ -13287,6 +13287,10 @@ const (
 	DataAPIRateLimitMaxBurst         = 1000
 	DataAPIRateLimitMaxSubjects      = 4096
 	DataAPIRateLimitSweepMS          = 1000
+	// Past this many tracked anonymous subjects, IPv6 visitors are grouped by
+	// /48 instead of /64, so one allocation cannot fill the table and lock
+	// other visitors out (ADR 20261018170742 amendment 1).
+	DataAPIAnonymousCoarseSubjects = DataAPIRateLimitMaxSubjects * 3 / 4
 	// Per-runtime user concurrency accounting, including uncertain dispatches.
 	DataAPIUserConcurrencyMaxSubjects = DataAPIRateLimitMaxSubjects
 	DataAPIUserConcurrencyCooldownMS  = DataAPIQueryTimeoutMS

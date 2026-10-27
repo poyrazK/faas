@@ -5510,9 +5510,10 @@ var cliCommands = []cliCommand{
 				{Name: "granularity", Value: "hour|day", Short: "bucket size (hour covers at most 48h)", ClosedSet: []string{"hour", "day"}},
 			}, Examples: []string{"gregale data-api usage shop-data --since 30d"}},
 			{Name: "storage", Short: "File storage governed by RLS on storage_objects", Subcommands: []cliSub{
-				{Name: "sql", Short: "Print the storage_objects migration", Notes: []string{"Includes the table, RLS, guard trigger and example policies."}, Flags: []cliFlag{
+				{Name: "sql", Short: "Print the storage_objects migration", Notes: []string{"Includes the table, RLS, guard trigger and example policies.", "--upgrade prints the object_key column for a table created before it."}, Flags: []cliFlag{
 					{Name: "schema", Value: "SCHEMA", Short: "the Data API's first exposed schema (default api)"},
-				}, Examples: []string{"gregale data-api storage sql > migrations/0005_storage.sql"}},
+					{Name: "upgrade", Short: "print the upgrade for a storage_objects table without object_key"},
+				}, Examples: []string{"gregale data-api storage sql > migrations/0005_storage.sql", "gregale data-api storage sql --upgrade > migrations/0009_storage_object_keys.sql"}},
 				{Name: "enable", Short: "Bind a bucket read-write and turn storage on", Positionals: []string{"<name>"}, Flags: []cliFlag{
 					{Name: "bucket", Value: "BUCKET", Req: true, Short: "bucket to store files in (created and bound when needed)"},
 					{Name: "scope", Value: "SCOPE", Short: "environment scope"},

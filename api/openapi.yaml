@@ -8335,6 +8335,64 @@ paths:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
 
+  /v1/apps/{slug}/data-api/contract-tasks:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    post:
+      operationId: createDataAPIContractTask
+      summary: Inspect a Data API app's database contract
+      description: |
+        Runs one fixed schema inspection inside a fresh task VM from the app's
+        live deployment: `types` renders the TypeScript contract, `validators`
+        the table and RPC input validators, and `schema` the JSON contract
+        snapshot. The receipt is an ordinary app task receipt and the output
+        arrives in `stdout_tail`. Belongs to the Data API, so it works without
+        the general app-task API.
+      tags: [managed_postgres]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateDataAPIContractTaskRequest' }
+      responses:
+        '202':
+          description: Contract inspection admitted and queued.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AppTaskResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '501': { $ref: '#/components/responses/NotImplemented' }
+
+  /v1/apps/{slug}/data-api/contract-tasks/{id}:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - $ref: '#/components/parameters/AppTaskID'
+    get:
+      operationId: getDataAPIContractTask
+      summary: Get one Data API contract inspection
+      description: Current or terminal receipt of a contract inspection. Any other app task is not found here.
+      tags: [managed_postgres]
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200':
+          description: Current or terminal contract inspection receipt.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AppTaskResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '501': { $ref: '#/components/responses/NotImplemented' }
+
   /v1/apps/{slug}/data-api/usage:
     parameters:
       - name: slug
@@ -82453,6 +82511,16 @@ components:
           required: [start]
           properties:
             start: { type: string, format: date-time, description: Start of the bucket. }
+    CreateDataAPIContractTaskRequest:
+      description: The contract inspection to run.
+      type: object
+      additionalProperties: false
+      required: [kind]
+      properties:
+        kind:
+          type: string
+          enum: [types, validators, schema]
+          description: '`types` (TypeScript contract), `validators` (input validators) or `schema` (JSON contract snapshot).'
     DataAPIUsage:
       description: An app's reported Data API usage over a window, zero-filled per bucket.
       type: object
