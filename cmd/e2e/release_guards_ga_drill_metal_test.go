@@ -335,13 +335,21 @@ func TestReleaseGuardsGADrillMetal(t *testing.T) {
 		restored := d.waitDeployment(t, stable.ID, 12*time.Minute, func(dep state.Deployment) bool {
 			return dep.Status == state.DeployLive && dep.TrafficPercent == 100
 		})
-		var rollbacks []api.AlertRollback
-		g.mustStatus(t, d.key, http.MethodGet, "/v1/apps/"+app+"/alert-rollbacks", nil, http.StatusOK, &rollbacks)
-		i := slices.IndexFunc(rollbacks, func(r api.AlertRollback) bool { return r.CandidateDeploymentID == release.ID && r.Historical })
-		if i < 0 {
-			t.Fatalf("alert rollbacks = %+v, want a historical one for release %s", rollbacks, release.ID)
+		// The receipt completes once the routing audit lands, just after the
+		// predecessor serves again (ADR-604).
+		var r api.AlertRollback
+		for deadline := time.Now().Add(2 * time.Minute); ; time.Sleep(2 * time.Second) {
+			var rollbacks []api.AlertRollback
+			g.mustStatus(t, d.key, http.MethodGet, "/v1/apps/"+app+"/alert-rollbacks", nil, http.StatusOK, &rollbacks)
+			i := slices.IndexFunc(rollbacks, func(r api.AlertRollback) bool { return r.CandidateDeploymentID == release.ID && r.Historical })
+			if i >= 0 && rollbacks[i].Status == "complete" {
+				r = rollbacks[i]
+				break
+			}
+			if time.Now().After(deadline) {
+				t.Fatalf("alert rollbacks = %+v, want a completed historical one for release %s", rollbacks, release.ID)
+			}
 		}
-		r := rollbacks[i]
 		t.Logf("DRILL alert_rollback seconds=%.0f status=%s observed=%.1f evidence=%+v restored=%s",
 			time.Since(started).Seconds(), r.Status, r.ObservedValue, r.DeploymentEvidence, restored.ID)
 		if e := r.DeploymentEvidence; e == nil || e.Status != "breached" || e.ErrorRatePct <= 10 {
@@ -359,13 +367,17 @@ func TestReleaseGuardsGADrillMetal(t *testing.T) {
 		g.mustStatus(t, d.key, http.MethodPut, "/v1/apps/"+app+"/route-health/gate", api.SetRouteHealthGateRequest{
 			Mode: "enforce", OnRegression: "abort", ExpectedRevision: &zero,
 			Routes: []api.RouteHealthRoute{{Method: http.MethodGet, Path: "/api"}}}, http.StatusOK, nil)
-		// /api is a small share of the traffic (about 2.5% once request
-		// latency slows the root loop), so the candidate's overall error rate
-		// stays under the circuit breaker's 5% floor and only the route guard
-		// sees the regression. At 2 s spacing the breaker won at 3/45.
-		stopRoot := d.sendTraffic(app, "/", 100*time.Millisecond)
-		defer stopRoot()
-		stopAPI := d.sendTraffic(app, "/api", 5*time.Second)
+		// The route guard judges closed one-minute windows that each need 20
+		// /api requests on both sides (ADR-454), so /api runs about once a
+		// second. Four root loops (about 8 requests a second each) keep /api
+		// near 3% of the candidate's traffic, under the circuit breaker's 5%
+		// floor, so only the route guard sees the regression. With one root
+		// loop the breaker won at 3/45; with /api every 5 s no window settled.
+		for range 4 {
+			stopRoot := d.sendTraffic(app, "/", 100*time.Millisecond)
+			defer stopRoot()
+		}
+		stopAPI := d.sendTraffic(app, "/api", time.Second)
 		defer stopAPI()
 		started := time.Now()
 		candidate := d.deployLive(t, app, api.CreateDeploymentRequest{Image: failAPI, Canary: customCanary("50", "10m")})
