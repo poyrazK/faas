@@ -51,6 +51,29 @@ func TestTraceBridgeForwardsFrame(t *testing.T) {
 	}
 }
 
+// adr: 213 — log exports reach the same bridge and carry the logs signal bit.
+func TestTraceBridgeForwardsLogFrame(t *testing.T) {
+	var got []byte
+	b := newTraceBridge(func(_ context.Context, frame []byte) (byte, error) {
+		got = frame
+		return api.TraceAckAccepted, nil
+	})
+	req := httptest.NewRequest(http.MethodPost, api.TraceLocalLogsPath, bytes.NewReader([]byte("logs")))
+	req.Header.Set("Content-Type", "application/x-protobuf")
+	rec := httptest.NewRecorder()
+	b.handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	base, logs := api.SplitTraceCodec(got[4])
+	if !logs || base != api.TraceCodecProtobuf || string(got[5:]) != "logs" {
+		t.Fatalf("log frame = %#x %q", got[4], got[5:])
+	}
+	if _, isLogs := api.SplitTraceCodec(api.TraceCodecGzipProtobuf); isLogs {
+		t.Fatal("a trace codec must not read as logs")
+	}
+}
+
 func TestTraceBridgeJSONResponse(t *testing.T) {
 	b := newTraceBridge(func(context.Context, []byte) (byte, error) { return api.TraceAckAccepted, nil })
 	rec := postTraceExport(t, b, "application/json; charset=utf-8", "", []byte(`{"resourceSpans":[]}`))
@@ -167,15 +190,18 @@ func TestTracingEnvAtPaths(t *testing.T) {
 	t.Run("defaults and preloads", func(t *testing.T) {
 		got := tracingEnvAtPaths([]string{"NODE_OPTIONS=--max-old-space-size=256", "PYTHONPATH=/app"}, enabled, "/n.cjs", "/py", all)
 		for key, want := range map[string]string{
-			"OTEL_TRACES_EXPORTER":               "otlp",
-			"OTEL_EXPORTER_OTLP_TRACES_ENDPOINT": "http://127.0.0.1:4318/v1/traces",
-			"OTEL_EXPORTER_OTLP_TRACES_PROTOCOL": "http/protobuf",
-			"OTEL_METRICS_EXPORTER":              "none",
-			"OTEL_LOGS_EXPORTER":                 "none",
-			"OTEL_TRACES_SAMPLER":                "always_on",
-			"FAAS_TRACING_ENABLED":               "1",
-			"NODE_OPTIONS":                       "--max-old-space-size=256 --require=/n.cjs",
-			"PYTHONPATH":                         "/py:/app",
+			"OTEL_TRACES_EXPORTER":                             "otlp",
+			"OTEL_EXPORTER_OTLP_TRACES_ENDPOINT":               "http://127.0.0.1:4318/v1/traces",
+			"OTEL_EXPORTER_OTLP_TRACES_PROTOCOL":               "http/protobuf",
+			"OTEL_METRICS_EXPORTER":                            "none",
+			"OTEL_LOGS_EXPORTER":                               "otlp",
+			"OTEL_EXPORTER_OTLP_LOGS_ENDPOINT":                 "http://127.0.0.1:4318/v1/logs",
+			"OTEL_EXPORTER_OTLP_LOGS_PROTOCOL":                 "http/protobuf",
+			"OTEL_PYTHON_LOGGING_AUTO_INSTRUMENTATION_ENABLED": "true",
+			"OTEL_TRACES_SAMPLER":                              "always_on",
+			"FAAS_TRACING_ENABLED":                             "1",
+			"NODE_OPTIONS":                                     "--max-old-space-size=256 --require=/n.cjs",
+			"PYTHONPATH":                                       "/py:/app",
 		} {
 			if v := envValue(got, key); v != want {
 				t.Fatalf("%s = %q, want %q", key, v, want)
@@ -195,6 +221,22 @@ func TestTracingEnvAtPaths(t *testing.T) {
 			t.Fatalf("missing assets must not be preloaded: %v", got)
 		}
 	})
+
+	// adr: 213 — an app that configures its own logs exporter keeps it: no
+	// bridge logs endpoint and no Python logging handler are stamped.
+	for _, key := range []string{"OTEL_LOGS_EXPORTER=none", "OTEL_EXPORTER_OTLP_LOGS_ENDPOINT=https://logs.example"} {
+		t.Run("own logs exporter "+key, func(t *testing.T) {
+			got := tracingEnvAtPaths([]string{key}, enabled, "/n.cjs", "/py", none)
+			name, value, _ := strings.Cut(key, "=")
+			if envValue(got, name) != value || hasEnvKey(got, "OTEL_PYTHON_LOGGING_AUTO_INSTRUMENTATION_ENABLED") ||
+				envValue(got, "OTEL_EXPORTER_OTLP_LOGS_ENDPOINT") == api.TraceLocalEndpoint+api.TraceLocalLogsPath {
+				t.Fatalf("app logs choice overridden: %v", got)
+			}
+			if envValue(got, "OTEL_TRACES_EXPORTER") != "otlp" {
+				t.Fatalf("traces must still be exported: %v", got)
+			}
+		})
+	}
 
 	t.Run("app choices win", func(t *testing.T) {
 		got := tracingEnvAtPaths([]string{"OTEL_TRACES_SAMPLER=parentbased_traceidratio", "OTEL_METRICS_EXPORTER=prometheus"}, enabled, "/n.cjs", "/py", none)
