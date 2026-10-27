@@ -28,8 +28,8 @@ mkdir -p packages
 cp <gregale-checkout>/sdk/node/gregale-sdk-node-0.1.0.tgz packages/gregale-sdk.tgz
 npm install --ignore-scripts
 npm test
-gregale customer-operations validate --dir . --app <slug> --plan pro
-gregale customer-operations types --dir . --app <slug> --plan pro
+gregale operation validate --dir . --app <slug> --plan pro
+gregale operation types --dir . --app <slug> --plan pro
 ```
 
 The final command writes `customer-operations.generated.d.ts` from the
@@ -41,7 +41,7 @@ either schema; the server remains authoritative at runtime.
 Commit the generated declaration and add the read-only freshness check to CI:
 
 ```sh
-gregale customer-operations types --dir . --app <slug> --plan pro --check
+gregale operation types --dir . --app <slug> --plan pro --check
 npm run typecheck
 ```
 
@@ -93,9 +93,9 @@ Deploy the SDK-equipped app source with your preview environment selector:
 
 ```sh
 gregale deploy --name <slug> --no-require-authn --secrets-file <app-settings-file>
-gregale customer-operations definitions get customer-export --app <slug> --deployment <deployment-uuid> --json
+gregale operation definitions get customer-export --app <slug> --deployment <deployment-uuid> --json
 gregale env set --app <slug> GREGALE_EXPORT_DEFINITION_ID=<definition-uuid>
-gregale customer-operations doctor --app <slug> --deployment <deployment-uuid>
+gregale operation doctor --app <slug> --deployment <deployment-uuid>
 ```
 
 The UI needs public app ingress. The browser authenticates directly to the

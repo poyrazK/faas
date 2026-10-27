@@ -1152,8 +1152,9 @@ var cliCommands = []cliCommand{
 		DocSlug: "slos",
 		Short:   "Define SLOs and track their error budgets",
 		Subcommands: []cliSub{
-			{Name: "list", Short: "List the app's SLOs", Flags: []cliFlag{
+			{Name: "list", Short: "List the app's SLOs, with the measured panel for a window", Examples: []string{"gregale slos list --app my-api", "gregale slos list --app my-api --window 24h"}, Flags: []cliFlag{
 				{Name: "app", Short: "app slug", Req: true, Value: "slug"},
+				{Name: "window", Short: "also show the measured SLO panel for this window", Value: "WINDOW", ClosedSet: []string{"1h", "24h", "7d"}},
 			}},
 			{Name: "create", Short: "Define an availability or latency SLO", Flags: []cliFlag{
 				{Name: "app", Short: "app slug", Req: true, Value: "slug"},
@@ -4030,10 +4031,17 @@ var cliCommands = []cliCommand{
 				{Name: "alert-webhook-secret", Short: "spike alert webhook signing secret (prefer --alert-webhook-secret-stdin)", Value: "VALUE"},
 				{Name: "alert-threshold", Short: "spike alert threshold in matches per hour (default 100)", Value: "N"},
 			}},
-			{Name: "suggest", Short: "Suggest protection recipes from the app's recent traffic", Notes: []string{"Prints the command to add each."}, Examples: []string{
+			{Name: "suggest", Short: "Suggest protection recipes or per-route rate limits from traffic", Notes: []string{"Prints the command to add each.", "With --rate-limits, suggests per-route rate limits and can preview a candidate limit against observed traffic."}, Examples: []string{
 				"gregale edge-rules suggest --app my-api",
+				"gregale edge-rules suggest --app my-api --rate-limits --range 24h",
+				"gregale edge-rules suggest --app my-api --rate-limits --dry-run --candidate-rps 50",
 			}, Flags: []cliFlag{
 				{Name: "app", Short: "app slug (defaults to linked project context)", Value: "slug"},
+				{Name: "rate-limits", Short: "suggest per-route rate limits instead of protection recipes", Bool: true},
+				{Name: "range", Short: "rate limits: observation window (" + strings.Join(appmetrics.Ranges(), "|") + ")", Value: "WINDOW", ClosedSet: appmetrics.Ranges()},
+				{Name: "dry-run", Short: "rate limits: preview --candidate-rps against observed traffic", Bool: true},
+				{Name: "candidate-rps", Short: "rate limits: candidate rps for the dry-run preview", Value: "N"},
+				{Name: "candidate-burst", Short: "rate limits: candidate burst for the dry-run preview", Value: "N"},
 			}},
 			{Name: "stats", Short: "Show match counts per rule", Notes: []string{"Enforced rules count matches; log-mode rules count logged requests."}, Flags: []cliFlag{
 				{Name: "app", Short: "app slug", Req: true, Value: "slug"},

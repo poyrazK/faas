@@ -61,6 +61,7 @@ var cliTreeNouns = []cliTreeNoun{
 	{"job", "Manage jobs that run to completion", "Work"},
 	{"worker", "Inspect and scale background worker pools", "Work"},
 	{"workflow", "Manage durable workflows", "Work"},
+	{"operation", "Inspect your customers' operations and their deliveries", "Work"},
 	{"automation", "Build, monitor and recover automations", "Work"},
 	{"event", "Publish and send events, manage subscriptions and replays", "Work"},
 	{"webhook", "Register webhooks and deliver events to them", "Work"},
@@ -208,6 +209,14 @@ var cliTreeAliases = []cliTreeAlias{
 	{"job", "jobs"},
 	{"worker", "workers"},
 	{"workflow", "workflows"},
+	{"operation delivery get", "customer-operations delivery"},
+	{"operation delivery attempts", "customer-operations delivery-attempts"},
+	{"operation delivery retry", "customer-operations retry-delivery"},
+	{"operation attention list", "customer-operations attention"},
+	{"operation attention summary", "customer-operations attention-summary"},
+	{"operation outcome summary", "customer-operations outcome-summary"},
+	{"operation binding generate", "customer-operations bindings"},
+	{"operation", "customer-operations"},
 	{"automation recovery health", "automations recovery-health"},
 	{"automation recovery suppress", "automations recovery-suppress"},
 	{"automation recovery create", "automations recovery-start"},
@@ -956,6 +965,10 @@ var cliTreeHintTerminal = func() bool { return term.IsTerminal(int(os.Stderr.Fd(
 // print nothing extra (ADR-20261026145832 step 5).
 func printCliTreeHint(w io.Writer, typed []string) {
 	if jsonOutput || nonInteractive || !cliTreeHintTerminal() || len(typed) == 0 || typed[0] == "help" || hasHelpFlag(typed) {
+		return
+	}
+	if path, fold, ok := cliTreeFold(typed); ok {
+		_, _ = fmt.Fprintf(w, "Tip: 'gregale %s' is now 'gregale %s'; the earlier name keeps working.\n", path, fold)
 		return
 	}
 	spelled, ok := cliTreeSpelling(typed)

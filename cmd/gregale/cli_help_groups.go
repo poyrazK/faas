@@ -9,8 +9,8 @@ import (
 // cliTreeShortcutCommands are the top-level verbs of the daily loop
 // (ADR-20261026145832 rule 5), in root help order.
 var cliTreeShortcutCommands = []string{
-	"init", "dev", "deploy", "logs", "status", "open", "rollback", "run", "invoke", "add",
-	"link", "unlink", "login", "logout", "signup", "whoami", "completion", "version",
+	"start", "menu", "init", "dev", "deploy", "logs", "status", "open", "rollback", "run", "invoke",
+	"add", "link", "unlink", "login", "logout", "signup", "whoami", "completion", "version",
 }
 
 // cliTreeDailyCommands is the first screen of `gregale help`: guided
@@ -76,15 +76,18 @@ func writeCliEarlierNames(b *strings.Builder, discovery cliTreeDiscovery) {
 		if _, ok := discovery.commands[command.Name]; !ok || cliTreeNamesCommand(command.Name) {
 			continue
 		}
-		nouns := cliTreeNounsHolding(command.Name)
-		if len(nouns) == 0 {
+		now := cliTreeFolds[command.Name]
+		if nouns := cliTreeNounsHolding(command.Name); now == "" && len(nouns) > 0 {
+			now = strings.Join(nouns, ", gregale ")
+		}
+		if now == "" {
 			continue
 		}
 		if !printed {
 			b.WriteString("\nEarlier names (still accepted):\n")
 			printed = true
 		}
-		writeRootHelpEntry(b, command.Name, "now gregale "+strings.Join(nouns, ", gregale "))
+		writeRootHelpEntry(b, command.Name, "now gregale "+now)
 	}
 }
 
@@ -95,9 +98,39 @@ func cliTreeNamesCommand(name string) bool {
 	return noun || slices.Contains(cliTreeShortcutCommands, name)
 }
 
-// cliTreePlaces reports a top-level command the tree keeps or renames.
+// cliTreeFolds are today's commands, or their verbs, that the tree runs as
+// another path or a flag of one; they stay accepted under their earlier
+// names. A command's own entry is what help lists for it.
+var cliTreeFolds = map[string]string{
+	"slo":                  "alert slo list --window",
+	"throttle-suggestions": "edge rule suggest --rate-limits",
+	"doctor":               "deploy check",
+	"inspect":              "app health --explain",
+	"scan":                 "deploy --plan",
+	"delayed-task":         "cron create --at",
+	"delayed-task add":     "cron create --at",
+	"delayed-task list":    "cron list --one-off",
+	"delayed-task get":     "cron get --one-off",
+	"delayed-task info":    "cron get --one-off",
+	"delayed-task cancel":  "cron cancel",
+}
+
+// cliTreeFold returns the tree path that now runs typed, matching its
+// command and verb before its command alone.
+func cliTreeFold(typed []string) (string, string, bool) {
+	for n := min(2, len(typed)); n > 0; n-- {
+		path := strings.Join(typed[:n], " ")
+		if fold, ok := cliTreeFolds[path]; ok {
+			return path, fold, true
+		}
+	}
+	return "", "", false
+}
+
+// cliTreePlaces reports a top-level command the tree keeps, renames or
+// folds into another path.
 func cliTreePlaces(name string) bool {
-	return cliTreeNamesCommand(name) || len(cliTreeNounsHolding(name)) > 0
+	return cliTreeNamesCommand(name) || len(cliTreeNounsHolding(name)) > 0 || cliTreeFolds[name] != ""
 }
 
 // cliTreeNounsHolding lists the customer nouns whose paths run command.

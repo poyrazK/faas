@@ -78,7 +78,7 @@ func TestTopLevelUsageAllListsTheCommandTree(t *testing.T) {
 	for _, tc := range []struct{ command, section string }{
 		{"deploy", "Shortcuts:"}, {"logs", "Shortcuts:"}, {"release", "Ship:"}, {"app", "Run:"},
 		{"env", "Configure:"}, {"bucket", "Data:"}, {"cron", "Work:"}, {"alert", "Observe:"},
-		{"mcp", "Agents:"}, {"billing", "Account:"}, {"start", "More:"},
+		{"mcp", "Agents:"}, {"billing", "Account:"}, {"start", "Shortcuts:"}, {"operation", "Work:"},
 	} {
 		if !strings.Contains(helpSection(out, tc.section), "\n  "+tc.command+" ") {
 			t.Errorf("--all help does not list %q under %q:\n%s", tc.command, tc.section, out)

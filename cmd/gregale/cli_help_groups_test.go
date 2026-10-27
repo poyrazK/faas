@@ -20,12 +20,9 @@ func enableEveryCLIFeature(t *testing.T) {
 }
 
 // cliTreeUnplacedCommands are customer commands the command tree does not
-// place yet; root help lists them under "More". The list only shrinks:
-// `doctor` folds into `deploy check`, `inspect` into `app health`,
-// `delayed-task` into `cron --at` and `scan` into `deploy --plan`.
+// place yet; root help lists them under "More". The list only shrinks.
 var cliTreeUnplacedCommands = []string{
-	"auth", "customer-operations", "delayed-task", "diff", "doctor", "inspect", "man", "menu",
-	"scan", "slo", "start", "throttle-suggestions",
+	"auth", "diff", "man",
 }
 
 // Every customer command is a shortcut, a noun, or reached through a noun

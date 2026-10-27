@@ -12,6 +12,8 @@ Automation: put `--non-interactive` before the command to disable prompts and br
 
 | Command | What it does |
 |---|---|
+| [`start`](#start) | Get your first app live with a few guided prompts |
+| [`menu`](#menu) | Choose a common task and open its guided command |
 | [`init`](#init) | Scaffold a project from a built-in template |
 | [`dev`](#dev) | Sync local changes to a developer environment |
 | [`deploy`](#deploy) | Deploy an app, function, or project |
@@ -56,6 +58,7 @@ Automation: put `--non-interactive` before the command to disable prompts and br
 | [`job`](#job) | Manage jobs that run to completion |
 | [`worker`](#worker) | Inspect and scale background worker pools |
 | [`workflow`](#workflow) | Manage durable workflows |
+| [`operation`](#operation) | Inspect your customers&#39; operations and their deliveries |
 | [`automation`](#automation) | Build, monitor and recover automations |
 | [`event`](#event) | Publish and send events, manage subscriptions and replays |
 | [`webhook`](#webhook) | Register webhooks and deliver events to them |
@@ -73,17 +76,35 @@ Automation: put `--non-interactive` before the command to disable prompts and br
 | [`billing`](#billing) | Manage plan, payment, usage, invoices and spend cap |
 | [`feature`](#feature) | See Gregale features and join early access |
 | [`config`](#config) | Manage local CLI settings, profiles and presets |
-| [`menu`](#menu) | Choose a common task and open its guided command |
-| [`start`](#start) | Get your first app live with a few guided prompts |
-| [`doctor`](#doctor) | Check local source or an image for problems before deploying |
-| [`delayed-task`](#delayed-task) | Schedule and inspect deferred invocations |
 | [`diff`](#diff) | Compare two named environments in the linked project |
-| [`inspect`](#inspect) | Explain an app&#39;s health from runtime, release, data and scaling |
-| [`customer-operations`](#customer-operations) | Inspect customer work, verify downloads and reconcile outcomes |
-| [`scan`](#scan) | Show how a source tree splits into deployable workloads |
-| [`slo`](#slo) | Show an app&#39;s SLO panel for a time window |
-| [`throttle-suggestions`](#throttle-suggestions) | Suggest per-route rate limits and preview their effect |
 | [`man`](#man) | Print the CLI manual page, or one command&#39;s page |
+
+## start
+
+Get your first app live with a few guided prompts
+
+`gregale start [path]`
+
+Examples:
+
+```sh
+gregale start
+gregale start ./my-api
+```
+
+
+## menu
+
+Choose a common task and open its guided command
+
+`gregale menu`
+
+Examples:
+
+```sh
+gregale menu
+```
+
 
 ## init
 
@@ -5934,21 +5955,30 @@ Use --enforce to enforce it immediately.
 
 #### edge rule suggest
 
-Suggest protection recipes from the app&#39;s recent traffic
+Suggest protection recipes or per-route rate limits from traffic
 
-`gregale edge rule suggest [--app <slug>]`
+`gregale edge rule suggest [--app <slug>] [--rate-limits] [--range <WINDOW>] [--dry-run] [--candidate-rps <N>] [--candidate-burst <N>]`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--app <slug>` | app slug (defaults to linked project context) |  |
+| `--rate-limits` | suggest per-route rate limits instead of protection recipes |  |
+| `--range <WINDOW>` | rate limits: observation window (5m\|15m\|1h\|6h\|24h\|7d\|15d) | one of `5m` · `15m` · `1h` · `6h` · `24h` · `7d` · `15d` |
+| `--dry-run` | rate limits: preview --candidate-rps against observed traffic |  |
+| `--candidate-rps <N>` | rate limits: candidate rps for the dry-run preview |  |
+| `--candidate-burst <N>` | rate limits: candidate burst for the dry-run preview |  |
 
 Examples:
 
 ```sh
 gregale edge rule suggest --app my-api
+gregale edge rule suggest --app my-api --rate-limits --range 24h
+gregale edge rule suggest --app my-api --rate-limits --dry-run --candidate-rps 50
 ```
 
 Prints the command to add each.
+
+With --rate-limits, suggests per-route rate limits and can preview a candidate limit against observed traffic.
 
 #### edge rule stats
 
@@ -10981,6 +11011,460 @@ gregale workflow events RUN_ID approved --payload-file -
 ```
 
 
+## operation
+
+Inspect your customers&#39; operations and their deliveries
+
+`gregale operation [<subcommand>]`
+
+Examples:
+
+```sh
+gregale operation list --app exports --scope production
+gregale operation watch <id> --app exports --timeout 5m --json
+```
+
+### operation delivery
+
+get · attempts · retry
+
+#### operation delivery get
+
+Inspect notification state, replay generation and receiver cooldown
+
+`gregale operation delivery get [--app <SLUG>] [--timeout <D>] <id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | required in account mode; omit with --self |  |
+| `--timeout <D>` | local request/wait deadline; work continues |  |
+
+#### operation delivery attempts
+
+Read retained notification attempt evidence
+
+`gregale operation delivery attempts [--app <SLUG>] [--timeout <D>] [--limit <N>] [--cursor <CURSOR>] <id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | required in account mode; omit with --self |  |
+| `--timeout <D>` | local request/wait deadline; work continues |  |
+| `--limit <N>` | page size, 1–100 |  |
+| `--cursor <CURSOR>` | next attempt page cursor |  |
+
+#### operation delivery retry
+
+Record a notification retry without repeating business work
+
+`gregale operation delivery retry [--app <SLUG>] [--timeout <D>] [--delivery <UUID>] [--expected-replay-generation <N>] [--retry-id <ID>] --receipt-file <PATH> <id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | required in account mode; omit with --self |  |
+| `--timeout <D>` | local request/wait deadline; work continues |  |
+| `--delivery <UUID>` | observed dead delivery; omit selectors to resume |  |
+| `--expected-replay-generation <N>` | observed notification generation; zero must be explicit |  |
+| `--retry-id <ID>` | stable retry decision identity |  |
+| `--receipt-file <PATH>` | private immutable request receipt | required |
+
+The retry is backed by a receipt.
+
+### operation attention
+
+list · summary
+
+#### operation attention list
+
+List workflows needing attention
+
+`gregale operation attention list [--app <SLUG>] [--self] [--app-id <UUID>] --scope <SCOPE> [--tenant <UUID>] [--workflow <NAME>] [--target-operation <NAME>] [--dependency-status <STATUS>] [--required-outcome-code <CODE>] [--priority <PRIORITY>] [--sort <ORDER>] [--owner <OWNER>] [--unassigned] [--blocker-code <CODE>] [--reason <REASON>] [--limit <N>] [--cursor <CURSOR>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | owned app in account mode |  |
+| `--self` | authenticated customer queue |  |
+| `--app-id <UUID>` | required with --self |  |
+| `--scope <SCOPE>` | explicit environment | required |
+| `--tenant <UUID>` | account customer filter |  |
+| `--workflow <NAME>` | workflow filter |  |
+| `--target-operation <NAME>` | target Operation filter |  |
+| `--dependency-status <STATUS>` | unresolved prerequisite status | one of `waiting` · `unknown` · `outcome_mismatch` |
+| `--required-outcome-code <CODE>` | required prerequisite outcome |  |
+| `--priority <PRIORITY>` | application-assigned blocker urgency | one of `low` · `normal` · `high` · `urgent` |
+| `--sort <ORDER>` | queue order; summaries retain group ordering | one of `updated_at` · `deadline` |
+| `--owner <OWNER>` | exact application-assigned blocker owner; excludes --unassigned |  |
+| `--unassigned` | only matching blockers without an owner; excludes --owner |  |
+| `--blocker-code <CODE>` | blocker code filter |  |
+| `--reason <REASON>` | attention reason | one of `blocked` · `stale` · `overdue` · `dependency` · `escalated` · `unacknowledged` · `follow_up_overdue` · `awaiting_verification` · `sla_breached` · `sla_at_risk` |
+| `--limit <N>` | page size, 1–100 |  |
+| `--cursor <CURSOR>` | continuation cursor |  |
+
+#### operation attention summary
+
+Summarize workflows needing attention
+
+`gregale operation attention summary [--group-by <DIMENSION>] [--app <SLUG>] [--self] [--app-id <UUID>] --scope <SCOPE> [--tenant <UUID>] [--workflow <NAME>] [--target-operation <NAME>] [--dependency-status <STATUS>] [--required-outcome-code <CODE>] [--priority <PRIORITY>] [--sort <ORDER>] [--owner <OWNER>] [--unassigned] [--blocker-code <CODE>] [--reason <REASON>] [--limit <N>] [--cursor <CURSOR>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--group-by <DIMENSION>` | summary grouping | one of `owner` · `workflow` · `blocker_code` · `target_operation` · `customer` · `dependency_status` · `required_outcome_code` |
+| `--app <SLUG>` | owned app in account mode |  |
+| `--self` | authenticated customer queue |  |
+| `--app-id <UUID>` | required with --self |  |
+| `--scope <SCOPE>` | explicit environment | required |
+| `--tenant <UUID>` | account customer filter |  |
+| `--workflow <NAME>` | workflow filter |  |
+| `--target-operation <NAME>` | target Operation filter |  |
+| `--dependency-status <STATUS>` | unresolved prerequisite status | one of `waiting` · `unknown` · `outcome_mismatch` |
+| `--required-outcome-code <CODE>` | required prerequisite outcome |  |
+| `--priority <PRIORITY>` | application-assigned blocker urgency | one of `low` · `normal` · `high` · `urgent` |
+| `--sort <ORDER>` | queue order; summaries retain group ordering | one of `updated_at` · `deadline` |
+| `--owner <OWNER>` | exact application-assigned blocker owner; excludes --unassigned |  |
+| `--unassigned` | only matching blockers without an owner; excludes --owner |  |
+| `--blocker-code <CODE>` | blocker code filter |  |
+| `--reason <REASON>` | attention reason | one of `blocked` · `stale` · `overdue` · `dependency` · `escalated` · `unacknowledged` · `follow_up_overdue` · `awaiting_verification` · `sla_breached` · `sla_at_risk` |
+| `--limit <N>` | page size, 1–100 |  |
+| `--cursor <CURSOR>` | continuation cursor |  |
+
+### operation outcome
+
+summary
+
+#### operation outcome summary
+
+Summarize explicit business outcomes
+
+`gregale operation outcome summary [--group-by <DIMENSION>] [--app <SLUG>] [--self] [--app-id <UUID>] --scope <SCOPE> [--tenant <UUID>] [--workflow <NAME>] [--code <CODE>] [--limit <N>] [--cursor <CURSOR>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--group-by <DIMENSION>` | summary grouping | one of `outcome` · `workflow` · `customer` |
+| `--app <SLUG>` | owned app |  |
+| `--self` | authenticated customer |  |
+| `--app-id <UUID>` | required with --self |  |
+| `--scope <SCOPE>` | explicit environment | required |
+| `--tenant <UUID>` | account customer filter |  |
+| `--workflow <NAME>` | workflow filter |  |
+| `--code <CODE>` | outcome code filter |  |
+| `--limit <N>` | page size 1–100 |  |
+| `--cursor <CURSOR>` | continuation cursor |  |
+
+### operation binding
+
+generate
+
+#### operation binding generate
+
+Generate typed application workflow bindings without credentials
+
+`gregale operation binding generate --app <SLUG> --plan <PLAN> [--dir <PATH>] --language <LANGUAGE> --output <PATH> [--package <NAME>] [--check]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | selected manifest app | required |
+| `--plan <PLAN>` | explicit target plan | required; one of `free` · `hobby` · `pro` · `scale` |
+| `--dir <PATH>` | source directory, default current directory |  |
+| `--language <LANGUAGE>` | application language | required; one of `typescript` · `javascript` · `go` · `python` |
+| `--output <PATH>` | generated module | required |
+| `--package <NAME>` | Go package name, default workflowbindings |  |
+| `--check` | fail on stale bindings without writing |  |
+
+### operation outcomes
+
+List completed workflows with explicit business outcomes
+
+`gregale operation outcomes [--app <SLUG>] [--self] [--app-id <UUID>] --scope <SCOPE> [--tenant <UUID>] [--workflow <NAME>] [--code <CODE>] [--limit <N>] [--cursor <CURSOR>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | owned app |  |
+| `--self` | authenticated customer |  |
+| `--app-id <UUID>` | required with --self |  |
+| `--scope <SCOPE>` | explicit environment | required |
+| `--tenant <UUID>` | account customer filter |  |
+| `--workflow <NAME>` | workflow filter |  |
+| `--code <CODE>` | outcome code filter |  |
+| `--limit <N>` | page size 1–100 |  |
+| `--cursor <CURSOR>` | continuation cursor |  |
+
+### operation doctor
+
+Observe submission blockers, delivery warnings and qualification gaps
+
+`gregale operation doctor --app <SLUG> --deployment <UUID> --tenant <UUID> [--name <NAME>] [--timeout <D>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | owned app | required |
+| `--deployment <UUID>` | exact deployment | required |
+| `--tenant <UUID>` | owned platform tenant | required |
+| `--name <NAME>` | optional operation name |  |
+| `--timeout <D>` | local diagnostic deadline |  |
+
+### operation definitions
+
+Discover deployed immutable contracts
+
+#### operation definitions list
+
+List ordered contract metadata
+
+`gregale operation definitions list --app <SLUG> --deployment <UUID> [--timeout <D>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | owned application | required |
+| `--deployment <UUID>` | immutable deployment ID | required |
+| `--timeout <D>` | local request deadline |  |
+
+#### operation definitions get
+
+Read schemas and deployment pins as JSON
+
+`gregale operation definitions get --app <SLUG> --deployment <UUID> [--timeout <D>] <name>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | owned application | required |
+| `--deployment <UUID>` | immutable deployment ID | required |
+| `--timeout <D>` | local request deadline |  |
+
+### operation validate
+
+Validate source contracts and sample input without credentials
+
+`gregale operation validate --app <SLUG> --plan <PLAN> [--dir <PATH>] [--name <NAME>] [--input-file <PATH>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | selected manifest app | required |
+| `--plan <PLAN>` | explicit target plan | required; one of `free` · `hobby` · `pro` · `scale` |
+| `--dir <PATH>` | source directory, default current directory |  |
+| `--name <NAME>` | selected operation; required for a sample |  |
+| `--input-file <PATH>` | sample JSON input |  |
+
+Sample input is optional.
+
+### operation types
+
+Generate or check TypeScript input and output types
+
+`gregale operation types --app <SLUG> --plan <PLAN> [--dir <PATH>] [--name <NAME>] [--output <PATH>] [--check]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | selected manifest app | required |
+| `--plan <PLAN>` | explicit target plan | required; one of `free` · `hobby` · `pro` · `scale` |
+| `--dir <PATH>` | source directory, default current directory |  |
+| `--name <NAME>` | selected operation; defaults to all |  |
+| `--output <PATH>` | generated declaration path (default customer-operations.generated.d.ts) |  |
+| `--check` | verify generated declarations are current without writing |  |
+
+### operation start
+
+Submit tenant-owned work with an immutable retry receipt
+
+`gregale operation start --self [--definition <UUID>] [--input-file <PATH>] [--idempotency-key <KEY>] --receipt-file <PATH> [--timeout <D>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--self` | derive tenant from credentials | required |
+| `--definition <UUID>` | immutable definition ID for a new receipt |  |
+| `--input-file <PATH>` | JSON input for a new receipt |  |
+| `--idempotency-key <KEY>` | stable request identity for a new receipt |  |
+| `--receipt-file <PATH>` | private request receipt; existing files must match | required |
+| `--timeout <D>` | local request deadline; resume from the receipt |  |
+
+### operation list
+
+List one bounded page of retained business work
+
+`gregale operation list [--app <SLUG>] [--timeout <D>] --scope <SCOPE> [--tenant <UUID>] [--name <NAME>] [--state <STATE>] [--limit <N>] [--cursor <CURSOR>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | required in account mode; omit with --self |  |
+| `--timeout <D>` | local request/wait deadline; work continues |  |
+| `--scope <SCOPE>` | explicit deployment environment | required |
+| `--tenant <UUID>` | optional platform tenant filter |  |
+| `--name <NAME>` | operation name |  |
+| `--state <STATE>` | business state | one of `accepted` · `running` · `waiting` · `succeeded` · `failed` · `cancelled` · `requires_reconciliation` |
+| `--limit <N>` | page size, 1–100 |  |
+| `--cursor <CURSOR>` | next page cursor |  |
+
+### operation get
+
+Read business result and independent delivery status
+
+`gregale operation get [--app <SLUG>] [--timeout <D>] [--self] <id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | required in account mode; omit with --self |  |
+| `--timeout <D>` | local request/wait deadline; work continues |  |
+| `--self` | use authenticated tenant routes; omit --app |  |
+
+### operation events
+
+Read durable event evidence and resync marker
+
+`gregale operation events [--app <SLUG>] [--timeout <D>] [--after <N>] [--self] <id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | required in account mode; omit with --self |  |
+| `--timeout <D>` | local request/wait deadline; work continues |  |
+| `--after <N>` | event sequence or execution generation watermark |  |
+| `--self` | use authenticated tenant routes; omit --app |  |
+
+### operation executions
+
+Read retained execution generations and attempt counts
+
+`gregale operation executions [--app <SLUG>] [--timeout <D>] [--after <N>] [--limit <N>] <id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | required in account mode; omit with --self |  |
+| `--timeout <D>` | local request/wait deadline; work continues |  |
+| `--after <N>` | event sequence or execution generation watermark |  |
+| `--limit <N>` | page size, 1–100 |  |
+
+### operation timeline
+
+Read one chronological history of events, attempts and deliveries
+
+`gregale operation timeline --app <SLUG> [--timeout <D>] [--limit <N>] [--cursor <CURSOR>] [--all] [--logs] <id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | owned application; account mode only | required |
+| `--timeout <D>` | local request/wait deadline; work continues |  |
+| `--limit <N>` | page size, 1–100 |  |
+| `--cursor <CURSOR>` | next timeline page cursor |  |
+| `--all` | follow cursors to the end |  |
+| `--logs` | print archived instance log lines inside each HTTP attempt |  |
+
+### operation milestones
+
+Read business milestones for an operation or reference
+
+`gregale operation milestones [--app <SLUG>] [--self] [--scope <SCOPE>] [--subject-type <TYPE>] [--subject-id <ID>] [--workflow <NAME>] [--workflow-instance-id <ID>] [--workflow-state-cursor <CURSOR>] [--stale-only] [--tenant <UUID>] [--limit <N>] [--cursor <CURSOR>] [<operation-id>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | owned app slug, or app UUID with --self |  |
+| `--self` | derive customer ownership from credentials |  |
+| `--scope <SCOPE>` | environment for a business-reference timeline |  |
+| `--subject-type <TYPE>` | business reference type |  |
+| `--subject-id <ID>` | exact business reference ID |  |
+| `--workflow <NAME>` | workflow for one business workflow run |  |
+| `--workflow-instance-id <ID>` | exact workflow run ID |  |
+| `--workflow-state-cursor <CURSOR>` | next workflow state history page |  |
+| `--stale-only` | only runs past their declared state age threshold |  |
+| `--tenant <UUID>` | account customer filter |  |
+| `--limit <N>` | page size |  |
+| `--cursor <CURSOR>` | next milestone page cursor |  |
+
+### operation watch
+
+Watch an operation&#39;s status changes
+
+`gregale operation watch [--app <SLUG>] [--timeout <D>] [--interval <D>] [--self] <id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | required in account mode; omit with --self |  |
+| `--timeout <D>` | local request/wait deadline; work continues |  |
+| `--interval <D>` | polling interval, default 1s |  |
+| `--self` | use authenticated tenant routes; omit --app |  |
+
+Exits 0 on success, 1 on failure or cancel, 4 on reconciliation, 124 on timeout and 130 when interrupted.
+
+### operation download
+
+Publish verified artifact bytes to a new private file
+
+`gregale operation download [--app <SLUG>] [--timeout <D>] [--artifact <UUID>] --output <PATH> [--self] <id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | required in account mode; omit with --self |  |
+| `--timeout <D>` | local request/wait deadline; work continues |  |
+| `--artifact <UUID>` | artifact ID; optional only when one artifact exists |  |
+| `--output <PATH>` | new output file | required |
+| `--self` | use authenticated tenant routes; omit --app |  |
+
+### operation cancel
+
+Request cancellation at an observed generation
+
+`gregale operation cancel [--app <SLUG>] [--timeout <D>] --expected-generation <N> [--self] <id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | required in account mode; omit with --self |  |
+| `--timeout <D>` | local request/wait deadline; work continues |  |
+| `--expected-generation <N>` | observed generation; stale decisions are rejected | required |
+| `--self` | use authenticated tenant routes; omit --app |  |
+
+### operation signal
+
+Deliver a named event to a waiting operation
+
+`gregale operation signal [--app <SLUG>] [--timeout <D>] --event <NAME> --signal-id <ID> [--payload <JSON>] [--payload-file <PATH>] [--scope <SCOPE>] [--operation <NAME>] [--subject <TYPE:ID>] [--self] [--definition <UUID>] [<id>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | owned application; omit with --self |  |
+| `--timeout <D>` | local request/wait deadline; work continues |  |
+| `--event <NAME>` | event the operation waits for | required |
+| `--signal-id <ID>` | stable idempotency key; repeat it to retry safely | required |
+| `--payload <JSON>` | JSON payload |  |
+| `--payload-file <PATH>` | file holding the JSON payload |  |
+| `--scope <SCOPE>` | environment, for a subject signal |  |
+| `--operation <NAME>` | operation name, for a subject signal |  |
+| `--subject <TYPE:ID>` | business subject, instead of an operation ID |  |
+| `--self` | signal the authenticated tenant&#39;s own operations |  |
+| `--definition <UUID>` | operation definition, for a --self subject signal |  |
+
+Address the operation by ID or by business subject.
+
+### operation approve
+
+Decide a declared approval on a waiting operation
+
+`gregale operation approve [--app <SLUG>] [--timeout <D>] --expected-generation <N> --step <STEP> --decision <DECISION> [--comment <TEXT>] <id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | required in account mode; omit with --self |  |
+| `--timeout <D>` | local request/wait deadline; work continues |  |
+| `--expected-generation <N>` | observed generation; stale decisions are rejected | required |
+| `--step <STEP>` | declared approval step | required |
+| `--decision <DECISION>` | approval decision | required; one of `approved` · `rejected` |
+| `--comment <TEXT>` | optional note recorded with the decision |  |
+
+### operation recover
+
+Preview or record an evidenced reconciliation decision
+
+`gregale operation recover [--app <SLUG>] [--timeout <D>] [--expected-generation <N>] [--receipt-file <PATH>] [--preview] [--inspection-revision <REVISION>] [--recovery-id <ID>] [--resolution <RESOLUTION>] [--evidence-file <PATH>] [--result-file <PATH>] <id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | required in account mode; omit with --self |  |
+| `--timeout <D>` | local request/wait deadline; work continues |  |
+| `--expected-generation <N>` | observed generation for a new decision or preview; omit to resume |  |
+| `--receipt-file <PATH>` | private immutable decision request; omit selectors to resume |  |
+| `--preview` | read-only plan; exit 4 when blocked; omit decision ID and evidence |  |
+| `--inspection-revision <REVISION>` | optional inspection revision checked when applying |  |
+| `--recovery-id <ID>` | stable decision ID required when applying |  |
+| `--resolution <RESOLUTION>` | explicit resolution for a new decision or preview; omit to resume | one of `succeeded` · `failed` · `cancelled` · `safe_to_retry` |
+| `--evidence-file <PATH>` | nonempty reconciliation evidence required when applying |  |
+| `--result-file <PATH>` | JSON result required for succeeded |  |
+
+
 ## automation
 
 Build, monitor and recover automations
@@ -14600,13 +15084,21 @@ Define SLOs and track their error budgets
 
 #### alert slo list
 
-List the app&#39;s SLOs
+List the app&#39;s SLOs, with the measured panel for a window
 
-`gregale alert slo list --app <slug>`
+`gregale alert slo list --app <slug> [--window <WINDOW>]`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--app <slug>` | app slug | required |
+| `--window <WINDOW>` | also show the measured SLO panel for this window | one of `1h` · `24h` · `7d` |
+
+Examples:
+
+```sh
+gregale alert slo list --app my-api
+gregale alert slo list --app my-api --window 24h
+```
 
 #### alert slo create
 
@@ -17910,137 +18402,6 @@ Persist one non-secret setting
 Show all effective settings
 
 
-## menu
-
-Choose a common task and open its guided command
-
-`gregale menu`
-
-Examples:
-
-```sh
-gregale menu
-```
-
-
-## start
-
-Get your first app live with a few guided prompts
-
-`gregale start [path]`
-
-Examples:
-
-```sh
-gregale start
-gregale start ./my-api
-```
-
-
-## doctor
-
-Check local source or an image for problems before deploying
-
-`gregale doctor [--path <DIR>] [--image <REF>] [--registry-user <USER>] [--registry-password-stdin] [--strict] [--json]`
-
-Checks local source or image metadata only; runtime checks are skipped.
-
-| Flag | Meaning | |
-|---|---|---|
-| `--path <DIR>` | source directory (default: current directory; a positional DIR also works) |  |
-| `--image <REF>` | inspect the Linux/amd64 image without downloading layers |  |
-| `--registry-user <USER>` | registry username; requires --registry-password-stdin |  |
-| `--registry-password-stdin` | read registry password/token from stdin; requires --image and --registry-user |  |
-| `--strict` | exit 1 on warn (default: exit 0 on warn) |  |
-| `--json` | machine output (default: human prose) |  |
-
-Examples:
-
-```sh
-gregale doctor
-gregale doctor --strict
-gregale doctor --path packages/api
-```
-
-
-## delayed-task
-
-Schedule and inspect deferred invocations
-
-`gregale delayed-task [<subcommand>]`
-
-### delayed-task add
-
-Schedule a deferred invocation
-
-`gregale delayed-task add --app <SLUG> [--scheduled-at <RFC3339>] [--delay <DURATION>] [--payload <JSON|@FILE|->] [--method <METHOD>] [--path <PATH>] [--work-policy <NAME>] [--work-key <JSON>] [--work-fairness-key <JSON>] [--header <NAME:VALUE>] [--max-attempts <N>] [--retry-base-seconds <N>] [--retry-max-seconds <N>] [--retry-jitter-seconds <N>] [--retention <DURATION>] [--on-success-webhook <ID>] [--on-failure-webhook <ID>] [--idempotency-key <KEY>] <duration>`
-
-| Flag | Meaning | |
-|---|---|---|
-| `--app <SLUG>` | app slug | required |
-| `--scheduled-at <RFC3339>` | absolute dispatch time; exclusive with --delay |  |
-| `--delay <DURATION>` | relative delay such as 30m; exclusive with --scheduled-at |  |
-| `--payload <JSON|@FILE|->` | JSON request payload |  |
-| `--method <METHOD>` | HTTP method (default POST) |  |
-| `--path <PATH>` | app path (default /) |  |
-| `--work-policy <NAME>` | named app work policy |  |
-| `--work-key <JSON>` | JSON scalar identifying related work |  |
-| `--work-fairness-key <JSON>` | JSON scalar shared by related work keys |  |
-| `--header <NAME:VALUE>` | request header (repeatable) |  |
-| `--max-attempts <N>` | maximum delivery attempts |  |
-| `--retry-base-seconds <N>` | base retry delay in seconds |  |
-| `--retry-max-seconds <N>` | maximum retry delay in seconds |  |
-| `--retry-jitter-seconds <N>` | retry jitter fraction (0..1) |  |
-| `--retention <DURATION>` | terminal result retention |  |
-| `--on-success-webhook <ID>` | success webhook subscription |  |
-| `--on-failure-webhook <ID>` | failure webhook subscription |  |
-| `--idempotency-key <KEY>` | stable create retry key |  |
-
-### delayed-task list
-
-List delayed tasks for an app
-
-`gregale delayed-task list --app <SLUG> [--limit <N>] [--before <ID>] [--cursor <CURSOR>] [--all]`
-
-| Flag | Meaning | |
-|---|---|---|
-| `--app <SLUG>` | app slug | required |
-| `--limit <N>` | page size (1-200) |  |
-| `--before <ID>` | alias for --cursor |  |
-| `--cursor <CURSOR>` | opaque continuation cursor |  |
-| `--all` | walk every page |  |
-
-### delayed-task get
-
-Show one delayed task
-
-`gregale delayed-task get [--app <SLUG>] <id>`
-
-| Flag | Meaning | |
-|---|---|---|
-| `--app <SLUG>` | require the task to belong to this app |  |
-
-### delayed-task info
-
-Alias for get
-
-`gregale delayed-task info [--app <SLUG>] <id>`
-
-| Flag | Meaning | |
-|---|---|---|
-| `--app <SLUG>` | require the task to belong to this app |  |
-
-### delayed-task cancel
-
-Cancel a delayed task
-
-`gregale delayed-task cancel [--app <SLUG>] <id>`
-
-| Flag | Meaning | |
-|---|---|---|
-| `--app <SLUG>` | require the task to belong to this app |  |
-
-
 ## diff
 
 Compare two named environments in the linked project
@@ -18050,528 +18411,6 @@ Compare two named environments in the linked project
 | Flag | Meaning | |
 |---|---|---|
 | `--project <SLUG>` | project slug (defaults to linked project) |  |
-
-
-## inspect
-
-Explain an app&#39;s health from runtime, release, data and scaling
-
-`gregale inspect [<slug>] [--upstreams] [--scope <scope>] [--errors] [--watch] [--interval <DURATION>] [--timeout <DURATION>] [--json]`
-
-| Flag | Meaning | |
-|---|---|---|
-| `--upstreams` | List data upstreams captured for this app |  |
-| `--scope <scope>` | filter by scope (defaults to linked project environment; used with --upstreams) |  |
-| `--errors` | show the latest failed deployment&#39;s persisted error explanation |  |
-| `--watch` | watch summary changes using read-only requests; incompatible with --upstreams and --errors |  |
-| `--interval <DURATION>` | time between watch reads (default 5s; 1s..1h); requires --watch |  |
-| `--timeout <DURATION>` | watch duration (default 0: until Ctrl-C); requires --watch |  |
-| `--json` | print summary JSON, or JSON Lines events with --watch |  |
-
-Examples:
-
-```sh
-gregale inspect my-api
-gregale inspect my-api --watch
-gregale inspect my-api --watch --interval 5s --timeout 10m --json
-gregale inspect my-api --upstreams
-```
-
-
-## customer-operations
-
-Inspect customer work, verify downloads and reconcile outcomes
-
-`gregale customer-operations [<subcommand>]`
-
-Examples:
-
-```sh
-gregale customer-operations list --app exports --scope production
-gregale customer-operations watch <id> --app exports --timeout 5m --json
-```
-
-### customer-operations outcomes
-
-List completed workflows with explicit business outcomes
-
-`gregale customer-operations outcomes [--app <SLUG>] [--self] [--app-id <UUID>] --scope <SCOPE> [--tenant <UUID>] [--workflow <NAME>] [--code <CODE>] [--limit <N>] [--cursor <CURSOR>]`
-
-| Flag | Meaning | |
-|---|---|---|
-| `--app <SLUG>` | owned app |  |
-| `--self` | authenticated customer |  |
-| `--app-id <UUID>` | required with --self |  |
-| `--scope <SCOPE>` | explicit environment | required |
-| `--tenant <UUID>` | account customer filter |  |
-| `--workflow <NAME>` | workflow filter |  |
-| `--code <CODE>` | outcome code filter |  |
-| `--limit <N>` | page size 1–100 |  |
-| `--cursor <CURSOR>` | continuation cursor |  |
-
-### customer-operations outcome-summary
-
-Summarize explicit business outcomes
-
-`gregale customer-operations outcome-summary [--group-by <DIMENSION>] [--app <SLUG>] [--self] [--app-id <UUID>] --scope <SCOPE> [--tenant <UUID>] [--workflow <NAME>] [--code <CODE>] [--limit <N>] [--cursor <CURSOR>]`
-
-| Flag | Meaning | |
-|---|---|---|
-| `--group-by <DIMENSION>` | summary grouping | one of `outcome` · `workflow` · `customer` |
-| `--app <SLUG>` | owned app |  |
-| `--self` | authenticated customer |  |
-| `--app-id <UUID>` | required with --self |  |
-| `--scope <SCOPE>` | explicit environment | required |
-| `--tenant <UUID>` | account customer filter |  |
-| `--workflow <NAME>` | workflow filter |  |
-| `--code <CODE>` | outcome code filter |  |
-| `--limit <N>` | page size 1–100 |  |
-| `--cursor <CURSOR>` | continuation cursor |  |
-
-### customer-operations attention
-
-List workflows needing attention
-
-`gregale customer-operations attention [--app <SLUG>] [--self] [--app-id <UUID>] --scope <SCOPE> [--tenant <UUID>] [--workflow <NAME>] [--target-operation <NAME>] [--dependency-status <STATUS>] [--required-outcome-code <CODE>] [--priority <PRIORITY>] [--sort <ORDER>] [--owner <OWNER>] [--unassigned] [--blocker-code <CODE>] [--reason <REASON>] [--limit <N>] [--cursor <CURSOR>]`
-
-| Flag | Meaning | |
-|---|---|---|
-| `--app <SLUG>` | owned app in account mode |  |
-| `--self` | authenticated customer queue |  |
-| `--app-id <UUID>` | required with --self |  |
-| `--scope <SCOPE>` | explicit environment | required |
-| `--tenant <UUID>` | account customer filter |  |
-| `--workflow <NAME>` | workflow filter |  |
-| `--target-operation <NAME>` | target Operation filter |  |
-| `--dependency-status <STATUS>` | unresolved prerequisite status | one of `waiting` · `unknown` · `outcome_mismatch` |
-| `--required-outcome-code <CODE>` | required prerequisite outcome |  |
-| `--priority <PRIORITY>` | application-assigned blocker urgency | one of `low` · `normal` · `high` · `urgent` |
-| `--sort <ORDER>` | queue order; summaries retain group ordering | one of `updated_at` · `deadline` |
-| `--owner <OWNER>` | exact application-assigned blocker owner; excludes --unassigned |  |
-| `--unassigned` | only matching blockers without an owner; excludes --owner |  |
-| `--blocker-code <CODE>` | blocker code filter |  |
-| `--reason <REASON>` | attention reason | one of `blocked` · `stale` · `overdue` · `dependency` · `escalated` · `unacknowledged` · `follow_up_overdue` · `awaiting_verification` · `sla_breached` · `sla_at_risk` |
-| `--limit <N>` | page size, 1–100 |  |
-| `--cursor <CURSOR>` | continuation cursor |  |
-
-### customer-operations attention-summary
-
-Summarize workflows needing attention
-
-`gregale customer-operations attention-summary [--group-by <DIMENSION>] [--app <SLUG>] [--self] [--app-id <UUID>] --scope <SCOPE> [--tenant <UUID>] [--workflow <NAME>] [--target-operation <NAME>] [--dependency-status <STATUS>] [--required-outcome-code <CODE>] [--priority <PRIORITY>] [--sort <ORDER>] [--owner <OWNER>] [--unassigned] [--blocker-code <CODE>] [--reason <REASON>] [--limit <N>] [--cursor <CURSOR>]`
-
-| Flag | Meaning | |
-|---|---|---|
-| `--group-by <DIMENSION>` | summary grouping | one of `owner` · `workflow` · `blocker_code` · `target_operation` · `customer` · `dependency_status` · `required_outcome_code` |
-| `--app <SLUG>` | owned app in account mode |  |
-| `--self` | authenticated customer queue |  |
-| `--app-id <UUID>` | required with --self |  |
-| `--scope <SCOPE>` | explicit environment | required |
-| `--tenant <UUID>` | account customer filter |  |
-| `--workflow <NAME>` | workflow filter |  |
-| `--target-operation <NAME>` | target Operation filter |  |
-| `--dependency-status <STATUS>` | unresolved prerequisite status | one of `waiting` · `unknown` · `outcome_mismatch` |
-| `--required-outcome-code <CODE>` | required prerequisite outcome |  |
-| `--priority <PRIORITY>` | application-assigned blocker urgency | one of `low` · `normal` · `high` · `urgent` |
-| `--sort <ORDER>` | queue order; summaries retain group ordering | one of `updated_at` · `deadline` |
-| `--owner <OWNER>` | exact application-assigned blocker owner; excludes --unassigned |  |
-| `--unassigned` | only matching blockers without an owner; excludes --owner |  |
-| `--blocker-code <CODE>` | blocker code filter |  |
-| `--reason <REASON>` | attention reason | one of `blocked` · `stale` · `overdue` · `dependency` · `escalated` · `unacknowledged` · `follow_up_overdue` · `awaiting_verification` · `sla_breached` · `sla_at_risk` |
-| `--limit <N>` | page size, 1–100 |  |
-| `--cursor <CURSOR>` | continuation cursor |  |
-
-### customer-operations bindings
-
-Generate typed application workflow bindings without credentials
-
-`gregale customer-operations bindings --app <SLUG> --plan <PLAN> [--dir <PATH>] --language <LANGUAGE> --output <PATH> [--package <NAME>] [--check]`
-
-| Flag | Meaning | |
-|---|---|---|
-| `--app <SLUG>` | selected manifest app | required |
-| `--plan <PLAN>` | explicit target plan | required; one of `free` · `hobby` · `pro` · `scale` |
-| `--dir <PATH>` | source directory, default current directory |  |
-| `--language <LANGUAGE>` | application language | required; one of `typescript` · `javascript` · `go` · `python` |
-| `--output <PATH>` | generated module | required |
-| `--package <NAME>` | Go package name, default workflowbindings |  |
-| `--check` | fail on stale bindings without writing |  |
-
-### customer-operations doctor
-
-Observe submission blockers, delivery warnings and qualification gaps
-
-`gregale customer-operations doctor --app <SLUG> --deployment <UUID> --tenant <UUID> [--name <NAME>] [--timeout <D>]`
-
-| Flag | Meaning | |
-|---|---|---|
-| `--app <SLUG>` | owned app | required |
-| `--deployment <UUID>` | exact deployment | required |
-| `--tenant <UUID>` | owned platform tenant | required |
-| `--name <NAME>` | optional operation name |  |
-| `--timeout <D>` | local diagnostic deadline |  |
-
-### customer-operations definitions
-
-Discover deployed immutable contracts
-
-#### customer-operations definitions list
-
-List ordered contract metadata
-
-`gregale customer-operations definitions list --app <SLUG> --deployment <UUID> [--timeout <D>]`
-
-| Flag | Meaning | |
-|---|---|---|
-| `--app <SLUG>` | owned application | required |
-| `--deployment <UUID>` | immutable deployment ID | required |
-| `--timeout <D>` | local request deadline |  |
-
-#### customer-operations definitions get
-
-Read schemas and deployment pins as JSON
-
-`gregale customer-operations definitions get --app <SLUG> --deployment <UUID> [--timeout <D>] <name>`
-
-| Flag | Meaning | |
-|---|---|---|
-| `--app <SLUG>` | owned application | required |
-| `--deployment <UUID>` | immutable deployment ID | required |
-| `--timeout <D>` | local request deadline |  |
-
-### customer-operations validate
-
-Validate source contracts and sample input without credentials
-
-`gregale customer-operations validate --app <SLUG> --plan <PLAN> [--dir <PATH>] [--name <NAME>] [--input-file <PATH>]`
-
-| Flag | Meaning | |
-|---|---|---|
-| `--app <SLUG>` | selected manifest app | required |
-| `--plan <PLAN>` | explicit target plan | required; one of `free` · `hobby` · `pro` · `scale` |
-| `--dir <PATH>` | source directory, default current directory |  |
-| `--name <NAME>` | selected operation; required for a sample |  |
-| `--input-file <PATH>` | sample JSON input |  |
-
-Sample input is optional.
-
-### customer-operations types
-
-Generate or check TypeScript input and output types
-
-`gregale customer-operations types --app <SLUG> --plan <PLAN> [--dir <PATH>] [--name <NAME>] [--output <PATH>] [--check]`
-
-| Flag | Meaning | |
-|---|---|---|
-| `--app <SLUG>` | selected manifest app | required |
-| `--plan <PLAN>` | explicit target plan | required; one of `free` · `hobby` · `pro` · `scale` |
-| `--dir <PATH>` | source directory, default current directory |  |
-| `--name <NAME>` | selected operation; defaults to all |  |
-| `--output <PATH>` | generated declaration path (default customer-operations.generated.d.ts) |  |
-| `--check` | verify generated declarations are current without writing |  |
-
-### customer-operations start
-
-Submit tenant-owned work with an immutable retry receipt
-
-`gregale customer-operations start --self [--definition <UUID>] [--input-file <PATH>] [--idempotency-key <KEY>] --receipt-file <PATH> [--timeout <D>]`
-
-| Flag | Meaning | |
-|---|---|---|
-| `--self` | derive tenant from credentials | required |
-| `--definition <UUID>` | immutable definition ID for a new receipt |  |
-| `--input-file <PATH>` | JSON input for a new receipt |  |
-| `--idempotency-key <KEY>` | stable request identity for a new receipt |  |
-| `--receipt-file <PATH>` | private request receipt; existing files must match | required |
-| `--timeout <D>` | local request deadline; resume from the receipt |  |
-
-### customer-operations list
-
-List one bounded page of retained business work
-
-`gregale customer-operations list [--app <SLUG>] [--timeout <D>] --scope <SCOPE> [--tenant <UUID>] [--name <NAME>] [--state <STATE>] [--limit <N>] [--cursor <CURSOR>]`
-
-| Flag | Meaning | |
-|---|---|---|
-| `--app <SLUG>` | required in account mode; omit with --self |  |
-| `--timeout <D>` | local request/wait deadline; work continues |  |
-| `--scope <SCOPE>` | explicit deployment environment | required |
-| `--tenant <UUID>` | optional platform tenant filter |  |
-| `--name <NAME>` | operation name |  |
-| `--state <STATE>` | business state | one of `accepted` · `running` · `waiting` · `succeeded` · `failed` · `cancelled` · `requires_reconciliation` |
-| `--limit <N>` | page size, 1–100 |  |
-| `--cursor <CURSOR>` | next page cursor |  |
-
-### customer-operations get
-
-Read business result and independent delivery status
-
-`gregale customer-operations get [--app <SLUG>] [--timeout <D>] [--self] <id>`
-
-| Flag | Meaning | |
-|---|---|---|
-| `--app <SLUG>` | required in account mode; omit with --self |  |
-| `--timeout <D>` | local request/wait deadline; work continues |  |
-| `--self` | use authenticated tenant routes; omit --app |  |
-
-### customer-operations inspect
-
-Inspect steps, uncertain attempts, retained files and retry blockers
-
-`gregale customer-operations inspect [--app <SLUG>] [--timeout <D>] <id>`
-
-| Flag | Meaning | |
-|---|---|---|
-| `--app <SLUG>` | required in account mode; omit with --self |  |
-| `--timeout <D>` | local request/wait deadline; work continues |  |
-
-### customer-operations events
-
-Read durable event evidence and resync marker
-
-`gregale customer-operations events [--app <SLUG>] [--timeout <D>] [--after <N>] [--self] <id>`
-
-| Flag | Meaning | |
-|---|---|---|
-| `--app <SLUG>` | required in account mode; omit with --self |  |
-| `--timeout <D>` | local request/wait deadline; work continues |  |
-| `--after <N>` | event sequence or execution generation watermark |  |
-| `--self` | use authenticated tenant routes; omit --app |  |
-
-### customer-operations executions
-
-Read retained execution generations and attempt counts
-
-`gregale customer-operations executions [--app <SLUG>] [--timeout <D>] [--after <N>] [--limit <N>] <id>`
-
-| Flag | Meaning | |
-|---|---|---|
-| `--app <SLUG>` | required in account mode; omit with --self |  |
-| `--timeout <D>` | local request/wait deadline; work continues |  |
-| `--after <N>` | event sequence or execution generation watermark |  |
-| `--limit <N>` | page size, 1–100 |  |
-
-### customer-operations timeline
-
-Read one chronological history of events, attempts and deliveries
-
-`gregale customer-operations timeline --app <SLUG> [--timeout <D>] [--limit <N>] [--cursor <CURSOR>] [--all] [--logs] <id>`
-
-| Flag | Meaning | |
-|---|---|---|
-| `--app <SLUG>` | owned application; account mode only | required |
-| `--timeout <D>` | local request/wait deadline; work continues |  |
-| `--limit <N>` | page size, 1–100 |  |
-| `--cursor <CURSOR>` | next timeline page cursor |  |
-| `--all` | follow cursors to the end |  |
-| `--logs` | print archived instance log lines inside each HTTP attempt |  |
-
-### customer-operations milestones
-
-Read business milestones for an operation or reference
-
-`gregale customer-operations milestones [--app <SLUG>] [--self] [--scope <SCOPE>] [--subject-type <TYPE>] [--subject-id <ID>] [--workflow <NAME>] [--workflow-instance-id <ID>] [--workflow-state-cursor <CURSOR>] [--stale-only] [--tenant <UUID>] [--limit <N>] [--cursor <CURSOR>] [<operation-id>]`
-
-| Flag | Meaning | |
-|---|---|---|
-| `--app <SLUG>` | owned app slug, or app UUID with --self |  |
-| `--self` | derive customer ownership from credentials |  |
-| `--scope <SCOPE>` | environment for a business-reference timeline |  |
-| `--subject-type <TYPE>` | business reference type |  |
-| `--subject-id <ID>` | exact business reference ID |  |
-| `--workflow <NAME>` | workflow for one business workflow run |  |
-| `--workflow-instance-id <ID>` | exact workflow run ID |  |
-| `--workflow-state-cursor <CURSOR>` | next workflow state history page |  |
-| `--stale-only` | only runs past their declared state age threshold |  |
-| `--tenant <UUID>` | account customer filter |  |
-| `--limit <N>` | page size |  |
-| `--cursor <CURSOR>` | next milestone page cursor |  |
-
-### customer-operations watch
-
-Watch an operation&#39;s status changes
-
-`gregale customer-operations watch [--app <SLUG>] [--timeout <D>] [--interval <D>] [--self] <id>`
-
-| Flag | Meaning | |
-|---|---|---|
-| `--app <SLUG>` | required in account mode; omit with --self |  |
-| `--timeout <D>` | local request/wait deadline; work continues |  |
-| `--interval <D>` | polling interval, default 1s |  |
-| `--self` | use authenticated tenant routes; omit --app |  |
-
-Exits 0 on success, 1 on failure or cancel, 4 on reconciliation, 124 on timeout and 130 when interrupted.
-
-### customer-operations download
-
-Publish verified artifact bytes to a new private file
-
-`gregale customer-operations download [--app <SLUG>] [--timeout <D>] [--artifact <UUID>] --output <PATH> [--self] <id>`
-
-| Flag | Meaning | |
-|---|---|---|
-| `--app <SLUG>` | required in account mode; omit with --self |  |
-| `--timeout <D>` | local request/wait deadline; work continues |  |
-| `--artifact <UUID>` | artifact ID; optional only when one artifact exists |  |
-| `--output <PATH>` | new output file | required |
-| `--self` | use authenticated tenant routes; omit --app |  |
-
-### customer-operations cancel
-
-Request cancellation at an observed generation
-
-`gregale customer-operations cancel [--app <SLUG>] [--timeout <D>] --expected-generation <N> [--self] <id>`
-
-| Flag | Meaning | |
-|---|---|---|
-| `--app <SLUG>` | required in account mode; omit with --self |  |
-| `--timeout <D>` | local request/wait deadline; work continues |  |
-| `--expected-generation <N>` | observed generation; stale decisions are rejected | required |
-| `--self` | use authenticated tenant routes; omit --app |  |
-
-### customer-operations signal
-
-Deliver a named event to a waiting operation
-
-`gregale customer-operations signal [--app <SLUG>] [--timeout <D>] --event <NAME> --signal-id <ID> [--payload <JSON>] [--payload-file <PATH>] [--scope <SCOPE>] [--operation <NAME>] [--subject <TYPE:ID>] [--self] [--definition <UUID>] [<id>]`
-
-| Flag | Meaning | |
-|---|---|---|
-| `--app <SLUG>` | owned application; omit with --self |  |
-| `--timeout <D>` | local request/wait deadline; work continues |  |
-| `--event <NAME>` | event the operation waits for | required |
-| `--signal-id <ID>` | stable idempotency key; repeat it to retry safely | required |
-| `--payload <JSON>` | JSON payload |  |
-| `--payload-file <PATH>` | file holding the JSON payload |  |
-| `--scope <SCOPE>` | environment, for a subject signal |  |
-| `--operation <NAME>` | operation name, for a subject signal |  |
-| `--subject <TYPE:ID>` | business subject, instead of an operation ID |  |
-| `--self` | signal the authenticated tenant&#39;s own operations |  |
-| `--definition <UUID>` | operation definition, for a --self subject signal |  |
-
-Address the operation by ID or by business subject.
-
-### customer-operations approve
-
-Decide a declared approval on a waiting operation
-
-`gregale customer-operations approve [--app <SLUG>] [--timeout <D>] --expected-generation <N> --step <STEP> --decision <DECISION> [--comment <TEXT>] <id>`
-
-| Flag | Meaning | |
-|---|---|---|
-| `--app <SLUG>` | required in account mode; omit with --self |  |
-| `--timeout <D>` | local request/wait deadline; work continues |  |
-| `--expected-generation <N>` | observed generation; stale decisions are rejected | required |
-| `--step <STEP>` | declared approval step | required |
-| `--decision <DECISION>` | approval decision | required; one of `approved` · `rejected` |
-| `--comment <TEXT>` | optional note recorded with the decision |  |
-
-### customer-operations recover
-
-Preview or record an evidenced reconciliation decision
-
-`gregale customer-operations recover [--app <SLUG>] [--timeout <D>] [--expected-generation <N>] [--receipt-file <PATH>] [--preview] [--inspection-revision <REVISION>] [--recovery-id <ID>] [--resolution <RESOLUTION>] [--evidence-file <PATH>] [--result-file <PATH>] <id>`
-
-| Flag | Meaning | |
-|---|---|---|
-| `--app <SLUG>` | required in account mode; omit with --self |  |
-| `--timeout <D>` | local request/wait deadline; work continues |  |
-| `--expected-generation <N>` | observed generation for a new decision or preview; omit to resume |  |
-| `--receipt-file <PATH>` | private immutable decision request; omit selectors to resume |  |
-| `--preview` | read-only plan; exit 4 when blocked; omit decision ID and evidence |  |
-| `--inspection-revision <REVISION>` | optional inspection revision checked when applying |  |
-| `--recovery-id <ID>` | stable decision ID required when applying |  |
-| `--resolution <RESOLUTION>` | explicit resolution for a new decision or preview; omit to resume | one of `succeeded` · `failed` · `cancelled` · `safe_to_retry` |
-| `--evidence-file <PATH>` | nonempty reconciliation evidence required when applying |  |
-| `--result-file <PATH>` | JSON result required for succeeded |  |
-
-### customer-operations delivery
-
-Inspect notification state, replay generation and receiver cooldown
-
-`gregale customer-operations delivery [--app <SLUG>] [--timeout <D>] <id>`
-
-| Flag | Meaning | |
-|---|---|---|
-| `--app <SLUG>` | required in account mode; omit with --self |  |
-| `--timeout <D>` | local request/wait deadline; work continues |  |
-
-### customer-operations delivery-attempts
-
-Read retained notification attempt evidence
-
-`gregale customer-operations delivery-attempts [--app <SLUG>] [--timeout <D>] [--limit <N>] [--cursor <CURSOR>] <id>`
-
-| Flag | Meaning | |
-|---|---|---|
-| `--app <SLUG>` | required in account mode; omit with --self |  |
-| `--timeout <D>` | local request/wait deadline; work continues |  |
-| `--limit <N>` | page size, 1–100 |  |
-| `--cursor <CURSOR>` | next attempt page cursor |  |
-
-### customer-operations retry-delivery
-
-Record a notification retry without repeating business work
-
-`gregale customer-operations retry-delivery [--app <SLUG>] [--timeout <D>] [--delivery <UUID>] [--expected-replay-generation <N>] [--retry-id <ID>] --receipt-file <PATH> <id>`
-
-| Flag | Meaning | |
-|---|---|---|
-| `--app <SLUG>` | required in account mode; omit with --self |  |
-| `--timeout <D>` | local request/wait deadline; work continues |  |
-| `--delivery <UUID>` | observed dead delivery; omit selectors to resume |  |
-| `--expected-replay-generation <N>` | observed notification generation; zero must be explicit |  |
-| `--retry-id <ID>` | stable retry decision identity |  |
-| `--receipt-file <PATH>` | private immutable request receipt | required |
-
-The retry is backed by a receipt.
-
-
-## scan
-
-Show how a source tree splits into deployable workloads
-
-`gregale scan [<dir>] [--tarball <PATH>] [--path <DIR>] [--repo <OWNER/NAME>] [--repository <OWNER/NAME>] [--install-id <N>] [--production-branch <BRANCH>] [--project-slug <SLUG>] [--environment <SLUG>] [--exclude <SLUGS>] [--show-affected] [--explain] [--persist-exclude]`
-
-| Flag | Meaning | |
-|---|---|---|
-| `--tarball <PATH>` | scan a source tarball |  |
-| `--path <DIR>` | scan a local directory |  |
-| `--repo <OWNER/NAME>` | scan a GitHub repo after gregale connect |  |
-| `--repository <OWNER/NAME>` | GitHub owner/name to bind to the project (defaults to --repo) |  |
-| `--install-id <N>` | optional GitHub installation id; normally resolved from the connected account |  |
-| `--production-branch <BRANCH>` | production branch for the project |  |
-| `--project-slug <SLUG>` | kebab slug; default = repo dir basename |  |
-| `--environment <SLUG>` | registered project environment to scan |  |
-| `--exclude <SLUGS>` | omit workloads (comma-separated slugs; cannot combine with --only) |  |
-| `--show-affected` | show workloads that deploy or stay unchanged |  |
-| `--explain` | show detector provenance and skipped/merged decisions |  |
-| `--persist-exclude` | save --exclude slugs for future project deploys |  |
-
-
-## slo
-
-Show an app&#39;s SLO panel for a time window
-
-`gregale slo [<slug>] [--window <WINDOW>]`
-
-| Flag | Meaning | |
-|---|---|---|
-| `--window <WINDOW>` | window (1h\|24h\|7d) | one of `1h` · `24h` · `7d` |
-
-
-## throttle-suggestions
-
-Suggest per-route rate limits and preview their effect
-
-`gregale throttle-suggestions <slug> [--range <WINDOW>] [--dry-run] [--candidate-rps <N>] [--candidate-burst <N>]`
-
-| Flag | Meaning | |
-|---|---|---|
-| `--range <WINDOW>` | observation window (5m\|15m\|1h\|6h\|24h\|7d\|15d) | one of `5m` · `15m` · `1h` · `6h` · `24h` · `7d` · `15d` |
-| `--dry-run` | enable the dry-run preview pass (requires --candidate-rps) |  |
-| `--candidate-rps <N>` | candidate rate-limit rps for the dry-run preview |  |
-| `--candidate-burst <N>` | candidate burst for the dry-run preview |  |
 
 
 ## man

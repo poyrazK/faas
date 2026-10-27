@@ -30,7 +30,7 @@ var cliTreeVerbs = []string{
 	"unprotect", "qualify", "reconcile", "reconnect", "refresh", "rehearse", "reopen", "require",
 	"resize", "resync", "retire", "revoke", "review", "scan", "split", "start", "stop", "subscribe",
 	"unsubscribe", "suggest", "suspend", "test", "track", "use", "validate", "override", "advise",
-	"reset", "pull", "push",
+	"reset", "pull", "push", "signal", "generate",
 }
 
 // A path may end with a noun it lists or shows (`app instances`).
@@ -45,7 +45,7 @@ var cliTreeReadNouns = []string{
 	"occurrences", "outcomes", "overview", "parts", "pending", "policies", "prices", "priority",
 	"profiles", "progress", "provenance", "readiness", "receipt", "records", "releases", "report",
 	"results", "retention", "routes", "runs", "running", "sbom", "stats", "steps", "storage",
-	"summary", "tables", "tags", "tasks", "teams", "tickets", "tokens", "traces", "types", "usage",
+	"summary", "tables", "tags", "tasks", "executions", "milestones", "timeline", "teams", "tickets", "tokens", "traces", "types", "usage",
 	"users", "views", "signups", "statements", "switches", "recipes", "repos", "resumes", "state",
 	"stages",
 }

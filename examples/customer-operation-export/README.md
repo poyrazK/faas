@@ -37,8 +37,8 @@ when deliberately upgrading the SDK and rerun the tests.
 ## Validate and run locally
 
 ```sh
-gregale customer-operations validate --dir . --app <slug> --plan hobby
-gregale customer-operations types --dir . --app <slug> --plan hobby
+gregale operation validate --dir . --app <slug> --plan hobby
+gregale operation types --dir . --app <slug> --plan hobby
 ```
 
 The second command writes `customer-operations.generated.d.ts` from the
@@ -50,7 +50,7 @@ either schema; the server remains authoritative at runtime.
 Commit the generated declaration and add the read-only freshness check to CI:
 
 ```sh
-gregale customer-operations types --dir . --app <slug> --plan hobby --check
+gregale operation types --dir . --app <slug> --plan hobby --check
 npm run typecheck
 ```
 
@@ -118,7 +118,7 @@ is known; the browser feature remains unavailable. After deployment, obtain the
 definition and configure its ID:
 
 ```sh
-gregale customer-operations definitions get customer-export --app <slug> --deployment <deployment-uuid> --json
+gregale operation definitions get customer-export --app <slug> --deployment <deployment-uuid> --json
 gregale env set --app <slug> GREGALE_EXPORT_DEFINITION_ID=<definition-uuid>
 ```
 
