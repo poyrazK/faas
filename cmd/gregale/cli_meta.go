@@ -668,6 +668,26 @@ var cliCommands = []cliCommand{
 				{Name: "dry-run", Short: "show the plan without changing anything"},
 				{Name: "remove", Short: "remove the app's Datadog log drain and webhook"},
 			}},
+			{Name: "ai", Short: "Set up the AI gateway for an app in one step", Notes: []string{
+				"Creates an AI integration for the provider, or reuses one of the same name or --integration, stores the key from an environment variable, stdin or a file, and binds it to the app.",
+				"Sets GREGALE_AI_BASE_URL and, for OpenAI and Anthropic, the SDK's base URL and a placeholder key, so the app needs no code change. The app sees them on its next deploy or restart.",
+			}, Examples: []string{
+				"OPENAI_API_KEY=sk-... gregale add ai --app my-api --provider openai",
+				"gregale add ai --app my-api --provider vertex --region us-central1 --key-file key.json",
+				"gregale add ai --app my-api --provider azure_openai --origin https://my-resource.openai.azure.com --key-stdin",
+			}, Flags: []cliFlag{
+				{Name: "app", Short: "app slug", Req: true, Value: "APP"},
+				{Name: "provider", Short: "AI provider", Req: true, Value: "PROVIDER", ClosedSet: []string{"openai", "anthropic", "gemini", "azure_openai", "bedrock", "vertex"}},
+				{Name: "integration", Short: "existing AI integration to bind instead of creating one", Value: "ID"},
+				{Name: "name", Short: "integration name (default the provider)", Value: "NAME"},
+				{Name: "origin", Short: "provider origin, for Azure OpenAI or an OpenAI-compatible API", Value: "URL"},
+				{Name: "region", Short: "provider region, for Bedrock and Vertex", Value: "REGION"},
+				{Name: "key-env", Short: "environment variable holding the provider key (default the provider's usual one)", Value: "NAME"},
+				{Name: "key-stdin", Short: "read the provider key from stdin"},
+				{Name: "key-file", Short: "file holding the provider key, such as a Vertex service-account key", Value: "PATH"},
+				{Name: "no-env", Short: "do not set the app's SDK settings"},
+				{Name: "scope", Short: "environment scope for the app's SDK settings", Value: "SCOPE"},
+			}},
 		},
 	},
 	{

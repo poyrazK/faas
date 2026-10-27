@@ -2001,6 +2001,38 @@ gregale add datadog --app my-api --dry-run
 gregale add datadog --app my-api --remove
 ```
 
+### add ai
+
+Set up the AI gateway for an app in one step
+
+`gregale add ai --app <APP> --provider <PROVIDER> [--integration <ID>] [--name <NAME>] [--origin <URL>] [--region <REGION>] [--key-env <NAME>] [--key-stdin] [--key-file <PATH>] [--no-env] [--scope <SCOPE>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <APP>` | app slug | required |
+| `--provider <PROVIDER>` | AI provider | required; one of `openai` · `anthropic` · `gemini` · `azure_openai` · `bedrock` · `vertex` |
+| `--integration <ID>` | existing AI integration to bind instead of creating one |  |
+| `--name <NAME>` | integration name (default the provider) |  |
+| `--origin <URL>` | provider origin, for Azure OpenAI or an OpenAI-compatible API |  |
+| `--region <REGION>` | provider region, for Bedrock and Vertex |  |
+| `--key-env <NAME>` | environment variable holding the provider key (default the provider&#39;s usual one) |  |
+| `--key-stdin` | read the provider key from stdin |  |
+| `--key-file <PATH>` | file holding the provider key, such as a Vertex service-account key |  |
+| `--no-env` | do not set the app&#39;s SDK settings |  |
+| `--scope <SCOPE>` | environment scope for the app&#39;s SDK settings |  |
+
+Examples:
+
+```sh
+OPENAI_API_KEY=sk-... gregale add ai --app my-api --provider openai
+gregale add ai --app my-api --provider vertex --region us-central1 --key-file key.json
+gregale add ai --app my-api --provider azure_openai --origin https://my-resource.openai.azure.com --key-stdin
+```
+
+Creates an AI integration for the provider, or reuses one of the same name or --integration, stores the key from an environment variable, stdin or a file, and binds it to the app.
+
+Sets GREGALE_AI_BASE_URL and, for OpenAI and Anthropic, the SDK&#39;s base URL and a placeholder key, so the app needs no code change. The app sees them on its next deploy or restart.
+
 
 ## bucket
 
@@ -2967,6 +2999,21 @@ Set or clear one app&#39;s own daily AI token limit
 |---|---|---|
 | `--app <slug>` | bound app slug | required |
 | `--daily-tokens <N>` | token limit, or none | required |
+
+### ai request-policy
+
+Show or set an AI integration&#39;s rate, concurrency and timeout
+
+`gregale ai request-policy [--rate <N>] [--burst <N>] [--max-in-flight <N>] [--timeout <SECONDS>] <integration-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--rate <N>` | calls per second |  |
+| `--burst <N>` | calls above the rate allowed at once |  |
+| `--max-in-flight <N>` | calls in flight at once |  |
+| `--timeout <SECONDS>` | seconds to wait for a response&#39;s headers |  |
+
+Flags you omit keep their values. The timeout bounds the wait for a response&#39;s headers; a streamed answer may take longer.
 
 ### ai guardrails
 
