@@ -1,6 +1,6 @@
 import http from 'node:http'
 import { refreshStatusReader, refreshTokenHash } from './refresh.mjs'
-import { spawn, execFile } from 'node:child_process'
+import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import { pathToFileURL } from 'node:url'
 import { createRemoteJWKSet, jwtVerify, SignJWT } from 'jose'
@@ -19,7 +19,8 @@ import { qualifiedConnectionEngine, startConnectionReporter } from './connection
 import { createPoolObservation } from './pool.mjs'
 import { createUsage, addResponseBytes, accessReport } from './usage.mjs'
 import { storageRoute, handleStorage, storageAnonymousTarget, storageServerKeyAllows, checkStorageTable } from './storage.mjs'
-import { publicReadTarget, publicRpcTarget, publicRpcListed, publicReadCache, clientKey, matchServerKey, serverKeyAllows, serverSubject, checkPublicRelations, checkPublicFunctions } from './access.mjs'
+import { createEngine, lifecyclePaths } from './engine.mjs'
+import { publicReadTarget, publicRpcTarget, publicRpcListed, publicReadCache, clientKey, matchServerKey, serverKeyAllows, serverSubject, checkPublicRelations, checkPublicFunctions, loadRowSecurity, rowSecurityDenial } from './access.mjs'
 
 export function createServer(config, verify, upstreamPort = 3000, readyPort = 3001, log) {
   const servingFingerprint = config.fingerprint
@@ -62,6 +63,18 @@ export function createServer(config, verify, upstreamPort = 3000, readyPort = 30
       const report = await health.snapshot(admitted.snapshot)
       if (!report.ready) markRequest(res, report.checks.refresh === 'unavailable' ? 'data_api_refresh_unavailable' : 'data_api_unavailable')
       return healthResponse(res, report.ready ? 200 : 503, report)
+    }
+    // guest-init calls these on loopback; the gateway strips inbound x-faas-*
+    // headers, so a public request cannot carry them.
+    if (config.lifecycle && req.method === 'POST' && req.url === lifecyclePaths.beforeCheckpoint && req.headers['x-faas-before-checkpoint'] === '1') {
+      try { await config.lifecycle.beforeCheckpoint() } catch { return problem(res, 503, 'data_api_unavailable') }
+      res.writeHead(204)
+      return res.end()
+    }
+    if (config.lifecycle && req.method === 'POST' && req.url === lifecyclePaths.afterRestore && req.headers['x-faas-after-restore'] === '1') {
+      config.lifecycle.afterRestore()
+      res.writeHead(204)
+      return res.end()
     }
     // Health checks and preflights are not usage.
     const counted = usage?.start(res)
@@ -154,6 +167,9 @@ export function createServer(config, verify, upstreamPort = 3000, readyPort = 30
           if (payload.gregale_read_only !== undefined && typeof payload.gregale_read_only !== 'boolean') return problem(res, 401, 'token_invalid')
           if (!admitRateLimit(rateLimiter, payload.sub, res, problem)) return
           if ((config.readOnly === true || payload.gregale_read_only === true) && writes) return problem(res, 403, 'read_only_identity')
+          // Storage authorizes through storage_objects' own RLS policies.
+          const denial = storage ? null : rowSecurityDenial(req, config, rpc)
+          if (denial) return problem(res, denial.status, denial.code)
           concurrencyKey = payload.sub
         } else if (access === 'anonymous') {
           const client = ['anonymous', clientKey(req)]
@@ -183,6 +199,11 @@ export function createServer(config, verify, upstreamPort = 3000, readyPort = 30
           } catch { return problem(res, 503, 'data_api_refresh_unavailable') }
         }
         if (!await admitRefreshRequest(config, req, res, deadline, userLease)) return
+        // After a restore the engine reconnects; wait for it within the deadline.
+        if (config.lifecycle && !await config.lifecycle.ready(deadline.expiresAt - Date.now())) {
+          if (deadline.check()) problem(res, 503, 'data_api_unavailable')
+          return
+        }
         if (!deadline.enter('signing')) return
         // Only the binding login may become the SQL role. External role claims
         // cannot select an administrator, owner or another application's role.
@@ -368,6 +389,7 @@ export async function main(env = process.env) {
   const snapshot = await inspect(config.connection, config.schemas)
   config.snapshot = snapshot
   config.functions = snapshot.functions
+  config.rowSecurity = await loadRowSecurity(config.connection, config.schemas)
   if (config.publicRpc) {
     try { await checkPublicFunctions(config.connection, config.publicRpc, snapshot.functions) } catch (error) {
       runtimeFailure('data_api_public_rpc_unsafe')
@@ -389,22 +411,33 @@ export async function main(env = process.env) {
   const verify = tokenVerifier(config.auth, jwks)
   // Avoid inheriting arbitrary PGRST_* overrides from application secrets.
   const childEnv = Object.fromEntries(Object.entries(env).filter(([k]) => !k.startsWith('PGRST_')))
-  const child = spawn(env.DATA_API_POSTGREST_BIN || '/usr/local/bin/postgrest', [], { env: { ...childEnv, ...config.postgrestEnv }, stdio: ['ignore', 'ignore', 'ignore'] })
-  const server = createServer(config, verify)
+  let server, stopping = false
+  // An engine that exits on its own ends the server; a stopped one does not.
+  const engine = createEngine({ bin: env.DATA_API_POSTGREST_BIN || '/usr/local/bin/postgrest', env: { ...childEnv, ...config.postgrestEnv }, readyPort: 3001,
+    onExit({ error, code }) {
+      if (error) runtimeFailure('data_api_postgrest_start_failed')
+      process.exitCode = error ? 1 : stopping ? 0 : (code || 1)
+      server.close()
+    } })
+  // A snapshot must not capture SQL sessions (lifecycle hooks set by the CLI).
+  config.lifecycle = {
+    ready: waitMs => engine.ready(waitMs),
+    beforeCheckpoint: () => Promise.all([engine.stop(), refresh?.release()]),
+    afterRestore: () => engine.start(),
+  }
+  engine.start()
+  server = createServer(config, verify)
   const stopReporting = startConnectionReporter(config)
   server.on('close', stopReporting)
   server.on('close', () => { void refresh?.close() })
-  let stopping = false
   // Uploads stream for up to a transfer's timeout after the request deadline.
   server.requestTimeout = (config.storage ? limits.storageTransferMs : limits.queryMs) + 5000
   server.headersTimeout = 10000
-  child.on('error', () => { runtimeFailure('data_api_postgrest_start_failed'); process.exitCode = 1; server.close() })
-  child.on('exit', code => { process.exitCode = stopping ? 0 : (code || 1); server.close() })
   // Report the last unreported usage before the process exits.
-  for (const signal of ['SIGTERM', 'SIGINT']) process.once(signal, () => { stopping = true; void server.usage?.flush(); server.close(); child.kill(signal) })
+  for (const signal of ['SIGTERM', 'SIGINT']) process.once(signal, () => { stopping = true; void server.usage?.flush(); server.close(); void engine.stop() })
   process.on('SIGUSR1', () => {
     if (config.coordinatedRefresh) runtimeFailure('data_api_uncoordinated_reload_rejected')
-    else child.kill('SIGUSR1')
+    else engine.signal('SIGUSR1')
   })
   server.listen(Number(env.PORT || 8080), '0.0.0.0')
 }

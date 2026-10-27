@@ -386,6 +386,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_HOST_HMAC_KEY_PATH` | apid, shared | `unit` |  |  | `` |  |
 | `FAAS_HOST_KEY_PATH` | gatewayd-internal, gatewayd-public, vmmd | `default` |  |  | `` |  |
 | `FAAS_HSTS_ENABLED` | apid, shared | `runtime-config` |  |  | `` |  |
+| `FAAS_HTTP_ADMISSION` | vmmd | `default` |  |  | `` | ADR-570 kill switch; empty or on enforces the per-VM HTTP admission cap, off lifts it on that node (permits stay tracked); vmmd restart applies |
 | `FAAS_IMAGED_METRICS_ADDR` | imaged | `default` |  |  | `` |  |
 | `FAAS_IMAGED_NODE_NAME` | shared | `default` |  |  | `` |  |
 | `FAAS_IMAGED_PRESTAGE_ONLY` | imaged | `dropin` |  |  | `` | release rollout one-shot exits after staging every assigned runtime base before node drain |

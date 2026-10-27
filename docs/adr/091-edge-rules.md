@@ -1243,4 +1243,7 @@ Decision:
   Compiled host entries remain per host.
 
 Not changed: response-cache invalidation for wildcard patterns (still a
-follow-up), and the per-gateway counting of `kind=throttle`.
+follow-up). (An earlier draft of this sentence also listed per-gateway
+counting of `kind=throttle`; that was wrong. In the default central rate-limit
+mode, throttle buckets are Postgres counters shared by every gateway. The
+customer reference is `docs/edge-rules.md`.)

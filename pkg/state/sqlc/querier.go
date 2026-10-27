@@ -3351,6 +3351,7 @@ type Querier interface {
 	ListManagedPostgresCutoverCredentials(ctx context.Context, db DBTX, id string) ([]ManagedPostgresCutoverCredential, error)
 	ListManagedPostgresDrainPlanInventory(ctx context.Context, db DBTX, arg ListManagedPostgresDrainPlanInventoryParams) ([]ListManagedPostgresDrainPlanInventoryRow, error)
 	ListManagedPostgresDrainPlanMembers(ctx context.Context, db DBTX, arg ListManagedPostgresDrainPlanMembersParams) ([]ListManagedPostgresDrainPlanMembersRow, error)
+	ListManagedPostgresEgressEndpoints(ctx context.Context, db DBTX) ([]ListManagedPostgresEgressEndpointsRow, error)
 	ListManagedPostgresImportRecords(ctx context.Context, db DBTX, arg ListManagedPostgresImportRecordsParams) ([]ManagedPostgresUsage, error)
 	ListManagedPostgresLifecycleDatabases(ctx context.Context, db DBTX, accountID pgtype.UUID) ([]ManagedPostgresDatabase, error)
 	ListManagedPostgresLifecycleUsageDatabases(ctx context.Context, db DBTX, arg ListManagedPostgresLifecycleUsageDatabasesParams) ([]ManagedPostgresDatabase, error)
@@ -5668,6 +5669,9 @@ type Querier interface {
 	// see a threshold records it and later sweeps leave it alone.
 	RecordManagedPostgresCapEvent(ctx context.Context, db DBTX, arg RecordManagedPostgresCapEventParams) (bool, error)
 	RecordManagedPostgresCreationReceipt(ctx context.Context, db DBTX, arg RecordManagedPostgresCreationReceiptParams) (ManagedPostgresCreationReceipt, error)
+	// ADR-20261026150000: managed database endpoints, recorded when a credential
+	// is sealed, and the bound apps that may reach them.
+	RecordManagedPostgresDatabaseEndpoint(ctx context.Context, db DBTX, arg RecordManagedPostgresDatabaseEndpointParams) error
 	RecordManagedPostgresDiscoveredResource(ctx context.Context, db DBTX, arg RecordManagedPostgresDiscoveredResourceParams) (int64, error)
 	RecordManagedPostgresLifecycleResource(ctx context.Context, db DBTX, arg RecordManagedPostgresLifecycleResourceParams) (int64, error)
 	RecordManagedPostgresProviderResource(ctx context.Context, db DBTX, arg RecordManagedPostgresProviderResourceParams) (int64, error)

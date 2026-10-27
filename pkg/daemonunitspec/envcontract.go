@@ -465,6 +465,7 @@ var EnvContract = []EnvVar{
 	{Name: "FAAS_HOST_HMAC_KEY_PATH", Owners: []string{"apid", "shared"}, Source: EnvSourceUnit},
 	{Name: "FAAS_HOST_KEY_PATH", Owners: []string{"gatewayd-internal", "gatewayd-public", "vmmd"}, Source: EnvSourceDefault},
 	{Name: "FAAS_HSTS_ENABLED", Owners: []string{"apid", "shared"}, Source: EnvSourceRuntimeConfig},
+	{Name: "FAAS_HTTP_ADMISSION", Owners: []string{"vmmd"}, Source: EnvSourceDefault, Note: "ADR-570 kill switch; empty or on enforces the per-VM HTTP admission cap, off lifts it on that node (permits stay tracked); vmmd restart applies"},
 	{Name: "FAAS_IMAGED_METRICS_ADDR", Owners: []string{"imaged"}, Source: EnvSourceDefault},
 	{Name: "FAAS_IMAGED_NODE_NAME", Owners: []string{"shared"}, Source: EnvSourceDefault},
 	{Name: "FAAS_IMAGED_PRESTAGE_ONLY", Owners: []string{"imaged"}, Source: EnvSourceDropin, Note: "release rollout one-shot exits after staging every assigned runtime base before node drain"},
