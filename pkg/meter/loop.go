@@ -581,7 +581,8 @@ type AlertsEvaluator = alerts.Evaluator
 // Issue #279 PR A: a per-account overage cap (`accounts.overage_cap_cents`,
 // opt-in) is loaded once per tick (one round-trip). For each capped account
 // the tick compares the month's combined billable overage, compute plus every
-// live provider meter, with the cap: at or past it the
+// live provider meter plus the live object-storage charge apid has billed
+// (ADR-20261027093220), with the cap: at or past it the
 // meterd_billing_cap_exceeded_total counter is incremented with the plan
 // label and the account's spend cap hold is recorded for schedd, which knows
 // only compute (ADR-20261026120843); below it the hold is cleared. The
@@ -639,7 +640,16 @@ func (l *Loop) recordSpendCapHold(ctx context.Context, acct state.Account, now t
 		l.log.Warn("meter: secondary overage read failed", "account", acct.ID, "err", err)
 		return
 	}
-	observed := saturatedAdd(monthCents, meterCents)
+	// apid bills object storage in daily steps under the same cap
+	// (ADR-20261027093220); a part cent counts as reached. A pending step's
+	// reservation is an upper bound, not a charge, so it never parks.
+	objectStorage, _, err := liveObjectStorageCharge(ctx, l.store, acct.ID, now)
+	if err != nil {
+		l.log.Warn("meter: object storage charge read failed", "account", acct.ID, "err", err)
+		return
+	}
+	objectStorageCents := objectStorage/api.MillicentsPerCent + min(objectStorage%api.MillicentsPerCent, 1)
+	observed := saturatedAdd(saturatedAdd(monthCents, meterCents), objectStorageCents)
 	holds, hasHolds := l.store.(state.SpendCapHoldStore)
 	if observed < capCents {
 		if hasHolds {

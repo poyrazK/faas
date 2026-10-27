@@ -43,20 +43,31 @@ type UsageReportExporter interface {
 // replaced only after the complete JSON document has been written and synced,
 // so apid never observes a partially written report during its minute sweep.
 func ExportUsageReports(ctx context.Context, path string, exporter UsageReportExporter, req UsageReportExportRequest) error {
+	return ExportUsageReportSet(ctx, path, exporter, req)
+}
+
+// ExportUsageReportSet is ExportUsageReports for several requests written to
+// one file, such as a month's closing report beside the current month's.
+// Every request must succeed before the file is replaced.
+func ExportUsageReportSet(ctx context.Context, path string, exporter UsageReportExporter, requests ...UsageReportExportRequest) error {
 	if exporter == nil {
 		return errors.New("object storage: usage exporter is nil")
 	}
-	if err := validateUsageReportExportRequest(req); err != nil {
-		return err
+	var all []api.ObjectStorageUsageReport
+	for _, req := range requests {
+		if err := validateUsageReportExportRequest(req); err != nil {
+			return err
+		}
+		reports, err := exporter.ExportUsageReports(ctx, req)
+		if err != nil {
+			return err
+		}
+		if err := validateExportedUsageReports(reports, req); err != nil {
+			return err
+		}
+		all = append(all, reports...)
 	}
-	reports, err := exporter.ExportUsageReports(ctx, req)
-	if err != nil {
-		return err
-	}
-	if err := validateExportedUsageReports(reports, req); err != nil {
-		return err
-	}
-	return WriteUsageReportsAtomic(path, reports)
+	return WriteUsageReportsAtomic(path, all)
 }
 
 // WriteUsageReportsAtomic writes a complete normalized report array to an

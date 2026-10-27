@@ -465,10 +465,17 @@ func (p *Pusher) pushPendingMeter(ctx context.Context, ops providerOps, byID map
 				}
 				continue
 			}
+			objectStorage, storageErr := liveObjectStorageReserved(ctx, p.store, acct.ID, hour)
+			if storageErr != nil {
+				if firstErr == nil {
+					firstErr = storageErr
+				}
+				continue
+			}
 			compute := api.BillableMBSecondsAbove(included, computeRaw)
-			if within := clampToAllowance(totalBillable-billable, totalBillable, capEgressAllowance(capCents, compute, policy)); within < billable {
+			if within := clampToAllowance(totalBillable-billable, totalBillable, capEgressAllowance(capCents, compute, objectStorage, policy)); within < billable {
 				p.log.Info("meter: egress overage cap reached", "account", acct.ID, "hour", window.Hour,
-					"cap_cents", capCents, "compute_mb_seconds", compute, "egress_quantity", totalBillable,
+					"cap_cents", capCents, "compute_mb_seconds", compute, "object_storage_millicents", objectStorage, "egress_quantity", totalBillable,
 					"billable_quantity", billable, "billed_quantity", within)
 				billable = within
 			}
