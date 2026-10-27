@@ -88,7 +88,7 @@ def sync_detailed(
     client: AuthenticatedClient | Client,
     body: CreateSLORequest,
 ) -> Response[Problem | SLOResponse]:
-    """Define an SLO on the app (ADR-747)
+    """Define an SLO on the app
 
      Creates an availability or latency SLO with an objective between 90% and 99.99% over a rolling 7- or
     30-day window. Latency thresholds are limited to the gateway histogram bucket bounds so attainment
@@ -96,7 +96,7 @@ def sync_detailed(
 
     Args:
         slug (str):
-        body (CreateSLORequest): Defines a customer SLO on an app (ADR-747).
+        body (CreateSLORequest): Defines a customer SLO on an app.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -124,7 +124,7 @@ def sync(
     client: AuthenticatedClient | Client,
     body: CreateSLORequest,
 ) -> Problem | SLOResponse | None:
-    """Define an SLO on the app (ADR-747)
+    """Define an SLO on the app
 
      Creates an availability or latency SLO with an objective between 90% and 99.99% over a rolling 7- or
     30-day window. Latency thresholds are limited to the gateway histogram bucket bounds so attainment
@@ -132,7 +132,7 @@ def sync(
 
     Args:
         slug (str):
-        body (CreateSLORequest): Defines a customer SLO on an app (ADR-747).
+        body (CreateSLORequest): Defines a customer SLO on an app.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -155,7 +155,7 @@ async def asyncio_detailed(
     client: AuthenticatedClient | Client,
     body: CreateSLORequest,
 ) -> Response[Problem | SLOResponse]:
-    """Define an SLO on the app (ADR-747)
+    """Define an SLO on the app
 
      Creates an availability or latency SLO with an objective between 90% and 99.99% over a rolling 7- or
     30-day window. Latency thresholds are limited to the gateway histogram bucket bounds so attainment
@@ -163,7 +163,7 @@ async def asyncio_detailed(
 
     Args:
         slug (str):
-        body (CreateSLORequest): Defines a customer SLO on an app (ADR-747).
+        body (CreateSLORequest): Defines a customer SLO on an app.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -189,7 +189,7 @@ async def asyncio(
     client: AuthenticatedClient | Client,
     body: CreateSLORequest,
 ) -> Problem | SLOResponse | None:
-    """Define an SLO on the app (ADR-747)
+    """Define an SLO on the app
 
      Creates an availability or latency SLO with an objective between 90% and 99.99% over a rolling 7- or
     30-day window. Latency thresholds are limited to the gateway histogram bucket bounds so attainment
@@ -197,7 +197,7 @@ async def asyncio(
 
     Args:
         slug (str):
-        body (CreateSLORequest): Defines a customer SLO on an app (ADR-747).
+        body (CreateSLORequest): Defines a customer SLO on an app.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

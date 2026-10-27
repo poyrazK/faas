@@ -106,8 +106,8 @@ def sync_detailed(
 
      Exports one finalized app consumer statement revision to the
     provider in the body (default stripe; connect it with
-    PUT /v1/account/billing-connections/{provider}), ADR-1502 and ADR-1507.
-    The connection's collection mode (ADR-1311) decides whether the
+    PUT /v1/account/billing-connections/{provider}).
+    The connection's collection mode decides whether the
     provider keeps a draft, sends it or charges it. One item per rate card
     and unit price, plus a rounding item, makes the invoice equal the
     statement total rounded to the currency's minor unit; with a negative
@@ -118,8 +118,8 @@ def sync_detailed(
     exporting the statement the answer is 409
     `statement_invoice_export_in_progress`; an export the provider refused
     before creating an invoice can be retried with another customer or
-    provider (ADR-20261019180000). Currencies with up to three decimal
-    places (ADR-20261019100330); Paddle takes USD, EUR and GBP.
+    provider. Currencies with up to three decimal
+    places; Paddle takes USD, EUR and GBP.
 
     Args:
         slug (str):
@@ -164,8 +164,8 @@ def sync(
 
      Exports one finalized app consumer statement revision to the
     provider in the body (default stripe; connect it with
-    PUT /v1/account/billing-connections/{provider}), ADR-1502 and ADR-1507.
-    The connection's collection mode (ADR-1311) decides whether the
+    PUT /v1/account/billing-connections/{provider}).
+    The connection's collection mode decides whether the
     provider keeps a draft, sends it or charges it. One item per rate card
     and unit price, plus a rounding item, makes the invoice equal the
     statement total rounded to the currency's minor unit; with a negative
@@ -176,8 +176,8 @@ def sync(
     exporting the statement the answer is 409
     `statement_invoice_export_in_progress`; an export the provider refused
     before creating an invoice can be retried with another customer or
-    provider (ADR-20261019180000). Currencies with up to three decimal
-    places (ADR-20261019100330); Paddle takes USD, EUR and GBP.
+    provider. Currencies with up to three decimal
+    places; Paddle takes USD, EUR and GBP.
 
     Args:
         slug (str):
@@ -217,8 +217,8 @@ async def asyncio_detailed(
 
      Exports one finalized app consumer statement revision to the
     provider in the body (default stripe; connect it with
-    PUT /v1/account/billing-connections/{provider}), ADR-1502 and ADR-1507.
-    The connection's collection mode (ADR-1311) decides whether the
+    PUT /v1/account/billing-connections/{provider}).
+    The connection's collection mode decides whether the
     provider keeps a draft, sends it or charges it. One item per rate card
     and unit price, plus a rounding item, makes the invoice equal the
     statement total rounded to the currency's minor unit; with a negative
@@ -229,8 +229,8 @@ async def asyncio_detailed(
     exporting the statement the answer is 409
     `statement_invoice_export_in_progress`; an export the provider refused
     before creating an invoice can be retried with another customer or
-    provider (ADR-20261019180000). Currencies with up to three decimal
-    places (ADR-20261019100330); Paddle takes USD, EUR and GBP.
+    provider. Currencies with up to three decimal
+    places; Paddle takes USD, EUR and GBP.
 
     Args:
         slug (str):
@@ -273,8 +273,8 @@ async def asyncio(
 
      Exports one finalized app consumer statement revision to the
     provider in the body (default stripe; connect it with
-    PUT /v1/account/billing-connections/{provider}), ADR-1502 and ADR-1507.
-    The connection's collection mode (ADR-1311) decides whether the
+    PUT /v1/account/billing-connections/{provider}).
+    The connection's collection mode decides whether the
     provider keeps a draft, sends it or charges it. One item per rate card
     and unit price, plus a rounding item, makes the invoice equal the
     statement total rounded to the currency's minor unit; with a negative
@@ -285,8 +285,8 @@ async def asyncio(
     exporting the statement the answer is 409
     `statement_invoice_export_in_progress`; an export the provider refused
     before creating an invoice can be retried with another customer or
-    provider (ADR-20261019180000). Currencies with up to three decimal
-    places (ADR-20261019100330); Paddle takes USD, EUR and GBP.
+    provider. Currencies with up to three decimal
+    places; Paddle takes USD, EUR and GBP.
 
     Args:
         slug (str):

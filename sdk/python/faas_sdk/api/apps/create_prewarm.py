@@ -101,7 +101,7 @@ def sync_detailed(
 ) -> Response[PrewarmIntentResponse | Problem]:
     """Schedule capacity restoration ahead of a demand window.
 
-     Persists a temporary prewarm intent. schedd claims it during the
+     Persists a temporary prewarm intent. The scheduler claims it during the
     platform's lead time (currently 60 seconds before wake_at), restores
     up to count instances through the normal admission gates, and never
     changes the app's permanent min_instances floor.
@@ -141,7 +141,7 @@ def sync(
 ) -> PrewarmIntentResponse | Problem | None:
     """Schedule capacity restoration ahead of a demand window.
 
-     Persists a temporary prewarm intent. schedd claims it during the
+     Persists a temporary prewarm intent. The scheduler claims it during the
     platform's lead time (currently 60 seconds before wake_at), restores
     up to count instances through the normal admission gates, and never
     changes the app's permanent min_instances floor.
@@ -176,7 +176,7 @@ async def asyncio_detailed(
 ) -> Response[PrewarmIntentResponse | Problem]:
     """Schedule capacity restoration ahead of a demand window.
 
-     Persists a temporary prewarm intent. schedd claims it during the
+     Persists a temporary prewarm intent. The scheduler claims it during the
     platform's lead time (currently 60 seconds before wake_at), restores
     up to count instances through the normal admission gates, and never
     changes the app's permanent min_instances floor.
@@ -214,7 +214,7 @@ async def asyncio(
 ) -> PrewarmIntentResponse | Problem | None:
     """Schedule capacity restoration ahead of a demand window.
 
-     Persists a temporary prewarm intent. schedd claims it during the
+     Persists a temporary prewarm intent. The scheduler claims it during the
     platform's lead time (currently 60 seconds before wake_at), restores
     up to count instances through the normal admission gates, and never
     changes the app's permanent min_instances floor.

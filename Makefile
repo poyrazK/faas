@@ -43,14 +43,27 @@ BUILD_CGO_ENABLED ?= 0
 # together with the soft heap limit (ADR-982). GO_TEST applies both; a
 # GOMEMLIMIT already in the environment wins. Packages that never approach
 # the limit are unaffected.
+#
+# GO_DEV_GOFLAGS is the one flag set of every local compile: GO_TEST,
+# test-changed, lint and lint-changed pass it as GOFLAGS, and `make go-env`
+# makes it the machine default for a bare go build/vet/test, gopls and
+# golangci-lint. The Go build cache keys every package on its exact flags, its
+# toolchain and, without -trimpath, its absolute directory, so each difference
+# stores a full second copy of the dependency graph. On a machine where many
+# checkouts share one GOCACHE, -trimpath lets checkouts of the same commit
+# share their packages, and one flag set keeps tests and lint from compiling
+# everything twice. Locate source files relative to the package directory
+# (go test's working directory) or with e2etest.CallerDir: under -trimpath
+# runtime.Caller names a file by its import path (`make trimpath-check`).
 TEST_HEAVY_PKGS ?= pkg/apid/apidserver pkg/apid/apidserver_test pkg/state pkg/state_test pkg/sched cmd/gregale
-TEST_GCFLAGS ?= '-gcflags=all=-dwarf=false' $(foreach p,$(TEST_HEAVY_PKGS),'-gcflags=github.com/onebox-faas/faas/$(p)=-c=1 -dwarf=false')
+GO_DEV_GOFLAGS ?= -trimpath -gcflags=all=-dwarf=false $(foreach p,$(TEST_HEAVY_PKGS),"-gcflags=github.com/onebox-faas/faas/$(p)=-c=1 -dwarf=false")
+GO_DEV_ENV = GOFLAGS='$(GO_DEV_GOFLAGS)'
 GO_TEST_MEMLIMIT ?= $(if $(GOMEMLIMIT),$(GOMEMLIMIT),6GiB)
 # Test binaries link without DWARF: measured ~75% less link CPU and 15-18%
 # smaller binaries for apidserver and sched. Set GO_TEST_LDFLAGS= to debug a
 # test binary with delve.
 GO_TEST_LDFLAGS ?= -ldflags=-w
-GO_TEST = GOMEMLIMIT=$(GO_TEST_MEMLIMIT) $(GO) test $(TEST_GCFLAGS) $(GO_TEST_LDFLAGS)
+GO_TEST = $(GO_DEV_ENV) GOMEMLIMIT=$(GO_TEST_MEMLIMIT) $(GO) test $(GO_TEST_LDFLAGS)
 BINDIR  := bin
 # Always use the repository's Ansible configuration.  Ansible only discovers
 # ansible.cfg from the current directory (or its parents); the playbook lives
@@ -330,7 +343,16 @@ product-control-provider-qualification: ## Qualify Product Control exports again
 
 .PHONY: test-changed
 test-changed: ## Vet + test only what your change affects (ci-light's selection vs origin/main); RACE=1, BASE=<ref>, VET=importers|0, DRY_RUN=1
-	@LDFLAGS=$(GO_TEST_LDFLAGS) GOMEMLIMIT=$(GO_TEST_MEMLIMIT) GO=$(GO) bash scripts/test-changed.sh $(TEST_GCFLAGS)
+	@$(GO_DEV_ENV) LDFLAGS=$(GO_TEST_LDFLAGS) GOMEMLIMIT=$(GO_TEST_MEMLIMIT) GO=$(GO) bash scripts/test-changed.sh
+
+.PHONY: go-env
+go-env: ## Machine setup (once, owner's call): bare go/gopls/golangci-lint use GO_DEV_GOFLAGS and go.mod's toolchain, so every checkout shares one GOCACHE copy
+	$(GO) env -w GOFLAGS='$(GO_DEV_GOFLAGS)' GOTOOLCHAIN=$$(sed -n 's/^toolchain //p' go.mod)+auto
+	@$(GO) env GOFLAGS GOTOOLCHAIN
+
+.PHONY: trimpath-check
+trimpath-check: ## Static gate: no runtime.Caller(0) to find source files (module-relative under -trimpath; see GO_DEV_GOFLAGS)
+	@bash scripts/ci/check_trimpath_safe.sh $(CURDIR)
 
 .PHONY: clean-tmp
 clean-tmp: ## Free disk: remove go-build work dirs idle >2h in $$TMPDIR (left by killed builds); never clears the shared GOCACHE
@@ -929,13 +951,13 @@ ha-write-redirect-drill: ## Tier A9 / ADR-089: standby write-redirect drill on t
 	  exit 0'
 
 .PHONY: lint-changed
-lint-changed: ## golangci-lint only what your change touches (ci-light's selection vs origin/main) + teststorecheck + sealdomaincheck; BASE=<ref>, DRY_RUN=1
-	@GO=$(GO) bash scripts/lint-changed.sh
+lint-changed: ## golangci-lint only what your change touches (ci-light's selection vs origin/main) + teststorecheck + sealdomaincheck + problemdetailcheck; BASE=<ref>, DRY_RUN=1
+	@$(GO_DEV_ENV) GO=$(GO) bash scripts/lint-changed.sh
 
 .PHONY: lint
-lint: egress-check lint-incompatible-mods image-validate sealed-env-scope-check seal-domain-scope-check runbook-sql-check text-encoding-check shell-quoting-check adr-number-uniqueness-check check-durable-entity-sdk-contract check-binding-runner-sync ## golangci-lint via go tool (matches CI version v2.14.0) + repository policy gates
+lint: egress-check lint-incompatible-mods image-validate sealed-env-scope-check seal-domain-scope-check problem-detail-check runbook-sql-check text-encoding-check shell-quoting-check adr-number-uniqueness-check trimpath-check check-durable-entity-sdk-contract check-binding-runner-sync ## golangci-lint via go tool (matches CI version v2.14.0) + repository policy gates
 	@python3 scripts/ci/check_gosec_baseline.py
-	@GO="$(GO)" python3 scripts/ci/lint_go_shard.py --shard 1 --shards 1 -- $(GO) tool golangci-lint
+	@$(GO_DEV_ENV) GO="$(GO)" python3 scripts/ci/lint_go_shard.py --shard 1 --shards 1 -- $(GO) tool golangci-lint
 
 .PHONY: runbook-sql-check
 runbook-sql-check: ## Reject mutating SQL in normal operator docs; emergency recipes live under docs/break-glass
@@ -1056,6 +1078,10 @@ sealed-env-scope-check: ## Static gate: /etc/faas/sealed.env is loaded only by f
 .PHONY: seal-domain-scope-check
 seal-domain-scope-check: ## Static gate: private age identities, direct identity loaders and unsealed bytea columns only shrink (ADR 20261022111812)
 	@$(GO) run ./scripts/ci/sealdomaincheck -root $(CURDIR)
+
+.PHONY: problem-detail-check
+problem-detail-check: ## Static gate: a 5xx problem detail never carries error text (log it; api.DetailServerFailure)
+	@$(GO) run ./scripts/ci/problemdetailcheck -root $(CURDIR)
 
 .PHONY: text-encoding-check
 text-encoding-check: ## Static gate: no JSON built with fmt %q, no free text truncated with a byte slice

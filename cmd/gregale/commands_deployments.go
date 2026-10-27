@@ -34,6 +34,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"regexp"
 	"strings"
@@ -417,6 +418,7 @@ func cmdDeploymentWait(args []string) int {
 	}
 	var progressState *deploymentProgressSnapshot
 	var held rolloutHeldNotice
+	transientFailures := 0
 
 	for {
 		d, getErr := client.GetDeployment(ctx, pos[0])
@@ -424,8 +426,22 @@ func cmdDeploymentWait(args []string) int {
 			if errors.Is(ctx.Err(), context.DeadlineExceeded) {
 				return printErr("Deployment wait timed out", fmt.Errorf("deployment %s did not become %s within %ds", pos[0], waitTarget, *timeoutSeconds))
 			}
+			// A long wait outlives one dropped connection or gateway blip:
+			// a rollout wait on prod exited after 84 s on a single
+			// "connection reset by peer" (Hunt 14 H14-99).
+			if transientDeploymentWaitError(getErr) && transientFailures < deploymentWaitTransientRetries {
+				transientFailures++
+				if transientFailures == 1 && !jsonOutput {
+					_, _ = fmt.Fprintf(osStderr, "warning: could not reach Gregale (%v); still waiting\n", getErr)
+				}
+				if !sleepOrDone(ctx, 2*time.Second) {
+					return printErr("Deployment wait timed out", fmt.Errorf("deployment %s did not become %s within %ds", pos[0], waitTarget, *timeoutSeconds))
+				}
+				continue
+			}
 			return printErr("Could not fetch deployment", getErr)
 		}
+		transientFailures = 0
 		if *progress && !jsonOutput {
 			progressState = renderDeploymentProgress(osStdout, d, progressState)
 		}
@@ -477,6 +493,36 @@ func cmdDeploymentWait(args []string) int {
 			return printErr("Deployment wait timed out", fmt.Errorf("deployment %s did not become live within %ds", d.ID, *timeoutSeconds))
 		case <-timer.C:
 		}
+	}
+}
+
+// deploymentWaitTransientRetries bounds consecutive transient read failures
+// a deployment wait rides out before it gives up (~10 s at the 2 s poll).
+const deploymentWaitTransientRetries = 5
+
+// transientDeploymentWaitError reports a read failure worth retrying: the
+// request never reached the API or the edge answered 429/502/503/504.
+func transientDeploymentWaitError(err error) bool {
+	var ae *APIError
+	if errors.As(err, &ae) {
+		switch ae.Problem.Status {
+		case http.StatusTooManyRequests, http.StatusBadGateway, http.StatusServiceUnavailable, http.StatusGatewayTimeout:
+			return true
+		}
+		return false
+	}
+	return isTransportError(err) && !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded)
+}
+
+// sleepOrDone waits d, or returns false when ctx ends first.
+func sleepOrDone(ctx context.Context, d time.Duration) bool {
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return false
+	case <-timer.C:
+		return true
 	}
 }
 

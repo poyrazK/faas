@@ -26,8 +26,8 @@ class AccountTraceWake:
     ready_in_ms: int | Unset = UNSET
     """Milliseconds from boot start to ready; omitted until the wake completed."""
     planned_method: str | Unset = UNSET
-    """What schedd planned for this wake when it differs from method, such as restore for a restore that fell back
-    to a cold boot."""
+    """What the scheduler planned for this wake when it differs from method, such as restore for a restore that
+    fell back to a cold boot."""
     restore_fallback_reason: AccountTraceWakeRestoreFallbackReason | Unset = UNSET
     """Closed reason for a restore that fell back to a cold boot, when one is reported."""
     thawed: bool | Unset = UNSET

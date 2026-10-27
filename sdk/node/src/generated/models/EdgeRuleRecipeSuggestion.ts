@@ -4,11 +4,11 @@
 /* eslint-disable */
 import type { EdgeRuleRecipeSuggestionAlternative } from './EdgeRuleRecipeSuggestionAlternative.js';
 /**
- * One suggested protection recipe and why (ADR-20261020105000).
+ * One suggested protection recipe and why.
  */
 export type EdgeRuleRecipeSuggestion = {
   /**
-   * Recipe id to add (ADR-986).
+   * Recipe id to add.
    */
   recipe: string;
   /**

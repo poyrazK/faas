@@ -321,6 +321,11 @@ type cliFlag struct {
 	// Unreleased keeps a dark-launched flag out of every customer surface
 	// unless it is turned on (unreleased.go).
 	Unreleased bool
+	// Capability names the product capability a flag reaches when it is not
+	// the command's own (`crons add --at` reaches delayed tasks). Discovery
+	// drops the flag, and the command refuses it, while the capability is
+	// hidden for the account (ADR-20261026145832).
+	Capability string
 	// Common keeps this option visible in compact command help. Group labels
 	// organize expanded help without changing parser or completion behavior.
 	Common bool
@@ -2124,7 +2129,7 @@ var cliCommands = []cliCommand{
 				{Name: "app", Short: "app slug (interactive mode can use linked app or picker)", Value: "slug"},
 				{Name: "schedule", Short: "five-field cron expression (required unless interactive)", Value: "EXPR"},
 				{Name: "path", Short: "path the cron sends a POST to (mutually exclusive with --command)", Value: "PATH"},
-				{Name: "command", Short: "executable for a deployment command cron", Value: "EXEC"},
+				{Name: "command", Short: "executable for a deployment command cron (preview: needs app tasks)", Value: "EXEC"},
 				{Name: "arg", Short: "append one command argument (repeatable)", Value: "ARG"},
 				{Name: "shell", Short: "run --command as one shell string"},
 				{Name: "timeout-seconds", Short: "command timeout (default 600 seconds)", Value: "N"},
@@ -4650,10 +4655,12 @@ var cliCommands = []cliCommand{
 		DocSlug: "debug",
 		Short:   "Inspect production requests and regressions",
 		Subcommands: []cliSub{
+			{Name: "status", Common: true, Short: "One summary of health, release, regressions, and recent failures", Positionals: []string{"<slug>"}, Flags: []cliFlag{{Name: "since", Short: "lookback window (default 1h)", Value: "DURATION"}}, Examples: []string{"gregale debug status checkout-api"}},
+			{Name: "rollout", Short: "Explain why a release was rolled back or held, with request evidence", Positionals: []string{"<slug>"}, Flags: []cliFlag{{Name: "deployment-id", Short: "deployment to explain (default: the newest canary rollout)", Value: "UUID"}}, Examples: []string{"gregale debug rollout checkout-api"}},
 			debugRequestsCLISubcommand(),
 			{Name: "profiles", Short: "Sampled CPU or heap functions and deployment comparison", Positionals: []string{"<slug>"}, Flags: []cliFlag{{Name: "type", Value: "KIND", Short: "cpu (default) or heap"}, {Name: "deployment-id", Value: "UUID", Short: "candidate deployment"}, {Name: "runtime", Value: "NAME", Short: "runtime name"}, {Name: "start", Value: "RFC3339", Short: "capture start"}, {Name: "end", Value: "RFC3339", Short: "capture end"}, {Name: "baseline-id", Value: "UUID", Short: "baseline deployment"}, {Name: "baseline-start", Value: "RFC3339", Short: "baseline capture start"}, {Name: "baseline-end", Value: "RFC3339", Short: "baseline capture end"}}},
 			{Name: "capture", Short: "Capture CPU, heap, stack or lock profiles from a running instance", Positionals: []string{"<slug>"}, Flags: []cliFlag{{Name: "type", Value: "KINDS", Short: "cpu, heap, stacks, block, mutex, comma-separated (default cpu)"}, {Name: "duration", Value: "DURATION", Short: "capture window, 1s..60s (default 10s)"}, {Name: "instance", Value: "UUID", Short: "running instance; default the earliest"}, {Name: "output", Value: "DIR", Short: "write merged .pb.gz pprof files"}, {Name: "top", Value: "N", Short: "functions to print per kind"}, {Name: "no-wait", Short: "queue the capture and print its id"}}},
-			{Name: "captures", Short: "List or show on-demand profile captures", Positionals: []string{"<slug>", "[<capture-id>]"}, Flags: []cliFlag{{Name: "output", Value: "DIR", Short: "write merged .pb.gz pprof files"}, {Name: "top", Value: "N", Short: "functions to print per kind"}}},
+			{Name: "captures", Short: "List, show or delete on-demand profile captures", Positionals: []string{"<slug>", "[<capture-id>]"}, Flags: []cliFlag{{Name: "output", Value: "DIR", Short: "write merged .pb.gz pprof files"}, {Name: "top", Value: "N", Short: "functions to print per kind"}, {Name: "delete", Short: "delete the named capture and free its storage"}}},
 			{Name: "capture-diff", Short: "Compare a profile capture with an earlier one to see what grew", Positionals: []string{"<slug>", "<capture-id>"}, Flags: []cliFlag{{Name: "base", Value: "ID", Short: "baseline capture id of the same app"}, {Name: "type", Value: "KIND", Short: "cpu, heap, stacks, block or mutex (default: shared kind, heap first)"}, {Name: "top", Value: "N", Short: "functions to print"}}},
 			{Name: "dependencies", Short: "Show observed dependency latency and regressions", Positionals: []string{"<slug>"}, Flags: []cliFlag{{Name: "since", Short: "lookback window", Value: "DURATION"}}},
 			{Name: "coverage", Short: "Show observed debugger signal coverage", Notes: []string{"Usage: coverage <slug> [--since D]."}, Positionals: []string{"<slug>"}, Flags: []cliFlag{{Name: "since", Short: "lookback window", Value: "DURATION"}}},
@@ -5505,9 +5512,10 @@ var cliCommands = []cliCommand{
 				{Name: "granularity", Value: "hour|day", Short: "bucket size (hour covers at most 48h)", ClosedSet: []string{"hour", "day"}},
 			}, Examples: []string{"gregale data-api usage shop-data --since 30d"}},
 			{Name: "storage", Short: "File storage governed by RLS on storage_objects", Subcommands: []cliSub{
-				{Name: "sql", Short: "Print the storage_objects migration", Notes: []string{"Includes the table, RLS, guard trigger and example policies."}, Flags: []cliFlag{
+				{Name: "sql", Short: "Print the storage_objects migration", Notes: []string{"Includes the table, RLS, guard trigger and example policies.", "--upgrade prints the object_key column for a table created before it."}, Flags: []cliFlag{
 					{Name: "schema", Value: "SCHEMA", Short: "the Data API's first exposed schema (default api)"},
-				}, Examples: []string{"gregale data-api storage sql > migrations/0005_storage.sql"}},
+					{Name: "upgrade", Short: "print the upgrade for a storage_objects table without object_key"},
+				}, Examples: []string{"gregale data-api storage sql > migrations/0005_storage.sql", "gregale data-api storage sql --upgrade > migrations/0009_storage_object_keys.sql"}},
 				{Name: "enable", Short: "Bind a bucket read-write and turn storage on", Positionals: []string{"<name>"}, Flags: []cliFlag{
 					{Name: "bucket", Value: "BUCKET", Req: true, Short: "bucket to store files in (created and bound when needed)"},
 					{Name: "scope", Value: "SCOPE", Short: "environment scope"},

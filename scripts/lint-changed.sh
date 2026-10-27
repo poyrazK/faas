@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # Lint only what a change affects, as ci-light does: golangci-lint (govet
 # included) on each changed package, then teststorecheck on the changed test
-# files and sealdomaincheck on the tree. `make lint` lints all ~520 packages
-# one by one; a single large package such as pkg/state takes minutes and
-# several GB.
+# files and sealdomaincheck and problemdetailcheck on the tree. `make lint`
+# lints all ~520 packages one by one; a single large package such as
+# pkg/state takes minutes and several GB.
 #
 # The change is everything that differs from the merge base with origin/main:
 # commits, uncommitted edits and untracked files. golangci-lint waits for
@@ -12,6 +12,8 @@
 #   BASE=<ref>   compare against <ref> instead of the merge base
 #   DRY_RUN=1    print the selection without running anything
 #   GOMEMLIMIT   set by `make lint-changed`
+#   GOFLAGS      set by `make lint-changed` to the Makefile's GO_DEV_GOFLAGS, so
+#                lint reuses the packages `make test-changed` compiled
 set -euo pipefail
 
 repo_root="$(git rev-parse --show-toplevel)"
@@ -44,6 +46,8 @@ for pkg in $lint_pkgs; do
 done
 "$go_bin" run ./scripts/ci/teststorecheck -base "$base" || failed+=(teststorecheck)
 "$go_bin" run ./scripts/ci/sealdomaincheck || failed+=(sealdomaincheck)
+"$go_bin" run ./scripts/ci/problemdetailcheck || failed+=(problemdetailcheck)
+bash scripts/ci/check_trimpath_safe.sh "$repo_root" || failed+=(trimpath-check)
 if ((${#failed[@]})); then
   echo "lint-changed: failed: ${failed[*]}" >&2
   exit 1

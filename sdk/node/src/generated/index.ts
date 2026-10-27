@@ -468,6 +468,7 @@ export type { CreateConsumerSignupResponse } from './models/CreateConsumerSignup
 export type { CreateCorsPresetRequest } from './models/CreateCorsPresetRequest.js';
 export type { CreateCronRequest } from './models/CreateCronRequest.js';
 export type { CreateCustomDomainRequest } from './models/CreateCustomDomainRequest.js';
+export type { CreateDataAPIContractTaskRequest } from './models/CreateDataAPIContractTaskRequest.js';
 export type { CreateDataConnectionRequest } from './models/CreateDataConnectionRequest.js';
 export type { CreateDataPipelineRequest } from './models/CreateDataPipelineRequest.js';
 export type { CreateDeploymentOverrides } from './models/CreateDeploymentOverrides.js';
@@ -622,6 +623,7 @@ export type { DebugDependencyLatencyResponse } from './models/DebugDependencyLat
 export type { DebugDependencyQueryItem } from './models/DebugDependencyQueryItem.js';
 export type { DebugEvidenceExplanation } from './models/DebugEvidenceExplanation.js';
 export type { DebugEvidenceFinding } from './models/DebugEvidenceFinding.js';
+export type { DebugEvidenceLogLine } from './models/DebugEvidenceLogLine.js';
 export type { DebugEvidenceRecommendation } from './models/DebugEvidenceRecommendation.js';
 export type { DebugEvidenceRef } from './models/DebugEvidenceRef.js';
 export type { DebugGuestExecutionEvidence } from './models/DebugGuestExecutionEvidence.js';
@@ -638,12 +640,18 @@ export type { DebugRequestCorrelationStage } from './models/DebugRequestCorrelat
 export type { DebugRequestCriticalPath } from './models/DebugRequestCriticalPath.js';
 export type { DebugRequestDependencyLatency } from './models/DebugRequestDependencyLatency.js';
 export type { DebugRequestEvidenceResponse } from './models/DebugRequestEvidenceResponse.js';
+export type { DebugRolloutExplanation } from './models/DebugRolloutExplanation.js';
+export type { DebugRolloutRoute } from './models/DebugRolloutRoute.js';
 export type { DebugRunningCause } from './models/DebugRunningCause.js';
 export type { DebugRunningConfig } from './models/DebugRunningConfig.js';
 export type { DebugRunningFlowSummary } from './models/DebugRunningFlowSummary.js';
 export type { DebugRunningObservation } from './models/DebugRunningObservation.js';
 export type { DebugRunningRequestAttribution } from './models/DebugRunningRequestAttribution.js';
 export type { DebugRunningResponse } from './models/DebugRunningResponse.js';
+export type { DebugStatusDeployment } from './models/DebugStatusDeployment.js';
+export type { DebugStatusHealth } from './models/DebugStatusHealth.js';
+export type { DebugStatusOOMKill } from './models/DebugStatusOOMKill.js';
+export type { DebugStatusResponse } from './models/DebugStatusResponse.js';
 export type { DebugSuspectedDependency } from './models/DebugSuspectedDependency.js';
 export type { DebugTelemetryListFilters } from './models/DebugTelemetryListFilters.js';
 export type { DebugTelemetryListResponse } from './models/DebugTelemetryListResponse.js';

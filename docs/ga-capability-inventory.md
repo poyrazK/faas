@@ -93,7 +93,7 @@ internal hosting service and Gregale Agents are already unreachable.
 | # | Capability | Where it lives | Catalog | Gate today | Tier |
 |---|---|---|---|---|---|
 | 1 | Apps: create, update, rename, delete, restore deleted | `/v1/apps`, `deleted-apps`, `rename`, `restore` | **MISSING** | — | GA |
-| 2 | Source deploys: local tree, tarball, Dockerfile; resumable uploads | `deployments`, `/v1/uploads`, `gregale deploy` | `source-deploy` beta | — | GA |
+| 2 | Source deploys: local tree, tarball, Dockerfile; resumable uploads | `deployments`, `/v1/uploads`, `gregale deploy` | `source-deploy` ga | `pf:source_deploy` (upload routes and multipart deploys; deployment status is core `apps`, ADR-20261026152731) | GA |
 | 3 | Builds in builder microVMs: Railpack, build logs, build cache | builderd, `/v1/builds` | **MISSING** | — | GA |
 | 4 | Container / OCI image deploys, incl. image-published deployments; image preflight | `deploy --image`, `image-published`, `gregale doctor --image` | `container-deployments` beta | — | GA |
 | 5 | GitHub: App install, push-to-deploy, Checks status | githubd, `/v1/install`, `github`, `connect` | `github-deploys` beta | — | GA |

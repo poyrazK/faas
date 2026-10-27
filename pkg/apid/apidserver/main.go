@@ -88,6 +88,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/routeprobe"
 	"github.com/onebox-faas/faas/pkg/sealdomain"
 	"github.com/onebox-faas/faas/pkg/secretbox"
+	"github.com/onebox-faas/faas/pkg/sourcespool"
 	"github.com/onebox-faas/faas/pkg/state"
 	artifactstorage "github.com/onebox-faas/faas/pkg/storage"
 	"github.com/onebox-faas/faas/pkg/trace"
@@ -898,6 +899,12 @@ func run(ctx context.Context, log *slog.Logger) error {
 				}
 			}()
 		}
+		// ADR-20261026152731: accepted source archives and build logs no
+		// longer stay on the control plane for good.
+		if spoolStore, ok := srv.store.(state.SourceSpoolStore); ok {
+			go sourcespool.Sweeper{Root: spoolRoot(), Layout: sourcespool.BuildSpool, Store: spoolStore,
+				MaxAge: api.SourceSpoolRetention, Log: log}.Run(ctx, api.SourceSpoolSweepInterval)
+		}
 		// Move 3 (M7.5 prep): bridge pg_notify → in-process broadcaster.
 		// Runs as a background goroutine for the daemon's lifetime; the
 		// SubscribeWithReconnect wrapper reconnects across Postgres
@@ -1622,12 +1629,23 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		// ADR-20261018083536 slice C: build and deploy events into the ledger.
 		go logsearch.NewProjector(srv.store, time.Now, ops.Registry(), log).Run(ctx)
 	}
+	// ADR-20261024222102: lets the vmmd forwarding alert tell a failure from
+	// the refusals apid answers while log search is off.
+	logIngest := prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: "apid_log_search_ingest_enabled",
+		Help: "1 while FAAS_LOG_SEARCH_ENABLED lets apid project build and deploy events and accept vmmd's runtime lines (ADR-20261024222102).",
+	})
+	if srv.logSearch.Enabled {
+		logIngest.Set(1)
+	}
+	ops.Registry().MustRegister(logIngest)
 	srv.changeTimelineEnabled = deps.getenv("FAAS_CHANGE_TIMELINE_ENABLED") == "1"
 	srv.anomalyAlertsEnabled = deps.getenv("FAAS_ANOMALY_ALERTS_ENABLED") == "1"
 	srv.seedEnvPlatformFlags(deps.getenv) // ADR-1700 boot fallbacks for the gates above
 	registerPlatformFlagRetireBy(ops.Registry())
 
 	srv.customMetricHistoryEnabled = deps.getenv("FAAS_CUSTOM_METRIC_HISTORY_ENABLED") == "1"
+	srv.datadogIntegrationEnabled = deps.getenv("FAAS_DATADOG_INTEGRATION_ENABLED") == "1"
 	if srv.customMetricHistoryEnabled {
 		// ADR-745: expose fresh pushed gauges so Prometheus keeps history.
 		if exportStore, ok := srv.store.(state.CustomMetricExportStore); ok {
@@ -1687,6 +1705,11 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// restart; calling WithDataPlacement after reconcile would overwrite it
 	// with the environment fallback on every boot.
 	srv.WithDataPlacement(dataPlacementEnabledFromEnv(deps.getenv))
+	egressCircuitEnforced, err := api.EgressCircuitBreakerEnabled(deps.getenv("FAAS_EGRESS_CIRCUIT_BREAKER"))
+	if err != nil {
+		return fmt.Errorf("apid: %w", err)
+	}
+	srv.WithEgressCircuitEnforcement(egressCircuitEnforced)
 	if err := srv.runtimeConfig.reconcile(ctx, store); err != nil {
 		return fmt.Errorf("apid: reconcile runtime config: %w", err)
 	}
@@ -1823,6 +1846,8 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		ReaperFailedTotal:      promCounterAdapter{c: ops.UploadSessionReaperFailedTotal()},
 	})
 	srv.WithOpsMetrics(ctx, ops)
+	// ADR 20261027163626: time each phase of the traffic binding guard.
+	state.SetTrafficPolicyPhaseObserver(ops.ObserveTrafficPolicyPhase)
 
 	// ADR-093 / PR-D: end-to-end request budgets on the apid
 	// listener. Same shape as gatewayd-public PR-B: a fresh
@@ -2518,7 +2543,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// that path's validation, rate cap and outcome metrics.
 	var guestSpans *receivers.GuestSpansIngester
 	if deps.getenv("FAAS_OTEL_SPANS_WRITER_ENABLED") != "false" {
-		guestSpans = receivers.NewGuestSpansIngester(srv.store, sharedLimiter, log)
+		guestSpans = receivers.NewGuestSpansIngester(srv.store, sharedLimiter, log).WithLogs(srv.store)
 		guestSpansWriter := receivers.NewSpansWriterReceiver(srv.store, srv.ops, sharedLimiter, true)
 		go func() {
 			if err := guestSpans.Run(ctx, receivers.OtelFlushInterval(deps.getenv), guestSpansWriter.WriteSpansSummary); err != nil && ctx.Err() == nil {
@@ -2528,10 +2553,15 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	}
 	// ADR-20261018083536 slice B: vmmd's runtime warn/error lines share the
 	// SpansWriter listeners it already dials for guest traces. The receiver
-	// accepts only while log search is on.
+	// accepts only while log search is on, and indexes only the lines of
+	// accounts the log-search capability is released to (ADR-20261024222102).
 	var runtimeLogs *receivers.RuntimeLogEventsReceiver
 	if deps.getenv("FAAS_OTEL_SPANS_WRITER_ENABLED") != "false" {
-		runtimeLogs = receivers.NewRuntimeLogEventsReceiver(srv.store, deps.getenv("FAAS_LOG_SEARCH_ENABLED") == "1", srv.ops.Registry(), log)
+		logSearchOn := deps.getenv("FAAS_LOG_SEARCH_ENABLED") == "1"
+		runtimeLogs = receivers.NewRuntimeLogEventsReceiver(srv.store, receivers.RuntimeLogGate{
+			Active:   func() bool { return logSearchOn },
+			Released: srv.logSearchReleasedForApp,
+		}, srv.ops.Registry(), log)
 		// Multi-box: a node's vmmd/apid-client leaf names the node, so its
 		// lines must come from instances on that node.
 		if nodes, ok := nodeVerifier.(wire.NodeIdentityResolver); ok {

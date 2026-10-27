@@ -133,6 +133,16 @@ func (r *server) ApplyRuntimeConfig(key string, value json.RawMessage, version i
 	return r.runtimeConfig.applyVersion(key, value, version)
 }
 
+// SetDatadogIntegrationEnabled sets FAAS_DATADOG_INTEGRATION_ENABLED's parsed
+// value (ADR-20261024222102).
+func (r *server) SetDatadogIntegrationEnabled(on bool) { r.datadogIntegrationEnabled = on }
+
+// LogSearchReleasedForApp decides the log-search capability for runtime lines
+// of app (ADR-20261024222102).
+func (r *server) LogSearchReleasedForApp(ctx context.Context, app state.App) bool {
+	return r.logSearchReleasedForApp(ctx, app)
+}
+
 // InstallCapabilityGate installs the production capability route gate
 // (ADR-20261023115741) on a test server.
 func (r *server) InstallCapabilityGate() error {
@@ -172,4 +182,10 @@ func (r *server) TemplateNames(acct state.Account) []string {
 		names = append(names, row.Name)
 	}
 	return names
+}
+
+// EventsPausedProblem is the events-flag refusal the platform-tenant publish
+// route applies (ADR-20261027125625).
+func (r *server) EventsPausedProblem(acct state.Account, app state.App) *api.Problem {
+	return r.eventsPausedProblem(acct, app)
 }

@@ -4,8 +4,7 @@
 /* eslint-disable */
 import type { AppErrorRequestItem } from './AppErrorRequestItem.js';
 /**
- * Drill-down page returned by `GET /v1/apps/{slug}/errors/{fingerprint}`
- * (ADR-096 / PR-B). The header fields (fingerprint,
+ * Drill-down page returned by `GET /v1/apps/{slug}/errors/{fingerprint}`. The header fields (fingerprint,
  * error_class, route, http_status) are denormalised from the
  * parent summary row so the dashboard renders the page header
  * without a second round-trip. Does NOT include

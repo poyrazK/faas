@@ -78,7 +78,7 @@ def sync_detailed(
     Args:
         body (CreateKeyRequest): API key creation payload — label and optional scopes. Plaintext
             is returned exactly once in the 201 response. Scopes defaults to `["admin"]` when omitted
-            so existing callers preserve the legacy full-access behavior. See IAM-1, ADR-034 rev2.
+            so existing callers preserve the legacy full-access behavior. rev2.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -112,7 +112,7 @@ def sync(
     Args:
         body (CreateKeyRequest): API key creation payload — label and optional scopes. Plaintext
             is returned exactly once in the 201 response. Scopes defaults to `["admin"]` when omitted
-            so existing callers preserve the legacy full-access behavior. See IAM-1, ADR-034 rev2.
+            so existing callers preserve the legacy full-access behavior. rev2.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -141,7 +141,7 @@ async def asyncio_detailed(
     Args:
         body (CreateKeyRequest): API key creation payload — label and optional scopes. Plaintext
             is returned exactly once in the 201 response. Scopes defaults to `["admin"]` when omitted
-            so existing callers preserve the legacy full-access behavior. See IAM-1, ADR-034 rev2.
+            so existing callers preserve the legacy full-access behavior. rev2.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -173,7 +173,7 @@ async def asyncio(
     Args:
         body (CreateKeyRequest): API key creation payload — label and optional scopes. Plaintext
             is returned exactly once in the 201 response. Scopes defaults to `["admin"]` when omitted
-            so existing callers preserve the legacy full-access behavior. See IAM-1, ADR-034 rev2.
+            so existing callers preserve the legacy full-access behavior. rev2.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

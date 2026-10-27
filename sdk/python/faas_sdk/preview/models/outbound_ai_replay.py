@@ -21,7 +21,7 @@ T = TypeVar("T", bound="OutboundAIReplay")
 
 @_attrs_define
 class OutboundAIReplay:
-    """A replay of one captured call and, once done, its results in target order (ADR-997)."""
+    """A replay of one captured call and, once done, its results in target order."""
 
     id: UUID
     integration_id: UUID

@@ -1,0 +1,84 @@
+# HTTP cron delivery lag and fleet-wide failure ratio (ADR-20261026201726).
+rule_files:
+- ../../../deploy/ansible/roles/prometheus/files/faas.rules.yml
+evaluation_interval: 1m
+tests:
+- name: late first claims page after ten minutes
+  interval: 1m
+  input_series:
+  - series: 'schedd_cron_schedule_lag_seconds_bucket{le="60"}'
+    values: '0+0x30'
+  - series: 'schedd_cron_schedule_lag_seconds_bucket{le="120"}'
+    values: '0+10x30'
+  - series: 'schedd_cron_schedule_lag_seconds_bucket{le="+Inf"}'
+    values: '0+10x30'
+  alert_rule_test:
+  - eval_time: 25m
+    alertname: FaasCronDeliveryLag
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: schedd
+        family: crons
+      exp_annotations:
+        summary: "HTTP cron runs are starting late"
+        description: "The p99 delay between an HTTP cron run's scheduled minute and its first delivery claim has exceeded 60 seconds for ten minutes. Check the cron tick, schedd health, invocation backlog, account concurrency pressure and database latency."
+        runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasCronDelivery.md"
+- name: prompt claims stay quiet
+  interval: 1m
+  input_series:
+  - series: 'schedd_cron_schedule_lag_seconds_bucket{le="5"}'
+    values: '0+10x30'
+  - series: 'schedd_cron_schedule_lag_seconds_bucket{le="60"}'
+    values: '0+10x30'
+  - series: 'schedd_cron_schedule_lag_seconds_bucket{le="+Inf"}'
+    values: '0+10x30'
+  alert_rule_test:
+  - eval_time: 25m
+    alertname: FaasCronDeliveryLag
+    exp_alerts: []
+- name: most deliveries failing fleet-wide
+  interval: 1m
+  input_series:
+  - series: 'schedd_cron_delivery_total{outcome="failed"}'
+    values: '0+3x90'
+  - series: 'schedd_cron_delivery_total{outcome="success"}'
+    values: '0+1x90'
+  - series: 'schedd_cron_delivery_total{outcome="retry"}'
+    values: '0+0x90'
+  - series: 'schedd_cron_delivery_total{outcome="dead_letter"}'
+    values: '0+0x90'
+  alert_rule_test:
+  - eval_time: 70m
+    alertname: FaasCronDeliveryFailing
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: schedd
+        family: crons
+      exp_annotations:
+        summary: "Most HTTP cron runs are failing"
+        description: "More than half of HTTP cron deliveries across the fleet have ended failed or dead-lettered for thirty minutes. Check wake failures, gateway errors and recent deploys before blaming individual apps."
+        runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasCronDelivery.md"
+- name: a handful of failures is below the volume floor
+  interval: 1m
+  input_series:
+  - series: 'schedd_cron_delivery_total{outcome="failed"}'
+    values: '0+0.2x90'
+  - series: 'schedd_cron_delivery_total{outcome="success"}'
+    values: '0+0x90'
+  alert_rule_test:
+  - eval_time: 70m
+    alertname: FaasCronDeliveryFailing
+    exp_alerts: []
+- name: a minority of failures stays quiet
+  interval: 1m
+  input_series:
+  - series: 'schedd_cron_delivery_total{outcome="failed"}'
+    values: '0+1x90'
+  - series: 'schedd_cron_delivery_total{outcome="success"}'
+    values: '0+4x90'
+  alert_rule_test:
+  - eval_time: 70m
+    alertname: FaasCronDeliveryFailing
+    exp_alerts: []

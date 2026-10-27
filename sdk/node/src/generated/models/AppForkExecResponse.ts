@@ -3,7 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * One command run inside a production fork (ADR-732) and, once finished, its result.
+ * One command run inside a production fork and, once finished, its result.
  */
 export type AppForkExecResponse = {
   id: string;

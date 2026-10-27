@@ -3,7 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * One deployment's AI gateway calls over the last 14 days (ADR 20261022153155).
+ * One deployment's AI gateway calls over the last 14 days.
  */
 export type AIDeploymentUsage = {
   deployment_id: string;

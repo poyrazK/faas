@@ -3578,6 +3578,7 @@
       "retry_backoff_seconds",
       "retry_max",
       "schedule",
+      "schedule_anchor_at",
       "schedule_policy",
       "schedule_revision",
       "skip_if_running",
@@ -11205,6 +11206,22 @@
     "kind": "operational"
   },
   {
+    "table": "object_storage_billing_progress",
+    "columns": [
+      "account_id",
+      "credited_millicents",
+      "delivered_millicents",
+      "mode",
+      "pending_fixed",
+      "pending_millicents",
+      "period_start",
+      "provider",
+      "updated_at",
+      "version"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "object_storage_bucket_usage",
     "columns": [
       "attempt_at",
@@ -13646,6 +13663,7 @@
     "columns": [
       "account_id",
       "approval_token_hash",
+      "approved_by_account_id",
       "consumed_at",
       "created_at",
       "environment_slug",

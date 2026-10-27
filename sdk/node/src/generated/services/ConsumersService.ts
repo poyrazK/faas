@@ -61,7 +61,7 @@ import { OpenAPI } from '../core/OpenAPI.js';
 import { request as __request } from '../core/request.js';
 export class ConsumersService {
   /**
-   * Read your own month-to-date usage and spend with your consumer key (ADR-1506).
+   * Read your own month-to-date usage and spend with your consumer key.
    * For an app's customers, not operators. Authenticate with a consumer
    * key that carries the billing scope. The amount is priced like the
    * next statement, but late usage can still change it.
@@ -158,7 +158,7 @@ export class ConsumersService {
     });
   }
   /**
-   * List the plans you can switch to with your consumer key (ADR-20261021183000).
+   * List the plans you can switch to with your consumer key.
    * @returns ConsumerBillingPlansResponse Your current plan, the offered plans and what you may do on your own.
    * @throws ApiError
    */
@@ -289,7 +289,7 @@ export class ConsumersService {
     });
   }
   /**
-   * Read an app's public sign-up form (ADR-20261021143000).
+   * Read an app's public sign-up form.
    * For an app's prospective customers; needs no credential.
    * @returns ConsumerSignupFormResponse The app's display name, offered plans and their current prices.
    * @throws ApiError
@@ -968,8 +968,8 @@ export class ConsumersService {
    * Export a finalized app consumer statement as an invoice in Stripe, Paddle or Lago.
    * Exports one finalized app consumer statement revision to the
    * provider in the body (default stripe; connect it with
-   * PUT /v1/account/billing-connections/{provider}), ADR-1502 and ADR-1507.
-   * The connection's collection mode (ADR-1311) decides whether the
+   * PUT /v1/account/billing-connections/{provider}).
+   * The connection's collection mode decides whether the
    * provider keeps a draft, sends it or charges it. One item per rate card
    * and unit price, plus a rounding item, makes the invoice equal the
    * statement total rounded to the currency's minor unit; with a negative
@@ -980,8 +980,8 @@ export class ConsumersService {
    * exporting the statement the answer is 409
    * `statement_invoice_export_in_progress`; an export the provider refused
    * before creating an invoice can be retried with another customer or
-   * provider (ADR-20261019180000). Currencies with up to three decimal
-   * places (ADR-20261019100330); Paddle takes USD, EUR and GBP.
+   * provider. Currencies with up to three decimal
+   * places; Paddle takes USD, EUR and GBP.
    *
    * @returns StatementInvoiceExportResponse The completed app consumer statement export.
    * @throws ApiError
@@ -1294,7 +1294,7 @@ export class ConsumersService {
     });
   }
   /**
-   * List a consumer's prepaid credit grants, newest first, with the usable balance per currency (ADR-1306).
+   * List a consumer's prepaid credit grants, newest first, with the usable balance per currency.
    * @returns APIConsumerCreditListResponse The consumer's grants and balances.
    * @throws ApiError
    */
@@ -1328,7 +1328,7 @@ export class ConsumersService {
    * Grant a consumer prepaid credit.
    * Finalized statements in the credit's currency draw it down, the grant
    * that expires first before grants that never expire, in the same
-   * transaction that finalizes them (ADR-1306). Credit never pays more
+   * transaction that finalizes them. Credit never pays more
    * than a statement's amount. A consumer holds at most 100 grants with
    * credit left.
    *
@@ -1447,11 +1447,11 @@ export class ConsumersService {
     });
   }
   /**
-   * Set a consumer's monthly spend cap (ADR-1306).
+   * Set a consumer's monthly spend cap.
    * Once the month's amount due passes the cap, the gateway answers the
    * consumer with 402 `consumer_spend_cap_reached` until the month ends,
    * the cap rises or credit is added. The amount due is the month to
-   * date priced like a statement, minus usable prepaid credit. apid
+   * date priced like a statement, minus usable prepaid credit. The API
    * checks it every minute and at once when the cap or credit changes,
    * so a consumer can overshoot by about two minutes of traffic. A zero
    * cap allows prepaid usage only.
@@ -1523,7 +1523,7 @@ export class ConsumersService {
     });
   }
   /**
-   * Read a consumer's free trial (ADR-1314).
+   * Read a consumer's free trial.
    * @returns APIConsumerTrialResponse The consumer's trial.
    * @throws ApiError
    */
@@ -1628,7 +1628,7 @@ export class ConsumersService {
     });
   }
   /**
-   * Read the app's overdue-invoice rule (ADR-1315).
+   * Read the app's overdue-invoice rule.
    * @returns APIConsumerBillingPolicyResponse The app's overdue rule.
    * @throws ApiError
    */
@@ -1654,7 +1654,7 @@ export class ConsumersService {
   }
   /**
    * Refuse consumers whose exported invoice is unpaid some days after its due date.
-   * Every 5 minutes apid places a hold on each consumer whose exported
+   * Every 5 minutes the API places a hold on each consumer whose exported
    * invoice is open or uncollectible with an amount left at least
    * block_overdue_after_days past its due date, and lifts holds that no
    * longer apply. The gateway answers a held consumer with 402
@@ -1715,7 +1715,7 @@ export class ConsumersService {
     });
   }
   /**
-   * Read the app's self-service sign-up settings (ADR-20261021143000).
+   * Read the app's self-service sign-up settings.
    * @returns ConsumerSignupSettingsResponse The app's sign-up settings and hosted page URL.
    * @throws ApiError
    */

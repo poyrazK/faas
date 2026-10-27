@@ -1104,6 +1104,7 @@ func watchInvalidations(ctx context.Context, pool *pgxpool.Pool, inv invalidator
 				continue
 			}
 			handleInvalidation(ctx, inv, n, log)
+			requestPublicRoutingRefresh(inv, n)
 			if n.Channel == db.NotifyEdgeRuleChanged && gatewayNode != "" {
 				ackEdgeRuleInvalidation(ctx, pool, n.Payload, gatewayNode, log)
 			}
@@ -1130,6 +1131,10 @@ func handleDeploymentRouteInvalidation(ctx context.Context, inv invalidator, raw
 	}
 	if err := inv.RefreshDeploymentWeights(ctx, payload.AppID); err != nil {
 		log.Warn("gatewayd: refresh deployment route weights failed", "app", payload.AppID, "generation", payload.Generation, "err", err)
+		return payload, false
+	}
+	if err := refreshPublicRoutingForRoute(ctx, inv, payload.AppID); err != nil {
+		log.Warn("gatewayd: refresh deployment route routing view failed", "app", payload.AppID, "generation", payload.Generation, "err", err)
 		return payload, false
 	}
 	return payload, true

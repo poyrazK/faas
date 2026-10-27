@@ -170,7 +170,7 @@ def sync_detailed(
     min_latency_ms: int | None | Unset = UNSET,
     cursor: None | str | Unset = UNSET,
 ) -> Response[DebugTelemetryListResponse | Problem]:
-    r"""Per-app request telemetry (ADR-127 / PR-A).
+    r"""Per-app request telemetry.
 
      Recent request telemetry rows for an app — status, latency_ms, route,
     method, deployment_id, cold_boot, trace_id, received_at, and the
@@ -178,9 +178,7 @@ def sync_detailed(
     are split by bounded latency bucket so aggregate percentiles retain
     distribution signal; `latency_ms` is that bucket's inclusive upper
     bound (and can therefore be slightly conservative).
-    PR-A ships the read endpoint only; the write-side (publisher
-    → gRPC IncrementRequestTelemetry → apid receiver → sqlc
-    INSERT) lands in PR-B. The endpoint is plan-gated by
+    The endpoint is plan-gated by
     `DebugTelemetryEnabled` (Free off; Hobby/Pro/Scale on).
     The window is clamped to `DebugTelemetryRetentionDays`
     (Hobby 3d, Pro 7d, Scale 14d). When the clamp fires, the
@@ -250,7 +248,7 @@ def sync(
     min_latency_ms: int | None | Unset = UNSET,
     cursor: None | str | Unset = UNSET,
 ) -> DebugTelemetryListResponse | Problem | None:
-    r"""Per-app request telemetry (ADR-127 / PR-A).
+    r"""Per-app request telemetry.
 
      Recent request telemetry rows for an app — status, latency_ms, route,
     method, deployment_id, cold_boot, trace_id, received_at, and the
@@ -258,9 +256,7 @@ def sync(
     are split by bounded latency bucket so aggregate percentiles retain
     distribution signal; `latency_ms` is that bucket's inclusive upper
     bound (and can therefore be slightly conservative).
-    PR-A ships the read endpoint only; the write-side (publisher
-    → gRPC IncrementRequestTelemetry → apid receiver → sqlc
-    INSERT) lands in PR-B. The endpoint is plan-gated by
+    The endpoint is plan-gated by
     `DebugTelemetryEnabled` (Free off; Hobby/Pro/Scale on).
     The window is clamped to `DebugTelemetryRetentionDays`
     (Hobby 3d, Pro 7d, Scale 14d). When the clamp fires, the
@@ -325,7 +321,7 @@ async def asyncio_detailed(
     min_latency_ms: int | None | Unset = UNSET,
     cursor: None | str | Unset = UNSET,
 ) -> Response[DebugTelemetryListResponse | Problem]:
-    r"""Per-app request telemetry (ADR-127 / PR-A).
+    r"""Per-app request telemetry.
 
      Recent request telemetry rows for an app — status, latency_ms, route,
     method, deployment_id, cold_boot, trace_id, received_at, and the
@@ -333,9 +329,7 @@ async def asyncio_detailed(
     are split by bounded latency bucket so aggregate percentiles retain
     distribution signal; `latency_ms` is that bucket's inclusive upper
     bound (and can therefore be slightly conservative).
-    PR-A ships the read endpoint only; the write-side (publisher
-    → gRPC IncrementRequestTelemetry → apid receiver → sqlc
-    INSERT) lands in PR-B. The endpoint is plan-gated by
+    The endpoint is plan-gated by
     `DebugTelemetryEnabled` (Free off; Hobby/Pro/Scale on).
     The window is clamped to `DebugTelemetryRetentionDays`
     (Hobby 3d, Pro 7d, Scale 14d). When the clamp fires, the
@@ -403,7 +397,7 @@ async def asyncio(
     min_latency_ms: int | None | Unset = UNSET,
     cursor: None | str | Unset = UNSET,
 ) -> DebugTelemetryListResponse | Problem | None:
-    r"""Per-app request telemetry (ADR-127 / PR-A).
+    r"""Per-app request telemetry.
 
      Recent request telemetry rows for an app — status, latency_ms, route,
     method, deployment_id, cold_boot, trace_id, received_at, and the
@@ -411,9 +405,7 @@ async def asyncio(
     are split by bounded latency bucket so aggregate percentiles retain
     distribution signal; `latency_ms` is that bucket's inclusive upper
     bound (and can therefore be slightly conservative).
-    PR-A ships the read endpoint only; the write-side (publisher
-    → gRPC IncrementRequestTelemetry → apid receiver → sqlc
-    INSERT) lands in PR-B. The endpoint is plan-gated by
+    The endpoint is plan-gated by
     `DebugTelemetryEnabled` (Free off; Hobby/Pro/Scale on).
     The window is clamped to `DebugTelemetryRetentionDays`
     (Hobby 3d, Pro 7d, Scale 14d). When the clamp fires, the

@@ -11,13 +11,29 @@ import (
 )
 
 // AIAccessToken reads a live token by the hash of its secret (ADR-1431).
+// Only the app's creator, as a company owner or admin, can mint one (the
+// route has no reviewed company action), so a token of a company app works
+// only while that creator still holds that standing, the company is active
+// and the app is not deleted, as fork tokens do (#5589). A creator who leaves
+// takes the app's tokens out of service with them.
 func (b *PostgresBackend) AIAccessToken(ctx context.Context, hash [32]byte) (AIAccessToken, error) {
 	var token AIAccessToken
 	var integrations []uuid.UUID
 	err := b.pool.QueryRow(ctx, `
-		SELECT id::text, account_id::text, app_id::text, integration_ids, expires_at
-		  FROM outbound_ai_access_tokens
-		 WHERE token_hash = $1 AND revoked_at IS NULL AND expires_at > now()`, hash[:]).
+		SELECT t.id::text, t.account_id::text, t.app_id::text, t.integration_ids, t.expires_at
+		  FROM outbound_ai_access_tokens t
+		  JOIN apps a ON a.id = t.app_id
+		 WHERE t.token_hash = $1 AND t.revoked_at IS NULL AND t.expires_at > now()
+		   AND a.status <> 'deleted'
+		   AND (a.org_id IS NULL OR EXISTS (
+		        SELECT 1 FROM orgs o
+		         WHERE o.id = a.org_id
+		           AND ((o.personal_org AND o.personal_owner_account_id = a.account_id)
+		                OR (NOT o.personal_org AND NOT o.deleted_pending
+		                    AND o.status NOT IN ('deleted_pending', 'suspended', 'past_due')
+		                    AND EXISTS (SELECT 1 FROM org_memberships m
+		                                 WHERE m.org_id = o.id AND m.account_id = a.account_id
+		                                   AND m.removed_at IS NULL AND m.role IN ('owner', 'admin'))))))`, hash[:]).
 		Scan(&token.ID, &token.AccountID, &token.AppID, &integrations, &token.ExpiresAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return AIAccessToken{}, ErrAIAccessTokenNotFound

@@ -169,7 +169,7 @@ BEGIN
            coalesce((SELECT sum(i.ram_mb + p_overhead_mb)
                        FROM instances i
                       WHERE i.node_id = n.id
-                        AND i.state IN ('waking','cold_booting','running','draining','warm')), 0)::bigint
+                        AND i.state IN ('waking','cold_booting','running','draining','warm','snapshotting')), 0)::bigint
       INTO ceiling_mb, used_mb
       FROM compute_nodes n WHERE n.id = p_node_id;
     IF NOT FOUND THEN
@@ -19166,6 +19166,16 @@ BEGIN
     AND EXISTS(SELECT 1 FROM object_buckets b WHERE b.org_id=NEW.id AND b.account_id=p.account_id)) THEN
    RAISE EXCEPTION 'remediate finalized current-period object billing before adoption' USING ERRCODE='23514';
   END IF;
+  INSERT INTO object_storage_billing_progress AS o
+         (provider,account_id,period_start,mode,delivered_millicents,pending_millicents,pending_fixed,credited_millicents,version)
+  SELECT p.provider,NEW.id,p.period_start,p.mode,0,0,false,LEAST(SUM(p.delivered_millicents+p.pending_millicents),1152921504606846976),1
+    FROM object_storage_billing_progress p
+   WHERE p.period_start=date_trunc('month',now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC' AND p.account_id<>NEW.id
+     AND EXISTS(SELECT 1 FROM object_buckets b WHERE b.org_id=NEW.id AND b.account_id=p.account_id)
+   GROUP BY p.provider,p.period_start,p.mode
+  ON CONFLICT (provider,account_id,period_start,mode) DO UPDATE
+     SET credited_millicents=LEAST(o.credited_millicents+EXCLUDED.credited_millicents,1152921504606846976),
+         version=o.version+1,updated_at=now();
   DELETE FROM object_storage_usage_heads h WHERE h.period_start>=date_trunc('month',now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC' AND
    (h.account_id=NEW.id OR EXISTS(SELECT 1 FROM object_buckets b WHERE b.org_id=NEW.id AND b.account_id=h.account_id));
  END IF;
@@ -25063,6 +25073,12 @@ BEGIN
     OR NEW.schedule_policy IS DISTINCT FROM OLD.schedule_policy
     OR NEW.failure_rules IS DISTINCT FROM OLD.failure_rules THEN
   NEW.schedule_revision := OLD.schedule_revision + 1;
+ END IF;
+ IF NEW.schedule IS DISTINCT FROM OLD.schedule
+    OR NEW.timezone IS DISTINCT FROM OLD.timezone
+    OR (NEW.enabled AND NOT OLD.enabled)
+    OR (NEW.suspended_reason = '' AND OLD.suspended_reason <> '') THEN
+  NEW.schedule_anchor_at := clock_timestamp();
  END IF;
  RETURN NEW;
 END;
@@ -32977,6 +32993,7 @@ CREATE TABLE public.crons (
     schedule_policy jsonb,
     failure_rules jsonb,
     schedule_revision bigint DEFAULT 1 NOT NULL,
+    schedule_anchor_at timestamp with time zone,
     CONSTRAINT crons_command_output_check CHECK (((command_max_output_bytes >= 1024) AND (command_max_output_bytes <= 16777216))),
     CONSTRAINT crons_command_shape_check CHECK ((((cardinality(command) = 0) AND (NOT command_shell)) OR (((cardinality(command) >= 1) AND (cardinality(command) <= 64)) AND (array_position(command, NULL::text) IS NULL) AND ((octet_length(command[1]) >= 1) AND (octet_length(command[1]) <= 4096)) AND ((octet_length(array_to_string(command, ''::text)) >= 1) AND (octet_length(array_to_string(command, ''::text)) <= 16384)) AND ((NOT command_shell) OR (cardinality(command) = 1))))),
     CONSTRAINT crons_command_timeout_check CHECK (((command_timeout_seconds >= 1) AND (command_timeout_seconds <= 3600))),
@@ -45479,6 +45496,40 @@ CREATE TABLE public.object_storage_billing_periods (
 
 
 --
+-- Name: object_storage_billing_progress; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.object_storage_billing_progress (
+    provider text NOT NULL,
+    account_id uuid NOT NULL,
+    period_start timestamp with time zone NOT NULL,
+    mode text NOT NULL,
+    delivered_millicents bigint NOT NULL,
+    pending_millicents bigint NOT NULL,
+    pending_fixed boolean NOT NULL,
+    credited_millicents bigint DEFAULT 0 NOT NULL,
+    version bigint NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT object_storage_billing_progress_check CHECK (((NOT pending_fixed) OR (pending_millicents > 0))),
+    CONSTRAINT object_storage_billing_progress_check1 CHECK (((delivered_millicents + pending_millicents) <= '1152921504606846976'::bigint)),
+    CONSTRAINT object_storage_billing_progress_credited_millicents_check CHECK (((credited_millicents >= 0) AND (credited_millicents <= '1152921504606846976'::bigint))),
+    CONSTRAINT object_storage_billing_progress_delivered_millicents_check CHECK (((delivered_millicents >= 0) AND (delivered_millicents <= '1152921504606846976'::bigint))),
+    CONSTRAINT object_storage_billing_progress_mode_check CHECK ((mode = ANY (ARRAY['shadow'::text, 'live'::text]))),
+    CONSTRAINT object_storage_billing_progress_pending_millicents_check CHECK (((pending_millicents >= 0) AND (pending_millicents <= '1152921504606846976'::bigint))),
+    CONSTRAINT object_storage_billing_progress_period_start_check CHECK ((period_start = (date_trunc('month'::text, (period_start AT TIME ZONE 'UTC'::text)) AT TIME ZONE 'UTC'::text))),
+    CONSTRAINT object_storage_billing_progress_provider_check CHECK ((provider <> ''::text)),
+    CONSTRAINT object_storage_billing_progress_version_check CHECK ((version > 0))
+);
+
+
+--
+-- Name: TABLE object_storage_billing_progress; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.object_storage_billing_progress IS 'Object-storage charge delivered so far per provider, account, UTC month and mode. Written by apid in daily steps and at month close; meterd reserves live rows under the overage cap (ADR-20261027093220).';
+
+
+--
 -- Name: object_storage_bucket_usage; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -49076,6 +49127,7 @@ CREATE TABLE public.project_environment_approvals (
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     token_kind text DEFAULT 'plan'::text NOT NULL,
     consumed_at timestamp with time zone,
+    approved_by_account_id uuid,
     CONSTRAINT project_environment_approvals_environment_slug_shape CHECK ((environment_slug ~ '^[a-z0-9](?:[a-z0-9-]{0,31}[a-z0-9])?$'::text)),
     CONSTRAINT project_environment_approvals_plan_hash_shape CHECK ((plan_token_hash ~ '^[a-f0-9]{64}$'::text)),
     CONSTRAINT project_environment_approvals_project_slug_shape CHECK ((project_slug ~ '^[a-z0-9][a-z0-9-]{0,62}$'::text)),
@@ -63466,6 +63518,14 @@ ALTER TABLE ONLY public.object_storage_billing_periods
 
 
 --
+-- Name: object_storage_billing_progress object_storage_billing_progress_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.object_storage_billing_progress
+    ADD CONSTRAINT object_storage_billing_progress_pkey PRIMARY KEY (provider, account_id, period_start, mode);
+
+
+--
 -- Name: object_storage_bucket_usage object_storage_bucket_usage_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -74542,6 +74602,13 @@ CREATE INDEX object_storage_billing_deliveries_account_period_idx ON public.obje
 --
 
 CREATE INDEX object_storage_billing_periods_account_period_idx ON public.object_storage_billing_periods USING btree (account_id, period_start DESC);
+
+
+--
+-- Name: object_storage_billing_progress_account_period_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX object_storage_billing_progress_account_period_idx ON public.object_storage_billing_progress USING btree (account_id, period_start);
 
 
 --

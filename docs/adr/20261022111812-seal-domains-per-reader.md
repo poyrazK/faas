@@ -565,10 +565,52 @@ This first slice covers the account's own values:
   --readers-verified` re-seals the five kinds with a compare-and-swap on the
   ciphertext; a plan's key id moves with it. Plans of finished workflows
   are already cleared.
-- **Later slices:** product email (`product_control_email_*`), GitLab, Slack
-  and Linear, managed realtime, data pipelines (with the data-pipeline
+- **Later slices:** product email (`product_control_email_*`, which has its
+  own SQL package), managed realtime, data pipelines (with the data-pipeline
   worker's identity), and project environment clones (with the clone
   worker's identity). Their columns stay on the fleet key until then.
+
+## Implemented in the eleventh slice: account integration credentials
+
+The second account slice moves the integration credentials apid holds:
+`gitlab_oauth_connections`, `issue_slack_installations`,
+`issue_slack_interaction_policies`, `issue_team_slack_destinations`,
+`issue_slack_oauth_flows`, `issue_tracker_linear_connections` and
+`issue_tracker_linear_oauth_flows`.
+
+- **Writers** seal to `accountRecipients(fleet)`: GitLab token storage and
+  rotation, the Slack OAuth service (workspace tokens, signing secrets and
+  consent flows), the dashboard's Slack bot token and signing secret forms,
+  and the Linear API key, OAuth credential and consent flow. The Slack and
+  Linear services take a list of recipients (`Recipients`); the
+  single-recipient helpers stay as wrappers.
+- **Readers** open with `accountIdentities()`: GitLab source fetches, Slack
+  delivery and routing, Slack interaction verification, the Linear OAuth
+  service, Linear webhook verification and native Linear creation.
+- **Re-seal:** `seal-domain migrate --domain account` covers the seven
+  kinds. A Linear connection holds an API key or an OAuth credential, so it
+  is re-sealed under whichever namespace it has. Expired consent flows are
+  left for their sweep.
+- The namespaces the re-seal shares with the writers moved to `pkg/api`.
+
+## Implemented in the twelfth slice: product email
+
+The third account slice moves product email's sealed values:
+`product_control_email_subscriptions` (`grant_sealed`,
+`pause_recipient_sealed`) and `product_control_email_deliveries`
+(`recipient_sealed`, `unsubscribe_sealed`). They have their own SQL package
+but live in the main schema.
+
+- Every product email value is sealed and opened through apid's two
+  product email functions, so the slice changes those two: they seal to the
+  account recipients (with apid's own identity's recipient as legacy) and
+  open with the account identity first (`productemail.SealTo`).
+- Each value binds a token to the subscription or evidence id it was sealed
+  for. The re-seal keeps that envelope as it is and refuses an envelope of
+  another shape.
+- **Later slices:** managed realtime, data pipelines (with the data-pipeline
+  worker's identity) and project environment clones (with the clone
+  worker's identity).
 
 ## Implemented: the alerting test-send relay
 

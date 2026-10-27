@@ -1154,11 +1154,12 @@ converge. Values re-sealed in this step stay domain-only, so:
 ## 12. Account seal domain
 
 apid both seals and opens account values, so it holds `account.age` itself;
-there is no recipient file. This release covers TOTP secrets, inbound
-webhook secrets, billing provider keys, managed workflow plans and
-PagerDuty acknowledgement secrets. The other account columns (product
-email, integrations, managed realtime, data pipelines, project clones) stay
-on the fleet key until later releases (ADR 20261022111812, tenth slice).
+there is no recipient file. It covers TOTP secrets, inbound webhook
+secrets, billing provider keys, managed workflow plans, PagerDuty
+acknowledgement secrets, GitLab, Slack and Linear credentials, and product
+email values. The other account columns (managed realtime, data pipelines,
+project clones) stay on the fleet key until later releases (ADR
+20261022111812, tenth to twelfth slices).
 
 ### 12a. Create the identity (operator machine)
 
@@ -1167,8 +1168,9 @@ gregalectl seal-domain init --domain account --dir ~/gregale-seal/<environment>
 ```
 
 Store `account.age` with the other domain identities. If it is lost after
-12d, every customer with MFA must enroll again, inbound webhooks and
-billing connections must be set again, and queued managed workflows fail.
+12d, every customer with MFA must enroll again; inbound webhooks, billing
+connections and GitLab, Slack and Linear connections must be set again; and
+queued managed workflows fail.
 
 ### 12b. Stage apid; seal to both keys
 
@@ -1192,7 +1194,7 @@ Check:
   FaasSealDomainIdentityMissing does not fire;
 - apid logs `"account seal domain"` with `"domain_identity":true`;
 - on a test account, enroll MFA and sign in with it; send a test delivery
-  to an inbound webhook.
+  to an inbound webhook; send a test issue to a connected Slack workspace.
 
 Rollback: set `faas_seal_domain_account_writes: fleet` and converge. Values
 saved in the meantime also carry the fleet key.

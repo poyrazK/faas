@@ -31,6 +31,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/dependencytrace"
 	"github.com/onebox-faas/faas/pkg/devbridge"
 	"github.com/onebox-faas/faas/pkg/flags"
+	"github.com/onebox-faas/faas/pkg/platformflags"
 	"github.com/onebox-faas/faas/pkg/reqbudget"
 	"github.com/onebox-faas/faas/pkg/trafficdeadline"
 	"github.com/onebox-faas/faas/pkg/trafficrevocation"
@@ -360,6 +361,8 @@ type ServiceProxyConfig struct {
 	RetryBudget        *RetryBudget
 	TrafficDeadlines   *trafficdeadline.Signer
 	TrafficRevocations *trafficrevocation.Registry
+	// TrafficFenceFlags is the revocation fence kill switch; nil enforces it.
+	TrafficFenceFlags *platformflags.Set
 }
 
 // ServiceProxy is an HTTP service-name router backed by the gateway's live
@@ -407,6 +410,7 @@ type ServiceProxy struct {
 	retryBudget        *RetryBudget
 	trafficDeadlines   *trafficdeadline.Signer
 	trafficRevocations *trafficrevocation.Registry
+	trafficFenceFlags  *platformflags.Set
 
 	mu           sync.Mutex
 	snapshots    map[string]serviceProxySnapshot
@@ -519,6 +523,7 @@ func NewServiceProxy(cfg ServiceProxyConfig) *ServiceProxy {
 		retryBudget:               retryBudget,
 		trafficDeadlines:          cfg.TrafficDeadlines,
 		trafficRevocations:        cfg.TrafficRevocations,
+		trafficFenceFlags:         cfg.TrafficFenceFlags,
 		snapshots:                 make(map[string]serviceProxySnapshot),
 		next:                      make(map[string]uint64),
 		nextSeen:                  make(map[string]time.Time),
@@ -629,8 +634,10 @@ func (p *ServiceProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 		}
-		dependencySpan.SetAttributes(trafficDecisionEvidence(r.Context(), status, true).attributes()...) //nolint:contextcheck // final rebound context includes lifetime fences added after span entry.
-		if evidence, ok := guestExecutionEvidenceFromContext(r.Context()); ok {                          //nolint:contextcheck // the deferred read observes the shared evidence sink through the dependency request context.
+		decision := trafficDecisionEvidence(r.Context(), status, true) //nolint:contextcheck // final rebound context includes lifetime fences added after span entry.
+		dependencySpan.SetAttributes(decision.attributes()...)
+		p.metrics.observeTrafficDecision(decision)
+		if evidence, ok := guestExecutionEvidenceFromContext(r.Context()); ok { //nolint:contextcheck // the deferred read observes the shared evidence sink through the dependency request context.
 			addServiceFlagEvidenceEvents(dependencySpan, evidence.FlagEvidenceJSON)
 		}
 		dependencySpan.End()
@@ -691,6 +698,11 @@ func (p *ServiceProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	if validateManagedDeadlineCaller(dispatchWriter, r, caller) {
 		return
+	}
+	// Only the caller app is known here: a platform-wide switch covers the
+	// whole call, and an account rule applies once authorization names it.
+	if trafficFenceOff(p.trafficFenceFlags, "") {
+		markTrafficFenceOff(r, p.metrics, "managed_service")
 	}
 	callerScopes := []trafficrevocation.Scope{{Kind: "app", ID: caller}}
 	if callerDeploymentID != "" {
@@ -860,6 +872,9 @@ func (p *ServiceProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	dependencyHealthCaller = callerInfo
 	if validateManagedDeadlineAccount(dispatchWriter, r, callerInfo.AccountID) {
 		return
+	}
+	if !trafficFenceIsOff(r.Context()) && trafficFenceOff(p.trafficFenceFlags, callerInfo.AccountID) {
+		markTrafficFenceOff(r, p.metrics, "managed_service")
 	}
 	if enrollTrafficScopes(dispatchWriter, r, p.trafficRevocations,
 		trafficrevocation.Scope{Kind: "account", ID: callerInfo.AccountID}, trafficrevocation.Scope{Kind: "app", ID: target.AppID}) {

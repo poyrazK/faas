@@ -422,7 +422,7 @@
       "id": "app-tasks",
       "name": "App tasks",
       "category": "runtime",
-      "description": "Run a one-off command in a fresh VM built from an app's deployment.",
+      "description": "Run a one-off or scheduled (command cron) command in a fresh VM built from an app's deployment.",
       "maturity": "preview",
       "plans": [
         "free",
@@ -527,7 +527,24 @@
         "=/v1/apps/{}",
         "/v1/apps/{}/rename",
         "/v1/apps/{}/restore",
-        "/v1/deleted-apps"
+        "/v1/deleted-apps",
+        "/dashboard/apps/{}/deployment-submissions",
+        "/dashboard/apps/{}/deployments",
+        "/v1/apps/{}/deployment-submissions",
+        "=/v1/apps/{}/deployments",
+        "/v1/apps/{}/deployments/clear-obsolete",
+        "/v1/apps/{}/deployments/latest",
+        "/v1/apps/{}/deployments/{}/cancel",
+        "/v1/apps/{}/deployments/{}/response-check",
+        "/v1/apps/{}/deployments/{}/summary",
+        "=/v1/deployments",
+        "/v1/deployments/latest-by-app",
+        "/v1/deployments/response-check",
+        "=/v1/deployments/{}",
+        "/v1/deployments/{}/diff",
+        "/v1/deployments/{}/retry",
+        "/v1/deployments/{}/stages",
+        "/v1/deployments/{}/url"
       ],
       "cli": [
         "apps",
@@ -1044,7 +1061,7 @@
       "id": "crons",
       "name": "Crons",
       "category": "async",
-      "description": "Run HTTP requests or commands on a schedule.",
+      "description": "Send an HTTP request to an app on a schedule. Command crons run as app tasks and share their preview.",
       "maturity": "ga",
       "plans": [
         "hobby",
@@ -1052,7 +1069,7 @@
         "scale"
       ],
       "docs_url": "/docs/crons",
-      "acceptance_test": "pkg/apid/apidserver/handlers_ext_test.go::TestListCrons_HappyPath",
+      "acceptance_test": "cmd/e2e/cron_e2e_test.go::TestE2E_Cron_FiresOnScheduleAndOnDemand",
       "consumers": [
         "schedd"
       ],
@@ -1191,6 +1208,7 @@
         "/replacement.js",
         "/resolution.js",
         "/sources.js",
+        "=/v1/events",
         "/validation.js",
         "/verification.js"
       ]
@@ -1208,6 +1226,7 @@
       ],
       "docs_url": "/docs/data-api",
       "acceptance_test": "cmd/gregale/commands_data_api_sync_test.go::TestDataAPISyncJourney",
+      "parent": "managed-postgres",
       "routes": [
         "/dashboard/apps/{}/data-api",
         "/v1/apps/{}/data-api",
@@ -2380,6 +2399,10 @@
       ],
       "docs_url": "/docs/event-driven",
       "acceptance_test": "cmd/e2e/events_fanout_e2e_test.go::TestE2E_EventFanout_MatchesFiltersAndIsolatesAccounts",
+      "consumers": [
+        "schedd",
+        "vmmd"
+      ],
       "routes": [
         "/dashboard/apps/{}/event-deliveries",
         "/dashboard/apps/{}/events",
@@ -2976,6 +2999,9 @@
       "docs_url": "/docs/adr/20261018083536-customer-log-search",
       "operator_flag": "FAAS_LOG_SEARCH_ENABLED",
       "acceptance_test": "pkg/apid/logsearch/service_test.go::TestSearchPagesNewestFirst",
+      "consumers": [
+        "meterd"
+      ],
       "routes": [
         "/dashboard/apps/{}/log-search",
         "/v1/apps/{}/log-events",
@@ -4065,12 +4091,16 @@
         "/dashboard/apps/{}/debug/requests",
         "/v1/apps/{}/debug/compare",
         "/v1/apps/{}/debug/critical-paths",
-        "/v1/apps/{}/debug/requests"
+        "/v1/apps/{}/debug/requests",
+        "/v1/apps/{}/debug/rollout",
+        "/v1/apps/{}/debug/status"
       ],
       "cli": [
         "debug bundle",
         "debug compare",
-        "debug requests"
+        "debug requests",
+        "debug rollout",
+        "debug status"
       ]
     },
     {
@@ -5190,30 +5220,16 @@
         "scale"
       ],
       "docs_url": "https://gregale.dev/docs/deploy-from-source",
-      "acceptance_test": "cmd/e2e/apply_project_e2e_test.go::TestApplyProject_DeploymentKindTarball",
+      "acceptance_test": "cmd/e2e/source_deploy_wake_metal_test.go::TestSourceDeployWakeMetal",
       "routes": [
-        "/dashboard/apps/{}/deployment-submissions",
-        "/dashboard/apps/{}/deployments",
-        "/v1/apps/{}/deployment-submissions",
-        "=/v1/apps/{}/deployments",
-        "/v1/apps/{}/deployments/clear-obsolete",
         "/v1/apps/{}/deployments/dev-source",
-        "/v1/apps/{}/deployments/latest",
         "/v1/apps/{}/deployments/source-tarball",
-        "/v1/apps/{}/deployments/{}/cancel",
-        "/v1/apps/{}/deployments/{}/response-check",
-        "/v1/apps/{}/deployments/{}/summary",
-        "=/v1/deployments",
-        "/v1/deployments/latest-by-app",
-        "/v1/deployments/response-check",
-        "=/v1/deployments/{}",
-        "/v1/deployments/{}/diff",
-        "/v1/deployments/{}/retry",
-        "/v1/deployments/{}/stages",
-        "/v1/deployments/{}/url",
         "=/v1/uploads",
         "=/v1/uploads/{}",
         "=/v1/uploads/{}/commit"
+      ],
+      "settings": [
+        "manifest.build"
       ]
     },
     {
@@ -5464,6 +5480,9 @@
         "/dashboard/apps/{}/profiles",
         "/v1/apps/{}/profiles",
         "/v1/deployments/{}/canary/profile-gate"
+      ],
+      "cli": [
+        "canary gate"
       ]
     },
     {

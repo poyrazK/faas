@@ -14,6 +14,7 @@ import (
 	"net/url"
 	"os"
 	"os/signal"
+	"path"
 	"path/filepath"
 	"regexp"
 	"slices"
@@ -1287,20 +1288,32 @@ func materializeCommittedGitSource(prov zeroConfigProvenance, selectedSourceDir,
 	}
 	defer func() { _ = os.Remove(tmpPath) }()
 
+	prefix := ""
 	switch {
 	case workspaceContextRoot != "":
 		err = gitArchiveHEAD(prov.Root, tmpPath)
 	case sourcePath == "":
 		err = gitArchiveHEAD(prov.Root, tmpPath)
 	default:
-		var relPath string
-		relPath, err = gitRelativePath(prov.Root, selectedSourceDir)
+		prefix, err = gitRelativePath(prov.Root, selectedSourceDir)
 		if err == nil {
-			err = gitArchiveHEADPath(prov.Root, relPath, tmpPath)
+			err = gitArchiveHEADPath(prov.Root, prefix, tmpPath)
 		}
 	}
 	if err != nil {
 		return "", "", nil, err
+	}
+	// Symlinks, submodules and Git LFS files become the bytes they stand
+	// for before anything reads the archive (ADR-20261026152731).
+	if prefix = path.Clean(filepath.ToSlash(prefix)); prefix == "." {
+		prefix = ""
+	}
+	warnings, err := normalizeGitArchive(gitArchiveSource{repoRoot: prov.Root, prefix: prefix, commit: "HEAD"}, tmpPath)
+	if err != nil {
+		return "", "", nil, fmt.Errorf("prepare committed source: %w", err)
+	}
+	for _, warning := range warnings {
+		PrintWarn(osStderr, "%s", warning)
 	}
 
 	archivePath, archiveRoot, cleanup, err := materializeDeployArchive(tmpPath)
@@ -1421,6 +1434,17 @@ func deletedAppUntil(t *time.Time, prefix string) string {
 		return ""
 	}
 	return prefix + t.UTC().Format("2006-01-02 15:04 UTC")
+}
+
+// usageTrafficCell labels the two ADR-046 byte counters, neither of which is
+// billed. tx_bytes is the HTTP response bytes the gateway sent to clients;
+// net_tx_bytes is what left the app's own network interface. Responses travel
+// over vmmd's stream bridge, not that interface, so net is not a superset of
+// tx: printing net alone as "egress" showed 0.000 GB for an app that had
+// served 0.69 GB of responses (Hunt 14 H14-95).
+func usageTrafficCell(txBytes, netTxBytes int64) string {
+	const gib = 1024 * 1024 * 1024
+	return fmt.Sprintf("responses %.2f GB · outbound %.2f GB", float64(txBytes)/gib, float64(netTxBytes)/gib)
 }
 
 // openPublicAuthAfterTokenRemoval is the public_auth change implied by
@@ -3451,7 +3475,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 				return printErr("Could not prepare committed deploy source", buildOnlyErr)
 			}
 			gitArchiveBuildOnlyFiles = buildOnlyFiles
-			path, n, scanFindings, packErr := packGitArchive(gitArchivePath, planCapMB, secretScanMode, gitArchiveBuildOnlyFiles, gitArchiveExcludes...)
+			path, n, scanFindings, packErr := packGitArchive(gitArchivePath, planCapMB, secretScanMode, gitArchiveBuildOnlyFiles, dockerfileSource(sourceDir), gitArchiveExcludes...)
 			if packErr != nil {
 				return printErr("Could not pack committed HEAD", packErr)
 			}
@@ -5965,7 +5989,7 @@ func cmdUsageList(args []string) int {
 	sortUsageRows(rows)
 	// The included allowance is account-wide, so it is printed once rather
 	// than repeated on every app row (production-us hunt #4).
-	_, _ = fmt.Fprintf(osStdout, "App — requests · GB-hours · egress\n")
+	_, _ = fmt.Fprintf(osStdout, "App — requests · GB-hours · traffic (not billed)\n")
 	var totalMBSeconds int64
 	for _, u := range rows {
 		totalMBSeconds += u.MBSeconds
@@ -5977,11 +6001,8 @@ func cmdUsageList(args []string) int {
 		// counter is non-zero — most months most apps are 0 and the
 		// trailing column is noise.
 		if u.TXBytes > 0 || u.NetTxBytes > 0 {
-			_, _ = fmt.Fprintf(osStdout, "%s — %d · %.3f · egress %.3f GB (tx %.2f / net %.2f)\n",
-				appLabel(slugs, u.AppID), u.Requests, float64(u.MBSeconds)/3.6e6,
-				u.TotalEgressGB(),
-				float64(u.TXBytes)/(1024*1024*1024),
-				float64(u.NetTxBytes)/(1024*1024*1024))
+			_, _ = fmt.Fprintf(osStdout, "%s — %d · %.3f · %s\n",
+				appLabel(slugs, u.AppID), u.Requests, float64(u.MBSeconds)/3.6e6, usageTrafficCell(u.TXBytes, u.NetTxBytes))
 			continue
 		}
 		_, _ = fmt.Fprintf(osStdout, "%s — %d · %.3f\n", appLabel(slugs, u.AppID), u.Requests, float64(u.MBSeconds)/3.6e6)
@@ -8263,10 +8284,8 @@ func cmdUsageDaily(args []string) int {
 		totalMBSeconds += u.MBSeconds
 		gbh := float64(u.MBSeconds) / 3.6e6
 		if u.TXBytes > 0 || u.NetTxBytes > 0 {
-			txGB := float64(u.TXBytes) / (1024 * 1024 * 1024)
-			netGB := float64(u.NetTxBytes) / (1024 * 1024 * 1024)
-			_, _ = fmt.Fprintf(osStdout, "%-36s %s %8d  %7.3f GB-h  egress %.3f GB (tx %.2f / net %.2f)\n",
-				appLabel(slugs, u.AppID), u.Day, u.Requests, gbh, netGB, txGB, netGB)
+			_, _ = fmt.Fprintf(osStdout, "%-36s %s %8d  %7.3f GB-h  %s\n",
+				appLabel(slugs, u.AppID), u.Day, u.Requests, gbh, usageTrafficCell(u.TXBytes, u.NetTxBytes))
 			continue
 		}
 		_, _ = fmt.Fprintf(osStdout, "%-36s %s %8d  %7.3f GB-h\n", appLabel(slugs, u.AppID), u.Day, u.Requests, gbh)

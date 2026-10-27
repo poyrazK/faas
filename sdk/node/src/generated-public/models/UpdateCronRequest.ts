@@ -9,6 +9,9 @@ import type { SchedulePolicy } from './SchedulePolicy.js';
  */
 export type UpdateCronRequest = {
   schedule?: string | null;
+  /**
+   * HTTP target path on the cron's own app; starts with a single /.
+   */
   path?: string | null;
   enabled?: boolean | null;
   /**

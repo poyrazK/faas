@@ -93,7 +93,7 @@ def sync_detailed(
 ) -> Response[Any | Problem]:
     """Stream a task's output live (SSE).
 
-     ADR-1163. Served by the compute gateway, not apid. Waits while the
+     Served by the compute gateway, not the API. Waits while the
     task is queued, then relays the task VM's console output as it is
     written, including each retry attempt in turn. Frames match the app
     log stream: `event: log` (seq, instance, stream, line, written_at),
@@ -142,7 +142,7 @@ def sync(
 ) -> Any | Problem | None:
     """Stream a task's output live (SSE).
 
-     ADR-1163. Served by the compute gateway, not apid. Waits while the
+     Served by the compute gateway, not the API. Waits while the
     task is queued, then relays the task VM's console output as it is
     written, including each retry attempt in turn. Frames match the app
     log stream: `event: log` (seq, instance, stream, line, written_at),
@@ -186,7 +186,7 @@ async def asyncio_detailed(
 ) -> Response[Any | Problem]:
     """Stream a task's output live (SSE).
 
-     ADR-1163. Served by the compute gateway, not apid. Waits while the
+     Served by the compute gateway, not the API. Waits while the
     task is queued, then relays the task VM's console output as it is
     written, including each retry attempt in turn. Frames match the app
     log stream: `event: log` (seq, instance, stream, line, written_at),
@@ -233,7 +233,7 @@ async def asyncio(
 ) -> Any | Problem | None:
     """Stream a task's output live (SSE).
 
-     ADR-1163. Served by the compute gateway, not apid. Waits while the
+     Served by the compute gateway, not the API. Waits while the
     task is queued, then relays the task VM's console output as it is
     written, including each retry attempt in turn. Frames match the app
     log stream: `event: log` (seq, instance, stream, line, written_at),

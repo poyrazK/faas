@@ -66,8 +66,12 @@ type Profile struct {
 	// hosting.start. It replaces the built image's command, which a Railpack
 	// build with no detected start inherits from the runtime base (python3 on
 	// the Python runner) (Hunt 12 H12-29).
-	StartFromConfig bool      `json:"start_from_config,omitempty"`
-	Warnings        []Warning `json:"warnings,omitempty"`
+	StartFromConfig bool `json:"start_from_config,omitempty"`
+	// HealthFromConfig reports that HealthPath is gregale.yaml's explicit
+	// hosting.health, which keeps HTTP readiness even on a raw-TCP routed
+	// port (ADR-20261027090000).
+	HealthFromConfig bool      `json:"health_from_config,omitempty"`
+	Warnings         []Warning `json:"warnings,omitempty"`
 	// ImageCommand is the accepted Compose CMD contract. Its presence freezes
 	// image semantics even when Cmd is nil (inherit) or the app changes class.
 	ImageCommand     *ImageCommand     `json:"image_command,omitempty"`
@@ -189,6 +193,7 @@ func applyHostingConfig(profile *Profile, cfg hostingconfig.Config) {
 	}
 	if health := strings.TrimSpace(cfg.Health); health != "" {
 		profile.HealthPath = health
+		profile.HealthFromConfig = true
 	}
 }
 

@@ -112,7 +112,7 @@ def sync_detailed(
     client: AuthenticatedClient | Client,
     body: OperationApprovalRequest,
 ) -> Response[OperationResponse | Problem]:
-    """Decide an account approval on waiting work (ADR-1194).
+    """Decide an account approval on waiting work.
 
      Requires deploy:write and MFA. Only a step whose definition names the account approver. The same
     decision is idempotent; a different one conflicts. Rejection settles the operation failed with
@@ -155,7 +155,7 @@ def sync(
     client: AuthenticatedClient | Client,
     body: OperationApprovalRequest,
 ) -> OperationResponse | Problem | None:
-    """Decide an account approval on waiting work (ADR-1194).
+    """Decide an account approval on waiting work.
 
      Requires deploy:write and MFA. Only a step whose definition names the account approver. The same
     decision is idempotent; a different one conflicts. Rejection settles the operation failed with
@@ -193,7 +193,7 @@ async def asyncio_detailed(
     client: AuthenticatedClient | Client,
     body: OperationApprovalRequest,
 ) -> Response[OperationResponse | Problem]:
-    """Decide an account approval on waiting work (ADR-1194).
+    """Decide an account approval on waiting work.
 
      Requires deploy:write and MFA. Only a step whose definition names the account approver. The same
     decision is idempotent; a different one conflicts. Rejection settles the operation failed with
@@ -234,7 +234,7 @@ async def asyncio(
     client: AuthenticatedClient | Client,
     body: OperationApprovalRequest,
 ) -> OperationResponse | Problem | None:
-    """Decide an account approval on waiting work (ADR-1194).
+    """Decide an account approval on waiting work.
 
      Requires deploy:write and MFA. Only a step whose definition names the account approver. The same
     decision is idempotent; a different one conflicts. Rejection settles the operation failed with

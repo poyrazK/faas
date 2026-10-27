@@ -14,13 +14,16 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-const oauthFlowNamespace = "issue-slack-oauth-flow-v1"
+const oauthFlowNamespace = api.IssueSlackOAuthFlowNamespace
 
 type OAuthService struct {
-	Store      state.IssueSlackOAuthStore
-	Client     *Client
-	Config     OAuthConfig
-	Recipient  *age.X25519Recipient
+	Store  state.IssueSlackOAuthStore
+	Client *Client
+	Config OAuthConfig
+	// Recipients seal workspace tokens, signing secrets and consent flows:
+	// the account seal domain and the fleet recipient while the domain rolls
+	// out (ADR 20261022111812). Identities open them, the domain first.
+	Recipients []*age.X25519Recipient
 	Identities []*age.X25519Identity
 }
 type oauthFlowSecret struct {
@@ -49,7 +52,7 @@ func (s OAuthService) seal(c oauthFlowSecret) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	return secretbox.SealBytes(s.Recipient, oauthFlowNamespace, b, api.IssueSlackOAuthSealedMaxBytes)
+	return secretbox.SealBytesTo(s.Recipients, oauthFlowNamespace, b, api.IssueSlackOAuthSealedMaxBytes)
 }
 func (s OAuthService) open(f state.IssueSlackOAuthFlow) (oauthFlowSecret, error) {
 	var c oauthFlowSecret
@@ -60,7 +63,7 @@ func (s OAuthService) open(f state.IssueSlackOAuthFlow) (oauthFlowSecret, error)
 	return c, nil
 }
 func (s OAuthService) Start(ctx context.Context, app, owner string, revision int64) (string, string, error) {
-	if !s.Config.Enabled() || s.Recipient == nil {
+	if !s.Config.Enabled() || len(s.Recipients) == 0 {
 		return "", "", api.ErrCapacity("Slack OAuth is not configured")
 	}
 	raw := make([]byte, api.IssueSlackLinkNonceBytes)
@@ -132,11 +135,11 @@ func (s OAuthService) Finish(ctx context.Context, nonce, app, owner string) erro
 	if err = s.Client.VerifyOAuth(ctx, OAuthTokens{Token: c.Token, WorkspaceID: c.WorkspaceID, BotUserID: c.BotUserID}); err != nil {
 		return api.ErrCapacity("Slack workspace verification failed; restart consent")
 	}
-	in.TokenSealed, err = secretbox.SealBytes(s.Recipient, state.IssueSlackTokenNamespace, []byte(c.Token), api.IssueSlackTokenMaxBytes)
+	in.TokenSealed, err = secretbox.SealBytesTo(s.Recipients, state.IssueSlackTokenNamespace, []byte(c.Token), api.IssueSlackTokenMaxBytes)
 	if err != nil {
 		return err
 	}
-	signing, err := secretbox.SealBytes(s.Recipient, state.IssueSlackSigningSecretNamespace, []byte(s.Config.SigningSecret), api.IssueSlackSigningSecretBytes)
+	signing, err := secretbox.SealBytesTo(s.Recipients, state.IssueSlackSigningSecretNamespace, []byte(s.Config.SigningSecret), api.IssueSlackSigningSecretBytes)
 	if err != nil {
 		return err
 	}

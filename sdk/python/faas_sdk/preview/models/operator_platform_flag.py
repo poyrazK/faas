@@ -39,7 +39,7 @@ class OperatorPlatformFlag:
     consumers: list[str]
     attributes: list[OperatorPlatformFlagAttributesItem]
     """Subject attributes every consumer can supply, so rules may constrain them; a write using any other is
-    refused (ADR 20261021080640)."""
+    refused."""
     legacy_env: list[str]
     definition: PlatformFlagDefinition
     """Stored value of a platform flag. Enabled is the kill switch; default applies to accounts no rule matches."""
@@ -56,7 +56,7 @@ class OperatorPlatformFlag:
     last_error: str | Unset = UNSET
     updated_at: datetime.datetime | Unset = UNSET
     maturity: OperatorPlatformFlagMaturity | Unset = UNSET
-    """Tier of the capability the flag releases (ADR-20261023115741)."""
+    """Tier of the capability the flag releases."""
     parent: str | Unset = UNSET
     """Parent capability flag; a sub-feature is released only while its parent is."""
     core: bool | Unset = UNSET

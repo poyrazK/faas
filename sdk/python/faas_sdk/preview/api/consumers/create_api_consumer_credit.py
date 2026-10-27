@@ -102,7 +102,7 @@ def sync_detailed(
 
      Finalized statements in the credit's currency draw it down, the grant
     that expires first before grants that never expire, in the same
-    transaction that finalizes them (ADR-1306). Credit never pays more
+    transaction that finalizes them. Credit never pays more
     than a statement's amount. A consumer holds at most 100 grants with
     credit left.
 
@@ -110,7 +110,7 @@ def sync_detailed(
         slug (str):
         consumer_id (UUID):
         idempotency_key (str | Unset):
-        body (CreateAPIConsumerCreditRequest): Prepaid credit for one consumer (ADR-1306).
+        body (CreateAPIConsumerCreditRequest): Prepaid credit for one consumer.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -146,7 +146,7 @@ def sync(
 
      Finalized statements in the credit's currency draw it down, the grant
     that expires first before grants that never expire, in the same
-    transaction that finalizes them (ADR-1306). Credit never pays more
+    transaction that finalizes them. Credit never pays more
     than a statement's amount. A consumer holds at most 100 grants with
     credit left.
 
@@ -154,7 +154,7 @@ def sync(
         slug (str):
         consumer_id (UUID):
         idempotency_key (str | Unset):
-        body (CreateAPIConsumerCreditRequest): Prepaid credit for one consumer (ADR-1306).
+        body (CreateAPIConsumerCreditRequest): Prepaid credit for one consumer.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -185,7 +185,7 @@ async def asyncio_detailed(
 
      Finalized statements in the credit's currency draw it down, the grant
     that expires first before grants that never expire, in the same
-    transaction that finalizes them (ADR-1306). Credit never pays more
+    transaction that finalizes them. Credit never pays more
     than a statement's amount. A consumer holds at most 100 grants with
     credit left.
 
@@ -193,7 +193,7 @@ async def asyncio_detailed(
         slug (str):
         consumer_id (UUID):
         idempotency_key (str | Unset):
-        body (CreateAPIConsumerCreditRequest): Prepaid credit for one consumer (ADR-1306).
+        body (CreateAPIConsumerCreditRequest): Prepaid credit for one consumer.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -227,7 +227,7 @@ async def asyncio(
 
      Finalized statements in the credit's currency draw it down, the grant
     that expires first before grants that never expire, in the same
-    transaction that finalizes them (ADR-1306). Credit never pays more
+    transaction that finalizes them. Credit never pays more
     than a statement's amount. A consumer holds at most 100 grants with
     credit left.
 
@@ -235,7 +235,7 @@ async def asyncio(
         slug (str):
         consumer_id (UUID):
         idempotency_key (str | Unset):
-        body (CreateAPIConsumerCreditRequest): Prepaid credit for one consumer (ADR-1306).
+        body (CreateAPIConsumerCreditRequest): Prepaid credit for one consumer.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

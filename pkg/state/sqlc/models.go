@@ -2865,6 +2865,7 @@ type Cron struct {
 	SchedulePolicy        []byte
 	FailureRules          []byte
 	ScheduleRevision      int64
+	ScheduleAnchorAt      pgtype.Timestamptz
 }
 
 type CronFireNowRequest struct {
@@ -9524,6 +9525,20 @@ type ObjectStorageBillingPeriod struct {
 	IncludedEgressBytes          int64
 }
 
+// Object-storage charge delivered so far per provider, account, UTC month and mode. Written by apid in daily steps and at month close; meterd reserves live rows under the overage cap (ADR-20261027093220).
+type ObjectStorageBillingProgress struct {
+	Provider            string
+	AccountID           pgtype.UUID
+	PeriodStart         pgtype.Timestamptz
+	Mode                string
+	DeliveredMillicents int64
+	PendingMillicents   int64
+	PendingFixed        bool
+	CreditedMillicents  int64
+	Version             int64
+	UpdatedAt           pgtype.Timestamptz
+}
+
 type ObjectStorageBucketUsage struct {
 	BucketID       pgtype.UUID
 	BaselineBytes  int64
@@ -11654,16 +11669,17 @@ type ProjectEnvironment struct {
 }
 
 type ProjectEnvironmentApproval struct {
-	ID                pgtype.UUID
-	AccountID         pgtype.UUID
-	ProjectSlug       string
-	EnvironmentSlug   string
-	PlanTokenHash     string
-	ApprovalTokenHash string
-	ExpiresAt         pgtype.Timestamptz
-	CreatedAt         pgtype.Timestamptz
-	TokenKind         string
-	ConsumedAt        pgtype.Timestamptz
+	ID                  pgtype.UUID
+	AccountID           pgtype.UUID
+	ProjectSlug         string
+	EnvironmentSlug     string
+	PlanTokenHash       string
+	ApprovalTokenHash   string
+	ExpiresAt           pgtype.Timestamptz
+	CreatedAt           pgtype.Timestamptz
+	TokenKind           string
+	ConsumedAt          pgtype.Timestamptz
+	ApprovedByAccountID pgtype.UUID
 }
 
 type ProjectEnvironmentCleanupJob struct {

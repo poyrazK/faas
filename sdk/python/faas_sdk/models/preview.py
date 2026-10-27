@@ -14,7 +14,7 @@ T = TypeVar("T", bound="Preview")
 
 @_attrs_define
 class Preview:
-    """One self-serve platform preview (ADR 20261021080640)."""
+    """One self-serve platform preview."""
 
     key: str
     label: str

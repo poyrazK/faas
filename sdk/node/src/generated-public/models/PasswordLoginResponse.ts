@@ -6,7 +6,7 @@
  * Successful sign-in. The session cookie is set via
  * `Set-Cookie: faas_sid=…`; the body carries only
  * `{account_id, plan}`. No API key is ever returned on
- * login (issue #165, PR #2).
+ * login.
  *
  */
 export type PasswordLoginResponse = {

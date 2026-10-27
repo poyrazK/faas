@@ -16,10 +16,7 @@ T = TypeVar("T", bound="DashboardWidget")
 
 @_attrs_define
 class DashboardWidget:
-    """One typed reference to a signal (ADR-20261022173833). app_metric and custom_metric use metric, log_count uses query,
-    slo uses slo_id.
-
-    """
+    """One typed reference to a signal. app_metric and custom_metric use metric, log_count uses query, slo uses slo_id."""
 
     title: str
     kind: DashboardWidgetKind

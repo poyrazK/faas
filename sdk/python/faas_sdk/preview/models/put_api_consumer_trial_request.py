@@ -14,7 +14,7 @@ T = TypeVar("T", bound="PutAPIConsumerTrialRequest")
 
 @_attrs_define
 class PutAPIConsumerTrialRequest:
-    """A consumer's trial length in days from its start, or its end (ADR-1314). Set exactly one."""
+    """A consumer's trial length in days from its start, or its end. Set exactly one."""
 
     days: int | Unset = UNSET
     ends_at: datetime.datetime | Unset = UNSET

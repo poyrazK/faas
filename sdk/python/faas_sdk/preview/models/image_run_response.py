@@ -39,7 +39,7 @@ class ImageRunResponse:
     command: list[str] | Unset = UNSET
     """The resolved argv the task runs."""
     attach: AppTaskAttachInfo | Unset = UNSET
-    """One-time attach credential for an interactive app task (ADR-1037). Returned only in the create response."""
+    """One-time attach credential for an interactive app task. Returned only in the create response."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

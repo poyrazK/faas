@@ -6,6 +6,8 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
+
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 // Node outbound budget (ADR-1323). Every connection copies the payloads queued
@@ -32,18 +34,30 @@ const (
 	outboundNodeBudgetReason = "node outbound budget exceeded"
 )
 
-// reserveNodeOutbound accounts n queued bytes against the node budget, or
-// reports that they do not fit. Releasing bytes (n <= 0) always succeeds, and
-// so does everything when the budget is disabled.
-func (m *Manager) reserveNodeOutbound(n int64) bool {
+// reserveNodeOutbound accounts n queued bytes for account against the node
+// budget, or reports that they do not fit. Releasing bytes (n <= 0) always
+// succeeds, and so does everything when the budget is disabled.
+//
+// An account holds at most api.RealtimeAccountNodeSharePercent of the budget
+// (security audit 2026-10-27): its slow readers each kept just under the
+// shedder's backlog floor could otherwise fill the node's budget with
+// backlogs nothing sheds, and every other tenant's frames on the node would
+// be refused.
+func (m *Manager) reserveNodeOutbound(account *accountConnections, n int64) bool {
 	limit := m.cfg.OutboundNodeBytes
 	if n <= 0 || limit <= 0 {
 		m.outboundPendingBytes.Add(n)
+		account.outbound.Add(n)
 		return true
+	}
+	if share := limit * api.RealtimeAccountNodeSharePercent / 100; account.outbound.Add(n) > share {
+		account.outbound.Add(-n)
+		return false
 	}
 	for {
 		current := m.outboundPendingBytes.Load()
 		if current > limit-n {
+			account.outbound.Add(-n)
 			m.wakeOutboundShed()
 			return false
 		}
@@ -155,4 +169,11 @@ func (c *connection) shed(code int, reason string) {
 			_ = c.ws.Close()
 		}()
 	})
+}
+
+// releaseNodeOutbound returns size bytes c held against the node budget and
+// its account's share.
+func (m *Manager) releaseNodeOutbound(c *connection, size int64) {
+	m.outboundPendingBytes.Add(-size)
+	c.state.account.outbound.Add(-size)
 }

@@ -3,7 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * Advances the rule's rollout stage by stage (ADR 20261021080640). The rollout is the current stage; apid moves it on once the flag's version has held for interval_seconds and its health routes stayed under max_5xx_basis_points over that window with at least min_requests requests. On a breach it pauses (and for rollback returns one stage); a paused ramp waits for an operator to clear paused.
+ * Advances the rule's rollout stage by stage. The rollout is the current stage; the API moves it on once the flag's version has held for interval_seconds and its health routes stayed under max_5xx_basis_points over that window with at least min_requests requests. On a breach it pauses (and for rollback returns one stage); a paused ramp waits for an operator to clear paused.
  */
 export type PlatformFlagRamp = {
   /**

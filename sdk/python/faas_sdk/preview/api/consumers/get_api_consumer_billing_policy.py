@@ -65,7 +65,7 @@ def sync_detailed(
     *,
     client: AuthenticatedClient | Client,
 ) -> Response[APIConsumerBillingPolicyResponse | Problem]:
-    """Read the app's overdue-invoice rule (ADR-1315).
+    """Read the app's overdue-invoice rule.
 
     Args:
         slug (str):
@@ -94,7 +94,7 @@ def sync(
     *,
     client: AuthenticatedClient | Client,
 ) -> APIConsumerBillingPolicyResponse | Problem | None:
-    """Read the app's overdue-invoice rule (ADR-1315).
+    """Read the app's overdue-invoice rule.
 
     Args:
         slug (str):
@@ -118,7 +118,7 @@ async def asyncio_detailed(
     *,
     client: AuthenticatedClient | Client,
 ) -> Response[APIConsumerBillingPolicyResponse | Problem]:
-    """Read the app's overdue-invoice rule (ADR-1315).
+    """Read the app's overdue-invoice rule.
 
     Args:
         slug (str):
@@ -145,7 +145,7 @@ async def asyncio(
     *,
     client: AuthenticatedClient | Client,
 ) -> APIConsumerBillingPolicyResponse | Problem | None:
-    """Read the app's overdue-invoice rule (ADR-1315).
+    """Read the app's overdue-invoice rule.
 
     Args:
         slug (str):

@@ -16,6 +16,9 @@ import (
 const (
 	trafficSecurityHeader   = "X-Faas-Traffic-Security"
 	trafficSecurityRealtime = "v1;managed-realtime"
+	// trafficSecurityFenceOff marks an answer an operator chose to serve
+	// without the revocation fence (platformflags.TrafficRevocationFence).
+	trafficSecurityFenceOff = "v1;fence-off"
 )
 
 func encodeTrafficSecurity(states map[trafficrevocation.Scope]trafficrevocation.State) (string, error) {
@@ -28,6 +31,10 @@ func decodeTrafficSecurity(value string) (map[trafficrevocation.Scope]trafficrev
 
 func stampTrafficSecurity(ctx context.Context, header http.Header) {
 	header.Del(trafficSecurityHeader)
+	if trafficFenceIsOff(ctx) {
+		header.Set(trafficSecurityHeader, trafficSecurityFenceOff)
+		return
+	}
 	// Invalid owner IDs can occur only in legacy fixtures. A production public
 	// gateway refuses a successful response without this verified snapshot.
 	if value, err := encodeTrafficSecurity(trafficSecuritySnapshot(ctx)); err == nil {
@@ -44,6 +51,9 @@ type publicTrafficSecurity struct {
 	// peers is non-nil only while a compute gateway behind this edge predates
 	// the snapshot header (release N-1); answers then pass unverified.
 	peers TrafficSecurityPeers
+	// observer counts answers passed unverified, including fence-off ones
+	// while the snapshot is otherwise required.
+	observer TrafficSecurityPeers
 }
 
 // TrafficSecurityPeers reports whether every compute gateway an edge may dial
@@ -74,7 +84,7 @@ func (p *InternalReverseProxy) publicTrafficContext(parent context.Context) (con
 		return parent, func() {}
 	}
 	ctx, cancel := reqbudget.WithCancellationFence(parent)
-	owner := &publicTrafficSecurity{registry: p.trafficRevocations, cancel: cancel}
+	owner := &publicTrafficSecurity{registry: p.trafficRevocations, cancel: cancel, observer: p.trafficSecurityPeers}
 	if p.trafficSecurityPeers != nil && !p.trafficSecurityPeers.Required() {
 		owner.peers = p.trafficSecurityPeers
 	}
@@ -130,6 +140,14 @@ func bindPublicTrafficSecurity(r *http.Request, resp *http.Response) error {
 	}
 	if len(values) != 1 {
 		return trafficrevocation.ErrUnavailable
+	}
+	if values[0] == trafficSecurityFenceOff {
+		// The compute gateway is the fence's owner and strips any guest copy,
+		// so its marker is trusted: the operator turned the fence off.
+		if owner.observer != nil {
+			owner.observer.Unverified()
+		}
+		return nil
 	}
 	if values[0] == trafficSecurityRealtime {
 		if strings.HasPrefix(r.URL.Path, realtime.ManagedPathPrefix) {

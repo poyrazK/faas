@@ -15,7 +15,7 @@ T = TypeVar("T", bound="PlatformTenantSpendCapResponse")
 
 @_attrs_define
 class PlatformTenantSpendCapResponse:
-    """A tenant's spend cap and its last check (ADR-20261019100331)."""
+    """A tenant's spend cap and its last check."""
 
     tenant_id: UUID
     currency: str

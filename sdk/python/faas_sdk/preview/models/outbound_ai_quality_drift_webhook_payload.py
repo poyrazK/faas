@@ -19,7 +19,7 @@ T = TypeVar("T", bound="OutboundAIQualityDriftWebhookPayload")
 @_attrs_define
 class OutboundAIQualityDriftWebhookPayload:
     """Data delivered with outbound.ai_quality.drift to every app bound to the integration when a model's quality signal
-    moves away from its previous 7 days (ADR 20261021171712). alert_id is stable across retries.
+    moves away from its previous 7 days. alert_id is stable across retries.
 
     """
 

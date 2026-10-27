@@ -3,7 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * One stored ADR-202 gauge.
+ * One stored gauge.
  */
 export type CustomMetricResponse = {
   name: string;
@@ -14,7 +14,7 @@ export type CustomMetricResponse = {
    */
   stale: boolean;
   /**
-   * gauge for pushed values (a scaling signal); counter for ADR-745 OTLP cumulative sums, which never drive scaling.
+   * gauge for pushed values (a scaling signal); counter for OTLP cumulative sums, which never drive scaling.
    */
   kind?: 'gauge' | 'counter';
 };

@@ -3860,7 +3860,7 @@ func (e *Engine) admitAndDispatchOnce(ctx context.Context, appID, deploymentID, 
 	}
 	prefetched := prefetch.wait()
 	privateNetwork := prefetched.privateNetwork
-	healthcheckPath, healthcheckGRPC, healthcheckGRPCService := startupProbeForApp(dep, app.AppProtocol)
+	healthcheckPath, healthcheckGRPC, healthcheckGRPCService := startupProbeForApp(dep, app)
 	pinnedBase, err := prefetched.baseKey, prefetched.baseKeyErr
 	ctx = withBootPrepared(ctx, bootPrepared{instanceID: ins.ID,
 		rehearsalRunID: prefetched.rehearsalRunID, haveRehearsal: prefetched.rehearsalErr == nil,
@@ -4078,16 +4078,16 @@ func (e *Engine) admitAndDispatchOnce(ctx context.Context, appID, deploymentID, 
 			// sees a Problem (and therefore writes through to the
 			// client with Retry-After) instead of falling through
 			// to its ErrCapacity fallback that lacks the header
-			// (review finding #1a on PR #322). The detail
-			// preserves the underlying storage error verbatim so
-			// log greps still find it.
+			// (review finding #1a on PR #322). The storage error
+			// is logged here, not returned: the problem can reach
+			// the app's visitors through the gateway.
 			e.log.Warn("wake: verifier i/o error",
 				"app", logsanitize.Field(appID), "layer", spec.LayerKey, "err", err)
 			e.transitionWithKind(ctx, bootInput.insID, appID, state.StateFailed, "wake_boot_error", "sig_verify_io")
 			e.ledger.Release(bootInput.insID)
 			return WakeResult{}, api.NewProblem(503, api.CodeCapacity,
 				"signature verification storage error",
-				fmt.Sprintf("verifier I/O error for layer %q: %v (retry shortly)", spec.LayerKey, err)).
+				"The image signature store could not be read; retry shortly.").
 				WithHeader("Retry-After", "5")
 		}
 	}
@@ -5917,7 +5917,7 @@ func (e *Engine) buildAppSpecForMigrationWithValues(ctx context.Context, instanc
 		return AppSpec{}, state.RuntimeAppValuesSnapshot{}, fmt.Errorf("sched: build app spec: GitOps service bindings: %w", err)
 	}
 	privateNetwork := e.privateNetworkProjection(ctx, app)
-	healthcheckPath, healthcheckGRPC, healthcheckGRPCService := startupProbeForApp(dep, app.AppProtocol)
+	healthcheckPath, healthcheckGRPC, healthcheckGRPCService := startupProbeForApp(dep, app)
 	pinnedBase, err := e.deploymentBaseKey(ctx, app, dep, layerKey(dep.RootfsKey, dep.ID))
 	if err != nil {
 		return AppSpec{}, state.RuntimeAppValuesSnapshot{}, err
@@ -6569,7 +6569,7 @@ func (e *Engine) verifyPrimeLayer(ctx context.Context, appID, layer string) erro
 		e.log.Warn("prime: verifier i/o error", "app", appID, "layer", layer, "err", err)
 		return api.NewProblem(503, api.CodeCapacity,
 			"signature verification storage error",
-			fmt.Sprintf("verifier I/O error for layer %q: %v (retry shortly)", layer, err)).
+			"The image signature store could not be read; retry shortly.").
 			WithHeader("Retry-After", "5")
 	}
 	return nil
@@ -9894,6 +9894,11 @@ func (e *Engine) DestroyForWorkloadOOMFailure(ctx context.Context, instanceID st
 	}
 	appID := fresh.AppID
 	deploymentID := fresh.DeploymentID
+	// A single-workload guest has no in-guest memory cap and reports
+	// plan 0; its plan RAM is the instance's (ADR-121 amendment).
+	if planMB <= 0 {
+		planMB = fresh.RAMMB
+	}
 
 	// Acquire the app lock so a parallel Wake / Park for the
 	// same app observes a consistent state. Mirrors the comment
@@ -9949,6 +9954,17 @@ func (e *Engine) DestroyForWorkloadOOMFailure(ctx context.Context, instanceID st
 		return fmt.Errorf("sched: workload_oom: destroy instance %s: %w", instanceID, err)
 	}
 	e.ledger.Release(instanceID)
+	failDeployment := false
+	if deploymentID != "" {
+		dep, derr := e.store.DeploymentByID(ctx, deploymentID)
+		if derr != nil {
+			// Unknown release state: keep it serving. The kill is
+			// still recorded below and the instance is gone.
+			e.log.Warn("workload_oom: read deployment", "instance", instanceID, "deployment_id", deploymentID, "err", derr)
+		} else {
+			failDeployment = oomFailsDeployment(dep)
+		}
+	}
 
 	// Audit row (Cluster C / ADR-121). The audit kind is
 	// `instances.workload_oom_failed` so the customer's
@@ -9970,12 +9986,13 @@ func (e *Engine) DestroyForWorkloadOOMFailure(ctx context.Context, instanceID st
 	// audit row is now exactly one.
 	if e.events != nil {
 		e.events.Emit(ctx, events.WorkloadOOMFailed{
-			EmitAt:       now,
-			InstanceID:   instanceID,
-			AppID:        appID,
-			DeploymentID: deploymentID,
-			PeakMB:       peakMB,
-			PlanMB:       planMB,
+			EmitAt:           now,
+			InstanceID:       instanceID,
+			AppID:            appID,
+			DeploymentID:     deploymentID,
+			PeakMB:           peakMB,
+			PlanMB:           planMB,
+			DeploymentFailed: failDeployment,
 		})
 	}
 	e.linkOOMProfileCapture(ctx, appID, instanceID, now, peakMB, planMB)
@@ -10015,10 +10032,11 @@ func (e *Engine) DestroyForWorkloadOOMFailure(ctx context.Context, instanceID st
 	// the dashboard's `.error-explanation` section + the
 	// catalogue's Hint/Why/Fix pick up the same prose.
 	//
-	// Unconditional (no reason-gating like the liveness path) —
-	// every workload OOM gets the stamp because the cluster code
-	// is dedicated to this failure mode.
-	if deploymentID != "" {
+	// Only before the release is fully live (ADR-121 amendment):
+	// failing a live release moves its traffic away, or takes the
+	// app offline when there is no fallback, over one memory spike.
+	// A live release keeps serving; the debugger reads the event.
+	if failDeployment {
 		problem := &api.Problem{
 			Code:   api.CodeAppRuntimeOOM,
 			Status: 422,
@@ -10036,6 +10054,32 @@ func (e *Engine) DestroyForWorkloadOOMFailure(ctx context.Context, instanceID st
 		}
 	}
 	return nil
+}
+
+// oomFailsDeployment reports whether an OOM kill of one of a deployment's
+// instances fails the deployment (ADR-121 amendment): while it is not live
+// yet, or live but still rolling out (a canary ladder, or a service handoff
+// with no ladder). A live release that has finished rolling out keeps
+// serving, and a failed, superseded or cancelled one is already out of
+// service. A live 'pending' row without a ladder is a release that predates
+// rollout tracking, which the safedeploy orchestrator completes on its next
+// tick; it counts as rolled out.
+func oomFailsDeployment(d state.Deployment) bool {
+	switch d.Status {
+	case state.DeployLive:
+		switch d.RolloutState {
+		case "rolling_out":
+			return true
+		case "pending":
+			return d.CanaryTotalSteps > 0 && d.CanaryStep < d.CanaryTotalSteps
+		default:
+			return false
+		}
+	case state.DeployPending, state.DeployBuilding, state.DeployImaging, state.DeploySnapshotting:
+		return true
+	default:
+		return false
+	}
 }
 
 // ParkDeployment is the liveness-window-exhausted stop path

@@ -32,7 +32,7 @@ class DataUpstreamHistoryResponse:
     scope: str | Unset = UNSET
     """Env scope associated with the upstream."""
     deployment_scope: str | Unset = UNSET
-    """Deployment scope from the ADR-098 issue #954 overlay."""
+    """Deployment scope from the overlay."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

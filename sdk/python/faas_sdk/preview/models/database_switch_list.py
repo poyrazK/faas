@@ -15,7 +15,7 @@ T = TypeVar("T", bound="DatabaseSwitchList")
 
 @_attrs_define
 class DatabaseSwitchList:
-    """An app's database switches, newest first."""
+    """A page of an app's database switches, newest first."""
 
     items: list[DatabaseSwitch]
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)

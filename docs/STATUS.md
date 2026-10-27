@@ -7,6 +7,43 @@ does not mirror this list; customer-facing maturity belongs in the generated
 release or acceptance state changes, and keep older milestone notes clearly
 historical.
 
+## Crons GA blockers — 2026-10-26 (#5649, merged 2026-10-27, not released)
+
+The 2026-10-26 crons GA review found four blockers; #5649 fixes them
+([ADR-20261026201726](adr/20261026201726-cron-delivery-through-the-drain.md)):
+
+- HTTP cron fires and manual runs no longer wake the app or wait for it on
+  schedd's main loop. They queue a cron invocation that the invocation drain
+  delivers, so slow handlers cannot stall heartbeats, the reaper or other
+  tenants' crons. Plain HTTP crons keep one delivery attempt; manual runs
+  report their invocation's outcome and are capped at five active per cron.
+- `crons.schedule_anchor_at` restarts a schedule when it is edited, enabled
+  or unsuspended, so none of those fires the cron at once or replays passed
+  occurrences.
+- Command crons are scoped into the app-tasks preview (off in production).
+  Crons have a customer page, [docs/crons.md](crons.md).
+- Acceptance: `cmd/e2e/cron_e2e_test.go` (KVM-free, real apid, schedd and
+  gatewayd processes) proves a scheduled fire and a manual run reach the app
+  with the cron source header, and a visitor cannot forge that header.
+  PASS on the n2 test node on 2026-10-27 (76.6 s, revision a9e9c64e83; log
+  at `n2:/mnt/e2e-scratch/crons-ga/cron_e2e.log`). Unit and Postgres suites
+  for the cron, fire-now, drain and app-task paths pass; the five
+  `TestDrainSecurity*` failures are on main already.
+
+Follow-ups from the same review (branch `fix/crons-ga-followups`):
+
+- Schedule decisions and manual-run requests older than 90 days
+  (`api.CronHistoryRetention`, the longest plan's run history) are pruned on
+  schedd's hourly retention tick; unsettled decisions are kept.
+- `schedd_cron_delivery_total{outcome}` and
+  `schedd_cron_schedule_lag_seconds` back two operator alerts,
+  `FaasCronDeliveryLag` and `FaasCronDeliveryFailing`
+  ([runbook](runbooks/FaasCronDelivery.md)).
+- Cron paths are validated (single leading `/`, no host, at most 2,048 bytes)
+  by the API, the triggers API, source-ref manifests and `gregale.yaml`.
+- The OpenAPI spec documents `GET /v1/crons?slug=`; the Go SDK gains
+  `GetCron`, `FireCron`, `GetFireCronRequest` and `ListCronRuns`.
+
 ## Release guards — 2026-10-26
 
 Production releases can be held back by:

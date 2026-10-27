@@ -256,6 +256,11 @@ Another account's broken free-form host match cannot block this tenant.
 Empty verified policies remain
 valid snapshots. Runtime response/span evidence records the digest.
 
+Amended by ADR-20261027085556: a request with no host, smoke, release or
+revision pin routes from its gateway's refreshed view of the app (owner,
+roster and release graph), refreshed every second and on notification, with
+a 5-minute outage grace. Pinned requests keep the per-request read below.
+
 Before public HTTP cache lookup or dispatch, release resolution, revision-pin
 eligibility, host-pinned deployment availability and scoped positive weights
 join one bounded read-only repeatable-read view. Owner identity is verified in
@@ -1083,6 +1088,25 @@ policies before changing any row. Applies without policy changes keep their
 existing transaction. With these, every writer found by the 2026-10-26
 inventory of binding-table writes is guarded or explicitly exempt.
 
+### Follow-up: operator kill switches
+
+The revocation fence and the per-VM HTTP cap fail closed and were live for
+every account with no way to turn them off short of a release. Operator
+disable switches remain explicit, observable states, as the decision requires:
+
+- The platform flag `traffic_revocation_fence` defaults on. Turned off
+  platform-wide or for an account, gatewayd-internal skips enrollment for
+  those requests and stamps their answers with a `v1;fence-off` marker, which
+  the public edge passes unverified like the managed-realtime marker. The
+  compute gateway strips any guest copy first, so a guest cannot author it.
+  A missing account never reads as "off".
+- `FAAS_HTTP_ADMISSION=off` on vmmd lifts the cap and the plan requirement on
+  that node after a restart, while every exchange still holds a permit that
+  park, migration and retirement cancel. vmmd has no runtime flag watcher.
+
+`gateway_traffic_revocation_fence_off_total{path}`, the edge's unverified
+counter, the VM admission status and a startup warning report each state.
+
 ### Follow-up: bounded request decision evidence
 
 Ordinary response completion checks the attached budget's wall-clock expiry as
@@ -1739,3 +1763,13 @@ Bounds and limits:
   consecutive releases have run with every member reporting the wiring, and
   not before rc.297. That is a separate change, with the release-compatibility
   tests updated to match.
+
+### Amendment: the binding guard is scoped to the hostnames a write changes (2026-10-27)
+
+[ADR 20261027163626](20261027163626-traffic-binding-guard-per-host.md)
+replaces the exclusive `gregale.traffic.global-routes.v1` lock with
+hierarchical per-name locks. The global key becomes their shared root. The
+guard analyses only hostnames whose claim changes, against the owned rules and
+the route candidates that can match them. The write-time guarantee, ceilings,
+error codes and the 2 s phase bound are unchanged. Until its switch is on, the
+sections above describe production.

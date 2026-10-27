@@ -17,8 +17,8 @@ T = TypeVar("T", bound="DebugDependencyDeploymentComparison")
 
 @_attrs_define
 class DebugDependencyDeploymentComparison:
-    """Dependency latency split by deployment (ADR-958): baseline_* fields describe the previous deployment, current_* the
-    compared one. Regressions first, then by current p95.
+    """Dependency latency split by deployment: baseline_* fields describe the previous deployment, current_* the compared
+    one. Regressions first, then by current p95.
 
     """
 

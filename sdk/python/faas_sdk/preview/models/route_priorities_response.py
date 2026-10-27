@@ -31,8 +31,8 @@ class RoutePrioritiesResponse:
     updated_at: datetime.datetime | Unset = UNSET
     """When saved rules last changed; omitted for the route-health default."""
     queue: RoutePriorityQueueStats | Unset = UNSET
-    """How the app's warm-capacity queue behaved per priority class over the evidence window (ADR-1152). Present on
-    GET; source is unavailable when gateway metrics cannot be read."""
+    """How the app's warm-capacity queue behaved per priority class over the evidence window. Present on GET;
+    source is unavailable when gateway metrics cannot be read."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
