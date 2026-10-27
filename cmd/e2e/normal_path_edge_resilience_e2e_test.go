@@ -15,7 +15,9 @@ package e2e_test
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 
@@ -70,6 +72,28 @@ func releasePlatformFlags(t *testing.T, pool *pgxpool.Pool, flags []string, reas
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
+}
+
+// gatewayCircuitMetrics returns gatewayd-internal's breaker series from its
+// control /metrics.
+func gatewayCircuitMetrics(t *testing.T, f *normalPathFixture) string {
+	t.Helper()
+	if f.h.GatewayControlURL == "" {
+		t.Fatal("harness does not expose the gatewayd-internal control URL")
+	}
+	resp, err := f.h.HTTPClient().Get(strings.TrimSuffix(f.h.GatewayControlURL, "/") + "/metrics")
+	if err != nil {
+		t.Fatalf("scrape gateway metrics: %v", err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	var out []string
+	for _, line := range strings.Split(string(body), "\n") {
+		if strings.HasPrefix(line, "gateway_circuit_") {
+			out = append(out, line)
+		}
+	}
+	return strings.Join(out, "\n")
 }
 
 // releaseResilienceCapabilities releases request-retry and circuit-breaking,
@@ -261,6 +285,15 @@ func TestE2E_NormalPath_EdgeCircuitBreakerKeepsFailedInstanceOut(t *testing.T) {
 			}
 			if !failed {
 				t.Fatal("no request reached the flaky sibling")
+			}
+			// The failure must have opened the tuned circuit, and only that.
+			circuitSeries := gatewayCircuitMetrics(t, f)
+			opened := strings.Contains(circuitSeries, `gateway_circuit_transitions_total{from="closed",to="open"}`)
+			if tuned && !opened {
+				t.Fatalf("one transport failure did not open the tuned circuit; breaker series:\n%s", circuitSeries)
+			}
+			if !tuned && opened {
+				t.Fatalf("the default breaker opened on one failure; breaker series:\n%s", circuitSeries)
 			}
 
 			// The instance recovers; once its quarantine ends it rejoins.
