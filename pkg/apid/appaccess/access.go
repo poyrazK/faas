@@ -258,7 +258,10 @@ func authorizeShared(r *http.Request, store Store, audit authz.AuditEmitter, act
 		}
 		action = authz.OrgActionManageAppSecurity
 	}
-	if (org.Status == state.OrgStatusSuspended || org.Status == state.OrgStatusPastDue) && action != authz.OrgActionReadApp && action != authz.OrgActionReadAppLogs && action != authz.ReadObjectStorage && action != authz.OrgActionReadQueues {
+	// A past-due company keeps running and loses only deploys (spec §4.7), as
+	// a past-due account does: the owner account below carries past_due, so
+	// deploy admission refuses while members still revoke and reconfigure.
+	if org.Status == state.OrgStatusSuspended && action != authz.OrgActionReadApp && action != authz.OrgActionReadAppLogs && action != authz.ReadObjectStorage && action != authz.OrgActionReadQueues {
 		return state.Account{}, api.ErrOrgRoleForbidden("change applications in an inactive organization")
 	}
 	if p := authz.AuthorizeOrgAction(r.Context(), action, audit); p != nil {
