@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -211,5 +212,45 @@ func TestTargetHydrationValidationSnapshotDoesNotAliasReadiness(t *testing.T) {
 	withdrawn.ReadinessGates.States["primary_app"] = ReadinessState{Ready: true, UpdatedAt: time.Now(), EventID: 11}
 	if b.Pick(target.AppID).OK {
 		t.Fatal("a caller's snapshot mutation re-enabled shared routing")
+	}
+}
+
+// A replica admitted while an at-capacity admission rehydrates its app fences
+// that read. The admission takes one fresh read instead of failing the wake
+// (a deployment response check failed this way in nightly e2e).
+func TestAtCapacityAdmissionRereadsAfterPlacementChange(t *testing.T) {
+	old := placementFixture("app", "instance")
+	fresh := old
+	fresh.WakeID = "replacement"
+	started, release := make(chan struct{}), make(chan struct{})
+	var reads atomic.Int32
+	b := NewPGBackend(nil, nil, nil).WithTargetPlacementLoader(func(ctx context.Context, _ []string) (map[string]TargetPlacementSnapshot, error) {
+		if reads.Add(1) == 1 {
+			close(started)
+			select {
+			case <-release:
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			}
+			return map[string]TargetPlacementSnapshot{old.AppID: placementSnapshot(old.AppID, old)}, nil
+		}
+		return map[string]TargetPlacementSnapshot{old.AppID: placementSnapshot(old.AppID, fresh)}, nil
+	})
+	done := make(chan error, 1)
+	go func() {
+		_, _, atCapacity, err := b.recordAdmission(t.Context(), old.AppID, old.DeploymentID, "", "", "", "", 0, true, 0)
+		if err == nil && !atCapacity {
+			err = errors.New("at-capacity admission lost its signal")
+		}
+		done <- err
+	}()
+	<-started
+	b.RecordTarget(old.AppID, fresh) // the replica the caller waits for
+	close(release)
+	if err := <-done; err != nil {
+		t.Fatalf("at-capacity admission failed on a stale read: %v", err)
+	}
+	if got := reads.Load(); got != 2 {
+		t.Fatalf("placement reads = %d, want one fresh read after the fence", got)
 	}
 }
