@@ -48,11 +48,11 @@ func TestAutomaticProfileCaptureInterval(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			if err := store.QueueAutomaticProfileCapture(ctx, acct.ID, app.ID, api.ProfileCapture{ID: uuid.NewString(), CreatedAt: now}, time.Hour); err == nil {
+			if err := store.QueueAutomaticProfileCapture(ctx, acct.ID, app.ID, api.ProfileCapture{ID: uuid.NewString(), CreatedAt: now}, time.Hour, profileCaptureStorage); err == nil {
 				t.Fatal("automatic capture without a trigger accepted")
 			}
 			first := auto(now)
-			if err := store.QueueAutomaticProfileCapture(ctx, acct.ID, app.ID, first, time.Hour); err != nil {
+			if err := store.QueueAutomaticProfileCapture(ctx, acct.ID, app.ID, first, time.Hour, profileCaptureStorage); err != nil {
 				t.Fatal(err)
 			}
 			got, err := store.GetProfileCapture(ctx, acct.ID, app.ID, first.ID)
@@ -60,19 +60,19 @@ func TestAutomaticProfileCaptureInterval(t *testing.T) {
 				t.Fatalf("automatic capture = %+v %v", got, err)
 			}
 			finish()
-			if err := store.QueueAutomaticProfileCapture(ctx, acct.ID, app.ID, auto(now.Add(30*time.Minute)), time.Hour); !errors.Is(err, state.ErrProfileCaptureRecent) {
+			if err := store.QueueAutomaticProfileCapture(ctx, acct.ID, app.ID, auto(now.Add(30*time.Minute)), time.Hour, profileCaptureStorage); !errors.Is(err, state.ErrProfileCaptureRecent) {
 				t.Fatalf("second automatic capture inside the interval: %v", err)
 			}
 			// A manual capture is not limited by the automatic interval.
 			manual := api.ProfileCapture{ID: uuid.NewString(), Kinds: []string{"cpu"}, DurationSeconds: 5, CreatedAt: now.Add(31 * time.Minute), ExpiresAt: now.Add(api.ProfileCaptureRetention)}
-			if err := store.CreateProfileCapture(ctx, acct.ID, app.ID, manual); err != nil {
+			if err := store.CreateProfileCapture(ctx, acct.ID, app.ID, manual, profileCaptureStorage); err != nil {
 				t.Fatal(err)
 			}
 			if got, _ := store.GetProfileCapture(ctx, acct.ID, app.ID, manual.ID); got.Trigger != api.ProfileCaptureTriggerManual {
 				t.Fatalf("manual capture trigger = %q", got.Trigger)
 			}
 			finish()
-			if err := store.QueueAutomaticProfileCapture(ctx, acct.ID, app.ID, auto(now.Add(61*time.Minute)), time.Hour); err != nil {
+			if err := store.QueueAutomaticProfileCapture(ctx, acct.ID, app.ID, auto(now.Add(61*time.Minute)), time.Hour, profileCaptureStorage); err != nil {
 				t.Fatalf("automatic capture after the interval: %v", err)
 			}
 		})

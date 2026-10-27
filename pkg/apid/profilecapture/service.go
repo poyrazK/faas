@@ -110,7 +110,7 @@ func (s *Service) Queue(ctx context.Context, acct state.Account, app state.App, 
 	capture := api.ProfileCapture{ID: uuid.NewString(), AppID: app.ID, Status: api.ProfileCaptureQueued, Kinds: req.Kinds,
 		DurationSeconds: req.DurationSeconds, RequestedInstanceID: req.InstanceID, Profiles: []api.ProfileCaptureProfile{},
 		CreatedAt: now, ExpiresAt: now.Add(api.ProfileCaptureRetention)}
-	if err := store.CreateProfileCapture(ctx, acct.ID, app.ID, capture); err != nil {
+	if err := store.CreateProfileCapture(ctx, acct.ID, app.ID, capture, api.MustLimitsFor(acct.Plan).Profiling.CaptureStorageBytes); err != nil {
 		return capture, createProblem(err)
 	}
 	payload, _ := json.Marshal(map[string]string{"capture_id": capture.ID})
@@ -130,6 +130,14 @@ func createProblem(err error) *api.Problem {
 		return api.NewProblem(http.StatusTooManyRequests, api.CodeQuotaExhausted, "Profile capture limit reached",
 			fmt.Sprintf("an account can start %d profile captures per hour", api.ProfileCaptureMaxPerAccountHour)).
 			WithLimit(api.ProfileCaptureMaxPerAccountHour, api.ProfileCaptureMaxPerAccountHour)
+	}
+	var full *state.ProfileCaptureStorageError
+	if errors.As(err, &full) {
+		return api.NewProblem(http.StatusTooManyRequests, api.CodeQuotaExhausted, "Profile capture storage full",
+			fmt.Sprintf("the account's profile captures use %d of %d bytes; captures expire %d days after they are taken",
+				full.Used, full.Limit, int(api.ProfileCaptureRetention.Hours()/24))).
+			WithByteLimit(full.Limit, full.Used).
+			WithDocs("https://gregale.dev/docs/profiling#capture-a-running-instance-on-demand")
 	}
 	return api.ErrCapacity("profile capture could not be queued")
 }
