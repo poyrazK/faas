@@ -1381,10 +1381,46 @@ func createOrFetchAppWith(ctx context.Context, client *Client, req, existingReq 
 	}
 	existing, err = client.GetApp(ctx, req.Slug)
 	if err != nil {
-		return fmt.Errorf("slug %q is already in use; pick a different --name", req.Slug)
+		return slugInUseError(ctx, client, req.Slug)
 	}
 	setResolved(existing)
 	return configureExistingApp(ctx, client, existing, existingReq, requireAuthnPtr, appProtocolPtr, publicAuthPtr)
+}
+
+// slugInUseError explains a CreateApp 409 that the follow-up GetApp cannot
+// resolve. The slug belongs to another account, or to one of the caller's
+// own deleted apps, which holds its slug until it is purged; the second case
+// gets a restore hint instead of a dead end (Hunt 14 H14-93). The lookup is
+// best effort: any error falls back to the generic message.
+func slugInUseError(ctx context.Context, client *Client, slug string) error {
+	cursor := ""
+	for page := 0; page < 4; page++ {
+		list, err := client.ListDeletedApps(ctx, cursor, 50)
+		if err != nil {
+			break
+		}
+		for _, app := range list.Apps {
+			if app.Slug != slug {
+				continue
+			}
+			if app.RestoreEligible {
+				return fmt.Errorf("slug %q belongs to an app you deleted%s; restore it with `gregale apps restore %s`, or pick a different --name", slug, deletedAppUntil(app.DeleteGraceUntil, " that can be restored until "), slug)
+			}
+			return fmt.Errorf("slug %q is held by an app you deleted until it is purged%s; pick a different --name", slug, deletedAppUntil(app.DeleteGraceUntil, " after "))
+		}
+		if list.NextCursor == "" {
+			break
+		}
+		cursor = list.NextCursor
+	}
+	return fmt.Errorf("slug %q is already in use; pick a different --name", slug)
+}
+
+func deletedAppUntil(t *time.Time, prefix string) string {
+	if t == nil || t.IsZero() {
+		return ""
+	}
+	return prefix + t.UTC().Format("2006-01-02 15:04 UTC")
 }
 
 // openPublicAuthAfterTokenRemoval is the public_auth change implied by

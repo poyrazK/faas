@@ -978,6 +978,31 @@ usage, the budgets and the window (`limits.settled_retention_seconds`).
 Unsettled receipts and receipts that a recovery or backfill holds are kept past
 the window.
 
+### Routing failures in the dead-letter queue
+
+A recipient whose routing fails for good (its retries run out, its delivery
+age expires, or its target is gone) never gets an invocation, so its failure
+lives on the event's receipt: `gregale events deliveries APP` lists it, and
+`gregale events replay` or `gregale events recover` route it again while the
+receipt is kept. When the receipt is pruned at the end of the settled-receipt
+window, each failed recipient moves to the dead-letter queue as an
+`event_route` entry, kept for 30 days from the failure like other dead letters
+([ADR-20261026163443](adr/20261026163443-event-routing-failures-in-the-dead-letter-queue.md)):
+
+- `payload` is the published event and `error_kind` its `failure_code`;
+  `error_detail` names the subscription, the event's source, id and type, when
+  it was accepted, the last error, the retry stop reason and `retryable`;
+  `retry_count` is the routing attempts. The origin is `event_subscription`, or
+  `event_workflow` for a workflow recipient.
+- The entry is listed under its app (`gregale dlq list APP`), or only in the
+  account view (`GET /v1/account/dlq`) when the app no longer exists.
+- It cannot be replayed, because the receipt is gone: replay answers
+  `409 dead_letter_not_replayable` and replay-all skips it. To deliver the
+  event, publish the payload again. A publication after the receipt is pruned
+  is accepted as a new delivery and reaches every subscription that matches it
+  now, not only the one that failed. Discard the entry with
+  `gregale dlq purge APP EVENT_ID`.
+
 ### Retention health and expiry alerts
 
 Inspect retained receipts and storage pressure before scheduling recovery:
@@ -1132,8 +1157,11 @@ before the recipient-snapshot migration continue using the previous routing
 behavior, which reads current subscriptions. The scheduler records a routing
 outcome for each captured candidate, so a transient enqueue error retries only
 that candidate. Retries are capped at 12; terminal routing failures remain on
-the outbox receipt and are logged by the scheduler. Once an invocation is
-enqueued, its handler retry and dead-letter lifecycle applies independently.
+the outbox receipt, are logged by the scheduler, and move to the dead-letter
+queue when the receipt is pruned (see
+[Routing failures in the dead-letter queue](#routing-failures-in-the-dead-letter-queue)).
+Once an invocation is enqueued, its handler retry and dead-letter lifecycle
+applies independently.
 
 Snapshot-backed application routing admits the invocation or work-policy
 cancellation and records success in one transaction. An expired routing worker
