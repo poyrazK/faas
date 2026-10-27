@@ -50,6 +50,14 @@ const (
 // DeploymentAttemptIDBytes is the encoded size of a random 128-bit submission identity.
 const DeploymentAttemptIDBytes = 32
 
+// Keys minted by a JSON password sign-in (POST /v1/auth/login and
+// /v1/auth/signup) lapse like CLI device-code keys, and an account keeps at
+// most SignInAPIKeysMax of them: the next sign-in revokes the oldest.
+const (
+	SignInAPIKeyTTL  = 30 * 24 * time.Hour
+	SignInAPIKeysMax = 5
+)
+
 // Migration verification shares normal task and wake admission. These bounds
 // limit orchestration receipts, not customer compute entitlements.
 const (

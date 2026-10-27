@@ -35,6 +35,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"sort"
 	"strings"
 	"time"
 
@@ -414,6 +415,7 @@ func (s *server) finishPasswordReset(w http.ResponseWriter, r *http.Request, acc
 		api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError, "internal_error", "Internal Error", "account lookup failed"))
 		return
 	}
+	s.revokeSignInKeysAfterPasswordChange(r, acct)
 	s.issueSessionCookie(w, r, acct)
 	http.Redirect(w, r, "/dashboard/", http.StatusFound)
 }
@@ -513,6 +515,7 @@ func (s *server) finishSetPassword(w http.ResponseWriter, r *http.Request, acct 
 			keep = current.ID
 		}
 		s.revokeSessionsAfterPasswordChange(r.Context(), acct.ID, keep)
+		s.revokeSignInKeysAfterPasswordChange(r, acct)
 	}
 	s.audit.Emit(r.Context(), "account.password_set", &acct.ID, map[string]any{
 		"proof":    proof,
@@ -1004,26 +1007,23 @@ func (s *server) postV1AuthSignupMagicLink(w http.ResponseWriter, r *http.Reques
 	_, _ = io.WriteString(w, `{"status":"ok"}`)
 }
 
+// signInKeyLabel marks the keys a JSON password sign-in mints, so a
+// password change can find and revoke them.
+const signInKeyLabel = "signup"
+
 // mintAndWriteV1AuthJSON mints a fresh programmatic api_key for acct
 // and writes the ProgrammaticAuthResponse body. Mirrors the
 // /v1/keys mint pattern (handlers_ext.go:1751): GenerateAPIKey →
 // SHA-256 → CreateAPIKeyWithExpiryAndProvenance with provenance
-// ("cli_signup", ip, ua), label "signup", expiry 0. The audit
-// provenance columns (created_ip, created_ua) are stamped on the
+// ("cli_signup", ip, ua), label "signup", expiry api.SignInAPIKeyTTL.
+// The audit provenance columns (created_ip, created_ua) are stamped on the
 // row so a SOC 2 auditor can answer "who minted this key from which
 // UA" without joining through Loki (R2 risk).
 func (s *server) mintAndWriteV1AuthJSON(w http.ResponseWriter, r *http.Request, acct state.Account, requestEmail string) {
-	// A password alone never yields an operator key (ADR 20261023214253):
-	// operators mint keys from an MFA-completed session via POST /v1/keys.
-	if s.isOperator(acct) {
-		s.audit.Emit(r.Context(), "auth.mfa_gate_hit", &acct.ID, map[string]any{
-			"path":   r.URL.Path,
-			"method": r.Method,
-		})
-		api.WriteProblem(w, api.NewProblem(http.StatusForbidden, api.CodeMFARequired, "MFA required",
-			"operator accounts cannot get an API key with a password; sign in with gregalectl auth login, or create a key from the dashboard"))
+	if s.refusePasswordOnlyKey(w, r, acct) {
 		return
 	}
+	s.retireOldSignInKeys(r, acct)
 	plaintext, hash, err := api.GenerateAPIKey()
 	if err != nil {
 		s.log.Error("v1auth_signup.generate_key", "err", err)
@@ -1038,15 +1038,16 @@ func (s *server) mintAndWriteV1AuthJSON(w http.ResponseWriter, r *http.Request, 
 	// signup/login on Postgres with a 500, while MemStore minted a
 	// scope-less key that could reach nothing.
 	org, perr := s.store.OrgByPersonalAccount(r.Context(), acct.ID)
+	expiresAt := time.Now().UTC().Add(api.SignInAPIKeyTTL)
 	var k state.APIKey
 	switch {
 	case perr == nil:
 		// Personal-org modern path. The label "signup" distinguishes
 		// these rows from /v1/keys-add key-mints in the audit query.
-		k, err = s.store.CreateOrgAPIKeyWithProvenance(r.Context(), org.ID, acct.ID, hash, "signup", api.ScopesAdminOnly, nil, bindIP, bindUA, nil)
+		k, err = s.store.CreateOrgAPIKeyWithProvenance(r.Context(), org.ID, acct.ID, hash, signInKeyLabel, api.ScopesAdminOnly, &expiresAt, bindIP, bindUA, nil)
 	case errors.Is(perr, state.ErrNotFound):
 		// Legacy fallback (pre-00127 fixtures). Same provenance columns.
-		k, err = s.store.CreateAPIKeyWithExpiryAndProvenance(r.Context(), acct.ID, hash, "signup", api.ScopesAdminOnly, nil, bindIP, bindUA, nil)
+		k, err = s.store.CreateAPIKeyWithExpiryAndProvenance(r.Context(), acct.ID, hash, signInKeyLabel, api.ScopesAdminOnly, &expiresAt, bindIP, bindUA, nil)
 	default:
 		api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError,
 			"internal_error", "Internal Error", "could not resolve personal org"))
@@ -1060,6 +1061,75 @@ func (s *server) mintAndWriteV1AuthJSON(w http.ResponseWriter, r *http.Request, 
 	}
 	s.recordKeyDisplayPrefix(r.Context(), k.ID, plaintext)
 	writeV1AuthJSON(w, acct, requestEmail, plaintext, k)
+}
+
+// refusePasswordOnlyKey refuses to trade a password alone for an API key
+// when the account has a second factor or must have one. Keys skip the
+// session MFA gate, so a key minted here would make TOTP worthless against
+// a stolen password. Operators are refused too (ADR 20261023214253). The
+// CLI's browser device-code flow goes through an MFA-checked session.
+func (s *server) refusePasswordOnlyKey(w http.ResponseWriter, r *http.Request, acct state.Account) bool {
+	if !s.sessionMFAPending(acct) {
+		return false
+	}
+	s.audit.Emit(r.Context(), "auth.mfa_gate_hit", &acct.ID, map[string]any{
+		"path":   r.URL.Path,
+		"method": r.Method,
+	})
+	detail := "this account uses two-factor authentication, so a password alone cannot get an API key; run gregale login to sign in through the browser, or create a key from the dashboard"
+	if s.isOperator(acct) {
+		detail = "operator accounts cannot get an API key with a password; sign in with gregalectl auth login, or create a key from the dashboard"
+	}
+	api.WriteProblem(w, api.NewProblem(http.StatusForbidden, api.CodeMFARequired, "MFA required", detail))
+	return true
+}
+
+// retireOldSignInKeys revokes the oldest live sign-in keys so the key about
+// to be minted leaves at most api.SignInAPIKeysMax. Best-effort: a failure
+// is logged and the sign-in proceeds.
+func (s *server) retireOldSignInKeys(r *http.Request, acct state.Account) {
+	keys, err := s.store.ListAPIKeys(r.Context(), acct.ID)
+	if err != nil {
+		s.log.Warn("v1auth.sign_in_keys_list", "account", acct.ID, "err", err)
+		return
+	}
+	live := liveSignInKeys(keys, time.Now())
+	for i := api.SignInAPIKeysMax - 1; i < len(live); i++ {
+		if _, err := s.revokeAPIKeyWithReason(r, acct, live[i].ID, "sign_in_rotated"); err != nil {
+			s.log.Warn("v1auth.sign_in_key_retire", "account", acct.ID, "key", live[i].ID, "err", err)
+		}
+	}
+}
+
+// liveSignInKeys returns the unrevoked, unexpired keys a password sign-in
+// minted, newest first.
+func liveSignInKeys(keys []state.APIKey, now time.Time) []state.APIKey {
+	var live []state.APIKey
+	for _, k := range keys {
+		if k.Label != signInKeyLabel || k.Status == "revoked" || (k.ExpiresAt != nil && !k.ExpiresAt.After(now)) {
+			continue
+		}
+		live = append(live, k)
+	}
+	sort.SliceStable(live, func(i, j int) bool { return live[i].CreatedAt.After(live[j].CreatedAt) })
+	return live
+}
+
+// revokeSignInKeysAfterPasswordChange revokes every key a password sign-in
+// minted: they were bought with the old password, which may be the one that
+// leaked. Keys the customer created on purpose stay. Best-effort, like the
+// session revocation beside it.
+func (s *server) revokeSignInKeysAfterPasswordChange(r *http.Request, acct state.Account) {
+	keys, err := s.store.ListAPIKeys(r.Context(), acct.ID)
+	if err != nil {
+		s.log.Warn("password change: list keys failed", "account", acct.ID, "err", err)
+		return
+	}
+	for _, k := range liveSignInKeys(keys, time.Now()) {
+		if _, err := s.revokeAPIKeyWithReason(r, acct, k.ID, "password_change"); err != nil {
+			s.log.Warn("password change: revoke key failed", "account", acct.ID, "key", k.ID, "err", err)
+		}
+	}
 }
 
 // writeV1AuthJSON writes the ProgrammaticAuthResponse with the

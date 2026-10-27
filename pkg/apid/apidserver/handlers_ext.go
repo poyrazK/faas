@@ -4781,6 +4781,13 @@ func (s *server) deleteKey(w http.ResponseWriter, r *http.Request, acct state.Ac
 // both entry points produce the same authentication-cache invalidation and
 // key.revoked event.
 func (s *server) revokeAPIKey(r *http.Request, acct state.Account, id string) (state.APIKey, error) {
+	return s.revokeAPIKeyWithReason(r, acct, id, "manual")
+}
+
+// revokeAPIKeyWithReason is revokeAPIKey with the audit reason named:
+// "manual" for the customer's own revocation, "password_change" and
+// "sign_in_rotated" for keys apid retires on the customer's behalf.
+func (s *server) revokeAPIKeyWithReason(r *http.Request, acct state.Account, id, reason string) (state.APIKey, error) {
 	ctx := r.Context()
 	prior, err := s.store.GetAPIKey(ctx, acct.ID, id)
 	if err != nil {
@@ -4793,7 +4800,7 @@ func (s *server) revokeAPIKey(r *http.Request, acct state.Account, id string) (s
 	// is a "update if not revoked" and returns the row either way.
 	var updated state.APIKey
 	if prior.OrgID != "" {
-		activity := newOrgAPIKeyActivity(r, acct, prior.OrgID, "api_key.revoked", map[string]any{"reason": "manual"})
+		activity := newOrgAPIKeyActivity(r, acct, prior.OrgID, "api_key.revoked", map[string]any{"reason": reason})
 		updated, err = s.revokeOrgAPIKeyWithActivity(ctx, prior.OrgID, id, activity)
 	} else {
 		updated, err = s.store.MarkAPIKeyRevoked(ctx, acct.ID, id)
@@ -4811,7 +4818,7 @@ func (s *server) revokeAPIKey(r *http.Request, acct state.Account, id string) (s
 	s.audit.Emit(ctx, "key.revoked", &acct.ID, map[string]any{
 		"key_id": updated.ID,
 		"scopes": updated.Scopes,
-		"reason": "manual",
+		"reason": reason,
 	})
 	return updated, nil
 }
