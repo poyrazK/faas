@@ -796,7 +796,12 @@ func (p *ServiceProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				serviceProxyProblem(dispatchWriter, http.StatusNotFound, "service is not registered")
 				return
 			}
-			serviceProxyProblem(dispatchWriter, http.StatusServiceUnavailable, err.Error())
+			// The cause can name internal hosts or store errors; tenant
+			// code gets a stable detail and operators get the log.
+			if p.log != nil {
+				p.log.Warn("service proxy: resolve target failed", "service", service, "err", err)
+			}
+			serviceProxyProblem(dispatchWriter, http.StatusServiceUnavailable, "service target is unavailable; retry shortly")
 			return
 		}
 	}
