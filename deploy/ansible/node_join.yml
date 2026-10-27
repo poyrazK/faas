@@ -1187,6 +1187,7 @@
       when: (faas_join_rollout_phase | default('full')) != 'activate'
 
     - name: Pre-stage release-bound runtime bases before draining the node
+      when: (faas_join_rollout_phase | default('full')) != 'activate'
       block:
         - name: Start the release-bound runtime-base pre-stage
           ansible.builtin.systemd:
@@ -1211,7 +1212,6 @@
         - name: Reload systemd after fresh-host vmmd bootstrap cleanup
           ansible.builtin.systemd:
             daemon_reload: true
-      when: (faas_join_rollout_phase | default('full')) != 'activate'
 
     - name: Record completed non-disruptive rollout preparation
       ansible.builtin.copy:
@@ -1382,8 +1382,8 @@
 
     - name: Gracefully drain the existing node before release installation
       when: >-
-        not (faas_join_skip_drain | bool) and (
-        (faas_join_rollout_phase | default('full')) == 'activate' or
+        not (faas_join_skip_drain | bool) and
+        ((faas_join_rollout_phase | default('full')) == 'activate' or
         (faas_join_existing_compute_node.rc | default(3)) == 0)
       block:
         - name: Begin graceful drain of the existing node before release installation
