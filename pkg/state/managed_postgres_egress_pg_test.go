@@ -6,6 +6,7 @@ package state_test
 import (
 	"errors"
 	"reflect"
+	"sort"
 	"strings"
 	"testing"
 
@@ -46,6 +47,8 @@ func TestPgManagedPostgresEgressEndpoints(t *testing.T) {
 				mine = append(mine, e)
 			}
 		}
+		// The query orders by the database's collation; compare as a set.
+		sort.Slice(mine, func(i, j int) bool { return mine[i].Host < mine[j].Host })
 		return mine
 	}
 	binding := uuid.NewString()

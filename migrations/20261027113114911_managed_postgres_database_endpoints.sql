@@ -1,5 +1,5 @@
 -- migration-compat: expand
--- filename: 20261026144852000_managed_postgres_database_endpoints.sql
+-- filename: 20261027113114911_managed_postgres_database_endpoints.sql
 --
 -- ADR-20261026150000: the host names and ports a managed database's
 -- credentials connect to, recorded by apid's credential sink whenever it seals
