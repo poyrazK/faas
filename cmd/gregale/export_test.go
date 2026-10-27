@@ -1394,6 +1394,7 @@ var McpCatalogDigestForPin = mcpCatalogDigestForPin
 var McpExpectedGatewayAction = mcpExpectedGatewayAction
 var McpHealthURL = mcpHealthURL
 var McpInputIsTerminal = mcpInputIsTerminal
+var McpLocalCLIDir = mcpLocalCLIDir
 var McpNativeDeploy = mcpNativeDeploy
 var McpNativeFingerprint = mcpNativeFingerprint
 var McpNativeWorkerLogs = mcpNativeWorkerLogs
