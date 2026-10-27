@@ -291,10 +291,62 @@ func (tg *target) cliEnv(token string) []string {
 }
 
 // run executes the CLI with the target's token. It never fails the test;
-// see ok for the asserting form.
+// see ok for the asserting form. An idempotent command that fails before
+// reaching the API (DNS, timeout: problem code transport_error) is retried
+// twice and logged as a warning, so a laptop network blip is not reported
+// as a platform failure while a slow API stays visible.
 func (tg *target) run(t *testing.T, timeout time.Duration, args ...string) cliResult {
 	t.Helper()
-	return tg.exec(t, tg.token, tg.home, timeout, args...)
+	res := tg.exec(t, tg.token, tg.home, timeout, args...)
+	for attempt, backoff := range []time.Duration{5 * time.Second, 15 * time.Second} {
+		if res.exit == 0 || res.problemCode() != "transport_error" || !idempotentCommand(args) {
+			break
+		}
+		t.Logf("warning: gregale %s could not reach the API (%s); retry %d in %s",
+			strings.Join(args, " "), res.problem(), attempt+1, backoff)
+		time.Sleep(backoff)
+		res = tg.exec(t, tg.token, tg.home, timeout, args...)
+	}
+	return res
+}
+
+// idempotentCommand reports whether repeating a CLI command cannot change
+// the outcome: reads, deletes, and settings that set an absolute value.
+// Deploys, rollbacks, key and cron creation and manual cron fires are not.
+func idempotentCommand(args []string) bool {
+	if len(args) == 0 {
+		return false
+	}
+	sub := ""
+	if len(args) > 1 {
+		sub = args[1]
+	}
+	switch args[0] {
+	case "app", "park", "wake", "ps", "logs", "metrics", "deployments", "deploys",
+		"whoami", "capabilities", "usage", "invoices", "audit-events", "status":
+		return true
+	case "apps":
+		return sub != "restore"
+	case "env":
+		return sub == "history" || sub == "diff"
+	case "secrets":
+		return sub == "list"
+	case "crons":
+		return sub == "rm" || sub == "runs" || sub == "list"
+	case "keys":
+		return sub == "rm" || sub == "list"
+	}
+	return false
+}
+
+func (r cliResult) problemCode() string {
+	var p struct {
+		Code string `json:"code"`
+	}
+	if json.Unmarshal(bytes.TrimSpace(r.stderr), &p) != nil {
+		return ""
+	}
+	return p.Code
 }
 
 // runAs runs the CLI with another credential, e.g. a freshly minted key.
@@ -454,7 +506,7 @@ func (tg *target) app(t *testing.T, name string) string {
 		}
 		res := tg.run(t, 2*time.Minute, "apps", "rm", slug, "--yes")
 		if res.exit != 0 && !strings.Contains(res.problem(), "not_found") {
-			t.Logf("cleanup: delete %s: %s", slug, res.problem())
+			t.Logf("warning: cleanup could not delete %s (%s); the next run's sweeper removes it", slug, res.problem())
 		}
 	})
 	return slug

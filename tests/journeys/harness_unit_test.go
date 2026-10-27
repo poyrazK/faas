@@ -2,6 +2,8 @@ package journeys
 
 import (
 	"errors"
+	"net"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -228,5 +230,39 @@ func TestHarnessFailureCodeNamesProblemOrStatus(t *testing.T) {
 	var none *continuity
 	if failed, total, _, _ := none.result(); failed != 0 || total != 0 {
 		t.Fatalf("nil continuity reported %d/%d", failed, total)
+	}
+}
+
+func TestHarnessIdempotentCommandRetriesOnlySafeCommands(t *testing.T) {
+	retry := [][]string{
+		{"app", "x", "--maintenance"}, {"park", "x"}, {"apps", "rm", "x", "--yes"},
+		{"secrets", "list", "--app", "x"}, {"crons", "rm", "id"}, {"keys", "rm", "id"},
+	}
+	once := [][]string{
+		{"deploy", "--name", "x"}, {"rollback", "x"}, {"keys", "add", "l"}, {"crons", "add"},
+		{"crons", "run", "id"}, {"secrets", "set", "K=V"}, {"apps", "restore", "x"}, {},
+	}
+	for _, args := range retry {
+		if !idempotentCommand(args) {
+			t.Errorf("idempotentCommand(%q) = false, want true", args)
+		}
+	}
+	for _, args := range once {
+		if idempotentCommand(args) {
+			t.Errorf("idempotentCommand(%q) = true, want false", args)
+		}
+	}
+}
+
+func TestHarnessLocalNetworkErrorIsDNSOnly(t *testing.T) {
+	dns := httpResult{err: &url.Error{Op: "Get", URL: "https://x", Err: &net.OpError{Op: "dial", Err: &net.DNSError{Err: "i/o timeout", Name: "x"}}}}
+	if !localNetworkError(dns) {
+		t.Error("a DNS failure is not classed as local")
+	}
+	if localNetworkError(httpResult{err: errors.New("net/http: TLS handshake timeout")}) {
+		t.Error("a TLS timeout (could be the edge) is classed as local")
+	}
+	if localNetworkError(httpResult{status: 503}) {
+		t.Error("an HTTP 503 is classed as local")
 	}
 }

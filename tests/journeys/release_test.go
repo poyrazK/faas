@@ -67,6 +67,9 @@ func TestSafeReleaseZeroDowntime(t *testing.T) {
 	s.check("no_failed_requests", func(t *testing.T) {
 		failed, total, byCode, samples := probe.result()
 		t.Logf("metric redeploy_probe_failures=%d", failed)
+		if n := probe.localFailures(); n > 0 {
+			t.Logf("warning: %d probes lost to this machine's DNS were not counted", n)
+		}
 		if failed > 0 {
 			t.Errorf("app was unavailable during the safe redeploy: %d of %d probes failed %v; first: %s",
 				failed, total, byCode, strings.Join(samples, "; "))
@@ -98,6 +101,9 @@ func TestHealthGate(t *testing.T) {
 				str(docs[0], "rollout_state"), str(docs[0], "rollout_aborted_reason"))
 		} else {
 			t.Logf("refused: %s", res.problem())
+		}
+		if n := watch.localFailures(); n > 0 {
+			t.Logf("warning: %d probes lost to this machine's DNS were not counted", n)
 		}
 		if failed, total, byCode, samples := watch.result(); failed > 0 {
 			t.Errorf("v1 stopped serving while the unhealthy release was refused: %d of %d probes failed %v; first: %s",

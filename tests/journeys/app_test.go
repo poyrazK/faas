@@ -5,7 +5,9 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"strings"
 	"sync"
@@ -318,6 +320,7 @@ type continuity struct {
 	mu      sync.Mutex
 	probes  int
 	failed  int
+	local   int            // probes lost to this machine's DNS
 	byCode  map[string]int // problem code (or HTTP status) -> count
 	samples []string       // the first few failures, verbatim
 	done    chan struct{}
@@ -340,7 +343,13 @@ func watchContinuity(target string) *continuity {
 				r := get(target)
 				c.mu.Lock()
 				c.probes++
-				if r.status != http.StatusOK {
+				switch {
+				case r.status == http.StatusOK:
+				case localNetworkError(r):
+					// The probe could not resolve the app's host: the
+					// laptop's resolver, not the platform.
+					c.local++
+				default:
 					c.failed++
 					c.byCode[failureCode(r)]++
 					if len(c.samples) < 5 {
@@ -368,7 +377,28 @@ func (c *continuity) result() (failed, total int, byCode map[string]int, samples
 	c.stop()
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	return c.failed, c.probes, c.byCode, c.samples
+	return c.failed, c.probes - c.local, c.byCode, c.samples
+}
+
+// localFailures is how many probes this machine's DNS lost; they count
+// neither as failures nor toward the total.
+func (c *continuity) localFailures() int {
+	if c == nil {
+		return 0
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.local
+}
+
+// localNetworkError reports a probe that never left this machine: its DNS
+// lookup failed.
+func localNetworkError(r httpResult) bool {
+	if r.err == nil {
+		return false
+	}
+	var dnsErr *net.DNSError
+	return errors.As(r.err, &dnsErr)
 }
 
 // failureCode names a failed probe by its RFC 7807 code, else its status.
