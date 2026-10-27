@@ -95,7 +95,7 @@ def sync_detailed(
 
      Loads the account, calls billing.Provider.ReconcileUsage for
     a rolling 30-day window [start, end). Stripe implements
-    this (ADR-049 §B.1); Paddle returns billing.ErrNotImplemented
+    this; Paddle returns billing.ErrNotImplemented
     and the handler maps to 501. The response surfaces the
     SDK-returned mb_seconds total so an operator can diff
     against the local usage_minutes sum.
@@ -131,7 +131,7 @@ def sync(
 
      Loads the account, calls billing.Provider.ReconcileUsage for
     a rolling 30-day window [start, end). Stripe implements
-    this (ADR-049 §B.1); Paddle returns billing.ErrNotImplemented
+    this; Paddle returns billing.ErrNotImplemented
     and the handler maps to 501. The response surfaces the
     SDK-returned mb_seconds total so an operator can diff
     against the local usage_minutes sum.
@@ -162,7 +162,7 @@ async def asyncio_detailed(
 
      Loads the account, calls billing.Provider.ReconcileUsage for
     a rolling 30-day window [start, end). Stripe implements
-    this (ADR-049 §B.1); Paddle returns billing.ErrNotImplemented
+    this; Paddle returns billing.ErrNotImplemented
     and the handler maps to 501. The response surfaces the
     SDK-returned mb_seconds total so an operator can diff
     against the local usage_minutes sum.
@@ -196,7 +196,7 @@ async def asyncio(
 
      Loads the account, calls billing.Provider.ReconcileUsage for
     a rolling 30-day window [start, end). Stripe implements
-    this (ADR-049 §B.1); Paddle returns billing.ErrNotImplemented
+    this; Paddle returns billing.ErrNotImplemented
     and the handler maps to 501. The response surfaces the
     SDK-returned mb_seconds total so an operator can diff
     against the local usage_minutes sum.

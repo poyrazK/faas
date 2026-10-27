@@ -17,7 +17,7 @@ T = TypeVar("T", bound="PutBillingConnectionRequest")
 
 @_attrs_define
 class PutBillingConnectionRequest:
-    """The account's own key for one billing provider (ADR-1502, ADR-1507)."""
+    """The account's own key for one billing provider."""
 
     secret_key: str
     """A Stripe secret or restricted key (sk_… or rk_…), a Paddle API key (pdl_…), or a Lago API key."""
@@ -25,15 +25,14 @@ class PutBillingConnectionRequest:
     """Lago only: the API origin for the EU region or a self-hosted Lago, https:// only; default
     https://api.getlago.com."""
     collection: PutBillingConnectionRequestCollection | Unset = "none"
-    """What the provider does with exported invoices (ADR-1311): none leaves drafts (Lago issues them without
-    charging); send has Stripe email the invoice; charge has Stripe charge the customer's default payment method, or
-    Lago charge through its payment provider. Paddle supports none and send: send bills the transaction so Paddle
-    emails the invoice to the customer's most recent address; Paddle cannot charge a saved card for an invoice."""
+    """What the provider does with exported invoices: none leaves drafts (Lago issues them without charging); send
+    has Stripe email the invoice; charge has Stripe charge the customer's default payment method, or Lago charge
+    through its payment provider. Paddle supports none and send: send bills the transaction so Paddle emails the
+    invoice to the customer's most recent address; Paddle cannot charge a saved card for an invoice."""
     days_until_due: int | Unset = 30
     """With collection send, days until a sent invoice is due."""
     automatic_tax: bool | Unset = False
-    """Stripe only: have Stripe Tax calculate tax on exported invoices (ADR-1313). Needs Stripe Tax and customer
-    addresses."""
+    """Stripe only: have Stripe Tax calculate tax on exported invoices. Needs Stripe Tax and customer addresses."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

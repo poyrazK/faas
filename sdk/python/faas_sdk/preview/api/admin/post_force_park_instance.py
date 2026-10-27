@@ -113,13 +113,12 @@ def sync_detailed(
 
      Operator-side recovery primitive for instances wedged in
     {RUNNING, WAKING, COLD_BOOTING} that the customer can't
-    wait for the idle reaper to handle. PR #1099 P2 redesign:
-    apid writes a row to `operator_intents` (PR #1099 P2.1)
-    and emits `pg_notify('operator_intent', …)`; schedd
-    (the ONLY writer to `instances` per CLAUDE.md §6.2) is
+    wait for the idle reaper to handle. redesign:
+    The API writes a row to `operator_intents`
+    and emits `pg_notify('operator_intent', …)`; the scheduler
+    (the ONLY writer to `instances`) is
     the sole consumer and dispatches via
-    `engine.ParkWithReason` so the `pkg/state/machine.go`
-    `CanTransition` guard fires. The handler returns 202
+    its park path, so the instance state machine's transition guard fires. The handler returns 202
     Accepted with an intent_id; the operator polls
     GET /v1/admin/operator-intents/{id} for terminal state.
 
@@ -128,7 +127,7 @@ def sync_detailed(
     to `operator_force_park`; values are clamped to the
     `[a-z0-9_]{1,64}` shape.
 
-    ADR-1524: requires an MFA-verified operator session with step-up in
+    Requires an MFA-verified operator session with step-up in
     the last five minutes, admin scope, the operator allowlist and same
     origin. Bearer keys do not satisfy step-up. Requires one
     Idempotency-Key (1-255 visible ASCII characters), an empty body,
@@ -184,13 +183,12 @@ def sync(
 
      Operator-side recovery primitive for instances wedged in
     {RUNNING, WAKING, COLD_BOOTING} that the customer can't
-    wait for the idle reaper to handle. PR #1099 P2 redesign:
-    apid writes a row to `operator_intents` (PR #1099 P2.1)
-    and emits `pg_notify('operator_intent', …)`; schedd
-    (the ONLY writer to `instances` per CLAUDE.md §6.2) is
+    wait for the idle reaper to handle. redesign:
+    The API writes a row to `operator_intents`
+    and emits `pg_notify('operator_intent', …)`; the scheduler
+    (the ONLY writer to `instances`) is
     the sole consumer and dispatches via
-    `engine.ParkWithReason` so the `pkg/state/machine.go`
-    `CanTransition` guard fires. The handler returns 202
+    its park path, so the instance state machine's transition guard fires. The handler returns 202
     Accepted with an intent_id; the operator polls
     GET /v1/admin/operator-intents/{id} for terminal state.
 
@@ -199,7 +197,7 @@ def sync(
     to `operator_force_park`; values are clamped to the
     `[a-z0-9_]{1,64}` shape.
 
-    ADR-1524: requires an MFA-verified operator session with step-up in
+    Requires an MFA-verified operator session with step-up in
     the last five minutes, admin scope, the operator allowlist and same
     origin. Bearer keys do not satisfy step-up. Requires one
     Idempotency-Key (1-255 visible ASCII characters), an empty body,
@@ -250,13 +248,12 @@ async def asyncio_detailed(
 
      Operator-side recovery primitive for instances wedged in
     {RUNNING, WAKING, COLD_BOOTING} that the customer can't
-    wait for the idle reaper to handle. PR #1099 P2 redesign:
-    apid writes a row to `operator_intents` (PR #1099 P2.1)
-    and emits `pg_notify('operator_intent', …)`; schedd
-    (the ONLY writer to `instances` per CLAUDE.md §6.2) is
+    wait for the idle reaper to handle. redesign:
+    The API writes a row to `operator_intents`
+    and emits `pg_notify('operator_intent', …)`; the scheduler
+    (the ONLY writer to `instances`) is
     the sole consumer and dispatches via
-    `engine.ParkWithReason` so the `pkg/state/machine.go`
-    `CanTransition` guard fires. The handler returns 202
+    its park path, so the instance state machine's transition guard fires. The handler returns 202
     Accepted with an intent_id; the operator polls
     GET /v1/admin/operator-intents/{id} for terminal state.
 
@@ -265,7 +262,7 @@ async def asyncio_detailed(
     to `operator_force_park`; values are clamped to the
     `[a-z0-9_]{1,64}` shape.
 
-    ADR-1524: requires an MFA-verified operator session with step-up in
+    Requires an MFA-verified operator session with step-up in
     the last five minutes, admin scope, the operator allowlist and same
     origin. Bearer keys do not satisfy step-up. Requires one
     Idempotency-Key (1-255 visible ASCII characters), an empty body,
@@ -319,13 +316,12 @@ async def asyncio(
 
      Operator-side recovery primitive for instances wedged in
     {RUNNING, WAKING, COLD_BOOTING} that the customer can't
-    wait for the idle reaper to handle. PR #1099 P2 redesign:
-    apid writes a row to `operator_intents` (PR #1099 P2.1)
-    and emits `pg_notify('operator_intent', …)`; schedd
-    (the ONLY writer to `instances` per CLAUDE.md §6.2) is
+    wait for the idle reaper to handle. redesign:
+    The API writes a row to `operator_intents`
+    and emits `pg_notify('operator_intent', …)`; the scheduler
+    (the ONLY writer to `instances`) is
     the sole consumer and dispatches via
-    `engine.ParkWithReason` so the `pkg/state/machine.go`
-    `CanTransition` guard fires. The handler returns 202
+    its park path, so the instance state machine's transition guard fires. The handler returns 202
     Accepted with an intent_id; the operator polls
     GET /v1/admin/operator-intents/{id} for terminal state.
 
@@ -334,7 +330,7 @@ async def asyncio(
     to `operator_force_park`; values are clamped to the
     `[a-z0-9_]{1,64}` shape.
 
-    ADR-1524: requires an MFA-verified operator session with step-up in
+    Requires an MFA-verified operator session with step-up in
     the last five minutes, admin scope, the operator allowlist and same
     origin. Bearer keys do not satisfy step-up. Requires one
     Idempotency-Key (1-255 visible ASCII characters), an empty body,

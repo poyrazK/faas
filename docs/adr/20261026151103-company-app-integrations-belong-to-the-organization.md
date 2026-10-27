@@ -91,3 +91,43 @@ For integrations that send data out of Gregale it is worse in two ways:
   has, including those other admins configured after this change.
 - **Flagging for review without pausing.** Company data keeps flowing to the
   departed member's destination until someone reviews it.
+
+## Amendment 1 (2026-10-27): credentials a company app issues
+
+A sweep of the app routes that still fall back to "the creator only, while
+an owner or admin" found a second kind of row a departure leaves behind:
+credentials. Each is shown once to the member who mints or sets it and
+keeps working after that member leaves, because it belongs to the app, not
+to the member. The member removal revokes deploy tokens and organization
+keys, which act as the member; it cannot revoke these without breaking the
+app's clients. Until now nobody else in the company could revoke or rotate
+them either.
+
+**Decision.** Owners and admins (`org.manage_app_security`) list, rotate and
+revoke a company app's credentials, whoever created the app:
+
+- API consumers and their keys: list, read, revoke a consumer; list, issue
+  and revoke its keys;
+- inbound webhooks: list, read, change (signing secret, delivery path,
+  enabled) and delete;
+- issue ingest tokens: list, issue and revoke;
+- the managed realtime endpoint's client authentication: list and read
+  endpoints, change one (static token, JWKS issuer, callback and the rest of
+  its settings), and rotate or finalize its static bearer token;
+- realtime publisher and worker credentials: list, issue, rotate and revoke;
+- AI gateway access tokens: list and revoke. Issuing one stays with the
+  app's creator, as binding an outbound integration does: the token spends
+  the creator's provider credential.
+
+Developers and viewers do not reach these routes. Each handler already binds
+the credential to the addressed app, so the change widens no lookup. The
+consequence above about managed realtime endpoint callbacks no longer holds
+for changing an endpoint; creating and deleting one keep the creator-only
+fallback.
+
+**Swept, unchanged.** The other unreviewed app routes keep the fallback:
+they configure or operate the app inside Gregale, and a departed creator
+loses them at once. Production forks and dev bridges, the two credentials
+that act as their creator outside apid, recheck the creator's standing on
+every use (`appaccess.Standing`). Traffic mirrors copy requests only to
+another deployment of the same app.

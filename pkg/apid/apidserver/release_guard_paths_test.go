@@ -251,3 +251,48 @@ func TestRollbackRestoreDatabasesIsHiddenWithoutPostgresRestore(t *testing.T) {
 		t.Fatalf("restore_databases with postgres-restore off = %d %s, want the unknown-field answer", w.Code, w.Body)
 	}
 }
+
+// A protected environment's promotion approval stands in for an app's own
+// policy only as one decision by its approver: it cannot meet two required
+// approvals, and when the policy forbids self-approval it must come from
+// someone other than the promoter (amendment 2, security audit 2026-10-27).
+func TestProtectedPromotionApprovalMeetsTheAppsPolicy(t *testing.T) {
+	e := apidserver.Setup(t, api.PlanScale)
+	store := *e.Store()
+	acct := *e.Acct()
+	srv := *e.S()
+	app, err := store.CreateApp(t.Context(), state.App{AccountID: acct.ID, Slug: "protected-shop", Status: state.AppActive})
+	if err != nil {
+		t.Fatal(err)
+	}
+	guardLiveDeployment(t, store, app.ID, "production")
+	policy := func(required int, self bool) {
+		t.Helper()
+		if _, err := store.SetReleaseApprovalPolicy(t.Context(), state.ReleaseApprovalPolicy{AppID: app.ID, AccountID: acct.ID,
+			RequiredApprovals: required, AfterStage: 1, TimeoutMinutes: 60, Approvers: state.ReleaseApproversAdmin, AllowSelfApproval: self}, time.Now()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	const promoter, colleague = "promoter-account", "colleague-account"
+	check := func(approver string) *api.Problem {
+		return srv.ProtectedPromotionApprovalProblemForTest(t.Context(), []state.App{app}, "production", approver, promoter)
+	}
+	policy(1, false)
+	if p := check(promoter); p == nil || p.Code != api.CodeReleaseApprovalSelf {
+		t.Fatalf("self-approved promotion under a no-self-approval policy = %+v, want release_approval_self", p)
+	}
+	if p := check(""); p == nil || p.Code != api.CodeReleaseApprovalSelf {
+		t.Fatalf("an approval with no recorded approver = %+v, want it refused", p)
+	}
+	if p := check(colleague); p != nil {
+		t.Fatalf("a colleague's approval = %+v, want it to stand in", p)
+	}
+	policy(1, true)
+	if p := check(promoter); p != nil {
+		t.Fatalf("self-approval under a policy that allows it = %+v", p)
+	}
+	policy(2, true)
+	if p := check(colleague); p == nil || p.Code != api.CodeReleaseApprovalCanaryRequired {
+		t.Fatalf("one approval for a two-approval policy = %+v, want release_approval_canary_required", p)
+	}
+}

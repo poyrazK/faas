@@ -90,9 +90,9 @@ def sync_detailed(
 ) -> Response[DevPatchStatusResponse | Problem]:
     """Inspect delivery of a developer live patch.
 
-     Reports whether a published developer live patch (ADR-740) reached the running developer
-    environment. The state is pending until an instance acknowledges it, then applied, or failed with a
-    bounded error code. Never renews the developer lease.
+     Reports whether a published developer live patch reached the running developer environment. The
+    state is pending until an instance acknowledges it, then applied, or failed with a bounded error
+    code. Never renews the developer lease.
 
     Args:
         project (str):
@@ -129,9 +129,9 @@ def sync(
 ) -> DevPatchStatusResponse | Problem | None:
     """Inspect delivery of a developer live patch.
 
-     Reports whether a published developer live patch (ADR-740) reached the running developer
-    environment. The state is pending until an instance acknowledges it, then applied, or failed with a
-    bounded error code. Never renews the developer lease.
+     Reports whether a published developer live patch reached the running developer environment. The
+    state is pending until an instance acknowledges it, then applied, or failed with a bounded error
+    code. Never renews the developer lease.
 
     Args:
         project (str):
@@ -163,9 +163,9 @@ async def asyncio_detailed(
 ) -> Response[DevPatchStatusResponse | Problem]:
     """Inspect delivery of a developer live patch.
 
-     Reports whether a published developer live patch (ADR-740) reached the running developer
-    environment. The state is pending until an instance acknowledges it, then applied, or failed with a
-    bounded error code. Never renews the developer lease.
+     Reports whether a published developer live patch reached the running developer environment. The
+    state is pending until an instance acknowledges it, then applied, or failed with a bounded error
+    code. Never renews the developer lease.
 
     Args:
         project (str):
@@ -200,9 +200,9 @@ async def asyncio(
 ) -> DevPatchStatusResponse | Problem | None:
     """Inspect delivery of a developer live patch.
 
-     Reports whether a published developer live patch (ADR-740) reached the running developer
-    environment. The state is pending until an instance acknowledges it, then applied, or failed with a
-    bounded error code. Never renews the developer lease.
+     Reports whether a published developer live patch reached the running developer environment. The
+    state is pending until an instance acknowledges it, then applied, or failed with a bounded error
+    code. Never renews the developer lease.
 
     Args:
         project (str):

@@ -22,7 +22,7 @@ class FilterCriteriaClause:
     """
 
     op: FilterCriteriaOp
-    """Filter operation primitive (ADR-118 §6)."""
+    """Filter operation primitive."""
     field: str | Unset = UNSET
     """Header key for eq / neq / exists on the headers map."""
     value: Any | Unset = UNSET

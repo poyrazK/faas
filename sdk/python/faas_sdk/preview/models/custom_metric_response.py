@@ -15,7 +15,7 @@ T = TypeVar("T", bound="CustomMetricResponse")
 
 @_attrs_define
 class CustomMetricResponse:
-    """One stored ADR-202 gauge.
+    """One stored gauge.
 
     Example:
         {'name': 'orders_pending', 'value': 1284, 'observed_at': '2026-09-21T12:00:00Z', 'stale': False, 'kind':
@@ -30,8 +30,7 @@ class CustomMetricResponse:
     """True when this row is older than the freshness window and is therefore NOT driving scaling. Computed server-
     side so the API and the scheduler cannot disagree about which rows count."""
     kind: CustomMetricResponseKind | Unset = UNSET
-    """gauge for pushed values (a scaling signal); counter for ADR-745 OTLP cumulative sums, which never drive
-    scaling."""
+    """gauge for pushed values (a scaling signal); counter for OTLP cumulative sums, which never drive scaling."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

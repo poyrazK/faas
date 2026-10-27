@@ -19,8 +19,7 @@ T = TypeVar("T", bound="AuditLogEntry")
 
 @_attrs_define
 class AuditLogEntry:
-    """One row of the FK-free `audit_log` table (issue #755 /
-    PR-6). The row outlives the account it relates to so a
+    """One row of the FK-free `audit_log` table. The row outlives the account it relates to so a
     regulator / DPO can re-derive the post-deletion state
     without joining back to a deleted `accounts` row. The
     table is append-only by spec (ISO 27001 SoA A.5.33 —
@@ -33,7 +32,7 @@ class AuditLogEntry:
     id: UUID
     """Audit-log row id (uuid canonical form)."""
     kind: str
-    """Namespaced audit-log kind. The PR-6 surface currently
+    """Namespaced audit-log kind. The surface currently
     emits only `account.deleted` from inside
     `(*PgStore).DeleteAccount` / `(*MemStore).DeleteAccount`
     so the regulator can replay post-deletion state. The
@@ -59,7 +58,7 @@ class AuditLogEntry:
     activity.
     """
     actor: str | Unset = UNSET
-    """Which daemon wrote the row. PR-6 emits `grace-sweep`
+    """Which daemon wrote the row. It emits `grace-sweep`
     from inside the DeleteAccount store method. Future
     emitters (follow-up PRs) will widen the vocabulary.
     """

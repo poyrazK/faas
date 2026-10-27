@@ -109,7 +109,7 @@ def sync_detailed(
     body: RecoverRolloutRequest,
     idempotency_key: str | Unset = UNSET,
 ) -> Response[Problem | RolloutTransitionResponse]:
-    r"""Operator manual rollout recovery (SAFE-RELEASES-R, issue
+    r"""Operator manual rollout recovery.
 
      The operator escape hatch for a stuck canary rollout. Three
     closed-set actions:
@@ -130,7 +130,7 @@ def sync_detailed(
 
       - `abort`: ordinary canaries transition synchronously to
         `rollout_state = 'aborted'`. A zero-step service rollout instead
-        records a durable abort request and returns 202; schedd restores
+        records a durable abort request and returns 202; the scheduler restores
         the predecessor route, waits for gateway acknowledgement and
         candidate request drain, then finalises the abort. `advance` and
         `promote` are invalid for service rollouts. Emits a
@@ -153,7 +153,7 @@ def sync_detailed(
     at zero weight after cutover. The response is 202 with a
     `service_recovery` receipt confirming the durable request only.
     APID checks that recipient and ready service capacity before publishing
-    routes; schedd then completes gateway acknowledgement and request drain.
+    routes; the scheduler then completes gateway acknowledgement and request drain.
     GET the exact deployment to observe `service_rollout_handoff` progress
     and bounded `bindings_check` blockers. Restarted workers resume the same
     request and never substitute a different predecessor.
@@ -161,10 +161,9 @@ def sync_detailed(
     Args:
         slug (str):
         idempotency_key (str | Unset):
-        body (RecoverRolloutRequest): Body for POST /v1/apps/{slug}/rollouts/recover (SAFE-
-            RELEASES-R, issue #976 / ADR-122). Closed-set `action` ∈ {advance, promote, abort};
-            `reason` is the operator-supplied free-text captured into the deployment_audit row's data
-            payload.
+        body (RecoverRolloutRequest): Body for POST /v1/apps/{slug}/rollouts/recover. Closed-set
+            `action` ∈ {advance, promote, abort}; `reason` is the operator-supplied free-text captured
+            into the deployment_audit row's data payload.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -194,7 +193,7 @@ def sync(
     body: RecoverRolloutRequest,
     idempotency_key: str | Unset = UNSET,
 ) -> Problem | RolloutTransitionResponse | None:
-    r"""Operator manual rollout recovery (SAFE-RELEASES-R, issue
+    r"""Operator manual rollout recovery.
 
      The operator escape hatch for a stuck canary rollout. Three
     closed-set actions:
@@ -215,7 +214,7 @@ def sync(
 
       - `abort`: ordinary canaries transition synchronously to
         `rollout_state = 'aborted'`. A zero-step service rollout instead
-        records a durable abort request and returns 202; schedd restores
+        records a durable abort request and returns 202; the scheduler restores
         the predecessor route, waits for gateway acknowledgement and
         candidate request drain, then finalises the abort. `advance` and
         `promote` are invalid for service rollouts. Emits a
@@ -238,7 +237,7 @@ def sync(
     at zero weight after cutover. The response is 202 with a
     `service_recovery` receipt confirming the durable request only.
     APID checks that recipient and ready service capacity before publishing
-    routes; schedd then completes gateway acknowledgement and request drain.
+    routes; the scheduler then completes gateway acknowledgement and request drain.
     GET the exact deployment to observe `service_rollout_handoff` progress
     and bounded `bindings_check` blockers. Restarted workers resume the same
     request and never substitute a different predecessor.
@@ -246,10 +245,9 @@ def sync(
     Args:
         slug (str):
         idempotency_key (str | Unset):
-        body (RecoverRolloutRequest): Body for POST /v1/apps/{slug}/rollouts/recover (SAFE-
-            RELEASES-R, issue #976 / ADR-122). Closed-set `action` ∈ {advance, promote, abort};
-            `reason` is the operator-supplied free-text captured into the deployment_audit row's data
-            payload.
+        body (RecoverRolloutRequest): Body for POST /v1/apps/{slug}/rollouts/recover. Closed-set
+            `action` ∈ {advance, promote, abort}; `reason` is the operator-supplied free-text captured
+            into the deployment_audit row's data payload.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -274,7 +272,7 @@ async def asyncio_detailed(
     body: RecoverRolloutRequest,
     idempotency_key: str | Unset = UNSET,
 ) -> Response[Problem | RolloutTransitionResponse]:
-    r"""Operator manual rollout recovery (SAFE-RELEASES-R, issue
+    r"""Operator manual rollout recovery.
 
      The operator escape hatch for a stuck canary rollout. Three
     closed-set actions:
@@ -295,7 +293,7 @@ async def asyncio_detailed(
 
       - `abort`: ordinary canaries transition synchronously to
         `rollout_state = 'aborted'`. A zero-step service rollout instead
-        records a durable abort request and returns 202; schedd restores
+        records a durable abort request and returns 202; the scheduler restores
         the predecessor route, waits for gateway acknowledgement and
         candidate request drain, then finalises the abort. `advance` and
         `promote` are invalid for service rollouts. Emits a
@@ -318,7 +316,7 @@ async def asyncio_detailed(
     at zero weight after cutover. The response is 202 with a
     `service_recovery` receipt confirming the durable request only.
     APID checks that recipient and ready service capacity before publishing
-    routes; schedd then completes gateway acknowledgement and request drain.
+    routes; the scheduler then completes gateway acknowledgement and request drain.
     GET the exact deployment to observe `service_rollout_handoff` progress
     and bounded `bindings_check` blockers. Restarted workers resume the same
     request and never substitute a different predecessor.
@@ -326,10 +324,9 @@ async def asyncio_detailed(
     Args:
         slug (str):
         idempotency_key (str | Unset):
-        body (RecoverRolloutRequest): Body for POST /v1/apps/{slug}/rollouts/recover (SAFE-
-            RELEASES-R, issue #976 / ADR-122). Closed-set `action` ∈ {advance, promote, abort};
-            `reason` is the operator-supplied free-text captured into the deployment_audit row's data
-            payload.
+        body (RecoverRolloutRequest): Body for POST /v1/apps/{slug}/rollouts/recover. Closed-set
+            `action` ∈ {advance, promote, abort}; `reason` is the operator-supplied free-text captured
+            into the deployment_audit row's data payload.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -357,7 +354,7 @@ async def asyncio(
     body: RecoverRolloutRequest,
     idempotency_key: str | Unset = UNSET,
 ) -> Problem | RolloutTransitionResponse | None:
-    r"""Operator manual rollout recovery (SAFE-RELEASES-R, issue
+    r"""Operator manual rollout recovery.
 
      The operator escape hatch for a stuck canary rollout. Three
     closed-set actions:
@@ -378,7 +375,7 @@ async def asyncio(
 
       - `abort`: ordinary canaries transition synchronously to
         `rollout_state = 'aborted'`. A zero-step service rollout instead
-        records a durable abort request and returns 202; schedd restores
+        records a durable abort request and returns 202; the scheduler restores
         the predecessor route, waits for gateway acknowledgement and
         candidate request drain, then finalises the abort. `advance` and
         `promote` are invalid for service rollouts. Emits a
@@ -401,7 +398,7 @@ async def asyncio(
     at zero weight after cutover. The response is 202 with a
     `service_recovery` receipt confirming the durable request only.
     APID checks that recipient and ready service capacity before publishing
-    routes; schedd then completes gateway acknowledgement and request drain.
+    routes; the scheduler then completes gateway acknowledgement and request drain.
     GET the exact deployment to observe `service_rollout_handoff` progress
     and bounded `bindings_check` blockers. Restarted workers resume the same
     request and never substitute a different predecessor.
@@ -409,10 +406,9 @@ async def asyncio(
     Args:
         slug (str):
         idempotency_key (str | Unset):
-        body (RecoverRolloutRequest): Body for POST /v1/apps/{slug}/rollouts/recover (SAFE-
-            RELEASES-R, issue #976 / ADR-122). Closed-set `action` ∈ {advance, promote, abort};
-            `reason` is the operator-supplied free-text captured into the deployment_audit row's data
-            payload.
+        body (RecoverRolloutRequest): Body for POST /v1/apps/{slug}/rollouts/recover. Closed-set
+            `action` ∈ {advance, promote, abort}; `reason` is the operator-supplied free-text captured
+            into the deployment_audit row's data payload.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

@@ -3,7 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * Metadata of one secret shared by every service of a project environment (ADR-1139). The value is write-only.
+ * Metadata of one secret shared by every service of a project environment. The value is write-only.
  */
 export type ProjectEnvironmentSharedSecret = {
   key: string;

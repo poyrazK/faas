@@ -199,3 +199,12 @@ off everywhere, at runtime and without a deploy.
   readiness alert routes and inbound-webhook bindings were owned by GA or
   beta prefixes, so the apid gate served those preview APIs to every
   account. They now belong to their capabilities.
+
+## Amendment (2026-10-27): the events flag
+
+[ADR 20261027125625](20261027125625-events-kill-switch.md) makes `events`
+stop the work it owns outside apid: schedd holds event routing (all of it
+under the kill switch, an account's customer events when off for that
+account), vmmd refuses in-guest publishing, and the publish routes answer
+`503 events_paused` rather than hiding, so producers keep their events. The
+exact path `/v1/events` (the live-update stream) moves to `dashboard`.

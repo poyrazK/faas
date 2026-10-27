@@ -14,10 +14,9 @@ T = TypeVar("T", bound="SeatUsageResponse")
 @_attrs_define
 class SeatUsageResponse:
     """GET /v1/orgs/{slug}/seat_usage response. Visibility-only —
-    PR 9 ships the per-seat pricing cut-over per ADR-061
-    §"Out of scope". `used` counts active members only (the
+    ships the per-seat pricing cut-over §"Out of scope". `used` counts active members only (the
     store's `CountActiveOrgMembers` filters `removed_at IS
-    NULL`). `limit` comes from `org.Plan.OrgMembersMax()` —
+    NULL`). `limit` comes from `org.Plan.OrgMembersMax` —
     the `free` plan returns `0` so the dashboard can render
     "personal org only" instead of "0 of 0 used".
 

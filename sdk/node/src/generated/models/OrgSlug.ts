@@ -4,8 +4,7 @@
 /* eslint-disable */
 /**
  * Org slug. Lowercase letters, digits, hyphens; must start
- * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern`
- * in `pkg/api/errors.go` exactly so the spec drift gate
+ * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern` exactly so the spec drift gate
  * (`make spec-check`) stays green.
  *
  */

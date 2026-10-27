@@ -3,7 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * A statement's monthly base fee or minimum-spend top-up (ADR-1316).
+ * A statement's monthly base fee or minimum-spend top-up.
  */
 export type APIConsumerStatementFeeResponse = {
   kind: 'base_fee' | 'minimum';

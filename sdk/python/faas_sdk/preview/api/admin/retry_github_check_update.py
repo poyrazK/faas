@@ -108,7 +108,7 @@ def sync_detailed(
 
      Strict operator-session mutation requiring a recent MFA step-up,
     Idempotency-Key, explicit confirmation, and a durable reason. The
-    compare-and-swap write is owned by githubd and emits a trace-linked
+    compare-and-swap write is owned by the GitHub integration and emits a trace-linked
     operator.action.github_check_update_retry audit event.
 
     Args:
@@ -148,7 +148,7 @@ def sync(
 
      Strict operator-session mutation requiring a recent MFA step-up,
     Idempotency-Key, explicit confirmation, and a durable reason. The
-    compare-and-swap write is owned by githubd and emits a trace-linked
+    compare-and-swap write is owned by the GitHub integration and emits a trace-linked
     operator.action.github_check_update_retry audit event.
 
     Args:
@@ -183,7 +183,7 @@ async def asyncio_detailed(
 
      Strict operator-session mutation requiring a recent MFA step-up,
     Idempotency-Key, explicit confirmation, and a durable reason. The
-    compare-and-swap write is owned by githubd and emits a trace-linked
+    compare-and-swap write is owned by the GitHub integration and emits a trace-linked
     operator.action.github_check_update_retry audit event.
 
     Args:
@@ -221,7 +221,7 @@ async def asyncio(
 
      Strict operator-session mutation requiring a recent MFA step-up,
     Idempotency-Key, explicit confirmation, and a durable reason. The
-    compare-and-swap write is owned by githubd and emits a trace-linked
+    compare-and-swap write is owned by the GitHub integration and emits a trace-linked
     operator.action.github_check_update_retry audit event.
 
     Args:

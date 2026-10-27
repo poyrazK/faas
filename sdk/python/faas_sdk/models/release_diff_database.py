@@ -13,7 +13,7 @@ T = TypeVar("T", bound="ReleaseDiffDatabase")
 
 @_attrs_define
 class ReleaseDiffDatabase:
-    """How the releases' release commands, which run database migrations, differ (ADR-1448)."""
+    """How the releases' release commands, which run database migrations, differ."""
 
     changed: bool
     from_release_command: str | Unset = UNSET

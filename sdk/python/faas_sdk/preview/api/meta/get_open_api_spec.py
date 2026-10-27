@@ -42,7 +42,7 @@ def sync_detailed(
 
      Machine-readable API description. Same bytes as
     `api/openapi.yaml` at the repo HEAD; embedded at build time
-    via `//go:embed` in `pkg/apid/openapi_handler.go`. No auth.
+    via `//go:embed`. No auth.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -69,7 +69,7 @@ async def asyncio_detailed(
 
      Machine-readable API description. Same bytes as
     `api/openapi.yaml` at the repo HEAD; embedded at build time
-    via `//go:embed` in `pkg/apid/openapi_handler.go`. No auth.
+    via `//go:embed`. No auth.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

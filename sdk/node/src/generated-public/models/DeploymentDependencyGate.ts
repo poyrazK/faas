@@ -4,7 +4,7 @@
 /* eslint-disable */
 import type { DeploymentDependencyPin } from './DeploymentDependencyPin.js';
 /**
- * Compose dependency readiness gate pinned at admission (ADR-685). The deadline starts when the candidate first presents its own readiness proof.
+ * Compose dependency readiness gate pinned at admission. The deadline starts when the candidate first presents its own readiness proof.
  */
 export type DeploymentDependencyGate = {
   dependencies: Array<DeploymentDependencyPin>;

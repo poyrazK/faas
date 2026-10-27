@@ -3,7 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * A platform tenant's free trial: its usage in [starts_at, ends_at) is priced at zero (ADR-1322).
+ * A platform tenant's free trial: its usage in [starts_at, ends_at) is priced at zero.
  */
 export type PlatformTenantTrialResponse = {
   tenant_id: string;

@@ -3,7 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * Inspects matched requests with the OWASP Core Rule Set (ADR-831).
+ * Inspects matched requests with the OWASP Core Rule Set.
  * Every mode samples requests (bodies included) off the request path
  * and reports detections without blocking them. warn and block also
  * check headers and URL in-path with a smaller rule set at paranoia

@@ -1205,7 +1205,7 @@ export class StorageService {
   }
   /**
    * Read a bucket's CORS rules
-   * Requires storage manage scope and the bucket write grant. Returns an empty rule list at revision 0 when none are set. The branded S3 endpoint applies the rules to browser requests that carry the bucket's presigned URLs or upload grants (ADR-20261025202805).
+   * Requires storage manage scope and the bucket write grant. Returns an empty rule list at revision 0 when none are set. The branded S3 endpoint applies the rules to browser requests that carry the bucket's presigned URLs or upload grants.
    * @returns ObjectBucketCORS The bucket's CORS rules
    * @returns Problem Bucket not found or access denied
    * @throws ApiError

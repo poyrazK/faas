@@ -85,8 +85,7 @@ def sync_detailed(
     client: AuthenticatedClient,
     range_: str | Unset = "5m",
 ) -> Response[Problem | ThrottleSuggestionsResponse]:
-    """Per-route throttle recommender (ADR-091 D20.5 amendment,
-    issue #881). Read-only: returns a suggested rps/burst per
+    """Per-route throttle recommender. Read-only: returns a suggested rps/burst per
     route over the window, clamped to the customer's plan
     ceiling so the suggestion is always settable.
 
@@ -123,8 +122,7 @@ def sync(
     client: AuthenticatedClient,
     range_: str | Unset = "5m",
 ) -> Problem | ThrottleSuggestionsResponse | None:
-    """Per-route throttle recommender (ADR-091 D20.5 amendment,
-    issue #881). Read-only: returns a suggested rps/burst per
+    """Per-route throttle recommender. Read-only: returns a suggested rps/burst per
     route over the window, clamped to the customer's plan
     ceiling so the suggestion is always settable.
 
@@ -156,8 +154,7 @@ async def asyncio_detailed(
     client: AuthenticatedClient,
     range_: str | Unset = "5m",
 ) -> Response[Problem | ThrottleSuggestionsResponse]:
-    """Per-route throttle recommender (ADR-091 D20.5 amendment,
-    issue #881). Read-only: returns a suggested rps/burst per
+    """Per-route throttle recommender. Read-only: returns a suggested rps/burst per
     route over the window, clamped to the customer's plan
     ceiling so the suggestion is always settable.
 
@@ -192,8 +189,7 @@ async def asyncio(
     client: AuthenticatedClient,
     range_: str | Unset = "5m",
 ) -> Problem | ThrottleSuggestionsResponse | None:
-    """Per-route throttle recommender (ADR-091 D20.5 amendment,
-    issue #881). Read-only: returns a suggested rps/burst per
+    """Per-route throttle recommender. Read-only: returns a suggested rps/burst per
     route over the window, clamped to the customer's plan
     ceiling so the suggestion is always settable.
 

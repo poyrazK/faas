@@ -10,8 +10,8 @@ import { request as __request } from '../../generated/core/request.js';
 export class DeploydiffService {
   /**
    * Read-only preview of what a deploy would change.
-   * PR-1 of the deploy-diff cluster. Server-side equivalent of
-   * `gregale deploy --diff` — runs the same engine (pkg/deploydiff)
+   * Server-side equivalent of
+   * `gregale deploy --diff` — runs the same engine
    * and returns the same wire shape (DiffResponse).
    *
    * Read-only: no DB writes, no audit row, no deployment row. The
@@ -23,9 +23,9 @@ export class DeploydiffService {
    * Auth: bearer-key with `apps:read` (or admin). NO MFA on this
    * endpoint, mirroring GET /v1/apps/{slug}/metrics.
    *
-   * Schema-break detection is text-only in PR-1 (handler / entrypoint
-   * / env-key changes → warn-severity Breaks). Structural OpenAPI
-   * response-schema diff lands in PR-2.
+   * Schema-break detection is text-only (handler / entrypoint
+   * / env-key changes → warn-severity Breaks); response schemas
+   * are not diffed yet.
    *
    * @returns DiffResponse DiffResponse with `blocking: true` if any break has
    * `severity: "error"`. CI gate input — `jq '.blocking'`
@@ -59,7 +59,7 @@ export class DeploydiffService {
         403: `code: forbidden. Caller's bearer key lacks both
         \`apps:read\` and admin scope.
         `,
-        503: `code: capacity. pkg/state read failed for the baseline
+        503: `code: capacity. The store read failed for the baseline
         builder (deployment / env / crons / edge rules).
         `,
       },

@@ -71,7 +71,7 @@ def sync_detailed(
 ) -> Response[Problem | RekeyProgress]:
     r"""Read the cumulative rekey walk progress (admin-only).
 
-     Returns the latest RekeyProgress snapshot the apid rekey
+     Returns the latest RekeyProgress snapshot the API rekey
     runner has written — either to the in-process atomic pointer
     (memory-only mode) or to FAAS_REKEY_PROGRESS_FILE on disk.
     Operators poll this endpoint to monitor the walk after a
@@ -87,16 +87,16 @@ def sync_detailed(
     value means the unseal step threw for at least one row —
     the operationally safe recovery is `git rm
     migrations/*reserve_slot.sql`-style idempotent re-trigger
-    (toggle FAAS_REKEY_ENABLED and restart apid; the seen-set
+    (toggle FAAS_REKEY_ENABLED and restart the API; the seen-set
     inside Replayer dedupes already-done rows).
 
     When the runner is disabled (FAAS_REKEY_ENABLED unset), the
     endpoint returns 503 with code `rekey_disabled` so an
     operator can distinguish \"no work yet\" from \"feature off\".
     If FAAS_REKEY_ENABLED=true is set but no host age identities
-    loaded (mfaIdentities() empty — typically FAAS_HOST_AGE_IDENTITY_PATH
+    loaded (mfaIdentities empty — typically FAAS_HOST_AGE_IDENTITY_PATH
     unset), the endpoint returns 503 with the distinct code
-    `rekey_no_identities` (PR #825 follow-up); this avoids the
+    `rekey_no_identities`; this avoids the
     misleading \"set FAAS_REKEY_ENABLED and restart\" detail when
     the operator already opted in.
 
@@ -123,7 +123,7 @@ def sync(
 ) -> Problem | RekeyProgress | None:
     r"""Read the cumulative rekey walk progress (admin-only).
 
-     Returns the latest RekeyProgress snapshot the apid rekey
+     Returns the latest RekeyProgress snapshot the API rekey
     runner has written — either to the in-process atomic pointer
     (memory-only mode) or to FAAS_REKEY_PROGRESS_FILE on disk.
     Operators poll this endpoint to monitor the walk after a
@@ -139,16 +139,16 @@ def sync(
     value means the unseal step threw for at least one row —
     the operationally safe recovery is `git rm
     migrations/*reserve_slot.sql`-style idempotent re-trigger
-    (toggle FAAS_REKEY_ENABLED and restart apid; the seen-set
+    (toggle FAAS_REKEY_ENABLED and restart the API; the seen-set
     inside Replayer dedupes already-done rows).
 
     When the runner is disabled (FAAS_REKEY_ENABLED unset), the
     endpoint returns 503 with code `rekey_disabled` so an
     operator can distinguish \"no work yet\" from \"feature off\".
     If FAAS_REKEY_ENABLED=true is set but no host age identities
-    loaded (mfaIdentities() empty — typically FAAS_HOST_AGE_IDENTITY_PATH
+    loaded (mfaIdentities empty — typically FAAS_HOST_AGE_IDENTITY_PATH
     unset), the endpoint returns 503 with the distinct code
-    `rekey_no_identities` (PR #825 follow-up); this avoids the
+    `rekey_no_identities`; this avoids the
     misleading \"set FAAS_REKEY_ENABLED and restart\" detail when
     the operator already opted in.
 
@@ -171,7 +171,7 @@ async def asyncio_detailed(
 ) -> Response[Problem | RekeyProgress]:
     r"""Read the cumulative rekey walk progress (admin-only).
 
-     Returns the latest RekeyProgress snapshot the apid rekey
+     Returns the latest RekeyProgress snapshot the API rekey
     runner has written — either to the in-process atomic pointer
     (memory-only mode) or to FAAS_REKEY_PROGRESS_FILE on disk.
     Operators poll this endpoint to monitor the walk after a
@@ -187,16 +187,16 @@ async def asyncio_detailed(
     value means the unseal step threw for at least one row —
     the operationally safe recovery is `git rm
     migrations/*reserve_slot.sql`-style idempotent re-trigger
-    (toggle FAAS_REKEY_ENABLED and restart apid; the seen-set
+    (toggle FAAS_REKEY_ENABLED and restart the API; the seen-set
     inside Replayer dedupes already-done rows).
 
     When the runner is disabled (FAAS_REKEY_ENABLED unset), the
     endpoint returns 503 with code `rekey_disabled` so an
     operator can distinguish \"no work yet\" from \"feature off\".
     If FAAS_REKEY_ENABLED=true is set but no host age identities
-    loaded (mfaIdentities() empty — typically FAAS_HOST_AGE_IDENTITY_PATH
+    loaded (mfaIdentities empty — typically FAAS_HOST_AGE_IDENTITY_PATH
     unset), the endpoint returns 503 with the distinct code
-    `rekey_no_identities` (PR #825 follow-up); this avoids the
+    `rekey_no_identities`; this avoids the
     misleading \"set FAAS_REKEY_ENABLED and restart\" detail when
     the operator already opted in.
 
@@ -221,7 +221,7 @@ async def asyncio(
 ) -> Problem | RekeyProgress | None:
     r"""Read the cumulative rekey walk progress (admin-only).
 
-     Returns the latest RekeyProgress snapshot the apid rekey
+     Returns the latest RekeyProgress snapshot the API rekey
     runner has written — either to the in-process atomic pointer
     (memory-only mode) or to FAAS_REKEY_PROGRESS_FILE on disk.
     Operators poll this endpoint to monitor the walk after a
@@ -237,16 +237,16 @@ async def asyncio(
     value means the unseal step threw for at least one row —
     the operationally safe recovery is `git rm
     migrations/*reserve_slot.sql`-style idempotent re-trigger
-    (toggle FAAS_REKEY_ENABLED and restart apid; the seen-set
+    (toggle FAAS_REKEY_ENABLED and restart the API; the seen-set
     inside Replayer dedupes already-done rows).
 
     When the runner is disabled (FAAS_REKEY_ENABLED unset), the
     endpoint returns 503 with code `rekey_disabled` so an
     operator can distinguish \"no work yet\" from \"feature off\".
     If FAAS_REKEY_ENABLED=true is set but no host age identities
-    loaded (mfaIdentities() empty — typically FAAS_HOST_AGE_IDENTITY_PATH
+    loaded (mfaIdentities empty — typically FAAS_HOST_AGE_IDENTITY_PATH
     unset), the endpoint returns 503 with the distinct code
-    `rekey_no_identities` (PR #825 follow-up); this avoids the
+    `rekey_no_identities`; this avoids the
     misleading \"set FAAS_REKEY_ENABLED and restart\" detail when
     the operator already opted in.
 
