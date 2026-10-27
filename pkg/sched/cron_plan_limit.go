@@ -4,6 +4,7 @@ import (
 	"cmp"
 	"context"
 	"slices"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -19,20 +20,21 @@ type cronPlanGate struct {
 		AccountByID(context.Context, string) (state.Account, error)
 	}
 	plans   map[string]api.Plan
-	perApp  map[string]int
 	perAcct map[string]int
 }
 
 func newCronPlanGate(accounts interface {
 	AccountByID(context.Context, string) (state.Account, error)
 }) *cronPlanGate {
-	return &cronPlanGate{accounts: accounts, plans: map[string]api.Plan{}, perApp: map[string]int{}, perAcct: map[string]int{}}
+	return &cronPlanGate{accounts: accounts, plans: map[string]api.Plan{}, perAcct: map[string]int{}}
 }
 
-// admit reports whether a cron of app may fire this tick, and counts it when
-// it may. A failed account read admits: the cron passed its plan's limits
-// when it was written.
-func (g *cronPlanGate) admit(ctx context.Context, app state.App) bool {
+// admit reports whether a due cron of app, the appRank-th oldest of the app's
+// enabled crons, may fire this tick, and counts it against the account when
+// it may. The per-app rank is exact; the per-account count covers the crons
+// that fire this tick. A failed account read admits: the cron passed its
+// plan's limits when it was written.
+func (g *cronPlanGate) admit(ctx context.Context, app state.App, appRank int) bool {
 	plan, seen := g.plans[app.AccountID]
 	if !seen {
 		if acct, err := g.accounts.AccountByID(ctx, app.AccountID); err == nil {
@@ -44,21 +46,42 @@ func (g *cronPlanGate) admit(ctx context.Context, app state.App) bool {
 	if !ok {
 		return true
 	}
-	if g.perApp[app.ID] >= limits.CronLimitPerApp || g.perAcct[app.AccountID] >= limits.CronLimitPerAccount {
+	if appRank >= limits.CronLimitPerApp || g.perAcct[app.AccountID] >= limits.CronLimitPerAccount {
 		return false
 	}
-	g.perApp[app.ID]++
 	g.perAcct[app.AccountID]++
 	return true
 }
 
 // oldestCronsFirst orders crons so the plan gate keeps the ones created
-// first.
-func oldestCronsFirst(crons []state.Cron) {
+// first, and returns each cron's rank among its app's crons.
+func oldestCronsFirst(crons []state.Cron) map[string]int {
 	slices.SortStableFunc(crons, func(a, b state.Cron) int {
 		if c := a.CreatedAt.Compare(b.CreatedAt); c != 0 {
 			return c
 		}
 		return cmp.Compare(a.ID, b.ID)
 	})
+	seen := map[string]int{}
+	rank := make(map[string]int, len(crons))
+	for _, c := range crons {
+		rank[c.ID] = seen[c.AppID]
+		seen[c.AppID]++
+	}
+	return rank
+}
+
+// cronDue reports whether c has an occurrence at or before now, with no
+// store read, so a cron that is not due costs nothing (a daily cron used to
+// cost an app read every minute). A disabled or unparseable cron reports due
+// so dispatchOneCron records its decision.
+func cronDue(c state.Cron, now time.Time) bool {
+	if !c.Enabled {
+		return true
+	}
+	sched, err := ParseScheduleWithTimezone(c.Schedule, c.Timezone)
+	if err != nil {
+		return true
+	}
+	return !sched.NextFireAt(c.ScheduleCursor()).After(now)
 }
