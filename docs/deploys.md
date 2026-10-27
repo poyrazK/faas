@@ -297,9 +297,11 @@ How each gate judges:
   threshold count for latency SLOs. A gate fails only when the release is
   also worse than the revision it replaces.
 - **`new_errors` gates** count error groups that the release produced first.
-- **`custom_metric` gates** bound the metric's average. Custom metrics are
-  reported per app, not per revision, so these gates are most useful after
-  the release takes all the traffic.
+- **`custom_metric` gates** bound the metric's average over the window, read
+  from the metric's history: every value you pushed, not only the latest. Push
+  at least `min_samples` values (default 20) in the window, or the gate is not
+  judged. Custom metrics are reported per app, not per revision, so these
+  gates are most useful after the release takes all the traffic.
 - **`ai` gates** compare the release's AI gateway calls with the previous
   release's ([ADR 20261022153155](adr/20261022153155-ai-signals-per-deployment-and-release-gates.md)):
   `error_rate` (provider errors), `flagged_rate` (answers truncated, refused,

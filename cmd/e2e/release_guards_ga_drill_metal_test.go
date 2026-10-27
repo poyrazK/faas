@@ -132,6 +132,7 @@ func TestReleaseGuardsGADrillMetal(t *testing.T) {
 	t.Run("an approval wait survives apid and meterd restarts, then times out", func(t *testing.T) {
 		const app = "ga-approve"
 		deployerKey, _ := g.orgWithApprover(t, ctx, app)
+		openPublicURL(t, d, deployerKey, app)
 		od := *d
 		od.key = deployerKey
 		og := &guardsDrill{d: &od, pool: store, plan: g.plan, name: g.name, org: g.org}
@@ -175,6 +176,7 @@ func TestReleaseGuardsGADrillMetal(t *testing.T) {
 	t.Run("a schedule that falls due while apid is down starts when apid returns", func(t *testing.T) {
 		const app = "ga-sched"
 		d.createApp(t, app)
+		openPublicURL(t, d, d.key, app)
 		d.deployLive(t, app, api.CreateDeploymentRequest{Image: v1})
 		d.waitServing(t, app, time.Minute)
 		at := time.Now().Add(90 * time.Second).UTC().Truncate(time.Second)
@@ -206,6 +208,7 @@ func TestReleaseGuardsGADrillMetal(t *testing.T) {
 	t.Run("a canary keeps being judged by its gates across a meterd restart", func(t *testing.T) {
 		const app = "ga-meterd"
 		d.createApp(t, app)
+		openPublicURL(t, d, d.key, app)
 		stable := d.deployLive(t, app, api.CreateDeploymentRequest{Image: v1})
 		d.waitServing(t, app, time.Minute)
 		zero := 0
@@ -234,6 +237,7 @@ func TestReleaseGuardsGADrillMetal(t *testing.T) {
 	t.Run("an slo gate aborts a canary that burns its latency objective", func(t *testing.T) {
 		const app = "ga-slo"
 		d.createApp(t, app)
+		openPublicURL(t, d, d.key, app)
 		stable := d.deployLive(t, app, api.CreateDeploymentRequest{Image: v1})
 		d.waitServing(t, app, time.Minute)
 		g.mustStatus(t, d.key, http.MethodPost, "/v1/apps/"+app+"/slos",
@@ -263,6 +267,7 @@ func TestReleaseGuardsGADrillMetal(t *testing.T) {
 		}
 		const app = "ga-metric"
 		d.createApp(t, app)
+		openPublicURL(t, d, d.key, app)
 		stable := d.deployLive(t, app, api.CreateDeploymentRequest{Image: v1})
 		d.waitServing(t, app, time.Minute)
 		threshold := 5.0
@@ -295,6 +300,7 @@ func TestReleaseGuardsGADrillMetal(t *testing.T) {
 		}
 		const app = "ga-alert"
 		d.createApp(t, app)
+		openPublicURL(t, d, d.key, app)
 		stable := d.deployLive(t, app, api.CreateDeploymentRequest{Image: v1})
 		d.waitServing(t, app, time.Minute)
 		action, window := "rollback", 900
@@ -324,6 +330,7 @@ func TestReleaseGuardsGADrillMetal(t *testing.T) {
 	t.Run("a critical route regression aborts the canary", func(t *testing.T) {
 		const app = "ga-route"
 		d.createApp(t, app)
+		openPublicURL(t, d, d.key, app)
 		stable := d.deployLive(t, app, api.CreateDeploymentRequest{Image: v1})
 		d.waitServing(t, app, time.Minute)
 		zero := int64(0)
@@ -364,6 +371,18 @@ func waitHoldRule(t *testing.T, d *safeReleaseDrill, deploymentID, rule string, 
 		}
 		time.Sleep(5 * time.Second)
 		rules = d.holdRules(t, deploymentID)
+	}
+}
+
+// openPublicURL makes app's public URL answer without a bearer: Pro and Scale
+// apps are created with public_auth bearer (ADR-079), which only a PATCH
+// changes.
+func openPublicURL(t *testing.T, d *safeReleaseDrill, key, app string) {
+	t.Helper()
+	raw, status := doReq(t, d.h, key, http.MethodPatch, "/v1/apps/"+app,
+		map[string]any{"public_auth": map[string]any{"mode": api.AppPublicAuthModeOpen}})
+	if status/100 != 2 {
+		t.Fatalf("open %s public URL: status=%d body=%s", app, status, raw)
 	}
 }
 
