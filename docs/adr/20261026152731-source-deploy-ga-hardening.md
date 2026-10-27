@@ -97,17 +97,19 @@ left data behind:
    live and wake). `TestDockerfileHealthcheckMetal` qualifies
    ADR-20261024100000 on a source-built image.
 
-   Status on n2 (nested KVM), 2026-10-27 at 3f854a7c83: a failing
-   `HEALTHCHECK` never serves (`startup_phase=image_healthcheck`, 4 of 4
-   runs); a passing one goes live with a verified 2xx smoke receipt.
-   `TestSourceDeployWakeMetal` passes build to live, park, cold-boot wake,
-   idempotent replay, function auto-pick and the resumable-upload redeploy.
-   Two failures are outside source deploys and stay open: (a) a new app's
-   first request within about a second of going live gets 429
-   `app_concurrency_reached` (observed 0), because imaged's smoke instance
-   holds the only slot before gatewayd has replayed the go-live; (b) snapshot
-   wakes fail on n2 when the resume ack misses the wake deadline, and the
-   cold-boot fallback runs under the same cancelled context.
+   The n2 (nested KVM) runs found two platform failures outside source
+   deploys, both fixed with this work:
+   - A new app's first request right after go-live got 429
+     `app_concurrency_reached` (observed 0). A gateway placement read during
+     the deployment smoke left out the snapshotting candidate, so the gateway
+     quarantined the smoke instance it had admitted, and schedd counted that
+     instance against `max_concurrency`. Placement reads now report
+     snapshotting candidates as not live (kept, never discovered), and a wake
+     answered at capacity serves a replica its rehydrate finds.
+   - After `POST /v1/apps/{slug}/park`, a request-woken instance was
+     destroyed by the reaper's must-park sweep, including a boot still in its
+     restore or cold-boot fallback (503). Request wakes now claim the parked
+     to active lifecycle (ADR-343 amendment 1).
 
 ## Consequences
 

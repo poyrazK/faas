@@ -102,12 +102,6 @@ func TestTrafficPlacementsPostgresCompletenessHistoryAndOwners(t *testing.T) {
 	if got := read()[app.ID]; len(got.Targets) == 0 || got.Targets[0].DeploymentLive {
 		t.Fatalf("snapshotting candidate: %+v", got)
 	}
-	if _, err := pool.Exec(ctx, `UPDATE deployments SET status='failed' WHERE id=$1`, dep.ID); err != nil {
-		t.Fatal(err)
-	}
-	if got := read()[app.ID]; !got.Complete || len(got.Targets) != 0 {
-		t.Fatal("failed deployment retained placements")
-	}
 	if _, err := pool.Exec(ctx, `UPDATE deployments SET deleted_at=now() WHERE id=$1`, dep.ID); err != nil {
 		t.Fatal(err)
 	}

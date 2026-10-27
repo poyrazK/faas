@@ -47,3 +47,14 @@ record while retaining the rule that `app.woken` requires ready capacity.
 - The dispatcher recovers a ready transition and relays one delivery.
 - Failed boot and park-wins paths produce no wake delivery.
 - Repeating completion does not duplicate an event.
+
+## Amendment 1 (2026-10-27): request wakes
+
+A request admission (`AdmitInstance`, the gateway's wake) of a parked app now
+runs through the same coordinated wake, so it records the transition and moves
+the app to `active` before booting. Before, only explicit and scheduler wakes
+did. A request-woken parked app stayed `evicted_cold`, and the reaper's
+must-park sweep destroyed its instance on the next tick, including a boot
+still in its restore or cold-boot fallback, which the customer saw as 503.
+A deployment smoke admission is excluded: verifying a candidate does not
+unpark the app.

@@ -2622,12 +2622,50 @@ func compareAndSetAppStatus(ctx context.Context, store state.Store, appID string
 // (legacy single-deployment behaviour). Stamped on the ctx via
 // WithScope so resolveApp / loadAPIEnv read the same value.
 func (e *Engine) AdmitInstance(ctx context.Context, appID, deploymentID, scope, trigger string) (WakeResult, error) {
+	if trigger != TriggerDeploymentSmoke {
+		if app, err := e.store.AppByID(ctx, appID); err == nil && app.Status == state.AppEvictedCold {
+			return e.admitParkedApp(ctx, appID, deploymentID, scope, trigger)
+		}
+	}
 	res, err := e.admitInstance(ctx, appID, deploymentID, scope, trigger)
 	if e.parkForCapacity(ctx, appID, trigger, err) ||
 		(err == nil && res.AtCapacity && e.parkZeroTrafficSibling(ctx, appID, deploymentID)) {
 		res, err = e.admitInstance(ctx, appID, deploymentID, scope, trigger)
 	}
 	return res, err
+}
+
+// admitParkedApp admits a request for a parked (evicted_cold) app through
+// ensureWake, which claims the evicted_cold -> active lifecycle (ADR-343).
+// Without that claim the reaper's must-park sweep destroys the woken instance
+// on its next tick, including a boot still in its restore or cold-boot
+// fallback, and the request fails with 503.
+func (e *Engine) admitParkedApp(ctx context.Context, appID, deploymentID, scope, trigger string) (WakeResult, error) {
+	var admitted WakeResult
+	out, err := e.ensureWake(WithScope(ctx, scope), appID, deploymentID, func(wakeCtx context.Context) ([]WakeResult, error) {
+		res, err := e.admitInstance(wakeCtx, appID, deploymentID, scope, trigger)
+		if err != nil {
+			return nil, err
+		}
+		admitted = res
+		return []WakeResult{res}, nil
+	})
+	if errors.Is(err, ErrAtCapacity) {
+		return WakeResult{AtCapacity: true}, nil
+	}
+	if err != nil {
+		return WakeResult{}, err
+	}
+	if admitted.InstanceID != "" || out.Instance == nil {
+		return admitted, nil
+	}
+	// A follower shares the leader's instance.
+	method := vmmdpb.WakeMethod_WAKE_RESTORE
+	if out.Instance.ColdBoot {
+		method = vmmdpb.WakeMethod_WAKE_COLD_BOOT
+	}
+	return WakeResult{InstanceID: out.Instance.InstanceID, NodeID: out.Instance.NodeID, DeploymentID: out.Instance.DeploymentID,
+		WakeID: out.Instance.WakeID, Port: int(out.Instance.Port), Method: method, Identity: out.Instance.Identity}, nil
 }
 
 func (e *Engine) admitInstance(ctx context.Context, appID, deploymentID, scope, trigger string) (WakeResult, error) {
