@@ -6,10 +6,15 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 
 	"github.com/onebox-faas/faas/pkg/netns"
 )
+
+// errNamespacePlaceholder is an empty, unmounted /run/netns marker: the file
+// `ip netns add` creates before it mounts the new namespace onto it.
+var errNamespacePlaceholder = errors.New("network namespace marker is not nsfs")
 
 func (m *Manager) probeNamespace(name string) (*resourceAsset, error) {
 	if m.namespaceProbe != nil {
@@ -70,11 +75,29 @@ func (m *Manager) checkOwnedNamespace(name string) error {
 		}
 	}
 	actual, err := m.probeNamespace(name)
+	if errors.Is(err, errNamespacePlaceholder) && ok && owned.File == nil {
+		// This manager journaled the creation but never checkpointed a
+		// namespace: `ip netns add` stopped (its context ended, or vmmd
+		// died) after creating the marker and before mounting onto it.
+		// Nothing was created, and a leftover marker would block every
+		// teardown of this binding.
+		return m.removeNamespacePlaceholder(name)
+	}
 	if err != nil || actual == nil {
 		return err
 	}
 	if !ok || !namespaceCheckpointMatches(owned, *actual) {
 		return errors.New("network namespace binding changed or lacks a live owner")
+	}
+	return nil
+}
+
+func (m *Manager) removeNamespacePlaceholder(name string) error {
+	if m.namespaceProbe != nil { // Tests substitute the probe, not /run/netns.
+		return nil
+	}
+	if err := os.Remove(filepath.Join("/run/netns", name)); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("remove unmounted network namespace marker: %w", err)
 	}
 	return nil
 }

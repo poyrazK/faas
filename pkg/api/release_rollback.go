@@ -69,6 +69,17 @@ func ErrDatabaseSwitchUnavailable(detail, hint string) *Problem {
 	return p
 }
 
+// ErrDatabaseSwitchesActive refuses a switch while the account already runs
+// DatabaseSwitchesActivePerAccount unfinished ones.
+func ErrDatabaseSwitchesActive(limit int) *Problem {
+	p := NewProblem(http.StatusTooManyRequests, "database_switches_active", "Too many database switches in progress",
+		fmt.Sprintf("the account already runs %d unfinished database switches, the most it may run at once", limit))
+	l := int64(limit)
+	p.Limit, p.Observed = &l, &l
+	return p.WithDocs(docsBase + "/deploys#rollbacks-that-restore-the-database").
+		WithHint("wait for one to finish, or cancel one with gregale rollback switches")
+}
+
 // ErrRollbackCrossesRelease refuses an unacknowledged rollback over release
 // commands that ran after its target last served (ADR-1448).
 func ErrRollbackCrossesRelease(target string, crossed []RollbackCrossedRelease, restore []ReleaseRestorePoint) *Problem {

@@ -94,6 +94,11 @@ func TestDirectOCIAutoscaleScaleToZeroMetal(t *testing.T) {
 		t.Fatalf("enable RPS autoscale: status=%d body=%s", status, raw)
 	}
 
+	// A deployment goes live parked on its priming snapshot: wake one
+	// instance so the burst below measures a running app.
+	if err := directOCIGatewayRequest(h.HTTPClient(), gatewayAppURL(h, "oci-autoscale"), "oci-autoscale.apps.test.example"); err != nil {
+		t.Fatalf("initial wake request: %v", err)
+	}
 	initialCtx, initialCancel := context.WithTimeout(context.Background(), 35*time.Second)
 	defer initialCancel()
 	if _, err := e2etest.WaitForInstanceState(initialCtx, t, pool, appID, state.StateRunning, 30*time.Second); err != nil {

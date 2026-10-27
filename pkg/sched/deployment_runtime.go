@@ -111,6 +111,19 @@ func healthcheckGRPCForApp(dep state.Deployment, appProtocol string) (bool, stri
 	return true, ""
 }
 
+// startupProbeForApp resolves the primary app's whole startup probe. The
+// gRPC-app default replaces the HTTP path rather than joining it: a source
+// build's inferred framework profile still names /healthz, and vmmd refuses
+// a spec that carries both, so h14-grpc's first deploy on rc.297 failed its
+// snapshot prime with "healthcheck_path and healthcheck_grpc are mutually
+// exclusive" (Hunt 14 H14-55).
+func startupProbeForApp(dep state.Deployment, appProtocol string) (path string, grpc bool, service string) {
+	if grpc, service = healthcheckGRPCForApp(dep, appProtocol); grpc {
+		return "", true, service
+	}
+	return healthcheckPathFromDep(dep), false, ""
+}
+
 // deploymentDeclaresStartupProbe reports an explicit primary-app probe: an
 // environment-scoped healthcheck or healthz, or a deploy-time override.
 // Inferred framework paths are defaults, not declarations.

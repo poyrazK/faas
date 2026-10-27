@@ -913,6 +913,14 @@ func (s *server) applyBuildsForAddedChangedOrdered(
 			out = append(out, res)
 			continue
 		}
+		// A project apply releases each app without a canary, atomic or not,
+		// so an app requiring approvals is refused like an immediate deploy
+		// (ADR-20261020085706 amendment 1).
+		if prob := s.releaseApprovalCanaryProblem(ctx, app, &api.CreateDeploymentRequest{Scope: environment}); prob != nil {
+			res.Error = prob.Detail
+			out = append(out, res)
+			continue
+		}
 		// New services install their pinned company intent before staging or
 		// consuming deploy rate. The ordinary deployment fence still applies.
 		var standardError string
@@ -1948,6 +1956,12 @@ func (s *server) scanService(
 	if composeEnvErr != nil {
 		composeEnv = reposcan.ComposeEnv{}
 	}
+	// Compose values that call these services over HTTP import as their
+	// Gregale addresses (ADR-20261026181020).
+	callableServices := make([]string, 0, len(result.Workloads))
+	for _, w := range result.Workloads {
+		callableServices = append(callableServices, w.Name)
+	}
 	planScope := req.Environment
 	if planScope == "" {
 		planScope = api.DefaultEnvScope
@@ -1994,8 +2008,10 @@ func (s *server) scanService(
 		if err != nil {
 			return nil, state.Project{}, nil, nil, nil, nil, api.ErrCapacity("could not read the configuration of a selected workload")
 		}
+		envImport := projectsetup.PlanEnvImport(composeEnv, w.Name, callableServices, limits)
 		pw.UnsetEnvKeys, pw.ImportedEnvKeys, pw.UnsetEnvKeyReasons = projectsetup.SplitEnvImport(
-			withoutProvidedKeys(w.Name, unset, composePostgres), projectsetup.PlanEnvImport(composeEnv, w.Name, limits))
+			withoutProvidedKeys(w.Name, unset, composePostgres), envImport)
+		warnings = append(warnings, projectsetup.RewrittenEnvNotes(w.Name, pw.ImportedEnvKeys, envImport)...)
 		if w.ServiceBindingPolicy == "" && existing != nil {
 			pw.ServiceBindingPolicy = existing.Manifest.EffectiveServiceBindingPolicy()
 		}

@@ -3,6 +3,8 @@ package state
 
 import (
 	"context"
+	"errors"
+	"strconv"
 	"strings"
 	"time"
 
@@ -38,16 +40,66 @@ func (s *PgStore) WithInvocationVersionSnapshot(ctx context.Context, read func(I
 	if read == nil {
 		return ErrInvalidArgument
 	}
-	return s.WithServicePolicySnapshot(ctx, func(reader ServicePolicyReader) error {
-		return read(invocationVersionPolicyReader{servicePolicyReader: reader.(servicePolicyReader), store: s})
-	})
+	// A worker job's lineage pin is a durable write in its own transaction.
+	// Taking it while the snapshot holds its connection deadlocks the pool
+	// once every connection is a snapshot waiting for a second one, so the
+	// reader stops at the pin, the pin is captured with no snapshot open, and
+	// the snapshot runs again with the captured result.
+	pins := &workerPinCaptures{results: map[string]workerPinCapture{}}
+	for attempt := 0; ; attempt++ {
+		pins.pending = pins.pending[:0]
+		err := s.WithServicePolicySnapshot(ctx, func(reader ServicePolicyReader) error {
+			return read(invocationVersionPolicyReader{servicePolicyReader: reader.(servicePolicyReader), store: s, workerPins: pins})
+		})
+		if !errors.Is(err, errWorkerPinPending) {
+			return err
+		}
+		if attempt == maxWorkerPinCaptureRounds {
+			return ErrConflict
+		}
+		for _, p := range pins.pending {
+			version, handled, err := s.ResolveProjectWorkerJobRelease(ctx, p.inv, p.revision, p.requested)
+			pins.results[workerPinKey(p.inv, p.revision, p.requested)] = workerPinCapture{version: version, handled: handled, err: err}
+		}
+	}
+}
+
+// errWorkerPinPending ends a snapshot that reached a worker job's lineage pin
+// before the pin was captured outside it.
+var errWorkerPinPending = errors.New("state: worker release pin capture pending")
+
+// maxWorkerPinCaptureRounds bounds the reruns when the pin's inputs change
+// between snapshots; the dispatch then retries as a conflict.
+const maxWorkerPinCaptureRounds = 2
+
+type workerPinRequest struct {
+	inv                 Invocation
+	revision, requested string
+}
+
+type workerPinCapture struct {
+	version InvocationVersion
+	handled bool
+	err     error
+}
+
+type workerPinCaptures struct {
+	results map[string]workerPinCapture
+	pending []workerPinRequest
+}
+
+func workerPinKey(inv Invocation, revision, requested string) string {
+	return strings.Join([]string{inv.ID, inv.AccountID, inv.AppID, inv.QueueBindingID,
+		strconv.Itoa(inv.Attempts), strconv.FormatInt(inv.ReplayGeneration, 10), revision, requested}, "\x00")
 }
 
 type invocationVersionPolicyReader struct {
 	servicePolicyReader
 	// store captures a worker job's lineage pin, a durable write with its own
-	// row locks that the read-only snapshot cannot take.
-	store *PgStore
+	// row locks that the read-only snapshot cannot take. WithInvocationVersion-
+	// Snapshot does that between snapshots; workerPins carries the results.
+	store      *PgStore
+	workerPins *workerPinCaptures
 }
 
 func (s invocationVersionPolicyReader) OperationByID(ctx context.Context, accountID, tenantID, id string) (Operation, error) {

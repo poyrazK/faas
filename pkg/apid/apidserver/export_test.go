@@ -59,6 +59,7 @@ import (
 	objruntime "github.com/onebox-faas/faas/pkg/rehearsalobj/runtime"
 	pgruntime "github.com/onebox-faas/faas/pkg/rehearsalpg/runtime"
 	"github.com/onebox-faas/faas/pkg/session"
+	"github.com/onebox-faas/faas/pkg/sessioncookie"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/wire"
 	"github.com/onebox-faas/faas/pkg/workloadidentity"
@@ -241,6 +242,11 @@ const ScheddMetricsDiscoveryPath = scheddMetricsDiscoveryPath
 const GatewaydPublicEdgeMetricsDiscoveryPath = gatewaydPublicEdgeMetricsDiscoveryPath
 const CloudflaredMetricsDiscoveryPath = cloudflaredMetricsDiscoveryPath
 const ServiceCallerKeysCacheControl = serviceCallerKeysCacheControl
+
+// sessionCookie is the legacy session cookie name test fixtures send; the
+// handlers read both names through pkg/sessioncookie (ADR-20261026112500).
+const sessionCookie = sessioncookie.LegacyName
+
 const SessionCookie = sessionCookie
 const SessionCookieLifetime = sessionCookieLifetime
 const SourceSpoolRootEnv = sourceSpoolRootEnv
@@ -1116,6 +1122,9 @@ func (r *server) GetDevBridgeActivity(p0 http.ResponseWriter, p1 *http.Request, 
 func (r *server) GetManagedPostgresDatabase(p0 http.ResponseWriter, p1 *http.Request, p2 state.Account) {
 	r.getManagedPostgresDatabase(p0, p1, p2)
 }
+func (r *server) GetProject(p0 http.ResponseWriter, p1 *http.Request, p2 state.Account) {
+	r.getProject(p0, p1, p2)
+}
 func (r *server) GetProjectEnvironmentApprovalStatus(p0 http.ResponseWriter, p1 *http.Request, p2 state.Account) {
 	r.getProjectEnvironmentApprovalStatus(p0, p1, p2)
 }
@@ -1773,3 +1782,4 @@ func (r *server) RequestBillingMailOutboxesForTest() {
 	on := func() bool { return true }
 	r.paymentFailedOutboxRequested, r.accountRestoredOutboxRequested, r.subscriptionEndedOutboxRequested = on, on, on
 }
+var AppRestartRefusal = appRestartRefusal

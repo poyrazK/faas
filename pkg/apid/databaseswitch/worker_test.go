@@ -19,6 +19,7 @@ type fakeDatabases struct {
 	target     managedpostgres.Database
 	named      map[string]bool
 	restores   int
+	restoreOrg string // the ownership scope the last restore ran under
 }
 
 func (f *fakeDatabases) Get(_ context.Context, _, id string) (managedpostgres.Database, error) {
@@ -35,8 +36,9 @@ func (f *fakeDatabases) FindByName(_ context.Context, _, name string) (managedpo
 	return managedpostgres.Database{}, managedpostgres.ErrNotFound
 }
 
-func (f *fakeDatabases) Restore(_ context.Context, r managedpostgres.RestoreDatabaseRequest) (managedpostgres.Database, error) {
+func (f *fakeDatabases) Restore(ctx context.Context, r managedpostgres.RestoreDatabaseRequest) (managedpostgres.Database, error) {
 	f.restores++
+	f.restoreOrg = managedpostgres.Organization(ctx)
 	if f.restoreErr != nil {
 		return managedpostgres.Database{}, f.restoreErr
 	}
@@ -123,6 +125,7 @@ func (f *fakeCutovers) Resume(context.Context, string, string) error {
 type fakeDrain struct {
 	preview state.DrainPreview
 	plan    *state.ManagedPostgresDrainPlan
+	onPlan  func() // runs while the drain step reads its plan
 }
 
 func (f *fakeDrain) PreviewDrainBlockers(context.Context, string) (state.DrainPreview, error) {
@@ -130,6 +133,9 @@ func (f *fakeDrain) PreviewDrainBlockers(context.Context, string) (state.DrainPr
 }
 
 func (f *fakeDrain) DrainPlanForCutover(context.Context, string, string, time.Time) (state.ManagedPostgresDrainPlan, bool, error) {
+	if f.onPlan != nil {
+		f.onPlan()
+	}
 	if f.plan == nil {
 		return state.ManagedPostgresDrainPlan{}, false, nil
 	}
@@ -470,5 +476,42 @@ func TestDatabaseSwitchAbortLosingToAnActivationKeepsTheTargetLive(t *testing.T)
 				t.Fatalf("got %+v", sw)
 			}
 		})
+	}
+}
+
+// A cancel the API accepts while the drain step runs, which then finds the
+// drain complete, is not lost: the step's advance to switching is held and
+// the next step cancels the switch with the release unchanged.
+func TestDatabaseSwitchCancelAcceptedMidDrainStepIsHonoured(t *testing.T) {
+	h := newHarness(t)
+	h.databases.target.State = managedpostgres.StateReady
+	h.runUntil(state.DatabaseSwitchDraining, 12)
+	h.completeDrain()
+	h.drain.onPlan = func() {
+		h.drain.onPlan = nil
+		if _, err := h.store.RequestDatabaseSwitchCancel(context.Background(), h.sw.AccountID, h.sw.AppID, h.sw.ID, h.clock); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if sw := h.tick(); sw.Phase != state.DatabaseSwitchDraining || sw.CancelRequestedAt == nil {
+		t.Fatalf("after the step that saw the cancel late: %s, want held in draining", sw.Phase)
+	}
+	sw := h.runUntil(state.DatabaseSwitchCancelled, 4)
+	if sw.FailureCode != "cancelled" || sw.ReleaseSwitchedAt != nil || h.releases.live["default"] != sw.FromDeploymentID {
+		t.Fatalf("cancelled switch = %+v, live %s", sw, h.releases.live["default"])
+	}
+}
+
+// The worker runs each step under the app's organization scope, so the
+// restore is admitted against the organization's plan.
+func TestDatabaseSwitchStepsRunUnderTheAppOwnership(t *testing.T) {
+	h := newHarness(t)
+	org := uuid.NewString()
+	h.worker.Ownership = func(ctx context.Context, sw state.DatabaseSwitch) (context.Context, error) {
+		return managedpostgres.WithOwnership(ctx, org, org), nil
+	}
+	h.tick()
+	if h.databases.restores != 1 || h.databases.restoreOrg != org {
+		t.Fatalf("restore ran %d times under %q, want once under the app's organization %q", h.databases.restores, h.databases.restoreOrg, org)
 	}
 }

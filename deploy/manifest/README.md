@@ -70,6 +70,15 @@ opens 80/443 to every source while the platform site keeps answering
 Cloudflare only, and apid publishes the CNAME target and apex addresses to
 customers. See `docs/ops/custom-domain-tls.md`.
 
+`workload_identity.source_dir` (ADR-1141) turns on workload-identity tokens,
+which queue workers use to lease messages without an API key in the image.
+Point it at the directory `gregalectl workload-identity init --out DIR` wrote
+on the Ansible controller; it must be absolute. It renders
+`faas_workload_identity_source_dir` for every control-plane and compute host:
+the control plane installs the public JWKS and apid trusts it, each compute
+node installs the signing key and vmmd mints tokens. Converge the control
+plane first. Leaving it out keeps issuance off.
+
 The validator fails closed on every missing field, every
 malformed CIDR, every non-octal mode, every non-hex digest, and
 every misplaced TOML table (the load-bearing check from issue

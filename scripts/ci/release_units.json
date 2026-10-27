@@ -41,7 +41,7 @@
       "lane": "edge",
       "services": [
         {"name": "gatewayd-public", "host": "control-plane", "readyz": "http://127.0.0.1:9092/readyz"},
-        {"name": "gatewayd-public-edge", "host": "compute-only", "optional": true, "readyz": "http://127.0.0.1:9092/readyz"}
+        {"name": "gatewayd-public-edge", "host": "compute-only", "optional": true, "readyz": "http://127.0.0.1:9109/readyz"}
       ]
     },
     "realtimed": {"lane": "compute"},

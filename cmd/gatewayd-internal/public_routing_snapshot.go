@@ -44,6 +44,11 @@ func publicRoutingPinner(store state.PublicRoutingSnapshotStore, verifyHostPolic
 			if inputs.HostDeploymentID != "" {
 				result.HostChecked = true
 				var err error
+				if inputs.Smoke {
+					// The candidate is not live yet, and its scope need not be the host's.
+					result.HostAllowed, err = reader.PublicSmokeCandidateAllowed(ctx, app.ID, inputs.HostDeploymentID)
+					return err
+				}
 				result.HostAllowed, err = reader.PublicHostPinAllowed(ctx, app.ID, inputs.HostScope, inputs.HostDeploymentID)
 				return err
 			}
@@ -64,17 +69,39 @@ func publicRoutingPinner(store state.PublicRoutingSnapshotStore, verifyHostPolic
 			if inputs.Async {
 				return nil
 			}
-			rows, err := reader.PublicDeploymentWeights(ctx, app.ID, inputs.Scope)
+			rows, lane, err := publicRoutingRoster(ctx, reader, app.ID, inputs.Scope)
 			if err != nil {
 				return err
 			}
 			for _, row := range rows {
 				result.Weights = append(result.Weights, gateway.DeploymentWeightsRow{ID: row.ID, TrafficPercent: row.TrafficPercent})
 			}
+			if lane != "" && lane != normalizedRoutingScope(inputs.Scope) {
+				result.RosterScope = lane
+			}
 			return nil
 		})
 		return result, err
 	}
+}
+
+// publicRoutingRoster reads the weighted roster. The production lane follows
+// state.ProductionRoutingDeployments like the weighted picker, so a project
+// app still serving from the legacy default scope keeps its roster (rc.296
+// read only "production" for it and refused every request).
+func publicRoutingRoster(ctx context.Context, reader state.PublicRoutingPolicyReader, app, scope string) ([]state.ServiceDeploymentWeight, string, error) {
+	if state.IsProductionRoutingScope(scope) {
+		return reader.PublicProductionDeploymentWeights(ctx, app)
+	}
+	rows, err := reader.PublicDeploymentWeights(ctx, app, scope)
+	return rows, "", err
+}
+
+func normalizedRoutingScope(scope string) string {
+	if scope == "" {
+		return state.DefaultEnvScope
+	}
+	return scope
 }
 
 func readPublicReleaseSnapshot(ctx context.Context, reader state.PublicRoutingPolicyReader, app string, inputs gateway.PublicRoutingInputs, result *gateway.PublicRoutingSnapshot) error {

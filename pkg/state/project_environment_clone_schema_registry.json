@@ -510,6 +510,7 @@
       "comparison",
       "cooldown_minutes",
       "created_at",
+      "created_by_account_id",
       "custom_metric_name",
       "edge_rule_id",
       "enabled",
@@ -1439,6 +1440,7 @@
       "app_id",
       "auth_header_sealed",
       "created_at",
+      "created_by_account_id",
       "enabled",
       "id",
       "kind",
@@ -1963,6 +1965,7 @@
       "account_id",
       "app_id",
       "created_at",
+      "created_by_account_id",
       "delivery_format",
       "enabled",
       "event_filter",
@@ -2413,6 +2416,21 @@
       "id",
       "kind",
       "received_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "audit_log_anchors",
+    "columns": [
+      "created_at",
+      "key_id",
+      "mac",
+      "prev_mac",
+      "row_count",
+      "rows_digest",
+      "seq",
+      "window_end",
+      "window_start"
     ],
     "kind": "operational"
   },
@@ -11380,6 +11398,16 @@
       "url_request"
     ],
     "kind": "configuration"
+  },
+  {
+    "table": "object_storage_timeline_acceptance",
+    "columns": [
+      "accepted_at",
+      "accepted_by",
+      "singleton",
+      "timeline"
+    ],
+    "kind": "operational"
   },
   {
     "table": "object_storage_upload_grants",
