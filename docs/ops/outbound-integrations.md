@@ -487,6 +487,14 @@ The SDK's placeholder key is replaced by the integration's credential.
 Anthropic integrations receive it in `x-api-key`, with any `Bearer ` prefix
 removed.
 
+### Suspended accounts
+
+Calls through a customer integration of an account that is `suspended` or
+`deleted_pending` are refused with `403 outbound_account_suspended`, from
+the app relay and from access tokens alike (ADR 20261027132936).
+`past_due` accounts keep calling. Reading a logged call's captured bodies
+(`GET .../ai-requests/{request}/content`) needs `admin` or `secrets:read`.
+
 ## App relay
 
 Every app VM has `GREGALE_OUTBOUND_URL=http://127.0.0.1:2774`. Requests to
@@ -585,7 +593,11 @@ call:
   byte reaches the caller.
 - **Cache:** with `response_cache_ttl_seconds` set, an identical JSON
   request (same body, caller and headers) is served from the cache when the
-  provider returned `200`. Streams are cached too (ADR-1440): the stream is
+  provider returned `200`. The key leaves out per-call telemetry headers
+  (`traceparent`, `tracestate`, `baggage`, `sentry-trace`, `b3`, `x-b3-*`,
+  `x-request-id`, `x-correlation-id`, `x-amzn-trace-id`,
+  `x-cloud-trace-context`, `user-agent`, `idempotency-key`, `x-stainless-*`;
+  ADR 20261027132936), and a hit skips the moderation check. Streams are cached too (ADR-1440): the stream is
   copied into the cache as it is forwarded and kept only when it ends cleanly
   within 1 MiB, and a hit replays it at once. Each outboundd process holds at
   most 32 MiB of entries.
@@ -603,6 +615,27 @@ call:
   these calls no longer count as unknown usage.
 
 Larger bodies stream exactly as before, without these features.
+
+### AI call bounds
+
+See [ADR 20261027132936](../adr/20261027132936-ai-gateway-release-review-fixes.md).
+For a billable AI call:
+
+- The integration's `request_timeout_ms` bounds the wait for the response
+  headers, retries and route fallback included. An AI integration created
+  without a request policy starts at its plan's ceilings
+  (`gregale ai request-policy <id>` shows and sets them).
+- After the headers, the call runs until `OutboundAICallMaxSeconds` (30
+  minutes) after it started, and a streamed answer ends after
+  `OutboundAIStreamIdleSeconds` (10 minutes) without a byte. The response's
+  write deadline moves to the call's end, so outboundd's `write_timeout`
+  does not cut it.
+- The admission lease is renewed every third of max(timeout, 15 s) while
+  the call runs, so its reservation and in-flight slot count until
+  settlement. A crashed outboundd's leases expire within that span.
+- A call whose request was sent but that ended before its headers settles
+  at its reservation as unknown usage, logged with status `504` (the
+  timeout) or `499` (the caller left).
 
 ## AI automatic prompt caching
 
@@ -835,6 +868,15 @@ use the same price.
   `model_prices_and_context_window.json` at a pinned commit into its own
   directory, run `python3 -I scripts/gen_ai_price_catalog.py` with that
   commit, and review the diff in a PR.
+- A model in neither the price list nor the catalog has no price. While a
+  cost cap applies to the call (the integration's daily or monthly cost
+  limit, the end-user cost limit for a named end user, a tag cost limit on
+  one of its tags, a trace cost limit), it is refused with
+  `403 outbound_ai_model_unpriced` unless `allow_unmetered` is on; an
+  unmetered realtime response ends the session. An answer whose own model has
+  no price is priced as the requested model. Settled calls that cost zero for
+  want of a price count in `outbound_ai_unpriced_calls_total`
+  (ADR 20261027132936).
 
 ## Per-end-user limits
 
@@ -1723,7 +1765,11 @@ local development, CI or a notebook (ADR-1431).
   - `401 outbound_access_token_invalid`: missing, unknown, revoked or expired;
   - `403 outbound_access_token_not_allowed`: the integration is outside the
     token's scope;
-  - `503 outbound_access_token_unavailable`: the lookup failed.
+  - `503 outbound_access_token_unavailable`: the lookup failed, or
+    `OutboundAIAccessTokenLookupsMax` (8) lookups of uncached tokens were
+    already running (ADR 20261027132936). Known and unknown tokens are
+    cached apart, so unknown ones never push out known ones;
+    `outbound_ai_access_token_lookups_total{result}` counts lookups.
 
 **Operator setup.** The public listener is off by default.
 
