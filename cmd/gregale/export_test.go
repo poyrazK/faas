@@ -670,6 +670,7 @@ var ClassifyDevRuntimeLog = classifyDevRuntimeLog
 var CleanupUploadCacheExclusive = cleanupUploadCacheExclusive
 var CliConfigPath = cliConfigPath
 var CliTreePlaces = cliTreePlaces
+var CliTreeManifest = cliTreeManifest
 var CliRelatedCommands = &cliRelatedCommands
 var CliSeeAlso = cliSeeAlso
 var CliPreAuthPatch = cliPreAuthPatch

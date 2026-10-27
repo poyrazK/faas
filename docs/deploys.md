@@ -141,7 +141,7 @@ the rollback is requested and prints its id:
 gregale rollback status my-api --operation <id> --wait
 ```
 
-See [`gregale deployments`](cli-reference.md#deployments) for deployment
+See [`gregale release list`](cli-reference.md#release-list) for deployment
 history and annotations.
 
 ## Releases that change the database

@@ -360,6 +360,17 @@ func cliTreeStandardVerb(verb string) string {
 	return verb
 }
 
+// cliTreeVerbFor spells a verb of siblings in its standard form. A synonym
+// whose standard verb is also a sibling (`rm` beside `delete`) is not
+// listed: the standard verb runs the sibling.
+func cliTreeVerbFor(verb string, siblings []cliSub) (string, bool) {
+	standard := cliTreeStandardVerb(verb)
+	if standard != verb && slices.ContainsFunc(siblings, func(sub cliSub) bool { return sub.Name == standard }) {
+		return "", false
+	}
+	return standard, true
+}
+
 func lookupCliTreeNoun(name string) (cliTreeNoun, bool) {
 	for _, noun := range cliTreeNouns {
 		if noun.Name == name {
@@ -745,8 +756,14 @@ type cliTreeDiscovery struct {
 }
 
 func newCliTreeDiscovery() cliTreeDiscovery {
+	return cliTreeDiscoveryOf(discoverableCliCommands())
+}
+
+// cliTreeDiscoveryOf indexes manifest, for a surface that documents more
+// than this account can see.
+func cliTreeDiscoveryOf(manifest []cliCommand) cliTreeDiscovery {
 	commands := map[string]cliCommand{}
-	for _, command := range discoverableCliCommands() {
+	for _, command := range manifest {
 		if cliCommandAvailable(command.Name) {
 			commands[command.Name] = command
 		}
@@ -810,8 +827,9 @@ func (d cliTreeDiscovery) entries(prefix []string) []cliTreeEntry {
 			continue
 		}
 		for _, sub := range node.Subs {
-			if old := alias.Old + " " + sub.Name; !renamed[old] {
-				add(cliTreeStandardVerb(sub.Name), sub.Short, old)
+			verb, ok := cliTreeVerbFor(sub.Name, node.Subs)
+			if old := alias.Old + " " + sub.Name; ok && !renamed[old] {
+				add(verb, sub.Short, old)
 			}
 		}
 	}
@@ -836,7 +854,8 @@ func (d cliTreeDiscovery) appEntries(add func(name, short, runs string)) {
 			add("listener", "Manage TCP and UDP listeners (--protocol tcp|udp)", runs)
 			continue
 		}
-		add(cliTreeStandardVerb(sub.Name), sub.Short, runs)
+		// rewriteAppPath dispatches today's spelling of an app verb.
+		add(sub.Name, sub.Short, runs)
 	}
 }
 
