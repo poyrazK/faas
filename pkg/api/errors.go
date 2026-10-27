@@ -4907,6 +4907,16 @@ func ErrPlanDataUpstreamsNotAllowed(p Plan) *Problem {
 // ErrDataUpstreamsDisabled reports cluster configuration independently of
 // plan entitlement. Operators can enable the runtime switch without asking an
 // already-entitled customer to change plans.
+// ErrEgressCircuitNotEnforced (ADR-570) refuses opting an upstream into the
+// egress circuit breaker while this platform's schedd and vmmd do not enforce
+// it: the setting would be stored and shown, but no connection rejected.
+func ErrEgressCircuitNotEnforced() *Problem {
+	return NewProblem(http.StatusServiceUnavailable, CodeEgressCircuitDisabled,
+		"Egress circuit breakers are not enforced",
+		"this platform does not enforce egress circuit breakers yet, so enabling one would not reject any connection; contact the platform operator").
+		WithDocs(docsBase + "/plans#data-placement")
+}
+
 func ErrDataUpstreamsDisabled() *Problem {
 	return NewProblem(http.StatusServiceUnavailable, CodeDataUpstreamsDisabled,
 		"Data placement is disabled",

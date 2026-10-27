@@ -248,7 +248,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_EDGE_CRAWLER_RANGES_REFRESH` | apid | `default` |  |  | `` | ADR-20261022083601: "0" turns off the refresh of crawler operators' published IP ranges on installs without outbound internet; gateways then verify search crawlers by DNS only and never verify AI crawlers |
 | `FAAS_EDGE_WAF_INLINE_DISABLED` | gatewayd-internal | `default` |  |  | `` | ADR-831 amendment 4 operator kill switch; "1" turns off in-path kind=waf checks so warn and block rules only observe |
 | `FAAS_EGRESS_ALLOW_LOOPBACK` | shared | `dev-only` |  |  | `` | must never be set on a production host |
-| `FAAS_EGRESS_CIRCUIT_BREAKER` | schedd, vmmd | `default` |  |  | `` | ADR-201 §3 / ADR-570; off by default; enable on schedd and each vmmd to reject new tenant connections to an unhealthy declared upstream |
+| `FAAS_EGRESS_CIRCUIT_BREAKER` | apid, schedd, vmmd | `default` |  |  | `` | ADR-201 §3 / ADR-570; off by default; enable on schedd and each vmmd to reject new tenant connections to an unhealthy declared upstream, and on apid so customers may opt an upstream in |
 | `FAAS_EGRESS_DNS_GATING` | vmmd | `default` |  |  | `` | ADR-373 per-node escape hatch; "off" disables DNS-gated tenant egress, any other value keeps it on |
 | `FAAS_EGRESS_SOCKET` | shared | `dropin` |  |  | `` |  |
 | `FAAS_ENVIRONMENT` | shared, apid | `default` |  |  | `` | optional deployment environment label; managed PostgreSQL provisioning and data pipeline workers require the explicit staging value |
