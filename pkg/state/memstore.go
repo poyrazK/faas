@@ -1247,6 +1247,9 @@ type MemStore struct {
 	// object-storage month-close ledger.
 	objectStorageBilling           map[string]ObjectStorageBillingRecord
 	objectStorageBillingDeliveries map[string]ObjectStorageBillingDelivery
+	// objectStorageBillingProgress is the object-storage charge delivered
+	// so far per provider, account, month and mode (ADR-20261027093220).
+	objectStorageBillingProgress map[string]ObjectStorageBillingProgress
 	// accountCredits is the in-memory mirror of the `account_credits`
 	// table (migration 00049, issue #279). Keyed by credit id. The
 	// handler is the only writer in production; meterd never reads
@@ -23801,6 +23804,11 @@ func (m *MemStore) DeleteAccount(ctx context.Context, id string) error {
 	for key, delivery := range m.objectStorageBillingDeliveries {
 		if delivery.AccountID == id {
 			delete(m.objectStorageBillingDeliveries, key)
+		}
+	}
+	for key, progress := range m.objectStorageBillingProgress {
+		if progress.AccountID == id {
+			delete(m.objectStorageBillingProgress, key)
 		}
 	}
 	for workflowID, workflow := range m.executionWorkflowJobs {

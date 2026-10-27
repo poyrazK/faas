@@ -2144,7 +2144,27 @@ const (
 	MaxObjectStoragePolicyValue         int64 = 1 << 60
 	MaxObjectStorageReportAgeSeconds    int64 = 86400
 	ObjectStorageInventoryMaxAgeSeconds int64 = 900
-	ObjectStorageInventoryMaxPages            = 1000
+	// ObjectStorageReportCloseWindow is how long after a UTC month ends a
+	// provider usage exporter keeps writing that month's closing report,
+	// observed at the month's last instant, so month close prices usage to
+	// the end of the month (Hunt 19 H19-2).
+	ObjectStorageReportCloseWindow = 6 * time.Hour
+	// ObjectStorageReportCloseTolerance is how long before a month's end a
+	// backend's latest provider report may be observed and still count as
+	// covering the month at month close. A closing report is observed at the
+	// month's last microsecond.
+	ObjectStorageReportCloseTolerance = time.Minute
+	// ObjectStorageProgressInterval is how often a paid account's
+	// month-to-date object-storage charge is delivered inside its month,
+	// so a subscription that ends mid-month is billed for its storage up to
+	// its last step (ADR-20261027093220). ObjectStorageProgressSweepInterval
+	// is how often apid looks for due accounts, and ObjectStorageProgressRetry
+	// how long a reservation a failed step left waits before a retry
+	// replaces it.
+	ObjectStorageProgressInterval      = 24 * time.Hour
+	ObjectStorageProgressSweepInterval = time.Hour
+	ObjectStorageProgressRetry         = 5 * time.Minute
+	ObjectStorageInventoryMaxPages     = 1000
 	// MaxObjectStorageReconcileBuckets bounds one backend's bucket listing in
 	// operator reconciliation after a database restore (ADR-20261025111015).
 	MaxObjectStorageReconcileBuckets = 100_000
@@ -4415,6 +4435,12 @@ type Limits struct {
 	// rather than dropping silently. Hobby=1000, Pro=10000,
 	// Scale=50000.
 	DebugTelemetryRequestsPerMinute int
+	// DebugGuestLogExportsPerMinute (ADR-213 runtime adapter, ADR-958) is
+	// the per-account cap on OTLP log exports a tracing-enabled app's guest
+	// bridge forwards to apid. Each export carries at most
+	// TraceMaxLogRecordsPerExport records, so the record cap is the product.
+	// Free=0 (off), Hobby=60, Pro=600, Scale=3000.
+	DebugGuestLogExportsPerMinute int
 	// DebugTelemetryDeploymentsPerApp (ADR-127 §Decision 4) is
 	// the per-app ceiling on distinct deployment_id labels the
 	// gateway_request_duration_seconds histogram admits. Past the
@@ -4991,6 +5017,7 @@ var planLimits = map[Plan]Limits{
 		Profiling:                       ProfilingLimits{},
 		DebugTelemetryRetentionDays:     0,
 		DebugTelemetryRequestsPerMinute: 0,
+		DebugGuestLogExportsPerMinute:   0,
 		DebugTelemetryDeploymentsPerApp: 0,
 		DebugTelemetrySpansPerTrace:     0,
 		// Per-app observability surface (Free = off). 0/0/0 is the
@@ -5425,6 +5452,7 @@ var planLimits = map[Plan]Limits{
 		DebugTelemetryRetentionDays:     3,
 		Profiling:                       ProfilingLimits{Enabled: true, RetentionDays: 3, UploadsPerMinute: 60},
 		DebugTelemetryRequestsPerMinute: 1000,
+		DebugGuestLogExportsPerMinute:   60,
 		DebugTelemetryDeploymentsPerApp: 10,
 		DebugTelemetrySpansPerTrace:     50,
 		// Per-app observability surface (Hobby = on). The Hobby
@@ -5825,6 +5853,7 @@ var planLimits = map[Plan]Limits{
 		DebugTelemetryRetentionDays:     7,
 		Profiling:                       ProfilingLimits{Enabled: true, RetentionDays: 7, UploadsPerMinute: 180},
 		DebugTelemetryRequestsPerMinute: 10000,
+		DebugGuestLogExportsPerMinute:   600,
 		DebugTelemetryDeploymentsPerApp: 50,
 		DebugTelemetrySpansPerTrace:     200,
 		// Per-app observability surface (Pro = on). Same posture
@@ -6256,6 +6285,7 @@ var planLimits = map[Plan]Limits{
 		DebugTelemetryRetentionDays:     14,
 		Profiling:                       ProfilingLimits{Enabled: true, RetentionDays: 14, UploadsPerMinute: 600},
 		DebugTelemetryRequestsPerMinute: 50000,
+		DebugGuestLogExportsPerMinute:   3000,
 		DebugTelemetryDeploymentsPerApp: 200,
 		DebugTelemetrySpansPerTrace:     1000,
 		// Per-app observability surface (Scale = on). Largest
@@ -9446,6 +9476,16 @@ func (p Plan) DebugTelemetryRequestsPerMinute() int {
 		return 0
 	}
 	return l.DebugTelemetryRequestsPerMinute
+}
+
+// DebugGuestLogExportsPerMinute returns the per-account cap on guest OTLP
+// log exports (ADR-213 runtime adapter). Returns 0 on unknown plans.
+func (p Plan) DebugGuestLogExportsPerMinute() int {
+	l, ok := LimitsFor(p)
+	if !ok {
+		return 0
+	}
+	return l.DebugGuestLogExportsPerMinute
 }
 
 // DebugTelemetryDeploymentsPerApp (ADR-127 §Decision 4) returns the
