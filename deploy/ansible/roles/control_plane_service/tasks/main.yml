@@ -43,6 +43,7 @@
     - faas-meterd
     - faas-outboundd
     - faas-bridged
+    - faas-mcp-bridge
 
 # schedd reads the non-secret signing public key directly. Keep the shared
 # parent traversable by the faas group while private children and files retain
@@ -1186,3 +1187,92 @@
     group: root
     mode: "0644"
   notify: restart faas-schedd
+
+# ADR-20261026195952: the hosted management MCP server. The unit ships with
+# every converge but runs only where faas_mcp_bridge_enabled is set and the
+# state key exists. The 50-faas-mcp-bridge.conf marker tells cd-controlplane
+# to update and restart it with each release.
+- name: control_plane_service — install hosted management MCP unit
+  ansible.builtin.copy:
+    src: faas-mcp-bridge.service
+    dest: /etc/systemd/system/faas-mcp-bridge.service
+    owner: root
+    group: root
+    mode: "0644"
+  notify: restart faas-mcp-bridge
+
+- name: control_plane_service — create hosted management MCP drop-in directory
+  ansible.builtin.file:
+    path: /etc/systemd/system/faas-mcp-bridge.service.d
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+# The bridge's resource URL is https://api.<platform domain>/mcp, resolved
+# from the same domain layout as every daemon (ADR-20261026100000).
+- name: control_plane_service — install hosted management MCP domain drop-ins
+  ansible.builtin.template:
+    src: "../../_shared/templates/{{ item }}.j2"
+    dest: "/etc/systemd/system/faas-mcp-bridge.service.d/{{ item }}"
+    owner: root
+    group: root
+    mode: "0644"
+  loop:
+    - 99-faas-apps-domain.conf
+    - 99-faas-domain-layout.conf
+  notify: restart faas-mcp-bridge
+
+- name: control_plane_service — check the hosted management MCP state key
+  ansible.builtin.stat:
+    path: /etc/faas/secrets/mcp-bridge/state.key
+  register: faas_mcp_bridge_key
+  when: faas_mcp_bridge_enabled | bool
+
+- name: control_plane_service — require the hosted management MCP state key
+  ansible.builtin.assert:
+    that:
+      - faas_mcp_bridge_key.stat.exists
+      - faas_mcp_bridge_key.stat.size in [32, 64, 65]
+    fail_msg: >-
+      faas_mcp_bridge_enabled needs /etc/faas/secrets/mcp-bridge/state.key: 32 random
+      bytes or 64 hex characters, root-owned, mode 0600. Create it once with
+      `install -d -m 0700 /etc/faas/secrets/mcp-bridge && head -c 32 /dev/urandom >
+      /etc/faas/secrets/mcp-bridge/state.key && chmod 0600 /etc/faas/secrets/mcp-bridge/state.key`
+      and keep a copy: losing it signs every connected agent out (ADR-20261026195952).
+  when: faas_mcp_bridge_enabled | bool
+
+- name: control_plane_service — mark the hosted management MCP server configured
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/faas-mcp-bridge.service.d/50-faas-mcp-bridge.conf
+    content: |
+      # Managed by Ansible (ADR-20261026195952): the hosted management MCP server
+      # is enabled here; cd-controlplane updates and restarts it with a release.
+      [Service]
+    owner: root
+    group: root
+    mode: "0644"
+  notify: restart faas-mcp-bridge
+  when: faas_mcp_bridge_enabled | bool
+
+- name: control_plane_service — enable the hosted management MCP server
+  ansible.builtin.systemd_service:
+    name: faas-mcp-bridge.service
+    enabled: true
+    state: started
+    daemon_reload: true
+  when: faas_mcp_bridge_enabled | bool
+
+- name: control_plane_service — unmark the hosted management MCP server when disabled
+  ansible.builtin.file:
+    path: /etc/systemd/system/faas-mcp-bridge.service.d/50-faas-mcp-bridge.conf
+    state: absent
+  when: not (faas_mcp_bridge_enabled | bool)
+
+- name: control_plane_service — stop the hosted management MCP server when disabled
+  ansible.builtin.systemd_service:
+    name: faas-mcp-bridge.service
+    enabled: false
+    state: stopped
+    daemon_reload: true
+  when: not (faas_mcp_bridge_enabled | bool)

@@ -29127,7 +29127,7 @@ CREATE TABLE public.api_keys (
     runs_principal_id uuid DEFAULT gen_random_uuid() NOT NULL,
     display_prefix text,
     CONSTRAINT api_keys_display_prefix_chk CHECK (((display_prefix IS NULL) OR (display_prefix ~ '^fp_[a-z]+_[0-9a-f]{8}$'::text))),
-    CONSTRAINT api_keys_scopes_vocab_chk CHECK (((scopes <@ ARRAY['admin'::text, 'apps:read'::text, 'deploy:write'::text, 'secrets:read'::text, 'secrets:write'::text, 'usage:read'::text, 'env:read'::text, 'env:write'::text, 'registry_credentials:read'::text, 'registry_credentials:write'::text, 'upstreams:write'::text, 'metrics:write'::text, 'delayed_tasks:read'::text, 'delayed_tasks:write'::text, 'events:publish'::text, 'queues:send'::text, 'storage:manage'::text, 'storage:read'::text, 'storage:write'::text, 'postgres:manage'::text, 'postgres:read'::text, 'github:manage'::text, 'project_environments:read'::text, 'project_environments:qualify'::text, 'runs:read'::text, 'runs:write'::text]) AND (cardinality(scopes) > 0))),
+    CONSTRAINT api_keys_scopes_vocab_v2_chk CHECK (((scopes <@ ARRAY['admin'::text, 'apps:read'::text, 'deploy:write'::text, 'secrets:read'::text, 'secrets:write'::text, 'secrets:request'::text, 'usage:read'::text, 'env:read'::text, 'env:write'::text, 'registry_credentials:read'::text, 'registry_credentials:write'::text, 'upstreams:write'::text, 'metrics:write'::text, 'delayed_tasks:read'::text, 'delayed_tasks:write'::text, 'events:publish'::text, 'queues:send'::text, 'storage:manage'::text, 'storage:read'::text, 'storage:write'::text, 'postgres:manage'::text, 'postgres:read'::text, 'github:manage'::text, 'project_environments:read'::text, 'project_environments:qualify'::text, 'runs:read'::text, 'runs:write'::text]) AND (cardinality(scopes) > 0))),
     CONSTRAINT api_keys_status_check CHECK ((status = ANY (ARRAY['active'::text, 'grace'::text, 'revoked'::text])))
 );
 
@@ -44163,6 +44163,39 @@ CREATE TABLE public.managed_realtime_worker_heartbeats (
     CONSTRAINT managed_realtime_worker_heartbeats_ready_check CHECK ((ready = ANY (ARRAY[true, false]))),
     CONSTRAINT managed_realtime_worker_heartbeats_status_code_check CHECK (((octet_length(status_code) <= 64) AND (status_code ~ '^[ -~]*$'::text))),
     CONSTRAINT managed_realtime_worker_heartbeats_worker_check CHECK (((octet_length(worker) >= 1) AND (octet_length(worker) <= 128)))
+);
+
+
+--
+-- Name: mcp_bridge_leases; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.mcp_bridge_leases (
+    bridge text NOT NULL,
+    holder text NOT NULL,
+    epoch bigint NOT NULL,
+    expires_at timestamp with time zone NOT NULL,
+    CONSTRAINT mcp_bridge_leases_bridge_check CHECK ((bridge ~ '^[a-z0-9][a-z0-9-]{0,62}$'::text)),
+    CONSTRAINT mcp_bridge_leases_epoch_check CHECK ((epoch > 0)),
+    CONSTRAINT mcp_bridge_leases_expires_at_check CHECK (isfinite(expires_at)),
+    CONSTRAINT mcp_bridge_leases_holder_check CHECK ((holder ~ '^[0-9a-f]{32}$'::text))
+);
+
+
+--
+-- Name: mcp_bridge_state; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.mcp_bridge_state (
+    bridge text NOT NULL,
+    namespace text NOT NULL,
+    sealed bytea NOT NULL,
+    epoch bigint NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT mcp_bridge_state_epoch_check CHECK ((epoch > 0)),
+    CONSTRAINT mcp_bridge_state_namespace_check CHECK (((octet_length(namespace) >= 1) AND (octet_length(namespace) <= 256))),
+    CONSTRAINT mcp_bridge_state_sealed_check CHECK (((octet_length(sealed) >= 29) AND (octet_length(sealed) <= 33554432))),
+    CONSTRAINT mcp_bridge_state_updated_at_check CHECK (isfinite(updated_at))
 );
 
 
@@ -62947,6 +62980,22 @@ ALTER TABLE ONLY public.managed_realtime_worker_heartbeats
 
 ALTER TABLE ONLY public.managed_realtime_worker_heartbeats
     ADD CONSTRAINT managed_realtime_worker_heartbeats_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: mcp_bridge_leases mcp_bridge_leases_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.mcp_bridge_leases
+    ADD CONSTRAINT mcp_bridge_leases_pkey PRIMARY KEY (bridge);
+
+
+--
+-- Name: mcp_bridge_state mcp_bridge_state_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.mcp_bridge_state
+    ADD CONSTRAINT mcp_bridge_state_pkey PRIMARY KEY (bridge, namespace);
 
 
 --
@@ -93741,6 +93790,14 @@ ALTER TABLE ONLY public.managed_realtime_worker_credentials
 
 ALTER TABLE ONLY public.managed_realtime_worker_heartbeats
     ADD CONSTRAINT managed_realtime_worker_heartbeats_group_id_fkey FOREIGN KEY (group_id) REFERENCES public.managed_realtime_consumer_groups(id) ON DELETE CASCADE;
+
+
+--
+-- Name: mcp_bridge_state mcp_bridge_state_bridge_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.mcp_bridge_state
+    ADD CONSTRAINT mcp_bridge_state_bridge_fkey FOREIGN KEY (bridge) REFERENCES public.mcp_bridge_leases(bridge) ON DELETE CASCADE;
 
 
 --
