@@ -99,6 +99,23 @@ func HourWindow(at time.Time) (start, end time.Time) {
 // (stripe.ClassifyPushError, paddle.ClassifyPushError) are
 // SDK-typed and live in each provider's package so the pusher
 // doesn't depend on either SDK's internal error shape.
+// usageDeliverable reports whether acct's usage for the hour starting at hour
+// may be pushed. A suspended account's usage waits. A deleting account's
+// hours that began before its deletion request are still delivered: skipping
+// them dropped the last hour or two (or, after a provider outage, every
+// undelivered window in the lookback), so an account could run heavy usage
+// and delete itself before it was billed. The subscription stays open until
+// period end, so the provider still accepts them.
+func usageDeliverable(acct state.Account, hour time.Time) bool {
+	switch acct.Status {
+	case state.AccountSuspended:
+		return false
+	case state.AccountDeletedPending:
+		return acct.DeletionRequestedAt != nil && hour.Before(*acct.DeletionRequestedAt)
+	}
+	return true
+}
+
 func (p *Pusher) PushHour(ctx context.Context) (int, error) {
 	if p.pusher == nil {
 		return 0, errors.New("meter: billing pusher not configured")
@@ -126,7 +143,7 @@ func (p *Pusher) PushHour(ctx context.Context) (int, error) {
 			// Free plan: no customer id, no overage — skip.
 			continue
 		}
-		if acct.Status == state.AccountSuspended || acct.Status == state.AccountDeletedPending {
+		if !usageDeliverable(acct, start) {
 			continue
 		}
 		acct, err = p.accountForProvider(ctx, acct)
@@ -270,7 +287,7 @@ func (p *Pusher) PushPending(ctx context.Context, lookback time.Duration) (int, 
 	var firstErr error
 	for _, window := range ordered {
 		acct, ok := byID[window.AccountID]
-		if !ok || acct.Plan == "free" || acct.Status == state.AccountSuspended || acct.Status == state.AccountDeletedPending {
+		if !ok || acct.Plan == "free" || !usageDeliverable(acct, window.Hour) {
 			continue
 		}
 		acct, err = p.accountForProvider(ctx, acct)
@@ -385,7 +402,7 @@ func (p *Pusher) pushPendingMeter(ctx context.Context, ops providerOps, byID map
 	var firstErr error
 	for _, window := range windows {
 		acct, exists := byID[window.AccountID]
-		if !exists || acct.Plan == api.PlanFree || acct.Status == state.AccountSuspended || acct.Status == state.AccountDeletedPending {
+		if !exists || acct.Plan == api.PlanFree || !usageDeliverable(acct, window.Hour) {
 			continue
 		}
 		policy, configured := policyProvider.MeterUsagePolicy(acct.Plan, meter)
