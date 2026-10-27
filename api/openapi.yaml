@@ -24810,6 +24810,21 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
         '503': { $ref: '#/components/responses/CapacityUnavailable' }
+    delete:
+      tags: [apps]
+      operationId: deleteProfileCapture
+      summary: Delete an on-demand profile capture.
+      description: Deletes the capture and its profiles with deploy-write access, freeing its share of the account's capture storage at once. A capture still queued or running is cancelled and its profiles are discarded.
+      responses:
+        '204':
+          description: Capture deleted.
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PaymentRequired' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
 
   /v1/apps/{slug}/profiles/captures/{id}/view:
     parameters:
@@ -120799,6 +120814,9 @@ components:
           type: integer
           minimum: 1
           maximum: 65535
+        automatic_captures:
+          description: Whether the platform may start automatic on-demand captures of the app when memory runs low, a request is in flight for too long, or an instance uses its whole CPU limit. Unset means on. Automatic captures count against their own hourly limit and at most half of the account's capture storage.
+          type: boolean
     CreateProfileCaptureRequest:
       description: On-demand capture request. Kinds defaults to [cpu]; duration_seconds to 10. Stacks is an instant snapshot of where every goroutine or thread is waiting, taken when the capture starts. Block and mutex are Go contention profiles (time goroutines spent blocked on channels or locks, or waiting for a mutex, during the window).
       type: object

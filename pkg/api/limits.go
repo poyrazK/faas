@@ -598,8 +598,20 @@ const (
 	// ProfileCaptureMaxProfileBytes bounds the summed compressed profiles so each
 	// host hop stays under gRPC's default 4 MiB message limit.
 	ProfileCaptureMaxProfileBytes = 3 << 20
-	// ProfileCaptureMaxPerAccountHour bounds captures started per account.
+	// ProfileCaptureMaxPerAccountHour bounds manual captures started per
+	// account. Automatic captures count against their own hourly bound, so
+	// they never use up the captures a person can start.
 	ProfileCaptureMaxPerAccountHour = 60
+	// ProfileCaptureAutomaticMaxPerAccountHour bounds automatic captures
+	// queued per account across its apps.
+	ProfileCaptureAutomaticMaxPerAccountHour = 30
+	// ProfileCaptureAutomaticStoragePercent is the share of an account's
+	// capture storage automatic captures may use, oldest rotated out first;
+	// the rest stays free for manual captures.
+	ProfileCaptureAutomaticStoragePercent = 50
+	// ProfileCaptureMaxRotated bounds the automatic captures one new
+	// automatic capture may rotate out.
+	ProfileCaptureMaxRotated = 256
 	// net/http/pprof collection by guest-init (profiling.pprof_port). A heap
 	// or goroutine fetch, and a CPU fetch beyond its window, must answer
 	// within ProfilePprofFetchTimeout. An endpoint that has not answered yet

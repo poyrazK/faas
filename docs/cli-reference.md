@@ -13843,14 +13843,15 @@ Capture CPU, heap, stack or lock profiles from a running instance
 
 ### debug captures
 
-List or show on-demand profile captures
+List, show or delete on-demand profile captures
 
-`gregale debug captures [--output <DIR>] [--top <N>] <slug> [<capture-id>]`
+`gregale debug captures [--output <DIR>] [--top <N>] [--delete] <slug> [<capture-id>]`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--output <DIR>` | write merged .pb.gz pprof files |  |
 | `--top <N>` | functions to print per kind |  |
+| `--delete` | delete the named capture and free its storage |  |
 
 ### debug capture-diff
 

@@ -818,6 +818,7 @@ var methodRouteMap = map[string]string{
 	"POST /v1/apps/{slug}/profiles/captures":           "CreateProfileCapture",
 	"GET /v1/apps/{slug}/profiles/captures":            "ListProfileCaptures",
 	"GET /v1/apps/{slug}/profiles/captures/{id}":       "GetProfileCapture",
+	"DELETE /v1/apps/{slug}/profiles/captures/{id}":    "DeleteProfileCapture",
 	"GET /v1/apps/{slug}/profiles/captures/{id}/view":  "GetProfileCaptureView",
 	"GET /v1/apps/{slug}/profiles/captures/{id}/diff":  "DiffProfileCaptures",
 	"GET /v1/apps/{slug}/profiles/captures/{id}/pprof": "DownloadProfileCapture",
