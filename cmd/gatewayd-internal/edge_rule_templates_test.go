@@ -43,3 +43,28 @@ func TestCompileEdgeRuleTemplates(t *testing.T) {
 		t.Fatalf("redirects=%v errs=%+v", byID, errs)
 	}
 }
+
+// adr: 091 — a rule saved while apid compared reserved header names
+// case-sensitively ("host", "transfer-encoding") drops at host load instead
+// of mutating framing or routing headers.
+func TestCompileEdgeRulesDropReservedHeaderNames(t *testing.T) {
+	headers := []state.EdgeRule{
+		{ID: "ok", Enabled: true, Kind: state.EdgeRuleKindHeaders, MatchPath: "/*", Action: state.EdgeRuleAction{Kind: state.EdgeRuleKindHeaders,
+			Headers: &state.EdgeRuleHeadersAction{RequestHeaders: []state.EdgeRuleHeaderOp{{Name: "X-Ok", Action: "set", Value: "1"}}}}},
+		{ID: "host", Enabled: true, Kind: state.EdgeRuleKindHeaders, MatchPath: "/*", Action: state.EdgeRuleAction{Kind: state.EdgeRuleKindHeaders,
+			Headers: &state.EdgeRuleHeadersAction{RequestHeaders: []state.EdgeRuleHeaderOp{{Name: "host", Action: "set", Value: "other.example"}}}}},
+		{ID: "te", Enabled: true, Kind: state.EdgeRuleKindHeaders, MatchPath: "/*", Action: state.EdgeRuleAction{Kind: state.EdgeRuleKindHeaders,
+			Headers: &state.EdgeRuleHeadersAction{ResponseHeaders: []state.EdgeRuleHeaderOp{{Name: "transfer-encoding", Action: "set", Value: "chunked"}}}}},
+	}
+	compiled, errs := compileHeadersRules(headers)
+	if len(compiled) != 1 || compiled[0].ID != "ok" || len(errs) != 2 {
+		t.Fatalf("headers compiled=%+v errs=%+v", compiled, errs)
+	}
+	redirects := []state.EdgeRule{
+		{ID: "cl", Enabled: true, Kind: state.EdgeRuleKindRedirect, MatchPath: "/*", Action: state.EdgeRuleAction{Kind: state.EdgeRuleKindRedirect,
+			Redirect: &state.EdgeRuleRedirectAction{StatusCode: 302, To: "/next", Headers: map[string]string{"content-length": "9"}}}},
+	}
+	if got, errs := compileRedirectRules(redirects); len(got) != 0 || len(errs) != 1 {
+		t.Fatalf("redirects=%+v errs=%+v", got, errs)
+	}
+}

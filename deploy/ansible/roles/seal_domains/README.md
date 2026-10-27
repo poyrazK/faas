@@ -1,6 +1,6 @@
 # seal_domains
 
-Stages per-reader seal-domain identities (ADR 20261022111812). Nine domains
+Stages per-reader seal-domain identities (ADR 20261022111812). Ten domains
 are wired, each opened by one daemon:
 - `outbound`: customer AI provider and other outbound credentials (outboundd);
 - `runtime`: customer env vars and secrets (vmmd);
@@ -16,7 +16,11 @@ are wired, each opened by one daemon:
   drop-in, the key moves only through `seal-domain migrate`);
 - `delivery`: app webhook signing secrets, commit-source connections and
   execution payloads (schedd, on every host; apid on the control plane
-  seals to the recipient).
+  seals to the recipient);
+- `account`: TOTP secrets, inbound webhook secrets, billing keys, workflow
+  plans and PagerDuty acknowledgement secrets (apid, which also seals them,
+  so it holds the identity and there is no recipient file). The other
+  account columns join in later releases.
 
 The `outbound` steps:
 

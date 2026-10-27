@@ -28,19 +28,21 @@ Database-restoring rollbacks
 shipped in #5305 behind the preview `postgres-restore` flag. All of these are
 preview capabilities except rollback (GA).
 
-Evidence: an n2 metal drill on 2026-10-26
-(`cmd/e2e/release_guards_drill_metal_test.go`, branch
-`test/release-guards-drill`) covered:
+Evidence: the n2 metal drill `TestReleaseGuardsDrillMetal`
+(`cmd/e2e/release_guards_drill_metal_test.go`) passed 5/5 on 2026-10-27 on
+main `461fd086f8`, which includes the release-guard gap fixes (#5568) and the
+ADR-570 hosting-smoke fix (#5574). It covered:
 
-- a freeze refusing a release;
-- a canary gate abort in 18 s;
-- a post-release gate rollback in 85 s, followed by the after-rollback freeze;
-- a scheduled start, and a schedule blocked by a freeze;
-- an approval hold at 50%, self-approval refused, admin approval and rejection, with email notices.
+- a freeze refusing a release, an audited override, and a release after the lift;
+- a canary gate abort (`abort_release_gate`) in 47 s;
+- a post-release gate rollback in 58 s, followed by the after-rollback freeze;
+- an approval hold, admin approval to completion in 26 s, and a rejection, with email notices;
+- a scheduled start 11 s after its time, and a schedule blocked by a freeze.
 
-Leakcheck was clean. The drill ran on a pre-ADR-570 base. On current main,
-full-stack deploys on n2 fail ADR-570's `policy_unavailable` until the open
-gateway snapshot fix lands.
+Leakcheck was clean. An earlier run the same day, on a pre-ADR-570 base, also
+passed and also refused self-approval with `release_approval_self`. Runs on main
+before #5574 failed: the gateway refused imaged's hosting smoke of a
+`snapshotting` candidate with `policy_unavailable`.
 
 A release-tooling audit on 2026-10-26 closed these gaps (amendment 1 of the
 freeze and approval ADRs):

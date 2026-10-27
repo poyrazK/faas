@@ -27,6 +27,7 @@ all=(SEAL_DOMAIN_OUTBOUND_AGE_KEY="$(key outbound)" SEAL_DOMAIN_OUTBOUND_AGE_REC
   SEAL_DOMAIN_STORAGE_AGE_KEY="$(key storage)" SEAL_DOMAIN_STORAGE_AGE_RECIPIENT="$(pub storage)"
   SEAL_DOMAIN_CONTROL_AGE_KEY="$(key control)" SEAL_DOMAIN_CONTROL_AGE_RECIPIENT="$(pub control)"
   SEAL_DOMAIN_DELIVERY_AGE_KEY="$(key delivery)" SEAL_DOMAIN_DELIVERY_AGE_RECIPIENT="$(pub delivery)"
+  SEAL_DOMAIN_ACCOUNT_AGE_KEY="$(key account)" SEAL_DOMAIN_ACCOUNT_AGE_RECIPIENT="$(pub account)"
   SEAL_DOMAIN_RUNTIME_AGE_KEY="$(key runtime)" SEAL_DOMAIN_RUNTIME_AGE_RECIPIENT="$(pub runtime)"
   SEAL_DOMAIN_BUILD_AGE_KEY="$(key build)" SEAL_DOMAIN_BUILD_AGE_RECIPIENT="$(pub build)"
   SEAL_DOMAIN_EDGE_AGE_KEY="$(key edge)" SEAL_DOMAIN_EDGE_AGE_RECIPIENT="$(pub edge)")
@@ -46,13 +47,14 @@ for want in "faas_seal_domains_managed: true" \
   "faas_seal_domain_control_identity_src: \"$work/cp/out/control.age\"" \
   "faas_seal_domain_delivery_identity_src: \"$work/cp/out/delivery.age\"" \
   "faas_seal_domain_delivery_recipient_src: \"$work/cp/out/delivery.age.pub\"" \
+  "faas_seal_domain_account_identity_src: \"$work/cp/out/account.age\"" \
   "faas_seal_domain_runtime_recipient_src: \"$work/cp/out/runtime.age.pub\"" \
   "faas_seal_domain_build_recipient_src: \"$work/cp/out/build.age.pub\"" \
   "faas_seal_domain_edge_recipient_src: \"$work/cp/out/edge.age.pub\""; do
   grep -qxF "$want" "$work/cp/vars.yml" || fail "control plane is missing: $want"$'\n'"$vars"
 done
 grep -qxF "# runtime recipient: $(pub runtime)" "$work/cp/vars.yml" || fail "the runtime recipient is not recorded for the contract hash"
-for unwanted in runtime_identity_src build_identity_src edge_identity_src; do
+for unwanted in runtime_identity_src build_identity_src edge_identity_src account_recipient_src; do
   ! grep -q "$unwanted" "$work/cp/vars.yml" || fail "control plane got $unwanted"
 done
 [[ ! -e "$work/cp/out/runtime.age" && ! -e "$work/cp/out/build.age" && ! -e "$work/cp/out/edge.age" ]] || fail "compute identities were written for the control plane"
@@ -68,7 +70,7 @@ for want in "faas_seal_domain_runtime_identity_src: \"$work/compute/out/runtime.
   "faas_seal_domain_delivery_identity_src: \"$work/compute/out/delivery.age\""; do
   grep -qxF "$want" "$work/compute/vars.yml" || fail "compute is missing: $want"
 done
-! grep -vE '^#' "$work/compute/vars.yml" | grep -qE 'outbound|source|alerting|storage|recipient_src' || fail "compute got control-plane keys: $(cat "$work/compute/vars.yml")"
+! grep -vE '^#' "$work/compute/vars.yml" | grep -qE 'outbound|source|alerting|storage|account|recipient_src' || fail "compute got control-plane keys: $(cat "$work/compute/vars.yml")"
 
 # Half a pair, a malformed key, and variables CD owns all refuse.
 if run compute half SEAL_DOMAIN_RUNTIME_AGE_KEY="$(key runtime)" 2>/dev/null; then fail "half a pair was accepted"; fi

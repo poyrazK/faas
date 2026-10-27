@@ -56,6 +56,11 @@ const (
 	RealtimeOccupancy  = "realtime_occupancy"
 	StrictBudgets      = "strict_budgets"
 
+	// TrafficRevocationFence is the ADR-570 security revocation fence kill
+	// switch: on by default, an operator turns it off for an account or the
+	// platform when the fence itself refuses healthy traffic.
+	TrafficRevocationFence = "traffic_revocation_fence"
+
 	// Edge rule features released by platform flags (ADR-20261023113721).
 	EdgeWAFBlocking = "edge_waf_blocking"
 	EdgeChallenge   = "edge_challenge"
@@ -389,6 +394,18 @@ var catalog = []Spec{
 		ADR:         "ADR-20261019102657",
 		Consumers:   []string{"apid"},
 		LegacyEnv:   []string{"FAAS_REALTIME_PREVIEW_ACCOUNTS"},
+	},
+	{
+		Key:   TrafficRevocationFence,
+		Label: "Traffic revocation fence",
+		Description: "Kill switch for the ADR-570 security revocation fence. On (the default), gateways verify the account, app and deployment " +
+			"security generations before serving and cancel exchanges when one is revoked. Turned off for an account or platform-wide, " +
+			"gatewayd-internal serves that account's requests without the fence and marks their answers so the public edge passes them " +
+			"unverified: suspension, deletion and deployment quarantine then stop cutting in-flight traffic for those accounts. " +
+			"Disable the flag to turn the fence off platform-wide; a value-false account rule turns it off for that account.",
+		ADR:       "ADR-570",
+		Consumers: []string{"gatewayd-internal"},
+		Default:   Definition{Enabled: true, Default: true},
 	},
 }
 

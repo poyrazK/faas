@@ -51,7 +51,7 @@ func decodeServicePolicyApp(row sqlc.ReadServicePolicyAppByIDRow, err error) (Ap
 	if err != nil {
 		return App{}, mapErr(err)
 	}
-	app := App{ID: pgUUIDString(row.ID), AccountID: pgUUIDString(row.AccountID), Slug: row.Slug,
+	app := App{ID: pgUUIDString(row.ID), AccountID: pgUUIDString(row.AccountID), Slug: row.Slug, WorkloadName: row.WorkloadName,
 		Status: AppStatus(row.Status), ProjectID: pgUUIDString(row.ProjectID),
 		PreviewOfSlug: row.PreviewOfSlug.String, PreviewPrNumber: int(row.PreviewPrNumber.Int32),
 		PreviewPrState: row.PreviewPrState.String, AppProtocol: row.AppProtocol, WebSocketEnabled: row.WebsocketEnabled}

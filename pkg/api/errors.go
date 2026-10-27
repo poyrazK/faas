@@ -1365,6 +1365,10 @@ const (
 	// "use `gregale invocation <id>` to inspect the state" hint
 	// without parsing prose.
 	CodeInvocationNotReplayable = "invocation_not_replayable"
+	// CodeDeadLetterNotReplayable is the 409 for a dead-letter entry with
+	// nothing left to redrive: an event_route routing failure whose receipt
+	// was pruned (ADR-20261026163443). Re-publish its payload instead.
+	CodeDeadLetterNotReplayable = "dead_letter_not_replayable"
 	// CodeDebugReplayUnsupported is returned when a retained request has no
 	// enabled mirror rule for the deployment that served it. Replaying without
 	// that target would silently exercise a different deployment.
@@ -2500,6 +2504,8 @@ func StatusForCode(code string) int {
 		// Issue #315: replay attempts on a non-replayable state
 		// surface 409 — the conflict is between the request and
 		// the resource's current state, not between two writes.
+		return http.StatusConflict
+	case CodeDeadLetterNotReplayable:
 		return http.StatusConflict
 	case CodeInvalidCredentials, CodeEmailNotVerified:
 		return http.StatusUnauthorized
@@ -6353,6 +6359,16 @@ func ErrInvocationNotFound(id string) *Problem {
 		"Invocation not found",
 		fmt.Sprintf("no invocation with id %q on this account.", id)).
 		WithDocs(docsBase + "/event-driven#invocations")
+}
+
+// ErrDeadLetterNotReplayable refuses replay of an event_route dead-letter
+// entry: the routing failure's receipt was pruned and no invocation exists,
+// so there is nothing to redrive (ADR-20261026163443).
+func ErrDeadLetterNotReplayable() *Problem {
+	return NewProblem(http.StatusConflict, CodeDeadLetterNotReplayable,
+		"Dead-letter event cannot be replayed",
+		"this routing failure's receipt has been pruned, so there is nothing to redrive; re-publish the event in its payload to deliver it again.").
+		WithDocs(docsBase + "/event-driven#routing-failures-in-the-dead-letter-queue")
 }
 
 // ErrInvocationNotReplayable (issue #315 / tier-2 DX) is returned by

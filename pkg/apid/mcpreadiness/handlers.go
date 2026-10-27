@@ -27,10 +27,14 @@ type Handler struct {
 	FallbackSeal                 func(context.Context, string) ([]byte, *api.Problem)
 	Audit                        MaintenanceAudit
 	Identities                   func(context.Context) []*age.X25519Identity
-	Loader                       httpkit.AppLoader
-	Store                        state.Store
-	Endpoint                     func(context.Context, state.App, state.Deployment) (string, error)
-	Client                       *http.Client
+	// AccountIdentities open PagerDuty acknowledgement signing secrets, an
+	// account seal-domain value (ADR 20261022111812). They stay apart from
+	// Identities, whose first identity the catalog observer seals to.
+	AccountIdentities func(context.Context) []*age.X25519Identity
+	Loader            httpkit.AppLoader
+	Store             state.Store
+	Endpoint          func(context.Context, state.App, state.Deployment) (string, error)
+	Client            *http.Client
 }
 
 func New(store state.Store, endpoint func(context.Context, state.App, state.Deployment) (string, error), loader httpkit.AppLoader) *Handler {
