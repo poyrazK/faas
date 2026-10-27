@@ -289,6 +289,11 @@ const XEventFanoutSafetyTick = eventFanoutSafetyTick
 
 func (l *Loop) XRunEventFanoutSweep(ctx context.Context) { l.runEventFanoutSweep(ctx) }
 
+// XWaitDispatches waits for every dispatch the drain started, including those
+// that outlived their tick.
+// adr: 20261027160930 — a slow dispatch finishes after its tick returns.
+func (d *Drain) XWaitDispatches() { d.inline.Wait() }
+
 // XRunEventFanoutSweepAt runs the sweep with the loop's clock at now.
 // adr: 20261027125625 — held recipients route once their wait has passed.
 func (l *Loop) XRunEventFanoutSweepAt(ctx context.Context, now time.Time) {
