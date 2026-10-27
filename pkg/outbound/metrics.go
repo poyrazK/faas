@@ -39,6 +39,8 @@ type Metrics struct {
 	aiEvaluations          *prometheus.CounterVec
 	aiBatches              *prometheus.CounterVec
 	aiUnmetered            *prometheus.CounterVec
+	aiUnpriced             *prometheus.CounterVec
+	aiAccessTokenLookups   *prometheus.CounterVec
 	aiToolUses             *prometheus.CounterVec
 	aiRouteCalls           *prometheus.CounterVec
 	aiCanaryCalls          *prometheus.CounterVec
@@ -168,6 +170,14 @@ func NewMetrics(reg prometheus.Registerer) (*Metrics, error) {
 			Name: "outbound_ai_unmetered_calls_total",
 			Help: "Writes on AI integrations let through unmetered because the AI policy allows them, by integration (ADR-1432).",
 		}, []string{"integration_id"}),
+		aiAccessTokenLookups: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "outbound_ai_access_token_lookups_total",
+			Help: "Public listener access-token lookups by result: found, unknown, busy or error (ADR 20261027132936).",
+		}, []string{"result"}),
+		aiUnpriced: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "outbound_ai_unpriced_calls_total",
+			Help: "Settled AI calls that cost zero because their model has no price, by integration (ADR 20261027132936).",
+		}, []string{"integration_id"}),
 		aiToolUses: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "outbound_ai_tool_uses_total",
 			Help: "Settled built-in tool uses by integration and tool (web_searches, file_searches, or code_session_gb) (ADR-1433).",
@@ -274,6 +284,8 @@ func NewMetrics(reg prometheus.Registerer) (*Metrics, error) {
 		m.aiEvaluations,
 		m.aiBatches,
 		m.aiUnmetered,
+		m.aiUnpriced,
+		m.aiAccessTokenLookups,
 		m.aiToolUses,
 		m.aiRouteCalls,
 		m.aiCanaryCalls,
@@ -442,6 +454,24 @@ func (m *Metrics) ObserveAIEvaluation(result string) {
 		return
 	}
 	m.aiEvaluations.WithLabelValues(result).Inc()
+}
+
+// ObserveAIAccessTokenLookup counts one public listener token lookup by
+// result (ADR 20261027132936).
+func (m *Metrics) ObserveAIAccessTokenLookup(result string) {
+	if m == nil || m.aiAccessTokenLookups == nil {
+		return
+	}
+	m.aiAccessTokenLookups.WithLabelValues(result).Inc()
+}
+
+// ObserveAIUnpriced counts one settled call that cost zero because its
+// model has no price (ADR 20261027132936).
+func (m *Metrics) ObserveAIUnpriced(integrationID string) {
+	if m == nil || m.aiUnpriced == nil {
+		return
+	}
+	m.aiUnpriced.WithLabelValues(integrationID).Inc()
 }
 
 // ObserveAIUnmetered counts one write let through unmetered.

@@ -267,7 +267,11 @@ func (h *Handler) settleAIUsage(ctx context.Context, integration Integration, ap
 		// ADR-1433: a container is charged once per session window.
 		usage.CodeSessionGB = h.aiContainers.charge(integration.ID, observer.containerIDs(), time.Now()) * max(settlement.codeGB, 1)
 	}
-	cost := aiCallCostMillicents(integration, usage)
+	cost, priced := aiSettledCost(integration, usage, settlement.requestModel)
+	if !priced && outcome == AIUsageOutcomeKnown && usage.BudgetTokens() > 0 {
+		// ADR 20261027132936: a call no price counts is visible.
+		h.Metrics.ObserveAIUnpriced(metricIntegrationID)
+	}
 	if estimated, estimatedCost, ok := estimatedAIUsage(outcome, usage, settlement); ok {
 		usage, cost = estimated, estimatedCost
 		span.SetAttributes(attribute.Bool("gregale.ai.usage_estimated", true))

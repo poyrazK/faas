@@ -83,6 +83,9 @@ func (c *outboundResponseCache) key(integrationID, appID string, policyRevision 
 	headerValues := make(map[string][]string, len(req.Header))
 	for name, values := range req.Header {
 		canonical := http.CanonicalHeaderKey(name)
+		if cacheKeyIgnoresHeader(canonical) {
+			continue
+		}
 		headerValues[canonical] = append(headerValues[canonical], values...)
 	}
 	names := make([]string, 0, len(headerValues))
@@ -102,6 +105,22 @@ func (c *outboundResponseCache) key(integrationID, appID string, policyRevision 
 		}
 	}
 	return hex.EncodeToString(mac.Sum(nil))
+}
+
+// cacheKeyIgnoredHeaders are per-call telemetry and client metadata that
+// never change an answer; keying on them made every traced call unique
+// (ADR 20261027132936). They are still forwarded.
+var cacheKeyIgnoredHeaders = map[string]struct{}{
+	"Traceparent": {}, "Tracestate": {}, "Baggage": {}, "Sentry-Trace": {}, "B3": {},
+	"X-Request-Id": {}, "X-Correlation-Id": {}, "X-Amzn-Trace-Id": {}, "X-Cloud-Trace-Context": {},
+	"User-Agent": {}, "Idempotency-Key": {},
+}
+
+func cacheKeyIgnoresHeader(canonical string) bool {
+	if _, ok := cacheKeyIgnoredHeaders[canonical]; ok {
+		return true
+	}
+	return strings.HasPrefix(canonical, "X-B3-") || strings.HasPrefix(canonical, "X-Stainless-")
 }
 
 type cacheKeyWriter interface {

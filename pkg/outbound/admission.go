@@ -75,7 +75,10 @@ type Integration struct {
 	Name      string
 	// AccountPlan is the owning account's plan; customer AI integrations
 	// need a plan entitled to the AI gateway (ADR-998).
-	AccountPlan                    api.Plan
+	AccountPlan api.Plan
+	// AccountStatus is the owning account's status; a suspended account's
+	// customer integrations refuse calls (ADR 20261027132936).
+	AccountStatus                  string
 	Origin                         *url.URL
 	TokenHash                      [32]byte
 	AppIDs                         map[string]struct{}

@@ -543,6 +543,12 @@ var (
 	// Granted by admin or secrets:read.
 	ScopesAppForkSecretsSurface = []string{ScopeAdmin, ScopeSecretsRead}
 
+	// ScopesAIContentReadSurface: GET
+	// /v1/outbound/integrations/{integration}/ai-requests/{request}/content
+	// (ADR 20261027132936). Captured prompts and answers can hold personal
+	// data, so reading them is granted by admin or secrets:read.
+	ScopesAIContentReadSurface = []string{ScopeAdmin, ScopeSecretsRead}
+
 	// ScopesEnvWriteSurface: PUT/DELETE on /v1/apps/{slug}/env/{key}
 	// (issue #395 / ADR-045). Granted by admin or env:write.
 	// NOT MFA-gated because env vars are explicitly non-sensitive

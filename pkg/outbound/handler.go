@@ -239,6 +239,13 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	metricIntegrationID := integration.MetricLabel()
+	if integration.OwnerKind == IntegrationOwnerCustomer && accountSuspended(integration.AccountStatus) {
+		// ADR 20261027132936: a suspended account's integrations call nothing,
+		// from its apps or from outside with an access token.
+		h.Metrics.ObserveRejection(metricIntegrationID, "account_suspended")
+		writeProblem(w, http.StatusForbidden, "outbound_account_suspended", "The account is suspended", "")
+		return
+	}
 	if integration.AIProvider != "" && !h.aiGatewayOn() {
 		h.Metrics.ObserveRejection(metricIntegrationID, "ai_gateway_disabled")
 		writeProblem(w, http.StatusServiceUnavailable, "outbound_ai_gateway_disabled", "The AI gateway is not enabled on this platform", "")
@@ -421,6 +428,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			h.Metrics.ObserveAIUnmetered(metricIntegrationID)
 		}
 	}
+	if rejection == nil {
+		// ADR 20261027132936: a cost cap cannot count a model with no price.
+		rejection = checkAICallPriced(integration, aiPlan, aiEndUser, aiTags, aiTrace)
+	}
 	if rejection != nil {
 		h.Metrics.ObserveRejection(metricIntegrationID, rejection.code)
 		writeProblem(w, rejection.status, rejection.code, rejection.title, "")
@@ -534,15 +545,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		defer h.dropUnconfirmedBatch(ctx, batch)
 	}
-	// ADR-1340: the moderation check runs after admission, so a call its
-	// caps refuse never pays for one. Replays and checks are not checked.
 	var moderation aiModerationOutcome
-	if aiPlan != nil && aiPlan.endpoint.billable() && !isReplay && !isInternal && integration.AIContentPolicy.Moderation.Active() {
-		var proceed bool
-		if moderation, proceed = h.moderateAICall(ctx, w, integration, aiReq, metricIntegrationID); !proceed {
-			return
-		}
-	}
 	if integration.ProviderAuthMode == ProviderAuthManaged && integration.CredentialSource == CredentialSourceCustomerSealed {
 		if h.CredentialResolver == nil {
 			writeProblem(w, http.StatusServiceUnavailable, "outbound_provider_credential_unavailable", "Outbound provider credential is unavailable", "1")
@@ -656,6 +659,17 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	dependencySpan.SetAttributes(attribute.Bool("gregale.outbound.cache_hit", cacheHit))
+	// ADR-1340: the moderation check runs after admission, so a call its
+	// caps refuse never pays for one. Replays and checks are not checked.
+	// It runs only on a cache miss: a hit matched a call already checked
+	// under the same policy revision (ADR 20261027132936).
+	if !cacheHit && aiPlan != nil && aiPlan.endpoint.billable() && !isReplay && !isInternal && integration.AIContentPolicy.Moderation.Active() {
+		var proceed bool
+		if moderation, proceed = h.moderateAICall(ctx, w, integration, aiReq, metricIntegrationID); !proceed {
+			return
+		}
+		upstreamStarted = time.Now()
+	}
 	if !cacheHit {
 		cooldown, ok := h.Backend.(ProviderCooldownBackend)
 		if !ok {
@@ -1095,6 +1109,11 @@ var _ http.Handler = (*Handler)(nil)
 // aiGatewayAdmitsAccount applies the staged rollout and plan entitlement to a
 // customer AI integration (ADR-998). Operator integrations are not
 // customer-entitled and pass.
+// accountSuspended reports an account status whose integrations refuse calls.
+func accountSuspended(status string) bool {
+	return status == "suspended" || status == "deleted_pending"
+}
+
 func (h *Handler) aiGatewayAdmitsAccount(integration Integration) bool {
 	if integration.OwnerKind != IntegrationOwnerCustomer {
 		return true

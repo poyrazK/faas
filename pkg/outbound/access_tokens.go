@@ -104,18 +104,26 @@ type PublicHandler struct {
 	// Now is the clock; nil means time.Now.
 	Now func() time.Time
 
-	mu      sync.Mutex
-	cache   map[[32]byte]cachedAccessToken
+	mu sync.Mutex
+	// known and unknown cache lookups apart, so a flood of unknown tokens
+	// never pushes out known ones; lookups bounds the database lookups of
+	// uncached tokens (ADR 20261027132936).
+	known   map[[32]byte]cachedAccessToken
+	unknown map[[32]byte]time.Time
+	lookups chan struct{}
 	touched map[string]time.Time
 }
 
+// errAccessTokenLookupsBusy reports that too many uncached tokens are being
+// looked up already; the caller retries.
+var errAccessTokenLookupsBusy = errors.New("outbound: AI access token lookups are busy")
+
 type cachedAccessToken struct {
 	token   AIAccessToken
-	found   bool
 	expires time.Time
 }
 
-// publicTokenCacheMax bounds cached lookups; a full cache is cleared.
+// publicTokenCacheMax bounds each lookup cache; a full one is cleared.
 const publicTokenCacheMax = 10_000
 
 func (p *PublicHandler) now() time.Time {
@@ -137,6 +145,7 @@ func (p *PublicHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	token, err := p.lookup(r.Context(), sha256.Sum256([]byte(raw)))
+	p.Handler.Metrics.ObserveAIAccessTokenLookup(accessTokenLookupResult(err))
 	switch {
 	case errors.Is(err, ErrAIAccessTokenNotFound):
 		writeProblem(w, http.StatusUnauthorized, "outbound_access_token_invalid", "The AI gateway access token is unknown, revoked or expired", "")
@@ -156,32 +165,69 @@ func (p *PublicHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 // lookup reads a token through a short cache, negative results included,
 // so a revoked token works for at most OutboundAIAccessTokenCacheSeconds.
+// At most OutboundAIAccessTokenLookupsMax uncached tokens are looked up at
+// once.
 func (p *PublicHandler) lookup(ctx context.Context, hash [32]byte) (AIAccessToken, error) {
 	now := p.now()
 	p.mu.Lock()
-	if cached, ok := p.cache[hash]; ok && now.Before(cached.expires) {
+	if cached, ok := p.known[hash]; ok && now.Before(cached.expires) {
 		p.mu.Unlock()
-		if !cached.found || !now.Before(cached.token.ExpiresAt) {
+		if !now.Before(cached.token.ExpiresAt) {
 			return AIAccessToken{}, ErrAIAccessTokenNotFound
 		}
 		return cached.token, nil
 	}
+	if expires, ok := p.unknown[hash]; ok && now.Before(expires) {
+		p.mu.Unlock()
+		return AIAccessToken{}, ErrAIAccessTokenNotFound
+	}
+	if p.lookups == nil {
+		p.lookups = make(chan struct{}, api.OutboundAIAccessTokenLookupsMax)
+	}
+	lookups := p.lookups
 	p.mu.Unlock()
+	select {
+	case lookups <- struct{}{}:
+		defer func() { <-lookups }()
+	default:
+		return AIAccessToken{}, errAccessTokenLookupsBusy
+	}
 	token, err := p.Tokens.AIAccessToken(ctx, hash)
 	if err != nil && !errors.Is(err, ErrAIAccessTokenNotFound) {
 		return AIAccessToken{}, err
 	}
+	expires := now.Add(api.OutboundAIAccessTokenCacheSeconds * time.Second)
 	p.mu.Lock()
-	if p.cache == nil || len(p.cache) >= publicTokenCacheMax {
-		p.cache = make(map[[32]byte]cachedAccessToken)
+	if err != nil {
+		if p.unknown == nil || len(p.unknown) >= publicTokenCacheMax {
+			p.unknown = make(map[[32]byte]time.Time)
+		}
+		p.unknown[hash] = expires
+	} else {
+		if p.known == nil || len(p.known) >= publicTokenCacheMax {
+			p.known = make(map[[32]byte]cachedAccessToken)
+		}
+		p.known[hash] = cachedAccessToken{token: token, expires: expires}
 	}
-	p.cache[hash] = cachedAccessToken{token: token, found: err == nil,
-		expires: now.Add(api.OutboundAIAccessTokenCacheSeconds * time.Second)}
 	p.mu.Unlock()
 	if err != nil || !now.Before(token.ExpiresAt) {
 		return AIAccessToken{}, ErrAIAccessTokenNotFound
 	}
 	return token, nil
+}
+
+// accessTokenLookupResult labels a lookup for the metric.
+func accessTokenLookupResult(err error) string {
+	switch {
+	case err == nil:
+		return "found"
+	case errors.Is(err, ErrAIAccessTokenNotFound):
+		return "unknown"
+	case errors.Is(err, errAccessTokenLookupsBusy):
+		return "busy"
+	default:
+		return "error"
+	}
 }
 
 // touch records a token's use at most once a minute, off the request path.

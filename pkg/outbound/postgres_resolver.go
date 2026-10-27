@@ -45,7 +45,7 @@ func (r *PostgresResolver) Integration(ctx context.Context, id string) (Integrat
 }
 
 const integrationPolicySQL = `
-	SELECT integration.account_id, integration.name, account.plan, integration.origin, integration.token_hash,
+	SELECT integration.account_id, integration.name, account.plan, account.status, integration.origin, integration.token_hash,
 	       integration.rate_per_second, integration.burst, integration.max_in_flight,
 	       integration.request_timeout_ms, integration.max_retries, integration.response_cache_ttl_seconds,
 	       integration.circuit_breaker_failure_threshold, integration.circuit_breaker_open_seconds,
@@ -117,7 +117,7 @@ func scanIntegration(id string, results pgx.BatchResults) (Integration, error) {
 	var origin string
 	var accountID uuid.UUID
 	var name string
-	var plan string
+	var plan, accountStatus string
 	var providerAuthMode string
 	var credentialSource string
 	var ownerKind string
@@ -140,7 +140,7 @@ func scanIntegration(id string, results pgx.BatchResults) (Integration, error) {
 	var traceLimits aiTraceLimits
 	var onlineEvalPercent int
 	err := results.QueryRow().
-		Scan(&accountID, &name, &plan, &origin, &tokenHash, &rate, &burst, &maxInFlight, &timeoutMS, &maxRetries, &responseCacheTTLSeconds,
+		Scan(&accountID, &name, &plan, &accountStatus, &origin, &tokenHash, &rate, &burst, &maxInFlight, &timeoutMS, &maxRetries, &responseCacheTTLSeconds,
 			&circuitBreakerFailureThreshold, &circuitBreakerOpenSeconds, &retryBudgetPerMinute, &policyUpdatedAt, &enabled, &providerAuthMode,
 			&credentialSource, &allowedMethods, &allowedPathPrefixes, &ownerKind, &dailyRequestLimitValue,
 			&aiProvider, &aiDailyTokenLimitValue, &aiDailyCostLimitValue, &aiMonthlyCostLimitValue, &aiRequestLogEnabled,
@@ -277,6 +277,7 @@ func scanIntegration(id string, results pgx.BatchResults) (Integration, error) {
 		BindingDailyAITokenLimits: bindingDailyAITokenLimits, AIPrices: prices,
 		BindingAIGuardrails: bindingAIGuardrails, AIRequestLogEnabled: aiRequestLogEnabled, AIRequestLogContent: aiRequestLogContent,
 		AccountPlan:       api.Plan(plan),
+		AccountStatus:     accountStatus,
 		AIContentPolicy:   contentPolicy,
 		AILogExport:       aiLogExport,
 		AIAllowUnmetered:  aiAllowUnmetered,
