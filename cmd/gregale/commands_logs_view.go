@@ -25,6 +25,11 @@ func cmdLogsView(args []string) int {
 		rest = slices.Delete(slices.Clone(rest), i, i+1)
 	}
 	if shared {
+		// Server-side saved searches belong to the log-search capability,
+		// which can be hidden for an account while logs is not.
+		if _, hidden := hiddenCommand([]string{"logs", "saved"}, false); hidden {
+			return printErr("Unknown flag", fmt.Errorf("gregale: unknown flag --shared; run 'gregale logs view --help' for its options"))
+		}
 		switch verb {
 		case subList, "save", "delete":
 			return cmdLogsSaved(append([]string{verb}, rest...))

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -62,5 +63,26 @@ func TestLogsViewLocalAndShared(t *testing.T) {
 	}
 	if code, _, stderr := runCLI(t, "logs", "view", "rename", "a", "b", "--shared"); code == 0 || !strings.Contains(stderr, "--shared views support") {
 		t.Errorf("--shared rename = %d %q, want a usage error", code, stderr)
+	}
+}
+
+// With log search hidden for the account, --shared answers like an unknown
+// flag; local views keep working (ADR-20261023115741).
+func TestLogsViewSharedFollowsLogSearchVisibility(t *testing.T) {
+	api := &capabilitiesAPI{}
+	server := httptest.NewServer(api)
+	defer server.Close()
+	t.Setenv("FAAS_CAPABILITY_FLAGS_RELEASE_ALL", "")
+	t.Setenv("FAAS_API", server.URL)
+	t.Setenv("FAAS_TOKEN", "test-token")
+	t.Setenv("FAAS_COMPLETION_CACHE_PATH", filepath.Join(t.TempDir(), "cache.json"))
+	api.setHidden("log-search")
+	_, _, _ = runCLI(t, "help", "--all") // caches the account view
+
+	if code, _, stderr := runCLI(t, "logs", "view", "list", "--shared", "--app", "demo"); code == 0 || !strings.Contains(stderr, "unknown flag --shared") {
+		t.Errorf("--shared with log search hidden = %d %q, want unknown flag --shared", code, stderr)
+	}
+	if code, _, stderr := runCLI(t, "logs", "view", "list"); code != 0 {
+		t.Errorf("local views must keep working: %d %q", code, stderr)
 	}
 }
