@@ -15,15 +15,26 @@ import { request as __request } from '../../generated/core/request.js';
 export class CronsService {
   /**
    * List cron triggers.
-   * @returns CronResponse Cron triggers on the account.
+   * @returns CronResponse Cron triggers on the account, or on the app named by slug.
    * @throws ApiError
    */
-  public static listCrons(): CancelablePromise<Array<CronResponse>> {
+  public static listCrons({
+    slug,
+  }: {
+    /**
+     * App slug or id. Lists only that app's crons; without it, every cron on the account's apps.
+     */
+    slug?: string,
+  }): CancelablePromise<Array<CronResponse>> {
     return __request(OpenAPI, {
       method: 'GET',
       url: '/v1/crons',
+      query: {
+        'slug': slug,
+      },
       errors: {
         401: `code: unauthorized`,
+        404: `code: not_found`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and

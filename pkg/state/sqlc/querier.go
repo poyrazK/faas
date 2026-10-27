@@ -4862,6 +4862,19 @@ type Querier interface {
 	PruneAppRuntimeUpgradeGatewayDrains(ctx context.Context, db DBTX, appID pgtype.UUID) error
 	PruneAutomationLiveBaselineHistory(ctx context.Context, db DBTX, arg PruneAutomationLiveBaselineHistoryParams) error
 	PruneAutomationLiveSuites(ctx context.Context, db DBTX, arg PruneAutomationLiveSuitesParams) error
+	// Manual-run requests made before before_at, whatever their status: a
+	// request that old can no longer start a run, and its outcome lives on the
+	// run itself.
+	PruneCronFireNowRequests(ctx context.Context, db DBTX, arg PruneCronFireNowRequestsParams) (int64, error)
+	// Cron history retention (api.CronHistoryRetention). Both deletes walk the
+	// live crons and probe each cron's own history index, so a sweep never scans
+	// the whole table. Rows of deleted crons are already gone: both tables
+	// cascade from crons.
+	// Settled schedule decisions scheduled before before_at, oldest first.
+	// Pending, queued, running, waiting_replacement and uncertain decisions are
+	// kept whatever their age. References from invocations, app tasks, job runs
+	// and blocking occurrences are ON DELETE SET NULL.
+	PruneCronScheduleOccurrences(ctx context.Context, db DBTX, arg PruneCronScheduleOccurrencesParams) (int64, error)
 	PruneCustomerOperationEvents(ctx context.Context, db DBTX, arg PruneCustomerOperationEventsParams) (int64, error)
 	PruneCustomerOperationIdempotency(ctx context.Context, db DBTX, arg PruneCustomerOperationIdempotencyParams) (int64, error)
 	PruneCustomerOperationStreams(ctx context.Context, db DBTX, arg PruneCustomerOperationStreamsParams) (int64, error)

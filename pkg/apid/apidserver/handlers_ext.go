@@ -4073,6 +4073,12 @@ func (s *server) createCron(w http.ResponseWriter, r *http.Request, acct state.A
 		api.WriteProblem(w, api.ErrCronInvalid("timezone must be a valid IANA location (for example, America/New_York)"))
 		return
 	}
+	if req.Path != "" {
+		if problem := api.ValidateCronPath(req.Path); problem != nil {
+			api.WriteProblem(w, problem)
+			return
+		}
+	}
 	var cronCommand []string
 	var commandShell bool
 	var commandTimeoutSeconds, commandMaxOutputBytes int
@@ -4291,6 +4297,12 @@ func (s *server) updateCron(w http.ResponseWriter, r *http.Request, acct state.A
 	if req.Path != nil && len(c.Command) > 0 {
 		api.WriteProblem(w, api.ErrValidation("command crons do not have an HTTP path; delete and recreate the cron to change its kind"))
 		return
+	}
+	if req.Path != nil {
+		if problem := api.ValidateCronPath(*req.Path); problem != nil {
+			api.WriteProblem(w, problem)
+			return
+		}
 	}
 	var retryOptions []state.CronOptions
 	if req.RetryMax != nil || req.RetryBackoffSeconds != nil {
