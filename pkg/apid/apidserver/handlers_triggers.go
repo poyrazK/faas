@@ -779,6 +779,12 @@ func (s *server) updateTrigger(w http.ResponseWriter, r *http.Request, acct stat
 			return
 		}
 	}
+	if req.Path != nil {
+		if problem := api.ValidateCronPath(*req.Path); problem != nil {
+			api.WriteProblem(w, problem)
+			return
+		}
+	}
 	// PR #993 / issue #757 review MED-4: mirror createTrigger's
 	// plan gates for PATCH. A Hobby customer upgrading their
 	// batch_window from 5s to 600s after the fact, or flipping

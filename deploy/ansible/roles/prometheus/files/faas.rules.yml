@@ -6547,6 +6547,44 @@ groups:
           description: "The p99 delay between a requested execution time and the first scheduler claim has exceeded 60 seconds for ten minutes. Check schedd health, invocation backlog, account concurrency pressure, and database latency."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasDelayedTaskDispatchLag.md"
 
+  # HTTP cron delivery (ADR-20261026201726). Scheduled fires and manual runs
+  # are queued invocations the drain delivers; schedd counts each settled
+  # attempt by outcome and records first-claim lag from the scheduled minute.
+  # Neither series carries an app or account label.
+  - name: faas_crons
+    interval: 30s
+    rules:
+      - alert: FaasCronDeliveryLag
+        expr: histogram_quantile(0.99, sum by (le) (rate(schedd_cron_schedule_lag_seconds_bucket[10m]))) > 60
+        for: 10m
+        labels:
+          severity: warn
+          component: schedd
+          family: crons
+        annotations:
+          summary: "HTTP cron runs are starting late"
+          description: "The p99 delay between an HTTP cron run's scheduled minute and its first delivery claim has exceeded 60 seconds for ten minutes. Check the cron tick, schedd health, invocation backlog, account concurrency pressure and database latency."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasCronDelivery.md"
+      # Fleet-wide, so one customer's broken handler cannot fire it: more
+      # than half of at least 20 deliveries in 30 minutes failing points at
+      # the platform (wake, routing or the gateway), not at an app.
+      - alert: FaasCronDeliveryFailing
+        expr: |
+          (
+            sum(rate(schedd_cron_delivery_total{outcome=~"failed|dead_letter"}[30m]))
+            / sum(rate(schedd_cron_delivery_total[30m]))
+          ) > 0.5
+          and sum(increase(schedd_cron_delivery_total[30m])) >= 20
+        for: 30m
+        labels:
+          severity: warn
+          component: schedd
+          family: crons
+        annotations:
+          summary: "Most HTTP cron runs are failing"
+          description: "More than half of HTTP cron deliveries across the fleet have ended failed or dead-lettered for thirty minutes. Check wake failures, gateway errors and recent deploys before blaming individual apps."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasCronDelivery.md"
+
   - name: faas_tcp_tls
     interval: 30s
     rules:

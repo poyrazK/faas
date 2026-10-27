@@ -1310,10 +1310,12 @@ func (l *Loop) Run(ctx context.Context) error {
 			// exclusively come from retentionT (the 1h ticker).
 			l.runRetention(ctx)
 			l.runDeadLetterRetention(ctx)
+			l.runCronHistoryRetention(ctx)
 			retentionFirst = nil
 		case <-retentionTick(retentionT):
 			l.runRetention(ctx)
 			l.runDeadLetterRetention(ctx)
+			l.runCronHistoryRetention(ctx)
 		case <-invocationsRetentionTick(invocationsRetentionT):
 			l.runInvocationsRetention(ctx)
 		case <-triggersRetentionTick(triggersRetentionT):
