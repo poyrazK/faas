@@ -1687,6 +1687,11 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// restart; calling WithDataPlacement after reconcile would overwrite it
 	// with the environment fallback on every boot.
 	srv.WithDataPlacement(dataPlacementEnabledFromEnv(deps.getenv))
+	egressCircuitEnforced, err := api.EgressCircuitBreakerEnabled(deps.getenv("FAAS_EGRESS_CIRCUIT_BREAKER"))
+	if err != nil {
+		return fmt.Errorf("apid: %w", err)
+	}
+	srv.WithEgressCircuitEnforcement(egressCircuitEnforced)
 	if err := srv.runtimeConfig.reconcile(ctx, store); err != nil {
 		return fmt.Errorf("apid: reconcile runtime config: %w", err)
 	}
