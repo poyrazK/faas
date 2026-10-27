@@ -58,6 +58,7 @@ func mcpCLICommand() cliCommand {
 			{Name: "resource-url", Short: "public HTTPS URL ending in /mcp (required for HTTP)", Value: "URL"},
 			{Name: "oauth-onboarding", Short: "remote onboarding (default browser)", Value: "MODE", ClosedSet: []string{"browser", "api-key"}},
 			{Name: "state-file", Short: "private encrypted remote state file", Value: "PATH"},
+			{Name: "api-base", Short: "Gregale API base URL for the HTTP bridge", Value: "URL"},
 			{Name: "hosted", Short: "serve as the hosted bridge with a path issuer under /mcp", Bool: true},
 			{Name: "state-postgres", Short: "keep remote state in Postgres under the named bridge lease", Value: "BRIDGE"},
 			{Name: "admin-socket", Short: "optional owner-protected Unix socket for listing and revoking HTTP grants", Value: "PATH"},

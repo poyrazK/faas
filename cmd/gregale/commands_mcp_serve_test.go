@@ -160,6 +160,7 @@ func TestMCPServeRemoteStateAndOnboardingOptions(t *testing.T) {
 		{"--transport", "streamable-http", "--state-file", "state", "--state-postgres", "hosted", "--state-key-file", "key"},
 		{"--state-postgres", "hosted", "--state-key-file", "key"},
 		{"--transport", "streamable-http", "--hosted"},
+		{"--api-base", "http://127.0.0.1:8081"},
 		{"--transport", "streamable-http", "--hosted", "--state-file", "state", "--state-key-file", "key"},
 	} {
 		if _, err := main.ParseMCPServeOptions(args); err == nil {

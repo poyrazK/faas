@@ -141,7 +141,7 @@ Connect agents to Gregale, or scaffold and deploy MCP servers
 
 Expose Gregale management tools over stdio or OAuth HTTP
 
-`gregale mcp serve [--transport <TRANSPORT>] [--timeout <DURATION>] [--allow-writes] [--tools <TOOLSETS>] [--listen <ADDR>] [--resource-url <URL>] [--oauth-onboarding <MODE>] [--state-file <PATH>] [--hosted] [--state-postgres <BRIDGE>] [--admin-socket <PATH>] [--metrics-listen <ADDR>] [--state-key-file <PATH>] [--oauth-redirect-uri <URI>]`
+`gregale mcp serve [--transport <TRANSPORT>] [--timeout <DURATION>] [--allow-writes] [--tools <TOOLSETS>] [--listen <ADDR>] [--resource-url <URL>] [--oauth-onboarding <MODE>] [--state-file <PATH>] [--api-base <URL>] [--hosted] [--state-postgres <BRIDGE>] [--admin-socket <PATH>] [--metrics-listen <ADDR>] [--state-key-file <PATH>] [--oauth-redirect-uri <URI>]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -153,6 +153,7 @@ Expose Gregale management tools over stdio or OAuth HTTP
 | `--resource-url <URL>` | public HTTPS URL ending in /mcp (required for HTTP) |  |
 | `--oauth-onboarding <MODE>` | remote onboarding (default browser) | one of `browser` · `api-key` |
 | `--state-file <PATH>` | private encrypted remote state file |  |
+| `--api-base <URL>` | Gregale API base URL for the HTTP bridge |  |
 | `--hosted` | serve as the hosted bridge with a path issuer under /mcp |  |
 | `--state-postgres <BRIDGE>` | keep remote state in Postgres under the named bridge lease |  |
 | `--admin-socket <PATH>` | optional owner-protected Unix socket for listing and revoking HTTP grants |  |

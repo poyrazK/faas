@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
@@ -34,6 +35,7 @@ type mcpServeOptions struct {
 	stateFile     string
 	statePostgres string
 	hosted        bool
+	apiBase       string
 	stateKeyFile  string
 	toolsets      []string
 }
@@ -52,6 +54,7 @@ func parseMCPServeOptions(args []string) (mcpServeOptions, error) {
 	fs.StringVar(&opts.onboarding, "oauth-onboarding", "browser", "remote onboarding: browser sign-in or explicit api-key fallback")
 	fs.StringVar(&opts.stateFile, "state-file", "", "private encrypted remote state file for restart-safe connections")
 	fs.BoolVar(&opts.hosted, "hosted", false, "serve as Gregale's hosted bridge: path issuer under /mcp; requires --state-postgres")
+	fs.StringVar(&opts.apiBase, "api-base", "", "Gregale API base URL for the HTTP bridge; overrides the profile and FAAS_API")
 	fs.StringVar(&opts.statePostgres, "state-postgres", "", "keep remote state in Postgres under the named bridge lease (DATABASE_URL or FAAS_DATABASE_URL)")
 	fs.StringVar(&opts.stateKeyFile, "state-key-file", "", "independent private file with the 32-byte state encryption key")
 	tools := fs.String("tools", mcpmanagement.ToolsetAll, "toolsets to list, comma-separated: core, release, diagnose, provision or all")
@@ -77,6 +80,9 @@ func parseMCPServeOptions(args []string) (mcpServeOptions, error) {
 	}
 	if opts.hosted && (opts.transport != "streamable-http" || opts.statePostgres == "" || opts.onboarding != "browser") {
 		return opts, errors.New("--hosted needs --transport streamable-http, --state-postgres and browser onboarding")
+	}
+	if opts.apiBase != "" && opts.transport != "streamable-http" {
+		return opts, errors.New("--api-base requires --transport streamable-http")
 	}
 	if opts.transport == "stdio" && (opts.adminSocket != "" || opts.onboarding != "browser" || opts.stateFile != "" || opts.statePostgres != "" || opts.resourceURL != "" || len(opts.redirects) > 0 || opts.listen != "127.0.0.1:8787") {
 		return opts, errors.New("remote OAuth and listen options require --transport streamable-http")
@@ -146,6 +152,10 @@ func serveMCPHTTP(ctx context.Context, opts mcpServeOptions) error {
 		opts.lifecycle = mcpmanagement.NewLifecycle()
 	}
 	connection := effectiveConnectionContext()
+	if opts.apiBase != "" {
+		// The hosted unit names apid's loopback listener (ADR-20261026195952).
+		connection.APIBase = strings.TrimRight(opts.apiBase, "/")
+	}
 	handlerOptions := mcpmanagement.HTTPOptions{Lifecycle: opts.lifecycle, Telemetry: opts.telemetry, AuditLogger: slog.New(slog.NewJSONHandler(osStderr, nil)), Onboarding: opts.onboarding, APIBase: connection.APIBase, ResourceURL: opts.resourceURL, RedirectURIs: opts.redirects, Version: wire.Version, Timeout: opts.timeout, AllowWrites: opts.allowWrites, Toolsets: opts.toolsets, Hosted: opts.hosted}
 	if opts.hosted {
 		handlerOptions.UploadDir = filepath.Join(os.TempDir(), "gregale-mcp-uploads")
