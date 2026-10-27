@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"syscall"
@@ -45,6 +46,12 @@ type helperSpec struct {
 // e2fsprogs tool named after "--". It returns only on failure, with the exit
 // code the caller should use.
 func SandboxMain(args []string) int {
+	// no_new_privs and the Landlock domain belong to the calling thread, and
+	// execve carries only the calling thread's. Keep confinement and the exec
+	// on one OS thread, or the tool could start unconfined (and
+	// landlock_restrict_self fails with EPERM on a thread without
+	// no_new_privs). The process ends in execve, so the lock is never undone.
+	runtime.LockOSThread()
 	spec, err := parseHelperArgs(args)
 	if err == nil {
 		err = confine(spec)
