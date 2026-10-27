@@ -128,8 +128,8 @@ type Config struct {
 	CPUTemplate string `toml:"cpu_template"`
 	// QuietPause enables ADR-1151 quiet pause: vmmd pauses an eligible
 	// instance's vCPUs between requests and resumes it on the next one.
-	// Off by default; schedd decides which instances are eligible.
-	// FAAS_QUIET_PAUSE overrides TOML.
+	// On by default (ADR-1151 amendment 2026-10-27); schedd decides which
+	// instances are eligible. FAAS_QUIET_PAUSE overrides TOML.
 	QuietPause bool `toml:"quiet_pause"`
 	// QuietPauseObserve runs quiet pause in observe mode: vmmd measures the
 	// pauses it would make (vmmd_quiet_pause_observed_*) and pauses nothing,
@@ -139,14 +139,14 @@ type Config struct {
 	QuietPauseObserve bool `toml:"quiet_pause_observe"`
 	// InvokeHookBackoff stops per-request invoke extension events to an
 	// instance for extension.InvokeUnavailableBackoff after its guest reports
-	// that no extension endpoint is listening (ADR-20261025150000). Off by
-	// default; FAAS_INVOKE_HOOK_BACKOFF overrides TOML.
+	// that no extension endpoint is listening (ADR-20261025150000). On by
+	// default (amendment 2026-10-27); FAAS_INVOKE_HOOK_BACKOFF overrides TOML.
 	InvokeHookBackoff bool `toml:"invoke_hook_backoff"`
 	// BridgeStreamHeadroom lets vmmd open another HTTP/2 connection to an
 	// instance's stream bridge when one is at its stream cap instead of
 	// queueing requests, sizes the bridge's guest pool to that cap and
-	// shortens its guest dial timeout (ADR-20261026120000). Off by default;
-	// FAAS_BRIDGE_STREAM_HEADROOM overrides TOML.
+	// shortens its guest dial timeout (ADR-20261026120000). On by default
+	// (amendment 2026-10-27); FAAS_BRIDGE_STREAM_HEADROOM overrides TOML.
 	BridgeStreamHeadroom bool `toml:"bridge_stream_headroom"`
 	// RequireSecretBinding refuses runtime secret envelopes that carry no
 	// account binding (ADR-20261023173624, contract step). Off by default;
@@ -601,6 +601,15 @@ func LoadConfig(path string) (*Config, error) {
 		// default. Bases without the pmem label, filesystems without
 		// reflink and native recovery all keep virtio-blk.
 		PmemBaseDir: fcvm.PmemBaseDirAuto,
+		// On by default since the 2026-10-27 production measurements
+		// (ADR-1151, ADR-20261025150000 and ADR-20261026120000
+		// amendments): release rollouts re-render vmmd.toml from the
+		// manifest, so a node-local TOML edit could not keep them on.
+		// vmmd.toml or FAAS_QUIET_PAUSE / FAAS_INVOKE_HOOK_BACKOFF /
+		// FAAS_BRIDGE_STREAM_HEADROOM = false turns one off.
+		QuietPause:           true,
+		InvokeHookBackoff:    true,
+		BridgeStreamHeadroom: true,
 		// KernelPath is the deprecated host-path default; main.go
 		// resolves KernelKey from storagekey.Kernel(fcVersion) after FC
 		// detection. The default here keeps pre-#116 vmmd.toml
