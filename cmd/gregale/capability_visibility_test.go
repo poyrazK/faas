@@ -246,6 +246,13 @@ func TestHiddenDebuggerSubcommandsLeaveDebugUsage(t *testing.T) {
 	if hint := debugUsageOutput(t, "invocations", "list", "--app", "my-app"); strings.Contains(hint, "debug requests") || !strings.Contains(hint, "gregale logs <slug> --source http") {
 		t.Fatalf("invocations --app hint names a hidden command: %q", hint)
 	}
+	// Verb lists after a mistyped verb follow the same view.
+	if choices := debugUsageOutput(t, "app", "my-app", "idle"); strings.Contains(choices, "security") || !strings.Contains(choices, "health") {
+		t.Fatalf("app verb list names a hidden subcommand: %q", choices)
+	}
+	if typo := debugUsageOutput(t, "debug", "requsts"); strings.Contains(typo, `"requests"`) {
+		t.Fatalf("a typo must not suggest a hidden subcommand: %q", typo)
+	}
 
 	api.setHidden()
 	t.Setenv("FAAS_COMPLETION_CACHE_PATH", filepath.Join(t.TempDir(), "cache2.json"))

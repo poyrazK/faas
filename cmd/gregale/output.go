@@ -279,6 +279,7 @@ func printCommandValidation(w io.Writer, format string, args ...any) {
 // shape as flag validation when --json is active, while retaining the legacy
 // text diagnostic and typo hint for interactive use.
 func printUnknownSubcommand(w io.Writer, path string, command cliCommand, got string) int {
+	command = visibleSubcommands(path, command)
 	detail := fmt.Sprintf("gregale %s: unknown subcommand %q", path, got)
 	suggestion, ok := suggestSubcommand(got, command)
 	if ok && jsonOutput && !jsonUsageHelp {
@@ -302,6 +303,7 @@ func unknownSubcommandChoices(w io.Writer, path string, command cliCommand, got 
 	if jsonOutput {
 		return 1
 	}
+	command = visibleSubcommands(path, command)
 	if suggestion, ok := suggestSubcommand(got, command); ok {
 		_, _ = fmt.Fprintf(w, "  Did you mean %q?\n", suggestion)
 		return 1
@@ -310,6 +312,22 @@ func unknownSubcommandChoices(w io.Writer, path string, command cliCommand, got 
 		printSubcommandChoices(w, path, command, got)
 	}
 	return 1
+}
+
+// visibleSubcommands drops the subcommands whose capability is hidden for
+// the account, so choices and suggestions never name a command the CLI then
+// refuses: `app h14-py idle` listed security, network and static-egress-ip on
+// production-us rc.297 (Hunt 14 H14-89).
+func visibleSubcommands(path string, command cliCommand) cliCommand {
+	view := discoveryCapabilityView()
+	subs := make([]cliSub, 0, len(command.Subcommands))
+	for _, sub := range command.Subcommands {
+		if !view.hidesPath(path + " " + sub.Name) {
+			subs = append(subs, sub)
+		}
+	}
+	command.Subcommands = subs
+	return command
 }
 
 // printSubcommandChoices lists the verbs a dispatcher accepts. An app slug in
