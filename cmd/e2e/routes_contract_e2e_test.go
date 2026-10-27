@@ -125,7 +125,9 @@ func TestE2E_Routes_OpenAPIContractPreviewAndValidationPolicy(t *testing.T) {
 	deadline = time.Now().Add(60 * time.Second)
 	for {
 		if status := f.post(t, "/orders", `{"qty":"many"}`); status != http.StatusOK {
-			t.Fatalf("POST /orders with an invalid body under observe mode: status=%d", status)
+			t.Fatalf("POST /orders with an invalid body under observe mode: status=%d\napplied rules: %s\ngateway edge policy: %v\ngateway traffic refusals: %v",
+				status, f.edgeRuleRows(t), metricLines(f.h.GatewayControlURL+"/metrics", "edge_rule"),
+				metricLines(f.h.GatewayControlURL+"/metrics", "traffic_"))
 		}
 		if n := validateFailures(f, "observe"); n > 0 {
 			break
@@ -136,6 +138,27 @@ func TestE2E_Routes_OpenAPIContractPreviewAndValidationPolicy(t *testing.T) {
 		}
 		time.Sleep(time.Second)
 	}
+}
+
+// edgeRuleRows lists the app's stored edge rules, for failure messages.
+func (f *routesFixture) edgeRuleRows(t *testing.T) string {
+	t.Helper()
+	rows, err := f.h.Pool.Query(f.ctx, `select kind, match_host, match_path, match_methods::text, validate_mode, enabled, action::text
+		from edge_rules where app_id = $1::uuid order by created_at`, f.app.ID)
+	if err != nil {
+		return "query failed: " + err.Error()
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var kind, host, path, methods, mode, action string
+		var enabled bool
+		if err := rows.Scan(&kind, &host, &path, &methods, &mode, &enabled, &action); err != nil {
+			return "scan failed: " + err.Error()
+		}
+		out = append(out, strings.Join([]string{kind, host, path, methods, mode, strconv.FormatBool(enabled), action}, " | "))
+	}
+	return strings.Join(out, "\n")
 }
 
 // validateFailures sums the gateway's validation failures for the fixture's
