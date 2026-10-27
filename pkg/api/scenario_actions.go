@@ -67,6 +67,9 @@ type ScenarioCapturedPlatformCall struct {
 const (
 	ScenarioQueueKindQueue       = "queue"
 	ScenarioQueueKindDelayedTask = "delayed_task"
+	// ScenarioQueueKindAsyncInvoke is a captured POST .../invoke/async
+	// (ADR-20261022082721).
+	ScenarioQueueKindAsyncInvoke = "async_invoke"
 	ScenarioPlatformAPIHost      = "api.svc.gregale"
 	ScenarioPlatformAPIURLEnv    = "GREGALE_API_URL"
 )

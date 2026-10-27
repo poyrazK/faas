@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { once } from 'node:events';
 import { createServer } from 'node:http';
 import test from 'node:test';
-import { FaaSClient, WorkflowsService, type AutomationQueueHealth } from '../src/index.js';
+import { FaaSClient, WorkflowsService, type AutomationQueueHealth } from '../src/preview.js';
 
 const queue: AutomationQueueHealth = {
   observed_at: '2026-10-07T12:00:00Z', waiting_run_count: 3, due_run_count: 2, stale_run_count: 1,

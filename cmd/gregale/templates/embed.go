@@ -19,6 +19,7 @@ package templates
 
 import (
 	"archive/tar"
+	"bytes"
 	"compress/gzip"
 	"embed"
 	"fmt"
@@ -28,6 +29,9 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"text/template"
+
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 // FS holds the embedded starter projects. The root is the directory
@@ -39,11 +43,21 @@ import (
 //go:embed rest-api-postgres-python/runtime/*.py object-storage-python object-storage-python/runtime/*.py
 var FS embed.FS
 
+// agentsGuide is the AGENTS.md every materialized project receives, so a
+// coding agent finds the deploy, inspect and rollback contract without
+// reading the docs first. Its only field is the template name; README.md
+// stays the source for each template's own setup.
+//
+//go:embed agents.md.tmpl
+var agentsGuide string
+
+var agentsGuideTemplate = template.Must(template.New("AGENTS.md").Parse(agentsGuide))
+
 // GoToolchainVersion is the patched toolchain selected by Gregale's built-in
-// Go starters. Keep this aligned with the repository toolchain pin: unlike a
-// customer-owned go.mod, these generated modules are platform-owned defaults
-// and must not knowingly create images with HIGH stdlib findings.
-const GoToolchainVersion = "1.26.10"
+// Go starters. Unlike a customer-owned go.mod, these generated modules are
+// platform-owned defaults and must not knowingly create images with HIGH
+// stdlib findings, so they name the release Go function builds use.
+const GoToolchainVersion = api.GoBuildToolchain
 
 // Names is the canonical template list, kept here so the CLI can
 // validate --template before touching the embed FS. The hello/function and
@@ -117,13 +131,15 @@ var generatedDotfiles = map[string]map[string]string{
 		".gregaleignore": "/tests/\n**/__pycache__/\n*.pyc\n/.venv/\n/.gregale/\n.env\n.env.*\n*.secrets\n",
 	},
 	"rest-api-postgres-python": {
-		".gitignore":     "__pycache__/\n*.pyc\n.venv/\n.gregale/\n.env\n.env.*\n*.secrets\n",
-		".gregaleignore": "/tests/\n**/__pycache__/\n*.pyc\n/.venv/\n/.gregale/\n.env\n.env.*\n*.secrets\n",
+		".gregale/env.json": "{\"optional\":[\"MIGRATION_DATABASE_URL\"]}\n",
+		".gitignore":        "__pycache__/\n*.pyc\n.venv/\n.gregale/\n.env\n.env.*\n*.secrets\n",
+		".gregaleignore":    "/tests/\n**/__pycache__/\n*.pyc\n/.venv/\n/.gregale/\n.env\n.env.*\n*.secrets\n",
 	},
 	"data-api-support-console": {".gitignore": "node_modules/\n.gregale/\n.env\n.env.*\n", ".gregaleignore": "/test/\n/demo.mjs\n/.env\n/.env.*\n"},
 	"data-api-teams": {
-		".gitignore":     "node_modules/\nclient/dist/\nclient/client.js\nclient/vendor/\n.gregale/\n.gregale-tools/\n.env\n.env.*\n",
-		".gregaleignore": "/client/\n/tools/\n/workers/\n/ci/\n/.github/\n/.gregale/\n/.gregale-tools/\n/seed.sql\n/data-api.dev.json\n/data-api.requests.json\n/data-api-artifacts.json\n",
+		".gregale/env.json": "{\"optional\":[\"MIGRATION_DATABASE_URL\"]}\n",
+		".gitignore":        "node_modules/\nclient/dist/\nclient/client.js\nclient/vendor/\n.gregale/\n.gregale-tools/\n.env\n.env.*\n",
+		".gregaleignore":    "/client/\n/tools/\n/workers/\n/ci/\n/.github/\n/.gregale/\n/.gregale-tools/\n/seed.sql\n/data-api.dev.json\n/data-api.requests.json\n/data-api-artifacts.json\n",
 	},
 	"object-storage-node": {
 		".gitignore":     "node_modules/\n.gregale/\n.env\n.env.*\n*.secrets\n",
@@ -134,17 +150,34 @@ var generatedDotfiles = map[string]map[string]string{
 		".gregaleignore": "/dev.mjs\n/tools/\n/test/\n/tsconfig.json\n/local-checkpoint.json\n/.session-frame.json\n/.env\n/.env.*\n",
 	},
 	"data-api-starter": {
-		".gitignore":     "node_modules/\nclient/dist/\nclient/browser/client.js\n.gregale-tools/\n.gregale/\n.env\n.env.*\n",
-		".gregaleignore": "/client/\n/tools/\n/test/\n/ci/\n/.github/\n/.gregale-tools/\n/.gregale/\n/data-api-artifacts.json\n/data-api.dev.json\n/data-api.requests.json\n/data-api.requests.json.*.tmp\n",
+		".gregale/env.json": "{\"optional\":[\"MIGRATION_DATABASE_URL\"]}\n",
+		".gitignore":        "node_modules/\nclient/dist/\nclient/browser/client.js\n.gregale-tools/\n.gregale/\n.env\n.env.*\n",
+		".gregaleignore":    "/client/\n/tools/\n/test/\n/ci/\n/.github/\n/.gregale-tools/\n/.gregale/\n/data-api-artifacts.json\n/data-api.dev.json\n/data-api.requests.json\n/data-api.requests.json.*.tmp\n",
 	},
 	// production-us hunt #4: tools/ holds owner-machine scripts that need an
 	// account-owner FAAS_TOKEN. Without this file `gregale doctor` scanned
 	// them and told users to store FAAS_TOKEN as an app secret.
 	"customer-platform": {
+		".gregale/env.json": "{\"optional\":[\"MIGRATION_DATABASE_URL\"]}\n",
 		".gregaleignore": "# Owner-machine tools mint and rotate customer keys with an account-owner\n" +
 			"# credential. They never run in the app (the Dockerfile copies app/\n" +
 			"# only), so keep them out of the upload and out of doctor's env checks.\n" +
 			"/tools/\n",
+	},
+	"mcp-node": {
+		".gregale/env.json": "{\"optional\":[\"MCP_CATALOG_EXPECTED_SHA256\",\"MCP_TASK_MIGRATION_DATABASE_URL\",\"MCP_TASK_RELEASE_INPUT\",\"MCP_TELEMETRY_LOSS_ALERT\"]}\n",
+	},
+	"mcp-go": {
+		".gregale/env.json": "{\"optional\":[\"GREGALE_API_URL\",\"MCP_BIND_ADDRESS\",\"MCP_CATALOG_EXPECTED_SHA256\",\"MCP_CONFIG_PATH\",\"MCP_DRAIN_TIMEOUT_SECONDS\",\"MCP_TASKS_ROLE\",\"MCP_TASKS_SCALING_APP_SLUG\",\"MCP_TASKS_SCALING_TOKEN\",\"MCP_TASK_MIGRATION_DATABASE_URL\",\"MCP_TASK_NAMESPACE\",\"MCP_TELEMETRY_LOSS_ALERT\"]}\n",
+	},
+	"mcp-python": {
+		".gregale/env.json": "{\"optional\":[\"MCP_BIND_ADDRESS\",\"MCP_TELEMETRY_LOSS_ALERT\"]}\n",
+	},
+	"rest-api-postgres": {
+		".gregale/env.json": "{\"optional\":[\"MIGRATION_DATABASE_URL\"]}\n",
+	},
+	"data-api": {
+		".gregale/env.json": "{\"optional\":[\"DOCKER_CONTEXT\",\"MIGRATION_DATABASE_URL\"]}\n",
 	},
 }
 
@@ -272,6 +305,9 @@ func Materialize(name, dest string) error {
 	}
 	for file, content := range generatedDotfiles[name] {
 		target := filepath.Join(dest, file)
+		if err := os.MkdirAll(filepath.Dir(target), 0o700); err != nil {
+			return err
+		}
 		if _, err := os.Stat(target); os.IsNotExist(err) {
 			if err := os.WriteFile(target, []byte(content), 0o644); err != nil {
 				return err
@@ -315,7 +351,20 @@ func Materialize(name, dest string) error {
 			}
 		}
 	}
-	return nil
+	return writeAgentsGuide(name, dest)
+}
+
+// writeAgentsGuide adds AGENTS.md unless the destination already has one.
+func writeAgentsGuide(name, dest string) error {
+	target := filepath.Join(dest, "AGENTS.md")
+	if _, err := os.Stat(target); !os.IsNotExist(err) {
+		return err
+	}
+	var guide bytes.Buffer
+	if err := agentsGuideTemplate.Execute(&guide, struct{ Template string }{name}); err != nil {
+		return err
+	}
+	return os.WriteFile(target, guide.Bytes(), 0o644)
 }
 
 // TarGz materializes the template and writes a tar.gz to dest. The

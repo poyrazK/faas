@@ -21,7 +21,7 @@ func cloneCutover(c Cutover) Cutover {
 }
 func (s *MemoryStore) databaseCutoverPinned(id string) bool {
 	for _, c := range s.cutovers {
-		if c.State != CutoverCancelled && (c.Source.ID == id || c.Target.ID == id) {
+		if !c.State.Closed() && (c.Source.ID == id || c.Target.ID == id) {
 			return true
 		}
 	}
@@ -29,7 +29,7 @@ func (s *MemoryStore) databaseCutoverPinned(id string) bool {
 }
 func (s *MemoryStore) bindingCutoverPinned(id string) bool {
 	for _, c := range s.cutovers {
-		if c.State == CutoverCancelled {
+		if c.State.Closed() {
 			continue
 		}
 		for _, m := range c.Credentials {
@@ -52,7 +52,7 @@ func (s *MemoryStore) ReserveCutover(_ context.Context, r PrepareCutoverRequest,
 		return Cutover{}, false, ErrNotFound
 	}
 	for _, c := range s.cutovers {
-		if c.ID == r.ID || (c.State != CutoverCancelled && c.AppID == r.AppID && c.Scope == r.Scope) {
+		if c.ID == r.ID || (!c.State.Closed() && c.AppID == r.AppID && c.Scope == r.Scope) {
 			if !sameCutoverRequest(c, r) {
 				return Cutover{}, false, ErrConflict
 			}
@@ -164,6 +164,9 @@ func (s *MemoryStore) finishCutoverStep(claim Cutover, member CutoverCredential,
 		c.State = CutoverPrepared
 		if revoke {
 			c.State = CutoverCancelled
+			if f, fenced := s.fences[c.AppID]; fenced && f.CutoverID == c.ID {
+				delete(s.fences, c.AppID)
+			}
 		}
 	}
 	c.LeaseToken = ""
@@ -202,6 +205,9 @@ func (s *MemoryStore) CancelCutover(_ context.Context, account, id string, now t
 	c, ok := s.cutovers[id]
 	if !ok || c.AccountID != account {
 		return Cutover{}, ErrNotFound
+	}
+	if c.State == CutoverActivated {
+		return Cutover{}, ErrConflict
 	}
 	if c.State != CutoverCancelled {
 		c.State = CutoverCancelling

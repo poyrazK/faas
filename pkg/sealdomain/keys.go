@@ -33,6 +33,9 @@ func CredentialName(d Domain) string {
 	return "faas_seal_domain_" + strings.ReplaceAll(string(d), "-", "_")
 }
 
+// ErrNoIdentity means none of the given identity files exists.
+var ErrNoIdentity = errors.New("sealdomain: no identity loaded")
+
 // LoadReaderIdentities returns what a reader daemon opens envelopes with:
 // the domain identity and its previous twin when present, then each legacy
 // identity (fleet, host) and its previous twin when present. Legacy
@@ -62,7 +65,7 @@ func LoadReaderIdentities(domainPath string, legacyPaths ...string) ([]*age.X255
 		}
 	}
 	if len(out) == 0 {
-		return nil, errors.New("sealdomain: no identity loaded")
+		return nil, ErrNoIdentity
 	}
 	return out, nil
 }
@@ -126,4 +129,22 @@ func Recipients(mode WriteMode, domain, fleet *age.X25519Recipient) ([]*age.X255
 	default:
 		return nil, fmt.Errorf("sealdomain: unknown write mode %q", mode)
 	}
+}
+
+// KeyID is the key id stored beside a value sealed to recipients, for a
+// reader that re-keys by key id (s3-gatewayd re-seals any credential whose
+// id is not its current key): the fleet recipient while the value still
+// opens with it, else the first recipient (the domain).
+func KeyID(recipients []*age.X25519Recipient, fleet *age.X25519Recipient) string {
+	if fleet != nil {
+		for _, r := range recipients {
+			if r.String() == fleet.String() {
+				return fleet.String()
+			}
+		}
+	}
+	if len(recipients) == 0 {
+		return ""
+	}
+	return recipients[0].String()
 }

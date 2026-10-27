@@ -71,9 +71,11 @@ func (h *Handler) enforceTenantRequestBudget(w http.ResponseWriter, r *http.Requ
 	// tenant is served (ADR-20261018090210). They refused before its budget
 	// was counted, so this request does not use budget.
 	monetized := decision.Scope == TenantBudgetScopeOverdue || decision.Scope == TenantBudgetScopeSpendCap
-	if decision.Allowed || monetized && !h.apiMonetizationEnabled() {
+	if decision.Allowed || monetized && !h.APIMonetizationEnabledFor(app.AccountID) {
 		return true
 	}
+	recordTrafficLimiter(r.Context(), "tenant")
+	recordTrafficRefusal(r.Context(), "rate_limited")
 	suppressFinancialUsage(r)
 	if decision.Scope == TenantBudgetScopeOverdue {
 		h.denyTenantOverdue(w, r, rec, app, decision.OverdueDueAt)
@@ -119,6 +121,8 @@ func (h *Handler) denyTenantSpendCap(w http.ResponseWriter, r *http.Request, rec
 }
 
 func (h *Handler) denyTenantBudgetUnavailable(w http.ResponseWriter, r *http.Request, rec *statusRecorder, app App) {
+	recordTrafficLimiter(r.Context(), "tenant")
+	recordTrafficRefusal(r.Context(), "rate_limit_unavailable")
 	suppressFinancialUsage(r)
 	api.WriteProblem(w, api.NewProblem(http.StatusServiceUnavailable, "tenant_request_budget_unavailable",
 		"Customer request budget unavailable", "request admission could not be verified"))

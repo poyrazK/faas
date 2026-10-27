@@ -100,7 +100,7 @@ func startPGConnectionsNode(t *testing.T) *pgConnectionsNode {
 		TicketPreview: true, TicketReader: pgTicketReader{store: store},
 		OccupancyPreview: true,
 	}, hooks)
-	if err := m.RegisterEndpoint(Endpoint{
+	if err := m.RegisterEndpoint(Endpoint{Preview: true,
 		ID: endpoint.ID, AppID: app.ID, AccountID: account.ID, CallbackURL: "https://app.example",
 		ClientAuth: AuthPolicy{
 			Mode: AuthModeOIDCJWT, Issuer: "https://issuer.example",

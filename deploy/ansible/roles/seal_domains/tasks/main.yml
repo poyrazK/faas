@@ -1,23 +1,6 @@
 ---
-# Seal domains (ADR 20261022111812). The order is the safety argument:
-# outboundd (the reader) gets the domain identity and proves it opens the
-# domain probe before apid (the writer) seals anything to the domain.
-- name: seal_domains — require the outbound domain sources on a control-plane host
-  ansible.builtin.assert:
-    that:
-      - faas_box_role | default('single-box') in ['control-plane', 'single-box']
-      - faas_seal_domain_outbound_identity_src | length > 0
-      - faas_seal_domain_outbound_recipient_src | length > 0
-      - faas_seal_domain_outbound_writes in ['', 'fleet', 'dual', 'domain']
-      - faas_seal_domain_outbound_writes != 'domain' or (faas_seal_domain_outbound_readers_verified | bool)
-    fail_msg: >-
-      The outbound seal domain runs where outboundd runs (a control-plane or
-      single-box host). Set faas_seal_domain_outbound_identity_src and
-      faas_seal_domain_outbound_recipient_src to the files from
-      `gregalectl seal-domain init --domain outbound`. writes=domain also
-      needs faas_seal_domain_outbound_readers_verified once every outboundd
-      verified the domain and the previous release left the rollback window.
-
+# Seal domains (ADR 20261022111812). Each wired domain is staged where its
+# reader runs and proved there before a writer seals to the domain alone.
 - name: seal_domains — create the domain identity directory
   ansible.builtin.file:
     path: /etc/faas/secrets/domains
@@ -26,70 +9,52 @@
     group: root
     mode: "0700"
 
-# 0400 root:root. systemd hands the identity to outboundd alone as a
-# credential; no other unit names it.
-- name: seal_domains — install the outbound domain identity
-  ansible.builtin.copy:
-    src: "{{ faas_seal_domain_outbound_identity_src }}"
-    dest: /etc/faas/secrets/domains/outbound.age
-    owner: root
-    group: root
-    mode: "0400"
-  no_log: true
-  notify: restart faas-outboundd for seal domains
+- name: seal_domains — outbound domain
+  ansible.builtin.include_tasks: outbound.yml
+  when:
+    - faas_box_role | default('single-box') in ['control-plane', 'single-box']
+    - faas_seal_domain_outbound_identity_src | length > 0 or faas_seal_domain_outbound_recipient_src | length > 0
 
-- name: seal_domains — install the outbound domain recipient
-  ansible.builtin.copy:
-    src: "{{ faas_seal_domain_outbound_recipient_src }}"
-    dest: /etc/faas/secrets/domains/outbound.age.pub
-    owner: root
-    group: root
-    mode: "0444"
-  notify: restart faas-apid for seal domains
+- name: seal_domains — source domain
+  ansible.builtin.include_tasks: source.yml
+  when:
+    - faas_box_role | default('single-box') in ['control-plane', 'single-box']
+    - faas_seal_domain_source_identity_src | length > 0 or faas_seal_domain_source_recipient_src | length > 0
 
-- name: seal_domains — create unit drop-in directories
-  ansible.builtin.file:
-    path: "/etc/systemd/system/{{ item }}.service.d"
-    state: directory
-    owner: root
-    group: root
-    mode: "0755"
-  loop: [faas-outboundd, faas-apid]
+- name: seal_domains — alerting domain
+  ansible.builtin.include_tasks: alerting.yml
+  when:
+    - faas_box_role | default('single-box') in ['control-plane', 'single-box']
+    - faas_seal_domain_alerting_identity_src | length > 0 or faas_seal_domain_alerting_recipient_src | length > 0
 
-- name: seal_domains — give outboundd the outbound domain identity
-  ansible.builtin.template:
-    src: 60-faas-seal-domain-outbound-reader.conf.j2
-    dest: /etc/systemd/system/faas-outboundd.service.d/60-faas-seal-domain-outbound.conf
-    owner: root
-    group: root
-    mode: "0644"
-  notify: restart faas-outboundd for seal domains
+- name: seal_domains — storage domain
+  ansible.builtin.include_tasks: storage.yml
+  when:
+    - faas_box_role | default('single-box') in ['control-plane', 'single-box']
+    - faas_seal_domain_storage_identity_src | length > 0 or faas_seal_domain_storage_recipient_src | length > 0
 
-- name: seal_domains — restart outboundd before proving the domain
-  ansible.builtin.meta: flush_handlers
+- name: seal_domains — control domain
+  ansible.builtin.include_tasks: control.yml
+  when: faas_seal_domain_control_identity_src | length > 0
 
-- name: seal_domains — prove this node opens the outbound domain probe
-  ansible.builtin.command:
-    argv:
-      - /usr/local/bin/gregalectl
-      - seal-domain
-      - verify
-      - --domain
-      - outbound
-      - --publish
-      - --db-env
-      - "{{ faas_seal_domain_db_env }}"
-      - --metrics-file
-      - "{{ faas_seal_domain_textfile_dir }}/faas_seal_domain_outbound.prom"
-      - --json
-  register: faas_seal_domain_outbound_verify
-  changed_when: (faas_seal_domain_outbound_verify.stdout | from_json).probe_written | default(false)
+- name: seal_domains — account domain
+  ansible.builtin.include_tasks: account.yml
+  when:
+    - faas_box_role | default('single-box') in ['control-plane', 'single-box']
+    - faas_seal_domain_account_identity_src | length > 0
 
-- name: seal_domains — have apid seal outbound credentials to the domain
-  ansible.builtin.template:
-    src: 60-faas-seal-domain-outbound-writer.conf.j2
-    dest: /etc/systemd/system/faas-apid.service.d/60-faas-seal-domain-outbound.conf
-    owner: root
-    group: root
-    mode: "0644"
-  notify: restart faas-apid for seal domains
+- name: seal_domains — delivery domain
+  ansible.builtin.include_tasks: delivery.yml
+  when: faas_seal_domain_delivery_identity_src | length > 0 or faas_seal_domain_delivery_recipient_src | length > 0
+
+- name: seal_domains — build domain
+  ansible.builtin.include_tasks: build.yml
+  when: faas_seal_domain_build_identity_src | length > 0 or faas_seal_domain_build_recipient_src | length > 0
+
+- name: seal_domains — edge domain
+  ansible.builtin.include_tasks: edge.yml
+  when: faas_seal_domain_edge_identity_src | length > 0 or faas_seal_domain_edge_recipient_src | length > 0
+
+- name: seal_domains — runtime domain
+  ansible.builtin.include_tasks: runtime.yml
+  when: faas_seal_domain_runtime_identity_src | length > 0 or faas_seal_domain_runtime_recipient_src | length > 0

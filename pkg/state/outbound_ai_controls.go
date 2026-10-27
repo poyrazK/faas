@@ -80,6 +80,18 @@ type OutboundAIRequestLogEntry struct {
 	Tags []string
 	// ContentCaptured reports stored bodies for the call (ADR-996).
 	ContentCaptured bool
+	// TraceID is the call's AI trace, and ToolCalls the tools its response
+	// requested (ADR 20261020202035).
+	TraceID   string
+	ToolCalls []string
+	// QualityFlags mark what went wrong with the answer; Feedback is the
+	// call's rating ("good" or "bad", or empty) with its label; and
+	// EvaluationScore is its online evaluation's score from 1 to 5
+	// (ADR 20261021171712).
+	QualityFlags    []string
+	Feedback        string
+	FeedbackLabel   string
+	EvaluationScore *int32
 }
 
 // OutboundAIRequestContent is one logged call's captured bodies (ADR-996):
@@ -102,6 +114,13 @@ type OutboundAIRequestContent struct {
 // change.
 type OutboundAIContentStore interface {
 	GetOutboundAIRequestContent(ctx context.Context, accountID, integrationID, logID string) (OutboundAIRequestContent, error)
+}
+
+// OutboundAIRequestCallerStore names who made one logged call of the
+// account's integration, so apid can withhold a call of an app its reader
+// may no longer see.
+type OutboundAIRequestCallerStore interface {
+	OutboundAIRequestCaller(ctx context.Context, accountID, integrationID, logID string) (string, error)
 }
 
 // OutboundAIControlStore owns the ADR-991 customer settings (guardrails and

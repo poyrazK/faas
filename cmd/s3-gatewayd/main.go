@@ -25,6 +25,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/role"
 	"github.com/onebox-faas/faas/pkg/runtimeconfig"
 	"github.com/onebox-faas/faas/pkg/s3gateway"
+	"github.com/onebox-faas/faas/pkg/sealdomain"
 	"github.com/onebox-faas/faas/pkg/secretbox"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/trace"
@@ -70,6 +71,14 @@ func run(ctx context.Context, log *slog.Logger) error {
 	if err != nil {
 		return err
 	}
+	// ADR 20261022111812: once the seal_domains role stages the storage
+	// domain, its identity opens S3 credentials ahead of the fleet and host
+	// identities. The startup rekey below leaves the rows it opens alone.
+	storageIdentities, err := loadStorageSealDomain(os.Getenv)
+	if err != nil {
+		return err
+	}
+	readers := storageReaders(storageIdentities, identities)
 	pool, err := db.OpenWithAppName(ctx, "", "faas-s3-gatewayd")
 	if err != nil {
 		return fmt.Errorf("s3-gatewayd: open db: %w", err)
@@ -100,7 +109,9 @@ func run(ctx context.Context, log *slog.Logger) error {
 			log.Warn("s3-gatewayd: object storage usage export failed", "backend_id", backend, "err", err)
 		})
 	}
-	if count, err := s3gateway.RekeyCredentials(ctx, store, identities); err != nil {
+	sealdomain.RegisterLoaded(ops.Registry(), sealdomain.Storage, len(storageIdentities) > 0)
+	log.Info("storage seal domain", "domain_identity", len(storageIdentities) > 0)
+	if count, err := s3gateway.RekeyCredentials(ctx, store, identities, storageIdentities); err != nil {
 		return fmt.Errorf("s3-gatewayd: rekey credentials: %w", err)
 	} else if count > 0 {
 		log.Info("s3-gatewayd: credentials re-sealed under current host identity", "count", count)
@@ -128,10 +139,19 @@ func run(ctx context.Context, log *slog.Logger) error {
 		}
 	}()
 
+	// A restore that promoted onto a new PostgreSQL timeline fences S3 until
+	// an operator accepts it (ADR-20261025111015 amendment).
+	fence := runtimeconfig.NewObjectStorageFence(store, log)
+	if err := fence.Check(ctx); err != nil {
+		log.Warn("s3-gatewayd: initial object storage fence read failed", "err", err)
+	}
+	go fence.Run(ctx)
+	serving := func() bool { return enabled.Load() && fence.Open() }
+
 	handler, err := s3gateway.New(s3gateway.Config{
-		Registry: registry, Store: store, RequestMetrics: requestMetrics, Enabled: enabled.Load, SpoolDir: os.Getenv("FAAS_S3_GATEWAY_SPOOL_DIR"), Log: log,
+		Registry: registry, Store: store, RequestMetrics: requestMetrics, Enabled: serving, SpoolDir: os.Getenv("FAAS_S3_GATEWAY_SPOOL_DIR"), Log: log,
 		OpenSecret: func(sealed []byte) (string, error) {
-			namespace, plaintext, err := secretbox.OpenBytesMulti(identities, sealed)
+			namespace, plaintext, err := secretbox.OpenBytesMulti(readers, sealed)
 			if err != nil || namespace != s3gateway.CredentialSecretNamespace || len(plaintext) != 40 {
 				return "", errors.New("s3-gatewayd: credential secret could not be opened")
 			}

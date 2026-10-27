@@ -366,6 +366,64 @@ func (q *Queries) LockLiveDatabase(ctx context.Context, db DBTX, arg LockLiveDat
 	return id, err
 }
 
+const resealLiveKey = `-- name: ResealLiveKey :execrows
+UPDATE managed_postgres_live_keys SET sealed_secret=$1::bytea
+ WHERE kid=$2::text AND database_id=$3::text::uuid AND sealed_secret=$4::bytea
+   AND recipient=$5::text
+`
+
+type ResealLiveKeyParams struct {
+	SealedSecret []byte
+	Kid          string
+	DatabaseID   string
+	Previous     []byte
+	Recipient    string
+}
+
+// Replaces a key's seal only while it still holds the one the re-seal read
+// and names the recipient the re-seal sealed to, so a key rotated, revoked
+// or redirected meanwhile is left as it is.
+func (q *Queries) ResealLiveKey(ctx context.Context, db DBTX, arg ResealLiveKeyParams) (int64, error) {
+	result, err := db.Exec(ctx, resealLiveKey,
+		arg.SealedSecret,
+		arg.Kid,
+		arg.DatabaseID,
+		arg.Previous,
+		arg.Recipient,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const resealLiveLogin = `-- name: ResealLiveLogin :execrows
+UPDATE managed_postgres_live_logins SET sealed_login=$1::bytea
+ WHERE database_id=$2::text::uuid AND sealed_login=$3::bytea
+   AND recipient=$4::text
+`
+
+type ResealLiveLoginParams struct {
+	SealedLogin []byte
+	DatabaseID  string
+	Previous    []byte
+	Recipient   string
+}
+
+// Replaces a login's seal only while it still holds the one the re-seal read.
+func (q *Queries) ResealLiveLogin(ctx context.Context, db DBTX, arg ResealLiveLoginParams) (int64, error) {
+	result, err := db.Exec(ctx, resealLiveLogin,
+		arg.SealedLogin,
+		arg.DatabaseID,
+		arg.Previous,
+		arg.Recipient,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const retireActiveLiveKey = `-- name: RetireActiveLiveKey :execrows
 UPDATE managed_postgres_live_keys SET retires_at=clock_timestamp()+make_interval(secs=>$1::double precision)
  WHERE database_id=$2::text::uuid AND retires_at IS NULL
@@ -382,6 +440,87 @@ func (q *Queries) RetireActiveLiveKey(ctx context.Context, db DBTX, arg RetireAc
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const sealedLiveKeysAfter = `-- name: SealedLiveKeysAfter :many
+SELECT kid,database_id::text AS database_id,sealed_secret,recipient FROM managed_postgres_live_keys
+ WHERE kid>$1::text ORDER BY kid LIMIT $2::int
+`
+
+type SealedLiveKeysAfterParams struct {
+	After    string
+	PageSize int32
+}
+
+type SealedLiveKeysAfterRow struct {
+	Kid          string
+	DatabaseID   string
+	SealedSecret []byte
+	Recipient    string
+}
+
+// One page of every live key in key-ID order, for the operator re-seal
+// (ADR-20261016151947 at-rest binding, release 2).
+func (q *Queries) SealedLiveKeysAfter(ctx context.Context, db DBTX, arg SealedLiveKeysAfterParams) ([]SealedLiveKeysAfterRow, error) {
+	rows, err := db.Query(ctx, sealedLiveKeysAfter, arg.After, arg.PageSize)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []SealedLiveKeysAfterRow{}
+	for rows.Next() {
+		var i SealedLiveKeysAfterRow
+		if err := rows.Scan(
+			&i.Kid,
+			&i.DatabaseID,
+			&i.SealedSecret,
+			&i.Recipient,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const sealedLiveLoginsAfter = `-- name: SealedLiveLoginsAfter :many
+SELECT database_id::text AS database_id,sealed_login,recipient FROM managed_postgres_live_logins
+ WHERE database_id::text>$1::text ORDER BY database_id::text LIMIT $2::int
+`
+
+type SealedLiveLoginsAfterParams struct {
+	After    string
+	PageSize int32
+}
+
+type SealedLiveLoginsAfterRow struct {
+	DatabaseID  string
+	SealedLogin []byte
+	Recipient   string
+}
+
+// One page of every live login in database order, for the operator re-seal.
+func (q *Queries) SealedLiveLoginsAfter(ctx context.Context, db DBTX, arg SealedLiveLoginsAfterParams) ([]SealedLiveLoginsAfterRow, error) {
+	rows, err := db.Query(ctx, sealedLiveLoginsAfter, arg.After, arg.PageSize)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []SealedLiveLoginsAfterRow{}
+	for rows.Next() {
+		var i SealedLiveLoginsAfterRow
+		if err := rows.Scan(&i.DatabaseID, &i.SealedLogin, &i.Recipient); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const upsertLiveLogin = `-- name: UpsertLiveLogin :exec

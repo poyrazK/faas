@@ -72,7 +72,7 @@ func TestDataAPILiveReadsUseTheDataAPIsTokenSettingsWithoutAppCallbacks(t *testi
 	unreported := LiveRoute{KID: "fedcba9876543210", Database: "legacy", URL: "wss://live.internal/legacy/live", DataAPIRole: "legacy_api"}
 	if err := m.RegisterEndpoint(Endpoint{ID: "data", AppID: "app-1", AccountID: "acct-1", CallbackURL: "https://shop-api.example",
 		ConnectPath: "/realtime/connect", DisconnectPath: "/realtime/disconnect", ClientAuth: AuthPolicy{Mode: AuthModeNone},
-		LiveRoutes: []LiveRoute{shop, unreported}}); err != nil {
+		LiveRoutes: []LiveRoute{shop, unreported}, Preview: true}); err != nil {
 		t.Fatal(err)
 	}
 	server := httptest.NewServer(m.Handler())

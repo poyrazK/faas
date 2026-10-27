@@ -12,8 +12,7 @@ import (
 )
 
 func (s *Service) loadRealtimeConsumerGroups(w http.ResponseWriter, r *http.Request, acct state.Account) (state.ManagedRealtimeEndpoint, state.RealtimeConsumerGroupStore, bool) {
-	if !s.HistoryPreviewEnabled {
-		httpkit.NotFound(w, "consumer groups preview unavailable")
+	if s.previewUnavailable(w, acct.ID, s.HistoryPreviewEnabled, "consumer groups preview unavailable") {
 		return state.ManagedRealtimeEndpoint{}, nil, false
 	}
 	ep, _, ok := s.loadManagedRealtimeEndpoint(w, r, acct)

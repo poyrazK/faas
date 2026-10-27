@@ -447,6 +447,9 @@ func runWorkloadsWithQualificationReceipt(mainManifest api.AppManifest, roster w
 		syscall.SIGUSR2,
 		syscall.SIGCHLD,
 	)
+	// The host's graceful stop arrives through the liveness listener on
+	// vsock port 1028 (Hunt 14 H14-59).
+	unregisterStop := registerWorkloadStopSignals(sigCh)
 	signalDone := make(chan struct{})
 	go func() {
 		defer close(signalDone)
@@ -489,6 +492,7 @@ func runWorkloadsWithQualificationReceipt(mainManifest api.AppManifest, roster w
 		}
 	}()
 	defer func() {
+		unregisterStop()
 		cancel()
 		<-signalDone
 		signal.Stop(sigCh)

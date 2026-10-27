@@ -1,5 +1,7 @@
 package api
 
+import "regexp"
+
 // BuildManifestPath is where builderd writes the manifest onto drive1 at
 // CreateColdBoot time and where guest-init reads it at boot to decide
 // "build mode" vs "app mode" (M6 / spec §4.5).
@@ -57,6 +59,22 @@ const (
 	FrameworkAuto BuildFramework = "auto"
 )
 
+// GoBuildToolchain is the patched Go release Railpack installs for go124 and
+// go124-alpine function builds and the Go starters' go.mod names (issue
+// #2641). The runtime names are historical. Railpack applies this pin over
+// the source's go.mod, so it is an exact release: Railpack 0.38 resolved the
+// line "1.26" to 1.26.9, one patch behind. The go.mod go line still sets the
+// module's language version and GODEBUG defaults. Keep it equal to go.mod's
+// toolchain directive (TestGoToolchainVersionMatchesRepositoryToolchain).
+const GoBuildToolchain = "1.26.10"
+
+var goCommandNameRE = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,62}$`)
+
+// ValidGoCommand reports whether name can select a `cmd/<name>` Go build
+// (ADR-20261025134512): what Railpack's RAILPACK_GO_BIN and a shell word
+// accept without quoting surprises.
+func ValidGoCommand(name string) bool { return goCommandNameRE.MatchString(name) }
+
 // BuildManifest is the /etc/faas/build.json contract — the single handoff
 // from builderd (host) to guest-init (inside the builder VM). Its fields
 // cover everything guest-init needs to run one build to completion without
@@ -76,8 +94,13 @@ type BuildManifest struct {
 	// (ADR-20261019142544). Only Dockerfile builds receive it, and the guest
 	// acknowledges its digest so an older guest cannot silently ignore it.
 	DockerfileBuild *DockerfileBuildOptions `json:"dockerfile_build,omitempty"`
-	OutDir          string                  `json:"out_dir"` // default /build/out
-	Framework       BuildFramework          `json:"framework"`
+	// GoCommand builds `cmd/<GoCommand>` of the Go module at Workdir
+	// (Railpack's RAILPACK_GO_BIN) for a Railpack build (ADR-20261025134512).
+	// The guest echoes it in BuildDone.GoCommand, so an older guest, which
+	// would build Railpack's default command, cannot pass for a newer one.
+	GoCommand string         `json:"go_command,omitempty"`
+	OutDir    string         `json:"out_dir"` // default /build/out
+	Framework BuildFramework `json:"framework"`
 	// Runtime and RuntimeBaseRef make the builder output reproducible with
 	// imaged's deployment layer. Railpack otherwise chooses its own mutable
 	// runtime base (currently railpack-runtime), which cannot be consumed by
@@ -117,6 +140,10 @@ type BuildManifest struct {
 	DevWatchHost string `json:"dev_watch_host,omitempty"`
 	TimeoutSec   int    `json:"timeout_sec"`
 	LogTailBytes int    `json:"log_tail_bytes"` // default 64 KiB
+	// DockerHubMirrors are the operator's Docker Hub mirrors, which the
+	// builder's BuildKit daemon tries before Docker Hub
+	// (ADR-20261025114554). Empty pulls from Docker Hub directly.
+	DockerHubMirrors []string `json:"docker_hub_mirrors,omitempty"`
 }
 
 // BuildDone is the /etc/faas/build-done.json contract — what guest-init
@@ -139,12 +166,15 @@ type BuildDone struct {
 	// DockerfileBuildSHA256 acknowledges the applied build arguments and
 	// target (ADR-20261019142544); empty when the manifest carried none.
 	DockerfileBuildSHA256 string `json:"dockerfile_build_sha256,omitempty"`
-	SchemaVersion         int    `json:"schema_version"`
-	BuildID               string `json:"build_id"`
-	ExitCode              int    `json:"exit_code"`
-	OCIImagePath          string `json:"oci_image_path"` // path on drive1, typically /build/out/image.tar
-	LogTail               string `json:"log_tail"`
-	FailureClass          string `json:"failure_class,omitempty"`
+	// GoCommand acknowledges the Go command the build compiled
+	// (ADR-20261025134512); empty when the manifest named none.
+	GoCommand     string `json:"go_command,omitempty"`
+	SchemaVersion int    `json:"schema_version"`
+	BuildID       string `json:"build_id"`
+	ExitCode      int    `json:"exit_code"`
+	OCIImagePath  string `json:"oci_image_path"` // path on drive1, typically /build/out/image.tar
+	LogTail       string `json:"log_tail"`
+	FailureClass  string `json:"failure_class,omitempty"`
 	// FailureCode is the RFC 7807 code guest-init identified (e.g.
 	// "app_arch_mismatch" when the build VM's kernel returned
 	// ENOEXEC on the customer binary; "dep_install_failed" with a

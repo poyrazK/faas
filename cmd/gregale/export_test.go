@@ -417,6 +417,9 @@ const DevDiagImportFailure = devDiagImportFailure
 const DevDiagStartupCrash = devDiagStartupCrash
 const DevDiagUpstreamFailure = devDiagUpstreamFailure
 const DevEditToLiveTarget = devEditToLiveTarget
+const DevGroupDependsEnv = devGroupDependsEnv
+const DevGroupServiceEnv = devGroupServiceEnv
+const DevGroupWorkspaceEnv = devGroupWorkspaceEnv
 const DevPhaseBuild = devPhaseBuild
 const DevPhaseReady = devPhaseReady
 const DevPhaseSync = devPhaseSync
@@ -545,6 +548,10 @@ var TestOnlyTTY = &testOnlyTTY
 var UpdateAppRequestCLISurfaces = &updateAppRequestCLISurfaces
 
 // Package-level funcs
+var ValidCLISlug = validCLISlug
+var CollectPreviewRouteReport = collectPreviewRouteReport
+var ErrPreviewNoProductionParent = errPreviewNoProductionParent
+var PreviewEnvironmentReviewNote = previewEnvironmentReviewNote
 var AddRouteMonitorSourceOwners = addRouteMonitorSourceOwners
 var AddSafeReleasePreview = addSafeReleasePreview
 var AddValidateParamFlags = addValidateParamFlags
@@ -670,6 +677,7 @@ var CliPreAuthPatch = cliPreAuthPatch
 var CliRevisionPinTTLSeconds = cliRevisionPinTTLSeconds
 var CliSessionMetadataPath = cliSessionMetadataPath
 var CmdAI = cmdAI
+var CmdReleaseGates = cmdReleaseGates
 var CmdAITokens = cmdAITokens
 var CmdAccount = cmdAccount
 var CmdAccountDelete = cmdAccountDelete
@@ -703,6 +711,7 @@ var CmdAppScalePlan = cmdAppScalePlan
 var CmdAppSecurity = cmdAppSecurity
 var CmdAppStaticEgressIP = cmdAppStaticEgressIP
 var CmdAppStaticEgressIPClear = cmdAppStaticEgressIPClear
+var CmdApps = cmdApps
 var CmdAppsRm = cmdAppsRm
 var CmdAppsRoutes = cmdAppsRoutes
 var CmdAppsTCP = cmdAppsTCP
@@ -785,6 +794,8 @@ var CmdCronsRuns = cmdCronsRuns
 var CmdCronsUpdate = cmdCronsUpdate
 var CmdDLQPurge = cmdDLQPurge
 var CmdDashboard = cmdDashboard
+var CmdDashboards = cmdDashboards
+var CmdIncidents = cmdIncidents
 var CmdDataAPI = cmdDataAPI
 var CmdDataAPIConfigure = cmdDataAPIConfigure
 var CmdDataAPICreate = cmdDataAPICreate
@@ -962,6 +973,7 @@ var CmdPostgresList = cmdPostgresList
 var CmdPostgresReconcile = cmdPostgresReconcile
 var CmdPostgresResize = cmdPostgresResize
 var CmdPostgresUsage = cmdPostgresUsage
+var CmdPostgresOverage = cmdPostgresOverage
 var CmdPostgresUsageImport = cmdPostgresUsageImport
 var CmdPreview = cmdPreview
 var CmdPreviewCustomers = cmdPreviewCustomers
@@ -1093,6 +1105,13 @@ var CmdWorkflowsStatus = cmdWorkflowsStatus
 var CmdWorkflowsSteps = cmdWorkflowsSteps
 var CollectEventDeliveryPages = collectEventDeliveryPages
 
+// ReleaseGateRequest builds a release-gates add request from its flags.
+func ReleaseGateRequest(name, slo string, maxBurn int, newErrors bool, maxGroups, minEvents int, metric, below, above, aiMetric string,
+	maxIncrease, minSamples int) (api.CreateReleaseGateRequest, error) {
+	return releaseGateRequest(releaseGateFlags{name: name, slo: slo, maxBurn: maxBurn, newErrors: newErrors, maxGroups: maxGroups,
+		minEvents: minEvents, metric: metric, below: below, above: above, aiMetric: aiMetric, maxIncrease: maxIncrease, minSamples: minSamples})
+}
+
 func CollectListPages[T any](p0 context.Context, p1 string, p2 bool, p3 func(context.Context, string) ([]T, string, error)) ([]T, string, error) {
 	return collectListPages[T](p0, p1, p2, p3)
 }
@@ -1133,6 +1152,7 @@ var CorrelateRouteMonitorIncidentSourceAuto = correlateRouteMonitorIncidentSourc
 var CoveragePolicy = coveragePolicy
 var CreateDevSetupManifest = createDevSetupManifest
 var CreateDurableProjectVerification = createDurableProjectVerification
+var CreateOrFetchApp = createOrFetchApp
 var CreateTestAsyncRoutes = createTestAsyncRoutes
 var CurrentUploadOffset = currentUploadOffset
 var CustomerCliCommands = customerCliCommands
@@ -1179,6 +1199,7 @@ var DeployOptionsFingerprint = deployOptionsFingerprint
 var DeployPreflightListener = deployPreflightListener
 var DeployPreflightListenerWith = deployPreflightListenerWith
 var DeployPreflightRepoSource = deployPreflightRepoSource
+var DeployPreflightScheduled = deployPreflightScheduled
 var DeployPreflightSource = deployPreflightSource
 var DeployPreviewRequested = deployPreviewRequested
 var DeploymentAliasRevisionLabel = deploymentAliasRevisionLabel
@@ -1195,6 +1216,10 @@ var DescribeRolloutDecision = describeRolloutDecision
 var DetectGithubSnippetEnv = detectGithubSnippetEnv
 var DevDiagnosticFromDeployment = devDiagnosticFromDeployment
 var DevDiagnosticFromError = devDiagnosticFromError
+var DevGroupDepends = devGroupDepends
+var DevGroupService = devGroupService
+var DevGroupServiceConfig = devGroupServiceConfig
+var DevGroupWorkspace = devGroupWorkspace
 var DevHistoryPatchNote = devHistoryPatchNote
 var DevPatchExplanation = devPatchExplanation
 var DevSetupManifestEdit = devSetupManifestEdit
@@ -1207,6 +1232,7 @@ var DiffAutomationDefinition = diffAutomationDefinition
 var DiffDataAPISnapshots = diffDataAPISnapshots
 var DiffPreviewRoutePolicy = diffPreviewRoutePolicy
 var DiffRequestFromCLI = diffRequestFromCLI
+var DiscoverProjectSources = discoverProjectSources
 var DocsURLForCode = docsURLForCode
 var DocsURLForTemplate = docsURLForTemplate
 var DocsURLForTopic = docsURLForTopic
@@ -1276,6 +1302,7 @@ var FindLatestFailedDeployment = findLatestFailedDeployment
 var FindPreviewReportRoute = findPreviewReportRoute
 var FindProjectContext = findProjectContext
 var FindSecretStatus = findSecretStatus
+var FinishMCPDeploy = finishMCPDeploy
 var FinishPreviewRequestComparison = finishPreviewRequestComparison
 var FinishPreviewSecurityComparison = finishPreviewSecurityComparison
 var FinishTestRunReports = finishTestRunReports
@@ -1314,6 +1341,7 @@ var InspectData = inspectData
 var InspectOpenAPI = inspectOpenAPI
 var InspectProductPilotHelp = inspectProductPilotHelp
 var InspectRecommendations = inspectRecommendations
+var InspectRuntime = inspectRuntime
 var InspectResources = inspectResources
 var InspectUnavailable = inspectUnavailable
 var InspectWatchChanges = inspectWatchChanges
@@ -1324,6 +1352,7 @@ var IsCompletedDeployment = isCompletedDeployment
 var IsTerminalBuildStatus = isTerminalBuildStatus
 var IsTerminalDeploymentStatus = isTerminalDeploymentStatus
 var IsValidDeploymentAnnotationTag = isValidDeploymentAnnotationTag
+var JoinDevGroup = joinDevGroup
 var JsonOut = jsonOut
 var LinkedAppSlug = linkedAppSlug
 var LinkedProjectContext = linkedProjectContext
@@ -1615,10 +1644,10 @@ var RecoveryReportDuration = recoveryReportDuration
 var RecoveryTrendReceipt = recoveryTrendReceipt
 var RedactErrorText = redactErrorText
 var RedactTestDiagnosticText = redactTestDiagnosticText
+var RehearsalTestGit = rehearsalTestGit
 var RehearsalTestRepo = rehearsalTestRepo
 var RejectDevTriggerAppSelection = rejectDevTriggerAppSelection
 var ReleaseDiffLines = releaseDiffLines
-var ReleaseGateRequest = releaseGateRequest
 var ReleaseSummaryLine = releaseSummaryLine
 var ReleasedUsage = releasedUsage
 var RemoveTestFaultRules = removeTestFaultRules
@@ -1652,6 +1681,7 @@ var RenderDeploymentRowWide = renderDeploymentRowWide
 var RenderDiffPreviewJSON = renderDiffPreviewJSON
 var RenderDoctorHuman = renderDoctorHuman
 var RenderDoctorImage = renderDoctorImage
+var RenderEdgeAttackMode = renderEdgeAttackMode
 var RenderEdgeProtection = renderEdgeProtection
 var RenderEdgeRuleTrace = renderEdgeRuleTrace
 var RenderEnvDiffCell = renderEnvDiffCell
@@ -1886,6 +1916,7 @@ var TestLatencySelection = testLatencySelection
 var TestManagedWorkDigest = testManagedWorkDigest
 var TestPhaseRecoveryEvidence = testPhaseRecoveryEvidence
 var TestRecoveryDeadlineSpec = testRecoveryDeadlineSpec
+var TestRehearsalLocalExecution = testRehearsalLocalExecution
 var TestStabilityMinimizationOutcome = testStabilityMinimizationOutcome
 var TestStabilitySelection = testStabilitySelection
 var TokenFingerprint = tokenFingerprint
@@ -2364,8 +2395,114 @@ func (r validateParamFlags) Resolve(p0 map[string]bool) (*api.EdgeRuleValidatePa
 func (r *zeroConfigStubServer) GotCalls() *map[string]int { return &r.gotCalls }
 func (r *zeroConfigStubServer) Srv() **httptest.Server    { return &r.srv }
 
+// Realtime preview (ADR-20261019102657).
+type ManifestCronTransaction = manifestCronTransaction
+
+var ErrRealtimeManifestHidden = errRealtimeManifestHidden
+var ReconcileManifestRealtimeEndpoints = reconcileManifestRealtimeEndpoints
+var RealtimePreviewVerbs = realtimePreviewVerbs
+var RealtimeUsage = realtimeUsage
+var RealtimePublishUsage = realtimePublishUsage
+
+var PrintEdgeRuleEvents = printEdgeRuleEvents
+var ResolveArchiveInstance = resolveArchiveInstance
+var RequestLatencyMS = requestLatencyMS
+var SafeDeployWaitTimeoutSeconds = safeDeployWaitTimeoutSeconds
+var InferLatestWorkflowName = inferLatestWorkflowName
 var CompactUsage = compactUsage
 
 const UsageSynopsisLimit = usageSynopsisLimit
 
 var InvokedCommandPath = &invokedCommandPath
+
+var AppArgumentEnabled = &appArgumentEnabled
+
+// AppArgumentPaths lists every visible command path whose leaf takes the
+// app as its first argument.
+func AppArgumentPaths() [][]string {
+	var paths [][]string
+	var walk func(path []string, flags []cliFlag, positionals []string, children []cliSub)
+	walk = func(path []string, flags []cliFlag, positionals []string, children []cliSub) {
+		if takesAppArgument(flags, positionals, children) {
+			paths = append(paths, append([]string{}, path...))
+		}
+		for _, child := range children {
+			if child.SubcommandsAfterPositionals {
+				continue
+			}
+			walk(append(append([]string{}, path...), child.Name), child.Flags, child.Positionals, child.Subcommands)
+		}
+	}
+	for _, command := range visibleCliCommands() {
+		if command.SubcommandsAfterPositionals {
+			continue
+		}
+		walk([]string{command.Name}, command.Flags, command.Positionals, command.Subcommands)
+	}
+	return paths
+}
+
+// Capability hiding (ADR-20261023115741).
+var CliPathCapability = cliPathCapability
+var CommandCapabilityPath = commandCapabilityPath
+
+var ValidateMCPProtocolResponseHeaders = validateMCPProtocolResponseHeaders
+
+// SavedDeployRecovery returns the resume command and hint a saved deploy
+// session with no staged settings offers after the given submission outcome.
+func SavedDeployRecovery(outcome string) (resume, hint string) {
+	s := &savedDeploySession{record: deploySessionRecord{ID: "sess-1", AppSlug: "probe-app", Outcome: deploySubmissionOutcome(outcome)}}
+	r := s.recovery("submission")
+	return r.ResumeCommand, r.Hint
+}
+
+var RoutesAppFlagAsPositional = routesAppFlagAsPositional
+
+var RenderProject = renderProject
+var InspectAttention = inspectAttention
+var RemoveCLITestSandbox = removeCLITestSandbox
+var WorkerScalingMetrics = workerScalingMetrics
+var WorkerMetricLabel = workerMetricLabel
+
+// ADR-20261025110000: registry credentials from a Docker config.
+type DockerCredentialHelper = dockerCredentialHelper
+
+func DockerConfigRegistryAuth(ctx context.Context, configPath, image string, helper DockerCredentialHelper) (*api.ImageRunRegistryAuth, error) {
+	return dockerConfigRegistryAuth(ctx, configPath, image, helper)
+}
+
+var RenderRouteMonitorReport = renderRouteMonitorReport
+
+var PreviewCompanionsFromManifest = previewCompanionsFromManifest
+
+// FormatStageDuration is the live ticker's stage duration cell.
+var FormatStageDuration = formatStageDuration
+
+// gregale logs --project (ADR-20261026190244).
+var RunProjectLogs = runProjectLogs
+var ProjectLogJSON = projectLogJSON
+
+// dev --all and gregale dev Go commands (ADR-20261026120412).
+var DiscoverDevAllApps = discoverDevAllApps
+
+func DevAllChildArgs(app devAllApp, stop bool) []string {
+	return devAllOptions{stop: stop}.childArgs(app, false)
+}
+func DevAllSourceLabel(app devAllApp) string { return app.sourceLabel() }
+func CheckDevGoCommand(dir string, function bool, command string) error {
+	config := devSourceConfig{shape: shapeApp}
+	if function {
+		config.shape = shapeFunction
+	}
+	return checkDevGoCommand(dir, config, command)
+}
+func DevGoCommandRequest(command string) api.UpsertDevSessionRequest {
+	return withDevGoCommand(devSourceConfig{shape: shapeApp}.sessionRequest("", false, "", 0, nil), command)
+}
+
+// Bucket CORS CLI (ADR-20261025202805).
+var (
+	DecodeBucketCORSFile = decodeBucketCORSFile
+	ValidBucketCORSArgs  = validBucketCORSArgs
+	RunBucketCORS        = runBucketCORS
+)

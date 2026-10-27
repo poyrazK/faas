@@ -177,7 +177,7 @@ func TestUDPListenerQuotaProblem(t *testing.T) {
 		if err := json.Unmarshal(w.Body.Bytes(), &problem); err != nil {
 			t.Fatal(err)
 		}
-		if w.Code != http.StatusConflict || problem.Code != api.CodeUDPListenerLimit || problem.Limit == nil || *problem.Limit != int64(api.UDPListenerReservationsPerAppMax) || problem.Observed == nil || *problem.Observed != int64(api.UDPListenerReservationsPerAppMax+1) || !strings.HasSuffix(problem.DocsURL, "/containers#udp-listeners") {
+		if w.Code != http.StatusConflict || problem.Code != api.CodeUDPListenerLimit || problem.Limit == nil || *problem.Limit != int64(api.UDPListenerReservationsPerAppMax) || problem.Observed == nil || *problem.Observed != int64(api.UDPListenerReservationsPerAppMax+1) || !strings.HasSuffix(problem.DocsURL, "/deploys#containers") {
 			t.Fatalf("status=%d quota problem=%+v", w.Code, problem)
 		}
 	}

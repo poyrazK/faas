@@ -101,7 +101,10 @@ type DPAView struct {
 type MFAChallengeData struct {
 	CSRFToken string
 	Failed    bool
-	Enrolled  bool
+	// Reused marks a failure where the code was right but had already
+	// verified a session; the page asks for the next code, not a retype.
+	Reused   bool
+	Enrolled bool
 	// Next is where a passed challenge continues (already validated as a
 	// same-origin dashboard or CLI-approval path).
 	Next string
@@ -212,6 +215,8 @@ type PreviewListItem struct {
 	CreatedAt     time.Time
 	Hostname      string
 	DestroyAction string
+	// DestroyCSRF is the token the Tear down form posts with DestroyAction.
+	DestroyCSRF string
 }
 
 // PRPreviewEnvironmentView is the current-head, whole-PR status shown on the
@@ -695,6 +700,9 @@ type FailedEventPageItem struct {
 	LastFailed  string
 	ReplayedAt  string
 	Status      string
+	// Replayable is false for an entry replay cannot redrive (event_route);
+	// it can only be discarded.
+	Replayable bool
 }
 
 // AppWebhooksData is the customer-facing projection for the per-app
@@ -979,8 +987,14 @@ type AppEdgeRulesData struct {
 	ErrorMessage           string
 	// Protection summarizes what the edge rejected over the last hour.
 	Protection api.EdgeProtectionResponse
+	// AttackModeAvailable is false while attack mode is not released to the
+	// account (ADR-20261021220456 amendment 1); the card then offers no
+	// switch to turn it on.
+	AttackModeAvailable bool
 	// Events is the ADR-964 security-events section.
 	Events EdgeRuleEventsPageData
+	// WAFReview is the WAF false-positive review (ADR-831 amendment 13).
+	WAFReview EdgeWAFReviewPageData
 	// Recipes is the protection-recipes section (ADR-986).
 	Recipes []EdgeRuleRecipeView
 	// RecipeAlerts is set when the plan includes alert rules, so recipe
@@ -1016,6 +1030,11 @@ type EdgeRuleHostCoverage struct {
 	Host   string
 	Custom bool
 	Rules  int
+	// Selector names the companion, or the public listener when PublicPort
+	// is set, that this <app>--<name> hostname reaches instead of the main
+	// workload (ADR-069, ADR-176).
+	Selector   string
+	PublicPort bool
 }
 
 // EdgeRuleRecipeView is one protection recipe on the edge-rules page.
@@ -1039,6 +1058,34 @@ type EdgeRuleRecipeParamView struct {
 	Default     string
 	Placeholder string
 	Required    bool
+}
+
+// EdgeWAFReviewPageData is the WAF false-positive review (ADR-831
+// amendment 13). Show is set when the app has a kind=waf rule.
+type EdgeWAFReviewPageData struct {
+	Show         bool
+	SinceLabel   string
+	Scanned      int
+	Truncated    bool
+	Groups       []EdgeWAFReviewView
+	ErrorMessage string
+}
+
+// EdgeWAFReviewView is one rule's detections by one CRS rule on one path.
+type EdgeWAFReviewView struct {
+	RuleID           string
+	RuleLabel        string
+	RuleMode         string
+	CRSRuleID        int
+	Category         string
+	Path             string
+	Events           int
+	Clients          int
+	Assessment       string
+	AssessmentLabel  string
+	Reason           string
+	ExampleRequestID string
+	Excluded         bool
 }
 
 // EdgeRuleEventsPageData is the filterable security-events table (ADR-964).
@@ -1103,6 +1150,9 @@ type EdgeRulePageItem struct {
 	SecurityPreset bool
 	// AppWide is set for a match_host "@app" rule (ADR-1191).
 	AppWide bool
+	// AttackMode is set for the app's attack-mode rule
+	// (ADR-20261021220456), which changes only through its switch.
+	AttackMode bool
 	// ADR-960/964: name, mode and 24 h hit counts.
 	Name       string
 	Mode       string
@@ -1112,6 +1162,10 @@ type EdgeRulePageItem struct {
 	// 6-hour totals and their sum.
 	SparkPoints string
 	Matches7d   int64
+	// Unreleased labels the gated features the rule uses that are not yet
+	// available to the account (ADR-20261023113721); the edge does not
+	// enforce them.
+	Unreleased []string
 }
 
 // CorsPresetPageItem is the read-only preset summary shown beside an app's
@@ -1498,6 +1552,9 @@ type AppCostOverviewRow struct {
 
 // AppDetailData combines the bits the app detail page renders.
 type AppDetailData struct {
+	// AnnouncedCaptures is the banner for profile captures the platform
+	// took on its own or that an OOM kill followed (ADR-1155); nil hides it.
+	AnnouncedCaptures  *AnnouncedProfileCapturesView
 	ProductControlURL  string
 	ProfilingAvailable bool
 	// ApplicationAuth shows the application Auth screens' link, a dark
@@ -1757,6 +1814,9 @@ type WorkflowStepItem struct {
 // button. Alive=false still carries a non-nil pointer with
 // Host="" — the same shape api.DeploymentPreviewURL returns.
 type DeploymentDetailData struct {
+	// OOMCaptureURL links an OOM-failed deployment to the heap capture taken
+	// before the kill (ADR-1155); empty when none exists.
+	OOMCaptureURL               string
 	ProfileCheck                *api.ProfileDeploymentCheck
 	CanaryProfileSignal         *api.CanaryProfileSignal
 	CanaryProfileTraffic        *ProfileTrafficView
@@ -2291,6 +2351,7 @@ type AppMetricsView struct {
 	CacheHitRateAvailable bool
 	ErrorBudgetPct        float64
 	ErrorBudgetAvailable  bool
+	WakeP95Unavailable    bool // too few fleet wakes for a p95 (Hunt 12 H12-40)
 }
 
 // RequestAnalyticsView is the dashboard-facing projection of the customer
@@ -2768,6 +2829,9 @@ type DebugRequestDetailView struct {
 	Findings                   []DebugEvidenceFindingView
 	Recommendations            []DebugEvidenceRecommendationView
 	GeneratedAt                string
+	// ProfileCaptureURL links the stack snapshot taken while the request was
+	// in flight (ADR-1155 slow_request capture), when one exists.
+	ProfileCaptureURL string
 }
 
 // DebugCriticalPathView is the template-safe projection of the selected
@@ -3375,6 +3439,12 @@ type AccountData struct {
 	ShowRestore         bool
 	RestoreUntil        string
 	RestoreConfirmToken string
+
+	// ShowDeleteManagedPostgres offers the checkbox that makes the deletion
+	// include the account's managed PostgreSQL databases
+	// (ADR-20261024150500); only for accounts in
+	// FAAS_ACCOUNT_DELETION_MANAGED_POSTGRES_ACCOUNTS until launch.
+	ShowDeleteManagedPostgres bool
 	// ConnectGithubConfirmToken (issue #961 / Mega-B PR-3) backs the
 	// dashboard's "Connect GitHub" button. The form posts to
 	// /dashboard/install/connect with this token + the matching named
@@ -3425,6 +3495,19 @@ type ManagedPostgresData struct {
 	Available bool
 	Error     string
 	Databases []ManagedPostgresDatabaseItem
+	// Overage is the compute overage form (ADR-20261025094915); nil hides it,
+	// as for Free plans and accounts without the postgres-overage capability.
+	Overage *ManagedPostgresOverageItem
+}
+
+// ManagedPostgresOverageItem backs the compute overage form on
+// /dashboard/postgres.
+type ManagedPostgresOverageItem struct {
+	Enabled        bool
+	AllowanceLabel string
+	CeilingLabel   string
+	ConfirmToken   string
+	Flash          string
 }
 
 // ManagedPostgresDatabaseItem is one database row on /dashboard/postgres.

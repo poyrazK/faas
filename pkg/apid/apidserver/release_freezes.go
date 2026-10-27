@@ -11,7 +11,9 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/approval"
 	"github.com/onebox-faas/faas/pkg/apid/freeze"
+	"github.com/onebox-faas/faas/pkg/releasemetrics"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -148,13 +150,23 @@ func (s *server) getReleaseFreezeStatus(w http.ResponseWriter, r *http.Request, 
 	if !ok {
 		return
 	}
-	now := time.Now().UTC()
-	freezes, err := store.ListReleaseFreezes(r.Context(), acct.ID, now)
+	status, err := s.releaseFreezeStatus(r.Context(), store, acct.ID, app)
 	if err != nil {
 		api.WriteProblem(w, api.ErrCapacity("could not read freezes"))
 		return
 	}
-	status := api.ReleaseFreezeStatus{App: app.Slug, Active: s.freezeViews(r.Context(), freeze.Active(freezes, app.ID, now), now)}
+	writeJSON(w, http.StatusOK, status)
+}
+
+// releaseFreezeStatus reports the freezes covering app now and the next one
+// due to start.
+func (s *server) releaseFreezeStatus(ctx context.Context, store state.ReleaseFreezeStore, accountID string, app state.App) (api.ReleaseFreezeStatus, error) {
+	now := time.Now().UTC()
+	freezes, err := store.ListReleaseFreezes(ctx, accountID, now)
+	if err != nil {
+		return api.ReleaseFreezeStatus{}, fmt.Errorf("list release freezes: %w", err)
+	}
+	status := api.ReleaseFreezeStatus{App: app.Slug, Active: s.freezeViews(ctx, freeze.Active(freezes, app.ID, now), now)}
 	status.Frozen = len(status.Active) > 0
 	var next *state.ReleaseFreeze
 	var nextAt time.Time
@@ -167,10 +179,10 @@ func (s *server) getReleaseFreezeStatus(w http.ResponseWriter, r *http.Request, 
 		}
 	}
 	if next != nil {
-		v := s.freezeViews(r.Context(), []state.ReleaseFreeze{*next}, now)[0]
+		v := s.freezeViews(ctx, []state.ReleaseFreeze{*next}, now)[0]
 		status.Next = &v
 	}
-	writeJSON(w, http.StatusOK, status)
+	return status, nil
 }
 
 // releaseFreezeProblem refuses a production release while a freeze covers
@@ -191,11 +203,13 @@ func (s *server) releaseFreezeProblem(r *http.Request, acct state.Account, app s
 		return nil
 	}
 	if strings.TrimSpace(override) == "" {
+		s.releaseMetrics.Decision(releasemetrics.GuardFreeze, "refused")
 		return api.ErrReleaseFrozen(app.Slug, s.freezeViews(r.Context(), active, now))
 	}
 	if prob := freeze.ValidateReason("override_freeze", override); prob != nil {
 		return prob
 	}
+	s.releaseMetrics.Decision(releasemetrics.GuardFreeze, "overridden")
 	ids := make([]string, 0, len(active))
 	for _, f := range active {
 		ids = append(ids, f.ID)
@@ -203,6 +217,36 @@ func (s *server) releaseFreezeProblem(r *http.Request, acct state.Account, app s
 	s.audit.Emit(r.Context(), "release.freeze_overridden", &acct.ID, map[string]any{
 		"app": app.ID, "freezes": ids, "reason": strings.TrimSpace(override), "actor": configActor(r, acct),
 	})
+	return nil
+}
+
+// retryReleaseProblem holds a retry to the guards a new production release
+// meets (ADR-20261019071733 amendment 1): a retry creates a release from the
+// failed one's inputs, so a freeze refuses it, and an app that requires
+// approvals needs the retry to keep a canary to wait in. A retry carries no
+// override; a deploy with override_freeze releases during a freeze.
+func (s *server) retryReleaseProblem(ctx context.Context, app state.App, dep state.Deployment) *api.Problem {
+	now := time.Now().UTC()
+	active, err := freeze.ActiveFor(ctx, s.store, app.AccountID, app.ID, dep.Scope, now)
+	if err != nil {
+		s.log.Warn("deploy freeze: could not read freezes; retrying", "app", app.ID, "err", err)
+	} else if len(active) > 0 {
+		s.releaseMetrics.Decision(releasemetrics.GuardFreeze, "refused")
+		return api.ErrReleaseFrozen(app.Slug, s.freezeViews(ctx, active, now)).
+			WithHint("A retry cannot override a freeze. Wait for it to end, lift it with `gregale freeze lift`, or deploy again with --override-freeze REASON; the override is audited.")
+	}
+	if dep.CanaryTotalSteps > 0 || (dep.TrafficPercentExplicit && dep.TrafficPercent == 0) {
+		return nil
+	}
+	required, err := approval.CanaryRequired(ctx, s.store, app, dep.Scope, "")
+	if err != nil {
+		logCustomerFailure(s.log, "read release approval policy", err)
+		return api.ErrInternal("Gregale could not read this app's release approval policy.").WithHint("Retry in a moment.")
+	}
+	if required {
+		s.releaseMetrics.Decision(releasemetrics.GuardApproval, "canary_required")
+		return api.ErrReleaseApprovalCanaryRequired(app.Slug)
+	}
 	return nil
 }
 
@@ -283,8 +327,14 @@ func (s *server) freezeAfterAutomaticRollback(ctx context.Context, accountID str
 // release pause is on (ADR 20261022140000). Unlike a freeze it covers every
 // scope and nothing overrides it; rollbacks do not pass through here.
 func (s *server) platformReleasePauseProblem() *api.Problem {
-	if s.runtimeBool(runtimeConfigPlatformReleasePause, false) {
+	if s.platformReleasePaused() {
 		return api.ErrPlatformReleasePaused()
 	}
 	return nil
+}
+
+// platformReleasePaused reports whether the break-glass release pause is on,
+// for paths that hold work rather than answer a request.
+func (s *server) platformReleasePaused() bool {
+	return s.runtimeBool(runtimeConfigPlatformReleasePause, false)
 }

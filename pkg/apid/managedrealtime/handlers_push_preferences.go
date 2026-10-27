@@ -11,8 +11,7 @@ import (
 )
 
 func (s *Service) ManagedRealtimePushPreferences(w http.ResponseWriter, r *http.Request, acct state.Account) {
-	if !s.HistoryPreviewEnabled {
-		httpkit.NotFound(w, "notification preferences preview unavailable")
+	if s.previewUnavailable(w, acct.ID, s.HistoryPreviewEnabled, "notification preferences preview unavailable") {
 		return
 	}
 	ep, _, ok := s.loadManagedRealtimeEndpoint(w, r, acct)

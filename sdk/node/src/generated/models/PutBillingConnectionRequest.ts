@@ -3,7 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * The account's own key for one billing provider (ADR-1502, ADR-1507).
+ * The account's own key for one billing provider.
  */
 export type PutBillingConnectionRequest = {
   /**
@@ -15,7 +15,7 @@ export type PutBillingConnectionRequest = {
    */
   api_url?: string;
   /**
-   * What the provider does with exported invoices (ADR-1311): none leaves drafts (Lago issues them without charging); send has Stripe email the invoice; charge has Stripe charge the customer's default payment method, or Lago charge through its payment provider. Paddle supports none and send: send bills the transaction so Paddle emails the invoice to the customer's most recent address; Paddle cannot charge a saved card for an invoice.
+   * What the provider does with exported invoices: none leaves drafts (Lago issues them without charging); send has Stripe email the invoice; charge has Stripe charge the customer's default payment method, or Lago charge through its payment provider. Paddle supports none and send: send bills the transaction so Paddle emails the invoice to the customer's most recent address; Paddle cannot charge a saved card for an invoice.
    */
   collection?: 'none' | 'send' | 'charge';
   /**
@@ -23,7 +23,7 @@ export type PutBillingConnectionRequest = {
    */
   days_until_due?: number;
   /**
-   * Stripe only: have Stripe Tax calculate tax on exported invoices (ADR-1313). Needs Stripe Tax and customer addresses.
+   * Stripe only: have Stripe Tax calculate tax on exported invoices. Needs Stripe Tax and customer addresses.
    */
   automatic_tax?: boolean;
 };

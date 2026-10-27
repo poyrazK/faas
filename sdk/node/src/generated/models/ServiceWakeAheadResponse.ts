@@ -4,7 +4,7 @@
 /* eslint-disable */
 import type { ServiceWakeAheadLearned } from './ServiceWakeAheadLearned.js';
 /**
- * An app's service wake-ahead opt-in (ADR-977).
+ * An app's service wake-ahead opt-in.
  */
 export type ServiceWakeAheadResponse = {
   slug: string;

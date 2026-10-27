@@ -1163,6 +1163,21 @@ not sandbox hostile code or automatically block external actions. Supply trusted
 recipes and suitable test credentials. Unix command cancellation stops the active
 process group; ordinary scenario cleanup and hosted resource expiry still apply.
 
+Real-VM execution runs the applications in microVMs, but recipe commands still
+run on the invoking machine unless the recipe uses `command_execution`: `setup`,
+`trigger`, `command`, step commands and `cleanup` start inside each extracted
+revision, so a candidate's scripts run there with your environment (`FAAS_TOKEN`
+is removed). The command prints a warning before it starts. Rehearse only
+revisions you trust.
+
+When the platform has not enabled a capability the scenario needs, it answers
+`501` with code `rehearsal_not_enabled`. Retrying does not help: the command
+records the refusal on the first run and skips the remaining runs. An
+interrupted run (Ctrl-C, SIGTERM, or the scenario timeout) destroys its
+developer sessions first and skips evidence sealing and diagnostics, so CI
+cancellation does not leave sessions holding developer-app slots until their
+lease expires.
+
 Use `--validate` instead of output flags to prepare both snapshots without running
 commands, logging in or provisioning resources. JSON mode prints the resolved
 revision and input identities. Execution requires `--report`; all requested output
@@ -1234,6 +1249,8 @@ inventory under `actions.evidence`, with provenance
 `gregale_captured_managed_webhooks` and scope `managed_operation_webhooks`.
 Retries can retrieve that same snapshot after namespace cleanup or soft deletion;
 physical purge of its anchor app/account removes retained evidence.
+Rehearsal evidence never blocks erasing the account that ran it; only a fixture
+still holding a database or bucket does, until its cleanup finishes.
 
 `test rehearse` and `test compare` compare the captured intents independently of
 declared `behavior` observations. Each logical workload/source/effect name is
@@ -1363,9 +1380,18 @@ consumer from the recipe.
 
 More than 256 requests or a body over 64 KiB make the evidence incomplete.
 Requests after sealing are refused with `409`. A customer *secret* named
-`GREGALE_API_URL` overrides the platform value and stays blocked. Org-scoped
-routes are not served. See
+`GREGALE_API_URL` overrides the platform value and stays blocked. See
 [ADR-20261021090000](adr/20261021090000-rehearsal-queue-capture.md).
+
+The inbox (`POST /v1/apps/{slug}/inbox`), asynchronous invokes
+(`POST /v1/apps/{slug}/invoke/async`) and organization-scoped queue sends are
+captured the same way; an async invoke compares by method, path, payload and
+options, and a deadline only by its presence. The run can read back what it
+captured, in the public API's shapes: `GET /v1/invocations/{id}`,
+`/v1/delayed-tasks/{id}`, `/v1/workflows/runs/{id}` and
+`/v1/events/receipt`. Captured work never runs, so it stays `pending` and an
+event receipt has no recipients; anything the run did not capture is not found.
+See [ADR-20261022082721](adr/20261022082721-rehearsal-captured-reads-inbox-async-invoke.md).
 
 The same endpoint captures workflow calls:
 `POST /v1/apps/{slug}/workflows/{name}/runs` and
@@ -1376,8 +1402,8 @@ started is named by its starter, workflow and start order
 (`run:primary/workload:billing/invoice#2`), so "the second invoice run" compares
 across runs. Sealed snapshots carry `platform_capture_version: 1` and
 `platform_calls`, compared per workload, kind, target and name by canonical
-content. Workflow definitions, plan gates and run status are not checked, and
-run reads are not served. See
+content. Workflow definitions, plan gates and run status are not checked; a
+captured run reads back as `pending`. See
 [ADR-20261021150000](adr/20261021150000-rehearsal-workflow-capture.md).
 
 Realtime channel publishes and backend signals are captured the same way:

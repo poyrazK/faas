@@ -35,7 +35,7 @@ type CommitRecoveryPlanAction struct {
 
 // PlanCommitRecovery refreshes the saved selection within the recipient page budget.
 // It never executes actions, follows action URLs, or reads replay history.
-func (c *Client) PlanCommitRecovery(ctx context.Context, saved CommitDeliveryReport, pages int) (CommitRecoveryPlan, error) {
+func (c *PreviewClient) PlanCommitRecovery(ctx context.Context, saved CommitDeliveryReport, pages int) (CommitRecoveryPlan, error) {
 	report, err := c.RefreshCommitDeliveryReport(ctx, saved, pages)
 	out := CommitRecoveryPlan{PublicationIssues: map[string]string{}, Report: report, Items: []CommitRecoveryPlanItem{}, Counts: map[string]int{}}
 	for _, item := range report.Items {

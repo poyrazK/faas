@@ -70,6 +70,8 @@ func Run(t *testing.T, open Open) {
 		{"release_approvals_policy_and_one_decision_per_person", testReleaseApprovals},
 		{"release_approval_events_once_due_and_retried", testReleaseApprovalEvents},
 		{"scheduled_releases_one_pending_and_start_in_the_traffic_change", testScheduledReleases},
+		{"database_switches_one_active_leased_and_undone_releases", testDatabaseSwitches},
+		{"database_switch_cancel_hold_and_account_cap", testDatabaseSwitchCancelHoldAndAccountCap},
 		{"app_secret_revocation_ack_survives_secret_deletion", testAppSecretRevocationAckSurvivesDeletion},
 		{"custom_metrics_cap_applies_to_new_names_only", testCustomMetricsContract},
 		{"scaling_policy_survives_a_store_round_trip", testScalingPolicyRoundTrip},
@@ -88,6 +90,7 @@ func Run(t *testing.T, open Open) {
 		{"fire_now_claim_respects_node_ownership_and_handoff", testFireNowNodeOwnershipAndHandoff},
 		{"manual_command_cron_fire_now_is_idempotent_and_keeps_schedule_cursor", testManualCommandCronFireNow},
 		{"runtime_config_operation_claim_is_exactly_once", testRuntimeConfigOperationClaimIsExactlyOnce},
+		{"egress_circuit_desired_state_is_durable_or_explicitly_unsupported", testEgressCircuitDesiredState},
 		{"runtime_config_apply_receipts_never_regress", testRuntimeConfigApplyReceiptsNeverRegress},
 		{"trigger_record_claim_is_bounded_and_scoped", testTriggerRecordClaimIsBoundedAndScoped},
 		{"vmmd_upsert_preserves_operator_state", testVmmdUpsertPreservesOperatorState},
@@ -98,6 +101,7 @@ func Run(t *testing.T, open Open) {
 		{"image_deployment_promotion_is_scope_and_revision_fenced", testImageDeploymentPromotionFence},
 		{"image_runtime_profile_is_persisted_before_prime", testImageRuntimeProfile},
 		{"observed_workload_class_without_a_proof", testObservedWorkloadClass},
+		{"source_runtime_profile_records_a_healthcheck_verdict", testSourceRuntimeProfileHealthcheck},
 		{"rollback_prepare_preserves_current_live", testPrepareDeploymentRollback},
 		{"service_rollout_abort_handoff_is_durable", testServiceRolloutAbortHandoff},
 		{"service_recovery_claim_and_retry_are_durable", testServiceRecoveryClaims},
@@ -120,6 +124,7 @@ func Run(t *testing.T, open Open) {
 		{"rehearsal_apps_receive_no_account_events", testRehearsalAppsReceiveNoAccountEvents},
 		{"usage_rollup_merges_minutes", testUsageRollup},
 		{"archived_logs_are_scoped_to_the_owning_app", testInstanceLogsOwnedByApp},
+		{"account_erasure_snapshots_archived_log_instances", testLogArchiveErasure},
 		{"invalid_instance_state_is_rejected", testInvalidInstanceState},
 		{"live_state_readers_count_running_instances", testLiveStateReaders},
 		{"live_instance_list_follows_app_ownership", testLiveInstanceListOwnership},
@@ -144,6 +149,10 @@ func Run(t *testing.T, open Open) {
 		{"compute_node_service_address_readiness_is_sticky_and_clearable", testComputeNodeServiceAddressReady},
 		{"service_address_caller_is_gated_on_node_readiness", testServiceAddressCallerByHostIP},
 		{"removed_member_can_rejoin", testRemovedMemberCanRejoin},
+		{"account_release_webhook_follows_org_access", testAccountReleaseWebhookFollowsOrgAccess},
+		{"departed_member_integrations_pause", testDepartedMemberIntegrationsPause},
+		{"object_storage_timeline_fence", testObjectStorageTimelineFence},
+		{"audit_log_anchors_seal_and_verify", testAuditLogAnchors},
 		{"api_key_requires_scopes", testAPIKeyRequiresScopes},
 		{"login_token_single_use_and_expiry", testLoginTokenSingleUseAndExpiry},
 		{"email_verification_token_single_use_and_expiry", testEmailVerificationTokenSingleUseAndExpiry},
@@ -184,6 +193,7 @@ func Run(t *testing.T, open Open) {
 		{"queue_binding_retirement_holds_work_and_retains_receipts", testQueueBindingRetirement},
 		{"queue_binding_identity_survives_rename_replacement_and_replay", testInvocationQueueBindingIdentity},
 		{"queue_dead_letter_replay_rearms_original_receipt", testQueueReplayReceipt},
+		{"queue_dead_letter_message_is_one_entry", testQueueDeadLetterSingleEntry},
 		{"queue_consumer_and_trigger_share_account_quota", testQueueConsumerAccountQuota},
 		{"invocation_claim_preserves_stored_cap", testInvocationClaimPreservesStoredCap},
 		{"invocation_retry_releases_reserved_slot", testInvocationRetryReleasesReservedSlot},
@@ -216,6 +226,14 @@ func Run(t *testing.T, open Open) {
 		{"retained_layers_and_deletion_artifacts_match", testRetainedLayersAndDeletionArtifacts},
 		{"snapshot_delete_intent_is_durable", testSnapshotDeleteIntent},
 		{"log_event_insert_is_idempotent_and_queries_are_tenant_scoped", testLogEventInsertAndList},
+		{"log_event_search_filters_and_facets", testLogEventSearchAndFacets},
+		{"log_event_projection_sources", testLogProjectionSources},
+		{"log_saved_searches", testLogSavedSearches},
+		{"log_search_alert_rule_round_trips", testLogSearchAlertRuleRoundTrips},
+		{"dashboards_are_account_scoped", testDashboards},
+		{"alert_episodes_follow_rule_state", testAlertEpisodesFollowRuleState},
+		{"route_monitor_incident_summaries_are_account_scoped", testRouteMonitorIncidentSummariesAreAccountScoped},
+		{"incident_notes_follow_their_incident", testIncidentNotesFollowTheirIncident},
 		{"app_deletion_claim_closes_restore_window", testAppDeletionClaim},
 		{"preview_lifecycle_is_scoped_and_reclaimable", testPreviewLifecycle},
 		{"scenario_test_namespace_is_scoped_and_reaped", testScenarioTestNamespace},
@@ -2170,7 +2188,7 @@ func testWorkflowAdmissionRecoveryAndCancel(t *testing.T, fx *Fixture) {
 		AppID: fx.App.ID, WorkflowName: "conformance", Status: state.WorkflowRunStatusRunning,
 		Input: []byte(`{"input":true}`), DefinitionSnapshot: []byte(`{"steps":["first","second"]}`),
 	}
-	active, err := fx.Store.CreateWorkflowRunAdmitted(fx.Ctx, run, 1)
+	active, err := fx.Store.CreateWorkflowRunAdmitted(fx.Ctx, run, 1, 0)
 	if err != nil || active != 1 {
 		t.Fatalf("CreateWorkflowRunAdmitted = (%d, %v), want (1, nil)", active, err)
 	}
@@ -2178,7 +2196,7 @@ func testWorkflowAdmissionRecoveryAndCancel(t *testing.T, fx *Fixture) {
 		AppID: fx.App.ID, WorkflowName: "over-quota",
 		Input: []byte(`{}`), DefinitionSnapshot: []byte(`{"steps":[]}`),
 	}
-	active, err = fx.Store.CreateWorkflowRunAdmitted(fx.Ctx, overQuota, 1)
+	active, err = fx.Store.CreateWorkflowRunAdmitted(fx.Ctx, overQuota, 1, 0)
 	if !errors.Is(err, state.ErrWorkflowRunQuotaExceeded) || active != 1 {
 		t.Fatalf("CreateWorkflowRunAdmitted(over quota) = (%d, %v), want (1, ErrWorkflowRunQuotaExceeded)", active, err)
 	}
@@ -2298,7 +2316,7 @@ func testWorkflowRunCreateIdempotency(t *testing.T, fx *Fixture) {
 				AppID: fx.App.ID, WorkflowName: "idempotent-create", Status: state.WorkflowRunStatusPending,
 				Input: json.RawMessage(`{"order_id":"same"}`), DefinitionSnapshot: json.RawMessage(`{"name":"idempotent-create","steps":[]}`),
 			}
-			active, replayed, err := fx.Store.CreateWorkflowRunAdmittedWithIdempotencyKey(fx.Ctx, run, 1, key, fingerprint)
+			active, replayed, err := fx.Store.CreateWorkflowRunAdmittedWithIdempotencyKey(fx.Ctx, run, 1, 0, key, fingerprint)
 			results <- result{run: run, active: active, replayed: replayed, err: err}
 		}()
 	}
@@ -2328,11 +2346,43 @@ func testWorkflowRunCreateIdempotency(t *testing.T, fx *Fixture) {
 		t.Fatalf("concurrent create outcomes = created:%d replayed:%d, want one of each", created, replayed)
 	}
 
+	lookup, err := fx.Store.GetWorkflowRunByIdempotencyKey(fx.Ctx, fx.App.ID, "idempotent-create", key, fingerprint)
+	if err != nil || lookup == nil || lookup.ID != runID || lookup.AppID != fx.App.ID || lookup.WorkflowName != "idempotent-create" {
+		t.Fatalf("idempotency lookup = (%+v, %v), want original scoped run %s", lookup, err, runID)
+	}
+	var input map[string]string
+	if err := json.Unmarshal(lookup.Input, &input); err != nil || input["order_id"] != "same" {
+		t.Fatalf("idempotency lookup input = (%s, %v), want original input", lookup.Input, err)
+	}
+	changedFingerprint := append([]byte(nil), fingerprint...)
+	changedFingerprint[0] = 'x'
+	for _, tc := range []struct {
+		name, appID, workflowName, key string
+		fingerprint                    []byte
+		want                           error
+	}{
+		{"other app", uuid.NewString(), "idempotent-create", key, fingerprint, state.ErrWorkflowRunNotFound},
+		{"other workflow", fx.App.ID, "other-workflow", key, fingerprint, state.ErrWorkflowRunNotFound},
+		{"other key", fx.App.ID, "idempotent-create", "other-" + key, fingerprint, state.ErrWorkflowRunNotFound},
+		{"changed request", fx.App.ID, "idempotent-create", key, changedFingerprint, state.ErrWorkflowRunIdempotencyConflict},
+	} {
+		got, err := fx.Store.GetWorkflowRunByIdempotencyKey(fx.Ctx, tc.appID, tc.workflowName, tc.key, tc.fingerprint)
+		if !errors.Is(err, tc.want) || got != nil {
+			t.Fatalf("idempotency lookup (%s) = (%+v, %v), want nil and %v", tc.name, got, err, tc.want)
+		}
+	}
+	// A caller cannot alter the authoritative input through the returned value.
+	lookup.Input[0] = 'x'
+	unchanged, err := fx.Store.GetWorkflowRunByIdempotencyKey(fx.Ctx, fx.App.ID, "idempotent-create", key, fingerprint)
+	if err != nil || unchanged == nil || !json.Valid(unchanged.Input) {
+		t.Fatalf("idempotency lookup returned aliased input = (%+v, %v)", unchanged, err)
+	}
+
 	changedDefinition := &state.WorkflowRun{
 		AppID: fx.App.ID, WorkflowName: "idempotent-create", Status: state.WorkflowRunStatusPending,
 		Input: json.RawMessage(`{"order_id":"same"}`), DefinitionSnapshot: json.RawMessage(`{"name":"new-published-definition","steps":[]}`),
 	}
-	if _, isReplay, err := fx.Store.CreateWorkflowRunAdmittedWithIdempotencyKey(fx.Ctx, changedDefinition, 1, key, fingerprint); err != nil || !isReplay {
+	if _, isReplay, err := fx.Store.CreateWorkflowRunAdmittedWithIdempotencyKey(fx.Ctx, changedDefinition, 1, 0, key, fingerprint); err != nil || !isReplay {
 		t.Fatalf("replay after definition update = (replayed:%t, err:%v), want original run", isReplay, err)
 	}
 	var replayedSnapshot, expectedSnapshot any
@@ -2352,12 +2402,12 @@ func testWorkflowRunCreateIdempotency(t *testing.T, fx *Fixture) {
 		AppID: fx.App.ID, WorkflowName: "idempotent-create", Status: state.WorkflowRunStatusPending,
 		Input: json.RawMessage(`{"order_id":"different"}`), DefinitionSnapshot: json.RawMessage(`{"name":"idempotent-create","steps":[]}`),
 	}
-	if _, isReplay, err := fx.Store.CreateWorkflowRunAdmittedWithIdempotencyKey(fx.Ctx, conflict, 1, key, changedInputFingerprint); !errors.Is(err, state.ErrWorkflowRunIdempotencyConflict) || isReplay {
+	if _, isReplay, err := fx.Store.CreateWorkflowRunAdmittedWithIdempotencyKey(fx.Ctx, conflict, 1, 0, key, changedInputFingerprint); !errors.Is(err, state.ErrWorkflowRunIdempotencyConflict) || isReplay {
 		t.Fatalf("changed-input retry = (replayed:%t, err:%v), want idempotency conflict", isReplay, err)
 	}
 
 	other := &state.WorkflowRun{AppID: fx.App.ID, WorkflowName: "idempotent-create", Input: json.RawMessage(`{}`), DefinitionSnapshot: json.RawMessage(`{}`)}
-	if _, _, err := fx.Store.CreateWorkflowRunAdmittedWithIdempotencyKey(fx.Ctx, other, 1, "other-"+uuid.NewString(), fingerprint); !errors.Is(err, state.ErrWorkflowRunQuotaExceeded) {
+	if _, _, err := fx.Store.CreateWorkflowRunAdmittedWithIdempotencyKey(fx.Ctx, other, 1, 0, "other-"+uuid.NewString(), fingerprint); !errors.Is(err, state.ErrWorkflowRunQuotaExceeded) {
 		t.Fatalf("new key after quota consumed = %v, want ErrWorkflowRunQuotaExceeded", err)
 	}
 }
@@ -3501,7 +3551,11 @@ func testAppSecretRuntimeProcessGenerationFence(t *testing.T, fx *Fixture) {
 	// instance) may replace it without knowing its generation; a start from
 	// an attempt that predates the registration is still fenced.
 	live, stray, fresh := strings.Repeat("d", 32), strings.Repeat("e", 32), strings.Repeat("f", 32)
-	if err := fx.Store.BeginAppSecretRuntimeProcess(fx.Ctx, process(live, third)); err != nil {
+	// Register a minute ago: a replacement stamped time.Now() right after an
+	// unstamped registration can share its microsecond and not be "later".
+	registered := process(live, third)
+	registered.AttemptedAt = time.Now().Add(-time.Minute)
+	if err := fx.Store.BeginAppSecretRuntimeProcess(fx.Ctx, registered); err != nil {
 		t.Fatalf("BeginAppSecretRuntimeProcess(after retire): %v", err)
 	}
 	earlier := process(stray, "")
@@ -4532,6 +4586,7 @@ func testScalingPolicyRoundTrip(t *testing.T, fx *Fixture) {
 		MaxQueueDepth:           17,
 		WakeMaxQueueDepth:       31,
 		WakeMaxQueueWaitSeconds: 41,
+		PerInstanceConcurrency:  2,
 		Timezone:                "Europe/Istanbul",
 		Schedules: []state.ScalingSchedule{
 			{Cron: "0 8 * * 1-5", DurationS: 12 * 3600, MinInstances: 3},

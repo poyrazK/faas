@@ -56,7 +56,7 @@ func (m *MemStore) GetProjectEnvironmentEdgePolicy(_ context.Context, accountID,
 	return policy, nil
 }
 
-func (m *MemStore) PutProjectEnvironmentEdgePolicy(_ context.Context, policy ProjectEnvironmentEdgePolicy) (ProjectEnvironmentEdgePolicy, error) {
+func (m *MemStore) PutProjectEnvironmentEdgePolicy(ctx context.Context, policy ProjectEnvironmentEdgePolicy) (ProjectEnvironmentEdgePolicy, error) {
 	if !validProjectEnvironmentEdgeRules(policy.Rules) {
 		return ProjectEnvironmentEdgePolicy{}, ErrInvalidArgument
 	}
@@ -67,6 +67,9 @@ func (m *MemStore) PutProjectEnvironmentEdgePolicy(_ context.Context, policy Pro
 		return ProjectEnvironmentEdgePolicy{}, ErrNotFound
 	}
 	if _, err := m.projectEnvironmentBySlugLocked(policy.ProjectID, policy.EnvironmentSlug); err != nil {
+		return ProjectEnvironmentEdgePolicy{}, err
+	}
+	if err := validateMemTrafficProjection("environment_edge_policy", environmentEdgeTrafficProjection(policy)); err != nil {
 		return ProjectEnvironmentEdgePolicy{}, err
 	}
 	memory, err := m.gitOpsGuardScopedWriteLocked(policy.AccountID, policy.AppID, policy.EnvironmentSlug, []string{"policies"})
@@ -82,6 +85,9 @@ func (m *MemStore) PutProjectEnvironmentEdgePolicy(_ context.Context, policy Pro
 	}
 	policy.UpdatedAt = now
 	policy.Rules = cloneProjectEnvironmentEdgeRules(policy.Rules)
+	if err := m.validateMemTrafficPolicyChangeLocked(ctx, policy.AccountID, memTrafficPolicyChange{Policies: map[string]ProjectEnvironmentEdgePolicy{key: policy}}); err != nil {
+		return ProjectEnvironmentEdgePolicy{}, err
+	}
 	m.projectEnvironmentEdgePolicies[key] = policy
 	touchGitOpsMemoryIntent(memory)
 	policy.Rules = cloneProjectEnvironmentEdgeRules(policy.Rules)
@@ -115,6 +121,9 @@ func (s *PgStore) PutProjectEnvironmentEdgePolicy(ctx context.Context, policy Pr
 	if !validProjectEnvironmentEdgeRules(policy.Rules) {
 		return ProjectEnvironmentEdgePolicy{}, ErrInvalidArgument
 	}
+	if err := s.validateTrafficProjection(ctx, "environment_edge_policy", environmentEdgeTrafficProjection(policy)); err != nil {
+		return ProjectEnvironmentEdgePolicy{}, err
+	}
 	rules := policy.Rules
 	if rules == nil {
 		rules = []ProjectEnvironmentEdgeRule{}
@@ -123,7 +132,12 @@ func (s *PgStore) PutProjectEnvironmentEdgePolicy(ctx context.Context, policy Pr
 	if err != nil {
 		return ProjectEnvironmentEdgePolicy{}, err
 	}
-	row := s.pool.QueryRow(ctx, `
+	tx, err := s.beginTrafficPolicyMutation(ctx, uuidToPgtype(policy.AccountID))
+	if err != nil {
+		return ProjectEnvironmentEdgePolicy{}, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	row := tx.QueryRow(ctx, `
 		insert into project_environment_edge_policies
 		    (account_id, project_id, app_id, environment_slug, rules)
 		select $1, $2, $3, $4, $5::jsonb
@@ -139,6 +153,9 @@ func (s *PgStore) PutProjectEnvironmentEdgePolicy(ctx context.Context, policy Pr
 			return ProjectEnvironmentEdgePolicy{}, ErrNotFound
 		}
 		return ProjectEnvironmentEdgePolicy{}, mapErr(err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return ProjectEnvironmentEdgePolicy{}, err
 	}
 	policy.Rules = cloneProjectEnvironmentEdgeRules(rules)
 	return policy, nil

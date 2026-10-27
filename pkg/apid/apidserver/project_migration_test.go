@@ -13,6 +13,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/apidserver"
+	"github.com/onebox-faas/faas/pkg/sealdomain"
 )
 
 func migrationUpload(t *testing.T, handler http.Handler, key, endpoint string, fields map[string]string) *httptest.ResponseRecorder {
@@ -274,9 +275,12 @@ func TestMigrationConfigurationFailureCanResumeTheSameApps(t *testing.T) {
 	}
 	name := plan.Workloads[0].Name
 	request := api.ApplyCachedProjectPlanRequest{PlanToken: plan.PlanToken, Only: []string{name}, InitialSecrets: api.ProjectInitialSecrets{name: {"DATABASE_URL": "request-only"}}}
-	identities, identity := *apidserver.MfaIdentities, *apidserver.MfaIdentity
-	t.Cleanup(func() { *apidserver.MfaIdentities, *apidserver.MfaIdentity = identities, identity })
-	*apidserver.MfaIdentities, *apidserver.MfaIdentity = nil, nil
+	// Sealing needs only a recipient since ADR-20261022111812. Select the
+	// runtime seal domain without its recipient so the initial secret write
+	// itself fails after the request passed its storage precheck.
+	mode, domain := *apidserver.RuntimeWriteMode, *apidserver.RuntimeDomainRecipient
+	t.Cleanup(func() { *apidserver.RuntimeWriteMode, *apidserver.RuntimeDomainRecipient = mode, domain })
+	*apidserver.RuntimeWriteMode, *apidserver.RuntimeDomainRecipient = sealdomain.WriteDomain, nil
 	failed := migrationJSON(t, *e.H(), *e.Key(), request)
 	var problem api.Problem
 	if err := json.Unmarshal(failed.Body.Bytes(), &problem); err != nil {
@@ -289,7 +293,7 @@ func TestMigrationConfigurationFailureCanResumeTheSameApps(t *testing.T) {
 	if err != nil || len(projects) != 1 {
 		t.Fatal("saved project is unavailable for correction")
 	}
-	*apidserver.MfaIdentities, *apidserver.MfaIdentity = identities, identity
+	*apidserver.RuntimeWriteMode, *apidserver.RuntimeDomainRecipient = mode, domain
 	resumed := migrationJSON(t, *e.H(), *e.Key(), request)
 	if resumed.Code != http.StatusOK {
 		t.Fatalf("resume: %d %s", resumed.Code, resumed.Body)

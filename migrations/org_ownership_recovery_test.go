@@ -16,8 +16,12 @@ import (
 // Ownership rollback must preserve the newer migration-capacity admission
 // accounting, and replay must restore the same company policy and constraints.
 func TestOrganizationOwnershipDownUpPreservesCapacityAccounting(t *testing.T) {
-	pool := openMigrated(t)
 	ctx := t.Context()
+	// Roll back at the ownership steps' own point in history. Later migrations
+	// reference their tables (project_environment_secrets.account_id ->
+	// resource_namespaces, 20261021081233450), and goose rolls those back first.
+	pool := pgtest.Open(t)
+	migrateUpTo(t, ctx, pool, 20261019190114676)
 	var schema, before string
 	if err := pool.QueryRow(ctx, `SELECT current_schema(), pg_get_functiondef('service_capacity_snapshot()'::regprocedure)`).Scan(&schema, &before); err != nil {
 		t.Fatal(err)

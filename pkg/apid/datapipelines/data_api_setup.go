@@ -39,6 +39,11 @@ type DataAPISetup struct {
 	ConfigureApp func(context.Context, state.Account, state.App) error
 	AdmitDeploy  func(context.Context, state.Account, state.App) error
 	AppCreated   func(context.Context, state.App)
+	// AppVisible reports whether the request's principal may still see an
+	// app the account created (appaccess.VisibleApps). A setup names its
+	// auth app in the request body, outside appaccess.Wrap, so a company
+	// auth app stays unavailable to a creator who left the company.
+	AppVisible func(context.Context, state.Account, state.App) bool
 }
 
 func (s *DataAPISetup) account(ctx context.Context, id string) (state.Account, error) {
@@ -82,8 +87,27 @@ func (s *DataAPISetup) auth(ctx context.Context, account, id string) (string, er
 	return origin + "/auth/v1", nil
 }
 
+// authVisible answers a hidden auth app as absent when a setup is submitted.
+// Saved setups keep running: the worker revalidates the app itself.
+func (s *DataAPISetup) authVisible(ctx context.Context, account, id string) error {
+	if s.AppVisible == nil {
+		return nil
+	}
+	app, err := s.Store.AppByID(ctx, id)
+	if err != nil {
+		return dataAPIError(err)
+	}
+	if app.AccountID == account && !s.AppVisible(ctx, state.Account{ID: account}, app) {
+		return datapipeline.ErrNotFound
+	}
+	return nil
+}
+
 func (s *DataAPISetup) Plan(ctx context.Context, account string, r datapipeline.SetupRequest) (datapipeline.DataAPIPlan, error) {
 	if _, err := s.account(ctx, account); err != nil {
+		return datapipeline.DataAPIPlan{}, err
+	}
+	if err := s.authVisible(ctx, account, r.AuthAppID); err != nil {
 		return datapipeline.DataAPIPlan{}, err
 	}
 	issuer, err := s.auth(ctx, account, r.AuthAppID)

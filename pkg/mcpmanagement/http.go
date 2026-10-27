@@ -34,6 +34,8 @@ type HTTPOptions struct {
 	Version      string
 	Timeout      time.Duration
 	AllowWrites  bool
+	// Toolsets limits the tools every grant lists; nil lists all.
+	Toolsets []string
 	// Onboarding is browser (default) or the explicit api-key fallback.
 	Onboarding  string
 	StateStore  *StateStore

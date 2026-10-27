@@ -1,7 +1,7 @@
 package fcvm
 
 import (
-	"net/netip"
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -14,9 +14,11 @@ import (
 // spec: §11
 //
 // drive1 is tenant-writable: the guest writes it at runtime and the customer
-// image seeds it. vmmd mounts it on the host as root before boot, so a link
-// the tenant planted must never carry a pre-boot write — or the full-rootfs
-// marker read — outside the mount.
+// image seeds it. A link the tenant planted must never carry a pre-boot
+// write, or the full-rootfs marker read, anywhere but the file's own path.
+// The sandboxed editor never follows links (pkg/guestdisk tests that on real
+// ext4); these tests hold the stagers to the same rules through the
+// directory model, where an escape would reach the host.
 
 const hostSentinel = "root:x:0:0:root:/root:/bin/sh\n"
 
@@ -42,12 +44,35 @@ func mustSymlink(t *testing.T, target, link string) {
 	}
 }
 
+// stageOnDir runs one staging session's inspection and write against a
+// directory drive.
+func stageOnDir(root string, files ...driveFile) error {
+	img := &dirDriveImage{root: root}
+	paths := make([]string, len(files))
+	for i, f := range files {
+		paths[i] = f.path
+	}
+	layout, err := inspectDrive(context.Background(), img, paths, nil)
+	if err != nil {
+		return err
+	}
+	return stageDriveFiles(context.Background(), img, layout, files)
+}
+
+func resolverFile(t *testing.T) driveFile {
+	t.Helper()
+	files, _, err := preBootFileWriters(nil, nil, nil, "10.200.0.1", false)
+	if err != nil || len(files) != 1 {
+		t.Fatalf("resolver writer: %v %v", files, err)
+	}
+	return files[0]
+}
+
 func TestPreBootWritesNeverLeaveTheDrive(t *testing.T) {
-	resolverIP := netip.MustParseAddr("10.200.0.1")
 	cases := []struct {
 		name  string
 		plant func(t *testing.T, mountRoot, hostDir, hostFile string)
-		write func(mountRoot string) error
+		file  driveFile
 		// wantWritten is the drive-relative file a successful write leaves
 		// behind; empty means the write must fail closed.
 		wantWritten string
@@ -57,7 +82,7 @@ func TestPreBootWritesNeverLeaveTheDrive(t *testing.T) {
 			plant: func(t *testing.T, mountRoot, _, hostFile string) {
 				mustSymlink(t, hostFile, filepath.Join(mountRoot, apiEnvPath))
 			},
-			write:       func(mp string) error { return writeAPIEnv(mp, []byte(`{"K":"v"}`)) },
+			file:        apiEnvFile([]byte(`{"K":"v"}`)),
 			wantWritten: apiEnvPath,
 		},
 		{
@@ -65,7 +90,7 @@ func TestPreBootWritesNeverLeaveTheDrive(t *testing.T) {
 			plant: func(t *testing.T, mountRoot, _, hostFile string) {
 				mustSymlink(t, hostFile, filepath.Join(mountRoot, secretsEnvPath))
 			},
-			write:       func(mp string) error { return writeSecretsEnv(mp, []byte(`{"sealed":"x"}`)) },
+			file:        secretsEnvFile([]byte(`{"sealed":"x"}`)),
 			wantWritten: secretsEnvPath,
 		},
 		{
@@ -73,21 +98,21 @@ func TestPreBootWritesNeverLeaveTheDrive(t *testing.T) {
 			plant: func(t *testing.T, mountRoot, hostDir, _ string) {
 				mustSymlink(t, hostDir, filepath.Join(mountRoot, "upper", "etc", "faas"))
 			},
-			write: func(mp string) error { return writeSecretsEnv(mp, []byte(`{"sealed":"x"}`)) },
+			file: secretsEnvFile([]byte(`{"sealed":"x"}`)),
 		},
 		{
 			name: "workload env directory is a symlink to a host directory",
 			plant: func(t *testing.T, mountRoot, hostDir, _ string) {
 				mustSymlink(t, hostDir, filepath.Join(mountRoot, workloadEnvPath))
 			},
-			write: func(mp string) error { return writeWorkloadEnv(mp, "worker", []byte(`{"K":"v"}`)) },
+			file: workloadEnvFile("worker", []byte(`{"K":"v"}`)),
 		},
 		{
 			name: "etc is a symlink to a host directory for the resolver",
 			plant: func(t *testing.T, mountRoot, hostDir, _ string) {
 				mustSymlink(t, hostDir, filepath.Join(mountRoot, "upper", "etc"))
 			},
-			write: func(mp string) error { return writeServiceDiscoveryResolver(mp, resolverIP) },
+			file: resolverFile(t),
 		},
 		{
 			name: "full-rootfs marker is reached through a symlinked etc",
@@ -104,7 +129,7 @@ func TestPreBootWritesNeverLeaveTheDrive(t *testing.T) {
 				}
 				mustSymlink(t, hostDir, filepath.Join(mountRoot, "etc"))
 			},
-			write: func(mp string) error { return writeAPIEnv(mp, []byte(`{"K":"v"}`)) },
+			file: apiEnvFile([]byte(`{"K":"v"}`)),
 		},
 	}
 	for _, tc := range cases {
@@ -114,7 +139,7 @@ func TestPreBootWritesNeverLeaveTheDrive(t *testing.T) {
 			tc.plant(t, mountRoot, hostDir, hostFile)
 			before := listDir(t, hostDir)
 
-			err := tc.write(mountRoot)
+			err := stageOnDir(mountRoot, tc.file)
 
 			if got, _ := os.ReadFile(hostFile); string(got) != hostSentinel {
 				t.Fatalf("host file overwritten through a tenant symlink: %q", got)
@@ -152,7 +177,7 @@ func TestPreBootWriteReplacesInDriveSymlink(t *testing.T) {
 	}
 	mustSymlink(t, "../../app/config.json", filepath.Join(mountRoot, apiEnvPath))
 
-	if err := writeAPIEnv(mountRoot, []byte(`{"K":"v"}`)); err != nil {
+	if err := stageOnDir(mountRoot, apiEnvFile([]byte(`{"K":"v"}`))); err != nil {
 		t.Fatalf("write: %v", err)
 	}
 	if got, _ := os.ReadFile(other); string(got) != "tenant" {
@@ -177,26 +202,22 @@ func listDir(t *testing.T, dir string) []string {
 	return names
 }
 
-// The builder drive is written by untrusted build code; vmmd exports it as
-// root. build-done.json must be a bounded regular file on the drive, never a
-// link to a host file (or an endless device such as /dev/zero, which made
-// os.ReadFile grow until vmmd was OOM-killed).
-func TestReadBuildDoneRefusesLinksAndOversize(t *testing.T) {
+const buildDoneRel = "upper/etc/faas/build-done.json"
+
+// The builder drive is written by untrusted build code. build-done.json must
+// be a bounded regular file on the drive, never a link to a host file (or an
+// endless device such as /dev/zero, which once made a read grow until vmmd
+// was OOM-killed).
+func TestExportBuildDoneRefusesLinksAndOversize(t *testing.T) {
 	cases := []struct {
 		name  string
 		plant func(t *testing.T, mountRoot, hostFile string)
-		want  string // "" = must not be read
+		want  string // "" = must not be exported
 	}{
 		{
 			name: "regular manifest",
 			plant: func(t *testing.T, mountRoot, _ string) {
-				p := filepath.Join(mountRoot, buildDoneRel)
-				if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
-					t.Fatal(err)
-				}
-				if err := os.WriteFile(p, []byte(`{"exit_code":0}`), 0o644); err != nil {
-					t.Fatal(err)
-				}
+				mustWriteFile(t, filepath.Join(mountRoot, buildDoneRel), []byte(`{"exit_code":0}`))
 			},
 			want: `{"exit_code":0}`,
 		},
@@ -225,13 +246,7 @@ func TestReadBuildDoneRefusesLinksAndOversize(t *testing.T) {
 		{
 			name: "oversize manifest",
 			plant: func(t *testing.T, mountRoot, _ string) {
-				p := filepath.Join(mountRoot, buildDoneRel)
-				if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
-					t.Fatal(err)
-				}
-				if err := os.WriteFile(p, make([]byte, maxBuildDoneBytes+1), 0o644); err != nil {
-					t.Fatal(err)
-				}
+				mustWriteFile(t, filepath.Join(mountRoot, buildDoneRel), make([]byte, maxBuildDoneBytes+1))
 			},
 		},
 	}
@@ -240,68 +255,78 @@ func TestReadBuildDoneRefusesLinksAndOversize(t *testing.T) {
 			mountRoot := t.TempDir()
 			_, hostFile := plantHostFile(t)
 			tc.plant(t, mountRoot, hostFile)
-			data, ok := readBuildDone(mountRoot)
+			exportDir := t.TempDir()
+			if err := exportBuildDrive(context.Background(), &dirDriveImage{root: mountRoot}, exportDir, 1<<20); err != nil {
+				t.Fatal(err)
+			}
+			data, err := os.ReadFile(filepath.Join(exportDir, "build-done.json"))
 			if tc.want == "" {
-				if ok {
-					t.Fatalf("read %d bytes that must not be read: %.40q", len(data), data)
+				if err == nil {
+					t.Fatalf("exported %d bytes that must not be read: %.40q", len(data), data)
 				}
 				return
 			}
-			if !ok || string(data) != tc.want {
-				t.Fatalf("readBuildDone = %q ok=%v, want %q", data, ok, tc.want)
+			if err != nil || string(data) != tc.want {
+				t.Fatalf("build-done.json = %q (%v), want %q", data, err, tc.want)
 			}
 		})
 	}
 }
 
-func TestBuildOutDirRefusesSymlinkedComponents(t *testing.T) {
+func TestExportRefusesSymlinkedBuildOutComponents(t *testing.T) {
 	mountRoot := t.TempDir()
 	hostDir, _ := plantHostFile(t)
-	if err := os.MkdirAll(filepath.Join(hostDir, "out"), 0o755); err != nil {
+	mustWriteFile(t, filepath.Join(hostDir, "out", "image.tar"), []byte("host"))
+	mustSymlink(t, hostDir, filepath.Join(mountRoot, "upper", "build"))
+	exportDir := t.TempDir()
+	if err := exportBuildDrive(context.Background(), &dirDriveImage{root: mountRoot}, exportDir, 1<<20); err != nil {
 		t.Fatal(err)
 	}
-	mustSymlink(t, hostDir, filepath.Join(mountRoot, "upper", "build"))
-	if dir, ok := buildOutDir(mountRoot); ok {
-		t.Fatalf("buildOutDir followed a symlinked component to %s", dir)
+	if _, err := os.Lstat(filepath.Join(exportDir, "build")); !os.IsNotExist(err) {
+		t.Fatalf("export followed a symlinked component (err=%v)", err)
 	}
 
 	real := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(real, "upper", "build", "out"), 0o755); err != nil {
+	mustWriteFile(t, filepath.Join(real, "upper", "build", "out", "image.tar"), []byte("oci"))
+	exportDir = t.TempDir()
+	if err := exportBuildDrive(context.Background(), &dirDriveImage{root: real}, exportDir, 1<<20); err != nil {
 		t.Fatal(err)
 	}
-	if dir, ok := buildOutDir(real); !ok || dir != filepath.Join(real, "upper", "build", "out") {
-		t.Fatalf("buildOutDir(real) = %q ok=%v", dir, ok)
+	if got, err := os.ReadFile(filepath.Join(exportDir, "build", "out", "image.tar")); err != nil || string(got) != "oci" {
+		t.Fatalf("image.tar = %q (%v)", got, err)
+	}
+	if _, err := os.Lstat(filepath.Join(exportDir, ".guestdisk-dump")); !os.IsNotExist(err) {
+		t.Fatalf("dump staging left in the export (err=%v)", err)
 	}
 }
 
-// copyTree exports builder output as root. Only directories and regular
-// files are copied: a recreated symlink hands builderd a path into the host
-// (image.tar -> another build's export), and opening a FIFO or device node
-// blocks or reads the host device.
-func TestCopyTreeDropsLinksAndSpecialFiles(t *testing.T) {
+// Builder output reaches builderd as root-owned files. Only directories and
+// regular files are moved: a recreated symlink hands builderd a path into
+// the host (image.tar -> another build's export), and opening a FIFO or
+// device node blocks or reads the host device. Oversize files are skipped.
+func TestMoveTreeDropsLinksSpecialAndOversizeFiles(t *testing.T) {
 	src, dst := t.TempDir(), t.TempDir()
 	hostDir, hostFile := plantHostFile(t)
-	if err := os.MkdirAll(filepath.Join(src, "cache", "blobs"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(src, "cache", "blobs", "layer"), []byte("blob"), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	mustWriteFile(t, filepath.Join(src, "cache", "blobs", "layer"), []byte("blob"))
+	mustWriteFile(t, filepath.Join(src, "huge"), make([]byte, 64))
 	mustSymlink(t, hostFile, filepath.Join(src, "image.tar"))
 	mustSymlink(t, hostDir, filepath.Join(src, "cache", "host"))
 	if err := syscall.Mkfifo(filepath.Join(src, "fifo"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
-	if err := copyTree(src, dst, 1<<20); err != nil {
-		t.Fatalf("copyTree: %v", err)
+	if err := moveTree(src, dst, 32); err != nil {
+		t.Fatalf("moveTree: %v", err)
 	}
 	if got, err := os.ReadFile(filepath.Join(dst, "cache", "blobs", "layer")); err != nil || string(got) != "blob" {
 		t.Fatalf("regular file not exported: %q err=%v", got, err)
 	}
-	for _, rel := range []string{"image.tar", "cache/host", "fifo"} {
+	for _, rel := range []string{"image.tar", "cache/host", "fifo", "huge"} {
 		if _, err := os.Lstat(filepath.Join(dst, rel)); !os.IsNotExist(err) {
 			t.Errorf("%s exported (err=%v); want it dropped", rel, err)
 		}
+	}
+	if got, _ := os.ReadFile(hostFile); string(got) != hostSentinel {
+		t.Fatal("host file changed")
 	}
 }

@@ -112,6 +112,10 @@ func (s *server) upsertDevSession(w http.ResponseWriter, r *http.Request, acct s
 		return
 	}
 	req.Watch = watch
+	if prob := devloop.ValidateGoCommand(req); prob != nil {
+		api.WriteProblem(w, prob)
+		return
+	}
 	limits := api.MustLimitsFor(acct.Plan)
 	lease, prob := devSessionLease(req.LeaseSeconds, limits)
 	if prob != nil {
@@ -129,6 +133,7 @@ func (s *server) upsertDevSession(w http.ResponseWriter, r *http.Request, acct s
 	app.PreviewPrNumber = 0
 	app.PreviewPrState = state.PreviewPrStateOpen
 	app.PreviewExpiresAt = &expiresAt
+	app.Manifest.BuildGoCommand = req.GoCommand
 
 	if existing, err := s.store.AppBySlug(r.Context(), slug); err == nil {
 		if existing.AccountID != acct.ID || existing.PreviewOfSlug != project || existing.PreviewPrNumber != 0 {

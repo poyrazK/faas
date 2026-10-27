@@ -1,0 +1,45 @@
+/* generated using openapi-typescript-codegen -- do not edit */
+/* istanbul ignore file */
+/* tslint:disable */
+/* eslint-disable */
+import type { AccountAbuseHold } from './AccountAbuseHold.js';
+import type { AccountLimits } from './AccountLimits.js';
+/**
+ * Account profile: id, email verification state, plan, status, limits snapshot, current-month usage, deployed-app count, and developer-environment count.
+ */
+export type AccountResponse = {
+  id: string;
+  email: string;
+  email_verified: boolean;
+  /**
+   * 30-day verification deadline; present only while email_verified is false.
+   */
+  email_verification_grace_ends_at?: string;
+  plan: 'free' | 'hobby' | 'pro' | 'scale';
+  status: 'active' | 'past_due' | 'suspended' | 'deleted_pending';
+  limits: AccountLimits;
+  usage_gb_hours: number;
+  app_count: number;
+  /**
+   * Live `gregale dev` environments; these do not consume deployed_apps slots.
+   */
+  developer_app_count: number;
+  github_install_id?: string | null;
+  plan_change_status?: string;
+  requested_plan?: 'free' | 'hobby' | 'pro' | 'scale';
+  effective_at?: string;
+  /**
+   * Legal business name used on future invoices.
+   */
+  business_name?: string;
+  /**
+   * Free-form billing address used on future invoices.
+   */
+  billing_address?: string;
+  /**
+   * Customer tax/VAT identifier used on future invoices.
+   */
+  tax_id?: string;
+  abuse_hold?: AccountAbuseHold;
+};
+

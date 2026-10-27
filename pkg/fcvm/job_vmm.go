@@ -34,10 +34,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net"
 	"os"
-	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -369,13 +370,9 @@ func (v *JailerVMM) BootColdBootForJob(ctx context.Context, l Lease, spec JobCol
 }
 
 // stageJobManifest writes the JSON-encoded JobManifest to the private drive1
-// at /etc/faas/job.json. The loop mount lives outside the chroot so a failed
-// unmount can never make chroot cleanup traverse and delete a mounted image.
-//
-// Idempotent on overwrite: a second write to the same path
-// truncates and replaces (rare; the chroot is per-instance so the
-// path is unique). Best-effort umount on error so a partial write
-// doesn't leak the mount.
+// at /etc/faas/job.json, mode 0600, in one sandboxed drive session
+// (ADR-20261025090100). A second write to the same path replaces the file
+// (rare; the chroot is per-instance so the path is unique).
 //
 // CR-C / code-review #2 round-3: the previous shape stats
 // "drive1.img" which is NOT the canonical in-chroot drive1 image
@@ -384,7 +381,7 @@ func (v *JailerVMM) BootColdBootForJob(ctx context.Context, l Lease, spec JobCol
 // chroot. Stat'ing drive1.img always returns ENOENT, every job
 // boot fails, the guest never sees /etc/faas/job.json, vsock
 // never gets a job_exit frame. Fix: stat the canonical name.
-func (v *JailerVMM) stageJobManifest(instance string, m JobManifest) (retErr error) {
+func (v *JailerVMM) stageJobManifest(instance string, m JobManifest) error {
 	ctx, cancel := v.driveStagingContext()
 	defer cancel()
 	owner, err := v.nativeDriveStagingOwner(ctx, instance)
@@ -394,62 +391,13 @@ func (v *JailerVMM) stageJobManifest(instance string, m JobManifest) (retErr err
 	return v.stageJobManifestForOwner(ctx, owner, instance, m)
 }
 
-func (v *JailerVMM) stageJobManifestForOwner(ctx context.Context, owner nativeLaunchRecord, instance string, m JobManifest) (retErr error) {
+func (v *JailerVMM) stageJobManifestForOwner(ctx context.Context, owner nativeLaunchRecord, instance string, m JobManifest) error {
 	if v.chrootBase == "" {
 		return fmt.Errorf("vmm: stageJobManifest: chrootBase not configured")
 	}
-	root := v.chrootRoot(instance)
-	drive1Img := filepath.Join(root, layerImageName)
+	drive1Img := filepath.Join(v.chrootRoot(instance), layerImageName)
 	if _, err := os.Stat(drive1Img); err != nil {
 		return fmt.Errorf("vmm: stageJobManifest: %s missing at %s: %w", layerImageName, drive1Img, err)
-	}
-	if v.nativeRecovery != nil {
-		return v.driveStagingSession(ctx, owner, instance, drive1Img, "faas-job-manifest-", func(mnt string) error {
-			return writeJobManifest(mnt, m)
-		})
-	}
-	mnt, err := os.MkdirTemp("", "faas-job-manifest-*")
-	if err != nil {
-		return fmt.Errorf("vmm: stageJobManifest: create mountpoint: %w", err)
-	}
-	mounted := false
-	defer func() {
-		if !mounted {
-			_ = os.Remove(mnt)
-		}
-	}()
-	if out, err := exec.Command("mount", "-o", "loop,rw,nodev,nosuid,noexec", drive1Img, mnt).CombinedOutput(); err != nil {
-		return fmt.Errorf("vmm: stageJobManifest: mount: %w: %s", err, string(out))
-	}
-	mounted = true
-	defer func() {
-		if out, err := exec.Command("umount", mnt).CombinedOutput(); err != nil {
-			unmountErr := fmt.Errorf("vmm: stageJobManifest: umount: %w: %s", err, string(out))
-			if lazyOut, lazyErr := exec.Command("umount", "-l", mnt).CombinedOutput(); lazyErr != nil {
-				unmountErr = errors.Join(unmountErr, fmt.Errorf("lazy umount: %w: %s", lazyErr, string(lazyOut)))
-			} else {
-				mounted = false
-			}
-			retErr = errors.Join(retErr, unmountErr)
-		} else {
-			mounted = false
-		}
-		if !mounted {
-			_ = os.Remove(mnt)
-		}
-	}()
-
-	return writeJobManifest(mnt, m)
-}
-
-func writeJobManifest(mnt string, m JobManifest) error {
-	manifestRoot, err := jobManifestStorageRoot(mnt)
-	if err != nil {
-		return fmt.Errorf("vmm: stageJobManifest: resolve artifact layout: %w", err)
-	}
-	etc, err := ensureJobManifestDirectory(manifestRoot)
-	if err != nil {
-		return fmt.Errorf("vmm: stageJobManifest: prepare etc/faas: %w", err)
 	}
 	blob, err := json.MarshalIndent(m, "", "  ")
 	if err != nil {
@@ -458,134 +406,15 @@ func writeJobManifest(mnt string, m JobManifest) error {
 	if len(blob) > JobManifestMaxBytes {
 		return fmt.Errorf("vmm: stageJobManifest: manifest is %d bytes (max %d)", len(blob), JobManifestMaxBytes)
 	}
-	tmp, err := os.CreateTemp(etc, ".job.json-*")
-	if err != nil {
-		return fmt.Errorf("vmm: stageJobManifest: create temp: %w", err)
-	}
-	tmpName := tmp.Name()
-	defer func() { _ = os.Remove(tmpName) }()
-	if err := tmp.Chmod(0o600); err != nil {
-		_ = tmp.Close()
-		return fmt.Errorf("vmm: stageJobManifest: chmod temp: %w", err)
-	}
-	if _, err := tmp.Write(blob); err != nil {
-		_ = tmp.Close()
-		return fmt.Errorf("vmm: stageJobManifest: write temp: %w", err)
-	}
-	if err := tmp.Sync(); err != nil {
-		_ = tmp.Close()
-		return fmt.Errorf("vmm: stageJobManifest: sync temp: %w", err)
-	}
-	if err := tmp.Close(); err != nil {
-		return fmt.Errorf("vmm: stageJobManifest: close temp: %w", err)
-	}
-	dst := filepath.Join(etc, "job.json")
-	if err := os.Rename(tmpName, dst); err != nil {
-		return fmt.Errorf("vmm: stageJobManifest: publish %s: %w", dst, err)
-	}
-	dir, err := os.Open(etc)
-	if err != nil {
-		return fmt.Errorf("vmm: stageJobManifest: open parent: %w", err)
-	}
-	if err := dir.Sync(); err != nil {
-		_ = dir.Close()
-		return fmt.Errorf("vmm: stageJobManifest: sync parent: %w", err)
-	}
-	if err := dir.Close(); err != nil {
-		return fmt.Errorf("vmm: stageJobManifest: close parent: %w", err)
-	}
-	return nil
+	// job.json lands where the guest's root is: below /upper on an optimized
+	// artifact (the overlay upperdir), at the ext4 root of a full-rootfs one.
+	// Writing every manifest at the ext4 root once made optimized job VMs
+	// miss job.json and start as ordinary HTTP apps.
+	return v.stageDriveFile(ctx, owner, instance, drive1Img, driveFile{what: "vmm: stageJobManifest", path: jobManifestPath, want: blob, mode: 0o600})
 }
 
-// jobManifestStorageRoot returns the directory that becomes / inside the
-// guest. Optimized artifacts store their filesystem below /upper because the
-// guest mounts it as overlayfs' upperdir. Full-rootfs artifacts pivot directly
-// into the ext4 root and carry the authenticated full-rootfs marker there.
-// Writing every manifest at the ext4 root made optimized job VMs miss
-// job.json and start as ordinary HTTP apps.
-func jobManifestStorageRoot(mountpoint string) (string, error) {
-	fullRootfs, err := jobArtifactIsFullRootfs(mountpoint)
-	if err != nil {
-		return "", err
-	}
-	if fullRootfs {
-		return mountpoint, nil
-	}
-	upper := filepath.Join(mountpoint, "upper")
-	info, err := os.Lstat(upper)
-	if err != nil {
-		return "", fmt.Errorf("optimized artifact upper: %w", err)
-	}
-	if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
-		return "", fmt.Errorf("optimized artifact upper %s is not a real directory", upper)
-	}
-	return upper, nil
-}
-
-// jobArtifactIsFullRootfs validates the marker without following an
-// image-provided symlink in any ancestor. A missing marker selects the normal
-// optimized /upper layout; a malformed marker rejects the artifact.
-func jobArtifactIsFullRootfs(mountpoint string) (bool, error) {
-	components := strings.Split(strings.TrimPrefix(api.FullRootfsMarkerPath, "/"), "/")
-	current := mountpoint
-	for i, component := range components {
-		current = filepath.Join(current, component)
-		info, err := os.Lstat(current)
-		if errors.Is(err, os.ErrNotExist) {
-			return false, nil
-		}
-		if err != nil {
-			return false, err
-		}
-		if info.Mode()&os.ModeSymlink != 0 {
-			return false, fmt.Errorf("full-rootfs marker path %s contains a symlink", current)
-		}
-		if i < len(components)-1 {
-			if !info.IsDir() {
-				return false, fmt.Errorf("full-rootfs marker parent %s is not a directory", current)
-			}
-			continue
-		}
-		if !info.Mode().IsRegular() {
-			return false, fmt.Errorf("full-rootfs marker %s is not a regular file", current)
-		}
-		data, err := os.ReadFile(current)
-		if err != nil {
-			return false, err
-		}
-		if string(data) != api.FullRootfsMarkerValue {
-			return false, fmt.Errorf("full-rootfs marker %s has invalid payload", current)
-		}
-		return true, nil
-	}
-	return false, nil
-}
-
-// ensureJobManifestDirectory creates the fixed platform-owned directory one
-// component at a time and refuses image-provided symlinks. The private image
-// is not attached to a guest yet, so these Lstat/create checks cannot race a
-// customer process; rejecting links prevents an absolute /etc or /etc/faas
-// symlink from redirecting vmmd's root write into the host filesystem.
-func ensureJobManifestDirectory(mountpoint string) (string, error) {
-	current := mountpoint
-	for _, component := range []string{"etc", "faas"} {
-		current = filepath.Join(current, component)
-		info, err := os.Lstat(current)
-		if errors.Is(err, os.ErrNotExist) {
-			if err := os.Mkdir(current, 0o755); err != nil {
-				return "", err
-			}
-			continue
-		}
-		if err != nil {
-			return "", err
-		}
-		if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
-			return "", fmt.Errorf("%s is not a real directory", current)
-		}
-	}
-	return current, nil
-}
+// jobManifestPath is job.json in the optimized layout.
+const jobManifestPath = "upper/etc/faas/job.json"
 
 // BuildJobColdBootConfig builds the Firecracker config for a job
 // VM. Mirrors BuildColdBootConfig (line 274) but emits only one
@@ -634,22 +463,231 @@ func (v *JailerVMM) jobExitUDSSock(instance string) string {
 	return v.guestVsockUDSSock(instance, VsockJobExitPort)
 }
 
-// prepareJobExitListener binds the host endpoint before Firecracker starts.
-// Short-lived jobs can otherwise finish all retries before schedd issues its
-// WaitJobExit RPC. The socket is owned by the jailer identity because the
-// unprivileged Firecracker process is the connecting peer.
+// ListenerStore keeps job-exit listeners across a vmmd restart: systemd's
+// file descriptor store on a node (daemonunit.FDStore; vmmd restart adoption
+// ADR, guest channels). A guest that connects while no vmmd runs then waits
+// in the listener's backlog, and the successor reads its frame.
+type ListenerStore interface {
+	Store(name string, ln *net.UnixListener) error
+	Remove(name string) error
+	// Take returns, once, a listener the predecessor stored.
+	Take(name string) *net.UnixListener
+}
+
+// WithListenerStore keeps every job-exit listener in store from its bind to
+// its release.
+func (v *JailerVMM) WithListenerStore(store ListenerStore) *JailerVMM {
+	v.fdStoreMu.Lock()
+	v.listenerStore = store
+	v.fdStoreMu.Unlock()
+	return v
+}
+
+// jobExitStoreName is the listener's FDNAME. systemd rejects ':' in it.
+func jobExitStoreName(instance string) string {
+	return "gvsock-" + instance + "-" + strconv.Itoa(VsockJobExitPort)
+}
+
+// storeJobExitListener puts a freshly bound listener in the store. A failure
+// only costs the restart window: the successor re-binds instead.
+func (v *JailerVMM) storeJobExitListener(instance string, ln *net.UnixListener) {
+	v.fdStoreMu.Lock()
+	defer v.fdStoreMu.Unlock()
+	if v.listenerStore == nil {
+		return
+	}
+	if err := v.listenerStore.Store(jobExitStoreName(instance), ln); err != nil {
+		slog.Warn("vmm: job-exit listener not stored for restart", "instance", instance, "err", err)
+		return
+	}
+	if v.storedJobExits == nil {
+		v.storedJobExits = make(map[string]*net.UnixListener)
+	}
+	v.storedJobExits[instance] = ln
+}
+
+// unstoreJobExitListener removes ln from the store once its receiver is done.
+// A newer listener stored for the same instance is left alone.
+func (v *JailerVMM) unstoreJobExitListener(instance string, ln *net.UnixListener) {
+	v.fdStoreMu.Lock()
+	defer v.fdStoreMu.Unlock()
+	if v.listenerStore == nil || v.storedJobExits[instance] != ln {
+		return
+	}
+	delete(v.storedJobExits, instance)
+	_ = v.listenerStore.Remove(jobExitStoreName(instance))
+}
+
+// adoptJobExitListener gives an adopted job its exit receiver back: on the
+// listener the predecessor stored, whose backlog holds any frame sent while
+// no vmmd ran, or else on a re-bound one, which a guest retrying its frame
+// reaches.
+func (v *JailerVMM) adoptJobExitListener(l Lease) error {
+	ln := v.takeStoredJobExitListener(l.Instance)
+	if ln == nil {
+		return v.prepareJobExitListener(l)
+	}
+	v.mu.Lock()
+	if v.guestVsockListeners == nil {
+		v.guestVsockListeners = make(map[guestVsockListenerKey]*net.UnixListener)
+	}
+	v.guestVsockListeners[guestVsockListenerKey{instance: l.Instance, port: VsockJobExitPort}] = ln
+	v.mu.Unlock()
+	v.startJobExitReceiver(l.Instance, ln)
+	return nil
+}
+
+// takeStoredJobExitListener returns the stored listener when it is still
+// bound at the instance's path. One whose path is gone can never be reached
+// again, so it is closed and removed from the store.
+func (v *JailerVMM) takeStoredJobExitListener(instance string) *net.UnixListener {
+	v.fdStoreMu.Lock()
+	defer v.fdStoreMu.Unlock()
+	if v.listenerStore == nil {
+		return nil
+	}
+	name := jobExitStoreName(instance)
+	ln := v.listenerStore.Take(name)
+	if ln == nil {
+		return nil
+	}
+	path := v.jobExitUDSSock(instance)
+	addr, ok := ln.Addr().(*net.UnixAddr)
+	info, err := os.Lstat(path)
+	if !ok || addr.Name != path || err != nil || info.Mode()&os.ModeSocket == 0 {
+		_ = ln.Close()
+		_ = v.listenerStore.Remove(name)
+		return nil
+	}
+	ln.SetUnlinkOnClose(true)
+	if v.storedJobExits == nil {
+		v.storedJobExits = make(map[string]*net.UnixListener)
+	}
+	v.storedJobExits[instance] = ln
+	return ln
+}
+
+// prepareJobExitListener binds the host endpoint before Firecracker starts
+// and starts its receiver. Short-lived jobs can otherwise finish all retries
+// before schedd issues its WaitJobExit RPC. The socket is owned by the jailer
+// identity because the unprivileged Firecracker process is the connecting
+// peer.
 func (v *JailerVMM) prepareJobExitListener(l Lease) error {
-	return v.prepareGuestVsockListener(l, VsockJobExitPort)
+	if err := v.prepareGuestVsockListener(l, VsockJobExitPort); err != nil {
+		return err
+	}
+	ln := v.guestVsockListener(l.Instance, VsockJobExitPort)
+	if ln == nil {
+		return fmt.Errorf("vmm: job-exit listener for %s is missing", l.Instance)
+	}
+	v.storeJobExitListener(l.Instance, ln)
+	v.startJobExitReceiver(l.Instance, ln)
+	return nil
 }
 
 func (v *JailerVMM) closeJobExitListener(instance string) {
 	v.closeGuestVsockListener(instance, VsockJobExitPort)
 }
 
-// WaitJobExit accepts the first valid guest-initiated STREAM on the listener
-// prepared during cold boot. Invalid frames are rejected with a bounded retry
-// budget so untrusted guest bytes cannot allocate unbounded memory or spin a
-// host goroutine forever.
+// jobExitFrameTimeout bounds one connection's frame read. guest-init writes
+// the frame in one go right after connecting.
+const jobExitFrameTimeout = 5 * time.Second
+
+// jobExitReceiver is vmmd's own accept loop on one job's exit listener (vmmd
+// restart adoption ADR, workload kinds). It accepts as soon as the listener
+// exists, independent of any WaitJobExit call, so a restart that ends the
+// RPC loses nothing: the sink records the payload before the guest is
+// acknowledged, and a later WaitJobExit, on this vmmd or on its successor,
+// returns it.
+type jobExitReceiver struct {
+	done    chan struct{} // closed once payload or err is set
+	payload JobExitPayload
+	err     error
+}
+
+// WithJobExitSink installs the callback that records a job's exit before the
+// guest is acknowledged. It is read when a frame arrives, so receivers
+// started before it is installed use it too.
+func (v *JailerVMM) WithJobExitSink(cb func(instance string, payload JobExitPayload)) *JailerVMM {
+	v.mu.Lock()
+	v.jobExitSink = cb
+	v.mu.Unlock()
+	return v
+}
+
+func (v *JailerVMM) startJobExitReceiver(instance string, ln *net.UnixListener) {
+	r := &jobExitReceiver{done: make(chan struct{})}
+	v.mu.Lock()
+	if v.jobExits == nil {
+		v.jobExits = make(map[string]*jobExitReceiver)
+	}
+	v.jobExits[instance] = r
+	v.mu.Unlock()
+	go v.receiveJobExit(instance, ln, r)
+}
+
+// receiveJobExit accepts until one valid frame arrives and records it. It
+// then keeps acknowledging retries of that frame until teardown closes the
+// listener: a frame that waited in the backlog while no vmmd ran is read
+// after the guest gave up on its ack, and without an answer to its next try
+// the guest would retry for jobExitShipBudget before powering off. Invalid
+// frames are rejected with a bounded budget so untrusted guest bytes cannot
+// allocate unbounded memory or spin a host goroutine forever.
+func (v *JailerVMM) receiveJobExit(instance string, ln *net.UnixListener, r *jobExitReceiver) {
+	defer v.releaseGuestVsockListener(instance, VsockJobExitPort, ln)
+	settled := false
+	settle := func(payload JobExitPayload, err error) {
+		r.payload, r.err, settled = payload, err, true
+		close(r.done)
+		// The exit is in the adoption block now; a successor needs no
+		// listener for it.
+		v.unstoreJobExitListener(instance, ln)
+	}
+	const maxInvalidFrames = 8
+	var lastErr error
+	for invalid := 0; ; {
+		conn, err := ln.AcceptUnix()
+		if err != nil {
+			if !settled {
+				settle(JobExitPayload{}, fmt.Errorf("vmm: job exit %s: accept: %w", instance, err))
+			}
+			return
+		}
+		_ = conn.SetDeadline(time.Now().Add(jobExitFrameTimeout))
+		payload, readErr := readJobExitEnvelope(conn)
+		if readErr != nil {
+			_, _ = conn.Write([]byte{1})
+			_ = conn.Close()
+			if lastErr, invalid = readErr, invalid+1; invalid >= maxInvalidFrames {
+				if !settled {
+					settle(JobExitPayload{}, fmt.Errorf("vmm: job exit %s: too many invalid frames: %w", instance, lastErr))
+				}
+				return
+			}
+			continue
+		}
+		if !settled {
+			v.mu.Lock()
+			sink := v.jobExitSink
+			v.mu.Unlock()
+			if sink != nil {
+				sink(instance, payload)
+			}
+		}
+		// Receipt is durable at the scheduler boundary, not here. The ack only
+		// tells guest-init that vmmd parsed and recorded a complete, valid
+		// frame; a failed ack must not discard a result already recorded.
+		_, _ = conn.Write([]byte{0})
+		_ = conn.Close()
+		if !settled {
+			settle(payload, nil)
+		}
+	}
+}
+
+// WaitJobExit returns the job's exit once its receiver has it. Returning on
+// ctx or the deadline leaves the receiver running, so the call can be made
+// again, which the scheduler does across a vmmd restart.
 func (v *JailerVMM) WaitJobExit(ctx context.Context, l Lease, deadline time.Duration) (JobExitPayload, error) {
 	var zero JobExitPayload
 	if v == nil {
@@ -664,64 +702,25 @@ func (v *JailerVMM) WaitJobExit(ctx context.Context, l Lease, deadline time.Dura
 	if deadline <= 0 {
 		return zero, fmt.Errorf("vmm: WaitJobExit: deadline must be positive")
 	}
-	ln := v.guestVsockListener(l.Instance, VsockJobExitPort)
-	if ln == nil {
+	v.mu.Lock()
+	r := v.jobExits[l.Instance]
+	v.mu.Unlock()
+	if r == nil {
 		return zero, fmt.Errorf("vmm: WaitJobExit: listener for %s was not prepared", l.Instance)
 	}
-	defer v.releaseGuestVsockListener(l.Instance, VsockJobExitPort, ln)
-
-	end := time.Now().Add(deadline)
-	if ctxDeadline, ok := ctx.Deadline(); ok && ctxDeadline.Before(end) {
-		end = ctxDeadline
+	timer := time.NewTimer(deadline)
+	defer timer.Stop()
+	select {
+	case <-r.done:
+		if r.err != nil {
+			return zero, r.err
+		}
+		return r.payload, nil
+	case <-ctx.Done():
+		return zero, ctx.Err()
+	case <-timer.C:
+		return zero, context.DeadlineExceeded
 	}
-	const maxInvalidFrames = 8
-	var lastErr error
-	for invalid := 0; invalid < maxInvalidFrames; {
-		if err := ctx.Err(); err != nil {
-			return zero, err
-		}
-		now := time.Now()
-		if !now.Before(end) {
-			if lastErr != nil {
-				return zero, fmt.Errorf("vmm: WaitJobExit: deadline after invalid frame: %w", lastErr)
-			}
-			return zero, context.DeadlineExceeded
-		}
-		pollDeadline := now.Add(200 * time.Millisecond)
-		if end.Before(pollDeadline) {
-			pollDeadline = end
-		}
-		if err := ln.SetDeadline(pollDeadline); err != nil {
-			return zero, fmt.Errorf("vmm: WaitJobExit: set accept deadline: %w", err)
-		}
-		conn, err := ln.AcceptUnix()
-		if err != nil {
-			var netErr net.Error
-			if errors.As(err, &netErr) && netErr.Timeout() {
-				continue
-			}
-			if ctx.Err() != nil {
-				return zero, ctx.Err()
-			}
-			return zero, fmt.Errorf("vmm: WaitJobExit: accept: %w", err)
-		}
-		_ = conn.SetDeadline(end)
-		payload, readErr := readJobExitEnvelope(conn)
-		if readErr != nil {
-			lastErr = readErr
-			invalid++
-			_, _ = conn.Write([]byte{1})
-			_ = conn.Close()
-			continue
-		}
-		// Receipt is durable at the scheduler boundary, not here. The ack only
-		// tells guest-init that vmmd parsed a complete, valid frame; a failed ack
-		// must not discard a terminal result that is already in memory.
-		_, _ = conn.Write([]byte{0})
-		_ = conn.Close()
-		return payload, nil
-	}
-	return zero, fmt.Errorf("vmm: WaitJobExit: too many invalid frames: %w", lastErr)
 }
 
 func readJobExitEnvelope(conn io.Reader) (JobExitPayload, error) {
@@ -802,9 +801,10 @@ func validateJobExitPayload(payload JobExitPayload) error {
 	return nil
 }
 
-// SignalJob delivers graceful cancellation to guest-init. StopInstance cannot
-// signal the customer by signalling the Firecracker host process; it must use a
-// host-initiated vsock connection to the supervisor inside the VM.
+// SignalJob delivers a graceful stop to guest-init, for jobs and for workers
+// (stopSignalsGuest). StopInstance cannot signal the customer by signalling the
+// Firecracker host process; it must use a host-initiated vsock connection to
+// the supervisor inside the VM.
 func (v *JailerVMM) SignalJob(ctx context.Context, l Lease, signal syscall.Signal, grace time.Duration) (bool, int32, error) {
 	// Preserve StopInstance's immediate-stop contract. A zero grace or explicit
 	// SIGKILL must not silently become a 30-second graceful stop for job VMs.
@@ -832,17 +832,80 @@ func (v *JailerVMM) SignalJob(ctx context.Context, l Lease, signal syscall.Signa
 	}
 	timer := time.NewTimer(grace + 5*time.Second)
 	defer timer.Stop()
-	select {
-	case <-rec.done:
-		v.mu.Lock()
-		code := int32(rec.exitCode)
-		v.mu.Unlock()
-		return false, code, nil
-	case <-ctx.Done():
-	case <-timer.C:
+	// Firecracker keeps running a guest that stopped on its own: a worker's
+	// guest-init exits as PID 1 once its workload drains, and a job guest
+	// powers off after its exit report is acknowledged. Reap it as soon as the
+	// console shows that, as watchBuilderGuestHalt does for builders, rather
+	// than waiting out the grace and reporting a SIGKILL (Hunt 14 H14-59).
+	poll := time.NewTicker(guestStopPollInterval)
+	defer poll.Stop()
+	for {
+		select {
+		case <-rec.done:
+			v.mu.Lock()
+			code := int32(rec.exitCode)
+			v.mu.Unlock()
+			return false, code, nil
+		case <-poll.C:
+			stopped, guestCode := consoleShowsGuestStopped(rec.consolePath)
+			if !stopped {
+				continue
+			}
+			_, _, err := v.SignalAndKill(context.WithoutCancel(ctx), l, 0, 0)
+			return false, guestCode, err
+		case <-ctx.Done():
+		case <-timer.C:
+		}
+		break
 	}
 	killed, code, err := v.SignalAndKill(context.WithoutCancel(ctx), l, 0, 0)
 	return killed, code, err
+}
+
+// errGuestStopUnsupported is a stop frame answered by something other than a
+// stop handler: a guest-init without the H14-59 dispatch serves port 1028 with
+// its liveness listener, whose error reply also starts with a zero byte.
+var errGuestStopUnsupported = errors.New("guest answered the stop frame with a liveness reply")
+
+// confirmJobControlAckEnd checks that the one-byte ack is the whole reply: a
+// stop handler closes the connection after it. Anything more is a liveness
+// reply, so the stop never reached the workload (Hunt 14 H14-59).
+func confirmJobControlAckEnd(conn net.Conn) error {
+	_ = conn.SetReadDeadline(time.Now().Add(jobControlAckEndWait))
+	var extra [1]byte
+	if n, _ := conn.Read(extra[:]); n > 0 {
+		return errGuestStopUnsupported
+	}
+	return nil
+}
+
+// jobControlAckEndWait bounds the wait for the guest to close after its ack.
+const jobControlAckEndWait = 500 * time.Millisecond
+
+// guestStopPollInterval is how often SignalJob reads the console for a guest
+// that stopped on its own.
+const guestStopPollInterval = 100 * time.Millisecond
+
+// guestInitExitMarker is the kernel's panic line when guest-init (PID 1)
+// exits; the value after it is the wait status, so the exit code is bits 8-15.
+const guestInitExitMarker = "Attempted to kill init! exitcode=0x"
+
+// consoleShowsGuestStopped reports whether the console shows the guest
+// stopped on its own: guest-init exited, or the guest halted after a power-off.
+// code is guest-init's exit code when the kernel printed it, else 0.
+func consoleShowsGuestStopped(path string) (stopped bool, code int32) {
+	tail := consoleTail(path)
+	if i := bytes.LastIndex(tail, []byte(guestInitExitMarker)); i >= 0 {
+		digits := tail[i+len(guestInitExitMarker):]
+		if n := bytes.IndexFunc(digits, func(r rune) bool { return !strings.ContainsRune("0123456789abcdefABCDEF", r) }); n >= 0 {
+			digits = digits[:n]
+		}
+		if status, err := strconv.ParseUint(string(digits), 16, 32); err == nil {
+			return true, int32((status >> 8) & 0xff)
+		}
+		return true, 0
+	}
+	return bytes.Contains(tail, []byte("Attempted to kill init!")) || bytes.Contains(tail, []byte("System halted")), 0
 }
 
 func (v *JailerVMM) signalJobGuest(ctx context.Context, l Lease, signal syscall.Signal) error {
@@ -850,7 +913,9 @@ func (v *JailerVMM) signalJobGuest(ctx context.Context, l Lease, signal syscall.
 		return fmt.Errorf("vmm: signal job: invalid VMM or instance")
 	}
 	switch signal {
-	case syscall.SIGTERM, syscall.SIGINT, syscall.SIGQUIT, syscall.SIGHUP:
+	// A worker manifest may also declare SIGUSR1 or SIGUSR2; a job guest still
+	// refuses them, and SignalJob then falls back to the hard stop.
+	case syscall.SIGTERM, syscall.SIGINT, syscall.SIGQUIT, syscall.SIGHUP, syscall.SIGUSR1, syscall.SIGUSR2:
 	default:
 		return fmt.Errorf("vmm: signal job: unsupported signal %d", signal)
 	}
@@ -894,10 +959,16 @@ func (v *JailerVMM) signalJobGuest(ctx context.Context, l Lease, signal syscall.
 			if err == nil && ack[0] != vsockJobControlAckOK {
 				err = fmt.Errorf("guest rejected cancellation")
 			}
+			if err == nil {
+				err = confirmJobControlAckEnd(conn)
+			}
 		}
 		_ = conn.Close()
 		if err == nil {
 			return nil
+		}
+		if errors.Is(err, errGuestStopUnsupported) {
+			return fmt.Errorf("vmm: signal job %s: %w", l.Instance, err)
 		}
 		lastErr = err
 		select {

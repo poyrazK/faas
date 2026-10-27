@@ -8,7 +8,10 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/eventcontract"
 	"github.com/onebox-faas/faas/pkg/events"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -16,7 +19,7 @@ import (
 // normalizeGuestEvent decodes and validates one in-guest publish exactly as an
 // ordinary publish does, so a rehearsal captures only events production would
 // have accepted.
-func normalizeGuestEvent(ctx context.Context, store any, accountID string, body []byte, now time.Time) (events.Envelope, error) {
+func normalizeGuestEvent(ctx context.Context, store any, appID, accountID string, body []byte, now time.Time) (events.Envelope, error) {
 	var req api.PublishEventRequest
 	if err := json.Unmarshal(body, &req); err != nil {
 		return events.Envelope{}, fmt.Errorf("decode in-guest event publish: %w", err)
@@ -25,6 +28,13 @@ func normalizeGuestEvent(ctx context.Context, store any, accountID string, body 
 	envelope, err := events.NormalizeCapturedPublish(ctx, registry, accountID, req, now)
 	if err != nil {
 		return events.Envelope{}, fmt.Errorf("validate in-guest event publish: %w", err)
+	}
+	// An app speaks for itself only: app.<id> sources belong to that app
+	// (ADR-929, as amended 2026-10-26).
+	if owner, reserved := eventcontract.AppSource(envelope.Source); reserved {
+		if self, err := uuid.Parse(appID); err != nil || self.String() != owner {
+			return events.Envelope{}, fmt.Errorf("validate in-guest event publish: %w: source %q belongs to another app", events.ErrPublishInvalid, envelope.Source)
+		}
 	}
 	return envelope, nil
 }

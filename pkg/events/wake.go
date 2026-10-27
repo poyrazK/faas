@@ -380,6 +380,93 @@ type BootStarted struct {
 	QueuedCount        int    // ADR-123 — ledger.Concurrency at admit
 	ConcurrencyAtAdmit int    // ADR-123 — same reading; 0 is cold start
 	AtCapacity         bool   // PR-A — true when post-admit ledger == plan MaxConcurrency
+	PreRPC             PreRPCTimings
+}
+
+// PreRPCTimings splits schedd's work before the vmmd Wake RPC, from the start
+// of the wake path to the boot inputs (schedd_wake_rpc_duration_seconds phase
+// "admit_to_rpc" starts there). Production-us measured ~157 ms of schedd
+// coordination per restore on rc.290 (schedd wait 429 ms against vmmd 272 ms)
+// that no phase covered before admission. Each field is a span in
+// milliseconds:
+//   - BeforeAdmissionMs: the wake's fast path (thaw ticket, running-instance
+//     lookup) up to this admission attempt, including an earlier attempt that
+//     an owner-cache refusal retried. Zero when the admission was not reached
+//     through Engine.Wake.
+//   - LockWaitMs: the admission's gates and acquiring the per-app lock.
+//   - ReadsMs: app, deployment, runtime values and snapshot choice.
+//   - AdmitMs: placement and the instance admission insert.
+//   - PostAdmitMs: lineage and CPU-boost writes, sidecars, secrets, receipt
+//     and binding reads before the boot inputs.
+type PreRPCTimings struct {
+	Set                                                          bool
+	BeforeAdmissionMs, LockWaitMs, ReadsMs, AdmitMs, PostAdmitMs int64
+	// PreWake splits EnsureWake's work before Engine.Wake started, which
+	// the spans above do not see; set only for wakes that came through it.
+	PreWake PreWakeTimings
+}
+
+// PreWakeTimings split the EnsureWake RPC before Engine.Wake starts, in
+// milliseconds:
+//   - AuthorizeMs: the RPC's app authorization and correlation setup.
+//   - EnvironmentMs: the app read, application-standard and financial-budget
+//     admission and the wake environment (skipped by a thaw ticket).
+//   - CoordinateMs: entering the per-app wake coordinator as its leader.
+//   - TransitionMs: the parked -> active lifecycle claim and the hand-off
+//     into Engine.Wake.
+type PreWakeTimings struct {
+	Set                                                    bool
+	AuthorizeMs, EnvironmentMs, CoordinateMs, TransitionMs int64
+}
+
+// NewPreWakeTimings derives the spans from the instants schedd stamps. Any
+// zero instant (a wake that did not come through EnsureWake, or a path that
+// skipped a step's mark) leaves them unset.
+func NewPreWakeTimings(rpcStarted, ensureStarted, environmentReady, leader, wakeStarted time.Time) PreWakeTimings {
+	for _, at := range []time.Time{rpcStarted, ensureStarted, environmentReady, leader, wakeStarted} {
+		if at.IsZero() {
+			return PreWakeTimings{}
+		}
+	}
+	ms := func(from, to time.Time) int64 {
+		if to.Before(from) {
+			return 0
+		}
+		return to.Sub(from).Milliseconds()
+	}
+	return PreWakeTimings{
+		Set:           true,
+		AuthorizeMs:   ms(rpcStarted, ensureStarted),
+		EnvironmentMs: ms(ensureStarted, environmentReady),
+		CoordinateMs:  ms(environmentReady, leader),
+		TransitionMs:  ms(leader, wakeStarted),
+	}
+}
+
+// NewPreRPCTimings derives the spans from the instants schedd stamps. A zero
+// wakeStarted means the attempt was the wake's start. A zero attempt or
+// admitted instant (a path that never admitted) leaves the timings unset.
+func NewPreRPCTimings(wakeStarted, attempt, locked, admitStarted, admitted, inputs time.Time) PreRPCTimings {
+	if attempt.IsZero() || admitted.IsZero() {
+		return PreRPCTimings{}
+	}
+	if wakeStarted.IsZero() {
+		wakeStarted = attempt
+	}
+	ms := func(from, to time.Time) int64 {
+		if to.Before(from) {
+			return 0
+		}
+		return to.Sub(from).Milliseconds()
+	}
+	return PreRPCTimings{
+		Set:               true,
+		BeforeAdmissionMs: ms(wakeStarted, attempt),
+		LockWaitMs:        ms(attempt, locked),
+		ReadsMs:           ms(locked, admitStarted),
+		AdmitMs:           ms(admitStarted, admitted),
+		PostAdmitMs:       ms(admitted, inputs),
+	}
 }
 
 // BootObserved is vmmd's narrow RPC-boundary acknowledgement. It deliberately
@@ -681,6 +768,19 @@ func (e BootStarted) Payload() map[string]any {
 	}
 	if e.ColdReason != "" {
 		p["cold_reason"] = e.ColdReason
+	}
+	if e.PreRPC.Set {
+		p["pre_rpc_before_admission_ms"] = e.PreRPC.BeforeAdmissionMs
+		p["pre_rpc_lock_wait_ms"] = e.PreRPC.LockWaitMs
+		p["pre_rpc_reads_ms"] = e.PreRPC.ReadsMs
+		p["pre_rpc_admit_ms"] = e.PreRPC.AdmitMs
+		p["pre_rpc_post_admit_ms"] = e.PreRPC.PostAdmitMs
+	}
+	if w := e.PreRPC.PreWake; w.Set {
+		p["pre_wake_authorize_ms"] = w.AuthorizeMs
+		p["pre_wake_environment_ms"] = w.EnvironmentMs
+		p["pre_wake_coordinate_ms"] = w.CoordinateMs
+		p["pre_wake_transition_ms"] = w.TransitionMs
 	}
 	return p
 }
@@ -1359,6 +1459,7 @@ func (e SidecarRestart) Payload() map[string]any {
 // sidecar. It is emitted independently of a single wake because the signal is
 // produced by guest-init's supervisor over the instance event channel.
 type SidecarHealth struct {
+	NodeID      string
 	EmitAt      time.Time
 	WakeID      string
 	AppID       string
@@ -1374,6 +1475,7 @@ func (e SidecarHealth) Subject() *string { return nil }
 func (e SidecarHealth) Payload() map[string]any {
 	return map[string]any{
 		"wake_id":      e.WakeID,
+		"node_id":      e.NodeID,
 		"app_id":       e.AppID,
 		"instance_id":  e.InstanceID,
 		"sidecar_name": e.SidecarName,
@@ -1383,9 +1485,11 @@ func (e SidecarHealth) Payload() map[string]any {
 }
 
 // AppReadiness records a continuous readiness transition for the primary app.
-// It is emitted independently of a wake so routing state can be hydrated after
-// a gateway restart and updated while an instance remains running.
+// It carries the VM wake and node identity even though it is emitted after the
+// original wake RPC. A retired loop cannot certify a replacement VM.
 type AppReadiness struct {
+	WakeID     string
+	NodeID     string
 	EmitAt     time.Time
 	AppID      string
 	InstanceID string
@@ -1398,6 +1502,8 @@ func (e AppReadiness) At() time.Time    { return e.EmitAt }
 func (e AppReadiness) Subject() *string { return nil }
 func (e AppReadiness) Payload() map[string]any {
 	return map[string]any{
+		"wake_id":     e.WakeID,
+		"node_id":     e.NodeID,
 		"app_id":      e.AppID,
 		"instance_id": e.InstanceID,
 		"source":      "primary_app",

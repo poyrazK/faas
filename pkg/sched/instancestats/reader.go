@@ -87,6 +87,9 @@ type InstanceStat struct {
 	// Frozen (ADR-1151) is true while vmmd holds the instance frozen in
 	// place.
 	Frozen bool
+	// QuietPause is vmmd's quiet pause record, which the pause ledger
+	// keeps for billing (ADR-20261023171905).
+	QuietPause sched.QuietPauseRecord
 	// LastRequestAt is the most recent ForwardHTTP start time on
 	// this instance. PR-B populates it from the vmmd
 	// ActivityTracker; PR-A leaves it zero and the poller

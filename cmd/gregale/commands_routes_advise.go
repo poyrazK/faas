@@ -143,7 +143,7 @@ func renderRouteAdviceSetting(w io.Writer, setting api.RouteAdviceSetting) {
 }
 
 func renderRouteAdvice(w io.Writer, a api.RouteAdviceResponse) {
-	_, _ = fmt.Fprintf(w, "Route advice for %s — traffic %s to %s, %ds cache what-if\n", a.Slug, a.From, a.Until, a.CacheMaxAgeSeconds)
+	_, _ = fmt.Fprintf(w, "Route advice for %s — traffic %s to %s, %ds cache what-if\n", a.Slug, analyticsWindowTime(a.From), analyticsWindowTime(a.Until), a.CacheMaxAgeSeconds)
 	if a.WindowClamped {
 		_, _ = fmt.Fprintln(w, "The window was shortened to the plan's telemetry retention.")
 	}

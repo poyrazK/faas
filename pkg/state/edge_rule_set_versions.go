@@ -127,12 +127,17 @@ func decodeEdgeRuleSnapshot(raw []byte) ([]EdgeRule, error) {
 // enforces one rule at a time to a whole restored set: a plan downgrade
 // since the version was recorded must not be bypassed by a rollback.
 func checkEdgeRuleSetQuota(rules []EdgeRule, limits api.Limits) error {
-	if len(rules) > limits.EdgeRulesPerApp {
-		return &EdgeRuleQuotaError{Limit: limits.EdgeRulesPerApp, Observed: len(rules)}
-	}
+	counted := 0
 	perKind := map[EdgeRuleKind]int{}
 	for _, r := range rules {
+		if r.AttackMode() {
+			continue
+		}
+		counted++
 		perKind[r.Kind]++
+	}
+	if counted > limits.EdgeRulesPerApp {
+		return &EdgeRuleQuotaError{Limit: limits.EdgeRulesPerApp, Observed: counted}
 	}
 	for _, c := range []struct {
 		kind  EdgeRuleKind
@@ -244,7 +249,13 @@ func (s *PgStore) RestoreEdgeRuleSetVersion(ctx context.Context, appID string, v
 	).Scan(&previousHosts); err != nil {
 		return EdgeRuleSetRestore{}, fmt.Errorf("state: read current edge-rule hosts: %w", err)
 	}
-	if _, err := tx.Exec(ctx, `delete from edge_rules where app_id = $1`, appID); err != nil {
+	// The attack-mode rule (ADR-20261021220456) is not part of the restore:
+	// the current one stays and the version's one is skipped, so a rollback
+	// during an attack neither ends attack mode nor revives a stale one.
+	if _, err := tx.Exec(ctx,
+		`delete from edge_rules where app_id = $1 and manifest_key is distinct from $2`,
+		appID, EdgeRuleAttackModeKey,
+	); err != nil {
 		return EdgeRuleSetRestore{}, fmt.Errorf("state: clear edge rules for restore: %w", err)
 	}
 	if _, err := tx.Exec(ctx, `
@@ -259,8 +270,9 @@ func (s *PgStore) RestoreEdgeRuleSetVersion(ctx context.Context, appID string, v
 		       cors_preset_id, manifest_key, name, description, expires_at, created_at,
 		       match_expr, coalesce(mode, 'enforce')
 		from jsonb_populate_recordset(null::edge_rules,
-			(select rules from edge_rule_set_versions where app_id = $1 and version = $2))`,
-		appID, version,
+			(select rules from edge_rule_set_versions where app_id = $1 and version = $2))
+		where manifest_key is distinct from $3`,
+		appID, version, EdgeRuleAttackModeKey,
 	); err != nil {
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) && pgErr.Code == pgerrcode.ForeignKeyViolation {

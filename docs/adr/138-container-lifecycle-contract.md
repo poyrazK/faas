@@ -264,3 +264,25 @@ Ordinary wakes keep the spec budgets. `handleAppWake` runs inline on the
 scheduler's main loop (ADR-191, 60 s liveness budget), so extending cold-boot
 wakes needs that wait moved off the loop first. That is tracked as a
 follow-up. Tests: `pkg/sched/prime_startup_budget_test.go`.
+
+## Amendment (2026-10-22): the startup deadline is the cold-boot window
+
+Owner decision after production-us Hunt 12 (H12-10). The deploy prime's
+startup extension above made the platform accept apps that no later cold
+boot can start: ordinary wakes keep the 30 s COLD_BOOTING budget, so an app
+that listened after 50 s deployed, served from its snapshot, and after any
+snapshot invalidation (a release, a secret change, a fresh restart, a parked
+app's stale snapshot) failed every cold boot at 30.0 s. Its requests got an
+instant 503 "Wake queue wait budget exceeded".
+
+- The startup deadline cannot exceed the cold-boot window,
+  `api.ColdBootReadyWindowS` (30 s, the scheduler's `ColdBootSweepBudget`).
+  Pro and Scale default to it (were 60 s and 120 s), and
+  `MaxAppManifestStartupDeadlineS` is 30 (was 300). A deploy whose app is not
+  ready within 30 s fails with `app_startup_timeout`, so every app the
+  platform accepts can cold boot (ADR-005).
+- Production data: 656 cold boots of 125 apps in the 14 days before the
+  change, one over 30 s (the test app). No app set `startup_deadline_s`.
+- The prime extension code stays and is inert at these caps; raising a cap
+  above the window again requires the extended cold-boot wakes described
+  above. `pkg/sched/cold_boot_window_test.go` pins the caps to the window.

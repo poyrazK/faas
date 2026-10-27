@@ -1,6 +1,7 @@
 package fleetseal
 
 import (
+	"bytes"
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
@@ -87,7 +88,7 @@ func TestMigrateAndVerifyAcrossTwelveUniqueHosts(t *testing.T) {
 		cluster: state.ClusterSigningKey{ID: 1, KeyID: kid, PublicKeyPEM: string(publicPEM), SealedBlob: clusterBlob},
 		secrets: []state.AppSecret{{AccountID: "a", AppID: "b", Scope: state.DefaultEnvScope, Key: "DATABASE_URL", Kid: legacy.Recipient().String(), Ciphertext: appBlob}},
 	}
-	report, err := Migrate(context.Background(), store, fleet, []*age.X25519Identity{legacy})
+	report, err := Migrate(context.Background(), store, fleet, []*age.X25519Identity{legacy}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -105,7 +106,7 @@ func TestMigrateAndVerifyAcrossTwelveUniqueHosts(t *testing.T) {
 	for i := 0; i < 12; i++ {
 		host, _ := age.GenerateX25519Identity()
 		seenHosts[host.Recipient().String()] = struct{}{}
-		verified, err := Verify(context.Background(), store, fleet, host)
+		verified, err := Verify(context.Background(), store, fleet, host, nil)
 		if err != nil {
 			t.Fatalf("node %d: %v", i, err)
 		}
@@ -118,9 +119,41 @@ func TestMigrateAndVerifyAcrossTwelveUniqueHosts(t *testing.T) {
 	}
 }
 
+// TestMigrateLeavesRowsOfOtherSealDomains pins ADR 20261022111812: a row
+// re-sealed to a seal domain (runtime) is not fleet material any more, and
+// fleet-seal migrate leaves it alone instead of failing on it.
+func TestMigrateLeavesRowsOfOtherSealDomains(t *testing.T) {
+	legacy, _ := age.GenerateX25519Identity()
+	fleet, _ := age.GenerateX25519Identity()
+	runtime, _ := age.GenerateX25519Identity()
+	privatePEM, publicPEM, kid := signingKey(t)
+	clusterBlob, err := secretbox.SealBytes(fleet.Recipient(), "internal_svc", privatePEM, 4096)
+	if err != nil {
+		t.Fatal(err)
+	}
+	domainBlob, err := secretbox.SealOne(runtime.Recipient(), "API_KEY", "sk-domain", 1024)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := &fakeStore{
+		cluster: state.ClusterSigningKey{ID: 1, KeyID: kid, PublicKeyPEM: string(publicPEM), SealedBlob: clusterBlob},
+		secrets: []state.AppSecret{{AccountID: "a", AppID: "b", Scope: state.DefaultEnvScope, Key: "API_KEY", Kid: runtime.Recipient().String(), Ciphertext: domainBlob}},
+	}
+	report, err := Migrate(context.Background(), store, fleet, []*age.X25519Identity{legacy}, nil)
+	if err != nil {
+		t.Fatalf("migrate failed on a seal-domain row: %v", err)
+	}
+	if report.SecretsInOtherDomains != 1 || report.SecretsResealed != 0 {
+		t.Fatalf("report = %+v; want the domain row skipped", report)
+	}
+	if env, err := secretbox.Open(runtime, store.secrets[0].Ciphertext); err != nil || env["API_KEY"] != "sk-domain" {
+		t.Fatalf("domain row changed: %v, %v", env, err)
+	}
+}
+
 func TestVerifyRejectsHostIdentityEqualToFleet(t *testing.T) {
 	fleet, _ := age.GenerateX25519Identity()
-	if _, err := Verify(context.Background(), &fakeStore{}, fleet, fleet); err == nil {
+	if _, err := Verify(context.Background(), &fakeStore{}, fleet, fleet, nil); err == nil {
 		t.Fatal("expected replaced host identity to fail")
 	}
 }
@@ -139,10 +172,10 @@ func TestMigrateNormalizesLegacyNamespaceAlreadySealedToFleet(t *testing.T) {
 		PublicKeyPEM: string(publicPEM),
 		SealedBlob:   clusterBlob,
 	}}
-	if _, err := Migrate(context.Background(), store, fleet, nil); err != nil {
+	if _, err := Migrate(context.Background(), store, fleet, nil, nil); err != nil {
 		t.Fatal(err)
 	}
-	verified, err := Verify(context.Background(), store, fleet, host)
+	verified, err := Verify(context.Background(), store, fleet, host, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -173,7 +206,7 @@ func TestMigrateCreatesClusterKeyForNewFleet(t *testing.T) {
 	fleet, _ := age.GenerateX25519Identity()
 	other, _ := age.GenerateX25519Identity()
 	store := &fakeStore{}
-	report, err := Migrate(context.Background(), store, fleet, nil)
+	report, err := Migrate(context.Background(), store, fleet, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -192,13 +225,13 @@ func TestMigrateCreatesClusterKeyForNewFleet(t *testing.T) {
 	}
 	for i := 0; i < 3; i++ {
 		host, _ := age.GenerateX25519Identity()
-		verified, err := Verify(context.Background(), store, fleet, host)
+		verified, err := Verify(context.Background(), store, fleet, host, nil)
 		if err != nil || !verified.Ready || !verified.JWTRoundTripOK {
 			t.Fatalf("host %d: %+v, %v", i, verified, err)
 		}
 	}
 
-	again, err := Migrate(context.Background(), store, fleet, nil)
+	again, err := Migrate(context.Background(), store, fleet, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -218,11 +251,44 @@ func TestMigrateAdoptsConcurrentlyCreatedClusterKey(t *testing.T) {
 	}
 	winner := state.ClusterSigningKey{ID: 1, KeyID: kid, PublicKeyPEM: string(publicPEM), SealedBlob: blob}
 	store := &fakeStore{concurrentCreate: &winner}
-	report, err := Migrate(context.Background(), store, fleet, nil)
+	report, err := Migrate(context.Background(), store, fleet, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if report.ClusterKeyCreated || report.ClusterKID != kid || store.cluster.KeyID != kid {
 		t.Fatalf("loser did not adopt the winner's key: %+v row=%s", report, store.cluster.KeyID)
+	}
+}
+
+// TestControlSealedClusterKey pins ADR 20261022111812's control domain: once
+// the cluster key is sealed to the control identity alone, fleet-seal migrate
+// leaves it there instead of re-sealing it to fleet, and verify proves the
+// shared-kid round trip with the control identity; a node without it fails.
+func TestControlSealedClusterKey(t *testing.T) {
+	fleet, _ := age.GenerateX25519Identity()
+	control, _ := age.GenerateX25519Identity()
+	privatePEM, publicPEM, kid := signingKey(t)
+	blob, err := secretbox.SealBytes(control.Recipient(), "internal_svc", privatePEM, 4096)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := &fakeStore{cluster: state.ClusterSigningKey{ID: 1, KeyID: kid, PublicKeyPEM: string(publicPEM), SealedBlob: blob}}
+	if _, err := Migrate(context.Background(), store, fleet, nil, nil); err == nil {
+		t.Fatal("migrate without the control identity passed over a key it cannot open")
+	}
+	report, err := Migrate(context.Background(), store, fleet, nil, []*age.X25519Identity{control})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report.ClusterKeySealedTo != "control" || !bytes.Equal(store.cluster.SealedBlob, blob) {
+		t.Fatalf("report %+v; the control-sealed key was re-sealed", report)
+	}
+	host, _ := age.GenerateX25519Identity()
+	verified, err := Verify(context.Background(), store, fleet, host, []*age.X25519Identity{control})
+	if err != nil || !verified.Ready || !verified.JWTRoundTripOK || verified.ClusterKeySealedTo != "control" {
+		t.Fatalf("verify with the control identity = %+v, %v", verified, err)
+	}
+	if _, err := Verify(context.Background(), store, fleet, host, nil); err == nil {
+		t.Fatal("verify passed on a node without the control identity")
 	}
 }

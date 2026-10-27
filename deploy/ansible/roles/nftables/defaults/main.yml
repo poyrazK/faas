@@ -83,6 +83,8 @@ faas_control_plane_allowed_ports:
   - 8080
   - 9091
   - 9092
+  # gatewayd-internal's private control listener (ADR-20261022004500).
+  - 9097
   - 9100
   - 9102
   - 9103
@@ -98,6 +100,10 @@ faas_edge_peer_gateway_port: 8080
 # The edge's Cloudflare Tunnel connector exposes its metrics here; the control
 # plane scrapes it per node (gatewayd_public_edge_service).
 faas_edge_connector_metrics_port: 20241
+# The edge's own control listener (readiness, metrics), which the control
+# plane probes and scrapes. Not 9092: gatewayd-internal's egress listener
+# holds that on a compute node (daemonunitspec.ComputeEdgeControlPort).
+faas_edge_control_port: 9109
 
 # Raw TCP app listeners are opt-in and fail closed. When enabled, only the
 # explicitly listed client CIDRs can reach the reserved public range.

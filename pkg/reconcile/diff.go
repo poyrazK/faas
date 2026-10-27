@@ -17,6 +17,7 @@ package reconcile
 import (
 	"maps"
 	"reflect"
+	"slices"
 	"strings"
 
 	"github.com/onebox-faas/faas/pkg/reposcan"
@@ -278,6 +279,9 @@ func diffFieldsChanged(a state.App, w reposcan.Workload, startCmd string, availa
 	if a.Manifest.DockerfileBuild.SHA256() != w.DockerfileBuild.SHA256() {
 		changed = append(changed, "dockerfile_build")
 	}
+	if a.Manifest.BuildGoCommand != w.GoCommand {
+		changed = append(changed, "go_command")
+	}
 	imageManifest := state.AppManifest{}
 	applyProjectImage(&imageManifest, w)
 	if a.Manifest.ProjectImage != imageManifest.ProjectImage {
@@ -292,6 +296,10 @@ func diffFieldsChanged(a state.App, w reposcan.Workload, startCmd string, availa
 	if !reflect.DeepEqual(a.Manifest.ProjectImageProcess, imageManifest.ProjectImageProcess) {
 		changed = append(changed, "image_process")
 	}
+	if !slices.Equal(a.Manifest.ProjectSecretFiles, imageManifest.ProjectSecretFiles) {
+		changed = append(changed, "secret_files")
+	}
+	changed = append(changed, composeResourcesChanged(a, w)...)
 	if !maps.Equal(a.Manifest.ProjectDependencyConditions, w.DependsOnConditions) {
 		changed = append(changed, "dependency_conditions")
 	}

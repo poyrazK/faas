@@ -89,10 +89,10 @@ def sync_detailed(
 
      Cookie-session-authenticated (NOT API-key). Hydrates the
     dashboard bind picker's repo dropdown. Returns the repos
-    visible to the user's GitHub App installation — githubd
+    visible to the user's GitHub App installation — the GitHub integration
     resolves the per-install token from the session's account.
 
-    ADR-1345 / §11: the exact installation must be durably connected to
+    the exact installation must be durably connected to
     the session's Gregale account before any GitHub call. A separate
     GitHub sign-in claim is not required. Live installation verification
     and account-scoped repository access checks still apply.
@@ -102,7 +102,7 @@ def sync_detailed(
             `POST /v1/apps/{slug}/install/bind`. Carries the
             (installation_id, repo_full_name, production_branch) tuple
             the dashboard's bind picker commits. `production_branch` is
-            optional — when omitted, githubd uses the install's
+            optional — when omitted, the GitHub integration uses the install's
             `default_branch` from `/installations/{id}`.
             Binding requires a `csrf_token` issued for `bind_app_to_repo`
             by `GET /v1/auth/csrf` and its matching HttpOnly cookie.
@@ -135,10 +135,10 @@ def sync(
 
      Cookie-session-authenticated (NOT API-key). Hydrates the
     dashboard bind picker's repo dropdown. Returns the repos
-    visible to the user's GitHub App installation — githubd
+    visible to the user's GitHub App installation — the GitHub integration
     resolves the per-install token from the session's account.
 
-    ADR-1345 / §11: the exact installation must be durably connected to
+    the exact installation must be durably connected to
     the session's Gregale account before any GitHub call. A separate
     GitHub sign-in claim is not required. Live installation verification
     and account-scoped repository access checks still apply.
@@ -148,7 +148,7 @@ def sync(
             `POST /v1/apps/{slug}/install/bind`. Carries the
             (installation_id, repo_full_name, production_branch) tuple
             the dashboard's bind picker commits. `production_branch` is
-            optional — when omitted, githubd uses the install's
+            optional — when omitted, the GitHub integration uses the install's
             `default_branch` from `/installations/{id}`.
             Binding requires a `csrf_token` issued for `bind_app_to_repo`
             by `GET /v1/auth/csrf` and its matching HttpOnly cookie.
@@ -176,10 +176,10 @@ async def asyncio_detailed(
 
      Cookie-session-authenticated (NOT API-key). Hydrates the
     dashboard bind picker's repo dropdown. Returns the repos
-    visible to the user's GitHub App installation — githubd
+    visible to the user's GitHub App installation — the GitHub integration
     resolves the per-install token from the session's account.
 
-    ADR-1345 / §11: the exact installation must be durably connected to
+    the exact installation must be durably connected to
     the session's Gregale account before any GitHub call. A separate
     GitHub sign-in claim is not required. Live installation verification
     and account-scoped repository access checks still apply.
@@ -189,7 +189,7 @@ async def asyncio_detailed(
             `POST /v1/apps/{slug}/install/bind`. Carries the
             (installation_id, repo_full_name, production_branch) tuple
             the dashboard's bind picker commits. `production_branch` is
-            optional — when omitted, githubd uses the install's
+            optional — when omitted, the GitHub integration uses the install's
             `default_branch` from `/installations/{id}`.
             Binding requires a `csrf_token` issued for `bind_app_to_repo`
             by `GET /v1/auth/csrf` and its matching HttpOnly cookie.
@@ -220,10 +220,10 @@ async def asyncio(
 
      Cookie-session-authenticated (NOT API-key). Hydrates the
     dashboard bind picker's repo dropdown. Returns the repos
-    visible to the user's GitHub App installation — githubd
+    visible to the user's GitHub App installation — the GitHub integration
     resolves the per-install token from the session's account.
 
-    ADR-1345 / §11: the exact installation must be durably connected to
+    the exact installation must be durably connected to
     the session's Gregale account before any GitHub call. A separate
     GitHub sign-in claim is not required. Live installation verification
     and account-scoped repository access checks still apply.
@@ -233,7 +233,7 @@ async def asyncio(
             `POST /v1/apps/{slug}/install/bind`. Carries the
             (installation_id, repo_full_name, production_branch) tuple
             the dashboard's bind picker commits. `production_branch` is
-            optional — when omitted, githubd uses the install's
+            optional — when omitted, the GitHub integration uses the install's
             `default_branch` from `/installations/{id}`.
             Binding requires a `csrf_token` issued for `bind_app_to_repo`
             by `GET /v1/auth/csrf` and its matching HttpOnly cookie.

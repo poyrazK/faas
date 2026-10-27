@@ -36,6 +36,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/financial"
 	"github.com/onebox-faas/faas/pkg/jobresult"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/wire"
 	"github.com/onebox-faas/faas/pkg/workpolicy"
 )
 
@@ -287,7 +288,7 @@ func (e *Engine) wakeJobOnce(ctx context.Context, accountID, runID string, taskI
 	//
 	//    On any create-instance failure, release the lease + ledger slot. The
 	//    task has not been claimed yet, so it remains queued for the next tick.
-	if _, err := e.store.CreateAndClaimJobInstance(nodePlacementContext(ctx, placement), instanceID, job.ID, runID, taskIndex, string(state.StateColdBooting), ramMB, nodeID, instanceID, string(tok), leaseExpires, e.ownerNodeID); err != nil {
+	if _, err := e.store.CreateAndClaimJobInstance(e.nodePlacementContext(ctx, placement), instanceID, job.ID, runID, taskIndex, string(state.StateColdBooting), ramMB, nodeID, instanceID, string(tok), leaseExpires, e.ownerNodeID); err != nil {
 		e.rollbackUnclaimedJobAdmission(ctx, instanceID, tok, "")
 		return JobWakeResult{}, fmt.Errorf("sched: WakeJob create and claim instance: %w", err)
 	}
@@ -1289,6 +1290,14 @@ func (e *Engine) DispatchJobsTick(ctx context.Context) error {
 		if err != nil {
 			return fmt.Errorf("sched: dispatchJobsTick resolve account: %w", err)
 		}
+		// ADR-20261023115741: jobs switched off for the account stay queued.
+		if !e.accountCapabilityAllowed(account, "jobs") {
+			e.jobDispatchMetrics.Observe(wire.JobDispatchCapability)
+			if err := e.store.JobTaskDeferQueued(ctx, t.RunID, t.TaskIndex, t.Attempt, time.Now().Add(capabilityDeferral)); err != nil && !errors.Is(err, state.ErrNotFound) {
+				return fmt.Errorf("sched: defer capability-held job task: %w", err)
+			}
+			continue
+		}
 		plan := account.Plan
 		if plan == api.PlanFree {
 			// Free plans are 404 at apid; if a row sneaks through
@@ -1298,6 +1307,7 @@ func (e *Engine) DispatchJobsTick(ctx context.Context) error {
 		}
 		planIdx := plan.PlanIndex()
 		if cap := api.JobConcurrentPerAccount[planIdx]; concurrent >= cap {
+			e.jobDispatchMetrics.Observe(wire.JobDispatchAccountCapacity)
 			if run.ExecutionClass == "flexible" {
 				e.jobFlexibleMetrics.DeferredTask("account_capacity")
 			}
@@ -1312,6 +1322,7 @@ func (e *Engine) DispatchJobsTick(ctx context.Context) error {
 		// task. The task stays queued until the cap is raised or the month
 		// rolls over; it is never failed for the cap.
 		if e.spendCapReached(ctx, run.AccountID) {
+			e.jobDispatchMetrics.Observe(wire.JobDispatchSpendCap)
 			if run.ExecutionClass == "flexible" {
 				e.jobFlexibleMetrics.DeferredTask("spend_cap")
 			}
@@ -1321,8 +1332,17 @@ func (e *Engine) DispatchJobsTick(ctx context.Context) error {
 			continue
 		}
 		if _, err := e.WakeJob(ctx, run.AccountID, t.RunID, t.TaskIndex); err != nil {
+			e.jobDispatchMetrics.Observe(jobDispatchResult(err))
 			if run.ExecutionClass == "flexible" {
 				e.jobFlexibleMetrics.DeferredTask("wake_error")
+			}
+			if errors.Is(err, ErrPermanentWake) {
+				// An inactive account starts nothing; check again later rather
+				// than every tick.
+				if err := e.store.JobTaskDeferQueued(ctx, t.RunID, t.TaskIndex, t.Attempt, time.Now().Add(capabilityDeferral)); err != nil && !errors.Is(err, state.ErrNotFound) {
+					return fmt.Errorf("sched: defer inactive-account job task: %w", err)
+				}
+				continue
 			}
 			if errors.Is(err, state.ErrJobQuotaExceeded) || financialJobBudgetDenied(err) || errors.Is(err, financial.ErrComputeUnavailable) {
 				// Recheck capacity shortly; monetary holds use the same bounded
@@ -1341,11 +1361,36 @@ func (e *Engine) DispatchJobsTick(ctx context.Context) error {
 			// Before-claim errors leave the task queued. WakeJob settles any
 			// claimed boot failure itself, including retry backoff. Requeueing
 			// here would erase that backoff or race a successful exit.
-		} else if run.ExecutionClass == "flexible" {
-			e.jobFlexibleMetrics.StartedTask(run.CreatedAt)
+		} else {
+			e.jobDispatchMetrics.Observe(wire.JobDispatchStarted)
+			if run.ExecutionClass == "flexible" {
+				e.jobFlexibleMetrics.StartedTask(run.CreatedAt)
+			}
 		}
 	}
 	return nil
+}
+
+// jobDispatchResult names why WakeJob did not start a ready task, separating
+// customer limits and benign races from the platform failing to start it.
+func jobDispatchResult(err error) string {
+	switch {
+	case errors.Is(err, state.ErrJobQuotaExceeded):
+		return wire.JobDispatchQuota
+	case financialJobBudgetDenied(err):
+		return wire.JobDispatchBudget
+	case errors.Is(err, financial.ErrComputeUnavailable):
+		return wire.JobDispatchComputeUnavailable
+	case errors.Is(err, ErrPermanentWake):
+		return wire.JobDispatchAccountInactive
+	case errors.Is(err, ErrJobTaskAlreadyClaimed), errors.Is(err, ErrJobRetryBackoff),
+		errors.Is(err, ErrJobRunNotEligible), errors.Is(err, ErrJobNotActive), errors.Is(err, ErrJobImageNotReady):
+		return wire.JobDispatchNotReady
+	case isCapacityProblem(err), errors.Is(err, state.ErrNodeCapacity):
+		return wire.JobDispatchNodeCapacity
+	default:
+		return wire.JobDispatchWakeError
+	}
 }
 
 // ----------------------------------------------------------------------------

@@ -9,6 +9,7 @@ from attrs import field as _attrs_field
 from ..models.plan_workload_action import PlanWorkloadAction, check_plan_workload_action
 from ..models.plan_workload_class import PlanWorkloadClass, check_plan_workload_class
 from ..models.plan_workload_tier import PlanWorkloadTier, check_plan_workload_tier
+from ..models.plan_workload_visibility import PlanWorkloadVisibility, check_plan_workload_visibility
 from ..models.preview_service_calls_policy import PreviewServiceCallsPolicy, check_preview_service_calls_policy
 from ..models.service_binding_policy import ServiceBindingPolicy, check_service_binding_policy
 from ..models.service_binding_transport import ServiceBindingTransport, check_service_binding_transport
@@ -17,8 +18,11 @@ from ..types import UNSET, Unset
 if TYPE_CHECKING:
     from ..models.compose_healthcheck import ComposeHealthcheck
     from ..models.compose_process import ComposeProcess
+    from ..models.compose_resources import ComposeResources
     from ..models.plan_detected_by import PlanDetectedBy
     from ..models.plan_workload_depends_on_conditions import PlanWorkloadDependsOnConditions
+    from ..models.plan_workload_unset_env_key_reasons import PlanWorkloadUnsetEnvKeyReasons
+    from ..models.secret_file import SecretFile
     from ..models.service_caller_scopes import ServiceCallerScopes
     from ..models.service_reliability_policies import ServiceReliabilityPolicies
 
@@ -42,10 +46,13 @@ class PlanWorkload:
     app_slug: str | Unset = UNSET
     """Reviewed Gregale app name. Repository name, dependencies and configuration keys retain their original
     identity. Present for migration scans, existing allocations, and new workloads whose name cannot be a slug,
-    which get the project-prefixed name (ADR-20261022120205)."""
+    which get the project-prefixed name."""
     platform_tenant_required: bool | Unset = UNSET
     """Requested customer identity policy from Compose x-gregale-platform-tenant-required or the request override.
     Omitted preserves existing app policy; new apps default to false."""
+    visibility: PlanWorkloadVisibility | Unset = UNSET
+    """Present when the app is or will be internal (no public route): an existing internal app, or a new Compose
+    service without `ports:`. Omitted means public."""
     dockerfile: str | Unset = UNSET
     image: str | Unset = UNSET
     """Normalized prebuilt OCI image for a workload without build. Tags are resolved and pinned by the image worker
@@ -56,13 +63,19 @@ class PlanWorkload:
     image settings. NONE disables the check. Durations retain nanosecond precision; positive durations must be at
     least 1ms."""
     image_process: ComposeProcess | Unset = UNSET
-    """Compose process overrides for a prebuilt image (ADR-1337). Omitted fields inherit the image's ENTRYPOINT,
-    USER, WORKDIR and stop settings."""
+    """Compose process overrides for a prebuilt image. Omitted fields inherit the image's ENTRYPOINT, USER, WORKDIR
+    and stop settings."""
     build_target: str | Unset = UNSET
-    """Dockerfile stage a source-built Compose service builds (build.target, ADR-20261019142544). Omitted builds
-    the final stage."""
+    """Dockerfile stage a source-built Compose service builds (build.target). Omitted builds the final stage."""
     build_args: list[str] | Unset = UNSET
     """Names of the Compose build.args passed to the Dockerfile build, sorted. Values are not returned."""
+    go_command: str | Unset = UNSET
+    """The cmd/<name> main package this service builds from the root of a Go module with several commands."""
+    secret_files: list[SecretFile] | Unset = UNSET
+    """Compose secrets written to /run/secrets."""
+    resources: ComposeResources | Unset = UNSET
+    """A Compose service's deploy.replicas and deploy.resources.limits, converted to app settings. Omitted fields
+    are undeclared and keep the app's own settings."""
     depends_on: list[str] | Unset = UNSET
     """Compose service dependencies. The apply path validates the graph, deploys in dependency order, and injects
     GREGALE_SERVICE_<NAME>_URL plus GREGALE_SERVICE_<NAME>_HTTPS_URL for workload dependencies."""
@@ -72,7 +85,7 @@ class PlanWorkload:
     service_binding_policy: ServiceBindingPolicy | Unset = UNSET
     """Caller-side authorization policy for internal service requests. `account` preserves same-account
     reachability; `declared` permits only targets present in the caller's service bindings; `project` also permits
-    every service in the caller's own project (ADR-20261022111119)."""
+    every service in the caller's own project."""
     service_reliability: ServiceReliabilityPolicies | Unset = UNSET
     """Map of declared target service names to caller-owned reliability policies. Only names in this app's service
     bindings may appear."""
@@ -92,19 +105,27 @@ class PlanWorkload:
     schedule: str | Unset = UNSET
     """cron expression when declared (CronJob, render, serverless)"""
     env_keys: list[str] | Unset = UNSET
-    """KEYS only — never values; spec §11 forbids logging secrets"""
+    """KEYS only — never values; forbids logging secrets"""
     required_env_keys: list[str] | Unset = UNSET
     """Explicit names from .gregale/required-secrets.json. Detected env_keys alone do not establish requirements."""
+    unset_env_keys: list[str] | Unset = UNSET
+    """Names from env_keys and required_env_keys that will have no value in the selected environment: not
+    configured on the app and not provided by the platform. Names only, never values."""
+    unset_env_key_reasons: PlanWorkloadUnsetEnvKeyReasons | Unset = UNSET
+    """For an unset_env_keys name with a Compose value, why that value is not imported. Never values."""
+    imported_env_keys: list[str] | Unset = UNSET
+    """Compose environment names whose plain values apply will write, because the project sets x-gregale-env-
+    import: true and they are unset. Names only."""
     source: str | Unset = UNSET
     """detector provenance, e.g. compose.yaml: api"""
     tier: PlanWorkloadTier | Unset = UNSET
     action: PlanWorkloadAction | Unset = UNSET
-    """ADR-124 blast-radius projection. create = workload is new to the account; update = existing app matches
-    (root_dir, name)."""
+    """Blast-radius projection. create = workload is new to the account; update = existing app matches (root_dir,
+    name)."""
     existing_app_id: str | Unset = UNSET
-    """ADR-124: app row ID the update targets. Empty iff action == create."""
+    """App row ID the update targets. Empty iff action == create."""
     detected_by: PlanDetectedBy | Unset = UNSET
-    """Structured detection trace for one workload (issue #742).
+    """Structured detection trace for one workload.
     `source` on PlanWorkload carries the same provenance as free
     text ("compose.yaml: api"); this is the machine-readable form
     so a client can branch on the detector without parsing it.
@@ -129,6 +150,10 @@ class PlanWorkload:
 
         platform_tenant_required = self.platform_tenant_required
 
+        visibility: str | Unset = UNSET
+        if not isinstance(self.visibility, Unset):
+            visibility = self.visibility
+
         dockerfile = self.dockerfile
 
         image = self.image
@@ -146,6 +171,19 @@ class PlanWorkload:
         build_args: list[str] | Unset = UNSET
         if not isinstance(self.build_args, Unset):
             build_args = self.build_args
+
+        go_command = self.go_command
+
+        secret_files: list[dict[str, Any]] | Unset = UNSET
+        if not isinstance(self.secret_files, Unset):
+            secret_files = []
+            for secret_files_item_data in self.secret_files:
+                secret_files_item = secret_files_item_data.to_dict()
+                secret_files.append(secret_files_item)
+
+        resources: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.resources, Unset):
+            resources = self.resources.to_dict()
 
         depends_on: list[str] | Unset = UNSET
         if not isinstance(self.depends_on, Unset):
@@ -193,6 +231,18 @@ class PlanWorkload:
         if not isinstance(self.required_env_keys, Unset):
             required_env_keys = self.required_env_keys
 
+        unset_env_keys: list[str] | Unset = UNSET
+        if not isinstance(self.unset_env_keys, Unset):
+            unset_env_keys = self.unset_env_keys
+
+        unset_env_key_reasons: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.unset_env_key_reasons, Unset):
+            unset_env_key_reasons = self.unset_env_key_reasons.to_dict()
+
+        imported_env_keys: list[str] | Unset = UNSET
+        if not isinstance(self.imported_env_keys, Unset):
+            imported_env_keys = self.imported_env_keys
+
         source = self.source
 
         tier: str | Unset = UNSET
@@ -225,6 +275,8 @@ class PlanWorkload:
             field_dict["app_slug"] = app_slug
         if platform_tenant_required is not UNSET:
             field_dict["platform_tenant_required"] = platform_tenant_required
+        if visibility is not UNSET:
+            field_dict["visibility"] = visibility
         if dockerfile is not UNSET:
             field_dict["dockerfile"] = dockerfile
         if image is not UNSET:
@@ -237,6 +289,12 @@ class PlanWorkload:
             field_dict["build_target"] = build_target
         if build_args is not UNSET:
             field_dict["build_args"] = build_args
+        if go_command is not UNSET:
+            field_dict["go_command"] = go_command
+        if secret_files is not UNSET:
+            field_dict["secret_files"] = secret_files
+        if resources is not UNSET:
+            field_dict["resources"] = resources
         if depends_on is not UNSET:
             field_dict["depends_on"] = depends_on
         if depends_on_conditions is not UNSET:
@@ -261,6 +319,12 @@ class PlanWorkload:
             field_dict["env_keys"] = env_keys
         if required_env_keys is not UNSET:
             field_dict["required_env_keys"] = required_env_keys
+        if unset_env_keys is not UNSET:
+            field_dict["unset_env_keys"] = unset_env_keys
+        if unset_env_key_reasons is not UNSET:
+            field_dict["unset_env_key_reasons"] = unset_env_key_reasons
+        if imported_env_keys is not UNSET:
+            field_dict["imported_env_keys"] = imported_env_keys
         if source is not UNSET:
             field_dict["source"] = source
         if tier is not UNSET:
@@ -278,8 +342,11 @@ class PlanWorkload:
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         from ..models.compose_healthcheck import ComposeHealthcheck
         from ..models.compose_process import ComposeProcess
+        from ..models.compose_resources import ComposeResources
         from ..models.plan_detected_by import PlanDetectedBy
         from ..models.plan_workload_depends_on_conditions import PlanWorkloadDependsOnConditions
+        from ..models.plan_workload_unset_env_key_reasons import PlanWorkloadUnsetEnvKeyReasons
+        from ..models.secret_file import SecretFile
         from ..models.service_caller_scopes import ServiceCallerScopes
         from ..models.service_reliability_policies import ServiceReliabilityPolicies
 
@@ -297,6 +364,13 @@ class PlanWorkload:
         app_slug = d.pop("app_slug", UNSET)
 
         platform_tenant_required = d.pop("platform_tenant_required", UNSET)
+
+        _visibility = d.pop("visibility", UNSET)
+        visibility: PlanWorkloadVisibility | Unset
+        if isinstance(_visibility, Unset):
+            visibility = UNSET
+        else:
+            visibility = check_plan_workload_visibility(_visibility)
 
         dockerfile = d.pop("dockerfile", UNSET)
 
@@ -319,6 +393,24 @@ class PlanWorkload:
         build_target = d.pop("build_target", UNSET)
 
         build_args = cast(list[str], d.pop("build_args", UNSET))
+
+        go_command = d.pop("go_command", UNSET)
+
+        _secret_files = d.pop("secret_files", UNSET)
+        secret_files: list[SecretFile] | Unset = UNSET
+        if _secret_files is not UNSET:
+            secret_files = []
+            for secret_files_item_data in _secret_files:
+                secret_files_item = SecretFile.from_dict(secret_files_item_data)
+
+                secret_files.append(secret_files_item)
+
+        _resources = d.pop("resources", UNSET)
+        resources: ComposeResources | Unset
+        if isinstance(_resources, Unset):
+            resources = UNSET
+        else:
+            resources = ComposeResources.from_dict(_resources)
 
         depends_on = cast(list[str], d.pop("depends_on", UNSET))
 
@@ -379,6 +471,17 @@ class PlanWorkload:
 
         required_env_keys = cast(list[str], d.pop("required_env_keys", UNSET))
 
+        unset_env_keys = cast(list[str], d.pop("unset_env_keys", UNSET))
+
+        _unset_env_key_reasons = d.pop("unset_env_key_reasons", UNSET)
+        unset_env_key_reasons: PlanWorkloadUnsetEnvKeyReasons | Unset
+        if isinstance(_unset_env_key_reasons, Unset):
+            unset_env_key_reasons = UNSET
+        else:
+            unset_env_key_reasons = PlanWorkloadUnsetEnvKeyReasons.from_dict(_unset_env_key_reasons)
+
+        imported_env_keys = cast(list[str], d.pop("imported_env_keys", UNSET))
+
         source = d.pop("source", UNSET)
 
         _tier = d.pop("tier", UNSET)
@@ -412,12 +515,16 @@ class PlanWorkload:
             public_url=public_url,
             app_slug=app_slug,
             platform_tenant_required=platform_tenant_required,
+            visibility=visibility,
             dockerfile=dockerfile,
             image=image,
             image_healthcheck=image_healthcheck,
             image_process=image_process,
             build_target=build_target,
             build_args=build_args,
+            go_command=go_command,
+            secret_files=secret_files,
+            resources=resources,
             depends_on=depends_on,
             depends_on_conditions=depends_on_conditions,
             service_binding_policy=service_binding_policy,
@@ -430,6 +537,9 @@ class PlanWorkload:
             schedule=schedule,
             env_keys=env_keys,
             required_env_keys=required_env_keys,
+            unset_env_keys=unset_env_keys,
+            unset_env_key_reasons=unset_env_key_reasons,
+            imported_env_keys=imported_env_keys,
             source=source,
             tier=tier,
             action=action,

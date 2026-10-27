@@ -170,6 +170,32 @@ seconds. Send a ping or an application heartbeat at least every 60 seconds,
 and reconnect when the connection closes. A connection that carries traffic
 stays open.
 
+## Public gRPC
+
+When Gregale itself refuses a gRPC call, before it reaches your app, the
+client receives a gRPC status, not an HTTP error page. Examples are a missing
+bearer token, a rate limit, a timed-out wake, or maintenance. `grpc-message`
+carries the reason and the stable problem code, for example
+`Authentication required: … (unauthorized)`.
+
+| Refusal (HTTP) | gRPC status |
+|---|---|
+| 400, 422 | `INVALID_ARGUMENT` |
+| 401 | `UNAUTHENTICATED` |
+| 402, 412, 428 | `FAILED_PRECONDITION` |
+| 403 | `PERMISSION_DENIED` |
+| 404, 410 | `NOT_FOUND` |
+| 405, 501 | `UNIMPLEMENTED` |
+| 408, 504 | `DEADLINE_EXCEEDED` |
+| 409 | `ABORTED` |
+| 413, 431, 429 | `RESOURCE_EXHAUSTED` |
+| 500 | `INTERNAL` |
+| 502, 503 | `UNAVAILABLE` |
+| anything else | `UNKNOWN` |
+
+Your app's own gRPC responses, including their `grpc-status` trailers, pass
+through unchanged. gRPC-Web requests are not translated.
+
 ## Internal services
 
 Apps in the same account reach one another by name, on every plan. There is no
@@ -246,15 +272,34 @@ bindings <app>` reports the effective transport.
 
 The same declared edges are exposed as service bindings by the app API and by
 `gregale bindings public-api`, alongside database, object-storage, queue,
-and outbound integration bindings. New project workloads use the `declared` caller policy: the gateway
-returns 403 for calls to services not listed in `depends_on`. Existing apps
-retain their persisted policy on reapply. To let a workload call every service
-in its own project without listing each one, set
-`x-gregale-service-policy: project` on the caller
-([ADR-20261022111119](adr/20261022111119-project-service-binding-policy.md)).
-Calls to services outside the project still need `depends_on`, and a target's
-`x-gregale-allow-callers` list still applies. An undeclared sibling has no
-injected URL or `.internal` alias; call it at
+and outbound integration bindings. New project workloads use the `project`
+caller policy
+([ADR-20261022111119](adr/20261022111119-project-service-binding-policy.md)):
+they may call every service in their own project without listing it, while
+calls to services outside the project need `depends_on` and get 403 without
+it. A target's `x-gregale-allow-callers` list still applies. Existing apps
+retain their persisted policy on reapply; set `x-gregale-service-policy:
+project` on a service to move it over, or `declared` to require `depends_on`
+for every call. A top-level `x-gregale-service-policy` sets the policy of
+every service that sets none, which moves a whole project over in one change:
+
+```yaml
+x-gregale-service-policy: project
+services:
+  web:
+    build: ./web
+  billing:
+    build: ./billing
+```
+
+A repository without Compose declares the same policy, per-service
+visibility and `depends_on` in `.gregale/project.yaml`
+([ADR-20261025093331](adr/20261025093331-project-config-and-whole-project-previews.md));
+a Compose declaration wins where both set a policy.
+
+An undeclared sibling has no injected URL; call it at
+`http://<name>.internal:10081`
+([ADR-20261022160248](adr/20261022160248-project-internal-aliases.md)) or
 `http://<app-slug>.svc.gregale:10081`. For an intentional same-account escape
 hatch, set `x-gregale-service-policy: account` on the caller. Under the
 `declared` policy the CLI reports service bindings as `enforced`; under
@@ -580,7 +625,12 @@ The target can independently restrict who calls it with
 not other same-account apps, even if they declare a dependency on `billing`.
 An omitted list preserves legacy same-account reachability; `[]` denies every
 internal caller. The list accepts at most 100 logical app slugs, not generated
-PR preview names. This target check runs before routing or waking `billing`. Preview callers
+PR preview names. In a project, a name in the list (or in
+`x-gregale-allow-call-scopes`) is a Compose service of the target's project,
+even when that service has a project-prefixed slug
+([ADR-20261022120205](adr/20261022120205-project-prefixed-app-slugs.md)). An
+app outside the project matches by its slug only when no service of the
+target's project has that name. This target check runs before routing or waking `billing`. Preview callers
 must also pass the existing project and target preview policies.
 
 For least-privilege access, a target can grant each caller only specific HTTP
@@ -658,9 +708,11 @@ project source instead. Binding declarations do not expose services publicly.
 
 Bound services can also be called through the short private alias
 `http://billing.internal:10081`. Gregale's node-local DNS answers that name
-only for a VM whose app declares a `billing` binding. A direct request to the
-service proxy with `Host: billing.internal` is checked against the same binding
-inventory, so bypassing DNS cannot grant access. The existing same-account,
+only for a VM whose app declares a `billing` binding, or, under the `project`
+service policy, whose project has a `billing` service
+([ADR-20261022160248](adr/20261022160248-project-internal-aliases.md)). A
+direct request to the service proxy with `Host: billing.internal` gets the same
+check, so bypassing DNS cannot grant access. The existing same-account,
 target allowlist, and preview checks still run before any target is woken.
 Unbound `.internal` names are passed to the configured upstream DNS resolver;
 Gregale does not claim the customer's entire private namespace. The existing
@@ -1022,9 +1074,12 @@ project, or account. The target preview's protocol and WebSocket settings are
 used exactly as they are on the public edge.
 
 Preview provisioning creates the bound app and the transitive `depends_on`
-workloads present at the PR head. A dependency that is absent from that
-closure can still resolve to the production app, so the gateway applies the
-project's production-dependency policy.
+workloads present at the PR head. When the bound app's service policy is
+`project`, it also creates every other callable workload of the project:
+workers, jobs and scheduled workloads join only as declared dependencies
+([ADR-20261025093331](adr/20261025093331-project-config-and-whole-project-previews.md)).
+A dependency that is absent from that set can still resolve to the production
+app, so the gateway applies the project's production-dependency policy.
 
 All projects use `preview_service_policy: deny` by default. A denied call returns
 `403 application/problem+json` with code
@@ -1197,6 +1252,12 @@ time (`visibility: "internal"`) or update an existing app:
 gregale app APP_ID --visibility internal
 gregale app APP_ID --visibility public
 ```
+
+A Compose project sets this for you: a new app for a service without `ports:`
+is created internal, as Docker publishes nothing for it (ADR-20261022131852).
+The plan shows `visibility=internal`. The choice is made once, when the app is
+created; later syncs keep whatever visibility the app has, so publish such a
+service with `--visibility public`. PR previews inherit their app's visibility.
 
 Internal apps do not receive a public platform-subdomain or verified custom
 domain route. Service discovery continues to resolve them through

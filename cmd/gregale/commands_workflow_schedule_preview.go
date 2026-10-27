@@ -48,7 +48,7 @@ func cmdWorkflowSchedulePreview(args []string) int {
 	}
 	preview, err := client.GetWorkflowSchedulePreview(context.Background(), *app, *workflow, options)
 	if err != nil {
-		return printErr("Request failed", err)
+		return printErr("Could not preview workflow schedule", err)
 	}
 	if jsonOutput {
 		return jsonOut(writeJSON(preview))

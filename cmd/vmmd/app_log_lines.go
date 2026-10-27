@@ -52,18 +52,25 @@ func (c *appLogLineCounter) newSeries(label string) *appLogLineSeries {
 	}
 }
 
+// guestLineLevel is a committed line's level: the ring's structured-log
+// parse, else the gregale logs --level heuristic over the first
+// LogLevelScanBytes. ADR-746 counts and the runtime ledger projection share
+// it, so an alert, a search and `gregale logs --level` agree on a line.
+func guestLineLevel(line logbuf.Line) string {
+	if line.Level != "" {
+		return line.Level
+	}
+	text := line.Line
+	if len(text) > api.LogLevelScanBytes {
+		text = text[:api.LogLevelScanBytes]
+	}
+	return loglevel.Detect(text)
+}
+
 // Observe classifies one committed line and counts it when it is an error
 // or a warning.
 func (c *appLogLineCounter) Observe(appID string, line logbuf.Line) {
-	level := line.Level
-	if level == "" {
-		text := line.Line
-		if len(text) > api.LogLevelScanBytes {
-			text = text[:api.LogLevelScanBytes]
-		}
-		level = loglevel.Detect(text)
-	}
-	switch level {
+	switch guestLineLevel(line) {
 	case loglevel.Error:
 		c.series(appID).errors.Inc()
 	case loglevel.Warn:

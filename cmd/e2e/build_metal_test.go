@@ -479,20 +479,17 @@ func postMultipartDeploymentWithSourceRoot(t *testing.T, h *e2etest.Harness, key
 	return raw, resp.StatusCode
 }
 
-// postMultipartDeploymentWithOverrides is the issue #460 / ADR-053
-// (PR-C) variant of postMultipartDeployment. It stamps an optional
-// `overrides` JSON form-field onto the multipart body so the test
-// can pin per-deployment Overrides.Port (and any future field from
-// the same struct). Nil overrides = behaves exactly like the
-// non-overrides helper above.
+// postMultipartDeploymentWithFields is postMultipartDeployment with extra
+// form fields (for example `healthcheck`, a DeploymentHealthcheck JSON).
+// apid rejects an `overrides` field on a source upload (ADR-053): a source
+// fixture declares its port in gregale.yaml (hosting.port).
 //
 // idempotencyKey follows the same convention as postMultipartDeployment:
 // non-empty sets the Idempotency-Key header for replay.
 //
 // Kept in this file next to postMultipartDeployment so the multipart
-// shape stays in one place; apid's createDeployment handler parses
-// the `overrides` field as JSON into pkg/api.CreateDeploymentOverrides.
-func postMultipartDeploymentWithOverrides(t *testing.T, h *e2etest.Harness, key, slug string, sourceTar []byte, isDockerfile bool, ov *api.CreateDeploymentOverrides, idempotencyKey string) ([]byte, int) {
+// shape stays in one place.
+func postMultipartDeploymentWithFields(t *testing.T, h *e2etest.Harness, key, slug string, sourceTar []byte, isDockerfile bool, fields map[string]string, idempotencyKey string) ([]byte, int) {
 	t.Helper()
 	var body bytes.Buffer
 	mw := multipart.NewWriter(&body)
@@ -508,13 +505,9 @@ func postMultipartDeploymentWithOverrides(t *testing.T, h *e2etest.Harness, key,
 			t.Fatalf("multipart WriteField dockerfile: %v", err)
 		}
 	}
-	if ov != nil {
-		ovJSON, mErr := json.Marshal(ov)
-		if mErr != nil {
-			t.Fatalf("marshal overrides: %v", mErr)
-		}
-		if err := mw.WriteField("overrides", string(ovJSON)); err != nil {
-			t.Fatalf("multipart WriteField overrides: %v", err)
+	for name, value := range fields {
+		if err := mw.WriteField(name, value); err != nil {
+			t.Fatalf("multipart WriteField %s: %v", name, err)
 		}
 	}
 	if err := mw.Close(); err != nil {

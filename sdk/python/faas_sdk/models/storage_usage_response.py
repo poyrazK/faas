@@ -12,17 +12,16 @@ T = TypeVar("T", bound="StorageUsageResponse")
 @_attrs_define
 class StorageUsageResponse:
     """Per-app storage rollup for one calendar day (informational; not billed today). Mirrors the `snapshot_storage_daily`
-    table populated by the meterd storage rollup loop (ADR-049 §B.3, migration 00070).
+    table populated by the metering service storage rollup loop.
 
     """
 
     app_id: str
     day: str
     snapshot_bytes: int
-    """Cumulative snapshot bytes (mem_bytes + disk_bytes) for the day (informational; not billed today). ADR-049
-    §B.3."""
+    """Cumulative snapshot bytes (mem_bytes + disk_bytes) for the day (informational; not billed today)."""
     layer_bytes: int
-    """Cumulative overlay-staging layer bytes for the day (informational; not billed today). ADR-049 §B.3."""
+    """Cumulative overlay-staging layer bytes for the day (informational; not billed today)."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

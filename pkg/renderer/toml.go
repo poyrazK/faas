@@ -199,7 +199,7 @@ func privateKeyValue(daemon string, dc *manifest.DaemonConfig, dbURL, appsDomain
 		// and causes split-box compute daemons to crash-loop.
 		return dbURL, nil
 	case "apps_domain":
-		// schedd + apid + gatewayd-internal carry this. The daemon
+		// Public routers and guarded intent/deployment writers carry this. The daemon
 		// loader uses the empty value as a "use the env var" signal
 		// (FAAS_APPS_DOMAIN). Passing through the manifest's
 		// DNS.AppsDomain makes the renderer's output deterministic

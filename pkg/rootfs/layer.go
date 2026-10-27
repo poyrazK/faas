@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/wire" // wire ops metrics for imaged-only counters
 )
 
@@ -118,17 +119,41 @@ type layerApplyOptions struct {
 	budget *extractionBudget
 }
 
-// extractionBudget bounds the regular-file bytes a build writes while
-// applying image layers, so a small compressed layer cannot fill the build
-// disk before the final size check runs.
+// extractionBudget bounds the regular-file bytes and the tar entries a build
+// writes while applying image layers, so a small compressed layer cannot fill
+// the build disk, or its inode table, before the final size check runs.
 type extractionBudget struct {
-	limit int64
-	used  int64
+	limit      int64
+	used       int64
+	maxEntries int
+	entries    int
 }
 
 // newExtractionBudget fails closed: a non-positive limit admits no bytes.
 func newExtractionBudget(limit int64) *extractionBudget {
-	return &extractionBudget{limit: limit}
+	return &extractionBudget{limit: limit, maxEntries: api.LayerExtractionMaxEntries}
+}
+
+// chargeEntry counts one tar entry, whatever its type, against the cap.
+func (b *extractionBudget) chargeEntry() error {
+	if b == nil {
+		return nil
+	}
+	if b.entries >= b.maxEntries {
+		return &ErrLayerExtractionTooManyEntries{LimitEntries: b.maxEntries}
+	}
+	b.entries++
+	return nil
+}
+
+// ErrLayerExtractionTooManyEntries reports that applying image layers would
+// create more tar entries than one build may apply.
+type ErrLayerExtractionTooManyEntries struct {
+	LimitEntries int
+}
+
+func (e *ErrLayerExtractionTooManyEntries) Error() string {
+	return fmt.Sprintf("rootfs: image layers exceed the extraction entry limit of %d", e.LimitEntries)
 }
 
 func (b *extractionBudget) charge(n int64) error {
@@ -164,6 +189,9 @@ func applyLayer(dst string, tr *tar.Reader, opts layerApplyOptions) error {
 		if err != nil {
 			return fmt.Errorf("rootfs: read tar: %w", err)
 		}
+		if err := opts.budget.chargeEntry(); err != nil {
+			return err
+		}
 		// Opaque whiteouts contain the literal ".." marker as part of
 		// their fixed format, not as a path component. Normalize that
 		// marker before the archive-name guard; the parent path remains
@@ -195,6 +223,14 @@ func applyLayer(dst string, tr *tar.Reader, opts layerApplyOptions) error {
 			target, err := resolveLayerEntryPath(dst, archiveName, replaceWhiteouts)
 			if err != nil {
 				return err
+			}
+			// The staging root is the image's "/". A directory entry may set
+			// its mode and ownership, but no other entry may replace it:
+			// applyEntry removes what sits at its target, so a symlink named
+			// "./" would swap the empty root for a link and every later entry
+			// would be written wherever that link points.
+			if filepath.Clean(target) == filepath.Clean(dst) && hdr.Typeflag != tar.TypeDir {
+				return fmt.Errorf("rootfs: archive entry %q would replace the image root", hdr.Name)
 			}
 
 			base := filepath.Base(archiveName)
@@ -261,6 +297,21 @@ func ApplyLayerGzWithResolver(dst string, r io.Reader, res Resolver) error {
 
 func applyLayerGzWithResolverBudget(dst string, r io.Reader, res Resolver, budget *extractionBudget) error {
 	return applyLayerGz(dst, r, layerApplyOptions{resolver: res, budget: budget})
+}
+
+// ApplyLayersGzWithin applies gzip-compressed layers to dst in order under
+// one extraction budget: their regular-file bytes may not pass limitBytes,
+// nor their entries api.LayerExtractionMaxEntries. Use it for layers the
+// tenant's build produced, where a small compressed layer can otherwise
+// expand without limit. It fails with ErrLayerExtractionExceedsBudget.
+func ApplyLayersGzWithin(dst string, layers []io.Reader, limitBytes int64) error {
+	budget := newExtractionBudget(limitBytes)
+	for i, layer := range layers {
+		if err := applyLayerGzWithResolverBudget(dst, layer, nil, budget); err != nil {
+			return fmt.Errorf("layer %d: %w", i, err)
+		}
+	}
+	return nil
 }
 
 // ApplyLayerGzWithOverlayWhiteouts is the gzip-compressed counterpart to
@@ -365,6 +416,11 @@ func applyEntry(base, target string, hdr *tar.Header, tr io.Reader, res Resolver
 // applyEntryWithBudget charges regular-file bytes to budget before writing
 // them; a nil budget is unbounded.
 func applyEntryWithBudget(base, target string, hdr *tar.Header, tr io.Reader, res Resolver, budget *extractionBudget) error {
+	// Every extractor shares this guard: base is the archive root, and only a
+	// directory entry may land on it (see applyLayer).
+	if filepath.Clean(target) == filepath.Clean(base) && hdr.Typeflag != tar.TypeDir {
+		return fmt.Errorf("rootfs: archive entry %q would replace the archive root", hdr.Name)
+	}
 	switch hdr.Typeflag {
 	case tar.TypeDir:
 		// A directory entry replaces any non-directory at its path, as the

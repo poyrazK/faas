@@ -21,6 +21,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/appstandards"
 	"github.com/onebox-faas/faas/pkg/exclusivework"
+	"github.com/onebox-faas/faas/pkg/rehearsalpg"
 	"github.com/onebox-faas/faas/pkg/runtimeadmission"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
@@ -920,7 +921,8 @@ func (r *MemStore) RouteHealthHistory() *map[string][]routeHealthStoredDecision 
 func (r *MemStore) RouteLifecycleApprovals() *map[string]api.RouteLifecycleApproval {
 	return &r.routeLifecycleApprovals
 }
-func (r *MemStore) SafeReleaseWorkerLeaseUntil() *time.Time { return &r.safeReleaseWorkerLeaseUntil }
+func (r *MemStore) SafeReleaseWorkerLeaseUntil() *time.Time            { return &r.safeReleaseWorkerLeaseUntil }
+func (r *MemStore) ScenarioPostgres() *map[string]rehearsalpg.Resource { return &r.scenarioPostgres }
 func (r *MemStore) ScheduleOccurrences() *map[string]ScheduleOccurrence {
 	return &r.scheduleOccurrences
 }
@@ -1137,3 +1139,5 @@ func (r *standardLocalIntentFixture) Rotated() *ApplicationStandardLogDestinatio
 // Members of workflowOperationWindow
 func (r *workflowOperationWindow) Deadline() *time.Time { return &r.deadline }
 func (r *workflowOperationWindow) Lease() *time.Time    { return &r.lease }
+
+var LiveServiceProxyIdentities = liveServiceProxyIdentities

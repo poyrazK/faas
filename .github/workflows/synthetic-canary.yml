@@ -66,7 +66,7 @@ jobs:
       CP_SSH_KEY: ${{ secrets.CP_SSH_KEY || secrets.DO_SSH_KEY }}
       COMPUTE_KNOWN_HOSTS: ${{ secrets.COMPUTE_KNOWN_HOSTS }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           fetch-depth: 1
 
@@ -137,6 +137,8 @@ jobs:
 
       - name: Page on canary failure
         if: failure() && (github.event_name == 'schedule' || inputs.page_on_failure)
+        env:
+          CANARY_FALLBACK_WEBHOOK_URL: ${{ secrets.CANARY_FALLBACK_WEBHOOK_URL }}
         run: |
           set -euo pipefail
           # A red GitHub badge is not a notification. Route through the
@@ -152,7 +154,21 @@ jobs:
           # emits one shell-safe token each. This is the same defect class the
           # check_shell_quoting gate enforces in Go; the gate does not read
           # YAML, so it did not catch it here.
-          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=yes "root@${CP_HOST}" \
+          if ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=yes "root@${CP_HOST}" \
             "env CANARY_RUN_URL=$(printf %q "$run_url") bash -s -- $(printf %q "$summary") $(printf %q "$tail")" \
-            < scripts/ops/canary_alert.sh
-          echo "::error::synthetic canary failed; a severity=page alert was pushed to Alertmanager"
+            < scripts/ops/canary_alert.sh; then
+            echo "::error::synthetic canary failed; a severity=page alert was pushed to Alertmanager"
+            exit 0
+          fi
+          # The control plane did not take the page. The outage may be the
+          # control plane itself, which also carries Alertmanager, so notify
+          # the chat webhook directly (ADR-20261023124955 §5).
+          if [[ -z "${CANARY_FALLBACK_WEBHOOK_URL:-}" ]]; then
+            echo "::error::synthetic canary failed and the Alertmanager push failed; set CANARY_FALLBACK_WEBHOOK_URL so this reaches someone" >&2
+            exit 1
+          fi
+          jq -n --arg text "Gregale synthetic canary failed and the control plane did not accept the page: ${summary}. ${run_url}" '{text: $text}' |
+            curl --fail --silent --show-error --max-time 15 \
+              --header 'Content-Type: application/json' --data @- "$CANARY_FALLBACK_WEBHOOK_URL" >/dev/null
+          echo "::error::synthetic canary failed; Alertmanager was unreachable, so the fallback webhook was notified"
+          exit 1

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -22,6 +23,14 @@ const eventInvocationPath = "/"
 const eventFanoutRecoveryBatch = 100
 const eventFanoutSubscriptionBatch = 256
 const eventFanoutRecipientMaxAttempts = api.EventRoutingRetryDefaultAttempts
+
+// eventFanoutClaimBatch bounds one recipient claim scan; adoption claims the
+// sweep's whole receipt budget in one scan, since adopting a receipt is one
+// short transaction. Each claim in a batch holds its lease until the sweep
+// routes it, and a stopping sweep releases the rest within
+// eventFanoutReleaseTimeout.
+const eventFanoutClaimBatch = 20
+const eventFanoutReleaseTimeout = 5 * time.Second
 
 // eventFanoutSafetyTick re-runs the fanout sweep when no event_published
 // wake arrives; a wake that lands while a sweep runs is coalesced away.
@@ -165,6 +174,15 @@ func (l *Loop) routePublishedEventSnapshot(ctx context.Context, work *state.Publ
 			routeErrs = append(routeErrs, state.ErrEventDeliveryCapacity)
 			continue
 		}
+		if l.eventsHeld(ctx, recipient, work.Payload) {
+			wait := state.EventCapabilityWaitProgress(previous, previous.Attempts+1, now.Add(capabilityDeferral))
+			if err := progressStore.RecordPublishedEventRecipientProgress(ctx, work.ID, work.ClaimToken, recipient.ID, wait); err != nil {
+				return err
+			}
+			work.RecipientProgress[recipient.ID] = wait
+			routeErrs = append(routeErrs, state.ErrEventDeliveryCapacity)
+			continue
+		}
 		if len(recipient.Workflow) != 0 && !l.workflowsDispatched {
 			// Keep workflow recipients pending while the preview runtime is
 			// disabled. Ordinary subscriptions can finish independently.
@@ -191,6 +209,18 @@ func (l *Loop) routePublishedEventSnapshot(ctx context.Context, work *state.Publ
 		var routeErr error
 		if len(recipient.Workflow) != 0 {
 			matched, routeErr = l.routeWorkflowEvent(ctx, work, envelope, recipient)
+			if errors.Is(routeErr, state.ErrWorkflowRunQuotaExceeded) {
+				// The app's run limit is capacity: wait without spending a
+				// routing attempt, as the recipient-claim path does.
+				wait := state.EventWorkflowCapacityWaitProgress(previous, previous.Attempts+1)
+				if err := progressStore.RecordPublishedEventRecipientProgress(ctx, work.ID, work.ClaimToken, recipient.ID, wait); err != nil {
+					return err
+				}
+				work.RecipientProgress[recipient.ID] = wait
+				l.ops.ObserveEventDeliveryCapacityDeferral(wait.CapacityScope)
+				routeErrs = append(routeErrs, state.ErrEventDeliveryCapacity)
+				continue
+			}
 		} else if admission, ok := l.engine.store.(state.PublishedEventRecipientAdmissionStore); ok && recipient.ObjectNotification == nil {
 			result, err := l.admitEventRecipient(ctx, admission, state.PublishedEventRoutingClaim{
 				OutboxID: work.ID, SubscriptionID: recipient.ID, ClaimToken: work.ClaimToken,
@@ -225,7 +255,7 @@ func (l *Loop) routePublishedEventSnapshot(ctx context.Context, work *state.Publ
 		if outcome.State == state.PublishedEventRecipientFailed && l.log != nil {
 			l.log.Error("sched: event recipient fanout permanently failed", "event_id", envelope.ID,
 				"source", envelope.Source, "subscription_id", recipient.ID, "app_id", recipient.AppID,
-				"attempts", outcome.Attempts, "err", outcome.LastError)
+				"attempts", outcome.Attempts, "error_class", dispatchErrorClass(routeErr))
 		}
 	}
 	err = errors.Join(routeErrs...)
@@ -450,9 +480,16 @@ func (l *Loop) runEventFanoutSweep(ctx context.Context) {
 	if !ok {
 		return
 	}
+	// ADR-20261027125625: the platform-wide events switch holds all routing
+	// (receipts, recipients, recoveries, backfills). Settled receipts still
+	// prune and routing health is still observed.
+	routing := l.engine.eventsReleased()
+	l.observeEventRoutingPause(routing)
 	// Disabling adoption must still drain previously adopted receipts.
 	defer l.observeEventRoutingHealth(ctx)
-	defer l.runEventRecipientSweep(ctx)
+	if routing {
+		defer l.runEventRecipientSweep(ctx)
+	}
 	now := time.Now().UTC()
 	if l.now != nil {
 		now = l.now().UTC()
@@ -465,9 +502,9 @@ func (l *Loop) runEventFanoutSweep(ctx context.Context) {
 			}
 		}
 		if retention, ok := l.engine.store.(state.PublishedEventRetentionStore); ok {
-			if _, err := retention.PruneDeliveredPublishedEvents(ctx, now.Add(-state.PublishedEventIdentityRetention), 5000); err != nil {
+			if _, err := retention.PruneSettledPublishedEvents(ctx, now, 5000); err != nil {
 				if l.log != nil {
-					l.log.Warn("sched: prune delivered event identities failed", "err", err)
+					l.log.Warn("sched: prune delivered event identities failed", "error_class", dispatchErrorClass(err))
 				}
 			} else {
 				if backfills, ok := l.engine.store.(state.EventReplayBackfillStore); ok {
@@ -483,6 +520,9 @@ func (l *Loop) runEventFanoutSweep(ctx context.Context) {
 				l.eventFanoutLastPrune = now
 			}
 		}
+	}
+	if !routing {
+		return
 	}
 	if recovery, ok := l.engine.store.(state.EventRecoveryStore); ok {
 		for i := 0; i < eventFanoutRecoveryBatch; i++ {
@@ -500,52 +540,89 @@ func (l *Loop) runEventFanoutSweep(ctx context.Context) {
 	}
 	l.runEventRecoveryExecutionNotifications(ctx, now)
 	l.runEventReplayBackfillSweep(ctx, now)
-	for i := 0; i < eventFanoutRecoveryBatch; i++ {
-		now := time.Now().UTC()
-		if l.now != nil {
-			now = l.now().UTC()
-		}
-		var work *state.PublishedEventWork
+	_, recipientSupported := store.(state.PublishedEventRecipientWorkStore)
+	_, workflowSupported := store.(state.EventWorkflowRecipientAdmissionStore)
+	adoption, adopting := store.(state.PublishedEventRecipientAdoptionClaimStore)
+	adopting = adopting && l.eventRecipientClaims && recipientSupported && workflowSupported
+	batches, batched := store.(state.PublishedEventAdoptionBatchClaimStore)
+	for claimed := 0; claimed < eventFanoutRecoveryBatch; {
+		var works []*state.PublishedEventWork
 		var err error
-		_, recipientSupported := store.(state.PublishedEventRecipientWorkStore)
-		_, workflowSupported := store.(state.EventWorkflowRecipientAdmissionStore)
-		if adoption, ok := store.(state.PublishedEventRecipientAdoptionClaimStore); ok && l.eventRecipientClaims && recipientSupported && workflowSupported {
-			work, err = adoption.ClaimDuePublishedEventForRecipientAdoption(ctx, now)
+		if adopting && batched {
+			works, err = batches.ClaimDuePublishedEventsForRecipientAdoption(ctx, l.eventFanoutNow(), eventFanoutRecoveryBatch-claimed)
 		} else {
-			work, err = store.ClaimDuePublishedEvent(ctx, now)
-		}
-		if errors.Is(err, state.ErrNotFound) {
-			return
+			var work *state.PublishedEventWork
+			if adopting {
+				work, err = adoption.ClaimDuePublishedEventForRecipientAdoption(ctx, l.eventFanoutNow())
+			} else {
+				work, err = store.ClaimDuePublishedEvent(ctx, l.eventFanoutNow())
+			}
+			if err == nil {
+				works = append(works, work)
+			} else if errors.Is(err, state.ErrNotFound) {
+				err = nil
+			}
 		}
 		if err != nil {
 			if l.log != nil {
-				l.log.Warn("sched: claim event fanout failed", "err", err)
+				l.log.Warn("sched: claim event fanout failed", "error_class", dispatchErrorClass(err))
 			}
 			return
 		}
-		var routeErr error
-		if recipients, ok := l.engine.store.(state.PublishedEventRecipientWorkStore); ok && l.eventRecipientClaims && work.SnapshotCaptured && l.eventRecipientAdoptionSupported(work) {
-			routeErr = recipients.InitializePublishedEventRecipients(ctx, work, now)
-			if routeErr == nil {
-				continue
+		if len(works) == 0 {
+			return
+		}
+		for i, work := range works {
+			if ctx.Err() != nil {
+				l.releaseEventAdoptionClaims(ctx, batches, works[i:])
+				return
 			}
-		} else if work.SnapshotCaptured {
-			routeErr = l.routePublishedEventSnapshot(ctx, work)
-		} else if _, ok := l.engine.store.(state.EventSubscriptionMatcherStore); ok {
-			// Receipts accepted before the snapshot migration retain their
-			// existing current-subscription routing behavior.
-			routeErr = l.routePublishedEventAt(ctx, string(work.Payload), work.CreatedAt)
-		} else {
-			routeErr = errors.New("sched: legacy event receipt requires subscription matcher")
+			l.routeClaimedEventReceipt(ctx, store, work, l.eventFanoutNow())
 		}
-		if routeErr != nil && !eventFanoutCapacityWait(routeErr) && l.log != nil {
-			l.log.Warn("sched: event fanout failed", "outbox_id", work.ID, "err", routeErr)
+		claimed += len(works)
+	}
+}
+
+// routeClaimedEventReceipt adopts a claimed receipt's recipients for
+// independent routing or, where that is unavailable, routes it whole.
+func (l *Loop) routeClaimedEventReceipt(ctx context.Context, store state.PublishedEventWorkStore, work *state.PublishedEventWork, now time.Time) {
+	var routeErr error
+	if recipients, ok := l.engine.store.(state.PublishedEventRecipientWorkStore); ok && l.eventRecipientClaims && work.SnapshotCaptured && l.eventRecipientAdoptionSupported(work) {
+		routeErr = recipients.InitializePublishedEventRecipients(ctx, work, now)
+		if routeErr == nil {
+			return
 		}
-		if work.Delivered {
-			continue
-		}
-		if err := store.FinishPublishedEvent(ctx, work.ID, work.ClaimToken, routeErr); err != nil && l.log != nil {
-			l.log.Warn("sched: finish event fanout failed", "outbox_id", work.ID, "err", err)
+	} else if work.SnapshotCaptured {
+		routeErr = l.routePublishedEventSnapshot(ctx, work)
+	} else if _, ok := l.engine.store.(state.EventSubscriptionMatcherStore); ok {
+		// Receipts accepted before the snapshot migration retain their
+		// existing current-subscription routing behavior.
+		routeErr = l.routePublishedEventAt(ctx, string(work.Payload), work.CreatedAt)
+	} else {
+		routeErr = errors.New("sched: legacy event receipt requires subscription matcher")
+	}
+	if routeErr != nil && !eventFanoutCapacityWait(routeErr) && l.log != nil {
+		l.log.Warn("sched: event fanout failed", "outbox_id", work.ID, "error_class", dispatchErrorClass(routeErr))
+	}
+	if work.Delivered {
+		return
+	}
+	if err := store.FinishPublishedEvent(ctx, work.ID, work.ClaimToken, routeErr); err != nil && l.log != nil {
+		l.log.Warn("sched: finish event fanout failed", "outbox_id", work.ID, "error_class", dispatchErrorClass(err))
+	}
+}
+
+// releaseEventAdoptionClaims hands back a batch's unadopted receipts when the
+// sweep stops early, so a restart does not leave them waiting out their lease.
+func (l *Loop) releaseEventAdoptionClaims(ctx context.Context, store state.PublishedEventAdoptionBatchClaimStore, works []*state.PublishedEventWork) {
+	if store == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), eventFanoutReleaseTimeout)
+	defer cancel()
+	for _, work := range works {
+		if err := store.ReleasePublishedEventAdoptionClaim(ctx, work); err != nil && l.log != nil {
+			l.log.Warn("sched: release event adoption claim failed", "outbox_id", work.ID, "error_class", dispatchErrorClass(err))
 		}
 	}
 }
@@ -581,108 +658,158 @@ func (l *Loop) runEventRecipientSweep(ctx context.Context) {
 	if !ok {
 		return
 	}
-	for i := 0; i < eventFanoutRecoveryBatch; i++ {
-		now := time.Now().UTC()
-		if l.now != nil {
-			now = l.now().UTC()
-		}
-		work, err := store.ClaimDuePublishedEventRecipient(ctx, now, l.workflowsDispatched)
-		if errors.Is(err, state.ErrNotFound) {
-			return
+	batches, batched := l.engine.store.(state.PublishedEventRecipientBatchClaimStore)
+	for routed := 0; routed < eventFanoutRecoveryBatch; {
+		var works []*state.PublishedEventRecipientWork
+		var err error
+		if batched {
+			works, err = batches.ClaimDuePublishedEventRecipients(ctx, l.eventFanoutNow(), min(eventFanoutClaimBatch, eventFanoutRecoveryBatch-routed), l.workflowsDispatched)
+		} else {
+			var work *state.PublishedEventRecipientWork
+			if work, err = store.ClaimDuePublishedEventRecipient(ctx, l.eventFanoutNow(), l.workflowsDispatched); err == nil {
+				works = append(works, work)
+			} else if errors.Is(err, state.ErrNotFound) {
+				err = nil
+			}
 		}
 		if err != nil {
 			if l.log != nil {
-				l.log.Error("sched: claim event recipient failed", "err", err)
+				l.log.Error("sched: claim event recipient failed", "error_class", dispatchErrorClass(err))
 			}
 			return
 		}
-		if state.EventSchemaVersionMismatch(work.Recipient, work.Payload) {
-			filtered := state.EventSchemaVersionFilteredProgress(work.PreviousProgress, max(0, work.TotalAttempts-1), now)
-			if err := store.FinishPublishedEventRecipient(ctx, work, filtered, now); err != nil && l.log != nil {
-				l.log.Error("sched: filter event schema version", "err", err)
+		if len(works) == 0 {
+			return
+		}
+		for i, work := range works {
+			if ctx.Err() != nil {
+				l.releaseEventRecipientClaims(ctx, batches, works[i:])
+				return
 			}
-			continue
+			l.routeEventRecipient(ctx, store, work, l.eventFanoutNow())
 		}
-		if state.EventDeliveryExpired(work.Recipient, work.AcceptedAt, work.PreviousProgress, now) {
-			expired := state.EventDeliveryExpiredProgress(work.PreviousProgress, max(0, work.TotalAttempts-1), now)
-			if err := store.FinishPublishedEventRecipient(ctx, work, expired, now); err != nil && l.log != nil {
-				l.log.Error("sched: expire event delivery", "err", err)
+		routed += len(works)
+	}
+}
+
+func (l *Loop) eventFanoutNow() time.Time {
+	if l.now != nil {
+		return l.now().UTC()
+	}
+	return time.Now().UTC()
+}
+
+// releaseEventRecipientClaims hands back a batch's unprocessed claims when the
+// sweep stops early, so a restart does not leave them waiting out their lease.
+func (l *Loop) releaseEventRecipientClaims(ctx context.Context, store state.PublishedEventRecipientBatchClaimStore, works []*state.PublishedEventRecipientWork) {
+	if store == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), eventFanoutReleaseTimeout)
+	defer cancel()
+	for _, work := range works {
+		if err := store.ReleasePublishedEventRecipientClaim(ctx, work); err != nil && l.log != nil {
+			l.log.Warn("sched: release event recipient claim failed", "outbox_id", work.OutboxID,
+				"subscription_id", work.Recipient.ID, "error_class", dispatchErrorClass(err))
+		}
+	}
+}
+
+func (l *Loop) routeEventRecipient(ctx context.Context, store state.PublishedEventRecipientWorkStore, work *state.PublishedEventRecipientWork, now time.Time) {
+	if state.EventSchemaVersionMismatch(work.Recipient, work.Payload) {
+		filtered := state.EventSchemaVersionFilteredProgress(work.PreviousProgress, max(0, work.TotalAttempts-1), now)
+		if err := store.FinishPublishedEventRecipient(ctx, work, filtered, now); err != nil && l.log != nil {
+			l.log.Error("sched: filter event schema version", "err", err)
+		}
+		return
+	}
+	if state.EventDeliveryExpired(work.Recipient, work.AcceptedAt, work.PreviousProgress, now) {
+		expired := state.EventDeliveryExpiredProgress(work.PreviousProgress, max(0, work.TotalAttempts-1), now)
+		if err := store.FinishPublishedEventRecipient(ctx, work, expired, now); err != nil && l.log != nil {
+			l.log.Error("sched: expire event delivery", "err", err)
+		}
+		return
+	}
+	if l.eventsHeld(ctx, work.Recipient, work.Payload) {
+		next := now.Add(capabilityDeferral)
+		wait := state.EventCapabilityWaitProgress(work.PreviousProgress, work.TotalAttempts, next)
+		if err := store.FinishPublishedEventRecipient(ctx, work, wait, next); err != nil && l.log != nil {
+			l.log.Error("sched: hold event recipient while events is off", "err", err)
+		}
+		return
+	}
+	if breaker, ok := l.engine.store.(state.EventCircuitBreakerStore); ok {
+		reason, next, err := breaker.AcquireEventCircuitPermit(ctx, work, now)
+		if err != nil {
+			reason, next = "circuit_probe_wait", now.Add(time.Second)
+			if l.log != nil {
+				l.log.Error("sched: acquire event circuit permit failed", "err", err)
 			}
-			continue
 		}
-		if breaker, ok := l.engine.store.(state.EventCircuitBreakerStore); ok {
-			reason, next, err := breaker.AcquireEventCircuitPermit(ctx, work, now)
-			if err != nil {
-				reason, next = "circuit_probe_wait", now.Add(time.Second)
-				if l.log != nil {
-					l.log.Error("sched: acquire event circuit permit failed", "err", err)
-				}
+		if reason != "" {
+			wait := state.EventCircuitWaitProgress(work.PreviousProgress, work.TotalAttempts, reason, next)
+			if err := store.FinishPublishedEventRecipient(ctx, work, wait, next); err != nil && l.log != nil {
+				l.log.Error("sched: defer event circuit delivery", "err", err)
 			}
-			if reason != "" {
-				wait := state.EventCircuitWaitProgress(work.PreviousProgress, work.TotalAttempts, reason, next)
-				if err := store.FinishPublishedEventRecipient(ctx, work, wait, next); err != nil && l.log != nil {
-					l.log.Error("sched: defer event circuit delivery", "err", err)
-				}
-				continue
-			}
+			return
 		}
-		startedAt := time.Now()
-		var envelope events.Envelope
-		routeErr := json.Unmarshal(work.Payload, &envelope)
-		if routeErr == nil {
-			routeErr = envelope.Validate()
-		}
-		var eventPayload []byte
-		if routeErr == nil {
-			eventPayload, routeErr = json.Marshal(envelope)
-		}
-		matched := false
-		if routeErr == nil {
-			if len(work.Recipient.Workflow) != 0 {
-				admission, ok := l.engine.store.(state.EventWorkflowRecipientAdmissionStore)
-				if !ok {
-					routeErr = &eventFanoutRouteError{code: state.EventFanoutFailureCodeInternal, retryable: true,
-						err: errors.New("workflow recipient admission store is unavailable")}
-				} else {
-					result, err := admission.AdmitEventWorkflowRecipient(ctx, state.PublishedEventRoutingClaim{
-						OutboxID: work.OutboxID, SubscriptionID: work.Recipient.ID,
-						ClaimToken: work.ClaimToken, Generation: work.Generation,
-					})
-					if err == nil {
-						continue
-					}
-					matched, routeErr = result.Matched, err
-				}
-			} else if admission, ok := l.engine.store.(state.PublishedEventRecipientAdmissionStore); ok && work.Recipient.ObjectNotification == nil {
-				result, err := l.admitEventRecipient(ctx, admission, state.PublishedEventRoutingClaim{
+	}
+	startedAt := time.Now()
+	var envelope events.Envelope
+	routeErr := json.Unmarshal(work.Payload, &envelope)
+	if routeErr == nil {
+		routeErr = envelope.Validate()
+	}
+	var eventPayload []byte
+	if routeErr == nil {
+		eventPayload, routeErr = json.Marshal(envelope)
+	}
+	matched := false
+	if routeErr == nil {
+		if len(work.Recipient.Workflow) != 0 {
+			admission, ok := l.engine.store.(state.EventWorkflowRecipientAdmissionStore)
+			if !ok {
+				routeErr = &eventFanoutRouteError{code: state.EventFanoutFailureCodeInternal, retryable: true,
+					err: errors.New("workflow recipient admission store is unavailable")}
+			} else {
+				result, err := admission.AdmitEventWorkflowRecipient(ctx, state.PublishedEventRoutingClaim{
 					OutboxID: work.OutboxID, SubscriptionID: work.Recipient.ID,
-					ClaimToken: work.ClaimToken, Generation: work.Generation, BackfillJobID: work.BackfillJobID,
+					ClaimToken: work.ClaimToken, Generation: work.Generation,
 				})
 				if err == nil {
-					continue
+					if result.CapacityDeferred {
+						l.ops.ObserveEventDeliveryCapacityDeferral(result.Progress.CapacityScope)
+					}
+					return
 				}
 				matched, routeErr = result.Matched, err
-			} else {
-				matched, routeErr = l.routeSubscription(ctx, envelope, eventPayload, work.Recipient, now, true, work.OutboxID)
 			}
+		} else if admission, ok := l.engine.store.(state.PublishedEventRecipientAdmissionStore); ok && work.Recipient.ObjectNotification == nil {
+			result, err := l.admitEventRecipient(ctx, admission, state.PublishedEventRoutingClaim{
+				OutboxID: work.OutboxID, SubscriptionID: work.Recipient.ID,
+				ClaimToken: work.ClaimToken, Generation: work.Generation, BackfillJobID: work.BackfillJobID,
+			})
+			if err == nil {
+				return
+			}
+			matched, routeErr = result.Matched, err
+		} else {
+			matched, routeErr = l.routeSubscription(ctx, envelope, eventPayload, work.Recipient, now, true, work.OutboxID)
 		}
-		finishedAt := time.Now().UTC()
-		if l.now != nil {
-			finishedAt = l.now().UTC()
-		}
-		progress, next := eventRoutingRetryOutcome(work.Recipient, work.PreviousProgress, work.TotalAttempts, work.Attempts-work.GenerationCapacityDeferrals, work.CapacityDeferrals, work.Generation, matched, routeErr, finishedAt, time.Since(startedAt), eventRoutingRetrySeed(work.OutboxID, work.Recipient.ID, work.Generation, work.Attempts-work.GenerationCapacityDeferrals))
-		if len(progress.LastError) > 1024 {
-			progress.LastError = progress.LastError[:1024]
-		}
+	}
+	finishedAt := l.eventFanoutNow()
+	progress, next := eventRoutingRetryOutcome(work.Recipient, work.PreviousProgress, work.TotalAttempts, work.Attempts-work.GenerationCapacityDeferrals, work.CapacityDeferrals, work.Generation, matched, routeErr, finishedAt, time.Since(startedAt), eventRoutingRetrySeed(work.OutboxID, work.Recipient.ID, work.Generation, work.Attempts-work.GenerationCapacityDeferrals))
+	if len(progress.LastError) > 1024 {
+		progress.LastError = progress.LastError[:1024]
+	}
 
-		if err := store.FinishPublishedEventRecipient(ctx, work, progress, next); err != nil && l.log != nil {
-			l.log.Error("sched: finish event recipient failed", "outbox_id", work.OutboxID,
-				"subscription_id", work.Recipient.ID, "err", err)
-		} else if progress.State == state.PublishedEventRecipientFailed && l.log != nil {
-			l.log.Error("sched: event recipient routing failed", "outbox_id", work.OutboxID,
-				"subscription_id", work.Recipient.ID, "failure_code", progress.FailureCode,
-				"retryable", progress.Retryable, "err", progress.LastError)
-		}
+	if err := store.FinishPublishedEventRecipient(ctx, work, progress, next); err != nil && l.log != nil {
+		l.log.Error("sched: finish event recipient failed", "outbox_id", work.OutboxID,
+			"subscription_id", work.Recipient.ID, "error_class", dispatchErrorClass(err))
+	} else if progress.State == state.PublishedEventRecipientFailed && l.log != nil {
+		l.log.Error("sched: event recipient routing failed", "outbox_id", work.OutboxID,
+			"subscription_id", work.Recipient.ID, "failure_code", progress.FailureCode,
+			"retryable", progress.Retryable, "error_class", dispatchErrorClass(routeErr))
 	}
 }
 
@@ -745,7 +872,7 @@ func (l *Loop) runEventHistoryPrune(ctx context.Context, now time.Time) {
 	}
 	if _, err := retention.PruneEventFanoutHistory(ctx, now, api.EventRoutingHistoryPruneBatch); err != nil {
 		if l.log != nil {
-			l.log.Warn("sched: compact routing history failed", "err", err)
+			l.log.Warn("sched: compact routing history failed", "error_class", dispatchErrorClass(err))
 		}
 		return
 	}
@@ -760,4 +887,38 @@ func (l *Loop) eventRecipientAdoptionSupported(work *state.PublishedEventWork) b
 		}
 	}
 	return true
+}
+
+// eventsHeld reports a customer event's recipient whose app's account has the
+// events capability off (ADR-20261027125625); it waits without spending a
+// routing attempt. Platform sources (gregale.*) belong to their own
+// capabilities and stop only with the platform-wide switch.
+func (l *Loop) eventsHeld(ctx context.Context, recipient state.PublishedEventRecipient, payload []byte) bool {
+	if l == nil || l.engine == nil || l.engine.capabilities == nil || recipient.AppID == "" {
+		return false
+	}
+	var event struct {
+		Source string `json:"source"`
+	}
+	if json.Unmarshal(payload, &event) != nil || strings.HasPrefix(event.Source, "gregale.") {
+		return false
+	}
+	return !l.engine.appEventsAllowed(ctx, recipient.AppID)
+}
+
+// observeEventRoutingPause logs when the platform-wide events switch stops or
+// resumes routing.
+func (l *Loop) observeEventRoutingPause(routing bool) {
+	if l.eventRoutingPaused == !routing {
+		return
+	}
+	l.eventRoutingPaused = !routing
+	if l.log == nil {
+		return
+	}
+	if routing {
+		l.log.Info("sched: event routing resumed: the events capability is back on")
+	} else {
+		l.log.Warn("sched: event routing paused: the events capability is switched off platform-wide")
+	}
 }

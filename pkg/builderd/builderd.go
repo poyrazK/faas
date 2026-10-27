@@ -864,6 +864,14 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 		// including clearing a Dockerfile for autodetected source builds.
 		dockerfilePath = frozen.Source.Dockerfile
 	}
+	goCommand, goCommandErr := selectGoCommand(app, dockerfilePath, fw)
+	if goCommandErr != nil {
+		b.markFailed(ctx, build, state.FailureUserError, goCommandErr.Error(), buildStart)
+		return BuildResult{}, goCommandErr
+	}
+	if goCommand != "" {
+		b.emitBuildLog(ctx, build.ID, "building Go command cmd/"+goCommand+"\n")
+	}
 
 	// Railpack must build FROM the same immutable runtime base that imaged
 	// will use when it materialises the deployment layer. Without this handoff
@@ -932,7 +940,7 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 		return BuildResult{}, buildOptionsErr
 	}
 	if buildOptionsIgnored {
-		b.emitBuildLog(ctx, build.ID, "Compose build.args and build.target ignored: this service builds without a Dockerfile\n")
+		b.emitBuildLog(ctx, build.ID, "Compose build.args, build.target and build.secrets ignored: this service builds without a Dockerfile\n")
 	}
 	if dockerfileBuild != nil && dockerfileBuild.Target != "" {
 		b.emitBuildLog(ctx, build.ID, "building Dockerfile stage "+dockerfileBuild.Target+"\n")
@@ -940,17 +948,51 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 	if shadowed := shadowedBuildArgs(dockerfileBuild, publicURLs); len(shadowed) > 0 {
 		b.emitBuildLog(ctx, build.ID, "build arguments "+strings.Join(shadowed, ", ")+" are also public build URLs; the reviewed URLs are used\n")
 	}
+	var buildSecrets []SealedBuildSecret
+	if dockerfileBuild != nil {
+		var secretsErr error
+		buildSecrets, secretsErr = loadBuildSecrets(ctx, b.store, app, dep, dockerfileBuild.Secrets)
+		if secretsErr != nil {
+			class := state.FailureInfra
+			if errors.Is(secretsErr, errBuildSecretMissing) {
+				class = state.FailureUserError
+			}
+			b.markFailed(ctx, build, class, secretsErr.Error(), buildStart)
+			return BuildResult{}, secretsErr
+		}
+		if len(buildSecrets) > 0 {
+			// Names only; vmmd opens the values into the builder VM.
+			b.emitBuildLog(ctx, build.ID, fmt.Sprintf("mounting %d build secrets\n", len(dockerfileBuild.Secrets)))
+		}
+	}
+	// ADR-20261026090000: a Dockerfile build pulls its base images with the
+	// app's registry credentials, so it can build FROM a private image.
+	var registryCreds []SealedRegistryCredential
+	if fw == FrameworkDocker {
+		var skippedECR []string
+		var credsErr error
+		registryCreds, skippedECR, credsErr = loadBuildRegistryCredentials(ctx, b.store, app)
+		if credsErr != nil {
+			b.markFailed(ctx, build, state.FailureInfra, credsErr.Error(), buildStart)
+			return BuildResult{}, credsErr
+		}
+		b.emitRegistryCredentialLog(ctx, build.ID, registryCreds, skippedECR)
+	}
 	recipe := BuildCacheRecipe{
 		BuildDependencyDigest: buildDependencyDigest,
 		PublicBuildURLs:       publicURLs,
 		DockerfileBuild:       dockerfileBuild,
+		GoCommand:             goCommand,
 		SourceSHA256:          srcHash, SourceRoot: dep.SourceRoot,
 		DockerfilePath: dockerfilePath,
 		Framework:      fw, Plan: acct.Plan, RuntimeBaseRef: runtimeBaseRef,
 		Function:        app.Type == state.AppTypeFunction,
 		DevWatchCommand: watch.Command,
 		DevWatchHost:    watch.Host,
+		AccountID:       app.AccountID,
 	}
+	recipe.BuildSecretScope = buildSecretScope(app.AccountID, app.ID, dep.Scope, buildSecrets)
+	recipe.RegistryAuthScope = registryAuthScope(app.ID, registryCreds)
 	reuseScope, reuseOptedIn := gitOpsReuseScope(app, dep)
 	recipe.GitOpsReuseScope = reuseScope
 	if sourceMaps != nil {
@@ -1042,7 +1084,7 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 		return BuildResult{}, ErrNoSlot
 	}
 	defer releaseSlot()
-	b.emitBuildLog(ctx, build.ID, fmt.Sprintf("allocated builder slot (%s)\n", slot.Label))
+	b.emitBuildLog(ctx, build.ID, builderSlotLogLine(slot.Label, time.Since(build.EnqueuedAt)))
 	if b.stopIfBuildCancelled(ctx, build) {
 		return BuildResult{}, nil
 	}
@@ -1060,7 +1102,7 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 	// Keep this projection best-effort, matching imaged's transition helper;
 	// the durable build/deployment status remains authoritative if the stage
 	// write is temporarily unavailable.
-	if _, stageErr := b.store.AppendDeploymentStage(ctx, dep.ID, state.StageSourceDownload, state.StageImageBuild, buildStart, ""); stageErr != nil {
+	if _, stageErr := b.store.AppendDeploymentStage(ctx, dep.ID, state.StageSourceDownload, state.StageImageBuild, buildStart, builderQueueWaitReason(build)); stageErr != nil {
 		b.log.Warn("builderd: open image-build stage", "deployment", dep.ID, "err", stageErr)
 	}
 
@@ -1074,6 +1116,9 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 		BuildDependencyDigest: buildDependencyDigest,
 		PublicBuildURLs:       publicURLs,
 		DockerfileBuild:       dockerfileBuild,
+		GoCommand:             goCommand,
+		BuildSecrets:          buildSecrets,
+		RegistryCredentials:   registryCreds,
 		BuildID:               build.ID,
 		TenantID:              app.AccountID,
 		DeploymentID:          dep.ID,
@@ -1096,6 +1141,12 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 		Plan:                  string(acct.Plan),
 		WarmScopeKey:          builderWarmScopeKey(app.AccountID, app.ID, fw, runtimeBaseRef),
 	}
+	if len(buildSecrets) > 0 || len(registryCreds) > 0 {
+		// A build with secrets or registry credentials never restores or
+		// leaves a warm builder, so a value cannot outlive its build in a
+		// snapshot (ADR-20261022185329, ADR-20261026090000).
+		vmReq.WarmScopeKey = ""
+	}
 	warmVM, warmResult, warmSnapshot, warmStarted := b.prepareWarmBuilder(ctx, slot, vmReq)
 	var warmCaptured WarmSnapshot
 	warmCommitted := false
@@ -1116,6 +1167,10 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 	timeout := time.Duration(b.cfg.BuildTimeoutSeconds) * time.Second
 	vmCtx, cancel := context.WithTimeout(ctx, timeout)
 
+	// Phase timings: builds took minutes on production-us while the guest's
+	// own build steps took seconds, and nothing recorded where the rest went
+	// (Hunt 14 H14-11).
+	phases := buildPhaseClock{start: time.Now()}
 	var handle BuildHandle
 	if warmStarted && warmResult == WarmRestoreHit {
 		handle, err = warmVM.RestoreWarmBuilder(vmCtx, vmReq, warmSnapshot)
@@ -1182,6 +1237,7 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 		cancelVM()
 	}
 	defer b.unregisterActiveVM(build.ID)
+	phases.vmReady = time.Now()
 	if handle.DependencyCacheKey != "" {
 		if handle.DependencyCacheRestored {
 			b.emitBuildLog(ctx, build.ID, "dependency cache restored — reusing matching install layers\n")
@@ -1243,6 +1299,8 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 		b.markFailed(ctx, build, fc, "vm wait: "+err.Error(), buildStart)
 		return BuildResult{}, err
 	}
+	phases.vmDone = time.Now()
+	b.emitBuildLog(ctx, build.ID, phases.vmLine())
 	if out.WarmSnapshotError != "" {
 		b.log.Warn("builderd: warm snapshot unavailable; build artifact preserved", "build", build.ID, "err", out.WarmSnapshotError)
 		b.emitBuildLog(ctx, build.ID, "warm builder cache unavailable — deployment completed from the built artifact\n")
@@ -1273,6 +1331,13 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 		// An older builder guest ignores the options and builds the final
 		// stage with default arguments; refuse that artifact.
 		err := errors.New("builder guest did not acknowledge the Compose build arguments and target")
+		b.markFailed(ctx, build, state.FailureInfra, err.Error(), buildStart)
+		return BuildResult{}, err
+	}
+	if out.ExitCode == 0 && out.GoCommand != goCommand {
+		// An older builder guest ignores the selection and builds the
+		// module's default command; refuse that artifact.
+		err := fmt.Errorf("builder guest did not acknowledge the Go command cmd/%s", goCommand)
 		b.markFailed(ctx, build, state.FailureInfra, err.Error(), buildStart)
 		return BuildResult{}, err
 	}
@@ -1382,10 +1447,13 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 		}
 		buildResult.IssueSourceMaps, buildResult.IssueSourceMapsImageSHA256 = &set.Request, digest
 	}
+	phases.published = time.Now()
 	result, err := b.completeBuild(ctx, build, dep, app, acct, srcHash, ver, buildResult, buildStart)
 	if err != nil || result.BuildID == "" {
 		return result, err
 	}
+	phases.completed = time.Now()
+	b.log.Info("builderd: build phases", append([]any{"build", build.ID, "deployment", build.DeploymentID}, phases.attrs()...)...)
 	// Only cache a successfully committed build produced by the same builder
 	// environment observed before VM launch. A concurrent base restage leaves
 	// the successful deployment intact but deliberately skips cache publication.
@@ -1882,22 +1950,54 @@ func boundedGuestBuildLogTail(raw string) string {
 		daemonSection  = "\n[buildkitd]\n"
 		customerHeader = "[build]\n"
 	)
+	raw = dropBuildkitdRefLockRetries(raw)
 	build, daemon, split := strings.Cut(raw, daemonSection)
 	body := strings.TrimPrefix(build, customerHeader)
 	if split && strings.TrimSpace(body) != "" {
-		daemon = strings.TrimSpace(safetext.TruncateTail(daemon, daemonTail))
+		daemon = strings.TrimSpace(tailWholeLines(daemon, daemonTail))
 		budget := maxBytes - len(customerHeader) - len(daemonSection) - len(daemon)
-		out := customerHeader + strings.TrimSpace(safetext.TruncateTail(body, budget))
+		out := customerHeader + strings.TrimSpace(tailWholeLines(body, budget))
 		if daemon != "" {
 			out += daemonSection + daemon
 		}
 		return strings.TrimSpace(out)
 	}
-	// safetext.TruncateTail advances to the next rune boundary, so a cut
-	// landing inside a multi-byte character drops the partial rune instead of
-	// prefixing the customer's build log with a stray U+FFFD. It also
-	// subsumes the ToValidUTF8 pass this used to do by hand.
-	return strings.TrimSpace(safetext.TruncateTail(raw, maxBytes))
+	return strings.TrimSpace(tailWholeLines(raw, maxBytes))
+}
+
+// dropBuildkitdRefLockRetries removes BuildKit content-store retries from
+// a successful or failed build log. When the image and cache exporters write
+// the same layer, buildkitd logs `level=error msg="(*service).Write failed"
+// ... ref layer-sha256:... locked for ...` and retries; the export still
+// succeeds. Customers read those lines as build errors (Hunt 11 H11-2) and
+// they used most of the 3 KiB tail.
+func dropBuildkitdRefLockRetries(raw string) string {
+	if !strings.Contains(raw, "(*service).Write failed") {
+		return raw
+	}
+	lines := strings.SplitAfter(raw, "\n")
+	kept := lines[:0]
+	for _, line := range lines {
+		if strings.Contains(line, "(*service).Write failed") && strings.Contains(line, " locked for ") {
+			continue
+		}
+		kept = append(kept, line)
+	}
+	return strings.Join(kept, "")
+}
+
+// tailWholeLines is safetext.TruncateTail that also drops the partial first
+// line a byte cut leaves, so the log does not open mid-message. TruncateTail
+// advances to the next rune boundary (no stray U+FFFD) and subsumes the
+// ToValidUTF8 pass this used to do by hand.
+func tailWholeLines(s string, maxBytes int) string {
+	tail := safetext.TruncateTail(s, maxBytes)
+	if len(tail) < len(safetext.Clean(s)) {
+		if i := strings.IndexByte(tail, '\n'); i >= 0 && i < len(tail)-1 {
+			tail = tail[i+1:]
+		}
+	}
+	return tail
 }
 
 // materializeSource preserves the package-local helper used by older tests;

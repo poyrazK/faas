@@ -55,6 +55,10 @@ type Config struct {
 	Region         string
 	SpoolDir       string
 	MaxPutBytes    int64
+	// UploadGrants serves ?gregale-upload= grant uploads. Nothing issues
+	// grants yet, so the path stays off: an unauthenticated request then never
+	// reaches the grant store, and a stray grant row authorizes nothing.
+	UploadGrants bool
 	// MaxConcurrentPuts bounds local disk consumed by authenticated uploads
 	// waiting to be verified or forwarded. Zero selects a conservative default.
 	MaxConcurrentPuts int
@@ -79,7 +83,10 @@ type Handler struct {
 	region          string
 	spoolDir        string
 	maxPutBytes     int64
+	uploadGrants    bool
 	putSlots        chan struct{}
+	slotMu          sync.Mutex
+	accountSlots    map[string]int
 	maxSpoolBytes   int64
 	minSpoolFree    int64
 	transferTimeout time.Duration
@@ -171,11 +178,11 @@ func New(c Config) (*Handler, error) {
 		registry: c.Registry, store: c.Store, requestMetrics: c.RequestMetrics, openSecret: c.OpenSecret, client: c.HTTPClient,
 		multipartStore: multipartStore(c.Store),
 		enabled:        c.Enabled, host: strings.ToLower(c.Host), region: c.Region, spoolDir: c.SpoolDir,
-		maxPutBytes: c.MaxPutBytes, putSlots: make(chan struct{}, c.MaxConcurrentPuts),
+		maxPutBytes: c.MaxPutBytes, uploadGrants: c.UploadGrants, putSlots: make(chan struct{}, c.MaxConcurrentPuts),
 		maxSpoolBytes: c.MaxSpoolBytes, minSpoolFree: c.MinSpoolFreeBytes,
 		transferTimeout: c.Registry.TransferTimeout(),
 		spoolAvailable:  func() (uint64, error) { return availableSpoolBytes(c.SpoolDir) },
-		now:             c.Now, log: c.Log, lastTouch: map[string]time.Time{},
+		now:             c.Now, log: c.Log, lastTouch: map[string]time.Time{}, accountSlots: map[string]int{},
 	}, nil
 }
 
@@ -245,6 +252,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 	r = r.WithContext(ctx)
 	h.setTransferDeadlines(w, ctx)
+	if r.Body != nil && r.Body != http.NoBody {
+		deadline, _ := ctx.Deadline()
+		r.Body = newProgressBody(w, r.Body, deadline)
+	}
 	requestID := strings.ReplaceAll(uuid.NewString(), "-", "")
 	w.Header().Set("Server", "Gregale")
 	w.Header().Set("x-amz-request-id", requestID)
@@ -274,6 +285,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	default:
 		err = errSignature
 	}
+	if errors.Is(err, errHeadersNotSigned) {
+		writeS3Error(w, http.StatusForbidden, "AccessDenied", "There were headers present in the request which were not signed.", r.URL.Path, requestID)
+		return
+	}
 	if err != nil {
 		writeS3Error(w, http.StatusForbidden, "SignatureDoesNotMatch", "The request signature we calculated does not match the signature you provided.", r.URL.Path, requestID)
 		return
@@ -294,7 +309,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		writeS3Error(w, http.StatusForbidden, "SignatureDoesNotMatch", "The request signature we calculated does not match the signature you provided.", r.URL.Path, requestID)
 		return
 	}
-	if !h.boundURLRequest(w, r, credential, bucket, requestID) {
+	if !h.applyBucketCORS(w, r, bucket, requestID) || !h.boundURLRequest(w, r, credential, bucket, requestID) {
 		return
 	}
 	if h.routeWriteReceipt(w, r, requestContext{requestID: requestID, credential: credential, bucket: bucket, signature: parsed}) {
@@ -413,7 +428,7 @@ func parsePath(escapedPath string) (bucket, key string, hasBucket, hasKey bool, 
 		return bucket, "", true, false, nil
 	}
 	key, err = url.PathUnescape(parts[1])
-	if err != nil || !objectstorage.ValidKey(key) {
+	if err != nil || !objectstorage.ValidRequestKey(key) {
 		return "", "", false, false, errors.New("invalid key")
 	}
 	return bucket, key, true, true, nil
@@ -632,7 +647,20 @@ func (h *Handler) routeObject(w http.ResponseWriter, r *http.Request, req reques
 	}
 }
 
+// bucketSettingsPermission is the access needed to change a bucket-wide
+// setting (object lock, lifecycle, notifications, encryption, versioning)
+// or an object's retention and legal hold. AWS keeps these apart from
+// PutObject; here only a customer-created read_write key holds it. A
+// write-only key handed to an uploader, and a compute-binding key delivered
+// into an app's VM (possibly scoped to a prefix), still upload and delete
+// objects but cannot lock the bucket under 100-year retention, expire every
+// object, or point notifications at the account's other apps.
+const bucketSettingsPermission = "bucket_settings"
+
 func (h *Handler) can(credential state.ObjectS3Credential, permission string) bool {
+	if permission == bucketSettingsPermission {
+		return credential.Permission == state.ObjectBucketPermissionReadWrite && credential.ManagedAppID == ""
+	}
 	return credential.Permission == permission || credential.Permission == state.ObjectBucketPermissionReadWrite
 }
 
@@ -719,15 +747,14 @@ func (h *Handler) deleteObjects(w http.ResponseWriter, r *http.Request, req requ
 	}
 	w.Header().Set("X-Gregale-Delete-Id", id)
 	result := deleteObjectsResult{XMLNS: s3XMLNamespace}
-	for index, object := range request.Objects {
-		deleted, err := h.deleteBulkTarget(r.Context(), req, object, bulkDeletionRequestID(id, index))
-		if err == nil {
+	for index, entry := range h.deleteBulkTargets(r.Context(), req, request.Objects, id) {
+		if entry.err == nil {
 			if !request.Quiet {
-				result.Deleted = append(result.Deleted, deleted)
+				result.Deleted = append(result.Deleted, entry.deleted)
 			}
 			continue
 		}
-		result.Errors = append(result.Errors, bulkDeleteError(object, err))
+		result.Errors = append(result.Errors, bulkDeleteError(request.Objects[index], entry.err))
 	}
 	writeS3XML(w, http.StatusOK, req.requestID, result)
 }
@@ -1037,6 +1064,11 @@ func copyObjectHeaders(dst, src http.Header) {
 	}
 }
 
+const (
+	objectBusyMessage     = "Other work on this bucket is settling. Reduce concurrency or retry shortly."
+	objectConflictMessage = "A conflicting operation on this bucket or key must finish first, such as an open multipart upload or a versioning change."
+)
+
 func (h *Handler) providerError(w http.ResponseWriter, r *http.Request, req requestContext, err error, key string) {
 	resource := r.URL.Path
 	if errors.Is(err, objectstorage.ErrPreconditionFailed) {
@@ -1050,6 +1082,18 @@ func (h *Handler) providerError(w http.ResponseWriter, r *http.Request, req requ
 	if errors.Is(err, state.ErrObjectVersionProtectionPending) {
 		w.Header().Set("Retry-After", "30")
 		writeS3Error(w, http.StatusConflict, "OperationAborted", "Object version protection is pending.", resource, req.requestID)
+		return
+	}
+	// Contention is the customer's own concurrent work, never a provider
+	// outage: SDKs retry SlowDown with backoff, and 409 tells them waiting
+	// will not help yet.
+	if errors.Is(err, state.ErrObjectBucketBusy) {
+		w.Header().Set("Retry-After", "1")
+		writeS3Error(w, http.StatusServiceUnavailable, "SlowDown", objectBusyMessage, resource, req.requestID)
+		return
+	}
+	if errors.Is(err, state.ErrConflict) || errors.Is(err, objectstorage.ErrConflict) {
+		writeS3Error(w, http.StatusConflict, "OperationAborted", objectConflictMessage, resource, req.requestID)
 		return
 	}
 	if errors.Is(err, objectstorage.ErrNotFound) {

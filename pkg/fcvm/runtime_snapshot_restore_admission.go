@@ -118,6 +118,7 @@ func (m *Manager) coldBootSpecForWake(nc netns.Config, req WakeRequest, serviceD
 		StartupDeadlineS:         req.StartupDeadlineS,
 		ExecutionMode:            req.ExecutionMode,
 		ProvenWorker:             m.workerProven(req),
+		FunctionRunner:           req.Runtime != "",
 		WorkerPushDelivery:       req.WorkerPushDelivery,
 		// One-shot guests use a vsock dispatch protocol rather than the app
 		// HTTP listener. App tasks remain networked; executions do not.

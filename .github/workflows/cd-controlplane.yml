@@ -178,13 +178,13 @@ jobs:
             exit 1
           }
 
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           # Unit/controller sources must come from the same commit as the
           # release assets. No daemon source is built in this workflow.
           ref: ${{ inputs.release_tag }}
 
-      - uses: actions/setup-go@v7
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with:
           go-version-file: go.mod
           # The fleet runner is long-lived and keeps its local Go build cache
@@ -759,6 +759,26 @@ jobs:
         if: ${{ !inputs.hosted_runner }}
         env:
           CP_ANSIBLE_VARS_B64: ${{ secrets.CP_ANSIBLE_VARS_B64 }}
+          SEAL_DOMAIN_OUTBOUND_AGE_KEY: ${{ secrets.SEAL_DOMAIN_OUTBOUND_AGE_KEY }}
+          SEAL_DOMAIN_OUTBOUND_AGE_RECIPIENT: ${{ secrets.SEAL_DOMAIN_OUTBOUND_AGE_RECIPIENT }}
+          SEAL_DOMAIN_SOURCE_AGE_KEY: ${{ secrets.SEAL_DOMAIN_SOURCE_AGE_KEY }}
+          SEAL_DOMAIN_SOURCE_AGE_RECIPIENT: ${{ secrets.SEAL_DOMAIN_SOURCE_AGE_RECIPIENT }}
+          SEAL_DOMAIN_RUNTIME_AGE_KEY: ${{ secrets.SEAL_DOMAIN_RUNTIME_AGE_KEY }}
+          SEAL_DOMAIN_RUNTIME_AGE_RECIPIENT: ${{ secrets.SEAL_DOMAIN_RUNTIME_AGE_RECIPIENT }}
+          SEAL_DOMAIN_BUILD_AGE_KEY: ${{ secrets.SEAL_DOMAIN_BUILD_AGE_KEY }}
+          SEAL_DOMAIN_BUILD_AGE_RECIPIENT: ${{ secrets.SEAL_DOMAIN_BUILD_AGE_RECIPIENT }}
+          SEAL_DOMAIN_EDGE_AGE_KEY: ${{ secrets.SEAL_DOMAIN_EDGE_AGE_KEY }}
+          SEAL_DOMAIN_EDGE_AGE_RECIPIENT: ${{ secrets.SEAL_DOMAIN_EDGE_AGE_RECIPIENT }}
+          SEAL_DOMAIN_ALERTING_AGE_KEY: ${{ secrets.SEAL_DOMAIN_ALERTING_AGE_KEY }}
+          SEAL_DOMAIN_ALERTING_AGE_RECIPIENT: ${{ secrets.SEAL_DOMAIN_ALERTING_AGE_RECIPIENT }}
+          SEAL_DOMAIN_STORAGE_AGE_KEY: ${{ secrets.SEAL_DOMAIN_STORAGE_AGE_KEY }}
+          SEAL_DOMAIN_STORAGE_AGE_RECIPIENT: ${{ secrets.SEAL_DOMAIN_STORAGE_AGE_RECIPIENT }}
+          SEAL_DOMAIN_CONTROL_AGE_KEY: ${{ secrets.SEAL_DOMAIN_CONTROL_AGE_KEY }}
+          SEAL_DOMAIN_CONTROL_AGE_RECIPIENT: ${{ secrets.SEAL_DOMAIN_CONTROL_AGE_RECIPIENT }}
+          SEAL_DOMAIN_DELIVERY_AGE_KEY: ${{ secrets.SEAL_DOMAIN_DELIVERY_AGE_KEY }}
+          SEAL_DOMAIN_DELIVERY_AGE_RECIPIENT: ${{ secrets.SEAL_DOMAIN_DELIVERY_AGE_RECIPIENT }}
+          SEAL_DOMAIN_ACCOUNT_AGE_KEY: ${{ secrets.SEAL_DOMAIN_ACCOUNT_AGE_KEY }}
+          SEAL_DOMAIN_ACCOUNT_AGE_RECIPIENT: ${{ secrets.SEAL_DOMAIN_ACCOUNT_AGE_RECIPIENT }}
           COMPUTE_SSH_KEY: ${{ secrets.COMPUTE_SSH_KEY }}
           COMPUTE_KNOWN_HOSTS: ${{ secrets.COMPUTE_KNOWN_HOSTS }}
           DEPLOY_ENVIRONMENT: ${{ inputs.deploy_environment }}
@@ -779,6 +799,9 @@ jobs:
           install -d -m 0700 "$work"
           trap 'rm -rf -- "$work"' EXIT
           printf '%s' "$CP_ANSIBLE_VARS_B64" | base64 --decode > "$work/vars.yml"
+          # ADR 20261022111812: the seal_domains role stages the domain keys
+          # held as SEAL_DOMAIN_* secrets; the write modes stay in the vars.
+          scripts/ci/seal_domain_vars.sh control-plane "$work/seal-domains" "$work/vars.yml"
           printf '%s\n' "$COMPUTE_SSH_KEY" > "$work/ssh-key"
           printf '%s\n' "$COMPUTE_KNOWN_HOSTS" > "$work/known_hosts"
           chmod 0600 "$work/vars.yml" "$work/ssh-key" "$work/known_hosts"
@@ -1000,7 +1023,7 @@ jobs:
 
       - name: Upload control-plane rollout probe evidence
         if: always()
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
           name: control-plane-rollout-probes-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/gregale-rollout-availability-${{ github.run_id }}-${{ github.run_attempt }}-*.tsv
@@ -1321,7 +1344,7 @@ jobs:
 
       # The verifier comes from the workflow's own ref; the release commit's
       # checkout below is only trusted once its signature verified.
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           path: workflow-src
           sparse-checkout: scripts/ci/verify_unit_release.sh
@@ -1342,7 +1365,7 @@ jobs:
             echo "The unit release changed no control-plane host role." >> "$GITHUB_STEP_SUMMARY"
           fi
 
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         if: steps.verify.outputs.carries == 'true'
         with:
           # The roles converge from the unit release's commit; the planner's
@@ -1438,6 +1461,26 @@ jobs:
         if: steps.plan.outputs.action == 'converge'
         env:
           CP_ANSIBLE_VARS_B64: ${{ secrets.CP_ANSIBLE_VARS_B64 }}
+          SEAL_DOMAIN_OUTBOUND_AGE_KEY: ${{ secrets.SEAL_DOMAIN_OUTBOUND_AGE_KEY }}
+          SEAL_DOMAIN_OUTBOUND_AGE_RECIPIENT: ${{ secrets.SEAL_DOMAIN_OUTBOUND_AGE_RECIPIENT }}
+          SEAL_DOMAIN_SOURCE_AGE_KEY: ${{ secrets.SEAL_DOMAIN_SOURCE_AGE_KEY }}
+          SEAL_DOMAIN_SOURCE_AGE_RECIPIENT: ${{ secrets.SEAL_DOMAIN_SOURCE_AGE_RECIPIENT }}
+          SEAL_DOMAIN_RUNTIME_AGE_KEY: ${{ secrets.SEAL_DOMAIN_RUNTIME_AGE_KEY }}
+          SEAL_DOMAIN_RUNTIME_AGE_RECIPIENT: ${{ secrets.SEAL_DOMAIN_RUNTIME_AGE_RECIPIENT }}
+          SEAL_DOMAIN_BUILD_AGE_KEY: ${{ secrets.SEAL_DOMAIN_BUILD_AGE_KEY }}
+          SEAL_DOMAIN_BUILD_AGE_RECIPIENT: ${{ secrets.SEAL_DOMAIN_BUILD_AGE_RECIPIENT }}
+          SEAL_DOMAIN_EDGE_AGE_KEY: ${{ secrets.SEAL_DOMAIN_EDGE_AGE_KEY }}
+          SEAL_DOMAIN_EDGE_AGE_RECIPIENT: ${{ secrets.SEAL_DOMAIN_EDGE_AGE_RECIPIENT }}
+          SEAL_DOMAIN_ALERTING_AGE_KEY: ${{ secrets.SEAL_DOMAIN_ALERTING_AGE_KEY }}
+          SEAL_DOMAIN_ALERTING_AGE_RECIPIENT: ${{ secrets.SEAL_DOMAIN_ALERTING_AGE_RECIPIENT }}
+          SEAL_DOMAIN_STORAGE_AGE_KEY: ${{ secrets.SEAL_DOMAIN_STORAGE_AGE_KEY }}
+          SEAL_DOMAIN_STORAGE_AGE_RECIPIENT: ${{ secrets.SEAL_DOMAIN_STORAGE_AGE_RECIPIENT }}
+          SEAL_DOMAIN_CONTROL_AGE_KEY: ${{ secrets.SEAL_DOMAIN_CONTROL_AGE_KEY }}
+          SEAL_DOMAIN_CONTROL_AGE_RECIPIENT: ${{ secrets.SEAL_DOMAIN_CONTROL_AGE_RECIPIENT }}
+          SEAL_DOMAIN_DELIVERY_AGE_KEY: ${{ secrets.SEAL_DOMAIN_DELIVERY_AGE_KEY }}
+          SEAL_DOMAIN_DELIVERY_AGE_RECIPIENT: ${{ secrets.SEAL_DOMAIN_DELIVERY_AGE_RECIPIENT }}
+          SEAL_DOMAIN_ACCOUNT_AGE_KEY: ${{ secrets.SEAL_DOMAIN_ACCOUNT_AGE_KEY }}
+          SEAL_DOMAIN_ACCOUNT_AGE_RECIPIENT: ${{ secrets.SEAL_DOMAIN_ACCOUNT_AGE_RECIPIENT }}
           COMPUTE_SSH_KEY: ${{ secrets.COMPUTE_SSH_KEY }}
           COMPUTE_KNOWN_HOSTS: ${{ secrets.COMPUTE_KNOWN_HOSTS }}
           DEPLOY_ENVIRONMENT: ${{ inputs.deploy_environment }}
@@ -1460,6 +1503,9 @@ jobs:
           done
           work="$HOST_CONFIG_WORK"
           printf '%s' "$CP_ANSIBLE_VARS_B64" | base64 --decode > "$work/vars.yml"
+          # ADR 20261022111812: the seal_domains role stages the domain keys
+          # held as SEAL_DOMAIN_* secrets; the write modes stay in the vars.
+          scripts/ci/seal_domain_vars.sh control-plane "$work/seal-domains" "$work/vars.yml"
           printf '%s\n' "$COMPUTE_SSH_KEY" > "$work/ssh-key"
           printf '%s\n' "$COMPUTE_KNOWN_HOSTS" > "$work/known_hosts"
           chmod 0600 "$work/vars.yml" "$work/ssh-key" "$work/known_hosts"
@@ -1551,7 +1597,7 @@ jobs:
 
       - name: Upload host-config rollout probe evidence
         if: always()
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
           name: control-plane-host-config-probes-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/gregale-rollout-availability-${{ github.run_id }}-${{ github.run_attempt }}-*.tsv
@@ -1650,7 +1696,7 @@ jobs:
 
       # The verifier comes from the workflow's own ref; the release commit's
       # checkout below is only trusted once its signature verified.
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           path: workflow-src
           sparse-checkout: scripts/ci/verify_unit_release.sh
@@ -1665,7 +1711,7 @@ jobs:
           echo "UNITS_DIR=$RUNNER_TEMP/gregale-units/unpacked" >> "$GITHUB_ENV"
           echo "UNITS_SHA=$git_sha" >> "$GITHUB_ENV"
 
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           # The planner and deployctl come from the unit release's commit;
           # the planner's ancestry and N±1 checks need main's history and the
@@ -1797,7 +1843,7 @@ jobs:
 
       - name: Upload unit rollout probe evidence
         if: always()
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
           name: control-plane-unit-rollout-probes-${{ github.run_id }}-${{ github.run_attempt }}-${{ inputs.units_lane }}
           path: ${{ runner.temp }}/gregale-rollout-availability-${{ github.run_id }}-${{ github.run_attempt }}-*.tsv

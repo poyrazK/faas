@@ -1,12 +1,16 @@
 # ADR-831: Edge WAF signatures, bot challenge, and client certificates
 
-- **Status:** proposed
+- **Status:** accepted (2026-10-22, amendment 9). `kind=waf` `observe`,
+  `warn` and `block` at paranoia level 1 and `kind=challenge` are generally
+  available (2026-10-23, amendment 11); paranoia level 2 stays in preview,
+  in `observe` only.
 - **Date:** 2026-10-09
 - **Related:** ADR-091 (edge rules), ADR-104 (throttle keying), ADR-520
   (self-hosted custom-domain TLS), ADR-829 (pre-auth observe default),
   `docs/api-hosting-roadmap.md` ("What not to do next" §1)
-- **Decision needed:** product owner, on scope, sequencing, and plan gating.
-  This ADR proposes; nothing is built until it is accepted.
+- **Decided:** product owner, 2026-10-22 (amendment 9). Until then this
+  ADR was a proposal, and steps were built as previews at the product
+  owner's request.
 
 ## Context
 
@@ -732,3 +736,520 @@ follow-up above:
   an online replacement that keeps its name (added NOT VALID under a
   temporary name, validated, swapped). The read API, `gregale edge-rules
   events --outcome` and the dashboard filter accept them.
+
+## Amendment 8 (2026-10-22): raising the difficulty under attack, and visitors without JavaScript
+
+The two items amendment 7 left open.
+
+### Raising the difficulty under attack
+
+A fixed difficulty is a trade-off made once: high enough to cost an
+attacker who solves challenges with headless browsers, low enough for slow
+phones. Under attack the right trade-off moves.
+
+- **Opt-in cap.** `max_difficulty` (optional, from `difficulty` up to 22)
+  on the challenge action. Omitted or equal to `difficulty` keeps the
+  difficulty fixed, as before. CLI `--challenge-max-difficulty`.
+- **Signal.** Challenge pages served by the rule, per gateway, per minute.
+  A page is what an unsolved client gets, so a flood of them is the attack
+  itself, whether or not the clients ever solve. Each gateway decides
+  alone: no shared state, no extra round trip, and a token carries the
+  difficulty it was issued at, so verifying a solution never depends on
+  which gateway issued it or on what that gateway decided since.
+- **Rule.** After a minute in which the gateway served the rule more than
+  4 x its usual pages per minute, and never fewer than 60, the difficulty
+  rises by 2 bits (4 x the work), up to `max_difficulty`. After each minute
+  below half that threshold it falls by 2 bits, back to `difficulty`.
+  Between the two it holds, so a rate near the threshold does not flap.
+- **Usual rate.** An average over about 15 minutes, learned only from
+  minutes at the rule's own difficulty, so a long attack does not become
+  the norm. A rule newer than 15 minutes has no usual rate yet: it rises
+  above a fixed 240 pages a minute and learns from every minute, so a rule
+  created during an attack (for example by attack mode,
+  ADR-20261021220456) is raised at once, and a busy rule raised by mistake
+  falls back once its warm-up has learned its real traffic. A gateway
+  restart, or two hours without a page, starts the rule over.
+- **Bounds.** A gateway tracks at most 10,000 rules; a rule past that keeps
+  its difficulty. The constants live in `pkg/api/limits.go`
+  (`EdgeChallengeRaise*`, `EdgeChallengeBaselineMinutes`).
+- **Signals.** `gateway_edge_challenge_raised_total{app}` counts pages
+  served at a raised difficulty (a subset of `issued`); the edge-protection
+  summary reports it as `challenge.raised`. Each step up or down is logged
+  with the rule, the new difficulty and the bounds.
+
+What it does not do: it does not raise the difficulty for clients that
+already hold a pass (a pass is not re-checked against the difficulty), and
+it does not help against clients that never solve, which the challenge
+already stops at the page.
+
+### Visitors without JavaScript
+
+The challenge needs JavaScript; that stays. A no-JavaScript proof (a form
+the visitor submits, a wait, an audio or image puzzle) is either trivial
+for a bot or an accessibility barrier, and a third-party widget is what
+section 2 rejected. Instead the ways through are the ones that already
+exist, made findable:
+
+- verified credentials (API key, consumer key, JWT) and verified bots
+  (`verified_bot missing` in the suggested rule) are never challenged;
+- the owner can exempt a client by a match condition on the rule, such as
+  `{"not":{"field":"client_ip","op":"in_list","list":"..."}}` (ADR-963).
+
+To make the second one usable, the page's no-JavaScript message now gives
+the visitor the request ID as a reference to send the site's owner, and
+the events API, `gregale edge-rules events --request-id` and the SDKs
+filter by request ID, so the owner finds the `challenged` event with the
+visitor's address and User-Agent. Events are sampled (10 per rule per
+minute per gateway), so under heavy load the reference may not have been
+kept; outside an attack it is.
+
+The challenge stays a preview with `kind=waf` warn and block; leaving
+preview is the product owner's call recorded under amendment 6.
+
+## Amendment 9 (2026-10-22): accepted; `observe` leaves preview
+
+The product owner's decisions on amendment 6's proposals:
+
+- **Accepted.** This ADR moves from proposed to accepted. Everything in it
+  that is built stays as built; what is still preview is named below.
+- **`observe` at paranoia level 1 is generally available** (proposal 1).
+  It adds no latency, detects 98% of the CRS regression corpus, and its
+  known false positives are documented with their exclusions. Paranoia
+  level 2 stays preview: it flagged 20 of the 38 legitimate requests.
+- **`warn` and `block` stay in preview, and the gate stays p95 at most
+  2 ms** (proposals 2 and 7). Restating it as 5 ms was declined. The
+  production measurement below misses the gate, so the engine work below
+  is the way out of preview, not a looser gate.
+- **`kind=challenge` stays in preview** with them.
+- **Coraza pre-filter** (proposal 3): reported upstream as
+  [corazawaf/coraza#1790](https://github.com/corazawaf/coraza/issues/1790),
+  with a reproducer on the public API and a patch verified against
+  Coraza's own operator tests. The cause is the trie reconstruction joining
+  a common prefix to a literal that is not adjacent to it
+  (`2(?:x|.2250)` yields `"22250"`). The pre-filter stays off until a
+  fixed release passes `TestCRSRegressionCorpusEngineEquivalence`; then it
+  takes about 19% off every in-path check.
+- **Open engineering options** toward the 2 ms gate, in order of expected
+  gain: the pre-filter once fixed (19%); dropping the three largest unix
+  command-injection rules from the in-path set (10%, 8 corpus attacks
+  missed; proposal 4); a CPU weight for gatewayd-internal in a slice of
+  its own (proposal 8); running `warn` alongside the proxied request
+  (proposal 6); memoizing regex results (proposal 5).
+
+### In-path latency on a production compute node
+
+`TestEdgeWAFInlineLoad_E2E` on `gregale-compute-2` (n2-standard-4: 4 vCPUs,
+two physical cores, Xeon 2.8 GHz; load average 0.04 before; two tenant
+microVMs running), built from 54ddc924f3. apid, gatewayd-internal and a
+throwaway Postgres ran in private mount and network namespaces, with empty
+filesystems over `/run/faas`, `/var/lib/faas` and `/etc/faas` and loopback
+only, so they could reach no production socket, state or network; all of
+it was removed afterwards. The load generator shared the node. Five passes,
+interleaved: no WAF rule twice, a `warn` rule three times, 15 s per rate.
+
+| Rate (req/s) | Check p50 | Check p95 | Check p99 | Within 2 ms | Skipped | Gateway CPU per request (no WAF) | Client p95 (no WAF) |
+|---|---|---|---|---|---|---|---|
+| 100 | 1.87-1.96 ms | 4.01-4.36 ms | 4.9-7.1 ms | 53-58% | 1.6-2.3% | 3.9-4.1 ms (1.7) | 6.0-7.3 ms (2.9-3.3) |
+| 250 | 1.90-1.96 ms | 4.23-4.46 ms | 5.8-6.8 ms | 52-56% | 7.0-7.9% | 3.6-3.7 ms (1.4) | 6.9-7.6 ms (3.0-3.5) |
+| 500 | 2.00-2.23 ms | 4.78-6.48 ms | 8.8-9.9 ms | 43-50% | 19.5-22.8% | 3.4-3.6 ms (1.2) | 13-41 ms (3.2-3.6) |
+| 1000 | 2.37-2.40 ms | 6.39-6.81 ms | 9.7-9.8 ms | 37-38% | 33.5-37.1% | 4.0 ms (1.0) | 8.7-9.0 s (7.5-10 ms) |
+
+No benign request was warned in any pass; the attacks not warned match the
+skipped checks.
+
+Findings:
+
+1. **The 2 ms gate is missed on a production node too.** The median check
+   is about 1.9 ms and p95 4.0-4.5 ms at 100-250 requests per second, at
+   the low end of what amendment 6 measured on the shared test node (p95
+   4.4-7.4 ms). The test node's numbers were not inflated by its
+   neighbours as much as amendment 6 feared: the check costs about 2 ms of
+   CPU on this processor. Dedicated cores do not close the gap; a cheaper
+   check has to.
+2. **A `warn` rule adds about 2.2 ms of gateway CPU per request** (3.4-4.1
+   against 1.0-1.75 ms without). At 1000 requests per second that is all
+   four vCPUs: the gateway saturated, a third of checks were skipped, and
+   clients waited seconds. With no WAF rule the same rate stayed under
+   10 ms at p95. The load generator shared the node, so a dedicated node
+   would saturate somewhat later, but a node's checked capacity is a few
+   hundred requests per second, as amendment 6 found.
+3. **Skips exceed 1% from 100 requests per second** (1.6-2.3%), so the
+   two check slots are already contended at low rates.
+
+The engine options listed above are therefore needed to leave preview:
+the pre-filter (19%) and dropping the three largest unix
+command-injection rules (10%) together would bring the median to about
+1.4 ms, still short of a 2 ms p95, so memoizing regex results (proposal
+5) or running `warn` alongside the request (proposal 6) is likely needed
+as well.
+
+## Amendment 10 (2026-10-22): `@grx`, a cheaper in-path check that keeps every verdict
+
+Amendment 9 showed the check itself has to get cheaper. The product owner
+chose to start with the changes that keep detection unchanged; dropping
+rules stays a last resort.
+
+### What changed
+
+CRS is loaded with `@rx` renamed to `@grx`, the gateway's own operator
+(`pkg/edgewaf/rxop.go`), registered through Coraza's operator plugin API.
+No Coraza fork is carried. `@grx` matches exactly as `@rx` does (RE2 with
+`(?sm)`, capture fields 0 to 8, the binary matcher for patterns that match
+non-UTF-8 bytes) and adds three things that never change a verdict:
+
+- **A sound pre-filter.** At load time each pattern yields a minimum input
+  length and up to three clauses of literals; an input missing any clause
+  skips the regex. Every literal is one whole literal node of the pattern,
+  so no literal is ever made by joining nodes, the cause of
+  corazawaf/coraza#1790. A single character counts when it is punctuation
+  or a control character, such as the `(` every function-call pattern ends
+  in. Case-insensitive literals are compared as ASCII only when the input is
+  ASCII, since Unicode folding matches `k` with U+212A and `s` with U+017F.
+  249 of the 316 CRS patterns get a pre-filter.
+- **Match before capture.** Most values do not match, so the regex runs
+  without capture tracking first and finds capture positions only for a
+  match a capturing rule needs.
+- **A result cache.** Results are cached by app, pattern and value, for
+  values up to 256 bytes, in 64 shards of 512 entries (a full shard is
+  emptied). The app is part of the key (the transaction ID carries it), so
+  one app's requests can never be timed to learn what another app's
+  requests contained. The value is kept only as two 64-bit hashes under
+  seeds chosen at start, so the cache holds no request data such as
+  cookies or tokens.
+
+### Evidence
+
+- **Same verdicts.** `TestCRSRegressionCorpusOwnRxEquivalence`: on the 4,621
+  replayable CRS v4.25.0 regression tests, the sampled PL1 and PL2 engines
+  and the in-path engine match the same rules with the same score with and
+  without `@grx`, on a first pass and again from the cache.
+  `TestGrxPrefilterSoundOnCRS`: across the 316 CRS patterns and 26,822
+  values from that corpus and the package's samples, the pre-filter never
+  skips a value its regex matches. The input Coraza's own pre-filter misses
+  for rule 942220 is detected.
+- **Cheaper check.** `BenchmarkInlinePrefilter` replays the in-path benign
+  samples, the cache's best case; `BenchmarkInlineVaried` gives every
+  request a unique session cookie and query value and draws User-Agents
+  from a pool of eight. On a laptop under heavy load from other work, so
+  ranges are wide:
+
+  | Traffic | Stock `@rx` | `@grx` | `@grx` with cache |
+  |---|---|---|---|
+  | Repeated samples | 560-650 µs | 390-470 µs | 225-245 µs |
+  | Varied | 615-725 µs | 450-535 µs | 320-355 µs |
+
+  On varied traffic the check takes about half the time. The regex share of
+  that traffic fell from about 0.9-1.1 s to 0.52 s per 6,000 values.
+
+### On a production compute node
+
+`TestEdgeWAFInlineLoad_E2E` on `gregale-compute-2` again, isolated as in
+amendment 9 and removed afterwards, with two gatewayd-internal builds: stock
+`@rx` (8f28696ef0) and `@grx` (20ee6792d7). The run waited until the node
+was idle (load 0.42, three tenant microVMs), then ran one pass without a
+WAF rule and six `warn` passes, interleaved stock, `@grx`, `@grx`, stock,
+stock, `@grx`, so both saw the same node. Ranges cover the three passes of
+each build.
+
+| Rate (req/s) | Build | Check p50 | Check p95 | Check p99 | Within 2 ms | Skipped | Gateway CPU per request |
+|---|---|---|---|---|---|---|---|
+| 100 | stock | 1.89-1.91 ms | 3.93-4.10 ms | 4.9 ms | 56-57% | 1.8-2.1% | 4.0-4.1 ms |
+| 100 | `@grx` | 1.06-1.10 ms | 1.55-1.76 ms | 1.95-2.64 ms | 98-99.5% | 0.1-1.0% | 3.0-3.1 ms |
+| 250 | stock | 1.92-1.94 ms | 4.38-4.48 ms | 7.0-8.2 ms | 53-54% | 6.9-7.9% | 3.6-3.7 ms |
+| 250 | `@grx` | 0.94-1.13 ms | 1.49-2.00 ms | 2.05-4.49 ms | 95-99% | 2.5-3.2% | 2.6-2.8 ms |
+| 500 | stock | 2.00-2.12 ms | 4.78-6.04 ms | 8.9-9.8 ms | 46-50% | 19.1-21.6% | 3.4-3.6 ms |
+| 500 | `@grx` | 0.90-0.96 ms | 1.67-1.98 ms | 2.79-4.30 ms | 95-98% | 6.7-7.7% | 2.4 ms |
+| 1000 | stock | 2.36-2.42 ms | 6.39-7.09 ms | 9.7-9.9 ms | 36-39% | 33.9-35.3% | 4.0-4.1 ms |
+| 1000 | `@grx` | 1.05-1.07 ms | 2.75-2.92 ms | 4.9-5.0 ms | 88-90% | 21.3-22.0% | 2.2 ms |
+
+Without a WAF rule the gateway used 1.05-1.76 ms of CPU per request. No
+benign request was warned in any pass; the attacks not warned match the
+skipped checks.
+
+Findings:
+
+1. **The 2 ms gate is met at 100-500 requests per second.** `@grx`'s p95 is
+   1.49-2.00 ms there in every pass, against 3.93-6.04 ms for stock on the
+   same node minutes apart, and its median is about 1 ms. At 1000 requests
+   per second, where the node is saturated, p95 is 2.75-2.92 ms.
+2. **The WAF's added CPU falls by about 45%:** 1.3 ms per request at 100
+   requests per second against 2.3 ms for stock. At 1000 requests per
+   second stock saturated the node and clients waited 6-7.5 s (one pass
+   lost 168 requests); with `@grx` clients saw p50 13-16 ms.
+3. **Skips remain.** Checks are skipped from 250 requests per second (2.5-
+   3.2%, 7-8% at 500), fewer than stock's (7-8%, 19-22%). A skipped check
+   lets the request through unchecked, so under `block` a few percent of
+   requests at those rates are not inspected. The two check slots are the
+   limit; a slot count tied to the node's cores is the lever.
+
+Whether `warn` and `block` leave preview on this evidence is the product
+owner's decision. The largest remaining regex cost is rule 932237's list of
+unix commands in request headers, which has no literal or punctuation every
+match must contain; a sound keyword index for such lists is the next step
+if more headroom is wanted. Dropping rules is not needed for the gate.
+
+## Amendment 11 (2026-10-23): `warn`, `block` and `kind=challenge` are generally available
+
+The product owner's decision, on amendment 10's production measurement:
+`kind=waf` `warn` and `block` at paranoia level 1 and `kind=challenge`
+(with amendment 8's escalation) leave preview. Paranoia level 2 stays in
+preview, in `observe` only, as amendment 6 left it.
+
+- **The gate is met.** With `@grx` the in-path check's p95 was 1.49-2.00 ms
+  at 100-500 requests per second on a production compute node.
+- **Known limits, accepted for GA and documented in `docs/security.md`:**
+  - The WAF fails open. A check over the app's budget or without a free
+    slot lets the request through unchecked and counts it as
+    `inline_skipped`; at 250-500 requests per second a node skipped 2.5-8%
+    of checks. Sizing the check slots to the node's cores is the follow-up.
+  - Verdicts are validated on the CRS regression corpus and the benign
+    corpus, not yet on production traffic, which has been too thin for the
+    false-positive review amendment 4 asked for. The detection events of
+    amendment 5 are the review's input as traffic arrives.
+  - The challenge needs JavaScript (amendment 8).
+- **Launch.** In production the features go live through the platform flags
+  of ADR-20261023113721, `edge_waf_blocking` and `edge_challenge`, after the
+  release carrying `@grx` (#5172) is deployed, so no account runs blocking
+  checks on the slower stock engine: `flags enable`, then `default` for
+  every account. The flags stay as kill switches until they retire, by
+  2027-03-31.
+- **Not part of this:** rule penalties (`edge_penalty_box`) keep their own
+  launch decision, and attack mode and AI crawler controls are not merged.
+
+## Amendment 12 (2026-10-24): check slots sized to the node, with a short wait
+
+Amendment 10's third finding, which amendment 11 accepted for GA as a
+known limit with slot sizing as the follow-up, is a queueing effect, not a
+CPU limit. The
+in-path pool had two slots and never waited: a check that arrived while two
+were running was skipped at once, and its request passed unchecked. A
+discrete-event model of that pool (Poisson arrivals, check times lognormal
+with `@grx`'s production median of 1.0 ms and p95 of 1.7 ms) reproduces
+every skip rate amendment 10 measured on `gregale-compute-2`:
+
+| Rate (req/s) | Measured, 2 slots, no wait | Model, 2 slots, no wait | Model, 3 slots, 1 ms wait |
+|---|---|---|---|
+| 100 | 0.1-1.0% | 0.46% | 0.000% |
+| 250 | 2.5-3.2% | 2.57% | 0.003% |
+| 500 | 6.7-7.7% | 8.26% | 0.013% |
+| 1000 | 21.3-22.0% | 21.15% | 0.221% |
+
+The model lives in `pkg/edgewaf/slot_model_test.go` (`TestInlineSlotModel`);
+it fails if it stops reproducing the measured column, or if the shipped
+sizing for that node predicts more than 0.1% skipped up to 500 req/s. It
+cannot model CPU contention, which lengthens checks as more overlap, so its
+1000 req/s figure is optimistic: the node saturates there.
+
+Decision:
+
+1. **Slots follow the gateway's processors.** `api.EdgeWAFInlineSlots`
+   gives one slot per `GOMAXPROCS` but one, at least 2 and at most 16.
+   gatewayd-internal runs without a CPU quota, so an n2-standard-4 node
+   gets 3 slots; the 2-vCPU test node keeps 2. A check is pure CPU, so
+   leaving one processor keeps checks from ever taking the last one from
+   proxying, garbage collection and the rest of the gateway. At 16, the
+   per-app budgets bind first.
+2. **A short wait before failing open.** A check that finds every slot busy
+   waits up to `api.EdgeWAFInlineSlotWait` (1 ms, about one check) for one,
+   then is skipped. A momentary pile-up clears within the wait; sustained
+   overload still fails open, after at most 1 ms more latency for the
+   skipped request.
+3. **`gateway_waf_inline_seconds` includes the wait**: it is the latency
+   the check added to the request. The app's inline budget is charged the
+   check alone.
+4. **Skips by reason.** `gateway_waf_inline_skips_total{app,reason}` counts
+   `budget` (the app used its inline budget, as under a flood) apart from
+   `busy` (no slot freed within the wait, a capacity shortfall). The
+   summary's `inline_skipped` is still the total. gatewayd-internal logs
+   the slot count and wait when in-path checks are armed.
+5. **Unchanged:** the per-app inline budget (500 worker-ms per second, burst
+   1000), and failing open. Throttle rules and the pre-auth limit remain the
+   defence against floods, not the WAF.
+
+At its peak the pool can now use 3 of an n2-standard-4's 4 vCPUs instead of
+2, but it reaches that only when checks queue, which before this change
+meant they were skipped.
+
+### Measured on a workstation
+
+`TestInlineLoad` (`FAAS_WAF_INLINE_SLOTS` and `FAAS_WAF_INLINE_WAIT_US` now
+override the sizing) on an Apple M3 Pro with GOMAXPROCS 4, 8 s per rate,
+two interleaved passes per sizing, while other work kept the load average
+at 9-14. Checks cost about 0.3 ms of CPU there, a quarter of the production
+Xeon's, so the times do not carry over; the skip comparison does, because
+the skips come from bursts, and a busy machine makes bursts worse.
+
+| Rate (req/s) | Sizing | Check p50 | Check p95 | Check p99 | Skipped | Attacks detected |
+|---|---|---|---|---|---|---|
+| 250 | 2 slots, no wait | 0.25-0.28 ms | 0.49-0.71 ms | 0.92-1.20 ms | 2.43-3.48% | 192/198 |
+| 250 | 3 slots, 1 ms wait | 0.25-0.42 ms | 0.49-1.02 ms | 0.84-1.32 ms | 0.00% | 195/195 |
+| 500 | 2 slots, no wait | 0.22-0.23 ms | 0.42-0.46 ms | 0.65-0.77 ms | 5.01-5.10% | 385/403 |
+| 500 | 3 slots, 1 ms wait | 0.25-0.26 ms | 0.51-0.62 ms | 0.91-0.99 ms | 0.00% | 402/402 |
+| 1000 | 2 slots, no wait | 0.21-0.29 ms | 0.42-0.80 ms | 0.65-1.07 ms | 7.18-9.20% | 735/799 |
+| 1000 | 3 slots, 1 ms wait | 0.21-0.29 ms | 0.37-0.83 ms | 0.49-1.26 ms | 0.00-0.01% | 802/802 |
+
+No benign request was flagged. The new sizing's p95 includes the wait and
+stays within the old sizing's range.
+
+Not yet measured on a production node. Rerun `TestEdgeWAFInlineLoad_E2E`
+on `gregale-compute-2` as in amendment 10, with `FAAS_E2E_WAF_LOAD_GATE=1`
+(ADR-20261024082000), and expect `busy` skips under 0.1% with p95 at most
+2 ms at 100-500 req/s, which retires amendment 11's known limit. Measured
+in amendment 14.
+
+## Amendment 13 (2026-10-24): the false-positive review
+
+Amendment 11 accepted verdicts validated on corpora but not on production
+traffic, and ADR-20261024082000 criterion W4 asks for 14 days of traffic
+with no false positive unexplained. The detection events of amendment 5
+hold the evidence, but reading them one at a time does not scale, and
+silencing a false positive meant restating a rule's whole WAF action
+(`edge-rules update --kind waf` replaces it). Decision:
+
+1. **A review groups the detections.** `GET
+   /v1/apps/{slug}/edge-rules/waf-review` (`rule` and `since` optional;
+   7 days by default, clamped to the plan's event window) reads the newest
+   5,000 detections of each outcome (`detected`, `warned`, `blocked`) and
+   groups them by edge rule, CRS rule and path, with id-like path segments
+   (numbers, UUIDs, hex of 16 or more, mixed tokens of 20 or more) read as
+   `{id}`. At most 50 groups are returned, largest first; `truncated` says
+   when the window held more detections. No new table or store method: the
+   review reads `edge_rule_events` through the events store.
+2. **Each group is assessed**, in this order:
+   - `excluded`: the rule already excludes the CRS rule;
+   - `likely_attack`: at least half its detections came from clients
+     flagged on 5 or more paths in the window, as scanners are;
+   - `likely_false_positive`: a documented false positive
+     (`api.EdgeWAFKnownFalsePositive`, the amendment 6 table, which
+     `TestKnownFalsePositivesMatchBenignCorpus` keeps equal to the benign
+     corpus), or at least 3 clients flagged on the path with none sending
+     most of the detections;
+   - `review`: too few clients to tell.
+   Scanning beats the catalog: a scanner that trips a rule legitimate
+   traffic also trips is still an attack. The thresholds are in
+   `pkg/api/limits.go` (`EdgeWAFReview*`). Detections are sampled (10 per
+   rule per minute per gateway), so counts are lower bounds, and an
+   assessment is advice: the customer decides.
+3. **Exclusions change in one step.** `POST
+   /v1/edge-rules/{id}/waf-exclusions` takes `add` and `remove` lists of CRS
+   rule IDs and updates `exclude_rule_ids` through the PATCH path (If-Match,
+   versioning, audit, convergence), keeping the rest of the action and the
+   rule's penalty.
+4. **Surfaces.** `gregale edge-rules waf-review` and `gregale edge-rules
+   waf-exclude <rule> --add|--remove IDS`; the dashboard's Edge rules page
+   shows the review for apps with a kind=waf rule, with an Exclude button
+   per group. The operator procedure for W4 is
+   `docs/runbooks/edge-waf-false-positive-review.md`.
+
+## Amendment 14 (2026-10-25): slot sizing measured on the reference node
+
+Amendment 12's sizing, measured where amendment 10 measured the old one.
+`TestEdgeWAFInlineLoad_E2E` with `FAAS_E2E_WAF_LOAD_GATE=1`, built from
+main at c0b566da41, ran on `gregale-compute-2` (n2-standard-4, Intel Xeon
+2.80 GHz, 4 vCPUs, so 3 check slots) on 2026-10-24 between 23:37 and
+23:43 UTC. It ran in private mount and network namespaces with its own
+Postgres in `/dev/shm`, beside the node's production daemons and up to
+two tenant microVMs, starting at a load average of 0.13. Each pass ran
+4 apps with a `warn` rule for 30 s per rate. There were three passes:
+
+| Rate (req/s) | Requests per pass | Check p50 | Check p95 | Check p99 | Within 2 ms | Skipped | Attacks warned | gatewayd-internal CPU |
+|---|---|---|---|---|---|---|---|---|
+| 100 | 2,920-3,007 | 1.03-1.09 ms | 1.49-1.57 ms | 1.93-1.98 ms | 99.2-99.5% | 0.0% | 445/445 | 2.94-3.02 ms/request |
+| 250 | 7,394-7,566 | 0.93-0.98 ms | 1.48-1.58 ms | 1.95-2.67 ms | 98.2-99.2% | 0.0% | 1,126/1,126 | 2.53-2.60 ms/request |
+| 500 | 14,915-15,087 | 0.90-0.91 ms | 1.52-1.54 ms | 2.65-2.74 ms | 98.0-98.1% | 0.0% | 2,252/2,252 | 2.28 ms/request |
+
+The test prints skips to one decimal, so 0.0% means under 0.05%. The gate
+checks the exact fraction against 0.1%, and every rate in every pass met
+both limits. No benign request was warned, every request was answered
+(status 200), and no check errored.
+
+Against amendment 10's run of the old sizing on the same node, skips fell
+from 2.5-8% to under 0.05% at 250-500 req/s. The check p95, which now
+includes the slot wait, is 1.48-1.58 ms, against 1.49-2.00 ms before.
+p99 went over 2 ms at 250-500 req/s (2.65-2.74 ms), where checks now wait
+for a slot instead of being skipped. The gate is set on p95.
+
+Decision:
+
+1. **ADR-20261024082000 criteria W1 and W2 are met.**
+2. **The skip rate is no longer a known limit.** Amendment 11 listed it
+   with slot sizing as the follow-up, and that follow-up is now measured.
+   Failing open itself stays: a flood that spends an app's inline budget,
+   or sustained overload, still lets requests through unchecked and counts
+   them as `inline_skipped`, as `docs/security.md` says.
+3. **Repeat this run** for any change that adds CPU to the in-path check:
+   CRS or Coraza upgrades, more in-path rules, or a paranoia level 2
+   in-path. Use the same node, rates and gate. The run kit is
+   cross-compiled binaries, a portable Postgres and an `unshare` launcher.
+   It refuses to start while `/var/lock/faas-deploy.lock` is held and waits
+   for a 1-minute load at or under 0.6.
+
+## Amendment 15 (2026-10-25): the challenge solver hashes the token once
+
+ADR-20261024082000 criterion H3 asks that a 2020 mid-range Android phone
+solve the challenge at the default difficulty within 2 s at the 95th
+percentile. Before the device test, the page ran in headless Chrome under
+CPU throttling (`docs/ops/evidence/20261025-edge-challenge-solve-time/`).
+That run used the page the gateway serves, fresh 225-byte tokens, and a
+local server that checked every solution. The solver needed 2.03 us of
+renderer CPU per hash on an Apple M3 Pro. Geekbench 6 puts a 2020 mid-range
+phone about 9x slower (11.5x on its slowest runs), which gives an estimated
+p95 of 3.8-4.9 s. Chrome's own 10x throttle measured a p95 of 6.4 s. The
+solver would have missed H3.
+
+The cause is the solver, not the difficulty. `token + ":" + counter` spans
+four 64-byte SHA-256 blocks, and only the last changes from one attempt to
+the next. The solver hashed all four, and allocated a new buffer, on every
+attempt.
+
+Decision:
+
+1. **The page hashes the token's whole blocks once.** `solve` computes the
+   SHA-256 state after the whole 64-byte blocks of `token + ":"`, then for
+   each counter pads and hashes only the last one or two blocks, in buffers
+   it reuses. The message, the hash and the counter it finds are unchanged,
+   so the gateway's check and old pages are unaffected.
+   `TestChallengeSolverJS` checks against Go that `solve` returns the first
+   valid counter, for token lengths 1-140 and starts where the counter
+   gains a digit.
+2. **Measured after the change**, on the same machine and method: 0.39 us
+   per hash (5.2x faster), Chrome 10x throttle p95 0.68 s, and an estimated
+   p95 of 0.88-1.12 s on a 2020 mid-range phone. The upper end of 2020
+   mid-range (Pixel 4a class, about 5.5x slower than the M3 Pro) is about
+   0.5 s.
+3. **The default difficulty stays at 16.** Lowering it would also have met
+   H3, but it would halve the work for every visitor, attackers included.
+   At difficulty 22 (about 4 million hashes on average), such a phone needs
+   about 15-20 s, which is acceptable only as a response to an attack.
+4. **H3 stays open** until a real phone is measured and recorded in
+   `docs/STATUS.md`. The estimate cannot see a phone's thermal state, or
+   whether Chrome runs the page on a big or a little core.
+
+## Amendment 16 (2026-10-26): a freed check slot goes first to an account below its share
+
+The in-path check slots were one FIFO pool for the node, and each app's
+inline budget (500 worker-ms per second, about half a slot) was the only
+per-tenant bound. An account with many apps could keep every slot busy with
+its own matching requests, so another account's checks waited out the 1 ms
+slot wait and failed open as `busy`: its `block` rules stopped blocking while
+the flood lasted.
+
+Decision:
+
+1. **The pool stays work-conserving.** A check takes any free slot, so one
+   busy account still uses the whole pool while it is alone, and amendment
+   12's skip rates for that case are unchanged.
+2. **Waiting checks are served by share.** When every slot is busy, a check
+   whose account holds and awaits fewer than
+   `api.EdgeWAFInlineAccountSharePercent` (50%, at least one) of the node's
+   slots queues ahead of checks from accounts at or above it. A freed slot
+   goes straight to the first such waiter, then to the rest in arrival order.
+   A check without an account counts against its app alone.
+3. **Skips by reason.** A check that times out while its account was over its
+   share is counted as `reason="account_share"`: that account's own load, not
+   a node shortfall, so it does not fire `FaasEdgeWAFChecksSkipped`.
+   `reason="busy"` now means a check below its share still found no slot.
+4. **Unchanged:** failing open, the slot wait, the per-app budget. A flood on
+   the protected app itself still spends that app's budget and then skips as
+   `budget`; throttle rules, the pre-auth limit and the penalty box remain the
+   defence there.

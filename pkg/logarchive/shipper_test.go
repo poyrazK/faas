@@ -59,6 +59,16 @@ func (f *fakeS3Bucket) handler() http.Handler {
 		// path = /bucket/key
 		key := strings.TrimPrefix(r.URL.Path, "/"+bucketFromPath(r.URL.Path))
 		key = strings.TrimPrefix(key, "/")
+		if r.Method == http.MethodGet {
+			object, ok := f.objects[key]
+			if !ok {
+				w.WriteHeader(http.StatusNotFound)
+				_, _ = w.Write([]byte(`<Error><Code>NoSuchKey</Code><Message>missing</Message></Error>`))
+				return
+			}
+			_, _ = w.Write(object)
+			return
+		}
 		f.objects[key] = body
 		w.WriteHeader(200)
 	})

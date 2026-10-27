@@ -6,6 +6,9 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"slices"
+	"strconv"
+	"strings"
 
 	"github.com/onebox-faas/faas/pkg/api"
 )
@@ -101,6 +104,15 @@ func cmdSyntheticsCreate(args []string) int {
 		PrintUsage(os.Stderr, "usage: gregale synthetics create --app <slug> --name <name> [--path /healthz] [--method GET|HEAD] [--expect-status N] [--timeout-ms N] [--every-minutes 5|15|60]", "synthetics")
 		return 1
 	}
+	// The API's check names interval_seconds and [300 900 3600], which
+	// `--every-minutes 1` never spelled (Hunt 14 H14-64).
+	if !slices.Contains(api.SyntheticCheckIntervalsSeconds, *every*60) {
+		minutes := make([]string, 0, len(api.SyntheticCheckIntervalsSeconds))
+		for _, seconds := range api.SyntheticCheckIntervalsSeconds {
+			minutes = append(minutes, strconv.Itoa(seconds/60))
+		}
+		return printErr("Invalid synthetic check", fmt.Errorf("--every-minutes must be one of %s; shorter intervals would keep the app permanently awake", strings.Join(minutes, ", ")))
+	}
 	req, prob := api.NormalizeCreateSyntheticCheck(api.CreateSyntheticCheckRequest{
 		Name: *name, Method: *method, Path: *path, ExpectedStatus: *expect, TimeoutMS: *timeout, IntervalSeconds: *every * 60,
 	})
@@ -152,11 +164,13 @@ func cmdSyntheticsSetEnabled(args []string, enabled bool) int {
 func cmdSyntheticsRm(args []string) int {
 	fs := newFlagSet("synthetics rm", flag.ContinueOnError)
 	slug := fs.String("app", "", "app slug (required)")
+	// rm never prompts; --yes is accepted like webhooks rm (Hunt 12 H12-37).
+	fs.Bool("yes", false, "accepted for consistency; rm does not prompt")
 	if err := parseInterspersed(fs, args); err != nil {
 		return 1
 	}
 	if *slug == "" || fs.NArg() != 1 {
-		PrintUsage(os.Stderr, "usage: gregale synthetics rm --app <slug> <check-id>", "synthetics")
+		PrintUsage(os.Stderr, "usage: gregale synthetics rm --app <slug> <check-id> [--yes]", "synthetics")
 		return 1
 	}
 	client, err := authedClient()

@@ -18,7 +18,7 @@ T = TypeVar("T", bound="ListInstancesResponse")
 
 @_attrs_define
 class ListInstancesResponse:
-    """Page shape for `GET /v1/instances` (issue #393). `instances`
+    """Page shape for `GET /v1/instances`. `instances`
     is the page in started_at DESC, id DESC order. `next_before`
     is the cursor the caller passes on the next request to fetch
     the older page; empty when the page is the end.

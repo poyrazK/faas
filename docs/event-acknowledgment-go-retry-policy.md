@@ -17,11 +17,11 @@ columns. Fresh schemas include them; existing installations must apply the
 before upgrading Go workers, even when all intents are unbound.
 
 ```go
-progress, err := faas.RecoverEventAcknowledgmentIntents(ctx, db, client,
-    accountID, appID, faas.EventAcknowledgmentIntentRecoveryPassOptions{
+progress, err := preview.RecoverEventAcknowledgmentIntents(ctx, db, client,
+    accountID, appID, preview.EventAcknowledgmentIntentRecoveryPassOptions{
         MaxAttempts: 100,
         Concurrency: 4,
-        RetryPolicy: &faas.EventAcknowledgmentIntentRetryPolicy{
+        RetryPolicy: &preview.EventAcknowledgmentIntentRetryPolicy{
             InitialBackoff: time.Second,
             MaxBackoff: 5 * time.Minute,
         },
@@ -49,10 +49,10 @@ while starting a call.
 For a single recovery iteration, use:
 
 ```go
-status, err := faas.RecoverNextEventAcknowledgmentIntentWithRetryPolicy(
+status, err := preview.RecoverNextEventAcknowledgmentIntentWithRetryPolicy(
     ctx, db, client, accountID, appID, 30*time.Second,
-    faas.EventAcknowledgmentWorkerOptions{},
-    faas.EventAcknowledgmentIntentRetryPolicy{
+    preview.EventAcknowledgmentWorkerOptions{},
+    preview.EventAcknowledgmentIntentRetryPolicy{
         InitialBackoff: time.Second,
         MaxBackoff: 5 * time.Minute,
     })

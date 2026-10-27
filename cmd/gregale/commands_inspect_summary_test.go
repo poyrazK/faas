@@ -250,7 +250,7 @@ func TestInspectRecommendations_DistinguishSmokeVerifierFromHealthEndpoint(t *te
 		t.Run(tc.name, func(t *testing.T) {
 			recs := main.InspectRecommendations(main.InspectSummary{
 				App:     main.InspectAppSummary{Slug: "demo"},
-				Release: main.InspectReleaseSummary{Available: true, Status: "live"},
+				Release: main.InspectReleaseSummary{Available: true, Status: "live", TrafficPercent: 100},
 				Runtime: main.InspectRuntimeSummary{Health: tc.health},
 			})
 			if len(recs) != 1 || recs[0].Code != tc.want {
@@ -365,7 +365,7 @@ func TestInspectRecommendations_ParkedAppPointsToWake(t *testing.T) {
 	} {
 		recs := main.InspectRecommendations(main.InspectSummary{
 			App:     main.InspectAppSummary{Slug: "demo", Status: "evicted_cold", ParkedReason: tc.reason},
-			Release: main.InspectReleaseSummary{Available: true, Status: "live"},
+			Release: main.InspectReleaseSummary{Available: true, Status: "live", TrafficPercent: 100},
 			Runtime: main.InspectRuntimeSummary{Health: &main.InspectHealthSummary{Status: apihostingreceipt.SmokeVerified}},
 		})
 		if len(recs) == 0 || recs[0].Code != "app_parked" || !strings.Contains(recs[0].Message, tc.want) || !strings.Contains(recs[0].Next, "gregale wake demo") {
@@ -374,7 +374,7 @@ func TestInspectRecommendations_ParkedAppPointsToWake(t *testing.T) {
 	}
 	recs := main.InspectRecommendations(main.InspectSummary{
 		App:     main.InspectAppSummary{Slug: "demo", Status: "evicted_cold", ParkedReason: "security_scan_regressed"},
-		Release: main.InspectReleaseSummary{Available: true, Status: "live"},
+		Release: main.InspectReleaseSummary{Available: true, Status: "live", TrafficPercent: 100},
 		Runtime: main.InspectRuntimeSummary{Health: &main.InspectHealthSummary{Status: apihostingreceipt.SmokeVerified}},
 	})
 	for _, rec := range recs {
@@ -409,5 +409,52 @@ func TestInspectDataPlacementNotOfferedIsNotAReadFailure(t *testing.T) {
 	readErr := &main.APIError{Problem: api.Problem{Code: api.CodeInternal}}
 	if off, err := main.UpstreamsNotOffered(readErr); off != "" || err == nil {
 		t.Fatalf("a real read failure must stay an error; got %q, %v", off, err)
+	}
+}
+
+// Production-us 2026-10-22: h12-mcp's only release was live at 0% traffic, so
+// every request got 404, but inspect led with a profile warning (Hunt 12
+// H12-59).
+func TestInspectRecommendations_LiveReleaseWithoutTraffic(t *testing.T) {
+	healthy := main.InspectRuntimeSummary{Health: &main.InspectHealthSummary{Status: apihostingreceipt.SmokeVerified}, Framework: "python"}
+	for _, tc := range []struct {
+		name    string
+		traffic int
+		want    bool
+	}{
+		{name: "dark release", traffic: 0, want: true},
+		{name: "serving release", traffic: 100, want: false},
+	} {
+		recs := main.InspectRecommendations(main.InspectSummary{
+			App:     main.InspectAppSummary{Slug: "h12-mcp", Status: "active", Type: "app"},
+			Release: main.InspectReleaseSummary{Available: true, Status: "live", DeploymentID: "dep-1", TrafficPercent: tc.traffic},
+			Runtime: healthy,
+		})
+		got := false
+		for _, rec := range recs {
+			if rec.Code == "no_traffic" {
+				got = rec.Severity == "error" && strings.Contains(rec.Next, "gregale traffic promote --app h12-mcp --deployment dep-1")
+			}
+		}
+		if got != tc.want {
+			t.Fatalf("%s: no_traffic recommendation = %v, want %v: %+v", tc.name, got, tc.want, recs)
+		}
+	}
+}
+
+// Production-us 2026-10-22: inspect said a parked h12-fnrs "does not run or
+// wake on its own", but a plain request woke it, as `gregale park` documents
+// ("until its next request"). Hunt 12 H12-60.
+func TestInspectRecommendations_ParkedAppWakesOnNextRequest(t *testing.T) {
+	for _, reason := range []string{"", "admin_park", "liveness_exhausted"} {
+		recs := main.InspectRecommendations(main.InspectSummary{
+			App:     main.InspectAppSummary{Slug: "h12-fnrs", Status: "evicted_cold", ParkedReason: reason},
+			Release: main.InspectReleaseSummary{Available: true, Status: "live", TrafficPercent: 100},
+			Runtime: main.InspectRuntimeSummary{Health: &main.InspectHealthSummary{Status: apihostingreceipt.SmokeVerified}},
+		})
+		if len(recs) == 0 || recs[0].Code != "app_parked" || strings.Contains(recs[0].Message, "does not run or wake") ||
+			!strings.Contains(recs[0].Message, "next request") {
+			t.Fatalf("reason %q: recommendations = %+v; want the parked message to say the next request wakes it", reason, recs)
+		}
 	}
 }

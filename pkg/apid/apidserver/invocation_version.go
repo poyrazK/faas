@@ -91,6 +91,10 @@ func (s *server) enqueuePreparedInvocation(ctx context.Context, inv state.Invoca
 		}
 		return state.Invocation{}, api.ErrPlanQueueDepth(depth.Limit, depth.Observed)
 	}
+	var backlog *state.InvocationBacklogBytesError
+	if errors.As(err, &backlog) {
+		return state.Invocation{}, api.ErrPlanQueueBacklogBytes(backlog.Limit, backlog.Observed)
+	}
 	if errors.Is(err, state.ErrQueueBindingRetired) {
 		return state.Invocation{}, api.NewProblem(http.StatusConflict, "queue_binding_retired", "Queue binding retired", "this queue is held for explicit recovery")
 	}

@@ -46,6 +46,7 @@ import (
 	"strconv"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/sessioncookie"
 )
 
 // stripLogInt is defined in handlers_install_github.go (same package);
@@ -139,7 +140,7 @@ func (s *server) renderOAuthCallback(w http.ResponseWriter, r *http.Request) {
 	// line), so a second Verify is cheap and the envelope is
 	// trustworthy.
 	var expectedLogin string
-	if c, cerr := r.Cookie(sessionCookie); cerr == nil && c.Value != "" {
+	if c, cerr := sessioncookie.Get(r); cerr == nil && c.Value != "" {
 		if env, verr := s.sessions.Verify(c.Value); verr == nil {
 			expectedLogin = env.GithubLogin
 		} else {

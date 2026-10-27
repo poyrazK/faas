@@ -309,6 +309,22 @@ service Schedd {
   // Additive per ADR-016: new RPC + new messages append at the
   // end; existing field tags are untouched.
   rpc ReportWorkloadOOM(ReportWorkloadOOMRequest) returns (ReportWorkloadOOMAck);
+
+  // ReportMemoryPressure (ADR-1155) is vmmd's best-effort relay of a guest
+  // memory-pressure report: MemAvailable fell to the pressure share of
+  // MemTotal while a profile collector was registered. schedd queues one
+  // automatic heap capture on that instance, rate limited per app, so the
+  // heap is captured before an OOM kill. Reports for instances this schedd
+  // does not own are ignored (queued=false). Additive per ADR-016.
+  rpc ReportMemoryPressure(ReportMemoryPressureRequest) returns (ReportMemoryPressureAck);
+
+  // ReportSlowRequest (ADR-1155) is gatewayd-internal's best-effort report
+  // of a request still in flight after ProfileCaptureSlowRequestAfter.
+  // schedd queues one automatic stacks+CPU capture of the serving instance,
+  // rate limited per app, so the stacks show where the request is stuck.
+  // Reports for instances this schedd does not own are ignored
+  // (queued=false). Additive per ADR-016.
+  rpc ReportSlowRequest(ReportSlowRequestRequest) returns (ReportSlowRequestAck);
 }
 
 message LivenessFailedReport {
@@ -995,6 +1011,11 @@ message CapacityReport {
   // Absence means an older producer; complete=false means unknown. A complete
   // empty inventory explicitly asserts that this node has no running VMs.
   NodeInstanceInventory instance_inventory = 11;
+  // StatsResponse.instance_bridge_resident_bytes from the same sample: the
+  // node's instance bridge units (connection-survival ADR §2). Telemetry
+  // like the instance rows, outside the capacity signature; absent when
+  // bridge units are off or on an older vmmd.
+  google.protobuf.Int64Value instance_bridge_resident_bytes = 12;
 }
 
 // Inherits node_id, sampled_at_unix_ms and node_key_id from CapacityReport.
@@ -1044,6 +1065,14 @@ message InstanceTelemetry {
   // ADR-1151: vmmd holds the instance frozen (paused in place until schedd
   // thaws or destroys it). Mirrors vmmd InstanceStats.frozen.
   bool frozen = 20;
+  // ADR-20261023171905: the quiet pause record schedd keeps in the pause
+  // ledger. Mirrors vmmd InstanceStats.quiet_paused_since,
+  // quiet_last_pause_started_at, quiet_last_pause_ended_at and
+  // quiet_paused_ns_total.
+  google.protobuf.Timestamp quiet_paused_since = 21;
+  google.protobuf.Timestamp quiet_last_pause_started_at = 22;
+  google.protobuf.Timestamp quiet_last_pause_ended_at = 23;
+  google.protobuf.Int64Value quiet_paused_ns_total = 24;
 }
 
 // ReportCapacityAck is the typed "I consumed all your messages"
@@ -1131,4 +1160,39 @@ message FlowSummary {
   string state = 4;
   string direction = 5;
   int64 count = 6;
+}
+
+message ReportMemoryPressureRequest {
+  string instance_id = 1;
+  string source_node_id = 2;
+  uint32 available_mb = 3;
+  uint32 total_mb = 4;
+  uint32 anon_mb = 5;
+}
+
+message ReportMemoryPressureAck {
+  // queued is true when an automatic heap capture was queued.
+  bool queued = 1;
+  // reason explains a skipped capture (rate limited, capture already
+  // running, plan without profiling, instance not running).
+  string reason = 2;
+}
+
+message ReportSlowRequestRequest {
+  string instance_id = 1;
+  // request_id is the public x-faas-request-id; trace_id is the id the
+  // request's telemetry row is stored under.
+  string request_id = 2;
+  string trace_id = 3;
+  // route is the route template or method + path label, never a full URL.
+  string route = 4;
+  int64 inflight_ms = 5;
+}
+
+message ReportSlowRequestAck {
+  // queued is true when an automatic stack capture was queued.
+  bool queued = 1;
+  // reason explains a skipped capture (rate limited, capture already
+  // running, plan without profiling, instance not running).
+  string reason = 2;
 }

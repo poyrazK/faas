@@ -10,7 +10,7 @@ import (
 func PlanWorkload(w Workload) api.PlanWorkload {
 	policy := api.ServiceBindingPolicy(w.ServiceBindingPolicy).Effective()
 	if w.ServiceBindingPolicy == "" {
-		policy = api.ServiceBindingPolicyDeclared
+		policy = api.ServiceBindingPolicyProject
 	}
 	return api.PlanWorkload{
 		Name:                w.Name,
@@ -22,6 +22,9 @@ func PlanWorkload(w Workload) api.PlanWorkload {
 		ImageProcess:        w.ImageProcess.Clone(),
 		BuildTarget:         w.DockerfileBuild.TargetStage(),
 		BuildArgs:           w.DockerfileBuild.ArgNames(),
+		GoCommand:           w.GoCommand,
+		SecretFiles:         api.CloneSecretFiles(w.SecretFiles),
+		Resources:           w.Resources.Clone(),
 		Command:             w.Command,
 		DependsOn:           w.DependsOn,
 		DependsOnConditions: maps.Clone(w.DependsOnConditions),
@@ -33,6 +36,7 @@ func PlanWorkload(w Workload) api.PlanWorkload {
 		AllowedServiceCallers:     w.AllowedServiceCallers,
 		AllowedServiceCallScopes:  w.AllowedServiceCallScopes,
 		PlatformTenantRequired:    w.PlatformTenantRequired,
+		Visibility:                NewWorkloadVisibility(w),
 
 		Class:      string(w.Class),
 		Schedule:   w.Schedule,
@@ -54,4 +58,15 @@ func planDetection(d Detection) *api.PlanDetectedBy {
 		Priority:   int(d.Priority),
 		MergedFrom: d.MergedFrom,
 	}
+}
+
+// NewWorkloadVisibility is the edge exposure of a new app for w: a Compose
+// service without `ports:` is internal, as Docker publishes nothing for it
+// (ADR-20261022131852), and .gregale/project.yaml can set either way
+// (ADR-20261025093331). Empty means public.
+func NewWorkloadVisibility(w Workload) api.AppVisibility {
+	if w.Unpublished {
+		return api.AppVisibilityInternal
+	}
+	return ""
 }

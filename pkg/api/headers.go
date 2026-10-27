@@ -195,7 +195,23 @@ func ClearGuestIdentityHeaders(h http.Header) {
 // IsWorkflowStepHeader reports one of the workflow step headers.
 func IsWorkflowStepHeader(name string) bool {
 	return strings.EqualFold(name, WorkflowRunIDHeader) || strings.EqualFold(name, WorkflowStepHeader) ||
-		strings.EqualFold(name, WorkflowAttemptHeader)
+		strings.EqualFold(name, WorkflowAttemptHeader) || strings.EqualFold(name, WorkflowCodeModeHeader)
+}
+
+// IsPlatformStampedHeader reports a header the gateway authors on the hop it
+// forwards: the guest identity set plus the vmmd bridge hints. A sender
+// cannot make one hop-by-hop by naming it in Connection, because the gateway
+// stamps it after reading the sender's headers.
+func IsPlatformStampedHeader(name string) bool {
+	if IsGuestIdentityHeader(name) {
+		return true
+	}
+	switch strings.ToLower(name) {
+	case "x-faas-app", "x-faas-instance", "x-faas-node":
+		return true
+	default:
+		return false
+	}
 }
 
 func IsGuestIdentityHeader(name string) bool {

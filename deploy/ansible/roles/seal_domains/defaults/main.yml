@@ -21,5 +21,179 @@ faas_seal_domain_outbound_writes: ""
 # the rollback window. Required for writes=domain.
 faas_seal_domain_outbound_readers_verified: false
 
+# Operator-local files from `gregalectl seal-domain init --domain runtime`.
+# Compute hosts stage the identity (vmmd reads it at start), control-plane
+# hosts the recipient (apid seals to it).
+faas_seal_domain_runtime_identity_src: ""
+faas_seal_domain_runtime_recipient_src: ""
+
+# Who apid seals runtime secrets to: "" or fleet (the fleet recipient), or
+# domain (the runtime domain alone). domain needs
+# faas_seal_domain_runtime_readers_verified.
+faas_seal_domain_runtime_writes: ""
+
+# Set true only after every vmmd reports
+# faas_seal_domain_loaded{domain="runtime"} 1 and the previous release left
+# the rollback window. Required for writes=domain.
+faas_seal_domain_runtime_readers_verified: false
+
+# ADR-20261023173624: off (default) or account. account binds every new
+# runtime secret to its account; a vmmd from before the binding refuses such
+# an envelope, so it needs faas_seal_domain_runtime_binding_readers_verified.
+faas_seal_domain_runtime_binding: "off"
+
+# Set true only after every vmmd and gregalectl run a release that checks
+# bindings (ADR-20261023173624) and the previous release left the rollback
+# window. Required for binding=account.
+faas_seal_domain_runtime_binding_readers_verified: false
+
+# ADR-20261023173624, contract step: true makes vmmd refuse runtime secrets
+# that carry no account binding. Needs binding=account. Set it only after
+# `gregalectl seal-domain migrate --domain runtime --bind-accounts` reports
+# 0 re-sealed, 0 bound to another account and 0 failed on a rerun, and every
+# schedd restarted after that pass (runbook seal-domains-rollout.md §4f).
+# vmmd reads it at start.
+faas_seal_domain_runtime_binding_required: false
+
+# Operator-local files from `gregalectl seal-domain init --domain source`.
+# Control-plane hosts stage both: githubd reads the identity, apid seals to
+# the recipient.
+faas_seal_domain_source_identity_src: ""
+faas_seal_domain_source_recipient_src: ""
+
+# Who apid seals GitHub webhook secret copies to, and githubd install tokens:
+#   ""      the domain and the fleet recipient (safe beside the previous
+#           release, whose githubd holds only the fleet identity)
+#   fleet   the fleet recipient alone (opt out)
+#   domain  the domain recipient alone; needs
+#           faas_seal_domain_source_readers_verified
+faas_seal_domain_source_writes: ""
+
+# Set true only after `gregalectl seal-domain verify --domain source` passed
+# on every node that runs githubd and the previous release left the
+# rollback window. Required for writes=domain.
+faas_seal_domain_source_readers_verified: false
+
+# Operator-local files from `gregalectl seal-domain init --domain build`.
+# Compute hosts stage the identity (imaged opens registry passwords),
+# control-plane hosts the recipient (apid seals to it).
+faas_seal_domain_build_identity_src: ""
+faas_seal_domain_build_recipient_src: ""
+
+# Who apid seals app and job private-registry passwords to:
+#   ""      the domain and the fleet recipient (safe beside the previous
+#           release, whose imaged holds only the fleet identity)
+#   fleet   the fleet recipient alone (opt out)
+#   domain  the domain recipient alone; needs
+#           faas_seal_domain_build_readers_verified
+faas_seal_domain_build_writes: ""
+
+# Set true only after every imaged reports
+# faas_seal_domain_loaded{domain="build"} 1 and the previous release left
+# the rollback window. Required for writes=domain.
+faas_seal_domain_build_readers_verified: false
+
+# Operator-local files from `gregalectl seal-domain init --domain edge`.
+# Compute hosts stage the identity (gatewayd-internal opens basic-auth
+# credentials and log drain headers), control-plane hosts the recipient
+# (apid seals to it).
+faas_seal_domain_edge_identity_src: ""
+faas_seal_domain_edge_recipient_src: ""
+
+# Who apid seals app basic-auth credentials and log drain headers to:
+#   ""      the domain and the fleet recipient (safe beside the previous
+#           release, whose gatewayd-internal holds only the fleet identity)
+#   fleet   the fleet recipient alone (opt out)
+#   domain  the domain recipient alone; needs
+#           faas_seal_domain_edge_readers_verified
+faas_seal_domain_edge_writes: ""
+
+# Set true only after every gatewayd-internal reports
+# faas_seal_domain_loaded{domain="edge"} 1 and the previous release left
+# the rollback window. Required for writes=domain.
+faas_seal_domain_edge_readers_verified: false
+
+# Operator-local files from `gregalectl seal-domain init --domain alerting`.
+# Control-plane hosts stage both: meterd opens alert rule webhook secrets,
+# notification channel destinations and MCP readiness provider keys with the
+# identity, and apid seals them to the recipient.
+faas_seal_domain_alerting_identity_src: ""
+faas_seal_domain_alerting_recipient_src: ""
+
+# Who apid seals alerting values to:
+#   ""      the domain and the fleet recipient (safe beside the previous
+#           release, whose meterd holds only the fleet identity)
+#   fleet   the fleet recipient alone (opt out)
+#   domain  the domain recipient alone; needs
+#           faas_seal_domain_alerting_readers_verified
+faas_seal_domain_alerting_writes: ""
+
+# Set true only after every meterd reports
+# faas_seal_domain_loaded{domain="alerting"} 1 and the previous release left
+# the rollback window. Required for writes=domain.
+faas_seal_domain_alerting_readers_verified: false
+
+# Operator-local files from `gregalectl seal-domain init --domain storage`.
+# Control-plane hosts stage both: s3-gatewayd opens Gregale S3 secret access
+# keys with the identity, and apid seals them to the recipient.
+faas_seal_domain_storage_identity_src: ""
+faas_seal_domain_storage_recipient_src: ""
+
+# Who apid seals S3 secret access keys to:
+#   ""      the domain and the fleet recipient (safe beside the previous
+#           release, whose s3-gatewayd holds only the fleet identity)
+#   fleet   the fleet recipient alone (opt out)
+#   domain  the domain recipient alone; needs
+#           faas_seal_domain_storage_readers_verified
+faas_seal_domain_storage_writes: ""
+
+# Set true only after every s3-gatewayd reports
+# faas_seal_domain_loaded{domain="storage"} 1 and the previous release left
+# the rollback window. Required for writes=domain.
+faas_seal_domain_storage_readers_verified: false
+
+# Operator-local file from `gregalectl seal-domain init --domain control`.
+# Every host stages it: schedd runs on both node roles and opens the cluster
+# signing key with it. The key has no writer drop-in and no write mode.
+faas_seal_domain_control_identity_src: ""
+
+# Operator-local files from `gregalectl seal-domain init --domain delivery`.
+# Every host stages the identity (schedd runs on both node roles and opens
+# app webhook signing secrets, commit-source connections and execution
+# payloads); control-plane hosts also stage the recipient (apid seals to it).
+faas_seal_domain_delivery_identity_src: ""
+faas_seal_domain_delivery_recipient_src: ""
+
+# Who apid seals delivery values to:
+#   ""      the domain and the fleet recipient (safe beside the previous
+#           release, whose schedd holds only the fleet identity)
+#   fleet   the fleet recipient alone (opt out)
+#   domain  the domain recipient alone; needs
+#           faas_seal_domain_delivery_readers_verified
+faas_seal_domain_delivery_writes: ""
+
+# Set true only after every schedd on both node roles reports
+# faas_seal_domain_loaded{domain="delivery"} 1 and the previous release
+# left the rollback window. Required for writes=domain.
+faas_seal_domain_delivery_readers_verified: false
+
+# Operator-local file from `gregalectl seal-domain init --domain account`.
+# Control-plane hosts stage it: apid seals and opens account values with it,
+# so there is no separate recipient file.
+faas_seal_domain_account_identity_src: ""
+
+# Who apid seals account values to:
+#   ""      the domain and the fleet recipient (safe beside the previous
+#           release, whose apid holds only the fleet identity)
+#   fleet   the fleet recipient alone (opt out)
+#   domain  the domain recipient alone; needs
+#           faas_seal_domain_account_readers_verified
+faas_seal_domain_account_writes: ""
+
+# Set true only after every apid reports
+# faas_seal_domain_loaded{domain="account"} 1 and the previous release left
+# the rollback window. Required for writes=domain.
+faas_seal_domain_account_readers_verified: false
+
 faas_seal_domain_db_env: /etc/faas/compute-db.env
 faas_seal_domain_textfile_dir: /var/lib/node_exporter/textfile_collector

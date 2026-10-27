@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -241,5 +242,20 @@ func TestUsageDiagnosticOptionIsExplicitAndValidated(t *testing.T) {
 		if got != test.want || (err != nil) != test.invalid {
 			t.Fatalf("value=%q: %v, %v", test.value, got, err)
 		}
+	}
+}
+
+// adr: 20261025094915 — the compute cap run is live-only, like the
+// provisioning run, and never calls a provider outside staging.
+func TestComputeCapRunRefusesOutsideLiveStaging(t *testing.T) {
+	var output, errorOutput strings.Builder
+	code := runComputeCap(func(key string) string {
+		if key == "FAAS_ENVIRONMENT" {
+			return "production"
+		}
+		return ""
+	}, &output, &errorOutput)
+	if code != 2 || output.Len() != 0 || !strings.Contains(errorOutput.String(), "FAAS_ENVIRONMENT=staging") {
+		t.Fatalf("code %d, output %q, error %q", code, output.String(), errorOutput.String())
 	}
 }

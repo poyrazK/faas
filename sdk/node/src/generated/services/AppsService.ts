@@ -7,6 +7,10 @@ import type { AppChangeTimelineResponse } from '../models/AppChangeTimelineRespo
 import type { AppErrorRequestsResponse } from '../models/AppErrorRequestsResponse.js';
 import type { AppErrorSampleResponse } from '../models/AppErrorSampleResponse.js';
 import type { AppErrorsSummaryResponse } from '../models/AppErrorsSummaryResponse.js';
+import type { AppForkExecListResponse } from '../models/AppForkExecListResponse.js';
+import type { AppForkExecResponse } from '../models/AppForkExecResponse.js';
+import type { AppForkListResponse } from '../models/AppForkListResponse.js';
+import type { AppForkResponse } from '../models/AppForkResponse.js';
 import type { AppHealthHistoryPage } from '../models/AppHealthHistoryPage.js';
 import type { AppHealthResponse } from '../models/AppHealthResponse.js';
 import type { AppMetricsResponse } from '../models/AppMetricsResponse.js';
@@ -35,6 +39,12 @@ import type { BulkIssueActionResponse } from '../models/BulkIssueActionResponse.
 import type { CanaryRouteGate } from '../models/CanaryRouteGate.js';
 import type { CheckProfileRegressionRequest } from '../models/CheckProfileRegressionRequest.js';
 import type { CheckRouteRequirementsRequest } from '../models/CheckRouteRequirementsRequest.js';
+import type { CrashCaptureListResponse } from '../models/CrashCaptureListResponse.js';
+import type { CrashCaptureResponse } from '../models/CrashCaptureResponse.js';
+import type { CrashSnapshotSettingsRequest } from '../models/CrashSnapshotSettingsRequest.js';
+import type { CrashSnapshotSettingsResponse } from '../models/CrashSnapshotSettingsResponse.js';
+import type { CreateAppForkExecRequest } from '../models/CreateAppForkExecRequest.js';
+import type { CreateAppForkRequest } from '../models/CreateAppForkRequest.js';
 import type { CreateAppRequest } from '../models/CreateAppRequest.js';
 import type { CreateBindingVerificationRunRequest } from '../models/CreateBindingVerificationRunRequest.js';
 import type { CreateDeployTokenRequest } from '../models/CreateDeployTokenRequest.js';
@@ -43,6 +53,7 @@ import type { CreateMigrationCutoverRequest } from '../models/CreateMigrationCut
 import type { CreateMigrationVerificationRequest } from '../models/CreateMigrationVerificationRequest.js';
 import type { CreateNativeIssueTicketRequest } from '../models/CreateNativeIssueTicketRequest.js';
 import type { CreateNativeLinearIssueTicketRequest } from '../models/CreateNativeLinearIssueTicketRequest.js';
+import type { CreateProfileCaptureRequest } from '../models/CreateProfileCaptureRequest.js';
 import type { CreateQueueBindingCanaryRequest } from '../models/CreateQueueBindingCanaryRequest.js';
 import type { CreateSLORequest } from '../models/CreateSLORequest.js';
 import type { CreateSyntheticCheckRequest } from '../models/CreateSyntheticCheckRequest.js';
@@ -123,10 +134,15 @@ import type { PrewarmIntentResponse } from '../models/PrewarmIntentResponse.js';
 import type { PrewarmRequest } from '../models/PrewarmRequest.js';
 import type { Problem } from '../models/Problem.js';
 import type { ProfileCanaryHistoryPage } from '../models/ProfileCanaryHistoryPage.js';
+import type { ProfileCapture } from '../models/ProfileCapture.js';
+import type { ProfileCaptureDiff } from '../models/ProfileCaptureDiff.js';
+import type { ProfileCaptureList } from '../models/ProfileCaptureList.js';
+import type { ProfileCaptureView } from '../models/ProfileCaptureView.js';
 import type { ProfileCompareRequest } from '../models/ProfileCompareRequest.js';
 import type { ProfileCompareResponse } from '../models/ProfileCompareResponse.js';
 import type { ProfileDeploymentCheck } from '../models/ProfileDeploymentCheck.js';
 import type { ProfileDeploymentPolicy } from '../models/ProfileDeploymentPolicy.js';
+import type { ProfileHeapResponse } from '../models/ProfileHeapResponse.js';
 import type { ProfileInvestigationResponse } from '../models/ProfileInvestigationResponse.js';
 import type { ProfileResponse } from '../models/ProfileResponse.js';
 import type { PublishIssueSourceMapsRequest } from '../models/PublishIssueSourceMapsRequest.js';
@@ -683,7 +699,7 @@ export class AppsService {
         401: `code: unauthorized`,
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
-        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        503: `Generic 503 envelope. Used by the API capacity gate (e.g.
         host age recipient not loaded → registry credential PUT
         returns 503 instead of accepting plaintext).
         `,
@@ -742,7 +758,7 @@ export class AppsService {
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
         409: `code: conflict`,
-        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        503: `Generic 503 envelope. Used by the API capacity gate (e.g.
         host age recipient not loaded → registry credential PUT
         returns 503 instead of accepting plaintext).
         `,
@@ -798,7 +814,7 @@ export class AppsService {
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
         409: `code: conflict`,
-        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        503: `Generic 503 envelope. Used by the API capacity gate (e.g.
         host age recipient not loaded → registry credential PUT
         returns 503 instead of accepting plaintext).
         `,
@@ -881,7 +897,7 @@ export class AppsService {
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
         \`profile_investigation_limit\`.
         `,
-        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        503: `Generic 503 envelope. Used by the API capacity gate (e.g.
         host age recipient not loaded → registry credential PUT
         returns 503 instead of accepting plaintext).
         `,
@@ -962,6 +978,580 @@ export class AppsService {
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
         \`profile_investigation_limit\`.
         `,
+      },
+    });
+  }
+  /**
+   * Read whether 5xx crash snapshots are on for an app.
+   * @returns CrashSnapshotSettingsResponse The app's crash snapshot setting.
+   * @throws ApiError
+   */
+  public static getCrashSnapshotSettings({
+    slug,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+  }): CancelablePromise<CrashSnapshotSettingsResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/crash-snapshots/settings',
+      path: {
+        'slug': slug,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        402: `code: billing_past_due — account is suspended; pay invoice to resume.`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        501: `code: not_implemented — this optional capability is not enabled on the serving daemon.`,
+      },
+    });
+  }
+  /**
+   * Turn 5xx crash snapshots on or off for an app.
+   * When on, the first 5xx answered by one of the app's instances
+   * captures that instance's memory, at most one in flight and
+   * none within 10 minutes of the last. Pro and Scale only. Answers 501
+   * `crash_snapshots_not_enabled` until the operator enables the feature.
+   *
+   * @returns CrashSnapshotSettingsResponse The saved setting.
+   * @throws ApiError
+   */
+  public static putCrashSnapshotSettings({
+    slug,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    requestBody: CrashSnapshotSettingsRequest,
+  }): CancelablePromise<CrashSnapshotSettingsResponse> {
+    return __request(OpenAPI, {
+      method: 'PUT',
+      url: '/v1/apps/{slug}/crash-snapshots/settings',
+      path: {
+        'slug': slug,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        402: `code: billing_past_due — account is suspended; pay invoice to resume.`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        501: `code: not_implemented — this optional capability is not enabled on the serving daemon.`,
+      },
+    });
+  }
+  /**
+   * List an app's crash snapshots, newest first.
+   * @returns CrashCaptureListResponse The app's crash snapshots.
+   * @throws ApiError
+   */
+  public static listCrashSnapshots({
+    slug,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+  }): CancelablePromise<CrashCaptureListResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/crash-snapshots',
+      path: {
+        'slug': slug,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        402: `code: billing_past_due — account is suspended; pay invoice to resume.`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        501: `code: not_implemented — this optional capability is not enabled on the serving daemon.`,
+      },
+    });
+  }
+  /**
+   * Capture the app's newest running instance now.
+   * Requests a crash snapshot of the app's newest running instance,
+   * whether or not 5xx captures are on. Refused with 409
+   * `crash_capture_refused` while another capture is in flight, within
+   * 10 minutes of the last, or when no instance is running.
+   *
+   * @returns CrashCaptureResponse Capture requested.
+   * @throws ApiError
+   */
+  public static createCrashSnapshot({
+    slug,
+    idempotencyKey,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Idempotency key for the POST. Stored for 24h. On replay the server
+     * returns the original response with `Idempotent-Replayed: true`.
+     *
+     */
+    idempotencyKey?: string,
+  }): CancelablePromise<CrashCaptureResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/crash-snapshots',
+      path: {
+        'slug': slug,
+      },
+      headers: {
+        'Idempotency-Key': idempotencyKey,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        402: `code: billing_past_due — account is suspended; pay invoice to resume.`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        501: `code: not_implemented — this optional capability is not enabled on the serving daemon.`,
+      },
+    });
+  }
+  /**
+   * Read one crash snapshot.
+   * @returns CrashCaptureResponse The crash snapshot.
+   * @throws ApiError
+   */
+  public static getCrashSnapshot({
+    slug,
+    id,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Canonical UUID for a crash snapshot.
+     */
+    id: string,
+  }): CancelablePromise<CrashCaptureResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/crash-snapshots/{id}',
+      path: {
+        'slug': slug,
+        'id': id,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        402: `code: billing_past_due — account is suspended; pay invoice to resume.`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        501: `code: not_implemented — this optional capability is not enabled on the serving daemon.`,
+      },
+    });
+  }
+  /**
+   * Open a ready crash snapshot as a production fork.
+   * Creates an fork restored from this capture instead of the
+   * deployment's newest snapshot. Same rules as `POST /v1/apps/{slug}/forks`:
+   * the key needs `deploy:write` and `secrets:read`, the response carries
+   * the one-time `access_token`, and the fork counts against the fork
+   * limits. 409 `crash_capture_not_ready` unless the capture is ready and
+   * unexpired.
+   *
+   * @returns AppForkResponse Fork of the crash snapshot admitted and queued.
+   * @throws ApiError
+   */
+  public static forkCrashSnapshot({
+    slug,
+    id,
+    idempotencyKey,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Canonical UUID for a crash snapshot.
+     */
+    id: string,
+    /**
+     * Idempotency key for the POST. Stored for 24h. On replay the server
+     * returns the original response with `Idempotent-Replayed: true`.
+     *
+     */
+    idempotencyKey?: string,
+    requestBody?: CreateAppForkRequest,
+  }): CancelablePromise<AppForkResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/crash-snapshots/{id}/fork',
+      path: {
+        'slug': slug,
+        'id': id,
+      },
+      headers: {
+        'Idempotency-Key': idempotencyKey,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        402: `code: billing_past_due — account is suspended; pay invoice to resume.`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        501: `code: not_implemented — this optional capability is not enabled on the serving daemon.`,
+      },
+    });
+  }
+  /**
+   * List production forks for an app.
+   * Returns the app's production forks, newest first. Answers
+   * 501 `app_forks_not_enabled` until the operator enables forks.
+   *
+   * @returns AppForkListResponse The app's forks, newest first.
+   * @throws ApiError
+   */
+  public static listAppForks({
+    slug,
+    limit = 100,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Maximum number of forks to return.
+     */
+    limit?: number,
+  }): CancelablePromise<AppForkListResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/forks',
+      path: {
+        'slug': slug,
+      },
+      query: {
+        'limit': limit,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        501: `code: not_implemented — this optional capability is not enabled on the serving daemon.`,
+      },
+    });
+  }
+  /**
+   * Fork the app's live deployment into a quarantined debug copy.
+   * Queues a production fork: a restore of the app's newest
+   * capture of its live deployment into an instance that never serves
+   * traffic, cannot reach the network, and is destroyed at its TTL.
+   * The fork holds a copy of production memory, secrets included, so
+   * the key needs `secrets:read` as well as `deploy:write`, and every
+   * create is audited. Pro and Scale only; one active fork per app and
+   * two per account. Answers 501 `app_forks_not_enabled` until the
+   * operator enables forks.
+   *
+   * @returns AppForkResponse Fork admitted and queued.
+   * @throws ApiError
+   */
+  public static createAppFork({
+    slug,
+    idempotencyKey,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Idempotency key for the POST. Stored for 24h. On replay the server
+     * returns the original response with `Idempotent-Replayed: true`.
+     *
+     */
+    idempotencyKey?: string,
+    requestBody?: CreateAppForkRequest,
+  }): CancelablePromise<AppForkResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/forks',
+      path: {
+        'slug': slug,
+      },
+      headers: {
+        'Idempotency-Key': idempotencyKey,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        402: `code: billing_past_due — account is suspended; pay invoice to resume.`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `An active-fork limit is full (\`app_fork_limit\`, with \`limit\` and \`observed\`), or the app has no live deployment (\`app_fork_unavailable\`).`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        501: `code: not_implemented — this optional capability is not enabled on the serving daemon.`,
+      },
+    });
+  }
+  /**
+   * Read one production fork.
+   * @returns AppForkResponse The fork.
+   * @throws ApiError
+   */
+  public static getAppFork({
+    slug,
+    id,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Canonical UUID for a production fork.
+     */
+    id: string,
+  }): CancelablePromise<AppForkResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/forks/{id}',
+      path: {
+        'slug': slug,
+        'id': id,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        501: `code: not_implemented — this optional capability is not enabled on the serving daemon.`,
+      },
+    });
+  }
+  /**
+   * Cancel a production fork.
+   * Cancels a queued fork immediately. For a restoring or running fork
+   * it records the request; the scheduler destroys the instance. A fork
+   * that has already ended is returned unchanged.
+   *
+   * @returns AppForkResponse Cancellation recorded.
+   * @throws ApiError
+   */
+  public static cancelAppFork({
+    slug,
+    id,
+    idempotencyKey,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Canonical UUID for a production fork.
+     */
+    id: string,
+    /**
+     * Idempotency key for the POST. Stored for 24h. On replay the server
+     * returns the original response with `Idempotent-Replayed: true`.
+     *
+     */
+    idempotencyKey?: string,
+  }): CancelablePromise<AppForkResponse> {
+    return __request(OpenAPI, {
+      method: 'DELETE',
+      url: '/v1/apps/{slug}/forks/{id}',
+      path: {
+        'slug': slug,
+        'id': id,
+      },
+      headers: {
+        'Idempotency-Key': idempotencyKey,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        501: `code: not_implemented — this optional capability is not enabled on the serving daemon.`,
+      },
+    });
+  }
+  /**
+   * List the commands run in a production fork.
+   * Newest first. Output can contain production data, so this needs `secrets:read` as well as `deploy:write`.
+   * @returns AppForkExecListResponse The fork's commands.
+   * @throws ApiError
+   */
+  public static listAppForkExecs({
+    slug,
+    id,
+    limit,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Canonical UUID for a production fork.
+     */
+    id: string,
+    /**
+     * Maximum number of commands to return (default 100).
+     */
+    limit?: number,
+  }): CancelablePromise<AppForkExecListResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/forks/{id}/execs',
+      path: {
+        'slug': slug,
+        'id': id,
+      },
+      query: {
+        'limit': limit,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        501: `code: not_implemented — this optional capability is not enabled on the serving daemon.`,
+      },
+    });
+  }
+  /**
+   * Run a command inside a running production fork.
+   * Queues one command to run inside the running fork, in the
+   * app's working directory and user, with its manifest environment and
+   * no secrets. The fork cannot reach the network. Poll the returned
+   * command for its exit code and the tail of its output. A command never
+   * runs in a serving instance. Needs `secrets:read` as well as
+   * `deploy:write`; every request is audited (without its arguments).
+   *
+   * @returns AppForkExecResponse Command queued.
+   * @throws ApiError
+   */
+  public static createAppForkExec({
+    slug,
+    id,
+    requestBody,
+    idempotencyKey,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Canonical UUID for a production fork.
+     */
+    id: string,
+    requestBody: CreateAppForkExecRequest,
+    /**
+     * Idempotency key for the POST. Stored for 24h. On replay the server
+     * returns the original response with `Idempotent-Replayed: true`.
+     *
+     */
+    idempotencyKey?: string,
+  }): CancelablePromise<AppForkExecResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/forks/{id}/execs',
+      path: {
+        'slug': slug,
+        'id': id,
+      },
+      headers: {
+        'Idempotency-Key': idempotencyKey,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `The fork is not running, or already has 4 commands pending (\`app_fork_exec_refused\`).`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        501: `code: not_implemented — this optional capability is not enabled on the serving daemon.`,
+      },
+    });
+  }
+  /**
+   * Read one command run in a production fork, with its result.
+   * @returns AppForkExecResponse The command.
+   * @throws ApiError
+   */
+  public static getAppForkExec({
+    slug,
+    id,
+    execId,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Canonical UUID for a production fork.
+     */
+    id: string,
+    /**
+     * Canonical UUID for a fork command.
+     */
+    execId: string,
+  }): CancelablePromise<AppForkExecResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/forks/{id}/execs/{exec_id}',
+      path: {
+        'slug': slug,
+        'id': id,
+        'exec_id': execId,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        501: `code: not_implemented — this optional capability is not enabled on the serving daemon.`,
       },
     });
   }
@@ -1166,11 +1756,16 @@ export class AppsService {
    * projection; use each named component for its own convergence state.
    * `active` requires fresh observations from every relevant serving
    * consumer. The egress allowlist is replayed from current app state by
-   * schedd if a notification is missed. Scheduler scaling `active` means
-   * the owning schedd loaded the policy, not that the replica target was
+   * the scheduler if a notification is missed. Scheduler scaling `active` means
+   * the owning scheduler loaded the policy, not that the replica target was
    * reached. This does not attest host-level firewall policy or guest
    * configuration.
    * `unverified` means no revision or no relevant serving fleet can be observed.
+   * Gateway policy acknowledgements belong to the current process generation
+   * and require a fresh serving report. Replacement clears convergence until
+   * the new consumers replay. `traffic_runtime` reports compute gateway wiring
+   * separately; fresh wiring does not prove request enforcement. The optional
+   * `wait` applies to policy convergence only.
    *
    * @returns RuntimePolicyStatusResponse Current application state; pending remains possible after wait expires.
    * @throws ApiError
@@ -1453,7 +2048,7 @@ export class AppsService {
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
         \`profile_investigation_limit\`.
         `,
-        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        503: `Generic 503 envelope. Used by the API capacity gate (e.g.
         host age recipient not loaded → registry credential PUT
         returns 503 instead of accepting plaintext).
         `,
@@ -1505,7 +2100,7 @@ export class AppsService {
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
         \`profile_investigation_limit\`.
         `,
-        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        503: `Generic 503 envelope. Used by the API capacity gate (e.g.
         host age recipient not loaded → registry credential PUT
         returns 503 instead of accepting plaintext).
         `,
@@ -1551,7 +2146,7 @@ export class AppsService {
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
         \`profile_investigation_limit\`.
         `,
-        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        503: `Generic 503 envelope. Used by the API capacity gate (e.g.
         host age recipient not loaded → registry credential PUT
         returns 503 instead of accepting plaintext).
         `,
@@ -1592,7 +2187,7 @@ export class AppsService {
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
         \`profile_investigation_limit\`.
         `,
-        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        503: `Generic 503 envelope. Used by the API capacity gate (e.g.
         host age recipient not loaded → registry credential PUT
         returns 503 instead of accepting plaintext).
         `,
@@ -1637,7 +2232,7 @@ export class AppsService {
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
         \`profile_investigation_limit\`.
         `,
-        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        503: `Generic 503 envelope. Used by the API capacity gate (e.g.
         host age recipient not loaded → registry credential PUT
         returns 503 instead of accepting plaintext).
         `,
@@ -1674,7 +2269,7 @@ export class AppsService {
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
         \`profile_investigation_limit\`.
         `,
-        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        503: `Generic 503 envelope. Used by the API capacity gate (e.g.
         host age recipient not loaded → registry credential PUT
         returns 503 instead of accepting plaintext).
         `,
@@ -1724,7 +2319,7 @@ export class AppsService {
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
         \`profile_investigation_limit\`.
         `,
-        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        503: `Generic 503 envelope. Used by the API capacity gate (e.g.
         host age recipient not loaded → registry credential PUT
         returns 503 instead of accepting plaintext).
         `,
@@ -1920,7 +2515,7 @@ export class AppsService {
     });
   }
   /**
-   * List the app's pushed custom metrics (ADR-202)
+   * List the app's pushed custom metrics
    * Returns every stored custom metric for the app, including rows whose last push is older than the freshness window. Stale rows are returned with `stale: true` rather than hidden — an operator debugging "why isn't my custom target scaling" needs to see that the value is old, because a hidden expired row looks identical to a missing one. Distinct from GET /v1/apps/{slug}/metrics, which serves the per-app Prometheus rollup of what the PLATFORM measured.
    * @returns CustomMetricListResponse The app's custom metrics.
    * @throws ApiError
@@ -1945,7 +2540,7 @@ export class AppsService {
     });
   }
   /**
-   * Push a custom application metric (ADR-202)
+   * Push a custom application metric
    * Upserts one customer-pushed gauge, used as a scaling signal by a `metric: custom` target. The caller is frequently NOT the app — a cron, a database trigger, or the customer's own infrastructure — which is the point: a parked app has no process, so a scale-to-zero platform whose custom signal required a running instance could never scale from zero on it. The value is FLEET-TOTAL; the scheduler computes ceil(value / target). Pushing a name the app already holds always succeeds (it is an upsert); only a NEW name can hit the per-app cap.
    * @returns void
    * @throws ApiError
@@ -1982,7 +2577,7 @@ export class AppsService {
     });
   }
   /**
-   * Delete a custom application metric (ADR-202)
+   * Delete a custom application metric
    * Removes one stored gauge, freeing a slot against the per-app cap. Deleting a name that does not exist returns 204, not 404: the caller's intent is "this metric is gone", which is already true, and a 404 would make a retry of a successful delete look like a failure.
    * @returns void
    * @throws ApiError
@@ -2013,8 +2608,8 @@ export class AppsService {
     });
   }
   /**
-   * Read a custom metric's history (ADR-745)
-   * ADR-745 internal preview, enabled by `FAAS_CUSTOM_METRIC_HISTORY_ENABLED=1`;
+   * Read a custom metric's history
+   * Internal preview, enabled by `FAAS_CUSTOM_METRIC_HISTORY_ENABLED=1`;
    * otherwise 503 `custom_metric_history_unavailable`.
    *
    * Returns the values Prometheus recorded from pushed custom metrics over
@@ -2056,7 +2651,7 @@ export class AppsService {
       errors: {
         400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
         404: `code: not_found`,
-        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        503: `Generic 503 envelope. Used by the API capacity gate (e.g.
         host age recipient not loaded → registry credential PUT
         returns 503 instead of accepting plaintext).
         `,
@@ -2064,8 +2659,8 @@ export class AppsService {
     });
   }
   /**
-   * Ingest OTLP/HTTP metrics as custom metrics (ADR-745)
-   * ADR-745 internal preview, enabled by `FAAS_CUSTOM_METRIC_HISTORY_ENABLED=1`;
+   * Ingest OTLP/HTTP metrics as custom metrics
+   * Internal preview, enabled by `FAAS_CUSTOM_METRIC_HISTORY_ENABLED=1`;
    * otherwise 503. Point an OpenTelemetry exporter's metrics endpoint here
    * with a `metrics:write` API key as the bearer token.
    *
@@ -2102,7 +2697,7 @@ export class AppsService {
         400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
         402: `code: billing_past_due — account is suspended; pay invoice to resume.`,
         404: `code: not_found`,
-        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        503: `Generic 503 envelope. Used by the API capacity gate (e.g.
         host age recipient not loaded → registry credential PUT
         returns 503 instead of accepting plaintext).
         `,
@@ -2110,8 +2705,8 @@ export class AppsService {
     });
   }
   /**
-   * List the app's customer-defined SLOs (ADR-747)
-   * Returns every SLO defined on the app, name-ordered. Distinct from GET /v1/apps/{slug}/slo, which reports ADR-082's fixed 99.5% availability panel.
+   * List the app's customer-defined SLOs
+   * Returns every SLO defined on the app, name-ordered. Distinct from GET /v1/apps/{slug}/slo, which reports the fixed 99.5% availability panel.
    * @returns SLOResponse The app's SLO definitions.
    * @throws ApiError
    */
@@ -2136,7 +2731,7 @@ export class AppsService {
     });
   }
   /**
-   * Define an SLO on the app (ADR-747)
+   * Define an SLO on the app
    * Creates an availability or latency SLO with an objective between 90% and 99.99% over a rolling 7- or 30-day window. Latency thresholds are limited to the gateway histogram bucket bounds so attainment is exact. An app can hold at most 10 SLOs.
    * @returns SLOResponse The SLO was created.
    * @throws ApiError
@@ -2169,7 +2764,7 @@ export class AppsService {
     });
   }
   /**
-   * Get one customer-defined SLO and its error budget (ADR-747)
+   * Get one customer-defined SLO and its error budget
    * Returns one SLO definition with its status: attainment and budget remaining over the window from hourly history, and live 1h/6h burn rates. An id belonging to another app returns 404.
    * @returns SLOResponse The SLO definition.
    * @throws ApiError
@@ -2201,7 +2796,7 @@ export class AppsService {
     });
   }
   /**
-   * Delete a customer-defined SLO (ADR-747)
+   * Delete a customer-defined SLO
    * Removes the SLO and frees a slot against the per-app cap.
    * @returns void
    * @throws ApiError
@@ -2229,7 +2824,7 @@ export class AppsService {
     });
   }
   /**
-   * List the app's synthetic checks (ADR-748)
+   * List the app's synthetic checks
    * Returns every scheduled HTTP check defined on the app, name-ordered.
    * @returns SyntheticCheckResponse The app's synthetic checks.
    * @throws ApiError
@@ -2255,7 +2850,7 @@ export class AppsService {
     });
   }
   /**
-   * Define a synthetic check on the app (ADR-748)
+   * Define a synthetic check on the app
    * Schedules a GET or HEAD request to a path on the app's own hostname every 5, 15, or 60 minutes, through the public edge. A probe that wakes a parked app is billed like any request. An app can have at most 5 checks.
    * @returns SyntheticCheckResponse The check was created and will run within one interval.
    * @throws ApiError
@@ -2288,7 +2883,7 @@ export class AppsService {
     });
   }
   /**
-   * Get one synthetic check and its recent results (ADR-748)
+   * Get one synthetic check and its recent results
    * Returns one check definition with 24-hour and 7-day uptime, 24-hour p95 latency, and the last 20 runs. An id belonging to another app returns 404.
    * @returns SyntheticCheckResponse The check definition.
    * @throws ApiError
@@ -2320,7 +2915,7 @@ export class AppsService {
     });
   }
   /**
-   * Pause or resume a synthetic check (ADR-748)
+   * Pause or resume a synthetic check
    * Sets whether the check runs. To change its path, schedule or expectations, delete and recreate it.
    * @returns SyntheticCheckResponse The updated check.
    * @throws ApiError
@@ -2356,7 +2951,7 @@ export class AppsService {
     });
   }
   /**
-   * Delete a synthetic check (ADR-748)
+   * Delete a synthetic check
    * Removes the check and its run history.
    * @returns void
    * @throws ApiError
@@ -2600,7 +3195,7 @@ export class AppsService {
   }
   /**
    * Read an app's change timeline.
-   * ADR-751 internal preview, enabled by `FAAS_CHANGE_TIMELINE_ENABLED=1`;
+   * Internal preview, enabled by `FAAS_CHANGE_TIMELINE_ENABLED=1`;
    * otherwise 503 `change_timeline_unavailable`. Requires apps:read or
    * admin; no MFA required.
    *
@@ -2648,7 +3243,7 @@ export class AppsService {
     });
   }
   /**
-   * Per-app request metrics (issue
+   * Per-app request metrics.
    * Time-windowed rollup of one app's gateway activity. The `range`
    * parameter is a closed vocabulary bounded by Prometheus
    * retention (`prom_retention_days: 15`):
@@ -2706,8 +3301,7 @@ export class AppsService {
   /**
    * Per-app wake timeline (JSON mirror of the dashboard page).
    * Wire-friendly mirror of the dashboard's per-app wake-timeline
-   * HTML page (`/dashboard/apps/{slug}/wake-timeline`,
-   * cmd/apid/handlers_dashboard.go:2548 renderAppWakeTimeline).
+   * HTML page (`/dashboard/apps/{slug}/wake-timeline`).
    * The HTML page keeps its pre-rendered HTML chips; this endpoint
    * emits the same data as JSON so a separate frontend agent can
    * render without re-parsing HTML.
@@ -2720,14 +3314,14 @@ export class AppsService {
    *
    * - 24h cutoff descending-break: the moment a row's
    * `started_at` falls before the trailing-24h instant, the
-   * loop breaks (no further iteration). Pre-ADR-123 fleet
+   * loop breaks (no further iteration). Older
    * rows with no `started_at` are not eligible for the break
    * (always in scope).
    * - Two-denominator rule for `at_capacity_pct`: numerator is
    * the count of rows where the events join succeeded AND
    * the at_capacity flag is true; denominator is the count
    * of rows where the events join succeeded
-   * (`wake_count_with_meta`). Pre-PR-A fleet rows contribute
+   * (`wake_count_with_meta`). Older rows contribute
    * to `wake_count_24h` but not the denominator — same
    * posture as the HTML page.
    *
@@ -2809,7 +3403,7 @@ export class AppsService {
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
         \`profile_investigation_limit\`.
         `,
-        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        503: `Generic 503 envelope. Used by the API capacity gate (e.g.
         host age recipient not loaded → registry credential PUT
         returns 503 instead of accepting plaintext).
         `,
@@ -2825,15 +3419,15 @@ export class AppsService {
    *
    * Window resolution: `since` and `until` are RFC3339 timestamps.
    * Both default to UTC midnight snaps; `until` defaults to
-   * `now()` snapped down, `since` defaults to `until - 30d`. The
+   * `now` snapped down, `since` defaults to `until - 30d`. The
    * handler clamps `since` to `until - 90d` so a customer cannot
-   * unbounded-scan `usage_minutes` (ADR-048 retention is 30d; the
+   * unbounded-scan `usage_minutes` (retention is 30d; the
    * 90d ceiling is a forward-compatibility ceiling for when
    * `usage_daily` lands).
    *
    * Overage computation: `overage_gb_hours = max(0, gb_hours -
    * plan_included_gb_hours)`. The included band is echoed from
-   * `acct.Plan.PlanIncludedGBHours()`; the overage figure is the
+   * `acct.Plan.PlanIncludedGBHours`; the overage figure is the
    * integer-rounded float the Stripe pusher bills at $0.01/GB-h.
    *
    * Source: `usage_minutes` today (after the 30d retention cap).
@@ -3126,12 +3720,12 @@ export class AppsService {
     });
   }
   /**
-   * Per-route breakdown for opt-in apps (ADR-093).
+   * Per-route breakdown for opt-in apps.
    * Returns the `routes` array of the per-app metrics surface.
    * Production reads the fleet Prometheus aggregate; single-box
-   * development may use the gatewayd-internal loopback listener.
+   * development may use the gateway loopback listener.
    * The array is empty when `route_metrics_enabled` is false
-   * on the app (the gatewayd handler returns 200 + empty
+   * on the app (the gateway handler returns 200 + empty
    * rows rather than 404 — the customer-facing "feature off"
    * state is not a 404). Labels use declared templates when available,
    * otherwise common numeric/UUID/long-hex segments become `{id}`.
@@ -3270,30 +3864,30 @@ export class AppsService {
     });
   }
   /**
-   * Per-app streaming classification probe (ADR-102 D6).
+   * Per-app streaming classification probe.
    * Returns the streaming-status enum (one of `streaming`,
    * `accept-json-downgrade`, `flag-disabled`, `plan-disallows`,
-   * `operator-disabled`, `upgrade-bypass`) the gatewayd handler
+   * `operator-disabled`, `upgrade-bypass`) the gateway handler
    * would stamp on the `Streaming-Status` response header for a
    * representative request to this app, plus the effective
    * response-body cap (in bytes) and the per-gate flags.
    *
    * With no query parameters the probe is a pure read against the
-   * apid cache (the per-account `Plan` and the per-app
+   * API cache (the per-account `Plan` and the per-app
    * `streaming_enabled` flag). Supplying `host`, `path`, and `method`
-   * together performs a bounded loopback read of gatewayd's compiled
+   * together performs a bounded loopback read of the gateway's compiled
    * kind=limit rules and reports a matching streaming response cap with
-   * `cap_kind="endpoint-rule"`. If gatewayd is unavailable or no rule
+   * `cap_kind="endpoint-rule"`. If the gateway is unavailable or no rule
    * matches, the response falls back to the plan cap.
    *
    * The operator opt-in (`FAAS_GATEWAY_STREAMING` env) remains
-   * gatewayd-side state, so the canonical signal is the
+   * gateway-side state, so the canonical signal is the
    * `Streaming-Status` response header on a real request, not this probe.
    * A customer evaluating "will my next request stream?" must
    * consider the operator-side flag separately.
    *
    * `status=plan-disallows` means the customer's plan tier
-   * forbids `streaming_enabled=true`; the CreateApp gate (D5)
+   * forbids `streaming_enabled=true`; the CreateApp gate
    * already returns 403 `CodePlanStreamingNotAllowed` so this
    * row should be unreachable from a properly-validated app,
    * but the probe still reflects the persisted state for
@@ -3351,11 +3945,11 @@ export class AppsService {
     });
   }
   /**
-   * Per-app customer-facing SLO panel (issue
+   * Per-app customer-facing SLO panel.
    * Closed-set windowed SLO panel for one app — the
    * customer-facing equivalent of AWS CloudWatch
    * per-function / GCP Cloud Run per-service. Distinct from
-   * `GET /v1/apps/{slug}/metrics` (issue #273 / ADR-042) which
+   * `GET /v1/apps/{slug}/metrics` which
    * is the 5m-window dashboard panel. The /slo surface is the
    * "yesterday's SLO" / "this week's SLO" summary, with the
    * customer-facing SLO signals co-located with the
@@ -5582,12 +6176,12 @@ export class AppsService {
     });
   }
   /**
-   * Per-app customer-facing automatic error grouping summary (ADR-096 / PR-B).
+   * Per-app customer-facing automatic error grouping summary.
    * Sentry-style grouped error view scoped to a customer's
    * app. One row per `(account_id, app_id, fingerprint)` over
    * the requested `[since, until]` window, sorted by `count
    * DESC, last_seen_at DESC, fingerprint ASC`. Distinct from
-   * `GET /v1/apps/{slug}/slo` (issue #696 / ADR-082) which is
+   * `GET /v1/apps/{slug}/slo` which is
    * the closed-set SLO summary (`1h` / `24h` / `7d`) — the
    * errors summary uses a continuous `[since, until]` window
    * with an explicit RFC3339Nano stamp instead.
@@ -5668,7 +6262,7 @@ export class AppsService {
     });
   }
   /**
-   * Per-fingerprint drill-down rows (ADR-096 / PR-B).
+   * Per-fingerprint drill-down rows.
    * Cursor-paginated drill-down over the request rows that
    * landed on this fingerprint. Returns 404 when the
    * fingerprint has been purged by the retention cron or
@@ -5725,7 +6319,7 @@ export class AppsService {
     });
   }
   /**
-   * Single oldest sample row + redacted headers (ADR-096 / PR-B).
+   * Single oldest sample row + redacted headers.
    * Returns the OLDEST request row for the fingerprint plus
    * the redacted `headers_sample` (jsonb-decoded) and the
    * list of `redactions_applied` pattern names so the
@@ -5767,16 +6361,14 @@ export class AppsService {
     });
   }
   /**
-   * Per-app request telemetry (ADR-127 / PR-A).
+   * Per-app request telemetry.
    * Recent request telemetry rows for an app — status, latency_ms, route,
    * method, deployment_id, cold_boot, trace_id, received_at, and the
    * number of original requests represented by each collapsed row. Rows
    * are split by bounded latency bucket so aggregate percentiles retain
    * distribution signal; `latency_ms` is that bucket's inclusive upper
    * bound (and can therefore be slightly conservative).
-   * PR-A ships the read endpoint only; the write-side (publisher
-   * → gRPC IncrementRequestTelemetry → apid receiver → sqlc
-   * INSERT) lands in PR-B. The endpoint is plan-gated by
+   * The endpoint is plan-gated by
    * `DebugTelemetryEnabled` (Free off; Hobby/Pro/Scale on).
    * The window is clamped to `DebugTelemetryRetentionDays`
    * (Hobby 3d, Pro 7d, Scale 14d). When the clamp fires, the
@@ -6597,7 +7189,358 @@ export class AppsService {
     });
   }
   /**
-   * Observed debugger signal coverage (ADR-127 follow-up).
+   * Query the continuous live heap near a window end.
+   * Requires profiling.kinds to include heap. The query is narrowed to the last collection window before end so merged snapshots are not summed. Values are live heap bytes.
+   * @returns ProfileHeapResponse Live heap functions and call paths.
+   * @throws ApiError
+   */
+  public static getAppHeapProfile({
+    slug,
+    deploymentId,
+    runtime,
+    start,
+    end,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Deployment whose live heap to read.
+     */
+    deploymentId: string,
+    /**
+     * Runtime the heap snapshots were collected under.
+     */
+    runtime: string,
+    /**
+     * Earliest acceptable snapshot time.
+     */
+    start: string,
+    /**
+     * Point in time to inspect.
+     */
+    end: string,
+  }): CancelablePromise<ProfileHeapResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/profiles/heap',
+      path: {
+        'slug': slug,
+      },
+      query: {
+        'deployment_id': deploymentId,
+        'runtime': runtime,
+        'start': start,
+        'end': end,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        402: `code: billing_past_due — account is suspended; pay invoice to resume.`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `code: capacity_unavailable — no host headroom.
+        Resource increases can return service_recovery_capacity_unavailable
+        when enabled bare-metal service protection needs more recovery headroom.
+        `,
+      },
+    });
+  }
+  /**
+   * List the app's on-demand profile captures, newest first.
+   * @returns ProfileCaptureList Up to 50 captures retained for 7 days.
+   * @throws ApiError
+   */
+  public static listProfileCaptures({
+    slug,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+  }): CancelablePromise<ProfileCaptureList> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/profiles/captures',
+      path: {
+        'slug': slug,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        402: `code: billing_past_due — account is suspended; pay invoice to resume.`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `code: capacity_unavailable — no host headroom.
+        Resource increases can return service_recovery_capacity_unavailable
+        when enabled bare-metal service protection needs more recovery headroom.
+        `,
+      },
+    });
+  }
+  /**
+   * Capture CPU and/or heap profiles from a running instance now.
+   * Queues a bounded capture on the requested or earliest-started RUNNING instance; parked apps are not woken. Poll the capture until status is ready or failed. One capture per app runs at a time; an account can start 60 per hour. Gregale also queues a heap capture automatically (trigger memory_pressure) when an instance runs low on memory, at most once per hour per app.
+   * @returns ProfileCapture Capture queued.
+   * @throws ApiError
+   */
+  public static createProfileCapture({
+    slug,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    requestBody?: CreateProfileCaptureRequest,
+  }): CancelablePromise<ProfileCapture> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/profiles/captures',
+      path: {
+        'slug': slug,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        402: `code: billing_past_due — account is suspended; pay invoice to resume.`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `code: capacity_unavailable — no host headroom.
+        Resource increases can return service_recovery_capacity_unavailable
+        when enabled bare-metal service protection needs more recovery headroom.
+        `,
+      },
+    });
+  }
+  /**
+   * Read one on-demand profile capture.
+   * @returns ProfileCapture Capture status and collected profile summary.
+   * @throws ApiError
+   */
+  public static getProfileCapture({
+    slug,
+    id,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Profile capture id.
+     */
+    id: string,
+  }): CancelablePromise<ProfileCapture> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/profiles/captures/{id}',
+      path: {
+        'slug': slug,
+        'id': id,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        402: `code: billing_past_due — account is suspended; pay invoice to resume.`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `code: capacity_unavailable — no host headroom.
+        Resource increases can return service_recovery_capacity_unavailable
+        when enabled bare-metal service protection needs more recovery headroom.
+        `,
+      },
+    });
+  }
+  /**
+   * Merged functions and call paths of one capture kind.
+   * @returns ProfileCaptureView CPU nanoseconds or live heap bytes merged across the instance's processes.
+   * @throws ApiError
+   */
+  public static getProfileCaptureView({
+    slug,
+    id,
+    kind,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Capture whose merged view to read.
+     */
+    id: string,
+    /**
+     * cpu, heap, stacks, block or mutex; defaults to the capture's first kind.
+     */
+    kind?: 'cpu' | 'heap' | 'stacks' | 'block' | 'mutex',
+  }): CancelablePromise<ProfileCaptureView> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/profiles/captures/{id}/view',
+      path: {
+        'slug': slug,
+        'id': id,
+      },
+      query: {
+        'kind': kind,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        402: `code: billing_past_due — account is suspended; pay invoice to resume.`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `code: capacity_unavailable — no host headroom.
+        Resource increases can return service_recovery_capacity_unavailable
+        when enabled bare-metal service protection needs more recovery headroom.
+        `,
+      },
+    });
+  }
+  /**
+   * Download one capture kind as a merged gzip pprof profile.
+   * @returns binary gzip-compressed pprof protobuf for go tool pprof, speedscope or Pyroscope.
+   * @throws ApiError
+   */
+  public static downloadProfileCapture({
+    slug,
+    id,
+    kind,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Capture to download.
+     */
+    id: string,
+    /**
+     * Kind to download as pprof: cpu, heap, stacks, block or mutex; defaults to the capture's first kind.
+     */
+    kind?: 'cpu' | 'heap' | 'stacks' | 'block' | 'mutex',
+  }): CancelablePromise<Blob> {
+    return __request(OpenAPI, {
+      responseType: 'blob',
+      method: 'GET',
+      url: '/v1/apps/{slug}/profiles/captures/{id}/pprof',
+      path: {
+        'slug': slug,
+        'id': id,
+      },
+      query: {
+        'kind': kind,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        402: `code: billing_past_due — account is suspended; pay invoice to resume.`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `code: capacity_unavailable — no host headroom.
+        Resource increases can return service_recovery_capacity_unavailable
+        when enabled bare-metal service protection needs more recovery headroom.
+        `,
+      },
+    });
+  }
+  /**
+   * Compare one capture kind with an earlier capture of the same app.
+   * Merges both captures and returns every call path and function with its baseline value, candidate value and difference, largest growth first. Values are not rescaled; captures of different durations or deployments carry warnings.
+   * @returns ProfileCaptureDiff Differential view in the kind's unit.
+   * @throws ApiError
+   */
+  public static diffProfileCaptures({
+    slug,
+    id,
+    base,
+    kind,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Candidate capture id.
+     */
+    id: string,
+    /**
+     * Baseline capture id of the same app.
+     */
+    base: string,
+    /**
+     * cpu, heap, stacks, block or mutex; defaults to a kind both captures collected, preferring heap.
+     */
+    kind?: 'cpu' | 'heap' | 'stacks' | 'block' | 'mutex',
+  }): CancelablePromise<ProfileCaptureDiff> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/profiles/captures/{id}/diff',
+      path: {
+        'slug': slug,
+        'id': id,
+      },
+      query: {
+        'base': base,
+        'kind': kind,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        402: `code: billing_past_due — account is suspended; pay invoice to resume.`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `code: capacity_unavailable — no host headroom.
+        Resource increases can return service_recovery_capacity_unavailable
+        when enabled bare-metal service protection needs more recovery headroom.
+        `,
+      },
+    });
+  }
+  /**
+   * Read observed debugger signal coverage.
    * Returns bounded, weighted coverage for the debugger signals
    * attached to retained request telemetry in the requested window.
    * Counts are split between stored aggregate rows and the original
@@ -6804,7 +7747,7 @@ export class AppsService {
     });
   }
   /**
-   * Get one request telemetry record (ADR-127).
+   * Get one request telemetry record.
    * Resolves an exact public x-faas-request-id through the durable,
    * app-scoped request-ID journal, then enriches it from detailed request
    * telemetry when that sampled row exists. If only the identity mapping
@@ -6852,7 +7795,7 @@ export class AppsService {
     });
   }
   /**
-   * Get request evidence and explanation (ADR-127).
+   * Get request evidence and explanation.
    * Returns a deterministic request/wake timeline plus bounded,
    * redacted span evidence for one request and links it to a matching
    * active regression observation when one exists. Database statements are sanitized fingerprints; raw
@@ -6894,16 +7837,15 @@ export class AppsService {
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
         \`profile_investigation_limit\`.
         `,
-        503: `code: debug_regressions_unavailable — the debugger regression table or read query is unavailable; inspect migrations/readiness and retry.`,
+        503: `code: debug_regressions_unavailable — the debugger regression table or read query is unavailable; check database migrations and readiness, then retry.`,
       },
     });
   }
   /**
-   * Active regression observations (ADR-127 / PR-B).
+   * Active regression observations.
    * Returns regression observations written by the
    * debug_regression_observations table — surfaces per-route
-   * p95 regressions detected by the regression cron
-   * (cmd/apid/debug_regression_cron.go). Ordered by
+   * p95 regressions detected by the regression cron. Ordered by
    * regression_factor DESC, last_detected_at DESC (worst
    * first). Plan-gated by DebugTelemetryEnabled. The window
    * is clamped to DebugTelemetryRetentionDays.
@@ -6942,7 +7884,7 @@ export class AppsService {
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
         \`profile_investigation_limit\`.
         `,
-        503: `code: debug_regressions_unavailable — the debugger regression table or read query is unavailable; inspect migrations/readiness and retry.`,
+        503: `code: debug_regressions_unavailable — the debugger regression table or read query is unavailable; check database migrations and readiness, then retry.`,
       },
     });
   }
@@ -6989,7 +7931,7 @@ export class AppsService {
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
         \`profile_investigation_limit\`.
         `,
-        503: `code: debug_regressions_unavailable — the debugger regression table or read query is unavailable; inspect migrations/readiness and retry.`,
+        503: `code: debug_regressions_unavailable — the debugger regression table or read query is unavailable; check database migrations and readiness, then retry.`,
       },
     });
   }
@@ -7040,7 +7982,7 @@ export class AppsService {
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
         \`profile_investigation_limit\`.
         `,
-        503: `code: debug_regressions_unavailable — the debugger regression table or read query is unavailable; inspect migrations/readiness and retry.`,
+        503: `code: debug_regressions_unavailable — the debugger regression table or read query is unavailable; check database migrations and readiness, then retry.`,
       },
     });
   }
@@ -7095,18 +8037,18 @@ export class AppsService {
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
         \`profile_investigation_limit\`.
         `,
-        503: `code: debug_regressions_unavailable — the debugger regression table or read query is unavailable; inspect migrations/readiness and retry.`,
+        503: `code: debug_regressions_unavailable — the debugger regression table or read query is unavailable; check database migrations and readiness, then retry.`,
       },
     });
   }
   /**
-   * Per-route latency compare (ADR-127 / PR-B).
+   * Per-route latency compare.
    * Compares two deployments' per-route latency
    * distributions in a shared time window. Body holds the
    * two deployment ids + optional route filter + optional
    * since/until bounds. Returns merged per-route stats with
    * per-deployment p50/p95/p99 + represented request counts. Includes
-   * the effective window and retention-clamping metadata (ADR-1623).
+   * the effective window and retention-clamping metadata.
    * Invalid lookbacks, invalid/future until values, and windows wholly
    * outside current plan retention are rejected. Reads retained telemetry
    * without replaying requests or writing platform state. Plan-gated by
@@ -7147,7 +8089,7 @@ export class AppsService {
     });
   }
   /**
-   * Replay a retained request through its mirror rule (ADR-127).
+   * Replay a retained request through its mirror rule.
    * Reissues the retained request metadata through the enabled mirror
    * rule for the deployment that served it. Raw request bodies and
    * credentials are not retained, so the mirror receives an empty body
@@ -7263,7 +8205,7 @@ export class AppsService {
         401: `code: unauthorized`,
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
-        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        503: `Generic 503 envelope. Used by the API capacity gate (e.g.
         host age recipient not loaded → registry credential PUT
         returns 503 instead of accepting plaintext).
         `,
@@ -7300,7 +8242,7 @@ export class AppsService {
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
         409: `code: conflict`,
-        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        503: `Generic 503 envelope. Used by the API capacity gate (e.g.
         host age recipient not loaded → registry credential PUT
         returns 503 instead of accepting plaintext).
         `,
@@ -7379,7 +8321,7 @@ export class AppsService {
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
         409: `code: conflict`,
-        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        503: `Generic 503 envelope. Used by the API capacity gate (e.g.
         host age recipient not loaded → registry credential PUT
         returns 503 instead of accepting plaintext).
         `,
@@ -7417,7 +8359,7 @@ export class AppsService {
         401: `code: unauthorized`,
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
-        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        503: `Generic 503 envelope. Used by the API capacity gate (e.g.
         host age recipient not loaded → registry credential PUT
         returns 503 instead of accepting plaintext).
         `,
@@ -7454,7 +8396,7 @@ export class AppsService {
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
         409: `code: conflict`,
-        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        503: `Generic 503 envelope. Used by the API capacity gate (e.g.
         host age recipient not loaded → registry credential PUT
         returns 503 instead of accepting plaintext).
         `,
@@ -7494,7 +8436,7 @@ export class AppsService {
         401: `code: unauthorized`,
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
-        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        503: `Generic 503 envelope. Used by the API capacity gate (e.g.
         host age recipient not loaded → registry credential PUT
         returns 503 instead of accepting plaintext).
         `,
@@ -7525,7 +8467,7 @@ export class AppsService {
         401: `code: unauthorized`,
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
-        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        503: `Generic 503 envelope. Used by the API capacity gate (e.g.
         host age recipient not loaded → registry credential PUT
         returns 503 instead of accepting plaintext).
         `,
@@ -7562,7 +8504,7 @@ export class AppsService {
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
         409: `code: conflict`,
-        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        503: `Generic 503 envelope. Used by the API capacity gate (e.g.
         host age recipient not loaded → registry credential PUT
         returns 503 instead of accepting plaintext).
         `,
@@ -7599,7 +8541,7 @@ export class AppsService {
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
         409: `code: conflict`,
-        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        503: `Generic 503 envelope. Used by the API capacity gate (e.g.
         host age recipient not loaded → registry credential PUT
         returns 503 instead of accepting plaintext).
         `,
@@ -7693,7 +8635,7 @@ export class AppsService {
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
         409: `code: conflict`,
-        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        503: `Generic 503 envelope. Used by the API capacity gate (e.g.
         host age recipient not loaded → registry credential PUT
         returns 503 instead of accepting plaintext).
         `,
@@ -7745,7 +8687,7 @@ export class AppsService {
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
         409: `code: conflict`,
-        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        503: `Generic 503 envelope. Used by the API capacity gate (e.g.
         host age recipient not loaded → registry credential PUT
         returns 503 instead of accepting plaintext).
         `,
@@ -7777,7 +8719,7 @@ export class AppsService {
         401: `code: unauthorized`,
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
-        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        503: `Generic 503 envelope. Used by the API capacity gate (e.g.
         host age recipient not loaded → registry credential PUT
         returns 503 instead of accepting plaintext).
         `,
@@ -7815,7 +8757,7 @@ export class AppsService {
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
         409: `Monitor revision changed.`,
-        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        503: `Generic 503 envelope. Used by the API capacity gate (e.g.
         host age recipient not loaded → registry credential PUT
         returns 503 instead of accepting plaintext).
         `,
@@ -7824,7 +8766,7 @@ export class AppsService {
   }
   /**
    * Suggest edge rules for observed routes with what-if estimates.
-   * Read-only route advisor (ADR-976). Reads retained request telemetry for
+   * Read-only route advisor. Reads retained request telemetry for
    * the app's busiest observed routes across deployments and suggests three
    * kinds of edge rules: cache for anonymous, successful GET routes with
    * repeat traffic; async for POST routes that time out or exceed a 10 s
@@ -7900,7 +8842,7 @@ export class AppsService {
   }
   /**
    * Show which routes keep a scale-to-zero app awake.
-   * Read-only awake-time report (ADR-1187). Awake time is the app's billed
+   * Read-only awake-time report. Awake time is the app's billed
    * running time (plan RAM + 8 MB per running second) from the usage
    * ledger. It is attributed, minute by minute, to the routes whose
    * requests restarted the idle timer: a 2xx response from an instance, or
@@ -7971,11 +8913,11 @@ export class AppsService {
   /**
    * List the app's proactive route insights.
    * Findings the route insights evaluator records every six hours for
-   * apps that ran in the last day (ADR-1198): `kept_awake` when a client
+   * apps that ran in the last day: `kept_awake` when a client
    * calling a route at a steady interval keeps a mostly-awake app from
    * parking, `cacheable` when the gateways measured a route safe to
    * cache for a given lifetime, and, for routes that already have a cache
-   * rule (ADR-1199), `cache_stale` when refills found the body changed
+   * rule, `cache_stale` when refills found the body changed
    * before the rule's max-age ran out and `cache_too_short` when the body
    * stayed the same far longer. Active insights come first, then those
    * resolved in the last seven days. An insight resolves after a day
@@ -8021,8 +8963,7 @@ export class AppsService {
   }
   /**
    * Apply a route insight's fix.
-   * Applies the edge-rule change the insight's `fix` describes
-   * (ADR-20261020161310): `create_cache_rule` creates an enabled `@app`
+   * Applies the edge-rule change the insight's `fix` describes: `create_cache_rule` creates an enabled `@app`
    * cache rule with the measured safe max-age, `set_cache_max_age` and
    * `disable_cache_rule` change the cache rule serving exactly this route,
    * and `add_cache_override` adds a narrower rule ahead of a rule that also
@@ -8087,7 +9028,7 @@ export class AppsService {
   }
   /**
    * Read an app's service wake-ahead opt-in.
-   * Service wake-ahead (ADR-977) is off by default. When it is on and this
+   * Service wake-ahead is off by default. When it is on and this
    * app starts a cold wake, the gateway also starts restoring the services
    * it has measured this app calling soon after it wakes, so their restores
    * overlap instead of running one after another. Measurement is per
@@ -8130,7 +9071,7 @@ export class AppsService {
   }
   /**
    * Turn an app's service wake-ahead on or off.
-   * Sets the ADR-977 opt-in. Gateways apply the change within 30 seconds.
+   * Sets the opt-in. Gateways apply the change within 30 seconds.
    * Wake-ahead never starts while fleet residency is at or above 60% of the
    * admission ceiling, never parks other instances to make room, and goes
    * through the same admission and plan concurrency limits as a request.
@@ -8176,7 +9117,7 @@ export class AppsService {
   }
   /**
    * Read the routes served first and last when an app is saturated.
-   * Route priorities (ADR-978) order the queue requests wait in while every
+   * Route priorities order the queue requests wait in while every
    * routable instance of the app is busy. Critical requests are served
    * before normal ones and normal before bulk; within a class the queue
    * stays first in, first out, and the request already at the head is never
@@ -8336,7 +9277,7 @@ export class AppsService {
         401: `code: unauthorized`,
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
-        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        503: `Generic 503 envelope. Used by the API capacity gate (e.g.
         host age recipient not loaded → registry credential PUT
         returns 503 instead of accepting plaintext).
         `,
@@ -8380,7 +9321,7 @@ export class AppsService {
         401: `code: unauthorized`,
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
-        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        503: `Generic 503 envelope. Used by the API capacity gate (e.g.
         host age recipient not loaded → registry credential PUT
         returns 503 instead of accepting plaintext).
         `,
@@ -8427,7 +9368,7 @@ export class AppsService {
         402: `Listing saved production incidents requires current telemetry entitlement.`,
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
-        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        503: `Generic 503 envelope. Used by the API capacity gate (e.g.
         host age recipient not loaded → registry credential PUT
         returns 503 instead of accepting plaintext).
         `,
@@ -8474,7 +9415,7 @@ export class AppsService {
         402: `Inspecting this saved production incident requires current telemetry entitlement.`,
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
-        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        503: `Generic 503 envelope. Used by the API capacity gate (e.g.
         host age recipient not loaded → registry credential PUT
         returns 503 instead of accepting plaintext).
         `,
@@ -8505,7 +9446,7 @@ export class AppsService {
         401: `code: unauthorized`,
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
-        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        503: `Generic 503 envelope. Used by the API capacity gate (e.g.
         host age recipient not loaded → registry credential PUT
         returns 503 instead of accepting plaintext).
         `,
@@ -8542,7 +9483,7 @@ export class AppsService {
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
         409: `Configuration revision changed.`,
-        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        503: `Generic 503 envelope. Used by the API capacity gate (e.g.
         host age recipient not loaded → registry credential PUT
         returns 503 instead of accepting plaintext).
         `,
@@ -8600,7 +9541,7 @@ export class AppsService {
         401: `code: unauthorized`,
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
-        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        503: `Generic 503 envelope. Used by the API capacity gate (e.g.
         host age recipient not loaded → registry credential PUT
         returns 503 instead of accepting plaintext).
         `,
@@ -8677,7 +9618,7 @@ export class AppsService {
         402: `code: billing_past_due — account is suspended; pay invoice to resume.`,
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
-        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        503: `Generic 503 envelope. Used by the API capacity gate (e.g.
         host age recipient not loaded → registry credential PUT
         returns 503 instead of accepting plaintext).
         `,
@@ -8729,7 +9670,7 @@ export class AppsService {
         401: `code: unauthorized`,
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
-        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        503: `Generic 503 envelope. Used by the API capacity gate (e.g.
         host age recipient not loaded → registry credential PUT
         returns 503 instead of accepting plaintext).
         `,
@@ -8773,7 +9714,7 @@ export class AppsService {
         401: `code: unauthorized`,
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
-        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        503: `Generic 503 envelope. Used by the API capacity gate (e.g.
         host age recipient not loaded → registry credential PUT
         returns 503 instead of accepting plaintext).
         `,
@@ -8804,7 +9745,7 @@ export class AppsService {
         401: `code: unauthorized`,
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
-        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        503: `Generic 503 envelope. Used by the API capacity gate (e.g.
         host age recipient not loaded → registry credential PUT
         returns 503 instead of accepting plaintext).
         `,
@@ -8841,7 +9782,7 @@ export class AppsService {
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
         409: `Gate revision changed or route requirements are missing.`,
-        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        503: `Generic 503 envelope. Used by the API capacity gate (e.g.
         host age recipient not loaded → registry credential PUT
         returns 503 instead of accepting plaintext).
         `,
@@ -8880,7 +9821,7 @@ export class AppsService {
         402: `Current plan does not include captured endpoint discovery.`,
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
-        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        503: `Generic 503 envelope. Used by the API capacity gate (e.g.
         host age recipient not loaded → registry credential PUT
         returns 503 instead of accepting plaintext).
         `,
@@ -8933,7 +9874,7 @@ export class AppsService {
         402: `Current plan lacks the captured endpoint discovery entitlement required to list route check history.`,
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
-        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        503: `Generic 503 envelope. Used by the API capacity gate (e.g.
         host age recipient not loaded → registry credential PUT
         returns 503 instead of accepting plaintext).
         `,
@@ -8978,7 +9919,7 @@ export class AppsService {
         402: `Reading retained requirement-check evidence requires captured endpoint discovery on the current plan.`,
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
-        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        503: `Generic 503 envelope. Used by the API capacity gate (e.g.
         host age recipient not loaded → registry credential PUT
         returns 503 instead of accepting plaintext).
         `,
@@ -9021,7 +9962,7 @@ export class AppsService {
         402: `The current plan cannot queue route requirement reevaluation because captured endpoint discovery is unavailable.`,
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
-        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        503: `Generic 503 envelope. Used by the API capacity gate (e.g.
         host age recipient not loaded → registry credential PUT
         returns 503 instead of accepting plaintext).
         `,
@@ -9058,7 +9999,7 @@ export class AppsService {
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
         409: `code: conflict`,
-        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        503: `Generic 503 envelope. Used by the API capacity gate (e.g.
         host age recipient not loaded → registry credential PUT
         returns 503 instead of accepting plaintext).
         `,
@@ -9103,7 +10044,7 @@ export class AppsService {
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
         409: `code: conflict`,
-        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        503: `Generic 503 envelope. Used by the API capacity gate (e.g.
         host age recipient not loaded → registry credential PUT
         returns 503 instead of accepting plaintext).
         `,
@@ -9141,7 +10082,7 @@ export class AppsService {
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
         409: `code: conflict`,
-        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        503: `Generic 503 envelope. Used by the API capacity gate (e.g.
         host age recipient not loaded → registry credential PUT
         returns 503 instead of accepting plaintext).
         `,
@@ -9398,7 +10339,7 @@ export class AppsService {
   }
   /**
    * Schedule capacity restoration ahead of a demand window.
-   * Persists a temporary prewarm intent. schedd claims it during the
+   * Persists a temporary prewarm intent. The scheduler claims it during the
    * platform's lead time (currently 60 seconds before wake_at), restores
    * up to count instances through the normal admission gates, and never
    * changes the app's permanent min_instances floor.
@@ -9630,10 +10571,10 @@ export class AppsService {
    * - **Live** — `?follow=1` holds the connection open and streams new
    * entries from the per-instance ring buffer. The stream terminates
    * with `event: end` when the backstop fires (10 minutes idle), the
-   * schedd returns NotFound (parked app), or the connection closes.
+   * scheduler returns NotFound (parked app), or the connection closes.
    *
    * - **Archive (`?archive=1`)** — fetches a single day's
-   * per-instance log batch from the S3 bucket the apid shipper
+   * per-instance log batch from the S3 bucket the API shipper
    * writes into. `?instance=<id>` selects the Firecracker instance
    * id; `?date=YYYY-MM-DD` selects the day. The response is the
    * same SSE shape as the live stream (`event: log` per line,
@@ -9680,7 +10621,7 @@ export class AppsService {
      */
     since?: string,
     /**
-     * Exact match on the structured `level` field (info, warn, or error) surfaced in each matching log event. Empty = no level filter. The CLI and the apid handler both validate against the same enum (api.IsValidLogLevel in pkg/api/logs.go); an unknown value short-circuits with an SSE error frame carrying code invalid_level.
+     * Exact match on the structured `level` field (info, warn, or error) surfaced in each matching log event. Empty = no level filter. The CLI and the API handler both validate against the same enum (api.IsValidLogLevel); an unknown value short-circuits with an SSE error frame carrying code invalid_level.
      *
      */
     level?: 'info' | 'warn' | 'error',
@@ -9730,8 +10671,7 @@ export class AppsService {
   }
   /**
    * Account-wide per-app metrics rollup.
-   * One call replaces N per-app `/v1/apps/{slug}/metrics` calls
-   * (issue #393). Returns the same `AppMetricsResponse` shape
+   * One call replaces N per-app `/v1/apps/{slug}/metrics` calls. Returns the same `AppMetricsResponse` shape
    * per app, keyed by `app_slug`, so the dashboard can render
    * all apps on a single page without a per-app fan-out.
    *
@@ -9743,7 +10683,7 @@ export class AppsService {
    * per-app contract exactly.
    *
    * PromQL cost: 6 round-trips regardless of N apps (vs. 7N
-   * for the naive per-app loop) — see `pkg/promql.Client.QueryMap`
+   * for the naive per-app loop)
    * and `Client.QueryBuckets`. This rollup exposes the same
    * Hobby+ signals as the per-app endpoint, so Free accounts
    * receive 402.
@@ -9806,7 +10746,7 @@ export class AppsService {
    * `wake_id` without adding wake IDs as metric labels.
    *
    * The endpoint is a sub-resource of `/v1/apps/{slug}`;
-   * auth and rate-limit share the §12 per-app budget with
+   * auth and rate-limit share the per-app budget with
    * logs/metrics/wake. Cross-account access 404s the
    * same way unknown slugs do (forge-proof: every row's
    * `data.app_id` is verified to match the resolved app).
@@ -9829,11 +10769,10 @@ export class AppsService {
      */
     slug: string,
     /**
-     * The per-wake correlation handle minted by the schedd
+     * The per-wake correlation handle minted by the scheduler
      * engine (UUID v4 in production). The endpoint returns
      * every `wake.*` events row whose `data.wake_id`
-     * matches — the partial index `events_wake_id_idx`
-     * (migrations/00113) serves the read in O(frames)
+     * matches — the partial index `events_wake_id_idx` serves the read in O(frames)
      * regardless of the events table size.
      *
      */
@@ -10479,7 +11418,7 @@ export class AppsService {
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
         409: `code: conflict`,
-        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        503: `Generic 503 envelope. Used by the API capacity gate (e.g.
         host age recipient not loaded → registry credential PUT
         returns 503 instead of accepting plaintext).
         `,

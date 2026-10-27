@@ -50,7 +50,7 @@ func (m *MemStore) enqueueDeploymentLifecycleWebhooksLocked(dep Deployment) {
 	body, _ := json.Marshal(payload) // fixed DTOs contain only JSON-safe fields
 	now := time.Now().UTC()
 	for _, hook := range m.appWebhooks {
-		if !releaseWebhookMatchesSource(hook, app, event) {
+		if !releaseWebhookMatchesSource(hook, app, event) || hook.Scope == AppWebhookScopeAccount && !m.accountMaySeeOrgLocked(hook.AccountID, app.OrgID) {
 			continue
 		}
 		id := newID()
@@ -115,7 +115,7 @@ func (m *MemStore) enqueueRolloutOutcomeWebhooksLocked(before, after Deployment)
 	}
 	body, _ := json.Marshal(payload) // fixed DTOs contain only JSON-safe fields
 	for _, hook := range m.appWebhooks {
-		if !releaseWebhookMatchesSource(hook, app, event) {
+		if !releaseWebhookMatchesSource(hook, app, event) || hook.Scope == AppWebhookScopeAccount && !m.accountMaySeeOrgLocked(hook.AccountID, app.OrgID) {
 			continue
 		}
 		id := newID()

@@ -258,6 +258,12 @@ func (m *Manager) rememberInstanceBacking(instance, baseKey string) {
 // writeSnapshotBacking stores the running VM's identity next to a capture.
 // Best-effort: a capture without it is refused at restore and cold-boots.
 func (m *Manager) writeSnapshotBacking(ctx context.Context, instance, memKey string) {
+	m.writeSnapshotBackingTo(ctx, m.storage, instance, memKey)
+}
+
+// writeSnapshotBackingTo writes the identity through store (a sealed
+// capture's encrypting backend, or the shared one).
+func (m *Manager) writeSnapshotBackingTo(ctx context.Context, store storage.StorageBackend, instance, memKey string) {
 	if !m.backingEnabled() {
 		return
 	}
@@ -274,7 +280,7 @@ func (m *Manager) writeSnapshotBacking(ctx context.Context, instance, memKey str
 	if err != nil {
 		return
 	}
-	if err := m.storage.Put(ctx, key, bytes.NewReader(body)); err != nil {
+	if err := store.Put(ctx, key, bytes.NewReader(body)); err != nil {
 		m.log.Warn("write snapshot backing identity", "instance", instance, "key", key, "err", err)
 	}
 }
@@ -290,7 +296,18 @@ func (m *Manager) verifySnapshotBacking(ctx context.Context, snap *Snapshot, bas
 	if key == "" {
 		return fmt.Errorf("%w: no backing identity location for %q", ErrSnapshotBackingUnverified, snap.StorageKey)
 	}
-	rc, err := m.storage.Get(ctx, key)
+	store := m.storage
+	if snap.Storage != nil {
+		store = snap.Storage
+	} else if native, ok := m.vmm.(interface {
+		nativeRuntimeSnapshotStore(string) storage.StorageBackend
+	}); ok {
+		// A native runtime capture's sidecar lives in the tree only vmmd writes.
+		if b := native.nativeRuntimeSnapshotStore(key); b != nil {
+			store = b
+		}
+	}
+	rc, err := store.Get(ctx, key)
 	if err != nil {
 		return fmt.Errorf("%w: read %s: %w", ErrSnapshotBackingUnverified, key, err)
 	}

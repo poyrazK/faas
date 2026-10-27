@@ -189,13 +189,14 @@ func preSeedHostKey(t *testing.T, keyPath, pubPath string) {
 	if err != nil {
 		t.Fatalf("GenerateX25519Identity: %v", err)
 	}
-	// secretbox.LoadHostKey accepts owner-read only; vmmd exits on 0600.
-	// vmmd also requires fleet.age beside host.age (LoadFleetAndHostKeys);
-	// the same identity serves both, so apid's seal to pubPath still opens.
-	for _, path := range []string{keyPath, filepath.Join(filepath.Dir(keyPath), "fleet.age")} {
-		if err := os.WriteFile(path, []byte(id.String()), 0o400); err != nil {
-			t.Fatalf("write key %s: %v", path, err)
-		}
+	// vmmd's LoadHostKey refuses anything but owner-read (0400), as on a host.
+	if err := os.WriteFile(keyPath, []byte(id.String()), 0o400); err != nil {
+		t.Fatalf("write key: %v", err)
+	}
+	// vmmd also requires the fleet identity beside host.age. apid seals to the
+	// recipient at pubPath, so the fleet identity is the same key.
+	if err := os.WriteFile(filepath.Join(filepath.Dir(keyPath), "fleet.age"), []byte(id.String()), 0o400); err != nil {
+		t.Fatalf("write fleet key: %v", err)
 	}
 	if err := os.WriteFile(pubPath, []byte(id.Recipient().String()), 0o444); err != nil {
 		t.Fatalf("write pub: %v", err)
