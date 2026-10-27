@@ -75,7 +75,7 @@ def sync_detailed(
     reset is a no-op (returns nil immediately) and the handler
     renders a 200 with empty entries so the CLI can print the
     \"delete products from the Paddle Dashboard, then call
-    sync\" message. Future work (issue #279+) may add
+    sync\" message. Future work may add
     merchant-side cleanup; this handler will then return 502
     on SDK failure rather than 200.
 
@@ -106,7 +106,7 @@ def sync(
     reset is a no-op (returns nil immediately) and the handler
     renders a 200 with empty entries so the CLI can print the
     \"delete products from the Paddle Dashboard, then call
-    sync\" message. Future work (issue #279+) may add
+    sync\" message. Future work may add
     merchant-side cleanup; this handler will then return 502
     on SDK failure rather than 200.
 
@@ -133,7 +133,7 @@ async def asyncio_detailed(
     reset is a no-op (returns nil immediately) and the handler
     renders a 200 with empty entries so the CLI can print the
     \"delete products from the Paddle Dashboard, then call
-    sync\" message. Future work (issue #279+) may add
+    sync\" message. Future work may add
     merchant-side cleanup; this handler will then return 502
     on SDK failure rather than 200.
 
@@ -162,7 +162,7 @@ async def asyncio(
     reset is a no-op (returns nil immediately) and the handler
     renders a 200 with empty entries so the CLI can print the
     \"delete products from the Paddle Dashboard, then call
-    sync\" message. Future work (issue #279+) may add
+    sync\" message. Future work may add
     merchant-side cleanup; this handler will then return 502
     on SDK failure rather than 200.
 

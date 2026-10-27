@@ -44,7 +44,7 @@ class ExecutionCapabilitiesResponse:
     plan_entitled: bool
     """Whether the account plan allows Runs."""
     control_plane_enabled: bool
-    """Whether the apid Runs admission gate is enabled."""
+    """Whether the API Runs admission gate is enabled."""
     runtimes: list[ExecutionCapabilitiesResponseRuntimesItem]
     profiles: list[ExecutionProfileCapability]
     network_modes: list[ExecutionCapabilitiesResponseNetworkModesItem]

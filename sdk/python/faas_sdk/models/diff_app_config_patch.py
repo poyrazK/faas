@@ -62,8 +62,8 @@ class DiffAppConfigPatch:
     require_authn: bool | Unset = UNSET
     eviction_priority: DiffAppConfigPatchEvictionPriority | Unset = UNSET
     app_protocol: DiffAppConfigPatchAppProtocol | Unset = UNSET
-    """Per-app wire-protocol selector (ADR-124). Same closed set + plan gate as UpdateAppRequest.app_protocol.
-    Pointer-aware: omitted → no change; non-null → set to this value."""
+    """Per-app wire-protocol selector. Same closed set + plan gate as UpdateAppRequest.app_protocol. Pointer-aware:
+    omitted → no change; non-null → set to this value."""
     execution_mode: DiffAppConfigPatchExecutionMode | Unset = UNSET
     """Lifecycle mode. Omitted → no change; worker runs as a long-lived non-HTTP workload."""
     restart_policy: DiffAppConfigPatchRestartPolicy | Unset = UNSET

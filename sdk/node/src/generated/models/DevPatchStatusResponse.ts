@@ -3,7 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * Delivery state of one developer live patch (ADR-740).
+ * Delivery state of one developer live patch.
  */
 export type DevPatchStatusResponse = {
   generation: number;

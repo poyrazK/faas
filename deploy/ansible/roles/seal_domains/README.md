@@ -18,7 +18,8 @@ are wired, each opened by one daemon:
   execution payloads (schedd, on every host; apid on the control plane
   seals to the recipient);
 - `account`: TOTP secrets, inbound webhook secrets, billing keys, workflow
-  plans and PagerDuty acknowledgement secrets (apid, which also seals them,
+  plans, PagerDuty acknowledgement secrets and GitLab, Slack and Linear
+  credentials (apid, which also seals them,
   so it holds the identity and there is no recipient file). The other
   account columns join in later releases.
 

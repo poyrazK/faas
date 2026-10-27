@@ -39,8 +39,7 @@ class ManagedPostgresUsageResponse:
     egress_bytes: int
     observed_at: datetime.datetime | None | Unset = UNSET
     compute_allowance_unit_seconds: int | Unset = UNSET
-    """The plan's monthly compute allowance in compute-unit seconds, pooled across the account's databases
-    (ADR-20261025094915)."""
+    """The plan's monthly compute allowance in compute-unit seconds, pooled across the account's databases."""
     compute_ceiling_unit_seconds: int | Unset = UNSET
     """Compute-unit seconds this month at which running databases are suspended. Absent while the usage ledger is
     off."""

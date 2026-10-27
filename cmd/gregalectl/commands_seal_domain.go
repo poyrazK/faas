@@ -300,7 +300,7 @@ func runSealDomainMigrate(args []string) error {
 		report, err = migrateDomain(ctx, store, d, *dir, *fleetKey, *hostKey)
 	case sealdomain.Account:
 		if !*readersVerified {
-			return errors.New("re-sealed TOTP secrets, inbound webhook secrets, billing keys, workflow plans and PagerDuty acknowledgement secrets no longer open with the fleet identity: an apid without the account identity cannot sign customers in with MFA; pass --readers-verified once every apid reports faas_seal_domain_loaded{domain=\"account\"} 1 and the previous release left the rollback window")
+			return errors.New("re-sealed TOTP secrets, inbound webhook secrets, billing keys, workflow plans, PagerDuty acknowledgement secrets and GitLab, Slack and Linear credentials no longer open with the fleet identity: an apid without the account identity cannot sign customers in with MFA; pass --readers-verified once every apid reports faas_seal_domain_loaded{domain=\"account\"} 1 and the previous release left the rollback window")
 		}
 		report, err = migrateDomain(ctx, store, d, *dir, *fleetKey, *hostKey)
 	case sealdomain.Delivery:

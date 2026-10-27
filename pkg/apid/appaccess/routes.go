@@ -110,14 +110,19 @@ var routeActions = map[string]authz.OrgAction{
 	// Gregale. The handlers keep the creator's account-wide alert rules and
 	// notification channels to the creator. Binding an outbound integration
 	// spends the creator's provider credential, so only unbinding is shared.
-	"GET /v1/apps/{slug}/alerts":                                  authz.OrgActionReadApp,
-	"POST /v1/apps/{slug}/alerts":                                 authz.OrgActionManageAppSecurity,
-	"GET /v1/apps/{slug}/alerts/{id}":                             authz.OrgActionReadApp,
-	"PATCH /v1/apps/{slug}/alerts/{id}":                           authz.OrgActionManageAppSecurity,
-	"DELETE /v1/apps/{slug}/alerts/{id}":                          authz.OrgActionManageAppSecurity,
-	"POST /v1/apps/{slug}/alerts/{id}/rotate-secret":              authz.OrgActionManageAppSecurity,
-	"GET /v1/apps/{slug}/alerts/{id}/deliveries":                  authz.OrgActionReadApp,
-	"GET /v1/apps/{slug}/log-drains":                              authz.OrgActionReadApp,
+	"GET /v1/apps/{slug}/alerts":                     authz.OrgActionReadApp,
+	"POST /v1/apps/{slug}/alerts":                    authz.OrgActionManageAppSecurity,
+	"GET /v1/apps/{slug}/alerts/{id}":                authz.OrgActionReadApp,
+	"PATCH /v1/apps/{slug}/alerts/{id}":              authz.OrgActionManageAppSecurity,
+	"DELETE /v1/apps/{slug}/alerts/{id}":             authz.OrgActionManageAppSecurity,
+	"POST /v1/apps/{slug}/alerts/{id}/rotate-secret": authz.OrgActionManageAppSecurity,
+	"GET /v1/apps/{slug}/alerts/{id}/deliveries":     authz.OrgActionReadApp,
+	"GET /v1/apps/{slug}/log-drains":                 authz.OrgActionReadApp,
+	// AI gateway access tokens act as their app. Minting stays with the
+	// app's creator (their standing keeps the tokens working); a company's
+	// owners and admins can see and revoke them once the creator is gone.
+	"GET /v1/apps/{slug}/ai-access-tokens":                        authz.OrgActionManageAppSecurity,
+	"DELETE /v1/apps/{slug}/ai-access-tokens/{token}":             authz.OrgActionManageAppSecurity,
 	"POST /v1/apps/{slug}/log-drains":                             authz.OrgActionManageAppSecurity,
 	"GET /v1/apps/{slug}/log-drains/{id}":                         authz.OrgActionReadApp,
 	"GET /v1/apps/{slug}/log-drains/{id}/health":                  authz.OrgActionReadApp,
@@ -136,6 +141,41 @@ var routeActions = map[string]authz.OrgAction{
 	"POST /v1/apps/{slug}/webhooks/{id}/deliveries/{did}/retry":   authz.OrgActionManageAppSecurity,
 	"GET /v1/apps/{slug}/outbound-bindings":                       authz.OrgActionReadApp,
 	"DELETE /v1/apps/{slug}/outbound-bindings/{integration}":      authz.OrgActionManageAppSecurity,
+
+	// Credentials a company app issues (ADR-20261026151103 amendment 1).
+	// Each one is shown once to the member who mints or sets it and keeps
+	// working after that member leaves, so owners and admins, not only the
+	// app's creator, list, rotate and revoke them: consumer API keys,
+	// inbound-webhook signing secrets, issue ingest tokens, the realtime
+	// endpoint's client authentication and its publisher and worker
+	// credentials, and AI gateway access tokens. Minting an AI access token
+	// spends the creator's provider credential, so only revoking is shared.
+	"GET /v1/apps/{slug}/consumers":                                                                                     authz.OrgActionManageAppSecurity,
+	"GET /v1/apps/{slug}/consumers/{consumer_id}":                                                                       authz.OrgActionManageAppSecurity,
+	"DELETE /v1/apps/{slug}/consumers/{consumer_id}":                                                                    authz.OrgActionManageAppSecurity,
+	"GET /v1/apps/{slug}/consumers/{consumer_id}/keys":                                                                  authz.OrgActionManageAppSecurity,
+	"POST /v1/apps/{slug}/consumers/{consumer_id}/keys":                                                                 authz.OrgActionManageAppSecurity,
+	"DELETE /v1/apps/{slug}/consumers/{consumer_id}/keys/{key_id}":                                                      authz.OrgActionManageAppSecurity,
+	"GET /v1/apps/{slug}/inbound-webhooks":                                                                              authz.OrgActionManageAppSecurity,
+	"GET /v1/apps/{slug}/inbound-webhooks/{id}":                                                                         authz.OrgActionManageAppSecurity,
+	"PATCH /v1/apps/{slug}/inbound-webhooks/{id}":                                                                       authz.OrgActionManageAppSecurity,
+	"DELETE /v1/apps/{slug}/inbound-webhooks/{id}":                                                                      authz.OrgActionManageAppSecurity,
+	"GET /v1/apps/{slug}/issue-ingest-tokens":                                                                           authz.OrgActionManageAppSecurity,
+	"POST /v1/apps/{slug}/issue-ingest-tokens":                                                                          authz.OrgActionManageAppSecurity,
+	"DELETE /v1/apps/{slug}/issue-ingest-tokens/{token_id}":                                                             authz.OrgActionManageAppSecurity,
+	"GET /v1/apps/{slug}/realtime/endpoints":                                                                            authz.OrgActionManageAppSecurity,
+	"GET /v1/apps/{slug}/realtime/endpoints/{id}":                                                                       authz.OrgActionManageAppSecurity,
+	"PATCH /v1/apps/{slug}/realtime/endpoints/{id}":                                                                     authz.OrgActionManageAppSecurity,
+	"POST /v1/apps/{slug}/realtime/endpoints/{id}/auth/rotate":                                                          authz.OrgActionManageAppSecurity,
+	"POST /v1/apps/{slug}/realtime/endpoints/{id}/auth/rotate/finalize":                                                 authz.OrgActionManageAppSecurity,
+	"GET /v1/apps/{slug}/realtime/endpoints/{id}/publish-credentials":                                                   authz.OrgActionManageAppSecurity,
+	"POST /v1/apps/{slug}/realtime/endpoints/{id}/publish-credentials":                                                  authz.OrgActionManageAppSecurity,
+	"POST /v1/apps/{slug}/realtime/endpoints/{id}/publish-credentials/{credential_id}/rotate":                           authz.OrgActionManageAppSecurity,
+	"POST /v1/apps/{slug}/realtime/endpoints/{id}/publish-credentials/{credential_id}/revoke":                           authz.OrgActionManageAppSecurity,
+	"GET /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/groups/{group}/credentials":                         authz.OrgActionManageAppSecurity,
+	"POST /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/groups/{group}/credentials":                        authz.OrgActionManageAppSecurity,
+	"POST /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/groups/{group}/credentials/{credential_id}/rotate": authz.OrgActionManageAppSecurity,
+	"POST /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/groups/{group}/credentials/{credential_id}/revoke": authz.OrgActionManageAppSecurity,
 
 	// Session-only dashboard and GitHub install routes (Authorize, called
 	// from the dashboard session gate). Their reads take OrgActionReadApp

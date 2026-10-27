@@ -15,8 +15,8 @@ T = TypeVar("T", bound="ProfileCaptureWebhookPayload")
 
 @_attrs_define
 class ProfileCaptureWebhookPayload:
-    """Payload of the profile.capture_ready and profile.capture_oom_linked app webhook events (ADR-1155). Carries the
-    capture record and its paths, never profile samples.
+    """Payload of the profile.capture_ready and profile.capture_oom_linked app webhook events. Carries the capture record
+    and its paths, never profile samples.
 
     """
 

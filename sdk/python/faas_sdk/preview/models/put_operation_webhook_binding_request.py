@@ -22,7 +22,7 @@ T = TypeVar("T", bound="PutOperationWebhookBindingRequest")
 
 @_attrs_define
 class PutOperationWebhookBindingRequest:
-    """Bind a verified provider endpoint to a customer operation with revision control (ADR-1193)."""
+    """Bind a verified provider endpoint to a customer operation with revision control."""
 
     expected_version: int
     operation: str
@@ -35,7 +35,7 @@ class PutOperationWebhookBindingRequest:
     event_types: list[str] | Unset = UNSET
     """Exact event types to admit; empty admits every verified event. Must be empty in signal mode."""
     mode: PutOperationWebhookBindingRequestMode | Unset = "start"
-    """start admits a new operation per event; signal resumes waiting operations (ADR-20261016100929)."""
+    """start admits a new operation per event; signal resumes waiting operations."""
     subject: OperationSubjectSpec | Unset = UNSET
     """Optional public business reference extracted once from validated input on new admission. This metadata does
     not authorize access to the business entity."""

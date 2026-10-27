@@ -3,7 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * Replace an app's AI guardrails on one integration (ADR-991). Null fields remove that guardrail.
+ * Replace an app's AI guardrails on one integration. Null fields remove that guardrail.
  */
 export type PutOutboundBindingAIGuardrailsRequest = {
   requests_per_minute?: number | null;

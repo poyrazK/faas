@@ -16,7 +16,7 @@ class ServiceMapNode:
     app_id: str
     app_slug: str
     wake_ahead_enabled: bool
-    """The app's opt-in to restore the services it calls while it wakes (ADR-977)."""
+    """The app's opt-in to restore the services it calls while it wakes."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

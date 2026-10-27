@@ -77,6 +77,14 @@ minutes:
 | `TestE2E_Routes_ProductionMonitorOpensIncident` | the production route monitor opens an incident from sustained 5xx on one route while another stays healthy |
 | `TestE2E_Routes_CanaryHealthGateHoldsRegressionAndAdvancesHealthy` | the canary guard compares candidate and stable per route, holds a regressed 50% canary with `route_health_blocked` and its history, and advances a healthy one to 100% with the gateway following |
 
+Multi-service projects have their own group. The test applies a Compose
+repository through `POST /v1/projects` and calls between its services through
+the real gateways:
+
+| Test | Regression class |
+| --- | --- |
+| `TestE2E_MultiServiceProject_ComposeServicesCallEachOtherByName` | a `billing_api` service is called `billing-api` (injected URL, imported Compose address and Postgres name lookup), the project lists what each service calls, a call wakes the parked service, a declared service cannot call an undeclared one, and a PR preview calls its own sibling |
+
 The tests seed a deployment after the source/build/image pipeline has produced
 its durable state. They must not become a second KVM suite. Add a scenario here
 when the bug is in daemon wiring, durable state propagation, routing, bridge
@@ -94,10 +102,12 @@ deploys, and the routes tests wait on wall-clock windows.
 example `E2E_GENERAL_RUN='^TestE2E_Routes_' make e2e-general`. The daemons need
 Linux.
 
-The gateway answers `503 rate_limit_unavailable` with `Retry-After` when its
-shared rate allowance cannot be checked in time (ADR-570), which a loaded
-runner can hit. A test that needs every request answered retries that refusal
-as a client would (`routesFixture.get`).
+The gateway answers `503` with `Retry-After` in two transient cases (ADR-570):
+`rate_limit_unavailable` when its shared rate allowance cannot be checked in
+time, which a loaded runner can hit, and `traffic_policy_unavailable` when a
+request races the edge policy change that follows a rule write. A test that
+needs every request answered retries both as a client would (`edgeRetry` in
+`cmd/e2e/routes_e2e_test.go`).
 
 The remaining general-path gaps are intentionally tracked rather than hidden:
 

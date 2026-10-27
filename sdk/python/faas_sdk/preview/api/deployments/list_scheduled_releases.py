@@ -75,7 +75,7 @@ def sync_detailed(
     client: AuthenticatedClient | Client,
     app: str | Unset = UNSET,
 ) -> Response[Problem | ScheduledReleaseListResponse]:
-    """List scheduled releases (ADR-20261021152201).
+    """List scheduled releases.
 
      The account's scheduled releases: pending ones first, soonest first, then the most recently ended.
 
@@ -106,7 +106,7 @@ def sync(
     client: AuthenticatedClient | Client,
     app: str | Unset = UNSET,
 ) -> Problem | ScheduledReleaseListResponse | None:
-    """List scheduled releases (ADR-20261021152201).
+    """List scheduled releases.
 
      The account's scheduled releases: pending ones first, soonest first, then the most recently ended.
 
@@ -132,7 +132,7 @@ async def asyncio_detailed(
     client: AuthenticatedClient | Client,
     app: str | Unset = UNSET,
 ) -> Response[Problem | ScheduledReleaseListResponse]:
-    """List scheduled releases (ADR-20261021152201).
+    """List scheduled releases.
 
      The account's scheduled releases: pending ones first, soonest first, then the most recently ended.
 
@@ -161,7 +161,7 @@ async def asyncio(
     client: AuthenticatedClient | Client,
     app: str | Unset = UNSET,
 ) -> Problem | ScheduledReleaseListResponse | None:
-    """List scheduled releases (ADR-20261021152201).
+    """List scheduled releases.
 
      The account's scheduled releases: pending ones first, soonest first, then the most recently ended.
 

@@ -89,8 +89,8 @@ def sync_detailed(
     """Read an AI route's targets' recent attempts.
 
      Requires MFA and read scope. Returns each target's settled attempts, errors, mean time to first byte
-    and mean cost per successful attempt over the window latency and cost routes judge (ADR-1434).
-    Attempts are counted for latency and cost routes and during a canary; other routes report zeros.
+    and mean cost per successful attempt over the window latency and cost routes judge. Attempts are
+    counted for latency and cost routes and during a canary; other routes report zeros.
 
     Args:
         route (UUID):
@@ -122,8 +122,8 @@ def sync(
     """Read an AI route's targets' recent attempts.
 
      Requires MFA and read scope. Returns each target's settled attempts, errors, mean time to first byte
-    and mean cost per successful attempt over the window latency and cost routes judge (ADR-1434).
-    Attempts are counted for latency and cost routes and during a canary; other routes report zeros.
+    and mean cost per successful attempt over the window latency and cost routes judge. Attempts are
+    counted for latency and cost routes and during a canary; other routes report zeros.
 
     Args:
         route (UUID):
@@ -150,8 +150,8 @@ async def asyncio_detailed(
     """Read an AI route's targets' recent attempts.
 
      Requires MFA and read scope. Returns each target's settled attempts, errors, mean time to first byte
-    and mean cost per successful attempt over the window latency and cost routes judge (ADR-1434).
-    Attempts are counted for latency and cost routes and during a canary; other routes report zeros.
+    and mean cost per successful attempt over the window latency and cost routes judge. Attempts are
+    counted for latency and cost routes and during a canary; other routes report zeros.
 
     Args:
         route (UUID):
@@ -181,8 +181,8 @@ async def asyncio(
     """Read an AI route's targets' recent attempts.
 
      Requires MFA and read scope. Returns each target's settled attempts, errors, mean time to first byte
-    and mean cost per successful attempt over the window latency and cost routes judge (ADR-1434).
-    Attempts are counted for latency and cost routes and during a canary; other routes report zeros.
+    and mean cost per successful attempt over the window latency and cost routes judge. Attempts are
+    counted for latency and cost routes and during a canary; other routes report zeros.
 
     Args:
         route (UUID):

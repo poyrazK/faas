@@ -3,7 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * An app's overdue-invoice rule (ADR-1315).
+ * An app's overdue-invoice rule.
  */
 export type PutAPIConsumerBillingPolicyRequest = {
   /**

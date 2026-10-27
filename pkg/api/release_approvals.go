@@ -211,6 +211,26 @@ func ErrReleaseApprovalPromotionUnprotected(app, project, environment string) *P
 		WithDocs(docsBase + "/deploys#release-approvals")
 }
 
+// ErrReleaseApprovalPromotionInsufficient refuses a protected-environment
+// promotion for an app whose own policy asks more approvals than the
+// environment's one approval gives.
+func ErrReleaseApprovalPromotionInsufficient(app, environment string, required int) *Problem {
+	return NewProblem(http.StatusConflict, CodeReleaseApprovalCanaryRequired, "Release approvals need a canary",
+		fmt.Sprintf("%s requires %d approvals; the single approval of a promotion into %s cannot meet that.", app, required, environment)).
+		WithHint(fmt.Sprintf("Release %s with a canary so its approvers can approve it, or lower its required approvals with `gregale approvals`.", app)).
+		WithDocs(docsBase + "/deploys#release-approvals")
+}
+
+// ErrReleaseApprovalPromotionSelf refuses a protected-environment promotion
+// approved by its own promoter for an app whose policy forbids
+// self-approval.
+func ErrReleaseApprovalPromotionSelf(app, environment string) *Problem {
+	return NewProblem(http.StatusForbidden, CodeReleaseApprovalSelf, "Approve someone else's promotion",
+		fmt.Sprintf("%s does not allow self-approval, and this promotion into %s was approved by the person promoting it.", app, environment)).
+		WithHint("Ask another approver to approve this promotion, then promote with their approval.").
+		WithDocs(docsBase + "/deploys#release-approvals")
+}
+
 // ErrReleaseApprovalSelf refuses the deployer's own approval.
 func ErrReleaseApprovalSelf() *Problem {
 	return NewProblem(http.StatusForbidden, CodeReleaseApprovalSelf, "Self-approval not allowed",

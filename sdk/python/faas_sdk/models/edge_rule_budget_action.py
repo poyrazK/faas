@@ -13,7 +13,7 @@ T = TypeVar("T", bound="EdgeRuleBudgetAction")
 
 @_attrs_define
 class EdgeRuleBudgetAction:
-    """Per-route execution budget plus an optional total deadline (ADR-570).
+    """Per-route execution budget plus an optional total deadline.
     budget_ms starts after upload, wake and capacity admission. Its
     configured override header (default x-faas-budget-ms) may alter the
     execution allowance within the plan ceiling.
@@ -24,7 +24,7 @@ class EdgeRuleBudgetAction:
     override. Zero or omission leaves existing execution semantics.
     Both values are at most 15 min (`RequestBudgetPlanMax`); the plan
     ceiling (`Plan.RequestBudgetMaxMs`: Free 30 s, Hobby 60 s, Pro 5 min,
-    Scale 15 min; ADR-1150) caps them at request time. Expiry returns a 504 problem with code
+    Scale 15 min) caps them at request time. Expiry returns a 504 problem with code
     request_budget_exceeded before response commitment; a committed
     ordinary response is terminated on expiry. Streaming and upgrades
     use their idle/session contract after successful response headers.

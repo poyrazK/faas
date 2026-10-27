@@ -116,7 +116,7 @@ def sync_detailed(
     source archive. With a base revision, `source` contains changed entries
     and `dev_source_deleted` removes paths from the cached base.
 
-    The cache is account/app scoped, node-local, and disposable. apid
+    The cache is account/app scoped, node-local, and disposable. The API
     reconstructs and verifies a complete archive before applying the same
     source-root, stateful-shape, secret-scan, Dockerfile, function, and
     enqueue gates as an ordinary source deployment. A missing base returns
@@ -163,7 +163,7 @@ def sync(
     source archive. With a base revision, `source` contains changed entries
     and `dev_source_deleted` removes paths from the cached base.
 
-    The cache is account/app scoped, node-local, and disposable. apid
+    The cache is account/app scoped, node-local, and disposable. The API
     reconstructs and verifies a complete archive before applying the same
     source-root, stateful-shape, secret-scan, Dockerfile, function, and
     enqueue gates as an ordinary source deployment. A missing base returns
@@ -205,7 +205,7 @@ async def asyncio_detailed(
     source archive. With a base revision, `source` contains changed entries
     and `dev_source_deleted` removes paths from the cached base.
 
-    The cache is account/app scoped, node-local, and disposable. apid
+    The cache is account/app scoped, node-local, and disposable. The API
     reconstructs and verifies a complete archive before applying the same
     source-root, stateful-shape, secret-scan, Dockerfile, function, and
     enqueue gates as an ordinary source deployment. A missing base returns
@@ -250,7 +250,7 @@ async def asyncio(
     source archive. With a base revision, `source` contains changed entries
     and `dev_source_deleted` removes paths from the cached base.
 
-    The cache is account/app scoped, node-local, and disposable. apid
+    The cache is account/app scoped, node-local, and disposable. The API
     reconstructs and verifies a complete archive before applying the same
     source-root, stateful-shape, secret-scan, Dockerfile, function, and
     enqueue gates as an ordinary source deployment. A missing base returns

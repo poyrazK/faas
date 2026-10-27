@@ -80,8 +80,8 @@ def sync_detailed(
 
      Organization queues: Reset a dead-letter queue row back to pending. Owners and admins can replay
     dead letters. Requires current membership and the corresponding credential scope. Mutations require
-    organization billing adoption. IDs, messages, retries and receipts survive creator erasure. ADR-134
-    PR-C. Resets the row's `state` to `pending` with
+    organization billing adoption. IDs, messages, retries and receipts survive creator erasure. Resets
+    the row's `state` to `pending` with
     `attempts=0`, `last_error=null`, `due_at=now()`,
     `last_replayed_at=now()`. Distinct from
     `POST /v1/invocations/{id}/replay`, which enqueues a NEW row
@@ -131,8 +131,8 @@ def sync(
 
      Organization queues: Reset a dead-letter queue row back to pending. Owners and admins can replay
     dead letters. Requires current membership and the corresponding credential scope. Mutations require
-    organization billing adoption. IDs, messages, retries and receipts survive creator erasure. ADR-134
-    PR-C. Resets the row's `state` to `pending` with
+    organization billing adoption. IDs, messages, retries and receipts survive creator erasure. Resets
+    the row's `state` to `pending` with
     `attempts=0`, `last_error=null`, `due_at=now()`,
     `last_replayed_at=now()`. Distinct from
     `POST /v1/invocations/{id}/replay`, which enqueues a NEW row
@@ -177,8 +177,8 @@ async def asyncio_detailed(
 
      Organization queues: Reset a dead-letter queue row back to pending. Owners and admins can replay
     dead letters. Requires current membership and the corresponding credential scope. Mutations require
-    organization billing adoption. IDs, messages, retries and receipts survive creator erasure. ADR-134
-    PR-C. Resets the row's `state` to `pending` with
+    organization billing adoption. IDs, messages, retries and receipts survive creator erasure. Resets
+    the row's `state` to `pending` with
     `attempts=0`, `last_error=null`, `due_at=now()`,
     `last_replayed_at=now()`. Distinct from
     `POST /v1/invocations/{id}/replay`, which enqueues a NEW row
@@ -226,8 +226,8 @@ async def asyncio(
 
      Organization queues: Reset a dead-letter queue row back to pending. Owners and admins can replay
     dead letters. Requires current membership and the corresponding credential scope. Mutations require
-    organization billing adoption. IDs, messages, retries and receipts survive creator erasure. ADR-134
-    PR-C. Resets the row's `state` to `pending` with
+    organization billing adoption. IDs, messages, retries and receipts survive creator erasure. Resets
+    the row's `state` to `pending` with
     `attempts=0`, `last_error=null`, `due_at=now()`,
     `last_replayed_at=now()`. Distinct from
     `POST /v1/invocations/{id}/replay`, which enqueues a NEW row

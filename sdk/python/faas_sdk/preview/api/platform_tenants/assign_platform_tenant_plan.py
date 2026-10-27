@@ -90,7 +90,7 @@ def sync_detailed(
     body: AssignPlatformTenantPlanRequest,
     idempotency_key: str | Unset = UNSET,
 ) -> Response[PlatformTenantPlanAssignmentResponse | Problem]:
-    """Move a tenant onto a plan from the next minute (ADR-1307).
+    """Move a tenant onto a plan from the next minute.
 
      Creates the tenant's rate card version from the plan's terms,
     effective the next UTC minute, and sets the plan's request budget at
@@ -130,7 +130,7 @@ def sync(
     body: AssignPlatformTenantPlanRequest,
     idempotency_key: str | Unset = UNSET,
 ) -> PlatformTenantPlanAssignmentResponse | Problem | None:
-    """Move a tenant onto a plan from the next minute (ADR-1307).
+    """Move a tenant onto a plan from the next minute.
 
      Creates the tenant's rate card version from the plan's terms,
     effective the next UTC minute, and sets the plan's request budget at
@@ -165,7 +165,7 @@ async def asyncio_detailed(
     body: AssignPlatformTenantPlanRequest,
     idempotency_key: str | Unset = UNSET,
 ) -> Response[PlatformTenantPlanAssignmentResponse | Problem]:
-    """Move a tenant onto a plan from the next minute (ADR-1307).
+    """Move a tenant onto a plan from the next minute.
 
      Creates the tenant's rate card version from the plan's terms,
     effective the next UTC minute, and sets the plan's request budget at
@@ -203,7 +203,7 @@ async def asyncio(
     body: AssignPlatformTenantPlanRequest,
     idempotency_key: str | Unset = UNSET,
 ) -> PlatformTenantPlanAssignmentResponse | Problem | None:
-    """Move a tenant onto a plan from the next minute (ADR-1307).
+    """Move a tenant onto a plan from the next minute.
 
      Creates the tenant's rate card version from the plan's terms,
     effective the next UTC minute, and sets the plan's request budget at

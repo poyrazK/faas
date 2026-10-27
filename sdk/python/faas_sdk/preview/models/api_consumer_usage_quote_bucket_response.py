@@ -28,9 +28,9 @@ class APIConsumerUsageQuoteBucketResponse:
     tier_units: list[int] | Unset = UNSET
     """Units per step of a tiered rate card's ladder."""
     trial: bool | Unset = UNSET
-    """A minute of the consumer's free trial, quoted at zero (ADR-1314)."""
+    """A minute of the consumer's free trial, quoted at zero."""
     unit: str | Unset = UNSET
-    """The quoted minute's price stream when it is not request (ADR-1317)."""
+    """The quoted minute's price stream when it is not request."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

@@ -32,7 +32,8 @@ func ensurePostgresEgress(ctx context.Context, client postgresEgressClient, app 
 	if _, err := client.UpdateApp(ctx, app.Slug, api.UpdateAppRequest{EgressPorts: &ports}); err != nil {
 		var apiErr *APIError
 		if errors.As(err, &apiErr) && apiErr.Problem.Code == api.CodePlanEgressPortsNotAllowed {
-			PrintWarn(osStderr, "App %s cannot open outbound TCP %d on its plan, so it cannot connect to this database; upgrade to Pro or Scale to allow it.", app.Slug, managedPostgresPort)
+			// ADR-20261026150000: the binding itself opens the database port.
+			PrintOK(osStderr, "App %s's plan has no extra egress ports; the binding opens outbound TCP %d to this database's own addresses instead.", app.Slug, managedPostgresPort)
 			return
 		}
 		PrintWarn(osStderr, "Could not open outbound TCP %d for app %s (%v); its connections will time out until you run: gregale app %s egress-ports add %d", managedPostgresPort, app.Slug, err, app.Slug, managedPostgresPort)

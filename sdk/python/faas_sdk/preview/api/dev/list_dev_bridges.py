@@ -65,8 +65,8 @@ def sync_detailed(
 ) -> Response[Any | ListDevBridgesResponse | Problem]:
     """List active development sessions owned by the account.
 
-     ADR-379 bounded inventory. Returns at most 100 active leases, newest expiry first. Connection state
-    is informational and unknown after observer restart or eviction. No credentials are returned.
+     Bounded inventory. Returns at most 100 active leases, newest expiry first. Connection state is
+    informational and unknown after observer restart or eviction. No credentials are returned.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -91,8 +91,8 @@ def sync(
 ) -> Any | ListDevBridgesResponse | Problem | None:
     """List active development sessions owned by the account.
 
-     ADR-379 bounded inventory. Returns at most 100 active leases, newest expiry first. Connection state
-    is informational and unknown after observer restart or eviction. No credentials are returned.
+     Bounded inventory. Returns at most 100 active leases, newest expiry first. Connection state is
+    informational and unknown after observer restart or eviction. No credentials are returned.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -113,8 +113,8 @@ async def asyncio_detailed(
 ) -> Response[Any | ListDevBridgesResponse | Problem]:
     """List active development sessions owned by the account.
 
-     ADR-379 bounded inventory. Returns at most 100 active leases, newest expiry first. Connection state
-    is informational and unknown after observer restart or eviction. No credentials are returned.
+     Bounded inventory. Returns at most 100 active leases, newest expiry first. Connection state is
+    informational and unknown after observer restart or eviction. No credentials are returned.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -137,8 +137,8 @@ async def asyncio(
 ) -> Any | ListDevBridgesResponse | Problem | None:
     """List active development sessions owned by the account.
 
-     ADR-379 bounded inventory. Returns at most 100 active leases, newest expiry first. Connection state
-    is informational and unknown after observer restart or eviction. No credentials are returned.
+     Bounded inventory. Returns at most 100 active leases, newest expiry first. Connection state is
+    informational and unknown after observer restart or eviction. No credentials are returned.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

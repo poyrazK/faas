@@ -24,7 +24,7 @@ T = TypeVar("T", bound="CustomMetricSeriesResponse")
 
 @_attrs_define
 class CustomMetricSeriesResponse:
-    """ADR-745 history of one pushed custom metric. Degraded responses carry null points."""
+    """History of one pushed custom metric. Degraded responses carry null points."""
 
     app_id: str
     name: str

@@ -3,7 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * One app's named log search filters (ADR-20261018083536).
+ * One app's named log search filters.
  */
 export type LogSavedSearch = {
   /**

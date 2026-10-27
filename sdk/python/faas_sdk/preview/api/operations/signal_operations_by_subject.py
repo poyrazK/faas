@@ -117,14 +117,14 @@ def sync_detailed(
 ) -> Response[OperationSubjectSignalResponse | Problem]:
     """Deliver a named event to every active operation about one business subject.
 
-     Requires deploy:write and MFA (ADR-1197). Reaches at most 16 active operations of the named
-    definition in the scope whose subject matches, oldest first; more is a limit error. Operations that
-    settle during delivery are skipped. Each delivery is idempotent per operation by signal_id.
+     Requires deploy:write and MFA. Reaches at most 16 active operations of the named definition in the
+    scope whose subject matches, oldest first; more is a limit error. Operations that settle during
+    delivery are skipped. Each delivery is idempotent per operation by signal_id.
 
     Args:
         slug (str):
         body (OperationSubjectSignalRequest): One named event for every active operation of a
-            definition about one business subject (ADR-1197).
+            definition about one business subject.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -154,14 +154,14 @@ def sync(
 ) -> OperationSubjectSignalResponse | Problem | None:
     """Deliver a named event to every active operation about one business subject.
 
-     Requires deploy:write and MFA (ADR-1197). Reaches at most 16 active operations of the named
-    definition in the scope whose subject matches, oldest first; more is a limit error. Operations that
-    settle during delivery are skipped. Each delivery is idempotent per operation by signal_id.
+     Requires deploy:write and MFA. Reaches at most 16 active operations of the named definition in the
+    scope whose subject matches, oldest first; more is a limit error. Operations that settle during
+    delivery are skipped. Each delivery is idempotent per operation by signal_id.
 
     Args:
         slug (str):
         body (OperationSubjectSignalRequest): One named event for every active operation of a
-            definition about one business subject (ADR-1197).
+            definition about one business subject.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -186,14 +186,14 @@ async def asyncio_detailed(
 ) -> Response[OperationSubjectSignalResponse | Problem]:
     """Deliver a named event to every active operation about one business subject.
 
-     Requires deploy:write and MFA (ADR-1197). Reaches at most 16 active operations of the named
-    definition in the scope whose subject matches, oldest first; more is a limit error. Operations that
-    settle during delivery are skipped. Each delivery is idempotent per operation by signal_id.
+     Requires deploy:write and MFA. Reaches at most 16 active operations of the named definition in the
+    scope whose subject matches, oldest first; more is a limit error. Operations that settle during
+    delivery are skipped. Each delivery is idempotent per operation by signal_id.
 
     Args:
         slug (str):
         body (OperationSubjectSignalRequest): One named event for every active operation of a
-            definition about one business subject (ADR-1197).
+            definition about one business subject.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -221,14 +221,14 @@ async def asyncio(
 ) -> OperationSubjectSignalResponse | Problem | None:
     """Deliver a named event to every active operation about one business subject.
 
-     Requires deploy:write and MFA (ADR-1197). Reaches at most 16 active operations of the named
-    definition in the scope whose subject matches, oldest first; more is a limit error. Operations that
-    settle during delivery are skipped. Each delivery is idempotent per operation by signal_id.
+     Requires deploy:write and MFA. Reaches at most 16 active operations of the named definition in the
+    scope whose subject matches, oldest first; more is a limit error. Operations that settle during
+    delivery are skipped. Each delivery is idempotent per operation by signal_id.
 
     Args:
         slug (str):
         body (OperationSubjectSignalRequest): One named event for every active operation of a
-            definition about one business subject (ADR-1197).
+            definition about one business subject.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

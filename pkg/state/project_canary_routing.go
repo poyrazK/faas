@@ -11,6 +11,12 @@ import (
 )
 
 func selectOwnedCanary(p ProjectCanaryPolicyState, active, key string) (string, error) {
+	return selectOwnedCanaryAt(p, active, key, time.Now())
+}
+
+// selectOwnedCanaryAt is selectOwnedCanary at a given instant, so a public
+// routing view (ADR-20261027085556) splits each request at its own time.
+func selectOwnedCanaryAt(p ProjectCanaryPolicyState, active, key string, now time.Time) (string, error) {
 	if err := p.validate(); err != nil {
 		return "", err
 	}
@@ -20,13 +26,13 @@ func selectOwnedCanary(p ProjectCanaryPolicyState, active, key string) (string, 
 		}
 		return "", ErrConflict
 	}
-	if p.Control != nil && p.Control.Status == "pending" || p.Status == "needs_operator" || !time.Now().Before(p.Deadline) {
+	if p.Control != nil && p.Control.Status == "pending" || p.Status == "needs_operator" || !now.Before(p.Deadline) {
 		if p.Percent < 100 {
 			return p.BaselineReleaseID, nil
 		}
 		return "", ErrConflict
 	}
-	return SelectProjectCanaryRelease(p, key, time.Now().UTC())
+	return SelectProjectCanaryRelease(p, key, now.UTC())
 }
 func selectProjectCanaryDB(ctx context.Context, db sqlc.DBTX, appID, key string) (string, error) {
 	row, err := sqlc.New().ReadProjectCanaryRouting(ctx, db, mustPgUUID(appID))

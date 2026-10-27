@@ -71,7 +71,7 @@ def sync_detailed(
 ) -> Response[OutboundAIRouteList | Problem]:
     """List the account's AI fallback routes.
 
-     Requires MFA and read scope (ADR-990). Lists every AI route the account owns.
+     Requires MFA and read scope. Lists every AI route the account owns.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -96,7 +96,7 @@ def sync(
 ) -> OutboundAIRouteList | Problem | None:
     """List the account's AI fallback routes.
 
-     Requires MFA and read scope (ADR-990). Lists every AI route the account owns.
+     Requires MFA and read scope. Lists every AI route the account owns.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -117,7 +117,7 @@ async def asyncio_detailed(
 ) -> Response[OutboundAIRouteList | Problem]:
     """List the account's AI fallback routes.
 
-     Requires MFA and read scope (ADR-990). Lists every AI route the account owns.
+     Requires MFA and read scope. Lists every AI route the account owns.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -140,7 +140,7 @@ async def asyncio(
 ) -> OutboundAIRouteList | Problem | None:
     """List the account's AI fallback routes.
 
-     Requires MFA and read scope (ADR-990). Lists every AI route the account owns.
+     Requires MFA and read scope. Lists every AI route the account owns.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

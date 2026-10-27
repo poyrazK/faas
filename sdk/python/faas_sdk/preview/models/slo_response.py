@@ -21,7 +21,7 @@ T = TypeVar("T", bound="SLOResponse")
 
 @_attrs_define
 class SLOResponse:
-    """One customer-defined SLO (ADR-747)."""
+    """One customer-defined SLO."""
 
     id: UUID
     name: str
@@ -32,7 +32,7 @@ class SLOResponse:
     latency_threshold_ms: int | Unset = UNSET
     """Threshold for a latency SLO; absent for availability."""
     status: SLOStatus | Unset = UNSET
-    """Error-budget position of one SLO, returned by GET /v1/apps/{slug}/slos/{id} (ADR-747)."""
+    """Error-budget position of one SLO, returned by GET /v1/apps/{slug}/slos/{id}."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

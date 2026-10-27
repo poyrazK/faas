@@ -30,21 +30,21 @@ class APIConsumerRateCardResponse:
     app_id: UUID
     currency: str
     unit: str
-    """What the card prices (ADR-1308, ADR-1318): billable requests, their compute seconds or response megabytes,
-    or the units of an app meter."""
+    """What the card prices: billable requests, their compute seconds or response megabytes, or the units of an app
+    meter."""
     price_millicents_per_unit: int
     included_units_per_month: int
     effective_from: datetime.datetime
     created_at: datetime.datetime
     base_fee_millicents_per_month: int | Unset = UNSET
-    """The card's fixed monthly charge per consumer (ADR-1316)."""
+    """The card's fixed monthly charge per consumer."""
     minimum_millicents_per_month: int | Unset = UNSET
-    """The card's minimum monthly usage charge per consumer (ADR-1316)."""
+    """The card's minimum monthly usage charge per consumer."""
     prorate_monthly_fees: bool | Unset = UNSET
-    """Whether a consumer's first-month fees are prorated (ADR-1325)."""
+    """Whether a consumer's first-month fees are prorated."""
     tiers: list[APIConsumerRateCardTier] | Unset = UNSET
     tier_mode: APIConsumerRateCardResponseTierMode | Unset = UNSET
-    """How the ladder prices a consumer's month (ADR-1309)."""
+    """How the ladder prices a consumer's month."""
     route_weights: APIConsumerRateCardResponseRouteWeights | Unset = UNSET
     """Units charged per request on a listed route; unlisted routes count 1."""
     plan_id: UUID | Unset = UNSET

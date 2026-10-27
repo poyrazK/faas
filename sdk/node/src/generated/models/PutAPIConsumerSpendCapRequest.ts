@@ -3,7 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * A consumer's monthly spend cap after prepaid credit (ADR-1306).
+ * A consumer's monthly spend cap after prepaid credit.
  */
 export type PutAPIConsumerSpendCapRequest = {
   currency: string;

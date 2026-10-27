@@ -433,6 +433,34 @@ func TestAdmitInstance_AdmitsNewInstance(t *testing.T) {
 	}
 }
 
+// trafficEngine adds the engine's request-traffic admission, which un-parks
+// an explicitly parked app before admitting it.
+type trafficEngine struct {
+	*fakeEngine
+	trafficTrigger string
+}
+
+func (f *trafficEngine) AdmitTrafficInstance(_ context.Context, _, _, _, trigger string) (sched.WakeResult, error) {
+	f.trafficTrigger = trigger
+	return sched.WakeResult{InstanceID: "i-traffic", NodeID: "node-test-1", WakeID: "w-traffic"}, nil
+}
+
+// The AdmitInstance RPC serves the gateway and the raw TCP/UDP edges, so it
+// takes the traffic admission that claims a parked app's lifecycle
+// (container qualification 2026-10-27).
+func TestAdmitInstance_UsesTrafficAdmission(t *testing.T) {
+	engine := &trafficEngine{fakeEngine: &fakeEngine{
+		admitInstanceFn: func(context.Context, string, string) (sched.WakeResult, error) {
+			t.Error("AdmitInstance RPC bypassed traffic admission")
+			return sched.WakeResult{}, nil
+		},
+	}}
+	resp, err := newServer(t, engine).AdmitInstance(context.Background(), &scheddpb.AdmitInstanceRequest{AppId: "app-1", Trigger: sched.TriggerGateway})
+	if err != nil || resp.GetInstanceId() != "i-traffic" || engine.trafficTrigger != sched.TriggerGateway {
+		t.Fatalf("AdmitInstance = %v, %v (trigger %q); want the traffic admission", resp, err, engine.trafficTrigger)
+	}
+}
+
 // TestAdmitInstance_AtCapacityIsTypedResult (issue #168) — the benign
 // "already at max_concurrency" outcome must surface as at_capacity=true,
 // identity fields empty, no gRPC error. The gateway treats this as a

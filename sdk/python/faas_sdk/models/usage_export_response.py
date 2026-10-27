@@ -14,7 +14,7 @@ T = TypeVar("T", bound="UsageExportResponse")
 @_attrs_define
 class UsageExportResponse:
     """One usage record: app id, GB-hours consumed, started/finished timestamps for the export window. cpu_usec is the
-    per-(app, month) cumulative host cgroup CPU-µs (issue #279 / PR-B). Informational only — billing is on mb_seconds.
+    per-(app, month) cumulative host cgroup CPU-µs. Informational only — billing is on mb_seconds.
 
     """
 
@@ -23,21 +23,18 @@ class UsageExportResponse:
     mb_seconds: int
     requests: int
     cpu_usec: int | Unset = UNSET
-    """Cumulative host cgroup CPU-µs consumed by the app in the export window (informational; not billed). issue
-    #279 / PR-B."""
+    """Cumulative host cgroup CPU-µs consumed by the app in the export window (informational; not billed)."""
     tx_bytes: int | Unset = UNSET
-    """Per-(app, month) HTTP response bytes (informational; not billed). ADR-046. The gateway-side producer lands
-    in PR-2; until then this field stays 0."""
+    """Per-(app, month) HTTP response bytes (informational; not billed). It is not collected yet and stays 0."""
     net_tx_bytes: int | Unset = UNSET
-    """Per-(app, month) byte delta on root-side vethHost.rx_bytes (informational; not billed). ADR-046. Sourced
-    from vmmd netstats.Cache via schedd ListInstanceStats. Includes Ethernet framing — same kernel counter the per-
-    plan tc tbf qdisc reads."""
+    """Per-(app, month) byte delta on root-side vethHost.rx_bytes (informational; not billed). Sourced from the VM
+    manager netstats.Cache via the scheduler ListInstanceStats. Includes Ethernet framing — same kernel counter the
+    per-plan tc tbf qdisc reads."""
     net_rx_bytes: int | Unset = UNSET
     """Per-(app, month) byte delta on root-side vethHost.tx_bytes (root→guest = ingress; informational; not
-    billed). ADR-048. Mirror of `net_tx_bytes` for the inbound direction."""
+    billed). Mirror of `net_tx_bytes` for the inbound direction."""
     cold_boots: int | Unset = UNSET
-    """Per-(app, month) count of WAKE_RESTORE→WAKE_COLD_BOOT transitions observed (informational; not billed).
-    ADR-048."""
+    """Per-(app, month) count of WAKE_RESTORE→WAKE_COLD_BOOT transitions observed (informational; not billed)."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
