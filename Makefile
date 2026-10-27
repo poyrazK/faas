@@ -361,7 +361,7 @@ memstore-stubs-check: ## Fail pure nil-return MemStore methods that can make tes
 	bash scripts/ci/check_memstore_stubs.sh
 
 .PHONY: fix-has-test-check
-fix-has-test-check: ## Require fix-shaped pull requests to change a Go regression test (issue #1529 / PR-4a)
+fix-has-test-check: ## Require fix-shaped pull requests to change a regression test (Go, shell, or SDK test file; issue #1529 / PR-4a)
 	bash scripts/ci/check_fix_has_test.sh
 
 .PHONY: fix-has-test-check-test
