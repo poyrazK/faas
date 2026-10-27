@@ -5,6 +5,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -70,4 +71,27 @@ func lastOf(values []string) string {
 		return ""
 	}
 	return values[len(values)-1]
+}
+
+// With the operations capability hidden for the account, --lock answers
+// like an unknown flag (ADR-20261023115741).
+func TestLockFollowsOperationsVisibility(t *testing.T) {
+	api := &capabilitiesAPI{}
+	server := httptest.NewServer(api)
+	defer server.Close()
+	t.Setenv("FAAS_CAPABILITY_FLAGS_RELEASE_ALL", "")
+	t.Setenv("FAAS_API", server.URL)
+	t.Setenv("FAAS_TOKEN", "test-token")
+	t.Setenv("FAAS_COMPLETION_CACHE_PATH", filepath.Join(t.TempDir(), "cache.json"))
+	api.setHidden("operations")
+	_, _, _ = runCLI(t, "help", "--all") // caches the account view
+
+	for _, args := range [][]string{
+		{"jobs", "run", "export", "--lock", "exports", "--lock-key", `"k"`},
+		{"crons", "add", "--app", "demo", "--schedule", "*/5 * * * *", "--path", "/sync", "--lock", "sync", "--lock-key", `"k"`},
+	} {
+		if code, _, stderr := runCLI(t, args...); code == 0 || !strings.Contains(stderr, "unknown flag --lock") {
+			t.Errorf("%v with operations hidden = %d %q, want unknown flag --lock", args, code, stderr)
+		}
+	}
 }

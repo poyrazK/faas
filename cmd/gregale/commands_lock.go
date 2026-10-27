@@ -52,6 +52,10 @@ func takeLockFlags(args []string) (*exclusiveLock, []string, error) {
 	switch {
 	case !hasPolicy && !hasKey:
 		return nil, rest, nil
+	case operationsHidden():
+		// The operations capability is hidden for the account
+		// (ADR-20261023115741): --lock does not exist for it.
+		return nil, nil, errors.New("gregale: unknown flag --lock")
 	case !hasPolicy || policy == "":
 		return nil, nil, errors.New("--lock-key needs --lock POLICY")
 	case !hasKey:
@@ -67,6 +71,13 @@ func takeLockFlags(args []string) (*exclusiveLock, []string, error) {
 		return nil, nil, errors.New("--lock-key must be a JSON string, number, or boolean")
 	}
 	return &exclusiveLock{Policy: policy, Key: json.RawMessage(key)}, rest, nil
+}
+
+// operationsHidden reports that the operations capability, which owns
+// exclusive keyed work, is hidden for the account.
+func operationsHidden() bool {
+	_, hidden := hiddenCommand([]string{"operations"}, false)
+	return hidden
 }
 
 // bindExclusiveLock binds a created cron or broker trigger to its lock. The
