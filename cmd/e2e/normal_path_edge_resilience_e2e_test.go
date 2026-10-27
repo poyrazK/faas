@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -94,6 +95,23 @@ func gatewayCircuitMetrics(t *testing.T, f *normalPathFixture) string {
 		}
 	}
 	return strings.Join(out, "\n")
+}
+
+// circuitOpenings reads how many closed->open transitions the breaker series
+// report.
+func circuitOpenings(t *testing.T, series string) float64 {
+	t.Helper()
+	const prefix = `gateway_circuit_transitions_total{from="closed",to="open"} `
+	for _, line := range strings.Split(series, "\n") {
+		if value, ok := strings.CutPrefix(line, prefix); ok {
+			n, err := strconv.ParseFloat(strings.TrimSpace(value), 64)
+			if err != nil {
+				t.Fatalf("parse %q: %v", line, err)
+			}
+			return n
+		}
+	}
+	return 0
 }
 
 // releaseResilienceCapabilities releases request-retry and circuit-breaking,
@@ -288,7 +306,7 @@ func TestE2E_NormalPath_EdgeCircuitBreakerKeepsFailedInstanceOut(t *testing.T) {
 			}
 			// The failure must have opened the tuned circuit, and only that.
 			circuitSeries := gatewayCircuitMetrics(t, f)
-			opened := strings.Contains(circuitSeries, `gateway_circuit_transitions_total{from="closed",to="open"}`)
+			opened := circuitOpenings(t, circuitSeries) > 0
 			if tuned && !opened {
 				t.Fatalf("one transport failure did not open the tuned circuit; breaker series:\n%s", circuitSeries)
 			}
@@ -318,7 +336,7 @@ func TestE2E_NormalPath_EdgeCircuitBreakerKeepsFailedInstanceOut(t *testing.T) {
 				time.Sleep(200 * time.Millisecond)
 			}
 			if tuned && reached != 0 {
-				t.Fatalf("the open circuit let %d requests reach the failed instance within open_seconds", reached)
+				t.Fatalf("the open circuit let %d requests reach the failed instance within open_seconds; breaker series:\n%s", reached, gatewayCircuitMetrics(t, f))
 			}
 			if !tuned && reached == 0 {
 				t.Fatal("without the rule the recovered instance never served again; the control does not show the rule's effect")
