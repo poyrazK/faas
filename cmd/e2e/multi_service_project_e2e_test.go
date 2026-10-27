@@ -139,11 +139,11 @@ func wokenInstance(t *testing.T, f *normalPathFixture, app state.App, wantURI st
 }
 
 // previewOf creates the PR-number preview of a project service, carrying its
-// manifest, as the preview path does.
+// manifest and owner node, as the preview path does.
 func previewOf(t *testing.T, f *normalPathFixture, app state.App, pr int) state.App {
 	t.Helper()
 	preview, err := f.store.CreateApp(f.ctx, state.App{AccountID: app.AccountID, ProjectID: app.ProjectID, Slug: fmt.Sprintf("pr-%d-%s", pr, app.Slug),
-		WorkloadName: app.WorkloadName, PreviewOfSlug: app.Slug, PreviewPrNumber: pr, Type: app.Type, Status: state.AppActive,
+		WorkloadName: app.WorkloadName, PreviewOfSlug: app.Slug, PreviewPrNumber: pr, Type: app.Type, Status: state.AppActive, NodeID: app.NodeID,
 		RAMMB: app.RAMMB, MaxConcurrency: app.MaxConcurrency, IdleTimeoutS: app.IdleTimeoutS, Manifest: app.Manifest})
 	if err != nil {
 		t.Fatalf("create preview of %s: %v", app.Slug, err)
