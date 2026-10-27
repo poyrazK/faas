@@ -300,3 +300,18 @@ func TestHarnessRedactHidesDeployTokens(t *testing.T) {
 		t.Fatalf("redact leaked a deploy token: %s", got)
 	}
 }
+
+func TestHarnessStalePreviewsOnlyJourneyPreviews(t *testing.T) {
+	now := time.Date(2026, 10, 28, 9, 0, 0, 0, time.UTC)
+	old := newRunID(now.Add(-5 * time.Hour))
+	apps := []map[string]any{
+		{"slug": "pr-3-e2ej-" + old + "-github"},
+		{"slug": "pr-4-e2ej-" + newRunID(now) + "-github"},
+		{"slug": "pr-7-customer-api"},
+		{"slug": "e2ej-" + old + "-github"},
+	}
+	got := stalePreviews(apps, now.Add(-3*time.Hour), newRunID(now))
+	if len(got) != 1 || got[0] != "pr-3-e2ej-"+old+"-github" {
+		t.Fatalf("stalePreviews = %v", got)
+	}
+}

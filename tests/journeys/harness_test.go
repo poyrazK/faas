@@ -1091,7 +1091,19 @@ func (tg *target) sweep(hours string) error {
 	if err != nil {
 		return fmt.Errorf("list apps: %w", err)
 	}
-	stale := staleSlugs(docs, time.Now().Add(-time.Duration(h*float64(time.Hour))), tg.runID)
+	cutoff := time.Now().Add(-time.Duration(h * float64(time.Hour)))
+	// Previews first: an app with a live preview cannot be deleted.
+	for _, preview := range stalePreviews(docs, cutoff, tg.runID) {
+		destroy := exec.Command(tg.cli, "--non-interactive", "preview", "destroy", preview)
+		destroy.Env = tg.cliEnv(tg.token)
+		destroy.Dir = tg.home
+		if out, err := destroy.CombinedOutput(); err != nil {
+			fmt.Fprintf(os.Stderr, "journeys: sweep preview %s: %v: %s\n", preview, err, tail(string(out), 300))
+			continue
+		}
+		fmt.Fprintf(os.Stderr, "journeys: swept stale preview %s\n", preview)
+	}
+	stale := staleSlugs(docs, cutoff, tg.runID)
 	for _, slug := range stale {
 		rm := exec.Command(tg.cli, "--non-interactive", "apps", "rm", slug, "--yes")
 		rm.Env = tg.cliEnv(tg.token)
@@ -1103,6 +1115,30 @@ func (tg *target) sweep(hours string) error {
 		fmt.Fprintf(os.Stderr, "journeys: swept stale app %s\n", slug)
 	}
 	return nil
+}
+
+// previewSlugRe matches pull-request previews of journey apps:
+// pr-<number>-e2ej-<run>-<name>.
+var previewSlugRe = regexp.MustCompile(`^pr-[0-9]+-(e2ej-.+)$`)
+
+// stalePreviews lists previews of journey apps from runs older than before.
+func stalePreviews(apps []map[string]any, before time.Time, currentRun string) []string {
+	var stale []string
+	for _, app := range apps {
+		m := previewSlugRe.FindStringSubmatch(str(app, "slug"))
+		if m == nil {
+			continue
+		}
+		run, ok := slugRun(m[1])
+		if !ok || run == currentRun {
+			continue
+		}
+		if started, _ := runTime(run); started.Before(before) {
+			stale = append(stale, str(app, "slug"))
+		}
+	}
+	sort.Strings(stale)
+	return stale
 }
 
 func staleSlugs(apps []map[string]any, before time.Time, currentRun string) []string {

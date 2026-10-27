@@ -275,6 +275,22 @@ func (tg *target) deployProbe(t *testing.T, name string) (slug, base string) {
 	return slug, base
 }
 
+// currentVersion reads the version an app serves, riding out transient
+// edge errors.
+func currentVersion(t *testing.T, base string) string {
+	t.Helper()
+	version := ""
+	eventually(t, "read the serving version", time.Minute, 2*time.Second, func() (bool, string) {
+		r := get(base + "/")
+		if r.status != http.StatusOK {
+			return false, r.String()
+		}
+		version = str(jsonBody(t, r), "version")
+		return version != "", "no version in " + r.String()
+	})
+	return version
+}
+
 func expectVersion(t *testing.T, base, version string, timeout time.Duration) {
 	t.Helper()
 	eventually(t, "GET / serves "+version, timeout, 2*time.Second, func() (bool, string) {

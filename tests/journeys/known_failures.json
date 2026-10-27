@@ -48,5 +48,10 @@
     "step": "TestGitHubDeploys/preview_created_on_pr_open",
     "bug": "opening a pull request on the bound fixture repository created no preview within 5 min; gregale preview create works and the preview serves",
     "since": "2026-10-27"
+  },
+  {
+    "step": "TestGitHubDeploys/preview_removed_on_pr_close",
+    "bug": "closing the pull request did not remove its preview (a preview from a closed PR was still live the next day); with push-to-deploy, auto-preview and Checks also failing, GitHub App webhooks for this installation look unprocessed",
+    "since": "2026-10-28"
   }
 ]

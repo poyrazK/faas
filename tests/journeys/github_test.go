@@ -90,21 +90,31 @@ func TestGitHubDeploys(t *testing.T) {
 		}
 	})
 	autoPreview := false
+	var number int
+	var preview string
+	// Registered on the journey so it runs before the app is deleted: an
+	// app with a live preview cannot be deleted (traffic_policy_too_complex).
+	t.Cleanup(func() {
+		if preview != "" {
+			tg.run(t, 2*time.Minute, "preview", "destroy", preview)
+		}
+	})
 	s.check("pull_request_preview", func(t *testing.T) {
 		// What production serves before the PR; the preview must not change it.
-		before := str(jsonBody(t, get(base+"/")), "version")
+		before := currentVersion(t, base)
 		branch := "e2ej-" + tg.runID
 		gh(t, "api", "repos/"+repo+"/git/refs", "-f", "ref=refs/heads/"+branch, "-f", "sha="+commit)
 		t.Cleanup(func() { ghQuiet("api", "-X", "DELETE", "repos/"+repo+"/git/refs/heads/"+branch) })
 		ghPutFile(t, repo, branch, "version.txt", "pr-preview\n", "e2e journeys preview "+tg.runID)
 		prURL := strings.TrimSpace(gh(t, "pr", "create", "--repo", repo, "--head", branch, "--base", "main",
 			"--title", "e2e journeys preview "+tg.runID, "--body", "Opened and closed by the Gregale journey suite."))
-		number, err := strconv.Atoi(prURL[strings.LastIndex(prURL, "/")+1:])
+		n, err := strconv.Atoi(prURL[strings.LastIndex(prURL, "/")+1:])
 		if err != nil {
 			t.Fatalf("gh pr create printed %q", prURL)
 		}
+		number = n
 		t.Cleanup(func() { ghQuiet("pr", "close", strconv.Itoa(number), "--repo", repo) })
-		preview := fmt.Sprintf("pr-%d-%s", number, slug)
+		preview = fmt.Sprintf("pr-%d-%s", number, slug)
 
 		// The GitHub App should create the preview on its own; create it
 		// explicitly if it has not appeared, so the serving check still runs.
@@ -126,12 +136,28 @@ func TestGitHubDeploys(t *testing.T) {
 		tg.ok(t, 25*time.Minute, "preview", "wait", preview, "--timeout", "20m")
 		expectVersion(t, tg.appURL(preview), "pr-preview", 5*time.Minute)
 		expectVersion(t, base, before, time.Minute)
-
+	})
+	s.check("preview_removed_on_pr_close", func(t *testing.T) {
+		if preview == "" {
+			t.Skip("blocked: no preview was created")
+		}
 		gh(t, "pr", "close", strconv.Itoa(number), "--repo", repo)
-		eventually(t, "closing the PR removes its preview", 10*time.Minute, 15*time.Second, func() (bool, string) {
+		eventually(t, "closing the PR removes its preview", 5*time.Minute, 15*time.Second, func() (bool, string) {
 			res := tg.run(t, time.Minute, "preview", "list", "--app", slug)
 			return res.exit == 0 && !strings.Contains(string(res.stdout), preview), "still listed: " + tail(string(res.stdout), 200)
 		})
+		preview = ""
+	})
+	s.check("preview_destroy", func(t *testing.T) {
+		if preview == "" {
+			t.Skip("the preview is already gone")
+		}
+		tg.ok(t, 2*time.Minute, "preview", "destroy", preview)
+		eventually(t, "a destroyed preview stops serving", 2*time.Minute, 5*time.Second, func() (bool, string) {
+			r := get(tg.appURL(preview) + "/")
+			return r.status == http.StatusNotFound, r.String()
+		})
+		preview = ""
 	})
 	// Separate from the lifecycle above so the GitHub App's automatic
 	// preview is judged on its own (docs/preview-environments.md: every PR
