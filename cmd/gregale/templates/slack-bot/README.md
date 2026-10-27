@@ -39,20 +39,20 @@ If you prefer to set secrets through the app API, reserve the app first:
 
 ```sh
 gregale deploy --create-only --template slack-bot --name <slug>
-gregale secrets set --app <slug> SLACK_SIGNING_SECRET=<your-signing-secret> SLACK_BOT_TOKEN=xoxb-...
+gregale env set --app <slug> SLACK_SIGNING_SECRET=<your-signing-secret> SLACK_BOT_TOKEN=xoxb-...
 cd <this-directory> && gregale deploy
 ```
 
 ## Rotate or update secrets
 
 ```sh
-gregale secrets set --app <slug> SLACK_SIGNING_SECRET=<your-signing-secret>
+gregale env set --app <slug> SLACK_SIGNING_SECRET=<your-signing-secret>
 # Optional, only if you uncomment the chat.postMessage block:
-gregale secrets set --app <slug> SLACK_BOT_TOKEN=xoxb-...
+gregale env set --app <slug> SLACK_BOT_TOKEN=xoxb-...
 ```
 
 If `SLACK_SIGNING_SECRET` is missing, the handler exits at startup with
-the exact `gregale secrets set` command.
+the exact `gregale env set` command.
 
 ## Deploy
 

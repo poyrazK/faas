@@ -25,7 +25,7 @@ upload where possible.
 
 Build failures are classified as user, dependency, resource, timeout, or
 platform failures. The CLI prints the failing stage and one next action. Use
-`gregale deployments`, `gregale deploys status ID`, and `gregale logs APP` to
+`gregale release list`, `gregale release get ID`, and `gregale logs APP` to
 inspect the retained evidence.
 
 Node source builds can automatically collect source maps from the final built

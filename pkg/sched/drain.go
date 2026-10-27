@@ -134,6 +134,12 @@ type Drain struct {
 	// delivered in the background; their next message waits for it.
 	longMu        sync.Mutex
 	longQueueApps map[string]bool
+	// slots is the inline dispatch pool every tick shares
+	// (ADR-20261027160930), sized from dispatchConcurrency on first use;
+	// inline tracks the dispatches it runs.
+	slotsOnce sync.Once
+	slots     *drainSlots
+	inline    sync.WaitGroup
 	// accts caches Active(account_id) lookups for the suspended-skip
 	// check (Move 2). One entry per account; the 5s TTL collapses the
 	// 64-row batch's per-row AccountByID into ≤0.2 RPS at Meta's
@@ -345,6 +351,13 @@ func (d *Drain) Tick(ctx context.Context) {
 	now := d.now()
 	after := state.InvocationDueCursor{OwnerNodeID: d.engine.claimNodeID()}
 	var prevPage string
+	// Tenant fairness (ADR-20261027160930): rows go round-robin across their
+	// apps onto the shared pool, and the walk lists the next page without
+	// waiting for this one. A row whose app is past its share waits for the
+	// end of the walk, so it cannot hold the pages behind it.
+	var tick sync.WaitGroup
+	var extra []state.Invocation
+walk:
 	for page := 0; ; page++ {
 		var (
 			rows []state.Invocation
@@ -357,24 +370,20 @@ func (d *Drain) Tick(ctx context.Context) {
 		}
 		if err != nil {
 			d.log.Warn("drain: list-due", "err", err)
-			return
+			break
 		}
 		if len(rows) == 0 {
-			return
+			break
 		}
 		if !paged {
 			// A store without a cursor can only re-list from the head;
 			// an identical page means nothing in it could be claimed.
 			key := invocationPageKey(rows)
 			if key == prevPage {
-				return
+				break
 			}
 			prevPage = key
 		}
-		// Tenant-fairness: bucket by app so a 1,000-row queue for
-		// one app doesn't starve a 1-row queue for another (the
-		// batch is bounded at 64 so contention is small, but the
-		// round-robin protects long-tail apps even within one tick).
 		byApp := map[string][]state.Invocation{}
 		order := []string{}
 		for _, r := range rows {
@@ -383,51 +392,51 @@ func (d *Drain) Tick(ctx context.Context) {
 			}
 			byApp[r.AppID] = append(byApp[r.AppID], r)
 		}
-		parallelRows := make([]state.Invocation, 0, len(rows))
 		queueRowsByApp := make(map[string][]state.Invocation)
 		queueTriggers := make(map[string][]sqlc.Trigger)
 		queueTriggerSkipped := false
-		for _, appID := range order {
-			for _, inv := range byApp[appID] {
-				if inv.Source == state.InvocationQueue || inv.Source == state.InvocationDelayedTask {
-					if inv.EnvironmentID == "" && inv.WorkPolicyName == "" && d.queueSourceBound(ctx, inv, queueTriggers) {
-						queueTriggerSkipped = true
-						continue
-					}
-					if inv.Source == state.InvocationQueue && inv.WorkPolicyName == "" {
-						queueRowsByApp[appID] = append(queueRowsByApp[appID], inv)
-						continue
-					}
+		for _, inv := range interleaveByApp(order, byApp) {
+			if inv.Source == state.InvocationQueue || inv.Source == state.InvocationDelayedTask {
+				if inv.EnvironmentID == "" && inv.WorkPolicyName == "" && d.queueSourceBound(ctx, inv, queueTriggers) {
+					queueTriggerSkipped = true
+					continue
 				}
-				parallelRows = append(parallelRows, inv)
+				// Each app's FIFO queue messages run in order on its lane.
+				if inv.Source == state.InvocationQueue && inv.WorkPolicyName == "" {
+					queueRowsByApp[inv.AppID] = append(queueRowsByApp[inv.AppID], inv)
+					continue
+				}
+			}
+			if !d.handOff(ctx, inv, false, time.Time{}, &tick) {
+				extra = append(extra, inv)
 			}
 		}
-		d.dispatchParallel(ctx, parallelRows)
-		// Queue rows remain serial per app so the FIFO contract is
-		// preserved. Other event sources use the bounded pool above.
 		for _, appID := range order {
-			for _, inv := range queueRowsByApp[appID] {
-				d.dispatchOne(ctx, inv)
-			}
+			d.handOffLane(ctx, appID, queueRowsByApp[appID], &tick)
 		}
 		// A bound queue trigger owns its source rows; the trigger poller
-		// will claim them on its event-driven tick. Returning here prevents
+		// will claim them on its event-driven tick. Stopping here prevents
 		// the generic drain from repeatedly selecting the same pending rows
 		// while the push consumer is processing them.
-		if queueTriggerSkipped {
-			return
-		}
-		if len(rows) < d.batchSize {
-			return
+		if queueTriggerSkipped || len(rows) < d.batchSize {
+			break
 		}
 		if paged {
 			if page+1 >= maxDuePagesPerTick {
-				return
+				break walk
 			}
 			last := rows[len(rows)-1]
 			after = state.InvocationDueCursor{DueAt: last.DueAt, ID: last.ID, OwnerNodeID: after.OwnerNodeID}
 		}
 	}
+	// Rows past their app's share take the slots left free beyond the others'
+	// share, until the tick's wait ends; the rest stay pending for a later
+	// tick. Dispatches still running then finish in the background.
+	until := time.Now().Add(drainTickWait)
+	for _, inv := range extra {
+		d.handOff(ctx, inv, true, until, &tick)
+	}
+	waitTick(ctx, &tick, until)
 }
 
 func (d *Drain) tickExclusiveOperations(ctx context.Context) {
@@ -734,42 +743,6 @@ func queueInvocationHasBoundTrigger(inv state.Invocation, triggers []sqlc.Trigge
 		inv.WorkPolicyName == "" && sharedQueueTriggers == 1
 }
 
-// dispatchParallel runs non-FIFO invocation sources through a bounded worker
-// pool. ClaimInvocationWithCap is the concurrency gate at the database layer,
-// while the pool prevents one schedd from creating an unbounded goroutine
-// storm when a large due batch is released at once.
-func (d *Drain) dispatchParallel(ctx context.Context, rows []state.Invocation) {
-	if len(rows) == 0 {
-		return
-	}
-	workers := d.dispatchConcurrency
-	if workers <= 1 {
-		for _, inv := range rows {
-			d.dispatchOne(ctx, inv)
-		}
-		return
-	}
-	if workers > len(rows) {
-		workers = len(rows)
-	}
-	jobs := make(chan state.Invocation)
-	var wg sync.WaitGroup
-	wg.Add(workers)
-	for i := 0; i < workers; i++ {
-		go func() {
-			defer wg.Done()
-			for inv := range jobs {
-				d.dispatchOne(ctx, inv)
-			}
-		}()
-	}
-	for _, inv := range rows {
-		jobs <- inv
-	}
-	close(jobs)
-	wg.Wait()
-}
-
 // dispatchOne is per-row. The lifecycle:
 //
 //  1. ClaimInvocation (pending → dispatching, lease, attempts++).
@@ -941,7 +914,6 @@ func (d *Drain) acquireLongDispatch(inv state.Invocation) (func(), bool) {
 // deliverClaimed wakes the app, delivers a claimed invocation and records
 // its outcome. timeout is how long the invocation may run (ADR-1180).
 func (d *Drain) deliverClaimed(ctx context.Context, inv state.Invocation, timeout time.Duration) {
-	stopLease := func() {}
 	claimCtx, stopClaim := d.operationClaimContext(ctx, inv)
 	defer stopClaim()
 	if timeout > api.AsyncInvocationTimeoutFloor {
@@ -951,9 +923,12 @@ func (d *Drain) deliverClaimed(ctx context.Context, inv state.Invocation, timeou
 		var cancelDispatch context.CancelFunc
 		claimCtx, cancelDispatch = context.WithTimeout(withLongDispatch(claimCtx), api.AsyncInvocationDispatchTimeout(timeout))
 		defer cancelDispatch()
-		claimCtx, stopLease = d.keepInvocationLease(claimCtx, inv)
-		defer stopLease()
 	}
+	// Every delivery renews its claim while it runs (ADR-1180,
+	// ADR-20261027160930): an inline one can outlast the tick that started it
+	// and, with a slow wake, its first lease.
+	claimCtx, stopLease := d.keepInvocationLease(claimCtx, inv)
+	defer stopLease()
 	var err error
 	d.observeScheduledClaim(inv)
 	// Debug replays are mirror-only work. They carry a small set of

@@ -9,10 +9,11 @@ import (
 )
 
 // The reference is generated, committed, and checked: a manifest edit
-// without a regenerate fails CI with the exact command to run.
+// without a regenerate fails CI with the exact command to run. It renders
+// the command tree's names (ADR-20261026145832 step 5).
 func TestMarkdownReferenceFresh(t *testing.T) {
 	var buf bytes.Buffer
-	main.RenderMarkdownReference(&buf, main.CustomerCliCommands())
+	main.RenderMarkdownReference(&buf, main.CliTreeManifest(main.VisibleCliCommands()))
 	want, err := os.ReadFile("../../docs/cli-reference.md")
 	if err != nil {
 		t.Fatalf("docs/cli-reference.md missing: %v — run `go run ./cmd/gregale man --markdown > docs/cli-reference.md`", err)
@@ -24,9 +25,9 @@ func TestMarkdownReferenceFresh(t *testing.T) {
 
 func TestMarkdownReferenceIncludesGitOpsBindingLifecycle(t *testing.T) {
 	var buf bytes.Buffer
-	main.RenderMarkdownReference(&buf, main.CustomerCliCommands())
+	main.RenderMarkdownReference(&buf, main.CliTreeManifest(main.VisibleCliCommands()))
 	for _, action := range []string{"rebind", "unbind"} {
-		if !strings.Contains(buf.String(), "##### projects environments gitops "+action+"\n") {
+		if !strings.Contains(buf.String(), "#### environment gitops "+action+"\n") {
 			t.Errorf("missing nested GitOps %s reference", action)
 		}
 	}
@@ -37,7 +38,7 @@ func TestMarkdownReferenceIncludesGitOpsBindingLifecycle(t *testing.T) {
 
 func TestMarkdownReferenceOmitsAdvancedCommands(t *testing.T) {
 	var buf bytes.Buffer
-	main.RenderMarkdownReference(&buf, main.CustomerCliCommands())
+	main.RenderMarkdownReference(&buf, main.CliTreeManifest(main.VisibleCliCommands()))
 	out := buf.String()
 	for _, command := range []string{"admin", "mail", "postgres", "rollouts", "github-webhook-secret", "tenant-surfaces", "entities"} {
 		if strings.Contains(out, "## "+command+"\n") {
@@ -127,8 +128,30 @@ func TestMarkdownReferenceEscapesPlaceholdersAndFlagValues(t *testing.T) {
 // flags at all.
 func TestMarkdownReferenceListsAppsRmConfirmation(t *testing.T) {
 	var buf bytes.Buffer
-	main.RenderMarkdownReference(&buf, main.CustomerCliCommands())
-	if !strings.Contains(buf.String(), "`gregale apps rm [--dry-run] [--yes] [--quiet] [-q] <slug>`") {
-		t.Error("apps rm reference omits its confirmation flags")
+	main.RenderMarkdownReference(&buf, main.CliTreeManifest(main.VisibleCliCommands()))
+	if !strings.Contains(buf.String(), "`gregale app delete [--dry-run] [--yes] [--quiet] [-q] <slug>`") {
+		t.Error("app delete reference omits its confirmation flags")
+	}
+}
+
+// The published reference documents the command tree: nouns and their tree
+// verbs, the app after an `app` verb, and none of today's renamed commands.
+func TestMarkdownReferenceSpeaksTheCommandTree(t *testing.T) {
+	var buf bytes.Buffer
+	main.RenderMarkdownReference(&buf, main.CliTreeManifest(main.VisibleCliCommands()))
+	out := buf.String()
+	for _, want := range []string{
+		"## cron\n", "### cron get\n", "### env set\n", "#### release attempt cancel\n",
+		"#### mcp client call\n", "#### bucket multipart get\n", "`gregale app egress-allowlist add [<app>] <cidr>`",
+		"#### app listener create\n",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("reference omits %q", want)
+		}
+	}
+	for _, renamed := range []string{"## crons\n", "## secrets\n", "## deployments\n", "## apps\n", "### cron info\n", "### app list list\n", "#### app listener rm\n"} {
+		if strings.Contains(out, renamed) {
+			t.Errorf("reference documents today's name %q instead of the tree's", strings.TrimSpace(renamed))
+		}
 	}
 }

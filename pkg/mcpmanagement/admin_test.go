@@ -293,7 +293,7 @@ func TestAdminRevocationCommitFailureIsNotAcknowledged(t *testing.T) {
 	}
 	// Force atomic journal replacement to fail without relying on UID permissions.
 	store.mu.Lock()
-	store.path = filepath.Join(t.TempDir(), "missing-parent", "state.enc")
+	store.persist.(*fileState).path = filepath.Join(t.TempDir(), "missing-parent", "state.enc")
 	store.mu.Unlock()
 	reply := adminRequest(t, service.AdminHandler(), http.MethodDelete, "/connections/"+id)
 	if reply.Code != http.StatusServiceUnavailable || strings.Contains(reply.Body.String(), `"revoked":true`) {
