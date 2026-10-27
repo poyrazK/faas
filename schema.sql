@@ -4448,7 +4448,6 @@ CREATE TABLE public.snapshots (
     cpu_model text DEFAULT ''::text NOT NULL,
     stale_at timestamp with time zone,
     CONSTRAINT snapshots_recovery_generation_check CHECK ((recovery_generation >= 0)),
-    CONSTRAINT snapshots_stale_at_check CHECK (((stale_at IS NULL) OR stale)),
     CONSTRAINT snapshots_stored_bytes_nonnegative CHECK ((stored_bytes >= 0)),
     CONSTRAINT snapshots_tier_check CHECK ((tier = ANY (ARRAY['init'::text, 'warm'::text])))
 );
@@ -67358,6 +67357,14 @@ ALTER TABLE ONLY public.snapshot_storage_daily
 
 ALTER TABLE ONLY public.snapshots
     ADD CONSTRAINT snapshots_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: snapshots snapshots_stale_at_check; Type: CHECK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE public.snapshots
+    ADD CONSTRAINT snapshots_stale_at_check CHECK (((stale_at IS NULL) OR stale)) NOT VALID;
 
 
 --

@@ -22,7 +22,9 @@ BEGIN
     END IF;
 END $$;
 -- +goose StatementEnd
-ALTER TABLE snapshots VALIDATE CONSTRAINT snapshots_stale_at_check;
+-- The check stays NOT VALID: it is enforced on every write, and every
+-- existing row has a NULL stale_at, so validating it would only scan the
+-- table under the ADD's lock.
 -- +goose StatementBegin
 CREATE OR REPLACE FUNCTION snapshot_stale_at_stamp() RETURNS trigger
     LANGUAGE plpgsql
