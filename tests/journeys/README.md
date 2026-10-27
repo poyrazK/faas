@@ -77,10 +77,37 @@ bound by the safe-rollout journey.
 | `TestHealthGate` | full | a release whose `/healthz` answers 503 is refused and the previous release keeps serving (47) |
 | `TestDeleteAndRestore` | full | delete stops the URL, `apps restore` brings the app back and it serves (1) |
 | `TestImageDeploy` | full | digest-pinned public image deploys without a build and serves (4) |
+| `TestGuestGuarantees` | smoke (3 wakes) / full (10) | from inside the app: egress refused to metadata, private ranges, the host link and mail ports while public HTTPS works; every wake has fresh RNG output and a stepped clock; a 20-request burst on a parked app is served by one wake; wake p50/p95 and overhead over a warm request (40, §6.2 invariant 5, §11) |
 
 Not covered yet: per-app deploy tokens (API only, no CLI command, needs
 step-up auth); and flows that need outside systems: signup and password-reset
 emails, custom domains and TLS, GitHub push-to-deploy, billing checkout.
+
+## Known bugs, history and trends
+
+- `known_failures.json` lists steps that fail on a known platform bug. Such a
+  step reports **KNOWN** and does not fail the run; when it passes, the report
+  says so, so the entry can be removed once the fix is confirmed. Add an entry
+  only for a bug that is understood and tracked.
+- Every run writes `summary.json` next to its report. The reporter compares
+  the run with the newest earlier summary in the same parent directory:
+  newly failing and now-passing steps, steps 50% (and 30 s) slower, metric
+  changes (wake p50/p95, clock skew, deploy stage times), and steps that both
+  passed and failed in the last five runs (flaky).
+
+## Scheduled runs (this Mac, no CI)
+
+```sh
+scripts/e2e-journeys-schedule.sh install --hour 3   # LaunchAgent, checks hourly
+scripts/e2e-journeys-schedule.sh status
+scripts/e2e-journeys-schedule.sh uninstall
+```
+
+Each hourly check runs a smoke pass with the matching CLI when a new `v*`
+release appears (production deploys every release) and otherwise one full
+pass a day after `--hour`. Runs never overlap. Reports go to
+`~/.local/state/gregale-e2e/runs/`, and a macOS notification names any run
+with a failure not in `known_failures.json`.
 
 ## Safety
 

@@ -10,14 +10,48 @@
 //   POST /cron        counts cron deliveries and logs them
 //   GET  /cron-hits   reads the counter
 //   GET  /sse         three server-sent events, then closes
+//   GET  /egress      tries a fixed set of outbound connections (never a
+//                     caller-chosen target) and reports which connected
+//   GET  /entropy     16 fresh random bytes and the guest clock, to prove
+//                     restored instances reseed their RNG and step the clock
 
 import http from "node:http";
-import { createHash } from "node:crypto";
+import net from "node:net";
+import { createHash, randomBytes } from "node:crypto";
 import { readFileSync } from "node:fs";
 
 const version = readFileSync(new URL("./version.txt", import.meta.url), "utf8").trim();
 const started = Date.now();
 let cronHits = 0;
+
+// Outbound targets for /egress. Tenant egress must refuse cloud metadata,
+// private ranges, the host side of the guest's link and mail submission
+// ports (CLAUDE.md security rules); public HTTPS is the control that proves
+// the guest has a network at all.
+const egressTargets = {
+  public_https: ["1.1.1.1", 443],
+  metadata: ["169.254.169.254", 80],
+  host_link_ssh: ["10.0.0.1", 22],
+  private_10: ["10.10.0.2", 22],
+  private_192: ["192.168.0.1", 80],
+  smtp_25: ["gmail-smtp-in.l.google.com", 25],
+  smtp_465: ["smtp.gmail.com", 465],
+  smtp_587: ["smtp.gmail.com", 587],
+};
+
+function tryConnect(host, port) {
+  return new Promise((resolve) => {
+    const started = Date.now();
+    const socket = net.connect({ host, port, timeout: 3000 });
+    const done = (connected, error) => {
+      socket.destroy();
+      resolve({ connected, error, ms: Date.now() - started });
+    };
+    socket.once("connect", () => done(true, null));
+    socket.once("timeout", () => done(false, "timeout"));
+    socket.once("error", (err) => done(false, err.code || String(err)));
+  });
+}
 
 function json(res, status, body) {
   res.writeHead(status, { "content-type": "application/json", "cache-control": "no-store" });
@@ -60,6 +94,19 @@ const server = http.createServer((req, res) => {
       return json(res, 200, { hits: cronHits });
     case "/cron-hits":
       return json(res, 200, { hits: cronHits });
+    case "/egress": {
+      const names = Object.keys(egressTargets);
+      Promise.all(names.map((n) => tryConnect(...egressTargets[n]))).then((results) => {
+        const out = {};
+        names.forEach((n, i) => {
+          out[n] = { target: egressTargets[n].join(":"), ...results[i] };
+        });
+        json(res, 200, out);
+      });
+      return;
+    }
+    case "/entropy":
+      return json(res, 200, { random: randomBytes(16).toString("hex"), now_ms: Date.now(), pid: process.pid });
     case "/sse": {
       res.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-store" });
       let sent = 0;

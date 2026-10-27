@@ -151,6 +151,9 @@ Cron limits: Free 0 · Hobby 5/app 10/acct · Pro 20/app 50/acct · Scale 100/ap
   capability, operational, and recovery evidence is green.
 - Small PRs (reviewable in ~10 min). PR description names the milestone; architecture
   changes name an ADR. New quota/limit → add to `pkg/api/limits.go` + docs, never inline.
+- A GA customer feature also gets a journey in `tests/journeys` (black-box, CLI and
+  public URLs against a deployed Gregale; `scripts/e2e-journeys.sh`). To check the
+  deployed product end to end, run the suite instead of hand-testing on prod.
 - **Never push directly to `main`.** All changes land via a PR (squash-merge from a
   feature branch). Dependabot and humans alike; the
   `.github/workflows/no-direct-push.yml` guard fires on `push` events without an

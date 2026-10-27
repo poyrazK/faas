@@ -157,12 +157,14 @@ GREGALE_E2E_API="$api" \
 	go test ./tests/journeys -count=1 -json -timeout 90m -parallel 32 -skip '^TestHarness' ${run_re:+-run "$run_re"} 2>&1 |
 	tee "$out/go-test.json" |
 	python3 -I tests/journeys/report.py --markdown "$out/report.md" \
+		--known tests/journeys/known_failures.json \
+		--summary "$out/summary.json" --history-dir "$(dirname "$out")" \
 		--header "target: $api" --header "tier: $tier" --header "cli: $cli_reported" \
 		--header "started: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
 status=("${PIPESTATUS[@]}")
 set -e
 
 echo "report: $out/report.md" >&2
-if ((status[0] != 0 || status[2] != 0)); then
-	exit 1
-fi
+# The reporter decides: go test also fails on known bugs, which
+# tests/journeys/known_failures.json says not to fail a run for.
+exit "${status[2]}"

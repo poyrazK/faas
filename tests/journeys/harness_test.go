@@ -547,6 +547,7 @@ func (tg *target) sharedProbe(t *testing.T) (slug, base string) {
 		if tg.sharedBase == "" {
 			tg.sharedBase = tg.appURL(tg.sharedSlug)
 		}
+		tg.logDeployStages(t, str(receipt, "id"))
 		tg.sharedErr = nil
 	})
 	if tg.sharedErr != nil {
@@ -578,6 +579,31 @@ func (tg *target) deployVersion(t *testing.T, slug, version string, extra ...str
 		return receipt
 	}
 	return tg.deploy(t, slug, args...)
+}
+
+// logDeployStages reports how long each stage of a deployment took
+// (source download, image build, security scan, snapshot, readiness) as
+// metrics, so a slow stage shows in the report and in run-to-run history.
+func (tg *target) logDeployStages(t *testing.T, id string) {
+	t.Helper()
+	res := tg.run(t, time.Minute, "deploys", "show", id)
+	if res.exit != 0 {
+		t.Logf("deploy stages unavailable: %s", res.problem())
+		return
+	}
+	docs, err := decodeObjects(res.stdout)
+	if err != nil || len(docs) != 1 {
+		return
+	}
+	history, _ := field(docs[0], "history").([]any)
+	if history == nil {
+		history, _ = field(docs[0], "stage_state.history").([]any)
+	}
+	for _, stage := range history {
+		if name := str(stage, "name"); name != "" {
+			t.Logf("metric deploy_stage_%s_s=%.1f", name, num(stage, "duration_ms")/1000)
+		}
+	}
 }
 
 // deleteShared removes the shared probe once every journey has finished.

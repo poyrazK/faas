@@ -266,3 +266,29 @@ func TestHarnessLocalNetworkErrorIsDNSOnly(t *testing.T) {
 		t.Error("an HTTP 503 is classed as local")
 	}
 }
+
+func TestHarnessPercentileNearestRank(t *testing.T) {
+	ms := func(vs ...int) []time.Duration {
+		out := make([]time.Duration, len(vs))
+		for i, v := range vs {
+			out[i] = time.Duration(v) * time.Millisecond
+		}
+		return out
+	}
+	d := ms(900, 100, 300, 200, 500, 400, 700, 600, 800, 1000)
+	tests := []struct {
+		p    int
+		want time.Duration
+	}{{50, 500 * time.Millisecond}, {95, time.Second}, {0, 100 * time.Millisecond}, {100, time.Second}}
+	for _, tc := range tests {
+		if got := percentile(d, tc.p); got != tc.want {
+			t.Errorf("p%d = %s, want %s", tc.p, got, tc.want)
+		}
+	}
+	if percentile(nil, 50) != 0 {
+		t.Error("percentile of no samples is not zero")
+	}
+	if d[0] != 900*time.Millisecond {
+		t.Error("percentile reordered its input")
+	}
+}
