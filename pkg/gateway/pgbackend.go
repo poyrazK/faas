@@ -280,6 +280,8 @@ type PGBackend struct {
 	metrics            *Metrics
 
 	routes *RouteCache // host -> app_id (LRU)
+	// rechecks keeps the warm custom-domain registry rechecks briefly.
+	rechecks *routeRecheckMemo
 	// stale (ADR-190) is the last-known-good host -> App tier consulted
 	// only when the Router errors. See stale_routes.go.
 	stale *staleRoutes
@@ -894,6 +896,7 @@ func NewPGBackend(router Router, sched Scheduler, log *slog.Logger) *PGBackend {
 		sched:           sched,
 		log:             log,
 		routes:          NewRouteCache(RouteCacheCap),
+		rechecks:        newRouteRecheckMemo(),
 		stale:           newStaleRoutes(RouteCacheCap, routeStaleTTL()),
 		apps:            map[string]App{},
 		appsPicker:      map[string]*appPicker{},
@@ -1138,6 +1141,7 @@ func (b *PGBackend) Lookup(ctx context.Context, host string) (App, bool) {
 			if !active {
 				b.routes.Invalidate(host)
 				b.stale.Delete(host)
+				b.rechecks.forget(host)
 				ok = false
 			}
 		}
@@ -1261,7 +1265,14 @@ func (b *PGBackend) cachedCustomDomainRouteActive(ctx context.Context, host, app
 	if !ok {
 		return true, nil
 	}
-	return validator.CachedCustomDomainRouteActive(ctx, host, appID)
+	if active, ok := b.rechecks.domain(host, appID); ok {
+		return active, nil
+	}
+	active, err := validator.CachedCustomDomainRouteActive(ctx, host, appID)
+	if err == nil {
+		b.rechecks.rememberDomain(host, appID, active)
+	}
+	return active, err
 }
 
 func (b *PGBackend) cachedPlatformTenantRouteValid(ctx context.Context, host string, target RouteTarget, app *App) (valid, deny bool) {
@@ -1269,7 +1280,16 @@ func (b *PGBackend) cachedPlatformTenantRouteValid(ctx context.Context, host str
 	if !ok {
 		return true, false
 	}
-	binding, found, err := resolver.ResolvePlatformTenantHost(ctx, host)
+	binding, found, memoized := b.rechecks.tenant(host)
+	var err error
+	if !memoized {
+		binding, found, err = resolver.ResolvePlatformTenantHost(ctx, host)
+		if err == nil && !found {
+			// Only "no tenant surface" is kept: a bound host's suspension
+			// must take effect on its next request.
+			b.rechecks.rememberTenant(host, binding, found)
+		}
+	}
 	if err != nil || (found && binding.Suspended) {
 		// A control-plane error cannot justify serving a possibly suspended
 		// customer. Do not enter the stale route tier for this host.
@@ -2775,6 +2795,7 @@ func (b *PGBackend) WithMirrorStore(s mirrorRulesStore) *PGBackend {
 func (b *PGBackend) FlushRoutes() {
 	b.workloadAdmissions.reset()
 	b.routes.Reset()
+	b.rechecks.reset()
 	b.appsMu.Lock()
 	b.apps = map[string]App{}
 	b.appsMu.Unlock()
@@ -2791,6 +2812,7 @@ func (b *PGBackend) InvalidateRoutesForApp(appID string) {
 	if b.routes != nil {
 		b.routes.InvalidateApp(appID)
 	}
+	b.rechecks.reset()
 	if b.stale != nil {
 		b.stale.DeleteApp(appID)
 	}

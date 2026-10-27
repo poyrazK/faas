@@ -68,6 +68,11 @@ const (
 // key for up to GatewayKeyAuthOutageGrace while the store fails. One client
 // source (IPv4 address or IPv6 /64) may fail GatewayFailedKeyLookupsPerSource
 // lookups per GatewayFailedKeyLookupWindow before it gets 429 with no lookup.
+// GatewayRouteRecheckInterval is how long a warm custom-domain route trusts
+// its last registry recheck (domain verified, tenant surface binding) before
+// asking again; domain_changed and app_changed drop it sooner.
+const GatewayRouteRecheckInterval = 10 * time.Second
+
 const (
 	GatewayKeyAuthCacheTTL           = 30 * time.Second
 	GatewayKeyAuthOutageGrace        = 5 * time.Minute
