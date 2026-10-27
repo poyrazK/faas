@@ -34,14 +34,18 @@ func cmdSLOs(args []string) int {
 	return 1
 }
 
+// cmdSLOsList lists an app's SLOs. --window adds the app's measured SLO
+// panel for that window, what `gregale slo` shows (ADR-20261026145832:
+// `alert slo list --window`).
 func cmdSLOsList(args []string) int {
 	fs := newFlagSet("slos list", flag.ContinueOnError)
 	slug := fs.String("app", "", "app slug (required)")
+	window := fs.String("window", "", "also show the measured SLO panel for this window (1h, 24h, 7d)")
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
-	if *slug == "" || fs.NArg() != 0 {
-		PrintUsage(os.Stderr, "usage: gregale slos list --app <slug>", "slos")
+	if *slug == "" || fs.NArg() != 0 || !validSLOPanelWindow(*window) {
+		PrintUsage(os.Stderr, "usage: gregale slos list --app <slug> [--window 1h|24h|7d]", "slos")
 		return 1
 	}
 	client, err := authedClient()
@@ -52,11 +56,29 @@ func cmdSLOsList(args []string) int {
 	if err != nil {
 		return printErr("Could not list SLOs", err)
 	}
+	if *window == "" {
+		if jsonOutput {
+			return jsonOut(writeJSON(slos))
+		}
+		renderSLOList(osStdout, slos)
+		return 0
+	}
+	panel, err := client.GetAppSLO(context.Background(), *slug, *window)
+	if err != nil {
+		return printErr("Could not fetch SLO", err)
+	}
 	if jsonOutput {
-		return jsonOut(writeJSON(slos))
+		return jsonOut(writeJSON(map[string]any{"slos": slos, "panel": panel}))
 	}
 	renderSLOList(osStdout, slos)
+	_, _ = fmt.Fprintf(osStdout, "\nMeasured over the last %s:\n", *window)
+	renderAppSLO(osStdout, panel)
 	return 0
+}
+
+// validSLOPanelWindow reports an empty window or one the SLO panel serves.
+func validSLOPanelWindow(window string) bool {
+	return window == "" || window == "1h" || window == "24h" || window == "7d"
 }
 
 func renderSLOList(w io.Writer, slos []api.SLOResponse) {

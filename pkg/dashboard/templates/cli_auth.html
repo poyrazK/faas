@@ -95,7 +95,7 @@
         {{if index .Data "MCP"}}
         A Gregale MCP bridge requested a connection as <strong>{{index .Data "AccountEmail"}}</strong>.
         Authorizing issues an eight-hour credential to inspect apps, logs, metrics and deployments.
-        {{if index .Data "MCPWrites"}}It also permits deployment, promotion and rollback.{{end}}
+        {{with index .Data "MCPCapabilities"}}It also lets the agent:</p><ul>{{range .}}<li>{{.}}</li>{{end}}</ul><p>{{end}}
         Return to the bridge to review the agent and select its apps before connecting.
         You can revoke the credential from your account's API keys page.
         {{else}}

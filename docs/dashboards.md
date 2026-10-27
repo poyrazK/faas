@@ -20,12 +20,12 @@ Describe the widgets in a JSON file:
 ```
 
 ```sh
-gregale dashboards create checkout --file checkout.json
-gregale dashboards list
-gregale dashboards show DASHBOARD_ID
-gregale dashboards get DASHBOARD_ID
-gregale dashboards replace DASHBOARD_ID --name checkout --file checkout.json
-gregale dashboards rm DASHBOARD_ID
+gregale dashboard create checkout --file checkout.json
+gregale dashboard list
+gregale dashboard show DASHBOARD_ID
+gregale dashboard get DASHBOARD_ID
+gregale dashboard update DASHBOARD_ID --name checkout --file checkout.json
+gregale dashboard delete DASHBOARD_ID
 ```
 
 `show` reads every widget now:

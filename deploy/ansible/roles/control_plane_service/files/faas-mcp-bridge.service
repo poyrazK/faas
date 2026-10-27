@@ -1,0 +1,42 @@
+[Unit]
+Description=Gregale hosted management MCP server
+Documentation=https://gregale.dev/docs/mcp
+After=network-online.target postgresql.service faas-apid.service faas-cp.slice
+Wants=faas-cp.slice faas-apid.service
+Requires=postgresql.service
+StartLimitIntervalSec=60s
+StartLimitBurst=5
+
+[Service]
+Type=simple
+User=faas-mcp-bridge
+Group=faas
+ExecStart=/opt/faas/current/bin/mcp-bridged --state-key-file %d/faas_mcp_bridge_state_key --oauth-redirect-uri https://claude.ai/api/mcp/auth_callback --oauth-redirect-uri https://claude.com/api/mcp/auth_callback --oauth-redirect-uri https://chatgpt.com/connector_platform_oauth_redirect --oauth-redirect-uri http://localhost/callback --oauth-redirect-uri http://127.0.0.1/callback
+Restart=on-failure
+RestartSec=2s
+Slice=faas-cp.slice
+MemoryMax=1G
+TasksMax=256
+EnvironmentFile=-/etc/faas/compute-db.env
+LoadCredential=faas_mcp_bridge_state_key:/etc/faas/secrets/mcp-bridge/state.key
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+SystemCallArchitectures=native
+LockPersonality=yes
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+ProtectHostname=yes
+ProtectClock=yes
+ProtectProc=invisible
+ReadOnlyPaths=/etc/faas
+
+[Install]
+WantedBy=multi-user.target

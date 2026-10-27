@@ -267,11 +267,11 @@ func (h *cliAuthHandlers) renderCliAuthPage(w http.ResponseWriter, r *http.Reque
 		Body:    "cli_auth",
 		Account: dashboardAccountView(acct, 0),
 		Data: map[string]any{
-			"Code":         shownCode,
-			"CSRFToken":    token,
-			"AccountEmail": acct.Email,
-			"MCP":          isMCPAuthCode(raw),
-			"MCPWrites":    strings.HasPrefix(raw, "MCPW"),
+			"Code":            shownCode,
+			"CSRFToken":       token,
+			"AccountEmail":    acct.Email,
+			"MCP":             isMCPAuthCode(raw),
+			"MCPCapabilities": mcpCapabilities(raw),
 		},
 	}
 	if err := dashboard.Render(w, h.log, httpsec.NonceFromContext(r.Context()), page); err != nil {
