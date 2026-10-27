@@ -15,8 +15,9 @@ import (
 )
 
 // traceBridge is the guest-local OTLP/HTTP receiver (ADR-958). It accepts
-// standard SDK exports on 127.0.0.1:4318 and forwards each body unparsed to
-// the host. It holds no credential: vmmd stamps identity from the vsock peer.
+// standard SDK trace and log exports on 127.0.0.1:4318 and forwards each body
+// unparsed to the host; log frames carry api.TraceCodecLogsSignal. It holds
+// no credential: vmmd stamps identity from the vsock peer.
 type traceBridge struct {
 	slots chan struct{}
 	send  func(context.Context, []byte) (byte, error)
@@ -31,16 +32,23 @@ func newTraceBridge(send func(context.Context, []byte) (byte, error)) *traceBrid
 
 func (b *traceBridge) handler() http.Handler {
 	mux := http.NewServeMux()
-	mux.HandleFunc("POST "+api.TraceLocalTracesPath, b.exportHandler)
+	mux.HandleFunc("POST "+api.TraceLocalTracesPath, func(w http.ResponseWriter, r *http.Request) { b.exportHandler(w, r, 0) })
+	mux.HandleFunc("POST "+api.TraceLocalLogsPath, func(w http.ResponseWriter, r *http.Request) {
+		b.exportHandler(w, r, api.TraceCodecLogsSignal)
+	})
 	return mux
 }
 
-func (b *traceBridge) exportHandler(w http.ResponseWriter, r *http.Request) {
+// exportHandler forwards one OTLP export; signal is 0 for traces and
+// api.TraceCodecLogsSignal for logs. Both responses are empty export
+// responses, which encode identically for the two signals.
+func (b *traceBridge) exportHandler(w http.ResponseWriter, r *http.Request, signal byte) {
 	codec, mediaType, ok := traceFrameCodec(r.Header.Get("Content-Type"), r.Header.Get("Content-Encoding"))
 	if !ok {
 		http.Error(w, "expected application/x-protobuf or application/json", http.StatusUnsupportedMediaType)
 		return
 	}
+	codec |= signal
 	select {
 	case b.slots <- struct{}{}:
 		defer func() { <-b.slots }()
@@ -158,7 +166,9 @@ func writeTraceExportResponse(w http.ResponseWriter, mediaType string) {
 }
 
 // stampTracingEnv points managed OTel SDKs at the local bridge and preloads
-// the platform auto-instrumentation when present (ADR-958).
+// the platform auto-instrumentation when present (ADR-958). Log export to the
+// bridge is on with tracing (ADR-213 runtime adapter) unless the app sets its
+// own OTel logs exporter or endpoint, which is left untouched.
 func stampTracingEnv(env []string, cfg *api.TracingConfig) []string {
 	return tracingEnvAtPaths(env, cfg, api.TraceNodeBootstrapPath, api.TracePythonBootstrapDir, pathExists)
 }
@@ -180,8 +190,15 @@ func tracingEnvAtPaths(env []string, cfg *api.TracingConfig, nodePath, pythonPat
 	if !hasEnvKey(env, "OTEL_METRICS_EXPORTER") {
 		env = setEnvValue(env, "OTEL_METRICS_EXPORTER", "none")
 	}
-	if !hasEnvKey(env, "OTEL_LOGS_EXPORTER") {
-		env = setEnvValue(env, "OTEL_LOGS_EXPORTER", "none")
+	if !hasEnvKey(env, "OTEL_LOGS_EXPORTER") && !hasEnvKey(env, "OTEL_EXPORTER_OTLP_LOGS_ENDPOINT") {
+		env = setEnvValue(env, "OTEL_LOGS_EXPORTER", "otlp")
+		env = setEnvValue(env, "OTEL_EXPORTER_OTLP_LOGS_ENDPOINT", api.TraceLocalEndpoint+api.TraceLocalLogsPath)
+		env = setEnvValue(env, "OTEL_EXPORTER_OTLP_LOGS_PROTOCOL", "http/protobuf")
+		// Python's SDK configurator attaches its logging handler only when
+		// asked; the Node SDK reads OTEL_LOGS_EXPORTER itself.
+		if !hasEnvKey(env, "OTEL_PYTHON_LOGGING_AUTO_INSTRUMENTATION_ENABLED") {
+			env = setEnvValue(env, "OTEL_PYTHON_LOGGING_AUTO_INSTRUMENTATION_ENABLED", "true")
+		}
 	}
 	if !hasEnvKey(env, "OTEL_TRACES_SAMPLER") {
 		// The gateway head-samples its own spans; the parent's sampled flag

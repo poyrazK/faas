@@ -16012,19 +16012,23 @@ File storage governed by RLS on storage_objects
 
 Print the storage_objects migration
 
-`gregale data-api storage sql [--schema <SCHEMA>]`
+`gregale data-api storage sql [--schema <SCHEMA>] [--upgrade]`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--schema <SCHEMA>` | the Data API&#39;s first exposed schema (default api) |  |
+| `--upgrade` | print the upgrade for a storage_objects table without object_key |  |
 
 Examples:
 
 ```sh
 gregale data-api storage sql > migrations/0005_storage.sql
+gregale data-api storage sql --upgrade > migrations/0009_storage_object_keys.sql
 ```
 
 Includes the table, RLS, guard trigger and example policies.
+
+--upgrade prints the object_key column for a table created before it.
 
 #### data-api storage enable
 

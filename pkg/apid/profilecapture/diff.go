@@ -60,7 +60,8 @@ func (s *Service) Compare(ctx context.Context, acct state.Account, app state.App
 	}
 	diff, err := profiling.DiffCaptureViews(baseView, candView)
 	if err != nil {
-		return api.ProfileCaptureDiff{}, api.ErrCapacity(err.Error())
+		s.Host.Logger().Error("apid: compare profile captures", "base", base.ID, "candidate", cand.ID, "err", err)
+		return api.ProfileCaptureDiff{}, api.ErrCapacity("The captures could not be compared.")
 	}
 	return diff, nil
 }

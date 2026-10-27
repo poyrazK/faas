@@ -930,7 +930,7 @@ func (d *Drain) deliverClaimed(ctx context.Context, inv state.Invocation, timeou
 	claimCtx, stopLease := d.keepInvocationLease(claimCtx, inv)
 	defer stopLease()
 	var err error
-	d.observeDelayedTaskClaim(inv)
+	d.observeScheduledClaim(inv)
 	// Debug replays are mirror-only work. They carry a small set of
 	// platform-owned metadata headers (the request body and credentials are
 	// intentionally absent from request_telemetry), so let gatewayd-internal
@@ -1038,7 +1038,7 @@ func (d *Drain) deliverClaimed(ctx context.Context, inv state.Invocation, timeou
 		}
 		budget := d.invocationAttemptBudget(ctx, inv)
 		failErr := d.store.FailInvocation(ctx, inv.ID, "wake: "+err.Error(), retryAfter, budget, failOutcome(err), state.WithInvocationClaim(inv), state.WithDispatchNotStarted())
-		d.observeDelayedTaskFailure(inv, retryAfter, budget, failErr)
+		d.observeScheduledFailure(inv, retryAfter, budget, failErr)
 		if failErr == nil && retryAfter > 0 && budget > 0 && inv.Attempts >= budget {
 			d.emitDeadLetter(ctx, inv, "dead_letter")
 		}
@@ -1061,7 +1061,7 @@ func (d *Drain) deliverClaimed(ctx context.Context, inv state.Invocation, timeou
 		// No gateway (test seam): the drain still completes the
 		// row so the meter gets its tick.
 		if err := completeClaimedInvocation(ctx, d.store, inv, nil); err == nil {
-			d.observeDelayedTaskDispatch(inv, wire.DelayedTaskDispatchSuccess)
+			d.observeScheduledDispatch(inv, wire.DelayedTaskDispatchSuccess)
 		}
 		d.emitDone(ctx, inv)
 		return
@@ -1117,7 +1117,7 @@ func (d *Drain) deliverClaimed(ctx context.Context, inv state.Invocation, timeou
 		}
 		budget := d.invocationAttemptBudget(ctx, inv)
 		failErr := d.store.FailInvocation(ctx, inv.ID, "invoke: "+err.Error(), retryAfter, budget, failOutcome(err), state.WithInvocationClaim(inv))
-		d.observeDelayedTaskFailure(inv, retryAfter, budget, failErr)
+		d.observeScheduledFailure(inv, retryAfter, budget, failErr)
 		if failErr == nil && retryAfter == 0 {
 			d.emitDone(ctx, inv, state.InvocationFailed)
 		}
@@ -1143,7 +1143,7 @@ func (d *Drain) deliverClaimed(ctx context.Context, inv state.Invocation, timeou
 		d.log.Warn("drain: complete", "inv", logsanitize.Field(inv.ID), "err", err)
 		return
 	}
-	d.observeDelayedTaskDispatch(inv, wire.DelayedTaskDispatchSuccess)
+	d.observeScheduledDispatch(inv, wire.DelayedTaskDispatchSuccess)
 	d.emitDone(ctx, inv)
 }
 
@@ -1168,6 +1168,7 @@ func (d *Drain) settleCronWorkPolicyResponse(ctx context.Context, inv, response 
 			d.log.Warn("drain: complete classified cron invocation", "inv", logsanitize.Field(inv.ID), "err", err)
 			return
 		}
+		d.observeScheduledDispatch(inv, wire.CronDeliverySuccess)
 		d.emitDone(ctx, inv)
 		return
 	}
@@ -1192,6 +1193,7 @@ func (d *Drain) settleCronWorkPolicyResponse(ctx context.Context, inv, response 
 		d.log.Warn("drain: fail classified cron invocation", "inv", logsanitize.Field(inv.ID), "action", decision.Action, "err", err)
 		return
 	}
+	d.observeScheduledFailure(inv, retryAfter, budget, nil)
 	if retryAfter == 0 {
 		d.emitDone(ctx, inv, state.InvocationFailed)
 	} else if budget > 0 && inv.Attempts >= budget {
@@ -1217,6 +1219,7 @@ func (d *Drain) settleCronWorkPolicyUncertain(ctx context.Context, inv state.Inv
 		d.log.Warn("drain: settle uncertain cron invocation", "inv", logsanitize.Field(inv.ID), "action", decision.Action, "err", err)
 		return
 	}
+	d.observeScheduledFailure(inv, retryAfter, budget, nil)
 	if decision.Action == "hold" {
 		d.emitDone(ctx, inv, state.InvocationFailed)
 	} else if budget > 0 && inv.Attempts >= budget {
@@ -1246,18 +1249,25 @@ func completeDispatchedInvocation(ctx context.Context, store state.Store, inv st
 	return completeClaimedInvocation(ctx, store, inv, result)
 }
 
-func (d *Drain) observeDelayedTaskClaim(inv state.Invocation) {
-	if inv.Source != state.InvocationDelayedTask || inv.Attempts != 1 {
+// observeScheduledClaim records first-claim lag for delayed tasks and HTTP
+// cron runs, measured from the requested or scheduled time. A manual cron
+// run is measured from its request.
+func (d *Drain) observeScheduledClaim(inv state.Invocation) {
+	if inv.Attempts != 1 || (inv.Source != state.InvocationDelayedTask && inv.Source != state.InvocationCron) {
 		return
 	}
 	scheduledAt := inv.DueAt
 	if inv.ScheduledAt != nil {
 		scheduledAt = *inv.ScheduledAt
 	}
+	if inv.Source == state.InvocationCron {
+		d.ops.ObserveCronScheduleLag(d.now().Sub(scheduledAt))
+		return
+	}
 	d.ops.ObserveDelayedTaskScheduleLag(d.now().Sub(scheduledAt))
 }
 
-func (d *Drain) observeDelayedTaskFailure(inv state.Invocation, retryAfter time.Duration, budget int, failErr error) {
+func (d *Drain) observeScheduledFailure(inv state.Invocation, retryAfter time.Duration, budget int, failErr error) {
 	if failErr != nil {
 		return
 	}
@@ -1267,12 +1277,17 @@ func (d *Drain) observeDelayedTaskFailure(inv state.Invocation, retryAfter time.
 	} else if budget > 0 && inv.Attempts >= budget {
 		outcome = wire.DelayedTaskDispatchDeadLetter
 	}
-	d.observeDelayedTaskDispatch(inv, outcome)
+	d.observeScheduledDispatch(inv, outcome)
 }
 
-func (d *Drain) observeDelayedTaskDispatch(inv state.Invocation, outcome string) {
-	if inv.Source == state.InvocationDelayedTask {
+// observeScheduledDispatch counts a settled delivery attempt. Delayed tasks
+// and HTTP crons share the outcome vocabulary (wire.CronDelivery*).
+func (d *Drain) observeScheduledDispatch(inv state.Invocation, outcome string) {
+	switch inv.Source {
+	case state.InvocationDelayedTask:
 		d.ops.ObserveDelayedTaskDispatch(outcome)
+	case state.InvocationCron:
+		d.ops.ObserveCronDelivery(outcome)
 	}
 }
 

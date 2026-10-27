@@ -346,6 +346,25 @@ instrumented process and its snapshots, for a capture taken rarely. Also
 rejected: keeping the inspector open permanently, which would expose a
 debugger on loopback to any SSRF in the application.
 
+## Amendment: capture storage per account
+
+Captures keep their profiles in Postgres: up to 3 MiB each, 60 per account per
+hour, for 7 days. Those bounds alone let one account store about 29.5 GiB, and
+nothing bounded the total. `ProfilingLimits.CaptureStorageBytes` now bounds it
+per plan: 256 MiB on Hobby, 1 GiB on Pro and 4 GiB on Scale.
+
+A capture is queued only if the stored profiles of the account's unexpired
+captures, plus `ProfileCaptureMaxProfileBytes` (3 MiB) for every capture still
+queued or running and for the new one, fit. Reserving the largest size keeps
+the account under its limit whatever the captures in flight return.
+Otherwise the request fails with 429 `quota_exhausted` with `limit_bytes` and
+`observed_bytes`, and an automatic capture is skipped with a reason. The
+store checks it in the queueing transaction under a per-account advisory lock,
+which also serializes the hourly quota across the account's apps; both
+manual and automatic captures pass the plan's limit in, since the plan of an
+organization's app is the organization's. No column or migration is added:
+the stored bytes are summed from `profile_capture_data`.
+
 ## Rejected alternatives
 
 - **apid → schedd gRPC.** Violates the ownership rule (apid records intent in

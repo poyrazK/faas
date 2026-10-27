@@ -128,6 +128,48 @@ func (s *server) capabilityEnabledFor(capability string, acct state.Account, app
 	return s.capGate == nil || s.capGate.Enabled(capability, appFlagSubject(acct, app))
 }
 
+// logSearchReleasedForApp decides the log-search capability for work that
+// arrives with only an app, such as vmmd's runtime lines
+// (ADR-20261024222102). Without a gate every account is released; a failed
+// account read decides off, so an unreadable account indexes nothing.
+func (s *server) logSearchReleasedForApp(ctx context.Context, app state.App) bool {
+	if s.capGate == nil {
+		return true
+	}
+	acct, err := s.store.AccountByID(ctx, app.AccountID)
+	if err != nil {
+		s.log.DebugContext(ctx, "log search release: account lookup", "app_id", app.ID, "err", err)
+		return false
+	}
+	return s.capabilityEnabledFor(logSearchCapability, acct, app)
+}
+
+// datadogIntegrationProblem refuses creating a Datadog log drain or app
+// webhook, or switching one to Datadog (ADR-20261024222102): 503 while the
+// operator switch FAAS_DATADOG_INTEGRATION_ENABLED is off, 403
+// capability_not_released while the datadog-integration capability is off
+// for the subject. Existing Datadog destinations keep delivering, and edits
+// that leave one Datadog pass.
+func (s *server) datadogIntegrationProblem(subject platformflags.Subject, becomesDatadog bool) *api.Problem {
+	switch {
+	case !becomesDatadog:
+		return nil
+	case !s.datadogIntegrationEnabled:
+		return api.NewProblem(http.StatusServiceUnavailable, "datadog_integration_unavailable",
+			"Datadog integration unavailable", "the Datadog integration is not enabled for this deployment")
+	case s.capGate != nil && !s.capGate.Enabled(datadogCapability, subject):
+		return api.ErrCapabilityNotReleased("datadog destinations", s.capGate.Name(datadogCapability))
+	}
+	return nil
+}
+
+// logSearchCapability and datadogCapability are the catalog ids these gates
+// decide (pkg/productcap/catalog.json).
+const (
+	logSearchCapability = "log-search"
+	datadogCapability   = "datadog-integration"
+)
+
 // realtimeReleased decides the realtime capability for a realtime endpoint's
 // account and app (ADR-20261023115741). A failed lookup keeps the endpoint
 // registered, so a transient store error never disconnects healthy sockets.

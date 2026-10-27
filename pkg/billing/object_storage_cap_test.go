@@ -21,9 +21,15 @@ func (s egressPolicySink) MeterUsagePolicy(api.Plan, state.BillingMeter) (MeterU
 	return s.egress, s.egress.Mode != ""
 }
 
-// capFreeBillingStore exposes only the billing seam, without cap reads.
-type capFreeBillingStore struct {
+type objectStorageBillingSeams interface {
 	state.ObjectStorageBillingStore
+	state.ObjectStorageBillingProgressStore
+}
+
+// capFreeBillingStore exposes only the billing and progress seams, without
+// cap reads.
+type capFreeBillingStore struct {
+	objectStorageBillingSeams
 }
 
 func TestFinalizeObjectStoragePeriodsHoldsChargeUnderOverageCap(t *testing.T) {
@@ -76,8 +82,9 @@ func TestFinalizeObjectStoragePeriodsHoldsChargeUnderOverageCap(t *testing.T) {
 			if err != nil || len(records) != 1 || records[0].TotalMillicents != 9000 {
 				t.Fatalf("records = %+v, err = %v; want one record keeping the full 9000 millicents", records, err)
 			}
-			if len(recorder.charges) != 1 || recorder.charges[0] != tc.want {
-				t.Fatalf("published charges = %v, want [%d]", recorder.charges, tc.want)
+			// A step with nothing to bill publishes nothing.
+			if want := []int64{tc.want}; tc.want == 0 && len(recorder.charges) != 0 || tc.want != 0 && (len(recorder.charges) != 1 || recorder.charges[0] != tc.want) {
+				t.Fatalf("published charges = %v, want %v", recorder.charges, want)
 			}
 			if d := store.deliveries["test"+records[0].ID]; d.Mode != state.ObjectStorageDeliveryLive || d.QuantityMillicents != tc.want {
 				t.Fatalf("delivery = %+v, want live %d", d, tc.want)
@@ -104,17 +111,22 @@ func TestFinalizeObjectStoragePeriodsFailsClosedWithoutCapReads(t *testing.T) {
 
 func TestCapRemainingMillicentsReservesEveryMeter(t *testing.T) {
 	egress := &MeterUsagePolicy{UnitQuantity: 3, MillicentsPerUnit: 1}
-	remaining, ok := CapRemainingMillicents(1, api.SecondsPerGBHour/2, 1, egress)
+	remaining, ok := CapRemainingMillicents(1, api.SecondsPerGBHour/2, 1, egress, 0)
 	// 1000 millicents less half a GB-hour (500) and a third of a millicent.
 	if !ok || FloorCapQuantity(remaining, 1, 1) != 499 {
 		t.Fatalf("remaining = %v, %v; want 499 whole millicents", remaining, ok)
 	}
-	for _, in := range [][3]int64{{-1, 0, 0}, {0, -1, 0}, {0, 0, -1}} {
-		if _, ok := CapRemainingMillicents(in[0], in[1], in[2], nil); ok {
+	// ADR-20261027093220: object storage billed during the month is reserved.
+	remaining, ok = CapRemainingMillicents(1, api.SecondsPerGBHour/2, 1, egress, 200)
+	if !ok || FloorCapQuantity(remaining, 1, 1) != 299 {
+		t.Fatalf("remaining with object storage = %v, %v; want 299 whole millicents", remaining, ok)
+	}
+	for _, in := range [][4]int64{{-1, 0, 0, 0}, {0, -1, 0, 0}, {0, 0, -1, 0}, {0, 0, 0, -1}} {
+		if _, ok := CapRemainingMillicents(in[0], in[1], in[2], nil, in[3]); ok {
 			t.Fatalf("CapRemainingMillicents%v accepted a negative input", in)
 		}
 	}
-	if _, ok := CapRemainingMillicents(1, 0, 1, &MeterUsagePolicy{}); ok {
+	if _, ok := CapRemainingMillicents(1, 0, 1, &MeterUsagePolicy{}, 0); ok {
 		t.Fatal("an unpriced egress reservation did not fail closed")
 	}
 }

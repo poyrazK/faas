@@ -4,7 +4,7 @@
   "sets": [
     {
       "id": "gregale-core-v1",
-      "revision": "c84b88a8409953a5c20a4ba9222f2591c218253ee3418d7745d9b197a6fda751",
+      "revision": "ad6197c1176b8dc2ec2c6c728f2c16c7c20bcaa61d3ebfa09399d28145d9a15b",
       "files": [
         "faas.rules.yml"
       ],
@@ -2896,6 +2896,19 @@
           }
         },
         {
+          "id": "7e121af3aae80ad2c7c53561ce32ee7a65a675ff0c1c7c908d54a529f67ebcb8",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_crons",
+          "rule_name": "FaasCronDeliveryLag",
+          "definition": {
+            "expression_hash": "e759a76dbe4e16a7d44981dfe082300df4bccde3cbcde99dcee638caf5701541",
+            "labels_hash": "c6f6d722b369e1acd2c5f2a3a80d2a32fd8f76a3cf9c7d4cb7d100b0ba163dc9",
+            "for_seconds": 600,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "48ac53224915203806a2d20e5b6f167b73c10bb29d154872676a41aaeb03b4f0"
+          }
+        },
+        {
           "id": "7e646692586fafd8b7cae604b4e9df837bdd6383936bd8c1baca1d9491fbc7cc",
           "file_name": "faas.rules.yml",
           "group_name": "faas_frozen_tier",
@@ -3153,6 +3166,19 @@
             "for_seconds": 300,
             "keep_firing_for_seconds": 0,
             "fingerprint": "36bb5cb6fe4c2a3ed74d5272199810d1c9cb35e67d4fab3f1ef799465b5ab125"
+          }
+        },
+        {
+          "id": "8bfe26b125b1a49edb2c484ff574d2a18658d4a1298578403f467771f6cfa6ef",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_crons",
+          "rule_name": "FaasCronDeliveryFailing",
+          "definition": {
+            "expression_hash": "9f1319a0088b203d62232954b1f15cc28576e25db6ca0ed62471d4d2bf4fc216",
+            "labels_hash": "c6f6d722b369e1acd2c5f2a3a80d2a32fd8f76a3cf9c7d4cb7d100b0ba163dc9",
+            "for_seconds": 1800,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "fea249b6589559f220c0ff2489545af686f104dd3c04f951c684bd263ba352a0"
           }
         },
         {
@@ -5837,7 +5863,7 @@
     },
     {
       "id": "gregale-full-v1",
-      "revision": "6dc358912687d440bdfff8c4f24ccd07fa7f2d3713198ebd34cc06f78fb27513",
+      "revision": "620a72d4ac3e082ab75d1f3cdb2764974ec7c3ff17cda2966abf7523a571d8ea",
       "files": [
         "bridge.rules.yml",
         "data_placement.yaml",
@@ -8889,6 +8915,19 @@
           }
         },
         {
+          "id": "7e121af3aae80ad2c7c53561ce32ee7a65a675ff0c1c7c908d54a529f67ebcb8",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_crons",
+          "rule_name": "FaasCronDeliveryLag",
+          "definition": {
+            "expression_hash": "e759a76dbe4e16a7d44981dfe082300df4bccde3cbcde99dcee638caf5701541",
+            "labels_hash": "c6f6d722b369e1acd2c5f2a3a80d2a32fd8f76a3cf9c7d4cb7d100b0ba163dc9",
+            "for_seconds": 600,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "48ac53224915203806a2d20e5b6f167b73c10bb29d154872676a41aaeb03b4f0"
+          }
+        },
+        {
           "id": "7e646692586fafd8b7cae604b4e9df837bdd6383936bd8c1baca1d9491fbc7cc",
           "file_name": "faas.rules.yml",
           "group_name": "faas_frozen_tier",
@@ -9172,6 +9211,19 @@
             "for_seconds": 300,
             "keep_firing_for_seconds": 0,
             "fingerprint": "36bb5cb6fe4c2a3ed74d5272199810d1c9cb35e67d4fab3f1ef799465b5ab125"
+          }
+        },
+        {
+          "id": "8bfe26b125b1a49edb2c484ff574d2a18658d4a1298578403f467771f6cfa6ef",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_crons",
+          "rule_name": "FaasCronDeliveryFailing",
+          "definition": {
+            "expression_hash": "9f1319a0088b203d62232954b1f15cc28576e25db6ca0ed62471d4d2bf4fc216",
+            "labels_hash": "c6f6d722b369e1acd2c5f2a3a80d2a32fd8f76a3cf9c7d4cb7d100b0ba163dc9",
+            "for_seconds": 1800,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "fea249b6589559f220c0ff2489545af686f104dd3c04f951c684bd263ba352a0"
           }
         },
         {
