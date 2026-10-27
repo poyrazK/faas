@@ -74123,6 +74123,13 @@ CREATE INDEX managed_realtime_channel_batches_cleanup_idx ON public.managed_real
 
 
 --
+-- Name: managed_realtime_channel_heads_held_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX managed_realtime_channel_heads_held_idx ON public.managed_realtime_channel_heads USING btree (endpoint_id) WHERE (oldest_sequence < next_sequence);
+
+
+--
 -- Name: managed_realtime_channel_messages_created_at_idx; Type: INDEX; Schema: public; Owner: -
 --
 

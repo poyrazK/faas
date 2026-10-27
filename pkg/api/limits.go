@@ -2989,13 +2989,19 @@ type RealtimeLimits struct {
 	// 5 seconds, so the node bound protects control-plane Postgres and this
 	// share divides it by plan (ADR-1323, amendment of 2026-10-27).
 	ResumeSubscriptionsPerNode int
+	// RetainedChannelsPerAccount caps the channels an account's endpoints hold
+	// retained messages, reducer state or a snapshot on, on top of 32 per
+	// endpoint. A channel holds at most 1,024 messages of 4 KiB, so this bounds
+	// the account's retained control-plane storage to about 4 MiB a channel:
+	// 128 MiB, 1 GiB and 4 GiB by plan (ADR-1323, amendment of 2026-10-27).
+	RetainedChannelsPerAccount int
 }
 
 var realtimeLimits = map[Plan]RealtimeLimits{
 	PlanFree:  {Plan: PlanFree},
-	PlanHobby: {Plan: PlanHobby, EndpointsPerApp: 2, EndpointsPerAccount: 10, ConnectionsPerAccount: 200, ResumeSubscriptionsPerNode: 16},
-	PlanPro:   {Plan: PlanPro, EndpointsPerApp: 10, EndpointsPerAccount: 50, ConnectionsPerAccount: 1_000, ResumeSubscriptionsPerNode: 64},
-	PlanScale: {Plan: PlanScale, EndpointsPerApp: 25, EndpointsPerAccount: 250, ConnectionsPerAccount: 5_000, ResumeSubscriptionsPerNode: 128},
+	PlanHobby: {Plan: PlanHobby, EndpointsPerApp: 2, EndpointsPerAccount: 10, ConnectionsPerAccount: 200, ResumeSubscriptionsPerNode: 16, RetainedChannelsPerAccount: 32},
+	PlanPro:   {Plan: PlanPro, EndpointsPerApp: 10, EndpointsPerAccount: 50, ConnectionsPerAccount: 1_000, ResumeSubscriptionsPerNode: 64, RetainedChannelsPerAccount: 256},
+	PlanScale: {Plan: PlanScale, EndpointsPerApp: 25, EndpointsPerAccount: 250, ConnectionsPerAccount: 5_000, ResumeSubscriptionsPerNode: 128, RetainedChannelsPerAccount: 1_024},
 }
 
 // RealtimeResumeSubscriptionsPerNodeFor maps the account connection allowance

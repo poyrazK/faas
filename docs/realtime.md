@@ -109,8 +109,13 @@ where realtime holds real capacity on our servers:
   realtime node, and a connection at most 8. A refused subscription gets
   `subscription_limit` (HTTP 429 for SSE); new connections may land on another
   node.
-- **Retained history** is bounded per endpoint (24 hours, 1,024 messages per
-  channel, 4 KiB per message).
+- **Retained history** keeps a channel's messages for 24 hours, at most 1,024
+  of them of up to 4 KiB each. A channel counts while it holds retained
+  messages, reducer state or a snapshot: an endpoint holds at most 32 such
+  channels at a time, and an account 32 (Hobby), 256 (Pro) or 1,024 (Scale).
+  A channel frees its slot when its messages expire. A publish that would
+  retain on one more channel gets HTTP 409 naming the limit and the number
+  held.
 - **Functions triggered by channel messages** bill as normal compute.
 
 An endpoint's `max_connections` still caps that endpoint; the account limit
