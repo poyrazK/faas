@@ -95,6 +95,13 @@ func TestCommandCapabilityPath(t *testing.T) {
 		{[]string{"app", "my-app", "tcp", "list"}, "app tcp list", "tcp-listeners"},
 		{[]string{"app", "my-app", "rename"}, "app rename", "apps"},
 		{[]string{"crons", "--json"}, "crons", "crons"},
+		// Hunt 14 H14-89: these routes belong to previews hidden on
+		// production-us, so the commands must be owned by them too.
+		{[]string{"debug", "requests", "list", "my-app"}, "debug requests list", "production-debugger"},
+		{[]string{"debug", "compare", "my-app"}, "debug compare", "production-debugger"},
+		{[]string{"debug", "bundle", "my-app", "req"}, "debug bundle", "production-debugger"},
+		{[]string{"debug", "coverage", "my-app"}, "debug coverage", "debug"},
+		{[]string{"app", "my-app", "security"}, "app security", "signed-deploys"},
 		{[]string{"deploy"}, "deploy", ""},
 	} {
 		path := main.CommandCapabilityPath(tc.args)
@@ -207,4 +214,59 @@ func TestAccountViewHidesCommandsAndRereadsBeforeRefusing(t *testing.T) {
 	if _, _, stderr := runCLI(t, "crons", "list", "my-app"); strings.Contains(stderr, "unknown command") {
 		t.Fatalf("a capability released since the cached view must run: %q", stderr)
 	}
+}
+
+// Hunt 14 H14-89: with the production-debugger preview hidden, `debug`
+// listed `requests`, `compare` and `bundle`, which answered only "no such
+// API route", and `invocations list --app` pointed at `debug requests list`.
+func TestHiddenDebuggerSubcommandsLeaveDebugUsage(t *testing.T) {
+	api := &capabilitiesAPI{}
+	server := httptest.NewServer(api)
+	defer server.Close()
+	t.Setenv("FAAS_CAPABILITY_FLAGS_RELEASE_ALL", "")
+	t.Setenv("FAAS_API", server.URL)
+	t.Setenv("FAAS_TOKEN", "test-token")
+	t.Setenv("FAAS_COMPLETION_CACHE_PATH", filepath.Join(t.TempDir(), "cache.json"))
+	api.setHidden("production-debugger", "signed-deploys")
+
+	usage := debugUsageOutput(t, "debug")
+	if !strings.Contains(usage, "usage: gregale debug <coverage|dependencies|running|regressions>") {
+		t.Fatalf("debug usage with the debugger hidden = %q", usage)
+	}
+	help := debugUsageOutput(t, "debug", "--help")
+	if strings.Contains(help, "requests list") || strings.Contains(help, "  compare ") || !strings.Contains(help, "  coverage ") {
+		t.Fatalf("debug --help with the debugger hidden:\n%s", help)
+	}
+	if code, _, stderr := runCLI(t, "debug", "requests", "list", "my-app"); code == 0 || !strings.Contains(stderr, `unknown command "debug requests list"`) {
+		t.Fatalf("hidden debug requests = %d %q, want unknown command", code, stderr)
+	}
+	if code, _, stderr := runCLI(t, "app", "my-app", "security"); code == 0 || !strings.Contains(stderr, `unknown command "app security"`) {
+		t.Fatalf("hidden app security = %d %q, want unknown command", code, stderr)
+	}
+	if hint := debugUsageOutput(t, "invocations", "list", "--app", "my-app"); strings.Contains(hint, "debug requests") || !strings.Contains(hint, "gregale logs <slug> --source http") {
+		t.Fatalf("invocations --app hint names a hidden command: %q", hint)
+	}
+	// Verb lists after a mistyped verb follow the same view.
+	if choices := debugUsageOutput(t, "app", "my-app", "idle"); strings.Contains(choices, "security") || !strings.Contains(choices, "health") {
+		t.Fatalf("app verb list names a hidden subcommand: %q", choices)
+	}
+	if typo := debugUsageOutput(t, "debug", "requsts"); strings.Contains(typo, `"requests"`) {
+		t.Fatalf("a typo must not suggest a hidden subcommand: %q", typo)
+	}
+
+	api.setHidden()
+	t.Setenv("FAAS_COMPLETION_CACHE_PATH", filepath.Join(t.TempDir(), "cache2.json"))
+	if usage := debugUsageOutput(t, "debug"); !strings.Contains(usage, "<requests|coverage|dependencies|running|regressions|compare|bundle>") {
+		t.Fatalf("debug usage with every capability shown = %q", usage)
+	}
+}
+
+// debugUsageOutput runs the CLI with the process streams swapped, because
+// cmdDebug prints its usage straight to os.Stderr.
+func debugUsageOutput(t *testing.T, args ...string) string {
+	t.Helper()
+	stdout, stderr, restore := main.SwapIO(t)
+	main.Run(args)
+	restore()
+	return stdout.String() + stderr()
 }
