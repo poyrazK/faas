@@ -157,8 +157,9 @@ var registry = []Spec{
 	// Account values are wired a group at a time (ADR 20261022111812):
 	// apid seals and opens the TOTP secrets, inbound webhook secrets,
 	// billing keys, workflow plans, PagerDuty acknowledgement secrets,
-	// GitLab, Slack and Linear credentials and product email values through
-	// the domain; the other columns stay on the fleet key until their slice.
+	// GitLab, Slack and Linear credentials, product email values and managed
+	// realtime credentials through the domain; the data pipeline and project
+	// clone columns stay on the fleet key until their slice.
 	{Domain: Account, Readers: []string{"apid", "apid-clone-worker", "apid-data-pipeline-worker"}, Roles: cpOnly, Wired: true, Columns: join(
 		cols("accounts", "mfa_secret_encrypted"),
 		// apid seals a managed workflow's plan and its workflow worker

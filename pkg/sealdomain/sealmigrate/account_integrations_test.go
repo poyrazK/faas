@@ -106,3 +106,44 @@ func TestMigrateAccountProductEmail(t *testing.T) {
 		t.Fatalf("re-sealed grant open = %q, %v; want its subscription binding kept", got, err)
 	}
 }
+
+// TestMigrateAccountRealtime re-seals managed realtime credentials; a push
+// value's namespace is bound to its row, so a value copied to another row
+// is not re-sealed.
+func TestMigrateAccountRealtime(t *testing.T) {
+	domain, fleet := mustIdentity(t), mustIdentity(t)
+	blob := func(namespace, value string) []byte {
+		b, err := secretbox.SealBytesTo([]*age.X25519Recipient{fleet.Recipient()}, namespace, []byte(value), 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return b
+	}
+	principal := strings.Repeat("a", 64)
+	device := "ep-1:" + principal + ":phone:1"
+	f := &accountValues{rows: map[string]map[string]state.AccountSealedValue{}}
+	for _, v := range []state.AccountSealedValue{
+		{Kind: state.AccountSealedRealtimeCallback, ID: "e1", Sealed: blob(api.RealtimeCallbackAuthNamespace, "callback-token")},
+		{Kind: state.AccountSealedRealtimeAuth, ID: "e1", Sealed: blob(api.RealtimeAuthTokenNamespace, "auth-token")},
+		{Kind: state.AccountSealedRealtimeAuthPrevious, ID: "e1", Sealed: blob(api.RealtimeAuthTokenNamespace, "old-token")},
+		{Kind: state.AccountSealedRealtimePushDevice, ID: device, Sealed: blob(api.RealtimePushDeviceNamespacePrefix+device, `{"token":"t"}`)},
+		{Kind: state.AccountSealedRealtimePushDevice, ID: "ep-1:" + principal + ":tablet", Sealed: blob(api.RealtimePushDeviceNamespacePrefix+device, `{"token":"t"}`)},
+		{Kind: state.AccountSealedRealtimePushProvider, ID: "ep-1:apns", Sealed: blob(api.RealtimePushProviderNamespacePrefix+"ep-1:apns", `{"provider":"apns"}`)},
+	} {
+		f.put(v)
+	}
+	report, err := sealmigrate.MigrateAccount(context.Background(), f, domain, []*age.X25519Identity{fleet})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := sealmigrate.MigrationReport{Domain: sealdomain.Account, Target: domain.Recipient().String(), Scanned: 6, Resealed: 5, Failed: 1}
+	if report != want {
+		t.Fatalf("report = %+v, want %+v", report, want)
+	}
+	if ns, _, err := secretbox.OpenBytes(domain, f.rows[state.AccountSealedRealtimePushDevice][device].Sealed); err != nil || ns != api.RealtimePushDeviceNamespacePrefix+device {
+		t.Fatalf("push device target domain open = %q, %v", ns, err)
+	}
+	if _, _, err := secretbox.OpenBytes(fleet, f.rows[state.AccountSealedRealtimeAuth]["e1"].Sealed); err == nil {
+		t.Fatal("the fleet identity still opens the re-sealed auth token")
+	}
+}

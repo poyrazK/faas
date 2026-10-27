@@ -612,6 +612,25 @@ but live in the main schema.
   worker's identity) and project environment clones (with the clone
   worker's identity).
 
+## Implemented in the thirteenth slice: managed realtime
+
+The fourth account slice moves managed realtime's credentials:
+`managed_realtime_endpoints` (callback token, client auth token and the
+previous auth token kept through a rotation), `managed_realtime_push_devices`
+(push targets) and `managed_realtime_push_providers` (provider configs).
+
+- apid seals and opens them through the realtime service's host, so the
+  slice changes that host: `SecretRecipients()` returns the account
+  recipients (the fleet recipient as legacy) and `HostIdentitiesForUnseal`
+  opens with the account identity first. apid then hands the opened tokens
+  to the realtime fleet's registrar, as before.
+- A push value's namespace names its row (endpoint, principal key and
+  device, or endpoint and provider), so the re-seal rebuilds it from the
+  row and refuses a value copied to another row. The namespaces and the
+  push size bounds moved to `pkg/api`.
+- **Last slice:** data pipelines and project environment clones, read by
+  the data-pipeline and clone workers.
+
 ## Implemented: the alerting test-send relay
 
 Section 3 moves apid's alerting test sends behind meterd, ahead of the
