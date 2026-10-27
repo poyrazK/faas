@@ -3111,7 +3111,7 @@ qualification remains separate.
 the compute cap emails of
 [ADR-20261025094915](../adr/20261025094915-managed-postgres-compute-caps-on-running-databases.md)
 in apid, maild and private reconciliation. Units and examples keep it off. Apply
-[`20261027101817572_managed_postgres_cap_events.sql`](../../migrations/20261027101817572_managed_postgres_cap_events.sql)
+[`20261027130112452_managed_postgres_cap_events.sql`](../../migrations/20261027130112452_managed_postgres_cap_events.sql)
 before opting in.
 
 It requires the existing master, producer, scheduling and producer-outbox gates,
