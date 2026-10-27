@@ -64,7 +64,8 @@
     "mail-report": {"lane": "tool"},
     "mail-metrics": {"lane": "tool"},
     "mail-feedback": {"lane": "tool"},
-    "gregale": {"lane": "control-plane", "services": [{"name": "mcp-bridge", "optional": true}]},
+    "gregale": {"lane": "tool"},
+    "mcp-bridged": {"lane": "control-plane", "services": [{"name": "mcp-bridge", "optional": true}]},
     "gregalectl": {"lane": "tool"}
   },
   "gates": {

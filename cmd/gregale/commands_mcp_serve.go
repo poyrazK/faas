@@ -10,13 +10,9 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
-	"path/filepath"
-	"strings"
 	"syscall"
 	"time"
 
-	"github.com/onebox-faas/faas/pkg/db"
-	"github.com/onebox-faas/faas/pkg/hostidentity"
 	"github.com/onebox-faas/faas/pkg/mcpmanagement"
 	"github.com/onebox-faas/faas/pkg/wire"
 )
@@ -34,9 +30,6 @@ type mcpServeOptions struct {
 	redirects     []string
 	onboarding    string
 	stateFile     string
-	statePostgres string
-	hosted        bool
-	apiBase       string
 	stateKeyFile  string
 	toolsets      []string
 }
@@ -54,9 +47,6 @@ func parseMCPServeOptions(args []string) (mcpServeOptions, error) {
 	fs.Func("oauth-redirect-uri", "allowed OAuth callback URI; repeat; omit loopback HTTP port for ephemeral client ports", func(value string) error { opts.redirects = append(opts.redirects, value); return nil })
 	fs.StringVar(&opts.onboarding, "oauth-onboarding", "browser", "remote onboarding: browser sign-in or explicit api-key fallback")
 	fs.StringVar(&opts.stateFile, "state-file", "", "private encrypted remote state file for restart-safe connections")
-	fs.BoolVar(&opts.hosted, "hosted", false, "serve as Gregale's hosted bridge: path issuer under /mcp; requires --state-postgres")
-	fs.StringVar(&opts.apiBase, "api-base", "", "Gregale API base URL for the HTTP bridge; overrides the profile and FAAS_API")
-	fs.StringVar(&opts.statePostgres, "state-postgres", "", "keep remote state in Postgres under the named bridge lease (DATABASE_URL or FAAS_DATABASE_URL)")
 	fs.StringVar(&opts.stateKeyFile, "state-key-file", "", "independent private file with the 32-byte state encryption key")
 	tools := fs.String("tools", mcpmanagement.ToolsetAll, "toolsets to list, comma-separated: core, release, diagnose, provision or all")
 	if err := fs.Parse(args); err != nil {
@@ -73,19 +63,10 @@ func parseMCPServeOptions(args []string) (mcpServeOptions, error) {
 	if opts.onboarding != "browser" && opts.onboarding != "api-key" {
 		return opts, errors.New("--oauth-onboarding must be browser or api-key")
 	}
-	if opts.stateFile != "" && opts.statePostgres != "" {
-		return opts, errors.New("use --state-file or --state-postgres, not both")
+	if (opts.stateFile == "") != (opts.stateKeyFile == "") {
+		return opts, errors.New("--state-file and --state-key-file must be supplied together")
 	}
-	if (opts.stateFile == "" && opts.statePostgres == "") != (opts.stateKeyFile == "") {
-		return opts, errors.New("--state-file or --state-postgres and --state-key-file must be supplied together")
-	}
-	if opts.hosted && (opts.transport != "streamable-http" || opts.statePostgres == "" || opts.onboarding != "browser") {
-		return opts, errors.New("--hosted needs --transport streamable-http, --state-postgres and browser onboarding")
-	}
-	if opts.apiBase != "" && opts.transport != "streamable-http" {
-		return opts, errors.New("--api-base requires --transport streamable-http")
-	}
-	if opts.transport == "stdio" && (opts.adminSocket != "" || opts.onboarding != "browser" || opts.stateFile != "" || opts.statePostgres != "" || opts.resourceURL != "" || len(opts.redirects) > 0 || opts.listen != "127.0.0.1:8787") {
+	if opts.transport == "stdio" && (opts.adminSocket != "" || opts.onboarding != "browser" || opts.stateFile != "" || opts.resourceURL != "" || len(opts.redirects) > 0 || opts.listen != "127.0.0.1:8787") {
 		return opts, errors.New("remote OAuth and listen options require --transport streamable-http")
 	}
 	if opts.adminSocket != "" {
@@ -153,45 +134,9 @@ func serveMCPHTTP(ctx context.Context, opts mcpServeOptions) error {
 		opts.lifecycle = mcpmanagement.NewLifecycle()
 	}
 	connection := effectiveConnectionContext()
-	if opts.hosted && opts.resourceURL == "" {
-		// The platform's API host, resolved as the daemons do
-		// (FAAS_PLATFORM_DOMAIN, else FAAS_APPS_DOMAIN; ADR-20261026195952).
-		opts.resourceURL = "https://api." + hostidentity.Configured().Platform + "/mcp"
-	}
-	if opts.apiBase != "" {
-		// The hosted unit names apid's loopback listener (ADR-20261026195952).
-		connection.APIBase = strings.TrimRight(opts.apiBase, "/")
-	}
-	handlerOptions := mcpmanagement.HTTPOptions{Lifecycle: opts.lifecycle, Telemetry: opts.telemetry, AuditLogger: slog.New(slog.NewJSONHandler(osStderr, nil)), Onboarding: opts.onboarding, APIBase: connection.APIBase, ResourceURL: opts.resourceURL, RedirectURIs: opts.redirects, Version: wire.Version, Timeout: opts.timeout, AllowWrites: opts.allowWrites, Toolsets: opts.toolsets, Hosted: opts.hosted}
-	if opts.hosted {
-		handlerOptions.UploadDir = filepath.Join(os.TempDir(), "gregale-mcp-uploads")
-		handlerOptions.CLIRunner = mcpHostedCLI(connection.APIBase, handlerOptions.UploadDir)
-	}
+	handlerOptions := mcpmanagement.HTTPOptions{Lifecycle: opts.lifecycle, Telemetry: opts.telemetry, AuditLogger: slog.New(slog.NewJSONHandler(osStderr, nil)), Onboarding: opts.onboarding, APIBase: connection.APIBase, ResourceURL: opts.resourceURL, RedirectURIs: opts.redirects, Version: wire.Version, Timeout: opts.timeout, AllowWrites: opts.allowWrites, Toolsets: opts.toolsets}
 	if opts.stateFile != "" {
 		store, err := mcpmanagement.OpenStateStore(opts.stateFile, opts.stateKeyFile)
-		if err != nil {
-			return err
-		}
-		defer func() {
-			opts.lifecycle.BeginDrain()
-			if opts.lifecycle.Drained() {
-				_ = store.Close()
-			}
-		}()
-		handlerOptions.StateStore = store
-	}
-	if opts.statePostgres != "" {
-		// Losing the lease stops this process; the successor holds the state
-		// (ADR-20261026195952).
-		var cancel context.CancelCauseFunc
-		ctx, cancel = context.WithCancelCause(ctx)
-		defer cancel(nil)
-		pool, err := db.OpenWithAppName(ctx, "", "faas-mcp-bridge")
-		if err != nil {
-			return err
-		}
-		defer pool.Close()
-		store, err := mcpmanagement.OpenPostgresStateStore(ctx, mcpmanagement.PostgresStateOptions{Pool: pool, Bridge: opts.statePostgres, KeyPath: opts.stateKeyFile, OnLeaseLost: func(err error) { cancel(err) }})
 		if err != nil {
 			return err
 		}
@@ -237,6 +182,6 @@ func serveMCPHTTP(ctx context.Context, opts mcpServeOptions) error {
 		if err := shutdownMCPHTTP(ctx, server, opts.lifecycle, adminServer); err != nil {
 			return err
 		}
-		return context.Cause(ctx)
+		return ctx.Err()
 	}
 }

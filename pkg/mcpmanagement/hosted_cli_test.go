@@ -1,23 +1,21 @@
 // adr: 20261026195952
-package main_test
+package mcpmanagement
 
 import (
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
-
-	main "github.com/onebox-faas/faas/cmd/gregale"
 )
 
-func TestMCPHostedCLIRunsWithNothingOfTheHost(t *testing.T) {
+func TestHostedCLIRunsWithNothingOfTheHost(t *testing.T) {
 	t.Setenv("HOST_ONLY_MARKER", "leaked")
 	t.Setenv("FAAS_PROFILE", "host-profile")
 	script := filepath.Join(t.TempDir(), "probe.sh")
 	if err := os.WriteFile(script, []byte("#!/bin/sh\nprintf 'ARGS %s\\n' \"$*\"\nprintf 'PWD %s\\n' \"$(pwd)\"\nenv\n"), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	run := main.MCPHostedCLI(t, script, "https://api.gregale.test", "fp_grant_token")
+	run := HostedCLIRunner(script, "https://api.gregale.test", "/uploads")("fp_grant_token")
 	result, err := run(t.Context(), []string{"crons", "list", "--app", "alpha"}, nil)
 	if err != nil || result.ExitCode != 0 {
 		t.Fatalf("run: %v %+v", err, result)
@@ -32,7 +30,7 @@ func TestMCPHostedCLIRunsWithNothingOfTheHost(t *testing.T) {
 	if !strings.Contains(out, "ARGS --non-interactive --json crons list --app alpha") {
 		t.Fatalf("args: %s", out)
 	}
-	if env["FAAS_TOKEN"] != "fp_grant_token" || env["FAAS_API"] != "https://api.gregale.test" || env["GIT_CONFIG_GLOBAL"] != os.DevNull || env["GIT_CONFIG_NOSYSTEM"] != "1" {
+	if env["FAAS_TOKEN"] != "fp_grant_token" || env["FAAS_API"] != "https://api.gregale.test" || env["GIT_CONFIG_GLOBAL"] != os.DevNull || env["GIT_CONFIG_NOSYSTEM"] != "1" || !strings.HasSuffix(env["GIT_CEILING_DIRECTORIES"], ":/uploads") {
 		t.Fatalf("env: %v", env)
 	}
 	for _, leaked := range []string{"HOST_ONLY_MARKER", "FAAS_PROFILE"} {

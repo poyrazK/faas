@@ -144,7 +144,11 @@ func (u *uploadStore) receive(w http.ResponseWriter, req *http.Request) {
 	up.receiving = true
 	u.mu.Unlock()
 
-	_ = http.NewResponseController(w).SetReadDeadline(time.Now().Add(uploadReadDeadline))
+	// The server's short read and write timeouts cover MCP frames, not an
+	// archive: extend both for this request.
+	controller := http.NewResponseController(w)
+	_ = controller.SetReadDeadline(time.Now().Add(uploadReadDeadline))
+	_ = controller.SetWriteDeadline(time.Now().Add(uploadReadDeadline + time.Minute))
 	size, err := u.store(up, http.MaxBytesReader(w, req.Body, up.maxBytes))
 
 	u.mu.Lock()

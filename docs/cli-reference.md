@@ -141,7 +141,7 @@ Connect agents to Gregale, or scaffold and deploy MCP servers
 
 Expose Gregale management tools over stdio or OAuth HTTP
 
-`gregale mcp serve [--transport <TRANSPORT>] [--timeout <DURATION>] [--allow-writes] [--tools <TOOLSETS>] [--listen <ADDR>] [--resource-url <URL>] [--oauth-onboarding <MODE>] [--state-file <PATH>] [--api-base <URL>] [--hosted] [--state-postgres <BRIDGE>] [--admin-socket <PATH>] [--metrics-listen <ADDR>] [--state-key-file <PATH>] [--oauth-redirect-uri <URI>]`
+`gregale mcp serve [--transport <TRANSPORT>] [--timeout <DURATION>] [--allow-writes] [--tools <TOOLSETS>] [--listen <ADDR>] [--resource-url <URL>] [--oauth-onboarding <MODE>] [--state-file <PATH>] [--admin-socket <PATH>] [--metrics-listen <ADDR>] [--state-key-file <PATH>] [--oauth-redirect-uri <URI>]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -150,12 +150,9 @@ Expose Gregale management tools over stdio or OAuth HTTP
 | `--allow-writes` | enable reviewed deploy, promotion, and rollback actions |  |
 | `--tools <TOOLSETS>` | toolsets to list, comma-separated: core, release, diagnose, provision (default all) |  |
 | `--listen <ADDR>` | HTTP listen address behind TLS proxy (default 127.0.0.1:8787) |  |
-| `--resource-url <URL>` | public HTTPS URL ending in /mcp (required for HTTP; --hosted defaults to the platform API host) |  |
+| `--resource-url <URL>` | public HTTPS URL ending in /mcp (required for HTTP) |  |
 | `--oauth-onboarding <MODE>` | remote onboarding (default browser) | one of `browser` · `api-key` |
 | `--state-file <PATH>` | private encrypted remote state file |  |
-| `--api-base <URL>` | Gregale API base URL for the HTTP bridge |  |
-| `--hosted` | serve as the hosted bridge with a path issuer under /mcp |  |
-| `--state-postgres <BRIDGE>` | keep remote state in Postgres under the named bridge lease |  |
 | `--admin-socket <PATH>` | optional owner-protected Unix socket for listing and revoking HTTP grants |  |
 | `--metrics-listen <ADDR>` | optional literal loopback IP:port for private management MCP Prometheus metrics |  |
 | `--state-key-file <PATH>` | independent private 32-byte state encryption key file |  |

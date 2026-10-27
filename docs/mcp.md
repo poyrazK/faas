@@ -2021,7 +2021,10 @@ Operators enable `https://api.<platform domain>/mcp` on the control plane
    - Releases update and restart the server while its role marker is in
      place.
 
-The server is `gregale mcp serve --hosted`:
+The server is the `mcp-bridged` daemon:
+- **Releases:** its tools run the active release's `gregale` CLI as a
+  subprocess, so a CLI release never restarts the server. Only a release of
+  `mcp-bridged` does.
 - **State:** connections, grants and plans are kept in Postgres as encrypted
   rows under a lease. A stale process can't overwrite them.
 - **Failover:** after a control-plane takeover, the standby's bootstrap and

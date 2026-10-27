@@ -62,18 +62,21 @@ unchanged.
 
 ### 2. A platform daemon on the control plane
 
-The hosted bridge is `gregale mcp serve --transport streamable-http --hosted`,
-the optional `faas-mcp-bridge` unit of the daemon unit spec. The
-control_plane_service role installs it and starts it only where
-`faas_mcp_bridge_enabled` is set and the state key exists. Releases update and
-restart it while the role's marker drop-in is in place. It runs:
+The hosted bridge is its own daemon, `mcp-bridged`, built from the same
+`pkg/mcpmanagement` as `gregale mcp serve`. It is the optional
+`faas-mcp-bridge` unit of the daemon unit spec. The control_plane_service role
+installs it and starts it only where `faas_mcp_bridge_enabled` is set and the
+state key exists. Releases update and restart it while the role's marker
+drop-in is in place. It runs:
 - as its own user, `faas-mcp-bridge`, with its own runtime database role;
 - under systemd sandboxing: a private `/tmp`, a read-only system, no new
   privileges, and memory and task caps;
-- against apid on loopback (`--api-base`).
+- against apid on loopback.
 
-Because the unit runs the `gregale` binary, that binary moves from the tool
-lane to the control-plane lane, and a CLI release restarts the bridge.
+Provisioning and deploy tools run the active release's `gregale` CLI
+(`/opt/faas/current/bin/gregale`) as a subprocess instead of linking it. The
+CLI stays in the tool lane, so a CLI release changes what the tools run but
+never restarts the server; only a release of `mcp-bridged` does.
 
 ### 3. State in Postgres under a lease (active + standby)
 

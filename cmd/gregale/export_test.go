@@ -23,7 +23,6 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/bindingrun"
 	"github.com/onebox-faas/faas/pkg/chaos"
-	"github.com/onebox-faas/faas/pkg/mcpmanagement"
 )
 
 // Package-level types
@@ -2491,16 +2490,6 @@ func CheckDevGoCommand(dir string, function bool, command string) error {
 	}
 	return checkDevGoCommand(dir, config, command)
 }
-
-// MCPHostedCLI runs path in place of this binary as the hosted bridge's
-// runner for token.
-func MCPHostedCLI(t interface{ Cleanup(func()) }, path, apiBase, token string) mcpmanagement.LocalCLI {
-	previous := mcpCLIExecutable
-	mcpCLIExecutable = func() (string, error) { return path, nil }
-	t.Cleanup(func() { mcpCLIExecutable = previous })
-	return mcpHostedCLI(apiBase, "/uploads")(token)
-}
-
 func DevGoCommandRequest(command string) api.UpsertDevSessionRequest {
 	return withDevGoCommand(devSourceConfig{shape: shapeApp}.sessionRequest("", false, "", 0, nil), command)
 }
