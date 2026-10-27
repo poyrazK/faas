@@ -6642,6 +6642,39 @@ groups:
           description: "The public gateway has reaped more than one raw TCP session per second for ten minutes. Check client keepalive behavior, the configured FAAS_TCPD_IDLE_TIMEOUT, and whether a downstream service is stalling."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasTCPIngress.md"
 
+  # ADR-570: the traffic controls fail closed. A store, revocation or node
+  # admission outage refuses customer requests with a 503, so each reason
+  # alerts on its own; customer-caused refusals (rate_limited, deadline,
+  # node_capacity) are not paging conditions.
+  - name: traffic_control
+    interval: 30s
+    rules:
+      - alert: FaasTrafficControlRefusing
+        expr: sum by (reason) (rate(gateway_traffic_refusals_total{job="gatewayd-internal",reason=~"policy_unavailable|security_unavailable|rate_limit_unavailable|node_admission_unavailable"}[5m])) > 0.2
+        for: 5m
+        labels:
+          severity: page
+          component: gatewayd-internal
+          family: traffic_control
+          public_status: internal
+        annotations:
+          summary: "Traffic controls are refusing requests ({{ $labels.reason }})"
+          description: "Gateways have refused more than 0.2 requests per second with {{ $labels.reason }} for five minutes. These refusals come from a fail-closed traffic control, not from the customer's app or limits."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasTrafficControl.md"
+
+      - alert: FaasPublicTrafficSecurityUnverified
+        expr: max by (job, instance) (gatewayd_public_traffic_security_enforced{job=~"gatewayd|gatewayd-public-edge"}) == 0
+        for: 30m
+        labels:
+          severity: warn
+          component: gatewayd-public
+          family: traffic_control
+          public_status: internal
+        annotations:
+          summary: "A public edge is passing responses without the revocation check"
+          description: "{{ $labels.instance }} has not enforced the traffic security fence for 30 minutes, so a revoked account, app or deployment can still receive responses through it. A gateway it dials lacks the fence wiring or has no fresh observation."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasTrafficControl.md"
+
   - name: retry_safety
     interval: 30s
     rules:

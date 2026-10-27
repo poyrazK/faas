@@ -634,8 +634,10 @@ func (p *ServiceProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 		}
-		dependencySpan.SetAttributes(trafficDecisionEvidence(r.Context(), status, true).attributes()...) //nolint:contextcheck // final rebound context includes lifetime fences added after span entry.
-		if evidence, ok := guestExecutionEvidenceFromContext(r.Context()); ok {                          //nolint:contextcheck // the deferred read observes the shared evidence sink through the dependency request context.
+		decision := trafficDecisionEvidence(r.Context(), status, true) //nolint:contextcheck // final rebound context includes lifetime fences added after span entry.
+		dependencySpan.SetAttributes(decision.attributes()...)
+		p.metrics.observeTrafficDecision(decision)
+		if evidence, ok := guestExecutionEvidenceFromContext(r.Context()); ok { //nolint:contextcheck // the deferred read observes the shared evidence sink through the dependency request context.
 			addServiceFlagEvidenceEvents(dependencySpan, evidence.FlagEvidenceJSON)
 		}
 		dependencySpan.End()

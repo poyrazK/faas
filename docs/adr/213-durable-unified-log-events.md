@@ -65,6 +65,39 @@ The public read path is app-scoped and always predicates both `account_id` and
 that requires an ADR amendment, producer redaction tests, and retention-cost
 qualification.
 
+## Runtime adapter: OTel logs from the guest bridge (amendment, 2026-10-14)
+
+The first `runtime` producer is apid's `IngestGuestLogs` receiver. Apps with
+tracing enabled export OTel log records to the in-guest bridge (ADR-958);
+vmmd forwards each export with host-owned identity, and apid decodes it and
+writes one row per record:
+
+- **Scope:** only records that carry a trace ID are kept. The projection
+  answers "what did this request log" (request evidence, ADR-127 §7.2, and
+  the account trace view); untraced lines keep their existing runtime ring
+  and archive paths.
+- **Redaction and bounds:** each message passes the ADR-096 redactor and is
+  bounded to 4 KiB (`TraceMaxLogMessageBytes`); structured bodies are encoded
+  as compact JSON before redaction. Record attributes are never stored;
+  `fields` holds only the span ID. Level maps from OTel severity; `stream` is
+  empty, as records are not raw stdout/stderr.
+- **Identity and replay:** account, app, deployment and instance come from
+  vmmd, never from the payload. The source event ID is a hash of instance,
+  trace, span, timestamps, severity and message, so a retried export
+  converges on the same rows.
+- **Volume:** an export carries at most 100 records
+  (`TraceMaxLogRecordsPerExport`); exports per account per minute are capped
+  by the plan (`DebugGuestLogExportsPerMinute`: Hobby 60, Pro 600, Scale
+  3000; off on Free, which has no debugger). The budget is separate from
+  trace exports. A database failure returns `unavailable` so the SDK retries
+  the export; a refused record is counted and dropped.
+- **Retention cost:** rows follow the plan's log-archive cap (Hobby 7 days,
+  Pro 30, Scale 90). At the Pro cap of 600 exports of 100 records a minute,
+  a single noisy app is bounded at about 86 million rows a day, but the
+  common case is a few log lines per traced request. The sample ratio in the
+  tracing setting bounds it further, since untraced requests export no
+  records.
+
 ## Payload and cardinality limits
 
 - `message`: 1–16,384 characters after producer-side line fragmentation.

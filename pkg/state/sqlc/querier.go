@@ -3869,6 +3869,8 @@ type Querier interface {
 	// schedd claims, finishes and expires them. Reads join the owning app so a
 	// deleted app's captures are invisible before the cascade removes them.
 	// Lifecycle columns are merged into the public capture document on read.
+	// Serializes the account-wide quota and storage checks across its apps.
+	LockProfileCaptureAccount(ctx context.Context, db DBTX, accountID string) error
 	LockProfileCaptureApp(ctx context.Context, db DBTX, arg LockProfileCaptureAppParams) (pgtype.UUID, error)
 	LockProfilePeriodicMonitor(ctx context.Context, db DBTX, arg LockProfilePeriodicMonitorParams) ([]byte, error)
 	LockProjectBindingVerificationRun(ctx context.Context, db DBTX, arg LockProjectBindingVerificationRunParams) (ProjectBindingVerificationRun, error)
@@ -4822,6 +4824,9 @@ type Querier interface {
 	// Customer-safe fields are selected explicitly. Permission and realm filters
 	// apply before pagination; owner notes, prices, snapshots and handoffs stay out.
 	ProductWorkspaceActivity(ctx context.Context, db DBTX, arg ProductWorkspaceActivityParams) ([]ProductWorkspaceActivityRow, error)
+	// Stored bytes of the account's unexpired captures, and how many of its
+	// captures are still queued or running.
+	ProfileCaptureAccountStorage(ctx context.Context, db DBTX, arg ProfileCaptureAccountStorageParams) (ProfileCaptureAccountStorageRow, error)
 	ProfileCaptureForRequest(ctx context.Context, db DBTX, arg ProfileCaptureForRequestParams) ([]byte, error)
 	ProfileInvestigationAppOwned(ctx context.Context, db DBTX, arg ProfileInvestigationAppOwnedParams) (bool, error)
 	ProfileInvestigationDeploymentOwned(ctx context.Context, db DBTX, arg ProfileInvestigationDeploymentOwnedParams) (bool, error)
@@ -5444,6 +5449,19 @@ type Querier interface {
 	// host, whatever the candidate's environment, so no scope applies; the smoke
 	// challenge already binds the app and deployment.
 	ReadPublicRoutingSmokeCandidate(ctx context.Context, db DBTX, arg ReadPublicRoutingSmokeCandidateParams) (bool, error)
+	// ReadProjectCanaryRouting and ActiveSafeProjectReleaseID for each app.
+	ReadPublicRoutingViewCanaries(ctx context.Context, db DBTX, appIds []pgtype.UUID) ([]ReadPublicRoutingViewCanariesRow, error)
+	// ADR-20261027085556: a gateway's public routing view reads every app it
+	// tracks in one repeatable-read snapshot. Each query below returns, for many
+	// apps at once, the rows its per-request counterpart above reads for one.
+	ReadPublicRoutingViewOwners(ctx context.Context, db DBTX, appIds []pgtype.UUID) ([]ReadPublicRoutingViewOwnersRow, error)
+	// Rows of ReadPublicRoutingRelease for each app: every active graph, and the
+	// named graphs (a running canary's) while they are still usable. A graph's
+	// target scope is its environment, the scope the per-request read filters on.
+	ReadPublicRoutingViewReleases(ctx context.Context, db DBTX, arg ReadPublicRoutingViewReleasesParams) ([]ReadPublicRoutingViewReleasesRow, error)
+	// Rows of ReadPublicRoutingWeights for every scope; a scope with more than
+	// row_limit rows is refused like the per-request roster.
+	ReadPublicRoutingViewWeights(ctx context.Context, db DBTX, arg ReadPublicRoutingViewWeightsParams) ([]ReadPublicRoutingViewWeightsRow, error)
 	ReadPublicRoutingWeights(ctx context.Context, db DBTX, arg ReadPublicRoutingWeightsParams) ([]ReadPublicRoutingWeightsRow, error)
 	ReadQueueCanary(ctx context.Context, db DBTX, arg ReadQueueCanaryParams) (ReadQueueCanaryRow, error)
 	ReadQueueLeaseReceipt(ctx context.Context, db DBTX, invocationID pgtype.UUID) (InvocationQueueLeaseReceipt, error)
