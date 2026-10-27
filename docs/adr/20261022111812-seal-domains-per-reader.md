@@ -565,10 +565,33 @@ This first slice covers the account's own values:
   --readers-verified` re-seals the five kinds with a compare-and-swap on the
   ciphertext; a plan's key id moves with it. Plans of finished workflows
   are already cleared.
-- **Later slices:** product email (`product_control_email_*`), GitLab, Slack
-  and Linear, managed realtime, data pipelines (with the data-pipeline
+- **Later slices:** product email (`product_control_email_*`, which has its
+  own SQL package), managed realtime, data pipelines (with the data-pipeline
   worker's identity), and project environment clones (with the clone
   worker's identity). Their columns stay on the fleet key until then.
+
+## Implemented in the eleventh slice: account integration credentials
+
+The second account slice moves the integration credentials apid holds:
+`gitlab_oauth_connections`, `issue_slack_installations`,
+`issue_slack_interaction_policies`, `issue_team_slack_destinations`,
+`issue_slack_oauth_flows`, `issue_tracker_linear_connections` and
+`issue_tracker_linear_oauth_flows`.
+
+- **Writers** seal to `accountRecipients(fleet)`: GitLab token storage and
+  rotation, the Slack OAuth service (workspace tokens, signing secrets and
+  consent flows), the dashboard's Slack bot token and signing secret forms,
+  and the Linear API key, OAuth credential and consent flow. The Slack and
+  Linear services take a list of recipients (`Recipients`); the
+  single-recipient helpers stay as wrappers.
+- **Readers** open with `accountIdentities()`: GitLab source fetches, Slack
+  delivery and routing, Slack interaction verification, the Linear OAuth
+  service, Linear webhook verification and native Linear creation.
+- **Re-seal:** `seal-domain migrate --domain account` covers the seven
+  kinds. A Linear connection holds an API key or an OAuth credential, so it
+  is re-sealed under whichever namespace it has. Expired consent flows are
+  left for their sweep.
+- The namespaces the re-seal shares with the writers moved to `pkg/api`.
 
 ## Implemented: the alerting test-send relay
 

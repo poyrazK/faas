@@ -2991,6 +2991,9 @@ type wakingInstance struct {
 	appID        string
 	accountID    string
 	contained    bool // a rehearsal run contains it (ADR-20261017201005)
+	// qualification marks a held GitOps qualification candidate (ADR-568):
+	// it boots with its app's identity but takes no external action.
+	qualification bool
 }
 
 // WorkloadTokenIdentity resolves the identity a workload-identity token is
@@ -4723,7 +4726,8 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 	if m.waking == nil {
 		m.waking = make(map[string]wakingInstance)
 	}
-	m.waking[req.Instance] = wakingInstance{deploymentID: req.DeploymentID, appID: req.AppID, accountID: req.AccountID, contained: req.RehearsalRunID != ""}
+	m.waking[req.Instance] = wakingInstance{deploymentID: req.DeploymentID, appID: req.AppID, accountID: req.AccountID,
+		contained: req.RehearsalRunID != "", qualification: qualificationOnly}
 	m.mu.Unlock()
 	lease = m.beginProcessAttempt(lease)
 	m.beginFunctionExecutionBoot(lease, req)

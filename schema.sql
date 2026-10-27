@@ -25074,6 +25074,12 @@ BEGIN
     OR NEW.failure_rules IS DISTINCT FROM OLD.failure_rules THEN
   NEW.schedule_revision := OLD.schedule_revision + 1;
  END IF;
+ IF NEW.schedule IS DISTINCT FROM OLD.schedule
+    OR NEW.timezone IS DISTINCT FROM OLD.timezone
+    OR (NEW.enabled AND NOT OLD.enabled)
+    OR (NEW.suspended_reason = '' AND OLD.suspended_reason <> '') THEN
+  NEW.schedule_anchor_at := clock_timestamp();
+ END IF;
  RETURN NEW;
 END;
 $$;
@@ -32987,6 +32993,7 @@ CREATE TABLE public.crons (
     schedule_policy jsonb,
     failure_rules jsonb,
     schedule_revision bigint DEFAULT 1 NOT NULL,
+    schedule_anchor_at timestamp with time zone,
     CONSTRAINT crons_command_output_check CHECK (((command_max_output_bytes >= 1024) AND (command_max_output_bytes <= 16777216))),
     CONSTRAINT crons_command_shape_check CHECK ((((cardinality(command) = 0) AND (NOT command_shell)) OR (((cardinality(command) >= 1) AND (cardinality(command) <= 64)) AND (array_position(command, NULL::text) IS NULL) AND ((octet_length(command[1]) >= 1) AND (octet_length(command[1]) <= 4096)) AND ((octet_length(array_to_string(command, ''::text)) >= 1) AND (octet_length(array_to_string(command, ''::text)) <= 16384)) AND ((NOT command_shell) OR (cardinality(command) = 1))))),
     CONSTRAINT crons_command_timeout_check CHECK (((command_timeout_seconds >= 1) AND (command_timeout_seconds <= 3600))),

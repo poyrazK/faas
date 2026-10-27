@@ -7204,8 +7204,9 @@ func (m *MemStore) restoreAppLocked(ctx context.Context, id string, limits api.L
 	delete(m.appDeletionClaims, id)
 	for cronID, cron := range m.crons {
 		if cron.AppID == id && cron.SuspendedReason == CronSuspendedAppDeleted {
-			cron.SuspendedReason = ""
-			m.crons[cronID] = cron
+			restored := cron
+			restored.SuspendedReason = ""
+			m.crons[cronID] = anchorCronSchedule(cron, restored, time.Now())
 		}
 	}
 	return a, nil
@@ -13324,6 +13325,7 @@ func (m *MemStore) UpdateCronWithOptions(_ context.Context, id string, schedule,
 	if !ok {
 		return Cron{}, ErrNotFound
 	}
+	before := c
 	scheduleChanged := schedule != nil && c.Schedule != *schedule
 	timezoneChanged := timezone != nil && c.Timezone != *timezone
 	if schedule != nil {
@@ -13378,8 +13380,20 @@ func (m *MemStore) UpdateCronWithOptions(_ context.Context, id string, schedule,
 	if len(c.Command) == 0 {
 		m.invalidateDeploymentCronsLocked(c.AppID)
 	}
+	c = anchorCronSchedule(before, c, time.Now())
 	m.crons[id] = c
 	return c, nil
+}
+
+// anchorCronSchedule mirrors the crons trigger (ADR-20261026201726): a
+// schedule or timezone change, an enable, or a lifted suspension restarts
+// the schedule at now.
+func anchorCronSchedule(before, after Cron, now time.Time) Cron {
+	if after.Schedule != before.Schedule || after.Timezone != before.Timezone ||
+		(after.Enabled && !before.Enabled) || (after.SuspendedReason == "" && before.SuspendedReason != "") {
+		after.ScheduleAnchorAt = now.UTC()
+	}
+	return after
 }
 
 func (m *MemStore) DeleteCron(_ context.Context, id, appID string) error {
@@ -13555,7 +13569,63 @@ func (m *MemStore) GetFireNowRequest(_ context.Context, requestID string) (FireN
 	if !ok {
 		return FireNowRequest{}, ErrFireNowRequestNotFound
 	}
+	if r.InvocationID != nil {
+		if inv, ok := m.invocations[*r.InvocationID]; ok {
+			var lastError *string
+			if inv.LastError != "" {
+				lastError = &inv.LastError
+			}
+			return settleFireNowFromInvocation(r, inv.State, lastError, inv.CompletedAt), nil
+		}
+	}
 	return r, nil
+}
+
+// InsertFireNowRequestUnderCap mirrors the PgStore cap (ADR-20261026201726).
+func (m *MemStore) InsertFireNowRequestUnderCap(_ context.Context, cronID, accountID string, maxActive int, since time.Time) (string, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	active := 0
+	for _, r := range m.fireNowRequests {
+		if r.CronID != cronID || r.RequestedAt.Before(since) {
+			continue
+		}
+		switch {
+		case r.Status == FireNowStatusPending:
+			active++
+		case r.Status == FireNowStatusRunning && r.InvocationID == nil:
+			active++
+		case r.Status == FireNowStatusRunning:
+			if inv, ok := m.invocations[*r.InvocationID]; !ok || fireNowInvocationActive(inv.State) {
+				active++
+			}
+		}
+	}
+	if active >= maxActive {
+		return "", &FireNowCapError{Limit: maxActive, Observed: active}
+	}
+	id := uuid.NewString()
+	m.fireNowRequests[id] = FireNowRequest{
+		ID:          id,
+		CronID:      cronID,
+		AccountID:   accountID,
+		RequestedAt: time.Now().UTC(),
+		Status:      FireNowStatusPending,
+	}
+	return id, nil
+}
+
+// MarkFireNowRequestQueued mirrors the PgStore link (ADR-20261026201726).
+func (m *MemStore) MarkFireNowRequestQueued(_ context.Context, requestID, invocationID string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	r, ok := m.fireNowRequests[requestID]
+	if !ok || r.Status != FireNowStatusRunning {
+		return ErrFireNowRequestNotFound
+	}
+	r.InvocationID = &invocationID
+	m.fireNowRequests[requestID] = r
+	return nil
 }
 
 // Operator intent queue (PR #1099 P2 redesign / migrations/00431).
@@ -13905,8 +13975,9 @@ func (m *MemStore) reactivateCronsForAppLocked(appID string) int {
 		if cron.AppID != appID || cron.SuspendedReason != CronSuspendedNoLiveDeployment {
 			continue
 		}
-		cron.SuspendedReason = ""
-		m.crons[id] = cron
+		reactivated := cron
+		reactivated.SuspendedReason = ""
+		m.crons[id] = anchorCronSchedule(cron, reactivated, time.Now())
 		updated++
 	}
 	return updated

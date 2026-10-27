@@ -323,6 +323,9 @@ var AccountIdentities = accountIdentities
 var WorkflowPlanRecipients = workflowPlanRecipients
 var HoldsIdentityFor = holdsIdentityFor
 var SealInboundWebhookSigningSecret = sealInboundWebhookSigningSecret
+var SealGitLabTokens = sealGitLabTokens
+var OpenGitLabTokens = openGitLabTokens
+var OpenIssueSlackToken = openIssueSlackToken
 var VerifyInboundWebhook = verifyInboundWebhook
 var SealMCPPagerDutyWebhookSecret = sealMCPPagerDutyWebhookSecret
 

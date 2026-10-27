@@ -25,19 +25,28 @@ type AccountStore interface {
 }
 
 // accountKinds are the account values this release seals to the domain.
-// The integration, realtime, data pipeline and project clone values follow
-// in later slices and stay on the fleet key until then.
+// The product email, realtime, data pipeline and project clone values
+// follow in later slices and stay on the fleet key until then.
 var accountKinds = []string{
 	state.AccountSealedMFASecret,
 	state.AccountSealedInboundWebhook,
 	state.AccountSealedBillingKey,
 	state.AccountSealedWorkflowPlan,
 	state.AccountSealedPagerDutyAck,
+	state.AccountSealedGitLabOAuth,
+	state.AccountSealedSlackInstallation,
+	state.AccountSealedSlackInteraction,
+	state.AccountSealedSlackDestination,
+	state.AccountSealedSlackOAuthFlow,
+	state.AccountSealedLinearConnection,
+	state.AccountSealedLinearOAuthFlow,
 }
 
 // MigrateAccount re-seals every account TOTP secret, inbound webhook
-// signing secret, billing provider key, pending workflow plan and PagerDuty
-// acknowledgement signing secret to the account domain recipient alone
+// signing secret, billing provider key, pending workflow plan, PagerDuty
+// acknowledgement signing secret and integration credential (GitLab, Slack,
+// Linear, and their pending consent flows) to the account domain recipient
+// alone
 // (ADR 20261022111812, step 3), and files each plan under the domain's key
 // id. legacy are the fleet and host identities that open values sealed
 // before the domain. Run it only after every apid holds the domain
@@ -96,6 +105,19 @@ func resealAccountValue(v state.AccountSealedValue, domain *age.X25519Identity, 
 		return resealBlob(v.Sealed, executionpayload.WorkflowPlanNamespace, api.ExecutionWorkflowManagedPlanMaxBytes, domain, legacy)
 	case state.AccountSealedPagerDutyAck:
 		return resealBlob(v.Sealed, api.MCPReadinessPagerDutyWebhookSecretNamespace, api.MCPReadinessPagerDutyWebhookSecretMaxBytes, domain, legacy)
+	case state.AccountSealedGitLabOAuth:
+		return resealBlob(v.Sealed, api.GitLabOAuthSecretNamespace, api.GitLabOAuthSecretMaxBytes, domain, legacy)
+	case state.AccountSealedSlackInstallation, state.AccountSealedSlackDestination:
+		return resealBlob(v.Sealed, state.IssueSlackTokenNamespace, api.IssueSlackTokenMaxBytes, domain, legacy)
+	case state.AccountSealedSlackInteraction:
+		return resealBlob(v.Sealed, state.IssueSlackSigningSecretNamespace, api.IssueSlackSigningSecretBytes, domain, legacy)
+	case state.AccountSealedSlackOAuthFlow:
+		return resealBlob(v.Sealed, api.IssueSlackOAuthFlowNamespace, api.IssueSlackOAuthSealedMaxBytes, domain, legacy)
+	case state.AccountSealedLinearConnection:
+		// A connection holds an API key credential or an OAuth credential.
+		return resealBlobInNamespace(v.Sealed, []string{api.IssueTrackerLinearCredentialNamespace, api.IssueTrackerLinearOAuthNamespace}, 0, domain, legacy)
+	case state.AccountSealedLinearOAuthFlow:
+		return resealBlob(v.Sealed, api.IssueTrackerLinearOAuthFlowNamespace, 0, domain, legacy)
 	}
 	return nil, resealFailed, fmt.Errorf("unknown account value kind %q", v.Kind)
 }
