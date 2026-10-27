@@ -684,12 +684,14 @@ func TestValidate_BadSchedule(t *testing.T) {
 }
 
 func TestValidate_PathNoSlash(t *testing.T) {
-	m := &Manifest{Triggers: []Trigger{
-		{Kind: TriggerKindCron, App: "x", Schedule: "0 3 * * *", Path: "cleanup"},
-	}}
-	err := m.Validate()
-	if err == nil || !strings.Contains(err.Error(), "path must start with '/'") {
-		t.Errorf("err = %v, want path-must-start-with-slash message", err)
+	for _, path := range []string{"cleanup", "//evil.example/x", "/a b"} {
+		m := &Manifest{Triggers: []Trigger{
+			{Kind: TriggerKindCron, App: "x", Schedule: "0 3 * * *", Path: path},
+		}}
+		err := m.Validate()
+		if err == nil || !strings.Contains(err.Error(), "path must start with a single /") {
+			t.Errorf("%q: err = %v, want the cron path rule", path, err)
+		}
 	}
 }
 

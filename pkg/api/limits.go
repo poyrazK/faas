@@ -1179,6 +1179,24 @@ const (
 	CronFireNowActiveWindow  = 15 * time.Minute
 )
 
+// CronHistoryRetention is how long schedd keeps a cron's settled schedule
+// decisions (schedule_occurrences) and its manual-run requests
+// (cron_fire_now_requests). It matches the longest plan's invocation result
+// retention, so no plan loses the decision behind a run it can still see.
+// Pending, queued and running decisions are never pruned. Each hourly sweep
+// makes at most CronHistoryPrunePasses passes of CronHistoryPruneBatch rows
+// per table, so a large backlog drains over several hours instead of
+// holding the scheduler loop.
+const (
+	CronHistoryRetention   = 90 * 24 * time.Hour
+	CronHistoryPruneBatch  = 1000
+	CronHistoryPrunePasses = 20
+)
+
+// CronPathMaxBytes bounds the HTTP path a cron requests. The path is always
+// on the cron's own app: it starts with a single "/" and carries no host.
+const CronPathMaxBytes = 2048
+
 // New apps start with the pre-auth source limit in observe mode (ADR-829):
 // it records which sources would exceed this per-source rate without
 // rejecting anything. Values are clamped to the app's plan ceiling.
@@ -13287,6 +13305,10 @@ const (
 	DataAPIRateLimitMaxBurst         = 1000
 	DataAPIRateLimitMaxSubjects      = 4096
 	DataAPIRateLimitSweepMS          = 1000
+	// Past this many tracked anonymous subjects, IPv6 visitors are grouped by
+	// /48 instead of /64, so one allocation cannot fill the table and lock
+	// other visitors out (ADR 20261018170742 amendment 1).
+	DataAPIAnonymousCoarseSubjects = DataAPIRateLimitMaxSubjects * 3 / 4
 	// Per-runtime user concurrency accounting, including uncertain dispatches.
 	DataAPIUserConcurrencyMaxSubjects = DataAPIRateLimitMaxSubjects
 	DataAPIUserConcurrencyCooldownMS  = DataAPIQueryTimeoutMS

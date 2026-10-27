@@ -175,10 +175,14 @@ func (s *server) resolveManifestPostgresBindings(
 		}
 		environmentKey := dependency.EffectiveEnvironmentKey()
 		access := managedpostgres.CredentialAccess(dependency.EffectiveAccess())
+		subject := platformflags.Subject{AccountID: acct.ID, Plan: string(acct.Plan), OrgID: managedpostgres.Organization(ctx)}
 		// Application Auth is a dark launch: without it the mode is unknown.
-		if access == managedpostgres.CredentialAuth && !s.applicationAuthEnabled(platformflags.Subject{AccountID: acct.ID, Plan: string(acct.Plan), OrgID: managedpostgres.Organization(ctx)}) {
+		if access == managedpostgres.CredentialAuth && !s.applicationAuthEnabled(subject) {
 			return nil, api.NewProblem(http.StatusUnprocessableEntity, CodeAppManifestInvalid,
 				"Invalid manifest", fmt.Sprintf("database[%d]: access %q not in {read_write, read_only, migration, data_api}", i, access))
+		}
+		if problem := s.dataAPIAccessProblem(subject, access, fmt.Sprintf(`database[%d]: access "data_api"`, i)); problem != nil {
+			return nil, problem
 		}
 		targetKey := strings.Join([]string{appSlug, scope, environmentKey}, "\x00")
 		if _, duplicate := seenTargets[targetKey]; duplicate {
