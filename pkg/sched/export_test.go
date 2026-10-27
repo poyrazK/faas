@@ -295,6 +295,11 @@ const XEventFanoutSafetyTick = eventFanoutSafetyTick
 
 func (l *Loop) XRunEventFanoutSweep(ctx context.Context) { l.runEventFanoutSweep(ctx) }
 
+// XWaitDispatches waits for every dispatch the drain started, including those
+// that outlived their tick.
+// adr: 20261027160930 — a slow dispatch finishes after its tick returns.
+func (d *Drain) XWaitDispatches() { d.inline.Wait() }
+
 // XEventRoutingHealthDue is the sweep's routing-health throttle.
 // adr: 614 — a node reads routing health at most every 15 s.
 func (l *Loop) XEventRoutingHealthDue(now time.Time) bool { return l.eventRoutingHealthDue(now) }
