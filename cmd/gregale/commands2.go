@@ -5340,6 +5340,10 @@ func cmdCrons(args []string) int {
 			}
 			return cmdCronsAddOneOff(args[1:], oneOff)
 		}
+		lock, addArgs, lockErr := takeLockFlags(args[1:])
+		if lockErr != nil {
+			return printErr("Invalid lock", lockErr)
+		}
 		fs := newFlagSet("crons-add", flag.ContinueOnError)
 		interactive := fs.Bool("interactive", false, "choose and review a scheduled HTTP task")
 		slug := fs.String("app", "", "app slug (required)")
@@ -5356,11 +5360,14 @@ func cmdCrons(args []string) int {
 		failureRulesJSON := fs.String("failure-rules", "", "versioned retry/failure rules as JSON")
 		retryMax := fs.Int("retry-max", 0, "additional command attempts after failure or timeout (0 disables retries; max 5)")
 		retryBackoff := fs.Int("retry-backoff-seconds", 60, "base retry delay in seconds; doubles per attempt (1..3600)")
-		if err := fs.Parse(args[1:]); err != nil {
+		if err := fs.Parse(addArgs); err != nil {
 			return 1
 		}
 		if rejectUnexpectedFlagArgs(fs) {
 			return 1
+		}
+		if *interactive && lock != nil {
+			return printErr("Invalid interactive cron flags", errors.New("--lock is not part of the interactive flow; create the cron with flags"))
 		}
 		if *interactive {
 			invalid := false
@@ -5450,7 +5457,7 @@ func cmdCrons(args []string) int {
 			req.RetryMax = *retryMax
 			req.RetryBackoffSeconds = *retryBackoff
 		}
-		return createCronAndRender(context.Background(), client, *slug, req)
+		return createCronAndRender(context.Background(), client, *slug, req, lock)
 	case subUpdate:
 		return cmdCronsUpdate(args[1:])
 	case subInfo:
@@ -5492,13 +5499,28 @@ func cmdCrons(args []string) int {
 // deploymentIDPattern — same 32-hex convention across the platform.
 var cronIDPattern = regexp.MustCompile(`^[0-9a-fA-F]{32}$|^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
 
-func createCronAndRender(ctx context.Context, client *Client, slug string, req api.CreateCronRequest) int {
+func createCronAndRender(ctx context.Context, client *Client, slug string, req api.CreateCronRequest, lock *exclusiveLock) int {
 	c, err := client.CreateCron(ctx, slug, req)
 	if err != nil {
 		return printErr("Could not create cron", err)
 	}
+	var binding *api.ExclusiveTriggerBindingRecord
+	if lock != nil {
+		if binding, err = bindExclusiveLock(ctx, client, "cron", c.ID, lock); err != nil {
+			return printErr("Could not lock cron", err)
+		}
+	}
 	if jsonOutput {
+		if binding != nil {
+			return jsonOut(writeJSON(struct {
+				api.CronResponse
+				Lock *api.ExclusiveTriggerBindingRecord `json:"lock"`
+			}{c, binding}))
+		}
 		return jsonOut(writeJSON(c))
+	}
+	if binding != nil {
+		defer func() { _, _ = fmt.Fprintf(osStdout, "Runs one at a time per key under lock %s.\n", binding.Policy) }()
 	}
 	// HTTP crons fire a synthetic POST (spec §4); a cron aimed at a GET-only
 	// route failed every run with 404 while the receipt showed only the

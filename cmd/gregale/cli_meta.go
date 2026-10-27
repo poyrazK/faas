@@ -2135,6 +2135,8 @@ var cliCommands = []cliCommand{
 			{Name: "add", Short: "Schedule a POST to an app path, or a deployment command", Examples: []string{"gregale crons add --app my-api --interactive", "gregale crons add --app my-api --at 2030-01-01T09:00:00Z --path /report", "gregale crons add --app my-api --in 30m --path /reminders"}, Notes: []string{"With --at or --in, add schedules one request instead of a recurring cron and takes the flags of `gregale delayed-task add` (--payload, --method, --header, retries); --schedule and the command flags belong to recurring crons."}, Flags: []cliFlag{
 				{Name: "at", Short: "send one request at this RFC3339 time instead of on a schedule", Value: "RFC3339", Capability: "delayed-execution"},
 				{Name: "in", Short: "send one request after this delay (such as 30m) instead of on a schedule", Value: "DURATION", Capability: "delayed-execution"},
+				{Name: "lock", Short: "run one at a time per --lock-key under this managed operation policy", Value: "POLICY", Capability: "operations"},
+				{Name: "lock-key", Short: "JSON value that must run one at a time (requires --lock)", Value: "JSON", Capability: "operations"},
 				{Name: "interactive", Short: "choose an HTTP path, schedule, and timezone, preview run times, and confirm creation", Bool: true},
 				{Name: "app", Short: "app slug (interactive mode can use linked app or picker)", Value: "slug"},
 				{Name: "schedule", Short: "five-field cron expression (required unless interactive)", Value: "EXPR"},
@@ -2209,6 +2211,8 @@ var cliCommands = []cliCommand{
 			}},
 			{Name: "get", Short: "Show one trigger", Positionals: []string{"<id>"}},
 			{Name: "create", Short: "Create a broker trigger", Flags: []cliFlag{
+				{Name: "lock", Short: "run one at a time per --lock-key under this managed operation policy", Value: "POLICY", Capability: "operations"},
+				{Name: "lock-key", Short: "JSON value that must run one at a time (requires --lock)", Value: "JSON", Capability: "operations"},
 				{Name: "app", Short: "app slug", Req: true, Value: "slug"},
 				{Name: "kind", Short: "trigger kind", Req: true, Value: "kind", ClosedSet: triggerBrokerKindNames},
 				{Name: "slug", Short: "trigger slug (required for non-cron kinds)", Value: "slug"},
@@ -2330,7 +2334,9 @@ var cliCommands = []cliCommand{
 				{Name: "failure-rules", Value: "JSON", Short: "replace versioned exit-code and outcome retry rules JSON"},
 			}},
 			{Name: "rm", Short: "Soft-delete one job", Positionals: []string{"[<name>]"}, Flags: []cliFlag{{Name: "interactive", Bool: true, Short: "choose a Job, review configuration, and confirm removal"}}, Examples: []string{"gregale jobs rm --interactive"}},
-			{Name: "run", Short: "Dispatch a new run (fan-out N tasks)", Positionals: []string{"[<job-name>]"}, Examples: []string{"gregale jobs run --interactive", "gregale jobs run <job-name>", "gregale jobs run nightly-report --tasks 10 --wait --wait-timeout 10m", "gregale jobs run nightly-report --tasks 10 --out-dir ./results", "gregale jobs run nightly-report --tasks 10 --results", "gregale jobs run --dry-run", "gregale jobs run --saved-job --dry-run", "gregale jobs run --wait-ready --results"}, Flags: []cliFlag{
+			{Name: "run", Short: "Dispatch a new run (fan-out N tasks)", Positionals: []string{"[<job-name>]"}, Examples: []string{"gregale jobs run --interactive", "gregale jobs run <job-name>", "gregale jobs run nightly-report --tasks 10 --wait --wait-timeout 10m", "gregale jobs run nightly-report --tasks 10 --out-dir ./results", "gregale jobs run nightly-report --tasks 10 --results", "gregale jobs run --dry-run", "gregale jobs run --saved-job --dry-run", "gregale jobs run --wait-ready --results", "gregale jobs run export --lock exports --lock-key '\"customer-42\"'"}, Notes: []string{"With --lock, the run is submitted through the lock (what `gregale operations start-job` does) and takes only --tasks, --run-file and --idempotency-key."}, Flags: []cliFlag{
+				{Name: "lock", Short: "run one at a time per --lock-key under this managed operation policy", Value: "POLICY", Capability: "operations"},
+				{Name: "lock-key", Short: "JSON value that must run one at a time (requires --lock)", Value: "JSON", Capability: "operations"},
 				{Name: "saved-job", Bool: true, Short: "use local jobs defaults for the Job name and omitted settings; excludes a positional Job name"},
 				{Name: "wait-ready", Bool: true, Short: "wait for selected image preparation before submitting"},
 				{Name: "image-wait-timeout", Value: "DURATION", Short: "image preparation deadline (default 5m; requires --wait-ready)"},
