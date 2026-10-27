@@ -124,6 +124,9 @@ ADR-568 requires.
     target. The restore now enables public forwarding on its network, as the
     wake does, and captures the target after network setup.
     `PublicForwardTarget` resolves it under the same rule.
+  - HTTP forward admission (ADR-570) admits instances only from the serving
+    index. It now resolves restored targets under the same rule. Their
+    admission generation retires through the shared cleanup.
   - Together these give the probe the same reach a source candidate already
     has. The serving index and routing are unchanged.
 - **Framework-ready evidence (decided 2026-10-26).** Only a function runtime

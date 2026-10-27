@@ -419,7 +419,7 @@ func TestNetnsForReachesRestoredQualificationTargetsOnly(t *testing.T) {
 	m.live["serving"] = &Instance{Lease: Lease{Instance: "serving", Netns: "fc-serving"}}
 	restoredTarget := &netns.PublicForwardTarget{Veth: "vh-restored", IfIndex: 7}
 	m.qualificationInstances["restored"] = &Instance{Lease: Lease{Instance: "restored", Netns: "fc-restored"}, Method: WakeRestore, QualificationOnly: true,
-		publicForwardTarget: restoredTarget}
+		publicForwardTarget: restoredTarget, Plan: api.PlanHobby}
 	m.qualificationInstances["job"] = &Instance{Lease: Lease{Instance: "job", Netns: "fc-job"}, Method: WakeRestore, QualificationOnly: true, IsJob: true}
 	m.qualificationInstances["cold"] = &Instance{Lease: Lease{Instance: "cold", Netns: "fc-cold"}, Method: WakeColdBoot, QualificationOnly: true}
 	for instance, want := range map[string]string{"serving": "fc-serving", "restored": "fc-restored", "job": "", "cold": "", "absent": ""} {
@@ -435,6 +435,17 @@ func TestNetnsForReachesRestoredQualificationTargetsOnly(t *testing.T) {
 	for _, instance := range []string{"job", "cold", "absent"} {
 		if _, err := m.PublicForwardTarget(instance); err == nil {
 			t.Fatalf("PublicForwardTarget(%s) reached a private member", instance)
+		}
+	}
+	// HTTP forward admission (ADR-570) admits the restored target too.
+	_, release, err := m.AcquireHTTPForward(t.Context(), "restored")
+	if err != nil {
+		t.Fatalf("AcquireHTTPForward(restored) = %v", err)
+	}
+	release()
+	for _, instance := range []string{"job", "cold", "absent"} {
+		if _, _, err := m.AcquireHTTPForward(t.Context(), instance); !errors.Is(err, ErrHTTPForwardNotLive) {
+			t.Fatalf("AcquireHTTPForward(%s) admitted a private member: %v", instance, err)
 		}
 	}
 	if m.live["restored"] != nil {

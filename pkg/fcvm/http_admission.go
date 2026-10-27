@@ -37,6 +37,11 @@ func (m *Manager) AcquireHTTPForward(ctx context.Context, instance string) (cont
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	inst := m.live[instance]
+	if inst == nil {
+		// The restored-graph smoke reaches a restored qualification target
+		// the way a source candidate's does (ADR 20261023093000).
+		inst = m.restoredQualificationTargetLocked(instance)
+	}
 	// An unclaimed warm spare is still paused. Paused alone stays set on a
 	// claimed warm-pool restore, which serves.
 	if inst == nil || inst.warmSpare || inst.ExecutionOnly || inst.AppTaskOnly || inst.IsJob || inst.Lease.IsBuilder {
