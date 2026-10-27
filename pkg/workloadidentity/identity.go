@@ -114,6 +114,22 @@ type ExecutionClaims struct {
 	LeaseToken  string `json:"lease_token"`
 }
 
+// AgentRunClaims is the host-to-host identity of an agent run's relay
+// connection (ADR-20261027090010 §7, ADR-20261027090016). vmmd mints it from placement data
+// only; LeaseToken fences it to agentd's current lease, like ExecutionClaims.
+type AgentRunClaims struct {
+	jwt.Claims
+	AccountID    string `json:"account_id"`
+	RunID        string `json:"run_id"`
+	LeaseToken   string `json:"lease_token"`
+	TenantID     string `json:"platform_tenant_id,omitempty"`
+	AgentID      string `json:"agent_id"`
+	AgentVersion int    `json:"agent_version"`
+}
+
+// AgentRunSubjectPrefix starts an agent run assertion's subject.
+const AgentRunSubjectPrefix = "agent_run:"
+
 // Token is the response returned to the guest metadata proxy.
 type Token struct {
 	AccessToken string `json:"access_token"`
@@ -241,38 +257,72 @@ func (s *Signer) MintExecution(now time.Time, accountID, executionID, leaseToken
 	if _, err := uuid.Parse(leaseToken); err != nil {
 		return ExecutionToken{}, errors.New("workload identity: lease_token is invalid")
 	}
-	if err := validateAudience(audience); err != nil {
+	base, err := s.hostClaims(now, "execution:"+executionID, audience)
+	if err != nil {
 		return ExecutionToken{}, err
 	}
-	if now.IsZero() {
-		now = time.Now()
-	}
-	ttl := s.ttl
-	if ttl > DefaultTokenTTL {
-		ttl = DefaultTokenTTL
-	}
-	expires := now.Add(ttl)
-	var jtiBytes [16]byte
-	if _, err := rand.Read(jtiBytes[:]); err != nil {
-		return ExecutionToken{}, fmt.Errorf("workload identity: generate jti: %w", err)
-	}
-	claims := ExecutionClaims{
-		Claims: jwt.Claims{
-			Issuer:    s.issuer,
-			Subject:   "execution:" + executionID,
-			Audience:  jwt.Audience{audience},
-			IssuedAt:  jwt.NewNumericDate(now),
-			Expiry:    jwt.NewNumericDate(expires),
-			NotBefore: jwt.NewNumericDate(now.Add(-time.Second)),
-			ID:        hex.EncodeToString(jtiBytes[:]),
-		},
-		AccountID: accountID, ExecutionID: executionID, LeaseToken: leaseToken,
-	}
+	claims := ExecutionClaims{Claims: base, AccountID: accountID, ExecutionID: executionID, LeaseToken: leaseToken}
 	raw, err := jwt.Signed(s.signer).Claims(claims).Serialize()
 	if err != nil {
 		return ExecutionToken{}, fmt.Errorf("workload identity: serialize execution token: %w", err)
 	}
 	return ExecutionToken{jwt: raw}, nil
+}
+
+// MintAgentRun creates the short-lived relay assertion of an agent run. Like
+// MintExecution it is host-to-host material and never guest-facing.
+func (s *Signer) MintAgentRun(now time.Time, c AgentRunClaims, audience string) (ExecutionToken, error) {
+	if s == nil || s.signer == nil {
+		return ExecutionToken{}, errors.New("workload identity: signer is not configured")
+	}
+	for name, id := range map[string]string{"account_id": c.AccountID, "run_id": c.RunID, "lease_token": c.LeaseToken, "agent_id": c.AgentID} {
+		if _, err := uuid.Parse(id); err != nil {
+			return ExecutionToken{}, fmt.Errorf("workload identity: %s is invalid", name)
+		}
+	}
+	if c.TenantID != "" {
+		if _, err := uuid.Parse(c.TenantID); err != nil {
+			return ExecutionToken{}, errors.New("workload identity: platform_tenant_id is invalid")
+		}
+	}
+	if c.AgentVersion < 1 {
+		return ExecutionToken{}, errors.New("workload identity: agent_version is invalid")
+	}
+	base, err := s.hostClaims(now, AgentRunSubjectPrefix+c.RunID, audience)
+	if err != nil {
+		return ExecutionToken{}, err
+	}
+	c.Claims = base
+	raw, err := jwt.Signed(s.signer).Claims(c).Serialize()
+	if err != nil {
+		return ExecutionToken{}, fmt.Errorf("workload identity: serialize agent run token: %w", err)
+	}
+	return ExecutionToken{jwt: raw}, nil
+}
+
+// hostClaims are the standard claims of a host-to-host assertion: at most
+// DefaultTokenTTL long, with a fresh ID.
+func (s *Signer) hostClaims(now time.Time, subject, audience string) (jwt.Claims, error) {
+	if err := validateAudience(audience); err != nil {
+		return jwt.Claims{}, err
+	}
+	if now.IsZero() {
+		now = time.Now()
+	}
+	ttl := min(s.ttl, DefaultTokenTTL)
+	var jtiBytes [16]byte
+	if _, err := rand.Read(jtiBytes[:]); err != nil {
+		return jwt.Claims{}, fmt.Errorf("workload identity: generate jti: %w", err)
+	}
+	return jwt.Claims{
+		Issuer:    s.issuer,
+		Subject:   subject,
+		Audience:  jwt.Audience{audience},
+		IssuedAt:  jwt.NewNumericDate(now),
+		Expiry:    jwt.NewNumericDate(now.Add(ttl)),
+		NotBefore: jwt.NewNumericDate(now.Add(-time.Second)),
+		ID:        hex.EncodeToString(jtiBytes[:]),
+	}, nil
 }
 
 // JWKS returns the public key set suitable for an OIDC discovery endpoint.

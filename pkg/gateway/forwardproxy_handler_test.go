@@ -152,6 +152,12 @@ func (s *stubVmmdClient) ExecuteExecutionStream(context.Context, *vmmdpb.Execute
 func (s *stubVmmdClient) ExecuteExecutionBrokerStream(context.Context, ...grpc.CallOption) (grpc.BidiStreamingClient[vmmdpb.ExecuteExecutionBrokerRequest, vmmdpb.ExecuteExecutionBrokerEvent], error) {
 	return nil, status.Error(codes.Unimplemented, "execution broker stream is not used by HTTP gateway tests")
 }
+func (s *stubVmmdClient) RunAgent(context.Context, ...grpc.CallOption) (grpc.BidiStreamingClient[vmmdpb.RunAgentRequest, vmmdpb.RunAgentEvent], error) {
+	return nil, status.Error(codes.Unimplemented, "agent runs are not used by HTTP gateway tests")
+}
+func (s *stubVmmdClient) CaptureAgentSnapshot(context.Context, *vmmdpb.CaptureAgentSnapshotRequest, ...grpc.CallOption) (*vmmdpb.CaptureAgentSnapshotResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "agent runs are not used by HTTP gateway tests")
+}
 func (s *stubVmmdClient) RestoreExecution(context.Context, *vmmdpb.RestoreExecutionRequest, ...grpc.CallOption) (*vmmdpb.RestoreExecutionResponse, error) {
 	panic("RestoreExecution: not stubbed in handler integration test")
 }

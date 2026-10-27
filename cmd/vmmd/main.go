@@ -1848,7 +1848,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		WithExecutionIdentitySigner(identitySigner).
 		WithDivergedInstances(divergedInstances).
 		WithInvokeHookBackoff(cfg.InvokeHookBackoff).
-		WithBridgeStreamHeadroom(cfg.BridgeStreamHeadroom)
+		WithBridgeStreamHeadroom(cfg.BridgeStreamHeadroom).
+		// ADR-20261027090010 §1: agent runs stay off unless this node opts in.
+		WithAgentRuns(strings.TrimSpace(os.Getenv("FAAS_VMMD_AGENT_RUNS")) == "1")
 	// ADR-20261022184531: Ping tells schedd whether this vmmd can adopt each
 	// configured base generation, so a node that cannot is marked degraded.
 	impl.WithBaseGenerationReadiness(vmmdgrpc.NewCachedBaseGenerationReadiness(

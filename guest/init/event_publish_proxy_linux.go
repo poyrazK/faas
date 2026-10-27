@@ -77,16 +77,8 @@ func configureMetadataLoopback() error {
 		return fmt.Errorf("metadata loopback socket: %w", err)
 	}
 	defer func() { _ = unix.Close(fd) }()
-	loopback, err := unix.NewIfreq("lo")
-	if err != nil {
-		return fmt.Errorf("metadata loopback interface: %w", err)
-	}
-	if err := unix.IoctlIfreq(fd, unix.SIOCGIFFLAGS, loopback); err != nil {
-		return fmt.Errorf("metadata loopback flags: %w", err)
-	}
-	loopback.SetUint16(loopback.Uint16() | unix.IFF_UP)
-	if err := unix.IoctlIfreq(fd, unix.SIOCSIFFLAGS, loopback); err != nil {
-		return fmt.Errorf("metadata loopback enable: %w", err)
+	if err := setLoopbackUp(fd); err != nil {
+		return fmt.Errorf("metadata %w", err)
 	}
 	// An alias preserves lo's primary 127.0.0.1 address and makes repeated
 	// setup idempotent. Its /32 mask creates only the platform metadata route.
@@ -94,6 +86,33 @@ func configureMetadataLoopback() error {
 		return err
 	}
 	return setMetadataLoopbackIPv4(fd, unix.SIOCSIFNETMASK, []byte{255, 255, 255, 255})
+}
+
+// bringUpLoopback sets lo up, which also gives it 127.0.0.1. Networked
+// guests get this from their network setup; networkless agent run VMs call
+// it before serving the relay.
+func bringUpLoopback() error {
+	fd, err := unix.Socket(unix.AF_INET, unix.SOCK_DGRAM|unix.SOCK_CLOEXEC, 0)
+	if err != nil {
+		return fmt.Errorf("loopback socket: %w", err)
+	}
+	defer func() { _ = unix.Close(fd) }()
+	return setLoopbackUp(fd)
+}
+
+func setLoopbackUp(fd int) error {
+	loopback, err := unix.NewIfreq("lo")
+	if err != nil {
+		return fmt.Errorf("loopback interface: %w", err)
+	}
+	if err := unix.IoctlIfreq(fd, unix.SIOCGIFFLAGS, loopback); err != nil {
+		return fmt.Errorf("loopback flags: %w", err)
+	}
+	loopback.SetUint16(loopback.Uint16() | unix.IFF_UP)
+	if err := unix.IoctlIfreq(fd, unix.SIOCSIFFLAGS, loopback); err != nil {
+		return fmt.Errorf("loopback enable: %w", err)
+	}
+	return nil
 }
 
 func setMetadataLoopbackIPv4(fd int, operation uint, address []byte) error {

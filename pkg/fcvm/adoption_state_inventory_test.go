@@ -115,6 +115,8 @@ var adoptionInstanceInventory = map[string]string{
 	"ExecutionLeaseToken":             "refused",
 	"ExecutionOutboundIntegrationIDs": "refused",
 	"AppTaskOnly":                     "refused", // app-task kind
+	"AgentRunOnly":                    "refused", // agent runs record the execution kind and are killed
+	"AgentRunRelay":                   "refused", // agent-run guests only
 	"QualificationOnly":               "refused", // qualification kind
 	"Paused":                          "rebuilt", // warm-pool restore, claimed or not
 	"QuietPauseAfter":                 "rebuilt",

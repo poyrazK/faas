@@ -132,6 +132,10 @@ const (
 	DriveLayer         = "layer"      // legacy alias for DriveLayerMain
 	DriveLayerMain     = "layer-main" // PR-B canonical main workload drive id
 	DriveSidecarPrefix = "layer-sidecar-"
+	// DriveAgentInput is an agent run's read-only input drive (ADR-20261027090010
+	// §3). It follows the base and the agent layer, so the guest sees it as
+	// drive 2.
+	DriveAgentInput = "agent-input"
 	// WorkloadNameMain is the reserved name on WorkloadSpec.Name / .Type
 	// for the main workload. Sidecar names must not collide with it
 	// (buildWorkloadsForColdBoot rejects "main" with a host-side
@@ -315,6 +319,11 @@ type ColdBootSpec struct {
 	// one command on the app-task vsock channel instead of starting the app.
 	// Unlike Networkless, it retains the deployment's normal network policy.
 	AppTask bool
+	// AgentInput attaches an agent run's read-only input drive (ADR-20261027090010
+	// §3), always agentrunproto.InputDriveBytes long. InputKey is the
+	// StorageBackend key of the image it holds; empty: zeros.
+	AgentInput bool
+	InputKey   string
 }
 
 // JobColdBootSpec (issue #1184 Workstream A / ADR-099) is the
@@ -454,9 +463,14 @@ func BuildColdBootConfig(s ColdBootSpec, slot int) VMConfig {
 			})
 		}
 	}
+	if s.AgentInput {
+		drives = append(drives, Drive{DriveID: DriveAgentInput, PathOnHost: s.InputKey, IsReadOnly: true})
+	}
 	network := []NetIface{{IfaceID: "eth0", HostDevName: s.Tap}}
 	if s.Networkless {
-		network = nil
+		// An empty list, not nil: Firecracker's --config-file parser rejects
+		// "network-interfaces": null ("expected a sequence").
+		network = []NetIface{}
 	}
 	bootArgs := withGuestTimer(coldBootArgs)
 	if s.Networkless {
@@ -528,6 +542,10 @@ func (s ColdBootSpec) Validate() error {
 		return fmt.Errorf("fcvm: cold boot: startup_deadline_s %d < 0", s.StartupDeadlineS)
 	case !validCharacterizationExecutionMode(s.ExecutionMode):
 		return fmt.Errorf("fcvm: cold boot: invalid execution_mode %q", s.ExecutionMode)
+	case s.InputKey != "" && !s.AgentInput:
+		return fmt.Errorf("fcvm: cold boot: an input image needs the agent input drive")
+	case s.AgentInput && (!s.Networkless || len(s.Workloads) > 0):
+		return fmt.Errorf("fcvm: cold boot: an input drive needs a networkless single-layer guest")
 	}
 	return nil
 }

@@ -273,10 +273,12 @@ type Server struct {
 	// (ADR-1037). The zero value is ready to use.
 	appTaskAttach appTaskAttachRegistry
 
-	vmm   VmmdAPI
-	ops   *wire.OpsMetrics
-	fcVer string
-	log   *slog.Logger
+	vmm VmmdAPI
+	ops *wire.OpsMetrics
+	// agentRunsEnabled gates RunAgent (ADR-20261027090010 §1: off by default).
+	agentRunsEnabled bool
+	fcVer            string
+	log              *slog.Logger
 	// baseReadiness answers Ping's base generation report (ADR-20261022184531).
 	baseReadiness *CachedBaseGenerationReadiness
 	// diverged (ADR-740) lists instances that were served a developer live
