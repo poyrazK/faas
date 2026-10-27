@@ -59,6 +59,10 @@ type target struct {
 	maxApps       int           // GREGALE_E2E_MAX_APPS; 0 sizes appSlots from account headroom
 	appSlots      chan struct{} // bounds apps held at once; made by the preflight
 
+	// firstBuild holds one sync.Once per probe version (see deployVersion).
+	firstBuildMu sync.Mutex
+	firstBuild   map[string]*sync.Once
+
 	// The shared probe is one v1 probe app that read-only journeys share.
 	sharedOnce sync.Once
 	sharedSlug string
@@ -486,7 +490,7 @@ func (tg *target) sharedProbe(t *testing.T) (slug, base string) {
 		tg.sharedErr = fmt.Errorf("the shared probe app failed to deploy in %s", t.Name())
 		tg.acquireAppSlot(t)
 		tg.sharedSlug = tg.slug("shared")
-		receipt := tg.deploy(t, tg.sharedSlug, "--path", probeSource(t, "v1"))
+		receipt := tg.deployVersion(t, tg.sharedSlug, "v1")
 		tg.sharedBase = strings.TrimRight(str(receipt, "app_url"), "/")
 		if tg.sharedBase == "" {
 			tg.sharedBase = tg.appURL(tg.sharedSlug)
@@ -497,6 +501,31 @@ func (tg *target) sharedProbe(t *testing.T) (slug, base string) {
 		t.Fatal(tg.sharedErr)
 	}
 	return tg.sharedSlug, tg.sharedBase
+}
+
+// deployVersion deploys probe version to slug. The first deploy of each
+// version runs alone and the rest wait for it: parallel deploys of a source
+// the build cache has not seen would each reserve a 20 GiB builder drive,
+// while after one build they are all cache hits that skip the builder VM.
+func (tg *target) deployVersion(t *testing.T, slug, version string, extra ...string) map[string]any {
+	t.Helper()
+	tg.firstBuildMu.Lock()
+	if tg.firstBuild == nil {
+		tg.firstBuild = map[string]*sync.Once{}
+	}
+	once := tg.firstBuild[version]
+	if once == nil {
+		once = &sync.Once{}
+		tg.firstBuild[version] = once
+	}
+	tg.firstBuildMu.Unlock()
+	args := append([]string{"--path", probeSource(t, version)}, extra...)
+	var receipt map[string]any
+	once.Do(func() { receipt = tg.deploy(t, slug, args...) })
+	if receipt != nil {
+		return receipt
+	}
+	return tg.deploy(t, slug, args...)
 }
 
 // deleteShared removes the shared probe once every journey has finished.

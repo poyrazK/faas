@@ -20,14 +20,14 @@ func TestReleaseAndRollback(t *testing.T) {
 
 	var v1 map[string]any
 	s.step("deploy_v1", func(t *testing.T) {
-		v1 = tg.deploy(t, slug, "--path", probeSource(t, "v1"))
+		v1 = tg.deployVersion(t, slug, "v1")
 		if u := str(v1, "app_url"); u != "" {
 			base = strings.TrimRight(u, "/")
 		}
 		expectVersion(t, base, "v1", time.Minute)
 	})
 	s.step("redeploy_v2_immediate", func(t *testing.T) {
-		tg.deploy(t, slug, "--path", probeSource(t, "v2"), "--rollout", "immediate")
+		tg.deployVersion(t, slug, "v2", "--rollout", "immediate")
 		expectVersion(t, base, "v2", 2*time.Minute)
 	})
 	s.check("deployment_history", func(t *testing.T) {
@@ -55,7 +55,7 @@ func TestSafeReleaseZeroDowntime(t *testing.T) {
 
 	s.step("safe_redeploy_v2", func(t *testing.T) {
 		defer probe.stop()
-		tg.deploy(t, slug, "--path", probeSource(t, "v2"))
+		tg.deployVersion(t, slug, "v2")
 		expectVersion(t, base, "v2", 2*time.Minute)
 	})
 	// Its own check so an availability gap is reported separately from

@@ -269,7 +269,7 @@ const probeImage = "docker.io/nginxinc/nginx-unprivileged@sha256:65e3e85dbaed8ba
 func (tg *target) deployProbe(t *testing.T, name string) (slug, base string) {
 	t.Helper()
 	slug = tg.app(t, name)
-	receipt := tg.deploy(t, slug, "--path", probeSource(t, "v1"))
+	receipt := tg.deployVersion(t, slug, "v1")
 	base = strings.TrimRight(str(receipt, "app_url"), "/")
 	if base == "" {
 		base = tg.appURL(slug)
