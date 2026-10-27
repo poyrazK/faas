@@ -71,6 +71,7 @@ table inet faas {
 {% if (faas_edge_on_compute_nodes | default(false) | string | lower) in ["true", "yes", "on", "1"] and faas_control_plane_allowed_cidrs is defined and faas_control_plane_allowed_cidrs -%}
 {% for cidr in faas_control_plane_allowed_cidrs -%}
     ip saddr {{ cidr }} tcp dport {{ faas_edge_connector_metrics_port | default(20241) }} accept comment "faas app edge connector metrics from control (ADR-1343)"
+    ip saddr {{ cidr }} tcp dport {{ faas_edge_control_port | default(9109) }} accept comment "faas app edge control listener from control (ADR-1343)"
 {% endfor -%}
 {% endif -%}
 {% if faas_control_plane_allowed_cidrs is defined and faas_control_plane_allowed_cidrs -%}

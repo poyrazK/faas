@@ -30,6 +30,9 @@ type deployPreflightSummary struct {
 	// Healthcheck is the resolved --healthcheck-path / --healthcheck-grpc
 	// override, when one was given.
 	Healthcheck *api.DeploymentHealthcheck
+	// AppProtocol is --app-protocol, when given. A gRPC app without a probe
+	// flag gets gRPC health readiness from schedd (Hunt 14 H14-55).
+	AppProtocol string
 	// Image marks an OCI image deploy, whose port comes from the image
 	// unless --port set one.
 	Image bool
@@ -175,7 +178,13 @@ func renderDeployPreflight(w io.Writer, summary deployPreflightSummary) {
 	if summary.BuildPlan != nil && summary.BuildPlan.Handler != "" {
 		_, _ = fmt.Fprintf(w, "  %-14s %s\n", "handler:", summary.BuildPlan.Handler)
 	}
-	listener := deployPreflightListenerWith(summary.BuildPlan, summary.SimpleAppPlan, summary.Healthcheck)
+	hc := summary.Healthcheck
+	if hc == nil && strings.EqualFold(summary.AppProtocol, api.AppProtocolGRPC) {
+		// Mirror schedd's default so the plan does not promise GET /healthz
+		// to a gRPC server.
+		hc = &api.DeploymentHealthcheck{GRPC: &api.DeploymentGRPCHealthcheck{}}
+	}
+	listener := deployPreflightListenerWith(summary.BuildPlan, summary.SimpleAppPlan, hc)
 	if summary.Image && imagePortDefaulted(summary.SimpleAppPlan) {
 		// The plan renders before the image is read; an image deploy without
 		// --port serves its declared port, not the 8080 default the plan

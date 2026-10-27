@@ -26,6 +26,7 @@ all=(SEAL_DOMAIN_OUTBOUND_AGE_KEY="$(key outbound)" SEAL_DOMAIN_OUTBOUND_AGE_REC
   SEAL_DOMAIN_ALERTING_AGE_KEY="$(key alerting)" SEAL_DOMAIN_ALERTING_AGE_RECIPIENT="$(pub alerting)"
   SEAL_DOMAIN_STORAGE_AGE_KEY="$(key storage)" SEAL_DOMAIN_STORAGE_AGE_RECIPIENT="$(pub storage)"
   SEAL_DOMAIN_CONTROL_AGE_KEY="$(key control)" SEAL_DOMAIN_CONTROL_AGE_RECIPIENT="$(pub control)"
+  SEAL_DOMAIN_DELIVERY_AGE_KEY="$(key delivery)" SEAL_DOMAIN_DELIVERY_AGE_RECIPIENT="$(pub delivery)"
   SEAL_DOMAIN_RUNTIME_AGE_KEY="$(key runtime)" SEAL_DOMAIN_RUNTIME_AGE_RECIPIENT="$(pub runtime)"
   SEAL_DOMAIN_BUILD_AGE_KEY="$(key build)" SEAL_DOMAIN_BUILD_AGE_RECIPIENT="$(pub build)"
   SEAL_DOMAIN_EDGE_AGE_KEY="$(key edge)" SEAL_DOMAIN_EDGE_AGE_RECIPIENT="$(pub edge)")
@@ -43,6 +44,8 @@ for want in "faas_seal_domains_managed: true" \
   "faas_seal_domain_storage_identity_src: \"$work/cp/out/storage.age\"" \
   "faas_seal_domain_storage_recipient_src: \"$work/cp/out/storage.age.pub\"" \
   "faas_seal_domain_control_identity_src: \"$work/cp/out/control.age\"" \
+  "faas_seal_domain_delivery_identity_src: \"$work/cp/out/delivery.age\"" \
+  "faas_seal_domain_delivery_recipient_src: \"$work/cp/out/delivery.age.pub\"" \
   "faas_seal_domain_runtime_recipient_src: \"$work/cp/out/runtime.age.pub\"" \
   "faas_seal_domain_build_recipient_src: \"$work/cp/out/build.age.pub\"" \
   "faas_seal_domain_edge_recipient_src: \"$work/cp/out/edge.age.pub\""; do
@@ -61,7 +64,8 @@ run compute compute "${all[@]}" || fail "compute staging failed"
 for want in "faas_seal_domain_runtime_identity_src: \"$work/compute/out/runtime.age\"" \
   "faas_seal_domain_build_identity_src: \"$work/compute/out/build.age\"" \
   "faas_seal_domain_edge_identity_src: \"$work/compute/out/edge.age\"" \
-  "faas_seal_domain_control_identity_src: \"$work/compute/out/control.age\""; do
+  "faas_seal_domain_control_identity_src: \"$work/compute/out/control.age\"" \
+  "faas_seal_domain_delivery_identity_src: \"$work/compute/out/delivery.age\""; do
   grep -qxF "$want" "$work/compute/vars.yml" || fail "compute is missing: $want"
 done
 ! grep -vE '^#' "$work/compute/vars.yml" | grep -qE 'outbound|source|alerting|storage|recipient_src' || fail "compute got control-plane keys: $(cat "$work/compute/vars.yml")"

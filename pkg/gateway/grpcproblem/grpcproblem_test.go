@@ -4,9 +4,11 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -159,6 +161,27 @@ func TestMiddlewareTranslatesOnlyGRPCErrorResponses(t *testing.T) {
 				t.Fatalf("body %q, want body present = %v", rec.Body.String(), tc.wantBody)
 			}
 		})
+	}
+}
+
+func TestLongRefusalMessageIsCutOnARuneBoundary(t *testing.T) {
+	detail := strings.Repeat("ç", 700) // 1,400 bytes of two-byte runes
+	h := grpcproblem.Middleware(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		api.WriteProblem(w, api.NewProblem(http.StatusForbidden, "forbidden", "x", detail))
+	}))
+	req := httptest.NewRequest(http.MethodPost, "/grpc.health.v1.Health/Check", strings.NewReader(""))
+	req.Header.Set("Content-Type", "application/grpc")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	message, err := url.PathUnescape(rec.Header().Get("Grpc-Message"))
+	if err != nil {
+		t.Fatalf("decode grpc-message: %v", err)
+	}
+	if len(message) == 0 || len(message) > 1024 {
+		t.Fatalf("grpc-message is %d bytes, want 1..1024", len(message))
+	}
+	if !utf8.ValidString(message) {
+		t.Fatalf("grpc-message is not valid UTF-8 after truncation: %q", message[len(message)-4:])
 	}
 }
 

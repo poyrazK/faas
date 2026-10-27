@@ -57,6 +57,63 @@ func (m *MemStore) AppWideEdgeRules(_ context.Context, appID string) ([]EdgeRule
 	return out, nil
 }
 
+// OwnedEdgeRuleStore is the capability gatewayd type-asserts to load a host's
+// rules for the account that owns the host (ADR-091 amendment 2026-10-26).
+// The gateway applies only the owner's rules, so another account's rules
+// whose match_host also covers the host ("*", "*.example.com") are never
+// read, and the read uses edge_rules_account_enabled_idx.
+type OwnedEdgeRuleStore interface {
+	// OwnedEdgeRulesForHost returns accountID's enabled, unexpired rules whose
+	// match_host covers host, and appID's app-wide ("@app") rules, in
+	// evaluation order (priority, created_at, id). appID may be empty.
+	OwnedEdgeRulesForHost(ctx context.Context, host, accountID, appID string) ([]EdgeRule, error)
+}
+
+var (
+	_ OwnedEdgeRuleStore = (*PgStore)(nil)
+	_ OwnedEdgeRuleStore = (*MemStore)(nil)
+)
+
+func (s *PgStore) OwnedEdgeRulesForHost(ctx context.Context, host, accountID, appID string) ([]EdgeRule, error) {
+	rows, err := s.pool.Query(ctx, `
+		select `+edgeRuleSelectCols+` from edge_rules
+		 where account_id = $2
+		   and enabled = true
+		   and (expires_at is null or expires_at > now())
+		   and (
+		   	match_host = $1
+		   	or match_host = '*'
+		   	or $1 like replace(replace(match_host, '*', '%'), '?', '_')
+		   	or (app_id = nullif($3, '')::uuid and lower(match_host) = $4)
+		   )
+		 order by priority asc, created_at asc, id asc
+	`, host, accountID, appID, api.EdgeRuleAppHosts)
+	if err != nil {
+		return nil, fmt.Errorf("state: owned edge rules for host %s: %w", host, err)
+	}
+	defer rows.Close()
+	return scanEdgeRules(rows)
+}
+
+func (m *MemStore) OwnedEdgeRulesForHost(_ context.Context, host, accountID, appID string) ([]EdgeRule, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var out []EdgeRule
+	for _, r := range m.edgeRules {
+		if r.AccountID != accountID || !r.Enabled || r.EdgeRuleExpired(time.Now()) {
+			continue
+		}
+		appWide := appID != "" && r.AppID == appID && api.IsEdgeRuleAppHosts(r.MatchHost)
+		if !appWide && !matchHostPattern(r.MatchHost, host) {
+			continue
+		}
+		r.MatchHeaders = cloneEdgeRuleMatchHeaders(r.MatchHeaders)
+		out = append(out, r)
+	}
+	sort.Slice(out, func(i, j int) bool { return edgeRuleMatchOrderLess(out[i], out[j]) })
+	return out, nil
+}
+
 // MergeEdgeRulesInOrder merges two rule slices already in evaluation order
 // into one, keeping that order and dropping duplicate ids.
 func MergeEdgeRulesInOrder(a, b []EdgeRule) []EdgeRule {

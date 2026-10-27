@@ -88,10 +88,20 @@ func (f *routesFixture) respond(path string, status int, body string, headers ..
 	f.vmmd.SetResponseForPath(f.instance.ID, path, e2etest.FakeResponse{Status: status, Headers: headers, Body: []byte(body)})
 }
 
-// get sends one anonymous customer request through the public edge.
+// get sends one anonymous customer request through the public edge. The
+// gateway refuses a request with 503 rate_limit_unavailable and Retry-After
+// when its shared rate allowance cannot be verified in time (ADR-570), which
+// a loaded CI runner hits; get retries that refusal as a client would.
 func (f *routesFixture) get(t *testing.T, path string) (http.Header, []byte, int) {
 	t.Helper()
-	return doReqHeaders(t, f.h, f.host, http.MethodGet, path, nil)
+	for attempt := 1; ; attempt++ {
+		headers, body, status := doReqHeaders(t, f.h, f.host, http.MethodGet, path, nil)
+		if status != http.StatusServiceUnavailable || !strings.Contains(string(body), `"rate_limit_unavailable"`) || attempt == 10 {
+			return headers, body, status
+		}
+		t.Logf("GET %s: shared rate allowance unavailable, retrying", path)
+		time.Sleep(time.Second)
+	}
 }
 
 func (f *routesFixture) api(t *testing.T, method, path string, body any, out any) int {
@@ -462,11 +472,16 @@ func TestE2E_Routes_ProductionMonitorOpensIncident(t *testing.T) {
 // gatewayReqNoFatal sends background traffic; a failure is the caller's
 // assertion to make, not a reason to stop the generator from its goroutine.
 func gatewayReqNoFatal(f *routesFixture, path string) (int, []byte, error) {
+	return gatewayGetNoFatal(f, f.host, path)
+}
+
+// gatewayGetNoFatal is gatewayReqNoFatal for any app on the fixture's edge.
+func gatewayGetNoFatal(f *routesFixture, host, path string) (int, []byte, error) {
 	req, err := http.NewRequest(http.MethodGet, f.h.EdgeURL()+path, nil) //nolint:noctx // bounded by the client timeout
 	if err != nil {
 		return 0, nil, err
 	}
-	req.Host = f.host
+	req.Host = host
 	client := *f.h.HTTPClient()
 	client.Timeout = 10 * time.Second
 	resp, err := client.Do(req)

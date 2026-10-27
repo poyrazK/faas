@@ -59,6 +59,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/logsanitize"
 	"github.com/onebox-faas/faas/pkg/middleware"
 	"github.com/onebox-faas/faas/pkg/session"
+	"github.com/onebox-faas/faas/pkg/sessioncookie"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/wire"
 )
@@ -192,8 +193,10 @@ type Middleware struct {
 	// (host-only cookie; dev/test default).
 	CookieDomain string
 
-	// SessionCookieName is the cookie name RequireSession reads
-	// (and clearSessionCookie writes). Empty = "faas_sid".
+	// SessionCookieName overrides the cookie RequireSession reads (and
+	// ClearSessionCookie writes). Empty or the default reads
+	// pkg/sessioncookie's __Host-faas_sid, then the legacy faas_sid
+	// (ADR-20261026112500).
 	SessionCookieName string
 
 	// keyDebounce gates per-key last_used_at touches to one
@@ -382,7 +385,15 @@ func New(authn Authenticator, sessions Sessions, lookups SessionLookup,
 	}
 }
 
-const defaultSessionCookieName = "faas_sid"
+const defaultSessionCookieName = sessioncookie.LegacyName
+
+// sessionCookie returns the request's session cookie.
+func (m *Middleware) sessionCookie(r *http.Request) (*http.Cookie, error) {
+	if m.SessionCookieName == "" || m.SessionCookieName == defaultSessionCookieName {
+		return sessioncookie.Get(r)
+	}
+	return r.Cookie(m.SessionCookieName)
+}
 
 // keyTouchWindow is the per-key debounce window for last_used_at
 // touches. 30s matches cmd/apid's server.touchDebounce. Hot keys
@@ -747,7 +758,7 @@ func (m *Middleware) RequireSession(next AccountHandler) http.HandlerFunc {
 		// (2) Session-cookie branch — verify AEAD, cross-check
 		//     live row, stamp principal.
 		if m.Sessions != nil && m.Lookups != nil {
-			if c, err := r.Cookie(m.SessionCookieName); err == nil && c.Value != "" {
+			if c, err := m.sessionCookie(r); err == nil && c.Value != "" {
 				env, err := m.Sessions.Verify(c.Value)
 				if err == nil {
 					sess, handled, cookieErr := m.RequireSessionCookie(w, r, env)
@@ -1752,8 +1763,9 @@ func (m *Middleware) clearSessionCookie(w http.ResponseWriter) {
 // session-revoke).
 func (m *Middleware) ClearSessionCookie(w http.ResponseWriter) {
 	name := m.SessionCookieName
-	if name == "" {
-		name = defaultSessionCookieName
+	if name == "" || name == defaultSessionCookieName {
+		sessioncookie.Clear(w, m.CookieDomain)
+		return
 	}
 	http.SetCookie(w, &http.Cookie{
 		Name:     name,
