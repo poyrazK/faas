@@ -963,6 +963,7 @@ type Handler struct {
 	preAuthCentral           CentralBackend
 	bodySpoolBudget          *requestBodyBudget
 	bodyMemoryBudget         *requestBodyBudget
+	keyLookups               *keyLookupLimiter
 	financialBudgetAdmission func(context.Context, App) error
 	// routeLimiter is the per-rule token-bucket throttle (ADR-091
 	// D20.5 amendment, issue #881). Same underlying *Limiter type as
@@ -1482,6 +1483,7 @@ func NewHandlerWith(backend Backend, m *Metrics, log *slog.Logger) *Handler {
 		// The request bodies this gateway holds at once: spooled uploads
 		// on disk, validate-rule bodies in the heap.
 		bodySpoolBudget:  newRequestBodyBudget(api.RequestBodySpoolNodeBytes, api.RequestBodySpoolPerClient),
+		keyLookups:       newKeyLookupLimiter(),
 		bodyMemoryBudget: newRequestBodyBudget(api.RequestBodyMemoryNodeBytes, 0),
 		// routeLimiter is built with NewLimiterWithLRU (#887) so
 		// the per-rule bucket map — keyed by appID+"\x00"+ruleID —
@@ -2226,7 +2228,13 @@ func (h *Handler) enforceRequireAuthn(w http.ResponseWriter, r *http.Request, re
 	// The hash call uses the same api.HashAPIKey helper the
 	// apid middleware uses (defense in depth — keys never
 	// reach the store unhashed).
-	acct, key, err := h.requireAuthnAuthn.AuthenticateKey(r.Context(), api.HashAPIKey(tok))
+	acct, key, err := h.authenticateBearer(r, tok)
+	if errors.Is(err, errKeyLookupThrottled) {
+		rec.status = http.StatusTooManyRequests
+		writeKeyLookupThrottled(w)
+		h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
+		return false
+	}
 	if err != nil {
 		// Distinguish expired/revoked (the store's typed
 		// sentinels) from "unknown key" so the audit row
@@ -5068,7 +5076,13 @@ func (h *Handler) enforcePublicAuthBearer(w http.ResponseWriter, r *http.Request
 	// (2) Verify the key via the shared require_authn chain
 	// (same api.HashAPIKey helper; defense in depth — keys
 	// never reach the store unhashed).
-	acct, key, err := h.requireAuthnAuthn.AuthenticateKey(r.Context(), api.HashAPIKey(tok))
+	acct, key, err := h.authenticateBearer(r, tok)
+	if errors.Is(err, errKeyLookupThrottled) {
+		rec.status = http.StatusTooManyRequests
+		writeKeyLookupThrottled(w)
+		h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
+		return false
+	}
 	if err != nil {
 		reason := authnReasonInvalidBearer
 		if errors.Is(err, ErrAPIKeyExpired) {
