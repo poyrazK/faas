@@ -815,6 +815,9 @@
       "routes": [
         "/v1/apps/{}/buckets/{}/cors",
         "/v1/orgs/{}/apps/{}/buckets/{}/cors"
+      ],
+      "cli": [
+        "bucket cors"
       ]
     },
     {
@@ -2997,7 +3000,7 @@
         "scale"
       ],
       "docs_url": "/docs/logs",
-      "acceptance_test": "pkg/api/client_test.go::TestStreamAppLogs_HappyPath",
+      "acceptance_test": "cmd/e2e/logs_archive_metal_test.go::TestLogsLiveAndArchivedMetal",
       "routes": [
         "/dashboard/apps/{}/logs",
         "/v1/apps/{}/logs",
@@ -3973,6 +3976,7 @@
         "githubd"
       ],
       "routes": [
+        "/dashboard/apps/{}/preview",
         "/dashboard/apps/{}/previews",
         "/dashboard/previews",
         "/v1/apps/{}/previews",
@@ -4062,6 +4066,11 @@
         "/v1/apps/{}/debug/compare",
         "/v1/apps/{}/debug/critical-paths",
         "/v1/apps/{}/debug/requests"
+      ],
+      "cli": [
+        "debug bundle",
+        "debug compare",
+        "debug requests"
       ]
     },
     {
@@ -4690,6 +4699,7 @@
         "/v1/apps/{}/routes"
       ],
       "cli": [
+        "app routes",
         "routes",
         "routes insights"
       ]
@@ -4942,6 +4952,7 @@
         "/dashboard/apps/{}/secret-revocations",
         "/dashboard/apps/{}/secrets",
         "/v1/apps/{}/secret-references",
+        "/v1/apps/{}/secret-requests",
         "/v1/apps/{}/secret-revocations",
         "/v1/apps/{}/secrets",
         "/v1/secrets"
@@ -5122,6 +5133,7 @@
         "/v1/apps/{}/trusted_signers"
       ],
       "cli": [
+        "app security",
         "trusted-publishers"
       ]
     },
@@ -5590,7 +5602,7 @@
         "pro",
         "scale"
       ],
-      "docs_url": "/docs/cli/deploy",
+      "docs_url": "/docs/workers",
       "acceptance_test": "cmd/e2e/worker_pool_e2e_test.go::TestE2E_WorkerPool_ScalesWithQueueDepthAndStabilizesScaleIn",
       "settings": [
         "app.execution_mode=worker",

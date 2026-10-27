@@ -2130,6 +2130,12 @@ func (b *PGBackend) recordAdmissionWithIdentity(ctx context.Context, appID, depl
 	if atCapacity || nodeID == "" || instanceID == "" {
 		if atCapacity && b.placementLoader != nil {
 			err := b.hydrateCurrentTargets(ctx, appID)
+			if errors.Is(err, ErrTargetPlacementChanged) {
+				// The replica the caller waits for can be admitted while this
+				// read is in flight; that read is stale, not wrong. Take one
+				// fresh read, as the control-plane repair poll does.
+				err = b.hydrateCurrentTargets(ctx, appID)
+			}
 			return "", WakeMethodUnspecified, true, err
 		}
 		if atCapacity && b.liveTargetLoader != nil {
@@ -2895,6 +2901,23 @@ func (b *PGBackend) InvalidateEdgeRuleHosts(patterns []string) {
 		return
 	}
 	b.edgeRules.Reset()
+}
+
+// InvalidateEdgeRuleAccountHosts is InvalidateEdgeRuleHosts for a mutation
+// whose account is known (ADR-091 amendment 2026-10-26): sets that hold only
+// another account's rules are kept. Matchers without it fall back to
+// InvalidateEdgeRuleHosts.
+func (b *PGBackend) InvalidateEdgeRuleAccountHosts(accountID, appID string, patterns []string) {
+	if b.edgeRules == nil {
+		return
+	}
+	if matcher, ok := b.edgeRules.(interface {
+		InvalidateAccountHosts(string, string, []string)
+	}); ok {
+		matcher.InvalidateAccountHosts(accountID, appID, patterns)
+		return
+	}
+	b.InvalidateEdgeRuleHosts(patterns)
 }
 
 // BeginEdgeRuleConvergence forwards the prepare phase to matchers that support

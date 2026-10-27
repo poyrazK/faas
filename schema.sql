@@ -5330,7 +5330,7 @@ BEGIN
   NOT EXISTS(SELECT 1 FROM object_buckets d JOIN object_buckets s ON s.id=source
     WHERE d.id=destination AND d.account_id=a AND s.account_id=a AND d.state='ready' AND s.state='ready'
     AND (d.backend_id,d.backend_fingerprint)=(s.backend_id,s.backend_fingerprint)) OR
-  EXISTS(SELECT 1 FROM object_deletions WHERE bucket_id IN (destination,source) AND state IN ('prepared','dispatched')) THEN
+  EXISTS(SELECT 1 FROM object_deletions WHERE bucket_id=source AND object_key=key AND state IN ('prepared','dispatched')) THEN
   RAISE EXCEPTION USING ERRCODE='23514',CONSTRAINT='object_copy_source_fenced',MESSAGE='Copy source authority changed';
  END IF;
 END $_$;
@@ -70935,6 +70935,13 @@ CREATE INDEX edge_rule_hit_counts_app_bucket_idx ON public.edge_rule_hit_counts 
 
 
 --
+-- Name: edge_rules_account_enabled_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX edge_rules_account_enabled_idx ON public.edge_rules USING btree (account_id) WHERE enabled;
+
+
+--
 -- Name: edge_rules_app_id_enabled_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -72678,6 +72685,13 @@ CREATE INDEX invocations_dispatching_due_idx ON public.invocations USING btree (
 
 
 --
+-- Name: invocations_drain_due_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX invocations_drain_due_idx ON public.invocations USING btree (due_at, id) WHERE ((state = 'pending'::text) AND ((source <> 'queue'::text) OR ((queue_name = ''::text) AND (queue_binding_id IS NULL))));
+
+
+--
 -- Name: invocations_due_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -72724,6 +72738,20 @@ CREATE INDEX invocations_platform_tenant_idx ON public.invocations USING btree (
 --
 
 CREATE INDEX invocations_queue_binding_scope_idx ON public.invocations USING btree (app_id, queue_binding_id, deployment_scope, state, created_at) WHERE ((source = 'queue'::text) AND (state = ANY (ARRAY['pending'::text, 'dispatching'::text, 'dead_letter'::text])));
+
+
+--
+-- Name: invocations_queue_lease_binding_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX invocations_queue_lease_binding_idx ON public.invocations USING btree (app_id, queue_binding_id, due_at, created_at, id) WHERE ((source = 'queue'::text) AND (state = 'pending'::text) AND (queue_binding_id IS NOT NULL));
+
+
+--
+-- Name: invocations_queue_lease_name_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX invocations_queue_lease_name_idx ON public.invocations USING btree (app_id, queue_name, due_at, created_at, id) WHERE ((source = 'queue'::text) AND (state = 'pending'::text) AND (queue_binding_id IS NULL));
 
 
 --

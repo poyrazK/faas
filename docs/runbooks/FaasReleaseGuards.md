@@ -8,6 +8,8 @@ The release guards hold production releases back:
 - rollbacks that restore the database (ADR-20261023181931);
 - the post-release watch (ADR-1445).
 
+## Check
+
 apid runs the scheduled-release, database-switch and post-release-watch
 workers. meterd delivers approval and schedule notices from the
 `release_approval_events` outbox. All of them export `pkg/releasemetrics`

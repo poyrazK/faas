@@ -128,7 +128,7 @@ func setDevGroupServiceConfig(ctx context.Context, client devGroupSecretClient, 
 // use as declared.
 func describeDevGroupService(app devAllApp) string {
 	declared := strings.TrimSpace(app.declared)
-	if declared == "" || strings.ToLower(declared) == app.Service {
+	if declared == "" || api.ServiceDNSName(declared) == app.Service {
 		return ""
 	}
 	return fmt.Sprintf("service %q is not a DNS name; the other apps call it %s", declared, app.Service)

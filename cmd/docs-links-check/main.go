@@ -3,6 +3,11 @@
 // each route against docs/customer-pages.json. Dynamic error and CLI routes
 // are matched by their longest registered prefix, while explicitly marked
 // operator/security assets are recorded as external routes.
+//
+// Go links built from the docsBase constant and a path are static, so they must name a
+// registered route exactly: the live site serves only registered routes, and
+// production-us answered 404 for /docs/errors/app-startup-timeout and 40 more
+// such links that the prefix rule accepted (Hunt 14 H14-90).
 package main
 
 import (
@@ -19,6 +24,9 @@ import (
 const catalogPath = "docs/customer-pages.json"
 
 var docsURLRE = regexp.MustCompile(`https://gregale\.dev/docs(/[A-Za-z0-9._~/%-]*)?`)
+
+// docsBaseRE finds Go links built from pkg/api's docsBase constant.
+var docsBaseRE = regexp.MustCompile(`docsBase\s*\+\s*"(/[A-Za-z0-9._~/%-]*)`)
 
 // Keep the obsolete origin split in source so the checker does not match its
 // own guard. pkg/wire retains the bare host solely to normalize responses from
@@ -39,6 +47,9 @@ type route struct {
 type link struct {
 	Path string
 	File string
+	// Exact links must name a registered route; the prefix rule does not
+	// apply to them.
+	Exact bool
 }
 
 func main() {
@@ -59,6 +70,9 @@ func run() error {
 	}
 	links, err := collectLinks()
 	if err != nil {
+		return err
+	}
+	if err := checkExactLinks(cat, links); err != nil {
 		return err
 	}
 	seen := map[string]link{}
@@ -83,6 +97,20 @@ func run() error {
 		}
 		if _, err := os.Stat(r.Source); err != nil {
 			return fmt.Errorf("route %q source %q: %w", path, r.Source, err)
+		}
+	}
+	return nil
+}
+
+// checkExactLinks requires every exact link to name a registered route.
+func checkExactLinks(cat catalog, links []link) error {
+	routes := make(map[string]bool, len(cat.Routes))
+	for _, r := range cat.Routes {
+		routes[r.Path] = true
+	}
+	for _, l := range links {
+		if l.Exact && !routes[l.Path] {
+			return fmt.Errorf("%s links docsBase + %q, which is no registered route; link an existing page (an #anchor may follow)", l.File, "/"+l.Path)
 		}
 	}
 	return nil
@@ -164,6 +192,11 @@ func collectLinks() ([]link, error) {
 				route := strings.Trim(match[1], "/")
 				route = strings.TrimRight(route, ".,;:!?)]}'\"")
 				links = append(links, link{Path: route, File: path})
+			}
+			if ext == ".go" && isProductionSurface(path) {
+				for _, match := range docsBaseRE.FindAllStringSubmatch(string(b), -1) {
+					links = append(links, link{Path: strings.Trim(match[1], "/"), File: path, Exact: true})
+				}
 			}
 			return nil
 		})

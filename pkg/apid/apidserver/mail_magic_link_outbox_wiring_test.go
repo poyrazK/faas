@@ -126,10 +126,14 @@ func TestMagicLinkOutboxPublicWiringUniformResponseAndRollback(t *testing.T) {
 			if verify.Code != http.StatusFound || verify.Header().Get("Location") != "/dashboard/" {
 				t.Fatal("issued sign-in link failed after flag rollback", verify.Code)
 			}
-			// A secure session cookie is __Host-faas_sid, written beside an
-			// expired faas_sid (ADR-20261026112500).
-			cookie, _ := sessioncookie.FromResponse(verify.Result())
-			if cookie == nil || cookie.Value == "" || !cookie.HttpOnly || cookie.SameSite != http.SameSiteLaxMode {
+			var cookie *http.Cookie
+			for _, c := range verify.Result().Cookies() {
+				// HTTPS sign-in sets __Host-faas_sid and expires the legacy name (#5522).
+				if sessioncookie.IsName(c.Name) && c.Value != "" {
+					cookie = c
+				}
+			}
+			if cookie == nil || !cookie.HttpOnly || cookie.SameSite != http.SameSiteLaxMode {
 				t.Fatal("sign-in lost the session cookie contract")
 			}
 			envelope, err := (*server.Sessions()).Verify(cookie.Value)

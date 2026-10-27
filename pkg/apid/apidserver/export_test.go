@@ -1138,6 +1138,9 @@ func (r *server) GetDevBridgeActivity(p0 http.ResponseWriter, p1 *http.Request, 
 func (r *server) GetManagedPostgresDatabase(p0 http.ResponseWriter, p1 *http.Request, p2 state.Account) {
 	r.getManagedPostgresDatabase(p0, p1, p2)
 }
+func (r *server) GetProject(p0 http.ResponseWriter, p1 *http.Request, p2 state.Account) {
+	r.getProject(p0, p1, p2)
+}
 func (r *server) GetProjectEnvironmentApprovalStatus(p0 http.ResponseWriter, p1 *http.Request, p2 state.Account) {
 	r.getProjectEnvironmentApprovalStatus(p0, p1, p2)
 }
@@ -1787,3 +1790,5 @@ var WriteExclusiveError = writeExclusiveError
 // ResolveAndCheckEgress is the create-time egress check every outbound URL
 // (alert, log drain, webhook, channel) passes.
 var ResolveAndCheckEgress = resolveAndCheckEgress
+
+var AppRestartRefusal = appRestartRefusal

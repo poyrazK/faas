@@ -1799,9 +1799,10 @@ Enabled deletion returns an owned marker version ID. A bucket runs one deletion
 per key at a time, and deletes of different keys overlap; S3 `DeleteObjects`
 runs up to eight entries at once and answers in request order
 ([ADR-20261025115958](adr/20261025115958-object-storage-per-key-deletion.md)).
-A dispatched uncertain intent fences writes of its key, and versioning, bucket
-deletion and inventories of its bucket. While an inventory scan of the bucket
-runs, new deletions wait for it. Permanent
+A dispatched uncertain intent fences writes of its key, cross-bucket copies
+from its key, and versioning, bucket deletion and inventories of its bucket.
+A lifecycle scan waits only for its own deletions. While an inventory scan of
+the bucket runs, new deletions wait for it. Permanent
 immutable deletes use the same journal. Recovery can safely resend their exact
 owned private selector and settle only a valid acknowledgment; a rejection of a
 recovery attempt cannot prove that the earlier request finished. An initial

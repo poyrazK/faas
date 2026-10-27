@@ -134,7 +134,15 @@ func (m *MemStore) ResolveProjectWorkerJobRelease(_ context.Context, inv Invocat
 // ADR-570: the invocation version snapshot captures the lineage pin too. A
 // worker job resolved without it would lose its release and its resident.
 func (s invocationVersionPolicyReader) ResolveProjectWorkerJobRelease(ctx context.Context, inv Invocation, revision, requested string) (InvocationVersion, bool, error) {
-	return s.store.ResolveProjectWorkerJobRelease(ctx, inv, revision, requested)
+	if s.workerPins == nil {
+		return s.store.ResolveProjectWorkerJobRelease(ctx, inv, revision, requested)
+	}
+	if r, ok := s.workerPins.results[workerPinKey(inv, revision, requested)]; ok {
+		return r.version, r.handled, r.err
+	}
+	// Never open a second connection while this snapshot holds one.
+	s.workerPins.pending = append(s.workerPins.pending, workerPinRequest{inv: inv, revision: revision, requested: requested})
+	return InvocationVersion{}, false, errWorkerPinPending
 }
 
 // The snapshot already holds the store lock.

@@ -1,4 +1,4 @@
-"""faas_sdk - Python client for the one-box FaaS REST API.
+"""faas_sdk - Python client for the Gregale API.
 
 This package covers generally available and beta capabilities
 (ADR-20261023115741): the client generated from `sdk/openapi.yaml` under

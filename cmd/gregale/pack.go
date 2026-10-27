@@ -1380,7 +1380,7 @@ func runPackPreflight(srcDir string, skipDoctorScan bool) []string {
 // the failed wake. Returns the whycopy hint string when the
 // pattern is found; empty otherwise.
 func preflightLoopbackBind(srcDir string) string {
-	sources := scanSource(srcDir, loopbackBindRegex, 1)
+	sources := scanLoopbackBinds(srcDir, 1)
 	if len(sources) == 0 {
 		return ""
 	}

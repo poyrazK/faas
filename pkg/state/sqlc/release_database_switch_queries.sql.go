@@ -210,13 +210,15 @@ INSERT INTO release_database_switches (
   source_database_id, target_name, restore_point, phase, requested_by,
   phase_started_at, retry_at, created_at, updated_at
 )
-VALUES (
+SELECT
   $1::uuid, $2::uuid, $3::uuid, $4::text,
   $5::uuid, $6::uuid, $7::uuid[],
   $8::uuid, $9::text, $10::timestamptz,
   'restoring', $11::text,
   $12::timestamptz, $12::timestamptz, $12::timestamptz, $12::timestamptz
-)
+ WHERE (SELECT count(*) FROM release_database_switches active
+         WHERE active.account_id = $2::uuid
+           AND active.phase NOT IN ('completed', 'failed', 'cancelled')) < $13::integer
 RETURNING id, account_id, app_id, scope, from_deployment_id, target_deployment_id, undone_deployment_ids, source_database_id, target_database_id, target_name, restore_point, cutover_id, phase, failure_code, failure_detail, requested_by, cancel_requested_at, fenced_at, drain_requested_at, release_switched_at, activated_at, finished_at, phase_started_at, drain_retired, drain_parked, drain_pending, drain_blocked, attempt_count, last_error_code, lease_token, lease_until, retry_at, created_at, updated_at
 `
 
@@ -233,9 +235,12 @@ type InsertReleaseDatabaseSwitchParams struct {
 	RestorePoint        pgtype.Timestamptz
 	RequestedBy         string
 	Now                 pgtype.Timestamptz
+	MaxActive           int32
 }
 
 // ADR-20261023181931: rollbacks that restore the database.
+// No row when the account already runs max_active unfinished switches
+// (api.DatabaseSwitchesActivePerAccount).
 func (q *Queries) InsertReleaseDatabaseSwitch(ctx context.Context, db DBTX, arg InsertReleaseDatabaseSwitchParams) (ReleaseDatabaseSwitch, error) {
 	row := db.QueryRow(ctx, insertReleaseDatabaseSwitch,
 		arg.ID,
@@ -250,6 +255,7 @@ func (q *Queries) InsertReleaseDatabaseSwitch(ctx context.Context, db DBTX, arg 
 		arg.RestorePoint,
 		arg.RequestedBy,
 		arg.Now,
+		arg.MaxActive,
 	)
 	var i ReleaseDatabaseSwitch
 	err := row.Scan(
@@ -521,7 +527,8 @@ const saveReleaseDatabaseSwitch = `-- name: SaveReleaseDatabaseSwitch :one
 UPDATE release_database_switches
    SET target_database_id = $1::uuid,
        cutover_id = $2::uuid,
-       phase = $3::text,
+       phase = CASE WHEN cancel_requested_at IS NOT NULL AND phase IN ('restoring', 'staging', 'verifying', 'fencing', 'settling', 'draining') AND $3::text = 'switching'
+                    THEN phase ELSE $3::text END,
        failure_code = $4::text,
        failure_detail = $5::text,
        last_error_code = $6::text,
@@ -530,19 +537,21 @@ UPDATE release_database_switches
        release_switched_at = $9::timestamptz,
        activated_at = $10::timestamptz,
        finished_at = $11::timestamptz,
-       phase_started_at = $12::timestamptz,
+       phase_started_at = CASE WHEN cancel_requested_at IS NOT NULL AND phase IN ('restoring', 'staging', 'verifying', 'fencing', 'settling', 'draining') AND $3::text = 'switching'
+                               THEN phase_started_at ELSE $12::timestamptz END,
        drain_retired = $13::integer,
        drain_parked = $14::integer,
        drain_pending = $15::integer,
        drain_blocked = $16::integer,
        attempt_count = $17::integer,
-       retry_at = $18::timestamptz,
+       retry_at = CASE WHEN cancel_requested_at IS NOT NULL AND phase IN ('restoring', 'staging', 'verifying', 'fencing', 'settling', 'draining') AND $3::text = 'switching'
+                       THEN $18::timestamptz ELSE $19::timestamptz END,
        lease_token = NULL,
        lease_until = NULL,
-       updated_at = $19::timestamptz
+       updated_at = $18::timestamptz
  WHERE id = $20::uuid
    AND lease_token = $21::text
-   AND lease_until > $19::timestamptz
+   AND lease_until > $18::timestamptz
 RETURNING id, account_id, app_id, scope, from_deployment_id, target_deployment_id, undone_deployment_ids, source_database_id, target_database_id, target_name, restore_point, cutover_id, phase, failure_code, failure_detail, requested_by, cancel_requested_at, fenced_at, drain_requested_at, release_switched_at, activated_at, finished_at, phase_started_at, drain_retired, drain_parked, drain_pending, drain_blocked, attempt_count, last_error_code, lease_token, lease_until, retry_at, created_at, updated_at
 `
 
@@ -564,12 +573,15 @@ type SaveReleaseDatabaseSwitchParams struct {
 	DrainPending      int32
 	DrainBlocked      int32
 	AttemptCount      int32
-	RetryAt           pgtype.Timestamptz
 	Now               pgtype.Timestamptz
+	RetryAt           pgtype.Timestamptz
 	ID                pgtype.UUID
 	Token             string
 }
 
+// A cancel the API accepted while the step ran holds the switch in its
+// cancellable phase: the drain's advance to switching is not saved and the
+// switch is due at once, so the next step aborts it.
 func (q *Queries) SaveReleaseDatabaseSwitch(ctx context.Context, db DBTX, arg SaveReleaseDatabaseSwitchParams) (ReleaseDatabaseSwitch, error) {
 	row := db.QueryRow(ctx, saveReleaseDatabaseSwitch,
 		arg.TargetDatabaseID,
@@ -589,8 +601,8 @@ func (q *Queries) SaveReleaseDatabaseSwitch(ctx context.Context, db DBTX, arg Sa
 		arg.DrainPending,
 		arg.DrainBlocked,
 		arg.AttemptCount,
-		arg.RetryAt,
 		arg.Now,
+		arg.RetryAt,
 		arg.ID,
 		arg.Token,
 	)

@@ -2459,6 +2459,8 @@ type Querier interface {
 	InsertReadinessNotification(ctx context.Context, db DBTX, arg InsertReadinessNotificationParams) error
 	InsertReadinessSubscription(ctx context.Context, db DBTX, arg InsertReadinessSubscriptionParams) (int64, error)
 	// ADR-20261023181931: rollbacks that restore the database.
+	// No row when the account already runs max_active unfinished switches
+	// (api.DatabaseSwitchesActivePerAccount).
 	InsertReleaseDatabaseSwitch(ctx context.Context, db DBTX, arg InsertReleaseDatabaseSwitchParams) (ReleaseDatabaseSwitch, error)
 	// ---------------------------------------------------------------------------
 	// ADR-127 / issue #477 — production debugger per-request telemetry
@@ -4303,6 +4305,9 @@ type Querier interface {
 	// Give up a claim without publishing; attempt_at keeps the retry cadence.
 	ObjectInventoryRelease(ctx context.Context, db DBTX, arg ObjectInventoryReleaseParams) (int64, error)
 	ObjectInventorySample(ctx context.Context, db DBTX, arg ObjectInventorySampleParams) error
+	// A lifecycle scan pauses only for its own unsettled deletions and for a
+	// version protection job in its bucket (ADR-20261025115958).
+	ObjectLifecycleDeletionActive(ctx context.Context, db DBTX, arg ObjectLifecycleDeletionActiveParams) (bool, error)
 	ObjectLifecycleMultipartAdmit(ctx context.Context, db DBTX, arg ObjectLifecycleMultipartAdmitParams) (int64, error)
 	ObjectLifecycleMultipartList(ctx context.Context, db DBTX, arg ObjectLifecycleMultipartListParams) ([]ObjectStorageMultipartUpload, error)
 	ObjectLifecyclePolicyDue(ctx context.Context, db DBTX, limit int32) ([]pgtype.UUID, error)
@@ -4957,6 +4962,9 @@ type Querier interface {
 	// A lost LISTEN hint still leaves replayable scheduler work after a crash.
 	QueueApplicationStandardRuntimeRefresh(ctx context.Context, db DBTX, arg QueueApplicationStandardRuntimeRefreshParams) error
 	QueueAutomaticRouteCheck(ctx context.Context, db DBTX, arg QueueAutomaticRouteCheckParams) error
+	// Whether QueueStateForBinding would count any in-flight message, without
+	// counting the backlog.
+	QueueBindingHasInFlight(ctx context.Context, db DBTX, arg QueueBindingHasInFlightParams) (bool, error)
 	QueueBindingHistoryByID(ctx context.Context, db DBTX, arg QueueBindingHistoryByIDParams) (QueueBinding, error)
 	// Admission holds the parent app lock, also required by release publication.
 	// Read committed authority without reversing the publisher's release/app lock order.
@@ -4983,10 +4991,25 @@ type Querier interface {
 	QueueConsumerRetireBinding(ctx context.Context, db DBTX, arg QueueConsumerRetireBindingParams) (QueueBinding, error)
 	QueueConsumerUpdateBinding(ctx context.Context, db DBTX, arg QueueConsumerUpdateBindingParams) (QueueBinding, error)
 	QueueConsumerUpdateTrigger(ctx context.Context, db DBTX, arg QueueConsumerUpdateTriggerParams) (int64, error)
+	// QueueStateForBinding's depth up to row_limit per branch: the binding's own
+	// messages, then legacy unassigned work under its name. Each branch reads an
+	// index range and stops at the limit; the caller clamps the sum.
+	QueueDepthForBinding(ctx context.Context, db DBTX, arg QueueDepthForBindingParams) (int32, error)
+	// QueueStateInScope's depth, counted only up to row_limit: worker scaling
+	// needs no more than the depth that saturates the pool (ADR-20261022105723
+	// amendment 2026-10-24).
+	QueueDepthInScope(ctx context.Context, db DBTX, arg QueueDepthInScopeParams) (int64, error)
 	QueueExpiredApplicationStandardExceptions(ctx context.Context, db DBTX, arg QueueExpiredApplicationStandardExceptionsParams) (int64, error)
 	QueueFinishDeliveryClaims(ctx context.Context, db DBTX, arg QueueFinishDeliveryClaimsParams) ([]string, error)
 	QueueInvocationForTriggerReceipt(ctx context.Context, db DBTX, recordID pgtype.UUID) (Invocation, error)
 	QueueLeaseActiveCount(ctx context.Context, db DBTX, arg QueueLeaseActiveCountParams) (int64, error)
+	// The binding's own messages and legacy messages under its name, each read in
+	// due order from its own index (invocations_queue_lease_binding_idx and
+	// _name_idx), so a lease reads about candidate_limit rows whatever the
+	// backlog, its own or another app's (ADR-20261022105723 amendment
+	// 2026-10-24). The due bound uses statement_timestamp(): it is stable, so it
+	// bounds the index range, where volatile clock_timestamp() left only a filter
+	// and the planner walked the global due index instead.
 	QueueLeaseCandidates(ctx context.Context, db DBTX, arg QueueLeaseCandidatesParams) ([]pgtype.UUID, error)
 	QueueLeaseClaimInvocation(ctx context.Context, db DBTX, arg QueueLeaseClaimInvocationParams) (Invocation, error)
 	QueueLeaseClock(ctx context.Context, db DBTX) (pgtype.Timestamptz, error)
@@ -6160,6 +6183,9 @@ type Querier interface {
 	SavePromotionReleaseConfiguration(ctx context.Context, db DBTX, arg SavePromotionReleaseConfigurationParams) error
 	SaveReadinessSubscriptionWatches(ctx context.Context, db DBTX, arg SaveReadinessSubscriptionWatchesParams) (int64, error)
 	SaveRegressionActionReceipt(ctx context.Context, db DBTX, arg SaveRegressionActionReceiptParams) (int64, error)
+	// A cancel the API accepted while the step ran holds the switch in its
+	// cancellable phase: the drain's advance to switching is not saved and the
+	// switch is due at once, so the next step aborts it.
 	SaveReleaseDatabaseSwitch(ctx context.Context, db DBTX, arg SaveReleaseDatabaseSwitchParams) (ReleaseDatabaseSwitch, error)
 	// Saves the config proof a publication commits with. A wake's bookkeeping
 	// rides in the same statement, so it costs no round trip: the transition

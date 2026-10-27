@@ -155,14 +155,15 @@ func TestMFARecoveryAlertOutboxPublicFlowAndFailureBoundaries(t *testing.T) {
 			}
 			if response.Code == http.StatusOK {
 				var recovered bool
-				// A secure session cookie is __Host-faas_sid, written beside
-				// an expired faas_sid (ADR-20261026112500).
-				if c, ok := sessioncookie.FromResponse(response.Result()); ok && c.Value != "" {
-					envelope, err := manager.Verify(c.Value)
-					if err != nil || envelope.MfaPending || envelope.Sid != sid || envelope.AccountID != accountID || !envelope.StepUpAt.IsZero() {
-						t.Fatal("recovery changed existing MFA session rules", err)
+				for _, c := range response.Result().Cookies() {
+					// HTTPS sign-in sets __Host-faas_sid and expires the legacy name (#5522).
+					if sessioncookie.IsName(c.Name) && c.Value != "" {
+						envelope, err := manager.Verify(c.Value)
+						if err != nil || envelope.MfaPending || envelope.Sid != sid || envelope.AccountID != accountID || !envelope.StepUpAt.IsZero() {
+							t.Fatal("recovery changed existing MFA session rules", err)
+						}
+						recovered = true
 					}
-					recovered = true
 				}
 				if !recovered {
 					t.Fatal("successful recovery did not reissue its session")

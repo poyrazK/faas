@@ -119,6 +119,8 @@ func UnitApid() daemonunit.Unit {
 			{Key: "FAAS_STATUSPAGE_PATH", Value: "/etc/faas/statuspage/index.html"},
 			{Key: "FAAS_DPA_PATH", Value: "/etc/faas/dpa.md"},
 			{Key: "FAAS_REALTIME_SOCKET", Value: "/run/faas/realtimed.sock"},
+			// Realtime fair use (ADR-1323), set on every realtime node too.
+			{Key: "FAAS_REALTIME_FAIR_USE_ENABLED", Value: "1"},
 			{Key: "FAAS_APP_TASK_API_ENABLED", Value: "0"},
 			{Key: "FAAS_EXECUTION_API_ENABLED", Value: "0"},
 			{Key: "FAAS_CI_INTERNAL_ENABLED", Value: "0"},

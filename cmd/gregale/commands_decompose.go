@@ -794,7 +794,7 @@ func printUnsetEnvKeys(w io.Writer, workloads []api.PlanWorkload) {
 var envImportReasonText = map[string]string{
 	"not_opted_in":    "plain value in Compose",
 	"secret":          "looks like a secret",
-	"service_address": "Docker service address",
+	"service_address": "Docker address of a datastore or non-HTTP service",
 	"local_address":   "local address",
 	"interpolated":    "uses $ interpolation",
 	"host_value":      "read from the host",
