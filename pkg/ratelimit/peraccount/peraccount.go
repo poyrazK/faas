@@ -74,9 +74,9 @@ type appUsage struct {
 // roll moves u to minute, keeping the previous minute's count only when it
 // is the one just before.
 func (u *appUsage) roll(minute int64) {
-	switch {
-	case u.minute == minute:
-	case u.minute == minute-1:
+	switch u.minute {
+	case minute:
+	case minute - 1:
 		u.minute, u.prev, u.cur = minute, u.cur, 0
 	default:
 		u.minute, u.prev, u.cur = minute, 0, 0
