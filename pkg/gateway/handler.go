@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/base64"
 	"errors"
@@ -5193,13 +5194,11 @@ func (h *Handler) enforcePublicAuthBasic(w http.ResponseWriter, r *http.Request,
 		h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
 		return false
 	}
-	// (3) Constant-time compare. Both sides are base64-
-	// decoded; we re-encode back to bytes for the compare so
-	// the function stays allocation-light. Length-mismatch
-	// short-circuits to 0 before the compare so an attacker
-	// who knows the password length can't probe via timing.
-	if subtle.ConstantTimeCompare([]byte(user), []byte(expectedUser)) != 1 ||
-		subtle.ConstantTimeCompare([]byte(pass), []byte(expectedPass)) != 1 {
+	// (3) Constant-time compare of fixed-length digests, both
+	// evaluated. ConstantTimeCompare returns early on unequal
+	// lengths and || skipped the password compare on a wrong
+	// username, so timing revealed the username and both lengths.
+	if !basicCredentialsMatch(user, pass, expectedUser, expectedPass) {
 		h.emitAuthnAudit(r, app, nil, "instances.public_auth_invalid", map[string]any{
 			"app_id": app.ID,
 			"slug":   r.Host,
@@ -9860,4 +9859,15 @@ func hostname(host string) string {
 		host = host[:i]
 	}
 	return strings.ToLower(host)
+}
+
+// basicCredentialsMatch compares Basic credentials in time independent of
+// which part differs and of either side's length: both values are hashed to
+// SHA-256 first and both comparisons always run.
+func basicCredentialsMatch(user, pass, expectedUser, expectedPass string) bool {
+	gotUser, wantUser := sha256.Sum256([]byte(user)), sha256.Sum256([]byte(expectedUser))
+	gotPass, wantPass := sha256.Sum256([]byte(pass)), sha256.Sum256([]byte(expectedPass))
+	userOK := subtle.ConstantTimeCompare(gotUser[:], wantUser[:])
+	passOK := subtle.ConstantTimeCompare(gotPass[:], wantPass[:])
+	return userOK&passOK == 1
 }
