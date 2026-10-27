@@ -35,6 +35,7 @@ type InternalSender struct {
 	mfaRecoveryAlertEnabled     func() bool
 	mfaDisabledAlertEnabled     func() bool
 	deploymentFailedEnabled     func() bool
+	agentRunDeliveredEnabled    func() bool
 	subscriptionEndedEnabled    func() bool
 	quotaWarningEnabled         func() bool
 	nonpaymentDeletionEnabled   func() bool

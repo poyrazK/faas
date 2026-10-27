@@ -249,7 +249,7 @@ func (s *server) handleSourceTarballDeploy(w http.ResponseWriter, r *http.Reques
 		api.WriteProblem(w, prob)
 		return
 	}
-	manifest, manifestProblem := loadSourceRefManifest(spoolPath, app, acct.Plan)
+	manifest, manifestProblem := loadSourceRefManifest(spoolPath, app, acct.Plan, s.agentStepsAllowed(acct))
 	if manifestProblem != nil {
 		api.WriteProblem(w, manifestProblem)
 		return

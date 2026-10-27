@@ -74,7 +74,7 @@ func (s *server) loadAndResolveProjectManifest(
 			return resolvedProjectManifest{}, p
 		}
 	}
-	if prob := validateManifestAgainstPlan(manifest, acct.Plan); prob != nil {
+	if prob := validateManifestAgainstPlan(manifest, acct.Plan, s.agentStepsAllowed(acct)); prob != nil {
 		return resolvedProjectManifest{}, prob
 	}
 	if err := manifest.ValidateForPlan(acct.Plan); err != nil {

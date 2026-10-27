@@ -9,11 +9,11 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-func loadReviewedSourceManifest(path string, app state.App, plan api.Plan, reviewed bool) (*gregalemanifest.Manifest, *api.Problem) {
+func loadReviewedSourceManifest(path string, app state.App, plan api.Plan, reviewed, agentSteps bool) (*gregalemanifest.Manifest, *api.Problem) {
 	if reviewed {
 		return nil, nil
 	}
-	return loadSourceRefManifest(path, app, plan)
+	return loadSourceRefManifest(path, app, plan, agentSteps)
 }
 
 // Retain declarations from the exact serving baseline, rather than installing

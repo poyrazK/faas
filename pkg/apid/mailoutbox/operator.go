@@ -122,6 +122,7 @@ func RunOperator(ctx context.Context, args []string, getenv func(string) string,
 	reconciler = reconciler.WithMagicLink(func() bool { return internalmail.MagicLinkOutboxEnabled(getenv) })
 	reconciler = reconciler.WithMFADisable(func() bool { return internalmail.MFADisableOutboxEnabled(getenv) })
 	reconciler = reconciler.WithDeploymentFailed(func() bool { return internalmail.DeploymentFailedOutboxEnabled(getenv) })
+	reconciler = reconciler.WithAgentRunDelivered(func() bool { return internalmail.AgentRunDeliveredOutboxEnabled(getenv) })
 	reconciler = reconciler.WithSubscriptionEnded(func() bool { return internalmail.SubscriptionEndedOutboxEnabled(getenv) })
 	reconciler = reconciler.WithQuotaWarning(func() bool { return internalmail.QuotaWarningOutboxEnabled(getenv) })
 	reconciler = reconciler.WithNonpaymentDeletion(func() bool { return internalmail.NonpaymentDeletionOutboxEnabled(getenv) })

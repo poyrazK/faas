@@ -263,7 +263,7 @@ func (s *server) handleSourceRefDeploy(w http.ResponseWriter, r *http.Request, a
 		api.WriteProblem(w, problem)
 		return
 	}
-	manifest, manifestProblem := loadReviewedSourceManifest(spoolPath, app, acct.Plan, req.ExpectedSource != nil)
+	manifest, manifestProblem := loadReviewedSourceManifest(spoolPath, app, acct.Plan, req.ExpectedSource != nil, s.agentStepsAllowed(acct))
 	if manifestProblem != nil {
 		api.WriteProblem(w, manifestProblem)
 		return

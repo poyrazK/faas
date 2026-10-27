@@ -29,6 +29,7 @@ func (s *InternalSender) WithOutbox(enabled func() bool) *InternalSender {
 func (s *InternalSender) WithVerificationOutbox(enabled func() bool) *InternalSender {
 	copy := *s
 	copy.deploymentFailedEnabled = nil
+	copy.agentRunDeliveredEnabled = nil
 	copy.subscriptionEndedEnabled = nil
 	copy.quotaWarningEnabled = nil
 	copy.nonpaymentDeletionEnabled = nil
@@ -49,6 +50,7 @@ func (s *InternalSender) WithVerificationOutbox(enabled func() bool) *InternalSe
 func (s *InternalSender) WithPasswordResetOutbox(enabled func() bool) *InternalSender {
 	copy := *s
 	copy.deploymentFailedEnabled = nil
+	copy.agentRunDeliveredEnabled = nil
 	copy.subscriptionEndedEnabled = nil
 	copy.quotaWarningEnabled = nil
 	copy.nonpaymentDeletionEnabled = nil
@@ -69,6 +71,7 @@ func (s *InternalSender) WithPasswordResetOutbox(enabled func() bool) *InternalS
 func (s *InternalSender) WithMagicLinkOutbox(enabled func() bool) *InternalSender {
 	copy := *s
 	copy.deploymentFailedEnabled = nil
+	copy.agentRunDeliveredEnabled = nil
 	copy.subscriptionEndedEnabled = nil
 	copy.quotaWarningEnabled = nil
 	copy.nonpaymentDeletionEnabled = nil
@@ -89,6 +92,7 @@ func (s *InternalSender) WithMagicLinkOutbox(enabled func() bool) *InternalSende
 func (s *InternalSender) WithMFARecoveryAlertOutbox(enabled func() bool) *InternalSender {
 	copy := *s
 	copy.deploymentFailedEnabled = nil
+	copy.agentRunDeliveredEnabled = nil
 	copy.subscriptionEndedEnabled = nil
 	copy.quotaWarningEnabled = nil
 	copy.nonpaymentDeletionEnabled = nil
@@ -109,6 +113,7 @@ func (s *InternalSender) WithMFARecoveryAlertOutbox(enabled func() bool) *Intern
 func (s *InternalSender) WithMFADisableOutbox(enabled func() bool) *InternalSender {
 	copy := *s
 	copy.deploymentFailedEnabled = nil
+	copy.agentRunDeliveredEnabled = nil
 	copy.subscriptionEndedEnabled = nil
 	copy.quotaWarningEnabled = nil
 	copy.nonpaymentDeletionEnabled = nil
@@ -129,6 +134,7 @@ func (s *InternalSender) WithMFADisableOutbox(enabled func() bool) *InternalSend
 func (s *InternalSender) WithMFADisabledAlertOutbox(enabled func() bool) *InternalSender {
 	copy := *s
 	copy.deploymentFailedEnabled = nil
+	copy.agentRunDeliveredEnabled = nil
 	copy.subscriptionEndedEnabled = nil
 	copy.quotaWarningEnabled = nil
 	copy.nonpaymentDeletionEnabled = nil
@@ -149,6 +155,7 @@ func (s *InternalSender) WithMFADisabledAlertOutbox(enabled func() bool) *Intern
 func (s *InternalSender) WithPasswordChangedAlertOutbox(enabled func() bool) *InternalSender {
 	copy := *s
 	copy.deploymentFailedEnabled = nil
+	copy.agentRunDeliveredEnabled = nil
 	copy.subscriptionEndedEnabled = nil
 	copy.quotaWarningEnabled = nil
 	copy.nonpaymentDeletionEnabled = nil
@@ -169,6 +176,7 @@ func (s *InternalSender) WithPasswordChangedAlertOutbox(enabled func() bool) *In
 func (s *InternalSender) WithMFAEnabledAlertOutbox(enabled func() bool) *InternalSender {
 	copy := *s
 	copy.deploymentFailedEnabled = nil
+	copy.agentRunDeliveredEnabled = nil
 	copy.subscriptionEndedEnabled = nil
 	copy.quotaWarningEnabled = nil
 	copy.nonpaymentDeletionEnabled = nil
@@ -189,6 +197,7 @@ func (s *InternalSender) WithMFAEnabledAlertOutbox(enabled func() bool) *Interna
 func (s *InternalSender) WithPaymentFailedOutbox(enabled func() bool) *InternalSender {
 	copy := *s
 	copy.deploymentFailedEnabled = nil
+	copy.agentRunDeliveredEnabled = nil
 	copy.subscriptionEndedEnabled = nil
 	copy.quotaWarningEnabled = nil
 	copy.nonpaymentDeletionEnabled = nil
@@ -209,6 +218,7 @@ func (s *InternalSender) WithPaymentFailedOutbox(enabled func() bool) *InternalS
 func (s *InternalSender) WithAccountSuspendedOutbox(enabled func() bool) *InternalSender {
 	copy := *s
 	copy.deploymentFailedEnabled = nil
+	copy.agentRunDeliveredEnabled = nil
 	copy.subscriptionEndedEnabled = nil
 	copy.quotaWarningEnabled = nil
 	copy.nonpaymentDeletionEnabled = nil
@@ -229,6 +239,7 @@ func (s *InternalSender) WithAccountSuspendedOutbox(enabled func() bool) *Intern
 func (s *InternalSender) WithAccountRestoredOutbox(enabled func() bool) *InternalSender {
 	copy := *s
 	copy.deploymentFailedEnabled = nil
+	copy.agentRunDeliveredEnabled = nil
 	copy.subscriptionEndedEnabled = nil
 	copy.quotaWarningEnabled = nil
 	copy.nonpaymentDeletionEnabled = nil
@@ -249,6 +260,7 @@ func (s *InternalSender) WithAccountRestoredOutbox(enabled func() bool) *Interna
 func (s *InternalSender) WithNonpaymentDeletionOutbox(enabled func() bool) *InternalSender {
 	copy := *s
 	copy.deploymentFailedEnabled = nil
+	copy.agentRunDeliveredEnabled = nil
 	copy.subscriptionEndedEnabled = nil
 	copy.quotaWarningEnabled = nil
 	copy.nonpaymentDeletionEnabled = enabled
@@ -269,6 +281,7 @@ func (s *InternalSender) WithNonpaymentDeletionOutbox(enabled func() bool) *Inte
 func (s *InternalSender) WithQuotaWarningOutbox(enabled func() bool) *InternalSender {
 	copy := *s
 	copy.deploymentFailedEnabled = nil
+	copy.agentRunDeliveredEnabled = nil
 	copy.subscriptionEndedEnabled = nil
 	copy.quotaWarningEnabled = enabled
 	copy.nonpaymentDeletionEnabled = nil
@@ -289,6 +302,7 @@ func (s *InternalSender) WithQuotaWarningOutbox(enabled func() bool) *InternalSe
 func (s *InternalSender) WithSubscriptionEndedOutbox(enabled func() bool) *InternalSender {
 	copy := *s
 	copy.deploymentFailedEnabled = nil
+	copy.agentRunDeliveredEnabled = nil
 	copy.subscriptionEndedEnabled = enabled
 	copy.quotaWarningEnabled = nil
 	copy.nonpaymentDeletionEnabled = nil
@@ -309,6 +323,29 @@ func (s *InternalSender) WithSubscriptionEndedOutbox(enabled func() bool) *Inter
 func (s *InternalSender) WithDeploymentFailedOutbox(enabled func() bool) *InternalSender {
 	copy := *s
 	copy.deploymentFailedEnabled = enabled
+	copy.agentRunDeliveredEnabled = nil
+	copy.subscriptionEndedEnabled = nil
+	copy.quotaWarningEnabled = nil
+	copy.nonpaymentDeletionEnabled = nil
+	copy.accountSuspendedEnabled = nil
+	copy.accountRestoredEnabled = nil
+	copy.paymentFailedEnabled = nil
+	copy.mfaEnabledAlertEnabled = nil
+	copy.passwordChangedAlertEnabled = nil
+	copy.mfaDisabledAlertEnabled = nil
+	copy.mfaDisableEnabled = nil
+	copy.mfaRecoveryAlertEnabled = nil
+	copy.verificationEnabled = nil
+	copy.passwordResetEnabled = nil
+	copy.magicLinkEnabled = nil
+	return &copy
+}
+
+// WithAgentRunDeliveredOutbox admits agent run summaries (ADR-20261027090010 §8).
+func (s *InternalSender) WithAgentRunDeliveredOutbox(enabled func() bool) *InternalSender {
+	copy := *s
+	copy.deploymentFailedEnabled = nil
+	copy.agentRunDeliveredEnabled = enabled
 	copy.subscriptionEndedEnabled = nil
 	copy.quotaWarningEnabled = nil
 	copy.nonpaymentDeletionEnabled = nil
@@ -329,6 +366,9 @@ func (s *InternalSender) WithDeploymentFailedOutbox(enabled func() bool) *Intern
 func (s *InternalSender) credentialOutboxGate() (string, func() bool) {
 	if s.deploymentFailedEnabled != nil {
 		return internalmail.ProducerOutboxDeploymentFailedTemplate, s.deploymentFailedEnabled
+	}
+	if s.agentRunDeliveredEnabled != nil {
+		return internalmail.ProducerOutboxAgentRunDeliveredTemplate, s.agentRunDeliveredEnabled
 	}
 	if s.subscriptionEndedEnabled != nil {
 		return internalmail.ProducerOutboxSubscriptionEndedTemplate, s.subscriptionEndedEnabled

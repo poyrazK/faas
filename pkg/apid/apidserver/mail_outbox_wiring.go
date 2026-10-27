@@ -51,6 +51,9 @@ func (s *server) configureMailOutbox(ctx context.Context, pool *pgxpool.Pool, ge
 	if err := outbox.ConfigureDeploymentFailed(ctx, getenv); err != nil {
 		return err
 	}
+	if err := outbox.ConfigureAgentRunDelivered(ctx, getenv); err != nil {
+		return err
+	}
 	if err := outbox.ConfigureSubscriptionEnded(ctx, getenv); err != nil {
 		return err
 	}

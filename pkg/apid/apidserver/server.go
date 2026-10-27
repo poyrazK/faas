@@ -37,6 +37,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/apid/httpkit"
 	"github.com/onebox-faas/faas/pkg/apid/mailoutbox"
 
+	"github.com/onebox-faas/faas/pkg/apid/agents"
 	"github.com/onebox-faas/faas/pkg/apid/dashboards"
 	"github.com/onebox-faas/faas/pkg/apid/incidents"
 	"github.com/onebox-faas/faas/pkg/apid/issuetrackers"
@@ -209,6 +210,8 @@ type server struct {
 	// liveRollout is who sees live queries (FAAS_LIVE_QUERIES_ACCOUNTS);
 	// nobody until configured.
 	liveRollout livequeries.Rollout
+	// agentAPI serves the agent routes; nil until configureAgents runs.
+	agentAPI *agents.Handler
 	// realtimeRollout is who sees the realtime preview until an operator
 	// writes the realtime_preview platform flag (ADR-20261019102657).
 	realtimeRollout               managedrealtime.PreviewGate
@@ -3134,6 +3137,21 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/jobs", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listJobs))))
 	mux.HandleFunc("POST /v1/jobs", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.createJob)))))
 	mux.HandleFunc("POST /v1/image-runs", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.createImageRun)))))
+	// ADR-20261027090010 agents: the agents capability owns these routes, so
+	// the capability gate hides them like unregistered routes from every
+	// account it is off for.
+	mux.HandleFunc("POST /v1/agents", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.createAgent)))))
+	mux.HandleFunc("GET /v1/agents", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listAgents))))
+	mux.HandleFunc("GET /v1/agents/{agent}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getAgent))))
+	mux.HandleFunc("DELETE /v1/agents/{agent}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.deleteAgent))))
+	mux.HandleFunc("POST /v1/agents/{agent}/versions", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.createAgentVersion)))))
+	mux.HandleFunc("GET /v1/agents/{agent}/versions/{version}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getAgentVersion))))
+	mux.HandleFunc("POST /v1/agents/{agent}/runs", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.createAgentRun)))))
+	mux.HandleFunc("GET /v1/agent-runs", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listAgentRuns))))
+	mux.HandleFunc("GET /v1/agent-runs/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getAgentRun))))
+	mux.HandleFunc("GET /v1/agent-runs/{id}/outputs", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getAgentRunOutputs))))
+	mux.HandleFunc("GET /v1/agent-runs/{id}/outputs/files/{name...}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getAgentRunOutputFile))))
+	mux.HandleFunc("DELETE /v1/agent-runs/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.cancelAgentRun))))
 	mux.HandleFunc("GET /v1/jobs/{name}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getJob))))
 	mux.HandleFunc("PATCH /v1/jobs/{name}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.updateJob))))
 	mux.HandleFunc("DELETE /v1/jobs/{name}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.deleteJob))))
@@ -5388,7 +5406,7 @@ func (s *server) handler() http.Handler {
 		func(*http.Request) bool { return true },
 		s.observeWrap(s.hosting.HideDisabled(s.hideDisabledMonetization(operation.OperationCustomerCORS(s.productControl.SurfaceGate(ciapi.HideDisabledRoutes(
 			func() ci.Config { return s.ciConfig }, s.capabilityKillSwitch(mux, apiContractHandler(mux, func(r *http.Request) bool {
-				return s.durable.Hidden(r) || s.liveGate().Hidden(r) || s.realtimePreviewProbe(r) || s.capabilityPathHidden(r)
+				return s.durable.Hidden(r) || s.liveGate().Hidden(r) || s.realtimePreviewProbe(r) || s.capabilityPathHidden(r) || s.agentPathHidden(r)
 			})),
 		)))))),
 	)))

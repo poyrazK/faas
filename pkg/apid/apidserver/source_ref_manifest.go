@@ -87,7 +87,7 @@ func sourceRefManifestNeedsRollback(staged sourceRefManifestStaged) bool {
 // loadSourceRefManifest reads the root manifest from the already validated
 // source archive. A workload-local manifest is preferred for monorepos, with
 // the repository root as a fallback for the common single-manifest layout.
-func loadSourceRefManifest(sourcePath string, app state.App, plan api.Plan) (*gregalemanifest.Manifest, *api.Problem) {
+func loadSourceRefManifest(sourcePath string, app state.App, plan api.Plan, agentSteps bool) (*gregalemanifest.Manifest, *api.Problem) {
 	b, name, found, err := readSourceRefManifestBytes(sourcePath, app.RootDir)
 	if err != nil {
 		return nil, api.NewProblem(http.StatusBadRequest, api.CodeSourceInvalid, "Bad source", err.Error())
@@ -104,7 +104,7 @@ func loadSourceRefManifest(sourcePath string, app state.App, plan api.Plan) (*gr
 	if err != nil {
 		return nil, api.NewProblem(http.StatusUnprocessableEntity, CodeAppManifestInvalid, "Invalid manifest", err.Error())
 	}
-	if prob := validateManifestAgainstPlan(m, plan); prob != nil {
+	if prob := validateManifestAgainstPlan(m, plan, agentSteps); prob != nil {
 		return nil, prob
 	}
 	if err := m.ValidateForPlan(plan); err != nil {

@@ -281,6 +281,23 @@ var routeExclude = map[string]bool{
 	"DELETE /v1/postgres/databases/{id}/live":      true,
 	"POST /v1/postgres/databases/{id}/live/rotate": true,
 
+	// ADR-20261027090010 agents: the internal agents capability, answering like
+	// unregistered routes to every account it is not released to, so it stays
+	// out of the public OpenAPI spec and generated SDKs until launch. Mirror
+	// across this list AND scripts/ci/speccompliance/spec_compliance_test.go::routeExclude.
+	"POST /v1/agents":                                 true,
+	"GET /v1/agents":                                  true,
+	"GET /v1/agents/{agent}":                          true,
+	"DELETE /v1/agents/{agent}":                       true,
+	"POST /v1/agents/{agent}/versions":                true,
+	"GET /v1/agents/{agent}/versions/{version}":       true,
+	"POST /v1/agents/{agent}/runs":                    true,
+	"GET /v1/agent-runs":                              true,
+	"GET /v1/agent-runs/{id}":                         true,
+	"DELETE /v1/agent-runs/{id}":                      true,
+	"GET /v1/agent-runs/{id}/outputs":                 true,
+	"GET /v1/agent-runs/{id}/outputs/files/{name...}": true,
+
 	// Issue #777 / ADR-091: operator observability backend. Same
 	// operator-only posture as /v1/compute-nodes — admin scope
 	// + FAAS_ADMIN_EMAILS allowlist. Mirror the exclusion across

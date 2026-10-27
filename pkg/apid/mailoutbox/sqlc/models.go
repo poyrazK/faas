@@ -40,6 +40,30 @@ type AccountPassword struct {
 	UpdatedAt pgtype.Timestamptz
 }
 
+type Agent struct {
+	ID        pgtype.UUID
+	AccountID pgtype.UUID
+	Name      string
+}
+
+type AgentDelivery struct {
+	ID            pgtype.UUID
+	AccountID     pgtype.UUID
+	RunID         pgtype.UUID
+	Destination   string
+	State         string
+	Body          string
+	BodyTruncated bool
+	CreatedAt     pgtype.Timestamptz
+	DeadlineAt    pgtype.Timestamptz
+}
+
+type AgentRun struct {
+	ID        pgtype.UUID
+	AccountID pgtype.UUID
+	AgentID   pgtype.UUID
+}
+
 type ApiKey struct {
 	ID        pgtype.UUID
 	AccountID pgtype.UUID
@@ -265,6 +289,21 @@ type PasswordResetToken struct {
 	CreatedAt        pgtype.Timestamptz
 }
 
+type PlatformMailAgentRunCapture struct {
+	Namespace  string
+	ProducerID string
+	StartedAt  pgtype.Timestamptz
+	RecoveryID pgtype.UUID
+}
+
+type PlatformMailAgentRunObservation struct {
+	DeliveryID  pgtype.UUID
+	AccountID   pgtype.UUID
+	Disposition string
+	IntentID    pgtype.UUID
+	ObservedAt  pgtype.Timestamptz
+}
+
 type PlatformMailDeploymentCapture struct {
 	Namespace  string
 	ProducerID string
@@ -352,6 +391,7 @@ type PlatformMailProducerOutbox struct {
 	DeploymentFailureAppRevision     pgtype.Int8
 	DeploymentFailureSuccessRevision pgtype.Int8
 	DeploymentFailureAt              pgtype.Timestamptz
+	AgentDeliveryID                  pgtype.UUID
 }
 
 type ScenarioTestActionPolicy struct {

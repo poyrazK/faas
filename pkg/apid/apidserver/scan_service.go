@@ -999,7 +999,7 @@ func (s *server) applyBuildsForAddedChangedOrdered(
 			command: append([]string(nil), workload.ReleaseCommand...),
 			shell:   workload.ReleaseCommandShell,
 		}
-		manifest, manifestProblem := loadSourceRefManifest(staged, sourceApp, acct.Plan)
+		manifest, manifestProblem := loadSourceRefManifest(staged, sourceApp, acct.Plan, s.agentStepsAllowed(acct))
 		if manifestProblem != nil {
 			_ = os.Remove(staged)
 			res.Error = "operation or release declaration invalid"

@@ -720,7 +720,7 @@ func (s *server) createImageDeployment(w http.ResponseWriter, r *http.Request, a
 		}
 	}
 	if len(req.Workflows) > 0 {
-		if p := validateWorkflowDefinitionsAgainstPlan(req.Workflows, acct.Plan); p != nil {
+		if p := validateWorkflowDefinitionsAgainstPlan(req.Workflows, acct.Plan, s.agentStepsAllowed(acct)); p != nil {
 			api.WriteProblem(w, p)
 			return
 		}

@@ -127,13 +127,19 @@ func (s *Service) claim(ctx context.Context) (q.PlatformMailProducerOutbox, erro
 			deploymentKeys = append(deploymentKeys, key)
 		}
 	}
+	var agentKeys []string
+	if s.agentRunDeliveredEnabled() {
+		for key := range s.agentRunDelivered.readers {
+			agentKeys = append(agentKeys, key)
+		}
+	}
 	var endedKeys []string
 	if s.subscriptionEndedEnabled() {
 		for key := range s.subscriptionEnded.readers {
 			endedKeys = append(endedKeys, key)
 		}
 	}
-	r, err := s.queries.Claim(ctx, tx, q.ClaimParams{Namespace: s.namespace, ProducerID: s.producer, FromAddress: s.from, VerificationEnabled: s.verificationEnabled(), VerificationOrigin: origin, VerificationKeys: keys, PasswordResetEnabled: s.passwordResetEnabled(), PasswordResetOrigin: resetOrigin, PasswordResetKeys: resetKeys, MagicLinkEnabled: s.magicLinkEnabled(), MagicLinkOrigin: magicOrigin, MagicLinkKeys: magicKeys, MfaDisableEnabled: s.mfaDisableEnabled(), MfaDisableOrigin: disableOrigin, MfaDisableKeys: disableKeys, DeploymentFailedEnabled: s.deploymentFailedEnabled(), DeploymentFailedKeys: deploymentKeys, SubscriptionEndedEnabled: s.subscriptionEndedEnabled(), SubscriptionEndedKeys: endedKeys, QuotaWarningEnabled: s.quotaWarningEnabled(), QuotaWarningKeys: quotaKeys, NonpaymentDeletionEnabled: s.nonpaymentDeletionEnabled(), NonpaymentDeletionKeys: nonpaymentKeys, AccountSuspendedEnabled: s.accountSuspendedEnabled(), AccountSuspendedKeys: suspendedKeys, AccountRestoredEnabled: s.accountRestoredEnabled(), AccountRestoredKeys: restoredKeys, PaymentFailedEnabled: s.paymentFailedEnabled(), PaymentFailedKeys: paymentKeys, MfaEnabledAlertEnabled: s.mfaEnabledAlertEnabled(), MfaEnabledAlertKeys: enabledKeys, PasswordChangedAlertEnabled: s.passwordChangedAlertEnabled(), PasswordChangedAlertKeys: changedKeys, MfaDisabledAlertEnabled: s.mfaDisabledAlertEnabled(), MfaDisabledAlertKeys: disabledKeys, MfaRecoveryAlertEnabled: s.mfaRecoveryAlertEnabled(), MfaRecoveryAlertKeys: alertKeys, MaxAttempts: api.InternalMailProducerOutboxMaxAttempts, LeaseID: pgID(uuid.NewString()), LeaseSeconds: int32(api.InternalMailProducerOutboxLease / time.Second)})
+	r, err := s.queries.Claim(ctx, tx, q.ClaimParams{Namespace: s.namespace, ProducerID: s.producer, FromAddress: s.from, VerificationEnabled: s.verificationEnabled(), VerificationOrigin: origin, VerificationKeys: keys, PasswordResetEnabled: s.passwordResetEnabled(), PasswordResetOrigin: resetOrigin, PasswordResetKeys: resetKeys, MagicLinkEnabled: s.magicLinkEnabled(), MagicLinkOrigin: magicOrigin, MagicLinkKeys: magicKeys, MfaDisableEnabled: s.mfaDisableEnabled(), MfaDisableOrigin: disableOrigin, MfaDisableKeys: disableKeys, DeploymentFailedEnabled: s.deploymentFailedEnabled(), DeploymentFailedKeys: deploymentKeys, AgentRunDeliveredEnabled: s.agentRunDeliveredEnabled(), AgentRunDeliveredKeys: agentKeys, SubscriptionEndedEnabled: s.subscriptionEndedEnabled(), SubscriptionEndedKeys: endedKeys, QuotaWarningEnabled: s.quotaWarningEnabled(), QuotaWarningKeys: quotaKeys, NonpaymentDeletionEnabled: s.nonpaymentDeletionEnabled(), NonpaymentDeletionKeys: nonpaymentKeys, AccountSuspendedEnabled: s.accountSuspendedEnabled(), AccountSuspendedKeys: suspendedKeys, AccountRestoredEnabled: s.accountRestoredEnabled(), AccountRestoredKeys: restoredKeys, PaymentFailedEnabled: s.paymentFailedEnabled(), PaymentFailedKeys: paymentKeys, MfaEnabledAlertEnabled: s.mfaEnabledAlertEnabled(), MfaEnabledAlertKeys: enabledKeys, PasswordChangedAlertEnabled: s.passwordChangedAlertEnabled(), PasswordChangedAlertKeys: changedKeys, MfaDisabledAlertEnabled: s.mfaDisabledAlertEnabled(), MfaDisabledAlertKeys: disabledKeys, MfaRecoveryAlertEnabled: s.mfaRecoveryAlertEnabled(), MfaRecoveryAlertKeys: alertKeys, MaxAttempts: api.InternalMailProducerOutboxMaxAttempts, LeaseID: pgID(uuid.NewString()), LeaseSeconds: int32(api.InternalMailProducerOutboxLease / time.Second)})
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return r, err
 	}
@@ -230,6 +236,8 @@ func (s *Service) dispatch(ctx context.Context, claimed q.PlatformMailProducerOu
 		state, code = "cancelled", "token_unavailable"
 	case (r.Template == MFARecoveryAlertTemplate || r.Template == MFADisabledAlertTemplate || r.Template == PasswordChangedAlertTemplate || r.Template == MFAEnabledAlertTemplate) && account.Status != "active" && account.Status != "past_due" && account.Status != "suspended":
 		state, code = "cancelled", "account_changed"
+	case r.Template == AgentRunDeliveredTemplate && (!agentRunDeliveredAccountAvailable(account.Status) || account.DeletionRequestedAt.Valid):
+		state, code = "cancelled", "account_changed"
 	case r.Template == PaymentFailedTemplate && (account.Status != "past_due" || account.DeletionRequestedAt.Valid || !account.PastDueAt.Valid || !r.PaymentPastDueAt.Valid || !account.PastDueAt.Time.Equal(r.PaymentPastDueAt.Time)):
 		state, code = "cancelled", "account_changed"
 	case r.Template == SubscriptionEndedTemplate && (account.Plan != "free" || account.Status != "active" || account.PastDueAt.Valid || account.DeletionRequestedAt.Valid || account.StripeSubscriptionItem != "" || !r.SubscriptionEndedRevision.Valid || account.SubscriptionMailRevision != r.SubscriptionEndedRevision.Int64):
@@ -275,7 +283,7 @@ func (s *Service) handoff(ctx context.Context, tx pgx.Tx, r q.PlatformMailProduc
 	sender := s.sender
 	var message mail.Message
 	switch r.Template {
-	case VerificationTemplate, PasswordResetTemplate, MagicLinkTemplate, MFARecoveryAlertTemplate, MFADisableTemplate, MFADisabledAlertTemplate, PasswordChangedAlertTemplate, MFAEnabledAlertTemplate, PaymentFailedTemplate, AccountRestoredTemplate, AccountSuspendedTemplate, NonpaymentDeletionTemplate, QuotaWarningTemplate, SubscriptionEndedTemplate, DeploymentFailedTemplate:
+	case VerificationTemplate, PasswordResetTemplate, MagicLinkTemplate, MFARecoveryAlertTemplate, MFADisableTemplate, MFADisabledAlertTemplate, PasswordChangedAlertTemplate, MFAEnabledAlertTemplate, PaymentFailedTemplate, AccountRestoredTemplate, AccountSuspendedTemplate, NonpaymentDeletionTemplate, QuotaWarningTemplate, SubscriptionEndedTemplate, DeploymentFailedTemplate, AgentRunDeliveredTemplate:
 		var err error
 		switch r.Template {
 		case MFADisableTemplate:
@@ -287,6 +295,11 @@ func (s *Service) handoff(ctx context.Context, tx pgx.Tx, r q.PlatformMailProduc
 			message, err = s.deploymentFailedMessage(r)
 			if s.deploymentFailed != nil {
 				sender = s.deploymentFailed.sender
+			}
+		case AgentRunDeliveredTemplate:
+			message, err = s.agentRunDeliveredMessage(r)
+			if s.agentRunDelivered != nil {
+				sender = s.agentRunDelivered.sender
 			}
 		case SubscriptionEndedTemplate:
 			message, err = s.subscriptionEndedMessage(r)
@@ -414,6 +427,11 @@ func (s *Service) Run(ctx context.Context, onError func(error)) {
 		}
 		if s.deploymentFailedEnabled() {
 			if err := s.CaptureDeploymentFailures(ctx); err != nil && ctx.Err() == nil && onError != nil {
+				onError(err)
+			}
+		}
+		if s.agentRunDeliveredEnabled() {
+			if err := s.CaptureAgentRunDeliveries(ctx); err != nil && ctx.Err() == nil && onError != nil {
 				onError(err)
 			}
 		}

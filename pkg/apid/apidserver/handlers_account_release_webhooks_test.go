@@ -186,3 +186,34 @@ func TestAccountReleaseWebhooks_FreePlanDenied(t *testing.T) {
 		t.Fatalf("free create status %d: %s", got.Code, got.Body)
 	}
 }
+
+// adr: 20261027090010 — agent_run.finished is part of the account receiver vocabulary
+// only for accounts the agents capability is released to; elsewhere it is
+// refused like any unknown event.
+func TestAccountReleaseWebhooks_AgentRunEventFollowsAgentsCapability(t *testing.T) {
+	e := setupWebhookTest(t, api.PlanPro)
+	installAgentGate(t, *e.S())
+	agentHook := accountReleaseWebhookReq()
+	agentHook.TargetURL = "https://example.com/agent-runs"
+	agentHook.EventFilter = []string{"deployment.live", api.AgentRunFinishedWebhookEvent}
+	if rec := e.Do(t, http.MethodPost, accountReleaseWebhooksPath, agentHook, nil); rec.Code != http.StatusBadRequest {
+		t.Fatalf("agents off: status %d: %s", rec.Code, rec.Body)
+	}
+	created := createAccountReleaseWebhookForTest(t, e)
+	agentOnly := []string{api.AgentRunFinishedWebhookEvent}
+	update := api.UpdateAccountReleaseWebhookRequest{EventFilter: &agentOnly}
+	if rec := e.Do(t, http.MethodPatch, accountReleaseWebhooksPath+"/"+created.ID, update, nil); rec.Code != http.StatusBadRequest {
+		t.Fatalf("update with agents off: status %d: %s", rec.Code, rec.Body)
+	}
+
+	releaseAgentsTo(t, *e.S(), (*e.Acct()).ID)
+	if rec := e.Do(t, http.MethodPost, accountReleaseWebhooksPath, agentHook, nil); rec.Code != http.StatusCreated {
+		t.Fatalf("agents released: status %d: %s", rec.Code, rec.Body)
+	}
+	rec := e.Do(t, http.MethodPatch, accountReleaseWebhooksPath+"/"+created.ID, update, nil)
+	var out api.AccountReleaseWebhookResponse
+	if rec.Code != http.StatusOK || json.Unmarshal(rec.Body.Bytes(), &out) != nil ||
+		strings.Join(out.EventFilter, ",") != api.AgentRunFinishedWebhookEvent {
+		t.Fatalf("update with agents released: status %d: %s", rec.Code, rec.Body)
+	}
+}

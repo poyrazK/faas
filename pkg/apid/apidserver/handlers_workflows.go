@@ -616,7 +616,7 @@ func (s *server) injectWorkflowEventForRun(w http.ResponseWriter, r *http.Reques
 		api.WriteProblem(w, api.ErrValidation("event_name is required"))
 		return
 	}
-	if api.IsWorkflowCallbackEventName(req.EventName) {
+	if api.IsWorkflowReservedEventName(req.EventName) {
 		api.WriteProblem(w, api.ErrValidation("callback event names are reserved; use the callback completion endpoint"))
 		return
 	}

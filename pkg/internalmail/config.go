@@ -38,6 +38,7 @@ const (
 	MagicLinkOutboxEnableEnv            = "FAAS_INTERNAL_MAIL_MAGIC_LINK_OUTBOX_ENABLED"
 	MFADisableOutboxEnableEnv           = "FAAS_INTERNAL_MAIL_MFA_DISABLE_OUTBOX_ENABLED"
 	DeploymentFailedOutboxEnableEnv     = "FAAS_INTERNAL_MAIL_DEPLOYMENT_FAILED_OUTBOX_ENABLED"
+	AgentRunDeliveredOutboxEnableEnv    = "FAAS_INTERNAL_MAIL_AGENT_RUN_DELIVERED_OUTBOX_ENABLED"
 	SubscriptionEndedOutboxEnableEnv    = "FAAS_INTERNAL_MAIL_SUBSCRIPTION_ENDED_OUTBOX_ENABLED"
 	QuotaWarningOutboxEnableEnv         = "FAAS_INTERNAL_MAIL_QUOTA_WARNING_OUTBOX_ENABLED"
 	NonpaymentDeletionOutboxEnableEnv   = "FAAS_INTERNAL_MAIL_NONPAYMENT_DELETION_OUTBOX_ENABLED"
@@ -393,4 +394,10 @@ func SubscriptionEndedOutboxEnabled(getenv func(string) string) bool {
 
 func DeploymentFailedOutboxEnabled(getenv func(string) string) bool {
 	return getenv(DeploymentFailedOutboxEnableEnv) == "1" && ProducerOutboxEnabled(getenv)
+}
+
+// AgentRunDeliveredOutboxEnabled gates agent run summaries mailed to the
+// account's own address (ADR-20261027090010 §8).
+func AgentRunDeliveredOutboxEnabled(getenv func(string) string) bool {
+	return getenv(AgentRunDeliveredOutboxEnableEnv) == "1" && ProducerOutboxEnabled(getenv)
 }

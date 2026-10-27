@@ -16,6 +16,7 @@ const ProducerOutboxMagicLinkTemplate = "magic_link"
 const ProducerOutboxMFADisableTemplate = "mfa_disable_request"
 const ProducerOutboxMFADisabledAlertTemplate = "mfa_disabled"
 const ProducerOutboxDeploymentFailedTemplate = "deployment_failed"
+const ProducerOutboxAgentRunDeliveredTemplate = "agent_run_delivered"
 const ProducerOutboxSubscriptionEndedTemplate = "subscription_ended"
 const ProducerOutboxQuotaWarningTemplate = "quota_warning"
 const ProducerOutboxNonpaymentDeletionTemplate = "nonpayment_deletion"
@@ -99,6 +100,8 @@ func (s *Service) producerOutboxContext(ctx context.Context, header http.Header)
 			gate = s.mfaDisableOutboxEnabled
 		case ProducerOutboxDeploymentFailedTemplate:
 			gate = s.deploymentFailedOutboxEnabled
+		case ProducerOutboxAgentRunDeliveredTemplate:
+			gate = s.agentRunDeliveredOutboxEnabled
 		case ProducerOutboxSubscriptionEndedTemplate:
 			gate = s.subscriptionEndedOutboxEnabled
 		case ProducerOutboxQuotaWarningTemplate:
@@ -120,7 +123,7 @@ func (s *Service) producerOutboxContext(ctx context.Context, header http.Header)
 		case ProducerOutboxMFARecoveryAlertTemplate:
 			gate = s.mfaRecoveryAlertOutboxEnabled
 		default:
-			if !s.verificationOutboxEnabled() && !s.passwordResetOutboxEnabled() && !s.magicLinkOutboxEnabled() && !s.mfaRecoveryAlertOutboxEnabled() && !s.mfaDisableOutboxEnabled() && !s.mfaDisabledAlertOutboxEnabled() && !s.passwordChangedAlertOutboxEnabled() && !s.mfaEnabledAlertOutboxEnabled() && !s.paymentFailedOutboxEnabled() && !s.accountRestoredOutboxEnabled() && !s.accountSuspendedOutboxEnabled() && !s.nonpaymentDeletionOutboxEnabled() && !s.quotaWarningOutboxEnabled() && !s.subscriptionEndedOutboxEnabled() && !s.deploymentFailedOutboxEnabled() {
+			if !s.verificationOutboxEnabled() && !s.passwordResetOutboxEnabled() && !s.magicLinkOutboxEnabled() && !s.mfaRecoveryAlertOutboxEnabled() && !s.mfaDisableOutboxEnabled() && !s.mfaDisabledAlertOutboxEnabled() && !s.passwordChangedAlertOutboxEnabled() && !s.mfaEnabledAlertOutboxEnabled() && !s.paymentFailedOutboxEnabled() && !s.accountRestoredOutboxEnabled() && !s.accountSuspendedOutboxEnabled() && !s.nonpaymentDeletionOutboxEnabled() && !s.quotaWarningOutboxEnabled() && !s.subscriptionEndedOutboxEnabled() && !s.deploymentFailedOutboxEnabled() && !s.agentRunDeliveredOutboxEnabled() {
 				return ctx, ErrDisabled
 			}
 			return ctx, ErrInvalid
@@ -181,6 +184,10 @@ func (s *Service) quotaWarningOutboxEnabled() bool {
 
 func (s *Service) subscriptionEndedOutboxEnabled() bool {
 	return s.producerOutboxEnabled() && s.SubscriptionEndedOutboxEnabled != nil && s.SubscriptionEndedOutboxEnabled()
+}
+
+func (s *Service) agentRunDeliveredOutboxEnabled() bool {
+	return s.producerOutboxEnabled() && s.AgentRunDeliveredOutboxEnabled != nil && s.AgentRunDeliveredOutboxEnabled()
 }
 
 func (s *Service) deploymentFailedOutboxEnabled() bool {

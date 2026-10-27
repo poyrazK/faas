@@ -146,6 +146,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 		MagicLinkOutboxEnabled:            func() bool { return internalmail.MagicLinkOutboxEnabled(os.Getenv) },
 		MFADisableOutboxEnabled:           func() bool { return internalmail.MFADisableOutboxEnabled(os.Getenv) },
 		DeploymentFailedOutboxEnabled:     func() bool { return internalmail.DeploymentFailedOutboxEnabled(os.Getenv) },
+		AgentRunDeliveredOutboxEnabled:    func() bool { return internalmail.AgentRunDeliveredOutboxEnabled(os.Getenv) },
 		SubscriptionEndedOutboxEnabled:    func() bool { return internalmail.SubscriptionEndedOutboxEnabled(os.Getenv) },
 		QuotaWarningOutboxEnabled:         func() bool { return internalmail.QuotaWarningOutboxEnabled(os.Getenv) },
 		NonpaymentDeletionOutboxEnabled:   func() bool { return internalmail.NonpaymentDeletionOutboxEnabled(os.Getenv) },

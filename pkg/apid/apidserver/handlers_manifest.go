@@ -44,7 +44,7 @@ const CodeAppManifestInvalid = "app_manifest_invalid"
 // failure so the handler can write the response directly.
 //
 //nolint:unused // reserved for the manifest scan-service reconciliation PR.
-func validateManifest(dir string, acctPlan api.Plan) (*gregalemanifest.Manifest, *api.Problem) {
+func validateManifest(dir string, acctPlan api.Plan, agentSteps bool) (*gregalemanifest.Manifest, *api.Problem) {
 	m, ok, err := gregalemanifest.Load(dir)
 	if err != nil {
 		return nil, api.NewProblem(http.StatusUnprocessableEntity, CodeAppManifestInvalid,
@@ -56,7 +56,7 @@ func validateManifest(dir string, acctPlan api.Plan) (*gregalemanifest.Manifest,
 		// this as "no work to do" rather than 4xx.
 		return nil, nil
 	}
-	if prob := validateManifestAgainstPlan(m, acctPlan); prob != nil {
+	if prob := validateManifestAgainstPlan(m, acctPlan, agentSteps); prob != nil {
 		return nil, prob
 	}
 	if err := m.ValidateForPlan(acctPlan); err != nil {
@@ -79,7 +79,7 @@ func validateManifest(dir string, acctPlan api.Plan) (*gregalemanifest.Manifest,
 // fmt.Errorf. The wrapper maps the manifest error onto the
 // CodeAppManifestInvalid RFC 7807 code so the customer sees a
 // stable, machine-readable error code from the CLI or the dashboard.
-func validateManifestBytes(b []byte, acctPlan api.Plan) (*gregalemanifest.Manifest, *api.Problem) {
+func validateManifestBytes(b []byte, acctPlan api.Plan, agentSteps bool) (*gregalemanifest.Manifest, *api.Problem) {
 	m, err := gregalemanifest.ParseBytes(b)
 	if err != nil {
 		return nil, api.NewProblem(http.StatusUnprocessableEntity, CodeAppManifestInvalid,
@@ -90,7 +90,7 @@ func validateManifestBytes(b []byte, acctPlan api.Plan) (*gregalemanifest.Manife
 		// shipping a blank blob. Treat as absent, not error.
 		return nil, nil
 	}
-	if prob := validateManifestAgainstPlan(m, acctPlan); prob != nil {
+	if prob := validateManifestAgainstPlan(m, acctPlan, agentSteps); prob != nil {
 		return nil, prob
 	}
 	if err := m.ValidateForPlan(acctPlan); err != nil {
@@ -112,11 +112,11 @@ func validateManifestBytes(b []byte, acctPlan api.Plan) (*gregalemanifest.Manife
 // When the per-kind trigger quotas land (PR-B in the trigger cluster),
 // this function will grow per-kind counts against TriggerLimitPerApp /
 // TriggerLimitPerAccount / TriggerBatchSizeMax.
-func validateManifestAgainstPlan(m *gregalemanifest.Manifest, acctPlan api.Plan) *api.Problem {
+func validateManifestAgainstPlan(m *gregalemanifest.Manifest, acctPlan api.Plan, agentSteps bool) *api.Problem {
 	if m == nil {
 		return nil
 	}
-	if prob := validateWorkflowDefinitionsAgainstPlan(m.Workflows, acctPlan); prob != nil {
+	if prob := validateWorkflowDefinitionsAgainstPlan(m.Workflows, acctPlan, agentSteps); prob != nil {
 		return prob
 	}
 	if (len(m.Triggers) > 0 || len(m.EventTriggers) > 0) && !acctPlan.TriggersAllowed() {
@@ -133,7 +133,11 @@ func validateManifestAgainstPlan(m *gregalemanifest.Manifest, acctPlan api.Plan)
 // and the JSON deployment boundary. It is deliberately separate from the
 // trigger gate: a manifest may contain only workflows, and a Free account
 // must still receive the workflow-specific 402 rather than a trigger error.
-func validateWorkflowDefinitionsAgainstPlan(workflows []api.WorkflowSpec, plan api.Plan) *api.Problem {
+//
+// An agent step is accepted only when agentSteps is set: the agents capability is
+// released to the account (ADR-20261027090010 §1). Elsewhere it fails like any invalid step
+// target, so the preview stays invisible.
+func validateWorkflowDefinitionsAgainstPlan(workflows []api.WorkflowSpec, plan api.Plan, agentSteps bool) *api.Problem {
 	if len(workflows) == 0 {
 		return nil
 	}
@@ -144,6 +148,10 @@ func validateWorkflowDefinitionsAgainstPlan(workflows []api.WorkflowSpec, plan a
 		return api.ErrPlanWorkflowsQuota(plan, max, len(workflows))
 	}
 	for i, workflow := range workflows {
+		if !agentSteps && api.WorkflowUsesAgentSteps(workflow) {
+			return api.NewProblem(http.StatusUnprocessableEntity, CodeAppManifestInvalid,
+				"Invalid workflow", fmt.Sprintf("workflows[%d]: %v", i, api.ErrWorkflowInvalidStepTarget))
+		}
 		if _, err := api.ValidateWorkflowDAG(workflow, plan); err != nil {
 			return api.NewProblem(http.StatusUnprocessableEntity, CodeAppManifestInvalid,
 				"Invalid workflow", fmt.Sprintf("workflows[%d]: %v", i, err))

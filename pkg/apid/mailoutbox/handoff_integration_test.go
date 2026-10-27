@@ -50,6 +50,9 @@ CREATE TABLE apps(id uuid PRIMARY KEY,account_id uuid NOT NULL REFERENCES accoun
 CREATE TABLE deployments(id uuid PRIMARY KEY,app_id uuid NOT NULL REFERENCES apps(id) ON DELETE CASCADE,status text NOT NULL DEFAULT 'pending',scope text NOT NULL DEFAULT 'default',deployed_by_user_id uuid REFERENCES accounts(id) ON DELETE SET NULL,deleted_at timestamptz,created_at timestamptz NOT NULL DEFAULT now(),error_code text,error text,error_hint text,error_why text,error_fix text);
 CREATE TABLE org_memberships(org_id uuid NOT NULL,account_id uuid NOT NULL,role text NOT NULL,removed_at timestamptz,PRIMARY KEY(org_id,account_id));
 CREATE TABLE mail_suppressions(email text NOT NULL,expires_at timestamptz);
+CREATE TABLE agents(id uuid PRIMARY KEY,account_id uuid NOT NULL,name text NOT NULL);
+CREATE TABLE agent_runs(id uuid PRIMARY KEY,account_id uuid NOT NULL,agent_id uuid NOT NULL REFERENCES agents(id) ON DELETE CASCADE);
+CREATE TABLE agent_deliveries(id uuid PRIMARY KEY DEFAULT gen_random_uuid(),account_id uuid NOT NULL,run_id uuid NOT NULL REFERENCES agent_runs(id) ON DELETE CASCADE,destination text NOT NULL,state text NOT NULL DEFAULT 'pending',body text NOT NULL DEFAULT '',body_truncated boolean NOT NULL DEFAULT false,created_at timestamptz NOT NULL DEFAULT now(),deadline_at timestamptz NOT NULL DEFAULT now()+interval '15 minutes');
 CREATE TABLE scenario_test_action_policies(app_id uuid PRIMARY KEY REFERENCES apps(id) ON DELETE CASCADE)`); err != nil {
 		t.Fatal(err)
 	}

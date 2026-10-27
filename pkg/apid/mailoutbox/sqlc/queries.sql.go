@@ -249,7 +249,7 @@ SELECT o.id,o.revision,o.state,o.template,o.from_address,o.expires_at,o.recovery
     coalesce(m.sender_address,'')::text AS sender_address
 FROM platform_mail_producer_outbox o
 LEFT JOIN internal_mail_messages m ON m.namespace=o.namespace AND m.producer_id=o.producer_id
-    AND m.idempotency_key=(CASE o.template WHEN 'email_verification' THEN 'verify-email:' WHEN 'password_reset' THEN 'password-reset:' WHEN 'magic_link' THEN 'magic-link:' WHEN 'mfa_recovery_used' THEN 'mfa-recovery-alert:' WHEN 'deployment_failed' THEN 'deployment-failed:' WHEN 'subscription_ended' THEN 'subscription-ended:' WHEN 'quota_warning' THEN 'quota-warning:' WHEN 'nonpayment_deletion' THEN 'nonpayment-deletion:' WHEN 'account_suspended' THEN 'account-suspended:' WHEN 'account_restored' THEN 'account-restored:' WHEN 'payment_failed' THEN 'payment-failed:' WHEN 'mfa_enabled' THEN 'mfa-enabled:' WHEN 'password_changed' THEN 'password-changed:' WHEN 'mfa_disabled' THEN 'mfa-disabled:' WHEN 'mfa_disable_request' THEN 'mfa-disable:' ELSE 'account-delete:' END)||o.id::text
+    AND m.idempotency_key=(CASE o.template WHEN 'email_verification' THEN 'verify-email:' WHEN 'password_reset' THEN 'password-reset:' WHEN 'magic_link' THEN 'magic-link:' WHEN 'mfa_recovery_used' THEN 'mfa-recovery-alert:' WHEN 'deployment_failed' THEN 'deployment-failed:' WHEN 'agent_run_delivered' THEN 'agent-run-delivered:' WHEN 'subscription_ended' THEN 'subscription-ended:' WHEN 'quota_warning' THEN 'quota-warning:' WHEN 'nonpayment_deletion' THEN 'nonpayment-deletion:' WHEN 'account_suspended' THEN 'account-suspended:' WHEN 'account_restored' THEN 'account-restored:' WHEN 'payment_failed' THEN 'payment-failed:' WHEN 'mfa_enabled' THEN 'mfa-enabled:' WHEN 'password_changed' THEN 'password-changed:' WHEN 'mfa_disabled' THEN 'mfa-disabled:' WHEN 'mfa_disable_request' THEN 'mfa-disable:' ELSE 'account-delete:' END)||o.id::text
 WHERE o.namespace=$1 AND o.id=$2
 `
 
@@ -297,6 +297,149 @@ func (q *Queries) AdmissionLookup(ctx context.Context, db DBTX, arg AdmissionLoo
 		&i.SenderAddress,
 	)
 	return i, err
+}
+
+const agentRunCapture = `-- name: AgentRunCapture :one
+SELECT started_at,recovery_id FROM platform_mail_agent_run_capture WHERE namespace=$1 AND producer_id=$2
+`
+
+type AgentRunCaptureParams struct {
+	Namespace  string
+	ProducerID string
+}
+
+type AgentRunCaptureRow struct {
+	StartedAt  pgtype.Timestamptz
+	RecoveryID pgtype.UUID
+}
+
+func (q *Queries) AgentRunCapture(ctx context.Context, db DBTX, arg AgentRunCaptureParams) (AgentRunCaptureRow, error) {
+	row := db.QueryRow(ctx, agentRunCapture, arg.Namespace, arg.ProducerID)
+	var i AgentRunCaptureRow
+	err := row.Scan(&i.StartedAt, &i.RecoveryID)
+	return i, err
+}
+
+const agentRunDeliveredKeyReferences = `-- name: AgentRunDeliveredKeyReferences :many
+SELECT DISTINCT security_alert_key_id FROM platform_mail_producer_outbox
+WHERE namespace=$1 AND producer_id=$2 AND template='agent_run_delivered' AND state IN ('queued','claimed') AND expires_at>clock_timestamp()
+`
+
+type AgentRunDeliveredKeyReferencesParams struct {
+	Namespace  string
+	ProducerID string
+}
+
+func (q *Queries) AgentRunDeliveredKeyReferences(ctx context.Context, db DBTX, arg AgentRunDeliveredKeyReferencesParams) ([]string, error) {
+	rows, err := db.Query(ctx, agentRunDeliveredKeyReferences, arg.Namespace, arg.ProducerID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []string{}
+	for rows.Next() {
+		var security_alert_key_id string
+		if err := rows.Scan(&security_alert_key_id); err != nil {
+			return nil, err
+		}
+		items = append(items, security_alert_key_id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const agentRunDeliveredReady = `-- name: AgentRunDeliveredReady :one
+
+WITH own_constraint AS MATERIALIZED (
+    SELECT c.oid FROM pg_catalog.pg_constraint c
+    JOIN pg_catalog.pg_class t ON t.oid=c.conrelid JOIN pg_catalog.pg_namespace n ON n.oid=t.relnamespace
+    WHERE n.nspname=current_schema() AND t.relname='platform_mail_producer_outbox'
+      AND c.conname='platform_mail_producer_outbox_security_alert_check'
+)
+SELECT EXISTS(SELECT 1 FROM own_constraint c
+    WHERE position('agent_run_delivered' in pg_catalog.pg_get_constraintdef(c.oid))>0)::boolean AS ready
+`
+
+// Agent run summaries (ADR-20261027090010 §8). agent_deliveries belongs to agentd;
+// capture reads it, sharing the row so agentd cannot end a delivery while it
+// is being captured, and writes only its own receipt.
+func (q *Queries) AgentRunDeliveredReady(ctx context.Context, db DBTX) (bool, error) {
+	row := db.QueryRow(ctx, agentRunDeliveredReady)
+	var ready bool
+	err := row.Scan(&ready)
+	return ready, err
+}
+
+const agentRunDeliveredSchemaReady = `-- name: AgentRunDeliveredSchemaReady :exec
+SELECT d.id,d.destination,d.state,d.body,d.body_truncated,d.created_at,r.agent_id,a.name,o.agent_delivery_id,c.started_at,x.disposition
+FROM agent_deliveries d JOIN agent_runs r ON r.id=d.run_id JOIN agents a ON a.id=r.agent_id
+JOIN platform_mail_producer_outbox o ON o.agent_delivery_id=d.id
+JOIN platform_mail_agent_run_capture c ON c.namespace=o.namespace AND c.producer_id=o.producer_id
+JOIN platform_mail_agent_run_observations x ON x.delivery_id=d.id LIMIT 0
+`
+
+func (q *Queries) AgentRunDeliveredSchemaReady(ctx context.Context, db DBTX) error {
+	_, err := db.Exec(ctx, agentRunDeliveredSchemaReady)
+	return err
+}
+
+const agentRunDeliveryCandidates = `-- name: AgentRunDeliveryCandidates :many
+SELECT d.id,d.account_id FROM agent_deliveries d
+JOIN platform_mail_agent_run_capture c ON c.namespace=$1 AND c.producer_id=$2
+WHERE d.destination='email' AND d.created_at>=c.started_at
+    AND d.created_at>clock_timestamp()-make_interval(secs=>$3::integer)
+    AND NOT EXISTS(SELECT 1 FROM platform_mail_agent_run_observations x WHERE x.delivery_id=d.id)
+ORDER BY d.created_at,d.id LIMIT $4
+`
+
+type AgentRunDeliveryCandidatesParams struct {
+	Namespace  string
+	ProducerID string
+	TtlSeconds int32
+	BatchSize  int32
+}
+
+type AgentRunDeliveryCandidatesRow struct {
+	ID        pgtype.UUID
+	AccountID pgtype.UUID
+}
+
+func (q *Queries) AgentRunDeliveryCandidates(ctx context.Context, db DBTX, arg AgentRunDeliveryCandidatesParams) ([]AgentRunDeliveryCandidatesRow, error) {
+	rows, err := db.Query(ctx, agentRunDeliveryCandidates,
+		arg.Namespace,
+		arg.ProducerID,
+		arg.TtlSeconds,
+		arg.BatchSize,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []AgentRunDeliveryCandidatesRow{}
+	for rows.Next() {
+		var i AgentRunDeliveryCandidatesRow
+		if err := rows.Scan(&i.ID, &i.AccountID); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const agentRunDeliveryObserved = `-- name: AgentRunDeliveryObserved :one
+SELECT EXISTS(SELECT 1 FROM platform_mail_agent_run_observations WHERE delivery_id=$1)::boolean
+`
+
+func (q *Queries) AgentRunDeliveryObserved(ctx context.Context, db DBTX, deliveryID pgtype.UUID) (bool, error) {
+	row := db.QueryRow(ctx, agentRunDeliveryObserved, deliveryID)
+	var column_1 bool
+	err := row.Scan(&column_1)
+	return column_1, err
 }
 
 const cancelOlderQuotaWarningIntents = `-- name: CancelOlderQuotaWarningIntents :exec
@@ -353,34 +496,36 @@ WITH candidate AS (
           AND o.verification_key_id=ANY($17::text[]))
         OR (o.template='deployment_failed' AND $18::boolean
           AND o.security_alert_key_id=ANY($19::text[]))
-        OR (o.template='subscription_ended' AND $20::boolean
+        OR (o.template='agent_run_delivered' AND $20::boolean
           AND o.security_alert_key_id=ANY($21::text[]))
-        OR (o.template='quota_warning' AND $22::boolean
+        OR (o.template='subscription_ended' AND $22::boolean
           AND o.security_alert_key_id=ANY($23::text[]))
-        OR (o.template='nonpayment_deletion' AND $24::boolean
+        OR (o.template='quota_warning' AND $24::boolean
           AND o.security_alert_key_id=ANY($25::text[]))
-        OR (o.template='account_suspended' AND $26::boolean
+        OR (o.template='nonpayment_deletion' AND $26::boolean
           AND o.security_alert_key_id=ANY($27::text[]))
-        OR (o.template='account_restored' AND $28::boolean
+        OR (o.template='account_suspended' AND $28::boolean
           AND o.security_alert_key_id=ANY($29::text[]))
-        OR (o.template='payment_failed' AND $30::boolean
+        OR (o.template='account_restored' AND $30::boolean
           AND o.security_alert_key_id=ANY($31::text[]))
-        OR (o.template='mfa_enabled' AND $32::boolean
+        OR (o.template='payment_failed' AND $32::boolean
           AND o.security_alert_key_id=ANY($33::text[]))
-        OR (o.template='password_changed' AND $34::boolean
+        OR (o.template='mfa_enabled' AND $34::boolean
           AND o.security_alert_key_id=ANY($35::text[]))
-        OR (o.template='mfa_disabled' AND $36::boolean
+        OR (o.template='password_changed' AND $36::boolean
           AND o.security_alert_key_id=ANY($37::text[]))
-        OR (o.template='mfa_recovery_used' AND $38::boolean
-          AND o.security_alert_key_id=ANY($39::text[])))
-      AND o.attempts<$40 AND o.expires_at>clock_timestamp()
+        OR (o.template='mfa_disabled' AND $38::boolean
+          AND o.security_alert_key_id=ANY($39::text[]))
+        OR (o.template='mfa_recovery_used' AND $40::boolean
+          AND o.security_alert_key_id=ANY($41::text[])))
+      AND o.attempts<$42 AND o.expires_at>clock_timestamp()
       AND ((o.state='queued' AND o.next_attempt_at<=clock_timestamp()) OR (o.state='claimed' AND o.lease_until<=clock_timestamp()))
       AND NOT EXISTS(SELECT 1 FROM internal_mail_recovery_state s WHERE s.namespace=o.namespace AND (s.held OR s.recovery_id<>o.recovery_id))
     ORDER BY next_attempt_at,id LIMIT 1 FOR UPDATE SKIP LOCKED
 )
 UPDATE platform_mail_producer_outbox o SET state='claimed',attempts=attempts+1,lease_id=$1,
     lease_until=clock_timestamp()+$2::integer*interval '1 second',updated_at=clock_timestamp(),revision=o.revision+1
-FROM candidate c WHERE o.id=c.id RETURNING o.id, o.account_id, o.namespace, o.producer_id, o.from_address, o.recipient_address, o.template, o.template_version, o.deletion_requested_at, o.restore_until, o.expires_at, o.recovery_id, o.state, o.attempts, o.next_attempt_at, o.lease_id, o.lease_until, o.code, o.created_at, o.updated_at, o.revision, o.verification_token_hash, o.sealed_verification, o.verification_key_id, o.verification_origin, o.sealed_security_alert, o.security_alert_key_id, o.payment_past_due_at, o.account_restored_revision, o.suspension_past_due_at, o.account_suspended_revision, o.nonpayment_past_due_at, o.nonpayment_deletion_revision, o.nonpayment_deletion_at, o.quota_warning_day, o.quota_warning_plan, o.quota_warning_revision, o.subscription_ended_revision, o.deployment_failure_id, o.deployment_failure_app_id, o.deployment_failure_scope, o.deployment_failure_revision, o.deployment_failure_account_revision, o.deployment_failure_app_revision, o.deployment_failure_success_revision, o.deployment_failure_at
+FROM candidate c WHERE o.id=c.id RETURNING o.id, o.account_id, o.namespace, o.producer_id, o.from_address, o.recipient_address, o.template, o.template_version, o.deletion_requested_at, o.restore_until, o.expires_at, o.recovery_id, o.state, o.attempts, o.next_attempt_at, o.lease_id, o.lease_until, o.code, o.created_at, o.updated_at, o.revision, o.verification_token_hash, o.sealed_verification, o.verification_key_id, o.verification_origin, o.sealed_security_alert, o.security_alert_key_id, o.payment_past_due_at, o.account_restored_revision, o.suspension_past_due_at, o.account_suspended_revision, o.nonpayment_past_due_at, o.nonpayment_deletion_revision, o.nonpayment_deletion_at, o.quota_warning_day, o.quota_warning_plan, o.quota_warning_revision, o.subscription_ended_revision, o.deployment_failure_id, o.deployment_failure_app_id, o.deployment_failure_scope, o.deployment_failure_revision, o.deployment_failure_account_revision, o.deployment_failure_app_revision, o.deployment_failure_success_revision, o.deployment_failure_at, o.agent_delivery_id
 `
 
 type ClaimParams struct {
@@ -403,6 +548,8 @@ type ClaimParams struct {
 	MfaDisableKeys              []string
 	DeploymentFailedEnabled     bool
 	DeploymentFailedKeys        []string
+	AgentRunDeliveredEnabled    bool
+	AgentRunDeliveredKeys       []string
 	SubscriptionEndedEnabled    bool
 	SubscriptionEndedKeys       []string
 	QuotaWarningEnabled         bool
@@ -447,6 +594,8 @@ func (q *Queries) Claim(ctx context.Context, db DBTX, arg ClaimParams) (Platform
 		arg.MfaDisableKeys,
 		arg.DeploymentFailedEnabled,
 		arg.DeploymentFailedKeys,
+		arg.AgentRunDeliveredEnabled,
+		arg.AgentRunDeliveredKeys,
 		arg.SubscriptionEndedEnabled,
 		arg.SubscriptionEndedKeys,
 		arg.QuotaWarningEnabled,
@@ -517,6 +666,7 @@ func (q *Queries) Claim(ctx context.Context, db DBTX, arg ClaimParams) (Platform
 		&i.DeploymentFailureAppRevision,
 		&i.DeploymentFailureSuccessRevision,
 		&i.DeploymentFailureAt,
+		&i.AgentDeliveryID,
 	)
 	return i, err
 }
@@ -929,6 +1079,43 @@ func (q *Queries) CreateAccountSuspendedIntent(ctx context.Context, db DBTX, arg
 		arg.SecurityAlertKeyID,
 		arg.AccountSuspendedRevision,
 		arg.SuspensionPastDueAt,
+	)
+	return err
+}
+
+const createAgentRunDeliveredIntent = `-- name: CreateAgentRunDeliveredIntent :exec
+INSERT INTO platform_mail_producer_outbox(id,account_id,namespace,producer_id,from_address,recipient_address,
+    template,template_version,expires_at,recovery_id,sealed_security_alert,security_alert_key_id,agent_delivery_id)
+VALUES($1,$2,$3,$4,$5,$6,'agent_run_delivered',1,$7,$8,$9,$10,$11)
+`
+
+type CreateAgentRunDeliveredIntentParams struct {
+	ID                  pgtype.UUID
+	AccountID           pgtype.UUID
+	Namespace           string
+	ProducerID          string
+	FromAddress         string
+	RecipientAddress    string
+	ExpiresAt           pgtype.Timestamptz
+	RecoveryID          pgtype.UUID
+	SealedSecurityAlert []byte
+	SecurityAlertKeyID  string
+	AgentDeliveryID     pgtype.UUID
+}
+
+func (q *Queries) CreateAgentRunDeliveredIntent(ctx context.Context, db DBTX, arg CreateAgentRunDeliveredIntentParams) error {
+	_, err := db.Exec(ctx, createAgentRunDeliveredIntent,
+		arg.ID,
+		arg.AccountID,
+		arg.Namespace,
+		arg.ProducerID,
+		arg.FromAddress,
+		arg.RecipientAddress,
+		arg.ExpiresAt,
+		arg.RecoveryID,
+		arg.SealedSecurityAlert,
+		arg.SecurityAlertKeyID,
+		arg.AgentDeliveryID,
 	)
 	return err
 }
@@ -1905,6 +2092,23 @@ func (q *Queries) DowngradeEndedSubscription(ctx context.Context, db DBTX, arg D
 	return i, err
 }
 
+const enrollAgentRunCapture = `-- name: EnrollAgentRunCapture :exec
+INSERT INTO platform_mail_agent_run_capture(namespace,producer_id,recovery_id) VALUES($1,$2,$3)
+ON CONFLICT(namespace,producer_id) DO UPDATE SET started_at=clock_timestamp(),recovery_id=EXCLUDED.recovery_id
+WHERE platform_mail_agent_run_capture.recovery_id<>EXCLUDED.recovery_id
+`
+
+type EnrollAgentRunCaptureParams struct {
+	Namespace  string
+	ProducerID string
+	RecoveryID pgtype.UUID
+}
+
+func (q *Queries) EnrollAgentRunCapture(ctx context.Context, db DBTX, arg EnrollAgentRunCaptureParams) error {
+	_, err := db.Exec(ctx, enrollAgentRunCapture, arg.Namespace, arg.ProducerID, arg.RecoveryID)
+	return err
+}
+
 const enrollDeploymentFailureCapture = `-- name: EnrollDeploymentFailureCapture :exec
 INSERT INTO platform_mail_deployment_capture(namespace,producer_id,recovery_id) VALUES($1,$2,$3)
 ON CONFLICT(namespace,producer_id) DO UPDATE SET started_at=clock_timestamp(),recovery_id=EXCLUDED.recovery_id
@@ -2009,7 +2213,7 @@ func (q *Queries) InsertReconciliation(ctx context.Context, db DBTX, arg InsertR
 }
 
 const intent = `-- name: Intent :one
-SELECT id, account_id, namespace, producer_id, from_address, recipient_address, template, template_version, deletion_requested_at, restore_until, expires_at, recovery_id, state, attempts, next_attempt_at, lease_id, lease_until, code, created_at, updated_at, revision, verification_token_hash, sealed_verification, verification_key_id, verification_origin, sealed_security_alert, security_alert_key_id, payment_past_due_at, account_restored_revision, suspension_past_due_at, account_suspended_revision, nonpayment_past_due_at, nonpayment_deletion_revision, nonpayment_deletion_at, quota_warning_day, quota_warning_plan, quota_warning_revision, subscription_ended_revision, deployment_failure_id, deployment_failure_app_id, deployment_failure_scope, deployment_failure_revision, deployment_failure_account_revision, deployment_failure_app_revision, deployment_failure_success_revision, deployment_failure_at FROM platform_mail_producer_outbox WHERE namespace=$1 AND id=$2
+SELECT id, account_id, namespace, producer_id, from_address, recipient_address, template, template_version, deletion_requested_at, restore_until, expires_at, recovery_id, state, attempts, next_attempt_at, lease_id, lease_until, code, created_at, updated_at, revision, verification_token_hash, sealed_verification, verification_key_id, verification_origin, sealed_security_alert, security_alert_key_id, payment_past_due_at, account_restored_revision, suspension_past_due_at, account_suspended_revision, nonpayment_past_due_at, nonpayment_deletion_revision, nonpayment_deletion_at, quota_warning_day, quota_warning_plan, quota_warning_revision, subscription_ended_revision, deployment_failure_id, deployment_failure_app_id, deployment_failure_scope, deployment_failure_revision, deployment_failure_account_revision, deployment_failure_app_revision, deployment_failure_success_revision, deployment_failure_at, agent_delivery_id FROM platform_mail_producer_outbox WHERE namespace=$1 AND id=$2
 `
 
 type IntentParams struct {
@@ -2067,6 +2271,7 @@ func (q *Queries) Intent(ctx context.Context, db DBTX, arg IntentParams) (Platfo
 		&i.DeploymentFailureAppRevision,
 		&i.DeploymentFailureSuccessRevision,
 		&i.DeploymentFailureAt,
+		&i.AgentDeliveryID,
 	)
 	return i, err
 }
@@ -2224,7 +2429,7 @@ func (q *Queries) LockDeploymentFailureApp(ctx context.Context, db DBTX, id pgty
 }
 
 const lockIntent = `-- name: LockIntent :one
-SELECT id, account_id, namespace, producer_id, from_address, recipient_address, template, template_version, deletion_requested_at, restore_until, expires_at, recovery_id, state, attempts, next_attempt_at, lease_id, lease_until, code, created_at, updated_at, revision, verification_token_hash, sealed_verification, verification_key_id, verification_origin, sealed_security_alert, security_alert_key_id, payment_past_due_at, account_restored_revision, suspension_past_due_at, account_suspended_revision, nonpayment_past_due_at, nonpayment_deletion_revision, nonpayment_deletion_at, quota_warning_day, quota_warning_plan, quota_warning_revision, subscription_ended_revision, deployment_failure_id, deployment_failure_app_id, deployment_failure_scope, deployment_failure_revision, deployment_failure_account_revision, deployment_failure_app_revision, deployment_failure_success_revision, deployment_failure_at FROM platform_mail_producer_outbox WHERE namespace=$1 AND id=$2 FOR UPDATE
+SELECT id, account_id, namespace, producer_id, from_address, recipient_address, template, template_version, deletion_requested_at, restore_until, expires_at, recovery_id, state, attempts, next_attempt_at, lease_id, lease_until, code, created_at, updated_at, revision, verification_token_hash, sealed_verification, verification_key_id, verification_origin, sealed_security_alert, security_alert_key_id, payment_past_due_at, account_restored_revision, suspension_past_due_at, account_suspended_revision, nonpayment_past_due_at, nonpayment_deletion_revision, nonpayment_deletion_at, quota_warning_day, quota_warning_plan, quota_warning_revision, subscription_ended_revision, deployment_failure_id, deployment_failure_app_id, deployment_failure_scope, deployment_failure_revision, deployment_failure_account_revision, deployment_failure_app_revision, deployment_failure_success_revision, deployment_failure_at, agent_delivery_id FROM platform_mail_producer_outbox WHERE namespace=$1 AND id=$2 FOR UPDATE
 `
 
 type LockIntentParams struct {
@@ -2282,6 +2487,7 @@ func (q *Queries) LockIntent(ctx context.Context, db DBTX, arg LockIntentParams)
 		&i.DeploymentFailureAppRevision,
 		&i.DeploymentFailureSuccessRevision,
 		&i.DeploymentFailureAt,
+		&i.AgentDeliveryID,
 	)
 	return i, err
 }
@@ -3951,6 +4157,27 @@ func (q *Queries) RecordAccountSuspension(ctx context.Context, db DBTX, arg Reco
 	return err
 }
 
+const recordAgentRunDeliveryObservation = `-- name: RecordAgentRunDeliveryObservation :exec
+INSERT INTO platform_mail_agent_run_observations(delivery_id,account_id,disposition,intent_id) VALUES($1,$2,$3,$4)
+`
+
+type RecordAgentRunDeliveryObservationParams struct {
+	DeliveryID  pgtype.UUID
+	AccountID   pgtype.UUID
+	Disposition string
+	IntentID    pgtype.UUID
+}
+
+func (q *Queries) RecordAgentRunDeliveryObservation(ctx context.Context, db DBTX, arg RecordAgentRunDeliveryObservationParams) error {
+	_, err := db.Exec(ctx, recordAgentRunDeliveryObservation,
+		arg.DeliveryID,
+		arg.AccountID,
+		arg.Disposition,
+		arg.IntentID,
+	)
+	return err
+}
+
 const recordDeploymentFailureObservation = `-- name: RecordDeploymentFailureObservation :exec
 INSERT INTO platform_mail_deployment_observations(deployment_id,failure_revision,account_id,disposition,intent_id)
 VALUES($1,$2,$3,$4,$5)
@@ -4464,6 +4691,41 @@ func (q *Queries) ShareAccountSuspendedSubmissionAccount(ctx context.Context, db
 		&i.SuspensionPastDueAt,
 		&i.FromAddress,
 		&i.SenderAddress,
+	)
+	return i, err
+}
+
+const shareAgentRunDelivery = `-- name: ShareAgentRunDelivery :one
+SELECT d.id,d.account_id,d.run_id,d.state,d.body,d.body_truncated,d.created_at,d.deadline_at,a.name AS agent_name
+FROM agent_deliveries d JOIN agent_runs r ON r.id=d.run_id JOIN agents a ON a.id=r.agent_id
+WHERE d.id=$1 AND d.destination='email' FOR SHARE OF d
+`
+
+type ShareAgentRunDeliveryRow struct {
+	ID            pgtype.UUID
+	AccountID     pgtype.UUID
+	RunID         pgtype.UUID
+	State         string
+	Body          string
+	BodyTruncated bool
+	CreatedAt     pgtype.Timestamptz
+	DeadlineAt    pgtype.Timestamptz
+	AgentName     string
+}
+
+func (q *Queries) ShareAgentRunDelivery(ctx context.Context, db DBTX, id pgtype.UUID) (ShareAgentRunDeliveryRow, error) {
+	row := db.QueryRow(ctx, shareAgentRunDelivery, id)
+	var i ShareAgentRunDeliveryRow
+	err := row.Scan(
+		&i.ID,
+		&i.AccountID,
+		&i.RunID,
+		&i.State,
+		&i.Body,
+		&i.BodyTruncated,
+		&i.CreatedAt,
+		&i.DeadlineAt,
+		&i.AgentName,
 	)
 	return i, err
 }

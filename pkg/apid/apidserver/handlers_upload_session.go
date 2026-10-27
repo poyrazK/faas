@@ -720,7 +720,7 @@ func (s *server) handleCommitUpload(w http.ResponseWriter, r *http.Request, acct
 		api.WriteProblem(w, prob)
 		return
 	}
-	if prob := validateWorkflowDefinitionsAgainstPlan(opts.Workflows, acct.Plan); prob != nil {
+	if prob := validateWorkflowDefinitionsAgainstPlan(opts.Workflows, acct.Plan, s.agentStepsAllowed(acct)); prob != nil {
 		api.WriteProblem(w, prob)
 		return
 	}
@@ -757,7 +757,7 @@ func (s *server) handleCommitUpload(w http.ResponseWriter, r *http.Request, acct
 	if opts.SourceRoot != "" {
 		manifestApp.RootDir = opts.SourceRoot
 	}
-	manifest, manifestProblem := loadSourceRefManifest(row.PartPath, manifestApp, acct.Plan)
+	manifest, manifestProblem := loadSourceRefManifest(row.PartPath, manifestApp, acct.Plan, s.agentStepsAllowed(acct))
 	if manifestProblem != nil {
 		api.WriteProblem(w, manifestProblem)
 		return
