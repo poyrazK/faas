@@ -141,18 +141,27 @@ func TestAppLifecycle(t *testing.T) {
 				t.Logf("wake response header %s: %s", k, strings.Join(v, ","))
 			}
 		}
-		if n := liveInstances(t, tg, slug); n == 0 {
-			t.Fatal("a request answered but `gregale ps` shows no live instance")
-		}
+	})
+	// Separate from the wake itself so a ps mismatch does not block the
+	// redeploy and rollback steps.
+	s.check("ps_shows_woken_instance", func(t *testing.T) {
+		eventually(t, "`gregale ps` lists the woken instance", 30*time.Second, 2*time.Second, func() (bool, string) {
+			if get(base+"/").status != http.StatusOK {
+				return false, "app stopped answering"
+			}
+			n := liveInstances(t, tg, slug)
+			return n > 0, fmt.Sprintf("app answers but ps lists %d live instance(s)", n)
+		})
 	})
 	if full {
 		s.check("manual_wake", func(t *testing.T) {
 			tg.ok(t, 2*time.Minute, "park", slug)
 			waitParked(t, tg, slug)
 			tg.ok(t, 3*time.Minute, "wake", slug, "--wait", "--timeout", "2m")
-			if n := liveInstances(t, tg, slug); n == 0 {
-				t.Fatal("`gregale wake --wait` returned but `gregale ps` shows no live instance")
-			}
+			eventually(t, "`gregale ps` lists the woken instance", 30*time.Second, 2*time.Second, func() (bool, string) {
+				n := liveInstances(t, tg, slug)
+				return n > 0, fmt.Sprintf("`wake --wait` returned but ps lists %d live instance(s)", n)
+			})
 		})
 	}
 
