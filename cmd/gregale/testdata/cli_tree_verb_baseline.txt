@@ -329,18 +329,12 @@ mcp server readiness fallback get  # more than three words
 mcp server readiness fallback set  # more than three words
 mcp server readiness incidents  # more than three words
 mcp server readiness maintenance  # more than three words
-mcp server readiness maintenance cancel  # more than three words
-mcp server readiness maintenance create  # more than three words
-mcp server readiness maintenance list  # more than three words
 mcp server readiness notifications  # more than three words
 mcp server readiness notifications abandon  # more than three words
 mcp server readiness notifications list  # more than three words
 mcp server readiness notifications retry  # more than three words
 mcp server readiness pagerduty  # more than three words
 mcp server readiness pagerduty acknowledgements  # more than three words
-mcp server readiness pagerduty disable  # more than three words
-mcp server readiness pagerduty get  # more than three words
-mcp server readiness pagerduty set  # more than three words
 mcp server readiness policy  # more than three words
 mcp server readiness policy diff  # more than three words
 mcp server readiness policy get  # more than three words

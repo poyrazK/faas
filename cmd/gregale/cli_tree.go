@@ -252,6 +252,14 @@ var cliTreeAliases = []cliTreeAlias{
 	{"open dashboard", "dashboard"},
 	{"audit", "audit-events"},
 	{"logs drain", "log-drains"},
+	// MCP readiness alerting folds into the alert family on the CLI; its
+	// backend stays separate (ADR-20261026145832).
+	{"alert maintenance list", "mcp readiness maintenance list"},
+	{"alert maintenance create", "mcp readiness maintenance create"},
+	{"alert maintenance cancel", "mcp readiness maintenance cancel"},
+	{"alert pagerduty get", "mcp readiness pagerduty get"},
+	{"alert pagerduty set", "mcp readiness pagerduty set"},
+	{"alert pagerduty disable", "mcp readiness pagerduty disable"},
 	{"alert channel", "channels"},
 	{"alert incident", "incidents"},
 	{"alert slo", "slos"},

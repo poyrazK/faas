@@ -205,6 +205,8 @@ func TestCliTreeRewrite(t *testing.T) {
 		{"app listener list api", "app api tcp list"},
 		{"app listener create api --port 7000 --protocol udp", "app api udp add --port 7000"},
 		{"app listener delete --protocol=tcp api l1", "app api tcp delete l1"},
+		{"alert maintenance create --app api --reason x", "mcp readiness maintenance create --app api --reason x"},
+		{"alert pagerduty get --app api", "mcp readiness pagerduty get --app api"},
 		{"admin sites list", "sites list"},
 		{"admin postgres reconcile acct-1", "postgres reconcile acct-1"},
 		{"admin credit --reason x", "admin credit --reason x"},
