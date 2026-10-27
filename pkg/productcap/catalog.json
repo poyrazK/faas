@@ -5469,6 +5469,9 @@
         "/dashboard/apps/{}/profiles",
         "/v1/apps/{}/profiles",
         "/v1/deployments/{}/canary/profile-gate"
+      ],
+      "cli": [
+        "canary gate"
       ]
     },
     {
