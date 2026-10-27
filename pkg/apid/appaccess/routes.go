@@ -150,6 +150,10 @@ var routeActions = map[string]authz.OrgAction{
 	"POST /dashboard/apps/{slug}/secrets/{key}/rotate":           authz.OrgActionManageAppSecrets,
 	"POST /dashboard/apps/{slug}/secret-references":              authz.OrgActionManageAppSecrets,
 	"POST /dashboard/apps/{slug}/secret-references/{key}/delete": authz.OrgActionManageAppSecrets,
+	// Team triage (ADR-1456–1498): members claim and acknowledge incidents;
+	// the handlers require the deploy-write scope.
+	"POST /dashboard/apps/{slug}/issues/{issue_id}/triage":                              authz.OrgActionDeployApp,
+	"POST /dashboard/apps/{slug}/issues/tracker-notifications/triage/{notification_id}": authz.OrgActionDeployApp,
 }
 
 // dashboardRead reports a read of a session-only dashboard app page, which

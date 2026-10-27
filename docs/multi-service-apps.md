@@ -189,13 +189,23 @@ services:
     environment:
       LOG_LEVEL: info            # imported
       STRIPE_KEY: sk_test_…      # not imported: looks like a secret
-      BILLING_URL: http://billing:8080   # not imported: Docker address
+      BILLING_URL: http://billing:8080/v1   # imported as http://billing.svc.gregale:10081/v1
+      CACHE_URL: redis://cache:6379         # not imported: Docker address
 ```
 
-The plan lists imported names under **Imported from Compose** and gives the
-reason beside each value it skips. Gregale never overwrites a value already set
-on the app, never imports secret-looking values, Docker service addresses,
-`${…}` interpolation or `env_file` values, and never shows values in the plan.
+An `http`, `https`, `ws` or `wss` value that calls another service of the
+project by its Docker name is imported as that service's Gregale address:
+`http://billing.svc.gregale:10081` (or `https://billing.internal`), keeping the
+path. The service mesh forwards to the service's own port, so the Docker port
+is dropped; a value for a second listener of that service, or for another
+protocol, needs its address set by hand
+([ADR-20261026181020](adr/20261026181020-compose-service-address-import.md)).
+
+The plan lists imported names under **Imported from Compose**, names each
+rewritten address, and gives the reason beside each value it skips. Gregale
+never overwrites a value already set on the app, never imports secret-looking
+values, other Docker addresses, `${…}` interpolation or `env_file` values, and
+never shows values in the plan.
 Imports happen on reviewed deploys (`gregale deploy`, the dashboard,
 `--repo … --project`); a GitHub push deploy imports nothing. Values in
 `compose.override.yaml` are imported too, so keep local-only settings out of an

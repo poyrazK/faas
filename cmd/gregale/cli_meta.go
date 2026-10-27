@@ -744,6 +744,11 @@ var cliCommands = []cliCommand{
 				{Name: "scan", Short: "Start or resume due discovery", Positionals: []string{"<app>", "<bucket-id>"}},
 				{Name: "status", Short: "Read discovery progress", Positionals: []string{"<app>", "<bucket-id>", "<scan-id>"}},
 			}},
+			{Name: "cors", Short: "Let browsers on your sites use the bucket's signed URLs", Subcommands: []cliSub{
+				{Name: "get", Short: "Read the bucket's CORS rules", Positionals: []string{"<app>", "<bucket-id>"}},
+				{Name: "set", Short: "Replace rules from a JSON file or stdin", Positionals: []string{"<app>", "<bucket-id>", "<JSON-file|->"}},
+				{Name: "clear", Short: "Remove the rules; console origins stay allowed", Positionals: []string{"<app>", "<bucket-id>"}},
+			}},
 			{Name: "versioning", Short: "Inspect or configure bucket versioning", Subcommands: []cliSub{
 				{Name: "status", Short: "Show durable versioning progress", Positionals: []string{"<app>", "<bucket-id>"}},
 				{Name: "enable", Short: "Enable retained versions", Positionals: []string{"<app>", "<bucket-id>"}},
@@ -4802,7 +4807,7 @@ var cliCommands = []cliCommand{
 		DocSlug:     "logs",
 		Short:       "Search an app's runtime logs and HTTP requests, or follow them",
 		CompactHelp: true,
-		Examples:    []string{"gregale logs my-api --interactive", "gregale logs my-api --follow", "gregale logs my-api --since 1h --level error", "gregale logs views save runtime-errors --since 1h --level error", "gregale logs my-api --view runtime-errors"},
+		Examples:    []string{"gregale logs my-api --interactive", "gregale logs my-api --follow", "gregale logs --project shop --follow", "gregale logs my-api --since 1h --level error", "gregale logs views save runtime-errors --since 1h --level error", "gregale logs my-api --view runtime-errors"},
 		Positionals: []string{"[<slug>]"},
 		Flags: []cliFlag{
 			{Name: "dry-run", Bool: true, Short: "preview effective target, source, and filters offline; no authentication or remote reads"},
@@ -4826,6 +4831,8 @@ var cliCommands = []cliCommand{
 			{Name: "route", Common: true, Short: "only show HTTP requests for this route label", Value: "METHOD /path"},
 			{Name: "request", Short: "show one HTTP request by public request id or row id", Value: "ID"},
 			{Name: "trace", Short: "show HTTP access logs correlated with a W3C trace id", Value: "TRACE_ID"},
+			{Name: "project", Short: "read every service of a project together, each line prefixed with its service", Value: "SLUG"},
+			{Name: "service", Short: "with --project, only these services", Value: "NAME,..."},
 			{Name: "limit", Short: "HTTP request page size (1..200)", Value: "N"},
 			{Name: "all", Short: "read every retained HTTP request page"},
 			{Name: "explain", Short: "summarize the last failure and common error patterns"},

@@ -11408,7 +11408,7 @@
       "singleton",
       "timeline"
     ],
-    "kind": "platform_configuration"
+    "kind": "operational"
   },
   {
     "table": "object_storage_upload_grants",

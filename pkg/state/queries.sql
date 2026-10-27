@@ -12390,6 +12390,53 @@ where b.id=sqlc.arg(binding_id)::uuid and b.app_id=sqlc.arg(app_id)::uuid
   and (b.deployment_scope='' or i.deployment_scope=b.deployment_scope)
   and (i.queue_binding_id=b.id or (b.deployment_scope='' and i.queue_binding_id is null and i.queue_name=b.queue_name));
 
+-- name: QueueDepthInScope :one
+-- QueueStateInScope's depth, counted only up to row_limit: worker scaling
+-- needs no more than the depth that saturates the pool (ADR-20261022105723
+-- amendment 2026-10-24).
+select count(*)::bigint as depth from (
+  select 1 from invocations
+  where app_id=sqlc.arg(app_id)::uuid and deployment_scope=sqlc.arg(deployment_scope)::text
+    and source='queue' and state in ('pending','dispatching')
+  limit sqlc.arg(row_limit)::integer
+) bounded;
+
+-- name: QueueDepthForBinding :one
+-- QueueStateForBinding's depth up to row_limit per branch: the binding's own
+-- messages, then legacy unassigned work under its name. Each branch reads an
+-- index range and stops at the limit; the caller clamps the sum.
+with b as (
+  select id, account_id, queue_name, deployment_scope from queue_bindings
+  where id=sqlc.arg(binding_id)::uuid and app_id=sqlc.arg(app_id)::uuid
+)
+select
+  (select count(*) from (
+     select 1 from invocations i, b
+     where i.app_id=sqlc.arg(app_id)::uuid and i.queue_binding_id=b.id and i.account_id=b.account_id
+       and i.source='queue' and i.state in ('pending','dispatching')
+       and (sqlc.narg(deployment_scope)::text is null or i.deployment_scope=sqlc.narg(deployment_scope)::text)
+       and (b.deployment_scope='' or i.deployment_scope=b.deployment_scope)
+     limit sqlc.arg(row_limit)::integer) own)::bigint
+  + (select count(*) from (
+     select 1 from invocations i, b
+     where b.deployment_scope='' and i.app_id=sqlc.arg(app_id)::uuid and i.queue_binding_id is null
+       and i.queue_name=b.queue_name and i.account_id=b.account_id
+       and i.source='queue' and i.state in ('pending','dispatching')
+       and (sqlc.narg(deployment_scope)::text is null or i.deployment_scope=sqlc.narg(deployment_scope)::text)
+     limit sqlc.arg(row_limit)::integer) legacy)::bigint as depth;
+
+-- name: QueueBindingHasInFlight :one
+-- Whether QueueStateForBinding would count any in-flight message, without
+-- counting the backlog.
+select exists (
+  select 1 from invocations i join queue_bindings b on b.app_id=i.app_id and b.account_id=i.account_id
+  where b.id=sqlc.arg(binding_id)::uuid and b.app_id=sqlc.arg(app_id)::uuid
+    and (sqlc.narg(deployment_scope)::text is null or i.deployment_scope=sqlc.narg(deployment_scope)::text)
+    and i.source='queue' and i.state='dispatching' and i.lease_expires_at > now()
+    and (b.deployment_scope='' or i.deployment_scope=b.deployment_scope)
+    and (i.queue_binding_id=b.id or (b.deployment_scope='' and i.queue_binding_id is null and i.queue_name=b.queue_name))
+)::boolean as in_flight;
+
 -- name: QueueClaimActiveCount :one
 select count(*)::bigint from invocations i
 where i.app_id=sqlc.arg(app_id)::uuid and i.source='queue'
@@ -20765,6 +20812,9 @@ SELECT (jsonb_build_object(
     'deployment_submission_receipts_deployment_id_fkey', (SELECT count(*) FROM deployment_submission_receipts WHERE deployment_id = sqlc.arg(deployment_id)::uuid),
     'project_worker_job_evidence_deployment_id_fkey', (SELECT count(*) FROM project_worker_job_evidence WHERE deployment_id = sqlc.arg(deployment_id)::uuid),
     'project_worker_release_pins_deployment_id_fkey', (SELECT count(*) FROM project_worker_release_pins WHERE deployment_id = sqlc.arg(deployment_id)::uuid),
+    -- Database-restoring rollbacks (ADR-20261023181931) record both releases.
+    'release_database_switches_from_deployment_id_fkey', (SELECT count(*) FROM release_database_switches WHERE from_deployment_id = sqlc.arg(deployment_id)::uuid),
+    'release_database_switches_target_deployment_id_fkey', (SELECT count(*) FROM release_database_switches WHERE target_deployment_id = sqlc.arg(deployment_id)::uuid),
     -- Preview command runtimes (financial previews) hold a deployment while preparing or active.
     'financial_preview_command_runtimes_deployment_id_fkey', (SELECT count(*) FROM financial_preview_command_runtimes WHERE deployment_id = sqlc.arg(deployment_id)::uuid AND phase <> 'retired')
 ))::jsonb AS borrowers;

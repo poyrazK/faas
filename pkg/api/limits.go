@@ -1107,6 +1107,12 @@ const DatabaseSwitchSettleTimeout = 2 * time.Minute
 const DatabaseSwitchDrainTimeout = 10 * time.Minute
 const DatabaseSwitchListMax = 50
 
+// DatabaseSwitchesActivePerAccount is how many unfinished database switches
+// one account may run at once. The switch worker's queue is shared by every
+// tenant; the cap keeps one account's many apps from crowding out the
+// fenced switches of others, whose apps are down while they wait.
+const DatabaseSwitchesActivePerAccount = 3
+
 // Verified rollback outcomes (ADR-1446). apid resolves each plain rollback
 // every RollbackOutcomeCheckInterval: complete once the target serves,
 // failed when it leaves activation without serving or when
