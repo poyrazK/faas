@@ -3,6 +3,7 @@ package mcpmanagement
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/url"
 	"slices"
@@ -115,8 +116,12 @@ func (r *remoteServer) prepareAccount(w http.ResponseWriter, req *http.Request, 
 		oauthError(w, 400, "access_denied", "Browser authorization expired or was already reviewed")
 		return
 	}
-	if len(r.grants) >= maxOAuthEntries {
+	if len(r.grants) >= r.capacity() {
 		oauthError(w, 429, "temporarily_unavailable", "Authorization grant capacity reached")
+		return
+	}
+	if r.opts.Hosted && r.accountGrantsLocked(account.ID) >= hostedGrantsPerAccount {
+		oauthError(w, 429, "temporarily_unavailable", fmt.Sprintf("This account already has %d agent connections. Revoke an mcp-login key on your account's API keys page, or wait for one to expire.", hostedGrantsPerAccount))
 		return
 	}
 	id, err := randomToken("gmcp_grant_")

@@ -63,7 +63,7 @@ func (r *remoteServer) authorize(w http.ResponseWriter, req *http.Request) {
 		oauthError(w, 400, "invalid_request", "Registered redirect URI, exact resource, supported scopes, code response type and S256 PKCE are required")
 		return
 	}
-	if len(r.requests) >= maxOAuthEntries {
+	if len(r.requests) >= r.capacity() {
 		oauthError(w, 429, "temporarily_unavailable", "Authorization capacity reached")
 		return
 	}
@@ -199,7 +199,7 @@ func (r *remoteServer) approveLocked(w http.ResponseWriter, req *http.Request, f
 		oauthError(w, 500, "server_error", "Could not authorize account connection")
 		return
 	}
-	if len(r.codes) >= maxOAuthEntries {
+	if len(r.codes) >= r.capacity() {
 		oauthError(w, 429, "temporarily_unavailable", "Authorization code capacity reached")
 		return
 	}

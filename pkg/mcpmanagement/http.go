@@ -60,17 +60,20 @@ type remoteServer struct {
 	origin string
 	// issuer is the origin, or the resource URL on the hosted bridge; every
 	// OAuth endpoint is issuer + "/oauth/...".
-	issuer      string
-	host        string
-	uploads     *uploadStore
-	mu          sync.Mutex
-	clients     map[string]*oauthClient
-	requests    map[string]*authorizationRequest
-	codes       map[string]*authorizationCode
-	grants      map[string]*oauthGrant
-	access      map[string]*oauthGrant
-	refresh     map[string]*oauthGrant
-	usedRefresh map[string]*oauthGrant
+	issuer  string
+	host    string
+	uploads *uploadStore
+	// registrations counts client registrations per address on the hosted
+	// bridge, in fixed windows.
+	registrations map[string]registrationWindow
+	mu            sync.Mutex
+	clients       map[string]*oauthClient
+	requests      map[string]*authorizationRequest
+	codes         map[string]*authorizationCode
+	grants        map[string]*oauthGrant
+	access        map[string]*oauthGrant
+	refresh       map[string]*oauthGrant
+	usedRefresh   map[string]*oauthGrant
 }
 
 type grantContextKey struct{}

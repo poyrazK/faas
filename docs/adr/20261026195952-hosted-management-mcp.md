@@ -159,12 +159,14 @@ deleted when the plan is applied or expires, and on start.
 
 ### 8. Bounds
 
-- **Global:** 10,000 grants, 2,000 registered clients and 1,000 pending
-  authorization flows. Registration is rate-limited per client IP at the edge.
-- **Per account:** 10 grants and 2 uploads in flight.
+- **Global:** 2,000 each of registered clients, pending authorization flows,
+  codes and grants (256 on a self-hosted bridge).
+- **Registration:** 20 per client address per hour. The address is
+  gatewayd-public's X-Forwarded-For, trusted only over loopback.
+- **Per account:** 10 usable grants, and 2 uploads waiting.
 - **Per grant:** request admission is unchanged (ADR-1256).
-- **Memory:** a grant's SDK server is built on first use and dropped after an
-  idle period, so memory follows active connections.
+- **Memory:** every grant keeps its SDK server, so the grant bound is also the
+  memory bound. Building servers on first use is the path past it.
 
 ### 9. Toolsets
 

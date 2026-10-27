@@ -66,7 +66,7 @@ func (r *remoteServer) restoreOAuth() error {
 	if snapshot.Format != stateFormat || snapshot.APIBase != r.opts.APIBase || snapshot.ResourceURL != r.opts.ResourceURL {
 		return errors.New("stored OAuth endpoint binding mismatch")
 	}
-	if len(snapshot.Clients) > maxOAuthEntries || len(snapshot.Requests) > maxOAuthEntries || len(snapshot.Codes) > maxOAuthEntries || len(snapshot.Grants) > maxOAuthEntries || len(snapshot.UsedRefresh) > maxRefreshHistory {
+	if len(snapshot.Clients) > r.capacity() || len(snapshot.Requests) > r.capacity() || len(snapshot.Codes) > r.capacity() || len(snapshot.Grants) > r.capacity() || len(snapshot.UsedRefresh) > maxRefreshHistory {
 		return errors.New("stored OAuth capacity is invalid")
 	}
 	for id, client := range snapshot.Clients {

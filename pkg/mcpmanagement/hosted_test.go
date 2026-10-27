@@ -5,12 +5,14 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestHostedBridgeIsItsOwnPathIssuer(t *testing.T) {
@@ -82,5 +84,49 @@ func TestHostedBridgeIsItsOwnPathIssuer(t *testing.T) {
 	opts.Onboarding = "api-key"
 	if _, err := NewHTTPHandler(opts); err == nil {
 		t.Fatal("the hosted bridge accepted API-key onboarding")
+	}
+
+	// Registration is rate-limited per forwarded client address.
+	registerFrom := func(address string) int {
+		req, err := http.NewRequest(http.MethodPost, resource+"/oauth/register", strings.NewReader(register))
+		if err != nil {
+			t.Fatal(err)
+		}
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("X-Forwarded-For", address)
+		response, err := client.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_ = response.Body.Close()
+		return response.StatusCode
+	}
+	for i := range hostedRegistrationLimit {
+		if status := registerFrom("203.0.113.7"); status != 201 {
+			t.Fatalf("registration %d = %d", i, status)
+		}
+	}
+	if status := registerFrom("203.0.113.7"); status != 429 {
+		t.Fatalf("registration over the limit = %d", status)
+	}
+	if status := registerFrom("203.0.113.8"); status != 201 {
+		t.Fatalf("another address was limited: %d", status)
+	}
+}
+
+func TestHostedBridgeCountsOnlyUsableGrantsPerAccount(t *testing.T) {
+	r := &remoteServer{opts: HTTPOptions{Hosted: true}, grants: map[string]*oauthGrant{}}
+	live := time.Now().Add(time.Hour)
+	for i := range hostedGrantsPerAccount {
+		r.grants[fmt.Sprint("live", i)] = &oauthGrant{accountID: "acct", credentialExpires: live}
+	}
+	r.grants["revoked"] = &oauthGrant{accountID: "acct", credentialExpires: live, revoked: true}
+	r.grants["expired"] = &oauthGrant{accountID: "acct", credentialExpires: time.Now().Add(-time.Minute)}
+	r.grants["other"] = &oauthGrant{accountID: "other", credentialExpires: live}
+	if got := r.accountGrantsLocked("acct"); got != hostedGrantsPerAccount {
+		t.Fatalf("usable grants = %d", got)
+	}
+	if r.capacity() != hostedOAuthEntries || (&remoteServer{}).capacity() != maxOAuthEntries {
+		t.Fatal("capacity does not follow hosted mode")
 	}
 }
