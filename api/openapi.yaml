@@ -8335,6 +8335,64 @@ paths:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
 
+  /v1/apps/{slug}/data-api/contract-tasks:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    post:
+      operationId: createDataAPIContractTask
+      summary: Inspect a Data API app's database contract
+      description: |
+        Runs one fixed schema inspection inside a fresh task VM from the app's
+        live deployment: `types` renders the TypeScript contract, `validators`
+        the table and RPC input validators, and `schema` the JSON contract
+        snapshot. The receipt is an ordinary app task receipt and the output
+        arrives in `stdout_tail`. Belongs to the Data API, so it works without
+        the general app-task API.
+      tags: [managed_postgres]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateDataAPIContractTaskRequest' }
+      responses:
+        '202':
+          description: Contract inspection admitted and queued.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AppTaskResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '501': { $ref: '#/components/responses/NotImplemented' }
+
+  /v1/apps/{slug}/data-api/contract-tasks/{id}:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - $ref: '#/components/parameters/AppTaskID'
+    get:
+      operationId: getDataAPIContractTask
+      summary: Get one Data API contract inspection
+      description: Current or terminal receipt of a contract inspection. Any other app task is not found here.
+      tags: [managed_postgres]
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200':
+          description: Current or terminal contract inspection receipt.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AppTaskResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '501': { $ref: '#/components/responses/NotImplemented' }
+
   /v1/apps/{slug}/data-api/usage:
     parameters:
       - name: slug
@@ -31369,6 +31427,16 @@ paths:
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
+        '503':
+          description: |
+            503 — `egress_circuit_disabled`: the request sets `enabled: true`
+            but this platform does not enforce egress circuit breakers yet,
+            so the breaker would never reject a connection. Turning a breaker
+            off is still accepted. `data_upstreams_disabled`: data placement
+            is not enabled on this cluster.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
 
   # ─── Deployments ──────────────────────────────────────────────────────────
 
@@ -32924,9 +32992,14 @@ paths:
       tags: [crons]
       operationId: listCrons
       summary: List cron triggers.
+      parameters:
+        - name: slug
+          in: query
+          description: App slug or id. Lists only that app's crons; without it, every cron on the account's apps.
+          schema: { type: string }
       responses:
         '200':
-          description: Cron triggers on the account.
+          description: Cron triggers on the account, or on the app named by slug.
           content:
             application/json:
               schema:
@@ -32935,6 +33008,7 @@ paths:
               example:
                 - {"id":"0123456789abcdef0123456789abcdef","app_id":"0123456789abcdef0123456789abcdef","schedule":"*/5 * * * *","path":"/cron","enabled":true,"created_at":"2026-07-23T11:25:00Z","last_fired_at":"2026-07-23T11:20:00Z"}
         '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
     post:
       tags: [crons]
@@ -82443,6 +82517,16 @@ components:
           required: [start]
           properties:
             start: { type: string, format: date-time, description: Start of the bucket. }
+    CreateDataAPIContractTaskRequest:
+      description: The contract inspection to run.
+      type: object
+      additionalProperties: false
+      required: [kind]
+      properties:
+        kind:
+          type: string
+          enum: [types, validators, schema]
+          description: '`types` (TypeScript contract), `validators` (input validators) or `schema` (JSON contract snapshot).'
     DataAPIUsage:
       description: An app's reported Data API usage over a window, zero-filled per bucket.
       type: object
@@ -102609,7 +102693,7 @@ components:
       properties:
         app_id: { type: string, description: "App id or slug.", example: "0123456789abcdef0123456789abcdef" }
         schedule: { type: string , example: "*/5 * * * *"}
-        path: { type: string, description: "HTTP target path; defaults to / and is mutually exclusive with command." }
+        path: { type: string, maxLength: 2048, description: "HTTP target path on the cron's own app; defaults to /, starts with a single /, may carry a query string, and is mutually exclusive with command." }
         command: { type: array, minItems: 1, maxItems: 64, items: { type: string, maxLength: 4096 }, description: "Direct command argv; mutually exclusive with path." }
         command_shell: { type: boolean, default: false, description: "Interpret one command string through the app shell when true." }
         timeout_seconds: { type: integer, minimum: 0, maximum: 3600, description: "Per-fire command deadline; zero uses the 600-second default." }
@@ -102627,7 +102711,7 @@ components:
       type: object
       properties:
         schedule: { type: [string, "null"] , example: "*/5 * * * *"}
-        path: { type: [string, "null"] }
+        path: { type: [string, "null"], maxLength: 2048, description: "HTTP target path on the cron's own app; starts with a single /." }
         enabled: { type: [boolean, "null"] }
         timezone: { type: [string, "null"], description: "IANA timezone; an empty value resets to UTC." }
         skip_if_running: { type: [boolean, "null"], description: "Enable or disable overlap skipping for scheduled fires." }
@@ -121652,8 +121736,8 @@ components:
 
     DebugRequestEvidenceResponse:
       type: object
-      description: "Request metadata, deterministic wake/request timeline, bounded span evidence, matching regression, and explanation."
-      required: [request, timeline, correlation, dependency_latency, dependency_latency_truncated, spans, spans_truncated, explanation, generated_at]
+      description: "Request metadata, deterministic wake/request timeline, bounded span evidence, the request's own log lines, matching regression, and explanation."
+      required: [request, timeline, correlation, dependency_latency, dependency_latency_truncated, spans, spans_truncated, logs, logs_truncated, explanation, generated_at]
       properties:
         request: { $ref: '#/components/schemas/DebugTelemetryRequestItem' }
         regression:
@@ -121677,8 +121761,25 @@ components:
           maxItems: 100
           items: { $ref: '#/components/schemas/DebugTelemetrySpan' }
         spans_truncated: { type: boolean }
+        logs:
+          type: array
+          maxItems: 20
+          description: "Log lines the app emitted for this request: OTel log records carrying its trace ID, forwarded by the in-guest bridge when tracing is enabled (runtime source; HTTP access lines are not repeated). Chronological; redacted and bounded. Empty without a trace ID or when the app exports no OTel logs."
+          items: { $ref: '#/components/schemas/DebugEvidenceLogLine' }
+        logs_truncated: { type: boolean, description: "True when the request logged more than 20 lines; logs then holds its last 20." }
         explanation: { $ref: '#/components/schemas/DebugEvidenceExplanation' }
         generated_at: { type: string, format: date-time }
+
+    DebugEvidenceLogLine:
+      type: object
+      description: "One log line attached to request evidence. The message is bounded to 512 bytes; structured log fields are not included."
+      required: [occurred_at, source, message]
+      properties:
+        occurred_at: { type: string, format: date-time }
+        source: { type: string, maxLength: 32 }
+        level: { type: string, maxLength: 16 }
+        stream: { type: string, maxLength: 16 }
+        message: { type: string, maxLength: 512 }
 
     DebugRegressionsResponse:
       type: object

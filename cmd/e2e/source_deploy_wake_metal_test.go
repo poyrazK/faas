@@ -533,8 +533,17 @@ func TestSourceDeployWakeMetal(t *testing.T) {
 		if err := pool.QueryRow(mctx, `select stale from snapshots where id=$1`, snapshot.ID).Scan(&badStale); err != nil || !badStale {
 			t.Fatalf("failed capture was not marked stale: stale=%v err=%v", badStale, err)
 		}
-		if _, status := doReq(t, h, key, http.MethodPost, "/v1/apps/srcdeploy/park", nil); status != http.StatusNoContent {
-			t.Fatalf("park replacement: status=%d", status)
+		// Parking the replacement captures a fresh snapshot. When that outlasts
+		// apid's 5 s drain wait (6 s for 512 MB on n2), park answers a
+		// retryable 503 while the capture finishes.
+		raw, status := doReq(t, h, key, http.MethodPost, "/v1/apps/srcdeploy/park", nil)
+		if status == http.StatusServiceUnavailable {
+			t.Logf("park replacement: status=%d body=%s; retrying once", status, raw)
+			time.Sleep(5 * time.Second)
+			raw, status = doReq(t, h, key, http.MethodPost, "/v1/apps/srcdeploy/park", nil)
+		}
+		if status != http.StatusNoContent {
+			t.Fatalf("park replacement: status=%d body=%s", status, raw)
 		}
 		if _, err := waitForSourceAppParked(mctx, h, appID, 25*time.Second); err != nil {
 			t.Fatalf("replacement did not park: %v", err)

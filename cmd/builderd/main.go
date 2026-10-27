@@ -37,6 +37,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/events"
 	"github.com/onebox-faas/faas/pkg/role"
 	"github.com/onebox-faas/faas/pkg/runtimeconfig"
+	"github.com/onebox-faas/faas/pkg/sourcespool"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/storage"
 	"github.com/onebox-faas/faas/pkg/storagekey"
@@ -448,6 +449,13 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			sourceMaxAge = 24 * time.Hour
 		}
 		go builderdpkg.SourceGCSweepLoop(runCtx, sourceStorage, store, sourceGCInterval, sourceMaxAge, log)
+	}
+	// ADR-20261026152731: materialized source archives and build logs in the
+	// local spool. On a single box this is also apid's spool; both sweepers
+	// keep whatever an in-flight deployment names, so running both is safe.
+	if cfg.SourceSpoolDir != "" {
+		go sourcespool.Sweeper{Root: cfg.SourceSpoolDir, Layout: sourcespool.BuildSpool, Store: store,
+			MaxAge: api.SourceSpoolRetention, Log: log}.Run(runCtx, api.SourceSpoolSweepInterval)
 	}
 
 	var shutdownOnce sync.Once

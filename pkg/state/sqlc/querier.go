@@ -1197,6 +1197,11 @@ type Querier interface {
 	// in service order and rotates the account's consumers. A consumer with
 	// delivery controls contributes one recipient per batch, so its admission
 	// gate sees current counters before its next claim.
+	//
+	// The due test is index-shaped (ADR-614 amendment 2026-10-27): a recipient is
+	// due by its available_at, its delivery deadline or its lapsed lease, never by
+	// a per-row function, so recipients backing off are not read. A schema
+	// mismatch is fixed at capture and filtered on the recipient's first claim.
 	EventRecipientClaimBatch(ctx context.Context, db DBTX, arg EventRecipientClaimBatchParams) ([]EventRecipientClaimBatchRow, error)
 	EventRecipientFinish(ctx context.Context, db DBTX, arg EventRecipientFinishParams) (int64, error)
 	EventRecipientGuardedReplayReceipt(ctx context.Context, db DBTX, arg EventRecipientGuardedReplayReceiptParams) (EventRecipientGuardedReplayReceiptRow, error)
@@ -3326,6 +3331,11 @@ type Querier interface {
 	// fully covers the 14-day beta cohort window.
 	ListFirstSuccessfulRequestsForAccountsCreatedSince(ctx context.Context, db DBTX, createdAt pgtype.Timestamptz) ([]ListFirstSuccessfulRequestsForAccountsCreatedSinceRow, error)
 	ListFunctionMigrationSourceInstances(ctx context.Context, db DBTX, appID pgtype.UUID) ([]pgtype.UUID, error)
+	// Source spool retention (ADR-20261026152731). A deployment that can still
+	// build or image reads its source archive from the build spool and appends
+	// to its build log there. The spool sweeper never removes either while the
+	// deployment is in one of these states, whatever the file's age.
+	ListInFlightDeploymentSpoolPaths(ctx context.Context, db DBTX) ([]ListInFlightDeploymentSpoolPathsRow, error)
 	ListInstancesForApp(ctx context.Context, db DBTX, appID pgtype.UUID) ([]ListInstancesForAppRow, error)
 	ListInvoiceSnapshots(ctx context.Context, db DBTX, arg ListInvoiceSnapshotsParams) ([]ListInvoiceSnapshotsRow, error)
 	ListLatestDeploymentPerApp(ctx context.Context, db DBTX, accountID pgtype.UUID) ([]Deployment, error)
@@ -3869,6 +3879,8 @@ type Querier interface {
 	// schedd claims, finishes and expires them. Reads join the owning app so a
 	// deleted app's captures are invisible before the cascade removes them.
 	// Lifecycle columns are merged into the public capture document on read.
+	// Serializes the account-wide quota and storage checks across its apps.
+	LockProfileCaptureAccount(ctx context.Context, db DBTX, accountID string) error
 	LockProfileCaptureApp(ctx context.Context, db DBTX, arg LockProfileCaptureAppParams) (pgtype.UUID, error)
 	LockProfilePeriodicMonitor(ctx context.Context, db DBTX, arg LockProfilePeriodicMonitorParams) ([]byte, error)
 	LockProjectBindingVerificationRun(ctx context.Context, db DBTX, arg LockProjectBindingVerificationRunParams) (ProjectBindingVerificationRun, error)
@@ -4822,6 +4834,9 @@ type Querier interface {
 	// Customer-safe fields are selected explicitly. Permission and realm filters
 	// apply before pagination; owner notes, prices, snapshots and handoffs stay out.
 	ProductWorkspaceActivity(ctx context.Context, db DBTX, arg ProductWorkspaceActivityParams) ([]ProductWorkspaceActivityRow, error)
+	// Stored bytes of the account's unexpired captures, and how many of its
+	// captures are still queued or running.
+	ProfileCaptureAccountStorage(ctx context.Context, db DBTX, arg ProfileCaptureAccountStorageParams) (ProfileCaptureAccountStorageRow, error)
 	ProfileCaptureForRequest(ctx context.Context, db DBTX, arg ProfileCaptureForRequestParams) ([]byte, error)
 	ProfileInvestigationAppOwned(ctx context.Context, db DBTX, arg ProfileInvestigationAppOwnedParams) (bool, error)
 	ProfileInvestigationDeploymentOwned(ctx context.Context, db DBTX, arg ProfileInvestigationDeploymentOwnedParams) (bool, error)
@@ -4862,6 +4877,19 @@ type Querier interface {
 	PruneAppRuntimeUpgradeGatewayDrains(ctx context.Context, db DBTX, appID pgtype.UUID) error
 	PruneAutomationLiveBaselineHistory(ctx context.Context, db DBTX, arg PruneAutomationLiveBaselineHistoryParams) error
 	PruneAutomationLiveSuites(ctx context.Context, db DBTX, arg PruneAutomationLiveSuitesParams) error
+	// Manual-run requests made before before_at, whatever their status: a
+	// request that old can no longer start a run, and its outcome lives on the
+	// run itself.
+	PruneCronFireNowRequests(ctx context.Context, db DBTX, arg PruneCronFireNowRequestsParams) (int64, error)
+	// Cron history retention (api.CronHistoryRetention). Both deletes walk the
+	// live crons and probe each cron's own history index, so a sweep never scans
+	// the whole table. Rows of deleted crons are already gone: both tables
+	// cascade from crons.
+	// Settled schedule decisions scheduled before before_at, oldest first.
+	// Pending, queued, running, waiting_replacement and uncertain decisions are
+	// kept whatever their age. References from invocations, app tasks, job runs
+	// and blocking occurrences are ON DELETE SET NULL.
+	PruneCronScheduleOccurrences(ctx context.Context, db DBTX, arg PruneCronScheduleOccurrencesParams) (int64, error)
 	PruneCustomerOperationEvents(ctx context.Context, db DBTX, arg PruneCustomerOperationEventsParams) (int64, error)
 	PruneCustomerOperationIdempotency(ctx context.Context, db DBTX, arg PruneCustomerOperationIdempotencyParams) (int64, error)
 	PruneCustomerOperationStreams(ctx context.Context, db DBTX, arg PruneCustomerOperationStreamsParams) (int64, error)
@@ -5597,6 +5625,11 @@ type Querier interface {
 	// status IN ('committed', 'cancelled', 'expired') — leaving
 	// as a follow-up ADR rather than conflated into PR-1's
 	// migration slot 533.
+	//
+	// ADR-20261026152731: on a single-box install the committed .part IS the
+	// build source, so it is kept while its deployment is in flight (a build
+	// may queue for hours) and for the 24h source-retention window that
+	// `deploys retry` relies on. Cancelled and expired parts keep the 1h grace.
 	ReapStaleUploadPartFiles(ctx context.Context, db DBTX) ([]ReapStaleUploadPartFilesRow, error)
 	// Preserve tenant cadence, version and admission priority, but invalidate the
 	// evaluated deployment so publish/pause/resume cannot replay the paused interval.

@@ -81,8 +81,10 @@ func (h *Handler) wakeDeployment(ctx context.Context, app App, deployment, scope
 				}
 				if atCapacity {
 					h.finishWakePageCycle(wakeCtx, app.ID, "")
-					// The waiters re-pick once this generation completes; an
-					// instance that became routable meanwhile serves them.
+					// An at-capacity answer rehydrates the app's targets. When
+					// that read finds a replica of this deployment, or one
+					// becomes routable soon after, the waiters re-pick and serve
+					// it once this generation completes.
 					limits := api.MustLimitsFor(app.Plan)
 					_, err = h.settleAtCapacity(wakeCtx, app, limits, effectiveAppConcurrencyLimit(app, limits.MaxConcurrency), func() PickResult {
 						return pickPublicDeployment(h.backend, app.ID, deployment, "")

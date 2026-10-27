@@ -296,8 +296,22 @@ func (q *Queries) ListProfileCaptures(ctx context.Context, db DBTX, arg ListProf
 	return items, nil
 }
 
-const lockProfileCaptureApp = `-- name: LockProfileCaptureApp :one
+const lockProfileCaptureAccount = `-- name: LockProfileCaptureAccount :exec
 
+SELECT pg_advisory_xact_lock(hashtextextended('profile_captures:' || $1::text, 0))
+`
+
+// On-demand profile captures (ADR-1155). apid queues and reads captures;
+// schedd claims, finishes and expires them. Reads join the owning app so a
+// deleted app's captures are invisible before the cascade removes them.
+// Lifecycle columns are merged into the public capture document on read.
+// Serializes the account-wide quota and storage checks across its apps.
+func (q *Queries) LockProfileCaptureAccount(ctx context.Context, db DBTX, accountID string) error {
+	_, err := db.Exec(ctx, lockProfileCaptureAccount, accountID)
+	return err
+}
+
+const lockProfileCaptureApp = `-- name: LockProfileCaptureApp :one
 SELECT id FROM apps WHERE id = $1::text::uuid AND account_id = $2::text::uuid AND status <> 'deleted' FOR UPDATE
 `
 
@@ -306,15 +320,39 @@ type LockProfileCaptureAppParams struct {
 	AccountID string
 }
 
-// On-demand profile captures (ADR-1155). apid queues and reads captures;
-// schedd claims, finishes and expires them. Reads join the owning app so a
-// deleted app's captures are invisible before the cascade removes them.
-// Lifecycle columns are merged into the public capture document on read.
 func (q *Queries) LockProfileCaptureApp(ctx context.Context, db DBTX, arg LockProfileCaptureAppParams) (pgtype.UUID, error) {
 	row := db.QueryRow(ctx, lockProfileCaptureApp, arg.AppID, arg.AccountID)
 	var id pgtype.UUID
 	err := row.Scan(&id)
 	return id, err
+}
+
+const profileCaptureAccountStorage = `-- name: ProfileCaptureAccountStorage :one
+SELECT
+  (SELECT coalesce(sum(octet_length(d.profile)), 0) FROM profile_capture_data d
+     JOIN profile_captures p ON p.id = d.capture_id
+   WHERE p.account_id = $1::text::uuid AND p.expires_at >= $2::timestamptz)::bigint AS stored_bytes,
+  (SELECT count(*) FROM profile_captures
+   WHERE account_id = $1::text::uuid AND status IN ('queued', 'capturing'))::bigint AS active
+`
+
+type ProfileCaptureAccountStorageParams struct {
+	AccountID string
+	Now       pgtype.Timestamptz
+}
+
+type ProfileCaptureAccountStorageRow struct {
+	StoredBytes int64
+	Active      int64
+}
+
+// Stored bytes of the account's unexpired captures, and how many of its
+// captures are still queued or running.
+func (q *Queries) ProfileCaptureAccountStorage(ctx context.Context, db DBTX, arg ProfileCaptureAccountStorageParams) (ProfileCaptureAccountStorageRow, error) {
+	row := db.QueryRow(ctx, profileCaptureAccountStorage, arg.AccountID, arg.Now)
+	var i ProfileCaptureAccountStorageRow
+	err := row.Scan(&i.StoredBytes, &i.Active)
+	return i, err
 }
 
 const profileCaptureForRequest = `-- name: ProfileCaptureForRequest :one

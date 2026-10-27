@@ -23,15 +23,19 @@ const (
 	atCapacitySettlePoll = 50 * time.Millisecond
 )
 
-// settleAtCapacity decides a request schedd answered at capacity. Schedd
-// counts instances this gateway may not route to yet: a deployment check's
-// instance, a wake started by another producer, or one being stopped. Only
-// when this gateway itself sees effectiveMax instances is the answer the
-// customer's limit (429 app_concurrency_reached with a true count). Otherwise
-// it re-reads the app's live targets and waits briefly for one to become
-// routable; pick reports one when it does. Past the wait it is
-// ErrInstanceSlotsSettling (#5709: "max_concurrency is 1; 0 already live").
+// settleAtCapacity decides a request schedd answered at capacity. An
+// at-capacity answer already rehydrated the app's targets, so a replica pick
+// now finds serves the request. Schedd also counts instances this gateway may
+// not route to yet: a deployment check's instance, a wake started by another
+// producer, or one being stopped. Only when this gateway itself sees
+// effectiveMax instances is the answer the customer's limit (429
+// app_concurrency_reached with a true count). Otherwise it re-reads the app's
+// live targets and waits briefly for one to become routable. Past the wait it
+// is ErrInstanceSlotsSettling (#5709: "max_concurrency is 1; 0 already live").
 func (h *Handler) settleAtCapacity(ctx context.Context, app App, limits api.Limits, effectiveMax int, pick func() PickResult) (PickResult, error) {
+	if picked := pick(); picked.OK {
+		return picked, nil
+	}
 	if observed := backendCapacityCount(h.backend, app.ID); observed >= effectiveMax {
 		return PickResult{}, api.ErrAppConcurrencyReachedAt(limits, effectiveMax, observed)
 	}

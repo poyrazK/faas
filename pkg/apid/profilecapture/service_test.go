@@ -3,6 +3,8 @@ package profilecapture_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -102,6 +104,52 @@ func TestCaptureGates(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestCaptureCreateProblems pins the problem each store rejection maps to.
+// Both account quotas answer 429 quota_exhausted with their limit and
+// observed value; a full capture storage also names the bytes (ADR-1155).
+func TestCaptureCreateProblems(t *testing.T) {
+	full := &state.ProfileCaptureStorageError{Limit: 256 << 20, Used: 254 << 20}
+	for _, tc := range []struct {
+		name            string
+		err             error
+		status          int
+		code            string
+		limit, observed int64
+		bytes           bool
+	}{
+		{"app gone", state.ErrNotFound, http.StatusNotFound, api.CodeNotFound, 0, 0, false},
+		{"capture active", state.ErrProfileCaptureActive, http.StatusConflict, api.CodeConflict, 0, 0, false},
+		{"hourly quota", state.ErrProfileCaptureQuota, http.StatusTooManyRequests, api.CodeQuotaExhausted,
+			api.ProfileCaptureMaxPerAccountHour, api.ProfileCaptureMaxPerAccountHour, false},
+		{"storage full", fmt.Errorf("queue profile capture: %w", full), http.StatusTooManyRequests, api.CodeQuotaExhausted,
+			full.Limit, full.Used, true},
+		{"store failure", errors.New("connection reset"), http.StatusServiceUnavailable, api.CodeCapacity, 0, 0, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			p := profilecapture.CreateProblem(tc.err)
+			if p.Status != tc.status || p.Code != tc.code {
+				t.Fatalf("problem = %d %s, want %d %s", p.Status, p.Code, tc.status, tc.code)
+			}
+			if got := [2]int64{deref(p.Limit), deref(p.Observed)}; got != [2]int64{tc.limit, tc.observed} {
+				t.Fatalf("limit, observed = %v, want %d, %d", got, tc.limit, tc.observed)
+			}
+			if bytes := p.LimitBytes != nil && *p.LimitBytes == tc.limit && p.ObservedBytes != nil && *p.ObservedBytes == tc.observed; bytes != tc.bytes {
+				t.Fatalf("limit_bytes, observed_bytes = %v, %v, want set %v", p.LimitBytes, p.ObservedBytes, tc.bytes)
+			}
+			if tc.bytes && p.DocsURL == "" {
+				t.Fatal("storage problem has no docs URL")
+			}
+		})
+	}
+}
+
+func deref(v *int64) int64 {
+	if v == nil {
+		return 0
+	}
+	return *v
 }
 
 func TestCaptureLifecycle(t *testing.T) {

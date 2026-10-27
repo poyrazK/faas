@@ -27,7 +27,7 @@ async function port() {
   }
 }
 
-// bucketServer stores objects by path; any PUT whose key contains "fail"
+// bucketServer stores objects by path; any PUT whose body is "fail-me"
 // answers 500, as a bucket outage would.
 async function bucketServer() {
   const objects = new Map()
@@ -39,7 +39,7 @@ async function bucketServer() {
       const chunks = []
       req.on('data', chunk => chunks.push(chunk))
       req.on('end', () => {
-        if (path.includes('fail')) { res.writeHead(500); return res.end() }
+        if (Buffer.concat(chunks).toString() === 'fail-me') { res.writeHead(500); return res.end() }
         objects.set(path, Buffer.concat(chunks))
         res.writeHead(200)
         res.end()
@@ -99,6 +99,11 @@ test('storage follows RLS through PostgREST: own files, public avatars, guarded 
   await checkStorageTable(loginURL.toString(), 'api')
   await assert.rejects(checkStorageTable(loginURL.toString(), 'bare'), /guard trigger/)
   await assert.rejects(checkStorageTable(loginURL.toString(), 'public'), /missing/)
+  // A table created before object keys refuses storage until its upgrade.
+  await owner.query(`CREATE SCHEMA old; ${sql.replaceAll('{{schema}}', 'old')}; ALTER TABLE old.storage_objects DROP COLUMN object_key; GRANT USAGE ON SCHEMA old TO "${role}"`)
+  await assert.rejects(checkStorageTable(loginURL.toString(), 'old'), /storage sql --upgrade/)
+  await owner.query(`ALTER TABLE old.storage_objects ADD COLUMN IF NOT EXISTS object_key text CHECK (object_key ~ '^_gregale/objects/[0-9a-f]{32}$')`)
+  await checkStorageTable(loginURL.toString(), 'old')
 
   const s3 = name => ({ [`GREGALE_S3_${name}_ENDPOINT`]: bucket.origin, [`GREGALE_S3_${name}_REGION`]: 'us-east-1', [`GREGALE_S3_${name}_BUCKET`]: `real-${name.toLowerCase()}`, [`GREGALE_S3_${name}_ACCESS_KEY_ID`]: 'AKID', [`GREGALE_S3_${name}_SECRET_ACCESS_KEY`]: 'secret' })
   const config = runtimeConfig({ DATABASE_URL: loginURL.toString(), DATA_API_ISSUER: 'https://issuer.example', DATA_API_JWKS_URL: 'https://issuer.example/jwks', DATA_API_AUDIENCE: 'files',
@@ -119,13 +124,16 @@ test('storage follows RLS through PostgREST: own files, public avatars, guarded 
   const alice = await sign('alice'), bob = await sign('bob')
   const files = token => createStorageClient({ url, accessToken: token }).from('uploads')
   const rows = async () => (await owner.query('SELECT bucket, name, owner, size, content_type, created_at, updated_at FROM api.storage_objects ORDER BY bucket, name')).rows
+  const stored = async name => `/real-uploads/${(await owner.query('SELECT object_key FROM api.storage_objects WHERE name = $1', [name])).rows[0].object_key}`
   const refusal = promise => promise.then(() => null, error => { assert.ok(error instanceof StorageError, String(error)); return [error.status, error.code] })
 
   // Alice's token claims gregale_storage itself; the gateway strips it, so only
   // the storage endpoints can write rows.
-  const stored = await files(alice).upload('alice/hello.txt', 'hello', { contentType: 'text/plain' })
-  assert.deepEqual([stored.owner, stored.size, stored.content_type], ['alice', 5, 'text/plain'])
-  assert.equal(bucket.objects.get('/real-uploads/alice/hello.txt').toString(), 'hello')
+  const uploaded = await files(alice).upload('alice/hello.txt', 'hello', { contentType: 'text/plain' })
+  assert.deepEqual([uploaded.owner, uploaded.size, uploaded.content_type, uploaded.object_key], ['alice', 5, 'text/plain', undefined])
+  const firstVersion = await stored('alice/hello.txt')
+  assert.match(firstVersion, /^\/real-uploads\/_gregale\/objects\/[0-9a-f]{32}$/)
+  assert.equal(bucket.objects.get(firstVersion).toString(), 'hello')
   assert.equal(await (await files(alice).download('alice/hello.txt')).text(), 'hello')
   assert.deepEqual(await refusal(files(bob).download('alice/hello.txt')), [404, 'storage_not_found'])
 
@@ -138,14 +146,17 @@ test('storage follows RLS through PostgREST: own files, public avatars, guarded 
   // Refusals and bucket failures leave no row: dry runs really roll back.
   assert.deepEqual(await refusal(files(alice).upload('alice/big.bin', 'x'.repeat(65))), [403, 'storage_forbidden'])
   assert.deepEqual(await refusal(files(bob).upload('alice/hello.txt', 'mine now')), [403, 'storage_forbidden'])
-  assert.deepEqual(await refusal(files(alice).upload('alice/fail.txt', 'x')), [502, 'storage_backend_unavailable'])
+  assert.deepEqual(await refusal(files(alice).upload('alice/fail.txt', 'fail-me')), [502, 'storage_backend_unavailable'])
   assert.deepEqual((await rows()).map(r => r.name), ['alice/hello.txt'])
-  assert.ok(!bucket.objects.has('/real-uploads/alice/big.bin'))
+  assert.deepEqual([...bucket.objects.keys()], [firstVersion], 'refused and failed uploads leave no bytes')
 
   const first = (await rows())[0]
   const replaced = await files(alice).upload('alice/hello.txt', 'hello again', { contentType: 'text/plain' })
   const second = (await rows())[0]
   assert.deepEqual([replaced.size, second.owner, second.created_at.getTime()], [11, 'alice', first.created_at.getTime()], 'overwrites keep the owner and creation time')
+  const secondVersion = await stored('alice/hello.txt')
+  assert.notEqual(secondVersion, firstVersion)
+  assert.deepEqual([...bucket.objects.keys()], [secondVersion], 'the replaced version is deleted after the commit')
 
   // Visitors read public avatars only; RLS hides Alice's uploads from them.
   await owner.query(`SELECT set_config('request.jwt.claims', '{"gregale_storage":"write","sub":"alice"}', false)`)
@@ -157,11 +168,11 @@ test('storage follows RLS through PostgREST: own files, public avatars, guarded 
   assert.deepEqual(await refusal(visitor.from('uploads').upload('anon.txt', 'x')), [401, 'token_required'])
 
   const link = await files(alice).signedUrl('alice/hello.txt')
-  assert.ok(link.url.startsWith(`${bucket.origin}/real-uploads/alice/hello.txt?`))
+  assert.ok(link.url.startsWith(`${bucket.origin}${secondVersion}?`))
   assert.equal(await (await fetch(link.url)).text(), 'hello again')
 
   assert.deepEqual(await refusal(files(bob).remove('alice/hello.txt')), [404, 'storage_not_found'])
   await files(alice).remove('alice/hello.txt')
-  assert.ok(!bucket.objects.has('/real-uploads/alice/hello.txt'))
+  assert.ok(!bucket.objects.has(secondVersion))
   assert.deepEqual((await rows()).map(r => `${r.bucket}/${r.name}`), ['avatars/alice.png'])
 })

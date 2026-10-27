@@ -1,0 +1,211 @@
+# ADR-20261024222102: customer observability pipelines page when they stop,
+# and stay quiet for customer-caused failures and switched-off previews.
+rule_files:
+  - faas.rules.yml
+evaluation_interval: 1m
+tests:
+  - name: a stalled loop fires only while the loop is enabled
+    interval: 1m
+    input_series:
+      # synthetic_checks last passed at 1 minute and never again.
+      - series: meterd_observability_loop_last_pass_timestamp_seconds{job="meterd",instance="a",loop="synthetic_checks"}
+        values: 60+0x30
+      - series: meterd_observability_loop_enabled{job="meterd",instance="a",loop="synthetic_checks"}
+        values: 1+0x30
+      # slo_rollup passes every minute.
+      - series: meterd_observability_loop_last_pass_timestamp_seconds{job="meterd",instance="a",loop="slo_rollup"}
+        values: 0+60x30
+      - series: meterd_observability_loop_enabled{job="meterd",instance="a",loop="slo_rollup"}
+        values: 1+0x30
+      # A disabled loop's stale pass is FaasObservabilityLoopDisabled's job.
+      - series: meterd_observability_loop_last_pass_timestamp_seconds{job="meterd",instance="b",loop="synthetic_checks"}
+        values: 0+0x30
+      - series: meterd_observability_loop_enabled{job="meterd",instance="b",loop="synthetic_checks"}
+        values: 0+0x30
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: FaasObservabilityLoopStalled
+        exp_alerts: []
+      - eval_time: 20m
+        alertname: FaasObservabilityLoopStalled
+        exp_alerts:
+          - exp_labels:
+              job: meterd
+              instance: a
+              loop: synthetic_checks
+              severity: warn
+              component: meterd
+              family: customer_observability
+              public_status: internal
+            exp_annotations:
+              summary: A customer observability loop in meterd has stopped completing passes
+              description: The loop has not finished an error-free pass within its budget (synthetic_checks
+                10 minutes, slo_rollup 30 minutes), so customers' synthetic results or SLO budgets are
+                going stale. Check meterd's log for the loop's errors and the database and Prometheus
+                it reads.
+              runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasCustomerObservability.md
+
+  - name: a disabled loop fires after half an hour
+    interval: 1m
+    input_series:
+      - series: meterd_observability_loop_enabled{job="meterd",instance="a",loop="slo_rollup"}
+        values: 0+0x40
+      - series: meterd_observability_loop_enabled{job="meterd",instance="a",loop="synthetic_checks"}
+        values: 1+0x40
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: FaasObservabilityLoopDisabled
+        exp_alerts: []
+      - eval_time: 35m
+        alertname: FaasObservabilityLoopDisabled
+        exp_alerts:
+          - exp_labels:
+              job: meterd
+              instance: a
+              loop: slo_rollup
+              severity: warn
+              component: meterd
+              family: customer_observability
+              public_status: internal
+            exp_annotations:
+              summary: A customer observability loop in meterd is not running
+              description: meterd started without the loop, usually slo_rollup with FAAS_PROMETHEUS_URL
+                unset. Customers' SLO budgets then read as no data and slo_budget alerts never fire.
+              runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasCustomerObservability.md
+
+  - name: platform item failures fire, customers' failing checks do not
+    interval: 1m
+    input_series:
+      - series: meterd_observability_loop_items_total{job="meterd",instance="a",loop="slo_rollup",outcome="failed"}
+        values: 0+1x40
+      - series: meterd_observability_loop_items_total{job="meterd",instance="a",loop="synthetic_checks",outcome="failed"}
+        values: 0+5x40
+      - series: meterd_observability_loop_items_total{job="meterd",instance="a",loop="synthetic_checks",outcome="record_error"}
+        values: 0+0x40
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: FaasObservabilityLoopItemsFailing
+        exp_alerts:
+          - exp_labels:
+              job: meterd
+              instance: a
+              loop: slo_rollup
+              severity: warn
+              component: meterd
+              family: customer_observability
+              public_status: internal
+            exp_annotations:
+              summary: A customer observability loop keeps failing items
+              description: For 15 minutes synthetic_checks could not record probe results, or slo_rollup
+                could not compute SLO hours from Prometheus. Each pass retries, but customers see missing
+                runs or no-data hours while it lasts. A customer's own failing check is counted as failed,
+                not here.
+              runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasCustomerObservability.md
+
+  - name: ledger write failures fire, rejected lines do not
+    interval: 1m
+    input_series:
+      - series: apid_log_projection_events_total{job="apid",instance="a",source="deploy",outcome="failed"}
+        values: 0+1x40
+      - series: apid_runtime_log_events_total{job="apid",instance="b",outcome="not_released"}
+        values: 0+10x40
+      - series: apid_runtime_log_events_total{job="apid",instance="b",outcome="db_error"}
+        values: 0+0x40
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: FaasLogLedgerWritesFailing
+        exp_alerts:
+          - exp_labels:
+              job: apid
+              instance: a
+              severity: warn
+              component: apid
+              family: customer_observability
+              public_status: internal
+            exp_annotations:
+              summary: apid cannot write build, deploy or runtime events to the log ledger
+              description: For 15 minutes the build and deploy projection or the runtime-line receiver
+                has failed to insert into log_events. Log search, log_search_matches alerts and alert
+                log context miss these events until writes recover; the projector retries from its cursor,
+                while runtime lines that fail are dropped (the instance ring and archive keep them).
+              runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasCustomerObservability.md
+
+  - name: forwarding failures stay quiet while apid has log search switched off
+    interval: 1m
+    input_series:
+      - series: vmmd_runtime_log_events_total{job="vmmd",instance="node-1",outcome="forward_failed"}
+        values: 0+1x40
+      - series: apid_log_search_ingest_enabled{job="apid",instance="a"}
+        values: 0+0x40
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: FaasRuntimeLogForwardingFailing
+        exp_alerts: []
+
+  - name: forwarding failures fire while apid accepts runtime lines
+    interval: 1m
+    input_series:
+      - series: vmmd_runtime_log_events_total{job="vmmd",instance="node-1",outcome="forward_failed"}
+        values: 0+1x40
+      - series: apid_log_search_ingest_enabled{job="apid",instance="a"}
+        values: 1+0x40
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: FaasRuntimeLogForwardingFailing
+        exp_alerts:
+          - exp_labels:
+              job: vmmd
+              instance: node-1
+              severity: warn
+              component: vmmd
+              family: customer_observability
+              public_status: internal
+            exp_annotations:
+              summary: vmmd cannot forward runtime warn and error lines to apid
+              description: For 15 minutes vmmd's runtime log forwarding has failed while apid accepts
+                runtime lines. Lines that fail are not indexed (the instance ring and archive keep them).
+                Check vmmd's guest-trace apid target and apid's LogEvents listener.
+              runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasCustomerObservability.md
+
+  - name: channel failures fire only when a whole kind fails or credentials cannot be unsealed
+    interval: 1m
+    input_series:
+      # One customer's broken Slack webhook while other Slack deliveries succeed.
+      - series: meterd_alert_channel_deliveries_total{job="meterd",instance="a",kind="slack",outcome="failed"}
+        values: 0+1x50
+      - series: meterd_alert_channel_deliveries_total{job="meterd",instance="a",kind="slack",outcome="delivered"}
+        values: 0+2x50
+      # Every email delivery fails.
+      - series: meterd_alert_channel_deliveries_total{job="meterd",instance="a",kind="email",outcome="failed"}
+        values: 0+1x50
+      # A PagerDuty routing key cannot be unsealed.
+      - series: meterd_alert_channel_deliveries_total{job="meterd",instance="a",kind="pagerduty",outcome="unseal_failed"}
+        values: 0+0x25 1+0x25
+    alert_rule_test:
+      - eval_time: 40m
+        alertname: FaasAlertChannelDeliveriesFailing
+        exp_alerts:
+          - exp_labels:
+              job: meterd
+              instance: a
+              kind: email
+              severity: warn
+              component: meterd
+              family: customer_observability
+              public_status: internal
+            exp_annotations: &channel_annotations
+              summary: Alert notifications to a channel kind are failing platform-wide
+              description: meterd could not unseal a channel's credentials, or every Slack, PagerDuty
+                or email delivery failed for 30 minutes (at least three attempts, none delivered). One
+                customer's broken destination does not fire this while others deliver; a platform failure
+                such as the unseal key, the mail relay or egress does.
+              runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasCustomerObservability.md
+          - exp_labels:
+              job: meterd
+              instance: a
+              kind: pagerduty
+              severity: warn
+              component: meterd
+              family: customer_observability
+              public_status: internal
+            exp_annotations: *channel_annotations
