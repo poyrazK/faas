@@ -118,7 +118,10 @@ declaration was lost before the pool reconcile read it:
   `gregalemanifest.(*Manifest).ScalingPolicyRequest` is now the one rule: the
   scaling block, with a worker block that names a metric taking its bounds and
   target, cooldowns defaulted as the scaling block's are. The CLI deploy, the
-  diff preview and apid's source deploys all apply it.
+  diff preview and apid's source deploys all apply it. A queue target on an
+  app the same request (or manifest) makes a worker is judged on that mode:
+  the class check read only the stored mode, so a first deploy of a worker
+  was refused.
 - **`gregale workers scale` defaulted to `queue_lag`.** Only external broker
   pollers report lag, so for Gregale queues the reconcile had no signal and
   failed every tick. The default is now the queue metric the app's policy

@@ -360,6 +360,10 @@ func (s *server) applySourceRefManifest(ctx context.Context, acct state.Account,
 			return staged, api.ErrCapacity("could not resolve account plan limits")
 		}
 		scalingReq := &api.UpdateAppRequest{ScalingPolicy: policy}
+		if lifecycle, ok := m.LifecycleRequest(); ok {
+			// The lifecycle step below sets the mode a queue target needs.
+			scalingReq.ExecutionMode = lifecycle.ExecutionMode
+		}
 		if prob := validateUpdateApp(scalingReq, acct, limits, app); prob != nil {
 			return staged, prob
 		}
