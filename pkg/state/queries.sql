@@ -20812,6 +20812,9 @@ SELECT (jsonb_build_object(
     'deployment_submission_receipts_deployment_id_fkey', (SELECT count(*) FROM deployment_submission_receipts WHERE deployment_id = sqlc.arg(deployment_id)::uuid),
     'project_worker_job_evidence_deployment_id_fkey', (SELECT count(*) FROM project_worker_job_evidence WHERE deployment_id = sqlc.arg(deployment_id)::uuid),
     'project_worker_release_pins_deployment_id_fkey', (SELECT count(*) FROM project_worker_release_pins WHERE deployment_id = sqlc.arg(deployment_id)::uuid),
+    -- Database-restoring rollbacks (ADR-20261023181931) record both releases.
+    'release_database_switches_from_deployment_id_fkey', (SELECT count(*) FROM release_database_switches WHERE from_deployment_id = sqlc.arg(deployment_id)::uuid),
+    'release_database_switches_target_deployment_id_fkey', (SELECT count(*) FROM release_database_switches WHERE target_deployment_id = sqlc.arg(deployment_id)::uuid),
     -- Preview command runtimes (financial previews) hold a deployment while preparing or active.
     'financial_preview_command_runtimes_deployment_id_fkey', (SELECT count(*) FROM financial_preview_command_runtimes WHERE deployment_id = sqlc.arg(deployment_id)::uuid AND phase <> 'retired')
 ))::jsonb AS borrowers;
