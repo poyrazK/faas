@@ -1108,7 +1108,9 @@ overwrites any value an application token tries to supply. Every access kind
 still uses the binding's restricted SQL login.
 
 Anonymous traffic is always rate limited per client address, using the address
-the Gregale edge stamps on each request (IPv6 is grouped by /64). The limit is
+the Gregale edge stamps on each request (IPv6 is grouped by /64, or by /48 once
+an instance tracks 3,072 anonymous or concurrent clients, so one network
+cannot crowd other visitors out). The limit is
 your `DATA_API_RATE_LIMIT_*` policy, or 10 requests per second with a burst of
 20 when you have not set one. Anonymous budgets are tracked separately from
 signed-in users. Request logs and `data-api diagnostics` record the access kind,
@@ -1461,9 +1463,16 @@ Each route asks PostgreSQL first, as the caller:
 - **Safe serving.** Downloads are served with `Content-Security-Policy:
   sandbox` and `nosniff`, so an uploaded page cannot run as your API's
   origin.
-- **Before the migration.** Until `storage_objects` exists with RLS and its
-  guard trigger, storage routes answer `503 storage_unavailable` and the rest
-  of the API keeps serving.
+- **Versions.** Each upload stores its bytes under a new `object_key` and
+  replaces the previous version only once its row commits, so two uploads
+  racing for one name never mix their bytes; a refused upload leaves the
+  existing file untouched. A row you insert yourself without `object_key`
+  names its bytes by `name`.
+- **Before the migration.** Until `storage_objects` exists with RLS, its
+  guard trigger and `object_key`, storage routes answer
+  `503 storage_unavailable` and the rest of the API keeps serving. A table
+  created before `object_key` existed needs
+  `gregale data-api storage sql --upgrade` applied as a migration.
 
 ## Aggregates
 

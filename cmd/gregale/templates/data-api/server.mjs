@@ -20,7 +20,7 @@ import { createPoolObservation } from './pool.mjs'
 import { createUsage, addResponseBytes, accessReport } from './usage.mjs'
 import { storageRoute, handleStorage, storageAnonymousTarget, storageServerKeyAllows, checkStorageTable } from './storage.mjs'
 import { createEngine, lifecyclePaths } from './engine.mjs'
-import { publicReadTarget, publicRpcTarget, publicRpcListed, publicReadCache, clientKey, matchServerKey, serverKeyAllows, serverSubject, checkPublicRelations, checkPublicFunctions, loadRowSecurity, rowSecurityDenial } from './access.mjs'
+import { publicReadTarget, publicRpcTarget, publicRpcListed, publicReadCache, anonymousClient, matchServerKey, serverKeyAllows, serverSubject, checkPublicRelations, checkPublicFunctions, loadRowSecurity, rowSecurityDenial } from './access.mjs'
 
 export function createServer(config, verify, upstreamPort = 3000, readyPort = 3001, log) {
   const servingFingerprint = config.fingerprint
@@ -172,7 +172,7 @@ export function createServer(config, verify, upstreamPort = 3000, readyPort = 30
           if (denial) return problem(res, denial.status, denial.code)
           concurrencyKey = payload.sub
         } else if (access === 'anonymous') {
-          const client = ['anonymous', clientKey(req)]
+          const client = anonymousClient(req, anonymousLimiter, userConcurrency)
           if (!admitRateLimit(anonymousLimiter, client, res, problem)) return
           concurrencyKey = client
         }
