@@ -173,7 +173,7 @@ jobs:
           # runner-python312's pip pin, and the profiling and tracing
           # bootstraps (their hashed Python locks). Daemon code and guest runner shims ship in the signed
           # release bundle and cannot change these image bytes.
-          if grep -Eq '^(images/(base-debian-parent|base-minimal|runner-node22|runner-node24|runner-python312|runner-python313|execution-python-data-v1|runner-go124|runner-go124-alpine)\.Dockerfile$|images/rootfs-skel/|images/runner-python312-pip\.txt$|guest/(profiling|tracing)/|images/install-execution-profile\.py$|images/install_execution_profile_test\.py$|pkg/executionprofiles/python-data-v1\.json$|images/Dockerfile\.lock$|scripts/ci/(install-grype|update-grype-db|scan-oci-image|validate-runtime-image|smoke-runtime-image)\.sh$|\.github/workflows/images\.yml$)' <<<"$changed"; then
+          if grep -Eq '^(images/(agent-base|base-debian-parent|base-minimal|runner-node22|runner-node24|runner-python312|runner-python313|execution-python-data-v1|runner-go124|runner-go124-alpine)\.Dockerfile$|images/rootfs-skel/|images/agent-base/|images/agent_base_install_test\.py$|pkg/agentpresets/presets\.json$|images/runner-python312-pip\.txt$|guest/(profiling|tracing)/|images/install-execution-profile\.py$|images/install_execution_profile_test\.py$|pkg/executionprofiles/python-data-v1\.json$|images/Dockerfile\.lock$|scripts/ci/(install-grype|update-grype-db|scan-oci-image|validate-runtime-image|smoke-runtime-image)\.sh$|\.github/workflows/images\.yml$)' <<<"$changed"; then
             bases=true
           fi
 
@@ -491,6 +491,9 @@ jobs:
             dockerfile: images/runner-go124.Dockerfile
           - image: runner-go124-alpine
             dockerfile: images/runner-go124-alpine.Dockerfile
+          # ADR-20261027090010 §2: the shared agent drive0 with the preset harnesses.
+          - image: agent-base
+            dockerfile: images/agent-base.Dockerfile
     env:
       IMAGE_NAME: ghcr.io/poyrazk/${{ matrix.image }}
     steps:
@@ -498,6 +501,9 @@ jobs:
 
       - name: Check curated wheel installer
         run: python3 images/install_execution_profile_test.py
+
+      - name: Check agent-base install script
+        run: python3 images/agent_base_install_test.py
 
       - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
 

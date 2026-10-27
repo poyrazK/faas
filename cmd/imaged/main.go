@@ -771,6 +771,13 @@ func (d runDeps) run(ctx context.Context, log *slog.Logger) error {
 	for _, base := range profileBases {
 		log.Info("imaged execution profile base ready", "profile", base.Runtime, "digest", base.ConfigDigest, "skipped", base.Skipped)
 	}
+	agentBases, err := h.EnsureAgentRunDrives(ctx, arch, getenv)
+	if err != nil {
+		return err
+	}
+	for _, base := range agentBases {
+		log.Info("imaged agent base ready", "digest", base.ConfigDigest, "skipped", base.Skipped)
+	}
 	if prestageOnlyFromEnv(getenv) {
 		// ADR-20261024191249: the rolled vmmd must be able to boot every
 		// runtime base the release configures, not only those of the apps

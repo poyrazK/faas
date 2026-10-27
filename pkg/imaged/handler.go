@@ -221,6 +221,9 @@ type Handler struct {
 	// sidecar write at base_stage.go::writeScanSidecar reads the
 	// counts off the struct to build the legacy sidecar JSON.
 	grypeRun func(ctx context.Context, dir string) (*ScanResult, error)
+	// lchown sets ownership in platform layer staging trees; nil is
+	// os.Lchown. Tests inject one because they run without CAP_CHOWN.
+	lchown func(path string, uid, gid int) error
 
 	// runtimeGrypeRun scans the native composed directory without treating a
 	// customer file named rootfs.ext4 as a nested image.
