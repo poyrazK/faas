@@ -1037,6 +1037,15 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// Wake RPC contexts are canceled when the request returns and
 	// must not own either background activity.
 	mgr.WithLifecycleContext(ctx)
+	httpAdmissionEnabled, err := api.HTTPAdmissionEnabled(os.Getenv("FAAS_HTTP_ADMISSION"))
+	if err != nil {
+		return err
+	}
+	mgr.WithHTTPAdmission(httpAdmissionEnabled)
+	if !httpAdmissionEnabled {
+		// ADR-570 kill switch: an operator lifted the per-VM HTTP cap on this node.
+		slog.Warn("vmmd: FAAS_HTTP_ADMISSION=off; per-VM HTTP admission cap is not enforced on this node")
+	}
 	egressCircuitEnabled, err := api.EgressCircuitBreakerEnabled(os.Getenv("FAAS_EGRESS_CIRCUIT_BREAKER"))
 	if err != nil {
 		return err
