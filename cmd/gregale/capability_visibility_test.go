@@ -281,7 +281,7 @@ func TestHiddenDebuggerSubcommandsLeaveDebugUsage(t *testing.T) {
 
 	api.setHidden()
 	t.Setenv("FAAS_COMPLETION_CACHE_PATH", filepath.Join(t.TempDir(), "cache2.json"))
-	if usage := debugUsageOutput(t, "debug"); !strings.Contains(usage, "<requests|coverage|dependencies|running|regressions|compare|bundle>") {
+	if usage := debugUsageOutput(t, "debug"); !strings.Contains(usage, "<status|rollout|requests|coverage|dependencies|running|regressions|compare|bundle>") {
 		t.Fatalf("debug usage with every capability shown = %q", usage)
 	}
 }

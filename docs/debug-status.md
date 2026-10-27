@@ -66,8 +66,8 @@ gregale debug rollout my-api
 gregale debug rollout my-api --deployment-id 7d1e2f3a-...
 ```
 
-The command explains your newest canary release, or the one you name. It
-shows:
+The command explains your newest canary release, or the one you name.
+`gregale debug explain` is the same command. It shows:
 
 - the safe-release decision: rolled back, held, rolling out or complete, with
   the rule and the numbers the decision used;

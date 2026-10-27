@@ -13710,7 +13710,7 @@ gregale debug status checkout-api
 
 ### debug rollout
 
-Explain why a release was rolled back or is held, with request evidence
+Explain why a release was rolled back or held, with request evidence
 
 `gregale debug rollout [--deployment-id <UUID>] <slug>`
 

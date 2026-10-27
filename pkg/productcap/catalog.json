@@ -4070,12 +4070,16 @@
         "/dashboard/apps/{}/debug/requests",
         "/v1/apps/{}/debug/compare",
         "/v1/apps/{}/debug/critical-paths",
-        "/v1/apps/{}/debug/requests"
+        "/v1/apps/{}/debug/requests",
+        "/v1/apps/{}/debug/rollout",
+        "/v1/apps/{}/debug/status"
       ],
       "cli": [
         "debug bundle",
         "debug compare",
-        "debug requests"
+        "debug requests",
+        "debug rollout",
+        "debug status"
       ]
     },
     {
