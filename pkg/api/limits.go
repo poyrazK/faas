@@ -582,6 +582,10 @@ const (
 	ProfileLocalEndpoint            = "http://127.0.0.1:9191"
 	ProfileHealthListen             = "127.0.0.1:9160"
 	ProfileDefaultSocket            = "/run/faas/profiled.sock"
+	// ProfileRetryCacheMaxEntries bounds profiled's upload replay cache on a
+	// node. At the bound the oldest entries are evicted: the cache is
+	// best-effort replay protection, so it never refuses an upload.
+	ProfileRetryCacheMaxEntries = 10000
 
 	// On-demand captures (ADR-1155).
 	ProfileCaptureMinDuration     = time.Second

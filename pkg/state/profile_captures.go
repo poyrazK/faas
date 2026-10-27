@@ -163,11 +163,17 @@ func validProfileCaptureFinish(result api.ProfileCapture, blobs []ProfileCapture
 		return errors.New("profile capture has too many profiles")
 	}
 	for _, b := range blobs {
-		if !api.ValidCaptureProfileKind(b.Kind) || len(b.Profile) == 0 || len(b.Profile) > api.ProfileMaxCompressedBytes || len(b.ProcessID) > 16 {
+		if !ProfileCaptureBlobFits(b) {
 			return errors.New("profile capture blob exceeds bounds")
 		}
 	}
 	return nil
+}
+
+// ProfileCaptureBlobFits reports whether one collector's profile is within
+// the bounds FinishProfileCapture stores (profile_capture_data's CHECKs).
+func ProfileCaptureBlobFits(b ProfileCaptureBlob) bool {
+	return api.ValidCaptureProfileKind(b.Kind) && len(b.Profile) > 0 && len(b.Profile) <= api.ProfileMaxCompressedBytes && len(b.ProcessID) <= 16
 }
 
 // profileCaptureNotice returns the webhook payload for an announced capture
