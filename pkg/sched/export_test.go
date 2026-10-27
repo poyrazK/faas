@@ -869,3 +869,5 @@ func MarkPreWakeForTest(ctx context.Context) {
 	markPreWake(ctx, preWakeEnvironmentReady)
 	markPreWake(ctx, preWakeLeader)
 }
+
+var LogVMMBootFailure = logVMMBootFailure
