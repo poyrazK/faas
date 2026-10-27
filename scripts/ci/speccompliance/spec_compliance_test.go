@@ -1511,6 +1511,16 @@ func strconvUnescape(s string) (string, error) {
 
 // --- Schemas parity --------------------------------------------------------
 
+// previewFieldExclude lists preview fields of public DTOs that stay out of
+// the spec until launch, by schema and JSON name.
+var previewFieldExclude = map[string]map[string]bool{
+	// ADR-20261027090010 §9: the automation agent step and agent trigger targets,
+	// behind the agents capability.
+	"WorkflowStepSpec":     {"agent": true},
+	"CreateTriggerRequest": {"agent": true},
+	"Trigger":              {"agent": true},
+}
+
 func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 	t.Helper()
 
@@ -2105,7 +2115,8 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 	}
 
 	// Per-schema: every JSON-named field must appear in the spec properties.
-	// Catches: field added to DTO but not to spec, renamed, etc.
+	// Catches: field added to DTO but not to spec, renamed, etc. Preview
+	// fields of public DTOs stay out of the spec until launch.
 	for name, fields := range dtos {
 		specBody, ok := spec.Schemas[name]
 		if !ok {
@@ -2117,7 +2128,7 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		}
 		var missing []string
 		for f := range fields {
-			if !propSet[f] {
+			if !propSet[f] && !previewFieldExclude[name][f] {
 				missing = append(missing, f)
 			}
 		}
