@@ -65,8 +65,9 @@ and to match the configured price exactly. Switching back to `off` stops egress
 processing without affecting compute billing.
 
 Object-storage billing has its own default-off rollout gate. Configure these
-values on both daemons so they validate the same Polar catalog; `apid` owns the
-actual UTC-month close and event delivery:
+values on both daemons so they validate the same Polar catalog. `apid` owns the
+daily charge steps, the UTC-month close and event delivery. meterd reserves the
+live object-storage charge under the overage cap:
 
 | Variable | Purpose |
 |---|---|
@@ -76,15 +77,24 @@ actual UTC-month close and event delivery:
 | `FAAS_POLAR_OBJECT_STORAGE_USAGE_EVENT_NAME` | Event filter; default `faas_object_storage_usage` |
 
 The object-storage rate card remains in the object-storage registry and must
-use USD, the billing currency (ADR-1430). At month close Gregale freezes exact storage, request, and egress
-components, then sends their total as an integer `charge_millicents` quantity.
-The Polar metered price must be USD `0.001` cents per unit. Each product can
-therefore show one Object storage usage line while Gregale retains the detailed
-components in event metadata and its immutable ledger. Use `shadow` first;
-shadow and pre-activation decisions are durable and cannot be replayed after a
-switch to `live`. Polar bills a backdated event in the billing cycle in which
-it is received, so the invoice line appears after Gregale closes the UTC month;
-the closed usage month remains explicit in event metadata.
+use USD, the billing currency (ADR-1430).
+
+- **Daily steps.** At most once a day, Gregale prices each paid account's
+  month-to-date storage and sends the part not yet billed as an integer
+  `charge_millicents` quantity.
+- **Month close.** Once the month has ended, Gregale freezes the exact storage,
+  request, and egress components and sends the rest of the month the same way.
+- **Polar price.** The Polar metered price must be USD `0.001` cents per unit.
+  Each product can therefore show one Object storage usage line, while Gregale
+  keeps the detailed components in event metadata and its immutable ledger.
+- **Invoicing.** Events are timestamped when sent, so storage is invoiced in
+  the subscription cycle it accrues in. A subscription that ends mid-month is
+  billed up to its last daily step
+  ([ADR 20261027093220](../adr/20261027093220-object-storage-billed-daily.md)).
+- **Rollout.** Use `shadow` first. Shadow and pre-activation decisions are
+  durable and cannot be replayed after a switch to `live`. Switch to `live`
+  only once every `apid` runs a release with daily steps: an older `apid`
+  closing a month would bill the whole month again.
 
 Create one active monthly recurring product per paid plan in the selected
 Polar environment. Each product must contain the fixed monthly price and the

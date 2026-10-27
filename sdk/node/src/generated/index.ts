@@ -468,6 +468,7 @@ export type { CreateConsumerSignupResponse } from './models/CreateConsumerSignup
 export type { CreateCorsPresetRequest } from './models/CreateCorsPresetRequest.js';
 export type { CreateCronRequest } from './models/CreateCronRequest.js';
 export type { CreateCustomDomainRequest } from './models/CreateCustomDomainRequest.js';
+export type { CreateDataAPIContractTaskRequest } from './models/CreateDataAPIContractTaskRequest.js';
 export type { CreateDataConnectionRequest } from './models/CreateDataConnectionRequest.js';
 export type { CreateDataPipelineRequest } from './models/CreateDataPipelineRequest.js';
 export type { CreateDeploymentOverrides } from './models/CreateDeploymentOverrides.js';

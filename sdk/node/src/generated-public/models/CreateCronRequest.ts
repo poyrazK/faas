@@ -14,7 +14,7 @@ export type CreateCronRequest = {
   app_id: string;
   schedule: string;
   /**
-   * HTTP target path; defaults to / and is mutually exclusive with command.
+   * HTTP target path on the cron's own app; defaults to /, starts with a single /, may carry a query string, and is mutually exclusive with command.
    */
   path?: string;
   /**

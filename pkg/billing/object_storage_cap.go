@@ -17,15 +17,15 @@ type objectStorageCapStore interface {
 	GetAccountOverageCapCents(context.Context, string) (int64, bool, error)
 }
 
-// objectStorageChargeWithinCap returns the part of a finalized period's
-// charge that the account's overage cap still allows (ADR-1320). Compute and
-// live egress bill hourly during the month and keep their place under the cap
-// (ADR-1162); object storage, priced only at month close, takes what remains
-// after their month's billable cost is reserved. An uncapped account is
-// charged in full. The record keeps the full priced usage; only the delivered
-// charge is capped, and capped usage is never billed later.
-func objectStorageChargeWithinCap(ctx context.Context, store state.ObjectStorageBillingStore, policies MeterUsagePolicyProvider, account state.Account, record state.ObjectStorageBillingRecord) (int64, error) {
-	if record.TotalMillicents == 0 {
+// objectStorageChargeWithinCap returns the part of a cumulative object-storage
+// charge for the month starting at start that the account's overage cap
+// allows, reading compute and egress over [start, end) (ADR-1320). Compute
+// and live egress keep their place under the cap (ADR-1162); object storage
+// takes what remains after their billable cost is reserved. An uncapped
+// account is charged in full. The record keeps the full priced usage; only
+// the delivered charge is capped, and capped usage is never billed later.
+func objectStorageChargeWithinCap(ctx context.Context, store state.ObjectStorageBillingStore, policies MeterUsagePolicyProvider, account state.Account, start, end time.Time, charge int64) (int64, error) {
+	if charge == 0 {
 		return 0, nil
 	}
 	caps, ok := store.(objectStorageCapStore)
@@ -37,23 +37,23 @@ func objectStorageChargeWithinCap(ctx context.Context, store state.ObjectStorage
 		return 0, fmt.Errorf("load overage cap: %w", err)
 	}
 	if !capped {
-		return record.TotalMillicents, nil
+		return charge, nil
 	}
 	// The month's compute overage as meterd delivers it hour by hour, before
 	// its own cap clamp.
-	compute, err := OverageMBSecondsForRange(ctx, caps, account, record.PeriodStart, record.PeriodEnd)
+	compute, err := OverageMBSecondsForRange(ctx, caps, account, start, end)
 	if err != nil {
 		return 0, err
 	}
-	egress, egressPolicy, err := monthBillableLiveEgress(ctx, caps, policies, account, record.PeriodStart, record.PeriodEnd)
+	egress, egressPolicy, err := monthBillableLiveEgress(ctx, caps, policies, account, start, end)
 	if err != nil {
 		return 0, err
 	}
-	remaining, ok := CapRemainingMillicents(capCents, compute, egress, egressPolicy)
+	remaining, ok := CapRemainingMillicents(capCents, compute, egress, egressPolicy, 0)
 	if !ok {
 		return 0, errors.New("billing: invalid overage cap reservation")
 	}
-	return min(record.TotalMillicents, FloorCapQuantity(remaining, 1, 1)), nil
+	return min(charge, FloorCapQuantity(remaining, 1, 1)), nil
 }
 
 // monthBillableLiveEgress is the period's egress above the plan's included

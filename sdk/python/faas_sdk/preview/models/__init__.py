@@ -873,6 +873,8 @@ from .create_consumer_signup_response import CreateConsumerSignupResponse
 from .create_cors_preset_request import CreateCorsPresetRequest
 from .create_cron_request import CreateCronRequest
 from .create_custom_domain_request import CreateCustomDomainRequest
+from .create_data_api_contract_task_request import CreateDataAPIContractTaskRequest
+from .create_data_api_contract_task_request_kind import CreateDataAPIContractTaskRequestKind
 from .create_data_connection_request import CreateDataConnectionRequest
 from .create_data_pipeline_request import CreateDataPipelineRequest
 from .create_deploy_token_request import CreateDeployTokenRequest
@@ -7073,6 +7075,8 @@ __all__ = (
     "CreateCorsPresetRequest",
     "CreateCronRequest",
     "CreateCustomDomainRequest",
+    "CreateDataAPIContractTaskRequest",
+    "CreateDataAPIContractTaskRequestKind",
     "CreateDataConnectionRequest",
     "CreateDataPipelineRequest",
     "CreateDeploymentFilesBody",

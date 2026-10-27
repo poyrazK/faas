@@ -3873,6 +3873,8 @@ type Querier interface {
 	// schedd claims, finishes and expires them. Reads join the owning app so a
 	// deleted app's captures are invisible before the cascade removes them.
 	// Lifecycle columns are merged into the public capture document on read.
+	// Serializes the account-wide quota and storage checks across its apps.
+	LockProfileCaptureAccount(ctx context.Context, db DBTX, accountID string) error
 	LockProfileCaptureApp(ctx context.Context, db DBTX, arg LockProfileCaptureAppParams) (pgtype.UUID, error)
 	LockProfilePeriodicMonitor(ctx context.Context, db DBTX, arg LockProfilePeriodicMonitorParams) ([]byte, error)
 	LockProjectBindingVerificationRun(ctx context.Context, db DBTX, arg LockProjectBindingVerificationRunParams) (ProjectBindingVerificationRun, error)
@@ -4826,6 +4828,9 @@ type Querier interface {
 	// Customer-safe fields are selected explicitly. Permission and realm filters
 	// apply before pagination; owner notes, prices, snapshots and handoffs stay out.
 	ProductWorkspaceActivity(ctx context.Context, db DBTX, arg ProductWorkspaceActivityParams) ([]ProductWorkspaceActivityRow, error)
+	// Stored bytes of the account's unexpired captures, and how many of its
+	// captures are still queued or running.
+	ProfileCaptureAccountStorage(ctx context.Context, db DBTX, arg ProfileCaptureAccountStorageParams) (ProfileCaptureAccountStorageRow, error)
 	ProfileCaptureForRequest(ctx context.Context, db DBTX, arg ProfileCaptureForRequestParams) ([]byte, error)
 	ProfileInvestigationAppOwned(ctx context.Context, db DBTX, arg ProfileInvestigationAppOwnedParams) (bool, error)
 	ProfileInvestigationDeploymentOwned(ctx context.Context, db DBTX, arg ProfileInvestigationDeploymentOwnedParams) (bool, error)
@@ -4866,6 +4871,19 @@ type Querier interface {
 	PruneAppRuntimeUpgradeGatewayDrains(ctx context.Context, db DBTX, appID pgtype.UUID) error
 	PruneAutomationLiveBaselineHistory(ctx context.Context, db DBTX, arg PruneAutomationLiveBaselineHistoryParams) error
 	PruneAutomationLiveSuites(ctx context.Context, db DBTX, arg PruneAutomationLiveSuitesParams) error
+	// Manual-run requests made before before_at, whatever their status: a
+	// request that old can no longer start a run, and its outcome lives on the
+	// run itself.
+	PruneCronFireNowRequests(ctx context.Context, db DBTX, arg PruneCronFireNowRequestsParams) (int64, error)
+	// Cron history retention (api.CronHistoryRetention). Both deletes walk the
+	// live crons and probe each cron's own history index, so a sweep never scans
+	// the whole table. Rows of deleted crons are already gone: both tables
+	// cascade from crons.
+	// Settled schedule decisions scheduled before before_at, oldest first.
+	// Pending, queued, running, waiting_replacement and uncertain decisions are
+	// kept whatever their age. References from invocations, app tasks, job runs
+	// and blocking occurrences are ON DELETE SET NULL.
+	PruneCronScheduleOccurrences(ctx context.Context, db DBTX, arg PruneCronScheduleOccurrencesParams) (int64, error)
 	PruneCustomerOperationEvents(ctx context.Context, db DBTX, arg PruneCustomerOperationEventsParams) (int64, error)
 	PruneCustomerOperationIdempotency(ctx context.Context, db DBTX, arg PruneCustomerOperationIdempotencyParams) (int64, error)
 	PruneCustomerOperationStreams(ctx context.Context, db DBTX, arg PruneCustomerOperationStreamsParams) (int64, error)

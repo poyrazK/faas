@@ -32,6 +32,7 @@ import (
 	"path/filepath"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/storage"
@@ -141,7 +142,25 @@ func (m *Manager) fetchBackingFile(ctx context.Context, key string) (string, err
 // fileDigest returns "sha256:<hex>" for path, hashing each file version once
 // per Manager.
 func (m *Manager) fileDigest(path string) (string, error) {
-	info, err := os.Stat(path)
+	f, err := os.Open(path) //nolint:forbidigo // path is a kernel or base image vmmd resolved itself.
+	if err != nil {
+		return "", fmt.Errorf("%w: open %s: %w", ErrSnapshotBackingUnverified, path, err)
+	}
+	defer func() { _ = f.Close() }()
+	return m.fileDigestOf(f, path)
+}
+
+// backingDigestCall is one file version being hashed. Concurrent first boots
+// of a base wait for it instead of reading the whole file again.
+type backingDigestCall struct {
+	done   chan struct{}
+	digest string
+	err    error
+}
+
+// fileDigestOf hashes the file version f has open, once per Manager.
+func (m *Manager) fileDigestOf(f *os.File, path string) (string, error) {
+	info, err := f.Stat()
 	if err != nil {
 		return "", fmt.Errorf("%w: stat %s: %w", ErrSnapshotBackingUnverified, path, err)
 	}
@@ -155,25 +174,38 @@ func (m *Manager) fileDigest(path string) (string, error) {
 		m.backingMu.Unlock()
 		return digest, nil
 	}
+	if call := m.backingHashing[key]; call != nil {
+		m.backingMu.Unlock()
+		<-call.done
+		return call.digest, call.err
+	}
+	if m.backingHashing == nil {
+		m.backingHashing = make(map[fileIdentityKey]*backingDigestCall)
+	}
+	call := &backingDigestCall{done: make(chan struct{})}
+	m.backingHashing[key] = call
 	m.backingMu.Unlock()
 
-	f, err := os.Open(path)
-	if err != nil {
-		return "", fmt.Errorf("%w: open %s: %w", ErrSnapshotBackingUnverified, path, err)
+	if m.beforeBackingHash != nil {
+		m.beforeBackingHash(path)
 	}
-	defer func() { _ = f.Close() }()
 	h := sha256.New()
-	if _, err := io.Copy(h, f); err != nil {
-		return "", fmt.Errorf("%w: hash %s: %w", ErrSnapshotBackingUnverified, path, err)
+	if _, err := io.Copy(h, io.NewSectionReader(f, 0, info.Size())); err != nil {
+		call.err = fmt.Errorf("%w: hash %s: %w", ErrSnapshotBackingUnverified, path, err)
+	} else {
+		call.digest = "sha256:" + hex.EncodeToString(h.Sum(nil))
 	}
-	digest := "sha256:" + hex.EncodeToString(h.Sum(nil))
 	m.backingMu.Lock()
-	if m.backingDigests == nil {
-		m.backingDigests = make(map[fileIdentityKey]string)
+	delete(m.backingHashing, key)
+	if call.err == nil {
+		if m.backingDigests == nil {
+			m.backingDigests = make(map[fileIdentityKey]string)
+		}
+		m.backingDigests[key] = call.digest
 	}
-	m.backingDigests[key] = digest
 	m.backingMu.Unlock()
-	return digest, nil
+	close(call.done)
+	return call.digest, call.err
 }
 
 // PrimeBackingDigests hashes the kernel and every configured runtime base
@@ -205,27 +237,57 @@ func (m *Manager) PrimeBackingDigests(ctx context.Context) {
 	}
 }
 
-// currentBacking identifies the kernel and base a wake would attach now.
-func (m *Manager) currentBacking(baseKey string) (BackingIdentity, error) {
-	return m.identifyBacking(baseKey, m.resolveBackingFile)
-}
-
 // identifyBacking identifies the kernel and base, resolving each key with
 // resolve.
 func (m *Manager) identifyBacking(baseKey string, resolve func(string) (string, error)) (BackingIdentity, error) {
-	kernelPath, err := resolve(m.paths.Kernel)
+	files, err := m.openBacking(baseKey, resolve)
 	if err != nil {
 		return BackingIdentity{}, err
+	}
+	defer files.close()
+	return m.identifyBackingFiles(files)
+}
+
+// backingFiles are the kernel and base a wake attaches, held open so their
+// identity is the version the VM booted with even if a refresh replaces the
+// files before they are hashed.
+type backingFiles struct {
+	kernel, base         *os.File
+	kernelPath, basePath string
+}
+
+func (m *Manager) openBacking(baseKey string, resolve func(string) (string, error)) (backingFiles, error) {
+	kernelPath, err := resolve(m.paths.Kernel)
+	if err != nil {
+		return backingFiles{}, err
 	}
 	basePath, err := resolve(baseKey)
 	if err != nil {
-		return BackingIdentity{}, err
+		return backingFiles{}, err
 	}
-	kernel, err := m.fileDigest(kernelPath)
+	kernel, err := os.Open(kernelPath) //nolint:forbidigo // vmmd's own kernel image.
+	if err != nil {
+		return backingFiles{}, fmt.Errorf("%w: open %s: %w", ErrSnapshotBackingUnverified, kernelPath, err)
+	}
+	base, err := os.Open(basePath) //nolint:forbidigo // a base image vmmd resolved itself.
+	if err != nil {
+		_ = kernel.Close()
+		return backingFiles{}, fmt.Errorf("%w: open %s: %w", ErrSnapshotBackingUnverified, basePath, err)
+	}
+	return backingFiles{kernel: kernel, base: base, kernelPath: kernelPath, basePath: basePath}, nil
+}
+
+func (b backingFiles) close() {
+	_ = b.kernel.Close()
+	_ = b.base.Close()
+}
+
+func (m *Manager) identifyBackingFiles(b backingFiles) (BackingIdentity, error) {
+	kernel, err := m.fileDigestOf(b.kernel, b.kernelPath)
 	if err != nil {
 		return BackingIdentity{}, err
 	}
-	base, err := m.fileDigest(basePath)
+	base, err := m.fileDigestOf(b.base, b.basePath)
 	if err != nil {
 		return BackingIdentity{}, err
 	}
@@ -236,23 +298,92 @@ func (m *Manager) identifyBacking(baseKey string, resolve func(string) (string, 
 // with, so a later capture describes the running VM rather than whatever the
 // logical base key resolves to by then. Best-effort: an unidentified VM
 // produces captures without an identity, which ADR-510 refuses to restore.
+//
+// The files are opened now, pinning the versions the VM booted with, and
+// hashed in the background: the first boot of a base version reads all of
+// it, which took 48 s for the 2.3 GB agent base on a native host. A wake no
+// longer waits for that; whatever needs the identity waits for it
+// (awaitInstanceBacking).
 func (m *Manager) rememberInstanceBacking(instance, baseKey string) {
 	if !m.backingEnabled() {
 		return
 	}
-	identity, err := m.currentBacking(baseKey)
+	files, err := m.openBacking(baseKey, m.resolveBackingFile)
+	if err != nil {
+		m.recordInstanceBacking(instance, nil, BackingIdentity{}, err)
+		return
+	}
+	done := make(chan struct{})
 	m.backingMu.Lock()
-	defer m.backingMu.Unlock()
+	if m.backingPending == nil {
+		m.backingPending = make(map[string]chan struct{})
+	}
+	m.backingPending[instance] = done
+	delete(m.instanceBacking, instance)
+	m.backingMu.Unlock()
+	go func() {
+		defer close(done)
+		started := time.Now()
+		identity, err := m.identifyBackingFiles(files)
+		files.close()
+		if elapsed := time.Since(started); elapsed >= time.Second {
+			m.log.Info("snapshot backing identified", "instance", instance, "base", files.basePath,
+				"duration_ms", elapsed.Milliseconds())
+		}
+		m.recordInstanceBacking(instance, done, identity, err)
+	}()
+}
+
+// recordInstanceBacking stores an instance's identity, or forgets it on err.
+// done is the pending computation it ends; a later wake of the same instance
+// name supersedes it, and then nothing is recorded.
+func (m *Manager) recordInstanceBacking(instance string, done chan struct{}, identity BackingIdentity, err error) {
+	m.backingMu.Lock()
+	if done != nil {
+		if m.backingPending[instance] != done {
+			m.backingMu.Unlock()
+			return
+		}
+		delete(m.backingPending, instance)
+	}
 	if m.instanceBacking == nil {
 		m.instanceBacking = make(map[string]BackingIdentity)
 	}
-	if err != nil {
+	if err == nil {
+		m.instanceBacking[instance] = identity
+	} else {
 		delete(m.instanceBacking, instance)
+	}
+	m.backingMu.Unlock()
+	if err != nil {
 		m.log.Warn("snapshot backing identity unavailable; captures of this instance will not be restorable",
 			"instance", instance, "err", err)
 		return
 	}
-	m.instanceBacking[instance] = identity
+	// A guest that came up before its hash finished was recorded for
+	// adoption without the identity; rewrite its block so a restart keeps
+	// it. A guest not yet live is skipped and recorded after bring-up.
+	m.markAdoptionDirty(instance)
+}
+
+// awaitInstanceBacking returns the instance's identity once any computation
+// rememberInstanceBacking started for it has finished, or false when it has
+// none or ctx ends first.
+func (m *Manager) awaitInstanceBacking(ctx context.Context, instance string) (BackingIdentity, bool) {
+	m.backingMu.Lock()
+	done := m.backingPending[instance]
+	m.backingMu.Unlock()
+	if done != nil {
+		select {
+		case <-done:
+		case <-ctx.Done():
+			return BackingIdentity{}, false
+		}
+	}
+	m.backingMu.Lock()
+	defer m.backingMu.Unlock()
+	identity, ok := m.instanceBacking[instance]
+	return identity, ok
 }
 
 // writeSnapshotBacking stores the running VM's identity next to a capture.
@@ -268,9 +399,7 @@ func (m *Manager) writeSnapshotBackingTo(ctx context.Context, store storage.Stor
 		return
 	}
 	key := state.SnapshotBackingKey(state.Snapshot{StorageKey: memKey})
-	m.backingMu.Lock()
-	identity, ok := m.instanceBacking[instance]
-	m.backingMu.Unlock()
+	identity, ok := m.awaitInstanceBacking(ctx, instance)
 	if key == "" || !ok {
 		m.log.Warn("snapshot captured without a backing identity; it will cold-boot instead of restoring",
 			"instance", instance, "storage_key", memKey)
