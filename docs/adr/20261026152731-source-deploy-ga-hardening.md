@@ -97,6 +97,18 @@ left data behind:
    live and wake). `TestDockerfileHealthcheckMetal` qualifies
    ADR-20261024100000 on a source-built image.
 
+   Status on n2 (nested KVM), 2026-10-27 at 3f854a7c83: a failing
+   `HEALTHCHECK` never serves (`startup_phase=image_healthcheck`, 4 of 4
+   runs); a passing one goes live with a verified 2xx smoke receipt.
+   `TestSourceDeployWakeMetal` passes build to live, park, cold-boot wake,
+   idempotent replay, function auto-pick and the resumable-upload redeploy.
+   Two failures are outside source deploys and stay open: (a) a new app's
+   first request within about a second of going live gets 429
+   `app_concurrency_reached` (observed 0), because imaged's smoke instance
+   holds the only slot before gatewayd has replayed the go-live; (b) snapshot
+   wakes fail on n2 when the resume ack misses the wake deadline, and the
+   cold-boot fallback runs under the same cancelled context.
+
 ## Consequences
 
 - Repositories with `db/migrations`, schemas or seed data deploy from every
