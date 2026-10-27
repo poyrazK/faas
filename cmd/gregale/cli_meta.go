@@ -5805,9 +5805,11 @@ var cliCommands = []cliCommand{
 		DocSlug: "dlq",
 		Short:   "Inspect, replay or purge events that failed delivery",
 		Subcommands: []cliSub{
-			{Name: "list", Short: "List app dead-letter events", Positionals: []string{"<app>"}, Flags: []cliFlag{
+			{Name: "list", Short: "List an app's dead letters from every source", Notes: []string{"--source and --trigger filter each page; when a filtered page is empty, later pages may still match."}, Examples: []string{"gregale dlq list my-api", "gregale dlq list my-api --source trigger", "gregale dlq list my-api --trigger <trigger-id>"}, Positionals: []string{"<app>"}, Flags: []cliFlag{
 				{Name: "limit", Short: "max events (1..200)", Value: "N"},
 				{Name: "before", Short: "pagination cursor", Value: "ID"},
+				{Name: "source", Short: "only this source", Value: "SOURCE", ClosedSet: []string{"invocation", "trigger", "webhook"}},
+				{Name: "trigger", Short: "only dead letters from this trigger", Value: "ID"},
 			}},
 			{Name: "inspect", Short: "Inspect one dead-letter event", Positionals: []string{"<app>", "<event-id>"}},
 			{Name: "replay", Short: "Replay one event, or all of them", Notes: []string{"Use --all for every event."}, Positionals: []string{"<app>", "[<event-id>]"}, Flags: []cliFlag{
