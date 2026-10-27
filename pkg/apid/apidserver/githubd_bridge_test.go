@@ -226,6 +226,8 @@ func newBridge(t *testing.T, store githubdBridgeStore, notif githubdBridgeNotifi
 // operates on regular files; the .tar.gz suffix is required.
 func stageFixtureFile(t *testing.T, rootDir, subpath string, body []byte) (string, int64) {
 	t.Helper()
+	// The bridge's secret scan extracts the archive under the scan spool.
+	t.Setenv("FAAS_SCAN_SPOOL_ROOT", t.TempDir())
 	dir := filepath.Join(rootDir, subpath)
 	if mkErr := os.MkdirAll(dir, 0o750); mkErr != nil {
 		t.Fatalf("mkdir: %v", mkErr)
@@ -259,6 +261,47 @@ func stageFixtureFile(t *testing.T, rootDir, subpath string, body []byte) (strin
 }
 
 // --- tests ------------------------------------------------------------------
+
+// TestEnqueueBuild_RefusesStatefulSource pins ADR-20261026152731: a push
+// gets the same stateless check as a CLI upload, before any deployment row.
+func TestEnqueueBuild_RefusesStatefulSource(t *testing.T) {
+	store := &bridgeStubStore{app: state.App{ID: "app-1", AccountID: "acct-1", Status: state.AppActive}}
+	bridge := newBridge(t, store, &bridgeStubNotifier{})
+	// Stage the fixture for its path and scan spool, then replace its bytes.
+	path, _ := stageFixtureFile(t, bridge.stagingRoot, "acct-1/app-1/abc123", []byte("x"))
+	var archive bytes.Buffer
+	gz := gzip.NewWriter(&archive)
+	tw := tar.NewWriter(gz)
+	for name, body := range map[string]string{"index.js": "x", "data/app.sqlite": "SQLite format 3\x00"} {
+		if err := tw.WriteHeader(&tar.Header{Name: name, Mode: 0o644, Size: int64(len(body))}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := tw.Write([]byte(body)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := tw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := gz.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, archive.Bytes(), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	size := int64(archive.Len())
+	_, err := bridge.EnqueueBuild(t.Context(), &githubdpb.EnqueueBuildRequest{
+		AccountId: "acct-1", AppId: "app-1", CommitSha: "abc123", SourcePath: path,
+		SourceUrl: "https://codeload.example.com/repo/tar.gz/abc123", SourceBytes: size,
+		Branch: "main", Pusher: "octocat",
+	})
+	if status.Code(err) != codes.InvalidArgument || !strings.Contains(err.Error(), "data/app.sqlite") {
+		t.Fatalf("EnqueueBuild err = %v, want InvalidArgument naming data/app.sqlite", err)
+	}
+	if store.createDeploymentReturned.ID != "" {
+		t.Fatalf("refused push created deployment %q", store.createDeploymentReturned.ID)
+	}
+}
 
 func TestEnqueueBuild_HappyPath(t *testing.T) {
 	accountID := "acct-1"

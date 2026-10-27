@@ -44,10 +44,13 @@ type resumableUploadProgress func(uploaded, total int64)
 // canUseResumableUpload reports whether the resumable session can represent
 // this deploy. Metadata is persisted with the session; traffic/canary remain
 // on the legacy path until the rollout mutation is made transactional with
-// upload commit.
+// upload commit. The session's deploy options carry no per-revision env or
+// MCP task migration override, so those deploys use multipart too; before,
+// --mcp-task-migration-override was silently dropped (ADR-20261026152731).
 func canUseResumableUpload(sh shape, runtime, handler string, dockerfile bool, sourceRoot string, ann api.DeployAnnotations, trafficPercent int, canaryPreset, canaryStages string) bool {
 	return (sh == shapeApp || sh == shapeFunction) &&
 		len(ann.OverrideEnv) == 0 &&
+		!ann.MCPTaskMigrationOverride &&
 		trafficPercent < 0 &&
 		canaryPreset == "" &&
 		canaryStages == ""

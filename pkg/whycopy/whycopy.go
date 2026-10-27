@@ -183,7 +183,7 @@ var catalog = map[string]Render{
 	api.CodeStatelessOnlyViolation: {
 		Title: "Stateless-only platform",
 		Hint:  "this app shape needs persistent storage we don't provide",
-		Why:   "the deploy shape (or resolved base image) is a stateful one this platform does not support in year one — a Dockerfile with VOLUME, a top-level data/ or db/ directory, or a known stateful base image (postgres/redis/etc.)",
+		Why:   "the deploy shape (or resolved base image) is a stateful one this platform does not support in year one — a Dockerfile with VOLUME, a database file (SQLite, Postgres or Redis data) inside a top-level data/ or db/ directory, or a known stateful base image (postgres/redis/etc.)",
 		Fix:   "• use a managed service (Neon, Upstash, S3, R2, MongoDB Atlas) and wire credentials via `gregale secrets`\n• if you need a quick start, `gregale init --template=s3-uploader` shows the pattern",
 	},
 	// ADR-117 §Production-ready follow-on: per-stage failure
