@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"net/netip"
+	"net/textproto"
 	"net/url"
 	"regexp"
 	"slices"
@@ -18,6 +19,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/google/uuid"
+	"golang.org/x/net/http/httpguts"
 
 	"github.com/onebox-faas/faas/pkg/api/canary"
 	"github.com/onebox-faas/faas/pkg/rehearsalcold"
@@ -8874,6 +8876,11 @@ func (a *EdgeRuleRedirectAction) Validate() *Problem {
 	if a.To == "" {
 		return ErrValidation("redirect action To is required")
 	}
+	for name, value := range a.Headers {
+		if p := validateEdgeRuleHeaderField(name, value); p != nil {
+			return p
+		}
+	}
 	if a.Template {
 		if _, err := CompileEdgeRuleTemplate(a.To, EdgeRuleTemplateRedirect); err != nil {
 			return ErrValidation("redirect action to: " + err.Error())
@@ -8907,6 +8914,32 @@ var edgeRuleHeaderForbidden = map[string]struct{}{
 	"Connection":        {},
 }
 
+// EdgeRuleHeaderNameForbidden reports whether an edge rule may not set or
+// remove the header name. HTTP header names are case-insensitive, so the
+// name is compared in canonical form: "host" is as reserved as "Host".
+func EdgeRuleHeaderNameForbidden(name string) bool {
+	if _, bad := edgeRuleHeaderForbidden[textproto.CanonicalMIMEHeaderKey(name)]; bad {
+		return true
+	}
+	return len(name) >= len("x-faas-") && strings.EqualFold(name[:len("x-faas-")], "x-faas-")
+}
+
+// validateEdgeRuleHeaderField rejects a reserved name, a name that is not
+// an HTTP token and a value with control characters. A template value is
+// checked as written; its expansions drop control characters (ADR-968).
+func validateEdgeRuleHeaderField(name, value string) *Problem {
+	if EdgeRuleHeaderNameForbidden(name) {
+		return ErrHeaderMutationForbidden(name)
+	}
+	if !httpguts.ValidHeaderFieldName(name) {
+		return ErrValidation(fmt.Sprintf("header name %q is not a valid HTTP header name", name))
+	}
+	if !httpguts.ValidHeaderFieldValue(value) {
+		return ErrValidation(fmt.Sprintf("header %q value contains characters HTTP does not allow", name))
+	}
+	return nil
+}
+
 func (op *EdgeRuleHeaderOp) Validate() *Problem {
 	if op == nil {
 		return ErrValidation("header op is required")
@@ -8919,11 +8952,8 @@ func (op *EdgeRuleHeaderOp) Validate() *Problem {
 	default:
 		return ErrValidation(fmt.Sprintf("header op action must be one of add,set,remove (got %q)", op.Action))
 	}
-	if _, bad := edgeRuleHeaderForbidden[op.Name]; bad {
-		return ErrHeaderMutationForbidden(op.Name)
-	}
-	if strings.HasPrefix(strings.ToLower(op.Name), "x-faas-") {
-		return ErrHeaderMutationForbidden(op.Name)
+	if p := validateEdgeRuleHeaderField(op.Name, op.Value); p != nil {
+		return p
 	}
 	if op.Template {
 		if op.Action == "remove" {
@@ -9132,10 +9162,16 @@ type EdgeRuleJWTAction struct {
 	RequiredClaims                 map[string]string  `json:"required_claims,omitempty"`
 	PlatformTenantExternalRefClaim string             `json:"platform_tenant_external_ref_claim,omitempty"`
 	MCP                            *MCPResourcePolicy `json:"mcp,omitempty"`
-	// RequireExp rejects tokens without an `exp` claim. Off by default
-	// for compatibility: JWT validation only checks exp when present, so
-	// a token minted without one never expires unless this is set.
-	RequireExp bool `json:"require_exp,omitempty"`
+	// RequireExp rejects tokens without an `exp` claim. Nil means true: a
+	// token minted without exp would never expire, so accepting one takes
+	// an explicit false (ADR-091 amendment 2026-10-27). Rules saved before
+	// the default changed keep the value they were saved with.
+	RequireExp *bool `json:"require_exp,omitempty"`
+}
+
+// RequiresExp resolves RequireExp's default.
+func (a *EdgeRuleJWTAction) RequiresExp() bool {
+	return a.RequireExp == nil || *a.RequireExp
 }
 
 // edgeRuleJWTAllowedJWKSURLPrefixes is the closed list of prefixes

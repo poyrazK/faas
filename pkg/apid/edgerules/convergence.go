@@ -6,12 +6,14 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/db"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 const (
@@ -50,26 +52,124 @@ type EdgeRuleConvergence struct {
 	OnAcknowledgement func(context.Context, string) error
 }
 
-var EdgeRuleMutationMu sync.Mutex
+// edgeRuleAccountLocks serializes this process's mutations per account
+// before they contend for the PostgreSQL advisory locks.
+var edgeRuleAccountLocks = keyedLocks{locks: map[string]*keyedLock{}}
 
 func (s *Service) PrepareEdgeRuleMutation(ctx context.Context, appID, ruleID, operation string, hosts ...string) (*EdgeRuleConvergence, error) {
-	EdgeRuleMutationMu.Lock()
-	unlock := func(context.Context) { EdgeRuleMutationMu.Unlock() }
-	if locker, ok := s.Host.Store().(EdgeRuleMutationLocker); ok {
-		release, err := locker.AcquireEdgeRuleMutationLock(ctx, appID)
-		if err != nil {
-			EdgeRuleMutationMu.Unlock()
-			return nil, err
-		}
-		unlock = func(ctx context.Context) {
-			release(ctx)
-			EdgeRuleMutationMu.Unlock()
-		}
+	unlock, err := s.LockEdgeRuleMutations(ctx, []string{appID})
+	if err != nil {
+		return nil, err
 	}
 	return s.PrepareEdgeRuleMutationLocked(ctx, appID, ruleID, operation, unlock, hosts...)
 }
 
-// Batch callers acquire the process and per-app locks once, in app ID order.
+// LockEdgeRuleMutations serializes edge-rule mutations of the apps' accounts,
+// then of the apps (ADR-091 amendment 2026-10-27). Two apps of one account
+// can fence the same host, and a gateway drops that fence on the newest
+// generation's apply, so one account's generations must commit in order;
+// other accounts' mutations proceed in parallel. An app whose account cannot
+// be read is locked by app only, as apids before the account lock did.
+func (s *Service) LockEdgeRuleMutations(ctx context.Context, appIDs []string) (func(context.Context), error) {
+	store := s.Host.Store()
+	accounts := make([]string, 0, len(appIDs))
+	processKeys := make([]string, 0, 2*len(appIDs))
+	for _, appID := range appIDs {
+		if app, err := store.AppByID(ctx, appID); err == nil && app.AccountID != "" {
+			accounts = append(accounts, app.AccountID)
+			processKeys = append(processKeys, "account:"+app.AccountID)
+		}
+		// "account:" sorts before "app:", so every caller takes accounts first.
+		processKeys = append(processKeys, "app:"+appID)
+	}
+	releaseProcess := edgeRuleAccountLocks.lock(processKeys)
+	var release func(context.Context)
+	var err error
+	switch locker := store.(type) {
+	case state.EdgeRuleAccountMutationLocker:
+		release, err = locker.AcquireEdgeRuleAccountMutationLocks(ctx, accounts, appIDs)
+	case EdgeRuleMutationLocker:
+		release, err = acquireAppLocks(ctx, locker, appIDs)
+	default:
+		release = func(context.Context) {}
+	}
+	if err != nil {
+		releaseProcess()
+		return nil, err
+	}
+	var once sync.Once
+	return func(ctx context.Context) {
+		once.Do(func() {
+			release(ctx)
+			releaseProcess()
+		})
+	}, nil
+}
+
+func acquireAppLocks(ctx context.Context, locker EdgeRuleMutationLocker, appIDs []string) (func(context.Context), error) {
+	apps := slices.Clone(appIDs)
+	slices.Sort(apps)
+	apps = slices.Compact(apps)
+	releases := make([]func(context.Context), 0, len(apps))
+	releaseAll := func(ctx context.Context) {
+		for i := len(releases) - 1; i >= 0; i-- {
+			releases[i](ctx)
+		}
+	}
+	for _, app := range apps {
+		release, err := locker.AcquireEdgeRuleMutationLock(ctx, app)
+		if err != nil {
+			releaseAll(ctx)
+			return nil, err
+		}
+		releases = append(releases, release)
+	}
+	return releaseAll, nil
+}
+
+// keyedLocks is a set of mutexes keyed by string; an entry lives while a
+// caller holds or waits for it.
+type keyedLocks struct {
+	mu    sync.Mutex
+	locks map[string]*keyedLock
+}
+
+type keyedLock struct {
+	mu   sync.Mutex
+	refs int
+}
+
+// lock takes every key's mutex in sorted order and returns the release.
+func (k *keyedLocks) lock(keys []string) func() {
+	keys = slices.Clone(keys)
+	slices.Sort(keys)
+	keys = slices.Compact(keys)
+	held := make([]*keyedLock, 0, len(keys))
+	for _, key := range keys {
+		k.mu.Lock()
+		l := k.locks[key]
+		if l == nil {
+			l = &keyedLock{}
+			k.locks[key] = l
+		}
+		l.refs++
+		k.mu.Unlock()
+		l.mu.Lock()
+		held = append(held, l)
+	}
+	return func() {
+		for i := len(held) - 1; i >= 0; i-- {
+			held[i].mu.Unlock()
+			k.mu.Lock()
+			if held[i].refs--; held[i].refs == 0 {
+				delete(k.locks, keys[i])
+			}
+			k.mu.Unlock()
+		}
+	}
+}
+
+// Batch callers take LockEdgeRuleMutations once for every app they change.
 // Each convergence owns only its subscription; the batch retains those locks
 // until every prepare, intent transaction, and apply attempt has finished.
 func (s *Service) PrepareEdgeRuleMutationLocked(ctx context.Context, appID, ruleID, operation string, unlock func(context.Context), hosts ...string) (*EdgeRuleConvergence, error) {
@@ -135,6 +235,10 @@ func (s *Service) PrepareEdgeRuleMutationLocked(ctx context.Context, appID, rule
 	return conv, nil
 }
 
+// ServingEdgeRuleNodes lists the gateways a mutation waits for. A gateway
+// whose edge-rule listener stopped reporting (ADR-091 amendment 2026-10-27)
+// is left out: waiting for it would fail every account's mutations until it
+// came back. It catches up within the 30 s rule cache TTL once it does.
 func (s *Service) ServingEdgeRuleNodes(ctx context.Context) ([]string, error) {
 	nodes, err := s.Host.Store().ListComputeNodes(ctx, false)
 	if err != nil {
@@ -148,6 +252,19 @@ func (s *Service) ServingEdgeRuleNodes(ctx context.Context) ([]string, error) {
 		}
 		if (role == "compute-only" || role == "compute-node") && node.GatewayTargetURL != nil && strings.TrimSpace(*node.GatewayTargetURL) != "" {
 			seen[node.Name] = struct{}{}
+		}
+	}
+	if liveness, ok := s.Host.Store().(state.StaleEdgeListenerStore); ok && len(seen) > 0 {
+		stale, err := liveness.StaleEdgeListenerNodes(ctx, state.EdgeListenerStaleAfter)
+		if err != nil {
+			return nil, err
+		}
+		for _, node := range stale {
+			if _, ok := seen[node]; ok {
+				delete(seen, node)
+				s.Host.Logger().Warn("edge-rule convergence skips a gateway whose listener is stale",
+					"node", node, "stale_after", state.EdgeListenerStaleAfter)
+			}
 		}
 	}
 	out := make([]string, 0, len(seen))

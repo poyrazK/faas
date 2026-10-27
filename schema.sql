@@ -32584,6 +32584,7 @@ CREATE TABLE public.compute_nodes (
     cpu_model text DEFAULT ''::text NOT NULL,
     readiness text DEFAULT 'ready'::text NOT NULL,
     readiness_reason text,
+    edge_listener_heartbeat_at timestamp with time zone,
     CONSTRAINT compute_nodes_admission_ceiling_mb_check CHECK ((admission_ceiling_mb > 0)),
     CONSTRAINT compute_nodes_gateway_target_url_scheme_chk CHECK (((gateway_target_url IS NULL) OR (gateway_target_url ~ '^tcp://[^/:][^/]*:[0-9]+$'::text))),
     CONSTRAINT compute_nodes_last_recovery_outcome_chk CHECK (((last_recovery_outcome IS NULL) OR (last_recovery_outcome = ANY (ARRAY['succeeded'::text, 'failed'::text, 'partial'::text])))),
@@ -32676,6 +32677,13 @@ COMMENT ON COLUMN public.compute_nodes.cpu_template IS 'Firecracker CPU template
 --
 
 COMMENT ON COLUMN public.compute_nodes.cpu_model IS 'Host CPU signature <class>/<vendor>-<family>-<model>-<stepping>/<flags hash>; empty before vmmd reports it.';
+
+
+--
+-- Name: COLUMN compute_nodes.edge_listener_heartbeat_at; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.compute_nodes.edge_listener_heartbeat_at IS 'Last time this node''s gatewayd-internal edge-rule listener reported alive (database clock); NULL before its first report (ADR-091).';
 
 
 --
