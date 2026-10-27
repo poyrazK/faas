@@ -143,7 +143,7 @@ func scanExtractedTreeSecrets(scanDir string) ([]secretscan.Finding, error) {
 // this sequence; keeping it here makes the direct tarball and source-ref
 // ingress paths subject to the same expanded-size, entry-type, and secret
 // policy before a build row is created.
-func scanSourceTarballSecrets(sourcePath string, limits api.Limits) *api.Problem {
+func (s *server) scanSourceTarballSecrets(sourcePath string, limits api.Limits) *api.Problem {
 	scanDir, prob := extractTarGzToDir(sourcePath, defaultExtractLimits(limits))
 	if prob != nil {
 		return prob
@@ -152,8 +152,9 @@ func scanSourceTarballSecrets(sourcePath string, limits api.Limits) *api.Problem
 
 	findings, err := scanExtractedTreeSecrets(scanDir)
 	if err != nil && len(findings) == 0 {
+		logCustomerFailure(s.log, "scan source tarball for secrets", err)
 		return api.NewProblem(http.StatusInternalServerError, api.CodeInternal,
-			"Secret scan failed", err.Error())
+			"Secret scan failed", api.DetailServerFailure)
 	}
 	if len(findings) > 0 {
 		return newSecretScanRejectionProblem(findings)
@@ -162,8 +163,9 @@ func scanSourceTarballSecrets(sourcePath string, limits api.Limits) *api.Problem
 		// Partial findings are still actionable, but do not silently
 		// convert a walk error into an accepted source when no finding
 		// happened to be in the unreadable portion.
+		logCustomerFailure(s.log, "scan source tarball for secrets", err)
 		return api.NewProblem(http.StatusInternalServerError, api.CodeInternal,
-			"Secret scan failed", err.Error())
+			"Secret scan failed", api.DetailServerFailure)
 	}
 	return nil
 }

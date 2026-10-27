@@ -35,8 +35,9 @@ func (s *server) getAppOpenAPIContractDiff(w http.ResponseWriter, r *http.Reques
 
 	check, err := openapidiff.CheckPromotion(r.Context(), s.store, app.ID, "contract-preview", scope)
 	if err != nil && !errors.Is(err, openapidiff.ErrSnapshotBaselineMissing) {
+		logCustomerFailure(s.log, "API contract diff unavailable", err)
 		api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError, api.CodeInternal,
-			"API contract diff unavailable", err.Error()))
+			"API contract diff unavailable", api.DetailServerFailure))
 		return
 	}
 	resp := api.OpenAPIContractDiffResponse{

@@ -280,6 +280,15 @@ first. While a capture runs the instance counts as busy and is not parked for
 idleness. One capture per app runs at a time, and an account can start 60 per
 hour. Captures are kept for 7 days.
 
+An account also has a capture storage limit, set by its plan (table below). A
+new capture is queued only if the stored profiles of unexpired captures, plus
+3 MiB (the largest capture) for each capture still queued or running and for
+the new one, fit within it. Otherwise the request fails with 429
+`quota_exhausted`, and the problem's `limit_bytes` and `observed_bytes` show
+the limit and the bytes in use. Automatic captures are skipped with the reason
+"the account's profile capture storage is full". Space frees up as captures
+expire.
+
 What a heap capture shows depends on the runtime:
 
 - **Go** — the sampled live heap of the process (`runtime/pprof`).
@@ -554,12 +563,12 @@ collectors on their next deploy. Continuous heap profiles additionally need
 the Pyroscope backend above; they are stored as
 `memory:inuse_space:bytes:space:bytes` under the same tenant selectors.
 
-| Plan | API query history | Uploads / account / minute |
-|---|---:|---:|
-| Free | Disabled | 0 |
-| Hobby | 3 days | 60 |
-| Pro | 7 days | 180 |
-| Scale | 14 days | 600 |
+| Plan | API query history | Uploads / account / minute | Capture storage |
+|---|---:|---:|---:|
+| Free | Disabled | 0 | None |
+| Hobby | 3 days | 60 | 256 MiB |
+| Pro | 7 days | 180 | 1 GiB |
+| Scale | 14 days | 600 | 4 GiB |
 
 These are internal defaults in `pkg/api/limits.go`. Queries enforce the current
 plan's history window. Physical deletion belongs to Pyroscope: configure a

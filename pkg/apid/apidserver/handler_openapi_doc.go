@@ -77,8 +77,9 @@ func (s *server) getOpenAPIDoc(w http.ResponseWriter, r *http.Request, acct stat
 			s.notFound(w, "no OpenAPI document captured for this deployment")
 			return
 		}
+		logCustomerFailure(s.log, "failed to read OpenAPI document", err)
 		api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError, "internal_error",
-			"failed to read OpenAPI document", err.Error()))
+			"failed to read OpenAPI document", api.DetailServerFailure))
 		return
 	}
 	// Cache-Control mirrors the CORS preset GET (5 min) — the
@@ -208,8 +209,9 @@ func (s *server) patchOpenAPIDoc(w http.ResponseWriter, r *http.Request, acct st
 	if !alreadyExists {
 		count, err := s.store.CountOpenAPIDocsByAccount(r.Context(), acct.ID)
 		if err != nil {
+			logCustomerFailure(s.log, "failed to count OpenAPI documents", err)
 			api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError, "internal_error",
-				"failed to count OpenAPI documents", err.Error()))
+				"failed to count OpenAPI documents", api.DetailServerFailure))
 			return
 		}
 		if count >= acct.Plan.OpenAPIDocsPerAccount() {
@@ -222,8 +224,9 @@ func (s *server) patchOpenAPIDoc(w http.ResponseWriter, r *http.Request, acct st
 		truncated = *req.Truncated
 	}
 	if err := s.store.UpsertDeploymentOpenAPIDoc(r.Context(), depID, acct.ID, app.ID, docBytes, source, truncated); err != nil {
+		logCustomerFailure(s.log, "failed to persist OpenAPI document", err)
 		api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError, "internal_error",
-			"failed to persist OpenAPI document", err.Error()))
+			"failed to persist OpenAPI document", api.DetailServerFailure))
 		return
 	}
 	// Audit emit. The kind follows the dotted
@@ -239,8 +242,9 @@ func (s *server) patchOpenAPIDoc(w http.ResponseWriter, r *http.Request, acct st
 	// 200 with the updated row.
 	gotDoc, gotMeta, err := s.store.GetDeploymentOpenAPIDoc(r.Context(), depID, acct.ID)
 	if err != nil {
+		logCustomerFailure(s.log, "failed to read back OpenAPI document", err)
 		api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError, "internal_error",
-			"failed to read back OpenAPI document", err.Error()))
+			"failed to read back OpenAPI document", api.DetailServerFailure))
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
@@ -287,8 +291,9 @@ func (s *server) openAPIDocDelete(w http.ResponseWriter, r *http.Request, acct s
 			s.notFound(w, "no OpenAPI document for this deployment")
 			return
 		}
+		logCustomerFailure(s.log, "failed to delete OpenAPI document", err)
 		api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError, "internal_error",
-			"failed to delete OpenAPI document", err.Error()))
+			"failed to delete OpenAPI document", api.DetailServerFailure))
 		return
 	}
 	s.audit.Emit(r.Context(), "app.openapi_doc.deleted", &acct.ID, map[string]any{

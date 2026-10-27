@@ -374,6 +374,15 @@ const (
 	ApplicationStandardScanMaxMetadataBytes   = 256
 	ApplicationStandardScanMaxPathBytes       = 4096
 	ApplicationStandardScanMaxPaths           = 128
+
+	// A shared base is scanned once, when a node stages it and before the
+	// node serves it, so it may take longer than one artifact. A 2.3 GB base
+	// ext4 of npm-installed agent harnesses took longer than that: copying,
+	// extracting and scanning it overran ApplicationStandardArtifactScanTimeout
+	// on a native host, and a base whose scan does not complete stays
+	// fail-closed.
+	ApplicationStandardBaseScanTimeout = 20 * time.Minute
+
 	// Safety bounds for a complete filesystem projection handed to Grype.
 	// These are separate from the tenant's rootfs/disk entitlements.
 	ApplicationStandardRuntimeScanMaxBytes           int64 = 32 << 30
@@ -846,6 +855,11 @@ type ProfilingLimits struct {
 	Enabled          bool
 	RetentionDays    int
 	UploadsPerMinute int
+	// CaptureStorageBytes bounds the on-demand capture profiles an account
+	// keeps in Postgres (ADR-1155). A capture is queued only while the
+	// unexpired stored profiles, plus ProfileCaptureMaxProfileBytes for each
+	// capture still queued or running and for the new one, fit.
+	CaptureStorageBytes int64
 }
 
 const (
@@ -1164,6 +1178,24 @@ const (
 	CronFireNowActivePerCron = 5
 	CronFireNowActiveWindow  = 15 * time.Minute
 )
+
+// CronHistoryRetention is how long schedd keeps a cron's settled schedule
+// decisions (schedule_occurrences) and its manual-run requests
+// (cron_fire_now_requests). It matches the longest plan's invocation result
+// retention, so no plan loses the decision behind a run it can still see.
+// Pending, queued and running decisions are never pruned. Each hourly sweep
+// makes at most CronHistoryPrunePasses passes of CronHistoryPruneBatch rows
+// per table, so a large backlog drains over several hours instead of
+// holding the scheduler loop.
+const (
+	CronHistoryRetention   = 90 * 24 * time.Hour
+	CronHistoryPruneBatch  = 1000
+	CronHistoryPrunePasses = 20
+)
+
+// CronPathMaxBytes bounds the HTTP path a cron requests. The path is always
+// on the cron's own app: it starts with a single "/" and carries no host.
+const CronPathMaxBytes = 2048
 
 // New apps start with the pre-auth source limit in observe mode (ADR-829):
 // it records which sources would exceed this per-source rate without
@@ -2144,7 +2176,27 @@ const (
 	MaxObjectStoragePolicyValue         int64 = 1 << 60
 	MaxObjectStorageReportAgeSeconds    int64 = 86400
 	ObjectStorageInventoryMaxAgeSeconds int64 = 900
-	ObjectStorageInventoryMaxPages            = 1000
+	// ObjectStorageReportCloseWindow is how long after a UTC month ends a
+	// provider usage exporter keeps writing that month's closing report,
+	// observed at the month's last instant, so month close prices usage to
+	// the end of the month (Hunt 19 H19-2).
+	ObjectStorageReportCloseWindow = 6 * time.Hour
+	// ObjectStorageReportCloseTolerance is how long before a month's end a
+	// backend's latest provider report may be observed and still count as
+	// covering the month at month close. A closing report is observed at the
+	// month's last microsecond.
+	ObjectStorageReportCloseTolerance = time.Minute
+	// ObjectStorageProgressInterval is how often a paid account's
+	// month-to-date object-storage charge is delivered inside its month,
+	// so a subscription that ends mid-month is billed for its storage up to
+	// its last step (ADR-20261027093220). ObjectStorageProgressSweepInterval
+	// is how often apid looks for due accounts, and ObjectStorageProgressRetry
+	// how long a reservation a failed step left waits before a retry
+	// replaces it.
+	ObjectStorageProgressInterval      = 24 * time.Hour
+	ObjectStorageProgressSweepInterval = time.Hour
+	ObjectStorageProgressRetry         = 5 * time.Minute
+	ObjectStorageInventoryMaxPages     = 1000
 	// MaxObjectStorageReconcileBuckets bounds one backend's bucket listing in
 	// operator reconciliation after a database restore (ADR-20261025111015).
 	MaxObjectStorageReconcileBuckets = 100_000
@@ -4415,6 +4467,12 @@ type Limits struct {
 	// rather than dropping silently. Hobby=1000, Pro=10000,
 	// Scale=50000.
 	DebugTelemetryRequestsPerMinute int
+	// DebugGuestLogExportsPerMinute (ADR-213 runtime adapter, ADR-958) is
+	// the per-account cap on OTLP log exports a tracing-enabled app's guest
+	// bridge forwards to apid. Each export carries at most
+	// TraceMaxLogRecordsPerExport records, so the record cap is the product.
+	// Free=0 (off), Hobby=60, Pro=600, Scale=3000.
+	DebugGuestLogExportsPerMinute int
 	// DebugTelemetryDeploymentsPerApp (ADR-127 §Decision 4) is
 	// the per-app ceiling on distinct deployment_id labels the
 	// gateway_request_duration_seconds histogram admits. Past the
@@ -4991,6 +5049,7 @@ var planLimits = map[Plan]Limits{
 		Profiling:                       ProfilingLimits{},
 		DebugTelemetryRetentionDays:     0,
 		DebugTelemetryRequestsPerMinute: 0,
+		DebugGuestLogExportsPerMinute:   0,
 		DebugTelemetryDeploymentsPerApp: 0,
 		DebugTelemetrySpansPerTrace:     0,
 		// Per-app observability surface (Free = off). 0/0/0 is the
@@ -5423,8 +5482,9 @@ var planLimits = map[Plan]Limits{
 		// (spec §4.7).
 		DebugTelemetryEnabled:           true,
 		DebugTelemetryRetentionDays:     3,
-		Profiling:                       ProfilingLimits{Enabled: true, RetentionDays: 3, UploadsPerMinute: 60},
+		Profiling:                       ProfilingLimits{Enabled: true, RetentionDays: 3, UploadsPerMinute: 60, CaptureStorageBytes: 256 << 20},
 		DebugTelemetryRequestsPerMinute: 1000,
+		DebugGuestLogExportsPerMinute:   60,
 		DebugTelemetryDeploymentsPerApp: 10,
 		DebugTelemetrySpansPerTrace:     50,
 		// Per-app observability surface (Hobby = on). The Hobby
@@ -5823,8 +5883,9 @@ var planLimits = map[Plan]Limits{
 		// for the Pro plan.
 		DebugTelemetryEnabled:           true,
 		DebugTelemetryRetentionDays:     7,
-		Profiling:                       ProfilingLimits{Enabled: true, RetentionDays: 7, UploadsPerMinute: 180},
+		Profiling:                       ProfilingLimits{Enabled: true, RetentionDays: 7, UploadsPerMinute: 180, CaptureStorageBytes: 1 << 30},
 		DebugTelemetryRequestsPerMinute: 10000,
+		DebugGuestLogExportsPerMinute:   600,
 		DebugTelemetryDeploymentsPerApp: 50,
 		DebugTelemetrySpansPerTrace:     200,
 		// Per-app observability surface (Pro = on). Same posture
@@ -6254,8 +6315,9 @@ var planLimits = map[Plan]Limits{
 		// would blow up Prometheus cardinality).
 		DebugTelemetryEnabled:           true,
 		DebugTelemetryRetentionDays:     14,
-		Profiling:                       ProfilingLimits{Enabled: true, RetentionDays: 14, UploadsPerMinute: 600},
+		Profiling:                       ProfilingLimits{Enabled: true, RetentionDays: 14, UploadsPerMinute: 600, CaptureStorageBytes: 4 << 30},
 		DebugTelemetryRequestsPerMinute: 50000,
+		DebugGuestLogExportsPerMinute:   3000,
 		DebugTelemetryDeploymentsPerApp: 200,
 		DebugTelemetrySpansPerTrace:     1000,
 		// Per-app observability surface (Scale = on). Largest
@@ -9446,6 +9508,16 @@ func (p Plan) DebugTelemetryRequestsPerMinute() int {
 		return 0
 	}
 	return l.DebugTelemetryRequestsPerMinute
+}
+
+// DebugGuestLogExportsPerMinute returns the per-account cap on guest OTLP
+// log exports (ADR-213 runtime adapter). Returns 0 on unknown plans.
+func (p Plan) DebugGuestLogExportsPerMinute() int {
+	l, ok := LimitsFor(p)
+	if !ok {
+		return 0
+	}
+	return l.DebugGuestLogExportsPerMinute
 }
 
 // DebugTelemetryDeploymentsPerApp (ADR-127 §Decision 4) returns the
@@ -13233,6 +13305,10 @@ const (
 	DataAPIRateLimitMaxBurst         = 1000
 	DataAPIRateLimitMaxSubjects      = 4096
 	DataAPIRateLimitSweepMS          = 1000
+	// Past this many tracked anonymous subjects, IPv6 visitors are grouped by
+	// /48 instead of /64, so one allocation cannot fill the table and lock
+	// other visitors out (ADR 20261018170742 amendment 1).
+	DataAPIAnonymousCoarseSubjects = DataAPIRateLimitMaxSubjects * 3 / 4
 	// Per-runtime user concurrency accounting, including uncertain dispatches.
 	DataAPIUserConcurrencyMaxSubjects = DataAPIRateLimitMaxSubjects
 	DataAPIUserConcurrencyCooldownMS  = DataAPIQueryTimeoutMS

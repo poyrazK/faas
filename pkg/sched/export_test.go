@@ -86,6 +86,8 @@ const TriggerReasonPoisonRecord = triggerReasonPoisonRecord
 const WakeTierColdBootFallback = wakeTierColdBootFallback
 const WakeTierInit = wakeTierInit
 const MaxDuePagesPerTick = maxDuePagesPerTick
+const WorkAppReconcile = workAppReconcile
+const WorkEventFanout = workEventFanout
 const WorkReaper = workReaper
 
 // Package-level vars
@@ -197,6 +199,7 @@ var NewWakeCoord = newWakeCoord
 var NewWarmHintBroadcaster = newWarmHintBroadcaster
 var Node = node
 var ObservationTask = observationTask
+var OOMFailsDeployment = oomFailsDeployment
 var OutcomeFromProtocolResult = outcomeFromProtocolResult
 var ParentBaseKeyAliases = storagekey.ParentBaseAliases
 var ParseJSONHeaders = parseJSONHeaders
@@ -210,6 +213,7 @@ var PrimeRunPlusFrameworkReady = primeRunPlusFrameworkReady
 var PrimeStartupExtension = primeStartupExtension
 var QuietEffective = quietEffective
 var QuietLog = quietLog
+var NewWorkPool = newWorkPool
 var QuietPauseAfterMS = quietPauseAfterMS
 var ReadCounterValue = readCounterValue
 var ReadGatewayDispatchResponse = readGatewayDispatchResponse
@@ -328,6 +332,13 @@ func (r *EgressCircuitBreaker) Resolve() *EgressResolver { return &r.resolve }
 // Members of Drain
 func (r *Drain) Engine() **Engine       { return &r.engine }
 func (r *Drain) Now() *func() time.Time { return &r.now }
+
+// XObserveWith attaches a metrics registry and rebuilds the account cache
+// on the drain's current clock, as the delayed-task metric test does.
+func (r *Drain) XObserveWith(ops *wire.OpsMetrics) {
+	r.ops = ops
+	r.accts = newAcctCache(r.now)
+}
 
 // Members of EgressCircuitLoop
 func (r *EgressCircuitLoop) Seen() *map[string]time.Time { return &r.seen }
@@ -882,3 +893,6 @@ func MarkPreWakeForTest(ctx context.Context) {
 }
 
 var LogVMMBootFailure = logVMMBootFailure
+
+// XRunCronHistoryRetention runs the hourly cron history sweep once.
+func (l *Loop) XRunCronHistoryRetention(ctx context.Context) { l.runCronHistoryRetention(ctx) }

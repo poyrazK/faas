@@ -334,3 +334,22 @@ func TestProducedBaseScanReuseNeverPublishesRefusal(t *testing.T) {
 		})
 	}
 }
+
+// adr: 435 — a shared base is scanned under the base timeout, not an
+// artifact's: the agent base's scan overran five minutes on a native host.
+func TestProducedBaseScanGetsTheBaseTimeout(t *testing.T) {
+	h, _, _, _, ref := verifiedBaseFixture(t, "complete")
+	var left time.Duration
+	h.WithGrypeRun(func(ctx context.Context, _ string) (*ScanResult, error) {
+		if deadline, ok := ctx.Deadline(); ok {
+			left = time.Until(deadline)
+		}
+		return producedScanResult(t, false), nil
+	})
+	if _, err := h.EnsureBaseExt4(t.Context(), ref, "base/verified.ext4", "base/verified.digest", "", "", ""); err != nil {
+		t.Fatal(err)
+	}
+	if left <= api.ApplicationStandardArtifactScanTimeout || left > api.ApplicationStandardBaseScanTimeout {
+		t.Fatalf("base scan deadline %s away, want the base timeout %s", left, api.ApplicationStandardBaseScanTimeout)
+	}
+}

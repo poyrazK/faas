@@ -33,7 +33,8 @@ const eventFanoutClaimBatch = 20
 const eventFanoutReleaseTimeout = 5 * time.Second
 
 // eventFanoutSafetyTick re-runs the fanout sweep when no event_published
-// wake arrives; a wake that lands while a sweep runs is coalesced away.
+// wake arrives; a wake that lands while a sweep runs asks the work pool for
+// one more sweep after it (workSpec.rerunCoalesced).
 const eventFanoutSafetyTick = 5 * time.Second
 
 type eventFanoutRouteError struct {

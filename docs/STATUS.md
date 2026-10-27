@@ -7,9 +7,9 @@ does not mirror this list; customer-facing maturity belongs in the generated
 release or acceptance state changes, and keep older milestone notes clearly
 historical.
 
-## Crons GA blockers — 2026-10-26 (branch `fix/crons-ga-blockers`, not released)
+## Crons GA blockers — 2026-10-26 (#5649, merged 2026-10-27, not released)
 
-The 2026-10-26 crons GA review found four blockers; this branch fixes them
+The 2026-10-26 crons GA review found four blockers; #5649 fixes them
 ([ADR-20261026201726](adr/20261026201726-cron-delivery-through-the-drain.md)):
 
 - HTTP cron fires and manual runs no longer wake the app or wait for it on
@@ -29,6 +29,20 @@ The 2026-10-26 crons GA review found four blockers; this branch fixes them
   at `n2:/mnt/e2e-scratch/crons-ga/cron_e2e.log`). Unit and Postgres suites
   for the cron, fire-now, drain and app-task paths pass; the five
   `TestDrainSecurity*` failures are on main already.
+
+Follow-ups from the same review (branch `fix/crons-ga-followups`):
+
+- Schedule decisions and manual-run requests older than 90 days
+  (`api.CronHistoryRetention`, the longest plan's run history) are pruned on
+  schedd's hourly retention tick; unsettled decisions are kept.
+- `schedd_cron_delivery_total{outcome}` and
+  `schedd_cron_schedule_lag_seconds` back two operator alerts,
+  `FaasCronDeliveryLag` and `FaasCronDeliveryFailing`
+  ([runbook](runbooks/FaasCronDelivery.md)).
+- Cron paths are validated (single leading `/`, no host, at most 2,048 bytes)
+  by the API, the triggers API, source-ref manifests and `gregale.yaml`.
+- The OpenAPI spec documents `GET /v1/crons?slug=`; the Go SDK gains
+  `GetCron`, `FireCron`, `GetFireCronRequest` and `ListCronRuns`.
 
 ## Release guards — 2026-10-26
 

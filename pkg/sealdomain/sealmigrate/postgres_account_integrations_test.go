@@ -16,15 +16,16 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-// TestPostgresMigrateAccountIntegrations runs every integration kind's list
-// and re-seal statements against the real schema, and re-seals a real
-// GitLab OAuth connection to the account domain alone.
+// TestPostgresMigrateAccountIntegrations runs every integration and product
+// email kind's list and re-seal statements against the real schema, and
+// re-seals a real GitLab OAuth connection to the account domain alone.
 func TestPostgresMigrateAccountIntegrations(t *testing.T) {
 	store := openStore(t)
 	ctx := context.Background()
 	fleet, domain := mustIdentity(t), mustIdentity(t)
 	for _, kind := range []string{state.AccountSealedGitLabOAuth, state.AccountSealedSlackInstallation, state.AccountSealedSlackInteraction,
-		state.AccountSealedSlackDestination, state.AccountSealedSlackOAuthFlow, state.AccountSealedLinearConnection, state.AccountSealedLinearOAuthFlow} {
+		state.AccountSealedSlackDestination, state.AccountSealedSlackOAuthFlow, state.AccountSealedLinearConnection, state.AccountSealedLinearOAuthFlow,
+		state.AccountSealedProductEmailGrant, state.AccountSealedProductEmailPause, state.AccountSealedProductEmailRecipient, state.AccountSealedProductEmailUnsubscribe} {
 		if _, err := store.ListAccountSealedValues(ctx, kind, "", 10); err != nil {
 			t.Fatalf("list %s: %v", kind, err)
 		}

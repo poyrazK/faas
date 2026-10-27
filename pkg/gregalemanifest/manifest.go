@@ -2655,8 +2655,8 @@ func (t Trigger) validateKindConfig(idx int) error {
 		if _, err := cronexpr.Parse(t.Schedule, cronexpr.DefaultTimezone); err != nil {
 			return fmt.Errorf("trigger[%d]: bad schedule %q: %w", idx, t.Schedule, err)
 		}
-		if !strings.HasPrefix(t.Path, "/") {
-			return fmt.Errorf("trigger[%d]: path must start with '/' (got %q)", idx, t.Path)
+		if problem := api.ValidateCronPath(t.Path); problem != nil {
+			return fmt.Errorf("trigger[%d]: invalid path %q: %s", idx, t.Path, problem.Detail)
 		}
 		if t.Timezone != "" {
 			if _, err := time.LoadLocation(t.Timezone); err != nil {
