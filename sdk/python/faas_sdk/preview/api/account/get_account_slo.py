@@ -85,7 +85,7 @@ def sync_detailed(
     client: AuthenticatedClient | Client,
     window: GetAccountSLOWindow | Unset = "24h",
 ) -> Response[AccountSLOResponse | Problem]:
-    r"""Account-wide SLO rollup (issue
+    r"""Account-wide SLO rollup.
 
      Flat scalar SLO rollup for the authenticated account. The
     same wire shape as the per-app endpoint without the
@@ -133,7 +133,7 @@ def sync(
     client: AuthenticatedClient | Client,
     window: GetAccountSLOWindow | Unset = "24h",
 ) -> AccountSLOResponse | Problem | None:
-    r"""Account-wide SLO rollup (issue
+    r"""Account-wide SLO rollup.
 
      Flat scalar SLO rollup for the authenticated account. The
     same wire shape as the per-app endpoint without the
@@ -176,7 +176,7 @@ async def asyncio_detailed(
     client: AuthenticatedClient | Client,
     window: GetAccountSLOWindow | Unset = "24h",
 ) -> Response[AccountSLOResponse | Problem]:
-    r"""Account-wide SLO rollup (issue
+    r"""Account-wide SLO rollup.
 
      Flat scalar SLO rollup for the authenticated account. The
     same wire shape as the per-app endpoint without the
@@ -222,7 +222,7 @@ async def asyncio(
     client: AuthenticatedClient | Client,
     window: GetAccountSLOWindow | Unset = "24h",
 ) -> AccountSLOResponse | Problem | None:
-    r"""Account-wide SLO rollup (issue
+    r"""Account-wide SLO rollup.
 
      Flat scalar SLO rollup for the authenticated account. The
     same wire shape as the per-app endpoint without the

@@ -19,7 +19,7 @@ import { OpenAPI } from '../../generated/core/OpenAPI.js';
 import { request as __request } from '../../generated/core/request.js';
 export class AlertRulesService {
   /**
-   * List the account's alert notification channels (ADR-749)
+   * List the account's alert notification channels
    * Returns Slack, PagerDuty and email channels with their last delivery outcome. Destinations are shown as non-secret hints only.
    * @returns NotificationChannelResponse The account's channels.
    * @throws ApiError
@@ -34,7 +34,7 @@ export class AlertRulesService {
     });
   }
   /**
-   * Add an alert notification channel (ADR-749)
+   * Add an alert notification channel
    * Slack takes an incoming-webhook URL on hooks.slack.com; PagerDuty takes an Events API v2 routing key and region; email may only address the account's own email. Secret destinations are sealed at rest and never returned.
    * @returns NotificationChannelResponse The channel was created.
    * @throws ApiError
@@ -58,7 +58,7 @@ export class AlertRulesService {
     });
   }
   /**
-   * Get one notification channel (ADR-749)
+   * Get one notification channel
    * Returns one channel with its last delivery outcome.
    * @returns NotificationChannelResponse The channel.
    * @throws ApiError
@@ -84,7 +84,7 @@ export class AlertRulesService {
     });
   }
   /**
-   * Delete a notification channel (ADR-749)
+   * Delete a notification channel
    * Removes the channel; alert rules stop delivering to it.
    * @returns void
    * @throws ApiError
@@ -110,7 +110,7 @@ export class AlertRulesService {
     });
   }
   /**
-   * Send a test notification through a channel (ADR-749)
+   * Send a test notification through a channel
    * Sends a clearly marked test message and records the outcome on the channel. Returns 200 whether or not the destination accepted it; delivered and error say which.
    * @returns TestNotificationChannelResponse The test outcome.
    * @throws ApiError

@@ -110,8 +110,8 @@ def sync_detailed(
 ) -> Response[OutboundAITagUsageResponse | Problem]:
     """Read one UTC day of AI gateway usage by tag.
 
-     Requires MFA and read scope (ADR-1436). Tags are the key=value pairs apps send in X-Gregale-AI-Tags;
-    rows are kept for 31 days and listed by cost, then tokens, with each tag's daily cost limit.
+     Requires MFA and read scope. Tags are the key=value pairs apps send in X-Gregale-AI-Tags; rows are
+    kept for 31 days and listed by cost, then tokens, with each tag's daily cost limit.
 
     Args:
         integration (UUID):
@@ -151,8 +151,8 @@ def sync(
 ) -> OutboundAITagUsageResponse | Problem | None:
     """Read one UTC day of AI gateway usage by tag.
 
-     Requires MFA and read scope (ADR-1436). Tags are the key=value pairs apps send in X-Gregale-AI-Tags;
-    rows are kept for 31 days and listed by cost, then tokens, with each tag's daily cost limit.
+     Requires MFA and read scope. Tags are the key=value pairs apps send in X-Gregale-AI-Tags; rows are
+    kept for 31 days and listed by cost, then tokens, with each tag's daily cost limit.
 
     Args:
         integration (UUID):
@@ -187,8 +187,8 @@ async def asyncio_detailed(
 ) -> Response[OutboundAITagUsageResponse | Problem]:
     """Read one UTC day of AI gateway usage by tag.
 
-     Requires MFA and read scope (ADR-1436). Tags are the key=value pairs apps send in X-Gregale-AI-Tags;
-    rows are kept for 31 days and listed by cost, then tokens, with each tag's daily cost limit.
+     Requires MFA and read scope. Tags are the key=value pairs apps send in X-Gregale-AI-Tags; rows are
+    kept for 31 days and listed by cost, then tokens, with each tag's daily cost limit.
 
     Args:
         integration (UUID):
@@ -226,8 +226,8 @@ async def asyncio(
 ) -> OutboundAITagUsageResponse | Problem | None:
     """Read one UTC day of AI gateway usage by tag.
 
-     Requires MFA and read scope (ADR-1436). Tags are the key=value pairs apps send in X-Gregale-AI-Tags;
-    rows are kept for 31 days and listed by cost, then tokens, with each tag's daily cost limit.
+     Requires MFA and read scope. Tags are the key=value pairs apps send in X-Gregale-AI-Tags; rows are
+    kept for 31 days and listed by cost, then tokens, with each tag's daily cost limit.
 
     Args:
         integration (UUID):

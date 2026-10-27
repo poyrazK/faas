@@ -28,7 +28,7 @@ export type OperationResponse = {
   completion_delivery: OperationDeliveryResponse;
   cancellation_requested: boolean;
   /**
-   * Stable failure reason. deadline_exceeded and budget_exhausted mean the operation's own limits settled it (ADR-1196).
+   * Stable failure reason. deadline_exceeded and budget_exhausted mean the operation's own limits settled it.
    */
   failure_code?: string;
   waiting?: OperationWaitingState;

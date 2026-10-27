@@ -32,11 +32,11 @@ T = TypeVar("T", bound="StatementInvoiceExportResponse")
 
 @_attrs_define
 class StatementInvoiceExportResponse:
-    """A finalized statement's invoice in the account's billing provider (ADR-1502, ADR-1507)."""
+    """A finalized statement's invoice in the account's billing provider."""
 
     statement_id: UUID
     provider: BillingProvider
-    """A billing provider statements export to (ADR-1507)."""
+    """A billing provider statements export to."""
     customer: str
     status: StatementInvoiceExportResponseStatus
     """creating means an earlier attempt stopped part-way; repeat the export to resume it."""
@@ -48,14 +48,14 @@ class StatementInvoiceExportResponse:
     invoice_id: str | Unset = UNSET
     dashboard_url: str | Unset = UNSET
     collection: StatementInvoiceExportResponseCollection | Unset = UNSET
-    """What the provider was asked to do with the invoice when the export began (ADR-1311)."""
+    """What the provider was asked to do with the invoice when the export began."""
     automatic_tax: bool | Unset = UNSET
-    """Whether Stripe Tax calculated this invoice's tax (ADR-1313)."""
+    """Whether Stripe Tax calculated this invoice's tax."""
     completed_at: datetime.datetime | Unset = UNSET
     source_kind: StatementInvoiceExportResponseSourceKind | Unset = UNSET
     payment_status: StatementInvoiceExportResponsePaymentStatus | Unset = UNSET
-    """The provider invoice's status as last read by Gregale (ADR-1504, ADR-1507); deleted means the provider no
-    longer has it. Absent until the first sync."""
+    """The provider invoice's status as last read by Gregale; deleted means the provider no longer has it. Absent
+    until the first sync."""
     amount_paid_minor: int | Unset = UNSET
     amount_remaining_minor: int | Unset = UNSET
     due_at: datetime.datetime | Unset = UNSET

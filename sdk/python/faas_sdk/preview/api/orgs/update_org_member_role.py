@@ -102,8 +102,7 @@ def sync_detailed(
 
      Owner-only (`org.change_role`). Role cannot be `owner` on
     this endpoint; transfer-ownership is the only path to owner.
-    The exactly-one-owner invariant lives in
-    `pkg/state::UpdateOrgMemberRole`'s tx; demoting the last
+    The exactly-one-owner invariant lives::UpdateOrgMemberRole`'s tx; demoting the last
     active owner surfaces as 409 `org_last_owner`.
 
     Args:
@@ -145,8 +144,7 @@ def sync(
 
      Owner-only (`org.change_role`). Role cannot be `owner` on
     this endpoint; transfer-ownership is the only path to owner.
-    The exactly-one-owner invariant lives in
-    `pkg/state::UpdateOrgMemberRole`'s tx; demoting the last
+    The exactly-one-owner invariant lives::UpdateOrgMemberRole`'s tx; demoting the last
     active owner surfaces as 409 `org_last_owner`.
 
     Args:
@@ -183,8 +181,7 @@ async def asyncio_detailed(
 
      Owner-only (`org.change_role`). Role cannot be `owner` on
     this endpoint; transfer-ownership is the only path to owner.
-    The exactly-one-owner invariant lives in
-    `pkg/state::UpdateOrgMemberRole`'s tx; demoting the last
+    The exactly-one-owner invariant lives::UpdateOrgMemberRole`'s tx; demoting the last
     active owner surfaces as 409 `org_last_owner`.
 
     Args:
@@ -224,8 +221,7 @@ async def asyncio(
 
      Owner-only (`org.change_role`). Role cannot be `owner` on
     this endpoint; transfer-ownership is the only path to owner.
-    The exactly-one-owner invariant lives in
-    `pkg/state::UpdateOrgMemberRole`'s tx; demoting the last
+    The exactly-one-owner invariant lives::UpdateOrgMemberRole`'s tx; demoting the last
     active owner surfaces as 409 `org_last_owner`.
 
     Args:

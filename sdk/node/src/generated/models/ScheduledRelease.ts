@@ -4,7 +4,7 @@
 /* eslint-disable */
 import type { CanaryPresetSpec } from './CanaryPresetSpec.js';
 /**
- * A release built ahead of time that starts its rollout at release_at (ADR-20261021152201).
+ * A release built ahead of time that starts its rollout at release_at.
  */
 export type ScheduledRelease = {
   id: string;

@@ -60,7 +60,7 @@ class RuntimePolicyStatusResponse:
     """Fresh app-level host policy status for compute nodes currently hosting live instances of this app. This
     shape is used by the egress_allowlist and cpu_limit components."""
     scheduler_scaling: RuntimePolicySchedulerStatus
-    """Fresh observation of the desired scaling policy by the owning schedd. Active means the policy was loaded,
+    """Fresh observation of the desired scaling policy by the owning scheduler. Active means the policy was loaded,
     not that a metric-driven replica target has been reached."""
     mcp_convergence: MCPPolicyConvergenceSnapshot | Unset = UNSET
     """Account-scoped live gateway replay observation for an active HTTP deployment. Snapshot metadata only; token

@@ -22,10 +22,10 @@ T = TypeVar("T", bound="CreateDeploymentFromSourceTarballBody")
 class CreateDeploymentFromSourceTarballBody:
     tarball: File
     sidecar: SourceTarballDeployRequest | Unset = UNSET
-    """Body for the informational `sidecar` form field on POST /v1/apps/{slug}/deployments/source-tarball (issue
-    #961 / Mega-A PR-1, ADR-115). The CLI is the trust root for this deploy path; apid does NOT consult
-    `github_installations` and does NOT attempt a server-side git fetch. The sidecar fields are recorded on the
-    build row for provenance only — the build pipeline does NOT use them to fetch upstream."""
+    """Body for the informational `sidecar` form field on POST /v1/apps/{slug}/deployments/source-tarball. The CLI
+    is the trust root for this deploy path; the API does NOT consult `github_installations` and does NOT attempt a
+    server-side git fetch. The sidecar fields are recorded on the build row for provenance only — the build pipeline
+    does NOT use them to fetch upstream."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

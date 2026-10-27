@@ -27,7 +27,7 @@ T = TypeVar("T", bound="OutboundAIRequestLogEntry")
 
 @_attrs_define
 class OutboundAIRequestLogEntry:
-    """One settled AI call's metadata (ADR-991). Its bodies are kept only when the integration captures content (ADR-996)."""
+    """One settled AI call's metadata. Its bodies are kept only when the integration captures content."""
 
     id: UUID
     created_at: datetime.datetime
@@ -46,23 +46,23 @@ class OutboundAIRequestLogEntry:
     ttfb_ms: int | None
     attempts: int
     end_user: None | str
-    """The call's X-Gregale-AI-User value (ADR-994)."""
+    """The call's X-Gregale-AI-User value."""
     content_captured: bool
-    """Whether the call's bodies can be read from its content endpoint (ADR-996)."""
+    """Whether the call's bodies can be read from its content endpoint."""
     tags: list[str]
-    """The call's X-Gregale-AI-Tags as key=value, sorted by key (ADR-1436)."""
+    """The call's X-Gregale-AI-Tags as key=value, sorted by key."""
     quality_flags: list[OutboundAIRequestLogEntryQualityFlagsItem] | Unset = UNSET
-    """What went wrong with the answer (ADR 20261021171712)."""
+    """What went wrong with the answer."""
     feedback: OutboundAIRequestLogEntryFeedback | Unset = UNSET
-    """The call's rating (ADR 20261021171712)."""
+    """The call's rating."""
     feedback_label: str | Unset = UNSET
     """The rating's label."""
     evaluation_score: int | Unset = UNSET
     """The online evaluation's score."""
     trace_id: str | Unset = UNSET
-    """The call's AI trace, when the integration records traces (ADR 20261020202035)."""
+    """The call's AI trace, when the integration records traces."""
     tool_calls: list[str] | Unset = UNSET
-    """The names of the tools the call's response requested, in order (ADR 20261020202035)."""
+    """The names of the tools the call's response requested, in order."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

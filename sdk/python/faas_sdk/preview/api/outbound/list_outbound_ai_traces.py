@@ -117,10 +117,9 @@ def sync_detailed(
 ) -> Response[OutboundAITraceList | Problem]:
     """Page an integration's AI traces.
 
-     Requires MFA and read scope (ADR 20261020202035). A trace groups the calls of one agent task, named
-    by X-Gregale-AI-Trace or the trace ID of a W3C traceparent header. Traces are recorded while the
-    integration keeps a request log or has trace limits, and are kept for 7 days. Newest last call
-    first.
+     Requires MFA and read scope. A trace groups the calls of one agent task, named by X-Gregale-AI-Trace
+    or the trace ID of a W3C traceparent header. Traces are recorded while the integration keeps a
+    request log or has trace limits, and are kept for 7 days. Newest last call first.
 
     Args:
         integration (UUID):
@@ -163,10 +162,9 @@ def sync(
 ) -> OutboundAITraceList | Problem | None:
     """Page an integration's AI traces.
 
-     Requires MFA and read scope (ADR 20261020202035). A trace groups the calls of one agent task, named
-    by X-Gregale-AI-Trace or the trace ID of a W3C traceparent header. Traces are recorded while the
-    integration keeps a request log or has trace limits, and are kept for 7 days. Newest last call
-    first.
+     Requires MFA and read scope. A trace groups the calls of one agent task, named by X-Gregale-AI-Trace
+    or the trace ID of a W3C traceparent header. Traces are recorded while the integration keeps a
+    request log or has trace limits, and are kept for 7 days. Newest last call first.
 
     Args:
         integration (UUID):
@@ -204,10 +202,9 @@ async def asyncio_detailed(
 ) -> Response[OutboundAITraceList | Problem]:
     """Page an integration's AI traces.
 
-     Requires MFA and read scope (ADR 20261020202035). A trace groups the calls of one agent task, named
-    by X-Gregale-AI-Trace or the trace ID of a W3C traceparent header. Traces are recorded while the
-    integration keeps a request log or has trace limits, and are kept for 7 days. Newest last call
-    first.
+     Requires MFA and read scope. A trace groups the calls of one agent task, named by X-Gregale-AI-Trace
+    or the trace ID of a W3C traceparent header. Traces are recorded while the integration keeps a
+    request log or has trace limits, and are kept for 7 days. Newest last call first.
 
     Args:
         integration (UUID):
@@ -248,10 +245,9 @@ async def asyncio(
 ) -> OutboundAITraceList | Problem | None:
     """Page an integration's AI traces.
 
-     Requires MFA and read scope (ADR 20261020202035). A trace groups the calls of one agent task, named
-    by X-Gregale-AI-Trace or the trace ID of a W3C traceparent header. Traces are recorded while the
-    integration keeps a request log or has trace limits, and are kept for 7 days. Newest last call
-    first.
+     Requires MFA and read scope. A trace groups the calls of one agent task, named by X-Gregale-AI-Trace
+    or the trace ID of a W3C traceparent header. Traces are recorded while the integration keeps a
+    request log or has trace limits, and are kept for 7 days. Newest last call first.
 
     Args:
         integration (UUID):

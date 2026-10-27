@@ -121,15 +121,15 @@ def sync_detailed(
 ) -> Response[OperationSignalReceipt | Problem]:
     """Deliver a named event to an operation that waits for it.
 
-     Requires deploy:write and MFA (ADR-1197). The event must be one the operation's workflow waits for.
-    signal_id makes delivery idempotent per operation; a repeat with the same event and payload returns
-    the original receipt, a different event or payload under it conflicts. A signal that arrives before
-    its wait is held until the wait starts. Settled operations take no new signals.
+     Requires deploy:write and MFA. The event must be one the operation's workflow waits for. signal_id
+    makes delivery idempotent per operation; a repeat with the same event and payload returns the
+    original receipt, a different event or payload under it conflicts. A signal that arrives before its
+    wait is held until the wait starts. Settled operations take no new signals.
 
     Args:
         slug (str):
         id (UUID):
-        body (OperationSignalRequest): One named event for an operation (ADR-1197).
+        body (OperationSignalRequest): One named event for an operation.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -161,15 +161,15 @@ def sync(
 ) -> OperationSignalReceipt | Problem | None:
     """Deliver a named event to an operation that waits for it.
 
-     Requires deploy:write and MFA (ADR-1197). The event must be one the operation's workflow waits for.
-    signal_id makes delivery idempotent per operation; a repeat with the same event and payload returns
-    the original receipt, a different event or payload under it conflicts. A signal that arrives before
-    its wait is held until the wait starts. Settled operations take no new signals.
+     Requires deploy:write and MFA. The event must be one the operation's workflow waits for. signal_id
+    makes delivery idempotent per operation; a repeat with the same event and payload returns the
+    original receipt, a different event or payload under it conflicts. A signal that arrives before its
+    wait is held until the wait starts. Settled operations take no new signals.
 
     Args:
         slug (str):
         id (UUID):
-        body (OperationSignalRequest): One named event for an operation (ADR-1197).
+        body (OperationSignalRequest): One named event for an operation.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -196,15 +196,15 @@ async def asyncio_detailed(
 ) -> Response[OperationSignalReceipt | Problem]:
     """Deliver a named event to an operation that waits for it.
 
-     Requires deploy:write and MFA (ADR-1197). The event must be one the operation's workflow waits for.
-    signal_id makes delivery idempotent per operation; a repeat with the same event and payload returns
-    the original receipt, a different event or payload under it conflicts. A signal that arrives before
-    its wait is held until the wait starts. Settled operations take no new signals.
+     Requires deploy:write and MFA. The event must be one the operation's workflow waits for. signal_id
+    makes delivery idempotent per operation; a repeat with the same event and payload returns the
+    original receipt, a different event or payload under it conflicts. A signal that arrives before its
+    wait is held until the wait starts. Settled operations take no new signals.
 
     Args:
         slug (str):
         id (UUID):
-        body (OperationSignalRequest): One named event for an operation (ADR-1197).
+        body (OperationSignalRequest): One named event for an operation.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -234,15 +234,15 @@ async def asyncio(
 ) -> OperationSignalReceipt | Problem | None:
     """Deliver a named event to an operation that waits for it.
 
-     Requires deploy:write and MFA (ADR-1197). The event must be one the operation's workflow waits for.
-    signal_id makes delivery idempotent per operation; a repeat with the same event and payload returns
-    the original receipt, a different event or payload under it conflicts. A signal that arrives before
-    its wait is held until the wait starts. Settled operations take no new signals.
+     Requires deploy:write and MFA. The event must be one the operation's workflow waits for. signal_id
+    makes delivery idempotent per operation; a repeat with the same event and payload returns the
+    original receipt, a different event or payload under it conflicts. A signal that arrives before its
+    wait is held until the wait starts. Settled operations take no new signals.
 
     Args:
         slug (str):
         id (UUID):
-        body (OperationSignalRequest): One named event for an operation (ADR-1197).
+        body (OperationSignalRequest): One named event for an operation.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

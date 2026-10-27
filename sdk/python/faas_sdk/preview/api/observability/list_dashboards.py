@@ -47,7 +47,7 @@ def sync_detailed(
 ) -> Response[DashboardsResponse | Problem]:
     """List the account's custom dashboards.
 
-     ADR-20261022173833 internal preview behind `FAAS_CUSTOM_DASHBOARDS_ENABLED=1`.
+     Internal preview behind `FAAS_CUSTOM_DASHBOARDS_ENABLED=1`.
     Returns the account's saved dashboards by name.
 
     Raises:
@@ -73,7 +73,7 @@ def sync(
 ) -> DashboardsResponse | Problem | None:
     """List the account's custom dashboards.
 
-     ADR-20261022173833 internal preview behind `FAAS_CUSTOM_DASHBOARDS_ENABLED=1`.
+     Internal preview behind `FAAS_CUSTOM_DASHBOARDS_ENABLED=1`.
     Returns the account's saved dashboards by name.
 
     Raises:
@@ -95,7 +95,7 @@ async def asyncio_detailed(
 ) -> Response[DashboardsResponse | Problem]:
     """List the account's custom dashboards.
 
-     ADR-20261022173833 internal preview behind `FAAS_CUSTOM_DASHBOARDS_ENABLED=1`.
+     Internal preview behind `FAAS_CUSTOM_DASHBOARDS_ENABLED=1`.
     Returns the account's saved dashboards by name.
 
     Raises:
@@ -119,7 +119,7 @@ async def asyncio(
 ) -> DashboardsResponse | Problem | None:
     """List the account's custom dashboards.
 
-     ADR-20261022173833 internal preview behind `FAAS_CUSTOM_DASHBOARDS_ENABLED=1`.
+     Internal preview behind `FAAS_CUSTOM_DASHBOARDS_ENABLED=1`.
     Returns the account's saved dashboards by name.
 
     Raises:

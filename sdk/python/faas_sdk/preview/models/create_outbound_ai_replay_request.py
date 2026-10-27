@@ -15,7 +15,7 @@ T = TypeVar("T", bound="CreateOutboundAIReplayRequest")
 
 @_attrs_define
 class CreateOutboundAIReplayRequest:
-    """Replay a captured call on up to 5 targets (ADR-997)."""
+    """Replay a captured call on up to 5 targets."""
 
     targets: list[OutboundAIReplayTarget]
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)

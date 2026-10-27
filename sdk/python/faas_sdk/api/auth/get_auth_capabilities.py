@@ -52,8 +52,8 @@ def sync_detailed(
 ) -> Response[Any | AuthCapabilities]:
     r"""Sign-in OAuth capability signal for the dashboard.
 
-     Returns the boot-resolved OAuth provider state for this apid
-    host (issue #419 / ADR-046). The dashboard reads this on
+     Returns the boot-resolved OAuth provider state for this API
+    host. The dashboard reads this on
     `/login` to decide whether to render the \"Sign in with
     Google\" / \"Sign in with GitHub\" buttons.
 
@@ -92,8 +92,8 @@ def sync(
 ) -> Any | AuthCapabilities | None:
     r"""Sign-in OAuth capability signal for the dashboard.
 
-     Returns the boot-resolved OAuth provider state for this apid
-    host (issue #419 / ADR-046). The dashboard reads this on
+     Returns the boot-resolved OAuth provider state for this API
+    host. The dashboard reads this on
     `/login` to decide whether to render the \"Sign in with
     Google\" / \"Sign in with GitHub\" buttons.
 
@@ -128,8 +128,8 @@ async def asyncio_detailed(
 ) -> Response[Any | AuthCapabilities]:
     r"""Sign-in OAuth capability signal for the dashboard.
 
-     Returns the boot-resolved OAuth provider state for this apid
-    host (issue #419 / ADR-046). The dashboard reads this on
+     Returns the boot-resolved OAuth provider state for this API
+    host. The dashboard reads this on
     `/login` to decide whether to render the \"Sign in with
     Google\" / \"Sign in with GitHub\" buttons.
 
@@ -166,8 +166,8 @@ async def asyncio(
 ) -> Any | AuthCapabilities | None:
     r"""Sign-in OAuth capability signal for the dashboard.
 
-     Returns the boot-resolved OAuth provider state for this apid
-    host (issue #419 / ADR-046). The dashboard reads this on
+     Returns the boot-resolved OAuth provider state for this API
+    host. The dashboard reads this on
     `/login` to decide whether to render the \"Sign in with
     Google\" / \"Sign in with GitHub\" buttons.
 

@@ -65,7 +65,7 @@ def sync_detailed(
     *,
     client: AuthenticatedClient | Client,
 ) -> Response[ConsumerSignupFormResponse | Problem]:
-    """Read an app's public sign-up form (ADR-20261021143000).
+    """Read an app's public sign-up form.
 
      For an app's prospective customers; needs no credential.
 
@@ -96,7 +96,7 @@ def sync(
     *,
     client: AuthenticatedClient | Client,
 ) -> ConsumerSignupFormResponse | Problem | None:
-    """Read an app's public sign-up form (ADR-20261021143000).
+    """Read an app's public sign-up form.
 
      For an app's prospective customers; needs no credential.
 
@@ -122,7 +122,7 @@ async def asyncio_detailed(
     *,
     client: AuthenticatedClient | Client,
 ) -> Response[ConsumerSignupFormResponse | Problem]:
-    """Read an app's public sign-up form (ADR-20261021143000).
+    """Read an app's public sign-up form.
 
      For an app's prospective customers; needs no credential.
 
@@ -151,7 +151,7 @@ async def asyncio(
     *,
     client: AuthenticatedClient | Client,
 ) -> ConsumerSignupFormResponse | Problem | None:
-    """Read an app's public sign-up form (ADR-20261021143000).
+    """Read an app's public sign-up form.
 
      For an app's prospective customers; needs no credential.
 

@@ -44,10 +44,10 @@ class CreateAlertRuleRequest:
     oldest active hold directly from state (seconds, zero with no holds); its alerts support webhook action only.
    """
     comparison: CreateAlertRuleRequestComparison
-    """above_baseline and below_baseline (ADR-744, preview behind FAAS_ANOMALY_ALERTS_ENABLED) compare against the
-    median of the same metric at the same time of day over the previous 7 days; threshold is then a multiplier
-    (1.5-20 above, 0.05-0.67 below). Supported for error_rate_pct, latency_p95_ms, latency_p99_ms, cold_start_pct
-    and request_count (below_baseline: request_count only)."""
+    """above_baseline and below_baseline (preview behind FAAS_ANOMALY_ALERTS_ENABLED) compare against the median of
+    the same metric at the same time of day over the previous 7 days; threshold is then a multiplier (1.5-20 above,
+    0.05-0.67 below). Supported for error_rate_pct, latency_p95_ms, latency_p99_ms, cold_start_pct and request_count
+    (below_baseline: request_count only)."""
     threshold: float
     window_spec: CreateAlertRuleRequestWindowSpec
     mcp_readiness_scope: str | Unset = UNSET
@@ -65,7 +65,7 @@ class CreateAlertRuleRequest:
     """Event subscription id in the create alert rule request: immutable subscription selector. Required only for
     event consumer metrics; webhook action and windows up to 24h are required."""
     edge_rule_id: UUID | Unset = UNSET
-    """ADR-1192. Edge rule to count for edge_rule_hits (enforced matches), edge_rule_log_hits (log-mode matches) or
+    """Edge rule to count for edge_rule_hits (enforced matches), edge_rule_log_hits (log-mode matches) or
     edge_rule_activity (matches in either mode, so the alert survives a switch from log mode to enforce); omit to
     count every rule of the app. Immutable. Edge-rule metrics are webhook-only and take window_spec 1h, 6h, 24h or
     7d (hourly hit buckets, kept 14 days)."""
@@ -92,8 +92,8 @@ class CreateAlertRuleRequest:
     webhook_url: str | Unset = UNSET
     """Signed webhook destination. Required with webhook_secret unless channel_ids is set."""
     channel_ids: list[UUID] | Unset = UNSET
-    """Notification channels (ADR-749) to deliver fires and resolves to. With at least one, webhook_url and
-    webhook_secret may be omitted."""
+    """Notification channels to deliver fires and resolves to. With at least one, webhook_url and webhook_secret
+    may be omitted."""
     webhook_secret: str | Unset = UNSET
     """Plaintext HMAC secret (max 256 bytes). Sealed at rest; never echoed."""
     cooldown_minutes: int | Unset = UNSET
