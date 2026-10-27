@@ -5951,7 +5951,9 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	requestCtx, statusHooks := withResponseStatusHooks(requestCtx)
 	r = r.WithContext(requestCtx)
 	defer func() { //nolint:contextcheck // inspect the final rebound request context, including later admission and lifetime fences.
-		requestSpan.SetAttributes(trafficDecisionEvidence(r.Context(), rec.status, true).attributes()...)
+		decision := trafficDecisionEvidence(r.Context(), rec.status, true)
+		requestSpan.SetAttributes(decision.attributes()...)
+		h.metrics.observeTrafficDecision(decision)
 		statusHooks.run(rec.status)
 		requestSpan.SetAttributes(attribute.Int("http.status_code", rec.status))
 		requestSpan.End()
