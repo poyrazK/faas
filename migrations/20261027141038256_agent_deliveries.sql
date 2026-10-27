@@ -22,10 +22,17 @@ ALTER TABLE agent_runs
     ADD COLUMN IF NOT EXISTS github_number bigint
         CHECK (github_number IS NULL OR github_number > 0),
     ADD COLUMN IF NOT EXISTS github_installation_id bigint
-        CHECK (github_installation_id IS NULL OR github_installation_id > 0),
-    ADD CONSTRAINT agent_runs_github_complete_chk CHECK (
-        (github_repository IS NULL) = (github_number IS NULL)
-        AND (github_repository IS NULL) = (github_installation_id IS NULL));
+        CHECK (github_installation_id IS NULL OR github_installation_id > 0);
+DO $do$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'agent_runs'::regclass
+        AND conname = 'agent_runs_github_complete_chk') THEN
+        ALTER TABLE agent_runs ADD CONSTRAINT agent_runs_github_complete_chk CHECK (
+            (github_repository IS NULL) = (github_number IS NULL)
+            AND (github_repository IS NULL) = (github_installation_id IS NULL));
+    END IF;
+END;
+$do$;
 
 -- pending → sending → delivered, or back to pending (a retry) or reconciling
 -- (the write's answer was lost; the next attempt reads the destination

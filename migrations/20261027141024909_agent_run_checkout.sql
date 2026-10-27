@@ -15,10 +15,17 @@ ALTER TABLE agent_runs
     ADD COLUMN IF NOT EXISTS checkout_commit text
         CHECK (checkout_commit IS NULL OR checkout_commit ~ '^[0-9a-f]{40}$'),
     ADD COLUMN IF NOT EXISTS checkout_installation_id bigint
-        CHECK (checkout_installation_id IS NULL OR checkout_installation_id > 0),
-    ADD CONSTRAINT agent_runs_checkout_complete_chk CHECK (
-        (checkout_repository IS NULL) = (checkout_commit IS NULL)
-        AND (checkout_repository IS NULL) = (checkout_installation_id IS NULL));
+        CHECK (checkout_installation_id IS NULL OR checkout_installation_id > 0);
+DO $do$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'agent_runs'::regclass
+        AND conname = 'agent_runs_checkout_complete_chk') THEN
+        ALTER TABLE agent_runs ADD CONSTRAINT agent_runs_checkout_complete_chk CHECK (
+            (checkout_repository IS NULL) = (checkout_commit IS NULL)
+            AND (checkout_repository IS NULL) = (checkout_installation_id IS NULL));
+    END IF;
+END;
+$do$;
 -- +goose StatementEnd
 
 -- +goose Down
