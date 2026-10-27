@@ -6660,8 +6660,11 @@ const (
 	// generations whose restore snapshots remain eligible for the fast rollback
 	// path. The window includes the live deployment, so the default retains the
 	// live release plus two previous releases. Older snapshots are reclaimed by
-	// imaged's nightly GC and rollback still has the documented cold-boot
-	// fallback when an operator selects one of those releases.
+	// imaged's nightly GC. The window's deployments also keep their cold-boot
+	// layers whatever state their snapshots are in, so a rollback to one can
+	// always cold boot (spec §4.6, Hunt 21 H21-1). An older release keeps its
+	// layers only while a snapshot or another reference holds them; a rollback
+	// to one whose layers were reclaimed is refused.
 	SnapshotRollbackRetentionDeployments = 3
 	// SnapshotBudgetAlarmPct is the lv-fc percentage at which the nightly
 	// imaged GC switches from per-app retention (keep the rollback window

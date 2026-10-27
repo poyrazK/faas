@@ -66,7 +66,7 @@ func (m *MemStore) PrepareOperatorRestart(_ context.Context, id, token string, t
 			}
 		}
 		if chosen >= 0 {
-			m.snapshots[chosen].Stale = true
+			m.markSnapshotStaleLocked(chosen)
 			target.SnapshotIDs = append(target.SnapshotIDs, m.snapshots[chosen].ID)
 			m.deleteSnapshotReplicasLocked(m.snapshots[chosen].ID)
 		}

@@ -2509,6 +2509,13 @@ func rollbackDuringTrafficSplitProblem(appSlug, earlier string) *api.Problem {
 // two entry points cannot drift. It also opens the ADR-1446 outcome ledger
 // row; the returned receipt is nil only when that write failed, and the
 // rollback itself still proceeds.
+// rollbackTargetArtifactsReclaimed refuses a rollback whose target's layers
+// were reclaimed: it could not cold boot, and its readiness prime would only
+// fail later (Hunt 21 H21-1).
+func rollbackTargetArtifactsReclaimed() *api.Problem {
+	return api.ErrRollbackTargetIneligible("the rollback target's build artifacts were reclaimed, so it cannot start; redeploy that release instead")
+}
+
 func (s *server) rollbackAppCore(r *http.Request, acct state.Account, app state.App, req api.RollbackRequest, trigger string) (state.Deployment, *api.RollbackOperation, *api.Problem) {
 	ctx := r.Context()
 	alertRuleID := uuid.Nil
@@ -2526,6 +2533,9 @@ func (s *server) rollbackAppCore(r *http.Request, acct state.Account, app state.
 	priorTargetStatus := target.Status
 	target, err = s.store.PrepareDeploymentRollback(ctx, app.ID, target.ID)
 	if err != nil {
+		if errors.Is(err, state.ErrLayerArtifactRetired) {
+			return state.Deployment{}, nil, rollbackTargetArtifactsReclaimed()
+		}
 		if errors.Is(err, state.ErrNoRollbackTarget) || errors.Is(err, state.ErrRollbackTargetAlreadyLive) {
 			return state.Deployment{}, nil, api.ErrRollbackTargetIneligible("rollback target changed state while the request was being validated; refresh deployments and retry")
 		}

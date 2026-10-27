@@ -16655,6 +16655,7 @@
       "mem_bytes",
       "recovery_generation",
       "stale",
+      "stale_at",
       "storage_key",
       "stored_bytes",
       "tier"
