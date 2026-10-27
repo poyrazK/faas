@@ -6407,10 +6407,12 @@ List cron rules
 
 Schedule a POST to an app path, or a deployment command
 
-`gregale crons add [--interactive] [--app <slug>] [--schedule <EXPR>] [--path <PATH>] [--command <EXEC>] [--arg <ARG>] [--shell] [--timeout-seconds <N>] [--max-output-bytes <N>] [--timezone <TZ>] [--skip-if-running] [--retry-max] [--retry-backoff-seconds] [--schedule-policy <JSON>] [--failure-rules <JSON>]`
+`gregale crons add [--lock <POLICY>] [--lock-key <JSON>] [--interactive] [--app <slug>] [--schedule <EXPR>] [--path <PATH>] [--command <EXEC>] [--arg <ARG>] [--shell] [--timeout-seconds <N>] [--max-output-bytes <N>] [--timezone <TZ>] [--skip-if-running] [--retry-max] [--retry-backoff-seconds] [--schedule-policy <JSON>] [--failure-rules <JSON>]`
 
 | Flag | Meaning | |
 |---|---|---|
+| `--lock <POLICY>` | run one at a time per --lock-key under this managed operation policy |  |
+| `--lock-key <JSON>` | JSON value that must run one at a time (requires --lock) |  |
 | `--interactive` | choose an HTTP path, schedule, and timezone, preview run times, and confirm creation |  |
 | `--app <slug>` | app slug (interactive mode can use linked app or picker) |  |
 | `--schedule <EXPR>` | five-field cron expression (required unless interactive) |  |
@@ -6583,10 +6585,12 @@ Show one trigger
 
 Create a broker trigger
 
-`gregale triggers create --app <slug> --kind <kind> [--slug <slug>] [--config <JSON>] [--enabled] [--disabled] [--batch-size <N>] [--batch-window-ms <N>] [--max-attempts <N>] [--payload-max-bytes <N>] [--broker-poison-strategy <commit|seek-to-offset>] [--delivery <record|batch>]`
+`gregale triggers create [--lock <POLICY>] [--lock-key <JSON>] --app <slug> --kind <kind> [--slug <slug>] [--config <JSON>] [--enabled] [--disabled] [--batch-size <N>] [--batch-window-ms <N>] [--max-attempts <N>] [--payload-max-bytes <N>] [--broker-poison-strategy <commit|seek-to-offset>] [--delivery <record|batch>]`
 
 | Flag | Meaning | |
 |---|---|---|
+| `--lock <POLICY>` | run one at a time per --lock-key under this managed operation policy |  |
+| `--lock-key <JSON>` | JSON value that must run one at a time (requires --lock) |  |
 | `--app <slug>` | app slug | required |
 | `--kind <kind>` | trigger kind | required; one of `kafka` · `nats` · `redis_streams` · `sqs_compat` · `queue` · `realtime` |
 | `--slug <slug>` | trigger slug (required for non-cron kinds) |  |
@@ -6904,10 +6908,12 @@ gregale jobs rm --interactive
 
 Dispatch a new run (fan-out N tasks)
 
-`gregale jobs run [--saved-job] [--wait-ready] [--image-wait-timeout <DURATION>] [--image-poll-interval <DURATION>] [--interactive] [--wait] [--results] [--out-dir <DIR>] [--all-artifacts] [--include <GLOB>] [--exclude <GLOB>] [--wait-timeout <DURATION>] [--poll-interval <DURATION>] [--dry-run] [--tasks <N>] [--retries <N>] [--timeout <SECONDS>] [--input <ID=REF>] [--input-manifest-uri <URI>] [--input-manifest-sha256 <DIGEST>] [--parallelism <N>] [--flexible] [--eligible-at <RFC3339>] [--latest-start-at <RFC3339>] [--fail-fast] [--failure-rules <JSON>] [<job-name>]`
+`gregale jobs run [--lock <POLICY>] [--lock-key <JSON>] [--saved-job] [--wait-ready] [--image-wait-timeout <DURATION>] [--image-poll-interval <DURATION>] [--interactive] [--wait] [--results] [--out-dir <DIR>] [--all-artifacts] [--include <GLOB>] [--exclude <GLOB>] [--wait-timeout <DURATION>] [--poll-interval <DURATION>] [--dry-run] [--tasks <N>] [--retries <N>] [--timeout <SECONDS>] [--input <ID=REF>] [--input-manifest-uri <URI>] [--input-manifest-sha256 <DIGEST>] [--parallelism <N>] [--flexible] [--eligible-at <RFC3339>] [--latest-start-at <RFC3339>] [--fail-fast] [--failure-rules <JSON>] [<job-name>]`
 
 | Flag | Meaning | |
 |---|---|---|
+| `--lock <POLICY>` | run one at a time per --lock-key under this managed operation policy |  |
+| `--lock-key <JSON>` | JSON value that must run one at a time (requires --lock) |  |
 | `--saved-job` | use local jobs defaults for the Job name and omitted settings; excludes a positional Job name |  |
 | `--wait-ready` | wait for selected image preparation before submitting |  |
 | `--image-wait-timeout <DURATION>` | image preparation deadline (default 5m; requires --wait-ready) |  |
@@ -6946,7 +6952,10 @@ gregale jobs run nightly-report --tasks 10 --results
 gregale jobs run --dry-run
 gregale jobs run --saved-job --dry-run
 gregale jobs run --wait-ready --results
+gregale jobs run export --lock exports --lock-key '"customer-42"'
 ```
+
+With --lock, the run is submitted through the lock (what `gregale operations start-job` does) and takes only --tasks, --run-file and --idempotency-key.
 
 ### jobs runs
 
