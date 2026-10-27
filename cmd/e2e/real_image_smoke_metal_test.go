@@ -16,6 +16,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
 	"github.com/onebox-faas/faas/pkg/e2etest"
+	"github.com/onebox-faas/faas/pkg/oci"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -166,13 +167,31 @@ func TestRealImageSmokeMetal(t *testing.T) {
 	}
 }
 
+// pinImageDigest resolves a tag to the digest deploys require, through the
+// same Docker Hub mirror imaged uses.
+func pinImageDigest(t *testing.T, ref string) string {
+	t.Helper()
+	parsed, err := oci.ParseReference(ref)
+	if err != nil {
+		t.Fatal(err)
+	}
+	client := oci.NewRegistryClient(oci.WithHTTPClient(oci.NewEgressHTTPClient()), oci.WithDockerHubMirrors([]string{"mirror.gcr.io"}, nil))
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	digest, err := client.PullDigest(ctx, ref)
+	if err != nil {
+		t.Fatalf("resolve %s: %v", ref, err)
+	}
+	return parsed.Registry + "/" + parsed.Repository + "@" + digest
+}
+
 func runRealImageCase(t *testing.T, h *e2etest.Harness, pool *pgxpool.Pool, key string, tc realImageCase) {
 	falsy := false
 	if got := postOK(t, h, key, "/v1/apps", api.CreateAppRequest{Slug: tc.slug, Type: "app", RequireAuthn: &falsy}); got != http.StatusCreated {
 		t.Fatalf("create app: status=%d", got)
 	}
 	appID := mustGetAppID(t, h, key, tc.slug)
-	request := api.CreateDeploymentRequest{Image: tc.image}
+	request := api.CreateDeploymentRequest{Image: pinImageDigest(t, tc.image)}
 	if tc.entrypoint != nil || tc.cmd != nil || tc.port != 0 {
 		request.Overrides = &api.CreateDeploymentOverrides{Entrypoint: tc.entrypoint, Cmd: tc.cmd, Port: tc.port}
 	}
