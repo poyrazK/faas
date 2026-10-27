@@ -1774,3 +1774,5 @@ var WriteExclusiveError = writeExclusiveError
 // ResolveAndCheckEgress is the create-time egress check every outbound URL
 // (alert, log drain, webhook, channel) passes.
 var ResolveAndCheckEgress = resolveAndCheckEgress
+
+var AppRestartRefusal = appRestartRefusal

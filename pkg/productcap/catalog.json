@@ -3976,6 +3976,7 @@
         "githubd"
       ],
       "routes": [
+        "/dashboard/apps/{}/preview",
         "/dashboard/apps/{}/previews",
         "/dashboard/previews",
         "/v1/apps/{}/previews",
@@ -4065,6 +4066,11 @@
         "/v1/apps/{}/debug/compare",
         "/v1/apps/{}/debug/critical-paths",
         "/v1/apps/{}/debug/requests"
+      ],
+      "cli": [
+        "debug bundle",
+        "debug compare",
+        "debug requests"
       ]
     },
     {
@@ -4693,6 +4699,7 @@
         "/v1/apps/{}/routes"
       ],
       "cli": [
+        "app routes",
         "routes",
         "routes insights"
       ]
@@ -4945,6 +4952,7 @@
         "/dashboard/apps/{}/secret-revocations",
         "/dashboard/apps/{}/secrets",
         "/v1/apps/{}/secret-references",
+        "/v1/apps/{}/secret-requests",
         "/v1/apps/{}/secret-revocations",
         "/v1/apps/{}/secrets",
         "/v1/secrets"
@@ -5125,6 +5133,7 @@
         "/v1/apps/{}/trusted_signers"
       ],
       "cli": [
+        "app security",
         "trusted-publishers"
       ]
     },

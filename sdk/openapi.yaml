@@ -36445,7 +36445,7 @@ components:
             the `FieldError` shape's prose pattern so the dashboard
             / SDK can render the hint as a one-line footer without
             parsing prose. Optional + omitempty.
-          example: "move detected secrets to `gregale secrets set` (see https://gregale.dev/docs/cli/secrets)"
+          example: "move detected secrets to `gregale secrets set` (see https://gregale.dev/docs/secrets)"
         hint:
           type: string
           description: |

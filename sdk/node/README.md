@@ -223,7 +223,9 @@ try {
 The four canonical error sentinels (`ErrNotFound`, `ErrUnauthorized`,
 `ErrRateLimited`, `ErrCapacity`) all extend `FaasError` and carry the
 parsed RFC 7807 `Problem` envelope, the HTTP status, and the daemon's
-`tx_id` for support tickets.
+`tx_id` for support tickets. Any other problem (a 400 `validation_failed`,
+a 409, a 422 or a 500) is thrown as the base `FaasError`: test it with
+`isFaasError(err)` and read `err.problem.code`.
 
 ## Supported surface
 

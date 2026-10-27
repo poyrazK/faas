@@ -162,6 +162,10 @@ automaton nodes to 1,000,000, states to 100,000, retained state buffers/overhead
 to 64 MiB and transitions to 2,000,000. A proved overload returns
 `traffic_policy_too_large`/422. An exhausted analysis returns the distinct
 `traffic_policy_too_complex`/422, with no saved mutation or change event.
+When the exhausted ceiling is analysis time (the 2 s phase or 1.75 s SQL
+timeout, unit `milliseconds`), the hint leads with a retry: a busy control
+plane can trip it for an account with no edge rules (Hunt 14 H14-78). Size
+and automaton ceilings keep the simplify-the-policy hint.
 Legacy action aliases whose decoding cannot be verified by this projection
 also refuse analysis; replace the affected rule through the supported API
 shape or disable/delete it to repair that graph. Caller cancellation still

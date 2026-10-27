@@ -9278,6 +9278,27 @@ func (h *Handler) EnsureServiceDeploymentCapacity(ctx context.Context, app App, 
 	return err
 }
 
+// EnsureRevisionDeploymentCapacity wakes one exact deployment for an
+// owner-authorized deployment check. Like a revision-pinned public request,
+// it gets the app's ceiling plus the rollout grant (ADR-199), so a
+// just-released deployment can come up beside the instance still serving the
+// previous one; schedd stays authoritative for the overlap.
+func (h *Handler) EnsureRevisionDeploymentCapacity(ctx context.Context, app App, deploymentID string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if deploymentID == "" {
+		return h.EnsureServiceCapacity(ctx, app)
+	}
+	if pickPublicDeployment(h.backend, app.ID, deploymentID, "").OK {
+		return nil
+	}
+	maximum := h.publicRoutingWakeMaximum(app, PublicRoutingSnapshot{SelectionReason: "revision", SelectedDeploymentID: deploymentID})
+	wakeID, _, _, err := h.wakeDeployment(ctx, app, deploymentID, app.Scope, sched.TriggerServiceMesh, maximum)
+	recordServiceWakeID(ctx, wakeID)
+	return err
+}
+
 func (h *Handler) warmTargetNeedsValidation(app App, target Target, now time.Time) bool {
 	idleSeconds := app.IdleTimeoutS
 	if idleSeconds <= 0 {
