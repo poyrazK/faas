@@ -53,6 +53,15 @@ func TestGitHubDeploys(t *testing.T) {
 		}
 		commit = ghPutFile(t, repo, "main", "version.txt", pushed+"\n", "e2e journeys run "+tg.runID)
 		t.Logf("pushed %s to %s main as %s", pushed, repo, commit)
+		defer func() {
+			if t.Failed() {
+				// Say whether the push created a deployment and how it ended.
+				res := tg.run(t, time.Minute, "deployments", "--app", slug, "--limit", "3")
+				t.Logf("deployments after the push: %s", tail(string(res.stdout), 1500))
+				status := tg.run(t, time.Minute, "github", "status", slug)
+				t.Logf("github status: %s", tail(string(status.stdout), 800))
+			}
+		}()
 		expectVersion(t, base, pushed, 25*time.Minute)
 	})
 	s.check("checks_status", func(t *testing.T) {

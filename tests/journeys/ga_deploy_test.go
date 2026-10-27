@@ -209,10 +209,11 @@ func TestDeployOverrides(t *testing.T) {
 	if path := str(receipt, "hosting_receipt.smoke.path"); path != "/ready" {
 		t.Errorf("the smoke check used %q, not the declared health path /ready", path)
 	}
-	r := get(base + "/ready")
-	if r.status != http.StatusOK || num(jsonBody(t, r), "port") != 9090 {
-		t.Fatalf("GET /ready: %s (want the app listening on the declared port 9090)", r)
-	}
+	// The probe listens on $PORT, so serving at all proves the platform ran
+	// it on the declared 9090 (a mismatch fails the deploy with
+	// app_not_listening). The edge answers the health path itself, so check
+	// an ordinary route.
+	expectVersion(t, base, "v1-yaml", 2*time.Minute)
 }
 
 // TestImageRegistryAndDeployTokens deploys a digest-pinned public image
@@ -270,15 +271,22 @@ func TestImageRegistryAndDeployTokens(t *testing.T) {
 			t.Fatalf("mint deploy token: %s", r)
 		}
 		doc := jsonBody(t, r)
-		token := apiKeyRe.FindString(string(r.body))
+		id := str(doc, "id")
+		if id == "" {
+			id = str(doc, "token.id")
+		}
+		if id != "" {
+			// Registered before any check can fail, so the token never
+			// outlives the journey.
+			t.Cleanup(func() { tg.apiCall(http.MethodDelete, "/v1/apps/"+slug+"/deploy-tokens/"+id, nil, key) })
+		}
+		token := str(doc, "plaintext")
 		if token == "" {
 			token = str(doc, "token_plaintext")
 		}
-		id := str(doc, "token.id")
 		if token == "" || id == "" {
-			t.Fatalf("deploy token response has no token or id: %s", tg.redact(compact(doc)))
+			t.Fatalf("deploy token response has no plaintext or id: %s", tg.redact(compact(doc)))
 		}
-		t.Cleanup(func() { tg.apiCall(http.MethodDelete, "/v1/apps/"+slug+"/deploy-tokens/"+id, nil, key) })
 		res := tg.exec(t, token, t.TempDir(), deployLimit+5*time.Minute, "deploy", "--name", slug, "--image", probeImage,
 			"--wait", "--timeout", deployLimit.String(), "--yes", "--no-require-authn", "--reason", "e2e-journeys deploy token")
 		if res.exit != 0 {

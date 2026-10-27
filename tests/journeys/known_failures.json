@@ -23,5 +23,10 @@
     "step": "TestPublicSurface/status_incidents",
     "bug": "GET /v1/status/incidents answers 404 no such API route (the inventory lists it as the public incidents API)",
     "since": "2026-10-26"
+  },
+  {
+    "step": "TestCustomDomainBinding/add",
+    "bug": "custom domains are disabled on production: domains add answers 'Custom domains are unavailable ... not available on this Gregale installation right now' though the inventory lists them as GA",
+    "since": "2026-10-27"
   }
 ]

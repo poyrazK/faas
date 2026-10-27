@@ -656,7 +656,13 @@ func (tg *target) deployWith(t *testing.T, slug string, smoke bool, args ...stri
 	dir := t.TempDir()
 	tg.deploySlots <- struct{}{}
 	defer func() { <-tg.deploySlots }()
+	submitted := time.Now().Add(-time.Minute)
 	res := tg.exec(t, tg.token, dir, deployLimit+5*time.Minute, full...)
+	if res.exit != 0 && res.problemCode() == "transport_error" {
+		// The CLI lost the API mid-deploy; the server may have accepted the
+		// deployment anyway. Follow it rather than deploying twice.
+		res = tg.followSubmitted(t, slug, submitted, res)
+	}
 	if reason := retryableAbort(res); reason != "" {
 		// Reported, not hidden: the report lists every warning line.
 		t.Logf("warning: deploy %s aborted for capacity (%s); retrying once in 60s", slug, reason)
@@ -688,6 +694,31 @@ func (tg *target) deployWith(t *testing.T, slug string, smoke bool, args ...stri
 	}
 	t.Logf("deployed %s as %s in %s", slug, str(receipt, "id"), res.elapsed.Round(time.Second))
 	return receipt
+}
+
+// followSubmitted handles a deploy whose CLI call lost the API: if the app
+// has a deployment created since the call started, it waits for that one
+// (its receipt replaces the lost one); otherwise it reports the original
+// failure so the caller fails clearly.
+func (tg *target) followSubmitted(t *testing.T, slug string, since time.Time, lost cliResult) cliResult {
+	t.Helper()
+	t.Logf("warning: deploy %s lost the API (%s); looking for the submitted deployment", slug, lost.problem())
+	list := tg.run(t, time.Minute, "deployments", "--app", slug, "--limit", "1")
+	if list.exit != 0 {
+		return lost
+	}
+	docs, err := decodeObjects(list.stdout)
+	if err != nil || len(docs) == 0 {
+		return lost
+	}
+	latest := field(docs[0], "items.0")
+	created, err := time.Parse(time.RFC3339, str(latest, "created_at"))
+	if latest == nil || err != nil || created.Before(since) {
+		return lost
+	}
+	id := str(latest, "id")
+	t.Logf("following deployment %s submitted at %s", id, created.Format(time.RFC3339))
+	return tg.run(t, deployLimit+5*time.Minute, "deployment", "wait", id, "--rollout", "--timeout", deployLimit.String())
 }
 
 // retryableAbort names a failed deploy's platform-capacity cause: an
@@ -1095,11 +1126,15 @@ func staleSlugs(apps []map[string]any, before time.Time, currentRun string) []st
 // apiKeyRe matches Gregale API key plaintexts, which `keys add` prints.
 var apiKeyRe = regexp.MustCompile(`fp_(live|test)_[A-Za-z0-9_]{16,}`)
 
+// credentialRe matches every Gregale credential plaintext (API keys,
+// per-app deploy tokens fp_deploy_…), for redaction.
+var credentialRe = regexp.MustCompile(`fp_[a-z]+_[A-Za-z0-9_]{16,}`)
+
 func (tg *target) redact(s string) string {
 	if tg != nil && len(tg.token) >= 8 {
 		s = strings.ReplaceAll(s, tg.token, "<token>")
 	}
-	return apiKeyRe.ReplaceAllString(s, "<api-key>")
+	return credentialRe.ReplaceAllString(s, "<credential>")
 }
 
 func tail(s string, n int) string {

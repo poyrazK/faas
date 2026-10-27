@@ -12,8 +12,9 @@ import (
 // URL, function templates with `gregale invoke`, workers and crons by their
 // live receipt (rows 2, 3, 9, 41). Smoke covers one app and one function;
 // full covers every template that needs no backing service. Templates that
-// need Postgres, object storage, AI provider keys, MCP hosting or other
-// preview products are left to those products' journeys.
+// need Postgres, object storage, AI provider keys, Upstash (cron-worker),
+// event subscriptions (event-worker), queues (queue-worker), MCP hosting or
+// other preview products are left to those products' journeys.
 func TestTemplateDeploys(t *testing.T) {
 	tg := needs(t, tierSmoke, true)
 	t.Parallel()
@@ -35,9 +36,6 @@ func TestTemplateDeploys(t *testing.T) {
 		{"function-go", function, tierFull},
 		{"function-rust", function, tierFull},
 		{"cron-example", workload, tierFull},
-		{"cron-worker", workload, tierFull},
-		{"event-worker", workload, tierFull},
-		{"queue-worker", workload, tierFull},
 		{"webhook-receiver", workload, tierFull},
 	}
 	for _, tc := range templates {

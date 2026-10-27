@@ -292,3 +292,11 @@ func TestHarnessPercentileNearestRank(t *testing.T) {
 		t.Error("percentile reordered its input")
 	}
 }
+
+func TestHarnessRedactHidesDeployTokens(t *testing.T) {
+	tg := &target{}
+	got := tg.redact(`{"plaintext":"fp_deploy_eceb8ed1ed1ab0ac8a537f1d8dd8feae"}`)
+	if strings.Contains(got, "eceb8ed1") {
+		t.Fatalf("redact leaked a deploy token: %s", got)
+	}
+}
