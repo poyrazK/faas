@@ -55,7 +55,7 @@ def sync_detailed(
 ) -> Response[LogSavedSearchesResponse | Problem]:
     """List an app's saved log searches.
 
-     ADR-20261018083536 internal preview behind `FAAS_LOG_SEARCH_ENABLED=1`.
+     Internal preview behind `FAAS_LOG_SEARCH_ENABLED=1`.
     Returns the app's saved searches by name. Each holds filters only;
     a search, the dashboard or an alert brings its own window.
 
@@ -88,7 +88,7 @@ def sync(
 ) -> LogSavedSearchesResponse | Problem | None:
     """List an app's saved log searches.
 
-     ADR-20261018083536 internal preview behind `FAAS_LOG_SEARCH_ENABLED=1`.
+     Internal preview behind `FAAS_LOG_SEARCH_ENABLED=1`.
     Returns the app's saved searches by name. Each holds filters only;
     a search, the dashboard or an alert brings its own window.
 
@@ -116,7 +116,7 @@ async def asyncio_detailed(
 ) -> Response[LogSavedSearchesResponse | Problem]:
     """List an app's saved log searches.
 
-     ADR-20261018083536 internal preview behind `FAAS_LOG_SEARCH_ENABLED=1`.
+     Internal preview behind `FAAS_LOG_SEARCH_ENABLED=1`.
     Returns the app's saved searches by name. Each holds filters only;
     a search, the dashboard or an alert brings its own window.
 
@@ -147,7 +147,7 @@ async def asyncio(
 ) -> LogSavedSearchesResponse | Problem | None:
     """List an app's saved log searches.
 
-     ADR-20261018083536 internal preview behind `FAAS_LOG_SEARCH_ENABLED=1`.
+     Internal preview behind `FAAS_LOG_SEARCH_ENABLED=1`.
     Returns the app's saved searches by name. Each holds filters only;
     a search, the dashboard or an alert brings its own window.
 

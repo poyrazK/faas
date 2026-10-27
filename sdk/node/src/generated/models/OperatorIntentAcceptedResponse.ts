@@ -11,9 +11,9 @@
  * under operator.action.{park_instance, restart_instance,
  * force_cold_boot} with target_account_id = the instance's /
  * app's owning account. StatusURL is the relative path;
- * clients prepend the apid base URL. The exact response is retained for
+ * clients prepend the API base URL. The exact response is retained for
  * matching request-key retries independently of target state and audit
- * queue retention (ADR-1524).
+ * queue retention.
  *
  */
 export type OperatorIntentAcceptedResponse = {
@@ -51,7 +51,7 @@ export type OperatorIntentAcceptedResponse = {
   /**
    * Obs-Meta + Trace-IDs Mega-PR / C4. OTel W3C 32-char
    * hex identifier shared with the inbound HTTP request
-   * and the schedd dispatch context. Always populated for
+   * and the scheduler dispatch context. Always populated for
    * the inbound force-action route (the middleware
    * generates one when absent); surfaced here so the
    * caller can correlate the 202 response with the

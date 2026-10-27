@@ -71,7 +71,7 @@ def sync_detailed(
     *,
     client: AuthenticatedClient | Client,
 ) -> Response[Problem | ReleaseFreeze]:
-    """Lift a deploy freeze (ADR-20261019071733).
+    """Lift a deploy freeze.
 
      Stops the freeze from withholding releases. The freeze is kept, with who lifted it and when, for the
     audit trail. 404 `release_freeze_not_found` when no unlifted freeze has this ID.
@@ -103,7 +103,7 @@ def sync(
     *,
     client: AuthenticatedClient | Client,
 ) -> Problem | ReleaseFreeze | None:
-    """Lift a deploy freeze (ADR-20261019071733).
+    """Lift a deploy freeze.
 
      Stops the freeze from withholding releases. The freeze is kept, with who lifted it and when, for the
     audit trail. 404 `release_freeze_not_found` when no unlifted freeze has this ID.
@@ -130,7 +130,7 @@ async def asyncio_detailed(
     *,
     client: AuthenticatedClient | Client,
 ) -> Response[Problem | ReleaseFreeze]:
-    """Lift a deploy freeze (ADR-20261019071733).
+    """Lift a deploy freeze.
 
      Stops the freeze from withholding releases. The freeze is kept, with who lifted it and when, for the
     audit trail. 404 `release_freeze_not_found` when no unlifted freeze has this ID.
@@ -160,7 +160,7 @@ async def asyncio(
     *,
     client: AuthenticatedClient | Client,
 ) -> Problem | ReleaseFreeze | None:
-    """Lift a deploy freeze (ADR-20261019071733).
+    """Lift a deploy freeze.
 
      Stops the freeze from withholding releases. The freeze is kept, with who lifted it and when, for the
     audit trail. 404 `release_freeze_not_found` when no unlifted freeze has this ID.

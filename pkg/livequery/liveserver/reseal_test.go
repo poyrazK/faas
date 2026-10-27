@@ -40,7 +40,7 @@ func page(rows map[string]livekeys.Sealed, after string, limit int) []livekeys.S
 
 func swap(rows map[string]livekeys.Sealed, row livekeys.Sealed, blob []byte) bool {
 	current, ok := rows[row.ID]
-	if !ok || !bytes.Equal(current.Blob, row.Blob) {
+	if !ok || !bytes.Equal(current.Blob, row.Blob) || current.Recipient != row.Recipient {
 		return false
 	}
 	current.Blob = blob
@@ -169,5 +169,57 @@ func TestResealBindsLegacyRowsToTheirDatabase(t *testing.T) {
 	}
 	if again.Keys.Resealed != 0 || again.Logins.Resealed != 0 || again.Keys.Bound != 2 || again.Logins.Bound != resealPage+1 {
 		t.Fatalf("a second re-seal = %+v; it must find every row it re-sealed already bound", again)
+	}
+}
+
+// A database writer controls each row's recipient column and can copy a
+// legacy login (which names no database) onto another row. The re-seal must
+// neither seal a plaintext to a recipient it was not loaded with nor bind a
+// login that two rows hold.
+func TestResealRefusesARedirectedRecipientAndACopiedLogin(t *testing.T) {
+	identity, err := age.GenerateX25519Identity()
+	if err != nil {
+		t.Fatal(err)
+	}
+	attacker, err := age.GenerateX25519Identity()
+	if err != nil {
+		t.Fatal(err)
+	}
+	sealTo := func(namespace, plain string) []byte {
+		t.Helper()
+		blob, err := secretbox.SealBytes(identity.Recipient(), namespace, []byte(plain), livekeys.LoginMaxBytes)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return blob
+	}
+	const victim, thief, redirected = "00000000-0000-4000-8000-000000000001", "00000000-0000-4000-8000-000000000002", "00000000-0000-4000-8000-000000000003"
+	victimLogin := "postgresql://gregale_live_victim:SECRET@db.internal/app"
+	store := &resealRows{keys: map[string]livekeys.Sealed{}, logins: map[string]livekeys.Sealed{
+		victim: {ID: victim, DatabaseID: victim, Blob: sealTo(livekeys.LoginSealNamespace, victimLogin), Recipient: identity.Recipient().String()},
+		// The victim's legacy blob copied onto the thief's database.
+		thief: {ID: thief, DatabaseID: thief, Blob: sealTo(livekeys.LoginSealNamespace, victimLogin), Recipient: identity.Recipient().String()},
+		// A row whose recipient column now names the attacker's key.
+		redirected: {ID: redirected, DatabaseID: redirected, Blob: sealTo(livekeys.LoginSealNamespace, "postgresql://gregale_live_3:PW@db.internal/app"),
+			Recipient: attacker.Recipient().String()},
+	}}
+	before := map[string][]byte{}
+	for id, row := range store.logins {
+		before[id] = row.Blob
+	}
+	report, err := Reseal(t.Context(), store, []*age.X25519Identity{identity}, slog.New(slog.DiscardHandler))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report.Logins != (ResealCounts{Refused: 3}) {
+		t.Fatalf("logins = %+v, want all three refused", report.Logins)
+	}
+	for id, row := range store.logins {
+		if !bytes.Equal(row.Blob, before[id]) {
+			t.Errorf("login %s was re-sealed; it must be left as it is", id)
+		}
+		if _, _, err := secretbox.OpenBytes(attacker, row.Blob); err == nil {
+			t.Errorf("login %s opens with the key a database row named", id)
+		}
 	}
 }

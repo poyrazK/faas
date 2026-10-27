@@ -3860,7 +3860,7 @@ func (e *Engine) admitAndDispatchOnce(ctx context.Context, appID, deploymentID, 
 	}
 	prefetched := prefetch.wait()
 	privateNetwork := prefetched.privateNetwork
-	healthcheckPath, healthcheckGRPC, healthcheckGRPCService := startupProbeForApp(dep, app.AppProtocol)
+	healthcheckPath, healthcheckGRPC, healthcheckGRPCService := startupProbeForApp(dep, app)
 	pinnedBase, err := prefetched.baseKey, prefetched.baseKeyErr
 	ctx = withBootPrepared(ctx, bootPrepared{instanceID: ins.ID,
 		rehearsalRunID: prefetched.rehearsalRunID, haveRehearsal: prefetched.rehearsalErr == nil,
@@ -4302,6 +4302,7 @@ func (e *Engine) admitAndDispatchOnce(ctx context.Context, appID, deploymentID, 
 		if e.ops != nil {
 			e.ops.WakeFailure("", bootInput.appID, "vmm_boot_failed").Inc()
 		}
+		logVMMBootFailure(e.log, bootCtx, bootInput.appID, bootInput.insID, bootInput.wakeID, bootInput.nodeID, method, rpcEndedAt.Sub(rpcStartedAt), err)
 		e.transitionWithKind(transitionCtx, bootInput.insID, bootInput.appID, state.StateFailed, "wake_boot_error", "vmm_boot_failed")
 		noteWakeBootError(ctx, bootInput.nodeID, err)
 		return WakeResult{}, err
@@ -5916,7 +5917,7 @@ func (e *Engine) buildAppSpecForMigrationWithValues(ctx context.Context, instanc
 		return AppSpec{}, state.RuntimeAppValuesSnapshot{}, fmt.Errorf("sched: build app spec: GitOps service bindings: %w", err)
 	}
 	privateNetwork := e.privateNetworkProjection(ctx, app)
-	healthcheckPath, healthcheckGRPC, healthcheckGRPCService := startupProbeForApp(dep, app.AppProtocol)
+	healthcheckPath, healthcheckGRPC, healthcheckGRPCService := startupProbeForApp(dep, app)
 	pinnedBase, err := e.deploymentBaseKey(ctx, app, dep, layerKey(dep.RootfsKey, dep.ID))
 	if err != nil {
 		return AppSpec{}, state.RuntimeAppValuesSnapshot{}, err
@@ -8016,15 +8017,15 @@ func (e *Engine) SeedLedger(ctx context.Context) error {
 				// including overlap and capacity above a subsequently lowered cap.
 				// This does not authorize new capacity: the rows are already
 				// resident, and the reconstructed count blocks normal admits.
-				AllowConcurrencyOverlap:    true,
-				AllowConcurrencyRecovery:   true,
-				NodeID:                     nodeID,
-				NodeCeilingMB:              loadCeiling(ctx, nodeID),
-				VCPUBudget:                 loadVCPUBudget(ctx, nodeID),
-				CPUBudgetMillicores:        loadCPUBudgetMillicores(ctx, nodeID),
-				AllowCPUOvercommitRecovery: true,
-				Kind:                       kind,
-				FrozenChargeMB:             api.MeasuredChargeFloorMB,
+				AllowConcurrencyOverlap:  true,
+				AllowConcurrencyRecovery: true,
+				NodeID:                   nodeID,
+				NodeCeilingMB:            loadCeiling(ctx, nodeID),
+				VCPUBudget:               loadVCPUBudget(ctx, nodeID),
+				CPUBudgetMillicores:      loadCPUBudgetMillicores(ctx, nodeID),
+				AllowResidentRecovery:    true,
+				Kind:                     kind,
+				FrozenChargeMB:           api.MeasuredChargeFloorMB,
 			}
 			// Preserve resident accounting even if scope recovery fails. Unknown
 			// scope cannot authorize an automatic rollout allowance.

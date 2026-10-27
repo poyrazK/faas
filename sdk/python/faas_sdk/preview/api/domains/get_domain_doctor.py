@@ -75,7 +75,7 @@ def sync_detailed(
     *,
     client: AuthenticatedClient | Client,
 ) -> Response[DomainDoctorReport | Problem]:
-    """Run the 5-check domain doctor (ADR-120).
+    """Run the 5-check domain doctor.
 
      Returns the per-domain doctor report. The five checks map
     1:1 to the Render-style custom-domain check: dns_record,
@@ -125,7 +125,7 @@ def sync(
     *,
     client: AuthenticatedClient | Client,
 ) -> DomainDoctorReport | Problem | None:
-    """Run the 5-check domain doctor (ADR-120).
+    """Run the 5-check domain doctor.
 
      Returns the per-domain doctor report. The five checks map
     1:1 to the Render-style custom-domain check: dns_record,
@@ -170,7 +170,7 @@ async def asyncio_detailed(
     *,
     client: AuthenticatedClient | Client,
 ) -> Response[DomainDoctorReport | Problem]:
-    """Run the 5-check domain doctor (ADR-120).
+    """Run the 5-check domain doctor.
 
      Returns the per-domain doctor report. The five checks map
     1:1 to the Render-style custom-domain check: dns_record,
@@ -218,7 +218,7 @@ async def asyncio(
     *,
     client: AuthenticatedClient | Client,
 ) -> DomainDoctorReport | Problem | None:
-    """Run the 5-check domain doctor (ADR-120).
+    """Run the 5-check domain doctor.
 
      Returns the per-domain doctor report. The five checks map
     1:1 to the Render-style custom-domain check: dns_record,

@@ -273,14 +273,26 @@ func configureDataAPI(ctx context.Context, client *api.Client, app api.AppRespon
 	if _, err = waitForManagedPostgresBinding(ctx, client, binding, addResourceDefaultWait); err != nil {
 		return err
 	}
-	// PostgreSQL's extra egress port remains subject to the normal plan gate.
+	// PostgreSQL's extra egress port stays subject to the plan gate; plans
+	// without extra ports rely on the binding's own database egress.
 	ports := []int{5432}
 	// Application JWTs are verified by the Data API runtime. Paid-plan edge
 	// defaults require an owner API key, which would reject those JWTs first.
 	requireAuthn := false
 	publicAuth := openPublicAuthAfterTokenRemoval(app)
-	if _, err = client.UpdateApp(ctx, app.Slug, api.UpdateAppRequest{EgressPorts: &ports, RequireAuthn: &requireAuthn, PublicAuth: publicAuth, SetPublicAuth: publicAuth != nil}); err != nil {
-		return err
+	update := api.UpdateAppRequest{EgressPorts: &ports, RequireAuthn: &requireAuthn, PublicAuth: publicAuth, SetPublicAuth: publicAuth != nil}
+	setDataAPILifecycle(&update)
+	if _, err = client.UpdateApp(ctx, app.Slug, update); err != nil {
+		// A plan without extra egress ports reaches its database through the
+		// binding itself (ADR-20261026150000); keep the other settings.
+		var apiErr *APIError
+		if !errors.As(err, &apiErr) || apiErr.Problem.Code != api.CodePlanEgressPortsNotAllowed {
+			return err
+		}
+		update.EgressPorts = nil
+		if _, err = client.UpdateApp(ctx, app.Slug, update); err != nil {
+			return err
+		}
 	}
 	for _, key := range []string{"DATA_API_SCHEMAS", "DATA_API_ISSUER", "DATA_API_JWKS_URL", "DATA_API_AUDIENCE", "DATA_API_ALLOWED_ORIGINS", "DATA_API_READ_ONLY"} {
 		if err = client.SetSecretWithScope(ctx, app.Slug, key, func() string {
@@ -302,6 +314,18 @@ func configureDataAPI(ctx context.Context, client *api.Client, app api.AppRespon
 		}
 	}
 	return nil
+}
+
+// The runtime stops PostgREST before a snapshot and starts it after a restore,
+// so no snapshot holds a SQL session (templates/data-api/engine.mjs).
+const (
+	dataAPIBeforeCheckpointPath = "/__gregale/lifecycle/before-checkpoint"
+	dataAPIAfterRestorePath     = "/__gregale/lifecycle/after-restore"
+)
+
+func setDataAPILifecycle(update *api.UpdateAppRequest) {
+	update.BeforeCheckpoint = &api.BeforeCheckpointHook{Path: dataAPIBeforeCheckpointPath, TimeoutMS: api.AfterRestoreHookMaxTimeoutMS}
+	update.AfterRestore = &api.AfterRestoreHook{Path: dataAPIAfterRestorePath, TimeoutMS: api.AfterRestoreHookMaxTimeoutMS}
 }
 
 func dataAPIHTTPS(value string) bool {

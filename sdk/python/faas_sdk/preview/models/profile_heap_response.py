@@ -23,7 +23,7 @@ T = TypeVar("T", bound="ProfileHeapResponse")
 
 @_attrs_define
 class ProfileHeapResponse:
-    """Continuous live heap near query.end (ADR-1155)."""
+    """Continuous live heap near query.end."""
 
     query: ProfileQuery
     """Authorized deployment CPU capture window."""

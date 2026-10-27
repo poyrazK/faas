@@ -8,7 +8,7 @@ import { request as __request } from '../core/request.js';
 export class OpenapiDiscoveryService {
   /**
    * Read the captured OpenAPI document for a deployment.
-   * Returns the OpenAPI document the cold-boot probe captured from the customer's app (issue #975 item #1, ADR-122). The probe runs unconditionally during cold boot; the apid surfaces the doc only on paid plans (Hobby/Pro/Scale). Free customers receive 402 + openapi_docs_not_allowed. Cache-Control: 5 min. Response headers: X-OpenAPI-Doc-Source (cold_boot or manual_upload), X-OpenAPI-Doc-Truncated (1 if clipped at 128 KiB), X-OpenAPI-Doc-Byte-Size, X-OpenAPI-Doc-Deployment-ID, X-OpenAPI-Doc-App-ID, X-OpenAPI-Doc-SHA256, X-OpenAPI-Doc-Captured-At and X-OpenAPI-Doc-Updated-At. These authenticated metadata headers bind the unchanged body to its capture.
+   * Returns the OpenAPI document the cold-boot probe captured from the customer's app. The probe runs unconditionally during cold boot; the API surfaces the doc only on paid plans (Hobby/Pro/Scale). Free customers receive 402 + openapi_docs_not_allowed. Cache-Control: 5 min. Response headers: X-OpenAPI-Doc-Source (cold_boot or manual_upload), X-OpenAPI-Doc-Truncated (1 if clipped at 128 KiB), X-OpenAPI-Doc-Byte-Size, X-OpenAPI-Doc-Deployment-ID, X-OpenAPI-Doc-App-ID, X-OpenAPI-Doc-SHA256, X-OpenAPI-Doc-Captured-At and X-OpenAPI-Doc-Updated-At. These authenticated metadata headers bind the unchanged body to its capture.
    * @returns any The OpenAPI document.
    * @throws ApiError
    */
@@ -34,7 +34,7 @@ export class OpenapiDiscoveryService {
       },
       errors: {
         401: `code: unauthorized`,
-        402: `Free plan cannot access endpoint discovery. MicroVM captures the doc, but the apid refuses to expose it.`,
+        402: `Free plan cannot access endpoint discovery. MicroVM captures the doc, but the API refuses to expose it.`,
         404: `No document captured for this deployment, or the deployment id is not owned by the caller (IDOR floor).`,
       },
     });

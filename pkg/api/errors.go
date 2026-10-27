@@ -653,7 +653,11 @@ const (
 	// CodeEventPublishRateLimited marks a publication beyond the account's
 	// event publish rate (EventPublishLimits); retry after Retry-After.
 	CodeEventPublishRateLimited = "event_publish_rate_limited"
-	CodeUnauthorized            = "unauthorized"
+	// CodeEventsPaused marks a publication refused while the events
+	// capability is switched off, platform-wide or for the account
+	// (ADR-20261027125625). Nothing was accepted; retry after Retry-After.
+	CodeEventsPaused = "events_paused"
+	CodeUnauthorized = "unauthorized"
 	// CodeAuthRateLimited marks a rejected credential after the caller's
 	// source IP exhausted the failed-auth budget. Valid credentials from the
 	// same IP are still admitted, so one broken client behind a shared NAT
@@ -1365,6 +1369,10 @@ const (
 	// "use `gregale invocation <id>` to inspect the state" hint
 	// without parsing prose.
 	CodeInvocationNotReplayable = "invocation_not_replayable"
+	// CodeDeadLetterNotReplayable is the 409 for a dead-letter entry with
+	// nothing left to redrive: an event_route routing failure whose receipt
+	// was pruned (ADR-20261026163443). Re-publish its payload instead.
+	CodeDeadLetterNotReplayable = "dead_letter_not_replayable"
 	// CodeDebugReplayUnsupported is returned when a retained request has no
 	// enabled mirror rule for the deployment that served it. Replaying without
 	// that target would silently exercise a different deployment.
@@ -2111,7 +2119,7 @@ func StatusForCode(code string) int {
 		CodeAccountAbuseHold:
 		return http.StatusForbidden
 	case CodePlanLimitConcur, CodeQuotaExhausted, CodeAppConcurReached, CodeConcurrencyThrottled, CodeConcurrencyQueueFull, CodeExportRateLimited, CodeDeployRateLimited,
-		CodeAuthRateLimited, CodeDevDebugSessionLimit, CodeEventPublishRateLimited:
+		CodeAuthRateLimited, CodeDevDebugSessionLimit, CodeEventPublishRateLimited, CodeCronFireNowBusy:
 		return http.StatusTooManyRequests
 	case CodeSourceTooLarge, CodeInboundWebhookTooLarge:
 		return http.StatusRequestEntityTooLarge
@@ -2139,7 +2147,7 @@ func StatusForCode(code string) int {
 		CodePrivateNetworkNotEnabled, CodePublicAuthConfigInvalid, CodeRealtimeUnavailable, CodeAppLogsUnavailable, CodeLogArchiveUnavailable,
 		CodeInstanceFrozen:
 		return http.StatusServiceUnavailable
-	case CodeAPIContractDiffDisabled, CodeDataUpstreamsDisabled:
+	case CodeAPIContractDiffDisabled, CodeDataUpstreamsDisabled, CodeEventsPaused:
 		return http.StatusServiceUnavailable
 	case CodeScanCritical:
 		// 503 — the base ext4 has a CRITICAL Grype finding
@@ -2500,6 +2508,8 @@ func StatusForCode(code string) int {
 		// Issue #315: replay attempts on a non-replayable state
 		// surface 409 — the conflict is between the request and
 		// the resource's current state, not between two writes.
+		return http.StatusConflict
+	case CodeDeadLetterNotReplayable:
 		return http.StatusConflict
 	case CodeInvalidCredentials, CodeEmailNotVerified:
 		return http.StatusUnauthorized
@@ -3002,6 +3012,24 @@ func ErrDeployRateLimited(limit, retryAfterS int) *Problem {
 
 // ErrEventPublishRateLimited reports a publication of events beyond the
 // account's per-second event publish rate. Nothing was accepted.
+// EventsPausedRetryAfter is the Retry-After a refused publication carries
+// while the events capability is off; a flag change applies within seconds.
+const EventsPausedRetryAfter = 30 * time.Second
+
+// ErrEventsPaused refuses a publication while the events capability is off
+// (ADR-20261027125625). accountScope says the switch is off for this account
+// rather than platform-wide. It is a 503 so producers keep and resend the
+// events instead of reading a missing route as permanent.
+func ErrEventsPaused(accountScope bool) *Problem {
+	detail := "Gregale has paused event publishing platform-wide; nothing was accepted. Retry the same events after the indicated back-off."
+	if accountScope {
+		detail = "Event publishing is switched off for this account; nothing was accepted. Retry the same events later, or contact support."
+	}
+	return NewProblem(http.StatusServiceUnavailable, CodeEventsPaused, "Event publishing is paused", detail).
+		WithHeader("Retry-After", strconv.Itoa(int(EventsPausedRetryAfter.Seconds()))).
+		WithDocs(docsBase + "/event-driven#pausing-events")
+}
+
 func ErrEventPublishRateLimited(perSecond, events int, retryAfter time.Duration) *Problem {
 	retryAfterS := int(math.Ceil(retryAfter.Seconds()))
 	if retryAfterS <= 0 {
@@ -3521,6 +3549,11 @@ const CodePlanCronsNotAllowed = "plan_crons_not_allowed"
 // Distinct from CodePlanCronsNotAllowed so the CLI can branch on
 // upsell-vs-delete copy without parsing the body.
 const CodePlanCronQuota = "plan_cron_quota"
+
+// CodeCronFireNowBusy is the 429 a manual cron run gets while the cron
+// already has CronFireNowActivePerCron runs waiting or running
+// (ADR-20261026201726).
+const CodeCronFireNowBusy = "cron_fire_now_busy"
 
 // CodePlanGateBlocked is the 403 the operator sees when a scan
 // project's plan gate was blocked pre-exclude AND the post-exclude
@@ -4202,6 +4235,17 @@ func ErrPlanCronQuota(plan Plan, scope string, limit, observed int) *Problem {
 			plan, limit, scopeName, observed)).
 		WithLimit(int64(limit), int64(observed)).
 		WithDocs(docsBase + "/plans#crons")
+}
+
+// ErrCronFireNowBusy is the 429 for a manual run of a cron that already
+// has limit runs waiting or running (ADR-20261026201726).
+func ErrCronFireNowBusy(limit, observed int) *Problem {
+	return NewProblem(http.StatusTooManyRequests, CodeCronFireNowBusy,
+		"Cron run already pending",
+		fmt.Sprintf("this cron already has %d manual runs waiting or running (limit %d); retry after one finishes.", observed, limit)).
+		WithLimit(int64(limit), int64(observed)).
+		WithHeader("Retry-After", "30").
+		WithDocs(docsBase + "/crons#run-a-cron-now")
 }
 
 // ErrPlanJobsNotAllowed is returned by apid's createJob handler
@@ -4901,6 +4945,16 @@ func ErrPlanDataUpstreamsNotAllowed(p Plan) *Problem {
 // ErrDataUpstreamsDisabled reports cluster configuration independently of
 // plan entitlement. Operators can enable the runtime switch without asking an
 // already-entitled customer to change plans.
+// ErrEgressCircuitNotEnforced (ADR-570) refuses opting an upstream into the
+// egress circuit breaker while this platform's schedd and vmmd do not enforce
+// it: the setting would be stored and shown, but no connection rejected.
+func ErrEgressCircuitNotEnforced() *Problem {
+	return NewProblem(http.StatusServiceUnavailable, CodeEgressCircuitDisabled,
+		"Egress circuit breakers are not enforced",
+		"this platform does not enforce egress circuit breakers yet, so enabling one would not reject any connection; contact the platform operator").
+		WithDocs(docsBase + "/plans#data-placement")
+}
+
 func ErrDataUpstreamsDisabled() *Problem {
 	return NewProblem(http.StatusServiceUnavailable, CodeDataUpstreamsDisabled,
 		"Data placement is disabled",
@@ -6353,6 +6407,16 @@ func ErrInvocationNotFound(id string) *Problem {
 		"Invocation not found",
 		fmt.Sprintf("no invocation with id %q on this account.", id)).
 		WithDocs(docsBase + "/event-driven#invocations")
+}
+
+// ErrDeadLetterNotReplayable refuses replay of an event_route dead-letter
+// entry: the routing failure's receipt was pruned and no invocation exists,
+// so there is nothing to redrive (ADR-20261026163443).
+func ErrDeadLetterNotReplayable() *Problem {
+	return NewProblem(http.StatusConflict, CodeDeadLetterNotReplayable,
+		"Dead-letter event cannot be replayed",
+		"this routing failure's receipt has been pruned, so there is nothing to redrive; re-publish the event in its payload to deliver it again.").
+		WithDocs(docsBase + "/event-driven#routing-failures-in-the-dead-letter-queue")
 }
 
 // ErrInvocationNotReplayable (issue #315 / tier-2 DX) is returned by

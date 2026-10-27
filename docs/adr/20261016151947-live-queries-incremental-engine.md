@@ -368,7 +368,22 @@ is a later step.
      login changes its password. A row that is bound to another database,
      doesn't open, or holds another key's secret is reported and left as it
      is (amended 2026-10-26).
+     Amended 2026-10-27 (security audit): the re-seal seals to the loaded
+     identity's own recipient, never to the `recipient` column, which a
+     database writer could point at their own key; a row naming any other
+     recipient is refused, and the compare-and-swap includes the recipient.
+     A login whose plaintext another row also holds is refused on both rows:
+     a legacy blob names no database, so a copy of one database's login onto
+     another is told apart only that way.
   3. livequeryd stops opening the legacy form.
+- **What the binding does not stop (2026-10-27).** age envelopes do not
+  authenticate their sender and livequeryd's recipient is public, so a
+  database writer can seal a new, correctly bound key or login for any
+  database, or move a whole key row (same key ID, new database) before the
+  re-seal. The binding stops copying one database's ciphertext onto
+  another's row; it does not make the rows authorization material a writer
+  cannot forge. That needs a MAC over the key ID, database and blob under a
+  key apid and livequeryd share, which is follow-up work.
 - Limits (`pkg/api/limits.go`):
   - SQL up to 32 KiB, 256 parameters of 16 KiB each (as Neon);
   - a sealed payload up to 48 KiB;

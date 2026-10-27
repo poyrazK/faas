@@ -1000,6 +1000,7 @@ func (m *MemStore) PruneSettledPublishedEvents(_ context.Context, now time.Time,
 		}
 		_, held := holds[work.ID]
 		if work.Delivered && work.DeliveredAt.Before(now.Add(-m.eventSettledRetentionLocked(memEventFanoutOwner(key)))) && !held {
+			m.captureEventRouteDeadLettersLocked(memEventFanoutOwner(key), work)
 			for _, recipient := range work.RecipientSnapshot {
 				m.loseSubscriptionExecutionCoverageLocked(recipient.ID, "receipt_deleted", time.Now().UTC())
 			}

@@ -4,7 +4,7 @@
 /* eslint-disable */
 import type { AppReleaseReview } from './AppReleaseReview.js';
 /**
- * Body for POST /v1/apps/{slug}/rollouts/recover (SAFE-RELEASES-R, issue #976 / ADR-122). Closed-set `action` ∈ {advance, promote, abort}; `reason` is the operator-supplied free-text captured into the deployment_audit row's data payload.
+ * Body for POST /v1/apps/{slug}/rollouts/recover. Closed-set `action` ∈ {advance, promote, abort}; `reason` is the operator-supplied free-text captured into the deployment_audit row's data payload.
  */
 export type RecoverRolloutRequest = {
   expected_review?: AppReleaseReview;

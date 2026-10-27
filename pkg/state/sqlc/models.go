@@ -2702,6 +2702,8 @@ type ComputeNode struct {
 	CpuModel        string
 	Readiness       string
 	ReadinessReason pgtype.Text
+	// Last time this node's gatewayd-internal edge-rule listener reported alive (database clock); NULL before its first report (ADR-091).
+	EdgeListenerHeartbeatAt pgtype.Timestamptz
 }
 
 type ComputeNodeHeartbeat struct {
@@ -2863,6 +2865,7 @@ type Cron struct {
 	SchedulePolicy        []byte
 	FailureRules          []byte
 	ScheduleRevision      int64
+	ScheduleAnchorAt      pgtype.Timestamptz
 }
 
 type CronFireNowRequest struct {
@@ -7996,6 +7999,13 @@ type ManagedPostgresDatabase struct {
 	OrgID                       pgtype.UUID
 }
 
+type ManagedPostgresDatabaseEndpoint struct {
+	DatabaseID pgtype.UUID
+	Host       string
+	Port       int32
+	UpdatedAt  pgtype.Timestamptz
+}
+
 type ManagedPostgresHealth struct {
 	DatabaseID         pgtype.UUID
 	AccountID          pgtype.UUID
@@ -11645,16 +11655,17 @@ type ProjectEnvironment struct {
 }
 
 type ProjectEnvironmentApproval struct {
-	ID                pgtype.UUID
-	AccountID         pgtype.UUID
-	ProjectSlug       string
-	EnvironmentSlug   string
-	PlanTokenHash     string
-	ApprovalTokenHash string
-	ExpiresAt         pgtype.Timestamptz
-	CreatedAt         pgtype.Timestamptz
-	TokenKind         string
-	ConsumedAt        pgtype.Timestamptz
+	ID                  pgtype.UUID
+	AccountID           pgtype.UUID
+	ProjectSlug         string
+	EnvironmentSlug     string
+	PlanTokenHash       string
+	ApprovalTokenHash   string
+	ExpiresAt           pgtype.Timestamptz
+	CreatedAt           pgtype.Timestamptz
+	TokenKind           string
+	ConsumedAt          pgtype.Timestamptz
+	ApprovedByAccountID pgtype.UUID
 }
 
 type ProjectEnvironmentCleanupJob struct {

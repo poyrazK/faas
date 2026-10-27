@@ -30,8 +30,8 @@ class RolloutCompletedWebhookPayload:
     traffic_percent: int
     completed_at: datetime.datetime
     decision: RolloutDecision | Unset = UNSET
-    """Evidence behind one decision about a rollout (ADR-1447): why a canary stage advanced, is held, or was
-    aborted. Aggregates only; no request payloads, routes, URLs or customer text."""
+    """Evidence behind one decision about a rollout: why a canary stage advanced, is held, or was aborted.
+    Aggregates only; no request payloads, routes, URLs or customer text."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

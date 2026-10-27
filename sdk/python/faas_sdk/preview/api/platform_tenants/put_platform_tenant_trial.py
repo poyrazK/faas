@@ -102,7 +102,7 @@ def sync_detailed(
     Args:
         id (UUID):
         body (PutAPIConsumerTrialRequest): A consumer's trial length in days from its start, or
-            its end (ADR-1314). Set exactly one.
+            its end. Set exactly one.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -141,7 +141,7 @@ def sync(
     Args:
         id (UUID):
         body (PutAPIConsumerTrialRequest): A consumer's trial length in days from its start, or
-            its end (ADR-1314). Set exactly one.
+            its end. Set exactly one.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -175,7 +175,7 @@ async def asyncio_detailed(
     Args:
         id (UUID):
         body (PutAPIConsumerTrialRequest): A consumer's trial length in days from its start, or
-            its end (ADR-1314). Set exactly one.
+            its end. Set exactly one.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -212,7 +212,7 @@ async def asyncio(
     Args:
         id (UUID):
         body (PutAPIConsumerTrialRequest): A consumer's trial length in days from its start, or
-            its end (ADR-1314). Set exactly one.
+            its end. Set exactly one.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

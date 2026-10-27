@@ -13,7 +13,7 @@ T = TypeVar("T", bound="EdgeRulePenalty")
 
 @_attrs_define
 class EdgeRulePenalty:
-    """A rule's penalty box (ADR-20261022105846). Once the rule has refused
+    """A rule's penalty box. Once the rule has refused
     the same client `after` times within `within_seconds`, every request
     from that client to the app is refused with 403 `penalty_box` and
     Retry-After for `seconds`, whichever rule or path it targets. The

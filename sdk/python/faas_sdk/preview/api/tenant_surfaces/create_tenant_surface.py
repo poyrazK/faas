@@ -106,7 +106,7 @@ def sync_detailed(
 ) -> Response[Problem | TenantSurfaceResponse]:
     """Add a tenant surface with seed hostnames.
 
-     The customer-facing surface for issue #879 / ADR-100. One
+     A tenant surface. One
     surface holds N hostnames under one SAN bundle. Returns 202
     (the cert engine has to mint; the surface is in pending/active
     state).
@@ -146,7 +146,7 @@ def sync(
 ) -> Problem | TenantSurfaceResponse | None:
     """Add a tenant surface with seed hostnames.
 
-     The customer-facing surface for issue #879 / ADR-100. One
+     A tenant surface. One
     surface holds N hostnames under one SAN bundle. Returns 202
     (the cert engine has to mint; the surface is in pending/active
     state).
@@ -181,7 +181,7 @@ async def asyncio_detailed(
 ) -> Response[Problem | TenantSurfaceResponse]:
     """Add a tenant surface with seed hostnames.
 
-     The customer-facing surface for issue #879 / ADR-100. One
+     A tenant surface. One
     surface holds N hostnames under one SAN bundle. Returns 202
     (the cert engine has to mint; the surface is in pending/active
     state).
@@ -219,7 +219,7 @@ async def asyncio(
 ) -> Problem | TenantSurfaceResponse | None:
     """Add a tenant surface with seed hostnames.
 
-     The customer-facing surface for issue #879 / ADR-100. One
+     A tenant surface. One
     surface holds N hostnames under one SAN bundle. Returns 202
     (the cert engine has to mint; the surface is in pending/active
     state).

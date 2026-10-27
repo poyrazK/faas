@@ -22,7 +22,7 @@ class CreateAPIConsumerPlanRequest:
     """Weighted units per consumer per UTC month; over the cap the gateway returns 429 until the month ends."""
     alert_thresholds_percent: list[int] | Unset = UNSET
     """Percentages of max_units_per_month at which a consumer.usage_threshold webhook fires, once per consumer per
-    UTC month (ADR-849). Requires max_units_per_month."""
+    UTC month. Requires max_units_per_month."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

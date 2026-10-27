@@ -202,9 +202,12 @@ Each step is its own PR, in this order:
    The first also pools the cap sweep by `managed_postgres_usage_subject`, so an
    organization that owns resources is one pool. It is keyed by the subject
    the ledger uses, not by each namespace.
-5. The staging qualification probe for decision 10, then an operator step:
-   `on` in staging, then in production, after a shadow week whose logged
-   quotas match the ledger.
+5. The staging qualification probe for decision 10:
+   `managed-postgres-qualify --compute-cap` writes a separate artifact, and
+   `on` refuses to start without one that names a configured backend and
+   passes every check. Then an operator step: `on` in staging, then in
+   production, after a shadow week whose logged quotas match the ledger. The
+   warning emails (step 3) land before `on`.
 6. The storage pool (decision 9).
 
 ## Release compatibility

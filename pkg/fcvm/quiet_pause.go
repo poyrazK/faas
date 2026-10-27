@@ -17,6 +17,10 @@ package fcvm
 // instance flight first and then call QuietResume, so the pass that
 // checks for flights either sees theirs or is resumed by it.
 //
+// Observe mode runs the same pass and the same ordering on
+// quietState.observing instead of paused, and never calls Firecracker: it
+// only measures the pauses quiet pause would make on the node.
+//
 // Lock order: quietState.mu, then Manager.mu. quietMu is a leaf.
 
 import (
@@ -27,6 +31,8 @@ import (
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
+
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 const (
@@ -51,6 +57,13 @@ type QuietPauseConfig struct {
 	Metrics  *QuietPauseMetrics
 	// Tick is the pause pass period; zero means DefaultQuietPauseTick.
 	Tick time.Duration
+	// Observe runs the pause pass without pausing anything. It records when
+	// each eligible instance would have been paused and for how long
+	// (vmmd_quiet_pause_observed_*), so an operator can measure quiet pause
+	// on a node's real traffic before turning it on. An observed instance
+	// keeps running, and nothing reports it as paused: probes, admission and
+	// the pause ledger see a running instance.
+	Observe bool
 }
 
 // WithQuietPause enables quiet pause. Without it RunQuietPause returns at
@@ -58,6 +71,7 @@ type QuietPauseConfig struct {
 func (m *Manager) WithQuietPause(cfg QuietPauseConfig) *Manager {
 	m.quietActivity = cfg.Activity
 	m.quietMetrics = cfg.Metrics
+	m.quietObserve = cfg.Observe
 	m.quietTick = cfg.Tick
 	if m.quietTick <= 0 {
 		m.quietTick = DefaultQuietPauseTick
@@ -96,6 +110,12 @@ type quietState struct {
 	// never measured from before it: the activity tracker keys on the
 	// instance id, so its last request may belong to an earlier VM.
 	seenAt time.Time
+	// observing is set, in observe mode, while the instance would be
+	// paused, from observedSince (guarded by mu). Like paused, it is set
+	// before the last idle check, so a racing request either backs the
+	// observation off or ends it in QuietResume.
+	observing     atomic.Bool
+	observedSince time.Time
 }
 
 // quietPauseAfterFor is the quiet pause delay an instance gets. Instances
@@ -144,7 +164,7 @@ func (m *Manager) RunQuietPause(ctx context.Context) {
 	if m.quietActivity == nil {
 		return
 	}
-	if _, ok := m.vmm.(quietPauser); !ok {
+	if _, ok := m.vmm.(quietPauser); !ok && !m.quietObserve {
 		m.log.Warn("quiet pause: VMM cannot pause; quiet pause stays off")
 		return
 	}
@@ -175,10 +195,14 @@ func (m *Manager) quietPausePass(ctx context.Context, now time.Time) {
 	m.mu.Unlock()
 
 	for _, c := range candidates {
+		if m.quietObserve {
+			m.quietObserveOne(c, now)
+			continue
+		}
 		m.quietPauseOne(ctx, c, now)
 	}
 
-	paused := 0
+	paused, observed := 0, 0
 	m.quietMu.Lock()
 	for id, st := range m.quietStates {
 		if live[id] != st.inst {
@@ -188,9 +212,54 @@ func (m *Manager) quietPausePass(ctx context.Context, now time.Time) {
 		if st.paused.Load() {
 			paused++
 		}
+		if st.observing.Load() {
+			observed++
+		}
 	}
 	m.quietMu.Unlock()
 	m.quietMetrics.setPaused(paused)
+	m.quietMetrics.setObserved(observed)
+}
+
+// quietObserveOne records, in observe mode, that an idle eligible instance
+// would be paused now, without pausing it. Like a pause, it announces the
+// observation before its last idle check, so a request that marks activity
+// either backs it off here or ends it in QuietResume, where the guest would
+// have resumed.
+func (m *Manager) quietObserveOne(c quietCandidate, now time.Time) {
+	st := m.quietStateFor(c.id, c.inst, now)
+	if st.observing.Load() || !m.quietIdle(c.id, st, c.after, now) {
+		return
+	}
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	if st.observing.Load() {
+		return
+	}
+	st.observing.Store(true)
+	m.mu.Lock()
+	inst := m.live[c.id]
+	eligible := inst == c.inst && m.quietEligibleLocked(c.id, inst)
+	m.mu.Unlock()
+	if !eligible || !m.quietIdle(c.id, st, c.after, now) {
+		st.observing.Store(false)
+		return
+	}
+	st.observedSince = time.Now()
+	m.quietMetrics.observeWouldPause()
+}
+
+// endQuietObservation ends an observed pause where the guest would have
+// resumed, and records how long it would have stayed paused.
+func (m *Manager) endQuietObservation(st *quietState) {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	if !st.observing.Load() {
+		return
+	}
+	st.observing.Store(false)
+	m.quietMetrics.observeWouldResume(st.inst.Lease, time.Since(st.observedSince))
+	st.observedSince = time.Time{}
 }
 
 // quietStateFor returns the pause state of this incarnation of id, starting
@@ -303,10 +372,17 @@ func (m *Manager) quietPauseOne(ctx context.Context, c quietCandidate, now time.
 // one (ADR-1151): only Thaw resumes a frozen guest, after schedd admits it.
 // Callers mark activity (or register their instance flight) before calling
 // it. The resume outlives the caller's cancellation: a half-done resume
-// would leave the next request to find the guest still paused.
+// would leave the next request to find the guest still paused. In observe
+// mode it ends the instance's observed pause instead.
 func (m *Manager) QuietResume(ctx context.Context, instance string) error {
 	st := m.quietStateIfAny(instance)
-	if st == nil || !st.paused.Load() {
+	if st == nil {
+		return nil
+	}
+	if st.observing.Load() {
+		m.endQuietObservation(st)
+	}
+	if !st.paused.Load() {
 		return nil
 	}
 	st.mu.Lock()
@@ -434,11 +510,18 @@ type QuietPauseMetrics struct {
 	resumes prometheus.Histogram
 	errors  prometheus.Counter
 	paused  prometheus.Gauge
+
+	// Observe mode: the pauses quiet pause would have made.
+	observedPauses    prometheus.Counter
+	observedDurations prometheus.Histogram
+	observedMBSeconds *prometheus.CounterVec
+	observed          prometheus.Gauge
 }
 
 // NewQuietPauseMetrics registers vmmd_quiet_pause_total,
-// vmmd_quiet_resume_seconds, vmmd_quiet_resume_errors_total and
-// vmmd_quiet_paused_instances on reg.
+// vmmd_quiet_resume_seconds, vmmd_quiet_resume_errors_total,
+// vmmd_quiet_paused_instances and the observe mode series
+// (vmmd_quiet_pause_observed_*) on reg.
 func NewQuietPauseMetrics(reg prometheus.Registerer) *QuietPauseMetrics {
 	resumes := prometheus.NewHistogram(prometheus.HistogramOpts{
 		Name:    "vmmd_quiet_resume_seconds",
@@ -459,9 +542,50 @@ func NewQuietPauseMetrics(reg prometheus.Registerer) *QuietPauseMetrics {
 			Name: "vmmd_quiet_paused_instances",
 			Help: "Instances held quiet-paused between requests on this node (ADR-1151).",
 		}),
+		observedPauses: prometheus.NewCounter(prometheus.CounterOpts{
+			Name: "vmmd_quiet_pause_observed_total",
+			Help: "Pauses quiet pause would have made in observe mode (quiet_pause_observe); nothing was paused (ADR-1151).",
+		}),
+		observedDurations: prometheus.NewHistogram(prometheus.HistogramOpts{
+			Name:    "vmmd_quiet_pause_observed_pause_seconds",
+			Help:    "How long each observed pause would have lasted, from the pause to the request or operation that would have resumed it (ADR-1151).",
+			Buckets: []float64{1, 2, 5, 10, 20, 30, 60, 120, 300, 600, 1800, 3600},
+		}),
+		observedMBSeconds: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "vmmd_quiet_pause_observed_mb_seconds_total",
+			Help: "Billable MB-seconds (VM RAM + 8 MB) of completed observed pauses, by plan: what unbilled quiet pause (ADR-20261023171905) would not have billed.",
+		}, []string{"plan"}),
+		observed: prometheus.NewGauge(prometheus.GaugeOpts{
+			Name: "vmmd_quiet_pause_observed_instances",
+			Help: "Instances observe mode would hold quiet-paused on this node right now (ADR-1151).",
+		}),
 	}
-	reg.MustRegister(m.pauses, resumes, m.errors, m.paused)
+	reg.MustRegister(m.pauses, resumes, m.errors, m.paused,
+		m.observedPauses, m.observedDurations, m.observedMBSeconds, m.observed)
 	return m
+}
+
+func (q *QuietPauseMetrics) observeWouldPause() {
+	if q != nil {
+		q.observedPauses.Inc()
+	}
+}
+
+// observeWouldResume records one completed observed pause of a VM.
+func (q *QuietPauseMetrics) observeWouldResume(l Lease, d time.Duration) {
+	if q == nil {
+		return
+	}
+	q.observedDurations.Observe(d.Seconds())
+	if l.MemoryMaxMiB > 0 {
+		q.observedMBSeconds.WithLabelValues(string(l.Plan)).Add(float64(l.MemoryMaxMiB+api.PerVMOverheadMB) * d.Seconds())
+	}
+}
+
+func (q *QuietPauseMetrics) setObserved(n int) {
+	if q != nil {
+		q.observed.Set(float64(n))
+	}
 }
 
 func (q *QuietPauseMetrics) observePause(outcome string) {

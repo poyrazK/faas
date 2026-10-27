@@ -106,11 +106,11 @@ def sync_detailed(
 ) -> Response[DataUpstreamResponse | Problem]:
     """Add a data upstream to an app.
 
-     Captures a (host, kind, port) tuple so the meterd probe loop
-    can dial it (PR-C) and schedd can bias wake placement by the
-    probed RTT (PR-D). Plaintext host is hashed via
+     Captures a (host, kind, port) tuple so the metering service probe loop
+    can dial it and the scheduler can bias wake placement by the
+    probed RTT. Plaintext host is hashed via
     `sha256(HostHashSalt||host)` before insert; the response
-    returns the hashed form only (§11 invariant).
+    returns the hashed form only (invariant).
 
     **Plan limits.** Free plan returns 402
     `plan_data_upstreams_not_allowed`. Hobby/Pro/Scale hit their
@@ -159,11 +159,11 @@ def sync(
 ) -> DataUpstreamResponse | Problem | None:
     """Add a data upstream to an app.
 
-     Captures a (host, kind, port) tuple so the meterd probe loop
-    can dial it (PR-C) and schedd can bias wake placement by the
-    probed RTT (PR-D). Plaintext host is hashed via
+     Captures a (host, kind, port) tuple so the metering service probe loop
+    can dial it and the scheduler can bias wake placement by the
+    probed RTT. Plaintext host is hashed via
     `sha256(HostHashSalt||host)` before insert; the response
-    returns the hashed form only (§11 invariant).
+    returns the hashed form only (invariant).
 
     **Plan limits.** Free plan returns 402
     `plan_data_upstreams_not_allowed`. Hobby/Pro/Scale hit their
@@ -207,11 +207,11 @@ async def asyncio_detailed(
 ) -> Response[DataUpstreamResponse | Problem]:
     """Add a data upstream to an app.
 
-     Captures a (host, kind, port) tuple so the meterd probe loop
-    can dial it (PR-C) and schedd can bias wake placement by the
-    probed RTT (PR-D). Plaintext host is hashed via
+     Captures a (host, kind, port) tuple so the metering service probe loop
+    can dial it and the scheduler can bias wake placement by the
+    probed RTT. Plaintext host is hashed via
     `sha256(HostHashSalt||host)` before insert; the response
-    returns the hashed form only (§11 invariant).
+    returns the hashed form only (invariant).
 
     **Plan limits.** Free plan returns 402
     `plan_data_upstreams_not_allowed`. Hobby/Pro/Scale hit their
@@ -258,11 +258,11 @@ async def asyncio(
 ) -> DataUpstreamResponse | Problem | None:
     """Add a data upstream to an app.
 
-     Captures a (host, kind, port) tuple so the meterd probe loop
-    can dial it (PR-C) and schedd can bias wake placement by the
-    probed RTT (PR-D). Plaintext host is hashed via
+     Captures a (host, kind, port) tuple so the metering service probe loop
+    can dial it and the scheduler can bias wake placement by the
+    probed RTT. Plaintext host is hashed via
     `sha256(HostHashSalt||host)` before insert; the response
-    returns the hashed form only (§11 invariant).
+    returns the hashed form only (invariant).
 
     **Plan limits.** Free plan returns 402
     `plan_data_upstreams_not_allowed`. Hobby/Pro/Scale hit their

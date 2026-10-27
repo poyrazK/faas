@@ -15,7 +15,7 @@ class TransferOwnershipRequest:
     must already be an active member of the org; the previous
     owner becomes admin on success. The exactly-one-owner
     invariant is enforced by the partial unique index
-    `org_memberships_one_owner_idx` (migration 00099).
+    `org_memberships_one_owner_idx`.
 
     """
 

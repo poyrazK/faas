@@ -17,11 +17,11 @@ T = TypeVar("T", bound="ConfigChangeReceipt")
 
 @_attrs_define
 class ConfigChangeReceipt:
-    """The config revision an env or secret write recorded and the guard watching it (ADR-1451)."""
+    """The config revision an env or secret write recorded and the guard watching it."""
 
     revision: int
     guard: ConfigGuardSummary | Unset = UNSET
-    """The config guard an env or secret write opened or joined (ADR-1451)."""
+    """The config guard an env or secret write opened or joined."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

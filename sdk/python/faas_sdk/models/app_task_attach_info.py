@@ -16,7 +16,7 @@ T = TypeVar("T", bound="AppTaskAttachInfo")
 
 @_attrs_define
 class AppTaskAttachInfo:
-    """One-time attach credential for an interactive app task (ADR-1037). Returned only in the create response."""
+    """One-time attach credential for an interactive app task. Returned only in the create response."""
 
     token: str
     """Send in X-Gregale-Attach-Token with the account credential; consumed by the first attach."""

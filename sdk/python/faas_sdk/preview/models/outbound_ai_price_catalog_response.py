@@ -18,8 +18,8 @@ T = TypeVar("T", bound="OutboundAIPriceCatalogResponse")
 
 @_attrs_define
 class OutboundAIPriceCatalogResponse:
-    """One provider's built-in AI price catalog (ADR-994), generated from LiteLLM's MIT-licensed price data. model_prefix
-    holds the catalog model name.
+    """One provider's built-in AI price catalog, generated from LiteLLM's MIT-licensed price data. model_prefix holds the
+    catalog model name.
 
     """
 
@@ -29,8 +29,8 @@ class OutboundAIPriceCatalogResponse:
     generated: datetime.date
     entries: list[OutboundAIPriceEntry]
     currency: str | Unset = UNSET
-    """ISO 4217 currency of every catalog price: the billing currency, USD. Absent from responses of releases
-    before ADR 20261019123822."""
+    """ISO 4217 currency of every catalog price: the billing currency, USD. Absent from responses of older
+    releases."""
     usd_per_eur: str | Unset = UNSET
     """Deprecated: always 1, since the catalog is in US dollars."""
     fx_source: str | Unset = UNSET

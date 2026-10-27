@@ -3,7 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * Response for POST /v1/apps/{slug}/deployments/clear-obsolete (ADR-124). Count is the number of soft-deleted rows in this call; OlderThan echoes the cutoff the store applied (default 168h).
+ * Response for POST /v1/apps/{slug}/deployments/clear-obsolete. Count is the number of soft-deleted rows in this call; OlderThan echoes the cutoff the store applied (default 168h).
  */
 export type ClearObsoleteReport = {
   app_slug: string;

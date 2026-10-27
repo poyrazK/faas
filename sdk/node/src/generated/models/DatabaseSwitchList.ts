@@ -4,7 +4,7 @@
 /* eslint-disable */
 import type { DatabaseSwitch } from './DatabaseSwitch.js';
 /**
- * An app's database switches, newest first.
+ * A page of an app's database switches, newest first.
  */
 export type DatabaseSwitchList = {
   items: Array<DatabaseSwitch>;
