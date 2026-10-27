@@ -159,6 +159,11 @@ prom_targets:
     port: 9471
     box_roles: [control-plane, single-box]
     enabled: "{{ faas_livequeryd_managed | default(false) | bool }}"
+  - job: agentd
+    host: 127.0.0.1
+    port: 9109
+    box_roles: [control-plane, single-box]
+    enabled: "{{ faas_agentd_managed | default(false) | bool }}"
   - job: prometheus
     host: 127.0.0.1
     port: 9095

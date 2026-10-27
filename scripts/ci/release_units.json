@@ -28,6 +28,10 @@
       "lane": "control-plane",
       "services": [{"name": "livequeryd", "optional": true, "readyz": "http://127.0.0.1:9471/readyz"}]
     },
+    "agentd": {
+      "lane": "control-plane",
+      "services": [{"name": "agentd", "optional": true}]
+    },
     "bridged": {
       "lane": "control-plane",
       "services": [{"name": "bridged", "optional": true}]
@@ -111,7 +115,8 @@
       "deploy/ansible/roles/gatewayd_public_service/files/faas-gatewayd-public.socket",
       "deploy/ansible/roles/githubd_service/files/faas-githubd.service",
       "deploy/ansible/roles/s3_gateway_service/files/faas-s3-gatewayd.service",
-      "deploy/ansible/roles/livequeryd_service/files/faas-livequeryd.service"
+      "deploy/ansible/roles/livequeryd_service/files/faas-livequeryd.service",
+      "deploy/ansible/roles/agentd_service/files/faas-agentd.service"
     ],
     "outside_releases": ["deploy/systemd/", "deploy/grafana/", "deploy/cloudflare/"]
   },

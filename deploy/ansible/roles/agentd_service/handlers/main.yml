@@ -1,0 +1,11 @@
+---
+- name: agentd_service — daemon-reload
+  ansible.builtin.systemd_service:
+    daemon_reload: true
+  listen: restart faas-agentd
+
+- name: agentd_service — try-restart faas-agentd
+  ansible.builtin.command: systemctl try-restart faas-agentd.service  # noqa: command-instead-of-module
+  changed_when: true
+  listen: restart faas-agentd
+  when: faas_agentd_enabled | bool

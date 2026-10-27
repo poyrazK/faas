@@ -146,6 +146,8 @@ var OptionalRegistry = []Entry{
 	// ADR-20261016151947: the live-query hub, configured per database by the
 	// livequeryd_service role.
 	{Name: "livequeryd", Unit: UnitLivequeryd, Role: RoleControlPlane, Critical: false, Lifecycle: Lifecycle{Probe: ProbeTCP, ProbeTarget: "127.0.0.1:9471", ReadyzURL: "http://127.0.0.1:9471/readyz"}},
+	// ADR-20261027090010, ADR-20261027090014: agent runs, switched on by the agentd_service role.
+	{Name: "agentd", Unit: UnitAgentd, Role: RoleControlPlane, Critical: false, Lifecycle: Lifecycle{After: []string{"schedd"}, Probe: ProbeSystemd}},
 	{Name: "gatewayd-public-edge", Unit: UnitGatewaydPublicEdge, Role: RoleComputeOnly, Critical: false, Lifecycle: Lifecycle{After: []string{"gatewayd-internal"}, Probe: ProbeTCP, ProbeTarget: "127.0.0.1:8090", ReadyzURL: "http://127.0.0.1:" + ComputeEdgeControlPort + "/readyz"}},
 }
 

@@ -25,6 +25,18 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_ACCOUNT_DELETION_MANAGED_POSTGRES_ACCOUNTS` | apid, shared | `default` |  |  | `` | comma-separated account UUIDs, or *, that may delete their account together with its managed PostgreSQL databases (ADR-20261024150500); unset admits none and the option stays hidden |
 | `FAAS_ACCOUNT_SPEND_AGGREGATOR_INTERVAL` | meterd | `default` |  |  | `` |  |
 | `FAAS_ADMIN_EMAILS` | apid | `secrets-env` |  |  | `` | delivered by /etc/faas/sealed.env (apid, operator-provisioned via `gregalectl secrets init`) |
+| `FAAS_AGENTD_AGENT_RUNS` | agentd | `dropin` |  |  | `` | ADR-20261027090010, ADR-20261027090014 agent runs: 1 claims queued agent runs and drives them through schedd's RunAgent; written by agentd_service's 50-faas-agentd.conf; unset leaves agentd idle and every run queued |
+| `FAAS_AGENTD_CHECKOUTS` | agentd | `dropin` |  |  | `` | ADR-20261027090010 agent runs: 1 prepares runs' checkouts as input drives, fetching commit archives through githubd (FAAS_GITHUBD_TARGET_URL or FAAS_GITHUBD_SOCKET, FAAS_GITHUBD_TLS_*) into the artifact store (FAAS_STORAGE_*); unset fails runs that ask for a checkout with checkout_failed |
+| `FAAS_AGENTD_CONCURRENCY` | agentd | `dropin` |  | 8 | `` | ADR-20261027090014 agentd: runs one replica drives at once, 1-256 |
+| `FAAS_AGENTD_DELIVERIES` | agentd | `dropin` |  |  | `` | ADR-20261027090010 §8 deliveries: 1 runs the delivery worker for succeeded runs (webhooks, GitHub comments through githubd, bucket writes, account email captured by apid); unset leaves deliveries pending until they expire |
+| `FAAS_AGENTD_LEASE_TTL` | agentd | `default` |  | 30s | `` | ADR-20261027090014 agentd: run lease length, renewed every third of it; at least 3s; an expired starting lease requeues the run, an expired running lease fails it with lease_lost |
+| `FAAS_AGENTD_METRICS_ADDR` | agentd | `dropin` |  |  | `` | ADR-20261027090010 agentd: loopback or node-private address serving /metrics (agent_deliveries_total and friends); unset serves no metrics |
+| `FAAS_AGENTD_OUTPUT_FILES` | agentd | `dropin` |  |  | `` | ADR-20261027090010 §8 output files: 1 stores runs' output file contents in the artifact store (FAAS_STORAGE_*) under agents/outputs/; unset keeps only their names and digests |
+| `FAAS_AGENTD_S3_ENDPOINT` | agentd | `dropin` |  |  | `` | ADR-20261027090010 §8 bucket deliveries: the S3 gateway's https origin agentd writes Gregale buckets through with upload grants; unset fails bucket deliveries |
+| `FAAS_AGENTD_SCHEDD_TARGET` | agentd | `default` |  | unix:///run/faas/schedd.sock | `` | ADR-20261027090014 agentd: schedd gRPC target; tcp:// targets need the FAAS_AGENTD_SCHEDD_TLS_* client certificate |
+| `FAAS_AGENTD_SCHEDD_TLS_CA_PATH` | agentd | `default` |  |  | `` | ADR-20261027090014 agentd: CA that verifies schedd; used with FAAS_AGENTD_SCHEDD_TLS_CERT_PATH |
+| `FAAS_AGENTD_SCHEDD_TLS_CERT_PATH` | agentd | `default` |  |  | `` | ADR-20261027090014 agentd: client certificate for schedd over tcp://; unset dials without TLS (unix sockets) |
+| `FAAS_AGENTD_SCHEDD_TLS_KEY_PATH` | agentd | `default` |  |  | `` | ADR-20261027090014 agentd: key for FAAS_AGENTD_SCHEDD_TLS_CERT_PATH |
 | `FAAS_AI_GATEWAY_ACCOUNTS` | apid, outboundd, shared | `default` |  |  | `` | boot fallback for the ai_gateway platform flag (ADR-1700): optional override for ai_gateway_accounts TOML; comma-separated account UUIDs the AI gateway preview is limited to (ADR-998), * or unset admits every entitled account; ignored once an operator writes platform_flag.ai_gateway |
 | `FAAS_AI_GATEWAY_ENABLED` | apid, outboundd, shared | `default` |  |  | `int` | boot fallback for the ai_gateway platform flag (ADR-1700): optional override for ai_gateway_enabled TOML; 1 opens the AI gateway (ADR-991), any other value keeps it closed, unset preserves the TOML setting (default off); ignored once an operator writes platform_flag.ai_gateway |
 | `FAAS_ALERTMANAGER_URL` | apid | `default` |  |  | `` |  |
@@ -352,11 +364,11 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_GITHUBD_LISTEN_ADDR` | githubd | `dropin` |  |  | `` | private mTLS gRPC listener for source-ref verification on compute-only hosts |
 | `FAAS_GITHUBD_LOOPBACK` | apid, gatewayd-internal, gatewayd-public | `default` |  |  | `` |  |
 | `FAAS_GITHUBD_ROLE` | githubd, shared | `dropin` |  |  | `` |  |
-| `FAAS_GITHUBD_SOCKET` | apid, imaged | `default` |  |  | `` |  |
-| `FAAS_GITHUBD_TARGET_URL` | imaged | `dropin` |  |  | `` | githubd private mTLS endpoint reached by imaged on compute-only hosts |
-| `FAAS_GITHUBD_TLS_CA_PATH` | githubd, imaged | `dropin` |  |  | `` |  |
-| `FAAS_GITHUBD_TLS_CERT_PATH` | githubd, imaged | `dropin` |  |  | `` |  |
-| `FAAS_GITHUBD_TLS_KEY_PATH` | githubd, imaged | `dropin` |  |  | `` |  |
+| `FAAS_GITHUBD_SOCKET` | agentd, apid, imaged | `default` |  |  | `` |  |
+| `FAAS_GITHUBD_TARGET_URL` | agentd, imaged | `dropin` |  |  | `` | githubd private mTLS endpoint reached by imaged on compute-only hosts |
+| `FAAS_GITHUBD_TLS_CA_PATH` | agentd, githubd, imaged | `dropin` |  |  | `` |  |
+| `FAAS_GITHUBD_TLS_CERT_PATH` | agentd, githubd, imaged | `dropin` |  |  | `` |  |
+| `FAAS_GITHUBD_TLS_KEY_PATH` | agentd, githubd, imaged | `dropin` |  |  | `` |  |
 | `FAAS_GITHUBD_WORK_DIR` | apid, githubd | `default` |  |  | `` |  |
 | `FAAS_GITHUB_APP_CLIENT_ID` | apid, githubd | `secrets-env` |  |  | `` | delivered by /etc/faas/secrets/githubd/githubd.env (githubd) and /etc/faas/sealed.env (apid) |
 | `FAAS_GITHUB_APP_CLIENT_SECRET` | githubd | `secrets-env` |  |  | `` | delivered by /etc/faas/secrets/githubd/githubd.env (githubd) and /etc/faas/sealed.env (apid) |
