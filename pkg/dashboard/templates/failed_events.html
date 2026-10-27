@@ -104,10 +104,10 @@
               <td class="actions">
                 {{if eq .Status "open"}}
                   {{if .AppSlug}}
-                    <form method="POST" action="/dashboard/failed-events/{{.AppSlug}}/{{.ID}}/replay"><input type="hidden" name="csrf_token" value="{{$.Data.ActionCSRF}}"><button type="submit">Replay</button></form>
+                    {{if .Replayable}}<form method="POST" action="/dashboard/failed-events/{{.AppSlug}}/{{.ID}}/replay"><input type="hidden" name="csrf_token" value="{{$.Data.ActionCSRF}}"><button type="submit">Replay</button></form>{{else}}<small class="muted">Re-publish to retry</small>{{end}}
                     <form method="POST" action="/dashboard/failed-events/{{.AppSlug}}/{{.ID}}/discard"><input type="hidden" name="csrf_token" value="{{$.Data.ActionCSRF}}"><button type="submit">Discard</button></form>
                   {{else}}
-                    <form method="POST" action="/dashboard/failed-events/account/{{.ID}}/replay"><input type="hidden" name="csrf_token" value="{{$.Data.ActionCSRF}}"><button type="submit">Replay</button></form>
+                    {{if .Replayable}}<form method="POST" action="/dashboard/failed-events/account/{{.ID}}/replay"><input type="hidden" name="csrf_token" value="{{$.Data.ActionCSRF}}"><button type="submit">Replay</button></form>{{else}}<small class="muted">Re-publish to retry</small>{{end}}
                     <form method="POST" action="/dashboard/failed-events/account/{{.ID}}/discard"><input type="hidden" name="csrf_token" value="{{$.Data.ActionCSRF}}"><button type="submit">Discard</button></form>
                   {{end}}
                 {{else}}—{{end}}

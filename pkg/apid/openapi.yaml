@@ -12392,6 +12392,9 @@ paths:
       tags: [account]
       operationId: replayAccountDeadLetterEvent
       summary: Replay one account-owned dead-letter event atomically.
+      description: |
+        An event_route entry (a routing failure whose receipt was pruned) has
+        nothing to redrive and answers 409 dead_letter_not_replayable.
       parameters:
         - $ref: '#/components/parameters/Id32'
         - $ref: '#/components/parameters/IdempotencyKey'
@@ -12403,6 +12406,7 @@ paths:
               schema: { $ref: '#/components/schemas/DeadLetterEvent' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
   /v1/account/rate-limits:
@@ -51224,7 +51228,9 @@ paths:
       description: |
         Resets the source invocation, trigger record, or outbound webhook
         delivery to pending, clears its retry error, and records replayed_at
-        on the unified ledger.
+        on the unified ledger. An event_route entry (a routing failure whose
+        receipt was pruned) has nothing to redrive and answers 409
+        dead_letter_not_replayable.
       parameters:
         - $ref: '#/components/parameters/Slug'
         - $ref: '#/components/parameters/Id32'
@@ -51237,6 +51243,7 @@ paths:
               schema: { $ref: '#/components/schemas/DeadLetterEvent' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
   /v1/apps/{slug}/delayed-tasks:
@@ -114115,7 +114122,7 @@ components:
         next_before: { type: string, pattern: '^[a-f0-9]{32}$', description: "Cursor for the previous page; absent on the final page." }
 
     DeadLetterEvent:
-      description: "One unified queue invocation, broker trigger, outbound webhook, job run, or workflow run dead-letter event."
+      description: "One unified queue invocation, broker trigger, outbound webhook, job run, workflow run, or event routing failure dead-letter event."
       type: object
       required: [id, source, source_id, payload, headers, error_kind,
                  error_detail, retry_count, first_failed_at, last_failed_at,
@@ -114124,7 +114131,10 @@ components:
         id: { type: string, pattern: '^[a-f0-9]{32}$' }
         app_id: { type: string, pattern: '^[a-f0-9]{32}$', description: "Owning app when the event is app-scoped." }
         app_slug: { type: string, description: "Owning app slug when the event is app-scoped." }
-        source: { type: string, enum: [invocation, trigger_record, webhook_delivery, job_run, workflow_run] }
+        source:
+          type: string
+          enum: [invocation, trigger_record, webhook_delivery, job_run, workflow_run, event_route]
+          description: "event_route is an event recipient whose routing failed and whose receipt was pruned; payload is the published envelope, error_kind the failure_code, and it cannot be replayed."
         source_id: { type: string, pattern: '^[a-f0-9]{32}$' }
         origin: { type: string, description: "Invocation source or trigger kind." }
         trigger_id: { type: string, pattern: '^[a-f0-9]{32}$' }
