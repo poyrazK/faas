@@ -24,6 +24,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/middleware"
 	"github.com/onebox-faas/faas/pkg/sourcecontext"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/statelessshape"
 	"github.com/onebox-faas/faas/pkg/tarball"
 )
 
@@ -502,8 +503,8 @@ func (s *server) createDeploymentMultipart(w http.ResponseWriter, r *http.Reques
 	//     inside a RUN. Only when the customer marked dockerfile=true
 	//     OR a Dockerfile exists at the selected source root (Railpack detect
 	//     handles the latter case, but we surface the violation here).
-	//   - Source root: a `data/` or `db/` directory at the selected root
-	//     is the canonical "this is a database" signal.
+	//   - Source root: a database file under a `data/` or `db/` directory
+	//     at the selected root (pkg/statelessshape).
 	// Both pass the same spooled tarball — no extra I/O.
 	if prob := scanForStatefulShapeAtRoot(sourcePath, dockerfile, sourceRoot); prob != nil {
 		api.WriteProblem(w, prob)
@@ -521,6 +522,14 @@ func (s *server) createDeploymentMultipart(w http.ResponseWriter, r *http.Reques
 	if manifestProblem != nil {
 		api.WriteProblem(w, manifestProblem)
 		return
+	}
+	sourceBuild, hasSourceBuild, buildProblem := resolveSourceDockerfileBuild(sourcePath, manifestApp.RootDir, app, manifest)
+	if buildProblem != nil {
+		api.WriteProblem(w, buildProblem)
+		return
+	}
+	if hasSourceBuild {
+		kind, dockerfile = state.DeploymentKindDockerfile, true
 	}
 	releaseCommand, releaseProblem := resolveSourceReleaseCommand(sourcePath, manifestApp, manifest)
 	if releaseProblem != nil {
@@ -592,6 +601,8 @@ func (s *server) createDeploymentMultipart(w http.ResponseWriter, r *http.Reques
 			SourcePath:                sourcePath,
 			SourceBytes:               sourceBytes,
 			SourceRoot:                sourceRoot,
+			DockerfilePath:            sourceBuild.path,
+			DockerfileBuild:           sourceBuild.options,
 			SourceURL:                 sourceURL,
 			CommitSHA:                 commitSHA,
 			Scope:                     rollout.Scope,
@@ -800,18 +811,6 @@ func escapesArchiveRoot(p string) bool {
 	return tarball.EscapesRoot(p)
 }
 
-// statefulTopLevelDirs is the set of top-level directory names that
-// flag the deploy as stateful. Empty directories are fine — the tar
-// entry exists either way, so a zero-byte `data/` is caught the same
-// as a populated one. Both names are the canonical "I'm trying to
-// persist" signal that bypasses Dockerfile detection entirely.
-var statefulTopLevelDirs = map[string]string{} //nolint:gochecknoglobals // constant lookup table
-
-func init() {
-	statefulTopLevelDirs["data"] = "top-level data/ directory — this platform is stateless"
-	statefulTopLevelDirs["db"] = "top-level db/ directory — this platform is stateless"
-}
-
 // scanForStatefulShape is the Wave 0 stateless-only accept-time check.
 // Reads the spooled tarball once and rejects with CodeStatelessOnlyViolation
 // when the selected source root has a persistent shape. Three checks, all in one pass:
@@ -820,11 +819,12 @@ func init() {
 //     sent), reject any VOLUME instruction or mkfs/mount -t ext4|xfs call
 //     inside a RUN directive. Bounded: we only read up to dockerfileMaxBytes
 //     of the Dockerfile so a multi-MB heredoc can't pin apid.
-//  2. Reject a source-root-level data/ or db/ directory — the canonical
-//     "this is a database" signal that bypasses Dockerfile detection.
-//     Short-circuits the scan: as soon as the offending entry is
-//     observed, the loop returns without reading the rest of the
-//     tarball (customer pays for one entry, not the whole archive).
+//  2. Reject a database-store file (by name or SQLite signature) under a
+//     source-root-level data/ or db/ directory (pkg/statelessshape,
+//     ADR-20261026152731). Migrations, schemas and seed files in those
+//     directories are ordinary source. Short-circuits the scan: as soon
+//     as the offending entry is observed, the loop returns without
+//     reading the rest of the tarball.
 //  3. The base-image deny-list runs in pkg/imaged, not here — apid only
 //     sees a tarball or an image: ref; the image: branch is enforced
 //     where the image is pulled (pkg/imaged/handler.go buildImageLayer).
@@ -880,13 +880,14 @@ func scanForStatefulShapeWithDockerfileAtRoot(path string, dockerfileFlag bool, 
 		if !inRoot {
 			continue
 		}
-		parts := strings.SplitN(rel, "/", 2)
-		if len(parts) >= 1 {
-			if reason, denied := statefulTopLevelDirs[parts[0]]; denied {
-				// Short-circuit: we don't need to read the rest of
-				// the tarball now that we've found the violation.
-				return api.ErrStatelessOnlyViolation("tarball", reason)
+		if rel != dockerfilePath && hdr.Typeflag == tar.TypeReg && statelessshape.StateDirOf(rel) != "" {
+			header := make([]byte, statelessshape.HeaderBytes)
+			n, _ := io.ReadFull(tr, header)
+			if statelessshape.DatabaseFile(rel, header[:n]) {
+				// Short-circuit: the rest of the archive is not needed.
+				return api.ErrStatelessOnlyViolation("tarball", statelessshape.Reason(rel))
 			}
+			continue
 		}
 		// Only read the selected Dockerfile within the source root. We do this
 		// lazily — dockerfileMaxBytes caps the read so a hostile
