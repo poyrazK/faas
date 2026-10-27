@@ -1394,10 +1394,57 @@ func createOrFetchAppWith(ctx context.Context, client *Client, req, existingReq 
 	}
 	existing, err = client.GetApp(ctx, req.Slug)
 	if err != nil {
-		return fmt.Errorf("slug %q is already in use; pick a different --name", req.Slug)
+		return slugInUseError(ctx, client, req.Slug)
 	}
 	setResolved(existing)
 	return configureExistingApp(ctx, client, existing, existingReq, requireAuthnPtr, appProtocolPtr, publicAuthPtr)
+}
+
+// slugInUseError explains a CreateApp 409 that the follow-up GetApp cannot
+// resolve. The slug belongs to another account, or to one of the caller's
+// own deleted apps, which holds its slug until it is purged; the second case
+// gets a restore hint instead of a dead end (Hunt 14 H14-93). The lookup is
+// best effort: any error falls back to the generic message.
+func slugInUseError(ctx context.Context, client *Client, slug string) error {
+	cursor := ""
+	for page := 0; page < 4; page++ {
+		list, err := client.ListDeletedApps(ctx, cursor, 50)
+		if err != nil {
+			break
+		}
+		for _, app := range list.Apps {
+			if app.Slug != slug {
+				continue
+			}
+			if app.RestoreEligible {
+				return fmt.Errorf("slug %q belongs to an app you deleted%s; restore it with `gregale apps restore %s`, or pick a different --name", slug, deletedAppUntil(app.DeleteGraceUntil, " that can be restored until "), slug)
+			}
+			return fmt.Errorf("slug %q is held by an app you deleted until it is purged%s; pick a different --name", slug, deletedAppUntil(app.DeleteGraceUntil, " after "))
+		}
+		if list.NextCursor == "" {
+			break
+		}
+		cursor = list.NextCursor
+	}
+	return fmt.Errorf("slug %q is already in use; pick a different --name", slug)
+}
+
+func deletedAppUntil(t *time.Time, prefix string) string {
+	if t == nil || t.IsZero() {
+		return ""
+	}
+	return prefix + t.UTC().Format("2006-01-02 15:04 UTC")
+}
+
+// usageTrafficCell labels the two ADR-046 byte counters, neither of which is
+// billed. tx_bytes is the HTTP response bytes the gateway sent to clients;
+// net_tx_bytes is what left the app's own network interface. Responses travel
+// over vmmd's stream bridge, not that interface, so net is not a superset of
+// tx: printing net alone as "egress" showed 0.000 GB for an app that had
+// served 0.69 GB of responses (Hunt 14 H14-95).
+func usageTrafficCell(txBytes, netTxBytes int64) string {
+	const gib = 1024 * 1024 * 1024
+	return fmt.Sprintf("responses %.2f GB · outbound %.2f GB", float64(txBytes)/gib, float64(netTxBytes)/gib)
 }
 
 // openPublicAuthAfterTokenRemoval is the public_auth change implied by
@@ -5942,7 +5989,7 @@ func cmdUsageList(args []string) int {
 	sortUsageRows(rows)
 	// The included allowance is account-wide, so it is printed once rather
 	// than repeated on every app row (production-us hunt #4).
-	_, _ = fmt.Fprintf(osStdout, "App — requests · GB-hours · egress\n")
+	_, _ = fmt.Fprintf(osStdout, "App — requests · GB-hours · traffic (not billed)\n")
 	var totalMBSeconds int64
 	for _, u := range rows {
 		totalMBSeconds += u.MBSeconds
@@ -5954,11 +6001,8 @@ func cmdUsageList(args []string) int {
 		// counter is non-zero — most months most apps are 0 and the
 		// trailing column is noise.
 		if u.TXBytes > 0 || u.NetTxBytes > 0 {
-			_, _ = fmt.Fprintf(osStdout, "%s — %d · %.3f · egress %.3f GB (tx %.2f / net %.2f)\n",
-				appLabel(slugs, u.AppID), u.Requests, float64(u.MBSeconds)/3.6e6,
-				u.TotalEgressGB(),
-				float64(u.TXBytes)/(1024*1024*1024),
-				float64(u.NetTxBytes)/(1024*1024*1024))
+			_, _ = fmt.Fprintf(osStdout, "%s — %d · %.3f · %s\n",
+				appLabel(slugs, u.AppID), u.Requests, float64(u.MBSeconds)/3.6e6, usageTrafficCell(u.TXBytes, u.NetTxBytes))
 			continue
 		}
 		_, _ = fmt.Fprintf(osStdout, "%s — %d · %.3f\n", appLabel(slugs, u.AppID), u.Requests, float64(u.MBSeconds)/3.6e6)
@@ -8240,10 +8284,8 @@ func cmdUsageDaily(args []string) int {
 		totalMBSeconds += u.MBSeconds
 		gbh := float64(u.MBSeconds) / 3.6e6
 		if u.TXBytes > 0 || u.NetTxBytes > 0 {
-			txGB := float64(u.TXBytes) / (1024 * 1024 * 1024)
-			netGB := float64(u.NetTxBytes) / (1024 * 1024 * 1024)
-			_, _ = fmt.Fprintf(osStdout, "%-36s %s %8d  %7.3f GB-h  egress %.3f GB (tx %.2f / net %.2f)\n",
-				appLabel(slugs, u.AppID), u.Day, u.Requests, gbh, netGB, txGB, netGB)
+			_, _ = fmt.Fprintf(osStdout, "%-36s %s %8d  %7.3f GB-h  %s\n",
+				appLabel(slugs, u.AppID), u.Day, u.Requests, gbh, usageTrafficCell(u.TXBytes, u.NetTxBytes))
 			continue
 		}
 		_, _ = fmt.Fprintf(osStdout, "%-36s %s %8d  %7.3f GB-h\n", appLabel(slugs, u.AppID), u.Day, u.Requests, gbh)

@@ -321,6 +321,11 @@ type cliFlag struct {
 	// Unreleased keeps a dark-launched flag out of every customer surface
 	// unless it is turned on (unreleased.go).
 	Unreleased bool
+	// Capability names the product capability a flag reaches when it is not
+	// the command's own (`crons add --at` reaches delayed tasks). Discovery
+	// drops the flag, and the command refuses it, while the capability is
+	// hidden for the account (ADR-20261026145832).
+	Capability string
 	// Common keeps this option visible in compact command help. Group labels
 	// organize expanded help without changing parser or completion behavior.
 	Common bool
@@ -2124,7 +2129,7 @@ var cliCommands = []cliCommand{
 				{Name: "app", Short: "app slug (interactive mode can use linked app or picker)", Value: "slug"},
 				{Name: "schedule", Short: "five-field cron expression (required unless interactive)", Value: "EXPR"},
 				{Name: "path", Short: "path the cron sends a POST to (mutually exclusive with --command)", Value: "PATH"},
-				{Name: "command", Short: "executable for a deployment command cron", Value: "EXEC"},
+				{Name: "command", Short: "executable for a deployment command cron (preview: needs app tasks)", Value: "EXEC"},
 				{Name: "arg", Short: "append one command argument (repeatable)", Value: "ARG"},
 				{Name: "shell", Short: "run --command as one shell string"},
 				{Name: "timeout-seconds", Short: "command timeout (default 600 seconds)", Value: "N"},
@@ -3779,7 +3784,7 @@ var cliCommands = []cliCommand{
 				{Name: "route-target-slug", Short: "kind=route: target app slug", Value: "slug"},
 				{Name: "cache-max-age-seconds", Short: "kind=cache: fresh window (default 60; max 3600)", Value: "N"},
 				{Name: "cache-stale-while-revalidate-seconds", Short: "kind=cache: serve stale during a background refresh (max 300)", Value: "N"},
-				{Name: "budget-ms", Short: "kind=budget: per-request wall-clock budget in ms (max 30000)", Value: "MS"},
+				{Name: "budget-ms", Short: "kind=budget: execution budget in ms (at most the plan ceiling: 30 s Free, 60 s Hobby, 5 min Pro, 15 min Scale)", Value: "MS"},
 				{Name: "retry-max-attempts", Short: "kind=retry: total attempts including the original (default 2; max 3)", Value: "N"},
 				{Name: "circuit-failure-threshold", Short: "kind=circuit_breaker: failure ratio that opens the app's instance-health breaker (default 0.5); the highest-priority rule tunes every instance, selectors do not partition it", Value: "RATIO"},
 				{Name: "circuit-open-seconds", Short: "kind=circuit_breaker: first open interval (default 5)", Value: "N"},
@@ -3810,7 +3815,7 @@ var cliCommands = []cliCommand{
 				{Name: "validate-schema", Short: "JSON Schema (inline JSON, @file, or - for stdin; max 64 KiB)", Value: "JSON|@FILE|-"},
 				{Name: "validate-mode", Short: "invalid-request behavior (default block)", Value: "MODE", ClosedSet: []string{api.ValidateModeBlock, api.ValidateModeObserve, api.ValidateModeWarn}},
 				{Name: "validate-content-type", Short: "accepted application media type (repeat; e.g. application/json)", Value: "TYPE"},
-				{Name: "validate-max-body-bytes", Short: "optional body cap in bytes (0 = plan default)", Value: "N"},
+				{Name: "validate-max-body-bytes", Short: "optional body cap in bytes (0 = 25 MiB or the plan cap, whichever is lower)", Value: "N"},
 				{Name: "validate-apply-while-streaming", Short: "also validate streaming requests"},
 				{Name: "validate-reject-unknown-fields", Short: "reject fields not declared by the schema"},
 				{Name: "validate-path-template", Short: "OpenAPI path template for the path schema (match-path must use ?* for each placeholder)", Value: "TEMPLATE"},
@@ -3862,7 +3867,7 @@ var cliCommands = []cliCommand{
 				{Name: "headers-response-set", Short: "kind=headers: response header to set (repeatable)", Value: "NAME:VALUE", Repeatable: true},
 				{Name: "jwt-algorithm", Short: "kind=jwt: allowed signing algorithm (repeatable)", Value: "ALG", Repeatable: true},
 				{Name: "jwt-audience", Short: "kind=jwt: required audience (repeatable)", Value: "AUDIENCE", Repeatable: true},
-				{Name: "jwt-require-exp", Short: "kind=jwt: reject tokens without an exp claim"},
+				{Name: "jwt-require-exp", Short: "kind=jwt: reject tokens without an exp claim (default true; =false accepts them)"},
 				{Name: "jwt-required-claim", Short: "kind=jwt: required claim (repeatable)", Value: "NAME=VALUE", Repeatable: true},
 				{Name: "name", Short: "operator-facing rule name (<=100 chars)", Value: "NAME"},
 				{Name: "redirect-header", Short: "kind=redirect: extra response header (repeatable)", Value: "NAME:VALUE", Repeatable: true},
@@ -3961,7 +3966,7 @@ var cliCommands = []cliCommand{
 				{Name: "validate-schema", Short: "replacement body schema; an action update replaces the body schema and parameter schemas together (inline JSON, @file, or -; max 64 KiB)", Value: "JSON|@FILE|-"},
 				{Name: "validate-mode", Short: "invalid-request behavior", Value: "MODE", ClosedSet: []string{api.ValidateModeBlock, api.ValidateModeObserve, api.ValidateModeWarn}},
 				{Name: "validate-content-type", Short: "accepted application media type (repeat; e.g. application/json)", Value: "TYPE"},
-				{Name: "validate-max-body-bytes", Short: "body cap in bytes (0 = plan default)", Value: "N"},
+				{Name: "validate-max-body-bytes", Short: "body cap in bytes (0 = 25 MiB or the plan cap, whichever is lower)", Value: "N"},
 				{Name: "validate-apply-while-streaming", Short: "also validate streaming requests"},
 				{Name: "validate-reject-unknown-fields", Short: "reject fields not declared by the schema"},
 				{Name: "validate-path-template", Short: "OpenAPI path template for the path schema (match-path must use ?* for each placeholder)", Value: "TEMPLATE"},
@@ -3979,7 +3984,7 @@ var cliCommands = []cliCommand{
 				{Name: "description", Short: "operator-facing description (<=1000 chars)", Value: "TEXT"},
 				{Name: "expires-at", Short: "stop applying the rule at this RFC 3339 time", Value: "RFC3339"},
 				{Name: "expires-in", Short: "stop applying the rule after this duration (e.g. 2h)", Value: "DURATION"},
-				{Name: "jwt-require-exp", Short: "kind=jwt: reject tokens without an exp claim"},
+				{Name: "jwt-require-exp", Short: "kind=jwt: reject tokens without an exp claim (default true; =false accepts them)"},
 				{Name: "name", Short: "operator-facing rule name (<=100 chars)", Value: "NAME"},
 			}},
 			{Name: subRm, Short: "Delete one edge rule", Positionals: []string{"<id>"}, Flags: []cliFlag{
@@ -5488,6 +5493,8 @@ var cliCommands = []cliCommand{
 				{Name: "no-public-read", Short: "disable anonymous reads"},
 				{Name: "public-rpc", Value: "SCHEMA.FUNCTION[,...]", Short: "approved STABLE or IMMUTABLE functions callable without a token by GET"},
 				{Name: "no-public-rpc", Short: "disable anonymous RPC calls"},
+				{Name: "allow-without-rls", Value: "SCHEMA.RELATION[,...]", Short: "relations signed-in users may reach without row-level security"},
+				{Name: "no-allow-without-rls", Short: "require row-level security on every relation again"},
 				{Name: "public-read-cache", Value: "DURATION|off", Short: "cache canonical public reads and RPC calls at the edge (max 1h)"},
 				{Name: "usage-reporting", Value: "on|off", Short: "report usage to the platform (on for new Data APIs)", ClosedSet: []string{"on", "off"}},
 				{Name: "monthly-caps", Value: "requests=N[,anonymous=N]|off", Short: "monthly owner caps; reached caps answer 429 until the next UTC month"},

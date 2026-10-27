@@ -1007,7 +1007,9 @@ type Handler struct {
 	// edgeFeatureFlags releases challenge rules, WAF warn and block, and the
 	// penalty box per account (ADR-20261023113721); nil enforces them all.
 	edgeFeatureFlags *platformflags.Set
-	gate             *WakeGate
+	// trafficFenceFlags is the revocation fence kill switch; nil enforces it.
+	trafficFenceFlags *platformflags.Set
+	gate              *WakeGate
 	// admissionQueue protects the control plane from a simultaneous cold
 	// burst across many apps. It is intentionally separate from gate:
 	// gate coalesces waiters for one app, while admissionQueue orders the
@@ -1230,10 +1232,10 @@ type Handler struct {
 	// by appID. Lazily created on the first request for an opt-in
 	// app (App.RouteMetricsEnabled=true AND the operator kill-
 	// switch is enabled) so the cold path is allocation-free for
-	// apps that don't opt in. The map is never deleted — the
-	// underlying routeLabelSet is non-evicting (the daemon
-	// restart is the only path that resets it, same contract as
-	// accountLabelSet / hostnameLabelSet). sync.Map because the
+	// apps that don't opt in. The map is never deleted; a full
+	// routeLabelSet only gives up a label idle for
+	// api.RouteLabelReuseAfterIdle (ADR-20261026143210 amendment
+	// 1). sync.Map because the
 	// hot path is the "already created" lookup. nil until
 	// SetRouteMetricsEnabled is called from the App→routeSet
 	// resolution path.
@@ -3645,6 +3647,16 @@ func (h *Handler) applyEdgeRuleMaintenance(w http.ResponseWriter, r *http.Reques
 	return true
 }
 
+// validateBodyCap is the in-memory body cap for a kind=validate rule: the
+// rule's own cap, else the platform cap, and never above the plan's.
+func validateBodyCap(ruleCap int, planCap int64) int {
+	limit := int64(api.MaxRequestBodyBytes)
+	if ruleCap > 0 && int64(ruleCap) < limit {
+		limit = int64(ruleCap)
+	}
+	return int(min(limit, planCap))
+}
+
 // applyEdgeRuleValidate (PR-B) consults the per-host edge-rule
 // matcher for a `kind=validate` rule. On a hit, the inbound
 // request body is buffered (up to the per-rule cap or
@@ -3755,12 +3767,11 @@ func (h *Handler) applyEdgeRuleValidate(w http.ResponseWriter, r *http.Request, 
 	// MaxBytesReader installed in ServeHTTP above this slot).
 	// The per-rule cap is layered on top via an inner
 	// MaxBytesReader so a rule with MaxBodyBytes=2KiB
-	// short-circuits before the global cap fires.
-	cap := rule.MaxBodyBytes
-	planCap := app.Plan.MaxRequestBodyBytes()
-	if cap <= 0 || int64(cap) > planCap {
-		cap = int(planCap)
-	}
+	// short-circuits before the global cap fires. The body is held
+	// in memory, so an unset or oversized cap stops at the 25 MiB
+	// platform cap (spec §4.1.2) even on plans that accept larger
+	// bodies through the spooled proxy path.
+	cap := validateBodyCap(rule.MaxBodyBytes, app.Plan.MaxRequestBodyBytes())
 	r.Body = http.MaxBytesReader(w, r.Body, int64(cap))
 	body, err := io.ReadAll(r.Body)
 	_ = r.Body.Close()
@@ -5940,7 +5951,9 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	requestCtx, statusHooks := withResponseStatusHooks(requestCtx)
 	r = r.WithContext(requestCtx)
 	defer func() { //nolint:contextcheck // inspect the final rebound request context, including later admission and lifetime fences.
-		requestSpan.SetAttributes(trafficDecisionEvidence(r.Context(), rec.status, true).attributes()...)
+		decision := trafficDecisionEvidence(r.Context(), rec.status, true)
+		requestSpan.SetAttributes(decision.attributes()...)
+		h.metrics.observeTrafficDecision(decision)
 		statusHooks.run(rec.status)
 		requestSpan.SetAttributes(attribute.Int("http.status_code", rec.status))
 		requestSpan.End()
@@ -6049,11 +6062,11 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// The fence is scoped to the host's owner (resolved above, before any
 	// route substitution or edge rule runs): another account's mutation,
 	// even on match_host "*", cannot change this host's policy.
-	var fenceOwner string
+	var fenceAccount, fenceApp string
 	if ok {
-		fenceOwner = lookedApp.AccountID
+		fenceAccount, fenceApp = lookedApp.AccountID, lookedApp.ID
 	}
-	if h.edgeRules != nil && h.edgeRules.Converging(host, fenceOwner) {
+	if h.edgeRules != nil && h.edgeRules.Converging(host, fenceAccount, fenceApp) {
 		w.Header().Set("Retry-After", "1")
 		api.WriteProblem(w, api.NewProblem(http.StatusServiceUnavailable,
 			api.CodeCapacity, "Edge policy update in progress",
@@ -6120,6 +6133,9 @@ haveApp:
 	if h.applyTotalDeadline(w, r, app) {
 		h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
 		return
+	}
+	if trafficFenceOff(h.trafficFenceFlags, app.AccountID) {
+		markTrafficFenceOff(r, h.metrics, "public_http")
 	}
 	if enrollPublicTrafficScopes(w, r, h.trafficRevocations, app) {
 		h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
@@ -8422,8 +8438,9 @@ func (p *preInstantiateApps) seen(appID string) bool {
 // creating a fresh one on the first sight of an opt-in app. The
 // lookup is O(1) (sync.Map.Load). Returns nil when the app is not
 // opted in (enabled=false) — the caller short-circuits the
-// per-route emission on nil. The map is never deleted; the
-// underlying routeLabelSet is non-evicting (ADR-093 D2).
+// per-route emission on nil. The map is never deleted; a full
+// routeLabelSet replaces only idle, undeclared labels and deletes
+// their series (ADR-20261026143210 amendment 1).
 //
 // Concurrency: sync.Map handles the parallel first-sight race
 // correctly. Two goroutines hitting the same opt-in app for the
@@ -8439,6 +8456,10 @@ func (h *Handler) routeSetFor(appID string, enabled bool) *routeLabelSet {
 		return v.(*routeLabelSet)
 	}
 	fresh := newRouteLabelSet()
+	// A replaced idle label takes its per-route series with it
+	// (ADR-20261026143210 amendment 1).
+	metrics := h.metrics
+	fresh.onEvict = func(route string) { metrics.DropRouteSeries(appID, route) }
 	actual, _ := h.routeSets.LoadOrStore(appID, fresh)
 	return actual.(*routeLabelSet)
 }

@@ -230,6 +230,13 @@ func (s *server) scheduleDeletion(ctx context.Context, acct state.Account, via s
 		if prob := s.sharedOrgOwnershipBlocksDeletion(ctx, acct.ID); prob != nil {
 			return acct, prob
 		}
+		// A deleted customer must not keep paying (Hunt 17 H17-2). The
+		// subscription ends with its paid period; restoring the account
+		// within grace does not resume it.
+		if err := s.endSubscriptionForDeletion(ctx, acct); err != nil {
+			s.log.Error("account deletion: end billing subscription", "account", acct.ID, "err", err)
+			return acct, api.ErrCapacity("could not cancel the billing subscription; try again")
+		}
 		outboxed, err := s.markDeletionPendingWithMail(ctx, acct.ID, state.IncludingManagedPostgres(includeDatabases))
 		if err != nil {
 			return acct, deletionRefusedProblem(err)

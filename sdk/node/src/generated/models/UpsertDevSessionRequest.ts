@@ -26,7 +26,7 @@ export type UpsertDevSessionRequest = {
   lease_seconds?: number;
   watch?: DevWatch;
   /**
-   * Builds cmd/<go_command> of the Go module at the source root (ADR-20261026120412), as a project service's Go command does. Omit to build what the source builds by default; applies from the next developer build. Refused with 400 for a function or a name that is not a cmd/ directory name.
+   * Builds cmd/<go_command> of the Go module at the source root, as a project service's Go command does. Omit to build what the source builds by default; applies from the next developer build. Refused with 400 for a function or a name that is not a cmd/ directory name.
    */
   go_command?: string;
 };

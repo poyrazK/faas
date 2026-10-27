@@ -6415,7 +6415,7 @@ Schedule a POST to an app path, or a deployment command
 | `--app <slug>` | app slug (interactive mode can use linked app or picker) |  |
 | `--schedule <EXPR>` | five-field cron expression (required unless interactive) |  |
 | `--path <PATH>` | path the cron sends a POST to (mutually exclusive with --command) |  |
-| `--command <EXEC>` | executable for a deployment command cron |  |
+| `--command <EXEC>` | executable for a deployment command cron (preview: needs app tasks) |  |
 | `--arg <ARG>` | append one command argument (repeatable) |  |
 | `--shell` | run --command as one shell string |  |
 | `--timeout-seconds <N>` | command timeout (default 600 seconds) |  |
@@ -10952,7 +10952,7 @@ Add an edge rule
 | `--route-target-slug <slug>` | kind=route: target app slug |  |
 | `--cache-max-age-seconds <N>` | kind=cache: fresh window (default 60; max 3600) |  |
 | `--cache-stale-while-revalidate-seconds <N>` | kind=cache: serve stale during a background refresh (max 300) |  |
-| `--budget-ms <MS>` | kind=budget: per-request wall-clock budget in ms (max 30000) |  |
+| `--budget-ms <MS>` | kind=budget: execution budget in ms (at most the plan ceiling: 30 s Free, 60 s Hobby, 5 min Pro, 15 min Scale) |  |
 | `--retry-max-attempts <N>` | kind=retry: total attempts including the original (default 2; max 3) |  |
 | `--circuit-failure-threshold <RATIO>` | kind=circuit_breaker: failure ratio that opens the app&#39;s instance-health breaker (default 0.5); the highest-priority rule tunes every instance, selectors do not partition it |  |
 | `--circuit-open-seconds <N>` | kind=circuit_breaker: first open interval (default 5) |  |
@@ -10982,7 +10982,7 @@ Add an edge rule
 | `--validate-schema <JSON|@FILE|->` | JSON Schema (inline JSON, @file, or - for stdin; max 64 KiB) |  |
 | `--validate-mode <MODE>` | invalid-request behavior (default block) | one of `block` · `observe` · `warn` |
 | `--validate-content-type <TYPE>` | accepted application media type (repeat; e.g. application/json) |  |
-| `--validate-max-body-bytes <N>` | optional body cap in bytes (0 = plan default) |  |
+| `--validate-max-body-bytes <N>` | optional body cap in bytes (0 = 25 MiB or the plan cap, whichever is lower) |  |
 | `--validate-apply-while-streaming` | also validate streaming requests |  |
 | `--validate-reject-unknown-fields` | reject fields not declared by the schema |  |
 | `--validate-path-template <TEMPLATE>` | OpenAPI path template for the path schema (match-path must use ?* for each placeholder) |  |
@@ -11034,7 +11034,7 @@ Add an edge rule
 | `--headers-response-set <NAME:VALUE>` | kind=headers: response header to set (repeatable) |  |
 | `--jwt-algorithm <ALG>` | kind=jwt: allowed signing algorithm (repeatable) |  |
 | `--jwt-audience <AUDIENCE>` | kind=jwt: required audience (repeatable) |  |
-| `--jwt-require-exp` | kind=jwt: reject tokens without an exp claim |  |
+| `--jwt-require-exp` | kind=jwt: reject tokens without an exp claim (default true; =false accepts them) |  |
 | `--jwt-required-claim <NAME=VALUE>` | kind=jwt: required claim (repeatable) |  |
 | `--name <NAME>` | operator-facing rule name (&lt;=100 chars) |  |
 | `--redirect-header <NAME:VALUE>` | kind=redirect: extra response header (repeatable) |  |
@@ -11156,7 +11156,7 @@ Update one edge rule
 | `--validate-schema <JSON|@FILE|->` | replacement body schema; an action update replaces the body schema and parameter schemas together (inline JSON, @file, or -; max 64 KiB) |  |
 | `--validate-mode <MODE>` | invalid-request behavior | one of `block` · `observe` · `warn` |
 | `--validate-content-type <TYPE>` | accepted application media type (repeat; e.g. application/json) |  |
-| `--validate-max-body-bytes <N>` | body cap in bytes (0 = plan default) |  |
+| `--validate-max-body-bytes <N>` | body cap in bytes (0 = 25 MiB or the plan cap, whichever is lower) |  |
 | `--validate-apply-while-streaming` | also validate streaming requests |  |
 | `--validate-reject-unknown-fields` | reject fields not declared by the schema |  |
 | `--validate-path-template <TEMPLATE>` | OpenAPI path template for the path schema (match-path must use ?* for each placeholder) |  |
@@ -11174,7 +11174,7 @@ Update one edge rule
 | `--description <TEXT>` | operator-facing description (&lt;=1000 chars) |  |
 | `--expires-at <RFC3339>` | stop applying the rule at this RFC 3339 time |  |
 | `--expires-in <DURATION>` | stop applying the rule after this duration (e.g. 2h) |  |
-| `--jwt-require-exp` | kind=jwt: reject tokens without an exp claim |  |
+| `--jwt-require-exp` | kind=jwt: reject tokens without an exp claim (default true; =false accepts them) |  |
 | `--name <NAME>` | operator-facing rule name (&lt;=100 chars) |  |
 
 Examples:
@@ -15963,7 +15963,7 @@ Deploy a single-app Data API with its migrations as the release task
 
 Change access, aggregates, usage reporting or caps
 
-`gregale data-api configure [--public-read <SCHEMA.RELATION[,...]>] [--no-public-read] [--public-rpc <SCHEMA.FUNCTION[,...]>] [--no-public-rpc] [--public-read-cache <DURATION|off>] [--usage-reporting <on|off>] [--monthly-caps <requests=N[,anonymous=N]|off>] [--aggregates <on|off>] [--pool <N|default>] [--server-key-concurrency <N|default>] [--server-key-rate-limit <N[,burst=M]|off>] [--scope <SCOPE>] [--no-restart] <name>`
+`gregale data-api configure [--public-read <SCHEMA.RELATION[,...]>] [--no-public-read] [--public-rpc <SCHEMA.FUNCTION[,...]>] [--no-public-rpc] [--allow-without-rls <SCHEMA.RELATION[,...]>] [--no-allow-without-rls] [--public-read-cache <DURATION|off>] [--usage-reporting <on|off>] [--monthly-caps <requests=N[,anonymous=N]|off>] [--aggregates <on|off>] [--pool <N|default>] [--server-key-concurrency <N|default>] [--server-key-rate-limit <N[,burst=M]|off>] [--scope <SCOPE>] [--no-restart] <name>`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -15971,6 +15971,8 @@ Change access, aggregates, usage reporting or caps
 | `--no-public-read` | disable anonymous reads |  |
 | `--public-rpc <SCHEMA.FUNCTION[,...]>` | approved STABLE or IMMUTABLE functions callable without a token by GET |  |
 | `--no-public-rpc` | disable anonymous RPC calls |  |
+| `--allow-without-rls <SCHEMA.RELATION[,...]>` | relations signed-in users may reach without row-level security |  |
+| `--no-allow-without-rls` | require row-level security on every relation again |  |
 | `--public-read-cache <DURATION|off>` | cache canonical public reads and RPC calls at the edge (max 1h) |  |
 | `--usage-reporting <on|off>` | report usage to the platform (on for new Data APIs) | one of `on` · `off` |
 | `--monthly-caps <requests=N[,anonymous=N]|off>` | monthly owner caps; reached caps answer 429 until the next UTC month |  |

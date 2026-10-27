@@ -22,7 +22,7 @@ class TestAlertPresetResponse:
     webhook URL with `payload.test == true`; this shape confirms
     the dispatch completed and surfaces the delivery_id the
     customer's webhook receiver should echo back.
-    (issue #1233 / ADR-123 PR-C commit 2)
+    (commit 2)
 
     """
 

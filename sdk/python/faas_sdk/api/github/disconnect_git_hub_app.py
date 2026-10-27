@@ -83,7 +83,7 @@ def sync_detailed(
     """Disconnect an app from its GitHub repository.
 
      Cookie-session-authenticated and CSRF-protected. Idempotently removes
-    the app's repository binding and invalidates githubd's binding cache.
+    the app's repository binding and invalidates the GitHub integration's binding cache.
     The GitHub App installation remains connected to the account so it can
     be rebound to another repository.
 
@@ -124,7 +124,7 @@ def sync(
     """Disconnect an app from its GitHub repository.
 
      Cookie-session-authenticated and CSRF-protected. Idempotently removes
-    the app's repository binding and invalidates githubd's binding cache.
+    the app's repository binding and invalidates the GitHub integration's binding cache.
     The GitHub App installation remains connected to the account so it can
     be rebound to another repository.
 
@@ -160,7 +160,7 @@ async def asyncio_detailed(
     """Disconnect an app from its GitHub repository.
 
      Cookie-session-authenticated and CSRF-protected. Idempotently removes
-    the app's repository binding and invalidates githubd's binding cache.
+    the app's repository binding and invalidates the GitHub integration's binding cache.
     The GitHub App installation remains connected to the account so it can
     be rebound to another repository.
 
@@ -199,7 +199,7 @@ async def asyncio(
     """Disconnect an app from its GitHub repository.
 
      Cookie-session-authenticated and CSRF-protected. Idempotently removes
-    the app's repository binding and invalidates githubd's binding cache.
+    the app's repository binding and invalidates the GitHub integration's binding cache.
     The GitHub App installation remains connected to the account so it can
     be rebound to another repository.
 

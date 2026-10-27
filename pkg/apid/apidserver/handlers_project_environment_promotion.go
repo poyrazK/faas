@@ -753,6 +753,15 @@ func (s *server) promoteProjectEnvironment(w http.ResponseWriter, r *http.Reques
 				"Protected environment approval required", "approve this exact promotion before executing it"))
 			return
 		}
+		// The approval stands in for each app's own release approval policy,
+		// so it is held to it: who approved, against who promotes.
+		if approval, err := s.store.ProjectEnvironmentApprovalByToken(r.Context(), acct.ID, projectSlug, toEnvironment,
+			hashProjectEnvironmentApprovalMaterial(promotionToken), hashProjectEnvironmentApprovalMaterial(approvalToken)); err == nil {
+			if problem := s.protectedPromotionApprovalProblem(r.Context(), plan, toEnvironment, approval.ApprovedByAccountID, actorAccount(r, acct).ID); problem != nil {
+				api.WriteProblem(w, problem)
+				return
+			}
+		}
 
 	}
 	promotionRecord := state.ProjectEnvironmentPromotion{

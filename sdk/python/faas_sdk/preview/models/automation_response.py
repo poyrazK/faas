@@ -28,8 +28,8 @@ class AutomationResponse:
     automation_version_conflict."""
     source: AutomationResponseSource
     draft: WorkflowSpec
-    """A named workflow DAG submitted with a deployment (ADR-081). max_concurrent_runs caps active run instances
-    for this workflow; excess admitted runs remain pending until a slot opens, subject to the app plan's run quota.
+    """A named workflow DAG submitted with a deployment. max_concurrent_runs caps active run instances for this
+    workflow; excess admitted runs remain pending until a slot opens, subject to the app plan's run quota.
     max_concurrent_actions caps active executor steps across runs of this workflow; steps wait in the scheduler
     queue while all action slots are occupied."""
     enabled: bool
@@ -42,8 +42,8 @@ class AutomationResponse:
     failure_paused: bool | Unset = UNSET
     """Runtime failure guard blocks automatic admissions independently of configured enabled intent."""
     published: WorkflowSpec | Unset = UNSET
-    """A named workflow DAG submitted with a deployment (ADR-081). max_concurrent_runs caps active run instances
-    for this workflow; excess admitted runs remain pending until a slot opens, subject to the app plan's run quota.
+    """A named workflow DAG submitted with a deployment. max_concurrent_runs caps active run instances for this
+    workflow; excess admitted runs remain pending until a slot opens, subject to the app plan's run quota.
     max_concurrent_actions caps active executor steps across runs of this workflow; steps wait in the scheduler
     queue while all action slots are occupied."""
     published_version: int | Unset = UNSET

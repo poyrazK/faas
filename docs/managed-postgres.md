@@ -765,13 +765,39 @@ hour of the UTC month start. Metrics:
 - `apid_managed_postgres_cap_last_sweep_timestamp_seconds`
 - `apid_managed_postgres_cap_enforcement_mode{mode}`
 
-Before setting `on`, run the staging qualification in the ADR's decision 10.
-It checks:
+### Qualifying compute caps
 
-- that Neon's CPU-second counter matches the ledger's compute-unit seconds;
-- that a quota at or below use suspends at once;
-- that raising the quota lets the database wake;
-- that the quota write leaves `logical_size_bytes` unchanged.
+`on` refuses to start without a compute cap qualification, read from
+`FAAS_MANAGED_POSTGRES_CAP_QUALIFICATION_PATH`. It must be made against a
+configured backend's ID and fingerprint, with every check passed and complete
+evidence. Produce the qualification in staging with the same environment as a
+live provisioning qualification (`FAAS_ENVIRONMENT=staging`,
+`FAAS_MANAGED_POSTGRES_QUALIFY_LIVE=true` and a disposable
+`FAAS_MANAGED_POSTGRES_QUALIFY_RESOURCE_ID`):
+
+```bash
+managed-postgres-qualify --compute-cap > compute-cap-qualification.json
+```
+
+The run creates a disposable database, probes it, and deletes it. The probe:
+
+1. Checks that Neon's consumption period starts within an hour of the UTC
+   month start.
+2. Holds the compute active for 90 seconds, then checks that
+   `compute_time_seconds` grew by the compute's size times its active seconds.
+   The ratio, `compute_unit_ratio_permille`, must be at least 800 and at most
+   the largest-to-smallest size ratio plus a quarter, so the quota and the
+   ledger count the same compute-unit seconds.
+3. Sets the quota to the counter and waits for the compute to suspend; a
+   connection must then fail.
+4. Raises the quota and waits for a connection to wake the compute.
+5. Checks that `logical_size_bytes` did not change.
+
+The command exits non-zero, and `on` refuses the file, if any observation
+fails. The file is separate from the provisioning approval on purpose: an
+older apid decodes that approval strictly. Re-run it after a Neon plan or API
+change. A shadow week whose logged quotas match the ledger then completes
+ADR-20261025094915 decision 10.
 
 ## Restore-to-new-database safety
 
@@ -1131,6 +1157,13 @@ records fresh/upgrade schema parity, lost-ledger migration replay, SCRAM role
 checks, SQL preparation, full race suites and 99 selected nested metal tests.
 It includes the journal close/reopen regression and preserves failed attempts
 with their source revisions. Native lifecycle acceptance remains pending.
+
+A bound app reaches its database on every plan: when its guest resolves the
+database's host name, the platform opens that host's port (5432) to the
+answered addresses for the app's instances only
+([ADR-20261026150000](adr/20261026150000-managed-database-binding-egress.md)).
+Other destinations on that port stay closed unless the app declares it in its
+egress ports (Pro and Scale).
 
 The `gregale postgres` command is the supported customer entry point for the
 provider-neutral API:

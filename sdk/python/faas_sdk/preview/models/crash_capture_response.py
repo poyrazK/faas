@@ -21,7 +21,7 @@ T = TypeVar("T", bound="CrashCaptureResponse")
 
 @_attrs_define
 class CrashCaptureResponse:
-    """One crash snapshot (ADR-733). `status` moves from `requested` through
+    """One crash snapshot. `status` moves from `requested` through
     `capturing` to `ready`, then `expired`, or ends as `failed`. Storage
     locations are never returned; open a ready capture as a fork.
 

@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/publicrouting"
 	"github.com/onebox-faas/faas/pkg/trafficrevocation"
 	"golang.org/x/sync/singleflight"
 )
@@ -271,6 +272,7 @@ func (s *targetSet) routableCount() int {
 // wake-fan-out to remove this fallback.
 type PGBackend struct {
 	trafficRevocations atomic.Pointer[trafficrevocation.Registry]
+	publicRoutingView  atomic.Pointer[publicrouting.Registry]
 	workloadAdmissions workloadAdmissionCache
 	router             Router
 	sched              Scheduler
@@ -2922,15 +2924,19 @@ func (b *PGBackend) InvalidateEdgeRuleAccountHosts(accountID, appID string, patt
 
 // BeginEdgeRuleConvergence forwards the prepare phase to matchers that support
 // the distributed policy barrier. Legacy matchers retain reset-only behavior.
-func (b *PGBackend) BeginEdgeRuleConvergence(accountID string, hosts []string, generation int64) {
-	if matcher, ok := b.edgeRules.(interface{ BeginConvergence(string, []string, int64) }); ok {
-		matcher.BeginConvergence(accountID, hosts, generation)
+func (b *PGBackend) BeginEdgeRuleConvergence(accountID, appID string, hosts []string, generation int64) {
+	if matcher, ok := b.edgeRules.(interface {
+		BeginConvergence(string, string, []string, int64)
+	}); ok {
+		matcher.BeginConvergence(accountID, appID, hosts, generation)
 	}
 }
 
-func (b *PGBackend) EndEdgeRuleConvergence(accountID string, hosts []string, generation int64) {
-	if matcher, ok := b.edgeRules.(interface{ EndConvergence(string, []string, int64) }); ok {
-		matcher.EndConvergence(accountID, hosts, generation)
+func (b *PGBackend) EndEdgeRuleConvergence(accountID, appID string, hosts []string, generation int64) {
+	if matcher, ok := b.edgeRules.(interface {
+		EndConvergence(string, string, []string, int64)
+	}); ok {
+		matcher.EndConvergence(accountID, appID, hosts, generation)
 	}
 }
 

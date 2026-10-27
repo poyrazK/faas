@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/capgate"
 	"github.com/onebox-faas/faas/pkg/apid/httpkit"
 	"github.com/onebox-faas/faas/pkg/platformflags"
@@ -35,6 +36,10 @@ func (s *server) capabilityKillSwitch(mux *http.ServeMux, next http.Handler) htt
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if s.capGate != nil {
 			if _, pattern := mux.Handler(r); pattern != "" && !s.capGate.Released(capabilityGateKey(pattern, r)) {
+				if eventPublishRoutes[pattern] {
+					api.WriteProblem(w, api.ErrEventsPaused(false))
+					return
+				}
 				writeMissingRoute(w, r)
 				return
 			}
@@ -60,11 +65,34 @@ func (s *server) capabilityPathHidden(r *http.Request) bool {
 func (s *server) capabilityAllowed(next accountHandler) accountHandler {
 	return func(w http.ResponseWriter, r *http.Request, acct state.Account) {
 		if !s.capabilityAllowedFor(r, acct) {
+			if eventPublishRoutes[r.Pattern] {
+				api.WriteProblem(w, api.ErrEventsPaused(true))
+				return
+			}
 			writeMissingRoute(w, r)
 			return
 		}
 		next(w, r, acct)
 	}
+}
+
+// eventPublishRoutes answer a switched-off events capability with 503
+// events_paused rather than a missing route (ADR-20261027125625): a producer
+// that reads 404 as permanent would drop the events it holds.
+var eventPublishRoutes = map[string]bool{
+	"POST /v1/events:publish":             true,
+	"POST /v1/events:publish-batch":       true,
+	"POST /v1/apps/{slug}/events:publish": true,
+}
+
+// eventsPausedProblem is the refusal for a publication path the events
+// capability does not own (the platform-tenant route): nil while events is on
+// for the app's account (ADR-20261027125625).
+func (s *server) eventsPausedProblem(acct state.Account, app state.App) *api.Problem {
+	if s.capabilityEnabledFor("events", acct, app) {
+		return nil
+	}
+	return api.ErrEventsPaused(s.capGate.Released("POST /v1/events:publish"))
 }
 
 func (s *server) capabilityAllowedFor(r *http.Request, acct state.Account) bool {

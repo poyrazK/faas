@@ -96,8 +96,8 @@ def sync_detailed(
     """Onboard (or replace) a trusted publisher (admin + MFA).
 
      Writes the (app_id, signer_name) row with the supplied base64-DER
-    blob (issue #472 / ADR-054). apid decodes the blob and persists it
-    verbatim; imaged mirrors the row to `/etc/faas/secrets/trusted-publishers/{name}.pem`
+    blob. The API decodes the blob and persists it
+    verbatim; the image service mirrors the row to `/etc/faas/secrets/trusted-publishers/{name}.pem`
     and refreshes its in-memory trust cache on `pg_notify('trusted_signer_changed')`.
     PUT semantics: idempotent re-PUT replaces the previous blob.
 
@@ -108,7 +108,7 @@ def sync_detailed(
         name (str):
         body (AddTrustedSignerRequest): PUT body for `/v1/apps/{slug}/trusted_signers/{name}`.
             `public_key_pem` is
-            the base64-encoded DER blob (apid side strips PEM armour). The DER must
+            the base64-encoded DER blob (the API side strips PEM armour). The DER must
             parse as an ECDSA P-256 SPKI; any other curve or non-ECDSA key returns
             400 `trusted_signer_invalid`. Bytes length must land in [64, 1024].
 
@@ -143,8 +143,8 @@ def sync(
     """Onboard (or replace) a trusted publisher (admin + MFA).
 
      Writes the (app_id, signer_name) row with the supplied base64-DER
-    blob (issue #472 / ADR-054). apid decodes the blob and persists it
-    verbatim; imaged mirrors the row to `/etc/faas/secrets/trusted-publishers/{name}.pem`
+    blob. The API decodes the blob and persists it
+    verbatim; the image service mirrors the row to `/etc/faas/secrets/trusted-publishers/{name}.pem`
     and refreshes its in-memory trust cache on `pg_notify('trusted_signer_changed')`.
     PUT semantics: idempotent re-PUT replaces the previous blob.
 
@@ -155,7 +155,7 @@ def sync(
         name (str):
         body (AddTrustedSignerRequest): PUT body for `/v1/apps/{slug}/trusted_signers/{name}`.
             `public_key_pem` is
-            the base64-encoded DER blob (apid side strips PEM armour). The DER must
+            the base64-encoded DER blob (the API side strips PEM armour). The DER must
             parse as an ECDSA P-256 SPKI; any other curve or non-ECDSA key returns
             400 `trusted_signer_invalid`. Bytes length must land in [64, 1024].
 
@@ -185,8 +185,8 @@ async def asyncio_detailed(
     """Onboard (or replace) a trusted publisher (admin + MFA).
 
      Writes the (app_id, signer_name) row with the supplied base64-DER
-    blob (issue #472 / ADR-054). apid decodes the blob and persists it
-    verbatim; imaged mirrors the row to `/etc/faas/secrets/trusted-publishers/{name}.pem`
+    blob. The API decodes the blob and persists it
+    verbatim; the image service mirrors the row to `/etc/faas/secrets/trusted-publishers/{name}.pem`
     and refreshes its in-memory trust cache on `pg_notify('trusted_signer_changed')`.
     PUT semantics: idempotent re-PUT replaces the previous blob.
 
@@ -197,7 +197,7 @@ async def asyncio_detailed(
         name (str):
         body (AddTrustedSignerRequest): PUT body for `/v1/apps/{slug}/trusted_signers/{name}`.
             `public_key_pem` is
-            the base64-encoded DER blob (apid side strips PEM armour). The DER must
+            the base64-encoded DER blob (the API side strips PEM armour). The DER must
             parse as an ECDSA P-256 SPKI; any other curve or non-ECDSA key returns
             400 `trusted_signer_invalid`. Bytes length must land in [64, 1024].
 
@@ -230,8 +230,8 @@ async def asyncio(
     """Onboard (or replace) a trusted publisher (admin + MFA).
 
      Writes the (app_id, signer_name) row with the supplied base64-DER
-    blob (issue #472 / ADR-054). apid decodes the blob and persists it
-    verbatim; imaged mirrors the row to `/etc/faas/secrets/trusted-publishers/{name}.pem`
+    blob. The API decodes the blob and persists it
+    verbatim; the image service mirrors the row to `/etc/faas/secrets/trusted-publishers/{name}.pem`
     and refreshes its in-memory trust cache on `pg_notify('trusted_signer_changed')`.
     PUT semantics: idempotent re-PUT replaces the previous blob.
 
@@ -242,7 +242,7 @@ async def asyncio(
         name (str):
         body (AddTrustedSignerRequest): PUT body for `/v1/apps/{slug}/trusted_signers/{name}`.
             `public_key_pem` is
-            the base64-encoded DER blob (apid side strips PEM armour). The DER must
+            the base64-encoded DER blob (the API side strips PEM armour). The DER must
             parse as an ECDSA P-256 SPKI; any other curve or non-ECDSA key returns
             400 `trusted_signer_invalid`. Bytes length must land in [64, 1024].
 

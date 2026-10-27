@@ -54,7 +54,7 @@ def sync_detailed(
     *,
     client: AuthenticatedClient | Client,
 ) -> Response[PlatformTenantPlanListResponse | Problem]:
-    """List the account's tenant plans by name (ADR-1307).
+    """List the account's tenant plans by name.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -77,7 +77,7 @@ def sync(
     *,
     client: AuthenticatedClient | Client,
 ) -> PlatformTenantPlanListResponse | Problem | None:
-    """List the account's tenant plans by name (ADR-1307).
+    """List the account's tenant plans by name.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -96,7 +96,7 @@ async def asyncio_detailed(
     *,
     client: AuthenticatedClient | Client,
 ) -> Response[PlatformTenantPlanListResponse | Problem]:
-    """List the account's tenant plans by name (ADR-1307).
+    """List the account's tenant plans by name.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -117,7 +117,7 @@ async def asyncio(
     *,
     client: AuthenticatedClient | Client,
 ) -> PlatformTenantPlanListResponse | Problem | None:
-    """List the account's tenant plans by name (ADR-1307).
+    """List the account's tenant plans by name.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

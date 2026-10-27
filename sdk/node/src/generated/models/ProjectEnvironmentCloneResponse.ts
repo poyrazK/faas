@@ -14,7 +14,7 @@ export type ProjectEnvironmentCloneResponse = {
    */
   secret_references_copied?: number;
   /**
-   * Secrets the source environment shares with every service, copied to the new environment (ADR-1139). Values are never returned.
+   * Secrets the source environment shares with every service, copied to the new environment. Values are never returned.
    */
   project_secrets_copied?: number;
   workloads_copied: number;

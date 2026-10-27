@@ -2659,6 +2659,9 @@ func (s *server) planRollback(r *http.Request, acct state.Account, app state.App
 			return rollbackPlan{}, api.ErrNoRollbackTargetWithCandidates(app.Slug, s.zeroTrafficRollbackCandidates(ctx, app.ID))
 		}
 	}
+	if problem := s.rollbackTargetApprovalProblem(ctx, app, target); problem != nil {
+		return rollbackPlan{}, problem
+	}
 	if policies, ok := s.store.(state.BindingReleasePolicyStore); ok {
 		policy, err := policies.GetBindingReleasePolicy(ctx, acct.ID, app.ID, target.Scope)
 		if err != nil {
@@ -5131,6 +5134,10 @@ func (s *server) changePlan(w http.ResponseWriter, r *http.Request, acct state.A
 	// Free while Polar continues charging the previous paid subscription. The
 	// provider webhook is the only source of truth for the eventual local plan.
 	if acct.Plan != plan {
+		if problem := s.planDowngradeProblem(r.Context(), acct, plan); problem != nil {
+			api.WriteProblem(w, problem)
+			return
+		}
 		billingAcct, identityErr := s.accountForActiveBillingProvider(r.Context(), acct)
 		if identityErr != nil {
 			api.WriteProblem(w, api.ErrCapacity("billing identity temporarily unavailable"))
@@ -5856,7 +5863,7 @@ func (s *server) handleBillingEventWithOptions(ctx context.Context, ev billing.E
 			}
 		}
 	case billing.EventPaymentSucceeded:
-		return s.handleSuccessfulPayment(ctx, ev, acct, asyncBillingMail, providerName(s.billingProvider), s.accountRestoredRequested())
+		return s.handleSuccessfulPayment(ctx, ev, acct, asyncBillingMail, providerName(s.billingProvider), s.accountRestoredRequested() && !orgBillingSubject(acct))
 	case billing.EventSubscriptionUpdated:
 		if ev.SubscriptionID != "" {
 			if err := s.stampActiveBillingSubscription(ctx, acct, ev.SubscriptionID); err != nil {

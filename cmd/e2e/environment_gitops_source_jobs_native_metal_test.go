@@ -8,7 +8,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -121,15 +120,15 @@ func runNativeSourceJob(t *testing.T, providerName, kind string) {
 
 func nativeSourceJobBinary(t *testing.T) []byte {
 	t.Helper()
-	_, file, _, ok := runtime.Caller(0)
-	if !ok {
-		t.Fatal("cannot locate native fixture source")
+	dir, err := e2etest.CallerDir()
+	if err != nil {
+		t.Fatalf("locate native fixture source: %v", err)
 	}
 	out := filepath.Join(t.TempDir(), "gitops-job")
 	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Minute)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "go", "build", "-trimpath", "-ldflags=-s -w", "-o", out, "./pkg/e2etest/testdata/gitopsjob")
-	cmd.Dir = filepath.Clean(filepath.Join(filepath.Dir(file), "../.."))
+	cmd.Dir = filepath.Clean(filepath.Join(dir, "../.."))
 	cmd.Env = append(os.Environ(), "CGO_ENABLED=0", "GOOS=linux", "GOARCH=amd64")
 	if output, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("build checkout-owned Dockerfile executable: %v\n%s", err, output)

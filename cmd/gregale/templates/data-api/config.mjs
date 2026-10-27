@@ -1,4 +1,8 @@
-import { randomBytes } from 'node:crypto'
+import { createHash, randomBytes } from 'node:crypto'
+import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { rootCertificates } from 'node:tls'
 
 // Mirrors pkg/api/limits.go; TestDataAPIRuntimeBounds checks this contract.
 export const limits = Object.freeze({ pool: 2, poolMax: 8, connectionReportMs: 5000, connectionReportIntervalMs: 15000, connectionReportBytes: 4096, rows: 1000, bodyBytes: 1048576, responseBytes: 16777216, outputBytes: 1048576, queryMs: 15000, lockMs: 5000, relations: 1000, columns: 10000, types: 20000, queuedRequests: 8, admissionWaitMs: 1000, overloadRetrySeconds: 1, healthProbeMs: 2000, healthBytes: 8192, rateLimitDefaultPerSecond: 10, rateLimitDefaultBurst: 20, rateLimitMaxPerSecond: 1000, rateLimitMaxBurst: 1000, rateLimitMaxSubjects: 4096, rateLimitSweepMs: 1000, userConcurrencyMaxSubjects: 4096, userConcurrencyCooldownMs: 15000, publicReadMaxRelations: 64, serverKeySubjectMaxBytes: 255, publicReadMaxAgeSeconds: 3600, cacheTagMaxBytes: 128, cacheTagsMax: 32, serverKeyPermissionsBytes: 4096, serverKeyPermissionsEntries: 64, publicRpcMaxFunctions: 64, usageReportMs: 5000, usageReportIntervalMs: 15000, usageReportMaxHours: 48, usageMonthlyCapMax: 1000000000000, usageRestoreJumpMs: 5000, storageObjectDefaultBytes: 26214400, storageObjectMaxBytes: 104857600, storageTransfers: 4, storageTransferMs: 120000, storageSignSeconds: 60 })
@@ -8,8 +12,18 @@ const schemaPart = /^[a-z][a-z0-9_]{0,62}$/
 
 // Owner allowlist of schema-qualified relations readable without a token.
 export function publicReadConfig(value, schemas) {
+  return relationListConfig(value, schemas, 'DATA_API_PUBLIC_READ')
+}
+
+// Owner list of relations signed-in users may reach without row-level security
+// (ADR 20261026140223), in the public-read format.
+export function allowWithoutRLSConfig(value, schemas) {
+  return relationListConfig(value, schemas, 'DATA_API_ALLOW_WITHOUT_RLS')
+}
+
+function relationListConfig(value, schemas, setting) {
   if (value === undefined) return null
-  const invalid = () => { throw new Error('Invalid DATA_API_PUBLIC_READ') }
+  const invalid = () => { throw new Error(`Invalid ${setting}`) }
   if (typeof value !== 'string' || !value) return invalid()
   const names = value.split(',')
   if (names.length > limits.publicReadMaxRelations || new Set(names).size !== names.length) return invalid()
@@ -149,6 +163,27 @@ export function databaseURL(value) {
   const local = ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname)
   if (!local && url.searchParams.get('sslmode') === 'disable') throw new Error('Remote PostgreSQL requires verified TLS')
   if (!local) url.searchParams.set('sslmode', 'verify-full')
+  return url.toString()
+}
+
+// libpq has no built-in trust store: verify-full without sslrootcert refuses
+// to connect. PostgREST therefore gets the roots Node verifies the same server
+// with, the bundled store plus NODE_EXTRA_CA_CERTS.
+const rootFiles = new Map()
+export function engineDatabaseURL(connection, env) {
+  const url = new URL(connection)
+  if (url.searchParams.get('sslmode') !== 'verify-full' || url.searchParams.has('sslrootcert')) return connection
+  let extra = ''
+  // Node also starts without an unreadable NODE_EXTRA_CA_CERTS file.
+  try { extra = env.NODE_EXTRA_CA_CERTS ? readFileSync(env.NODE_EXTRA_CA_CERTS, 'utf8') : '' } catch {}
+  const bundle = [...rootCertificates, extra].filter(Boolean).join('\n') + '\n'
+  const key = createHash('sha256').update(bundle).digest('hex')
+  if (!rootFiles.has(key)) {
+    const file = join(mkdtempSync(join(tmpdir(), 'gregale-data-api-')), 'roots.pem')
+    writeFileSync(file, bundle, { mode: 0o600, flag: 'wx' })
+    rootFiles.set(key, file)
+  }
+  url.searchParams.set('sslrootcert', rootFiles.get(key))
   return url.toString()
 }
 
@@ -311,9 +346,9 @@ export function runtimeConfig(env) {
   const storage = storageConfig(env, schemas)
   const pool = poolConfig(env.DATA_API_POOL, coordinatedRefresh)
   const engine = coordinatedRefresh ? pool - 1 : pool
-  return { connection, role, schemas, auth, secret, storage, pool, engine, serverKeyConcurrency: serverKeyConcurrencyConfig(env.DATA_API_SERVER_KEY_CONCURRENCY, engine), serverKeyRateLimit: rateLimitConfig(env, 'DATA_API_SERVER_KEY_RATE_LIMIT'), coordinatedRefresh, sqlDeadline, queryShapes, readOnly, aggregates, publicRead: publicReadConfig(env.DATA_API_PUBLIC_READ, schemas), serverKeys: serverKeyConfig(env),
+  return { connection, role, schemas, auth, secret, storage, pool, engine, serverKeyConcurrency: serverKeyConcurrencyConfig(env.DATA_API_SERVER_KEY_CONCURRENCY, engine), serverKeyRateLimit: rateLimitConfig(env, 'DATA_API_SERVER_KEY_RATE_LIMIT'), coordinatedRefresh, sqlDeadline, queryShapes, readOnly, aggregates, publicRead: publicReadConfig(env.DATA_API_PUBLIC_READ, schemas), allowWithoutRLS: allowWithoutRLSConfig(env.DATA_API_ALLOW_WITHOUT_RLS, schemas), serverKeys: serverKeyConfig(env),
     publicRpc: publicRpcConfig(env.DATA_API_PUBLIC_RPC, schemas), usage: usageConfig(env), publicReadMaxAge: publicReadMaxAge(env.DATA_API_PUBLIC_READ_MAX_AGE, env.DATA_API_PUBLIC_READ !== undefined || env.DATA_API_PUBLIC_RPC !== undefined), connectionObservation: connectionObservationConfig(env), rateLimit: rateLimitConfig(env), userConcurrency: userConcurrencyConfig(env, engine), acceptedContracts: acceptedContracts(env.DATA_API_ACCEPTED_CONTRACTS), origins: (env.DATA_API_ALLOWED_ORIGINS ?? '').split(',').filter(Boolean),
-    postgrestEnv: { PGRST_DB_URI: connection, PGRST_DB_SCHEMAS: schemas.join(','), PGRST_JWT_SECRET: secret.toString('base64url'),
+    postgrestEnv: { PGRST_DB_URI: engineDatabaseURL(connection, env), PGRST_DB_SCHEMAS: schemas.join(','), PGRST_JWT_SECRET: secret.toString('base64url'),
       PGRST_SERVER_HOST: '127.0.0.1', PGRST_SERVER_PORT: '3000', PGRST_ADMIN_SERVER_PORT: '3001', PGRST_SERVER_TIMING_ENABLED: 'true',
       PGRST_DB_POOL: String(engine), PGRST_DB_MAX_ROWS: String(limits.rows), ...(sqlDeadline ? { PGRST_DB_PRE_REQUEST: 'gregale_data_api.check_deadline_request', PGRST_DB_CONFIG: 'false' } : coordinatedRefresh ? { PGRST_DB_PRE_REQUEST: 'gregale_data_api.check_request' } : {}), PGRST_DB_CHANNEL_ENABLED: 'false', PGRST_DB_PREPARED_STATEMENTS: 'false', ...(aggregates ? { PGRST_DB_AGGREGATES_ENABLED: 'true' } : {}),
       // Storage authorizes before transferring with Prefer: tx=rollback dry runs.

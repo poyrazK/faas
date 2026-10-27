@@ -2801,7 +2801,7 @@ export class RealtimeService {
   }
   /**
    * Create a managed realtime endpoint.
-   * Registers the callback contract used by realtimed for connect,
+   * Registers the callback contract used by the realtime service for connect,
    * message, and disconnect events. Callback and optional client
    * credentials are sealed at rest and never returned in plaintext.
    *
@@ -3032,7 +3032,7 @@ export class RealtimeService {
   }
   /**
    * Count a managed realtime channel's subscribers and presence members.
-   * Returns fleet-wide counts for each requested channel (ADR-1324).
+   * Returns fleet-wide counts for each requested channel.
    * `subscribers` counts every open subscription: WebSocket, read-only
    * ticket and SSE. `presence_members` counts distinct presence members;
    * a principal-scoped member with several connections counts once.
@@ -3363,7 +3363,7 @@ export class RealtimeService {
   }
   /**
    * Read durable channel denies and session cutoff for one principal.
-   * Requires MFA and read scope. Operator preview requires FAAS_REALTIME_ACCESS_PREVIEW_ENABLED=1 on apid and every realtime node. OIDC endpoints only. Revision zero means no stored controls. Responses contain no token or connection identifiers.
+   * Requires MFA and read scope. Operator preview requires FAAS_REALTIME_ACCESS_PREVIEW_ENABLED=1 on the API and every realtime node. OIDC endpoints only. Revision zero means no stored controls. Responses contain no token or connection identifiers.
    * @returns ManagedRealtimeAccessResponse Durable controls; not proof that every live node has applied them.
    * @throws ApiError
    */
@@ -3412,7 +3412,7 @@ export class RealtimeService {
   }
   /**
    * Revoke channel access or older sessions, or remove a channel deny.
-   * Requires MFA and write scope. OIDC operator preview must be enabled on apid and every realtime node. Channel revocation also denies its private activity scopes. Revoke_sessions records a monotonic server-time cutoff; tokens require an integer iat strictly after it. Nodes refresh access state every second and fail closed on refresh failure. Restoration does not grant app membership or automatically resubscribe. Success confirms persistence, not instantaneous fleet convergence.
+   * Requires MFA and write scope. OIDC operator preview must be enabled on the API and every realtime node. Channel revocation also denies its private activity scopes. Revoke_sessions records a monotonic server-time cutoff; tokens require an integer iat strictly after it. Nodes refresh access state every second and fail closed on refresh failure. Restoration does not grant app membership or automatically resubscribe. Success confirms persistence, not instantaneous fleet convergence.
    * @returns ManagedRealtimeAccessResponse Committed access controls.
    * @throws ApiError
    */
@@ -3541,7 +3541,7 @@ export class RealtimeService {
         401: `code: unauthorized`,
         402: `code: plan_realtime_not_allowed — the plan does not include managed realtime endpoints.`,
         404: `code: not_found`,
-        410: `code: upload_session_expired — the resumable-upload session has been swept by the reaper (cmd/apid/upload_session_reaper.go) and cannot be appended to or committed. The CLI is expected to detect this on the first PATCH/COMMIT after expiry and mint a fresh session (issue #1182 §P1 PR-2).`,
+        410: `code: upload_session_expired — the resumable-upload session has been swept by the reaper and cannot be appended to or committed. The CLI is expected to detect this on the first PATCH/COMMIT after expiry and mint a fresh session.`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
@@ -3594,7 +3594,7 @@ export class RealtimeService {
         401: `code: unauthorized`,
         402: `code: plan_realtime_not_allowed — the plan does not include managed realtime endpoints.`,
         404: `code: not_found`,
-        410: `code: upload_session_expired — the resumable-upload session has been swept by the reaper (cmd/apid/upload_session_reaper.go) and cannot be appended to or committed. The CLI is expected to detect this on the first PATCH/COMMIT after expiry and mint a fresh session (issue #1182 §P1 PR-2).`,
+        410: `code: upload_session_expired — the resumable-upload session has been swept by the reaper and cannot be appended to or committed. The CLI is expected to detect this on the first PATCH/COMMIT after expiry and mint a fresh session.`,
         503: `code: capacity_unavailable — no host headroom.
         Resource increases can return service_recovery_capacity_unavailable
         when enabled bare-metal service protection needs more recovery headroom.
@@ -3644,7 +3644,7 @@ export class RealtimeService {
         401: `code: unauthorized`,
         402: `code: plan_realtime_not_allowed — the plan does not include managed realtime endpoints.`,
         404: `code: not_found`,
-        410: `code: upload_session_expired — the resumable-upload session has been swept by the reaper (cmd/apid/upload_session_reaper.go) and cannot be appended to or committed. The CLI is expected to detect this on the first PATCH/COMMIT after expiry and mint a fresh session (issue #1182 §P1 PR-2).`,
+        410: `code: upload_session_expired — the resumable-upload session has been swept by the reaper and cannot be appended to or committed. The CLI is expected to detect this on the first PATCH/COMMIT after expiry and mint a fresh session.`,
         503: `code: capacity_unavailable — no host headroom.
         Resource increases can return service_recovery_capacity_unavailable
         when enabled bare-metal service protection needs more recovery headroom.
@@ -3694,7 +3694,7 @@ export class RealtimeService {
         401: `code: unauthorized`,
         402: `code: plan_realtime_not_allowed — the plan does not include managed realtime endpoints.`,
         404: `code: not_found`,
-        410: `code: upload_session_expired — the resumable-upload session has been swept by the reaper (cmd/apid/upload_session_reaper.go) and cannot be appended to or committed. The CLI is expected to detect this on the first PATCH/COMMIT after expiry and mint a fresh session (issue #1182 §P1 PR-2).`,
+        410: `code: upload_session_expired — the resumable-upload session has been swept by the reaper and cannot be appended to or committed. The CLI is expected to detect this on the first PATCH/COMMIT after expiry and mint a fresh session.`,
         503: `code: capacity_unavailable — no host headroom.
         Resource increases can return service_recovery_capacity_unavailable
         when enabled bare-metal service protection needs more recovery headroom.
@@ -3704,7 +3704,7 @@ export class RealtimeService {
   }
   /**
    * Publish a message to live or resumable channel subscribers.
-   * delivery=live (the default) fans out to live raw-frame subscribers. delivery=retained is preview-only and requires FAAS_REALTIME_RETAINED_PREVIEW_ENABLED=1 on apid; it accepts at most 4096 decoded bytes and requires an Idempotency-Key. Retained delivery commits the message to the ordered channel log before fan-out and returns its sequence. V2 subscribers read the committed log in sequence; a best-effort wake reduces latency while bounded polling recovers missed wakes. The retained log remains authoritative if live fan-out is incomplete. The resume protocol separately requires FAAS_REALTIME_RESUME_PREVIEW_ENABLED=1 on realtimed.
+   * delivery=live (the default) fans out to live raw-frame subscribers. delivery=retained is preview-only and requires FAAS_REALTIME_RETAINED_PREVIEW_ENABLED=1 on the API; it accepts at most 4096 decoded bytes and requires an Idempotency-Key. Retained delivery commits the message to the ordered channel log before fan-out and returns its sequence. V2 subscribers read the committed log in sequence; a best-effort wake reduces latency while bounded polling recovers missed wakes. The retained log remains authoritative if live fan-out is incomplete. The resume protocol separately requires FAAS_REALTIME_RESUME_PREVIEW_ENABLED=1 on the realtime service.
    * A supplied Idempotency-Key binds the publish to delivery mode, decoded payload and binary flag for 24 hours. Replays return the original response and do not retry recipients that missed a partial publish. Reusing a key with a different mode or payload returns 409. An in-flight or uncertain reservation also returns 409 and is not run again while the key is active. Queue admission does not confirm client receipt.
    * @returns ManagedRealtimePublishResponse Per-recipient queue outcomes; retained publishes also include the committed channel sequence.
    * @throws ApiError
@@ -3775,7 +3775,7 @@ export class RealtimeService {
   }
   /**
    * Append one ordered message to retained channel history.
-   * Disabled by default; an operator must set FAAS_REALTIME_RETAINED_PREVIEW_ENABLED=1 on apid. Retained writes reach only opt-in v2 WebSocket subscribers when the separate realtimed resume preview is enabled. The sequence is committed before the response; idempotency applies while the message remains retained. At most 32 channels and 1024 messages per channel are retained per endpoint, for up to 24 hours.
+   * Disabled by default; an operator must set FAAS_REALTIME_RETAINED_PREVIEW_ENABLED=1 on the API. Retained writes reach only opt-in v2 WebSocket subscribers when the separate realtime service resume preview is enabled. The sequence is committed before the response; idempotency applies while the message remains retained. At most 32 channels and 1024 messages per channel are retained per endpoint, for up to 24 hours.
    * @returns ManagedRealtimeRetainedMessageResponse Message committed to the channel log.
    * @throws ApiError
    */
@@ -3829,7 +3829,7 @@ export class RealtimeService {
   }
   /**
    * Read a page of retained channel history after a sequence.
-   * Disabled by default; an operator must set FAAS_REALTIME_RETAINED_PREVIEW_ENABLED=1 on apid. A cursor older than retained history returns 410 with code history_unavailable. This management API is not a WebSocket resume protocol.
+   * Disabled by default; an operator must set FAAS_REALTIME_RETAINED_PREVIEW_ENABLED=1 on the API. A cursor older than retained history returns 410 with code history_unavailable. This management API is not a WebSocket resume protocol.
    * @returns ManagedRealtimeRetainedHistoryResponse A consistent page of retained messages.
    * @throws ApiError
    */
@@ -3878,7 +3878,7 @@ export class RealtimeService {
         401: `code: unauthorized`,
         402: `code: plan_realtime_not_allowed — the plan does not include managed realtime endpoints.`,
         404: `code: not_found`,
-        410: `code: upload_session_expired — the resumable-upload session has been swept by the reaper (cmd/apid/upload_session_reaper.go) and cannot be appended to or committed. The CLI is expected to detect this on the first PATCH/COMMIT after expiry and mint a fresh session (issue #1182 §P1 PR-2).`,
+        410: `code: upload_session_expired — the resumable-upload session has been swept by the reaper and cannot be appended to or committed. The CLI is expected to detect this on the first PATCH/COMMIT after expiry and mint a fresh session.`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and

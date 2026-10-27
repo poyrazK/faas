@@ -10,10 +10,10 @@ T = TypeVar("T", bound="RouteHealthProbe")
 
 @_attrs_define
 class RouteHealthProbe:
-    """Opt-in synthetic probe for a GET or HEAD selector (ADR-847). While a canary is in flight and organic evidence stays
-    sparse, Gregale sends a few bodyless requests per minute to the candidate and stable deployments with customer auth
-    gates unchanged. Probe requests never appear in request telemetry, analytics or usage; they wake the app like any
-    request. At most 5 selectors per app.
+    """Opt-in synthetic probe for a GET or HEAD selector. While a canary is in flight and organic evidence stays sparse,
+    Gregale sends a few bodyless requests per minute to the candidate and stable deployments with customer auth gates
+    unchanged. Probe requests never appear in request telemetry, analytics or usage; they wake the app like any request.
+    At most 5 selectors per app.
 
     """
 

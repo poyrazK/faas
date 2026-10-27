@@ -10,6 +10,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/platformflags"
 	"github.com/onebox-faas/faas/pkg/reqbudget"
 	"github.com/onebox-faas/faas/pkg/trafficrevocation"
 )
@@ -71,6 +72,33 @@ func AdmitSyntheticTraffic(ctx context.Context, registry *trafficrevocation.Regi
 	return ctx, cleanup, nil
 }
 
+// AdmitPlatformResponse enrolls a compute-owned platform response (a log read
+// or stream, an attach session, the dev debug tunnel) under its owner's
+// security scopes. Those handlers sit beside the application handler, but
+// the public hop proxies them like application traffic and refuses a
+// successful response without the security snapshot (ADR-570). It stamps
+// the snapshot into header, the response's or a WebSocket upgrade's, or
+// writes the refusal and returns ok=false. The context ends with the
+// revocation as its cause (TrafficRevocation) when a scope is revoked;
+// release ends the enrollment once the response is complete.
+func AdmitPlatformResponse(ctx context.Context, w http.ResponseWriter, r *http.Request, registry *trafficrevocation.Registry, header http.Header, scopes ...trafficrevocation.Scope) (context.Context, func(), bool) {
+	if registry == nil { // Optional only for legacy in-process fixtures.
+		return ctx, func() {}, true
+	}
+	ctx, release, err := AdmitSyntheticTraffic(ctx, registry, scopes...)
+	if err != nil {
+		writeTrafficRevocationError(w, r, err)
+		return nil, nil, false
+	}
+	stampTrafficSecurity(ctx, header)
+	return ctx, release, true
+}
+
+// TrafficRevocation reports the security revocation that ended ctx, or nil.
+func TrafficRevocation(ctx context.Context) error {
+	return trafficRevocationCause(ctx)
+}
+
 func (e *trafficEnrollment) addBaseline(ctx context.Context, scopes []trafficrevocation.Scope, baseline map[trafficrevocation.Scope]trafficrevocation.State) error {
 	e.mu.Lock()
 	defer e.mu.Unlock()
@@ -109,6 +137,46 @@ func (h *Handler) WithTrafficRevocations(registry *trafficrevocation.Registry) *
 	return h
 }
 
+// WithTrafficRevocationFenceFlags installs the operator kill switch for the
+// revocation fence (platformflags.TrafficRevocationFence); nil enforces it.
+func (h *Handler) WithTrafficRevocationFenceFlags(flags *platformflags.Set) *Handler {
+	h.trafficFenceFlags = flags
+	return h
+}
+
+type trafficFenceOffKey struct{}
+
+// trafficFenceOff reports that an operator turned the revocation fence off:
+// platform-wide by disabling the flag, or for accountID by an account rule.
+// The flag defaults on, and a missing account or unknown flag keeps the fence,
+// since the evaluator answers "not enabled" for those.
+func trafficFenceOff(flags *platformflags.Set, accountID string) bool {
+	if flags == nil {
+		return false
+	}
+	decision := flags.Evaluate(platformflags.TrafficRevocationFence, platformflags.Subject{AccountID: accountID})
+	switch decision.Reason {
+	case platformflags.ReasonFlagDisabled:
+		return true
+	case platformflags.ReasonAccountMissing, platformflags.ReasonUnknownFlag:
+		return false
+	}
+	return !decision.Enabled
+}
+
+// markTrafficFenceOff serves the rest of this request without the fence:
+// later enrollments are skipped and the compute answer carries the fence-off
+// marker, so the public edge passes it instead of refusing an unstamped one.
+func markTrafficFenceOff(r *http.Request, metrics *Metrics, path string) {
+	*r = *r.WithContext(context.WithValue(r.Context(), trafficFenceOffKey{}, true))
+	metrics.observeTrafficFenceOff(path)
+}
+
+func trafficFenceIsOff(ctx context.Context) bool {
+	off, _ := ctx.Value(trafficFenceOffKey{}).(bool)
+	return off
+}
+
 func enrollTrafficScopes(w http.ResponseWriter, r *http.Request, registry *trafficrevocation.Registry, scopes ...trafficrevocation.Scope) bool {
 	return enrollTrafficScopesWith(w, r, registry, func(err error) { writeTrafficRevocationError(w, r, err) }, scopes...)
 }
@@ -139,8 +207,8 @@ func enrollTrafficScopesWith(w http.ResponseWriter, r *http.Request, registry *t
 	if registry == nil { // Optional only for legacy in-process fixtures.
 		return false
 	}
-	if handleForwardRequestCancellation(w, r, true) {
-		return true
+	if handleForwardRequestCancellation(w, r, true) || trafficFenceIsOff(r.Context()) {
+		return handleForwardRequestCancellation(w, r, true)
 	}
 	enrollment, _ := r.Context().Value(trafficEnrollmentKey{}).(*trafficEnrollment)
 	if enrollment == nil {

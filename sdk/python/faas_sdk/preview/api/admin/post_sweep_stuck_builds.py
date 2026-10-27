@@ -100,7 +100,7 @@ def sync_detailed(
      Operator-side recovery primitive for builder microVMs that
     crashed (OOM, kernel panic, host reboot) and left their
     `builds` row in 'running' indefinitely. Mirrors the
-    in-process reaper at pkg/builderd/reaper.go:48 — the
+    in-process reaper — the
     operator-facing endpoint is the manual escape hatch for
     when the reaper's grace period is too long for an
     incident.
@@ -150,7 +150,7 @@ def sync(
      Operator-side recovery primitive for builder microVMs that
     crashed (OOM, kernel panic, host reboot) and left their
     `builds` row in 'running' indefinitely. Mirrors the
-    in-process reaper at pkg/builderd/reaper.go:48 — the
+    in-process reaper — the
     operator-facing endpoint is the manual escape hatch for
     when the reaper's grace period is too long for an
     incident.
@@ -195,7 +195,7 @@ async def asyncio_detailed(
      Operator-side recovery primitive for builder microVMs that
     crashed (OOM, kernel panic, host reboot) and left their
     `builds` row in 'running' indefinitely. Mirrors the
-    in-process reaper at pkg/builderd/reaper.go:48 — the
+    in-process reaper — the
     operator-facing endpoint is the manual escape hatch for
     when the reaper's grace period is too long for an
     incident.
@@ -243,7 +243,7 @@ async def asyncio(
      Operator-side recovery primitive for builder microVMs that
     crashed (OOM, kernel panic, host reboot) and left their
     `builds` row in 'running' indefinitely. Mirrors the
-    in-process reaper at pkg/builderd/reaper.go:48 — the
+    in-process reaper — the
     operator-facing endpoint is the manual escape hatch for
     when the reaper's grace period is too long for an
     incident.

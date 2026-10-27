@@ -166,6 +166,30 @@ func run(args []string) (status int) {
 	if profileErr != nil {
 		return printErr("Invalid connection profile", profileErr)
 	}
+	// ADR-20261026145832: a path in the new command tree runs the command
+	// that implements it today, so help, gating and dispatch see that path.
+	typed := args
+	args, err := rewriteCliTree(args)
+	if err != nil {
+		return printErr("Invalid app target", err)
+	}
+	args = normalizeTreeFlags(args)
+	// A flag that reaches another capability answers like an unknown flag
+	// while that capability is hidden for the account (cliFlag.Capability).
+	if len(args) > 0 {
+		if name, hidden := hiddenFlagArg(manifestLeafFlags(args), args[1:]); hidden {
+			return printErr("Unknown flag", fmt.Errorf("gregale: unknown flag %s; run 'gregale %s --help' for its options", name, leadingWords(typed)))
+		}
+	}
+	if noun, ok := cliTreeHelpTopic(args); ok {
+		printCliTreeHelp(osStdout, noun)
+		return 0
+	}
+	if len(args) > 0 {
+		if noun, ok := cliTreeNounOnly(args[0]); ok {
+			return printErr("Unknown command", fmt.Errorf("gregale: unknown command %q; run 'gregale %s --help' for its commands", leadingWords(args), noun.Name))
+		}
+	}
 	jsonUsageHelp = hasHelpFlag(args)
 	invokedCommandPath = publicCommandPath(args)
 	previousHelpPrinted, previousHelpPath := flagHelpPrinted, helpRequestPath
@@ -192,6 +216,9 @@ func run(args []string) (status int) {
 	// answers like an unknown one.
 	if args[0] != "help" {
 		if path, hidden := hiddenCommand(args, hasHelpFlag(args[1:])); hidden {
+			if !slices.Equal(typed, args) {
+				path = strings.Join(leadingTreeWords(typed), " ") // the name the user typed
+			}
 			return unknownCommand(path)
 		}
 	}

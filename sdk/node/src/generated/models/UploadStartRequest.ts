@@ -4,7 +4,7 @@
 /* eslint-disable */
 import type { UploadDeployOptions } from './UploadDeployOptions.js';
 /**
- * Body of POST /v1/uploads. `total_size` must be ≤ the per-plan SourceTarballMaxMB cap (Free/Hobby 100 MB, Pro/Scale 250 MB); the handler returns 413 + `source_too_large` otherwise. `sha256_hex` is recorded for the build_provenance audit row only — the server does NOT re-verify it at commit time (ADR-115 trust boundary).
+ * Body of POST /v1/uploads. `total_size` must be ≤ the per-plan SourceTarballMaxMB cap (Free/Hobby 100 MB, Pro/Scale 250 MB); the handler returns 413 + `source_too_large` otherwise. `sha256_hex` is recorded for the build_provenance audit row only — the server does NOT re-verify it at commit time (trust boundary).
  */
 export type UploadStartRequest = {
   app_slug: string;

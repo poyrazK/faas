@@ -1124,6 +1124,16 @@ Each slice is one reviewable change on a branch. Slices 2–4 are behind
      runs the dry run. Step 2, after one release whose dry run refuses
      nothing (`vmmd_adoption_refused_total`), turns `vmmd_adopt_running_vms`
      on for one canary host.
+   - **Production step 2.** `vmmd_adoption_canary_nodes` (`fsn-2.faas`)
+     turns `vmmd_adopt_running_vms` on by canonical node name. rc.297's first
+     dry run refused every record as `no_adoption_record`, because rc.294
+     wrote none, so the gate is a clean dry run at the following restart,
+     not the counter's total. node_join now also requires the serving vmmd
+     to hand its guests off (`FAAS_VMMD_ADOPT_RUNNING_VMS` in the running
+     process's environment) before it skips the drain: a serving vmmd
+     without it sets no planned-restart notice and hands no bridge unit
+     over. The canary's first rollout with step 2 therefore drains, and the
+     next one can skip the drain.
 5. **fsn-4 acceptance** (§5), then flip `adopt_running_vms` to true by default.
 
 ## Risks

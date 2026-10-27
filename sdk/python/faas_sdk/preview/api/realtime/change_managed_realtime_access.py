@@ -103,10 +103,10 @@ def sync_detailed(
 ) -> Response[ManagedRealtimeAccessResponse | Problem]:
     """Revoke channel access or older sessions, or remove a channel deny.
 
-     Requires MFA and write scope. OIDC operator preview must be enabled on apid and every realtime node.
-    Channel revocation also denies its private activity scopes. Revoke_sessions records a monotonic
-    server-time cutoff; tokens require an integer iat strictly after it. Nodes refresh access state
-    every second and fail closed on refresh failure. Restoration does not grant app membership or
+     Requires MFA and write scope. OIDC operator preview must be enabled on the API and every realtime
+    node. Channel revocation also denies its private activity scopes. Revoke_sessions records a
+    monotonic server-time cutoff; tokens require an integer iat strictly after it. Nodes refresh access
+    state every second and fail closed on refresh failure. Restoration does not grant app membership or
     automatically resubscribe. Success confirms persistence, not instantaneous fleet convergence.
 
     Args:
@@ -147,10 +147,10 @@ def sync(
 ) -> ManagedRealtimeAccessResponse | Problem | None:
     """Revoke channel access or older sessions, or remove a channel deny.
 
-     Requires MFA and write scope. OIDC operator preview must be enabled on apid and every realtime node.
-    Channel revocation also denies its private activity scopes. Revoke_sessions records a monotonic
-    server-time cutoff; tokens require an integer iat strictly after it. Nodes refresh access state
-    every second and fail closed on refresh failure. Restoration does not grant app membership or
+     Requires MFA and write scope. OIDC operator preview must be enabled on the API and every realtime
+    node. Channel revocation also denies its private activity scopes. Revoke_sessions records a
+    monotonic server-time cutoff; tokens require an integer iat strictly after it. Nodes refresh access
+    state every second and fail closed on refresh failure. Restoration does not grant app membership or
     automatically resubscribe. Success confirms persistence, not instantaneous fleet convergence.
 
     Args:
@@ -186,10 +186,10 @@ async def asyncio_detailed(
 ) -> Response[ManagedRealtimeAccessResponse | Problem]:
     """Revoke channel access or older sessions, or remove a channel deny.
 
-     Requires MFA and write scope. OIDC operator preview must be enabled on apid and every realtime node.
-    Channel revocation also denies its private activity scopes. Revoke_sessions records a monotonic
-    server-time cutoff; tokens require an integer iat strictly after it. Nodes refresh access state
-    every second and fail closed on refresh failure. Restoration does not grant app membership or
+     Requires MFA and write scope. OIDC operator preview must be enabled on the API and every realtime
+    node. Channel revocation also denies its private activity scopes. Revoke_sessions records a
+    monotonic server-time cutoff; tokens require an integer iat strictly after it. Nodes refresh access
+    state every second and fail closed on refresh failure. Restoration does not grant app membership or
     automatically resubscribe. Success confirms persistence, not instantaneous fleet convergence.
 
     Args:
@@ -228,10 +228,10 @@ async def asyncio(
 ) -> ManagedRealtimeAccessResponse | Problem | None:
     """Revoke channel access or older sessions, or remove a channel deny.
 
-     Requires MFA and write scope. OIDC operator preview must be enabled on apid and every realtime node.
-    Channel revocation also denies its private activity scopes. Revoke_sessions records a monotonic
-    server-time cutoff; tokens require an integer iat strictly after it. Nodes refresh access state
-    every second and fail closed on refresh failure. Restoration does not grant app membership or
+     Requires MFA and write scope. OIDC operator preview must be enabled on the API and every realtime
+    node. Channel revocation also denies its private activity scopes. Revoke_sessions records a
+    monotonic server-time cutoff; tokens require an integer iat strictly after it. Nodes refresh access
+    state every second and fail closed on refresh failure. Restoration does not grant app membership or
     automatically resubscribe. Success confirms persistence, not instantaneous fleet convergence.
 
     Args:

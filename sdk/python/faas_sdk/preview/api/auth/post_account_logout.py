@@ -70,7 +70,7 @@ def sync_detailed(
     r"""Log the current dashboard session out.
 
      Revokes the calling session row in the `sessions` table
-    (one row per dashboard login; ADR-039 / IAM-3) and
+    (one row per dashboard login) and
     clears the `faas_sid` cookie. Always 204 on success,
     even if the row was already revoked (idempotent — the
     cookie is cleared either way). Other sessions on the
@@ -114,7 +114,7 @@ def sync(
     r"""Log the current dashboard session out.
 
      Revokes the calling session row in the `sessions` table
-    (one row per dashboard login; ADR-039 / IAM-3) and
+    (one row per dashboard login) and
     clears the `faas_sid` cookie. Always 204 on success,
     even if the row was already revoked (idempotent — the
     cookie is cleared either way). Other sessions on the
@@ -153,7 +153,7 @@ async def asyncio_detailed(
     r"""Log the current dashboard session out.
 
      Revokes the calling session row in the `sessions` table
-    (one row per dashboard login; ADR-039 / IAM-3) and
+    (one row per dashboard login) and
     clears the `faas_sid` cookie. Always 204 on success,
     even if the row was already revoked (idempotent — the
     cookie is cleared either way). Other sessions on the
@@ -195,7 +195,7 @@ async def asyncio(
     r"""Log the current dashboard session out.
 
      Revokes the calling session row in the `sessions` table
-    (one row per dashboard login; ADR-039 / IAM-3) and
+    (one row per dashboard login) and
     clears the `faas_sid` cookie. Always 204 on success,
     even if the row was already revoked (idempotent — the
     cookie is cleared either way). Other sessions on the

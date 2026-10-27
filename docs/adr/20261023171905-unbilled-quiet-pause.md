@@ -226,6 +226,14 @@ meterd's retention loop.
   `load_error`. Alert `FaasQuietPauseLedgerWriteErrors`.
 - `schedd_quiet_pause_ledger_watermark_seconds{node}`: Unix time of the newest
   recorded report. It stops moving while a node reports no VM.
+- `schedd_quiet_pause_measured_seconds_total{node}` (amended 2026-10-26):
+  the quiet-paused time vmmd measured, from the reports the ledger is built
+  from: each incarnation's completed pauses (`quiet_paused_ns_total`) plus
+  its open pause time. The alerts above only catch customers paying for
+  pause time. `FaasQuietPauseUnbilledExceedsMeasured` catches the other
+  direction: over 6 h, meterd's unbilled seconds (subtracted or shadow)
+  exceed the measured seconds by more than 5% plus 10 minutes, meaning the
+  ledger proves pauses that did not happen.
 
 Runbook: docs/runbooks/FaasQuietPauseBilling.md.
 

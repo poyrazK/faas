@@ -16,7 +16,7 @@ T = TypeVar("T", bound="GithubRecoveryStatusResponse")
 
 @_attrs_define
 class GithubRecoveryStatusResponse:
-    """Operator-safe projections of githubd's durable recovery queues. Webhook payloads are never included."""
+    """Operator-safe projections of the GitHub integration's durable recovery queues. Webhook payloads are never included."""
 
     deliveries: list[GithubWebhookDeliveryRecord]
     check_updates: list[GithubCheckUpdateRecord]
