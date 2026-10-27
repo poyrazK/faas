@@ -230,6 +230,17 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if d, ok := driver.(*builderdpkg.VMMDriver); ok {
 		d.WithBuilderBaseDigest(builderBaseDigestPath)
 		d.WithDockerHubMirrors(mirrors)
+		// The node artifact cache shares the build drive filesystem and keeps
+		// less free than one build needs (#5709, ADR-20261027173012).
+		if sourceStorage != nil {
+			d.WithDriveSpaceReclaimer(func(_ context.Context, need int64) error {
+				if err := storage.ReclaimFreeBytes(sourceStorage, need); err != nil {
+					log.Warn("builderd: could not reclaim artifact cache space for a build drive", "need_bytes", need, "err", err)
+					return err
+				}
+				return nil
+			})
+		}
 	}
 	if c, ok := driver.(*builderdpkg.VMMDriver); ok {
 		defer func() { _ = c.Close() }()

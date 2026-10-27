@@ -11453,6 +11453,12 @@ const (
 	// refresh, dropping the least recently used.
 	TrafficPublicRoutingWarmTTL  = 10 * time.Minute
 	TrafficPublicRoutingMaxViews = 4_096
+	// TrafficRateLimitOutageGrace is how long after its last successful shared
+	// counter decision a gateway enforces central rate limits from its own
+	// per-gateway bucket while the counter cannot be read
+	// (ADR-20261027173012). It matches TrafficSecurityOutageGrace: past it,
+	// unverified admission is refused with rate_limit_unavailable.
+	TrafficRateLimitOutageGrace = 5 * time.Minute
 	// Runtime feature observations are small fleet snapshots, independent of
 	// request accounting and policy-revision convergence.
 	TrafficRuntimeObservationInterval  = 2 * time.Second

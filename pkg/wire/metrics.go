@@ -8596,8 +8596,14 @@ func (m *OpsMetrics) ObserveImageScanVuln(image, severity string, count int) {
 }
 
 // BaseScanRefusalReasons is the closed reason set of
-// <daemon>_base_scan_refusals_total.
-var BaseScanRefusalReasons = []string{"critical", "sidecar_missing", "generation_mismatch", "generation_unavailable", "incomplete"}
+// <daemon>_base_scan_refusals_total. scan_failed is imaged's fail-closed
+// placeholder (BaseScanFailedCount) rather than real findings.
+var BaseScanRefusalReasons = []string{"critical", "sidecar_missing", "generation_mismatch", "generation_unavailable", "incomplete", "scan_failed"}
+
+// BaseScanFailedCount is the per-severity count imaged writes into a base's
+// scan sidecar when its Grype scan failed, so vmmd refuses to boot an
+// unscanned base. It is a placeholder, not a number of vulnerabilities.
+const BaseScanFailedCount = 9999
 
 // ObserveBaseScanRefusal counts one boot refused by vmmd's base scan gate.
 // Safe on a nil receiver.

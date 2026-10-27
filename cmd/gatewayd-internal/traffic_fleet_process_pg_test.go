@@ -47,6 +47,10 @@ type fleetDaemonSpec struct {
 	// outage grace so the test can cross it.
 	DatabaseAddr   string
 	RoutingGraceMS int
+	// RateLimitGraceMS replaces the rate counters' outage grace
+	// (ADR-20261027173012): 0 keeps the production grace, negative refuses
+	// at the first counter failure.
+	RateLimitGraceMS int
 	// LogWarnings sends the daemon's warnings to stderr, which a failing
 	// test prints. CachedHostPolicy is the production default (no
 	// FAAS_TRAFFIC_AUTHORITATIVE_HOST_POLICY): hosts resolve from the route
@@ -197,6 +201,7 @@ func TestTrafficFleetDaemonProcess(t *testing.T) {
 	if spec.RoutingGraceMS > 0 {
 		deps.publicRoutingView = publicrouting.New(store).WithOutageGrace(time.Duration(spec.RoutingGraceMS) * time.Millisecond)
 	}
+	deps.rateLimitOutageGrace = time.Duration(spec.RateLimitGraceMS) * time.Millisecond
 	// Outer run() loads the operator key before runWithDeps. Exercise that
 	// same loader here; a configured deadline must not use a fixture signer.
 	deps.trafficDeadlines, err = loadTrafficDeadlineSigner(os.Getenv)
@@ -374,8 +379,10 @@ func startFleetDaemonDNS(t *testing.T, pool *pgxpool.Pool, apps []fleetDaemonApp
 
 func startFleetDaemonOptions(t *testing.T, pool *pgxpool.Pool, apps []fleetDaemonApp, nodeID, nodeName, usageSocket string, managed bool, dnsUpstream string, repairWithoutNotifications bool) *fleetDaemonProcess {
 	t.Helper()
+	// These fleets assert the refusal past the rate counters' outage grace;
+	// TestTrafficFleetDaemonRateCounterOutageGrace covers the grace itself.
 	return startFleetDaemonConfigured(t, pool, apps, nodeID, nodeName, usageSocket, fleetDaemonOptions{Managed: managed,
-		DNSUpstream: dnsUpstream, RepairWithoutNotifications: repairWithoutNotifications})
+		DNSUpstream: dnsUpstream, RepairWithoutNotifications: repairWithoutNotifications, RateLimitGraceMS: -1})
 }
 
 type fleetDaemonOptions struct {
@@ -386,6 +393,7 @@ type fleetDaemonOptions struct {
 	LocalCounters                 bool
 	DatabaseAddr                  string
 	RoutingGraceMS                int
+	RateLimitGraceMS              int
 	LogWarnings, CachedHostPolicy bool
 	BudgetAdmissionOff            bool
 }
@@ -409,7 +417,7 @@ func startFleetDaemonConfigured(t *testing.T, pool *pgxpool.Pool, apps []fleetDa
 	}
 	spec := fleetDaemonSpec{Database: pool.Config().ConnConfig.Database, SearchPath: pool.Config().ConnConfig.RuntimeParams["search_path"],
 		ConfigPath: configPath, NodeID: nodeID, Apps: apps, Managed: managed, DNSUpstream: dnsUpstream, RepairWithoutNotifications: repairWithoutNotifications,
-		DatabaseAddr: options.DatabaseAddr, RoutingGraceMS: options.RoutingGraceMS, LogWarnings: options.LogWarnings,
+		DatabaseAddr: options.DatabaseAddr, RoutingGraceMS: options.RoutingGraceMS, RateLimitGraceMS: options.RateLimitGraceMS, LogWarnings: options.LogWarnings,
 		CachedHostPolicy: options.CachedHostPolicy, BudgetAdmissionOff: options.BudgetAdmissionOff}
 	encoded, err := json.Marshal(spec)
 	if err != nil {

@@ -159,7 +159,7 @@ func (h *Handler) writeProducedBaseScanSidecar(ctx context.Context, r verifiedBa
 // zero. Invalidate old compatibility output before rebuilding or refreshing;
 // only a successfully retained private result can replace that refusal.
 func writeProducedBaseScanCompatibility(ctx context.Context, be storage.StorageBackend, key, ref, out string, value state.BaseImageScan) error {
-	findings := map[string]int{SeverityCritical: 9999, SeverityHigh: 9999, SeverityMedium: 9999, SeverityLow: 9999, SeverityUnknown: 0}
+	findings := map[string]int{SeverityCritical: wire.BaseScanFailedCount, SeverityHigh: wire.BaseScanFailedCount, SeverityMedium: wire.BaseScanFailedCount, SeverityLow: wire.BaseScanFailedCount, SeverityUnknown: 0}
 	fixAvailable := findings
 	if value.Input.Status == "complete" {
 		result, err := scanResultFromAPI(value.Result)
