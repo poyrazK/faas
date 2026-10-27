@@ -86,6 +86,7 @@ func main() {
 	identityProbe := flag.Bool("identity-probe", false, "serve /identity, which fetches a workload identity token from guest-init")
 	queueConsumer := flag.Bool("queue-consumer", false, "run as a pull-queue worker: fetch a gregale:queues token, never listen")
 	failAPI := flag.Bool("fail-api", false, "answer /api with 500 while / and /healthz stay healthy (bad release)")
+	rejectAPI := flag.Int("reject-api", 0, "answer /api with this 4xx status, an error the platform's 5xx rules do not see (release gates; 0 disables)")
 	failLivez := flag.Bool("fail-livez", false, "answer /livez with 500 while /healthz stays healthy (crash loop)")
 	failRootAfter := flag.Int64("fail-root-after-requests", 0, "answer / with 500 after this many / requests, so a release passes its post-readiness smoke and fails later (0 disables)")
 	delayRoot := flag.Duration("delay-root", 0, "wait this long before answering / (a release that is slow at full traffic, ADR-1445)")
@@ -272,6 +273,10 @@ func main() {
 	mux.HandleFunc("/api", func(w http.ResponseWriter, _ *http.Request) {
 		if *failAPI {
 			http.Error(w, "fixture bad release", http.StatusInternalServerError)
+			return
+		}
+		if *rejectAPI != 0 {
+			http.Error(w, "fixture rejects the request", *rejectAPI)
 			return
 		}
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
