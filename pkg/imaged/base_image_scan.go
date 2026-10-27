@@ -70,7 +70,7 @@ func (h *Handler) loadOrRunProducedBaseScan(ctx context.Context, be storage.Stor
 	if !ok {
 		return state.BaseImageScan{}, fmt.Errorf("imaged: durable shared-base scan store unavailable")
 	}
-	ctx, cancel := context.WithTimeout(ctx, api.ApplicationStandardArtifactScanTimeout)
+	ctx, cancel := context.WithTimeout(ctx, api.ApplicationStandardBaseScanTimeout)
 	defer cancel()
 	expected := scanArtifactTarget{StorageKey: base.Input.Artifact.StorageKey, ArtifactIdentity: rootfs.ArtifactIdentity{Digest: base.Input.Artifact.Digest, Bytes: base.Input.Artifact.Bytes}}
 	current, err := store.GetFreshBaseImageScan(ctx, base.ID, base.InputHash)
@@ -84,7 +84,12 @@ func (h *Handler) loadOrRunProducedBaseScan(ctx context.Context, be storage.Stor
 		return state.BaseImageScan{}, err
 	}
 	in := state.BaseImageScanInput{ID: uuid.NewString(), BaseProducerID: base.ID, BaseInputHash: base.InputHash, Artifact: base.Input.Artifact, SourceReference: base.Input.SourceReference}
+	started := time.Now()
 	result, failure := h.readProducedArtifactScan(ctx, be, expected)
+	if h.log != nil {
+		h.log.Info("imaged: shared base scanned", "key", expected.StorageKey, "bytes", expected.Bytes,
+			"duration", time.Since(started).Round(time.Second), "failure", failure)
+	}
 	if failure != "" {
 		return h.publishBaseScanFailure(ctx, store, in, failure)
 	}

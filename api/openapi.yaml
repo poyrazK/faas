@@ -31369,6 +31369,16 @@ paths:
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
+        '503':
+          description: |
+            503 — `egress_circuit_disabled`: the request sets `enabled: true`
+            but this platform does not enforce egress circuit breakers yet,
+            so the breaker would never reject a connection. Turning a breaker
+            off is still accepted. `data_upstreams_disabled`: data placement
+            is not enabled on this cluster.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
 
   # ─── Deployments ──────────────────────────────────────────────────────────
 
@@ -121653,8 +121663,8 @@ components:
 
     DebugRequestEvidenceResponse:
       type: object
-      description: "Request metadata, deterministic wake/request timeline, bounded span evidence, matching regression, and explanation."
-      required: [request, timeline, correlation, dependency_latency, dependency_latency_truncated, spans, spans_truncated, explanation, generated_at]
+      description: "Request metadata, deterministic wake/request timeline, bounded span evidence, the request's own log lines, matching regression, and explanation."
+      required: [request, timeline, correlation, dependency_latency, dependency_latency_truncated, spans, spans_truncated, logs, logs_truncated, explanation, generated_at]
       properties:
         request: { $ref: '#/components/schemas/DebugTelemetryRequestItem' }
         regression:
@@ -121678,8 +121688,25 @@ components:
           maxItems: 100
           items: { $ref: '#/components/schemas/DebugTelemetrySpan' }
         spans_truncated: { type: boolean }
+        logs:
+          type: array
+          maxItems: 20
+          description: "Log lines the app emitted for this request: OTel log records carrying its trace ID, forwarded by the in-guest bridge when tracing is enabled (runtime source; HTTP access lines are not repeated). Chronological; redacted and bounded. Empty without a trace ID or when the app exports no OTel logs."
+          items: { $ref: '#/components/schemas/DebugEvidenceLogLine' }
+        logs_truncated: { type: boolean, description: "True when the request logged more than 20 lines; logs then holds its last 20." }
         explanation: { $ref: '#/components/schemas/DebugEvidenceExplanation' }
         generated_at: { type: string, format: date-time }
+
+    DebugEvidenceLogLine:
+      type: object
+      description: "One log line attached to request evidence. The message is bounded to 512 bytes; structured log fields are not included."
+      required: [occurred_at, source, message]
+      properties:
+        occurred_at: { type: string, format: date-time }
+        source: { type: string, maxLength: 32 }
+        level: { type: string, maxLength: 16 }
+        stream: { type: string, maxLength: 16 }
+        message: { type: string, maxLength: 512 }
 
     DebugRegressionsResponse:
       type: object

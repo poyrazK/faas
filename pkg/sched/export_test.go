@@ -197,6 +197,7 @@ var NewWakeCoord = newWakeCoord
 var NewWarmHintBroadcaster = newWarmHintBroadcaster
 var Node = node
 var ObservationTask = observationTask
+var OOMFailsDeployment = oomFailsDeployment
 var OutcomeFromProtocolResult = outcomeFromProtocolResult
 var ParentBaseKeyAliases = storagekey.ParentBaseAliases
 var ParseJSONHeaders = parseJSONHeaders
