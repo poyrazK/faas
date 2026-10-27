@@ -101,6 +101,7 @@
 - [Product Control billing records survive app purge](20261020090607-product-control-billing-records-survive-app-purge.md)
 - [Product Control customers keep their billing details in the owner's Paddle](20261020120000-product-control-customer-billing-details.md)
 - [Safety rails for automatic per-unit deploys](20261020214632-automatic-unit-deploy-safety-rails.md)
+- [Unit lanes: one class per deploy/ path](20261027151755-unit-lane-deploy-path-classes.md)
 - [Push-bound workers may listen for their deliveries](20261021153953-push-bound-worker-delivery-listener.md)
 - [What a fix restarts: daemon blast radius](20261020160744-daemon-blast-radius.md)
 - [Object storage in budgets](20261020160000-object-storage-in-budgets.md)

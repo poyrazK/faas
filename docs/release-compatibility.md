@@ -464,6 +464,16 @@ The unit lanes enforce the rules above in their workflows:
   a variable an older binary ignores, and never remove one the running
   binaries read in the same change.
 
+  Every `deploy/` path has one class
+  (docs/adr/20261027151755-unit-lane-deploy-path-classes.md). A daemon
+  change must not need a change of the classes the lanes leave at the base:
+  the release's unit files and `blocking` paths (the production manifest,
+  operator playbooks) wait for the next full release and close both lanes
+  until then, and compute roles and playbooks hold the edge lane while it
+  restarts a gateway on a compute host. Documentation, samples, the
+  dashboard mirror and changes that only touch comment lines change
+  nothing a host runs, so they close nothing.
+
   `release-units.yml` deploys the control-plane lane first, and the edge
   lane (`cd-edge-units.yml`) only after it. When the edge lane runs alone,
   it first checks that the control plane already runs the code of that unit

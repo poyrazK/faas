@@ -50,9 +50,9 @@ Non-Go inputs map to flags (scripts/ci/release_units.json):
                files cd-controlplane copies into its bundle that no
                control-plane role installs, the release tarball's own
                contents, migrations that are not lane-eligible, and deploy/
-               paths no host role reads. Any of these since base
-               makes the range ineligible: the per-unit lane reuses them
-               from the base release.
+               paths of the `blocking` class (below). Any of these since
+               base makes the range ineligible: the per-unit lane reuses
+               them from the base release.
   data         migrations added since base when every one is lane-eligible
                (check_migration_expand_contract.classify_range: declared
                `-- migration-compat: expand`, no contract change, no
@@ -71,15 +71,23 @@ Non-Go inputs map to flags (scripts/ci/release_units.json):
                the roles whose content hash changed before anything else
                (docs/adr/20261018133100-host-configuration-lane.md).
   pending      guest/, images/, kernel, and deploy/ paths a compute host
-               role reads (compute_deploy). They ship with the next full
-               release and do not stop control-plane units from deploying
-               alone. compute_deploy does block the edge lane, which deploys
-               onto compute hosts without converging their roles.
+               role reads or of the `compute_only` class (compute_deploy).
+               They ship with the next full release and do not stop
+               control-plane units from deploying alone. compute_deploy
+               holds the edge lane while it restarts a gateway on a compute
+               host, which it does without converging that host's roles.
 
-deploy/ documentation, tests, and files of a tree no release installs
-(host_config.outside_releases: the generated legacy unit tree, the
-dashboard mirror, Cloudflare workers) that no host role reads map to
-nothing.
+Every deploy/ path has exactly one class (deploy_class), decided in this
+order: a release unit (host_config.release_units: blocking); a path a host
+role reads (host_config for a converged group, compute_deploy for compute);
+then the first pattern class of release_units.json deploy_classes that
+matches it: `inert` (documentation, tests, samples no daemon reads, trees
+no release installs: no flag), `compute_only` (compute playbooks:
+compute_deploy) or `blocking` (deploy). A path no rule names blocks too,
+and the repository test fails until the table names it. A path no host role
+reads whose change since base only touches comment lines is inert whatever
+its class (comment_only_paths). docs/adr/20261027151755-unit-lane-deploy-
+path-classes.md.
 
 Binaries outside both lanes (shared with compute hosts, compute-only, CLIs)
 are reported as pending: the per-unit lanes leave them at base, which is the
@@ -123,7 +131,12 @@ RECIPE_TARGETS = ("build-release-batch:", "build-release-unit:")
 FLAG_PATH_LIMIT = 20
 # Host groups (pkg/daemonunitspec roles) whose roles a unit lane converges.
 HOST_GROUP_ROLES = {"control_plane": "control-plane", "compute_nodes": "compute-only"}
-NOT_SHIPPED = re.compile(r"(^|/)tests?/|_test\.(go|sh|py)$|\.md$")
+# The pattern classes of release_units.json deploy_classes, in match order,
+# and the flag each maps a changed path to.
+DEPLOY_CLASSES = {"inert": None, "compute_only": "compute_deploy", "blocking": "deploy"}
+# Files whose `#` lines are comments to every reader: a change confined to
+# them changes nothing a host runs (comment_only_paths).
+COMMENT_SUFFIXES = (".yml", ".yaml", ".ini", ".toml", ".cfg", ".conf", ".nft", ".sh")
 
 
 def git(*args, root="."):
@@ -147,6 +160,11 @@ def load_config(path=DEFAULT_CONFIG):
     for group in (config.get("host_config") or {}).get("converged_groups") or []:
         if group not in HOST_GROUP_ROLES:
             raise ValueError(f"{path}: host_config converges unknown host group {group!r}")
+    for cls, patterns in (config.get("deploy_classes") or {}).items():
+        if cls.startswith("_"):
+            continue
+        if cls not in DEPLOY_CLASSES or not isinstance(patterns, list):
+            raise ValueError(f"{path}: deploy_classes has unknown class {cls!r}")
     return config
 
 
@@ -311,6 +329,36 @@ def matches(path, prefixes):
     return any(path == p or (p.endswith("/") and path.startswith(p)) for p in prefixes)
 
 
+_GLOBS = {}
+
+
+def glob_match(path, pattern):
+    """Whether a deploy_classes pattern names path: a directory (trailing
+    /), an exact path, or a glob where * stays inside one path segment and
+    **/ spans any number of them."""
+    if pattern.endswith("/"):
+        return path.startswith(pattern)
+    if "*" not in pattern:
+        return path == pattern
+    if pattern not in _GLOBS:
+        out, i = [], 0
+        while i < len(pattern):
+            if pattern.startswith("**/", i):
+                out.append("(?:[^/]+/)*")
+                i += 3
+            elif pattern.startswith("**", i):
+                out.append(".*")
+                i += 2
+            elif pattern[i] == "*":
+                out.append("[^/]*")
+                i += 1
+            else:
+                out.append(re.escape(pattern[i]))
+                i += 1
+        _GLOBS[pattern] = re.compile("".join(out) + r"\Z")
+    return bool(_GLOBS[pattern].match(path))
+
+
 def data_step(commits, config, verdict):
     """The migrations of a range and whether a unit release may apply them.
     verdict is classify_range's result, or None when the range was not
@@ -376,40 +424,79 @@ def changed_roles(owners, paths):
     return {"all": "*" in roles, "roles": sorted(roles - {"*"})}
 
 
-def classify_deploy(paths, config, host):
-    """{flag: [paths]} for changed deploy/ paths: release_units (blocking),
-    host_config (a converged group's role reads it), compute_deploy (a
-    compute role reads it) and deploy (blocking: nothing that converges
-    reads it). Documentation, tests and files of trees no release installs
-    map to no flag."""
+def deploy_class(path, config, host, comment_only=frozenset()):
+    """(class, flags) of one deploy/ path. Classes, first match wins:
+    release_units (blocking), host_roles (host_config for a converged
+    group's role, compute_deploy for a compute role), then the pattern
+    classes of deploy_classes in DEPLOY_CLASSES order, and unclassified
+    (blocking) for a path no rule names. A path no host role reads whose
+    change is in comment_only is `comments`, with no flag."""
     hc = config.get("host_config") or {}
-    release_units = set(hc.get("release_units") or [])
-    outside = hc.get("outside_releases") or []
+    if path in set(hc.get("release_units") or []):
+        return "release_units", ["release_units"]
     converged = set(hc.get("converged_groups") or [])
-    out = {}
+    flags = [("host_config" if group in converged else "compute_deploy")
+             for group, view in sorted(host.items()) if path in view["owners"]]
+    if flags:
+        return "host_roles", list(dict.fromkeys(flags))
+    classes = config.get("deploy_classes") or {}
+    cls = next((c for c in DEPLOY_CLASSES if any(glob_match(path, p) for p in classes.get(c) or [])),
+               "unclassified")
+    if cls == "inert":
+        return cls, []
+    if path in comment_only:
+        return "comments", []
+    return cls, [DEPLOY_CLASSES.get(cls) or "deploy"]
+
+
+def classify_deploy(paths, config, host, comment_only=frozenset()):
+    """({flag: [paths]}, {class: [paths]}) for changed deploy/ paths
+    (deploy_class): release_units and deploy block both lanes,
+    host_config rides the control-plane lane, compute_deploy is pending
+    and holds the edge lane on compute hosts. Inert and comment-only paths
+    map to no flag."""
+    flags, classes = {}, {}
     for path in sorted(paths):
-        flags = []
-        if path in release_units:
-            flags.append("release_units")
-        else:
-            for group, view in sorted(host.items()):
-                if path in view["owners"]:
-                    flags.append("host_config" if group in converged else "compute_deploy")
-            if not flags and not (NOT_SHIPPED.search(path) or matches(path, outside)):
-                flags.append("deploy")
-        for flag in dict.fromkeys(flags):
-            out.setdefault(flag, []).append(path)
+        cls, names = deploy_class(path, config, host, comment_only)
+        classes.setdefault(cls, []).append(path)
+        for flag in names:
+            flags.setdefault(flag, []).append(path)
+    return flags, classes
+
+
+def comment_free(text):
+    """Lines of text that are not blank or `#` comments; a #! line is
+    content."""
+    return [line.rstrip() for line in text.split("\n")
+            if line.strip() and not (line.lstrip().startswith("#") and not line.lstrip().startswith("#!"))]
+
+
+def comment_only_paths(base, head, paths, root="."):
+    """The paths of a COMMENT_SUFFIXES kind that exist at base and head and
+    differ only in blank and `#` comment lines."""
+    out = set()
+    for path in sorted(paths):
+        if not path.endswith(COMMENT_SUFFIXES):
+            continue
+        try:
+            old, new = git("show", f"{base}:{path}", root=root), git("show", f"{head}:{path}", root=root)
+        except RuntimeError:
+            continue  # added or deleted
+        if comment_free(old) == comment_free(new):
+            out.add(path)
     return out
 
 
-def analyze(commits, closures, config, exists, recipe_shas=frozenset(), data=None, host=None, code=None):
+def analyze(commits, closures, config, exists, recipe_shas=frozenset(), data=None, host=None, code=None,
+            comment_only=frozenset()):
     """The report for a range. commits are newest first; closures map each
     binary to (package dirs, input files) at head; exists is head's file set;
     data is classify_range's verdict on the range's migrations; host maps
     each host group to {"owners": {path: [roles]}, "changed": {"all",
-    "roles"}} (host_view), and without it every deploy/ path blocks; code
-    maps measured binaries to {"code", "code_digest", "base_code_digest"}
-    (measure_code)."""
+    "roles"}} (host_view), and without it no deploy/ path is host
+    configuration; code maps measured binaries to {"code", "code_digest",
+    "base_code_digest"} (measure_code); comment_only is the deploy/ paths
+    whose change since base touches only comments (comment_only_paths)."""
     global_inputs = set(config.get("global_inputs") or [])
     binaries = {}
     for name, entry in sorted(config["binaries"].items()):
@@ -460,13 +547,15 @@ def analyze(commits, closures, config, exists, recipe_shas=frozenset(), data=Non
                            and not (flag == "control_plane_bundle" and p in converged_owned))
             if found:
                 flags[flag] = {"blocking": kind == "blocking_paths", "count": len(found), "paths": found[:FLAG_PATH_LIMIT]}
-    # deploy/ by what reads it: a role a lane converges (host_config), a
-    # compute role (compute_deploy, which waits for the full release and
-    # holds the edge lane), the release's own units, or nothing that
-    # converges (deploy). A deploy/ path no host role reads blocks.
+    # deploy/ by its class (deploy_class): a role a lane converges
+    # (host_config), a compute role or compute playbook (compute_deploy,
+    # which waits for the full release and holds the edge lane), the
+    # release's own units, nothing at activation (inert), or anything else
+    # (deploy, blocking).
     deploy_paths = {p for p in changed_paths if matches(p, deploy_prefixes)
                     or (matches(p, bundle_prefixes) and p in converged_owned)}
-    for flag, found in classify_deploy(deploy_paths, config, host).items():
+    found_flags, deploy_classes = classify_deploy(deploy_paths, config, host, comment_only)
+    for flag, found in found_flags.items():
         flags[flag] = {"blocking": flag in ("deploy", "release_units"), "count": len(found),
                        "paths": found[:FLAG_PATH_LIMIT]}
     host_step = host_config_step(commits, config, host)
@@ -487,9 +576,14 @@ def analyze(commits, closures, config, exists, recipe_shas=frozenset(), data=Non
         # A lane carries every closure binary, the ones whose code did not
         # change too: a host on an earlier unit release may run other code.
         carried = sorted(n for n, b in binaries.items() if b["closure"] and b["lane"] == lane)
-        # The edge lane lands on compute hosts as they are: a change to a
-        # role those hosts run waits for the full release that converges it.
-        blocked = sorted(blocking + (["compute_deploy"] if lane == "edge" and "compute_deploy" in flags else []))
+        # The edge lane lands on compute hosts as they are: while it restarts
+        # a gateway there, a change to a role or playbook those hosts run
+        # waits for the full release that converges it. A lane that only
+        # restarts control-plane gateways does not wait.
+        on_compute = any(svc.get("host") == "compute-only" for n in carried
+                         for svc in config["binaries"][n].get("services") or [])
+        blocked = sorted(blocking + (["compute_deploy"] if lane == "edge" and on_compute and "compute_deploy" in flags
+                                     else []))
         reasons = [f"{f} changed since base ({flags[f]['count']} paths, e.g. {flags[f]['paths'][0]})" for f in blocked]
         if "migrations" in blocked and step["blockers"]:
             reasons.append(f"migrations are not lane-eligible: {step['blockers'][0]}")
@@ -515,6 +609,8 @@ def analyze(commits, closures, config, exists, recipe_shas=frozenset(), data=Non
         "binaries": binaries,
         "data": step,
         "host_config": host_step,
+        "deploy_classes": {cls: {"count": len(found), "paths": found[:FLAG_PATH_LIMIT]}
+                           for cls, found in sorted(deploy_classes.items())},
         "flags": flags,
         "lanes": lanes,
         "deployable": deployable,
@@ -679,7 +775,11 @@ def report(base, head, config_path=DEFAULT_CONFIG, root=".", code=False, code_ca
     hc = config.get("host_config")
     host = host_view(base_sha, head_sha, root, hc.get("stateful_services") or ()) if hc else {}
     recipes = recipe_commits(commits, root)
-    out = analyze(commits, closures, config, exists, recipes, data, host)
+    deploy_prefixes = (config.get("blocking_paths") or {}).get("deploy") or []
+    owned = {p for view in host.values() for p in view["owners"]}
+    comments = comment_only_paths(base_sha, head_sha, {p for _, paths in commits for p in paths
+                                                       if matches(p, deploy_prefixes) and p not in owned}, root)
+    out = analyze(commits, closures, config, exists, recipes, data, host, comment_only=comments)
     selection = None
     if code:
         names = code_candidates(out)
@@ -690,7 +790,7 @@ def report(base, head, config_path=DEFAULT_CONFIG, root=".", code=False, code_ca
             if names:
                 measured, selection["base_cached"], selection["base_built"] = measure_code(
                     names, base_sha, head_sha, selection["go"], root, code_cache, workdir)
-                out = analyze(commits, closures, config, exists, recipes, data, host, measured)
+                out = analyze(commits, closures, config, exists, recipes, data, host, measured, comments)
         except (RuntimeError, subprocess.CalledProcessError) as err:
             # Selecting by closure restarts more units, never fewer: the
             # release carries no digests and hosts compare unit versions.
@@ -716,6 +816,9 @@ def summary(rep):
     if data.get("migrations"):
         state = f"applied first, {data['version']}" if data["eligible"] else "blocking: " + "; ".join(data["blockers"][:3])
         lines.append(f"  data: {len(data['migrations'])} migrations ({state})")
+    classes = rep.get("deploy_classes") or {}
+    if classes:
+        lines.append("  deploy/ classes: " + ", ".join(f"{cls} {v['count']}" for cls, v in sorted(classes.items())))
     hc = rep.get("host_config") or {}
     if hc.get("roles"):
         lines.append(f"  host config: {'every role' if hc['all'] else ' '.join(hc['roles'])} "

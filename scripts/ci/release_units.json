@@ -94,7 +94,7 @@
       "cmd/release-artifact/"
     ]
   },
-  "_host_config_comment": "Host configuration (docs/adr/20261018133100-host-configuration-lane.md). A deploy/ path a control-plane host role reads (scripts/ci/host_roles.py: the role's files and every path it names) no longer blocks the control-plane lane, which converges the roles whose content hash changed before it restarts anything (cd-controlplane.yml converge-host-config). A path a compute host role reads waits for the full release and holds the edge lane (compute_deploy). release_units are the files cd-controlplane's bundle installs through deployctl at activation (systemd/, optional-systemd/, tmpfiles.d/): a unit release reuses the base's copies, so a change to one still needs a full release. stateful_services are services the lane never restarts: a role that can restart or stop one (a task, or a notified handler of any role, scripts/ci/host_roles.py restart_roles) blocks both lanes when its content changes (stateful_restart), the planner never selects it on its own, and in lane mode the roles refuse a restart (faas_stateful_restart_allowed). outside_releases are trees no release installs, so a change there maps to nothing unless a host role names the file: deploy/systemd/ is deployctl generate's legacy and dev-VM tree, deploy/grafana/ mirrors the grafana role's dashboards (make grafana-mirror-check), and deploy/cloudflare/ workers deploy through their own workflows.",
+  "_host_config_comment": "Host configuration (docs/adr/20261018133100-host-configuration-lane.md). A deploy/ path a control-plane host role reads (scripts/ci/host_roles.py: the role's files and every path it names) no longer blocks the control-plane lane, which converges the roles whose content hash changed before it restarts anything (cd-controlplane.yml converge-host-config). A path a compute host role reads waits for the full release and holds the edge lane (compute_deploy) while that lane restarts a gateway on a compute host. release_units are the files cd-controlplane's bundle installs through deployctl at activation (systemd/, optional-systemd/, tmpfiles.d/): a unit release reuses the base's copies, so a change to one still needs a full release. stateful_services are services the lane never restarts: a role that can restart or stop one (a task, or a notified handler of any role, scripts/ci/host_roles.py restart_roles) blocks both lanes when its content changes (stateful_restart), the planner never selects it on its own, and in lane mode the roles refuse a restart (faas_stateful_restart_allowed).",
   "host_config": {
     "converged_groups": ["control_plane"],
     "stateful_services": ["postgresql", "pgbouncer"],
@@ -112,8 +112,64 @@
       "deploy/ansible/roles/githubd_service/files/faas-githubd.service",
       "deploy/ansible/roles/s3_gateway_service/files/faas-s3-gatewayd.service",
       "deploy/ansible/roles/livequeryd_service/files/faas-livequeryd.service"
+    ]
+  },
+  "_deploy_classes_comment": "Every deploy/ path has exactly one class (docs/adr/20261027151755-unit-lane-deploy-path-classes.md; scripts/ci/affected_units.py deploy_class), first match wins: a release unit (host_config.release_units, blocking); a path a host role reads (host_config on the control plane, compute_deploy on compute); then the first class below with a pattern that names it. A pattern is a directory (trailing /), an exact path, or a glob (* inside one segment, **/ across segments). inert: nothing a host runs reads it at activation, so it maps to no flag: documentation, tests, samples (*.example, which roles install only as /etc/faas/*.example for operators to copy), the legacy unit tree deployctl generate writes for dev VMs (deploy/systemd/), the grafana role's dashboard mirror (deploy/grafana/, make grafana-mirror-check) and Cloudflare workers, which deploy through their own workflows. compute_only: playbooks only compute hosts run; pending for the control-plane lane, they hold the edge lane while it restarts a gateway on a compute host (compute_deploy). blocking: read by a full release or an operator path the lanes cannot vouch for, so a change waits for the next full tag (deploy). A path none of these names blocks, and scripts/ci/affected_units_test.py fails until it is classified. Whatever its class, a path no host role reads whose change since base only touches blank and # comment lines maps to no flag.",
+  "deploy_classes": {
+    "inert": [
+      "deploy/**/*.md",
+      "deploy/**/tests/**",
+      "deploy/**/*_test.sh",
+      "deploy/**/*_test.py",
+      "deploy/**/*.example",
+      "deploy/**/*.example.*",
+      "deploy/ansible/.ansible-lint",
+      "deploy/systemd/",
+      "deploy/grafana/",
+      "deploy/cloudflare/"
     ],
-    "outside_releases": ["deploy/systemd/", "deploy/grafana/", "deploy/cloudflare/"]
+    "compute_only": [
+      "deploy/ansible/node_join.yml",
+      "deploy/ansible/node_join_accept_release.yml",
+      "deploy/ansible/node_join_contract_probe.yml"
+    ],
+    "blocking": [
+      "deploy/ansible/.cache/",
+      "deploy/ansible/control_plane_converge.yml",
+      "deploy/ansible/cp_state_restore.yml",
+      "deploy/ansible/fleet_runner.yml",
+      "deploy/ansible/metal-h2c-acceptance.yml",
+      "deploy/ansible/native-acceptance-host.yml",
+      "deploy/ansible/node_join_control_plane.yml",
+      "deploy/ansible/object_storage_reconcile.yml",
+      "deploy/ansible/pki_renew.yml",
+      "deploy/ansible/postgres_promote.yml",
+      "deploy/ansible/postgres_standby.yml",
+      "deploy/ansible/preflight.yml",
+      "deploy/ansible/scale_check.yml",
+      "deploy/ansible/site.yml",
+      "deploy/ansible/standby_takeover.yml",
+      "deploy/ansible/tenant_egress_gateway.yml",
+      "deploy/ansible/verify.yml",
+      "deploy/ansible/inventory/hosts.ini",
+      "deploy/ansible/roles/control_plane_peer_access/",
+      "deploy/ansible/roles/control_plane_standby/",
+      "deploy/ansible/roles/github_actions_runner/",
+      "deploy/ansible/roles/metal-h2c-acceptance/",
+      "deploy/ansible/roles/native_acceptance_host/",
+      "deploy/ansible/roles/postgres_standby/",
+      "deploy/ansible/roles/tenant_egress_gateway/",
+      "deploy/controlplane/",
+      "deploy/etc/",
+      "deploy/firecracker/",
+      "deploy/gcp/",
+      "deploy/internal-mail/",
+      "deploy/lima/",
+      "deploy/manifest/production/",
+      "deploy/nftables/",
+      "deploy/packer/",
+      "deploy/scripts/"
+    ]
   },
   "pending_paths": {
     "guest": ["guest/"],
