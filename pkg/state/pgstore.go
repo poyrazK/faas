@@ -26901,20 +26901,43 @@ func (s *PgStore) MarkAccountEmailVerified(ctx context.Context, accountID string
 }
 
 // DeleteOldEvents (ADR-075) prunes audit-log events whose `at` is
-// older than the cutoff. Returns the row count. The
-// (subject, at desc) partial index on the events table keeps the
-// WHERE a partial range scan; the per-tick cost is bounded by
-// (cutoff × recent rows added in that window).
+// older than the cutoff. Returns the row count.
+//
+// It deletes in batches of eventRetentionBatchRows, each found through the
+// events_at_brin_idx BRIN index, with a short pause between them. One
+// unbatched DELETE of a day's rows (several days after a missed run) held a
+// long transaction and flooded WAL and vacuum across all of the table's
+// indexes on the CP Postgres every request path shares (bug hunt O9).
 //
 // Used by pkg/eventretention's daily loop; the maintenance floor
 // is 90 days (SOC 2 CC6.2).
 func (s *PgStore) DeleteOldEvents(ctx context.Context, before time.Time) (int64, error) {
-	tag, err := s.pool.Exec(ctx, `delete from events where at < $1`, before)
-	if err != nil {
-		return 0, err
+	var total int64
+	for {
+		tag, err := s.pool.Exec(ctx, `delete from events
+			 where ctid = any(array(select ctid from events where at < $1 limit $2))`,
+			before, eventRetentionBatchRows)
+		if err != nil {
+			return total, err
+		}
+		total += tag.RowsAffected()
+		if tag.RowsAffected() < eventRetentionBatchRows {
+			return total, nil
+		}
+		select {
+		case <-ctx.Done():
+			return total, ctx.Err()
+		case <-time.After(eventRetentionBatchPause):
+		}
 	}
-	return tag.RowsAffected(), nil
 }
+
+// The events retention deletes this many rows per statement and pauses this
+// long between statements.
+const (
+	eventRetentionBatchRows  = 5000
+	eventRetentionBatchPause = 50 * time.Millisecond
+)
 
 // SetAccountPassword upserts the Argon2id PHC hash for an account.
 // ON CONFLICT (account_id) DO UPDATE so a password change / set

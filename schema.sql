@@ -71725,6 +71725,13 @@ CREATE INDEX events_app_readiness_latest_idx ON public.events USING btree (((dat
 
 
 --
+-- Name: events_at_brin_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX events_at_brin_idx ON public.events USING brin (at);
+
+
+--
 -- Name: events_data_app_id_idx; Type: INDEX; Schema: public; Owner: -
 --
 
