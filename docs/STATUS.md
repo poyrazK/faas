@@ -622,6 +622,24 @@ listener behind a socket unit each restarted five times under load with 0 of
 returned 103,323 502s. Open: the first socket conversion through `node_join`
 and deployctl, and the listeners the ADR leaves without socket activation.
 
+## Worker end-to-end fixes — 2026-10-27
+
+`worker.scale` in gregale.yaml now becomes the app's queue scaling policy on
+CLI, repository and GitHub deploys, and a first deploy of a worker is no longer
+refused for its queue target. `gregale workers scale` keeps the app's queue
+metric (default `queue_depth`), and a scaling policy's `min_instances: 0` lets
+the pool stop when worker replica bounds are unset
+([ADR-20261018101500](adr/20261018101500-worker-pool-scale-out-off-loop.md)
+amendment 2026-10-27). Queue gauges refresh every 30 seconds for every worker
+app from bounded reads, and `queue_backlog` / `queue_oldest_age_seconds` alert
+on the durable queue. Single-process apps report OOM kills, and only a release
+that is not yet fully live fails on one
+([ADR-121](adr/121-runtime-oom-detection-on-workload-cgroup.md) amendment).
+On the nested-KVM test node at 81723d5f4a, `TestSingleProcessOOMMetal` (live
+release keeps serving; startup OOM fails the deployment with `app_runtime_oom`,
+peak 456 MB) and `TestDirectOCIMainHealthcheckMetal` passed with a clean leak
+check. This change is not deployed.
+
 ## Worker admission explanations — 2026-10-18
 
 Worker pool recovery now records the actual admission blockers per environment:
