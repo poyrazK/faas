@@ -24810,6 +24810,21 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
         '503': { $ref: '#/components/responses/CapacityUnavailable' }
+    delete:
+      tags: [apps]
+      operationId: deleteProfileCapture
+      summary: Delete an on-demand profile capture.
+      description: Deletes the capture and its profiles with deploy-write access, freeing its share of the account's capture storage at once. A capture still queued or running is cancelled and its profiles are discarded.
+      responses:
+        '204':
+          description: Capture deleted.
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PaymentRequired' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
 
   /v1/apps/{slug}/profiles/captures/{id}/view:
     parameters:
@@ -25032,6 +25047,77 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/DebugRunningResponse'
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PaymentRequired' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/apps/{slug}/debug/status:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      tags: [apps]
+      operationId: getAppDebugStatus
+      summary: Summarize an app's health, release, regressions, and recent failures.
+      description: |
+        One answer to "is this app healthy, and if not where do I look?": the
+        serving deployments' requests, server errors, and p95 over the window,
+        the canary rollout in flight or rolled back inside the window (with
+        its request evidence), open debugger regressions, the newest
+        server-error requests, and a verdict (`failing`, `rolled_back`,
+        `degraded`, `releasing`, `healthy`, or `idle`) with a one-line
+        headline. Plan-gated by `DebugTelemetryEnabled`; the window is clamped
+        to `DebugTelemetryRetentionDays`.
+      parameters:
+        - name: since
+          in: query
+          required: false
+          schema: { type: [string, 'null'] }
+          description: "Optional lookback window (e.g. 30m, 1h, 24h); defaults to 1h and is clamped by plan retention."
+      responses:
+        '200':
+          description: The app's debug status.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DebugStatusResponse'
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PaymentRequired' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/apps/{slug}/debug/rollout:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      tags: [apps]
+      operationId: getAppDebugRollout
+      summary: Explain why a release was rolled back or is held.
+      description: |
+        Explains the app's newest canary rollout, or `deployment_id`, with
+        request evidence: the safe-release decision that rolled it back, holds
+        it, or advanced it; the candidate's routes compared with the stable
+        deployment over the decision window, worst first; example requests
+        that show the problem; and the candidate's open regressions. The
+        evidence is read from request telemetry at request time and is not
+        stored with the decision. `state` is `none` when no recent deployment
+        had a canary rollout. Plan-gated by `DebugTelemetryEnabled`; the
+        window is clamped to `DebugTelemetryRetentionDays`.
+      parameters:
+        - name: deployment_id
+          in: query
+          required: false
+          schema: { type: [string, 'null'], format: uuid }
+          description: "Deployment to explain; defaults to the newest of the app's recent deployments with a canary rollout."
+      responses:
+        '200':
+          description: The rollout explanation.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DebugRolloutExplanation'
         '400': { $ref: '#/components/responses/ValidationFailed' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '402': { $ref: '#/components/responses/PaymentRequired' }
@@ -120805,6 +120891,9 @@ components:
           type: integer
           minimum: 1
           maximum: 65535
+        automatic_captures:
+          description: Whether the platform may start automatic on-demand captures of the app when memory runs low, a request is in flight for too long, or an instance uses its whole CPU limit. Unset means on. Automatic captures count against their own hourly limit and at most half of the account's capture storage.
+          type: boolean
     CreateProfileCaptureRequest:
       description: On-demand capture request. Kinds defaults to [cpu]; duration_seconds to 10. Stacks is an instant snapshot of where every goroutine or thread is waiting, taken when the capture starts. Block and mutex are Go contention profiles (time goroutines spent blocked on channels or locks, or waiting for a mutex, during the window).
       type: object
@@ -121270,6 +121359,120 @@ components:
           type: array
           items: { $ref: '#/components/schemas/DebugRunningObservation' }
         history_truncated: { type: boolean }
+
+    DebugRolloutExplanation:
+      type: object
+      description: |
+        Why a release was rolled back or is held, with the request evidence
+        behind the safe-release decision.
+      required: [state, traffic_percent, headline, routes, examples, regressions, generated_at]
+      properties:
+        deployment_id: { type: string, format: uuid }
+        stable_deployment_id: { type: string, format: uuid }
+        state:
+          type: string
+          enum: [aborted, held, rolling_out, complete, none]
+        traffic_percent: { type: integer, minimum: 0, maximum: 100 }
+        decision: { $ref: '#/components/schemas/RolloutDecision' }
+        aborted_reason: { type: string, description: "Reason recorded by an abort that has no safe-release decision (route monitor, alert rollback, profile gate)." }
+        headline: { type: string, description: "Deterministic one-line explanation." }
+        window_start: { type: string, format: date-time }
+        window_end: { type: string, format: date-time }
+        retention_clamped: { type: boolean }
+        routes:
+          type: array
+          maxItems: 5
+          items: { $ref: '#/components/schemas/DebugRolloutRoute' }
+        examples:
+          type: array
+          maxItems: 3
+          items: { $ref: '#/components/schemas/DebugTelemetryRequestItem' }
+        regressions:
+          type: array
+          items: { $ref: '#/components/schemas/DebugRegressionItem' }
+        generated_at: { type: string, format: date-time }
+
+    DebugRolloutRoute:
+      type: object
+      description: "One route's candidate-vs-stable comparison over the rollout window; counts are represented requests."
+      required: [route, candidate_requests, candidate_server_errors, candidate_p95_ms, stable_requests, stable_server_errors, stable_p95_ms]
+      properties:
+        route: { type: string }
+        candidate_requests: { type: integer, format: int64, minimum: 0 }
+        candidate_server_errors: { type: integer, format: int64, minimum: 0 }
+        candidate_p95_ms: { type: integer, minimum: 0 }
+        stable_requests: { type: integer, format: int64, minimum: 0 }
+        stable_server_errors: { type: integer, format: int64, minimum: 0 }
+        stable_p95_ms: { type: integer, minimum: 0 }
+
+    DebugStatusResponse:
+      type: object
+      description: "One summary of an app's health, release, regressions, and recent failures over `since`."
+      required: [verdict, headline, since, window_start, window_end, health, deployments, regressions, regressions_total, recent_failures, tracing_enabled, generated_at]
+      properties:
+        verdict:
+          type: string
+          enum: [failing, rolled_back, degraded, releasing, healthy, idle]
+        headline: { type: string }
+        since: { type: string }
+        window_start: { type: string, format: date-time }
+        window_end: { type: string, format: date-time }
+        health: { $ref: '#/components/schemas/DebugStatusHealth' }
+        deployments:
+          type: array
+          items: { $ref: '#/components/schemas/DebugStatusDeployment' }
+        rollout: { $ref: '#/components/schemas/DebugRolloutExplanation' }
+        regressions:
+          type: array
+          maxItems: 5
+          items: { $ref: '#/components/schemas/DebugRegressionItem' }
+        regressions_total: { type: integer, minimum: 0 }
+        recent_failures:
+          type: array
+          maxItems: 5
+          items: { $ref: '#/components/schemas/DebugTelemetryRequestItem' }
+        oom_kills:
+          type: array
+          maxItems: 5
+          description: "Out-of-memory kills of the app's instances in the window, newest first."
+          items: { $ref: '#/components/schemas/DebugStatusOOMKill' }
+        oom_kills_total: { type: integer, minimum: 0 }
+        oom_fix:
+          type: string
+          description: "The remedy for the newest out-of-memory kill, one suggestion per line."
+        tracing_enabled: { type: boolean }
+        generated_at: { type: string, format: date-time }
+
+    DebugStatusOOMKill:
+      type: object
+      description: "One out-of-memory kill of an app instance. A deployment that was not yet live fails; a live release keeps serving on a new instance."
+      required: [at, deployment_id, peak_mb, plan_mb, deployment_failed]
+      properties:
+        at: { type: string, format: date-time }
+        deployment_id: { type: string, format: uuid }
+        peak_mb: { type: integer, minimum: 0 }
+        plan_mb: { type: integer, minimum: 0 }
+        deployment_failed: { type: boolean }
+
+    DebugStatusHealth:
+      type: object
+      description: "The serving deployments' traffic over the window."
+      required: [requests, server_errors, p95_ms]
+      properties:
+        requests: { type: integer, format: int64, minimum: 0 }
+        server_errors: { type: integer, format: int64, minimum: 0 }
+        p95_ms: { type: integer, minimum: 0 }
+
+    DebugStatusDeployment:
+      type: object
+      description: "One deployment currently serving traffic."
+      required: [id, traffic_percent, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        traffic_percent: { type: integer, minimum: 0, maximum: 100 }
+        rollout_state: { type: string }
+        commit_sha: { type: string }
+        created_at: { type: string, format: date-time }
 
     DebugTelemetryListResponse:
       type: object

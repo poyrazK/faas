@@ -18,7 +18,8 @@ tracing:
 enabled = true
 ```
 
-The setting applies from the next deployment. Then open a request with
+The setting applies from the next deployment. Start an investigation with
+[`gregale debug status <app>`](debug-status.md), then open a request with
 `gregale debug requests get <app> <request-id>` or in the dashboard debugger;
 spans from your app appear under the request, and the evidence summary uses
 them to point at the slow dependency.

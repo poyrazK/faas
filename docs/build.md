@@ -39,3 +39,28 @@ Configure the bundler to emit flat Source Map v3 files in that final directory,
 then deploy normally. The build publishes sanitized maps before it can become
 ready. See [automatic build source maps](issues.md#publish-source-maps-from-node-builds)
 for limits, supported paths and rollout requirements.
+
+## Limits
+
+What is uploaded, the source size limits and the accept-time checks are on
+[Deploy from source](deploys.md#what-gets-uploaded). Builds and their output
+have these limits on every plan unless noted.
+
+### Memory
+
+Each build runs in its own microVM with 2 vCPU and 2048 MB. A build that runs
+out of memory fails with a resource failure; reduce parallelism (for example
+`NODE_OPTIONS=--max-old-space-size=1536` or fewer bundler workers) or move
+heavy steps to CI and deploy the result.
+
+### Timeout
+
+A build has 15 minutes. A build still waiting for a builder after 6 hours
+fails with `deployment_queue_timeout`; deploy again.
+
+### App layer
+
+The built application layer, everything the image adds on top of the
+runtime base, is capped by plan: 256 MB on Free, 512 MB on Hobby, 1 GB on
+Pro and 2 GB on Scale. Use a multi-stage Dockerfile, prune development
+dependencies, or exclude build inputs from the final stage to fit.

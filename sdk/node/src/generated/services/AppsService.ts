@@ -74,7 +74,9 @@ import type { DebugRegressionsResponse } from '../models/DebugRegressionsRespons
 import type { DebugReplayRequest } from '../models/DebugReplayRequest.js';
 import type { DebugReplayResponse } from '../models/DebugReplayResponse.js';
 import type { DebugRequestEvidenceResponse } from '../models/DebugRequestEvidenceResponse.js';
+import type { DebugRolloutExplanation } from '../models/DebugRolloutExplanation.js';
 import type { DebugRunningResponse } from '../models/DebugRunningResponse.js';
+import type { DebugStatusResponse } from '../models/DebugStatusResponse.js';
 import type { DebugTelemetryListResponse } from '../models/DebugTelemetryListResponse.js';
 import type { DebugTelemetryRequestItem } from '../models/DebugTelemetryRequestItem.js';
 import type { DeletedAppListResponse } from '../models/DeletedAppListResponse.js';
@@ -7376,6 +7378,50 @@ export class AppsService {
     });
   }
   /**
+   * Delete an on-demand profile capture.
+   * Deletes the capture and its profiles with deploy-write access, freeing its share of the account's capture storage at once. A capture still queued or running is cancelled and its profiles are discarded.
+   * @returns void
+   * @throws ApiError
+   */
+  public static deleteProfileCapture({
+    slug,
+    id,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Profile capture id.
+     */
+    id: string,
+  }): CancelablePromise<void> {
+    return __request(OpenAPI, {
+      method: 'DELETE',
+      url: '/v1/apps/{slug}/profiles/captures/{id}',
+      path: {
+        'slug': slug,
+        'id': id,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        402: `code: billing_past_due — account is suspended; pay invoice to resume.`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `code: capacity_unavailable — no host headroom.
+        Resource increases can return service_recovery_capacity_unavailable
+        when enabled bare-metal service protection needs more recovery headroom.
+        `,
+      },
+    });
+  }
+  /**
    * Merged functions and call paths of one capture kind.
    * @returns ProfileCaptureView CPU nanoseconds or live heap bytes merged across the instance's processes.
    * @throws ApiError
@@ -7732,6 +7778,105 @@ export class AppsService {
       query: {
         'since': since,
         'limit': limit,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        402: `code: billing_past_due — account is suspended; pay invoice to resume.`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Summarize an app's health, release, regressions, and recent failures.
+   * One answer to "is this app healthy, and if not where do I look?": the
+   * serving deployments' requests, server errors, and p95 over the window,
+   * the canary rollout in flight or rolled back inside the window (with
+   * its request evidence), open debugger regressions, the newest
+   * server-error requests, and a verdict (`failing`, `rolled_back`,
+   * `degraded`, `releasing`, `healthy`, or `idle`) with a one-line
+   * headline. Plan-gated by `DebugTelemetryEnabled`; the window is clamped
+   * to `DebugTelemetryRetentionDays`.
+   *
+   * @returns DebugStatusResponse The app's debug status.
+   * @throws ApiError
+   */
+  public static getAppDebugStatus({
+    slug,
+    since,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Optional lookback window (e.g. 30m, 1h, 24h); defaults to 1h and is clamped by plan retention.
+     */
+    since?: string | null,
+  }): CancelablePromise<DebugStatusResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/debug/status',
+      path: {
+        'slug': slug,
+      },
+      query: {
+        'since': since,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        402: `code: billing_past_due — account is suspended; pay invoice to resume.`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Explain why a release was rolled back or is held.
+   * Explains the app's newest canary rollout, or `deployment_id`, with
+   * request evidence: the safe-release decision that rolled it back, holds
+   * it, or advanced it; the candidate's routes compared with the stable
+   * deployment over the decision window, worst first; example requests
+   * that show the problem; and the candidate's open regressions. The
+   * evidence is read from request telemetry at request time and is not
+   * stored with the decision. `state` is `none` when no recent deployment
+   * had a canary rollout. Plan-gated by `DebugTelemetryEnabled`; the
+   * window is clamped to `DebugTelemetryRetentionDays`.
+   *
+   * @returns DebugRolloutExplanation The rollout explanation.
+   * @throws ApiError
+   */
+  public static getAppDebugRollout({
+    slug,
+    deploymentId,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Deployment to explain; defaults to the newest of the app's recent deployments with a canary rollout.
+     */
+    deploymentId?: string | null,
+  }): CancelablePromise<DebugRolloutExplanation> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/debug/rollout',
+      path: {
+        'slug': slug,
+      },
+      query: {
+        'deployment_id': deploymentId,
       },
       errors: {
         400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,

@@ -14477,6 +14477,38 @@ Revoke an ingest credential
 |---|---|---|
 | `--app <SLUG>` | application slug | required |
 
+### debug explain
+
+Explain why a release was rolled back or held, with request evidence
+
+`gregale debug explain [--deployment-id <UUID>] <slug>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--deployment-id <UUID>` | deployment to explain (default: the newest canary rollout) |  |
+
+Examples:
+
+```sh
+gregale debug explain checkout-api
+```
+
+### debug status
+
+One summary of health, release, regressions, and recent failures
+
+`gregale debug status [--since <DURATION>] <slug>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--since <DURATION>` | lookback window (default 1h) |  |
+
+Examples:
+
+```sh
+gregale debug status checkout-api
+```
+
 ### debug requests
 
 Per-request telemetry and root-cause synthesis
@@ -14628,14 +14660,15 @@ Capture CPU, heap, stack or lock profiles from a running instance
 
 ### debug captures
 
-List or show on-demand profile captures
+List, show or delete on-demand profile captures
 
-`gregale debug captures [--output <DIR>] [--top <N>] <slug> [<capture-id>]`
+`gregale debug captures [--output <DIR>] [--top <N>] [--delete] <slug> [<capture-id>]`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--output <DIR>` | write merged .pb.gz pprof files |  |
 | `--top <N>` | functions to print per kind |  |
+| `--delete` | delete the named capture and free its storage |  |
 
 ### debug capture-diff
 
