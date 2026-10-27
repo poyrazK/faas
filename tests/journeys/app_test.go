@@ -21,6 +21,8 @@ func TestAppLifecycle(t *testing.T) {
 	full := tg.tier == tierFull
 	slug := tg.app(t, "probe")
 	base := tg.appURL(slug)
+	// Only deploy, serve, redeploy and rollback block later steps: a flaky
+	// logs, secrets or park call must not hide whether rollback works.
 	s := newStory(t)
 
 	var v1 map[string]any
@@ -67,7 +69,7 @@ func TestAppLifecycle(t *testing.T) {
 		})
 	})
 
-	s.step("secrets", func(t *testing.T) {
+	s.check("secrets", func(t *testing.T) {
 		value := randomHex(t, 32)
 		sum := sha256.Sum256([]byte(value))
 		want := hex.EncodeToString(sum[:])
@@ -128,7 +130,7 @@ func TestAppLifecycle(t *testing.T) {
 		})
 	}
 
-	s.step("park_and_wake_on_request", func(t *testing.T) {
+	s.check("park_and_wake_on_request", func(t *testing.T) {
 		tg.ok(t, 2*time.Minute, "park", slug)
 		waitParked(t, tg, slug)
 		r := get(base + "/")
