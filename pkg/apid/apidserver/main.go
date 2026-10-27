@@ -1847,6 +1847,8 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		ReaperFailedTotal:      promCounterAdapter{c: ops.UploadSessionReaperFailedTotal()},
 	})
 	srv.WithOpsMetrics(ctx, ops)
+	// ADR 20261027163626: time each phase of the traffic binding guard.
+	state.SetTrafficPolicyPhaseObserver(ops.ObserveTrafficPolicyPhase)
 
 	// ADR-093 / PR-D: end-to-end request budgets on the apid
 	// listener. Same shape as gatewayd-public PR-B: a fresh

@@ -1240,6 +1240,11 @@ const QueueBindingMaxConcurrency = 10000
 // cannot flood the pool with lanes it would only drop.
 const QueuePushDispatchSlotsPerNode = 32
 
+// BrokerTriggerDispatchSlotsPerNode bounds the external broker triggers
+// (Kafka, NATS, Redis Streams, SQS-compatible) one schedd polls and delivers
+// at once, one batch per trigger (ADR-20261027162741).
+const BrokerTriggerDispatchSlotsPerNode = 16
+
 // Trigger ledger retention: terminal trigger_records rows without an explicit
 // result_retention_until are deleted this long after their last dispatch.
 // Dead letters stay longer so operators can review, retry or drop them.
@@ -15502,6 +15507,11 @@ const (
 	WorkerRecoveryFailureCountMax         = 32
 	WorkerRecoveryConcurrentApps          = 8
 	WorkerRecoveryBatchSize               = 32
+	// A boot refused for a reason that repeats until the revision changes
+	// (execution mode conflict, wrong architecture, loopback bind,
+	// stateless-only violation) retries this rarely instead of every 300 s.
+	// A new deployment or configuration resets it at once (Hunt 14 H14-98).
+	WorkerRecoveryDeterministicRefusalHoldSeconds = 3600
 )
 
 // Pipeline limits are intentionally separate from Data API request limits.

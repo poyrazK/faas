@@ -56,6 +56,30 @@ func workerRecoveryBackoff(failures int) time.Duration {
 	return min(delay, maximum)
 }
 
+// deterministicWorkerRefusals are boot refusals that repeat for an unchanged
+// revision: the shipped image or configuration contradicts what the platform
+// can run. Crashes, OOMs and timeouts can be transient and keep the backoff.
+var deterministicWorkerRefusals = map[string]bool{
+	api.CodeExecutionModeConflict:  true,
+	api.CodeAppArchMismatch:        true,
+	api.CodeAppLoopbackBound:       true,
+	api.CodeStatelessOnlyViolation: true,
+}
+
+// workerRecoveryRetryDelay is the wait before the next admission attempt after
+// a failed one. production-us hunt #14 (H14-98): h8-worker-hz's image serves
+// HTTP while declared a worker, so every boot ends in execution_mode_conflict;
+// the 300 s cap retried it 293 times a day for 19 days. A deterministic
+// refusal holds for WorkerRecoveryDeterministicRefusalHoldSeconds; a revision
+// change still resets the lease immediately.
+func workerRecoveryRetryDelay(failures int, attemptErr error) time.Duration {
+	var problem *api.Problem
+	if errors.As(attemptErr, &problem) && deterministicWorkerRefusals[problem.Code] {
+		return time.Duration(api.WorkerRecoveryDeterministicRefusalHoldSeconds) * time.Second
+	}
+	return workerRecoveryBackoff(failures)
+}
+
 func (e *Engine) beginWorkerRecovery(ctx context.Context, app state.App, deps []state.Deployment, scope string) (*workerRecoveryAttempt, bool, error) {
 	if app.Status != state.AppActive {
 		return nil, true, nil // Lifecycle cleanup never admits another worker.
@@ -123,7 +147,7 @@ func (e *Engine) completeWorkerRecovery(ctx context.Context, a *workerRecoveryAt
 			row.Status = "waiting_dependency"
 		}
 		row.Failures = min(row.Failures+1, api.WorkerRecoveryFailureCountMax)
-		row.NextAttemptAt = now.Add(workerRecoveryBackoff(row.Failures))
+		row.NextAttemptAt = now.Add(workerRecoveryRetryDelay(row.Failures, attemptErr))
 	case a.status == "ready":
 		row.Failures = 0
 		row.NextAttemptAt = now.Add(time.Duration(api.WorkerRecoveryHealthyIntervalSeconds) * time.Second)

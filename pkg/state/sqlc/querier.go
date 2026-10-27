@@ -3101,6 +3101,10 @@ type Querier interface {
 	ListAppWakeHistoryPage(ctx context.Context, db DBTX, arg ListAppWakeHistoryPageParams) ([]ListAppWakeHistoryPageRow, error)
 	// ADR-1637: app scope/canonical selection before a total-order seek and limit.
 	ListAppWakeTimelinePage(ctx context.Context, db DBTX, arg ListAppWakeTimelinePageParams) ([]ListAppWakeTimelinePageRow, error)
+	// ADR-121 and ADR-1447 amendments: the app's OOM kills in a window, newest
+	// first, with the window's total, for GET /v1/apps/{slug}/debug/status. Kills
+	// are rare, so events_kind_at_idx (kind, at DESC) bounds the scan.
+	ListAppWorkloadOOMKills(ctx context.Context, db DBTX, arg ListAppWorkloadOOMKillsParams) ([]ListAppWorkloadOOMKillsRow, error)
 	ListApplicationStandardAssignmentInventory(ctx context.Context, db DBTX, arg ListApplicationStandardAssignmentInventoryParams) ([]ApplicationStandardAssignment, error)
 	ListApplicationStandardAssignments(ctx context.Context, db DBTX, orgID pgtype.UUID) ([]ListApplicationStandardAssignmentsRow, error)
 	ListApplicationStandardControlBackups(ctx context.Context, db DBTX, appID pgtype.UUID) ([]ApplicationStandardControlBackup, error)
