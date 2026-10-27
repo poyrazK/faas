@@ -100,3 +100,37 @@ func TestValidateShapeCapsExpandedSize(t *testing.T) {
 		t.Fatalf("with the cap off the archive is valid: %v", err)
 	}
 }
+
+// A symlink target is relative to the link's directory, so an in-repository
+// "../" link is accepted and only a target leaving the archive is refused
+// (ADR-20261028090000).
+func TestLinkTarget(t *testing.T) {
+	for _, tc := range []struct {
+		name, link string
+		hard       bool
+		want       string
+		ok         bool
+	}{
+		{name: "packages/api/LICENSE", link: "../../LICENSE", want: "LICENSE", ok: true},
+		{name: "./CLAUDE.md", link: "AGENTS.md", want: "AGENTS.md", ok: true},
+		{name: "a/b", link: "./c/../d", want: "a/d", ok: true},
+		{name: "hard", link: "./dir/file", hard: true, want: "dir/file", ok: true},
+		{name: "LICENSE", link: "../LICENSE"},
+		{name: "a/b", link: "../../x"},
+		{name: "link", link: "/etc/passwd"},
+		{name: "link", link: ""},
+		{name: "a/hard", link: "../x", hard: true},
+	} {
+		got, ok := LinkTarget(tc.name, tc.link, tc.hard)
+		if got != tc.want || ok != tc.ok {
+			t.Errorf("LinkTarget(%q, %q, %v) = %q, %v; want %q, %v", tc.name, tc.link, tc.hard, got, ok, tc.want, tc.ok)
+		}
+	}
+	inTree := shapeArchive(t, []*tar.Header{
+		{Name: "LICENSE", Typeflag: tar.TypeReg, Mode: 0o600},
+		{Name: "packages/api/LICENSE", Linkname: "../../LICENSE", Typeflag: tar.TypeSymlink, Mode: 0o777},
+	}, nil)
+	if err := ValidateShape(inTree, 10, 0); err != nil {
+		t.Fatalf("in-tree link rejected: %v", err)
+	}
+}

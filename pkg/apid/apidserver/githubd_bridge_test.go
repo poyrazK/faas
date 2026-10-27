@@ -44,6 +44,7 @@ import (
 
 	githubdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/githubd/v1"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/appstandards"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/wire"
@@ -90,12 +91,21 @@ type bridgeStubStore struct {
 	updateStatusCalls []state.DeploymentStatus
 	account           state.Account
 	accountUnverified bool
+	org               state.Org
 	deployRate        state.AccountDeployRateSnapshot
 	deployRateErr     error
+	deployRateSubject string
 }
 
 func (s *bridgeStubStore) AppByID(_ context.Context, _ string) (state.App, error) {
 	return s.app, s.appErr
+}
+
+func (s *bridgeStubStore) OrgByID(_ context.Context, id string) (state.Org, error) {
+	if s.org.ID == id {
+		return s.org, nil
+	}
+	return state.Org{}, state.ErrNotFound
 }
 
 func (s *bridgeStubStore) AccountByID(_ context.Context, id string) (state.Account, error) {
@@ -114,7 +124,8 @@ func (s *bridgeStubStore) AccountByID(_ context.Context, id string) (state.Accou
 	return state.Account{ID: id, Plan: api.PlanFree, Status: state.AccountActive, EmailVerifiedAt: &verified}, nil
 }
 
-func (s *bridgeStubStore) ConsumeAccountDeployRate(_ context.Context, _ string, limit int, now time.Time) (state.AccountDeployRateSnapshot, error) {
+func (s *bridgeStubStore) ConsumeAccountDeployRate(_ context.Context, subject string, limit int, now time.Time) (state.AccountDeployRateSnapshot, error) {
+	s.deployRateSubject = subject
 	if s.deployRateErr != nil {
 		return state.AccountDeployRateSnapshot{}, s.deployRateErr
 	}
@@ -359,6 +370,57 @@ func TestEnqueueBuild_HappyPath(t *testing.T) {
 	// Status update: building was stamped.
 	if len(store.updateStatusCalls) != 1 || store.updateStatusCalls[0] != state.DeployBuilding {
 		t.Errorf("status calls = %v, want [building]", store.updateStatusCalls)
+	}
+}
+
+// bridgeStandardsStubStore adds an admitted application standards
+// enrollment, which an organization app needs before a build is enqueued.
+type bridgeStandardsStubStore struct {
+	*bridgeStubStore
+	enrollment state.ApplicationStandardEnrollment
+}
+
+func (s bridgeStandardsStubStore) GetApplicationStandardEnrollment(context.Context, string, string) (state.ApplicationStandardEnrollment, error) {
+	return s.enrollment, nil
+}
+
+func (s bridgeStandardsStubStore) ListApplicationStandardAssignments(context.Context, string) ([]appstandards.Assignment, error) {
+	return nil, nil
+}
+
+// An organization app's push is admitted against the organization, as the
+// API path is: its billing status gates the deploy and its deploy rate is
+// charged, not the namespace account's.
+func TestEnqueueBuild_OrganizationAppUsesResourceAccount(t *testing.T) {
+	const acctID, appID, orgID = "33333333-3333-4333-8333-333333333333", "11111111-1111-4111-8111-111111111111", "22222222-2222-4222-8222-222222222222"
+	for _, tc := range []struct {
+		name        string
+		org         state.Org
+		wantCode    codes.Code
+		wantSubject string
+	}{
+		{"suspended organization refused", state.Org{ID: orgID, Status: state.OrgStatusSuspended}, codes.FailedPrecondition, ""},
+		{"rate charged to the organization", state.Org{ID: orgID, Status: state.OrgStatusActive, ResourceOwnershipEnabled: true, Plan: api.PlanPro}, codes.OK, orgID},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			stagingRoot, spoolRoot := t.TempDir(), t.TempDir()
+			path, size := stageFixtureFile(t, stagingRoot, filepath.Join(acctID, appID, "abc123"), []byte("tiny-tar"))
+			store := &bridgeStubStore{app: state.App{ID: appID, AccountID: acctID, OrgID: orgID, Status: state.AppActive}, org: tc.org}
+			enrolled := bridgeStandardsStubStore{bridgeStubStore: store, enrollment: state.ApplicationStandardEnrollment{
+				AppID: appID, OrgID: orgID, DesiredRevision: 1, State: "unmanaged"}}
+			g := &githubdBridge{store: enrolled, notif: &bridgeStubNotifier{}, log: discLog(), ops: wire.NewOpsMetrics("apid"),
+				spool: spoolRoot, stagingRoot: stagingRoot, spoolRoot: spoolRoot}
+			_, err := g.EnqueueBuild(context.Background(), &githubdpb.EnqueueBuildRequest{
+				AccountId: acctID, AppId: appID, CommitSha: "abc123", SourcePath: path, SourceBytes: size,
+				SourceUrl: "https://codeload.example.com/repo/tar.gz/abc123", RepoFullName: "owner/repo", Branch: "main",
+			})
+			if got := status.Code(err); got != tc.wantCode {
+				t.Fatalf("EnqueueBuild code = %v (%v), want %v", got, err, tc.wantCode)
+			}
+			if store.deployRateSubject != tc.wantSubject {
+				t.Fatalf("deploy rate charged to %q, want %q", store.deployRateSubject, tc.wantSubject)
+			}
+		})
 	}
 }
 

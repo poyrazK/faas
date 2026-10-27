@@ -105,6 +105,14 @@ with `PYTHONPATH`, as functions use) in a later slice.
       default off; job mode excluded.
 4. Native-metal acceptance, then default on. Python.
 
+## Amendment 1 (2026-10-28): default on
+
+Slice 4's acceptance is `TestSharedRuntimeRollbackMetal` (rollback across
+the two layer kinds, each from a cold boot and a snapshot restore) with
+`TestSourceDeployWakeMetal` on the shared base. With it passing,
+`FAAS_SOURCE_APP_SHARED_RUNTIME` is on by default and `0` turns it off
+(ADR-20261028090000). Python remains a later slice.
+
 ## Consequences
 
 - An eligible Node app layer is its source plus `node_modules`, a few MB for

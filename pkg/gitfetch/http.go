@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/tarball"
 )
 
 // httpFetcher is the production Fetcher. It dollies a tar.gz
@@ -320,7 +321,10 @@ func defaultExtractLimits() extractLimit {
 // cannot pin the daemon's memory. The extractor mirrors the
 // apid path's posture verbatim:
 //
-//   - Reject absolute paths, ".." segments, symlinks/chars/blocks/fifos
+//   - Reject absolute paths, ".." segments, chars/blocks/fifos
+//   - Replace in-tree symlinks and hard links with copies of their
+//     targets (links.go); a link to an absolute path or out of the
+//     tree is left out, as it would dangle in any other checkout
 //   - Reject entries beyond MaxEntries
 //   - Reject any single entry exceeding MaxFileBytes
 //   - Reject cumulative bytes beyond maxTotalBytes
@@ -345,13 +349,14 @@ func extractStream(dst string, r io.Reader, maxTotalBytes int64, lim extractLimi
 		// under `<owner>-<sha>/...`). Strip it on write.
 		firstDir string
 		firstSet bool
+		links    []pendingLink
 	)
 	for {
 		// codeql[go/zipslip] — tr.Next() returns the tar header
 		// whose hdr.Name drives every downstream write; the path
 		// is guarded by escapesArchiveRoot(hdr.Name) above
-		// (and the TypeSymlink/TypeLink allow-list denies
-		// link entries outright). Pin the suppression at
+		// (and link entries are never created on disk; links.go
+		// copies their in-tree targets). Pin the suppression at
 		// the call site per memory:codeql-zipslip-source-line-suppression.
 		hdr, err := tr.Next()
 		if errors.Is(err, io.EOF) {
@@ -384,22 +389,8 @@ func extractStream(dst string, r io.Reader, maxTotalBytes int64, lim extractLimi
 		if escapesArchiveRoot(hdr.Name) {
 			return fmt.Errorf("invalid path %q: %w", hdr.Name, ErrBadArchive)
 		}
-		// Defense in depth for a future relaxation of the
-		// type allow-list: if anyone ever allows TypeLink /
-		// TypeSymlink entries, the Linkname target must still
-		// be guarded against ../ escapes. Today the
-		// type-flag switch below rejects all link types, so
-		// this branch is dead; the guard is here so a future
-		// maintainer who adds a link type without re-reading
-		// the security posture doesn't accidentally re-enable
-		// the symlink-with-escape class.
 		switch hdr.Typeflag {
-		case tar.TypeSymlink, tar.TypeLink:
-			if escapesArchiveRoot(hdr.Linkname) {
-				return fmt.Errorf("invalid link target %q: %w", hdr.Linkname, ErrBadArchive)
-			}
-			return fmt.Errorf("entry type %d not allowed: %w", hdr.Typeflag, ErrBadArchive)
-		case tar.TypeReg, tar.TypeDir:
+		case tar.TypeSymlink, tar.TypeLink, tar.TypeReg, tar.TypeDir:
 			// allowed
 		default:
 			return fmt.Errorf("entry type %d not allowed: %w", hdr.Typeflag, ErrBadArchive)
@@ -414,9 +405,7 @@ func extractStream(dst string, r io.Reader, maxTotalBytes int64, lim extractLimi
 			}
 			firstSet = true
 		}
-		if firstDir != "" && strings.HasPrefix(name, firstDir+"/") {
-			name = name[len(firstDir)+1:]
-		}
+		name = stripArchiveRoot(name, firstDir)
 		if name == "" {
 			// root directory entry itself
 			continue
@@ -434,6 +423,15 @@ func extractStream(dst string, r io.Reader, maxTotalBytes int64, lim extractLimi
 		}
 
 		switch hdr.Typeflag {
+		case tar.TypeSymlink, tar.TypeLink:
+			// A hard link names another archive entry, wrapper included.
+			linkname := hdr.Linkname
+			if hdr.Typeflag == tar.TypeLink {
+				linkname = stripArchiveRoot(linkname, firstDir)
+			}
+			if resolved, ok := tarball.LinkTarget(name, linkname, hdr.Typeflag == tar.TypeLink); ok {
+				links = append(links, pendingLink{name: path.Clean(name), target: resolved})
+			}
 		case tar.TypeDir:
 			if err := os.MkdirAll(target, 0o755); err != nil {
 				return fmt.Errorf("mkdir %q: %w", target, err)
@@ -459,7 +457,15 @@ func extractStream(dst string, r io.Reader, maxTotalBytes int64, lim extractLimi
 	if err := gz.Close(); err != nil {
 		return fmt.Errorf("gzip trailer verify: %w: %w", err, ErrBadArchive)
 	}
-	return nil
+	return materializeLinks(dst, links, &total, maxTotalBytes, lim.MaxFileBytes, &entries, lim.MaxEntries)
+}
+
+// stripArchiveRoot removes the codeload "<owner>-<repo>-<sha>/" wrapper.
+func stripArchiveRoot(name, firstDir string) string {
+	if firstDir != "" && strings.HasPrefix(name, firstDir+"/") {
+		return name[len(firstDir)+1:]
+	}
+	return name
 }
 
 // writeOneFile copies a single tar entry's body into path. The

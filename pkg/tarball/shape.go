@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path"
 	"strings"
 )
 
@@ -87,8 +88,8 @@ func ValidateShape(path string, maxEntries int, maxExpandedBytes int64) error {
 			return &ShapeError{Kind: ShapeUnsafePath, Detail: "absolute paths or '..' entries are rejected"}
 		}
 		if header.Typeflag == tar.TypeSymlink || header.Typeflag == tar.TypeLink {
-			if EscapesRoot(header.Linkname) {
-				return &ShapeError{Kind: ShapeUnsafeLink, Detail: "symlink/hardlink with absolute or '..' target rejected"}
+			if _, ok := LinkTarget(header.Name, header.Linkname, header.Typeflag == tar.TypeLink); !ok {
+				return &ShapeError{Kind: ShapeUnsafeLink, Detail: "symlink/hardlink with an absolute target or one outside the archive rejected"}
 			}
 		}
 		count++
@@ -106,6 +107,26 @@ func ValidateShape(path string, maxEntries int, maxExpandedBytes int64) error {
 
 // EscapesRoot reports whether a tar path is absolute or contains a parent
 // component. Tar paths always use forward slashes, independent of host OS.
+// LinkTarget resolves a link entry's target to an archive-relative path. A
+// symlink's target is relative to the directory holding the link, so
+// "packages/api/LICENSE -> ../../LICENSE" names the root LICENSE; a hard
+// link's target is an archive entry name. ok is false for an absolute
+// target or one resolving outside the archive (ADR-20261028090000).
+// Checking the raw target for ".." refused ordinary in-repository links.
+func LinkTarget(name, linkname string, hard bool) (string, bool) {
+	if linkname == "" || strings.HasPrefix(linkname, "/") {
+		return "", false
+	}
+	resolved := path.Clean(TrimLeadingDotSlash(linkname))
+	if !hard {
+		resolved = path.Join(path.Dir(TrimLeadingDotSlash(name)), linkname)
+	}
+	if resolved == ".." || strings.HasPrefix(resolved, "../") {
+		return "", false
+	}
+	return resolved, true
+}
+
 func EscapesRoot(value string) bool {
 	if value == "" {
 		return false

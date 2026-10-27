@@ -30,6 +30,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"golang.org/x/sys/unix"
@@ -182,14 +183,36 @@ func createBuildDrive1WithCacheStager(ctx context.Context, dest string, m api.Bu
 	return cacheRestored, nil
 }
 
-func checkBuildDriveCapacity(dest string) error {
+// buildDriveAvailable reports the free bytes of the filesystem holding dir.
+// A seam so tests can drive the capacity check without filling a disk.
+var buildDriveAvailable = func(dir string) (uint64, error) {
 	var stat unix.Statfs_t
-	if err := unix.Statfs(filepath.Dir(dest), &stat); err != nil {
-		return fmt.Errorf("builderd: stat drive filesystem: %w", err)
+	if err := unix.Statfs(dir, &stat); err != nil {
+		return 0, fmt.Errorf("builderd: stat drive filesystem: %w", err)
 	}
-	available := uint64(stat.Bavail) * uint64(stat.Bsize)
+	return uint64(stat.Bavail) * uint64(stat.Bsize), nil
+}
+
+// checkBuildDriveCapacity requires BuildDriveMinFreeBytes on the drive's
+// filesystem. The developer dependency cache shares the drive directory and
+// only saves dependency installs, so its oldest entries are given back before
+// the build is refused. Production nodes failed every source build at about
+// 20 GB free while that cache held 13 GB.
+func checkBuildDriveCapacity(dest string) error {
+	dir := filepath.Dir(dest)
+	available, err := buildDriveAvailable(dir)
+	if err != nil {
+		return err
+	}
+	if available >= BuildDriveMinFreeBytes {
+		return nil
+	}
+	reclaimDependencyCaches(dir, int64(BuildDriveMinFreeBytes-available), time.Now())
+	if available, err = buildDriveAvailable(dir); err != nil {
+		return err
+	}
 	if available < BuildDriveMinFreeBytes {
-		return fmt.Errorf("builderd: insufficient host free space for build drive: available=%d bytes, required=%d bytes", available, BuildDriveMinFreeBytes)
+		return fmt.Errorf("%w: available=%d bytes, required=%d bytes", ErrBuildDiskFull, available, BuildDriveMinFreeBytes)
 	}
 	return nil
 }

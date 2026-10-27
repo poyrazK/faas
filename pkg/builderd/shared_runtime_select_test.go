@@ -9,10 +9,11 @@ import (
 
 // spec: §4.6
 // H10-140: only Node container apps without a runtime, a Dockerfile or job
-// mode build on a shared runner base, and only with the flag on.
+// mode build on a shared runner base, unless the node turns it off
+// (default on, ADR-20261028090000).
 func TestSharedSourceAppRuntime(t *testing.T) {
-	on := func(string) string { return "1" }
-	off := func(string) string { return "" }
+	on := func(string) string { return "" }
+	off := func(string) string { return "0" }
 	app := state.App{Type: state.AppTypeApp}
 	job := app
 	job.Manifest.ExecutionMode = api.ExecutionModeJob
@@ -31,6 +32,7 @@ func TestSharedSourceAppRuntime(t *testing.T) {
 		{"engines 24", app, FrameworkNode, "24", "", on, "node24"},
 		{"declared 20 keeps its toolchain", app, FrameworkNode, "20", "", on, ""},
 		{"flag off", app, FrameworkNode, "", "", off, ""},
+		{"explicit on", app, FrameworkNode, "22", "", func(string) string { return "1" }, "node22"},
 		{"function", state.App{Type: state.AppTypeFunction, Runtime: "node22"}, FrameworkNode, "", "", on, ""},
 		{"own runtime", state.App{Type: state.AppTypeApp, Runtime: "go124"}, FrameworkNode, "", "", on, ""},
 		{"python", app, FrameworkPython, "", "", on, ""},

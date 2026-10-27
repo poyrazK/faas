@@ -53,6 +53,7 @@ import (
 type githubdBridgeStore interface {
 	AppByID(ctx context.Context, id string) (state.App, error)
 	AccountByID(ctx context.Context, id string) (state.Account, error)
+	OrgByID(ctx context.Context, id string) (state.Org, error)
 	ConsumeAccountDeployRate(ctx context.Context, accountID string, limit int, now time.Time) (state.AccountDeployRateSnapshot, error)
 	LatestDeployment(ctx context.Context, appID string) (state.Deployment, error)
 	CreateDeployment(ctx context.Context, d state.Deployment) (state.Deployment, error)
@@ -283,16 +284,24 @@ func (g *githubdBridge) EnqueueBuild(ctx context.Context, req *githubdpb.Enqueue
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "EnqueueBuild: account lookup: %v", err)
 	}
+	// Plan, billing status, holds and the deploy rate belong to the app's
+	// resource owner: the organization for an organization app, as on the API
+	// path. Checking the namespace account let a suspended organization keep
+	// deploying on push and applied the wrong plan's limits.
+	resource, err := state.AppResourceAccount(ctx, g.store, app)
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "EnqueueBuild: resource account lookup: %v", err)
+	}
 	// A push must not deploy for an account the API would refuse:
 	// this path had no account-status check, so suspended and
 	// deletion-pending accounts kept building on every push.
-	if acct.AbuseHeld() {
+	if resource.AbuseHeld() {
 		return nil, status.Errorf(codes.FailedPrecondition,
-			"EnqueueBuild: account %s is on an abuse hold; deploys are blocked until an operator releases it", acct.ID)
+			"EnqueueBuild: account %s is on an abuse hold; deploys are blocked until an operator releases it", resource.ResourceOwnerID())
 	}
-	if !acct.MayDeploy() {
+	if !resource.MayDeploy() {
 		return nil, status.Errorf(codes.FailedPrecondition,
-			"EnqueueBuild: account %s is %s; deploys are blocked until billing is resolved", acct.ID, acct.Status)
+			"EnqueueBuild: account %s is %s; deploys are blocked until billing is resolved", resource.ResourceOwnerID(), resource.Status)
 	}
 	if !acct.EmailVerified() {
 		return nil, status.Errorf(codes.FailedPrecondition,
@@ -306,10 +315,10 @@ func (g *githubdBridge) EnqueueBuild(ctx context.Context, req *githubdpb.Enqueue
 		}
 		return nil, status.Error(code, "EnqueueBuild: "+standardFailure.Detail)
 	}
-	if err := bridgeSourcePolicy(g.log, req.SourcePath, app, acct.Plan); err != nil {
+	if err := bridgeSourcePolicy(g.log, req.SourcePath, app, resource.Plan); err != nil {
 		return nil, err
 	}
-	manifest, manifestProblem := loadSourceRefManifest(req.SourcePath, app, acct.Plan)
+	manifest, manifestProblem := loadSourceRefManifest(req.SourcePath, app, resource.Plan)
 	if manifestProblem != nil {
 		return nil, status.Errorf(codes.InvalidArgument, "EnqueueBuild: source manifest: %s", manifestProblem.Detail)
 	}
@@ -321,7 +330,7 @@ func (g *githubdBridge) EnqueueBuild(ctx context.Context, req *githubdpb.Enqueue
 	if releaseProblem != nil {
 		return nil, status.Errorf(codes.InvalidArgument, "EnqueueBuild: release command: %s", releaseProblem.Detail)
 	}
-	rate, err := g.store.ConsumeAccountDeployRate(ctx, acct.ID, acct.Plan.DeploysPerHour(), timeNow().UTC())
+	rate, err := g.store.ConsumeAccountDeployRate(ctx, resource.ResourceOwnerID(), resource.Plan.DeploysPerHour(), timeNow().UTC())
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "EnqueueBuild: deploy admission: %v", err)
 	}
@@ -406,7 +415,7 @@ func (g *githubdBridge) EnqueueBuild(ctx context.Context, req *githubdpb.Enqueue
 		ImageProcess:         app.Manifest.ProjectImageProcess,
 		DockerfilePath:       dockerfilePath,
 		DockerfileBuild:      dockerfileBuild,
-		FullRootfsAllowAuto:  api.FullRootfsAllowAutoDefault[acct.Plan],
+		FullRootfsAllowAuto:  api.FullRootfsAllowAutoDefault[resource.Plan],
 		SourcePath:           req.SourcePath,
 		SourceBytes:          req.SourceBytes,
 		SourceRoot:           app.RootDir,
@@ -457,7 +466,7 @@ func (g *githubdBridge) EnqueueBuild(ctx context.Context, req *githubdpb.Enqueue
 		} else if len(active) > 0 {
 			return nil, status.Error(codes.FailedPrecondition, freeze.Summary(app.Slug, active))
 		}
-		release.ApplyDefaultToEnqueue(ctx, g.store, g.log, app, acct.Plan, req.DeploymentScope, &params)
+		release.ApplyDefaultToEnqueue(ctx, g.store, g.log, app, resource.Plan, req.DeploymentScope, &params)
 		// ADR-20261020085706: a push to an app that requires approvals must
 		// wait in a canary; githubd reports the refusal on the commit.
 		if params.CanaryPreset == "" {

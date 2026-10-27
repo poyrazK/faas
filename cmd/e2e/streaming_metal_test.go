@@ -286,12 +286,12 @@ func TestE2E_Streaming_Metal_PlanMatrix(t *testing.T) {
 	e2etest.OverrideDeployBase(t, registry.Host()+"/onebox-faas/deploy-base:latest")
 
 	// A Node source app fits Free's 256 MB layer cap only on the shared
-	// runner base (ADR-1500), which nodes enable with
-	// FAAS_SOURCE_APP_SHARED_RUNTIME; FAAS_E2E_SHARED_RUNTIME=1 runs it.
-	sharedRuntime := os.Getenv("FAAS_E2E_SHARED_RUNTIME") == "1"
+	// runner base (ADR-1500), on by default (ADR-20261028090000);
+	// FAAS_E2E_SHARED_RUNTIME=0 runs the full-layer path instead.
+	sharedRuntime := os.Getenv("FAAS_E2E_SHARED_RUNTIME") != "0"
 	harnessEnv := []string{"FAAS_GATEWAY_STREAMING=true"}
-	if sharedRuntime {
-		harnessEnv = append(harnessEnv, "FAAS_SOURCE_APP_SHARED_RUNTIME=1")
+	if !sharedRuntime {
+		harnessEnv = append(harnessEnv, "FAAS_SOURCE_APP_SHARED_RUNTIME=0")
 	}
 	h := e2etest.Start(t, pool, e2etest.DeployWake|e2etest.Builderd, harnessEnv...)
 	defer h.DumpLogs(t)

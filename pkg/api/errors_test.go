@@ -374,7 +374,7 @@ func TestCodeConstants_UniqueAndNonEmpty(t *testing.T) {
 	codes := []string{
 		CodePlanLimitApps, CodePlanLimitRAM, CodePlanLimitConcur, CodeInvalidAppCPU, CodeInvalidAppRAM, CodeInvalidCPURAMPair,
 		CodeSourceTooLarge, CodeAppLayerTooBig,
-		CodeBuildUndetected, CodeBuildOOM, CodeBuildTimeout,
+		CodeBuildUndetected, CodeBuildOOM, CodeBuildTimeout, CodeBuildFailed, CodeBuildInfrastructure,
 		CodeQuotaExhausted, CodeBillingPastDue, CodeCapacity, CodeDebugRegressionUnavailable,
 		CodeUnauthorized, CodeNotFound, CodeValidation,
 		CodeImageNotFound, CodeImageEgressDenied, CodeImageManifestInvalid,

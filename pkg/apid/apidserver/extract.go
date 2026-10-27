@@ -79,9 +79,11 @@ func defaultExtractLimits(l api.Limits) extractLimits {
 //   - Reject absolute paths and `..` segments (already done by
 //     validateTarballShape, but we re-check defensively in case the
 //     caller skipped that step).
-//   - Reject TypeLink, TypeSymlink, TypeChar, TypeBlock, TypeFifo.
-//     A symlink whose target is inside the archive root is the
-//     classic "exfil a host file" vector — never allow.
+//   - Never create a link on the host: a materialized symlink is the
+//     classic "exfil a host file" vector. Links whose target stays
+//     inside the archive are skipped (the target is scanned as its own
+//     entry); absolute or escaping targets are rejected.
+//   - Reject TypeChar, TypeBlock, TypeFifo.
 //   - Reject entry counts beyond MaxEntries.
 //   - Reject any single entry whose body exceeds MaxFileBytes
 //     (read with io.LimitReader so a hostile tarball can't pin
@@ -236,9 +238,23 @@ func extractTarGzInto(src, dst string, lim extractLimits) *api.Problem {
 		switch hdr.Typeflag {
 		case tar.TypeReg, tar.TypeDir:
 			// allowed
+		case tar.TypeSymlink, tar.TypeLink:
+			// A link inside the archive is never created on this host. Its
+			// target is a regular entry of the same archive, scanned there;
+			// the build guest extracts the link itself. Repositories carry
+			// in-tree links (a shared LICENSE, CLAUDE.md -> AGENTS.md), and
+			// refusing every link refused them all (ADR-20261028090000).
+			if _, ok := tarball.LinkTarget(hdr.Name, hdr.Linkname, hdr.Typeflag == tar.TypeLink); !ok {
+				return api.ErrSourceInvalid("links with an absolute target or one outside the archive are rejected")
+			}
+			entries++
+			if entries > lim.MaxEntries {
+				return api.ErrSourceInvalid(fmt.Sprintf("too many files (>%d)", lim.MaxEntries))
+			}
+			continue
 		default:
 			return api.ErrSourceInvalid(
-				fmt.Sprintf("entry type %d not allowed (only files/dirs)", hdr.Typeflag))
+				fmt.Sprintf("entry type %d not allowed (only files, directories and links inside the archive)", hdr.Typeflag))
 		}
 		entries++
 		if entries > lim.MaxEntries {

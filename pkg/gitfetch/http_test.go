@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"io/fs"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -370,33 +371,28 @@ func TestFetch_CapEnforcedWhenContentLengthMissing(t *testing.T) {
 	}
 }
 
-// TestFetch_SymlinkLinkname_Rejected pins H3 (defense in
-// depth). The type allow-list rejects TypeLink/TypeSymlink
-// outright today; this test pins that the Linkname guard
-// would catch a "../etc/passwd" target if a future
-// maintainer ever relaxes the type allow-list without
-// re-reading the security posture.
-func TestFetch_SymlinkLinkname_Rejected(t *testing.T) {
-	var buf bytes.Buffer
-	gz := gzip.NewWriter(&buf)
-	tw := tar.NewWriter(gz)
-	hdr := &tar.Header{
-		Name:     "link.txt",
-		Linkname: "../../etc/passwd",
-		Mode:     0o644,
-		Typeflag: tar.TypeSymlink,
-	}
-	if err := tw.WriteHeader(hdr); err != nil {
-		t.Fatalf("tar header: %v", err)
-	}
-	_ = tw.Close()
-	_ = gz.Close()
+// TestFetch_EscapingLinkIsLeftOut pins H3 for links: a link to an absolute
+// path or out of the tree is never created and never followed
+// (ADR-20261028090000). It would dangle in any other checkout, so the
+// fetched tree simply has no entry there.
+func TestFetch_EscapingLinkIsLeftOut(t *testing.T) {
+	body := buildLinkArchive(t, []linkEntry{
+		{name: "owner-sha/README.md", body: "hi"},
+		{name: "owner-sha/link.txt", link: "../../etc/passwd"},
+		{name: "owner-sha/abs.txt", link: "/etc/passwd"},
+	})
 	f, _ := withServer(t, func(w http.ResponseWriter, r *http.Request) {
-		_, _ = w.Write(buf.Bytes())
+		_, _ = w.Write(body)
 	}, 0, 0)
-	_, err := f.Fetch(context.Background(), "owner/repo", "abcdef1234567", "tok")
-	if !errors.Is(err, ErrBadArchive) {
-		t.Errorf("err = %v, want ErrBadArchive", err)
+	tree, err := f.Fetch(context.Background(), "owner/repo", "abcdef1234567", "tok")
+	if err != nil {
+		t.Fatalf("Fetch: %v", err)
+	}
+	t.Cleanup(func() { _ = tree.Close() })
+	for _, name := range []string{"link.txt", "abs.txt"} {
+		if _, err := fs.Stat(tree.FS(), name); !errors.Is(err, fs.ErrNotExist) {
+			t.Errorf("%s: err = %v, want not exist", name, err)
+		}
 	}
 }
 

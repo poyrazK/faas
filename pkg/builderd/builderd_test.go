@@ -659,6 +659,51 @@ func TestProcessOne_FrameworkDetectFailsFlipsDeployment(t *testing.T) {
 	if !contains(dep.Error, "framework detect") {
 		t.Errorf("deployment Error = %q, want substring %q", dep.Error, "framework detect")
 	}
+	// adr: 20261028090000 — a plain build failure carries its class's code
+	// and guidance, not only the message.
+	if dep.ErrorCode != api.CodeBuildFailed || dep.ErrorHint == "" {
+		t.Errorf("deployment error_code=%q hint=%q, want %q with a hint", dep.ErrorCode, dep.ErrorHint, api.CodeBuildFailed)
+	}
+}
+
+// adr: 20261028090000 — a build whose deployment a newer revision of the same
+// app has outpaced is skipped: promotion would supersede it, and building it
+// first held the builder slot the newer deployment was queued for.
+func TestProcessOne_SkipsBuildOutpacedByNewerDeployment(t *testing.T) {
+	ctx := context.Background()
+	store := state.NewMemStore()
+	src := filepath.Join(t.TempDir(), "src.tar.gz")
+	makeTarballWithName(t, src, []string{"package.json"})
+	buildID, depID, appID := seedDeployment(t, store, src)
+	if err := store.UpdateDeploymentStatus(ctx, depID, state.DeployBuilding, ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.CreateDeployment(ctx, state.Deployment{AppID: appID, Kind: state.DeploymentKindTarball, SourcePath: src, SourceBytes: 100}); err != nil {
+		t.Fatal(err)
+	}
+	fvm := &fakeVM{}
+	b := New(store, &fakeNotifier{}, fvm, NewCache(t.TempDir()), NewDetector(), nil, Config{}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if _, err := b.ProcessOne(ctx, buildID); err != nil {
+		t.Fatalf("ProcessOne: %v", err)
+	}
+	build, _ := store.BuildByID(ctx, buildID)
+	dep, _ := store.DeploymentByID(ctx, depID)
+	if build.Status != state.BuildCancelled || dep.Status != state.DeploySuperseded || fvm.spawnCalls != 0 {
+		t.Fatalf("build=%s deployment=%s spawns=%d; want cancelled, superseded, 0", build.Status, dep.Status, fvm.spawnCalls)
+	}
+}
+
+func TestBuildFailureCodeCoversEveryClass(t *testing.T) {
+	for fc, want := range map[state.FailureClass]string{
+		state.FailureOOM:       api.CodeStageImageBuildOOM,
+		state.FailureTimeout:   api.CodeStageImageBuildTimeout,
+		state.FailureUserError: api.CodeBuildFailed,
+		state.FailureInfra:     api.CodeBuildInfrastructure,
+	} {
+		if got := buildFailureCode(fc); got != want {
+			t.Errorf("buildFailureCode(%s) = %q, want %q", fc, got, want)
+		}
+	}
 }
 
 func TestProcessOne_MarkerlessFunctionUsesRuntimeFramework(t *testing.T) {

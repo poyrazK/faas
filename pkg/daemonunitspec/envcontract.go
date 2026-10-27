@@ -886,7 +886,7 @@ var EnvContract = []EnvVar{
 	{Name: "FAAS_SKIP_SOCKET_GROUP", Owners: []string{"shared"}, Source: EnvSourceDevOnly, Note: "must never be set on a production host"},
 	{Name: "FAAS_SNAPSHOT_FANOUT_INTERVAL", Owners: []string{"vmmd"}, Source: EnvSourceDefault, Note: "defaults to 100ms to keep snapshot prepositioning inside the M9 200ms queue-wait budget; increase only for intentionally relaxed environments"},
 	{Name: "FAAS_SNAPSHOT_MEMORY_SHARING", Owners: []string{"vmmd"}, Source: EnvSourceDefault, Note: "ADR-956 snapshot memory page sharing with cached image blocks; on by default, `off` disables it"},
-	{Name: "FAAS_SOURCE_APP_SHARED_RUNTIME", Owners: []string{"builderd", "shared"}, Source: EnvSourceDefault, Note: "opt-in; 1 builds Node source container apps on the shared runner base so drive1 holds only /app (docs/adr/20261017-shared-runtime-source-apps.md); off until the native-metal acceptance run passes"},
+	{Name: "FAAS_SOURCE_APP_SHARED_RUNTIME", Owners: []string{"builderd", "shared"}, Source: EnvSourceDefault, Note: "on by default (ADR-20261028090000): Node source container apps build on the shared runner base so drive1 holds only /app (docs/adr/1500-shared-runtime-source-apps.md); 0 turns it off"},
 	{Name: "FAAS_SPOOL_ROOT", Owners: []string{"apid", "builderd"}, Source: EnvSourceDefault},
 	{Name: "FAAS_STANDBY_WARMUP_ENABLED", Owners: []string{"gatewayd-public"}, Source: EnvSourceDefault},
 	{Name: "FAAS_STANDBY_WARMUP_INTERVAL_MS", Owners: []string{"gatewayd-public"}, Source: EnvSourceDefault},

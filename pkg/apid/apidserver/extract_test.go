@@ -241,3 +241,49 @@ func mustExtractProblem(t *testing.T, p *api.Problem, msg string) *api.Problem {
 	}
 	return p
 }
+
+// TestExtractTarGz_InTreeLinksAreSkipped pins ADR-20261028090000: a link
+// whose target stays inside the archive passes the scan extraction without
+// being created on the host; an escaping link is still refused.
+func TestExtractTarGz_InTreeLinksAreSkipped(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("FAAS_SCAN_SPOOL_ROOT", dir)
+	spool := filepath.Join(dir, "link-spool")
+	if err := os.MkdirAll(spool, 0o755); err != nil {
+		t.Fatalf("mkdir spool: %v", err)
+	}
+	extract := func(t *testing.T, name string, headers []tar.Header) (string, *api.Problem) {
+		t.Helper()
+		raw := apidserver.BuildTestTarGz(t, headers, map[string][]byte{"project/LICENSE": []byte("MIT")})
+		path := filepath.Join(spool, name+".tar.gz")
+		if err := os.WriteFile(path, raw, 0o644); err != nil {
+			t.Fatalf("write tar: %v", err)
+		}
+		return apidserver.ExtractTarGzToDir(path, extractTestSafeLim)
+	}
+
+	t.Run("in_tree", func(t *testing.T) {
+		scanDir, prob := extract(t, "in-tree", []tar.Header{
+			{Name: "project/LICENSE"},
+			{Name: "project/packages/api/LICENSE", Linkname: "../../LICENSE", Typeflag: tar.TypeSymlink},
+			{Name: "project/copy", Linkname: "project/LICENSE", Typeflag: tar.TypeLink},
+		})
+		if prob != nil {
+			t.Fatalf("extract: code=%s detail=%s", prob.Code, prob.Detail)
+		}
+		defer func() { _ = os.RemoveAll(scanDir) }()
+		for _, name := range []string{"packages/api/LICENSE", "copy"} {
+			if _, err := os.Lstat(filepath.Join(scanDir, name)); !os.IsNotExist(err) {
+				t.Errorf("%s was created on the host: %v", name, err)
+			}
+		}
+	})
+
+	t.Run("escaping", func(t *testing.T) {
+		_, prob := extract(t, "escaping", []tar.Header{
+			{Name: "project/LICENSE"},
+			{Name: "project/LICENSE2", Linkname: "../../etc/passwd", Typeflag: tar.TypeSymlink},
+		})
+		mustExtractProblem(t, prob, "expected rejection on an escaping link, got nil")
+	})
+}

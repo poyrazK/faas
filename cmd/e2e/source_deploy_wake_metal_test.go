@@ -119,13 +119,15 @@ func TestSourceDeployWakeMetal(t *testing.T) {
 	// Full metal set: deploy_wake_metal_test.go uses DeployWake
 	// (no builderd) but the source-deploy path needs builderd to claim
 	// the build_queued pg_notify and spin up a builder microVM. Use All.
-	// FAAS_E2E_SHARED_RUNTIME=1 runs the chain with H10-140's shared runner
-	// base: the Node fixture (engines 22) builds on runner-node22 and its
-	// layer keeps only /app (docs/adr/20261017-shared-runtime-source-apps.md).
-	sharedRuntime := os.Getenv("FAAS_E2E_SHARED_RUNTIME") == "1"
+	// The chain runs on H10-140's shared runner base, on by default
+	// (ADR-20261028090000): the Node fixture (engines 22) builds on
+	// runner-node22 and its layer keeps only /app
+	// (docs/adr/1500-shared-runtime-source-apps.md). FAAS_E2E_SHARED_RUNTIME=0
+	// runs the full-layer path instead.
+	sharedRuntime := os.Getenv("FAAS_E2E_SHARED_RUNTIME") != "0"
 	harnessEnv := commitOperationEnvironment(t, "FAAS_COMMIT_API_ENABLED=true")
-	if sharedRuntime {
-		harnessEnv = append(harnessEnv, "FAAS_SOURCE_APP_SHARED_RUNTIME=1")
+	if !sharedRuntime {
+		harnessEnv = append(harnessEnv, "FAAS_SOURCE_APP_SHARED_RUNTIME=0")
 	}
 	h := e2etest.Start(t, pool, e2etest.All, harnessEnv...)
 	key := h.SeedAccount(context.Background(), api.PlanHobby)

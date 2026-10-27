@@ -515,6 +515,12 @@ const (
 	CodeBuildUndetected          = "build_undetected"
 	CodeBuildOOM                 = "build_oom"
 	CodeBuildTimeout             = "build_timeout"
+	// CodeBuildFailed marks a source build whose own install or build step
+	// exited non-zero; CodeBuildInfrastructure marks one the platform could
+	// not run (builder VM, disk, or control-plane failure). Both are stamped
+	// on the deployment row with whycopy guidance (ADR-20261028090000).
+	CodeBuildFailed         = "build_failed"
+	CodeBuildInfrastructure = "build_infrastructure_failed"
 	// CodeDeploymentQueueTimeout and CodeDeploymentStalled are the
 	// deployment watchdog's failures (ADR-20261024140100): a build waited
 	// past DeploymentQueuedBuildTimeoutSeconds, or an in-flight deployment

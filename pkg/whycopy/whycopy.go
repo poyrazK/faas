@@ -212,9 +212,21 @@ var catalog = map[string]Render{
 	},
 	api.CodeStageImageBuildTimeout: {
 		Title: "Image build timed out",
-		Hint:  "the build VM exceeded the 10-minute build-time ceiling",
-		Why:   "the build VM has a hard 10-minute wall-clock ceiling (ADR-003 §SLO). Cold-cache dependency restores, large monorepo clones, or stuck network calls trip this; the build VM is forcibly killed",
+		Hint:  "the build VM exceeded the 15-minute build-time ceiling",
+		Why:   "the build VM has a hard 15-minute wall-clock ceiling (ADR-791). Cold-cache dependency restores, large monorepo clones, or stuck network calls trip this; the build VM is forcibly killed",
 		Fix:   "• warm the dependency cache first (`gregale deploy` will reuse a recent cache hit within 24 h)\n• split a monolithic build into smaller, parallelized CI jobs\n• if the build is genuinely large, file a ticket — the ceiling is on the roadmap to be plan-tiered",
+	},
+	api.CodeBuildFailed: {
+		Title: "Build failed",
+		Hint:  "a step of your build exited with an error",
+		Why:   "the build VM ran your app's install and build steps and one of them exited non-zero; the failing command and its output are in the build log",
+		Fix:   "• read the build log: `gregale logs <slug> --deployment <id>` (`gregale deploy` prints the failing lines)\n• reproduce the step locally, fix it, and deploy again",
+	},
+	api.CodeBuildInfrastructure: {
+		Title: "Build could not run",
+		Hint:  "a platform problem stopped the build; your code did not cause it",
+		Why:   "the build failed in Gregale's build infrastructure (builder VM, build disk, or control plane) before your build steps could finish",
+		Fix:   "• deploy again; the build is retried from the start\n• if it keeps failing, contact support with the deployment id",
 	},
 	api.CodeStageSecurityScanFindings: {
 		Title: "Security scan flagged findings",
