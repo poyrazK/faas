@@ -157,6 +157,8 @@ func TestTrafficFleetDaemonRateAdmissionAndRecovery(t *testing.T) {
 func TestTrafficFleetDaemonRateCounterOutageGrace(t *testing.T) {
 	f := newFleetDaemonFixture(t)
 	gateway := startFleetDaemonConfigured(t, f.pool, f.apps, f.nodes[0].ID, f.nodes[0].Name, f.usage, fleetDaemonOptions{})
+	// The first request creates the counter rows the fixture balance sets.
+	fleetDaemonCall(t, gateway, f.apps[0], "/work", http.StatusOK)
 	fleetDaemonSetBalance(t, f, "app", f.apps[0].ID, 3)
 	fleetDaemonSetBalance(t, f, "account", f.app.AccountID, 100)
 	fleetDaemonCall(t, gateway, f.apps[0], "/work", http.StatusOK)
@@ -183,7 +185,7 @@ func TestTrafficFleetDaemonRateCounterOutageGrace(t *testing.T) {
 	}
 	// The gateway's bucket starts from the counter's last answer (2 left) and
 	// refills at the app's rate, so the limit still holds during the outage.
-	if served == 0 || limited == 0 || f.vm.guestCalls("/work") != served+1 {
+	if served == 0 || limited == 0 || f.vm.guestCalls("/work") != served+2 {
 		t.Fatalf("outage grace served=%d limited=%d guest=%d", served, limited, f.vm.guestCalls("/work"))
 	}
 	if _, err := f.pool.Exec(t.Context(), "ALTER TABLE pg_ratelimit_counters_offline RENAME TO pg_ratelimit_counters"); err != nil {
