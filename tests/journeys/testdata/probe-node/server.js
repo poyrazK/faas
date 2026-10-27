@@ -30,6 +30,8 @@ let cronHits = 0;
 // the guest has a network at all.
 const egressTargets = {
   public_https: ["1.1.1.1", 443],
+  public_https_2: ["8.8.8.8", 443],
+  public_https_dns: ["api.github.com", 443],
   metadata: ["169.254.169.254", 80],
   host_link_ssh: ["10.0.0.1", 22],
   private_10: ["10.10.0.2", 22],
@@ -38,6 +40,21 @@ const egressTargets = {
   smtp_465: ["smtp.gmail.com", 465],
   smtp_587: ["smtp.gmail.com", 587],
 };
+
+// identifyMetadata asks 169.254.169.254 who it is without requesting any
+// data: Google's metadata server answers every request with the header
+// Metadata-Flavor: Google; Firecracker's per-VM MMDS does not. Only the
+// status and that header are reported, never a body.
+function identifyMetadata() {
+  return new Promise((resolve) => {
+    const req = http.get({ host: "169.254.169.254", port: 80, path: "/", timeout: 3000 }, (res) => {
+      res.resume();
+      resolve({ status: res.statusCode, metadata_flavor: res.headers["metadata-flavor"] || "", server: res.headers["server"] || "" });
+    });
+    req.on("timeout", () => { req.destroy(); resolve({ error: "timeout" }); });
+    req.on("error", (err) => resolve({ error: err.code || String(err) }));
+  });
+}
 
 function tryConnect(host, port) {
   return new Promise((resolve) => {
@@ -96,11 +113,12 @@ const server = http.createServer((req, res) => {
       return json(res, 200, { hits: cronHits });
     case "/egress": {
       const names = Object.keys(egressTargets);
-      Promise.all(names.map((n) => tryConnect(...egressTargets[n]))).then((results) => {
+      Promise.all([...names.map((n) => tryConnect(...egressTargets[n])), identifyMetadata()]).then((results) => {
         const out = {};
         names.forEach((n, i) => {
           out[n] = { target: egressTargets[n].join(":"), ...results[i] };
         });
+        out.metadata_identity = results[names.length];
         json(res, 200, out);
       });
       return;

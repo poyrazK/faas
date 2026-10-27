@@ -21,25 +21,50 @@ func TestGuestGuarantees(t *testing.T) {
 	slug, base := tg.deployProbe(t, "guest")
 	s := newStory(t)
 
-	s.check("egress_policy", func(t *testing.T) {
+	var egress map[string]any
+	s.check("public_egress", func(t *testing.T) {
 		r := get(base + "/egress")
 		if r.status != http.StatusOK {
 			t.Fatalf("GET /egress: %s", r)
 		}
-		doc := jsonBody(t, r)
-		names := make([]string, 0, len(doc))
-		for name := range doc {
-			names = append(names, name)
+		egress = jsonBody(t, r)
+		names := make([]string, 0, len(egress))
+		for name := range egress {
+			if name != "metadata_identity" {
+				names = append(names, name)
+			}
 		}
 		sort.Strings(names)
 		for _, name := range names {
-			connected, _ := field(doc, name+".connected").(bool)
-			t.Logf("egress %-14s %-32s connected=%-5v %s", name, str(doc, name+".target"), connected, str(doc, name+".error"))
-			switch {
-			case name == "public_https" && !connected:
-				t.Errorf("public HTTPS from the guest failed (%s): deny results below prove nothing", str(doc, name+".error"))
-			case name != "public_https" && connected:
-				t.Errorf("tenant egress reached %s (%s); it must be refused", name, str(doc, name+".target"))
+			connected, _ := field(egress, name+".connected").(bool)
+			t.Logf("egress %-16s %-32s connected=%-5v %s", name, str(egress, name+".target"), connected, str(egress, name+".error"))
+		}
+		// ADR-031: with no allowlist an app reaches every public address
+		// not on the platform denylist.
+		for _, name := range []string{"public_https", "public_https_2", "public_https_dns"} {
+			if connected, _ := field(egress, name+".connected").(bool); connected {
+				return
+			}
+		}
+		t.Errorf("the app cannot open any public HTTPS connection (1.1.1.1, 8.8.8.8, api.github.com): outbound calls to APIs fail")
+	})
+	s.check("cloud_metadata_unreachable", func(t *testing.T) {
+		if egress == nil {
+			t.Skip("blocked: no /egress result")
+		}
+		id := field(egress, "metadata_identity")
+		t.Logf("169.254.169.254 identity: %s", compact(id))
+		if strings.EqualFold(str(id, "metadata_flavor"), "Google") {
+			t.Errorf("a tenant app reached the cloud provider's metadata server (Metadata-Flavor: Google): it could read the compute node's credentials")
+		}
+	})
+	s.check("denied_destinations", func(t *testing.T) {
+		if egress == nil {
+			t.Skip("blocked: no /egress result")
+		}
+		for _, name := range []string{"host_link_ssh", "private_10", "private_192", "smtp_25", "smtp_465", "smtp_587"} {
+			if connected, _ := field(egress, name+".connected").(bool); connected {
+				t.Errorf("tenant egress reached %s (%s); it must be refused", name, str(egress, name+".target"))
 			}
 		}
 	})
