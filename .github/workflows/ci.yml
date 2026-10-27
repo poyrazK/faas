@@ -644,11 +644,13 @@ jobs:
     # Green runs on 2026-10-12/13 took 42-43 minutes; by 2026-10-19/20 they
     # took 58-60, and three of five full runs were cancelled at the old
     # 60-minute bound while apidserver tests were still passing. go test's
-    # own -timeout=45m below still catches a hung package. The TestPGClone*
+    # own -timeout below still catches a hung package. The TestPGClone*
     # suite runs in unit-tests-pg-1-pgclone instead: after #4499 its 317
     # sequential functions could not finish here in 100 minutes under these
-    # bounds.
-    timeout-minutes: 75
+    # bounds. On 2026-10-27 the apidserver package alone reached the old 45m
+    # package timeout (2705 s, run 40420329172) inside a 66-minute job, so
+    # the bounds are 60m and 90 minutes until apidserver gets its own shards.
+    timeout-minutes: 90
     permissions:
       contents: read
       id-token: write
@@ -763,7 +765,7 @@ jobs:
           # the aggregate still requires every complete state shard below.
           STATEPKG=$(go list ./pkg/state)
           COVERPKGS=$(printf '%s\n' "$PKGS" "$STATEPKG" | sort -u | paste -sd, -)
-          go test -json -race -count=1 -p 4 -timeout=45m -skip '^TestPGClone' -coverpkg="$COVERPKGS" -coverprofile=coverage/cover-shard1.out -covermode=atomic $PKGS
+          go test -json -race -count=1 -p 4 -timeout=60m -skip '^TestPGClone' -coverpkg="$COVERPKGS" -coverprofile=coverage/cover-shard1.out -covermode=atomic $PKGS
           python3 scripts/ci/normalize_go_cover_profile.py coverage/cover-shard1.out
 
       - name: application-standard ledger recovery tests
