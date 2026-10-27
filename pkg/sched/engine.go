@@ -4078,16 +4078,16 @@ func (e *Engine) admitAndDispatchOnce(ctx context.Context, appID, deploymentID, 
 			// sees a Problem (and therefore writes through to the
 			// client with Retry-After) instead of falling through
 			// to its ErrCapacity fallback that lacks the header
-			// (review finding #1a on PR #322). The detail
-			// preserves the underlying storage error verbatim so
-			// log greps still find it.
+			// (review finding #1a on PR #322). The storage error
+			// is logged here, not returned: the problem can reach
+			// the app's visitors through the gateway.
 			e.log.Warn("wake: verifier i/o error",
 				"app", logsanitize.Field(appID), "layer", spec.LayerKey, "err", err)
 			e.transitionWithKind(ctx, bootInput.insID, appID, state.StateFailed, "wake_boot_error", "sig_verify_io")
 			e.ledger.Release(bootInput.insID)
 			return WakeResult{}, api.NewProblem(503, api.CodeCapacity,
 				"signature verification storage error",
-				fmt.Sprintf("verifier I/O error for layer %q: %v (retry shortly)", spec.LayerKey, err)).
+				"The image signature store could not be read; retry shortly.").
 				WithHeader("Retry-After", "5")
 		}
 	}
@@ -6569,7 +6569,7 @@ func (e *Engine) verifyPrimeLayer(ctx context.Context, appID, layer string) erro
 		e.log.Warn("prime: verifier i/o error", "app", appID, "layer", layer, "err", err)
 		return api.NewProblem(503, api.CodeCapacity,
 			"signature verification storage error",
-			fmt.Sprintf("verifier I/O error for layer %q: %v (retry shortly)", layer, err)).
+			"The image signature store could not be read; retry shortly.").
 			WithHeader("Retry-After", "5")
 	}
 	return nil

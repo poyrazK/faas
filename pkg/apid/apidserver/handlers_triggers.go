@@ -614,12 +614,12 @@ func setRetryPolicyInConfig(config *json.RawMessage, policy *api.RetryPolicyDTO)
 	}
 	b, err := json.Marshal(policy)
 	if err != nil {
-		return api.NewProblem(http.StatusInternalServerError, api.CodeCapacity, "Could not persist retry policy", err.Error())
+		return api.NewProblem(http.StatusInternalServerError, api.CodeCapacity, "Could not persist retry policy", "The retry policy could not be encoded.")
 	}
 	top["retry_policy"] = b
 	merged, err := json.Marshal(top)
 	if err != nil {
-		return api.NewProblem(http.StatusInternalServerError, api.CodeCapacity, "Could not persist retry policy", err.Error())
+		return api.NewProblem(http.StatusInternalServerError, api.CodeCapacity, "Could not persist retry policy", "The trigger config could not be encoded.")
 	}
 	*config = merged
 	return nil
