@@ -1016,7 +1016,20 @@ jobs:
             # Shard b alone runs the PostgreSQL native verdict, starter TLS,
             # fixture and GitOps compilation gates before its tests: about
             # 28 minutes on 2026-10-18 (20 on 2026-10-17), ahead of a ~20
-            # minute test step. 45 cancelled it mid-suite.
+            # minute test step. 45 cancelled it mid-suite. The gates moved to
+            # shard c when they reached 36 minutes (run 40420329172).
+            job_timeout_minutes: 60
+          - id: c
+            label: PostgreSQL native and starter gates
+            # Shard b's pre-test gates took 26 minutes on 2026-10-26 and 36 on
+            # 2026-10-27, which pushed its ~24-minute suite past the 60-minute
+            # budget (run 40420329172). They run here, beside it.
+            package_pattern: ''
+            coverage_file: ''
+            gitops_acceptance: false
+            state_coverage: false
+            gates: true
+            test_timeout: 30m
             job_timeout_minutes: 60
     # Keep main's bounded PostgreSQL budgets: 30 minutes for parity and
     # reconciliation, 20 minutes for CLI/daemons. The full state suite runs
@@ -1102,12 +1115,12 @@ jobs:
             go-pg-2-${{ matrix.id }}-${{ runner.os }}-go${{ env.GO_VERSION }}-${{ hashFiles('go.sum') }}-
             go-pg-2-${{ matrix.id }}-${{ runner.os }}-go${{ env.GO_VERSION }}-
       - name: Enable TLS for durable SQL credential acceptance
-        if: matrix.id == 'b'
+        if: matrix.id == 'b' || matrix.gates
         env:
           POSTGRES_SERVICE_CONTAINER: ${{ job.services.postgres.id }}
         run: bash scripts/ci/enable_postgres_tls.sh "$POSTGRES_SERVICE_CONTAINER"
       - name: PostgreSQL native verdict contracts
-        if: matrix.id == 'b'
+        if: matrix.gates
         run: |
           python3 scripts/ci/managed-postgres-native-verdict_test.py
           python3 scripts/ci/object-storage-native-verdict_test.py
@@ -1120,7 +1133,7 @@ jobs:
           go test -race -p 1 ./pkg/managedpostgres/guestqualification ./pkg/e2etest/postgresstarter ./pkg/e2etest/queuestarter ./pkg/e2etest/servicestarter ./pkg/e2etest/testdata/helloserver
           go test -race -p 1 ./pkg/e2etest -run '^Test(PostgresGuest|StorageGuest|QueueGuest|ServiceGuest)'
       - name: scoped PostgreSQL rehearsal fault and recovery (no KVM)
-        if: matrix.id == 'b'
+        if: matrix.gates
         env:
           FAAS_REHEARSAL_PG_TEST_ADMIN_URL: postgres://faas:faas@127.0.0.1:5433/gregale_rehearsal_admin?sslmode=disable
         run: >-
@@ -1128,19 +1141,19 @@ jobs:
           ./pkg/rehearsalpg/runtime ./pkg/rehearsalwork/acceptance
           -run 'TestPostgresFault|TestPostgresCollectorFailureAndCleanupFailureCannotPass'
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
-        if: matrix.id == 'b'
+        if: matrix.id == 'b' || matrix.gates
         with:
           node-version: '22'
       - name: queue worker safe completion canary
-        if: matrix.id == 'b'
+        if: matrix.gates
         run: go test -race -p 1 ./cmd/gregale/templates -run '^TestQueueWorkerStarter' -count=1
       - name: native M9 gate contracts (no KVM)
-        if: matrix.id == 'b'
+        if: matrix.gates
         run: |
           make test-native-m9-contracts
           go test -tags=metal -run '^$' ./tests/native/m9
       - name: generated PostgreSQL starter TLS recovery
-        if: matrix.id == 'b'
+        if: matrix.gates
         env:
           POSTGRES_SERVICE_CONTAINER: ${{ job.services.postgres.id }}
           GREGALE_POSTGRES_STARTER_TEST: '1'
@@ -1148,7 +1161,7 @@ jobs:
           docker cp "$POSTGRES_SERVICE_CONTAINER:/var/lib/postgresql/data/qualification-server.crt" "$RUNNER_TEMP/starter-postgres-ca.pem"
           NODE_EXTRA_CA_CERTS="$RUNNER_TEMP/starter-postgres-ca.pem" go test -race -p 2 ./cmd/gregale/templates -run '^TestPostgresStarterSQLRecovery$' -count=1 -v -timeout=180s
       - name: PostgreSQL fixture API and binding guest compilation (no KVM)
-        if: matrix.id == 'b'
+        if: matrix.gates
         env:
           GOFLAGS: '"-gcflags=github.com/onebox-faas/faas/pkg/apid/apidserver=-dwarf=false -c=1"'
           GOGC: 10
@@ -1158,17 +1171,17 @@ jobs:
           go test -race -p 1 -tags metal,managed_postgres_native ./pkg/apid/apidserver -run '^TestManagedPostgresFixturePublicRotation$' -count=1 -v -timeout=180s
           go test -race -p 1 -tags metal,managed_postgres_native,object_storage_native,queue_binding_native,managed_service_native -c -o "$RUNNER_TEMP/binding-native.test" ./cmd/e2e
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7
-        if: matrix.id == 'b'
+        if: matrix.id == 'b' || matrix.gates
         with:
           python-version: '3.12'
       - name: generated Python PostgreSQL starter TLS recovery
-        if: matrix.id == 'b'
+        if: matrix.gates
         run: bash scripts/ci/test_python_postgres_starter.sh "$RUNNER_TEMP/starter-postgres-ca.pem"
       # Moved from ci-light, which no longer builds cmd/e2e with extra tags.
       # The acceptance test skips unless GREGALE_GITOPS_ACCEPTANCE=1, so the
       # e2e shards never run it.
       - name: GitOps source approval and native graph compilation (no KVM)
-        if: matrix.id == 'b'
+        if: matrix.gates
         env:
           GOFLAGS: '"-gcflags=github.com/onebox-faas/faas/pkg/apid/apidserver=-dwarf=false -c=1"'
           GOGC: 10
@@ -1181,6 +1194,7 @@ jobs:
           go test -race -p 1 -tags metal -c -o "$RUNNER_TEMP/gitops-native.test" ./cmd/e2e
           rm -f "$RUNNER_TEMP/gitops-native.test"
       - name: unit tests (pg shard 2${{ matrix.id }})
+        if: matrix.package_pattern != ''
         env:
           GOGC: 10
           GOMEMLIMIT: 2GiB
@@ -1258,6 +1272,7 @@ jobs:
         run: make coverage-floor COVERDIR=coverage
 
       - name: upload to Codecov (pg shard 2${{ matrix.id }})
+        if: matrix.coverage_file != ''
         uses: codecov/codecov-action@a99c28d3f0da835de33ff2feb2e15691c7b9641f # v7
         with:
           files: coverage/${{ matrix.coverage_file }}
