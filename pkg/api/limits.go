@@ -407,6 +407,11 @@ const (
 	BuildExportPublicationVerificationTTL         = 24 * time.Hour
 )
 
+// LocalOCIZstdMaxWindowBytes bounds the decoder window, and so the memory, a
+// zstd-compressed source-build layer may demand. BuildKit's default zstd level
+// uses a few MiB; 128 MiB still admits zstd's long-distance mode.
+const LocalOCIZstdMaxWindowBytes = 128 << 20
+
 // Registry image verification bounds both retained metadata and consumed layers.
 // Signature attachment bounds cover the supported keyed simple-signing format.
 // Final converted app layers remain subject to the creating account's plan.
