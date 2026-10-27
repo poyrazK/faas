@@ -48,6 +48,9 @@ type GuestSpansIngester struct {
 	accounts guestSpansAccounts
 	limiter  *peraccount.Limiter
 	log      *slog.Logger
+	// logs, when set by WithLogs, ingests guest OTLP log exports (ADR-213
+	// runtime adapter); nil reports log exports unavailable.
+	logs *guestLogsIngester
 }
 
 func NewGuestSpansIngester(accounts guestSpansAccounts, limiter *peraccount.Limiter, log *slog.Logger) *GuestSpansIngester {

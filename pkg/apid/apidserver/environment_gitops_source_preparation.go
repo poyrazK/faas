@@ -60,7 +60,7 @@ func (s *server) prepareEnvironmentGitArchive(ctx context.Context, lease state.E
 		archivePath, bytes = canonicalPath, canonicalBytes
 		contextFormat = environmentgitops.BuildContextFormat
 	}
-	if problem := scanSourceTarballSecrets(archivePath, limits); problem != nil {
+	if problem := s.scanSourceTarballSecrets(archivePath, limits); problem != nil {
 		return artifact, fmt.Errorf("git build source validation rejected the archive")
 	}
 	if problem := scanForStatefulShapeWithDockerfileAtRoot(archivePath, request.Source.Kind == "dockerfile" || request.Source.Dockerfile != "", request.Source.Directory, request.Source.Dockerfile); problem != nil {

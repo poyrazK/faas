@@ -463,6 +463,7 @@ export type { CreateConsumerSignupResponse } from './CreateConsumerSignupRespons
 export type { CreateCorsPresetRequest } from './CreateCorsPresetRequest.js';
 export type { CreateCronRequest } from './CreateCronRequest.js';
 export type { CreateCustomDomainRequest } from './CreateCustomDomainRequest.js';
+export type { CreateDataAPIContractTaskRequest } from './CreateDataAPIContractTaskRequest.js';
 export type { CreateDataConnectionRequest } from './CreateDataConnectionRequest.js';
 export type { CreateDataPipelineRequest } from './CreateDataPipelineRequest.js';
 export type { CreateDeployTokenRequest } from './CreateDeployTokenRequest.js';
@@ -617,6 +618,7 @@ export type { DebugDependencyLatencyResponse } from './DebugDependencyLatencyRes
 export type { DebugDependencyQueryItem } from './DebugDependencyQueryItem.js';
 export type { DebugEvidenceExplanation } from './DebugEvidenceExplanation.js';
 export type { DebugEvidenceFinding } from './DebugEvidenceFinding.js';
+export type { DebugEvidenceLogLine } from './DebugEvidenceLogLine.js';
 export type { DebugEvidenceRecommendation } from './DebugEvidenceRecommendation.js';
 export type { DebugEvidenceRef } from './DebugEvidenceRef.js';
 export type { DebugGuestExecutionEvidence } from './DebugGuestExecutionEvidence.js';
