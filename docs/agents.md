@@ -12,7 +12,7 @@ Create a dedicated key instead of sharing your own login. Scope it to what the
 agent needs:
 
 ```sh
-gregale keys add coding-agent --scopes apps:read,deploy:write
+gregale key create coding-agent --scopes apps:read,deploy:write
 ```
 
 `apps:read` lets the agent inspect apps, deployments, logs and metrics.
@@ -26,7 +26,7 @@ secrets API. Add `storage:manage` for buckets, and `postgres:manage` with
 Put the key in the agent's environment as `FAAS_TOKEN`. It overrides the
 saved login for every `gregale` command and for the MCP server. Don't paste
 it into a prompt, a command argument or a committed file. Remove it with
-`gregale keys rm <id>` when the agent no longer needs it.
+`gregale key delete <id>` when the agent no longer needs it.
 
 ## Run the CLI non-interactively
 
@@ -59,7 +59,7 @@ credentials are redacted from both.
 A deploy writes a receipt with the deployment `id`, its `status` and the
 `app_url`. If `timed_out` is true, run the receipt's `resume_command` instead
 of deploying again. After a temporary failure, the server may already have
-accepted the deploy: check `gregale deploys status <id> --app <slug>` first.
+accepted the deploy: check `gregale release get <id> --app <slug>` first.
 
 Commands that delete or replace something need explicit approval, such as
 `--yes` for app deletion. Preview them with `--dry-run` first. Missing
@@ -147,7 +147,7 @@ was set. The page works only in your own signed-in session and expires after
 
 With `--tools core,provision` the agent can also attach a custom domain, add a
 bucket or a PostgreSQL database, and add a cron. Each is planned first and
-runs the matching `gregale domains add`, `add bucket`, `add postgres` or
+runs the matching `gregale domain create`, `add bucket`, `add postgres` or
 `crons add` command. For a domain it returns the DNS records you create at
 your DNS provider; `gregale_check_domain` reports when they verify. See
 [Provision a domain, data and crons](mcp.md#provision-a-domain-data-and-crons).
