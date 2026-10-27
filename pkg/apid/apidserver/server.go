@@ -420,6 +420,8 @@ type server struct {
 	// turns the existing per-IP failure limiter into a generic
 	// per-IP rate limiter without dragging in x/time/rate.
 	dashboardExportLimiter *middleware.Limiter
+	// securityMail caps sign-in mail per account (security_mail_limit.go).
+	securityMail *securityMailLimiter
 	// exportsInFlight holds the account IDs with a REST export bundle being
 	// built: one at a time per account.
 	exportsInFlight sync.Map
@@ -1444,6 +1446,7 @@ func newServerWithDeps(
 		cliAuthLimiter:         cliAuthLimiter,
 		cliAuthSubmitLimiter:   cliAuthSubmitLimiter,
 		dashboardExportLimiter: dashboardExportLimiter,
+		securityMail:           newSecurityMailLimiter(),
 		domainCreateLimiter:    domainCreateLimiter,
 		audit:                  aud,
 		runtimeConfig:          newRuntimeConfigManager(nil),

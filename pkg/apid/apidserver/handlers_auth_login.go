@@ -298,6 +298,9 @@ func (s *server) postForgotPassword(w http.ResponseWriter, r *http.Request) {
 // at any step are logged but never surface — the calling public
 // endpoint remains a constant 200.
 func (s *server) sendPasswordResetEmail(ctx context.Context, r *http.Request, acct state.Account, email string) {
+	if !s.allowSecurityMail(ctx, acct, "password_reset") {
+		return
+	}
 	if s.queuePasswordReset(ctx, acct, email) {
 		return
 	}
@@ -761,9 +764,23 @@ func (s *server) revokePreVerificationCredentials(ctx context.Context, accountID
 			return fmt.Errorf("revoke pre-verification api key: %w", err)
 		}
 	}
-	if sessions > 0 || len(keys) > 0 {
+	// A TOTP enrolled before the owner proved the address is the
+	// squatter's: left in place, it faced the real owner with a second
+	// factor they never had. Clearing it leaves an explicit mfa_required
+	// policy in force.
+	acct, err := s.store.AccountByID(ctx, accountID)
+	if err != nil {
+		return fmt.Errorf("read pre-verification account: %w", err)
+	}
+	mfaCleared := acct.MFAEnrolled() || len(acct.MFASecretEncrypted) > 0
+	if mfaCleared {
+		if err := s.store.ClearMFA(ctx, accountID); err != nil {
+			return fmt.Errorf("clear pre-verification mfa: %w", err)
+		}
+	}
+	if sessions > 0 || len(keys) > 0 || mfaCleared {
 		s.audit.Emit(ctx, "auth.pre_verification_credentials_revoked", &accountID, map[string]any{
-			"sessions": sessions, "api_keys": len(keys),
+			"sessions": sessions, "api_keys": len(keys), "mfa_cleared": mfaCleared,
 		})
 	}
 	return nil
@@ -1173,6 +1190,9 @@ func writeV1AuthJSON(w http.ResponseWriter, acct state.Account, requestEmail, pl
 // via the platform mailer. Mailer errors are logged but never
 // surface — the public endpoint remains a constant 200.
 func (s *server) sendMagicLinkEmail(ctx context.Context, r *http.Request, acct state.Account, email string) {
+	if !s.allowSecurityMail(ctx, acct, "magic_link") {
+		return
+	}
 	if s.queueMagicLink(ctx, acct, email) {
 		return
 	}
@@ -1212,6 +1232,9 @@ func (s *server) sendMagicLinkEmail(ctx context.Context, r *http.Request, acct s
 // token. Delivery errors remain server-side because signup has already
 // committed; a same-credential signup retry mints and sends a fresh link.
 func (s *server) sendEmailVerification(ctx context.Context, r *http.Request, acct state.Account) {
+	if !s.allowSecurityMail(ctx, acct, "email_verification") {
+		return
+	}
 	if s.queueEmailVerification(ctx, acct) {
 		return
 	}

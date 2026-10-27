@@ -68,6 +68,20 @@ const (
 // key for up to GatewayKeyAuthOutageGrace while the store fails. One client
 // source (IPv4 address or IPv6 /64) may fail GatewayFailedKeyLookupsPerSource
 // lookups per GatewayFailedKeyLookupWindow before it gets 429 with no lookup.
+// Sign-in mail of one kind (password reset, magic link, email verification)
+// one account may receive: one per SecurityMailPerAccountInterval and
+// SecurityMailPerAccountPerHour an hour. One apid tracks at most
+// SecurityMailTrackedAccountsMax accounts at a time.
+const (
+	SecurityMailPerAccountInterval = time.Minute
+	SecurityMailPerAccountPerHour  = 5
+	SecurityMailTrackedAccountsMax = 100_000
+)
+
+// PasswordHashConcurrency caps the Argon2id password hashes (64 MiB each)
+// one process computes at once; the rest wait for a slot.
+const PasswordHashConcurrency = 3
+
 // GatewayRouteRecheckInterval is how long a warm custom-domain route trusts
 // its last registry recheck (domain verified, tenant surface binding) before
 // asking again; domain_changed and app_changed drop it sooner.
