@@ -17,6 +17,7 @@ import (
 	"context"
 	"io"
 	"os"
+	"regexp"
 	"slices"
 	"strings"
 	"sync"
@@ -311,6 +312,27 @@ func (v capabilityView) discoverableFlags(flags []cliFlag) []cliFlag {
 	return kept
 }
 
+// withoutHiddenFlags drops the examples or notes that use a flag the view
+// hides, so help does not show what it no longer lists.
+func (v capabilityView) withoutHiddenFlags(lines []string, flags []cliFlag) []string {
+	var hidden []*regexp.Regexp
+	for _, flag := range flags {
+		if flag.Capability != "" && v.hides(flag.Capability) {
+			hidden = append(hidden, regexp.MustCompile(`--`+regexp.QuoteMeta(flag.Name)+`([ =]|$)`))
+		}
+	}
+	if len(hidden) == 0 || lines == nil {
+		return lines
+	}
+	kept := make([]string, 0, len(lines))
+	for _, line := range lines {
+		if !slices.ContainsFunc(hidden, func(pattern *regexp.Regexp) bool { return pattern.MatchString(line) }) {
+			kept = append(kept, line)
+		}
+	}
+	return kept
+}
+
 // discoverableCliCommands is the manifest discovery surfaces read: the
 // released commands without those, or the verbs, the capability view hides.
 func discoverableCliCommands() []cliCommand {
@@ -324,6 +346,8 @@ func discoverableCliCommands() []cliCommand {
 		if view.hidesPath(command.Name) {
 			continue
 		}
+		command.Examples = view.withoutHiddenFlags(command.Examples, command.Flags)
+		command.HelpNotes = view.withoutHiddenFlags(command.HelpNotes, command.Flags)
 		command.Flags = view.discoverableFlags(command.Flags)
 		command.Subcommands = view.discoverableSubcommands(command.Name, command.Subcommands)
 		discoverable = append(discoverable, command)
@@ -341,6 +365,8 @@ func (v capabilityView) discoverableSubcommands(parent string, subs []cliSub) []
 		if v.hidesPath(path) {
 			continue
 		}
+		sub.Examples = v.withoutHiddenFlags(sub.Examples, sub.Flags)
+		sub.Notes = v.withoutHiddenFlags(sub.Notes, sub.Flags)
 		sub.Flags = v.discoverableFlags(sub.Flags)
 		sub.Subcommands = v.discoverableSubcommands(path, sub.Subcommands)
 		kept = append(kept, sub)

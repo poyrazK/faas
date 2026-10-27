@@ -95,6 +95,13 @@ func TestCronsOneOffFollowsDelayedExecutionVisibility(t *testing.T) {
 			t.Errorf("%v with delayed execution hidden = %d %q, want unknown flag %s", tc.args, code, stderr, tc.flag)
 		}
 	}
+	// Help leaves the flags out (cliFlag.Capability).
+	if _, help, _ := runCLI(t, "crons", "add", "--help"); strings.Contains(help, "--at") || strings.Contains(help, "--in ") {
+		t.Errorf("crons add help lists --at or --in with delayed execution hidden:\n%s", help)
+	}
+	if _, help, _ := runCLI(t, "crons", "list", "--help"); strings.Contains(help, "--one-off") {
+		t.Errorf("crons list help lists --one-off with delayed execution hidden:\n%s", help)
+	}
 	// One id is then a usage error of the cron-run cancel (printed to the
 	// process stderr), not a delayed-task cancellation.
 	if code, stdout, _ := runCLI(t, "crons", "cancel", cronOneOffTaskID); code == 0 || strings.Contains(stdout, "cancelled") {
