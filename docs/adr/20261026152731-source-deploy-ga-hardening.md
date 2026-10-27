@@ -111,6 +111,10 @@ left data behind:
      restore or cold-boot fallback (503). Request wakes now claim the parked
      to active lifecycle (ADR-343 amendment 1).
 
+   With both fixes, `TestDockerfileHealthcheckMetal` and every subtest of
+   `TestSourceDeployWakeMetal` pass on n2 (2026-10-27, fc91430a3b); the
+   commit-wake subtests skip there for lack of a TLS Postgres.
+
 ## Consequences
 
 - Repositories with `db/migrations`, schemas or seed data deploy from every
