@@ -663,9 +663,11 @@ var SafeReleasesAlertMetric = safeReleasesAlertMetric
 var SafeReleasesAuditKind = safeReleasesAuditKind
 var SanContains = sanContains
 var ScanExtractedTreeSecrets = scanExtractedTreeSecrets
+
 func ScanSourceTarballSecrets(sourcePath string, limits api.Limits) *api.Problem {
 	return (&server{log: slog.New(slog.DiscardHandler)}).scanSourceTarballSecrets(sourcePath, limits)
 }
+
 var ScopeGenericRootWorkload = scopeGenericRootWorkload
 var ScrapeOpsMetrics = scrapeOpsMetrics
 var SeedActivityPersonalOrg = seedActivityPersonalOrg
