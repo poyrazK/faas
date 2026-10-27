@@ -5488,6 +5488,8 @@ var cliCommands = []cliCommand{
 				{Name: "no-public-read", Short: "disable anonymous reads"},
 				{Name: "public-rpc", Value: "SCHEMA.FUNCTION[,...]", Short: "approved STABLE or IMMUTABLE functions callable without a token by GET"},
 				{Name: "no-public-rpc", Short: "disable anonymous RPC calls"},
+				{Name: "allow-without-rls", Value: "SCHEMA.RELATION[,...]", Short: "relations signed-in users may reach without row-level security"},
+				{Name: "no-allow-without-rls", Short: "require row-level security on every relation again"},
 				{Name: "public-read-cache", Value: "DURATION|off", Short: "cache canonical public reads and RPC calls at the edge (max 1h)"},
 				{Name: "usage-reporting", Value: "on|off", Short: "report usage to the platform (on for new Data APIs)", ClosedSet: []string{"on", "off"}},
 				{Name: "monthly-caps", Value: "requests=N[,anonymous=N]|off", Short: "monthly owner caps; reached caps answer 429 until the next UTC month"},
