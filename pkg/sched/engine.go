@@ -4404,7 +4404,7 @@ func (e *Engine) admitAndDispatchOnce(ctx context.Context, appID, deploymentID, 
 		}
 		e.log.Warn("wake: state stolen during boot, aborting",
 			"app", logsanitize.Field(bootInput.appID), "instance", bootInput.insID, "wake_id", logsanitize.Field(bootInput.wakeID),
-			"expected", bootInput.initState, "got", actual)
+			"expected", bootInput.initState, "got", actual, "err", publishErr)
 		return WakeResult{}, fmt.Errorf("sched: wake: state stolen by another transition: was %s, now %s", bootInput.initState, actual)
 	}
 	if publishErr != nil {
