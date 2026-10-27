@@ -97,7 +97,7 @@ def sync_detailed(
 ) -> Response[ManagedRealtimeEndpointResponse | Problem]:
     """Create a managed realtime endpoint.
 
-     Registers the callback contract used by realtimed for connect,
+     Registers the callback contract used by the realtime service for connect,
     message, and disconnect events. Callback and optional client
     credentials are sealed at rest and never returned in plaintext.
 
@@ -134,7 +134,7 @@ def sync(
 ) -> ManagedRealtimeEndpointResponse | Problem | None:
     """Create a managed realtime endpoint.
 
-     Registers the callback contract used by realtimed for connect,
+     Registers the callback contract used by the realtime service for connect,
     message, and disconnect events. Callback and optional client
     credentials are sealed at rest and never returned in plaintext.
 
@@ -166,7 +166,7 @@ async def asyncio_detailed(
 ) -> Response[ManagedRealtimeEndpointResponse | Problem]:
     """Create a managed realtime endpoint.
 
-     Registers the callback contract used by realtimed for connect,
+     Registers the callback contract used by the realtime service for connect,
     message, and disconnect events. Callback and optional client
     credentials are sealed at rest and never returned in plaintext.
 
@@ -201,7 +201,7 @@ async def asyncio(
 ) -> ManagedRealtimeEndpointResponse | Problem | None:
     """Create a managed realtime endpoint.
 
-     Registers the callback contract used by realtimed for connect,
+     Registers the callback contract used by the realtime service for connect,
     message, and disconnect events. Callback and optional client
     credentials are sealed at rest and never returned in plaintext.
 

@@ -52,7 +52,7 @@ export type ProjectScanRequest = {
    */
   platform_tenant_required?: boolean;
   /**
-   * Apply only: release frozen apps to production anyway; the reason is audited (ADR-20261019071733).
+   * Apply only: release frozen apps to production anyway; the reason is audited.
    */
   override_freeze?: string;
 };

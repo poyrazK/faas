@@ -411,7 +411,7 @@ export class AccountService {
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
         \`profile_investigation_limit\`.
         `,
-        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        503: `Generic 503 envelope. Used by the API capacity gate (e.g.
         host age recipient not loaded → registry credential PUT
         returns 503 instead of accepting plaintext).
         `,
@@ -543,7 +543,7 @@ export class AccountService {
     });
   }
   /**
-   * Account-wide SLO rollup (issue
+   * Account-wide SLO rollup.
    * Flat scalar SLO rollup for the authenticated account. The
    * same wire shape as the per-app endpoint without the
    * `app_id` / `app_slug` fields — the rollup is sum-based
@@ -647,7 +647,7 @@ export class AccountService {
     provider,
   }: {
     /**
-     * Billing provider statements export to (ADR-1507).
+     * Billing provider statements export to.
      */
     provider: BillingProvider,
   }): CancelablePromise<BillingConnectionResponse> {
@@ -682,7 +682,7 @@ export class AccountService {
     requestBody,
   }: {
     /**
-     * Billing provider statements export to (ADR-1507).
+     * Billing provider statements export to.
      */
     provider: BillingProvider,
     requestBody: PutBillingConnectionRequest,
@@ -712,7 +712,7 @@ export class AccountService {
     provider,
   }: {
     /**
-     * Billing provider statements export to (ADR-1507).
+     * Billing provider statements export to.
      */
     provider: BillingProvider,
   }): CancelablePromise<void> {
@@ -729,7 +729,7 @@ export class AccountService {
     });
   }
   /**
-   * List invoices exported from usage statements, with their payment status (ADR-1504).
+   * List invoices exported from usage statements, with their payment status.
    * @returns StatementInvoiceListResponse Exported invoices, newest first.
    * @throws ApiError
    */
@@ -791,7 +791,7 @@ export class AccountService {
     });
   }
   /**
-   * Bill one ended month for every customer (ADR-1503).
+   * Bill one ended month for every customer.
    * Starts a background run for one UTC calendar month that ended at least
    * an hour ago. For every app consumer and platform tenant with billable
    * usage, it drafts the month's statement, holds consumers whose ledger
@@ -978,20 +978,19 @@ export class AccountService {
     });
   }
   /**
-   * Set or clear the account's spend cap (issue
+   * Set or clear the account's spend cap.
    * Sets accounts.overage_cap_cents in integer cents. Body shape:
    *
    * {"overage_cap_cents": <int|null>}
    *
    * Pass `null` (or omit the field) to clear the cap (NULL).
    * Pass 0 to set "no overage allowed." Passing a positive integer
-   * sets the monthly ceiling. The migration CHECK constraint at
-   * `migrations/00054_account_credits.sql` pins
+   * sets the monthly ceiling. The migration CHECK constraint pins
    * `overage_cap_cents IS NULL OR overage_cap_cents >= 0`; a
-   * negative value is rejected at the apid validator before the
+   * negative value is rejected at the API validator before the
    * store ever sees it, returning 400 `validation_failed`.
    *
-   * Once current-month overage meets/exceeds the cap, schedd refuses
+   * Once current-month overage meets/exceeds the cap, the scheduler refuses
    * new wakes with `code: admission_refused` (HTTP 402). The cap is
    * account-self-scoped (admin scope required) and the response
    * is the post-update account state. Audit row
@@ -1028,7 +1027,7 @@ export class AccountService {
   }
   /**
    * List the platform previews you can join.
-   * Self-serve platform previews (ADR 20261021080640): the previews an
+   * Self-serve platform previews: the previews an
    * operator opened to self-serve, plus any you joined that have since
    * closed, so you can still leave them. `eligible` says whether your plan
    * may join; `enabled` whether the preview is on for you now, for any
@@ -1121,8 +1120,7 @@ export class AccountService {
   /**
    * Read the per-account egress allowlist extra budget.
    * Returns the per-account additive budget on top of the
-   * plan's `apps.egress_allowlist` cap (issue #679 / PR-B /
-   * ADR-082). The plan cap (Pro 16 / Scale 64) is
+   * plan's `apps.egress_allowlist` cap. The plan cap (Pro 16 / Scale 64) is
    * authoritative for the default case; the additive budget
    * lets admins raise one account's effective cap without
    * changing the plan default for everyone. `extra=0`

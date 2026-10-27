@@ -15,7 +15,7 @@ T = TypeVar("T", bound="RouteInsightsResponse")
 
 @_attrs_define
 class RouteInsightsResponse:
-    """An app's active route insights, then those resolved in the last seven days (ADR-1198)."""
+    """An app's active route insights, then those resolved in the last seven days."""
 
     slug: str
     insights: list[RouteInsight]

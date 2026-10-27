@@ -96,7 +96,7 @@ export class AppsService {
         401: `code: unauthorized`,
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
-        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        503: `Generic 503 envelope. Used by the API capacity gate (e.g.
         host age recipient not loaded → registry credential PUT
         returns 503 instead of accepting plaintext).
         `,
@@ -155,7 +155,7 @@ export class AppsService {
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
         409: `code: conflict`,
-        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        503: `Generic 503 envelope. Used by the API capacity gate (e.g.
         host age recipient not loaded → registry credential PUT
         returns 503 instead of accepting plaintext).
         `,
@@ -238,7 +238,7 @@ export class AppsService {
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
         \`profile_investigation_limit\`.
         `,
-        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        503: `Generic 503 envelope. Used by the API capacity gate (e.g.
         host age recipient not loaded → registry credential PUT
         returns 503 instead of accepting plaintext).
         `,
@@ -523,8 +523,8 @@ export class AppsService {
    * projection; use each named component for its own convergence state.
    * `active` requires fresh observations from every relevant serving
    * consumer. The egress allowlist is replayed from current app state by
-   * schedd if a notification is missed. Scheduler scaling `active` means
-   * the owning schedd loaded the policy, not that the replica target was
+   * the scheduler if a notification is missed. Scheduler scaling `active` means
+   * the owning scheduler loaded the policy, not that the replica target was
    * reached. This does not attest host-level firewall policy or guest
    * configuration.
    * `unverified` means no revision or no relevant serving fleet can be observed.
@@ -615,7 +615,7 @@ export class AppsService {
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
         \`profile_investigation_limit\`.
         `,
-        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        503: `Generic 503 envelope. Used by the API capacity gate (e.g.
         host age recipient not loaded → registry credential PUT
         returns 503 instead of accepting plaintext).
         `,
@@ -652,7 +652,7 @@ export class AppsService {
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
         \`profile_investigation_limit\`.
         `,
-        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        503: `Generic 503 envelope. Used by the API capacity gate (e.g.
         host age recipient not loaded → registry credential PUT
         returns 503 instead of accepting plaintext).
         `,
@@ -702,7 +702,7 @@ export class AppsService {
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
         \`profile_investigation_limit\`.
         `,
-        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        503: `Generic 503 envelope. Used by the API capacity gate (e.g.
         host age recipient not loaded → registry credential PUT
         returns 503 instead of accepting plaintext).
         `,
@@ -898,7 +898,7 @@ export class AppsService {
     });
   }
   /**
-   * List the app's pushed custom metrics (ADR-202)
+   * List the app's pushed custom metrics
    * Returns every stored custom metric for the app, including rows whose last push is older than the freshness window. Stale rows are returned with `stale: true` rather than hidden — an operator debugging "why isn't my custom target scaling" needs to see that the value is old, because a hidden expired row looks identical to a missing one. Distinct from GET /v1/apps/{slug}/metrics, which serves the per-app Prometheus rollup of what the PLATFORM measured.
    * @returns CustomMetricListResponse The app's custom metrics.
    * @throws ApiError
@@ -923,7 +923,7 @@ export class AppsService {
     });
   }
   /**
-   * Push a custom application metric (ADR-202)
+   * Push a custom application metric
    * Upserts one customer-pushed gauge, used as a scaling signal by a `metric: custom` target. The caller is frequently NOT the app — a cron, a database trigger, or the customer's own infrastructure — which is the point: a parked app has no process, so a scale-to-zero platform whose custom signal required a running instance could never scale from zero on it. The value is FLEET-TOTAL; the scheduler computes ceil(value / target). Pushing a name the app already holds always succeeds (it is an upsert); only a NEW name can hit the per-app cap.
    * @returns void
    * @throws ApiError
@@ -960,7 +960,7 @@ export class AppsService {
     });
   }
   /**
-   * Delete a custom application metric (ADR-202)
+   * Delete a custom application metric
    * Removes one stored gauge, freeing a slot against the per-app cap. Deleting a name that does not exist returns 204, not 404: the caller's intent is "this metric is gone", which is already true, and a 404 would make a retry of a successful delete look like a failure.
    * @returns void
    * @throws ApiError
@@ -1169,7 +1169,7 @@ export class AppsService {
     });
   }
   /**
-   * Per-app request metrics (issue
+   * Per-app request metrics.
    * Time-windowed rollup of one app's gateway activity. The `range`
    * parameter is a closed vocabulary bounded by Prometheus
    * retention (`prom_retention_days: 15`):
@@ -1227,8 +1227,7 @@ export class AppsService {
   /**
    * Per-app wake timeline (JSON mirror of the dashboard page).
    * Wire-friendly mirror of the dashboard's per-app wake-timeline
-   * HTML page (`/dashboard/apps/{slug}/wake-timeline`,
-   * cmd/apid/handlers_dashboard.go:2548 renderAppWakeTimeline).
+   * HTML page (`/dashboard/apps/{slug}/wake-timeline`).
    * The HTML page keeps its pre-rendered HTML chips; this endpoint
    * emits the same data as JSON so a separate frontend agent can
    * render without re-parsing HTML.
@@ -1241,14 +1240,14 @@ export class AppsService {
    *
    * - 24h cutoff descending-break: the moment a row's
    * `started_at` falls before the trailing-24h instant, the
-   * loop breaks (no further iteration). Pre-ADR-123 fleet
+   * loop breaks (no further iteration). Older
    * rows with no `started_at` are not eligible for the break
    * (always in scope).
    * - Two-denominator rule for `at_capacity_pct`: numerator is
    * the count of rows where the events join succeeded AND
    * the at_capacity flag is true; denominator is the count
    * of rows where the events join succeeded
-   * (`wake_count_with_meta`). Pre-PR-A fleet rows contribute
+   * (`wake_count_with_meta`). Older rows contribute
    * to `wake_count_24h` but not the denominator — same
    * posture as the HTML page.
    *
@@ -1330,7 +1329,7 @@ export class AppsService {
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
         \`profile_investigation_limit\`.
         `,
-        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        503: `Generic 503 envelope. Used by the API capacity gate (e.g.
         host age recipient not loaded → registry credential PUT
         returns 503 instead of accepting plaintext).
         `,
@@ -1346,15 +1345,15 @@ export class AppsService {
    *
    * Window resolution: `since` and `until` are RFC3339 timestamps.
    * Both default to UTC midnight snaps; `until` defaults to
-   * `now()` snapped down, `since` defaults to `until - 30d`. The
+   * `now` snapped down, `since` defaults to `until - 30d`. The
    * handler clamps `since` to `until - 90d` so a customer cannot
-   * unbounded-scan `usage_minutes` (ADR-048 retention is 30d; the
+   * unbounded-scan `usage_minutes` (retention is 30d; the
    * 90d ceiling is a forward-compatibility ceiling for when
    * `usage_daily` lands).
    *
    * Overage computation: `overage_gb_hours = max(0, gb_hours -
    * plan_included_gb_hours)`. The included band is echoed from
-   * `acct.Plan.PlanIncludedGBHours()`; the overage figure is the
+   * `acct.Plan.PlanIncludedGBHours`; the overage figure is the
    * integer-rounded float the Stripe pusher bills at $0.01/GB-h.
    *
    * Source: `usage_minutes` today (after the 30d retention cap).
@@ -1704,30 +1703,30 @@ export class AppsService {
     });
   }
   /**
-   * Per-app streaming classification probe (ADR-102 D6).
+   * Per-app streaming classification probe.
    * Returns the streaming-status enum (one of `streaming`,
    * `accept-json-downgrade`, `flag-disabled`, `plan-disallows`,
-   * `operator-disabled`, `upgrade-bypass`) the gatewayd handler
+   * `operator-disabled`, `upgrade-bypass`) the gateway handler
    * would stamp on the `Streaming-Status` response header for a
    * representative request to this app, plus the effective
    * response-body cap (in bytes) and the per-gate flags.
    *
    * With no query parameters the probe is a pure read against the
-   * apid cache (the per-account `Plan` and the per-app
+   * API cache (the per-account `Plan` and the per-app
    * `streaming_enabled` flag). Supplying `host`, `path`, and `method`
-   * together performs a bounded loopback read of gatewayd's compiled
+   * together performs a bounded loopback read of the gateway's compiled
    * kind=limit rules and reports a matching streaming response cap with
-   * `cap_kind="endpoint-rule"`. If gatewayd is unavailable or no rule
+   * `cap_kind="endpoint-rule"`. If the gateway is unavailable or no rule
    * matches, the response falls back to the plan cap.
    *
    * The operator opt-in (`FAAS_GATEWAY_STREAMING` env) remains
-   * gatewayd-side state, so the canonical signal is the
+   * gateway-side state, so the canonical signal is the
    * `Streaming-Status` response header on a real request, not this probe.
    * A customer evaluating "will my next request stream?" must
    * consider the operator-side flag separately.
    *
    * `status=plan-disallows` means the customer's plan tier
-   * forbids `streaming_enabled=true`; the CreateApp gate (D5)
+   * forbids `streaming_enabled=true`; the CreateApp gate
    * already returns 403 `CodePlanStreamingNotAllowed` so this
    * row should be unreachable from a properly-validated app,
    * but the probe still reflects the persisted state for
@@ -1785,7 +1784,7 @@ export class AppsService {
     });
   }
   /**
-   * Observed debugger signal coverage (ADR-127 follow-up).
+   * Observed debugger signal coverage.
    * Returns bounded, weighted coverage for the debugger signals
    * attached to retained request telemetry in the requested window.
    * Counts are split between stored aggregate rows and the original
@@ -1940,11 +1939,10 @@ export class AppsService {
     });
   }
   /**
-   * Active regression observations (ADR-127 / PR-B).
+   * Active regression observations.
    * Returns regression observations written by the
    * debug_regression_observations table — surfaces per-route
-   * p95 regressions detected by the regression cron
-   * (cmd/apid/debug_regression_cron.go). Ordered by
+   * p95 regressions detected by the regression cron. Ordered by
    * regression_factor DESC, last_detected_at DESC (worst
    * first). Plan-gated by DebugTelemetryEnabled. The window
    * is clamped to DebugTelemetryRetentionDays.
@@ -1983,7 +1981,7 @@ export class AppsService {
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
         \`profile_investigation_limit\`.
         `,
-        503: `code: debug_regressions_unavailable — the debugger regression table or read query is unavailable; inspect migrations/readiness and retry.`,
+        503: `code: debug_regressions_unavailable — the debugger regression table or read query is unavailable; check database migrations and readiness, then retry.`,
       },
     });
   }
@@ -2030,7 +2028,7 @@ export class AppsService {
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
         \`profile_investigation_limit\`.
         `,
-        503: `code: debug_regressions_unavailable — the debugger regression table or read query is unavailable; inspect migrations/readiness and retry.`,
+        503: `code: debug_regressions_unavailable — the debugger regression table or read query is unavailable; check database migrations and readiness, then retry.`,
       },
     });
   }
@@ -2081,7 +2079,7 @@ export class AppsService {
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
         \`profile_investigation_limit\`.
         `,
-        503: `code: debug_regressions_unavailable — the debugger regression table or read query is unavailable; inspect migrations/readiness and retry.`,
+        503: `code: debug_regressions_unavailable — the debugger regression table or read query is unavailable; check database migrations and readiness, then retry.`,
       },
     });
   }
@@ -2136,7 +2134,7 @@ export class AppsService {
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
         \`profile_investigation_limit\`.
         `,
-        503: `code: debug_regressions_unavailable — the debugger regression table or read query is unavailable; inspect migrations/readiness and retry.`,
+        503: `code: debug_regressions_unavailable — the debugger regression table or read query is unavailable; check database migrations and readiness, then retry.`,
       },
     });
   }
@@ -2183,7 +2181,7 @@ export class AppsService {
   }
   /**
    * Read an app's service wake-ahead opt-in.
-   * Service wake-ahead (ADR-977) is off by default. When it is on and this
+   * Service wake-ahead is off by default. When it is on and this
    * app starts a cold wake, the gateway also starts restoring the services
    * it has measured this app calling soon after it wakes, so their restores
    * overlap instead of running one after another. Measurement is per
@@ -2226,7 +2224,7 @@ export class AppsService {
   }
   /**
    * Turn an app's service wake-ahead on or off.
-   * Sets the ADR-977 opt-in. Gateways apply the change within 30 seconds.
+   * Sets the opt-in. Gateways apply the change within 30 seconds.
    * Wake-ahead never starts while fleet residency is at or above 60% of the
    * admission ceiling, never parks other instances to make room, and goes
    * through the same admission and plan concurrency limits as a request.
@@ -2520,7 +2518,7 @@ export class AppsService {
   }
   /**
    * Schedule capacity restoration ahead of a demand window.
-   * Persists a temporary prewarm intent. schedd claims it during the
+   * Persists a temporary prewarm intent. The scheduler claims it during the
    * platform's lead time (currently 60 seconds before wake_at), restores
    * up to count instances through the normal admission gates, and never
    * changes the app's permanent min_instances floor.
@@ -2752,10 +2750,10 @@ export class AppsService {
    * - **Live** — `?follow=1` holds the connection open and streams new
    * entries from the per-instance ring buffer. The stream terminates
    * with `event: end` when the backstop fires (10 minutes idle), the
-   * schedd returns NotFound (parked app), or the connection closes.
+   * scheduler returns NotFound (parked app), or the connection closes.
    *
    * - **Archive (`?archive=1`)** — fetches a single day's
-   * per-instance log batch from the S3 bucket the apid shipper
+   * per-instance log batch from the S3 bucket the API shipper
    * writes into. `?instance=<id>` selects the Firecracker instance
    * id; `?date=YYYY-MM-DD` selects the day. The response is the
    * same SSE shape as the live stream (`event: log` per line,
@@ -2802,7 +2800,7 @@ export class AppsService {
      */
     since?: string,
     /**
-     * Exact match on the structured `level` field (info, warn, or error) surfaced in each matching log event. Empty = no level filter. The CLI and the apid handler both validate against the same enum (api.IsValidLogLevel in pkg/api/logs.go); an unknown value short-circuits with an SSE error frame carrying code invalid_level.
+     * Exact match on the structured `level` field (info, warn, or error) surfaced in each matching log event. Empty = no level filter. The CLI and the API handler both validate against the same enum (api.IsValidLogLevel); an unknown value short-circuits with an SSE error frame carrying code invalid_level.
      *
      */
     level?: 'info' | 'warn' | 'error',
@@ -2852,8 +2850,7 @@ export class AppsService {
   }
   /**
    * Account-wide per-app metrics rollup.
-   * One call replaces N per-app `/v1/apps/{slug}/metrics` calls
-   * (issue #393). Returns the same `AppMetricsResponse` shape
+   * One call replaces N per-app `/v1/apps/{slug}/metrics` calls. Returns the same `AppMetricsResponse` shape
    * per app, keyed by `app_slug`, so the dashboard can render
    * all apps on a single page without a per-app fan-out.
    *
@@ -2865,7 +2862,7 @@ export class AppsService {
    * per-app contract exactly.
    *
    * PromQL cost: 6 round-trips regardless of N apps (vs. 7N
-   * for the naive per-app loop) — see `pkg/promql.Client.QueryMap`
+   * for the naive per-app loop)
    * and `Client.QueryBuckets`. This rollup exposes the same
    * Hobby+ signals as the per-app endpoint, so Free accounts
    * receive 402.
@@ -2928,7 +2925,7 @@ export class AppsService {
    * `wake_id` without adding wake IDs as metric labels.
    *
    * The endpoint is a sub-resource of `/v1/apps/{slug}`;
-   * auth and rate-limit share the §12 per-app budget with
+   * auth and rate-limit share the per-app budget with
    * logs/metrics/wake. Cross-account access 404s the
    * same way unknown slugs do (forge-proof: every row's
    * `data.app_id` is verified to match the resolved app).
@@ -2951,11 +2948,10 @@ export class AppsService {
      */
     slug: string,
     /**
-     * The per-wake correlation handle minted by the schedd
+     * The per-wake correlation handle minted by the scheduler
      * engine (UUID v4 in production). The endpoint returns
      * every `wake.*` events row whose `data.wake_id`
-     * matches — the partial index `events_wake_id_idx`
-     * (migrations/00113) serves the read in O(frames)
+     * matches — the partial index `events_wake_id_idx` serves the read in O(frames)
      * regardless of the events table size.
      *
      */

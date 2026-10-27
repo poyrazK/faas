@@ -56,8 +56,7 @@ export class EdgeRulesService {
   }
   /**
    * Switch attack mode on, or extend it.
-   * Challenges every request to every host of the app until it ends
-   * (ADR-20261021220456). Available on every plan, outside the plan's
+   * Challenges every request to every host of the app until it ends. Available on every plan, outside the plan's
    * edge-rule quotas. The response returns once the serving gateways
    * have applied it; `X-Faas-Edge-Rules-State: converging` with 503 means it
    * was saved but not yet acknowledged. An empty body applies the
@@ -189,7 +188,7 @@ export class EdgeRulesService {
   }
   /**
    * List the account's reusable edge-rule lists.
-   * ADR-963. Items are omitted here; fetch one list for its items.
+   * Items are omitted here; fetch one list for its items.
    * referenced_by names the rules whose match conditions use the list.
    *
    * @returns ListEdgeRuleListsResponse The account's lists, by name.
@@ -211,7 +210,7 @@ export class EdgeRulesService {
   }
   /**
    * Create a reusable edge-rule list.
-   * ADR-963. Items are validated for the list kind and stored
+   * Items are validated for the list kind and stored
    * canonicalized, deduplicated and sorted. Lists per account and items
    * per list are plan limits.
    *
@@ -273,8 +272,8 @@ export class EdgeRulesService {
   }
   /**
    * Edit an edge-rule list.
-   * ADR-963. items replaces the list; add and remove edit it in place
-   * (remove applies after add) and cannot be combined with items.
+   * `items` replaces the list; `add` and `remove` edit it in place
+   * (remove applies after add) and cannot be combined with `items`.
    * Gateways pick up the change for every referencing rule within a few
    * seconds; no rule-set version is recorded.
    *
@@ -552,7 +551,7 @@ export class EdgeRulesService {
   }
   /**
    * Add or remove CRS rule IDs on a kind=waf rule's exclusions.
-   * ADR-831 amendment 13. Changes exclude_rule_ids and keeps the rest of
+   * Changes exclude_rule_ids and keeps the rest of
    * the rule's action and its penalty, so silencing a false positive does
    * not mean restating the whole action. Recorded as a new rule-set
    * version like any PATCH.
@@ -604,7 +603,7 @@ export class EdgeRulesService {
   /**
    * List recorded versions of an app's edge-rule set, newest first.
    * Every committed change to an app's edge rules records the whole rule
-   * set as a new version (ADR-961). Up to the 50 newest versions are
+   * set as a new version. Up to the 50 newest versions are
    * returned, without rule bodies; the newest 100 are retained.
    *
    * @returns EdgeRuleSetVersionResponse Versions, newest first.
@@ -674,7 +673,7 @@ export class EdgeRulesService {
   }
   /**
    * Sampled requests each edge rule matched, newest first.
-   * ADR-964. Gateways keep the first 10 matches of each rule per minute
+   * Gateways keep the first 10 matches of each rule per minute
    * as full events (request ID, method, host, path without query string,
    * trusted client IP, country, user agent); hit counts (stats) cover
    * every match. Events are kept 7 days; how far back a plan can read is
@@ -706,7 +705,7 @@ export class EdgeRulesService {
      */
     outcome?: 'matched' | 'logged' | 'detected' | 'warned' | 'blocked' | 'challenged' | 'rejected' | 'solved' | 'failed' | 'boxed',
     /**
-     * Only events for this request ID, such as the reference a visitor without JavaScript sees on the challenge page (ADR-831 amendment 8).
+     * Only events for this request ID, such as the reference a visitor without JavaScript sees on the challenge page.
      */
     requestId?: string,
     /**
@@ -750,8 +749,8 @@ export class EdgeRulesService {
   }
   /**
    * The app's WAF detections grouped for a false-positive review.
-   * ADR-831 amendment 13. Reads the app's sampled kind=waf detections
-   * (detected, warned and blocked events, ADR-831 amendment 5) and groups
+   * Reads the app's sampled kind=waf detections
+   * (detected, warned and blocked events) and groups
    * them by edge rule, CRS rule and path, with id-like path segments read
    * as {id}. Each group is assessed: likely_false_positive (a documented
    * false positive, or at least 3 clients flagged on the path with none
@@ -807,7 +806,7 @@ export class EdgeRulesService {
   }
   /**
    * Per-rule match counts for an app over a window.
-   * ADR-960. Gateways count each rule's matches (matched for enforced
+   * Gateways count each rule's matches (matched for enforced
    * rules, logged for log-mode rules), at most once per rule per request,
    * and flush them into hourly buckets once a minute; buckets are kept
    * for 14 days. Rules with no matches in the window are omitted.
@@ -829,7 +828,7 @@ export class EdgeRulesService {
      */
     window?: '1h' | '24h' | '7d',
     /**
-     * Also return each rule's hourly totals (ADR-20261020105001).
+     * Also return each rule's hourly totals.
      */
     series?: boolean,
   }): CancelablePromise<EdgeRuleStatsResponse> {
@@ -857,9 +856,9 @@ export class EdgeRulesService {
   }
   /**
    * Protection recipes suggested from an app's own traffic.
-   * ADR-20261020105000. Reads the app's request telemetry over the last 7 days (or
+   * Reads the app's request telemetry over the last 7 days (or
    * the plan's telemetry retention when shorter) and recommends
-   * protection recipes (ADR-986) with the parameters to add them with:
+   * protection recipes with the parameters to add them with:
    * blocking unverified bots when bots are a noticeable share of
    * requests, rate-limiting busy or failing sign-in paths, and limiting
    * /admin to known IPs. Recipes already added and paths an enabled rule
@@ -948,8 +947,7 @@ export class EdgeRulesService {
     });
   }
   /**
-   * Per-route throttle recommender (ADR-091 D20.5 amendment,
-   * issue #881). Read-only: returns a suggested rps/burst per
+   * Per-route throttle recommender. Read-only: returns a suggested rps/burst per
    * route over the window, clamped to the customer's plan
    * ceiling so the suggestion is always settable.
    *
@@ -968,12 +966,11 @@ export class EdgeRulesService {
     range = '5m',
   }: {
     /**
-     * App slug (lowercase, kebab-case; per-account unique). The recommender walks the per-route rate() for this app's gatewayd-internal reader.
+     * App slug (lowercase, kebab-case; per-account unique). The recommender walks the per-route rate() for this app's the gateway reader.
      */
     slug: string,
     /**
-     * Prometheus window. Closed vocabulary (see
-     * `pkg/appmetrics.Ranges`). Defaults to 5m.
+     * Prometheus window. Closed vocabulary. Defaults to 5m.
      *
      */
     range?: string,

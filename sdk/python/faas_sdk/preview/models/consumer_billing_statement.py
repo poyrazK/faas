@@ -29,12 +29,12 @@ class ConsumerBillingStatement:
     billable_units: int
     amount_millicents: int
     credit_applied_millicents: int
-    """Prepaid credit drawn when the statement was finalized (ADR-20261020211500)."""
+    """Prepaid credit drawn when the statement was finalized."""
     amount_due_millicents: int
     """amount_millicents less credit_applied_millicents: what is left to pay."""
     finalized_at: datetime.datetime | Unset = UNSET
     invoice: ConsumerBillingInvoice | Unset = UNSET
-    """The customer-facing view of a statement's exported invoice (ADR-1504)."""
+    """The customer-facing view of a statement's exported invoice."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

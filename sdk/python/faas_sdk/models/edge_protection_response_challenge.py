@@ -13,7 +13,7 @@ T = TypeVar("T", bound="EdgeProtectionResponseChallenge")
 
 @_attrs_define
 class EdgeProtectionResponseChallenge:
-    """kind=challenge decisions (ADR-831 amendment 7); its 403s also appear in rejections under gate challenge."""
+    """kind=challenge decisions; its 403s also appear in rejections under gate challenge."""
 
     issued: int
     """Challenge pages served to browser navigations."""
@@ -28,7 +28,7 @@ class EdgeProtectionResponseChallenge:
     invalid: int
     """Solutions refused: wrong work or an expired token."""
     raised: int | Unset = UNSET
-    """The part of issued served at a difficulty raised under attack (ADR-831 amendment 8)."""
+    """The part of issued served at a difficulty raised under attack."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

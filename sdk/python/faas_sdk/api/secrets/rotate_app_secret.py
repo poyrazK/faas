@@ -125,8 +125,7 @@ def sync_detailed(
         key (str):
         guard (bool | Unset):
         scope (str | Unset):
-        body (RotateAppSecretRequest): Rotate a secret: new plaintext value (ADR-089 PR-B). Same
-            wire
+        body (RotateAppSecretRequest): Rotate a secret: new plaintext value. Same wire
             shape as `PutAppSecretRequest`; the rotate verb is distinct so
             the server can emit the `secret.rotated` audit kind (vs
             `secret.set` on PUT). Byte cap is the per-plan
@@ -178,8 +177,7 @@ def sync(
         key (str):
         guard (bool | Unset):
         scope (str | Unset):
-        body (RotateAppSecretRequest): Rotate a secret: new plaintext value (ADR-089 PR-B). Same
-            wire
+        body (RotateAppSecretRequest): Rotate a secret: new plaintext value. Same wire
             shape as `PutAppSecretRequest`; the rotate verb is distinct so
             the server can emit the `secret.rotated` audit kind (vs
             `secret.set` on PUT). Byte cap is the per-plan
@@ -226,8 +224,7 @@ async def asyncio_detailed(
         key (str):
         guard (bool | Unset):
         scope (str | Unset):
-        body (RotateAppSecretRequest): Rotate a secret: new plaintext value (ADR-089 PR-B). Same
-            wire
+        body (RotateAppSecretRequest): Rotate a secret: new plaintext value. Same wire
             shape as `PutAppSecretRequest`; the rotate verb is distinct so
             the server can emit the `secret.rotated` audit kind (vs
             `secret.set` on PUT). Byte cap is the per-plan
@@ -277,8 +274,7 @@ async def asyncio(
         key (str):
         guard (bool | Unset):
         scope (str | Unset):
-        body (RotateAppSecretRequest): Rotate a secret: new plaintext value (ADR-089 PR-B). Same
-            wire
+        body (RotateAppSecretRequest): Rotate a secret: new plaintext value. Same wire
             shape as `PutAppSecretRequest`; the rotate verb is distinct so
             the server can emit the `secret.rotated` audit kind (vs
             `secret.set` on PUT). Byte cap is the per-plan

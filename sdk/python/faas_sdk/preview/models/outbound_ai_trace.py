@@ -13,8 +13,8 @@ T = TypeVar("T", bound="OutboundAITrace")
 
 @_attrs_define
 class OutboundAITrace:
-    """One AI trace's totals (ADR 20261020202035). app_id and end_user are its first call's; repeated_tool_calls is its
-    current streak of calls that requested the same tools with the same arguments.
+    """One AI trace's totals. app_id and end_user are its first call's; repeated_tool_calls is its current streak of calls
+    that requested the same tools with the same arguments.
 
     """
 

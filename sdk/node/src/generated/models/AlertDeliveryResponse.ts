@@ -4,7 +4,7 @@
 /* eslint-disable */
 /**
  * One alert_deliveries row as surfaced by
- * GET /v1/apps/{slug}/alerts/{id}/deliveries (ADR-123 PR-D).
+ * GET /v1/apps/{slug}/alerts/{id}/deliveries.
  * Test rows (IsTest=true) are written by Dispatcher.DispatchTest
  * (the customer-facing "send test alert" path); the production
  * read (include_test=false) hides them, the operator read

@@ -15,8 +15,8 @@ T = TypeVar("T", bound="AppSecretListResponseSecretsByScope")
 
 @_attrs_define
 class AppSecretListResponseSecretsByScope:
-    """Nested per-scope map (ADR-092 PR-B, mirror of ADR-090 PR-B D3). Populated only when `?scope=__all__` is passed; keys
-    are scope names, values are per-scope row lists ordered by key ASC.
+    """Nested per-scope map. Populated only when `?scope=__all__` is passed; keys are scope names, values are per-scope row
+    lists ordered by key ASC.
 
     """
 

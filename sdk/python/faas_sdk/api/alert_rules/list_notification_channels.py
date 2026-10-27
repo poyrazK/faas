@@ -59,7 +59,7 @@ def sync_detailed(
     *,
     client: AuthenticatedClient | Client,
 ) -> Response[Problem | list[NotificationChannelResponse]]:
-    """List the account's alert notification channels (ADR-749)
+    """List the account's alert notification channels
 
      Returns Slack, PagerDuty and email channels with their last delivery outcome. Destinations are shown
     as non-secret hints only.
@@ -85,7 +85,7 @@ def sync(
     *,
     client: AuthenticatedClient | Client,
 ) -> Problem | list[NotificationChannelResponse] | None:
-    """List the account's alert notification channels (ADR-749)
+    """List the account's alert notification channels
 
      Returns Slack, PagerDuty and email channels with their last delivery outcome. Destinations are shown
     as non-secret hints only.
@@ -107,7 +107,7 @@ async def asyncio_detailed(
     *,
     client: AuthenticatedClient | Client,
 ) -> Response[Problem | list[NotificationChannelResponse]]:
-    """List the account's alert notification channels (ADR-749)
+    """List the account's alert notification channels
 
      Returns Slack, PagerDuty and email channels with their last delivery outcome. Destinations are shown
     as non-secret hints only.
@@ -131,7 +131,7 @@ async def asyncio(
     *,
     client: AuthenticatedClient | Client,
 ) -> Problem | list[NotificationChannelResponse] | None:
-    """List the account's alert notification channels (ADR-749)
+    """List the account's alert notification channels
 
      Returns Slack, PagerDuty and email channels with their last delivery outcome. Destinations are shown
     as non-secret hints only.

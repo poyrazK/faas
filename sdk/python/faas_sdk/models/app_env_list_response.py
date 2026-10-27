@@ -19,7 +19,7 @@ T = TypeVar("T", bound="AppEnvListResponse")
 @_attrs_define
 class AppEnvListResponse:
     """List of env var envelopes (no plaintext values). Discriminated
-    union (ADR-090 PR-B D3):
+    union:
 
       * `env` array populated, `env_by_scope` omitted: the
         default-scope or per-scope read (omitted or `?scope=<slug>`).
@@ -36,8 +36,8 @@ class AppEnvListResponse:
     quota_max: int
     count: int
     env_by_scope: AppEnvListResponseEnvByScope | Unset = UNSET
-    """Nested per-scope map (ADR-090 PR-B D3). Populated only when `?scope=__all__` is passed; keys are scope
-    names, values are per-scope row lists ordered by key ASC."""
+    """Nested per-scope map. Populated only when `?scope=__all__` is passed; keys are scope names, values are per-
+    scope row lists ordered by key ASC."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

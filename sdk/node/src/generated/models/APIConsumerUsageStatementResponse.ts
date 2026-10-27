@@ -21,14 +21,14 @@ export type APIConsumerUsageStatementResponse = {
   priced: boolean;
   buckets: Array<APIConsumerUsageStatementBucketResponse>;
   /**
-   * The month's base fees and minimum top-ups (ADR-1316); amount_millicents includes them.
+   * The month's base fees and minimum top-ups; amount_millicents includes them.
    */
   fees?: Array<APIConsumerStatementFeeResponse>;
   as_of: string;
   created_at: string;
   finalized_at?: string | null;
   /**
-   * Prepaid credit drawn when the statement was finalized (ADR-1306).
+   * Prepaid credit drawn when the statement was finalized.
    */
   credit_applied_millicents?: number;
   /**

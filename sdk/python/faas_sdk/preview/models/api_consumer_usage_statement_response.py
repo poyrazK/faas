@@ -44,10 +44,10 @@ class APIConsumerUsageStatementResponse:
     created_at: datetime.datetime
     currency: str | Unset = UNSET
     fees: list[APIConsumerStatementFeeResponse] | Unset = UNSET
-    """The month's base fees and minimum top-ups (ADR-1316); amount_millicents includes them."""
+    """The month's base fees and minimum top-ups; amount_millicents includes them."""
     finalized_at: datetime.datetime | None | Unset = UNSET
     credit_applied_millicents: int | Unset = UNSET
-    """Prepaid credit drawn when the statement was finalized (ADR-1306)."""
+    """Prepaid credit drawn when the statement was finalized."""
     amount_due_millicents: int | Unset = UNSET
     """amount_millicents less credit_applied_millicents: what is left to bill."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)

@@ -24,7 +24,7 @@ T = TypeVar("T", bound="SyntheticCheckResponse")
 
 @_attrs_define
 class SyntheticCheckResponse:
-    """One synthetic check definition (ADR-748)."""
+    """One synthetic check definition."""
 
     id: UUID
     name: str
@@ -39,7 +39,7 @@ class SyntheticCheckResponse:
     expected_status: int | Unset = UNSET
     """Exact expected status; absent means any 2xx."""
     results: SyntheticCheckResults | Unset = UNSET
-    """Recent outcomes of one synthetic check, returned by GET /v1/apps/{slug}/synthetics/{id} (ADR-748)."""
+    """Recent outcomes of one synthetic check, returned by GET /v1/apps/{slug}/synthetics/{id}."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

@@ -80,7 +80,7 @@ def sync_detailed(
 ) -> Response[Any | CancelDeploymentResponse200 | Problem]:
     r"""Cancel a deployment.
 
-     ADR-124 deployment queue controls — flip a deployment in
+     Deployment queue controls — flip a deployment in
     {pending, building, imaging, snapshotting} to \"cancelled\"
     and cascade-cancel its in-flight builds. Live deployments
     return 409 `deployment_cancel_live_forbidden` with the
@@ -91,9 +91,8 @@ def sync_detailed(
         slug (str):
         id (str):
         body (CancelDeploymentRequest | Unset): Body for POST
-            /v1/apps/{slug}/deployments/{id}/cancel (ADR-124). Optional — empty body defaults to
-            reason='user' server-side. Reason is the closed set user | auto_quota | auto_health |
-            system.
+            /v1/apps/{slug}/deployments/{id}/cancel. Optional — empty body defaults to reason='user'
+            server-side. Reason is the closed set user | auto_quota | auto_health | system.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -125,7 +124,7 @@ def sync(
 ) -> Any | CancelDeploymentResponse200 | Problem | None:
     r"""Cancel a deployment.
 
-     ADR-124 deployment queue controls — flip a deployment in
+     Deployment queue controls — flip a deployment in
     {pending, building, imaging, snapshotting} to \"cancelled\"
     and cascade-cancel its in-flight builds. Live deployments
     return 409 `deployment_cancel_live_forbidden` with the
@@ -136,9 +135,8 @@ def sync(
         slug (str):
         id (str):
         body (CancelDeploymentRequest | Unset): Body for POST
-            /v1/apps/{slug}/deployments/{id}/cancel (ADR-124). Optional — empty body defaults to
-            reason='user' server-side. Reason is the closed set user | auto_quota | auto_health |
-            system.
+            /v1/apps/{slug}/deployments/{id}/cancel. Optional — empty body defaults to reason='user'
+            server-side. Reason is the closed set user | auto_quota | auto_health | system.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -165,7 +163,7 @@ async def asyncio_detailed(
 ) -> Response[Any | CancelDeploymentResponse200 | Problem]:
     r"""Cancel a deployment.
 
-     ADR-124 deployment queue controls — flip a deployment in
+     Deployment queue controls — flip a deployment in
     {pending, building, imaging, snapshotting} to \"cancelled\"
     and cascade-cancel its in-flight builds. Live deployments
     return 409 `deployment_cancel_live_forbidden` with the
@@ -176,9 +174,8 @@ async def asyncio_detailed(
         slug (str):
         id (str):
         body (CancelDeploymentRequest | Unset): Body for POST
-            /v1/apps/{slug}/deployments/{id}/cancel (ADR-124). Optional — empty body defaults to
-            reason='user' server-side. Reason is the closed set user | auto_quota | auto_health |
-            system.
+            /v1/apps/{slug}/deployments/{id}/cancel. Optional — empty body defaults to reason='user'
+            server-side. Reason is the closed set user | auto_quota | auto_health | system.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -208,7 +205,7 @@ async def asyncio(
 ) -> Any | CancelDeploymentResponse200 | Problem | None:
     r"""Cancel a deployment.
 
-     ADR-124 deployment queue controls — flip a deployment in
+     Deployment queue controls — flip a deployment in
     {pending, building, imaging, snapshotting} to \"cancelled\"
     and cascade-cancel its in-flight builds. Live deployments
     return 409 `deployment_cancel_live_forbidden` with the
@@ -219,9 +216,8 @@ async def asyncio(
         slug (str):
         id (str):
         body (CancelDeploymentRequest | Unset): Body for POST
-            /v1/apps/{slug}/deployments/{id}/cancel (ADR-124). Optional — empty body defaults to
-            reason='user' server-side. Reason is the closed set user | auto_quota | auto_health |
-            system.
+            /v1/apps/{slug}/deployments/{id}/cancel. Optional — empty body defaults to reason='user'
+            server-side. Reason is the closed set user | auto_quota | auto_health | system.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

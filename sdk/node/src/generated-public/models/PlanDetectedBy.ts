@@ -3,7 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * Structured detection trace for one workload (issue #742).
+ * Structured detection trace for one workload.
  * `source` on PlanWorkload carries the same provenance as free
  * text ("compose.yaml: api"); this is the machine-readable form
  * so a client can branch on the detector without parsing it.

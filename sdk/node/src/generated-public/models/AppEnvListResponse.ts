@@ -6,7 +6,7 @@ import type { AppEnvResponse } from './AppEnvResponse.js';
 import type { ScopedAppEnvResponse } from './ScopedAppEnvResponse.js';
 /**
  * List of env var envelopes (no plaintext values). Discriminated
- * union (ADR-090 PR-B D3):
+ * union:
  *
  * * `env` array populated, `env_by_scope` omitted: the
  * default-scope or per-scope read (omitted or `?scope=<slug>`).
@@ -21,7 +21,7 @@ import type { ScopedAppEnvResponse } from './ScopedAppEnvResponse.js';
 export type AppEnvListResponse = {
   env: Array<AppEnvResponse>;
   /**
-   * Nested per-scope map (ADR-090 PR-B D3). Populated only when `?scope=__all__` is passed; keys are scope names, values are per-scope row lists ordered by key ASC.
+   * Nested per-scope map. Populated only when `?scope=__all__` is passed; keys are scope names, values are per-scope row lists ordered by key ASC.
    */
   env_by_scope?: Record<string, Array<ScopedAppEnvResponse>>;
   quota_max: number;

@@ -93,31 +93,31 @@ def sync_detailed(
     path: str | Unset = UNSET,
     method: str | Unset = UNSET,
 ) -> Response[AppStreamingStatus | Problem]:
-    r"""Per-app streaming classification probe (ADR-102 D6).
+    r"""Per-app streaming classification probe.
 
      Returns the streaming-status enum (one of `streaming`,
     `accept-json-downgrade`, `flag-disabled`, `plan-disallows`,
-    `operator-disabled`, `upgrade-bypass`) the gatewayd handler
+    `operator-disabled`, `upgrade-bypass`) the gateway handler
     would stamp on the `Streaming-Status` response header for a
     representative request to this app, plus the effective
     response-body cap (in bytes) and the per-gate flags.
 
     With no query parameters the probe is a pure read against the
-    apid cache (the per-account `Plan` and the per-app
+    API cache (the per-account `Plan` and the per-app
     `streaming_enabled` flag). Supplying `host`, `path`, and `method`
-    together performs a bounded loopback read of gatewayd's compiled
+    together performs a bounded loopback read of the gateway's compiled
     kind=limit rules and reports a matching streaming response cap with
-    `cap_kind=\"endpoint-rule\"`. If gatewayd is unavailable or no rule
+    `cap_kind=\"endpoint-rule\"`. If the gateway is unavailable or no rule
     matches, the response falls back to the plan cap.
 
     The operator opt-in (`FAAS_GATEWAY_STREAMING` env) remains
-    gatewayd-side state, so the canonical signal is the
+    gateway-side state, so the canonical signal is the
     `Streaming-Status` response header on a real request, not this probe.
     A customer evaluating \"will my next request stream?\" must
     consider the operator-side flag separately.
 
     `status=plan-disallows` means the customer's plan tier
-    forbids `streaming_enabled=true`; the CreateApp gate (D5)
+    forbids `streaming_enabled=true`; the CreateApp gate
     already returns 403 `CodePlanStreamingNotAllowed` so this
     row should be unreachable from a properly-validated app,
     but the probe still reflects the persisted state for
@@ -159,31 +159,31 @@ def sync(
     path: str | Unset = UNSET,
     method: str | Unset = UNSET,
 ) -> AppStreamingStatus | Problem | None:
-    r"""Per-app streaming classification probe (ADR-102 D6).
+    r"""Per-app streaming classification probe.
 
      Returns the streaming-status enum (one of `streaming`,
     `accept-json-downgrade`, `flag-disabled`, `plan-disallows`,
-    `operator-disabled`, `upgrade-bypass`) the gatewayd handler
+    `operator-disabled`, `upgrade-bypass`) the gateway handler
     would stamp on the `Streaming-Status` response header for a
     representative request to this app, plus the effective
     response-body cap (in bytes) and the per-gate flags.
 
     With no query parameters the probe is a pure read against the
-    apid cache (the per-account `Plan` and the per-app
+    API cache (the per-account `Plan` and the per-app
     `streaming_enabled` flag). Supplying `host`, `path`, and `method`
-    together performs a bounded loopback read of gatewayd's compiled
+    together performs a bounded loopback read of the gateway's compiled
     kind=limit rules and reports a matching streaming response cap with
-    `cap_kind=\"endpoint-rule\"`. If gatewayd is unavailable or no rule
+    `cap_kind=\"endpoint-rule\"`. If the gateway is unavailable or no rule
     matches, the response falls back to the plan cap.
 
     The operator opt-in (`FAAS_GATEWAY_STREAMING` env) remains
-    gatewayd-side state, so the canonical signal is the
+    gateway-side state, so the canonical signal is the
     `Streaming-Status` response header on a real request, not this probe.
     A customer evaluating \"will my next request stream?\" must
     consider the operator-side flag separately.
 
     `status=plan-disallows` means the customer's plan tier
-    forbids `streaming_enabled=true`; the CreateApp gate (D5)
+    forbids `streaming_enabled=true`; the CreateApp gate
     already returns 403 `CodePlanStreamingNotAllowed` so this
     row should be unreachable from a properly-validated app,
     but the probe still reflects the persisted state for
@@ -220,31 +220,31 @@ async def asyncio_detailed(
     path: str | Unset = UNSET,
     method: str | Unset = UNSET,
 ) -> Response[AppStreamingStatus | Problem]:
-    r"""Per-app streaming classification probe (ADR-102 D6).
+    r"""Per-app streaming classification probe.
 
      Returns the streaming-status enum (one of `streaming`,
     `accept-json-downgrade`, `flag-disabled`, `plan-disallows`,
-    `operator-disabled`, `upgrade-bypass`) the gatewayd handler
+    `operator-disabled`, `upgrade-bypass`) the gateway handler
     would stamp on the `Streaming-Status` response header for a
     representative request to this app, plus the effective
     response-body cap (in bytes) and the per-gate flags.
 
     With no query parameters the probe is a pure read against the
-    apid cache (the per-account `Plan` and the per-app
+    API cache (the per-account `Plan` and the per-app
     `streaming_enabled` flag). Supplying `host`, `path`, and `method`
-    together performs a bounded loopback read of gatewayd's compiled
+    together performs a bounded loopback read of the gateway's compiled
     kind=limit rules and reports a matching streaming response cap with
-    `cap_kind=\"endpoint-rule\"`. If gatewayd is unavailable or no rule
+    `cap_kind=\"endpoint-rule\"`. If the gateway is unavailable or no rule
     matches, the response falls back to the plan cap.
 
     The operator opt-in (`FAAS_GATEWAY_STREAMING` env) remains
-    gatewayd-side state, so the canonical signal is the
+    gateway-side state, so the canonical signal is the
     `Streaming-Status` response header on a real request, not this probe.
     A customer evaluating \"will my next request stream?\" must
     consider the operator-side flag separately.
 
     `status=plan-disallows` means the customer's plan tier
-    forbids `streaming_enabled=true`; the CreateApp gate (D5)
+    forbids `streaming_enabled=true`; the CreateApp gate
     already returns 403 `CodePlanStreamingNotAllowed` so this
     row should be unreachable from a properly-validated app,
     but the probe still reflects the persisted state for
@@ -284,31 +284,31 @@ async def asyncio(
     path: str | Unset = UNSET,
     method: str | Unset = UNSET,
 ) -> AppStreamingStatus | Problem | None:
-    r"""Per-app streaming classification probe (ADR-102 D6).
+    r"""Per-app streaming classification probe.
 
      Returns the streaming-status enum (one of `streaming`,
     `accept-json-downgrade`, `flag-disabled`, `plan-disallows`,
-    `operator-disabled`, `upgrade-bypass`) the gatewayd handler
+    `operator-disabled`, `upgrade-bypass`) the gateway handler
     would stamp on the `Streaming-Status` response header for a
     representative request to this app, plus the effective
     response-body cap (in bytes) and the per-gate flags.
 
     With no query parameters the probe is a pure read against the
-    apid cache (the per-account `Plan` and the per-app
+    API cache (the per-account `Plan` and the per-app
     `streaming_enabled` flag). Supplying `host`, `path`, and `method`
-    together performs a bounded loopback read of gatewayd's compiled
+    together performs a bounded loopback read of the gateway's compiled
     kind=limit rules and reports a matching streaming response cap with
-    `cap_kind=\"endpoint-rule\"`. If gatewayd is unavailable or no rule
+    `cap_kind=\"endpoint-rule\"`. If the gateway is unavailable or no rule
     matches, the response falls back to the plan cap.
 
     The operator opt-in (`FAAS_GATEWAY_STREAMING` env) remains
-    gatewayd-side state, so the canonical signal is the
+    gateway-side state, so the canonical signal is the
     `Streaming-Status` response header on a real request, not this probe.
     A customer evaluating \"will my next request stream?\" must
     consider the operator-side flag separately.
 
     `status=plan-disallows` means the customer's plan tier
-    forbids `streaming_enabled=true`; the CreateApp gate (D5)
+    forbids `streaming_enabled=true`; the CreateApp gate
     already returns 403 `CodePlanStreamingNotAllowed` so this
     row should be unreachable from a properly-validated app,
     but the probe still reflects the persisted state for

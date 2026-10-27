@@ -17,15 +17,15 @@ export type DebugDependencyLatencyItem = {
   p95_ms: number;
   p99_ms: number;
   /**
-   * P50 wall time not covered by overlapping direct child spans.
+   * Wall time not covered by overlapping direct child spans.
    */
   exclusive_p50_ms?: number;
   /**
-   * P95 wall time not covered by overlapping direct child spans.
+   * Wall time not covered by overlapping direct child spans.
    */
   exclusive_p95_ms?: number;
   /**
-   * P99 wall time not covered by overlapping direct child spans.
+   * Wall time not covered by overlapping direct child spans.
    */
   exclusive_p99_ms?: number;
   baseline_p95_ms?: number;

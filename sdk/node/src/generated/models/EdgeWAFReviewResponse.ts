@@ -4,7 +4,7 @@
 /* eslint-disable */
 import type { EdgeWAFReviewGroup } from './EdgeWAFReviewGroup.js';
 /**
- * An app's sampled kind=waf detections grouped for a false-positive review (ADR-831 amendment 13).
+ * An app's sampled kind=waf detections grouped for a false-positive review.
  */
 export type EdgeWAFReviewResponse = {
   /**

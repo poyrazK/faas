@@ -60,7 +60,7 @@ def sync_detailed(
     *,
     client: AuthenticatedClient | Client,
 ) -> Response[Any | Problem]:
-    """Delete a notification channel (ADR-749)
+    """Delete a notification channel
 
      Removes the channel; alert rules stop delivering to it.
 
@@ -91,7 +91,7 @@ def sync(
     *,
     client: AuthenticatedClient | Client,
 ) -> Any | Problem | None:
-    """Delete a notification channel (ADR-749)
+    """Delete a notification channel
 
      Removes the channel; alert rules stop delivering to it.
 
@@ -117,7 +117,7 @@ async def asyncio_detailed(
     *,
     client: AuthenticatedClient | Client,
 ) -> Response[Any | Problem]:
-    """Delete a notification channel (ADR-749)
+    """Delete a notification channel
 
      Removes the channel; alert rules stop delivering to it.
 
@@ -146,7 +146,7 @@ async def asyncio(
     *,
     client: AuthenticatedClient | Client,
 ) -> Any | Problem | None:
-    """Delete a notification channel (ADR-749)
+    """Delete a notification channel
 
      Removes the channel; alert rules stop delivering to it.
 

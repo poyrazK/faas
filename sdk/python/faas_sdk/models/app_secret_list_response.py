@@ -19,7 +19,7 @@ T = TypeVar("T", bound="AppSecretListResponse")
 @_attrs_define
 class AppSecretListResponse:
     """Paginated list of sealed-secret envelopes (no plaintext). Discriminated union: `secrets` is the flat arm;
-    `secrets_by_scope` is the `?scope=__all__` arm (ADR-092 PR-B).
+    `secrets_by_scope` is the `?scope=__all__` arm.
 
     """
 
@@ -27,8 +27,8 @@ class AppSecretListResponse:
     quota_max: int
     count: int
     secrets_by_scope: AppSecretListResponseSecretsByScope | Unset = UNSET
-    """Nested per-scope map (ADR-092 PR-B, mirror of ADR-090 PR-B D3). Populated only when `?scope=__all__` is
-    passed; keys are scope names, values are per-scope row lists ordered by key ASC."""
+    """Nested per-scope map. Populated only when `?scope=__all__` is passed; keys are scope names, values are per-
+    scope row lists ordered by key ASC."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

@@ -44,7 +44,7 @@ class ExclusiveAppTaskOperationRequest:
     Gregale HTTPS service-binding canary and is handled by guest-init.
     `__gregale_outbound_binding_probe_v1__ <integration-id>` selects a
     configured outbound probe; the server supplies immutable gateway routing metadata.
-    `interactive=true` admits an ADR-1037 session (operator-gated): the
+    `interactive=true` admits an session (operator-gated): the
     command defaults to `/bin/sh`, the timeout defaults to 3600 seconds
     and bounds the session, no output is retained, and the create
     response carries a one-time `attach` credential for

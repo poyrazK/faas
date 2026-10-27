@@ -13,10 +13,10 @@ T = TypeVar("T", bound="TemplateView")
 
 @_attrs_define
 class TemplateView:
-    """A starter template entry from GET /v1/templates (issue #961 / Mega-B PR-3)."""
+    """A starter template entry from GET /v1/templates."""
 
     name: str
-    """The template name — matches cmd/gregale/templates/embed.go::Names verbatim."""
+    """The template name — matches the CLI's template names verbatim."""
     category: TemplateViewCategory
     """Customer-facing group label (templates.CategoryFor)."""
     description: str

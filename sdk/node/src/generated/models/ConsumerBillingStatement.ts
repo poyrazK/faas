@@ -15,7 +15,7 @@ export type ConsumerBillingStatement = {
   billable_units: number;
   amount_millicents: number;
   /**
-   * Prepaid credit drawn when the statement was finalized (ADR-20261020211500).
+   * Prepaid credit drawn when the statement was finalized.
    */
   credit_applied_millicents: number;
   /**

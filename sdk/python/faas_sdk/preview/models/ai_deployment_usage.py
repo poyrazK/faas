@@ -15,7 +15,7 @@ T = TypeVar("T", bound="AIDeploymentUsage")
 
 @_attrs_define
 class AIDeploymentUsage:
-    """One deployment's AI gateway calls over the last 14 days (ADR 20261022153155)."""
+    """One deployment's AI gateway calls over the last 14 days."""
 
     deployment_id: UUID
     first_call_at: datetime.datetime

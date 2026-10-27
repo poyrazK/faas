@@ -4,7 +4,7 @@
 /* eslint-disable */
 import type { OutboundAITagLimit } from './OutboundAITagLimit.js';
 /**
- * An integration's per-tag daily cost limits, ordered by tag (ADR-1436).
+ * An integration's per-tag daily cost limits, ordered by tag.
  */
 export type OutboundAITagLimits = {
   limits: Array<OutboundAITagLimit>;

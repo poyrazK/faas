@@ -22,8 +22,8 @@ T = TypeVar("T", bound="DeploymentBuildDependencyGate")
 
 @_attrs_define
 class DeploymentBuildDependencyGate:
-    """Build-time wait on the API deployments a guided service migration selected (ADR-1666). It is checked before cache
-    lookup and slot allocation and never holds a build slot while waiting.
+    """Build-time wait on the API deployments a guided service migration selected. It is checked before cache lookup and
+    slot allocation and never holds a build slot while waiting.
 
     """
 

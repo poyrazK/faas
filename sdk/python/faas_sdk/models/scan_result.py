@@ -20,7 +20,7 @@ T = TypeVar("T", bound="ScanResult")
 
 @_attrs_define
 class ScanResult:
-    """Per-deploy grype CVE scan result (issue #464 / ADR-055). Surfaced on
+    """Per-deploy grype CVE scan result. Surfaced on
     GET /v1/deployments/{id} (additive DeploymentResponse.Scan field) and
     on GET /v1/deployments/{id}/scan (the dedicated drill-down route).
     The dashboard renders the severity counts and the top 10 CVEs;
@@ -41,8 +41,7 @@ class ScanResult:
     severity_counts: SeverityCounts
     """Per-bucket count of CVEs in Grype's closed vocabulary
     (CRITICAL|HIGH|MEDIUM|LOW|UNKNOWN). Negligible collapses into LOW
-    (matches the existing pkg/imaged.grype.go::normalizeGrypeSeverity
-    convention). All fields present without omitempty so the JSON shape
+    (the image scanner's severity convention). All fields present without omitempty so the JSON shape
     is uniform — the dashboard reads counts without nil checks.
     """
     vulnerabilities: list[Vulnerability]
@@ -50,7 +49,8 @@ class ScanResult:
     sorts+truncates client-side. The /scan route returns the full list."""
     scanned_at: datetime.datetime | None | Unset = UNSET
     """Wall clock the grype run completed (RFC 3339 UTC). Empty when status != "complete". Distinct from
-    deployments.created_at — the deploy ships before the scan lands (AC"""
+    deployments.created_at — the deploy ships before the scan lands (AC #1: scan within 5 min of status: live, not
+    at the same instant). Enforce mode rejects evidence older than 5 minutes."""
     scanner_version: None | str | Unset = UNSET
     """Grype binary version from the descriptor of the run that produced the scan (e.g. "0.78.0"). Enforce mode
     requires this identity to be present."""
@@ -70,7 +70,7 @@ class ScanResult:
     30 days."""
     error: None | str | Unset = UNSET
     """Grype runner's last error message on a failed scan (status = "failed"). Empty on every other status. The
-    PR-3 sink captures the message after the 1-retry backoff is exhausted."""
+    sink captures the message after the 1-retry backoff is exhausted."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

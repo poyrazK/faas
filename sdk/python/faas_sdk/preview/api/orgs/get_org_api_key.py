@@ -80,9 +80,8 @@ def sync_detailed(
 ) -> Response[APIKeyResponse | Problem]:
     """Fetch a single API key by id (org-scoped).
 
-     Lookup mirror of `GET /v1/keys/{id}` (the legacy path does not
-    exist by id in pre-PR-6 — this path is the canonical single-key
-    read). The response is the standard `APIKeyResponse` (no
+     Lookup mirror of `GET /v1/keys/{id}`; this path is the canonical
+    single-key read. The response is the standard `APIKeyResponse` (no
     plaintext). Cross-org probes collapse to 404.
 
     Args:
@@ -117,9 +116,8 @@ def sync(
 ) -> APIKeyResponse | Problem | None:
     """Fetch a single API key by id (org-scoped).
 
-     Lookup mirror of `GET /v1/keys/{id}` (the legacy path does not
-    exist by id in pre-PR-6 — this path is the canonical single-key
-    read). The response is the standard `APIKeyResponse` (no
+     Lookup mirror of `GET /v1/keys/{id}`; this path is the canonical
+    single-key read. The response is the standard `APIKeyResponse` (no
     plaintext). Cross-org probes collapse to 404.
 
     Args:
@@ -149,9 +147,8 @@ async def asyncio_detailed(
 ) -> Response[APIKeyResponse | Problem]:
     """Fetch a single API key by id (org-scoped).
 
-     Lookup mirror of `GET /v1/keys/{id}` (the legacy path does not
-    exist by id in pre-PR-6 — this path is the canonical single-key
-    read). The response is the standard `APIKeyResponse` (no
+     Lookup mirror of `GET /v1/keys/{id}`; this path is the canonical
+    single-key read. The response is the standard `APIKeyResponse` (no
     plaintext). Cross-org probes collapse to 404.
 
     Args:
@@ -184,9 +181,8 @@ async def asyncio(
 ) -> APIKeyResponse | Problem | None:
     """Fetch a single API key by id (org-scoped).
 
-     Lookup mirror of `GET /v1/keys/{id}` (the legacy path does not
-    exist by id in pre-PR-6 — this path is the canonical single-key
-    read). The response is the standard `APIKeyResponse` (no
+     Lookup mirror of `GET /v1/keys/{id}`; this path is the canonical
+    single-key read. The response is the standard `APIKeyResponse` (no
     plaintext). Cross-org probes collapse to 404.
 
     Args:
