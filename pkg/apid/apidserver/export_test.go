@@ -1782,4 +1782,5 @@ func (r *server) RequestBillingMailOutboxesForTest() {
 	on := func() bool { return true }
 	r.paymentFailedOutboxRequested, r.accountRestoredOutboxRequested, r.subscriptionEndedOutboxRequested = on, on, on
 }
+
 var AppRestartRefusal = appRestartRefusal
