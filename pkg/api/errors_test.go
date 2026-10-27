@@ -328,8 +328,8 @@ func TestErrBillingNotImplemented(t *testing.T) {
 	if p.Code != CodeBillingNotImplemented {
 		t.Errorf("Code = %q, want %q", p.Code, CodeBillingNotImplemented)
 	}
-	if !strings.Contains(p.DocsURL, "billing/providers") {
-		t.Errorf("DocsURL = %q, want /billing/providers", p.DocsURL)
+	if !strings.Contains(p.DocsURL, "/billing#providers") {
+		t.Errorf("DocsURL = %q, want /billing#providers", p.DocsURL)
 	}
 }
 
