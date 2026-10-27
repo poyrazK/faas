@@ -17503,11 +17503,7 @@ func (m *MemStore) ComputeNodeUsedMB(_ context.Context, nodeID string) (int64, e
 	defer m.mu.Unlock()
 	used := m.functionMigrationNodeUsageLocked(nodeID).RAM
 	for _, ins := range m.instances {
-		if ins.NodeID != nodeID {
-			continue
-		}
-		switch ins.State {
-		case "waking", "cold_booting", "running", "draining", "warm":
+		if ins.NodeID == nodeID && nodeRAMCounts(State(ins.State)) {
 			used += m.migrationResidentRAMLocked(ins)
 		}
 	}
