@@ -73,8 +73,8 @@ def sync_detailed(
     portal URL. Otherwise it renders the operator's
     `FAAS_BILLING_PORTAL_URL` template.
 
-    The response also carries a `payment_method` block (issue
-    #242) — the card-on-file summary (brand, last-4, expiry).
+    The response also carries a `payment_method` block — the card-on-file summary (brand, last-4,
+    expiry).
     The CLI's `faas billing payment-method` renders from this
     field; the dashboard's billing page does the same. The
     field is omitempty so no-card-on-file responses stay clean.
@@ -109,8 +109,8 @@ def sync(
     portal URL. Otherwise it renders the operator's
     `FAAS_BILLING_PORTAL_URL` template.
 
-    The response also carries a `payment_method` block (issue
-    #242) — the card-on-file summary (brand, last-4, expiry).
+    The response also carries a `payment_method` block — the card-on-file summary (brand, last-4,
+    expiry).
     The CLI's `faas billing payment-method` renders from this
     field; the dashboard's billing page does the same. The
     field is omitempty so no-card-on-file responses stay clean.
@@ -141,8 +141,8 @@ async def asyncio_detailed(
     portal URL. Otherwise it renders the operator's
     `FAAS_BILLING_PORTAL_URL` template.
 
-    The response also carries a `payment_method` block (issue
-    #242) — the card-on-file summary (brand, last-4, expiry).
+    The response also carries a `payment_method` block — the card-on-file summary (brand, last-4,
+    expiry).
     The CLI's `faas billing payment-method` renders from this
     field; the dashboard's billing page does the same. The
     field is omitempty so no-card-on-file responses stay clean.
@@ -175,8 +175,8 @@ async def asyncio(
     portal URL. Otherwise it renders the operator's
     `FAAS_BILLING_PORTAL_URL` template.
 
-    The response also carries a `payment_method` block (issue
-    #242) — the card-on-file summary (brand, last-4, expiry).
+    The response also carries a `payment_method` block — the card-on-file summary (brand, last-4,
+    expiry).
     The CLI's `faas billing payment-method` renders from this
     field; the dashboard's billing page does the same. The
     field is omitempty so no-card-on-file responses stay clean.

@@ -4,7 +4,7 @@
 /* eslint-disable */
 import type { ConfigGuardDecision } from './ConfigGuardDecision.js';
 /**
- * A scope's config guard (ADR-1451).
+ * A scope's config guard.
  */
 export type ConfigGuard = {
   id: string;

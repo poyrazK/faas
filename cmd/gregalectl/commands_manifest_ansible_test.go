@@ -161,6 +161,60 @@ func TestRenderManifestAnsibleFiles_DerivesRouting(t *testing.T) {
 	}
 }
 
+// adr: 20261026100000 — the manifest's domain layout reaches every host's
+// vars (the drop-ins of every daemon read it), and an unset layout renders
+// only the apps domain.
+func TestRenderManifestAnsibleFiles_DomainLayout(t *testing.T) {
+	render := func(t *testing.T, dns string) map[string]string {
+		t.Helper()
+		yaml := strings.Replace(validManifestYAML,
+			"    - name: fsn-1\n      role: control-plane\n",
+			"    - name: fsn-1\n      role: control-plane\n      address: 10.42.0.1:7100\n    - name: fsn-2\n      role: compute-only\n      address: 10.42.0.2:50051\n      storage_device: /dev/disk/by-id/google-local-ssd-0\n", 1)
+		yaml = strings.Replace(yaml, "dns:\n  apps_domain: apps.gregale.dev\n  mode: cloudflare\n", dns, 1)
+		m, err := manifest.Parse([]byte(yaml))
+		if err != nil {
+			t.Fatalf("manifest.Parse: %v", err)
+		}
+		if errs := m.Validate(); errs != nil {
+			t.Fatalf("manifest.Validate: %v", errs)
+		}
+		files, err := renderManifestAnsibleFiles(m, t.TempDir())
+		if err != nil {
+			t.Fatalf("renderManifestAnsibleFiles: %v", err)
+		}
+		vars := map[string]string{}
+		for _, file := range files {
+			for _, host := range []string{"fsn-1", "fsn-2"} {
+				if strings.HasSuffix(file.Path, host+".yml") {
+					vars[host] = string(file.Body)
+				}
+			}
+		}
+		return vars
+	}
+
+	split := render(t, "dns:\n  apps_domain: gregale.app\n  mode: cloudflare\n  platform_domain: gregale.dev\n  deploy_domain: gregale.app\n  apps_domain_aliases: [gregale.dev]\n  apps_domain_alias_mode: redirect\n")
+	for _, host := range []string{"fsn-1", "fsn-2"} {
+		for _, want := range []string{
+			`gatewayd_apps_domain: "gregale.app"`,
+			`faas_platform_domain: "gregale.dev"`,
+			`faas_deploy_domain: "gregale.app"`,
+			`faas_apps_domain_aliases: ["gregale.dev"]`,
+			`faas_apps_domain_alias_mode: "redirect"`,
+		} {
+			if !strings.Contains(split[host], want) {
+				t.Errorf("%s vars missing %s:\n%s", host, want, split[host])
+			}
+		}
+	}
+
+	shared := render(t, "dns:\n  apps_domain: gregale.dev\n  mode: cloudflare\n")
+	if !strings.Contains(shared["fsn-1"], `gatewayd_apps_domain: "gregale.dev"`) || strings.Contains(shared["fsn-1"], "faas_platform_domain") ||
+		strings.Contains(shared["fsn-1"], "faas_apps_domain_alias") || strings.Contains(shared["fsn-1"], "faas_deploy_domain") {
+		t.Errorf("shared layout vars:\n%s", shared["fsn-1"])
+	}
+}
+
 func TestRenderManifestAnsibleFiles_TwoComputeTargetsAreDistinct(t *testing.T) {
 	yaml := strings.Replace(validManifestYAML,
 		"    - name: fsn-1\n      role: control-plane\n",
@@ -553,6 +607,50 @@ func TestRenderManifestAnsibleFiles_ComputeEdge(t *testing.T) {
 	}
 }
 
+// ADR-1141 amendment 2026-10-24: workload_identity.source_dir reaches both
+// roles' hosts, so the control plane installs the JWKS and each compute node
+// the signing key. Without it nothing renders and issuance stays off.
+func TestRenderManifestAnsibleFiles_WorkloadIdentity(t *testing.T) {
+	base := strings.Replace(validManifestYAML,
+		"    - name: fsn-1\n      role: control-plane\n",
+		"    - name: fsn-1\n      role: control-plane\n      address: 10.42.0.1:7100\n    - name: fsn-2\n      role: compute-only\n      address: 10.42.0.2:50051\n", 1)
+	render := func(t *testing.T, yaml string) string {
+		t.Helper()
+		m, err := manifest.Parse([]byte(yaml))
+		if err != nil {
+			t.Fatalf("manifest.Parse: %v", err)
+		}
+		if errs := m.Validate(); errs != nil {
+			t.Fatalf("manifest.Validate: %v", errs)
+		}
+		files, err := renderManifestAnsibleFiles(m, t.TempDir())
+		if err != nil {
+			t.Fatalf("renderManifestAnsibleFiles: %v", err)
+		}
+		var vars strings.Builder
+		for _, file := range files {
+			if strings.HasSuffix(file.Path, "fsn-1.yml") || strings.HasSuffix(file.Path, "fsn-2.yml") {
+				vars.Write(file.Body)
+			}
+		}
+		return vars.String()
+	}
+	if vars := render(t, base); strings.Contains(vars, "faas_workload_identity_source_dir") {
+		t.Fatalf("workload identity rendered without workload_identity:\n%s", vars)
+	}
+	vars := render(t, base+"workload_identity:\n  source_dir: /srv/faas/workload-identity\n")
+	if got := strings.Count(vars, `faas_workload_identity_source_dir: "/srv/faas/workload-identity"`); got != 2 {
+		t.Fatalf("source dir rendered on %d of 2 hosts:\n%s", got, vars)
+	}
+	m, err := manifest.Parse([]byte(base + "workload_identity:\n  source_dir: relative/dir\n"))
+	if err != nil {
+		t.Fatalf("manifest.Parse: %v", err)
+	}
+	if errs := m.Validate(); errs == nil || !strings.Contains(errs.Error(), "workload_identity.source_dir") {
+		t.Fatalf("relative source_dir validated: %v", errs)
+	}
+}
+
 // ADR-1344 §8: postgresql.standby puts the warm standby in its own inventory
 // group, outside control_plane and compute_nodes, and tells the primary which
 // address to admit for replication. Without it nothing renders.
@@ -625,5 +723,51 @@ func TestRenderManifestAnsibleFiles_PostgresStandby(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// ADR 20261025111015: the manifest, not a hand edit, decides whether the
+// playbooks own s3-gatewayd.
+func TestRenderManifestAnsibleFiles_ObjectStorageGateway(t *testing.T) {
+	base := strings.Replace(validManifestYAML,
+		"    - name: fsn-1\n      role: control-plane\n",
+		"    - name: fsn-1\n      role: control-plane\n      address: 10.42.0.1:7100\n    - name: fsn-2\n      role: compute-only\n      address: 10.42.0.2:50051\n", 1)
+	render := func(t *testing.T, yaml string) (string, string) {
+		t.Helper()
+		m, err := manifest.Parse([]byte(yaml))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if errs := m.Validate(); errs != nil {
+			t.Fatal(errs)
+		}
+		files, err := renderManifestAnsibleFiles(m, t.TempDir())
+		if err != nil {
+			t.Fatal(err)
+		}
+		var cp, compute string
+		for _, f := range files {
+			switch {
+			case strings.HasSuffix(f.Path, "fsn-1.yml"):
+				cp = string(f.Body)
+			case strings.HasSuffix(f.Path, "fsn-2.yml"):
+				compute = string(f.Body)
+			}
+		}
+		return cp, compute
+	}
+	cp, _ := render(t, base)
+	if strings.Contains(cp, "faas_object_storage") {
+		t.Fatalf("unmanaged manifest rendered gateway vars:\n%s", cp)
+	}
+	managed := base + "object_storage:\n  gateway: managed\n  config_src: /operator/object-storage.json\n  provider_env_src: /operator/provider.env\n"
+	cp, compute := render(t, managed)
+	for _, want := range []string{"faas_object_storage_gateway_managed: true\n", `faas_object_storage_config_src: "/operator/object-storage.json"`, `faas_object_storage_provider_env_src: "/operator/provider.env"`} {
+		if !strings.Contains(cp, want) {
+			t.Errorf("control-plane vars missing %q:\n%s", want, cp)
+		}
+	}
+	if strings.Contains(compute, "faas_object_storage") {
+		t.Errorf("compute node got gateway vars:\n%s", compute)
 	}
 }

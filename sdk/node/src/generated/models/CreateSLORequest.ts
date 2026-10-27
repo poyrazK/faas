@@ -3,7 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * Defines a customer SLO on an app (ADR-747).
+ * Defines a customer SLO on an app.
  */
 export type CreateSLORequest = {
   /**

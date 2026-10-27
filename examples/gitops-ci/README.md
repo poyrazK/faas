@@ -1,7 +1,7 @@
 # GitOps plans in pull and merge requests
 
 Use a runner with a pinned `gregale` CLI containing `gitops plan`. Before a
-release, build it from this reviewed checkout with Go 1.26.9:
+release, build it from this reviewed checkout with Go 1.26.10:
 
 ```sh
 go build -o bin/gregale ./cmd/gregale

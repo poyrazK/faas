@@ -14,7 +14,7 @@ import (
 type rollbackRecencyStore interface {
 	CreateDeployment(context.Context, state.Deployment) (state.Deployment, error)
 	MarkDeploymentLive(context.Context, string) error
-	LatestSupersededDeployment(context.Context, string) (state.Deployment, error)
+	LatestSupersededDeployment(context.Context, string, string) (state.Deployment, error)
 	AutoRollbackDeploymentsTx(context.Context, string, string) (string, error)
 }
 
@@ -50,7 +50,7 @@ func runRollbackRecencyScenario(t *testing.T, ctx context.Context, s rollbackRec
 	v5 := deploy("v5")
 	live(v5) // v1 superseded
 
-	target, err := s.LatestSupersededDeployment(ctx, appID)
+	target, err := s.LatestSupersededDeployment(ctx, appID, state.DefaultEnvScope)
 	if err != nil {
 		t.Fatalf("LatestSupersededDeployment: %v", err)
 	}
@@ -129,7 +129,7 @@ func runPromoteRollbackScenario(t *testing.T, ctx context.Context, s promoteRoll
 	if _, err := s.UpdateDeploymentTraffic(ctx, v2.ID, 100); err != nil {
 		t.Fatalf("promote v2: %v", err)
 	}
-	target, err = s.LatestSupersededDeployment(ctx, appID)
+	target, err = s.LatestSupersededDeployment(ctx, appID, state.DefaultEnvScope)
 	if err != nil {
 		t.Fatalf("LatestSupersededDeployment after promote: %v (the demoted release must be a rollback target)", err)
 	}

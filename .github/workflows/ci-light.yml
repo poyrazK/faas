@@ -11,9 +11,10 @@ name: ci-light
 #                             packages and `go vet` of the importers that use
 #                             a changed exported name; -race tests of changed
 #                             packages and the §6.2 invariants; for
-#                             cmd/gregale, pkg/state and pkg/apid/apidserver
-#                             only the tests related to the change, without
-#                             -race (scripts/ci/select_package_tests.py);
+#                             cmd/gregale, pkg/sched, pkg/state and
+#                             pkg/apid/apidserver only the tests related to
+#                             the change, without -race
+#                             (scripts/ci/select_package_tests.py);
 #                             boot-contract, generated-code drift, policy
 #                             gates, version-skew (N±1) checks and migration
 #                             ID/expand-contract/apply/replay checks.
@@ -58,7 +59,7 @@ permissions:
 
 env:
   # Keep in lock-step with ci.yml and go.mod's toolchain directive.
-  GO_VERSION: "1.26.9"
+  GO_VERSION: "1.26.10"
   VACUUM_VERSION: "0.29.10"
   VACUUM_SHA256_LINUX_AMD64: "84a596d5f88dd42f6f020376e5d2c2a29e6e51cc4b5614828f03dda122457a03"
   SQLC_VERSION: "1.31.1"
@@ -72,17 +73,17 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-go@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with:
           go-version: ${{ env.GO_VERSION }}
           cache: false
-      - uses: actions/setup-node@v7
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
           node-version: '22.10.0'
           cache: npm
           cache-dependency-path: sdk/node/package-lock.json
-      - uses: actions/setup-python@v7
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7
         with:
           python-version: '3.11'
           cache: pip
@@ -133,7 +134,7 @@ jobs:
     # package; per-package limits remain.
     timeout-minutes: 60
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           # PR-4a scans every commit subject; the diff base must be present.
           # A blobless clone keeps full history without downloading old blobs.
@@ -144,7 +145,7 @@ jobs:
       # The light tier owns the go-lint family (golangci-lint analysis cache
       # included): main pushes save it, pull requests only restore it.
       - name: restore Go build + lint cache
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: |
             ~/.cache/go-build
@@ -155,7 +156,7 @@ jobs:
             go-lint-${{ runner.os }}-go${{ env.GO_VERSION }}-${{ hashFiles('go.sum') }}-
             go-lint-${{ runner.os }}-go${{ env.GO_VERSION }}-
             go-lint-${{ runner.os }}-
-      - uses: actions/setup-go@v7
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with:
           go-version: ${{ env.GO_VERSION }}
           cache: false
@@ -278,10 +279,11 @@ jobs:
           if (( i < ${#pkgs[@]} )); then
             echo "::warning::importer compile check reached the job's 15-minute budget; not checked here (the mega tier vets them): ${pkgs[*]:i}"
           fi
-      # Main pushes lint cmd/gregale, pkg/state and pkg/apid/apidserver even
-      # when unchanged, so the saved cache holds their dependencies' export
-      # data and analysis facts: a pull request touching one of them then
-      # re-analyses only what it changed (about a minute, not ten).
+      # Main pushes lint cmd/gregale, pkg/sched, pkg/state and
+      # pkg/apid/apidserver even when unchanged, so the saved cache holds
+      # their dependencies' export data and analysis facts: a pull request
+      # touching one of them then re-analyses only what it changed (about a
+      # minute, not ten).
       - name: warm the large packages' lint cache (main)
         if: github.ref == 'refs/heads/main'
         env:
@@ -291,14 +293,15 @@ jobs:
           GOMAXPROCS: 4
         run: |
           for shard in 1 2 3; do
-            pkg="$(python3 scripts/ci/affected_packages.py pinned --shard "$shard" --shards 3 < /dev/null)"
-            echo "Warming $pkg"
-            golangci-lint run --timeout=20m "$pkg" >/dev/null \
-              || echo "::warning::golangci-lint reports findings in $pkg on main; the mega tier's lint shards fail on them"
+            for pkg in $(python3 scripts/ci/affected_packages.py pinned --shard "$shard" --shards 3 < /dev/null); do
+              echo "Warming $pkg"
+              golangci-lint run --timeout=20m "$pkg" >/dev/null \
+                || echo "::warning::golangci-lint reports findings in $pkg on main; the mega tier's lint shards fail on them"
+            done
           done
       - name: save Go build + lint cache
         if: always() && github.ref == 'refs/heads/main'
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: |
             ~/.cache/go-build
@@ -329,7 +332,7 @@ jobs:
     env:
       DATABASE_URL: postgres://faas:faas@localhost:5432/faas?sslmode=disable
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           fetch-depth: 0
           filter: blob:none
@@ -337,7 +340,7 @@ jobs:
         run: echo "date=$(date -u +%F)" >> "$GITHUB_OUTPUT"
       # Main pushes save this family; pull requests only restore it.
       - name: restore Go build + test cache
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: |
             ~/.cache/go-build
@@ -347,7 +350,7 @@ jobs:
             go-light-checks-${{ runner.os }}-go${{ env.GO_VERSION }}-${{ hashFiles('go.sum') }}-
             go-light-checks-${{ runner.os }}-
             go-checks-${{ runner.os }}-
-      - uses: actions/setup-go@v7
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with:
           go-version: ${{ env.GO_VERSION }}
           cache: false
@@ -368,6 +371,10 @@ jobs:
           python3 scripts/ci/select_importers_test.py
           python3 scripts/ci/cancel_conflicted_pr_runs_test.py
           bash scripts/ci/light_diff_base_test.sh
+      - name: curl installer and its cli-channel pointers
+        run: make cli-install-check
+      - name: coding-agent eval harness (parsers, commands, checks; no agents run)
+        run: make agent-eval-test
       - name: deploy Action scripts (vendored CLI, push-head guard, environment preflight)
         run: |
           make deploy-action-cli-check
@@ -395,6 +402,7 @@ jobs:
           bash scripts/unit-release-verify_test.sh
           bash scripts/ci/unit_deploy_test.sh
           bash scripts/ci/check_edge_store_test.sh
+          bash scripts/ci/seal_domain_vars_test.sh
           bash scripts/ci/verify_unit_release_test.sh
       - name: release binaries link no forbidden package
         run: make daemon-deps-check
@@ -402,10 +410,23 @@ jobs:
         run: make memstore-stubs-check
       - name: daemon environment contract
         run: make env-contract-check
+      # ADR-20261023115741: every customer entry point (route, CLI command,
+      # manifest key, flag, SDK file, table, ...) maps to a row of
+      # docs/ga-capability-inventory.md, so nothing ships without a tier and
+      # a platform flag; the catalog's generated artefacts stay in sync.
+      - name: capability coverage, catalog matrix and SDK spec
+        run: |
+          make capability-coverage-check
+          make capabilities-check
+          make sdk-spec-check
       - name: restore-drill script contract
         run: make lint-drill
       - name: forbid mutating SQL in normal runbooks
         run: make runbook-sql-check
+      - name: forbid committed executables
+        run: make committed-binaries-check
+      - name: require GitHub Actions pinned to a commit SHA
+        run: make action-pin-check
       - name: post-mortem artifact check
         run: make test-postmortems
       - name: restore-drill evidence freshness (M8 claim)
@@ -485,6 +506,10 @@ jobs:
       # tens of MB. Only this change's additions fail.
       - name: test store embedding check
         run: go run ./scripts/ci/teststorecheck -base "$LIGHT_DIFF_BASE"
+      # Seal domains (ADR 20261022111812): new holders of private identities,
+      # new direct identity loaders and new unsealed bytea columns fail.
+      - name: seal domain scope check
+        run: go run ./scripts/ci/sealdomaincheck
       - name: migrations check (static)
         run: make migrations-check
       - name: select migration changes
@@ -511,7 +536,7 @@ jobs:
         run: bash scripts/ci/migrations-replay-safety.sh
       - name: save Go build + test cache
         if: always() && github.ref == 'refs/heads/main'
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: |
             ~/.cache/go-build
@@ -522,10 +547,11 @@ jobs:
     name: "light: tests (shard ${{ matrix.shard }})"
     runs-on: ubuntu-latest
     # Changed packages run in full with -race. Each shard also runs related
-    # tests of one large package (cmd/gregale, pkg/state or pkg/apid/apidserver;
-    # see SELECTIVE_SHARD in affected_packages.py), without -race. The mega
-    # tier (ci.yml) runs every suite in full with -race nightly and before
-    # every release. Main pushes also warm the large-package build for PRs.
+    # tests of its large packages (cmd/gregale; pkg/sched and pkg/state;
+    # pkg/apid/apidserver; see SELECTIVE_SHARD in affected_packages.py),
+    # without -race. The mega tier (ci.yml) runs every suite in full with
+    # -race nightly and before every release. Main pushes also warm the
+    # large-package builds for PRs.
     # Cold native fixtures and large-package builds can exceed 20 minutes.
     # Use main's budget on PRs too; the Go test deadlines below stay bounded.
     timeout-minutes: 40
@@ -571,7 +597,7 @@ jobs:
       FAAS_PGTEST_TEMPLATE_DATABASE: "1"
       SPLIT_DATABASE_URL: postgres://faas:faas@localhost:5433/faas?sslmode=disable
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           fetch-depth: 2
       - id: cache-date
@@ -579,7 +605,7 @@ jobs:
       # Main pushes save one family per shard; pull requests only restore.
       # The race-built pg shard 1 family is the cold-start fallback.
       - name: restore Go build + test cache
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: |
             ~/.cache/go-build
@@ -589,7 +615,7 @@ jobs:
             go-light-test-${{ matrix.shard }}-${{ runner.os }}-go${{ env.GO_VERSION }}-${{ hashFiles('go.sum') }}-
             go-light-test-${{ matrix.shard }}-${{ runner.os }}-
             go-pg-1-${{ runner.os }}-
-      - uses: actions/setup-go@v7
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with:
           go-version: ${{ env.GO_VERSION }}
           cache: false
@@ -614,7 +640,7 @@ jobs:
         run: |
           bash scripts/ci/enable_postgres_tls.sh "$POSTGRES_SERVICE_CONTAINER"
           bash scripts/ci/enable_postgres_tls.sh "$SPLIT_POSTGRES_SERVICE_CONTAINER"
-      - uses: actions/setup-node@v7
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         if: matrix.shard == 1
         with:
           node-version: '22'
@@ -671,7 +697,7 @@ jobs:
             ./pkg/e2etest/testdata/helloserver ./pkg/e2etest
           go test -race -p 1 ./pkg/managedpostgres/guestqualification ./pkg/e2etest/postgresstarter ./pkg/e2etest/queuestarter ./pkg/e2etest/servicestarter ./pkg/e2etest/testdata/helloserver
           go test -race -p 1 ./pkg/e2etest -run '^Test(PostgresGuest|StorageGuest|QueueGuest|ServiceGuest)'
-      - uses: actions/setup-python@v7
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7
         if: matrix.shard == 1
         with:
           python-version: '3.12'
@@ -707,8 +733,8 @@ jobs:
       # Two kinds of package per shard:
       #   - changed packages (and the §6.2 invariants in tests/property when
       #     anything in their import tree changed) run in full with -race;
-      #   - the shard's pinned large package (cmd/gregale, pkg/state or
-      #     pkg/apid/apidserver), when changed, runs only the tests
+      #   - the shard's pinned large packages (cmd/gregale; pkg/sched and
+      #     pkg/state; pkg/apid/apidserver), when changed, run only the tests
       #     scripts/ci/select_package_tests.py relates to the change, capped,
       #     without -race. The mega tier runs those suites in full with -race.
       # The race build of cmd/apid can exhaust hosted-runner memory, so race
@@ -740,8 +766,10 @@ jobs:
             # before a 10m package deadline. Whichever shard the diff assigns
             # it to keeps every test and the 40m job bound (~13m of race
             # builds, then the run) with a bounded 18m package deadline.
+            # cmd/gatewayd-internal's ADR-570 PostgreSQL fleet and public-route
+            # suites take 13-17m with -race on a light runner (#4153).
             package_timeout=10m
-            if [[ " $PKGS " == *" ./pkg/environmentsync/pgintegration "* ]]; then package_timeout=18m; fi
+            if [[ " $PKGS " == *" ./pkg/environmentsync/pgintegration "* || " $PKGS " == *" ./cmd/gatewayd-internal "* ]]; then package_timeout=18m; fi
             # shellcheck disable=SC2086 # space-separated package list
             GOMEMLIMIT=2GiB GOGC=10 GOMAXPROCS=2 go test -race -count=1 -p 4 -timeout="$package_timeout" $PKGS || status=1
           fi
@@ -776,11 +804,12 @@ jobs:
           SHARD: ${{ matrix.shard }}
         run: |
           set -euo pipefail
-          pkg="$(python3 scripts/ci/affected_packages.py pinned --shard "$SHARD" --shards 3 < /dev/null)"
-          go test -count=1 -run '^$' "$pkg"
+          pkgs="$(python3 scripts/ci/affected_packages.py pinned --shard "$SHARD" --shards 3 < /dev/null)"
+          # shellcheck disable=SC2086 # space-separated package list
+          go test -count=1 -run '^$' $pkgs
       - name: save Go build + test cache
         if: always() && github.ref == 'refs/heads/main'
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: |
             ~/.cache/go-build
@@ -813,11 +842,11 @@ jobs:
       DATABASE_URL: postgres://faas:faas@localhost:5432/faas?sslmode=disable
       FAAS_SKIP_PG_TESTS: ""
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - id: cache-date
         run: echo "date=$(date -u +%F)" >> "$GITHUB_OUTPUT"
       - name: restore Go build + test cache
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: |
             ~/.cache/go-build
@@ -827,7 +856,7 @@ jobs:
             go-light-boot-${{ runner.os }}-go${{ env.GO_VERSION }}-${{ hashFiles('go.sum') }}-
             go-light-boot-${{ runner.os }}-
             go-e2e-${{ runner.os }}-
-      - uses: actions/setup-go@v7
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with:
           go-version: ${{ env.GO_VERSION }}
           cache: false
@@ -849,7 +878,7 @@ jobs:
             go test -race -count=1 -timeout=12m -run '^TestBootContract_' ./cmd/e2e/...
       - name: save Go build + test cache
         if: always() && github.ref == 'refs/heads/main'
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: |
             ~/.cache/go-build

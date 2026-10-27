@@ -70,7 +70,7 @@ def sync_detailed(
     *,
     client: AuthenticatedClient | Client,
 ) -> Response[CustomDomainResponse | Problem]:
-    """Show a custom domain's cert details (issue
+    """Show a custom domain's cert details.
 
      Returns the durable domain row + the live cert chain
     (NotAfter, SANs) by dialing port-443 and reading the leaf
@@ -103,7 +103,7 @@ def sync(
     *,
     client: AuthenticatedClient | Client,
 ) -> CustomDomainResponse | Problem | None:
-    """Show a custom domain's cert details (issue
+    """Show a custom domain's cert details.
 
      Returns the durable domain row + the live cert chain
     (NotAfter, SANs) by dialing port-443 and reading the leaf
@@ -131,7 +131,7 @@ async def asyncio_detailed(
     *,
     client: AuthenticatedClient | Client,
 ) -> Response[CustomDomainResponse | Problem]:
-    """Show a custom domain's cert details (issue
+    """Show a custom domain's cert details.
 
      Returns the durable domain row + the live cert chain
     (NotAfter, SANs) by dialing port-443 and reading the leaf
@@ -162,7 +162,7 @@ async def asyncio(
     *,
     client: AuthenticatedClient | Client,
 ) -> CustomDomainResponse | Problem | None:
-    """Show a custom domain's cert details (issue
+    """Show a custom domain's cert details.
 
      Returns the durable domain row + the live cert chain
     (NotAfter, SANs) by dialing port-443 and reading the leaf

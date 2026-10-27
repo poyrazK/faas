@@ -66,6 +66,11 @@ func (s *server) advanceCanaryWithLeasePolicy(w http.ResponseWriter, r *http.Req
 		api.WriteProblem(w, problem)
 		return
 	}
+	// ADR-20261020085706: the release waits in its stage until approved.
+	if p := s.releaseApprovalAdvanceProblem(r, app, d, req.ExpectedStep, requireWorkerLease); p != nil {
+		api.WriteProblem(w, p)
+		return
+	}
 	advancer, ok := s.store.(state.CanaryAdvancer)
 	if !ok {
 		writeCustomerInternalProblem(w, r, s.log, "advance canary",

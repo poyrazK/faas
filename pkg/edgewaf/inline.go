@@ -5,7 +5,6 @@ import (
 	"strings"
 	"time"
 
-	coreruleset "github.com/corazawaf/coraza-coreruleset/v4"
 	"github.com/corazawaf/coraza/v3"
 
 	"github.com/onebox-faas/faas/pkg/gateway"
@@ -38,7 +37,7 @@ SecAction "id:900000,phase:1,pass,t:none,nolog,setvar:tx.blocking_paranoia_level
 SecAuditEngine Off
 SecRequestBodyAccess Off
 SecResponseBodyAccess Off`, opts.directive(), rules.String())
-	waf, err := coraza.NewWAF(coraza.NewWAFConfig().WithRootFS(coreruleset.FS).WithDirectives(directives))
+	waf, err := coraza.NewWAF(coraza.NewWAFConfig().WithRootFS(opts.rootFS()).WithDirectives(directives))
 	if err != nil {
 		return nil, fmt.Errorf("compile in-path OWASP CRS rule set: %w", err)
 	}
@@ -58,31 +57,36 @@ func (i *Inspector) inlineWAF() (coraza.WAF, error) {
 
 // CheckInline implements gateway.WAFInlineChecker: it scores the sample's
 // headers and URI on the caller's goroutine. The body is ignored. A check
-// over the app's inline budget or with no free slot is skipped so the WAF
-// never queues requests or takes the gateway down; the caller lets the
-// request through and counts the skip.
+// over the app's inline budget, or that finds no slot within the slot wait,
+// is skipped so the WAF never queues requests for long or takes the gateway
+// down; the caller lets the request through and counts the skip. Seconds is
+// the latency the check added, including any wait for a slot.
 func (i *Inspector) CheckInline(s gateway.WAFSample) gateway.WAFInlineResult {
 	if !i.admitInline(s.AppID) {
-		return gateway.WAFInlineResult{Outcome: gateway.WAFInlineSkipped}
+		return gateway.WAFInlineResult{Outcome: gateway.WAFInlineSkipped, SkipReason: gateway.WAFInlineSkipBudget}
 	}
-	select {
-	case i.inlineSlots <- struct{}{}:
-	default:
+	start := time.Now()
+	tenant := inlineTenant(s)
+	if ok, overShare := i.inlineSlots.acquire(tenant, i.inlineWait); !ok {
 		i.settleInline(s.AppID, 0)
-		return gateway.WAFInlineResult{Outcome: gateway.WAFInlineSkipped}
+		reason := gateway.WAFInlineSkipBusy
+		if overShare {
+			reason = gateway.WAFInlineSkipAccountShare
+		}
+		return gateway.WAFInlineResult{Outcome: gateway.WAFInlineSkipped, SkipReason: reason}
 	}
-	defer func() { <-i.inlineSlots }()
+	defer i.inlineSlots.release(tenant)
 	waf, err := i.inlineWAF()
 	if err != nil {
 		i.settleInline(s.AppID, 0)
 		return gateway.WAFInlineResult{Outcome: gateway.WAFInlineError}
 	}
 	s.Body, s.BodyTruncated = nil, false
-	start := time.Now()
+	checkStart := time.Now()
 	res, err := evaluate(waf, s)
-	took := time.Since(start)
-	i.settleInline(s.AppID, took)
-	out := gateway.WAFInlineResult{Seconds: took.Seconds()}
+	// The app's budget is charged the check's own time, not the wait.
+	i.settleInline(s.AppID, time.Since(checkStart))
+	out := gateway.WAFInlineResult{Seconds: time.Since(start).Seconds()}
 	switch {
 	case err != nil:
 		out.Outcome = gateway.WAFInlineError
@@ -93,6 +97,18 @@ func (i *Inspector) CheckInline(s gateway.WAFSample) gateway.WAFInlineResult {
 	}
 	return out
 }
+
+// inlineTenant is whose share of the check slots a check counts against:
+// the app's account, or the app alone when the gateway knows no account.
+func inlineTenant(s gateway.WAFSample) string {
+	if s.AccountID != "" {
+		return s.AccountID
+	}
+	return "app:" + s.AppID
+}
+
+// InlineSlots is how many in-path checks may run at once.
+func (i *Inspector) InlineSlots() int { return i.inlineSlots.size }
 
 func (i *Inspector) admitInline(appID string) bool {
 	i.inlineMu.Lock()

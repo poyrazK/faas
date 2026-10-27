@@ -12,6 +12,7 @@ package main
 
 import (
 	"bufio"
+	"context"
 	"encoding/hex"
 	"fmt"
 	"net"
@@ -21,18 +22,6 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 )
-
-// containsNat reports whether the byte slice lists "nat" as a line.
-// Avoids a strings.Contains that could match e.g. "nat1234"; the
-// file format is one table per line — exact match on the trimmed line.
-func containsNat(data []byte) bool {
-	for _, line := range strings.Split(string(data), "\n") {
-		if strings.TrimSpace(line) == "nat" {
-			return true
-		}
-	}
-	return false
-}
 
 // procNetInodeColumn is the inode's position in a /proc/net/tcp{,6} row:
 // sl local_address rem_address st tx:rx tr:tm->when retrnsmt uid timeout inode.
@@ -209,9 +198,6 @@ func truncateLog(s string, n int) string {
 	return s[len(s)-n:]
 }
 
-// choosePortNormMode lives in portnorm_common.go (it depends on the
-// PortNormMode type + ladder constants, which are platform-agnostic).
-
 // probeListening is the cross-platform entry point. The no-child
 // early-out is here (testable on every platform); the /proc walk
 // is delegated to probeListeningLinux (gated `//go:build linux`)
@@ -223,4 +209,71 @@ func probeListening(pid, want int) (int, string, bool) {
 		return 0, "", false
 	}
 	return probeListeningLinux(pid, want)
+}
+
+// probeResult is the inner return shape of every L7 probe.
+// Class is the workload-class hint (empty = inconclusive).
+// OpenAPIDoc + OpenAPIDocTruncated are populated by probeHTTP
+// only; the other probes leave them at the zero value. HTTP1 reports
+// that the listener answered the probe with an HTTP/1.x response of any
+// status.
+type probeResult struct {
+	Class               string
+	OpenAPIDoc          []byte
+	OpenAPIDocTruncated bool
+	HTTP1               bool
+	// Stalled: the listener accepted the request but sent nothing before the
+	// probe's timeout. An HTTP/1 app still importing its code does that on a
+	// cold boot; a prior-knowledge gRPC server rejects HTTP/1.1 at once.
+	Stalled bool
+}
+
+// collectL7Probes runs the HTTP/1.1 probes concurrently and returns the
+// first non-empty class hint, keeping the OpenAPI document from whichever
+// probe captured one. h2Probe, which writes the HTTP/2 connection preface,
+// runs only when no HTTP/1.1 probe got an HTTP/1.x answer: an HTTP/1 server
+// cannot be a prior-knowledge gRPC server, and the preface would only put a
+// protocol error in the customer's logs (Hunt 11 H11-5). ctx bounds the
+// whole collection; on expiry it returns whatever document it has, with no
+// class hint (the engine re-derives from runtime shape).
+func collectL7Probes(ctx context.Context, http1Probes []func() probeResult, h2Probe func() probeResult) (string, []byte, bool) {
+	resCh := make(chan probeResult, len(http1Probes))
+	for _, fn := range http1Probes {
+		go func() { resCh <- fn() }()
+	}
+	var openAPIDoc []byte
+	var truncated bool
+	spokeHTTP1 := false
+	for collected := 0; collected < len(http1Probes); collected++ {
+		select {
+		case <-ctx.Done():
+			return "", openAPIDoc, truncated
+		case r := <-resCh:
+			if r.OpenAPIDoc != nil && openAPIDoc == nil {
+				openAPIDoc, truncated = r.OpenAPIDoc, r.OpenAPIDocTruncated
+			}
+			if r.Class != "" {
+				return r.Class, openAPIDoc, truncated
+			}
+			// A stalled listener is not a gRPC server either: the preface
+			// reached gunicorn while its workers were still booting (Hunt
+			// 14 H14-21).
+			spokeHTTP1 = spokeHTTP1 || r.HTTP1 || r.Stalled
+		}
+	}
+	if spokeHTTP1 || h2Probe == nil {
+		// All probes ran without a class hint. Surface the captured
+		// openapi_doc (if any) but DO NOT default to classHTTP — "no
+		// probe matched" is itself a signal (ADR-051 §"Class hint
+		// fallback").
+		return "", openAPIDoc, truncated
+	}
+	h2Ch := make(chan probeResult, 1)
+	go func() { h2Ch <- h2Probe() }()
+	select {
+	case <-ctx.Done():
+		return "", openAPIDoc, truncated
+	case r := <-h2Ch:
+		return r.Class, openAPIDoc, truncated
+	}
 }

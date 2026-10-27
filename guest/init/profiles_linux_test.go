@@ -86,14 +86,14 @@ func TestCPUProfileBridgeEpochAndCheckpoint(t *testing.T) {
 
 func TestCPUProfileEnvOptInPreservesApplicationOptions(t *testing.T) {
 	env := []string{"NODE_OPTIONS=--enable-source-maps", "PYTHONPATH=/app", "FAAS_PROFILING_ENDPOINT=http://wrong"}
-	out := profileEnvAtPaths(env, &api.ProfilingConfig{Enabled: true}, "/managed/node.cjs", "/managed/python", func(string) bool { return true })
+	out := profileEnvAtPaths(env, &api.ProfilingConfig{Enabled: true}, false, "/managed/node.cjs", "/managed/python", func(string) bool { return true })
 	text := strings.Join(out, "\n")
 	for _, want := range []string{"NODE_OPTIONS=--enable-source-maps --require=/managed/node.cjs", "PYTHONPATH=/managed/python:/app", "FAAS_PROFILING_ENDPOINT=" + api.ProfileLocalEndpoint} {
 		if !strings.Contains(text, want) {
 			t.Fatal("managed configuration missing", text)
 		}
 	}
-	disabled := profileEnvAtPaths(env, nil, "", "", func(string) bool { t.Fatal("disabled configuration checked runtime files"); return true })
+	disabled := profileEnvAtPaths(env, nil, false, "", "", func(string) bool { t.Fatal("disabled configuration checked runtime files"); return true })
 	if strings.Join(disabled, "\n") != strings.Join(env, "\n") {
 		t.Fatal("disabled configuration changed environment")
 	}

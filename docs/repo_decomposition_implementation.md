@@ -10,7 +10,11 @@ platform after one confirmation keypress. No per-language parser, no manifest
 the customer has to author.
 
 **Non-goal:** storage. Datastores found during the scan are reported as
-managed-service requirements, never provisioned (ADR-047, `docs/storage.md`).
+managed-service requirements, never run as apps (ADR-047, `docs/storage.md`).
+The one exception is a Compose `postgres` service on an account with managed
+PostgreSQL: a reviewed apply creates or reuses the managed database
+`<project>-<service>` and binds it to the services that use it, never
+replacing a key already configured (ADR-20261025111824).
 
 ---
 
@@ -41,6 +45,24 @@ $ gregale deploy
 `Y` creates the project, four apps, one cron row, and enqueues four builds.
 That is the whole interaction.
 
+Each new workload's app slug is its name. When the name cannot be a slug,
+because it is reserved (`api`, `billing`, `admin`, …), too short, or held by
+another app, the plan gives the app `<project>-<name>` instead (for example
+`shop-api`; ADR-20261022120205). Existing members keep their slugs. Inside the
+project the workload keeps its name: `depends_on`, the injected
+`GREGALE_SERVICE_<NAME>_URL` and `<name>.svc.gregale` all use `api`.
+
+A Compose service without `ports:` becomes an internal app: reachable from the
+project's other services, with no public URL (ADR-20261022131852). Services
+that publish `ports:` are public.
+
+`.gregale/project.yaml` at the repository root declares, for any detected
+workload, the service policy (`service_policy`, top level or per service),
+`visibility` (create-only) and `depends_on` (ADR-20261025093331). It is
+applied after the scan merges workloads: a Compose `x-gregale-service-policy`
+wins, `depends_on` lists are merged, and the merged graph goes through the
+same plan gate. Unknown services, keys or values fail the scan.
+
 For Compose workloads, `depends_on` is carried into the plan, validated as a
 cycle-free graph, and used to order app creation/build enqueueing. Each
 workload also receives platform-owned `GREGALE_SERVICE_<NAME>_URL` variables
@@ -50,9 +72,12 @@ canary companions (for example,
 `GREGALE_SERVICE_API_HTTPS_URL=https://api.internal`). The private DNS and
 proxy path provides the endpoint even when the target app is cold; denylisted
 stateful image services remain customer-provided and are not given a Gregale URL.
-Compose services may set `x-gregale-service-policy: declared` to make this
-dependency list an outbound authorization allowlist. The omitted/default
-`account` policy preserves same-account reachability for existing projects.
+New project workloads use the `project` policy: they may call every service in
+their own project, and this dependency list authorizes calls outside it
+(ADR-20261022111119). Compose services may set `x-gregale-service-policy:
+declared` to make the list an allowlist for every call (ADR-266), or `account`
+for same-account reachability. Existing
+workloads keep their stored policy when the extension is omitted.
 The target-side `x-gregale-preview-calls: deny` extension rejects internal
 calls from preview apps to that production workload before it wakes. Its
 default is `allow`.

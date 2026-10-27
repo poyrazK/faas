@@ -414,6 +414,7 @@ func buildCapacityReport(
 		VcpuBusy:        live * 2,
 	}
 	if stats != nil {
+		report.InstanceBridgeResidentBytes = stats.GetInstanceBridgeResidentBytes()
 		report.Instances = make([]*scheddpb.InstanceTelemetry, 0, len(stats.GetInstances()))
 		for _, in := range stats.GetInstances() {
 			if in == nil || in.GetInstance() == "" {
@@ -441,6 +442,10 @@ func buildCapacityReport(
 				EgressFloodDropsLimitPerMin:      in.GetEgressFloodDropsLimitPerMin(),
 				QuietPaused:                      in.GetQuietPaused(),
 				Frozen:                           in.GetFrozen(),
+				QuietPausedSince:                 in.GetQuietPausedSince(),
+				QuietLastPauseStartedAt:          in.GetQuietLastPauseStartedAt(),
+				QuietLastPauseEndedAt:            in.GetQuietLastPauseEndedAt(),
+				QuietPausedNsTotal:               in.GetQuietPausedNsTotal(),
 			}
 			report.Instances = append(report.Instances, row)
 		}

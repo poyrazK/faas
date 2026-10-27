@@ -622,3 +622,72 @@ func TestWorkerReplicaBoundsMirrorScheduler(t *testing.T) {
 		})
 	}
 }
+
+// `gregale workers list <app>` once ignored its argument and listed every
+// worker pool on the account.
+func TestCmdWorkersList_AppArgumentSelectsOnePool(t *testing.T) {
+	var instanceReads []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.URL.Path == "/v1/apps":
+			_ = json.NewEncoder(w).Encode([]api.AppResponse{
+				{ID: "app-orders", Slug: "order-worker", Status: "running", Manifest: api.AppManifest{ExecutionMode: api.ExecutionModeWorker}},
+				{ID: "app-emails", Slug: "email-worker", Status: "running", Manifest: api.AppManifest{ExecutionMode: api.ExecutionModeWorker}},
+				{ID: "app-web", Slug: "web-api", Status: "running", Manifest: api.AppManifest{ExecutionMode: api.ExecutionModeRequest}},
+			})
+		case strings.HasSuffix(r.URL.Path, "/instances"):
+			instanceReads = append(instanceReads, r.URL.Path)
+			_, _ = io.WriteString(w, `[]`)
+		case r.URL.Path == "/v1/triggers":
+			_, _ = io.WriteString(w, `[]`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	t.Setenv("FAAS_API", srv.URL)
+	t.Setenv("FAAS_TOKEN", "test-token")
+	main.ResetJSONOutput()
+	t.Cleanup(main.ResetJSONOutput)
+
+	for _, tc := range []struct {
+		name     string
+		args     []string
+		wantCode int
+		want     []string
+		reject   []string
+	}{
+		{name: "worker pool", args: []string{"email-worker"}, want: []string{"email-worker"}, reject: []string{"order-worker", "web-api"}},
+		{name: "no argument lists every pool", args: nil, want: []string{"email-worker", "order-worker"}, reject: []string{"web-api"}},
+		{name: "not a worker", args: []string{"web-api"}, wantCode: 1, want: []string{"web-api", "not a worker pool"}},
+		{name: "unknown app", args: []string{"missing"}, wantCode: 1, want: []string{"missing", "not found"}},
+		{name: "two apps", args: []string{"email-worker", "order-worker"}, wantCode: 1, want: []string{"usage: gregale workers [list] [<app> | --app <app>]"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			instanceReads = nil
+			stdout, restoreStdout := main.CaptureStdout(t)
+			stderr, restoreStderr := main.CaptureStderr(t)
+			code := main.CmdWorkersList(tc.args)
+			restoreStdout()
+			restoreStderr()
+			out := strings.ToLower(stdout.String() + stderr.String())
+			if code != tc.wantCode {
+				t.Fatalf("code = %d, want %d; output: %s", code, tc.wantCode, out)
+			}
+			for _, want := range tc.want {
+				if !strings.Contains(out, strings.ToLower(want)) {
+					t.Errorf("output lacks %q: %s", want, out)
+				}
+			}
+			for _, reject := range tc.reject {
+				if strings.Contains(out, reject) {
+					t.Errorf("output lists %q: %s", reject, out)
+				}
+			}
+			if len(tc.args) == 1 && len(instanceReads) > 1 {
+				t.Errorf("one selected pool read instances of %v", instanceReads)
+			}
+		})
+	}
+}

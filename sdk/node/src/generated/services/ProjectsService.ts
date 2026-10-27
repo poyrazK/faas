@@ -299,7 +299,7 @@ export class ProjectsService {
   /**
    * Scan a connected GitHub repository and return a deploy plan.
    * Resolves a durable GitHub App installation owned by the authenticated
-   * account, fetches the selected ref through githubd, and runs the same
+   * account, fetches the selected ref through the GitHub integration, and runs the same
    * read-only scanner as the multipart upload endpoint. The installation
    * token remains inside the control plane. When `install_id` is omitted,
    * exactly one connected installation must be able to access `repo`.
@@ -366,7 +366,7 @@ export class ProjectsService {
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
         \`profile_investigation_limit\`.
         `,
-        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        503: `Generic 503 envelope. Used by the API capacity gate (e.g.
         host age recipient not loaded → registry credential PUT
         returns 503 instead of accepting plaintext).
         `,
@@ -415,7 +415,7 @@ export class ProjectsService {
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
         \`profile_investigation_limit\`.
         `,
-        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        503: `Generic 503 envelope. Used by the API capacity gate (e.g.
         host age recipient not loaded → registry credential PUT
         returns 503 instead of accepting plaintext).
         `,
@@ -494,7 +494,7 @@ export class ProjectsService {
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
         \`profile_investigation_limit\`.
         `,
-        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        503: `Generic 503 envelope. Used by the API capacity gate (e.g.
         host age recipient not loaded → registry credential PUT
         returns 503 instead of accepting plaintext).
         `,
@@ -627,7 +627,7 @@ export class ProjectsService {
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
         \`profile_investigation_limit\`.
         `,
-        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        503: `Generic 503 envelope. Used by the API capacity gate (e.g.
         host age recipient not loaded → registry credential PUT
         returns 503 instead of accepting plaintext).
         `,
@@ -1097,7 +1097,7 @@ export class ProjectsService {
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
         \`profile_investigation_limit\`.
         `,
-        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        503: `Generic 503 envelope. Used by the API capacity gate (e.g.
         host age recipient not loaded → registry credential PUT
         returns 503 instead of accepting plaintext).
         `,
@@ -1157,7 +1157,7 @@ export class ProjectsService {
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
         \`profile_investigation_limit\`.
         `,
-        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        503: `Generic 503 envelope. Used by the API capacity gate (e.g.
         host age recipient not loaded → registry credential PUT
         returns 503 instead of accepting plaintext).
         `,
@@ -1217,7 +1217,7 @@ export class ProjectsService {
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
         \`profile_investigation_limit\`.
         `,
-        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        503: `Generic 503 envelope. Used by the API capacity gate (e.g.
         host age recipient not loaded → registry credential PUT
         returns 503 instead of accepting plaintext).
         `,
@@ -1274,7 +1274,7 @@ export class ProjectsService {
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
         \`profile_investigation_limit\`.
         `,
-        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        503: `Generic 503 envelope. Used by the API capacity gate (e.g.
         host age recipient not loaded → registry credential PUT
         returns 503 instead of accepting plaintext).
         `,
@@ -1331,7 +1331,7 @@ export class ProjectsService {
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
         \`profile_investigation_limit\`.
         `,
-        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        503: `Generic 503 envelope. Used by the API capacity gate (e.g.
         host age recipient not loaded → registry credential PUT
         returns 503 instead of accepting plaintext).
         `,
@@ -1374,7 +1374,7 @@ export class ProjectsService {
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
         \`profile_investigation_limit\`.
         `,
-        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        503: `Generic 503 envelope. Used by the API capacity gate (e.g.
         host age recipient not loaded → registry credential PUT
         returns 503 instead of accepting plaintext).
         `,
@@ -1417,7 +1417,7 @@ export class ProjectsService {
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
         \`profile_investigation_limit\`.
         `,
-        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        503: `Generic 503 envelope. Used by the API capacity gate (e.g.
         host age recipient not loaded → registry credential PUT
         returns 503 instead of accepting plaintext).
         `,
@@ -1468,7 +1468,7 @@ export class ProjectsService {
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
         \`profile_investigation_limit\`.
         `,
-        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        503: `Generic 503 envelope. Used by the API capacity gate (e.g.
         host age recipient not loaded → registry credential PUT
         returns 503 instead of accepting plaintext).
         `,
@@ -1519,7 +1519,7 @@ export class ProjectsService {
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
         \`profile_investigation_limit\`.
         `,
-        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        503: `Generic 503 envelope. Used by the API capacity gate (e.g.
         host age recipient not loaded → registry credential PUT
         returns 503 instead of accepting plaintext).
         `,
@@ -1577,7 +1577,7 @@ export class ProjectsService {
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
         \`profile_investigation_limit\`.
         `,
-        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        503: `Generic 503 envelope. Used by the API capacity gate (e.g.
         host age recipient not loaded → registry credential PUT
         returns 503 instead of accepting plaintext).
         `,
@@ -1628,7 +1628,7 @@ export class ProjectsService {
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
         \`profile_investigation_limit\`.
         `,
-        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        503: `Generic 503 envelope. Used by the API capacity gate (e.g.
         host age recipient not loaded → registry credential PUT
         returns 503 instead of accepting plaintext).
         `,
@@ -1678,7 +1678,7 @@ export class ProjectsService {
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
         \`profile_investigation_limit\`.
         `,
-        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        503: `Generic 503 envelope. Used by the API capacity gate (e.g.
         host age recipient not loaded → registry credential PUT
         returns 503 instead of accepting plaintext).
         `,
@@ -1738,7 +1738,7 @@ export class ProjectsService {
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
         \`profile_investigation_limit\`.
         `,
-        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        503: `Generic 503 envelope. Used by the API capacity gate (e.g.
         host age recipient not loaded → registry credential PUT
         returns 503 instead of accepting plaintext).
         `,
@@ -1781,7 +1781,7 @@ export class ProjectsService {
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
         \`profile_investigation_limit\`.
         `,
-        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        503: `Generic 503 envelope. Used by the API capacity gate (e.g.
         host age recipient not loaded → registry credential PUT
         returns 503 instead of accepting plaintext).
         `,
@@ -1841,7 +1841,7 @@ export class ProjectsService {
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
         \`profile_investigation_limit\`.
         `,
-        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        503: `Generic 503 envelope. Used by the API capacity gate (e.g.
         host age recipient not loaded → registry credential PUT
         returns 503 instead of accepting plaintext).
         `,
@@ -1901,7 +1901,7 @@ export class ProjectsService {
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
         \`profile_investigation_limit\`.
         `,
-        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        503: `Generic 503 envelope. Used by the API capacity gate (e.g.
         host age recipient not loaded → registry credential PUT
         returns 503 instead of accepting plaintext).
         `,
@@ -1961,7 +1961,7 @@ export class ProjectsService {
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
         \`profile_investigation_limit\`.
         `,
-        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        503: `Generic 503 envelope. Used by the API capacity gate (e.g.
         host age recipient not loaded → registry credential PUT
         returns 503 instead of accepting plaintext).
         `,
@@ -2048,7 +2048,7 @@ export class ProjectsService {
   }
   /**
    * List the secrets shared by every service of a project environment.
-   * Metadata only (ADR-1139): key, version, sealing key id and value
+   * Metadata only: key, version, sealing key id and value
    * fingerprint. Values are write-only and never returned.
    *
    * @returns ProjectEnvironmentSharedSecretsResponse The environment's shared secrets and the plan's limit.
@@ -2087,8 +2087,7 @@ export class ProjectsService {
   }
   /**
    * Set a secret shared by every service of a project environment.
-   * Seals the value for the fleet and stores it once for the environment
-   * (ADR-1139). Each service receives it at its next boot unless it sets
+   * Seals the value for the fleet and stores it once for the environment. Each service receives it at its next boot unless it sets
    * the same key itself; services' snapshots in the environment are
    * invalidated. Platform identity keys are rejected.
    *
@@ -2881,7 +2880,7 @@ export class ProjectsService {
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
         409: `code: conflict`,
-        410: `code: upload_session_expired — the resumable-upload session has been swept by the reaper (cmd/apid/upload_session_reaper.go) and cannot be appended to or committed. The CLI is expected to detect this on the first PATCH/COMMIT after expiry and mint a fresh session (issue #1182 §P1 PR-2).`,
+        410: `code: upload_session_expired — the resumable-upload session has been swept by the reaper and cannot be appended to or committed. The CLI is expected to detect this on the first PATCH/COMMIT after expiry and mint a fresh session.`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
@@ -2925,7 +2924,7 @@ export class ProjectsService {
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
         409: `code: conflict`,
-        410: `code: upload_session_expired — the resumable-upload session has been swept by the reaper (cmd/apid/upload_session_reaper.go) and cannot be appended to or committed. The CLI is expected to detect this on the first PATCH/COMMIT after expiry and mint a fresh session (issue #1182 §P1 PR-2).`,
+        410: `code: upload_session_expired — the resumable-upload session has been swept by the reaper and cannot be appended to or committed. The CLI is expected to detect this on the first PATCH/COMMIT after expiry and mint a fresh session.`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
@@ -3568,7 +3567,7 @@ export class ProjectsService {
   }
   /**
    * Drop a persisted --exclude row from deployment_scope_exclusions.
-   * Operator escape hatch (ADR-124 code-review fix #2) for
+   * Operator escape hatch (code-review fix #2) for
    * when a persisted slug no longer exists in the repo
    * (workload was renamed or deleted) and is blocking
    * subsequent deploys via exclude_unknown_slug. Without
@@ -5390,6 +5389,51 @@ export class ProjectsService {
     });
   }
   /**
+   * Preview a company promotion with destination production secret changes.
+   * Read-only, bounded preview with immutable secret version references, with the same rules as the personal secret preview. Requires MFA, secrets write permission and deployment permission in the organization.
+   * @returns ProjectEnvironmentPromotionPreviewResponse Company promotion preview listing secret key changes as version references only.
+   * @throws ApiError
+   */
+  public static previewOrgProjectEnvironmentPromotionSecrets({
+    organization,
+    slug,
+    environment,
+    requestBody,
+  }: {
+    /**
+     * Company organization slug that owns the addressed project; requires current membership and compatible organization credentials.
+     */
+    organization: string,
+    /**
+     * Project slug within the organization named in the URL.
+     */
+    slug: string,
+    /**
+     * Registered environment in the addressed organization project.
+     */
+    environment: string,
+    requestBody: ProjectEnvironmentPromotionSecretPreviewRequest,
+  }): CancelablePromise<ProjectEnvironmentPromotionPreviewResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/orgs/{organization}/projects/{slug}/environments/{environment}/promotion-preview',
+      path: {
+        'organization': organization,
+        'slug': slug,
+        'environment': environment,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        503: `Company secret releases or destination verification are unavailable.`,
+      },
+    });
+  }
+  /**
    * Inspect a protected company environment approval.
    * Reads the company approval lifecycle without returning its raw one-time approval token.
    * @returns ProjectEnvironmentApprovalStatusResponse Lifecycle metadata for a company approval, without its raw token.
@@ -5899,6 +5943,174 @@ export class ProjectsService {
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
         409: `code: conflict`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Abort an in-progress company environment promotion.
+   * Generation-fenced operator decision on a company promotion, with the same semantics as the personal abort route. Requires deployment permission in the organization.
+   * @returns ProjectPromotionControl Terminal acknowledgement of the company abort decision.
+   * @throws ApiError
+   */
+  public static abortOrgProjectEnvironmentPromotion({
+    organization,
+    slug,
+    environment,
+    promotion,
+    requestBody,
+  }: {
+    /**
+     * Company organization slug that owns the addressed project; requires current membership and compatible organization credentials.
+     */
+    organization: string,
+    /**
+     * Project slug within the organization named in the URL.
+     */
+    slug: string,
+    /**
+     * Registered environment in the addressed organization project.
+     */
+    environment: string,
+    /**
+     * Durable promotion identifier in the company environment history.
+     */
+    promotion: string,
+    requestBody: ProjectPromotionControlRequest,
+  }): CancelablePromise<ProjectPromotionControl> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/orgs/{organization}/projects/{slug}/environments/{environment}/promotions/{promotion}/abort',
+      path: {
+        'organization': organization,
+        'slug': slug,
+        'environment': environment,
+        'promotion': promotion,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `Company abort refused: the generation, request identity, phase or destination intent changed; inspect the promotion.`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Retry guarded restoration of a blocked company environment promotion.
+   * Retries a blocked company restoration with fresh baseline health and worker startup proof, like the personal recover route. Requires deployment permission in the organization.
+   * @returns ProjectPromotionControl Terminal acknowledgement of the company restoration retry.
+   * @throws ApiError
+   */
+  public static recoverOrgProjectEnvironmentPromotion({
+    organization,
+    slug,
+    environment,
+    promotion,
+    requestBody,
+  }: {
+    /**
+     * Company organization slug that owns the addressed project; requires current membership and compatible organization credentials.
+     */
+    organization: string,
+    /**
+     * Project slug within the organization named in the URL.
+     */
+    slug: string,
+    /**
+     * Registered environment in the addressed organization project.
+     */
+    environment: string,
+    /**
+     * Durable promotion identifier in the company environment history.
+     */
+    promotion: string,
+    requestBody: ProjectPromotionControlRequest,
+  }): CancelablePromise<ProjectPromotionControl> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/orgs/{organization}/projects/{slug}/environments/{environment}/promotions/{promotion}/recover',
+      path: {
+        'organization': organization,
+        'slug': slug,
+        'environment': environment,
+        'promotion': promotion,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `Company restoration retry refused: the inspected generation, request identity, phase or destination intent no longer allows it.`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Recover an interrupted company promotion migration without replaying SQL.
+   * Records explicit database inspection and resumes or resolves an interrupted company promotion migration, like the personal recover-migration route. Requires deployment permission in the organization.
+   * @returns ProjectPromotionMigrationRecovery Existing terminal acknowledgement of the company migration recovery.
+   * @throws ApiError
+   */
+  public static recoverOrgProjectEnvironmentPromotionMigration({
+    organization,
+    slug,
+    environment,
+    promotion,
+    requestBody,
+  }: {
+    /**
+     * Company organization slug that owns the addressed project; requires current membership and compatible organization credentials.
+     */
+    organization: string,
+    /**
+     * Project slug within the organization named in the URL.
+     */
+    slug: string,
+    /**
+     * Registered environment in the addressed organization project.
+     */
+    environment: string,
+    /**
+     * Durable promotion identifier in the company environment history.
+     */
+    promotion: string,
+    requestBody: ProjectPromotionMigrationRecoveryRequest,
+  }): CancelablePromise<ProjectPromotionMigrationRecovery> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/orgs/{organization}/projects/{slug}/environments/{environment}/promotions/{promotion}/recover-migration',
+      path: {
+        'organization': organization,
+        'slug': slug,
+        'environment': environment,
+        'promotion': promotion,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `Company migration recovery refused: the task, generation, runtime or destination intent changed.`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and

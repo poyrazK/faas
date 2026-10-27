@@ -13,10 +13,10 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/deploymentcheck"
 	"github.com/onebox-faas/faas/pkg/gateway"
+	"github.com/onebox-faas/faas/pkg/hostidentity"
 	"github.com/onebox-faas/faas/pkg/reqbudget"
 	"github.com/onebox-faas/faas/pkg/safetext"
 	"github.com/onebox-faas/faas/pkg/state"
-	"github.com/onebox-faas/faas/pkg/wire"
 )
 
 type deploymentResponsePicker interface {
@@ -141,7 +141,7 @@ func (c deploymentResponseChecker) check(ctx context.Context, target deploymentR
 	path, _ := url.Parse(request.Path)
 	path.Scheme, path.Host = "http", slug
 	if request.EnvironmentID != "" {
-		path.Host = gateway.BuildEnvironmentHost(wire.DeployWildcardSuffix, request.EnvironmentID, request.AppID)
+		path.Host = gateway.BuildEnvironmentHost(hostidentity.DeploySuffix(), request.EnvironmentID, request.AppID)
 	} else if domain := strings.TrimPrefix(c.appsDomain, "."); domain != "" {
 		path.Host += "." + domain
 	}
@@ -158,8 +158,7 @@ func (c deploymentResponseChecker) check(ctx context.Context, target deploymentR
 	probe.Header.Set("x-faas-wake-id", target.WakeID)
 	probe.Header.Set("x-faas-protocol", target.protocol)
 	response := &boundedMCPProbeResponseWriter{header: make(http.Header), cancel: cancel, maxBytes: api.DeploymentResponseCheckMaxBodyBytes}
-	c.forward(target.Target).ServeHTTP(response, probe)
-	if ctx.Err() != nil || response.status < 200 || response.status > 599 {
+	if serveBoundedProbe(c.forward(target.Target), response, probe) || ctx.Err() != nil || response.status < 200 || response.status > 599 {
 		return result, errors.New("no complete HTTP response")
 	}
 	result.HTTPStatus, result.BodyTruncated = response.status, response.tooLarge

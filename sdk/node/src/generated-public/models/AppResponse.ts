@@ -1,0 +1,272 @@
+/* generated using openapi-typescript-codegen -- do not edit */
+/* istanbul ignore file */
+/* tslint:disable */
+/* eslint-disable */
+import type { AppConfiguredResources } from './AppConfiguredResources.js';
+import type { AppEffectiveLimits } from './AppEffectiveLimits.js';
+import type { AppManifest } from './AppManifest.js';
+import type { AppServiceBinding } from './AppServiceBinding.js';
+import type { DeclaredRoute } from './DeclaredRoute.js';
+import type { ParkedDeploymentRef } from './ParkedDeploymentRef.js';
+import type { PreviewServiceCallsPolicy } from './PreviewServiceCallsPolicy.js';
+import type { PublicAuthStatus } from './PublicAuthStatus.js';
+import type { ResourceProfile } from './ResourceProfile.js';
+import type { RetryPolicyDTO } from './RetryPolicyDTO.js';
+import type { ScalingPolicy } from './ScalingPolicy.js';
+import type { ServiceBindingPolicy } from './ServiceBindingPolicy.js';
+import type { ServiceBindingTransport } from './ServiceBindingTransport.js';
+import type { ServiceCallerScopes } from './ServiceCallerScopes.js';
+import type { ServiceReliabilityPolicies } from './ServiceReliabilityPolicies.js';
+/**
+ * An app: slug, type, runtime (for functions), RAM/cpu/idle-timeout config, current state, last-deploy pointer, per-app outbound CIDR allowlist, and reactive scale-up trigger targets.
+ */
+export type AppResponse = {
+  /**
+   * Opaque fingerprint of app identity, source ownership and service binding settings. Use as the atomic precondition for a reviewed service-only update.
+   */
+  service_binding_fingerprint?: string;
+  id: string;
+  slug: string;
+  type: 'app' | 'function';
+  /**
+   * Parent project as a canonical hyphenated UUID. Omitted when the app is standalone. Read-only: app create and update requests do not accept it.
+   */
+  project_id?: string;
+  /**
+   * Public exposes the app through the edge; internal keeps it available only to authenticated service-to-service routing. Available on every plan.
+   */
+  visibility?: 'public' | 'internal';
+  /**
+   * Runtime-observed application shape. Repository scanning seeds the value and the first characterization boot may replace it. Distinct from type, which selects the app-vs-function execution contract.
+   */
+  workload_class?: 'http' | 'graphql' | 'grpc' | 'job' | 'worker';
+  /**
+   * Runtime for `type: function` apps. Omit for `type: app` (the default).
+   */
+  runtime?: 'node22' | 'python312' | 'go124' | 'go124-alpine' | 'node24' | 'python313' | 'binary';
+  ram_mb: number;
+  /**
+   * Plan-derived guest vCPU count. Present on read responses; explicit create-time values must match the canonical plan RAM/vCPU pair.
+   */
+  vcpu: number;
+  cpu_millicores: 250 | 500 | 1000;
+  /**
+   * Named profile when the configured memory and CPU exactly match one of the platform profiles; omitted for custom shapes.
+   */
+  resource_profile?: ResourceProfile;
+  configured_resources: AppConfiguredResources;
+  max_concurrency: number;
+  concurrency_per_vm: number;
+  effective_limits: AppEffectiveLimits;
+  idle_timeout_s?: number | null;
+  /**
+   * Configured per-app request wall-clock timeout in seconds; 0 means the plan/type default.
+   */
+  request_timeout_s?: number;
+  /**
+   * Requests one Node or Python function worker serves at once. 0 or 1 keeps one request per worker; the plan's concurrency_per_vm bound caps it. Python runs sync handlers on threads. Takes effect on the next deploy.
+   */
+  function_concurrency?: number;
+  min_instances: number;
+  /**
+   * Customer-visible app state. `undeployed` is projected when the app has no deployment rows; its persisted lifecycle remains active until the first deploy.
+   */
+  status: 'active' | 'evicted_cold' | 'deleted' | 'undeployed';
+  /**
+   * Present on app list/detail reads. Reports whether any deployment is currently live; this is independent from the app lifecycle status and does not assert that a historical artifact is safe to restore.
+   */
+  deployment_availability?: 'live' | 'no_live_deployment';
+  /**
+   * Trailing 30-day percentage of cache-eligible deployments served from the builder cache. Zero means no cache decision was recorded in the window.
+   */
+  build_cache_hit_rate_pct: number;
+  deleted_at?: string | null;
+  delete_grace_until?: string | null;
+  /**
+   * Stable platform hostname for the app (for example, https://my-app.gregale.dev).
+   */
+  url: string;
+  /**
+   * Customer-facing URL to share. Uses the verified default custom domain when configured, otherwise the platform URL.
+   */
+  canonical_url?: string;
+  /**
+   * Verified custom domain selected as the app's canonical host, when configured.
+   */
+  default_domain?: string;
+  /**
+   * Parent app slug for a pull-request or developer preview. Absent for production apps.
+   */
+  preview_of_slug?: string;
+  /**
+   * Pull-request number for a GitHub preview. Zero identifies a developer preview; absent for production apps.
+   */
+  preview_pr_number?: number;
+  /**
+   * Preview lifecycle state. Absent for production apps.
+   */
+  preview_pr_state?: 'open' | 'closed' | 'stale' | 'torn_down';
+  /**
+   * Automatic teardown deadline for a preview, when one is configured.
+   */
+  preview_expires_at?: string | null;
+  manifest: AppManifest;
+  /**
+   * Declared same-account service dependencies injected into this workload as legacy `_URL` environment variables plus additive `_HTTPS_URL` canary companions. Project workloads derive these from Compose; standalone apps derive them from service_binding_targets. They are discovery metadata under the `account` policy and the outbound authorization allowlist under the `declared` policy.
+   */
+  service_bindings?: Array<AppServiceBinding>;
+  service_reliability?: ServiceReliabilityPolicies;
+  /**
+   * Effective internal-service authorization policy. Legacy apps without a stored value return `account`.
+   */
+  service_binding_policy?: ServiceBindingPolicy;
+  /**
+   * Effective canonical service URL transport. Legacy apps without a stored value return `http`.
+   */
+  service_binding_transport?: ServiceBindingTransport;
+  /**
+   * Effective policy for preview callers reaching this app as a production service. Legacy apps return `allow`.
+   */
+  preview_service_calls_policy?: PreviewServiceCallsPolicy;
+  /**
+   * Target-side service allowlist of logical app slugs. Omitted means any same-account caller; an explicit empty array denies all. Compose owns project policies; the app API owns standalone policies.
+   */
+  allowed_service_callers?: Array<string>;
+  /**
+   * Per-caller HTTP grants for requests reaching this app through a service binding. A missing caller entry denies that caller; any allowed_service_callers entry must also match.
+   */
+  allowed_service_call_scopes?: ServiceCallerScopes;
+  /**
+   * Per-app outbound CIDR allowlist. Each entry is a CIDR string — v4 (`1.2.3.0/24`) or v6 (`2001:db8::/32`). v4-mapped v6 form (`::ffff:1.2.3.0/120`) is silently canonicalised to its v4 form at write time. Empty array means no allowlist rule; the per-netns chain's default-accept policy applies.
+   */
+  egress_allowlist?: Array<string>;
+  /**
+   * Extra TCP destination ports the app's guests may reach on top of 80 and 443. All other guest-originated traffic except DNS (pinned to the platform resolver) is dropped. Sorted; empty array when none are declared.
+   */
+  egress_ports?: Array<number>;
+  /**
+   * Per-instance RPS target for the reactive scale-up trigger. 0 = disabled. Hobby/Pro/Scale only. When measured per-instance RPS exceeds this value, the scheduler admits another instance (up to max_concurrency).
+   */
+  autoscale_target_rps: number;
+  /**
+   * Per-instance CPU% target (1..100) for the reactive scale-up trigger. 0 = disabled. Pro/Scale only. When measured per-instance CPU% exceeds this value, the scheduler admits another instance (up to max_concurrency).
+   */
+  autoscale_target_cpu_pct: number;
+  /**
+   * Per-app streaming flag. Free customers always see this as false; Hobby/Pro/Scale can PATCH it. activates the streamed response path; only persists the flag.
+   */
+  streaming_enabled?: boolean;
+  /**
+   * Per-app raw-bytes Upgrade bridge flag. Default-on for Hobby/Pro/Scale; Free customers always see this as false. PATCH-true on Free is rejected by the API with 403 plan_websocket_not_allowed.
+   */
+  websocket_enabled?: boolean;
+  /**
+   * Whether the edge should prefer the same running instance for this app. Best effort only; stale or unhealthy instances are bypassed automatically.
+   */
+  session_affinity?: boolean;
+  /**
+   * Optional browser cookie name used for rollout affinity when Gregale-Version-Key is absent. The edge hashes the value before forwarding it as a key.
+   */
+  version_affinity_cookie?: string;
+  /**
+   * Whether the edge issues an opaque, host-only browser cookie before the first rollout pick. Mutually exclusive with version_affinity_cookie.
+   */
+  version_affinity_managed_cookie?: boolean;
+  /**
+   * Retain superseded live deployments for revision-pinned requests for up to this many seconds. Zero disables revision pinning.
+   */
+  revision_pin_ttl_seconds?: number;
+  /**
+   * Default rollout for production releases that name no rollout policy. safe (or unset) uses the adaptive health-gated canary (each stage advances on clean evidence after a minute) with first-wake 5xx rollback; fast uses the aggressive ladder with the same rollback; immediate moves all traffic at once.
+   */
+  release_policy?: 'safe' | 'fast' | 'immediate';
+  /**
+   * Up to 3 concrete GET paths the default rollout probe checks instead of /. No queries, fragments, wildcards or parameters.
+   */
+  release_probe_paths?: Array<string>;
+  /**
+   * Per-app per-route observability flag. When true, the gateway emits gateway_request_duration_seconds{app,route,class} and serves the bounded reader at GET /v1/apps/{slug}/routes. Default-on for Hobby/Pro/Scale; Free customers always see this as false. PATCH-true on Free is rejected by the API with 403 plan_route_metrics_not_allowed.
+   */
+  route_metrics_enabled?: boolean;
+  /**
+   * When true, the gateway rejects paths not present in declared_routes or the imported OpenAPI document before waking an app.
+   */
+  only_allow_declared_routes?: boolean;
+  /**
+   * Optional explicit route contract. When non-empty it takes precedence over the imported OpenAPI document.
+   */
+  declared_routes?: Array<DeclaredRoute>;
+  /**
+   * Coarse per-app maintenance toggle. When true the gateway hot-path short-circuits every request to this app with 503 + Retry-After (default 60 s) BEFORE auth, BEFORE wake, BEFORE any kind=maintenance edge rule. Free-tier allowed. Surfaced in the GET /v1/apps/{slug} response so dashboards can show 'maintenance on / off' alongside the streaming/WS pills.
+   */
+  maintenance_mode?: boolean;
+  /**
+   * Per-app scaling policy. null = legacy row, project the empty-policy shape from min_instances / max_concurrency. Non-null = customer-authored policy persisted to the jsonb column `apps.scaling_policy`.
+   */
+  scaling_policy?: (null | ScalingPolicy);
+  /**
+   * App-level default for invocation retries. Queue binding and per-invocation policies override this value.
+   */
+  retry_policy?: (null | RetryPolicyDTO);
+  /**
+   * RFC 3339 timestamp of the most recent scale-out event the scheduler admitted for this app, or null if the app has never scaled out.
+   */
+  last_scale_out_at?: string | null;
+  /**
+   * RFC 3339 timestamp of the most recent scale-in event the scheduler reaped for this app, or null if the app has never scaled in.
+   */
+  last_scale_in_at?: string | null;
+  /**
+   * Per-app cosign signature-enforcement flag. When true, OCI image deploys must carry a valid signature from a publisher in the per-app trusted_signers list. Default false.
+   */
+  require_signed?: boolean;
+  /**
+   * Per-app two-tier snapshot flag. True on Pro/Scale by default; Free/Hobby always false.
+   */
+  warm_snapshot_enabled?: boolean;
+  /**
+   * Effective per-app request-count threshold for warm-tier capture on this app. Range [1, 100].
+   */
+  warm_snapshot_min_requests?: number;
+  /**
+   * Per-app time-since-first-ready threshold for warm-tier capture, milliseconds. Range [100, 60000].
+   */
+  warm_snapshot_min_ms?: number;
+  /**
+   * Desired paused warm-pool size. Zero disables the pool; bounded by max_concurrency and available on Hobby+ plans.
+   */
+  warm_pool_size?: number;
+  /**
+   * Per-app eviction tier. 'best_effort' (default) keeps the pre-#475 LRU-by-last_request_at reaper behaviour; 'reserved' protects the app from cross-account RAM-pressure eviction.
+   */
+  eviction_priority?: 'best_effort' | 'reserved';
+  /**
+   * Per-deployment token-gate flag. When true, the gateway demands `Authorization: Bearer <token>` on every request; cross-account tokens receive 403 insufficient_scope. Pro/Scale only — Free/Hobby PATCH-true is rejected with 403 plan_require_authn_not_allowed.
+   */
+  require_authn?: boolean;
+  /**
+   * End-customer credential policy. optional accepts anonymous requests and attributes valid consumer keys; required mandates a valid consumer key.
+   */
+  consumer_auth_mode?: 'optional' | 'required';
+  /**
+   * Require a verified platform tenant from a linked consumer key, verified tenant surface, or opted-in JWT authorization rule before app traffic is served. Default false.
+   */
+  platform_tenant_required?: boolean;
+  /**
+   * Most-recently parked deployment for this app, or null if never parked. The reference surfaces the closed-set parking reason + timestamp on GET /v1/apps/{slug} so operators can answer 'why is my app evicted_cold?' without grepping the audit log.
+   */
+  parked_deployment?: (ParkedDeploymentRef | null);
+  /**
+   * Per-app preferred spill target for cross-node pressure rebalance. Resolved UUID from the customer's named compute_nodes.name preference (null when unset). Consulted by Engine.RebalancePressuredApps before the A9 fallback; falls through to A9 when the target is inactive or full.
+   */
+  overflow_node?: string | null;
+  cors_default_enabled?: boolean | null;
+  cors_default_origins?: Array<string>;
+  public_auth?: PublicAuthStatus;
+  auth_default_flipped_at?: string | null;
+  /**
+   * Per-app wire-protocol selector. Closed set {http1, http2, grpc}. Default 'http1' (universal). Setting 'grpc' is plan-gated to Hobby+/Pro/Scale; Free customers see this as 'http1'.
+   */
+  app_protocol?: 'http1' | 'http2' | 'grpc';
+};
+

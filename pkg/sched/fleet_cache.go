@@ -99,6 +99,9 @@ type NodeTelemetry struct {
 	QuietPaused bool
 	// Frozen (ADR-1151): vmmd holds the instance frozen in place.
 	Frozen bool
+	// QuietPause is the instance's quiet pause record for the pause ledger
+	// (ADR-20261023171905).
+	QuietPause QuietPauseRecord
 }
 
 // NodeTelemetryCache holds the most recent batched report from each node.
@@ -108,7 +111,57 @@ type NodeTelemetry struct {
 type NodeTelemetryCache struct {
 	mu    sync.RWMutex
 	nodes map[string]telemetryEntry
+	// bridges is each node's instance bridge memory from the same stream
+	// (connection-survival ADR §2): node-level, so kept beside the rows.
+	bridges map[string]bridgeMemorySample
 }
+
+type bridgeMemorySample struct {
+	bytes    int64
+	lastSeen time.Time
+}
+
+// ReplaceInstanceBridge records a node's instance bridge memory.
+func (c *NodeTelemetryCache) ReplaceInstanceBridge(nodeID string, receivedAt time.Time, bytes int64) {
+	if c == nil || nodeID == "" || bytes < 0 {
+		return
+	}
+	c.mu.Lock()
+	if c.bridges == nil {
+		c.bridges = make(map[string]bridgeMemorySample)
+	}
+	c.bridges[nodeID] = bridgeMemorySample{bytes: bytes, lastSeen: receivedAt}
+	c.mu.Unlock()
+}
+
+// InstanceBridgeMB returns each node's fresh instance bridge memory in MiB,
+// rounded up.
+func (c *NodeTelemetryCache) InstanceBridgeMB(now time.Time) map[string]int {
+	if c == nil {
+		return nil
+	}
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	out := make(map[string]int, len(c.bridges))
+	for nodeID, s := range c.bridges {
+		if now.Sub(s.lastSeen) <= TelemetryFreshness {
+			out[nodeID] = BytesToMiBCeil(s.bytes)
+		}
+	}
+	return out
+}
+
+// BytesToMiBCeil converts a byte count to MiB, rounding up.
+func BytesToMiBCeil(b int64) int {
+	if b <= 0 {
+		return 0
+	}
+	return int((b + (1 << 20) - 1) >> 20)
+}
+
+// InstanceBridgeSink applies a node's instance bridge memory from its
+// capacity stream.
+type InstanceBridgeSink func(nodeID string, receivedAt time.Time, bytes int64)
 
 type telemetryEntry struct {
 	sampledAt time.Time

@@ -31,7 +31,6 @@ package main
 import (
 	"context"
 	"errors"
-	"fmt"
 	"net/http"
 	"time"
 
@@ -130,6 +129,8 @@ func cmdDeployRepoSourceRefContextWithJSONWaitOptionsAndManifestAndRollout(ctx c
 		Canary:                   ann.Canary,
 		MCPTaskMigrationOverride: ann.MCPTaskMigrationOverride,
 		OverrideFreeze:           ann.OverrideFreeze,
+		ReleaseAt:                ann.ReleaseAt,
+		ReleaseNotify:            ann.ReleaseNotify,
 		NoTriggers:               noTriggers,
 		RollbackOn5xx:            ann.RollbackOn5xx,
 		DisableStartupCPUBoost:   ann.DisableStartupCPUBoost,
@@ -220,7 +221,7 @@ func ensureSourceRefApp(ctx context.Context, client *Client, slug string, appPol
 	// owns it and the caller should choose a different name.
 	app, err := client.GetApp(ctx, slug)
 	if err != nil {
-		return api.AppResponse{}, fmt.Errorf("slug %q is already in use; pick a different --name", slug)
+		return api.AppResponse{}, slugInUseError(ctx, client, slug)
 	}
 	return configure(app)
 }

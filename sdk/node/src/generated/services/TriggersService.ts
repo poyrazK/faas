@@ -41,7 +41,7 @@ export class TriggersService {
     /**
      * Optional trigger kind filter (kafka / nats / redis_streams
      * / sqs_compat / queue). Invalid values produce an empty list,
-     * not 400 — see the trigger list paginator in pkg/apid.
+     * not 400.
      *
      */
     kind?: TriggerKind,
@@ -69,7 +69,7 @@ export class TriggersService {
    * `plan_triggers_not_allowed` for Free plan. A 403 may be
    * `trigger_kind_not_allowed`, `plan_trigger_quota`,
    * `trigger_batch_window_too_large`, or
-   * `trigger_tls_skip_verify_not_allowed`; see ADR-100.
+   * `trigger_tls_skip_verify_not_allowed`.
    *
    * @returns Trigger The new trigger.
    * @throws ApiError
@@ -114,7 +114,7 @@ export class TriggersService {
    * Fires a `triggers:` and `event_triggers:` fragment at the server,
    * validates via the same path the CLI uses, and returns per-row ids
    * and any per-row RFC 7807 codes. Event triggers for the target app
-   * are applied the way a source deploy applies them (ADR-1342):
+   * are applied the way a source deploy applies them:
    * existing subscriptions are kept, and a failure is one `errors`
    * row after its changes are rolled back.
    *
@@ -607,7 +607,7 @@ export class TriggersService {
   /**
    * Per-state aggregate counts for one trigger.
    * Counter roll-up by state. Not a Prometheus surface — that
-   * is /v1/metrics (issue #684).
+   * is /v1/metrics.
    *
    * @returns TriggerMetricsResponse Aggregated counts.
    * @throws ApiError
@@ -638,7 +638,7 @@ export class TriggersService {
     });
   }
   /**
-   * Internal — schedd posts a batch envelope to the gateway.
+   * Internal — the scheduler posts a batch envelope to the gateway.
    * Internal-only route. Schedd invokes this once per closed
    * batch. The gateway delivers records sequentially and returns one
    * result per item. Each function response may include

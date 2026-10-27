@@ -103,7 +103,7 @@ For an affected app, compare the exact inputs used by the fleet route reader:
 
 ```text
 max by (node_id) (up{job="gatewayd-internal"})
-max by (node_id, route) (gateway_requests_by_route_total{app="<app-id>"})
+max by (node_id, route) (last_over_time(gateway_requests_by_route_total{app="<app-id>"}[604800s]))
 ```
 
 Then call `gregale app <slug> routes --json`. The response's

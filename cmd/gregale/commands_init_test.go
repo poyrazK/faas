@@ -233,7 +233,7 @@ func TestCmdInit_QueueWorkerQuickstartContract(t *testing.T) {
 		"gregale deploy --name orders-worker",
 		"gregale queue send orders-worker",
 		"gregale queue status orders-worker",
-		"gregale dlq orders-worker",
+		"gregale dlq list orders-worker",
 	}
 	last := -1
 	for _, step := range steps {
@@ -618,7 +618,7 @@ func TestCmdInit_List_GroupsByCategory(t *testing.T) {
 	}
 	for cat, names := range wantPerCat {
 		for _, n := range names {
-			needle := "\n  " + n + "\n"
+			needle := "\n  " + n + " "
 			if !strings.Contains(out, needle) {
 				t.Errorf("category %q missing template %q (looked for %q); output:\n%s", cat, n, needle, out)
 			}

@@ -12,16 +12,40 @@
 # supplied below for Bash and customer applications.
 FROM mirror.gcr.io/library/busybox:1.37.0-musl@sha256:5cec3fc171c87218698e85a52af7087de727372aae264a787b8112901a5b0092 AS busybox
 
-FROM mirror.gcr.io/library/debian:12-slim@sha256:a4672c0cb26fbdde88e38fa2dfb6c681942306680e41e4378b28770b6e79ee91 AS build
-# Issue #197 B3.5 (extension): base-minimal shares the same `debian:12-slim`
-# digest as builder-base; the lock entry covers both. The `scratch` FROM
-# below is the empty canonical image (no upstream repo) and is exempt
-# from the lock.
-RUN apt-get update && apt-get install -y --no-install-recommends \
+FROM mirror.gcr.io/library/debian:13-slim@sha256:4876fdea29cac1a33a3195f1eb1952feb1fca7dd6dd00be3e2f1879cf20d34d2 AS build
+# Issue #197 B3.5 (extension): pinned via images/Dockerfile.lock, at the same
+# `debian:13-slim` digest as base-debian-parent (ADR 20261023220532 step 4).
+# Debian 13 drops 13 libraries Debian 12 shipped here; `gregalectl audit
+# base-libraries` lists the live app layers that need one. The `scratch` FROM
+# below is the empty canonical image (no upstream repo) and is exempt from the
+# lock.
+# The final stage copies libraries out of this stage, so upgrade first: a
+# security update published after the pinned image must still reach drive0.
+RUN apt-get update && DEBIAN_FRONTEND=noninteractive \
+      apt-get upgrade -y --no-install-recommends && \
+    apt-get install -y --no-install-recommends \
       libc6 ca-certificates bash && \
     rm -rf /var/lib/apt/lists/*
+# Declare what the final stage copies (ADR 20261023220532). Without dpkg
+# metadata a scanner sees no packages here, although every app on this base
+# loads this glibc. Keep the status entries of each package that owns a file
+# under the copied library trees or /bin/bash, plus ca-certificates for the
+# copied bundle; nothing else of dpkg is copied.
+RUN set -eu; \
+    keep="ca-certificates"; \
+    for pkg in $(dpkg-query -W -f '${binary:Package}\n'); do \
+      if dpkg -L "${pkg}" | grep -qE '^(/usr)?/lib(64|/x86_64-linux-gnu)/.|^(/usr)?/bin/bash$'; then \
+        keep="${keep} ${pkg%%:*}"; \
+      fi; \
+    done; \
+    mkdir -p /tmp/declared/var/lib/dpkg /tmp/declared/etc; \
+    awk -v keep="${keep}" 'BEGIN { RS = ""; ORS = "\n\n"; n = split(keep, k, " "); for (i = 1; i <= n; i++) want[k[i]] = 1 } \
+      $1 == "Package:" && ($2 in want)' /var/lib/dpkg/status > /tmp/declared/var/lib/dpkg/status; \
+    cp /usr/lib/os-release /tmp/declared/etc/os-release; \
+    grep -q '^Package: libc6$' /tmp/declared/var/lib/dpkg/status
 
 FROM scratch
+COPY --from=build /tmp/declared/ /
 COPY --from=build /lib/x86_64-linux-gnu/ /lib/x86_64-linux-gnu/
 COPY --from=build /lib64/ /lib64/
 COPY --from=busybox /bin/busybox /bin/busybox

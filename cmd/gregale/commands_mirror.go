@@ -145,7 +145,7 @@ func cmdMirrorCreate(args []string) int {
 		RedactHeaders:      headers,
 	})
 	if err != nil {
-		return printErr("Create failed", err)
+		return printErr("Could not create traffic mirror", err)
 	}
 	if jsonOutput {
 		return jsonOut(writeJSON(resp))
@@ -319,7 +319,7 @@ func cmdMirrorUpdate(args []string) int {
 	}
 	resp, err := client.PatchAppsSlugMirrorsId(context.Background(), *slug, *id, req)
 	if err != nil {
-		return printErr("Update failed", err)
+		return printErr("Could not update traffic mirror", err)
 	}
 	if jsonOutput {
 		return jsonOut(writeJSON(resp))
@@ -351,7 +351,7 @@ func cmdMirrorRm(args []string) int {
 		return printErr("Not logged in", err)
 	}
 	if err := client.DeleteAppsSlugMirrorsId(context.Background(), *slug, *id); err != nil {
-		return printErr("Delete failed", err)
+		return printErr("Could not delete traffic mirror", err)
 	}
 	if jsonOutput {
 		return jsonOut(writeJSON(map[string]any{"deleted": true, "id": *id}))
@@ -390,19 +390,21 @@ func cmdMirrorSummary(args []string) int {
 	if jsonOutput {
 		return jsonOut(writeJSON(resp))
 	}
-	_, _ = fmt.Fprintf(os.Stdout, "Window:         %d s\n", resp.WindowSeconds)
-	_, _ = fmt.Fprintf(os.Stdout, "Invocations:    %d\n", resp.TotalInvocations)
-	_, _ = fmt.Fprintf(os.Stdout, "Changed:        %d (%.2f%%)\n", resp.ChangedResponseCount, resp.ChangedResponsePct)
-	_, _ = fmt.Fprintf(os.Stdout, "Inconclusive:   %d\n", resp.IncompleteComparisonCount)
-	_, _ = fmt.Fprintf(os.Stdout, "Status diff:    %d\n", resp.StatusDiffCount)
-	_, _ = fmt.Fprintf(os.Stdout, "Schema diff:    %d\n", resp.SchemaDiffCount)
-	_, _ = fmt.Fprintf(os.Stdout, "Body diff:      %d\n", resp.BodyDiffCount)
-	_, _ = fmt.Fprintf(os.Stdout, "Mean latency Δ: %d ms\n", resp.MeanLatencyDiffMs)
-	_, _ = fmt.Fprintf(os.Stdout, "p99 latency Δ:  %d ms\n", resp.P99LatencyDiffMs)
-	_, _ = fmt.Fprintf(os.Stdout, "Crashes:        %d\n", resp.CrashCount)
-	_, _ = fmt.Fprintf(os.Stdout, "Admission timeout:  %d\n", resp.SchedulerAdmissionTimeoutCount)
-	_, _ = fmt.Fprintf(os.Stdout, "Admission rejected: %d\n", resp.SchedulerAdmissionRejectedCount)
-	_, _ = fmt.Fprintf(os.Stdout, "Admission errors:   %d\n", resp.SchedulerAdmissionErrorCount)
+	_, _ = fmt.Fprintf(osStdout, "Window:         %d s\n", resp.WindowSeconds)
+	_, _ = fmt.Fprintf(osStdout, "Invocations:    %d\n", resp.TotalInvocations)
+	_, _ = fmt.Fprintf(osStdout, "Changed:        %d (%.2f%%)\n", resp.ChangedResponseCount, resp.ChangedResponsePct)
+	_, _ = fmt.Fprintf(osStdout, "Inconclusive:   %d\n", resp.IncompleteComparisonCount)
+	_, _ = fmt.Fprintf(osStdout, "Status diff:    %d\n", resp.StatusDiffCount)
+	_, _ = fmt.Fprintf(osStdout, "Schema diff:    %d\n", resp.SchemaDiffCount)
+	_, _ = fmt.Fprintf(osStdout, "Body diff:      %d\n", resp.BodyDiffCount)
+	_, _ = fmt.Fprintf(osStdout, "Mean latency Δ: %d ms\n", resp.MeanLatencyDiffMs)
+	_, _ = fmt.Fprintf(osStdout, "p99 latency Δ:  %d ms\n", resp.P99LatencyDiffMs)
+	// A mirror "crash" is a 5xx or no response; a deliberate 500 read as a
+	// crash (Hunt 12 H12-38).
+	_, _ = fmt.Fprintf(osStdout, "Crashes:        %d (mirror answered 5xx or not at all)\n", resp.CrashCount)
+	_, _ = fmt.Fprintf(osStdout, "Admission timeout:  %d\n", resp.SchedulerAdmissionTimeoutCount)
+	_, _ = fmt.Fprintf(osStdout, "Admission rejected: %d\n", resp.SchedulerAdmissionRejectedCount)
+	_, _ = fmt.Fprintf(osStdout, "Admission errors:   %d\n", resp.SchedulerAdmissionErrorCount)
 	if resp.SchedulerAdmissionRejectedCount > 0 {
 		warnMirrorConcurrency(client, *slug)
 	}

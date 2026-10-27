@@ -96,8 +96,9 @@ func (l *Loop) scheduleQueuePushLanes(ctx context.Context, t sqlc.Trigger, store
 	appID, bindingID := t.AppID.String(), t.QueueBindingID.String()
 	if binding, err := l.engine.Store().QueueBindingByID(ctx, t.AccountID.String(), appID, bindingID); err == nil {
 		maxConcurrency = max(binding.MaxConcurrency, 1)
-		if stats, err := l.engine.Store().QueueStateForBinding(ctx, appID, bindingID); err == nil {
-			depth = stats.Depth
+		// Lanes never exceed max_concurrency, so depth past it changes nothing.
+		if bounded, err := l.engine.Store().QueueDepthForBindingInScope(ctx, appID, bindingID, "", maxConcurrency); err == nil {
+			depth = bounded
 		}
 	}
 	// A lane carries one record. The binding projection sizes batches at

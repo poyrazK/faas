@@ -62,6 +62,29 @@ func TestCliCommandSummariesArePlain(t *testing.T) {
 	}
 }
 
+// Subcommand summaries follow the same rules; detail goes in Notes.
+func TestCliSubcommandSummariesArePlain(t *testing.T) {
+	enableEveryCLIFeature(t)
+	var walk func(path string, subs []main.CliSub)
+	walk = func(path string, subs []main.CliSub) {
+		for _, sub := range subs {
+			subPath := path + " " + sub.Name
+			if n := utf8.RuneCountInString(sub.Short); n == 0 || n > 70 {
+				t.Errorf("%s: summary is %d characters; keep it to 70 and move detail to Notes: %q", subPath, n, sub.Short)
+			}
+			for _, syntax := range []string{"|", "--", "gregale ", "<", "ADR-", "slug defaults"} {
+				if strings.Contains(sub.Short, syntax) {
+					t.Errorf("%s: summary contains %q; move usage details to flags, notes or examples: %q", subPath, syntax, sub.Short)
+				}
+			}
+			walk(subPath, sub.Subcommands)
+		}
+	}
+	for _, command := range main.VisibleCliCommands() {
+		walk(command.Name, command.Subcommands)
+	}
+}
+
 // ADR numbers are for maintainers; customer help explains behavior instead.
 func TestCliHelpTextOmitsADRReferences(t *testing.T) {
 	enableEveryCLIFeature(t)
@@ -160,5 +183,19 @@ func TestCompactHelpOmitsEmptyCommonCommands(t *testing.T) {
 		if strings.Contains(out.String(), "Common commands:\n\n") || strings.HasSuffix(out.String(), "Common commands:\n") {
 			t.Errorf("%s compact help prints an empty Common commands section:\n%s", command.Name, out.String())
 		}
+	}
+}
+
+// Detail moved out of a subcommand summary stays visible in its help.
+func TestSubcommandNotesAppearInHelp(t *testing.T) {
+	var out bytes.Buffer
+	oldOut := *main.OsStdout
+	*main.OsStdout = &out
+	t.Cleanup(func() { *main.OsStdout = oldOut })
+	if code := main.Run([]string{"domains", "verify", "--help"}); code != 0 {
+		t.Fatalf("domains verify --help = %d", code)
+	}
+	if !strings.Contains(out.String(), "Check DNS and certificate verification status") || !strings.Contains(out.String(), "Exits nonzero while pending.") {
+		t.Fatalf("help lacks the summary or its note:\n%s", out.String())
 	}
 }

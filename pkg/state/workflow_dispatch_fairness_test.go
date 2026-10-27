@@ -265,7 +265,14 @@ func TestWorkflowDispatchStaleLeaseRecoveryAndCancelledAdmission(t *testing.T) {
 		if _, err := store.ClaimNextDueWorkflowRun(cancelled); !errors.Is(err, context.Canceled) {
 			t.Fatalf("cancelled context admitted work: %v", err)
 		}
-		claimFairDispatchRun(t, store, run)
+		due, err := store.ClaimNextDueWorkflowRun(t.Context())
+		if err != nil || due == nil || due.ID != run.ID {
+			t.Fatalf("claimed=%+v err=%v, want %s", due, err, run.ID)
+		}
+		// A due claim reports when it was due, for the dispatch lag metric.
+		if due.ClaimedDueAt == nil || !due.ClaimedDueAt.Equal(due.ScheduledFor) {
+			t.Fatalf("due claim ClaimedDueAt=%v scheduled_for=%v", due.ClaimedDueAt, due.ScheduledFor)
+		}
 		if err := store.CreateWorkflowSteps(t.Context(), run.ID, []*WorkflowStep{{StepName: "work", Status: WorkflowStepStatusRunning, Attempt: 1}}); err != nil {
 			t.Fatal(err)
 		}
@@ -279,7 +286,14 @@ func TestWorkflowDispatchStaleLeaseRecoveryAndCancelledAdmission(t *testing.T) {
 				t.Fatal(err)
 			}
 		}
-		claimFairDispatchRun(t, store, run)
+		recovered, err := store.ClaimNextDueWorkflowRun(t.Context())
+		if err != nil || recovered == nil || recovered.ID != run.ID {
+			t.Fatalf("recovered=%+v err=%v, want %s", recovered, err, run.ID)
+		}
+		// A lease recovery is not a late dispatch.
+		if recovered.ClaimedDueAt != nil {
+			t.Fatalf("lease recovery reported ClaimedDueAt=%v", recovered.ClaimedDueAt)
+		}
 		steps, err := store.GetWorkflowSteps(t.Context(), run.ID)
 		if err != nil || len(steps) != 1 || steps[0].Status != WorkflowStepStatusPending {
 			t.Fatalf("stale steps not recovered: %+v err=%v", steps, err)

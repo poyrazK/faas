@@ -287,7 +287,10 @@ func TestPgCloneEnvironmentCleanupScopeColumnInventory(t *testing.T) {
 		"application_standard_assignments.scope", // ADR-595 hierarchy level (organization/project/application), not an environment.
 		"binding_verification_runs.scope",        // Retained verification evidence blocks deployment and scope cleanup.
 		"custom_domains.environment_id",
+		"customer_operation_approval_forms.scope",
+		"customer_operation_concurrency_policies.scope",
 		"customer_operation_definitions.scope",
+		"customer_operation_queue.scope",
 		"customer_operation_webhook_bindings.scope",
 		"customer_operation_workflow_states.scope",
 		"customer_workflow_readiness_subscriptions.scope",
@@ -366,6 +369,7 @@ func TestPgCloneEnvironmentCleanupScopeColumnInventory(t *testing.T) {
 		"project_release_stages.environment_slug", // Retained stages reference the environment through a composite foreign key.
 		"queue_bindings.deployment_scope",
 		"queue_bindings.environment_id",
+		"release_database_switches.scope",     // Database-restoring rollback evidence (ADR-20261023181931); app-scoped and retained.
 		"runtime_config_apply_receipts.scope", // Platform runtime-config scope (global/control_plane/daemon/node), not an environment.
 		"runtime_config_entries.scope",
 		"runtime_config_operations.scope",

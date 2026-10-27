@@ -72,6 +72,13 @@ func spoolRoot() string {
 	return "/var/spool/faas/builds"
 }
 
+// multipartOverridesProblem rejects an `overrides` field on a source upload.
+// Only JSON image deployments take the overrides object (ADR-053); a source
+// tree declares its run contract in gregale.yaml.
+func multipartOverridesProblem() *api.Problem {
+	return api.ErrValidation("overrides is accepted only on JSON image deployments; a source deployment declares hosting.port, hosting.start and hosting.health in gregale.yaml, and the multipart healthcheck and override_env fields set its startup probe and environment")
+}
+
 // createDeploymentMultipart handles source tarball + dockerfile + function
 // source uploads (spec §4.2, §9). Multipart form fields:
 //
@@ -83,6 +90,8 @@ func spoolRoot() string {
 //	source_url string — optional informational repository provenance URL.
 //	commit_sha string — optional lowercase hexadecimal Git commit identifier.
 //	override_env string — optional JSON object of per-deployment plaintext env values.
+//
+// An `overrides` field is rejected (multipartOverridesProblem).
 //
 // DeployedApps is enforced at app-create time via
 // store.CreateAppIfUnderQuota — the deploy path cannot bypass it because
@@ -143,6 +152,8 @@ func (s *server) createDeploymentMultipart(w http.ResponseWriter, r *http.Reques
 		disableStartupCPUBoost   *bool
 		mcpTaskMigrationOverride bool
 		overrideFreeze           string
+		releaseAt                string
+		releaseNotify            []string
 		healthcheck              *api.DeploymentHealthcheck
 		overrideEnv              map[string]string
 		overrideEnvSeen          bool
@@ -314,6 +325,20 @@ func (s *server) createDeploymentMultipart(w http.ResponseWriter, r *http.Reques
 				return
 			}
 			overrideFreeze = strings.TrimSpace(string(b))
+		case "release_at":
+			b, readErr := io.ReadAll(io.LimitReader(part, 65))
+			if readErr != nil || len(b) > 64 {
+				api.WriteProblem(w, api.ErrValidation("release_at must be an RFC 3339 time"))
+				return
+			}
+			releaseAt = strings.TrimSpace(string(b))
+		case "release_notify":
+			b, readErr := io.ReadAll(io.LimitReader(part, 257))
+			if readErr != nil || len(b) > 256 || len(releaseNotify) >= api.ScheduledReleaseNotifyChannelsMax {
+				api.WriteProblem(w, api.ErrValidation(fmt.Sprintf("release_notify names at most %d channels of at most 256 characters", api.ScheduledReleaseNotifyChannelsMax)))
+				return
+			}
+			releaseNotify = append(releaseNotify, strings.TrimSpace(string(b)))
 		case "healthcheck":
 			b, readErr := io.ReadAll(io.LimitReader(part, (64<<10)+1))
 			if readErr != nil || len(b) > 64<<10 || json.Unmarshal(b, &healthcheck) != nil {
@@ -359,6 +384,12 @@ func (s *server) createDeploymentMultipart(w http.ResponseWriter, r *http.Reques
 				api.WriteProblem(w, prob)
 				return
 			}
+		case "overrides":
+			// The JSON deployment field is not a multipart field (ADR-053):
+			// silently dropping it deployed without the caller's port or
+			// healthcheck.
+			api.WriteProblem(w, multipartOverridesProblem())
+			return
 		default:
 			// Ignore unknown fields so clients can ship extra metadata.
 			_, _ = io.Copy(io.Discard, part)
@@ -375,7 +406,7 @@ func (s *server) createDeploymentMultipart(w http.ResponseWriter, r *http.Reques
 		api.WriteProblem(w, prob)
 		return
 	}
-	rolloutReq := &api.CreateDeploymentRequest{Scope: scope, Environment: environment, TrafficPercent: trafficPercent, Canary: canarySpec, RollbackOn5xx: rollbackOn5xx, DisableStartupCPUBoost: disableStartupCPUBoost, MCPTaskMigrationOverride: mcpTaskMigrationOverride, OverrideFreeze: overrideFreeze, Sidecars: sidecars}
+	rolloutReq := &api.CreateDeploymentRequest{Scope: scope, Environment: environment, TrafficPercent: trafficPercent, Canary: canarySpec, RollbackOn5xx: rollbackOn5xx, DisableStartupCPUBoost: disableStartupCPUBoost, MCPTaskMigrationOverride: mcpTaskMigrationOverride, OverrideFreeze: overrideFreeze, ReleaseAt: releaseAt, ReleaseNotify: releaseNotify, Sidecars: sidecars}
 	rolloutReq.Overrides = sourceHealthcheckOverrides(healthcheck)
 	if len(overrideEnv) > 0 {
 		if rolloutReq.Overrides == nil {
@@ -398,11 +429,16 @@ func (s *server) createDeploymentMultipart(w http.ResponseWriter, r *http.Reques
 			return
 		}
 	}
-	if prob := s.releaseFreezeProblem(r, acct, app, rolloutReq.Scope, rolloutReq.OverrideFreeze); prob != nil {
+	sched, prob := s.releaseFreezeOrSchedule(r, acct, app, rolloutReq)
+	if prob != nil {
 		api.WriteProblem(w, prob)
 		return
 	}
 	release.ApplyDefault(r.Context(), s.store, s.log, app, acct.Plan, rolloutReq)
+	if ap := s.releaseApprovalCanaryProblem(r.Context(), app, rolloutReq); ap != nil {
+		api.WriteProblem(w, ap)
+		return
+	}
 	if prob := validateDeploymentTrafficOptions(rolloutReq, acct.Plan); prob != nil {
 		api.WriteProblem(w, prob)
 		return
@@ -419,6 +455,7 @@ func (s *server) createDeploymentMultipart(w http.ResponseWriter, r *http.Reques
 		api.WriteProblem(w, prob)
 		return
 	}
+	sched.park(rolloutReq)
 	rollout, prob := buildDeploymentForInsert(app, rolloutReq, deploymentOverrides, limits, acct.Plan)
 	if prob != nil {
 		api.WriteProblem(w, prob)
@@ -612,6 +649,10 @@ func (s *server) createDeploymentMultipart(w http.ResponseWriter, r *http.Reques
 		if developerSource {
 			s.recordDevPatchSource(r.Context(), app, d.ID, sourcePath, sourceRoot, devPatch)
 		}
+		if prob := s.recordReleaseSchedule(r, acct, app, d, sched); prob != nil {
+			api.WriteProblem(w, prob)
+			return
+		}
 		response := s.deploymentResponse(r.Context(), d, app)
 		response.DevPatch = devPatch.preview
 		writeJSON(w, http.StatusAccepted, response)
@@ -729,7 +770,7 @@ func validateSourceProvenance(sourceURL, commitSHA string) *api.Problem {
 //
 //nolint:forbidigo // path is the tmp file apid just wrote via os.Create in validateAndSpool above with a fresh random id; apid OWNS the parent directory AND the inode, customer never touched them — symlink-attack impossible. Tarball-shape validation re-reads the bytes to enforce spec §9.
 func validateTarballShape(path string) *api.Problem {
-	err := tarball.ValidateShape(path, maxSourceFiles)
+	err := tarball.ValidateShape(path, maxSourceFiles, api.SourceArchiveMaxExpandedBytes)
 	if err == nil {
 		return nil
 	}

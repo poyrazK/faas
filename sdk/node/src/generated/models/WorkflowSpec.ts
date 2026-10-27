@@ -2,10 +2,11 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { WorkflowCodeSpec } from './WorkflowCodeSpec.js';
 import type { WorkflowStepSpec } from './WorkflowStepSpec.js';
 import type { WorkflowTriggerSpec } from './WorkflowTriggerSpec.js';
 /**
- * A named workflow DAG submitted with a deployment (ADR-081). max_concurrent_runs caps active run instances for this workflow; excess admitted runs remain pending until a slot opens, subject to the app plan's run quota. max_concurrent_actions caps active executor steps across runs of this workflow; steps wait in the scheduler queue while all action slots are occupied.
+ * A named workflow DAG submitted with a deployment. max_concurrent_runs caps active run instances for this workflow; excess admitted runs remain pending until a slot opens, subject to the app plan's run quota. max_concurrent_actions caps active executor steps across runs of this workflow; steps wait in the scheduler queue while all action slots are occupied.
  */
 export type WorkflowSpec = {
   name: string;
@@ -19,5 +20,6 @@ export type WorkflowSpec = {
    */
   max_concurrent_actions?: number;
   steps: Array<WorkflowStepSpec>;
+  code?: WorkflowCodeSpec;
 };
 

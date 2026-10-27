@@ -1,0 +1,7 @@
+# Managed by the seal_domains role (ADR 20261022111812): meterd opens alert
+# rule webhook secrets, notification channel destinations and MCP readiness
+# provider keys with the alerting seal-domain identity. The fleet identity
+# stays in the base unit until the domain re-seal completes.
+[Service]
+LoadCredential=faas_seal_domain_alerting:/etc/faas/secrets/domains/alerting.age
+Environment=FAAS_SEAL_DOMAIN_ALERTING_IDENTITY_PATH=%d/faas_seal_domain_alerting

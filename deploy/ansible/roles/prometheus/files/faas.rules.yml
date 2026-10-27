@@ -20,6 +20,26 @@
 # implicitly anchored, so the regex MUST match the case exactly.
 
 groups:
+  # ADR 20261021080640: preview platform flags carry a retire-by date. Past it,
+  # a ticket reminds operators to fold the preview into general availability
+  # or remove the flag, so flags do not accumulate as permanent gates.
+  - name: faas_platform_flags
+    interval: 1h
+    rules:
+      - alert: FaasPlatformFlagPastRetireBy
+        expr: |
+          max by (flag) (apid_platform_flag_retire_by_timestamp_seconds) < time()
+        for: 1h
+        labels:
+          severity: warn
+          component: apid
+          family: platform_flags
+          public_status: internal
+        annotations:
+          summary: "Platform flag {{ $labels.flag }} is past its retire-by date"
+          description: "The preview platform flag {{ $labels.flag }} has passed the retire-by date in its catalog entry. Release it to everyone and remove the gate, or move the date with a reason in the PR."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasPlatformFlagPastRetireBy.md"
+
   # ADR-387: source discovery health is separate from approved-intent/runtime
   # convergence. Counts come from one durable fleet observation per scrape;
   # max avoids counting the same sources again on every apid replica.
@@ -593,6 +613,91 @@ groups:
           description: "Completed rollbacks took longer than 60 s at p95 over 6 h, measured from request to serving. Check snapshot restore, cold boot, and post-readiness smoke latency."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasSafeDeployRollout.md"
 
+  # Release guards (pkg/releasemetrics): scheduled releases, database
+  # switches, the post-release watch and approval notices. A worker that
+  # never ran on an instance exports no pass timestamp, so the stall alerts
+  # fire only for a worker that ran and stopped.
+  - name: faas_release_guards
+    interval: 30s
+    rules:
+      - alert: FaasReleaseWorkerStalled
+        expr: time() - faas_release_worker_last_pass_timestamp_seconds{worker!="approval_notices"} > 300
+        for: 5m
+        labels:
+          severity: warn
+          component: apid
+          family: release_guards
+          public_status: internal
+        annotations:
+          summary: "apid release worker {{ $labels.worker }} has not completed a pass for 5 minutes"
+          description: "The {{ $labels.worker }} worker on {{ $labels.instance }} last read its queue over 5 minutes ago. Due scheduled releases do not start, database switches do not advance, or completed releases are not watched until it recovers. Check apid's database access and logs."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasReleaseGuards.md"
+
+      - alert: FaasReleaseApprovalNoticesStalled
+        expr: time() - faas_release_worker_last_pass_timestamp_seconds{worker="approval_notices"} > 600
+        for: 5m
+        labels:
+          severity: warn
+          component: meterd
+          family: release_guards
+          public_status: internal
+        annotations:
+          summary: "meterd has not delivered release approval notices for 10 minutes"
+          description: "meterd's alert evaluator on {{ $labels.instance }} has not read the release approval outbox for over 10 minutes. Approvers are not told that releases wait for them; the releases still wait and time out on schedule."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasReleaseGuards.md"
+
+      - alert: FaasReleaseWorkerErrors
+        expr: increase(faas_release_worker_errors_total{worker!="approval_notices"}[15m]) > 5
+        for: 0m
+        labels:
+          severity: warn
+          component: apid
+          family: release_guards
+          public_status: internal
+        annotations:
+          summary: "Release worker {{ $labels.worker }} is failing repeatedly"
+          description: "{{ $labels.worker }} recorded more than 5 failed passes or items in 15 minutes on {{ $labels.instance }}. Failed items are retried; read the worker's warnings in the {{ $labels.job }} log."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasReleaseGuards.md"
+
+      - alert: FaasDatabaseSwitchFailed
+        expr: increase(faas_release_guard_decisions_total{guard="database_switch",outcome="failed"}[10m]) > 0 or (faas_release_guard_decisions_total{guard="database_switch",outcome="failed"} > 0 unless faas_release_guard_decisions_total{guard="database_switch",outcome="failed"} offset 10m)
+        for: 0m
+        labels:
+          severity: warn
+          component: apid
+          family: release_guards
+          public_status: internal
+        annotations:
+          summary: "A database-restoring rollback failed and was undone"
+          description: "A database switch (rollback --restore-databases) gave up: it put the previous release back, cancelled the cutover and lifted the fence, so the app serves as before on its source database. The restored copy is kept. Read the failure code in the app.database_switch_failed audit event."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasReleaseGuards.md"
+
+      - alert: FaasDatabaseSwitchAborting
+        expr: increase(faas_release_guard_decisions_total{guard="database_switch",outcome="aborting"}[10m]) > 0 or (faas_release_guard_decisions_total{guard="database_switch",outcome="aborting"} > 0 unless faas_release_guard_decisions_total{guard="database_switch",outcome="aborting"} offset 10m)
+        for: 0m
+        labels:
+          severity: warn
+          component: apid
+          family: release_guards
+          public_status: internal
+        annotations:
+          summary: "A database-restoring rollback is aborting"
+          description: "A database switch hit an error and is compensating: it releases the fence and keeps the source database. Watch it reach cancelled or failed with `gregale rollback switch`."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasReleaseGuards.md"
+
+      - alert: FaasReleaseApprovalNoticeDropped
+        expr: increase(faas_release_guard_decisions_total{guard="approval_notice",outcome="dropped"}[15m]) > 0 or (faas_release_guard_decisions_total{guard="approval_notice",outcome="dropped"} > 0 unless faas_release_guard_decisions_total{guard="approval_notice",outcome="dropped"} offset 15m)
+        for: 0m
+        labels:
+          severity: warn
+          component: meterd
+          family: release_guards
+          public_status: internal
+        annotations:
+          summary: "meterd gave up delivering a release approval notice"
+          description: "A release approval or schedule notice failed on every channel for all of its attempts. The approvers were not told; the release still waits. Check the channel's delivery errors in release_approval_events.last_error."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasReleaseGuards.md"
+
   - name: managed_realtime_channel_routing
     interval: 30s
     rules:
@@ -658,6 +763,35 @@ groups:
           summary: "A non-active account retained live compute"
           description: "Schedd found and repaired a live or waking instance owned by a suspended or deletion-pending account. Verify all scheduler admission producers enforce Account.Active and confirm no additional instances remain resident."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasInactiveAccountHasLiveInstance.md"
+      # meterd sets this gauge once per hourly dunning sweep and holds it until
+      # the next sweep, so one blocked sweep already reads > 0 for an hour.
+      # Two hours means the block outlived at least two consecutive sweeps.
+      - alert: FaasDunningDeletionBlocked
+        expr: max by (reason) (meterd_dunning_deletion_blocked_accounts) > 0
+        for: 2h
+        labels:
+          severity: warn
+          component: meterd
+          family: account_lifecycle
+          public_status: internal
+        annotations:
+          summary: "Non-payment deletion is blocked for suspended accounts ({{ $labels.reason }})"
+          description: "The dunning sweep cannot move suspended accounts past the non-payment deadline to deleted_pending because a deletion guard holds (managed_postgres_databases: the account still owns live managed PostgreSQL databases; shared_app_ownership: company apps still reference it). The accounts stay suspended, their provider databases keep running and erasure does not start. meterd logs each one as 'meter: non-payment deletion blocked'."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasDunningDeletionBlocked.md"
+      # apid's grace sweep sets this gauge every tick (60 s). A day of holds
+      # leaves most of the DPA's 30-day deletion window to fix the cause.
+      - alert: FaasAccountErasureDeferred
+        expr: max(apid_account_grace_deferred_accounts) > 0
+        for: 24h
+        labels:
+          severity: warn
+          component: apid
+          family: account_lifecycle
+          public_status: internal
+        annotations:
+          summary: "Expired account deletions are held by unfinished external cleanup"
+          description: "{{ $value }} account(s) are past their deletion grace but the grace sweep keeps their rows because external cleanup (object buckets, managed PostgreSQL, archived runtime logs) is not finished. apid logs each one as 'grace: external cleanup deferred' with the failing step. The DPA promises erasure within 30 days of the grace ending."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasAccountErasureDeferred.md"
 
   - name: postgres_capacity
     interval: 30s
@@ -728,6 +862,85 @@ groups:
           summary: "Compute nodes report different cluster signing kids"
           description: "More than one cluster signing kid is reported by verified fleet nodes. Internal-service JWTs can fail across nodes until every node verifies the current singleton key."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasFleetSealDomain.md"
+
+  # ADR 20261022111812: per-reader seal domains. `gregalectl seal-domain
+  # verify` (run by the seal_domains role) writes faas_seal_domain_ready to the
+  # node's textfile collector; a reader daemon exports faas_seal_domain_loaded
+  # from its start. Neither series exists until the domain is staged, so both
+  # alerts stay quiet before a rollout.
+  # ADR 20261024014500: a honeytoken is a decoy API key that belongs to no
+  # account, so nothing legitimate presents one. A single presentation means
+  # the place it was planted, usually the secret store, has been read.
+  - name: honeytokens
+    interval: 30s
+    rules:
+      - alert: FaasHoneytokenPresented
+        expr: sum by (kind) (increase(faas_honeytoken_presented_total[15m])) > 0
+        labels:
+          severity: page
+          family: honeytokens
+        annotations:
+          summary: "A honeytoken ({{ $labels.kind }}) was presented to the API"
+          description: "Someone presented a decoy credential that belongs to no account. Whoever holds it has read the place it was planted, usually the secret store. Start the customer secret store compromise runbook; the security.honeytoken_presented audit event names the honeytoken and the caller."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasHoneytokenPresented.md"
+
+  # ADR 20261024014500: every reader daemon counts the sealed values it
+  # opens. A daemon in an attacker's hands can be made to open secrets in
+  # bulk, or to try envelopes its keys do not open.
+  - name: secret_unseals
+    rules:
+      - alert: FaasSecretUnsealSurge
+        expr: |
+          sum by (job, instance) (rate(faas_secret_unseal_total{result="ok"}[15m]))
+            > 10 * sum by (job, instance) (rate(faas_secret_unseal_total{result="ok"}[1d]))
+          and
+          sum by (job, instance) (rate(faas_secret_unseal_total{result="ok"}[15m])) > 1
+        for: 10m
+        labels:
+          severity: warn
+          family: secret_unseals
+        annotations:
+          summary: "{{ $labels.job }} on {{ $labels.instance }} is opening sealed values at over ten times its daily rate"
+          description: "For the last 10 minutes this daemon has decrypted sealed values at over ten times its 24-hour average, and more than one per second. A traffic surge does this too; if its request or wake rate has not risen to match, treat it as a daemon being used to read the secret store."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasSecretUnseal.md"
+      - alert: FaasSecretUnsealFailures
+        expr: sum by (job, instance) (increase(faas_secret_unseal_total{result="failed"}[15m])) > 20
+        for: 5m
+        labels:
+          severity: warn
+          family: secret_unseals
+        annotations:
+          summary: "{{ $labels.job }} on {{ $labels.instance }} failed to open over 20 sealed values in 15 minutes"
+          description: "This daemon was handed sealed values that none of its keys open. Usually a key is missing after a seal-domain change; it can also be someone trying envelopes from another domain through this daemon."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasSecretUnseal.md"
+
+  - name: seal_domains
+    interval: 30s
+    rules:
+      - alert: FaasSealDomainUnverified
+        expr: faas_seal_domain_ready == 0
+        for: 5m
+        labels:
+          severity: warn
+          family: seal_domains
+        annotations:
+          summary: "{{ $labels.instance }} could not prove the {{ $labels.domain }} seal domain"
+          description: "gregalectl seal-domain verify failed on {{ $labels.instance }}: the staged {{ $labels.domain }} identity is missing, or it does not open the domain probe. Once writers seal to the domain alone, the reader on this host cannot open that domain's secrets."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasSealDomain.md"
+
+      - alert: FaasSealDomainIdentityMissing
+        expr: |
+          faas_seal_domain_loaded == 0
+          and on(domain)
+          (max by (domain) (faas_seal_domain_loaded) == 1)
+        for: 10m
+        labels:
+          severity: warn
+          family: seal_domains
+        annotations:
+          summary: "{{ $labels.job }} on {{ $labels.instance }} started without the {{ $labels.domain }} seal-domain identity"
+          description: "Other {{ $labels.job }} instances hold the {{ $labels.domain }} identity, but this one started without it. Once writers seal to the domain alone, it cannot open those secrets: for runtime, wakes on this node fail for every app with a secret sealed to the domain, which is every app once the re-seal has run. Stage the identity and restart the daemon before it takes traffic."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasSealDomain.md"
 
   - name: gcp_ops_agent
     interval: 30s
@@ -1110,14 +1323,221 @@ groups:
   # `loki_send_total` is intentionally an aggregate across Promtail targets,
   # while the alerts retain the Prometheus `instance` label for triage.
   # ────────────────────────────────────────────────────────────────────
+  # ─────────────────────────────────────────────────────────────────────
+  # Per-slice host resources (ADR-20261023124955). faas-cgroup-metrics
+  # (roles/cgroup_metrics) writes CPU, memory, IO and pressure-stall time for
+  # each slice and service to the node_exporter textfile collector every 30 s,
+  # on the control plane and on compute nodes; tenant VM scopes are never
+  # listed. Memory alerts read anonymous memory, not memory.current: page
+  # cache is reclaimable and would make every busy slice look full.
+  # ─────────────────────────────────────────────────────────────────────
+  # Serving probe (ADR-20261023124955 §5). faas-serving-probe on each compute
+  # node already posts failures straight to a chat webhook, which works with
+  # the control plane down. These alerts put the same signal in the
+  # Alertmanager review queue and the fleet dashboard while it is up, and
+  # notice a probe that stopped running.
+  - name: faas_serving_probe
+    interval: 1m
+    rules:
+      - alert: FaasServingProbeFailing
+        expr: faas_serving_probe_success == 0
+        for: 10m
+        labels:
+          severity: warn
+          component: gatewayd-public
+          family: serving_probe
+          public_status: internal
+        annotations:
+          summary: "The serving probe on {{ $labels.instance }} cannot reach {{ $labels.url }}"
+          description: "Two attempts 30 s apart have missed a 2xx on every run for 10 minutes; faas_serving_probe_http_status shows the last status (0 means nothing answered). The node's webhook has already posted. If every compute node reports it, look at the edge or the probe app; if only one does, look at that node's network."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasServingProbe.md"
+
+      - alert: FaasServingProbeStale
+        expr: time() - faas_serving_probe_last_run_timestamp_seconds > 900
+        for: 5m
+        labels:
+          severity: warn
+          component: node
+          family: serving_probe
+          public_status: internal
+        annotations:
+          summary: "The serving probe on {{ $labels.instance }} has not run for 15 minutes"
+          description: "faas-serving-probe.timer has not completed a run on {{ $labels.instance }} for over 15 minutes, so an outage seen from that node would not be reported. Check systemctl status faas-serving-probe.timer and journalctl -u faas-serving-probe."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasServingProbe.md"
+
+  # ─────────────────────────────────────────────────────────────────────
+  # Control-plane PostgreSQL activity. faas-postgres-activity-metrics (role
+  # postgres_metrics) exports transactions, backends by daemon and host,
+  # waits, transaction ages, checkpoints, the busiest tables and the top
+  # pg_stat_statements entries every 30 s. These are warnings for the daily
+  # review; PostgreSQL waiting for CPU is FaasPostgresCPUStalled
+  # (cgroup_resources).
+  - name: faas_postgres_activity
+    interval: 30s
+    rules:
+      - alert: FaasPostgresLongTransaction
+        expr: max(faas_postgres_oldest_transaction_seconds) > 600
+        for: 5m
+        labels:
+          severity: warn
+          component: postgres
+          family: postgres_activity
+          public_status: internal
+        annotations:
+          summary: "A PostgreSQL transaction has been open for {{ $value | humanizeDuration }}"
+          description: "The oldest open transaction in the faas database is over 10 minutes old. It holds back vacuum on every table it touched and may hold locks other daemons queue behind. The application and client of the session are on the PostgreSQL dashboard (backends by daemon); end it with pg_terminate_backend only after checking what it is."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasPostgresActivity.md"
+
+      - alert: FaasPostgresIdleInTransaction
+        expr: max(faas_postgres_idle_in_transaction_max_seconds) > 300
+        for: 5m
+        labels:
+          severity: warn
+          component: postgres
+          family: postgres_activity
+          public_status: internal
+        annotations:
+          summary: "A PostgreSQL session has sat idle in a transaction for {{ $value | humanizeDuration }}"
+          description: "A client opened a transaction and has done nothing in it for over 5 minutes, usually a daemon that leaked a transaction on an error path. Find it in pg_stat_activity (state = 'idle in transaction') by application_name."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasPostgresActivity.md"
+
+      - alert: FaasPostgresLockWaits
+        expr: sum(faas_postgres_backends_waiting{wait_event_type="Lock"}) > 5
+        for: 10m
+        labels:
+          severity: warn
+          component: postgres
+          family: postgres_activity
+          public_status: internal
+        annotations:
+          summary: "{{ $value }} PostgreSQL backends are waiting on locks"
+          description: "More than 5 active backends have been waiting on heavyweight locks for 10 minutes. Requests that need those rows are stalled. Look for a long or idle-in-transaction session holding the lock (pg_locks joined to pg_stat_activity)."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasPostgresActivity.md"
+
+      - alert: FaasPostgresDeadlocks
+        expr: increase(faas_postgres_deadlocks_total[15m]) > 0
+        labels:
+          severity: warn
+          component: postgres
+          family: postgres_activity
+          public_status: internal
+        annotations:
+          summary: "PostgreSQL detected a deadlock in the faas database"
+          description: "PostgreSQL aborted at least one transaction to break a deadlock in the last 15 minutes. The PostgreSQL log names both statements; two daemons are taking the same locks in opposite orders."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasPostgresActivity.md"
+
+      - alert: FaasPostgresCacheHitRatioLow
+        expr: (sum(rate(faas_postgres_blocks_hit_total[30m])) / (sum(rate(faas_postgres_blocks_hit_total[30m])) + sum(rate(faas_postgres_blocks_read_total[30m])))) < 0.95 and sum(rate(faas_postgres_blocks_read_total[30m])) > 50
+        for: 30m
+        labels:
+          severity: warn
+          component: postgres
+          family: postgres_activity
+          public_status: internal
+        annotations:
+          summary: "PostgreSQL serves under 95% of blocks from shared_buffers"
+          description: "Over 30 minutes, more than 5% of block reads missed shared_buffers while reads were frequent. Either the working set outgrew shared_buffers or a query started scanning a large table; the top statements by blocks read on the PostgreSQL dashboard show which."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasPostgresActivity.md"
+
+      - alert: FaasPostgresActivityMetricsStale
+        expr: time() - faas_postgres_activity_metrics_last_run_timestamp_seconds > 300
+        for: 5m
+        labels:
+          severity: warn
+          component: postgres
+          family: postgres_activity
+          public_status: internal
+        annotations:
+          summary: "The PostgreSQL activity collector has not written for over 5 minutes"
+          description: "faas-postgres-activity-metrics has stopped, so the postgres_activity alerts and the PostgreSQL dashboard are stale. Check systemctl status faas-postgres-activity-metrics.timer and journalctl -u faas-postgres-activity-metrics."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasPostgresActivity.md"
+
+      - alert: FaasPostgresActivityMetricsFailing
+        expr: faas_postgres_activity_metrics_errors == 1
+        for: 15m
+        labels:
+          severity: warn
+          component: postgres
+          family: postgres_activity
+          public_status: internal
+        annotations:
+          summary: "The PostgreSQL activity collector's {{ $labels.section }} section is failing"
+          description: "One section of faas-postgres-activity-metrics has failed on every run for 15 minutes, so its series are missing. journalctl -u faas-postgres-activity-metrics names the error; a statements failure usually means pg_stat_statements is not loaded in the postgres database."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasPostgresActivity.md"
+
+  - name: faas_cgroup_resources
+    interval: 30s
+    rules:
+      - alert: FaasCgroupMemoryNearLimit
+        expr: |
+          faas_cgroup_memory_anon_bytes / faas_cgroup_memory_max_bytes > 0.85
+        for: 15m
+        labels:
+          severity: warn
+          component: node
+          family: cgroup_resources
+          public_status: internal
+        annotations:
+          summary: "{{ $labels.cgroup }} on {{ $labels.instance }} holds over 85% of its memory limit in anonymous memory"
+          description: "Anonymous (non-reclaimable) memory in {{ $labels.cgroup }} has stayed above 85% of its MemoryMax for 15 minutes, so the next allocation spike OOM-kills a process in it. Find the largest member with faas_cgroup_memory_anon_bytes before raising the limit; on the control plane, faas-obs.slice must not grow into the memory PostgreSQL needs."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasCgroupResources.md"
+
+      - alert: FaasCgroupOOMKill
+        expr: increase(faas_cgroup_memory_events_total{event="oom_kill"}[10m]) > 0
+        labels:
+          severity: warn
+          component: node
+          family: cgroup_resources
+          public_status: internal
+        annotations:
+          summary: "The kernel OOM-killed a process in {{ $labels.cgroup }} on {{ $labels.instance }}"
+          description: "memory.events oom_kill increased in the last 10 minutes. A slice counts its children, so find the service that restarted (systemctl list-units --failed; journalctl -k | grep -i oom) and compare its memory with its limit on the Control plane resources dashboard."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasCgroupResources.md"
+
+      - alert: FaasPostgresCPUStalled
+        expr: |
+          rate(faas_cgroup_pressure_stall_seconds_total{cgroup="system.slice/system-postgresql.slice",resource="cpu",kind="some"}[10m]) > 0.5
+        for: 15m
+        labels:
+          severity: warn
+          component: postgres
+          family: cgroup_resources
+          public_status: internal
+        annotations:
+          summary: "PostgreSQL on {{ $labels.instance }} has waited for CPU more than half the time for 15m"
+          description: "At least one PostgreSQL process was runnable but waiting for a CPU more than 50% of the time (cgroup cpu.pressure) for 15 minutes. Every control-plane daemon queues behind the database while this lasts. The Control plane resources dashboard shows which slice is taking the CPU; the GitHub runners and faas-obs.slice are the usual competitors."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasCgroupResources.md"
+
+      - alert: FaasCgroupMetricsStale
+        expr: time() - faas_cgroup_metrics_last_run_timestamp_seconds > 300
+        for: 5m
+        labels:
+          severity: warn
+          component: node
+          family: cgroup_resources
+          public_status: internal
+        annotations:
+          summary: "faas-cgroup-metrics on {{ $labels.instance }} has not written for over 5 minutes"
+          description: "The per-slice resource numbers on {{ $labels.instance }} are stale, so the other cgroup_resources alerts cannot fire there. Check systemctl status faas-cgroup-metrics.timer and journalctl -u faas-cgroup-metrics."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasCgroupResources.md"
+
+  # The journal shipper is Alloy (ADR-20261023185953) or, for one release,
+  # Promtail as the rollback. Both scrape under the promtail and
+  # promtail-compute jobs; each rule takes whichever family a host exposes.
+  # loki_source_journal_target_lines_total is Alloy's read counter; the
+  # go/no-go check (scripts/ops/obs_gate.py) fails until it is seen.
   - name: faas_loki_pipeline
     interval: 30s
     rules:
       - record: loki_send_total
-        expr: sum by (instance) (promtail_sent_entries_total)
+        expr: |
+          sum by (instance) (promtail_sent_entries_total)
+            or sum by (instance) (loki_write_sent_entries_total{job=~"promtail|promtail-compute"})
 
       - record: loki_drop_total
-        expr: sum by (instance) (promtail_dropped_entries_total)
+        expr: |
+          sum by (instance) (promtail_dropped_entries_total)
+            or sum by (instance) (loki_write_dropped_entries_total{job=~"promtail|promtail-compute"})
 
       - alert: FaasLokiPromtailDown
         expr: up{job=~"promtail|promtail-compute"} == 0
@@ -1127,30 +1547,38 @@ groups:
           component: promtail
           family: loki_pipeline
         annotations:
-          summary: "Promtail is down on {{ $labels.instance }}"
-          description: "The FaaS host's journal shipper has not been scrapeable for 10m. Platform and customer-context logs may remain only on the FaaS host. Check systemctl status promtail and the host's private route to Loki."
+          summary: "The journal shipper is down on {{ $labels.instance }}"
+          description: "The FaaS host's journal shipper has not been scrapeable for 10m. Platform and customer-context logs may remain only on the FaaS host. Check systemctl status alloy (or promtail while it is the selected shipper) and the host's private route to Loki."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasLokiPipelineDegraded.md"
 
       - alert: FaasLokiShippingDropped
-        expr: increase(promtail_dropped_entries_total[10m]) > 0
+        expr: |
+          sum by (instance) (increase(promtail_dropped_entries_total[10m])) > 0
+            or sum by (instance) (increase(loki_write_dropped_entries_total{job=~"promtail|promtail-compute"}[10m])) > 0
         for: 5m
         labels:
           severity: warn
           component: promtail
           family: loki_pipeline
         annotations:
-          summary: "Promtail dropped log entries on {{ $labels.instance }}"
-          description: "Promtail exhausted its bounded retry budget and dropped journal entries during the last 10m. Investigate Loki reachability, mTLS expiry, and disk/journal pressure before the local journal rotates."
+          summary: "The journal shipper dropped log entries on {{ $labels.instance }}"
+          description: "The journal shipper exhausted its bounded retry budget and dropped journal entries during the last 10m. Investigate Loki reachability, mTLS expiry, and disk/journal pressure before the local journal rotates."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasLokiPipelineDegraded.md"
 
       - alert: FaasLokiShippingStalled
         expr: |
           (
-            sum by (instance) (increase(promtail_journal_target_lines_total[10m])) > 0
+            (
+              sum by (instance) (increase(promtail_journal_target_lines_total[10m]))
+                or sum by (instance) (increase(loki_source_journal_target_lines_total{job=~"promtail|promtail-compute"}[10m]))
+            ) > 0
           )
           and on (instance)
           (
-            sum by (instance) (increase(promtail_sent_entries_total[10m])) == 0
+            (
+              sum by (instance) (increase(promtail_sent_entries_total[10m]))
+                or sum by (instance) (increase(loki_write_sent_entries_total{job=~"promtail|promtail-compute"}[10m]))
+            ) == 0
           )
         for: 10m
         labels:
@@ -1158,8 +1586,8 @@ groups:
           component: promtail
           family: loki_pipeline
         annotations:
-          summary: "Promtail is reading journal entries but not shipping on {{ $labels.instance }}"
-          description: "Promtail read journal lines but recorded no successful Loki sends for 10m. This is the backpressure signal; check the dropped-entry counter and the Loki mTLS/client path."
+          summary: "The journal shipper is reading journal entries but not shipping on {{ $labels.instance }}"
+          description: "The journal shipper read journal lines but recorded no successful Loki sends for 10m. This is the backpressure signal; check the dropped-entry counter and the Loki mTLS/client path."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasLokiPipelineDegraded.md"
 
       - alert: FaasLokiBackendDown
@@ -1171,7 +1599,7 @@ groups:
           family: loki_pipeline
         annotations:
           summary: "Loki backend is down"
-          description: "The dedicated Loki metrics endpoint has not been scrapeable for 5m. Promtail may continue buffering briefly, but new platform and customer-context logs are at risk. Check the Loki service, private route, and mTLS material on the observability host."
+          description: "The dedicated Loki metrics endpoint has not been scrapeable for 5m. The journal shipper may keep retrying briefly, but new platform and customer-context logs are at risk. Check the Loki service (it runs on the control plane in faas-obs.slice), its object-storage credentials, the private route, and the mTLS material."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasLokiPipelineDegraded.md"
 
       - alert: FaasLokiRetentionStalled
@@ -1714,7 +2142,7 @@ groups:
   # Fan-out to per-account series is done by the alert rules, not here
   # (keeps the recording-rule set O(routes) not O(customers)). The 3d
   # window sees the same time-of-day/weekday traffic mix as the
-  # current 5m window; retention (15d, prom_retention_days) gives 5x
+  # current 5m window; retention (35d, prom_retention_days) gives 11x
   # headroom. clamp_min(...) guards against /0 when a route has zero
   # recent traffic — the small 0.001 floor lets the ratio formula
   # produce a numeric value rather than a NaN.
@@ -1832,6 +2260,125 @@ groups:
             sum by (app, route, le) (rate(gateway_request_duration_by_route_seconds_bucket[5m]))
           )
 
+  # ─────────────────────────────────────────────────────────────────────
+  # Monthly public SLOs (spec §12, ADR-20261023124955 §3). The burn-rate
+  # alerts in faas_slo watch minutes to hours; nothing computed the month the
+  # status page promises, and 15 d of retention could not hold one. These
+  # rules record fleet-wide good/total rates every 5m (no app label, so the
+  # 30 d windows cost a handful of series), then a rolling 30 d ratio per
+  # SLO. Ratios of summed 5m rates equal ratios of counts because every
+  # sample covers the same 5m. Wake p95 < 1 s is recorded as the share of
+  # wakes at or under the 1 s bucket: p95 < 1 s holds exactly when that share
+  # is >= 0.95. The platform 350 ms gate uses the platform histogram's
+  # 0.35 s bucket the same way. A ratio has no sample while its window holds
+  # no eligible events, so a quiet fleet reads as "no data", not 100 %.
+  # Retention must cover the window: prom_retention_days is 35.
+  - name: faas_slo_monthly
+    interval: 5m
+    rules:
+      - record: faas_slo_api_eligible_requests:rate5m
+        expr: sum(rate(gateway_requests_total{app!="-",code=~"2..|5.."}[5m]))
+      - record: faas_slo_api_platform_errors:rate5m
+        expr: sum(rate(gateway_platform_errors_total{app!="-"}[5m])) or vector(0)
+      - record: faas_slo_wakes:rate5m
+        expr: sum(rate(gateway_wake_latency_seconds_count[5m]))
+      - record: faas_slo_wakes_within_1s:rate5m
+        expr: sum(rate(gateway_wake_latency_seconds_bucket{le="1"}[5m]))
+      - record: faas_slo_platform_wakes:rate5m
+        expr: sum(rate(gateway_platform_wake_latency_seconds_count[5m]))
+      - record: faas_slo_platform_wakes_within_350ms:rate5m
+        expr: sum(rate(gateway_platform_wake_latency_seconds_bucket{le="0.35"}[5m]))
+      - record: faas_slo_builds_eligible:rate5m
+        expr: sum(rate(builderd_ops_total{op="build",code!="user_error"}[5m]))
+      - record: faas_slo_builds_ok:rate5m
+        expr: sum(rate(builderd_ops_total{op="build",code=~"ok|cache_hit"}[5m]))
+
+      - record: faas_slo_api_availability:ratio_30d
+        expr: |
+          1 - sum_over_time(faas_slo_api_platform_errors:rate5m[30d])
+            / (sum_over_time(faas_slo_api_eligible_requests:rate5m[30d]) > 0)
+      - record: faas_slo_wakes_within_1s:ratio_30d
+        expr: |
+          sum_over_time(faas_slo_wakes_within_1s:rate5m[30d])
+            / (sum_over_time(faas_slo_wakes:rate5m[30d]) > 0)
+      - record: faas_slo_platform_wakes_within_350ms:ratio_30d
+        expr: |
+          sum_over_time(faas_slo_platform_wakes_within_350ms:rate5m[30d])
+            / (sum_over_time(faas_slo_platform_wakes:rate5m[30d]) > 0)
+      - record: faas_slo_build_success:ratio_30d
+        expr: |
+          sum_over_time(faas_slo_builds_ok:rate5m[30d])
+            / (sum_over_time(faas_slo_builds_eligible:rate5m[30d]) > 0)
+
+      # The rolling 30 d ratio is below a public SLO (spec §12). Warn, not
+      # page: the burn-rate alerts in faas_slo already page on the fast
+      # burns; this is the daily-review signal that the month is lost or close.
+
+      - alert: FaasMonthlyApiAvailabilityBelowSLO
+        expr: faas_slo_api_availability:ratio_30d < 0.995
+        for: 1h
+        labels:
+          severity: warn
+          component: gatewayd-internal
+          family: slo_monthly
+          public_status: internal
+        annotations:
+          summary: "30-day API availability is {{ $value | humanizePercentage }}, below the 99.5% SLO"
+          description: "Requests answered without a platform-produced 5xx over the last 30 days are below the public 99.5% SLO (spec §12). The error budget for the window is spent; check the API availability panels for the days that consumed it before the status page reports the month."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasMonthlySLO.md"
+
+      - alert: FaasMonthlyWakeLatencyBelowSLO
+        expr: faas_slo_wakes_within_1s:ratio_30d < 0.95
+        for: 1h
+        labels:
+          severity: warn
+          component: gatewayd-internal
+          family: slo_monthly
+          public_status: internal
+        annotations:
+          summary: "Only {{ $value | humanizePercentage }} of wakes in 30 days finished within 1 s (SLO: p95 < 1 s)"
+          description: "Fewer than 95% of wakes over the last 30 days reached the first upstream byte within 1 s, so wake p95 is above the public 1 s SLO (spec §12). Compare with the platform-only histogram to separate platform restore time from app start time."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasMonthlySLO.md"
+
+      - alert: FaasMonthlyPlatformWakeGateMissed
+        expr: faas_slo_platform_wakes_within_350ms:ratio_30d < 0.95
+        for: 1h
+        labels:
+          severity: warn
+          component: vmmd
+          family: slo_monthly
+          public_status: internal
+        annotations:
+          summary: "Only {{ $value | humanizePercentage }} of platform wakes in 30 days finished within 350 ms"
+          description: "Fewer than 95% of platform-only wakes over the last 30 days finished within 350 ms, so the platform restore p95 misses the public-beta gate. vmmd_restore_phase_duration_seconds shows which restore phase grew."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasMonthlySLO.md"
+
+      - alert: FaasMonthlyBuildSuccessBelowSLO
+        expr: faas_slo_build_success:ratio_30d < 0.99
+        for: 1h
+        labels:
+          severity: warn
+          component: builderd
+          family: slo_monthly
+          public_status: internal
+        annotations:
+          summary: "30-day build success is {{ $value | humanizePercentage }}, below the 99% SLO"
+          description: "Builds that did not fail on the customer's code succeeded less than 99% of the time over the last 30 days (spec §12). builderd_ops_total by code shows which failure class consumed the budget."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasMonthlySLO.md"
+
+      - alert: FaasPrometheusRetentionBelowSLOWindow
+        expr: (time() - prometheus_tsdb_lowest_timestamp_seconds) < 31 * 86400 and on (instance, job) increase(prometheus_tsdb_size_retentions_total[6h]) > 0
+        for: 15m
+        labels:
+          severity: warn
+          component: prometheus
+          family: slo_monthly
+          public_status: internal
+        annotations:
+          summary: "Prometheus is deleting blocks for size before it holds 31 days"
+          description: "The size cap (prom_retention_size) removed blocks in the last 6 hours while the oldest sample is less than 31 days old, so the faas_slo_monthly 30-day ratios cover only part of a month. Raise prom_retention_size if the disk allows, or drop high-cardinality bucket series as ADR-20261023124955 §3 describes."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasMonthlySLO.md"
+
   - name: faas_slo
     interval: 30s
     rules:
@@ -1878,6 +2425,51 @@ groups:
           summary: "A terminal or unowned job VM could not be destroyed"
           description: "The job ownership reconciler found a live Firecracker instance without a matching claimed task and vmmd destroy failed. The VM may still consume and meter RAM until the next successful sweep."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasJobInstanceCleanupFailed.md"
+
+      # Jobs and workflows dispatch (Hunt 13 H13-10/H13-11). Customer limits
+      # (concurrency caps, spend caps, budgets, capability flags) hold work by
+      # design and never fire these.
+      - alert: FaasJobsQueueBacklog
+        expr: sum by (job, instance) (rate(schedd_job_dispatch_total{result=~"node_capacity|compute_unavailable|wake_error"}[5m])) > 0
+        for: 15m
+        labels:
+          severity: warn
+          component: schedd
+          family: job_dispatch
+          public_status: internal
+        annotations:
+          summary: "schedd on {{ $labels.instance }} has failed to start ready job tasks for 15m"
+          description: "Ready job tasks kept failing to start for 15m because of node capacity, an unavailable compute authority or a wake error. Customer concurrency caps, spend caps, budgets and capability flags are not counted."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasJobsQueueBacklog.md"
+
+      - alert: FaasWorkflowDispatchSaturated
+        expr: min_over_time(workflow_dispatch_slots_busy[5m]) >= workflow_dispatch_slots
+        for: 10m
+        labels:
+          severity: warn
+          component: schedd
+          family: workflow_dispatch
+          public_status: internal
+        annotations:
+          summary: "Every workflow dispatch slot on {{ $labels.instance }} has been busy for 10m"
+          description: "Every one of the {{ $value }} workflow dispatch slots on {{ $labels.instance }} has stayed busy for 10m. Slots wait on customer step handlers, so due runs, including other customers' runs, wait for a slot."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasWorkflowsAndJobs.md"
+
+      - alert: FaasWorkflowDispatchLagHigh
+        expr: |
+          histogram_quantile(0.95, sum by (le) (rate(workflow_dispatch_lag_seconds_bucket[10m]))) > 60
+          and on ()
+          sum(increase(workflow_dispatch_lag_seconds_count[10m])) >= 5
+        for: 10m
+        labels:
+          severity: warn
+          component: schedd
+          family: workflow_dispatch
+          public_status: internal
+        annotations:
+          summary: "Due workflow runs are claimed more than 60s late (p95)"
+          description: "The p95 delay between a workflow run's scheduled_for and schedd claiming it has been over 60s for 10m. Sleeps wake late, events resume late and retries run late."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasWorkflowsAndJobs.md"
 
       # ─────────────────────────────────────────────────────────────────
       # Snapshot fleet average size (vmmd / fcvm — schedd /metrics/fcvm)
@@ -3242,6 +3834,18 @@ groups:
           description: "At least one GitHub Check Run projection exhausted its retry budget. Deployments continue, but customer GitHub status may be stale. Inspect and retry with gregalectl github status / retry-check."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasGithubRecoveryQueue.md"
 
+      - alert: FaasPreviewJanitorFailing
+        expr: sum(increase(apid_preview_janitor_outcomes_total{outcome=~"failed|row_failed"}[30m])) > 0
+        for: 15m
+        labels:
+          severity: warn
+          component: apid
+          family: github_recovery
+        annotations:
+          summary: "Preview teardown janitor is failing"
+          description: "The preview janitor could not sweep, or could not claim or tear down a preview, in the last 30 minutes. Closed and expired PR previews keep running and keep their PR preview allowance until it recovers. Check `journalctl -u faas-apid` for `preview janitor:` warnings."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/PreviewSubdomainRouting.md"
+
       - alert: FaasGithubRecoveryQueueStalled
         expr: githubd_recovery_oldest_actionable_seconds{status=~"pending|processing"} > 900
         for: 5m
@@ -3444,6 +4048,26 @@ groups:
           summary: "vmmd cold-boot fallback > 30 % for 10m"
           description: "Cold-boot fallback rate has exceeded 30 % of all wakes for 10m. The §6.2 budget is approaching saturation on the wake-economics curve — sustained cold-boot at this rate is ~3x the wake-side I/O of a healthy fleet and stresses lv-fc (pkg/fcvm/lvfc.go). Catching this trend before snapshot_fleet_avg exceeds 160 MB gives ~24 h headroom. Drill-down: `rate(vmmd_wake_failure_total{reason=\"disk_full\"}[5m])` (storage pressure), `fcvm_snapshot_fleet_avg_bytes` (growth signal). Recover: see docs/runbooks/FaasColdBootRatioHigh.md."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasColdBootRatioHigh.md"
+
+      # Hunt 12 H12-1: vmmd's base scan gate (issue #299) refused every boot
+      # of the python313 runner base on prod after a node-side Grype scan
+      # found two fixable CRITICAL findings, and nothing alerted. A refusal
+      # in every 10-minute window for 15 minutes catches a base that stays
+      # refused, even with sparse boots, and rides out the short
+      # sidecar-missing window after a release roll (H11-33): a single
+      # burst keeps increase(...[10m]) above zero for about 11 minutes on
+      # Prometheus 2.x, whose range selectors include the window's start.
+      - alert: FaasBaseScanRefusingBoots
+        expr: sum by (node, base, reason) (increase(vmmd_base_scan_refusals_total[10m])) > 0
+        for: 15m
+        labels:
+          severity: page
+          component: vmmd
+          family: base_scan_gate
+        annotations:
+          summary: "vmmd refuses to boot {{ $labels.base }} ({{ $labels.reason }}) on {{ $labels.node }}"
+          description: "vmmd's base scan gate has kept refusing boots on {{ $labels.base }} for fifteen minutes with reason {{ $labels.reason }}. No instance on that base can cold boot or restore, so every app on its runtime fails to deploy and to wake. critical means the node-side Grype scan found a fixable CRITICAL vulnerability: publish a patched base. sidecar_missing, incomplete and generation_* mean the scan record is absent or stale: rerun the base stage."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasBaseScanRefusingBoots.md"
 
       # ─────────────────────────────────────────────────────────────────
       # ADR-127 PR-B production debugger alerts. Mirrors the
@@ -5110,6 +5734,29 @@ groups:
           description: "The usage ledger is enabled but apid has not completed a full provider usage sweep for more than 15m. New database reservations fail closed while observations are stale; check the usage collector, provider API, and apid database connectivity."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasManagedPostgresDegraded.md"
 
+      # ADR-20261025094915: the compute cap sweep runs after every usage sweep
+      # (5m by default). Its timestamp moves only when no account failed, so
+      # this also fires when quota writes keep failing.
+      - alert: FaasManagedPostgresCapEnforcementStale
+        expr: |
+          apid_managed_postgres_usage_policy_enabled == 1
+          and on(job, instance)
+          max by (job, instance) (apid_managed_postgres_cap_enforcement_mode{mode=~"shadow|on"}) == 1
+          and on(job, instance)
+          (
+            apid_managed_postgres_cap_last_sweep_timestamp_seconds == 0
+            or time() - apid_managed_postgres_cap_last_sweep_timestamp_seconds > 2700
+          )
+        for: 15m
+        labels:
+          severity: warn
+          component: apid
+          family: managed_postgres
+        annotations:
+          summary: "Managed PostgreSQL compute caps are not being enforced"
+          description: "apid has not completed a compute cap sweep without a failed account for more than 45m. Running databases keep the quotas last written, so a stalled sweep neither lifts nor imposes a suspension; check the usage collector, the provider API and apid_managed_postgres_cap_accounts{state=\"failed\"}."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasManagedPostgresDegraded.md"
+
       - alert: FaasManagedPostgresUsageCollectionDeferred
         expr: faas_managed_postgres_usage_deferred:rate15m > 0
         for: 10m
@@ -5164,6 +5811,138 @@ groups:
           summary: "Managed PostgreSQL health collector is stalled"
           description: "An enabled apid health collector has not completed a catalog sweep within its freshness window. Check apid logs and catalog connectivity; provider failures are recorded as degraded checks and do not stop successful sweeps."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasManagedPostgresDegraded.md"
+
+  # Live queries (ADR-20261016151947). The hub (livequeryd) is a dark-launched
+  # preview, so every alert warns rather than pages. One process serves several
+  # databases: hub series carry a database label, and a single-database hub's
+  # carry none.
+  - name: faas_live_queries
+    interval: 30s
+    rules:
+      - alert: FaasLiveQueryHubDown
+        expr: up{job="livequeryd"} == 0
+        for: 5m
+        labels:
+          severity: warn
+          component: livequeryd
+          family: live_queries
+        annotations:
+          summary: "The live-query hub is down on {{ $labels.instance }}"
+          description: "Prometheus has not scraped livequeryd for 5m, so no live query on this control plane receives new results. Check systemctl status faas-livequeryd and its journal; systemd stops restarting a hub that fails five times in a minute."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasLiveQueries.md"
+
+      - alert: FaasLiveQueryDatabaseNotServed
+        expr: livequery_hub_up == 0
+        for: 5m
+        labels:
+          severity: warn
+          component: livequeryd
+          family: live_queries
+        annotations:
+          summary: "Live queries are not served for database {{ $labels.database }}"
+          description: "livequeryd has not run the database's hub for 5m: opening the database, its slot or its checkpoint keeps failing, and realtimed gets 503 for it. The hub retries with backoff up to once a minute. GET /databases on the hub's metrics listener shows its state; the journal shows the error."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasLiveQueries.md"
+
+      - alert: FaasLiveQueryHubRestarting
+        expr: increase(livequery_hub_restarts_total[30m]) >= 3
+        for: 5m
+        labels:
+          severity: warn
+          component: livequeryd
+          family: live_queries
+        annotations:
+          summary: "The live-query hub for database {{ $labels.database }} keeps restarting"
+          description: "Serving the database failed at least three times in 30m. Each restart drops its subscribers until realtimed resubscribes them. Read the hub's journal for the error that stops it."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasLiveQueries.md"
+
+      - alert: FaasLiveQueryResumeFailing
+        expr: |
+          sum without (reason) (increase(livequery_resumes_total{reason="failed"}[15m])) > 0
+          and on (job, instance, database)
+          livequery_released == 1
+        for: 10m
+        labels:
+          severity: warn
+          component: livequeryd
+          family: live_queries
+        annotations:
+          summary: "A released live-query hub cannot reconnect to database {{ $labels.database }}"
+          description: "The hub released the database so it could scale to zero, and every attempt to reconnect for 10m has failed. Commits made meanwhile reach subscribers only after it reconnects. Check the database's compute state and the replication slot."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasLiveQueries.md"
+
+      - alert: FaasLiveQuerySlotLagHigh
+        expr: livequery_slot_lag_bytes > 1073741824
+        for: 15m
+        labels:
+          severity: warn
+          component: livequeryd
+          family: live_queries
+        annotations:
+          summary: "The live-query slot of database {{ $labels.database }} retains more than 1 GiB of WAL"
+          description: "The replication slot holds back WAL the hub has not confirmed for 15m. The database's storage grows until it does; a hub that stopped decoding, or a database the hub stopped serving, leaves its slot behind."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasLiveQueries.md"
+
+      - alert: FaasLiveQuerySlotLost
+        expr: sum without (reason) (increase(livequery_resnapshots_total{reason="slot_lost"}[30m])) > 0
+        labels:
+          severity: warn
+          component: livequeryd
+          family: live_queries
+        annotations:
+          summary: "The live-query slot of database {{ $labels.database }} was lost"
+          description: "The hub restored from its checkpoint but its replication slot was gone, so every live query was read again from scratch. Find what dropped the slot: a database restore, a branch reset, or an operator."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasLiveQueries.md"
+
+      - alert: FaasLiveQueryKeysUnreadable
+        expr: |
+          sum without (result) (increase(livequery_key_refreshes_total{result="error"}[10m])) > 0
+          unless on (job, instance, database)
+          sum without (result) (increase(livequery_key_refreshes_total{result="ok"}[10m])) > 0
+        for: 5m
+        labels:
+          severity: warn
+          component: livequeryd
+          family: live_queries
+        annotations:
+          summary: "The live-query hub cannot read the live keys of database {{ $labels.database }}"
+          description: "Every read of the database's live keys from the control plane failed for 15m. The hub keeps the keys it has, so existing seals still open, but new and rotated keys are not picked up and revocations do not apply. Check the hub's read-only control-plane connection."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasLiveQueries.md"
+
+      - alert: FaasLiveQueryCommitToDeltaSlow
+        expr: |
+          histogram_quantile(0.95, sum by (job, instance, database, le) (rate(livequery_commit_to_delta_seconds_bucket[10m]))) > 1
+        for: 15m
+        labels:
+          severity: warn
+          component: livequeryd
+          family: live_queries
+        annotations:
+          summary: "Live-query results for database {{ $labels.database }} lag commits"
+          description: "For 15m, 5% of transactions took more than 1s from commit to their live-query frames; the ADR measured p95 near 100ms. Look at livequery_round_duration_seconds, statements per round and slot lag on the live-queries dashboard."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasLiveQueries.md"
+
+      - alert: FaasLiveQuerySlowConsumer
+        expr: increase(livequery_slow_consumers_total[10m]) > 0
+        labels:
+          severity: warn
+          component: livequeryd
+          family: live_queries
+        annotations:
+          summary: "The live-query hub cut off a slow connection for database {{ $labels.database }}"
+          description: "A connection fell too far behind its frames and was closed. realtimed carries every client of a database over one connection, so its subscribers resubscribe. Check realtimed's health and the network between it and the hub."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasLiveQueries.md"
+
+      - alert: FaasLiveQueryUpstreamFlapping
+        expr: increase(realtimed_live_upstream_drops_total[15m]) > 3
+        for: 5m
+        labels:
+          severity: warn
+          component: realtimed
+          family: live_queries
+        annotations:
+          summary: "realtimed on {{ $labels.instance }} keeps losing its live-query hub connections"
+          description: "More than three hub connections dropped in 15m. Subscriptions go stale until realtimed redials and resubscribes them. Check the hub's health, its TLS certificates and the network path to it."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasLiveQueries.md"
 
   - name: faas_stale_deployments
     interval: 30s
@@ -5498,6 +6277,56 @@ groups:
           description: "At least three terminal init snapshot attempts failed in 15m, and failures exceeded 10% of attempts. before_checkpoint_failed is excluded because it is an application callback rejection. Inspect the capture outcome dashboard and schedd/vmmd logs."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasInitSnapshotCaptureFailures.md"
 
+  # ADR-20261023171905 unbilled quiet pause: schedd's pause ledger and what
+  # meterd subtracts from it. Both alerts mean customers were billed for pause
+  # time the ledger could not prove, never the reverse;
+  # docs/runbooks/FaasQuietPauseBilling.md covers them.
+  - name: faas_quiet_pause_billing
+    interval: 30s
+    rules:
+      - alert: FaasQuietPauseLedgerWriteErrors
+        expr: |
+          sum by (instance) (increase(schedd_quiet_pause_ledger_writes_total{outcome=~"error|load_error"}[15m])) >= 3
+        for: 5m
+        labels:
+          severity: warn
+          component: schedd
+          family: quiet_pause_billing
+        annotations:
+          summary: "schedd on {{ $labels.instance }} cannot write the quiet pause ledger"
+          description: "At least three quiet pause ledger writes or open-pause loads failed in 15m. The node's watermark stops, so meterd bills open pauses as running time until the writes succeed. Check schedd logs for 'quiet pause ledger' and Postgres reachability."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasQuietPauseBilling.md"
+      - alert: FaasQuietPauseUnprovenMinutes
+        expr: |
+          sum (increase(meterd_quiet_pause_unproven_minutes_total{mode="on"}[1h])) > 30
+        for: 15m
+        labels:
+          severity: warn
+          component: meterd
+          family: quiet_pause_billing
+        annotations:
+          summary: "meterd is billing quiet pauses the ledger could not prove"
+          description: "More than 30 instance-minutes in 1h had an open quiet pause past its node's ledger watermark, so their uncovered pause time was billed. A schedd that stopped writing its node's ledger is the usual cause; see FaasQuietPauseLedgerWriteErrors and schedd_quiet_pause_ledger_watermark_seconds."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasQuietPauseBilling.md"
+      # The under-billing direction: meterd may only subtract pause time vmmd
+      # measured. Its seconds are floored per instance-minute and missed
+      # pauses are billed, so it normally reads a little under schedd's
+      # measurement; above it, the ledger proves pauses that did not happen.
+      # Shadow mode counts too, so the shadow week catches it before billing.
+      - alert: FaasQuietPauseUnbilledExceedsMeasured
+        expr: |
+          sum (increase(meterd_quiet_pause_unbilled_seconds_total[6h]))
+            > 1.05 * (sum (increase(schedd_quiet_pause_measured_seconds_total[6h])) or vector(0)) + 600
+        for: 30m
+        labels:
+          severity: warn
+          component: meterd
+          family: quiet_pause_billing
+        annotations:
+          summary: "meterd counted more quiet-paused time than vmmd measured"
+          description: "In 6h meterd subtracted (or, in shadow mode, would have subtracted) more quiet-paused seconds than vmmd measured on the nodes, by over 5% plus 10 minutes. The ledger is proving pauses that did not happen, so customers are or would be under-billed. Set quiet_pause_unbilled to shadow until it is explained."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasQuietPauseBilling.md"
+
   # ADR-1151 pause tiers: the frozen tier and quiet pause. Warnings while the
   # tiers are in canary; the dashboard is deploy/grafana/frozen-tier.json and
   # docs/runbooks/FaasFrozenTier.md covers every alert.
@@ -5813,6 +6642,39 @@ groups:
           description: "The public gateway has reaped more than one raw TCP session per second for ten minutes. Check client keepalive behavior, the configured FAAS_TCPD_IDLE_TIMEOUT, and whether a downstream service is stalling."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasTCPIngress.md"
 
+  # ADR-570: the traffic controls fail closed. A store, revocation or node
+  # admission outage refuses customer requests with a 503, so each reason
+  # alerts on its own; customer-caused refusals (rate_limited, deadline,
+  # node_capacity) are not paging conditions.
+  - name: traffic_control
+    interval: 30s
+    rules:
+      - alert: FaasTrafficControlRefusing
+        expr: sum by (reason) (rate(gateway_traffic_refusals_total{job="gatewayd-internal",reason=~"policy_unavailable|security_unavailable|rate_limit_unavailable|node_admission_unavailable"}[5m])) > 0.2
+        for: 5m
+        labels:
+          severity: page
+          component: gatewayd-internal
+          family: traffic_control
+          public_status: internal
+        annotations:
+          summary: "Traffic controls are refusing requests ({{ $labels.reason }})"
+          description: "Gateways have refused more than 0.2 requests per second with {{ $labels.reason }} for five minutes. These refusals come from a fail-closed traffic control, not from the customer's app or limits."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasTrafficControl.md"
+
+      - alert: FaasPublicTrafficSecurityUnverified
+        expr: max by (job, instance) (gatewayd_public_traffic_security_enforced{job=~"gatewayd|gatewayd-public-edge"}) == 0
+        for: 30m
+        labels:
+          severity: warn
+          component: gatewayd-public
+          family: traffic_control
+          public_status: internal
+        annotations:
+          summary: "A public edge is passing responses without the revocation check"
+          description: "{{ $labels.instance }} has not enforced the traffic security fence for 30 minutes, so a revoked account, app or deployment can still receive responses through it. A gateway it dials lacks the fence wiring or has no fresh observation."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasTrafficControl.md"
+
   - name: retry_safety
     interval: 30s
     rules:
@@ -5825,7 +6687,7 @@ groups:
           family: retry_safety
         annotations:
           summary: "Gateway retry budgets use mixed local and shared modes"
-          description: "At least one gateway uses a process-local allowance while another uses Redis. Check the fleet Vault variable and restart all gatewayd-internal units before claiming a fleet-wide retry cap."
+          description: "At least one gateway uses a process-local allowance while another uses a shared backend. Check ratelimit.mode and any Redis override before claiming a fleet-wide retry cap."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasSharedRetryBudget.md"
 
       - alert: FaasRetryBudgetBackendErrors
@@ -5836,8 +6698,8 @@ groups:
           component: gatewayd-internal
           family: retry_safety
         annotations:
-          summary: "Shared retry budget Redis operations are failing"
-          description: "Gateway retries are being denied because Redis observations or admissions failed. Check Redis availability, TLS, credentials, and private transport. Original requests continue."
+          summary: "Shared retry budget operations are failing"
+          description: "Gateway retries are being denied because shared observations or admissions failed. Check Postgres or the configured Redis backend. Original requests run only when their independent admission checks succeed."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasSharedRetryBudget.md"
 
       - alert: FaasRetryBudgetBackendMismatch
@@ -5849,7 +6711,7 @@ groups:
           family: retry_safety
         annotations:
           summary: "Gateways point at different shared retry budget endpoints"
-          description: "Redis-backed gateways report more than one endpoint identity. Check that one common fleet Vault URL reaches every gateway before relying on the aggregate retry cap."
+          description: "Gateways report more than one shared backend identity. Check that all gateways select the same Postgres database or common Redis override before relying on the aggregate retry cap."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasSharedRetryBudget.md"
 
       - alert: FaasRetryAmplificationHigh
@@ -5959,6 +6821,50 @@ groups:
           summary: "UDP peer resource limits are ending sessions"
           description: "UDP peer byte/message or transport resource limits are being reached repeatedly. Inspect client traffic and configured limits; this is distinct from an admission or forwarding failure."
 
+  - name: faas_object_storage
+    rules:
+      # ADR-20261023223000: a bucket whose inventory keeps failing becomes
+      # stale and refuses its own transfers; other buckets keep working.
+      - alert: FaasObjectStorageInventoryFailing
+        expr: |
+          sum(rate(faas_object_storage_inventory_scans_total{outcome="failed"}[15m]))
+            / clamp_min(sum(rate(faas_object_storage_inventory_scans_total[15m])), 1e-9) > 0.2
+          and sum(rate(faas_object_storage_inventory_scans_total[15m])) > 0
+        for: 15m
+        labels:
+          severity: warn
+          component: apid
+          family: object_storage
+        annotations:
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasObjectStorage.md"
+          summary: "Object storage inventory scans are failing"
+          description: "More than 20% of apid's bucket inventory scans failed over 15m. A bucket whose inventory is older than 900 s refuses its own uploads and reads until a scan succeeds."
+      - alert: FaasS3GatewayErrorRateHigh
+        expr: |
+          sum(rate(s3_gateway_ops_total{op="s3_request",code="5xx"}[10m]))
+            / clamp_min(sum(rate(s3_gateway_ops_total{op="s3_request"}[10m])), 1e-9) > 0.05
+          and sum(rate(s3_gateway_ops_total{op="s3_request"}[10m])) > 0.1
+        for: 10m
+        labels:
+          severity: warn
+          component: s3-gatewayd
+          family: object_storage
+        annotations:
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasObjectStorage.md"
+          summary: "s3-gatewayd is answering more than 5% of requests with 5xx"
+          description: "Provider failures, stale accounting or sustained SlowDown contention. Check s3-gatewayd logs by request status and the provider's status page."
+      - alert: FaasObjectStorageUsageExportStale
+        expr: time() - s3_gateway_usage_export_last_success_timestamp_seconds > 3600
+        for: 15m
+        labels:
+          severity: warn
+          component: s3-gatewayd
+          family: object_storage
+        annotations:
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasObjectStorage.md"
+          summary: "Object storage provider usage export is stale"
+          description: "s3-gatewayd has not exported provider usage for backend {{ $labels.backend }} for over an hour. With provider-report accounting, admission fails closed once reports exceed max_report_age_seconds."
+
   - name: faas-durable-entity-health
     rules:
       - alert: FaasDurableEntityHealthScanFailed
@@ -6005,6 +6911,277 @@ groups:
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasDurableEntityHealth.md"
           summary: "Durable entity {{ $labels.target }} backlog has aged"
           description: "A recent rotation observed work older than five minutes. Alarm age starts at its saved deadline; outbox age uses known stored timestamps. This is sampled bucket backlog, not receiver-delivery latency."
+  # ADR-732/733: production forks and crash snapshots. Crash captures are
+  # copies of production memory: the DPA promises they are encrypted at
+  # rest within one imaged pass, so a missing key or a stuck backlog is
+  # a compliance problem, not only an availability one.
+  - name: faas_crash_snapshots
+    interval: 30s
+    rules:
+      - alert: FaasCrashCaptureEncryptionKeyMissing
+        expr: max(imaged_crash_capture_encryption_key_missing) == 1
+        for: 5m
+        labels:
+          severity: page
+          component: imaged
+          family: crash_snapshots
+          public_status: internal
+        annotations:
+          summary: "Crash captures are not being encrypted: imaged has no host age identity"
+          description: "imaged has crash captures waiting for encryption and no host age identity (FAAS_HOST_AGE_IDENTITY_PATH). Their plaintext stays on disk until the key is restored."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasCrashSnapshots.md"
+
+      - alert: FaasCrashCaptureUnencrypted
+        expr: max(imaged_crash_capture_unencrypted_oldest_age_seconds) > 120
+        for: 5m
+        labels:
+          severity: warn
+          component: imaged
+          family: crash_snapshots
+          public_status: internal
+        annotations:
+          summary: "A crash capture has been unencrypted for more than 2 minutes"
+          description: "ADR-733 encrypts a ready crash capture within one 5 s imaged pass. The oldest unencrypted capture is over 2 minutes old; check imaged_crash_capture_ops_total{op=\"encrypt\",result=\"error\"} and imaged logs."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasCrashSnapshots.md"
+
+      - alert: FaasCrashCaptureFileOpErrors
+        expr: sum by (op) (increase(imaged_crash_capture_ops_total{result="error"}[30m])) >= 3
+        for: 5m
+        labels:
+          severity: warn
+          component: imaged
+          family: crash_snapshots
+          public_status: internal
+        annotations:
+          summary: "Crash capture {{ $labels.op }} is failing"
+          description: "imaged failed to {{ $labels.op }} crash capture files at least three times in 30m. A failing purge leaves plaintext on disk; a failing expire keeps captures past their retention."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasCrashSnapshots.md"
+
+      - alert: FaasCrashCaptureFailures
+        expr: |
+          (
+            sum by (trigger) (increase(schedd_crash_captures_total{result=~"capture_failed|capture_timeout"}[1h])) >= 3
+          )
+          and on (trigger)
+          (
+            sum by (trigger) (increase(schedd_crash_captures_total{result=~"capture_failed|capture_timeout"}[1h]))
+            /
+            clamp_min(sum by (trigger) (increase(schedd_crash_captures_total[1h])), 1)
+            > 0.5
+          )
+        for: 5m
+        labels:
+          severity: warn
+          component: schedd
+          family: crash_snapshots
+          public_status: internal
+        annotations:
+          summary: "Crash captures ({{ $labels.trigger }}) are failing"
+          description: "At least three crash captures failed or timed out in 1h, more than half of all attempts. A failed capture destroys the instance it paused; check schedd and vmmd logs for the snapshot error."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasCrashSnapshots.md"
+
+      - alert: FaasForkRestoreFailures
+        expr: |
+          (
+            sum by (source) (increase(schedd_fork_restores_total{result="restore_failed"}[1h])) >= 3
+          )
+          and on (source)
+          (
+            sum by (source) (increase(schedd_fork_restores_total{result="restore_failed"}[1h]))
+            /
+            clamp_min(sum by (source) (increase(schedd_fork_restores_total[1h])), 1)
+            > 0.5
+          )
+        for: 5m
+        labels:
+          severity: warn
+          component: schedd
+          family: crash_snapshots
+          public_status: internal
+        annotations:
+          summary: "Fork restores from {{ $labels.source }} are failing"
+          description: "At least three fork restores failed with restore_failed in 1h, more than half of all attempts. Customer-side refusals (no_capture, no_capacity, account_inactive, deployment_unavailable) are excluded."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasCrashSnapshots.md"
+
+  # ─────────────────────────────────────────────────────────────────
+  # Edge security features (ADR-20261024082000 amendment 1, criterion
+  # C3): the failure modes of WAF warn/block, the browser challenge,
+  # shared penalty boxes, AI crawler range refresh and attack mode.
+  # Every feature fails open or stays inert, so none pages; each runbook
+  # names the platform flag that withdraws the feature.
+  # ─────────────────────────────────────────────────────────────────
+  - name: faas_edge_security
+    rules:
+      # ADR-831 amendment 12: a check that finds no free slot within 1 ms
+      # is skipped and its request passes unchecked. Criterion W2 allows
+      # 0.1%; budget skips are one app's flood and are not counted here.
+      - alert: FaasEdgeWAFChecksSkipped
+        expr: |
+          (
+            sum by (instance) (rate(gateway_waf_inline_skips_total{reason="busy"}[10m]))
+              / sum by (instance) (rate(gateway_waf_inline_checks_total[10m]))
+          ) > 0.001
+          and sum by (instance) (rate(gateway_waf_inline_checks_total[10m])) > 1
+        for: 15m
+        labels:
+          severity: warn
+          component: gatewayd-internal
+          family: edge_security
+          public_status: internal
+        annotations:
+          summary: "{{ $labels.instance }} is skipping more than 0.1% of in-path WAF checks for lack of a check slot"
+          description: "gateway_waf_inline_skips_total{reason=\"busy\"} is above 0.1% of in-path checks on {{ $labels.instance }} for 15m. Skipped requests pass without the WAF's verdict (it fails open); the node is short of CPU for its check load."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasEdgeWAFInline.md"
+      - alert: FaasEdgeWAFCheckSlow
+        expr: |
+          histogram_quantile(0.95, sum by (instance, le) (rate(gateway_waf_inline_seconds_bucket[10m]))) > 0.002
+          and sum by (instance) (rate(gateway_waf_inline_seconds_count[10m])) > 1
+        for: 15m
+        labels:
+          severity: warn
+          component: gatewayd-internal
+          family: edge_security
+          public_status: internal
+        annotations:
+          summary: "In-path WAF checks on {{ $labels.instance }} add more than 2 ms at p95"
+          description: "The p95 of gateway_waf_inline_seconds on {{ $labels.instance }} has been above 2 ms (criterion W1) for 15m. Every request matched by a warn or block rule pays this latency."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasEdgeWAFInline.md"
+      - alert: FaasEdgeWAFCheckErrors
+        expr: sum by (instance) (rate(gateway_waf_inline_checks_total{outcome="error"}[10m])) > 0
+        for: 10m
+        labels:
+          severity: warn
+          component: gatewayd-internal
+          family: edge_security
+          public_status: internal
+        annotations:
+          summary: "In-path WAF checks are failing on {{ $labels.instance }}"
+          description: "gateway_waf_inline_checks_total{outcome=\"error\"} has kept rising on {{ $labels.instance }} for 10m. A failed check lets its request through, so warn and block rules are not protecting those requests."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasEdgeWAFInline.md"
+      # Criterion H5 wants 90% of challenge pages solved over 14 days;
+      # below half for an hour across the fleet means browsers cannot
+      # solve the page, not that bots are being turned away.
+      - alert: FaasEdgeChallengeSolveRateLow
+        expr: |
+          (
+            sum(rate(gateway_edge_challenge_total{outcome="solved"}[1h]))
+              / sum(rate(gateway_edge_challenge_total{outcome="issued"}[1h]))
+          ) < 0.5
+          and sum(rate(gateway_edge_challenge_total{outcome="issued"}[1h])) > 0.05
+        for: 30m
+        labels:
+          severity: warn
+          component: gatewayd-internal
+          family: edge_security
+          public_status: internal
+        annotations:
+          summary: "Fewer than half of the challenge pages served in the last hour were solved"
+          description: "gateway_edge_challenge_total solved/issued has been below 0.5 for 30m with at least 3 pages a minute. Either one app is being flooded by clients that never solve (expected) or browsers cannot solve the page (a regression)."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasEdgeChallenge.md"
+      - alert: FaasEdgeChallengeSolutionsRefused
+        expr: |
+          (
+            sum by (instance) (rate(gateway_edge_challenge_total{outcome=~"invalid|expired"}[15m]))
+              / sum by (instance) (rate(gateway_edge_challenge_total{outcome=~"solved|invalid|expired"}[15m]))
+          ) > 0.5
+          and sum by (instance) (rate(gateway_edge_challenge_total{outcome=~"solved|invalid|expired"}[15m])) > 0.05
+        for: 15m
+        labels:
+          severity: warn
+          component: gatewayd-internal
+          family: edge_security
+          public_status: internal
+        annotations:
+          summary: "{{ $labels.instance }} refuses most challenge solutions it receives"
+          description: "More than half of the challenge solutions {{ $labels.instance }} received in 15m were invalid or expired. If only this gateway does it, its challenge key or clock differs from the gateway that issued the pages; visitors are sent back to the challenge."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasEdgeChallenge.md"
+      # ADR-20261022105846 amendment 1: boxes are shared through Postgres.
+      - alert: FaasEdgePenaltyShareFailing
+        expr: sum by (instance, op) (rate(gateway_edge_penalty_share_total{outcome="error"}[5m])) > 0
+        for: 10m
+        labels:
+          severity: warn
+          component: gatewayd-internal
+          family: edge_security
+          public_status: internal
+        annotations:
+          summary: "{{ $labels.instance }} cannot {{ $labels.op }} shared penalty boxes"
+          description: "gateway_edge_penalty_share_total{op=\"{{ $labels.op }}\",outcome=\"error\"} has kept rising for 10m. Boxes still hold on the gateway that made them, but not on the others or across a restart."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasEdgePenaltyShare.md"
+      - alert: FaasEdgePenaltyShareDropped
+        expr: sum by (instance) (increase(gateway_edge_penalty_share_dropped_total[10m])) > 0
+        labels:
+          severity: warn
+          component: gatewayd-internal
+          family: edge_security
+          public_status: internal
+        annotations:
+          summary: "{{ $labels.instance }} dropped penalty boxes at the share queue bound"
+          description: "gateway_edge_penalty_share_dropped_total rose on {{ $labels.instance }}: more than 10,000 boxes were waiting for a flush. Those boxes hold on this gateway only."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasEdgePenaltyShare.md"
+      - alert: FaasEdgePenaltyShareSlow
+        expr: |
+          histogram_quantile(0.95, sum by (instance, le) (rate(gateway_edge_penalty_share_seconds_bucket{stage="propagated"}[15m]))) > 1
+          and sum by (instance) (rate(gateway_edge_penalty_share_seconds_count{stage="propagated"}[15m])) > 0
+        for: 15m
+        labels:
+          severity: warn
+          component: gatewayd-internal
+          family: edge_security
+          public_status: internal
+        annotations:
+          summary: "Penalty boxes take more than 1 s to reach {{ $labels.instance }}"
+          description: "The p95 of gateway_edge_penalty_share_seconds{stage=\"propagated\"} on {{ $labels.instance }} has been above 1 s (criterion P2) for 15m. The gateway is probably missing the edge_penalty_box notifications and reading boxes only on its 15 s repair tick."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasEdgePenaltyShare.md"
+      # ADR-20261022083601: apid refreshes each crawler operator's
+      # published ranges every 12 h; gateways stop trusting them after
+      # 7 days. Three failed cycles leave days to fix the feed.
+      - alert: FaasEdgeCrawlerRangesStale
+        expr: |
+          (sum by (crawler) (increase(edge_crawler_ranges_refresh_total[36h])) > 0)
+          unless
+          (sum by (crawler) (increase(edge_crawler_ranges_refresh_total{outcome=~"ok|fresh"}[36h])) > 0)
+        for: 1h
+        labels:
+          severity: warn
+          component: apid
+          family: edge_security
+          public_status: internal
+        annotations:
+          summary: "Published IP ranges for crawler {{ $labels.crawler }} have not refreshed in 36 h"
+          description: "Every edge_crawler_ranges_refresh_total attempt for {{ $labels.crawler }} in 36h failed. Gateways keep the last good ranges for 7 days, then stop verifying {{ $labels.crawler }}, so verified_ai_crawler rules stop matching it."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasEdgeCrawlerRangesStale.md"
+      # ADR-20261021220456: attack mode challenges every visitor to an
+      # app. While it is preview, each use is reviewed (criterion A3).
+      - alert: FaasEdgeAttackModeActive
+        expr: sum by (app) (rate(gateway_edge_attack_mode_total[5m])) > 0
+        for: 15m
+        labels:
+          severity: info
+          component: gatewayd-internal
+          family: edge_security
+          public_status: internal
+        annotations:
+          summary: "App {{ $labels.app }} is in attack mode"
+          description: "gateway_edge_attack_mode_total shows app {{ $labels.app }}'s attack mode deciding requests for 15m. While attack mode is preview, review each use: did it stop the flood, and did the app's own clients get through?"
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasEdgeAttackMode.md"
+      - alert: FaasEdgeAttackModeRefusingClients
+        expr: |
+          (
+            sum by (app) (rate(gateway_edge_attack_mode_total{outcome="rejected"}[15m]))
+              / sum by (app) (rate(gateway_edge_attack_mode_total[15m]))
+          ) > 0.5
+          and sum by (app) (rate(gateway_edge_attack_mode_total{outcome="rejected"}[15m])) > 1
+        for: 15m
+        labels:
+          severity: warn
+          component: gatewayd-internal
+          family: edge_security
+          public_status: internal
+        annotations:
+          summary: "Attack mode refuses most of app {{ $labels.app }}'s requests"
+          description: "More than half of the requests app {{ $labels.app }}'s attack mode decided in 15m were refused with 403 challenge_required (not browser navigations, no verified credential). Either a script flood is being turned away, or the app's own API clients are locked out."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasEdgeAttackMode.md"
 
   # ─────────────────────────────────────────────────────────────────
   # Spec §12 operator signals (ADR-1235). These rows of the §12 table
@@ -6054,6 +7231,22 @@ groups:
           summary: "Edge rules of kind {{ $labels.kind }} are failing to compile"
           description: "gatewayd-internal dropped at least one {{ $labels.kind }} edge rule at load time in the last 10m. A shipped rule is broken and is not being enforced; the counter is cumulative, so this alert reads new ticks only."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasEdgeRuleCompileError.md"
+      # ADR-091 amendment (2026-10-26): a gateway could not read a host's
+      # edge rules. last_known: it serves the host's last compiled set, so
+      # rule edits do not apply; failed: it had none and refuses the host's
+      # requests with 503 until a read succeeds.
+      - alert: FaasEdgeRuleLoadFailing
+        expr: sum by (instance, outcome) (increase(gateway_edge_rule_load_total{outcome=~"failed|last_known"}[10m])) > 0
+        for: 5m
+        labels:
+          severity: warn
+          component: gatewayd-internal
+          family: edge_rules
+          public_status: internal
+        annotations:
+          summary: "{{ $labels.instance }} cannot read edge rules ({{ $labels.outcome }})"
+          description: "gateway_edge_rule_load_total{outcome=\"{{ $labels.outcome }}\"} kept rising on {{ $labels.instance }} for 5m. last_known: hosts get their last compiled rules and rule edits do not apply. failed: hosts with nothing compiled are refused with 503 Edge security unavailable."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasEdgeRuleLoadFailing.md"
       - alert: FaasEdgeRuleJWTFailures
         expr: sum(rate(gateway_edge_rule_match_total{kind="jwt",outcome="failed"}[5m])) * 60 > 5
         for: 5m
@@ -6234,6 +7427,89 @@ groups:
           summary: "{{ $labels.instance }} is routing from last-known-good routes"
           description: "Route lookups on {{ $labels.instance }} are erroring and the edge has served from its stale route tier for 5m. Routes change no faster than FAAS_GATEWAY_ROUTE_STALE_TTL allows; check Postgres reachability from this node."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasRouteLookupStaleServed.md"
+      # ADR-20261024154324: the per-route series budget and apid's route
+      # workers (insights evaluator, production route monitor, automatic
+      # route checks).
+      - alert: GatewayRouteMetricsBudgetExhausted
+        expr: sum by (job, instance) (increase(gateway_route_metrics_rejected_total[15m])) > 0
+        for: 15m
+        labels:
+          severity: warn
+          component: gatewayd-internal
+          family: route_metrics
+          public_status: internal
+        annotations:
+          summary: "{{ $labels.instance }} has no room for more per-route series"
+          description: "{{ $labels.instance }} holds its full budget of live (app, route) pairs and has declined new ones for 15m, so some apps' route lists and throttle suggestions miss routes. Raise FAAS_GATEWAY_ROUTE_METRICS_MAX_ROUTES if Prometheus has headroom."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/GatewayRouteMetricsBudget.md"
+      - alert: FaasRouteInsightsStalled
+        expr: time() - max(max_over_time(apid_route_insights_last_success_timestamp_seconds[13h])) > 13 * 3600
+        for: 30m
+        labels:
+          severity: warn
+          component: apid
+          family: route_workers
+          public_status: internal
+        annotations:
+          summary: "No route insights evaluation has finished in 13h"
+          description: "No apid replica has finished a route insights run without error for more than two six-hour intervals, so customers' route insights and their webhooks are going stale."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasRouteWorkers.md"
+      - alert: FaasRouteInsightsFailing
+        expr: |
+          sum(increase(apid_route_insights_runs_total{outcome="failed"}[13h])) > 1
+          or
+          (
+            sum(increase(apid_route_insights_apps_total{outcome="failed"}[13h]))
+            /
+            clamp_min(sum(increase(apid_route_insights_apps_total{outcome=~"evaluated|failed"}[13h])), 1)
+          ) > 0.25
+        for: 15m
+        labels:
+          severity: warn
+          component: apid
+          family: route_workers
+          public_status: internal
+        annotations:
+          summary: "Route insights evaluations are failing"
+          description: "More than one route insights run failed, or more than a quarter of the apps evaluated failed, in the last 13h. Read apid's 'route insights' warnings for the failing query."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasRouteWorkers.md"
+      - alert: FaasRouteMonitorLagging
+        expr: max(apid_route_monitor_lag_seconds) > 300
+        for: 10m
+        labels:
+          severity: warn
+          component: apid
+          family: route_workers
+          public_status: internal
+        annotations:
+          summary: "Production route monitors are more than 5m overdue"
+          description: "The oldest due production route monitor waited {{ $value | humanizeDuration }} at the latest drain. Budget incidents and opt-in automatic rollbacks are delayed until the monitors catch up."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasRouteWorkers.md"
+      - alert: FaasRouteWorkersFailing
+        expr: |
+          sum(increase(apid_route_worker_queue_unavailable_total[15m])) > 2
+          or
+          (
+            sum(rate(apid_route_monitor_evaluations_total{outcome="failed"}[15m]))
+            /
+            clamp_min(sum(rate(apid_route_monitor_evaluations_total{outcome=~"evaluated|failed"}[15m])), 1e-9)
+          ) > 0.1
+          or
+          (
+            sum(rate(apid_route_checks_total{outcome="retried"}[30m]))
+            /
+            clamp_min(sum(rate(apid_route_checks_total[30m])), 1e-9)
+          ) > 0.5
+        for: 15m
+        labels:
+          severity: warn
+          component: apid
+          family: route_workers
+          public_status: internal
+        annotations:
+          summary: "apid's route monitor or route check workers are failing"
+          description: "A route worker cannot read its queue, more than 10% of production route monitor evaluations fail, or more than half of automatic route checks are being retried."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasRouteWorkers.md"
       - alert: FaasDBNotifyHubReconnects
         expr: sum by (job, instance) (increase({__name__=~".+_db_notify_hub_reconnects_total"}[5m])) > 1
         for: 5m

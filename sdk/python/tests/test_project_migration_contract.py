@@ -1,7 +1,7 @@
-from faas_sdk.api.projects import apply_cached_project_plan
-from faas_sdk.models.apply_cached_project_plan_request import ApplyCachedProjectPlanRequest
-from faas_sdk.models.project_initial_secrets import ProjectInitialSecrets
-from faas_sdk.models.project_source_ref_scan_request import ProjectSourceRefScanRequest
+from faas_sdk.preview.api.projects import apply_cached_project_plan
+from faas_sdk.preview.models.apply_cached_project_plan_request import ApplyCachedProjectPlanRequest
+from faas_sdk.preview.models.project_initial_secrets import ProjectInitialSecrets
+from faas_sdk.preview.models.project_source_ref_scan_request import ProjectSourceRefScanRequest
 
 
 def test_initial_values_remain_in_the_apply_request_wire_body():
@@ -18,8 +18,8 @@ def test_initial_values_remain_in_the_apply_request_wire_body():
 
 
 def test_connected_scan_preserves_manual_migration_mode():
-    from faas_sdk.models.plan_workload import PlanWorkload
-    from faas_sdk.models.project_source_ref_scan_request_app_slugs import ProjectSourceRefScanRequestAppSlugs
+    from faas_sdk.preview.models.plan_workload import PlanWorkload
+    from faas_sdk.preview.models.project_source_ref_scan_request_app_slugs import ProjectSourceRefScanRequestAppSlugs
 
     request = ProjectSourceRefScanRequest(
         repo="team/shop",
@@ -40,11 +40,11 @@ def test_connected_scan_preserves_manual_migration_mode():
 def test_durable_project_migration_create_and_resume_wire_identity():
     from uuid import UUID
 
-    from faas_sdk.api.projects import create_project_migration, resume_project_migration
-    from faas_sdk.models import CreateProjectMigrationRequestBuildDependencies, ProjectPublicBuildURLs
-    from faas_sdk.models.create_project_migration_request import CreateProjectMigrationRequest
-    from faas_sdk.models.project_service_connections import ProjectServiceConnections
-    from faas_sdk.models.resume_project_migration_request import ResumeProjectMigrationRequest
+    from faas_sdk.preview.api.projects import create_project_migration, resume_project_migration
+    from faas_sdk.preview.models import CreateProjectMigrationRequestBuildDependencies, ProjectPublicBuildURLs
+    from faas_sdk.preview.models.create_project_migration_request import CreateProjectMigrationRequest
+    from faas_sdk.preview.models.project_service_connections import ProjectServiceConnections
+    from faas_sdk.preview.models.resume_project_migration_request import ResumeProjectMigrationRequest
 
     migration = UUID("7a7ab9c4-2995-48d5-85c5-c094ce55c599")
     body = CreateProjectMigrationRequest(

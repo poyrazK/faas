@@ -38,7 +38,11 @@
   pre_tasks:
     - name: End managed-host bootstrap discovery on the release-only fast path
       ansible.builtin.meta: end_host
-      when: faas_join_bootstrap_contract_current | default(false) | bool
+      # A node_join.yml prepare runs in parallel across serving nodes, so it
+      # never converges roles; activation does that before the drain (ADR-20261025095348).
+      when: >-
+        (faas_join_bootstrap_contract_current | default(false) | bool) or
+        (faas_join_rollout_phase | default('full')) == 'prepare'
 
     - name: Gather facts for hosts requiring bootstrap convergence
       ansible.builtin.setup:
@@ -71,7 +75,11 @@
   pre_tasks:
     - name: End managed control-plane bootstrap on the release-only fast path
       ansible.builtin.meta: end_host
-      when: faas_join_bootstrap_contract_current | default(false) | bool
+      # A node_join.yml prepare runs in parallel across serving nodes, so it
+      # never converges roles; activation does that before the drain (ADR-20261025095348).
+      when: >-
+        (faas_join_bootstrap_contract_current | default(false) | bool) or
+        (faas_join_rollout_phase | default('full')) == 'prepare'
 
     - name: Gather facts for control-plane bootstrap convergence
       ansible.builtin.setup:
@@ -121,17 +129,48 @@
       when: faas_cp_converge_roles | default(none) is none or 'internal_pki_renewal' in faas_cp_converge_roles
     - role: canary_artifact_retention
       when: faas_cp_converge_roles | default(none) is none or 'canary_artifact_retention' in faas_cp_converge_roles
+    # ADR-20261023124955: per-slice CPU, memory, IO and stall time, so the
+    # dashboards show what PostgreSQL, the daemons and observability each use.
+    - role: cgroup_metrics
+      when: faas_cp_converge_roles | default(none) is none or 'cgroup_metrics' in faas_cp_converge_roles
+    # ADR-20261023124955 §2: the log pipeline's fleet-PKI feature leaves,
+    # before Prometheus, Grafana, Loki and Promtail read them.
+    - role: platform_logs_pki
+      when:
+        - faas_obs_logs_enabled | default(false) | bool
+        - faas_cp_converge_roles | default(none) is none or 'platform_logs_pki' in faas_cp_converge_roles
     - role: alertmanager
       when: faas_cp_converge_roles | default(none) is none or 'alertmanager' in faas_cp_converge_roles
     - role: prometheus
       when: faas_cp_converge_roles | default(none) is none or 'prometheus' in faas_cp_converge_roles
     - role: grafana
       when: faas_cp_converge_roles | default(none) is none or 'grafana' in faas_cp_converge_roles
+    # ADR-20261023124955 §2: Loki and the control plane's own Promtail, in
+    # faas-obs.slice. Off until the operator sets faas_obs_logs_enabled with
+    # faas_obs_loki_address, the bucket and the TLS material (docs/ops/logs.md).
+    - role: loki
+      when:
+        - faas_obs_logs_enabled | default(false) | bool
+        - faas_cp_converge_roles | default(none) is none or 'loki' in faas_cp_converge_roles
+    # ADR-20261023185953: Alloy ships the journal; promtail stays selectable
+    # for one release as the rollback (faas_obs_log_shipper: promtail).
+    - role: alloy
+      when:
+        - faas_obs_logs_enabled | default(false) | bool
+        - faas_obs_log_shipper | default('alloy') == 'alloy'
+        - faas_cp_converge_roles | default(none) is none or 'alloy' in faas_cp_converge_roles
+    - role: promtail
+      when:
+        - faas_obs_logs_enabled | default(false) | bool
+        - faas_obs_log_shipper | default('alloy') == 'promtail'
+        - faas_cp_converge_roles | default(none) is none or 'promtail' in faas_cp_converge_roles
     # Control-plane-only:
     - role: postgres
       when: faas_cp_converge_roles | default(none) is none or 'postgres' in faas_cp_converge_roles
     - role: postgres_capacity
       when: faas_cp_converge_roles | default(none) is none or 'postgres_capacity' in faas_cp_converge_roles
+    - role: postgres_metrics
+      when: faas_cp_converge_roles | default(none) is none or 'postgres_metrics' in faas_cp_converge_roles
     - role: pgbouncer
       when:
         - faas_pgbouncer_enabled | default(false) | bool
@@ -146,8 +185,18 @@
       when:
         - not (faas_image_seed | default(false) | bool)
         - faas_cp_converge_roles | default(none) is none or 'cp_state_backup' in faas_cp_converge_roles
+    # ADR-20261026163015: seal the audit log into a MAC-chained anchor every
+    # 15 minutes and verify the chain daily.
+    - role: audit_anchor
+      when:
+        - not (faas_image_seed | default(false) | bool)
+        - faas_cp_converge_roles | default(none) is none or 'audit_anchor' in faas_cp_converge_roles
     - role: control_plane_service
       when: faas_cp_converge_roles | default(none) is none or 'control_plane_service' in faas_cp_converge_roles
+    - role: seal_domains
+      when:
+        - faas_seal_domains_managed | default(false) | bool
+        - faas_cp_converge_roles | default(none) is none or 'seal_domains' in faas_cp_converge_roles
     - role: internal_mail_service
       when:
         - faas_internal_mail_managed | default(false) | bool
@@ -189,7 +238,11 @@
   pre_tasks:
     - name: End managed compute bootstrap on the release-only fast path
       ansible.builtin.meta: end_host
-      when: faas_join_bootstrap_contract_current | default(false) | bool
+      # A node_join.yml prepare runs in parallel across serving nodes, so it
+      # never converges roles; activation does that before the drain (ADR-20261025095348).
+      when: >-
+        (faas_join_bootstrap_contract_current | default(false) | bool) or
+        (faas_join_rollout_phase | default('full')) == 'prepare'
 
     - name: Gather facts for compute bootstrap convergence
       ansible.builtin.setup:
@@ -227,7 +280,15 @@
     - role: gcp_ops_agent
     - role: internal_pki_renewal
     - role: canary_artifact_retention
+    - role: cgroup_metrics
+    # ADR-20261023124955 §5: alerts on the public serving path without the
+    # control plane. Removes its timer while no probe URL is configured.
+    - role: serving_probe
     # Compute-only:
+    # ADR 20261022111812: stage the runtime seal-domain identity before
+    # vmmd_service so a vmmd (re)start in this run loads it.
+    - role: seal_domains
+      when: faas_seal_domains_managed | default(false) | bool
     - role: vmmd_service
     # M9: every compute node owns a node-local schedd for heartbeat and
     # recovery decisions. The shared database is remote on this host.
@@ -241,6 +302,18 @@
     - role: builderd_service
     - role: compute_only_service
     - role: profiled_service
+    # ADR-20261023124955 §2: ship this node's platform journal to Loki on the
+    # control plane, with a Promtail leaf issued by the control plane's CA.
+    - role: platform_logs_pki
+      when: faas_obs_logs_enabled | default(false) | bool
+    - role: alloy
+      when:
+        - faas_obs_logs_enabled | default(false) | bool
+        - faas_obs_log_shipper | default('alloy') == 'alloy'
+    - role: promtail
+      when:
+        - faas_obs_logs_enabled | default(false) | bool
+        - faas_obs_log_shipper | default('alloy') == 'promtail'
     - role: log_archive
     - role: optional_credentials
     - role: role_convergence

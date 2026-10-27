@@ -164,8 +164,8 @@ func cmdInvitations(args []string) int {
 	case "accept":
 		return cmdInvitationsAccept(args[1:])
 	default:
-		fmt.Fprintf(os.Stderr, "gregale invitations: unknown subcommand %q\n", args[0])
-		return 1
+		printCommandValidation(os.Stderr, "gregale invitations: unknown subcommand %q\n", args[0])
+		return unknownSubcommandChoices(os.Stderr, "invitations", nestedCliCommand("invitations"), args[0])
 	}
 }
 
@@ -836,7 +836,7 @@ func cmdOrgsKeysAdd(args []string) int {
 	}
 	k, err := client.CreateOrgAPIKey(context.Background(), *slug, *label, scopes)
 	if err != nil {
-		return printErr("Create failed", err)
+		return printErr("Could not create org API key", err)
 	}
 	if jsonOutput {
 		return jsonOut(writeJSON(k))
@@ -1047,7 +1047,7 @@ func cmdOrgsUpdate(args []string) int {
 	}
 	resp, err := client.PatchOrg(context.Background(), *slug, req)
 	if err != nil {
-		return printErr("Update failed", err)
+		return printErr("Could not update org", err)
 	}
 	if jsonOutput {
 		return jsonOut(writeJSON(resp))

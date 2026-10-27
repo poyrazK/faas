@@ -3,8 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * Response body for `POST /v1/apps/{slug}/openapi` (issue #975
- * item #2 / ADR-126). One row per app in `app_openapi_docs`,
+ * Response body for `POST /v1/apps/{slug}/openapi`. One row per app in `app_openapi_docs`,
  * last-write-wins. Source is always `manual_import` — cold-
  * boot captures go to `deployment_openapi_docs` (item #1).
  * `endpoint_count` is the number of HTTP operations in the

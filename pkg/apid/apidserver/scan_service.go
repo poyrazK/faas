@@ -52,6 +52,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/apid/projectmigration"
 	"github.com/onebox-faas/faas/pkg/apid/projectsetup"
 	"github.com/onebox-faas/faas/pkg/apid/serviceadditions"
+	"github.com/onebox-faas/faas/pkg/apid/trafficproblem"
 	"github.com/onebox-faas/faas/pkg/cronexpr"
 	"github.com/onebox-faas/faas/pkg/githubd"
 	"github.com/onebox-faas/faas/pkg/logsanitize"
@@ -912,6 +913,14 @@ func (s *server) applyBuildsForAddedChangedOrdered(
 			out = append(out, res)
 			continue
 		}
+		// A project apply releases each app without a canary, atomic or not,
+		// so an app requiring approvals is refused like an immediate deploy
+		// (ADR-20261020085706 amendment 1).
+		if prob := s.releaseApprovalCanaryProblem(ctx, app, &api.CreateDeploymentRequest{Scope: environment}); prob != nil {
+			res.Error = prob.Detail
+			out = append(out, res)
+			continue
+		}
 		// New services install their pinned company intent before staging or
 		// consuming deploy rate. The ordinary deployment fence still applies.
 		var standardError string
@@ -1522,6 +1531,17 @@ func (s *server) scanService(
 	if slugProblem != nil {
 		return nil, state.Project{}, nil, nil, nil, nil, slugProblem
 	}
+	projectsetup.SetAppSlugs(result.Workloads, appSlugs)
+	allocated, allocErr := reconcile.AllocateAppSlugs(r.Context(), s.store.AppBySlugIncludingDeleted, result.Workloads, acctApps, acct.ID, projectID, req.ProjectSlug)
+	if allocErr != nil {
+		return nil, state.Project{}, nil, nil, nil, nil, customerInternalProblem(s.log, "allocate project app names",
+			"Gregale could not check app name availability.", "Retry the scan before deploying.", allocErr)
+	}
+	for _, w := range allocated {
+		if _, chosen := appSlugs[w.Name]; !chosen && w.AppSlug != "" {
+			appSlugs[w.Name] = w.AppSlug
+		}
+	}
 	req.AppSlugs = appSlugs
 	projectsetup.SetAppSlugs(result.Workloads, appSlugs)
 	if scheduleErr := validateScannedSchedules(result.Workloads); scheduleErr != nil {
@@ -1743,6 +1763,9 @@ func (s *server) scanService(
 	if routeWarning := projectAsyncRoutePlanWarning(resolvedManifest.AsyncRoutes, resolvedManifest.AsyncRoutesPresent, req.NoTriggers); routeWarning != "" {
 		warnings = append(warnings, routeWarning)
 	}
+	if routeWarning := projectPathRoutePlanWarning(resolvedManifest.Routes, resolvedManifest.RoutesPresent, req.NoTriggers); routeWarning != "" {
+		warnings = append(warnings, routeWarning)
+	}
 	if req.NoTriggers {
 		if len(crons) > 0 {
 			warnings = append(warnings, "triggers skipped by request (--no-triggers); existing trigger state left unchanged")
@@ -1794,6 +1817,11 @@ func (s *server) scanService(
 			return nil, state.Project{}, nil, nil, nil, nil, problem
 		}
 		if problem := projectAsyncRoutesPlanProblem(acct.Plan, resolvedManifest.AsyncRoutes, filteredW, projectApps); problem != nil {
+			return nil, state.Project{}, nil, nil, nil, nil, problem
+		}
+	}
+	if resolvedManifest.RoutesPresent && !req.NoTriggers {
+		if problem := validateProjectManifestPathRoutes(resolvedManifest.Routes, result.Workloads, filteredW, projectApps, req.Exclude); problem != nil {
 			return nil, state.Project{}, nil, nil, nil, nil, problem
 		}
 	}
@@ -1922,10 +1950,49 @@ func (s *server) scanService(
 	// the JSON marshal sees string Tier (matching OpenAPI enum +
 	// pkg/api.PlanWorkload.Tier) instead of the raw int the
 	// reposcan type carries. See toPlanWorkload / toPlanManaged.
+	// The Compose environment's values are read apart from the scan so they
+	// never enter a plan; an unreadable one only means nothing is imported.
+	composeEnv, composeEnvErr := reposcan.ReadComposeEnv(os.DirFS(req.ScanDir))
+	if composeEnvErr != nil {
+		composeEnv = reposcan.ComposeEnv{}
+	}
+	// Compose values that call these services over HTTP import as their
+	// Gregale addresses (ADR-20261026181020).
+	callableServices := make([]string, 0, len(result.Workloads))
+	for _, w := range result.Workloads {
+		callableServices = append(callableServices, w.Name)
+	}
+	planScope := req.Environment
+	if planScope == "" {
+		planScope = api.DefaultEnvScope
+	}
+	// Compose postgres services become managed databases where the account
+	// has managed PostgreSQL (ADR-20261025111824).
+	composePostgres, composePostgresReasons, composePostgresErr := s.composePostgresPlan(r.Context(), acct, req.ProjectSlug, planScope,
+		filteredMc, filteredW, composeEnv, projectApps)
+	if composePostgresErr != nil {
+		return nil, state.Project{}, nil, nil, nil, nil, api.ErrCapacity("could not plan the project's managed databases")
+	}
 	respWorkloads := make([]api.PlanWorkload, len(filteredW))
 	for i, w := range filteredW {
 		pw := toPlanWorkload(w)
-		if s.domain != "" && (string(w.Class) == "http" || string(w.Class) == "graphql") {
+		pw.Action = partition.WillDeploy[i].Action
+		pw.ExistingAppID = partition.WillDeploy[i].ID
+		var existing *state.App
+		for j := range acctApps {
+			if pw.ExistingAppID != "" && acctApps[j].ID == pw.ExistingAppID {
+				existing = &acctApps[j]
+				break
+			}
+		}
+		if existing != nil {
+			// Visibility is create-only; the plan shows what the app has.
+			pw.Visibility = ""
+			if api.NormalizeAppVisibility(existing.Visibility) == api.AppVisibilityInternal {
+				pw.Visibility = api.AppVisibilityInternal
+			}
+		}
+		if s.domain != "" && pw.Visibility != api.AppVisibilityInternal && (string(w.Class) == "http" || string(w.Class) == "graphql") {
 			slug := w.AppSlug
 			if slug == "" {
 				slug = w.Name
@@ -1937,23 +2004,27 @@ func (s *server) scanService(
 			return nil, state.Project{}, nil, nil, nil, nil, api.ErrValidation("invalid required-secret declaration for a selected workload")
 		}
 		pw.RequiredEnvKeys = required
-		pw.Action = partition.WillDeploy[i].Action
-		pw.ExistingAppID = partition.WillDeploy[i].ID
-		if w.ServiceBindingPolicy == "" {
-			if pw.ExistingAppID != "" {
-				for _, existing := range acctApps {
-					if existing.ID == pw.ExistingAppID {
-						pw.ServiceBindingPolicy = existing.Manifest.EffectiveServiceBindingPolicy()
-						break
-					}
-				}
-			}
+		unset, err := projectsetup.UnsetEnvKeys(r.Context(), s.store, acct.ID, planScope, existing, w.EnvKeys, required)
+		if err != nil {
+			return nil, state.Project{}, nil, nil, nil, nil, api.ErrCapacity("could not read the configuration of a selected workload")
+		}
+		envImport := projectsetup.PlanEnvImport(composeEnv, w.Name, callableServices, limits)
+		pw.UnsetEnvKeys, pw.ImportedEnvKeys, pw.UnsetEnvKeyReasons = projectsetup.SplitEnvImport(
+			withoutProvidedKeys(w.Name, unset, composePostgres), envImport)
+		warnings = append(warnings, projectsetup.RewrittenEnvNotes(w.Name, pw.ImportedEnvKeys, envImport)...)
+		if w.ServiceBindingPolicy == "" && existing != nil {
+			pw.ServiceBindingPolicy = existing.Manifest.EffectiveServiceBindingPolicy()
 		}
 		respWorkloads[i] = pw
 	}
 	respManaged := make([]api.PlanManaged, len(filteredMc))
 	for i, m := range filteredMc {
 		respManaged[i] = toPlanManaged(m)
+		if provision, ok := composePostgres[m.Name]; ok {
+			respManaged[i].Provision = planManagedProvision(provision)
+		} else {
+			respManaged[i].NotProvisionedReason = composePostgresReasons[m.Name]
+		}
 	}
 	resp := &scanPlanResponse{
 		SafeRelease:           req.SafeRelease,
@@ -2359,7 +2430,7 @@ func (s *server) scanService(
 			if mapped.Quota != nil {
 				prob = quotaProblem(acct.Plan, limits, mapped.Quota)
 			} else {
-				prob = api.NewProblem(mapped.Status, mapped.Code, mapped.Msg, "")
+				prob = trafficproblem.Policy(recErr, api.NewProblem(mapped.Status, mapped.Code, mapped.Msg, ""))
 			}
 			capturedProb = prob
 			return resp, state.Project{}, nil, nil, nil, nil, prob
@@ -2387,7 +2458,7 @@ func (s *server) scanService(
 			removedSlugs = append(removedSlugs, slug)
 		}
 	}
-	needsProjectApps := len(req.RetryTargets) > 0 || (!req.NoTriggers && reconcileProductionEnvironment(req.Environment)) || len(req.Secrets) > 0 || len(resolvedManifest.PostgresBindings) > 0 || (resolvedManifest.AsyncRoutesPresent && !req.NoTriggers)
+	needsProjectApps := len(req.RetryTargets) > 0 || (!req.NoTriggers && reconcileProductionEnvironment(req.Environment)) || len(req.Secrets) > 0 || len(resolvedManifest.PostgresBindings) > 0 || (resolvedManifest.AsyncRoutesPresent && !req.NoTriggers) || (resolvedManifest.RoutesPresent && !req.NoTriggers)
 	var currentProjectApps []state.App
 	if needsProjectApps {
 		// Reconcile has already committed the project/app rows. A binding
@@ -2412,6 +2483,12 @@ func (s *server) scanService(
 	if resolvedManifest.AsyncRoutesPresent && !req.NoTriggers {
 		selectedApps := selectedProjectManifestApps(filteredW, currentProjectApps)
 		if prob := s.applyProjectManifestAsyncRoutes(r.Context(), acct, resolvedManifest.AsyncRoutes, true, false, selectedApps); prob != nil {
+			return resp, state.Project{}, nil, nil, nil, nil, prob
+		}
+	}
+	if resolvedManifest.RoutesPresent && !req.NoTriggers {
+		selectedApps := selectedProjectManifestApps(filteredW, currentProjectApps)
+		if prob := s.applyProjectManifestPathRoutes(r.Context(), acct, resolvedManifest.Routes, true, false, selectedApps); prob != nil {
 			return resp, state.Project{}, nil, nil, nil, nil, prob
 		}
 	}
@@ -2508,6 +2585,24 @@ func (s *server) scanService(
 				return s.persistProjectInitialSecret(ctx, acct, app, scope, key, value, limits)
 			})
 		if problem != nil {
+			return resp, state.Project{}, nil, nil, nil, nil, problem
+		}
+	}
+	// Opted-in Compose values fill what is still unset, after the secrets
+	// above, so a key configured either way keeps that value.
+	importScope := req.Environment
+	if importScope == "" {
+		importScope = api.DefaultEnvScope
+	}
+	if problem := s.importComposeEnv(r, acct, project.ID, importScope, composeEnv, filteredW, limits); problem != nil {
+		return resp, state.Project{}, nil, nil, nil, nil, problem
+	}
+	if len(composePostgres) > 0 {
+		apps, err := s.store.AppsForProject(r.Context(), acct.ID, project.ID)
+		if err != nil {
+			return resp, state.Project{}, nil, nil, nil, nil, api.ErrCapacity("could not load project database targets")
+		}
+		if problem := s.applyComposePostgres(r.Context(), acct, importScope, composePostgres, apps); problem != nil {
 			return resp, state.Project{}, nil, nil, nil, nil, problem
 		}
 	}

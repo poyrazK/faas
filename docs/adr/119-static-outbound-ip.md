@@ -407,6 +407,49 @@ call. Mirrors `cmd/gregale/commands_tenant_surfaces.go:32-56`.
   IP before the customer pins it. Documented in the deploy runbook
   (not a code change).
 
+## Known gaps (found 2026-10-18, while scoping vmmd restart adoption)
+
+The feature is off everywhere (`FAAS_STATIC_EGRESS_IP_ENABLED` is set by
+no deploy role, so apid answers pins with 402), and its data path is not
+finished. Three defects stand between this ADR and a working pin:
+
+1. **The wake drops the pin.** schedd sends `AppSpec.static_egress_ip`
+   (`pkg/sched/vmmclient.go`), but `pkg/vmmdgrpc/proto.go` never copies it
+   into `fcvm.WakeRequest.StaticEgressIP`. The wake-time branch in
+   `pkg/fcvm/manager.go` that looks up the reservation and calls
+   `RegisterStaticEgressIPForVM` never runs, so `perVMHostIP` stays empty
+   and `rebuildHostStaticEgressRules` emits no rule.
+   - Wiring the field alone is not enough. The reservation pool
+     (`pkg/fcvm/alloc.go`) lives only in vmmd's memory and is filled only
+     by `UpdateStaticEgressIP`, which schedd sends on a pin change and only
+     to nodes already running the app. After any vmmd restart, or on a
+     node's first wake for the app, the wake would fail with "no
+     reservation". The wake must reserve the pin itself (the wake request
+     comes from the apps row, which is authoritative), or the pool must be
+     persisted.
+2. **Nothing gives the VM the per-VM host address.** The host rule
+   matches `ip saddr <per-VM host IP>` from the 10.200.0.0/16 pool, but no
+   code configures that address on the VM's veth or SNATs the namespace's
+   traffic to it. A pinned VM's packets still leave its namespace from its
+   10.100.x.y lease address and meet the broad MASQUERADE. The namespace
+   side of the redesign has to be built (address the veth from the pool,
+   or SNAT to it in the per-netns chain).
+3. **The bundle path crashes the renderer.**
+   `cmd/vmmd/egress_static_ip_bundle.go::pushStaticEgressIPRulesToHostRenderer`
+   builds `StaticEgressRule`s without a `PerVMHostIP`, and
+   `HostPolicy.Render` panics on such a rule. Any non-empty bundle would
+   take vmmd's host renderer down on the next render.
+
+Verifying a fix needs an additional public IP routed to the test host, so
+the pinned app's outbound traffic can be observed leaving from it.
+
+vmmd restart adoption (`docs/adr/20261017-vmmd-restart-adoption.md`)
+refuses a guest whose app has a static egress IP (`static_egress_ip`).
+That refusal cannot fire while the feature is off. Once the data path is
+finished, adoption has to record the app's reserved per-VM host IP and
+pool slot, re-reserve that exact slot, restore the per-app customer IP and
+render the host SNAT rules before the first startup policy apply.
+
 ## Cross-references
 
 - ADR-009 (identical inner network world) — preserved.

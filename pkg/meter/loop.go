@@ -283,6 +283,12 @@ func (l *Loop) Run(ctx context.Context) error {
 	} else {
 		sampler = NewSampler(l.store, l.cpu, l.now)
 	}
+	if mode, err := ParseQuietPauseMode(l.cfg.QuietPauseUnbilled); err != nil {
+		l.log.Warn("meter: quiet pause billing stays off", "err", err)
+	} else if mode != QuietPauseOff {
+		sampler.WithQuietPause(mode, l.ops.Registry())
+		l.log.Info("meter: quiet pause billing (ADR-20261023171905)", "mode", mode)
+	}
 	pusher := NewPusher(l.store, l.pusher, l.log, l.now, l.ops)
 	// One result slot per possible worker, including monitoring and delivery;
 	// a cancelled Run must not strand workers trying to report their exit.
@@ -573,23 +579,17 @@ type AlertsEvaluator = alerts.Evaluator
 // is runQuotaTicks.
 //
 // Issue #279 PR A: a per-account overage cap (`accounts.overage_cap_cents`,
-// opt-in) sits in front of the existing free/paid ladder. The cap is
-// loaded once per tick (one round-trip) and consulted per account;
-// accounts at-or-past the cap skip the overage-row insert path
-// inside EnforceQuota and the meterd_billing_cap_exceeded_total
-// counter is incremented with the plan label. The cap is advisory
-// for overage only — in-budget usage continues to accumulate and
-// the Free hard-stop / paid warning ladder is unchanged.
+// opt-in) is loaded once per tick (one round-trip). For each capped account
+// the tick compares the month's combined billable overage, compute plus every
+// live provider meter, with the cap: at or past it the
+// meterd_billing_cap_exceeded_total counter is incremented with the plan
+// label and the account's spend cap hold is recorded for schedd, which knows
+// only compute (ADR-20261026120843); below it the hold is cleared. The
+// Free hard-stop / paid warning ladder runs for every account either way.
 //
-// Concurrency note: this loop is the only writer to usage_minutes
-// (spec §6.1) and runs as a single meterd process today, so the
-// (capCache read → CurrentMonthOverageCents → EnforceQuota) sequence
-// is race-free against itself. A future meterd-replica deploy would
-// race here — at worst one minute's overage-row insert slips past
-// the cap per replica. The follow-up is to wrap the per-account
-// section in `SELECT … FOR UPDATE` on the `accounts` row (precedent
-// pgstore.go:380-381, :668); today's behaviour is acceptable per
-// the cap's documented "advisory for the overage row only" contract.
+// Concurrency note: holds are recomputed from durable usage every tick, so
+// two meterd replicas converge on the same row; a hold written for a cap the
+// customer has since changed is ignored by schedd until the next tick.
 func (l *Loop) runQuotaOnce(ctx context.Context) {
 	accounts, err := state.ListBillingResourceAccounts(ctx, l.store)
 	if err != nil {
@@ -610,17 +610,8 @@ func (l *Loop) runQuotaOnce(ctx context.Context) {
 			l.log.Warn("meter: quota usage_by_month", "account", acct.ID, "err", err)
 			continue
 		}
-		capCents, ok := capCache[acct.ID]
-		if ok && capCents >= 0 {
-			monthCents, err := l.store.CurrentMonthOverageCents(ctx, acct.ID)
-			if err != nil {
-				l.log.Warn("meter: overage read failed", "account", acct.ID, "err", err)
-			} else if meterCents, meterErr := liveMeterOverageCents(ctx, l.store, l.pusher, acct, now, state.BillingMeterEgress); meterErr != nil {
-				l.log.Warn("meter: secondary overage read failed", "account", acct.ID, "err", meterErr)
-			} else if saturatedAdd(monthCents, meterCents) >= capCents {
-				l.ops.BillingCapExceededTotal(string(acct.Plan))
-				continue
-			}
+		if capCents, ok := capCache[acct.ID]; ok && capCents >= 0 {
+			l.recordSpendCapHold(ctx, acct, now, capCents)
 		}
 		used := MonthlyUsageGB(usages)
 		if _, err := (QuotaParams{Store: l.store, Notif: l.notif, Parker: l.parker, Mailer: l.mailer, Log: l.log, WarningRequested: l.quotaWarningRequested, WarningCommands: l.quotaWarningCommands}).Enforce(ctx, acct, used, now); err != nil {
@@ -631,6 +622,42 @@ func (l *Loop) runQuotaOnce(ctx context.Context) {
 			}
 			l.log.Warn("meter: enforce_quota", "account", acct.ID, "err", err)
 		}
+	}
+}
+
+// recordSpendCapHold compares the account's combined billable overage this
+// UTC month with its cap and records or clears the hold schedd enforces
+// (ADR-20261026120843). A read failure keeps the previous hold.
+func (l *Loop) recordSpendCapHold(ctx context.Context, acct state.Account, now time.Time, capCents int64) {
+	monthCents, err := l.store.CurrentMonthOverageCents(ctx, acct.ID)
+	if err != nil {
+		l.log.Warn("meter: overage read failed", "account", acct.ID, "err", err)
+		return
+	}
+	meterCents, err := liveMeterOverageCents(ctx, l.store, l.pusher, acct, now, state.BillingMeterEgress)
+	if err != nil {
+		l.log.Warn("meter: secondary overage read failed", "account", acct.ID, "err", err)
+		return
+	}
+	observed := saturatedAdd(monthCents, meterCents)
+	holds, hasHolds := l.store.(state.SpendCapHoldStore)
+	if observed < capCents {
+		if hasHolds {
+			if err := holds.ClearSpendCapHold(ctx, acct.ID); err != nil {
+				l.log.Warn("meter: clear spend cap hold failed", "account", acct.ID, "err", err)
+			}
+		}
+		return
+	}
+	l.ops.BillingCapExceededTotal(string(acct.Plan))
+	if !hasHolds {
+		return
+	}
+	at := now.UTC()
+	hold := state.SpendCapHold{AccountID: acct.ID, Month: time.Date(at.Year(), at.Month(), 1, 0, 0, 0, 0, time.UTC),
+		CapCents: capCents, ObservedCents: observed}
+	if err := holds.PutSpendCapHold(ctx, hold); err != nil {
+		l.log.Warn("meter: record spend cap hold failed", "account", acct.ID, "err", err)
 	}
 }
 

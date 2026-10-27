@@ -124,9 +124,7 @@ func cmdJobs(args []string) int {
 		return cmdJobsRegistry(rest)
 	}
 	printCommandValidation(os.Stderr, "unknown jobs subcommand %q\n", subcommand)
-	sug, _ := suggestSubcommand(subcommand, parent)
-	maybeSuggestSub(sug)
-	return 1
+	return unknownSubcommandChoices(os.Stderr, "jobs", parent, subcommand)
 }
 
 // cmdJobsList implements `gregale jobs list`. Returns the
@@ -134,6 +132,12 @@ func cmdJobs(args []string) int {
 // server-side list. Output is either the complete pagination envelope
 // in JSON mode or a tabular row per job.
 func cmdJobsList(args []string) int {
+	// Jobs belong to the account, not to an app, so there is no --app filter;
+	// the flag package answered only "unknown flag --app" (Hunt 14 H14-63).
+	if argsPassAppFlag(args) {
+		PrintUsage(os.Stderr, "gregale jobs list lists every job in the account; it has no --app filter. Inspect one job with `gregale jobs info <job>`.\nusage: gregale jobs list [--limit N] [--offset N] [--all]", "jobs")
+		return 1
+	}
 	fs := newFlagSet("jobs-list", flag.ContinueOnError)
 	limit := fs.Int("limit", 0, "page size (1..200; omit for server default 50)")
 	offset := fs.Int("offset", 0, "starting page offset")
@@ -176,7 +180,7 @@ func cmdJobsList(args []string) int {
 	})
 	out.Jobs, out.NextOffset = items, next
 	if err != nil {
-		return printErr("Request failed", err)
+		return printErr("Could not list jobs", err)
 	}
 	if jsonOutput {
 		return jsonOut(writeJSON(out))
@@ -276,7 +280,7 @@ func cmdJobsAdd(args []string) int {
 	}
 	j, err := client.CreateJob(context.Background(), req)
 	if err != nil {
-		return printErr("Create failed", err)
+		return printErr("Could not create job", err)
 	}
 	if jsonOutput {
 		return jsonOut(writeJSONSingle(j))
@@ -431,7 +435,7 @@ func cmdJobsUpdate(args []string) int {
 	}
 	j, err := client.UpdateJob(context.Background(), name, req)
 	if err != nil {
-		return printErr("Update failed", err)
+		return printErr("Could not update job", err)
 	}
 	if jsonOutput {
 		return jsonOut(writeJSONSingle(j))
@@ -458,7 +462,7 @@ func cmdJobsRm(args []string) int {
 	}
 	_, err = client.DeleteJob(context.Background(), args[0])
 	if err != nil {
-		return printErr("Delete failed", err)
+		return printErr("Could not delete job", err)
 	}
 	if jsonOutput {
 		return jsonOut(writeJSONSingle(map[string]any{"name": args[0], "deleted": true}))
@@ -780,7 +784,7 @@ func cmdJobsRuns(args []string) int {
 		return page.Runs, page.NextOffset, err
 	})
 	if err != nil {
-		return printErr("Request failed", err)
+		return printErr("Could not list job runs", err)
 	}
 	if statusSet || *failedOnly {
 		filtered := make([]api.JobRunResponse, 0)
@@ -874,7 +878,7 @@ func cmdJobsOccurrences(args []string) int {
 	})
 	page.Occurrences, page.NextBefore = items, next
 	if err != nil {
-		return printErr("Request failed", err)
+		return printErr("Could not list job schedule occurrences", err)
 	}
 	if jsonOutput {
 		return jsonOut(writeJSONSingle(struct {
@@ -1050,7 +1054,7 @@ func cmdJobsTasks(args []string) int {
 		out, err = client.ListJobRunTasksPage(ctx, args[0], runID, *limit, *offset)
 	}
 	if err != nil {
-		return printErr("Request failed", err)
+		return printErr("Could not list job tasks", err)
 	}
 	if *unsuccessfulOnly {
 		filtered := make([]api.JobTaskResponse, 0)
@@ -1202,7 +1206,7 @@ func cmdJobsAttempts(args []string) int {
 	}
 	out, err := collectJobAttemptHistory(client, ctx, args[0], runID, taskIdx, *limit, *offset, *all)
 	if err != nil {
-		return printErr("Request failed", err)
+		return printErr("Could not list job attempts", err)
 	}
 	if *failedOnly || *unsuccessfulOnly {
 		filtered := make([]api.JobTaskAttemptResponse, 0)
@@ -2027,4 +2031,15 @@ func writeJSONSingle(v any) error {
 	}
 	_, err = fmt.Fprintln(osStdout, string(b))
 	return err
+}
+
+// argsPassAppFlag reports an --app flag on an account-wide list, which the
+// flag package would refuse with only "unknown flag --app".
+func argsPassAppFlag(args []string) bool {
+	for _, arg := range args {
+		if arg == "--app" || strings.HasPrefix(arg, "--app=") || arg == "-app" || strings.HasPrefix(arg, "-app=") {
+			return true
+		}
+	}
+	return false
 }

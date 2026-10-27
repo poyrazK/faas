@@ -146,3 +146,11 @@ func (c *Client) GetReleaseFreezeStatus(ctx context.Context, slug string) (Relea
 	var out ReleaseFreezeStatus
 	return out, c.do(ctx, http.MethodGet, "/v1/apps/"+url.PathEscape(slug)+"/freeze-status", nil, &out)
 }
+
+// ErrPlatformReleasePaused refuses a release while the break-glass release
+// pause is on (ADR 20261022140000). It is a 503: the request is valid and
+// succeeds once the pause is lifted.
+func ErrPlatformReleasePaused() *Problem {
+	return NewProblem(http.StatusServiceUnavailable, CodePlatformReleasePaused, "Releases are paused",
+		"Gregale has paused new releases on the whole platform while an incident is handled. Running apps keep serving and rollbacks still work. Retry once the pause is lifted.")
+}

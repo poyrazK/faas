@@ -383,7 +383,30 @@ func (s *PgStore) FinancialComputePolicies(ctx context.Context, account, app str
 		return nil, ErrInvalidArgument
 	}
 	reader := &pgFinancialComputeTxn{ctx: ctx, db: s.pool, q: sqlc.New(), account: a}
-	return computeWorkloadPolicies(reader, app)
+	if !computeAppScopeKey(app) {
+		// No app row scopes this workload, so the budgets are the one read.
+		return computeWorkloadPolicies(reader, app)
+	}
+	// One statement reads the budgets and, only when there are any, the app's
+	// project: the check costs one round trip on every admission (scheduler
+	// wake path), and an account without budgets reads no app row.
+	id, _ := parsePgUUID(app)
+	rows, err := reader.q.FinancialComputeAppPolicies(ctx, s.pool, sqlc.FinancialComputeAppPoliciesParams{AccountID: a, AppID: id, PageSize: api.FinancialBudgetsPerAccount + 1})
+	if err != nil {
+		return nil, err
+	}
+	if len(rows) == 0 {
+		return []FinancialBudget{}, nil
+	}
+	all := make([]FinancialBudget, 0, len(rows))
+	for _, row := range rows {
+		p, err := financialBudgetFromRow(row.FinancialBudgetPolicy)
+		if err != nil {
+			return nil, err
+		}
+		all = append(all, p)
+	}
+	return computeWorkloadPoliciesIn(reader, app, all, computeScopes{Project: rows[0].ProjectID})
 }
 func (s *PgStore) FinancialComputeBillingSeconds(ctx context.Context, account, app, instance string, start time.Time, seconds int64) (int64, error) {
 	a, _ := parsePgUUID(account)

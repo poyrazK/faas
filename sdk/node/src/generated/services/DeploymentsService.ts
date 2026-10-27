@@ -14,6 +14,9 @@ import type { ClearObsoleteReport } from '../models/ClearObsoleteReport.js';
 import type { CreateDeploymentRequest } from '../models/CreateDeploymentRequest.js';
 import type { CreateReleaseFreezeRequest } from '../models/CreateReleaseFreezeRequest.js';
 import type { CreateReleaseGateRequest } from '../models/CreateReleaseGateRequest.js';
+import type { DatabaseSwitch } from '../models/DatabaseSwitch.js';
+import type { DatabaseSwitchList } from '../models/DatabaseSwitchList.js';
+import type { DecideReleaseApprovalRequest } from '../models/DecideReleaseApprovalRequest.js';
 import type { DeploymentAliasListResponse } from '../models/DeploymentAliasListResponse.js';
 import type { DeploymentAliasResponse } from '../models/DeploymentAliasResponse.js';
 import type { DeploymentCronStagingRequest } from '../models/DeploymentCronStagingRequest.js';
@@ -33,11 +36,15 @@ import type { DeploymentSubmissionReceipt } from '../models/DeploymentSubmission
 import type { DeploymentSummaryResponse } from '../models/DeploymentSummaryResponse.js';
 import type { LatestDeploymentsByAppResponse } from '../models/LatestDeploymentsByAppResponse.js';
 import type { ListDeploymentAuditResponse } from '../models/ListDeploymentAuditResponse.js';
+import type { ListReleaseApprovalsResponse } from '../models/ListReleaseApprovalsResponse.js';
 import type { ListReleaseFreezesResponse } from '../models/ListReleaseFreezesResponse.js';
 import type { ListReleaseGatesResponse } from '../models/ListReleaseGatesResponse.js';
 import type { Problem } from '../models/Problem.js';
 import type { ProfileCanaryGateDecision } from '../models/ProfileCanaryGateDecision.js';
 import type { RecoverRolloutRequest } from '../models/RecoverRolloutRequest.js';
+import type { ReleaseApprovalPolicy } from '../models/ReleaseApprovalPolicy.js';
+import type { ReleaseApprovalStatus } from '../models/ReleaseApprovalStatus.js';
+import type { ReleaseDiff } from '../models/ReleaseDiff.js';
 import type { ReleaseFreeze } from '../models/ReleaseFreeze.js';
 import type { ReleaseFreezeStatus } from '../models/ReleaseFreezeStatus.js';
 import type { ReleaseGate } from '../models/ReleaseGate.js';
@@ -47,8 +54,12 @@ import type { RollbackRequest } from '../models/RollbackRequest.js';
 import type { RolloutTransitionResponse } from '../models/RolloutTransitionResponse.js';
 import type { RuntimeUpgradePreviewResponse } from '../models/RuntimeUpgradePreviewResponse.js';
 import type { ScanResult } from '../models/ScanResult.js';
+import type { ScheduledRelease } from '../models/ScheduledRelease.js';
+import type { ScheduledReleaseListResponse } from '../models/ScheduledReleaseListResponse.js';
+import type { ScheduleReleaseRequest } from '../models/ScheduleReleaseRequest.js';
 import type { SecretScanResult } from '../models/SecretScanResult.js';
 import type { SetDeploymentAliasRequest } from '../models/SetDeploymentAliasRequest.js';
+import type { SetReleaseApprovalPolicyRequest } from '../models/SetReleaseApprovalPolicyRequest.js';
 import type { SourceRefDeployRequest } from '../models/SourceRefDeployRequest.js';
 import type { SourceTarballDeployRequest } from '../models/SourceTarballDeployRequest.js';
 import type { UpdateDeploymentTrafficRequest } from '../models/UpdateDeploymentTrafficRequest.js';
@@ -653,7 +664,7 @@ export class DeploymentsService {
    * source archive. With a base revision, `source` contains changed entries
    * and `dev_source_deleted` removes paths from the cached base.
    *
-   * The cache is account/app scoped, node-local, and disposable. apid
+   * The cache is account/app scoped, node-local, and disposable. The API
    * reconstructs and verifies a complete archive before applying the same
    * source-root, stateful-shape, secret-scan, Dockerfile, function, and
    * enqueue gates as an ordinary source deployment. A missing base returns
@@ -742,9 +753,9 @@ export class DeploymentsService {
   }
   /**
    * Create a deployment from a Git source-ref (headless).
-   * Headless deploy path (issue #739 / DEPLOY-PROV-4 / ADR-092).
+   * Headless deploy path.
    * Resolves the GitHub install bound to the caller's account,
-   * fetches the (repo, ref) tarball via the githubd bridge, spools
+   * fetches the (repo, ref) tarball via the GitHub bridge, spools
    * it under the per-plan SourceTarballMaxMB cap, validates shape,
    * and enqueues a build (Kind=DeploymentKindGitHub) pinned to
    * the resolved 40-char commit SHA.
@@ -821,7 +832,7 @@ export class DeploymentsService {
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
         \`profile_investigation_limit\`.
         `,
-        503: `githubd unreachable or source-ref tarball fetch failed
+        503: `The GitHub integration unreachable or source-ref tarball fetch failed
         (code: source_ref_unavailable). Retry in ~30s.
         `,
       },
@@ -830,19 +841,19 @@ export class DeploymentsService {
   /**
    * @deprecated
    * Create a deployment from a CLI-uploaded local tarball (zero-config).
-   * Zero-config deploy path (issue #961 / Mega-A PR-1, ADR-115).
+   * Zero-config deploy path.
    * This multipart endpoint is deprecated for new clients. Use the
    * resumable upload session endpoints under `/v1/uploads` for progress,
    * retry-safe chunking, and commit deduplication; this route remains
    * available during the migration window.
    * The CLI uploads a gzipped tar via the `tarball` form field and
    * an optional informational `{repo, ref}` JSON sidecar. The CLI
-   * binary is the trust root: apid does NOT consult
+   * binary is the trust root: The API does NOT consult
    * `github_installations` and does NOT attempt a server-side git
    * fetch.
    *
    * Distinct from the source-ref path
-   * (`POST /v1/apps/{slug}/deployments/source-ref`, ADR-092) which
+   * (`POST /v1/apps/{slug}/deployments/source-ref`) which
    * resolves the GitHub install and pins the tarball to a 40-char
    * SHA. The source-ref handler is unchanged; this is a parallel
    * trust path for first-deploy customers without the GitHub App
@@ -859,7 +870,7 @@ export class DeploymentsService {
    * informational. Operators relying on source-pinning MUST
    * use the source-ref path instead.
    *
-   * Lifecycle (issue #1182 fix): the refactored zero-config
+   * Lifecycle (fix): the refactored zero-config
    * CLI path runs `POST /v1/apps` (CreateApp) BEFORE this endpoint,
    * so a brand-new slug gets a 201 from CreateApp and a 202 from
    * this endpoint. A direct hit on this endpoint with a slug that
@@ -930,9 +941,9 @@ export class DeploymentsService {
         403: `code: email_verification_required — verify the account email before deploying code or changing billing settings.`,
         404: `code: not_found. The slug does not exist OR belongs to
         another account (loadAppAndPreflight's IDOR silent-404 —
-        apid deliberately returns the same shape for both cases
+        the API deliberately returns the same shape for both cases
         to avoid leaking the existence of other customers'
-        apps). The refactored zero-config CLI path (issue #1182)
+        apps). The refactored zero-config CLI path
         runs CreateApp before this endpoint, so a slug should
         always exist by the time the request lands here; a 404
         on the CLI path is the symptom of a misconfigured
@@ -951,7 +962,7 @@ export class DeploymentsService {
   /**
    * Read a coherent worker-generation residency snapshot
    * @returns WorkerRolloutObservation Database snapshot of selected and retired worker residents. Does not establish queue processing or external consumer completion.
-   * @returns Problem Generic 503 envelope. Used by the apid capacity gate (e.g.
+   * @returns Problem Generic 503 envelope. Used by the API capacity gate (e.g.
    * host age recipient not loaded → registry credential PUT
    * returns 503 instead of accepting plaintext).
    *
@@ -1102,7 +1113,128 @@ export class DeploymentsService {
     });
   }
   /**
-   * Operator manual rollout recovery (SAFE-RELEASES-R, issue
+   * List rollbacks that restore the database.
+   * An app's database switches, newest first.
+   * @returns DatabaseSwitchList The app's switches.
+   * @throws ApiError
+   */
+  public static listDatabaseSwitches({
+    slug,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+  }): CancelablePromise<DatabaseSwitchList> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/database-switches',
+      path: {
+        'slug': slug,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `code: capacity_unavailable — no host headroom.
+        Resource increases can return service_recovery_capacity_unavailable
+        when enabled bare-metal service protection needs more recovery headroom.
+        `,
+      },
+    });
+  }
+  /**
+   * Read a rollback that restores the database.
+   * The switch's phase, restore point, databases, drain counts and outcome.
+   * @returns DatabaseSwitch The switch.
+   * @throws ApiError
+   */
+  public static getDatabaseSwitch({
+    slug,
+    id,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Database switch UUID.
+     */
+    id: string,
+  }): CancelablePromise<DatabaseSwitch> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/database-switches/{id}',
+      path: {
+        'slug': slug,
+        'id': id,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `code: capacity_unavailable — no host headroom.
+        Resource increases can return service_recovery_capacity_unavailable
+        when enabled bare-metal service protection needs more recovery headroom.
+        `,
+      },
+    });
+  }
+  /**
+   * Cancel a rollback that restores the database.
+   * Unwinds the switch; the app keeps its current release and database. Refused with database_switch_not_cancellable once the switch started switching the release and the bindings.
+   * @returns DatabaseSwitch Cancellation recorded; the worker unwinds the switch.
+   * @throws ApiError
+   */
+  public static cancelDatabaseSwitch({
+    slug,
+    id,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * UUID of the database switch to cancel.
+     */
+    id: string,
+  }): CancelablePromise<DatabaseSwitch> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/database-switches/{id}/cancel',
+      path: {
+        'slug': slug,
+        'id': id,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `code: capacity_unavailable — no host headroom.
+        Resource increases can return service_recovery_capacity_unavailable
+        when enabled bare-metal service protection needs more recovery headroom.
+        `,
+      },
+    });
+  }
+  /**
+   * Operator manual rollout recovery.
    * The operator escape hatch for a stuck canary rollout. Three
    * closed-set actions:
    *
@@ -1122,7 +1254,7 @@ export class DeploymentsService {
    *
    * - `abort`: ordinary canaries transition synchronously to
    * `rollout_state = 'aborted'`. A zero-step service rollout instead
-   * records a durable abort request and returns 202; schedd restores
+   * records a durable abort request and returns 202; the scheduler restores
    * the predecessor route, waits for gateway acknowledgement and
    * candidate request drain, then finalises the abort. `advance` and
    * `promote` are invalid for service rollouts. Emits a
@@ -1145,7 +1277,7 @@ export class DeploymentsService {
    * at zero weight after cutover. The response is 202 with a
    * `service_recovery` receipt confirming the durable request only.
    * APID checks that recipient and ready service capacity before publishing
-   * routes; schedd then completes gateway acknowledgement and request drain.
+   * routes; the scheduler then completes gateway acknowledgement and request drain.
    * GET the exact deployment to observe `service_rollout_handoff` progress
    * and bounded `bindings_check` blockers. Restarted workers resume the same
    * request and never substitute a different predecessor.
@@ -1197,7 +1329,38 @@ export class DeploymentsService {
     });
   }
   /**
-   * List deploy freezes (ADR-20261019071733).
+   * List scheduled releases.
+   * The account's scheduled releases: pending ones first, soonest first, then the most recently ended.
+   * @returns ScheduledReleaseListResponse The scheduled releases.
+   * @throws ApiError
+   */
+  public static listScheduledReleases({
+    app,
+  }: {
+    /**
+     * Only this app's schedules.
+     */
+    app?: string,
+  }): CancelablePromise<ScheduledReleaseListResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/scheduled-releases',
+      query: {
+        'app': app,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * List deploy freezes.
    * Unlifted freezes that have not ended: active and upcoming windows, weekly windows and after-rollback policies. `app` narrows the list to the freezes covering one app.
    * @returns ListReleaseFreezesResponse The account's freezes.
    * @throws ApiError
@@ -1228,7 +1391,7 @@ export class DeploymentsService {
     });
   }
   /**
-   * Freeze production releases (ADR-20261019071733).
+   * Freeze production releases.
    * Creates a window, weekly or after-rollback freeze for one app or, without `app`, for every app of the account. While a freeze is active, new production deployments are refused with `release_frozen` unless the request carries `override_freeze`.
    * @returns ReleaseFreeze The freeze.
    * @throws ApiError
@@ -1257,7 +1420,7 @@ export class DeploymentsService {
     });
   }
   /**
-   * Lift a deploy freeze (ADR-20261019071733).
+   * Lift a deploy freeze.
    * Stops the freeze from withholding releases. The freeze is kept, with who lifted it and when, for the audit trail. 404 `release_freeze_not_found` when no unlifted freeze has this ID.
    * @returns ReleaseFreeze The lifted freeze.
    * @throws ApiError
@@ -1288,7 +1451,7 @@ export class DeploymentsService {
     });
   }
   /**
-   * Whether production releases of an app are frozen now (ADR-20261019071733).
+   * Whether production releases of an app are frozen now.
    * Lists the freezes that would refuse a production release of the app now, and the freeze that starts next within a week.
    * @returns ReleaseFreezeStatus The app's freeze status.
    * @throws ApiError
@@ -1319,7 +1482,7 @@ export class DeploymentsService {
     });
   }
   /**
-   * List an app's release gates (ADR-20261019071734).
+   * List an app's release gates.
    * Gates on the app's SLOs, new error groups and custom metrics. The canary circuit breaker and the post-release watch abort or roll back a release that fails one.
    * @returns ListReleaseGatesResponse The app's release gates.
    * @throws ApiError
@@ -1350,8 +1513,8 @@ export class DeploymentsService {
     });
   }
   /**
-   * Add a release gate (ADR-20261019071734).
-   * An slo gate names one of the app's SLOs; a new_errors gate counts error groups the release produced first; a custom_metric gate bounds a custom metric's average. Omitted numbers take Gregale's defaults.
+   * Add a release gate.
+   * An slo gate names one of the app's SLOs; a new_errors gate counts error groups the release produced first; a custom_metric gate bounds a custom metric's average; an ai gate fails a release whose AI gateway calls got worse than its baseline's. Omitted numbers take Gregale's defaults.
    * @returns ReleaseGate The release gate.
    * @throws ApiError
    */
@@ -1387,7 +1550,7 @@ export class DeploymentsService {
     });
   }
   /**
-   * Remove a release gate (ADR-20261019071734).
+   * Remove a release gate.
    * 404 `release_gate_not_found` when the app has no gate with this name.
    * @returns ReleaseGate The removed release gate.
    * @throws ApiError
@@ -1411,6 +1574,138 @@ export class DeploymentsService {
       path: {
         'slug': slug,
         'name': name,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Show an app's release approval policy.
+   * 404 `release_approval_policy_not_found` when the app does not require approvals.
+   * @returns ReleaseApprovalPolicy The app's approval policy.
+   * @throws ApiError
+   */
+  public static getReleaseApprovalPolicy({
+    slug,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+  }): CancelablePromise<ReleaseApprovalPolicy> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/release-approval-policy',
+      path: {
+        'slug': slug,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Require approvals for an app's production releases.
+   * Creates or replaces the policy. Each production release then waits in a canary stage until enough eligible people approve it. Organization owners and admins may change the policy. An app outside an organization always counts its owner's own approval.
+   * @returns ReleaseApprovalPolicy The saved policy.
+   * @throws ApiError
+   */
+  public static setReleaseApprovalPolicy({
+    slug,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    requestBody: SetReleaseApprovalPolicyRequest,
+  }): CancelablePromise<ReleaseApprovalPolicy> {
+    return __request(OpenAPI, {
+      method: 'PUT',
+      url: '/v1/apps/{slug}/release-approval-policy',
+      path: {
+        'slug': slug,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | env_var_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Stop requiring release approvals.
+   * Releases waiting for approval continue on the canary's next step.
+   * @returns void
+   * @throws ApiError
+   */
+  public static deleteReleaseApprovalPolicy({
+    slug,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+  }): CancelablePromise<void> {
+    return __request(OpenAPI, {
+      method: 'DELETE',
+      url: '/v1/apps/{slug}/release-approval-policy',
+      path: {
+        'slug': slug,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * List an app's releases waiting for approval.
+   * Releases in state waiting, and those past their timeout that the canary worker is about to abort.
+   * @returns ListReleaseApprovalsResponse The waiting releases.
+   * @throws ApiError
+   */
+  public static listReleaseApprovals({
+    slug,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+  }): CancelablePromise<ListReleaseApprovalsResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/release-approvals',
+      path: {
+        'slug': slug,
       },
       errors: {
         401: `code: unauthorized`,
@@ -1517,8 +1812,7 @@ export class DeploymentsService {
   }
   /**
    * Set the per-deployment cold-wake floor.
-   * Update the deployment's min_instances (issue #557 closure /
-   * ADR-072). The only mutable field on a deployment post-create;
+   * Update the deployment's min_instances (closure). The only mutable field on a deployment post-create;
    * image / digest / overrides / sidecars stay immutable (a new
    * deployment is the canonical way to change them). Pass
    * min_instances=0 to inherit from the parent app's floor.
@@ -1572,7 +1866,7 @@ export class DeploymentsService {
   }
   /**
    * Soft-delete a deployment.
-   * ADR-124 deployment queue controls — soft-delete one deployment
+   * Deployment queue controls — soft-delete one deployment
    * row. Status is intentionally untouched (admin audit trail).
    * Live deployments return 409 with the cancel-live hint pointing
    * at `gregale deploys rollback`.
@@ -1602,7 +1896,7 @@ export class DeploymentsService {
   }
   /**
    * Reorder a pending deployment.
-   * ADR-124 deployment queue controls — update the priority of a
+   * Deployment queue controls — update the priority of a
    * still-pending deployment. 0 = deploy immediately (top of
    * queue), 100 = FIFO default, 1000 = background rebuild.
    * Plan-gated (Hobby/Pro/Scale only); Free returns 402
@@ -1643,7 +1937,7 @@ export class DeploymentsService {
   }
   /**
    * Cancel a deployment.
-   * ADR-124 deployment queue controls — flip a deployment in
+   * Deployment queue controls — flip a deployment in
    * {pending, building, imaging, snapshotting} to "cancelled"
    * and cascade-cancel its in-flight builds. Live deployments
    * return 409 `deployment_cancel_live_forbidden` with the
@@ -1691,7 +1985,7 @@ export class DeploymentsService {
   }
   /**
    * Bulk soft-delete terminal-but-not-current deployments.
-   * ADR-124 deployment queue controls — bulk soft-delete rows
+   * Deployment queue controls — bulk soft-delete rows
    * in {superseded, failed, cancelled} older than the cutoff
    * (default 168h). Plan-gated (Free returns 402
    * `plan_reorder_disabled`). Retention
@@ -1736,8 +2030,8 @@ export class DeploymentsService {
   }
   /**
    * Set the per-deployment traffic-split weight.
-   * Update the deployment's traffic_percent (issue #556 PR-A).
-   * PR-A uses the zero-siblings rebalance form: setting row R's
+   * Update the deployment's traffic_percent.
+   * uses the zero-siblings rebalance form: setting row R's
    * traffic_percent to N forces every other live row in the same
    * app to 0, keeping Σ = 100 by construction. Pro/Scale only —
    * Free/Hobby are rejected at 403 `plan_traffic_split_not_allowed`.
@@ -1955,6 +2249,214 @@ export class DeploymentsService {
     });
   }
   /**
+   * Show a release's approvals.
+   * The release's approval state, the decisions so far, and when its wait expires.
+   * @returns ReleaseApprovalStatus The release's approval status.
+   * @throws ApiError
+   */
+  public static getReleaseApproval({
+    id,
+  }: {
+    /**
+     * 32-hex-char opaque ID (NOT canonical UUID).
+     */
+    id: string,
+  }): CancelablePromise<ReleaseApprovalStatus> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/deployments/{id}/approvals',
+      path: {
+        'id': id,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Approve or reject a release.
+   * Records one decision per person. A rejection is final and aborts the rollout, restoring the previous release. 403 `release_approval_self` when the deployer approves their own release and the policy does not allow it; 409 `release_approval_decided` for a second decision or a release that no longer accepts one.
+   * @returns ReleaseApprovalStatus The release's approval status after the decision.
+   * @throws ApiError
+   */
+  public static decideReleaseApproval({
+    id,
+    requestBody,
+  }: {
+    /**
+     * 32-hex-char opaque ID (NOT canonical UUID).
+     */
+    id: string,
+    requestBody: DecideReleaseApprovalRequest,
+  }): CancelablePromise<ReleaseApprovalStatus> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/deployments/{id}/approvals',
+      path: {
+        'id': id,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | env_var_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Show what changed between two releases.
+   * Compares the code, configuration keys, packages, runtime settings and release command of two releases of one app. Never returns variable values, secret fingerprints or SBOM files. A section whose history is missing reports known=false with a note.
+   * @returns ReleaseDiff The release diff.
+   * @throws ApiError
+   */
+  public static getReleaseDiff({
+    id,
+    against,
+  }: {
+    /**
+     * 32-hex-char opaque ID (NOT canonical UUID).
+     */
+    id: string,
+    /**
+     * The release to compare with; defaults to the release of the same scope that served before this one.
+     */
+    against?: string,
+  }): CancelablePromise<ReleaseDiff> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/deployments/{id}/diff',
+      path: {
+        'id': id,
+      },
+      query: {
+        'against': against,
+      },
+      errors: {
+        400: `code: validation_failed | env_var_invalid_key`,
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Show a release's schedule.
+   * The release's newest schedule: pending, or how it ended. 404 `scheduled_release_not_found` when the release was never scheduled.
+   * @returns ScheduledRelease The schedule.
+   * @throws ApiError
+   */
+  public static getDeploymentSchedule({
+    id,
+  }: {
+    /**
+     * 32-hex-char opaque ID (NOT canonical UUID).
+     */
+    id: string,
+  }): CancelablePromise<ScheduledRelease> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/deployments/{id}/schedule',
+      path: {
+        'id': id,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Schedule, or move, the start of a release waiting without traffic.
+   * The release must be live without traffic and without a canary ladder, or still building to go live without traffic; otherwise 409 `release_not_parked`. A release_at that has passed starts it on the API's next pass. Freezes active at release_at refuse the schedule with 409 `release_frozen` unless override_freeze gives a reason. An app that requires approvals needs a canary: 409 `release_approval_canary_required`. An app's earlier pending schedule is cancelled.
+   * @returns ScheduledRelease The pending schedule.
+   * @throws ApiError
+   */
+  public static scheduleDeployment({
+    id,
+    requestBody,
+  }: {
+    /**
+     * 32-hex-char opaque ID (NOT canonical UUID).
+     */
+    id: string,
+    requestBody: ScheduleReleaseRequest,
+  }): CancelablePromise<ScheduledRelease> {
+    return __request(OpenAPI, {
+      method: 'PUT',
+      url: '/v1/deployments/{id}/schedule',
+      path: {
+        'id': id,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | env_var_invalid_key`,
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Cancel a release's pending schedule.
+   * The release stays live without traffic. 404 `scheduled_release_not_found` when it has no pending schedule.
+   * @returns ScheduledRelease The cancelled schedule.
+   * @throws ApiError
+   */
+  public static cancelDeploymentSchedule({
+    id,
+  }: {
+    /**
+     * 32-hex-char opaque ID (NOT canonical UUID).
+     */
+    id: string,
+  }): CancelablePromise<ScheduledRelease> {
+    return __request(OpenAPI, {
+      method: 'DELETE',
+      url: '/v1/deployments/{id}/schedule',
+      path: {
+        'id': id,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
    * Advance one persisted canary stage.
    * Atomically advances the deployment's canary ladder by one stage.
    * The caller supplies the canary_step it observed; APID resolves the
@@ -2014,7 +2516,7 @@ export class DeploymentsService {
    * Server-Sent Events stream of build logs. `follow=1` holds the
    * connection open until the build completes.
    *
-   * ADR-117: the stream also publishes one `event: stage` frame
+   * the stream also publishes one `event: stage` frame
    * per named pipeline stage the customer's deploy passes
    * through. The frame shape is:
    *
@@ -2082,8 +2584,7 @@ export class DeploymentsService {
   /**
    * List deployment audit timeline.
    * Returns the deployment_audit rows for one deployment in
-   * reverse-chronological order (issue #976 / ADR-122 /
-   * SAFE-RELEASES-E.2 + production-leveling Stream A).
+   * reverse-chronological order (E.2 + production-leveling Stream A).
    *
    * The wire surface is a paginated JSON list
    * (ListDeploymentAuditResponse); for the SSE-streaming
@@ -2091,8 +2592,7 @@ export class DeploymentsService {
    * `/v1/deployments/{id}/logs`.
    *
    * IDOR posture: the handler resolves the deployment ID
-   * via `pkg/state.DeploymentByID` + `pkg/state.AppByID`
-   * + account match BEFORE returning rows. A
+   * and its app and checks the account BEFORE returning rows. A
    * cross-account probe returns 404 (no
    * account-existence leak).
    *
@@ -2140,8 +2640,7 @@ export class DeploymentsService {
   }
   /**
    * Get per-deploy grype scan.
-   * Returns the per-deploy grype CVE scan payload (issue #464 /
-   * ADR-055). The scan runs on the per-app layer ext4 in imaged's
+   * Returns the per-deploy grype CVE scan payload. The scan runs on the per-app layer ext4 in the image service's
    * deploy-complete path (after `SetDeploymentRootfs`, before the
    * pending→snapshotting transition) and lands on the
    * `deployments` row.
@@ -2152,15 +2651,15 @@ export class DeploymentsService {
    * all-zero, Vulnerabilities is nil. Rendered as the
    * "scan failed" chip on the dashboard.
    * - `skipped` — pre-feature backfill row
-   * (migrations/00135 stamps `scan_status='skipped'` on every
-   * pre-#464 row). Payload carries the reason sentinel.
+   * (rows created before scanning existed are stamped
+   * `scan_status='skipped'`). Payload carries the reason sentinel.
    *
    * A 404 is returned when:
    * - the deployment row does not exist,
    * - the deployment belongs to a different account (IDOR-safe;
    * no account-existence leak),
    * - no scan has run yet (the deploy is still mid-pipeline or
-   * the row predates #464 entirely).
+   * the row predates entirely).
    *
    * @returns ScanResult The typed scan payload. The shape mirrors the `deployments.scan_result` jsonb column (with the Status re-pinned from the authoritative `scan_status` column).
    * @throws ApiError
@@ -2192,11 +2691,10 @@ export class DeploymentsService {
   }
   /**
    * Get per-deploy image-layer secret scan.
-   * Returns the per-deploy secret-scan audit row (PR-A /
-   * ADR-101). The scan runs on the per-app ext4 in imaged's
+   * Returns the per-deploy secret-scan audit row. The scan runs on the per-app ext4 in the image service's
    * deploy-complete path (after `SetDeploymentRootfs`, before
    * the pending→snapshotting transition) using the same
-   * `pkg/secretscan` engine the apid source-tree rejection
+   * secret-scan engine the API source-tree rejection
    * path uses — same patterns, same providers, same Severity
    * table, same snippet policy.
    *
@@ -2215,11 +2713,11 @@ export class DeploymentsService {
    * - the deployment belongs to a different account
    * (IDOR-safe; no account-existence leak),
    * - no scan has run yet (the deploy is still
-   * mid-pipeline or the row predates PR-A entirely).
+   * mid-pipeline or the row predates entirely).
    *
    * Each finding carries a `layer` label that attributes the
    * finding to the per-walk source (`app` for the main image,
-   * `sidecar-<slug>` for each sidecar). Pre-PR-A rows
+   * `sidecar-<slug>` for each sidecar). Older rows
    * (rejected source-tree bytes via the v2 422 path) carry
    * `layer` empty or absent.
    *
@@ -2242,7 +2740,7 @@ export class DeploymentsService {
       },
       errors: {
         401: `code: unauthorized`,
-        404: `Deployment row missing, cross-account probe, or secret scan has not been stamped for this deploy yet (pre-PR-A rows return 404 because the \`secret_findings\` jsonb has never been written).`,
+        404: `Deployment row missing, cross-account probe, or secret scan has not been stamped for this deploy yet (older rows return 404 because the \`secret_findings\` jsonb has never been written).`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
@@ -2253,7 +2751,7 @@ export class DeploymentsService {
   }
   /**
    * Inspect immutable runtime base identity.
-   * Read-only artifact evidence for Gregale-managed function runtimes (ADR-736).
+   * Read-only artifact evidence for Gregale-managed function runtimes.
    * Older artifacts return unknown rather than inferring their base from builder
    * provenance. Published candidates are limited to the same family and architecture,
    * at most 50 newest publications. Publication does not establish upgrade compatibility.
@@ -2285,7 +2783,7 @@ export class DeploymentsService {
   }
   /**
    * Preview a runtime base change without applying it.
-   * Compares exact published component identities (ADR-736). This planning-only
+   * Compares exact published component identities. This planning-only
    * response cannot authorize an update. Runtime family changes, architecture changes
    * and unknown current provenance block the plan. Same-family changes still require
    * native qualification, a rebuilt candidate, fresh readiness and guarded rollout.
@@ -2326,7 +2824,7 @@ export class DeploymentsService {
     });
   }
   /**
-   * Get per-deploy closed-stage summary (ADR-117 follow-up).
+   * Get per-deploy closed-stage summary.
    * Returns the closed 6-stage summary for a deployment. Companion
    * to `/v1/deployments/{id}/logs` (which streams `event: stage`
    * frames during a live deploy) and `/v1/deployments/{id}` (which
@@ -2335,7 +2833,7 @@ export class DeploymentsService {
    * the future dashboard widget.
    *
    * The body is the same JSON shape already stored on
-   * `deployments.stage_state` (ADR-117, migration 00302). The
+   * `deployments.stage_state`. The
    * handler does NOT add a typed DTO — the column's jsonb IS the
    * wire. The closed vocabulary (`source_download` /
    * `dependency_restore` / `image_build` / `security_scan` /
@@ -2417,8 +2915,8 @@ export class DeploymentsService {
     });
   }
   /**
-   * Retry a failed deployment from a named stage (ADR-117 production-ready follow-on C2).
-   * Closes the production-ready gap exposed by ADR-117 §C4: a
+   * Retry a failed deployment from a named stage (production-ready follow-on C2).
+   * A
    * deployment that fails partway is restorable via
    * `POST /v1/deployments/{id}/retry` with a `from_stage` field.
    * The deployment row is duplicated (NOT mutated); the new
@@ -2427,8 +2925,7 @@ export class DeploymentsService {
    * timeline (and the CLI's `gregale deploys show <id>` summary)
    * reflects the retry as a separate event.
    *
-   * The closed-6 vocabulary mirrors `state.AllStageNames`
-   * (ADR-117); the API rejects unknown values with 400.
+   * The closed-6 vocabulary mirrors `state.AllStageNames`; the API rejects unknown values with 400.
    * Empty strings are rejected for the same reason.
    *
    * Auth chain mirrors `POST /v1/apps/{slug}/deployments`:
@@ -2475,10 +2972,10 @@ export class DeploymentsService {
     });
   }
   /**
-   * Get per-deployment preview URL (SAFE-RELEASES-C.2).
+   * Get per-deployment preview URL.
    * Returns the per-deployment preview URL shape
    * `deploy-{N}-{slug}.gregale.dev` that the cert allowlist will
-   * mint under for a single deployment (issue #976 / ADR-122).
+   * mint under for a single deployment.
    * `N` is the per-app 1-based ordinal of the deployment row,
    * resolved from state.DeploymentOrdinal — the order is
    * stable so a previously-issued URL doesn't silently rot when
@@ -2544,7 +3041,7 @@ export class DeploymentsService {
    * on this page — server-emitted, round-tripped verbatim. The
    * id tiebreaker makes the keyset deterministic for queued
    * tails (started_at IS NULL) and for sub-second collisions
-   * on started_at. See ADR-091 §3.
+   * on started_at.
    *
    * BuildResponse.started_at (the per-row wire field) is
    * RFC3339 (whole-second) for backward compatibility with
@@ -2663,9 +3160,9 @@ export class DeploymentsService {
   }
   /**
    * Get build provenance.
-   * Returns the ADR-038 `build_provenance` row for a single build.
+   * Returns the `build_provenance` row for a single build.
    * Each successful build produces exactly one provenance row
-   * (builderd's populator runs at the `markSucceeded` sites); the
+   * (the build service's populator runs at the `markSucceeded` sites); the
    * row is the customer-visible "what ran?" record: buildkit /
    * railpack version, base / runner digests, source URL + commit
    * SHA, plan, builder node ID, and the build's started_at /
@@ -2673,12 +3170,12 @@ export class DeploymentsService {
    *
    * A 404 with `code=build_provenance_not_found` is returned when
    * the build exists but no provenance row landed (the populator
-   * logs a WARN inside builderd on a failed INSERT — the build
+   * logs a WARN inside the build service on a failed INSERT — the build
    * itself still succeeded). A 404 with `code=not_found` is
    * returned when no build row matches the id, or when the
    * build's owning app belongs to a different account.
    *
-   * @returns BuildProvenanceResponse The build provenance row, with every field populated. Empty strings indicate a column the populator hasn't filled yet (the schema half of Phase 2 is in this PR; cosign / SBOM populate the rest in Phase 3).
+   * @returns BuildProvenanceResponse The build provenance row, with every field populated. Empty strings indicate a column the populator hasn't filled yet (the schema half of is in this PR; cosign / SBOM populate the rest).
    * @throws ApiError
    */
   public static getBuildProvenance({
@@ -2708,8 +3205,8 @@ export class DeploymentsService {
   }
   /**
    * Get build SBOM (CycloneDX JSON).
-   * Streams the CycloneDX 1.5 SBOM JSON generated by `imaged`'s
-   * post-build syft pass (issue #299). The body is the raw SBOM
+   * Streams the CycloneDX 1.5 SBOM JSON generated by the image service's
+   * post-build syft pass. The body is the raw SBOM
    * document; the response content-type is
    * `application/vnd.cyclonedx+json` so external tooling
    * (cyclonedx-cli validate, jq with `@cyclonedx-json`, Grype's
@@ -2722,10 +3219,10 @@ export class DeploymentsService {
    * belongs to another account (the handler returns the same
    * surface on both so account-existence isn't probeable).
    * - `503 build_sbom_unavailable` — the build row exists for this
-   * account but imaged's syft populator did not persist a
+   * account but the image service's syft populator did not persist a
    * CycloneDX document (pre-PR build, or best-effort WARN).
    * The CLI prints "no SBOM for this build" and exits 1; the
-   * operator's job is to re-deploy imaged with Phase 3 active.
+   * operator's job is to re-deploy the image service with active.
    * - `503 capacity_unavailable` — the SBOM exists but the file
    * was unreadable from disk (storage backend returned a
    * transient error). The customer retries once.

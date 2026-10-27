@@ -19,6 +19,9 @@ func ValidateWorkflow(operation api.OperationDefinitionSpec, workflow api.Workfl
 	if _, err := api.ValidateWorkflowDAG(workflow, plan); err != nil {
 		return err
 	}
+	if workflow.Code != nil {
+		return fmt.Errorf("operation workflow cannot be a code-first workflow")
+	}
 	if workflow.Trigger != nil && workflow.Trigger.Type != "manual" {
 		return fmt.Errorf("operation workflow requires a manual trigger")
 	}

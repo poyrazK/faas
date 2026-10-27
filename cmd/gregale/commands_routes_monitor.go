@@ -281,6 +281,10 @@ func cmdRoutesMonitor(args []string) int {
 		if jsonOutput {
 			return jsonOut(writeJSON(page))
 		}
+		if len(page.Incidents) == 0 && page.NextBefore == "" {
+			// It printed nothing at all (Hunt 14 H14-60).
+			_, _ = fmt.Fprintf(osStdout, "No route incidents for %s.\n", o.slug)
+		}
 		for _, i := range page.Incidents {
 			_, _ = fmt.Fprintf(osStdout, "%s  %s  %s  deployment %s\n", i.ID, i.Status, i.OpenedAt.Format("2006-01-02 15:04:05Z"), i.DeploymentID)
 		}
@@ -340,7 +344,13 @@ func renderRouteMonitorBudget(r api.RouteMonitorRoute) {
 	_, _ = fmt.Fprintln(osStdout)
 }
 func renderRouteMonitorReport(r api.RouteMonitorReport) {
-	_, _ = fmt.Fprintf(osStdout, "Production route health: %s (%s, revision %d)\nDeployment: %s (%s)\nCoverage: observed telemetry only; full capture unknown\n", r.Status, previewReportText(r.Reason), r.Revision, r.DeploymentID, previewReportText(r.CommitSHA))
+	_, _ = fmt.Fprintf(osStdout, "Production route health: %s (%s, revision %d)\n", r.Status, previewReportText(r.Reason), r.Revision)
+	// A disabled monitor has no deployment; it printed "Deployment:  ()"
+	// (Hunt 14 H14-60).
+	if r.DeploymentID != "" {
+		_, _ = fmt.Fprintf(osStdout, "Deployment: %s (%s)\n", r.DeploymentID, previewReportText(r.CommitSHA))
+	}
+	_, _ = fmt.Fprintln(osStdout, "Coverage: observed telemetry only; full capture unknown")
 	for _, f := range r.Routes {
 		renderRouteMonitorBudget(f.Route)
 		_, _ = fmt.Fprintf(osStdout, "    %s; errors %s, latency %s\n", f.Status, f.ErrorStatus, f.LatencyStatus)

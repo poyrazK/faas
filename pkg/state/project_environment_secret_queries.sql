@@ -41,6 +41,15 @@ WHERE account_id = sqlc.arg(account_id)::uuid AND project_id = sqlc.arg(project_
   AND environment_slug = sqlc.arg(environment_slug)::text
 ORDER BY key;
 
+-- name: CopyProjectEnvironmentSecrets :execrows
+-- An environment clone copies the source environment's shared secrets as it
+-- copies app secrets: the envelope is not bound to an environment.
+INSERT INTO project_environment_secrets (account_id, project_id, environment_slug, key, ciphertext, kid, value_hash, secret_version)
+SELECT s.account_id, s.project_id, sqlc.arg(target_slug)::text, s.key, s.ciphertext, s.kid, s.value_hash, s.secret_version
+FROM project_environment_secrets s
+WHERE s.account_id = sqlc.arg(account_id)::uuid AND s.project_id = sqlc.arg(project_id)::uuid
+  AND s.environment_slug = sqlc.arg(source_slug)::text;
+
 -- name: CompareAndSwapProjectSecretEnvelope :execrows
 UPDATE project_environment_secrets p SET kid = sqlc.arg(replacement)::jsonb#>>'{0,kid}',
  ciphertext = decode(sqlc.arg(replacement)::jsonb#>>'{0,ciphertext}', 'base64')

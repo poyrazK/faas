@@ -14,6 +14,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/appaccess"
 	"github.com/onebox-faas/faas/pkg/apid/release"
+	"github.com/onebox-faas/faas/pkg/apid/trafficproblem"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/logsanitize"
 	"github.com/onebox-faas/faas/pkg/meter"
@@ -191,6 +192,10 @@ func (s *server) createAppInOrg(w http.ResponseWriter, r *http.Request, acct sta
 		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Bad request", err.Error()))
 		return
 	}
+	if problem := s.appCreateSettingsProblem(r, acct, req); problem != nil {
+		api.WriteProblem(w, problem)
+		return
+	}
 	// Tier A10 / ADR-088: per-app overflow_node preference.
 	// Resolve the wire name → UUID server-side before buildApp
 	// runs, so the resulting state.App carries the resolved
@@ -245,8 +250,8 @@ func (s *server) createAppInOrg(w http.ResponseWriter, r *http.Request, acct sta
 			api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeValidation,
 				"Slug taken", fmt.Sprintf("app slug %q is already in use", req.Slug)))
 		default:
-			api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError, api.CodeCapacity,
-				"Capacity", "could not create app"))
+			api.WriteProblem(w, trafficproblem.Policy(err, api.NewProblem(http.StatusInternalServerError, api.CodeCapacity,
+				"Capacity", "could not create app")))
 		}
 		return
 	}
@@ -337,7 +342,7 @@ func (s *server) buildApp(acct state.Account, req api.CreateAppRequest, limits a
 	if req.Profiling != nil && req.Profiling.Enabled && s.profileBackend == nil {
 		return state.App{}, api.ErrCapacity("CPU profiling is unavailable on this installation")
 	}
-	if req.Tracing != nil && req.Tracing.Enabled && !s.guestTracingEnabled {
+	if req.Tracing != nil && req.Tracing.Enabled && !s.guestTracingFor(acct) {
 		return state.App{}, api.ErrCapacity("request tracing is unavailable on this installation")
 	}
 	lifecycle := lifecycleManifestFromCreate(req)
@@ -719,11 +724,16 @@ func (s *server) createImageDeployment(w http.ResponseWriter, r *http.Request, a
 			return
 		}
 	}
-	if p := s.releaseFreezeProblem(r, acct, app, req.Scope, req.OverrideFreeze); p != nil {
+	sched, p := s.releaseFreezeOrSchedule(r, acct, app, &req)
+	if p != nil {
 		api.WriteProblem(w, p)
 		return
 	}
 	release.ApplyDefault(r.Context(), s.store, s.log, app, acct.Plan, &req)
+	if ap := s.releaseApprovalCanaryProblem(r.Context(), app, &req); ap != nil {
+		api.WriteProblem(w, ap)
+		return
+	}
 	if p := validateDeploymentTrafficOptions(&req, acct.Plan); p != nil {
 		api.WriteProblem(w, p)
 		return
@@ -787,6 +797,7 @@ func (s *server) createImageDeployment(w http.ResponseWriter, r *http.Request, a
 		api.WriteProblem(w, p)
 		return
 	}
+	sched.park(&req)
 	dep, sErr := buildDeploymentForInsert(app, &req, overrides, limits, acct.Plan)
 	if sErr != nil {
 		api.WriteProblem(w, sErr)
@@ -864,6 +875,10 @@ func (s *server) createImageDeployment(w http.ResponseWriter, r *http.Request, a
 	}
 	if activityOutboxID > 0 {
 		s.deliverOrgActivityOutbox(r.Context(), activityOutboxID)
+	}
+	if p := s.recordReleaseSchedule(r, acct, app, d, sched); p != nil {
+		api.WriteProblem(w, p)
+		return
 	}
 	notifyAndAuditDeployment(r, s, acct, app, d, prev, &req)
 	writeJSON(w, http.StatusAccepted, s.deploymentResponse(r.Context(), d, app))
@@ -1194,7 +1209,12 @@ func appEffectiveLimits(a state.App, plan api.Plan) api.AppEffectiveLimits {
 	if !ok {
 		return api.AppEffectiveLimits{MemoryLimitMB: a.RAMMB, CPULimitMillicores: effectiveAppCPUMillicores(a, plan), MaxInstances: a.MaxConcurrency, RequestBodyMaxBytes: plan.MaxRequestBodyBytes()}
 	}
-	queueDepth, queueWait, _ := api.ConcurrencyQueueDefaultsForPlan(plan)
+	queueDepth, _, _ := api.ConcurrencyQueueDefaultsForPlan(plan)
+	perInstance := 0
+	if a.ScalingPolicy != nil {
+		perInstance = a.ScalingPolicy.PerInstanceConcurrency
+	}
+	queueWait := api.ConcurrencyQueueDefaultWaitFor(plan, perInstance)
 	if a.ScalingPolicy != nil {
 		if a.ScalingPolicy.MaxQueueDepth > 0 {
 			queueDepth = a.ScalingPolicy.MaxQueueDepth
@@ -1214,7 +1234,7 @@ func appEffectiveLimits(a state.App, plan api.Plan) api.AppEffectiveLimits {
 		MemoryLimitMB: a.RAMMB, PlanMemoryMaxMB: limits.RAMMB,
 		EphemeralDiskMaxMB: limits.EphemeralDiskMaxMB(),
 		GuestVCPUs:         limits.VCPU, CPULimitMillicores: cpuMillicores, PlanCPUMaxMillicores: planCPUMaxMillicores, CPUWeight: limits.CPUWeight,
-		MaxInstances: maxInstances, ConcurrencyPerInstance: limits.ConcurrencyPerVMBound,
+		MaxInstances: maxInstances, ConcurrencyPerInstance: limits.PerInstanceConcurrency(perInstance),
 		ConcurrencyQueueDepth: queueDepth, ConcurrencyQueueWaitMS: queueWait.Milliseconds(),
 		AppRequestRateRPS: requestRateRPS, AppRequestBurst: requestRateBurst,
 		AccountRequestRateRPM: limits.RateLimitPerAccountRPM,
@@ -1314,6 +1334,7 @@ func statePolicyToDTO(p *state.ScalingPolicy) *api.ScalingPolicy {
 		MaxQueueDepth:           p.MaxQueueDepth,
 		WakeMaxQueueDepth:       p.WakeMaxQueueDepth,
 		WakeMaxQueueWaitSeconds: p.WakeMaxQueueWaitSeconds,
+		PerInstanceConcurrency:  p.PerInstanceConcurrency,
 	}
 	if p.Target != nil {
 		out.Target = &api.ScalingTarget{

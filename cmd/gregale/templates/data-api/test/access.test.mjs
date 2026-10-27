@@ -4,7 +4,7 @@ import http from 'node:http'
 import { createHash } from 'node:crypto'
 import { createServer } from '../server.mjs'
 import { runtimeConfig, publicReadConfig, publicRpcConfig, serverKeyConfig, serverKeyPermissions, publicReadMaxAge, limits } from '../config.mjs'
-import { selectEmbeddings, clientKey, matchServerKey, serverKeyAllows, serverSubject, unsafePublicRelations, unsafePublicFunctions, publicReadTarget, publicRpcTarget, publicReadCache } from '../access.mjs'
+import { selectEmbeddings, clientKey, matchServerKey, serverKeyAllows, serverSubject, unsafePublicRelations, unsafePublicFunctions, publicReadTarget, publicRpcTarget, publicReadCache, rowSecured, rowSecurityDenial } from '../access.mjs'
 
 const keyA = 'gdsk_' + 'A'.repeat(43)
 const keyB = 'gdsk_' + 'b'.repeat(42) + '-'
@@ -487,4 +487,49 @@ test('the OpenAPI catalog keeps GET only for public functions', async t => {
   assert.deepEqual(Object.keys(document.paths['/rpc/search_products']).sort(), ['get', 'post'])
   assert.deepEqual(Object.keys(document.paths['/rpc/save_note']), ['post'])
   assert.equal(document.paths['/rpc/hidden'], undefined)
+})
+
+test('signed-in requests reach only row-secured or exempt relations (ADR 20261026140223)', () => {
+  assert.deepEqual([{ kind: 'r', rls: true }, { kind: 'p', rls: true }, { kind: 'v', invoker: 'on' }].map(rowSecured), [true, true, true])
+  assert.deepEqual([{ kind: 'r', rls: false }, { kind: 'v', invoker: '' }, { kind: 'm', rls: false }, { kind: 'f', rls: false }].map(rowSecured), [false, false, false, false])
+  const config = runtimeConfig({ ...baseEnv, DATA_API_ALLOW_WITHOUT_RLS: 'api.countries' })
+  config.rowSecurity = new Map([['api.notes', true], ['api.secrets', false], ['api.countries', false], ['api.note_view', true]])
+  config.functions = [{ schema: 'api', name: 'note_secrets', setof: { from: 'notes', to: 'secrets' } }, { schema: 'api', name: 'note_links', setof: { from: 'notes', to: 'notes' } }]
+  const denial = (url, headers = {}, method = 'GET', rpc) => rowSecurityDenial({ url, method, headers }, config, rpc)?.code ?? null
+  assert.equal(denial('/rest/v1/notes?select=id'), null)
+  assert.equal(denial('/rest/v1/secrets'), 'rls_required')
+  assert.equal(denial('/rest/v1/secrets', {}, 'POST'), 'rls_required', 'writes too')
+  assert.equal(denial('/rest/v1/countries'), null, 'an owner exemption')
+  assert.equal(denial('/rest/v1/missing'), 'not_found', 'unknown since boot')
+  assert.equal(denial('/rest/v1/'), null, 'the root reads no rows')
+  assert.equal(denial('/openapi.json'), null)
+  assert.equal(denial('/rest/v1/notes?select=id,author:secrets(id)'), 'rls_required', 'an embedded unprotected relation')
+  assert.equal(denial('/rest/v1/notes?select=id,countries(name)'), null)
+  assert.equal(denial('/rest/v1/notes?select=id,note_secrets(id)'), 'rls_required', 'a computed relationship to an unprotected relation')
+  assert.equal(denial('/rest/v1/notes?select=id,note_links(id)'), null)
+  assert.equal(denial('/rest/v1/notes?select=id,unknown(id)'), 'not_found')
+  assert.equal(denial('/rest/v1/notes?select="id"'), 'rls_required', 'unclassified select syntax where an unprotected relation exists')
+  assert.equal(denial('/rest/v1/rpc/search?select=id,secrets(id)', {}, 'POST', { schema: 'api', name: 'search' }), 'rls_required')
+  assert.equal(denial('/rest/v1/rpc/search', {}, 'POST', { schema: 'api', name: 'search' }), null)
+  assert.equal(denial('/rest/v1/notes', { 'accept-profile': 'other' }), 'not_found')
+  config.rowSecurity.set('api.secrets', true)
+  assert.equal(denial('/rest/v1/notes?select="id"'), null, 'every relation protected: nothing to embed unsafely')
+  assert.equal(rowSecurityDenial({ url: '/rest/v1/secrets', method: 'GET', headers: {} }, { ...config, rowSecurity: undefined }), null, 'no boot contract, no check')
+  assert.throws(() => runtimeConfig({ ...baseEnv, DATA_API_ALLOW_WITHOUT_RLS: 'other.countries' }), /Invalid DATA_API_ALLOW_WITHOUT_RLS/)
+})
+
+test('a signed-in request to an unprotected relation is refused before the engine', async t => {
+  const upstreamCalls = []
+  const upstream = http.createServer((req, res) => { upstreamCalls.push(req.url); res.end('[]') })
+  await new Promise(resolve => upstream.listen(0, '127.0.0.1', resolve))
+  const config = runtimeConfig(baseEnv)
+  config.rowSecurity = new Map([['api.notes', true], ['api.secrets', false]])
+  const server = createServer(config, async () => ({ sub: 'alice', exp: 9999999999 }), upstream.address().port, undefined, () => {})
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve))
+  t.after(() => { server.close(); upstream.close() })
+  const get = path => fetch(`http://127.0.0.1:${server.address().port}${path}`, { headers: { Authorization: 'Bearer fixture' } })
+  const refused = await get('/rest/v1/secrets')
+  assert.deepEqual([refused.status, (await refused.json()).code], [403, 'rls_required'])
+  assert.equal((await get('/rest/v1/notes')).status, 200)
+  assert.deepEqual(upstreamCalls, ['/notes'])
 })

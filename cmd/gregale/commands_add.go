@@ -70,7 +70,7 @@ func cmdAdd(args []string) int {
 		return cmdAddDatadog(args[1:])
 	default:
 		printCommandValidation(os.Stderr, "unknown add resource %q\n", args[0])
-		return 1
+		return unknownSubcommandChoices(os.Stderr, "add", nestedCliCommand("add"), args[0])
 	}
 }
 
@@ -79,7 +79,8 @@ func cmdAdd(args []string) int {
 // returns only secret names for compute bindings; this command deliberately
 // projects out even the non-secret access-key identifier from its result.
 func cmdAddBucket(args []string) int {
-	args = normalizePostgresArgs(args)
+	// Flags may follow NAME, as the help shows; Go's flag parsing stopped at
+	// NAME and dropped them (Hunt 14 H14-13).
 	fs := newFlagSet("add bucket", flag.ContinueOnError)
 	appSlug := fs.String("app", "", "app slug (required)")
 	scope := fs.String("env", "", "environment scope (defaults to linked project environment)")
@@ -91,7 +92,7 @@ func cmdAddBucket(args []string) int {
 	label := fs.String("label", "compute", "label for the bucket-scoped compute credential")
 	prefix := fs.String("prefix", "", "uppercase prefix for injected storage secret names")
 	waitTimeout := fs.Duration("wait-timeout", addResourceDefaultWait, "maximum time to wait for the bucket to become ready")
-	if err := fs.Parse(args); err != nil {
+	if err := parseInterspersed(fs, args); err != nil {
 		return 1
 	}
 	resolvedScope, resolveErr := resolveEnvironmentFlagOrContext(*scope)
@@ -298,7 +299,7 @@ func waitForObjectBucket(ctx context.Context, client interface {
 // account-scoped name is derived from the app slug. --database can instead
 // select an existing database by ID or name.
 func cmdAddPostgres(args []string) int {
-	args = normalizePostgresArgs(args)
+	// Flags may follow NAME (Hunt 14 H14-13).
 	fs := newFlagSet("add postgres", flag.ContinueOnError)
 	appSlug := fs.String("app", "", "app slug (required)")
 	scope := fs.String("env", "", "environment scope (defaults to linked project environment)")
@@ -314,7 +315,7 @@ func cmdAddPostgres(args []string) int {
 	restoreWindow := fs.Int64("restore-window-seconds", 0, "point-in-time restore window (0 uses plan allowance)")
 	access := fs.String("access", "read_write", "credential access: read_write|read_only|migration|data_api|auth")
 	waitTimeout := fs.Duration("wait-timeout", addResourceDefaultWait, "maximum time to wait for the database and binding to become ready")
-	if err := fs.Parse(args); err != nil {
+	if err := parseInterspersed(fs, args); err != nil {
 		return 1
 	}
 	resolvedScope, resolveErr := resolveEnvironmentFlagOrContext(*scope)
@@ -379,7 +380,9 @@ func cmdAddPostgres(args []string) int {
 			return printErr("Could not find managed PostgreSQL database", fmt.Errorf("no managed database named or identified %q", reference))
 		}
 		if strings.TrimSpace(*region) == "" {
-			PrintUsage(os.Stderr, usage, "add")
+			// The compacted usage line drops the optional --region, so a bare
+			// usage here never named the missing flag (Hunt 14 H14-41).
+			printCommandValidation(os.Stderr, "add postgres: no managed database named %q exists yet; pass --region REGION to create it, or --database REF to attach an existing one\n", name)
 			return 1
 		}
 		createCtx := api.ContextWithIdempotencyKey(ctx, addResourceIdempotencyKey("database", appName, name, *scope, *environmentKey))

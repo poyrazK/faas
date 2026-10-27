@@ -13,6 +13,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/projectaccess"
+	"github.com/onebox-faas/faas/pkg/apid/trafficproblem"
 	"github.com/onebox-faas/faas/pkg/logsanitize"
 	"github.com/onebox-faas/faas/pkg/managedpostgres"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -209,6 +210,19 @@ func (s *server) loadProject(w http.ResponseWriter, r *http.Request, acct state.
 	return project, true
 }
 
+// projectWorkloadDependencies are the services an app's declared bindings
+// name: its Compose depends_on within the project (ADR-20261026193018).
+func projectWorkloadDependencies(app state.App) []string {
+	var out []string
+	for _, binding := range app.Manifest.ServiceBindings {
+		if service := binding.Service; service != "" && !slices.Contains(out, service) {
+			out = append(out, service)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
 func (s *server) projectResponse(r *http.Request, acct state.Account, project state.Project) (api.ProjectResponse, *api.Problem) {
 	apps, err := s.store.AppsForProject(r.Context(), acct.ID, project.ID)
 	if err != nil {
@@ -225,7 +239,8 @@ func (s *server) projectResponse(r *http.Request, acct state.Account, project st
 	}
 	var latest time.Time
 	for _, app := range apps {
-		workload := api.ProjectWorkloadResponse{Slug: app.Slug, WorkloadName: app.WorkloadName, Status: string(app.Status)}
+		workload := api.ProjectWorkloadResponse{Slug: app.Slug, WorkloadName: app.WorkloadName, Status: string(app.Status),
+			DependsOn: projectWorkloadDependencies(app)}
 		deployment, deployErr := s.store.LatestDeployment(r.Context(), app.ID)
 		if deployErr == nil {
 			workload.DeploymentStatus = string(deployment.Status)
@@ -342,6 +357,7 @@ func (s *server) createProjectEnvironment(w http.ResponseWriter, r *http.Request
 		"protected": environment.Protected, "cloned_from": req.FromEnvironment,
 		"variables_copied": clone.VariablesCopied, "secrets_copied": clone.SecretsCopied,
 		"secret_references_copied": clone.SecretReferencesCopied,
+		"project_secrets_copied":   clone.ProjectSecretsCopied,
 		"bindings_copied":          clone.BindingsCopied, "routes_copied": clone.RoutesCopied, "policies_copied": clone.PoliciesCopied,
 	})
 	response := projectEnvironmentResponse(environment)
@@ -357,6 +373,7 @@ func (s *server) createProjectEnvironment(w http.ResponseWriter, r *http.Request
 			ConfigurationCopied: clone.ConfigurationCopied, VariablesCopied: clone.VariablesCopied,
 			SecretsCopied: clone.SecretsCopied, WorkloadsCopied: clone.WorkloadsCopied,
 			SecretReferencesCopied: clone.SecretReferencesCopied,
+			ProjectSecretsCopied:   clone.ProjectSecretsCopied,
 			BindingsCopied:         clone.BindingsCopied, RoutesCopied: clone.RoutesCopied, PoliciesCopied: clone.PoliciesCopied, SharedResources: sharedResources,
 		}
 	}
@@ -509,7 +526,7 @@ func writeCreateProjectEnvironmentError(w http.ResponseWriter, projectSlug strin
 		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeConflict,
 			"Environment already exists", "the project already has an environment with this slug"))
 	default:
-		api.WriteProblem(w, api.ErrCapacity("could not create project environment"))
+		api.WriteProblem(w, trafficproblem.Policy(err, api.ErrCapacity("could not create project environment")))
 	}
 }
 

@@ -147,8 +147,8 @@ func TestEgressLoopContinuesPastOneFailingApp(t *testing.T) {
 		WithClock(func() time.Time { return clock })
 
 	for i := 0; i < 3; i++ {
-		if err := l.Tick(context.Background()); err != nil {
-			t.Fatalf("Tick: %v", err)
+		if err := l.Tick(context.Background()); err == nil {
+			t.Fatal("Tick acknowledged success despite the failing app")
 		}
 		sampled = sampled.Add(30 * time.Second)
 		clock = clock.Add(30 * time.Second)
@@ -200,5 +200,36 @@ func TestEgressLoopForgetsRetiredCandidates(t *testing.T) {
 	_ = l.Tick(context.Background())
 	if len((*l.Seen())) != 0 {
 		t.Fatalf("seen = %v, want empty once the candidate retires", (*l.Seen()))
+	}
+}
+
+// adr: 20261023115741 — an app whose account has egress circuit breaking off
+// gets no circuits: the loop clears what it had and installs nothing new.
+func TestEgressLoopClearsAppsTheCapabilityRefuses(t *testing.T) {
+	up := testUpstream()
+	sampled := time.Date(2026, 9, 21, 11, 59, 45, 0, time.UTC)
+	read := func(context.Context) ([]sched.EgressCircuitCandidate, error) {
+		return []sched.EgressCircuitCandidate{{Upstream: up, OK: false, Sampled: sampled}}, nil
+	}
+	l, _, applier, clock := loopFixture(t, read)
+	allowed := true
+	l.WithAppAllowed(func(context.Context, string) bool { return allowed })
+	ctx := context.Background()
+	for i := 0; i < 3; i++ {
+		if err := l.Tick(ctx); err != nil {
+			t.Fatalf("Tick: %v", err)
+		}
+		sampled = sampled.Add(30 * time.Second)
+		*clock = clock.Add(30 * time.Second)
+	}
+	if applier.opened() != 1 || len(applier.last()) == 0 {
+		t.Fatalf("pushes = %v, want the circuit enforced while the capability is on", applier.pushes)
+	}
+	allowed = false
+	if err := l.Tick(ctx); err != nil {
+		t.Fatalf("Tick: %v", err)
+	}
+	if got := applier.last(); len(got) != 0 {
+		t.Fatalf("last push = %v, want the app's circuits cleared once its capability is off", got)
 	}
 }

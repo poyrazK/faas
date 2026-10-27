@@ -69,7 +69,7 @@ func TestMemStorePRPreviewSetBatchQuotaNeutralSwap(t *testing.T) {
 			WorkloadName: name, PreviewOfSlug: name, PreviewPrNumber: 42,
 			PreviewPrState: state.PreviewPrStateOpen, PreviewExpiresAt: &expiry, Status: state.AppActive}
 	}
-	limits := api.Limits{DeployedApps: 5, PreviewApps: 2}
+	limits := api.Limits{DeployedApps: 2, PreviewApps: 2} // one environment holds at most two workloads
 	head := state.PRPreviewHead{InstallationID: 7, RepoFullName: "octo/api", PRNumber: 42, CommitSHA: strings.Repeat("a", 40)}
 	first, err := m.ReservePRPreviewSet(ctx, head, []state.App{preview("api"), preview("worker")}, limits)
 	if err != nil || len(first) != 2 {

@@ -56,7 +56,11 @@ secrets derive a key from the source and flags, so repeating an identical deploy
 returns the deployment already in progress or live. Branches, tags, short SHAs,
 and secret bundles use a fresh key per invocation; transport retries reuse it.
 A local wait timeout or interruption preserves accepted deployment configuration;
-resume with `gregale deployment wait <deployment-id>`. Submission errors report
+resume with `gregale deployment wait <deployment-id>`. The server bounds every
+deployment on its own: a build still waiting in the builder queue after 6 hours
+fails with `deployment_queue_timeout`, and a deployment with no build running
+that makes no progress for 3 hours fails with `deployment_stalled` (a running
+build is bounded by the build timeout). Deploy again after either. Submission errors report
 accepted, rejected, or unknown acceptance. Accepted and unknown outcomes retain
 staged triggers, profiling, and tracing; only definite rejection restores prior
 settings. Inspect deployment history and reuse the printed retry key when
@@ -112,9 +116,14 @@ artifact instead of rebuilding it. Without `--to`, rollback (and automatic
 rollback) returns to the deployment that most recently stopped serving
 traffic, not the most recently created one, so a rollback after an earlier
 rollback or a completed canary restores the release that was just replaced.
-A rollback that fails its readiness or hosting check leaves the current
+It rolls back production; an app that serves only in one other environment
+rolls back that environment, and a release of any other environment needs
+`--to`. A rollback that fails its readiness or hosting check leaves the current
 release serving. The target returns to `superseded` with the error recorded,
-so it remains available for another rollback.
+so it remains available for another rollback. If another release goes live in
+that environment while the target is getting ready, the rollback is not
+applied (`rollback_release_changed`), and a rollback whose receipt already
+reported a failure such as `rollback_timeout` never cuts over later.
 
 `gregale rollback APP` waits until the previous release actually serves
 again and reports how long it took:
@@ -171,10 +180,89 @@ For a managed PostgreSQL database that the app's release commands can migrate
 (attached with `--access migration`), the refusal names the moment before the
 earliest crossed release. `gregale postgres restore` creates a new database
 from that point without touching the current one; attach it when you have
-checked it. The point must be inside the database's restore window.
+checked it. The point must be inside the database's restore window. To
+restore it and move the app to it as part of the rollback, see
+[Rollbacks that restore the database](#rollbacks-that-restore-the-database).
 `gregale deployment summary <id>` and `GET /v1/deployments/{id}` show a
 deployment's release run as `release`: its status, start and finish times,
 and the databases it can migrate.
+
+## Rollbacks that restore the database
+
+`--restore-databases` rolls back the code and the managed PostgreSQL database
+together ([ADR-20261023181931](adr/20261023181931-rollbacks-that-restore-the-database.md)):
+
+```sh
+gregale rollback my-api --to v41 --restore-databases
+```
+
+```text
+This rollback undoes release commands that ran after its target last served:
+  v42  succeeded  started 2026-10-23T12:03:10Z
+orders is restored to 2026-10-23T12:03:10Z as a new database; writes to orders after that moment stay only in orders.
+my-api stops serving while it switches (usually under a minute, then a cold start).
+Type my-api to continue: my-api
+restoring orders to 2026-10-23T12:03:10Z as orders-before-v42
+staging and verifying credentials for orders-before-v42
+fencing my-api; it stops serving until the switch ends
+draining my-api: 3 retired, 1 parked, 0 pending
+switching my-api to v41 and orders-before-v42
+resuming my-api on v41
+✓ Rolled back to v41 on orders-before-v42. orders keeps every write and is no longer bound to my-api; delete it when you no longer need it.
+```
+
+The switch runs in phases, and the app keeps serving its current release
+until the copy is ready and its credentials are verified:
+
+1. **Restore.** The database the release commands migrate is restored, as a
+   new database named `<name>-before-v<revision>`, to the start of the earliest
+   release the rollback undoes. A database already restored to that point
+   under that name is reused.
+2. **Stage and verify.** Gregale issues credentials on the copy for every
+   binding the app has in the scope, and checks them over SQL.
+3. **Fence and drain.** Nothing new starts for the app, in any scope. Running
+   instances are stopped and their exit confirmed on the host; parked ones
+   have no process and their snapshots are discarded.
+4. **Switch.** The rollback target becomes the live release, and in one
+   transaction the app's bindings move to the copy under the same variable
+   names.
+5. **Resume.** The fence lifts. The first request cold-boots the target with
+   the copy's credentials.
+
+Until the switch reaches step 4, any failure (or `gregale rollback switch
+my-api <id> --cancel`) unwinds it, and the app keeps serving its current
+release on the original database. The restored copy is kept either way;
+delete it with `gregale postgres delete` if you do not need it.
+
+What to expect:
+- **Writes after the restore point are not copied.** The original database
+  keeps them, unchanged, so you can compare or copy rows by hand.
+- **The app is unavailable** from the fence until the first request after the
+  switch is served, usually under a minute plus a cold start.
+- **One database per switch.** When the release commands can migrate more
+  than one managed database, restore them with `gregale postgres restore` and
+  roll back with `--acknowledge-releases`.
+- **The switch waits for the app to settle.** Frozen instances, starting
+  instances and running tasks must finish within two minutes of the fence,
+  and the drain must finish within ten; otherwise the switch fails and the app
+  resumes as it was.
+- **The restore point must be inside the database's restore window**,
+  otherwise the request is refused before anything changes.
+- **An account runs at most three switches at once.** A fourth is refused
+  with `database_switches_active` (429) until one finishes or is cancelled.
+
+After a switch, rolling back to a release whose migration it undid is refused
+with `rollback_target_database_restored`, and automated rollbacks cannot go
+there either: deploy that code again so its release command runs. Later
+rollbacks no longer list the undone release commands as crossed.
+
+`gregale rollback switches my-api` lists an app's switches and `gregale
+rollback switch my-api <id> --wait` follows one. The API is
+`"restore_databases": true` on `POST /v1/apps/{slug}/rollback` (it needs
+`"acknowledge_releases": true`, the `postgres:manage` scope and a verified
+email, like a database restore), then
+`GET /v1/apps/{slug}/database-switches/{id}` and
+`POST /v1/apps/{slug}/database-switches/{id}/cancel` (also `postgres:manage`).
 
 ## Release gates
 
@@ -189,6 +277,8 @@ gregale release-gates add --name checkout-slo --slo checkout --max-burn-rate 10
 gregale release-gates add --name no-new-errors --new-errors --min-events 3
 # ...when orders per minute average below 5.
 gregale release-gates add --name orders --metric orders_per_minute --below 5
+# ...when its AI gateway calls cost 30% more each than the previous release's.
+gregale release-gates add --name ai-cost --ai cost_per_call --max-increase 30
 
 gregale release-gates list
 gregale release-gates rm orders
@@ -210,9 +300,142 @@ How each gate judges:
 - **`custom_metric` gates** bound the metric's average. Custom metrics are
   reported per app, not per revision, so these gates are most useful after
   the release takes all the traffic.
+- **`ai` gates** compare the release's AI gateway calls with the previous
+  release's ([ADR 20261022153155](adr/20261022153155-ai-signals-per-deployment-and-release-gates.md)):
+  `error_rate` (provider errors), `flagged_rate` (answers truncated, refused,
+  empty, invalid JSON or with a failed tool call), `cost_per_call` or
+  `ttfb_ms` (time to first byte). The gate fails when the release is more
+  than `--max-increase` percent worse (default 50), and worse by more than a
+  floor: 1 percentage point, 1 millicent per call or 50 ms. Both releases need
+  `--min-samples` calls. Only calls from the app's instances count;
+  `gregale ai deployments` lists them by deployment.
 
 A gate that has too few requests or values (`--min-samples`, default 20) is
 not judged. A gate never holds a rollout on missing evidence.
+
+## What changed between releases
+
+`gregale deployment diff` shows what a release changes compared with the
+release that served before it
+([ADR-20261021101117](adr/20261021101117-release-diff.md)):
+
+```bash
+gregale deployment diff v42                 # against the release before it
+gregale deployment diff v42 --against v38   # against any release of the app
+```
+
+It reports:
+- **Code:** both commits, a GitHub compare link when both releases came
+  from the same repository, and whether the image changed.
+- **Configuration:** env variables and secrets added, removed or changed,
+  by key. Values are never shown.
+- **Packages:** packages added, removed or upgraded, from the two builds'
+  SBOMs (at most 100 per list).
+- **Runtime settings:** handler, runtime base, port, entrypoint, command,
+  probes, minimum instances, sidecars, workflows and env override keys.
+- **Release command:** the step that runs database migrations.
+
+A section shows as unknown when its history is gone: config history keeps
+the last 100 revisions per scope, and image releases have no build SBOM.
+The approval page and the "approval needed" message show the same
+comparison. `gregale deployment summary` remains the quick cockpit view:
+rollout status, rollback target, and release fields against the previous
+deployment.
+
+## Release approvals
+
+Require people to approve each production release before it takes more than
+its first canary stage
+([ADR-20261020085706](adr/20261020085706-release-approvals.md)):
+
+```bash
+# Two owners or admins, other than the deployer, approve every release.
+gregale approvals require --approvals 2
+# One person, developers included, within four hours.
+gregale approvals require --approvals 1 --approvers developer --timeout 4h
+
+gregale approvals pending                 # releases waiting right now
+gregale approvals approve <deployment> --comment "canary looks clean"
+gregale approvals reject <deployment> --reason "checkout latency is up"
+gregale approvals status <deployment>
+gregale approvals off
+```
+
+A production release is one to the default scope or to the project's
+`production` environment (`--environment production`); both serve the app's
+production traffic, so the policy gates both. Other environments and scopes
+are not gated.
+
+The release starts its canary as usual. At the stage the policy names
+(`--after-stage`, default 1), it waits. `gregale deploy` shows the wait and
+the approve command. The canary still judges the waiting stage, so a
+regression aborts the release even while it waits. Once enough people
+approve, the rollout continues on its next step.
+
+Waiting ends in one of three ways:
+- **Enough approvals:** the rollout continues.
+- **A rejection:** the rollout is aborted at once (rule
+  `abort_approval_rejected`), and the previous release takes its traffic
+  back.
+- **The timeout passes** (default 24 hours): the rollout is aborted in the
+  same way (rule `abort_approval_timeout`).
+
+While a release waits, nothing gives it more traffic: not `canary advance`,
+`rollouts recover --action promote`, `traffic set`, or
+`POST /v1/deployments/{id}/promote`. Rollbacks and aborts are never held.
+
+Who may approve:
+- **Approvers:** with `--approvers admin` (the default), organization owners
+  and admins; `developer` adds developers.
+- **The deployer:** their own approval does not count unless you pass
+  `--allow-self-approval`. An app outside an organization has one person,
+  whose own approval always counts.
+- **Changing the policy:** only owners and admins can change or remove it.
+
+Tell people when a release waits, is approved or rejected, or times out:
+
+```bash
+echo "https://hooks.slack.com/services/…" | gregale channels add --name releases --kind slack --secret-stdin
+gregale approvals require --approvals 2 --notify releases
+```
+
+`--notify` takes up to five Slack or email channels; PagerDuty channels are
+refused, because a release waiting for approval is not an incident. Each
+event is sent once per release.
+
+The Slack message for a waiting release has **Approve**, **Reject** and
+**Review** buttons, and the email has the same links. They open
+`/dashboard/releases/<deployment>/approval` in Gregale; if you are not signed
+in, Gregale asks you to sign in first. The decision is made on that page,
+under your own Gregale account, so your organization role, MFA and the
+self-approval rule apply exactly as in the CLI. The buttons grant nothing by
+themselves.
+
+Releases need a canary to wait in. While the policy is on, a production
+release with `--rollout immediate` or `--traffic-percent` is refused with
+`release_approval_canary_required`. A release deployed with `--no-traffic`
+can't be given traffic by hand either; start it with
+`gregale scheduled-releases set <release> --at now`, which rolls it out
+through a canary that waits for approval.
+
+Production means the `default` scope and a project's `production`
+environment, as for freezes. Releases that have no canary to wait in are
+refused the same way:
+- `gregale deploys retry` of a release that had no canary;
+- a project apply that would release the app;
+- a promotion into a `production` environment that is not protected.
+
+Protect the environment (`gregale projects environments protect <project>
+production`) and its promotion approval stands in for the app's policy.
+A GitOps source releases into `production` only once a person approved the
+revision in Gregale (approval policy `manual`); with `protected_branch` the
+sync waits until you remove the app's policy or switch the source to manual
+approval.
+
+The app's **Release safety** page in the dashboard
+(`/dashboard/apps/<app>/release-safety`) shows the policy and the releases
+waiting for approval, next to the app's freezes, gates and scheduled
+releases.
 
 ## Deploy freezes
 
@@ -238,7 +461,13 @@ with `release_frozen`, which names the freeze, its reason and its creator:
 - `gregale deploy` and the deployment API;
 - GitHub push deploys;
 - `gregale deploy --project`;
-- promotions into `production`.
+- promotions into `production`;
+- `gregale deploys retry` and the dashboard's retry button. A retry can't
+  carry an override; deploy again with `--override-freeze` instead.
+
+A GitOps source managing the `production` environment keeps its sync
+unconverged while a freeze covers one of its apps, and activates the new
+revision once the freeze ends.
 
 A freeze covers the `default` deployment scope and the `production`
 environment.
@@ -265,12 +494,81 @@ breaker, the post-release watch, the first-wake 5xx guard or an alert rule
 rolls an app back, Gregale freezes that app for the given time. The freeze
 names the release that was rolled back, and you can lift it like any other.
 
+### Platform release pause
+
+While Gregale handles a security incident, it may pause new releases for
+every account
+([ADR-20261022140000](adr/20261022140000-break-glass-controls.md)). Deploys
+and new schedules then fail with 503 `platform_release_paused`, which nothing
+in the request overrides. Queued builds wait, and scheduled releases start
+once the pause is lifted. Your running apps keep serving, rollbacks still
+work, and you can still change env vars and secrets, so you can rotate a
+credential during the incident. Retry the deploy after the pause is lifted.
+
+## Scheduled releases
+
+Build a release now and start it later: at a quiet hour, at a launch time, or
+when the team is around to watch
+([ADR-20261021152201](adr/20261021152201-scheduled-releases.md)):
+
+```bash
+# Build now; start the rollout at 02:00 local time and tell #releases how it went.
+gregale deploy --at 02:00 --release-notify releases
+# Other ways to say when: +2h, "2026-10-22 09:00" (local time), or an RFC 3339 time.
+gregale deploy --at "2026-10-22 09:00" --rollout fast
+
+gregale scheduled-releases list
+gregale scheduled-releases show v44 --app my-api
+gregale scheduled-releases set v44 --app my-api --at +30m   # move it
+gregale scheduled-releases set v44 --app my-api --at now    # start it on the next pass
+gregale scheduled-releases cancel v44 --app my-api
+```
+
+The build, readiness check and snapshot happen right away, so a broken build
+shows up while you are still there. The release then waits live without
+traffic; production stays on the current release, and nothing wakes the
+waiting one. At its time, Gregale starts the rollout the deploy would have
+had: the same canary (`--rollout safe` or `fast`, or the app's release
+policy), or all traffic at once for `--rollout immediate`.
+
+Just before it starts, Gregale checks again:
+- **Freezes.** A freeze active at that moment stops the release, including a
+  freeze created after you scheduled it. Scheduling into a freeze you know
+  about needs `--override-freeze REASON`, which covers exactly the freezes
+  active at the scheduled time.
+- **Approvals.** If the app requires approvals, the release must roll out
+  through a canary, and it waits for approval in that canary like any other
+  release. A policy added while the release waited applies to it.
+- **Newer releases.** If a newer release serves traffic by then, the
+  scheduled one is superseded and never starts.
+
+If the build is still running, or another rollout is still in progress,
+Gregale waits for up to an hour past the scheduled time, then gives up
+(`expired`). A release that could not start stays built without traffic:
+schedule it again, or promote it by hand. `--release-notify` channels (Slack
+or email, up to five) hear when the release starts and when it can't.
+
+While a release waits for its time, `gregale traffic set` and `gregale
+traffic promote` refuse it with `release_scheduled`; move or cancel the
+schedule instead. `gregale traffic promote --deployment v44 --at 09:00`
+schedules a release you deployed with `--no-traffic`.
+
+A scheduled release is a production release of a request app: previews,
+named environments, services, workers and jobs release immediately. An app
+has one pending schedule at a time; scheduling another release cancels the
+earlier schedule and leaves that release waiting without traffic.
+
 ## Revisions
 
 Every deploy creates an immutable revision, numbered per app and shown as
 `v41`, `v42`, `v43`. A revision is never rewritten — a redeploy supersedes it
 and creates the next one — so it is a stable handle you can keep in a runbook
 or an incident channel.
+
+Deploys of one environment go live in the order you start them, not the order
+they finish. If you start another deploy before an earlier one goes live, the
+earlier one never goes live: it is superseded when it reaches the cutover,
+whether or not the newer deploy succeeds.
 
 Use a revision anywhere a deployment ID is accepted:
 
@@ -399,6 +697,11 @@ Probes are always `GET`, and the twenty a minute are split across the paths.
 Pick cheap, read-only routes your app answers without a login; each path must
 be concrete, with no query, wildcard, or `{parameter}`. The setting is
 `release_probe_paths` in the app manifest and the API.
+
+Probes are ordinary requests to your app: they wake the new release and the
+one it replaces and keep both running while the rollout waits for evidence,
+and that running time is billed like any other request (about 0.09 GB-h for a
+quiet rollout of a 256 MB app). `release_policy: immediate` skips them.
 
 When probes cannot give an answer (for example, the probed path requires a login), a
 stage whose only problem is too few samples waits up to 5 more minutes after

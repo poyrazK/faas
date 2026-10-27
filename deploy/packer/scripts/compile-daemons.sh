@@ -18,11 +18,11 @@
 set -euo pipefail
 
 SRC_ROOT="${SRC_ROOT:-/tmp/src}"
-GO_VERSION="${GO_VERSION:-1.26.9}"
+GO_VERSION="${GO_VERSION:-1.26.10}"
 
 DAEMONS=(apid gatewayd-public gatewayd-internal s3-gatewayd realtimed schedd vmmd builderd imaged meterd githubd outboundd)
 CLIS=(gregale gregalectl)
-TOOLS=(vmmd-jail-helper vmmd-raw-bridge vmmd-tcp-bridge vmmd-udp-bridge vmmd-stream-bridge)
+TOOLS=(vmmd-jail-helper vmmd-guestdisk vmmd-raw-bridge vmmd-tcp-bridge vmmd-udp-bridge vmmd-stream-bridge)
 
 if [[ ! -d "${SRC_ROOT}" ]]; then
     echo "compile-daemons: SRC_ROOT=${SRC_ROOT} not present; expected the repo mounted at this path" >&2

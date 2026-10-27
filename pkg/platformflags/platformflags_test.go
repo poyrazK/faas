@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -252,6 +253,108 @@ func TestFromAccountList(t *testing.T) {
 	}
 }
 
+// adr: 20261021080640 — company targeting: org rules match the organization a
+// request acts under and fail closed without one.
+func TestOrgRulesMatchTheRequestOrganization(t *testing.T) {
+	const orgX, orgY = "44444444-4444-4444-8444-444444444444", "55555555-5555-4555-8555-555555555555"
+	snap := compileOne(Definition{Enabled: true, Rules: []Rule{
+		{ID: "x-pro", Orgs: []string{orgX}, Plans: []string{"pro"}, Value: boolPtr(true)},
+	}}, nil)
+	cases := []struct {
+		name    string
+		subject Subject
+		enabled bool
+	}{
+		{"member of x on pro", Subject{AccountID: acctA, Plan: "pro", OrgID: orgX}, true},
+		{"org id in another spelling", Subject{AccountID: acctA, Plan: "pro", OrgID: strings.ToUpper(orgX)}, true},
+		{"other organization", Subject{AccountID: acctA, Plan: "pro", OrgID: orgY}, false},
+		{"no organization", Subject{AccountID: acctA, Plan: "pro"}, false},
+		{"x but plan mismatch", Subject{AccountID: acctA, Plan: "hobby", OrgID: orgX}, false},
+	}
+	for _, tc := range cases {
+		if got := snap.Enabled(AIGateway, tc.subject); got != tc.enabled {
+			t.Errorf("%s: enabled = %v, want %v", tc.name, got, tc.enabled)
+		}
+	}
+}
+
+func TestOrgRulesValidateAndRespectTargetingSupport(t *testing.T) {
+	const org = "44444444-4444-4444-8444-444444444444"
+	def, err := ParseDefinition(json.RawMessage(`{"enabled":true,"rules":[{"id":"acme","orgs":["` + strings.ToUpper(org) + `"],"value":true}]}`))
+	if err != nil {
+		t.Fatalf("an org-only rule must be valid: %v", err)
+	}
+	if got := def.Rules[0].Orgs; len(got) != 1 || got[0] != org {
+		t.Fatalf("orgs = %v, want the canonical UUID", got)
+	}
+	for name, raw := range map[string]string{
+		"not a uuid": `{"enabled":true,"rules":[{"id":"acme","orgs":["acme-inc"],"value":true}]}`,
+		"duplicate":  `{"enabled":true,"rules":[{"id":"acme","orgs":["` + org + `","` + org + `"],"value":true}]}`,
+	} {
+		if _, err := ParseDefinition(json.RawMessage(raw)); err == nil {
+			t.Errorf("%s: want a validation error", name)
+		}
+	}
+	orgRule := Definition{Enabled: true, Rules: []Rule{{ID: "acme", Orgs: []string{org}, Value: boolPtr(true)}}}
+	planRule := Definition{Enabled: true, Rules: []Rule{{ID: "pro", Plans: []string{"pro"}, Value: boolPtr(true)}}}
+	for _, tc := range []struct {
+		flag string
+		def  Definition
+		ok   bool
+	}{
+		{AIGateway, orgRule, false},      // outboundd does not know the organization
+		{AIGateway, planRule, true},      // every consumer knows the plan
+		{LiveQueries, planRule, false},   // the realtime path knows only the account
+		{ApplicationAuth, orgRule, true}, // apid knows both
+	} {
+		spec, _ := Lookup(tc.flag)
+		if err := ValidateTargeting(spec, tc.def); (err == nil) != tc.ok {
+			t.Errorf("%s %+v: err = %v, want ok=%v", tc.flag, tc.def.Rules[0], err, tc.ok)
+		}
+	}
+}
+
+// adr: 20261021080640 — a rule outside its window does not match;
+// evaluation falls through and the decision names the inactive rule.
+func TestScheduledRulesApplyOnlyInsideTheirWindow(t *testing.T) {
+	start := time.Date(2026, 11, 2, 9, 0, 0, 0, time.UTC)
+	end := start.Add(48 * time.Hour)
+	def, err := ParseDefinition(json.RawMessage(`{"enabled":true,"rules":[
+		{"id":"launch","accounts":["` + acctA + `"],"starts_at":"2026-11-02T12:00:00+03:00","ends_at":"2026-11-04T09:00:00Z","value":true},
+		{"id":"everyone-later","starts_at":"2026-12-01T00:00:00Z","value":true}]}`))
+	if err != nil {
+		t.Fatalf("a windowed rule and a window-only rule must be valid: %v", err)
+	}
+	if got := *def.Rules[0].StartsAt; !got.Equal(start) || got.Location() != time.UTC {
+		t.Fatalf("starts_at = %v, want %v in UTC", got, start)
+	}
+	snap := compileOne(def, nil)
+	cases := []struct {
+		name    string
+		at      time.Time
+		subject string
+		enabled bool
+		reason  string
+		state   string
+	}{
+		{"before the window", start.Add(-time.Minute), acctA, false, ReasonDefault, ScheduleNotStarted},
+		{"at the start", start, acctA, true, ReasonRuleMatch, ""},
+		{"inside", start.Add(time.Hour), acctA, true, ReasonRuleMatch, ""},
+		{"at the end", end, acctA, false, ReasonDefault, ScheduleEnded},
+		{"other account inside", start.Add(time.Hour), acctB, false, ReasonDefault, ScheduleNotStarted}, // everyone-later
+		{"everyone after general availability", time.Date(2026, 12, 1, 0, 0, 0, 0, time.UTC), acctB, true, ReasonRuleMatch, ""},
+	}
+	for _, tc := range cases {
+		d := snap.Evaluate(AIGateway, Subject{AccountID: tc.subject, At: tc.at})
+		if d.Enabled != tc.enabled || d.Reason != tc.reason || d.ScheduleState != tc.state {
+			t.Errorf("%s: %+v, want enabled=%v reason=%s state=%q", tc.name, d, tc.enabled, tc.reason, tc.state)
+		}
+	}
+	if _, err := ParseDefinition(json.RawMessage(`{"enabled":true,"rules":[{"id":"x","starts_at":"2026-11-04T00:00:00Z","ends_at":"2026-11-02T00:00:00Z","value":true}]}`)); err == nil {
+		t.Fatal("ends_at before starts_at must be refused")
+	}
+}
+
 func TestCatalogIsWellFormed(t *testing.T) {
 	seen := map[string]bool{}
 	for _, spec := range Catalog() {
@@ -268,8 +371,18 @@ func TestCatalogIsWellFormed(t *testing.T) {
 		if key, ok := FlagKeyFromConfigKey(ConfigKey(spec.Key)); !ok || key != spec.Key || !IsConfigKey(ConfigKey(spec.Key)) {
 			t.Fatalf("config key round trip failed for %q", spec.Key)
 		}
+		optInsKey := OptInsConfigKey(spec.Key)
+		if key, ok := FlagKeyFromOptInsConfigKey(optInsKey); !ok || key != spec.Key || !IsConfigKey(optInsKey) {
+			t.Fatalf("opt-in config key round trip failed for %q", spec.Key)
+		}
+		if _, ok := FlagKeyFromConfigKey(optInsKey); ok {
+			t.Fatalf("opt-in key %q must not parse as a flag definition key", optInsKey)
+		}
+		if _, ok := spec.RetireByTime(); spec.RetireBy != "" && !ok {
+			t.Fatalf("flag %q retire_by %q must be YYYY-MM-DD", spec.Key, spec.RetireBy)
+		}
 		if spec.Capability != "" {
-			if key, ok := FlagForCapability(spec.Capability); !ok || key != spec.Key {
+			if key, ok := CapabilityFlag(spec.Capability); !ok || key != spec.Key {
 				t.Fatalf("capability %q does not resolve to %q", spec.Capability, spec.Key)
 			}
 		}
@@ -277,7 +390,94 @@ func TestCatalogIsWellFormed(t *testing.T) {
 	if !IsConfigKey(GroupsConfigKey) || IsConfigKey("hsts_enabled") {
 		t.Fatal("IsConfigKey misclassifies keys")
 	}
-	if got := len(ConfigKeys()); got != len(Catalog())+1 {
-		t.Fatalf("ConfigKeys = %d, want one per flag plus groups", got)
+	if got := len(ConfigKeys()); got != 2*len(Catalog())+1 {
+		t.Fatalf("ConfigKeys = %d, want a definition and an opt-in row per flag plus groups", got)
+	}
+}
+
+func TestSelfServeOptInsDecideAfterRulesAndBeforeDefault(t *testing.T) {
+	const orgA = "44444444-4444-4444-8444-444444444444"
+	set := NewSet(nil)
+	def := Definition{Enabled: true, Rules: []Rule{{ID: "deny-b", Accounts: []string{acctB}, Value: boolPtr(false)}},
+		SelfServe: &SelfServe{Enabled: true, Plans: []string{"pro", "scale"}}}
+	if err := set.Apply(ConfigKey(ApplicationAuth), def.Marshal(), 4); err != nil {
+		t.Fatal(err)
+	}
+	optIns := OptIns{}.With(acctA, false).With(acctB, false).With(strings.ToUpper(orgA), true)
+	if err := set.Apply(OptInsConfigKey(ApplicationAuth), optIns.Marshal(), 2); err != nil {
+		t.Fatal(err)
+	}
+	cases := []struct {
+		name    string
+		subject Subject
+		enabled bool
+		reason  string
+		via     string
+	}{
+		{"opted-in account on an eligible plan", Subject{AccountID: acctA, Plan: "pro"}, true, ReasonOptIn, OptInAccount},
+		{"opted-in account on an ineligible plan", Subject{AccountID: acctA, Plan: "free"}, false, ReasonDefault, ""},
+		{"a deny rule beats the opt-in", Subject{AccountID: acctB, Plan: "pro"}, false, ReasonRuleMatch, ""},
+		{"member acting under an opted-in company", Subject{AccountID: acctC, Plan: "scale", OrgID: orgA}, true, ReasonOptIn, OptInOrg},
+		{"same member outside the company", Subject{AccountID: acctC, Plan: "scale"}, false, ReasonDefault, ""},
+	}
+	for _, tc := range cases {
+		d := set.Evaluate(ApplicationAuth, tc.subject)
+		if d.Enabled != tc.enabled || d.Reason != tc.reason || d.OptIn != tc.via {
+			t.Errorf("%s: %+v, want enabled=%t reason=%s opt_in=%q", tc.name, d, tc.enabled, tc.reason, tc.via)
+		}
+	}
+	if got, version := set.Snapshot().OptIns(ApplicationAuth); got.Count() != 3 || version != 2 || !got.HasOrg(orgA) {
+		t.Fatalf("OptIns = %+v v%d", got, version)
+	}
+	if err := set.Apply(OptInsConfigKey(ApplicationAuth), OptIns{}.Marshal(), 1); err != nil {
+		t.Fatal(err)
+	}
+	if !set.Enabled(ApplicationAuth, Subject{AccountID: acctA, Plan: "pro"}) {
+		t.Fatal("an older opt-in version must not replace a newer one")
+	}
+	def.SelfServe.Enabled = false
+	if err := set.Apply(ConfigKey(ApplicationAuth), def.Marshal(), 5); err != nil {
+		t.Fatal(err)
+	}
+	if set.Enabled(ApplicationAuth, Subject{AccountID: acctA, Plan: "pro"}) {
+		t.Fatal("turning self_serve off must ignore existing opt-ins")
+	}
+	if kept, _ := set.Snapshot().OptIns(ApplicationAuth); kept.Count() != 3 {
+		t.Fatal("turning self_serve off must keep the opt-ins")
+	}
+}
+
+func TestSelfServeAndOptInsValidate(t *testing.T) {
+	if _, err := ParseDefinition(json.RawMessage(`{"enabled":true,"default":false,"self_serve":{"enabled":true,"max_subjects":5001}}`)); err == nil {
+		t.Fatal("max_subjects above the limit must be refused")
+	}
+	if _, err := ParseDefinition(json.RawMessage(`{"enabled":true,"default":false,"self_serve":{"enabled":true,"plans":["gold"]}}`)); err == nil {
+		t.Fatal("an unknown self_serve plan must be refused")
+	}
+	if _, err := ParseOptIns(json.RawMessage(`{"accounts":["not-a-uuid"]}`)); err == nil {
+		t.Fatal("a malformed opt-in account must be refused")
+	}
+	if _, err := ParseOptIns(json.RawMessage(`{"acounts":[]}`)); err == nil {
+		t.Fatal("an unknown opt-in field must be refused")
+	}
+	if (OptIns{}.With(acctA, false).Without(acctA, false)).Count() != 0 {
+		t.Fatal("Without must remove the subject")
+	}
+	live, _ := Lookup(LiveQueries)
+	if err := ValidateTargeting(live, Definition{Enabled: true, SelfServe: &SelfServe{Enabled: true, Plans: []string{"pro"}}}); err == nil {
+		t.Fatal("live_queries cannot limit self-serve plans: the realtime path knows only the account")
+	}
+	gateway, _ := Lookup(AIGateway)
+	if err := ValidateOptIns(gateway, OptIns{Orgs: []string{acctA}}); err == nil {
+		t.Fatal("ai_gateway cannot take organization opt-ins")
+	}
+	if err := ValidateTargeting(gateway, Definition{Enabled: true, SelfServe: &SelfServe{Enabled: true}}); err == nil {
+		t.Fatal("a paid capability's preview must list its entitled plans")
+	}
+	if err := ValidateTargeting(gateway, Definition{Enabled: true, SelfServe: &SelfServe{Enabled: true, Plans: []string{"free"}}}); err == nil {
+		t.Fatal("a paid capability's preview must not be offered to an unentitled plan")
+	}
+	if c := (SelfServe{}).Capacity(); c != 5000 {
+		t.Fatalf("default capacity = %d", c)
 	}
 }

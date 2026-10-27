@@ -66,6 +66,13 @@
       {% for cidr in faas_postgres_allowed_cidrs %}
       host    faas            faas                                    {{ cidr }}                scram-sha-256
       {% endfor %}
+      # ADR-20261023104734: daemons on their own faas_runtime member role.
+      local   faas            +faas_runtime                           peer map=faas_map
+      host    faas            +faas_runtime                           127.0.0.1/32            scram-sha-256
+      host    faas            +faas_runtime                           ::1/128                  scram-sha-256
+      {% for cidr in faas_postgres_allowed_cidrs %}
+      host    faas            +faas_runtime                           {{ cidr }}                scram-sha-256
+      {% endfor %}
       {% if faas_postgres_standby_address | default('') %}
       # ADR-1344 §8: the warm standby streams WAL from this address only, over
       # TLS (it verifies the primary's certificate; see the postgres role).

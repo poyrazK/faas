@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import { once } from 'node:events';
-import { FaaSClient, AlertRulesService, type AlertRollback } from '../src/index.js';
+import { FaaSClient, AlertRulesService, type AlertRollback } from '../src/preview.js';
 
 test('automatic rollback status preserves the fire and pinned pair through GETs', async (t) => {
  const receipt: AlertRollback = { id: '3e9f323a-ade6-442b-8444-c91da107fe44', rule_id: 'a2b9cc53-907f-4b5c-88a4-fd0c21214556', account_id: 'b3b9cc53-907f-4b5c-88a4-fd0c21214556', app_id: '142b7504-f03a-4ee2-aeb3-14d922a845d4', scope: 'default', candidate_deployment_id: '5b87c415-7c93-4932-acab-a3c90e98be86', predecessor_deployment_id: '6b87c415-7c93-4932-acab-a3c90e98be86', status: 'blocked', reason: 'alert fired', observed_value: 42, fired_at: new Date().toISOString(), updated_at: new Date().toISOString(), code: 'binding_verification_missing', blockers: [{ code: 'binding_verification_missing', message: 'verify predecessor' }] };

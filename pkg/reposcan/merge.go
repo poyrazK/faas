@@ -53,9 +53,12 @@ func mergeByKey(seeds []workloadSeed) []Workload {
 		source              string // highest-tier seed's source
 		dockerfile          string // highest-tier seed's dockerfile
 		dockerfileBuild     *api.DockerfileBuildOptions
+		goCommand           string
 		image               string // highest-tier seed's prebuilt image
 		healthcheck         *api.ComposeHealthcheck
 		imageProcess        *api.ComposeProcess
+		secretFiles         []api.SecretFile
+		resources           *api.ComposeResources
 		class               Class
 		command             []string
 		commandShell        bool
@@ -144,6 +147,15 @@ func mergeByKey(seeds []workloadSeed) []Workload {
 		}
 		if b.dockerfileBuild == nil && s.dockerfileBuild != nil {
 			b.dockerfileBuild = s.dockerfileBuild.Clone()
+		}
+		if b.goCommand == "" {
+			b.goCommand = s.goCommand
+		}
+		if b.secretFiles == nil && s.secretFiles != nil {
+			b.secretFiles = api.CloneSecretFiles(s.secretFiles)
+		}
+		if b.resources == nil && s.resources != nil {
+			b.resources = s.resources.Clone()
 		}
 		if !b.imageSet && (s.imageSet || s.image != "") {
 			b.image = s.image
@@ -249,11 +261,14 @@ func mergeByKey(seeds []workloadSeed) []Workload {
 			RootDir:             b.rootDir,
 			Dockerfile:          b.dockerfile,
 			DockerfileBuild:     b.dockerfileBuild.Clone(),
+			GoCommand:           goCommandForBuild(b.goCommand, b.dockerfile, b.image),
 			Image:               b.image,
 			Command:             b.command,
 			CommandShell:        b.commandShell,
 			ImageHealthcheck:    b.healthcheck.Clone(),
 			ImageProcess:        b.imageProcess.Clone(),
+			SecretFiles:         api.CloneSecretFiles(b.secretFiles),
+			Resources:           b.resources.Clone(),
 			DependsOn:           b.dependsOn,
 			DependsOnConditions: maps.Clone(b.dependsOnConditions),
 
@@ -264,6 +279,7 @@ func mergeByKey(seeds []workloadSeed) []Workload {
 			AllowedServiceCallers:     b.allowedServiceCallers,
 			AllowedServiceCallScopes:  b.allowedServiceCallScopes,
 			PlatformTenantRequired:    b.platformTenantRequired,
+			Unpublished:               b.det == detCompose && len(b.ports) == 0,
 			InternalPorts:             b.internalPorts,
 
 			Class:     cls,

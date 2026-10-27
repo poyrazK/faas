@@ -53,6 +53,8 @@ type deployIdempotencyIntent struct {
 	RollbackOn5xx            *bool                      `json:"rollback_on_5xx,omitempty"`
 	DisableStartupCPUBoost   *bool                      `json:"disable_startup_cpu_boost,omitempty"`
 	OverrideFreeze           string                     `json:"override_freeze,omitempty"`
+	ReleaseAt                string                     `json:"release_at,omitempty"`
+	ReleaseNotify            []string                   `json:"release_notify,omitempty"`
 	Healthcheck              *api.DeploymentHealthcheck `json:"healthcheck,omitempty"`
 	NoTriggers               bool                       `json:"no_triggers,omitempty"`
 	ProjectSlug              string                     `json:"project_slug,omitempty"`

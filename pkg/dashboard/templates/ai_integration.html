@@ -1,0 +1,171 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{.Title}} — onebox faas</title>
+  <style nonce="{{.Nonce}}">
+    :root { color-scheme: light dark; }
+    body { font-family: ui-sans-serif, system-ui, sans-serif; margin: 0; padding: 0 1.5rem; max-width: 1100px; margin-inline: auto; }
+    header { display: flex; justify-content: space-between; align-items: center; padding: 1rem 0; border-bottom: 1px solid #ddd; }
+    nav a { margin-right: 1rem; text-decoration: none; }
+    main { padding: 1rem 0; }
+    table { width: 100%; border-collapse: collapse; margin: 0.75rem 0 1.5rem; }
+    th, td { text-align: right; padding: 0.45rem 0.55rem; border-bottom: 1px solid #eee; vertical-align: top; }
+    th:first-child, td:first-child { text-align: left; }
+    .summary { display: flex; gap: 2rem; flex-wrap: wrap; margin: 1rem 0; }
+    .summary div { display: grid; gap: 0.2rem; }
+    .summary small, .muted { color: #6b7280; }
+    .notice { padding: 0.7rem; background: #fff8c5; border: 1px solid #e2cf6e; }
+    .day-filter { display: flex; gap: 0.75rem; align-items: end; margin: 1rem 0; }
+    .day-filter label { display: grid; gap: 0.25rem; }
+    .day-filter input, .day-filter button { padding: 0.4rem 0.55rem; font: inherit; }
+    .bar { fill: #3b82f6; }
+    .bar-track { fill: #e5e7eb; }
+    .looping { color: #b45309; }
+    @media (max-width: 750px) { table { font-size: 0.85rem; } th, td { padding: 0.35rem 0.25rem; } }
+  </style>
+</head>
+<body>
+  <header>
+    <strong>onebox faas</strong>
+    <nav>
+      <a href="/dashboard/">Overview</a>
+      <a href="/dashboard/apps">Apps</a>
+      <a href="/dashboard/ai">AI gateway</a>
+      <a href="/dashboard/usage">Usage</a>
+      <a href="/dashboard/billing">Billing</a>
+      <a href="/dashboard/account">Account</a>
+    </nav>
+  </header>
+  <main>
+    {{template "email-verification-banner" .}}
+    <p><a href="/dashboard/ai">AI gateway</a> /</p>
+    <h1>{{.Data.Name}} <span class="muted">{{.Data.Provider}}</span></h1>
+    <form class="day-filter" method="get" action="{{.Data.Href}}">
+      <label for="ai-day">UTC day
+        <input id="ai-day" type="date" name="date" value="{{.Data.Day}}" min="{{.Data.MinDay}}" max="{{.Data.MaxDay}}" required>
+      </label>
+      <button type="submit">Show</button>
+      <a href="{{.Data.TracesHref}}">Traces</a>
+    </form>
+    {{if .Data.Unavailable}}
+      <p class="notice" role="status">{{.Data.Unavailable}}</p>
+    {{else}}
+      <section class="summary" aria-label="Day summary">
+        <div><small>Calls</small><strong>{{.Data.Summary.Requests}}</strong></div>
+        <div><small>Error rate</small><strong>{{.Data.Summary.ErrorRate}}</strong></div>
+        <div><small>Tokens</small><strong>{{.Data.Summary.Tokens}}</strong></div>
+        <div><small>Cost</small><strong>{{.Data.Summary.Cost}}</strong> <small>limit {{.Data.Summary.DailyCostLimit}}</small></div>
+        <div><small>Month to date</small><strong>{{.Data.Summary.MonthCost}}</strong> <small>limit {{.Data.Summary.MonthlyCostLimit}}</small></div>
+        <div><small>Saved by caching</small><strong>{{.Data.Summary.CacheSaved}}</strong></div>
+      </section>
+
+      <h2>By model</h2>
+      {{if .Data.Models}}
+        <div style="overflow-x:auto">
+          <table>
+            <thead><tr><th>Model</th><th>Calls</th><th>Error rate</th><th>Input tokens</th><th>Output tokens</th><th>Cost</th><th>Share of cost</th><th>Quality flags</th><th>Ratings</th><th>Mean score</th></tr></thead>
+            <tbody>
+              {{range .Data.Models}}
+                <tr><td>{{.Name}}</td><td>{{.Requests}}</td><td>{{.ErrorRate}}</td><td>{{.InputTokens}}</td><td>{{.OutputTokens}}</td><td>{{.Cost}}</td>
+                  <td><svg width="100" height="10" viewBox="0 0 100 10" role="img" aria-label="{{.Bar}}% of the day's cost"><rect class="bar-track" width="100" height="10"/><rect class="bar" width="{{.Bar}}" height="10"/></svg></td>
+                  <td>{{.Quality}}</td><td>{{.Ratings}}</td><td>{{.Score}}</td></tr>
+              {{end}}
+            </tbody>
+          </table>
+        </div>
+      {{else}}
+        <p class="muted">No calls this day.</p>
+      {{end}}
+
+      <h2>By caller</h2>
+      {{if .Data.Callers}}
+        <div style="overflow-x:auto">
+          <table>
+            <thead><tr><th>App or caller</th><th>Calls</th><th>Error rate</th><th>Input tokens</th><th>Output tokens</th><th>Cost</th><th>Share of cost</th><th>Quality flags</th></tr></thead>
+            <tbody>
+              {{range .Data.Callers}}
+                <tr><td>{{.Name}}</td><td>{{.Requests}}</td><td>{{.ErrorRate}}</td><td>{{.InputTokens}}</td><td>{{.OutputTokens}}</td><td>{{.Cost}}</td>
+                  <td><svg width="100" height="10" viewBox="0 0 100 10" role="img" aria-label="{{.Bar}}% of the day's cost"><rect class="bar-track" width="100" height="10"/><rect class="bar" width="{{.Bar}}" height="10"/></svg></td>
+                  <td>{{.Quality}}</td></tr>
+              {{end}}
+            </tbody>
+          </table>
+        </div>
+      {{end}}
+
+      <h2>Cost by tag</h2>
+      {{if .Data.Tags}}
+        <table>
+          <thead><tr><th>Tag</th><th>Calls</th><th>Tokens</th><th>Cost</th><th>Share of cost</th><th>Daily limit</th></tr></thead>
+          <tbody>
+            {{range .Data.Tags}}
+              <tr><td><code>{{.Name}}</code></td><td>{{.Requests}}</td><td>{{.Tokens}}</td><td>{{.Cost}}</td>
+                <td><svg width="100" height="10" viewBox="0 0 100 10" role="img" aria-label="{{.Bar}}% of the day's cost"><rect class="bar-track" width="100" height="10"/><rect class="bar" width="{{.Bar}}" height="10"/></svg></td>
+                <td>{{.Limit}}</td></tr>
+            {{end}}
+          </tbody>
+        </table>
+      {{end}}
+      {{if .Data.TagsNote}}<p class="muted">{{.Data.TagsNote}}</p>{{end}}
+
+      <h2>Cost by end user</h2>
+      {{if .Data.Users}}
+        <table>
+          <thead><tr><th>End user</th><th>Calls</th><th>Tokens</th><th>Cost</th><th>Share of cost</th></tr></thead>
+          <tbody>
+            {{range .Data.Users}}
+              <tr><td><code>{{.Name}}</code></td><td>{{.Requests}}</td><td>{{.Tokens}}</td><td>{{.Cost}}</td>
+                <td><svg width="100" height="10" viewBox="0 0 100 10" role="img" aria-label="{{.Bar}}% of the day's cost"><rect class="bar-track" width="100" height="10"/><rect class="bar" width="{{.Bar}}" height="10"/></svg></td></tr>
+            {{end}}
+          </tbody>
+        </table>
+      {{end}}
+      {{if .Data.UsersNote}}<p class="muted">{{.Data.UsersNote}}</p>{{end}}
+
+      <h2>Latency and errors</h2>
+      {{if .Data.Latency}}
+        <table>
+          <thead><tr><th>Model</th><th>Calls</th><th>Error rate</th><th>First byte p50</th><th>First byte p95</th><th>Duration p50</th><th>Duration p95</th></tr></thead>
+          <tbody>
+            {{range .Data.Latency}}
+              <tr><td>{{.Model}}</td><td>{{.Calls}}</td><td>{{.ErrorRate}}</td><td>{{.TTFBP50}}</td><td>{{.TTFBP95}}</td><td>{{.DurationP50}}</td><td>{{.DurationP95}}</td></tr>
+            {{end}}
+          </tbody>
+        </table>
+      {{end}}
+      {{if .Data.LatencyNote}}<p class="muted">{{.Data.LatencyNote}}</p>{{end}}
+
+      <h2>Quality drift alerts</h2>
+      {{if .Data.Alerts}}
+        <table>
+          <thead><tr><th>Day</th><th>Model</th><th>Metric</th><th>Today</th><th>Previous 7 days</th><th>Calls</th><th>Detected</th></tr></thead>
+          <tbody>
+            {{range .Data.Alerts}}
+              <tr><td>{{.Day}}</td><td>{{.Model}}</td><td>{{.Metric}}</td><td>{{.Current}}</td><td>{{.Baseline}}</td><td>{{.Counts}}</td><td>{{.Detected}}</td></tr>
+            {{end}}
+          </tbody>
+        </table>
+      {{else}}
+        <p class="muted">No drift alerts in the last 31 days.</p>
+      {{end}}
+
+      <h2>Recent traces</h2>
+      {{if .Data.Traces}}
+        <table>
+          <thead><tr><th>Trace</th><th>Last call</th><th>Calls</th><th>Errors</th><th>Cost</th><th>Tool calls</th><th>Repeated</th></tr></thead>
+          <tbody>
+            {{range .Data.Traces}}
+              <tr><td><a href="{{.Href}}"><code>{{.ID}}</code></a></td><td>{{.LastCall}}</td><td>{{.Calls}}</td><td>{{.Errors}}</td><td>{{.Cost}}</td><td>{{.ToolCalls}}</td>
+                <td>{{if .Looping}}<span class="looping">{{.Repeated}}</span>{{else}}{{.Repeated}}{{end}}</td></tr>
+            {{end}}
+          </tbody>
+        </table>
+        <p><a href="{{.Data.TracesHref}}">All traces</a></p>
+      {{end}}
+      {{if .Data.TracesNote}}<p class="muted">{{.Data.TracesNote}}</p>{{end}}
+    {{end}}
+  </main>
+</body>
+</html>

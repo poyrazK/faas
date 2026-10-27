@@ -83,7 +83,7 @@ func TestImmutableDeletionInventorySDKE2E(t *testing.T) {
 			}
 			input := &awss3.DeleteObjectInput{Bucket: aws.String("assets"), Key: aws.String(publicVersionTestKey), VersionId: aws.String(refs[0].ID)}
 			_, e = f.client.DeleteObject(t.Context(), input)
-			assertSDKErrorCode(t, e, "ServiceUnavailable")
+			assertSDKErrorCode(t, e, "OperationAborted")
 			if p.count() != 0 {
 				t.Fatal("delete invalidated cursor", p.count())
 			}

@@ -383,6 +383,7 @@
           <p class="muted">request <code>{{.Data.Selected.Request.ID}}</code> · deployment <code>{{.Data.Selected.Request.DeploymentID}}</code>{{if .Data.Selected.Request.InstanceID}} · instance <code>{{.Data.Selected.Request.InstanceID}}</code>{{end}}{{if .Data.Selected.Request.WakeID}} · wake <code>{{.Data.Selected.Request.WakeID}}</code>{{end}}{{if .Data.Selected.Request.TraceID}} · trace <code>{{.Data.Selected.Request.TraceID}}</code>{{end}}</p>
           {{if .Data.Selected.Request.GuestRuntime}}<p class="muted">guest execution <strong>{{.Data.Selected.Request.GuestRuntime}}</strong> · {{.Data.Selected.Request.GuestDurationMS}} ms · outcome <strong>{{.Data.Selected.Request.GuestOutcome}}</strong>{{if .Data.Selected.Request.GuestErrorClass}} · error <code>{{.Data.Selected.Request.GuestErrorClass}}</code>{{end}}</p>{{end}}
           <div class="explanation"><strong>{{.Data.Selected.EvidenceStatus}}</strong>: {{.Data.Selected.Explanation}}</div>
+          {{with .Data.Selected.ProfileCaptureURL}}<p><a href="{{.}}">Stack snapshot taken while this request was in flight →</a> <span class="muted">where every goroutine or thread was waiting</span></p>{{end}}
           {{if .Data.Selected.Findings}}
             <h3>Root-cause findings</h3>
             <ul class="debug-findings">

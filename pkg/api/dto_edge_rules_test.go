@@ -54,6 +54,9 @@ func TestApplyEdgeRuleRewritePath(t *testing.T) {
 		{name: "wildcard from adds prefix", requestPath: "/items", from: "*", to: "v1/", wantPath: "/v1/items", wantApplied: true},
 		{name: "root is no-op", requestPath: "/items", from: "", to: "/", wantPath: "/items", wantApplied: true},
 		{name: "from mismatch", requestPath: "/api/items", from: "/v2", to: "/v1", wantPath: "/api/items", wantApplied: false},
+		{name: "strip prefix to root", requestPath: "/api/items", from: "/api", to: "/", wantPath: "/items", wantApplied: true},
+		{name: "strip exact prefix", requestPath: "/api", from: "/api", to: "/", wantPath: "/", wantApplied: true},
+		{name: "strip prefix keeps query-free tail", requestPath: "/api/v1/items/", from: "/api", to: "/", wantPath: "/v1/items/", wantApplied: true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -1313,5 +1316,42 @@ func TestEdgeRuleCacheAction_Validate_Boundaries(t *testing.T) {
 	}
 	if ResponseCacheDefaultStaleIfErrorSeconds != 300 {
 		t.Errorf("ResponseCacheDefaultStaleIfErrorSeconds = %d, want 300; the ADR ask example uses 300 s", ResponseCacheDefaultStaleIfErrorSeconds)
+	}
+}
+
+// adr: 091 — reserved header names are reserved in any case, and a header op
+// or redirect header must be a valid HTTP field before apid saves it.
+func TestEdgeRuleHeaderFieldValidation(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name, value string
+		ok          bool
+	}{
+		{"X-Custom", "v", true},
+		{"x-custom", "", true},
+		{"Host", "x", false},
+		{"host", "x", false},
+		{"HOST", "x", false},
+		{"content-length", "1", false},
+		{"transfer-encoding", "chunked", false},
+		{"CONNECTION", "close", false},
+		{"X-FAAS-Budget-Ms", "1", false},
+		{"bad header", "v", false},
+		{"X-Colon:", "v", false},
+		{"X-Newline", "a\r\nX-Injected: 1", false},
+		{"X-Nul", "a\x00b", false},
+	}
+	for _, tc := range cases {
+		op := EdgeRuleHeaderOp{Name: tc.name, Value: tc.value, Action: "set"}
+		if p := op.Validate(); (p == nil) != tc.ok {
+			t.Errorf("header op %q=%q: problem=%v, want ok=%v", tc.name, tc.value, p, tc.ok)
+		}
+		redirect := EdgeRuleRedirectAction{StatusCode: 302, To: "/next", Headers: map[string]string{tc.name: tc.value}}
+		if p := redirect.Validate(); (p == nil) != tc.ok {
+			t.Errorf("redirect header %q=%q: problem=%v, want ok=%v", tc.name, tc.value, p, tc.ok)
+		}
+	}
+	if !EdgeRuleHeaderNameForbidden("x-faas-anything") || EdgeRuleHeaderNameForbidden("x-faa") {
+		t.Fatal("EdgeRuleHeaderNameForbidden misreads the x-faas- prefix")
 	}
 }

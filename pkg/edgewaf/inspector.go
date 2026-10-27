@@ -4,6 +4,7 @@ import (
 	"context"
 	"log/slog"
 	"net/url"
+	"runtime"
 	"sync"
 	"time"
 
@@ -47,7 +48,8 @@ type Inspector struct {
 
 	events gateway.WAFEventRecorder
 
-	inlineSlots   chan struct{}
+	inlineSlots   *slotPool
+	inlineWait    time.Duration
 	inlineMu      sync.Mutex
 	inlineBudgets budgets
 	inlineEngine  lazyEngine
@@ -79,7 +81,8 @@ func New(obs Observer, log *slog.Logger) *Inspector {
 		now:     time.Now,
 		budgets: newBudgets(sampleRate),
 
-		inlineSlots:   make(chan struct{}, api.EdgeWAFInlineConcurrency),
+		inlineSlots:   newSlotPool(api.EdgeWAFInlineSlots(runtime.GOMAXPROCS(0)), api.EdgeWAFInlineAccountSharePercent),
+		inlineWait:    api.EdgeWAFInlineSlotWait,
 		inlineBudgets: newBudgets(inlineRate),
 	}
 }

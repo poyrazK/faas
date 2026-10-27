@@ -3,6 +3,7 @@ package state
 import (
 	"context"
 	"encoding/json"
+	"slices"
 	"sort"
 	"time"
 
@@ -25,7 +26,10 @@ type WakeHistoryRecord struct {
 	InstanceID, AppID, WakeID, State string
 	StartedAt, BootAt, CompletedAt   time.Time
 	BootData                         json.RawMessage
-	HasMeta                          bool
+	// CompletedData is the first wake.boot_completed payload, which carries
+	// the method vmmd actually ran (Hunt 12 H12-49); nil until completion.
+	CompletedData json.RawMessage
+	HasMeta       bool
 }
 
 func (s *PgStore) ListAppWakeHistoryPage(ctx context.Context, appID string, since, until time.Time, after WakeHistoryPosition, limit int) ([]WakeHistoryRecord, error) {
@@ -41,7 +45,7 @@ func (s *PgStore) ListAppWakeHistoryPage(ctx context.Context, appID string, sinc
 	}
 	out := make([]WakeHistoryRecord, 0, len(rows))
 	for _, r := range rows {
-		out = append(out, WakeHistoryRecord{InstanceID: r.InstanceID, AppID: r.AppID, WakeID: r.WakeID, State: r.State, StartedAt: r.StartedAt.Time, BootData: r.BootData, BootAt: r.BootAt.Time, CompletedAt: r.CompletedAt.Time, HasMeta: r.HasMeta})
+		out = append(out, WakeHistoryRecord{InstanceID: r.InstanceID, AppID: r.AppID, WakeID: r.WakeID, State: r.State, StartedAt: r.StartedAt.Time, BootData: r.BootData, BootAt: r.BootAt.Time, CompletedAt: r.CompletedAt.Time, CompletedData: r.CompletedData, HasMeta: r.HasMeta})
 	}
 	return out, nil
 }
@@ -94,6 +98,7 @@ func (m *MemStore) fillWakeHistoryMetaLocked(r *WakeHistoryRecord) {
 		}
 		if e.Kind == "wake.boot_completed" && (r.CompletedAt.IsZero() || e.At.Before(r.CompletedAt)) {
 			r.CompletedAt = e.At
+			r.CompletedData = append(json.RawMessage(nil), e.Data...)
 		}
 	}
 }
@@ -125,7 +130,7 @@ func (s *PgStore) ListWakeHistoryByWakeIDs(ctx context.Context, appIDs, wakeIDs 
 	}
 	out := make([]WakeHistoryRecord, 0, len(rows))
 	for _, r := range rows {
-		out = append(out, WakeHistoryRecord{InstanceID: r.InstanceID, AppID: r.AppID, WakeID: r.WakeID, State: r.State, StartedAt: r.StartedAt.Time, BootData: r.BootData, BootAt: r.BootAt.Time, CompletedAt: r.CompletedAt.Time, HasMeta: r.HasMeta})
+		out = append(out, WakeHistoryRecord{InstanceID: r.InstanceID, AppID: r.AppID, WakeID: r.WakeID, State: r.State, StartedAt: r.StartedAt.Time, BootData: r.BootData, BootAt: r.BootAt.Time, CompletedAt: r.CompletedAt.Time, CompletedData: r.CompletedData, HasMeta: r.HasMeta})
 	}
 	return out, nil
 }
@@ -170,6 +175,77 @@ func (m *MemStore) ListWakeHistoryByWakeIDs(_ context.Context, appIDs, wakeIDs [
 		return rows[i].StartedAt.Before(rows[j].StartedAt)
 	})
 	return rows, nil
+}
+
+// WakeThawsStore reads frozen-VM thaws (ADR-1151) for the account trace view.
+// A thaw resumes an instance under its original wake_id, so a request that
+// thawed one carries that wake's ID. It is optional so the Store contract
+// stays unchanged.
+type WakeThawsStore interface {
+	ListWakeThaws(ctx context.Context, appIDs, wakeIDs []string, since, until time.Time) ([]WakeThawRecord, error)
+}
+
+// WakeThawRecord is one wake.thaw_breakdown: when schedd answered the thaw
+// and how long it took from the wake request to that answer.
+type WakeThawRecord struct {
+	WakeID  string
+	At      time.Time
+	TotalMs int64
+}
+
+// ListWakeThaws returns the thaws of wakeIDs of appIDs answered within
+// [since, until], oldest first, at most api.AccountTraceThawsMax of them.
+func (s *PgStore) ListWakeThaws(ctx context.Context, appIDs, wakeIDs []string, since, until time.Time) ([]WakeThawRecord, error) {
+	if _, err := wakeHistoryUUIDs(appIDs); err != nil {
+		return nil, err
+	}
+	if _, err := wakeHistoryUUIDs(wakeIDs); err != nil {
+		return nil, err
+	}
+	if len(appIDs) == 0 || len(wakeIDs) == 0 || until.Before(since) {
+		return nil, nil
+	}
+	rows, err := s.appErrorsQueries().ListWakeThawsByWakeIDs(ctx, s.pool, sqlc.ListWakeThawsByWakeIDsParams{
+		Since: pgtype.Timestamptz{Time: since, Valid: true}, Until: pgtype.Timestamptz{Time: until, Valid: true},
+		AppIds: appIDs, WakeIds: wakeIDs, RowLimit: api.AccountTraceThawsMax,
+	})
+	if err != nil {
+		return nil, err
+	}
+	out := make([]WakeThawRecord, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, WakeThawRecord{WakeID: r.WakeID, At: r.At.Time, TotalMs: r.TotalMs})
+	}
+	return out, nil
+}
+
+func (m *MemStore) ListWakeThaws(_ context.Context, appIDs, wakeIDs []string, since, until time.Time) ([]WakeThawRecord, error) {
+	if _, err := wakeHistoryUUIDs(appIDs); err != nil {
+		return nil, err
+	}
+	if _, err := wakeHistoryUUIDs(wakeIDs); err != nil {
+		return nil, err
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := []WakeThawRecord{}
+	for _, e := range m.events {
+		var p struct {
+			AppID   string          `json:"app_id"`
+			WakeID  string          `json:"wake_id"`
+			TotalMs json.RawMessage `json:"total_ms"`
+		}
+		at := e.At.UTC().Truncate(time.Microsecond)
+		if e.Kind != "wake.thaw_breakdown" || at.Before(since) || at.After(until) || json.Unmarshal(e.Data, &p) != nil ||
+			!slices.Contains(appIDs, p.AppID) || !slices.Contains(wakeIDs, p.WakeID) {
+			continue
+		}
+		var total float64
+		_ = json.Unmarshal(p.TotalMs, &total) // a non-number reads as 0, as in SQL
+		out = append(out, WakeThawRecord{WakeID: p.WakeID, At: at, TotalMs: int64(total)})
+	}
+	sort.SliceStable(out, func(i, j int) bool { return out[i].At.Before(out[j].At) })
+	return out[:min(len(out), api.AccountTraceThawsMax)], nil
 }
 
 func wakeHistoryUUIDs(ids []string) ([]pgtype.UUID, error) {

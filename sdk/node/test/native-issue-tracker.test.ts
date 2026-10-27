@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createServer} from 'node:http';
 import {once} from 'node:events';
-import {AppsService,FaaSClient,type NativeIssueTrackerStatus} from '../src/index.js';
+import {AppsService,FaaSClient,type NativeIssueTrackerStatus} from '../src/preview.js';
 
 test('native status API retains the provider snapshot without provider credentials',async(t)=>{
  const issue='33333333-3333-4333-8333-333333333333';const link='55555555-5555-4555-8555-555555555555';

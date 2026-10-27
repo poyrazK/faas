@@ -3,7 +3,8 @@
 Data APIs expose PostgreSQL relations as authenticated REST endpoints and
 generate TypeScript application types from the same schema. This is a managed
 PostgreSQL preview: your account and region must already be enabled for managed
-databases, `data_api` bindings, port 5432 egress, and app tasks.
+databases, `data_api` bindings and app tasks. The binding opens the database's
+port for the API on every plan.
 
 For a complete application starting point, run
 `gregale init --template data-api-starter --path notes`. The
@@ -31,9 +32,13 @@ Both require managed PostgreSQL read permission and return `Cache-Control:
 no-store`. No provider calls, SQL probes, credential delivery or admission changes
 occur. Different database snapshots are independent.
 
-The canonical planning model uses two total connections per Data API runtime,
-including the reserved reader when coordinated refresh splits the pool, and four
-per Auth runtime. It retains nonterminal resident states and parked instances,
+The planning model counts each Data API runtime at the connections it reports
+(its [engine pool](#engine-pool-size), including the reserved reader when
+coordinated refresh splits the pool). Unreported and planned runtimes count at
+the largest pool validly reported for the same binding, and never below two.
+With no valid report they count at two, or at eight when the app sets
+`DATA_API_POOL`, whose sealed value the platform cannot read. Auth runtimes
+count at four each. It retains nonterminal resident states and parked instances,
 deduplicates app/scope/access consumers, and plans for the greater of observed
 resident-plus-parked instances or effective concurrency plus one overlap slot
 when rotation/deployment overlap is observed. Existing replacements are not
@@ -83,13 +88,57 @@ Older logs and routes bypassing admission have no admission metadata; zero
 observations give null wait percentiles. These are retained-log samples, not
 durable counters, SQL execution timing or measurements of SQL pool wait.
 
+## Engine pool size
+
+Each Data API instance runs its requests on a pool of engine connections: two by
+default. A busy API that answers `503 data_api_overloaded` while the database
+has room can use more:
+
+```sh
+gregale data-api configure shop-data --pool 6
+```
+
+The pool takes 1 to 8 connections, and `--pool default` returns to two.
+Requests in flight per instance follow it, and so do per-user concurrency
+limits and the pool metrics in `data-api health`. The queue stays at eight
+waiters. Data API bindings connect through the provider's connection pooler,
+so a larger pool adds pooled client sessions rather than PostgreSQL server
+connections. Watch `data-api health`'s connection budget when you raise it.
+Coordinated refresh keeps one connection of the pool for its reader, so it
+needs a pool of at least two. A `DATA_API_USER_CONCURRENCY` above the pool
+acts as the pool. Upgrade the CLI before changing the pool: older CLIs
+report health from a runtime with another pool as inconsistent.
+
+### Server-key limits
+
+Server keys skip the per-user limits, so they have their own:
+
+- **Concurrency.** Server-key requests together hold at most all but one of
+  the pool's slots, so signed-in users and visitors always keep one.
+  `--server-key-concurrency N` changes that from 1 to 8; a value at or above
+  the pool removes the separate limit, as does a one-connection pool. A
+  request past the limit waits in order, like admission's queue: up to eight
+  wait, for up to one second. After that it answers
+  `429 data_api_concurrency_limited` with `reason: "server_key"` and
+  `Retry-After`, so backends should retry. A request whose client
+  disconnects after its query starts keeps its slot for up to 15 seconds,
+  because the query may still be running.
+- **Rate.** `--server-key-rate-limit 50` (or `50,burst=100`) adds a token
+  bucket per key slot, so each of the two keys has its own budget. A request
+  past it answers `429 data_api_rate_limited` with `reason: "server_key"`.
+  `--server-key-rate-limit off` removes it.
+
+`data-api diagnostics` counts both refusals under their codes and shows the
+reason, never the key.
+
 ## Per-user concurrent request limits
 
 Set `DATA_API_USER_CONCURRENCY=1` in the deployment environment to limit each
 verified user to one concurrent authenticated request per runtime. The setting
 is optional and absent means disabled. It accepts decimal integers from one to
-the serving admission capacity: two normally, one with coordinated refresh.
-Invalid settings fail startup. Rebuild from the updated runtime template and
+eight. A value above the serving admission capacity, the
+[engine pool](#engine-pool-size) (two by default) less one with coordinated
+refresh, acts as that capacity. Invalid settings fail startup. Rebuild from the updated runtime template and
 fresh-restart after changing deployment settings.
 
 The policy covers REST, RPC, schema and OpenAPI routes. JWTs with the same verified
@@ -875,6 +924,14 @@ Repeat the command with the same settings and `--resume` to continue; the bindin
 request uses a stable idempotency key. Use ordinary app/database commands to
 inspect or remove retained resources.
 
+The API verifies the database's TLS certificate against the public root store
+(plus `NODE_EXTRA_CA_CERTS`, if set). Like any app, it parks when idle. Creation
+also registers `before_checkpoint` and `after_restore` hooks, so a parked API
+holds no database connection: the first request after a wake waits while the
+API reconnects, within the request deadline. For an API created before these
+hooks existed, `data-api create NAME ... --resume` (or `data-api deploy` for a
+single-app project) adds them with the current runtime.
+
 ## Define your application schema and authorization
 
 Create tables and policies with your existing migration tool, using a managed
@@ -901,11 +958,32 @@ CREATE POLICY own_notes ON api.notes
 
 Every valid application token uses the same restricted SQL role, with the
 original JWT subject and claims available to RLS. A token's external `role`
-claim cannot select an administrator. A table without RLS grants every
-authenticated user the binding's table access, so define policies before
-exposing user-specific data. On PostgreSQL 15+, use `security_invoker=true`
-for exposed views that must follow the underlying table's RLS; ordinary views
-can run with their owner's privileges. Only explicitly opted-in security-invoker RPC functions are exposed; see the RPC section below.
+claim cannot select an administrator. Only explicitly opted-in security-invoker RPC functions are exposed; see the RPC section below.
+
+### Row-level security is required
+
+Signed-in requests reach only relations whose rows PostgreSQL decides: tables
+with RLS enabled, and views created `WITH (security_invoker = true)` (PostgreSQL
+15+), which follow the RLS of the tables they read. The rule covers the request
+target, every relation embedded with `select=...,other(...)`, and the target
+table of a computed relationship. Any other relation (a table without RLS, a
+view running as its owner, a materialized view) answers `403 rls_required`
+without reaching the database, for reads and writes alike.
+
+To share a relation with every signed-in user on purpose, for example a
+reference table, exempt it:
+
+```sh
+gregale data-api configure notes-data --allow-without-rls api.countries,api.plans
+gregale data-api configure notes-data --no-allow-without-rls   # remove all exemptions
+```
+
+Exemptions use the `--public-read` format (at most 64 `schema.relation`
+names). In local development, list them as `"allow_without_rls": [...]` in
+`data-api.dev.json`. The API reads its relations at startup: a table created
+later answers `404 not_found` until `gregale data-api refresh`. Server keys are
+trusted backends and are not checked; anonymous requests follow the
+[public read](#public-reads) rules.
 
 ## Generate types and use the client
 
@@ -3292,8 +3370,9 @@ Generated types are retained after a client-check failure, and completed DDL
 is not rolled back. Losing the private token requires owner-controlled recovery
 of the database barrier; the CLI does not adopt another session automatically.
 
-This mode reserves one of the existing two connections for its control reader
-and one for PostgREST. Engine-only SIGUSR1 reloads are rejected; use coordinated
+This mode reserves one connection of the [engine pool](#engine-pool-size) for
+its control reader and leaves the rest to PostgREST, so it needs a pool of at
+least two. Engine-only SIGUSR1 reloads are rejected; use coordinated
 sync. Owner/superuser DDL and direct database connections remain outside this
 barrier. Serialize DDL through the workflow; fingerprints do not cover policy
 bodies or every behavioral change. Upgrade every runtime sharing the binding

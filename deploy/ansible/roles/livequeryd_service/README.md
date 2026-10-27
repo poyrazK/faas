@@ -75,6 +75,30 @@ The hub serves each listed database at `/<database_id>/live`:
 - **Changing the list restarts the hub.** Every database then resumes from
   its checkpoint, and realtimed reconnects.
 
+## Discovering databases
+
+With `faas_livequeryd_discover_backends`, the hub serves every live database
+of those managed Postgres backends without an inventory entry:
+- **Enabling** (`gregale postgres live enable`) makes the database's provider
+  prepare it and issue its live login. apid seals the login to this hub's
+  identity, and the hub picks it up within `-discover-every` (15 s).
+- **Disabling** revokes the login and drops the slot, and the hub stops
+  serving the database.
+- **Scale to zero.** `faas_livequeryd_discover_release_after` releases
+  discovered Neon databases when idle; it needs
+  `faas_livequeryd_neon_api_key_src`.
+- **Listed databases** in `faas_livequeryd_databases` are served beside
+  discovered ones, and discovery leaves them alone.
+
+```yaml
+faas_livequeryd_discover_backends: [neon-us-1]   # BackendConfig IDs whose live_hub_url names this hub
+faas_livequeryd_discover_release_after: 5m
+```
+
+A backend's provider must issue live logins (the Neon provider does). On any
+other backend, enabling live queries issues no login, and the database must
+be listed.
+
 ## Inventory
 
 ```yaml
@@ -136,10 +160,43 @@ and set `faas_realtime_live_tls_ca_file`, `_cert_file` and `_key_file`.
 The nftables role opens the hub's port to `faas_compute_allowed_cidrs` when
 `faas_livequeryd_managed` is set.
 
+## Re-sealing live keys and logins (ADR-20261016151947, release 2)
+
+apid seals each live key and login to its database
+(`livequery:<database>`, `livequery-login:<database>`). Rows written before
+that release use the unbound legacy namespaces, which livequeryd still opens.
+Re-seal them before the release that stops opening the legacy form. Only the
+hub's identity opens what apid sealed, so run this on the hub host:
+
+```sh
+sudo -u faas /opt/faas/current/bin/livequeryd -reseal \
+  -keys-identity /etc/faas/secrets/livequeryd/keys.age \
+  -reseal-dsn-file <file holding a control-plane DSN that may UPDATE
+                    managed_postgres_live_keys and managed_postgres_live_logins>
+```
+
+The hub's own `keys-dsn` is read-only, so give `-reseal-dsn-file` a role
+that can write those two tables, such as apid's runtime role. The command:
+- seals each row's plaintext again, unchanged, to the same recipient. The
+  customer's secret and the database login stay as they are, and the hub
+  keeps serving throughout;
+- writes one row at a time, and only while the row still holds the seal it
+  read, so a rotation or revocation made meanwhile wins;
+- is idempotent: run it again until it reports no refused rows;
+- logs counts and the IDs of refused rows, never a secret or a connection
+  string.
+
+It exits non-zero when a row was left as it is. A refused row is one that
+doesn't open with this identity, is bound to another database, or is a key
+holding another key's secret. Resolve each one before release 3: rotate the
+key, or disable and re-enable live queries on the database.
+
 ## Not covered yet
 
-- Discovering databases: the list is inventory, so a database enabled for
-  live queries in apid is served only once an operator adds it here.
+- Live logins on Neon are unverified: the owner login may not be allowed to
+  grant `REPLICATION`, create event triggers or a publication `FOR ALL
+  TABLES` (see the ADR).
 - Native databases (ADR-1027), where the engine runs inside the database VM.
-- Paging alerts. Prometheus scrapes the hub; `livequery_*` and
-  `livequeryd_daemon_ready` are on the metrics endpoint.
+- Paging. The `live_queries` alerts (`docs/runbooks/FaasLiveQueries.md`)
+  warn rather than page while live queries are a preview. The
+  live-queries Grafana dashboard shows each database.

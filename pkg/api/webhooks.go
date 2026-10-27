@@ -28,6 +28,10 @@ import (
 // from secret managers, rejects megabyte uploads.
 const AppWebhookSecretMaxBytes = 256
 
+// AppWebhookSecretNamespace is the secretbox namespace an app webhook's
+// signing secret is sealed under; schedd's dispatcher accepts no other.
+const AppWebhookSecretNamespace = "APP_WEBHOOK"
+
 // AppWebhookSecretMasked is the literal returned in every response
 // shape that carries the webhook_secret field. Never echo the
 // plaintext back to the customer — same posture as
@@ -101,6 +105,7 @@ var AllowedAppWebhookEvents = []string{
 	"realtime.message.read",
 	"realtime.inbox.acknowledged", "realtime.inbox.gap", "realtime.inbox.fallback_required",
 	"profile.route_regressed", "profile.route_recovered",
+	"profile.capture_ready", "profile.capture_oom_linked",
 	"operation.effect",
 	"app.parked", "app.woken",
 	"app.health.changed",
@@ -110,7 +115,11 @@ var AllowedAppWebhookEvents = []string{
 	"operation.finished",
 	"usage_statement.finalized",
 	"consumer.usage_threshold",
+	"consumer.signed_up",
+	"consumer.plan_changed",
+	"consumer.closed",
 	"outbound.ai_budget.threshold",
+	"outbound.ai_quality.drift",
 	"debug.regression.detected", "debug.regression.resolved",
 	"routes.requirements.changed", "routes.requirements.violated",
 	"routes.requirements.recovered",

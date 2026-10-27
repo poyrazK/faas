@@ -1,25 +1,26 @@
 import http from 'node:http'
 import { refreshStatusReader, refreshTokenHash } from './refresh.mjs'
-import { spawn, execFile } from 'node:child_process'
+import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import { pathToFileURL } from 'node:url'
 import { createRemoteJWKSet, jwtVerify, SignJWT } from 'jose'
 import { traceRequest, markRequest, markAccess, markQueryShape, markDatabaseTimings, requestID, runtimeFailure } from './logging.mjs'
 import { parseDatabaseTimings, unknownDatabaseTimings } from './database-timing.mjs'
 import { inspect, fingerprint, enrichOpenAPI } from './types.mjs'
-import { runtimeConfig, servingContracts, limits } from './config.mjs'
+import { runtimeConfig, servingContracts, limits, enginePool } from './config.mjs'
 import { createAdmission } from './admission.mjs'
 import { createHealth } from './health.mjs'
 import { createDeadline } from './deadline.mjs'
 import { checkSQLDeadlineConnection } from './sql-deadline.mjs'
 import { streamResponse } from './response-limit.mjs'
-import { createRateLimiter, admitRateLimit } from './rate-limit.mjs'
-import { createUserConcurrency, admitUserConcurrency } from './user-concurrency.mjs'
+import { createRateLimiter, admitRateLimit, admitServerKeyRate } from './rate-limit.mjs'
+import { createUserConcurrency, admitUserConcurrency, createServerKeyConcurrency, admitServerKeyConcurrency } from './user-concurrency.mjs'
 import { qualifiedConnectionEngine, startConnectionReporter } from './connection-observations.mjs'
 import { createPoolObservation } from './pool.mjs'
 import { createUsage, addResponseBytes, accessReport } from './usage.mjs'
 import { storageRoute, handleStorage, storageAnonymousTarget, storageServerKeyAllows, checkStorageTable } from './storage.mjs'
-import { publicReadTarget, publicRpcTarget, publicRpcListed, publicReadCache, clientKey, matchServerKey, serverKeyAllows, serverSubject, checkPublicRelations, checkPublicFunctions } from './access.mjs'
+import { createEngine, lifecyclePaths } from './engine.mjs'
+import { publicReadTarget, publicRpcTarget, publicRpcListed, publicReadCache, clientKey, matchServerKey, serverKeyAllows, serverSubject, checkPublicRelations, checkPublicFunctions, loadRowSecurity, rowSecurityDenial } from './access.mjs'
 
 export function createServer(config, verify, upstreamPort = 3000, readyPort = 3001, log) {
   const servingFingerprint = config.fingerprint
@@ -28,8 +29,10 @@ export function createServer(config, verify, upstreamPort = 3000, readyPort = 30
   const rateLimiter = createRateLimiter(config.rateLimit)
   // Anonymous clients always have a budget and never use subject tracking slots.
   const anonymousLimiter = config.publicRead || config.publicRpc ? createRateLimiter(config.rateLimit ?? { perSecond: limits.rateLimitDefaultPerSecond, burst: limits.rateLimitDefaultBurst }) : null
-  const userConcurrency = createUserConcurrency(config.userConcurrency, config.coordinatedRefresh ? limits.pool - 1 : limits.pool)
-  const admitted = createAdmission(config.coordinatedRefresh ? limits.pool - 1 : limits.pool, res => {
+  const userConcurrency = createUserConcurrency(config.userConcurrency, enginePool(config))
+  const serverKeyRate = config.serverKeyRateLimit ? createRateLimiter(config.serverKeyRateLimit) : null
+  const serverKeyConcurrency = config.serverKeyConcurrency ? createServerKeyConcurrency(config.serverKeyConcurrency) : null
+  const admitted = createAdmission(enginePool(config), res => {
     res.setHeader('Retry-After', String(limits.overloadRetrySeconds))
     problem(res, 503, 'data_api_overloaded')
   })
@@ -60,6 +63,18 @@ export function createServer(config, verify, upstreamPort = 3000, readyPort = 30
       const report = await health.snapshot(admitted.snapshot)
       if (!report.ready) markRequest(res, report.checks.refresh === 'unavailable' ? 'data_api_refresh_unavailable' : 'data_api_unavailable')
       return healthResponse(res, report.ready ? 200 : 503, report)
+    }
+    // guest-init calls these on loopback; the gateway strips inbound x-faas-*
+    // headers, so a public request cannot carry them.
+    if (config.lifecycle && req.method === 'POST' && req.url === lifecyclePaths.beforeCheckpoint && req.headers['x-faas-before-checkpoint'] === '1') {
+      try { await config.lifecycle.beforeCheckpoint() } catch { return problem(res, 503, 'data_api_unavailable') }
+      res.writeHead(204)
+      return res.end()
+    }
+    if (config.lifecycle && req.method === 'POST' && req.url === lifecyclePaths.afterRestore && req.headers['x-faas-after-restore'] === '1') {
+      config.lifecycle.afterRestore()
+      res.writeHead(204)
+      return res.end()
     }
     // Health checks and preflights are not usage.
     const counted = usage?.start(res)
@@ -113,6 +128,8 @@ export function createServer(config, verify, upstreamPort = 3000, readyPort = 30
     if (counted) counted.access = access
     if (serverKeyPermissions && !(storage ? storageServerKeyAllows(storage, serverKeyPermissions, config) : serverKeyAllows(req, serverKeyPermissions, config, rpc))) return problem(res, 403, 'server_key_permission_denied')
     if (access === 'server' && config.readOnly === true && writes) return problem(res, 403, 'read_only_identity')
+    // Server keys skip per-user budgets but have their own (ADR-20261021180534).
+    if (access === 'server' && serverKeyRate && !admitServerKeyRate(serverKeyRate, serverKeySlot, res, problem)) return
     // Owner caps are checked before admission, against month-to-date totals.
     const cap = usage?.capReached(access)
     if (cap) {
@@ -127,12 +144,17 @@ export function createServer(config, verify, upstreamPort = 3000, readyPort = 30
       if (!Number.isSafeInteger(declared) || declared < 0) return problem(res, 400, 'storage_invalid_length')
       if (declared > config.storage.maxObjectBytes) return problem(res, 413, 'storage_object_too_large', { limit: config.storage.maxObjectBytes, observed: declared })
     } else if (!Number.isSafeInteger(declared) || declared < 0 || declared > limits.bodyBytes) return problem(res, 413, 'request_too_large')
+    // A server-key lease spans admission's queue too, and settles even when
+    // admission never runs the handler.
+    const serverKeyLease = access === 'server' && serverKeyConcurrency ? await admitServerKeyConcurrency(serverKeyConcurrency, req, res, problem) : null
+    if (serverKeyLease === false) return
     return admitted(req, res, async release => {
       const deadline = createDeadline(req, res, () => {
         if (!res.headersSent) res.setHeader('Connection', 'close')
         problem(res, 504, 'request_deadline_exceeded')
       })
-      let userLease
+      // Server-key leases settle exactly as user leases do.
+      let userLease = serverKeyLease ?? undefined
       try {
         let payload, concurrencyKey = null
         if (access === 'user') {
@@ -145,6 +167,9 @@ export function createServer(config, verify, upstreamPort = 3000, readyPort = 30
           if (payload.gregale_read_only !== undefined && typeof payload.gregale_read_only !== 'boolean') return problem(res, 401, 'token_invalid')
           if (!admitRateLimit(rateLimiter, payload.sub, res, problem)) return
           if ((config.readOnly === true || payload.gregale_read_only === true) && writes) return problem(res, 403, 'read_only_identity')
+          // Storage authorizes through storage_objects' own RLS policies.
+          const denial = storage ? null : rowSecurityDenial(req, config, rpc)
+          if (denial) return problem(res, denial.status, denial.code)
           concurrencyKey = payload.sub
         } else if (access === 'anonymous') {
           const client = ['anonymous', clientKey(req)]
@@ -174,6 +199,11 @@ export function createServer(config, verify, upstreamPort = 3000, readyPort = 30
           } catch { return problem(res, 503, 'data_api_refresh_unavailable') }
         }
         if (!await admitRefreshRequest(config, req, res, deadline, userLease)) return
+        // After a restore the engine reconnects; wait for it within the deadline.
+        if (config.lifecycle && !await config.lifecycle.ready(deadline.expiresAt - Date.now())) {
+          if (deadline.check()) problem(res, 503, 'data_api_unavailable')
+          return
+        }
         if (!deadline.enter('signing')) return
         // Only the binding login may become the SQL role. External role claims
         // cannot select an administrator, owner or another application's role.
@@ -213,7 +243,7 @@ export function createServer(config, verify, upstreamPort = 3000, readyPort = 30
         proxy(req, res, internal, upstreamPort, config, guarded ? `/__gregale/contract/${guarded[1]}/rest/v1` : '/rest/v1', deadline, userLease, guarded ? null : publicCache)
       } catch { problem(res, 503, 'data_api_unavailable') }
       finally { if (userLease) userLease.settled() }
-    })
+    }).finally(() => serverKeyLease?.settled())
   })
   server.usage = usage
   server.on('close', () => usage?.stop())
@@ -359,6 +389,7 @@ export async function main(env = process.env) {
   const snapshot = await inspect(config.connection, config.schemas)
   config.snapshot = snapshot
   config.functions = snapshot.functions
+  config.rowSecurity = await loadRowSecurity(config.connection, config.schemas)
   if (config.publicRpc) {
     try { await checkPublicFunctions(config.connection, config.publicRpc, snapshot.functions) } catch (error) {
       runtimeFailure('data_api_public_rpc_unsafe')
@@ -376,26 +407,37 @@ export async function main(env = process.env) {
     config.refreshStatus = refresh.read
   }
   const jwks = createRemoteJWKSet(config.auth.jwks, { timeoutDuration: 3000, cacheMaxAge: 300000 })
-  config.poolObservation = createPoolObservation(3001, config.coordinatedRefresh ? limits.pool - 1 : limits.pool)
+  config.poolObservation = createPoolObservation(3001, config.engine)
   const verify = tokenVerifier(config.auth, jwks)
   // Avoid inheriting arbitrary PGRST_* overrides from application secrets.
   const childEnv = Object.fromEntries(Object.entries(env).filter(([k]) => !k.startsWith('PGRST_')))
-  const child = spawn(env.DATA_API_POSTGREST_BIN || '/usr/local/bin/postgrest', [], { env: { ...childEnv, ...config.postgrestEnv }, stdio: ['ignore', 'ignore', 'ignore'] })
-  const server = createServer(config, verify)
+  let server, stopping = false
+  // An engine that exits on its own ends the server; a stopped one does not.
+  const engine = createEngine({ bin: env.DATA_API_POSTGREST_BIN || '/usr/local/bin/postgrest', env: { ...childEnv, ...config.postgrestEnv }, readyPort: 3001,
+    onExit({ error, code }) {
+      if (error) runtimeFailure('data_api_postgrest_start_failed')
+      process.exitCode = error ? 1 : stopping ? 0 : (code || 1)
+      server.close()
+    } })
+  // A snapshot must not capture SQL sessions (lifecycle hooks set by the CLI).
+  config.lifecycle = {
+    ready: waitMs => engine.ready(waitMs),
+    beforeCheckpoint: () => Promise.all([engine.stop(), refresh?.release()]),
+    afterRestore: () => engine.start(),
+  }
+  engine.start()
+  server = createServer(config, verify)
   const stopReporting = startConnectionReporter(config)
   server.on('close', stopReporting)
   server.on('close', () => { void refresh?.close() })
-  let stopping = false
   // Uploads stream for up to a transfer's timeout after the request deadline.
   server.requestTimeout = (config.storage ? limits.storageTransferMs : limits.queryMs) + 5000
   server.headersTimeout = 10000
-  child.on('error', () => { runtimeFailure('data_api_postgrest_start_failed'); process.exitCode = 1; server.close() })
-  child.on('exit', code => { process.exitCode = stopping ? 0 : (code || 1); server.close() })
   // Report the last unreported usage before the process exits.
-  for (const signal of ['SIGTERM', 'SIGINT']) process.once(signal, () => { stopping = true; void server.usage?.flush(); server.close(); child.kill(signal) })
+  for (const signal of ['SIGTERM', 'SIGINT']) process.once(signal, () => { stopping = true; void server.usage?.flush(); server.close(); void engine.stop() })
   process.on('SIGUSR1', () => {
     if (config.coordinatedRefresh) runtimeFailure('data_api_uncoordinated_reload_rejected')
-    else child.kill('SIGUSR1')
+    else engine.signal('SIGUSR1')
   })
   server.listen(Number(env.PORT || 8080), '0.0.0.0')
 }

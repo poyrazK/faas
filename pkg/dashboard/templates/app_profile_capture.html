@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">{{if .Data.Refresh}}<meta http-equiv="refresh" content="2">{{end}}<title>{{.Title}} — Gregale</title>
+<style nonce="{{.Nonce}}">
+body {font-family:system-ui,sans-serif;max-width:1180px;margin:auto;padding:1.5rem} a {color:#2563eb} table {width:100%;border-collapse:collapse} td,th {text-align:left;padding:.5rem;border-bottom:1px solid #ddd} code {overflow-wrap:anywhere} .notice {padding:1rem;background:#fef3c7;color:#92400e} .muted {color:#64748b} svg {width:100%;font-size:12px} svg rect {stroke:white;stroke-width:1;cursor:pointer} svg text {pointer-events:none} svg g:focus rect {stroke:#0f172a;stroke-width:2}
+</style></head><body>
+{{$d := .Data}}{{$c := $d.Capture}}
+<nav><a href="/dashboard/apps/{{$d.AppSlug}}">{{$d.AppSlug}}</a> · <a href="/dashboard/apps/{{$d.AppSlug}}/profiles#profile-captures">Profiles</a></nav>
+<h1>Profile capture</h1>
+<p>Status: <strong>{{$c.Status}}</strong>{{if $d.Refresh}} — this page refreshes until the capture finishes.{{end}}</p>
+<p class="muted">{{range $i, $k := $c.Kinds}}{{if $i}} + {{end}}{{$k}}{{end}} for {{$c.DurationSeconds}}s · started {{$c.CreatedAt.Format "2006-01-02 15:04:05Z07:00"}}{{with $c.InstanceID}} · instance <code>{{.}}</code>{{end}}{{with $c.DeploymentID}} · deployment <code>{{.}}</code>{{end}}{{if $c.InstanceID}} · {{$c.Processes}} instrumented process(es){{end}}</p>
+{{if eq $c.Trigger "memory_pressure"}}<p class="notice">Captured automatically because the instance was running out of memory: {{$c.TriggerDetail}}. Node and Python heap captures show memory allocated during the capture that was still live at its end.</p>{{end}}
+{{if eq $c.Trigger "slow_request"}}<p class="notice">Captured automatically while a request was stuck: {{$c.TriggerDetail}}.{{with $c.RequestID}} <a href="/dashboard/apps/{{$d.AppSlug}}/debug?request_id={{.}}#request-detail">Open the request</a>.{{end}} The stacks show where every goroutine or thread was waiting when the capture started.</p>{{end}}
+{{if eq $c.Trigger "cpu_saturation"}}<p class="notice">Captured automatically because the instance was using its whole CPU limit: {{$c.TriggerDetail}}. The CPU profile shows where that time went.</p>{{end}}
+{{with $c.OOMKilledAt}}<p class="notice" role="alert">This instance was OOM-killed at {{.Format "2006-01-02 15:04:05Z07:00"}}{{if $c.OOMPeakMB}}, peaking at {{$c.OOMPeakMB}} MB of its {{$c.OOMPlanMB}} MB plan{{end}}. The heap profile below shows memory retained before the kill.</p>{{end}}
+{{with $c.Reason}}<p class="notice">{{.}}</p>{{end}}
+{{if $d.Compare}}<form method="get" action="/dashboard/apps/{{$d.AppSlug}}/profiles/captures/{{$c.ID}}/diff" aria-label="Compare captures">
+<label>Compare with <select name="base">{{range $d.Compare}}<option value="{{.ID}}">{{.Label}}</option>{{end}}</select></label>
+<label>Kind <select name="kind">{{range $c.Kinds}}<option value="{{.}}"{{if eq . "heap"}} selected{{end}}>{{.}}</option>{{end}}</select></label>
+<button type="submit">Compare</button> <span class="muted">Shows which call paths grew or shrank since the earlier capture.</span></form>{{end}}
+{{range $d.Kinds}}
+<section aria-label="{{.Kind}} profile"><h2>{{.Kind}}: {{.Total}}</h2>
+{{if .Error}}<p class="notice">{{.Error}}</p>{{else if .Empty}}<p>No samples were captured.</p>{{else}}
+<p><a href="{{.DownloadURL}}">Download pprof</a> <span class="muted">(open with <code>go tool pprof -http=: file.pb.gz</code> or speedscope)</span></p>
+{{if .Flamegraph}}<h3>Flamegraph</h3><p class="muted">Click a frame to focus its call path.</p><button type="button" data-reset="{{.Kind}}">Reset zoom</button> <label>Search functions <input data-search="{{.Kind}}" placeholder="Function name"></label>
+<p data-source="{{.Kind}}" aria-live="polite">Select a frame to inspect its source.</p><svg data-flamegraph="{{.Kind}}" role="group" aria-label="{{.Kind}} flamegraph"></svg>{{end}}
+<table><thead><tr><th>Self</th><th>Total</th><th>Function</th><th>Location</th></tr></thead><tbody>
+{{range .Rows}}<tr><td>{{.Self}} <meter min="0" max="100" value="{{printf "%.1f" .SelfPercent}}"></meter></td><td>{{.Total}}</td><td><code>{{.Name}}</code></td><td>{{if .SourceURL}}<a href="{{.SourceURL}}" target="_blank" rel="noopener noreferrer"><code>{{.Location}}</code></a>{{else}}<code>{{.Location}}</code>{{end}}</td></tr>
+{{end}}</tbody></table>{{end}}
+</section>
+{{end}}
+<script nonce="{{.Nonce}}">
+const captureKinds = {{$d.Kinds}};
+const ns='http://www.w3.org/2000/svg';
+function amount(v,unit){if(unit==='count')return v+(v===1?' thread':' threads');if(unit==='bytes'){if(v>=1073741824)return (v/1073741824).toFixed(2)+' GiB';if(v>=1048576)return (v/1048576).toFixed(2)+' MiB';if(v>=1024)return (v/1024).toFixed(1)+' KiB';return v+' B'}if(v>=1e9)return (v/1e9).toFixed(3)+' s';return (v/1e6).toFixed(2)+' ms'}
+for (const kind of captureKinds || []) {
+ if (!kind.flamegraph) continue;
+ const svg=document.querySelector('svg[data-flamegraph="'+kind.kind+'"]'),search=document.querySelector('input[data-search="'+kind.kind+'"]'),panel=document.querySelector('p[data-source="'+kind.kind+'"]');
+ if(!svg)continue;let focus=kind.flamegraph;
+ function showSource(node){panel.replaceChildren();if(node.source){const link=document.createElement('a');link.href=node.source.url;link.target='_blank';link.rel='noopener noreferrer';link.textContent='Open '+node.name+' source · '+node.source.path+':'+node.source.line;panel.append(link)}else{panel.textContent=node.name==='all'?'Select a frame to inspect its source.':'Source unavailable for '+node.name+'.'}}
+ function draw(){svg.replaceChildren();let height=24;const term=search.value.toLowerCase();
+  function frame(node,x,width,depth){height=Math.max(height,(depth+1)*24);const group=document.createElementNS(ns,'g'),rect=document.createElementNS(ns,'rect'),title=document.createElementNS(ns,'title');
+   rect.setAttribute('x',x);rect.setAttribute('y',depth*24);rect.setAttribute('width',width);rect.setAttribute('height',23);
+   rect.setAttribute('fill',term&&node.name.toLowerCase().includes(term)?'#fbbf24':(kind.unit==='bytes'?'hsl('+(200+(depth*17+node.name.length*5)%40)+',70%,75%)':'hsl('+((depth*29+node.name.length*7)%60)+',85%,72%)'));
+   title.textContent=node.name+' — '+amount(node.value,kind.unit);group.append(rect,title);
+   if(width>50){const text=document.createElementNS(ns,'text');text.setAttribute('x',x+4);text.setAttribute('y',depth*24+16);text.textContent=node.name.slice(0,Math.floor(width/7));group.append(text)}
+   group.setAttribute('tabindex','0');group.setAttribute('role','button');group.setAttribute('aria-label','Focus '+node.name);
+   const select=()=>{focus=node;showSource(node);draw()};group.addEventListener('click',select);group.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();select()}});svg.append(group);
+   let offset=x;for(const child of node.children||[]){const w=node.value>0?width*child.value/node.value:0;if(w>0){frame(child,offset,w,depth+1);offset+=w}}
+  }frame(focus,0,1100,0);svg.setAttribute('viewBox','0 0 1100 '+height)}
+ document.querySelector('button[data-reset="'+kind.kind+'"]').addEventListener('click',()=>{focus=kind.flamegraph;showSource(focus);draw()});search.addEventListener('input',draw);draw();
+}
+</script>
+</body></html>

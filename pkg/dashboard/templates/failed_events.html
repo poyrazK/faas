@@ -41,8 +41,8 @@
     <nav>
       <a href="/dashboard/">Overview</a>
       <a href="/dashboard/apps">Apps</a>
-      <a href="/dashboard/jobs">Jobs &amp; queues</a>
-      <a href="/dashboard/failed-events">Failed events</a>
+      {{if $.On "workflows-and-jobs"}}<a href="/dashboard/jobs">Jobs &amp; queues</a>{{end}}
+      {{if $.On "events"}}<a href="/dashboard/failed-events">Failed events</a>{{end}}
       <a href="/dashboard/usage">Usage</a>
       <a href="/dashboard/billing">Billing</a>
       <a href="/dashboard/account">Account</a>
@@ -51,7 +51,7 @@
   <main>
     {{template "email-verification-banner" .}}
     <h1>Failed events</h1>
-    <p class="muted">Terminal queue, trigger, and webhook delivery failures collected in one place. Replay returns an event to its source queue; discard removes only the Failed Events entry and leaves the source record for audit.</p>
+    <p class="muted">Terminal queue, trigger, and webhook delivery failures collected in one place. Replay returns an event to its source queue; discard removes only the Failed Events entry and leaves the source record for audit. An <code>event_route</code> entry is an event that could not be routed and whose receipt has been pruned: re-publish its payload to deliver it.</p>
 
     {{if eq .Data.Action "replayed"}}<div class="flash ok" role="status">{{if gt .Data.ActionCount 0}}{{.Data.ActionCount}} events replayed and returned to their source queues.{{else}}Events replayed and returned to their source queues.{{end}}</div>{{end}}
     {{if eq .Data.Action "discarded"}}<div class="flash ok" role="status">{{if gt .Data.ActionCount 0}}{{.Data.ActionCount}} events discarded from Failed Events.{{else}}Event discarded from Failed Events.{{end}}</div>{{end}}
@@ -104,10 +104,10 @@
               <td class="actions">
                 {{if eq .Status "open"}}
                   {{if .AppSlug}}
-                    <form method="POST" action="/dashboard/failed-events/{{.AppSlug}}/{{.ID}}/replay"><input type="hidden" name="csrf_token" value="{{$.Data.ActionCSRF}}"><button type="submit">Replay</button></form>
+                    {{if .Replayable}}<form method="POST" action="/dashboard/failed-events/{{.AppSlug}}/{{.ID}}/replay"><input type="hidden" name="csrf_token" value="{{$.Data.ActionCSRF}}"><button type="submit">Replay</button></form>{{else}}<small class="muted">Re-publish to retry</small>{{end}}
                     <form method="POST" action="/dashboard/failed-events/{{.AppSlug}}/{{.ID}}/discard"><input type="hidden" name="csrf_token" value="{{$.Data.ActionCSRF}}"><button type="submit">Discard</button></form>
                   {{else}}
-                    <form method="POST" action="/dashboard/failed-events/account/{{.ID}}/replay"><input type="hidden" name="csrf_token" value="{{$.Data.ActionCSRF}}"><button type="submit">Replay</button></form>
+                    {{if .Replayable}}<form method="POST" action="/dashboard/failed-events/account/{{.ID}}/replay"><input type="hidden" name="csrf_token" value="{{$.Data.ActionCSRF}}"><button type="submit">Replay</button></form>{{else}}<small class="muted">Re-publish to retry</small>{{end}}
                     <form method="POST" action="/dashboard/failed-events/account/{{.ID}}/discard"><input type="hidden" name="csrf_token" value="{{$.Data.ActionCSRF}}"><button type="submit">Discard</button></form>
                   {{end}}
                 {{else}}—{{end}}

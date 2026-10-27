@@ -201,8 +201,8 @@ func cmdEvents(args []string) int {
 	case "replay-retryable":
 		return cmdEventsReplayRetryableFanoutFailures(args[1:])
 	default:
-		PrintUsage(os.Stderr, fmt.Sprintf("unknown events subcommand: %s", args[0]), "events")
-		return 1
+		printCommandValidation(os.Stderr, "unknown events subcommand %q\n", args[0])
+		return unknownSubcommandChoices(os.Stderr, "events", nestedCliCommand("events"), args[0])
 	}
 }
 
@@ -648,7 +648,9 @@ func cmdEventsPublish(args []string) int {
 	}
 	PrintOK(osStdout, "Event %s accepted for account %s.", resp.ID, resp.AccountID)
 	if resp.ReceiptURL != "" {
-		_, _ = fmt.Fprintf(osStdout, "Receipt: %s\n", resp.ReceiptURL)
+		// The receipt line was a raw API path; name the command that reads
+		// it (Hunt 12 H12-46).
+		_, _ = fmt.Fprintf(osStdout, "Inspect: gregale events inspect --source %s --id %s\n", quoteCLIArg(strings.TrimSpace(*source)), quoteCLIArg(resp.ID))
 	}
 	return 0
 }

@@ -4,8 +4,7 @@
 /* eslint-disable */
 /**
  * Kafka TLS material. MinVersion is forced to TLS 1.2 at
- * decoder time regardless of what the wire sends
- * (pkg/sched/poller_kafka.go::buildKafkaTLSConfig). When
+ * decoder time regardless of what the wire sends. When
  * ClientCert + ClientKey are both set the decoder performs
  * a half-wired guard — if only one is set, decode returns
  * an error rather than the poller falling through silently
@@ -31,7 +30,7 @@ export type KafkaTLSConfig = {
   readonly client_key_set?: boolean;
   /**
    * Skip TLS verification. Hobby plan rejects this
-   * (TLSSkipVerifyAllowed=false in pkg/api/limits.go);
+   * (TLSSkipVerifyAllowed=false);
    * Pro and Scale accept it for self-signed brokers.
    *
    */

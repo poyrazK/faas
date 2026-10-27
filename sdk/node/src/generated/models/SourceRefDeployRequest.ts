@@ -6,8 +6,7 @@ import type { CanaryPresetSpec } from './CanaryPresetSpec.js';
 import type { DeploymentHealthcheck } from './DeploymentHealthcheck.js';
 import type { SourceReviewResponse } from './SourceReviewResponse.js';
 /**
- * JSON body for POST /v1/apps/{slug}/deployments/source-ref
- * (DEPLOY-PROV-4 / ADR-092, issue #739). The headless CI deploy
+ * JSON body for POST /v1/apps/{slug}/deployments/source-ref. The headless CI deploy
  * path: `repo` resolves to an install-token-bound fetch, `ref` is
  * the customer's chosen input (branch / tag / SHA — server
  * resolves to a 40-char SHA before stamping the deployment row).
@@ -51,7 +50,7 @@ export type SourceRefDeployRequest = {
    */
   source_branch?: string;
   /**
-   * Forward-compat field. PR-A only supports `tarball`.
+   * Forward-compat field. only supports `tarball`.
    */
   format?: 'tarball';
   /**
@@ -71,11 +70,11 @@ export type SourceRefDeployRequest = {
    */
   tag?: 'incident_recovery' | 'hotfix' | 'scheduled_maintenance' | 'compliance_hold' | 'partner_request';
   /**
-   * Human-readable actor label. CLI auto-captures from `git config user.name`; githubd stamps pusher.name; the GitHub Action defaults to ${{ github.actor }}.
+   * Human-readable actor label. CLI auto-captures from `git config user.name`; the GitHub integration stamps pusher.name; the GitHub Action defaults to ${{ github.actor }}.
    */
   deployed_by?: string;
   /**
-   * Pull-request number when the wire offers it (githubd pull_request.number; Action ${{ github.event.pull_request.number }}). NULL for push-to-main with no inferred PR.
+   * Pull-request number when the wire offers it (the GitHub integration pull_request.number; Action ${{ github.event.pull_request.number }}). NULL for push-to-main with no inferred PR.
    */
   pr_number?: number;
   /**
@@ -95,9 +94,17 @@ export type SourceRefDeployRequest = {
    */
   mcp_task_migration_override?: boolean;
   /**
-   * Release this source ref to production while a deploy freeze is active; the reason is audited (ADR-20261019071733).
+   * Release this source ref to production while a deploy freeze is active; the reason is audited.
    */
   override_freeze?: string;
+  /**
+   * Build this source ref now, keep it live without traffic, and start its production rollout at this time; deploy freezes are checked at that time.
+   */
+  release_at?: string;
+  /**
+   * Slack or email notification channels told when this source ref, scheduled with release_at, starts or cannot start.
+   */
+  release_notify?: Array<string>;
   /**
    * Opt this source-ref deployment out of temporary startup CPU headroom. Omitted or null preserves the default boost.
    */

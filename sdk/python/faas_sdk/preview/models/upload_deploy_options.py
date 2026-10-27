@@ -1,0 +1,325 @@
+from __future__ import annotations
+
+import datetime
+from collections.abc import Mapping
+from typing import TYPE_CHECKING, Any, TypeVar, cast
+
+from attrs import define as _attrs_define
+
+from ..types import UNSET, Unset
+
+if TYPE_CHECKING:
+    from ..models.deployment_healthcheck import DeploymentHealthcheck
+    from ..models.sidecar import Sidecar
+    from ..models.workflow_spec import WorkflowSpec
+
+
+T = TypeVar("T", bound="UploadDeployOptions")
+
+
+@_attrs_define
+class UploadDeployOptions:
+    """Deployment metadata persisted with the upload session and applied at commit."""
+
+    healthcheck: DeploymentHealthcheck | Unset = UNSET
+    """Startup healthcheck shape on the deploy-time override object. Exactly one of `path` (HTTP) or `grpc`
+    (standard gRPC health
+    Check) selects the startup admission action. The gRPC probe uses the
+    app's published port; an empty service checks overall server health.
+
+    Validation rules (enforced):
+    - Exactly one of `path` and `grpc` must be set.
+    - `path`, when set, must start with `/`.
+    - `grpc.service` is optional and limited to 256 characters.
+    - `interval_s`, `timeout_s`, `retries` must be `>= 0`.
+    - Missing tuning fields default to 0; the host readiness deadline is
+      resolved separately from the app's plan and startup policy.
+
+    OCI `test` argv and `start_period_s` remain deploy metadata; the host
+    readiness gate uses only the selected HTTP path or gRPC health RPC.
+    """
+    runtime: str | Unset = UNSET
+    handler: str | Unset = UNSET
+    dockerfile: bool | Unset = UNSET
+    source_root: str | Unset = UNSET
+    scope: str | Unset = UNSET
+    """Named environment scope applied when the upload is committed; omitted uses default."""
+    source_url: str | Unset = UNSET
+    """Informational repository provenance URL; never fetched by the API."""
+    commit_sha: str | Unset = UNSET
+    """Lowercase hexadecimal Git commit identifier."""
+    environment: str | Unset = UNSET
+    """Registered project environment to resolve at upload commit."""
+    reason: str | Unset = UNSET
+    tag: str | Unset = UNSET
+    deployed_by: str | Unset = UNSET
+    pr_number: int | Unset = UNSET
+    workflows: list[WorkflowSpec] | Unset = UNSET
+    companions: list[Sidecar] | Unset = UNSET
+    """Preferred field for up to five helpers carried across the resumable upload session (one init helper and up
+    to four long-running companions)."""
+    sidecars: list[Sidecar] | Unset = UNSET
+    """Deprecated spelling of companions."""
+    rollback_on_5xx: bool | None | Unset = UNSET
+    """Resumable deploy policy persisted with deploy_options; Pro/Scale may enable first-wake 5xx auto-rollback,
+    while omitted or null keeps the default false."""
+    disable_startup_cpu_boost: bool | None | Unset = UNSET
+    """Create this deployment without temporary startup CPU headroom; omitted or null keeps the default boost."""
+    no_triggers: bool | Unset = UNSET
+    """Skip reconciling trigger declarations from the uploaded gregale manifest at commit time."""
+    override_freeze: str | Unset = UNSET
+    """Commit this upload to production while a deploy freeze is active; the reason is audited with the freezes it
+    overrode."""
+    release_at: datetime.datetime | Unset = UNSET
+    """Build this upload now, keep it live without traffic, and start its production rollout at this time; deploy
+    freezes are checked at that time."""
+    release_notify: list[str] | Unset = UNSET
+    """Slack or email notification channels told when this upload, scheduled with release_at, starts or cannot
+    start."""
+
+    def to_dict(self) -> dict[str, Any]:
+        healthcheck: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.healthcheck, Unset):
+            healthcheck = self.healthcheck.to_dict()
+
+        runtime = self.runtime
+
+        handler = self.handler
+
+        dockerfile = self.dockerfile
+
+        source_root = self.source_root
+
+        scope = self.scope
+
+        source_url = self.source_url
+
+        commit_sha = self.commit_sha
+
+        environment = self.environment
+
+        reason = self.reason
+
+        tag = self.tag
+
+        deployed_by = self.deployed_by
+
+        pr_number = self.pr_number
+
+        workflows: list[dict[str, Any]] | Unset = UNSET
+        if not isinstance(self.workflows, Unset):
+            workflows = []
+            for workflows_item_data in self.workflows:
+                workflows_item = workflows_item_data.to_dict()
+                workflows.append(workflows_item)
+
+        companions: list[dict[str, Any]] | Unset = UNSET
+        if not isinstance(self.companions, Unset):
+            companions = []
+            for companions_item_data in self.companions:
+                companions_item = companions_item_data.to_dict()
+                companions.append(companions_item)
+
+        sidecars: list[dict[str, Any]] | Unset = UNSET
+        if not isinstance(self.sidecars, Unset):
+            sidecars = []
+            for sidecars_item_data in self.sidecars:
+                sidecars_item = sidecars_item_data.to_dict()
+                sidecars.append(sidecars_item)
+
+        rollback_on_5xx: bool | None | Unset
+        if isinstance(self.rollback_on_5xx, Unset):
+            rollback_on_5xx = UNSET
+        else:
+            rollback_on_5xx = self.rollback_on_5xx
+
+        disable_startup_cpu_boost: bool | None | Unset
+        if isinstance(self.disable_startup_cpu_boost, Unset):
+            disable_startup_cpu_boost = UNSET
+        else:
+            disable_startup_cpu_boost = self.disable_startup_cpu_boost
+
+        no_triggers = self.no_triggers
+
+        override_freeze = self.override_freeze
+
+        release_at: str | Unset = UNSET
+        if not isinstance(self.release_at, Unset):
+            release_at = self.release_at.isoformat()
+
+        release_notify: list[str] | Unset = UNSET
+        if not isinstance(self.release_notify, Unset):
+            release_notify = self.release_notify
+
+        field_dict: dict[str, Any] = {}
+
+        field_dict.update({})
+        if healthcheck is not UNSET:
+            field_dict["healthcheck"] = healthcheck
+        if runtime is not UNSET:
+            field_dict["runtime"] = runtime
+        if handler is not UNSET:
+            field_dict["handler"] = handler
+        if dockerfile is not UNSET:
+            field_dict["dockerfile"] = dockerfile
+        if source_root is not UNSET:
+            field_dict["source_root"] = source_root
+        if scope is not UNSET:
+            field_dict["scope"] = scope
+        if source_url is not UNSET:
+            field_dict["source_url"] = source_url
+        if commit_sha is not UNSET:
+            field_dict["commit_sha"] = commit_sha
+        if environment is not UNSET:
+            field_dict["environment"] = environment
+        if reason is not UNSET:
+            field_dict["reason"] = reason
+        if tag is not UNSET:
+            field_dict["tag"] = tag
+        if deployed_by is not UNSET:
+            field_dict["deployed_by"] = deployed_by
+        if pr_number is not UNSET:
+            field_dict["pr_number"] = pr_number
+        if workflows is not UNSET:
+            field_dict["workflows"] = workflows
+        if companions is not UNSET:
+            field_dict["companions"] = companions
+        if sidecars is not UNSET:
+            field_dict["sidecars"] = sidecars
+        if rollback_on_5xx is not UNSET:
+            field_dict["rollback_on_5xx"] = rollback_on_5xx
+        if disable_startup_cpu_boost is not UNSET:
+            field_dict["disable_startup_cpu_boost"] = disable_startup_cpu_boost
+        if no_triggers is not UNSET:
+            field_dict["no_triggers"] = no_triggers
+        if override_freeze is not UNSET:
+            field_dict["override_freeze"] = override_freeze
+        if release_at is not UNSET:
+            field_dict["release_at"] = release_at
+        if release_notify is not UNSET:
+            field_dict["release_notify"] = release_notify
+
+        return field_dict
+
+    @classmethod
+    def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.deployment_healthcheck import DeploymentHealthcheck
+        from ..models.sidecar import Sidecar
+        from ..models.workflow_spec import WorkflowSpec
+
+        d = dict(src_dict)
+        _healthcheck = d.pop("healthcheck", UNSET)
+        healthcheck: DeploymentHealthcheck | Unset
+        if isinstance(_healthcheck, Unset):
+            healthcheck = UNSET
+        else:
+            healthcheck = DeploymentHealthcheck.from_dict(_healthcheck)
+
+        runtime = d.pop("runtime", UNSET)
+
+        handler = d.pop("handler", UNSET)
+
+        dockerfile = d.pop("dockerfile", UNSET)
+
+        source_root = d.pop("source_root", UNSET)
+
+        scope = d.pop("scope", UNSET)
+
+        source_url = d.pop("source_url", UNSET)
+
+        commit_sha = d.pop("commit_sha", UNSET)
+
+        environment = d.pop("environment", UNSET)
+
+        reason = d.pop("reason", UNSET)
+
+        tag = d.pop("tag", UNSET)
+
+        deployed_by = d.pop("deployed_by", UNSET)
+
+        pr_number = d.pop("pr_number", UNSET)
+
+        _workflows = d.pop("workflows", UNSET)
+        workflows: list[WorkflowSpec] | Unset = UNSET
+        if _workflows is not UNSET:
+            workflows = []
+            for workflows_item_data in _workflows:
+                workflows_item = WorkflowSpec.from_dict(workflows_item_data)
+
+                workflows.append(workflows_item)
+
+        _companions = d.pop("companions", UNSET)
+        companions: list[Sidecar] | Unset = UNSET
+        if _companions is not UNSET:
+            companions = []
+            for companions_item_data in _companions:
+                companions_item = Sidecar.from_dict(companions_item_data)
+
+                companions.append(companions_item)
+
+        _sidecars = d.pop("sidecars", UNSET)
+        sidecars: list[Sidecar] | Unset = UNSET
+        if _sidecars is not UNSET:
+            sidecars = []
+            for sidecars_item_data in _sidecars:
+                sidecars_item = Sidecar.from_dict(sidecars_item_data)
+
+                sidecars.append(sidecars_item)
+
+        def _parse_rollback_on_5xx(data: object) -> bool | None | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(bool | None | Unset, data)
+
+        rollback_on_5xx = _parse_rollback_on_5xx(d.pop("rollback_on_5xx", UNSET))
+
+        def _parse_disable_startup_cpu_boost(data: object) -> bool | None | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(bool | None | Unset, data)
+
+        disable_startup_cpu_boost = _parse_disable_startup_cpu_boost(d.pop("disable_startup_cpu_boost", UNSET))
+
+        no_triggers = d.pop("no_triggers", UNSET)
+
+        override_freeze = d.pop("override_freeze", UNSET)
+
+        _release_at = d.pop("release_at", UNSET)
+        release_at: datetime.datetime | Unset
+        if isinstance(_release_at, Unset):
+            release_at = UNSET
+        else:
+            release_at = datetime.datetime.fromisoformat(_release_at)
+
+        release_notify = cast(list[str], d.pop("release_notify", UNSET))
+
+        upload_deploy_options = cls(
+            healthcheck=healthcheck,
+            runtime=runtime,
+            handler=handler,
+            dockerfile=dockerfile,
+            source_root=source_root,
+            scope=scope,
+            source_url=source_url,
+            commit_sha=commit_sha,
+            environment=environment,
+            reason=reason,
+            tag=tag,
+            deployed_by=deployed_by,
+            pr_number=pr_number,
+            workflows=workflows,
+            companions=companions,
+            sidecars=sidecars,
+            rollback_on_5xx=rollback_on_5xx,
+            disable_startup_cpu_boost=disable_startup_cpu_boost,
+            no_triggers=no_triggers,
+            override_freeze=override_freeze,
+            release_at=release_at,
+            release_notify=release_notify,
+        )
+
+        return upload_deploy_options

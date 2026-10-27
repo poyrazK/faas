@@ -167,7 +167,7 @@ func (e *serviceExplanation) resolve(ctx context.Context, store ServiceExplanati
 			return
 		}
 		e.ReleaseID, e.TargetDeploymentID = route.ReleaseSetID, route.TargetDeploymentID
-		policy.RequireHTTPS, policy.CallScope, policy.Reliability = route.RequireHTTPS, route.CallScope, route.Reliability
+		policy.RequireHTTPS, policy.CallScope = route.RequireHTTPS, route.CallScope
 		e.check("routing", "allowed", "active_reviewed_release", "")
 	} else {
 		e.PolicySource = "app"

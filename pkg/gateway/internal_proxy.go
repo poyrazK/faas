@@ -46,6 +46,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"go.opentelemetry.io/otel/propagation"
@@ -53,9 +54,12 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/gateway/drain"
+	"github.com/onebox-faas/faas/pkg/hostidentity"
 	"github.com/onebox-faas/faas/pkg/httpsec"
 	"github.com/onebox-faas/faas/pkg/logsanitize"
 	"github.com/onebox-faas/faas/pkg/reqbudget"
+	"github.com/onebox-faas/faas/pkg/trafficrevocation"
+	"slices"
 )
 
 // InternalDialer is the seam the public daemon wires to reach a
@@ -125,6 +129,11 @@ func (d *tcpDialer) DialContext(ctx context.Context, _ string) (net.Conn, error)
 //
 // The zero value is unusable; construct via NewInternalReverseProxy.
 type InternalReverseProxy struct {
+	// trafficSecurityPeers says whether every compute gateway behind this edge
+	// stamps the traffic security snapshot; nil means it does.
+	trafficSecurityPeers TrafficSecurityPeers
+
+	trafficRevocations  *trafficrevocation.Registry
 	Dialer              InternalDialer
 	Target              *url.URL
 	Transport           http.RoundTripper
@@ -142,7 +151,9 @@ type InternalReverseProxy struct {
 }
 
 const (
-	cloudflareWorkerHeader       = "CF-Worker"
+	cloudflareWorkerHeader = "CF-Worker"
+	// cloudflareWorkerZone is the original Worker zone; the Worker in any
+	// other owned zone is accepted too (isEdgeWorkerZone).
 	cloudflareWorkerZone         = "gregale.dev"
 	edgeOriginalStatusHeader     = "X-Faas-Edge-Original-Status"
 	edgeOrigin504TransportStatus = http.StatusConflict
@@ -150,6 +161,14 @@ const (
 	// from the 409 transport ("502,504").
 	edgeRestorableHeader = "X-Faas-Edge-Restorable"
 )
+
+// isEdgeWorkerZone reports whether a CF-Worker header names the zone of a
+// Gregale edge Worker: the original zone or any domain the layout owns, since
+// each apps domain has its own zone and Worker (ADR-20261026100000).
+func isEdgeWorkerZone(zone string) bool {
+	zone = strings.ToLower(strings.TrimSpace(zone))
+	return zone != "" && (zone == cloudflareWorkerZone || slices.Contains(hostidentity.Configured().OwnedDomains(), zone))
+}
 
 // edgeTransportStatus reports whether an origin status must cross the
 // Cloudflare Worker hop as 409 + X-Faas-Edge-Original-Status, because
@@ -160,7 +179,7 @@ const (
 // hunt #9 (H9-96): an app OOM-killed mid-request reached API clients as
 // Cloudflare HTML with no request id.
 func edgeTransportStatus(r *http.Request, status int) bool {
-	if r == nil || !strings.EqualFold(strings.TrimSpace(r.Header.Get(cloudflareWorkerHeader)), cloudflareWorkerZone) {
+	if r == nil || !isEdgeWorkerZone(r.Header.Get(cloudflareWorkerHeader)) {
 		return false
 	}
 	switch status {
@@ -430,6 +449,12 @@ func dialWithTimeout(ctx context.Context, dialer InternalDialer, dialTimeout tim
 // On dial failure: 502 Bad Gateway. On upstream error: propagated
 // unchanged.
 func (p *InternalReverseProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	ctx, release := p.publicTrafficContext(r.Context())
+	defer release()
+	p.serveHTTP(w, r.WithContext(WithStartTime(ctx, time.Now())))
+}
+
+func (p *InternalReverseProxy) serveHTTP(w http.ResponseWriter, r *http.Request) {
 	bridgeDuplex := r.Header.Get("X-Gregale-Dev-Bridge-Session") != "" || r.Header.Get("X-Gregale-Dev-Session-Context") != ""
 	grpcDuplex := strings.HasPrefix(strings.ToLower(r.Header.Get("Content-Type")), "application/grpc")
 	if bridgeDuplex || grpcDuplex {
@@ -480,8 +505,13 @@ func (p *InternalReverseProxy) ServeHTTP(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	// The shutdown notice lets a gateway restart end an SSE stream cleanly.
-	streamCtx, detachBudget, touch, cancelStream := newStreamSession(drain.WithShutdownNotice(r.Context(), p.Drain), 0, streamIdleTimeout)
+	streamCtx, detachBudget, sessionTouch, cancelStream := newStreamSession(drain.WithShutdownNotice(r.Context(), p.Drain), 0, streamIdleTimeout)
 	defer cancelStream()
+	deadlines := newStreamDeadlines(w, streamIdleTimeout)
+	touch := func() {
+		sessionTouch()
+		deadlines.touch()
+	}
 	outReq := r.Clone(streamCtx)
 	outReq.URL.Scheme = p.Target.Scheme
 	outReq.URL.Host = p.Target.Host
@@ -497,6 +527,7 @@ func (p *InternalReverseProxy) ServeHTTP(w http.ResponseWriter, r *http.Request)
 	// Upgrade traffic branched above; plain HTTP must not forward hop-by-hop
 	// headers from an untrusted client.
 	stripHopByHopInPlace(outReq.Header)
+	stampTrafficStart(outReq)
 	// This transport is intentionally custom rather than otelhttp.Transport,
 	// so propagate the active public-edge span explicitly. The internal
 	// gateway extracts it before starting gateway.request, keeping the edge,
@@ -612,6 +643,30 @@ func (p *InternalReverseProxy) ServeHTTP(w http.ResponseWriter, r *http.Request)
 	}
 	// copyResponseBody owns Body.Close (issue #687: closes it on
 	// ctx cancel to release the H2C stream window).
+	if err := bindPublicTrafficSecurity(r, resp); err != nil {
+		_ = resp.Body.Close()
+		if !refusePublicTrafficSecurity(w, r, err) {
+			writeForwarderProblem(w, http.StatusServiceUnavailable)
+		}
+		return
+	}
+	longLived := isLongLivedResponse(resp.StatusCode, resp.Header) || isUnverifiedPeerStream(r, resp)
+	publicBudget := r.Context()
+	if longLived {
+		detachBudget()
+		deadlines.start()
+		touch()
+		publicBudget = streamCtx
+	}
+	bodyCtx, cancelBody, err := responseBodyContext(streamCtx, publicBudget, resp)
+	resp.Header.Del(trafficResponseSessionHeader)
+	if err != nil {
+		_ = resp.Body.Close()
+		p.logger().Error("invalid compute response policy", "err", err)
+		writeForwarderProblem(w, http.StatusBadGateway)
+		return
+	}
+	defer cancelBody()
 	// Copy headers + body to the inbound writer. Strip hop-by-hop
 	// in place on the response (RFC 7230 §6.1) — the internal
 	// daemon may have set Connection: close and we don't want to
@@ -697,7 +752,7 @@ func (p *InternalReverseProxy) ServeHTTP(w http.ResponseWriter, r *http.Request)
 	announced := make(map[string]bool, len(resp.Trailer)+1)
 	announce := func(name string) {
 		key := textproto.CanonicalMIMEHeaderKey(name)
-		if key == "" || announced[key] {
+		if key == "" || announced[key] || isTrafficResponseControlHeader(key) {
 			return
 		}
 		announced[key] = true
@@ -733,22 +788,24 @@ func (p *InternalReverseProxy) ServeHTTP(w http.ResponseWriter, r *http.Request)
 		w.Header().Set(edgeOriginalStatusHeader, strconv.Itoa(resp.StatusCode))
 		responseStatus = edgeOrigin504TransportStatus
 	}
+	defer guardResponseWrites(bodyCtx, w)()
+	var shutdownEnded atomic.Bool
+	if longLived && isEventStream(resp.Header) {
+		// Ends as a clean close: closing the upstream body stops the copy
+		// without firing the write fences, so the stream's end reaches the
+		// client and the EventSource reconnects to the replacement process.
+		drain.EndOnShutdown(streamCtx, func() {
+			shutdownEnded.Store(true)
+			_ = resp.Body.Close()
+		})
+	}
 	w.WriteHeader(responseStatus)
 	if bridgeDuplex || grpcDuplex {
 		_ = http.NewResponseController(w).Flush()
 	}
 	// Body copy bound to ctx — a hung upstream pins only the
 	// in-flight goroutine, not the listener.
-	if isLongLivedResponse(resp.StatusCode, resp.Header) {
-		detachBudget()
-		touch()
-		if isEventStream(resp.Header) {
-			// Ends as a clean close (the copy sees context.Canceled); the
-			// EventSource reconnects to the replacement process.
-			drain.EndOnShutdown(streamCtx, cancelStream)
-		}
-	}
-	if _, err := copyResponseBodyWithActivity(streamCtx, w, resp.Body, touch); err != nil && !errors.Is(err, context.Canceled) {
+	if _, err := copyResponseBodyWithActivity(bodyCtx, w, resp.Body, touch); err != nil && !shutdownEnded.Load() && (!errors.Is(err, context.Canceled) || trafficRevocationCause(bodyCtx) != nil) {
 		p.logger().Warn("internal body copy failed",
 			"target", p.Target.String(),
 			"err", err)
@@ -776,6 +833,9 @@ func (p *InternalReverseProxy) ServeHTTP(w http.ResponseWriter, r *http.Request)
 	// matters: adding an already-announced key under the prefix as well would
 	// send it twice.
 	for name, values := range resp.Trailer {
+		if isTrafficResponseControlHeader(name) {
+			continue
+		}
 		key := name
 		if !announced[textproto.CanonicalMIMEHeaderKey(name)] {
 			key = http.TrailerPrefix + name
@@ -792,9 +852,15 @@ func (p *InternalReverseProxy) ServeHTTP(w http.ResponseWriter, r *http.Request)
 func stripHopByHopInPlace(h http.Header) {
 	// Connection's options name additional hop-specific fields. Read all
 	// values before removing Connection itself (RFC 9110 §7.6.1).
+	// Platform identity headers are exempt: the gateway stamps them after
+	// reading the sender's headers, so a caller naming them here would strip
+	// the authoritative values (an internal service call carries the calling
+	// guest's own HTTP/1.1 Connection header to this point).
 	for _, value := range h.Values("Connection") {
 		for _, name := range strings.Split(value, ",") {
-			h.Del(strings.TrimSpace(name))
+			if name = strings.TrimSpace(name); !api.IsPlatformStampedHeader(name) {
+				h.Del(name)
+			}
 		}
 	}
 	for k := range h {
@@ -841,6 +907,14 @@ func copyResponseBody(ctx context.Context, dst io.Writer, src io.ReadCloser) (in
 }
 
 func copyResponseBodyWithActivity(ctx context.Context, dst io.Writer, src io.ReadCloser, activity func()) (int64, error) {
+	if w, ok := dst.(http.ResponseWriter); ok {
+		stop, err := armResponseWriteContext(ctx, w)
+		if err != nil {
+			_ = src.Close()
+			return 0, err
+		}
+		defer stop()
+	}
 	flusher, _ := dst.(http.Flusher) // ok if dst isn't an http.ResponseWriter
 	type result struct {
 		n   int64
@@ -945,10 +1019,9 @@ func copyResponseBodyWithActivity(ctx context.Context, dst io.Writer, src io.Rea
 	case r := <-done:
 		return r.n, r.err
 	case <-ctx.Done():
-		// Close src so the goroutine's Read returns; the upstream
-		// unix socket sees the FIN and the H2C stream window is
-		// released. The second <-done makes the goroutine-exit
-		// assertion in tests deterministic.
+		// Interrupt both ends: Close releases an upstream Read; the write
+		// context guard releases a downstream Write/Flush. Join the copier
+		// before returning so no writer survives response ownership.
 		_ = src.Close()
 		<-done
 		return 0, ctx.Err()
@@ -984,9 +1057,14 @@ func makeBodyReplayable(req *http.Request) error {
 		req.ContentLength > api.InternalHopReplayableBodyBytes {
 		return nil
 	}
-	body := make([]byte, req.ContentLength)
-	_, err := io.ReadFull(req.Body, body)
+	// Grow with the bytes received rather than allocating the declared length:
+	// a client that declares a body and sends none of it would otherwise pin
+	// the whole buffer until the server's ReadTimeout.
+	body, err := io.ReadAll(io.LimitReader(req.Body, req.ContentLength))
 	_ = req.Body.Close()
+	if err == nil && int64(len(body)) < req.ContentLength {
+		err = io.ErrUnexpectedEOF
+	}
 	if err != nil {
 		return fmt.Errorf("read %d-byte request body: %w", req.ContentLength, err)
 	}
@@ -1008,12 +1086,8 @@ func isLongLivedResponse(statusCode int, h http.Header) bool {
 	if statusCode != http.StatusSwitchingProtocols && (statusCode < http.StatusOK || statusCode >= http.StatusBadRequest) {
 		return false
 	}
-	switch strings.ToLower(strings.TrimSpace(h.Get(api.StreamingStatusHeader))) {
-	case string(api.StreamingStatusStreaming), string(api.StreamingStatusUpgradeBypass):
-		return true
-	default:
-		return false
-	}
+	values := h.Values(trafficResponseSessionHeader)
+	return len(values) == 1 && values[0] == "long-lived"
 }
 
 func (p *InternalReverseProxy) logger() *slog.Logger {

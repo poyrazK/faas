@@ -3,11 +3,11 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * One of an app's release gates (ADR-20261019071734).
+ * One of an app's release gates.
  */
 export type ReleaseGate = {
   name: string;
-  kind: 'slo' | 'new_errors' | 'custom_metric';
+  kind: 'slo' | 'new_errors' | 'custom_metric' | 'ai';
   /**
    * slo gates: the SLO judged.
    */
@@ -25,7 +25,7 @@ export type ReleaseGate = {
    */
   min_events?: number;
   /**
-   * custom_metric gates: the custom metric.
+   * custom_metric gates: the custom metric. ai gates: error_rate, flagged_rate, cost_per_call or ttfb_ms.
    */
   metric?: string;
   /**
@@ -37,7 +37,11 @@ export type ReleaseGate = {
    */
   threshold?: number;
   /**
-   * Requests or metric values a release needs before the gate is judged.
+   * ai gates: the largest increase over the baseline, in percent.
+   */
+  max_increase_percent?: number;
+  /**
+   * Requests, metric values or AI calls (on each side, for ai gates) needed before the gate is judged.
    */
   min_samples: number;
   created_by: string;

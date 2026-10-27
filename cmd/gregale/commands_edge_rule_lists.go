@@ -34,10 +34,7 @@ func cmdEdgeRuleLists(args []string) int {
 		return cmdEdgeRuleListsRm(args[1:])
 	}
 	printCommandValidation(os.Stderr, "unknown edge-rule-lists subcommand %q\n", args[0])
-	if sug, _ := suggestSubcommand(args[0], parent); sug != "" {
-		maybeSuggestSub(sug)
-	}
-	return 1
+	return unknownSubcommandChoices(os.Stderr, "edge-rule-lists", parent, args[0])
 }
 
 func cmdEdgeRuleListsList(args []string) int {
@@ -165,7 +162,7 @@ func cmdEdgeRuleListsCreate(args []string) int {
 	}
 	l, err := client.CreateEdgeRuleList(context.Background(), req)
 	if err != nil {
-		return printErr("Create failed", err)
+		return printErr("Could not create edge rule list", err)
 	}
 	return printEdgeRuleList(l)
 }
@@ -202,7 +199,7 @@ func cmdEdgeRuleListsUpdate(args []string) int {
 	}
 	l, err := client.UpdateEdgeRuleList(context.Background(), name, req)
 	if err != nil {
-		return printErr("Update failed", err)
+		return printErr("Could not update edge rule list", err)
 	}
 	return printEdgeRuleList(l)
 }
@@ -222,7 +219,7 @@ func cmdEdgeRuleListsRm(args []string) int {
 		return printErr("Not logged in", err)
 	}
 	if err := client.DeleteEdgeRuleList(context.Background(), name); err != nil {
-		return printErr("Delete failed", err)
+		return printErr("Could not delete edge rule list", err)
 	}
 	if !jsonOutput {
 		_, _ = fmt.Fprintf(osStdout, "Deleted edge rule list %s\n", name)

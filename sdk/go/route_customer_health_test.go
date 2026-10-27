@@ -6,6 +6,8 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/poyrazK/faas/sdk/go/preview"
+
 	faas "github.com/poyrazK/faas/sdk/go"
 )
 
@@ -30,7 +32,7 @@ func TestRouteCustomerHealthSDKOptions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	r, err := c.GetRouteHealthReportWithOptions(context.Background(), "demo", "candidate", faas.RouteHealthReportOptions{Customers: true, CustomerGroupBy: "consumer", CustomerDetails: true})
+	r, err := preview.Wrap(c).GetRouteHealthReportWithOptions(context.Background(), "demo", "candidate", preview.RouteHealthReportOptions{Customers: true, CustomerGroupBy: "consumer", CustomerDetails: true})
 	if err != nil || r.Status != "healthy" || r.Customers == nil || r.Customers.Status != "regressed" {
 		t.Fatalf("%+v %v", r, err)
 	}
@@ -38,11 +40,11 @@ func TestRouteCustomerHealthSDKOptions(t *testing.T) {
 	if cohort.CustomerID != "customer" || *cohort.Health.Windows[0].Stable.P95LatencyMS != 0 || r.Customers.Routes[0].Candidate.UnresolvedIdentityRequests != 3 {
 		t.Fatal("evidence lost")
 	}
-	if _, err := c.GetRouteHealthReport(context.Background(), "demo", "candidate"); err != nil {
+	if _, err := preview.Wrap(c).GetRouteHealthReport(context.Background(), "demo", "candidate"); err != nil {
 		t.Fatal(err)
 	}
-	for _, opts := range []faas.RouteHealthReportOptions{{CustomerDetails: true}, {CustomerGroupBy: "consumer"}, {Customers: true, CustomerGroupBy: "wrong"}} {
-		if _, err := c.GetRouteHealthReportWithOptions(context.Background(), "demo", "candidate", opts); err == nil {
+	for _, opts := range []preview.RouteHealthReportOptions{{CustomerDetails: true}, {CustomerGroupBy: "consumer"}, {Customers: true, CustomerGroupBy: "wrong"}} {
+		if _, err := preview.Wrap(c).GetRouteHealthReportWithOptions(context.Background(), "demo", "candidate", opts); err == nil {
 			t.Fatal("invalid options accepted")
 		}
 	}

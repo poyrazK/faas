@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -25,7 +26,7 @@ const (
 	// trace cannot consume unbounded memory or schema-validation time.
 	MaxTraceBodyBytes = 1 << 20
 
-	Scope = "Host/method/path/header matching is simulated. Per-rule rows show standalone matches against the submitted request; the sequential simulation composes deterministic actions in gateway phase order. Credential-like header values and recognizable token patterns are redacted from trace output after evaluation, so redaction does not affect rule matching. A supplied body is limited to 1 MiB and is evaluated only for validate, limit, and async-route eligibility; its contents are never included in the result. Limit rules use the supplied body size and app plan cap; when buffered and streaming caps would produce different outcomes, the trace stops as incomplete because gateway streaming context is unavailable. Inline and preset-backed edge-rule CORS and per-app default CORS are simulated from Origin, preflight request headers, app settings, and supplied preset data; preset-backed rules remain incomplete when preset data is unavailable or invalid, and default CORS is incomplete when app settings are unavailable. App-level maintenance is evaluated after routing and earlier gateway gates, before per-rule maintenance; it is incomplete when app metadata is unavailable. Declared-route policy is simulated from explicit routes or the app's imported OpenAPI document, using the original public path and method after CORS preflight handling. When a project and environment are selected, the trace uses that workload's effective declared-route policy and environment-owned headers/CORS edge-rule replacement; the separate per-app default CORS setting remains app-owned. Its URL host must be the environment workload URL or a verified environment domain. Without an environment selection, only app-owned policy is used. Cache-rule traces show the configured freshness/stale windows and Vary dimensions and identify deterministic method or credential bypasses; a possible lookup stops as incomplete because authentication, async/pinned-deployment context, and live cache contents determine the runtime result. When app budget metadata is available, budget traces report the matching rule or app/plan baseline, override-header handling, and plan ceiling; they do not predict elapsed time or a deadline outcome because the budget starts only after upload, wake, routing, and admission. Throttle-rule traces report configured rate, burst, keying, and plan/app/account limits when available, but stop before guessing identity resolution or the live token-bucket admission result. Retry-rule traces report effective attempts, backoff, request-budget floor, aggregate replay budget, and the deterministic method/idempotency-key guard; they do not predict a replay because the operator gate, transport failure, body replayability, remaining budget, healthy sibling, and live aggregate budget are runtime state. Ingress/auth policy, target-app rules after routing, circuit-breaker state, async enqueue state, wake, and backend response are not simulated. The trace also stops as incomplete where other runtime state or unavailable request context is required. A completed 'continue' outcome means inspected edge-rule phases did not terminate the request, not that the app will return successfully. IP and geo use supplied client_ip/country directly; trusted-proxy validation and live geo lookup are not performed. Equal-priority candidates have no guaranteed order. Results are limited to the named app."
+	Scope = "Host/method/path/header matching is simulated. Per-rule rows show standalone matches against the submitted request; the sequential simulation composes deterministic actions in gateway phase order. Credential-like header values and recognizable token patterns are redacted from trace output after evaluation, so redaction does not affect rule matching. A supplied body is limited to 1 MiB and is evaluated only for validate, limit, and async-route eligibility; its contents are never included in the result. Limit rules use the supplied body size and app plan cap; when buffered and streaming caps would produce different outcomes, the trace stops as incomplete because gateway streaming context is unavailable. Inline and preset-backed edge-rule CORS and per-app default CORS are simulated from Origin, preflight request headers, app settings, and supplied preset data; preset-backed rules remain incomplete when preset data is unavailable or invalid, and default CORS is incomplete when app settings are unavailable. App-level maintenance is evaluated after routing and earlier gateway gates, before per-rule maintenance; it is incomplete when app metadata is unavailable. Declared-route policy is simulated from explicit routes or the app's imported OpenAPI document, using the original public path and method after CORS preflight handling. When a project and environment are selected, the trace uses that workload's effective declared-route policy and environment-owned headers/CORS edge-rule replacement; the separate per-app default CORS setting remains app-owned. Its URL host must be the environment workload URL or a verified environment domain. Without an environment selection, only app-owned policy is used. Cache-rule traces show the configured freshness/stale windows and Vary dimensions and identify deterministic method or credential bypasses; a possible lookup stops as incomplete because authentication, async/pinned-deployment context, and live cache contents determine the runtime result. When app budget metadata is available, budget traces report the matching rule or app/plan baseline, override-header handling, and plan ceiling; execution starts after upload, wake, routing, and admission. A separate total deadline is selected on the original public route and includes elapsed time from trusted public ingress; it pins the execution rule across rewrites and cannot be increased by execution overrides. Header selectors always use the original ingress headers, even when earlier header actions change the forwarded request. Preview reports configured candidates, not operator enablement or verified deployed enforcement, and does not predict elapsed time or expiry. Throttle-rule traces report configured rate, burst, keying, and plan/app/account limits when available, but stop before guessing identity resolution or the live token-bucket admission result. Retry-rule traces report effective attempts, backoff, request-budget floor, aggregate replay budget, and the deterministic method/idempotency-key guard; they do not predict a replay because the operator gate, transport failure, body replayability, remaining budget, healthy sibling, and live aggregate budget are runtime state. Ingress/auth policy, target-app rules after routing, circuit-breaker state, async enqueue state, wake, and backend response are not simulated. The trace also stops as incomplete where other runtime state or unavailable request context is required. A completed 'continue' outcome means inspected edge-rule phases did not terminate the request, not that the app will return successfully. IP and geo use supplied client_ip/country directly; trusted-proxy validation and live geo lookup are not performed. Equal-priority candidates have no guaranteed order. Results are limited to the named app."
 )
 
 const circuitBreakerScope = "Circuit-breaker rule traces report effective per-instance thresholds and open/backoff durations, but do not consult the operator feature gate or live per-instance breaker counters/state; target selection and half-open probe outcomes are not predicted."
@@ -59,8 +60,12 @@ type Input struct {
 	// (ADR-973): verified_bot is then the known crawler the User-Agent
 	// header claims. The simulator does no DNS.
 	VerifiedBot bool
-	Headers     http.Header
-	Body        []byte
+	// VerifiedAICrawler simulates a client IP inside the published ranges
+	// of the AI crawler the User-Agent claims (ADR-20261022083601), so
+	// verified_ai_crawler is that crawler when it publishes ranges.
+	VerifiedAICrawler bool
+	Headers           http.Header
+	Body              []byte
 	// CorsPresets supplies caller-resolved presets for preset-backed CORS
 	// rules. Missing or cross-account presets remain incomplete instead of
 	// being guessed.
@@ -135,6 +140,13 @@ type Input struct {
 	AsyncRequestInvocationsEnabled bool
 	AsyncAppRetryPolicyLoaded      bool
 	AsyncAppRetryPolicy            *api.RetryPolicyDTO
+	// EdgeAnswersLoaded marks the app's edge-answered paths as known. The
+	// gateway answers GET/HEAD on the health path (unless AppHealthPathWakes),
+	// /favicon.ico and /robots.txt itself, before any edge-rule phase.
+	// AppHealthPath is the manifest's health_path, falling back to healthz.
+	EdgeAnswersLoaded  bool
+	AppHealthPath      string
+	AppHealthPathWakes bool
 }
 
 type Result struct {
@@ -155,22 +167,23 @@ type Result struct {
 }
 
 type Simulation struct {
-	Status            string                 `json:"status"`
-	Outcome           string                 `json:"outcome"`
-	ProblemCode       string                 `json:"problem_code,omitempty"`
-	FinalPath         string                 `json:"final_path"`
-	RequestHeaders    map[string][]string    `json:"request_headers,omitempty"`
-	ResponseHeaderOps []api.EdgeRuleHeaderOp `json:"response_header_ops,omitempty"`
-	StatusCode        int                    `json:"status_code,omitempty"`
-	Location          string                 `json:"location,omitempty"`
-	RedirectHeaders   map[string]string      `json:"redirect_headers,omitempty"`
-	RetryAfterSeconds int                    `json:"retry_after_seconds,omitempty"`
-	Message           string                 `json:"message,omitempty"`
-	TargetApp         string                 `json:"target_app,omitempty"`
-	Body              json.RawMessage        `json:"body,omitempty"`
-	StoppedAt         string                 `json:"stopped_at,omitempty"`
-	Reason            string                 `json:"reason"`
-	Steps             []SimulationStep       `json:"steps"`
+	Status              string                      `json:"status"`
+	Outcome             string                      `json:"outcome"`
+	ProblemCode         string                      `json:"problem_code,omitempty"`
+	FinalPath           string                      `json:"final_path"`
+	RequestHeaders      map[string][]string         `json:"request_headers,omitempty"`
+	ResponseHeaderOps   []api.EdgeRuleHeaderOp      `json:"response_header_ops,omitempty"`
+	StatusCode          int                         `json:"status_code,omitempty"`
+	Location            string                      `json:"location,omitempty"`
+	RedirectHeaders     map[string]string           `json:"redirect_headers,omitempty"`
+	RetryAfterSeconds   int                         `json:"retry_after_seconds,omitempty"`
+	Message             string                      `json:"message,omitempty"`
+	TargetApp           string                      `json:"target_app,omitempty"`
+	Body                json.RawMessage             `json:"body,omitempty"`
+	StoppedAt           string                      `json:"stopped_at,omitempty"`
+	Reason              string                      `json:"reason"`
+	Steps               []SimulationStep            `json:"steps"`
+	TotalDeadlinePolicy *TotalDeadlinePolicyPreview `json:"total_deadline_policy,omitempty"`
 }
 
 type SimulationStep struct {
@@ -267,15 +280,17 @@ type CachePolicyPreview struct {
 
 // BudgetPolicyPreview reports the configured and effective request budget
 // without claiming that guest execution will actually consume the full
-// duration. The runtime starts this deadline only after upload, wake, routing,
-// and per-VM admission have completed.
+// duration. Execution starts after upload, wake, routing and VM admission.
+// A positive TotalDeadlineMS in a sequential step refers to the separately
+// pinned ingress rule; a rewritten-path rule cannot create an ingress timer.
 type BudgetPolicyPreview struct {
-	ConfiguredMS   int64  `json:"configured_ms"`
-	BudgetMS       int64  `json:"budget_ms"`
-	PlanMaxMS      int64  `json:"plan_max_ms"`
-	Source         string `json:"source"`
-	OverrideHeader string `json:"override_header,omitempty"`
-	OverrideStatus string `json:"override_status"`
+	TotalDeadlineMS int64  `json:"total_deadline_ms,omitempty"`
+	ConfiguredMS    int64  `json:"configured_ms"`
+	BudgetMS        int64  `json:"budget_ms"`
+	PlanMaxMS       int64  `json:"plan_max_ms"`
+	Source          string `json:"source"`
+	OverrideHeader  string `json:"override_header,omitempty"`
+	OverrideStatus  string `json:"override_status"`
 }
 
 // ThrottlePolicyPreview reports configured per-route throttle behavior and
@@ -605,6 +620,8 @@ func previewNormalized(input Input, rules []api.EdgeRuleResponse) Result {
 			row.Status, row.Reason = "skipped", "rule expired at "+rule.ExpiresAt.UTC().Format(time.RFC3339)
 		case !rule.Enabled:
 			row.Status, row.Reason = "skipped", "rule is disabled"
+		case unreleasedChallenge(rule):
+			row.Status, row.Reason = "skipped", "challenge rules or attack mode are not yet available to this account; the gateway does not enforce this rule"
 		case !HostMatches(rule.MatchHost, input.Host):
 			row.Status, row.Reason = "skipped", fmt.Sprintf("host %q does not match %q", input.Host, rule.MatchHost)
 		case !ruleMethodMatches(rule.Kind, rule.MatchMethods, matchMethod):
@@ -628,7 +645,9 @@ func previewNormalized(input Input, rules []api.EdgeRuleResponse) Result {
 				// a candidate that shadows enforced rules of its kind.
 				row.Status, row.Reason = "logged", matchedSelectors(rule)+"; log mode: counted, not enforced"
 			default:
-				if firstIndex, seen := firstByKind[rule.Kind]; seen {
+				if !runtimeTrafficActionAvailable(rule) {
+					row.Status, row.Reason = "unavailable", matchedSelectors(rule)+"; gateway compilation would drop this rule"
+				} else if firstIndex, seen := firstByKind[rule.Kind]; seen {
 					first := &result.Rules[firstIndex]
 					if first.Priority == rule.Priority {
 						if first.Status != "tied_candidate" {
@@ -666,6 +685,7 @@ func simulateRequest(input Input, rules []api.EdgeRuleResponse) Simulation {
 	}
 	workingHeaders := cloneHeaders(input.Headers)
 	requestPath := input.Path
+	var pinnedBudget *api.EdgeRuleResponse
 	stop := func(status, outcome, phase, reason string, rule *api.EdgeRuleResponse) Simulation {
 		simulation.Status = status
 		simulation.Outcome = outcome
@@ -681,9 +701,30 @@ func simulateRequest(input Input, rules []api.EdgeRuleResponse) Simulation {
 		return simulation
 	}
 
+	if reason, ok := edgeAnswerReason(input); ok {
+		stopped := stop("complete", "edge_answer", "edge_answer", reason, nil)
+		stopped.Steps[len(stopped.Steps)-1].Kind = "edge_answer"
+		return stopped
+	}
+
 	phases := []string{"route", "app_maintenance", "maintenance", "redirect", "rewrite", "headers", "cors", "declared_routes", "jwt", "ip", "geo", "limit", "throttle", "validate", "challenge", "respond", "async", "cache", "budget", "circuit_breaker", "retry"}
 	for _, phase := range phases {
 		if phase == "app_maintenance" {
+			if unavailable := unavailableTotalDeadlineRule(input, rules); unavailable != nil {
+				stopped := stop("incomplete", api.CodeTrafficPolicyUnavailable, "policy", "the named owner's invalid total deadline prevents host-policy verification; when that owner is resolved, the gateway refuses HTTP 503 before authentication, wake or forwarding", unavailable)
+				stopped.StatusCode, stopped.ProblemCode = http.StatusServiceUnavailable, api.CodeTrafficPolicyUnavailable
+				step := &stopped.Steps[len(stopped.Steps)-1]
+				step.StatusCode, step.ProblemCode = stopped.StatusCode, stopped.ProblemCode
+				return stopped
+			}
+			var ambiguous bool
+			pinnedBudget, simulation.TotalDeadlinePolicy, ambiguous = selectIngressBudget(input, rules)
+			if ambiguous {
+				return stop("incomplete", "ambiguous", "total_deadline", "equal-priority ingress budget candidates cannot establish a unique total deadline or pinned execution rule", nil)
+			}
+			if simulation.TotalDeadlinePolicy != nil && !hasAppRequestBudget(input) {
+				return stop("incomplete", "needs_app_request_budget", "total_deadline", "the ingress budget rule is configured, but its effective plan ceiling was not loaded", pinnedBudget)
+			}
 			if !input.AppMaintenanceLoaded {
 				stopped := stop("incomplete", "needs_app_maintenance", phase, "app maintenance settings were not loaded, so the gateway-wide gate cannot be evaluated", nil)
 				stopped.Steps[len(stopped.Steps)-1].Kind = phase
@@ -750,7 +791,10 @@ func simulateRequest(input Input, rules []api.EdgeRuleResponse) Simulation {
 		if phase == "cors" {
 			matchMethod, _ = corsMatchMethod(input.Method, workingHeaders)
 		}
-		rule, tied := firstPhaseRule(rules, phase, input, requestPath, matchMethod, workingHeaders)
+		rule, tied := firstPhaseRule(rules, phase, input, requestPath, matchMethod, input.Headers)
+		if phase == "budget" && pinnedBudget != nil {
+			rule, tied = pinnedBudget, false
+		}
 		if tied {
 			return stop("incomplete", "ambiguous", phase, "equal-priority matching rules have no guaranteed evaluation order", rule)
 		}
@@ -1011,6 +1055,10 @@ func simulateRequest(input Input, rules []api.EdgeRuleResponse) Simulation {
 				return stop("incomplete", outcome, phase, reason, rule)
 			}
 			policy := resolveBudgetPolicy(input, rule, workingHeaders)
+			policy.TotalDeadlineMS = 0
+			if simulation.TotalDeadlinePolicy != nil {
+				policy.TotalDeadlineMS = simulation.TotalDeadlinePolicy.DeadlineMS
+			}
 			step.Outcome = "budget_candidate"
 			step.BudgetPolicy = &policy
 			step.PathAfter = requestPath
@@ -1084,6 +1132,44 @@ func simulateRequest(input Input, rules []api.EdgeRuleResponse) Simulation {
 // declaredRouteAllowed mirrors gatewayd-internal's declared route matcher.
 // The public path/method are supplied separately from the rewritten path so
 // edge rewrites cannot change the app's public contract.
+// EdgeAnswerHealthPath is the health path the gateway answers at the edge:
+// the manifest's health_path, falling back to its readiness healthz path
+// (cmd/gatewayd-internal edgeAnswersFromManifest).
+func EdgeAnswerHealthPath(healthPath, healthz string) string {
+	if strings.TrimSpace(healthPath) != "" {
+		return healthPath
+	}
+	return healthz
+}
+
+// edgeAnswerReason names the static paths the gateway answers itself, after
+// app resolution and the app's consumer gate but before any edge-rule phase,
+// operator auth, limiter or wake (pkg/gateway serveEdgeAnswer). No rule runs
+// for GET or HEAD on them: an enforced rate limit on /healthz traced as a
+// match on production-us and never returned 429 (Hunt 14 H14-49).
+func edgeAnswerReason(input Input) (string, bool) {
+	if !input.EdgeAnswersLoaded || (input.Method != http.MethodGet && input.Method != http.MethodHead) {
+		return "", false
+	}
+	const tail = " itself, before edge rules, rate limiters and wake, so no edge rule runs for this request"
+	switch input.Path {
+	case "/favicon.ico":
+		return "the gateway answers GET and HEAD /favicon.ico from the app's favicon setting" + tail, true
+	case "/robots.txt":
+		return "the gateway answers GET and HEAD /robots.txt from the app's robots setting" + tail, true
+	}
+	healthPath := strings.TrimSpace(input.AppHealthPath)
+	if healthPath == "" {
+		healthPath = "/healthz"
+	} else if !strings.HasPrefix(healthPath, "/") {
+		healthPath = "/" + healthPath
+	}
+	if input.Path == healthPath && !input.AppHealthPathWakes {
+		return "the gateway answers GET and HEAD " + healthPath + " (the app's health path) from the last wake's health state" + tail, true
+	}
+	return "", false
+}
+
 func declaredRouteAllowed(input Input, requestPath, requestMethod string) (allowed, unavailable, loaded bool) {
 	if input.DeclaredRoutesLoaded || len(input.DeclaredRoutes) > 0 {
 		allowed, err := matchDeclaredRoutes(input.DeclaredRoutes, requestPath, requestMethod)
@@ -1238,11 +1324,20 @@ func previewAppCORSDefault(input Input, headers http.Header) (SimulationStep, []
 	return step, responseOps
 }
 
+// unreleasedChallenge reports a challenge rule the gateway leaves inert
+// because its account has not been released challenge rules
+// (ADR-20261023113721) or, for the attack-mode rule, attack mode
+// (ADR-20261021220456 amendment 1).
+func unreleasedChallenge(rule api.EdgeRuleResponse) bool {
+	return rule.Kind == "challenge" && (slices.Contains(rule.UnreleasedFeatures, api.EdgeFeatureChallenge) ||
+		slices.Contains(rule.UnreleasedFeatures, api.EdgeFeatureAttackMode))
+}
+
 func firstPhaseRule(rules []api.EdgeRuleResponse, kind string, input Input, requestPath, method string, headers http.Header) (*api.EdgeRuleResponse, bool) {
 	var first *api.EdgeRuleResponse
 	for i := range rules {
 		rule := &rules[i]
-		if rule.Kind != kind || !rule.Enabled || !HostMatches(rule.MatchHost, input.Host) || !ruleMethodMatches(rule.Kind, rule.MatchMethods, method) || !api.EdgeRuleRequestHeadersMatch(rule.MatchHeaders, headers) {
+		if rule.Kind != kind || !rule.Enabled || unreleasedChallenge(*rule) || !HostMatches(rule.MatchHost, input.Host) || !ruleMethodMatches(rule.Kind, rule.MatchMethods, method) || !api.EdgeRuleRequestHeadersMatch(rule.MatchHeaders, headers) {
 			continue
 		}
 		if rule.Mode == api.EdgeRuleModeLog || !traceConditionMatches(*rule, input, requestPath, method, headers) {
@@ -1253,6 +1348,9 @@ func firstPhaseRule(rules []api.EdgeRuleResponse, kind string, input Input, requ
 			matched, err = api.MatchEdgeRuleKindPath(rule.Kind, rule.MatchPath, requestPath)
 		}
 		if err != nil || !matched {
+			continue
+		}
+		if !runtimeTrafficActionAvailable(*rule) {
 			continue
 		}
 		if first == nil {
@@ -1268,6 +1366,8 @@ func previewAction(rule api.EdgeRuleResponse, row RuleRow, input Input, requestP
 	switch row.Status {
 	case "skipped":
 		return "not_applicable", "static selectors did not match", nil
+	case "unavailable":
+		return "unavailable", "gateway compilation would drop this rule", nil
 	case "logged":
 		return "logged", "log-mode rule: the gateway counts the match and does not act", nil
 	case "later_candidate":
@@ -1628,7 +1728,8 @@ func previewBudgetRule(rule api.EdgeRuleResponse, input Input) (string, string, 
 			headerName = api.RequestBudgetDefaultOverrideHeader
 		}
 		policy := &BudgetPolicyPreview{
-			ConfiguredMS: int64(action.BudgetMs), OverrideHeader: headerName,
+			TotalDeadlineMS: int64(action.TotalDeadlineMs),
+			ConfiguredMS:    int64(action.BudgetMs), OverrideHeader: headerName,
 			OverrideStatus: "unresolved", Source: "unavailable",
 		}
 		return "needs_app_request_budget", "a matching budget rule is configured, but the app's effective request budget and plan ceiling were not loaded", &ActionPreview{Type: "budget", BudgetPolicy: policy}
@@ -1724,69 +1825,30 @@ func throttlePolicyReason(policy ThrottlePolicyPreview) string {
 }
 
 func previewRetryRule(rule api.EdgeRuleResponse, input Input) (string, string, *ActionPreview) {
-	action, ok := decodeAction[api.EdgeRuleRetryAction](rule.Action, "retry")
+	stored, ok := decodeAction[api.EdgeRuleRetryAction](rule.Action, "retry")
 	if !ok {
-		return "unavailable", "retry action is missing or invalid; gateway compilation would drop it", nil
+		return "unavailable", "retry action is missing or invalid; gateway compilation would drop this rule", nil
 	}
-	if action.MaxAttempts < 2 {
-		return "unavailable", "retry action max_attempts is below 2, so gateway compilation would drop this rule; the operator default may apply if retry is enabled", nil
+	action, valid := api.CompileRetryActionForRuntime(*stored)
+	if !valid {
+		return "unavailable", "retry action is missing, invalid, or cannot replay; gateway compilation would drop this rule", nil
 	}
-
 	policy := &RetryPolicyPreview{
-		MaxAttempts:           action.MaxAttempts,
-		MaxAttemptsSource:     "rule",
+		MaxAttempts: action.MaxAttempts, MaxReplays: action.MaxAttempts - 1, MaxAttemptsSource: "rule",
 		AllowNonIdempotent:    action.AllowNonIdempotent,
 		IdempotencyKeyPresent: strings.TrimSpace(input.Headers.Get("Idempotency-Key")) != "",
-		MethodEligibility:     retryMethodEligibility(input.Method, action.AllowNonIdempotent, input.Headers),
+		MethodEligibility:     api.RequestRetryMethodEligibility(input.Method, action.AllowNonIdempotent, input.Headers.Get("Idempotency-Key")),
+		MinRemainingMS:        action.MinRemainingMs, BackoffMS: action.BackoffMs, BudgetPercent: action.BudgetPercent,
+		BudgetMinRetries: action.BudgetMinRetries,
 	}
-	if policy.MaxAttempts > api.EdgeRuleRetryMaxAttempts {
-		policy.MaxAttempts = api.EdgeRuleRetryMaxAttempts
+	if stored.MaxAttempts != action.MaxAttempts {
 		policy.MaxAttemptsSource = "platform_ceiling"
 	}
-	policy.MaxReplays = policy.MaxAttempts - 1
-
-	minRemaining := action.MinRemainingMs
-	if minRemaining <= 0 || minRemaining > api.MaxEdgeRuleRetryMinRemainingMs {
-		minRemaining = api.EdgeRuleRetryDefaultMinRemainingMs
+	// The forwarding loop substitutes the low-traffic allowance at spend time.
+	if policy.BudgetMinRetries <= 0 {
+		policy.BudgetMinRetries = api.EdgeRuleRetryDefaultBudgetMin
 	}
-	policy.MinRemainingMS = minRemaining
-
-	backoff := action.BackoffMs
-	if backoff < 0 || backoff > api.MaxEdgeRuleRetryBackoffMs {
-		backoff = 0
-	}
-	policy.BackoffMS = backoff
-
-	budgetPercent := action.BudgetPercent
-	if budgetPercent < 1 || budgetPercent > api.MaxEdgeRuleRetryBudgetPercent {
-		budgetPercent = api.EdgeRuleRetryDefaultBudgetPercent
-	}
-	policy.BudgetPercent = budgetPercent
-
-	budgetMinRetries := action.BudgetMinRetries
-	if budgetMinRetries <= 0 || budgetMinRetries > api.MaxEdgeRuleRetryBudgetMin {
-		budgetMinRetries = api.EdgeRuleRetryDefaultBudgetMin
-	}
-	policy.BudgetMinRetries = budgetMinRetries
-
 	return "retry_policy_candidate", retryPolicyConfiguredReason(*policy), &ActionPreview{Type: "retry", RetryPolicy: policy}
-}
-
-func retryMethodEligibility(method string, allowNonIdempotent bool, headers http.Header) string {
-	switch method {
-	case http.MethodGet, http.MethodHead, http.MethodOptions, http.MethodTrace, http.MethodPut, http.MethodDelete:
-		return "idempotent_method"
-	case http.MethodPost, http.MethodPatch:
-		if !allowNonIdempotent {
-			return "non_idempotent_disabled"
-		}
-		if strings.TrimSpace(headers.Get("Idempotency-Key")) == "" {
-			return "idempotency_key_required"
-		}
-		return "non_idempotent_allowed_with_key"
-	default:
-		return "unsupported_method"
-	}
 }
 
 func retryPolicyConfiguredReason(policy RetryPolicyPreview) string {
@@ -1796,7 +1858,7 @@ func retryPolicyConfiguredReason(policy RetryPolicyPreview) string {
 	}
 	reason := fmt.Sprintf("matched retry rule allows %s, with a %d ms minimum remaining request budget, %d ms backoff, and aggregate budget of %d%% or at least %d replay(s); method eligibility is %s", attempts, policy.MinRemainingMS, policy.BackoffMS, policy.BudgetPercent, policy.BudgetMinRetries, policy.MethodEligibility)
 	if policy.AllowNonIdempotent {
-		reason += "; POST/PATCH replay is opted in and requires an Idempotency-Key"
+		reason += "; POST/PATCH replay is opted in and requires an Idempotency-Key; the app must honor that key to prevent duplicate side effects"
 	} else {
 		reason += "; POST/PATCH replay is disabled"
 	}
@@ -1807,7 +1869,11 @@ func retryPolicyRuntimeReason(policy RetryPolicyPreview) string {
 	if policy.MethodEligibility == "non_idempotent_disabled" || policy.MethodEligibility == "idempotency_key_required" || policy.MethodEligibility == "unsupported_method" {
 		return fmt.Sprintf("the configured retry method guard prevents replay for this request (%s); the overall result is still incomplete because the operator gate and downstream behavior are not simulated", policy.MethodEligibility)
 	}
-	return "the matching retry policy is shown, but a replay requires an enabled operator gate and a stale transport failure; body replayability, committed-response state, remaining request budget, healthy sibling availability, and live aggregate budget are unknown, so no replay or response outcome is predicted"
+	reason := "the matching retry policy is shown, but a replay requires an enabled operator gate and a stale transport failure; body replayability, committed-response state, remaining request budget, healthy sibling availability, and live aggregate budget are unknown, so no replay or response outcome is predicted"
+	if policy.MethodEligibility == "non_idempotent_allowed_with_key" {
+		reason += "; transport failure can follow completed guest work, so the app must honor its Idempotency-Key to prevent duplicate side effects"
+	}
+	return reason
 }
 
 func previewCircuitBreakerRule(rule api.EdgeRuleResponse) (string, string, *ActionPreview) {
@@ -1898,53 +1964,24 @@ func hasAppRequestBudget(input Input) bool {
 }
 
 func resolveBudgetPolicy(input Input, rule *api.EdgeRuleResponse, headers http.Header) BudgetPolicyPreview {
-	policy := BudgetPolicyPreview{
-		PlanMaxMS: input.RequestBudgetMaxMS, OverrideStatus: "not_applicable",
-	}
-	configuredMS := input.RequestBudgetMS
-	candidateMS := configuredMS
-	source := "plan_default"
-	if input.RequestTimeoutS > 0 {
-		configuredMS = int64(input.RequestTimeoutS) * 1000
-		candidateMS, source = configuredMS, "app"
-	}
+	var action *api.EdgeRuleBudgetAction
 	if rule != nil {
-		action, ok := decodeAction[api.EdgeRuleBudgetAction](rule.Action, "budget")
+		decoded, ok := decodeAction[api.EdgeRuleBudgetAction](rule.Action, "budget")
 		if !ok {
 			return BudgetPolicyPreview{PlanMaxMS: input.RequestBudgetMaxMS, Source: "unavailable", OverrideStatus: "unavailable"}
 		}
-		configuredMS = int64(action.BudgetMs)
-		candidateMS, source = configuredMS, "rule"
-		policy.OverrideHeader = action.AllowOverrideHeader
-		if policy.OverrideHeader == "" {
-			policy.OverrideHeader = api.RequestBudgetDefaultOverrideHeader
+		if _, valid := api.CompileBudgetActionForRuntime(*decoded); !valid {
+			return BudgetPolicyPreview{PlanMaxMS: input.RequestBudgetMaxMS, Source: "unavailable", OverrideStatus: "unavailable"}
 		}
-		policy.OverrideStatus = "not_present"
-		if value := headers.Get(policy.OverrideHeader); value != "" {
-			parsed, err := strconv.Atoi(strings.TrimSpace(value))
-			if err != nil || parsed <= 0 {
-				policy.OverrideStatus = "ignored_invalid"
-			} else {
-				candidateMS, source = int64(parsed), "header_override"
-				policy.OverrideStatus = "applied"
-			}
-		}
+		action = decoded
 	}
-	policy.ConfiguredMS = configuredMS
-	platformMaxMS := api.RequestBudgetPlanMax.Milliseconds()
-	if rule != nil && (candidateMS <= 0 || candidateMS > platformMaxMS) {
-		candidateMS, source = platformMaxMS, "ceiling_clamp"
-		if policy.OverrideStatus == "applied" {
-			policy.OverrideStatus = "applied_clamped"
-		}
+	resolved := api.ResolveRequestExecutionBudget(input.RequestBudgetMS, input.RequestBudgetMaxMS, input.RequestTimeoutS, action, headers)
+	policy := BudgetPolicyPreview{ConfiguredMS: resolved.ConfiguredMS, BudgetMS: resolved.BudgetMS,
+		PlanMaxMS: resolved.PlanMaxMS, Source: resolved.Source, OverrideHeader: resolved.OverrideHeader,
+		OverrideStatus: resolved.OverrideStatus}
+	if action != nil && action.TotalDeadlineMs > 0 {
+		policy.TotalDeadlineMS = min(int64(action.TotalDeadlineMs), input.RequestBudgetMaxMS)
 	}
-	if candidateMS <= 0 || candidateMS > policy.PlanMaxMS {
-		candidateMS, source = policy.PlanMaxMS, "ceiling_clamp"
-		if policy.OverrideStatus == "applied" {
-			policy.OverrideStatus = "applied_clamped"
-		}
-	}
-	policy.BudgetMS, policy.Source = candidateMS, source
 	return policy
 }
 
@@ -1966,7 +2003,10 @@ func budgetPolicyReason(policy BudgetPolicyPreview) string {
 	case "not_present":
 		reason += fmt.Sprintf("; request header %q is absent", policy.OverrideHeader)
 	}
-	return reason + "; this deadline starts only after upload, wake, routing, and admission, and the trace does not predict when it expires"
+	if policy.TotalDeadlineMS > 0 {
+		reason += fmt.Sprintf("; the original-route rule separately configures a %d ms total deadline from trusted public ingress, including upload/wake/queue; execution overrides cannot increase it", policy.TotalDeadlineMS)
+	}
+	return reason + "; the execution budget starts after upload, wake, routing, and admission, and the trace does not predict when it expires"
 }
 
 func requestHasCookie(headers http.Header) bool {
@@ -2636,8 +2676,27 @@ func traceConditionMatches(rule api.EdgeRuleResponse, input Input, requestPath, 
 	return program.Matches(api.EdgeRuleMatchInput{
 		Method: method, Path: requestPath, Host: input.Host, Headers: headers,
 		ClientIP: net.ParseIP(input.ClientIP), Country: input.Country, ASN: input.ASN,
-		VerifiedBot: traceVerifiedBot(input.VerifiedBot, headers),
+		VerifiedBot:       traceVerifiedBot(input.VerifiedBot, headers),
+		VerifiedAICrawler: traceVerifiedAICrawler(input.VerifiedAICrawler, headers),
+		// ADR-20261022083601 amendment 1: as the gateway reads them.
+		AICrawlersUnreleased: slices.Contains(rule.UnreleasedFeatures, api.EdgeFeatureAICrawlers),
 	})
+}
+
+// traceVerifiedAICrawler is the simulated verified_ai_crawler value
+// (ADR-20261022083601). A crawler without published ranges never verifies,
+// as at the gateway.
+func traceVerifiedAICrawler(verified bool, headers http.Header) func() string {
+	if !verified {
+		return nil
+	}
+	return func() string {
+		crawler, ok := api.ClaimedAICrawler(headers.Get("User-Agent"))
+		if !ok || crawler.RangesURL == "" {
+			return ""
+		}
+		return crawler.Name
+	}
 }
 
 // traceVerifiedBot is the simulated verified_bot value (ADR-973).

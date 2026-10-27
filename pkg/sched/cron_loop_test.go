@@ -195,6 +195,13 @@ func makeEngine(t *testing.T, store state.Store, vmm RoutedVMM) (*Engine, *NodeL
 	return eng, ledger
 }
 
+// deliverCronInvocations runs one invocation-drain tick. The cron loop only
+// queues a fire; the drain wakes the app and delivers it (ADR-20261026201726).
+func deliverCronInvocations(t *testing.T, store state.Store, eng *Engine, synth GatewaySynth) {
+	t.Helper()
+	NewDrain(store, eng, WithDrainGatewaySynth(synth)).Tick(context.Background())
+}
+
 func newAppAndCron(t *testing.T, store state.Store, accountID string, enabled bool) (state.App, state.Cron) {
 	t.Helper()
 	ctx := context.Background()
@@ -294,8 +301,14 @@ func TestCronDispatch_FiresOncePerBoundary(t *testing.T) {
 		WithClock(func() time.Time { return now })
 
 	// First tick: cron is due (CreatedAt backdated to 11:00, well past
-	// the previous minute boundary).
+	// the previous minute boundary). ADR-20261026201726: the tick only
+	// queues the fire; it never wakes the app or calls the gateway on the
+	// scheduler loop. The drain delivers it.
 	loop.runCronTick(ctx)
+	if vmm.calls.Load() != 0 || synth.calls.Load() != 0 {
+		t.Fatalf("tick woke %d and invoked %d inline, want 0 and 0", vmm.calls.Load(), synth.calls.Load())
+	}
+	deliverCronInvocations(t, store, eng, synth)
 	if got := vmm.calls.Load(); got != 1 {
 		t.Fatalf("cold boots after first tick = %d, want 1", got)
 	}
@@ -309,6 +322,7 @@ func TestCronDispatch_FiresOncePerBoundary(t *testing.T) {
 	// Second tick without advancing the clock: already fired in this
 	// boundary; must skip (synth still 1, no second cold boot).
 	loop.runCronTick(ctx)
+	deliverCronInvocations(t, store, eng, synth)
 	if got := vmm.calls.Load(); got != 1 {
 		t.Fatalf("cold boots after second tick = %d, want still 1", got)
 	}
@@ -322,6 +336,7 @@ func TestCronDispatch_FiresOncePerBoundary(t *testing.T) {
 	now = time.Date(2026, 7, 17, 12, 3, 0, 0, time.UTC)
 	loop.now = func() time.Time { return now }
 	loop.runCronTick(ctx)
+	deliverCronInvocations(t, store, eng, synth)
 	if got := vmm.calls.Load(); got != 1 {
 		t.Fatalf("cold boots after advance = %d, want still 1 (Wake fast-path)", got)
 	}
@@ -424,8 +439,9 @@ func TestCronDispatch_SuspendedAccountSkipped(t *testing.T) {
 
 // TestCronDispatch_NoGatewayNoCrash pins the "gateway synth is
 // optional" invariant. When schedd is wired without an internal RPC
-// client (e.g. before gatewayd-internal starts up), the loop must still Wake
-// and mark the cron as fired — the synth call is best-effort.
+// client (e.g. before gatewayd-internal starts up), the loop must still
+// queue the fire and mark the cron as fired. It never wakes the app
+// itself: the drain does (ADR-20261026201726).
 func TestCronDispatch_NoGatewayNoCrash(t *testing.T) {
 	t.Parallel()
 	store := state.NewMemStore()
@@ -442,8 +458,8 @@ func TestCronDispatch_NoGatewayNoCrash(t *testing.T) {
 
 	loop.runCronTick(ctx)
 
-	if got := vmm.calls.Load(); got != 1 {
-		t.Fatalf("wake calls = %d, want 1 even without gateway synth", got)
+	if got := vmm.calls.Load(); got != 0 {
+		t.Fatalf("wake calls = %d, want 0: the drain, not the cron loop, wakes the app", got)
 	}
 	got, err := store.CronByID(ctx, cron.ID)
 	if err != nil {
@@ -568,8 +584,8 @@ func TestCronDispatch_ClaimLostHandsOffWithoutDuplicateInvoke(t *testing.T) {
 	if err != nil {
 		t.Fatalf("InvocationByID: %v", err)
 	}
-	if inv.State != state.InvocationDispatching {
-		t.Fatalf("invocation state = %q, want dispatching under drain ownership", inv.State)
+	if inv.State != state.InvocationPending {
+		t.Fatalf("invocation state = %q, want pending for the drain (ADR-20261026201726)", inv.State)
 	}
 }
 
@@ -726,9 +742,10 @@ func TestCronDispatch_EmitsCronFiredAudit(t *testing.T) {
 			t.Errorf("payload missing key %q (full payload=%+v)", k, payload)
 		}
 	}
-	// Value-level checks on the success path.
-	if payload["status"] != "ok" {
-		t.Errorf("payload.status = %v, want ok (synth call succeeded)", payload["status"])
+	// Value-level checks on the success path. ADR-20261026201726: the
+	// row records the queued fire; the drain delivers it later.
+	if payload["status"] != "queued" {
+		t.Errorf("payload.status = %v, want queued", payload["status"])
 	}
 	if payload["app_id"] != app.ID {
 		t.Errorf("payload.app_id = %v, want %s", payload["app_id"], app.ID)
@@ -742,16 +759,13 @@ func TestCronDispatch_EmitsCronFiredAudit(t *testing.T) {
 	if payload["path"] != "/ping" {
 		t.Errorf("payload.path = %v, want /ping", payload["path"])
 	}
-	// invocation_id is the invocations row id; instance_id is the
-	// live VM. recordingSynth stamps inst-fake-<inv.ID> (see
-	// cron_loop_test.go:88), so instance_id is non-empty iff the
-	// synth path landed. Pin both ends so future refactors can't
-	// silently regress the join.
+	// invocation_id is the invocations row id. The instance is chosen
+	// when the drain delivers the row, so it is recorded there, not here.
 	if payload["invocation_id"] == "" {
 		t.Errorf("payload.invocation_id empty on success path (full payload=%+v)", payload)
 	}
-	if payload["instance_id"] == "" {
-		t.Errorf("payload.instance_id empty on success path (full payload=%+v)", payload)
+	if payload["instance_id"] != "" {
+		t.Errorf("payload.instance_id = %v, want empty at queue time (full payload=%+v)", payload["instance_id"], payload)
 	}
 
 	// Second-fire contract: after the first fire, LastFiredAt is
@@ -819,6 +833,7 @@ func TestCronDispatch_CronFiredAuditFailureDoesNotRollback(t *testing.T) {
 		WithClock(func() time.Time { return now })
 
 	loop.runCronTick(ctx)
+	deliverCronInvocations(t, inner, eng, synth)
 
 	// Fire must still have committed (audit failure is best-effort).
 	got, err := inner.CronByID(ctx, cron.ID)
@@ -836,13 +851,7 @@ func TestCronDispatch_CronFiredAuditFailureDoesNotRollback(t *testing.T) {
 }
 
 // failingSynth is a recordingSynth whose Invoke and SynthesizeRequest
-// both error. Drives the status="err" branch in dispatchOneCron: the
-// cron reached the Wake step (so the boundary guard already
-// approved the fire), the synthetic Invoke failed, AND the legacy
-// SynthesizeRequest fallback also failed. The defer-block emit
-// MUST still record status="err" with empty invocation_id and
-// instance_id so SOC 2 CC7.2 catches the "scheduled but failed to
-// fire" case. Test pins that audit row exists + status field.
+// both error: the drain's delivery of a queued cron fire fails.
 type failingSynth struct {
 	calls atomic.Int64
 }
@@ -911,6 +920,7 @@ func TestCronDispatch_FirstFireAfterEnable(t *testing.T) {
 		WithClock(func() time.Time { return now })
 
 	loop.runCronTick(ctx)
+	deliverCronInvocations(t, store, eng, synth)
 
 	if got := synth.calls.Load(); got != 1 {
 		t.Errorf("synth calls = %d, want 1 (first-fire boundary reached, must dispatch)", got)
@@ -1053,23 +1063,20 @@ func TestCronDispatch_FirstFireAuditNullLastFiredAtBefore(t *testing.T) {
 		t.Errorf("last_fired_at_before = %v, want nil on first fire", v)
 	}
 	// Sanity-check the rest of the payload is still populated.
-	if payload["status"] != "ok" {
-		t.Errorf("payload.status = %v, want ok", payload["status"])
+	if payload["status"] != "queued" {
+		t.Errorf("payload.status = %v, want queued", payload["status"])
 	}
 	if payload["cron_id"] != cronRow.ID {
 		t.Errorf("payload.cron_id = %v, want %s", payload["cron_id"], cronRow.ID)
 	}
 }
 
-// TestCronDispatch_EmitsCronFiredAudit_WhenInvokeFails pins the
-// err-path coverage promised by the PR description ("emitted
-// regardless of synthetic Invoke outcome"). A cron that reaches
-// the Wake step but whose synthetic Invoke + SynthesizeRequest
-// both fail MUST still produce a cron.fired audit row with
-// status="err" and empty invocation_id / instance_id (the JSON
-// shape stays stable for dashboards per pkg/audit ADR-035
-// err-path invariant).
-func TestCronDispatch_EmitsCronFiredAudit_WhenInvokeFails(t *testing.T) {
+// TestCronDispatch_FailedDeliveryIsOneAttempt pins ADR-20261026201726: a
+// plain HTTP cron fire is queued (audit status "queued") and the drain makes
+// exactly one delivery attempt. A failed attempt ends the invocation as
+// failed, not dead-lettered, and is not retried; the next boundary is the
+// retry. There is no wake-only fallback.
+func TestCronDispatch_FailedDeliveryIsOneAttempt(t *testing.T) {
 	t.Parallel()
 	store := state.NewMemStore()
 	ctx := context.Background()
@@ -1087,52 +1094,37 @@ func TestCronDispatch_EmitsCronFiredAudit_WhenInvokeFails(t *testing.T) {
 
 	loop.runCronTick(ctx)
 
-	// Even though Invoke + SynthesizeRequest both failed, the
-	// defer-block emit MUST have fired — the cron reached the Wake
-	// step so the boundary guard approved the fire, and SOC 2 CC7.2
-	// expects an audit signal for "scheduled but failed to fire".
 	rows, err := store.ListEvents(ctx, acct.ID, 0)
 	if err != nil {
 		t.Fatalf("ListEvents: %v", err)
 	}
-	if len(rows) != 1 {
-		t.Fatalf("ListEvents(acct) returned %d rows, want 1 (cron.fired on err path); rows=%+v", len(rows), rows)
-	}
-	e := rows[0]
-	if e.Kind != "cron.fired" {
-		t.Errorf("event kind = %q, want cron.fired", e.Kind)
-	}
-	if e.Actor != "schedd" {
-		t.Errorf("event actor = %q, want schedd", e.Actor)
+	if len(rows) != 1 || rows[0].Kind != "cron.fired" || rows[0].Actor != "schedd" {
+		t.Fatalf("events = %+v, want one schedd cron.fired row", rows)
 	}
 	var payload map[string]any
-	if err := json.Unmarshal(e.Data, &payload); err != nil {
-		t.Fatalf("event Data not valid JSON: %v (data=%q)", err, e.Data)
+	if err := json.Unmarshal(rows[0].Data, &payload); err != nil {
+		t.Fatalf("event Data not valid JSON: %v (data=%q)", err, rows[0].Data)
 	}
-	if payload["status"] != "err" {
-		t.Errorf("payload.status = %v, want err (synth failed)", payload["status"])
+	if payload["status"] != "queued" || payload["cron_id"] != cron.ID || payload["app_id"] != app.ID {
+		t.Fatalf("payload = %+v, want queued fire of cron %s", payload, cron.ID)
 	}
-	// JSON shape invariant: invocation_id + instance_id MUST be
-	// present (empty string), NOT omitted — see pkg/audit ADR-035.
-	for _, k := range []string{"invocation_id", "instance_id"} {
-		if _, ok := payload[k]; !ok {
-			t.Errorf("payload missing key %q on err path (full=%+v)", k, payload)
-		}
-		if v, _ := payload[k].(string); v != "" {
-			t.Errorf("payload[%q] = %q, want empty string on err path", k, v)
-		}
+	invocationID, _ := payload["invocation_id"].(string)
+	if invocationID == "" {
+		t.Fatalf("payload.invocation_id empty (full=%+v)", payload)
 	}
-	// The pre-fire state is still useful for ops reconciliation.
-	if payload["cron_id"] != cron.ID {
-		t.Errorf("payload.cron_id = %v, want %s", payload["cron_id"], cron.ID)
+
+	for range 3 {
+		deliverCronInvocations(t, store, eng, synth)
 	}
-	if payload["app_id"] != app.ID {
-		t.Errorf("payload.app_id = %v, want %s", payload["app_id"], app.ID)
+	if got := synth.calls.Load(); got != 1 {
+		t.Fatalf("delivery attempts = %d, want 1 (no retry, no wake-only fallback)", got)
 	}
-	// Synth call counter: both Invoke and SynthesizeRequest must
-	// have been attempted (proves the err path was actually taken).
-	if got := synth.calls.Load(); got != 2 {
-		t.Errorf("synth.calls = %d, want 2 (Invoke + SynthesizeRequest fallback)", got)
+	inv, err := store.InvocationByID(ctx, invocationID)
+	if err != nil {
+		t.Fatalf("InvocationByID: %v", err)
+	}
+	if inv.State != state.InvocationFailed || inv.LastError == "" {
+		t.Fatalf("invocation = state %q error %q, want failed with the delivery error", inv.State, inv.LastError)
 	}
 }
 
@@ -1184,6 +1176,7 @@ func TestCronDispatch_PermanentInvokeErrorSkipsLegacyWake(t *testing.T) {
 	synth := &recordingSynth{invokeErr: fmt.Errorf("%w: application returned HTTP 404", ErrPermanentInvoke)}
 	loop := NewLoop(nil, eng, slog.Default()).WithGatewaySynth(synth)
 	loop.runCronTick(ctx)
+	deliverCronInvocations(t, store, eng, synth)
 	if got := synth.calls.Load(); got != 1 {
 		t.Fatalf("synth calls = %d, want 1: the delivered fire must not be retried as a wake", got)
 	}

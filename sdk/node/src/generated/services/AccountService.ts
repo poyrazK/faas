@@ -23,6 +23,8 @@ import type { CapabilitiesResponse } from '../models/CapabilitiesResponse.js';
 import type { ChangePlanRequest } from '../models/ChangePlanRequest.js';
 import type { CreateBillingRunRequest } from '../models/CreateBillingRunRequest.js';
 import type { DeadLetterEvent } from '../models/DeadLetterEvent.js';
+import type { Preview } from '../models/Preview.js';
+import type { PreviewList } from '../models/PreviewList.js';
 import type { PutBillingConnectionRequest } from '../models/PutBillingConnectionRequest.js';
 import type { PutBillingRunScheduleRequest } from '../models/PutBillingRunScheduleRequest.js';
 import type { RaiseOverageCapRequest } from '../models/RaiseOverageCapRequest.js';
@@ -298,6 +300,9 @@ export class AccountService {
   }
   /**
    * Replay one account-owned dead-letter event atomically.
+   * An event_route entry (a routing failure whose receipt was pruned) has
+   * nothing to redrive and answers 409 dead_letter_not_replayable.
+   *
    * @returns DeadLetterEvent Account dead-letter replay accepted.
    * @throws ApiError
    */
@@ -328,6 +333,7 @@ export class AccountService {
       errors: {
         401: `code: unauthorized`,
         404: `code: not_found`,
+        409: `code: conflict`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
@@ -409,7 +415,7 @@ export class AccountService {
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
         \`profile_investigation_limit\`.
         `,
-        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        503: `Generic 503 envelope. Used by the API capacity gate (e.g.
         host age recipient not loaded → registry credential PUT
         returns 503 instead of accepting plaintext).
         `,
@@ -541,7 +547,7 @@ export class AccountService {
     });
   }
   /**
-   * Account-wide SLO rollup (issue
+   * Account-wide SLO rollup.
    * Flat scalar SLO rollup for the authenticated account. The
    * same wire shape as the per-app endpoint without the
    * `app_id` / `app_slug` fields — the rollup is sum-based
@@ -645,7 +651,7 @@ export class AccountService {
     provider,
   }: {
     /**
-     * Billing provider statements export to (ADR-1507).
+     * Billing provider statements export to.
      */
     provider: BillingProvider,
   }): CancelablePromise<BillingConnectionResponse> {
@@ -680,7 +686,7 @@ export class AccountService {
     requestBody,
   }: {
     /**
-     * Billing provider statements export to (ADR-1507).
+     * Billing provider statements export to.
      */
     provider: BillingProvider,
     requestBody: PutBillingConnectionRequest,
@@ -710,7 +716,7 @@ export class AccountService {
     provider,
   }: {
     /**
-     * Billing provider statements export to (ADR-1507).
+     * Billing provider statements export to.
      */
     provider: BillingProvider,
   }): CancelablePromise<void> {
@@ -727,7 +733,7 @@ export class AccountService {
     });
   }
   /**
-   * List invoices exported from usage statements, with their payment status (ADR-1504).
+   * List invoices exported from usage statements, with their payment status.
    * @returns StatementInvoiceListResponse Exported invoices, newest first.
    * @throws ApiError
    */
@@ -789,7 +795,7 @@ export class AccountService {
     });
   }
   /**
-   * Bill one ended month for every customer (ADR-1503).
+   * Bill one ended month for every customer.
    * Starts a background run for one UTC calendar month that ended at least
    * an hour ago. For every app consumer and platform tenant with billable
    * usage, it drafts the month's statement, holds consumers whose ledger
@@ -976,22 +982,21 @@ export class AccountService {
     });
   }
   /**
-   * Set or clear the account's spend cap (issue
+   * Set or clear the account's spend cap.
    * Sets accounts.overage_cap_cents in integer cents. Body shape:
    *
    * {"overage_cap_cents": <int|null>}
    *
    * Pass `null` (or omit the field) to clear the cap (NULL).
    * Pass 0 to set "no overage allowed." Passing a positive integer
-   * sets the monthly ceiling. The migration CHECK constraint at
-   * `migrations/00054_account_credits.sql` pins
+   * sets the monthly ceiling. The migration CHECK constraint pins
    * `overage_cap_cents IS NULL OR overage_cap_cents >= 0`; a
-   * negative value is rejected at the apid validator before the
+   * negative value is rejected at the API validator before the
    * store ever sees it, returning 400 `validation_failed`.
    *
-   * Once current-month overage meets/exceeds the cap, schedd refuses
+   * Once current-month overage meets/exceeds the cap, the scheduler refuses
    * new wakes with `code: admission_refused` (HTTP 402). The cap is
-   * account-self-scoped (no admin scope required) and the response
+   * account-self-scoped (admin scope required) and the response
    * is the post-update account state. Audit row
    * `overage.cap_changed` is emitted on every successful call.
    *
@@ -1025,10 +1030,101 @@ export class AccountService {
     });
   }
   /**
+   * List the platform previews you can join.
+   * Self-serve platform previews: the previews an
+   * operator opened to self-serve, plus any you joined that have since
+   * closed, so you can still leave them. `eligible` says whether your plan
+   * may join; `enabled` whether the preview is on for you now, for any
+   * reason.
+   *
+   * @returns PreviewList The previews.
+   * @throws ApiError
+   */
+  public static listPreviews(): CancelablePromise<PreviewList> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/previews',
+      errors: {
+        401: `code: unauthorized`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Join a platform preview.
+   * Opts your account in. Joining twice changes nothing. A preview never
+   * grants a plan entitlement, and an operator can still exclude an
+   * account.
+   *
+   * @returns Preview The preview after joining.
+   * @throws ApiError
+   */
+  public static joinPreview({
+    key,
+  }: {
+    /**
+     * Platform preview key, as GET /v1/previews lists it.
+     */
+    key: string,
+  }): CancelablePromise<Preview> {
+    return __request(OpenAPI, {
+      method: 'PUT',
+      url: '/v1/previews/{key}',
+      path: {
+        'key': key,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        403: `\`preview_plan_not_eligible\`: your plan cannot join this preview.`,
+        404: `\`preview_not_offered\`: not a preview open to self-serve.`,
+        409: `\`preview_full\` (with limit and observed) or a concurrent change.`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Leave a platform preview.
+   * Removes your account's opt-in. Leaving is always allowed, even after the preview closed; leaving one you never joined changes nothing.
+   * @returns Preview The preview after leaving.
+   * @throws ApiError
+   */
+  public static leavePreview({
+    key,
+  }: {
+    /**
+     * Platform preview key, as GET /v1/previews lists it.
+     */
+    key: string,
+  }): CancelablePromise<Preview> {
+    return __request(OpenAPI, {
+      method: 'DELETE',
+      url: '/v1/previews/{key}',
+      path: {
+        'key': key,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        404: `\`preview_not_offered\`: not a platform preview.`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
    * Read the per-account egress allowlist extra budget.
    * Returns the per-account additive budget on top of the
-   * plan's `apps.egress_allowlist` cap (issue #679 / PR-B /
-   * ADR-082). The plan cap (Pro 16 / Scale 64) is
+   * plan's `apps.egress_allowlist` cap. The plan cap (Pro 16 / Scale 64) is
    * authoritative for the default case; the additive budget
    * lets admins raise one account's effective cap without
    * changing the plan default for everyone. `extra=0`

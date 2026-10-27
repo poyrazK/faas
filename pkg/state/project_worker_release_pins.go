@@ -128,6 +128,29 @@ func validateRootWorkerPinHeaders(raw json.RawMessage, revision, release string)
 func (m *MemStore) ResolveProjectWorkerJobRelease(_ context.Context, inv Invocation, revision, requested string) (InvocationVersion, bool, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	return m.resolveProjectWorkerJobReleaseLocked(inv, revision, requested)
+}
+
+// ADR-570: the invocation version snapshot captures the lineage pin too. A
+// worker job resolved without it would lose its release and its resident.
+func (s invocationVersionPolicyReader) ResolveProjectWorkerJobRelease(ctx context.Context, inv Invocation, revision, requested string) (InvocationVersion, bool, error) {
+	if s.workerPins == nil {
+		return s.store.ResolveProjectWorkerJobRelease(ctx, inv, revision, requested)
+	}
+	if r, ok := s.workerPins.results[workerPinKey(inv, revision, requested)]; ok {
+		return r.version, r.handled, r.err
+	}
+	// Never open a second connection while this snapshot holds one.
+	s.workerPins.pending = append(s.workerPins.pending, workerPinRequest{inv: inv, revision: revision, requested: requested})
+	return InvocationVersion{}, false, errWorkerPinPending
+}
+
+// The snapshot already holds the store lock.
+func (s memInvocationVersionReader) ResolveProjectWorkerJobRelease(_ context.Context, inv Invocation, revision, requested string) (InvocationVersion, bool, error) {
+	return s.store.resolveProjectWorkerJobReleaseLocked(inv, revision, requested)
+}
+
+func (m *MemStore) resolveProjectWorkerJobReleaseLocked(inv Invocation, revision, requested string) (InvocationVersion, bool, error) {
 	stored, exists := m.invocations[inv.ID]
 	app, appOK := m.apps[inv.AppID]
 	binding, bindingOK := m.queueBindings[stored.QueueBindingID]

@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"slices"
 	"strings"
 
 	"github.com/onebox-faas/faas/pkg/wire"
@@ -39,8 +40,9 @@ func topLevelUsage(showAll, showOperator bool) string {
 	} else {
 		b.WriteString("\nGet started:\n")
 		for _, name := range []string{"start", "menu", "login", "init", "deploy", "dev", "apps", "logs", "inspect", "doctor", "status", "openapi"} {
-			command, _ := lookupCliCommand(name)
-			writeRootHelpEntry(&b, command.Name, command.Short)
+			if command, ok := lookupDiscoverableCommand(name); ok {
+				writeRootHelpEntry(&b, command.Name, command.Short)
+			}
 		}
 		writeRootHelpEntry(&b, "help", "Show command help")
 		b.WriteString("\nExamples:\n")
@@ -95,6 +97,18 @@ func writeRootHelpEntry(b *strings.Builder, name, short string) {
 	fmt.Fprintf(b, "  %-22s %s\n", name, short)
 }
 
+// leadingWords returns the arguments before the first flag, joined.
+func leadingWords(args []string) string {
+	var words []string
+	for _, arg := range args {
+		if strings.HasPrefix(arg, "-") {
+			break
+		}
+		words = append(words, arg)
+	}
+	return strings.Join(words, " ")
+}
+
 func hasHelpFlag(args []string) bool {
 	for _, arg := range args {
 		if arg == "--" {
@@ -120,6 +134,7 @@ func init() {
 }
 
 func run(args []string) (status int) {
+	resetCapabilityView()
 	previousJSON, previousUsageHelp, previousPath := jsonOutput, jsonUsageHelp, invokedCommandPath
 	defer func() {
 		jsonOutput = previousJSON
@@ -153,6 +168,19 @@ func run(args []string) (status int) {
 	}
 	jsonUsageHelp = hasHelpFlag(args)
 	invokedCommandPath = publicCommandPath(args)
+	previousHelpPrinted, previousHelpPath := flagHelpPrinted, helpRequestPath
+	flagHelpPrinted, helpRequestPath = false, ""
+	if jsonUsageHelp {
+		helpRequestPath = leadingWords(args)
+	}
+	defer func() {
+		// A parser that printed --help reports the request as a parse error;
+		// the user asked for help, so the run succeeded.
+		if flagHelpPrinted {
+			status = 0
+		}
+		flagHelpPrinted, helpRequestPath = previousHelpPrinted, previousHelpPath
+	}()
 	if len(args) == 0 {
 		_, _ = fmt.Fprint(osStdout, topLevelUsage(false, false))
 		return 0
@@ -160,15 +188,29 @@ func run(args []string) (status int) {
 	if !cliCommandAvailable(args[0]) {
 		return unknownCommand(args[0])
 	}
+	// ADR-20261023115741: a command whose capability is off for the account
+	// answers like an unknown one.
+	if args[0] != "help" {
+		if path, hidden := hiddenCommand(args, hasHelpFlag(args[1:])); hidden {
+			return unknownCommand(path)
+		}
+	}
 	// Help is always local and comes from the same manifest as completion and
 	// the generated reference. This also handles flags preceding --help.
 	if len(args) > 1 && args[0] != "help" && hasHelpFlag(args[1:]) {
-		if command, ok := lookupCliCommand(args[0]); ok {
+		if command, ok := lookupDiscoverableCommand(args[0]); ok {
 			if printManifestHelp(osStdout, command, args[1:]) {
 				return 0
 			}
 		}
 	}
+	// A command that names its app only with --app also takes the app as the
+	// first argument after its verb.
+	rewritten, err := appArgumentAsFlag(args)
+	if err != nil {
+		return printErr("Invalid app target", err)
+	}
+	args = rewritten
 	// Help and version must remain available when saved configuration is broken.
 	switch args[0] {
 	case "version", "--version", "-v":
@@ -192,7 +234,7 @@ func run(args []string) (status int) {
 			_, _ = fmt.Fprint(osStdout, topLevelUsage(showAll, showOperator))
 			return 0
 		}
-		if command, ok := lookupCliCommand(args[1]); ok && cliCommandAvailable(command.Name) {
+		if command, ok := lookupDiscoverableCommand(args[1]); ok && cliCommandAvailable(command.Name) {
 			if printManifestHelp(osStdout, command, args[2:]) {
 				return 0
 			}
@@ -271,6 +313,9 @@ func run(args []string) (status int) {
 		// switch in cmdPreview itself rather than living as
 		// siblings in main.go.
 		return cmdPreview(args[1:])
+	case "previews":
+		// ADR 20261021080640: join or leave self-serve platform previews.
+		return cmdPreviews(args[1:])
 	case "scan":
 		// Phase 3 (repo decomposition) — dry-run entry point. Prints
 		// the plan as a table or --json, never writes. The
@@ -430,6 +475,10 @@ func run(args []string) (status int) {
 		return cmdFreeze(args[1:])
 	case "release-gates":
 		return cmdReleaseGates(args[1:])
+	case "approvals":
+		return cmdApprovals(args[1:])
+	case "scheduled-releases":
+		return cmdScheduledReleases(args[1:])
 	case "plan":
 		return cmdPlan(args[1:])
 	case "dashboard":
@@ -555,6 +604,12 @@ func run(args []string) (status int) {
 	case "channels":
 		// ADR-749: Slack, PagerDuty and email alert destinations.
 		return cmdChannels(args[1:])
+	case "dashboards":
+		// ADR-20261022173833: saved custom dashboards.
+		return cmdDashboards(args[1:])
+	case "incidents":
+		// ADR-20261022193512: the unified incident list.
+		return cmdIncidents(args[1:])
 	case "slos":
 		// ADR-747: customer-defined SLO definitions (distinct from `slo`).
 		return cmdSLOs(args[1:])
@@ -867,8 +922,14 @@ func printLocalCommandHelpDetail(w io.Writer, command cliCommand, showAll bool) 
 	if len(command.Subcommands) > 0 && !command.SubcommandsAfterPositionals && command.Name != "logs" {
 		choice := " <" + command.subcommandChoice() + ">"
 		// Compact help stays within 80 columns; its Commands section lists
-		// the choices when they no longer fit on the usage line.
-		if command.CompactHelp && len("  "+usage+choice+" [flags]") > 80 {
+		// the choices when they no longer fit on the usage line. Full help
+		// lists them too, so it takes the bad-invocation synopsis limit:
+		// `events --help` put ~120 verbs on one line (Hunt 14 H14-48).
+		limit := usageSynopsisLimit
+		if command.CompactHelp {
+			limit = 80
+		}
+		if len("  "+usage+choice+" [flags]") > limit {
 			choice = " [command]"
 		}
 		usage += choice
@@ -970,6 +1031,10 @@ func printLocalPathHelp(w io.Writer, command cliCommand, sub cliSub, names []str
 		_, _ = fmt.Fprintln(w, "\nExamples:")
 		printCLIExamples(w, sub.Examples)
 	}
+	printHelpNotes(w, sub.Notes)
+	if takesAppArgument(sub.Flags, sub.Positionals, sub.Subcommands) {
+		_, _ = fmt.Fprintf(w, "\nThe app can also be the first argument: %s my-api\n", localHelpSubcommandPath(command, names))
+	}
 	_, _ = fmt.Fprintf(w, "\nDocs: %s\n", docsURLForTopic(command.DocSlug))
 }
 
@@ -1054,9 +1119,16 @@ func printCLIExamples(w io.Writer, examples []string) {
 	}
 }
 
+// findCliSubcommand resolves a verb by name, then by alias, so help for an
+// accepted spelling such as `orgs list` finds the `ls` entry.
 func findCliSubcommand(subcommands []cliSub, name string) (cliSub, bool) {
 	for _, sub := range subcommands {
 		if sub.Name == name {
+			return sub, true
+		}
+	}
+	for _, sub := range subcommands {
+		if slices.Contains(sub.Aliases, name) {
 			return sub, true
 		}
 	}

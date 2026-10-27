@@ -20,7 +20,15 @@ LoadCredential=tls_key:{{ faas_livequeryd_tls_key }}
 {% endif %}
 ExecStart=
 ExecStart=/opt/faas/current/bin/livequeryd \
+{% if faas_livequeryd_databases | length > 0 %}
   -databases-file=/etc/faas/livequeryd/databases.json \
+{% endif %}
+{% if faas_livequeryd_discover_backends | length > 0 %}
+  -discover-backends={{ faas_livequeryd_discover_backends | join(',') }} \
+{% if faas_livequeryd_discover_release_after %}
+  -discover-release-after={{ faas_livequeryd_discover_release_after }} \
+{% endif %}
+{% endif %}
   -checkpoint-dir=/var/lib/faas/livequeryd \
   -keys-dsn-file=%d/keys_dsn \
   -keys-identity=%d/keys_identity \

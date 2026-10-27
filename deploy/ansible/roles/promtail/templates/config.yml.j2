@@ -30,18 +30,25 @@ positions:
   sync_period: 10s
 
 scrape_configs:
-{% for unit in promtail_journal_units %}
-  - job_name: faas-journal-{{ loop.index }}
+  # One journal reader for every listed unit (ADR-20261023124955 §2). Matches
+  # on the same field are ORed by sd-journal, so this reads the journal once
+  # instead of once per unit, which matters on the 2-vCPU control plane.
+  - job_name: faas-journal
     journal:
       max_age: {{ promtail_journal_max_age }}
       json: true
-      matches: _SYSTEMD_UNIT={{ unit }}
+      matches: "{{ promtail_journal_units | map('regex_replace', '^', '_SYSTEMD_UNIT=') | join(' ') }}"
       labels:
         job: faas-journal
-        unit: {{ unit }}
+    relabel_configs:
+      - source_labels: ['__journal__systemd_unit']
+        target_label: unit
     # The first JSON stage unwraps journald's MESSAGE field. The second stage
     # extracts only server-validated identity fields from app_log records;
-    # arbitrary user attributes never become Loki labels.
+    # arbitrary user attributes never become Loki labels. level is slog's
+    # closed set (DEBUG, INFO, WARN, ERROR); debug lines stay in the local
+    # journal and are not shipped. request_id, wake_id and trace_id stay in
+    # the line, never in labels.
     pipeline_stages:
       - json:
           expressions:
@@ -52,8 +59,18 @@ scrape_configs:
             account_id: account_id
             app_id: app_id
             daemon: daemon
+            level: level
+      - drop:
+          source: level
+          value: DEBUG
+          drop_counter_reason: debug_level
       - labels:
           account_id:
           app_id:
           daemon:
-{% endfor %}
+          level:
+      # Store the daemon's own line, not journald's JSON envelope around it:
+      # host and unit are labels already, and the envelope roughly doubles
+      # every line Loki stores. Lines without a MESSAGE keep the envelope.
+      - output:
+          source: message

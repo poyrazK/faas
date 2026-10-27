@@ -6,13 +6,13 @@ import (
 	"net/http"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/platformflags"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func (s *Service) IssueRealtimeTicket(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	w.Header().Set("Cache-Control", "no-store")
-	if !s.TicketsPreviewEnabled {
-		httpkit.NotFound(w, "subscription tickets preview unavailable")
+	if s.previewFlagUnavailable(w, r, acct, platformflags.RealtimeTickets, s.TicketsPreviewEnabled, "subscription tickets preview unavailable") {
 		return
 	}
 	ep, _, ok := s.loadManagedRealtimeEndpoint(w, r, acct)
@@ -49,8 +49,7 @@ func (s *Service) IssueRealtimeTicket(w http.ResponseWriter, r *http.Request, ac
 // the request itself and returns ok=false.
 func (s *Service) ticketRevoker(w http.ResponseWriter, r *http.Request, acct state.Account) (state.ManagedRealtimeEndpoint, state.RealtimeSubscriptionTicketRevoker, bool) {
 	w.Header().Set("Cache-Control", "no-store")
-	if !s.TicketsPreviewEnabled {
-		httpkit.NotFound(w, "subscription tickets preview unavailable")
+	if s.previewFlagUnavailable(w, r, acct, platformflags.RealtimeTickets, s.TicketsPreviewEnabled, "subscription tickets preview unavailable") {
 		return state.ManagedRealtimeEndpoint{}, nil, false
 	}
 	ep, _, ok := s.loadManagedRealtimeEndpoint(w, r, acct)

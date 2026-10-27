@@ -317,16 +317,52 @@ func (m *Manager) resumeDirectMessageAck(ctx context.Context, c *connection, fra
 	m.queueResumeControl(ctx, c, resumeServerFrame{Type: "direct_message_acknowledged", MessageID: frame.MessageID})
 }
 
-func (m *Manager) reserveResume() bool {
+// reserveResume takes one of the node's resume, inbox and SSE subscription
+// slots for account. An account holds at most RealtimeAccountNodeSharePercent
+// of them, as with connections: at 8 per connection, 32 connections of one
+// tenant otherwise took every slot on the node. A nil account (no endpoint
+// state) is held only to the node cap.
+func (m *Manager) reserveResume(account *accountConnections) bool {
+	share := int64(max(1, maxResumeSubscriptions*api.RealtimeAccountNodeSharePercent/100))
+	if account != nil {
+		for {
+			current := account.resume.Load()
+			if current >= share {
+				return false
+			}
+			if account.resume.CompareAndSwap(current, current+1) {
+				break
+			}
+		}
+	}
 	for {
 		current := m.resumeCount.Load()
 		if current >= maxResumeSubscriptions {
+			if account != nil {
+				account.resume.Add(-1)
+			}
 			return false
 		}
 		if m.resumeCount.CompareAndSwap(current, current+1) {
 			return true
 		}
 	}
+}
+
+// releaseResume returns a slot reserveResume granted to account.
+func (m *Manager) releaseResume(account *accountConnections) {
+	m.resumeCount.Add(-1)
+	if account != nil {
+		account.resume.Add(-1)
+	}
+}
+
+// account is the per-account counter of the endpoint c connected to.
+func (c *connection) account() *accountConnections {
+	if c == nil || c.state == nil {
+		return nil
+	}
+	return c.state.account
 }
 
 func (m *Manager) resumeSubscribe(ctx context.Context, c *connection, frame resumeClientFrame) {
@@ -358,14 +394,14 @@ func (m *Manager) resumeSubscribe(ctx context.Context, c *connection, frame resu
 		count++
 	}
 	c.mu.RUnlock()
-	if exists || count >= maxResumePerConnection || !m.reserveResume() {
+	if exists || count >= maxResumePerConnection || !m.reserveResume(c.account()) {
 		m.queueResumeControl(ctx, c, resumeServerFrame{Type: "error", Channel: frame.Channel, Code: "subscription_limit"})
 		return
 	}
 	release := true
 	defer func() {
 		if release {
-			m.resumeCount.Add(-1)
+			m.releaseResume(c.account())
 		}
 	}()
 	subscription := &resumeSubscription{}
@@ -586,7 +622,7 @@ func (m *Manager) resumeSubscribe(ctx context.Context, c *connection, frame resu
 // watchSubscriptionOccupancy starts live occupancy frames when the subscribe
 // frame asked for them and the preview is on (ADR-1324).
 func (m *Manager) watchSubscriptionOccupancy(ctx context.Context, c *connection, frame resumeClientFrame) {
-	if frame.Occupancy && m.cfg.OccupancyPreview && !m.watchOccupancy(c.info.EndpointID, frame.Channel, c) {
+	if frame.Occupancy && c.endpointConfig().occupancyOn(m.cfg) && !m.watchOccupancy(c.info.EndpointID, frame.Channel, c) {
 		m.queueResumeControl(ctx, c, resumeServerFrame{Type: "error", Channel: frame.Channel, Code: "occupancy_limit"})
 	}
 }
@@ -875,6 +911,9 @@ func (m *Manager) checkResumeChannel(ctx context.Context, c *connection, channel
 	if c.ticketToken != "" {
 		return true, nil
 	}
+	if c.identity != nil && channelRulesAllow(endpoint, c.identity.identity, channel) {
+		return true, nil
+	}
 	authorizer, ok := m.hooks.(ChannelAuthorizer)
 	if !ok {
 		return false, errors.New("realtime: channel authorizer unavailable")
@@ -908,7 +947,7 @@ func (m *Manager) checkResumeChannel(ctx context.Context, c *connection, channel
 }
 
 func (m *Manager) pumpResumeSubscription(ctx context.Context, c *connection, channel string, subscription *resumeSubscription, page state.ManagedRealtimeChannelHistory) {
-	defer m.resumeCount.Add(-1)
+	defer m.releaseResume(c.account())
 	defer m.removeResumeSubscription(ctx, c, channel, subscription)
 	ticker := time.NewTicker(m.cfg.ResumePollInterval)
 	defer ticker.Stop()

@@ -91,7 +91,12 @@ func cmdScan(args []string) int {
 		PrintUsage(os.Stderr, "usage: gregale scan [--tarball P] [--path DIR] [--repo OWNER/NAME] [--repository OWNER/NAME --install-id N] [--production-branch BRANCH] [--show-affected] [--explain] [--exclude NAME,…]", "scan")
 		return 1
 	}
-	if rejectUnexpectedFlagArgs(fs) {
+	// `scan ./my-app` answered only "unexpected positional argument" on
+	// production-us rc.294 while `doctor ./my-app` takes the directory
+	// positionally (Hunt 14 H14-64).
+	if dir, ok := sourceDirPositional(fs); ok && *pathFlag == "" && *tarball == "" && *repo == "" {
+		*pathFlag = dir
+	} else if rejectUnexpectedFlagArgs(fs) {
 		return 1
 	}
 	projectSlugExplicit := false
@@ -248,52 +253,9 @@ func executeConnectedRepoScan(opts connectedRepoScanOptions) int {
 // returns the same plan that a project apply would use, without creating an
 // app, deployment, or binding.
 func executeConnectedRepoPreview(ctx context.Context, opts connectedRepoScanOptions, emitJSON, strict, noTriggers bool) int {
-	if opts.tarball != "" || opts.path != "" {
-		return printErr("Could not resolve source", errors.New("--tarball, --path, and --repo are mutually exclusive"))
-	}
-	if err := validateRepoSlug(opts.repo); err != nil {
-		return printErr("Could not resolve source", fmt.Errorf("invalid --repo: %w", err))
-	}
-	if err := validateGitHubRef(opts.ref); err != nil {
-		return printErr("Could not resolve source", fmt.Errorf("invalid --ref: %w", err))
-	}
-	if !api.ValidProjectSlug(opts.projectSlug) {
-		return printErr("Invalid --project-slug", projectSlugValidationError(opts.projectSlug))
-	}
-	if opts.bindingRepo == "" {
-		opts.bindingRepo = opts.repo
-	}
-	if err := validateRepoSlug(opts.bindingRepo); err != nil {
-		return printErr("Invalid --repository", err)
-	}
-	if opts.productionBranch == "" {
-		opts.productionBranch = "main"
-	}
-	if err := validateGitHubRef(opts.productionBranch); err != nil {
-		return printErr("Invalid --production-branch", err)
-	}
-	if opts.installID < 0 {
-		return printErr("Invalid --install-id", errors.New("must be zero or a positive integer"))
-	}
-	if err := validateProjectEnvironmentFlag(opts.environment); err != nil {
-		return printErr("Invalid --environment", err)
-	}
-	onlyList, excludeList := splitCSV(opts.only), splitCSV(opts.exclude)
-	if ok, clash := intersect(onlyList, excludeList); ok {
-		return printErr("Invalid flags", fmt.Errorf("--only and --exclude share workload(s): %s", strings.Join(clash, ", ")))
-	}
-	client, err := authedClientWithDeployTimeout(2 * time.Minute)
-	if err != nil {
-		return printErr("Not logged in", err)
-	}
-	plan, err := client.ScanProjectSourceRef(ctx, api.ProjectSourceRefScanRequest{
-		Repo: opts.repo, Ref: opts.ref, ProjectSlug: opts.projectSlug,
-		RepoFullName: opts.bindingRepo, ProductionBranch: opts.productionBranch,
-		InstallID: opts.installID, Only: onlyList, Exclude: excludeList,
-		Environment: opts.environment, NoTriggers: noTriggers,
-	})
-	if err != nil {
-		return printErr("Scan failed", err)
+	_, plan, _, excludeList, code := connectedRepoPlan(ctx, opts, noTriggers)
+	if code != 0 {
+		return code
 	}
 	if emitJSON {
 		if code := jsonOut(writeJSON(plan)); code != 0 {
@@ -304,7 +266,7 @@ func executeConnectedRepoPreview(ctx context.Context, opts connectedRepoScanOpti
 		}
 		return 0
 	}
-	code := printPlanTextWithExplain(osStdout, plan, excludeList, opts.showAffected, opts.explain)
+	code = printPlanTextWithExplain(osStdout, plan, excludeList, opts.showAffected, opts.explain)
 	if code != 0 {
 		return code
 	}
@@ -312,6 +274,63 @@ func executeConnectedRepoPreview(ctx context.Context, opts connectedRepoScanOpti
 		return printErr("Project plan cannot be applied", planBlockedError(plan))
 	}
 	return 0
+}
+
+// connectedRepoPlan validates the connected-repository options and has the
+// control plane scan the requested ref. A non-zero code means the failure was
+// already reported.
+func connectedRepoPlan(ctx context.Context, opts connectedRepoScanOptions, noTriggers bool) (*Client, api.PlanResponse, []string, []string, int) {
+	fail := func(code int) (*Client, api.PlanResponse, []string, []string, int) {
+		return nil, api.PlanResponse{}, nil, nil, code
+	}
+	if opts.tarball != "" || opts.path != "" {
+		return fail(printErr("Could not resolve source", errors.New("--tarball, --path, and --repo are mutually exclusive")))
+	}
+	if err := validateRepoSlug(opts.repo); err != nil {
+		return fail(printErr("Could not resolve source", fmt.Errorf("invalid --repo: %w", err)))
+	}
+	if err := validateGitHubRef(opts.ref); err != nil {
+		return fail(printErr("Could not resolve source", fmt.Errorf("invalid --ref: %w", err)))
+	}
+	if !api.ValidProjectSlug(opts.projectSlug) {
+		return fail(printErr("Invalid --project-slug", projectSlugValidationError(opts.projectSlug)))
+	}
+	if opts.bindingRepo == "" {
+		opts.bindingRepo = opts.repo
+	}
+	if err := validateRepoSlug(opts.bindingRepo); err != nil {
+		return fail(printErr("Invalid --repository", err))
+	}
+	if opts.productionBranch == "" {
+		opts.productionBranch = "main"
+	}
+	if err := validateGitHubRef(opts.productionBranch); err != nil {
+		return fail(printErr("Invalid --production-branch", err))
+	}
+	if opts.installID < 0 {
+		return fail(printErr("Invalid --install-id", errors.New("must be zero or a positive integer")))
+	}
+	if err := validateProjectEnvironmentFlag(opts.environment); err != nil {
+		return fail(printErr("Invalid --environment", err))
+	}
+	onlyList, excludeList := splitCSV(opts.only), splitCSV(opts.exclude)
+	if ok, clash := intersect(onlyList, excludeList); ok {
+		return fail(printErr("Invalid flags", fmt.Errorf("--only and --exclude share workload(s): %s", strings.Join(clash, ", "))))
+	}
+	client, err := authedClientWithDeployTimeout(2 * time.Minute)
+	if err != nil {
+		return fail(printErr("Not logged in", err))
+	}
+	plan, err := client.ScanProjectSourceRef(ctx, api.ProjectSourceRefScanRequest{
+		Repo: opts.repo, Ref: opts.ref, ProjectSlug: opts.projectSlug,
+		RepoFullName: opts.bindingRepo, ProductionBranch: opts.productionBranch,
+		InstallID: opts.installID, Only: onlyList, Exclude: excludeList,
+		Environment: opts.environment, NoTriggers: noTriggers,
+	})
+	if err != nil {
+		return fail(printErr("Scan failed", err))
+	}
+	return client, plan, onlyList, excludeList, 0
 }
 
 // runProjectDeployPreviewWithMode is the read-only preview path for
@@ -598,8 +617,218 @@ func intersect(a, b []string) (bool, []string) {
 // same slugs). The single-section Workloads loop does not need
 // it: plan.Workloads is the post-filter set, so excluded slugs
 // never appear there.
+// planCreatedSlugs reports the app slugs the plan creates.
+func planCreatedSlugs(plan api.PlanResponse) map[string]bool {
+	creates := make(map[string]bool, len(plan.WillDeploy))
+	for _, affected := range plan.WillDeploy {
+		creates[affected.Slug] = affected.Action == "create"
+	}
+	return creates
+}
+
+// printDefaultMemoryServices names the new services that start with the
+// project default RAM because their Compose file declares no memory, which
+// is easy to miss: a standalone app gets the plan's RAM (Hunt 14 H14-36).
+//
+//nolint:errcheck // a failed write is handled like printPlanTextWithExplain's
+func printDefaultMemoryServices(w io.Writer, plan api.PlanResponse) {
+	creates := planCreatedSlugs(plan)
+	var names []string
+	for _, wl := range plan.Workloads {
+		if strings.HasSuffix(planWorkloadMemorySuffix(wl, creates[wl.AppSlug]), "(default)") {
+			names = append(names, wl.Name)
+		}
+	}
+	if len(names) == 0 {
+		return
+	}
+	sort.Strings(names)
+	fmt.Fprintf(w, "\nStarts with the default %d MB (no memory in the Compose file):\n", api.ProjectWorkloadDefaultRAMMB)
+	for _, name := range names {
+		fmt.Fprintf(w, "  - %s\n", name)
+	}
+	fmt.Fprintln(w, "  Node and Python services often need more. Set deploy.resources.limits.memory (or mem_limit),")
+	fmt.Fprintln(w, "  or run gregale app <slug> --ram <MB> after the deploy.")
+}
+
+// planWorkloadMemorySuffix names a workload's RAM in the plan: the Compose
+// memory when declared, the project default for a service the plan creates
+// (Hunt 14 H14-36), and nothing for an existing app, which keeps its RAM.
+func planWorkloadMemorySuffix(wl api.PlanWorkload, created bool) string {
+	switch {
+	case wl.Resources != nil && wl.Resources.MemoryMB > 0:
+		return fmt.Sprintf("  memory=%dMB", wl.Resources.MemoryMB)
+	case created:
+		return fmt.Sprintf("  memory=%dMB (default)", api.ProjectWorkloadDefaultRAMMB)
+	}
+	return ""
+}
+
 func printPlanText(w io.Writer, plan api.PlanResponse, excludeSet []string, showAffected bool) int {
 	return printPlanTextWithExplain(w, plan, excludeSet, showAffected, false)
+}
+
+// printManagedServices lists the datastores the repository declares: the
+// managed databases apply provides (ADR-20261025111824), then those it does
+// not, with the variable services expect.
+//
+//nolint:errcheck // a failed write is handled like printPlanTextWithExplain's
+func printManagedServices(w io.Writer, managed []api.PlanManaged) {
+	var provided, listed []api.PlanManaged
+	for _, m := range managed {
+		if m.Provision != nil {
+			provided = append(provided, m)
+		} else {
+			listed = append(listed, m)
+		}
+	}
+	if len(provided) > 0 {
+		fmt.Fprintln(w, "\nManaged PostgreSQL (provided by this deploy):")
+		for _, m := range provided {
+			verb := "creates"
+			if m.Provision.Existing {
+				verb = "reuses"
+			}
+			bindings := make([]string, 0, len(m.Provision.Bindings))
+			for _, b := range m.Provision.Bindings {
+				bindings = append(bindings, b.Workload+"."+b.EnvKey)
+			}
+			version := ""
+			if m.Provision.PostgresMajor != 0 {
+				version = fmt.Sprintf(" (PostgreSQL %d)", m.Provision.PostgresMajor)
+			}
+			fmt.Fprintf(w, "  - %-20s %s %s%s, bound to %s\n", m.Name, verb, m.Provision.Database, version, strings.Join(bindings, ", "))
+		}
+	}
+	if len(listed) > 0 {
+		fmt.Fprintln(w, "\nManaged (not provisioned):")
+		for _, m := range listed {
+			reason := ""
+			if text := managedNotProvidedText[m.NotProvisionedReason]; text != "" {
+				reason = "   (" + text + ")"
+			}
+			fmt.Fprintf(w, "  - %s [%s]   hint=%s   image=%s%s\n", m.Name, m.Kind, m.EnvHint, m.Image, reason)
+		}
+	}
+}
+
+// managedNotProvidedText renders the plan's not_provisioned_reason codes.
+var managedNotProvidedText = map[string]string{
+	"unavailable":    "managed PostgreSQL is not available to this account",
+	"plan":           "the plan does not include a managed database",
+	"quota":          "the plan's database limit is reached",
+	"unsupported":    "not supported as a managed database, or its PostgreSQL version is not offered",
+	"configured":     "every service already has its database configured",
+	"not_referenced": "no service uses it",
+	"permission":     "your organization role or key cannot create and bind databases (needs postgres:manage)",
+}
+
+// printPublicURLs names every workload the plan puts on the public edge, so
+// a reviewer sees which services the internet can reach before applying.
+//
+//nolint:errcheck // a failed write is handled like printPlanTextWithExplain's
+func printPublicURLs(w io.Writer, workloads []api.PlanWorkload) {
+	ws := make([]api.PlanWorkload, 0, len(workloads))
+	for _, wl := range workloads {
+		if wl.PublicURL != "" && wl.Visibility != api.AppVisibilityInternal {
+			ws = append(ws, wl)
+		}
+	}
+	if len(ws) == 0 {
+		return
+	}
+	sort.Slice(ws, func(i, j int) bool { return ws[i].Name < ws[j].Name })
+	fmt.Fprintln(w, "\nPublic on the internet:")
+	for _, wl := range ws {
+		fmt.Fprintf(w, "  - %-20s %s\n", wl.Name, wl.PublicURL)
+	}
+}
+
+// printUnsetEnvKeys lists, per workload, the runtime keys that will have no
+// value, so an app does not start without configuration it names.
+//
+//nolint:errcheck // a failed write is handled like printPlanTextWithExplain's
+func printUnsetEnvKeys(w io.Writer, workloads []api.PlanWorkload) {
+	ws := append([]api.PlanWorkload(nil), workloads...)
+	sort.Slice(ws, func(i, j int) bool { return ws[i].Name < ws[j].Name })
+	imported, unset, notOptedIn := false, false, false
+	for _, wl := range ws {
+		imported = imported || len(wl.ImportedEnvKeys) > 0
+		unset = unset || len(wl.UnsetEnvKeys) > 0
+	}
+	if imported {
+		fmt.Fprintln(w, "\nImported from Compose (values already set on an app are kept):")
+		for _, wl := range ws {
+			if len(wl.ImportedEnvKeys) > 0 {
+				fmt.Fprintf(w, "  - %-20s %s\n", wl.Name, strings.Join(wl.ImportedEnvKeys, ", "))
+			}
+		}
+	}
+	if !unset {
+		return
+	}
+	fmt.Fprintln(w, "\nNeeds a value (set before the first request):")
+	for _, wl := range ws {
+		if len(wl.UnsetEnvKeys) == 0 {
+			continue
+		}
+		keys := make([]string, 0, len(wl.UnsetEnvKeys))
+		for _, key := range wl.UnsetEnvKeys {
+			reason := wl.UnsetEnvKeyReasons[key]
+			notOptedIn = notOptedIn || reason == "not_opted_in"
+			if text := envImportReasonText[reason]; text != "" {
+				key += " (" + text + ")"
+			}
+			keys = append(keys, key)
+		}
+		fmt.Fprintf(w, "  - %-20s %s\n", wl.Name, strings.Join(keys, ", "))
+	}
+	fmt.Fprintln(w, "  Set them with `gregale env set --app <app> KEY=VALUE` or `gregale secrets set --app <app> KEY=VALUE`,")
+	fmt.Fprintln(w, "  or pass them in a --secrets-file to gregale deploy.")
+	if notOptedIn {
+		fmt.Fprintln(w, "  To import plain Compose values, add `x-gregale-env-import: true` at the top of the Compose file.")
+	}
+}
+
+// envImportReasonText renders the plan's unset_env_key_reasons codes.
+var envImportReasonText = map[string]string{
+	"not_opted_in":    "plain value in Compose",
+	"secret":          "looks like a secret",
+	"service_address": "Docker address of a datastore or non-HTTP service",
+	"local_address":   "local address",
+	"interpolated":    "uses $ interpolation",
+	"host_value":      "read from the host",
+	"empty":           "empty in Compose",
+	"invalid":         "not importable",
+}
+
+// withProvidedEnvKeys drops keys a --secrets-file supplies from every
+// workload's unset and imported lists: the file's values go to every
+// selected workload, before any Compose value is imported.
+func withProvidedEnvKeys(plan api.PlanResponse, pairs []secretsPair) api.PlanResponse {
+	if len(pairs) == 0 {
+		return plan
+	}
+	provided := make(map[string]bool, len(pairs))
+	for _, pair := range pairs {
+		provided[pair.Key] = true
+	}
+	notProvided := func(keys []string) []string {
+		var out []string
+		for _, key := range keys {
+			if !provided[key] {
+				out = append(out, key)
+			}
+		}
+		return out
+	}
+	workloads := append([]api.PlanWorkload(nil), plan.Workloads...)
+	for i := range workloads {
+		workloads[i].UnsetEnvKeys = notProvided(workloads[i].UnsetEnvKeys)
+		workloads[i].ImportedEnvKeys = notProvided(workloads[i].ImportedEnvKeys)
+	}
+	plan.Workloads = workloads
+	return plan
 }
 
 // printPlanTextWithExplain renders the plan and, when explain is true,
@@ -667,6 +896,9 @@ func printPlanTextWithExplain(w io.Writer, plan api.PlanResponse, excludeSet []s
 	}
 	if showAffected {
 		printAffectedText(w, plan, excludeIdx)
+		printPublicURLs(w, plan.Workloads)
+		printUnsetEnvKeys(w, plan.Workloads)
+		printDefaultMemoryServices(w, plan)
 		if explain {
 			printPlanDetectionTrace(w, plan.Workloads)
 			printPlanDetectionWarnings(w, plan.DetectionWarnings)
@@ -679,7 +911,9 @@ func printPlanTextWithExplain(w io.Writer, plan api.PlanResponse, excludeSet []s
 		// future server-side refactor must not change CLI output.
 		ws := append([]api.PlanWorkload(nil), plan.Workloads...)
 		sort.Slice(ws, func(i, j int) bool { return ws[i].Name < ws[j].Name })
+		creates := planCreatedSlugs(plan)
 		for _, wl := range ws {
+			memorySuffix := planWorkloadMemorySuffix(wl, creates[wl.AppSlug])
 			schedSuffix := ""
 			if wl.Schedule != "" {
 				schedSuffix = " (cron: " + wl.Schedule + ")"
@@ -689,8 +923,8 @@ func printPlanTextWithExplain(w io.Writer, plan api.PlanResponse, excludeSet []s
 				classSuffix = "  class=" + wl.Class
 			}
 			servicePolicySuffix := ""
-			if wl.ServiceBindingPolicy.Effective() == api.ServiceBindingPolicyDeclared {
-				servicePolicySuffix = "  service_policy=declared"
+			if policy := wl.ServiceBindingPolicy.Effective(); policy != api.ServiceBindingPolicyAccount {
+				servicePolicySuffix = "  service_policy=" + string(policy)
 			}
 			serviceTransportSuffix := ""
 			if wl.ServiceBindingTransport == api.ServiceBindingTransportHTTPS {
@@ -707,6 +941,12 @@ func printPlanTextWithExplain(w io.Writer, plan api.PlanResponse, excludeSet []s
 			imageSuffix := ""
 			if wl.Image != "" {
 				imageSuffix = "  image=" + wl.Image
+			} else if wl.GoCommand != "" {
+				imageSuffix = "  builds=cmd/" + wl.GoCommand
+			}
+			visibilitySuffix := ""
+			if wl.Visibility == api.AppVisibilityInternal {
+				visibilitySuffix = "  visibility=internal"
 			}
 			// plan.Workloads is the post-filter set: the scan
 			// service drops --only/--exclude slugs before populating
@@ -714,19 +954,16 @@ func printPlanTextWithExplain(w io.Writer, plan api.PlanResponse, excludeSet []s
 			// appears in this loop, and no "(excluded)" tag is
 			// needed here. The show-affected branch (printAffectedText)
 			// renders the partition including Skipped.
-			fmt.Fprintf(w, "  - %-20s root=%-20s%s%s%s%s%s%s%s\n", wl.Name, wl.RootDir, schedSuffix, classSuffix, servicePolicySuffix, serviceTransportSuffix, previewPolicySuffix, tenantPolicySuffix, imageSuffix)
+			fmt.Fprintf(w, "  - %-20s root=%-20s%s%s%s%s%s%s%s%s%s\n", wl.Name, wl.RootDir, schedSuffix, classSuffix, memorySuffix, servicePolicySuffix, serviceTransportSuffix, previewPolicySuffix, tenantPolicySuffix, visibilitySuffix, imageSuffix)
 			if explain {
 				printWorkloadDetectionTrace(w, wl)
 			}
 		}
 	}
-	if len(plan.Managed) > 0 {
-		fmt.Fprintln(w, "\nManaged (not provisioned):")
-		for _, m := range plan.Managed {
-			fmt.Fprintf(w, "  - %s [%s]   hint=%s   image=%s\n",
-				m.Name, m.Kind, m.EnvHint, m.Image)
-		}
-	}
+	printManagedServices(w, plan.Managed)
+	printPublicURLs(w, plan.Workloads)
+	printUnsetEnvKeys(w, plan.Workloads)
+	printDefaultMemoryServices(w, plan)
 	if len(plan.Warnings) > 0 {
 		fmt.Fprintln(w, "\nWarnings:")
 		for _, wn := range plan.Warnings {

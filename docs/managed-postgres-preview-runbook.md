@@ -247,11 +247,36 @@ when verification fails. Worker restarts repeat verification before readiness.
 
 ## Account deletion
 
-The account status transition is blocked while any managed database is not a
-provider-confirmed `deleted` tombstone. Ask the customer to delete the
-database and wait for reconciliation. The final deletion transaction removes
-only deleted managed-Postgres metadata and usage rows; it never erases an
-active provider resource as a shortcut.
+An account deletion can include the account's personal managed databases
+([ADR-20261024150500](adr/20261024150500-account-deletion-includes-managed-postgres.md)).
+Personal means the ones the account created in its personal organization or in
+an organization without resource ownership. Company-owned databases are never
+included.
+
+- **Non-payment deletion** always includes them, unless the operator sets
+  `FAAS_NONPAYMENT_DELETION_MANAGED_POSTGRES=off` on apid and meterd. With the
+  kill switch off, such an account stays suspended and counts in
+  `meterd_dunning_deletion_blocked_accounts`
+  ([`FaasDunningDeletionBlocked`](runbooks/FaasDunningDeletionBlocked.md)).
+- **Self-service** includes them only when the customer asks
+  (`include_managed_postgres_databases=true`, `--include-postgres-databases`, or
+  the dashboard checkbox). Until launch, only accounts listed in
+  `FAAS_ACCOUNT_DELETION_MANAGED_POSTGRES_ACCOUNTS` see the option. Without it,
+  the deletion is refused with `409 account_deletion_managed_postgres_databases`
+  until the customer deletes each database.
+
+Nothing is deleted when the account enters `deleted_pending`, so an account
+restored or paid back during the 30-day grace keeps its databases and loses the
+opt-in. When the grace ends, apid's grace sweep deletes the bindings and then
+the databases through the normal lifecycle. It retries every tick and logs
+`grace: external cleanup deferred` until every database is a provider-confirmed
+`deleted` tombstone. A database with a restore descendant waits for the
+descendant, and one held by an environment clone waits for the hold.
+
+The final deletion transaction then removes only deleted managed-Postgres
+metadata and usage rows. It never erases an active provider resource as a
+shortcut. Never delete the rows or provider projects by hand, and never disable
+the guard trigger.
 
 ## Billing evidence
 
@@ -496,8 +521,10 @@ Live queries are invisible to customers until launch.
    both. Which accounts see live queries is the `live_queries` platform flag
    (ADR-1700). One livequeryd serves every database the role lists in
    `faas_livequeryd_databases` (`-databases-file`), each at
-   `/<database_id>/live`. A database must be listed there before its live
-   queries work. The flags below serve a single database, for development.
+   `/<database_id>/live`. With `faas_livequeryd_discover_backends`, it also
+   serves every live database of those backends whose provider issued a live
+   login when live queries were enabled (the Neon provider does), with no
+   listing. The flags below serve a single database, for development.
    - `-database-url-file`: a file holding the database connection string
      (`-database-url` puts its password in the process list);
    - `-keys-dsn-file`: a file holding a read-only control-plane connection

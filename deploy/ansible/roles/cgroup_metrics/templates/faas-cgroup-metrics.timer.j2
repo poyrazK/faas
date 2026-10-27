@@ -1,0 +1,11 @@
+[Unit]
+Description=Export per-slice cgroup resource usage every {{ faas_cgroup_metrics_interval }}
+
+[Timer]
+OnBootSec=1min
+OnUnitActiveSec={{ faas_cgroup_metrics_interval }}
+AccuracySec=1s
+Unit=faas-cgroup-metrics.service
+
+[Install]
+WantedBy=timers.target
