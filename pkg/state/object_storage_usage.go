@@ -250,6 +250,12 @@ func SummarizeObjectStorageBillingUsage(s ObjectUsageSnapshot, periodStart time.
 	u := api.ObjectStorageUsage{Fresh: true, PeriodStart: periodStart, Authorizations: s.Authorizations}
 	periodEnd := periodStart.AddDate(0, 1, 0)
 	required := map[string]string{}
+	// A backend with a bucket still live at the month's end must report to
+	// that end. Accepting any in-month report billed a month short by the
+	// exporter's coverage lag, and a stalled exporter's last report locked in
+	// an undercount (Hunt 19 H19-2). A backend whose buckets were all deleted
+	// keeps its last report.
+	liveAtEnd := map[string]bool{}
 	for _, b := range s.Buckets {
 		if !b.Bucket.CreatedAt.IsZero() && !b.Bucket.CreatedAt.Before(periodEnd) {
 			continue
@@ -259,6 +265,9 @@ func SummarizeObjectStorageBillingUsage(s ObjectUsageSnapshot, periodStart time.
 		}
 		if b.Bucket.BackendID != "" {
 			required[b.Bucket.BackendID] = b.Bucket.BackendFingerprint
+			if b.Bucket.State != "deleted" || !b.Bucket.UpdatedAt.Before(periodEnd) {
+				liveAtEnd[b.Bucket.BackendID] = true
+			}
 		}
 	}
 	latest := map[string]api.ObjectStorageUsageReport{}
@@ -273,6 +282,9 @@ func SummarizeObjectStorageBillingUsage(s ObjectUsageSnapshot, periodStart time.
 	for backendID, r := range latest {
 		if fp, ok := required[backendID]; ok {
 			if fp != r.BackendFingerprint {
+				return api.ObjectStorageUsage{}, ErrObjectBillingIncomplete
+			}
+			if liveAtEnd[backendID] && r.ObservedAt.Before(periodEnd.Add(-api.ObjectStorageReportCloseTolerance)) {
 				return api.ObjectStorageUsage{}, ErrObjectBillingIncomplete
 			}
 			delete(required, backendID)
