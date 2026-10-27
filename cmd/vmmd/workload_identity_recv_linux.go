@@ -144,6 +144,9 @@ func (r *WorkloadIdentityReceiver) handleGuestStream(instance string, conn net.C
 	if errors.Is(err, fcvm.ErrRehearsalExternalActionDenied) {
 		return r.respond(conn, workloadIdentityInvalidAudience, workloadIdentityResponse{Error: "rehearsal_identity_unavailable"})
 	}
+	if errors.Is(err, fcvm.ErrQualificationExternalActionDenied) {
+		return r.respond(conn, workloadIdentityInvalidAudience, workloadIdentityResponse{Error: "qualification_identity_unavailable"})
+	}
 	if err != nil || appID == "" || accountID == "" {
 		return r.respond(conn, workloadIdentityInstanceNotFound, workloadIdentityResponse{Error: "instance_not_found"})
 	}

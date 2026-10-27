@@ -3578,6 +3578,7 @@
       "retry_backoff_seconds",
       "retry_max",
       "schedule",
+      "schedule_anchor_at",
       "schedule_policy",
       "schedule_revision",
       "skip_if_running",
@@ -13646,6 +13647,7 @@
     "columns": [
       "account_id",
       "approval_token_hash",
+      "approved_by_account_id",
       "consumed_at",
       "created_at",
       "environment_slug",

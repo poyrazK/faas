@@ -71,7 +71,7 @@ def sync_detailed(
 
      Idempotent at the wire level — second DELETE returns 404.
     Cascades to `mirror_invocation_results` rows via FK ON DELETE
-    CASCADE (PR-A1 migration 00384_mirror_rules.sql). Emits
+    CASCADE (migration 00384_mirror_rules.sql). Emits
     `mirror_rule.deleted` audit + pg_notify `kind=\"mirror\"`.
 
     Args:
@@ -108,7 +108,7 @@ def sync(
 
      Idempotent at the wire level — second DELETE returns 404.
     Cascades to `mirror_invocation_results` rows via FK ON DELETE
-    CASCADE (PR-A1 migration 00384_mirror_rules.sql). Emits
+    CASCADE (migration 00384_mirror_rules.sql). Emits
     `mirror_rule.deleted` audit + pg_notify `kind=\"mirror\"`.
 
     Args:
@@ -140,7 +140,7 @@ async def asyncio_detailed(
 
      Idempotent at the wire level — second DELETE returns 404.
     Cascades to `mirror_invocation_results` rows via FK ON DELETE
-    CASCADE (PR-A1 migration 00384_mirror_rules.sql). Emits
+    CASCADE (migration 00384_mirror_rules.sql). Emits
     `mirror_rule.deleted` audit + pg_notify `kind=\"mirror\"`.
 
     Args:
@@ -175,7 +175,7 @@ async def asyncio(
 
      Idempotent at the wire level — second DELETE returns 404.
     Cascades to `mirror_invocation_results` rows via FK ON DELETE
-    CASCADE (PR-A1 migration 00384_mirror_rules.sql). Emits
+    CASCADE (migration 00384_mirror_rules.sql). Emits
     `mirror_rule.deleted` audit + pg_notify `kind=\"mirror\"`.
 
     Args:

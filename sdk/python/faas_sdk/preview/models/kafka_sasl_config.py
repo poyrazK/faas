@@ -22,7 +22,7 @@ class KafkaSASLConfig:
     """
 
     mechanism: KafkaSASLMechanism
-    """Kafka SASL mechanism (ADR-118 §5). Closed-vocab."""
+    """Kafka SASL mechanism. Closed-vocab."""
     username: str
     password: str | Unset = UNSET
     """Plaintext-on-write only. Omit inside a supplied SASL block to preserve the stored password."""

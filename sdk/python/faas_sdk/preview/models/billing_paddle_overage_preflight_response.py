@@ -12,7 +12,7 @@ T = TypeVar("T", bound="BillingPaddleOveragePreflightResponse")
 @_attrs_define
 class BillingPaddleOveragePreflightResponse:
     """Wire shape for GET /v1/admin/billing-paddle-overage/preflight
-    (B4 / Tier 1 follow-up to PR #802). Operator-side guard that
+    Operator-side guard that
     probes information_schema.columns for the four migration-00041
     columns + counts the per-state rows in a single round-trip.
 
@@ -20,7 +20,7 @@ class BillingPaddleOveragePreflightResponse:
     entirely absent (migrations 00034 + 00041 both unapplied).
     has_window_start / has_state / has_claimed_at / has_claimed_by
     each correspond to one of the four columns added by
-    migration 00041; all four must be true for the meterd
+    migration 00041; all four must be true for the metering service
     overage pusher to land. pending_rows / completed_rows are
     the per-state row totals (a single SQL filter pair).
 

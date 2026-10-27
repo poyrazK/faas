@@ -38,7 +38,7 @@ class RequestAnalyticsDependencyDeploymentObservation:
     deployment_created_at: str | Unset = UNSET
     """RFC 3339 creation time used to order comparable revisions."""
     p95_change_pct: float | Unset = UNSET
-    """P95 percentage change from the preceding comparable deployment, when its baseline is non-zero."""
+    """Percentage change from the preceding comparable deployment, when its baseline is non-zero."""
     error_rate_change_pct: float | Unset = UNSET
     """Error-rate change in percentage points from the preceding comparable deployment."""
     compared_to: str | Unset = UNSET

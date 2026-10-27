@@ -22,8 +22,8 @@ T = TypeVar("T", bound="RouteAdviceSuggestion")
 @_attrs_define
 class RouteAdviceSuggestion:
     """One proposed edge rule for one observed route, with evidence, a what-if estimate and disabled rule bodies (one per
-    hostname). Kinds wake_ahead and priority are app-level settings (ADR-1152): method and route are empty, rules is
-    empty and setting carries the proposal.
+    hostname). Kinds wake_ahead and priority are app-level settings: method and route are empty, rules is empty and
+    setting carries the proposal.
 
     """
 

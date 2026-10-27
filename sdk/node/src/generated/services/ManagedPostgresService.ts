@@ -58,7 +58,7 @@ export class ManagedPostgresService {
   }
   /**
    * Show whether compute overage is on
-   * With overage on, a paid account's managed PostgreSQL databases keep running past the plan's monthly compute allowance until the ceiling, twice the allowance, and are then suspended. Off is the default; the databases are then suspended at the allowance. A cap never deletes a database (ADR-20261025094915).
+   * With overage on, a paid account's managed PostgreSQL databases keep running past the plan's monthly compute allowance until the ceiling, twice the allowance, and are then suspended. Off is the default; the databases are then suspended at the allowance. A cap never deletes a database.
    * @returns ManagedPostgresOverage The account's overage setting and compute ceiling
    * @returns Problem Authentication, plan or capability error
    * @throws ApiError
@@ -880,7 +880,7 @@ export class ManagedPostgresService {
         401: `code: unauthorized`,
         409: `code: conflict`,
         422: `Observation reporting is unsupported by this catalog adapter.`,
-        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        503: `Generic 503 envelope. Used by the API capacity gate (e.g.
         host age recipient not loaded → registry credential PUT
         returns 503 instead of accepting plaintext).
         `,
@@ -907,7 +907,7 @@ export class ManagedPostgresService {
         400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
         401: `code: unauthorized`,
         404: `code: not_found`,
-        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        503: `Generic 503 envelope. Used by the API capacity gate (e.g.
         host age recipient not loaded → registry credential PUT
         returns 503 instead of accepting plaintext).
         `,

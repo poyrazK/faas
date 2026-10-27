@@ -95,7 +95,7 @@ def sync_detailed(
     client: AuthenticatedClient | Client,
     body: DecideReleaseApprovalRequest,
 ) -> Response[Problem | ReleaseApprovalStatus]:
-    """Approve or reject a release (ADR-20261020085706).
+    """Approve or reject a release.
 
      Records one decision per person. A rejection is final and aborts the rollout, restoring the previous
     release. 403 `release_approval_self` when the deployer approves their own release and the policy
@@ -133,7 +133,7 @@ def sync(
     client: AuthenticatedClient | Client,
     body: DecideReleaseApprovalRequest,
 ) -> Problem | ReleaseApprovalStatus | None:
-    """Approve or reject a release (ADR-20261020085706).
+    """Approve or reject a release.
 
      Records one decision per person. A rejection is final and aborts the rollout, restoring the previous
     release. 403 `release_approval_self` when the deployer approves their own release and the policy
@@ -166,7 +166,7 @@ async def asyncio_detailed(
     client: AuthenticatedClient | Client,
     body: DecideReleaseApprovalRequest,
 ) -> Response[Problem | ReleaseApprovalStatus]:
-    """Approve or reject a release (ADR-20261020085706).
+    """Approve or reject a release.
 
      Records one decision per person. A rejection is final and aborts the rollout, restoring the previous
     release. 403 `release_approval_self` when the deployer approves their own release and the policy
@@ -202,7 +202,7 @@ async def asyncio(
     client: AuthenticatedClient | Client,
     body: DecideReleaseApprovalRequest,
 ) -> Problem | ReleaseApprovalStatus | None:
-    """Approve or reject a release (ADR-20261020085706).
+    """Approve or reject a release.
 
      Records one decision per person. A rejection is final and aborts the rollout, restoring the previous
     release. 403 `release_approval_self` when the deployer approves their own release and the policy

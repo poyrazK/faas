@@ -103,7 +103,7 @@ def sync_detailed(
     """Create a mirror rule on an app.
 
      Binds a source deployment to a mirror deployment for canary-shadow
-    comparison (issue #72 / ADR-125 / ADR-124 PR-A2). Both
+    comparison. Both
     deployments must be `live` and belong to the same app. Plan gate
     fires 403 `plan_mirror_not_allowed` for Free/Hobby (cost: 1
     mirror VM per request, billed per running second, capped at
@@ -124,7 +124,7 @@ def sync_detailed(
             `redact_headers` is the
             customer's additive list on top of the always-stripped list
             (Authorization, Cookie, Set-Cookie, X-API-Key, Proxy-Authorization,
-            WWW-Authenticate — applied by PR-A3's redaction layer, NOT by
+            WWW-Authenticate — applied by the redaction layer, NOT by
             A2's storage layer). Requests whose bodies exceed the 64 KiB mirror
             snapshot cap are safely skipped rather than sending a partial request
             to the mirror deployment.
@@ -158,7 +158,7 @@ def sync(
     """Create a mirror rule on an app.
 
      Binds a source deployment to a mirror deployment for canary-shadow
-    comparison (issue #72 / ADR-125 / ADR-124 PR-A2). Both
+    comparison. Both
     deployments must be `live` and belong to the same app. Plan gate
     fires 403 `plan_mirror_not_allowed` for Free/Hobby (cost: 1
     mirror VM per request, billed per running second, capped at
@@ -179,7 +179,7 @@ def sync(
             `redact_headers` is the
             customer's additive list on top of the always-stripped list
             (Authorization, Cookie, Set-Cookie, X-API-Key, Proxy-Authorization,
-            WWW-Authenticate — applied by PR-A3's redaction layer, NOT by
+            WWW-Authenticate — applied by the redaction layer, NOT by
             A2's storage layer). Requests whose bodies exceed the 64 KiB mirror
             snapshot cap are safely skipped rather than sending a partial request
             to the mirror deployment.
@@ -208,7 +208,7 @@ async def asyncio_detailed(
     """Create a mirror rule on an app.
 
      Binds a source deployment to a mirror deployment for canary-shadow
-    comparison (issue #72 / ADR-125 / ADR-124 PR-A2). Both
+    comparison. Both
     deployments must be `live` and belong to the same app. Plan gate
     fires 403 `plan_mirror_not_allowed` for Free/Hobby (cost: 1
     mirror VM per request, billed per running second, capped at
@@ -229,7 +229,7 @@ async def asyncio_detailed(
             `redact_headers` is the
             customer's additive list on top of the always-stripped list
             (Authorization, Cookie, Set-Cookie, X-API-Key, Proxy-Authorization,
-            WWW-Authenticate — applied by PR-A3's redaction layer, NOT by
+            WWW-Authenticate — applied by the redaction layer, NOT by
             A2's storage layer). Requests whose bodies exceed the 64 KiB mirror
             snapshot cap are safely skipped rather than sending a partial request
             to the mirror deployment.
@@ -261,7 +261,7 @@ async def asyncio(
     """Create a mirror rule on an app.
 
      Binds a source deployment to a mirror deployment for canary-shadow
-    comparison (issue #72 / ADR-125 / ADR-124 PR-A2). Both
+    comparison. Both
     deployments must be `live` and belong to the same app. Plan gate
     fires 403 `plan_mirror_not_allowed` for Free/Hobby (cost: 1
     mirror VM per request, billed per running second, capped at
@@ -282,7 +282,7 @@ async def asyncio(
             `redact_headers` is the
             customer's additive list on top of the always-stripped list
             (Authorization, Cookie, Set-Cookie, X-API-Key, Proxy-Authorization,
-            WWW-Authenticate — applied by PR-A3's redaction layer, NOT by
+            WWW-Authenticate — applied by the redaction layer, NOT by
             A2's storage layer). Requests whose bodies exceed the 64 KiB mirror
             snapshot cap are safely skipped rather than sending a partial request
             to the mirror deployment.

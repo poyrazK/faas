@@ -103,6 +103,7 @@ import (
 	"math"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -228,6 +229,12 @@ type Metrics struct {
 	// label is closed to queue|drop and the app label is the existing gateway
 	// app identity used by request metrics.
 	concurrencyThrottled *prometheus.CounterVec
+	// trafficFenceOff counts requests served without the revocation fence
+	// because an operator turned its kill switch off (ADR-570).
+	trafficFenceOff *prometheus.CounterVec
+	// trafficRefusals counts ADR-570 refused and deadline outcomes once per
+	// sealed request decision. path and reason are closed sets.
+	trafficRefusals *prometheus.CounterVec
 	// concurrencyQueueDepth and concurrencyQueueWait expose warm-instance
 	// backpressure separately from the cold-wake queue. Without this split a
 	// customer cannot tell whether latency came from booting or saturation.
@@ -1373,6 +1380,14 @@ func NewMetrics() *Metrics {
 			Name: "gateway_concurrency_throttled_total",
 			Help: "Requests rejected or delayed by an app concurrency boundary, labelled by app and overflow mode.",
 		}, []string{"app", "mode"}),
+		trafficFenceOff: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "gateway_traffic_revocation_fence_off_total",
+			Help: "Requests served without the ADR-570 revocation fence because the traffic_revocation_fence kill switch is off, labelled by traffic path.",
+		}, []string{"path"}),
+		trafficRefusals: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "gateway_traffic_refusals_total",
+			Help: "Requests the traffic controls refused or timed out (ADR-570), labelled by traffic path and refusal reason.",
+		}, []string{"path", "reason"}),
 		concurrencyQueueDepth: prometheus.NewGaugeVec(prometheus.GaugeOpts{
 			Name: "gateway_concurrency_queue_depth",
 			Help: "Requests currently waiting for warm instance capacity on this gateway replica, labelled by app and plan.",
@@ -2149,7 +2164,7 @@ func NewMetrics() *Metrics {
 	for _, result := range []string{"recorded", "failed"} {
 		m.requestIDJournalWrites.WithLabelValues(result)
 	}
-	reg.MustRegister(m.requests, m.platformErrors, m.appInflight, m.smokeChallenge, m.smokeValidation, m.versionAffinityKeys, m.notificationPayloadRejected, m.logDrainDropped, m.logDrainDelivered, m.logDrainFailed, m.logDrainActive, m.logDrainQueueDepth, m.logDrainQueueCapacity, m.logDrainPendingRecords, m.logDrainPendingBytes, m.logDrainPendingCapacity, m.logDrainDeadLetters, m.logDrainOldestPending, m.logDrainDeliveryLatency, m.logDrainRetries, m.logDrainStreamReconnects, m.logDrainGaps, m.logDrainLastSuccess, m.logDrainLastFailure, m.requestTelemetryDropped, m.requestTelemetryShipped, m.requestTelemetryOverwritten, m.requestDuration, m.requestDurationByDeployment, m.wakeLatency, m.platformWakeLatency, m.wakeLatencyByNode, m.wakeQueueWait, m.wakePhaseDuration, m.queueDepth, m.wakeQueueDepth, m.wakeAdmissionQueueDepth, m.wakeAdmissionTotal, m.wakeAdmissionWait, m.wakeAdmissionPreemptTotal, m.concurrencyThrottled, m.concurrencyQueueDepth, m.concurrencyQueueWait, m.rateLimited, m.rateLimitDegraded, m.rateLimitLeaseRequests, m.rateLimitLeaseTokens, m.rateLimitSyncConsults, m.rateLimitShared, m.accountRateLimited, m.coldBoot, m.tlsCertExpiry, m.tlsCertExpiryByHost, m.tlsCertExpiryRefresherWalkComplete, m.tlsOnDemandDenied, m.tenantSurfaceCert, m.wakeLocality, m.wakeSnapshotTier, m.computeNodeChangedSubscriberAlive, m.responseBytes, m.streamFlushes, m.streamActive, m.vmInflightRequests, m.edgeRuleMatch, m.edgeRuleLoadedGeneration, m.edgeRuleConvergingHosts, m.edgeRuleGenerationLag, m.edgeRuleApply, m.publicAuthConfigErrors, m.edgeRuleValidateFailures, m.validateFailures, m.retryAttempts, m.retryExhausted, m.retryBudgetShared, m.retryBudgetBackend, m.circuitTransitions, m.circuitOpenTargets, m.edgeRuleCompileError, m.edgeRuleLoad, m.responseBodyWarnTotal, m.internalAuthMatch, m.appMaintenance, m.requestsByRoute, m.durationByRoute, m.failuresByRoute, m.leaderBootstrapAborts, m.wsUpgradeTotal, m.wsActiveSessions, m.wsSessionDuration, m.wsSessionBytes, m.geoipDBAgeSeconds, m.routeConsumerThrottleDecisions, m.responseCache, m.responseCacheByApp, m.responseCacheWakesAvoided, m.cacheStaleWhileWaking, m.responseCacheBytes, m.responseCacheEntries, m.edgeAnswered, m.corsPreflightEdge, m.healthEdgeAnswered, m.mirrorDispatched, m.mirrorLatency, m.mirrorBodyDiff, m.serviceCallTotal, m.serviceChaosInjected, m.serviceDependencyCalls, m.serviceWakeLatency)
+	reg.MustRegister(m.requests, m.platformErrors, m.appInflight, m.smokeChallenge, m.smokeValidation, m.versionAffinityKeys, m.notificationPayloadRejected, m.logDrainDropped, m.logDrainDelivered, m.logDrainFailed, m.logDrainActive, m.logDrainQueueDepth, m.logDrainQueueCapacity, m.logDrainPendingRecords, m.logDrainPendingBytes, m.logDrainPendingCapacity, m.logDrainDeadLetters, m.logDrainOldestPending, m.logDrainDeliveryLatency, m.logDrainRetries, m.logDrainStreamReconnects, m.logDrainGaps, m.logDrainLastSuccess, m.logDrainLastFailure, m.requestTelemetryDropped, m.requestTelemetryShipped, m.requestTelemetryOverwritten, m.requestDuration, m.requestDurationByDeployment, m.wakeLatency, m.platformWakeLatency, m.wakeLatencyByNode, m.wakeQueueWait, m.wakePhaseDuration, m.queueDepth, m.wakeQueueDepth, m.wakeAdmissionQueueDepth, m.wakeAdmissionTotal, m.wakeAdmissionWait, m.wakeAdmissionPreemptTotal, m.concurrencyThrottled, m.trafficFenceOff, m.trafficRefusals, m.concurrencyQueueDepth, m.concurrencyQueueWait, m.rateLimited, m.rateLimitDegraded, m.rateLimitLeaseRequests, m.rateLimitLeaseTokens, m.rateLimitSyncConsults, m.rateLimitShared, m.accountRateLimited, m.coldBoot, m.tlsCertExpiry, m.tlsCertExpiryByHost, m.tlsCertExpiryRefresherWalkComplete, m.tlsOnDemandDenied, m.tenantSurfaceCert, m.wakeLocality, m.wakeSnapshotTier, m.computeNodeChangedSubscriberAlive, m.responseBytes, m.streamFlushes, m.streamActive, m.vmInflightRequests, m.edgeRuleMatch, m.edgeRuleLoadedGeneration, m.edgeRuleConvergingHosts, m.edgeRuleGenerationLag, m.edgeRuleApply, m.publicAuthConfigErrors, m.edgeRuleValidateFailures, m.validateFailures, m.retryAttempts, m.retryExhausted, m.retryBudgetShared, m.retryBudgetBackend, m.circuitTransitions, m.circuitOpenTargets, m.edgeRuleCompileError, m.edgeRuleLoad, m.responseBodyWarnTotal, m.internalAuthMatch, m.appMaintenance, m.requestsByRoute, m.durationByRoute, m.failuresByRoute, m.leaderBootstrapAborts, m.wsUpgradeTotal, m.wsActiveSessions, m.wsSessionDuration, m.wsSessionBytes, m.geoipDBAgeSeconds, m.routeConsumerThrottleDecisions, m.responseCache, m.responseCacheByApp, m.responseCacheWakesAvoided, m.cacheStaleWhileWaking, m.responseCacheBytes, m.responseCacheEntries, m.edgeAnswered, m.corsPreflightEdge, m.healthEdgeAnswered, m.mirrorDispatched, m.mirrorLatency, m.mirrorBodyDiff, m.serviceCallTotal, m.serviceChaosInjected, m.serviceDependencyCalls, m.serviceWakeLatency)
 	reg.MustRegister(m.retryBudgetBackendInfo)
 	reg.MustRegister(m.requestIDJournalWrites, m.requestIDJournalWriteTime)
 	reg.MustRegister(m.preAuthRateLimited, m.preAuthPolicyShadow, m.edgeRejections)
@@ -2750,6 +2765,16 @@ func (m *Metrics) SweepRouteSeries(now time.Time) int {
 	return m.routeSeries.sweep(now, m.dropRouteSeries)
 }
 
+// DropRouteSeries deletes one route's per-route series for appID when the
+// app's route label set gave that label to another route
+// (ADR-20261026143210 amendment 1). nil-receiver safe.
+func (m *Metrics) DropRouteSeries(appID, route string) {
+	if m == nil || m.routeSeries == nil || appID == "" || route == "" {
+		return
+	}
+	m.routeSeries.dropRoute(appID, route, m.dropRouteSeries)
+}
+
 func (m *Metrics) dropRouteSeries(appID string, routes map[string]map[routeSeriesKey]struct{}) {
 	for route, keys := range routes {
 		for _, class := range routeSeriesClasses {
@@ -3204,6 +3229,43 @@ func normalizeWakeAdmissionPlan(plan string) string {
 	default:
 		return "__other__"
 	}
+}
+
+// observeTrafficFenceOff counts a request served with the revocation fence
+// switched off. path is public_http or managed_service.
+func (m *Metrics) observeTrafficFenceOff(path string) {
+	if m == nil || m.trafficFenceOff == nil {
+		return
+	}
+	if path != "public_http" && path != "managed_service" {
+		path = "other"
+	}
+	m.trafficFenceOff.WithLabelValues(path).Inc()
+}
+
+// trafficRefusalReasons are the refusal values a sealed decision can carry;
+// anything else is reported as "other" so the label family stays bounded.
+var trafficRefusalReasons = map[string]bool{
+	"deadline": true, "rate_limited": true, "rate_limit_unavailable": true, "security_revoked": true,
+	"security_unavailable": true, "policy_unavailable": true, "capacity": true, "identity": true,
+	"authorization": true, "circuit": true, "node_capacity": true, "node_admission_unavailable": true,
+}
+
+// observeTrafficDecision counts a sealed refused or deadline decision. It runs
+// once per public request and once per managed service call.
+func (m *Metrics) observeTrafficDecision(decision trafficDecisionSnapshot) {
+	if m == nil || m.trafficRefusals == nil || decision.refusal == "" || decision.outcome != "refused" && decision.outcome != "deadline" {
+		return
+	}
+	path := decision.path
+	if path != "public_http" && path != "managed_service" {
+		path = "other"
+	}
+	reason := decision.refusal
+	if !trafficRefusalReasons[reason] && !strings.HasSuffix(reason, "_response") {
+		reason = "other"
+	}
+	m.trafficRefusals.WithLabelValues(path, reason).Inc()
 }
 
 // ObserveConcurrencyThrottled records an app-local saturation outcome. Empty

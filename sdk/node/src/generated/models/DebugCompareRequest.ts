@@ -3,7 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * POST body for /v1/apps/{slug}/debug/compare (ADR-127 / PR-B).
+ * POST body for /v1/apps/{slug}/debug/compare.
  */
 export type DebugCompareRequest = {
   /**

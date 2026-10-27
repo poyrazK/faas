@@ -86,7 +86,7 @@ def sync_detailed(
     """List every live instance across the caller's account.
 
      Replaces the per-app fan-out from `/v1/apps/{slug}/instances`
-    with one account-scoped read (issue #393). Each instance carries
+    with one account-scoped read. Each instance carries
     its `app_id`; cross-account isolation is enforced by the SQL
     `apps.account_id = $1` join (test: see
     `TestListInstancesForAccount_CrossAccountIsolation`).
@@ -98,8 +98,8 @@ def sync_detailed(
 
     Rate-limit tiering: one call now replaces N per-app calls,
     so per-page-load token spend drops from N to 1. The
-    per-account bucket (ADR-040) still applies at the gatewayd
-    edge; this route charges 1 token via the apid authLimited
+    per-account bucket still applies at the gateway
+    edge; this route charges 1 token via the API authLimited
     middleware, same as every other `/v1/*` route.
 
     Args:
@@ -135,7 +135,7 @@ def sync(
     """List every live instance across the caller's account.
 
      Replaces the per-app fan-out from `/v1/apps/{slug}/instances`
-    with one account-scoped read (issue #393). Each instance carries
+    with one account-scoped read. Each instance carries
     its `app_id`; cross-account isolation is enforced by the SQL
     `apps.account_id = $1` join (test: see
     `TestListInstancesForAccount_CrossAccountIsolation`).
@@ -147,8 +147,8 @@ def sync(
 
     Rate-limit tiering: one call now replaces N per-app calls,
     so per-page-load token spend drops from N to 1. The
-    per-account bucket (ADR-040) still applies at the gatewayd
-    edge; this route charges 1 token via the apid authLimited
+    per-account bucket still applies at the gateway
+    edge; this route charges 1 token via the API authLimited
     middleware, same as every other `/v1/*` route.
 
     Args:
@@ -179,7 +179,7 @@ async def asyncio_detailed(
     """List every live instance across the caller's account.
 
      Replaces the per-app fan-out from `/v1/apps/{slug}/instances`
-    with one account-scoped read (issue #393). Each instance carries
+    with one account-scoped read. Each instance carries
     its `app_id`; cross-account isolation is enforced by the SQL
     `apps.account_id = $1` join (test: see
     `TestListInstancesForAccount_CrossAccountIsolation`).
@@ -191,8 +191,8 @@ async def asyncio_detailed(
 
     Rate-limit tiering: one call now replaces N per-app calls,
     so per-page-load token spend drops from N to 1. The
-    per-account bucket (ADR-040) still applies at the gatewayd
-    edge; this route charges 1 token via the apid authLimited
+    per-account bucket still applies at the gateway
+    edge; this route charges 1 token via the API authLimited
     middleware, same as every other `/v1/*` route.
 
     Args:
@@ -226,7 +226,7 @@ async def asyncio(
     """List every live instance across the caller's account.
 
      Replaces the per-app fan-out from `/v1/apps/{slug}/instances`
-    with one account-scoped read (issue #393). Each instance carries
+    with one account-scoped read. Each instance carries
     its `app_id`; cross-account isolation is enforced by the SQL
     `apps.account_id = $1` join (test: see
     `TestListInstancesForAccount_CrossAccountIsolation`).
@@ -238,8 +238,8 @@ async def asyncio(
 
     Rate-limit tiering: one call now replaces N per-app calls,
     so per-page-load token spend drops from N to 1. The
-    per-account bucket (ADR-040) still applies at the gatewayd
-    edge; this route charges 1 token via the apid authLimited
+    per-account bucket still applies at the gateway
+    edge; this route charges 1 token via the API authLimited
     middleware, same as every other `/v1/*` route.
 
     Args:

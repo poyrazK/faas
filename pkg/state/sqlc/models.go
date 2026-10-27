@@ -2865,6 +2865,7 @@ type Cron struct {
 	SchedulePolicy        []byte
 	FailureRules          []byte
 	ScheduleRevision      int64
+	ScheduleAnchorAt      pgtype.Timestamptz
 }
 
 type CronFireNowRequest struct {
@@ -11654,16 +11655,17 @@ type ProjectEnvironment struct {
 }
 
 type ProjectEnvironmentApproval struct {
-	ID                pgtype.UUID
-	AccountID         pgtype.UUID
-	ProjectSlug       string
-	EnvironmentSlug   string
-	PlanTokenHash     string
-	ApprovalTokenHash string
-	ExpiresAt         pgtype.Timestamptz
-	CreatedAt         pgtype.Timestamptz
-	TokenKind         string
-	ConsumedAt        pgtype.Timestamptz
+	ID                  pgtype.UUID
+	AccountID           pgtype.UUID
+	ProjectSlug         string
+	EnvironmentSlug     string
+	PlanTokenHash       string
+	ApprovalTokenHash   string
+	ExpiresAt           pgtype.Timestamptz
+	CreatedAt           pgtype.Timestamptz
+	TokenKind           string
+	ConsumedAt          pgtype.Timestamptz
+	ApprovedByAccountID pgtype.UUID
 }
 
 type ProjectEnvironmentCleanupJob struct {

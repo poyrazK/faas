@@ -9,11 +9,9 @@ import { request as __request } from '../../generated/core/request.js';
 export class TemplatesService {
   /**
    * Catalog of starter templates the dashboard wizard renders.
-   * Cookie-session-authenticated (NOT API-key). Mirrors the
-   * embed.FS in cmd/gregale/templates/ via cmd/gregale/templates.Names
-   * without importing the CLI's main package — the dashboard and
-   * the CLI read the same 13-entry list through independent paths.
-   * Adding a template means a new entry in cmd/gregale/templates/embed.go
+   * Cookie-session-authenticated (NOT API-key). The dashboard and
+   * the CLI read the same template list.
+   * Adding a template means a new entry
    * + the same category + description wiring here.
    *
    * Used by the dashboard's /dashboard/apps/new wizard to populate

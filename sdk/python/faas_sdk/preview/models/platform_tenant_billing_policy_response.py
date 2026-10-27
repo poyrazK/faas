@@ -12,7 +12,7 @@ T = TypeVar("T", bound="PlatformTenantBillingPolicyResponse")
 
 @_attrs_define
 class PlatformTenantBillingPolicyResponse:
-    """The account's stored overdue-invoice rule for platform tenants (ADR-1324)."""
+    """The account's stored overdue-invoice rule for platform tenants."""
 
     block_overdue_after_days: int
     updated_at: datetime.datetime

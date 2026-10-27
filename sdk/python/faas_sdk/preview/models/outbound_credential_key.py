@@ -13,7 +13,7 @@ T = TypeVar("T", bound="OutboundCredentialKey")
 
 @_attrs_define
 class OutboundCredentialKey:
-    """One extra provider key of an integration's pool (ADR-991). The value is write-only."""
+    """One extra provider key of an integration's pool. The value is write-only."""
 
     id: UUID
     label: str

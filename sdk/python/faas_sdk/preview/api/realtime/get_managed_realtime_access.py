@@ -93,8 +93,8 @@ def sync_detailed(
 ) -> Response[ManagedRealtimeAccessResponse | Problem]:
     """Read durable channel denies and session cutoff for one principal.
 
-     Requires MFA and read scope. Operator preview requires FAAS_REALTIME_ACCESS_PREVIEW_ENABLED=1 on
-    apid and every realtime node. OIDC endpoints only. Revision zero means no stored controls. Responses
+     Requires MFA and read scope. Operator preview requires FAAS_REALTIME_ACCESS_PREVIEW_ENABLED=1 on the
+    API and every realtime node. OIDC endpoints only. Revision zero means no stored controls. Responses
     contain no token or connection identifiers.
 
     Args:
@@ -132,8 +132,8 @@ def sync(
 ) -> ManagedRealtimeAccessResponse | Problem | None:
     """Read durable channel denies and session cutoff for one principal.
 
-     Requires MFA and read scope. Operator preview requires FAAS_REALTIME_ACCESS_PREVIEW_ENABLED=1 on
-    apid and every realtime node. OIDC endpoints only. Revision zero means no stored controls. Responses
+     Requires MFA and read scope. Operator preview requires FAAS_REALTIME_ACCESS_PREVIEW_ENABLED=1 on the
+    API and every realtime node. OIDC endpoints only. Revision zero means no stored controls. Responses
     contain no token or connection identifiers.
 
     Args:
@@ -166,8 +166,8 @@ async def asyncio_detailed(
 ) -> Response[ManagedRealtimeAccessResponse | Problem]:
     """Read durable channel denies and session cutoff for one principal.
 
-     Requires MFA and read scope. Operator preview requires FAAS_REALTIME_ACCESS_PREVIEW_ENABLED=1 on
-    apid and every realtime node. OIDC endpoints only. Revision zero means no stored controls. Responses
+     Requires MFA and read scope. Operator preview requires FAAS_REALTIME_ACCESS_PREVIEW_ENABLED=1 on the
+    API and every realtime node. OIDC endpoints only. Revision zero means no stored controls. Responses
     contain no token or connection identifiers.
 
     Args:
@@ -203,8 +203,8 @@ async def asyncio(
 ) -> ManagedRealtimeAccessResponse | Problem | None:
     """Read durable channel denies and session cutoff for one principal.
 
-     Requires MFA and read scope. Operator preview requires FAAS_REALTIME_ACCESS_PREVIEW_ENABLED=1 on
-    apid and every realtime node. OIDC endpoints only. Revision zero means no stored controls. Responses
+     Requires MFA and read scope. Operator preview requires FAAS_REALTIME_ACCESS_PREVIEW_ENABLED=1 on the
+    API and every realtime node. OIDC endpoints only. Revision zero means no stored controls. Responses
     contain no token or connection identifiers.
 
     Args:

@@ -31,8 +31,8 @@ class EnableAlertPresetRequest:
     webhook_secret: str | Unset = UNSET
     """HMAC secret for the webhook; required with webhook_url unless channel_ids is set."""
     channel_ids: list[UUID] | Unset = UNSET
-    """Notification channels (ADR-749) the instantiated rule delivers to; with at least one, the webhook fields may
-    be omitted."""
+    """Notification channels the instantiated rule delivers to; with at least one, the webhook fields may be
+    omitted."""
     action: EnableAlertPresetRequestAction | Unset = "webhook"
     """Action to run when the instantiated alert fires. Omit to
     use the default webhook-only behavior. The login_target_pressure,

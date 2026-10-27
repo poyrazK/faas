@@ -138,12 +138,35 @@ func wokenInstance(t *testing.T, f *normalPathFixture, app state.App, wantURI st
 	}
 }
 
+// ownerNodeOf waits for schedd to stamp app's owner node. Apply inserts
+// project apps unplaced and schedd claims them from apid's created notify, so
+// a row read right after apply may not carry a node yet.
+func ownerNodeOf(t *testing.T, f *normalPathFixture, app state.App) string {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		current, err := f.store.AppByID(f.ctx, app.ID)
+		if err != nil {
+			t.Fatalf("read %s: %v", app.Slug, err)
+		}
+		if current.NodeID != "" {
+			return current.NodeID
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("%s has no owner node 10s after apply", app.Slug)
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+}
+
 // previewOf creates the PR-number preview of a project service, carrying its
-// manifest and owner node, as the preview path does.
+// manifest and owner node, as the preview path does. The preview row is
+// inserted directly, with no created notify, so schedd never claims it: it
+// must carry the owner node from the start.
 func previewOf(t *testing.T, f *normalPathFixture, app state.App, pr int) state.App {
 	t.Helper()
 	preview, err := f.store.CreateApp(f.ctx, state.App{AccountID: app.AccountID, ProjectID: app.ProjectID, Slug: fmt.Sprintf("pr-%d-%s", pr, app.Slug),
-		WorkloadName: app.WorkloadName, PreviewOfSlug: app.Slug, PreviewPrNumber: pr, Type: app.Type, Status: state.AppActive, NodeID: app.NodeID,
+		WorkloadName: app.WorkloadName, PreviewOfSlug: app.Slug, PreviewPrNumber: pr, Type: app.Type, Status: state.AppActive, NodeID: ownerNodeOf(t, f, app),
 		RAMMB: app.RAMMB, MaxConcurrency: app.MaxConcurrency, IdleTimeoutS: app.IdleTimeoutS, Manifest: app.Manifest})
 	if err != nil {
 		t.Fatalf("create preview of %s: %v", app.Slug, err)

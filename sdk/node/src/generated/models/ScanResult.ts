@@ -5,7 +5,7 @@
 import type { SeverityCounts } from './SeverityCounts.js';
 import type { Vulnerability } from './Vulnerability.js';
 /**
- * Per-deploy grype CVE scan result (issue #464 / ADR-055). Surfaced on
+ * Per-deploy grype CVE scan result. Surfaced on
  * GET /v1/deployments/{id} (additive DeploymentResponse.Scan field) and
  * on GET /v1/deployments/{id}/scan (the dedicated drill-down route).
  * The dashboard renders the severity counts and the top 10 CVEs;
@@ -26,7 +26,7 @@ export type ScanResult = {
    */
   status: 'pending' | 'complete' | 'failed' | 'skipped';
   /**
-   * Wall clock the grype run completed (RFC 3339 UTC). Empty when status != "complete". Distinct from deployments.created_at — the deploy ships before the scan lands (AC
+   * Wall clock the grype run completed (RFC 3339 UTC). Empty when status != "complete". Distinct from deployments.created_at — the deploy ships before the scan lands (AC #1: scan within 5 min of status: live, not at the same instant). Enforce mode rejects evidence older than 5 minutes.
    */
   scanned_at?: string | null;
   /**
@@ -59,7 +59,7 @@ export type ScanResult = {
    */
   vulnerabilities: Array<Vulnerability>;
   /**
-   * Grype runner's last error message on a failed scan (status = "failed"). Empty on every other status. The PR-3 sink captures the message after the 1-retry backoff is exhausted.
+   * Grype runner's last error message on a failed scan (status = "failed"). Empty on every other status. The sink captures the message after the 1-retry backoff is exhausted.
    */
   error?: string | null;
 };

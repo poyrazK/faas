@@ -66,8 +66,7 @@ def sync_detailed(
     *,
     client: AuthenticatedClient | Client,
 ) -> Response[PlatformTenantCreditListResponse | Problem]:
-    """List a tenant's prepaid credit grants, newest first, with the usable balance per currency
-    (ADR-20261019100331).
+    """List a tenant's prepaid credit grants, newest first, with the usable balance per currency.
 
     Args:
         id (UUID):
@@ -96,8 +95,7 @@ def sync(
     *,
     client: AuthenticatedClient | Client,
 ) -> PlatformTenantCreditListResponse | Problem | None:
-    """List a tenant's prepaid credit grants, newest first, with the usable balance per currency
-    (ADR-20261019100331).
+    """List a tenant's prepaid credit grants, newest first, with the usable balance per currency.
 
     Args:
         id (UUID):
@@ -121,8 +119,7 @@ async def asyncio_detailed(
     *,
     client: AuthenticatedClient | Client,
 ) -> Response[PlatformTenantCreditListResponse | Problem]:
-    """List a tenant's prepaid credit grants, newest first, with the usable balance per currency
-    (ADR-20261019100331).
+    """List a tenant's prepaid credit grants, newest first, with the usable balance per currency.
 
     Args:
         id (UUID):
@@ -149,8 +146,7 @@ async def asyncio(
     *,
     client: AuthenticatedClient | Client,
 ) -> PlatformTenantCreditListResponse | Problem | None:
-    """List a tenant's prepaid credit grants, newest first, with the usable balance per currency
-    (ADR-20261019100331).
+    """List a tenant's prepaid credit grants, newest first, with the usable balance per currency.
 
     Args:
         id (UUID):

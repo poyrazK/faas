@@ -11,7 +11,7 @@ T = TypeVar("T", bound="AccountAbuseHoldAction")
 
 @_attrs_define
 class AccountAbuseHoldAction:
-    """Operator note recorded in the audit log for an abuse-hold change (ADR-361)."""
+    """Operator note recorded in the audit log for an abuse-hold change."""
 
     note: str
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)

@@ -21,7 +21,7 @@ T = TypeVar("T", bound="ConsumerBillingSummaryResponse")
 
 @_attrs_define
 class ConsumerBillingSummaryResponse:
-    """A consumer's own month to date (ADR-1506), priced like its next statement."""
+    """A consumer's own month to date, priced like its next statement."""
 
     consumer_id: UUID
     external_ref: str
@@ -40,7 +40,7 @@ class ConsumerBillingSummaryResponse:
     plan: ConsumerBillingPlan | Unset = UNSET
     """The consumer's current plan and its monthly unit cap."""
     credits_: list[APIConsumerCreditBalance] | Unset = UNSET
-    """Prepaid credit the consumer can still use, per currency (ADR-1306)."""
+    """Prepaid credit the consumer can still use, per currency."""
     spend_cap: ConsumerBillingSpendCap | Unset = UNSET
     """The consumer's monthly spend cap; once the amount due passes it, requests are refused until the month ends
     or credit is added."""

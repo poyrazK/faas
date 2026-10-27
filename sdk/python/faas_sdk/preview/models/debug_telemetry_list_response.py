@@ -19,7 +19,7 @@ T = TypeVar("T", bound="DebugTelemetryListResponse")
 
 @_attrs_define
 class DebugTelemetryListResponse:
-    """Response from GET /v1/apps/{slug}/debug/requests (ADR-127).
+    """Response from GET /v1/apps/{slug}/debug/requests.
     `since` echoes the effective window used (after the plan's
     `DebugTelemetryRetentionDays` clamp) so the dashboard can
     surface a "you widened past the cap" tile.

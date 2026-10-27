@@ -3,7 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * A persisted mirror rule (issue #72 / ADR-125 / ADR-124 PR-A2).
+ * A persisted mirror rule.
  * `always_stripped_headers` is rendered so the customer can audit
  * what the gateway guarantees regardless of their
  * `redact_headers` setting.

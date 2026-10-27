@@ -18,9 +18,9 @@ T = TypeVar("T", bound="CreateProfileCaptureRequest")
 
 @_attrs_define
 class CreateProfileCaptureRequest:
-    """On-demand capture request (ADR-1155). Kinds defaults to [cpu]; duration_seconds to 10. Stacks is an instant snapshot
-    of where every goroutine or thread is waiting, taken when the capture starts. Block and mutex are Go contention
-    profiles (time goroutines spent blocked on channels or locks, or waiting for a mutex, during the window).
+    """On-demand capture request. Kinds defaults to [cpu]; duration_seconds to 10. Stacks is an instant snapshot of where
+    every goroutine or thread is waiting, taken when the capture starts. Block and mutex are Go contention profiles
+    (time goroutines spent blocked on channels or locks, or waiting for a mutex, during the window).
 
     """
 

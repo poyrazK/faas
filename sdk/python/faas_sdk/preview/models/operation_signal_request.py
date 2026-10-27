@@ -12,7 +12,7 @@ T = TypeVar("T", bound="OperationSignalRequest")
 
 @_attrs_define
 class OperationSignalRequest:
-    """One named event for an operation (ADR-1197)."""
+    """One named event for an operation."""
 
     signal_id: str
     """Idempotency key for this delivery"""

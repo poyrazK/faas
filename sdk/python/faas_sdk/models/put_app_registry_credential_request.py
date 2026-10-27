@@ -19,9 +19,9 @@ class PutAppRegistryCredentialRequest:
     """
 
     registry: str
-    """Registry host. Must include explicit `https://` prefix (schemeless + http:// are rejected per ADR-062
-    §https-only clarification; customer's Basic Auth never leaves the box over cleartext). Trailing slash optional;
-    embedded path / query / fragment rejected."""
+    """Registry host. Must include explicit `https://` prefix (schemeless + http:// are rejected §https-only
+    clarification; customer's Basic Auth never leaves the box over cleartext). Trailing slash optional; embedded
+    path / query / fragment rejected."""
     username: str
     """Basic Auth username (metadata, NOT sealed)."""
     password: str

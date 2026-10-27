@@ -111,8 +111,8 @@ def sync_detailed(
 ) -> Response[Problem | RouteInsightFixResponse]:
     """Apply a route insight's fix.
 
-     Applies the edge-rule change the insight's `fix` describes
-    (ADR-20261020161310): `create_cache_rule` creates an enabled `@app`
+     Applies the edge-rule change the insight's `fix` describes: `create_cache_rule` creates an enabled
+    `@app`
     cache rule with the measured safe max-age, `set_cache_max_age` and
     `disable_cache_rule` change the cache rule serving exactly this route,
     and `add_cache_override` adds a narrower rule ahead of a rule that also
@@ -133,7 +133,7 @@ def sync_detailed(
         slug (str):
         id (UUID):
         body (RouteInsightFixRequest): Applies the fix an insight listed; refused when the fix
-            changed since (ADR-20261020161310).
+            changed since.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -165,8 +165,8 @@ def sync(
 ) -> Problem | RouteInsightFixResponse | None:
     """Apply a route insight's fix.
 
-     Applies the edge-rule change the insight's `fix` describes
-    (ADR-20261020161310): `create_cache_rule` creates an enabled `@app`
+     Applies the edge-rule change the insight's `fix` describes: `create_cache_rule` creates an enabled
+    `@app`
     cache rule with the measured safe max-age, `set_cache_max_age` and
     `disable_cache_rule` change the cache rule serving exactly this route,
     and `add_cache_override` adds a narrower rule ahead of a rule that also
@@ -187,7 +187,7 @@ def sync(
         slug (str):
         id (UUID):
         body (RouteInsightFixRequest): Applies the fix an insight listed; refused when the fix
-            changed since (ADR-20261020161310).
+            changed since.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -214,8 +214,8 @@ async def asyncio_detailed(
 ) -> Response[Problem | RouteInsightFixResponse]:
     """Apply a route insight's fix.
 
-     Applies the edge-rule change the insight's `fix` describes
-    (ADR-20261020161310): `create_cache_rule` creates an enabled `@app`
+     Applies the edge-rule change the insight's `fix` describes: `create_cache_rule` creates an enabled
+    `@app`
     cache rule with the measured safe max-age, `set_cache_max_age` and
     `disable_cache_rule` change the cache rule serving exactly this route,
     and `add_cache_override` adds a narrower rule ahead of a rule that also
@@ -236,7 +236,7 @@ async def asyncio_detailed(
         slug (str):
         id (UUID):
         body (RouteInsightFixRequest): Applies the fix an insight listed; refused when the fix
-            changed since (ADR-20261020161310).
+            changed since.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -266,8 +266,8 @@ async def asyncio(
 ) -> Problem | RouteInsightFixResponse | None:
     """Apply a route insight's fix.
 
-     Applies the edge-rule change the insight's `fix` describes
-    (ADR-20261020161310): `create_cache_rule` creates an enabled `@app`
+     Applies the edge-rule change the insight's `fix` describes: `create_cache_rule` creates an enabled
+    `@app`
     cache rule with the measured safe max-age, `set_cache_max_age` and
     `disable_cache_rule` change the cache rule serving exactly this route,
     and `add_cache_override` adds a narrower rule ahead of a rule that also
@@ -288,7 +288,7 @@ async def asyncio(
         slug (str):
         id (UUID):
         body (RouteInsightFixRequest): Applies the fix an insight listed; refused when the fix
-            changed since (ADR-20261020161310).
+            changed since.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

@@ -447,12 +447,28 @@ func (s *server) releaseApprovalState(ctx context.Context, app state.App, d stat
 // releaseApprovalTrafficProblem refuses more traffic for a release that
 // waits for approval or was rejected (ADR-20261020085706).
 func (s *server) releaseApprovalTrafficProblem(r *http.Request, app state.App, d state.Deployment) *api.Problem {
+	return s.approvalTrafficProblem(r.Context(), app, d)
+}
+
+// rollbackTargetApprovalProblem holds a rollback whose target is still live
+// at 0% to the approvals a traffic increase meets: a release deployed with
+// no traffic, or parked for its schedule, is a forward release, not a
+// known-good one, and rolling back to it must not ship it past its approvals
+// or its schedule. A superseded target served before and needs none.
+func (s *server) rollbackTargetApprovalProblem(ctx context.Context, app state.App, target state.Deployment) *api.Problem {
+	if target.Status != state.DeployLive {
+		return nil
+	}
+	return s.approvalTrafficProblem(ctx, app, target)
+}
+
+func (s *server) approvalTrafficProblem(ctx context.Context, app state.App, d state.Deployment) *api.Problem {
 	// ADR-20261021152201: a release waiting for its scheduled start takes
 	// no traffic by hand.
-	if p := s.scheduledReleaseTrafficProblem(r, d); p != nil {
+	if p := s.scheduledTrafficProblem(ctx, d); p != nil {
 		return p
 	}
-	policy, status, err := s.releaseApprovalState(r.Context(), app, d)
+	policy, status, err := s.releaseApprovalState(ctx, app, d)
 	if err != nil {
 		logCustomerFailure(s.log, "read release approvals", err)
 		return api.ErrInternal("Gregale could not read this release's approvals.").WithHint("Retry in a moment.")
@@ -595,16 +611,13 @@ func releaseApprovalActorLabel(r *http.Request, acct state.Account) string {
 // production environment that would release an app requiring approvals
 // (ADR-20261020085706 amendment 1). A promotion has no canary to wait in,
 // so only the protected environment's promotion approval stands in for the
-// app's policy. Apps are checked in slug order.
+// app's policy (protectedPromotionApprovalProblem holds that approval to the
+// policy). Apps are checked in slug order.
 func (s *server) promotionApprovalProblem(ctx context.Context, plan projectEnvironmentPromotionPlan, toEnvironment string) *api.Problem {
 	if plan.Preview.ApprovalRequired || !freeze.IsProductionScope(toEnvironment) {
 		return nil
 	}
-	apps := make([]state.App, 0, len(plan.Apps))
-	for _, app := range plan.Apps {
-		apps = append(apps, app)
-	}
-	sort.Slice(apps, func(i, j int) bool { return apps[i].Slug < apps[j].Slug })
+	apps := promotionAppsBySlug(plan)
 	for _, app := range apps {
 		required, err := approval.CanaryRequired(ctx, s.store, app, toEnvironment, "")
 		if err != nil {
@@ -614,6 +627,59 @@ func (s *server) promotionApprovalProblem(ctx context.Context, plan projectEnvir
 		if required {
 			s.releaseMetrics.Decision(releasemetrics.GuardApproval, "canary_required")
 			return api.ErrReleaseApprovalPromotionUnprotected(app.Slug, plan.Preview.ProjectSlug, toEnvironment)
+		}
+	}
+	return nil
+}
+
+func promotionAppsBySlug(plan projectEnvironmentPromotionPlan) []state.App {
+	apps := make([]state.App, 0, len(plan.Apps))
+	for _, app := range plan.Apps {
+		apps = append(apps, app)
+	}
+	sort.Slice(apps, func(i, j int) bool { return apps[i].Slug < apps[j].Slug })
+	return apps
+}
+
+// protectedPromotionApprovalProblem holds a protected production
+// environment's promotion approval, which stands in for each promoted app's
+// release approval policy (amendment 1), to that policy (amendment 2,
+// security audit 2026-10-27): it is one decision, so it cannot meet a policy
+// of more than one approval, and a policy that forbids self-approval needs
+// it given by someone other than the promoter. approver is "" for an
+// approval made before approvers were recorded.
+func (s *server) protectedPromotionApprovalProblem(ctx context.Context, plan projectEnvironmentPromotionPlan, toEnvironment, approver, promoter string) *api.Problem {
+	if !plan.Preview.ApprovalRequired || !freeze.IsProductionScope(toEnvironment) {
+		return nil
+	}
+	store, ok := s.store.(state.ReleaseApprovalStore)
+	if !ok {
+		return nil
+	}
+	for _, app := range promotionAppsBySlug(plan) {
+		required, err := approval.CanaryRequired(ctx, s.store, app, toEnvironment, "")
+		if err != nil {
+			logCustomerFailure(s.log, "read release approval policy", err)
+			return api.ErrInternal("Gregale could not read an app's release approval policy.").WithHint("Retry in a moment.")
+		}
+		if !required {
+			continue
+		}
+		policy, err := store.ReleaseApprovalPolicy(ctx, app.ID)
+		if errors.Is(err, state.ErrNotFound) {
+			continue
+		}
+		if err != nil {
+			logCustomerFailure(s.log, "read release approval policy", err)
+			return api.ErrInternal("Gregale could not read an app's release approval policy.").WithHint("Retry in a moment.")
+		}
+		if policy.RequiredApprovals > 1 {
+			s.releaseMetrics.Decision(releasemetrics.GuardApproval, "canary_required")
+			return api.ErrReleaseApprovalPromotionInsufficient(app.Slug, toEnvironment, policy.RequiredApprovals)
+		}
+		if !policy.AllowSelfApproval && (approver == "" || approver == promoter) {
+			s.releaseMetrics.Decision(releasemetrics.GuardApproval, "canary_required")
+			return api.ErrReleaseApprovalPromotionSelf(app.Slug, toEnvironment)
 		}
 	}
 	return nil

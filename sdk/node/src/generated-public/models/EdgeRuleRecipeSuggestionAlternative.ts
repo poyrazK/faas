@@ -3,11 +3,11 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * A softer recipe for the same observation, such as challenging browsers instead of rate-limiting (ADR-831 amendment 7).
+ * A softer recipe for the same observation, such as challenging browsers instead of rate-limiting.
  */
 export type EdgeRuleRecipeSuggestionAlternative = {
   /**
-   * Recipe id of the alternative (ADR-986).
+   * Recipe id of the alternative.
    */
   recipe: string;
   /**

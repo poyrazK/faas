@@ -59,7 +59,7 @@ class JobResponse:
     image_resolved_digest: str | Unset = UNSET
     """Immutable OCI manifest digest selected from image_ref."""
     image_storage_key: str | Unset = UNSET
-    """Canonical ext4 artifact key consumed by vmmd."""
+    """Canonical ext4 artifact key consumed by the VM manager."""
     image_materialization_error: str | Unset = UNSET
     """Actionable pull/build failure when materialization_status is failed."""
     image_materialized_at: datetime.datetime | Unset = UNSET

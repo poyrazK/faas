@@ -68,7 +68,7 @@ def sync_detailed(
     """Preview declared routes, observed routes, and matching edge policies.
 
      Read-only route-policy preview for API-hosting roadmap item 11.
-    Joins the persisted OpenAPI declaration with gatewayd's observed
+    Joins the persisted OpenAPI declaration with the gateway's observed
     route labels and the app's edge rules. Each route is classified as
     `matched`, `declared_only`, or `observed_only`; `covered` is true
     when at least one enabled edge rule matches the path and method.
@@ -110,7 +110,7 @@ def sync(
     """Preview declared routes, observed routes, and matching edge policies.
 
      Read-only route-policy preview for API-hosting roadmap item 11.
-    Joins the persisted OpenAPI declaration with gatewayd's observed
+    Joins the persisted OpenAPI declaration with the gateway's observed
     route labels and the app's edge rules. Each route is classified as
     `matched`, `declared_only`, or `observed_only`; `covered` is true
     when at least one enabled edge rule matches the path and method.
@@ -147,7 +147,7 @@ async def asyncio_detailed(
     """Preview declared routes, observed routes, and matching edge policies.
 
      Read-only route-policy preview for API-hosting roadmap item 11.
-    Joins the persisted OpenAPI declaration with gatewayd's observed
+    Joins the persisted OpenAPI declaration with the gateway's observed
     route labels and the app's edge rules. Each route is classified as
     `matched`, `declared_only`, or `observed_only`; `covered` is true
     when at least one enabled edge rule matches the path and method.
@@ -187,7 +187,7 @@ async def asyncio(
     """Preview declared routes, observed routes, and matching edge policies.
 
      Read-only route-policy preview for API-hosting roadmap item 11.
-    Joins the persisted OpenAPI declaration with gatewayd's observed
+    Joins the persisted OpenAPI declaration with the gateway's observed
     route labels and the app's edge rules. Each route is classified as
     `matched`, `declared_only`, or `observed_only`; `covered` is true
     when at least one enabled edge rule matches the path and method.

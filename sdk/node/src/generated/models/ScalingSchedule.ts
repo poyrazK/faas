@@ -3,7 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * One recurring window that raises the warm floor (ADR-195). `cron` is a five-field expression evaluated in the policy's `timezone`; each fire opens a window of `duration_s` seconds during which the app's floor is at least `min_instances`. Cron expresses instants rather than intervals, so the duration is what makes a window — and it needs no special case for a window that crosses midnight.
+ * One recurring window that raises the warm floor. `cron` is a five-field expression evaluated in the policy's `timezone`; each fire opens a window of `duration_s` seconds during which the app's floor is at least `min_instances`. Cron expresses instants rather than intervals, so the duration is what makes a window — and it needs no special case for a window that crosses midnight.
  */
 export type ScalingSchedule = {
   /**

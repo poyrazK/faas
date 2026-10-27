@@ -65,7 +65,7 @@ func TestGRPCReadinessDefaultReplacesTheInferredPath(t *testing.T) {
 			if tc.override != "" {
 				dep.OverrideHealthcheck = []byte(tc.override)
 			}
-			path, grpc, service := sched.StartupProbeForApp(dep, tc.protocol)
+			path, grpc, service := sched.StartupProbeForApp(dep, state.App{AppProtocol: tc.protocol})
 			if path != tc.wantPath || grpc != tc.wantGRPC || service != tc.wantService {
 				t.Fatalf("probe = (%q, %v, %q), want (%q, %v, %q)", path, grpc, service, tc.wantPath, tc.wantGRPC, tc.wantService)
 			}

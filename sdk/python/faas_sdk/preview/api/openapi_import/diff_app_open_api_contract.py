@@ -81,7 +81,7 @@ def sync_detailed(
 ) -> Response[Any | OpenAPIContractDiffResponse | Problem]:
     """Preview the production OpenAPI contract gate.
 
-     Read-only ADR-121 contract diff. Compares the current projected
+     Read-only contract diff. Compares the current projected
     OpenAPI surface against the latest captured live snapshot in the
     requested scope (default `prod`). `blocking=true` means a production
     promotion would be rejected while `FAAS_API_CONTRACT_DIFF_ENABLED`
@@ -120,7 +120,7 @@ def sync(
 ) -> Any | OpenAPIContractDiffResponse | Problem | None:
     """Preview the production OpenAPI contract gate.
 
-     Read-only ADR-121 contract diff. Compares the current projected
+     Read-only contract diff. Compares the current projected
     OpenAPI surface against the latest captured live snapshot in the
     requested scope (default `prod`). `blocking=true` means a production
     promotion would be rejected while `FAAS_API_CONTRACT_DIFF_ENABLED`
@@ -154,7 +154,7 @@ async def asyncio_detailed(
 ) -> Response[Any | OpenAPIContractDiffResponse | Problem]:
     """Preview the production OpenAPI contract gate.
 
-     Read-only ADR-121 contract diff. Compares the current projected
+     Read-only contract diff. Compares the current projected
     OpenAPI surface against the latest captured live snapshot in the
     requested scope (default `prod`). `blocking=true` means a production
     promotion would be rejected while `FAAS_API_CONTRACT_DIFF_ENABLED`
@@ -191,7 +191,7 @@ async def asyncio(
 ) -> Any | OpenAPIContractDiffResponse | Problem | None:
     """Preview the production OpenAPI contract gate.
 
-     Read-only ADR-121 contract diff. Compares the current projected
+     Read-only contract diff. Compares the current projected
     OpenAPI surface against the latest captured live snapshot in the
     requested scope (default `prod`). `blocking=true` means a production
     promotion would be rejected while `FAAS_API_CONTRACT_DIFF_ENABLED`
