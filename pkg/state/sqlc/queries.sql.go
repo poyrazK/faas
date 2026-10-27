@@ -84376,7 +84376,7 @@ func (q *Queries) ReadServicePolicyActiveRelease(ctx context.Context, db DBTX, a
 }
 
 const readServicePolicyAppByID = `-- name: ReadServicePolicyAppByID :one
-SELECT id, account_id, slug, status, project_id, preview_of_slug,
+SELECT id, account_id, slug, workload_name, status, project_id, preview_of_slug,
        preview_pr_number, preview_pr_state, preview_expires_at, app_protocol, websocket_enabled,
        jsonb_strip_nulls(jsonb_build_object(
            'service_bindings', manifest->'service_bindings',
@@ -84393,6 +84393,7 @@ type ReadServicePolicyAppByIDRow struct {
 	ID               pgtype.UUID
 	AccountID        pgtype.UUID
 	Slug             string
+	WorkloadName     string
 	Status           string
 	ProjectID        pgtype.UUID
 	PreviewOfSlug    pgtype.Text
@@ -84412,6 +84413,7 @@ func (q *Queries) ReadServicePolicyAppByID(ctx context.Context, db DBTX, id pgty
 		&i.ID,
 		&i.AccountID,
 		&i.Slug,
+		&i.WorkloadName,
 		&i.Status,
 		&i.ProjectID,
 		&i.PreviewOfSlug,
@@ -84426,7 +84428,7 @@ func (q *Queries) ReadServicePolicyAppByID(ctx context.Context, db DBTX, id pgty
 }
 
 const readServicePolicyAppBySlug = `-- name: ReadServicePolicyAppBySlug :one
-SELECT id, account_id, slug, status, project_id, preview_of_slug,
+SELECT id, account_id, slug, workload_name, status, project_id, preview_of_slug,
        preview_pr_number, preview_pr_state, preview_expires_at, app_protocol, websocket_enabled,
        jsonb_strip_nulls(jsonb_build_object(
            'service_bindings', manifest->'service_bindings',
@@ -84443,6 +84445,7 @@ type ReadServicePolicyAppBySlugRow struct {
 	ID               pgtype.UUID
 	AccountID        pgtype.UUID
 	Slug             string
+	WorkloadName     string
 	Status           string
 	ProjectID        pgtype.UUID
 	PreviewOfSlug    pgtype.Text
@@ -84461,6 +84464,7 @@ func (q *Queries) ReadServicePolicyAppBySlug(ctx context.Context, db DBTX, slug 
 		&i.ID,
 		&i.AccountID,
 		&i.Slug,
+		&i.WorkloadName,
 		&i.Status,
 		&i.ProjectID,
 		&i.PreviewOfSlug,
@@ -84533,7 +84537,7 @@ func (q *Queries) ReadServicePolicyDeploymentWeights(ctx context.Context, db DBT
 }
 
 const readServicePolicyPreviewApp = `-- name: ReadServicePolicyPreviewApp :one
-SELECT id, account_id, slug, status, project_id, preview_of_slug,
+SELECT id, account_id, slug, workload_name, status, project_id, preview_of_slug,
        preview_pr_number, preview_pr_state, preview_expires_at, app_protocol, websocket_enabled,
        jsonb_strip_nulls(jsonb_build_object(
            'service_bindings', manifest->'service_bindings',
@@ -84544,7 +84548,8 @@ SELECT id, account_id, slug, status, project_id, preview_of_slug,
            'allowed_service_callers', manifest->'allowed_service_callers',
            'allowed_service_call_scopes', manifest->'allowed_service_call_scopes'))::jsonb AS manifest
 FROM apps WHERE account_id = $1::uuid AND project_id = $2::uuid
-  AND preview_pr_number = $3::integer AND workload_name = $4::text
+  AND preview_pr_number = $3::integer
+  AND translate(lower(workload_name), '_.', '--') = translate(lower($4::text), '_.', '--')
   AND preview_of_slug IS NOT NULL AND status <> 'deleted'
 `
 
@@ -84559,6 +84564,7 @@ type ReadServicePolicyPreviewAppRow struct {
 	ID               pgtype.UUID
 	AccountID        pgtype.UUID
 	Slug             string
+	WorkloadName     string
 	Status           string
 	ProjectID        pgtype.UUID
 	PreviewOfSlug    pgtype.Text
@@ -84582,6 +84588,7 @@ func (q *Queries) ReadServicePolicyPreviewApp(ctx context.Context, db DBTX, arg 
 		&i.ID,
 		&i.AccountID,
 		&i.Slug,
+		&i.WorkloadName,
 		&i.Status,
 		&i.ProjectID,
 		&i.PreviewOfSlug,
@@ -84668,7 +84675,7 @@ func (q *Queries) ReadServicePolicyReleaseCandidates(ctx context.Context, db DBT
 }
 
 const readServicePolicyTestApp = `-- name: ReadServicePolicyTestApp :one
-SELECT id, account_id, slug, status, project_id, preview_of_slug,
+SELECT id, account_id, slug, workload_name, status, project_id, preview_of_slug,
        preview_pr_number, preview_pr_state, preview_expires_at, app_protocol, websocket_enabled,
        jsonb_strip_nulls(jsonb_build_object(
            'service_bindings', manifest->'service_bindings',
@@ -84693,6 +84700,7 @@ type ReadServicePolicyTestAppRow struct {
 	ID               pgtype.UUID
 	AccountID        pgtype.UUID
 	Slug             string
+	WorkloadName     string
 	Status           string
 	ProjectID        pgtype.UUID
 	PreviewOfSlug    pgtype.Text
@@ -84711,6 +84719,7 @@ func (q *Queries) ReadServicePolicyTestApp(ctx context.Context, db DBTX, arg Rea
 		&i.ID,
 		&i.AccountID,
 		&i.Slug,
+		&i.WorkloadName,
 		&i.Status,
 		&i.ProjectID,
 		&i.PreviewOfSlug,
