@@ -295,6 +295,9 @@ func (m *Manager) RestoreEnvironmentQualification(ctx context.Context, frame sta
 	if err := restorer.RestoreNativeQualification(bootCtx, frame, lease, req, [2]string{kernelPath, basePath}, m.fcVersion); err != nil {
 		return nil, fmt.Errorf("native qualification restore: dedicated native restore: %w", err)
 	}
+	if err := m.recordRestoredQualificationFrameworkReady(bootCtx, frame, req.Runtime); err != nil {
+		return nil, err
+	}
 	inst := &Instance{publicForwardTarget: publicTarget, Lease: lease, Net: nc, Method: WakeRestore, QualificationOnly: true, AppID: req.AppID, AccountID: req.AccountID,
 		DeploymentID: req.DeploymentID, Plan: req.Plan, Port: req.Port, HealthcheckPath: req.HealthcheckPath,
 		StartupDeadlineS: req.StartupDeadlineS}

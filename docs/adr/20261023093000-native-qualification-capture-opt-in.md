@@ -126,6 +126,23 @@ ADR-568 requires.
     `PublicForwardTarget` resolves it under the same rule.
   - Together these give the probe the same reach a source candidate already
     has. The serving index and routing are unchanged.
+- **Framework-ready evidence (decided 2026-10-26).** Only a function runtime
+  runner signals framework-ready. It records the signal in guest memory,
+  which a snapshot keeps, and serves it when the host reads guest port 1027.
+  It never pushes the signal again after a restore.
+  - A candidate whose app has no runtime (`apps.runtime` empty) never
+    signals framework-ready, and production stamps none for it. Its graph
+    member now carries `no_framework_ready_signal`, and activation evidence
+    no longer requires that receipt for it.
+  - Graphs stored before this change keep the requirement: the field is
+    absent there, which fails closed.
+  - For a runner candidate the restore reads the stored state from the
+    restored guest after the native restore succeeds. vmmd records the
+    framework-ready receipt for the restore frame before it publishes the
+    target, using the frozen runtime label.
+  - The n2 run with 4919977311 completed the whole qualification dispatch
+    for the first time. Activation then waited only on this receipt for two
+    full-rootfs image candidates.
 - **What the receipt proves.** A capture made from different inputs cannot
   satisfy the restore request's expectation. Restore still refuses sidecars,
   so only the main workload re-attests.
@@ -155,8 +172,12 @@ ADR-568 requires.
 - 2026-10-26, n2, rerun with 170e8ed217 (`NetnsFor` only):
   - Restore and receipts passed again.
   - The probe then failed with `public forward instance is not live`.
-- Pending: the n2 native GitOps journey with the restored public forward
-  target.
+- 2026-10-26, n2, rerun with 4919977311:
+  - The github graph completed the whole native qualification dispatch:
+    capture, restore, guest receipt, restored-graph smoke and retirement.
+  - Activation evidence then lacked only framework-ready (both candidates
+    are image apps), activation and serving.
+- Pending: the n2 native GitOps journey with the framework-ready rule.
 
 ## Rejected alternatives
 

@@ -55,7 +55,7 @@ func graphActivationEvidenceWithReleaseTargets(graph EnvironmentWorkloadGraph, c
 		// status fail-closed when a definition has no activatable workloads.
 		evidence.BlockingReasons = append(evidence.BlockingReasons, "environment_workload_graph_empty")
 	}
-	nonJobCandidates, jobCandidates := 0, 0
+	nonJobCandidates, jobCandidates, frameworkReadyCandidates := 0, 0, 0
 	for _, member := range graph.Members {
 		switch member.ExecutionMode {
 		case api.ExecutionModeRequest, api.ExecutionModeService, api.ExecutionModeWorker, api.ExecutionModeJob:
@@ -119,6 +119,9 @@ func graphActivationEvidenceWithReleaseTargets(graph EnvironmentWorkloadGraph, c
 			continue
 		}
 		nonJobCandidates++
+		if !member.NoFrameworkReadySignal {
+			frameworkReadyCandidates++
+		}
 		workerSmokeRecorded := false
 		receipt, exists := captures[member.CandidateDeploymentID]
 		frame := receipt.Execution
@@ -140,7 +143,7 @@ func graphActivationEvidenceWithReleaseTargets(graph EnvironmentWorkloadGraph, c
 					restore.InstanceID, frame.InstanceID) {
 					evidence.GuestConfigAcknowledgementsRecorded++
 				}
-				if ready, readyExists := frameworkReady[frame.InstanceID]; readyExists && qualificationFrameworkReadyReceiptMatchesRestore(ready, restore, graph.ID) {
+				if ready, readyExists := frameworkReady[frame.InstanceID]; !member.NoFrameworkReadySignal && readyExists && qualificationFrameworkReadyReceiptMatchesRestore(ready, restore, graph.ID) {
 					evidence.FrameworkReadyAcknowledgementsRecorded++
 				}
 				smoke, smokeExists := smokes[frame.InstanceID]
@@ -170,7 +173,8 @@ func graphActivationEvidenceWithReleaseTargets(graph EnvironmentWorkloadGraph, c
 	if nonJobCandidates > 0 && evidence.GuestConfigAcknowledgementsRecorded != nonJobCandidates {
 		evidence.BlockingReasons = append(evidence.BlockingReasons, "environment_guest_config_acknowledgement_missing")
 	}
-	if nonJobCandidates > 0 && evidence.FrameworkReadyAcknowledgementsRecorded != nonJobCandidates {
+	// Only a runtime runner signals framework-ready (ADR 20261023093000).
+	if frameworkReadyCandidates > 0 && evidence.FrameworkReadyAcknowledgementsRecorded != frameworkReadyCandidates {
 		evidence.BlockingReasons = append(evidence.BlockingReasons, "environment_framework_ready_evidence_missing")
 	}
 	if evidence.SmokesRecorded != evidence.Candidates {

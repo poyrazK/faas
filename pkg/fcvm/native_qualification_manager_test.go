@@ -15,6 +15,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/frameworkready"
 	"github.com/onebox-faas/faas/pkg/netns"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/wire"
@@ -438,6 +439,49 @@ func TestNetnsForReachesRestoredQualificationTargetsOnly(t *testing.T) {
 	}
 	if m.live["restored"] != nil {
 		t.Fatal("a restored qualification target entered the serving index")
+	}
+}
+
+// A restored runner reports the framework-ready state it kept since capture;
+// a runtime-less app owes no receipt, and a missing sink fails closed.
+func TestRestoredQualificationFrameworkReadyIsReadFromTheGuest(t *testing.T) {
+	m := NewManager(&fakeRunner{}, nil, Paths{}, "test", nil, nil)
+	frame := state.EnvironmentQualificationExecution{InstanceID: uuid.NewString()}
+	reads := 0
+	m.WithFrameworkReadyReader(func(_ context.Context, instance string) (frameworkready.Status, error) {
+		reads++
+		if instance != frame.InstanceID {
+			return frameworkready.Status{}, errors.New("read another instance")
+		}
+		return frameworkready.Status{Ready: reads > 1, WarmupMs: 42}, nil
+	})
+	if err := m.recordRestoredQualificationFrameworkReady(t.Context(), frame, "node22"); !errors.Is(err, state.ErrConflict) {
+		t.Fatalf("restore without a framework-ready sink = %v", err)
+	}
+	if err := m.recordRestoredQualificationFrameworkReady(t.Context(), frame, ""); err != nil || reads != 0 {
+		t.Fatalf("runtime-less restore read framework-ready: %v, reads=%d", err, reads)
+	}
+	type record struct {
+		frame   state.EnvironmentQualificationExecution
+		runtime string
+		warmup  int64
+	}
+	var got []record
+	m.WithQualificationFrameworkReadyRecorder(func(_ context.Context, frame state.EnvironmentQualificationExecution, runtime string, warmup int64) error {
+		got = append(got, record{frame, runtime, warmup})
+		return nil
+	})
+	if err := m.recordRestoredQualificationFrameworkReady(t.Context(), frame, "node22"); err != nil {
+		t.Fatal(err)
+	}
+	if reads != 2 || len(got) != 1 || got[0] != (record{frame, "node22", 42}) {
+		t.Fatalf("framework-ready receipt = %+v after %d reads", got, reads)
+	}
+	canceled, cancel := context.WithCancel(t.Context())
+	cancel()
+	reads = -100 // never ready before the deadline
+	if err := m.recordRestoredQualificationFrameworkReady(canceled, frame, "node22"); err == nil || len(got) != 1 {
+		t.Fatalf("a runner that never reported ready was recorded: %v", err)
 	}
 }
 

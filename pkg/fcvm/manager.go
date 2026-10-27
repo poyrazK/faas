@@ -37,6 +37,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/rehearsalrecorder"
 	"github.com/onebox-faas/faas/pkg/runtimeadmission"
 	"github.com/onebox-faas/faas/pkg/secretbox"
+	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/storage"
 	pkgtrace "github.com/onebox-faas/faas/pkg/trace"
 	"github.com/onebox-faas/faas/pkg/vmmdmount"
@@ -1079,6 +1080,9 @@ type Manager struct {
 	lifecycleCtx         context.Context
 	frameworkReadyReader func(context.Context, string) (frameworkready.Status, error)
 	frameworkReadyRuns   map[string]*frameworkReadyRun
+	// qualificationFrameworkReadyRecorder stores a restored qualification
+	// target's framework-ready receipt (ADR 20261023093000).
+	qualificationFrameworkReadyRecorder func(context.Context, state.EnvironmentQualificationExecution, string, int64) error
 	// hostIdentities is the slice of X25519 secret keys used to
 	// unseal per-app sealed env blobs at wake time (spec §11/G2).
 	// Holds the current identity alone in the normal pre-rotation
