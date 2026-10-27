@@ -8462,21 +8462,14 @@ SELECT id, account_id, slug, workload_name, status, project_id, preview_of_slug,
            'allowed_service_call_scopes', manifest->'allowed_service_call_scopes'))::jsonb AS manifest
 FROM apps WHERE slug = sqlc.arg(slug)::text AND status <> 'deleted';
 
--- name: ReadServicePolicyPreviewApp :one
-SELECT id, account_id, slug, workload_name, status, project_id, preview_of_slug,
-       preview_pr_number, preview_pr_state, preview_expires_at, app_protocol, websocket_enabled,
-       jsonb_strip_nulls(jsonb_build_object(
-           'service_bindings', manifest->'service_bindings',
-           'service_reliability', manifest->'service_reliability',
-           'service_binding_policy', manifest->'service_binding_policy',
-           'service_binding_transport', manifest->'service_binding_transport',
-           'preview_service_calls_policy', manifest->'preview_service_calls_policy',
-           'allowed_service_callers', manifest->'allowed_service_callers',
-           'allowed_service_call_scopes', manifest->'allowed_service_call_scopes'))::jsonb AS manifest
-FROM apps WHERE account_id = sqlc.arg(account_id)::uuid AND project_id = sqlc.arg(project_id)::uuid
+-- name: ServicePolicyPreviewAppIDs :many
+-- Two IDs suffice to refuse an ambiguous service name, as production does.
+SELECT id FROM apps WHERE account_id = sqlc.arg(account_id)::uuid AND project_id = sqlc.arg(project_id)::uuid
   AND preview_pr_number = sqlc.arg(preview_pr_number)::integer
   AND translate(lower(workload_name), '_.', '--') = translate(lower(sqlc.arg(workload_name)::text), '_.', '--')
-  AND preview_of_slug IS NOT NULL AND status <> 'deleted';
+  AND preview_of_slug IS NOT NULL AND status <> 'deleted'
+ORDER BY id
+LIMIT 2;
 
 -- name: ReadServicePolicyTestApp :one
 SELECT id, account_id, slug, workload_name, status, project_id, preview_of_slug,

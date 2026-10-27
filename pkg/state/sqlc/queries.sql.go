@@ -84735,72 +84735,6 @@ func (q *Queries) ReadServicePolicyDeploymentWeights(ctx context.Context, db DBT
 	return items, nil
 }
 
-const readServicePolicyPreviewApp = `-- name: ReadServicePolicyPreviewApp :one
-SELECT id, account_id, slug, workload_name, status, project_id, preview_of_slug,
-       preview_pr_number, preview_pr_state, preview_expires_at, app_protocol, websocket_enabled,
-       jsonb_strip_nulls(jsonb_build_object(
-           'service_bindings', manifest->'service_bindings',
-           'service_reliability', manifest->'service_reliability',
-           'service_binding_policy', manifest->'service_binding_policy',
-           'service_binding_transport', manifest->'service_binding_transport',
-           'preview_service_calls_policy', manifest->'preview_service_calls_policy',
-           'allowed_service_callers', manifest->'allowed_service_callers',
-           'allowed_service_call_scopes', manifest->'allowed_service_call_scopes'))::jsonb AS manifest
-FROM apps WHERE account_id = $1::uuid AND project_id = $2::uuid
-  AND preview_pr_number = $3::integer
-  AND translate(lower(workload_name), '_.', '--') = translate(lower($4::text), '_.', '--')
-  AND preview_of_slug IS NOT NULL AND status <> 'deleted'
-`
-
-type ReadServicePolicyPreviewAppParams struct {
-	AccountID       pgtype.UUID
-	ProjectID       pgtype.UUID
-	PreviewPrNumber int32
-	WorkloadName    string
-}
-
-type ReadServicePolicyPreviewAppRow struct {
-	ID               pgtype.UUID
-	AccountID        pgtype.UUID
-	Slug             string
-	WorkloadName     string
-	Status           string
-	ProjectID        pgtype.UUID
-	PreviewOfSlug    pgtype.Text
-	PreviewPrNumber  pgtype.Int4
-	PreviewPrState   pgtype.Text
-	PreviewExpiresAt pgtype.Timestamptz
-	AppProtocol      string
-	WebsocketEnabled bool
-	Manifest         []byte
-}
-
-func (q *Queries) ReadServicePolicyPreviewApp(ctx context.Context, db DBTX, arg ReadServicePolicyPreviewAppParams) (ReadServicePolicyPreviewAppRow, error) {
-	row := db.QueryRow(ctx, readServicePolicyPreviewApp,
-		arg.AccountID,
-		arg.ProjectID,
-		arg.PreviewPrNumber,
-		arg.WorkloadName,
-	)
-	var i ReadServicePolicyPreviewAppRow
-	err := row.Scan(
-		&i.ID,
-		&i.AccountID,
-		&i.Slug,
-		&i.WorkloadName,
-		&i.Status,
-		&i.ProjectID,
-		&i.PreviewOfSlug,
-		&i.PreviewPrNumber,
-		&i.PreviewPrState,
-		&i.PreviewExpiresAt,
-		&i.AppProtocol,
-		&i.WebsocketEnabled,
-		&i.Manifest,
-	)
-	return i, err
-}
-
 const readServicePolicyProject = `-- name: ReadServicePolicyProject :one
 SELECT preview_service_policy FROM github_deploy_policies
 WHERE project_id = $1::uuid AND account_id = $2::uuid
@@ -96576,6 +96510,48 @@ func (q *Queries) ServiceCapacityProtection(ctx context.Context, db DBTX) ([]byt
 	var snapshot []byte
 	err := row.Scan(&snapshot)
 	return snapshot, err
+}
+
+const servicePolicyPreviewAppIDs = `-- name: ServicePolicyPreviewAppIDs :many
+SELECT id FROM apps WHERE account_id = $1::uuid AND project_id = $2::uuid
+  AND preview_pr_number = $3::integer
+  AND translate(lower(workload_name), '_.', '--') = translate(lower($4::text), '_.', '--')
+  AND preview_of_slug IS NOT NULL AND status <> 'deleted'
+ORDER BY id
+LIMIT 2
+`
+
+type ServicePolicyPreviewAppIDsParams struct {
+	AccountID       pgtype.UUID
+	ProjectID       pgtype.UUID
+	PreviewPrNumber int32
+	WorkloadName    string
+}
+
+// Two IDs suffice to refuse an ambiguous service name, as production does.
+func (q *Queries) ServicePolicyPreviewAppIDs(ctx context.Context, db DBTX, arg ServicePolicyPreviewAppIDsParams) ([]pgtype.UUID, error) {
+	rows, err := db.Query(ctx, servicePolicyPreviewAppIDs,
+		arg.AccountID,
+		arg.ProjectID,
+		arg.PreviewPrNumber,
+		arg.WorkloadName,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []pgtype.UUID{}
+	for rows.Next() {
+		var id pgtype.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const serviceRecoveryByApp = `-- name: ServiceRecoveryByApp :one

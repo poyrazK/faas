@@ -156,7 +156,11 @@ func NewSigner(private *rsa.PrivateKey, issuer, keyID string, ttl time.Duration)
 	if keyID == "" {
 		keyID = DefaultKeyID
 	}
-	if ttl <= 0 {
+	// Gregale's own verifiers refuse tokens that live longer than
+	// DefaultTokenTTL, but a cloud trusting the issuer accepts whatever the
+	// token says, so a longer configured lifetime only widens the replay
+	// window of a copied token. It is capped here for every token minted.
+	if ttl <= 0 || ttl > DefaultTokenTTL {
 		ttl = DefaultTokenTTL
 	}
 	signer, err := jose.NewSigner(

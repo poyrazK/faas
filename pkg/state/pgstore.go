@@ -2854,11 +2854,13 @@ func (s *PgStore) PreviewAppsByParent(ctx context.Context, accountID, parentSlug
 	return scanApps(rows)
 }
 
+// PreviewAppByProjectWorkload answers ErrConflict when two of the PR's
+// previews share the name in DNS form, like ProjectAppByWorkload.
 func (s *PgStore) PreviewAppByProjectWorkload(ctx context.Context, accountID, projectID string, previewPRNumber int, workloadName string) (App, error) {
 	if accountID == "" || projectID == "" || previewPRNumber <= 0 || workloadName == "" {
 		return App{}, ErrNotFound
 	}
-	row := s.pool.QueryRow(ctx, `
+	rows, err := s.pool.Query(ctx, `
 		select `+appsSelectColumns+`
 		  from apps
 		 where account_id = $1
@@ -2867,8 +2869,24 @@ func (s *PgStore) PreviewAppByProjectWorkload(ctx context.Context, accountID, pr
 		   and translate(lower(workload_name), '_.', '--') = translate(lower($4), '_.', '--')
 		   and preview_of_slug is not null
 		   and status <> 'deleted'
+		 order by id
+		 limit 2
 	`, accountID, projectID, previewPRNumber, workloadName)
-	return scanApp(row)
+	if err != nil {
+		return App{}, fmt.Errorf("state: preview app by project workload: %w", mapErr(err))
+	}
+	defer rows.Close()
+	apps, err := scanApps(rows)
+	if err != nil {
+		return App{}, err
+	}
+	switch len(apps) {
+	case 0:
+		return App{}, ErrNotFound
+	case 1:
+		return apps[0], nil
+	}
+	return App{}, ErrConflict
 }
 
 // ListPreviewsForAccount (Mega-C PR-1 / issue #961 leaf 3) is the

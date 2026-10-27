@@ -77,10 +77,22 @@ func (s servicePolicyReader) AppBySlug(ctx context.Context, slug string) (App, e
 	return decodeServicePolicyApp(sqlc.ReadServicePolicyAppByIDRow(row), err)
 }
 
+// PreviewAppByProjectWorkload refuses a name two of the PR's previews share in
+// DNS form (web_ui and web-ui) with ErrConflict, as ProjectAppByWorkload does
+// in production, instead of routing to whichever row the database returns.
 func (s servicePolicyReader) PreviewAppByProjectWorkload(ctx context.Context, account, project string, pr int, workload string) (App, error) {
-	row, err := sqlc.New().ReadServicePolicyPreviewApp(ctx, s.tx, sqlc.ReadServicePolicyPreviewAppParams{
+	ids, err := sqlc.New().ServicePolicyPreviewAppIDs(ctx, s.tx, sqlc.ServicePolicyPreviewAppIDsParams{
 		AccountID: uuidToPgtype(account), ProjectID: uuidToPgtype(project), PreviewPrNumber: int32(pr), WorkloadName: workload})
-	return decodeServicePolicyApp(sqlc.ReadServicePolicyAppByIDRow(row), err)
+	if err != nil {
+		return App{}, fmt.Errorf("resolve preview service: %w", mapErr(err))
+	}
+	if len(ids) == 0 {
+		return App{}, ErrNotFound
+	}
+	if len(ids) != 1 {
+		return App{}, ErrConflict
+	}
+	return s.AppByID(ctx, uuidString(ids[0]))
 }
 
 // ProjectAppByWorkload resolves a production project alias in the same view.

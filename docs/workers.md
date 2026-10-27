@@ -80,6 +80,7 @@ scaling:
 
 The pool runs `ceil(depth / value)` workers, between `min_instances` and
 `max_instances`, and never more than the binding's `max_concurrency` allows.
+`value` is at most 10,000 messages per worker.
 With `min_instances: 0` the pool stops when the queue is empty and starts a
 worker when the next message arrives. It scales out on the tick that sees the
 backlog and scales in only after demand has stayed low for 60 seconds, so a

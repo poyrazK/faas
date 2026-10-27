@@ -5259,14 +5259,21 @@ func (m *MemStore) PreviewAppByProjectWorkload(_ context.Context, accountID, pro
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	var found App
 	for _, app := range m.apps {
 		if app.AccountID == accountID && app.ProjectID == projectID &&
 			app.PreviewPrNumber == previewPRNumber && api.SameServiceName(app.WorkloadName, workloadName) &&
 			app.PreviewOfSlug != "" && app.Status != AppDeleted {
-			return app, nil
+			if found.ID != "" {
+				return App{}, ErrConflict
+			}
+			found = app
 		}
 	}
-	return App{}, ErrNotFound
+	if found.ID == "" {
+		return App{}, ErrNotFound
+	}
+	return found, nil
 }
 
 // ProjectAppByWorkload mirrors PgStore: a service-name production alias in
