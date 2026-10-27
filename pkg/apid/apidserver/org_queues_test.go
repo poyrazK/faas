@@ -103,8 +103,12 @@ func orgQueueHTTPJourney(t *testing.T, server *apidserver.Server, store state.St
 	legacyID := projections[0].ID.String()
 	// Legacy /v1/triggers covers personal apps only; a company trigger is an
 	// unreviewed queue operation, refused even for its creator (878dcdc0f1).
+	// A key bound to the creator's personal organization never reaches a
+	// company app (#4982), so the refusal may come first as not found.
 	legacyRead := send(t, "GET", "/v1/triggers/"+legacyID, nil, nil)
-	if legacyRead.Code != 403 || !strings.Contains(legacyRead.Body.String(), string(api.CodeOrgRoleForbidden)) {
+	roleRefused := legacyRead.Code == 403 && strings.Contains(legacyRead.Body.String(), string(api.CodeOrgRoleForbidden))
+	keyRefused := legacyRead.Code == 404 && strings.Contains(legacyRead.Body.String(), string(api.CodeNotFound))
+	if (!roleRefused && !keyRefused) || strings.Contains(legacyRead.Body.String(), legacyID) {
 		t.Fatalf("legacy creator bypassed queue roles: %d %s", legacyRead.Code, legacyRead.Body)
 	}
 	legacyList := send(t, "GET", "/v1/triggers", nil, nil)

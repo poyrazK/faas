@@ -100,6 +100,38 @@ takes its token after it is RUNNING. A burst still boots workers one at a
 time (first leases at 2.0, 13.9 and 25.6 s for three workers), because the
 pool admits the next worker only when the previous boot returns.
 
+## Amendment 2026-10-24 — booting instances call out too
+
+The 2026-10-17 amendment let a booting worker lease, but left the outbound
+relay (ADR-989) and in-guest event publishing on live instances only. A
+worker handles a leased message as soon as it has it, so a handler that
+called an outbound integration or published an event inside the boot window
+failed with "external action instance is not live": up to the 10 s
+`api.CharacterizationDeadline` on a deployment's first cold boot on a node,
+about 1 s after that (ADR-20261018101500).
+
+`fcvm.Manager.InstanceExternalActionIdentity`, the rule behind the relay,
+event publishing and workload tokens, now resolves a booting instance to the
+identity its wake fixed, with the same limits the token rule already had: a
+qualification restore carries no identity and gets nothing, and a wake that
+joined a contained rehearsal run, or whose app has one, is denied.
+`WorkloadTokenIdentity` is now that rule. A booting instance gets no
+simulation relay, because its containment run is installed only when it goes
+live (`InstanceRehearsalRelayIdentity` denies it while the app is in a
+simulation run). `InstanceIdentity` and other guest services stay live-only.
+
+outboundd verifies a relay assertion by signature and claims; nothing
+there depends on the instance being live. A boot that fails leaves at most
+the calls its own code made while booting, the same exposure the token rule
+accepted.
+
+The manifest can now turn issuance on. `gregalectl manifest ansible` never
+emitted `faas_workload_identity_source_dir`, so a manifest-converged fleet,
+the documented path, could enable workload identity only by editing
+generated host vars. A `workload_identity.source_dir` manifest field (an
+absolute controller path) now renders that variable for every control-plane
+and compute host; empty keeps issuance off. The production template carries
+it commented out until an operator generates the keys.
 ## Amendment 2026-10-25 — tokens name their environment
 
 A security review found that every instance of an app received the subject

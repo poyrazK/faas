@@ -13,6 +13,7 @@ import (
 	"os"
 	"sort"
 	"strings"
+	"text/tabwriter"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -1162,5 +1163,22 @@ func renderProject(project api.ProjectResponse) int {
 	_, _ = fmt.Fprintf(osStdout, "%s\n  repository: %s\n  production branch: %s\n  scan source: %s\n  workloads: %d\n  exclusions: %s\n  last deploy: %s\n  last build: %s\n",
 		project.Slug, orDash(project.RepoFullName), orDash(project.ProductionBranch), orDash(project.ScanSource),
 		len(project.Workloads), orDash(strings.Join(project.Exclusions, ", ")), orDash(project.LastReconciliationStatus), orDash(project.LastBuildStatus))
+	printProjectServices(osStdout, project.Workloads)
 	return 0
+}
+
+// printProjectServices lists each service with its app, its latest
+// deployment and the services it declares it calls (ADR-20261026193018).
+func printProjectServices(w io.Writer, workloads []api.ProjectWorkloadResponse) {
+	if len(workloads) == 0 {
+		return
+	}
+	_, _ = fmt.Fprintln(w, "  services:")
+	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
+	_, _ = fmt.Fprintln(tw, "    NAME\tAPP\tDEPLOYMENT\tCALLS")
+	for _, workload := range workloads {
+		_, _ = fmt.Fprintf(tw, "    %s\t%s\t%s\t%s\n", orDash(workload.WorkloadName), workload.Slug,
+			orDash(workload.DeploymentStatus), orDash(strings.Join(workload.DependsOn, ", ")))
+	}
+	_ = tw.Flush()
 }

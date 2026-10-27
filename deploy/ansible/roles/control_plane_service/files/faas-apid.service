@@ -58,6 +58,7 @@ Environment=FAAS_APID_ADVISORY_SOCK=/run/faas/apid.sock
 Environment=FAAS_STATUSPAGE_PATH=/etc/faas/statuspage/index.html
 Environment=FAAS_DPA_PATH=/etc/faas/dpa.md
 Environment=FAAS_REALTIME_SOCKET=/run/faas/realtimed.sock
+Environment=FAAS_REALTIME_FAIR_USE_ENABLED=1
 Environment=FAAS_APP_TASK_API_ENABLED=0
 Environment=FAAS_EXECUTION_API_ENABLED=0
 Environment=FAAS_CI_INTERNAL_ENABLED=0

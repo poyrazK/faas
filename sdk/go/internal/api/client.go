@@ -1274,7 +1274,7 @@ func (c *Client) SetPassword(ctx context.Context, password string) error {
 	return NewProblem(http.StatusForbidden, CodeUnsupportedByCLI,
 		"endpoint requires the dashboard session cookie",
 		"use SetPasswordWithSession with the faas_sid and faas_csrf cookies").WithDocs(
-		docsBase + "/cli/cookie-only-routes")
+		docsBase + "/cli#cookie-only-routes")
 }
 
 // SetPasswordWithSession updates the password through the

@@ -48,7 +48,7 @@ func parseMCPServeOptions(args []string) (mcpServeOptions, error) {
 	fs.StringVar(&opts.onboarding, "oauth-onboarding", "browser", "remote onboarding: browser sign-in or explicit api-key fallback")
 	fs.StringVar(&opts.stateFile, "state-file", "", "private encrypted remote state file for restart-safe connections")
 	fs.StringVar(&opts.stateKeyFile, "state-key-file", "", "independent private file with the 32-byte state encryption key")
-	tools := fs.String("tools", mcpmanagement.ToolsetAll, "toolsets to list, comma-separated: core, release, diagnose or all")
+	tools := fs.String("tools", mcpmanagement.ToolsetAll, "toolsets to list, comma-separated: core, release, diagnose, provision or all")
 	if err := fs.Parse(args); err != nil {
 		return opts, err
 	}

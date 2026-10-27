@@ -722,7 +722,9 @@ def test_pending_acknowledgment(graph, asynchronous, mode):
     for member in members:
         member["steps"][0]["plan"].update(type="postgres", name="database", binding="DATABASE_URL", scope="production")
     if mode == "deadline":
-        f.root["expires_at"] = (datetime.now(UTC) + timedelta(milliseconds=150)).isoformat()
+        # Long enough that the first server answer arrives before expiry on a
+        # loaded runner; the runner must still time out waiting afterwards.
+        f.root["expires_at"] = (datetime.now(UTC) + timedelta(seconds=1)).isoformat()
         for member in members:
             member["expires_at"] = f.root["expires_at"]
     completed, observed = [], []

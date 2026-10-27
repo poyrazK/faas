@@ -740,6 +740,13 @@ func (d runDeps) run(ctx context.Context, log *slog.Logger) error {
 		return err
 	}
 	arch := imaged.BuilderArch()
+	// ADR-20261026181418: publish and read each gated runtime base under the
+	// shared keys of this release's generation, before anything stages one.
+	routedBases, err := h.RouteBaseGenerations(arch, getenv)
+	if err != nil {
+		return err
+	}
+	log.Info("imaged: runtime bases routed to their generation keys", "bases", routedBases)
 	basePath := builderBasePathFromEnv(arch)
 	// #96 / ADR-025 axis 2: EnsureBaseExt4 publishes via the StorageBackend
 	// under storagekey.BaseForArch / storagekey.BaseDigestForArch, partitioned

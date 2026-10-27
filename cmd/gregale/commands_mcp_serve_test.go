@@ -80,8 +80,9 @@ func TestMCPServeStdioUsesSelectedProfile(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = session.Close() })
 	tools, err := session.ListTools(ctx, nil)
-	// 49 read tools plus the local deploy and env plans (ADR-20261026141841).
-	if err != nil || len(tools.Tools) != 51 || requests.Load() != 0 {
+	// 49 read tools, the local deploy and env plans (ADR-20261026141841), and
+	// the provisioning plans and domain check (ADR-20261026174727).
+	if err != nil || len(tools.Tools) != 56 || requests.Load() != 0 {
 		t.Fatalf("discovery=%+v error=%v requests=%d", tools, err, requests.Load())
 	}
 	listed := map[string]bool{}

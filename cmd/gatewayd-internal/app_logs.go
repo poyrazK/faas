@@ -29,6 +29,7 @@ import (
 	mwauth "github.com/onebox-faas/faas/pkg/auth/middleware"
 	"github.com/onebox-faas/faas/pkg/scheddgrpc"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/trafficrevocation"
 	"github.com/onebox-faas/faas/pkg/wire"
 )
 
@@ -103,6 +104,9 @@ type AppLogsHandler struct {
 	Store     state.Store
 	Log       *slog.Logger
 	Ops       *wire.OpsMetrics
+	// Traffic enrolls the stream under the app's security scopes
+	// (admitPlatformTraffic); nil only in legacy fixtures.
+	Traffic *trafficrevocation.Registry
 
 	// Heartbeat is the SSE liveness interval. Defaults to 15s in
 	// production (cmd/gatewayd-internal/main.go); tests shorten it to a
@@ -158,7 +162,12 @@ func (h *AppLogsHandler) stream(w http.ResponseWriter, r *http.Request, acct sta
 		// LoadApp already wrote a 404 problem. Nothing to do.
 		return
 	}
-	if _, err := h.Store.ListInstancesForApp(r.Context(), app.ID); err != nil {
+	ctx, release, ok := admitPlatformTraffic(r.Context(), w, r, h.Traffic, w.Header(), acct.ID, app.ID)
+	if !ok {
+		return
+	}
+	defer release()
+	if _, err := h.Store.ListInstancesForApp(ctx, app.ID); err != nil {
 		api.WriteProblem(w, api.NewProblem(http.StatusNotFound, api.CodeNotFound,
 			"No running instance", "the app is parked; wake it first"))
 		return
@@ -195,7 +204,7 @@ func (h *AppLogsHandler) stream(w http.ResponseWriter, r *http.Request, acct sta
 
 	apislogs.StartSSE(w)
 	flusher, _ := w.(http.Flusher)
-	h.serveAppLogsWithIdentityFollow(r.Context(), w, flusher, app.ID, acct.ID, app.ID, sinceSeq, sinceWrittenAt, follow, deploymentID, level, grep)
+	h.serveAppLogsWithIdentityFollow(ctx, w, flusher, app.ID, acct.ID, app.ID, sinceSeq, sinceWrittenAt, follow, deploymentID, level, grep)
 }
 
 // serveAppLogs is the receive-pump body. Mirrors the legacy

@@ -106,3 +106,38 @@
     ledger and financial-model changes.
   - *Larger worker sizes* (2 GB / 1 CPU up to 8 GB / 4 CPU on Pro and
     Scale) are deferred. When added, decision 2's ratio applies.
+
+## Amendment 2026-10-24 — paths that read the backlog
+
+Decision 1 raised the per-app cap from 100 to 1,000,000 pending messages.
+Four paths that run every scheduler tick or on every lease read the backlog
+in full; at 100 messages that was free. Measured on `gregale-internal-test-1`
+(PostgreSQL 16, `jit = off` as in production) with one app holding 420,000
+pending and 100,000 dead-lettered messages:
+
+| Path | Query | Before | After |
+|---|---|---|---|
+| Worker scaling, per reconcile | `QueueStateInScope` → `QueueDepthInScope` | 873 ms | 0.19 ms |
+| Worker scaling with bindings, per reconcile | `QueueStateForBinding` → `QueueDepthForBinding` | 1,804 ms | 0.9 ms (5.2 ms generic plan) |
+| Retired-binding drain check | `QueueStateForBinding` → `QueueBindingHasInFlight` | 1,804 ms | 0.05–0.24 ms |
+| Invocation drain, every tick, all apps | `ListDueInvocationRows` | 315 ms | 0.5 ms |
+| Pull lease, with another app's older 200,000-message backlog | `QueueLeaseCandidates` | 188–231 ms | 43–52 ms |
+
+- *Scaling reads stop at the limit.* A worker pool's desired size is
+  `ceil(depth / target)`, capped at its maximum, so depth past
+  `target × max` changes nothing; push lanes stop at the binding's
+  `max_concurrency`. The new store readers count up to that limit and skip
+  dead letters; the full `QueueState*` readers stay for the API.
+- *The drain gets its own index.* It never delivers a named-queue message,
+  yet `invocations_due_idx` holds them, so every tick skipped the whole
+  backlog. `invocations_drain_due_idx` holds only rows the drain can deliver.
+- *Pull leases read per-binding indexes.* The binding and legacy-name
+  branches each read `invocations_queue_lease_binding_idx` or
+  `_name_idx` in due order. The due bound uses `statement_timestamp()`:
+  with volatile `clock_timestamp()` it could not bound an index range, and
+  the planner walked the global due index past other apps' messages. The
+  remaining 40–50 ms is the 400 candidate fetches, independent of backlog.
+- *Unchanged.* The named-queue push poller already reads
+  `invocations_queue_pending_created_idx` (6 ms). The legacy poller for
+  triggers without a binding, shared with delayed tasks, still sorts the
+  app's unbound pending rows (309 ms at 20,000); new queues use bindings.

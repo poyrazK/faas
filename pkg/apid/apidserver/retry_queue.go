@@ -32,6 +32,9 @@ func (s *server) enqueueRetry(ctx context.Context, app state.App, dep state.Depl
 	if p := s.platformReleasePauseProblem(); p != nil {
 		return state.Deployment{}, p
 	}
+	if p := s.retryReleaseProblem(ctx, app, dep); p != nil {
+		return state.Deployment{}, p
+	}
 	acct, err := state.AppResourceAccount(ctx, s.store, app)
 	if err != nil {
 		return state.Deployment{}, err

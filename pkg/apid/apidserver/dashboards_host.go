@@ -36,6 +36,24 @@ func (h dashboardsHost) AppForAccount(ctx context.Context, acct state.Account, s
 	return app, true
 }
 
+// ShowsDashboard hides a dashboard from a key bound to one app or company
+// unless every widget names an app that key may see: the definitions carry
+// app slugs, titles and log queries. A session and an account-wide key see
+// all of the account's dashboards; their widgets' data is still hidden per
+// app.
+func (h dashboardsHost) ShowsDashboard(ctx context.Context, acct state.Account, widgets []api.DashboardWidget) bool {
+	_, key, _ := middleware.AccountFromCtx(ctx)
+	if key == nil || key.AppID == "" && key.OrgID == "" {
+		return true
+	}
+	for _, w := range widgets {
+		if _, ok := h.AppForAccount(ctx, acct, w.App); !ok {
+			return false
+		}
+	}
+	return true
+}
+
 // accountViewAppVisible reports whether an account view (a dashboard widget
 // or an incident) may show app's data to the request's principal. A failed
 // read hides the app.
