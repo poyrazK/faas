@@ -345,6 +345,35 @@ func TestCliTreeSpelling(t *testing.T) {
 	}
 }
 
+// An earlier name still runs; in a terminal it names the tree path on
+// stderr, and --json or --non-interactive print nothing extra.
+func TestCliTreeHintsEarlierNamesInATerminal(t *testing.T) {
+	enableEveryCLIFeature(t)
+	t.Chdir(t.TempDir())
+	t.Setenv("FAAS_TOKEN", "")
+	tty := true
+	prev := *main.TestOnlyTTY
+	*main.TestOnlyTTY = &tty
+	t.Cleanup(func() { *main.TestOnlyTTY = prev })
+	const hint = "Tip: 'gregale crons list api' is now 'gregale cron list api'"
+	if _, _, stderr := runCLI(t, "crons", "list", "api"); !strings.Contains(stderr, hint) {
+		t.Errorf("crons list in a terminal = %q, want the tree name", stderr)
+	}
+	for _, args := range [][]string{
+		{"--json", "crons", "list", "api"},
+		{"--non-interactive", "crons", "list", "api"},
+		{"cron", "list", "api"},
+	} {
+		if _, _, stderr := runCLI(t, args...); strings.Contains(stderr, "Tip: ") {
+			t.Errorf("gregale %s printed a hint: %q", strings.Join(args, " "), stderr)
+		}
+	}
+	tty = false
+	if _, _, stderr := runCLI(t, "crons", "list", "api"); strings.Contains(stderr, "Tip: ") {
+		t.Errorf("crons list without a terminal printed a hint: %q", stderr)
+	}
+}
+
 // Help reached through a tree path is spelled in that path.
 func TestCliTreeLeafHelpUsesTheTypedPath(t *testing.T) {
 	enableEveryCLIFeature(t)

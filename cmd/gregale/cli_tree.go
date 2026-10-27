@@ -948,6 +948,20 @@ func cliTreeSpelling(args []string) ([]string, bool) {
 	return candidate, true
 }
 
+// printCliTreeHint names the tree path of a command typed by its earlier
+// name, on stderr in a terminal; --json and --non-interactive runs print
+// nothing extra (ADR-20261026145832 step 5).
+func printCliTreeHint(w io.Writer, typed []string) {
+	if jsonOutput || !stdoutIsTTY() {
+		return
+	}
+	spelled, ok := cliTreeSpelling(typed)
+	if !ok {
+		return
+	}
+	_, _ = fmt.Fprintf(w, "Tip: 'gregale %s' is now 'gregale %s'; the earlier name keeps working.\n", leadingWords(typed), leadingWords(spelled))
+}
+
 // cliTreeAppSpelling spells today's `app <slug> <verb> [<verb>]` as the
 // tree's `app <verb> [<verb>] <slug>`, with tcp and udp listeners under
 // `app listener`.

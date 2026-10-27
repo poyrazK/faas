@@ -13,12 +13,13 @@ import (
 )
 
 // cliTreeDocs are the customer-facing pages that spell commands besides the
-// docs site (docs/customer-pages.json): the starter templates, the
-// AGENTS.md template and the Claude Code plugin. Specs, ADRs, ops docs and
+// docs site (docs/customer-pages.json): the starter templates and their
+// examples, the AGENTS.md template and the Claude Code plugin. Specs, ADRs, ops docs and
 // runbooks are records of their time and keep their spelling.
 var cliTreeDocs = []string{
 	"templates/*.tmpl",
 	"templates/*/README.md",
+	"../../examples/*/README.md",
 	"../../packaging/claude-plugin/README.md",
 	"../../packaging/claude-plugin/skills/*/SKILL.md",
 }

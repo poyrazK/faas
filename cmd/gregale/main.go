@@ -143,6 +143,9 @@ func run(args []string) (status int) {
 	if err != nil {
 		return printErr("Invalid app target", err)
 	}
+	if slices.Equal(typed, args) {
+		printCliTreeHint(osStderr, typed)
+	}
 	args = normalizeTreeFlags(args)
 	// A flag that reaches another capability answers like an unknown flag
 	// while that capability is hidden for the account (cliFlag.Capability).
