@@ -99,6 +99,22 @@ func TestRegistry_DeliveryIsWiredToScheddAlone(t *testing.T) {
 	}
 }
 
+func TestRegistry_AccountIsWiredToApidOnTheControlPlane(t *testing.T) {
+	s, ok := sealdomain.Lookup(sealdomain.Account)
+	if !ok || !s.Wired {
+		t.Fatalf("account domain = %+v, %v; want wired", s, ok)
+	}
+	if len(s.Roles) != 1 || s.Roles[0] != sealdomain.RoleControlPlane {
+		t.Fatalf("account roles = %v; a compute node never holds account material", s.Roles)
+	}
+	if got := sealdomain.ReaderDomains("apid"); !containsDomain(got, sealdomain.Account) {
+		t.Fatalf("apid reads %v; it opens account values", got)
+	}
+	if got := sealdomain.ReaderDomains("schedd"); containsDomain(got, sealdomain.Account) {
+		t.Fatalf("schedd reads %v; it must not open account values", got)
+	}
+}
+
 func TestRegistry_StorageIsWiredToS3GatewaydAlone(t *testing.T) {
 	s, ok := sealdomain.Lookup(sealdomain.Storage)
 	if !ok || !s.Wired {

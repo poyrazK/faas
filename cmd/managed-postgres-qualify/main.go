@@ -57,11 +57,18 @@ func main() {
 		}
 		os.Exit(runConfigurationPreflight(os.Getenv, os.Stdout, os.Stderr))
 	}
+	if len(os.Args) > 1 && os.Args[1] == "--compute-cap" {
+		if len(os.Args) != 2 {
+			_, _ = fmt.Fprintln(os.Stderr, "usage: managed-postgres-qualify --compute-cap")
+			os.Exit(2)
+		}
+		os.Exit(runComputeCap(os.Getenv, os.Stdout, os.Stderr))
+	}
 	if len(os.Args) > 1 && os.Args[1] == "--verify" {
 		os.Exit(runVerificationArguments(os.Args[2:], os.Getenv, os.Stdout, os.Stderr))
 	}
 	if len(os.Args) > 1 {
-		_, _ = fmt.Fprintln(os.Stderr, "usage: managed-postgres-qualify [--check-config | --verify [--approval PATH] [--rollout --guest-report PATH --runtime-manifest PATH]]")
+		_, _ = fmt.Fprintln(os.Stderr, "usage: managed-postgres-qualify [--check-config | --compute-cap | --verify [--approval PATH] [--rollout --guest-report PATH --runtime-manifest PATH]]")
 		os.Exit(2)
 	}
 	os.Exit(run(os.Getenv, os.Stdout, os.Stderr))
@@ -202,20 +209,29 @@ func preflightPlanEntitlements(backend managedpostgres.Backend) bool {
 	return true
 }
 
-func run(getenv func(string) string, output, errorOutput io.Writer) int {
+// liveQualification is the shared setup of a live run.
+type liveQualification struct {
+	registry   *managedpostgres.Registry
+	backend    managedpostgres.Backend
+	resourceID string
+	spec       managedpostgres.Spec
+	timeout    time.Duration
+}
+
+func loadLiveQualification(getenv func(string) string, errorOutput io.Writer) (liveQualification, bool) {
 	if !isLiveQualificationEnabled(getenv) {
 		_, _ = fmt.Fprintln(errorOutput, "managed postgres qualification requires FAAS_ENVIRONMENT=staging and FAAS_MANAGED_POSTGRES_QUALIFY_LIVE=true")
-		return 2
+		return liveQualification{}, false
 	}
 	registry, err := managedpostgres.Load(getenv, map[string]managedpostgres.Factory{"neon": neon.New})
 	if err != nil || registry == nil {
 		_, _ = fmt.Fprintln(errorOutput, "managed postgres qualification configuration is unavailable")
-		return 2
+		return liveQualification{}, false
 	}
 	resourceID := strings.TrimSpace(getenv("FAAS_MANAGED_POSTGRES_QUALIFY_RESOURCE_ID"))
 	if resourceID == "" || len(resourceID) > 255 {
 		_, _ = fmt.Fprintln(errorOutput, "FAAS_MANAGED_POSTGRES_QUALIFY_RESOURCE_ID is required and must be at most 255 characters")
-		return 2
+		return liveQualification{}, false
 	}
 	region := strings.TrimSpace(getenv("FAAS_MANAGED_POSTGRES_QUALIFY_REGION"))
 	if region == "" {
@@ -224,21 +240,66 @@ func run(getenv func(string) string, output, errorOutput io.Writer) int {
 	backend, err := registry.Default(region)
 	if err != nil {
 		_, _ = fmt.Fprintln(errorOutput, "qualification region has no configured backend")
-		return 2
+		return liveQualification{}, false
 	}
 	spec, err := qualificationSpec(backend, region)
 	if err != nil {
 		_, _ = fmt.Fprintln(errorOutput, "configured backend cannot produce a qualification spec")
-		return 2
+		return liveQualification{}, false
 	}
 	timeout := 20 * time.Minute
 	if value := strings.TrimSpace(getenv("FAAS_MANAGED_POSTGRES_QUALIFY_TIMEOUT")); value != "" {
 		timeout, err = time.ParseDuration(value)
 		if err != nil || timeout <= 0 {
 			_, _ = fmt.Fprintln(errorOutput, "FAAS_MANAGED_POSTGRES_QUALIFY_TIMEOUT must be a positive duration")
-			return 2
+			return liveQualification{}, false
 		}
 	}
+	return liveQualification{registry: registry, backend: backend, resourceID: resourceID, spec: spec, timeout: timeout}, true
+}
+
+// runComputeCap qualifies compute caps (ADR-20261025094915 decision 10) on a
+// disposable resource and writes the artifact that
+// FAAS_MANAGED_POSTGRES_CAP_ENFORCEMENT=on requires. It is separate from the
+// provisioning approval, which an older apid decodes strictly.
+func runComputeCap(getenv func(string) string, output, errorOutput io.Writer) int {
+	live, ok := loadLiveQualification(getenv, errorOutput)
+	if !ok {
+		return 2
+	}
+	report, qualificationErr := managedpostgres.QualifyProvider(context.Background(), live.backend.Provider, managedpostgres.QualificationOptions{
+		ProviderName: live.backend.Driver,
+		ResourceID:   live.resourceID,
+		Spec:         live.spec,
+		Timeout:      live.timeout,
+		Mutating:     true,
+		ComputeCap:   true,
+	})
+	artifact := managedpostgres.ComputeCapQualification{
+		Version: managedpostgres.ComputeCapQualificationVersion, BackendID: live.backend.ID,
+		BackendFingerprint: live.backend.Fingerprint, CompletedAt: report.CompletedAt, Checks: report.Checks,
+	}
+	if report.ComputeCap != nil {
+		artifact.Evidence = *report.ComputeCap
+	}
+	encoder := json.NewEncoder(output)
+	encoder.SetIndent("", "  ")
+	if err := encoder.Encode(artifact); err != nil {
+		return 1
+	}
+	if qualificationErr != nil || live.registry.VerifyComputeCapQualification(artifact) != nil {
+		_, _ = fmt.Fprintln(errorOutput, "compute cap qualification failed; see the checks and evidence")
+		return 1
+	}
+	return 0
+}
+
+func run(getenv func(string) string, output, errorOutput io.Writer) int {
+	live, ok := loadLiveQualification(getenv, errorOutput)
+	if !ok {
+		return 2
+	}
+	registry, backend, resourceID, spec, timeout := live.registry, live.backend, live.resourceID, live.spec, live.timeout
 	approvalTTL, err := parseQualificationApprovalTTL(getenv)
 	if err != nil {
 		_, _ = fmt.Fprintln(errorOutput, managedpostgres.QualificationApprovalTTLEnv+" must be positive and no longer than 90 days")

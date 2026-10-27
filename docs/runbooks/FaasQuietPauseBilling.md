@@ -63,3 +63,31 @@ node stopped writing.
    first value. If the incident was large, credit affected accounts with the
    `meterd_quiet_pause_unproven_minutes_total` window as evidence (spec
    §4.7.1).
+
+## FaasQuietPauseUnbilledExceedsMeasured
+
+The other direction from the alerts above: over 6 h, meterd counted more
+quiet-paused seconds (`meterd_quiet_pause_unbilled_seconds_total`, subtracted
+in `on` mode, only counted in `shadow`) than vmmd measured on the nodes
+(`schedd_quiet_pause_measured_seconds_total`), by more than 5% plus 10
+minutes. meterd floors paused seconds per instance-minute and bills missed
+pauses, so it normally reads a little under the measurement. Above it, the
+ledger proves pauses that did not happen: customers are under-billed in `on`
+mode, or would be in `shadow`.
+
+1. Stop the loss first: set meterd's `quiet_pause_unbilled` to `shadow`
+   (`FAAS_QUIET_PAUSE_UNBILLED=shadow`). Billing returns to running time from
+   the next rolled minute; the alert keeps evaluating in shadow.
+2. Compare the two series per node to find where the excess comes from:
+   `sum by (node) (increase(schedd_quiet_pause_measured_seconds_total[6h]))`.
+   A node missing from it while its schedd writes the ledger points at that
+   schedd's capacity stream or a vmmd without the pause record fields.
+3. Look for open pauses that never close:
+   `SELECT node_id, count(*), min(started_at) FROM instance_quiet_pauses WHERE ended_at IS NULL AND started_at < now() - interval '1 hour' GROUP BY 1;`
+   An open pause counts up to its node's watermark, so one whose VM is gone
+   keeps adding unbilled time for every minute the instance id runs again.
+4. Check clock skew between compute nodes and the control-plane database
+   (`chronyc tracking` on both). Pause times are vmmd's wall clock; billing
+   intervals are the database's.
+5. Keep `shadow` until the cause is fixed and the series agree for a full
+   day.
