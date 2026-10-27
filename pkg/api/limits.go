@@ -85,6 +85,11 @@ const (
 	SignupAccountsPerNetworkPerDay = 50
 )
 
+// InboundWebhookFailuresPerIPPerMinute is how many unknown-token or
+// failed-signature deliveries one client IP may send to /v1/hooks a minute
+// before it gets 429 without a lookup.
+const InboundWebhookFailuresPerIPPerMinute = 30
+
 // PasswordHashConcurrency caps the Argon2id password hashes (64 MiB each)
 // one process computes at once; the rest wait for a slot.
 const PasswordHashConcurrency = 3

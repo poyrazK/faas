@@ -4712,7 +4712,15 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("PUT /v1/apps/{slug}/inbound-webhooks/{id}/operation-binding", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.endpointOperation(s.operation.PutOperationWebhookBinding))))))
 	mux.HandleFunc("GET /v1/apps/{slug}/inbound-webhooks/{id}/operation-binding", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.endpointOperation(s.operation.GetOperationWebhookBinding)))))
 	mux.HandleFunc("DELETE /v1/apps/{slug}/inbound-webhooks/{id}/operation-binding", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.endpointOperation(s.operation.DeleteOperationWebhookBinding)))))
-	mux.HandleFunc("POST /v1/hooks/{token}", s.receiveInboundWebhook)
+	// Unauthenticated: any string with the token prefix cost a CP Postgres
+	// lookup. Unknown tokens (404) and failed signatures (401) count against
+	// a per-IP bucket; a provider delivering valid events is never limited.
+	mux.Handle("POST /v1/hooks/{token}", middleware.AuthLimit(middleware.AuthLimitConfig{
+		Log:           s.log,
+		Window:        time.Minute,
+		MaxFailures:   api.InboundWebhookFailuresPerIPPerMinute,
+		CountStatuses: []int{http.StatusNotFound, http.StatusUnauthorized},
+	})(http.HandlerFunc(s.receiveInboundWebhook)))
 
 	// Operator admin surface (issue #98 / ADR-028). Auth lives in
 	// s.adminAllows (email allowlist via FAAS_ADMIN_EMAILS); handlers
