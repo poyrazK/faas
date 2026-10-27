@@ -255,7 +255,7 @@ func (s *server) handleSourceRefDeploy(w http.ResponseWriter, r *http.Request, a
 		}
 		branchRef = req.SourceBranch
 	}
-	if prob := scanSourceTarballSecrets(spoolPath, limits); prob != nil {
+	if prob := s.scanSourceTarballSecrets(spoolPath, limits); prob != nil {
 		api.WriteProblem(w, prob)
 		return
 	}
