@@ -147,7 +147,7 @@ func TestObjectStorageBillingRequiresUTCMonthActivation(t *testing.T) {
 	}
 }
 
-func TestPublishObjectStorageLineItemUsesExactMillicentQuantity(t *testing.T) {
+func TestPublishObjectStorageChargeUsesExactMillicentQuantity(t *testing.T) {
 	var got usageEvent
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/v1/events/ingest" {
@@ -183,18 +183,37 @@ func TestPublishObjectStorageLineItemUsesExactMillicentQuantity(t *testing.T) {
 		StorageMillicents: 1200, RequestsMillicents: 34, EgressMillicents: 5, TotalMillicents: 1239,
 		FinalizedAt: period.AddDate(0, 1, 0).Add(time.Minute),
 	}
-	if err := p.PublishObjectStorageLineItem(context.Background(), record, record.TotalMillicents+1); err == nil {
-		t.Fatal("a charge above the record total was published")
+	at := period.AddDate(0, 1, 0).Add(time.Hour)
+	step := billing.ObjectStorageChargeStep{AccountID: "acct-1", PeriodStart: period, DeliveredMillicents: 400, TargetMillicents: 1000, At: at, Record: &record}
+	for _, bad := range []billing.ObjectStorageChargeStep{
+		{AccountID: "acct-1", PeriodStart: period, DeliveredMillicents: 400, TargetMillicents: 400, At: at},
+		{AccountID: "acct-1", PeriodStart: period.Add(time.Hour), DeliveredMillicents: 0, TargetMillicents: 1, At: at},
+		{AccountID: "acct-2", PeriodStart: period, DeliveredMillicents: 0, TargetMillicents: 1, At: at, Record: &record},
+	} {
+		if err := p.PublishObjectStorageCharge(context.Background(), bad); err == nil {
+			t.Fatalf("invalid step %+v was published", bad)
+		}
 	}
-	// ADR-1320: the overage cap held the charge to 1000 of 1239 millicents.
-	if err := p.PublishObjectStorageLineItem(context.Background(), record, 1000); err != nil {
+	// ADR-1320 and ADR-20261027093220: the overage cap held the month to 1000
+	// of 1239 millicents, and 400 were billed in daily steps, so the
+	// month-close step bills 600.
+	if err := p.PublishObjectStorageCharge(context.Background(), step); err != nil {
 		t.Fatal(err)
 	}
-	if got.Name != "object_storage_usage" || got.ExternalID != "faas-object-storage-record-1" || got.ExternalCustomerID != "acct-1" {
+	if got.Name != "object_storage_usage" || got.ExternalID != "faas-object-storage-acct-1-2026-09-1000" || got.ExternalCustomerID != "acct-1" || got.Timestamp != at.Format(time.RFC3339) {
 		t.Fatalf("object storage event = %+v", got)
 	}
-	if got.Metadata["charge_millicents"] != float64(1000) || got.Metadata["uncapped_millicents"] != float64(1239) || got.Metadata["storage_millicents"] != float64(1200) {
+	if got.Metadata["charge_millicents"] != float64(600) || got.Metadata["cumulative_millicents"] != float64(1000) || got.Metadata["previous_millicents"] != float64(400) ||
+		got.Metadata["uncapped_millicents"] != float64(1239) || got.Metadata["storage_millicents"] != float64(1200) || got.Metadata["billing_record_id"] != "record-1" {
 		t.Fatalf("object storage event metadata = %+v", got.Metadata)
+	}
+	// A daily step carries no record.
+	step.Record, step.DeliveredMillicents, step.TargetMillicents = nil, 0, 400
+	if err := p.PublishObjectStorageCharge(context.Background(), step); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := got.Metadata["billing_record_id"]; ok || got.ExternalID != "faas-object-storage-acct-1-2026-09-400" || got.Metadata["charge_millicents"] != float64(400) {
+		t.Fatalf("daily object storage event = %+v", got)
 	}
 }
 
@@ -203,7 +222,7 @@ func TestObjectStorageShadowCannotPublish(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := p.PublishObjectStorageLineItem(context.Background(), state.ObjectStorageBillingRecord{}, 0); err == nil || !strings.Contains(err.Error(), "not live") {
+	if err := p.PublishObjectStorageCharge(context.Background(), billing.ObjectStorageChargeStep{}); err == nil || !strings.Contains(err.Error(), "not live") {
 		t.Fatalf("shadow publish error = %v", err)
 	}
 }

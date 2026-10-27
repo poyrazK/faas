@@ -2144,7 +2144,17 @@ const (
 	// covering the month at month close. A closing report is observed at the
 	// month's last microsecond.
 	ObjectStorageReportCloseTolerance = time.Minute
-	ObjectStorageInventoryMaxPages    = 1000
+	// ObjectStorageProgressInterval is how often a paid account's
+	// month-to-date object-storage charge is delivered inside its month,
+	// so a subscription that ends mid-month is billed for its storage up to
+	// its last step (ADR-20261027093220). ObjectStorageProgressSweepInterval
+	// is how often apid looks for due accounts, and ObjectStorageProgressRetry
+	// how long a reservation a failed step left waits before a retry
+	// replaces it.
+	ObjectStorageProgressInterval      = 24 * time.Hour
+	ObjectStorageProgressSweepInterval = time.Hour
+	ObjectStorageProgressRetry         = 5 * time.Minute
+	ObjectStorageInventoryMaxPages     = 1000
 	// MaxObjectStorageReconcileBuckets bounds one backend's bucket listing in
 	// operator reconciliation after a database restore (ADR-20261025111015).
 	MaxObjectStorageReconcileBuckets = 100_000

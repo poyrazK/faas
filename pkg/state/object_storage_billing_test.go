@@ -63,6 +63,34 @@ func TestSummarizeObjectStorageBillingUsageRequiresCoverageToTheMonthEnd(t *test
 	}
 }
 
+// ADR-20261027093220: daily steps price what has been metered or reported so
+// far, without the month-close coverage requirements.
+func TestSummarizeObjectStorageUsageToDateNeedsNoCoverage(t *testing.T) {
+	period := time.Date(2026, time.August, 1, 0, 0, 0, 0, time.UTC)
+	const fp = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	live := state.ObjectBucket{BackendID: "external-a", BackendFingerprint: fp, CreatedAt: period.AddDate(0, 0, -1)}
+	other := state.ObjectBucket{BackendID: "external-b", BackendFingerprint: fp, CreatedAt: period.AddDate(0, 0, -1)}
+	reported := state.ObjectUsageSnapshot{Buckets: []state.ObjectBucketUsage{{Bucket: live}, {Bucket: other}}, Reports: []api.ObjectStorageUsageReport{
+		{BackendID: "external-a", BackendFingerprint: fp, PeriodStart: period, ObservedAt: period.AddDate(0, 0, 3), StoredByteHours: 10},
+		{BackendID: "external-a", BackendFingerprint: fp, PeriodStart: period, ObservedAt: period.AddDate(0, 0, 9), StoredByteHours: 25},
+	}}
+	if _, err := state.SummarizeObjectStorageBillingUsage(reported, period); !errors.Is(err, state.ErrObjectBillingIncomplete) {
+		t.Fatalf("month close accepted a partial month: %v", err)
+	}
+	if usage, err := state.SummarizeObjectStorageUsageToDate(reported, period); err != nil || usage.StoredByteHours != 25 {
+		t.Fatalf("reported usage to date = %+v, err = %v; want the latest report's 25", usage, err)
+	}
+	metered := state.ObjectUsageSnapshot{Buckets: []state.ObjectBucketUsage{
+		{Bucket: live, StoredByteHours: 40, StorageMeteredThrough: period.AddDate(0, 0, 9)},
+	}}
+	if _, err := state.SummarizeObjectStorageBillingUsage(metered, period); !errors.Is(err, state.ErrObjectBillingIncomplete) {
+		t.Fatalf("month close accepted a partly metered month: %v", err)
+	}
+	if usage, err := state.SummarizeObjectStorageUsageToDate(metered, period); err != nil || usage.StoredByteHours != 40 {
+		t.Fatalf("metered usage to date = %+v, err = %v; want 40", usage, err)
+	}
+}
+
 func TestMemObjectStorageBillingPeriodIsIdempotent(t *testing.T) {
 	store := state.NewMemStore()
 	period := time.Date(2026, time.August, 1, 0, 0, 0, 0, time.UTC)

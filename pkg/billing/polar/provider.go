@@ -265,9 +265,9 @@ func (p *Provider) Capabilities() billing.CapabilitySet {
 	return caps
 }
 
-// ObjectStorageLineItemPolicy exposes the month-close rollout boundary to
+// ObjectStorageLineItemPolicy exposes the object-storage rollout boundary to
 // apid. Off returns ok=false, so merely deploying the code cannot acknowledge
-// or publish any object-storage periods.
+// or publish any object-storage charges.
 func (p *Provider) ObjectStorageLineItemPolicy() (billing.ObjectStorageLineItemPolicy, bool) {
 	if p == nil || p.objectStorageMode == ObjectStorageBillingOff {
 		return billing.ObjectStorageLineItemPolicy{}, false
@@ -701,50 +701,62 @@ func (p *Provider) PushMeterUsageRecord(ctx context.Context, acct state.Account,
 	return nil
 }
 
-// PublishObjectStorageLineItem emits one immutable month-close charge event.
-// Polar's catalog price is 0.001 cents per charge_millicent, so the integer
-// quantity reproduces Gregale's exact customer ledger without float money.
-// chargeMillicents is the record's total held under the overage cap
-// (ADR-1320); the uncapped total travels as metadata for audit.
-func (p *Provider) PublishObjectStorageLineItem(ctx context.Context, record state.ObjectStorageBillingRecord, chargeMillicents int64) error {
+// PublishObjectStorageCharge emits one object-storage charge step
+// (ADR-20261027093220). Polar's catalog price is 0.001 cents per
+// charge_millicent, so the integer quantity, the step's delta, reproduces
+// Gregale's exact customer ledger without float money. Steps arrive during
+// the month and are timestamped when sent, so Polar bills them in the
+// subscription cycle they accrue in. The external ID names the account, the
+// UTC month and the cumulative charge: a retried step is a duplicate and each
+// later step a new event. The month-close step carries the record's detail,
+// with the uncapped total as metadata for audit.
+func (p *Provider) PublishObjectStorageCharge(ctx context.Context, step billing.ObjectStorageChargeStep) error {
 	if p == nil || p.objectStorageMode != ObjectStorageBillingLive || !p.Capabilities().Has(billing.CapObjectStorageUsage) {
 		return errors.New("polar: object storage usage delivery is not live")
 	}
-	if record.ID == "" || record.Currency != api.BillingCurrency || !state.ValidObjectStorageBillingRecord(record) ||
-		chargeMillicents < 0 || chargeMillicents > record.TotalMillicents {
-		return errors.New("polar: invalid object storage billing record")
+	period := step.PeriodStart.UTC()
+	if step.AccountID == "" || period.IsZero() || !period.Equal(state.ObjectStoragePeriod(period)) || step.At.IsZero() ||
+		step.DeliveredMillicents < 0 || step.TargetMillicents <= step.DeliveredMillicents || step.TargetMillicents > api.MaxObjectStoragePolicyValue {
+		return errors.New("polar: invalid object storage charge step")
 	}
-	if chargeMillicents == 0 {
-		return nil
+	month := period.Format("2006-01")
+	metadata := map[string]any{
+		"faas_account_id":       step.AccountID,
+		"period_start":          period.Format(time.RFC3339),
+		"period_end":            period.AddDate(0, 1, 0).Format(time.RFC3339),
+		"previous_millicents":   step.DeliveredMillicents,
+		"cumulative_millicents": step.TargetMillicents,
+		"charge_millicents":     step.TargetMillicents - step.DeliveredMillicents,
 	}
-	externalID := "faas-object-storage-" + record.ID
+	if record := step.Record; record != nil {
+		if record.ID == "" || record.Currency != api.BillingCurrency || !state.ValidObjectStorageBillingRecord(*record) ||
+			record.AccountID != step.AccountID || !record.PeriodStart.Equal(period) {
+			return errors.New("polar: invalid object storage billing record")
+		}
+		metadata["billing_record_id"] = record.ID
+		metadata["stored_byte_hours"] = record.StoredByteHours
+		metadata["request_count"] = record.RequestCount
+		metadata["egress_bytes"] = record.EgressBytes
+		metadata["provider_cost_millicents"] = record.ProviderCostMillicents
+		metadata["storage_millicents"] = record.StorageMillicents
+		metadata["requests_millicents"] = record.RequestsMillicents
+		metadata["egress_millicents"] = record.EgressMillicents
+		metadata["uncapped_millicents"] = record.TotalMillicents
+	}
+	externalID := "faas-object-storage-" + step.AccountID + "-" + month + "-" + strconv.FormatInt(step.TargetMillicents, 10)
 	body := ingestRequest{Events: []usageEvent{{
 		ExternalID:         externalID,
 		Name:               p.objectStorageEvent,
-		ExternalCustomerID: record.AccountID,
-		Metadata: map[string]any{
-			"faas_account_id":          record.AccountID,
-			"billing_record_id":        record.ID,
-			"period_start":             record.PeriodStart.Format(time.RFC3339),
-			"period_end":               record.PeriodEnd.Format(time.RFC3339),
-			"stored_byte_hours":        record.StoredByteHours,
-			"request_count":            record.RequestCount,
-			"egress_bytes":             record.EgressBytes,
-			"provider_cost_millicents": record.ProviderCostMillicents,
-			"storage_millicents":       record.StorageMillicents,
-			"requests_millicents":      record.RequestsMillicents,
-			"egress_millicents":        record.EgressMillicents,
-			"uncapped_millicents":      record.TotalMillicents,
-			"charge_millicents":        chargeMillicents,
-		},
-		Timestamp: record.PeriodEnd.Format(time.RFC3339),
+		ExternalCustomerID: step.AccountID,
+		Metadata:           metadata,
+		Timestamp:          step.At.UTC().Format(time.RFC3339),
 	}}}
 	var result ingestResponse
 	if err := p.doJSON(ctx, http.MethodPost, "/v1/events/ingest", body, &result, externalID); err != nil {
-		return fmt.Errorf("polar: ingest object storage account=%s period=%s: %w", record.AccountID, record.PeriodStart.Format("2006-01"), err)
+		return fmt.Errorf("polar: ingest object storage account=%s period=%s: %w", step.AccountID, month, err)
 	}
 	if result.Inserted == 0 && result.Duplicates == 0 {
-		return fmt.Errorf("polar: ingest object storage account=%s period=%s returned no inserted or duplicate events", record.AccountID, record.PeriodStart.Format("2006-01"))
+		return fmt.Errorf("polar: ingest object storage account=%s period=%s returned no inserted or duplicate events", step.AccountID, month)
 	}
 	return nil
 }
