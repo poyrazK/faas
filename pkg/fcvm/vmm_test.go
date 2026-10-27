@@ -2371,6 +2371,39 @@ func TestWaitReady_HealthcheckRefusedIsAppNotListening(t *testing.T) {
 	}
 }
 
+// A raw TCP echo service accepted every probe after it bound :5432, yet the
+// wake failed "got ECONNREFUSED ... the app never listened": only the probes
+// before the bind were counted (container qualification, 2026-10-26).
+func TestHealthcheckNonHTTPReplyIsNotReportedAsNeverListened(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	t.Cleanup(func() { _ = ln.Close() })
+	go func() {
+		for {
+			conn, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			go func() {
+				defer conn.Close()
+				buf := make([]byte, 512)
+				n, _ := conn.Read(buf)
+				_, _ = conn.Write(append([]byte("tcp-echo:"), buf[:n]...))
+			}()
+		}
+	}()
+	_, transportErr, probeErr := healthcheckProbeResult(context.Background(), &http.Client{Timeout: 2 * time.Second}, ln.Addr().String(), "/healthz")
+	if probeErr != nil || !isNonHTTPReply(transportErr) {
+		t.Fatalf("probe of a raw TCP echo = (%v, %v), want a non-HTTP reply", transportErr, probeErr)
+	}
+	p := (&JailerVMM{}).healthcheckNotReadyProblem(Lease{Instance: "i", AppPort: 5432}, "/healthz", readinessObservation{connRefused: 107, nonHTTP: 40}, 30*time.Second)
+	if p.Code != api.CodeAppStartupTimeout || !strings.Contains(p.Detail, "GET /healthz on :5432 but answered without HTTP") || strings.Contains(p.Detail, "never listened") {
+		t.Fatalf("problem = %+v", p)
+	}
+}
+
 func TestHealthcheckNotReadyProblemNamesTheLastStatus(t *testing.T) {
 	p := (&JailerVMM{}).healthcheckNotReadyProblem(Lease{Instance: "i"}, "/healthz", readinessObservation{responses: 7, lastStatus: 503}, time.Second)
 	if p.Code != api.CodeAppStartupTimeout || !strings.Contains(p.Detail, "last status 503") {

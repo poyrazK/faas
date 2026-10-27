@@ -353,7 +353,7 @@ func cmdEdgeRulesCreate(args []string) int {
 	// a kind=budget rule with no budget is a silent no-op. The
 	// override header defaults to api.RequestBudgetDefaultOverrideHeader
 	// server-side when left empty.
-	budgetMs := fs.Int("budget-ms", 0, "kind=budget: execution budget in ms (>0; max 30000)")
+	budgetMs := fs.Int("budget-ms", 0, "kind=budget: execution budget in ms (>0; at most the plan ceiling)")
 	totalDeadlineMs := fs.Int("total-deadline-ms", 0, "kind=budget: optional total deadline from public ingress in ms (includes upload, wake and queue)")
 	budgetOverrideHeader := fs.String("budget-allow-override-header", "", "kind=budget: header that may override budget-ms per request (default x-faas-budget-ms)")
 
@@ -787,7 +787,7 @@ func cmdEdgeRulesUpdate(args []string) int {
 	// budget + maintenance (ADR-093 / ADR-091 D20). Mirror of the
 	// create-side flags; same structural checks run in
 	// buildEdgeRuleAction for both paths.
-	budgetMs := fs.Int("budget-ms", 0, "kind=budget: new execution budget in ms (>0; max 30000)")
+	budgetMs := fs.Int("budget-ms", 0, "kind=budget: new execution budget in ms (>0; at most the plan ceiling)")
 	totalDeadlineMs := fs.Int("total-deadline-ms", 0, "kind=budget: optional total deadline from public ingress in ms (includes upload, wake and queue)")
 	budgetOverrideHeader := fs.String("budget-allow-override-header", "", "kind=budget: header that may override budget-ms per request (default x-faas-budget-ms)")
 

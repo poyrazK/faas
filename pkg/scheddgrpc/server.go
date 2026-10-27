@@ -564,7 +564,16 @@ func (s *Server) AdmitInstance(ctx context.Context, req *scheddpb.AdmitInstanceR
 	if req.GetBurstContinuation() {
 		engineCtx = sched.WithBurstContinuation(engineCtx)
 	}
-	res, err := s.engine.AdmitInstance(engineCtx, req.GetAppId(), req.GetDeploymentId(), req.GetScope(), req.GetTrigger())
+	// Request traffic un-parks an explicitly parked app through the
+	// EnsureWake lifecycle claim; plain admission left it evicted_cold and
+	// the reaper destroyed the waking VM.
+	admit := s.engine.AdmitInstance
+	if traffic, ok := s.engine.(interface {
+		AdmitTrafficInstance(context.Context, string, string, string, string) (sched.WakeResult, error)
+	}); ok {
+		admit = traffic.AdmitTrafficInstance
+	}
+	res, err := admit(engineCtx, req.GetAppId(), req.GetDeploymentId(), req.GetScope(), req.GetTrigger())
 	finishWakeSpan(wakeSpan, err)
 	s.ops.Observe(op, time.Since(start), err)
 	if err != nil {

@@ -226,6 +226,21 @@ func TestDataAPIConfiguresBindingEgressAndScopedSecrets(t *testing.T) {
 			if body.RequireAuthn == nil || *body.RequireAuthn || body.PublicAuth == nil || body.PublicAuth.Mode != "open" {
 				t.Error("application JWT authentication was not configured")
 			}
+			// The hooks must name the runtime's own lifecycle routes.
+			engine, err := os.ReadFile("templates/data-api/engine.mjs")
+			if err != nil || body.BeforeCheckpoint == nil || body.AfterRestore == nil {
+				t.Errorf("lifecycle hooks missing: %v", err)
+			} else {
+				for _, hook := range []struct {
+					path    string
+					timeout int
+					route   string
+				}{{body.BeforeCheckpoint.Path, body.BeforeCheckpoint.TimeoutMS, "beforeCheckpoint: '"}, {body.AfterRestore.Path, body.AfterRestore.TimeoutMS, "afterRestore: '"}} {
+					if hook.timeout != api.AfterRestoreHookMaxTimeoutMS || !strings.Contains(string(engine), hook.route+hook.path+"'") {
+						t.Errorf("lifecycle hook %s (%d ms) is not the runtime's route", hook.path, hook.timeout)
+					}
+				}
+			}
 			writeJSONTest(w, api.AppResponse{ID: "app", Slug: "notes"})
 		case r.Method == "PUT":
 			if r.URL.Query().Get("scope") != "staging" {
@@ -244,6 +259,38 @@ func TestDataAPIConfiguresBindingEgressAndScopedSecrets(t *testing.T) {
 	}
 	if len(writes) != 8 || !strings.HasSuffix(writes[0], "/bindings") || writes[1] != "PATCH /v1/apps/notes" {
 		t.Fatalf("wrong configuration order: %v", writes)
+	}
+}
+
+// ADR-20261026150000: a plan without extra egress ports keeps the other
+// settings and relies on the binding's own database egress.
+func TestDataAPIConfigureWithoutExtraEgressPorts(t *testing.T) {
+	var patches []api.UpdateAppRequest
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/bindings"):
+			writeJSONTest(w, api.ManagedPostgresBinding{ID: "binding", State: "ready"})
+		case r.Method == "PATCH":
+			var body api.UpdateAppRequest
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			patches = append(patches, body)
+			if body.EgressPorts != nil {
+				w.Header().Set("Content-Type", "application/problem+json")
+				w.WriteHeader(http.StatusForbidden)
+				_, _ = w.Write([]byte(`{"status":403,"code":"` + api.CodePlanEgressPortsNotAllowed + `","title":"Plan doesn't allow extra egress ports"}`))
+				return
+			}
+			writeJSONTest(w, api.AppResponse{ID: "app", Slug: "notes"})
+		default:
+			writeJSONTest(w, map[string]any{})
+		}
+	}))
+	defer server.Close()
+	if err := configureDataAPI(context.Background(), api.NewClient(server.URL, "token"), api.AppResponse{ID: "app", Slug: "notes"}, "db", "production", map[string]string{"DATA_API_SCHEMAS": "api"}); err != nil {
+		t.Fatal(err)
+	}
+	if len(patches) != 2 || patches[1].EgressPorts != nil || patches[1].BeforeCheckpoint == nil || patches[1].AfterRestore == nil || patches[1].RequireAuthn == nil {
+		t.Fatalf("patches = %+v, want one retry without egress ports that keeps the other settings", patches)
 	}
 }
 
