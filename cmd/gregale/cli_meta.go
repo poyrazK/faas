@@ -2125,8 +2125,10 @@ var cliCommands = []cliCommand{
 		Short:   "Manage scheduled HTTP requests and deployment commands",
 		Subcommands: []cliSub{
 			{Name: "next", Short: "Show upcoming expression times across app tasks", Notes: []string{"Includes state and policy caveats."}, Examples: []string{"gregale crons next --app my-api", "gregale crons next --app my-api --json"}, Flags: []cliFlag{{Name: "app", Short: "app slug (linked app or picker by default)", Value: "SLUG"}}},
-			{Name: "list", Short: "List cron rules", Flags: []cliFlag{{Name: "app", Short: "app slug", Req: true, Value: "slug"}}},
-			{Name: "add", Short: "Schedule a POST to an app path, or a deployment command", Examples: []string{"gregale crons add --app my-api --interactive"}, Flags: []cliFlag{
+			{Name: "list", Short: "List cron rules", Flags: []cliFlag{{Name: "app", Short: "app slug", Req: true, Value: "slug"}, {Name: "one-off", Short: "list one-off requests (--at or --in) instead of cron rules", Bool: true, Capability: "delayed-execution"}}},
+			{Name: "add", Short: "Schedule a POST to an app path, or a deployment command", Examples: []string{"gregale crons add --app my-api --interactive", "gregale crons add --app my-api --at 2030-01-01T09:00:00Z --path /report", "gregale crons add --app my-api --in 30m --path /reminders"}, Notes: []string{"With --at or --in, add schedules one request instead of a recurring cron and takes the flags of `gregale delayed-task add` (--payload, --method, --header, retries); --schedule and the command flags belong to recurring crons."}, Flags: []cliFlag{
+				{Name: "at", Short: "send one request at this RFC3339 time instead of on a schedule", Value: "RFC3339", Capability: "delayed-execution"},
+				{Name: "in", Short: "send one request after this delay (such as 30m) instead of on a schedule", Value: "DURATION", Capability: "delayed-execution"},
 				{Name: "interactive", Short: "choose an HTTP path, schedule, and timezone, preview run times, and confirm creation", Bool: true},
 				{Name: "app", Short: "app slug (interactive mode can use linked app or picker)", Value: "slug"},
 				{Name: "schedule", Short: "five-field cron expression (required unless interactive)", Value: "EXPR"},
@@ -2143,7 +2145,10 @@ var cliCommands = []cliCommand{
 				{Name: "schedule-policy", Short: "versioned schedule policy JSON", Value: "JSON"},
 				{Name: "failure-rules", Short: "versioned failure and outcome-code rules JSON", Value: "JSON"},
 			}},
-			{Name: "info", Short: "Show one cron rule", Positionals: []string{"<id>"}},
+			{Name: "info", Short: "Show one cron rule", Positionals: []string{"<id>"}, Flags: []cliFlag{
+				{Name: "one-off", Short: "show a one-off request (--at or --in) instead of a cron rule", Bool: true, Capability: "delayed-execution"},
+				{Name: "app", Short: "with --one-off, require the request to belong to this app", Value: "SLUG"},
+			}},
 			{Name: "update", Short: "Update one cron rule", Positionals: []string{"[<id>]"}, Examples: []string{"gregale crons update --app my-api --interactive"}, Flags: []cliFlag{
 				{Name: "interactive", Short: "choose an HTTP task, edit current values, preview times, and confirm changes", Bool: true},
 				{Name: "app", Short: "app slug for interactive task selection (linked app or picker by default)", Value: "SLUG"},
@@ -2182,7 +2187,9 @@ var cliCommands = []cliCommand{
 				{Name: "all", Short: "walk every page using --limit and --cursor"},
 				{Name: "limit", Short: "max occurrence decisions (1..200)", Value: "N"},
 			}},
-			{Name: "cancel", Short: "Request cancellation of one command-cron run", Positionals: []string{"<cron-id>", "<run-id>"}},
+			{Name: "cancel", Short: "Cancel a command-cron run, or a one-off request", Positionals: []string{"<cron-id> <run-id> | <request-id>"}, Notes: []string{"With one id, cancels a one-off request made with --at or --in; --app then requires it to belong to that app."}, Flags: []cliFlag{
+				{Name: "app", Short: "with a one-off request, require it to belong to this app", Value: "SLUG"},
+			}},
 		},
 	},
 	{
