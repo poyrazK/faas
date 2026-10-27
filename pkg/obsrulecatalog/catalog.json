@@ -4,7 +4,7 @@
   "sets": [
     {
       "id": "gregale-core-v1",
-      "revision": "d14838586ff7a63db5e07f2f7ed522f9d9524fe6c3d75973431630199698c267",
+      "revision": "d2f4de8ef5225793930b9eb48f7ff377ad3be51d99f33208cb1296833d0a7328",
       "files": [
         "faas.rules.yml"
       ],
@@ -319,6 +319,19 @@
             "for_seconds": 900,
             "keep_firing_for_seconds": 0,
             "fingerprint": "8fe92f2e3435622098dc0efdb0a2284d10f926892dc5205b71a57454337ffd05"
+          }
+        },
+        {
+          "id": "0af7f426ec89c59eb0ffc837ed024312e01f4bf8eb610abe5c9a8632dbc84f12",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_customer_observability",
+          "rule_name": "FaasObservabilityLoopItemsFailing",
+          "definition": {
+            "expression_hash": "1a659f1f931d289bab81a5d7579e727e7538569a01273f3843695da2c210f6f5",
+            "labels_hash": "baf3254f31226170fd41d129ca13fbeb71df85ea84878f43959023d5ed3bb091",
+            "for_seconds": 900,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "35b641e4ae6f082ef8745c6ec9857a5f80ddccc5a44e44c9ce33e334dcf2ca28"
           }
         },
         {
@@ -1466,6 +1479,19 @@
           }
         },
         {
+          "id": "39fc18b38c8a04f19cf103b019f9c86d41d25f864aed9fe8ca94d7ebf273e058",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_customer_observability",
+          "rule_name": "FaasObservabilityLoopDisabled",
+          "definition": {
+            "expression_hash": "6b5b921ae1999bfd7853d2172a9b98955beefc0833e2d6f1a1ebd46948f19203",
+            "labels_hash": "baf3254f31226170fd41d129ca13fbeb71df85ea84878f43959023d5ed3bb091",
+            "for_seconds": 1800,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "6fd0b5f56d97690302af220db019dd3c8c23743bb184e5caf40081a62274be23"
+          }
+        },
+        {
           "id": "3a8777b2165c1c34f60c7ff0a3ed0da107ffd8190f9334c7667410ae96d395bc",
           "file_name": "faas.rules.yml",
           "group_name": "faas_spec12_operator_signals",
@@ -1554,6 +1580,19 @@
             "for_seconds": 300,
             "keep_firing_for_seconds": 0,
             "fingerprint": "f86aac3e01bc9a3bee0807a3562d41dfaaaded8b316b0460d820055ba3571c57"
+          }
+        },
+        {
+          "id": "407f6baf1f2ab6ad157345e975e60e5fe40622cee27847b42c51fa65942e3845",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_customer_observability",
+          "rule_name": "FaasObservabilityLoopStalled",
+          "definition": {
+            "expression_hash": "9b4fa6451cd361e1712cd7b61a9ca09ab1d235e80f8c2530ebb475beace8d14a",
+            "labels_hash": "baf3254f31226170fd41d129ca13fbeb71df85ea84878f43959023d5ed3bb091",
+            "for_seconds": 300,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "4a9b1465373a984298f31db4453c63e38a84baea31b71d2938f6dd94abea45d7"
           }
         },
         {
@@ -1970,6 +2009,32 @@
             "for_seconds": 900,
             "keep_firing_for_seconds": 0,
             "fingerprint": "f242856fc65b9ff8899c9afbdc3faf88c77938294d4dbdb18ec7711877da9cbd"
+          }
+        },
+        {
+          "id": "4df4f916d38088df6b37658fe9d32fffd8d8c58aaaf2055e920d7967181913e2",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_customer_observability",
+          "rule_name": "FaasAlertChannelDeliveriesFailing",
+          "definition": {
+            "expression_hash": "6f1e04dd3c8f0ec3cc7f1f0d9e38a83488c5b85428c35bea6b49e408bf3ddfef",
+            "labels_hash": "baf3254f31226170fd41d129ca13fbeb71df85ea84878f43959023d5ed3bb091",
+            "for_seconds": 600,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "383fea51a75786c249973203e6aee5e475f08a380eba28623e0dca8af7d61c0d"
+          }
+        },
+        {
+          "id": "4e6ef767d9d94021a6c4ea572eb6122c295ca5e1e85dc4fd3faee9a28f95c974",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_customer_observability",
+          "rule_name": "FaasLogLedgerWritesFailing",
+          "definition": {
+            "expression_hash": "edc10c8841d0c8d2dfd32e46178d560b804973ed4507e65ae990ce8a53426be3",
+            "labels_hash": "3f35dd22da4524e93ed2c88b1809063294c3f0ea82b542e94b30fe03c1f1053e",
+            "for_seconds": 900,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "f0f77634d6e11d314c3578f851bcf5622f0de2b977067e1d34e26c87714536a0"
           }
         },
         {
@@ -2854,6 +2919,19 @@
             "for_seconds": 300,
             "keep_firing_for_seconds": 0,
             "fingerprint": "4388e0018bdd2df9a98ff4c84280093a59f01ef8ee5b08f9154ab8dbe3f60563"
+          }
+        },
+        {
+          "id": "79d949d1b6de9fa6e2032b181fbf2a905efb1a60e621667adda2a74ddbe5cd52",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_customer_observability",
+          "rule_name": "FaasRuntimeLogForwardingFailing",
+          "definition": {
+            "expression_hash": "316a27d3add5f633cdb9f8536b5fe0878302c18781e7f7f3dedda69aa27762d2",
+            "labels_hash": "f70fa2db4f3083174add421ad4eaf60d1e9fd4f8e0a37294a1de1d15ea48e395",
+            "for_seconds": 900,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "3004c7e1ca4d1d6ccce1137b875c6575fbd4ef068c26e4dc6aab5a2872ad2b82"
           }
         },
         {
@@ -5876,7 +5954,7 @@
     },
     {
       "id": "gregale-full-v1",
-      "revision": "fe6b323c7db85a46b302ed8e32393cff2a0dd9d66341582e2a1a755bc3f55000",
+      "revision": "d6706bf36a66f423155b1740e0afa99708043d38afc7152c908479216e397bb5",
       "files": [
         "bridge.rules.yml",
         "data_placement.yaml",
@@ -6208,6 +6286,19 @@
             "for_seconds": 900,
             "keep_firing_for_seconds": 0,
             "fingerprint": "8fe92f2e3435622098dc0efdb0a2284d10f926892dc5205b71a57454337ffd05"
+          }
+        },
+        {
+          "id": "0af7f426ec89c59eb0ffc837ed024312e01f4bf8eb610abe5c9a8632dbc84f12",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_customer_observability",
+          "rule_name": "FaasObservabilityLoopItemsFailing",
+          "definition": {
+            "expression_hash": "1a659f1f931d289bab81a5d7579e727e7538569a01273f3843695da2c210f6f5",
+            "labels_hash": "baf3254f31226170fd41d129ca13fbeb71df85ea84878f43959023d5ed3bb091",
+            "for_seconds": 900,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "35b641e4ae6f082ef8745c6ec9857a5f80ddccc5a44e44c9ce33e334dcf2ca28"
           }
         },
         {
@@ -7420,6 +7511,19 @@
           }
         },
         {
+          "id": "39fc18b38c8a04f19cf103b019f9c86d41d25f864aed9fe8ca94d7ebf273e058",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_customer_observability",
+          "rule_name": "FaasObservabilityLoopDisabled",
+          "definition": {
+            "expression_hash": "6b5b921ae1999bfd7853d2172a9b98955beefc0833e2d6f1a1ebd46948f19203",
+            "labels_hash": "baf3254f31226170fd41d129ca13fbeb71df85ea84878f43959023d5ed3bb091",
+            "for_seconds": 1800,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "6fd0b5f56d97690302af220db019dd3c8c23743bb184e5caf40081a62274be23"
+          }
+        },
+        {
           "id": "3a8777b2165c1c34f60c7ff0a3ed0da107ffd8190f9334c7667410ae96d395bc",
           "file_name": "faas.rules.yml",
           "group_name": "faas_spec12_operator_signals",
@@ -7508,6 +7612,19 @@
             "for_seconds": 300,
             "keep_firing_for_seconds": 0,
             "fingerprint": "f86aac3e01bc9a3bee0807a3562d41dfaaaded8b316b0460d820055ba3571c57"
+          }
+        },
+        {
+          "id": "407f6baf1f2ab6ad157345e975e60e5fe40622cee27847b42c51fa65942e3845",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_customer_observability",
+          "rule_name": "FaasObservabilityLoopStalled",
+          "definition": {
+            "expression_hash": "9b4fa6451cd361e1712cd7b61a9ca09ab1d235e80f8c2530ebb475beace8d14a",
+            "labels_hash": "baf3254f31226170fd41d129ca13fbeb71df85ea84878f43959023d5ed3bb091",
+            "for_seconds": 300,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "4a9b1465373a984298f31db4453c63e38a84baea31b71d2938f6dd94abea45d7"
           }
         },
         {
@@ -7924,6 +8041,32 @@
             "for_seconds": 900,
             "keep_firing_for_seconds": 0,
             "fingerprint": "f242856fc65b9ff8899c9afbdc3faf88c77938294d4dbdb18ec7711877da9cbd"
+          }
+        },
+        {
+          "id": "4df4f916d38088df6b37658fe9d32fffd8d8c58aaaf2055e920d7967181913e2",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_customer_observability",
+          "rule_name": "FaasAlertChannelDeliveriesFailing",
+          "definition": {
+            "expression_hash": "6f1e04dd3c8f0ec3cc7f1f0d9e38a83488c5b85428c35bea6b49e408bf3ddfef",
+            "labels_hash": "baf3254f31226170fd41d129ca13fbeb71df85ea84878f43959023d5ed3bb091",
+            "for_seconds": 600,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "383fea51a75786c249973203e6aee5e475f08a380eba28623e0dca8af7d61c0d"
+          }
+        },
+        {
+          "id": "4e6ef767d9d94021a6c4ea572eb6122c295ca5e1e85dc4fd3faee9a28f95c974",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_customer_observability",
+          "rule_name": "FaasLogLedgerWritesFailing",
+          "definition": {
+            "expression_hash": "edc10c8841d0c8d2dfd32e46178d560b804973ed4507e65ae990ce8a53426be3",
+            "labels_hash": "3f35dd22da4524e93ed2c88b1809063294c3f0ea82b542e94b30fe03c1f1053e",
+            "for_seconds": 900,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "f0f77634d6e11d314c3578f851bcf5622f0de2b977067e1d34e26c87714536a0"
           }
         },
         {
@@ -8847,6 +8990,19 @@
             "for_seconds": 300,
             "keep_firing_for_seconds": 0,
             "fingerprint": "4388e0018bdd2df9a98ff4c84280093a59f01ef8ee5b08f9154ab8dbe3f60563"
+          }
+        },
+        {
+          "id": "79d949d1b6de9fa6e2032b181fbf2a905efb1a60e621667adda2a74ddbe5cd52",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_customer_observability",
+          "rule_name": "FaasRuntimeLogForwardingFailing",
+          "definition": {
+            "expression_hash": "316a27d3add5f633cdb9f8536b5fe0878302c18781e7f7f3dedda69aa27762d2",
+            "labels_hash": "f70fa2db4f3083174add421ad4eaf60d1e9fd4f8e0a37294a1de1d15ea48e395",
+            "for_seconds": 900,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "3004c7e1ca4d1d6ccce1137b875c6575fbd4ef068c26e4dc6aab5a2872ad2b82"
           }
         },
         {
