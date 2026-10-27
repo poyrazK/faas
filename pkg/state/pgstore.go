@@ -31574,6 +31574,8 @@ func replayDeadLetterEventTx(ctx context.Context, tx pgx.Tx, accountID, appID st
 				   and exists (select 1 from apps a where a.id = r.app_id and a.account_id = $3)`,
 				ev.SourceID, appID, accountID)
 		}
+	case DeadLetterSourceEventRoute:
+		return time.Time{}, ErrDeadLetterNotReplayable
 	default:
 		return time.Time{}, fmt.Errorf("state: unsupported dead-letter source %q", ev.Source)
 	}

@@ -2924,15 +2924,19 @@ func (b *PGBackend) InvalidateEdgeRuleAccountHosts(accountID, appID string, patt
 
 // BeginEdgeRuleConvergence forwards the prepare phase to matchers that support
 // the distributed policy barrier. Legacy matchers retain reset-only behavior.
-func (b *PGBackend) BeginEdgeRuleConvergence(accountID string, hosts []string, generation int64) {
-	if matcher, ok := b.edgeRules.(interface{ BeginConvergence(string, []string, int64) }); ok {
-		matcher.BeginConvergence(accountID, hosts, generation)
+func (b *PGBackend) BeginEdgeRuleConvergence(accountID, appID string, hosts []string, generation int64) {
+	if matcher, ok := b.edgeRules.(interface {
+		BeginConvergence(string, string, []string, int64)
+	}); ok {
+		matcher.BeginConvergence(accountID, appID, hosts, generation)
 	}
 }
 
-func (b *PGBackend) EndEdgeRuleConvergence(accountID string, hosts []string, generation int64) {
-	if matcher, ok := b.edgeRules.(interface{ EndConvergence(string, []string, int64) }); ok {
-		matcher.EndConvergence(accountID, hosts, generation)
+func (b *PGBackend) EndEdgeRuleConvergence(accountID, appID string, hosts []string, generation int64) {
+	if matcher, ok := b.edgeRules.(interface {
+		EndConvergence(string, string, []string, int64)
+	}); ok {
+		matcher.EndConvergence(accountID, appID, hosts, generation)
 	}
 }
 

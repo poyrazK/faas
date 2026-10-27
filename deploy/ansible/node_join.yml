@@ -1358,6 +1358,32 @@
         - faas_join_active_vmmd.stat.exists
         - not (faas_join_force_drain | default(false) | bool)
 
+    # The candidate adopting is not enough: the serving vmmd must hand its
+    # guests off. Only a vmmd with adopt_running_vms on sets the planned-
+    # restart notice that holds wakes and steers placement away while it
+    # restarts, and hands its bridge units over. A host just switched on
+    # (step 2 of the canary order) therefore drains once more; the rollout
+    # after it can skip the drain. Read from the running process: the unit's
+    # drop-ins already carry the candidate's switches.
+    - name: Read whether the serving vmmd hands its guests off
+      ansible.builtin.shell: |
+        set -euo pipefail
+        pid=$(systemctl show faas-vmmd -p MainPID --value)
+        if [ "${pid:-0}" -gt 0 ] && tr '\0' '\n' < "/proc/$pid/environ" |
+            grep -Eqx 'FAAS_VMMD_ADOPT_RUNNING_VMS=(1|t|T|true|TRUE|True)'; then
+          echo yes
+        else
+          echo no
+        fi
+      args:
+        executable: /bin/bash
+      register: faas_join_serving_vmmd_adopts
+      changed_when: false
+      when:
+        - (faas_join_existing_compute_node.rc | default(3)) == 0
+        - faas_join_active_vmmd.stat.exists
+        - not (faas_join_force_drain | default(false) | bool)
+
     # A changed runtime base generation always drains: its pre-stage runs
     # behind the drain barrier, and the serving vmmd must not take new
     # guests once the cache holds the candidate's generation.
@@ -1365,6 +1391,7 @@
       ansible.builtin.set_fact:
         faas_join_skip_drain: >-
           {{ (faas_join_adoption_check.rc | default(3)) == 0 and
+             (faas_join_serving_vmmd_adopts.stdout | default('no')) == 'yes' and
              not (faas_join_force_drain | default(false) | bool) and
              (faas_join_drain_base_generations.rc | default(0)) == 0 }}
 
@@ -1377,6 +1404,8 @@
              if (faas_join_drain_base_generations.rc | default(0)) in [3, 4] else
              'Draining: faas_join_force_drain is set.'
              if faas_join_force_drain | default(false) | bool else
+             'Draining: the serving vmmd does not hand its guests off (adopt_running_vms is off); the next rollout can skip the drain.'
+             if (faas_join_adoption_check.rc | default(3)) == 0 else
              'Draining: ' ~ ((faas_join_adoption_check.stdout | default('{}') | from_json).reason
              | default('the candidate cannot adopt every live guest', true)) }}
 

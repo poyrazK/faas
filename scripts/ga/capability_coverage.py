@@ -72,7 +72,7 @@ RULES = [
     (r"retained-service-spans|spans-", "Tracing:"),
     (r"response-status-hooks", "Throttle suggestions"),
     (r"^warmup$", "Warm pool"),
-    (r"^(apps-root|artifact-sync-.*|compute-mem-mb|control-plane-api-target|cp-state-backup-.*|curl|drill-.*|edge-discovery-url|git-sha|h2-?c-.*|ha-.*|host-(age-pub|age-recipient-path|bridge-cidr|hmac-key-path|key-path|name)|internal-target|json|masquerade-cidr|origin-ip|output|private-ingress-cidrs|public-(control-addr|edge-control-plane-target|edge-mode|health-path|host|iface|listen-addr|private-listen-addr)|quiet-pause|rclone-bin|repo-root|require-shared-artifacts|sample-interval|sign-pub|token|trusted-ingress-cidrs)$", "INFRA"),
+    (r"^(apps-root|artifact-sync-.*|compute-mem-mb|control-plane-api-target|cp-state-backup-.*|curl|drill-.*|edge-discovery-url|git-sha|h2-?c-.*|ha-.*|host-(age-pub|age-recipient-path|bridge-cidr|hmac-key-path|key-path|name)|internal-target|json|masquerade-cidr|origin-ip|output|private-ingress-cidrs|public-(control-addr|edge-control-plane-target|edge-mode|health-path|host|iface|listen-addr|private-listen-addr)|quiet-pause(-observe)?|rclone-bin|repo-root|require-shared-artifacts|sample-interval|sign-pub|token|trusted-ingress-cidrs)$", "INFRA"),
     (r"^(control|dns-handoff|edge-health-outcome|handler|inflight|pgbackend|rule-label-set|stale-target|workload-retirement)$", "INFRA"),
     (r"^/v1/apps/\\$|^/v1\?api.key", "TEST"),
     (r"^app-layer-max", "Builds in builder"),

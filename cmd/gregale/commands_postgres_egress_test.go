@@ -39,7 +39,7 @@ func TestEnsurePostgresEgressOpensThePort(t *testing.T) {
 			wantOut: "Opened outbound TCP 5432 for app api"},
 		{name: "already open", existing: []int{5432}, wantCalls: 0},
 		{name: "plan without extra ports", err: &main.APIError{Problem: api.Problem{Status: 403, Code: api.CodePlanEgressPortsNotAllowed}},
-			wantPorts: []int{5432}, wantCalls: 1, wantOut: "cannot open outbound TCP 5432 on its plan"},
+			wantPorts: []int{5432}, wantCalls: 1, wantOut: "the binding opens outbound TCP 5432 to this database"},
 		{name: "other failure", err: errors.New("boom"), wantPorts: []int{5432}, wantCalls: 1,
 			wantOut: "gregale app api egress-ports add 5432"},
 	}

@@ -37,11 +37,22 @@ type allowResolvedEgressClient interface {
 // the name looked a hostname up in a UUID column, so no answer was ever
 // registered and DNS-gated egress dropped every guest connection: builds
 // could not reach npm or nodejs.org on the first production-us fleet.
-func newResolvedEgressHook(clients vmmdClientLookup, localNode *localNodeID) gateway.ResolvedEgressHook {
-	return func(ctx context.Context, remote string, addrs []netip.Addr, ttl time.Duration) error {
+//
+// When the name is one of the calling app's bound managed databases
+// (ADR-20261026150000), the call also carries the database port so vmmd
+// opens it to those addresses on any plan. Only names in the database index
+// pay for resolving the caller.
+func newResolvedEgressHook(clients vmmdClientLookup, localNode *localNodeID, databases *databaseEgressIndex, resolveCaller gateway.ServiceProxyCallerResolver) gateway.ResolvedEgressHook {
+	return func(ctx context.Context, remote, name string, addrs []netip.Addr, ttl time.Duration) error {
 		host := remote
 		if h, _, err := net.SplitHostPort(remote); err == nil {
 			host = h
+		}
+		var databasePort uint16
+		if apps := databases.lookup(ctx, name); len(apps) > 0 && resolveCaller != nil {
+			if appID, err := resolveCaller(ctx, remote); err == nil {
+				databasePort = apps[appID]
+			}
 		}
 		nodeID, err := localNode.Get(ctx)
 		if err != nil {
@@ -53,8 +64,62 @@ func newResolvedEgressHook(clients vmmdClientLookup, localNode *localNodeID) gat
 			return fmt.Errorf("local vmmd %s (%s) unavailable", localNode.name, nodeID)
 		}
 		defer func() { _ = closer.Close() }()
-		return allowResolvedEgress(ctx, cli, host, addrs, ttl)
+		return allowResolvedEgress(ctx, cli, host, addrs, ttl, databasePort)
 	}
+}
+
+type databaseEgressSource interface {
+	ManagedPostgresEgressEndpoints(ctx context.Context) ([]state.ManagedPostgresEgressEndpoint, error)
+}
+
+// databaseEgressIndexRefresh bounds how long a newly bound database stays
+// closed: a guest that resolves it sooner fails its first connection and
+// opens it on the next lookup, as libpq and Node resolve on every connect.
+const databaseEgressIndexRefresh = 10 * time.Second
+
+// databaseEgressIndex maps each bound managed database host to the apps bound
+// to it and its port (ADR-20261026150000). It lives in memory because the
+// resolver consults it for every forwarded answer; a stale index refreshes on
+// the next lookup, and a failed refresh keeps the previous one.
+type databaseEgressIndex struct {
+	source databaseEgressSource
+	now    func() time.Time
+
+	mu       sync.Mutex
+	byHost   map[string]map[string]uint16
+	loadedAt time.Time
+}
+
+func newDatabaseEgressIndex(source databaseEgressSource) *databaseEgressIndex {
+	return &databaseEgressIndex{source: source, now: time.Now}
+}
+
+// lookup returns the apps bound to name with each one's database port.
+func (x *databaseEgressIndex) lookup(ctx context.Context, name string) map[string]uint16 {
+	if x == nil || x.source == nil || name == "" {
+		return nil
+	}
+	x.mu.Lock()
+	defer x.mu.Unlock()
+	if x.now().Sub(x.loadedAt) >= databaseEgressIndexRefresh {
+		// A slow or failed read keeps the previous index until the next
+		// interval rather than stalling every answer behind the lock.
+		refreshCtx, cancel := context.WithTimeout(ctx, time.Second)
+		endpoints, err := x.source.ManagedPostgresEgressEndpoints(refreshCtx)
+		cancel()
+		if err == nil {
+			byHost := make(map[string]map[string]uint16, len(endpoints))
+			for _, e := range endpoints {
+				if byHost[e.Host] == nil {
+					byHost[e.Host] = map[string]uint16{}
+				}
+				byHost[e.Host][e.AppID] = uint16(e.Port)
+			}
+			x.byHost = byHost
+		}
+		x.loadedAt = x.now()
+	}
+	return x.byHost[name]
 }
 
 type computeNodeByName interface {
@@ -96,8 +161,8 @@ func (l *localNodeID) Forget() {
 	l.mu.Unlock()
 }
 
-func allowResolvedEgress(ctx context.Context, cli allowResolvedEgressClient, host string, addrs []netip.Addr, ttl time.Duration) error {
-	req := &vmmdpb.AllowResolvedEgressRequest{SourceIp: host, TtlSeconds: uint32(min(ttl/time.Second, 1<<31))}
+func allowResolvedEgress(ctx context.Context, cli allowResolvedEgressClient, host string, addrs []netip.Addr, ttl time.Duration, databasePort uint16) error {
+	req := &vmmdpb.AllowResolvedEgressRequest{SourceIp: host, TtlSeconds: uint32(min(ttl/time.Second, 1<<31)), DatabasePort: uint32(databasePort)}
 	for _, a := range addrs {
 		req.Addresses = append(req.Addresses, a.String())
 	}

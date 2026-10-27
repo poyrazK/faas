@@ -40,7 +40,7 @@ Then consume it with the SDK, which leases, runs your handler, acks on success,
 nacks on an error and keeps long-running leases alive:
 
 ```js
-import { consumeQueue } from '@gregale/sdk-node/queues/runtime';
+import { consumeQueue } from '@gregale/sdk-node/preview/queues/runtime';
 
 consumeQueue({ app: 'my-worker', queue: 'jobs', concurrency: 4 }, async (message, { signal }) => {
   await processJob(message.payload, { signal });
@@ -49,7 +49,7 @@ consumeQueue({ app: 'my-worker', queue: 'jobs', concurrency: 4 }, async (message
 
 ```python
 import asyncio
-from faas_sdk.queue_consumer import consume_queue
+from faas_sdk.preview.queue_consumer import consume_queue
 
 async def handle(message):
     await process_job(message.payload)

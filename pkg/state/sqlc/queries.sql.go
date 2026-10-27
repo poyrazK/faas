@@ -84575,7 +84575,7 @@ func (q *Queries) ReadServicePolicyActiveRelease(ctx context.Context, db DBTX, a
 }
 
 const readServicePolicyAppByID = `-- name: ReadServicePolicyAppByID :one
-SELECT id, account_id, slug, status, project_id, preview_of_slug,
+SELECT id, account_id, slug, workload_name, status, project_id, preview_of_slug,
        preview_pr_number, preview_pr_state, preview_expires_at, app_protocol, websocket_enabled,
        jsonb_strip_nulls(jsonb_build_object(
            'service_bindings', manifest->'service_bindings',
@@ -84592,6 +84592,7 @@ type ReadServicePolicyAppByIDRow struct {
 	ID               pgtype.UUID
 	AccountID        pgtype.UUID
 	Slug             string
+	WorkloadName     string
 	Status           string
 	ProjectID        pgtype.UUID
 	PreviewOfSlug    pgtype.Text
@@ -84611,6 +84612,7 @@ func (q *Queries) ReadServicePolicyAppByID(ctx context.Context, db DBTX, id pgty
 		&i.ID,
 		&i.AccountID,
 		&i.Slug,
+		&i.WorkloadName,
 		&i.Status,
 		&i.ProjectID,
 		&i.PreviewOfSlug,
@@ -84625,7 +84627,7 @@ func (q *Queries) ReadServicePolicyAppByID(ctx context.Context, db DBTX, id pgty
 }
 
 const readServicePolicyAppBySlug = `-- name: ReadServicePolicyAppBySlug :one
-SELECT id, account_id, slug, status, project_id, preview_of_slug,
+SELECT id, account_id, slug, workload_name, status, project_id, preview_of_slug,
        preview_pr_number, preview_pr_state, preview_expires_at, app_protocol, websocket_enabled,
        jsonb_strip_nulls(jsonb_build_object(
            'service_bindings', manifest->'service_bindings',
@@ -84642,6 +84644,7 @@ type ReadServicePolicyAppBySlugRow struct {
 	ID               pgtype.UUID
 	AccountID        pgtype.UUID
 	Slug             string
+	WorkloadName     string
 	Status           string
 	ProjectID        pgtype.UUID
 	PreviewOfSlug    pgtype.Text
@@ -84660,6 +84663,7 @@ func (q *Queries) ReadServicePolicyAppBySlug(ctx context.Context, db DBTX, slug 
 		&i.ID,
 		&i.AccountID,
 		&i.Slug,
+		&i.WorkloadName,
 		&i.Status,
 		&i.ProjectID,
 		&i.PreviewOfSlug,
@@ -84732,7 +84736,7 @@ func (q *Queries) ReadServicePolicyDeploymentWeights(ctx context.Context, db DBT
 }
 
 const readServicePolicyPreviewApp = `-- name: ReadServicePolicyPreviewApp :one
-SELECT id, account_id, slug, status, project_id, preview_of_slug,
+SELECT id, account_id, slug, workload_name, status, project_id, preview_of_slug,
        preview_pr_number, preview_pr_state, preview_expires_at, app_protocol, websocket_enabled,
        jsonb_strip_nulls(jsonb_build_object(
            'service_bindings', manifest->'service_bindings',
@@ -84743,7 +84747,8 @@ SELECT id, account_id, slug, status, project_id, preview_of_slug,
            'allowed_service_callers', manifest->'allowed_service_callers',
            'allowed_service_call_scopes', manifest->'allowed_service_call_scopes'))::jsonb AS manifest
 FROM apps WHERE account_id = $1::uuid AND project_id = $2::uuid
-  AND preview_pr_number = $3::integer AND workload_name = $4::text
+  AND preview_pr_number = $3::integer
+  AND translate(lower(workload_name), '_.', '--') = translate(lower($4::text), '_.', '--')
   AND preview_of_slug IS NOT NULL AND status <> 'deleted'
 `
 
@@ -84758,6 +84763,7 @@ type ReadServicePolicyPreviewAppRow struct {
 	ID               pgtype.UUID
 	AccountID        pgtype.UUID
 	Slug             string
+	WorkloadName     string
 	Status           string
 	ProjectID        pgtype.UUID
 	PreviewOfSlug    pgtype.Text
@@ -84781,6 +84787,7 @@ func (q *Queries) ReadServicePolicyPreviewApp(ctx context.Context, db DBTX, arg 
 		&i.ID,
 		&i.AccountID,
 		&i.Slug,
+		&i.WorkloadName,
 		&i.Status,
 		&i.ProjectID,
 		&i.PreviewOfSlug,
@@ -84867,7 +84874,7 @@ func (q *Queries) ReadServicePolicyReleaseCandidates(ctx context.Context, db DBT
 }
 
 const readServicePolicyTestApp = `-- name: ReadServicePolicyTestApp :one
-SELECT id, account_id, slug, status, project_id, preview_of_slug,
+SELECT id, account_id, slug, workload_name, status, project_id, preview_of_slug,
        preview_pr_number, preview_pr_state, preview_expires_at, app_protocol, websocket_enabled,
        jsonb_strip_nulls(jsonb_build_object(
            'service_bindings', manifest->'service_bindings',
@@ -84892,6 +84899,7 @@ type ReadServicePolicyTestAppRow struct {
 	ID               pgtype.UUID
 	AccountID        pgtype.UUID
 	Slug             string
+	WorkloadName     string
 	Status           string
 	ProjectID        pgtype.UUID
 	PreviewOfSlug    pgtype.Text
@@ -84910,6 +84918,7 @@ func (q *Queries) ReadServicePolicyTestApp(ctx context.Context, db DBTX, arg Rea
 		&i.ID,
 		&i.AccountID,
 		&i.Slug,
+		&i.WorkloadName,
 		&i.Status,
 		&i.ProjectID,
 		&i.PreviewOfSlug,
@@ -89326,6 +89335,17 @@ func (q *Queries) ReleaseConfigurationCandidateOwner(ctx context.Context, db DBT
 	var i ReleaseConfigurationCandidateOwnerRow
 	err := row.Scan(&i.AccountID, &i.ProjectID)
 	return i, err
+}
+
+const releaseEdgeRuleAccountMutationLock = `-- name: ReleaseEdgeRuleAccountMutationLock :one
+SELECT pg_advisory_unlock(hashtextextended('edge-rule-account:' || $1::text, 0))::boolean AS unlocked
+`
+
+func (q *Queries) ReleaseEdgeRuleAccountMutationLock(ctx context.Context, db DBTX, accountID string) (bool, error) {
+	row := db.QueryRow(ctx, releaseEdgeRuleAccountMutationLock, accountID)
+	var unlocked bool
+	err := row.Scan(&unlocked)
+	return unlocked, err
 }
 
 const releaseEdgeRuleMutationLock = `-- name: ReleaseEdgeRuleMutationLock :one
@@ -97790,6 +97810,32 @@ func (q *Queries) StageProjectReleaseConfiguration(ctx context.Context, db DBTX,
 	return err
 }
 
+const staleEdgeListenerNodes = `-- name: StaleEdgeListenerNodes :many
+SELECT name FROM compute_nodes
+WHERE active = true AND edge_listener_heartbeat_at < now() - $1::interval
+ORDER BY name
+`
+
+func (q *Queries) StaleEdgeListenerNodes(ctx context.Context, db DBTX, staleAfter pgtype.Interval) ([]string, error) {
+	rows, err := db.Query(ctx, staleEdgeListenerNodes, staleAfter)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []string{}
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return nil, err
+		}
+		items = append(items, name)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const stampCustomerOperationExecutionAttempt = `-- name: StampCustomerOperationExecutionAttempt :execrows
 WITH stamped AS (
   UPDATE invocations SET instance_id=$1::uuid
@@ -99098,6 +99144,15 @@ func (q *Queries) TouchCustomerOperationWorkflowStep(ctx context.Context, db DBT
 	return err
 }
 
+const touchEdgeListenerHeartbeat = `-- name: TouchEdgeListenerHeartbeat :exec
+UPDATE compute_nodes SET edge_listener_heartbeat_at = now() WHERE name = $1::text
+`
+
+func (q *Queries) TouchEdgeListenerHeartbeat(ctx context.Context, db DBTX, name string) error {
+	_, err := db.Exec(ctx, touchEdgeListenerHeartbeat, name)
+	return err
+}
+
 const touchEnvironmentGitOpsIntent = `-- name: TouchEnvironmentGitOpsIntent :exec
 UPDATE environment_git_sources SET intent_version = intent_version + 1, updated_at = now()
 WHERE id = $1::uuid
@@ -99617,6 +99672,17 @@ func (q *Queries) TriggerRecordIDByItemIdentifier(ctx context.Context, db DBTX, 
 	var id pgtype.UUID
 	err := row.Scan(&id)
 	return id, err
+}
+
+const tryEdgeRuleAccountMutationLock = `-- name: TryEdgeRuleAccountMutationLock :one
+SELECT pg_try_advisory_lock(hashtextextended('edge-rule-account:' || $1::text, 0))::boolean AS locked
+`
+
+func (q *Queries) TryEdgeRuleAccountMutationLock(ctx context.Context, db DBTX, accountID string) (bool, error) {
+	row := db.QueryRow(ctx, tryEdgeRuleAccountMutationLock, accountID)
+	var locked bool
+	err := row.Scan(&locked)
+	return locked, err
 }
 
 const tryEdgeRuleMutationLock = `-- name: TryEdgeRuleMutationLock :one

@@ -3,7 +3,8 @@
 Data APIs expose PostgreSQL relations as authenticated REST endpoints and
 generate TypeScript application types from the same schema. This is a managed
 PostgreSQL preview: your account and region must already be enabled for managed
-databases, `data_api` bindings, port 5432 egress, and app tasks.
+databases, `data_api` bindings and app tasks. The binding opens the database's
+port for the API on every plan.
 
 For a complete application starting point, run
 `gregale init --template data-api-starter --path notes`. The
@@ -923,6 +924,14 @@ Repeat the command with the same settings and `--resume` to continue; the bindin
 request uses a stable idempotency key. Use ordinary app/database commands to
 inspect or remove retained resources.
 
+The API verifies the database's TLS certificate against the public root store
+(plus `NODE_EXTRA_CA_CERTS`, if set). Like any app, it parks when idle. Creation
+also registers `before_checkpoint` and `after_restore` hooks, so a parked API
+holds no database connection: the first request after a wake waits while the
+API reconnects, within the request deadline. For an API created before these
+hooks existed, `data-api create NAME ... --resume` (or `data-api deploy` for a
+single-app project) adds them with the current runtime.
+
 ## Define your application schema and authorization
 
 Create tables and policies with your existing migration tool, using a managed
@@ -949,11 +958,32 @@ CREATE POLICY own_notes ON api.notes
 
 Every valid application token uses the same restricted SQL role, with the
 original JWT subject and claims available to RLS. A token's external `role`
-claim cannot select an administrator. A table without RLS grants every
-authenticated user the binding's table access, so define policies before
-exposing user-specific data. On PostgreSQL 15+, use `security_invoker=true`
-for exposed views that must follow the underlying table's RLS; ordinary views
-can run with their owner's privileges. Only explicitly opted-in security-invoker RPC functions are exposed; see the RPC section below.
+claim cannot select an administrator. Only explicitly opted-in security-invoker RPC functions are exposed; see the RPC section below.
+
+### Row-level security is required
+
+Signed-in requests reach only relations whose rows PostgreSQL decides: tables
+with RLS enabled, and views created `WITH (security_invoker = true)` (PostgreSQL
+15+), which follow the RLS of the tables they read. The rule covers the request
+target, every relation embedded with `select=...,other(...)`, and the target
+table of a computed relationship. Any other relation (a table without RLS, a
+view running as its owner, a materialized view) answers `403 rls_required`
+without reaching the database, for reads and writes alike.
+
+To share a relation with every signed-in user on purpose, for example a
+reference table, exempt it:
+
+```sh
+gregale data-api configure notes-data --allow-without-rls api.countries,api.plans
+gregale data-api configure notes-data --no-allow-without-rls   # remove all exemptions
+```
+
+Exemptions use the `--public-read` format (at most 64 `schema.relation`
+names). In local development, list them as `"allow_without_rls": [...]` in
+`data-api.dev.json`. The API reads its relations at startup: a table created
+later answers `404 not_found` until `gregale data-api refresh`. Server keys are
+trusted backends and are not checked; anonymous requests follow the
+[public read](#public-reads) rules.
 
 ## Generate types and use the client
 

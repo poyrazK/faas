@@ -23,6 +23,7 @@ var _ managedpostgres.ComputeCapProvider = (*Provider)(nil)
 type computeCapProject struct {
 	ID                     string `json:"id"`
 	ComputeTimeSeconds     int64  `json:"compute_time_seconds"`
+	ActiveTimeSeconds      int64  `json:"active_time_seconds"`
 	ConsumptionPeriodStart string `json:"consumption_period_start"`
 	Settings               struct {
 		Quota computeCapQuota `json:"quota"`

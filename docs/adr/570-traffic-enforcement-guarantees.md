@@ -1088,6 +1088,25 @@ policies before changing any row. Applies without policy changes keep their
 existing transaction. With these, every writer found by the 2026-10-26
 inventory of binding-table writes is guarded or explicitly exempt.
 
+### Follow-up: operator kill switches
+
+The revocation fence and the per-VM HTTP cap fail closed and were live for
+every account with no way to turn them off short of a release. Operator
+disable switches remain explicit, observable states, as the decision requires:
+
+- The platform flag `traffic_revocation_fence` defaults on. Turned off
+  platform-wide or for an account, gatewayd-internal skips enrollment for
+  those requests and stamps their answers with a `v1;fence-off` marker, which
+  the public edge passes unverified like the managed-realtime marker. The
+  compute gateway strips any guest copy first, so a guest cannot author it.
+  A missing account never reads as "off".
+- `FAAS_HTTP_ADMISSION=off` on vmmd lifts the cap and the plan requirement on
+  that node after a restart, while every exchange still holds a permit that
+  park, migration and retirement cancel. vmmd has no runtime flag watcher.
+
+`gateway_traffic_revocation_fence_off_total{path}`, the edge's unverified
+counter, the VM admission status and a startup warning report each state.
+
 ### Follow-up: bounded request decision evidence
 
 Ordinary response completion checks the attached budget's wall-clock expiry as

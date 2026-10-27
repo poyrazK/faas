@@ -2955,6 +2955,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	handler.WithAPIMonetization(deps.apiMonetization)
 	handler.WithAPIMonetizationFlags(deps.platformFlags)
 	handler.WithEdgeFeatureFlags(deps.platformFlags)
+	handler.WithTrafficRevocationFenceFlags(deps.platformFlags)
 	handler.WithCapabilities(deps.capabilityAllowed)
 	// ADR-978: order the warm-capacity queue by route priority. Rules are
 	// read only for requests that have to queue, through a 30 s cache.
@@ -4108,6 +4109,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			Policy:                    newServicePolicyPinner(pgStore),
 			TrafficDeadlines:          deps.trafficDeadlines,
 			TrafficRevocations:        deps.trafficRevocations,
+			TrafficFenceFlags:         deps.platformFlags,
 			AdmitRuntime:              financialBudgetServiceAdmission(pgStore),
 			APIMonetization:           deps.apiMonetization,
 			APIMonetizationFor:        handler.APIMonetizationEnabledFor,
@@ -4485,8 +4487,11 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 				log.Info("gatewayd: guest DNS blocklist loaded", "domains", blocklist.Len())
 				// ADR-373 DNS-gated egress: report every guest answer to this
 				// node's vmmd before replying, so the guest may connect to it.
+				// ADR-20261026150000: a bound managed database's answer also
+				// opens its port for the calling app.
 				if deps.nodeCache != nil && deps.pgStore != nil && cfg.NodeName != "" {
-					dnsHandler.WithResolvedEgressHook(newResolvedEgressHook(deps.nodeCache.cache, newLocalNodeID(deps.pgStore, cfg.NodeName)))
+					dnsHandler.WithResolvedEgressHook(newResolvedEgressHook(deps.nodeCache.cache, newLocalNodeID(deps.pgStore, cfg.NodeName),
+						newDatabaseEgressIndex(deps.pgStore), guestServiceCallerResolver))
 				}
 				// ADR-576: answer service names with service addresses only once
 				// the TCP proxy behind them is configured.
