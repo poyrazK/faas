@@ -4826,6 +4826,9 @@ func (s *server) handler() http.Handler {
 		// faster than the spec §11 10/min/IP budget.
 		CountStatuses: []int{http.StatusUnauthorized, http.StatusGone},
 	}, http.HandlerFunc(auth.verify)))
+	mux.Handle("POST /auth/verify", s.dashboardAuthChain(middleware.AuthLimitConfig{
+		CountStatuses: []int{http.StatusUnauthorized, http.StatusGone},
+	}, s.fromTrustedOrigin(http.HandlerFunc(auth.verifyConfirmed))))
 	mux.Handle("GET /v1/auth/verify-email", s.dashboardAuthChain(middleware.AuthLimitConfig{
 		CountStatuses: []int{middleware.CountEveryAttempt, http.StatusGone},
 	}, http.HandlerFunc(s.verifyEmail)))
@@ -4846,7 +4849,10 @@ func (s *server) handler() http.Handler {
 	mux.Handle("POST /v1/auth/signup/magic-link", s.dashboardAuthChain(middleware.AuthLimitConfig{
 		CountStatuses: []int{middleware.CountEveryAttempt},
 	}, http.HandlerFunc(s.postV1AuthSignupMagicLink)))
-	mux.Handle("POST /logout", s.dashboardChain(http.HandlerFunc(auth.logout)))
+	// A logout must come from Gregale itself: a sibling app host could
+	// otherwise post it to drop the __Host- session and leave a legacy
+	// faas_sid it planted to be read next (security audit 2026-10-27).
+	mux.Handle("POST /logout", s.dashboardChain(s.fromTrustedOrigin(http.HandlerFunc(auth.logout))))
 	// /oauth/callback is the GitHub App install redirect target
 	// (review finding #1+#2 closure for the M7.5 OAuth path).
 	// Behind sessionAuth so the bind row is anchored to the

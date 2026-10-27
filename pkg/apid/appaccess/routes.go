@@ -110,14 +110,19 @@ var routeActions = map[string]authz.OrgAction{
 	// Gregale. The handlers keep the creator's account-wide alert rules and
 	// notification channels to the creator. Binding an outbound integration
 	// spends the creator's provider credential, so only unbinding is shared.
-	"GET /v1/apps/{slug}/alerts":                                  authz.OrgActionReadApp,
-	"POST /v1/apps/{slug}/alerts":                                 authz.OrgActionManageAppSecurity,
-	"GET /v1/apps/{slug}/alerts/{id}":                             authz.OrgActionReadApp,
-	"PATCH /v1/apps/{slug}/alerts/{id}":                           authz.OrgActionManageAppSecurity,
-	"DELETE /v1/apps/{slug}/alerts/{id}":                          authz.OrgActionManageAppSecurity,
-	"POST /v1/apps/{slug}/alerts/{id}/rotate-secret":              authz.OrgActionManageAppSecurity,
-	"GET /v1/apps/{slug}/alerts/{id}/deliveries":                  authz.OrgActionReadApp,
-	"GET /v1/apps/{slug}/log-drains":                              authz.OrgActionReadApp,
+	"GET /v1/apps/{slug}/alerts":                     authz.OrgActionReadApp,
+	"POST /v1/apps/{slug}/alerts":                    authz.OrgActionManageAppSecurity,
+	"GET /v1/apps/{slug}/alerts/{id}":                authz.OrgActionReadApp,
+	"PATCH /v1/apps/{slug}/alerts/{id}":              authz.OrgActionManageAppSecurity,
+	"DELETE /v1/apps/{slug}/alerts/{id}":             authz.OrgActionManageAppSecurity,
+	"POST /v1/apps/{slug}/alerts/{id}/rotate-secret": authz.OrgActionManageAppSecurity,
+	"GET /v1/apps/{slug}/alerts/{id}/deliveries":     authz.OrgActionReadApp,
+	"GET /v1/apps/{slug}/log-drains":                 authz.OrgActionReadApp,
+	// AI gateway access tokens act as their app. Minting stays with the
+	// app's creator (their standing keeps the tokens working); a company's
+	// owners and admins can see and revoke them once the creator is gone.
+	"GET /v1/apps/{slug}/ai-access-tokens":                        authz.OrgActionManageAppSecurity,
+	"DELETE /v1/apps/{slug}/ai-access-tokens/{token}":             authz.OrgActionManageAppSecurity,
 	"POST /v1/apps/{slug}/log-drains":                             authz.OrgActionManageAppSecurity,
 	"GET /v1/apps/{slug}/log-drains/{id}":                         authz.OrgActionReadApp,
 	"GET /v1/apps/{slug}/log-drains/{id}/health":                  authz.OrgActionReadApp,

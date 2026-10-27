@@ -7707,6 +7707,9 @@ type ProjectEnvironmentApproval struct {
 	ExpiresAt         time.Time
 	ConsumedAt        *time.Time
 	CreatedAt         time.Time
+	// ApprovedByAccountID is who gave the approval; "" for approvals made
+	// before it was recorded (ADR-20261020085706 amendment 2).
+	ApprovedByAccountID string
 }
 
 // ProjectEnvironmentConfig is one immutable, canonical non-secret

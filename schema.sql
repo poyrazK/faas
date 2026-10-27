@@ -49017,6 +49017,7 @@ CREATE TABLE public.project_environment_approvals (
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     token_kind text DEFAULT 'plan'::text NOT NULL,
     consumed_at timestamp with time zone,
+    approved_by_account_id uuid,
     CONSTRAINT project_environment_approvals_environment_slug_shape CHECK ((environment_slug ~ '^[a-z0-9](?:[a-z0-9-]{0,31}[a-z0-9])?$'::text)),
     CONSTRAINT project_environment_approvals_plan_hash_shape CHECK ((plan_token_hash ~ '^[a-f0-9]{64}$'::text)),
     CONSTRAINT project_environment_approvals_project_slug_shape CHECK ((project_slug ~ '^[a-z0-9][a-z0-9-]{0,62}$'::text)),
