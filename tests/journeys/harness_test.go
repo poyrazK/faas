@@ -460,10 +460,12 @@ func (tg *target) deploy(t *testing.T, slug string, args ...string) map[string]a
 	receipt := object(t, res.stdout)
 	// A redeploy's --wait returns once the candidate is live and verified,
 	// while traffic is still shifting; follow the rollout like
-	// production-release-acceptance.sh does.
+	// production-release-acceptance.sh does. The default safe ladder
+	// (adaptive: 1/10/50%, up to 2 min each) may hold each stage another
+	// 5 min on a low-traffic app (ADR-1446), so allow ~21 min plus margin.
 	if str(receipt, "status") == "live" && str(receipt, "rollout_state") == "rolling_out" {
-		waited := tg.ok(t, 12*time.Minute, "deployment", "wait", str(receipt, "id"),
-			"--rollout", "--timeout", "10m")
+		waited := tg.ok(t, 27*time.Minute, "deployment", "wait", str(receipt, "id"),
+			"--rollout", "--timeout", "25m")
 		final := object(t, waited.stdout)
 		receipt["rollout_state"] = field(final, "rollout_state")
 		receipt["status"] = field(final, "status")
