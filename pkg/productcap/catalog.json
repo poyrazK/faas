@@ -1191,6 +1191,7 @@
         "/replacement.js",
         "/resolution.js",
         "/sources.js",
+        "=/v1/events",
         "/validation.js",
         "/verification.js"
       ]
@@ -2380,6 +2381,10 @@
       ],
       "docs_url": "/docs/event-driven",
       "acceptance_test": "cmd/e2e/events_fanout_e2e_test.go::TestE2E_EventFanout_MatchesFiltersAndIsolatesAccounts",
+      "consumers": [
+        "schedd",
+        "vmmd"
+      ],
       "routes": [
         "/dashboard/apps/{}/event-deliveries",
         "/dashboard/apps/{}/events",
