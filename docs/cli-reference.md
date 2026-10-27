@@ -14671,6 +14671,86 @@ Examples:
 gregale logs defaults clear --dry-run
 ```
 
+### logs view
+
+Save, list and reuse log filters, locally or shared with the team
+
+Examples:
+
+```sh
+gregale logs view save errors --since 1h --level error
+gregale logs view save errors --shared --level error --app my-api
+gregale logs view list --shared --app my-api
+gregale logs view use errors --default
+gregale logs my-api --view errors
+```
+
+Local views are what `logs views` manages; --shared stores a view on the server as `logs saved` does, so teammates and agents see it. Each verb takes the flags of the command it runs.
+
+#### logs view list
+
+List local or shared views
+
+`gregale logs view list [--shared]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--shared` | list the app&#39;s server-side views |  |
+
+#### logs view show
+
+Show one local view and its commands
+
+`gregale logs view show <name>`
+
+#### logs view save
+
+Save filters as a local or shared view
+
+`gregale logs view save [--shared] <name>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--shared` | save on the server for the app |  |
+
+#### logs view delete
+
+Delete a local or shared view
+
+`gregale logs view delete [--shared] <name>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--shared` | delete the app&#39;s server-side view |  |
+
+#### logs view rename
+
+Rename a local view
+
+`gregale logs view rename <old-name> <new-name>`
+
+#### logs view copy
+
+Copy a local view under a new name
+
+`gregale logs view copy <source-name> <new-name>`
+
+#### logs view update
+
+Change a local view&#39;s filters
+
+`gregale logs view update <name>`
+
+#### logs view use
+
+Make a local view the project&#39;s default
+
+`gregale logs view use --default <name>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--default` | save it as the project-local preferred view | required |
+
 ### logs views
 
 List or manage reusable local log filters
