@@ -1208,6 +1208,7 @@
       ],
       "docs_url": "/docs/data-api",
       "acceptance_test": "cmd/gregale/commands_data_api_sync_test.go::TestDataAPISyncJourney",
+      "parent": "managed-postgres",
       "routes": [
         "/dashboard/apps/{}/data-api",
         "/v1/apps/{}/data-api",

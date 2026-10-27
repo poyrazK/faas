@@ -183,14 +183,14 @@ func TestDataAPITypesUsesBoundedPrivateTaskAndRejectsTruncation(t *testing.T) {
 			if (code != 0) != truncated {
 				t.Fatalf("exit=%d truncated=%v", code, truncated)
 			}
-			if f.sawMethod != "POST" || f.sawPath != "/v1/apps/notes/tasks" {
+			if f.sawMethod != "POST" || f.sawPath != "/v1/apps/notes/data-api/contract-tasks" {
 				t.Fatalf("wrong task endpoint %s %s", f.sawMethod, f.sawPath)
 			}
-			var request api.CreateAppTaskRequest
-			if err := json.Unmarshal(f.sawBody, &request); err != nil {
-				t.Fatal(err)
+			var contract api.CreateDataAPIContractTaskRequest
+			if err := json.Unmarshal(f.sawBody, &contract); err != nil || contract.Kind != api.DataAPIContractTypes {
+				t.Fatalf("contract task %s: %v", f.sawBody, err)
 			}
-			if strings.Join(request.Command, " ") != "node /app/types.mjs" || request.MaxOutputBytes != api.DataAPIMaxOutputBytes || request.TimeoutSeconds != 60 {
+			if request := contract.Kind.Request(); strings.Join(request.Command, " ") != "node /app/types.mjs" || request.MaxOutputBytes != api.DataAPIMaxOutputBytes || request.TimeoutSeconds != 60 {
 				t.Fatalf("unbounded task: %+v", request)
 			}
 			got, _ := os.ReadFile(path)

@@ -318,6 +318,8 @@ function proxy(req, res, token, port, config, restBasePath, deadline, userLease,
     response.on('data', () => deadline.check())
     if (req.method === 'GET' && path.split('?')[0] === '/' && response.statusCode === 200) return openAPISpec(response, res, config, restBasePath, deadline)
     if (response.statusCode >= 400) markRequest(res, 'upstream_error')
+    // The engine names a created row from its own root; clients reach it below restBasePath.
+    if (typeof response.headers.location === 'string' && response.headers.location.startsWith('/')) response.headers.location = restBasePath + response.headers.location
     streamResponse(response, res, req.method, deadline, problem, publicCache)
   })
   let bytes = 0
