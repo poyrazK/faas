@@ -89,7 +89,10 @@ func TestGitHubDeploys(t *testing.T) {
 			t.Fatalf("source review pinned %s, want %s", got, commit)
 		}
 	})
+	autoPreview := false
 	s.check("pull_request_preview", func(t *testing.T) {
+		// What production serves before the PR; the preview must not change it.
+		before := str(jsonBody(t, get(base+"/")), "version")
 		branch := "e2ej-" + tg.runID
 		gh(t, "api", "repos/"+repo+"/git/refs", "-f", "ref=refs/heads/"+branch, "-f", "sha="+commit)
 		t.Cleanup(func() { ghQuiet("api", "-X", "DELETE", "repos/"+repo+"/git/refs/heads/"+branch) })
@@ -114,20 +117,29 @@ func TestGitHubDeploys(t *testing.T) {
 			}
 			time.Sleep(15 * time.Second)
 		}
+		autoPreview = appeared
 		if !appeared {
-			t.Errorf("opening PR #%d created no preview within 5 minutes; creating it with the CLI", number)
+			t.Logf("opening PR #%d created no preview within 5 minutes; creating it with the CLI", number)
 			tg.ok(t, 25*time.Minute, "preview", "create", "--app", slug, "--repo", repo, "--ref", branch,
 				"--pr-number", strconv.Itoa(number), "--wait")
 		}
 		tg.ok(t, 25*time.Minute, "preview", "wait", preview, "--timeout", "20m")
 		expectVersion(t, tg.appURL(preview), "pr-preview", 5*time.Minute)
-		expectVersion(t, base, pushed, time.Minute)
+		expectVersion(t, base, before, time.Minute)
 
 		gh(t, "pr", "close", strconv.Itoa(number), "--repo", repo)
 		eventually(t, "closing the PR removes its preview", 10*time.Minute, 15*time.Second, func() (bool, string) {
 			res := tg.run(t, time.Minute, "preview", "list", "--app", slug)
 			return res.exit == 0 && !strings.Contains(string(res.stdout), preview), "still listed: " + tail(string(res.stdout), 200)
 		})
+	})
+	// Separate from the lifecycle above so the GitHub App's automatic
+	// preview is judged on its own (docs/preview-environments.md: every PR
+	// against a connected repository gets one, no CI needed).
+	s.check("preview_created_on_pr_open", func(t *testing.T) {
+		if !autoPreview {
+			t.Fatalf("opening a pull request created no preview within 5 minutes")
+		}
 	})
 }
 

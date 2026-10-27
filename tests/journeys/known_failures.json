@@ -36,12 +36,17 @@
   },
   {
     "step": "TestGitHubDeploys/push_to_deploy",
-    "bug": "a push to the production branch of an app bound with gregale github bind created no deployment within 25 min (two runs); github status reports the binding healthy",
+    "bug": "a push to the production branch of an app bound with gregale github bind created no deployment within 25 min (three runs); github status reports the binding healthy",
     "since": "2026-10-27"
   },
   {
     "step": "TestGitHubDeploys/checks_status",
     "bug": "follows from push_to_deploy: no deployment, so no Gregale check on the pushed commit",
+    "since": "2026-10-27"
+  },
+  {
+    "step": "TestGitHubDeploys/preview_created_on_pr_open",
+    "bug": "opening a pull request on the bound fixture repository created no preview within 5 min; gregale preview create works and the preview serves",
     "since": "2026-10-27"
   }
 ]
