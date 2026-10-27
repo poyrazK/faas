@@ -6777,8 +6777,8 @@ DECLARE
     payload jsonb;
 BEGIN
     IF TG_OP = 'UPDATE' THEN
-        IF (to_jsonb(NEW) - 'last_heartbeat_at') IS NOT DISTINCT FROM
-           (to_jsonb(OLD) - 'last_heartbeat_at') THEN
+        IF (to_jsonb(NEW) - 'last_heartbeat_at' - 'edge_listener_heartbeat_at') IS NOT DISTINCT FROM
+           (to_jsonb(OLD) - 'last_heartbeat_at' - 'edge_listener_heartbeat_at') THEN
             RETURN NEW;
         END IF;
     END IF;
