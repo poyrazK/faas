@@ -91,10 +91,12 @@ SELECT kid,database_id::text AS database_id,sealed_secret,recipient FROM managed
  WHERE kid>sqlc.arg(after)::text ORDER BY kid LIMIT sqlc.arg(page_size)::int;
 
 -- name: ResealLiveKey :execrows
--- Replaces a key's seal only while it still holds the one the re-seal read,
--- so a key rotated or revoked meanwhile is left as it is.
+-- Replaces a key's seal only while it still holds the one the re-seal read
+-- and names the recipient the re-seal sealed to, so a key rotated, revoked
+-- or redirected meanwhile is left as it is.
 UPDATE managed_postgres_live_keys SET sealed_secret=sqlc.arg(sealed_secret)::bytea
- WHERE kid=sqlc.arg(kid)::text AND database_id=sqlc.arg(database_id)::text::uuid AND sealed_secret=sqlc.arg(previous)::bytea;
+ WHERE kid=sqlc.arg(kid)::text AND database_id=sqlc.arg(database_id)::text::uuid AND sealed_secret=sqlc.arg(previous)::bytea
+   AND recipient=sqlc.arg(recipient)::text;
 
 -- name: SealedLiveLoginsAfter :many
 -- One page of every live login in database order, for the operator re-seal.
@@ -104,4 +106,5 @@ SELECT database_id::text AS database_id,sealed_login,recipient FROM managed_post
 -- name: ResealLiveLogin :execrows
 -- Replaces a login's seal only while it still holds the one the re-seal read.
 UPDATE managed_postgres_live_logins SET sealed_login=sqlc.arg(sealed_login)::bytea
- WHERE database_id=sqlc.arg(database_id)::text::uuid AND sealed_login=sqlc.arg(previous)::bytea;
+ WHERE database_id=sqlc.arg(database_id)::text::uuid AND sealed_login=sqlc.arg(previous)::bytea
+   AND recipient=sqlc.arg(recipient)::text;

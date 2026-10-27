@@ -365,6 +365,13 @@ func TestStoreResealSwapsOnlyTheSealItRead(t *testing.T) {
 	if swapped, err := store.ResealKey(ctx, keys[0], []byte("bound-again")); err != nil || swapped {
 		t.Fatalf("re-seal from a stale read = %v, %v; want it refused", swapped, err)
 	}
+	// A re-seal sealed to the recipient it read; a row now naming another
+	// recipient is not overwritten with it.
+	redirected := next[0]
+	redirected.Recipient = "age1" + strings.Repeat("q", 58)
+	if swapped, err := store.ResealKey(ctx, redirected, []byte("bound-b")); err != nil || swapped {
+		t.Fatalf("re-seal under another recipient = %v, %v; want it refused", swapped, err)
+	}
 	ring, err := store.Ring(ctx, dbID)
 	if err != nil || len(ring) != 2 || string(ring[0].Sealed) != "bound-a" || string(ring[1].Sealed) != "sealed-bbbbbbbbbbbbbbbb" {
 		t.Fatalf("ring after re-seal = %+v, %v", ring, err)

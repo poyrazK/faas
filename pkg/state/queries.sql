@@ -8437,7 +8437,7 @@ WHERE id = sqlc.arg(id)::uuid AND status <> 'deleted' AND deleted_at IS NULL;
 
 -- ADR-570: minimal credential-free projection for one read-only service-policy snapshot.
 -- name: ReadServicePolicyAppByID :one
-SELECT id, account_id, slug, status, project_id, preview_of_slug,
+SELECT id, account_id, slug, workload_name, status, project_id, preview_of_slug,
        preview_pr_number, preview_pr_state, preview_expires_at, app_protocol, websocket_enabled,
        jsonb_strip_nulls(jsonb_build_object(
            'service_bindings', manifest->'service_bindings',
@@ -8450,7 +8450,7 @@ SELECT id, account_id, slug, status, project_id, preview_of_slug,
 FROM apps WHERE id = sqlc.arg(id)::uuid;
 
 -- name: ReadServicePolicyAppBySlug :one
-SELECT id, account_id, slug, status, project_id, preview_of_slug,
+SELECT id, account_id, slug, workload_name, status, project_id, preview_of_slug,
        preview_pr_number, preview_pr_state, preview_expires_at, app_protocol, websocket_enabled,
        jsonb_strip_nulls(jsonb_build_object(
            'service_bindings', manifest->'service_bindings',
@@ -8463,7 +8463,7 @@ SELECT id, account_id, slug, status, project_id, preview_of_slug,
 FROM apps WHERE slug = sqlc.arg(slug)::text AND status <> 'deleted';
 
 -- name: ReadServicePolicyPreviewApp :one
-SELECT id, account_id, slug, status, project_id, preview_of_slug,
+SELECT id, account_id, slug, workload_name, status, project_id, preview_of_slug,
        preview_pr_number, preview_pr_state, preview_expires_at, app_protocol, websocket_enabled,
        jsonb_strip_nulls(jsonb_build_object(
            'service_bindings', manifest->'service_bindings',
@@ -8474,11 +8474,12 @@ SELECT id, account_id, slug, status, project_id, preview_of_slug,
            'allowed_service_callers', manifest->'allowed_service_callers',
            'allowed_service_call_scopes', manifest->'allowed_service_call_scopes'))::jsonb AS manifest
 FROM apps WHERE account_id = sqlc.arg(account_id)::uuid AND project_id = sqlc.arg(project_id)::uuid
-  AND preview_pr_number = sqlc.arg(preview_pr_number)::integer AND workload_name = sqlc.arg(workload_name)::text
+  AND preview_pr_number = sqlc.arg(preview_pr_number)::integer
+  AND translate(lower(workload_name), '_.', '--') = translate(lower(sqlc.arg(workload_name)::text), '_.', '--')
   AND preview_of_slug IS NOT NULL AND status <> 'deleted';
 
 -- name: ReadServicePolicyTestApp :one
-SELECT id, account_id, slug, status, project_id, preview_of_slug,
+SELECT id, account_id, slug, workload_name, status, project_id, preview_of_slug,
        preview_pr_number, preview_pr_state, preview_expires_at, app_protocol, websocket_enabled,
        jsonb_strip_nulls(jsonb_build_object(
            'service_bindings', manifest->'service_bindings',
@@ -10756,6 +10757,20 @@ SELECT pg_try_advisory_lock(hashtextextended(sqlc.arg(app_id)::text, 0))::boolea
 
 -- name: ReleaseEdgeRuleMutationLock :one
 SELECT pg_advisory_unlock(hashtextextended(sqlc.arg(app_id)::text, 0))::boolean AS unlocked;
+
+-- name: TryEdgeRuleAccountMutationLock :one
+SELECT pg_try_advisory_lock(hashtextextended('edge-rule-account:' || sqlc.arg(account_id)::text, 0))::boolean AS locked;
+
+-- name: ReleaseEdgeRuleAccountMutationLock :one
+SELECT pg_advisory_unlock(hashtextextended('edge-rule-account:' || sqlc.arg(account_id)::text, 0))::boolean AS unlocked;
+
+-- name: TouchEdgeListenerHeartbeat :exec
+UPDATE compute_nodes SET edge_listener_heartbeat_at = now() WHERE name = sqlc.arg(name)::text;
+
+-- name: StaleEdgeListenerNodes :many
+SELECT name FROM compute_nodes
+WHERE active = true AND edge_listener_heartbeat_at < now() - sqlc.arg(stale_after)::interval
+ORDER BY name;
 
 -- name: ObserveEnvironmentGitOpsRuntime :many
 SELECT app_id, resource, environment_slug, required_at::timestamptz AS required_at, stale_residents, starting_residents, stale_snapshots

@@ -74,3 +74,12 @@ Warm placement, listener/source-address translation, VM startup, namespace
 selection and the guest HTTP server remain fixtures. This case uses configured
 compute gateway startup; outer discovery, the separate public edge daemon,
 cross-host authentication and native/deployed acceptance remain separate.
+
+## Kill switch
+
+`FAAS_HTTP_ADMISSION=off` on a vmmd lifts the per-VM HTTP cap on that node
+after a vmmd restart. Exchanges still hold permits, so park, migration and
+retirement keep cancelling them, and an instance without a known plan is no
+longer refused. The VM status reports the cap as not enforced and vmmd logs a
+warning at startup. Empty, `on` or a true boolean keeps the cap; `off` or a
+false boolean lifts it; any other value fails startup.

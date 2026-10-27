@@ -395,6 +395,14 @@ func invocationStageScope(scope string) bool {
 	return scope != "production" && scope != DefaultEnvScope
 }
 
+// ProductionDeploymentScope reports whether a deployment scope (or a
+// workload token's environment) is the production lane: "production", the
+// default scope, or no scope. Every other scope is a stage, staging or a
+// preview, whose code must not touch production work.
+func ProductionDeploymentScope(scope string) bool {
+	return !invocationStageScope(normalizedDeploymentScope(scope))
+}
+
 func invocationScopesMatch(projectApp bool, expected, actual string) bool {
 	if projectApp {
 		return workloadEnvironmentSlug(expected) == workloadEnvironmentSlug(actual)

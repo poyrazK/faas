@@ -782,6 +782,8 @@ type Querier interface {
 	CutoverCheckedRollbackTarget(ctx context.Context, db DBTX, targetID pgtype.UUID) error
 	DataRepairHealthSnapshot(ctx context.Context, db DBTX, arg DataRepairHealthSnapshotParams) ([]byte, error)
 	DeactivateProjectReleaseSets(ctx context.Context, db DBTX, arg DeactivateProjectReleaseSetsParams) error
+	// event_route entries cannot be replayed (DeadLetterReplayable), so they never
+	// take a page from replay-all.
 	DeadLetterReplayCandidateIDs(ctx context.Context, db DBTX, arg DeadLetterReplayCandidateIDsParams) ([]string, error)
 	// issue #667 / ADR-078 — canonical "tail task reached terminal" path.
 	// Equivalent to BumpInstanceTailCount(ctx, id, -n) but kept as a
@@ -3349,6 +3351,7 @@ type Querier interface {
 	ListManagedPostgresCutoverCredentials(ctx context.Context, db DBTX, id string) ([]ManagedPostgresCutoverCredential, error)
 	ListManagedPostgresDrainPlanInventory(ctx context.Context, db DBTX, arg ListManagedPostgresDrainPlanInventoryParams) ([]ListManagedPostgresDrainPlanInventoryRow, error)
 	ListManagedPostgresDrainPlanMembers(ctx context.Context, db DBTX, arg ListManagedPostgresDrainPlanMembersParams) ([]ListManagedPostgresDrainPlanMembersRow, error)
+	ListManagedPostgresEgressEndpoints(ctx context.Context, db DBTX) ([]ListManagedPostgresEgressEndpointsRow, error)
 	ListManagedPostgresImportRecords(ctx context.Context, db DBTX, arg ListManagedPostgresImportRecordsParams) ([]ManagedPostgresUsage, error)
 	ListManagedPostgresLifecycleDatabases(ctx context.Context, db DBTX, accountID pgtype.UUID) ([]ManagedPostgresDatabase, error)
 	ListManagedPostgresLifecycleUsageDatabases(ctx context.Context, db DBTX, arg ListManagedPostgresLifecycleUsageDatabasesParams) ([]ManagedPostgresDatabase, error)
@@ -5660,6 +5663,9 @@ type Querier interface {
 	//      until operator override; non-null is the TTL deadline)
 	RecordMailSuppression(ctx context.Context, db DBTX, arg RecordMailSuppressionParams) (bool, error)
 	RecordManagedPostgresCreationReceipt(ctx context.Context, db DBTX, arg RecordManagedPostgresCreationReceiptParams) (ManagedPostgresCreationReceipt, error)
+	// ADR-20261026150000: managed database endpoints, recorded when a credential
+	// is sealed, and the bound apps that may reach them.
+	RecordManagedPostgresDatabaseEndpoint(ctx context.Context, db DBTX, arg RecordManagedPostgresDatabaseEndpointParams) error
 	RecordManagedPostgresDiscoveredResource(ctx context.Context, db DBTX, arg RecordManagedPostgresDiscoveredResourceParams) (int64, error)
 	RecordManagedPostgresLifecycleResource(ctx context.Context, db DBTX, arg RecordManagedPostgresLifecycleResourceParams) (int64, error)
 	RecordManagedPostgresProviderResource(ctx context.Context, db DBTX, arg RecordManagedPostgresProviderResourceParams) (int64, error)
@@ -5751,6 +5757,7 @@ type Querier interface {
 	ReleaseCloneCheckpointObjectFence(ctx context.Context, db DBTX, arg ReleaseCloneCheckpointObjectFenceParams) (int64, error)
 	ReleaseCloneCheckpointPostgresFence(ctx context.Context, db DBTX, arg ReleaseCloneCheckpointPostgresFenceParams) (int64, error)
 	ReleaseConfigurationCandidateOwner(ctx context.Context, db DBTX, appID string) (ReleaseConfigurationCandidateOwnerRow, error)
+	ReleaseEdgeRuleAccountMutationLock(ctx context.Context, db DBTX, accountID string) (bool, error)
 	ReleaseEdgeRuleMutationLock(ctx context.Context, db DBTX, appID string) (bool, error)
 	ReleaseEnvironmentGitOpsField(ctx context.Context, db DBTX, arg ReleaseEnvironmentGitOpsFieldParams) error
 	ReleaseEnvironmentGitOpsLease(ctx context.Context, db DBTX, arg ReleaseEnvironmentGitOpsLeaseParams) (int64, error)
@@ -6418,6 +6425,7 @@ type Querier interface {
 	StageMigrationContract(ctx context.Context, db DBTX, arg StageMigrationContractParams) (int64, error)
 	StageProjectReleaseCommand(ctx context.Context, db DBTX, arg StageProjectReleaseCommandParams) error
 	StageProjectReleaseConfiguration(ctx context.Context, db DBTX, arg StageProjectReleaseConfigurationParams) error
+	StaleEdgeListenerNodes(ctx context.Context, db DBTX, staleAfter pgtype.Interval) ([]string, error)
 	// The placement shares the fenced stamp (ADR-1195); an attempt keeps its first.
 	StampCustomerOperationExecutionAttempt(ctx context.Context, db DBTX, arg StampCustomerOperationExecutionAttemptParams) (int64, error)
 	StampDeadLetterEventReplay(ctx context.Context, db DBTX, arg StampDeadLetterEventReplayParams) error
@@ -6494,6 +6502,7 @@ type Querier interface {
 	ThawFrozenInstance(ctx context.Context, db DBTX, arg ThawFrozenInstanceParams) (ThawFrozenInstanceRow, error)
 	TouchCronActivation(ctx context.Context, db DBTX, arg TouchCronActivationParams) error
 	TouchCustomerOperationWorkflowStep(ctx context.Context, db DBTX, arg TouchCustomerOperationWorkflowStepParams) error
+	TouchEdgeListenerHeartbeat(ctx context.Context, db DBTX, name string) error
 	TouchEnvironmentGitOpsIntent(ctx context.Context, db DBTX, sourceID pgtype.UUID) error
 	TouchKeyLastUsed(ctx context.Context, db DBTX, id pgtype.UUID) error
 	TouchProjectSubmission(ctx context.Context, db DBTX, arg TouchProjectSubmissionParams) error
@@ -6578,6 +6587,7 @@ type Querier interface {
 	// as "skip the dead_letter insert; leave the record in
 	// poller.inFlight for the next tick to retry".
 	TriggerRecordIDByItemIdentifier(ctx context.Context, db DBTX, arg TriggerRecordIDByItemIdentifierParams) (pgtype.UUID, error)
+	TryEdgeRuleAccountMutationLock(ctx context.Context, db DBTX, accountID string) (bool, error)
 	TryEdgeRuleMutationLock(ctx context.Context, db DBTX, appID string) (bool, error)
 	TryLockApplicationStandardApprovalArtifactChildren(ctx context.Context, db DBTX, deploymentIds []pgtype.UUID) (bool, error)
 	TryLockApplicationStandardApprovalControls(ctx context.Context, db DBTX, appIds []pgtype.UUID) (bool, error)

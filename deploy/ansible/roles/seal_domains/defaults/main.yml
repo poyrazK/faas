@@ -177,5 +177,23 @@ faas_seal_domain_delivery_writes: ""
 # left the rollback window. Required for writes=domain.
 faas_seal_domain_delivery_readers_verified: false
 
+# Operator-local file from `gregalectl seal-domain init --domain account`.
+# Control-plane hosts stage it: apid seals and opens account values with it,
+# so there is no separate recipient file.
+faas_seal_domain_account_identity_src: ""
+
+# Who apid seals account values to:
+#   ""      the domain and the fleet recipient (safe beside the previous
+#           release, whose apid holds only the fleet identity)
+#   fleet   the fleet recipient alone (opt out)
+#   domain  the domain recipient alone; needs
+#           faas_seal_domain_account_readers_verified
+faas_seal_domain_account_writes: ""
+
+# Set true only after every apid reports
+# faas_seal_domain_loaded{domain="account"} 1 and the previous release left
+# the rollback window. Required for writes=domain.
+faas_seal_domain_account_readers_verified: false
+
 faas_seal_domain_db_env: /etc/faas/compute-db.env
 faas_seal_domain_textfile_dir: /var/lib/node_exporter/textfile_collector

@@ -84,12 +84,12 @@ func isServicePolicyDenial(err error) bool {
 // Keep only relevant customer intent in the fingerprint, never credentials,
 // build settings or unrelated manifest content.
 type servicePolicyAppInput struct {
-	ID, AccountID, Slug, ProjectID, PreviewOfSlug, PreviewPrState, AppProtocol string
-	Status                                                                     state.AppStatus
-	PreviewPrNumber                                                            int
-	PreviewExpiresAt                                                           *time.Time
-	WebSocketEnabled                                                           bool
-	Manifest                                                                   state.AppManifest
+	ID, AccountID, Slug, WorkloadName, ProjectID, PreviewOfSlug, PreviewPrState, AppProtocol string
+	Status                                                                                   state.AppStatus
+	PreviewPrNumber                                                                          int
+	PreviewExpiresAt                                                                         *time.Time
+	WebSocketEnabled                                                                         bool
+	Manifest                                                                                 state.AppManifest
 }
 
 type servicePolicyEvidenceReader struct {
@@ -113,7 +113,7 @@ func (s *servicePolicyEvidenceReader) recordApp(app state.App, err error) (state
 		return app, err
 	}
 	m := app.Manifest
-	input := servicePolicyAppInput{ID: app.ID, AccountID: app.AccountID, Slug: app.Slug, ProjectID: app.ProjectID,
+	input := servicePolicyAppInput{ID: app.ID, AccountID: app.AccountID, Slug: app.Slug, WorkloadName: app.WorkloadName, ProjectID: app.ProjectID,
 		PreviewOfSlug: app.PreviewOfSlug, PreviewPrState: app.PreviewPrState, AppProtocol: app.AppProtocol,
 		Status: app.Status, PreviewPrNumber: app.PreviewPrNumber, PreviewExpiresAt: app.PreviewExpiresAt, WebSocketEnabled: app.WebSocketEnabled,
 		Manifest: state.AppManifest{ServiceBindings: m.ServiceBindings, ServiceReliability: m.ServiceReliability,
