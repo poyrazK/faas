@@ -1434,8 +1434,10 @@ jobs:
     # Race compilation plus the scheduler suite can consume ten minutes.
     # Leave room for the coverage gate and upload after the tests pass.
     # The memory-bounded pkg/sched compile below roughly doubles that
-    # compile's time on a cold cache.
-    timeout-minutes: 30
+    # compile's time on a cold cache. Run 40446563363 spent 15 minutes
+    # compiling, 10 in tests and 4 in the wake-admission repeats and was
+    # cancelled at the old 30-minute budget.
+    timeout-minutes: 45
     permissions:
       contents: read
       id-token: write
