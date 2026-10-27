@@ -8,7 +8,7 @@ import type { DebugTelemetryRequestItem } from './DebugTelemetryRequestItem.js';
 import type { RolloutDecision } from './RolloutDecision.js';
 /**
  * Why a release was rolled back or is held, with the request evidence
- * behind the decision (ADR-127 amendment following ADR-1447).
+ * behind the safe-release decision.
  *
  */
 export type DebugRolloutExplanation = {
@@ -18,7 +18,7 @@ export type DebugRolloutExplanation = {
   traffic_percent: number;
   decision?: RolloutDecision;
   /**
-   * Reason recorded by an abort that has no ADR-1447 decision (route monitor, alert rollback, profile gate).
+   * Reason recorded by an abort that has no safe-release decision (route monitor, alert rollback, profile gate).
    */
   aborted_reason?: string;
   /**

@@ -41,7 +41,7 @@ class DebugStatusResponse:
     generated_at: datetime.datetime
     rollout: DebugRolloutExplanation | Unset = UNSET
     """Why a release was rolled back or is held, with the request evidence
-    behind the decision (ADR-127 amendment following ADR-1447).
+    behind the safe-release decision.
     """
     oom_kills: list[DebugStatusOOMKill] | Unset = UNSET
     """Out-of-memory kills of the app's instances in the window, newest first."""

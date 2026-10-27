@@ -387,7 +387,7 @@ func TestCliTreeFlagSpellings(t *testing.T) {
 // commands: a hidden capability's verbs are not listed, its paths answer
 // with the name the user typed, and a flag that reaches it is dropped.
 func TestCliTreeFollowsCapabilityVisibility(t *testing.T) {
-	t.Setenv("FAAS_CAPABILITY_FLAGS_RELEASE_ALL", "")
+	clearCapabilityReleaseAll(t)
 	t.Setenv("FAAS_TOKEN", "")
 	t.Setenv("FAAS_COMPLETION_CACHE_PATH", filepath.Join(t.TempDir(), "cache.json"))
 

@@ -101,7 +101,7 @@ def sync_detailed(
     """Explain why a release was rolled back or is held.
 
      Explains the app's newest canary rollout, or `deployment_id`, with
-    request evidence: the ADR-1447 decision that rolled it back, holds
+    request evidence: the safe-release decision that rolled it back, holds
     it, or advanced it; the candidate's routes compared with the stable
     deployment over the decision window, worst first; example requests
     that show the problem; and the candidate's open regressions. The
@@ -143,7 +143,7 @@ def sync(
     """Explain why a release was rolled back or is held.
 
      Explains the app's newest canary rollout, or `deployment_id`, with
-    request evidence: the ADR-1447 decision that rolled it back, holds
+    request evidence: the safe-release decision that rolled it back, holds
     it, or advanced it; the candidate's routes compared with the stable
     deployment over the decision window, worst first; example requests
     that show the problem; and the candidate's open regressions. The
@@ -180,7 +180,7 @@ async def asyncio_detailed(
     """Explain why a release was rolled back or is held.
 
      Explains the app's newest canary rollout, or `deployment_id`, with
-    request evidence: the ADR-1447 decision that rolled it back, holds
+    request evidence: the safe-release decision that rolled it back, holds
     it, or advanced it; the candidate's routes compared with the stable
     deployment over the decision window, worst first; example requests
     that show the problem; and the candidate's open regressions. The
@@ -220,7 +220,7 @@ async def asyncio(
     """Explain why a release was rolled back or is held.
 
      Explains the app's newest canary rollout, or `deployment_id`, with
-    request evidence: the ADR-1447 decision that rolled it back, holds
+    request evidence: the safe-release decision that rolled it back, holds
     it, or advanced it; the candidate's routes compared with the stable
     deployment over the decision window, worst first; example requests
     that show the problem; and the candidate's open regressions. The

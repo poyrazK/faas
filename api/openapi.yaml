@@ -25024,7 +25024,7 @@ paths:
       summary: Explain why a release was rolled back or is held.
       description: |
         Explains the app's newest canary rollout, or `deployment_id`, with
-        request evidence: the ADR-1447 decision that rolled it back, holds
+        request evidence: the safe-release decision that rolled it back, holds
         it, or advanced it; the candidate's routes compared with the stable
         deployment over the decision window, worst first; example requests
         that show the problem; and the candidate's open regressions. The
@@ -121262,7 +121262,7 @@ components:
       type: object
       description: |
         Why a release was rolled back or is held, with the request evidence
-        behind the decision (ADR-127 amendment following ADR-1447).
+        behind the safe-release decision.
       required: [state, traffic_percent, headline, routes, examples, regressions, generated_at]
       properties:
         deployment_id: { type: string, format: uuid }
@@ -121272,7 +121272,7 @@ components:
           enum: [aborted, held, rolling_out, complete, none]
         traffic_percent: { type: integer, minimum: 0, maximum: 100 }
         decision: { $ref: '#/components/schemas/RolloutDecision' }
-        aborted_reason: { type: string, description: "Reason recorded by an abort that has no ADR-1447 decision (route monitor, alert rollback, profile gate)." }
+        aborted_reason: { type: string, description: "Reason recorded by an abort that has no safe-release decision (route monitor, alert rollback, profile gate)." }
         headline: { type: string, description: "Deterministic one-line explanation." }
         window_start: { type: string, format: date-time }
         window_end: { type: string, format: date-time }

@@ -24,7 +24,7 @@ T = TypeVar("T", bound="DebugRolloutExplanation")
 @_attrs_define
 class DebugRolloutExplanation:
     """Why a release was rolled back or is held, with the request evidence
-    behind the decision (ADR-127 amendment following ADR-1447).
+    behind the safe-release decision.
 
     """
 
@@ -42,7 +42,7 @@ class DebugRolloutExplanation:
     """Evidence behind one decision about a rollout: why a canary stage advanced, is held, or was aborted.
     Aggregates only; no request payloads, routes, URLs or customer text."""
     aborted_reason: str | Unset = UNSET
-    """Reason recorded by an abort that has no ADR-1447 decision (route monitor, alert rollback, profile gate)."""
+    """Reason recorded by an abort that has no safe-release decision (route monitor, alert rollback, profile gate)."""
     window_start: datetime.datetime | Unset = UNSET
     window_end: datetime.datetime | Unset = UNSET
     retention_clamped: bool | Unset = UNSET
