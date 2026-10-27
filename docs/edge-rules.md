@@ -477,7 +477,10 @@ least `min_requests` requests in `window_seconds` failed at
 `failure_threshold` or more (a ratio). It gets one probe request after
 `open_seconds`, then twice as long after each failed probe, up to
 `max_open_seconds`. The breaker is per app: the highest-priority rule tunes
-it for every instance, and selectors do not split it by route.
+it for every instance, and selectors do not split it by route. Independently
+of the breaker, an instance that fails at the transport layer gets no
+traffic for 30 seconds, so an `open_seconds` below 30 shows only after
+repeated failures. A rule change reaches the breaker within 30 seconds.
 
 ### async
 

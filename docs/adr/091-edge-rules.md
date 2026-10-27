@@ -1293,7 +1293,11 @@ The last code items before edge rules leave beta.
     `min_requests: 1` one failure keeps a recovered instance out for
     `open_seconds`; the default needs five) on the normal-path harness with
     real apid, schedd and gateways, with `FAAS_GATEWAY_RETRY` and
-    `FAAS_GATEWAY_CIRCUIT_BREAKER` on as production sets them.
+    `FAAS_GATEWAY_CIRCUIT_BREAKER` on as production sets them. A transport
+    failure also quarantines the instance for 30 s
+    (`api.TrafficStaleTargetQuarantine`) whatever the breaker says, and the
+    gateway caches an app's breaker tuning for 30 s, so the breaker test
+    waits out both; the customer reference states both.
   - `BenchmarkEdgeRuleEvaluation500Rules` measures one request's matcher
     work with the per-app maximum of 500 rules on a host, compiled set
     cached, each kind scanning its whole slice. It found that every

@@ -89,20 +89,26 @@ func TestE2E_NormalPath_EdgeRetryReplaysTransportFailure(t *testing.T) {
 		t.Fatal("no GET reached the dead sibling first and was replayed on the healthy one")
 	}
 
-	// The dead sibling is evicted after its failure; bring it back so a POST
-	// can land on it, still failing.
-	notifyNormalPathInstanceChanged(t, f, dead.ID, string(state.StateRunning))
-	for _, withKey := range []bool{false, true} {
+	// A transport failure quarantines the instance for
+	// api.TrafficStaleTargetQuarantine, so each POST case gets its own freshly
+	// RUNNING, failing sibling, which joins the target set at once.
+	for i, withKey := range []bool{false, true} {
+		failing := createNormalPathRunningSibling(t, f, dead.DeploymentID)
+		f.vmmd.SetVersion(failing.ID, fmt.Sprintf("c%d", i))
+		f.vmmd.FailAll(failing.ID, status.Error(codes.Unavailable, "simulated dead sibling"))
+		notifyNormalPathInstanceChanged(t, f, failing.ID, string(state.StateRunning))
 		hit := false
-		for i := 0; i < 10 && !hit; i++ {
-			path := fmt.Sprintf("/edge-retry/post/%t/%d", withKey, i)
+		deadline := time.Now().Add(10 * time.Second)
+		for j := 0; !hit && time.Now().Before(deadline); j++ {
+			path := fmt.Sprintf("/edge-retry/post/%t/%d", withKey, j)
 			headers := map[string]string{}
 			if withKey {
-				headers["Idempotency-Key"] = fmt.Sprintf("order-%d", i)
+				headers["Idempotency-Key"] = fmt.Sprintf("order-%d", j)
 			}
 			_, body, code := doReqHeaders(t, f.h, f.host, http.MethodPost, path, map[string]string{"order": "1"}, headers)
 			seen := normalPathInstancesFor(f, path)
-			if len(seen) == 0 || seen[0] != dead.ID {
+			if len(seen) == 0 || seen[0] != failing.ID {
+				time.Sleep(100 * time.Millisecond)
 				continue
 			}
 			hit = true
@@ -112,10 +118,9 @@ func TestE2E_NormalPath_EdgeRetryReplaysTransportFailure(t *testing.T) {
 			case !withKey && (code != http.StatusServiceUnavailable || len(seen) != 1):
 				t.Fatalf("POST without Idempotency-Key: status=%d attempts=%v, want one attempt and 503", code, seen)
 			}
-			notifyNormalPathInstanceChanged(t, f, dead.ID, string(state.StateRunning))
 		}
 		if !hit {
-			t.Fatalf("no POST (Idempotency-Key=%t) reached the dead sibling", withKey)
+			t.Fatalf("no POST (Idempotency-Key=%t) reached the failing sibling within 10s", withKey)
 		}
 	}
 }
@@ -126,7 +131,14 @@ func TestE2E_NormalPath_EdgeRetryReplaysTransportFailure(t *testing.T) {
 // open_seconds, even after the instance comes back. The default breaker
 // needs five failures, so without the rule one failure does not open it and
 // the instance serves again once it rejoins.
+//
+// Two waits are inherent: the gateway caches an app's breaker tuning for
+// 30 s (circuitConfigTTL) and the fixture's first requests cached "no rule";
+// and a transport failure quarantines the instance for
+// api.TrafficStaleTargetQuarantine whatever the breaker says, so only after
+// that does the breaker decide whether the instance serves again.
 func TestE2E_NormalPath_EdgeCircuitBreakerKeepsFailedInstanceOut(t *testing.T) {
+	const circuitTuningTTL = 30 * time.Second
 	for _, tuned := range []bool{false, true} {
 		t.Run(fmt.Sprintf("tuned=%t", tuned), func(t *testing.T) {
 			f, flaky, healthy := newNormalPathSiblings(t, fmt.Sprintf("normal-edge-circuit-%t", tuned), "FAAS_GATEWAY_CIRCUIT_BREAKER=true")
@@ -139,11 +151,12 @@ func TestE2E_NormalPath_EdgeCircuitBreakerKeepsFailedInstanceOut(t *testing.T) {
 					"action": map[string]any{"failure_threshold": 0.5, "min_requests": 1, "window_seconds": 60,
 						"open_seconds": 300, "max_open_seconds": 600},
 				})
+				// Let the cached "no rule" tuning expire; one request then
+				// starts the background reload.
+				time.Sleep(circuitTuningTTL + time.Second)
+				doReqHeaders(t, f.h, f.host, http.MethodGet, "/edge-circuit/reload", nil)
+				time.Sleep(2 * time.Second)
 			}
-			// The gateway loads an app's breaker tuning in the background on
-			// first use; let one request start the load and give it time.
-			doReqHeaders(t, f.h, f.host, http.MethodGet, "/edge-circuit/warmup", nil)
-			time.Sleep(time.Second)
 
 			f.vmmd.FailAll(flaky.ID, status.Error(codes.Unavailable, "simulated flaky sibling"))
 			failed := false
@@ -157,12 +170,13 @@ func TestE2E_NormalPath_EdgeCircuitBreakerKeepsFailedInstanceOut(t *testing.T) {
 				t.Fatal("no request reached the flaky sibling")
 			}
 
-			// The instance recovers and rejoins the target set.
+			// The instance recovers; once its quarantine ends it rejoins.
 			f.vmmd.FailAll(flaky.ID, nil)
+			time.Sleep(api.TrafficStaleTargetQuarantine + 2*time.Second)
 			notifyNormalPathInstanceChanged(t, f, flaky.ID, string(state.StateRunning))
-			time.Sleep(500 * time.Millisecond)
 			reached := 0
-			for i := 0; i < 10; i++ {
+			deadline := time.Now().Add(8 * time.Second)
+			for i := 0; time.Now().Before(deadline) && (tuned || reached == 0); i++ {
 				path := fmt.Sprintf("/edge-circuit/after/%d", i)
 				_, body, code := doReqHeaders(t, f.h, f.host, http.MethodGet, path, nil)
 				if code != http.StatusOK {
@@ -175,12 +189,13 @@ func TestE2E_NormalPath_EdgeCircuitBreakerKeepsFailedInstanceOut(t *testing.T) {
 						t.Fatalf("GET %s used unexpected instance %q", path, id)
 					}
 				}
+				time.Sleep(200 * time.Millisecond)
 			}
 			if tuned && reached != 0 {
 				t.Fatalf("the open circuit let %d requests reach the failed instance within open_seconds", reached)
 			}
 			if !tuned && reached == 0 {
-				t.Fatal("without the rule one failure kept the recovered instance out; the control does not show the rule's effect")
+				t.Fatal("without the rule the recovered instance never served again; the control does not show the rule's effect")
 			}
 		})
 	}
