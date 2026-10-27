@@ -5330,7 +5330,7 @@ BEGIN
   NOT EXISTS(SELECT 1 FROM object_buckets d JOIN object_buckets s ON s.id=source
     WHERE d.id=destination AND d.account_id=a AND s.account_id=a AND d.state='ready' AND s.state='ready'
     AND (d.backend_id,d.backend_fingerprint)=(s.backend_id,s.backend_fingerprint)) OR
-  EXISTS(SELECT 1 FROM object_deletions WHERE bucket_id IN (destination,source) AND state IN ('prepared','dispatched')) THEN
+  EXISTS(SELECT 1 FROM object_deletions WHERE bucket_id=source AND object_key=key AND state IN ('prepared','dispatched')) THEN
   RAISE EXCEPTION USING ERRCODE='23514',CONSTRAINT='object_copy_source_fenced',MESSAGE='Copy source authority changed';
  END IF;
 END $_$;
