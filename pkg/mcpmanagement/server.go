@@ -48,7 +48,13 @@ type Options struct {
 	// Environments is nil for local account access. Remote grants always set it.
 	Environments *EnvironmentConsent
 	// LocalCLI enables the local deploy and env tools on local connections.
+	// On a hosted grant it runs only provisioning, as the grant.
 	LocalCLI LocalCLI
+	// Capabilities are the scopes a remote grant's consent added beyond
+	// inspection and writes: secrets:request, storage:manage and
+	// postgres:manage. A remote grant lists only their tools
+	// (ADR-20261026195952).
+	Capabilities []string
 	// Toolsets limits the listed tools (see ParseToolsets); nil lists all.
 	Toolsets      []string
 	planStore     *StateStore

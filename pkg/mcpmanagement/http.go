@@ -42,6 +42,9 @@ type HTTPOptions struct {
 	AuditLogger *slog.Logger
 	// APIHTTPClient allows transport configuration, including private CA trust.
 	APIHTTPClient *http.Client
+	// CLIRunner, on the hosted bridge, runs the gregale CLI as a grant with
+	// its own credential; provisioning tools use it.
+	CLIRunner func(token string) LocalCLI
 	// Hosted serves Gregale's own bridge at https://api.<platform>/mcp
 	// (ADR-20261026195952). The issuer is the resource URL itself, so the
 	// OAuth endpoints live under /mcp and the metadata at the RFC 8414 path

@@ -53,7 +53,19 @@ func (r *remoteServer) startNativeLogin(ctx context.Context, w http.ResponseWrit
 		oauthError(w, 400, "invalid_request", "Sign-in already started")
 		return
 	}
-	code, err := client.MintMCPAuthCode(ctx, slices.Contains(flow.Scopes, scopeWrite))
+	writes := slices.Contains(flow.Scopes, scopeWrite)
+	capabilities, err := chosenCapabilities(req.PostForm["capability"], writes)
+	if err != nil {
+		oauthError(w, 400, "invalid_request", err.Error())
+		return
+	}
+	var code api.CliAuthCodeResponse
+	if len(capabilities) == 0 {
+		code, err = client.MintMCPAuthCode(ctx, writes)
+	} else {
+		// The code carries exactly these scopes (ADR-20261026195952).
+		code, err = client.MintScopedMCPAuthCode(ctx, append([]string{api.ScopeDeployWrite}, capabilities...))
+	}
 	login, parseErr := url.Parse(code.URL)
 	// The API controls its console origin; never render credential-bearing,
 	// script or arbitrary non-browser redirect schemes.
@@ -69,7 +81,7 @@ func (r *remoteServer) startNativeLogin(ctx context.Context, w http.ResponseWrit
 		oauthError(w, 400, "access_denied", "Browser authorization expired or was already started")
 		return
 	}
-	active.NativeCode, active.NativeURL = code.Code, code.URL
+	active.NativeCode, active.NativeURL, active.Capabilities = code.Code, code.URL, capabilities
 	r.renderConsent(w, active, req.PostForm.Get("csrf"), "")
 }
 
@@ -112,7 +124,7 @@ func (r *remoteServer) prepareAccount(w http.ResponseWriter, req *http.Request, 
 		oauthError(w, 500, "server_error", "Could not prepare account connection")
 		return
 	}
-	g := &oauthGrant{id: id, clientID: flow.ClientID, accountID: account.ID, scopes: append([]string(nil), flow.Scopes...), client: client, expires: minTime(expiry, flow.Expires), credentialExpires: expiry, availableApps: apps, availableEnvironments: environments}
+	g := &oauthGrant{id: id, clientID: flow.ClientID, accountID: account.ID, scopes: append([]string(nil), flow.Scopes...), client: client, expires: minTime(expiry, flow.Expires), credentialExpires: expiry, availableApps: apps, availableEnvironments: environments, capabilities: append([]string(nil), flow.Capabilities...)}
 	r.grants[id], active.GrantID = g, id
 	active.NativeCode, active.NativeURL = "", ""
 	r.renderConsent(w, active, req.PostForm.Get("csrf"), account.ID)

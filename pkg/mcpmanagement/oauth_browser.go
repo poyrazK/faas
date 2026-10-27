@@ -16,7 +16,7 @@ const flowCookieName = "__Host-gregale-mcp-flow"
 var consentPage = template.Must(template.New("consent").Parse(`<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Connect to Gregale</title></head>
 <body><main><h1>Connect to Gregale</h1><p>Client: <strong>{{.Client}}</strong></p><p>Return address: {{.Redirect}}</p><p>Gregale API: {{.APIBase}}</p>
-{{if .Account}}<p>Account: <strong>{{.Account}}</strong></p><p>This client can inspect apps, deployments, logs, metrics, health and routes in this account. App logs may contain private data.</p>
+{{if .Account}}<p>Account: <strong>{{.Account}}</strong></p><p>This client can inspect apps, deployments, logs, metrics, health and routes in this account. App logs may contain private data.</p>{{if .Capabilities}}<p>With write access it may also:</p><ul>{{range .Capabilities}}<li>{{.}}</li>{{end}}</ul>{{end}}
 <form method="post" action="{{.ConsentAction}}"><input type="hidden" name="request_id" value="{{.RequestID}}"><input type="hidden" name="csrf" value="{{.CSRF}}">
 {{if .Writes}}<p><label><input type="checkbox" name="allow_writes" value="yes" required> Also allow reviewed deployments, production promotion, and checked rollback. These actions can change traffic and incur costs.</label></p>{{end}}
 <fieldset><legend>Apps this agent may access</legend><label><input type="radio" name="app_access" value="all" required> All apps in this account, including future apps</label><br><label><input type="radio" name="app_access" value="selected" required> Only selected apps</label>{{range .Apps}}<p><label><input type="checkbox" name="apps" value="{{.Slug}}"> {{.Slug}}</label></p>{{end}}</fieldset>
@@ -27,7 +27,7 @@ var consentPage = template.Must(template.New("consent").Parse(`<!doctype html>
 <button name="decision" value="approve" type="submit">Connect this account</button> <button name="decision" value="deny" type="submit" formnovalidate>Cancel</button></form>
 {{else if .Native}}<p>Sign in to Gregale to choose your account. Then return here to review the agent's access.</p>
 {{if .LoginURL}}<p><a href="{{.LoginURL}}" target="_blank" rel="noopener noreferrer">Sign in to Gregale</a></p>{{end}}
-<form method="post" action="{{.ConsentAction}}"><input type="hidden" name="request_id" value="{{.RequestID}}"><input type="hidden" name="csrf" value="{{.CSRF}}"><button name="decision" value="{{if .LoginURL}}check-login{{else}}start-login{{end}}" type="submit">{{if .LoginURL}}I authorized in Gregale; review account{{else}}Start Gregale sign-in{{end}}</button><button name="decision" value="deny" type="submit">Cancel</button></form>
+<form method="post" action="{{.ConsentAction}}"><input type="hidden" name="request_id" value="{{.RequestID}}"><input type="hidden" name="csrf" value="{{.CSRF}}">{{if and .Writes (not .LoginURL)}}<fieldset><legend>With write access, also allow (optional)</legend><label><input type="checkbox" name="capability" value="secrets:request"> Asking you to enter secrets on a Gregale page; the agent never sees their values</label><br><label><input type="checkbox" name="capability" value="storage:manage"> Creating object storage buckets and binding them to apps</label><br><label><input type="checkbox" name="capability" value="postgres:manage"> Creating managed PostgreSQL databases and binding them to apps (billed)</label></fieldset>{{end}}<button name="decision" value="{{if .LoginURL}}check-login{{else}}start-login{{end}}" type="submit">{{if .LoginURL}}I authorized in Gregale; review account{{else}}Start Gregale sign-in{{end}}</button><button name="decision" value="deny" type="submit">Cancel</button></form>
 {{else}}<p>Enter a Gregale API key for the account you want to connect. Use a dedicated key with the smallest needed API scopes. The next screen identifies the account before you approve access.</p>
 <form method="post" action="{{.ConsentAction}}" autocomplete="off"><input type="hidden" name="request_id" value="{{.RequestID}}"><input type="hidden" name="csrf" value="{{.CSRF}}">
 <p><label>Gregale API key <input name="api_key" type="password" required autocomplete="off" maxlength="4096"></label></p>
@@ -41,13 +41,15 @@ type consentView struct {
 	Account  string
 	// ConsentAction is the consent endpoint, under /mcp on the hosted bridge.
 	ConsentAction string
-	RequestID     string
-	CSRF          string
-	Writes        bool
-	Native        bool
-	LoginURL      string
-	Apps          []consentApp
-	Environments  []EnvironmentGrant
+	// Capabilities describe the extra scopes chosen before sign-in.
+	Capabilities []string
+	RequestID    string
+	CSRF         string
+	Writes       bool
+	Native       bool
+	LoginURL     string
+	Apps         []consentApp
+	Environments []EnvironmentGrant
 }
 
 func (r *remoteServer) authorize(w http.ResponseWriter, req *http.Request) {
@@ -96,7 +98,7 @@ func (r *remoteServer) renderConsent(w http.ResponseWriter, flow *authorizationR
 		oauthError(w, 400, "access_denied", "Client registration expired; start a new connection")
 		return
 	}
-	view := consentView{ConsentAction: r.issuer + "/oauth/consent", Client: client.Name, Redirect: flow.Redirect, APIBase: r.opts.APIBase, Account: account, RequestID: flow.ID, CSRF: csrf, Writes: slices.Contains(flow.Scopes, scopeWrite), Native: r.opts.Onboarding == "browser", LoginURL: flow.NativeURL}
+	view := consentView{ConsentAction: r.issuer + "/oauth/consent", Capabilities: describeCapabilities(flow.Capabilities), Client: client.Name, Redirect: flow.Redirect, APIBase: r.opts.APIBase, Account: account, RequestID: flow.ID, CSRF: csrf, Writes: slices.Contains(flow.Scopes, scopeWrite), Native: r.opts.Onboarding == "browser", LoginURL: flow.NativeURL}
 	if g := r.grants[flow.GrantID]; g != nil {
 		view.Environments = g.availableEnvironments
 		for _, app := range g.availableApps {
@@ -187,7 +189,7 @@ func (r *remoteServer) approveLocked(w http.ResponseWriter, req *http.Request, f
 		oauthError(w, 400, "invalid_request", "Regression triage requires explicit write scope and diagnostic access to each selected app")
 		return
 	}
-	server, management, err := newManagementServer(g.client, Options{Lifecycle: r.opts.Lifecycle, Telemetry: r.opts.Telemetry, auditLogger: r.opts.AuditLogger, accountID: g.accountID, grantID: g.id, AllowedApps: apps, Environments: environments, planStore: r.opts.StateStore, planNamespace: g.id, Profile: "oauth", APIBase: r.opts.APIBase, Version: r.opts.Version, Timeout: r.opts.Timeout, Token: g.client.Token(), AllowWrites: r.opts.AllowWrites && slices.Contains(g.scopes, scopeWrite), Toolsets: r.opts.Toolsets})
+	server, management, err := newManagementServer(g.client, Options{Lifecycle: r.opts.Lifecycle, Telemetry: r.opts.Telemetry, auditLogger: r.opts.AuditLogger, accountID: g.accountID, grantID: g.id, AllowedApps: apps, Environments: environments, planStore: r.opts.StateStore, planNamespace: g.id, Profile: "oauth", APIBase: r.opts.APIBase, Version: r.opts.Version, Timeout: r.opts.Timeout, Token: g.client.Token(), AllowWrites: r.opts.AllowWrites && slices.Contains(g.scopes, scopeWrite), Toolsets: r.opts.Toolsets, Capabilities: g.capabilities, LocalCLI: r.grantCLI(g.client.Token())})
 	if err != nil {
 		oauthError(w, 500, "server_error", "Could not prepare account tools")
 		return

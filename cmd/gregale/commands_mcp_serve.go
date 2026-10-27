@@ -146,6 +146,9 @@ func serveMCPHTTP(ctx context.Context, opts mcpServeOptions) error {
 	}
 	connection := effectiveConnectionContext()
 	handlerOptions := mcpmanagement.HTTPOptions{Lifecycle: opts.lifecycle, Telemetry: opts.telemetry, AuditLogger: slog.New(slog.NewJSONHandler(osStderr, nil)), Onboarding: opts.onboarding, APIBase: connection.APIBase, ResourceURL: opts.resourceURL, RedirectURIs: opts.redirects, Version: wire.Version, Timeout: opts.timeout, AllowWrites: opts.allowWrites, Toolsets: opts.toolsets, Hosted: opts.hosted}
+	if opts.hosted {
+		handlerOptions.CLIRunner = mcpHostedCLI(connection.APIBase)
+	}
 	if opts.stateFile != "" {
 		store, err := mcpmanagement.OpenStateStore(opts.stateFile, opts.stateKeyFile)
 		if err != nil {
