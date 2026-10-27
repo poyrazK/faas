@@ -1,7 +1,7 @@
 # ADR: The traffic binding guard locks and checks only the hostnames a write changes
 
 Date: 2026-10-27
-Status: Proposed
+Status: Accepted (owner, 2026-10-27)
 Amends: [ADR-570](570-traffic-enforcement-guarantees.md) (effective request policy: the global-route session lock and the global route analysis; the binding-transition follow-ups)
 Related: [ADR 20261027085556](20261027085556-public-routing-admits-from-refreshed-view.md) (CP Postgres off the request path), Hunt 14 H14-78 (#5612)
 
