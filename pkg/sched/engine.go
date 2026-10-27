@@ -5096,6 +5096,10 @@ func (e *Engine) loadPlacementSnapshotFresh(ctx context.Context, r Request) (pla
 			return placementSnapshot{}, fmt.Errorf("sched: placement: list active compute_nodes: %w", err)
 		}
 	}
+	if r.Kind == KindAgentRun {
+		// ADR-20261027090014 §2: agent runs are admitted only on the agent pool.
+		nodes = agentPoolNodes(nodes, r.agentPool)
+	}
 	if isServiceReplicaPlacementSpread(ctx) {
 		capacity, err := e.store.ServiceCapacityPlacement(ctx)
 		if err != nil {

@@ -752,6 +752,13 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_SBOM_ROOT` | apid | `default` |  |  | `` |  |
 | `FAAS_SCAN_SPOOL_ROOT` | apid | `default` |  |  | `` |  |
 | `FAAS_SCHEDD_ADDR` | meterd | `default` |  |  | `` |  |
+| `FAAS_SCHEDD_AGENT_RUNS` | schedd | `default` |  |  | `` | ADR-20261027090010 agent runs: 1 serves the RunAgent RPC and admits KindAgentRun on the agent pool; unset refuses it with Unimplemented |
+| `FAAS_SCHEDD_AGENT_RUN_BASE_KEY` | schedd | `default` |  |  | `` | ADR-20261027090010 agent runs: storage key (or host path) of the agent-base drive0; unset uses base/runner-agent-amd64.ext4, where an agent-pool imaged stages FAAS_AGENT_BASE_REF |
+| `FAAS_SCHEDD_AGENT_RUN_LAYER_KEY` | schedd | `default` |  |  | `` | ADR-20261027090010 agent runs: storage key (or host path) of the platform agent layer (drive1 holding /etc/faas/agent.json); unset uses base/agent-layer-v1-amd64.ext4, which an agent-pool imaged publishes |
+| `FAAS_SCHEDD_AGENT_RUN_NODES` | schedd | `default` |  |  | `` | ADR-20261027090014 agent pool: comma-separated compute node IDs or names agent runs may be placed on, until compute_nodes carries the agents role; required when FAAS_SCHEDD_AGENT_RUNS=1 |
+| `FAAS_SCHEDD_AGENT_RUN_SNAPSHOTS` | schedd | `default` |  |  | `` | ADR-20261027090010 §2 preset snapshots: 1 restores agent runs from a snapshot of their node and machine shape, captured by vmmd after the shape's first cold-boot run there under that run's reservation; unset cold-boots every run |
+| `FAAS_SCHEDD_AGENT_STEPS` | schedd | `default` |  |  | `` | ADR-20261027090010 §9 automation agent steps: 1 lets the workflow orchestrator admit agent runs for agent steps and deliver their ends; unset fails agent steps before they start |
+| `FAAS_SCHEDD_AGENT_TRIGGERS` | schedd | `default` |  |  | `` | ADR-20261027090010 §9 agent trigger targets: 1 polls broker triggers that name an agent and admits one agent run per record; unset leaves their records with the broker |
 | `FAAS_SCHEDD_APP_TASK_DISPATCH_CONCURRENCY` | schedd | `default` |  |  | `` | bounded app-task worker pool; 1 by default and at most 32; only consulted when FAAS_APP_TASK_DISPATCH=1 |
 | `FAAS_SCHEDD_CONFIG` | schedd | `default` |  |  | `` |  |
 | `FAAS_SCHEDD_EXECUTION_DISPATCH_CONCURRENCY` | schedd | `default` |  |  | `` | bounded disposable-execution worker pool; 1 by default and at most 32; only consulted when FAAS_EXECUTION_DISPATCH=1 |

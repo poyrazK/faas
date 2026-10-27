@@ -113,6 +113,7 @@ const (
 	triggerReasonRateLimited                = "rate_limited"
 	triggerReasonPayloadTooLarge            = "payload_too_large"
 	triggerReasonExclusiveOperationRejected = "exclusive_operation_rejected"
+	triggerReasonCustomerDisabled           = "customer_disabled"
 )
 
 // triggerDispatchRecord is one broker-delivered record the
@@ -422,6 +423,13 @@ func (l *Loop) dispatchOneTrigger(ctx context.Context, t sqlc.Trigger, store sto
 	if !l.engine.appIDCapabilityAllowed(ctx, t.AppID.String(), triggerCapability(t.Kind)) {
 		return nil
 	}
+	// An agent-target trigger is not polled on a scheduler that cannot
+	// admit agent runs, or while the agents capability is off for the
+	// account, so its records stay with the broker (ADR-20261027090010 §9).
+	agentTarget := t.Agent.Valid
+	if agentTarget && (l.triggerAgents == nil || !l.agentsCapabilityAllowed(ctx, t.AppID.String())) {
+		return nil
+	}
 	var exclusiveBinding *state.ExclusiveTriggerBinding
 	if bindings, ok := store.(state.ExclusiveTriggerBindingStore); ok {
 		binding, bindingErr := bindings.ExclusiveTriggerBinding(ctx, t.AccountID.String(), "broker", t.ID.String())
@@ -447,7 +455,7 @@ func (l *Loop) dispatchOneTrigger(ctx context.Context, t sqlc.Trigger, store sto
 	if poller == nil {
 		return nil
 	}
-	if exclusiveBinding == nil && l.gatewayHTTPClient == nil {
+	if exclusiveBinding == nil && !agentTarget && l.gatewayHTTPClient == nil {
 		return nil
 	}
 	t = l.longTimeoutTriggerBatch(ctx, t)
@@ -769,7 +777,8 @@ func (l *Loop) dispatchOneTrigger(ctx context.Context, t sqlc.Trigger, store sto
 	if planFor != nil {
 		appPlan = planFor(t.AppID.String())
 	}
-	if exclusiveBinding == nil && l.rateLimiter != nil && !l.rateLimiter.AllowWakeApp(t.AppID.String(), appPlan) {
+	// Agent runs wake no app; their plan limits bound them instead.
+	if exclusiveBinding == nil && !agentTarget && l.rateLimiter != nil && !l.rateLimiter.AllowWakeApp(t.AppID.String(), appPlan) {
 		l.handleRateLimitedBatch(ctx, poller, t, batch, store)
 		return nil
 	}
@@ -781,7 +790,7 @@ func (l *Loop) dispatchOneTrigger(ctx context.Context, t sqlc.Trigger, store sto
 	// account_id; an extra round-trip per trigger (one per tick)
 	// is acceptable because the deny path is the hot path we
 	// want to keep fast.
-	if exclusiveBinding == nil && l.rateLimiter != nil {
+	if exclusiveBinding == nil && !agentTarget && l.rateLimiter != nil {
 		app, appErr := l.engine.Store().AppByID(ctx, t.AppID.String())
 		if appErr == nil {
 			if !l.rateLimiter.AllowWakeAccount(app.AccountID, appPlan) {
@@ -852,7 +861,9 @@ func (l *Loop) dispatchOneTrigger(ctx context.Context, t sqlc.Trigger, store sto
 	defer dispatchSpan.End()
 	var respBody []byte
 	var postErr error
-	if exclusiveBinding != nil {
+	if agentTarget {
+		respBody, postErr = json.Marshal(l.admitAgentTriggerBatch(dispatchCtx, store, t, claimedBatch, claimed))
+	} else if exclusiveBinding != nil {
 		response := l.admitExclusiveBrokerBatch(dispatchCtx, store, t, *exclusiveBinding, claimedBatch, claimed)
 		respBody, postErr = json.Marshal(response)
 	} else {
@@ -2334,6 +2345,10 @@ func classifyDLQReason(code, gatewayErr string) string {
 		switch code {
 		case triggerReasonExclusiveOperationRejected:
 			return triggerReasonExclusiveOperationRejected
+		case triggerCodeAgentRefused:
+			return triggerReasonCustomerDisabled
+		case triggerCodePayloadTooLarge:
+			return triggerReasonPayloadTooLarge
 		case "function_failed":
 			return triggerReasonMaxAttempts
 		case "function_state_timeout",

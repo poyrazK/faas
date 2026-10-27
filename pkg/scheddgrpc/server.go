@@ -323,8 +323,10 @@ type Server struct {
 
 	engine SchedAPI
 	stats  StatsReader
-	ops    *wire.OpsMetrics
-	log    *slog.Logger
+	// agentRuns serves RunAgent (ADR-20261027090010 §6); nil answers Unimplemented.
+	agentRuns AgentRunRunner
+	ops       *wire.OpsMetrics
+	log       *slog.Logger
 	// owner is the durable Phase 2 / Gate A shard key this schedd
 	// serves. Empty for the legacy single-box posture. Set via
 	// (*Server).WithOwner at wiring time (cmd/schedd resolves it

@@ -24,6 +24,7 @@ import (
 
 	vmmdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/vmmd/v1"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/capflags"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/events"
 	"github.com/onebox-faas/faas/pkg/fcvm"
@@ -894,6 +895,20 @@ func MarkPreWakeForTest(ctx context.Context) {
 	markPreWake(ctx, preWakeEnsureStarted)
 	markPreWake(ctx, preWakeEnvironmentReady)
 	markPreWake(ctx, preWakeLeader)
+}
+
+// WithAgentsAllowedForTest sets the agents capability decision a standalone
+// orchestrator holds runs with an agent step by.
+func (o *WorkflowOrchestrator) WithAgentsAllowedForTest(allowed func(ctx context.Context, appID string) bool) *WorkflowOrchestrator {
+	o.agentsAllowed = allowed
+	return o
+}
+
+// WithCapabilitiesForTest gives a test loop an engine over store that
+// decides capability flags with d.
+func (l *Loop) WithCapabilitiesForTest(store state.Store, d *capflags.Decider) *Loop {
+	l.engine = &Engine{store: store, capabilities: d}
+	return l
 }
 
 var LogVMMBootFailure = logVMMBootFailure

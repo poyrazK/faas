@@ -59,6 +59,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/sealdomain"
 	"github.com/onebox-faas/faas/pkg/secretbox"
 	"github.com/onebox-faas/faas/pkg/state"
+	agentstore "github.com/onebox-faas/faas/pkg/state/agents"
 	"github.com/onebox-faas/faas/pkg/storage"
 	"github.com/onebox-faas/faas/pkg/webhook"
 	"github.com/onebox-faas/faas/pkg/wire"
@@ -1816,6 +1817,15 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		WithOwner(scheddgrpc.OwnerNodeID(ownerNodeID), store).
 		WithAppOwnership(engine.OwnsApp).
 		WithForeignReportRelay(engine)
+	// ADR-20261027090010 §1: agent runs stay off unless this schedd opts in.
+	agentRunner, err := agentRunnerFromEnv(engine, vmmRouter, os.Getenv)
+	if err != nil {
+		return err
+	}
+	if agentRunner != nil {
+		grpcHandler.WithAgentRunner(agentRunner)
+		log.Info("agent runs enabled", "nodes", os.Getenv("FAAS_SCHEDD_AGENT_RUN_NODES"))
+	}
 	// An empty NodeName is the single-box, Unix-socket posture. Passing a
 	// typed nil *PGNodeVerifier as the resolver still creates a non-nil
 	// interface and would require mTLS peer identity on that Unix socket.
@@ -2279,6 +2289,12 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 						}
 						orchestrator.WithOutboundExecutor(sched.NewWorkflowOutboundExecutor(store, workflowOutboundMinter))
 					}
+					// ADR-20261027090010 §9: automation agent steps admit agent runs
+					// and wait for them; agentd runs them.
+					if os.Getenv("FAAS_SCHEDD_AGENT_STEPS") == "1" {
+						orchestrator.WithAgents(agentstore.New(pool))
+						log.Info("schedd workflow agent steps enabled — FAAS_SCHEDD_AGENT_STEPS=1")
+					}
 					loop.WithWorkflowsDispatched(true).
 						WithWorkflowOrchestrator(orchestrator).
 						WithWorkflowRetention(sched.NewWorkflowRetention(store, log))
@@ -2290,6 +2306,13 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 				log.Info("schedd workflows dispatch disabled — set FAAS_WORKFLOWS_ENABLED=1 to enable")
 			}
 		}
+	}
+	// ADR-20261027090010 §9: broker triggers that target an agent admit one agent
+	// run per record; agentd runs them. Without the switch those triggers
+	// are not polled.
+	if os.Getenv("FAAS_SCHEDD_AGENT_TRIGGERS") == "1" {
+		loop.WithTriggerAgents(agentstore.New(pool))
+		log.Info("schedd agent trigger targets enabled — FAAS_SCHEDD_AGENT_TRIGGERS=1")
 	}
 
 	// Issue #757 / ADR-100 (commits #13/#14): wire the HTTP transport

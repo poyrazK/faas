@@ -194,6 +194,11 @@ const (
 	// not consume the app's request-concurrency budget (invariant 1) while
 	// still counting toward the RAM ceiling (invariant 2).
 	KindFork
+	// KindAgentRun is one disposable agent run VM (ADR-20261027090010 §5, ADR-20261027090014 §2).
+	// It counts toward per-node RAM, vCPU and CPU like a job and belongs to
+	// no app; agentd enforces AgentRunConcurrentPerAccount before it asks.
+	// It is admitted only on agent-pool nodes.
+	KindAgentRun
 )
 
 // kindCountsConcurrency reports whether a reservation consumes the app's
@@ -201,7 +206,7 @@ const (
 // that must overlap the old live revision; migration destinations and jobs
 // have the same non-serving accounting semantics for different reasons.
 func kindCountsConcurrency(kind Kind) bool {
-	return kind != KindMigration && kind != KindJob && kind != KindSnapshotPrime && kind != KindWarmPool && kind != KindAppTask && kind != KindFrozen && kind != KindDataRepairRehearsal && kind != KindFork
+	return kind != KindMigration && kind != KindJob && kind != KindSnapshotPrime && kind != KindWarmPool && kind != KindAppTask && kind != KindFrozen && kind != KindDataRepairRehearsal && kind != KindFork && kind != KindAgentRun
 }
 
 // Request is an admission request for one instance (a wake or a build).
@@ -374,6 +379,9 @@ type Request struct {
 	// cache under a generation the admission insert rechecks; placement's
 	// ownership check uses it instead of reading the app again (ADR-1741).
 	ownerApp *state.App
+	// agentPool restricts a KindAgentRun placement to these node IDs or names
+	// (AgentRunner's configured pool).
+	agentPool map[string]bool
 }
 
 func (r Request) admissionMB() int {

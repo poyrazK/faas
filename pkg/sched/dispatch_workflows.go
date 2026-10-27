@@ -59,12 +59,17 @@ type WorkflowOrchestrator struct {
 	store    state.Store
 	executor WorkflowStepExecutor
 	outbound WorkflowOutboundExecutor
+	agents   WorkflowAgents
 	auditor  *audit.Auditor
 	metrics  *wire.WorkflowMetrics
 	log      *slog.Logger
 	// capabilityAllowed holds a claimed run while workflows are switched off
 	// for its app's account (ADR-20261023115741); nil allows every run.
 	capabilityAllowed func(ctx context.Context, appID string) bool
+	// agentsAllowed holds a claimed run with an agent step while the agents
+	// capability is off for its app's account (ADR-20261027090010); nil
+	// allows every run.
+	agentsAllowed func(ctx context.Context, appID string) bool
 	// dbPhase bounds dispatch slots' database work (workflow_db_phase.go).
 	dbPhase *workflowDBPhase
 }
@@ -521,7 +526,8 @@ func (o *WorkflowOrchestrator) dispatchOne(ctx context.Context) (bool, error) {
 
 	if claimed != nil {
 		ctx = state.WithWorkflowRunGeneration(ctx, claimed.ID, claimed.ResumeCount)
-		if o.capabilityAllowed != nil && !o.capabilityAllowed(ctx, claimed.AppID) {
+		if o.capabilityAllowed != nil && !o.capabilityAllowed(ctx, claimed.AppID) ||
+			o.agentsAllowed != nil && workflowRunHasAgentSteps(claimed) && !o.agentsAllowed(ctx, claimed.AppID) {
 			// Put the run back, due again after the deferral; its steps are
 			// untouched and it resumes when the flag is on.
 			if err := o.store.ScheduleWorkflowRun(ctx, claimed.ID, state.WorkflowRunStatusPending, time.Now().Add(capabilityDeferral)); err != nil {
@@ -1036,6 +1042,9 @@ func (o *WorkflowOrchestrator) executeStep(ctx context.Context, run *state.Workf
 	}
 	if spec.WaitForCondition != nil {
 		return o.executeConditionCheck(ctx, run, step, spec)
+	}
+	if spec.Agent != "" {
+		return o.executeAgentStep(ctx, run, step, spec, steps)
 	}
 	// A duration wait has no executor call: only a persisted deadline is left
 	// behind while the run is parked. The step's first started_at is the source

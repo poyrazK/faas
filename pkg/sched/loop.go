@@ -241,6 +241,8 @@ type Loop struct {
 	tenantWorkflowScheduleFailed      bool
 	workflowOrch                      *WorkflowOrchestrator
 	workflowRetention                 *WorkflowRetention
+	// triggerAgents admits the runs of agent-target triggers (ADR-20261027090010 §9).
+	triggerAgents TriggerAgents
 
 	// triggerHealthMu guards triggerHealthLast, the last consumer health row
 	// written per trigger (trigger_health_throttle.go).
@@ -285,6 +287,7 @@ func (l *Loop) WithWorkflowsDispatched(enabled bool) *Loop {
 func (l *Loop) WithWorkflowOrchestrator(o *WorkflowOrchestrator) *Loop {
 	if o != nil {
 		o.capabilityAllowed = l.workflowCapabilityAllowed
+		o.agentsAllowed = l.agentsCapabilityAllowed
 	}
 	l.workflowOrch = o
 	return l
@@ -294,6 +297,13 @@ func (l *Loop) WithWorkflowOrchestrator(o *WorkflowOrchestrator) *Loop {
 // account (ADR-20261023115741).
 func (l *Loop) workflowCapabilityAllowed(ctx context.Context, appID string) bool {
 	return l.engine.appIDCapabilityAllowed(ctx, appID, "workflows")
+}
+
+// agentsCapabilityAllowed decides the agents capability for an app's account
+// (ADR-20261027090010): agent-target triggers and runs with an agent step
+// are held while it is off.
+func (l *Loop) agentsCapabilityAllowed(ctx context.Context, appID string) bool {
+	return l.engine.appIDCapabilityAllowed(ctx, appID, "agents")
 }
 
 // WithWorkflowRetention attaches the workflow retention cleaner.
@@ -4292,6 +4302,13 @@ func (l *Loop) runWorkflowsDispatchTick(ctx context.Context) {
 			l.log.Warn("schedd: workflow schedule tick failed", "error_type", logsanitize.Field(fmt.Sprintf("%T", err)))
 		}
 	})
+	if orch := l.workflowOrch; orch != nil {
+		l.submitWork(workWorkflowAgentRuns, "tick", func() {
+			if err := orch.DeliverAgentRunEnds(ctx); err != nil && l.log != nil {
+				l.log.Warn("schedd: agent step delivery failed", "err", err)
+			}
+		})
+	}
 	// The base slots are offered every tick. A further slot is offered only
 	// while every lower slot is still busy, so an idle scheduler polls as
 	// before and capacity grows by one slot a tick under load (ADR-20261025232118).
@@ -4305,6 +4322,7 @@ func (l *Loop) runWorkflowsDispatchTick(ctx context.Context) {
 			if orch == nil {
 				orch = NewWorkflowOrchestrator(l.engine.Store(), nil, l.audit, nil, l.log)
 				orch.capabilityAllowed = l.workflowCapabilityAllowed
+				orch.agentsAllowed = l.agentsCapabilityAllowed
 			}
 			if err := orch.DispatchBatch(ctx); err != nil && l.log != nil {
 				l.log.Warn("schedd: workflow dispatch tick failed", "err", err)
