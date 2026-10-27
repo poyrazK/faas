@@ -14,8 +14,7 @@ T = TypeVar("T", bound="KafkaTLSConfig")
 @_attrs_define
 class KafkaTLSConfig:
     """Kafka TLS material. MinVersion is forced to TLS 1.2 at
-    decoder time regardless of what the wire sends
-    (pkg/sched/poller_kafka.go::buildKafkaTLSConfig). When
+    decoder time regardless of what the wire sends. When
     ClientCert + ClientKey are both set the decoder performs
     a half-wired guard — if only one is set, decode returns
     an error rather than the poller falling through silently
@@ -34,7 +33,7 @@ class KafkaTLSConfig:
     """Response-only marker indicating that a client key is configured; no credential material is returned."""
     skip_verify: bool | Unset = False
     """Skip TLS verification. Hobby plan rejects this
-    (TLSSkipVerifyAllowed=false in pkg/api/limits.go);
+    (TLSSkipVerifyAllowed=false);
     Pro and Scale accept it for self-signed brokers.
     """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)

@@ -11,7 +11,7 @@ T = TypeVar("T", bound="PlanManagedBinding")
 
 @_attrs_define
 class PlanManagedBinding:
-    """One service key bound to the database a project apply provides (ADR-20261025111824)."""
+    """One service key bound to the database a project apply provides."""
 
     workload: str
     env_key: str

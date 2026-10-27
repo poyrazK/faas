@@ -99,7 +99,7 @@ def sync_detailed(
 ) -> Response[Any | Problem]:
     """Attach to an interactive app task (WebSocket).
 
-     ADR-1037. Served by the compute gateway, not apid. Requires the account
+     Served by the compute gateway, not the API. Requires the account
     credential, deploy-write scope, the `X-Gregale-Attach-Token` from the
     task's create response, and the `gregale-app-task-attach-v1`
     WebSocket subprotocol. Optional `rows`/`cols` set the initial terminal
@@ -147,7 +147,7 @@ def sync(
 ) -> Any | Problem | None:
     """Attach to an interactive app task (WebSocket).
 
-     ADR-1037. Served by the compute gateway, not apid. Requires the account
+     Served by the compute gateway, not the API. Requires the account
     credential, deploy-write scope, the `X-Gregale-Attach-Token` from the
     task's create response, and the `gregale-app-task-attach-v1`
     WebSocket subprotocol. Optional `rows`/`cols` set the initial terminal
@@ -190,7 +190,7 @@ async def asyncio_detailed(
 ) -> Response[Any | Problem]:
     """Attach to an interactive app task (WebSocket).
 
-     ADR-1037. Served by the compute gateway, not apid. Requires the account
+     Served by the compute gateway, not the API. Requires the account
     credential, deploy-write scope, the `X-Gregale-Attach-Token` from the
     task's create response, and the `gregale-app-task-attach-v1`
     WebSocket subprotocol. Optional `rows`/`cols` set the initial terminal
@@ -236,7 +236,7 @@ async def asyncio(
 ) -> Any | Problem | None:
     """Attach to an interactive app task (WebSocket).
 
-     ADR-1037. Served by the compute gateway, not apid. Requires the account
+     Served by the compute gateway, not the API. Requires the account
     credential, deploy-write scope, the `X-Gregale-Attach-Token` from the
     task's create response, and the `gregale-app-task-attach-v1`
     WebSocket subprotocol. Optional `rows`/`cols` set the initial terminal

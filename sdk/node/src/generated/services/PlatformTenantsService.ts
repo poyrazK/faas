@@ -902,7 +902,7 @@ export class PlatformTenantsService {
     });
   }
   /**
-   * Read a tenant's free trial (ADR-1322).
+   * Read a tenant's free trial.
    * @returns PlatformTenantTrialResponse The tenant's trial.
    * @throws ApiError
    */
@@ -990,7 +990,7 @@ export class PlatformTenantsService {
     });
   }
   /**
-   * List a tenant's prepaid credit grants, newest first, with the usable balance per currency (ADR-20261019100331).
+   * List a tenant's prepaid credit grants, newest first, with the usable balance per currency.
    * @returns PlatformTenantCreditListResponse The tenant's grants and balances.
    * @throws ApiError
    */
@@ -1018,7 +1018,7 @@ export class PlatformTenantsService {
    * Grant a tenant prepaid credit that pays its statements across all of its apps.
    * Finalized tenant statements in the credit's currency draw it down,
    * the grant that expires first before grants that never expire, in the
-   * same transaction that finalizes them (ADR-20261019100331). The
+   * same transaction that finalizes them. The
    * statement's credit_applied_millicents records the draw and invoice
    * exports bill amount_due_millicents. Credit never pays more than a
    * statement's amount. A tenant holds at most 100 grants with credit
@@ -1121,12 +1121,12 @@ export class PlatformTenantsService {
     });
   }
   /**
-   * Set a tenant's monthly spend cap across all of its apps (ADR-20261019100331).
+   * Set a tenant's monthly spend cap across all of its apps.
    * Once the month's amount due passes the cap, the gateway answers every
    * request attributed to the tenant with 402 `tenant_spend_cap_reached`
    * until the month ends, the cap rises or credit is added. The amount
    * due is the tenant's usage for the month to date priced like a
-   * statement, without monthly fees, minus usable prepaid credit. apid
+   * statement, without monthly fees, minus usable prepaid credit. The API
    * checks it every minute and at once when the cap or credit changes, so
    * a tenant can overshoot by about two minutes of traffic. A zero cap
    * allows prepaid usage only.
@@ -1186,7 +1186,7 @@ export class PlatformTenantsService {
     });
   }
   /**
-   * Read the account's overdue-invoice rule for tenants (ADR-1324).
+   * Read the account's overdue-invoice rule for tenants.
    * @returns PlatformTenantBillingPolicyResponse The account's tenant overdue rule.
    * @throws ApiError
    */
@@ -1202,7 +1202,7 @@ export class PlatformTenantsService {
   }
   /**
    * Refuse tenants whose exported invoice is unpaid some days after its due date.
-   * Every 5 minutes apid places a hold on each tenant whose exported
+   * Every 5 minutes the API places a hold on each tenant whose exported
    * invoice is open or uncollectible with an amount left at least
    * block_overdue_after_days past its due date, and lifts holds that no
    * longer apply. The gateway answers every request of a held tenant
@@ -1259,7 +1259,7 @@ export class PlatformTenantsService {
     });
   }
   /**
-   * List the account's tenant plans by name (ADR-1307).
+   * List the account's tenant plans by name.
    * @returns PlatformTenantPlanListResponse The account's tenant plans.
    * @throws ApiError
    */
@@ -1388,7 +1388,7 @@ export class PlatformTenantsService {
     });
   }
   /**
-   * Move a tenant onto a plan from the next minute (ADR-1307).
+   * Move a tenant onto a plan from the next minute.
    * Creates the tenant's rate card version from the plan's terms,
    * effective the next UTC minute, and sets the plan's request budget at
    * once when the plan has one. The tenant's existing currency must match
@@ -1791,8 +1791,8 @@ export class PlatformTenantsService {
    * Export a finalized platform tenant statement as an invoice in Stripe, Paddle or Lago.
    * Exports one finalized platform tenant statement revision to the
    * provider in the body (default stripe; connect it with
-   * PUT /v1/account/billing-connections/{provider}), ADR-1502 and ADR-1507.
-   * The connection's collection mode (ADR-1311) decides whether the
+   * PUT /v1/account/billing-connections/{provider}).
+   * The connection's collection mode decides whether the
    * provider keeps a draft, sends it or charges it. Items are one per rate
    * card and unit price plus a rounding item, so the invoice equals the
    * statement total rounded to the currency's minor unit; Paddle and Lago
@@ -1802,8 +1802,8 @@ export class PlatformTenantsService {
    * it. A statement exports to one provider only. Another attempt still
    * exporting it answers 409 `statement_invoice_export_in_progress`, and an
    * export the provider refused before creating an invoice can be retried
-   * with another customer or provider (ADR-20261019180000). Currencies with
-   * up to three decimal places (ADR-20261019100330); Paddle allows USD, EUR
+   * with another customer or provider. Currencies with
+   * up to three decimal places; Paddle allows USD, EUR
    * and GBP.
    *
    * @returns StatementInvoiceExportResponse The completed platform tenant statement export.

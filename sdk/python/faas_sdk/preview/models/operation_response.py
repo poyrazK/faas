@@ -49,16 +49,14 @@ class OperationResponse:
     """Pinned-schema-validated business result, when confirmed successful."""
     artifacts: list[OperationResultArtifact] | Unset = UNSET
     failure_code: str | Unset = UNSET
-    """Stable failure reason. deadline_exceeded and budget_exhausted mean the operation's own limits settled it
-    (ADR-1196)."""
+    """Stable failure reason. deadline_exceeded and budget_exhausted mean the operation's own limits settled it."""
     waiting: OperationWaitingState | Unset = UNSET
     """Why a waiting operation holds no execution. until is the timer's wake time or the approval deadline."""
     data_repair: OperationDataRepair | Unset = UNSET
     """Repair plan metadata in Operation history; captured row values remain in the application executor."""
     limits: OperationLimits | Unset = UNSET
-    """ADR-1196 bounds fixed onto each accepted Operation. Every field is optional and bounded by the plan;
-    workflow definitions take a deadline and an execution budget (ADR-20261016110803), and job definitions take
-    none."""
+    """Bounds fixed onto each accepted Operation. Every field is optional and bounded by the plan; workflow
+    definitions take a deadline and an execution budget, and job definitions take none."""
     deadline_at: datetime.datetime | Unset = UNSET
     """Absolute deadline fixed at acceptance; waits, retries and recovery count against it."""
     usage: OperationUsage | Unset = UNSET

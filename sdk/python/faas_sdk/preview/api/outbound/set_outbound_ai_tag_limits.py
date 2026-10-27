@@ -92,7 +92,7 @@ def sync_detailed(
 ) -> Response[Any | Problem]:
     """Replace an AI integration's per-tag daily cost limits.
 
-     Requires MFA and deploy-write scope (ADR-1436). A call carrying a limited tag is refused with 429
+     Requires MFA and deploy-write scope. A call carrying a limited tag is refused with 429
     outbound_budget_exhausted (X-Gregale-Outbound-Rejection tag_daily_cost_limit) when the tag's settled
     UTC-day cost, live reservations and the call's reservation would pass the limit. An empty list
     removes every limit.
@@ -130,7 +130,7 @@ def sync(
 ) -> Any | Problem | None:
     """Replace an AI integration's per-tag daily cost limits.
 
-     Requires MFA and deploy-write scope (ADR-1436). A call carrying a limited tag is refused with 429
+     Requires MFA and deploy-write scope. A call carrying a limited tag is refused with 429
     outbound_budget_exhausted (X-Gregale-Outbound-Rejection tag_daily_cost_limit) when the tag's settled
     UTC-day cost, live reservations and the call's reservation would pass the limit. An empty list
     removes every limit.
@@ -163,7 +163,7 @@ async def asyncio_detailed(
 ) -> Response[Any | Problem]:
     """Replace an AI integration's per-tag daily cost limits.
 
-     Requires MFA and deploy-write scope (ADR-1436). A call carrying a limited tag is refused with 429
+     Requires MFA and deploy-write scope. A call carrying a limited tag is refused with 429
     outbound_budget_exhausted (X-Gregale-Outbound-Rejection tag_daily_cost_limit) when the tag's settled
     UTC-day cost, live reservations and the call's reservation would pass the limit. An empty list
     removes every limit.
@@ -199,7 +199,7 @@ async def asyncio(
 ) -> Any | Problem | None:
     """Replace an AI integration's per-tag daily cost limits.
 
-     Requires MFA and deploy-write scope (ADR-1436). A call carrying a limited tag is refused with 429
+     Requires MFA and deploy-write scope. A call carrying a limited tag is refused with 429
     outbound_budget_exhausted (X-Gregale-Outbound-Rejection tag_daily_cost_limit) when the tag's settled
     UTC-day cost, live reservations and the call's reservation would pass the limit. An empty list
     removes every limit.

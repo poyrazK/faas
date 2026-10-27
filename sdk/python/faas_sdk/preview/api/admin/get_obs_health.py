@@ -71,7 +71,7 @@ def sync_detailed(
     JSON snapshot from:
 
       - `apid_audit_log_write_total[5m]` / `apid_audit_log_write_failures_total[5m]`
-        — apid's own Prometheus counters.
+        — the API's own Prometheus counters.
       - `audit_log_coverage_ratio_5m` — SQL trace coverage over the durable
         audit_log table, including every audit kind.
       - `SELECT kind, count(*) FROM operator_intents WHERE
@@ -86,7 +86,7 @@ def sync_detailed(
         and info-only alerts.
 
     Federation is out of scope (each daemon owns its own
-    /metrics); this endpoint is the local apid's view. Kinds
+    /metrics); this endpoint is the local API's view. Kinds
     with zero rows in the SQL-derived fields are seeded to
     0 (counts) or 1.0 (ratios, vacuous truth) so the JSON
     shape stays stable.
@@ -119,7 +119,7 @@ def sync(
     JSON snapshot from:
 
       - `apid_audit_log_write_total[5m]` / `apid_audit_log_write_failures_total[5m]`
-        — apid's own Prometheus counters.
+        — the API's own Prometheus counters.
       - `audit_log_coverage_ratio_5m` — SQL trace coverage over the durable
         audit_log table, including every audit kind.
       - `SELECT kind, count(*) FROM operator_intents WHERE
@@ -134,7 +134,7 @@ def sync(
         and info-only alerts.
 
     Federation is out of scope (each daemon owns its own
-    /metrics); this endpoint is the local apid's view. Kinds
+    /metrics); this endpoint is the local API's view. Kinds
     with zero rows in the SQL-derived fields are seeded to
     0 (counts) or 1.0 (ratios, vacuous truth) so the JSON
     shape stays stable.
@@ -163,7 +163,7 @@ async def asyncio_detailed(
     JSON snapshot from:
 
       - `apid_audit_log_write_total[5m]` / `apid_audit_log_write_failures_total[5m]`
-        — apid's own Prometheus counters.
+        — the API's own Prometheus counters.
       - `audit_log_coverage_ratio_5m` — SQL trace coverage over the durable
         audit_log table, including every audit kind.
       - `SELECT kind, count(*) FROM operator_intents WHERE
@@ -178,7 +178,7 @@ async def asyncio_detailed(
         and info-only alerts.
 
     Federation is out of scope (each daemon owns its own
-    /metrics); this endpoint is the local apid's view. Kinds
+    /metrics); this endpoint is the local API's view. Kinds
     with zero rows in the SQL-derived fields are seeded to
     0 (counts) or 1.0 (ratios, vacuous truth) so the JSON
     shape stays stable.
@@ -209,7 +209,7 @@ async def asyncio(
     JSON snapshot from:
 
       - `apid_audit_log_write_total[5m]` / `apid_audit_log_write_failures_total[5m]`
-        — apid's own Prometheus counters.
+        — the API's own Prometheus counters.
       - `audit_log_coverage_ratio_5m` — SQL trace coverage over the durable
         audit_log table, including every audit kind.
       - `SELECT kind, count(*) FROM operator_intents WHERE
@@ -224,7 +224,7 @@ async def asyncio(
         and info-only alerts.
 
     Federation is out of scope (each daemon owns its own
-    /metrics); this endpoint is the local apid's view. Kinds
+    /metrics); this endpoint is the local API's view. Kinds
     with zero rows in the SQL-derived fields are seeded to
     0 (counts) or 1.0 (ratios, vacuous truth) so the JSON
     shape stays stable.

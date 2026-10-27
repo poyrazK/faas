@@ -16,7 +16,7 @@ T = TypeVar("T", bound="EdgeRuleRecipeSuggestionsResponse")
 
 @_attrs_define
 class EdgeRuleRecipeSuggestionsResponse:
-    """Protection recipes suggested from the app's traffic (ADR-20261020105000)."""
+    """Protection recipes suggested from the app's traffic."""
 
     window: str
     """Telemetry window the suggestions read, in days: 7d, or the plan's telemetry retention when shorter."""

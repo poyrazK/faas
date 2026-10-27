@@ -6,7 +6,7 @@ import type { ReleaseGateResult } from './ReleaseGateResult.js';
 import type { RolloutDecisionSample } from './RolloutDecisionSample.js';
 import type { RolloutDecisionSignals } from './RolloutDecisionSignals.js';
 /**
- * Evidence behind one decision about a rollout (ADR-1447): why a canary stage advanced, is held, or was aborted. Aggregates only; no request payloads, routes, URLs or customer text.
+ * Evidence behind one decision about a rollout: why a canary stage advanced, is held, or was aborted. Aggregates only; no request payloads, routes, URLs or customer text.
  */
 export type RolloutDecision = {
   kind: 'advance' | 'hold' | 'abort';
@@ -32,12 +32,12 @@ export type RolloutDecision = {
   candidate?: RolloutDecisionSample;
   stable?: RolloutDecisionSample;
   /**
-   * The 5xx sample included synthetic probes of the app (ADR-1446).
+   * The 5xx sample included synthetic probes of the app.
    */
   probes_included?: boolean;
   signals?: RolloutDecisionSignals;
   /**
-   * The release gates judged with this decision (ADR-20261019071734).
+   * The release gates judged with this decision.
    */
   gates?: Array<ReleaseGateResult>;
   decided_at: string;

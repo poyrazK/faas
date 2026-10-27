@@ -21,7 +21,7 @@ export type ManagedPostgresUsageResponse = {
   history_byte_seconds: number;
   egress_bytes: number;
   /**
-   * The plan's monthly compute allowance in compute-unit seconds, pooled across the account's databases (ADR-20261025094915).
+   * The plan's monthly compute allowance in compute-unit seconds, pooled across the account's databases.
    */
   compute_allowance_unit_seconds?: number;
   /**

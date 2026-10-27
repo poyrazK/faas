@@ -70,7 +70,7 @@ def sync_detailed(
 ) -> Response[DeleteDeploymentScopeExclusionResponse200 | Problem]:
     r"""Drop a persisted --exclude row from deployment_scope_exclusions.
 
-     Operator escape hatch (ADR-124 code-review fix #2) for
+     Operator escape hatch (code-review fix #2) for
     when a persisted slug no longer exists in the repo
     (workload was renamed or deleted) and is blocking
     subsequent deploys via exclude_unknown_slug. Without
@@ -113,7 +113,7 @@ def sync(
 ) -> DeleteDeploymentScopeExclusionResponse200 | Problem | None:
     r"""Drop a persisted --exclude row from deployment_scope_exclusions.
 
-     Operator escape hatch (ADR-124 code-review fix #2) for
+     Operator escape hatch (code-review fix #2) for
     when a persisted slug no longer exists in the repo
     (workload was renamed or deleted) and is blocking
     subsequent deploys via exclude_unknown_slug. Without
@@ -151,7 +151,7 @@ async def asyncio_detailed(
 ) -> Response[DeleteDeploymentScopeExclusionResponse200 | Problem]:
     r"""Drop a persisted --exclude row from deployment_scope_exclusions.
 
-     Operator escape hatch (ADR-124 code-review fix #2) for
+     Operator escape hatch (code-review fix #2) for
     when a persisted slug no longer exists in the repo
     (workload was renamed or deleted) and is blocking
     subsequent deploys via exclude_unknown_slug. Without
@@ -192,7 +192,7 @@ async def asyncio(
 ) -> DeleteDeploymentScopeExclusionResponse200 | Problem | None:
     r"""Drop a persisted --exclude row from deployment_scope_exclusions.
 
-     Operator escape hatch (ADR-124 code-review fix #2) for
+     Operator escape hatch (code-review fix #2) for
     when a persisted slug no longer exists in the repo
     (workload was renamed or deleted) and is blocking
     subsequent deploys via exclude_unknown_slug. Without

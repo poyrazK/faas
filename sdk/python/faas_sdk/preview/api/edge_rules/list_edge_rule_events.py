@@ -116,7 +116,7 @@ def sync_detailed(
 ) -> Response[EdgeRuleEventsResponse | Problem]:
     """Sampled requests each edge rule matched, newest first.
 
-     ADR-964. Gateways keep the first 10 matches of each rule per minute
+     Gateways keep the first 10 matches of each rule per minute
     as full events (request ID, method, host, path without query string,
     trusted client IP, country, user agent); hit counts (stats) cover
     every match. Events are kept 7 days; how far back a plan can read is
@@ -170,7 +170,7 @@ def sync(
 ) -> EdgeRuleEventsResponse | Problem | None:
     """Sampled requests each edge rule matched, newest first.
 
-     ADR-964. Gateways keep the first 10 matches of each rule per minute
+     Gateways keep the first 10 matches of each rule per minute
     as full events (request ID, method, host, path without query string,
     trusted client IP, country, user agent); hit counts (stats) cover
     every match. Events are kept 7 days; how far back a plan can read is
@@ -219,7 +219,7 @@ async def asyncio_detailed(
 ) -> Response[EdgeRuleEventsResponse | Problem]:
     """Sampled requests each edge rule matched, newest first.
 
-     ADR-964. Gateways keep the first 10 matches of each rule per minute
+     Gateways keep the first 10 matches of each rule per minute
     as full events (request ID, method, host, path without query string,
     trusted client IP, country, user agent); hit counts (stats) cover
     every match. Events are kept 7 days; how far back a plan can read is
@@ -271,7 +271,7 @@ async def asyncio(
 ) -> EdgeRuleEventsResponse | Problem | None:
     """Sampled requests each edge rule matched, newest first.
 
-     ADR-964. Gateways keep the first 10 matches of each rule per minute
+     Gateways keep the first 10 matches of each rule per minute
     as full events (request ID, method, host, path without query string,
     trusted client IP, country, user agent); hit counts (stats) cover
     every match. Events are kept 7 days; how far back a plan can read is

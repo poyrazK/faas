@@ -21,9 +21,8 @@ T = TypeVar("T", bound="EdgeRuleThrottleAction")
 
 @_attrs_define
 class EdgeRuleThrottleAction:
-    """Per-route token-bucket cap (ADR-091 D20.5 amendment,
-    issue #881). Customers tighten the per-route rps/burst
-    below their plan's `plan.RateLimitRPS` — the apid
+    """Per-route token-bucket cap. Customers tighten the per-route rps/burst
+    below their plan's `plan.RateLimitRPS` — the API
     validator enforces the sub-plan ceiling; the gateway
     compiler enforces it again at load time.
 
@@ -33,25 +32,19 @@ class EdgeRuleThrottleAction:
     BEFORE any DB write — a customer cannot raise their
     plan limit by registering a throttle rule.
 
-    Per-IP sub-keying is deliberately absent — see the package
-    doc on `pkg/state.EdgeRuleThrottleAction` for the design
-    rationale (memory-bounded limiter + attacker-controlled IP
-    cardinality = unbounded bucket growth). Country keying uses
+    Per-IP sub-keying is deliberately absent: a memory-bounded limiter
+    with attacker-controlled IP cardinality would grow without bound. Country keying uses
     the existing trusted GeoIP lookup and therefore has bounded
     cardinality.
 
-    Phase 3 (ADR-091 D20.5 amendment 4, ADR-104, issue #881
-    Phase 3) extends the wire shape with optional per-consumer
+    The wire shape has optional per-consumer
     keying. Default values (`""` for key_by, omitted
-    jwt_claim_name, 0 for max_keys_per_rule) preserve PR
-    #887's behaviour bit-for-bit. See ADR-104 for the policy
-    and `pkg/gateway/ratelimit.go::AllowWithConsumerKey`
-    (Phase 3) for the run-time semantics.
+    jwt_claim_name, 0 for max_keys_per_rule) preserve the behaviour bit-for-bit.
 
     """
 
     requests_per_second: float
-    """Token-bucket refill rate per route. The apid
+    """Token-bucket refill rate per route. The API
     validator rejects rps > plan.RateLimitRPS with a
     422. The gateway compiler clamps + warns on the
     same bound at load time.
@@ -62,9 +55,8 @@ class EdgeRuleThrottleAction:
     clamped at compile time.
     """
     key_by: EdgeRuleThrottleActionKeyBy | Unset = ""
-    """Per-consumer keying dimension (ADR-104 / issue #881
-    Phase 3). When `""` or `"none"`, the bucket is shared
-    across every caller of the route (PR #887 shape).
+    """Per-consumer keying dimension. When `""` or `"none"`, the bucket is shared
+    across every caller of the route (shape).
     When `"api_key"`, one bucket per authenticated API
     key. When `"consumer_id"`, one bucket per stable API consumer
     identity (all rotated keys for that consumer share a bucket).
@@ -75,14 +67,14 @@ class EdgeRuleThrottleAction:
     gateway's trusted client IP. When `"ip"`, one bucket per
     trusted client IP (IPv6 clients keyed by their /64).
     When `"composite"`, one bucket per combination of
-    `key_fields` (ADR-965).
+    `key_fields`.
     Each non-empty
     value activates the bounded design: when the
     per-rule consumer set exceeds
     `max_keys_per_rule`, all over-cap callers collapse
     into a single non-evicting `__other__` bucket that
     still consumes tokens (the load-bearing safety
-    property — see ADR-104 §"Consequences").
+    property — §"Consequences").
     """
     jwt_claim_name: str | Unset = UNSET
     """Required iff `key_by="jwt_claim"`. Names the JWT
@@ -107,7 +99,7 @@ class EdgeRuleThrottleAction:
     non-per-consumer rules.
     """
     key_fields: list[str] | Unset = UNSET
-    """ADR-965. Required iff `key_by="composite"`: the request
+    """Required iff `key_by="composite"`: the request
     fields combined into one bucket identity. Each is one of
     ip, country, api_key, consumer_id, jwt_subject, jwt_claim
     (with `jwt_claim_name`), method, path or `header:<name>`.
@@ -115,7 +107,7 @@ class EdgeRuleThrottleAction:
     `missing_key_policy` applies.
     """
     count_statuses: list[int] | Unset = UNSET
-    """ADR-965. When set, requests are admitted while the bucket
+    """When set, requests are admitted while the bucket
     has a token but only responses with one of these statuses
     charge it, e.g. [401, 403] to limit failed logins without
     limiting successful ones. Across gateways the admission

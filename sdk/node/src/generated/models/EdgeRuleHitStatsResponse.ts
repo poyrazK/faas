@@ -3,7 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * One rule's match counts over the window (ADR-960).
+ * One rule's match counts over the window.
  */
 export type EdgeRuleHitStatsResponse = {
   rule_id: string;
@@ -16,7 +16,7 @@ export type EdgeRuleHitStatsResponse = {
    */
   logged: number;
   /**
-   * With series=true, matched plus logged per hour; the first value is the hour starting at since, the last the current hour (ADR-20261020105001).
+   * With series=true, matched plus logged per hour; the first value is the hour starting at since, the last the current hour.
    */
   series?: Array<number>;
 };

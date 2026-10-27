@@ -12,7 +12,7 @@ T = TypeVar("T", bound="SetFinancialBudgetChannelsRequest")
 
 @_attrs_define
 class SetFinancialBudgetChannelsRequest:
-    """The full replacement set of notification channels for a budget's alerts (ADR-20261019193500)."""
+    """The full replacement set of notification channels for a budget's alerts."""
 
     channel_ids: list[UUID]
     """Account-owned notification channel ids; empty leaves only the account email."""

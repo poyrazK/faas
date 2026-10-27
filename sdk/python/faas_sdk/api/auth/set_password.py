@@ -94,7 +94,7 @@ def sync_detailed(
     `SameSite=Lax` alone does not protect it from a customer app
     hosted under `*.gregale.dev`.
 
-    Proof of presence (ADR-140), decided by what the account has:
+    Proof of presence, decided by what the account has:
 
     - A step-up verified within the last 5 minutes
       (`POST /v1/account/mfa/verify`) is accepted as-is.
@@ -156,7 +156,7 @@ def sync(
     `SameSite=Lax` alone does not protect it from a customer app
     hosted under `*.gregale.dev`.
 
-    Proof of presence (ADR-140), decided by what the account has:
+    Proof of presence, decided by what the account has:
 
     - A step-up verified within the last 5 minutes
       (`POST /v1/account/mfa/verify`) is accepted as-is.
@@ -213,7 +213,7 @@ async def asyncio_detailed(
     `SameSite=Lax` alone does not protect it from a customer app
     hosted under `*.gregale.dev`.
 
-    Proof of presence (ADR-140), decided by what the account has:
+    Proof of presence, decided by what the account has:
 
     - A step-up verified within the last 5 minutes
       (`POST /v1/account/mfa/verify`) is accepted as-is.
@@ -273,7 +273,7 @@ async def asyncio(
     `SameSite=Lax` alone does not protect it from a customer app
     hosted under `*.gregale.dev`.
 
-    Proof of presence (ADR-140), decided by what the account has:
+    Proof of presence, decided by what the account has:
 
     - A step-up verified within the last 5 minutes
       (`POST /v1/account/mfa/verify`) is accepted as-is.

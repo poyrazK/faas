@@ -53,7 +53,7 @@ class Problem:
     title: str
     status: int
     code: str
-    """Stable machine-readable error code. See StatusForCode in pkg/api/errors.go."""
+    """Stable machine-readable error code. See StatusForCode."""
     current_sequence: int | Unset = UNSET
     """Observed channel head on realtime_sequence_conflict."""
     condition_field: str | Unset = UNSET
@@ -71,14 +71,13 @@ class Problem:
     passed report does not independently establish application readiness or credential use. Optional application
     acknowledgements are version-bound self-attestations."""
     crossed_releases: list[RollbackCrossedRelease] | Unset = UNSET
-    """rollback_crosses_release: release commands the rollback would not undo (ADR-1448)."""
+    """rollback_crosses_release: release commands the rollback would not undo."""
     restore_points: list[ReleaseRestorePoint] | Unset = UNSET
-    """rollback_crosses_release: how to restore each managed PostgreSQL database to before those releases
-    (ADR-1448)."""
+    """rollback_crosses_release: how to restore each managed PostgreSQL database to before those releases."""
     freezes: list[ReleaseFreeze] | Unset = UNSET
-    """release_frozen: the freezes refusing the release (ADR-20261019071733)."""
+    """release_frozen: the freezes refusing the release."""
     release_approval: ReleaseApprovalStatus | Unset = UNSET
-    """A release's approval state (ADR-20261020085706)."""
+    """A release's approval state."""
     type_: str | Unset = UNSET
     instance: str | Unset = UNSET
     """URI reference identifying this problem occurrence when supplied by the caller."""
@@ -115,9 +114,8 @@ class Problem:
     """
     secret_findings: list[SecretFinding] | Unset = UNSET
     """Per-line secret-scan detail. Populated by 422 sites with
-    `code: secret_scan_strict` (cmd/apid/secretscan.go
-    server-side scan rejection; cmd/gregale printErr
-    --secret-scan=strict client-side rejection). The shape
+    `code: secret_scan_strict` (the server-side scan rejection,
+    and the CLI's `--secret-scan=strict` client-side rejection). The shape
     is shared with the on-disk `SecretScanResult` so a
     programmatic consumer can render the same UI for both
     rejection paths. Optional + omitempty.
@@ -132,8 +130,7 @@ class Problem:
     """
     hint: str | Unset = UNSET
     """Single short next-action line lifted from the
-    `pkg/whycopy` catalog (error-explanations cluster,
-    spec §6.4 amendment 1). Populated by the 9 cluster-
+    error-explanation catalog. Populated by the 9 cluster-
     owned RFC 7807 codes (app_not_listening,
     app_loopback_bound, app_arch_mismatch,
     env_var_missing, app_healthz_unauthorized,
@@ -146,15 +143,14 @@ class Problem:
     """
     why: str | Unset = UNSET
     """Human-readable cause with the observed value templated
-    in (error-explanations cluster, spec §6.4 amendment 1).
+    in (error-explanations cluster).
     Distinct from `detail`: `detail` is the platform's
     machine-stable message; `why` is the customer-facing
-    explanation. Multi-line (≤512 bytes per `pkg/whycopy`
-    catalog row). Optional + omitempty.
+    explanation. Multi-line (≤512 bytes per catalog row). Optional + omitempty.
     """
     fix: str | Unset = UNSET
     """Prescriptive remediation (1-3 lines, error-explanations
-    cluster, spec §6.4 amendment 1). Distinct from `hint`:
+    cluster). Distinct from `hint`:
     `hint` is a single line, `fix` is the bulleted
     remediation list. The CLI renders this as
     `→ fix: <fix>` with literal newlines preserved so the
@@ -162,7 +158,7 @@ class Problem:
     """
     relevant_logs: list[LogExcerpt] | Unset = UNSET
     """Per-line log excerpts that explain the failure (error-
-    explanations cluster, spec §6.4 amendment 1). The
+    explanations cluster). The
     detection site attaches the last N log lines that
     caused the failure (capped at 20 entries × 512 bytes
     each per CLI tripwire). The CLI renders the first 5

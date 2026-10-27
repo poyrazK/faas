@@ -22,8 +22,7 @@ class ProjectWorkloadResponse:
     rollout_state: str | Unset = UNSET
     build_status: str | Unset = UNSET
     depends_on: list[str] | Unset = UNSET
-    """The project services this one declares it calls (Compose depends_on), sorted. Omitted when none
-    (ADR-20261026193018)."""
+    """The project services this one declares it calls (Compose depends_on), sorted. Omitted when none."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

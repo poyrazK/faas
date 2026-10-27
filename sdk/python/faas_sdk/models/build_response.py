@@ -18,12 +18,11 @@ T = TypeVar("T", bound="BuildResponse")
 
 @_attrs_define
 class BuildResponse:
-    """DEPLOY-PROV-6 / ADR-089 (issue #741): the LIFECYCLE row for
+    """The LIFECYCLE row for
     a single build — current status, enqueued/started/finished
     timestamps, failure_class, server-computed duration_seconds.
-    Companion to BuildProvenanceResponse (post-mortem export,
-    ADR-038) and the /sbom route (post-mortem blob, ADR-038
-    Phase 3). The status field mirrors builds.status — a
+    Companion to BuildProvenanceResponse (post-mortem export) and the /sbom route (post-mortem blob). The status field
+    mirrors builds.status — a
     5-state enum `queued|running|succeeded|failed|cancelled`.
 
     failure_class is the low-cardinality enum

@@ -11,7 +11,7 @@ T = TypeVar("T", bound="PlatformTenantRateCardResponseRouteWeights")
 
 @_attrs_define
 class PlatformTenantRateCardResponseRouteWeights:
-    """Units per request on a route (ADR-1307, ADR-1310); absent when every request counts 1."""
+    """Units per request on a route; absent when every request counts 1."""
 
     additional_properties: dict[str, int] = _attrs_field(init=False, factory=dict)
 

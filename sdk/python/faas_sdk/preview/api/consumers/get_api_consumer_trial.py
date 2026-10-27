@@ -69,7 +69,7 @@ def sync_detailed(
     *,
     client: AuthenticatedClient | Client,
 ) -> Response[APIConsumerTrialResponse | Problem]:
-    """Read a consumer's free trial (ADR-1314).
+    """Read a consumer's free trial.
 
     Args:
         slug (str):
@@ -101,7 +101,7 @@ def sync(
     *,
     client: AuthenticatedClient | Client,
 ) -> APIConsumerTrialResponse | Problem | None:
-    """Read a consumer's free trial (ADR-1314).
+    """Read a consumer's free trial.
 
     Args:
         slug (str):
@@ -128,7 +128,7 @@ async def asyncio_detailed(
     *,
     client: AuthenticatedClient | Client,
 ) -> Response[APIConsumerTrialResponse | Problem]:
-    """Read a consumer's free trial (ADR-1314).
+    """Read a consumer's free trial.
 
     Args:
         slug (str):
@@ -158,7 +158,7 @@ async def asyncio(
     *,
     client: AuthenticatedClient | Client,
 ) -> APIConsumerTrialResponse | Problem | None:
-    """Read a consumer's free trial (ADR-1314).
+    """Read a consumer's free trial.
 
     Args:
         slug (str):

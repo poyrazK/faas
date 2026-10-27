@@ -4,7 +4,7 @@
 /* eslint-disable */
 import type { SyntheticCheckResults } from './SyntheticCheckResults.js';
 /**
- * One synthetic check definition (ADR-748).
+ * One synthetic check definition.
  */
 export type SyntheticCheckResponse = {
   id: string;
