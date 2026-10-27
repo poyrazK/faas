@@ -4302,6 +4302,7 @@ func (e *Engine) admitAndDispatchOnce(ctx context.Context, appID, deploymentID, 
 		if e.ops != nil {
 			e.ops.WakeFailure("", bootInput.appID, "vmm_boot_failed").Inc()
 		}
+		logVMMBootFailure(e.log, bootCtx, bootInput.appID, bootInput.insID, bootInput.wakeID, bootInput.nodeID, method, rpcEndedAt.Sub(rpcStartedAt), err)
 		e.transitionWithKind(transitionCtx, bootInput.insID, bootInput.appID, state.StateFailed, "wake_boot_error", "vmm_boot_failed")
 		noteWakeBootError(ctx, bootInput.nodeID, err)
 		return WakeResult{}, err
