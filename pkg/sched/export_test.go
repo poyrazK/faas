@@ -287,6 +287,13 @@ const XEventFanoutSafetyTick = eventFanoutSafetyTick
 
 func (l *Loop) XRunEventFanoutSweep(ctx context.Context) { l.runEventFanoutSweep(ctx) }
 
+// XRunEventFanoutSweepAt runs the sweep with the loop's clock at now.
+// adr: 20261027125625 — held recipients route once their wait has passed.
+func (l *Loop) XRunEventFanoutSweepAt(ctx context.Context, now time.Time) {
+	l.now = func() time.Time { return now }
+	l.runEventFanoutSweep(ctx)
+}
+
 // XDispatchExplicitWake is Loop.Run's arm for app_wake and
 // runtime_config_restart deliveries.
 func (l *Loop) XDispatchExplicitWake(ctx context.Context, n db.Notification) {

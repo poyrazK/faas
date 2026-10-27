@@ -1515,6 +1515,15 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		// expected default-local development posture, so the endpoint reports
 		// a bounded transport error instead of accepting an unverifiable event.
 		guestRate := &guestEventRate{}
+		// ADR-20261027125625: the events flag pauses in-guest publishes too.
+		var guestEvents *guestEventGate
+		if store != nil && pool != nil {
+			gate, gateErr := startGuestEventGate(ctx, store, pool, log)
+			if gateErr != nil {
+				return gateErr
+			}
+			guestEvents = gate
+		}
 		recv.WithEventPublisher(func(publishCtx context.Context, instance string, body []byte) error {
 			if store == nil || pool == nil {
 				return errors.New("event publish persistence is not configured")
@@ -1532,6 +1541,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			// A capture-only rehearsal keeps its ordinary network, but its
 			// events still belong to its run (ADR-20261020090000).
 			if captured, err := captureGuestEvent(publishCtx, store, appID, "", accountID, envelope); captured || err != nil {
+				return err
+			}
+			if err := guestEvents.allow(publishCtx, store, appID); err != nil {
 				return err
 			}
 			if err := guestRate.allow(publishCtx, store, accountID); err != nil {

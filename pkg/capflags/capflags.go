@@ -5,8 +5,8 @@
 //
 // apid uses it through pkg/apid/capgate to hide routes and refuse settings,
 // and decides realtime for realtimed, which has no flag source. schedd,
-// githubd and gatewayd-internal use it to stop the work a capability does
-// outside apid when its flag is off.
+// githubd, gatewayd-internal and vmmd use it to stop the work a capability
+// does outside apid when its flag is off.
 package capflags
 
 import (

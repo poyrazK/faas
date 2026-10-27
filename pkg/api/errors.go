@@ -653,7 +653,11 @@ const (
 	// CodeEventPublishRateLimited marks a publication beyond the account's
 	// event publish rate (EventPublishLimits); retry after Retry-After.
 	CodeEventPublishRateLimited = "event_publish_rate_limited"
-	CodeUnauthorized            = "unauthorized"
+	// CodeEventsPaused marks a publication refused while the events
+	// capability is switched off, platform-wide or for the account
+	// (ADR-20261027125625). Nothing was accepted; retry after Retry-After.
+	CodeEventsPaused = "events_paused"
+	CodeUnauthorized = "unauthorized"
 	// CodeAuthRateLimited marks a rejected credential after the caller's
 	// source IP exhausted the failed-auth budget. Valid credentials from the
 	// same IP are still admitted, so one broken client behind a shared NAT
@@ -2143,7 +2147,7 @@ func StatusForCode(code string) int {
 		CodePrivateNetworkNotEnabled, CodePublicAuthConfigInvalid, CodeRealtimeUnavailable, CodeAppLogsUnavailable, CodeLogArchiveUnavailable,
 		CodeInstanceFrozen:
 		return http.StatusServiceUnavailable
-	case CodeAPIContractDiffDisabled, CodeDataUpstreamsDisabled:
+	case CodeAPIContractDiffDisabled, CodeDataUpstreamsDisabled, CodeEventsPaused:
 		return http.StatusServiceUnavailable
 	case CodeScanCritical:
 		// 503 — the base ext4 has a CRITICAL Grype finding
@@ -3008,6 +3012,24 @@ func ErrDeployRateLimited(limit, retryAfterS int) *Problem {
 
 // ErrEventPublishRateLimited reports a publication of events beyond the
 // account's per-second event publish rate. Nothing was accepted.
+// EventsPausedRetryAfter is the Retry-After a refused publication carries
+// while the events capability is off; a flag change applies within seconds.
+const EventsPausedRetryAfter = 30 * time.Second
+
+// ErrEventsPaused refuses a publication while the events capability is off
+// (ADR-20261027125625). accountScope says the switch is off for this account
+// rather than platform-wide. It is a 503 so producers keep and resend the
+// events instead of reading a missing route as permanent.
+func ErrEventsPaused(accountScope bool) *Problem {
+	detail := "Gregale has paused event publishing platform-wide; nothing was accepted. Retry the same events after the indicated back-off."
+	if accountScope {
+		detail = "Event publishing is switched off for this account; nothing was accepted. Retry the same events later, or contact support."
+	}
+	return NewProblem(http.StatusServiceUnavailable, CodeEventsPaused, "Event publishing is paused", detail).
+		WithHeader("Retry-After", strconv.Itoa(int(EventsPausedRetryAfter.Seconds()))).
+		WithDocs(docsBase + "/event-driven#pausing-events")
+}
+
 func ErrEventPublishRateLimited(perSecond, events int, retryAfter time.Duration) *Problem {
 	retryAfterS := int(math.Ceil(retryAfter.Seconds()))
 	if retryAfterS <= 0 {

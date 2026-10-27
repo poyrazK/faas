@@ -1074,6 +1074,23 @@ Apply the retention-health migration before upgrading binaries. Remove the new
 alert rules and downgrade binaries before rolling it back. See
 [ADR-912](adr/912-event-retention-health.md).
 
+### Pausing events
+
+Gregale can pause the event bus, platform-wide during an incident or for one
+account ([ADR-20261027125625](adr/20261027125625-events-kill-switch.md)).
+While it is paused:
+
+- Publishing answers `503 events_paused` with `Retry-After`, from
+  `POST /v1/events:publish`, `:publish-batch`, the app producer route, the
+  platform-tenant route and in-app publishing (the runtime's metadata endpoint
+  answers `503 event_publish_unavailable`). Nothing is accepted, so resend the
+  same events after the back-off; the SDK outbox does this for you.
+- Events already accepted are kept and wait to be routed; routing resumes when
+  the pause ends. Delivery-age limits keep counting while they wait.
+- Deliveries that already became invocations run as usual.
+- Object-storage notifications, inbound webhook automation and other events
+  Gregale publishes for you are still accepted and wait with the rest.
+
 ### Publish rate
 
 An account publishes at most its plan's rate of events per second: 5 on Free,
