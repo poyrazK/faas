@@ -56,8 +56,10 @@ type Options struct {
 	// (ADR-20261026195952).
 	Capabilities []string
 	// Toolsets limits the listed tools (see ParseToolsets); nil lists all.
-	Toolsets      []string
-	planStore     *StateStore
+	Toolsets  []string
+	planStore *StateStore
+	// uploads is the hosted bridge's upload store (ADR-20261026195952).
+	uploads       *uploadStore
 	planNamespace string
 	auditLogger   *slog.Logger
 	accountID     string
@@ -182,6 +184,7 @@ func newManagementServer(client *api.Client, opts Options) (*mcp.Server, *manage
 	registerLocalReleases(s, m)
 	registerSecretEntry(s, m)
 	registerLocalProvisioning(s, m)
+	registerUploadDeploys(s, m)
 	registerEnvironments(s, m)
 	registerContextCatalog(s, m)
 	registerLifecycle(s, m)
@@ -205,8 +208,8 @@ func registerTool[In any](s *mcp.Server, m *management, name, description string
 		func(ctx context.Context, req *mcp.CallToolRequest, args In) (*mcp.CallToolResult, any, error) {
 			timeout := m.opts.Timeout
 			switch name {
-			case "gregale_apply_local_deploy":
-				timeout = localDeployTimeout // the source upload
+			case "gregale_apply_local_deploy", "gregale_plan_upload_deploy", "gregale_apply_upload_deploy":
+				timeout = localDeployTimeout // the source upload, or unpacking one
 			case "gregale_apply_provision":
 				timeout = provisionTimeout // a database can take minutes
 			}

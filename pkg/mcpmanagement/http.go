@@ -42,6 +42,9 @@ type HTTPOptions struct {
 	AuditLogger *slog.Logger
 	// APIHTTPClient allows transport configuration, including private CA trust.
 	APIHTTPClient *http.Client
+	// UploadDir, on the hosted bridge, holds source uploads and the
+	// directories plans deploy from. It is emptied on start.
+	UploadDir string
 	// CLIRunner, on the hosted bridge, runs the gregale CLI as a grant with
 	// its own credential; provisioning tools use it.
 	CLIRunner func(token string) LocalCLI
@@ -59,6 +62,7 @@ type remoteServer struct {
 	// OAuth endpoint is issuer + "/oauth/...".
 	issuer      string
 	host        string
+	uploads     *uploadStore
 	mu          sync.Mutex
 	clients     map[string]*oauthClient
 	requests    map[string]*authorizationRequest
@@ -134,6 +138,11 @@ func NewHTTPService(opts HTTPOptions) (*RemoteService, error) {
 		issuer = opts.ResourceURL
 	}
 	r := &remoteServer{opts: opts, origin: origin, issuer: issuer, host: u.Host, clients: map[string]*oauthClient{}, requests: map[string]*authorizationRequest{}, codes: map[string]*authorizationCode{}, grants: map[string]*oauthGrant{}, access: map[string]*oauthGrant{}, refresh: map[string]*oauthGrant{}, usedRefresh: map[string]*oauthGrant{}}
+	if opts.Hosted && opts.UploadDir != "" {
+		if r.uploads, err = newUploadStore(opts.UploadDir, opts.ResourceURL); err != nil {
+			return nil, err
+		}
+	}
 	if err := r.restoreOAuth(); err != nil {
 		return nil, err
 	}
@@ -230,6 +239,11 @@ func (r *remoteServer) handler() http.Handler {
 		}
 		if origin := req.Header.Get("Origin"); origin != "" && origin != r.origin {
 			http.Error(w, "Origin is not allowed", http.StatusForbidden)
+			return
+		}
+		if r.uploads != nil && strings.HasPrefix(req.URL.Path, "/mcp/uploads/") {
+			// The capability URL authorizes the body; its limit is the plan's.
+			r.uploads.receive(w, req)
 			return
 		}
 		r.mu.Lock()

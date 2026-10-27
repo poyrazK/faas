@@ -148,8 +148,8 @@ Uploads and inline files are written to a private per-plan directory, rejecting:
 - absolute paths and `..`;
 - symlinks, hard links and device files;
 - anything named `.git`;
-- more than 10,000 entries, and more than the plan's source limit once
-  unpacked.
+- more than 10,000 entries, and more than four times the plan's source limit
+  once unpacked.
 
 Then the same flow as a local deploy runs: `gregale_plan_upload_deploy` runs
 the CLI's `deploy --plan` on that directory and fingerprints it, and
@@ -168,9 +168,12 @@ deleted when the plan is applied or expires, and on start.
 
 ### 9. Toolsets
 
-A hosted grant lists `core` by default. The consent page can add `release`,
-`diagnose` and `provision`, and the choice is stored with the grant. Write
-tools still need write consent.
+The hosted bridge lists `core` and `provision`: inspection, deploys by
+upload, secret requests, promotion, rollback and provisioning. Consent
+decides the rest. A grant lists write tools only with write consent, and
+secret requests, buckets and PostgreSQL only with their scopes. Release and
+diagnose tools stay with self-hosted and local bridges until a client needs
+them hosted.
 
 ## Not included
 

@@ -2498,7 +2498,7 @@ func MCPHostedCLI(t interface{ Cleanup(func()) }, path, apiBase, token string) m
 	previous := mcpCLIExecutable
 	mcpCLIExecutable = func() (string, error) { return path, nil }
 	t.Cleanup(func() { mcpCLIExecutable = previous })
-	return mcpHostedCLI(apiBase)(token)
+	return mcpHostedCLI(apiBase, "/uploads")(token)
 }
 
 func DevGoCommandRequest(command string) api.UpsertDevSessionRequest {

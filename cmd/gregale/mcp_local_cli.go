@@ -49,7 +49,7 @@ var mcpHostedCLISlots = make(chan struct{}, 4)
 // own credential, and a fresh empty private home and git configuration, so a
 // command never reads the host's profiles, saved login or a repository's
 // config. The environment is built from nothing but these values.
-func mcpHostedCLI(apiBase string) func(token string) mcpmanagement.LocalCLI {
+func mcpHostedCLI(apiBase, uploadDir string) func(token string) mcpmanagement.LocalCLI {
 	return func(token string) mcpmanagement.LocalCLI {
 		return func(ctx context.Context, args []string, stdin []byte) (mcpmanagement.LocalCLIResult, error) {
 			select {
@@ -76,7 +76,8 @@ func mcpHostedCLI(apiBase string) func(token string) mcpmanagement.LocalCLI {
 				"TMPDIR=" + home,
 				"GIT_CONFIG_NOSYSTEM=1",
 				"GIT_CONFIG_GLOBAL=" + os.DevNull,
-				"GIT_CEILING_DIRECTORIES=" + home,
+				// Git never looks above an upload for a repository.
+				"GIT_CEILING_DIRECTORIES=" + home + ":" + uploadDir,
 				"FAAS_TOKEN=" + token,
 				"FAAS_API=" + apiBase,
 			}
