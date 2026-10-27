@@ -8,18 +8,18 @@ app never wakes for it.
 
 ```sh
 # Redirect an old path, permanently.
-gregale edge-rules create --app my-api --kind redirect \
+gregale edge rule create --app my-api --kind redirect \
   --match-host api.example.com --match-path /docs --redirect-status 308 --redirect-to https://docs.example.com/
 
 # Allow at most 5 searches a second, with bursts of 10.
-gregale edge-rules create --app my-api --kind throttle \
+gregale edge rule create --app my-api --kind throttle \
   --match-host @app --match-path '/search/**' \
   --throttle-requests-per-second 5 --throttle-burst 10
 
-gregale edge-rules list --app my-api
+gregale edge rule list --app my-api
 ```
 
-Every flag is listed under [`gregale edge-rules create`](cli#edge-rules-create).
+Every flag is listed under [`gregale edge rule create`](cli#edge-rules-create).
 The API is `POST /v1/apps/{slug}/edge-rules`, `GET`, `PATCH` and `DELETE
 /v1/edge-rules/{id}`.
 
@@ -97,8 +97,8 @@ list reaches every rule that uses it within seconds, and a list cannot be
 deleted while a rule uses it.
 
 ```sh
-gregale edge-rule-lists create office-ips --kind ip --item 203.0.113.0/24 --item 2001:db8::1
-gregale edge-rule-lists update office-ips --add 198.51.100.7
+gregale edge rule-list create office-ips --kind ip --item 203.0.113.0/24 --item 2001:db8::1
+gregale edge rule-list update office-ips --add 198.51.100.7
 ```
 
 Lists are available on Hobby and above; see [Limits](#limits).
@@ -113,15 +113,15 @@ get headers from another and be rate-limited by a third.
 
 A rule in `mode: log` is matched and counted but never acts, and it does not
 stop an enforced rule of the same kind from acting. Start a risky rule in log
-mode, check what it matched with `gregale edge-rules events --outcome logged`,
-then switch it to `enforce`. `gregale edge-rules review` lists log-mode rules
+mode, check what it matched with `gregale edge rule events --outcome logged`,
+then switch it to `enforce`. `gregale edge rule review` lists log-mode rules
 that look ready.
 
 A disabled rule (`enabled: false`) is skipped. A rule with `expires_at` stops
 applying at that time, which suits temporary blocks:
 
 ```sh
-gregale edge-rules create --app my-api --kind ip --match-host @app --match-path '/**' \
+gregale edge rule create --app my-api --kind ip --match-host @app --match-path '/**' \
   --ip-deny 192.0.2.0/24 --expires-in 2h --name "block scraper"
 ```
 
@@ -267,7 +267,7 @@ headers. An origin is
 `https://host:*` for any port. `*` cannot be combined with
 `allow_credentials`. `max_age_seconds` is at most 86400. Instead of inline
 fields, `cors_preset_id` can name a CORS preset shared by several rules
-(`/v1/cors-presets`). `gregale cors allow` creates a simple rule.
+(`/v1/cors-presets`). `gregale edge cors allow` creates a simple rule.
 
 ### jwt
 
@@ -447,7 +447,7 @@ or `Accept-Encoding` to the cache key.
 
 Requests with credentials (`Authorization`, cookies) are never cached or
 served from the cache, and neither are responses with `Set-Cookie` or
-`Cache-Control: no-store` or `private`. `gregale cache purge` removes cached
+`Cache-Control: no-store` or `private`. `gregale edge cache purge` removes cached
 responses. Changing an edge rule also clears the cached responses of the
 apps it covers; a `*` or glob host pattern clears all of your account's
 apps.
@@ -532,27 +532,27 @@ change made since answers 412.
 Every change records a version of the app's whole rule set.
 
 ```sh
-gregale edge-rules history --app my-api              # versions
-gregale edge-rules history --app my-api --version 12 # the rules in version 12
-gregale edge-rules rollback --app my-api --to 12
+gregale edge rule history --app my-api              # versions
+gregale edge rule history --app my-api --version 12 # the rules in version 12
+gregale edge rule rollback --app my-api --to 12
 ```
 
 A deployment also records the rules it went live with.
 
 ## Testing and observing
 
-- `gregale edge-rules trace` shows which rules a request would match and
+- `gregale edge rule trace` shows which rules a request would match and
   what each would do, and can compare a proposed change; see
   [Reusable edge-rule trace scenarios](edge-rule-trace).
 - Log mode counts what a rule would do without acting.
-- `gregale edge-rules stats` shows match counts per rule for the last hour,
+- `gregale edge rule stats` shows match counts per rule for the last hour,
   day or week.
-- `gregale edge-rules events` shows sampled requests each rule matched: up to
+- `gregale edge rule events` shows sampled requests each rule matched: up to
   10 per rule per minute, kept for your plan's event window.
-- `gregale edge-rules summary` shows what the edge refused for an app, by
+- `gregale edge rule summary` shows what the edge refused for an app, by
   reason and status.
-- `gregale edge-rules suggest` proposes rules from your recent traffic, and
-  `gregale edge-rules recipes` lists ready-made rules that start in log mode.
+- `gregale edge rule suggest` proposes rules from your recent traffic, and
+  `gregale edge rule recipes` lists ready-made rules that start in log mode.
 
 ## Limits
 
@@ -601,5 +601,5 @@ with 403 `capability_not_released`.
 | 503 `capacity_unavailable` | a rule change being applied, rules the gateway cannot load, an unreachable JWKS |
 | 504 `request_budget_exceeded` | `budget` |
 
-Errors use the [problem format](errors); `gregale edge-rules events
+Errors use the [problem format](errors); `gregale edge rule events
 --request-id <id>` finds the rule behind a refused request.

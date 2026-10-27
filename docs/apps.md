@@ -4,11 +4,11 @@ An app is a named HTTP API with a current deployment, runtime profile, and
 optional domains, secrets, environment variables, and triggers.
 
 ```bash
-gregale apps
-gregale app my-api
-gregale app my-api scale --min 1
+gregale app list
+gregale app get my-api
+gregale app scale my-api --min 1
 gregale open my-api
-gregale apps --q my-api
+gregale app list --q my-api
 ```
 
 `gregale deploy` creates the app on first use and updates it on later runs.
@@ -25,8 +25,8 @@ control this lifecycle.
 Use the app detail page or inspect retained usage costs from the CLI:
 
 ```bash
-gregale app my-api costs
-gregale app my-api costs --month 2026-10 --json
+gregale app costs my-api
+gregale app costs my-api --month 2026-10 --json
 ```
 
 The app dashboard lets you select a UTC month and shows compute and
@@ -92,10 +92,10 @@ and is available through the Go, Node and Python clients.
 Review an app configuration change before applying it:
 
 ```bash
-gregale app my-api scale --plan --ram 512 --min 1
-gregale app my-api scale --plan --ram 512 --out scale-change.json
-gregale app my-api scale --apply scale-change.json --confirm
-gregale app my-api scale --plan --environment staging --size medium
+gregale app scale my-api --plan --ram 512 --min 1
+gregale app scale my-api --plan --ram 512 --out scale-change.json
+gregale app scale my-api --apply scale-change.json --confirm
+gregale app scale my-api --plan --environment staging --size medium
 ```
 
 The preview reads current app settings and the account plan, then shows the
@@ -161,7 +161,7 @@ omitted, just as with a single inspection.
 To apply current runtime configuration and follow processing:
 
 ```bash
-gregale app my-api restart --fresh --wait --timeout 5m
+gregale app restart my-api --fresh --wait --timeout 5m
 ```
 
 The command submits one fresh restart and follows its accepted `wake_id` with
@@ -172,8 +172,8 @@ application health; check `gregale inspect my-api` afterwards.
 To follow an already accepted fresh restart, use the ID printed by the request:
 
 ```bash
-gregale app my-api restart status --wake-id "$WAKE_ID" --wait --timeout 5m
-gregale app my-api restart status --wake-id "$WAKE_ID" --json
+gregale app restart status my-api --wake-id "$WAKE_ID" --wait --timeout 5m
+gregale app restart status my-api --wake-id "$WAKE_ID" --json
 ```
 
 Status commands never submit another restart. A client timeout or interrupt
@@ -186,7 +186,7 @@ timeout and unavailable status return a nonzero exit code; interruption returns
 the default poll interval is two seconds, configurable with `--poll-interval`.
 
 Durable tracking covers fresh runtime-configuration restarts. The existing
-`gregale app my-api restart` snapshot restart retains its behavior; `--wait`
+`gregale app restart my-api` snapshot restart retains its behavior; `--wait`
 requires `--fresh`. A snapshot restart ID is not a fresh restart status ID.
 
 In the dashboard, select **view progress** on a restart in Current operations.
@@ -202,7 +202,7 @@ Read and edit the desired workload configuration of a registered environment:
 ```bash
 gregale app my-api --environment staging
 gregale app my-api --environment staging --ram 512
-gregale app my-api scale --environment staging --request-timeout 17
+gregale app scale my-api --environment staging --request-timeout 17
 ```
 
 Deploy to that environment to test the saved configuration. A deployment pins
@@ -259,9 +259,9 @@ live deployment, with the deployment's files, environment, secrets and
 bindings. Add `-it` to attach your terminal to it, like `docker exec -it`:
 
 ```sh
-gregale app my-api exec -it              # /bin/sh
-gregale app my-api exec -it -- bash -l
-echo 'select 1;' | gregale app my-api exec -i -- psql "$DATABASE_URL"
+gregale app exec my-api -it              # /bin/sh
+gregale app exec my-api -it -- bash -l
+echo 'select 1;' | gregale app exec my-api -i -- psql "$DATABASE_URL"
 ```
 
 The VM is never routed, parked or snapshotted and is destroyed when the
@@ -282,10 +282,10 @@ supported yet.
 The same fresh-VM sessions power two more commands:
 
 ```sh
-gregale app my-api cp /app/dist ./dist          # directory or file
-gregale app my-api cp config/app.yaml -         # tar to stdout
-gregale app my-api port-forward 5432:db.svc.gregale:5432
-gregale app my-api port-forward 0:billing.svc.gregale:8080   # pick a free port
+gregale app cp my-api /app/dist ./dist          # directory or file
+gregale app cp my-api config/app.yaml -         # tar to stdout
+gregale app port-forward my-api 5432:db.svc.gregale:5432
+gregale app port-forward my-api 0:billing.svc.gregale:8080   # pick a free port
 ```
 
 `cp` reads the path as the app's configured user, so it sees exactly what the
