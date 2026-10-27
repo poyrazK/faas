@@ -21,7 +21,7 @@ func (s *PgStore) SetTriggerDelivery(ctx context.Context, id, delivery string) (
 	if err != nil {
 		return sqlc.Trigger{}, err
 	}
-	if err := api.ValidateTriggerDelivery(api.TriggerKind(current.Kind), delivery); err != nil {
+	if err := api.ValidateTriggerDelivery(api.TriggerKind(current.Kind), delivery); err != nil || (current.Agent.Valid && delivery != api.TriggerDeliveryRecord) {
 		return sqlc.Trigger{}, ErrInvalidArgument
 	}
 	n, err := s.triggerQueries().SetTriggerDelivery(ctx, s.pool, sqlc.SetTriggerDeliveryParams{ID: mustPgUUID(id), Delivery: delivery})
@@ -41,7 +41,8 @@ func (m *MemStore) SetTriggerDelivery(_ context.Context, id, delivery string) (s
 	if !ok {
 		return sqlc.Trigger{}, ErrNotFound
 	}
-	if err := api.ValidateTriggerDelivery(api.TriggerKind(t.Kind), delivery); err != nil {
+	// An agent trigger starts one run per record (ADR-20261027090010 §9).
+	if err := api.ValidateTriggerDelivery(api.TriggerKind(t.Kind), delivery); err != nil || (t.Agent.Valid && delivery != api.TriggerDeliveryRecord) {
 		return sqlc.Trigger{}, ErrInvalidArgument
 	}
 	if t.QueueBindingID.Valid {
