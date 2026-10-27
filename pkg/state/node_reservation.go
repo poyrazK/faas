@@ -77,22 +77,20 @@ var ErrNodeCapacity = errors.New("state: compute node at admission ceiling")
 // pg_locks can tell what took it.
 const nodeReservationLockClass = 0x6E6F6465
 
-// nodeUsageCounts reports whether a row in this state contributes to the
-// per-node RAM sum.
+// nodeUsageCounts reports whether a new row in this state takes the per-node
+// RAM reservation. nodeRAMCounts is the set the reservation sums.
 //
-// This deliberately does NOT call State.CountsForRAM(). That predicate also
-// returns true for 'snapshotting' and 'migrating', while the SQL in
-// ComputeNodeUsedMB / ComputeNodeUsedMBByNode sums only
-// ('waking','cold_booting','running','draining','warm'). The two have disagreed since
-// the states were added, and the SQL set is the one the placement chooser
-// actually reads.
+// Neither calls State.CountsForRAM(), which also returns true for
+// 'migrating'. Migration rows are booked through the migration admission
+// (reserveNodeForMigration), not this sum.
 //
-// The guard MUST agree with the chooser: if it counted a state the chooser
-// ignores, a node the chooser believes has headroom would start refusing
-// admissions, and every wake routed there would fail with no way for the
-// chooser to learn why. Reconciling CountsForRAM with the SQL is a real
-// question, but it changes placement behaviour and belongs in its own ADR —
-// not smuggled in under a correctness fix.
+// The guard MUST agree with the chooser (ComputeNodeUsedMB /
+// ComputeNodeUsedMBByNode): if it counted a state the chooser ignores, a node
+// the chooser believes has headroom would start refusing admissions, and
+// every wake routed there would fail with no way for the chooser to learn
+// why. ADR-20261027172037 added SNAPSHOTTING to both sums: its VM holds its
+// RAM until the capture finishes. No row is inserted SNAPSHOTTING, so it
+// never takes the guard itself.
 func nodeUsageCounts(s State) bool {
 	switch s {
 	case StateWaking, StateColdBooting, StateRunning, StateDraining, StateWarm:
@@ -100,6 +98,13 @@ func nodeUsageCounts(s State) bool {
 	default:
 		return false
 	}
+}
+
+// nodeRAMCounts reports whether an instance in s holds RAM on its node for
+// placement and the durable reservation: the live states plus SNAPSHOTTING,
+// whose VM stays resident until its capture finishes (ADR-20261027172037).
+func nodeRAMCounts(s State) bool {
+	return nodeUsageCounts(s) || s == StateSnapshotting
 }
 
 // instanceInserter is the narrow slice of pgxpool.Pool / pgx.Tx that the
@@ -230,7 +235,7 @@ func reserveNodeStatementsDB(ctx context.Context, tx pgx.Tx, nodeID, newState st
 		       coalesce((select sum(i.ram_mb + $2)
 		                   from instances i
 		                  where i.node_id = n.id
-		                    and i.state in ('waking','cold_booting','running','draining','warm')), 0)::bigint
+		                    and i.state in ('waking','cold_booting','running','draining','warm','snapshotting')), 0)::bigint
 		  from compute_nodes n
 		 where n.id = $1`,
 			nodeID, api.PerVMOverheadMB,
@@ -292,7 +297,7 @@ func (m *MemStore) checkNodeReservationWithinLocked(nodeID, newState string, ram
 		if ins.NodeID != nodeID {
 			continue
 		}
-		if nodeUsageCounts(State(ins.State)) {
+		if nodeRAMCounts(State(ins.State)) {
 			usedMB += m.migrationResidentRAMLocked(ins)
 		}
 	}

@@ -28,11 +28,17 @@ var (
 // ProfileCaptureStorageError rejects a capture that might not fit the
 // account's capture storage limit. Used counts the stored profiles plus
 // api.ProfileCaptureMaxProfileBytes for each capture still queued or running.
+// Automatic reports the automatic captures' share (Limit is that share and
+// Used their bytes) rather than the whole limit.
 type ProfileCaptureStorageError struct {
 	Limit, Used int64
+	Automatic   bool
 }
 
 func (e *ProfileCaptureStorageError) Error() string {
+	if e.Automatic {
+		return fmt.Sprintf("%v: automatic captures use %d of their %d bytes", ErrProfileCaptureStorage, e.Used, e.Limit)
+	}
 	return fmt.Sprintf("%v: %d of %d bytes used", ErrProfileCaptureStorage, e.Used, e.Limit)
 }
 
@@ -46,6 +52,67 @@ func checkProfileCaptureStorage(storedBytes, active, limit int64) error {
 		return &ProfileCaptureStorageError{Limit: limit, Used: used}
 	}
 	return nil
+}
+
+// profileCaptureUsage is an account's capture storage: stored bytes of
+// unexpired captures and captures still queued or running, in total and for
+// automatic captures alone.
+type profileCaptureUsage struct {
+	StoredBytes, Active                   int64
+	AutomaticStoredBytes, AutomaticActive int64
+}
+
+// rotatableProfileCapture is a finished automatic capture without an OOM
+// link, a candidate to rotate out; candidates come oldest first.
+type rotatableProfileCapture struct {
+	ID    string
+	Bytes int64
+}
+
+// planProfileCaptureStorage admits a capture under the account's capture
+// storage limit (ADR-1155) and returns the automatic captures to delete
+// first. A manual capture may use the whole limit. An automatic capture may
+// use only api.ProfileCaptureAutomaticStoragePercent of it, so automatic
+// captures never fill the room manual captures need; when that share is full
+// the oldest candidates are rotated out. Nothing is rotated out unless the
+// new capture then fits.
+func planProfileCaptureStorage(u profileCaptureUsage, automatic bool, limit int64, candidates []rotatableProfileCapture) ([]string, error) {
+	var rotate []string
+	if automatic {
+		share := limit * api.ProfileCaptureAutomaticStoragePercent / 100
+		used := func() int64 { return u.AutomaticStoredBytes + u.AutomaticActive*api.ProfileCaptureMaxProfileBytes }
+		inUse := used()
+		for _, c := range candidates {
+			if used()+api.ProfileCaptureMaxProfileBytes <= share {
+				break
+			}
+			rotate = append(rotate, c.ID)
+			u.AutomaticStoredBytes -= c.Bytes
+			u.StoredBytes -= c.Bytes
+		}
+		if used()+api.ProfileCaptureMaxProfileBytes > share {
+			return nil, &ProfileCaptureStorageError{Limit: share, Used: inUse, Automatic: true}
+		}
+	}
+	if err := checkProfileCaptureStorage(u.StoredBytes, u.Active, limit); err != nil {
+		return nil, err
+	}
+	return rotate, nil
+}
+
+// automaticShareFull reports whether an automatic capture needs candidates
+// to rotate out, so stores read them only then.
+func (u profileCaptureUsage) automaticShareFull(limit int64) bool {
+	share := limit * api.ProfileCaptureAutomaticStoragePercent / 100
+	return u.AutomaticStoredBytes+(u.AutomaticActive+1)*api.ProfileCaptureMaxProfileBytes > share
+}
+
+// profileCaptureHourlyLimit is the hourly quota a capture counts against.
+func profileCaptureHourlyLimit(automatic bool) int64 {
+	if automatic {
+		return api.ProfileCaptureAutomaticMaxPerAccountHour
+	}
+	return api.ProfileCaptureMaxPerAccountHour
 }
 
 // ProfileCaptureBlob is one collector's unparsed pprof profile.
@@ -75,6 +142,10 @@ type ProfileCaptureStore interface {
 	// not fit returns a *ProfileCaptureStorageError.
 	CreateProfileCapture(ctx context.Context, accountID, appID string, c api.ProfileCapture, storageLimit int64) error
 	GetProfileCapture(ctx context.Context, accountID, appID, id string) (api.ProfileCapture, error)
+	// DeleteProfileCapture deletes one of the app's captures and its
+	// profiles, in any status, or returns ErrNotFound. A capture still
+	// running finishes into nothing.
+	DeleteProfileCapture(ctx context.Context, accountID, appID, id string) error
 	ListProfileCaptures(ctx context.Context, accountID, appID string) ([]api.ProfileCapture, error)
 	ProfileCaptureBlobs(ctx context.Context, accountID, appID, id string) ([]ProfileCaptureBlob, error)
 	// LatestOOMProfileCapture returns the deployment's newest ready capture
@@ -163,11 +234,17 @@ func validProfileCaptureFinish(result api.ProfileCapture, blobs []ProfileCapture
 		return errors.New("profile capture has too many profiles")
 	}
 	for _, b := range blobs {
-		if !api.ValidCaptureProfileKind(b.Kind) || len(b.Profile) == 0 || len(b.Profile) > api.ProfileMaxCompressedBytes || len(b.ProcessID) > 16 {
+		if !ProfileCaptureBlobFits(b) {
 			return errors.New("profile capture blob exceeds bounds")
 		}
 	}
 	return nil
+}
+
+// ProfileCaptureBlobFits reports whether one collector's profile is within
+// the bounds FinishProfileCapture stores (profile_capture_data's CHECKs).
+func ProfileCaptureBlobFits(b ProfileCaptureBlob) bool {
+	return api.ValidCaptureProfileKind(b.Kind) && len(b.Profile) > 0 && len(b.Profile) <= api.ProfileMaxCompressedBytes && len(b.ProcessID) <= 16
 }
 
 // profileCaptureNotice returns the webhook payload for an announced capture

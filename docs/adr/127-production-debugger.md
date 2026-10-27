@@ -189,6 +189,9 @@ debugger.
 | apid | `POST /v1/apps/{slug}/debug/requests/{req_id}/replay` | §6 |
 | apid | `POST /v1/apps/{slug}/mirrors/{id}/replay` | Explicit customer-sanitized batch replay (§6.1) |
 | apid | `GET /v1/apps/{slug}/debug/requests/{req_id}/evidence` | Bounded root-cause synthesis from redacted evidence |
+| apid | `GET /v1/apps/{slug}/debug/rollout` | Why a canary rollout was rolled back or is held, with its request evidence ([ADR-1447](1447-explained-rollout-decisions.md) amendment) |
+| apid | `GET /v1/apps/{slug}/debug/status` | One summary: verdict, health, release, regressions, recent failures (ADR-1447 amendment) |
+| CLI | `gregale debug status <slug>`, `gregale debug rollout <slug>` | `cmd/gregale/commands_debug_status.go` |
 | apid | `POST /v1/otel/v1/traces` | §5 |
 | CLI | `gregale debug requests {list,get,evidence,explain,replay}` | `cmd/gregale/commands_debug.go` |
 | CLI | `gregale debug regressions <slug>` | |
