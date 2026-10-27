@@ -9,6 +9,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	pipelineapi "github.com/onebox-faas/faas/pkg/apid/datapipelines"
 	"github.com/onebox-faas/faas/pkg/datapipeline"
+	"github.com/onebox-faas/faas/pkg/platformflags"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -19,6 +20,9 @@ func (s *server) configurePipelineDataAPI(service *datapipeline.Service) {
 	setup := &pipelineapi.DataAPISetup{Store: s.store, Bindings: s.managedPostgresBindings, Notifier: s.notif, Log: s.log, Spool: spoolRoot(), Origin: s.dashboardAppOrigin, AppCreated: s.emitAppCreated,
 		AppVisible: func(ctx context.Context, acct state.Account, app state.App) bool {
 			return accountViewAppVisible(ctx, s.store, s.log, acct, app)
+		},
+		DataAPIReleased: func(a state.Account) bool {
+			return s.capGate == nil || s.capGate.Enabled(dataAPICapability, platformflags.Subject{AccountID: a.ID, Plan: string(a.Plan)})
 		}}
 	setup.BuildApp = func(a state.Account, name string) (state.App, error) {
 		requireAuthn := false
@@ -49,7 +53,11 @@ func (s *server) configurePipelineAPIApp(ctx context.Context, a state.Account, a
 	r := httptest.NewRequest(http.MethodPatch, "/v1/apps/"+app.Slug, nil).WithContext(ctx)
 	r.SetPathValue("slug", app.Slug)
 	ports, requireAuthn := []int{5432}, false
-	response := s.forwardDashboardJSON(r, a, http.MethodPatch, r.URL.Path, api.DefaultEnvScope, "", api.UpdateAppRequest{EgressPorts: &ports, RequireAuthn: &requireAuthn, PublicAuth: &api.PublicAuthBlock{Mode: "open"}, SetPublicAuth: true}, s.updateApp)
+	update := api.UpdateAppRequest{EgressPorts: &ports, RequireAuthn: &requireAuthn, PublicAuth: &api.PublicAuthBlock{Mode: "open"}, SetPublicAuth: true}
+	// The runtime must close its SQL sessions before a snapshot, as the CLI's
+	// Data APIs do.
+	update.SetDataAPILifecycle()
+	response := s.forwardDashboardJSON(r, a, http.MethodPatch, r.URL.Path, api.DefaultEnvScope, "", update, s.updateApp)
 	if response.Code < 200 || response.Code >= 300 {
 		return datapipeline.ErrUnavailable
 	}

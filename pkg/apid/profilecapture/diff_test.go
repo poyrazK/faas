@@ -35,7 +35,7 @@ func readyCapture(t *testing.T, host *fakeHost, acct state.Account, kinds []stri
 	t.Helper()
 	c := api.ProfileCapture{ID: uuid.NewString(), AppID: host.app.ID, Status: api.ProfileCaptureQueued, Kinds: kinds,
 		DurationSeconds: 10, Profiles: []api.ProfileCaptureProfile{}, CreatedAt: at, ExpiresAt: at.Add(api.ProfileCaptureRetention)}
-	if err := host.mem.CreateProfileCapture(t.Context(), acct.ID, host.app.ID, c); err != nil {
+	if err := host.mem.CreateProfileCapture(t.Context(), acct.ID, host.app.ID, c, api.MustLimitsFor(api.PlanPro).Profiling.CaptureStorageBytes); err != nil {
 		t.Fatal(err)
 	}
 	claimed, err := host.mem.ClaimProfileCapture(t.Context(), at)

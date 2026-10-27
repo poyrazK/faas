@@ -1580,9 +1580,10 @@ func (s *server) scanService(
 		// 500 so the customer can retry. If we DO have findings, the
 		// 422 takes precedence — refusing the upload is more useful
 		// than a generic "scan failed" 500.
+		logCustomerFailure(s.log, "Secret scan failed", ssErr)
 		return nil, state.Project{}, nil, nil, nil, nil, api.NewProblem(
 			http.StatusInternalServerError, api.CodeInternal,
-			"Secret scan failed", ssErr.Error())
+			"Secret scan failed", api.DetailServerFailure)
 	}
 	if len(secretFindings) > 0 {
 		return nil, state.Project{}, nil, nil, nil, nil, newSecretScanRejectionProblem(secretFindings)

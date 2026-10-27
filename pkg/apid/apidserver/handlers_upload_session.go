@@ -745,7 +745,7 @@ func (s *server) handleCommitUpload(w http.ResponseWriter, r *http.Request, acct
 			return
 		}
 	}
-	if prob := scanSourceTarballSecrets(row.PartPath, api.MustLimitsFor(acct.Plan)); prob != nil {
+	if prob := s.scanSourceTarballSecrets(row.PartPath, api.MustLimitsFor(acct.Plan)); prob != nil {
 		api.WriteProblem(w, prob)
 		return
 	}

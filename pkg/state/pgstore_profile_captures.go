@@ -12,21 +12,21 @@ import (
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
-func (s *PgStore) CreateProfileCapture(ctx context.Context, accountID, appID string, c api.ProfileCapture) error {
-	return s.insertProfileCapture(ctx, accountID, appID, c, 0)
+func (s *PgStore) CreateProfileCapture(ctx context.Context, accountID, appID string, c api.ProfileCapture, storageLimit int64) error {
+	return s.insertProfileCapture(ctx, accountID, appID, c, 0, storageLimit)
 }
 
-func (s *PgStore) QueueAutomaticProfileCapture(ctx context.Context, accountID, appID string, c api.ProfileCapture, minInterval time.Duration) error {
+func (s *PgStore) QueueAutomaticProfileCapture(ctx context.Context, accountID, appID string, c api.ProfileCapture, minInterval time.Duration, storageLimit int64) error {
 	if c.Trigger == "" || c.Trigger == api.ProfileCaptureTriggerManual || minInterval <= 0 {
 		return fmt.Errorf("automatic profile capture needs a trigger and minimum interval")
 	}
-	return s.insertProfileCapture(ctx, accountID, appID, c, minInterval)
+	return s.insertProfileCapture(ctx, accountID, appID, c, minInterval, storageLimit)
 }
 
-// insertProfileCapture enforces, under the app row lock, the account quota,
-// one active capture per app and, for automatic captures, the per-trigger
-// minimum interval.
-func (s *PgStore) insertProfileCapture(ctx context.Context, accountID, appID string, c api.ProfileCapture, automaticInterval time.Duration) error {
+// insertProfileCapture enforces, under the account and app locks, the
+// account quota, one active capture per app, for automatic captures the
+// per-trigger minimum interval, and the account's capture storage limit.
+func (s *PgStore) insertProfileCapture(ctx context.Context, accountID, appID string, c api.ProfileCapture, automaticInterval time.Duration, storageLimit int64) error {
 	doc, err := profileCaptureRequestDoc(c)
 	if err != nil {
 		return fmt.Errorf("encode profile capture: %w", err)
@@ -37,7 +37,11 @@ func (s *PgStore) insertProfileCapture(ctx context.Context, accountID, appID str
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 	q := sqlc.New()
-	// The app row lock serializes the quota and single-active checks.
+	// The account lock serializes the account-wide quota and storage checks
+	// across its apps; the app row lock, the single-active check.
+	if err := q.LockProfileCaptureAccount(ctx, tx, accountID); err != nil {
+		return routePolicyReadError(err)
+	}
 	if _, err := q.LockProfileCaptureApp(ctx, tx, sqlc.LockProfileCaptureAppParams{AppID: appID, AccountID: accountID}); err != nil {
 		return routePolicyReadError(err)
 	}
@@ -63,6 +67,13 @@ func (s *PgStore) insertProfileCapture(ctx context.Context, accountID, appID str
 		if n > 0 {
 			return ErrProfileCaptureRecent
 		}
+	}
+	usage, err := q.ProfileCaptureAccountStorage(ctx, tx, sqlc.ProfileCaptureAccountStorageParams{AccountID: accountID, Now: pgtypeFromTime(c.CreatedAt)})
+	if err != nil {
+		return fmt.Errorf("profile capture storage: %w", err)
+	}
+	if err := checkProfileCaptureStorage(usage.StoredBytes, usage.Active, storageLimit); err != nil {
+		return err
 	}
 	if err := q.InsertProfileCapture(ctx, tx, sqlc.InsertProfileCaptureParams{ID: c.ID, AppID: appID, AccountID: accountID, Capture: doc,
 		CreatedAt: pgtypeFromTime(c.CreatedAt), ExpiresAt: pgtypeFromTime(c.ExpiresAt)}); err != nil {
