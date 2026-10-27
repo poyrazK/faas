@@ -9631,15 +9631,37 @@ func publicWakeFailure(p *api.Problem) (*api.Problem, bool) {
 	return nil, false
 }
 
-// logWakeFailure keeps the detail publicWakeFailure withholds from visitors.
+// logWakeFailure keeps the detail publicWakeFailure withholds from visitors,
+// and the cause of an error writeWakeError answers with a bare "wake failed":
+// that 503 otherwise leaves no record of why (container qualification
+// 2026-10-27: a public-routing wake failed in 17 ms with nothing logged).
 func (h *Handler) logWakeFailure(appID string, err error) {
+	if h.log == nil || err == nil {
+		return
+	}
 	var prob *api.Problem
-	if h.log == nil || !errors.As(err, &prob) {
+	if !errors.As(err, &prob) {
+		if unclassifiedWakeError(err) && !errors.Is(err, context.Canceled) {
+			h.log.Warn("gateway: wake failed", "app_id", appID, "err", logsanitize.FieldAny(err))
+		}
 		return
 	}
 	if _, hidden := publicWakeFailure(prob); hidden {
 		h.log.Warn("gateway: wake failed", "app_id", appID, "code", prob.Code, "detail", logsanitize.Field(prob.Detail))
 	}
+}
+
+// unclassifiedWakeError reports an error writeWakeError has no answer for
+// but the generic "wake failed". Keep it in step with writeWakeError's cases.
+func unclassifiedWakeError(err error) bool {
+	for _, known := range []error{ErrConcurrencyQueueFull, ErrConcurrencyQueueWaitTimeout,
+		ErrConcurrencyQueueAdmissionUnavailable, ErrWakeQueueWaitTimeout, ErrQueueFull,
+		ErrWakeAdmissionQueueFull, ErrBootstrapAborted} {
+		if errors.Is(err, known) {
+			return false
+		}
+	}
+	return !isWakeConcurrencyDrop(err)
 }
 
 // fleetCapacityRetryAfterSeconds matches the gateway's own wake-queue
