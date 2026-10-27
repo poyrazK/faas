@@ -1376,7 +1376,7 @@ jobs:
           file "$RUNNER_TEMP/traffic-evidence/binaries/"*.test > "$RUNNER_TEMP/traffic-evidence/linux-compilation-types.txt"
       - name: SQLC reproducibility and traffic policy gates
         run: |
-          make sqlc-check runbook-sql-check text-encoding-check shell-quoting-check adr-number-uniqueness-check 2>&1 | tee "$RUNNER_TEMP/traffic-evidence/static-gates.log"
+          make sqlc-check runbook-sql-check text-encoding-check shell-quoting-check adr-number-uniqueness-check trimpath-check 2>&1 | tee "$RUNNER_TEMP/traffic-evidence/static-gates.log"
       - name: Verify PostgreSQL source remains isolated
         if: ${{ !cancelled() }}
         run: |
