@@ -803,6 +803,9 @@ func (s *Sampler) rollApps(ctx context.Context, observedAt, minute time.Time, ex
 		// closed would be billed as if it were still open, or vice versa.
 		floor := app.EffectiveMinInstancesAt(observedAt)
 		deploymentFloor := 0
+		// One read per deployment, not per instance: a deployment's
+		// instances share its floor (bug hunt 2026-10-27 O3).
+		floorByDeployment := map[string]int{}
 		for _, ins := range ins {
 			if !state.State(ins.State).CountsForRAM() {
 				continue
@@ -818,11 +821,16 @@ func (s *Sampler) rollApps(ctx context.Context, observedAt, minute time.Time, ex
 			if ins.DeploymentID == "" {
 				continue
 			}
-			dep, err := s.store.DeploymentByID(ctx, ins.DeploymentID)
-			if err != nil {
-				continue
+			depFloor, seen := floorByDeployment[ins.DeploymentID]
+			if !seen {
+				dep, err := s.store.DeploymentByID(ctx, ins.DeploymentID)
+				if err != nil {
+					continue
+				}
+				depFloor = dep.EffectiveMinInstances()
+				floorByDeployment[ins.DeploymentID] = depFloor
 			}
-			deploymentFloor = max(deploymentFloor, dep.EffectiveMinInstances())
+			deploymentFloor = max(deploymentFloor, depFloor)
 		}
 		floor = max(floor, deploymentFloor)
 		// Bill only the floor schedd may hold under the plan: a stored floor
