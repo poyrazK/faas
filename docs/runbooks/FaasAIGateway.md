@@ -333,3 +333,44 @@ a few calls in both builds got `503` from `out of shared memory`.
 
 On the production control plane, watch time to first byte against the
 provider's and the settlement panel during rollout step 1.
+
+## FaasAIGatewayOnlineEvaluationsFailing
+
+More than half of online evaluations (ADR 20261021171712) got no score for
+30 minutes, so quality scores and drift alerts lack data
+(ADR 20261027132936).
+
+1. `sum by (instance) (rate(outbound_ai_online_evaluations_total{result="judge_error"}[30m]))`
+   shows where they fail.
+2. Online evaluations call each account's own judge integration. If one
+   account's judge carries most of the traffic, its provider key, quota or
+   model is the cause; tell the customer.
+3. If many accounts fail at once, check outboundd's logs for the judge calls
+   and the providers' status pages.
+
+## FaasAIGatewayAccessTokenLookupsFailing
+
+More than a fifth of public listener access-token lookups failed or found the
+lookups saturated for 10 minutes; those callers got
+`503 outbound_access_token_unavailable` (ADR 20261027132936).
+
+1. `sum by (result) (rate(outbound_ai_access_token_lookups_total[10m]))`
+   splits `busy` from `error`.
+2. `busy`: more than `OutboundAIAccessTokenLookupsMax` uncached tokens were
+   looked up at once, usually a flood of random tokens at the AI host. Known
+   tokens stay cached and keep working. Rate-limit the source at the edge.
+3. `error`: the lookups failed; check outboundd's database connection.
+
+## FaasAIGatewayUnpricedCalls
+
+More than a tenth of settled AI calls cost zero for an hour because their
+model has no price (ADR 20261027132936). Usage reports undercount them, and
+under a cost cap those models are refused with `403 outbound_ai_model_unpriced`.
+
+1. `sum by (integration_id) (rate(outbound_ai_unpriced_calls_total[1h]))`
+   shows whether one integration carries them; customer integrations share
+   the `customer_managed` label, so look up the models in the request logs.
+2. A new model from a major provider: refresh the built-in catalog
+   ([operator guide](../ops/outbound-integrations.md#built-in-price-catalog)).
+3. One account's custom or OpenAI-compatible model: the customer adds it to
+   the integration's price list with `gregale ai prices`.
