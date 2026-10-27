@@ -48,8 +48,8 @@ stages the keys on every host it joins or rebuilds.
   - `SEAL_DOMAIN_<DOMAIN>_AGE_RECIPIENT`: the contents of `<domain>.age.pub`.
 
   The control-plane CD then stages the `outbound`, `source`, `alerting`,
-  `storage`, `control` and `delivery` identities and every domain's
-  recipient. The compute join stages the `runtime`, `build`, `edge`,
+  `storage`, `control`, `delivery` and `account` identities and every
+  domain's recipient. The compute join stages the `runtime`, `build`, `edge`,
   `control` and `delivery` identities on each node it joins, and leaves the
   node drained if `seal-domain verify` fails there. Before apid seals to a
   domain, the role checks that the staged recipient is the one readers
@@ -1149,4 +1149,86 @@ converge. Values re-sealed in this step stay domain-only, so:
 
 - never remove `delivery.age` from a host that runs schedd;
 - never roll schedd back past the first release that carried the delivery
+  reader.
+
+## 12. Account seal domain
+
+apid both seals and opens account values, so it holds `account.age` itself;
+there is no recipient file. This release covers TOTP secrets, inbound
+webhook secrets, billing provider keys, managed workflow plans and
+PagerDuty acknowledgement secrets. The other account columns (product
+email, integrations, managed realtime, data pipelines, project clones) stay
+on the fleet key until later releases (ADR 20261022111812, tenth slice).
+
+### 12a. Create the identity (operator machine)
+
+```bash
+gregalectl seal-domain init --domain account --dir ~/gregale-seal/<environment>
+```
+
+Store `account.age` with the other domain identities. If it is lost after
+12d, every customer with MFA must enroll again, inbound webhooks and
+billing connections must be set again, and queued managed workflows fail.
+
+### 12b. Stage apid; seal to both keys
+
+Set the `SEAL_DOMAIN_ACCOUNT_*` secrets (CD stages the identity on the
+control plane only), or add to the local variables file:
+
+```yaml
+faas_seal_domain_account_identity_src: /Users/<you>/gregale-seal/<environment>/account.age
+```
+
+and converge the role on the control plane. The role installs `account.age`,
+restarts apid with it and proves the probe. With
+`faas_seal_domain_account_writes` left empty, apid then seals new account
+values to the domain and the fleet key.
+
+Check:
+
+- `faas_seal_domain_account.prom` shows
+  `faas_seal_domain_ready{domain="account"} 1`;
+- `faas_seal_domain_loaded{domain="account"}` is 1 on every apid, and
+  FaasSealDomainIdentityMissing does not fire;
+- apid logs `"account seal domain"` with `"domain_identity":true`;
+- on a test account, enroll MFA and sign in with it; send a test delivery
+  to an inbound webhook.
+
+Rollback: set `faas_seal_domain_account_writes: fleet` and converge. Values
+saved in the meantime also carry the fleet key.
+
+### 12c. Wait out the rollback window
+
+Go on only when every apid reports `faas_seal_domain_loaded{domain="account"} 1`
+and apid's previous release (N-1) also carries the account reader.
+
+### 12d. Seal to the domain only; re-seal stored values
+
+Add to the local variables file, and converge the control plane:
+
+```yaml
+faas_seal_domain_account_readers_verified: true
+faas_seal_domain_account_writes: domain
+```
+
+apid then logs `"write_mode":"domain"`. Re-seal on the control-plane host:
+
+```bash
+sudo gregalectl seal-domain migrate --domain account --readers-verified --db-env /etc/faas/compute-db.env
+```
+
+- Expect `0 failed`.
+- `changed concurrently` counts values a customer changed during the run.
+  Run the migration again later.
+- A second run reports every row `current`.
+- If `failed` is not 0, apid cannot open those values today either: the
+  owners must set them again (MFA: enroll again).
+
+Sign in with MFA on the test account again.
+
+Rollback: set `faas_seal_domain_account_writes` back to empty and converge.
+Values re-sealed in this step stay domain-only, so:
+
+- never remove `account.age` from a control-plane host;
+- never roll apid back past the first release that carried the account
   reader.

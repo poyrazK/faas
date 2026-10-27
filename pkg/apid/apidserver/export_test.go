@@ -316,6 +316,22 @@ var DeliveryWriteMode = &deliveryWriteMode
 var CommitConnectionRecipients = commitConnectionRecipients
 var ExecutionPayloadRecipients = executionPayloadRecipients
 var SealAppWebhookSecret = sealAppWebhookSecret
+var AccountDomainIdentities = &accountDomainIdentities
+var AccountWriteMode = &accountWriteMode
+var AccountRecipients = accountRecipients
+var AccountIdentities = accountIdentities
+var WorkflowPlanRecipients = workflowPlanRecipients
+var HoldsIdentityFor = holdsIdentityFor
+var SealInboundWebhookSigningSecret = sealInboundWebhookSigningSecret
+var VerifyInboundWebhook = verifyInboundWebhook
+var SealMCPPagerDutyWebhookSecret = sealMCPPagerDutyWebhookSecret
+
+// StatementInvoicesHostSecrets exposes the billing-key seal and open apid
+// gives statement invoices.
+func StatementInvoicesHostSecrets() (func(string, []byte, int) ([]byte, error), func([]byte) (string, []byte, error)) {
+	return statementInvoicesHost{}.SealSecret, statementInvoicesHost{}.OpenSecret
+}
+
 var SealPresetWebhookSecret = sealPresetWebhookSecret
 var SealMCPFallbackSecret = sealMCPFallbackSecret
 var SealMCPPagerDutyKey = sealMCPPagerDutyKey
