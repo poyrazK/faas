@@ -8601,6 +8601,50 @@ SELECT EXISTS (
       AND status IN ('snapshotting', 'live') AND deleted_at IS NULL
 )::boolean AS allowed;
 
+-- ADR-20261027085556: a gateway's public routing view reads every app it
+-- tracks in one repeatable-read snapshot. Each query below returns, for many
+-- apps at once, the rows its per-request counterpart above reads for one.
+-- name: ReadPublicRoutingViewOwners :many
+SELECT id, account_id, project_id FROM apps
+WHERE id = ANY(sqlc.arg(app_ids)::uuid[]) AND status <> 'deleted' AND deleted_at IS NULL;
+
+-- Rows of ReadPublicRoutingWeights for every scope; a scope with more than
+-- row_limit rows is refused like the per-request roster.
+-- name: ReadPublicRoutingViewWeights :many
+SELECT app_id, id, traffic_percent, scope FROM (
+    SELECT app_id, id, traffic_percent, scope, row_number() OVER (PARTITION BY app_id, scope ORDER BY id) AS position
+    FROM deployments
+    WHERE app_id = ANY(sqlc.arg(app_ids)::uuid[]) AND status = 'live' AND deleted_at IS NULL AND traffic_percent > 0
+) ranked WHERE position <= sqlc.arg(row_limit)::integer
+ORDER BY app_id, scope, id;
+
+-- ReadProjectCanaryRouting and ActiveSafeProjectReleaseID for each app.
+-- name: ReadPublicRoutingViewCanaries :many
+SELECT DISTINCT ON (a.id) a.id AS app_id, c.policy,
+       coalesce((SELECT rs.id::text FROM project_release_sets rs
+                 WHERE rs.project_id = a.project_id AND rs.environment_slug = 'production' AND rs.active), '')::text AS active_release_id
+FROM apps a JOIN project_release_canaries c ON c.project_id = a.project_id AND c.account_id = a.account_id
+WHERE a.id = ANY(sqlc.arg(app_ids)::uuid[]) AND c.status IN ('running', 'needs_operator')
+ORDER BY a.id, (c.status = 'running') DESC, c.created_at DESC;
+
+-- Rows of ReadPublicRoutingRelease for each app: every active graph, and the
+-- named graphs (a running canary's) while they are still usable. A graph's
+-- target scope is its environment, the scope the per-request read filters on.
+-- name: ReadPublicRoutingViewReleases :many
+SELECT a.id AS app_id, rs.id, rs.environment_slug, rs.active, member.deployment_id,
+       EXISTS (
+           SELECT 1 FROM deployments d WHERE d.id = member.deployment_id AND d.app_id = member.app_id
+             AND d.scope = rs.environment_slug AND d.status = 'live' AND d.deleted_at IS NULL
+             AND (d.traffic_percent > 0 OR EXISTS (SELECT 1 FROM deployment_revision_pins p WHERE p.deployment_id = d.id AND p.expires_at > now())
+                  OR EXISTS (SELECT 1 FROM project_release_members retained JOIN project_release_sets retained_set ON retained_set.id = retained.release_id
+                             WHERE retained.deployment_id = d.id AND retained.app_id = d.app_id AND (retained_set.active OR retained_set.expires_at > now())))
+       )::boolean AS target_live
+FROM apps a JOIN project_release_sets rs ON rs.project_id = a.project_id AND rs.account_id = a.account_id
+LEFT JOIN project_release_members member ON member.release_id = rs.id AND member.app_id = a.id
+WHERE a.id = ANY(sqlc.arg(app_ids)::uuid[]) AND a.status <> 'deleted' AND a.deleted_at IS NULL
+  AND (rs.active OR (rs.id = ANY(sqlc.arg(release_ids)::uuid[]) AND rs.expires_at > now()))
+ORDER BY a.id, rs.environment_slug, rs.created_at DESC, rs.id;
+
 -- ADR-570: public host policy reads are credential-minimal and transaction-scoped.
 -- name: ReadPublicHostApp :one
 SELECT (jsonb_build_object(
