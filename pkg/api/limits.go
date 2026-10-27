@@ -12024,6 +12024,14 @@ const UDPPeerQueueDepth = 4
 const UDPMaxPeersDefault = 64
 const UDPMaxPeersPerAccountDefault = 16
 
+// Raw TCP ingress sessions one gatewayd-public holds, in all and per account,
+// when FAAS_TCPD_MAX_CONNECTIONS(_PER_ACCOUNT) is unset or 0. Each session
+// holds a read buffer, a copied chunk per read and a stream to vmmd, so an
+// unlimited default let a few thousand idle connections push the node's only
+// public listener past its 512 MB cap.
+const RawTCPMaxConnectionsDefault = 1024
+const RawTCPMaxConnectionsPerAccountDefault = 128
+
 const UDPReplyQueueDepth = 64
 const UDPWriteTimeout = time.Second
 
