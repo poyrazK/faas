@@ -12667,6 +12667,7 @@
       "account_id",
       "account_restored_revision",
       "account_suspended_revision",
+      "agent_delivery_id",
       "attempts",
       "code",
       "created_at",
@@ -16901,6 +16902,7 @@
     "table": "triggers",
     "columns": [
       "account_id",
+      "agent",
       "app_id",
       "batch_size_max",
       "batch_window_ms",
@@ -17802,6 +17804,175 @@
       "expires_at",
       "id",
       "status"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "agents",
+    "columns": [
+      "account_id",
+      "created_at",
+      "deleted_at",
+      "description",
+      "id",
+      "latest_version",
+      "name",
+      "state",
+      "updated_at"
+    ],
+    "kind": "account_identity"
+  },
+  {
+    "table": "agent_versions",
+    "columns": [
+      "account_id",
+      "agent_id",
+      "ai_budget_millicents",
+      "created_at",
+      "deliveries",
+      "harness_image",
+      "harness_models",
+      "harness_preset",
+      "harness_run",
+      "model_integrations",
+      "prompt_template",
+      "ram_mb",
+      "timeout_sec",
+      "version"
+    ],
+    "kind": "account_identity"
+  },
+  {
+    "table": "agent_runs",
+    "columns": [
+      "account_id",
+      "agent_id",
+      "agent_version",
+      "ai_budget_millicents",
+      "attempt",
+      "boot_ms",
+      "cancel_requested_at",
+      "checkout_commit",
+      "checkout_installation_id",
+      "checkout_repository",
+      "dedupe_key",
+      "exit_code",
+      "finished_at",
+      "github_installation_id",
+      "github_number",
+      "github_repository",
+      "id",
+      "inputs",
+      "instance_id",
+      "lease_expires_at",
+      "lease_owner",
+      "lease_token",
+      "node_id",
+      "outcome_code",
+      "outcome_message",
+      "prompt",
+      "queued_at",
+      "ram_mb",
+      "running_at",
+      "signal",
+      "started_at",
+      "state",
+      "tenant_id",
+      "timeout_sec",
+      "trigger",
+      "updated_at",
+      "workflow_event",
+      "workflow_run_id",
+      "workflow_step"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "agent_run_outputs",
+    "columns": [
+      "account_id",
+      "created_at",
+      "files",
+      "log_tail",
+      "log_truncated",
+      "result",
+      "run_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "agent_run_ai_spend",
+    "columns": [
+      "account_id",
+      "calls",
+      "run_id",
+      "spent_millicents",
+      "updated_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "agent_run_ai_reservations",
+    "columns": [
+      "created_at",
+      "expires_at",
+      "lease_id",
+      "reserved_millicents",
+      "run_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "agent_deliveries",
+    "columns": [
+      "account_id",
+      "attempts",
+      "body",
+      "body_truncated",
+      "bucket_app_id",
+      "bucket_id",
+      "created_at",
+      "deadline_at",
+      "destination",
+      "external_id",
+      "external_url",
+      "finished_at",
+      "id",
+      "idempotency_key",
+      "installation_id",
+      "lease_expires_at",
+      "lease_token",
+      "next_attempt_at",
+      "number",
+      "object_prefix",
+      "ordinal",
+      "outcome_code",
+      "outcome_message",
+      "repository",
+      "run_id",
+      "state",
+      "updated_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "platform_mail_agent_run_capture",
+    "columns": [
+      "namespace",
+      "producer_id",
+      "recovery_id",
+      "started_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "platform_mail_agent_run_observations",
+    "columns": [
+      "account_id",
+      "delivery_id",
+      "disposition",
+      "intent_id",
+      "observed_at"
     ],
     "kind": "operational"
   }

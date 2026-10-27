@@ -2832,6 +2832,13 @@ returning id, account_id, app_id, kind, slug, enabled, config,
 update triggers set delivery = $2, updated_at = now()
 where id = $1 and queue_binding_id is null;
 
+-- name: SetTriggerAgent :execrows
+-- ADR-20261027090010 §9: point a just-created public broker trigger at an agent. The
+-- CHECK constraint refuses other kinds, batch delivery and binding-owned
+-- projections.
+update triggers set agent = $2, updated_at = now()
+where id = $1 and queue_binding_id is null;
+
 -- name: DeleteTrigger :exec
 delete from triggers where id = $1 and app_id = $2 and queue_binding_id is null;
 
@@ -2845,7 +2852,7 @@ delete from triggers where id = $1 and app_id = $2 and queue_binding_id is null;
 select id, account_id, app_id, kind, slug, enabled, config, queue_binding_id, queue_binding_scope, queue_binding_environment_id,
        batch_size_max, batch_window_ms, max_attempts,
        cron_id, source, payload_max_bytes, broker_poison_strategy,
-       filter_criteria, delivery,
+       filter_criteria, delivery, agent,
        created_at, updated_at
 from triggers where id = $1;
 
@@ -2856,7 +2863,7 @@ from triggers where id = $1;
 select id, account_id, app_id, kind, slug, enabled, config, queue_binding_id, queue_binding_scope, queue_binding_environment_id,
        batch_size_max, batch_window_ms, max_attempts,
        cron_id, source, payload_max_bytes, broker_poison_strategy,
-       filter_criteria, delivery,
+       filter_criteria, delivery, agent,
        created_at, updated_at
 from triggers where app_id = $1 order by created_at desc;
 
@@ -2872,7 +2879,7 @@ from triggers where app_id = $1 order by created_at desc;
 select id, account_id, app_id, kind, slug, enabled, config, queue_binding_id, queue_binding_scope, queue_binding_environment_id,
        batch_size_max, batch_window_ms, max_attempts,
        cron_id, source, payload_max_bytes, broker_poison_strategy,
-       filter_criteria, delivery,
+       filter_criteria, delivery, agent,
        created_at, updated_at
 from triggers where enabled = true AND NOT environment_workload_admission_retired(app_id,queue_binding_scope)
 -- A rehearsal-enrolled app never polls or commits offsets on a real external
@@ -3177,6 +3184,10 @@ where p.issuer_url = $1
 order by length(p.subject_pattern) desc,
          a.id
 limit 1;
+
+-- name: AccountIDByGitHubInstallation :one
+-- An installation ID is globally unique (github_installations_installation_id_uidx).
+select account_id from github_installations where installation_id = sqlc.arg(installation_id)::bigint;
 
 -- name: AccountIDByGitHubOIDCRepositoryIdentity :one
 -- First-use GitHub Actions bootstrap through an OAuth-verified install

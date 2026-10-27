@@ -125,11 +125,14 @@ func appendCustomerPublishedEventTx(ctx context.Context, tx pgx.Tx, actor, accou
 	if !errors.Is(err, pgx.ErrNoRows) {
 		return err
 	}
+	// Platform events (gregale.*) are never charged to the account's event
+	// storage, so its limits do not refuse them.
+	platform := strings.HasPrefix(identity.Source, "gregale.")
 	usage, err := q.EventStorageUsage(ctx, tx, id)
 	if err != nil {
 		return err
 	}
-	if err = eventStorageExceeded(limits.EventStorage, usage.RetainedEvents+1, usage.RetainedBytes); err != nil {
+	if err = eventStorageExceeded(limits.EventStorage, usage.RetainedEvents+1, usage.RetainedBytes); err != nil && !platform {
 		return err
 	}
 	if err = q.EventStorageAppend(ctx, tx, sqlc.EventStorageAppendParams{Actor: actor, AccountID: id, Payload: payload, TraceID: eventStorageTrace(traceID), OccurredAt: nullableTimestamptzPtr(at)}); err != nil {
@@ -139,7 +142,7 @@ func appendCustomerPublishedEventTx(ctx context.Context, tx pgx.Tx, actor, accou
 	if err != nil {
 		return err
 	}
-	if err = eventStorageExceeded(limits.EventStorage, usage.RetainedEvents+1, usage.RetainedBytes+charge); err != nil {
+	if err = eventStorageExceeded(limits.EventStorage, usage.RetainedEvents+1, usage.RetainedBytes+charge); err != nil && !platform {
 		return err
 	}
 	return readPublishedEventAcceptanceTx(ctx, tx, q, accountID, identity, false, result)

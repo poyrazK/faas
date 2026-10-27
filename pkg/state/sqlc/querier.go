@@ -31,6 +31,8 @@ type Querier interface {
 	// GitHub Actions subject to such an account.
 	AccountByOIDCIssuerSubject(ctx context.Context, db DBTX, arg AccountByOIDCIssuerSubjectParams) (AccountByOIDCIssuerSubjectRow, error)
 	AccountDeletedAppByID(ctx context.Context, db DBTX, arg AccountDeletedAppByIDParams) (AccountDeletedAppByIDRow, error)
+	// An installation ID is globally unique (github_installations_installation_id_uidx).
+	AccountIDByGitHubInstallation(ctx context.Context, db DBTX, installationID int64) (pgtype.UUID, error)
 	// First-use GitHub Actions bootstrap through an OAuth-verified install
 	// binding. Immutable subjects must match both persisted numeric IDs as well
 	// as the current repository name; a zero ID preserves legacy name-only
@@ -6428,6 +6430,10 @@ type Querier interface {
 	SetServiceWakeAhead(ctx context.Context, db DBTX, arg SetServiceWakeAheadParams) (SetServiceWakeAheadRow, error)
 	SetSyntheticCheckEnabled(ctx context.Context, db DBTX, arg SetSyntheticCheckEnabledParams) (SyntheticCheck, error)
 	SetTrafficTenantSurfaceStatus(ctx context.Context, db DBTX, arg SetTrafficTenantSurfaceStatusParams) (int64, error)
+	// ADR-20261027090010 §9: point a just-created public broker trigger at an agent. The
+	// CHECK constraint refuses other kinds, batch delivery and binding-owned
+	// projections.
+	SetTriggerAgent(ctx context.Context, db DBTX, arg SetTriggerAgentParams) (int64, error)
 	// ADR-1321: switch a public trigger between per-record and batch delivery.
 	// The CHECK constraint refuses batch for cron and queue triggers.
 	SetTriggerDelivery(ctx context.Context, db DBTX, arg SetTriggerDeliveryParams) (int64, error)

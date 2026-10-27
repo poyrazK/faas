@@ -147,6 +147,18 @@ sql:
         emit_methods_with_db_argument: true
         emit_empty_slices: true
 
+  # ADR-20261027090010 agents, versions and runs; projection mirrors its migration-owned tables.
+  - engine: "postgresql"
+    queries: "pkg/state/agents/queries.sql"
+    schema: "pkg/state/agents/schema.sql"
+    gen:
+      go:
+        package: "sqlc"
+        out: "pkg/state/agents/sqlc"
+        sql_package: "pgx/v5"
+        emit_methods_with_db_argument: true
+        emit_empty_slices: true
+
   # ADR-20261019102108 Data API usage; projection mirrors its migration-owned tables.
   - engine: "postgresql"
     queries: "pkg/state/dataapiusage/queries.sql"
