@@ -8761,6 +8761,10 @@ func (m *MemStore) SafedeployStampRollout(_ context.Context, id string, rolloutS
 	if !ok {
 		return Deployment{}, ErrNotFound
 	}
+	// The row may have changed since the orchestrator listed it.
+	if err := checkRolloutStamp(d.RolloutState, rolloutState); err != nil {
+		return d, err
+	}
 	before := d
 	d.RolloutState = NormalizeRolloutState(rolloutState)
 	if startedAt != nil {
@@ -9024,31 +9028,14 @@ func (m *MemStore) recoverRolloutLocked(ctx context.Context, appID, deploymentID
 		if now.Sub(*target.CanaryStepStartedAt) < RecoverRolloutStuckAfter {
 			return Deployment{}, 0, ErrRolloutNotStuck
 		}
-		if target.CanaryTotalSteps <= 0 || target.CanaryStep >= target.CanaryTotalSteps {
-			return *target, 0, ErrRolloutStateInvalid
+		// The next stage of the persisted ladder (Hunt 20 H20-1).
+		newStep, stepPct, complete, err := recoverAdvanceStage(*target)
+		if err != nil {
+			return *target, 0, err
 		}
-
-		// Bump step, stamp started_at.
-		target.CanaryStep++
+		target.CanaryStep = newStep
 		t := now
 		target.CanaryStepStartedAt = &t
-
-		// Resolve the stage's traffic percent via the canary
-		// catalog (pkg/api/canary). We don't import it here —
-		// the MemStore reads the closed-set raw weights via
-		// the catalog-side helper resolved in the
-		// handler/safedeploy layer. For the MemStore test seam,
-		// we re-use the in-memory catalog (pkg/api/canary)
-		// through a deferred lookup. To keep the state
-		// package import-clean we use a linear step-to-percent
-		// mapping: step k / total N gets 1,10,50,100 in that
-		// progression. Real production resolves via the
-		// catalog; the store-layer semantics are "bump the
-		// step" — the orchestrator/handler layer applies the
-		// catalog and stamps traffic_percent. For the
-		// MemStore test we mirror the
-		// 1-10-50-100-equivalent curve.
-		stepPct := stepToPercent(target.CanaryStep, target.CanaryTotalSteps)
 		target.TrafficPercent = stepPct
 
 		// Redistribute residual across sibling live rows.
@@ -9074,9 +9061,8 @@ func (m *MemStore) recoverRolloutLocked(ctx context.Context, appID, deploymentID
 			m.putDeploymentLocked(s.ID, other)
 		}
 
-		// If the bump reaches the top of the ladder, flip
-		// rollout_state='complete'.
-		if target.CanaryStep >= target.CanaryTotalSteps {
+		// Moving onto the last stage completes the rollout.
+		if complete {
 			target.RolloutState = "complete"
 			t := now
 			target.RolloutCompletedAt = &t
@@ -9229,61 +9215,6 @@ func toHelperSiblings(in []siblingRow) []struct {
 		out[i].Prior = s.Prior
 	}
 	return out
-}
-
-// stepToPercent maps a (step, total_steps) pair onto the catalog's
-// percent for that step. The MemStore RecoverRollout doesn't import
-// pkg/api/canary (would invert the dependency), so it inlines the
-// canonical 1-10-50-100 progression the catalog returns for the
-// `1-10-50-100` preset (the only preset CLI surfaces today via
-// `gregale deploy --canary-preset 1-10-50-100`). Total steps == 0
-// or step > total returns 0 — the handler layer is responsible for
-// non-default presets, where the catalog resolves to a stage table
-// that's stamped by the canary_progression tick on each step.
-//
-// Production deployments that use the slower presets (slow,
-// balanced, aggressive) will continue to advance via the meterd
-// orchestrator (which DOES import pkg/api/canary); the CLI's
-// `recover` path is the operator escape hatch for stuck rollouts
-// and is calibrated for the headline 4-stage cadence. Pinning the
-// step-to-percent curve here keeps the MemStore test suite
-// deterministic without duplicating the catalog.
-func stepToPercent(step, total int) int {
-	if total <= 0 || step <= 0 {
-		return 0
-	}
-	switch total {
-	case 4: // 1-10-50-100 / balanced.
-		switch step {
-		case 1:
-			return 1
-		case 2:
-			return 10
-		case 3:
-			return 50
-		case 4:
-			return 100
-		default:
-			return 0
-		}
-	case 3: // aggressive (5/50/100).
-		switch step {
-		case 1:
-			return 5
-		case 2:
-			return 50
-		case 3:
-			return 100
-		}
-	case 2: // slow (1/100).
-		switch step {
-		case 1:
-			return 1
-		case 2:
-			return 100
-		}
-	}
-	return 0
 }
 
 // appendDeploymentAuditLocked is the lock-held variant of
