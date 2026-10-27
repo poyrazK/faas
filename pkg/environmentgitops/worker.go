@@ -41,6 +41,39 @@ type RuntimeVerifier interface {
 	VerifyRuntime(context.Context, state.EnvironmentGitOpsLease, environmentsync.Plan) (bool, error)
 }
 
+// RuntimeVerificationError names the verification step an error came from.
+// The worker logs the step and a sentinel class, never the error text, which
+// may carry customer data.
+type RuntimeVerificationError struct {
+	Step string
+	Err  error
+}
+
+func (e *RuntimeVerificationError) Error() string { return e.Step + ": " + e.Err.Error() }
+func (e *RuntimeVerificationError) Unwrap() error { return e.Err }
+
+// runtimeVerificationFailure returns the failed step and a stable class.
+func runtimeVerificationFailure(err error) (string, string) {
+	step := "unknown"
+	var named *RuntimeVerificationError
+	if errors.As(err, &named) {
+		step = named.Step
+	}
+	switch {
+	case errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):
+		return step, "context"
+	case errors.Is(err, state.ErrConflict):
+		return step, "conflict"
+	case errors.Is(err, state.ErrNotFound):
+		return step, "not_found"
+	case errors.Is(err, state.ErrInvalidArgument):
+		return step, "invalid_argument"
+	case errors.Is(err, state.ErrInvalidStateTransition):
+		return step, "invalid_state_transition"
+	}
+	return step, "internal"
+}
+
 // EnforcementUnavailableCode is recorded on an enforced source whose account
 // is not admitted to GitOps execution.
 const EnforcementUnavailableCode = "environment_git_enforcement_unavailable"
@@ -241,6 +274,11 @@ func (w *Worker) runtimeStatus(ctx context.Context, lease state.EnvironmentGitOp
 	}
 	ready, err := verifier.VerifyRuntime(ctx, lease, plan)
 	if err != nil {
+		if w.Log != nil {
+			step, class := runtimeVerificationFailure(err)
+			w.Log.Warn("environment GitOps runtime verification failed", "error_code", "environment_runtime_verification_failed",
+				"source_id", lease.Source.ID, "generation", lease.Source.Generation, "step", step, "class", class)
+		}
 		return "partial", "environment_runtime_verification_failed"
 	}
 	if !ready {

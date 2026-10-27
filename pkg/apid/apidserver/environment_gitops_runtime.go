@@ -52,7 +52,7 @@ func (b *environmentGitOpsBackend) recoverRuntime(ctx context.Context, lease sta
 func (b *environmentGitOpsBackend) VerifyRuntime(ctx context.Context, lease state.EnvironmentGitOpsLease, plan environmentsync.Plan) (bool, error) {
 	store, err := b.runtimeStore()
 	if err != nil {
-		return false, err
+		return false, runtimeStep("runtime_store", err)
 	}
 	workloadReady := true
 	var workloadErr error
@@ -60,11 +60,11 @@ func (b *environmentGitOpsBackend) VerifyRuntime(ctx context.Context, lease stat
 		if retirement, ok := b.intent.(state.EnvironmentGitOpsWorkloadRetirementStore); ok {
 			steps, err := retirement.BeginEnvironmentGitOpsWorkloadRetirements(ctx, lease, plan)
 			if err != nil || len(steps) > 0 {
-				return false, err
+				return false, runtimeStep("retirement_begin", err)
 			}
 		}
 		if err := store.EnsureEnvironmentGitOpsRuntime(ctx, lease, plan); err != nil {
-			return false, err
+			return false, runtimeStep("ensure_runtime", err)
 		}
 		var definition api.EnvironmentDefinition
 		if err := json.Unmarshal(lease.Revision.Definition, &definition); err != nil {
@@ -76,7 +76,7 @@ func (b *environmentGitOpsBackend) VerifyRuntime(ctx context.Context, lease stat
 		if len(definition.Workloads) == 0 {
 			if retirement, ok := b.intent.(state.EnvironmentGitOpsWorkloadRetirementStore); ok {
 				if _, err := retirement.ActivateEnvironmentGitOpsEmptyRetirement(ctx, lease, plan); err != nil {
-					return false, err
+					return false, runtimeStep("empty_retirement", err)
 				}
 			}
 
@@ -89,13 +89,14 @@ func (b *environmentGitOpsBackend) VerifyRuntime(ctx context.Context, lease stat
 			} else {
 				var managed bool
 				managed, workloadErr = guard.EnvironmentGitOpsHasServingManagedWorkload(ctx, lease)
+				workloadErr = runtimeStep("empty_graph_guard", workloadErr)
 				workloadReady = !managed
 			}
 		} else {
 			workloadReady, workloadErr = b.prepareWorkloadCandidates(ctx, lease, plan)
 		}
 		if err := b.recoverRuntime(ctx, lease); err != nil {
-			return false, err
+			return false, runtimeStep("recover_runtime", err)
 		}
 		if workloadErr != nil {
 			return false, workloadErr
@@ -103,7 +104,7 @@ func (b *environmentGitOpsBackend) VerifyRuntime(ctx context.Context, lease stat
 	}
 	targets, err := store.ObserveEnvironmentGitOpsRuntime(ctx, lease)
 	if err != nil {
-		return false, err
+		return false, runtimeStep("observe_runtime", err)
 	}
 	for _, target := range targets {
 		if !target.Ready() {
@@ -112,14 +113,23 @@ func (b *environmentGitOpsBackend) VerifyRuntime(ctx context.Context, lease stat
 	}
 	pending, err := store.PendingEnvironmentGitOpsRuntime(ctx, lease)
 	if err != nil || len(pending) != 0 {
-		return false, err
+		return false, runtimeStep("pending_runtime", err)
 	}
 	retired, err := b.reconcileWorkloadRetirements(ctx, lease)
 	if err != nil {
-		return false, err
+		return false, runtimeStep("retirements", err)
 	}
 	effects, err := b.effects.PendingEnvironmentGitOpsEffects(ctx, lease)
-	return workloadReady && retired && len(effects) == 0, err
+	return workloadReady && retired && len(effects) == 0, runtimeStep("pending_effects", err)
+}
+
+// runtimeStep names the verification step an error came from, so the GitOps
+// worker can say where verification stopped without logging error text.
+func runtimeStep(step string, err error) error {
+	if err == nil {
+		return nil
+	}
+	return &environmentgitops.RuntimeVerificationError{Step: step, Err: err}
 }
 
 func (b *environmentGitOpsBackend) prepareWorkloadCandidates(ctx context.Context, lease state.EnvironmentGitOpsLease, plan environmentsync.Plan) (bool, error) {
@@ -132,13 +142,13 @@ func (b *environmentGitOpsBackend) prepareWorkloadCandidates(ctx context.Context
 		return false, nil
 	}
 	if err != nil {
-		return false, err
+		return false, runtimeStep("source_requests", err)
 	}
 	artifacts := map[string]state.EnvironmentWorkloadSourceArtifact{}
 	for _, request := range requests {
 		artifact, err := b.server.prepareEnvironmentGitArchive(ctx, lease, request)
 		if err != nil {
-			return false, err
+			return false, runtimeStep("source_archive", err)
 		}
 		artifacts[request.Resource] = artifact
 	}
@@ -147,7 +157,7 @@ func (b *environmentGitOpsBackend) prepareWorkloadCandidates(ctx context.Context
 		return false, nil // unsupported adapters remain partial; never serving proof
 	}
 	if err != nil {
-		return false, err
+		return false, runtimeStep("candidates", err)
 	}
 	// PgStore also commits the durable handoff with candidate creation. A
 	// repeated pending hint is safe: imaging deduplicates on deployment status.
@@ -156,7 +166,7 @@ func (b *environmentGitOpsBackend) prepareWorkloadCandidates(ctx context.Context
 			if candidate.Status == state.DeployBuilding {
 				payload, _ := json.Marshal(map[string]string{"build_id": candidate.BuildID, "app_id": candidate.AppID, "deployment_id": candidate.DeploymentID, "kind": "github"})
 				if err := b.server.notif.Notify(ctx, db.NotifyBuildQueued, string(payload)); err != nil {
-					return false, err
+					return false, runtimeStep("build_handoff", err)
 				}
 			}
 			continue
@@ -166,7 +176,7 @@ func (b *environmentGitOpsBackend) prepareWorkloadCandidates(ctx context.Context
 		}
 		payload, _ := json.Marshal(map[string]string{"app_id": candidate.AppID, "to": candidate.DeploymentID, "deployment_id": candidate.DeploymentID, "kind": "image"})
 		if err := b.server.notif.Notify(ctx, db.NotifyEnvironmentWorkloadImage, string(payload)); err != nil {
-			return false, err
+			return false, runtimeStep("image_handoff", err)
 		}
 	}
 	graphStore, ok := b.intent.(state.EnvironmentGitOpsGraphPreparationStore)
@@ -175,19 +185,20 @@ func (b *environmentGitOpsBackend) prepareWorkloadCandidates(ctx context.Context
 	}
 	graph, err := graphStore.ReconcileEnvironmentGitOpsPreparation(ctx, lease, plan)
 	if err != nil {
-		return false, err
+		return false, runtimeStep("graph_preparation", err)
 	}
 	if graph.Phase == "prepared" {
 		if err := b.queueWorkloadQualification(ctx, lease, plan); err != nil {
-			return false, err
+			return false, runtimeStep("qualification_queue", err)
 		}
 		if activator, ok := b.intent.(state.EnvironmentGitOpsGraphActivationStore); ok {
 			_, activated, err := activator.ActivateEnvironmentGitOpsWorkloadGraph(ctx, lease, plan)
 			if err != nil {
-				return false, err
+				return false, runtimeStep("activation", err)
 			}
 			if activated {
-				return b.convergeEnvironmentGitOpsWorkloadServing(ctx, lease, plan)
+				serving, err := b.convergeEnvironmentGitOpsWorkloadServing(ctx, lease, plan)
+				return serving, runtimeStep("serving", err)
 			}
 		}
 	}
