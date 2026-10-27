@@ -284,6 +284,17 @@ Turning one on for an account that has inert rules makes them enforce at
 once. Release them the same way: `flags enable`, then `flags allow` per
 account, or `default` for everyone at launch.
 
+Before releasing `edge_challenge` or `edge_attack_mode` to any account on a
+fleet with more than one gateway, give every gateway the fleet's challenge
+key: set `gatewayd_edge_challenge_key` (`openssl rand -hex 32`) in the fleet
+vault and run the `gatewayd_internal_service` role with
+`gatewayd_edge_challenge_key_required=true`. Then check that
+`gateway_edge_challenge_key_info{job="gatewayd-internal"}` shows one `key_id`
+with `source="fleet"` and that `FaasEdgeChallengeKeyMismatch` is quiet.
+Without the key each gateway signs with its own host's session key, and a
+visitor whose requests reach another gateway is challenged again and again
+(ADR-831 amendment 17).
+
 ## Day-to-day commands
 
 Every write needs an operator session with a recent MFA step-up

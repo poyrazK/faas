@@ -225,6 +225,15 @@ Open:
 Alerts and runbooks for the five features' failure modes (criterion C3) are
 in the `faas_edge_security` group (ADR-20261024082000 amendment 1).
 
+2026-10-27: an end-to-end review found three ways a visitor could never pass
+a challenge, now fixed (ADR-831 amendment 17, criterion H6). The production
+compute gateways signed with different keys, the declared-route and rewrite
+gates took the solution post, and passes bound to one app failed on hosts
+whose paths route to several apps. Open before releasing `edge_challenge` or
+`edge_attack_mode`: deliver the fleet's `gatewayd_edge_challenge_key` to
+every gateway and see `FaasEdgeChallengeKeyMismatch` quiet
+(`docs/ops/platform-flags.md`).
+
 ## Event substrate benchmark (V12) — 2026-10-23
 
 `make bench-event-substrate` measures event publish, fanout routing, the
