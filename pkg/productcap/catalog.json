@@ -4066,6 +4066,11 @@
         "/v1/apps/{}/debug/compare",
         "/v1/apps/{}/debug/critical-paths",
         "/v1/apps/{}/debug/requests"
+      ],
+      "cli": [
+        "debug bundle",
+        "debug compare",
+        "debug requests"
       ]
     },
     {
@@ -5127,6 +5132,7 @@
         "/v1/apps/{}/trusted_signers"
       ],
       "cli": [
+        "app security",
         "trusted-publishers"
       ]
     },
