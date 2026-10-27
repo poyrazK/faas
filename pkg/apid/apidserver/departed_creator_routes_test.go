@@ -61,29 +61,51 @@ func TestDepartedCreatorReachesNoCompanyAppRoute(t *testing.T) {
 	if len(routes) < 500 {
 		t.Fatalf("found %d app routes; the source scan is broken", len(routes))
 	}
-	handler, key := *e.H(), *e.Key()
+	// The creator signs in both ways: an API key, and a dashboard session
+	// for the routes that only take one.
+	sessionToken, err := apidserver.MintDashboardSession(t.Context(), store, *(*e.S()).Sessions(), creator.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	credentials := map[string]func(*http.Request){
+		"api key": func(req *http.Request) { req.Header.Set("Authorization", "Bearer "+*e.Key()) },
+		"session": func(req *http.Request) {
+			req.AddCookie(&http.Cookie{Name: apidserver.SessionCookie, Value: sessionToken})
+		},
+	}
+	handler := *e.H()
 	for _, route := range routes {
 		method, pattern, _ := strings.Cut(route, " ")
-		body := ""
-		if method != http.MethodGet && method != http.MethodDelete {
-			body = "{}"
+		for via, authenticate := range credentials {
+			body := ""
+			if method != http.MethodGet && method != http.MethodDelete {
+				body = "{}"
+			}
+			// A stream that wrongly opens ends with the context, not the test.
+			ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
+			req := httptest.NewRequestWithContext(ctx, method, appRoutePath(pattern, "company-api"), strings.NewReader(body))
+			req.Header.Set("Content-Type", "application/json")
+			authenticate(req)
+			r := httptest.NewRecorder()
+			handler.ServeHTTP(r, req)
+			cancel()
+			if refused(r) {
+				continue
+			}
+			if _, ok := departedCreatorAllowed[route]; ok {
+				continue
+			}
+			t.Errorf("departed creator (%s): %s = %d %.200s", via, route, r.Code, r.Body)
 		}
-		// A stream that wrongly opens ends with the context, not the test.
-		ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
-		req := httptest.NewRequestWithContext(ctx, method, appRoutePath(pattern, "company-api"), strings.NewReader(body))
-		req.Header.Set("Authorization", "Bearer "+key)
-		req.Header.Set("Content-Type", "application/json")
-		r := httptest.NewRecorder()
-		handler.ServeHTTP(r, req)
-		cancel()
-		if r.Code >= 400 {
-			continue
-		}
-		if _, ok := departedCreatorAllowed[route]; ok {
-			continue
-		}
-		t.Errorf("departed creator: %s = %d %.200s", route, r.Code, r.Body)
 	}
+}
+
+// refused reports an error status or a redirect to sign in.
+func refused(r *httptest.ResponseRecorder) bool {
+	if r.Code >= 400 {
+		return true
+	}
+	return r.Code >= 300 && strings.HasPrefix(r.Header().Get("Location"), "/login")
 }
 
 // appRoutes lists the app routes written as string literals in the
