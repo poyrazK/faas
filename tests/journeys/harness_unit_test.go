@@ -236,11 +236,11 @@ func TestHarnessFailureCodeNamesProblemOrStatus(t *testing.T) {
 func TestHarnessIdempotentCommandRetriesOnlySafeCommands(t *testing.T) {
 	retry := [][]string{
 		{"app", "x", "--maintenance"}, {"park", "x"}, {"apps", "rm", "x", "--yes"},
-		{"secrets", "list", "--app", "x"}, {"crons", "rm", "id"}, {"keys", "rm", "id"},
+		{"secrets", "list", "--app", "x"}, {"secrets", "set", "K=V"}, {"crons", "rm", "id"}, {"keys", "rm", "id"},
 	}
 	once := [][]string{
 		{"deploy", "--name", "x"}, {"rollback", "x"}, {"keys", "add", "l"}, {"crons", "add"},
-		{"crons", "run", "id"}, {"secrets", "set", "K=V"}, {"apps", "restore", "x"}, {},
+		{"crons", "run", "id"}, {"apps", "restore", "x"}, {},
 	}
 	for _, args := range retry {
 		if !idempotentCommand(args) {

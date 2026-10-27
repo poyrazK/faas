@@ -331,9 +331,12 @@ func idempotentCommand(args []string) bool {
 	case "apps":
 		return sub != "restore"
 	case "env":
-		return sub == "history" || sub == "diff"
+		// push sets absolute values, so repeating it changes nothing.
+		return sub == "history" || sub == "diff" || sub == "pull" || sub == "push"
 	case "secrets":
-		return sub == "list"
+		// set and unset write absolute values; a repeat at most restarts
+		// the app again.
+		return sub == "list" || sub == "set" || sub == "unset"
 	case "crons":
 		return sub == "rm" || sub == "runs" || sub == "list"
 	case "keys":
