@@ -37,7 +37,9 @@ func TestGitHubDeploys(t *testing.T) {
 	s := newStory(t)
 
 	s.step("bind", func(t *testing.T) {
-		tg.ok(t, 2*time.Minute, "github", "bind", slug, "--repo", repo, "--branch", "main", "--deploy-branches", "main=default")
+		// Branch-to-scope mappings need a project-backed app; a plain app
+		// deploys its production branch.
+		tg.ok(t, 2*time.Minute, "github", "bind", slug, "--repo", repo, "--branch", "main")
 		eventually(t, "the binding is healthy", 2*time.Minute, 5*time.Second, func() (bool, string) {
 			res := tg.run(t, time.Minute, "github", "status", slug)
 			return res.exit == 0 && strings.Contains(string(res.stdout), repo), res.problem() + tail(string(res.stdout), 300)
@@ -45,7 +47,9 @@ func TestGitHubDeploys(t *testing.T) {
 	})
 
 	var pushed, commit string
-	s.step("push_to_deploy", func(t *testing.T) {
+	// A check, not a step: source review and PR previews only need the
+	// pushed commit, not its deployment.
+	s.check("push_to_deploy", func(t *testing.T) {
 		current := strings.TrimSpace(ghFileContent(t, repo, "main", "version.txt"))
 		pushed = "gh-a"
 		if current == "gh-a" {

@@ -219,8 +219,9 @@ func TestDeployOverrides(t *testing.T) {
 // TestImageRegistryAndDeployTokens deploys a digest-pinned public image
 // without a build (row 4), manages a private-registry credential on it
 // without exposing the secret (row 15), and mints a per-app deploy token,
-// publishes the image with it the way CI does (image-published deployment,
-// row 4) and revokes it (row 13).
+// deploys with it through the API and the CLI, checks it reaches nothing
+// else, and revokes it (row 13). Image-published deployments (`registry
+// published`) need a project workload, a preview feature.
 func TestImageRegistryAndDeployTokens(t *testing.T) {
 	tg := needs(t, tierFull, true)
 	t.Parallel()
@@ -258,52 +259,66 @@ func TestImageRegistryAndDeployTokens(t *testing.T) {
 			t.Errorf("the removed credential is still listed")
 		}
 	})
-	s.check("deploy_tokens", func(t *testing.T) {
-		key := tg.scopedKey(t, "tokens")
+	// Deploy tokens have no CLI command; the journey mints one through the
+	// API with a scoped key, deploys with it, and revokes it.
+	key := tg.scopedKey(t, "tokens")
+	var token, tokenID string
+	t.Cleanup(func() {
+		if tokenID != "" {
+			tg.apiCall(http.MethodDelete, "/v1/apps/"+slug+"/deploy-tokens/"+tokenID, nil, key)
+		}
+	})
+	s.step("mint_deploy_token", func(t *testing.T) {
 		if r := tg.apiCall(http.MethodGet, "/v1/apps/"+slug+"/deploy-tokens", nil, key); r.status != http.StatusOK {
 			t.Fatalf("list deploy tokens: %s", r)
 		}
 		r := tg.apiCall(http.MethodPost, "/v1/apps/"+slug+"/deploy-tokens", map[string]string{"label": tg.slug("ci")}, key)
-		if r.status == http.StatusForbidden || r.status == http.StatusUnauthorized {
-			t.Skipf("minting a deploy token needs a recent step-up sign-in, which an API key cannot give (%s); "+
-				"there is no CLI command for it either", r)
-		}
 		if r.status != http.StatusCreated && r.status != http.StatusOK {
-			t.Fatalf("mint deploy token: %s", r)
+			t.Fatalf("mint deploy token: %s", tg.redact(r.String()))
 		}
 		doc := jsonBody(t, r)
-		id := str(doc, "id")
-		if id == "" {
-			id = str(doc, "token.id")
-		}
-		if id != "" {
-			// Registered before any check can fail, so the token never
-			// outlives the journey.
-			t.Cleanup(func() { tg.apiCall(http.MethodDelete, "/v1/apps/"+slug+"/deploy-tokens/"+id, nil, key) })
-		}
-		token := str(doc, "plaintext")
-		if token == "" {
-			token = str(doc, "token_plaintext")
-		}
-		if token == "" || id == "" {
+		tokenID = str(doc, "id")
+		token = str(doc, "plaintext")
+		if tokenID == "" || token == "" {
 			t.Fatalf("deploy token response has no plaintext or id: %s", tg.redact(compact(doc)))
 		}
-		// The documented CI flow (docs/image-published-deployments.md):
-		// publish the declared image digest with the app's deploy token.
-		res := tg.exec(t, token, t.TempDir(), deployLimit+5*time.Minute, "registry", "published",
-			"--app", slug, "--image", probeImage, "--wait")
-		if res.exit != 0 {
-			t.Fatalf("registry published with the app's deploy token: %s", res.problem())
+	})
+	s.check("api_deploy_with_token", func(t *testing.T) {
+		r := tg.apiCall(http.MethodPost, "/v1/apps/"+slug+"/deployments",
+			map[string]string{"image": probeImage, "reason": "e2e-journeys deploy token " + tg.runID}, token)
+		if r.status >= 300 {
+			t.Fatalf("deploy with the app's deploy token: %s", tg.redact(r.String()))
 		}
-		if other := tg.runAs(t, token, time.Minute, "apps"); other.exit == 0 {
+		id := str(jsonBody(t, r), "id")
+		res := tg.ok(t, deployLimit+5*time.Minute, "deployment", "wait", id, "--rollout", "--timeout", deployLimit.String())
+		if got := str(object(t, res.stdout), "status"); got != "live" {
+			t.Fatalf("token deployment %s ended %s", id, got)
+		}
+	})
+	s.check("cli_deploy_with_token", func(t *testing.T) {
+		// What a CI job does with FAAS_TOKEN set to the app's deploy token.
+		res := tg.exec(t, token, t.TempDir(), deployLimit+5*time.Minute, "deploy", "--name", slug, "--image", probeImage,
+			"--wait", "--timeout", deployLimit.String(), "--yes", "--no-require-authn", "--reason", "e2e-journeys deploy token cli")
+		if res.exit != 0 {
+			t.Fatalf("gregale deploy with the app's deploy token: %s", res.problem())
+		}
+	})
+	s.check("token_is_app_scoped", func(t *testing.T) {
+		if res := tg.runAs(t, token, time.Minute, "apps"); res.exit == 0 {
 			t.Errorf("a deploy token could list the account's apps")
 		}
-		if d := tg.apiCall(http.MethodDelete, "/v1/apps/"+slug+"/deploy-tokens/"+id, nil, key); d.status >= 300 {
+		if r := tg.apiCall(http.MethodGet, "/v1/keys", nil, token); r.status < 400 {
+			t.Errorf("a deploy token could list the account's API keys: %s", r)
+		}
+	})
+	s.check("revoked_token_refused", func(t *testing.T) {
+		if d := tg.apiCall(http.MethodDelete, "/v1/apps/"+slug+"/deploy-tokens/"+tokenID, nil, key); d.status >= 300 {
 			t.Fatalf("revoke deploy token: %s", d)
 		}
+		tokenID = ""
 		eventually(t, "revoked deploy token refused", time.Minute, 3*time.Second, func() (bool, string) {
-			res := tg.exec(t, token, t.TempDir(), 2*time.Minute, "registry", "published", "--app", slug, "--image", probeImage)
-			return res.exit != 0, "revoked token still publishes"
+			r := tg.apiCall(http.MethodPost, "/v1/apps/"+slug+"/deployments", map[string]string{"image": probeImage}, token)
+			return r.status == http.StatusUnauthorized || r.status == http.StatusForbidden, r.String()
 		})
 	})
 }

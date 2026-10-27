@@ -28,5 +28,20 @@
     "step": "TestCustomDomainBinding/add",
     "bug": "custom domains are disabled on production: domains add answers 'Custom domains are unavailable ... not available on this Gregale installation right now' though the inventory lists them as GA",
     "since": "2026-10-27"
+  },
+  {
+    "step": "TestImageRegistryAndDeployTokens/cli_deploy_with_token",
+    "bug": "gregale deploy with an app's deploy token fails insufficient_scope (the CLI calls an endpoint needing admin or apps:read); the deploy API itself accepts the token",
+    "since": "2026-10-27"
+  },
+  {
+    "step": "TestGitHubDeploys/push_to_deploy",
+    "bug": "a push to the production branch of an app bound with gregale github bind created no deployment within 25 min (two runs); github status reports the binding healthy",
+    "since": "2026-10-27"
+  },
+  {
+    "step": "TestGitHubDeploys/checks_status",
+    "bug": "follows from push_to_deploy: no deployment, so no Gregale check on the pushed commit",
+    "since": "2026-10-27"
   }
 ]
