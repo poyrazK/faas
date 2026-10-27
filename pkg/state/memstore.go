@@ -17506,11 +17506,7 @@ func (m *MemStore) ComputeNodeUsedMB(_ context.Context, nodeID string) (int64, e
 	defer m.mu.Unlock()
 	used := m.functionMigrationNodeUsageLocked(nodeID).RAM
 	for _, ins := range m.instances {
-		if ins.NodeID != nodeID {
-			continue
-		}
-		switch ins.State {
-		case "waking", "cold_booting", "running", "draining", "warm":
+		if ins.NodeID == nodeID && nodeRAMCounts(State(ins.State)) {
 			used += m.migrationResidentRAMLocked(ins)
 		}
 	}
@@ -29201,20 +29197,28 @@ func (m *MemStore) ReapExpiredUploadSessions(_ context.Context) ([]sqlc.ReapExpi
 }
 
 // ReapStaleUploadPartFiles returns terminal-row sessions whose
-// part_path cleanup marker is set and last_patched_at < now() - 1h.
-// Bounded by 100 rows. The 1h grace matches the production query —
-// kept identical so the whitebox reaper tests exercise the same
+// part_path cleanup marker is set and whose grace has passed: 24h for a
+// committed source (1h otherwise), and never while the committed
+// deployment is in flight. Bounded by 100 rows. Kept identical to the
+// production query so the whitebox reaper tests exercise the same
 // predicate.
 func (m *MemStore) ReapStaleUploadPartFiles(_ context.Context) ([]sqlc.ReapStaleUploadPartFilesRow, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	var out []sqlc.ReapStaleUploadPartFilesRow
-	cutoff := time.Now().UTC().Add(-1 * time.Hour)
+	now := time.Now().UTC()
 	for _, row := range m.uploadSessions {
 		if row.Status != "committed" && row.Status != "cancelled" && row.Status != "expired" {
 			continue
 		}
 		if row.PartPath == "" {
+			continue
+		}
+		cutoff := now.Add(-1 * time.Hour)
+		if row.Status == "committed" {
+			cutoff = now.Add(-24 * time.Hour)
+		}
+		if dep, ok := m.deployments[row.DeploymentID.String]; ok && row.DeploymentID.Valid && deploymentInFlight(dep.Status) {
 			continue
 		}
 		if row.LastPatchedAt.Valid && row.LastPatchedAt.Time.Before(cutoff) {

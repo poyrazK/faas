@@ -98,8 +98,9 @@ func (s *server) resolveOverflowNode(ctx context.Context, wire *string, strictEm
 		if errors.Is(err, state.ErrNotFound) {
 			return "", api.ErrInvalidOverflowNode(*wire)
 		}
+		logCustomerFailure(s.log, "lookup overflow_node", err)
 		return "", api.NewProblem(http.StatusInternalServerError, api.CodeCapacity,
-			"Capacity", fmt.Sprintf("lookup overflow_node %q: %v", *wire, err))
+			"Capacity", api.DetailServerFailure)
 	}
 	if !row.Active {
 		return "", api.NewProblem(http.StatusUnprocessableEntity, api.CodeInvalidOverflowNode,
@@ -654,6 +655,10 @@ func (s *server) createDeployment(w http.ResponseWriter, r *http.Request, acct s
 	// JSON branch is the rest of this handler. Extracted to
 	// loadAppAndPreflight so createDeployment stays under the
 	// CLAUDE.md 50-line handler cap.
+	if !s.deploymentBodyCapabilityAllowed(r, acct) {
+		writeMissingRoute(w, r)
+		return
+	}
 	app, ok, limits := s.loadAppAndPreflight(w, r, acct)
 	if !ok {
 		return

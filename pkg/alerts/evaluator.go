@@ -196,8 +196,9 @@ type Evaluator struct {
 	channels         ChannelSender
 	channelOutcome   func(kind, outcome string)
 	dashboardBaseURL string
-	// logContextEnabled attaches the ADR-20261022172052 log context to fires.
-	logContextEnabled bool
+	// logContextReleased decides, per account, whether fires carry the
+	// ADR-20261022172052 log context; nil means never.
+	logContextReleased func(ctx context.Context, accountID, appID string) bool
 	// releaseMetrics counts release notice deliveries; nil records nothing.
 	releaseMetrics *releasemetrics.Metrics
 

@@ -40,7 +40,7 @@ func TestProfileCaptureOOMLink(t *testing.T) {
 			started := func(at time.Time, kinds []string, finish bool) string {
 				t.Helper()
 				c := api.ProfileCapture{ID: uuid.NewString(), Kinds: kinds, DurationSeconds: 10, CreatedAt: at, ExpiresAt: at.Add(api.ProfileCaptureRetention)}
-				if err := store.CreateProfileCapture(ctx, acct.ID, app.ID, c); err != nil {
+				if err := store.CreateProfileCapture(ctx, acct.ID, app.ID, c, profileCaptureStorage); err != nil {
 					t.Fatal(err)
 				}
 				if _, err := store.ClaimProfileCapture(ctx, at); err != nil {
@@ -114,7 +114,7 @@ func TestProfileCaptureOOMLink(t *testing.T) {
 			slow := api.ProfileCapture{ID: uuid.NewString(), Kinds: []string{api.ProfileKindStacks, api.ProfileKindCPU}, DurationSeconds: 5,
 				Trigger: api.ProfileCaptureTriggerSlowRequest, TriggerDetail: "GET /orders in flight for 12s", RequestID: "req-1", RequestTraceID: "trace-1",
 				CreatedAt: now, ExpiresAt: now.Add(api.ProfileCaptureRetention)}
-			if err := store.QueueAutomaticProfileCapture(ctx, acct.ID, app.ID, slow, api.ProfileCaptureSlowRequestMinInterval); err != nil {
+			if err := store.QueueAutomaticProfileCapture(ctx, acct.ID, app.ID, slow, api.ProfileCaptureSlowRequestMinInterval, profileCaptureStorage); err != nil {
 				t.Fatal(err)
 			}
 			got, err = store.ProfileCaptureForRequest(ctx, acct.ID, app.ID, "trace-1")

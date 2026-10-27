@@ -81,6 +81,11 @@ func (h *Handler) wakeDeployment(ctx context.Context, app App, deployment, scope
 				}
 				if atCapacity {
 					h.finishWakePageCycle(wakeCtx, app.ID, "")
+					// An at-capacity answer rehydrates the app's targets. When
+					// that read finds a replica of this deployment, serve it.
+					if pickPublicDeployment(h.backend, app.ID, deployment, "").OK {
+						return nil
+					}
 					return api.ErrAppConcurrencyReachedAt(api.MustLimitsFor(app.Plan), effectiveAppConcurrencyLimit(app, api.MustLimitsFor(app.Plan).MaxConcurrency), backendCapacityCount(h.backend, app.ID))
 				}
 				if method == WakeMethodSnapshotRestore && h.burstPressure != nil {

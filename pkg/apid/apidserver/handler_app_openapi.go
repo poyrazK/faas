@@ -117,8 +117,9 @@ func (s *server) getAppOpenAPIPolicyPreview(w http.ResponseWriter, r *http.Reque
 
 	raw, _, err := s.store.GetAppOpenAPIDoc(r.Context(), app.ID, app.AccountID)
 	if err != nil && !errors.Is(err, state.ErrNotFound) {
+		logCustomerFailure(s.log, "failed to read imported OpenAPI document", err)
 		api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError, "internal_error",
-			"failed to read imported OpenAPI document", err.Error()))
+			"failed to read imported OpenAPI document", api.DetailServerFailure))
 		return
 	}
 
@@ -126,8 +127,9 @@ func (s *server) getAppOpenAPIPolicyPreview(w http.ResponseWriter, r *http.Reque
 	if len(raw) > 0 {
 		spec, err = openapidiff.LoadBytes(raw)
 		if err != nil {
+			logCustomerFailure(s.log, "persisted OpenAPI document could not be parsed", err)
 			api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError, "openapi_import_invalid",
-				"persisted OpenAPI document could not be parsed", err.Error()))
+				"persisted OpenAPI document could not be parsed", api.DetailServerFailure))
 			return
 		}
 	}
@@ -136,8 +138,9 @@ func (s *server) getAppOpenAPIPolicyPreview(w http.ResponseWriter, r *http.Reque
 	observed := observedSnapshot.rows()
 	rules, err := s.store.ListEdgeRulesForApp(r.Context(), app.ID)
 	if err != nil {
+		logCustomerFailure(s.log, "failed to read app edge rules", err)
 		api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError, "internal_error",
-			"failed to read app edge rules", err.Error()))
+			"failed to read app edge rules", api.DetailServerFailure))
 		return
 	}
 
@@ -183,8 +186,9 @@ func (s *server) getAppOpenAPIPolicyPreview(w http.ResponseWriter, r *http.Reque
 	if len(raw) > 0 {
 		dryRun, dryErr := openapidiff.ComputeDryRun(raw, rules)
 		if dryErr != nil {
+			logCustomerFailure(s.log, "persisted OpenAPI document could not be analyzed", dryErr)
 			api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError, "openapi_import_invalid",
-				"persisted OpenAPI document could not be analyzed", dryErr.Error()))
+				"persisted OpenAPI document could not be analyzed", api.DetailServerFailure))
 			return
 		}
 		resp.Suggestions = make([]api.EdgeRuleSuggestion, len(dryRun.Suggestions))
@@ -227,20 +231,23 @@ func (s *server) postAppOpenAPIPolicyApply(w http.ResponseWriter, r *http.Reques
 			s.notFound(w, "no OpenAPI document imported for this app")
 			return
 		}
+		logCustomerFailure(s.log, "failed to read imported OpenAPI document", err)
 		api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError, "internal_error",
-			"failed to read imported OpenAPI document", err.Error()))
+			"failed to read imported OpenAPI document", api.DetailServerFailure))
 		return
 	}
 	rules, err := s.store.ListEdgeRulesForApp(r.Context(), app.ID)
 	if err != nil {
+		logCustomerFailure(s.log, "failed to read app edge rules", err)
 		api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError, "internal_error",
-			"failed to read app edge rules", err.Error()))
+			"failed to read app edge rules", api.DetailServerFailure))
 		return
 	}
 	dryRun, err := openapidiff.ComputeDryRun(raw, rules)
 	if err != nil {
+		logCustomerFailure(s.log, "persisted OpenAPI document could not be analyzed", err)
 		api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError, "openapi_import_invalid",
-			"persisted OpenAPI document could not be analyzed", err.Error()))
+			"persisted OpenAPI document could not be analyzed", api.DetailServerFailure))
 		return
 	}
 	suggestions := make([]api.EdgeRuleSuggestion, 0, len(dryRun.Suggestions))
@@ -256,8 +263,9 @@ func (s *server) postAppOpenAPIPolicyApply(w http.ResponseWriter, r *http.Reques
 	}
 	previewSHA256, err := openapidiff.PolicySuggestionsSHA256(matchHost, dryRun.Suggestions)
 	if err != nil {
+		logCustomerFailure(s.log, "failed to fingerprint OpenAPI policy plan", err)
 		api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError, "internal_error",
-			"failed to fingerprint OpenAPI policy plan", err.Error()))
+			"failed to fingerprint OpenAPI policy plan", api.DetailServerFailure))
 		return
 	}
 	resp := api.AppOpenAPIPolicyApplyResponse{
@@ -343,8 +351,9 @@ func (s *server) postAppOpenAPIPolicyApply(w http.ResponseWriter, r *http.Reques
 			if !rollbackOrConverge(r.Context()) {
 				return
 			}
+			logCustomerFailure(s.log, "failed to encode OpenAPI policy action", marshalErr)
 			api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError, "internal_error",
-				"failed to encode OpenAPI policy action", marshalErr.Error()))
+				"failed to encode OpenAPI policy action", api.DetailServerFailure))
 			return
 		}
 		createReq := api.CreateEdgeRuleRequest{
@@ -426,8 +435,9 @@ func (s *server) serveOpenAPIDocManualImport(w http.ResponseWriter, r *http.Requ
 			s.notFound(w, "no OpenAPI document imported for this app")
 			return
 		}
+		logCustomerFailure(s.log, "failed to read OpenAPI document", err)
 		api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError, "internal_error",
-			"failed to read OpenAPI document", err.Error()))
+			"failed to read OpenAPI document", api.DetailServerFailure))
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
@@ -478,8 +488,9 @@ func (s *server) loadAutoGenInputs(w http.ResponseWriter, r *http.Request, app s
 	var docErr error
 	doc, _, docErr = s.store.GetAppOpenAPIDoc(r.Context(), app.ID, app.AccountID)
 	if docErr != nil && !errors.Is(docErr, state.ErrNotFound) {
+		logCustomerFailure(s.log, "failed to read imported doc", docErr)
 		api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError, "internal_error",
-			"failed to read imported doc", docErr.Error()))
+			"failed to read imported doc", api.DetailServerFailure))
 		return nil, nil, nil, [32]byte{}, [32]byte{}, [32]byte{}, observedRoutesSnapshot{}, false
 	}
 	observation = s.collectObservedRoutes(r.Context(), app.AccountID, app.ID, app.Slug)
@@ -537,8 +548,9 @@ func (s *server) serveOpenAPIDocAuto(w http.ResponseWriter, r *http.Request, app
 			source := autoOpenAPISource(openapidiff.SourceEmptyImportRules, observation, len(doc) > 0)
 			rendered := renderOpenAPISpecJSON(nil, openapidiff.GenerateFromAppMeta{Source: source}, app, observation)
 			if err := validateRenderedOpenAPISpec(rendered); err != nil {
+				logCustomerFailure(s.log, "failed to generate valid OpenAPI doc", err)
 				api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError, "internal_error",
-					"failed to generate valid OpenAPI doc", err.Error()))
+					"failed to generate valid OpenAPI doc", api.DetailServerFailure))
 				return
 			}
 			writeAutoSpecHeaders(w, source, "miss", 0)
@@ -546,8 +558,9 @@ func (s *server) serveOpenAPIDocAuto(w http.ResponseWriter, r *http.Request, app
 			_, _ = w.Write(rendered)
 			return
 		}
+		logCustomerFailure(s.log, "failed to generate OpenAPI doc", genErr)
 		api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError, "internal_error",
-			"failed to generate OpenAPI doc", genErr.Error()))
+			"failed to generate OpenAPI doc", api.DetailServerFailure))
 		return
 	}
 	genMeta.Source = autoOpenAPISource(genMeta.Source, observation, len(doc) > 0)
@@ -559,8 +572,9 @@ func (s *server) serveOpenAPIDocAuto(w http.ResponseWriter, r *http.Request, app
 	genMeta.RulesSHA256 = rulesSHA
 	rendered := renderOpenAPISpecJSON(genSpec, genMeta, app, observation)
 	if err := validateRenderedOpenAPISpec(rendered); err != nil {
+		logCustomerFailure(s.log, "failed to generate valid OpenAPI doc", err)
 		api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError, "internal_error",
-			"failed to generate valid OpenAPI doc", err.Error()))
+			"failed to generate valid OpenAPI doc", api.DetailServerFailure))
 		return
 	}
 	if s.specCache != nil {
@@ -816,8 +830,9 @@ func (s *server) postAppOpenAPIImport(w http.ResponseWriter, r *http.Request, ac
 	}
 	_, gotMeta, err := s.store.GetAppOpenAPIDoc(r.Context(), app.ID, acct.ID)
 	if err != nil {
+		logCustomerFailure(s.log, "failed to read back import", err)
 		api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError, "internal_error",
-			"failed to read back import", err.Error()))
+			"failed to read back import", api.DetailServerFailure))
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
@@ -849,8 +864,9 @@ func (s *server) enforceOpenAPIImportQuota(w http.ResponseWriter, r *http.Reques
 		case errors.Is(err, state.ErrNotFound):
 			s.notFound(w, "no such app")
 		default:
+			logCustomerFailure(s.log, "failed to persist import", err)
 			api.WriteProblem(w, trafficproblem.Policy(err, api.NewProblem(http.StatusInternalServerError, "internal_error",
-				"failed to persist import", err.Error())))
+				"failed to persist import", api.DetailServerFailure)))
 		}
 		return err
 	}
@@ -907,8 +923,9 @@ func (s *server) deleteAppOpenAPIImport(w http.ResponseWriter, r *http.Request, 
 		return
 	}
 	if err := s.store.DeleteAppOpenAPIDoc(r.Context(), app.ID, acct.ID); err != nil && !errors.Is(err, state.ErrNotFound) {
+		logCustomerFailure(s.log, "failed to delete OpenAPI import", err)
 		api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError, "internal_error",
-			"failed to delete OpenAPI import", err.Error()))
+			"failed to delete OpenAPI import", api.DetailServerFailure))
 		return
 	}
 	s.audit.Emit(r.Context(), "app.openapi_import.deleted", &acct.ID, map[string]any{

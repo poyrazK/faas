@@ -13843,14 +13843,15 @@ Capture CPU, heap, stack or lock profiles from a running instance
 
 ### debug captures
 
-List or show on-demand profile captures
+List, show or delete on-demand profile captures
 
-`gregale debug captures [--output <DIR>] [--top <N>] <slug> [<capture-id>]`
+`gregale debug captures [--output <DIR>] [--top <N>] [--delete] <slug> [<capture-id>]`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--output <DIR>` | write merged .pb.gz pprof files |  |
 | `--top <N>` | functions to print per kind |  |
+| `--delete` | delete the named capture and free its storage |  |
 
 ### debug capture-diff
 
@@ -16012,19 +16013,23 @@ File storage governed by RLS on storage_objects
 
 Print the storage_objects migration
 
-`gregale data-api storage sql [--schema <SCHEMA>]`
+`gregale data-api storage sql [--schema <SCHEMA>] [--upgrade]`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--schema <SCHEMA>` | the Data API&#39;s first exposed schema (default api) |  |
+| `--upgrade` | print the upgrade for a storage_objects table without object_key |  |
 
 Examples:
 
 ```sh
 gregale data-api storage sql > migrations/0005_storage.sql
+gregale data-api storage sql --upgrade > migrations/0009_storage_object_keys.sql
 ```
 
 Includes the table, RLS, guard trigger and example policies.
+
+--upgrade prints the object_key column for a table created before it.
 
 #### data-api storage enable
 

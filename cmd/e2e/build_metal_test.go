@@ -241,6 +241,12 @@ func runBuildSubtestWithSourceRoot(t *testing.T, h *e2etest.Harness, pool *pgxpo
 	if got := postOK(t, h, key, "/v1/apps", api.CreateAppRequest{Slug: slug, Type: "app", RequireAuthn: &public}); got != http.StatusCreated {
 		t.Fatalf("create app %s: status=%d", slug, got)
 	}
+	// Pro apps default to public_auth_mode=bearer as well as require_authn;
+	// assertHostingRuntime's request is anonymous, so open both gates.
+	if _, status := doReq(t, h, key, http.MethodPatch, "/v1/apps/"+slug, api.UpdateAppRequest{RequireAuthn: &public,
+		PublicAuth: &api.PublicAuthBlock{Mode: api.AppPublicAuthModeOpen}}); status != http.StatusOK {
+		t.Fatalf("open app auth %s: status=%d", slug, status)
+	}
 	appID := mustGetAppID(t, h, key, slug)
 
 	depBody, depStatus := postMultipartDeploymentWithSourceRoot(t, h, key, slug, sourceTar, isDockerfile, sourceRoot, "")
