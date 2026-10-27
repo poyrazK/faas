@@ -16,7 +16,7 @@ Automation: put `--non-interactive` before the command to disable prompts and br
 | [`dev`](#dev) | Sync local changes to a developer environment |
 | [`deploy`](#deploy) | Deploy an app, function, or project |
 | [`logs`](#logs) | Search an app&#39;s runtime logs and HTTP requests, or follow them |
-| [`status`](#status) | Show Gregale platform status (not specific to your account) |
+| [`status`](#status) | Show what this checkout targets, or Gregale&#39;s platform status |
 | [`open`](#open) | Open an app&#39;s URL in your browser |
 | [`rollback`](#rollback) | Restore a previous deployment, or check an exact historical rollback |
 | [`run`](#run) | Run code, or one command from an image, in a disposable sandbox |
@@ -393,13 +393,17 @@ gregale deploy --path packages/api --source=worktree
 
 ### deploy check
 
-Check project prerequisites without uploading or submitting
+Check local source, an image or project prerequisites before deploying
 
-`gregale deploy check --project [--project-slug <SLUG>] [--path <DIR>] [--source <MODE>] [--worktree] [--environment <ENV>] [--from <ENV>] [--expected-state <SHA256>] [--atomic] [--add-services] [--verify] [--workers] [--worker-health] [--migrate] [--progressive] [--stabilize] [--sync-config] [--config-file <PATH>] [--secrets-file <PATH>]`
+`gregale deploy check [--project] [--image <REF>] [--registry-user <USER>] [--registry-password-stdin] [--strict] [--project-slug <SLUG>] [--path <DIR>] [--source <MODE>] [--worktree] [--environment <ENV>] [--from <ENV>] [--expected-state <SHA256>] [--atomic] [--add-services] [--verify] [--workers] [--worker-health] [--migrate] [--progressive] [--stabilize] [--sync-config] [--config-file <PATH>] [--secrets-file <PATH>]`
 
 | Flag | Meaning | |
 |---|---|---|
-| `--project` | check the complete project | required |
+| `--project` | check the complete project&#39;s release prerequisites |  |
+| `--image <REF>` | without --project: inspect this Linux/amd64 image without downloading layers |  |
+| `--registry-user <USER>` | without --project: registry username; requires --registry-password-stdin |  |
+| `--registry-password-stdin` | without --project: read the registry password or token from stdin |  |
+| `--strict` | without --project: exit 1 on warnings |  |
 | `--project-slug <SLUG>` | project slug (defaults to linked context or selected directory) |  |
 | `--path <DIR>` | selected source directory |  |
 | `--source <MODE>` | local source policy (default auto) | one of `auto` · `head` · `worktree` |
@@ -422,10 +426,14 @@ Check project prerequisites without uploading or submitting
 Examples:
 
 ```sh
+gregale deploy check
+gregale deploy check --image ghcr.io/acme/api:1.2 --strict
 gregale deploy check --project --json
 gregale deploy check --project --atomic --verify
 gregale deploy check --project --project-slug shop --from staging --environment production --sync-config --verify
 ```
+
+Without --project, checks local source or an image, as `gregale doctor` does; with --project, checks the project&#39;s release prerequisites against current state.
 
 ### deploy resolve-contract
 
@@ -757,6 +765,86 @@ Examples:
 gregale logs defaults clear --dry-run
 ```
 
+### logs view
+
+Save, list and reuse log filters, locally or shared with the team
+
+Examples:
+
+```sh
+gregale logs view save errors --since 1h --level error
+gregale logs view save errors --shared --level error --app my-api
+gregale logs view list --shared --app my-api
+gregale logs view use errors --default
+gregale logs my-api --view errors
+```
+
+Local views are what `logs views` manages; --shared stores a view on the server as `logs saved` does, so teammates and agents see it. Each verb takes the flags of the command it runs.
+
+#### logs view list
+
+List local or shared views
+
+`gregale logs view list [--shared]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--shared` | list the app&#39;s server-side views |  |
+
+#### logs view show
+
+Show one local view and its commands
+
+`gregale logs view show <name>`
+
+#### logs view save
+
+Save filters as a local or shared view
+
+`gregale logs view save [--shared] <name>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--shared` | save on the server for the app |  |
+
+#### logs view delete
+
+Delete a local or shared view
+
+`gregale logs view delete [--shared] <name>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--shared` | delete the app&#39;s server-side view |  |
+
+#### logs view rename
+
+Rename a local view
+
+`gregale logs view rename <old-name> <new-name>`
+
+#### logs view copy
+
+Copy a local view under a new name
+
+`gregale logs view copy <source-name> <new-name>`
+
+#### logs view update
+
+Change a local view&#39;s filters
+
+`gregale logs view update <name>`
+
+#### logs view use
+
+Make a local view the project&#39;s default
+
+`gregale logs view use --default <name>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--default` | save it as the project-local preferred view | required |
+
 ### logs views
 
 List or manage reusable local log filters
@@ -908,9 +996,24 @@ Save filters as a named view
 
 ## status
 
-Show Gregale platform status (not specific to your account)
+Show what this checkout targets, or Gregale&#39;s platform status
 
-`gregale status`
+`gregale status [--app <SLUG>] [--platform]`
+
+In a linked checkout (or with --app), shows the project, app, environment, state and account. Elsewhere, and with --platform, shows Gregale&#39;s platform status.
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | show this app instead of the linked one |  |
+| `--platform` | show Gregale&#39;s platform status |  |
+
+Examples:
+
+```sh
+gregale status
+gregale status --app my-api
+gregale status --platform
+```
 
 
 ## open
@@ -4352,7 +4455,7 @@ Change an app&#39;s settings
 
 Check serving health and readiness
 
-`gregale app health [--check] [--wait] [--timeout <DURATION>] [--poll-interval <DURATION>] [--history] [--limit <N>] [--before <CURSOR>] [--environment <SLUG>] [<app>]`
+`gregale app health [--check] [--wait] [--timeout <DURATION>] [--poll-interval <DURATION>] [--history] [--limit <N>] [--before <CURSOR>] [--environment <SLUG>] [--explain] [--errors] [<app>]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -4364,6 +4467,8 @@ Check serving health and readiness
 | `--limit <N>` | history page size |  |
 | `--before <CURSOR>` | history cursor |  |
 | `--environment <SLUG>` | assess this project environment instead of the default scope; excludes history options |  |
+| `--explain` | explain health from runtime, release, data and scaling (what inspect shows); stands alone |  |
+| `--errors` | explain the latest failed deployment (what inspect --errors shows); stands alone |  |
 
 Examples:
 
@@ -9308,20 +9413,25 @@ Includes state and policy caveats.
 
 List cron rules
 
-`gregale cron list --app <slug>`
+`gregale cron list --app <slug> [--one-off]`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--app <slug>` | app slug | required |
+| `--one-off` | list one-off requests (--at or --in) instead of cron rules |  |
 
 ### cron create
 
 Schedule a POST to an app path, or a deployment command
 
-`gregale cron create [--interactive] [--app <slug>] [--schedule <EXPR>] [--path <PATH>] [--command <EXEC>] [--arg <ARG>] [--shell] [--timeout-seconds <N>] [--max-output-bytes <N>] [--timezone <TZ>] [--skip-if-running] [--retry-max] [--retry-backoff-seconds] [--schedule-policy <JSON>] [--failure-rules <JSON>]`
+`gregale cron create [--at <RFC3339>] [--in <DURATION>] [--lock <POLICY>] [--lock-key <JSON>] [--interactive] [--app <slug>] [--schedule <EXPR>] [--path <PATH>] [--command <EXEC>] [--arg <ARG>] [--shell] [--timeout-seconds <N>] [--max-output-bytes <N>] [--timezone <TZ>] [--skip-if-running] [--retry-max] [--retry-backoff-seconds] [--schedule-policy <JSON>] [--failure-rules <JSON>]`
 
 | Flag | Meaning | |
 |---|---|---|
+| `--at <RFC3339>` | send one request at this RFC3339 time instead of on a schedule |  |
+| `--in <DURATION>` | send one request after this delay (such as 30m) instead of on a schedule |  |
+| `--lock <POLICY>` | run one at a time per --lock-key under this managed operation policy |  |
+| `--lock-key <JSON>` | JSON value that must run one at a time (requires --lock) |  |
 | `--interactive` | choose an HTTP path, schedule, and timezone, preview run times, and confirm creation |  |
 | `--app <slug>` | app slug (interactive mode can use linked app or picker) |  |
 | `--schedule <EXPR>` | five-field cron expression (required unless interactive) |  |
@@ -9342,13 +9452,22 @@ Examples:
 
 ```sh
 gregale cron create --app my-api --interactive
+gregale cron create --app my-api --at 2030-01-01T09:00:00Z --path /report
+gregale cron create --app my-api --in 30m --path /reminders
 ```
+
+With --at or --in, add schedules one request instead of a recurring cron and takes the flags of `gregale delayed-task add` (--payload, --method, --header, retries); --schedule and the command flags belong to recurring crons.
 
 ### cron get
 
 Show one cron rule
 
-`gregale cron get <id>`
+`gregale cron get [--one-off] [--app <SLUG>] <id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--one-off` | show a one-off request (--at or --in) instead of a cron rule |  |
+| `--app <SLUG>` | with --one-off, require the request to belong to this app |  |
 
 ### cron update
 
@@ -9460,9 +9579,15 @@ Inspect scheduled occurrence decisions
 
 ### cron cancel
 
-Request cancellation of one command-cron run
+Cancel a command-cron run, or a one-off request
 
-`gregale cron cancel <cron-id> <run-id>`
+`gregale cron cancel [--app <SLUG>] <cron-id> <run-id> | <request-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | with a one-off request, require it to belong to this app |  |
+
+With one id, cancels a one-off request made with --at or --in; --app then requires it to belong to that app.
 
 
 ## trigger
@@ -9492,10 +9617,12 @@ Show one trigger
 
 Create a broker trigger
 
-`gregale trigger create --app <slug> --kind <kind> [--slug <slug>] [--config <JSON>] [--enabled] [--disabled] [--batch-size <N>] [--batch-window-ms <N>] [--max-attempts <N>] [--payload-max-bytes <N>] [--broker-poison-strategy <commit|seek-to-offset>] [--delivery <record|batch>]`
+`gregale trigger create [--lock <POLICY>] [--lock-key <JSON>] --app <slug> --kind <kind> [--slug <slug>] [--config <JSON>] [--enabled] [--disabled] [--batch-size <N>] [--batch-window-ms <N>] [--max-attempts <N>] [--payload-max-bytes <N>] [--broker-poison-strategy <commit|seek-to-offset>] [--delivery <record|batch>]`
 
 | Flag | Meaning | |
 |---|---|---|
+| `--lock <POLICY>` | run one at a time per --lock-key under this managed operation policy |  |
+| `--lock-key <JSON>` | JSON value that must run one at a time (requires --lock) |  |
 | `--app <slug>` | app slug | required |
 | `--kind <kind>` | trigger kind | required; one of `kafka` · `nats` · `redis_streams` · `sqs_compat` · `queue` · `realtime` |
 | `--slug <slug>` | trigger slug (required for non-cron kinds) |  |
@@ -9783,10 +9910,12 @@ gregale job delete --interactive
 
 Dispatch a new run (fan-out N tasks)
 
-`gregale job run [--saved-job] [--wait-ready] [--image-wait-timeout <DURATION>] [--image-poll-interval <DURATION>] [--interactive] [--wait] [--results] [--out-dir <DIR>] [--all-artifacts] [--include <GLOB>] [--exclude <GLOB>] [--wait-timeout <DURATION>] [--poll-interval <DURATION>] [--dry-run] [--tasks <N>] [--retries <N>] [--timeout <SECONDS>] [--input <ID=REF>] [--input-manifest-uri <URI>] [--input-manifest-sha256 <DIGEST>] [--parallelism <N>] [--flexible] [--eligible-at <RFC3339>] [--latest-start-at <RFC3339>] [--fail-fast] [--failure-rules <JSON>] [<job-name>]`
+`gregale job run [--lock <POLICY>] [--lock-key <JSON>] [--saved-job] [--wait-ready] [--image-wait-timeout <DURATION>] [--image-poll-interval <DURATION>] [--interactive] [--wait] [--results] [--out-dir <DIR>] [--all-artifacts] [--include <GLOB>] [--exclude <GLOB>] [--wait-timeout <DURATION>] [--poll-interval <DURATION>] [--dry-run] [--tasks <N>] [--retries <N>] [--timeout <SECONDS>] [--input <ID=REF>] [--input-manifest-uri <URI>] [--input-manifest-sha256 <DIGEST>] [--parallelism <N>] [--flexible] [--eligible-at <RFC3339>] [--latest-start-at <RFC3339>] [--fail-fast] [--failure-rules <JSON>] [<job-name>]`
 
 | Flag | Meaning | |
 |---|---|---|
+| `--lock <POLICY>` | run one at a time per --lock-key under this managed operation policy |  |
+| `--lock-key <JSON>` | JSON value that must run one at a time (requires --lock) |  |
 | `--saved-job` | use local jobs defaults for the Job name and omitted settings; excludes a positional Job name |  |
 | `--wait-ready` | wait for selected image preparation before submitting |  |
 | `--image-wait-timeout <DURATION>` | image preparation deadline (default 5m; requires --wait-ready) |  |
@@ -9825,7 +9954,10 @@ gregale job run nightly-report --tasks 10 --results
 gregale job run --dry-run
 gregale job run --saved-job --dry-run
 gregale job run --wait-ready --results
+gregale job run export --lock exports --lock-key '"customer-42"'
 ```
+
+With --lock, the run is submitted through the lock (what `gregale operations start-job` does) and takes only --tasks, --run-file and --idempotency-key.
 
 ### job runs
 
@@ -13371,14 +13503,26 @@ Inspect, replay or purge items that failed delivery
 
 ### dlq list
 
-List app dead-letter events
+List an app&#39;s dead letters from every source
 
-`gregale dlq list [--limit <N>] [--before <ID>] <app>`
+`gregale dlq list [--limit <N>] [--before <ID>] [--source <SOURCE>] [--trigger <ID>] <app>`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--limit <N>` | max events (1..200) |  |
 | `--before <ID>` | pagination cursor |  |
+| `--source <SOURCE>` | only this source | one of `invocation` · `trigger` · `webhook` |
+| `--trigger <ID>` | only dead letters from this trigger |  |
+
+Examples:
+
+```sh
+gregale dlq list my-api
+gregale dlq list my-api --source trigger
+gregale dlq list my-api --trigger <trigger-id>
+```
+
+--source and --trigger filter each page; when a filtered page is empty, later pages may still match.
 
 ### dlq get
 
@@ -17523,7 +17667,24 @@ See Gregale features and join early access
 
 ### feature list
 
-Show feature maturity and plan availability
+Show feature maturity, plan availability and early access
+
+`gregale feature list [--early-access] [--org <SLUG>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--early-access` | list only early-access features you can join or have joined |  |
+| `--org <SLUG>` | with --early-access, list the organization&#39;s early access |  |
+
+Examples:
+
+```sh
+gregale feature list
+gregale feature list --early-access
+gregale feature list --early-access --org acme
+```
+
+Signed in, the list ends with early-access features you can join or have joined; join one with `gregale previews join &lt;key&gt;`.
 
 ### feature join
 

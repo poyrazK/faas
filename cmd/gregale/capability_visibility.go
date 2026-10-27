@@ -318,7 +318,7 @@ func (v capabilityView) withoutHiddenFlags(lines []string, flags []cliFlag) []st
 	var hidden []*regexp.Regexp
 	for _, flag := range flags {
 		if flag.Capability != "" && v.hides(flag.Capability) {
-			hidden = append(hidden, regexp.MustCompile(`--`+regexp.QuoteMeta(flag.Name)+`([ =]|$)`))
+			hidden = append(hidden, regexp.MustCompile(`--`+regexp.QuoteMeta(flag.Name)+`([^a-z0-9-]|$)`))
 		}
 	}
 	if len(hidden) == 0 || lines == nil {

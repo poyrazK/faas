@@ -672,6 +672,7 @@ var CliConfigPath = cliConfigPath
 var CliTreePlaces = cliTreePlaces
 var CliTreeManifest = cliTreeManifest
 var CliTreeSpelling = cliTreeSpelling
+var CliTreeHintTerminal = &cliTreeHintTerminal
 var CliRelatedCommands = &cliRelatedCommands
 var CliSeeAlso = cliSeeAlso
 var CliPreAuthPatch = cliPreAuthPatch

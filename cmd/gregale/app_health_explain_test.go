@@ -29,8 +29,8 @@ func TestAppHealthExplainMatchesInspect(t *testing.T) {
 	t.Setenv("FAAS_CAPABILITY_FLAGS_RELEASE_ALL", "1")
 
 	for _, pair := range [][2][]string{
-		{{"inspect", "demo"}, {"app", "demo", "health", "--explain"}},
-		{{"inspect", "demo", "--errors"}, {"app", "demo", "health", "--errors"}},
+		{{"inspect", "demo"}, {"app", "health", "demo", "--explain"}},
+		{{"inspect", "demo", "--errors"}, {"app", "health", "demo", "--errors"}},
 	} {
 		wantCode, wantOut, wantErr := runCLI(t, pair[0]...)
 		gotCode, gotOut, gotErr := runCLI(t, pair[1]...)

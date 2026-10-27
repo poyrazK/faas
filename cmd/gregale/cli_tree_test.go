@@ -345,16 +345,16 @@ func TestCliTreeSpelling(t *testing.T) {
 	}
 }
 
-// An earlier name still runs; in a terminal it names the tree path on
-// stderr, and --json or --non-interactive print nothing extra.
+// An earlier name still runs; with stderr in a terminal it names the tree
+// path there, and help, --json or --non-interactive print nothing extra.
 func TestCliTreeHintsEarlierNamesInATerminal(t *testing.T) {
 	enableEveryCLIFeature(t)
 	t.Chdir(t.TempDir())
 	t.Setenv("FAAS_TOKEN", "")
 	tty := true
-	prev := *main.TestOnlyTTY
-	*main.TestOnlyTTY = &tty
-	t.Cleanup(func() { *main.TestOnlyTTY = prev })
+	prev := *main.CliTreeHintTerminal
+	*main.CliTreeHintTerminal = func() bool { return tty }
+	t.Cleanup(func() { *main.CliTreeHintTerminal = prev })
 	const hint = "Tip: 'gregale crons list api' is now 'gregale cron list api'"
 	if _, _, stderr := runCLI(t, "crons", "list", "api"); !strings.Contains(stderr, hint) {
 		t.Errorf("crons list in a terminal = %q, want the tree name", stderr)
@@ -363,6 +363,8 @@ func TestCliTreeHintsEarlierNamesInATerminal(t *testing.T) {
 		{"--json", "crons", "list", "api"},
 		{"--non-interactive", "crons", "list", "api"},
 		{"cron", "list", "api"},
+		{"crons", "list", "--help"},
+		{"help", "crons", "list"},
 	} {
 		if _, _, stderr := runCLI(t, args...); strings.Contains(stderr, "Tip: ") {
 			t.Errorf("gregale %s printed a hint: %q", strings.Join(args, " "), stderr)

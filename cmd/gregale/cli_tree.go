@@ -14,9 +14,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"regexp"
 	"slices"
 	"strings"
+
+	"golang.org/x/term"
 
 	"github.com/onebox-faas/faas/pkg/api"
 )
@@ -948,11 +951,15 @@ func cliTreeSpelling(args []string) ([]string, bool) {
 	return candidate, true
 }
 
-// printCliTreeHint names the tree path of a command typed by its earlier
-// name, on stderr in a terminal; --json and --non-interactive runs print
-// nothing extra (ADR-20261026145832 step 5).
+// cliTreeHintTerminal reports whether stderr, where the hint goes, is a
+// terminal. Tests swap it.
+var cliTreeHintTerminal = func() bool { return term.IsTerminal(int(os.Stderr.Fd())) }
+
+// printCliTreeHint names the tree path of a command run by its earlier
+// name, on stderr in a terminal; help, --json and --non-interactive runs
+// print nothing extra (ADR-20261026145832 step 5).
 func printCliTreeHint(w io.Writer, typed []string) {
-	if jsonOutput || !stdoutIsTTY() {
+	if jsonOutput || nonInteractive || !cliTreeHintTerminal() || len(typed) == 0 || typed[0] == "help" || hasHelpFlag(typed) {
 		return
 	}
 	spelled, ok := cliTreeSpelling(typed)

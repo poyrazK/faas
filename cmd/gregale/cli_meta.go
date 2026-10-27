@@ -4933,10 +4933,10 @@ var cliCommands = []cliCommand{
 			{Name: "view", Short: "Save, list and reuse log filters, locally or shared with the team", Notes: []string{
 				"Local views are what `logs views` manages; --shared stores a view on the server as `logs saved` does, so teammates and agents see it. Each verb takes the flags of the command it runs.",
 			}, Examples: []string{"gregale logs view save errors --since 1h --level error", "gregale logs view save errors --shared --level error --app my-api", "gregale logs view list --shared --app my-api", "gregale logs view use errors --default", "gregale logs my-api --view errors"}, Subcommands: []cliSub{
-				{Name: "list", Short: "List local or shared views", Flags: []cliFlag{{Name: "shared", Short: "list the app's server-side views", Bool: true}}},
+				{Name: "list", Short: "List local or shared views", Flags: []cliFlag{{Name: "shared", Short: "list the app's server-side views", Bool: true, Capability: "log-search"}}},
 				{Name: "show", Short: "Show one local view and its commands", Positionals: []string{"<name>"}},
-				{Name: "save", Short: "Save filters as a local or shared view", Positionals: []string{"<name>"}, Flags: []cliFlag{{Name: "shared", Short: "save on the server for the app", Bool: true}}},
-				{Name: "delete", Short: "Delete a local or shared view", Positionals: []string{"<name>"}, Flags: []cliFlag{{Name: "shared", Short: "delete the app's server-side view", Bool: true}}},
+				{Name: "save", Short: "Save filters as a local or shared view", Positionals: []string{"<name>"}, Flags: []cliFlag{{Name: "shared", Short: "save on the server for the app", Bool: true, Capability: "log-search"}}},
+				{Name: "delete", Short: "Delete a local or shared view", Positionals: []string{"<name>"}, Flags: []cliFlag{{Name: "shared", Short: "delete the app's server-side view", Bool: true, Capability: "log-search"}}},
 				{Name: "rename", Short: "Rename a local view", Positionals: []string{"<old-name>", "<new-name>"}},
 				{Name: "copy", Short: "Copy a local view under a new name", Positionals: []string{"<source-name>", "<new-name>"}},
 				{Name: "update", Short: "Change a local view's filters", Positionals: []string{"<name>"}},

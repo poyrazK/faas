@@ -85,4 +85,8 @@ func TestLogsViewSharedFollowsLogSearchVisibility(t *testing.T) {
 	if code, _, stderr := runCLI(t, "logs", "view", "list"); code != 0 {
 		t.Errorf("local views must keep working: %d %q", code, stderr)
 	}
+	// Help leaves the flag out (cliFlag.Capability).
+	if _, help, _ := runCLI(t, "logs", "view", "save", "--help"); strings.Contains(help, "--shared") {
+		t.Errorf("logs view save help lists --shared with log search hidden:\n%s", help)
+	}
 }
