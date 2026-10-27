@@ -26,16 +26,13 @@ const contractDoc = `{"openapi":"3.1.0","info":{"title":"orders","version":"1"},
 "/orders":{"post":{"requestBody":{"required":true,"content":{"application/json":{"schema":{"type":"object","required":["qty"],"properties":{"qty":{"type":"integer"}}}}}},"responses":{"200":{"description":"ok"}}}}}}`
 
 // post sends one anonymous JSON POST through the public edge, retrying the
-// shared rate allowance refusal as get does.
+// gateway's transient refusals as get does.
 func (f *routesFixture) post(t *testing.T, path, body string) int {
 	t.Helper()
-	for attempt := 1; ; attempt++ {
-		_, out, status := doReqHeaders(t, f.h, f.host, http.MethodPost, path, json.RawMessage(body), map[string]string{"Content-Type": "application/json"})
-		if status != http.StatusServiceUnavailable || !strings.Contains(string(out), `"rate_limit_unavailable"`) || attempt == 10 {
-			return status
-		}
-		time.Sleep(time.Second)
-	}
+	_, _, status := edgeRetry(t, http.MethodPost+" "+path, func() (http.Header, []byte, int) {
+		return doReqHeaders(t, f.h, f.host, http.MethodPost, path, json.RawMessage(body), map[string]string{"Content-Type": "application/json"})
+	})
+	return status
 }
 
 func previewRoute(preview api.AppOpenAPIPolicyPreviewResponse, method, path string) (api.AppOpenAPIPolicyPreviewRoute, bool) {
