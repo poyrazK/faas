@@ -1,6 +1,7 @@
 package journeys
 
 import (
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -175,5 +176,25 @@ func TestHarnessStoryBlocksLaterStepsAfterFailure(t *testing.T) {
 	s.check("metrics", func(*testing.T) { ran = true })
 	if ran {
 		t.Fatal("a blocked story ran a later step")
+	}
+}
+
+func TestHarnessFailureCodeNamesProblemOrStatus(t *testing.T) {
+	tests := []struct {
+		r    httpResult
+		want string
+	}{
+		{httpResult{status: 503, body: []byte(`{"code":"traffic_policy_unavailable"}`)}, "traffic_policy_unavailable"},
+		{httpResult{status: 502, body: []byte(`<html>bad gateway</html>`)}, "http_502"},
+		{httpResult{err: errors.New("timeout")}, "transport_error"},
+	}
+	for _, tc := range tests {
+		if got := failureCode(tc.r); got != tc.want {
+			t.Errorf("failureCode(%+v) = %q, want %q", tc.r, got, tc.want)
+		}
+	}
+	var none *continuity
+	if failed, total, _, _ := none.result(); failed != 0 || total != 0 {
+		t.Fatalf("nil continuity reported %d/%d", failed, total)
 	}
 }

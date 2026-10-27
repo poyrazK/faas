@@ -3,6 +3,7 @@ package journeys
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"strings"
@@ -167,20 +168,31 @@ func TestAppLifecycle(t *testing.T) {
 		})
 	}
 
+	var probe *continuity
 	s.step("redeploy_v2", func(t *testing.T) {
-		var probe *continuity
 		if full {
 			probe = watchContinuity(base + "/")
 		}
-		tg.deploy(t, slug, "--path", probeSource(t, "v2"))
-		if probe != nil {
-			if failures := probe.stop(); len(failures) > 0 {
-				t.Errorf("app was unavailable during redeploy (%d of %d probes failed): %s",
-					len(failures), probe.count(), strings.Join(failures, "; "))
+		defer func() {
+			if probe != nil {
+				probe.stop()
 			}
-		}
+		}()
+		tg.deploy(t, slug, "--path", probeSource(t, "v2"))
 		expectVersion(t, base, "v2", 2*time.Minute)
 	})
+	if full {
+		// Its own check so an availability gap is reported without
+		// blocking rollback.
+		s.check("zero_downtime_redeploy", func(t *testing.T) {
+			failed, total, byCode, samples := probe.result()
+			t.Logf("metric redeploy_probe_failures=%d", failed)
+			if failed > 0 {
+				t.Errorf("app was unavailable during redeploy: %d of %d probes failed %v; first: %s",
+					failed, total, byCode, strings.Join(samples, "; "))
+			}
+		})
+	}
 	s.check("deployment_history", func(t *testing.T) {
 		doc := object(t, tg.ok(t, time.Minute, "deployments", "--app", slug).stdout)
 		items, _ := field(doc, "items").([]any)
@@ -249,15 +261,18 @@ func waitParked(t *testing.T, tg *target, slug string) {
 
 // continuity polls a URL once a second and records every non-200 answer.
 type continuity struct {
-	mu       sync.Mutex
-	probes   int
-	failures []string
-	done     chan struct{}
-	wg       sync.WaitGroup
+	mu      sync.Mutex
+	probes  int
+	failed  int
+	byCode  map[string]int // problem code (or HTTP status) -> count
+	samples []string       // the first few failures, verbatim
+	done    chan struct{}
+	stopped sync.Once
+	wg      sync.WaitGroup
 }
 
 func watchContinuity(target string) *continuity {
-	c := &continuity{done: make(chan struct{})}
+	c := &continuity{done: make(chan struct{}), byCode: map[string]int{}}
 	c.wg.Add(1)
 	go func() {
 		defer c.wg.Done()
@@ -271,8 +286,12 @@ func watchContinuity(target string) *continuity {
 				r := get(target)
 				c.mu.Lock()
 				c.probes++
-				if r.status != http.StatusOK && len(c.failures) < 10 {
-					c.failures = append(c.failures, time.Now().UTC().Format("15:04:05")+" "+r.String())
+				if r.status != http.StatusOK {
+					c.failed++
+					c.byCode[failureCode(r)]++
+					if len(c.samples) < 5 {
+						c.samples = append(c.samples, time.Now().UTC().Format("15:04:05")+" "+r.String())
+					}
 				}
 				c.mu.Unlock()
 			}
@@ -281,16 +300,33 @@ func watchContinuity(target string) *continuity {
 	return c
 }
 
-func (c *continuity) stop() []string {
-	close(c.done)
+func (c *continuity) stop() {
+	c.stopped.Do(func() { close(c.done) })
 	c.wg.Wait()
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return c.failures
 }
 
-func (c *continuity) count() int {
+// result reports failed and total probes, failures by code, and samples.
+// A nil continuity (the redeploy never started) reports nothing.
+func (c *continuity) result() (failed, total int, byCode map[string]int, samples []string) {
+	if c == nil {
+		return 0, 0, nil, nil
+	}
+	c.stop()
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	return c.probes
+	return c.failed, c.probes, c.byCode, c.samples
+}
+
+// failureCode names a failed probe by its RFC 7807 code, else its status.
+func failureCode(r httpResult) string {
+	if r.err != nil {
+		return "transport_error"
+	}
+	var p struct {
+		Code string `json:"code"`
+	}
+	if json.Unmarshal(r.body, &p) == nil && p.Code != "" {
+		return p.Code
+	}
+	return fmt.Sprintf("http_%d", r.status)
 }
