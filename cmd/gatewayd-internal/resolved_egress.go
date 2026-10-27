@@ -181,7 +181,7 @@ func (l *localNodeID) Get(ctx context.Context) (string, error) {
 		if l.recheck && !l.rechecking {
 			l.rechecking = true
 			l.recheckDone = make(chan struct{})
-			go l.reresolve(l.recheckDone)
+			go l.reresolve(context.WithoutCancel(ctx), l.recheckDone)
 		}
 		return l.id, nil
 	}
@@ -193,9 +193,9 @@ func (l *localNodeID) Get(ctx context.Context) (string, error) {
 	return l.id, nil
 }
 
-func (l *localNodeID) reresolve(done chan struct{}) {
+func (l *localNodeID) reresolve(ctx context.Context, done chan struct{}) {
 	defer close(done)
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	node, err := l.store.ComputeNodeByName(ctx, l.name)
 	l.mu.Lock()
