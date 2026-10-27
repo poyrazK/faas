@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/publicrouting"
 	"github.com/onebox-faas/faas/pkg/trafficrevocation"
 	"golang.org/x/sync/singleflight"
 )
@@ -271,6 +272,7 @@ func (s *targetSet) routableCount() int {
 // wake-fan-out to remove this fallback.
 type PGBackend struct {
 	trafficRevocations atomic.Pointer[trafficrevocation.Registry]
+	publicRoutingView  atomic.Pointer[publicrouting.Registry]
 	workloadAdmissions workloadAdmissionCache
 	router             Router
 	sched              Scheduler

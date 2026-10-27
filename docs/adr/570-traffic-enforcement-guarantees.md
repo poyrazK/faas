@@ -256,6 +256,11 @@ Another account's broken free-form host match cannot block this tenant.
 Empty verified policies remain
 valid snapshots. Runtime response/span evidence records the digest.
 
+Amended by ADR-20261027085556: a request with no host, smoke, release or
+revision pin routes from its gateway's refreshed view of the app (owner,
+roster and release graph), refreshed every second and on notification, with
+a 5-minute outage grace. Pinned requests keep the per-request read below.
+
 Before public HTTP cache lookup or dispatch, release resolution, revision-pin
 eligibility, host-pinned deployment availability and scoped positive weights
 join one bounded read-only repeatable-read view. Owner identity is verified in

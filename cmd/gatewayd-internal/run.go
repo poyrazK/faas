@@ -81,6 +81,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/logarchive"
 	"github.com/onebox-faas/faas/pkg/middleware"
 	"github.com/onebox-faas/faas/pkg/platformflags"
+	"github.com/onebox-faas/faas/pkg/publicrouting"
 	"github.com/onebox-faas/faas/pkg/reqbudget"
 	"github.com/onebox-faas/faas/pkg/role"
 	"github.com/onebox-faas/faas/pkg/runtimeconfig"
@@ -1308,6 +1309,12 @@ type runDeps struct {
 	sessions           *session.Manager
 	trafficDeadlines   *trafficdeadline.Signer
 	trafficRevocations *trafficrevocation.Registry
+	// publicRoutingView admits ordinary public requests (ADR-20261027085556);
+	// runWithDeps builds it when nil.
+	publicRoutingView *publicrouting.Registry
+	// financialBudgetAdmission defaults to the pgStore-backed check; outage
+	// tests replace it to isolate the routing view.
+	financialBudgetAdmission func(context.Context, gateway.App) error
 	// hostKeyDir (issue #477 / ADR-079) is the directory
 	// secretbox.LoadHostKeys reads from to build the
 	// multi-identity rotation-overlap slice for the basic-auth
@@ -2776,8 +2783,11 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	handler := gateway.NewHandlerWith(deps.backend, deps.metrics, log).WithRetryBudget(retryBudget).
 		WithTrafficDeadlines(deps.trafficDeadlines).WithTrafficRevocations(deps.trafficRevocations).
 		WithSelectorSuffixes(appsSuffix(deps.domains.Apps), hostidentity.DeploySuffix())
-	if deps.pgStore != nil {
-		handler.WithFinancialBudgetAdmission(newFinancialBudgetAdmission(deps.pgStore))
+	if deps.financialBudgetAdmission == nil && deps.pgStore != nil {
+		deps.financialBudgetAdmission = newFinancialBudgetAdmission(deps.pgStore)
+	}
+	if deps.financialBudgetAdmission != nil {
+		handler.WithFinancialBudgetAdmission(deps.financialBudgetAdmission)
 	}
 	if err := configureOperationRoutes(handler, deps); err != nil {
 		return fmt.Errorf("gatewayd-internal: %w", err)
@@ -2842,7 +2852,21 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		if routingStore == nil {
 			routingStore = state.NewPgStore(deps.pool)
 		}
-		handler.WithPublicRoutingPolicy(publicRoutingPinnerFor(routingStore, deps.cachedHostPolicy))
+		// The authoritative host policy reads every request exactly, so it
+		// has no use for the view.
+		var view gateway.PublicRoutingViewSource
+		if deps.cachedHostPolicy {
+			if deps.publicRoutingView == nil {
+				deps.publicRoutingView = publicrouting.New(routingStore)
+			}
+			deps.publicRoutingView.WithLogger(log)
+			go deps.publicRoutingView.Run(counterCtx)
+			if backend, ok := deps.backend.(*gateway.PGBackend); ok {
+				backend.WithPublicRoutingView(deps.publicRoutingView)
+			}
+			view = deps.publicRoutingView
+		}
+		handler.WithPublicRoutingPolicy(publicRoutingViewPinnerFor(routingStore, view, deps.cachedHostPolicy))
 	}
 	if deps.declaredRoutesMatcher != nil && deps.pool != nil {
 		go watchDeclaredRouteInvalidations(ctx, deps.pool, deps.declaredRoutesMatcher, log)
