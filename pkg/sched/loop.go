@@ -4347,6 +4347,8 @@ func (l *Loop) runCronTick(ctx context.Context) {
 		return
 	}
 	now := l.now()
+	oldestCronsFirst(crons)
+	plans := newCronPlanGate(store)
 	for _, c := range crons {
 		app, appErr := store.AppByID(ctx, c.AppID)
 		if appErr != nil {
@@ -4360,6 +4362,12 @@ func (l *Loop) runCronTick(ctx context.Context) {
 		if !l.engine.ownsApp(app) {
 			if len(c.Command) > 0 {
 				l.cronMetrics.decision("not_owned")
+			}
+			continue
+		}
+		if !plans.admit(ctx, app) {
+			if len(c.Command) > 0 {
+				l.cronMetrics.decision("plan_limit")
 			}
 			continue
 		}

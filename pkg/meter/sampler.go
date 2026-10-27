@@ -825,10 +825,19 @@ func (s *Sampler) rollApps(ctx context.Context, observedAt, minute time.Time, ex
 			deploymentFloor = max(deploymentFloor, dep.EffectiveMinInstances())
 		}
 		floor = max(floor, deploymentFloor)
+		// Bill only the floor schedd may hold under the plan: a stored floor
+		// outlives a downgrade, and schedd then holds none (Free) or no more
+		// than the plan allows, while the gap was still billed. An unknown
+		// plan (a failed prefetch) keeps the stored floor, as before.
+		floorCap := floor
+		if plan, known := planByAccount[app.AccountID]; known {
+			floorCap = planFloorCap(app, plan)
+		}
+		floor = min(floor, floorCap)
 		floorSeconds := int64(floor) * 60
 		floorGap := floor > 0 && liveCount < floor
 		if exactResidency {
-			floorSeconds = app.EffectiveMinInstanceSecondsInMinute(minute, deploymentFloor)
+			floorSeconds = min(app.EffectiveMinInstanceSecondsInMinute(minute, deploymentFloor), int64(floorCap)*60)
 			floorGap = floorSeconds > liveSeconds
 		}
 		if floorGap {

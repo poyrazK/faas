@@ -882,3 +882,12 @@ func MarkPreWakeForTest(ctx context.Context) {
 }
 
 var LogVMMBootFailure = logVMMBootFailure
+
+// NewCronPlanGate exposes the cron plan gate's admit decision.
+func NewCronPlanGate(accounts interface {
+	AccountByID(context.Context, string) (state.Account, error)
+}) func(context.Context, state.App) bool {
+	return newCronPlanGate(accounts).admit
+}
+
+var OldestCronsFirst = oldestCronsFirst
