@@ -341,8 +341,9 @@ export class EdgeRulesService {
    * retry, circuit_breaker, async, waf and challenge. `action` is the
    * kind's action object (the EdgeRule*Action schemas). jwt, ip and async
    * return 402 plan_edge_rule_kind_not_allowed on Free; a kind past its
-   * per-app quota returns 402 plan_edge_rule_kind_quota_reached, and the
-   * per-app total 402 plan_limit_edge_rules. Reference:
+   * per-app quota returns 403 plan_edge_rule_kind_quota_reached, the per-app
+   * total 403 plan_limit_edge_rules, and a kind not enabled for the account
+   * 403 capability_not_released. Reference:
    * https://gregale.dev/docs/edge-rules
    *
    * @returns EdgeRuleResponse Rule created.

@@ -1309,4 +1309,11 @@ The last code items before edge rules leave beta.
     the time is an upper bound). A host with a handful of rules costs a
     small fraction of that.
 5. The create-rule API description listed 10 of the 20 kinds; it lists all
-  of them and links the reference.
+  of them and links the reference. It, and `docs/edge-rules.md`, now give
+  the status codes the API returns: 403 for `plan_limit_edge_rules` and
+  `plan_edge_rule_kind_quota_reached` (they said 402), 402 for
+  `plan_edge_rule_kind_not_allowed`, and 403 `capability_not_released` for
+  a kind not enabled for the account. The reference also says that `retry`
+  and `circuit_breaker` (capability maturity `internal`) and `async`
+  (`preview`) are enabled per account. The kind-quota error passed its limit
+  and usage in the wrong order; fixed.

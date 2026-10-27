@@ -172,12 +172,17 @@ Each rule has one `kind` and an `action` object whose fields depend on it.
 | [`maintenance`](#maintenance) | Answers 503 for a route | All |
 | [`budget`](#budget) | Sets a route's time budget | All |
 | [`cache`](#cache) | Caches responses at the edge | Hobby+ |
-| [`retry`](#retry) | Tunes replay of requests that failed in transport | Hobby+ |
-| [`circuit_breaker`](#circuit_breaker) | Tunes when a failing instance is taken out | Hobby+ |
-| [`async`](#async) | Accepts the request and runs it later | Hobby+ |
+| [`retry`](#retry) | Tunes replay of requests that failed in transport | Hobby+, on request* |
+| [`circuit_breaker`](#circuit_breaker) | Tunes when a failing instance is taken out | Hobby+, on request* |
+| [`async`](#async) | Accepts the request and runs it later | Hobby+, preview* |
 | [`respond`](#respond) | Answers with fixed JSON (preview apps only) | All |
 | `waf` | Checks requests against the OWASP Core Rule Set; see [Web application firewall](security#web-application-firewall) | Pro+ |
 | `challenge` | Asks browsers for a proof of work; see [Browser challenge](security#browser-challenge) | Hobby+ |
+
+\* `retry` and `circuit_breaker` are not yet generally available, and `async`
+is in preview. Each is enabled per account: until it is enabled for yours,
+creating such a rule returns 403 `capability_not_released`. Contact support
+to have one enabled.
 
 `ip`, `geo`, `throttle` and blocking `waf` rules can also put a client they
 keep refusing in a penalty box for the whole app; see
@@ -569,10 +574,11 @@ A deployment also records the rules it went live with.
 | Items per list | 0 | 100 | 1000 | 10000 |
 | Event history | 24 hours | 72 hours | 7 days | 7 days |
 
-A rule past a count limit is refused with 402
+A rule past a count limit is refused with 403
 `plan_edge_rule_kind_quota_reached` (or `plan_limit_edge_rules` for the rule
-total), and a kind your plan does not include with 402
-`plan_edge_rule_kind_not_allowed`.
+total), a kind your plan does not include with 402
+`plan_edge_rule_kind_not_allowed`, and a kind not enabled for your account
+with 403 `capability_not_released`.
 
 ## Responses from the edge
 

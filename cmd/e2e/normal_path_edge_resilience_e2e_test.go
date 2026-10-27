@@ -126,11 +126,13 @@ func TestE2E_NormalPath_EdgeRetryReplaysTransportFailure(t *testing.T) {
 }
 
 // TestE2E_NormalPath_EdgeCircuitBreakerKeepsFailedInstanceOut: a
-// kind=circuit_breaker rule with min_requests=1 opens an instance's circuit
-// on its first transport failure and keeps it out of rotation for
-// open_seconds, even after the instance comes back. The default breaker
-// needs five failures, so without the rule one failure does not open it and
-// the instance serves again once it rejoins.
+// kind=circuit_breaker rule with min_requests=1 and a near-zero
+// failure_threshold (the ratio counts the instance's earlier successes in the
+// window) opens an instance's circuit on its first transport failure and
+// keeps it out of rotation for open_seconds, even after the instance comes
+// back. The default breaker needs five observations and a 50% failure ratio,
+// so without the rule one failure does not open it and the instance serves
+// again once it rejoins.
 //
 // Two waits are inherent: the gateway caches an app's breaker tuning for
 // 30 s (circuitConfigTTL) and the fixture's first requests cached "no rule";
@@ -148,7 +150,7 @@ func TestE2E_NormalPath_EdgeCircuitBreakerKeepsFailedInstanceOut(t *testing.T) {
 			if tuned {
 				createNormalPathEdgeRule(t, f, map[string]any{
 					"kind": "circuit_breaker", "match_host": api.EdgeRuleAppHosts, "match_path": "/**",
-					"action": map[string]any{"failure_threshold": 0.5, "min_requests": 1, "window_seconds": 60,
+					"action": map[string]any{"failure_threshold": 0.01, "min_requests": 1, "window_seconds": 60,
 						"open_seconds": 300, "max_open_seconds": 600},
 				})
 				// Let the cached "no rule" tuning expire; one request then
