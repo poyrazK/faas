@@ -19,18 +19,25 @@ const syntheticCheckTick = 30 * time.Second
 const syntheticCheckConcurrency = 8
 
 // runSyntheticChecks probes due checks until ctx ends. A store that
-// predates ADR-748 disables the runner rather than failing meterd.
-func runSyntheticChecks(ctx context.Context, store state.Store, appsDomain string, log *slog.Logger) {
+// predates ADR-748 disables the runner rather than failing meterd. loops
+// exports the runner's health (ADR-20261024222102).
+func runSyntheticChecks(ctx context.Context, store state.Store, appsDomain string, loops *observabilityLoops, log *slog.Logger) {
 	runs, ok := store.(state.SyntheticRunStore)
 	if !ok {
 		log.Info("meterd: synthetic checks disabled; store does not support them")
 		return
 	}
+	loops.setEnabled(loopSyntheticChecks, true)
+	defer loops.setEnabled(loopSyntheticChecks, false)
 	r := &synthetics.Runner{Store: runs, AppsDomain: appsDomain, Concurrency: syntheticCheckConcurrency, Log: log}
 	ticker := time.NewTicker(syntheticCheckTick)
 	defer ticker.Stop()
 	for {
 		stats, err := r.RunOnce(ctx)
+		loops.pass(loopSyntheticChecks, err, time.Now())
+		loops.add(loopSyntheticChecks, "ok", stats.OK)
+		loops.add(loopSyntheticChecks, "failed", stats.Failed)
+		loops.add(loopSyntheticChecks, "record_error", stats.RecordErrors)
 		switch {
 		case err != nil:
 			log.Warn("meterd: synthetic checks", "err", err)

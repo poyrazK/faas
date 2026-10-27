@@ -550,7 +550,7 @@ WITH candidate AS (
     JOIN event_fanout_outbox o ON o.id=r.outbox_id
     LEFT JOIN event_routing_fairness fa ON fa.account_id=o.account_id AND fa.subscription_id=''
     LEFT JOIN event_routing_fairness fc ON fc.account_id=o.account_id AND fc.subscription_id=r.subscription_id
-    WHERE ((r.state = 'pending' AND (r.available_at <= $1::timestamptz OR r.delivery_deadline_at <= $1::timestamptz OR event_recipient_schema_version_mismatch(r.recipient,o.payload)))
+    WHERE ((r.state = 'pending' AND (r.available_at <= $1::timestamptz OR r.delivery_deadline_at <= $1::timestamptz))
        OR (r.state = 'processing' AND r.lease_until <= $1::timestamptz))
       AND ($2::boolean OR NOT r.recipient ? 'workflow')
       AND (r.backfill_job_id IS NULL OR EXISTS (
@@ -637,7 +637,6 @@ func (q *Queries) EventRecipientClaim(ctx context.Context, db DBTX, arg EventRec
 const eventRecipientClaimBatch = `-- name: EventRecipientClaimBatch :many
 WITH eligible AS MATERIALIZED (
     SELECT r.outbox_id, r.subscription_id, o.account_id, r.available_at,
-        event_recipient_schema_version_mismatch(r.recipient,o.payload) AS schema_mismatch,
         coalesce(fa.last_claimed_at,'epoch'::timestamptz) AS account_served,
         coalesce(fc.last_claimed_at,'epoch'::timestamptz) AS consumer_served,
         (EXISTS (SELECT 1 FROM event_subscription_delivery_controls c
@@ -648,7 +647,7 @@ WITH eligible AS MATERIALIZED (
     JOIN event_fanout_outbox o ON o.id=r.outbox_id
     LEFT JOIN event_routing_fairness fa ON fa.account_id=o.account_id AND fa.subscription_id=''
     LEFT JOIN event_routing_fairness fc ON fc.account_id=o.account_id AND fc.subscription_id=r.subscription_id
-    WHERE ((r.state = 'pending' AND (r.available_at <= $1::timestamptz OR r.delivery_deadline_at <= $1::timestamptz OR event_recipient_schema_version_mismatch(r.recipient,o.payload)))
+    WHERE ((r.state = 'pending' AND (r.available_at <= $1::timestamptz OR r.delivery_deadline_at <= $1::timestamptz))
        OR (r.state = 'processing' AND r.lease_until <= $1::timestamptz))
       AND ($2::boolean OR NOT r.recipient ? 'workflow')
       AND (r.backfill_job_id IS NULL OR EXISTS (
@@ -658,26 +657,26 @@ WITH eligible AS MATERIALIZED (
       AND (r.delivery_deadline_at <= $1::timestamptz OR event_recipient_schema_version_mismatch(r.recipient,o.payload) OR event_subscription_delivery_waiting_reason(o.account_id,r.app_id,r.subscription_id,$1::timestamptz)='')
       AND (r.delivery_deadline_at <= $1::timestamptz OR event_recipient_schema_version_mismatch(r.recipient,o.payload) OR NOT event_recipient_order_blocked(r.outbox_id, r.subscription_id, r.recipient, true))
 ), consumer_rounds AS (
-    SELECT e.outbox_id, e.subscription_id, e.account_id, e.available_at, e.schema_mismatch, e.account_served, e.consumer_served, e.controlled, row_number() OVER consumer_order AS consumer_round,
+    SELECT e.outbox_id, e.subscription_id, e.account_id, e.available_at, e.account_served, e.consumer_served, e.controlled, row_number() OVER consumer_order AS consumer_round,
         first_value(e.available_at) OVER consumer_order AS consumer_first_available_at,
         first_value(e.outbox_id) OVER consumer_order AS consumer_first_outbox_id
     FROM eligible e
     WINDOW consumer_order AS (PARTITION BY e.account_id, e.subscription_id ORDER BY e.available_at, e.outbox_id)
 ), account_rounds AS (
-    SELECT c.outbox_id, c.subscription_id, c.account_id, c.available_at, c.schema_mismatch, c.account_served, c.consumer_served, c.controlled, c.consumer_round, c.consumer_first_available_at, c.consumer_first_outbox_id, row_number() OVER (PARTITION BY c.account_id ORDER BY c.consumer_round, c.consumer_served,
+    SELECT c.outbox_id, c.subscription_id, c.account_id, c.available_at, c.account_served, c.consumer_served, c.controlled, c.consumer_round, c.consumer_first_available_at, c.consumer_first_outbox_id, row_number() OVER (PARTITION BY c.account_id ORDER BY c.consumer_round, c.consumer_served,
         c.consumer_first_available_at, c.consumer_first_outbox_id, c.subscription_id) AS account_round
     FROM consumer_rounds c
     WHERE c.consumer_round = 1 OR NOT c.controlled
 ), account_firsts AS (
     -- Later rounds visit accounts in the order their first claims took.
-    SELECT a.outbox_id, a.subscription_id, a.account_id, a.available_at, a.schema_mismatch, a.account_served, a.consumer_served, a.controlled, a.consumer_round, a.consumer_first_available_at, a.consumer_first_outbox_id, a.account_round, first_value(a.consumer_served) OVER account_order AS first_consumer_served,
+    SELECT a.outbox_id, a.subscription_id, a.account_id, a.available_at, a.account_served, a.consumer_served, a.controlled, a.consumer_round, a.consumer_first_available_at, a.consumer_first_outbox_id, a.account_round, first_value(a.consumer_served) OVER account_order AS first_consumer_served,
         first_value(a.available_at) OVER account_order AS first_available_at,
         first_value(a.outbox_id) OVER account_order AS first_outbox_id,
         first_value(a.subscription_id) OVER account_order AS first_subscription_id
     FROM account_rounds a
     WINDOW account_order AS (PARTITION BY a.account_id ORDER BY a.account_round)
 ), ordered AS (
-    SELECT f.outbox_id, f.subscription_id, f.schema_mismatch,
+    SELECT f.outbox_id, f.subscription_id,
         row_number() OVER (ORDER BY f.account_round, f.account_served, f.first_consumer_served,
             f.first_available_at, f.first_outbox_id, f.first_subscription_id) AS position
     FROM account_firsts f
@@ -690,7 +689,7 @@ WITH eligible AS MATERIALIZED (
     FROM event_fanout_recipients r
     JOIN ordered k ON k.outbox_id=r.outbox_id AND k.subscription_id=r.subscription_id
     WHERE k.position <= 2 * $3::integer
-      AND ((r.state = 'pending' AND (r.available_at <= $1::timestamptz OR r.delivery_deadline_at <= $1::timestamptz OR k.schema_mismatch))
+      AND ((r.state = 'pending' AND (r.available_at <= $1::timestamptz OR r.delivery_deadline_at <= $1::timestamptz))
        OR (r.state = 'processing' AND r.lease_until <= $1::timestamptz))
     ORDER BY k.position
     FOR UPDATE OF r SKIP LOCKED LIMIT $3::integer
@@ -762,6 +761,11 @@ type EventRecipientClaimBatchRow struct {
 // in service order and rotates the account's consumers. A consumer with
 // delivery controls contributes one recipient per batch, so its admission
 // gate sees current counters before its next claim.
+//
+// The due test is index-shaped (ADR-614 amendment 2026-10-27): a recipient is
+// due by its available_at, its delivery deadline or its lapsed lease, never by
+// a per-row function, so recipients backing off are not read. A schema
+// mismatch is fixed at capture and filtered on the recipient's first claim.
 func (q *Queries) EventRecipientClaimBatch(ctx context.Context, db DBTX, arg EventRecipientClaimBatchParams) ([]EventRecipientClaimBatchRow, error) {
 	rows, err := db.Query(ctx, eventRecipientClaimBatch, arg.NowAt, arg.IncludeWorkflows, arg.BatchLimit)
 	if err != nil {

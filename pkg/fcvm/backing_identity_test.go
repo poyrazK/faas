@@ -4,13 +4,18 @@ package fcvm
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"os"
 	"path/filepath"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/storage"
 	"github.com/onebox-faas/faas/pkg/wire"
 )
@@ -245,5 +250,114 @@ func TestMigrationCaptureRestoresOnTheDestination(t *testing.T) {
 	}
 	if inst.Method != WakeRestore {
 		t.Fatalf("destination method = %s, want restore from the migration capture", inst.Method)
+	}
+}
+
+func sha256Of(content string) string {
+	sum := sha256.Sum256([]byte(content))
+	return "sha256:" + hex.EncodeToString(sum[:])
+}
+
+// adr: 510 — the first boot of a base used to hash all of it in the wake
+// path (48 s for the 2.3 GB agent base). The wake now returns while the hash
+// runs; the identity is still the version the VM booted with, even when a
+// refresh replaces the base meanwhile, and a capture waits for it.
+func TestInstanceBackingIsHashedOffTheWakePath(t *testing.T) {
+	ctx := t.Context()
+	f := newBackingFixture(ctx, t)
+	release := make(chan struct{})
+	f.m.beforeBackingHash = func(path string) {
+		if path == f.base {
+			<-release
+		}
+	}
+	returned := make(chan struct{})
+	go func() {
+		f.m.rememberInstanceBacking("i", f.base)
+		close(returned)
+	}()
+	select {
+	case <-returned:
+	case <-time.After(5 * time.Second):
+		t.Fatal("rememberInstanceBacking waited for the base hash")
+	}
+	replaceFile(t, f.base, "base-layout-b")
+	captured := make(chan struct{})
+	go func() {
+		f.m.writeSnapshotBacking(ctx, "i", "snap/d1/captures/c1/v2/mem")
+		close(captured)
+	}()
+	select {
+	case <-captured:
+		t.Fatal("a capture did not wait for the pending identity")
+	case <-time.After(100 * time.Millisecond):
+	}
+	close(release)
+	<-captured
+	identity, ok := f.m.awaitInstanceBacking(ctx, "i")
+	if !ok || identity.Base != sha256Of("base-layout-a") || identity.Kernel != sha256Of("kernel-v1") || !identity.complete() {
+		t.Fatalf("identity = %+v, %v; want the booted base-layout-a", identity, ok)
+	}
+	rc, err := f.m.storage.Get(ctx, state.SnapshotBackingKey(state.Snapshot{StorageKey: "snap/d1/captures/c1/v2/mem"}))
+	if err != nil {
+		t.Fatalf("capture wrote no identity: %v", err)
+	}
+	_ = rc.Close()
+}
+
+// Concurrent first boots of one base version read it once.
+func TestConcurrentBackingDigestsHashAFileOnce(t *testing.T) {
+	f := newBackingFixture(t.Context(), t)
+	var hashes atomic.Int32
+	release := make(chan struct{})
+	f.m.beforeBackingHash = func(string) {
+		hashes.Add(1)
+		<-release
+	}
+	var wg sync.WaitGroup
+	digests := make([]string, 4)
+	for i := range digests {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			digests[i], _ = f.m.fileDigest(f.base)
+		}()
+	}
+	time.Sleep(100 * time.Millisecond)
+	close(release)
+	wg.Wait()
+	for _, d := range digests {
+		if d != sha256Of("base-layout-a") {
+			t.Fatalf("digests = %q", digests)
+		}
+	}
+	if n := hashes.Load(); n != 1 {
+		t.Fatalf("hashed %d times, want once", n)
+	}
+}
+
+// A later wake of the same instance name supersedes a pending identity.
+func TestLaterWakeSupersedesAPendingBacking(t *testing.T) {
+	ctx := t.Context()
+	f := newBackingFixture(ctx, t)
+	release := make(chan struct{})
+	var first atomic.Bool
+	f.m.beforeBackingHash = func(path string) {
+		if path == f.base && first.CompareAndSwap(false, true) {
+			<-release
+		}
+	}
+	f.m.rememberInstanceBacking("i", f.base)
+	time.Sleep(50 * time.Millisecond)
+	replaceFile(t, f.base, "base-layout-b")
+	f.m.rememberInstanceBacking("i", f.base)
+	identity, ok := f.m.awaitInstanceBacking(ctx, "i")
+	close(release)
+	if !ok || identity.Base != sha256Of("base-layout-b") {
+		t.Fatalf("identity = %+v, %v; want the later wake's base-layout-b", identity, ok)
+	}
+	time.Sleep(50 * time.Millisecond)
+	if again, _ := f.m.awaitInstanceBacking(ctx, "i"); again.Base != sha256Of("base-layout-b") {
+		t.Fatalf("the superseded hash overwrote the identity: %+v", again)
 	}
 }

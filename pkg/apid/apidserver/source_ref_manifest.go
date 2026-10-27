@@ -483,6 +483,9 @@ func (s *server) applySourceRefManifest(ctx context.Context, acct state.Account,
 			if limits.CronLimitPerApp == 0 {
 				return staged, api.ErrPlanCronsNotAllowed(acct.Plan)
 			}
+			if problem := api.ValidateCronPath(declaration.Path); problem != nil {
+				return staged, problem
+			}
 			cron, createErr := s.store.CreateCronIfUnderQuota(ctx, app.ID, declaration.Schedule, declaration.Path, declaration.IsEnabled(), limits)
 			if createErr != nil {
 				return staged, sourceRefManifestStoreProblem(createErr, acct.Plan, true)

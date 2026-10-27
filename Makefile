@@ -951,11 +951,11 @@ ha-write-redirect-drill: ## Tier A9 / ADR-089: standby write-redirect drill on t
 	  exit 0'
 
 .PHONY: lint-changed
-lint-changed: ## golangci-lint only what your change touches (ci-light's selection vs origin/main) + teststorecheck + sealdomaincheck; BASE=<ref>, DRY_RUN=1
+lint-changed: ## golangci-lint only what your change touches (ci-light's selection vs origin/main) + teststorecheck + sealdomaincheck + problemdetailcheck; BASE=<ref>, DRY_RUN=1
 	@$(GO_DEV_ENV) GO=$(GO) bash scripts/lint-changed.sh
 
 .PHONY: lint
-lint: egress-check lint-incompatible-mods image-validate sealed-env-scope-check seal-domain-scope-check runbook-sql-check text-encoding-check shell-quoting-check adr-number-uniqueness-check trimpath-check check-durable-entity-sdk-contract check-binding-runner-sync ## golangci-lint via go tool (matches CI version v2.14.0) + repository policy gates
+lint: egress-check lint-incompatible-mods image-validate sealed-env-scope-check seal-domain-scope-check problem-detail-check runbook-sql-check text-encoding-check shell-quoting-check adr-number-uniqueness-check trimpath-check check-durable-entity-sdk-contract check-binding-runner-sync ## golangci-lint via go tool (matches CI version v2.14.0) + repository policy gates
 	@python3 scripts/ci/check_gosec_baseline.py
 	@$(GO_DEV_ENV) GO="$(GO)" python3 scripts/ci/lint_go_shard.py --shard 1 --shards 1 -- $(GO) tool golangci-lint
 
@@ -1078,6 +1078,10 @@ sealed-env-scope-check: ## Static gate: /etc/faas/sealed.env is loaded only by f
 .PHONY: seal-domain-scope-check
 seal-domain-scope-check: ## Static gate: private age identities, direct identity loaders and unsealed bytea columns only shrink (ADR 20261022111812)
 	@$(GO) run ./scripts/ci/sealdomaincheck -root $(CURDIR)
+
+.PHONY: problem-detail-check
+problem-detail-check: ## Static gate: a 5xx problem detail never carries error text (log it; api.DetailServerFailure)
+	@$(GO) run ./scripts/ci/problemdetailcheck -root $(CURDIR)
 
 .PHONY: text-encoding-check
 text-encoding-check: ## Static gate: no JSON built with fmt %q, no free text truncated with a byte slice

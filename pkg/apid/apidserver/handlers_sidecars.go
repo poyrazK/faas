@@ -148,7 +148,7 @@ func sealSidecars(ss api.Sidecars, recipient *age.X25519Recipient, limits api.Li
 	if err != nil {
 		return nil, api.NewProblem(http.StatusInternalServerError,
 			api.CodeCapacity, "Failed to marshal sealed sidecars",
-			fmt.Sprintf("marshal sealed sidecars: %v", err))
+			"The sidecar definitions could not be encoded.")
 	}
 	return raw, nil
 }

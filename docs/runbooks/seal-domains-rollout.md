@@ -1156,10 +1156,10 @@ converge. Values re-sealed in this step stay domain-only, so:
 apid both seals and opens account values, so it holds `account.age` itself;
 there is no recipient file. It covers TOTP secrets, inbound webhook
 secrets, billing provider keys, managed workflow plans, PagerDuty
-acknowledgement secrets, and GitLab, Slack and Linear credentials. The other
-account columns (product email, managed realtime, data pipelines, project
-clones) stay on the fleet key until later releases (ADR 20261022111812,
-tenth and eleventh slices).
+acknowledgement secrets, GitLab, Slack and Linear credentials, and product
+email values. The other account columns (managed realtime, data pipelines,
+project clones) stay on the fleet key until later releases (ADR
+20261022111812, tenth to twelfth slices).
 
 ### 12a. Create the identity (operator machine)
 

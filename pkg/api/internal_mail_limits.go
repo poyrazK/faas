@@ -145,26 +145,35 @@ const (
 	InternalMailDeploymentFailedOriginMaxBytes     = 256
 	InternalMailDeploymentFailedCaptureBatch       = 25
 	InternalMailDeploymentFailedCooldown           = time.Hour
-	InternalMailSubscriptionEndedTTL               = 24 * time.Hour
-	InternalMailSubscriptionEndedMaxBytes          = 512
-	InternalMailSubscriptionEndedIDMaxBytes        = 256
-	InternalMailQuotaWarningTTL                    = 24 * time.Hour
-	InternalMailQuotaWarningMaxBytes               = 3072
-	InternalMailQuotaWarningUnsubscribeMaxBytes    = 2048
-	InternalMailQuotaWarningFollowupLease          = 5 * time.Minute
-	InternalMailQuotaWarningCommandTimeout         = 5 * time.Second
-	InternalMailQuotaWarningCommandMaxBytes        = 4096
-	InternalMailQuotaWarningTokenMinBytes          = 32
-	InternalMailQuotaWarningTokenMaxBytes          = 4096
-	InternalMailNonpaymentDeletionTTL              = 24 * time.Hour
-	InternalMailNonpaymentDeletionMaxBytes         = 512
-	InternalMailNonpaymentDeletionFollowupLease    = 5 * time.Minute
-	InternalMailNonpaymentDeletionCommandTimeout   = 5 * time.Second
-	InternalMailNonpaymentDeletionCommandMaxBytes  = 4096
-	InternalMailNonpaymentDeletionTokenMinBytes    = 32
-	InternalMailNonpaymentDeletionTokenMaxBytes    = 4096
-	InternalMailAccountSuspendedTTL                = 24 * time.Hour
-	InternalMailAccountSuspendedMaxBytes           = 512
+	// An agent run's mailed summary (ADR-20261027090010 §8): the sealed payload stays
+	// within the outbox's 4 KiB ciphertext bound, so only the first
+	// InternalMailAgentRunSummaryMaxBytes of the result field travel; the
+	// rest stays behind the authenticated outputs endpoint.
+	InternalMailAgentRunDeliveredTTL              = 24 * time.Hour
+	InternalMailAgentRunDeliveredMaxBytes         = 2048
+	InternalMailAgentRunSummaryMaxBytes           = 1200
+	InternalMailAgentRunNameMaxBytes              = 64
+	InternalMailAgentRunCaptureBatch              = 25
+	InternalMailSubscriptionEndedTTL              = 24 * time.Hour
+	InternalMailSubscriptionEndedMaxBytes         = 512
+	InternalMailSubscriptionEndedIDMaxBytes       = 256
+	InternalMailQuotaWarningTTL                   = 24 * time.Hour
+	InternalMailQuotaWarningMaxBytes              = 3072
+	InternalMailQuotaWarningUnsubscribeMaxBytes   = 2048
+	InternalMailQuotaWarningFollowupLease         = 5 * time.Minute
+	InternalMailQuotaWarningCommandTimeout        = 5 * time.Second
+	InternalMailQuotaWarningCommandMaxBytes       = 4096
+	InternalMailQuotaWarningTokenMinBytes         = 32
+	InternalMailQuotaWarningTokenMaxBytes         = 4096
+	InternalMailNonpaymentDeletionTTL             = 24 * time.Hour
+	InternalMailNonpaymentDeletionMaxBytes        = 512
+	InternalMailNonpaymentDeletionFollowupLease   = 5 * time.Minute
+	InternalMailNonpaymentDeletionCommandTimeout  = 5 * time.Second
+	InternalMailNonpaymentDeletionCommandMaxBytes = 4096
+	InternalMailNonpaymentDeletionTokenMinBytes   = 32
+	InternalMailNonpaymentDeletionTokenMaxBytes   = 4096
+	InternalMailAccountSuspendedTTL               = 24 * time.Hour
+	InternalMailAccountSuspendedMaxBytes          = 512
 	// A compute cap warning is useful for a day; later sweeps never resend it.
 	InternalMailManagedPostgresCapTTL         = 24 * time.Hour
 	InternalMailManagedPostgresCapMaxBytes    = 512

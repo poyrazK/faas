@@ -19066,10 +19066,11 @@ func (s *PgStore) ComputeNodeByName(ctx context.Context, name string) (ComputeNo
 
 // ComputeNodeUsedMB returns the Σ(ram_mb + api.PerVMOverheadMB) for live
 // instances on the given node. Mirrors the §6.2-2 invariant re-stated
-// per-node: Σ ≤ admission_ceiling_mb per active node. Live = state ∈
-// ('waking','cold_booting','running','draining'); SNAPSHOTTING is excluded because
-// the watchdog considers a snapshotting instance parked-from-RAM (its
-// resident memory is being flushed to disk, not held for requests).
+// per-node: Σ ≤ admission_ceiling_mb per active node. Counted = state ∈
+// ('waking','cold_booting','running','draining','warm','snapshotting'). A
+// SNAPSHOTTING instance serves no requests, but its VM holds its RAM until
+// the capture finishes, so the node cannot lend that memory to a new
+// instance (ADR-20261027172037). The durable reservation sums the same set.
 // The 8 MB per-vm constant lives in pkg/api (pkg/api.PerVMOverheadMB)
 // — the single source of truth shared with sched.Ledger's reservation
 // math and the §4.7 billing model. Reading from pkg/api rather than a
@@ -19081,7 +19082,7 @@ func (s *PgStore) ComputeNodeUsedMB(ctx context.Context, nodeID string) (int64, 
 		select coalesce(sum(ram_mb + $2), 0)::bigint
 		  from instances
 		 where node_id = $1
-		   and state in ('waking','cold_booting','running','draining','warm')
+		   and state in ('waking','cold_booting','running','draining','warm','snapshotting')
 	`, nodeID, api.PerVMOverheadMB).Scan(&used)
 	if err != nil {
 		return 0, fmt.Errorf("state: compute_node %s used_mb: %w", nodeID, err)
@@ -19116,7 +19117,7 @@ func (s *PgStore) ComputeNodeUsedMBByNode(ctx context.Context, nodeIDs []string)
 		select node_id::text, coalesce(sum(ram_mb + $2), 0)::bigint
 		  from instances
 		 where node_id = any($1::uuid[])
-		   and state in ('waking','cold_booting','running','draining','warm')
+		   and state in ('waking','cold_booting','running','draining','warm','snapshotting')
 		 group by node_id
 	`, parsedIDs, api.PerVMOverheadMB)
 	if err != nil {

@@ -152,6 +152,7 @@ type server struct {
 	changeTimelineEnabled                  bool // ADR-751 (FAAS_CHANGE_TIMELINE_ENABLED=1)
 	anomalyAlertsEnabled                   bool // ADR-744 (FAAS_ANOMALY_ALERTS_ENABLED=1)
 	customMetricHistoryEnabled             bool // ADR-745 (FAAS_CUSTOM_METRIC_HISTORY_ENABLED=1)
+	datadogIntegrationEnabled              bool // ADR-752 (FAAS_DATADOG_INTEGRATION_ENABLED=1)
 	devBridgeURL                           string
 	devBridgeObserver                      *devbridge.Observer
 	operation                              operation.Service // ADR-977; Host wired in newServer
@@ -1805,6 +1806,9 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("POST /v1/runtime/data-api/usage", s.reportDataAPIUsage)
 	mux.HandleFunc("GET /v1/apps/{slug}/data-api/usage", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.appDataAPIUsage)))
 	mux.HandleFunc("GET /v1/apps/{slug}/data-api/connection-budget", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresReadSurface...)(s.appDataAPIConnectionBudget))))
+	// ADR-20261027123814: owner contract inspection, gated by the Data API capability.
+	mux.HandleFunc("POST /v1/apps/{slug}/data-api/contract-tasks", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.createDataAPIContractTask)))))
+	mux.HandleFunc("GET /v1/apps/{slug}/data-api/contract-tasks/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getDataAPIContractTask))))
 	mux.HandleFunc("POST /v1/postgres/databases/{id}/bindings", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresManageSurface...)(s.requireVerifiedEmail(s.idempotent(s.createManagedPostgresBinding))))))
 	mux.HandleFunc("GET /v1/postgres/bindings/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresReadSurface...)(s.getManagedPostgresBinding))))
 	mux.HandleFunc("DELETE /v1/postgres/bindings/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresManageSurface...)(s.idempotent(s.deleteManagedPostgresBinding)))))
@@ -4070,6 +4074,7 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("POST /v1/apps/{slug}/profiles/captures", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.profileCaptures.Create))))
 	mux.HandleFunc("GET /v1/apps/{slug}/profiles/captures", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.profileCaptures.List))))
 	mux.HandleFunc("GET /v1/apps/{slug}/profiles/captures/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.profileCaptures.Get))))
+	mux.HandleFunc("DELETE /v1/apps/{slug}/profiles/captures/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.profileCaptures.Delete))))
 	mux.HandleFunc("GET /v1/apps/{slug}/profiles/captures/{id}/view", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.profileCaptures.View))))
 	mux.HandleFunc("GET /v1/apps/{slug}/profiles/captures/{id}/pprof", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.profileCaptures.Download))))
 	mux.HandleFunc("GET /v1/apps/{slug}/profiles/captures/{id}/diff", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.profileCaptures.Diff))))

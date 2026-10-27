@@ -1,19 +1,5 @@
 # Deploys
 
-Atomic projects can opt into adding independent HTTP source services with
-`gregale deploy --project --atomic --add-services --verify --yes`. Run
-`gregale deploy check --project --atomic --add-services --verify` first to inspect
-prerequisites without reserving apps. Admission remains disabled by default
-until [native qualification](adr/20261019120043-atomic-http-service-additions.md) passes.
-Every existing serving service must remain present with unchanged settings.
-New services pass startup readiness before the graph switches; `--verify` checks
-existing critical routes and restores the original membership on regression.
-New services have no baseline probe history. Failed or withdrawn additions keep
-their app IDs and consume quota but have no default route. An identical retry
-can reuse them after the earlier attempt finishes. Removal, dependencies, declared
-environment keys, schedules, workers, images, migration commands, configuration
-snapshots and progressive rollout are unsupported in this first version.
-
 The normal deploy path is source-first and wait-by-default:
 
 ```bash
@@ -22,6 +8,100 @@ gregale deploy --path services/api
 gregale deploy --tarball build/source.tar.gz
 gregale deploy --image ghcr.io/acme/api@sha256:...
 ```
+
+## What gets uploaded
+
+By default `gregale deploy` uploads the committed `HEAD` of the selected
+directory when the repository has an `origin` remote, and the files on disk
+otherwise (`--source=worktree` includes uncommitted changes). Before upload:
+
+- **Excluded by default:** `.git`, `node_modules`, `vendor`, `__pycache__`,
+  `.venv`, `dist`, `.next`, `target`, `coverage`, `.cache`, `.DS_Store`,
+  `Thumbs.db` and `*.pyc`, at any depth. A Go `vendor/` directory with
+  `vendor/modules.txt` ships, because it is source. When the app builds with
+  a Dockerfile, `dist`, `.next`, `target`, `coverage` and `.cache` ship too
+  (Dockerfiles commonly `COPY target/*.jar` or `COPY dist/`), and
+  `.dockerignore` applies the way `docker build` reads it.
+- **`.gregaleignore`** at the source root uses `.gitignore` syntax. Later lines
+  win, so `!dist/` re-includes a directory the defaults exclude. `.git` can
+  never be included.
+- **Symlinks** inside the source directory are uploaded as the file or
+  directory they point to. A link that leaves the directory, dangles or
+  contains itself stops the deploy with the link's name; exclude it in
+  `.gregaleignore` or copy its target in.
+- **Submodules** that are checked out are uploaded at the commit the
+  repository records. A submodule that is not checked out is uploaded empty
+  with a warning; run `git submodule update --init --recursive`.
+- **Git LFS** files are uploaded with their real content when the objects are
+  downloaded locally. Otherwise the pointer files are uploaded with a
+  warning; run `git lfs pull`.
+- **`.env` files** are scanned locally and credential-shaped values are
+  redacted before upload (`--secret-scan=off` disables this). Use
+  `--secrets-file` or `gregale secrets set` for real secrets.
+
+### Limits
+
+| Limit | Free | Hobby | Pro | Scale |
+|---|---|---|---|---|
+| Upload (packed archive) | 100 MB | 100 MB | 250 MB | 250 MB |
+| Expanded source | 2 GiB | 2 GiB | 2 GiB | 2 GiB |
+| Files and directories | 10,000 | 10,000 | 10,000 | 10,000 |
+| App layer after build | 256 MB | 512 MB | 1 GB | 2 GB |
+| Build | 2 vCPU, 2048 MB, 15 min | same | same | same |
+
+A deploy over a limit fails before upload with the limit and the observed
+size. Large source uploads resume after a dropped connection.
+
+### Accept-time checks
+
+Every source deploy, from the CLI, the API, a GitHub push or a project, is
+checked before a build starts:
+
+- **Credentials.** A known credential format (cloud, payment, VCS and AI
+  provider keys, private keys, Gregale deploy tokens) refuses the deploy with
+  the file and line. Heuristic high-entropy values and test-mode keys do not
+  block; they are listed on the deployment
+  (`gregale deployment ID --show-secret-scan`). Subresource Integrity digests
+  are never flagged. To keep a deliberately committed value, such as a test
+  fixture or a documented example key, add `gregale:allow-secret` to its line
+  in a comment.
+- **Stateless contract.** Apps lose local writes when they park, so a
+  database file under a top-level `data/` or `db/` directory (SQLite, DuckDB,
+  Postgres, MySQL, MongoDB or Redis data) refuses the deploy, as does a
+  Dockerfile `VOLUME` or filesystem mount. Migrations, schemas and seed files
+  in those directories are fine. Keep data in managed Postgres or object
+  storage.
+
+### Dockerfile builds
+
+A `Dockerfile` at the source root is built with BuildKit. To use another
+Dockerfile or pass build options, declare them in `gregale.yaml`:
+
+```yaml
+build:
+  dockerfile: docker/Dockerfile.prod   # relative to the source root
+  target: runtime                      # a FROM … AS stage
+  args:
+    NODE_ENV: production
+  secrets:
+    - id: npmrc          # RUN --mount=type=secret,id=npmrc
+      secret: NPM_TOKEN  # an app secret
+```
+
+Up to 64 arguments of at most 4 KiB each and 16 build secrets are accepted.
+Secret values never reach the image or the build log. A `HEALTHCHECK` command
+in the Dockerfile gates readiness: the deployment serves only after it passes,
+and an instance whose check keeps failing restarts. Use `HEALTHCHECK NONE` to
+opt out.
+
+### Retries and retention
+
+`gregale deploys retry` rebuilds from the uploaded source for 24 hours after
+the upload; after that, deploy again from your source. A build waiting in the
+queue for 6 hours, or a deployment making no progress for 3 hours, fails
+with a stable error code.
+
+## Waiting and resuming
 
 Interrupted single-app deploys save a local session. Run
 `gregale deploy resume --app my-api`, or `gregale deploy resume SESSION_ID --json`,
@@ -86,6 +166,22 @@ With `--json`, the receipt keeps the existing deployment/provenance fields and
 adds `release_summary` with `previous_deployment_id`, `changes`,
 `rollback_target_id`, and `rollback_command`. A queued `--no-wait` deploy has
 no release summary yet because the new release is not live.
+
+## Adding services to an atomic project
+
+Atomic projects can opt into adding independent HTTP source services with
+`gregale deploy --project --atomic --add-services --verify --yes`. Run
+`gregale deploy check --project --atomic --add-services --verify` first to inspect
+prerequisites without reserving apps. Admission remains disabled by default
+until [native qualification](adr/20261019120043-atomic-http-service-additions.md) passes.
+Every existing serving service must remain present with unchanged settings.
+New services pass startup readiness before the graph switches; `--verify` checks
+existing critical routes and restores the original membership on regression.
+New services have no baseline probe history. Failed or withdrawn additions keep
+their app IDs and consume quota but have no default route. An identical retry
+can reuse them after the earlier attempt finishes. Removal, dependencies, declared
+environment keys, schedules, workers, images, migration commands, configuration
+snapshots and progressive rollout are unsupported in this first version.
 
 ## GitHub Actions
 

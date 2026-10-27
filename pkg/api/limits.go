@@ -374,6 +374,15 @@ const (
 	ApplicationStandardScanMaxMetadataBytes   = 256
 	ApplicationStandardScanMaxPathBytes       = 4096
 	ApplicationStandardScanMaxPaths           = 128
+
+	// A shared base is scanned once, when a node stages it and before the
+	// node serves it, so it may take longer than one artifact. A 2.3 GB base
+	// ext4 of npm-installed agent harnesses took longer than that: copying,
+	// extracting and scanning it overran ApplicationStandardArtifactScanTimeout
+	// on a native host, and a base whose scan does not complete stays
+	// fail-closed.
+	ApplicationStandardBaseScanTimeout = 20 * time.Minute
+
 	// Safety bounds for a complete filesystem projection handed to Grype.
 	// These are separate from the tenant's rootfs/disk entitlements.
 	ApplicationStandardRuntimeScanMaxBytes           int64 = 32 << 30
@@ -573,6 +582,10 @@ const (
 	ProfileLocalEndpoint            = "http://127.0.0.1:9191"
 	ProfileHealthListen             = "127.0.0.1:9160"
 	ProfileDefaultSocket            = "/run/faas/profiled.sock"
+	// ProfileRetryCacheMaxEntries bounds profiled's upload replay cache on a
+	// node. At the bound the oldest entries are evicted: the cache is
+	// best-effort replay protection, so it never refuses an upload.
+	ProfileRetryCacheMaxEntries = 10000
 
 	// On-demand captures (ADR-1155).
 	ProfileCaptureMinDuration     = time.Second
@@ -585,8 +598,20 @@ const (
 	// ProfileCaptureMaxProfileBytes bounds the summed compressed profiles so each
 	// host hop stays under gRPC's default 4 MiB message limit.
 	ProfileCaptureMaxProfileBytes = 3 << 20
-	// ProfileCaptureMaxPerAccountHour bounds captures started per account.
+	// ProfileCaptureMaxPerAccountHour bounds manual captures started per
+	// account. Automatic captures count against their own hourly bound, so
+	// they never use up the captures a person can start.
 	ProfileCaptureMaxPerAccountHour = 60
+	// ProfileCaptureAutomaticMaxPerAccountHour bounds automatic captures
+	// queued per account across its apps.
+	ProfileCaptureAutomaticMaxPerAccountHour = 30
+	// ProfileCaptureAutomaticStoragePercent is the share of an account's
+	// capture storage automatic captures may use, oldest rotated out first;
+	// the rest stays free for manual captures.
+	ProfileCaptureAutomaticStoragePercent = 50
+	// ProfileCaptureMaxRotated bounds the automatic captures one new
+	// automatic capture may rotate out.
+	ProfileCaptureMaxRotated = 256
 	// net/http/pprof collection by guest-init (profiling.pprof_port). A heap
 	// or goroutine fetch, and a CPU fetch beyond its window, must answer
 	// within ProfilePprofFetchTimeout. An endpoint that has not answered yet
@@ -846,6 +871,11 @@ type ProfilingLimits struct {
 	Enabled          bool
 	RetentionDays    int
 	UploadsPerMinute int
+	// CaptureStorageBytes bounds the on-demand capture profiles an account
+	// keeps in Postgres (ADR-1155). A capture is queued only while the
+	// unexpired stored profiles, plus ProfileCaptureMaxProfileBytes for each
+	// capture still queued or running and for the new one, fit.
+	CaptureStorageBytes int64
 }
 
 const (
@@ -1164,6 +1194,24 @@ const (
 	CronFireNowActivePerCron = 5
 	CronFireNowActiveWindow  = 15 * time.Minute
 )
+
+// CronHistoryRetention is how long schedd keeps a cron's settled schedule
+// decisions (schedule_occurrences) and its manual-run requests
+// (cron_fire_now_requests). It matches the longest plan's invocation result
+// retention, so no plan loses the decision behind a run it can still see.
+// Pending, queued and running decisions are never pruned. Each hourly sweep
+// makes at most CronHistoryPrunePasses passes of CronHistoryPruneBatch rows
+// per table, so a large backlog drains over several hours instead of
+// holding the scheduler loop.
+const (
+	CronHistoryRetention   = 90 * 24 * time.Hour
+	CronHistoryPruneBatch  = 1000
+	CronHistoryPrunePasses = 20
+)
+
+// CronPathMaxBytes bounds the HTTP path a cron requests. The path is always
+// on the cron's own app: it starts with a single "/" and carries no host.
+const CronPathMaxBytes = 2048
 
 // New apps start with the pre-auth source limit in observe mode (ADR-829):
 // it records which sources would exceed this per-source rate without
@@ -2415,6 +2463,15 @@ const (
 	// developer delta reconstruction so the optimization cannot accept an
 	// archive the canonical deployment path would reject.
 	SourceArchiveMaxEntries = 10_000
+	// SourceSpoolRetention keeps a deployment's spooled source archive and
+	// build log after its last write; `deploys retry` relies on the archive
+	// for this long. It matches builderd's default source_max_age for the
+	// object-store copy. Nothing an in-flight deployment still needs is
+	// removed, whatever its age (ADR-20261026152731).
+	SourceSpoolRetention = 24 * time.Hour
+	// SourceSpoolSweepInterval is the cadence of the spool sweeper on the
+	// apid, builderd and githubd hosts.
+	SourceSpoolSweepInterval = time.Hour
 	// SourceArchiveMaxExpandedBytes caps the summed declared size of a source
 	// archive's entries. The compressed upload cap alone admits a highly
 	// compressed archive that apid would inflate, at full CPU, on every pass
@@ -2551,6 +2608,20 @@ const DefaultAppCPUMillicores = 1000
 // arithmetic aligned.
 func ValidAppCPUMillicores(v int) bool {
 	return v == 250 || v == 500 || v == DefaultAppCPUMillicores
+}
+
+// ValidAgentRunCPUMillicores reports whether v is an agent run's CPU quota:
+// whole vCPUs, up to the largest plan's AgentRunVCPUMax (ADR-20261027090014 §3).
+func ValidAgentRunCPUMillicores(v int) bool {
+	if v < 1000 || v%1000 != 0 {
+		return false
+	}
+	for _, vcpus := range AgentRunVCPUMax {
+		if v/1000 <= vcpus {
+			return true
+		}
+	}
+	return false
 }
 
 // Plan is a customer subscription tier. The zero value is intentionally invalid
@@ -5450,7 +5521,7 @@ var planLimits = map[Plan]Limits{
 		// (spec §4.7).
 		DebugTelemetryEnabled:           true,
 		DebugTelemetryRetentionDays:     3,
-		Profiling:                       ProfilingLimits{Enabled: true, RetentionDays: 3, UploadsPerMinute: 60},
+		Profiling:                       ProfilingLimits{Enabled: true, RetentionDays: 3, UploadsPerMinute: 60, CaptureStorageBytes: 256 << 20},
 		DebugTelemetryRequestsPerMinute: 1000,
 		DebugGuestLogExportsPerMinute:   60,
 		DebugTelemetryDeploymentsPerApp: 10,
@@ -5851,7 +5922,7 @@ var planLimits = map[Plan]Limits{
 		// for the Pro plan.
 		DebugTelemetryEnabled:           true,
 		DebugTelemetryRetentionDays:     7,
-		Profiling:                       ProfilingLimits{Enabled: true, RetentionDays: 7, UploadsPerMinute: 180},
+		Profiling:                       ProfilingLimits{Enabled: true, RetentionDays: 7, UploadsPerMinute: 180, CaptureStorageBytes: 1 << 30},
 		DebugTelemetryRequestsPerMinute: 10000,
 		DebugGuestLogExportsPerMinute:   600,
 		DebugTelemetryDeploymentsPerApp: 50,
@@ -6283,7 +6354,7 @@ var planLimits = map[Plan]Limits{
 		// would blow up Prometheus cardinality).
 		DebugTelemetryEnabled:           true,
 		DebugTelemetryRetentionDays:     14,
-		Profiling:                       ProfilingLimits{Enabled: true, RetentionDays: 14, UploadsPerMinute: 600},
+		Profiling:                       ProfilingLimits{Enabled: true, RetentionDays: 14, UploadsPerMinute: 600, CaptureStorageBytes: 4 << 30},
 		DebugTelemetryRequestsPerMinute: 50000,
 		DebugGuestLogExportsPerMinute:   3000,
 		DebugTelemetryDeploymentsPerApp: 200,
@@ -8537,6 +8608,158 @@ var (
 	WorkflowMaxConcurrentRuns = [4]int{0, 10, 50, 200}
 	WorkflowStepMaxTimeoutSec = [4]int{0, 600, 1800, 7200}
 	WorkflowMaxWaitDays       = 365 // deprecated global ceiling; use Plan.WorkflowMaxWaitDays()
+)
+
+// Agent runs (ADR-20261027090010, ADR-20261027090014). Indexed by Plan.PlanIndex(): Free,
+// Hobby, Pro, Scale. Free is 0 everywhere (D9: paid plans only), so a Free
+// account gets a limit error even when the agents capability is released to
+// it. The surfaces are gated off by default (the internal agents capability)
+// and stay out of docs/plans.md until launch.
+var (
+	// AgentsPerAccount caps the agents an account defines.
+	AgentsPerAccount = [4]int{0, 10, 50, 200}
+
+	// AgentVersionsPerAgent caps the immutable versions kept per agent.
+	AgentVersionsPerAgent = [4]int{0, 50, 200, 1000}
+
+	// AgentRunConcurrentPerAccount caps an account's runs and sandbox
+	// sessions in starting or running (ADR-20261027090014 §3). Matches the plans'
+	// concurrent-instance ceilings.
+	AgentRunConcurrentPerAccount = [4]int{0, 2, 5, 20}
+
+	// AgentRunQueuedPerAccount bounds an account's queued runs; admission
+	// beyond it is refused with a limit error (ADR-20261027090010 §5).
+	AgentRunQueuedPerAccount = [4]int{0, 20, 100, 1000}
+
+	// AgentRunsPerDay is the runaway guard on admitted runs per account per
+	// UTC day.
+	AgentRunsPerDay = [4]int{0, 500, 10_000, 100_000}
+
+	// AgentRunTimeoutMaxSec caps a run's wall clock. Matches
+	// JobTaskTimeoutSec.
+	AgentRunTimeoutMaxSec = [4]int{0, 300, 1800, 3600}
+
+	// AgentRunRAMMBMax caps a run's configured RAM. Hobby is above JobRAMMB
+	// because Node-based harnesses do not fit in 512 MB.
+	AgentRunRAMMBMax = [4]int{0, 1024, 2048, 4096}
+
+	// AgentRunVCPUMax caps a run's vCPUs (ADR-20261027090014 §3).
+	AgentRunVCPUMax = [4]int{0, 1, 2, 2}
+
+	// AgentImageLayerMaxMB caps a custom harness layer (drive1). The shared
+	// agent base (drive0) is not counted. Matches AppLayerMaxMB.
+	AgentImageLayerMaxMB = [4]int{0, 512, 1024, 2048}
+
+	// AgentResultMaxBytes caps a run's inline output/result.json.
+	AgentResultMaxBytes = [4]int{0, 64 << 10, 256 << 10, 1 << 20}
+
+	// AgentOutputRetentionDays is how long a run's outputs are kept.
+	AgentOutputRetentionDays = [4]int{0, 7, 30, 90}
+
+	// AgentRunAIBudgetDefaultMillicents is one run's model spend cap when its
+	// agent version names none (ADR-20261027090010 Limits: $0.50 / $2 / $5). The AI
+	// gateway enforces it like an ADR-991 hard cap: settled spend plus live
+	// reservations plus the call's reservation.
+	AgentRunAIBudgetDefaultMillicents = [4]int64{0, 50_000, 200_000, 500_000}
+
+	// AgentCheckoutArchiveMaxBytes caps a checkout's compressed archive
+	// (ADR-20261027090010 §3), matching the plans' SourceTarballMaxMB.
+	AgentCheckoutArchiveMaxBytes = [4]int64{0, 100 << 20, 250 << 20, 250 << 20}
+	// AgentCheckoutExtractedMaxBytes caps the files guest-init unpacks from
+	// it. They live in drive1's free space until runs get a scratch drive.
+	AgentCheckoutExtractedMaxBytes = [4]int64{0, 400 << 20, 1 << 30, 1 << 30}
+)
+
+const (
+	// AgentRunRAMMBMin is the smallest RAM a run may ask for.
+	AgentRunRAMMBMin = 512
+	// AgentNameMaxLen bounds an agent name ([a-z0-9-], ADR-20261027090010 §9).
+	AgentNameMaxLen = 63
+	// AgentPromptTemplateMaxBytes bounds a version's prompt template.
+	AgentPromptTemplateMaxBytes = 64 << 10
+	// AgentRunPromptMaxBytes bounds a run's prompt override.
+	AgentRunPromptMaxBytes = 64 << 10
+	// AgentRunInputsMaxBytes bounds a run's JSON inputs.
+	AgentRunInputsMaxBytes = 256 << 10
+	// AgentRunDedupeKeyMaxLen bounds a run's dedupe key.
+	AgentRunDedupeKeyMaxLen = 200
+	// AgentHarnessArgsMax bounds a custom harness's argv.
+	AgentHarnessArgsMax = 64
+	// AgentImageRefMaxBytes bounds a custom harness's image reference
+	// (agent_versions.harness_image).
+	AgentImageRefMaxBytes = 512
+	// AgentHarnessArgMaxBytes bounds one argv entry.
+	AgentHarnessArgMaxBytes = 4096
+	// AgentDescriptionMaxLen bounds an agent's description, in characters.
+	AgentDescriptionMaxLen = 1024
+	// AgentRunTimeoutDefaultSec is a version's timeout when it names none,
+	// lowered to the plan's AgentRunTimeoutMaxSec.
+	AgentRunTimeoutDefaultSec = 600
+	// AgentListPageMax bounds one page of agents or agent runs.
+	AgentListPageMax = 100
+	// AgentRequestMaxBytes bounds an agent API request body.
+	AgentRequestMaxBytes = 512 << 10
+
+	// One run's guest boundary (ADR-20261027090010 §3; inline outputs in the style of
+	// ADR-382). The input files are the rendered prompt, the event and
+	// earlier steps' small files; a checkout comes on the input drive.
+	AgentRunInputFilesMax = 64
+	// AgentRunInputFilesMaxBytes keeps a run's start frame, base64 in JSON,
+	// under gRPC's default 4 MB receive limit on schedd and vmmd.
+	AgentRunInputFilesMaxBytes = 2 << 20
+	// AgentRunLogMaxBytes bounds the stdout and stderr streamed from one
+	// run; output past it is dropped and the run reports log_truncated.
+	AgentRunLogMaxBytes = 8 << 20
+	// AgentRunOutputFilesMax and AgentRunOutputFilesMaxBytes bound the
+	// regular files under /work/output returned inline with a run's result.
+	AgentRunOutputFilesMax      = 64
+	AgentRunOutputFilesMaxBytes = 16 << 20
+	// AgentRunStopGraceSec is how long a timed-out or cancelled harness has
+	// between SIGTERM and SIGKILL.
+	AgentRunStopGraceSec = 10
+	// AgentModelIntegrationsMax bounds a version's model integrations: one
+	// per model provider a harness may point at the relay.
+	AgentModelIntegrationsMax = 2
+	// AgentRunAIReservationSlackSec keeps a run's spend reservation past the
+	// gateway request's own timeout, so a crashed gateway's reservation
+	// lapses on its own (ADR-20261027090010 §7).
+	AgentRunAIReservationSlackSec = 60
+	// AgentCheckoutEntriesMax bounds the entries guest-init unpacks from a
+	// checkout archive.
+	AgentCheckoutEntriesMax = 200_000
+	// AgentRunWebhookResultMaxBytes bounds the result carried inline in an
+	// agent_run.finished delivery; larger results are fetched from the
+	// outputs endpoint.
+	AgentRunWebhookResultMaxBytes = 64 << 10
+	// WorkflowAgentStepResultMaxBytes bounds the result.json an agent step
+	// carries as its output; a larger one is read from the run's outputs.
+	WorkflowAgentStepResultMaxBytes = 64 << 10
+	// AgentDeliveriesPerVersionMax bounds the deliveries one agent version
+	// declares (ADR-20261027090010 §8); a version declares each destination once.
+	AgentDeliveriesPerVersionMax = 4
+	// AgentGitHubCommentMaxBytes caps a delivered GitHub comment, below
+	// GitHub's 65,536-character limit with room for the hidden marker. A
+	// longer body is cut at a character boundary and marked truncated.
+	AgentGitHubCommentMaxBytes = 60_000
+	// AgentDeliveryWindowSec is how long a succeeded run's deliveries may
+	// take, retries included, before an unfinished delivery ends.
+	AgentDeliveryWindowSec = 900
+	// AgentDeliveryAttemptsMax bounds the attempts of one delivery.
+	AgentDeliveryAttemptsMax = 8
+	// GitHubEventTitleMaxBytes bounds the pull request title a gregale.github
+	// event carries (ADR-20261027090010 §9); GitHub titles stay under 256 characters.
+	GitHubEventTitleMaxBytes = 1024
+	// GitHubEventLabelsMax and GitHubEventLabelMaxBytes bound the labels a
+	// gregale.github event carries; further labels are left out.
+	GitHubEventLabelsMax     = 20
+	GitHubEventLabelMaxBytes = 100
+)
+
+// An agent step waits for its run (ADR-20261027090010 §9). The default covers the
+// longest plan run, the delivery window and a queue wait.
+const (
+	WorkflowAgentStepDefaultTimeout = 90 * time.Minute
+	WorkflowAgentStepMaxTimeout     = 24 * time.Hour
 )
 
 const (
@@ -13273,6 +13496,10 @@ const (
 	DataAPIRateLimitMaxBurst         = 1000
 	DataAPIRateLimitMaxSubjects      = 4096
 	DataAPIRateLimitSweepMS          = 1000
+	// Past this many tracked anonymous subjects, IPv6 visitors are grouped by
+	// /48 instead of /64, so one allocation cannot fill the table and lock
+	// other visitors out (ADR 20261018170742 amendment 1).
+	DataAPIAnonymousCoarseSubjects = DataAPIRateLimitMaxSubjects * 3 / 4
 	// Per-runtime user concurrency accounting, including uncertain dispatches.
 	DataAPIUserConcurrencyMaxSubjects = DataAPIRateLimitMaxSubjects
 	DataAPIUserConcurrencyCooldownMS  = DataAPIQueryTimeoutMS
