@@ -6632,6 +6632,8 @@ func (v *JailerVMM) waitReadyWithProbe(ctx context.Context, l Lease, healthcheck
 				seen.lastStatus = status
 			case isConnRefusedErr(transportErr):
 				seen.connRefused++
+			case isNonHTTPReply(transportErr):
+				seen.nonHTTP++
 			}
 		}
 		select {
@@ -7066,10 +7068,19 @@ func (v *JailerVMM) notReadyProblem(l Lease, healthcheckPath string, connRefused
 
 // readinessObservation summarizes the HTTP readiness probes of one wake.
 // responses counts real HTTP answers; connRefused counts probes nothing
-// accepted. A transport failure is never an answer (H4-21: a crashed app was
-// reported as "answered 348 readiness probes without a 2xx").
+// accepted; nonHTTP counts connections the app accepted and answered with
+// bytes that are not HTTP. A transport failure is never an answer (H4-21: a
+// crashed app was reported as "answered 348 readiness probes without a 2xx").
 type readinessObservation struct {
-	responses, lastStatus, connRefused int
+	responses, lastStatus, connRefused, nonHTTP int
+}
+
+// isNonHTTPReply reports a probe the app accepted and answered with something
+// other than an HTTP response, such as a raw TCP service's own protocol.
+// net/http reports these as "malformed HTTP response", "... status code" or
+// "... version".
+func isNonHTTPReply(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "malformed HTTP ")
 }
 
 // healthcheckNotReadyProblem distinguishes a reachable handler returning an
@@ -7081,6 +7092,14 @@ func (v *JailerVMM) healthcheckNotReadyProblem(l Lease, healthcheckPath string, 
 			"app healthcheck did not become ready in time",
 			fmt.Sprintf("startup_phase=handler_healthcheck: guest %s answered %d readiness probes at %s without a 2xx response (last status %d) before %s",
 				l.Instance, seen.responses, healthcheckPath, seen.lastStatus, readyTimeout))
+	}
+	// Checked before connRefused: the refusals came before the app bound
+	// its port, so "never listened" would be false.
+	if seen.nonHTTP > 0 {
+		return api.NewProblem(422, api.CodeAppStartupTimeout,
+			"app did not answer its HTTP healthcheck",
+			fmt.Sprintf("startup_phase=handler_healthcheck: guest %s accepted %d readiness probes GET %s on :%d but answered without HTTP before %s; a raw TCP service declares that port as a TCP listener and sets no health path",
+				l.Instance, seen.nonHTTP, healthcheckPath, l.guestAppPort(), readyTimeout))
 	}
 	if seen.connRefused > 0 {
 		return api.NewProblem(422, api.CodeAppNotListening,

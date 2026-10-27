@@ -3,7 +3,6 @@ package apidserver
 import (
 	"context"
 	"crypto/subtle"
-	"filippo.io/age"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/issuetrackers"
 	"github.com/onebox-faas/faas/pkg/dashboard"
@@ -29,15 +28,10 @@ func (s *server) linearOAuthService() (issuetrackers.LinearOAuthService, bool) {
 	if verifier == nil {
 		verifier = issuetracker.NewClient(nil)
 	}
-	var recipient *age.X25519Recipient
-	var ids []*age.X25519Identity
-	if setSecretRecipient != nil {
-		recipient = setSecretRecipient()
-	}
-	if mfaIdentities != nil {
-		ids = mfaIdentities()
-	}
-	return issuetrackers.LinearOAuthService{Store: store, Provider: provider, Verifier: verifier, Config: s.linearOAuthConfig, Recipient: recipient, Identities: ids}, ok
+	// Linear OAuth credentials and consent flows are account values (ADR
+	// 20261022111812). No recipient leaves the service unconfigured.
+	recipients, _ := accountRecipients(hostSecretRecipient())
+	return issuetrackers.LinearOAuthService{Store: store, Provider: provider, Verifier: verifier, Config: s.linearOAuthConfig, Recipients: recipients, Identities: accountIdentities()}, ok
 }
 func (s *server) dashboardLinearOAuthForm(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	_, app, ok := s.linearConnectionAccess(w, r, acct)

@@ -637,14 +637,24 @@ func (s *PgStore) ResealDeliveryValue(ctx context.Context, v DeliverySealedValue
 
 // Account value kinds (ADR 20261022111812) that apid both seals and opens:
 // an account's TOTP secret, an inbound webhook endpoint's signing secret, a
-// billing provider key, a managed workflow's plan and a PagerDuty
-// acknowledgement signing secret.
+// billing provider key, a managed workflow's plan, a PagerDuty
+// acknowledgement signing secret and the integration credentials below.
 const (
 	AccountSealedMFASecret      = "mfa_secret"
 	AccountSealedInboundWebhook = "inbound_webhook"
 	AccountSealedBillingKey     = "billing_key"
 	AccountSealedWorkflowPlan   = "workflow_plan"
 	AccountSealedPagerDutyAck   = "pagerduty_ack"
+	// Integration credentials: GitLab OAuth tokens, Slack workspace tokens,
+	// interaction signing secrets, team Slack destinations and pending
+	// Slack consent, and Linear credentials and pending Linear consent.
+	AccountSealedGitLabOAuth       = "gitlab_oauth"
+	AccountSealedSlackInstallation = "slack_installation"
+	AccountSealedSlackInteraction  = "slack_interaction"
+	AccountSealedSlackDestination  = "slack_destination"
+	AccountSealedSlackOAuthFlow    = "slack_oauth_flow"
+	AccountSealedLinearConnection  = "linear_connection"
+	AccountSealedLinearOAuthFlow   = "linear_oauth_flow"
 )
 
 // AccountSealedValue is one sealed account value, listed for the account
@@ -660,7 +670,8 @@ type AccountSealedValue struct {
 }
 
 // ListAccountSealedValues pages through one kind's sealed account values in
-// id order after afterID. Plans of finished workflows are already cleared.
+// id order after afterID. Plans of finished workflows are already cleared;
+// expired consent flows are left for their sweep.
 func (s *PgStore) ListAccountSealedValues(ctx context.Context, kind, afterID string, limit int) ([]AccountSealedValue, error) {
 	if limit <= 0 || limit > 1000 {
 		limit = 1000
@@ -683,6 +694,27 @@ func (s *PgStore) ListAccountSealedValues(ctx context.Context, kind, afterID str
 	case AccountSealedWorkflowPlan:
 		query = `SELECT id::text, sealed_plan, payload_kid FROM agent_execution_workflows
 		          WHERE sealed_plan IS NOT NULL AND id > $1::uuid ORDER BY id LIMIT $2`
+	case AccountSealedGitLabOAuth:
+		query = `SELECT account_id::text, credentials_sealed, '' FROM gitlab_oauth_connections
+		          WHERE account_id > $1::uuid ORDER BY account_id LIMIT $2`
+	case AccountSealedSlackInstallation:
+		query = `SELECT app_id::text, token_sealed, '' FROM issue_slack_installations
+		          WHERE octet_length(token_sealed) > 0 AND app_id > $1::uuid ORDER BY app_id LIMIT $2`
+	case AccountSealedSlackInteraction:
+		query = `SELECT app_id::text, secret_sealed, '' FROM issue_slack_interaction_policies
+		          WHERE app_id > $1::uuid ORDER BY app_id LIMIT $2`
+	case AccountSealedSlackDestination:
+		query = `SELECT id::text, token_sealed, '' FROM issue_team_slack_destinations
+		          WHERE octet_length(token_sealed) > 0 AND id > $1::uuid ORDER BY id LIMIT $2`
+	case AccountSealedSlackOAuthFlow:
+		query = `SELECT app_id::text, sealed, '' FROM issue_slack_oauth_flows
+		          WHERE expires_at > now() AND app_id > $1::uuid ORDER BY app_id LIMIT $2`
+	case AccountSealedLinearConnection:
+		query = `SELECT app_id::text, sealed_credential, '' FROM issue_tracker_linear_connections
+		          WHERE sealed_credential IS NOT NULL AND app_id > $1::uuid ORDER BY app_id LIMIT $2`
+	case AccountSealedLinearOAuthFlow:
+		query = `SELECT app_id::text, sealed_state, '' FROM issue_tracker_linear_oauth_flows
+		          WHERE expires_at > now() AND app_id > $1::uuid ORDER BY app_id LIMIT $2`
 	case AccountSealedBillingKey:
 		query, after = `SELECT k, sealed_secret, '' FROM (
 		           SELECT account_id::text || '/' || provider AS k, sealed_secret FROM account_billing_connections
@@ -738,6 +770,27 @@ func (s *PgStore) ResealAccountValue(ctx context.Context, v AccountSealedValue, 
 		}
 		tag, err = s.pool.Exec(ctx, `UPDATE agent_execution_workflows SET sealed_plan = $3, payload_kid = $4
 		                             WHERE id = $1::uuid AND sealed_plan = $2`, v.ID, v.Sealed, sealed, kid)
+	case AccountSealedGitLabOAuth:
+		tag, err = s.pool.Exec(ctx, `UPDATE gitlab_oauth_connections SET credentials_sealed = $3
+		                             WHERE account_id = $1::uuid AND credentials_sealed = $2`, v.ID, v.Sealed, sealed)
+	case AccountSealedSlackInstallation:
+		tag, err = s.pool.Exec(ctx, `UPDATE issue_slack_installations SET token_sealed = $3
+		                             WHERE app_id = $1::uuid AND token_sealed = $2`, v.ID, v.Sealed, sealed)
+	case AccountSealedSlackInteraction:
+		tag, err = s.pool.Exec(ctx, `UPDATE issue_slack_interaction_policies SET secret_sealed = $3
+		                             WHERE app_id = $1::uuid AND secret_sealed = $2`, v.ID, v.Sealed, sealed)
+	case AccountSealedSlackDestination:
+		tag, err = s.pool.Exec(ctx, `UPDATE issue_team_slack_destinations SET token_sealed = $3
+		                             WHERE id = $1::uuid AND token_sealed = $2`, v.ID, v.Sealed, sealed)
+	case AccountSealedSlackOAuthFlow:
+		tag, err = s.pool.Exec(ctx, `UPDATE issue_slack_oauth_flows SET sealed = $3
+		                             WHERE app_id = $1::uuid AND sealed = $2`, v.ID, v.Sealed, sealed)
+	case AccountSealedLinearConnection:
+		tag, err = s.pool.Exec(ctx, `UPDATE issue_tracker_linear_connections SET sealed_credential = $3
+		                             WHERE app_id = $1::uuid AND sealed_credential = $2`, v.ID, v.Sealed, sealed)
+	case AccountSealedLinearOAuthFlow:
+		tag, err = s.pool.Exec(ctx, `UPDATE issue_tracker_linear_oauth_flows SET sealed_state = $3
+		                             WHERE app_id = $1::uuid AND sealed_state = $2`, v.ID, v.Sealed, sealed)
 	case AccountSealedBillingKey:
 		account, provider, ok := strings.Cut(v.ID, "/")
 		if !ok {

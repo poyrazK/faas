@@ -129,8 +129,9 @@ var deliveryWriteMode sealdomain.WriteMode
 // accountDomainIdentities are the account domain's identity and its
 // previous twin once the seal_domains role stages them; nil until then.
 // apid is the account domain's reader: it opens MFA secrets, inbound
-// webhook signing secrets, billing connection keys, managed workflow plans
-// and PagerDuty acknowledgement secrets with them.
+// webhook signing secrets, billing connection keys, managed workflow plans,
+// PagerDuty acknowledgement secrets and GitLab, Slack and Linear
+// credentials with them.
 var accountDomainIdentities []*age.X25519Identity
 
 // accountWriteMode picks the recipients of account values.
@@ -386,6 +387,12 @@ func accountIdentities() []*age.X25519Identity {
 			legacy = []*age.X25519Identity{id}
 		}
 	}
+	return accountIdentitiesWith(legacy)
+}
+
+// accountIdentitiesWith is accountIdentities for a reader that has its own
+// legacy identities: the account domain first, then legacy, each once.
+func accountIdentitiesWith(legacy []*age.X25519Identity) []*age.X25519Identity {
 	out := make([]*age.X25519Identity, 0, len(accountDomainIdentities)+len(legacy))
 	seen := map[string]bool{}
 	for _, id := range append(append([]*age.X25519Identity(nil), accountDomainIdentities...), legacy...) {

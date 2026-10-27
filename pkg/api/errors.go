@@ -2115,7 +2115,7 @@ func StatusForCode(code string) int {
 		CodeAccountAbuseHold:
 		return http.StatusForbidden
 	case CodePlanLimitConcur, CodeQuotaExhausted, CodeAppConcurReached, CodeConcurrencyThrottled, CodeConcurrencyQueueFull, CodeExportRateLimited, CodeDeployRateLimited,
-		CodeAuthRateLimited, CodeDevDebugSessionLimit, CodeEventPublishRateLimited:
+		CodeAuthRateLimited, CodeDevDebugSessionLimit, CodeEventPublishRateLimited, CodeCronFireNowBusy:
 		return http.StatusTooManyRequests
 	case CodeSourceTooLarge, CodeInboundWebhookTooLarge:
 		return http.StatusRequestEntityTooLarge
@@ -3528,6 +3528,11 @@ const CodePlanCronsNotAllowed = "plan_crons_not_allowed"
 // upsell-vs-delete copy without parsing the body.
 const CodePlanCronQuota = "plan_cron_quota"
 
+// CodeCronFireNowBusy is the 429 a manual cron run gets while the cron
+// already has CronFireNowActivePerCron runs waiting or running
+// (ADR-20261026201726).
+const CodeCronFireNowBusy = "cron_fire_now_busy"
+
 // CodePlanGateBlocked is the 403 the operator sees when a scan
 // project's plan gate was blocked pre-exclude AND the post-exclude
 // --exclude filter did not rescue it. ADR-124 follow-up #1
@@ -4208,6 +4213,17 @@ func ErrPlanCronQuota(plan Plan, scope string, limit, observed int) *Problem {
 			plan, limit, scopeName, observed)).
 		WithLimit(int64(limit), int64(observed)).
 		WithDocs(docsBase + "/plans#crons")
+}
+
+// ErrCronFireNowBusy is the 429 for a manual run of a cron that already
+// has limit runs waiting or running (ADR-20261026201726).
+func ErrCronFireNowBusy(limit, observed int) *Problem {
+	return NewProblem(http.StatusTooManyRequests, CodeCronFireNowBusy,
+		"Cron run already pending",
+		fmt.Sprintf("this cron already has %d manual runs waiting or running (limit %d); retry after one finishes.", observed, limit)).
+		WithLimit(int64(limit), int64(observed)).
+		WithHeader("Retry-After", "30").
+		WithDocs(docsBase + "/crons#run-a-cron-now")
 }
 
 // ErrPlanJobsNotAllowed is returned by apid's createJob handler
@@ -4907,6 +4923,16 @@ func ErrPlanDataUpstreamsNotAllowed(p Plan) *Problem {
 // ErrDataUpstreamsDisabled reports cluster configuration independently of
 // plan entitlement. Operators can enable the runtime switch without asking an
 // already-entitled customer to change plans.
+// ErrEgressCircuitNotEnforced (ADR-570) refuses opting an upstream into the
+// egress circuit breaker while this platform's schedd and vmmd do not enforce
+// it: the setting would be stored and shown, but no connection rejected.
+func ErrEgressCircuitNotEnforced() *Problem {
+	return NewProblem(http.StatusServiceUnavailable, CodeEgressCircuitDisabled,
+		"Egress circuit breakers are not enforced",
+		"this platform does not enforce egress circuit breakers yet, so enabling one would not reject any connection; contact the platform operator").
+		WithDocs(docsBase + "/plans#data-placement")
+}
+
 func ErrDataUpstreamsDisabled() *Problem {
 	return NewProblem(http.StatusServiceUnavailable, CodeDataUpstreamsDisabled,
 		"Data placement is disabled",
