@@ -3976,6 +3976,7 @@
         "githubd"
       ],
       "routes": [
+        "/dashboard/apps/{}/preview",
         "/dashboard/apps/{}/previews",
         "/dashboard/previews",
         "/v1/apps/{}/previews",
@@ -4945,6 +4946,7 @@
         "/dashboard/apps/{}/secret-revocations",
         "/dashboard/apps/{}/secrets",
         "/v1/apps/{}/secret-references",
+        "/v1/apps/{}/secret-requests",
         "/v1/apps/{}/secret-revocations",
         "/v1/apps/{}/secrets",
         "/v1/secrets"
