@@ -94,4 +94,11 @@ func TestLockFollowsOperationsVisibility(t *testing.T) {
 			t.Errorf("%v with operations hidden = %d %q, want unknown flag --lock", args, code, stderr)
 		}
 	}
+	// Help leaves the flags, and the example and note that use them, out
+	// (cliFlag.Capability).
+	for _, args := range [][]string{{"jobs", "run", "--help"}, {"crons", "add", "--help"}, {"triggers", "create", "--help"}} {
+		if _, help, _ := runCLI(t, args...); strings.Contains(help, "--lock") {
+			t.Errorf("%v lists --lock with operations hidden:\n%s", args, help)
+		}
+	}
 }
