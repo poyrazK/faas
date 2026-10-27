@@ -985,13 +985,24 @@ func secretsUnset(args []string) int {
 	if err := fs.Parse(orderedArgs); err != nil {
 		return 1
 	}
+	// A leading app slug names the app, as `secrets set <slug> KEY=VALUE`
+	// does; `secrets rm h14-py H14_SWEEP` answered only "no linked Gregale
+	// project context" on production-us rc.297 (Hunt 14 H14-86). Secret keys
+	// are upper-case, so a valid key is never taken for the app.
+	positionals := fs.Args()
+	if len(positionals) > 1 && api.ValidAppSlug(positionals[0]) && api.ValidateSecretKey(positionals[0]) != nil {
+		if err := mergeLeadingSlug(app, positionals[0]); err != nil {
+			return printErr("Invalid arguments", err)
+		}
+		positionals = positionals[1:]
+	}
 	resolvedApp, appErr := resolveSecretApp(*app)
 	if appErr != nil {
 		return printErr("Could not resolve app", appErr)
 	}
 	appSource := targetValueSource(*app, resolvedApp)
 	*app = resolvedApp
-	if (!*interactive && fs.NArg() < 1) || (*interactive && fs.NArg() != 0) {
+	if (!*interactive && len(positionals) < 1) || (*interactive && len(positionals) != 0) {
 		PrintUsage(os.Stderr, "usage: gregale secrets unset [--app <slug>] (KEY...|--interactive) [--scope <name>] [--restart] [--dry-run] [--wait-for-ack [--timeout 2m]]", "secrets")
 		return 1
 	}
@@ -1029,7 +1040,7 @@ func secretsUnset(args []string) int {
 	*scope = resolvedScope
 	keys := []string{}
 	seen := map[string]bool{}
-	for _, key := range fs.Args() {
+	for _, key := range positionals {
 		if problem := api.ValidateSecretKey(key); problem != nil {
 			return printErr("Invalid secret key", errors.New(problem.Detail))
 		}
