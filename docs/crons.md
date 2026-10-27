@@ -147,8 +147,8 @@ Each run shows when it started, how long it took, its outcome (`success`,
 [invocation history retention](event-driven#invocation-history-retention)
 period.
 
-Schedule decisions (`gregale crons occurrences CRON_ID`) and manual-run
-requests (`gregale crons fire-now REQUEST_ID`) are kept for 90 days. A
+Schedule decisions (`gregale cron occurrences CRON_ID`) and manual-run
+requests (`gregale cron fire-now REQUEST_ID`) are kept for 90 days. A
 decision that is still waiting or running is kept until it settles.
 
 To be told when runs fail, add an alert rule on failed cron invocations:
