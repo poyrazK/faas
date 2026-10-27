@@ -102,10 +102,12 @@ deploys, and the routes tests wait on wall-clock windows.
 example `E2E_GENERAL_RUN='^TestE2E_Routes_' make e2e-general`. The daemons need
 Linux.
 
-The gateway answers `503 rate_limit_unavailable` with `Retry-After` when its
-shared rate allowance cannot be checked in time (ADR-570), which a loaded
-runner can hit. A test that needs every request answered retries that refusal
-as a client would (`routesFixture.get`).
+The gateway answers `503` with `Retry-After` in two transient cases (ADR-570):
+`rate_limit_unavailable` when its shared rate allowance cannot be checked in
+time, which a loaded runner can hit, and `traffic_policy_unavailable` when a
+request races the edge policy change that follows a rule write. A test that
+needs every request answered retries both as a client would (`edgeRetry` in
+`cmd/e2e/routes_e2e_test.go`).
 
 The remaining general-path gaps are intentionally tracked rather than hidden:
 

@@ -3400,6 +3400,24 @@ type Cron struct {
 	SkipIfRunning   bool   // skip a scheduled fire while a prior cron run is active
 	CreatedAt       time.Time
 	LastFiredAt     time.Time // zero until first fire; updated by MarkCronFired
+	// ScheduleAnchorAt is when the schedule last took effect: a schedule or
+	// timezone change, an enable, or a lifted suspension (ADR-20261026201726).
+	// Zero until then. See ScheduleCursor.
+	ScheduleAnchorAt time.Time
+}
+
+// ScheduleCursor is the instant after which the cron's next boundary
+// falls: LastFiredAt (CreatedAt before the first fire), or ScheduleAnchorAt
+// when that is later (ADR-20261026201726).
+func (c Cron) ScheduleCursor() time.Time {
+	cursor := c.LastFiredAt
+	if cursor.IsZero() {
+		cursor = c.CreatedAt
+	}
+	if c.ScheduleAnchorAt.After(cursor) {
+		cursor = c.ScheduleAnchorAt
+	}
+	return cursor
 }
 
 const CronSuspendedNoLiveDeployment = "no_live_deployment"
@@ -3462,7 +3480,7 @@ type FireNowRequest struct {
 	AccountID    string
 	RequestedAt  time.Time
 	Status       FireNowStatus
-	InvocationID *string // nil while pending/running; set on terminal
+	InvocationID *string // set once an HTTP fire queues its invocation (ADR-20261026201726)
 	OperationID  *string // set when this cron fire was admitted as managed work
 	TaskID       *string // nil for HTTP crons; set when a command-cron task is queued
 	Error        *string // nil until status=failed
@@ -8310,7 +8328,9 @@ type EdgeRuleIPAction struct {
 //     enforced as a sanity floor — MaxBodyBytes > plan cap is a
 //     create-time 422 from pkg/api/dto.go.
 type EdgeRuleValidateAction struct {
-	Schema              json.RawMessage `json:"schema"`
+	// Schema is absent for a parameter-only rule. Rows written before
+	// omitempty store "schema": null; the gateway reads that as absent.
+	Schema              json.RawMessage `json:"schema,omitempty"`
 	ContentTypes        []string        `json:"content_types,omitempty"`
 	ApplyWhileStreaming bool            `json:"apply_while_streaming,omitempty"`
 	RejectOnUnknown     bool            `json:"reject_on_unknown_fields,omitempty"`

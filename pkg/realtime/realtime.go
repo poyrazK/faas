@@ -1850,7 +1850,7 @@ func (m *Manager) queueOutbound(ctx context.Context, c *connection, msg Message)
 				m.outboundQueueByteDrops.Add(1)
 				return ErrOutboundQueueFull
 			}
-			if !m.reserveNodeOutbound(delta) {
+			if !m.reserveNodeOutbound(c.state.account, delta) {
 				m.droppedMessages.Add(1)
 				m.outboundNodeBudgetDrops.Add(1)
 				return ErrOutboundQueueFull
@@ -1871,7 +1871,7 @@ func (m *Manager) queueOutbound(ctx context.Context, c *connection, msg Message)
 		m.outboundQueueByteDrops.Add(1)
 		return ErrOutboundQueueFull
 	}
-	if !m.reserveNodeOutbound(size) {
+	if !m.reserveNodeOutbound(c.state.account, size) {
 		m.droppedMessages.Add(1)
 		m.outboundNodeBudgetDrops.Add(1)
 		return ErrOutboundQueueFull
@@ -1894,13 +1894,13 @@ func (m *Manager) queueOutbound(ctx context.Context, c *connection, msg Message)
 		c.outboundBytes += size
 		return nil
 	case <-ctx.Done():
-		m.outboundPendingBytes.Add(-size)
+		m.releaseNodeOutbound(c, size)
 		return ctx.Err()
 	case <-c.done:
-		m.outboundPendingBytes.Add(-size)
+		m.releaseNodeOutbound(c, size)
 		return ErrConnectionClosed
 	default:
-		m.outboundPendingBytes.Add(-size)
+		m.releaseNodeOutbound(c, size)
 		m.droppedMessages.Add(1)
 		m.outboundQueueCountDrops.Add(1)
 		return ErrOutboundQueueFull
@@ -1925,7 +1925,7 @@ func (c *connection) releaseOutboundBytes(size int64) {
 		size = c.outboundBytes
 	}
 	c.outboundBytes -= size
-	c.m.outboundPendingBytes.Add(-size)
+	c.m.releaseNodeOutbound(c, size)
 	c.outboundMu.Unlock()
 }
 
@@ -1944,7 +1944,7 @@ func (c *connection) closeOutboundQueue() {
 				size = c.outboundBytes
 			}
 			c.outboundBytes -= size
-			c.m.outboundPendingBytes.Add(-size)
+			c.m.releaseNodeOutbound(c, size)
 		default:
 			c.outboundMu.Unlock()
 			return

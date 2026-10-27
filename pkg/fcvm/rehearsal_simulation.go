@@ -62,6 +62,9 @@ func (m *Manager) bootingRehearsalRelayIdentity(ctx context.Context, booting wak
 	if booting.contained {
 		return "", "", "", ErrRehearsalExternalActionDenied
 	}
+	if booting.qualification {
+		return "", "", "", ErrQualificationExternalActionDenied
+	}
 	if booting.appID == "" {
 		return "", "", "", nil
 	}

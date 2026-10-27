@@ -2124,7 +2124,7 @@ var cliCommands = []cliCommand{
 				{Name: "app", Short: "app slug (interactive mode can use linked app or picker)", Value: "slug"},
 				{Name: "schedule", Short: "five-field cron expression (required unless interactive)", Value: "EXPR"},
 				{Name: "path", Short: "path the cron sends a POST to (mutually exclusive with --command)", Value: "PATH"},
-				{Name: "command", Short: "executable for a deployment command cron", Value: "EXEC"},
+				{Name: "command", Short: "executable for a deployment command cron (preview: needs app tasks)", Value: "EXEC"},
 				{Name: "arg", Short: "append one command argument (repeatable)", Value: "ARG"},
 				{Name: "shell", Short: "run --command as one shell string"},
 				{Name: "timeout-seconds", Short: "command timeout (default 600 seconds)", Value: "N"},
