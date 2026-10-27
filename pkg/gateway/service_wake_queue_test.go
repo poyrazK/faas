@@ -337,6 +337,24 @@ func TestServiceDeploymentWakeUsesAppCeilingAndAdmittedRollout(t *testing.T) {
 	}
 }
 
+// A deployment check wakes the just-released deployment while the previous
+// one may still hold the app's only instance; it needs the rollout grant.
+func TestRevisionDeploymentWakeGetsRolloutGrant(t *testing.T) {
+	f := newServiceWakeQueueFixture(t)
+	app := f.backend.app
+	app.MaxConcurrency = 1
+	want := 1 + api.RolloutConcurrencyGrant
+	f.backend.onAdmit = func(_ context.Context, deployment, scope string, maximum int) error {
+		if maximum != want || deployment != "selected" || scope != app.Scope {
+			t.Errorf("wrong deployment-check admission: maximum=%d deployment=%s scope=%s", maximum, deployment, scope)
+		}
+		return nil
+	}
+	if err := f.handler.EnsureRevisionDeploymentCapacity(t.Context(), app, "selected"); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestServiceProxyWakeAdmissionRefusalsPreserveRetryContract(t *testing.T) {
 	for _, tc := range []struct {
 		name   string

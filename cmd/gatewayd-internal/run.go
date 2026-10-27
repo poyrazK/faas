@@ -3948,7 +3948,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if deps.nodeCache != nil {
 		responseForward = deps.nodeCache.Forwarding()
 	}
-	responseChecker := deploymentResponseChecker{store: responseStore, picker: responsePicker, ensure: handler.EnsureServiceDeploymentCapacity, forward: responseForward, appsDomain: deps.domains.Apps}
+	responseChecker := deploymentResponseChecker{store: responseStore, picker: responsePicker, ensure: handler.EnsureRevisionDeploymentCapacity, forward: responseForward, appsDomain: deps.domains.Apps}
 	controlMux.HandleFunc(api.DeploymentResponseCheckCapabilitiesControlPath, responseChecker.Capabilities)
 	// ADR-093: mount the per-route observability reader on the
 	// control mux so apid can reverse-proxy
