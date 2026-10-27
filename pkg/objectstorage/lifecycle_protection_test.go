@@ -244,6 +244,9 @@ func TestLifecycleProtectionRecoveryHTTP(t *testing.T) {
 				if active, err := f.st.HasActiveObjectDeletion(t.Context(), f.bucket.AccountID, f.bucket.AppID, f.bucket.ID); err != nil || !active {
 					t.Fatal("uncertainty released custody", active, err)
 				}
+				if active, err := f.st.(state.ObjectLifecycleDeletionActivityStore).HasActiveObjectLifecycleDeletion(t.Context(), f.bucket.ID, scan.ID); err != nil || !active {
+					t.Fatal("uncertainty let the scan advance", active, err)
+				}
 				f.expire(j.ID)
 				s.Store = f.reopen()
 				if scenario == "hold after uncertainty" {

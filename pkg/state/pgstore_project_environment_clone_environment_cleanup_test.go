@@ -369,6 +369,7 @@ func TestPgCloneEnvironmentCleanupScopeColumnInventory(t *testing.T) {
 		"project_release_stages.environment_slug", // Retained stages reference the environment through a composite foreign key.
 		"queue_bindings.deployment_scope",
 		"queue_bindings.environment_id",
+		"release_database_switches.scope",     // Database-restoring rollback evidence (ADR-20261023181931); app-scoped and retained.
 		"runtime_config_apply_receipts.scope", // Platform runtime-config scope (global/control_plane/daemon/node), not an environment.
 		"runtime_config_entries.scope",
 		"runtime_config_operations.scope",

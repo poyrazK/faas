@@ -311,11 +311,17 @@ func (s *PgStore) RemoveOrgMemberWithActivity(ctx context.Context, orgID, accoun
 	if err != nil {
 		return OrgMembership{}, 0, fmt.Errorf("state: remove org member activity update: %w", err)
 	}
+	departed, err := pauseDepartedMemberIntegrationsTx(ctx, tx, orgID, accountID)
+	if err != nil {
+		return OrgMembership{}, 0, err
+	}
 	label, err := orgMemberActivityLabelTx(ctx, tx, accountID)
 	if err != nil {
 		return OrgMembership{}, 0, err
 	}
-	activity, err = withOrgActivityData(activity, map[string]any{"role": string(removed.Role)})
+	data := departed.activityData()
+	data["role"] = string(removed.Role)
+	activity, err = withOrgActivityData(activity, data)
 	if err != nil {
 		return OrgMembership{}, 0, err
 	}

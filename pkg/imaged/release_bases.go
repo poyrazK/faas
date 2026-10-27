@@ -1,6 +1,6 @@
 package imaged
 
-// adr: 20261024191249
+// adr: 20261024191249, 20261026181418
 
 import (
 	"context"
@@ -15,8 +15,10 @@ import (
 // base the candidate release configures. Each list holds runtimes; "" is the
 // minimal base.
 type ReleaseBasesResult struct {
-	// Staged: the shared copy named another generation and this node's
-	// cache did not hold the candidate's, so this pre-stage published it.
+	// Staged: this node's cache did not hold the candidate's generation and
+	// its own keys did not publish it (the shared logical key named another
+	// generation, or named it only under the legacy key), so this pre-stage
+	// published it.
 	Staged []string
 	// Current: cached here or already published at the candidate's
 	// generation, so nothing was built.
@@ -88,7 +90,10 @@ func (h *Handler) EnsureReleaseBases(ctx context.Context, arch string, envLookup
 }
 
 // releaseBasePlan sorts the configured runtimes the assigned pass did not
-// already stage by their adoption verdict. Only stale ones are staged.
+// already stage by their adoption verdict. Stale ones are staged, and so are
+// legacy ones: vmmd could adopt those today, but a node on a release before
+// ADR-20261026181418 can restage the shared logical key with its own
+// generation before this node first boots the base.
 func releaseBasePlan(runtimes []string, handled map[string]bool, judge func(runtime string) (BaseAdoption, error)) (ReleaseBasesResult, error) {
 	var result ReleaseBasesResult
 	for _, runtime := range runtimes {

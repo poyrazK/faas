@@ -34,7 +34,7 @@ func TestPlanEnvImport(t *testing.T) {
 		"billing": {},
 		"cache":   {},
 	}}
-	got := PlanEnvImport(env, "api", api.MustLimitsFor(api.PlanPro))
+	got := PlanEnvImport(env, "api", []string{"api"}, api.MustLimitsFor(api.PlanPro))
 	wantValues := map[string]string{"LOG_LEVEL": "info", "RATIO": "1.0", "PUBLIC_URL": "https://shop.example.com"}
 	if !maps.Equal(got.Values, wantValues) {
 		t.Fatalf("imported %v, want %v", got.Values, wantValues)
@@ -50,7 +50,7 @@ func TestPlanEnvImport(t *testing.T) {
 	}
 
 	env.Import = false
-	got = PlanEnvImport(env, "api", api.MustLimitsFor(api.PlanPro))
+	got = PlanEnvImport(env, "api", []string{"api"}, api.MustLimitsFor(api.PlanPro))
 	if len(got.Values) != 0 || got.Skipped["LOG_LEVEL"] != EnvSkipNotOptedIn || got.Skipped["STRIPE_KEY"] != EnvSkipSecret {
 		t.Fatalf("without the opt-in: values %v, skipped %v", got.Values, got.Skipped)
 	}

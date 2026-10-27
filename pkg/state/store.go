@@ -876,6 +876,20 @@ type ComputeNodeCPUUsageBatcher interface {
 	ComputeNodeUsedCPUMillicoresByNode(ctx context.Context, nodeIDs []string) (map[string]int64, error)
 }
 
+// ComputeNodeVCPUUsageBatcher is the optional fleet-wide guest vCPU view used
+// by placement: each live instance's capacity_vcpu, grouped by node. Like the
+// CPU view it counts instances every scheduler placed, not only this one's.
+type ComputeNodeVCPUUsageBatcher interface {
+	ComputeNodeUsedVCPUByNode(ctx context.Context, nodeIDs []string) (map[string]int64, error)
+}
+
+// AppOwnershipLoadReader reports how much app RAM each node already owns
+// (Σ apps.ram_mb over its non-deleted apps), so a new app's owner can be
+// chosen by load (ADR-20261026170000). PgStore and MemStore implement it.
+type AppOwnershipLoadReader interface {
+	OwnedAppRAMByNode(ctx context.Context) (map[string]int64, error)
+}
+
 // ManagedRealtimeEndpointStore is the optional persistence surface for
 // managed realtime endpoint resources. It is intentionally separate from
 // Store so narrow test doubles and older integrations remain source-
@@ -4410,6 +4424,14 @@ type Store interface {
 	// Binding readers follow immutable message identity through rename/retirement.
 	QueueStateForBinding(ctx context.Context, appID, bindingID string) (QueueStats, error)
 	QueueStateForBindingInScope(ctx context.Context, appID, bindingID, scope string) (QueueStats, error)
+	// Scaling readers count depth only up to limit: a scheduler decision needs
+	// no more than the depth that saturates its pool, and a full count reads
+	// the whole backlog on every reconcile (ADR-20261022105723 amendment
+	// 2026-10-24). They match the QueueState readers above; a binding reader
+	// with an empty scope reads every scope, like QueueStateForBinding.
+	QueueDepthInScope(ctx context.Context, appID, scope string, limit int) (int, error)
+	QueueDepthForBindingInScope(ctx context.Context, appID, bindingID, scope string, limit int) (int, error)
+	QueueBindingHasInFlight(ctx context.Context, appID, bindingID, scope string) (bool, error)
 	WorkerPoolHistory(ctx context.Context, appID, deploymentID string) (WorkerPoolHistory, error)
 	// QueuePeek lists the oldest pending queue messages for an app
 	// without acquiring a lease or incrementing attempts. Paginated by

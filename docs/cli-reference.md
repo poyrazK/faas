@@ -148,7 +148,7 @@ Expose Gregale management tools over stdio or OAuth HTTP
 | `--transport <TRANSPORT>` | management MCP transport (default stdio) | one of `stdio` · `streamable-http` |
 | `--timeout <DURATION>` | per-tool API timeout (default 30s, maximum 1m) |  |
 | `--allow-writes` | enable reviewed deploy, promotion, and rollback actions |  |
-| `--tools <TOOLSETS>` | toolsets to list, comma-separated: core, release, diagnose (default all) |  |
+| `--tools <TOOLSETS>` | toolsets to list, comma-separated: core, release, diagnose, provision (default all) |  |
 | `--listen <ADDR>` | HTTP listen address behind TLS proxy (default 127.0.0.1:8787) |  |
 | `--resource-url <URL>` | public HTTPS URL ending in /mcp (required for HTTP) |  |
 | `--oauth-onboarding <MODE>` | remote onboarding (default browser) | one of `browser` · `api-key` |
@@ -2398,6 +2398,28 @@ Start or resume due discovery
 Read discovery progress
 
 `gregale bucket lifecycle status <app> <bucket-id> <scan-id>`
+
+### bucket cors
+
+Let browsers on your sites use the bucket&#39;s signed URLs
+
+#### bucket cors get
+
+Read the bucket&#39;s CORS rules
+
+`gregale bucket cors get <app> <bucket-id>`
+
+#### bucket cors set
+
+Replace rules from a JSON file or stdin
+
+`gregale bucket cors set <app> <bucket-id> <JSON-file|->`
+
+#### bucket cors clear
+
+Remove the rules; console origins stay allowed
+
+`gregale bucket cors clear <app> <bucket-id>`
 
 ### bucket versioning
 
@@ -10960,7 +10982,7 @@ Add an edge rule
 | `--validate-schema <JSON|@FILE|->` | JSON Schema (inline JSON, @file, or - for stdin; max 64 KiB) |  |
 | `--validate-mode <MODE>` | invalid-request behavior (default block) | one of `block` · `observe` · `warn` |
 | `--validate-content-type <TYPE>` | accepted application media type (repeat; e.g. application/json) |  |
-| `--validate-max-body-bytes <N>` | optional body cap in bytes (0 = plan default) |  |
+| `--validate-max-body-bytes <N>` | optional body cap in bytes (0 = 25 MiB or the plan cap, whichever is lower) |  |
 | `--validate-apply-while-streaming` | also validate streaming requests |  |
 | `--validate-reject-unknown-fields` | reject fields not declared by the schema |  |
 | `--validate-path-template <TEMPLATE>` | OpenAPI path template for the path schema (match-path must use ?* for each placeholder) |  |
@@ -11012,7 +11034,7 @@ Add an edge rule
 | `--headers-response-set <NAME:VALUE>` | kind=headers: response header to set (repeatable) |  |
 | `--jwt-algorithm <ALG>` | kind=jwt: allowed signing algorithm (repeatable) |  |
 | `--jwt-audience <AUDIENCE>` | kind=jwt: required audience (repeatable) |  |
-| `--jwt-require-exp` | kind=jwt: reject tokens without an exp claim |  |
+| `--jwt-require-exp` | kind=jwt: reject tokens without an exp claim (default true; =false accepts them) |  |
 | `--jwt-required-claim <NAME=VALUE>` | kind=jwt: required claim (repeatable) |  |
 | `--name <NAME>` | operator-facing rule name (&lt;=100 chars) |  |
 | `--redirect-header <NAME:VALUE>` | kind=redirect: extra response header (repeatable) |  |
@@ -11134,7 +11156,7 @@ Update one edge rule
 | `--validate-schema <JSON|@FILE|->` | replacement body schema; an action update replaces the body schema and parameter schemas together (inline JSON, @file, or -; max 64 KiB) |  |
 | `--validate-mode <MODE>` | invalid-request behavior | one of `block` · `observe` · `warn` |
 | `--validate-content-type <TYPE>` | accepted application media type (repeat; e.g. application/json) |  |
-| `--validate-max-body-bytes <N>` | body cap in bytes (0 = plan default) |  |
+| `--validate-max-body-bytes <N>` | body cap in bytes (0 = 25 MiB or the plan cap, whichever is lower) |  |
 | `--validate-apply-while-streaming` | also validate streaming requests |  |
 | `--validate-reject-unknown-fields` | reject fields not declared by the schema |  |
 | `--validate-path-template <TEMPLATE>` | OpenAPI path template for the path schema (match-path must use ?* for each placeholder) |  |
@@ -11152,7 +11174,7 @@ Update one edge rule
 | `--description <TEXT>` | operator-facing description (&lt;=1000 chars) |  |
 | `--expires-at <RFC3339>` | stop applying the rule at this RFC 3339 time |  |
 | `--expires-in <DURATION>` | stop applying the rule after this duration (e.g. 2h) |  |
-| `--jwt-require-exp` | kind=jwt: reject tokens without an exp claim |  |
+| `--jwt-require-exp` | kind=jwt: reject tokens without an exp claim (default true; =false accepts them) |  |
 | `--name <NAME>` | operator-facing rule name (&lt;=100 chars) |  |
 
 Examples:
@@ -14377,7 +14399,7 @@ Search an app&#39;s runtime logs and HTTP requests, or follow them
 
 See also: [`tail`](#tail).
 
-`gregale logs [<slug>] [--dry-run] [--view <NAME>] [--saved-view] [--clear-status] [--clear-grep] [--clear-level] [--clear-route] [--latest-failure] [--latest-request-error] [--interactive] [--follow] [--deployment <ID>] [--release <ID|vN>] [--source <SOURCE>] [--grep <SUBSTR>] [--since <15m|3d|RFC3339>] [--level <LEVEL>] [--status <100..599>] [--route <METHOD /path>] [--request <ID>] [--trace <TRACE_ID>] [--limit <N>] [--all] [--explain] [--archive] [--instance <ID>] [--date <DAY>]`
+`gregale logs [<slug>] [--dry-run] [--view <NAME>] [--saved-view] [--clear-status] [--clear-grep] [--clear-level] [--clear-route] [--latest-failure] [--latest-request-error] [--interactive] [--follow] [--deployment <ID>] [--release <ID|vN>] [--source <SOURCE>] [--grep <SUBSTR>] [--since <15m|3d|RFC3339>] [--level <LEVEL>] [--status <100..599>] [--route <METHOD /path>] [--request <ID>] [--trace <TRACE_ID>] [--project <SLUG>] [--service <NAME,...>] [--limit <N>] [--all] [--explain] [--archive] [--instance <ID>] [--date <DAY>]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -14402,6 +14424,8 @@ See also: [`tail`](#tail).
 | `--route <METHOD /path>` | only show HTTP requests for this route label |  |
 | `--request <ID>` | show one HTTP request by public request id or row id |  |
 | `--trace <TRACE_ID>` | show HTTP access logs correlated with a W3C trace id |  |
+| `--project <SLUG>` | read every service of a project together, each line prefixed with its service |  |
+| `--service <NAME,...>` | with --project, only these services |  |
 | `--limit <N>` | HTTP request page size (1..200) |  |
 | `--all` | read every retained HTTP request page |  |
 | `--explain` | summarize the last failure and common error patterns |  |
@@ -14414,6 +14438,7 @@ Examples:
 ```sh
 gregale logs my-api --interactive
 gregale logs my-api --follow
+gregale logs --project shop --follow
 gregale logs my-api --since 1h --level error
 gregale logs views save runtime-errors --since 1h --level error
 gregale logs my-api --view runtime-errors

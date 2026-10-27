@@ -3495,6 +3495,19 @@ type ManagedPostgresData struct {
 	Available bool
 	Error     string
 	Databases []ManagedPostgresDatabaseItem
+	// Overage is the compute overage form (ADR-20261025094915); nil hides it,
+	// as for Free plans and accounts without the postgres-overage capability.
+	Overage *ManagedPostgresOverageItem
+}
+
+// ManagedPostgresOverageItem backs the compute overage form on
+// /dashboard/postgres.
+type ManagedPostgresOverageItem struct {
+	Enabled        bool
+	AllowanceLabel string
+	CeilingLabel   string
+	ConfirmToken   string
+	Flash          string
 }
 
 // ManagedPostgresDatabaseItem is one database row on /dashboard/postgres.

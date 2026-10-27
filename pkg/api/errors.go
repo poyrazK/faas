@@ -1813,6 +1813,9 @@ const (
 	CodeCliAuthUnavailable         = "cli_auth_code_unavailable"
 	CodeBrowserApprovalPending     = "browser_approval_pending"
 	CodeBrowserApprovalUnavailable = "browser_approval_unavailable"
+	// CodeSecretEntryUnavailable covers an expired, used, unknown or
+	// mismatched secret entry request (ADR-20261026174727).
+	CodeSecretEntryUnavailable = "secret_entry_unavailable"
 
 	// CodeAppConcurReached is the typed "already at max_concurrency"
 	// result from Engine.AdmitInstance (issue #168). Distinct from
@@ -2399,7 +2402,7 @@ func StatusForCode(code string) int {
 		return http.StatusConflict
 	case CodeCliAuthPending, CodeBrowserApprovalPending:
 		return http.StatusNotFound
-	case CodeCliAuthUnavailable, CodeBrowserApprovalUnavailable:
+	case CodeCliAuthUnavailable, CodeBrowserApprovalUnavailable, CodeSecretEntryUnavailable:
 		return http.StatusGone
 	case CodePlanQueueDepth, CodePlanDelayedCap, CodePlanQueueBacklogBytes:
 		return http.StatusForbidden
@@ -2658,7 +2661,7 @@ func ErrDevWatchRAM(ramMB int) *Problem {
 		"Watch mode needs more memory",
 		fmt.Sprintf("watch mode runs your development server, which needs at least %d MB; this developer environment has %d MB. Upgrade the plan or use gregale dev without --watch.", DevWatchMinRAMMB, ramMB)).
 		WithLimit(int64(DevWatchMinRAMMB), int64(ramMB)).
-		WithDocs(docsBase + "/gregale-dev#watch-mode")
+		WithDocs(docsBase + "/cli#dev")
 }
 
 // ErrPlanLimitDeveloperLease is returned when a developer session requests a
@@ -2720,7 +2723,7 @@ func ErrAppLayerTooLarge(l Limits, observedBytes int64) *Problem {
 		fmt.Sprintf("%s plan caps total ephemeral app-filesystem capacity at %d MB (including app content and filesystem overhead); the built layer requires %.1f MB.",
 			l.Plan, l.EphemeralDiskMaxMB(), float64(observedBytes)/(1024*1024))).
 		WithLimit(capBytes, observedBytes).
-		WithDocs(docsBase + "/build/limits#app-layer")
+		WithDocs(docsBase + "/build#limits")
 }
 
 // ErrAppLayerTooManyEntries is returned when an image's layers apply more tar
@@ -2731,7 +2734,7 @@ func ErrAppLayerTooManyEntries(l Limits, limit int) *Problem {
 		"App too large",
 		fmt.Sprintf("image layers contain more than %d files, directories and links in total; %s plan builds stop at that limit.", limit, l.Plan)).
 		WithLimit(int64(limit), int64(limit)+1).
-		WithDocs(docsBase + "/build/limits#app-layer")
+		WithDocs(docsBase + "/build#limits")
 }
 
 // ErrPlanLimitConcurrency is returned when waking another instance would exceed
@@ -3064,7 +3067,7 @@ func ErrStepUpRequired() *Problem {
 func ErrBillingNotImplemented(detail string) *Problem {
 	return NewProblem(http.StatusNotImplemented, CodeBillingNotImplemented,
 		"Billing provider does not support this surface", detail).
-		WithDocs(docsBase + "/billing/providers")
+		WithDocs(docsBase + "/billing#providers")
 }
 
 // ErrSourceTooLarge is returned when an uploaded tarball exceeds the plan cap.
@@ -3074,7 +3077,7 @@ func ErrSourceTooLarge(l Limits, observedBytes int64) *Problem {
 		"Source too large",
 		fmt.Sprintf("%s plan caps source at %d MB.", l.Plan, l.SourceTarballMaxMB)).
 		WithLimit(capBytes, observedBytes).
-		WithDocs(docsBase + "/build/limits")
+		WithDocs(docsBase + "/build#limits")
 }
 
 // ErrRequestBodyTooLarge is the stable 413 envelope for an inbound request
@@ -3123,11 +3126,23 @@ func ErrTrafficPolicyTooComplex(scope, unit string, limit, observed int64) *Prob
 		fmt.Sprintf("%s analysis reached %d %s, above the %d cap; no policy was changed", scope, observed, unit, limit)).
 		WithLimit(limit, observed).
 		WithDocs(docsBase + "/plans#edge-rules").
-		WithHint("Simplify host selectors, replace legacy rules with the supported API shape, or remove unused rules, then retry. Analysis could not verify the proposed policy within its limits.")
+		WithHint(trafficPolicyTooComplexHint(unit))
 	if unit == "bytes" {
 		problem = problem.WithByteLimit(limit, observed)
 	}
 	return problem
+}
+
+// trafficPolicyTooComplexHint tells a time ceiling apart from a size one. The
+// wall-clock and SQL time ceilings also trip on a busy control plane: a deploy
+// of an app with no edge rules was refused at 2002 ms during a rollout and
+// passed on retry (Hunt 14 H14-78), so "simplify your rules" was the wrong
+// first step.
+func trafficPolicyTooComplexHint(unit string) string {
+	if unit == "milliseconds" {
+		return "The policy check ran out of time before it finished, which can happen while the platform is busy. Retry in a few seconds; if it keeps failing, simplify host selectors or remove unused rules."
+	}
+	return "Simplify host selectors, replace legacy rules with the supported API shape, or remove unused rules, then retry. Analysis could not verify the proposed policy within its limits."
 }
 
 // ErrRequestUploadTimeout reports a stalled or too-slow inbound upload. The
@@ -3136,7 +3151,7 @@ func ErrRequestUploadTimeout(timeout time.Duration) *Problem {
 	return NewProblem(http.StatusRequestTimeout, CodeRequestUploadTimeout,
 		"Request upload timed out",
 		fmt.Sprintf("request body was not received within the %s upload allowance", timeout)).
-		WithDocs(docsBase + "/functions/limits").
+		WithDocs(docsBase + "/functions#limits").
 		WithHint("Retry on a stable connection, or use a bucket signed URL for large uploads.")
 }
 
@@ -3144,7 +3159,7 @@ func ErrRequestUploadTimeout(timeout time.Duration) *Problem {
 func ErrRequestBodyReadFailed() *Problem {
 	return NewProblem(http.StatusBadRequest, CodeRequestBodyReadFailed,
 		"Request body could not be read", "the request body ended before it could be admitted").
-		WithDocs(docsBase + "/functions/limits")
+		WithDocs(docsBase + "/functions#limits")
 }
 
 // ErrSourceInvalid is returned when a tarball fails shape validation
@@ -3164,7 +3179,7 @@ func ErrUploadSessionNotFound(uploadID string) *Problem {
 	return NewProblem(http.StatusNotFound, CodeUploadSessionNotFound,
 		"Upload session not found",
 		fmt.Sprintf("No open upload session with id %q; it may have been committed, cancelled, or reaped.", uploadID)).
-		WithDocs(docsBase + "/build/uploads")
+		WithDocs(docsBase + "/deploy-from-source#uploads")
 }
 
 // ErrUploadSessionOffsetConflict is returned when the atomic CAS in
@@ -3176,7 +3191,7 @@ func ErrUploadSessionOffsetConflict(uploadID string, expected, current int64) *P
 	return NewProblem(http.StatusConflict, CodeUploadSessionOffsetConflict,
 		"Upload session offset conflict",
 		fmt.Sprintf("Upload session %q expected offset %d but server is at %d; resume from current offset.", uploadID, expected, current)).
-		WithDocs(docsBase + "/build/uploads")
+		WithDocs(docsBase + "/deploy-from-source#uploads")
 }
 
 // ErrUploadSessionExpired is returned when the reaper has marked the
@@ -3188,7 +3203,7 @@ func ErrUploadSessionExpired(uploadID string) *Problem {
 	return NewProblem(http.StatusGone, CodeUploadSessionExpired,
 		"Upload session expired",
 		fmt.Sprintf("Upload session %q expired (24h TTL) and was reaped.", uploadID)).
-		WithDocs(docsBase + "/build/uploads")
+		WithDocs(docsBase + "/deploy-from-source#uploads")
 }
 
 // ErrUploadSessionTooMany is returned by POST /v1/uploads when the
@@ -3201,7 +3216,7 @@ func ErrUploadSessionTooMany(detail string, limitBytes, observedBytes int64) *Pr
 		"Too many upload sessions",
 		detail).
 		WithLimit(limitBytes, observedBytes).
-		WithDocs(docsBase + "/build/uploads")
+		WithDocs(docsBase + "/deploy-from-source#uploads")
 }
 
 // ErrUploadSessionAlreadyCommitted is returned by POST /v1/uploads/{id}/commit
@@ -3212,7 +3227,7 @@ func ErrUploadSessionAlreadyCommitted(uploadID, deploymentID string) *Problem {
 	return NewProblem(http.StatusConflict, CodeUploadSessionAlreadyCommitted,
 		"Upload session already committed",
 		fmt.Sprintf("Upload session %q was already committed as deployment %s.", uploadID, deploymentID)).
-		WithDocs(docsBase + "/build/uploads")
+		WithDocs(docsBase + "/deploy-from-source#uploads")
 }
 
 // ErrUploadSessionAlreadyCancelled is returned by DELETE on a session
@@ -3222,7 +3237,7 @@ func ErrUploadSessionAlreadyCancelled(uploadID string) *Problem {
 	return NewProblem(http.StatusConflict, CodeUploadSessionAlreadyCancelled,
 		"Upload session not open",
 		fmt.Sprintf("Upload session %q is not in 'open' status; the .part file is gone.", uploadID)).
-		WithDocs(docsBase + "/build/uploads")
+		WithDocs(docsBase + "/deploy-from-source#uploads")
 }
 
 // ErrDevSourceBaseMissing tells an incremental-sync client to retry the same
@@ -3231,7 +3246,7 @@ func ErrDevSourceBaseMissing() *Problem {
 	return NewProblem(http.StatusConflict, CodeDevSourceBaseMissing,
 		"Developer source base unavailable",
 		"the cached source revision is unavailable; retry with a complete source snapshot").
-		WithDocs(docsBase + "/dev/source-sync")
+		WithDocs(docsBase + "/cli#dev")
 }
 
 // ErrStatelessOnlyViolation is returned when a deploy shape (or resolved
@@ -3285,7 +3300,7 @@ func ErrAppNotListening(observedPort string) *Problem {
 		"No process listening on $PORT",
 		fmt.Sprintf("readiness probe found no listener on port %s after the wake timeout.",
 			observedPort)).
-		WithDocs(docsBase + "/errors/app-not-listening")
+		WithDocs(docsBase + "/errors#app_not_listening")
 }
 
 // ErrAppLoopbackBound is returned when the customer's app binds its
@@ -3299,7 +3314,7 @@ func ErrAppLoopbackBound(observedBind string) *Problem {
 		"Application bound to loopback",
 		fmt.Sprintf("app is listening on %s; the per-VM bridge proxies requests to 10.0.0.2, "+
 			"so loopback-only binds never receive traffic.", observedBind)).
-		WithDocs(docsBase + "/errors/app-loopback-bound")
+		WithDocs(docsBase + "/errors#app_loopback_bound")
 }
 
 // ErrAppArchMismatch is returned when the build VM cannot execute the
@@ -3313,7 +3328,7 @@ func ErrAppArchMismatch(observedArch, requiredArch string) *Problem {
 		fmt.Sprintf("binary is %s; this control plane runs %s. "+
 			"rebuild with the matching target.",
 			observedArch, requiredArch)).
-		WithDocs(docsBase + "/errors/app-arch-mismatch")
+		WithDocs(docsBase + "/errors#app_arch_mismatch")
 }
 
 // ErrEnvVarMissing is returned when a deploy-time preflight detects
@@ -3328,7 +3343,7 @@ func ErrEnvVarMissing(envVar string) *Problem {
 		"Missing environment variable",
 		fmt.Sprintf("source references $%s but it is not declared in the app's env config.",
 			envVar)).
-		WithDocs(docsBase + "/errors/env-var-missing")
+		WithDocs(docsBase + "/errors#env_var_missing")
 }
 
 // ErrAppHealthzUnauthorized is returned when the customer's health
@@ -3342,7 +3357,7 @@ func ErrAppHealthzUnauthorized(observedStatus int) *Problem {
 		"Health endpoint returning 401",
 		fmt.Sprintf("/healthz returned %d; consecutive 401s flip the deployment to failed.",
 			observedStatus)).
-		WithDocs(docsBase + "/errors/app-healthz-unauthorized")
+		WithDocs(docsBase + "/errors#app_healthz_unauthorized")
 }
 
 // ErrAppRuntimeOOM is returned when the cgroup OOM-killer terminates
@@ -3375,7 +3390,7 @@ func ErrAppRuntimeOOM(observedPeakMB, planMB int) *Problem {
 		"Container out of memory",
 		fmt.Sprintf("cgroup OOM-kill fired at %d MB (plan cap %d MB); upgrade plan or trim in-memory state.",
 			observedPeakMB, planMB)).
-		WithDocs(docsBase + "/errors/app-runtime-oom")
+		WithDocs(docsBase + "/errors#app_runtime_oom")
 }
 
 // ErrDepInstallFailed is returned when the build VM's dependency
@@ -3390,7 +3405,7 @@ func ErrDepInstallFailed(pkgManager, observedCmd string) *Problem {
 		"Dependency installation failure",
 		fmt.Sprintf("%s install failed: %s — see build log for the failing command.",
 			pkgManager, observedCmd)).
-		WithDocs(docsBase + "/errors/dep-install-failed")
+		WithDocs(docsBase + "/errors#dep_install_failed")
 }
 
 // ErrAppStartupTimeout is returned when the customer's app does not
@@ -3404,7 +3419,7 @@ func ErrAppStartupTimeout(stuckReason, observedDuration string) *Problem {
 		"Application startup timeout",
 		fmt.Sprintf("app did not become ready after %s (stuck_reason=%s).",
 			observedDuration, stuckReason)).
-		WithDocs(docsBase + "/errors/app-startup-timeout")
+		WithDocs(docsBase + "/errors#app_startup_timeout")
 }
 
 // ErrDomainNotVerified is returned when a customer tries to bind a domain
@@ -3413,7 +3428,7 @@ func ErrDomainNotVerified(domain string) *Problem {
 	return NewProblem(http.StatusConflict, CodeDomainNotVerified,
 		"Domain not verified",
 		fmt.Sprintf("TXT challenge for %q not yet satisfied; publish the required TXT record and retry.", domain)).
-		WithDocs(docsBase + "/domains/verify")
+		WithDocs(docsBase + "/domains#verify")
 }
 
 // ErrDomainVerificationFailed (issue #961 / Mega-A PR-3) is the 422
@@ -3425,7 +3440,7 @@ func ErrDomainVerificationFailed(domain, reason string) *Problem {
 	return NewProblem(http.StatusUnprocessableEntity, CodeDomainVerificationFailed,
 		"Domain verification failed",
 		fmt.Sprintf("%s: %s — fix the DNS record and retry.", domain, reason)).
-		WithDocs(docsBase + "/domains/verify")
+		WithDocs(docsBase + "/domains#verify")
 }
 
 // ErrDomainCertNotIssued (issue #961 / Mega-A PR-3) is the 422
@@ -3438,7 +3453,7 @@ func ErrDomainCertNotIssued(domain, reason string) *Problem {
 	return NewProblem(http.StatusUnprocessableEntity, CodeDomainCertNotIssued,
 		"Domain cert not issued",
 		fmt.Sprintf("port-443 cert for %q is not Gregale-issued: %s", domain, reason)).
-		WithDocs(docsBase + "/domains/verify")
+		WithDocs(docsBase + "/domains#verify")
 }
 
 // ErrDoctorDisabled (ADR-120) is the 503 returned by
@@ -3452,7 +3467,7 @@ func ErrDoctorDisabled() *Problem {
 	return NewProblem(http.StatusServiceUnavailable, CodeDoctorDisabled,
 		"Domain doctor is dark-launched",
 		"the domain doctor is not available on this Gregale installation right now; use `gregale domains verify` for a one-shot check or contact support").
-		WithDocs(docsBase + "/domains/doctor")
+		WithDocs(docsBase + "/domains#doctor")
 }
 
 // ErrDoctorUnavailable (ADR-120) is the 503 returned when
@@ -3464,7 +3479,7 @@ func ErrDoctorUnavailable(domain, reason string) *Problem {
 	return NewProblem(http.StatusServiceUnavailable, CodeDoctorUnavailable,
 		"Domain doctor unavailable",
 		fmt.Sprintf("doctor probes for %s failed: %s", domain, reason)).
-		WithDocs(docsBase + "/domains/doctor")
+		WithDocs(docsBase + "/domains#doctor")
 }
 
 // ErrAPIContractDiffDisabled is the deterministic dark-launch response for
@@ -3473,7 +3488,7 @@ func ErrAPIContractDiffDisabled() *Problem {
 	return NewProblem(http.StatusServiceUnavailable, CodeAPIContractDiffDisabled,
 		"API contract diff is disabled",
 		"API contract diff is not available on this Gregale installation right now; contact support for availability").
-		WithDocs(docsBase + "/api-hosting/contract-diff")
+		WithDocs(docsBase + "/api-hosting#contract-diff")
 }
 
 // ErrAPIContractBreakingChange is used by a promotion API caller when the
@@ -3481,7 +3496,7 @@ func ErrAPIContractDiffDisabled() *Problem {
 func ErrAPIContractBreakingChange(detail string) *Problem {
 	return NewProblem(http.StatusUnprocessableEntity, CodeAPIContractBreakingChange,
 		"API contract breaking change", detail).
-		WithDocs(docsBase + "/api-hosting/contract-diff")
+		WithDocs(docsBase + "/api-hosting#contract-diff")
 }
 
 // ErrAPIContractComparisonIncomplete is used when the compatibility gate
@@ -3490,7 +3505,7 @@ func ErrAPIContractBreakingChange(detail string) *Problem {
 func ErrAPIContractComparisonIncomplete(detail string) *Problem {
 	return NewProblem(http.StatusUnprocessableEntity, CodeAPIContractComparisonIncomplete,
 		"API contract comparison incomplete", detail).
-		WithDocs(docsBase + "/api-hosting/contract-diff")
+		WithDocs(docsBase + "/api-hosting#contract-diff")
 }
 
 // ErrCronInvalid is returned for malformed cron expressions.
@@ -4524,7 +4539,7 @@ func ErrPlanAlertRuleQuota(plan Plan, scope string, limit, observed int) *Proble
 func ErrAlertPresetInvalid(reason string) *Problem {
 	return NewProblem(http.StatusBadRequest, CodeAlertPresetInvalid,
 		"Invalid alert preset", reason).
-		WithDocs(docsBase + "/alerts/presets")
+		WithDocs(docsBase + "/alerts#presets")
 }
 
 // ErrAlertPresetDisabled is returned when the customer POSTs to
@@ -4536,7 +4551,7 @@ func ErrAlertPresetDisabled(presetName string) *Problem {
 	return NewProblem(http.StatusBadRequest, CodeAlertPresetDisabled,
 		"Alert preset not yet available",
 		fmt.Sprintf("the %q preset is staged for a future release; check the catalog for available presets.", presetName)).
-		WithDocs(docsBase + "/alerts/presets")
+		WithDocs(docsBase + "/alerts#presets")
 }
 
 // ErrPlanAlertPresetsNotAllowed is returned when the customer's
@@ -4585,7 +4600,7 @@ func ErrPlanInboundWebhooksNotAllowed(p Plan) *Problem {
 	return NewProblem(http.StatusPaymentRequired, CodePlanInboundWebhooksNotAllowed,
 		"Inbound webhooks unavailable on this plan",
 		fmt.Sprintf("the %s plan does not include durable inbound webhooks; upgrade to Hobby or above to receive provider callbacks while an app sleeps.", p)).
-		WithDocs(docsBase + "/inbound-webhooks")
+		WithDocs(docsBase + "/event-driven#inbound-webhooks")
 }
 
 func ErrPlanInboundWebhookQuota(plan Plan, scope string, limit, observed int) *Problem {
@@ -4595,7 +4610,7 @@ func ErrPlanInboundWebhookQuota(plan Plan, scope string, limit, observed int) *P
 		fmt.Sprintf("%s plan caps inbound webhook endpoints at %d for %s; you have %d. Delete one to add another.",
 			plan, limit, scopeName, observed)).
 		WithLimit(int64(limit), int64(observed)).
-		WithDocs(docsBase + "/inbound-webhooks")
+		WithDocs(docsBase + "/event-driven#inbound-webhooks")
 }
 
 func ErrPlanRealtimeNotAllowed(p Plan) *Problem {
@@ -6304,7 +6319,7 @@ func ErrPlanFeatureGated(feature string, p Plan) *Problem {
 		return NewProblem(http.StatusPaymentRequired, CodePlanFeatureGated,
 			"Plan doesn't include the AI gateway",
 			fmt.Sprintf("the %s plan doesn't include the AI gateway; upgrade to Hobby or higher to call AI providers through managed integrations.", p)).
-			WithDocs(docsBase + "/ai-gateway#plans")
+			WithDocs(docsBase + "/cli#ai")
 	}
 	if feature == "route_controls" {
 		return NewProblem(http.StatusPaymentRequired, CodePlanFeatureGated,
@@ -6517,7 +6532,7 @@ func ErrInvalidCredentials() *Problem {
 	return NewProblem(http.StatusUnauthorized, CodeInvalidCredentials,
 		"Sign in failed",
 		"email or password is incorrect.").
-		WithDocs(docsBase + "/auth/sign-in")
+		WithDocs(docsBase + "/auth#sign-in")
 }
 
 // ErrEmailNotVerified is the 401 returned by the Google / GitHub OAuth
@@ -6529,7 +6544,7 @@ func ErrEmailNotVerified(provider string) *Problem {
 	return NewProblem(http.StatusUnauthorized, CodeEmailNotVerified,
 		"Email not verified",
 		fmt.Sprintf("the %s account's primary email is not verified; verify it on the provider and retry.", provider)).
-		WithDocs(docsBase + "/auth/oauth")
+		WithDocs(docsBase + "/auth#oauth")
 }
 
 // ErrEmailVerificationRequired is the authenticated 403 gate for deploy and
@@ -6538,7 +6553,7 @@ func ErrEmailVerificationRequired() *Problem {
 	return NewProblem(http.StatusForbidden, CodeEmailVerificationRequired,
 		"Email verification required",
 		"verify your email address before deploying apps or changing billing settings.").
-		WithDocs(docsBase + "/auth/email-verification")
+		WithDocs(docsBase + "/auth#email-verification")
 }
 
 // ErrVerificationLinkInvalid intentionally collapses malformed, expired and
@@ -6549,7 +6564,7 @@ func ErrVerificationLinkInvalid() *Problem {
 		"Verification link no longer valid",
 		"This verification link is invalid, expired, or has already been used.").
 		WithHint("Request a new verification email, then open the latest link.").
-		WithDocs(docsBase + "/auth/email-verification")
+		WithDocs(docsBase + "/auth#email-verification")
 }
 
 // ErrPasswordTooWeak is the 400 returned by POST /signup and POST
@@ -6559,7 +6574,7 @@ func ErrVerificationLinkInvalid() *Problem {
 func ErrPasswordTooWeak(reason string) *Problem {
 	return NewProblem(http.StatusBadRequest, CodePasswordTooWeak,
 		"Password too weak", reason).
-		WithDocs(docsBase + "/auth/password")
+		WithDocs(docsBase + "/auth#password")
 }
 
 // ErrResetTokenInvalid is the 410 returned by GET / POST /auth/reset
@@ -6570,7 +6585,7 @@ func ErrResetTokenInvalid() *Problem {
 	return NewProblem(http.StatusGone, CodeResetTokenInvalid,
 		"Reset link invalid",
 		"this password-reset link is unknown or has already been used.").
-		WithDocs(docsBase + "/auth/reset")
+		WithDocs(docsBase + "/auth#reset")
 }
 
 // ErrResetTokenExpired is the 410 returned by GET / POST /auth/reset
@@ -6581,7 +6596,7 @@ func ErrResetTokenExpired() *Problem {
 	return NewProblem(http.StatusGone, CodeResetTokenExpired,
 		"Reset link expired",
 		"this password-reset link has expired; request a new one.").
-		WithDocs(docsBase + "/auth/reset")
+		WithDocs(docsBase + "/auth#reset")
 }
 
 // --- Organizations (issue #190 / IAM-6 / ADR-061) --------------------------
@@ -6992,7 +7007,7 @@ func ErrNodeDraining(nodeName, currentLifecycle string) *Problem {
 	return NewProblem(http.StatusConflict, CodeNodeDraining,
 		"Compute node is already draining",
 		fmt.Sprintf("node=%q lifecycle=%q; drain is already in progress.", nodeName, currentLifecycle)).
-		WithDocs(docsBase + "/admin/compute-nodes#drain")
+		WithDocs(docsBase + "/admin#compute-nodes")
 }
 
 // ErrNodeNotRecoverable (Workstream B / issue #1184) is the 422
@@ -7004,7 +7019,7 @@ func ErrNodeNotRecoverable(nodeName, lastOutcome string) *Problem {
 	return NewProblem(http.StatusUnprocessableEntity, CodeNodeNotRecoverable,
 		"Compute node cannot be recovered",
 		fmt.Sprintf("node=%q last_recovery_outcome=%q; no peer with headroom and no snapshot to recreate from.", nodeName, lastOutcome)).
-		WithDocs(docsBase + "/admin/compute-nodes#recovery")
+		WithDocs(docsBase + "/admin#compute-nodes")
 }
 
 // ErrNodeRecoveryInProgress (Workstream B / issue #1184) is the
@@ -7016,7 +7031,7 @@ func ErrNodeRecoveryInProgress(nodeName string) *Problem {
 	return NewProblem(http.StatusConflict, CodeNodeRecoveryInProgress,
 		"Compute node recovery in progress",
 		fmt.Sprintf("node=%q; the recovery arbiter owns this node until last_recovery_outcome lands.", nodeName)).
-		WithDocs(docsBase + "/admin/compute-nodes#recovery")
+		WithDocs(docsBase + "/admin#compute-nodes")
 }
 
 // ErrNodeLifecycleInvalid (Workstream B / issue #1184) is the 422
@@ -7028,7 +7043,7 @@ func ErrNodeLifecycleInvalid(from, to string) *Problem {
 	return NewProblem(http.StatusUnprocessableEntity, CodeNodeLifecycleInvalid,
 		"Compute node lifecycle transition invalid",
 		fmt.Sprintf("cannot transition lifecycle from %q to %q.", from, to)).
-		WithDocs(docsBase + "/admin/compute-nodes#lifecycle")
+		WithDocs(docsBase + "/admin#compute-nodes")
 }
 
 // ErrPlanCustomMetricsNotAllowed is the 402 for an ADR-202 push on a plan
@@ -7049,7 +7064,7 @@ const CodeUDPListenerLimit = "udp_listener_limit"
 func ErrUDPListenerLimit(limit, observed int) *Problem {
 	return NewProblem(http.StatusConflict, CodeUDPListenerLimit,
 		"UDP listener reservation limit reached", "Delete an existing UDP listener before reserving another public port. Disabled listeners still reserve their ports.").
-		WithLimit(int64(limit), int64(observed)).WithDocs(docsBase + "/containers#udp-listeners")
+		WithLimit(int64(limit), int64(observed)).WithDocs(docsBase + "/deploys#containers")
 }
 
 // CodeProfileInvestigationLimit is the per-app saved metadata quota.

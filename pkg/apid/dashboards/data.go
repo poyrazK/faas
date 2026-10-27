@@ -51,7 +51,7 @@ func (s *Service) Data(w http.ResponseWriter, r *http.Request, acct state.Accoun
 // window, with bounded concurrency and a per-widget deadline. The API and
 // the dashboard page share it.
 func (s *Service) Read(ctx context.Context, acct state.Account, id string) (api.DashboardData, error) {
-	row, err := s.Host.Dashboards().DashboardByID(ctx, acct.ID, id)
+	row, err := s.dashboard(ctx, acct, id)
 	if err != nil {
 		return api.DashboardData{}, err
 	}
