@@ -1079,7 +1079,7 @@ func watchInvalidations(ctx context.Context, pool *pgxpool.Pool, inv invalidator
 	// barrier.
 	var heartbeat <-chan time.Time
 	if gatewayNode != "" {
-		touchEdgeListenerHeartbeat(ctx, pool, gatewayNode, log)
+		touchEdgeListenerHeartbeat(ctx, pool, inv, gatewayNode, log)
 		ticker := time.NewTicker(state.EdgeListenerHeartbeatInterval)
 		defer ticker.Stop()
 		heartbeat = ticker.C
@@ -1090,7 +1090,7 @@ func watchInvalidations(ctx context.Context, pool *pgxpool.Pool, inv invalidator
 		case <-ctx.Done():
 			return
 		case <-heartbeat:
-			touchEdgeListenerHeartbeat(ctx, pool, gatewayNode, log)
+			touchEdgeListenerHeartbeat(ctx, pool, inv, gatewayNode, log)
 		case n, ok := <-notif:
 			if !ok {
 				// Defensive — wrapper keeps open until ctx cancels.
@@ -1145,12 +1145,19 @@ func ackDeploymentRouteInvalidation(ctx context.Context, pool *pgxpool.Pool, gen
 	}
 }
 
-func touchEdgeListenerHeartbeat(ctx context.Context, pool *pgxpool.Pool, node string, log *slog.Logger) {
+// touchEdgeListenerHeartbeat stamps node's edge listener heartbeat and, when
+// the write succeeds, records it on inv's metrics, so an alert sees a stamp
+// that stopped advancing without waiting for a rule change.
+func touchEdgeListenerHeartbeat(ctx context.Context, pool *pgxpool.Pool, inv invalidator, node string, log *slog.Logger) {
 	// Short: the write runs on the notification loop it vouches for.
 	touchCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
 	if err := state.NewPgStore(pool).TouchEdgeListenerHeartbeat(touchCtx, node); err != nil {
 		log.Warn("gatewayd: edge listener heartbeat", "node", node, "err", err)
+		return
+	}
+	if observer, ok := inv.(interface{ ObserveEdgeListenerHeartbeat(time.Time) }); ok {
+		observer.ObserveEdgeListenerHeartbeat(time.Now())
 	}
 }
 

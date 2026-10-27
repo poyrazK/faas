@@ -743,6 +743,11 @@ func (s *server) WithOpsMetrics(ctx context.Context, ops *wire.OpsMetrics) *serv
 		s.routeJobMetrics = routejobs.NewMetrics(ops.Registry(), ops.MetricPrefix())
 	}
 	if ops == nil {
+		s.edgeRules.Metrics = nil
+	} else if s.edgeRules.Metrics.Registry() != ops.Registry() {
+		s.edgeRules.Metrics = edgerules.NewMetrics(ops.Registry(), ops.MetricPrefix())
+	}
+	if ops == nil {
 		s.honeytokenMetrics = nil
 	} else if s.honeytokenMetrics == nil || s.honeytokenMetrics.registry != ops.Registry() {
 		s.honeytokenMetrics = newHoneytokenMetrics(ops.Registry())

@@ -111,13 +111,14 @@ def sync_detailed(
 ) -> Response[EdgeRuleResponse | Problem]:
     """Create an edge rule on an app.
 
-     Kind is one of {route, rewrite, redirect, headers, cors, jwt, ip,
-    validate, geo, async}. `action` is a kind-tagged jsonb body — the per-kind
-    shape is documented under components/schemas. Plan-kind gate:
-    jwt/ip return 402 plan_edge_rule_kind_not_allowed on Free; geo
-    is allowed on Free with a tighter per-app quota. Per-app
-    quota returns 402 plan_limit_edge_rules once EdgeRulesPerApp
-    is reached.
+     Kind is one of route, rewrite, redirect, headers, cors, jwt, ip,
+    validate, limit, maintenance, geo, throttle, budget, cache, respond,
+    retry, circuit_breaker, async, waf and challenge. `action` is the
+    kind's action object (the EdgeRule*Action schemas). jwt, ip and async
+    return 402 plan_edge_rule_kind_not_allowed on Free; a kind past its
+    per-app quota returns 402 plan_edge_rule_kind_quota_reached, and the
+    per-app total 402 plan_limit_edge_rules. Reference:
+    https://gregale.dev/docs/edge-rules
 
     Args:
         slug (str):
@@ -154,13 +155,14 @@ def sync(
 ) -> EdgeRuleResponse | Problem | None:
     """Create an edge rule on an app.
 
-     Kind is one of {route, rewrite, redirect, headers, cors, jwt, ip,
-    validate, geo, async}. `action` is a kind-tagged jsonb body — the per-kind
-    shape is documented under components/schemas. Plan-kind gate:
-    jwt/ip return 402 plan_edge_rule_kind_not_allowed on Free; geo
-    is allowed on Free with a tighter per-app quota. Per-app
-    quota returns 402 plan_limit_edge_rules once EdgeRulesPerApp
-    is reached.
+     Kind is one of route, rewrite, redirect, headers, cors, jwt, ip,
+    validate, limit, maintenance, geo, throttle, budget, cache, respond,
+    retry, circuit_breaker, async, waf and challenge. `action` is the
+    kind's action object (the EdgeRule*Action schemas). jwt, ip and async
+    return 402 plan_edge_rule_kind_not_allowed on Free; a kind past its
+    per-app quota returns 402 plan_edge_rule_kind_quota_reached, and the
+    per-app total 402 plan_limit_edge_rules. Reference:
+    https://gregale.dev/docs/edge-rules
 
     Args:
         slug (str):
@@ -192,13 +194,14 @@ async def asyncio_detailed(
 ) -> Response[EdgeRuleResponse | Problem]:
     """Create an edge rule on an app.
 
-     Kind is one of {route, rewrite, redirect, headers, cors, jwt, ip,
-    validate, geo, async}. `action` is a kind-tagged jsonb body — the per-kind
-    shape is documented under components/schemas. Plan-kind gate:
-    jwt/ip return 402 plan_edge_rule_kind_not_allowed on Free; geo
-    is allowed on Free with a tighter per-app quota. Per-app
-    quota returns 402 plan_limit_edge_rules once EdgeRulesPerApp
-    is reached.
+     Kind is one of route, rewrite, redirect, headers, cors, jwt, ip,
+    validate, limit, maintenance, geo, throttle, budget, cache, respond,
+    retry, circuit_breaker, async, waf and challenge. `action` is the
+    kind's action object (the EdgeRule*Action schemas). jwt, ip and async
+    return 402 plan_edge_rule_kind_not_allowed on Free; a kind past its
+    per-app quota returns 402 plan_edge_rule_kind_quota_reached, and the
+    per-app total 402 plan_limit_edge_rules. Reference:
+    https://gregale.dev/docs/edge-rules
 
     Args:
         slug (str):
@@ -233,13 +236,14 @@ async def asyncio(
 ) -> EdgeRuleResponse | Problem | None:
     """Create an edge rule on an app.
 
-     Kind is one of {route, rewrite, redirect, headers, cors, jwt, ip,
-    validate, geo, async}. `action` is a kind-tagged jsonb body — the per-kind
-    shape is documented under components/schemas. Plan-kind gate:
-    jwt/ip return 402 plan_edge_rule_kind_not_allowed on Free; geo
-    is allowed on Free with a tighter per-app quota. Per-app
-    quota returns 402 plan_limit_edge_rules once EdgeRulesPerApp
-    is reached.
+     Kind is one of route, rewrite, redirect, headers, cors, jwt, ip,
+    validate, limit, maintenance, geo, throttle, budget, cache, respond,
+    retry, circuit_breaker, async, waf and challenge. `action` is the
+    kind's action object (the EdgeRule*Action schemas). jwt, ip and async
+    return 402 plan_edge_rule_kind_not_allowed on Free; a kind past its
+    per-app quota returns 402 plan_edge_rule_kind_quota_reached, and the
+    per-app total 402 plan_limit_edge_rules. Reference:
+    https://gregale.dev/docs/edge-rules
 
     Args:
         slug (str):

@@ -1247,3 +1247,62 @@ follow-up). (An earlier draft of this sentence also listed per-gateway
 counting of `kind=throttle`; that was wrong. In the default central rate-limit
 mode, throttle buckets are Postgres counters shared by every gateway. The
 customer reference is `docs/edge-rules.md`.)
+
+## Amendment (2026-10-27, later): GA hardening — rollout signals, cache scope, coverage
+
+The last code items before edge rules leave beta.
+
+1. **Rollout signals.** Three warn alerts, one runbook
+  (`docs/runbooks/FaasEdgeRuleConvergence.md`):
+  - `FaasEdgeRuleListenerStale` reads a new gauge,
+    `gateway_edge_rule_listener_heartbeat_timestamp_seconds`, set each time a
+    gateway stamps its edge listener heartbeat. A stamp older than 90 s on a
+    live process means apid is changing rules without that gateway. The
+    alert needs no rule change to fire, unlike a counter of skipped gateways.
+  - `FaasEdgeRuleConvergenceFailing` reads
+    `apid_edge_rule_convergence_failures_total{phase}`. `prepare` failures
+    are customer edits refused with 503; `apply` failures are committed edits
+    whose hosts stay held until the fence expires. apid now logs the prepare
+    failure (it only logged apply failures), naming the gateways that did not
+    answer.
+  - `FaasEdgeRuleConvergenceStuck` fires when
+    `gateway_edge_rule_converging_hosts` stays above zero for 10 minutes. A
+    fence lasts 10 s, so that means changes keep being prepared without an
+    apply.
+  - `apid_edge_rule_convergence_skipped_gateways_total{node}` counts the
+    gateways a change left out, for the runbook rather than an alert.
+2. **Dropped geo and challenge rules page.** `FaasEdgeRuleAuthCompileError`
+  covered `jwt`, `ip` and `waf`. A dropped `geo` rule lets denied countries
+  through and a dropped `challenge` rule lets bots through, so both now page
+  with them.
+3. **A wildcard change clears one account's cached responses.** A `*` or glob
+  `match_host` covered hosts the gateway cannot enumerate, so the change
+  flushed every account's response cache on every gateway. With owned reads
+  (amendment 2026-10-26) such a rule only applies to its own account's
+  hosts, so the gateway now lists the account's apps (`ListApps`, one read
+  per change per gateway, 2 s timeout) and drops their entries, local and
+  shared. A change without an account (the repair ledger) or a failed
+  listing still flushes everything.
+4. **Coverage.**
+  - End-to-end tests for `kind=limit` (413 before the app, selectors,
+    API validation of the cap) and the penalty box (boxing after `after`
+    refusals, other paths and clients, release on `clear_penalty`), on the
+    APID and gateway harness.
+  - `kind=retry` (a GET replayed from a dead instance to its sibling; a POST
+    replayed only with `Idempotency-Key`) and `kind=circuit_breaker` (with
+    `min_requests: 1` one failure keeps a recovered instance out for
+    `open_seconds`; the default needs five) on the normal-path harness with
+    real apid, schedd and gateways, with `FAAS_GATEWAY_RETRY` and
+    `FAAS_GATEWAY_CIRCUIT_BREAKER` on as production sets them.
+  - `BenchmarkEdgeRuleEvaluation500Rules` measures one request's matcher
+    work with the per-app maximum of 500 rules on a host, compiled set
+    cached, each kind scanning its whole slice. It found that every
+    matcher call copied the host's whole compiled set (`GetHost`) before
+    taking its own kind, 17 copies per request: 1.6 MB and 693 allocations
+    per request at 500 rules. `gateway.HostRules` now copies only the
+    requested kind: 100 KB and 517 allocations per request, about 170 µs of
+    CPU, most of it path matching (measured on a heavily loaded M3 Pro, so
+    the time is an upper bound). A host with a handful of rules costs a
+    small fraction of that.
+5. The create-rule API description listed 10 of the 20 kinds; it lists all
+  of them and links the reference.

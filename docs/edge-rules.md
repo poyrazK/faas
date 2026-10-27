@@ -443,7 +443,9 @@ or `Accept-Encoding` to the cache key.
 Requests with credentials (`Authorization`, cookies) are never cached or
 served from the cache, and neither are responses with `Set-Cookie` or
 `Cache-Control: no-store` or `private`. `gregale cache purge` removes cached
-responses.
+responses. Changing an edge rule also clears the cached responses of the
+apps it covers; a `*` or glob host pattern clears all of your account's
+apps.
 
 ### retry
 
