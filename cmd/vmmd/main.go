@@ -1834,9 +1834,12 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// nil to vmmdgrpc.NewWithCPUAndNet and skip the sample
 	// loop entirely.
 	netCache := netstats.NewWithDefaults()
-	gsrv := grpc.NewServer(append(
+	gsrv := grpc.NewServer(append(append(
 		wire.ServerCredsOrEmpty(serverTLS),
-		wire.TraceServerOptions()...,
+		wire.TraceServerOptions()...),
+		// Exec and destroy RPCs take schedd's certificate (bug hunt H17).
+		grpc.ChainUnaryInterceptor(vmmdgrpc.CallerPolicyUnaryInterceptor()),
+		grpc.ChainStreamInterceptor(vmmdgrpc.CallerPolicyStreamInterceptor()),
 	)...)
 	impl := vmmdgrpc.NewWithCPUAndNetAndActivity(signalAdapter{mgr}, ops, fcVersion, log, cpuCache, netCache, activityTracker).
 		WithFlowCounter(flowcount.NewReader(wire.ExecRunner{})).
