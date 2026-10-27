@@ -1007,7 +1007,9 @@ type Handler struct {
 	// edgeFeatureFlags releases challenge rules, WAF warn and block, and the
 	// penalty box per account (ADR-20261023113721); nil enforces them all.
 	edgeFeatureFlags *platformflags.Set
-	gate             *WakeGate
+	// trafficFenceFlags is the revocation fence kill switch; nil enforces it.
+	trafficFenceFlags *platformflags.Set
+	gate              *WakeGate
 	// admissionQueue protects the control plane from a simultaneous cold
 	// burst across many apps. It is intentionally separate from gate:
 	// gate coalesces waiters for one app, while admissionQueue orders the
@@ -6129,6 +6131,9 @@ haveApp:
 	if h.applyTotalDeadline(w, r, app) {
 		h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
 		return
+	}
+	if trafficFenceOff(h.trafficFenceFlags, app.AccountID) {
+		markTrafficFenceOff(r, h.metrics, "public_http")
 	}
 	if enrollPublicTrafficScopes(w, r, h.trafficRevocations, app) {
 		h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})

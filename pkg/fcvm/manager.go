@@ -861,6 +861,8 @@ type Manager struct {
 	// Forwarding permits belong to the live instance generation, not a gateway
 	// process. Cleanup drains them before recycling its network or lease.
 	httpForwards map[string]*httpForwardGeneration
+	// httpAdmissionDisabled is the FAAS_HTTP_ADMISSION=off kill switch.
+	httpAdmissionDisabled bool
 	// qualificationInstances owns isolated qualification targets without
 	// making them discoverable through serving lookups, CID routing, health
 	// loops, or app policy fan-out. Guarded by mu.
