@@ -341,14 +341,15 @@ func (s *server) createAppWebhook(w http.ResponseWriter, r *http.Request, acct s
 		eventFilter = defaultAppWebhookEventFilter()
 	}
 	row, err := s.store.CreateAppWebhookIfUnderQuota(r.Context(), state.AppWebhook{
-		AccountID:      acct.ID,
-		AppID:          app.ID,
-		TargetURL:      req.TargetURL,
-		SecretSealed:   sealed,
-		EventFilter:    eventFilter,
-		RetryPolicy:    state.AppWebhookRetryPolicy(retryPolicy),
-		DeliveryFormat: state.AppWebhookDeliveryFormat(deliveryFormat),
-		Enabled:        enabled,
+		AccountID:          acct.ID,
+		AppID:              app.ID,
+		CreatedByAccountID: actorAccount(r, acct).ID,
+		TargetURL:          req.TargetURL,
+		SecretSealed:       sealed,
+		EventFilter:        eventFilter,
+		RetryPolicy:        state.AppWebhookRetryPolicy(retryPolicy),
+		DeliveryFormat:     state.AppWebhookDeliveryFormat(deliveryFormat),
+		Enabled:            enabled,
 	}, limits)
 	if err != nil {
 		var quotaErr *state.AppWebhookQuotaError

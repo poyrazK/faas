@@ -41,7 +41,7 @@ class FaaSClientOptions:
 
 
 class FaaSClient:
-    """Public sync facade for the one-box FaaS REST API.
+    """Public sync facade for the Gregale API.
 
     Construct once at process start, reuse across requests. Reachable
     service namespaces are accessed through the inner generator client::

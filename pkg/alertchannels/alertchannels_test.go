@@ -97,6 +97,24 @@ func TestNotesReachEveryChannel(t *testing.T) {
 	}
 }
 
+// A log note names the route a visitor requested, and a rule name or
+// summary is free text: none of it may form a Slack mention or link.
+func TestSlackPayloadEscapesMentionsAndLinks(t *testing.T) {
+	msg := fire()
+	msg.RuleName = "<!here> errors"
+	msg.Notes = []string{"Logs in the window: 3 errors (most errors on /<!channel> <https://evil.example|Re-login>: 3)"}
+	payload := SlackPayload(msg)
+	section := payload["blocks"].([]map[string]any)[0]["text"].(map[string]any)["text"].(string)
+	for _, text := range []string{payload["text"].(string), section} {
+		if strings.ContainsAny(text, "<>") {
+			t.Fatalf("slack text keeps raw angle brackets: %q", text)
+		}
+	}
+	if !strings.Contains(section, "&lt;!channel&gt; &lt;https://evil.example|Re-login&gt;") || !strings.Contains(section, "&lt;!here&gt; errors") {
+		t.Fatalf("slack section = %q, want the note and rule name escaped", section)
+	}
+}
+
 func TestPostJSONRetriesTransientAndStopsOnConfigErrors(t *testing.T) {
 	var calls atomic.Int32
 	codes := []int{503, 429, 200}

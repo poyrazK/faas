@@ -1,15 +1,14 @@
 openapi: 3.1.0
 info:
-  title: one-box FaaS REST API
+  title: Gregale API
   version: 1.0.0
-  summary: Customer-facing REST API for the one-box FaaS platform.
+  summary: The Gregale platform REST API.
   description: |
-    Public REST surface exposed by `apid` on `127.0.0.1:8081` (proxied by
-    `gatewayd` at the public listener). Protected routes accept an account
-    Bearer API key (`fp_live_…`) or the tenant-bound `fp_tenant_…` credential
-    only on the explicitly documented tenant-self routes. Authentication
-    is rate-limited per-IP (10 failed-auth / min), except the provider-signed
-    durable inbound webhook ingress.
+    The public REST API of Gregale. Protected routes accept an account Bearer
+    API key (`fp_live_…`), or the tenant-bound `fp_tenant_…` credential on
+    the explicitly documented tenant-self routes. Authentication is
+    rate-limited per client IP (10 failed attempts a minute), except
+    provider-signed durable inbound webhook deliveries.
     Successful POSTs generally accept an `Idempotency-Key` header (24h TTL)
     and replay with `Idempotent-Replayed: true`; the one-time token-creation
     endpoint deliberately does not cache plaintext for retries. A key is
@@ -21,23 +20,22 @@ info:
     field — see `Problem` schema. Authentication rate limits use the same
     envelope with `code: auth_rate_limited` and a `Retry-After` header.
 
-    Operator routes (`/v1/compute-nodes`), dashboard routes (`/dashboard/*`),
-    webhook receivers (`/v1/webhooks/stripe`), SSE streams (`/v1/events`,
-    `/v1/deployments/{id}/logs`), and the CLI device-code flow
-    (`/v1/cli-auth/*`) are not part of this public spec.
+    Dashboard pages, server-sent event streams (account events and
+    deployment logs), the CLI sign-in flow and operator-only routes are not
+    part of this reference.
   contact:
-    name: one-box FaaS
+    name: Gregale
     url: https://gregale.dev/docs
   license:
     name: Proprietary
-    identifier: LicenseRef-onebox-internal
+    identifier: LicenseRef-Gregale-Proprietary
 servers:
   - url: https://{host}
-    description: Public endpoint (proxied through gatewayd).
+    description: Gregale API.
     variables:
       host:
         default: api.gregale.dev
-        description: Public hostname (one-box FaaS).
+        description: API hostname.
 tags:
   - name: operations
     description: Staged customer-owned HTTP work, scoped status and durable progress; production admission is disabled.
@@ -6499,6 +6497,56 @@ paths:
         '413': {$ref: '#/components/responses/SecretValueTooLarge'}
         '429': {$ref: '#/components/responses/TooManyRequests'}
         '503': {$ref: '#/components/responses/CapacityUnavailable'}
+  # ─── Secret entry by the owner for an agent (ADR-20261026174727) ────────
+  # The value is typed on the session-authenticated /cli-auth page and
+  # never passes through the requester, which learns only pending or set.
+  /v1/apps/{slug}/secret-requests:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    post:
+      tags: [secrets]
+      operationId: requestSecretEntry
+      summary: Ask the signed-in account owner to enter a secret on a one-time page.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/SecretEntryRequest'}
+      responses:
+        '201':
+          description: Private bridge response; ticket and exchange_code must never be returned to an agent.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/SecretEntryResponse'}
+        '400': {$ref: '#/components/responses/ValidationFailed'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+        '503': {$ref: '#/components/responses/CapacityUnavailable'}
+  /v1/apps/{slug}/secret-requests/status:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    post:
+      tags: [secrets]
+      operationId: getSecretEntryStatus
+      summary: Privately check whether the owner has set a requested secret; never returns the value.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/SecretEntryStatusRequest'}
+      responses:
+        '200':
+          description: Pending or set.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/SecretEntryStatus'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '410': {$ref: '#/components/responses/Gone'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
   # ─── Per-app private-registry credentials (issue #461 / ADR-062) ────────
   # Sealed Basic Auth per (app, registry_host). Free plan returns 403
   # (RegistryCredentialMax == 0). Password is never returned; DELETE
@@ -25675,7 +25723,7 @@ components:
         commit_sha: {type: string}
         plan: {type: string, description: "free / hobby / pro / scale — copied from the account at claim time."}
         runner_digest: {type: string}
-        builder_node_id: {type: string, description: "compute_node name (default `default-local` on the one-box)."}
+        builder_node_id: {type: string, description: "Compute node name (`default-local` on a single-node install)."}
         started_at: {type: string, format: date-time}
         finished_at: {type: string, format: date-time}
         sbom_storage_key: {type: [string, "null"], description: "Phase 3 populator fills this from `syft` output. Empty string when not yet populated."}
@@ -29575,6 +29623,40 @@ components:
         environment: {type: string}
         key: {type: string}
         reference: {type: string, pattern: '^secret:[A-Z][A-Z0-9_]*$'}
+    SecretEntryRequest:
+      description: A secret the account owner is asked to enter on a one-time page (ADR-20261026174727).
+      type: object
+      required: [key, reason]
+      properties:
+        key: {type: string, minLength: 1, maxLength: 256}
+        scope: {type: string, description: 'Env scope; empty selects default.'}
+        reason: {type: string, minLength: 1, maxLength: 280, description: Shown to the owner on the entry page.}
+    SecretEntryResponse:
+      description: Fifteen-minute entry link with separate private status material. Only entry_url and expires_at may be exposed to agents; the link works only in the owner's signed-in session.
+      type: object
+      required: [entry_url, ticket, exchange_code, expires_at]
+      properties:
+        entry_url: {type: string, format: uri}
+        ticket: {type: string}
+        exchange_code: {type: string, minLength: 43, maxLength: 43}
+        expires_at: {type: string, format: date-time}
+    SecretEntryStatusRequest:
+      description: Private status check of a secret entry request.
+      type: object
+      required: [ticket, exchange_code]
+      properties:
+        ticket: {type: string, maxLength: 32768}
+        exchange_code: {type: string, minLength: 43, maxLength: 43}
+    SecretEntryStatus:
+      description: Whether the owner has set the requested secret. Never carries the value.
+      type: object
+      required: [status, app, key, scope, expires_at]
+      properties:
+        status: {type: string, enum: [pending, set]}
+        app: {type: string}
+        key: {type: string}
+        scope: {type: string}
+        expires_at: {type: string, format: date-time}
     ProjectSourceRefScanRequest:
       description: "Connected GitHub repository input for POST /v1/projects/scan/source-ref."
       type: object
@@ -32054,7 +32136,7 @@ components:
           description: Optional verified custom JWT claim name whose exact value resolves to a platform tenant external_ref in the app owner's account. Supports namespaced claims. When set, unknown, suspended, or unavailable tenants are rejected before the request reaches the guest.
         require_exp:
           type: boolean
-          description: 'Reject tokens that carry no `exp` claim. Off by default: `exp` is validated only when present, so a token minted without one never expires unless this is set.'
+          description: 'Reject tokens that carry no `exp` claim. Defaults to true when omitted, because a token minted without `exp` never expires; set false to accept such tokens (`exp` is then validated only when present). Rules saved before this default keep their saved value, and responses show the field only when it is true.'
     EdgeRuleIPAction:
       description: 'CIDR allow/deny evaluator. Deny is checked AFTER allow so a single-IP deny wins.'
       type: object
@@ -36363,7 +36445,7 @@ components:
             the `FieldError` shape's prose pattern so the dashboard
             / SDK can render the hint as a one-line footer without
             parsing prose. Optional + omitempty.
-          example: "move detected secrets to `gregale secrets set` (see https://gregale.dev/docs/cli/secrets)"
+          example: "move detected secrets to `gregale secrets set` (see https://gregale.dev/docs/secrets)"
         hint:
           type: string
           description: |

@@ -492,7 +492,7 @@ func envChangeInput(values map[string]string) ([]string, []byte, error) {
 func secretRefusal(err error, app string) error {
 	var apiErr *api.APIError
 	if err == nil || errors.As(err, &apiErr) && apiErr.Problem.Code == "secret_scan_strict" {
-		return invalid("secret_detected", "a value looks like a credential and was not set. Ask the user to run `gregale secrets set "+app+" KEY` themselves; never ask for or pass a secret value in a tool call")
+		return invalid("secret_detected", "a value looks like a credential and was not set. Call gregale_request_secret so the user enters it on Gregale's page, or ask them to run `gregale secrets set "+app+" KEY` themselves; never ask for or pass a secret value in a tool call")
 	}
 	return err
 }
@@ -518,6 +518,12 @@ func (m *management) runCLI(ctx context.Context, args []string, stdin []byte) ([
 	if result.ExitCode == 0 {
 		return result.Stdout, nil
 	}
+	return nil, cliProblem(result)
+}
+
+// cliProblem is the error of a failed CLI command: the Problem object it wrote
+// to stderr when there is one, so codes and hints reach the agent.
+func cliProblem(result LocalCLIResult) error {
 	var problem api.Problem
 	stderr := bytes.TrimSpace(result.Stderr)
 	candidates := [][]byte{stderr}
@@ -527,12 +533,12 @@ func (m *management) runCLI(ctx context.Context, args []string, stdin []byte) ([
 	}
 	for _, candidate := range candidates {
 		if json.Unmarshal(candidate, &problem) == nil && (problem.Code != "" || problem.Title != "") {
-			return nil, &api.APIError{Problem: problem}
+			return &api.APIError{Problem: problem}
 		}
 		problem = api.Problem{}
 	}
 	first, _, _ := bytes.Cut(stderr, []byte("\n"))
-	return nil, invalid("cli_failed", fmt.Sprintf("gregale exited with code %d: %s", result.ExitCode, first))
+	return invalid("cli_failed", fmt.Sprintf("gregale exited with code %d: %s", result.ExitCode, first))
 }
 
 func notFound(err error) bool {

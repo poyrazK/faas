@@ -94,7 +94,7 @@ func (e *Engine) seedFinancialPreviewCommandLedger(ctx context.Context, apps []s
 			}
 			if err := e.ledger.Admit(Request{Instance: command.TaskID, AppID: app.ID, DeploymentID: command.DeploymentID, Plan: account.Plan,
 				RAMMB: command.RAMMB, VCPU: limits.VCPU, CPUMillicores: command.CPUMillicores, MaxConcurrency: app.MaxConcurrency,
-				NodeID: command.NodeID, Kind: KindAppTask, AllowConcurrencyRecovery: true, AllowCPUOvercommitRecovery: true}); err != nil {
+				NodeID: command.NodeID, Kind: KindAppTask, AllowConcurrencyRecovery: true, AllowResidentRecovery: true}); err != nil {
 				return fmt.Errorf("recover preview command capacity: %w", err)
 			}
 		}

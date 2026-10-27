@@ -13,6 +13,8 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+
+	"github.com/onebox-faas/faas/pkg/safetext"
 )
 
 // gRPC status codes (google.golang.org/grpc/codes), kept local so the edge
@@ -204,10 +206,7 @@ func refusalMessage(status int, body []byte) string {
 			message += " (" + code + ")"
 		}
 	}
-	if len(message) > maxMessage {
-		message = message[:maxMessage]
-	}
-	return message
+	return safetext.Truncate(message, maxMessage)
 }
 
 // EncodeMessage percent-encodes a grpc-message value as the gRPC HTTP/2

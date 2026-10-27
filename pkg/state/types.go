@@ -3867,26 +3867,30 @@ type AlertRule struct {
 	ID                              string
 	AccountID                       string
 	AppID                           string // empty = account-wide
-	Name                            string
-	Enabled                         bool
-	Metric                          AlertMetric
-	Comparison                      AlertComparison
-	Threshold                       float64
-	WindowSpec                      AlertWindowSpec
-	FailureSource                   AlertFailureSource // empty unless Metric == failed_invocations
-	CustomMetricName                string             // empty unless Metric == custom_metric (ADR-745)
-	LogQuery                        string             // canonical log search filters; set only for log_search_matches
-	SLOID                           string             // set only for the ADR-747 SLO metrics
-	SyntheticCheckID                string             // set only for the ADR-748 synthetic check metrics
-	Action                          AlertAction        // issue #976 / ADR-122 / SAFE-RELEASES-B
-	WebhookURL                      string
-	WebhookSecretSealed             []byte // age/X25519 ciphertext; never logged
-	CooldownMinutes                 int
-	State                           AlertState
-	LastFiredAt                     time.Time // zero until first fire
-	LastEvaluatedAt                 time.Time
-	CreatedAt                       time.Time
-	UpdatedAt                       time.Time
+	// CreatedByAccountID is the member who created the rule
+	// (ADR-20261026151103); empty for a rule older than the column, which
+	// only the app's creator could create.
+	CreatedByAccountID  string
+	Name                string
+	Enabled             bool
+	Metric              AlertMetric
+	Comparison          AlertComparison
+	Threshold           float64
+	WindowSpec          AlertWindowSpec
+	FailureSource       AlertFailureSource // empty unless Metric == failed_invocations
+	CustomMetricName    string             // empty unless Metric == custom_metric (ADR-745)
+	LogQuery            string             // canonical log search filters; set only for log_search_matches
+	SLOID               string             // set only for the ADR-747 SLO metrics
+	SyntheticCheckID    string             // set only for the ADR-748 synthetic check metrics
+	Action              AlertAction        // issue #976 / ADR-122 / SAFE-RELEASES-B
+	WebhookURL          string
+	WebhookSecretSealed []byte // age/X25519 ciphertext; never logged
+	CooldownMinutes     int
+	State               AlertState
+	LastFiredAt         time.Time // zero until first fire
+	LastEvaluatedAt     time.Time
+	CreatedAt           time.Time
+	UpdatedAt           time.Time
 }
 
 // AlertDelivery is one delivery attempt record. IdempotencyKey is
@@ -4262,8 +4266,11 @@ type AppWebhook struct {
 	RetryPolicy      AppWebhookRetryPolicy
 	DeliveryFormat   AppWebhookDeliveryFormat
 	Enabled          bool
-	CreatedAt        time.Time
-	UpdatedAt        time.Time
+	// CreatedByAccountID is the member who created an app-scope webhook
+	// (ADR-20261026151103). It is written on create only.
+	CreatedByAccountID string
+	CreatedAt          time.Time
+	UpdatedAt          time.Time
 }
 
 // ManagedRealtimeEndpoint is the durable control-plane description of one
@@ -9624,8 +9631,11 @@ type AppLogDrain struct {
 	TargetURL        string
 	AuthHeaderSealed []byte
 	Enabled          bool
-	CreatedAt        time.Time
-	UpdatedAt        time.Time
+	// CreatedByAccountID is the member who created the drain
+	// (ADR-20261026151103). It is written on create only.
+	CreatedByAccountID string
+	CreatedAt          time.Time
+	UpdatedAt          time.Time
 }
 
 // AppLogDrainHealth is the durable, customer-safe delivery snapshot for one

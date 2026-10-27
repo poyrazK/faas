@@ -819,6 +819,7 @@ var QueueDeadLetterError = queueDeadLetterError
 var PrimeRuntimeBusyBackoff = &primeRuntimeBusyBackoff
 var ApplicationStandardRuntimeProblem = applicationStandardRuntimeProblem
 var HealthcheckGRPCForApp = healthcheckGRPCForApp
+var StartupProbeForApp = startupProbeForApp
 
 // ADR-20261024225612 (CPU-compatible restore, per-platform snapshot slots).
 var (
