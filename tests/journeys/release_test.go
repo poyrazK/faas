@@ -18,7 +18,7 @@ func TestReleaseAndRollback(t *testing.T) {
 	base := tg.appURL(slug)
 	s := newStory(t)
 
-	var v1 map[string]any
+	var v1, v2 map[string]any
 	s.step("deploy_v1", func(t *testing.T) {
 		v1 = tg.deployVersion(t, slug, "v1")
 		if u := str(v1, "app_url"); u != "" {
@@ -27,7 +27,7 @@ func TestReleaseAndRollback(t *testing.T) {
 		expectVersion(t, base, "v1", time.Minute)
 	})
 	s.step("redeploy_v2_immediate", func(t *testing.T) {
-		tg.deployVersion(t, slug, "v2", "--rollout", "immediate")
+		v2 = tg.deployVersion(t, slug, "v2", "--rollout", "immediate")
 		expectVersion(t, base, "v2", 2*time.Minute)
 	})
 	s.check("deployment_history", func(t *testing.T) {
@@ -37,8 +37,12 @@ func TestReleaseAndRollback(t *testing.T) {
 			t.Fatalf("deployments lists %d revisions after two deploys", len(items))
 		}
 	})
+	// A checked rollback: it names the revision it expects to replace, so it
+	// refuses to act if anything else was released in between (and only a
+	// checked rollback takes --reason).
 	s.step("rollback_to_v1", func(t *testing.T) {
 		tg.ok(t, 27*time.Minute, "rollback", slug, "--to", str(v1, "id"),
+			"--expected-current", str(v2, "id"),
 			"--reason", "e2e-journeys run "+tg.runID, "--wait", "--timeout", "25m")
 		expectVersion(t, base, "v1", 2*time.Minute)
 	})
