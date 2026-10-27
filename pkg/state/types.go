@@ -8310,7 +8310,9 @@ type EdgeRuleIPAction struct {
 //     enforced as a sanity floor — MaxBodyBytes > plan cap is a
 //     create-time 422 from pkg/api/dto.go.
 type EdgeRuleValidateAction struct {
-	Schema              json.RawMessage `json:"schema"`
+	// Schema is absent for a parameter-only rule. Rows written before
+	// omitempty store "schema": null; the gateway reads that as absent.
+	Schema              json.RawMessage `json:"schema,omitempty"`
 	ContentTypes        []string        `json:"content_types,omitempty"`
 	ApplyWhileStreaming bool            `json:"apply_while_streaming,omitempty"`
 	RejectOnUnknown     bool            `json:"reject_on_unknown_fields,omitempty"`
