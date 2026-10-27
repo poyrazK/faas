@@ -6231,6 +6231,51 @@ END $$;
 
 
 --
+-- Name: capture_event_route_dead_letters(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.capture_event_route_dead_letters() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $_$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM accounts a WHERE a.id = OLD.account_id AND a.status <> 'deleted_pending') THEN
+        RETURN OLD;
+    END IF;
+    BEGIN
+        INSERT INTO dead_letter_events (account_id, app_id, source, source_id, origin, event_payload, headers,
+            error_kind, error_detail, retry_count, first_failed_at, last_failed_at)
+        SELECT OLD.account_id, app.id, 'event_route', md5(OLD.id::text || '/' || p.key)::uuid,
+               CASE WHEN r.recipient ? 'workflow' THEN 'event_workflow' ELSE 'event_subscription' END,
+               OLD.payload, '{}'::jsonb,
+               COALESCE(NULLIF(p.outcome->>'failure_code', ''), 'unknown'),
+               jsonb_strip_nulls(jsonb_build_object(
+                   'subscription_id', p.key,
+                   'event_source', OLD.source, 'event_id', OLD.event_id, 'event_type', OLD.event_type,
+                   'accepted_at', OLD.created_at,
+                   'last_error', NULLIF(p.outcome->>'last_error', ''),
+                   'retry_stop_reason', NULLIF(p.outcome->>'retry_stop_reason', ''),
+                   'retryable', COALESCE(NULLIF(p.outcome->>'retryable', '')::boolean, false))),
+               GREATEST(COALESCE(NULLIF(p.outcome->>'attempts', '')::integer, 0), 0),
+               f.failed_at, f.failed_at
+        FROM jsonb_each(COALESCE(OLD.recipient_progress, '{}'::jsonb)) AS p(key, outcome)
+        LEFT JOIN LATERAL (
+            SELECT x.recipient FROM jsonb_array_elements(COALESCE(OLD.recipient_snapshot, '[]'::jsonb)) AS x(recipient)
+            WHERE x.recipient->>'id' = p.key LIMIT 1
+        ) r ON true
+        LEFT JOIN apps app ON app.account_id = OLD.account_id
+            AND app.id = CASE WHEN r.recipient->>'app_id' ~* '^[0-9a-f]{8}-?[0-9a-f]{4}-?[0-9a-f]{4}-?[0-9a-f]{4}-?[0-9a-f]{12}$'
+                              THEN (r.recipient->>'app_id')::uuid END
+        CROSS JOIN LATERAL (SELECT COALESCE(NULLIF(p.outcome->>'updated_at', '')::timestamptz, OLD.created_at) AS failed_at) f
+        WHERE p.outcome->>'state' = 'failed'
+        ON CONFLICT (source, source_id) DO NOTHING;
+    EXCEPTION WHEN others THEN
+        RAISE WARNING 'event_route dead-letter capture skipped for receipt %: %', OLD.id, SQLERRM;
+    END;
+    RETURN OLD;
+END $_$;
+
+
+--
 -- Name: capture_instance_billing_interval(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -34169,7 +34214,7 @@ CREATE TABLE public.dead_letter_events (
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     environment_owned boolean DEFAULT false NOT NULL,
     CONSTRAINT dead_letter_events_retry_count_check CHECK ((retry_count >= 0)),
-    CONSTRAINT dead_letter_events_source_check CHECK ((source = ANY (ARRAY['invocation'::text, 'trigger_record'::text, 'webhook_delivery'::text, 'job_run'::text, 'workflow_run'::text])))
+    CONSTRAINT dead_letter_events_source_kind_check CHECK ((source = ANY (ARRAY['invocation'::text, 'trigger_record'::text, 'webhook_delivery'::text, 'job_run'::text, 'workflow_run'::text, 'event_route'::text])))
 );
 
 
@@ -81095,6 +81140,13 @@ CREATE TRIGGER event_execution_recipient_loss BEFORE DELETE ON public.event_fano
 --
 
 CREATE TRIGGER event_fanout_ordering_snapshot AFTER INSERT ON public.event_fanout_outbox FOR EACH ROW EXECUTE FUNCTION public.capture_event_recipient_ordering_snapshot();
+
+
+--
+-- Name: event_fanout_outbox event_fanout_outbox_route_dead_letters; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER event_fanout_outbox_route_dead_letters BEFORE DELETE ON public.event_fanout_outbox FOR EACH ROW WHEN ((old.last_error IS NOT NULL)) EXECUTE FUNCTION public.capture_event_route_dead_letters();
 
 
 --

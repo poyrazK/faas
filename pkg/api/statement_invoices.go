@@ -167,3 +167,14 @@ func (c *Client) GetPlatformTenantStatementInvoice(ctx context.Context, tenantID
 	var out StatementInvoiceExportResponse
 	return out, c.do(ctx, "GET", "/v1/account/platform-tenants/"+tenantID+"/usage-statements/"+statementID+"/invoice", nil, &out)
 }
+
+// BillingProviderKeyMaxBytes bounds a stored billing provider key; real keys
+// are ~110 bytes.
+const BillingProviderKeyMaxBytes = 512
+
+// BillingProviderKeyNamespace is the secretbox namespace an account's
+// billing provider key is sealed under; it binds the ciphertext to its
+// provider and account.
+func BillingProviderKeyNamespace(provider, accountID string) string {
+	return "gregale.billing." + provider + "." + accountID
+}

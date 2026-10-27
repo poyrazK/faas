@@ -149,6 +149,8 @@ type CapEnforcerOptions struct {
 	Observe func(CapSweepSummary)
 	// BatchSize pages the catalog; zero uses the usage collector's default.
 	BatchSize int
+	// Qualification is the staging evidence `on` requires (decision 10).
+	Qualification *ComputeCapQualification
 }
 
 // CapSweepSummary counts one enforcement sweep. Scopes are provider quota
@@ -189,6 +191,12 @@ func NewCapEnforcer(registry *Registry, store UsageStore, options CapEnforcerOpt
 		// Enforcement reads the ledger for databases deleted this month.
 		if !registry.UsagePolicy().Enabled {
 			return nil, fmt.Errorf("%s=on needs the usage ledger enabled: %w", CapEnforcementEnv, ErrInvalid)
+		}
+		if options.Qualification == nil {
+			return nil, fmt.Errorf("%s=on needs a compute cap qualification at %s: %w", CapEnforcementEnv, CapQualificationPathEnv, ErrInvalid)
+		}
+		if err := registry.VerifyComputeCapQualification(*options.Qualification); err != nil {
+			return nil, fmt.Errorf("%s=on: %w", CapEnforcementEnv, err)
 		}
 	default:
 		return nil, ErrInvalid

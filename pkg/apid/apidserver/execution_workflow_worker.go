@@ -84,8 +84,7 @@ func (s *server) driveManagedExecutionWorkflow(ctx context.Context, claim state.
 	if !jobsOK || !runsOK || !workflowOK {
 		return fmt.Errorf("managed workflow stores are unavailable")
 	}
-	identities := mfaIdentities()
-	planBytes, err := executionpayload.DecodeWorkflowPlan(ctx, identities, job.SealedPlan, job.PayloadKID)
+	planBytes, err := executionpayload.DecodeWorkflowPlan(ctx, accountIdentities(), job.SealedPlan, job.PayloadKID)
 	if err != nil {
 		return s.completeManagedWorkflowClaim(ctx, jobs, claim, api.ManagedExecutionWorkflowFailed, job.NextStep, "encrypted plan could not be opened")
 	}

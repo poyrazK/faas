@@ -4,7 +4,7 @@
   "sets": [
     {
       "id": "gregale-core-v1",
-      "revision": "c3f4c7d9a7797a413775ac74a240ba978c7bc7008c22c6c2b54b7ca692b8c39c",
+      "revision": "ff198cda46d5612b952d8d8819d78c308b51becf59b86b2624c718f2881ea344",
       "files": [
         "faas.rules.yml"
       ],
@@ -3858,6 +3858,19 @@
           }
         },
         {
+          "id": "ad3bbdef0e3ecb3698f623c30e1ecbd268d731c20f7886bd9e98f19ae519f22f",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_quiet_pause_billing",
+          "rule_name": "FaasQuietPauseUnbilledExceedsMeasured",
+          "definition": {
+            "expression_hash": "06bcd4086dc0446a1afa2c2e6124c3515fc6538a416a3bca991c33c26fd75f7e",
+            "labels_hash": "01d9c7fcd05a6fc8297b249442f23e318554c5ab472fe2ea652addd6347215b9",
+            "for_seconds": 1800,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "53189ab54b8a17257a8c5c2ec9cef7aa5f58c24642c5f4273ad123df2f4bef12"
+          }
+        },
+        {
           "id": "ad47bca5bed34cef63fe1f39d7430f45ea9b64bb4359be61f31785d9962a8066",
           "file_name": "faas.rules.yml",
           "group_name": "faas_spec12_operator_signals",
@@ -5798,7 +5811,7 @@
     },
     {
       "id": "gregale-full-v1",
-      "revision": "5b4efa1f3a9bfde837dad1d3213e565668053064066aafd5aeddcef9c650f052",
+      "revision": "594d29583b09b8daf1c8ad017e73d9322091349001b22a5aeba55e8130ce413d",
       "files": [
         "bridge.rules.yml",
         "data_placement.yaml",
@@ -9861,6 +9874,19 @@
             "for_seconds": 300,
             "keep_firing_for_seconds": 0,
             "fingerprint": "fc624ebca4abe2ea5452b103d36c2885ee6d96c319cee55d85a08545e191bc20"
+          }
+        },
+        {
+          "id": "ad3bbdef0e3ecb3698f623c30e1ecbd268d731c20f7886bd9e98f19ae519f22f",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_quiet_pause_billing",
+          "rule_name": "FaasQuietPauseUnbilledExceedsMeasured",
+          "definition": {
+            "expression_hash": "06bcd4086dc0446a1afa2c2e6124c3515fc6538a416a3bca991c33c26fd75f7e",
+            "labels_hash": "01d9c7fcd05a6fc8297b249442f23e318554c5ab472fe2ea652addd6347215b9",
+            "for_seconds": 1800,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "53189ab54b8a17257a8c5c2ec9cef7aa5f58c24642c5f4273ad123df2f4bef12"
           }
         },
         {

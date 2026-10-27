@@ -64,3 +64,11 @@ the epic.
   failure record.
 - **Expose only the two legacy DLQs:** rejected because callers would need
   source-specific discovery and could not build one recovery workflow.
+
+## Amendment (2026-10-26): event routing failures
+
+[ADR 20261026163443](20261026163443-event-routing-failures-in-the-dead-letter-queue.md)
+adds the `event_route` source: an event recipient whose routing failed,
+captured when its receipt is pruned. Such an entry has nothing to redrive, so
+replay refuses it (409 `dead_letter_not_replayable`) and replay-all skips it;
+delete, purge and retention apply as for the other sources.
