@@ -2932,6 +2932,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	handler.WithAPIMonetization(deps.apiMonetization)
 	handler.WithAPIMonetizationFlags(deps.platformFlags)
 	handler.WithEdgeFeatureFlags(deps.platformFlags)
+	handler.WithTrafficRevocationFenceFlags(deps.platformFlags)
 	handler.WithCapabilities(deps.capabilityAllowed)
 	// ADR-978: order the warm-capacity queue by route priority. Rules are
 	// read only for requests that have to queue, through a 30 s cache.
@@ -4085,6 +4086,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			Policy:                    newServicePolicyPinner(pgStore),
 			TrafficDeadlines:          deps.trafficDeadlines,
 			TrafficRevocations:        deps.trafficRevocations,
+			TrafficFenceFlags:         deps.platformFlags,
 			AdmitRuntime:              financialBudgetServiceAdmission(pgStore),
 			APIMonetization:           deps.apiMonetization,
 			APIMonetizationFor:        handler.APIMonetizationEnabledFor,

@@ -77,8 +77,7 @@ def sync_detailed(
 
      Verifies state, exchanges the code, fetches the profile,
     enforces RFC 7636 `S256` PKCE and `email_verified=true`, and signs the user in.
-    Sub-first lookup against `oauth_links` enforces the §11
-    anti-takeover invariant.
+    Sub-first lookup against `oauth_links` enforces the anti-takeover invariant.
 
     Args:
         code (str):
@@ -114,8 +113,7 @@ def sync(
 
      Verifies state, exchanges the code, fetches the profile,
     enforces RFC 7636 `S256` PKCE and `email_verified=true`, and signs the user in.
-    Sub-first lookup against `oauth_links` enforces the §11
-    anti-takeover invariant.
+    Sub-first lookup against `oauth_links` enforces the anti-takeover invariant.
 
     Args:
         code (str):
@@ -146,8 +144,7 @@ async def asyncio_detailed(
 
      Verifies state, exchanges the code, fetches the profile,
     enforces RFC 7636 `S256` PKCE and `email_verified=true`, and signs the user in.
-    Sub-first lookup against `oauth_links` enforces the §11
-    anti-takeover invariant.
+    Sub-first lookup against `oauth_links` enforces the anti-takeover invariant.
 
     Args:
         code (str):
@@ -181,8 +178,7 @@ async def asyncio(
 
      Verifies state, exchanges the code, fetches the profile,
     enforces RFC 7636 `S256` PKCE and `email_verified=true`, and signs the user in.
-    Sub-first lookup against `oauth_links` enforces the §11
-    anti-takeover invariant.
+    Sub-first lookup against `oauth_links` enforces the anti-takeover invariant.
 
     Args:
         code (str):

@@ -3,7 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * One row of the drill-down page (ADR-096 / PR-B).
+ * One row of the drill-down page.
  */
 export type AppErrorRequestItem = {
   /**

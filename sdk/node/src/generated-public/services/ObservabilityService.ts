@@ -326,7 +326,7 @@ export class ObservabilityService {
    * `wake_id` without adding wake IDs as metric labels.
    *
    * The endpoint is a sub-resource of `/v1/apps/{slug}`;
-   * auth and rate-limit share the §12 per-app budget with
+   * auth and rate-limit share the per-app budget with
    * logs/metrics/wake. Cross-account access 404s the
    * same way unknown slugs do (forge-proof: every row's
    * `data.app_id` is verified to match the resolved app).
@@ -349,11 +349,10 @@ export class ObservabilityService {
      */
     slug: string,
     /**
-     * The per-wake correlation handle minted by the schedd
+     * The per-wake correlation handle minted by the scheduler
      * engine (UUID v4 in production). The endpoint returns
      * every `wake.*` events row whose `data.wake_id`
-     * matches — the partial index `events_wake_id_idx`
-     * (migrations/00113) serves the read in O(frames)
+     * matches — the partial index `events_wake_id_idx` serves the read in O(frames)
      * regardless of the events table size.
      *
      */

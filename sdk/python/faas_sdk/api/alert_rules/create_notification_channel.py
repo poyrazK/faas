@@ -80,15 +80,15 @@ def sync_detailed(
     client: AuthenticatedClient | Client,
     body: CreateNotificationChannelRequest,
 ) -> Response[NotificationChannelResponse | Problem]:
-    """Add an alert notification channel (ADR-749)
+    """Add an alert notification channel
 
      Slack takes an incoming-webhook URL on hooks.slack.com; PagerDuty takes an Events API v2 routing key
     and region; email may only address the account's own email. Secret destinations are sealed at rest
     and never returned.
 
     Args:
-        body (CreateNotificationChannelRequest): Adds a Slack, PagerDuty or email alert channel
-            (ADR-749). Set only the fields for the chosen kind.
+        body (CreateNotificationChannelRequest): Adds a Slack, PagerDuty or email alert channel.
+            Set only the fields for the chosen kind.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -114,15 +114,15 @@ def sync(
     client: AuthenticatedClient | Client,
     body: CreateNotificationChannelRequest,
 ) -> NotificationChannelResponse | Problem | None:
-    """Add an alert notification channel (ADR-749)
+    """Add an alert notification channel
 
      Slack takes an incoming-webhook URL on hooks.slack.com; PagerDuty takes an Events API v2 routing key
     and region; email may only address the account's own email. Secret destinations are sealed at rest
     and never returned.
 
     Args:
-        body (CreateNotificationChannelRequest): Adds a Slack, PagerDuty or email alert channel
-            (ADR-749). Set only the fields for the chosen kind.
+        body (CreateNotificationChannelRequest): Adds a Slack, PagerDuty or email alert channel.
+            Set only the fields for the chosen kind.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -143,15 +143,15 @@ async def asyncio_detailed(
     client: AuthenticatedClient | Client,
     body: CreateNotificationChannelRequest,
 ) -> Response[NotificationChannelResponse | Problem]:
-    """Add an alert notification channel (ADR-749)
+    """Add an alert notification channel
 
      Slack takes an incoming-webhook URL on hooks.slack.com; PagerDuty takes an Events API v2 routing key
     and region; email may only address the account's own email. Secret destinations are sealed at rest
     and never returned.
 
     Args:
-        body (CreateNotificationChannelRequest): Adds a Slack, PagerDuty or email alert channel
-            (ADR-749). Set only the fields for the chosen kind.
+        body (CreateNotificationChannelRequest): Adds a Slack, PagerDuty or email alert channel.
+            Set only the fields for the chosen kind.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -175,15 +175,15 @@ async def asyncio(
     client: AuthenticatedClient | Client,
     body: CreateNotificationChannelRequest,
 ) -> NotificationChannelResponse | Problem | None:
-    """Add an alert notification channel (ADR-749)
+    """Add an alert notification channel
 
      Slack takes an incoming-webhook URL on hooks.slack.com; PagerDuty takes an Events API v2 routing key
     and region; email may only address the account's own email. Secret destinations are sealed at rest
     and never returned.
 
     Args:
-        body (CreateNotificationChannelRequest): Adds a Slack, PagerDuty or email alert channel
-            (ADR-749). Set only the fields for the chosen kind.
+        body (CreateNotificationChannelRequest): Adds a Slack, PagerDuty or email alert channel.
+            Set only the fields for the chosen kind.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

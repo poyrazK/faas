@@ -89,12 +89,12 @@ def sync_detailed(
     client: AuthenticatedClient | Client,
     body: PutAPIConsumerSpendCapRequest,
 ) -> Response[APIConsumerSpendCapResponse | Problem]:
-    """Set a consumer's monthly spend cap (ADR-1306).
+    """Set a consumer's monthly spend cap.
 
      Once the month's amount due passes the cap, the gateway answers the
     consumer with 402 `consumer_spend_cap_reached` until the month ends,
     the cap rises or credit is added. The amount due is the month to
-    date priced like a statement, minus usable prepaid credit. apid
+    date priced like a statement, minus usable prepaid credit. The API
     checks it every minute and at once when the cap or credit changes,
     so a consumer can overshoot by about two minutes of traffic. A zero
     cap allows prepaid usage only.
@@ -102,8 +102,7 @@ def sync_detailed(
     Args:
         slug (str):
         consumer_id (UUID):
-        body (PutAPIConsumerSpendCapRequest): A consumer's monthly spend cap after prepaid credit
-            (ADR-1306).
+        body (PutAPIConsumerSpendCapRequest): A consumer's monthly spend cap after prepaid credit.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -133,12 +132,12 @@ def sync(
     client: AuthenticatedClient | Client,
     body: PutAPIConsumerSpendCapRequest,
 ) -> APIConsumerSpendCapResponse | Problem | None:
-    """Set a consumer's monthly spend cap (ADR-1306).
+    """Set a consumer's monthly spend cap.
 
      Once the month's amount due passes the cap, the gateway answers the
     consumer with 402 `consumer_spend_cap_reached` until the month ends,
     the cap rises or credit is added. The amount due is the month to
-    date priced like a statement, minus usable prepaid credit. apid
+    date priced like a statement, minus usable prepaid credit. The API
     checks it every minute and at once when the cap or credit changes,
     so a consumer can overshoot by about two minutes of traffic. A zero
     cap allows prepaid usage only.
@@ -146,8 +145,7 @@ def sync(
     Args:
         slug (str):
         consumer_id (UUID):
-        body (PutAPIConsumerSpendCapRequest): A consumer's monthly spend cap after prepaid credit
-            (ADR-1306).
+        body (PutAPIConsumerSpendCapRequest): A consumer's monthly spend cap after prepaid credit.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -172,12 +170,12 @@ async def asyncio_detailed(
     client: AuthenticatedClient | Client,
     body: PutAPIConsumerSpendCapRequest,
 ) -> Response[APIConsumerSpendCapResponse | Problem]:
-    """Set a consumer's monthly spend cap (ADR-1306).
+    """Set a consumer's monthly spend cap.
 
      Once the month's amount due passes the cap, the gateway answers the
     consumer with 402 `consumer_spend_cap_reached` until the month ends,
     the cap rises or credit is added. The amount due is the month to
-    date priced like a statement, minus usable prepaid credit. apid
+    date priced like a statement, minus usable prepaid credit. The API
     checks it every minute and at once when the cap or credit changes,
     so a consumer can overshoot by about two minutes of traffic. A zero
     cap allows prepaid usage only.
@@ -185,8 +183,7 @@ async def asyncio_detailed(
     Args:
         slug (str):
         consumer_id (UUID):
-        body (PutAPIConsumerSpendCapRequest): A consumer's monthly spend cap after prepaid credit
-            (ADR-1306).
+        body (PutAPIConsumerSpendCapRequest): A consumer's monthly spend cap after prepaid credit.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -214,12 +211,12 @@ async def asyncio(
     client: AuthenticatedClient | Client,
     body: PutAPIConsumerSpendCapRequest,
 ) -> APIConsumerSpendCapResponse | Problem | None:
-    """Set a consumer's monthly spend cap (ADR-1306).
+    """Set a consumer's monthly spend cap.
 
      Once the month's amount due passes the cap, the gateway answers the
     consumer with 402 `consumer_spend_cap_reached` until the month ends,
     the cap rises or credit is added. The amount due is the month to
-    date priced like a statement, minus usable prepaid credit. apid
+    date priced like a statement, minus usable prepaid credit. The API
     checks it every minute and at once when the cap or credit changes,
     so a consumer can overshoot by about two minutes of traffic. A zero
     cap allows prepaid usage only.
@@ -227,8 +224,7 @@ async def asyncio(
     Args:
         slug (str):
         consumer_id (UUID):
-        body (PutAPIConsumerSpendCapRequest): A consumer's monthly spend cap after prepaid credit
-            (ADR-1306).
+        body (PutAPIConsumerSpendCapRequest): A consumer's monthly spend cap after prepaid credit.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

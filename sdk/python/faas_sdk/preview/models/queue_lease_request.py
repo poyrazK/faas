@@ -13,7 +13,7 @@ T = TypeVar("T", bound="QueueLeaseRequest")
 
 @_attrs_define
 class QueueLeaseRequest:
-    """ADR-1140 pull lease. Zero values lease one message for the default visibility timeout (30s) and return at once."""
+    """Pull lease. Zero values lease one message for the default visibility timeout (30s) and return at once."""
 
     max_messages: int | Unset = UNSET
     """A lease also stops once its payloads and headers would pass 8 MiB; it always returns at least one ready

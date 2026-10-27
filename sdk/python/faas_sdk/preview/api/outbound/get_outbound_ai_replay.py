@@ -88,7 +88,7 @@ def sync_detailed(
 ) -> Response[OutboundAIReplay | Problem]:
     """Read an AI replay and its results.
 
-     Requires MFA and read scope (ADR-997). Replays are kept for 3 days.
+     Requires MFA and read scope. Replays are kept for 3 days.
 
     Args:
         replay (UUID):
@@ -119,7 +119,7 @@ def sync(
 ) -> OutboundAIReplay | Problem | None:
     """Read an AI replay and its results.
 
-     Requires MFA and read scope (ADR-997). Replays are kept for 3 days.
+     Requires MFA and read scope. Replays are kept for 3 days.
 
     Args:
         replay (UUID):
@@ -145,7 +145,7 @@ async def asyncio_detailed(
 ) -> Response[OutboundAIReplay | Problem]:
     """Read an AI replay and its results.
 
-     Requires MFA and read scope (ADR-997). Replays are kept for 3 days.
+     Requires MFA and read scope. Replays are kept for 3 days.
 
     Args:
         replay (UUID):
@@ -174,7 +174,7 @@ async def asyncio(
 ) -> OutboundAIReplay | Problem | None:
     """Read an AI replay and its results.
 
-     Requires MFA and read scope (ADR-997). Replays are kept for 3 days.
+     Requires MFA and read scope. Replays are kept for 3 days.
 
     Args:
         replay (UUID):

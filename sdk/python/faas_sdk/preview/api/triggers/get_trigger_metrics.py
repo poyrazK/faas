@@ -73,7 +73,7 @@ def sync_detailed(
     """Per-state aggregate counts for one trigger.
 
      Counter roll-up by state. Not a Prometheus surface — that
-    is /v1/metrics (issue #684).
+    is /v1/metrics.
 
     Args:
         id (str):
@@ -105,7 +105,7 @@ def sync(
     """Per-state aggregate counts for one trigger.
 
      Counter roll-up by state. Not a Prometheus surface — that
-    is /v1/metrics (issue #684).
+    is /v1/metrics.
 
     Args:
         id (str):
@@ -132,7 +132,7 @@ async def asyncio_detailed(
     """Per-state aggregate counts for one trigger.
 
      Counter roll-up by state. Not a Prometheus surface — that
-    is /v1/metrics (issue #684).
+    is /v1/metrics.
 
     Args:
         id (str):
@@ -162,7 +162,7 @@ async def asyncio(
     """Per-state aggregate counts for one trigger.
 
      Counter roll-up by state. Not a Prometheus surface — that
-    is /v1/metrics (issue #684).
+    is /v1/metrics.
 
     Args:
         id (str):

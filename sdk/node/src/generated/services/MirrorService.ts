@@ -15,7 +15,7 @@ import { request as __request } from '../core/request.js';
 export class MirrorService {
   /**
    * List every mirror rule for an app.
-   * Per-app listing (issue #72 / ADR-124 PR-A2). At most
+   * Per-app listing. At most
    * `Limits.MirrorTargetsPerApp` rows are returned (Free/Hobby = 0
    * blocked at the plan gate before reaching this surface; Pro = 1;
    * Scale = 3) — no pagination cursor in A2.
@@ -51,7 +51,7 @@ export class MirrorService {
   /**
    * Create a mirror rule on an app.
    * Binds a source deployment to a mirror deployment for canary-shadow
-   * comparison (issue #72 / ADR-125 / ADR-124 PR-A2). Both
+   * comparison. Both
    * deployments must be `live` and belong to the same app. Plan gate
    * fires 403 `plan_mirror_not_allowed` for Free/Hobby (cost: 1
    * mirror VM per request, billed per running second, capped at
@@ -199,7 +199,7 @@ export class MirrorService {
    * Delete a mirror rule.
    * Idempotent at the wire level — second DELETE returns 404.
    * Cascades to `mirror_invocation_results` rows via FK ON DELETE
-   * CASCADE (PR-A1 migration 00384_mirror_rules.sql). Emits
+   * CASCADE (migration 00384_mirror_rules.sql). Emits
    * `mirror_rule.deleted` audit + pg_notify `kind="mirror"`.
    *
    * @returns void

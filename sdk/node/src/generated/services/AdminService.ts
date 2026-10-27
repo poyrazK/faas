@@ -553,7 +553,7 @@ export class AdminService {
       errors: {
         400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
         401: `code: unauthorized`,
-        403: `Code admin_required — admin-scoped Bearer + email in FAAS_ADMIN_EMAILS allowlist. PR-D widens the scope to cover per-tenant webhook secret rotation; the table-level pg_notify side-effect (installation_id) is intentional and consumed by githubd.`,
+        403: `Code admin_required — admin-scoped Bearer + email in FAAS_ADMIN_EMAILS allowlist. widens the scope to cover per-tenant webhook secret rotation; the table-level pg_notify side-effect (installation_id) is intentional and consumed by the GitHub integration.`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
@@ -629,7 +629,7 @@ export class AdminService {
    * reset is a no-op (returns nil immediately) and the handler
    * renders a 200 with empty entries so the CLI can print the
    * "delete products from the Paddle Dashboard, then call
-   * sync" message. Future work (issue #279+) may add
+   * sync" message. Future work may add
    * merchant-side cleanup; this handler will then return 502
    * on SDK failure rather than 200.
    *
@@ -683,16 +683,16 @@ export class AdminService {
   /**
    * Read the paddle_overage_dedupe schema probe (admin-only).
    * Operator-side guard for the Paddle overage pusher's
-   * per-window claim state machine (migration 00041). Returns
+   * per-window claim state machine. Returns
    * which of the four new columns are present + the per-state
-   * row counts so an operator can verify the meterd loop will
+   * row counts so an operator can verify the metering service loop will
    * not crash on a 42703 (column missing) error before any
    * customer-facing push is attempted.
    *
-   * Returned by the B4 pre-flight CLI subcommand. A response
+   * Returned by the pre-flight CLI subcommand. A response
    * with table_exists=true and any of has_window_start /
    * has_state / has_claimed_at / has_claimed_by=false means
-   * migration 00041 was not (fully) applied. A response with
+   * was not (fully) applied. A response with
    * table_exists=false means migrations 00034 + 00041 are
    * both unapplied (the table has never been created).
    *
@@ -718,7 +718,7 @@ export class AdminService {
    * Run a single-account reconcile against the active billing Provider (admin-only).
    * Loads the account, calls billing.Provider.ReconcileUsage for
    * a rolling 30-day window [start, end). Stripe implements
-   * this (ADR-049 §B.1); Paddle returns billing.ErrNotImplemented
+   * this; Paddle returns billing.ErrNotImplemented
    * and the handler maps to 501. The response surfaces the
    * SDK-returned mb_seconds total so an operator can diff
    * against the local usage_minutes sum.
@@ -757,7 +757,7 @@ export class AdminService {
   }
   /**
    * Read the cumulative rekey walk progress (admin-only).
-   * Returns the latest RekeyProgress snapshot the apid rekey
+   * Returns the latest RekeyProgress snapshot the API rekey
    * runner has written — either to the in-process atomic pointer
    * (memory-only mode) or to FAAS_REKEY_PROGRESS_FILE on disk.
    * Operators poll this endpoint to monitor the walk after a
@@ -773,16 +773,16 @@ export class AdminService {
    * value means the unseal step threw for at least one row —
    * the operationally safe recovery is `git rm
    * migrations*reserve_slot.sql`-style idempotent re-trigger
-   * (toggle FAAS_REKEY_ENABLED and restart apid; the seen-set
+   * (toggle FAAS_REKEY_ENABLED and restart the API; the seen-set
    * inside Replayer dedupes already-done rows).
    *
    * When the runner is disabled (FAAS_REKEY_ENABLED unset), the
    * endpoint returns 503 with code `rekey_disabled` so an
    * operator can distinguish "no work yet" from "feature off".
    * If FAAS_REKEY_ENABLED=true is set but no host age identities
-   * loaded (mfaIdentities() empty — typically FAAS_HOST_AGE_IDENTITY_PATH
+   * loaded (mfaIdentities empty — typically FAAS_HOST_AGE_IDENTITY_PATH
    * unset), the endpoint returns 503 with the distinct code
-   * `rekey_no_identities` (PR #825 follow-up); this avoids the
+   * `rekey_no_identities`; this avoids the
    * misleading "set FAAS_REKEY_ENABLED and restart" detail when
    * the operator already opted in.
    *
@@ -804,12 +804,12 @@ export class AdminService {
         503: `Runner not running. The detail distinguishes two cases
         via the \`code\` field:
         - \`rekey_disabled\` — FAAS_REKEY_ENABLED is unset on
-        this apid; the background re-seal runner is not
-        running. Set the env flag and restart apid to opt in.
+        this API; the background re-seal runner is not
+        running. Set the env flag and restart the API to opt in.
         - \`rekey_no_identities\` — FAAS_REKEY_ENABLED=true but
         no host age identities loaded (FAAS_HOST_AGE_IDENTITY_PATH
         missing or empty). Set the identity path alongside
-        the flag, then restart apid.
+        the flag, then restart the API.
         `,
       },
     });
@@ -818,13 +818,12 @@ export class AdminService {
    * Enqueue a force-park intent for a wedged live instance (admin-only).
    * Operator-side recovery primitive for instances wedged in
    * {RUNNING, WAKING, COLD_BOOTING} that the customer can't
-   * wait for the idle reaper to handle. PR #1099 P2 redesign:
-   * apid writes a row to `operator_intents` (PR #1099 P2.1)
-   * and emits `pg_notify('operator_intent', …)`; schedd
-   * (the ONLY writer to `instances` per CLAUDE.md §6.2) is
+   * wait for the idle reaper to handle. redesign:
+   * The API writes a row to `operator_intents`
+   * and emits `pg_notify('operator_intent', …)`; the scheduler
+   * (the ONLY writer to `instances`) is
    * the sole consumer and dispatches via
-   * `engine.ParkWithReason` so the `pkg/state/machine.go`
-   * `CanTransition` guard fires. The handler returns 202
+   * its park path, so the instance state machine's transition guard fires. The handler returns 202
    * Accepted with an intent_id; the operator polls
    * GET /v1/admin/operator-intents/{id} for terminal state.
    *
@@ -833,7 +832,7 @@ export class AdminService {
    * to `operator_force_park`; values are clamped to the
    * `[a-z0-9_]{1,64}` shape.
    *
-   * ADR-1524: requires an MFA-verified operator session with step-up in
+   * Requires an MFA-verified operator session with step-up in
    * the last five minutes, admin scope, the operator allowlist and same
    * origin. Bearer keys do not satisfy step-up. Requires one
    * Idempotency-Key (1-255 visible ASCII characters), an empty body,
@@ -907,15 +906,15 @@ export class AdminService {
    * Operator-side recovery primitive for the case where the
    * live instance is fine but the snapshot backing the warm
    * tier is suspected to be the carrier of a customer-reported
-   * wedge. Per ADR-005 ("snapshot of a wedged VM is a wedged
-   * VM"), the recovery action is `MarkSnapshotStale` on the
+   * wedge. Because a snapshot of a wedged VM is a wedged
+   * VM, the recovery action is `MarkSnapshotStale` on the
    * deployment's latest warm + init snapshots — NOT a state-
    * machine transition. The instance row is NOT mutated;
    * the next customer Wake takes the cold-boot path through
    * `engine.go::usableSnapshotForWake` returning `haveSnap=false`.
    *
-   * PR #1099 P2 redesign: apid writes a row to `operator_intents`
-   * and emits `pg_notify('operator_intent', …)`; schedd is the
+   * The API writes a row to `operator_intents`
+   * and emits `pg_notify('operator_intent', …)`; the scheduler is the
    * sole consumer and dispatches via
    * `engine.ForceColdBootNextWake`. The handler returns 202
    * Accepted with an intent_id; the operator polls
@@ -925,7 +924,7 @@ export class AdminService {
    * Requires `?confirm=true` as a tripwire. Optional
    * `?reason=<slug>` defaults to `operator_force_cold_boot`.
    *
-   * ADR-1524: requires an MFA-verified operator session with step-up in
+   * Requires an MFA-verified operator session with step-up in
    * the last five minutes, admin scope, the operator allowlist and same
    * origin. Bearer keys do not satisfy step-up. Requires one
    * Idempotency-Key (1-255 visible ASCII characters), an empty body,
@@ -1002,18 +1001,16 @@ export class AdminService {
    * the carrier of the wedge. Composes the two earlier
    * primitives: kill the instance (force-park) AND flip the
    * deployment's latest warm + init snapshots stale
-   * (force-cold-boot). Per ADR-005 ("snapshot of a wedged
+   * (force-cold-boot). ("snapshot of a wedged
    * VM is a wedged VM"), the recovery action is destroy +
    * snap-stale so the next Wake is a guaranteed cold boot.
    *
-   * PR #1105 (P2d follow-on to PR #1099): apid writes a row
-   * to `operator_intents` (kind = `force_restart`, CHECK
-   * widened by migrations/00446) and emits
-   * `pg_notify('operator_intent', …)`; schedd (the ONLY
-   * writer to `instances` per CLAUDE.md §6.2) is the sole
-   * consumer and dispatches via `engine.ForceRestart` so the
-   * `pkg/state/machine.go` `CanTransition` guard fires on the
-   * locked re-read. The handler returns 202 Accepted with an
+   * The API writes a row
+   * to `operator_intents` (kind = `force_restart`) and emits
+   * `pg_notify('operator_intent', …)`; the scheduler (the ONLY
+   * writer to `instances`) is the sole
+   * consumer and dispatches a forced restart, so the instance state
+   * machine's transition guard fires on the locked re-read. The handler returns 202 Accepted with an
    * intent_id; the operator polls
    * GET /v1/admin/operator-intents/{id} for terminal state
    * and `snap_ids_marked_stale`.
@@ -1021,7 +1018,7 @@ export class AdminService {
    * Gate is intentionally TIGHTER than force-park's
    * ({RUNNING, WAKING, COLD_BOOTING}): force-restart only
    * acts on RUNNING instances because the engine's
-   * state-machine validation at pkg/sched/engine.go:5299
+   * state-machine validation
    * rejects non-RUNNING states as
    * `state.ErrInstanceNotRunning` (a wedged WAKING /
    * COLD_BOOTING instance's nodeID may be empty or its
@@ -1034,7 +1031,7 @@ export class AdminService {
    * to `operator_force_restart`; values are clamped to the
    * `[a-z0-9_]{1,64}` shape.
    *
-   * ADR-1524: requires an MFA-verified operator session with step-up in
+   * Requires an MFA-verified operator session with step-up in
    * the last five minutes, admin scope, the operator allowlist and same
    * origin. Bearer keys do not satisfy step-up. Requires one
    * Idempotency-Key (1-255 visible ASCII characters), an empty body,
@@ -1259,7 +1256,7 @@ export class AdminService {
    * gregale-full-v1 also expects bridge.rules.yml, pg_backup.rules.yml and
    * data_placement.yaml alerts. Both are minimum sets; additional rules are
    * allowed and counted. The embedded catalog revision identifies the exact
-   * expected definitions shipped in this apid binary.
+   * expected definitions shipped in this API binary.
    * A complete bounded Prometheus alert-rule read and comparison share a
    * three-second deadline. Compares canonical PromQL syntax, for,
    * keep_firing_for and rule labels. Identity uses file basename, group and
@@ -1308,12 +1305,12 @@ export class AdminService {
    * Inspect critical telemetry inputs for an explicitly selected role.
    * Requires operator read scope, MFA and the operator allowlist. Without an
    * explicit expected_role, returns unknown with choices and reads no source.
-   * Both roles expect at least one apid, gatewayd (public gateway) and schedd
-   * scrape target. Single-box also expects vmmd. Control-plane adds vmmd,
-   * gatewayd-internal and schedd-compute counts from fresh apid discovery.
+   * Both roles expect at least one API, the gateway (public gateway) and the scheduler
+   * scrape target. Single-box also expects the VM manager. Control-plane adds the VM manager,
+   * the gateway and the compute scheduler counts from fresh the API discovery.
    * Static counts are minimums, not a complete intended inventory. Compute
    * counts do not prove target identity membership. The default Prometheus
-   * collision mapping job=apid plus exported_job selects discovery evidence.
+   * collision mapping job=the API plus exported_job selects discovery evidence.
    * Missing, stale, conflicting or invalid discovery stays unknown. A fresh
    * zero registry is legitimate; omitted invalid discovery targets degrade.
    * Pins strict Prometheus queries to one time under a three-second budget
@@ -1748,7 +1745,7 @@ export class AdminService {
    * JSON snapshot from:
    *
    * - `apid_audit_log_write_total[5m]` / `apid_audit_log_write_failures_total[5m]`
-   * — apid's own Prometheus counters.
+   * — the API's own Prometheus counters.
    * - `audit_log_coverage_ratio_5m` — SQL trace coverage over the durable
    * audit_log table, including every audit kind.
    * - `SELECT kind, count(*) FROM operator_intents WHERE
@@ -1763,7 +1760,7 @@ export class AdminService {
    * and info-only alerts.
    *
    * Federation is out of scope (each daemon owns its own
-   * /metrics); this endpoint is the local apid's view. Kinds
+   * /metrics); this endpoint is the local API's view. Kinds
    * with zero rows in the SQL-derived fields are seeded to
    * 0 (counts) or 1.0 (ratios, vacuous truth) so the JSON
    * shape stays stable.
@@ -1791,7 +1788,7 @@ export class AdminService {
    * Operator-side recovery primitive for builder microVMs that
    * crashed (OOM, kernel panic, host reboot) and left their
    * `builds` row in 'running' indefinitely. Mirrors the
-   * in-process reaper at pkg/builderd/reaper.go:48 — the
+   * in-process reaper — the
    * operator-facing endpoint is the manual escape hatch for
    * when the reaper's grace period is too long for an
    * incident.
@@ -1886,7 +1883,7 @@ export class AdminService {
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
         \`profile_investigation_limit\`.
         `,
-        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        503: `Generic 503 envelope. Used by the API capacity gate (e.g.
         host age recipient not loaded → registry credential PUT
         returns 503 instead of accepting plaintext).
         `,
@@ -1895,7 +1892,7 @@ export class AdminService {
   }
   /**
    * List operator-safe GitHub webhook and Check Run recovery queue items.
-   * Returns bounded queue metadata from githubd. Webhook payloads and
+   * Returns bounded queue metadata from the GitHub integration. Webhook payloads and
    * installation credentials are deliberately excluded. Requires admin
    * scope, MFA, and membership in FAAS_ADMIN_EMAILS.
    *
@@ -1931,7 +1928,7 @@ export class AdminService {
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
         \`profile_investigation_limit\`.
         `,
-        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        503: `Generic 503 envelope. Used by the API capacity gate (e.g.
         host age recipient not loaded → registry credential PUT
         returns 503 instead of accepting plaintext).
         `,
@@ -1942,7 +1939,7 @@ export class AdminService {
    * Move one dead GitHub webhook delivery back to pending.
    * Strict operator-session mutation requiring a recent MFA step-up,
    * Idempotency-Key, explicit confirmation, and a durable reason. The
-   * compare-and-swap write is owned by githubd and emits a trace-linked
+   * compare-and-swap write is owned by the GitHub integration and emits a trace-linked
    * operator.action.github_delivery_retry audit event.
    *
    * @returns GithubRecoveryRetryResponse Delivery moved back to pending.
@@ -1986,7 +1983,7 @@ export class AdminService {
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
         \`profile_investigation_limit\`.
         `,
-        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        503: `Generic 503 envelope. Used by the API capacity gate (e.g.
         host age recipient not loaded → registry credential PUT
         returns 503 instead of accepting plaintext).
         `,
@@ -1997,7 +1994,7 @@ export class AdminService {
    * Move one dead GitHub Check Run update back to pending.
    * Strict operator-session mutation requiring a recent MFA step-up,
    * Idempotency-Key, explicit confirmation, and a durable reason. The
-   * compare-and-swap write is owned by githubd and emits a trace-linked
+   * compare-and-swap write is owned by the GitHub integration and emits a trace-linked
    * operator.action.github_check_update_retry audit event.
    *
    * @returns GithubRecoveryRetryResponse Check Run update moved back to pending.
@@ -2041,7 +2038,7 @@ export class AdminService {
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
         \`profile_investigation_limit\`.
         `,
-        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        503: `Generic 503 envelope. Used by the API capacity gate (e.g.
         host age recipient not loaded → registry credential PUT
         returns 503 instead of accepting plaintext).
         `,

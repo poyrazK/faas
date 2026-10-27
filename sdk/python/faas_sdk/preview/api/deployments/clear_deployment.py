@@ -60,7 +60,7 @@ def sync_detailed(
 ) -> Response[Any | Problem]:
     """Soft-delete a deployment.
 
-     ADR-124 deployment queue controls — soft-delete one deployment
+     Deployment queue controls — soft-delete one deployment
     row. Status is intentionally untouched (admin audit trail).
     Live deployments return 409 with the cancel-live hint pointing
     at `gregale deploys rollback`.
@@ -94,7 +94,7 @@ def sync(
 ) -> Any | Problem | None:
     """Soft-delete a deployment.
 
-     ADR-124 deployment queue controls — soft-delete one deployment
+     Deployment queue controls — soft-delete one deployment
     row. Status is intentionally untouched (admin audit trail).
     Live deployments return 409 with the cancel-live hint pointing
     at `gregale deploys rollback`.
@@ -123,7 +123,7 @@ async def asyncio_detailed(
 ) -> Response[Any | Problem]:
     """Soft-delete a deployment.
 
-     ADR-124 deployment queue controls — soft-delete one deployment
+     Deployment queue controls — soft-delete one deployment
     row. Status is intentionally untouched (admin audit trail).
     Live deployments return 409 with the cancel-live hint pointing
     at `gregale deploys rollback`.
@@ -155,7 +155,7 @@ async def asyncio(
 ) -> Any | Problem | None:
     """Soft-delete a deployment.
 
-     ADR-124 deployment queue controls — soft-delete one deployment
+     Deployment queue controls — soft-delete one deployment
     row. Status is intentionally untouched (admin audit trail).
     Live deployments return 409 with the cancel-live hint pointing
     at `gregale deploys rollback`.

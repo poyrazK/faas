@@ -31,11 +31,11 @@ import { request as __request } from '../core/request.js';
 export class ObservabilityService {
   /**
    * Search an app's log events.
-   * ADR-20261018083536 internal preview, enabled by
+   * Internal preview, enabled by
    * `FAAS_LOG_SEARCH_ENABLED=1`; otherwise 503 `log_search_unavailable`.
    * Requires apps:read or admin.
    *
-   * Returns one newest-first page of the app's ADR-213 log ledger. Filters
+   * Returns one newest-first page of the app's log ledger. Filters
    * combine with AND. A text search (`q`) covers at most 24 hours and
    * answers 400 `log_search_window_too_large` beyond that; every search
    * runs under a 5 second statement timeout and answers 503
@@ -146,7 +146,7 @@ export class ObservabilityService {
   }
   /**
    * Count an app's log events by facet.
-   * ADR-20261018083536 internal preview behind `FAAS_LOG_SEARCH_ENABLED=1`.
+   * Internal preview behind `FAAS_LOG_SEARCH_ENABLED=1`.
    * Takes the same filters as the search and counts the matches by
    * source, level, status class, and the ten busiest routes. Counts sum
    * each event's occurrences. The window is at most 7 days.
@@ -241,7 +241,7 @@ export class ObservabilityService {
   }
   /**
    * List the account's custom dashboards.
-   * ADR-20261022173833 internal preview behind `FAAS_CUSTOM_DASHBOARDS_ENABLED=1`.
+   * Internal preview behind `FAAS_CUSTOM_DASHBOARDS_ENABLED=1`.
    * Returns the account's saved dashboards by name.
    *
    * @returns DashboardsResponse The account's dashboards.
@@ -377,7 +377,7 @@ export class ObservabilityService {
   }
   /**
    * List the account's incidents.
-   * ADR-20261022193512 internal preview behind `FAAS_INCIDENTS_ENABLED=1`.
+   * Internal preview behind `FAAS_INCIDENTS_ENABLED=1`.
    * One list of alert rule firing periods, route monitor incidents and
    * platform incidents from the status page: everything open plus what
    * resolved since `since`, open first, then newest first, at most 100.
@@ -505,7 +505,7 @@ export class ObservabilityService {
   }
   /**
    * List an app's saved log searches.
-   * ADR-20261018083536 internal preview behind `FAAS_LOG_SEARCH_ENABLED=1`.
+   * Internal preview behind `FAAS_LOG_SEARCH_ENABLED=1`.
    * Returns the app's saved searches by name. Each holds filters only;
    * a search, the dashboard or an alert brings its own window.
    *
@@ -880,7 +880,7 @@ export class ObservabilityService {
   }
   /**
    * Account service map of caller → target app edges.
-   * ADR-1131 internal preview, enabled by `FAAS_SERVICE_MAP_ENABLED=1`;
+   * Internal preview, enabled by `FAAS_SERVICE_MAP_ENABLED=1`;
    * otherwise 503 `service_map_unavailable`.
    *
    * Built from the unsampled service-proxy edge series. Both the
@@ -916,7 +916,7 @@ export class ObservabilityService {
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
         \`profile_investigation_limit\`.
         `,
-        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        503: `Generic 503 envelope. Used by the API capacity gate (e.g.
         host age recipient not loaded → registry credential PUT
         returns 503 instead of accepting plaintext).
         `,
@@ -952,7 +952,7 @@ export class ObservabilityService {
    * `wake_id` without adding wake IDs as metric labels.
    *
    * The endpoint is a sub-resource of `/v1/apps/{slug}`;
-   * auth and rate-limit share the §12 per-app budget with
+   * auth and rate-limit share the per-app budget with
    * logs/metrics/wake. Cross-account access 404s the
    * same way unknown slugs do (forge-proof: every row's
    * `data.app_id` is verified to match the resolved app).
@@ -975,11 +975,10 @@ export class ObservabilityService {
      */
     slug: string,
     /**
-     * The per-wake correlation handle minted by the schedd
+     * The per-wake correlation handle minted by the scheduler
      * engine (UUID v4 in production). The endpoint returns
      * every `wake.*` events row whose `data.wake_id`
-     * matches — the partial index `events_wake_id_idx`
-     * (migrations/00113) serves the read in O(frames)
+     * matches — the partial index `events_wake_id_idx` serves the read in O(frames)
      * regardless of the events table size.
      *
      */
@@ -1091,9 +1090,9 @@ export class ObservabilityService {
   }
   /**
    * Retrieve a stored OpenTelemetry trace.
-   * Issue #555. Returns the full span tree for a single trace_id
+   * Returns the full span tree for a single trace_id
    * (32-hex, the same as the request's `wake_id`). The trace is
-   * sourced from the gatewayd-public in-memory ring (24h
+   * sourced from the public edge in-memory ring (24h
    * retention, 100k default cap). When no OTLP endpoint is set
    * the ring is the only source — when OTLP is set, the ring
    * still operates as the customer-facing query layer.

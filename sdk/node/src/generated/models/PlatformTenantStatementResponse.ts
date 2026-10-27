@@ -20,11 +20,11 @@ export type PlatformTenantStatementResponse = {
   amount_millicents: number;
   lines: Array<PlatformTenantStatementLineResponse>;
   /**
-   * Monthly base fees and minimum top-ups this revision bills (ADR-1322); amount_millicents includes them. A revision can bill fees without lines for a tenant without usage.
+   * Monthly base fees and minimum top-ups this revision bills; amount_millicents includes them. A revision can bill fees without lines for a tenant without usage.
    */
   fees?: Array<APIConsumerStatementFeeResponse>;
   /**
-   * Prepaid credit drawn when the revision was finalized (ADR-20261019100331).
+   * Prepaid credit drawn when the revision was finalized.
    */
   credit_applied_millicents?: number;
   /**

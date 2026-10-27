@@ -7,8 +7,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -250,6 +252,84 @@ func TestProducedComponentCollectionKeepsBaseFindingsSeparate(t *testing.T) {
 			shared, baseErr := th.store.GetFreshBaseImageScan(t.Context(), base.ID, base.InputHash)
 			if err != nil || mainErr != nil || baseErr != nil || calls != 2 || main.Input.RootfsProducerID != root.ID || shared.Input.BaseProducerID != base.ID || main.ID == shared.ID || (shared.Result.SeverityCounts.High > 0) != unsafe {
 				t.Fatalf("both drives did not retain separate component scans: %v %v %v", err, mainErr, baseErr)
+			}
+		})
+	}
+}
+
+// scanPutRecorder records the CRITICAL total of every write to one scan key.
+type scanPutRecorder struct {
+	storage.StorageBackend
+	key      string
+	critical []int
+}
+
+func (r *scanPutRecorder) Put(ctx context.Context, key string, body io.Reader) error {
+	if key != r.key {
+		return r.StorageBackend.Put(ctx, key, body)
+	}
+	raw, err := io.ReadAll(body)
+	if err != nil {
+		return err
+	}
+	var value baseScanCompatibility
+	if err := json.Unmarshal(raw, &value); err != nil {
+		return err
+	}
+	r.critical = append(r.critical, value.Findings[SeverityCritical])
+	return r.StorageBackend.Put(ctx, key, bytes.NewReader(raw))
+}
+
+// Production-us rc.297 (Hunt 14 H14-102): every reuse of the shared base first
+// published the CRITICAL=9999 refusal, and vmmd on both nodes refused every
+// cold boot on base/base-amd64.ext4 until the reload finished; a transient
+// "review inputs are being modified" error held it for minutes. A fresh
+// complete scan of the exact producer bytes is republished as is; a failed
+// or missing one still invalidates first.
+func TestProducedBaseScanReuseNeverPublishesRefusal(t *testing.T) {
+	for _, mode := range []string{"fresh complete", "stored scan failed"} {
+		t.Run(mode, func(t *testing.T) {
+			h, store, _, _, ref := verifiedBaseFixture(t, "complete")
+			h.WithGrypeRun(func(context.Context, string) (*ScanResult, error) { return producedScanResult(t, false), nil })
+			base, err := h.EnsureBaseExt4(t.Context(), ref, "base/verified.ext4", "base/verified.digest", "", "", "")
+			if err != nil {
+				t.Fatal(err)
+			}
+			old, err := store.GetFreshBaseImageScan(t.Context(), base.Producer.ID, base.Producer.InputHash)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if mode == "stored scan failed" {
+				failed := old.Input
+				failed.ID, failed.Status, failed.Failure, failed.ScannerName, failed.Report = uuid.NewString(), "failed", "scanner_unavailable", "", nil
+				if _, err := store.PublishBaseImageScan(t.Context(), failed); err != nil {
+					t.Fatal(err)
+				}
+			}
+			scans := 0
+			h.WithGrypeRun(func(context.Context, string) (*ScanResult, error) {
+				scans++
+				return producedScanResult(t, false), nil
+			})
+			be, err := h.storageFor()
+			if err != nil {
+				t.Fatal(err)
+			}
+			rec := &scanPutRecorder{StorageBackend: be, key: wire.ScanKeyForBaseKey(base.StorageKey)}
+			value, err := h.ensureProducedBaseScan(t.Context(), rec, base.Producer, "")
+			if err != nil || value.Input.Status != "complete" || len(rec.critical) == 0 {
+				t.Fatalf("ensure = %+v, %v; writes %v", value.Input.Status, err, rec.critical)
+			}
+			last := rec.critical[len(rec.critical)-1]
+			switch mode {
+			case "fresh complete":
+				if scans != 0 || value.ID != old.ID || slices.Contains(rec.critical, 9999) || last != 0 {
+					t.Fatalf("reuse rescanned (%d) or published the refusal: writes %v", scans, rec.critical)
+				}
+			case "stored scan failed":
+				if scans != 1 || rec.critical[0] != 9999 || last != 0 {
+					t.Fatalf("a refresh must invalidate before rescanning: scans %d writes %v", scans, rec.critical)
+				}
 			}
 		})
 	}

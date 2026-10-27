@@ -91,9 +91,9 @@ def sync_detailed(
     value NEVER appears in the response — guest-init reads the value
     at process start from `/etc/faas/env.json` inside the guest.
 
-    **ADR-090 PR-B scope filter.** The optional `?scope=`
+    **scope filter.** The optional `?scope=`
     query param selects which scope to read. Omitted = the
-    default scope (pre-PR-B behavior, byte-identical wire).
+    default scope (legacy behaviour, byte-identical wire).
     `?scope=__all__` returns the nested `env_by_scope` response
     shape with every scope on the app; the flat `env` array
     is empty in that arm (discriminated union). Any other
@@ -136,9 +136,9 @@ def sync(
     value NEVER appears in the response — guest-init reads the value
     at process start from `/etc/faas/env.json` inside the guest.
 
-    **ADR-090 PR-B scope filter.** The optional `?scope=`
+    **scope filter.** The optional `?scope=`
     query param selects which scope to read. Omitted = the
-    default scope (pre-PR-B behavior, byte-identical wire).
+    default scope (legacy behaviour, byte-identical wire).
     `?scope=__all__` returns the nested `env_by_scope` response
     shape with every scope on the app; the flat `env` array
     is empty in that arm (discriminated union). Any other
@@ -176,9 +176,9 @@ async def asyncio_detailed(
     value NEVER appears in the response — guest-init reads the value
     at process start from `/etc/faas/env.json` inside the guest.
 
-    **ADR-090 PR-B scope filter.** The optional `?scope=`
+    **scope filter.** The optional `?scope=`
     query param selects which scope to read. Omitted = the
-    default scope (pre-PR-B behavior, byte-identical wire).
+    default scope (legacy behaviour, byte-identical wire).
     `?scope=__all__` returns the nested `env_by_scope` response
     shape with every scope on the app; the flat `env` array
     is empty in that arm (discriminated union). Any other
@@ -219,9 +219,9 @@ async def asyncio(
     value NEVER appears in the response — guest-init reads the value
     at process start from `/etc/faas/env.json` inside the guest.
 
-    **ADR-090 PR-B scope filter.** The optional `?scope=`
+    **scope filter.** The optional `?scope=`
     query param selects which scope to read. Omitted = the
-    default scope (pre-PR-B behavior, byte-identical wire).
+    default scope (legacy behaviour, byte-identical wire).
     `?scope=__all__` returns the nested `env_by_scope` response
     shape with every scope on the app; the flat `env` array
     is empty in that arm (discriminated union). Any other

@@ -88,9 +88,8 @@ def sync_detailed(
 ) -> Response[Any | AppOpenAPIImportResponse | Problem]:
     """Import an OpenAPI document for an app.
 
-     Customer-facing import (ADR-126 / issue #975 item #2).
-    Reads the body, validates via
-    pkg/openapiimport.ValidateImport (structural-minimum
+     Customer-facing import.
+    Reads the body, validates it (structural-minimum
     OpenAPI 3.0 / 3.1 check), enforces size + endpoint
     caps, persists via UpsertAppOpenAPIDoc, emits
     app.openapi_import.replaced audit + pg_notify on
@@ -137,9 +136,8 @@ def sync(
 ) -> Any | AppOpenAPIImportResponse | Problem | None:
     """Import an OpenAPI document for an app.
 
-     Customer-facing import (ADR-126 / issue #975 item #2).
-    Reads the body, validates via
-    pkg/openapiimport.ValidateImport (structural-minimum
+     Customer-facing import.
+    Reads the body, validates it (structural-minimum
     OpenAPI 3.0 / 3.1 check), enforces size + endpoint
     caps, persists via UpsertAppOpenAPIDoc, emits
     app.openapi_import.replaced audit + pg_notify on
@@ -181,9 +179,8 @@ async def asyncio_detailed(
 ) -> Response[Any | AppOpenAPIImportResponse | Problem]:
     """Import an OpenAPI document for an app.
 
-     Customer-facing import (ADR-126 / issue #975 item #2).
-    Reads the body, validates via
-    pkg/openapiimport.ValidateImport (structural-minimum
+     Customer-facing import.
+    Reads the body, validates it (structural-minimum
     OpenAPI 3.0 / 3.1 check), enforces size + endpoint
     caps, persists via UpsertAppOpenAPIDoc, emits
     app.openapi_import.replaced audit + pg_notify on
@@ -228,9 +225,8 @@ async def asyncio(
 ) -> Any | AppOpenAPIImportResponse | Problem | None:
     """Import an OpenAPI document for an app.
 
-     Customer-facing import (ADR-126 / issue #975 item #2).
-    Reads the body, validates via
-    pkg/openapiimport.ValidateImport (structural-minimum
+     Customer-facing import.
+    Reads the body, validates it (structural-minimum
     OpenAPI 3.0 / 3.1 check), enforces size + endpoint
     caps, persists via UpsertAppOpenAPIDoc, emits
     app.openapi_import.replaced audit + pg_notify on

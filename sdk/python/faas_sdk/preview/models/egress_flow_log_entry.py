@@ -12,7 +12,7 @@ T = TypeVar("T", bound="EgressFlowLogEntry")
 
 @_attrs_define
 class EgressFlowLogEntry:
-    """A destination address and TCP port a tenant guest opened a new flow to (ADR-371)."""
+    """A destination address and TCP port a tenant guest opened a new flow to."""
 
     observed_at: datetime.datetime
     node: str

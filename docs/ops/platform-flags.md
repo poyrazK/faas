@@ -99,8 +99,8 @@ flags in the table below release their capability; every other capability in
 - **Enforcement.** `enforcement=routes` means apid hides the capability's
   routes; `settings` means apid refuses the app fields, edge rule kinds,
   runtimes, gregale.yaml blocks or wildcard domains that turn it on (with
-  `403 capability_not_released`); `daemons` means schedd, githubd or
-  gatewayd-internal also stop its work outside apid (below); `handler` means
+  `403 capability_not_released`); `daemons` means schedd, githubd,
+  gatewayd-internal or vmmd also stop its work outside apid (below); `handler` means
   the flag's consumers decide it in code; `none` means the flag is not
   enforced yet (VM behavior, or a CLI-side tool).
 - **Work outside apid.** Daemons follow the same decision, tier defaults
@@ -110,6 +110,17 @@ flags in the table below release their capability; every other capability in
     managed exclusive operations a minute at a time, without spending a
     delivery attempt. The backlog runs when the flag is back on, so cancel
     the work as well if the capability is off for good.
+  - `events` is the event bus's kill switch
+    ([ADR-20261027125625](../adr/20261027125625-events-kill-switch.md)).
+    Off platform-wide, schedd routes no receipts and runs no event recoveries
+    or backfills, and every customer publish path (the publish routes, the
+    platform-tenant route and in-guest publishing through vmmd) answers
+    `503 events_paused` with `Retry-After` instead of hiding. Off for an
+    account, that account's publishing is refused the same way and its
+    customer events wait a minute at a time. Server-side events (object
+    storage, inbound webhooks, commit relay) are still accepted and wait;
+    deliveries already admitted finish. Nothing accepted is lost: turning it
+    back on resumes routing.
   - githubd ignores pushes (`github_deploys`) and pull-request previews
     (`pr_previews`) and does not replay them later; closing a pull request
     still tears its preview down.

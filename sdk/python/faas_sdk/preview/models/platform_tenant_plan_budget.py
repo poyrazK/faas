@@ -11,7 +11,7 @@ T = TypeVar("T", bound="PlatformTenantPlanBudget")
 
 @_attrs_define
 class PlatformTenantPlanBudget:
-    """The request budget a tenant plan sets (ADR-240); zero disables a ceiling."""
+    """The request budget a tenant plan sets; zero disables a ceiling."""
 
     max_requests_per_minute: int
     max_requests_per_day: int

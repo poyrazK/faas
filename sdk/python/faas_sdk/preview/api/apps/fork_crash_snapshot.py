@@ -111,7 +111,7 @@ def sync_detailed(
 ) -> Response[AppForkResponse | Problem]:
     """Open a ready crash snapshot as a production fork.
 
-     Creates an ADR-732 fork restored from this capture instead of the
+     Creates an fork restored from this capture instead of the
     deployment's newest snapshot. Same rules as `POST /v1/apps/{slug}/forks`:
     the key needs `deploy:write` and `secrets:read`, the response carries
     the one-time `access_token`, and the fork counts against the fork
@@ -157,7 +157,7 @@ def sync(
 ) -> AppForkResponse | Problem | None:
     """Open a ready crash snapshot as a production fork.
 
-     Creates an ADR-732 fork restored from this capture instead of the
+     Creates an fork restored from this capture instead of the
     deployment's newest snapshot. Same rules as `POST /v1/apps/{slug}/forks`:
     the key needs `deploy:write` and `secrets:read`, the response carries
     the one-time `access_token`, and the fork counts against the fork
@@ -198,7 +198,7 @@ async def asyncio_detailed(
 ) -> Response[AppForkResponse | Problem]:
     """Open a ready crash snapshot as a production fork.
 
-     Creates an ADR-732 fork restored from this capture instead of the
+     Creates an fork restored from this capture instead of the
     deployment's newest snapshot. Same rules as `POST /v1/apps/{slug}/forks`:
     the key needs `deploy:write` and `secrets:read`, the response carries
     the one-time `access_token`, and the fork counts against the fork
@@ -242,7 +242,7 @@ async def asyncio(
 ) -> AppForkResponse | Problem | None:
     """Open a ready crash snapshot as a production fork.
 
-     Creates an ADR-732 fork restored from this capture instead of the
+     Creates an fork restored from this capture instead of the
     deployment's newest snapshot. Same rules as `POST /v1/apps/{slug}/forks`:
     the key needs `deploy:write` and `secrets:read`, the response carries
     the one-time `access_token`, and the fork counts against the fork

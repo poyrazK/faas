@@ -70,7 +70,8 @@ type Capability struct {
 	Settings []string `json:"settings,omitempty"`
 	// Consumers are the daemons besides apid that stop the capability's
 	// background work while its flag is off (schedd, githubd,
-	// gatewayd-internal). realtimed has no flag source; apid decides for it.
+	// gatewayd-internal, vmmd). realtimed has no flag source; apid decides
+	// for it.
 	Consumers []string `json:"consumers,omitempty"`
 	// CLI are the gregale command paths the capability owns: a top-level
 	// command ("realtime") or a verb path under one ("bucket lifecycle").
@@ -80,7 +81,7 @@ type Capability struct {
 }
 
 // KnownConsumers are the daemons that may decide capability flags.
-var KnownConsumers = []string{"schedd", "githubd", "gatewayd-internal"}
+var KnownConsumers = []string{"schedd", "githubd", "gatewayd-internal", "vmmd"}
 
 // Catalog is the versioned on-disk product capability registry.
 type Catalog struct {

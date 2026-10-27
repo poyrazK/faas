@@ -39,7 +39,7 @@ export type RealtimeConsumerGroup = {
   history_unavailable: boolean;
   capacity_blocked: boolean;
   /**
-   * Realtime trigger consuming this group (ADR-1322). Absent when workers consume it directly.
+   * Realtime trigger consuming this group. Absent when workers consume it directly.
    */
   trigger_id?: string;
   lease_seconds: number;

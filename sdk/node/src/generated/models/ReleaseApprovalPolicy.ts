@@ -3,7 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * An app's release approval policy (ADR-20261020085706).
+ * An app's release approval policy.
  */
 export type ReleaseApprovalPolicy = {
   app: string;

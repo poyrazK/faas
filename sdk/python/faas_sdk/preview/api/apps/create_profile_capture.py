@@ -106,7 +106,7 @@ def sync_detailed(
     client: AuthenticatedClient | Client,
     body: CreateProfileCaptureRequest | Unset = UNSET,
 ) -> Response[Problem | ProfileCapture]:
-    """Capture CPU and/or heap profiles from a running instance now (ADR-1155).
+    """Capture CPU and/or heap profiles from a running instance now.
 
      Queues a bounded capture on the requested or earliest-started RUNNING instance; parked apps are not
     woken. Poll the capture until status is ready or failed. One capture per app runs at a time; an
@@ -115,11 +115,11 @@ def sync_detailed(
 
     Args:
         slug (str):
-        body (CreateProfileCaptureRequest | Unset): On-demand capture request (ADR-1155). Kinds
-            defaults to [cpu]; duration_seconds to 10. Stacks is an instant snapshot of where every
-            goroutine or thread is waiting, taken when the capture starts. Block and mutex are Go
-            contention profiles (time goroutines spent blocked on channels or locks, or waiting for a
-            mutex, during the window).
+        body (CreateProfileCaptureRequest | Unset): On-demand capture request. Kinds defaults to
+            [cpu]; duration_seconds to 10. Stacks is an instant snapshot of where every goroutine or
+            thread is waiting, taken when the capture starts. Block and mutex are Go contention
+            profiles (time goroutines spent blocked on channels or locks, or waiting for a mutex,
+            during the window).
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -147,7 +147,7 @@ def sync(
     client: AuthenticatedClient | Client,
     body: CreateProfileCaptureRequest | Unset = UNSET,
 ) -> Problem | ProfileCapture | None:
-    """Capture CPU and/or heap profiles from a running instance now (ADR-1155).
+    """Capture CPU and/or heap profiles from a running instance now.
 
      Queues a bounded capture on the requested or earliest-started RUNNING instance; parked apps are not
     woken. Poll the capture until status is ready or failed. One capture per app runs at a time; an
@@ -156,11 +156,11 @@ def sync(
 
     Args:
         slug (str):
-        body (CreateProfileCaptureRequest | Unset): On-demand capture request (ADR-1155). Kinds
-            defaults to [cpu]; duration_seconds to 10. Stacks is an instant snapshot of where every
-            goroutine or thread is waiting, taken when the capture starts. Block and mutex are Go
-            contention profiles (time goroutines spent blocked on channels or locks, or waiting for a
-            mutex, during the window).
+        body (CreateProfileCaptureRequest | Unset): On-demand capture request. Kinds defaults to
+            [cpu]; duration_seconds to 10. Stacks is an instant snapshot of where every goroutine or
+            thread is waiting, taken when the capture starts. Block and mutex are Go contention
+            profiles (time goroutines spent blocked on channels or locks, or waiting for a mutex,
+            during the window).
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -183,7 +183,7 @@ async def asyncio_detailed(
     client: AuthenticatedClient | Client,
     body: CreateProfileCaptureRequest | Unset = UNSET,
 ) -> Response[Problem | ProfileCapture]:
-    """Capture CPU and/or heap profiles from a running instance now (ADR-1155).
+    """Capture CPU and/or heap profiles from a running instance now.
 
      Queues a bounded capture on the requested or earliest-started RUNNING instance; parked apps are not
     woken. Poll the capture until status is ready or failed. One capture per app runs at a time; an
@@ -192,11 +192,11 @@ async def asyncio_detailed(
 
     Args:
         slug (str):
-        body (CreateProfileCaptureRequest | Unset): On-demand capture request (ADR-1155). Kinds
-            defaults to [cpu]; duration_seconds to 10. Stacks is an instant snapshot of where every
-            goroutine or thread is waiting, taken when the capture starts. Block and mutex are Go
-            contention profiles (time goroutines spent blocked on channels or locks, or waiting for a
-            mutex, during the window).
+        body (CreateProfileCaptureRequest | Unset): On-demand capture request. Kinds defaults to
+            [cpu]; duration_seconds to 10. Stacks is an instant snapshot of where every goroutine or
+            thread is waiting, taken when the capture starts. Block and mutex are Go contention
+            profiles (time goroutines spent blocked on channels or locks, or waiting for a mutex,
+            during the window).
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -222,7 +222,7 @@ async def asyncio(
     client: AuthenticatedClient | Client,
     body: CreateProfileCaptureRequest | Unset = UNSET,
 ) -> Problem | ProfileCapture | None:
-    """Capture CPU and/or heap profiles from a running instance now (ADR-1155).
+    """Capture CPU and/or heap profiles from a running instance now.
 
      Queues a bounded capture on the requested or earliest-started RUNNING instance; parked apps are not
     woken. Poll the capture until status is ready or failed. One capture per app runs at a time; an
@@ -231,11 +231,11 @@ async def asyncio(
 
     Args:
         slug (str):
-        body (CreateProfileCaptureRequest | Unset): On-demand capture request (ADR-1155). Kinds
-            defaults to [cpu]; duration_seconds to 10. Stacks is an instant snapshot of where every
-            goroutine or thread is waiting, taken when the capture starts. Block and mutex are Go
-            contention profiles (time goroutines spent blocked on channels or locks, or waiting for a
-            mutex, during the window).
+        body (CreateProfileCaptureRequest | Unset): On-demand capture request. Kinds defaults to
+            [cpu]; duration_seconds to 10. Stacks is an instant snapshot of where every goroutine or
+            thread is waiting, taken when the capture starts. Block and mutex are Go contention
+            profiles (time goroutines spent blocked on channels or locks, or waiting for a mutex,
+            during the window).
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

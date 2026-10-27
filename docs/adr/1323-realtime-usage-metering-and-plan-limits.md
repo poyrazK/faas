@@ -127,3 +127,19 @@ These flags are protections, not features.
   and no allowance from apid applies only the node and endpoint caps.
 - Usage recording (`FAAS_REALTIME_USAGE_ENABLED`) stays off.
 
+
+## Amendment (2026-10-27): an account's share of the outbound budget
+
+The node outbound budget is one pool, and the shedder disconnects only
+connections whose backlog reaches 1/16 of their own queue limit (256 KiB by
+default). A security audit found that one tenant could open a few hundred
+slow-reading connections, keep each just under that floor, and fill the
+budget with backlogs nothing sheds; every frame on the node, for every
+tenant, was then refused.
+
+- An account's connections on a node hold at most
+  `api.RealtimeAccountNodeSharePercent` (50%) of the node outbound budget,
+  as they hold at most that share of its connections. A frame past the share
+  is refused like a full queue and counted as a node budget drop.
+- The bytes are counted per account (`accountConnections.outbound`) at the
+  same points the node total is reserved and released.

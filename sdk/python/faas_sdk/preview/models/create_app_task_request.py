@@ -34,7 +34,7 @@ class CreateAppTaskRequest:
     Gregale HTTPS service-binding canary and is handled by guest-init.
     `__gregale_outbound_binding_probe_v1__ <integration-id>` selects a
     configured outbound probe; the server supplies immutable gateway routing metadata.
-    `interactive=true` admits an ADR-1037 session (operator-gated): the
+    `interactive=true` admits an session (operator-gated): the
     command defaults to `/bin/sh`, the timeout defaults to 3600 seconds
     and bounds the session, no output is retained, and the create
     response carries a one-time `attach` credential for
@@ -56,7 +56,7 @@ class CreateAppTaskRequest:
     """Zero uses the 1 MiB default; non-zero values must be at least 1024. Must be omitted for interactive
     sessions."""
     interactive: bool | Unset = False
-    """Admit an interactive session (ADR-1037). The command is required unless interactive."""
+    """Admit an interactive session. The command is required unless interactive."""
     tty: bool | Unset = False
     """Allocate a pseudo-terminal; requires interactive."""
 

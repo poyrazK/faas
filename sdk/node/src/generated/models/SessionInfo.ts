@@ -3,7 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * One row per dashboard login (ADR-039 / IAM-3). The
+ * One row per dashboard login. The
  * cookie envelope carries the row's `id` as `sid`;
  * every authenticated request re-validates the row.
  * Revoked rows are filtered out of the

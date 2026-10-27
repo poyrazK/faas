@@ -7,6 +7,29 @@ does not mirror this list; customer-facing maturity belongs in the generated
 release or acceptance state changes, and keep older milestone notes clearly
 historical.
 
+## Crons GA blockers — 2026-10-26 (branch `fix/crons-ga-blockers`, not released)
+
+The 2026-10-26 crons GA review found four blockers; this branch fixes them
+([ADR-20261026201726](adr/20261026201726-cron-delivery-through-the-drain.md)):
+
+- HTTP cron fires and manual runs no longer wake the app or wait for it on
+  schedd's main loop. They queue a cron invocation that the invocation drain
+  delivers, so slow handlers cannot stall heartbeats, the reaper or other
+  tenants' crons. Plain HTTP crons keep one delivery attempt; manual runs
+  report their invocation's outcome and are capped at five active per cron.
+- `crons.schedule_anchor_at` restarts a schedule when it is edited, enabled
+  or unsuspended, so none of those fires the cron at once or replays passed
+  occurrences.
+- Command crons are scoped into the app-tasks preview (off in production).
+  Crons have a customer page, [docs/crons.md](crons.md).
+- Acceptance: `cmd/e2e/cron_e2e_test.go` (KVM-free, real apid, schedd and
+  gatewayd processes) proves a scheduled fire and a manual run reach the app
+  with the cron source header, and a visitor cannot forge that header.
+  PASS on the n2 test node on 2026-10-27 (76.6 s, revision a9e9c64e83; log
+  at `n2:/mnt/e2e-scratch/crons-ga/cron_e2e.log`). Unit and Postgres suites
+  for the cron, fire-now, drain and app-task paths pass; the five
+  `TestDrainSecurity*` failures are on main already.
+
 ## Release guards — 2026-10-26
 
 Production releases can be held back by:

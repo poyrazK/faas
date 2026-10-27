@@ -18,14 +18,14 @@ T = TypeVar("T", bound="ConfigRollbackResponse")
 
 @_attrs_define
 class ConfigRollbackResponse:
-    """What a config rollback changed, and the secrets it could not restore (ADR-1451)."""
+    """What a config rollback changed, and the secrets it could not restore."""
 
     restored_revision: int
     set_: list[str]
     deleted: list[str]
     secrets_not_restored: list[ConfigSecretDifference]
     change: ConfigChangeReceipt | Unset = UNSET
-    """The config revision an env or secret write recorded and the guard watching it (ADR-1451)."""
+    """The config revision an env or secret write recorded and the guard watching it."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

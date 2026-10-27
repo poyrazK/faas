@@ -60,7 +60,7 @@ func (e *Engine) prepareDeploymentPrimeBoot(ctx context.Context, app state.App, 
 		}
 	}
 	privateNetwork := e.privateNetworkProjection(ctx, app)
-	healthcheckPath, healthcheckGRPC, healthcheckGRPCService := startupProbeForApp(dep, app.AppProtocol)
+	healthcheckPath, healthcheckGRPC, healthcheckGRPCService := startupProbeForApp(dep, app)
 	pinnedBase, err := e.deploymentBaseKey(ctx, app, dep, primeLayer)
 	if err != nil {
 		result.RejectionReason = "prime_runtime_release_unavailable"

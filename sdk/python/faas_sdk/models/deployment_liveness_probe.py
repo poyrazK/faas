@@ -17,20 +17,20 @@ T = TypeVar("T", bound="DeploymentLivenessProbe")
 
 @_attrs_define
 class DeploymentLivenessProbe:
-    """Liveness-probe shape on the deploy-time override object (issue #554 / ADR-078).
+    """Liveness-probe shape on the deploy-time override object.
     The probe is the Cloud-Run-parity primitive that asks "is the VM still
     responding?" — a wedged guest (busy-loop, leaked fd, deadlocked runner)
-    sits resident billing RAM-hours while serving 5xx until the §13 idle
+    sits resident billing RAM-hours while serving 5xx until the idle
     reaper eventually fires. The liveness probe replaces that wait with the
     short, customer-visible path: 3 consecutive failures → destroy →
-    cold-boot from rootfs (per ADR-005 — never snapshot-restore).
+    cold-boot from rootfs (never snapshot-restore).
 
     Distinct from `DeploymentHealthcheck`: readiness is "accept traffic?",
     liveness is "still alive?". A passing readiness but failing liveness
     is the canonical "wake succeeded, then the runtime died" failure mode
     that this primitive is designed to catch.
 
-    Validation rules (enforced in `pkg/api/dto.go::CreateDeploymentOverrides.Validate`):
+    Validation rules (enforced):
     - Exactly one of `path` (HTTP) or `grpc` (standard gRPC health Check) must be set.
       The server enforces this mutual-exclusion rule.
     - `path`, when set, must start with `/`.
@@ -38,8 +38,8 @@ class DeploymentLivenessProbe:
     - `interval_s` ∈ [0, 60] (0 = inherit per-plan default; Hobby/Pro/Scale → 5 s).
     - `timeout_s` ∈ [0, 5] (0 = inherit 2 s) for either probe action.
     - `consecutive_failures` ∈ [0, 10] (0 = inherit per-plan default; Hobby/Pro/Scale → 3).
-    - `cooldown_s` ∈ [10, 600] (cooldown gate enforced by the vmmd-side
-      probe loop after a destroy fires — see ADR-078; 0 = no cooldown, the
+    - `cooldown_s` ∈ [10, 600] (cooldown gate enforced by the VM manager-side
+      probe loop after a destroy fires —; 0 = no cooldown, the
       legacy Free-plan behaviour).
 
     Per-deployment overrides of `interval_s` / `timeout_s` / `consecutive_failures` / `cooldown_s`
@@ -53,7 +53,7 @@ class DeploymentLivenessProbe:
 
     path: str | Unset = UNSET
     """HTTP path the probe requests from the guest; must start with `/` (e.g. `/healthz`). Reuses the runner's
-    existing listener — no runner changes (issue #554 §4). Set exactly one of path or grpc."""
+    existing listener — no runner changes. Set exactly one of path or grpc."""
     grpc: DeploymentGRPCLivenessProbe | Unset = UNSET
     """Standard gRPC health.v1 liveness probe. An omitted or empty service checks overall server health."""
     interval_s: int | Unset = UNSET
@@ -67,9 +67,9 @@ class DeploymentLivenessProbe:
     is reset to 0 on the first 2xx and survives an intermittent 5xx across the consecutive window (AC #2 — flaky app
     does NOT oscillate)."""
     cooldown_s: int | Unset = UNSET
-    """Cooldown window in seconds after a liveness-driven destroy fires. While inside the window the vmmd-side
-    probe loop short-circuits the failure counter so the cold-boot replacement has time to settle (issue #554
-    closure / ADR-078). 0 = no cooldown (Free-plan / legacy behaviour); clamped to [MinLivenessCooldownSeconds=10,
+    """Cooldown window in seconds after a liveness-driven destroy fires. While inside the window the VM manager-
+    side probe loop short-circuits the failure counter so the cold-boot replacement has time to settle (closure). 0
+    = no cooldown (Free-plan / legacy behaviour); clamped to [MinLivenessCooldownSeconds=10,
     MaxLivenessCooldownSeconds=600] when the field is populated by a Pro/Scale deployment override."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
