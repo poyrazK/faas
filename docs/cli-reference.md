@@ -150,7 +150,7 @@ Expose Gregale management tools over stdio or OAuth HTTP
 | `--allow-writes` | enable reviewed deploy, promotion, and rollback actions |  |
 | `--tools <TOOLSETS>` | toolsets to list, comma-separated: core, release, diagnose, provision (default all) |  |
 | `--listen <ADDR>` | HTTP listen address behind TLS proxy (default 127.0.0.1:8787) |  |
-| `--resource-url <URL>` | public HTTPS URL ending in /mcp (required for HTTP) |  |
+| `--resource-url <URL>` | public HTTPS URL ending in /mcp (required for HTTP; --hosted defaults to the platform API host) |  |
 | `--oauth-onboarding <MODE>` | remote onboarding (default browser) | one of `browser` · `api-key` |
 | `--state-file <PATH>` | private encrypted remote state file |  |
 | `--api-base <URL>` | Gregale API base URL for the HTTP bridge |  |
