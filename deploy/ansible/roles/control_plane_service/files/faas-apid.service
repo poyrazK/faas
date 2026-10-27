@@ -27,6 +27,11 @@ EnvironmentFile=-/etc/faas/storage.env
 EnvironmentFile=-/etc/faas/profiling.env
 EnvironmentFile=-/etc/faas/otel.env
 Environment=GOMEMLIMIT=256MiB
+# Operation artifacts and account exports spool to TMPDIR. PrivateTmp puts
+# /tmp on the host /tmp, tmpfs on some hosts, where those bytes count
+# against MemoryMax; the cache directory is on disk.
+CacheDirectory=faas-apid
+Environment=TMPDIR=/var/cache/faas-apid
 Environment=FAAS_INTERNAL_MAIL_PRODUCER_OUTBOX_ENABLED=0
 Environment=FAAS_INTERNAL_MAIL_OUTBOX_RECONCILIATION_ENABLED=0
 Environment=FAAS_INTERNAL_MAIL_VERIFICATION_OUTBOX_ENABLED=0

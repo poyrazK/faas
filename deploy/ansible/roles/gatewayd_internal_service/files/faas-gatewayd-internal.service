@@ -26,6 +26,11 @@ EnvironmentFile=-/etc/faas/secrets/gatewayd-internal/gatewayd-internal.env
 EnvironmentFile=-/etc/faas/otel.env
 Environment=GOGC=200
 Environment=GOMEMLIMIT=384MiB
+# Request bodies over 1 MiB spool to TMPDIR. PrivateTmp puts /tmp on the
+# host /tmp, tmpfs on some hosts, where spooled bytes count against
+# MemoryMax; the cache directory is on disk.
+CacheDirectory=faas-gatewayd-internal
+Environment=TMPDIR=/var/cache/faas-gatewayd-internal
 Environment=FAAS_GATEWAY_LISTEN=off
 Environment=FAAS_REALTIME_SOCKET=/run/faas/realtimed.sock
 Environment=FAAS_HOST_KEY_PATH=%d/host.age

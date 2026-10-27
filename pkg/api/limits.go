@@ -58,6 +58,18 @@ const (
 	SignInAPIKeysMax = 5
 )
 
+// Request bodies one gateway holds at once. Uploads spooled to disk share
+// RequestBodySpoolNodeBytes and one client IP (an IPv6 /64) holds at most
+// RequestBodySpoolPerClient of them; validate-rule bodies read into the heap
+// share RequestBodyMemoryNodeBytes. A request that would pass a budget gets
+// 503 with Retry-After RequestBodyBudgetRetryAfter.
+const (
+	RequestBodySpoolNodeBytes   int64 = 2 << 30
+	RequestBodySpoolPerClient         = 4
+	RequestBodyMemoryNodeBytes  int64 = 96 << 20
+	RequestBodyBudgetRetryAfter       = 5 * time.Second
+)
+
 // Migration verification shares normal task and wake admission. These bounds
 // limit orchestration receipts, not customer compute entitlements.
 const (
@@ -2867,6 +2879,12 @@ func RealtimeLimitsFor(p Plan) (RealtimeLimits, bool) {
 const (
 	ExportRateLimitWindow        = 24 * time.Hour
 	ExportRateLimitWindowSeconds = int(24 * time.Hour / time.Second)
+	// ExportReplayWindow is how long after an export a retry with the same
+	// request ID still counts as that export instead of a new one.
+	ExportReplayWindow = 15 * time.Minute
+	// ExportInFlightRetryAfterSeconds is the Retry-After for an export
+	// refused because the account already has one being built.
+	ExportInFlightRetryAfterSeconds = 30
 )
 
 // Limits is the full quota/limit set for one plan. Every field has a spec

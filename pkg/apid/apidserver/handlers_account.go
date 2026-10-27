@@ -69,7 +69,11 @@ func (s *server) exportAccount(w http.ResponseWriter, r *http.Request, acct stat
 	if requestID != "" {
 		prior, err := s.store.FindGdprRequestByRequestID(r.Context(), acct.ID, requestID)
 		switch {
-		case err == nil && prior.Action == state.GdprActionExport:
+		// The request ID is client-supplied and the ledger row never
+		// expires, so a retry counts as the original only shortly after
+		// it; otherwise one ID replayed forever ran unlimited exports.
+		case err == nil && prior.Action == state.GdprActionExport &&
+			time.Since(prior.RequestedAt) <= api.ExportReplayWindow:
 			isIdempotentRetry = true
 			s.log.Info("apid: export request_id idempotent hit",
 				"account", acct.ID, "request_id", requestID, "ledger_id", prior.ID)
@@ -134,6 +138,11 @@ func (s *server) exportAccount(w http.ResponseWriter, r *http.Request, acct stat
 			return
 		}
 	}
+	if _, busy := s.exportsInFlight.LoadOrStore(acct.ID, struct{}{}); busy {
+		api.WriteProblem(w, api.ErrExportRateLimited(api.ExportInFlightRetryAfterSeconds))
+		return
+	}
+	defer s.exportsInFlight.Delete(acct.ID)
 	include := r.URL.Query().Get("include_secrets") != includeSecretsFalse
 	spool, byteCount, err := prepareAccountExport(r.Context(), s, acct, include)
 	if err != nil {

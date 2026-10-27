@@ -420,6 +420,9 @@ type server struct {
 	// turns the existing per-IP failure limiter into a generic
 	// per-IP rate limiter without dragging in x/time/rate.
 	dashboardExportLimiter *middleware.Limiter
+	// exportsInFlight holds the account IDs with a REST export bundle being
+	// built: one at a time per account.
+	exportsInFlight sync.Map
 	// domainCreateLimiter caps pending DNS challenges per client IP. The
 	// durable store separately enforces per-account outstanding-claim quotas;
 	// this edge bucket prevents one source from cycling accounts to create an
@@ -2035,7 +2038,14 @@ func (s *server) handler() http.Handler {
 	// can take a final export or cancel during the 30-day grace.
 	// DELETE /v1/account is admin-only — losing the account is
 	// irreversible.
-	mux.HandleFunc("GET /v1/account/export", s.auth(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.exportAccount))))
+	// The export shares the dashboard twin's 3/min/IP bucket: each bundle
+	// scans every per-account table and spools to disk.
+	mux.Handle("GET /v1/account/export", middleware.AuthLimitWithLimiter(middleware.AuthLimitConfig{
+		Log:           s.log,
+		Window:        time.Minute,
+		MaxFailures:   3,
+		CountStatuses: []int{middleware.CountEveryAttempt},
+	}, s.dashboardExportLimiter)(s.auth(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.exportAccount)))))
 	mux.HandleFunc("DELETE /v1/account", s.auth(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.requireStepUp(5*time.Minute)(s.idempotent(s.deleteAccount))))))
 	mux.HandleFunc("POST /v1/account/restore", s.auth(s.requireScope(api.ScopesDeployWriteSurface...)(s.restoreAccount)))
 	mux.HandleFunc("GET /v1/account/dpa", s.dpaTemplate)
