@@ -110,8 +110,8 @@ func (s *objectStorageBillingStore) LiveObjectStorageMillicents(_ context.Contex
 	return delivered, pending, nil
 }
 
-func (s *objectStorageBillingStore) liveReserved(account string, period time.Time) int64 {
-	delivered, pending, _ := s.LiveObjectStorageMillicents(context.Background(), account, period)
+func (s *objectStorageBillingStore) liveReserved(ctx context.Context, account string, period time.Time) int64 {
+	delivered, pending, _ := s.LiveObjectStorageMillicents(ctx, account, period)
 	return delivered + pending
 }
 
@@ -120,8 +120,8 @@ func (s *objectStorageBillingStore) GetAccountOverageCapCents(_ context.Context,
 	return capCents, capped, nil
 }
 
-func (s *objectStorageBillingStore) UsageByHour(_ context.Context, account string, start, end time.Time) ([]state.Usage, error) {
-	s.reservedAtCapRead = append(s.reservedAtCapRead, s.liveReserved(account, state.ObjectStoragePeriod(start)))
+func (s *objectStorageBillingStore) UsageByHour(ctx context.Context, account string, start, end time.Time) ([]state.Usage, error) {
+	s.reservedAtCapRead = append(s.reservedAtCapRead, s.liveReserved(ctx, account, state.ObjectStoragePeriod(start)))
 	var out []state.Usage
 	for _, row := range s.usage[account] {
 		if !row.Month.Before(start) && row.Month.Before(end) {

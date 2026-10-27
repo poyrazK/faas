@@ -150,7 +150,7 @@ func TestObjectStorageStepReservesBeforeReadingTheCapAndStaysUnderIt(t *testing.
 	if len(sink.charges) != 1 || sink.charges[0] != 6000 {
 		t.Fatalf("charges = %v, want 6000 under the cap", sink.charges)
 	}
-	if reserved := store.liveReserved("acct", period); reserved != 6000 {
+	if reserved := store.liveReserved(context.Background(), "acct", period); reserved != 6000 {
 		t.Fatalf("live reserved after the step = %d, want 6000", reserved)
 	}
 }
@@ -183,7 +183,7 @@ func TestObjectStorageShadowStepsRecordWithoutPublishing(t *testing.T) {
 	if err != nil || p.DeliveredMillicents != 3000 {
 		t.Fatalf("shadow progress = %+v, err = %v", p, err)
 	}
-	if reserved := store.liveReserved("acct", period); reserved != 0 {
+	if reserved := store.liveReserved(context.Background(), "acct", period); reserved != 0 {
 		t.Fatalf("shadow reserved %d of the live cap", reserved)
 	}
 }
