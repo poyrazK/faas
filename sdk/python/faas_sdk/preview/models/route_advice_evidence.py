@@ -32,8 +32,8 @@ class RouteAdviceEvidence:
     top_consumer_peak_per_minute: int | Unset = UNSET
     next_consumer_peak_per_minute: int | Unset = UNSET
     content_observed: int | Unset = UNSET
-    """Anonymous GET responses the gateways compared with the previous response for their URL (ADR-1188). Cache
-    suggestions only."""
+    """Anonymous GET responses the gateways compared with the previous response for their URL. Cache suggestions
+    only."""
     content_repeats: int | Unset = UNSET
     """Observed responses identical to the previous one for their URL within the longest content window (1 h)."""
     content_changes: int | Unset = UNSET

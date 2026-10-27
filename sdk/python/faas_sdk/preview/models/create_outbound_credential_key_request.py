@@ -11,11 +11,11 @@ T = TypeVar("T", bound="CreateOutboundCredentialKeyRequest")
 
 @_attrs_define
 class CreateOutboundCredentialKeyRequest:
-    """An extra provider key to seal for outboundd, with a DNS-label label."""
+    """An extra provider key to seal for the outbound gateway, with a DNS-label label."""
 
     label: str
     authorization: str
-    """Same format as the integration's primary credential; sealed for outboundd and never returned."""
+    """Same format as the integration's primary credential; sealed for the outbound gateway and never returned."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

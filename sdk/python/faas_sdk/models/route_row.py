@@ -11,7 +11,7 @@ T = TypeVar("T", bound="RouteRow")
 
 @_attrs_define
 class RouteRow:
-    """Per-route detail row (ADR-093). The `route` field is the
+    """Per-route detail row. The `route` field is the
     bounded label: `"GET /users/4f8a"` for an admitted route, or
     `"__route_other__"` for the overflow bucket. Latency fields
     are milliseconds over the full request duration (status-

@@ -17,7 +17,7 @@ T = TypeVar("T", bound="EdgeRuleAsyncAction")
 
 @_attrs_define
 class EdgeRuleAsyncAction:
-    """Marks the matched route for durable asynchronous execution (ADR-215).
+    """Marks the matched route for durable asynchronous execution.
     on_success and on_failure optionally select app webhook subscription
     IDs that receive the terminal job.finished invocation outcome. An
     optional retry_policy overrides the app retry curve for invocations

@@ -23,7 +23,7 @@ T = TypeVar("T", bound="AccountSLOResponse")
 @_attrs_define
 class AccountSLOResponse:
     """Flat account-wide SLO rollup returned by
-    `GET /v1/account/slo?window=` (issue #696 / ADR-082).
+    `GET /v1/account/slo?window=`.
     Mirrors `AppSLOResponse` field-for-field except for
     `app_id` / `app_slug` (the rollup is account-wide). The
     fields are scalar sums/rates across the account; per-app

@@ -12,7 +12,7 @@ T = TypeVar("T", bound="OutboundAITagUsageExportRow")
 
 @_attrs_define
 class OutboundAITagUsageExportRow:
-    """One NDJSON line of a tag usage export (ADR-1438); CSV rows carry the same fields in this order."""
+    """One NDJSON line of a tag usage export; CSV rows carry the same fields in this order."""
 
     usage_date: datetime.date
     tag: str

@@ -15,11 +15,11 @@ T = TypeVar("T", bound="RotateAppSecretResponse")
 @_attrs_define
 class RotateAppSecretResponse:
     """Response from `POST /v1/apps/{slug}/secrets/{key}/rotate`. The
-    `kid` is the age-1... recipient string of the host identity that
-    sealed the new envelope (ADR-089 D4); `rotated_at` is
+    `kid` is the age-1.. recipient string of the host identity that
+    sealed the new envelope; `rotated_at` is
     RFC3339Nano so two rotates in the same second produce distinct
     timestamps. Empty `kid` means the row was rotated but the kid
-    was not stampable (rare — happens only if apid started without
+    was not stampable (rare — happens only if the API started without
     host.age.pub, which the handler 503s for instead).
 
     """

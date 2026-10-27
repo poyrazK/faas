@@ -103,6 +103,9 @@ func TestCommandCapabilityPath(t *testing.T) {
 		{[]string{"debug", "coverage", "my-app"}, "debug coverage", "debug"},
 		{[]string{"app", "my-app", "security"}, "app security", "signed-deploys"},
 		{[]string{"app", "my-app", "routes"}, "app routes", "route-insights"},
+		// Hunt 14 H14-100: the profile gate route belongs to the internal
+		// traffic-profiles capability.
+		{[]string{"canary", "gate", "dep"}, "canary gate", "traffic-profiles"},
 		{[]string{"deploy"}, "deploy", ""},
 	} {
 		path := main.CommandCapabilityPath(tc.args)

@@ -464,7 +464,7 @@ func fwdStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 		if handleForwardRequestCancellation(w, r, true) {
 			return
 		}
-		if writeNodeAdmissionRefusal(w, err) {
+		if writeNodeAdmissionRefusal(w, r, err) {
 			return
 		}
 		if st, ok := status.FromError(err); ok && st.Code() == codes.Unavailable {
@@ -578,7 +578,7 @@ func fwdStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 					"node", t.NodeID, "err", err.Error())
 				panic(http.ErrAbortHandler)
 			}
-			if writeNodeAdmissionRefusal(w, err) {
+			if writeNodeAdmissionRefusal(w, r, err) {
 				return
 			}
 			if st, ok := status.FromError(err); ok && st.Code() == codes.Unavailable {
@@ -901,7 +901,7 @@ func rawStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 		if handleForwardRequestCancellation(w, r, true) {
 			return
 		}
-		if writeNodeAdmissionRefusal(w, err) {
+		if writeNodeAdmissionRefusal(w, r, err) {
 			wsOutcome = WSOutcomeUpstreamUnavailable
 			return
 		}
@@ -931,7 +931,7 @@ func rawStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 		if handleForwardRequestCancellation(w, r, true) {
 			return
 		}
-		if writeNodeAdmissionRefusal(w, err) {
+		if writeNodeAdmissionRefusal(w, r, err) {
 			wsOutcome = WSOutcomeUpstreamUnavailable
 			return
 		}
@@ -1011,7 +1011,7 @@ func rawStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 			if handleForwardRequestCancellation(w, r, !wroteHeader) {
 				return
 			}
-			if !wroteHeader && writeNodeAdmissionRefusal(w, err) {
+			if !wroteHeader && writeNodeAdmissionRefusal(w, r, err) {
 				wsOutcome = WSOutcomeUpstreamUnavailable
 				return
 			}

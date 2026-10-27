@@ -85,7 +85,7 @@ def sync_detailed(
     client: AuthenticatedClient | Client,
     body: CreateReleaseFreezeRequest,
 ) -> Response[Problem | ReleaseFreeze]:
-    """Freeze production releases (ADR-20261019071733).
+    """Freeze production releases.
 
      Creates a window, weekly or after-rollback freeze for one app or, without `app`, for every app of
     the account. While a freeze is active, new production deployments are refused with `release_frozen`
@@ -120,7 +120,7 @@ def sync(
     client: AuthenticatedClient | Client,
     body: CreateReleaseFreezeRequest,
 ) -> Problem | ReleaseFreeze | None:
-    """Freeze production releases (ADR-20261019071733).
+    """Freeze production releases.
 
      Creates a window, weekly or after-rollback freeze for one app or, without `app`, for every app of
     the account. While a freeze is active, new production deployments are refused with `release_frozen`
@@ -150,7 +150,7 @@ async def asyncio_detailed(
     client: AuthenticatedClient | Client,
     body: CreateReleaseFreezeRequest,
 ) -> Response[Problem | ReleaseFreeze]:
-    """Freeze production releases (ADR-20261019071733).
+    """Freeze production releases.
 
      Creates a window, weekly or after-rollback freeze for one app or, without `app`, for every app of
     the account. While a freeze is active, new production deployments are refused with `release_frozen`
@@ -183,7 +183,7 @@ async def asyncio(
     client: AuthenticatedClient | Client,
     body: CreateReleaseFreezeRequest,
 ) -> Problem | ReleaseFreeze | None:
-    """Freeze production releases (ADR-20261019071733).
+    """Freeze production releases.
 
      Creates a window, weekly or after-rollback freeze for one app or, without `app`, for every app of
     the account. While a freeze is active, new production deployments are refused with `release_frozen`

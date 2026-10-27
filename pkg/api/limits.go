@@ -11455,6 +11455,22 @@ const (
 	// store read. Warm scopes share TrafficSecurityMaxScopes with active ones
 	// and give way to them least recently used first.
 	TrafficSecurityWarmScopeTTL = 10 * time.Minute
+	// Public routing view (ADR-20261027085556). An ordinary public request
+	// admits from its gateway's refreshed view of the app's owner, roster and
+	// release graph instead of reading Postgres. The refresher re-reads every
+	// tracked app each interval, in one bounded transaction, and an app at
+	// once when a deployment, app or release notification names it.
+	TrafficPublicRoutingRefreshInterval = time.Second
+	TrafficPublicRoutingRefreshTimeout  = 2 * time.Second
+	// TrafficPublicRoutingOutageGrace is how long an app's last successful
+	// read keeps admitting while the store cannot be read. It matches
+	// TrafficSecurityOutageGrace: past it, both refuse.
+	TrafficPublicRoutingOutageGrace = 5 * time.Minute
+	// TrafficPublicRoutingWarmTTL keeps an app's view refreshed after its last
+	// request; TrafficPublicRoutingMaxViews bounds the views, and so one
+	// refresh, dropping the least recently used.
+	TrafficPublicRoutingWarmTTL  = 10 * time.Minute
+	TrafficPublicRoutingMaxViews = 4_096
 	// Runtime feature observations are small fleet snapshots, independent of
 	// request accounting and policy-revision convergence.
 	TrafficRuntimeObservationInterval  = 2 * time.Second

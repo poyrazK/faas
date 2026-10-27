@@ -18,7 +18,7 @@ T = TypeVar("T", bound="RouteAdviceResponse")
 
 @_attrs_define
 class RouteAdviceResponse:
-    """Route advisor suggestions derived from retained request telemetry (ADR-976). Nothing is applied."""
+    """Route advisor suggestions derived from retained request telemetry. Nothing is applied."""
 
     slug: str
     from_: datetime.datetime

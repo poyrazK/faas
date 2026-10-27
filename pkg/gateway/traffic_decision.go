@@ -202,7 +202,7 @@ func recordTrafficRetryStop(ctx context.Context, reason string) {
 
 func recordTrafficRefusal(ctx context.Context, reason string) {
 	switch reason {
-	case "deadline", "rate_limited", "rate_limit_unavailable", "security_revoked", "security_unavailable", "policy_unavailable", "capacity", "identity", "authorization", "circuit":
+	case "deadline", "rate_limited", "rate_limit_unavailable", "security_revoked", "security_unavailable", "policy_unavailable", "capacity", "identity", "authorization", "circuit", "node_capacity", "node_admission_unavailable":
 	default:
 		reason = "other"
 	}

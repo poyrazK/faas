@@ -4,7 +4,7 @@
   "sets": [
     {
       "id": "gregale-core-v1",
-      "revision": "24a5968f47efade38b49fdc2446ddf1f659d342b86e719f77fe011baff39a78b",
+      "revision": "ad6197c1176b8dc2ec2c6c728f2c16c7c20bcaa61d3ebfa09399d28145d9a15b",
       "files": [
         "faas.rules.yml"
       ],
@@ -449,6 +449,19 @@
             "for_seconds": 600,
             "keep_firing_for_seconds": 0,
             "fingerprint": "81033b31bd45e58e16baca8f04a7a8c70ec9a12668198eb7eaedd731efd0ec55"
+          }
+        },
+        {
+          "id": "113c4f4b12bb6ac8a435a2c9fa218d7cd21eb7958c7ad1ce9f3642947f5be2aa",
+          "file_name": "faas.rules.yml",
+          "group_name": "traffic_control",
+          "rule_name": "FaasTrafficControlRefusing",
+          "definition": {
+            "expression_hash": "7069ad84d272d7ea7bb52175bd9921dfab52291bcb93d31edce482c29a5504d6",
+            "labels_hash": "60373e62812920b85bb60b169077319dc9edb0fc44ca94614f134df62b7dcd76",
+            "for_seconds": 300,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "c5596f37941efd8f65372684287fe02b7735c0f0605627eab55d813babff5207"
           }
         },
         {
@@ -3273,6 +3286,19 @@
           }
         },
         {
+          "id": "91b39944efd6e432f6ed22ef7a0987534f68f279e337a023b2f9d29762e84c90",
+          "file_name": "faas.rules.yml",
+          "group_name": "traffic_control",
+          "rule_name": "FaasPublicTrafficSecurityUnverified",
+          "definition": {
+            "expression_hash": "a1afa62654a1430b208152fa995382af0f0e79e075f41b7c80f8496761316107",
+            "labels_hash": "2be5390fadf61deaa3648684ba71595f86613bb38ce05166d9b68aae7e315970",
+            "for_seconds": 1800,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "78d53786410a3c6b120cdd581720081c23086f1cfd188c39ac8578541bf2cd02"
+          }
+        },
+        {
           "id": "930534794f4cd55535337689ef8037ecd879daf961c432ac3374d52e3ee8b2ef",
           "file_name": "faas.rules.yml",
           "group_name": "faas_slo",
@@ -5837,7 +5863,7 @@
     },
     {
       "id": "gregale-full-v1",
-      "revision": "d75297fe9d39eee07b4e843db666e3b4221b81e0e50eec662a9e2a69eea015ea",
+      "revision": "620a72d4ac3e082ab75d1f3cdb2764974ec7c3ff17cda2966abf7523a571d8ea",
       "files": [
         "bridge.rules.yml",
         "data_placement.yaml",
@@ -6299,6 +6325,19 @@
             "for_seconds": 600,
             "keep_firing_for_seconds": 0,
             "fingerprint": "81033b31bd45e58e16baca8f04a7a8c70ec9a12668198eb7eaedd731efd0ec55"
+          }
+        },
+        {
+          "id": "113c4f4b12bb6ac8a435a2c9fa218d7cd21eb7958c7ad1ce9f3642947f5be2aa",
+          "file_name": "faas.rules.yml",
+          "group_name": "traffic_control",
+          "rule_name": "FaasTrafficControlRefusing",
+          "definition": {
+            "expression_hash": "7069ad84d272d7ea7bb52175bd9921dfab52291bcb93d31edce482c29a5504d6",
+            "labels_hash": "60373e62812920b85bb60b169077319dc9edb0fc44ca94614f134df62b7dcd76",
+            "for_seconds": 300,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "c5596f37941efd8f65372684287fe02b7735c0f0605627eab55d813babff5207"
           }
         },
         {
@@ -9289,6 +9328,19 @@
             "for_seconds": 300,
             "keep_firing_for_seconds": 0,
             "fingerprint": "2e76efde300dc712601ad553438525e986396f94dd8ce602d682711f570a6431"
+          }
+        },
+        {
+          "id": "91b39944efd6e432f6ed22ef7a0987534f68f279e337a023b2f9d29762e84c90",
+          "file_name": "faas.rules.yml",
+          "group_name": "traffic_control",
+          "rule_name": "FaasPublicTrafficSecurityUnverified",
+          "definition": {
+            "expression_hash": "a1afa62654a1430b208152fa995382af0f0e79e075f41b7c80f8496761316107",
+            "labels_hash": "2be5390fadf61deaa3648684ba71595f86613bb38ce05166d9b68aae7e315970",
+            "for_seconds": 1800,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "78d53786410a3c6b120cdd581720081c23086f1cfd188c39ac8578541bf2cd02"
           }
         },
         {

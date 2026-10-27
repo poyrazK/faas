@@ -4,7 +4,7 @@
 /* eslint-disable */
 import type { PlanManagedBinding } from './PlanManagedBinding.js';
 /**
- * The managed PostgreSQL database a project apply creates or reuses for a Compose postgres service, and the service keys it binds (ADR-20261025111824).
+ * The managed PostgreSQL database a project apply creates or reuses for a Compose postgres service, and the service keys it binds.
  */
 export type PlanManagedProvision = {
   database: string;

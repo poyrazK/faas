@@ -7,8 +7,6 @@ import (
 	"context"
 	"errors"
 	"os"
-	"path/filepath"
-	"runtime"
 	"strings"
 	"testing"
 
@@ -252,8 +250,7 @@ func TestMigrationAdmissionPostgresDirectWriteGuards(t *testing.T) {
 }
 
 func TestMigrationAdmissionPostgresMigrationRoundTrip(t *testing.T) {
-	_, file, _, _ := runtime.Caller(0)
-	body, err := os.ReadFile(filepath.Join(filepath.Dir(file), "../../migrations/20261017140000003_inbound_migration_reservations.sql"))
+	body, err := os.ReadFile("../../migrations/20261017140000003_inbound_migration_reservations.sql")
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -13647,6 +13647,7 @@
     "columns": [
       "account_id",
       "approval_token_hash",
+      "approved_by_account_id",
       "consumed_at",
       "created_at",
       "environment_slug",

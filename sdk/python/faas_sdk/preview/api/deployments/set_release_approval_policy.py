@@ -95,7 +95,7 @@ def sync_detailed(
     client: AuthenticatedClient | Client,
     body: SetReleaseApprovalPolicyRequest,
 ) -> Response[Problem | ReleaseApprovalPolicy]:
-    """Require approvals for an app's production releases (ADR-20261020085706).
+    """Require approvals for an app's production releases.
 
      Creates or replaces the policy. Each production release then waits in a canary stage until enough
     eligible people approve it. Organization owners and admins may change the policy. An app outside an
@@ -132,7 +132,7 @@ def sync(
     client: AuthenticatedClient | Client,
     body: SetReleaseApprovalPolicyRequest,
 ) -> Problem | ReleaseApprovalPolicy | None:
-    """Require approvals for an app's production releases (ADR-20261020085706).
+    """Require approvals for an app's production releases.
 
      Creates or replaces the policy. Each production release then waits in a canary stage until enough
     eligible people approve it. Organization owners and admins may change the policy. An app outside an
@@ -164,7 +164,7 @@ async def asyncio_detailed(
     client: AuthenticatedClient | Client,
     body: SetReleaseApprovalPolicyRequest,
 ) -> Response[Problem | ReleaseApprovalPolicy]:
-    """Require approvals for an app's production releases (ADR-20261020085706).
+    """Require approvals for an app's production releases.
 
      Creates or replaces the policy. Each production release then waits in a canary stage until enough
     eligible people approve it. Organization owners and admins may change the policy. An app outside an
@@ -199,7 +199,7 @@ async def asyncio(
     client: AuthenticatedClient | Client,
     body: SetReleaseApprovalPolicyRequest,
 ) -> Problem | ReleaseApprovalPolicy | None:
-    """Require approvals for an app's production releases (ADR-20261020085706).
+    """Require approvals for an app's production releases.
 
      Creates or replaces the policy. Each production release then waits in a canary stage until enough
     eligible people approve it. Organization owners and admins may change the policy. An app outside an

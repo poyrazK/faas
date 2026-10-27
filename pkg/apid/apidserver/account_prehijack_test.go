@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"regexp"
+	"strings"
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -131,5 +133,51 @@ func TestVerifyEmailLinkKeepsSignupCredentials(t *testing.T) {
 	}
 	if rec := v1AuthJSONRequest(t, h, "/v1/auth/login", `{"email":"owner@example.com","password":"owner-password-123!"}`); rec.Code != http.StatusOK {
 		t.Errorf("owner password after verify-email = %d, want 200", rec.Code)
+	}
+}
+
+// A magic link reached from another site gets a confirm page, not a session:
+// any site could otherwise sign a visitor into the account a link it asked
+// for belongs to. The confirm page's POST is refused from another origin and
+// signs in from Gregale's own (security audit 2026-10-27). A logout is held
+// to Gregale's origin too.
+func TestMagicLinkFromAnotherSiteNeedsAConfirmFromGregale(t *testing.T) {
+	srv, mailer, _ := v1AuthTestHarness(t)
+	h := srv.handler()
+	if rec := v1AuthJSONRequest(t, h, "/v1/auth/signup/magic-link", `{"email":"magic-csrf@example.com"}`); rec.Code != http.StatusOK {
+		t.Fatalf("magic-link request = %d", rec.Code)
+	}
+	token := lastMailToken(t, mailer, magicLinkTokenPattern)
+	get := httptest.NewRequest(http.MethodGet, "/auth/verify?token="+token, nil)
+	get.Header.Set("Sec-Fetch-Site", "cross-site")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, get)
+	if rec.Code != http.StatusOK || rec.Header().Get("Set-Cookie") != "" || !strings.Contains(rec.Body.String(), `action="/auth/verify"`) {
+		t.Fatalf("cross-site magic link = %d (Set-Cookie %q), want a confirm page and no session: %s", rec.Code, rec.Header().Get("Set-Cookie"), rec.Body.String())
+	}
+	post := func(site, origin string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodPost, "/auth/verify", strings.NewReader(url.Values{"token": {token}}.Encode()))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		req.Header.Set("Sec-Fetch-Site", site)
+		if origin != "" {
+			req.Header.Set("Origin", origin)
+		}
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		return rec
+	}
+	if rec := post("cross-site", "https://evil.example"); rec.Code != http.StatusForbidden || rec.Header().Get("Set-Cookie") != "" {
+		t.Fatalf("confirm posted from another site = %d (Set-Cookie %q), want 403", rec.Code, rec.Header().Get("Set-Cookie"))
+	}
+	if rec := post("same-origin", ""); rec.Code != http.StatusFound || rec.Header().Get("Set-Cookie") == "" {
+		t.Fatalf("confirm from Gregale = %d (Set-Cookie %q), want a signed-in redirect: %s", rec.Code, rec.Header().Get("Set-Cookie"), rec.Body.String())
+	}
+	logout := httptest.NewRequest(http.MethodPost, "/logout", nil)
+	logout.Header.Set("Sec-Fetch-Site", "same-site")
+	logout.Header.Set("Origin", "https://tenant.gregale.dev")
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, logout)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("logout posted from a sibling app host = %d, want 403", rec.Code)
 	}
 }

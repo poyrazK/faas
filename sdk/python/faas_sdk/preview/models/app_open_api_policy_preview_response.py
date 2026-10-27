@@ -24,7 +24,7 @@ T = TypeVar("T", bound="AppOpenAPIPolicyPreviewResponse")
 @_attrs_define
 class AppOpenAPIPolicyPreviewResponse:
     """Read-only declared-vs-observed route and edge-policy preview
-    (API-hosting roadmap item 11 / ADR-126 follow-up). The response
+    (API-hosting roadmap item 11). The response
     never writes an OpenAPI document or edge rule.
 
     """

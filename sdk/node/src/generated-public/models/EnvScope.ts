@@ -3,12 +3,12 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * Env-var scope (ADR-090). A domain-valid slug (1..40 chars,
+ * Env-var scope. A domain-valid slug (1..40 chars,
  * lowercase alnum + dash, no leading/trailing dash) — e.g.
  * `default`, `staging`, `prod-eu`. Or the reserved sentinel
  * `__all__` on GET only, which returns the nested
  * `env_by_scope` response shape (every scope on the app).
- * Omitted = `scope=default` (pre-PR-B behavior).
+ * Omitted = `scope=default` (legacy behaviour).
  *
  */
 export type EnvScope = string;

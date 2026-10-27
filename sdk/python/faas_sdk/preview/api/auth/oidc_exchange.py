@@ -99,7 +99,7 @@ def sync_detailed(
 ) -> Response[OAuthTokenExchangeResponse | OIDCExchangeResponse | Problem]:
     """Exchange an IdP-issued JWT for a short-lived deploy bearer
 
-     ADR-101 / issue #270. CI runners that have an IdP-issued OIDC
+     CI runners that have an IdP-issued OIDC
     JWT (e.g. GitHub Actions `ACTIONS_ID_TOKEN_REQUEST_TOKEN`,
     GitLab CI, CircleCI) call this endpoint to exchange it for a
     short-lived opaque bearer (5 min TTL, `fp_oidc_<48 hex>` prefix).
@@ -118,8 +118,8 @@ def sync_detailed(
     `(account_id, issuer_url)` pair so customers do not have to
     configure the dashboard before their first CI deploy.
 
-    The AuthLimit surface is the shared per-IP bucket (spec §11
-    10/min/IP) — high-volume CI runners may hit the cap; long-lived
+    The AuthLimit surface is the shared per-IP bucket
+    (10/min/IP) — high-volume CI runners may hit the cap; long-lived
     deploy tokens remain the escape hatch.
 
     The endpoint also accepts the RFC 8693 OAuth 2.0 Token Exchange
@@ -129,7 +129,7 @@ def sync_detailed(
     as an OAuth `access_token`. The legacy JSON shape remains supported.
 
     Args:
-        body (OIDCExchangeRequest): Body for `POST /v1/auth/oidc/exchange` (ADR-101).
+        body (OIDCExchangeRequest): Body for `POST /v1/auth/oidc/exchange`.
         body (OAuthTokenExchangeRequest): RFC 8693 form-encoded request profile for the OIDC
             exchange endpoint.
             Gregale requires one `audience` because it selects the account trust
@@ -162,7 +162,7 @@ def sync(
 ) -> OAuthTokenExchangeResponse | OIDCExchangeResponse | Problem | None:
     """Exchange an IdP-issued JWT for a short-lived deploy bearer
 
-     ADR-101 / issue #270. CI runners that have an IdP-issued OIDC
+     CI runners that have an IdP-issued OIDC
     JWT (e.g. GitHub Actions `ACTIONS_ID_TOKEN_REQUEST_TOKEN`,
     GitLab CI, CircleCI) call this endpoint to exchange it for a
     short-lived opaque bearer (5 min TTL, `fp_oidc_<48 hex>` prefix).
@@ -181,8 +181,8 @@ def sync(
     `(account_id, issuer_url)` pair so customers do not have to
     configure the dashboard before their first CI deploy.
 
-    The AuthLimit surface is the shared per-IP bucket (spec §11
-    10/min/IP) — high-volume CI runners may hit the cap; long-lived
+    The AuthLimit surface is the shared per-IP bucket
+    (10/min/IP) — high-volume CI runners may hit the cap; long-lived
     deploy tokens remain the escape hatch.
 
     The endpoint also accepts the RFC 8693 OAuth 2.0 Token Exchange
@@ -192,7 +192,7 @@ def sync(
     as an OAuth `access_token`. The legacy JSON shape remains supported.
 
     Args:
-        body (OIDCExchangeRequest): Body for `POST /v1/auth/oidc/exchange` (ADR-101).
+        body (OIDCExchangeRequest): Body for `POST /v1/auth/oidc/exchange`.
         body (OAuthTokenExchangeRequest): RFC 8693 form-encoded request profile for the OIDC
             exchange endpoint.
             Gregale requires one `audience` because it selects the account trust
@@ -220,7 +220,7 @@ async def asyncio_detailed(
 ) -> Response[OAuthTokenExchangeResponse | OIDCExchangeResponse | Problem]:
     """Exchange an IdP-issued JWT for a short-lived deploy bearer
 
-     ADR-101 / issue #270. CI runners that have an IdP-issued OIDC
+     CI runners that have an IdP-issued OIDC
     JWT (e.g. GitHub Actions `ACTIONS_ID_TOKEN_REQUEST_TOKEN`,
     GitLab CI, CircleCI) call this endpoint to exchange it for a
     short-lived opaque bearer (5 min TTL, `fp_oidc_<48 hex>` prefix).
@@ -239,8 +239,8 @@ async def asyncio_detailed(
     `(account_id, issuer_url)` pair so customers do not have to
     configure the dashboard before their first CI deploy.
 
-    The AuthLimit surface is the shared per-IP bucket (spec §11
-    10/min/IP) — high-volume CI runners may hit the cap; long-lived
+    The AuthLimit surface is the shared per-IP bucket
+    (10/min/IP) — high-volume CI runners may hit the cap; long-lived
     deploy tokens remain the escape hatch.
 
     The endpoint also accepts the RFC 8693 OAuth 2.0 Token Exchange
@@ -250,7 +250,7 @@ async def asyncio_detailed(
     as an OAuth `access_token`. The legacy JSON shape remains supported.
 
     Args:
-        body (OIDCExchangeRequest): Body for `POST /v1/auth/oidc/exchange` (ADR-101).
+        body (OIDCExchangeRequest): Body for `POST /v1/auth/oidc/exchange`.
         body (OAuthTokenExchangeRequest): RFC 8693 form-encoded request profile for the OIDC
             exchange endpoint.
             Gregale requires one `audience` because it selects the account trust
@@ -281,7 +281,7 @@ async def asyncio(
 ) -> OAuthTokenExchangeResponse | OIDCExchangeResponse | Problem | None:
     """Exchange an IdP-issued JWT for a short-lived deploy bearer
 
-     ADR-101 / issue #270. CI runners that have an IdP-issued OIDC
+     CI runners that have an IdP-issued OIDC
     JWT (e.g. GitHub Actions `ACTIONS_ID_TOKEN_REQUEST_TOKEN`,
     GitLab CI, CircleCI) call this endpoint to exchange it for a
     short-lived opaque bearer (5 min TTL, `fp_oidc_<48 hex>` prefix).
@@ -300,8 +300,8 @@ async def asyncio(
     `(account_id, issuer_url)` pair so customers do not have to
     configure the dashboard before their first CI deploy.
 
-    The AuthLimit surface is the shared per-IP bucket (spec §11
-    10/min/IP) — high-volume CI runners may hit the cap; long-lived
+    The AuthLimit surface is the shared per-IP bucket
+    (10/min/IP) — high-volume CI runners may hit the cap; long-lived
     deploy tokens remain the escape hatch.
 
     The endpoint also accepts the RFC 8693 OAuth 2.0 Token Exchange
@@ -311,7 +311,7 @@ async def asyncio(
     as an OAuth `access_token`. The legacy JSON shape remains supported.
 
     Args:
-        body (OIDCExchangeRequest): Body for `POST /v1/auth/oidc/exchange` (ADR-101).
+        body (OIDCExchangeRequest): Body for `POST /v1/auth/oidc/exchange`.
         body (OAuthTokenExchangeRequest): RFC 8693 form-encoded request profile for the OIDC
             exchange endpoint.
             Gregale requires one `audience` because it selects the account trust

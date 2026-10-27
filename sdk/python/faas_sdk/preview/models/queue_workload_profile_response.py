@@ -21,15 +21,12 @@ class QueueWorkloadProfileResponse:
 
     app: AppResponse
     """An app: slug, type, runtime (for functions), RAM/cpu/idle-timeout config, current state, last-deploy
-    pointer, per-app outbound CIDR allowlist (ADR-031 + ADR-032), and reactive scale-up trigger targets (issue #169
-    / #172)."""
+    pointer, per-app outbound CIDR allowlist, and reactive scale-up trigger targets."""
     binding: QueueBindingResponse
     """Durable queue-to-workload binding."""
     scaling_policy: ScalingPolicy
-    """Per-app autoscaling configuration (issue #462 / ADR-058). Mirrors the on-disk jsonb column
-    `apps.scaling_policy`. Empty values map to the engine default (the apid gate is load-bearing for the floor /
-    ceiling, not the encoder). PR-A persists the DTO; PR-C wires the engine; PR-D carves out the worker-class
-    branch."""
+    """Per-app autoscaling configuration. Mirrors the on-disk jsonb column `apps.scaling_policy`. Empty values map
+    to the engine default (the API gate is load-bearing for the floor / ceiling, not the encoder)."""
     created: bool
     """True when the default binding was created by this request."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
