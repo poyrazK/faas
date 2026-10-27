@@ -69,6 +69,7 @@ import (
 var ResolveAlertmanagerURL = resolveAlertmanagerURL
 
 var BuildDebugRequestCorrelation = buildDebugRequestCorrelation
+var DashboardDebugStatusView = dashboardDebugStatusView
 
 // Package-level types
 type AffectedPartition = affectedPartition

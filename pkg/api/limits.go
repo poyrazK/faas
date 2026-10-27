@@ -647,6 +647,10 @@ const (
 	ProfileLocalEndpoint            = "http://127.0.0.1:9191"
 	ProfileHealthListen             = "127.0.0.1:9160"
 	ProfileDefaultSocket            = "/run/faas/profiled.sock"
+	// ProfileRetryCacheMaxEntries bounds profiled's upload replay cache on a
+	// node. At the bound the oldest entries are evicted: the cache is
+	// best-effort replay protection, so it never refuses an upload.
+	ProfileRetryCacheMaxEntries = 10000
 
 	// On-demand captures (ADR-1155).
 	ProfileCaptureMinDuration     = time.Second
@@ -659,8 +663,20 @@ const (
 	// ProfileCaptureMaxProfileBytes bounds the summed compressed profiles so each
 	// host hop stays under gRPC's default 4 MiB message limit.
 	ProfileCaptureMaxProfileBytes = 3 << 20
-	// ProfileCaptureMaxPerAccountHour bounds captures started per account.
+	// ProfileCaptureMaxPerAccountHour bounds manual captures started per
+	// account. Automatic captures count against their own hourly bound, so
+	// they never use up the captures a person can start.
 	ProfileCaptureMaxPerAccountHour = 60
+	// ProfileCaptureAutomaticMaxPerAccountHour bounds automatic captures
+	// queued per account across its apps.
+	ProfileCaptureAutomaticMaxPerAccountHour = 30
+	// ProfileCaptureAutomaticStoragePercent is the share of an account's
+	// capture storage automatic captures may use, oldest rotated out first;
+	// the rest stays free for manual captures.
+	ProfileCaptureAutomaticStoragePercent = 50
+	// ProfileCaptureMaxRotated bounds the automatic captures one new
+	// automatic capture may rotate out.
+	ProfileCaptureMaxRotated = 256
 	// net/http/pprof collection by guest-init (profiling.pprof_port). A heap
 	// or goroutine fetch, and a CPU fetch beyond its window, must answer
 	// within ProfilePprofFetchTimeout. An endpoint that has not answered yet
@@ -15565,6 +15581,11 @@ const (
 	WorkerRecoveryFailureCountMax         = 32
 	WorkerRecoveryConcurrentApps          = 8
 	WorkerRecoveryBatchSize               = 32
+	// A boot refused for a reason that repeats until the revision changes
+	// (execution mode conflict, wrong architecture, loopback bind,
+	// stateless-only violation) retries this rarely instead of every 300 s.
+	// A new deployment or configuration resets it at once (Hunt 14 H14-98).
+	WorkerRecoveryDeterministicRefusalHoldSeconds = 3600
 )
 
 // Pipeline limits are intentionally separate from Data API request limits.

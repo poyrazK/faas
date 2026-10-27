@@ -7185,6 +7185,13 @@ haveApp:
 			}
 		}
 		if !pick.OK {
+			// ADR-977: every public request takes this branch once its routing
+			// is pinned (ADR-570), so a cold app starts restoring the services
+			// it calls here too. Deployment smokes and route probes verify a
+			// deployment and do not wake its dependencies.
+			if !deploymentSmoke && !routeProbe {
+				h.noteColdWake(r.Context(), app.ID)
+			}
 			// A snapshot candidate or zero-percent live deployment can be cold
 			// before its exact URL is visited. Admit one deployment-scoped
 			// instance; schedd remains authoritative for the bounded rollout

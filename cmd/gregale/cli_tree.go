@@ -252,6 +252,7 @@ var cliTreeAliases = []cliTreeAlias{
 	{"metric", "metrics"},
 	{"debug trace", "trace"},
 	{"debug issue", "issues"},
+	{"debug explain", "debug rollout"},
 	{"debug", "debug"},
 	{"dashboard", "dashboards"},
 	{"open dashboard", "dashboard"},

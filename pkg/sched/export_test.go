@@ -129,6 +129,7 @@ var ExerciseServiceRecoveryRestart = exerciseServiceRecoveryRestart
 var ExerciseStandardEnvironmentRefresh = exerciseStandardEnvironmentRefresh
 var ExerciseStandardServingRestore = exerciseStandardServingRestore
 var ExerciseWorkerRecoveryRestart = exerciseWorkerRecoveryRestart
+var FinishProfileCapture = finishProfileCapture
 var ExpectTaskCohort = expectTaskCohort
 var GetMetricsBody = getMetricsBody
 var GuardOrchestrationStores = guardOrchestrationStores
@@ -211,6 +212,7 @@ var PrimeObservationCandidate = primeObservationCandidate
 var PrimeObservationInstance = primeObservationInstance
 var PrimeRunPlusFrameworkReady = primeRunPlusFrameworkReady
 var PrimeStartupExtension = primeStartupExtension
+var ProfileCaptureOutcomeOf = profileCaptureOutcome
 var QuietEffective = quietEffective
 var QuietLog = quietLog
 var NewWorkPool = newWorkPool
@@ -292,6 +294,11 @@ func (e *Engine) XWakeLeaderBudget() time.Duration { return e.wakeLeaderBudget()
 const XEventFanoutSafetyTick = eventFanoutSafetyTick
 
 func (l *Loop) XRunEventFanoutSweep(ctx context.Context) { l.runEventFanoutSweep(ctx) }
+
+// XWaitDispatches waits for every dispatch the drain started, including those
+// that outlived their tick.
+// adr: 20261027160930 — a slow dispatch finishes after its tick returns.
+func (d *Drain) XWaitDispatches() { d.inline.Wait() }
 
 // XEventRoutingHealthDue is the sweep's routing-health throttle.
 // adr: 614 — a node reads routing health at most every 15 s.
@@ -897,6 +904,7 @@ func MarkPreWakeForTest(ctx context.Context) {
 }
 
 var LogVMMBootFailure = logVMMBootFailure
+var WorkerRecoveryRetryDelay = workerRecoveryRetryDelay
 
 // NewCronPlanGate exposes the cron plan gate's admit decision.
 func NewCronPlanGate(accounts interface {
