@@ -1750,7 +1750,9 @@ admission set is the only thing standing between us and
 A route earns a label only once the app answers it with a status
 that shows the route exists, or when it is declared; scanner 404s
 and non-standard methods stay `__route_other__`
-(ADR-20261026143210).
+(ADR-20261026143210). A full set gives a new route the slot of a
+label idle for an hour on that gateway, never a declared route's,
+and deletes the replaced label's series (amendment 1).
 The in-memory reader is also exposed via the control listener at
 `GET /v1/internal/apps/{slug}/routes` (loopback-only, mTLS-free
 within the same box) and reverse-proxied by apid as

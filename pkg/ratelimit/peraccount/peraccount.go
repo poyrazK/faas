@@ -18,6 +18,12 @@
 // thousands of accounts the contention is fine — the receivers'
 // hot path runs once per row, not per goroutine.
 //
+// Fair share (ADR-20261026143210 amendment 1): TakeForApp also counts
+// each app's rows per minute. While the bucket is below
+// api.DebugTelemetryFairSharePressure of its capacity, an app that has
+// used its fair share of the minute yields, so one busy app cannot use
+// up the rows its sibling apps' route evidence needs.
+//
 // Plan caching: the limiter caches the resolved api.Limits per
 // account so a sustained-overflow customer doesn't pay an
 // AccountByID round-trip per row. The cache TTL is 60s — a plan
@@ -56,6 +62,25 @@ type accountBucket struct {
 	tokens     float64
 	lastRefill time.Time
 	cap        int
+	apps       map[uuid.UUID]*appUsage // rows per app per minute, TakeForApp only
+}
+
+// appUsage counts one app's rows in the current and previous minute.
+type appUsage struct {
+	minute    int64 // unix minute of cur
+	cur, prev int
+}
+
+// roll moves u to minute, keeping the previous minute's count only when it
+// is the one just before.
+func (u *appUsage) roll(minute int64) {
+	switch {
+	case u.minute == minute:
+	case u.minute == minute-1:
+		u.minute, u.prev, u.cur = minute, u.cur, 0
+	default:
+		u.minute, u.prev, u.cur = minute, 0, 0
+	}
 }
 
 // NewLimiter wires an empty limiter using time.Now() as the clock.
@@ -85,6 +110,19 @@ func (r *Limiter) SetClock(now func() time.Time) {
 // 0 disables the limiter (every call is rate-limited — the
 // customer's plan doesn't include telemetry).
 func (r *Limiter) Take(accountID uuid.UUID, bucketCap int) (bool, int64) {
+	return r.take(accountID, uuid.Nil, bucketCap)
+}
+
+// TakeForApp is Take for a row of appID. Under pressure (the bucket below
+// api.DebugTelemetryFairSharePressure of its capacity) an app that has used
+// its fair share of this minute — capacity divided by the apps active this
+// minute or the last — is refused until the next minute, leaving the rest
+// to its sibling apps. With one active app it behaves exactly like Take.
+func (r *Limiter) TakeForApp(accountID, appID uuid.UUID, bucketCap int) (bool, int64) {
+	return r.take(accountID, appID, bucketCap)
+}
+
+func (r *Limiter) take(accountID, appID uuid.UUID, bucketCap int) (bool, int64) {
 	if bucketCap <= 0 {
 		return false, 60_000 // 60s — match the standard rate-limit hint
 	}
@@ -109,14 +147,58 @@ func (r *Limiter) Take(accountID uuid.UUID, bucketCap int) (bool, int64) {
 	if b.cap <= 0 {
 		return false, 60_000
 	}
+	var usage *appUsage
+	if appID != uuid.Nil {
+		minute := now.Unix() / 60
+		usage = b.usage(appID, minute)
+		if b.tokens < float64(b.cap)*api.DebugTelemetryFairSharePressure {
+			if active := b.activeApps(minute); active > 1 && float64(usage.cur) >= float64(b.cap)/float64(active) {
+				// Retry when this app's minute rolls over.
+				return false, max(1, (minute+1)*60_000-now.UnixMilli())
+			}
+		}
+	}
 	if b.tokens >= 1 {
 		b.tokens--
+		if usage != nil {
+			usage.cur++
+		}
 		return true, 0
 	}
 	// Round up the remaining fractional-token delay: truncating can tell a
 	// caller to retry before any token is actually available.
 	retryMs := int64(math.Ceil((1 - b.tokens) * 60_000 / float64(b.cap)))
 	return false, max(1, retryMs)
+}
+
+// usage returns appID's counter rolled to minute.
+func (b *accountBucket) usage(appID uuid.UUID, minute int64) *appUsage {
+	if b.apps == nil {
+		b.apps = make(map[uuid.UUID]*appUsage)
+	}
+	u := b.apps[appID]
+	if u == nil {
+		u = &appUsage{minute: minute}
+		b.apps[appID] = u
+	}
+	u.roll(minute)
+	return u
+}
+
+// activeApps counts the apps with rows this minute or the last, at least one
+// (the caller), and forgets apps idle longer than that. The scan is bounded
+// by the account's deployed apps.
+func (b *accountBucket) activeApps(minute int64) int {
+	active := 0
+	for id, u := range b.apps {
+		u.roll(minute)
+		if u.cur == 0 && u.prev == 0 {
+			delete(b.apps, id)
+			continue
+		}
+		active++
+	}
+	return max(1, active)
 }
 
 func (b *accountBucket) refill(now time.Time) {

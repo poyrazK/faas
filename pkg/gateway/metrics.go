@@ -2750,6 +2750,16 @@ func (m *Metrics) SweepRouteSeries(now time.Time) int {
 	return m.routeSeries.sweep(now, m.dropRouteSeries)
 }
 
+// DropRouteSeries deletes one route's per-route series for appID when the
+// app's route label set gave that label to another route
+// (ADR-20261026143210 amendment 1). nil-receiver safe.
+func (m *Metrics) DropRouteSeries(appID, route string) {
+	if m == nil || m.routeSeries == nil || appID == "" || route == "" {
+		return
+	}
+	m.routeSeries.dropRoute(appID, route, m.dropRouteSeries)
+}
+
 func (m *Metrics) dropRouteSeries(appID string, routes map[string]map[routeSeriesKey]struct{}) {
 	for route, keys := range routes {
 		for _, class := range routeSeriesClasses {
