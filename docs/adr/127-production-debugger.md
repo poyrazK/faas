@@ -261,11 +261,15 @@ App errors return the public `x-faas-request-id` as a dashed UUID while the
 gateway issues it as 32 hex characters; both spellings resolve, so each
 app-error request links straight to its evidence.
 
-**Request logs are not attached to evidence.** `log_events` holds only the
-HTTP access projection of request telemetry; runtime output is not projected
-with trace IDs. Trace-matched lines would repeat the request itself (and its
-5xx access line would read as an application error), so log lines are left
-out of evidence until runtime logs carry trace IDs.
+**Request logs in evidence (2026-10-14).** Request evidence carries up to 20
+of the app's own log lines for the request: `log_events` rows with source
+`runtime` and the request's trace ID, produced by the ADR-213 runtime adapter
+from OTel log records the app exports through the in-guest bridge (ADR-958).
+HTTP access rows are deliberately excluded, since they only repeat the request
+and their 5xx level would read as an application error. Lines are the
+request's last ones when it logged more, redacted with the ADR-096 redactor
+and bounded to 512 bytes. §7.1 still holds: the synthesis layer receives log
+levels only and reports `error_logs` when the app logged error-level lines.
 
 ## Why now
 

@@ -617,6 +617,7 @@ export type { DebugDependencyLatencyResponse } from './DebugDependencyLatencyRes
 export type { DebugDependencyQueryItem } from './DebugDependencyQueryItem.js';
 export type { DebugEvidenceExplanation } from './DebugEvidenceExplanation.js';
 export type { DebugEvidenceFinding } from './DebugEvidenceFinding.js';
+export type { DebugEvidenceLogLine } from './DebugEvidenceLogLine.js';
 export type { DebugEvidenceRecommendation } from './DebugEvidenceRecommendation.js';
 export type { DebugEvidenceRef } from './DebugEvidenceRef.js';
 export type { DebugGuestExecutionEvidence } from './DebugGuestExecutionEvidence.js';

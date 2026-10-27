@@ -2865,6 +2865,18 @@ type DebugRequestDetailView struct {
 	// ProfileCaptureURL links the stack snapshot taken while the request was
 	// in flight (ADR-1155 slow_request capture), when one exists.
 	ProfileCaptureURL string
+	// Logs are the request's own log lines, matched by trace ID.
+	Logs          []DebugLogLineView
+	LogsTruncated bool
+}
+
+// DebugLogLineView is one bounded log line attached to request evidence.
+type DebugLogLineView struct {
+	OccurredAt string
+	Source     string
+	Level      string
+	Stream     string
+	Message    string
 }
 
 // DebugCriticalPathView is the template-safe projection of the selected

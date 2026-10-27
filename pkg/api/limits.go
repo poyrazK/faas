@@ -4415,6 +4415,12 @@ type Limits struct {
 	// rather than dropping silently. Hobby=1000, Pro=10000,
 	// Scale=50000.
 	DebugTelemetryRequestsPerMinute int
+	// DebugGuestLogExportsPerMinute (ADR-213 runtime adapter, ADR-958) is
+	// the per-account cap on OTLP log exports a tracing-enabled app's guest
+	// bridge forwards to apid. Each export carries at most
+	// TraceMaxLogRecordsPerExport records, so the record cap is the product.
+	// Free=0 (off), Hobby=60, Pro=600, Scale=3000.
+	DebugGuestLogExportsPerMinute int
 	// DebugTelemetryDeploymentsPerApp (ADR-127 §Decision 4) is
 	// the per-app ceiling on distinct deployment_id labels the
 	// gateway_request_duration_seconds histogram admits. Past the
@@ -4991,6 +4997,7 @@ var planLimits = map[Plan]Limits{
 		Profiling:                       ProfilingLimits{},
 		DebugTelemetryRetentionDays:     0,
 		DebugTelemetryRequestsPerMinute: 0,
+		DebugGuestLogExportsPerMinute:   0,
 		DebugTelemetryDeploymentsPerApp: 0,
 		DebugTelemetrySpansPerTrace:     0,
 		// Per-app observability surface (Free = off). 0/0/0 is the
@@ -5425,6 +5432,7 @@ var planLimits = map[Plan]Limits{
 		DebugTelemetryRetentionDays:     3,
 		Profiling:                       ProfilingLimits{Enabled: true, RetentionDays: 3, UploadsPerMinute: 60},
 		DebugTelemetryRequestsPerMinute: 1000,
+		DebugGuestLogExportsPerMinute:   60,
 		DebugTelemetryDeploymentsPerApp: 10,
 		DebugTelemetrySpansPerTrace:     50,
 		// Per-app observability surface (Hobby = on). The Hobby
@@ -5825,6 +5833,7 @@ var planLimits = map[Plan]Limits{
 		DebugTelemetryRetentionDays:     7,
 		Profiling:                       ProfilingLimits{Enabled: true, RetentionDays: 7, UploadsPerMinute: 180},
 		DebugTelemetryRequestsPerMinute: 10000,
+		DebugGuestLogExportsPerMinute:   600,
 		DebugTelemetryDeploymentsPerApp: 50,
 		DebugTelemetrySpansPerTrace:     200,
 		// Per-app observability surface (Pro = on). Same posture
@@ -6256,6 +6265,7 @@ var planLimits = map[Plan]Limits{
 		DebugTelemetryRetentionDays:     14,
 		Profiling:                       ProfilingLimits{Enabled: true, RetentionDays: 14, UploadsPerMinute: 600},
 		DebugTelemetryRequestsPerMinute: 50000,
+		DebugGuestLogExportsPerMinute:   3000,
 		DebugTelemetryDeploymentsPerApp: 200,
 		DebugTelemetrySpansPerTrace:     1000,
 		// Per-app observability surface (Scale = on). Largest
@@ -9446,6 +9456,16 @@ func (p Plan) DebugTelemetryRequestsPerMinute() int {
 		return 0
 	}
 	return l.DebugTelemetryRequestsPerMinute
+}
+
+// DebugGuestLogExportsPerMinute returns the per-account cap on guest OTLP
+// log exports (ADR-213 runtime adapter). Returns 0 on unknown plans.
+func (p Plan) DebugGuestLogExportsPerMinute() int {
+	l, ok := LimitsFor(p)
+	if !ok {
+		return 0
+	}
+	return l.DebugGuestLogExportsPerMinute
 }
 
 // DebugTelemetryDeploymentsPerApp (ADR-127 §Decision 4) returns the

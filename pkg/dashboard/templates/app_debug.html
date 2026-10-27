@@ -532,6 +532,20 @@
           {{else}}
             <p class="muted">No linked OTel spans were captured for this request.</p>
           {{end}}
+          <h3>Request logs</h3>
+          {{if .Data.Selected.Logs}}
+            <table class="span-table" aria-label="Log lines emitted by this request">
+              <thead><tr><th>Time</th><th>Level</th><th>Source</th><th>Message</th></tr></thead>
+              <tbody>
+              {{range .Data.Selected.Logs}}
+                <tr><td><small><code>{{.OccurredAt}}</code></small></td><td>{{if .Level}}{{.Level}}{{else}}—{{end}}</td><td>{{.Source}}{{if .Stream}} <small class="muted">{{.Stream}}</small>{{end}}</td><td><code>{{.Message}}</code></td></tr>
+              {{end}}
+              </tbody>
+            </table>
+            {{if .Data.Selected.LogsTruncated}}<p class="muted">Showing the request's last 20 log lines.</p>{{end}}
+          {{else}}
+            <p class="muted">No app log lines carry this request's trace ID. With tracing enabled, Python <code>logging</code> and Node pino or bunyan logs are linked automatically.</p>
+          {{end}}
           <small class="muted">Evidence generated {{.Data.Selected.GeneratedAt}}. Values are bounded and redacted before rendering.</small>
         </div>
       {{end}}

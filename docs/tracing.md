@@ -63,6 +63,27 @@ error rate at least 5 percentage points and twice above baseline:
 
 > http "api.stripe.com" fails 12.5% of calls since the previous deployment (v80), up from 0.0%.
 
+## Request logs
+
+With tracing enabled, the app's own log lines are linked to the request that
+wrote them. Python's standard `logging` records and Node's pino and bunyan
+logs are exported automatically with the active trace context, and the
+request's evidence shows its last 20 lines in the dashboard and the API:
+
+```
+12:04:31.118  error  runtime  charge failed for [REDACTED:email]: card declined
+```
+
+Python sends the records your logging configuration emits (warnings and
+above unless you set a lower level), and your console output is unchanged.
+Lines are redacted (emails, card numbers, tokens and keys) and cut to 512
+characters; structured log fields are not stored. Plain `console.log` output
+and winston logs are not linked. Log lines without a request (for example at
+startup) still appear in your runtime logs as before.
+
+To keep your logs out of Gregale, set `OTEL_LOGS_EXPORTER=none`, or point
+`OTEL_EXPORTER_OTLP_LOGS_ENDPOINT` at your own collector.
+
 ## Following a request across services
 
 `gregale trace <trace-id>` shows every retained request of one trace across
