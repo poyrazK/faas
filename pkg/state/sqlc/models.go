@@ -9525,6 +9525,20 @@ type ObjectStorageBillingPeriod struct {
 	IncludedEgressBytes          int64
 }
 
+// Object-storage charge delivered so far per provider, account, UTC month and mode. Written by apid in daily steps and at month close; meterd reserves live rows under the overage cap (ADR-20261027093220).
+type ObjectStorageBillingProgress struct {
+	Provider            string
+	AccountID           pgtype.UUID
+	PeriodStart         pgtype.Timestamptz
+	Mode                string
+	DeliveredMillicents int64
+	PendingMillicents   int64
+	PendingFixed        bool
+	CreditedMillicents  int64
+	Version             int64
+	UpdatedAt           pgtype.Timestamptz
+}
+
 type ObjectStorageBucketUsage struct {
 	BucketID       pgtype.UUID
 	BaselineBytes  int64

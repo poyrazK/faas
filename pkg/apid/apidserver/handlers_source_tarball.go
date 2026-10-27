@@ -246,7 +246,7 @@ func (s *server) handleSourceTarballDeploy(w http.ResponseWriter, r *http.Reques
 			s.log.Warn("local-tarball manifest rollback incomplete", "app_id", app.ID, "err", rollbackErr)
 		}
 	}(r.Context())
-	if prob := scanSourceTarballSecrets(spoolPath, limits); prob != nil {
+	if prob := s.scanSourceTarballSecrets(spoolPath, limits); prob != nil {
 		api.WriteProblem(w, prob)
 		return
 	}

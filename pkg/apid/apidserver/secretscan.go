@@ -24,6 +24,7 @@ package apidserver
 import (
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -144,7 +145,13 @@ func scanExtractedTreeSecrets(scanDir string) ([]secretscan.Finding, error) {
 // this sequence; keeping it here makes the direct tarball and source-ref
 // ingress paths subject to the same expanded-size, entry-type, and secret
 // policy before a build row is created.
-func scanSourceTarballSecrets(sourcePath string, limits api.Limits) *api.Problem {
+func (s *server) scanSourceTarballSecrets(sourcePath string, limits api.Limits) *api.Problem {
+	return scanSourceTarballSecretsLogged(s.log, sourcePath, limits)
+}
+
+// scanSourceTarballSecretsLogged is scanSourceTarballSecrets for callers
+// outside the HTTP server, such as the githubd bridge.
+func scanSourceTarballSecretsLogged(log *slog.Logger, sourcePath string, limits api.Limits) *api.Problem {
 	scanDir, prob := extractTarGzToDir(sourcePath, defaultExtractLimits(limits))
 	if prob != nil {
 		return prob
@@ -160,8 +167,9 @@ func scanSourceTarballSecrets(sourcePath string, limits api.Limits) *api.Problem
 	if err != nil {
 		// Do not silently convert a walk error into an accepted source:
 		// the unreadable portion may hold a credential.
+		logCustomerFailure(log, "scan source tarball for secrets", err)
 		return api.NewProblem(http.StatusInternalServerError, api.CodeInternal,
-			"Secret scan failed", err.Error())
+			"Secret scan failed", api.DetailServerFailure)
 	}
 	return nil
 }

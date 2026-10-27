@@ -56,13 +56,8 @@ func (s *server) advanceCanaryWithLeasePolicy(w http.ResponseWriter, r *http.Req
 		api.WriteProblem(w, problem)
 		return
 	}
-	current, next, problem := canaryStagesForAdvance(d, req.ExpectedStep)
+	current, next, problem := s.canaryStagesForAdvance(d, req.ExpectedStep)
 	if problem != nil {
-		if problem.Status >= http.StatusInternalServerError {
-			logCustomerFailure(s.log, "read persisted canary configuration", fmt.Errorf("%s", problem.Detail))
-			problem.Detail = "Gregale could not read this rollout's configuration."
-			problem.Hint = "Retry the request in a moment; if it continues, contact support."
-		}
 		api.WriteProblem(w, problem)
 		return
 	}
@@ -166,13 +161,16 @@ func (s *server) loadCanaryDeployment(w http.ResponseWriter, r *http.Request, ac
 	return d, app, true
 }
 
-func canaryStagesForAdvance(d state.Deployment, expected int) (canarycatalog.Stage, canarycatalog.Stage, *api.Problem) {
+func (s *server) canaryStagesForAdvance(d state.Deployment, expected int) (canarycatalog.Stage, canarycatalog.Stage, *api.Problem) {
 	if expected < 0 || d.CanaryStep != expected {
 		return canarycatalog.Stage{}, canarycatalog.Stage{}, api.ErrCanaryStepConflict(expected, d.CanaryStep)
 	}
 	preset, err := persistedCanaryPreset(d)
 	if err != nil {
-		return canarycatalog.Stage{}, canarycatalog.Stage{}, api.NewProblem(http.StatusInternalServerError, api.CodeInternal, "invalid persisted canary", err.Error())
+		logCustomerFailure(s.log, "read persisted canary configuration", err)
+		return canarycatalog.Stage{}, canarycatalog.Stage{}, api.NewProblem(http.StatusInternalServerError, api.CodeInternal, "invalid persisted canary",
+			"Gregale could not read this rollout's configuration.").
+			WithHint("Retry the request in a moment; if it continues, contact support.")
 	}
 	if d.CanaryTotalSteps != preset.TotalSteps() || expected >= preset.TotalSteps()-1 {
 		return canarycatalog.Stage{}, canarycatalog.Stage{}, api.ErrRolloutStateInvalid(d.RolloutState)

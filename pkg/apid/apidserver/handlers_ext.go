@@ -3809,7 +3809,8 @@ func (s *server) getDomainDoctor(w http.ResponseWriter, r *http.Request, acct st
 	}
 	report, err := s.buildDoctorReport(r.Context(), d)
 	if err != nil {
-		api.WriteProblem(w, api.ErrDoctorUnavailable(d.Domain, err.Error()))
+		logCustomerFailure(s.log, "build domain doctor report", err)
+		api.WriteProblem(w, api.ErrDoctorUnavailable(d.Domain, "a probe could not run"))
 		return
 	}
 	writeJSON(w, http.StatusOK, report)

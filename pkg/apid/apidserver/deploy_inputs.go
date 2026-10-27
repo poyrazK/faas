@@ -510,7 +510,7 @@ func (s *server) createDeploymentMultipart(w http.ResponseWriter, r *http.Reques
 		api.WriteProblem(w, prob)
 		return
 	}
-	if prob := scanSourceTarballSecrets(sourcePath, limits); prob != nil {
+	if prob := s.scanSourceTarballSecrets(sourcePath, limits); prob != nil {
 		api.WriteProblem(w, prob)
 		return
 	}

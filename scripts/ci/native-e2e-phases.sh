@@ -79,6 +79,7 @@ native_e2e_phase_files() {
       direct_oci_port_metal_test.go \
       function_concurrency_metal_test.go \
       guest_tracing_metal_test.go \
+      single_process_oom_metal_test.go \
       profile_capture_metal_test.go \
       profile_capture_pprof_metal_test.go \
       profile_capture_pressure_metal_test.go \

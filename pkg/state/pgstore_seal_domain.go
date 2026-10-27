@@ -655,6 +655,12 @@ const (
 	AccountSealedSlackOAuthFlow    = "slack_oauth_flow"
 	AccountSealedLinearConnection  = "linear_connection"
 	AccountSealedLinearOAuthFlow   = "linear_oauth_flow"
+	// Product email: a subscription's delivery grant and paused-recipient
+	// evidence, and a delivery's recipient evidence and unsubscribe token.
+	AccountSealedProductEmailGrant       = "product_email_grant"
+	AccountSealedProductEmailPause       = "product_email_pause"
+	AccountSealedProductEmailRecipient   = "product_email_recipient"
+	AccountSealedProductEmailUnsubscribe = "product_email_unsubscribe"
 )
 
 // AccountSealedValue is one sealed account value, listed for the account
@@ -715,6 +721,18 @@ func (s *PgStore) ListAccountSealedValues(ctx context.Context, kind, afterID str
 	case AccountSealedLinearOAuthFlow:
 		query = `SELECT app_id::text, sealed_state, '' FROM issue_tracker_linear_oauth_flows
 		          WHERE expires_at > now() AND app_id > $1::uuid ORDER BY app_id LIMIT $2`
+	case AccountSealedProductEmailGrant:
+		query = `SELECT id::text, grant_sealed, '' FROM product_control_email_subscriptions
+		          WHERE octet_length(grant_sealed) > 0 AND id > $1::uuid ORDER BY id LIMIT $2`
+	case AccountSealedProductEmailPause:
+		query = `SELECT id::text, pause_recipient_sealed, '' FROM product_control_email_subscriptions
+		          WHERE octet_length(pause_recipient_sealed) > 0 AND id > $1::uuid ORDER BY id LIMIT $2`
+	case AccountSealedProductEmailRecipient:
+		query = `SELECT id::text, recipient_sealed, '' FROM product_control_email_deliveries
+		          WHERE octet_length(recipient_sealed) > 0 AND id > $1::uuid ORDER BY id LIMIT $2`
+	case AccountSealedProductEmailUnsubscribe:
+		query = `SELECT id::text, unsubscribe_sealed, '' FROM product_control_email_deliveries
+		          WHERE octet_length(unsubscribe_sealed) > 0 AND id > $1::uuid ORDER BY id LIMIT $2`
 	case AccountSealedBillingKey:
 		query, after = `SELECT k, sealed_secret, '' FROM (
 		           SELECT account_id::text || '/' || provider AS k, sealed_secret FROM account_billing_connections
@@ -791,6 +809,18 @@ func (s *PgStore) ResealAccountValue(ctx context.Context, v AccountSealedValue, 
 	case AccountSealedLinearOAuthFlow:
 		tag, err = s.pool.Exec(ctx, `UPDATE issue_tracker_linear_oauth_flows SET sealed_state = $3
 		                             WHERE app_id = $1::uuid AND sealed_state = $2`, v.ID, v.Sealed, sealed)
+	case AccountSealedProductEmailGrant:
+		tag, err = s.pool.Exec(ctx, `UPDATE product_control_email_subscriptions SET grant_sealed = $3
+		                             WHERE id = $1::uuid AND grant_sealed = $2`, v.ID, v.Sealed, sealed)
+	case AccountSealedProductEmailPause:
+		tag, err = s.pool.Exec(ctx, `UPDATE product_control_email_subscriptions SET pause_recipient_sealed = $3
+		                             WHERE id = $1::uuid AND pause_recipient_sealed = $2`, v.ID, v.Sealed, sealed)
+	case AccountSealedProductEmailRecipient:
+		tag, err = s.pool.Exec(ctx, `UPDATE product_control_email_deliveries SET recipient_sealed = $3
+		                             WHERE id = $1::uuid AND recipient_sealed = $2`, v.ID, v.Sealed, sealed)
+	case AccountSealedProductEmailUnsubscribe:
+		tag, err = s.pool.Exec(ctx, `UPDATE product_control_email_deliveries SET unsubscribe_sealed = $3
+		                             WHERE id = $1::uuid AND unsubscribe_sealed = $2`, v.ID, v.Sealed, sealed)
 	case AccountSealedBillingKey:
 		account, provider, ok := strings.Cut(v.ID, "/")
 		if !ok {

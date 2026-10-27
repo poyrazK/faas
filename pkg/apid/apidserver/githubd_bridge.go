@@ -306,7 +306,7 @@ func (g *githubdBridge) EnqueueBuild(ctx context.Context, req *githubdpb.Enqueue
 		}
 		return nil, status.Error(code, "EnqueueBuild: "+standardFailure.Detail)
 	}
-	if err := bridgeSourcePolicy(req.SourcePath, app, acct.Plan); err != nil {
+	if err := bridgeSourcePolicy(g.log, req.SourcePath, app, acct.Plan); err != nil {
 		return nil, err
 	}
 	manifest, manifestProblem := loadSourceRefManifest(req.SourcePath, app, acct.Plan)
@@ -531,11 +531,11 @@ func (g *githubdBridge) newDeploymentActivity(ctx context.Context, acct state.Ac
 // image service builds nothing from the source and is skipped. A scan that
 // could not run (a 5xx problem) is Unavailable so githubd's delivery worker
 // retries it; a refused source is InvalidArgument.
-func bridgeSourcePolicy(sourcePath string, app state.App, plan api.Plan) error {
+func bridgeSourcePolicy(log *slog.Logger, sourcePath string, app state.App, plan api.Plan) error {
 	if app.Manifest.ProjectImage != "" {
 		return nil
 	}
-	prob := scanSourceTarballSecrets(sourcePath, api.MustLimitsFor(plan))
+	prob := scanSourceTarballSecretsLogged(log, sourcePath, api.MustLimitsFor(plan))
 	detail := ""
 	if prob != nil {
 		detail = "secret scan: " + secretScanProblemSummary(prob)

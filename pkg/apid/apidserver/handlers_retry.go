@@ -56,8 +56,9 @@ func (s *server) retryDeployment(w http.ResponseWriter, r *http.Request, acct st
 			s.notFound(w, "no such deployment")
 			return
 		}
+		logCustomerFailure(s.log, "load deployment", err)
 		api.WriteProblem(w, api.ErrInternal(
-			fmt.Sprintf("load deployment: %v", err)))
+			api.DetailServerFailure))
 		return
 	}
 	// 2. Resolve the parent app + cross-account guard. The route
@@ -71,8 +72,9 @@ func (s *server) retryDeployment(w http.ResponseWriter, r *http.Request, acct st
 		// as 500 so the operator can distinguish from a missing
 		// row. Collapsing into the IDOR 404 path would mask
 		// outages as "no such deployment".
+		logCustomerFailure(s.log, "load app", err)
 		api.WriteProblem(w, api.ErrInternal(
-			fmt.Sprintf("load app: %v", err)))
+			api.DetailServerFailure))
 		return
 	}
 	if app.AccountID != acct.ID {

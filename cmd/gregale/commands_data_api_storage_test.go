@@ -16,20 +16,26 @@ import (
 )
 
 func TestDataAPIStorageSQLRendersTheSchema(t *testing.T) {
-	sql, err := main.DataAPIStorageSQL("catalog")
+	sql, err := main.DataAPIStorageSQL("catalog", false)
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"CREATE TABLE catalog.storage_objects", "ENABLE ROW LEVEL SECURITY", "CREATE TRIGGER storage_objects_guard", "gregale_storage"} {
+	for _, want := range []string{"CREATE TABLE catalog.storage_objects", "ENABLE ROW LEVEL SECURITY", "CREATE TRIGGER storage_objects_guard", "gregale_storage", "object_key text CHECK"} {
 		if !strings.Contains(sql, want) {
 			t.Fatalf("missing %q", want)
 		}
 	}
-	if strings.Contains(sql, "{{schema}}") {
-		t.Fatal("unrendered placeholder")
+	upgrade, err := main.DataAPIStorageSQL("catalog", true)
+	if err != nil || !strings.Contains(upgrade, "ALTER TABLE catalog.storage_objects ADD COLUMN IF NOT EXISTS object_key text") || !strings.Contains(upgrade, "SET LOCAL lock_timeout") {
+		t.Fatalf("upgrade SQL: %v\n%s", err, upgrade)
+	}
+	for _, rendered := range []string{sql, upgrade} {
+		if strings.Contains(rendered, "{{schema}}") {
+			t.Fatal("unrendered placeholder")
+		}
 	}
 	for _, bad := range []string{"", "API", "api;drop", "1api"} {
-		if _, err := main.DataAPIStorageSQL(bad); err == nil {
+		if _, err := main.DataAPIStorageSQL(bad, true); err == nil {
 			t.Fatalf("accepted schema %q", bad)
 		}
 	}

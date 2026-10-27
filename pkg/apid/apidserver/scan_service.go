@@ -1592,9 +1592,10 @@ func (s *server) scanService(
 		return nil, state.Project{}, nil, nil, nil, nil, newSecretScanRejectionProblem(blocking)
 	}
 	if ssErr != nil {
+		logCustomerFailure(s.log, "Secret scan failed", ssErr)
 		return nil, state.Project{}, nil, nil, nil, nil, api.NewProblem(
 			http.StatusInternalServerError, api.CodeInternal,
-			"Secret scan failed", ssErr.Error())
+			"Secret scan failed", api.DetailServerFailure)
 	}
 
 	// Filter --only and --exclude against workload name. Deterministic
