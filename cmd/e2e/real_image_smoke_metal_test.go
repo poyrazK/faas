@@ -75,8 +75,11 @@ EOF
 exec java /tmp/app/Main.java`
 
 // chromiumDumpDOM renders a page with headless Chromium, which needs
-// /dev/shm, and serves the DOM it produced with busybox httpd.
-const chromiumDumpDOM = `mkdir -p /tmp/www && chromium-browser --headless --no-sandbox --disable-gpu --dump-dom 'data:text/html,<p>gregale-chromium-ok</p>' > /tmp/www/index.html 2> /tmp/www/chromium.log; exec busybox httpd -f -p "$PORT" -h /tmp/www`
+// /dev/shm, and serves the DOM it produced, or Chromium's error output when
+// it failed, with busybox nc (the image's busybox has no httpd).
+const chromiumDumpDOM = `mkdir -p /tmp/www
+chromium-browser --headless --no-sandbox --disable-gpu --dump-dom 'data:text/html,<p>gregale-chromium-ok</p>' > /tmp/www/index.html 2> /tmp/www/chromium.log || cat /tmp/www/chromium.log >> /tmp/www/index.html
+while true; do { printf 'HTTP/1.0 200 OK\r\nContent-Type: text/html\r\n\r\n'; cat /tmp/www/index.html; } | nc -l -p "$PORT"; done`
 
 func realImageCases() []realImageCase {
 	return []realImageCase{
@@ -191,6 +194,13 @@ func runRealImageCase(t *testing.T, h *e2etest.Harness, pool *pgxpool.Pool, key 
 		t.Fatalf("create app: status=%d", got)
 	}
 	appID := mustGetAppID(t, h, key, tc.slug)
+	// Scale defaults to bearer public auth (ADR-079); the anonymous GETs
+	// below check the workload, not edge auth.
+	if body, code := doReq(t, h, key, http.MethodPatch, "/v1/apps/"+tc.slug, map[string]any{
+		"require_authn": false, "public_auth": map[string]any{"mode": "open"},
+	}); code != http.StatusOK {
+		t.Fatalf("open public auth: %d %s", code, body)
+	}
 	request := api.CreateDeploymentRequest{Image: pinImageDigest(t, tc.image)}
 	if tc.entrypoint != nil || tc.cmd != nil || tc.port != 0 {
 		request.Overrides = &api.CreateDeploymentOverrides{Entrypoint: tc.entrypoint, Cmd: tc.cmd, Port: tc.port}
