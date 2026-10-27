@@ -21,7 +21,7 @@ import type { ScopedAppEnvResponse } from './ScopedAppEnvResponse.js';
 export type AppEnvListResponse = {
   env: Array<AppEnvResponse>;
   /**
-   * Nested per-scope map. Populated only when `?scope=__all__` is passed; keys are scope names, values are per-scope row lists ordered by key ASC.
+   * Nested per-scope map of env vars. Populated only when `?scope=__all__` is passed; keys are scope names, values are per-scope row lists ordered by key ASC.
    */
   env_by_scope?: Record<string, Array<ScopedAppEnvResponse>>;
   quota_max: number;

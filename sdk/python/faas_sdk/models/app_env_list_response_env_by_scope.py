@@ -15,8 +15,8 @@ T = TypeVar("T", bound="AppEnvListResponseEnvByScope")
 
 @_attrs_define
 class AppEnvListResponseEnvByScope:
-    """Nested per-scope map. Populated only when `?scope=__all__` is passed; keys are scope names, values are per-scope row
-    lists ordered by key ASC.
+    """Nested per-scope map of env vars. Populated only when `?scope=__all__` is passed; keys are scope names, values are
+    per-scope row lists ordered by key ASC.
 
     """
 

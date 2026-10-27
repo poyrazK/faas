@@ -28,7 +28,7 @@ export type APIConsumerUsageStatementResponse = {
   created_at: string;
   finalized_at?: string | null;
   /**
-   * Prepaid credit drawn when the statement was finalized.
+   * Prepaid credit drawn when this usage statement was finalized.
    */
   credit_applied_millicents?: number;
   /**

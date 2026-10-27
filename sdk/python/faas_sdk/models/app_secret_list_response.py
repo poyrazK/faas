@@ -27,8 +27,8 @@ class AppSecretListResponse:
     quota_max: int
     count: int
     secrets_by_scope: AppSecretListResponseSecretsByScope | Unset = UNSET
-    """Nested per-scope map. Populated only when `?scope=__all__` is passed; keys are scope names, values are per-
-    scope row lists ordered by key ASC."""
+    """Nested per-scope map of secrets. Populated only when `?scope=__all__` is passed; keys are scope names,
+    values are per-scope row lists ordered by key ASC."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

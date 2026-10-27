@@ -10,7 +10,7 @@ import type { ScopedAppSecretResponse } from './ScopedAppSecretResponse.js';
 export type AppSecretListResponse = {
   secrets: Array<AppSecretResponse>;
   /**
-   * Nested per-scope map. Populated only when `?scope=__all__` is passed; keys are scope names, values are per-scope row lists ordered by key ASC.
+   * Nested per-scope map of secrets. Populated only when `?scope=__all__` is passed; keys are scope names, values are per-scope row lists ordered by key ASC.
    */
   secrets_by_scope?: Record<string, Array<ScopedAppSecretResponse>>;
   quota_max: number;

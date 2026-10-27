@@ -83,7 +83,7 @@ def sync_detailed(
 ) -> Response[OutboundAITagLimits | Problem]:
     """Read an AI integration's per-tag daily cost limits.
 
-     Requires MFA and read scope.
+     Requires MFA and read scope. Returns each tag's daily cost limit.
 
     Args:
         integration (UUID):
@@ -114,7 +114,7 @@ def sync(
 ) -> OutboundAITagLimits | Problem | None:
     """Read an AI integration's per-tag daily cost limits.
 
-     Requires MFA and read scope.
+     Requires MFA and read scope. Returns each tag's daily cost limit.
 
     Args:
         integration (UUID):
@@ -140,7 +140,7 @@ async def asyncio_detailed(
 ) -> Response[OutboundAITagLimits | Problem]:
     """Read an AI integration's per-tag daily cost limits.
 
-     Requires MFA and read scope.
+     Requires MFA and read scope. Returns each tag's daily cost limit.
 
     Args:
         integration (UUID):
@@ -169,7 +169,7 @@ async def asyncio(
 ) -> OutboundAITagLimits | Problem | None:
     """Read an AI integration's per-tag daily cost limits.
 
-     Requires MFA and read scope.
+     Requires MFA and read scope. Returns each tag's daily cost limit.
 
     Args:
         integration (UUID):

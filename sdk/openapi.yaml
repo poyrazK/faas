@@ -3928,7 +3928,7 @@ paths:
     get:
       tags: [apps]
       operationId: getAppDebugCoverage
-      summary: Observed debugger signal coverage.
+      summary: Read observed debugger signal coverage.
       description: |
         Returns bounded, weighted coverage for the debugger signals
         attached to retained request telemetry in the requested window.
@@ -33469,7 +33469,7 @@ components:
         # no DTO in code".
         secrets_by_scope:
           type: object
-          description: "Nested per-scope map. Populated only when `?scope=__all__` is passed; keys are scope names, values are per-scope row lists ordered by key ASC."
+          description: "Nested per-scope map of secrets. Populated only when `?scope=__all__` is passed; keys are scope names, values are per-scope row lists ordered by key ASC."
           additionalProperties:
             type: array
             items: {$ref: '#/components/schemas/ScopedAppSecretResponse'}
@@ -33957,7 +33957,7 @@ components:
           items: {$ref: '#/components/schemas/AppEnvResponse'}
         env_by_scope:
           type: object
-          description: "Nested per-scope map. Populated only when `?scope=__all__` is passed; keys are scope names, values are per-scope row lists ordered by key ASC."
+          description: "Nested per-scope map of env vars. Populated only when `?scope=__all__` is passed; keys are scope names, values are per-scope row lists ordered by key ASC."
           additionalProperties:
             type: array
             items: {$ref: '#/components/schemas/ScopedAppEnvResponse'}
@@ -38296,9 +38296,9 @@ components:
         p50_ms: {type: integer, format: int64, minimum: 0}
         p95_ms: {type: integer, format: int64, minimum: 0}
         p99_ms: {type: integer, format: int64, minimum: 0}
-        exclusive_p50_ms: {type: integer, format: int64, minimum: 0, description: "Wall time not covered by overlapping direct child spans."}
-        exclusive_p95_ms: {type: integer, format: int64, minimum: 0, description: "Wall time not covered by overlapping direct child spans."}
-        exclusive_p99_ms: {type: integer, format: int64, minimum: 0, description: "Wall time not covered by overlapping direct child spans."}
+        exclusive_p50_ms: {type: integer, format: int64, minimum: 0, description: "Median (p50) wall time not covered by overlapping direct child spans."}
+        exclusive_p95_ms: {type: integer, format: int64, minimum: 0, description: "p95 wall time not covered by overlapping direct child spans."}
+        exclusive_p99_ms: {type: integer, format: int64, minimum: 0, description: "p99 wall time not covered by overlapping direct child spans."}
         baseline_p95_ms: {type: integer, format: int64, minimum: 0}
         current_p95_ms: {type: integer, format: int64, minimum: 0}
         p95_delta_ms: {type: integer, format: int64}

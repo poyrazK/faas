@@ -88,7 +88,7 @@ def sync_detailed(
 ) -> Response[OutboundAIPriceListResponse | Problem]:
     """Read the AI price list in effect.
 
-     Requires MFA and read scope.
+     Requires MFA and read scope. Returns the prices the integration's calls are costed at.
 
     Args:
         integration (UUID):
@@ -119,7 +119,7 @@ def sync(
 ) -> OutboundAIPriceListResponse | Problem | None:
     """Read the AI price list in effect.
 
-     Requires MFA and read scope.
+     Requires MFA and read scope. Returns the prices the integration's calls are costed at.
 
     Args:
         integration (UUID):
@@ -145,7 +145,7 @@ async def asyncio_detailed(
 ) -> Response[OutboundAIPriceListResponse | Problem]:
     """Read the AI price list in effect.
 
-     Requires MFA and read scope.
+     Requires MFA and read scope. Returns the prices the integration's calls are costed at.
 
     Args:
         integration (UUID):
@@ -174,7 +174,7 @@ async def asyncio(
 ) -> OutboundAIPriceListResponse | Problem | None:
     """Read the AI price list in effect.
 
-     Requires MFA and read scope.
+     Requires MFA and read scope. Returns the prices the integration's calls are costed at.
 
     Args:
         integration (UUID):

@@ -95,7 +95,7 @@ def sync_detailed(
     client: AuthenticatedClient | Client,
     since: None | str | Unset = UNSET,
 ) -> Response[DebugCoverageResponse | Problem]:
-    """Observed debugger signal coverage.
+    """Read observed debugger signal coverage.
 
      Returns bounded, weighted coverage for the debugger signals
     attached to retained request telemetry in the requested window.
@@ -135,7 +135,7 @@ def sync(
     client: AuthenticatedClient | Client,
     since: None | str | Unset = UNSET,
 ) -> DebugCoverageResponse | Problem | None:
-    """Observed debugger signal coverage.
+    """Read observed debugger signal coverage.
 
      Returns bounded, weighted coverage for the debugger signals
     attached to retained request telemetry in the requested window.
@@ -170,7 +170,7 @@ async def asyncio_detailed(
     client: AuthenticatedClient | Client,
     since: None | str | Unset = UNSET,
 ) -> Response[DebugCoverageResponse | Problem]:
-    """Observed debugger signal coverage.
+    """Read observed debugger signal coverage.
 
      Returns bounded, weighted coverage for the debugger signals
     attached to retained request telemetry in the requested window.
@@ -208,7 +208,7 @@ async def asyncio(
     client: AuthenticatedClient | Client,
     since: None | str | Unset = UNSET,
 ) -> DebugCoverageResponse | Problem | None:
-    """Observed debugger signal coverage.
+    """Read observed debugger signal coverage.
 
      Returns bounded, weighted coverage for the debugger signals
     attached to retained request telemetry in the requested window.

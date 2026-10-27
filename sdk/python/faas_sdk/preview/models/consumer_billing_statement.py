@@ -29,7 +29,7 @@ class ConsumerBillingStatement:
     billable_units: int
     amount_millicents: int
     credit_applied_millicents: int
-    """Prepaid credit drawn when the statement was finalized."""
+    """Prepaid credit drawn when this billing statement was finalized."""
     amount_due_millicents: int
     """amount_millicents less credit_applied_millicents: what is left to pay."""
     finalized_at: datetime.datetime | Unset = UNSET

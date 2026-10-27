@@ -1784,7 +1784,7 @@ export class AppsService {
     });
   }
   /**
-   * Observed debugger signal coverage.
+   * Read observed debugger signal coverage.
    * Returns bounded, weighted coverage for the debugger signals
    * attached to retained request telemetry in the requested window.
    * Counts are split between stored aggregate rows and the original

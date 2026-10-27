@@ -5624,7 +5624,7 @@ paths:
       tags: [outbound]
       operationId: getOutboundIntegrationAIPrices
       summary: Read the AI price list in effect.
-      description: Requires MFA and read scope.
+      description: Requires MFA and read scope. Returns the prices the integration's calls are costed at.
       responses:
         '200':
           description: The price list in effect.
@@ -5835,7 +5835,7 @@ paths:
       tags: [outbound]
       operationId: getOutboundAITagLimits
       summary: Read an AI integration's per-tag daily cost limits.
-      description: Requires MFA and read scope.
+      description: Requires MFA and read scope. Returns each tag's daily cost limit.
       responses:
         '200':
           description: The integration's tag limits, ordered by tag.
@@ -24832,7 +24832,7 @@ paths:
     get:
       tags: [apps]
       operationId: getAppDebugCoverage
-      summary: Observed debugger signal coverage.
+      summary: Read observed debugger signal coverage.
       description: |
         Returns bounded, weighted coverage for the debugger signals
         attached to retained request telemetry in the requested window.
@@ -88467,7 +88467,7 @@ components:
         as_of: { type: string, format: date-time }
         created_at: { type: string, format: date-time }
         finalized_at: { type: [string, "null"], format: date-time }
-        credit_applied_millicents: { type: integer, format: int64, minimum: 0, description: "Prepaid credit drawn when the statement was finalized." }
+        credit_applied_millicents: { type: integer, format: int64, minimum: 0, description: "Prepaid credit drawn when this usage statement was finalized." }
         amount_due_millicents: { type: integer, format: int64, minimum: 0, description: "amount_millicents less credit_applied_millicents: what is left to bill." }
 
     CreateAPIConsumerCreditRequest:
@@ -110000,7 +110000,7 @@ components:
         # no DTO in code".
         secrets_by_scope:
           type: object
-          description: "Nested per-scope map. Populated only when `?scope=__all__` is passed; keys are scope names, values are per-scope row lists ordered by key ASC."
+          description: "Nested per-scope map of secrets. Populated only when `?scope=__all__` is passed; keys are scope names, values are per-scope row lists ordered by key ASC."
           additionalProperties:
             type: array
             items: { $ref: '#/components/schemas/ScopedAppSecretResponse' }
@@ -110380,7 +110380,7 @@ components:
         blocked: { type: integer, minimum: 0 }
 
     DatabaseSwitchList:
-      description: "An app's database switches, newest first."
+      description: "A page of an app's database switches, newest first."
       type: object
       required: [items]
       properties:
@@ -110631,7 +110631,7 @@ components:
           items: { $ref: '#/components/schemas/AppEnvResponse' }
         env_by_scope:
           type: object
-          description: "Nested per-scope map. Populated only when `?scope=__all__` is passed; keys are scope names, values are per-scope row lists ordered by key ASC."
+          description: "Nested per-scope map of env vars. Populated only when `?scope=__all__` is passed; keys are scope names, values are per-scope row lists ordered by key ASC."
           additionalProperties:
             type: array
             items: { $ref: '#/components/schemas/ScopedAppEnvResponse' }
@@ -118079,7 +118079,7 @@ components:
         currency: { type: string, pattern: '^[A-Z]{3}$' }
         billable_units: { type: integer, format: int64, minimum: 0 }
         amount_millicents: { type: integer, format: int64 }
-        credit_applied_millicents: { type: integer, format: int64, minimum: 0, description: "Prepaid credit drawn when the statement was finalized." }
+        credit_applied_millicents: { type: integer, format: int64, minimum: 0, description: "Prepaid credit drawn when this billing statement was finalized." }
         amount_due_millicents: { type: integer, format: int64, minimum: 0, description: "amount_millicents less credit_applied_millicents: what is left to pay." }
         finalized_at: { type: string, format: date-time }
         invoice: { $ref: '#/components/schemas/ConsumerBillingInvoice' }
@@ -121317,9 +121317,9 @@ components:
         p50_ms: { type: integer, format: int64, minimum: 0 }
         p95_ms: { type: integer, format: int64, minimum: 0 }
         p99_ms: { type: integer, format: int64, minimum: 0 }
-        exclusive_p50_ms: { type: integer, format: int64, minimum: 0, description: "Wall time not covered by overlapping direct child spans." }
-        exclusive_p95_ms: { type: integer, format: int64, minimum: 0, description: "Wall time not covered by overlapping direct child spans." }
-        exclusive_p99_ms: { type: integer, format: int64, minimum: 0, description: "Wall time not covered by overlapping direct child spans." }
+        exclusive_p50_ms: { type: integer, format: int64, minimum: 0, description: "Median (p50) wall time not covered by overlapping direct child spans." }
+        exclusive_p95_ms: { type: integer, format: int64, minimum: 0, description: "p95 wall time not covered by overlapping direct child spans." }
+        exclusive_p99_ms: { type: integer, format: int64, minimum: 0, description: "p99 wall time not covered by overlapping direct child spans." }
         baseline_p95_ms: { type: integer, format: int64, minimum: 0 }
         current_p95_ms: { type: integer, format: int64, minimum: 0 }
         p95_delta_ms: { type: integer, format: int64 }

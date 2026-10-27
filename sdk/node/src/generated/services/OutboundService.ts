@@ -539,7 +539,7 @@ export class OutboundService {
   }
   /**
    * Read the AI price list in effect.
-   * Requires MFA and read scope.
+   * Requires MFA and read scope. Returns the prices the integration's calls are costed at.
    * @returns OutboundAIPriceListResponse The price list in effect.
    * @throws ApiError
    */
@@ -832,7 +832,7 @@ export class OutboundService {
   }
   /**
    * Read an AI integration's per-tag daily cost limits.
-   * Requires MFA and read scope.
+   * Requires MFA and read scope. Returns each tag's daily cost limit.
    * @returns OutboundAITagLimits The integration's tag limits, ordered by tag.
    * @throws ApiError
    */
