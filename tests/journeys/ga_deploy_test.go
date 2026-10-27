@@ -290,10 +290,28 @@ func TestImageRegistryAndDeployTokens(t *testing.T) {
 			t.Fatalf("deploy with the app's deploy token: %s", tg.redact(r.String()))
 		}
 		id := str(jsonBody(t, r), "id")
-		res := tg.ok(t, deployLimit+5*time.Minute, "deployment", "wait", id, "--rollout", "--timeout", deployLimit.String())
-		if got := str(object(t, res.stdout), "status"); got != "live" {
-			t.Fatalf("token deployment %s ended %s", id, got)
-		}
+		t.Logf("deploy token accepted deployment %s (HTTP %d)", id, r.status)
+		eventually(t, "the token's deployment goes live", deployLimit, 10*time.Second, func() (bool, string) {
+			res := tg.run(t, time.Minute, "deployments", "--app", slug, "--limit", "5")
+			if res.exit != 0 {
+				return false, res.problem()
+			}
+			items, _ := field(object(t, res.stdout), "items").([]any)
+			seen := make([]string, 0, len(items))
+			for _, item := range items {
+				seen = append(seen, str(item, "id")+"="+str(item, "status")+"/"+str(item, "rollout_state"))
+				if str(item, "id") != id {
+					continue
+				}
+				switch str(item, "status") {
+				case "live":
+					return true, ""
+				case "failed", "cancelled", "superseded":
+					t.Fatalf("token deployment %s ended %s: %s", id, str(item, "status"), str(item, "rollout_aborted_reason"))
+				}
+			}
+			return false, "latest deployments: " + strings.Join(seen, ", ")
+		})
 	})
 	s.check("cli_deploy_with_token", func(t *testing.T) {
 		// What a CI job does with FAAS_TOKEN set to the app's deploy token.

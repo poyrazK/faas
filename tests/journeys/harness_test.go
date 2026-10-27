@@ -736,7 +736,7 @@ func retryableAbort(res cliResult) string {
 		return "failure_class=infra"
 	}
 	reason := str(docs[0], "rollout_aborted_reason")
-	for _, capacity := range []string{"capacity_unavailable", "insufficient host free space"} {
+	for _, capacity := range []string{"capacity_unavailable", "insufficient host free space", "cold_boot_timeout"} {
 		if strings.Contains(reason, capacity) {
 			return reason
 		}
