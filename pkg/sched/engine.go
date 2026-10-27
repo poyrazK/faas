@@ -3860,7 +3860,7 @@ func (e *Engine) admitAndDispatchOnce(ctx context.Context, appID, deploymentID, 
 	}
 	prefetched := prefetch.wait()
 	privateNetwork := prefetched.privateNetwork
-	healthcheckGRPC, healthcheckGRPCService := healthcheckGRPCForApp(dep, app.AppProtocol)
+	healthcheckPath, healthcheckGRPC, healthcheckGRPCService := startupProbeForApp(dep, app.AppProtocol)
 	pinnedBase, err := prefetched.baseKey, prefetched.baseKeyErr
 	ctx = withBootPrepared(ctx, bootPrepared{instanceID: ins.ID,
 		rehearsalRunID: prefetched.rehearsalRunID, haveRehearsal: prefetched.rehearsalErr == nil,
@@ -3935,7 +3935,7 @@ func (e *Engine) admitAndDispatchOnce(ctx context.Context, appID, deploymentID, 
 		// Per-deployment HTTP or gRPC readiness selection. Both probe
 		// modes target :8080 (ADR-009/portnorm); an empty override
 		// keeps the legacy TCP probe.
-		HealthcheckPath:          healthcheckPathFromDep(dep),
+		HealthcheckPath:          healthcheckPath,
 		HealthcheckGRPC:          healthcheckGRPC,
 		HealthcheckGRPCService:   healthcheckGRPCService,
 		ImageHealthcheckRequired: imageHealthcheckRequiredFromDep(dep),
@@ -5916,7 +5916,7 @@ func (e *Engine) buildAppSpecForMigrationWithValues(ctx context.Context, instanc
 		return AppSpec{}, state.RuntimeAppValuesSnapshot{}, fmt.Errorf("sched: build app spec: GitOps service bindings: %w", err)
 	}
 	privateNetwork := e.privateNetworkProjection(ctx, app)
-	healthcheckGRPC, healthcheckGRPCService := healthcheckGRPCForApp(dep, app.AppProtocol)
+	healthcheckPath, healthcheckGRPC, healthcheckGRPCService := startupProbeForApp(dep, app.AppProtocol)
 	pinnedBase, err := e.deploymentBaseKey(ctx, app, dep, layerKey(dep.RootfsKey, dep.ID))
 	if err != nil {
 		return AppSpec{}, state.RuntimeAppValuesSnapshot{}, err
@@ -5976,7 +5976,7 @@ func (e *Engine) buildAppSpecForMigrationWithValues(ctx context.Context, instanc
 		Port: deploymentRuntimePort(dep),
 		// Issue #460 / ADR-053, ADR-057 (PR-D): per-deployment
 		// override readiness probe path. "" = legacy TCP-accept.
-		HealthcheckPath:          healthcheckPathFromDep(dep),
+		HealthcheckPath:          healthcheckPath,
 		HealthcheckGRPC:          healthcheckGRPC,
 		HealthcheckGRPCService:   healthcheckGRPCService,
 		ImageHealthcheckRequired: imageHealthcheckRequiredFromDep(dep),
