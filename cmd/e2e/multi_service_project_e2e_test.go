@@ -28,6 +28,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/servicebinding"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -298,12 +299,27 @@ func TestE2E_MultiServiceProject_ComposeServicesCallEachOtherByName(t *testing.T
 
 	// A public request wakes the parked admin, and wake-ahead wakes ledger,
 	// which admin declared, before admin calls it.
+	if enabled, err := f.store.ServiceWakeAheadEnabled(f.ctx, admin.ID); err != nil || !enabled {
+		t.Fatalf("wake-ahead for admin = %t, %v; want on by default under the project policy (stored policy %q)",
+			enabled, err, admin.Manifest.ServiceBindingPolicy)
+	}
+	if target, err := state.AppByServiceName(f.ctx, f.store, admin, "ledger"); err != nil || target.ID != ledger.ID {
+		t.Fatalf("admin resolves ledger to %+v, %v", target, err)
+	}
+	if _, err := servicebinding.NewAuthorizer(f.store)(f.ctx, admin.ID, ledger.ID); err != nil {
+		t.Fatalf("admin may not call ledger: %v", err)
+	}
+	if err := state.CheckFinancialBudgetAdmission(f.ctx, f.store, ledger, "", time.Now().UTC()); err != nil {
+		t.Fatalf("ledger budget admission: %v", err)
+	}
 	parkMultiServiceApp(t, f, admin)
 	if status := pollPublicRequest(t, f, admin, http.StatusOK, 30*time.Second); status != http.StatusOK {
 		t.Fatalf("public GET on admin status = %d, want 200 (the parked app must wake)", status)
 	}
 	if !waitRunning(f, ledger, 30*time.Second) {
-		t.Errorf("waking admin did not wake ledger ahead of admin's first call")
+		resident, ceiling, err := f.store.ServiceWakeAheadFleetResidency(f.ctx)
+		t.Errorf("waking admin did not wake ledger ahead of admin's first call; residency %d/%d MB (%v); gateway: %v",
+			resident, ceiling, err, metricLines(f.h.GatewayControlURL+"/metrics", "gateway_service_wake_ahead"))
 	}
 
 	// PR 7's web calls PR 7's billing_api, never production's.
