@@ -1,6 +1,6 @@
 # ADR-20261027120000: Multi-service projects for general availability
 
-- **Status:** proposed (merges when the gates below are met)
+- **Status:** accepted
 - **Date:** 2026-10-27
 - **Owner:** apid (projects, bindings) and gateway (service proxy, wake-ahead) maintainers
 - **Amends:** ADR-20261022111119 (project service policy), ADR-20261025105812 (wake-ahead default), ADR-20261026170512 (service DNS names)
@@ -25,7 +25,7 @@
   Promoting it would have released preview environments, promotions, release sets and GitOps to every account. These now belong to `environments`, `environment-promotions`, `environment-release-sets` and `environment-gitops`, the same capabilities as their non-org twins. The public SDK spec gains only the 18 project paths.
 
   **Rollback.** Each capability keeps its platform flag. `gregalectl flags disable --capability <id> --reason … --yes` hides it again for every account. Narrower rules (`deny --account`, `--org-id`) hide it for one customer. The [multi-service recovery runbook](../ops/multi-service-recovery.md) covers diagnosis.
-- **Gates before this merges:**
+- **Open at acceptance** (the owner chose to promote on 2026-10-27 before these were met; each is a follow-up):
   1. Native acceptance evidence: the e2e-native lane green on a native x86_64 KVM host, including a guest that resolves `<service>.svc.gregale` and calls through the tenant bridge. The KVM-free test cannot exercise that path.
   2. The plan entitlement for Free (owner decision). Free allows one deployed app, so it cannot deploy a project of two or more services. Either drop `free` from the four capabilities' plans, or change the Free app limit in the financial model and `pkg/api/limits.go`.
   3. Datastores other than Postgres (owner decision). A Compose `redis`, `mysql`, `mongo`, `kafka` or similar image service is listed in the plan with the variable the customer must supply (`REDIS_URL`, `DATABASE_URL`, …) and is not provisioned. Only Compose `postgres` becomes a managed database (ADR-20261026151530). Either GA documents this, or it waits for managed Redis and MySQL.
