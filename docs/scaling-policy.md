@@ -136,9 +136,9 @@ you push is recorded for 15 days, so you can watch the number over time as
 well as scale on it:
 
 ```sh
-gregale metrics my-api --custom orders_pending            # last 24 hours
-gregale metrics my-api --custom orders_pending --range 7d
-gregale metrics my-api --custom orders_pending --json     # every point
+gregale metric my-api --custom orders_pending            # last 24 hours
+gregale metric my-api --custom orders_pending --range 7d
+gregale metric my-api --custom orders_pending --json     # every point
 ```
 
 `--range` is `1h`, `6h`, `24h`, `7d`, or `15d`. The dashboard's **Custom

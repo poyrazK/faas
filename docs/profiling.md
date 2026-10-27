@@ -434,7 +434,7 @@ Each event is sent once per capture. A webhook with no event filter receives
 both; to receive only these, subscribe to them explicitly:
 
 ```sh
-gregale webhooks add --app my-app --target-url https://hooks.example.com/gregale \
+gregale webhook create --app my-app --target-url https://hooks.example.com/gregale \
   --event profile.capture_ready --event profile.capture_oom_linked
 ```
 
@@ -751,7 +751,7 @@ These checks record CPU regression signals. They do not send notifications,
 block rollouts or roll back deployments. Traffic mix, replica counts, CPU
 allocation and instrumentation coverage can affect the result.
 
-When this policy is enabled, `gregale routes health report`, the canary's
+When this policy is enabled, `gregale api route health report`, the canary's
 route-health API report and deployment detail page also show a **default advisory
 canary profile signal**. A background worker pins the active canary stage and
 policy revision, then compares it with the unique live stable deployment over
@@ -783,7 +783,7 @@ GET /v1/apps/{slug}/profiles/canary-checks/{deployment_id}?limit=5
 ```
 
 Use `next_cursor` as the `before` query parameter to page through older stages.
-The deployment detail page and `gregale routes health profile-history APP`
+The deployment detail page and `gregale api route health profile-history APP`
 show the same history. Each entry includes its exact stable/canary windows,
 threshold evidence and policy revision.
 
@@ -1271,7 +1271,7 @@ Other route, health and binding gates still apply.
 
 Inspect the baseline, route streaks, functions and call paths on the deployment
 dashboard, through `GET /v1/deployments/DEPLOYMENT_ID/canary/profile-gate`, or with
-`gregale canary gate DEPLOYMENT_ID --json`. The readout uses retained evidence and
+`gregale release canary gate DEPLOYMENT_ID --json`. The readout uses retained evidence and
 commit-pinned source links; it does not query profile storage. Changing the policy
 revision starts fresh evidence collection for the current stage. A passed gate
 certifies those recorded windows for that stage, rather than continuously
@@ -1280,7 +1280,7 @@ monitoring the stage after it passes.
 A customer may explicitly override only the profiling gate:
 
 ```sh
-gregale canary advance DEPLOYMENT_ID --expected-step 1 \
+gregale release canary advance DEPLOYMENT_ID --expected-step 1 \
   --profile-policy-revision 7 \
   --profile-override-reason "Reviewed checkout profiles and accepted the CPU cost."
 ```

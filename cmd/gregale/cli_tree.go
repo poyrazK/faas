@@ -907,6 +907,110 @@ func printCliTreeHelp(w io.Writer, topic cliTreeTopic) {
 	_, _ = fmt.Fprintf(w, "\nRun 'gregale %s <command> --help' for command details.\nDocs: %s\n", name, docsURL)
 }
 
+// cliTreeSpelling returns args in the tree's names: the tree path whose
+// rewrite runs exactly args today. It reports false when args already use
+// the tree's names or have no tree spelling.
+func cliTreeSpelling(args []string) ([]string, bool) {
+	// A tree path rewrites to something else; today's path runs as typed.
+	if rewritten, err := rewriteCliTree(args); err != nil || !slices.Equal(rewritten, args) {
+		return nil, false
+	}
+	var candidate []string
+	appSlug := len(args) > 1 && args[0] == appSlugFallback && !cliTreeAppVerb(args[1]) && api.ValidAppSlug(args[1])
+	switch {
+	case appSlug && len(args) == 2:
+		candidate = []string{appSlugFallback, "get", args[1]}
+	case appSlug && !strings.HasPrefix(args[2], "-"):
+		candidate = cliTreeAppSpelling(args[1], args[2:])
+	case appSlug:
+		return nil, false
+	default:
+		alias, ok := cliTreeAliasFrom(args)
+		if !ok {
+			return nil, false
+		}
+		old := strings.Fields(alias.Old)
+		candidate = append(strings.Fields(alias.New), args[len(old):]...)
+		if rest := args[len(old):]; len(rest) > 0 {
+			if node, ok := lookupCliPath(old); ok && !node.AfterPositionals {
+				if verb, ok := cliTreeVerbFor(rest[0], node.Subs); ok && verb != rest[0] {
+					candidate[len(strings.Fields(alias.New))] = verb
+				}
+			}
+		}
+	}
+	if slices.Equal(candidate, args) {
+		return nil, false
+	}
+	if rewritten, err := rewriteCliTree(candidate); err != nil || !slices.Equal(rewritten, args) {
+		return nil, false
+	}
+	return candidate, true
+}
+
+// cliTreeAppSpelling spells today's `app <slug> <verb> [<verb>]` as the
+// tree's `app <verb> [<verb>] <slug>`, with tcp and udp listeners under
+// `app listener`.
+func cliTreeAppSpelling(slug string, words []string) []string {
+	chain, rest := words[:1], words[1:]
+	var family []cliSub
+	if command, ok := lookupCliCommand(appSlugFallback); ok {
+		if sub, ok := findCliSubcommand(command.Subcommands, words[0]); ok && len(sub.Subcommands) > 0 && len(rest) > 0 {
+			if _, nested := findCliSubcommand(sub.Subcommands, rest[0]); nested {
+				chain, rest, family = words[:2], words[2:], sub.Subcommands
+			}
+		}
+	}
+	tail := append([]string{slug}, rest...)
+	if protocol := chain[0]; (protocol == "tcp" || protocol == "udp") && len(chain) == 2 {
+		verb := chain[1]
+		if standard, ok := cliTreeVerbFor(verb, family); ok {
+			verb = standard
+		}
+		spelled := append([]string{appSlugFallback, "listener", verb}, tail...)
+		if protocol == "udp" {
+			spelled = append(spelled, "--protocol", "udp")
+		}
+		return spelled
+	}
+	return append(append([]string{appSlugFallback}, chain...), tail...)
+}
+
+// cliTreeAliasFrom returns the customer alias whose today's path is the
+// longest prefix of args. A path the tree keeps (`mcp serve`) matches its
+// own alias, and a shortcut keeps its name (`run` is also `sandbox run`).
+func cliTreeAliasFrom(args []string) (cliTreeAlias, bool) {
+	var best cliTreeAlias
+	bestLen := 0
+	for _, alias := range cliTreeAliases {
+		old := strings.Fields(alias.Old)
+		if strings.HasPrefix(alias.New, "admin ") || slices.Contains(cliTreeShortcutCommands, alias.Old) {
+			continue
+		}
+		if len(old) > len(args) || len(old) <= bestLen || !slices.Equal(old, args[:len(old)]) {
+			continue
+		}
+		best, bestLen = alias, len(old)
+	}
+	return best, bestLen > 0
+}
+
+// cliTreeAppVerb reports a word the tree's `app` takes as its verb.
+func cliTreeAppVerb(word string) bool {
+	if _, _, ok := matchCliTreeAlias([]string{appSlugFallback, word}); ok {
+		return true
+	}
+	if word == "get" || word == "update" || word == "listener" {
+		return true
+	}
+	command, ok := lookupCliCommand(appSlugFallback)
+	if !ok {
+		return false
+	}
+	_, ok = findCliSubcommand(command.Subcommands, word)
+	return ok
+}
+
 // cliTreeHelpRename returns the path help shows in place of today's when
 // run() rewrote typed to args: today's path, with the verb it reached, and
 // the tree path typed in its place.

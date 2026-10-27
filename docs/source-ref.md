@@ -290,7 +290,7 @@ Authorization: Bearer <key-with-github:manage>
 
 The response contains repository id, full name, default branch, and visibility.
 If no GitHub App installation exists, the API returns
-`github_install_not_found`; complete `gregale connect github` once, then retry.
+`github_install_not_found`; complete `gregale github connect` once, then retry.
 
 ### What's not automated by the Action
 - **PR-preview environments.** Each deploy is a fresh

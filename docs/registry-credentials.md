@@ -5,7 +5,7 @@ Registry credentials let Gregale pull private OCI images during a deployment.
 ```bash
 gregale registry list --app APP_ID
 printf '%s\n' "$REGISTRY_TOKEN" | gregale registry set --app APP_ID --registry registry-1.docker.io --user USER --password-stdin
-gregale registry rm --app APP_ID --registry registry-1.docker.io
+gregale registry delete --app APP_ID --registry registry-1.docker.io
 ```
 
 The CLI prompts for the secret and sends it over the authenticated API; it never prints the value. The service stores write-only credential metadata, redacts credential fields from events and logs, and uses the credential only for the selected registry host. The credential is sent only to an HTTPS token endpoint; a registry whose authentication challenge names a plain-HTTP token endpoint fails the pull instead.

@@ -306,6 +306,45 @@ func TestCliTreeHelpForTodaysCommands(t *testing.T) {
 	}
 }
 
+// Today's commands have a tree spelling that runs exactly them.
+func TestCliTreeSpelling(t *testing.T) {
+	enableEveryCLIFeature(t)
+	t.Chdir(t.TempDir())
+	for _, tc := range []struct{ in, want string }{
+		{"crons info c1", "cron get c1"},
+		{"crons add --path /sync", "cron create --path /sync"},
+		{"apps", "app list"},
+		{"apps rm api --yes", "app delete api --yes"},
+		{"app api", "app get api"},
+		{"app api scale --ram 512", "app scale api --ram 512"},
+		{"app api egress-allowlist add 10.0.0.0/8", "app egress-allowlist add api 10.0.0.0/8"},
+		{"app api tcp list", "app listener list api"},
+		{"app api udp add --port 7000", "app listener create api --port 7000 --protocol udp"},
+		{"deploys status 42", "release get 42"},
+		{"secrets set K=V", "env set K=V"},
+		{"bucket uploads list", "bucket multipart list"},
+		{"ps api", "app instances api"},
+		// Already the tree's names, or nothing in the tree runs exactly this.
+		{"cron list", ""},
+		{"deploy --prod", ""},
+		{"crons", ""},
+		{"env push", ""},
+		{"preview show 12", "preview get 12"},
+		{"mcp serve --transport stdio", ""},
+		{"mcp doctor", "mcp server doctor"},
+		{"mcp server readiness", ""}, // already the tree's names
+		{"dashboard list", ""},
+		{"run --image alpine", ""}, // a shortcut keeps its name
+		{"rollback api", ""},
+		{"app api --ram", ""}, // `app <slug> --flag` updates the app
+	} {
+		got, ok := main.CliTreeSpelling(strings.Fields(tc.in))
+		if gotText := strings.Join(got, " "); (tc.want == "") == ok || gotText != tc.want {
+			t.Errorf("%q spelled %q (%v), want %q", tc.in, gotText, ok, tc.want)
+		}
+	}
+}
+
 // Help reached through a tree path is spelled in that path.
 func TestCliTreeLeafHelpUsesTheTypedPath(t *testing.T) {
 	enableEveryCLIFeature(t)

@@ -12,9 +12,9 @@ plan once enabled for your deployment.
 ## Read the timeline
 
 ```sh
-gregale app my-api changes                       # last 24 hours
-gregale app my-api changes --since 2026-10-08T12:00:00Z
-gregale app my-api changes --json                # for scripts and agents
+gregale app changes my-api                       # last 24 hours
+gregale app changes my-api --since 2026-10-08T12:00:00Z
+gregale app changes my-api --json                # for scripts and agents
 ```
 
 ```text

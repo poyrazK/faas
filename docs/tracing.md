@@ -64,7 +64,7 @@ error rate at least 5 percentage points and twice above baseline:
 
 ## Following a request across services
 
-`gregale trace <trace-id>` shows every retained request of one trace across
+`gregale debug trace <trace-id>` shows every retained request of one trace across
 your apps, with the logs, queued invocations and spans linked to it. The trace
 id is on each request in `gregale debug requests get`.
 

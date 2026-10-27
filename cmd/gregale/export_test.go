@@ -671,6 +671,7 @@ var CleanupUploadCacheExclusive = cleanupUploadCacheExclusive
 var CliConfigPath = cliConfigPath
 var CliTreePlaces = cliTreePlaces
 var CliTreeManifest = cliTreeManifest
+var CliTreeSpelling = cliTreeSpelling
 var CliRelatedCommands = &cliRelatedCommands
 var CliSeeAlso = cliSeeAlso
 var CliPreAuthPatch = cliPreAuthPatch

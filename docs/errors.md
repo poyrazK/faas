@@ -20,7 +20,7 @@ the caller supplies an occurrence URI.
 | `capacity_unavailable` | The platform cannot admit work now | Retry with backoff; the response includes `Retry-After` where applicable. |
 | `idempotency_key_reused` (422) | The request's `Idempotency-Key` was used in the last 24 hours for a different request (another body, query, or precondition header); nothing ran, and the first request's result is kept ([ADR-20261022204036](adr/20261022204036-idempotency-key-bound-to-request.md)) | Send a new key for a new request. To get the first request's result, resend it unchanged with the same key. |
 | `auth_rate_limited` (429) | Too many failed authentication attempts came from this address | Wait for `Retry-After`, then retry with valid credentials. |
-| `ip_denied`, `geo_denied` (403) | An app edge rule refused the client's IP address or country | Check the rule with `gregale edge-rules list --app APP` and any list it references with `gregale edge-rule-lists get NAME`. |
+| `ip_denied`, `geo_denied` (403) | An app edge rule refused the client's IP address or country | Check the rule with `gregale edge rule list --app APP` and any list it references with `gregale edge rule-list get NAME`. |
 | `unauthorized` (401) | The dashboard session or API credential is missing or expired | Sign in again or refresh the API credential, then retry. |
 | `oauth_provider_unavailable` (503) | A third-party sign-in or GitHub connection provider is unavailable on this Gregale installation | Use another sign-in method if available, retry later, or contact support to enable the provider. |
 | `event_publish_batch_too_large` (413) | Batch publication exceeds its 1 MiB body limit; no items accepted | Reduce the batch size, preserving each event's source and id. |
@@ -38,7 +38,7 @@ the caller supplies an occurrence URI.
 | `log_archive_retention_exceeded` (403) | The requested log date is outside the plan's retention window | Choose a more recent date or review plans with longer retention. |
 | `verification_link_invalid` (410) | A verification link is malformed, expired, or already used | Request a new verification email and open its latest link. |
 | `not_found` (404) | The requested resource is missing or not visible to this account | Check the URL and account, then retry. |
-| `bindings_check_failed` (409) | Candidate binding preflight has blockers | Inspect `bindings_check.blockers`, resolve them and verify the candidate with `gregale bindings verify APP --deployment ID --all`. |
+| `bindings_check_failed` (409) | Candidate binding preflight has blockers | Inspect `bindings_check.blockers`, resolve them and verify the candidate with `gregale app binding verify APP --deployment ID --all`. |
 | `bindings_check_changed` (409) | Configuration, evidence or runtime facts changed, or a proof/push-consumer poll expired before promotion | Inspect `bindings_check.blockers` and retry. For `verification_expired`, verify the candidate again. For `queue_consumer_stale`, restore scheduler polling and wait for a healthy poll; the consumer window is thirty seconds independently of probe age. Traffic remains unchanged. |
 | `bindings_gate_unavailable` (503) | Binding catalogs cannot enforce the atomic promotion fence | Update the server and apply its migrations; ensure managed PostgreSQL and traffic state share the same database pool. |
 | `outbound_probe_unavailable` (503) | The outbound probe policy catalog cannot be read or saved | Apply the server migrations and restore catalog availability before configuring or verifying the binding. |
