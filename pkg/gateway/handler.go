@@ -1232,10 +1232,10 @@ type Handler struct {
 	// by appID. Lazily created on the first request for an opt-in
 	// app (App.RouteMetricsEnabled=true AND the operator kill-
 	// switch is enabled) so the cold path is allocation-free for
-	// apps that don't opt in. The map is never deleted — the
-	// underlying routeLabelSet is non-evicting (the daemon
-	// restart is the only path that resets it, same contract as
-	// accountLabelSet / hostnameLabelSet). sync.Map because the
+	// apps that don't opt in. The map is never deleted; a full
+	// routeLabelSet only gives up a label idle for
+	// api.RouteLabelReuseAfterIdle (ADR-20261026143210 amendment
+	// 1). sync.Map because the
 	// hot path is the "already created" lookup. nil until
 	// SetRouteMetricsEnabled is called from the App→routeSet
 	// resolution path.
@@ -8436,8 +8436,9 @@ func (p *preInstantiateApps) seen(appID string) bool {
 // creating a fresh one on the first sight of an opt-in app. The
 // lookup is O(1) (sync.Map.Load). Returns nil when the app is not
 // opted in (enabled=false) — the caller short-circuits the
-// per-route emission on nil. The map is never deleted; the
-// underlying routeLabelSet is non-evicting (ADR-093 D2).
+// per-route emission on nil. The map is never deleted; a full
+// routeLabelSet replaces only idle, undeclared labels and deletes
+// their series (ADR-20261026143210 amendment 1).
 //
 // Concurrency: sync.Map handles the parallel first-sight race
 // correctly. Two goroutines hitting the same opt-in app for the
@@ -8453,6 +8454,10 @@ func (h *Handler) routeSetFor(appID string, enabled bool) *routeLabelSet {
 		return v.(*routeLabelSet)
 	}
 	fresh := newRouteLabelSet()
+	// A replaced idle label takes its per-route series with it
+	// (ADR-20261026143210 amendment 1).
+	metrics := h.metrics
+	fresh.onEvict = func(route string) { metrics.DropRouteSeries(appID, route) }
 	actual, _ := h.routeSets.LoadOrStore(appID, fresh)
 	return actual.(*routeLabelSet)
 }

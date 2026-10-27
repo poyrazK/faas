@@ -57,6 +57,7 @@ type QueuePoller = queuePoller
 type ReadCountingStore = readCountingStore
 type RealtimeTriggerRecord = realtimeTriggerRecord
 type RecordingJobVMM = recordingJobVMM
+type RecordingSynth = recordingSynth
 type RuntimeConfigDrainReason = runtimeConfigDrainReason
 type RuntimeSnapshotVerifierFunc = runtimeSnapshotVerifierFunc
 type ScheduleStepExecutor = scheduleStepExecutor
@@ -139,6 +140,7 @@ var KafkaSASLMechanism = kafkaSASLMechanism
 var KindsOf = kindsOf
 var ListServiceReplicas = listServiceReplicas
 var LiveCount = liveCount
+var DeliverCronInvocations = deliverCronInvocations
 var MakeEngine = makeEngine
 var MakeLoopForDLQ = makeLoopForDLQ
 var MarshalJSON = marshalJSON
@@ -492,6 +494,7 @@ func (r *Loop) RecoverPrimeCandidate(p0 context.Context, p1 string, p2 time.Time
 func (r *Loop) RunInstanceStats(p0 context.Context) { r.runInstanceStats(p0) }
 func (r *Loop) RunPrimeRecovery(p0 context.Context) { r.runPrimeRecovery(p0) }
 func (r *Loop) RunReaper(p0 context.Context)        { r.runReaper(p0) }
+func (r *Loop) RunCronTick(p0 context.Context)      { r.runCronTick(p0) }
 func (r *Loop) RecordTriggerConsumerHealth(p0 context.Context, p1 storeLike, p2 sqlc.Trigger, p3 PollResult) {
 	r.recordTriggerConsumerHealth(p0, p1, p2, p3)
 }
@@ -610,9 +613,10 @@ func (r *fakeVMM) WarmSnapshotHook() *func() { return &r.warmSnapshotHook }
 func (r *fakeVMM) WarmSnapshots() *int       { return &r.warmSnapshots }
 
 // Members of fireNowHarness
-func (r *fireNowHarness) Loop() **Loop            { return &r.loop }
-func (r *fireNowHarness) Store() *state.Store     { return &r.store }
-func (r *fireNowHarness) Synth() **recordingSynth { return &r.synth }
+func (r *fireNowHarness) DeliverInvocations(p0 context.Context) { r.deliverInvocations(p0) }
+func (r *fireNowHarness) Loop() **Loop                          { return &r.loop }
+func (r *fireNowHarness) Store() *state.Store                   { return &r.store }
+func (r *fireNowHarness) Synth() **recordingSynth               { return &r.synth }
 
 // Members of frozenFakeVMM
 func (r *frozenFakeVMM) Thaws() *int { return &r.thaws }
