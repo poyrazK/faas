@@ -176,8 +176,6 @@ var routeActions = map[string]authz.OrgAction{
 	"POST /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/groups/{group}/credentials":                        authz.OrgActionManageAppSecurity,
 	"POST /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/groups/{group}/credentials/{credential_id}/rotate": authz.OrgActionManageAppSecurity,
 	"POST /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/groups/{group}/credentials/{credential_id}/revoke": authz.OrgActionManageAppSecurity,
-	"GET /v1/apps/{slug}/ai-access-tokens":                                                                              authz.OrgActionManageAppSecurity,
-	"DELETE /v1/apps/{slug}/ai-access-tokens/{token}":                                                                   authz.OrgActionManageAppSecurity,
 
 	// Session-only dashboard and GitHub install routes (Authorize, called
 	// from the dashboard session gate). Their reads take OrgActionReadApp
