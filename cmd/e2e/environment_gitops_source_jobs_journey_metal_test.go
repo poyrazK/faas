@@ -239,6 +239,7 @@ func (j *nativeSourceJobJourney) waitSourceApplied(t *testing.T, revision string
 		t.Logf("serving proof job: status=%s kind=%s rev=%d image=%s/%s/%s materialized=%s retry=%d timeout=%d par=%d ram=%d cmd=%q env=%s rules=%+v",
 			job.Status, job.Kind, job.ScheduleRevision, job.ImageRef, job.ImageResolvedDigest, job.ImageStorageKey, job.ImageMaterializationStatus,
 			job.RetryMax, job.TaskTimeoutS, job.MaxParallelism, job.RAMMB, job.Command, job.EnvOverrides, job.FailureRules)
+		t.Logf("serving proof schedule: job cron=%q tz=%q policy=%+v; intent schedule=%+v", job.CronSchedule, job.CronTimezone, job.SchedulePolicy, intent.Schedule)
 		occurrences, err := j.store.ScheduleOccurrenceListByJob(ctx, job.ID, 5, "")
 		t.Logf("serving proof occurrences (err=%v):", err)
 		for _, o := range occurrences {
