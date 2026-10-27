@@ -66,7 +66,9 @@ func TestNativeConsentCarriesChosenCapabilitiesToTheGrant(t *testing.T) {
 		t.Fatal(err)
 	}
 	var tokens tokenResponse
-	decodeResponse(t, f.exchange(redirect.Query().Get("code"), testVerifier, f.resource, f.clientID), &tokens)
+	exchanged := f.exchange(redirect.Query().Get("code"), testVerifier, f.resource, f.clientID)
+	decodeResponse(t, exchanged, &tokens)
+	_ = exchanged.Body.Close()
 	cs, ctx := f.connect(tokens, "2026-07-28")
 	tools := listedTools(t, ctx, cs)
 	for _, want := range []string{"gregale_request_secret", "gregale_get_secret_request", "gregale_plan_domain", "gregale_plan_cron", "gregale_plan_bucket", "gregale_check_domain", "gregale_apply_provision"} {

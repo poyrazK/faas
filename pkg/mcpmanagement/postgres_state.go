@@ -84,7 +84,8 @@ func OpenPostgresStateStore(ctx context.Context, opts PostgresStateOptions) (*St
 	p.mu.Lock()
 	p.renewing = true
 	p.mu.Unlock()
-	go p.renew(store)
+	// Renewal outlives the opening context; Close stops it.
+	go p.renew(context.WithoutCancel(ctx), store)
 	return store, nil
 }
 
@@ -204,7 +205,7 @@ func (p *pgState) commit(records map[string]json.RawMessage, changed []string) e
 
 // renew extends the lease every third of its TTL. A lease another process
 // took, or one not renewed before it surely expired, disables the store.
-func (p *pgState) renew(store *StateStore) {
+func (p *pgState) renew(ctx context.Context, store *StateStore) {
 	defer close(p.done)
 	ticker := time.NewTicker(p.ttl / 3)
 	defer ticker.Stop()
@@ -218,8 +219,8 @@ func (p *pgState) renew(store *StateStore) {
 		epoch := p.epoch
 		p.mu.Unlock()
 		started := time.Now()
-		ctx, cancel := context.WithTimeout(context.Background(), p.ttl/3)
-		_, err := p.q.RenewMCPBridgeLease(ctx, p.pool, sqlc.RenewMCPBridgeLeaseParams{Bridge: p.bridge, Holder: p.holder, Epoch: epoch, TtlSeconds: p.ttl.Seconds()})
+		renewCtx, cancel := context.WithTimeout(ctx, p.ttl/3)
+		_, err := p.q.RenewMCPBridgeLease(renewCtx, p.pool, sqlc.RenewMCPBridgeLeaseParams{Bridge: p.bridge, Holder: p.holder, Epoch: epoch, TtlSeconds: p.ttl.Seconds()})
 		cancel()
 		if err == nil {
 			p.mu.Lock()
@@ -232,7 +233,7 @@ func (p *pgState) renew(store *StateStore) {
 		p.mu.Unlock()
 		if errors.Is(err, pgx.ErrNoRows) || expired {
 			if !errors.Is(err, pgx.ErrNoRows) {
-				err = fmt.Errorf("%w: renewal failed until it expired: %v", ErrStateLeaseLost, err)
+				err = fmt.Errorf("%w: renewal failed until it expired: %w", ErrStateLeaseLost, err)
 			} else {
 				err = ErrStateLeaseLost
 			}

@@ -57,8 +57,13 @@ func TestHostedBridgeIsItsOwnPathIssuer(t *testing.T) {
 		}
 	}
 	register := `{"client_name":"hosted-agent","redirect_uris":["` + testRedirect + `"],"grant_types":["authorization_code","refresh_token"],"token_endpoint_auth_method":"none"}`
-	if response, err := client.Post(server.URL+"/oauth/register", "application/json", strings.NewReader(register)); err != nil || response.StatusCode != 404 {
-		t.Fatalf("root registration: %v %v", response, err)
+	root, err := client.Post(server.URL+"/oauth/register", "application/json", strings.NewReader(register))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = root.Body.Close()
+	if root.StatusCode != 404 {
+		t.Fatalf("root registration = %d", root.StatusCode)
 	}
 	response, err := client.Post(resource+"/oauth/register", "application/json", strings.NewReader(register))
 	if err != nil || response.StatusCode != 201 {
