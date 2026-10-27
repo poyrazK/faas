@@ -12,6 +12,8 @@ counts only up to its node's watermark, and anything missing is billed as
 running time, as before the feature. So both alerts mean customers paid for
 pause time they should not have, never that billing was skipped.
 
+## Check
+
 Switches, all off by default:
 
 - schedd `quiet_pause_ledger` (`FAAS_QUIET_PAUSE_LEDGER`): write the ledger.

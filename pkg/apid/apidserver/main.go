@@ -2545,6 +2545,11 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			Active:   func() bool { return logSearchOn },
 			Released: srv.logSearchReleasedForApp,
 		}, srv.ops.Registry(), log)
+		// Multi-box: a node's vmmd/apid-client leaf names the node, so its
+		// lines must come from instances on that node.
+		if nodes, ok := nodeVerifier.(wire.NodeIdentityResolver); ok {
+			runtimeLogs.WithPeerNodes(nodes)
+		}
 	}
 	// H5-34: one gate across both telemetry listeners bounds their share of
 	// apid's database pool.

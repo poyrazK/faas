@@ -2,11 +2,14 @@ package state
 
 import (
 	"context"
+	"errors"
 	"slices"
 	"sort"
 	"time"
 
 	"github.com/google/uuid"
+
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 // Database switch phases (ADR-20261023181931). A switch moves through them in
@@ -33,6 +36,10 @@ func DatabaseSwitchTerminal(phase string) bool {
 
 // DatabaseSwitchCancellable reports whether a person may still cancel a
 // switch in phase: until it starts switching the release and the bindings.
+// ErrDatabaseSwitchesActive means the account already runs
+// api.DatabaseSwitchesActivePerAccount unfinished switches.
+var ErrDatabaseSwitchesActive = errors.New("state: too many unfinished database switches for the account")
+
 func DatabaseSwitchCancellable(phase string) bool {
 	switch phase {
 	case DatabaseSwitchRestoring, DatabaseSwitchStaging, DatabaseSwitchVerifying,
@@ -144,10 +151,17 @@ func (m *MemStore) CreateDatabaseSwitch(_ context.Context, sw DatabaseSwitch) (D
 	if _, ok := m.apps[sw.AppID]; !ok {
 		return DatabaseSwitch{}, ErrNotFound
 	}
+	active := 0
 	for _, existing := range m.databaseSwitches {
 		if existing.AppID == sw.AppID && !DatabaseSwitchTerminal(existing.Phase) {
 			return DatabaseSwitch{}, ErrConflict
 		}
+		if existing.AccountID == sw.AccountID && !DatabaseSwitchTerminal(existing.Phase) {
+			active++
+		}
+	}
+	if active >= api.DatabaseSwitchesActivePerAccount {
+		return DatabaseSwitch{}, ErrDatabaseSwitchesActive
 	}
 	if m.databaseSwitches == nil {
 		m.databaseSwitches = map[string]DatabaseSwitch{}
@@ -247,6 +261,11 @@ func (m *MemStore) SaveDatabaseSwitch(_ context.Context, sw DatabaseSwitch, now 
 	}
 	if err := validDatabaseSwitchProgress(sw); err != nil {
 		return DatabaseSwitch{}, err
+	}
+	if current.CancelRequestedAt != nil && DatabaseSwitchCancellable(current.Phase) && sw.Phase == DatabaseSwitchSwitching {
+		// A cancel accepted while the drain step ran: hold the phase, due
+		// now, so the next step aborts.
+		sw.Phase, sw.PhaseStartedAt, sw.RetryAt = current.Phase, current.PhaseStartedAt, now
 	}
 	saved := current
 	applyDatabaseSwitchProgress(&saved, sw)

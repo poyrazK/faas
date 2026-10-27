@@ -138,7 +138,7 @@ func discoverDevAllApps(root string, discover func(string) ([]projectSource, err
 			return nil, fmt.Errorf("apps %s and %s both map to developer project %q; rename one workspace or run them separately with --path and --name", previous, source.RootDir, project)
 		}
 		owners[project] = source.RootDir
-		service := strings.ToLower(strings.TrimSpace(source.Name))
+		service := api.ServiceDNSName(source.Name)
 		if !api.ValidServiceName(service) {
 			service = project
 		}

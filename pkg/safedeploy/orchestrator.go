@@ -365,6 +365,10 @@ func (o *Orchestrator) autoAbort(ctx context.Context, d state.Deployment, elapse
 			"deployment_id", d.ID, "app_id", d.AppID, "err", err)
 		return
 	}
+	if app.Status == state.AppDeleted {
+		o.closeDeletedAppRollout(ctx, d, stats)
+		return
+	}
 	reason := fmt.Sprintf("automatic abort: rollout stuck at canary step %d/%d for %s (safety gate or progression worker did not recover)",
 		d.CanaryStep, d.CanaryTotalSteps, elapsed.Round(time.Second))
 	key := fmt.Sprintf("safedeploy/%s/stuck-abort", d.ID)
@@ -385,6 +389,37 @@ func (o *Orchestrator) autoAbort(ctx context.Context, d state.Deployment, elapse
 	stats.AutoAborted++
 	o.Log.Warn("safedeploy: automatically aborted stuck rollout",
 		"deployment_id", d.ID, "app_slug", app.Slug, "reason", reason)
+}
+
+// closeDeletedAppRollout ends a stuck rollout whose app was deleted. APID
+// will not load a deleted app's rollout, so the recovery call failed on every
+// tick and the row was picked again forever: h11-py, deleted four minutes into
+// its canary, sat at canary step 1 for six days (Hunt 14 H14-84). No traffic
+// remains to redistribute, so the row is only stamped aborted.
+func (o *Orchestrator) closeDeletedAppRollout(ctx context.Context, d state.Deployment, stats *Stats) {
+	abortedAt := o.now()
+	var startedAt *time.Time
+	if d.RolloutStartedAt != nil {
+		s := *d.RolloutStartedAt
+		startedAt = &s
+	}
+	const reason = "app deleted during rollout"
+	if _, err := o.Store.SafedeployStampRollout(ctx, d.ID, "aborted", startedAt, nil, &abortedAt, reason); err != nil {
+		stats.AutoAbortFailed++
+		o.Log.Warn("safedeploy: close rollout of deleted app",
+			"deployment_id", d.ID, "app_id", d.AppID, "err", err)
+		return
+	}
+	o.emitAudit(ctx, d, AuditKindRolloutAborted, map[string]any{
+		"deployment_id": d.ID,
+		"app_id":        d.AppID,
+		"canary_step":   d.CanaryStep,
+		"canary_total":  d.CanaryTotalSteps,
+		"reason":        reason,
+		"aborted_at":    abortedAt.UTC().Format(time.RFC3339Nano),
+	}, stats)
+	stats.AutoAborted++
+	o.Log.Info("safedeploy: closed rollout of deleted app", "deployment_id", d.ID, "app_id", d.AppID)
 }
 
 // start flips pending → rolling_out and stamps rollout_started_at.

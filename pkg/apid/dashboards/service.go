@@ -27,6 +27,10 @@ import (
 type Host interface {
 	// AppForAccount returns the account's app by slug, or false.
 	AppForAccount(ctx context.Context, acct state.Account, slug string) (state.App, bool)
+	// ShowsDashboard reports whether the request's credential may see a
+	// dashboard with these widgets: a key bound to one app or company sees
+	// only dashboards whose widgets all name apps it may see.
+	ShowsDashboard(ctx context.Context, acct state.Account, widgets []api.DashboardWidget) bool
 	Dashboards() state.DashboardStore
 	Sources() Sources
 	Logger() *slog.Logger
@@ -55,7 +59,9 @@ func (s *Service) List(w http.ResponseWriter, r *http.Request, acct state.Accoun
 	}
 	resp := api.DashboardsResponse{Dashboards: make([]api.Dashboard, 0, len(rows))}
 	for _, row := range rows {
-		resp.Dashboards = append(resp.Dashboards, dto(row))
+		if d := dto(row); s.Host.ShowsDashboard(r.Context(), acct, d.Widgets) {
+			resp.Dashboards = append(resp.Dashboards, d)
+		}
 	}
 	httpkit.WriteJSON(w, http.StatusOK, resp)
 }
@@ -94,7 +100,7 @@ func (s *Service) Get(w http.ResponseWriter, r *http.Request, acct state.Account
 	if !s.gate(w) {
 		return
 	}
-	row, err := s.Host.Dashboards().DashboardByID(r.Context(), acct.ID, r.PathValue("id"))
+	row, err := s.dashboard(r.Context(), acct, r.PathValue("id"))
 	if s.writeErr(w, r, "read dashboard", err) {
 		return
 	}
@@ -104,6 +110,9 @@ func (s *Service) Get(w http.ResponseWriter, r *http.Request, acct state.Account
 // Replace serves PUT /v1/dashboards/{id}.
 func (s *Service) Replace(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	if !s.gate(w) {
+		return
+	}
+	if _, err := s.dashboard(r.Context(), acct, r.PathValue("id")); s.writeErr(w, r, "read dashboard", err) {
 		return
 	}
 	row, ok := s.decode(w, r, acct)
@@ -123,10 +132,26 @@ func (s *Service) Delete(w http.ResponseWriter, r *http.Request, acct state.Acco
 	if !s.gate(w) {
 		return
 	}
+	if _, err := s.dashboard(r.Context(), acct, r.PathValue("id")); s.writeErr(w, r, "read dashboard", err) {
+		return
+	}
 	if s.writeErr(w, r, "delete dashboard", s.Host.Dashboards().DeleteDashboard(r.Context(), acct.ID, r.PathValue("id"))) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// dashboard reads one of the account's dashboards that the request's
+// credential may see; one it may not reads as absent.
+func (s *Service) dashboard(ctx context.Context, acct state.Account, id string) (state.Dashboard, error) {
+	row, err := s.Host.Dashboards().DashboardByID(ctx, acct.ID, id)
+	if err != nil {
+		return state.Dashboard{}, err
+	}
+	if !s.Host.ShowsDashboard(ctx, acct, dto(row).Widgets) {
+		return state.Dashboard{}, state.ErrNotFound
+	}
+	return row, nil
 }
 
 func (s *Service) gate(w http.ResponseWriter) bool {

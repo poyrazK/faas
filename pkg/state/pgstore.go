@@ -2864,7 +2864,7 @@ func (s *PgStore) PreviewAppByProjectWorkload(ctx context.Context, accountID, pr
 		 where account_id = $1
 		   and project_id = $2
 		   and preview_pr_number = $3
-		   and workload_name = $4
+		   and translate(lower(workload_name), '_.', '--') = translate(lower($4), '_.', '--')
 		   and preview_of_slug is not null
 		   and status <> 'deleted'
 	`, accountID, projectID, previewPRNumber, workloadName)
@@ -3356,6 +3356,34 @@ func (s *PgStore) ListUnplacedApps(ctx context.Context) ([]App, error) {
 	}
 	defer rows.Close()
 	return scanApps(rows)
+}
+
+// OwnedAppRAMByNode implements AppOwnershipLoadReader: Σ apps.ram_mb over
+// the non-deleted apps each node owns.
+func (s *PgStore) OwnedAppRAMByNode(ctx context.Context) (map[string]int64, error) {
+	rows, err := s.pool.Query(ctx, `
+		select node_id::text, coalesce(sum(ram_mb), 0)::bigint
+		  from apps
+		 where node_id is not null
+		   and status <> 'deleted'
+		 group by node_id`)
+	if err != nil {
+		return nil, fmt.Errorf("state: owned app ram by node: %w", err)
+	}
+	defer rows.Close()
+	owned := make(map[string]int64)
+	for rows.Next() {
+		var nodeID string
+		var mb int64
+		if err := rows.Scan(&nodeID, &mb); err != nil {
+			return nil, fmt.Errorf("state: scan owned app ram by node: %w", err)
+		}
+		owned[nodeID] = mb
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("state: iterate owned app ram by node: %w", err)
+	}
+	return owned, nil
 }
 
 // SetAppNodeID atomically claims the owner for an unplaced app. The
@@ -8320,9 +8348,9 @@ func (s *PgStore) updateDeploymentTraffic(ctx context.Context, id string, newPer
 		if _, err := tx.Exec(ctx,
 			`update deployments
 			    set traffic_percent = $2,
-			        traffic_percent_explicit = case when traffic_percent = $2 then traffic_percent_explicit else $3 end
+			        traffic_percent_explicit = case when traffic_percent = $2 or $4 then traffic_percent_explicit else $3 end
 			  where id = $1`,
-			stamp.id, stamp.next, manualTrafficExplicit(stamp.prior, stamp.next, false)); err != nil {
+			stamp.id, stamp.next, manualTrafficExplicit(stamp.prior, stamp.next, false), manualTrafficKeepsExplicit(stamp.prior, stamp.next)); err != nil {
 			if stamp.target {
 				return Deployment{}, fmt.Errorf("state: stamp traffic_percent %s: %w", stamp.id, mapErr(err))
 			}

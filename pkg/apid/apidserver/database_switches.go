@@ -53,10 +53,30 @@ func (s *server) databaseSwitchWorker() *databaseswitch.Worker {
 			return err
 		},
 		AppChanged: func(ctx context.Context, appID string) { _ = s.notif.Notify(ctx, db.NotifyAppChanged, appID) },
+		Ownership:  s.databaseSwitchOwnership,
 		Observe:    s.observeDatabaseSwitch,
 		Report:     s.reportDatabaseSwitchTick,
 		Log:        s.log,
 	}
+}
+
+// databaseSwitchOwnership scopes a switch's managed PostgreSQL calls to the
+// app's organization, as appaccess does for the request that started it, so
+// the restore is admitted and counted against the organization's plan, not
+// the creator's personal one.
+func (s *server) databaseSwitchOwnership(ctx context.Context, sw state.DatabaseSwitch) (context.Context, error) {
+	app, err := s.store.AppByID(ctx, sw.AppID)
+	if err != nil {
+		return ctx, err
+	}
+	if app.OrgID == "" {
+		return ctx, nil
+	}
+	owner, err := state.AppResourceAccount(ctx, s.store, app)
+	if err != nil {
+		return ctx, err
+	}
+	return managedpostgres.WithOwnership(ctx, app.OrgID, owner.ResourceOwnerID()), nil
 }
 
 // runDatabaseSwitchWorker advances switches. Concurrent apid processes are
@@ -88,6 +108,13 @@ func (s *server) startDatabaseSwitch(w http.ResponseWriter, r *http.Request, acc
 			"restore_databases restores and rebinds a managed PostgreSQL database; the key needs the postgres:manage scope as well"))
 		return
 	}
+	// A switch creates a billable restored database, as
+	// POST /v1/postgres/databases/{id}/restore does, so it asks the same of
+	// the caller.
+	if !actorAccount(r, acct).EmailVerified() {
+		api.WriteProblem(w, api.ErrEmailVerificationRequired())
+		return
+	}
 	plan, problem := s.planRollback(r, acct, app, req)
 	if problem != nil {
 		api.WriteProblem(w, problem)
@@ -107,6 +134,10 @@ func (s *server) startDatabaseSwitch(w http.ResponseWriter, r *http.Request, acc
 		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeDatabaseSwitchInProgress, "Database switch in progress",
 			"This app already has a database switch that has not finished.").
 			WithHint(fmt.Sprintf("Follow it with gregale rollback switches %s, or cancel it before it starts switching.", app.Slug)))
+		return
+	}
+	if errors.Is(err, state.ErrDatabaseSwitchesActive) {
+		api.WriteProblem(w, api.ErrDatabaseSwitchesActive(api.DatabaseSwitchesActivePerAccount))
 		return
 	}
 	if err != nil {
@@ -146,7 +177,8 @@ func (s *server) databaseSwitchFor(ctx context.Context, r *http.Request, acct st
 	}
 	source, err := s.managedPostgres.Get(ctx, acct.ID, databases[0].ID)
 	if err != nil {
-		return state.DatabaseSwitch{}, api.ErrDatabaseSwitchUnavailable("The database the release commands migrate cannot be read: "+err.Error()+".", "")
+		s.log.WarnContext(ctx, "database switch: read source database", "app", app.ID, "database", databases[0].ID, "err", err)
+		return state.DatabaseSwitch{}, api.ErrDatabaseSwitchUnavailable("The database the release commands migrate cannot be read.", "")
 	}
 	limits, ok := api.ManagedPostgresLimitsFor(acct.Plan)
 	if !ok || limits.DatabasesMax == 0 || !managedPostgresPlanAllows(limits, source.Spec) {
@@ -273,6 +305,13 @@ func (s *server) getDatabaseSwitch(w http.ResponseWriter, r *http.Request, acct 
 func (s *server) cancelDatabaseSwitch(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	app, sw, ok := s.loadDatabaseSwitch(w, r, acct)
 	if !ok {
+		return
+	}
+	// Cancelling changes what happens to a managed database, as starting
+	// does, so it needs the same postgres:manage scope.
+	if p, ok := principalFrom(r); !ok || !principalHasScope(p, api.ScopesManagedPostgresManageSurface) {
+		api.WriteProblem(w, api.NewProblem(http.StatusForbidden, api.CodeForbidden, "Insufficient scope",
+			"cancelling a database switch needs the postgres:manage scope as well"))
 		return
 	}
 	switches, _ := s.databaseSwitchStore()

@@ -379,11 +379,11 @@ func (e *Engine) retiredQueueHasInFlightWork(ctx context.Context, app state.App,
 		if binding.RetiredAt == nil {
 			continue
 		}
-		stats, err := e.store.QueueStateForBindingInScope(ctx, app.ID, binding.ID, scope)
+		inFlight, err := e.store.QueueBindingHasInFlight(ctx, app.ID, binding.ID, scope)
 		if err != nil {
 			return false, err
 		}
-		if stats.InFlight > 0 {
+		if inFlight {
 			return true, nil
 		}
 	}
@@ -642,7 +642,7 @@ func (e *Engine) workerReplicaTargetForScope(ctx context.Context, app state.App,
 			}
 		}
 		if haveQueue && queueTarget > 0 {
-			desired, err = e.workerQueueDemandForScope(ctx, app, scope, queueTarget)
+			desired, err = e.workerQueueDemandForScope(ctx, app, scope, queueTarget, max)
 			if err != nil {
 				return 0, "", err
 			}
@@ -809,14 +809,18 @@ func (e *Engine) mcpTasksObserverReady(ctx context.Context, worker state.App) (b
 	return false, nil
 }
 
-func (e *Engine) workerQueueDemandForScope(ctx context.Context, app state.App, scope string, target float64) (int, error) {
+// workerQueueDemandForScope reads each queue's depth only up to the depth that
+// saturates maxReplicas workers: the caller caps desired at maxReplicas, and
+// a full count would read the whole backlog on every reconcile.
+func (e *Engine) workerQueueDemandForScope(ctx context.Context, app state.App, scope string, target float64, maxReplicas int) (int, error) {
 	bindings, err := e.store.ListQueueBindingHistoryForApp(ctx, app.AccountID, app.ID)
 	if err != nil {
 		return 0, err
 	}
+	limit := workerQueueDepthLimit(target, maxReplicas)
 	if len(bindings) == 0 {
-		stats, err := e.store.QueueStateInScope(ctx, app.ID, scope)
-		return int(math.Ceil(float64(stats.Depth) / target)), err
+		depth, err := e.store.QueueDepthInScope(ctx, app.ID, scope, limit)
+		return int(math.Ceil(float64(depth) / target)), err
 	}
 	desired := 0
 	var environment *state.ProjectEnvironment
@@ -842,17 +846,27 @@ func (e *Engine) workerQueueDemandForScope(ctx context.Context, app state.App, s
 				continue
 			}
 		}
-		stats, err := e.store.QueueStateForBindingInScope(ctx, app.ID, binding.ID, scope)
+		depth, err := e.store.QueueDepthForBindingInScope(ctx, app.ID, binding.ID, scope, limit)
 		if err != nil {
 			return 0, err
 		}
-		demand := int(math.Ceil(float64(stats.Depth) / target))
+		demand := int(math.Ceil(float64(depth) / target))
 		if binding.MaxConcurrency > 0 && demand > binding.MaxConcurrency {
 			demand = binding.MaxConcurrency
 		}
 		desired += demand
 	}
 	return desired, nil
+}
+
+// workerQueueDepthLimit is the depth at which ceil(depth/target) reaches
+// maxReplicas; no deeper read can change the pool's size.
+func workerQueueDepthLimit(target float64, maxReplicas int) int {
+	limit := math.Ceil(target * float64(max(maxReplicas, 1)))
+	if limit < 1 || math.IsNaN(limit) {
+		return 1
+	}
+	return int(min(limit, float64(1<<20)))
 }
 
 func (e *Engine) capWorkerReplicasToAccount(ctx context.Context, app state.App, current []state.Instance, desired int) (int, *api.WorkerAdmissionBlocker, error) {

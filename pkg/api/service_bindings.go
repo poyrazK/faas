@@ -475,7 +475,7 @@ func ServiceBindingEnvForTransport(base map[string]string, bindings []AppService
 	for _, binding := range bindings {
 		env[binding.Binding] = ServiceBindingCanonicalURL(binding.Service, transport)
 		env[ServiceBindingHTTPSEnvKey(binding.Service)] = ServiceBindingCanonicalURL(binding.Service, ServiceBindingTransportHTTPS)
-		env[ServiceBindingHostEnvKey(binding.Service)] = binding.Service + ".svc.gregale"
+		env[ServiceBindingHostEnvKey(binding.Service)] = ServiceDNSName(binding.Service) + ".svc.gregale"
 	}
 	if len(env) == 0 {
 		return nil
@@ -486,10 +486,29 @@ func ServiceBindingEnvForTransport(base map[string]string, bindings []AppService
 // ServiceBindingCanonicalURL is the GREGALE_SERVICE_<NAME>_URL value for a
 // caller's transport: the private HTTPS alias, or the plaintext service proxy.
 func ServiceBindingCanonicalURL(service string, transport ServiceBindingTransport) string {
+	service = ServiceDNSName(service)
 	if transport.Effective() == ServiceBindingTransportHTTPS {
 		return "https://" + service + ".internal"
 	}
 	return fmt.Sprintf("http://%s.svc.gregale:%d", service, ServiceBindingPort)
+}
+
+// serviceDNSNameReplacer maps the Compose service-name characters a DNS label
+// cannot carry to the hyphen (ADR-20261026170512).
+var serviceDNSNameReplacer = strings.NewReplacer("_", "-", ".", "-")
+
+// ServiceDNSName is the name a service is called by over the network
+// (`<name>.internal`, `<name>.svc.gregale`): the repository service name in
+// lower case, with `_` and `.` written as `-`, so Compose's `billing_api` is
+// `billing-api`. Stored names keep their declared form; every comparison and
+// generated address uses this one (ADR-20261026170512).
+func ServiceDNSName(name string) string {
+	return serviceDNSNameReplacer.Replace(strings.ToLower(strings.TrimSpace(name)))
+}
+
+// SameServiceName reports whether two service names call the same service.
+func SameServiceName(a, b string) bool {
+	return ServiceDNSName(a) == ServiceDNSName(b)
 }
 
 // ValidServiceName reports whether name is a service DNS label, the name

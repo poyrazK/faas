@@ -98,8 +98,12 @@ fi
 # past were to move the case somewhere it would stop running against both
 # stores, or to claim a "Why no test" exception that was not true.
 conformance_lib='pkg/state/conformance/*.go'
+# The SDKs are tested in their own languages: a Node SDK fix carries a
+# *.test.ts case and a Python one a test_*.py case. Before this the gate
+# rejected them for want of a Go test (Hunt 14 H14-91, #5644).
 changed_tests="$(git diff --name-only --diff-filter=ACMRTUXB "$base_sha" "$head_sha" \
-  -- '*_test.go' '*_test.sh' "$conformance_lib")"
+  -- '*_test.go' '*_test.sh' "$conformance_lib" \
+  '*.test.ts' '*.test.mjs' '*.test.js' '*/test_*.py' '*_test.py')"
 if [[ -n "$changed_tests" ]]; then
   echo "fix-has-test-check: OK — $trigger changes regression test coverage:"
   printf '  %s\n' "$changed_tests"
@@ -120,7 +124,7 @@ if (( has_bypass_label == 1 )) && printf '%s\n' "$pr_body" \
   exit 0
 fi
 
-echo "::error::fix-has-test-check: $trigger must change a *_test.go or *_test.sh file (or a pkg/state/conformance case)" >&2
+echo "::error::fix-has-test-check: $trigger must change a *_test.go, *_test.sh, *.test.{ts,mjs,js} or Python test file (or a pkg/state/conformance case)" >&2
 echo "::error::Add a regression test to this PR. For an intentional exception, add the no-regression-test label and a non-empty Why no test: line to the PR body." >&2
 [[ -z "$pr_number" ]] || echo "::error::PR #$pr_number changed files:" >&2
 git diff --name-only "$base_sha" "$head_sha" -- | sed 's/^/  /' >&2

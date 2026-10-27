@@ -2130,6 +2130,12 @@ func (b *PGBackend) recordAdmissionWithIdentity(ctx context.Context, appID, depl
 	if atCapacity || nodeID == "" || instanceID == "" {
 		if atCapacity && b.placementLoader != nil {
 			err := b.hydrateCurrentTargets(ctx, appID)
+			if errors.Is(err, ErrTargetPlacementChanged) {
+				// The replica the caller waits for can be admitted while this
+				// read is in flight; that read is stale, not wrong. Take one
+				// fresh read, as the control-plane repair poll does.
+				err = b.hydrateCurrentTargets(ctx, appID)
+			}
 			return "", WakeMethodUnspecified, true, err
 		}
 		if atCapacity && b.liveTargetLoader != nil {

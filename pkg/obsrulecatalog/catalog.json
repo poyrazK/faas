@@ -4,7 +4,7 @@
   "sets": [
     {
       "id": "gregale-core-v1",
-      "revision": "5f79df7fb1118dc7ce29d1610192031e3b3f855cd94cdb9cba73995eb1cd9430",
+      "revision": "c3f4c7d9a7797a413775ac74a240ba978c7bc7008c22c6c2b54b7ca692b8c39c",
       "files": [
         "faas.rules.yml"
       ],
@@ -5704,6 +5704,19 @@
           }
         },
         {
+          "id": "fdbd5c1c9bd5bd4f13d4fc857f7dfd78321c26169758f15758276f4f91f88e55",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_spec12_operator_signals",
+          "rule_name": "FaasEdgeRuleLoadFailing",
+          "definition": {
+            "expression_hash": "b374d378f70a1c3076b44f5f25a75af3d8387716e7968161b8ece89d37ce6f36",
+            "labels_hash": "99b7144c59ed917d63f5f68b0216f33554d4f96bbf089fa84c8afec17ac96d0b",
+            "for_seconds": 300,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "ba8f90200b61f91779f4904c633e0bf094b0e5b7e0e0618ee36a4d038c8f3fb9"
+          }
+        },
+        {
           "id": "fdf015313a8ed48d40c95d2abf6c81aa1473ab92612029e2ab3d3f8765c230ff",
           "file_name": "faas.rules.yml",
           "group_name": "faas_realtime_callbacks",
@@ -5785,7 +5798,7 @@
     },
     {
       "id": "gregale-full-v1",
-      "revision": "ea76e32a7f9f63d3dc75c30c42ff32b1a1dc06ee7c132b6cc7c77b3563eb74b0",
+      "revision": "5b4efa1f3a9bfde837dad1d3213e565668053064066aafd5aeddcef9c650f052",
       "files": [
         "bridge.rules.yml",
         "data_placement.yaml",
@@ -9019,6 +9032,19 @@
           }
         },
         {
+          "id": "86710a05d7b9c2233f11d3660a1a516fc407d6c981e78b65c18ede14d7c8f1b6",
+          "file_name": "pg_backup.rules.yml",
+          "group_name": "faas.pg_backup",
+          "rule_name": "FaasAuditAnchorErased",
+          "definition": {
+            "expression_hash": "cf549bd932d3ceaf4a1af606cd554edf7c4c5f1d23967500441d40cd0ddd9945",
+            "labels_hash": "1c639ef5f8989fffb0e665ab839be0a4964efa3da01d1635ff9675fca5002ddd",
+            "for_seconds": 0,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "79cf123e6ea3f7c02a8582a57953d5e7aae31972a7799ef82e83d48b04be53c1"
+          }
+        },
+        {
           "id": "86f08e6f1a68395874addb6c22b1377ec78fa78b893a33ad0187c3d0a6036fb5",
           "file_name": "faas.rules.yml",
           "group_name": "faas_slo",
@@ -9536,6 +9562,19 @@
             "for_seconds": 300,
             "keep_firing_for_seconds": 0,
             "fingerprint": "2170b15d8f92fffd21d2779db3118ad8844e33e0bc7280b8dd8c8cdfad5a7ca3"
+          }
+        },
+        {
+          "id": "9e5296da7d2ce7c41aee9b7d25b7fa4aea34d532016014a7aee2939cb72f5916",
+          "file_name": "pg_backup.rules.yml",
+          "group_name": "faas.pg_backup",
+          "rule_name": "FaasAuditLogTampered",
+          "definition": {
+            "expression_hash": "3de52a7685f4285a3ce5b6cc8ea842766654741aba9a1e7d5c0d4438d0e12813",
+            "labels_hash": "1c639ef5f8989fffb0e665ab839be0a4964efa3da01d1635ff9675fca5002ddd",
+            "for_seconds": 0,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "b07e8102c6f9a2a77e832b4a954dc85944cb5de8c23801289c9280dc92bad464"
           }
         },
         {
@@ -11476,6 +11515,19 @@
           }
         },
         {
+          "id": "f2606a25aaa231b811c0fa0b1233d9ffad25ea98b21b6c48b3b1cb275e0b21a0",
+          "file_name": "pg_backup.rules.yml",
+          "group_name": "faas.pg_backup",
+          "rule_name": "FaasAuditAnchorStale",
+          "definition": {
+            "expression_hash": "6e1903d2067e14c9c4ec7995d648fad68897aeb5c541a374874f1056b3905662",
+            "labels_hash": "de4d8008c49607d66212980df06f7093ed7b3e591cbb5e6b241ca6ace9a07deb",
+            "for_seconds": 900,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "c516e60c5d42b7065beef02ad6fc057fe1dd10f06535c9011ab7ed1640ceb798"
+          }
+        },
+        {
           "id": "f2a8899b4b6bad28266336874f117e1a5a29c7556338b40eff2f8b06b7fe9444",
           "file_name": "faas.rules.yml",
           "group_name": "faas_cgroup_resources",
@@ -11746,6 +11798,19 @@
             "for_seconds": 60,
             "keep_firing_for_seconds": 0,
             "fingerprint": "354fc8f56793bb7a3e9a6f04eb53cfe8f7e9863a6207b34bcc9874bcbdfedc6f"
+          }
+        },
+        {
+          "id": "fdbd5c1c9bd5bd4f13d4fc857f7dfd78321c26169758f15758276f4f91f88e55",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_spec12_operator_signals",
+          "rule_name": "FaasEdgeRuleLoadFailing",
+          "definition": {
+            "expression_hash": "b374d378f70a1c3076b44f5f25a75af3d8387716e7968161b8ece89d37ce6f36",
+            "labels_hash": "99b7144c59ed917d63f5f68b0216f33554d4f96bbf089fa84c8afec17ac96d0b",
+            "for_seconds": 300,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "ba8f90200b61f91779f4904c633e0bf094b0e5b7e0e0618ee36a4d038c8f3fb9"
           }
         },
         {

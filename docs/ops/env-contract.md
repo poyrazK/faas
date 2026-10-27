@@ -662,7 +662,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_REALTIME_CALLBACK_RETRY_MAX_INTERVAL` | realtimed | `default` |  |  | `` | maximum persistent callback retry delay; defaults to one minute and is capped at one hour |
 | `FAAS_REALTIME_CALLBACK_TIMEOUT` | realtimed | `default` |  |  | `` |  |
 | `FAAS_REALTIME_CHANNEL_ROUTING_ENABLED` | apid | `default` |  | 0 | `` | enable recipient-aware realtime publish only after every apid replica runs a route-writing version |
-| `FAAS_REALTIME_FAIR_USE_ENABLED` | apid, realtimed | `default` |  | 0 | `` | enforce plan connection limits per account and the 50% per-node account share, synced through apid (ADR-1323); also lowers the node connection default to 6000; enable on apid and every realtime node |
+| `FAAS_REALTIME_FAIR_USE_ENABLED` | apid, realtimed | `unit` |  |  | `` | the apid and realtimed units set 1: plan connection limits per account and the fleet-wide count, synced through apid, and the 6000 node connection default that keeps realtimed inside its 512 MB MemoryMax (ADR-1323); unset, apid sends no allowance and the node default is 10000 |
 | `FAAS_REALTIME_HEALTH_LISTEN` | realtimed | `default` |  |  | `` |  |
 | `FAAS_REALTIME_HEARTBEAT` | realtimed | `default` |  |  | `` |  |
 | `FAAS_REALTIME_HISTORY_TARGET` | realtimed | `default` |  | /run/faas/request_telemetry.sock | `` | private apid gRPC target for the optional resume preview; split-box TCP targets require mTLS |
@@ -677,7 +677,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_REALTIME_MAX_CONNECTIONS` | realtimed | `default` |  | 10000 | `` | node connection cap; 6000 with FAAS_REALTIME_FAIR_USE_ENABLED=1, sized to realtimed's 512 MB MemoryMax at ~52 KB per idle connection (ADR-1323); raise only with MemoryMax |
 | `FAAS_REALTIME_MAX_MESSAGE_BYTES` | realtimed | `default` |  |  | `` |  |
 | `FAAS_REALTIME_OCCUPANCY_PREVIEW_ENABLED` | apid, realtimed, shared | `default` |  | 0 | `` | channel occupancy preview: the occupancy API on apid, live occupancy frames and SSE events on realtimed (ADR-1324); enable on apid and every realtime node; on apid, the boot fallback for the realtime_occupancy platform flag (ADR 20261021080640), which then decides per account and is sent to realtime nodes with each endpoint registration; this switch stays a node capability |
-| `FAAS_REALTIME_OUTBOUND_BUDGET_ENABLED` | realtimed | `default` |  | 0 | `` | node outbound payload budget and slow-consumer shedding (ADR-1323); also sets a 384 MiB soft memory limit unless GOMEMLIMIT is set |
+| `FAAS_REALTIME_OUTBOUND_BUDGET_ENABLED` | realtimed | `unit` |  |  | `` | the realtimed unit sets 1: node outbound payload budget and slow-consumer shedding (ADR-1323); also sets a 384 MiB soft memory limit unless GOMEMLIMIT is set |
 | `FAAS_REALTIME_OUTBOUND_NODE_BYTES` | realtimed | `default` |  | 67108864 | `` | outbound payload budget across every connection on the node, with FAAS_REALTIME_OUTBOUND_BUDGET_ENABLED=1; the largest backlogs are disconnected first (ADR-1323); raise only with MemoryMax |
 | `FAAS_REALTIME_OUTBOUND_QUEUE` | realtimed | `default` |  |  | `` |  |
 | `FAAS_REALTIME_OUTBOUND_QUEUE_BYTES` | realtimed | `default` |  | 4194304 | `` | per-connection outbound payload budget, including a frame being written |
