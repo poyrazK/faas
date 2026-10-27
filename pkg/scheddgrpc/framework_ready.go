@@ -22,7 +22,11 @@ func (s *Server) ReportFrameworkReady(ctx context.Context, req *scheddpb.Framewo
 		return nil, status.Error(codes.InvalidArgument, "instance_id is required")
 	}
 	if _, err := s.authorizeInstance(ctx, id); err != nil {
-		return nil, err
+		relayed, relayErr := s.relayForeignFrameworkReady(ctx, err, id)
+		if !relayed {
+			return nil, relayErr
+		}
+		return &scheddpb.FrameworkReadyAck{}, nil
 	}
 	engine, ok := s.engine.(frameworkReadyEngine)
 	if !ok {
@@ -41,4 +45,30 @@ func (s *Server) ReportFrameworkReady(ctx context.Context, req *scheddpb.Framewo
 		return nil, grpcerr.ToStatus(toProblem(err))
 	}
 	return &scheddpb.FrameworkReadyAck{}, nil
+}
+
+// ForeignFrameworkReadyRelay publishes a framework-ready receipt for the
+// schedd that owns the app. *sched.Engine implements it.
+type ForeignFrameworkReadyRelay interface {
+	RelayFrameworkReady(ctx context.Context, instanceID, appID string) error
+}
+
+// relayForeignFrameworkReady hands vmmd's framework-ready receipt for an
+// instance this node hosts, but whose app a peer schedd owns, to that owner
+// (Hunt 14 H14-104). It uses the failure relay's guards: a FailedPrecondition
+// ownership rejection, a configured relay, and an instance on this node.
+func (s *Server) relayForeignFrameworkReady(ctx context.Context, authErr error, instanceID string) (bool, error) {
+	relay, ok := s.failureRelay.(ForeignFrameworkReadyRelay)
+	if !ok || s.resolver == nil || status.Code(authErr) != codes.FailedPrecondition {
+		return false, authErr
+	}
+	ins, err := s.resolver.InstanceByID(ctx, instanceID)
+	if err != nil || ins.NodeID == "" || ins.NodeID != string(s.owner) {
+		return false, authErr
+	}
+	if err := relay.RelayFrameworkReady(ctx, instanceID, ins.AppID); err != nil {
+		s.log.Warn("schedd: relay foreign framework ready", "instance", instanceID, "err", err)
+		return false, status.Errorf(codes.Unavailable, "relay framework-ready report for instance %s: %v", instanceID, err)
+	}
+	return true, nil
 }

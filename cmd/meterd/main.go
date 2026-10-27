@@ -53,12 +53,14 @@ import (
 	"github.com/onebox-faas/faas/pkg/billing/reconciler"
 	"github.com/onebox-faas/faas/pkg/canary"
 	"github.com/onebox-faas/faas/pkg/capdecl/runtimecheck"
+	"github.com/onebox-faas/faas/pkg/capflags"
 	"github.com/onebox-faas/faas/pkg/daemonunit"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/gateway/egresssocket"
 	"github.com/onebox-faas/faas/pkg/internalmail"
 	"github.com/onebox-faas/faas/pkg/mail"
 	"github.com/onebox-faas/faas/pkg/meter"
+	"github.com/onebox-faas/faas/pkg/platformflags"
 	"github.com/onebox-faas/faas/pkg/promql"
 	"github.com/onebox-faas/faas/pkg/releasemetrics"
 	"github.com/onebox-faas/faas/pkg/role"
@@ -1176,7 +1178,8 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if appsDomain == "" {
 		appsDomain = "gregale.dev" // apid's default for unset deployments
 	}
-	go runSyntheticChecks(ctx, store, appsDomain, log)
+	loops := newObservabilityLoops(ops.Registry()) // ADR-20261024222102
+	go runSyntheticChecks(ctx, store, appsDomain, loops, log)
 	// ADR 20261022111812: once the seal_domains role stages the alerting
 	// domain, its identity opens alert secrets, channel destinations and MCP
 	// readiness provider keys ahead of the fleet and host identities.
@@ -1192,10 +1195,18 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// ADR 20261022111812: apid relays the test sends it cannot open here;
 	// meterd holds the alerting key.
 	go runAlertTestSends(ctx, evaluator, log)
-	// ADR-20261022172052: firing app alerts carry what the log ledger shows.
-	evaluator.SetLogContext(deps.getenv("FAAS_LOG_SEARCH_ENABLED") == "1")
+	// ADR-20261022172052: firing app alerts carry what the log ledger shows,
+	// for the accounts the log-search capability flag releases it to
+	// (ADR-20261024222102). The runtime-config watcher below keeps the
+	// capability flags current; until its first reconcile, tier defaults decide.
+	capabilityFlags := platformflags.NewSet(capflags.Bootstrap(deps.getenv))
+	logSearch, err := newLogSearchRelease(deps.getenv, capabilityFlags, store)
+	if err != nil {
+		return err
+	}
+	evaluator.SetLogContext(logSearch.Released)
 	// ADR-747: record customer SLO budget hours from Prometheus.
-	go runSLORollup(ctx, store, promClient, log)
+	go runSLORollup(ctx, store, promClient, loops, log)
 	// ADR-098 PR-C: connection-aware upstream probe + partition
 	// cron. The FAAS_UPSTREAM_PROBE environment value is the
 	// bootstrap fallback; the durable data-placement flag can
@@ -1216,7 +1227,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// a hot enable is picked up on the next interval.
 	runtimeCtx, runtimeCancel := context.WithCancel(ctx)
 	defer runtimeCancel()
-	watcher := runtimeconfig.New(store, pool, []string{runtimeconfig.KeyDataPlacement},
+	keys, apply := runtimeconfig.WithPlatformFlags([]string{runtimeconfig.KeyDataPlacement},
 		func(ctx context.Context, key string, value json.RawMessage, _ int64) error {
 			enabled, err := runtimeconfig.Bool(value)
 			if err != nil {
@@ -1227,7 +1238,8 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 				probe.SetEnabled(enabled)
 			}
 			return nil
-		}, log)
+		}, capabilityFlags)
+	watcher := runtimeconfig.New(store, pool, keys, apply, log)
 	watcher.Daemon = "meterd" // ADR-1700 apply receipts
 	if err := watcher.Reconcile(runtimeCtx); err != nil {
 		log.Warn("meterd: initial runtime config reconcile failed", "err", err)

@@ -510,6 +510,10 @@ jobs:
       # new direct identity loaders and new unsealed bytea columns fail.
       - name: seal domain scope check
         run: go run ./scripts/ci/sealdomaincheck
+      # A 5xx problem detail built from an error hands the caller SQL,
+      # hostnames and paths; handlers log the error instead.
+      - name: problem detail check
+        run: go run ./scripts/ci/problemdetailcheck
       - name: migrations check (static)
         run: make migrations-check
       - name: select migration changes

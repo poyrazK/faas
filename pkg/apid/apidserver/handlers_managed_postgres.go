@@ -482,6 +482,10 @@ func (s *server) createManagedPostgresBinding(w http.ResponseWriter, r *http.Req
 		managedPostgresProblem(w, managedpostgres.ErrInvalid)
 		return
 	}
+	if problem := s.dataAPIAccessProblem(appFlagSubject(acct, app), managedpostgres.CredentialAccess(req.Access), `access "data_api"`); problem != nil {
+		api.WriteProblem(w, problem)
+		return
+	}
 	binding, err := s.managedPostgresBindings.Create(r.Context(), managedpostgres.CreateBindingRequest{AccountID: app.AccountID, DatabaseAccountID: acct.ID, DatabaseID: r.PathValue("id"), AppID: req.AppID, Scope: req.Scope, EnvironmentKey: req.EnvironmentKey, Access: managedpostgres.CredentialAccess(req.Access)})
 	if err != nil {
 		managedPostgresProblem(w, err)

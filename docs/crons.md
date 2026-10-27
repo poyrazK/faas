@@ -28,6 +28,11 @@ gregale cron create --app my-api --interactive   # pick a path, preview run time
 month, month, day of week). The finest granularity is one minute. A schedule
 that can never fire, such as `0 0 30 2 *`, is rejected.
 
+`--path` is the request path on your app and defaults to `/`. It starts with a
+single `/`, may carry a query string, and is at most 2,048 bytes; whitespace,
+control characters, backslashes and `#` are rejected. A cron always calls its
+own app, so a path cannot name another host.
+
 `--timezone` takes an IANA name and defaults to `UTC`. Schedules follow the
 zone's daylight-saving rules: a time that falls in a spring-forward gap fires
 once at the first valid minute after it, and a fixed time that repeats when
@@ -141,6 +146,10 @@ Each run shows when it started, how long it took, its outcome (`success`,
 `failed`, `timeout`) and the error. Runs are kept for the
 [invocation history retention](event-driven#invocation-history-retention)
 period.
+
+Schedule decisions (`gregale crons occurrences CRON_ID`) and manual-run
+requests (`gregale crons fire-now REQUEST_ID`) are kept for 90 days. A
+decision that is still waiting or running is kept until it settles.
 
 To be told when runs fail, add an alert rule on failed cron invocations:
 

@@ -873,6 +873,8 @@ from .create_consumer_signup_response import CreateConsumerSignupResponse
 from .create_cors_preset_request import CreateCorsPresetRequest
 from .create_cron_request import CreateCronRequest
 from .create_custom_domain_request import CreateCustomDomainRequest
+from .create_data_api_contract_task_request import CreateDataAPIContractTaskRequest
+from .create_data_api_contract_task_request_kind import CreateDataAPIContractTaskRequestKind
 from .create_data_connection_request import CreateDataConnectionRequest
 from .create_data_pipeline_request import CreateDataPipelineRequest
 from .create_deploy_token_request import CreateDeployTokenRequest
@@ -1174,6 +1176,7 @@ from .debug_evidence_explanation_generated_by import DebugEvidenceExplanationGen
 from .debug_evidence_explanation_status import DebugEvidenceExplanationStatus
 from .debug_evidence_finding import DebugEvidenceFinding
 from .debug_evidence_finding_confidence import DebugEvidenceFindingConfidence
+from .debug_evidence_log_line import DebugEvidenceLogLine
 from .debug_evidence_recommendation import DebugEvidenceRecommendation
 from .debug_evidence_ref import DebugEvidenceRef
 from .debug_guest_execution_evidence import DebugGuestExecutionEvidence
@@ -7064,6 +7067,8 @@ __all__ = (
     "CreateCorsPresetRequest",
     "CreateCronRequest",
     "CreateCustomDomainRequest",
+    "CreateDataAPIContractTaskRequest",
+    "CreateDataAPIContractTaskRequestKind",
     "CreateDataConnectionRequest",
     "CreateDataPipelineRequest",
     "CreateDeploymentFilesBody",
@@ -7347,6 +7352,7 @@ __all__ = (
     "DebugEvidenceExplanationStatus",
     "DebugEvidenceFinding",
     "DebugEvidenceFindingConfidence",
+    "DebugEvidenceLogLine",
     "DebugEvidenceRecommendation",
     "DebugEvidenceRef",
     "DebugGuestExecutionEvidence",

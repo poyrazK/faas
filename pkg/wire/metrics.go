@@ -1983,6 +1983,7 @@ type OpsMetrics struct {
 	workerRecovery          *workerRecoveryMetrics
 	queue                   *queueMetrics
 	delayedTasks            *delayedTaskMetrics
+	cronDelivery            *cronDeliveryMetrics
 	// auditLogWriteTotal (PR-#TBD / C5): per-(endpoint, kind)
 	// counter incremented on every successful events-table
 	// append at pkg/audit.Auditor.Emit. Splits the legacy
@@ -2143,6 +2144,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 	workerRecovery := newWorkerRecoveryMetrics(prefix)
 	queue := newQueueMetrics(prefix)
 	delayedTasks := newDelayedTaskMetrics(prefix)
+	cronDelivery := newCronDeliveryMetrics(prefix)
 	ops := prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: prefix + "_ops_total",
 		Help: "Count of operations, labelled by op name and terminal status code.",
@@ -3986,6 +3988,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		queue.depth, queue.inFlight, queue.oldestAge, queue.deadLetter,
 		queue.bindingDepth, queue.bindingInFlight, queue.bindingLagSeconds, queue.bindingDeadLetter, queue.bindingWorkerDemand, queue.bindingThrottled,
 		delayedTasks.dispatchTotal, delayedTasks.scheduleLagSeconds,
+		cronDelivery.deliveryTotal, cronDelivery.scheduleLagSeconds,
 		ops, dur, watchdogKills, warmSnapshotErrors, warmPoolSize, warmPoolResumeTotal, frozenFreezeTotal, frozenThawTotal, frozenFastPathSkipped, frozenThawTickets, ownerCacheTotal, frozenParksTotal, frozenCompressTotal, frozenInstances, warmupErrors, livenessRestarts, workloadOOMKills, serviceReplicaStatus, serviceRolloutHandoffPhaseDuration, daemonRestartCount, daemonBuildInfo, daemonUptimeSeconds, daemonReady, daemonReadyReason, faasDeployVersion, bridgeFramingTotal, guestInitDuration, wakeSnapshotTier, wakeColdReason, executionActive, executionTotal, executionPhaseDuration, executionFailures, executionOutputBytes, executionSweeps, executionQueueDepth, executionQueueOldestWait, executionWorkers, wakeFailure, wakeLatency, guestTailSeconds, guestTailFailedTotal, tailCapReached, evictedPriority, evictionFiredTotal, eventsWriteFail, auditWriteFail, cveCheckTotal, cvesOpenTotal,
 		writeRedirectTotal, writeRedirectLatency,
 		auditWriteDur, cronFireNowDispatchDur, accountOrgMismatch, requestFailures, requestTotal, stripePushDur, paddlePushDur, polarPushDur,
@@ -5038,6 +5041,8 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		cronFireNowDispatchDur:             schedd,
 		delayedTasks.dispatchTotal:         schedd,
 		delayedTasks.scheduleLagSeconds:    schedd,
+		cronDelivery.deliveryTotal:         schedd,
+		cronDelivery.scheduleLagSeconds:    schedd,
 		evictionFiredTotal:                 schedd,
 		scaleUpAdmitRPS:                    schedd,
 		eventsWriteFail:                    schedd,
@@ -5777,6 +5782,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		workerRecovery:                       workerRecovery,
 		queue:                                queue,
 		delayedTasks:                         delayedTasks,
+		cronDelivery:                         cronDelivery,
 		auditLogWriteTotal:                   auditLogWriteTotal,
 		auditLogWriteFailuresTotal:           auditLogWriteFailuresTotal,
 		operatorActionTraceCompletenessRatio: operatorActionTraceCompletenessRatio,

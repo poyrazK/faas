@@ -688,6 +688,14 @@ const (
 	// Payload: {"instance_id":uuid,"app_id":uuid,"kind":"liveness"|"workload_oom",
 	//           "reason":string,"peak_mb":int,"plan_mb":int}
 	NotifyInstanceFailureRelayed = "instance_failure_relayed"
+	// NotifyFrameworkReadyRelayed carries vmmd's framework-ready receipt from
+	// the schedd that hosts an instance to the schedd that owns its app, the
+	// same route as NotifyInstanceFailureRelayed (Hunt 14 H14-104). Without
+	// it the host refused the receipt, so an instance placed off its owner's
+	// node never qualified for warm or frozen capture. Advisory: a missed
+	// delivery only defers warm eligibility.
+	// Payload: {"instance_id":uuid,"app_id":uuid}
+	NotifyFrameworkReadyRelayed = "framework_ready_relayed"
 	// NotifyPrivateNetworkAttachmentChanged carries the durable cleanup
 	// event emitted when an app attachment is detached. Unlike the broad
 	// app_changed stream, this channel is replayed so a schedd restart or
