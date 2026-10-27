@@ -134,6 +134,17 @@ func refreshEventReplayCapacity(ctx context.Context, tx sqlc.DBTX, id string) er
 	return lockEventCapacity(ctx, tx, uuidString(row.AccountID), limits.EventDeliveries)
 }
 
+// eventWorkflowCapacityScope is the capacity scope of a workflow recipient
+// waiting for its app's concurrent run limit; it reuses the app scope the
+// backlog and its API already name.
+const eventWorkflowCapacityScope = "app"
+
+// EventWorkflowCapacityWaitProgress is the legacy whole-event router's
+// progress for a workflow recipient waiting for its app's run limit.
+func EventWorkflowCapacityWaitProgress(previous PublishedEventRecipientProgress, attempts int) PublishedEventRecipientProgress {
+	return eventCapacityProgress(previous, attempts, eventWorkflowCapacityScope)
+}
+
 func eventCapacityProgress(previous PublishedEventRecipientProgress, attempts int, scope string) PublishedEventRecipientProgress {
 	now := time.Now().UTC()
 	next := now.Add(EventDeliveryCapacityRetryDelay)

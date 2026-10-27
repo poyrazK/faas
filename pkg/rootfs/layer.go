@@ -299,6 +299,21 @@ func applyLayerGzWithResolverBudget(dst string, r io.Reader, res Resolver, budge
 	return applyLayerGz(dst, r, layerApplyOptions{resolver: res, budget: budget})
 }
 
+// ApplyLayersGzWithin applies gzip-compressed layers to dst in order under
+// one extraction budget: their regular-file bytes may not pass limitBytes,
+// nor their entries api.LayerExtractionMaxEntries. Use it for layers the
+// tenant's build produced, where a small compressed layer can otherwise
+// expand without limit. It fails with ErrLayerExtractionExceedsBudget.
+func ApplyLayersGzWithin(dst string, layers []io.Reader, limitBytes int64) error {
+	budget := newExtractionBudget(limitBytes)
+	for i, layer := range layers {
+		if err := applyLayerGzWithResolverBudget(dst, layer, nil, budget); err != nil {
+			return fmt.Errorf("layer %d: %w", i, err)
+		}
+	}
+	return nil
+}
+
 // ApplyLayerGzWithOverlayWhiteouts is the gzip-compressed counterpart to
 // ApplyLayerWithOverlayWhiteouts.
 func ApplyLayerGzWithOverlayWhiteouts(dst string, r io.Reader) error {

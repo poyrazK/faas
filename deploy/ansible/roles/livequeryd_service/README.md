@@ -160,6 +160,37 @@ and set `faas_realtime_live_tls_ca_file`, `_cert_file` and `_key_file`.
 The nftables role opens the hub's port to `faas_compute_allowed_cidrs` when
 `faas_livequeryd_managed` is set.
 
+## Re-sealing live keys and logins (ADR-20261016151947, release 2)
+
+apid seals each live key and login to its database
+(`livequery:<database>`, `livequery-login:<database>`). Rows written before
+that release use the unbound legacy namespaces, which livequeryd still opens.
+Re-seal them before the release that stops opening the legacy form. Only the
+hub's identity opens what apid sealed, so run this on the hub host:
+
+```sh
+sudo -u faas /opt/faas/current/bin/livequeryd -reseal \
+  -keys-identity /etc/faas/secrets/livequeryd/keys.age \
+  -reseal-dsn-file <file holding a control-plane DSN that may UPDATE
+                    managed_postgres_live_keys and managed_postgres_live_logins>
+```
+
+The hub's own `keys-dsn` is read-only, so give `-reseal-dsn-file` a role
+that can write those two tables, such as apid's runtime role. The command:
+- seals each row's plaintext again, unchanged, to the same recipient. The
+  customer's secret and the database login stay as they are, and the hub
+  keeps serving throughout;
+- writes one row at a time, and only while the row still holds the seal it
+  read, so a rotation or revocation made meanwhile wins;
+- is idempotent: run it again until it reports no refused rows;
+- logs counts and the IDs of refused rows, never a secret or a connection
+  string.
+
+It exits non-zero when a row was left as it is. A refused row is one that
+doesn't open with this identity, is bound to another database, or is a key
+holding another key's secret. Resolve each one before release 3: rotate the
+key, or disable and re-enable live queries on the database.
+
 ## Not covered yet
 
 - Live logins on Neon are unverified: the owner login may not be allowed to

@@ -1,8 +1,8 @@
 from uuid import uuid4
 
-from faas_sdk.api.apps import get_native_issue_tracker_status, update_native_issue_tracker_status
-from faas_sdk.models.native_issue_tracker_status import NativeIssueTrackerStatus
-from faas_sdk.models.update_native_issue_tracker_status_request import UpdateNativeIssueTrackerStatusRequest
+from faas_sdk.preview.api.apps import get_native_issue_tracker_status, update_native_issue_tracker_status
+from faas_sdk.preview.models.native_issue_tracker_status import NativeIssueTrackerStatus
+from faas_sdk.preview.models.update_native_issue_tracker_status_request import UpdateNativeIssueTrackerStatusRequest
 
 
 def test_native_status_routes_preserve_expected_snapshot_without_provider_credentials():
@@ -31,9 +31,9 @@ def test_native_status_routes_preserve_expected_snapshot_without_provider_creden
 
 
 def test_native_creation_retains_request_identity_and_recovery_url():
-    from faas_sdk.api.apps import create_native_issue_ticket
-    from faas_sdk.models.create_native_issue_ticket_request import CreateNativeIssueTicketRequest
-    from faas_sdk.models.native_issue_ticket_result import NativeIssueTicketResult
+    from faas_sdk.preview.api.apps import create_native_issue_ticket
+    from faas_sdk.preview.models.create_native_issue_ticket_request import CreateNativeIssueTicketRequest
+    from faas_sdk.preview.models.native_issue_ticket_result import NativeIssueTicketResult
 
     issue, request_id, link = uuid4(), uuid4(), uuid4()
     payload = {
@@ -56,9 +56,9 @@ def test_native_creation_retains_request_identity_and_recovery_url():
 
 
 def test_auto_sync_routes_keep_revision_and_aligned_native_snapshot():
-    from faas_sdk.api.apps import get_issue_tracker_auto_sync, update_issue_tracker_auto_sync
-    from faas_sdk.models.issue_tracker_auto_sync import IssueTrackerAutoSync
-    from faas_sdk.models.update_issue_tracker_auto_sync_request import UpdateIssueTrackerAutoSyncRequest
+    from faas_sdk.preview.api.apps import get_issue_tracker_auto_sync, update_issue_tracker_auto_sync
+    from faas_sdk.preview.models.issue_tracker_auto_sync import IssueTrackerAutoSync
+    from faas_sdk.preview.models.update_issue_tracker_auto_sync_request import UpdateIssueTrackerAutoSyncRequest
 
     issue, link = uuid4(), uuid4()
     status = {
@@ -93,9 +93,9 @@ def test_auto_sync_routes_keep_revision_and_aligned_native_snapshot():
 
 
 def test_linear_connection_routes_preserve_revision_and_omit_key_on_disconnect():
-    from faas_sdk.api.apps import get_issue_tracker_linear_connection, update_issue_tracker_linear_connection
-    from faas_sdk.models.issue_tracker_linear_connection import IssueTrackerLinearConnection
-    from faas_sdk.models.update_issue_tracker_linear_connection_request import UpdateIssueTrackerLinearConnectionRequest
+    from faas_sdk.preview.api.apps import get_issue_tracker_linear_connection, update_issue_tracker_linear_connection
+    from faas_sdk.preview.models.issue_tracker_linear_connection import IssueTrackerLinearConnection
+    from faas_sdk.preview.models.update_issue_tracker_linear_connection_request import UpdateIssueTrackerLinearConnectionRequest
 
     team = uuid4()
     payload = {"connected": True, "expected_revision": 7, "team_id": str(team), "api_key": "secret"}
@@ -113,8 +113,8 @@ def test_linear_connection_routes_preserve_revision_and_omit_key_on_disconnect()
 
 
 def test_native_linear_creation_preserves_uuid_recovery_without_url():
-    from faas_sdk.api.apps import create_native_linear_issue_ticket
-    from faas_sdk.models.create_native_linear_issue_ticket_request import CreateNativeLinearIssueTicketRequest
+    from faas_sdk.preview.api.apps import create_native_linear_issue_ticket
+    from faas_sdk.preview.models.create_native_linear_issue_ticket_request import CreateNativeLinearIssueTicketRequest
 
     issue, request_id, team = uuid4(), uuid4(), uuid4()
     payload = {"request_id": str(request_id), "team_id": str(team), "title": "Fix", "recover": True}
@@ -126,9 +126,9 @@ def test_native_linear_creation_preserves_uuid_recovery_without_url():
 
 
 def test_native_linear_status_preserves_preview_scope_and_workflow_selection():
-    from faas_sdk.api.apps import get_native_linear_issue_tracker_status, update_native_linear_issue_tracker_status
-    from faas_sdk.models.native_linear_issue_tracker_status import NativeLinearIssueTrackerStatus
-    from faas_sdk.models.update_native_linear_issue_tracker_status_request import (
+    from faas_sdk.preview.api.apps import get_native_linear_issue_tracker_status, update_native_linear_issue_tracker_status
+    from faas_sdk.preview.models.native_linear_issue_tracker_status import NativeLinearIssueTrackerStatus
+    from faas_sdk.preview.models.update_native_linear_issue_tracker_status_request import (
         UpdateNativeLinearIssueTrackerStatusRequest,
     )
 
@@ -170,9 +170,9 @@ def test_native_linear_status_preserves_preview_scope_and_workflow_selection():
 
 
 def test_linear_auto_sync_preserves_mapping_and_native_scope():
-    from faas_sdk.api.apps import update_issue_tracker_auto_sync
-    from faas_sdk.models.issue_tracker_auto_sync import IssueTrackerAutoSync
-    from faas_sdk.models.update_issue_tracker_auto_sync_request import UpdateIssueTrackerAutoSyncRequest
+    from faas_sdk.preview.api.apps import update_issue_tracker_auto_sync
+    from faas_sdk.preview.models.issue_tracker_auto_sync import IssueTrackerAutoSync
+    from faas_sdk.preview.models.update_issue_tracker_auto_sync_request import UpdateIssueTrackerAutoSyncRequest
 
     issue, link, opened, resolved = uuid4(), uuid4(), uuid4(), uuid4()
     payload = {
@@ -215,9 +215,9 @@ def test_linear_auto_sync_preserves_mapping_and_native_scope():
 
 
 def test_linear_callback_secret_is_write_only_and_metadata_is_public():
-    from faas_sdk.api.apps import update_issue_tracker_linear_connection
-    from faas_sdk.models.issue_tracker_linear_connection import IssueTrackerLinearConnection
-    from faas_sdk.models.update_issue_tracker_linear_connection_request import UpdateIssueTrackerLinearConnectionRequest
+    from faas_sdk.preview.api.apps import update_issue_tracker_linear_connection
+    from faas_sdk.preview.models.issue_tracker_linear_connection import IssueTrackerLinearConnection
+    from faas_sdk.preview.models.update_issue_tracker_linear_connection_request import UpdateIssueTrackerLinearConnectionRequest
 
     secret = "linear_signing_secret_1234567890abcdef"
     payload = {
@@ -238,7 +238,7 @@ def test_linear_callback_secret_is_write_only_and_metadata_is_public():
 
 
 def test_linear_oauth_metadata_is_typed_and_contains_no_provider_credentials():
-    from faas_sdk.models.issue_tracker_linear_connection import IssueTrackerLinearConnection
+    from faas_sdk.preview.models.issue_tracker_linear_connection import IssueTrackerLinearConnection
 
     metadata = IssueTrackerLinearConnection.from_dict(
         {
@@ -257,8 +257,8 @@ def test_linear_oauth_metadata_is_typed_and_contains_no_provider_credentials():
 
 
 def test_directional_policy_preserves_opt_in_and_observed_hold():
-    from faas_sdk.models.issue_tracker_auto_sync import IssueTrackerAutoSync
-    from faas_sdk.models.update_issue_tracker_auto_sync_request import UpdateIssueTrackerAutoSyncRequest
+    from faas_sdk.preview.models.issue_tracker_auto_sync import IssueTrackerAutoSync
+    from faas_sdk.preview.models.update_issue_tracker_auto_sync_request import UpdateIssueTrackerAutoSyncRequest
 
     request = UpdateIssueTrackerAutoSyncRequest.from_dict(
         {"enabled": True, "expected_revision": 3, "direction": "inbound"}

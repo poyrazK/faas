@@ -1011,6 +1011,11 @@ message CapacityReport {
   // Absence means an older producer; complete=false means unknown. A complete
   // empty inventory explicitly asserts that this node has no running VMs.
   NodeInstanceInventory instance_inventory = 11;
+  // StatsResponse.instance_bridge_resident_bytes from the same sample: the
+  // node's instance bridge units (connection-survival ADR §2). Telemetry
+  // like the instance rows, outside the capacity signature; absent when
+  // bridge units are off or on an older vmmd.
+  google.protobuf.Int64Value instance_bridge_resident_bytes = 12;
 }
 
 // Inherits node_id, sampled_at_unix_ms and node_key_id from CapacityReport.
@@ -1060,6 +1065,14 @@ message InstanceTelemetry {
   // ADR-1151: vmmd holds the instance frozen (paused in place until schedd
   // thaws or destroys it). Mirrors vmmd InstanceStats.frozen.
   bool frozen = 20;
+  // ADR-20261023171905: the quiet pause record schedd keeps in the pause
+  // ledger. Mirrors vmmd InstanceStats.quiet_paused_since,
+  // quiet_last_pause_started_at, quiet_last_pause_ended_at and
+  // quiet_paused_ns_total.
+  google.protobuf.Timestamp quiet_paused_since = 21;
+  google.protobuf.Timestamp quiet_last_pause_started_at = 22;
+  google.protobuf.Timestamp quiet_last_pause_ended_at = 23;
+  google.protobuf.Int64Value quiet_paused_ns_total = 24;
 }
 
 // ReportCapacityAck is the typed "I consumed all your messages"

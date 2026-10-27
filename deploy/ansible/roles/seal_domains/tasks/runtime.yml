@@ -10,6 +10,9 @@
     that:
       - faas_seal_domain_runtime_writes in ['', 'fleet', 'domain']
       - faas_seal_domain_runtime_writes != 'domain' or (faas_seal_domain_runtime_readers_verified | bool)
+      - faas_seal_domain_runtime_binding in ['off', 'account']
+      - faas_seal_domain_runtime_binding != 'account' or (faas_seal_domain_runtime_binding_readers_verified | bool)
+      - not (faas_seal_domain_runtime_binding_required | bool) or faas_seal_domain_runtime_binding == 'account'
       - faas_box_role | default('single-box') not in ['compute-only', 'single-box'] or faas_seal_domain_runtime_identity_src | length > 0
       - faas_box_role | default('single-box') not in ['control-plane', 'single-box'] or faas_seal_domain_runtime_recipient_src | length > 0
     fail_msg: >-
@@ -19,7 +22,10 @@
       `gregalectl seal-domain init --domain runtime`. writes=domain also needs
       faas_seal_domain_runtime_readers_verified once every vmmd reports
       faas_seal_domain_loaded{domain="runtime"} 1 and the previous release
-      left the rollback window.
+      left the rollback window. binding=account needs
+      faas_seal_domain_runtime_binding_readers_verified once every vmmd runs
+      a release that checks account bindings (ADR-20261023173624).
+      binding_required needs binding=account.
 
 # 0400 root:root; only vmmd (root) reads it.
 - name: seal_domains — install the runtime domain identity
@@ -30,6 +36,28 @@
     group: root
     mode: "0400"
   no_log: true
+  when: faas_box_role | default('single-box') in ['compute-only', 'single-box']
+
+# ADR-20261023173624, contract step. vmmd is not restarted here: it reads
+# the switch at its next start, and faas_runtime_secret_binding_required
+# says which vmmd enforces it.
+- name: seal_domains — create the vmmd drop-in directory
+  ansible.builtin.file:
+    path: /etc/systemd/system/faas-vmmd.service.d
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  when: faas_box_role | default('single-box') in ['compute-only', 'single-box']
+
+- name: seal_domains — tell vmmd whether runtime secrets must be bound
+  ansible.builtin.template:
+    src: 60-faas-seal-domain-runtime-reader.conf.j2
+    dest: /etc/systemd/system/faas-vmmd.service.d/60-faas-seal-domain-runtime.conf
+    owner: root
+    group: root
+    mode: "0644"
+  notify: daemon-reload for seal domains
   when: faas_box_role | default('single-box') in ['compute-only', 'single-box']
 
 - name: seal_domains — prove this node opens the runtime domain probe
@@ -67,6 +95,30 @@
     owner: root
     group: root
     mode: "0755"
+  when: faas_box_role | default('single-box') in ['control-plane', 'single-box']
+
+# The recipient apid seals to must be the one readers published the probe
+# with; a recipient from another pair would seal to a key no reader holds.
+# Before any reader published the probe there is nothing to compare, which
+# is only acceptable while apid still seals to the fleet key too.
+- name: seal_domains — check the runtime recipient against the published probe
+  ansible.builtin.command:
+    argv:
+      - /usr/local/bin/gregalectl
+      - seal-domain
+      - verify
+      - --domain
+      - runtime
+      - --recipient-only
+      - --db-env
+      - "{{ faas_seal_domain_db_env }}"
+      - --json
+  register: faas_seal_domain_runtime_recipient_check
+  changed_when: false
+  failed_when: >-
+    faas_seal_domain_runtime_recipient_check.rc != 0 or
+    (faas_seal_domain_runtime_writes == 'domain' and
+     not (faas_seal_domain_runtime_recipient_check.stdout | from_json).probe_published)
   when: faas_box_role | default('single-box') in ['control-plane', 'single-box']
 
 - name: seal_domains — give apid the runtime domain recipient

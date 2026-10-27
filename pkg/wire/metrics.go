@@ -18,6 +18,7 @@ import (
 	"math"
 	"net/http"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -26,7 +27,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/billing/paddle"
 	"github.com/onebox-faas/faas/pkg/billing/polar"
-	"github.com/onebox-faas/faas/pkg/billing/stripe"
+	"github.com/onebox-faas/faas/pkg/billing/stripe/pushresult"
 	"github.com/onebox-faas/faas/pkg/gateway/writegate"
 	"github.com/onebox-faas/faas/pkg/netns"
 	"github.com/prometheus/client_golang/prometheus"
@@ -111,6 +112,12 @@ type OpsMetrics struct {
 	initSnapshotAttempts        *prometheus.CounterVec
 	initSnapshotCaptureDuration *prometheus.HistogramVec
 	snapshotPublication         *prometheus.CounterVec
+	// wakeFailover counts schedd's re-placements of a wake a node refused
+	// before the VM started (ADR-20261022184531). Closed labels only.
+	wakeFailover *prometheus.CounterVec
+	// computeNodeReadiness is one-hot per node: 1 for the node's current
+	// readiness, 0 for the others (ADR-20261022184531).
+	computeNodeReadiness *prometheus.GaugeVec
 	// warmPoolSize (issue #1056 / ADR-074) exposes the desired paused
 	// warm-pool size by plan. Runtime reconciliation will update the
 	// gauge in a follow-up; registering it here makes the contract
@@ -302,7 +309,8 @@ type OpsMetrics struct {
 	// (≤50 per app), so {app_id, upstream_hash} is safe. upstream_hash is
 	// the §11-redacted identifier — the plaintext host must never reach a
 	// label.
-	egressCircuitState *prometheus.GaugeVec
+	egressCircuitState     *prometheus.GaugeVec
+	egressCircuitReconcile *prometheus.GaugeVec
 	// wakeSnapshotTier (issue #470 / PR C / ADR-074) — closed-set
 	// counter for the warm-vs-init-vs-cold-boot choice Engine.usableSnapshotForWake
 	// makes on every wake. Labels ∈ {warm, init, cold_boot_fallback}.
@@ -2051,6 +2059,10 @@ type OpsMetrics struct {
 	dbNotifyHubReconnects prometheus.Counter
 	dbNotifyHubDropped    *prometheus.CounterVec
 	dbNotifyHubDelivered  *prometheus.CounterVec
+	// secretUnseals (ADR 20261024014500): every decryption pkg/secretbox
+	// performs in this daemon, by the key that opened it. Installed via
+	// secretbox.SetUnsealObserver in RegisterDefaultOps.
+	secretUnseals *prometheus.CounterVec
 	// loopWork / loopWorkDuration (ADR-191): schedd's bounded off-loop
 	// work pool. kind is the closed task set (prime, restart,
 	// app_reconcile, deployment_reconcile, job_cancel); outcome is
@@ -2100,6 +2112,18 @@ func (m *OpsMetrics) HubReconnect() {
 		return
 	}
 	m.dbNotifyHubReconnects.Inc()
+}
+
+// SecretUnsealed implements secretbox.UnsealObserver. nil-safe.
+func (m *OpsMetrics) SecretUnsealed(identity string, ok bool) {
+	if m == nil || m.secretUnseals == nil {
+		return
+	}
+	result := "ok"
+	if !ok {
+		result = "failed"
+	}
+	m.secretUnseals.WithLabelValues(identity, result).Inc()
 }
 
 // HubDropped implements db.NotifyHubObserver. nil-safe.
@@ -2187,6 +2211,21 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		Name: prefix + "_init_snapshot_attempt_total",
 		Help: "Terminal init snapshot path outcomes by site (prime or park). Reuse is counted separately from new captures; reuse_cleanup_failed means destroying the source guest failed.",
 	}, []string{"site", "outcome"})
+	wakeFailover := prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: prefix + "_wake_failover_total",
+		Help: "Wakes a compute node refused before the VM started, by refusal reason and what schedd's re-placement did (ADR-20261022184531). outcome=succeeded is a wake another node served; refused_again means the alternate node refused too; no_alternate means no other node fit; out_of_time means too little of the wake's deadline remained; failed means the alternate attempt failed for another reason.",
+	}, []string{"reason", "outcome"})
+	if prefix == "schedd" {
+		for _, reason := range WakeFailoverReasons {
+			for _, outcome := range WakeFailoverOutcomes {
+				wakeFailover.WithLabelValues(reason, outcome)
+			}
+		}
+	}
+	computeNodeReadiness := prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Name: prefix + "_compute_node_readiness",
+		Help: "One-hot readiness of each compute node this schedd heartbeats (ADR-20261022184531): 1 on the state the node last proved, 0 on the others. state is ready, degraded (answers but cannot serve a wake), unavailable or draining (both mirror lifecycle). node is the compute node name.",
+	}, []string{"node", "state"})
 	initSnapshotCaptureDuration := prometheus.NewHistogramVec(prometheus.HistogramOpts{
 		Name:    prefix + "_init_snapshot_capture_duration_seconds",
 		Help:    "Wall-clock duration of new terminal init snapshot captures, including before_checkpoint, by site and outcome. Reused snapshots are excluded.",
@@ -2504,10 +2543,10 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 	// break the wake-latency panel that ships to day-1.
 	wakeRPCDuration := prometheus.NewHistogramVec(prometheus.HistogramOpts{
 		Name:    prefix + "_wake_rpc_duration_seconds",
-		Help:    "Wall-clock seconds for each schedd-side wake RPC phase (ADR-097). phase ∈ {before_admission, lock_wait, reads, admit, post_admit, admit_to_rpc, rpc_call, rpc_to_running, resume}; app label is apps.id. before_admission .. post_admit split the work before the boot inputs exist: Wake's fast path, the admission gates and per-app lock, the app/deployment/runtime/snapshot reads, placement plus the instance admission insert, and the reads and writes after admission (they also ride wake.boot_started as pre_rpc_*_ms). admit_to_rpc covers the boot inputs → vmmd RPC start window. rpc_call covers the vmmd Create{FromSnapshot,ColdBoot} round trip. rpc_to_running covers the RPC return → WAKING/COLD_BOOTING → RUNNING transition. resume covers vmmd's in-place warm-pool resume. wake_id is attached as a prometheus.Exemplar on each observation so operators can join to gateway_wake_latency_seconds and to the events table. Bucket set reuses spec §6.3 verbatim with a 0.01 low-end bucket for admit_to_rpc.",
+		Help:    "Wall-clock seconds for each schedd-side wake RPC phase (ADR-097). phase ∈ {pre_wake_authorize, pre_wake_environment, pre_wake_coordinate, pre_wake_transition, before_admission, lock_wait, reads, admit, post_admit, admit_to_rpc, rpc_call, rpc_to_running, resume}; app label is apps.id. pre_wake_* split an EnsureWake RPC before Engine.Wake starts: authorization, the app and admission reads, coordination, and the parked -> active claim (they also ride wake.boot_started as pre_wake_*_ms). before_admission .. post_admit split the work before the boot inputs exist: Wake's fast path, the admission gates and per-app lock, the app/deployment/runtime/snapshot reads, placement plus the instance admission insert, and the reads and writes after admission (they also ride wake.boot_started as pre_rpc_*_ms). admit_to_rpc covers the boot inputs → vmmd RPC start window. rpc_call covers the vmmd Create{FromSnapshot,ColdBoot} round trip. rpc_to_running covers the RPC return → WAKING/COLD_BOOTING → RUNNING transition. resume covers vmmd's in-place warm-pool resume. wake_id is attached as a prometheus.Exemplar on each observation so operators can join to gateway_wake_latency_seconds and to the events table. Bucket set reuses spec §6.3 verbatim with a 0.01 low-end bucket for admit_to_rpc.",
 		Buckets: []float64{0.01, 0.05, 0.1, 0.2, 0.35, 0.5, 0.8, 1, 1.5, 3, 5},
 	}, []string{"app", "phase"})
-	for _, phase := range []string{"before_admission", "lock_wait", "reads", "admit", "post_admit"} {
+	for _, phase := range []string{"pre_wake_authorize", "pre_wake_environment", "pre_wake_coordinate", "pre_wake_transition", "before_admission", "lock_wait", "reads", "admit", "post_admit"} {
 		wakeRPCDuration.WithLabelValues("", phase)
 	}
 	wakeRPCDuration.WithLabelValues("", "admit_to_rpc")
@@ -4033,7 +4072,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		planGateRescuedByExclude,
 	}
 	if prefix == "schedd" {
-		commonCollectors = append(commonCollectors, initSnapshotAttempts, initSnapshotCaptureDuration)
+		commonCollectors = append(commonCollectors, initSnapshotAttempts, initSnapshotCaptureDuration, wakeFailover, computeNodeReadiness)
 	}
 	if prefix == "imaged" {
 		commonCollectors = append(commonCollectors, snapshotPublication)
@@ -4407,10 +4446,10 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 	// ObserveAppErrorsPurge convention.
 	previewJanitorOutcomes := prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: prefix + "_preview_janitor_outcomes_total",
-		Help: "Preview teardown cron outcomes (ADR-095 PR-C, issue #272), labelled by outcome ∈ {ok, failed, torn_down}. `ok` fires every tick the sweep ran cleanly (whether or not it tombstoned a row); `torn_down` fires per-row when a preview app reaches torn_down and is soft-deleted (the §12 teardown-rate panel sums this over 1h to chart PR-close cadence); `failed` is the tripwire for a SQL-level failure (alertable). Single-registry: registered on every daemon; only apid increments via ObservePreviewJanitor.",
+		Help: "Preview teardown cron outcomes (ADR-095 PR-C, issue #272), labelled by outcome ∈ {ok, failed, torn_down, row_failed}. `ok` fires every tick the sweep ran cleanly (whether or not it tombstoned a row); `torn_down` fires per-row when a preview app reaches torn_down and is soft-deleted (the §12 teardown-rate panel sums this over 1h to chart PR-close cadence); `failed` is the tripwire for a SQL-level failure of a whole sweep and `row_failed` for one preview that could not be claimed or torn down (both alertable). Single-registry: registered on every daemon; only apid increments via ObservePreviewJanitor.",
 	}, []string{"outcome"})
 	commonCollectors = append(commonCollectors, previewJanitorOutcomes)
-	for _, outcome := range []string{"ok", "failed", "torn_down"} {
+	for _, outcome := range []string{"ok", "failed", "torn_down", "row_failed"} {
 		previewJanitorOutcomes.WithLabelValues(outcome)
 	}
 	// ADR-067 / Tier A6: migrating-instance watchdog reconcile counter.
@@ -4593,10 +4632,14 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 	// upstream cannot leave a stale gauge asserting a dependency is broken.
 	egressCircuitState := prometheus.NewGaugeVec(prometheus.GaugeOpts{
 		Name: prefix + "_egress_circuit_state",
-		Help: "ADR-201 §3 egress circuit state per declared upstream: 0=closed, 1=half_open, 2=open. While 2, the app's NEW connections to that upstream are rejected with a TCP reset instead of hanging. Labelled by {app_id, upstream_hash}; upstream_hash is the §11-redacted host identifier and the plaintext host never appears. Bounded by Limits.EgressCircuitBreakersPerApp (≤50/app).",
+		Help: "ADR-201 §3 egress circuit state per declared upstream: 0=closed, 1=half_open, 2=open. Logical probe state only; actual nft completion is reported separately by vmmd Stats.egress_circuit_enforcement. Labelled by {app_id, upstream_hash}; upstream_hash is the §11-redacted host identifier and the plaintext host never appears. Bounded by Limits.EgressCircuitBreakersPerApp (≤50/app).",
 	}, []string{"app_id", "upstream_hash"})
+	egressCircuitReconcile := prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Name: prefix + "_egress_circuit_reconcile_success",
+		Help: "ADR-570: latest whole-app desired-policy reconciliation completed DNS resolution, durable commit and all applicable node acknowledgments (1), or remains pending (0). Distinct from logical probe state.",
+	}, []string{"app_id"})
 	commonCollectors = append(commonCollectors, gatewayDrainWaitSeconds, gatewayInflightRequests,
-		egressCircuitState)
+		egressCircuitState, egressCircuitReconcile)
 	// Issue #757 / ADR-118 commit 9: ESM metric collectors. All
 	// three are pre-instantiated at boot from the closed sets
 	// below so the rows surface in /metrics from process start —
@@ -4872,6 +4915,12 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		Name: prefix + "_db_notify_hub_delivered_total",
 		Help: "Notifications this daemon's LISTEN hub handed to a subscriber, by channel. pg_notify carries no routing, so one emit fans out to every interested subscriber on every daemon on every node. Summed fleet-wide and divided by the emit rate this is the broadcast amplification factor; read next to schedd_app_ownership_checks_total{outcome=\"not_owned\"}, which counts the share of that fan-out the receiving schedd then discards. Together they price per-owner notify channels before anyone builds them.",
 	}, []string{"channel"})
+	// One name across daemons, so one alert covers every reader; the
+	// scrape's job label says which daemon.
+	secretUnseals := prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "faas_secret_unseal_total",
+		Help: "Sealed values this daemon decrypted (ADR 20261024014500), by the key that opened them (a seal domain, fleet or host; none when no key did) and result. A daemon opening far more than its usual rate, or failing to open what it is given, may be in an attacker's hands.",
+	}, []string{"identity", "result"})
 	loopWork := prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: prefix + "_loop_work_total",
 		Help: "Tasks schedd's notification loop handed to its bounded off-loop work pool (ADR-191), labelled by kind and outcome ∈ {queued, inline, dropped, coalesced, panicked}. `dropped` is benign in isolation (the durable table plus a safety ticker retries) but a sustained rate means the kind's slot budget is too small; any `panicked` is a bug.",
@@ -4900,6 +4949,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		dbNotifyHubReconnects,
 		dbNotifyHubDelivered,
 		dbNotifyHubDropped,
+		secretUnseals,
 		loopWork,
 		loopWorkDuration,
 		instanceDivergence,
@@ -5090,7 +5140,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 	for _, mode := range []string{PathFilterModePaths, PathFilterModeFullFallback, PathFilterModeTruncated, PathFilterModeError, PathFilterModeBreakerOpen} {
 		githubdPathFilterTotal.WithLabelValues(mode)
 	}
-	for _, reason := range []string{PushSkippedReasonMarker} {
+	for _, reason := range []string{PushSkippedReasonMarker, PushSkippedReasonCapability} {
 		githubdPushSkippedTotal.WithLabelValues(reason)
 	}
 	// issue #299: pre-instantiate the closed `severity` label set
@@ -5256,9 +5306,9 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 	// HistogramVec series with zero observed label tuples, which would
 	// render the dashboard's stripe-push panel as "no data" until at
 	// least one push happened (a real ops hazard). The label set is
-	// the canonical closed list from stripe.PushResultLabels —
-	// adding a label there must also extend this loop. ADR-024.
-	for _, label := range stripe.PushResultLabels() {
+	// the canonical closed list from pushresult.Labels, which
+	// stripe.ClassifyPushError emits. ADR-024.
+	for _, label := range pushresult.Labels() {
 		stripePushDur.WithLabelValues(label)
 	}
 	// Pre-instantiate every label in the closed result set for the
@@ -5461,6 +5511,8 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		warmSnapshotErrors:                         warmSnapshotErrors,
 		initSnapshotAttempts:                       initSnapshotAttempts,
 		initSnapshotCaptureDuration:                initSnapshotCaptureDuration,
+		wakeFailover:                               wakeFailover,
+		computeNodeReadiness:                       computeNodeReadiness,
 		snapshotPublication:                        snapshotPublication,
 		warmPoolSize:                               warmPoolSize,
 		warmPoolResumeTotal:                        warmPoolResumeTotal,
@@ -5493,6 +5545,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		gatewayDrainWaitSeconds:                    gatewayDrainWaitSeconds,
 		gatewayInflightRequests:                    gatewayInflightRequests,
 		egressCircuitState:                         egressCircuitState,
+		egressCircuitReconcile:                     egressCircuitReconcile,
 		wakeSnapshotTier:                           wakeSnapshotTier,
 		wakeColdReason:                             wakeColdReason,
 		executionActive:                            executionActive,
@@ -5739,6 +5792,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		loopStalled:                                         loopStalled,
 		loopLastBeatAgeSeconds:                              loopLastBeatAgeSeconds,
 		dbNotifyHubReconnects:                               dbNotifyHubReconnects,
+		secretUnseals:                                       secretUnseals,
 		dbNotifyHubDelivered:                                dbNotifyHubDelivered,
 		dbNotifyHubDropped:                                  dbNotifyHubDropped,
 		loopWork:                                            loopWork,
@@ -5792,6 +5846,17 @@ func (m *OpsMetrics) SetEgressCircuitState(appID, upstreamHash string, state flo
 		return
 	}
 	m.egressCircuitState.WithLabelValues(appID, upstreamHash).Set(state)
+}
+
+func (m *OpsMetrics) SetEgressCircuitReconcile(appID string, success bool) {
+	if m == nil || m.egressCircuitReconcile == nil {
+		return
+	}
+	value := float64(0)
+	if success {
+		value = 1
+	}
+	m.egressCircuitReconcile.WithLabelValues(appID).Set(value)
 }
 
 // ClearEgressCircuitState drops the series for a retired upstream, so a
@@ -6177,6 +6242,55 @@ func (m *OpsMetrics) RecordInitSnapshotAttempt(site, outcome string, duration ti
 	}
 }
 
+// Closed label values of schedd_wake_failover_total (ADR-20261022184531).
+const (
+	WakeFailoverReasonBaseGeneration     = "base_generation"
+	WakeFailoverReasonScanSidecarMissing = "scan_sidecar_missing"
+
+	WakeFailoverOutcomeSucceeded    = "succeeded"
+	WakeFailoverOutcomeRefusedAgain = "refused_again"
+	WakeFailoverOutcomeNoAlternate  = "no_alternate"
+	WakeFailoverOutcomeOutOfTime    = "out_of_time"
+	WakeFailoverOutcomeFailed       = "failed"
+)
+
+// WakeFailoverReasons and WakeFailoverOutcomes are pre-instantiated so the
+// counter reads zero, not absent, on a fleet that has never failed over.
+var (
+	WakeFailoverReasons  = []string{WakeFailoverReasonBaseGeneration, WakeFailoverReasonScanSidecarMissing}
+	WakeFailoverOutcomes = []string{WakeFailoverOutcomeSucceeded, WakeFailoverOutcomeRefusedAgain, WakeFailoverOutcomeNoAlternate, WakeFailoverOutcomeOutOfTime, WakeFailoverOutcomeFailed}
+)
+
+// ComputeNodeReadinessStates are the closed state label values of
+// schedd_compute_node_readiness; they mirror compute_nodes_readiness_chk.
+var ComputeNodeReadinessStates = []string{"ready", "degraded", "unavailable", "draining"}
+
+// SetComputeNodeReadiness marks node's current readiness. Only schedd
+// exports the gauge; an unknown state or empty node is dropped.
+func (m *OpsMetrics) SetComputeNodeReadiness(node, readiness string) {
+	if m == nil || m.computeNodeReadiness == nil || m.metricPrefix != "schedd" ||
+		node == "" || !slices.Contains(ComputeNodeReadinessStates, readiness) {
+		return
+	}
+	for _, candidate := range ComputeNodeReadinessStates {
+		value := 0.0
+		if candidate == readiness {
+			value = 1
+		}
+		m.computeNodeReadiness.WithLabelValues(node, candidate).Set(value)
+	}
+}
+
+// RecordWakeFailover counts one refused wake attempt by what its failover
+// did. Only schedd exports the collector; unknown labels are dropped.
+func (m *OpsMetrics) RecordWakeFailover(reason, outcome string) {
+	if m == nil || m.wakeFailover == nil || m.metricPrefix != "schedd" ||
+		!slices.Contains(WakeFailoverReasons, reason) || !slices.Contains(WakeFailoverOutcomes, outcome) {
+		return
+	}
+	m.wakeFailover.WithLabelValues(reason, outcome).Inc()
+}
+
 const (
 	SnapshotPublicationPublished         = "published"
 	SnapshotPublicationDuplicate         = "duplicate"
@@ -6230,18 +6344,18 @@ func (m *OpsMetrics) WarmPoolResumeTotal(outcome string) prometheus.Counter {
 
 // Bounded label sets of the frozen-tier series (ADR-1151).
 var (
-	FrozenFreezeOutcomes = []string{"frozen", "frozen_early", "busy", "error", "ineligible", "no_snapshot", "node_full"}
+	FrozenFreezeOutcomes = []string{"frozen", "frozen_early", "busy", "error", "ineligible", "no_snapshot", "node_full", "node_draining"}
 	FrozenThawOutcomes   = []string{"success", "failed", "no_capacity", "fast", "fast_refused"}
 	// FrozenFastPathSkipReasons and FrozenThawTicketOutcomes are the closed
 	// label sets of the ADR-1740 fast path's series.
-	FrozenFastPathSkipReasons = []string{"deployment", "scope", "selection", "no_ticket", "admission", "capacity"}
+	FrozenFastPathSkipReasons = []string{"deployment", "scope", "selection", "no_ticket", "admission", "capacity", "node_draining"}
 	FrozenThawTicketOutcomes  = []string{"issued", "error", "mode", "not_selected", "operator_cold_boot",
 		"app_inactive", "managed_standards", "account", "organization", "shape", "config"}
 	// OwnerCacheOutcomes are schedd_owner_cache_total's closed label set
 	// (ADR-1741).
 	OwnerCacheOutcomes = []string{"hit", "miss", "invalidated", "resync", "refused", "guarded_publish", "guarded_publish_moved", "selection", "organization"}
 	FrozenParkReasons  = []string{"ttl", "memory_pressure", "superseded", "config_changed", "stale",
-		"ineligible", "no_capacity", "thaw_failed", "publish_failed", "node_restart", "park"}
+		"ineligible", "no_capacity", "thaw_failed", "publish_failed", "node_restart", "park", "node_draining"}
 	// FrozenCompressOutcomes: compressed keeps the VM frozen; insufficient,
 	// unavailable (no memory-only swap) and error park it.
 	FrozenCompressOutcomes = []string{"compressed", "insufficient", "unavailable", "error"}
@@ -6547,7 +6661,7 @@ var WakeColdReasons = []string{
 	"no_snapshot", "snapshots_stale", "snapshot_lookup_failed",
 	"fc_version_mismatch", "snapshot_without_drive", "ram_mismatch",
 	"base_image_mismatch", "snapshot_stale", "instance_mode",
-	"ephemeral_secret", "secret_policy_unavailable",
+	"ephemeral_secret", "secret_policy_unavailable", "cpu_incompatible",
 }
 
 // WakeColdReason returns the counter for one cold-boot reason. Values outside
@@ -9760,6 +9874,9 @@ const (
 	PathFilterModeError        = "error"
 	PathFilterModeBreakerOpen  = "breaker_open"
 	PushSkippedReasonMarker    = "marker"
+	// PushSkippedReasonCapability counts pushes ignored because the GitHub
+	// deploys capability flag is off for the account (ADR-20261023115741).
+	PushSkippedReasonCapability = "capability"
 )
 
 // ObserveGithubdPushSkipped increments githubd_push_skipped_total{reason}.
@@ -9769,14 +9886,14 @@ func (m *OpsMetrics) ObserveGithubdPushSkipped(reason string) {
 	if m == nil || m.githubdPushSkippedTotal == nil {
 		return
 	}
-	if reason == PushSkippedReasonMarker {
+	if reason == PushSkippedReasonMarker || reason == PushSkippedReasonCapability {
 		m.githubdPushSkippedTotal.WithLabelValues(reason).Inc()
 	}
 }
 
 // GithubdPushSkippedTotal returns the metric series for service-level tests.
 func (m *OpsMetrics) GithubdPushSkippedTotal(reason string) prometheus.Counter {
-	if m == nil || m.githubdPushSkippedTotal == nil || reason != PushSkippedReasonMarker {
+	if m == nil || m.githubdPushSkippedTotal == nil || (reason != PushSkippedReasonMarker && reason != PushSkippedReasonCapability) {
 		return nil
 	}
 	return m.githubdPushSkippedTotal.WithLabelValues(reason)

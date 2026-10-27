@@ -15,8 +15,8 @@
 //   - LISTEN. The ADR-190 notify hub, the legacy Subscribe path, and
 //     WaitFor all hold a connection open to receive pg_notify. A pooled
 //     connection would be handed to another client between notifications.
-//   - Session advisory locks. PgStore's edge-rule mutation lock and
-//     MigrateUp's migration lock both take pg_advisory_lock (NOT the
+//   - Session advisory locks. PgStore's edge-rule mutation fence and traffic
+//     policy guards, and MigrateUp's migration lock take pg_advisory_lock (NOT the
 //     _xact_ variant) on a pinned connection and hold it across statements.
 //     Under transaction pooling the lock would be released — or worse,
 //     leak to whichever client got that server connection next.
@@ -72,6 +72,14 @@ const DirectDSNEnv = "FAAS_DATABASE_URL_DIRECT"
 // across every node.
 const directHubOnMaxConns int32 = 2
 
+// ADR-570: apid holds its outer edge mutation lock, and imaged its deployment
+// activation lock, while a traffic policy guard pins a second connection
+// (imaged's MarkDeploymentLive). Each admits one outer lock at a time: apid's
+// process mutex, imaged's serial notification loop. Without the extra
+// connection imaged's guard waited behind the parked hub connection and image
+// deploys stalled in snapshotting.
+const directNestedGuardHubOnMaxConns int32 = directHubOnMaxConns + 1
+
 // directMaxConns resolves the session-scoped pool budget for the notify mode
 // this process runs in.
 //
@@ -83,10 +91,13 @@ const directHubOnMaxConns int32 = 2
 // the same coupling the ordinary pool has, so it takes the same table: the
 // kill switch stays a rollback rather than becoming a second outage.
 func directMaxConns(appName string) int32 {
+	name := strings.TrimPrefix(strings.TrimSpace(appName), "faas-")
 	if notifyHubEnabled() {
+		if name == "apid" || name == "imaged" {
+			return directNestedGuardHubOnMaxConns
+		}
 		return directHubOnMaxConns
 	}
-	name := strings.TrimPrefix(strings.TrimSpace(appName), "faas-")
 	if limit, ok := DaemonMaxConnectionsNotifyHubDisabled[name]; ok {
 		return limit
 	}

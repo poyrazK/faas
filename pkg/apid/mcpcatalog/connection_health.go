@@ -27,10 +27,15 @@ func ConnectionHealthHandler(store state.Store) httpkit.AccountHandler {
 			api.WriteProblem(w, api.ErrValidation("invalid health offset"))
 			return
 		}
+		hidden, err := hiddenApps(r, store, account)
+		if err != nil {
+			respond(w, nil, err)
+			return
+		}
 		appID := ""
 		if slug := r.URL.Query().Get("app"); slug != "" {
 			app, e := store.AppBySlug(r.Context(), slug)
-			if e != nil || app.AccountID != account.ID {
+			if e != nil || app.AccountID != account.ID || hidden[app.ID] {
 				respond(w, nil, state.ErrNotFound)
 				return
 			}
@@ -38,7 +43,7 @@ func ConnectionHealthHandler(store state.Store) httpkit.AccountHandler {
 		}
 		read, cancel := context.WithTimeout(r.Context(), api.MCPPolicyConvergenceReadTimeout)
 		defer cancel()
-		out, err := source.MCPConnectionHealth(read, account.ID, appID, offset, time.Now().UTC())
+		out, err := state.VisibleMCPConnectionHealth(read, source, account.ID, appID, hidden, offset, time.Now().UTC())
 		respond(w, out, err)
 	}
 }

@@ -50,6 +50,7 @@ func Compute(slug string, plan Plan, baseline Baseline, pending Pending) Diff {
 	diffBuildPlan(&out, baseline, pending)
 	diffRollout(&out, baseline.LatestDeployment, pending)
 	diffWorkflows(&out, baseline.LatestDeployment, pending.Workflows)
+	diffCompanions(&out, baseline, pending)
 
 	// 2. Per-scope env vars.
 	diffEnvByScope(&out, baseline.EnvByScope, pending.EnvByScope)

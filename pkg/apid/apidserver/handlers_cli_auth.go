@@ -211,6 +211,10 @@ func (h *cliAuthHandlers) renderCliAuthPage(w http.ResponseWriter, r *http.Reque
 		h.renderPromotionApprovalPage(w, r)
 		return
 	}
+	if r.URL.Query().Has("secret") {
+		h.renderSecretEntryPage(w, r)
+		return
+	}
 	hash, ok := normalizeCliAuthCode(r.URL.Query().Get("code"))
 	if !ok {
 		h.renderCliAuthError(w, r, "Code looks malformed", "Codes are 8 characters, like ABCD-1234.")
@@ -295,6 +299,10 @@ func (h *cliAuthHandlers) postCliAuthPage(w http.ResponseWriter, r *http.Request
 	}
 	if r.PostForm.Has("approval") {
 		h.postPromotionApprovalPage(w, r)
+		return
+	}
+	if r.PostForm.Has("secret") {
+		h.postSecretEntryPage(w, r)
 		return
 	}
 	// Resolve the code first so we can pass it as the CSRF subject.

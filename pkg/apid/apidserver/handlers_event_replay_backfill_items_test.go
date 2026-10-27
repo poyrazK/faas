@@ -29,6 +29,10 @@ func (s *eventReplayBackfillItemsHandlerStore) ListEventReplayBackfillItems(_ co
 	return s.response, s.err
 }
 
+func (s *eventReplayBackfillItemsHandlerStore) GetEventReplayBackfill(_ context.Context, _ string, jobID string) (api.EventReplayBackfillJobResponse, error) {
+	return api.EventReplayBackfillJobResponse{ID: jobID}, nil
+}
+
 func TestEventReplayBackfillItemsAPIReadOnlyMetadataAndValidation(t *testing.T) {
 	e := apidserver.Setup(t, api.PlanPro)
 	jobID := uuid.NewString()

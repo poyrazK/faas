@@ -87,6 +87,43 @@ func (m *MemStore) ResolveProjectCanary(_ context.Context, appID, scope, key str
 	}
 	return m.resolveProjectReleaseLocked(appID, scope, requested)
 }
+
+// ADR-570: the invocation version snapshot selects a canary in its own
+// committed view; both reads are lock-free.
+func (s invocationVersionPolicyReader) ResolveProjectCanary(ctx context.Context, appID, scope, key string) (string, string, error) {
+	requested := ""
+	if normalizedDeploymentScope(scope) == "production" {
+		var err error
+		if requested, err = selectProjectCanaryDB(ctx, s.tx, appID, key); err != nil {
+			return "", "", err
+		}
+	}
+	return s.ResolveProjectRelease(ctx, appID, scope, requested)
+}
+
+// The public routing snapshot applies the same canary to unpinned traffic.
+func (s publicRoutingPolicyReader) ResolvePublicProjectCanary(ctx context.Context, appID, scope, key string) (string, string, error) {
+	requested := ""
+	if normalizedDeploymentScope(scope) == "production" {
+		var err error
+		if requested, err = selectProjectCanaryDB(ctx, s.tx, appID, key); err != nil {
+			return "", "", err
+		}
+	}
+	return s.ResolvePublicProjectRelease(ctx, appID, scope, requested)
+}
+
+// The snapshot already holds the store lock.
+func (s memInvocationVersionReader) ResolveProjectCanary(ctx context.Context, appID, scope, key string) (string, string, error) {
+	requested := ""
+	if normalizedDeploymentScope(scope) == "production" {
+		var err error
+		if requested, err = s.store.selectProjectCanaryLocked(appID, key); err != nil {
+			return "", "", err
+		}
+	}
+	return s.ResolveProjectRelease(ctx, appID, scope, requested)
+}
 func (m *MemStore) canaryGraphCapturedLocked(accountID, projectID, graphID string) bool {
 	for _, c := range m.projectCanaries {
 		if c.AccountID == accountID && c.ProjectID == projectID && (c.Policy.Status == "running" || c.Policy.Status == "needs_operator" || c.Policy.Status == "complete" && c.Policy.Stabilizing) && (c.Policy.CandidateReleaseID == graphID || c.Policy.BaselineReleaseID == graphID) && m.activeProjectReleaseSets[releaseKey(projectID, "production")] == canaryActiveID(c.Policy) && releasePubliclyUsable(m.projectReleaseSets[graphID], time.Now()) {

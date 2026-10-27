@@ -742,6 +742,10 @@ func (s *server) promoteProjectEnvironment(w http.ResponseWriter, r *http.Reques
 		api.WriteProblem(w, problem)
 		return
 	}
+	if problem := s.promotionApprovalProblem(r.Context(), plan, toEnvironment); problem != nil {
+		api.WriteProblem(w, problem)
+		return
+	}
 	if plan.Preview.ApprovalRequired {
 		approvalToken := strings.TrimSpace(req.ApprovalToken)
 		if approvalToken == "" {
@@ -1235,11 +1239,9 @@ func (s *server) executeProjectEnvironmentPromotion(ctx context.Context, acct st
 			if err := s.durable.CheckProjectValidatorMembers(ctx, []state.ProjectReleaseMember{{AppID: existing.AppID, DeploymentID: existing.ID}}); err != nil {
 				return api.ProjectEnvironmentPromotionResponse{}, api.ErrCapacity("validator binding unavailable for resumed promotion")
 			}
-			updated, updateErr := s.store.UpdateProjectEnvironmentPromotionWorkload(ctx, acct.ID, promotion.ID, workload.ID, "promoted", existing.ID, "")
-			if updateErr != nil {
+			if _, updateErr := s.store.UpdateProjectEnvironmentPromotionWorkload(ctx, acct.ID, promotion.ID, workload.ID, "promoted", existing.ID, ""); updateErr != nil {
 				return api.ProjectEnvironmentPromotionResponse{}, api.ErrCapacity("could not update environment promotion checkpoint")
 			}
-			workload = updated
 			continue
 		}
 		var promoted state.Deployment

@@ -277,6 +277,8 @@ type Server struct {
 	ops   *wire.OpsMetrics
 	fcVer string
 	log   *slog.Logger
+	// baseReadiness answers Ping's base generation report (ADR-20261022184531).
+	baseReadiness *CachedBaseGenerationReadiness
 	// diverged (ADR-740) lists instances that were served a developer live
 	// patch; their snapshot captures are refused. nil disables the guard.
 	diverged *DivergedInstances
@@ -317,6 +319,14 @@ type Server struct {
 	// inflightTraces holds each in-flight HTTP forward's traceparent for
 	// InflightRequestTrace (ADR-1138).
 	inflightTraces inflightTraces
+	// invokeHooks skips per-request invoke events for instances whose guest
+	// has no extension endpoint (ADR-20261025150000) while
+	// invokeHookBackoffOn is set (vmmd invoke_hook_backoff, default off).
+	invokeHooks         invokeHookBackoff
+	invokeHookBackoffOn bool
+	// bridgeStreamHeadroom is vmmd's bridge_stream_headroom switch
+	// (ADR-20261026120000); every stream bridge manager takes it.
+	bridgeStreamHeadroom bool
 	// identitySigner mints execution-only assertions for the scheduler's
 	// outbound relay. Tokens are sent only over the vmmd↔schedd stream.
 	identitySigner *workloadidentity.Signer
@@ -413,7 +423,11 @@ func NewWithCPUAndNetAndActivity(vmm VmmdAPI, ops *wire.OpsMetrics, fcVer string
 		// never exported. Tests that don't assert metrics use this path.
 		ops = wire.NewOpsMetrics("vmmd_test")
 	}
-	return &Server{vmm: vmm, ops: ops, fcVer: fcVer, log: log, cpuCache: cpu, netCache: net, activity: act, migrations: newMigrationTracker(), streamBridges: newStreamBridgeManager(log)}
+	s := &Server{vmm: vmm, ops: ops, fcVer: fcVer, log: log, cpuCache: cpu, netCache: net, activity: act, migrations: newMigrationTracker(), streamBridges: newStreamBridgeManager(log)}
+	if j, ok := vmm.(instanceBridgeJournal); ok {
+		s.streamBridges.journal = j
+	}
+	return s
 }
 
 // WithEvents (issue #517 / PR-C / ADR-064) wires the wake-timeline
@@ -497,6 +511,36 @@ func (s *Server) MigrationLeaser() leaser.Leaser[any] {
 		return nil
 	}
 	return NewMigrationLeaser(s.migrations)
+}
+
+// WithBridgeStreamHeadroom turns on the ADR-20261026120000 bridge
+// settings for the bridges this server starts from now on.
+func (s *Server) WithBridgeStreamHeadroom(on bool) *Server {
+	if s != nil {
+		s.bridgeStreamHeadroom = on
+		if s.streamBridges != nil {
+			s.streamBridges.headroom.Store(on)
+		}
+	}
+	return s
+}
+
+// newBridgeManager builds a stream bridge manager carrying this server's
+// bridge settings.
+func (s *Server) newBridgeManager() *streamBridgeManager {
+	m := newStreamBridgeManager(s.log)
+	m.headroom.Store(s.bridgeStreamHeadroom)
+	return m
+}
+
+// WithInvokeHookBackoff turns on the ADR-20261025150000 backoff: an instance
+// whose guest answered that no extension endpoint is listening gets no
+// per-request invoke events for extension.InvokeUnavailableBackoff.
+func (s *Server) WithInvokeHookBackoff(on bool) *Server {
+	if s != nil {
+		s.invokeHookBackoffOn = on
+	}
+	return s
 }
 
 // WithFlowCounter wires the compute-side conntrack reader used by Stats.
@@ -674,6 +718,7 @@ func (s *Server) CreateFromSnapshot(ctx context.Context, req *vmmdpb.CreateFromS
 		s.incWakeFailure(ctx, "snapshot_restore_err")
 		return nil, grpcerr.ToStatus(toProblem(err))
 	}
+	wr.NodeID = s.nodeID
 	wakeCtx, wakeSpan := newWakeSpan(ctx, "restore", wr)
 	// issue #517 / PR-C / ADR-064 — emit wake.boot_observed at
 	// the gRPC server boundary. Schedd is the canonical emit site;
@@ -704,7 +749,7 @@ func (s *Server) wakeWithBridgePrewarm(ctx context.Context, wr fcvm.WakeRequest,
 		return s.vmm.Wake(ctx, wr)
 	}
 	if s.streamBridges == nil {
-		s.streamBridges = newStreamBridgeManager(s.log)
+		s.streamBridges = s.newBridgeManager()
 	}
 	inst, err := fastVMM.WakeWithNetworkReady(ctx, wr, func(ready fcvm.WakeNetworkReady) {
 		s.prewarmStreamBridge(withPublicTarget(ctx, ready.PublicTarget), &vmmdpb.ForwardHTTPRequestInit{
@@ -740,6 +785,7 @@ func (s *Server) CreateColdBoot(ctx context.Context, req *vmmdpb.CreateColdBootR
 		s.incWakeFailure(ctx, "mem_backend_err")
 		return nil, grpcerr.ToStatus(toProblem(err))
 	}
+	wr.NodeID = s.nodeID
 	wakeCtx, wakeSpan := newWakeSpan(ctx, "cold_boot", wr)
 	// issue #517 / PR-C / ADR-064 — emit wake.boot_observed at
 	// the gRPC server boundary. Same canonical-site pairing as
@@ -1267,6 +1313,38 @@ func (s *Server) DeleteWarmSnapshot(ctx context.Context, req *vmmdpb.DeleteWarmS
 	return &vmmdpb.DeleteWarmSnapshotResponse{Deleted: true}, nil
 }
 
+// RetireNativeRuntimeSnapshotObject removes one object of a native runtime
+// capture on imaged's behalf (ADR 20261022184951 amendment 1). imaged owns
+// the collection decision; vmmd, the tree's only writer, does the removal.
+func (s *Server) RetireNativeRuntimeSnapshotObject(ctx context.Context, req *vmmdpb.RetireNativeRuntimeSnapshotObjectRequest) (*vmmdpb.RetireNativeRuntimeSnapshotObjectResponse, error) {
+	const op = "RetireNativeRuntimeSnapshotObject"
+	start := time.Now()
+	retirer, ok := s.vmm.(interface {
+		RetireNativeRuntimeSnapshotObject(context.Context, string) error
+	})
+	if !ok {
+		err := api.NewProblem(int(codes.Unimplemented), api.CodeNotImplemented,
+			"Native runtime snapshot retirement unavailable", "vmmd does not expose native runtime snapshot retirement")
+		s.ops.Observe(op, time.Since(start), err)
+		return nil, grpcerr.ToStatus(err)
+	}
+	err := retirer.RetireNativeRuntimeSnapshotObject(ctx, req.GetStorageKey())
+	s.ops.Observe(op, time.Since(start), err)
+	switch {
+	case err == nil:
+		return &vmmdpb.RetireNativeRuntimeSnapshotObjectResponse{}, nil
+	case errors.Is(err, storage.ErrInvalidKey):
+		return nil, grpcerr.ToStatus(api.NewProblem(int(codes.InvalidArgument), api.CodeValidation,
+			"Not a native runtime snapshot object", err.Error()))
+	case errors.Is(err, fcvm.ErrNativeRuntimeSnapshotRootUnset):
+		// To imaged this vmmd is one without the RPC: keep the row, retry.
+		return nil, grpcerr.ToStatus(api.NewProblem(int(codes.Unimplemented), api.CodeNotImplemented,
+			"Native runtime snapshot root unavailable", err.Error()))
+	default:
+		return nil, grpcerr.ToStatus(toProblem(err))
+	}
+}
+
 // FrameworkReady is the vmmd-side receipt of the guest-init "framework
 // ready" vsock DGRAM (port 1027, msg=4) signal (issue #470, PR
 // #470-FU-B). The handler:
@@ -1516,10 +1594,17 @@ func (s *Server) Stats(ctx context.Context, _ *vmmdpb.StatsRequest) (*vmmdpb.Sta
 			}
 		}
 		row.OpenConns = openConns[inst]
+		row.EgressCircuitEnforcement = s.egressCircuitEnforcement(inst)
+		row.HttpAdmissionEnforcement = s.httpAdmissionEnforcement(inst)
 		row.FlowSummaries = flowSummariesToProto(flowTelemetry.summaries[inst])
 		resp.Instances = append(resp.Instances, row)
 	}
 	resp.TotalResidentBytes = wrapperspb.Int64(total)
+	if InstanceBridgeUnitsEnabled() {
+		if b, ok := instanceBridgeResidentBytes(); ok {
+			resp.InstanceBridgeResidentBytes = wrapperspb.Int64(b)
+		}
+	}
 	return resp, nil
 }
 
@@ -1698,17 +1783,26 @@ func buildInstanceStatsRow(
 // both gRPC socket reachability and that vmmd's goroutine
 // scheduler is responsive enough to schedule this handler. Idempotent
 // + side-effect free; no backing Manager call.
-func (s *Server) Ping(_ context.Context, _ *vmmdpb.PingRequest) (*vmmdpb.PingResponse, error) {
+func (s *Server) Ping(ctx context.Context, _ *vmmdpb.PingRequest) (*vmmdpb.PingResponse, error) {
 	const op = "Ping"
 	start := time.Now()
 	defer func() { s.ops.Observe(op, time.Since(start), nil) }()
-	return &vmmdpb.PingResponse{
+	resp := &vmmdpb.PingResponse{
 		FcVersion:                          s.fcVer,
 		ServerTime:                         timestamppb.Now(),
 		SupportsSecretAliases:              true,
 		SupportsImageHealthcheck:           true,
 		SupportsImageHealthcheckMonitoring: true,
-	}, nil
+	}
+	// ADR-20261022184531: schedd's heartbeat marks a node that cannot adopt
+	// its configured base generation degraded. The report is cached; Ping
+	// never waits for shared storage.
+	for _, base := range s.baseReadiness.Report(ctx) {
+		resp.BaseGenerations = append(resp.BaseGenerations, &vmmdpb.BaseGenerationReadiness{
+			BaseKey: base.BaseKey, Generation: base.Generation, Adoptable: base.Adoptable, Reason: base.Reason,
+		})
+	}
+	return resp, nil
 }
 
 // UpdateEgressAllowlist (ADR-031 + ADR-033, tier-2 PR-B) walks the

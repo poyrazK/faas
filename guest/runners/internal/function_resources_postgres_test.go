@@ -3,6 +3,7 @@ package internal
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"os"
@@ -105,55 +106,37 @@ func TestFunctionResourcesPostgres(t *testing.T) {
 	awaitBackground(t, func() bool { return host.count() == 0 && len(sql.Rows(t.Context(), t)) == 3 })
 	// Model repeated continuing-VM captures: the same four interpreters must
 	// drain and rebuild twice. Native snapshot bytes are a separate gate.
+	parked := func(phase string, arrivals func() int, sessions int) func() (bool, string) {
+		return func() (bool, string) {
+			all, _ := sql.Connections(t.Context(), t)
+			n := arrivals()
+			if n == 4 && all == sessions {
+				return true, ""
+			}
+			return false, fmt.Sprintf("%s arrivals=%d/4 sessions=%d/%d leases=%d activity=%s", phase, n, all, sessions, host.count(), sql.Activity(t.Context()))
+		}
+	}
 	for cycle := range 2 {
+		// fcvm admits a checkpoint hook only once no execution lease is held,
+		// and a lease is released only after its worker slot. This fake host
+		// admits it unconditionally, so wait for the previous /state lease
+		// here or the runner rightly answers "workers have not quiesced".
+		awaitBackground(t, func() bool { return host.count() == 0 })
 		control.Arm()
 		control.ArmRecovery()
-		callback := make(chan int, 1)
-		go func() {
-			f := &backgroundFunction{cfg: cfg}
-			callback <- resourceHook(f, functionlifetime.BeforeResourcePath, "before_checkpoint")
-		}()
-		awaitBackground(t, func() bool { all, _ := sql.Connections(t.Context(), t); return control.Arrivals() == 4 && all == 0 })
+		reply := startResourceHook(cfg, functionlifetime.BeforeResourcePath, "before_checkpoint")
+		awaitParkedHook(t, cycle, reply, parked("checkpoint", control.Arrivals, 0))
 		checkSQLWorkerGenerations(t, control.CheckpointWorkers(), pids, cycle)
-		select {
-		case <-callback:
-			t.Fatal("checkpoint acknowledged before control released")
-		default:
-		}
 		if host.count() != 1 {
 			t.Fatal("SQL checkpoint lost host execution ownership")
 		}
 		control.ReleaseCheckpoint()
-		select {
-		case status := <-callback:
-			if status != 204 {
-				t.Fatal("SQL checkpoint failed")
-			}
-		case <-time.After(3 * time.Second):
-			t.Fatal("SQL checkpoint did not finish")
-		}
-		go func() {
-			callback <- resourceHook(&backgroundFunction{cfg: cfg}, functionlifetime.AfterResourcePath, "after_restore")
-		}()
-		awaitBackground(t, func() bool {
-			all, _ := sql.Connections(t.Context(), t)
-			return control.RecoveryArrivals() == 4 && all == 8
-		})
+		awaitHookReply(t, cycle, "checkpoint", reply)
+		reply = startResourceHook(cfg, functionlifetime.AfterResourcePath, "after_restore")
+		awaitParkedHook(t, cycle, reply, parked("recovery", control.RecoveryArrivals, 8))
 		checkSQLWorkerGenerations(t, control.RecoveryWorkers(), pids, cycle+1)
-		select {
-		case <-callback:
-			t.Fatal("recovery acknowledged before every worker completed")
-		default:
-		}
 		control.Release()
-		select {
-		case status := <-callback:
-			if status != 204 {
-				t.Fatal("SQL recovery failed")
-			}
-		case <-time.After(3 * time.Second):
-			t.Fatal("SQL recovery did not finish")
-		}
+		awaitHookReply(t, cycle, "recovery", reply)
 		calls := control.Calls()
 		if len(calls) != 4 {
 			t.Fatal("resource callback history missed an interpreter")
@@ -182,6 +165,60 @@ func TestFunctionResourcesPostgres(t *testing.T) {
 	}
 	if rows := sql.Rows(t.Context(), t); len(rows) != 3 || rows["interrupted"] != 0 {
 		t.Fatal("worker replacement replayed or committed interrupted SQL")
+	}
+}
+
+type hookReply struct {
+	code int
+	body string
+}
+
+func startResourceHook(cfg ServeConfig, path, kind string) <-chan hookReply {
+	reply := make(chan hookReply, 1)
+	go func() {
+		code, body := resourceHookReply(&backgroundFunction{cfg: cfg}, path, kind)
+		reply <- hookReply{code: code, body: body}
+	}()
+	return reply
+}
+
+// awaitParkedHook waits until every interpreter is parked at the control peer
+// with the hook still unanswered. A bare timeout cannot tell a refused hook
+// from a stuck pool drain, so each failure names what was last observed.
+func awaitParkedHook(t *testing.T, cycle int, reply <-chan hookReply, parked func() (bool, string)) {
+	t.Helper()
+	deadline := time.Now().Add(8 * time.Second)
+	for {
+		done, state := parked()
+		if done {
+			break
+		}
+		select {
+		case r := <-reply:
+			t.Fatalf("cycle %d: hook answered %d %q before every interpreter parked: %s", cycle, r.code, r.body, state)
+		default:
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("cycle %d: interpreters did not park: %s", cycle, state)
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	select {
+	case r := <-reply:
+		t.Fatalf("cycle %d: hook answered %d %q before control released", cycle, r.code, r.body)
+	default:
+	}
+}
+
+func awaitHookReply(t *testing.T, cycle int, phase string, reply <-chan hookReply) {
+	t.Helper()
+	select {
+	case r := <-reply:
+		if r.code != http.StatusNoContent {
+			t.Fatalf("cycle %d: SQL %s answered %d %q", cycle, phase, r.code, r.body)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatalf("cycle %d: SQL %s did not finish", cycle, phase)
 	}
 }
 

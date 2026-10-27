@@ -1,0 +1,183 @@
+# Monthly public SLOs (spec §12, ADR-20261023124955 §3). faas_slo_monthly
+# records fleet-wide 5m rates and rolling 30 d ratios. These cases pin the
+# arithmetic: requests answered without a platform 5xx over eligible requests,
+# the share of wakes inside the 1 s and 0.35 s buckets, and builds that
+# succeeded over builds that did not fail on the customer's code. A quiet
+# fleet must read as "no data", never as a perfect month.
+
+rule_files:
+  - ../../../deploy/ansible/roles/prometheus/files/faas.rules.yml
+
+evaluation_interval: 1m
+
+tests:
+  - interval: 1m
+    name: "steady traffic produces the four monthly ratios"
+    input_series:
+      # 1,000 eligible requests a minute, one platform 5xx among them.
+      - series: 'gateway_requests_total{app="a1",plan="pro",code="2xx"}'
+        values: '0+999x240'
+      - series: 'gateway_requests_total{app="a1",plan="pro",code="5xx"}'
+        values: '0+1x240'
+      - series: 'gateway_platform_errors_total{app="a1",plan="pro"}'
+        values: '0+1x240'
+      # Requests that never reached an app are not eligible.
+      - series: 'gateway_requests_total{app="-",plan="",code="5xx"}'
+        values: '0+500x240'
+      # 97 of 100 wakes finish within 1 s.
+      - series: 'gateway_wake_latency_seconds_bucket{le="1"}'
+        values: '0+97x240'
+      - series: 'gateway_wake_latency_seconds_bucket{le="+Inf"}'
+        values: '0+100x240'
+      - series: 'gateway_wake_latency_seconds_count'
+        values: '0+100x240'
+      # 96 of 100 platform wakes finish within 350 ms.
+      - series: 'gateway_platform_wake_latency_seconds_bucket{le="0.35"}'
+        values: '0+96x240'
+      - series: 'gateway_platform_wake_latency_seconds_count'
+        values: '0+100x240'
+      # 99 of 100 eligible builds succeed; user errors do not count.
+      - series: 'builderd_ops_total{op="build",code="ok"}'
+        values: '0+98x240'
+      - series: 'builderd_ops_total{op="build",code="cache_hit"}'
+        values: '0+1x240'
+      - series: 'builderd_ops_total{op="build",code="internal"}'
+        values: '0+1x240'
+      - series: 'builderd_ops_total{op="build",code="user_error"}'
+        values: '0+50x240'
+    promql_expr_test:
+      - expr: 'abs(faas_slo_api_availability:ratio_30d - 0.999) < bool 0.0001'
+        eval_time: 4h
+        exp_samples:
+          - labels: '{}'
+            value: 1
+      - expr: 'abs(faas_slo_wakes_within_1s:ratio_30d - 0.97) < bool 0.0001'
+        eval_time: 4h
+        exp_samples:
+          - labels: '{}'
+            value: 1
+      - expr: 'abs(faas_slo_platform_wakes_within_350ms:ratio_30d - 0.96) < bool 0.0001'
+        eval_time: 4h
+        exp_samples:
+          - labels: '{}'
+            value: 1
+      - expr: 'abs(faas_slo_build_success:ratio_30d - 0.99) < bool 0.0001'
+        eval_time: 4h
+        exp_samples:
+          - labels: '{}'
+            value: 1
+
+  - interval: 1m
+    name: "no platform error series reads as full availability"
+    input_series:
+      - series: 'gateway_requests_total{app="a1",plan="pro",code="2xx"}'
+        values: '0+100x120'
+    promql_expr_test:
+      - expr: 'faas_slo_api_availability:ratio_30d'
+        eval_time: 2h
+        exp_samples:
+          - labels: '{__name__="faas_slo_api_availability:ratio_30d"}'
+            value: 1
+
+  - interval: 1m
+    name: "a quiet fleet has no monthly ratio"
+    input_series:
+      - series: 'gateway_requests_total{app="a1",plan="pro",code="2xx"}'
+        values: '0+0x120'
+      - series: 'gateway_wake_latency_seconds_bucket{le="1"}'
+        values: '0+0x120'
+      - series: 'gateway_wake_latency_seconds_count'
+        values: '0+0x120'
+      - series: 'builderd_ops_total{op="build",code="user_error"}'
+        values: '0+5x120'
+    promql_expr_test:
+      - expr: 'faas_slo_api_availability:ratio_30d'
+        eval_time: 2h
+        exp_samples: []
+      - expr: 'faas_slo_wakes_within_1s:ratio_30d'
+        eval_time: 2h
+        exp_samples: []
+      - expr: 'faas_slo_build_success:ratio_30d'
+        eval_time: 2h
+        exp_samples: []
+
+  - interval: 1m
+    name: "a 30-day ratio below a public SLO warns after an hour"
+    input_series:
+      # 1% platform errors: availability 0.99 < 0.995.
+      - series: 'gateway_requests_total{app="a1",plan="pro",code="2xx"}'
+        values: '0+990x240'
+      - series: 'gateway_requests_total{app="a1",plan="pro",code="5xx"}'
+        values: '0+10x240'
+      - series: 'gateway_platform_errors_total{app="a1",plan="pro"}'
+        values: '0+10x240'
+      # 90 of 100 wakes within 1 s; 99 of 100 platform wakes within 350 ms.
+      - series: 'gateway_wake_latency_seconds_bucket{le="1"}'
+        values: '0+90x240'
+      - series: 'gateway_wake_latency_seconds_count'
+        values: '0+100x240'
+      - series: 'gateway_platform_wake_latency_seconds_bucket{le="0.35"}'
+        values: '0+99x240'
+      - series: 'gateway_platform_wake_latency_seconds_count'
+        values: '0+100x240'
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: FaasMonthlyApiAvailabilityBelowSLO
+        exp_alerts: []
+      - eval_time: 3h
+        alertname: FaasMonthlyApiAvailabilityBelowSLO
+        exp_alerts:
+          - exp_labels:
+              severity: warn
+              component: gatewayd-internal
+              family: slo_monthly
+              public_status: internal
+            exp_annotations:
+              summary: "30-day API availability is 99%, below the 99.5% SLO"
+              description: "Requests answered without a platform-produced 5xx over the last 30 days are below the public 99.5% SLO (spec §12). The error budget for the window is spent; check the API availability panels for the days that consumed it before the status page reports the month."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasMonthlySLO.md"
+      - eval_time: 3h
+        alertname: FaasMonthlyWakeLatencyBelowSLO
+        exp_alerts:
+          - exp_labels:
+              severity: warn
+              component: gatewayd-internal
+              family: slo_monthly
+              public_status: internal
+            exp_annotations:
+              summary: "Only 90% of wakes in 30 days finished within 1 s (SLO: p95 < 1 s)"
+              description: "Fewer than 95% of wakes over the last 30 days reached the first upstream byte within 1 s, so wake p95 is above the public 1 s SLO (spec §12). Compare with the platform-only histogram to separate platform restore time from app start time."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasMonthlySLO.md"
+      - eval_time: 3h
+        alertname: FaasMonthlyPlatformWakeGateMissed
+        exp_alerts: []
+      # No builds at all: no ratio, so no alert.
+      - eval_time: 3h
+        alertname: FaasMonthlyBuildSuccessBelowSLO
+        exp_alerts: []
+
+  - interval: 1m
+    name: "size retention before 31 days of data warns"
+    input_series:
+      - series: 'prometheus_tsdb_lowest_timestamp_seconds{job="prometheus",instance="127.0.0.1:9095"}'
+        values: '0x120'
+      - series: 'prometheus_tsdb_size_retentions_total{job="prometheus",instance="127.0.0.1:9095"}'
+        values: '0x30 1x90'
+    alert_rule_test:
+      - eval_time: 25m
+        alertname: FaasPrometheusRetentionBelowSLOWindow
+        exp_alerts: []
+      - eval_time: 50m
+        alertname: FaasPrometheusRetentionBelowSLOWindow
+        exp_alerts:
+          - exp_labels:
+              severity: warn
+              component: prometheus
+              family: slo_monthly
+              public_status: internal
+              job: prometheus
+              instance: 127.0.0.1:9095
+            exp_annotations:
+              summary: "Prometheus is deleting blocks for size before it holds 31 days"
+              description: "The size cap (prom_retention_size) removed blocks in the last 6 hours while the oldest sample is less than 31 days old, so the faas_slo_monthly 30-day ratios cover only part of a month. Raise prom_retention_size if the disk allows, or drop high-cardinality bucket series as ADR-20261023124955 §3 describes."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasMonthlySLO.md"

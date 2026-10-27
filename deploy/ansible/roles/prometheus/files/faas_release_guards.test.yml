@@ -1,0 +1,152 @@
+rule_files:
+  - faas.rules.yml
+
+evaluation_interval: 30s
+
+tests:
+  - name: a stopped release worker warns; a running one does not
+    interval: 15s
+    input_series:
+      - series: 'faas_release_worker_last_pass_timestamp_seconds{job="apid",instance="stuck",worker="scheduled_releases"}'
+        values: '0+0x60'
+      - series: 'faas_release_worker_last_pass_timestamp_seconds{job="apid",instance="healthy",worker="scheduled_releases"}'
+        values: '0+15x60'
+      - series: 'faas_release_worker_last_pass_timestamp_seconds{job="meterd",instance="stuck",worker="approval_notices"}'
+        values: '0+0x80'
+    alert_rule_test:
+      - eval_time: 4m
+        alertname: FaasReleaseWorkerStalled
+        exp_alerts: []
+      - eval_time: 12m
+        alertname: FaasReleaseWorkerStalled
+        exp_alerts:
+          - exp_labels:
+              job: apid
+              instance: stuck
+              worker: scheduled_releases
+              severity: warn
+              component: apid
+              family: release_guards
+              public_status: internal
+            exp_annotations:
+              summary: apid release worker scheduled_releases has not completed a pass for 5 minutes
+              description: The scheduled_releases worker on stuck last read its queue over 5 minutes ago. Due scheduled releases do not start, database switches do not advance, or completed releases are not watched until it recovers. Check apid's database access and logs.
+              runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasReleaseGuards.md
+      - eval_time: 12m
+        alertname: FaasReleaseApprovalNoticesStalled
+        exp_alerts: []
+      - eval_time: 19m
+        alertname: FaasReleaseApprovalNoticesStalled
+        exp_alerts:
+          - exp_labels:
+              job: meterd
+              instance: stuck
+              worker: approval_notices
+              severity: warn
+              component: meterd
+              family: release_guards
+              public_status: internal
+            exp_annotations:
+              summary: meterd has not delivered release approval notices for 10 minutes
+              description: meterd's alert evaluator on stuck has not read the release approval outbox for over 10 minutes. Approvers are not told that releases wait for them; the releases still wait and time out on schedule.
+              runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasReleaseGuards.md
+
+  - name: repeated worker errors warn; a few do not
+    interval: 1m
+    input_series:
+      - series: 'faas_release_worker_errors_total{job="apid",instance="a",worker="database_switches"}'
+        values: '0 2 4 6 8 10'
+      - series: 'faas_release_worker_errors_total{job="apid",instance="b",worker="post_release_watch"}'
+        values: '0 1 1 1 1 1'
+      - series: 'faas_release_worker_errors_total{job="meterd",instance="c",worker="approval_notices"}'
+        values: '0 5 10 15 20 25'
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: FaasReleaseWorkerErrors
+        exp_alerts:
+          - exp_labels:
+              job: apid
+              instance: a
+              worker: database_switches
+              severity: warn
+              component: apid
+              family: release_guards
+              public_status: internal
+            exp_annotations:
+              summary: Release worker database_switches is failing repeatedly
+              description: database_switches recorded more than 5 failed passes or items in 15 minutes on a. Failed items are retried; read the worker's warnings in the apid log.
+              runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasReleaseGuards.md
+
+  - name: failed and aborting database switches warn
+    interval: 15s
+    input_series:
+      - series: 'faas_release_guard_decisions_total{job="apid",instance="a",guard="database_switch",outcome="failed"}'
+        values: '0 0 0 0 1 1 1 1 1 1 1 1'
+      - series: 'faas_release_guard_decisions_total{job="apid",instance="a",guard="database_switch",outcome="aborting"}'
+        values: '0 0 1 1 1 1 1 1 1 1 1 1'
+      - series: 'faas_release_guard_decisions_total{job="apid",instance="a",guard="database_switch",outcome="completed"}'
+        values: '0 1 2 3 4 5 6 7 8 9 10 11'
+    alert_rule_test:
+      - eval_time: 30s
+        alertname: FaasDatabaseSwitchFailed
+        exp_alerts: []
+      - eval_time: 2m
+        alertname: FaasDatabaseSwitchFailed
+        exp_alerts:
+          - exp_labels:
+              job: apid
+              instance: a
+              guard: database_switch
+              outcome: failed
+              severity: warn
+              component: apid
+              family: release_guards
+              public_status: internal
+            exp_annotations:
+              summary: A database-restoring rollback failed and was undone
+              description: "A database switch (rollback --restore-databases) gave up: it put the previous release back, cancelled the cutover and lifted the fence, so the app serves as before on its source database. The restored copy is kept. Read the failure code in the app.database_switch_failed audit event."
+              runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasReleaseGuards.md
+      - eval_time: 1m
+        alertname: FaasDatabaseSwitchAborting
+        exp_alerts:
+          - exp_labels:
+              job: apid
+              instance: a
+              guard: database_switch
+              outcome: aborting
+              severity: warn
+              component: apid
+              family: release_guards
+              public_status: internal
+            exp_annotations:
+              summary: A database-restoring rollback is aborting
+              description: "A database switch hit an error and is compensating: it releases the fence and keeps the source database. Watch it reach cancelled or failed with `gregale rollback switch`."
+              runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasReleaseGuards.md
+
+  - name: a dropped approval notice warns; retries do not
+    interval: 1m
+    input_series:
+      - series: 'faas_release_guard_decisions_total{job="meterd",instance="m",guard="approval_notice",outcome="retried"}'
+        values: '0 1 2 3 4 5'
+      - series: 'faas_release_guard_decisions_total{job="meterd",instance="m",guard="approval_notice",outcome="dropped"}'
+        values: '0 0 0 1 1 1'
+    alert_rule_test:
+      - eval_time: 2m
+        alertname: FaasReleaseApprovalNoticeDropped
+        exp_alerts: []
+      - eval_time: 4m
+        alertname: FaasReleaseApprovalNoticeDropped
+        exp_alerts:
+          - exp_labels:
+              job: meterd
+              instance: m
+              guard: approval_notice
+              outcome: dropped
+              severity: warn
+              component: meterd
+              family: release_guards
+              public_status: internal
+            exp_annotations:
+              summary: meterd gave up delivering a release approval notice
+              description: A release approval or schedule notice failed on every channel for all of its attempts. The approvers were not told; the release still waits. Check the channel's delivery errors in release_approval_events.last_error.
+              runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasReleaseGuards.md

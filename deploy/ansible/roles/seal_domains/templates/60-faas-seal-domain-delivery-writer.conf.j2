@@ -1,0 +1,8 @@
+# Managed by the seal_domains role (ADR 20261022111812): apid seals app
+# webhook signing secrets, commit-source connections and execution payloads
+# to the delivery seal domain. It holds the public recipient only and cannot
+# open what it seals.
+[Service]
+LoadCredential=faas_seal_domain_delivery_recipient:/etc/faas/secrets/domains/delivery.age.pub
+Environment=FAAS_SEAL_DOMAIN_DELIVERY_RECIPIENT_PATH=%d/faas_seal_domain_delivery_recipient
+Environment=FAAS_SEAL_DOMAIN_DELIVERY_WRITES={{ faas_seal_domain_delivery_writes }}

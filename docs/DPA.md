@@ -86,6 +86,19 @@ keeping (tax invoices: 7 years).
   retained beyond the in-flight transit window.
 - Operational logs: request path, status code, host IP, timing —
   retained for 30 days for security incident response (spec §11).
+- Application logs: what Controller's applications write to standard
+  output and standard error, which can contain any personal data an
+  application chooses to log. Held in memory while an instance runs,
+  then archived in object storage. Controller can read archived logs for
+  its plan's log retention (Free 1 day, Hobby 7, Pro 30, Scale 90). The
+  archive deletes them 90 days after they are written, and with the
+  account (section 11); the storage provider keeps a deleted object
+  recoverable for 7 more days before purging it.
+- Request traces: spans Controller's applications export when tracing is
+  on — operation and dependency names, durations, status and failure
+  class. Exception messages and stack traces are not retained. Spans are
+  kept with the request record and follow the same retention as
+  customer request analytics below.
 - Crash snapshots and production forks (only when Controller turns
   them on or requests one): a copy of one instance's memory and
   writable disk layer at one moment, which can contain any personal
@@ -147,7 +160,7 @@ before signing up.
 ## 7. Sub-processors
 
 The current sub-processor list is published at
-https://docs.gregale.dev/dpa/subprocessors for advance notification
+https://gregale.dev/docs/dpa/subprocessors for advance notification
 of additions and replacements (30-day notice, see paragraph below);
 the executed sub-processor set for any signed DPA is the list
 enumerated in this section at the time of signature, and the
@@ -237,7 +250,7 @@ required by Art. 32 GDPR, including:
   is written to the audit log (ADR-732).
 - TLS 1.3 in transit; HSTS + Strict CSP on the dashboard.
 
-Full security checklist lives at https://docs.gregale.dev/security.
+Full security checklist lives at https://gregale.dev/docs/security.
 
 ## 9. Audit rights
 

@@ -103,6 +103,7 @@ func boot() error {
 		return fmt.Errorf("pivot_root: %w", err)
 	}
 	guestStage("pivot")
+	prepareGuestRuntime(slog.Default())
 	if _, markerErr := fullRootfsMarkerPresent("/"); markerErr != nil {
 		return fmt.Errorf("inspect full-rootfs marker after pivot: %w", markerErr)
 	}
@@ -230,7 +231,7 @@ func boot() error {
 	if extensionHooks != nil {
 		if err := listenResumeHookWithExtension(slog.Default(),
 			func() { extensionHooks.emit(extension.PhasePostRestore) },
-			func(req extensionHookRequest) { extensionHooks.emitWithMetadata(req.Phase, req.Metadata) },
+			func(req extensionHookRequest) error { return extensionHooks.emitWithMetadata(req.Phase, req.Metadata) },
 			func() error {
 				cfg := afterRestore.Load()
 				if cfg == nil {
@@ -352,6 +353,16 @@ func boot() error {
 	if secErr != nil {
 		// Don't surface the value, just the fact that the file failed.
 		slog.Default().Warn("secrets.env could not be loaded; proceeding without secrets", "err_kind", errorKind(secErr))
+	}
+	// Compose secrets declared as files (ADR-20261023090000) belong to the
+	// main workload, which runs from this root in both the single-workload
+	// and roster paths.
+	secretFiles, err := newSecretFileWriter("", manifest, slog.Default())
+	if err != nil {
+		return err
+	}
+	if err := secretFiles.write(secrets); err != nil {
+		return err
 	}
 
 	// Issue #395 / ADR-045: read /etc/faas/env.json (plaintext JSON
@@ -530,7 +541,11 @@ func runAppWithRAMAndWorkloadEnv(m api.AppManifest, secrets, apiEnv map[string]s
 
 func runAppWithSecretStartup(m api.AppManifest, secrets, apiEnv map[string]string, sup *Supervisor, ramMB int, workloadEnv map[string]string, snapshot *runtimeSecretSnapshot, projection *runtimeSecretProjection, processSecrets *runtimeSecretsState, cpuMillicoresOpt ...int) error {
 	argv := m.Entrypoint
-	env := BuildEnvWithSecrets(os.Environ(), m, secrets, apiEnv)
+	credential, err := processCredential("", m.EffectiveUser())
+	if err != nil {
+		return fmt.Errorf("run app: %w", err)
+	}
+	env := withDefaultPath(BuildEnvWithSecrets(os.Environ(), m, secrets, apiEnv))
 	// Issue #460 / ADR-053 (PR-C): stamp PORT=<m.EffectivePort()>
 	// onto the exec'd env so the runner shim can bind the
 	// per-deployment override port. Appended AFTER
@@ -544,7 +559,7 @@ func runAppWithSecretStartup(m api.AppManifest, secrets, apiEnv map[string]strin
 	// keeping the live edit here means the precedence assertion
 	// tests the exact code path the production execve uses.
 	env = StampOverridePortEnv(env, m.EffectivePort())
-	env = StampDefaultHomeEnv(env)
+	env = StampDefaultHomeEnv(env, workloadHome(credential.Uid, credential.Gid))
 	env = StampWorkloadIdentityEnv(env)
 	env = StampEventPublishEnv(env)
 	env = StampOutboundRelayEnv(env)
@@ -589,6 +604,9 @@ func runAppWithSecretStartup(m api.AppManifest, secrets, apiEnv map[string]strin
 	argv0 := resolveWorkloadCommandPath("/", argv[0], env)
 	cmd := exec.Command(argv0, argv[1:]...)
 	cmd.Dir = m.EffectiveWorkingDir()
+	if err := ensureWorkingDir(cmd.Dir, credential.Uid, credential.Gid); err != nil {
+		return fmt.Errorf("run app: prepare working directory: %w", err)
+	}
 	cmd.Env = env
 	// ADR-051 Phase 4 Slice A PR-B: tee the customer's stdout/stderr
 	// into the supervisor's ring buffer so the characterize probe can
@@ -601,10 +619,6 @@ func runAppWithSecretStartup(m api.AppManifest, secrets, apiEnv map[string]strin
 	var output io.Writer = os.Stdout
 	if sup != nil {
 		output = io.MultiWriter(os.Stdout, sup.LogBuffer())
-	}
-	credential, err := processCredential("", m.EffectiveUser())
-	if err != nil {
-		return fmt.Errorf("run app: %w", err)
 	}
 	outputPipe, err := newWorkloadOutputPipe(output, int(credential.Uid), int(credential.Gid))
 	if err != nil {
@@ -1163,23 +1177,38 @@ func runBuildOnce(m api.BuildManifest) error {
 	}
 	guestStage("runc-preflight")
 
+	buildkitArgs := []string{
+		"--debug",
+		"--rootless",
+		"--root", buildkitRoot,
+		"--addr", "unix:///run/buildkit/buildkitd.sock",
+		"--oci-worker-binary", "/usr/local/bin/runc",
+		// The builder drive is deliberately 28 GiB. The image includes
+		// fuse-overlayfs and the guest kernel has FUSE built in; use the
+		// rootless COW snapshotter so committing a layer does not scan/copy the
+		// complete native snapshot tree after every RUN instruction.
+		"--oci-worker-snapshotter", "fuse-overlayfs",
+		"--oci-worker-net", "host",
+	}
+	// ADR-20261025114554: BuildKit tries the operator's Docker Hub mirrors
+	// before Docker Hub, which limits anonymous pulls per IP.
+	if len(m.DockerHubMirrors) > 0 {
+		config, err := buildkitMirrorConfig(m.DockerHubMirrors)
+		if err != nil {
+			return writeAndPoweroff(m, fmt.Errorf("buildkit mirror config: %w", err), "")
+		}
+		if err := os.MkdirAll(filepath.Dir(buildkitConfigPath), 0o755); err != nil {
+			return writeAndPoweroff(m, fmt.Errorf("buildkit config dir: %w", err), "")
+		}
+		if err := os.WriteFile(buildkitConfigPath, []byte(config), 0o644); err != nil {
+			return writeAndPoweroff(m, fmt.Errorf("write buildkit config: %w", err), "")
+		}
+		buildkitArgs = append(buildkitArgs, "--config", buildkitConfigPath)
+	}
 	var buildkitLog bytes.Buffer
 	bk := exec.Command(
 		"/usr/bin/unshare",
-		rootlessBuildkitUnshareArgs(
-			"/usr/local/bin/buildkitd",
-			"--debug",
-			"--rootless",
-			"--root", buildkitRoot,
-			"--addr", "unix:///run/buildkit/buildkitd.sock",
-			"--oci-worker-binary", "/usr/local/bin/runc",
-			// The builder drive is deliberately 28 GiB. The image includes
-			// fuse-overlayfs and the guest kernel has FUSE built in; use the
-			// rootless COW snapshotter so committing a layer does not scan/copy the
-			// complete native snapshot tree after every RUN instruction.
-			"--oci-worker-snapshotter", "fuse-overlayfs",
-			"--oci-worker-net", "host",
-		)...,
+		rootlessBuildkitUnshareArgs(append([]string{"/usr/local/bin/buildkitd"}, buildkitArgs...)...)...,
 	)
 	// Keep the daemon and its rootless worker tree in a private process group so
 	// the timeout path can terminate BuildKit descendants before powering off.
@@ -1258,6 +1287,9 @@ func runBuildOnce(m api.BuildManifest) error {
 	}
 	if m.Framework != api.FrameworkDockerfile && strings.TrimSpace(m.RuntimeBaseRef) == "" {
 		return finish(fmt.Errorf("missing runtime_base_ref for %s build", m.Framework), "")
+	}
+	if err := checkGoCommand(m); err != nil {
+		return finish(err, "")
 	}
 	var restoreRailpackConfig func() error
 	if m.Framework != api.FrameworkDockerfile {
@@ -1746,7 +1778,7 @@ func railpackRuntimePackage(runtime string) (string, string) {
 	case "python313":
 		return "python", "3.13"
 	case "go124", "go124-alpine":
-		return "go", "1.24"
+		return "go", api.GoBuildToolchain
 	default:
 		return "", ""
 	}
@@ -1860,6 +1892,8 @@ func buildArgv(m api.BuildManifest) []string {
 		"--plan-out", shellQuote(planPath),
 		"--info-out", shellQuote(infoPath),
 	}, " ")
+	goCommand, goCommandEnv := railpackGoCommand(m)
+	prepare += goCommand
 	if len(m.PublicBuildURLs) > 0 || m.BuildDependencyDigest != "" {
 		prepare += " && " + dependencyInputsHelperEnv + "=" + publicBuildURLsHelperValue + " /proc/1/exe " + shellQuote(planPath)
 	}
@@ -1871,6 +1905,12 @@ func buildArgv(m api.BuildManifest) []string {
 		"--local", "context=" + shellQuote(contextDir),
 		"--local", "dockerfile=" + shellQuote(planDir),
 	}, " ")
+	if goCommandEnv != "" {
+		// Railpack lists each --env value as a plan secret its steps mount,
+		// and BuildKit refuses a build whose secret is missing.
+		build += " --secret id=" + railpackGoBinEnv + ",env=" + railpackGoBinEnv
+		prepare = goCommandEnv + prepare
+	}
 	if m.DependencyCacheImport {
 		build += " --import-cache " + shellQuote("type=local,src=/build/cache")
 	}
@@ -2144,6 +2184,41 @@ func dockerfileBuildAcknowledgement(m api.BuildManifest) string {
 	return m.DockerfileBuild.SHA256()
 }
 
+// railpackGoBinEnv is Railpack's selector for the `cmd/<name>` main package
+// of a Go module (ADR-20261025134512).
+const railpackGoBinEnv = "RAILPACK_GO_BIN"
+
+// railpackGoCommand returns the `railpack prepare` flag that selects the
+// manifest's Go command and the shell export that hands BuildKit the same
+// value, or two empty strings. checkGoCommand has already refused a command
+// this build cannot honour.
+func railpackGoCommand(m api.BuildManifest) (prepareFlag, export string) {
+	if m.GoCommand == "" || m.Framework == api.FrameworkDockerfile {
+		return "", ""
+	}
+	return " --env " + shellQuote(railpackGoBinEnv+"="+m.GoCommand), "export " + railpackGoBinEnv + "=" + shellQuote(m.GoCommand) + "; "
+}
+
+// checkGoCommand refuses a Go command the build cannot honour, rather than
+// building the module's default command under the selected service's name.
+func checkGoCommand(m api.BuildManifest) error {
+	if m.GoCommand == "" {
+		return nil
+	}
+	if m.Framework == api.FrameworkDockerfile || m.DevWatchCommand != "" || !api.ValidGoCommand(m.GoCommand) {
+		return fmt.Errorf("go command %q cannot be built by this %s build", m.GoCommand, m.Framework)
+	}
+	return nil
+}
+
+// goCommandAcknowledgement is the Go command a successful build compiled.
+func goCommandAcknowledgement(m api.BuildManifest) string {
+	if checkGoCommand(m) != nil {
+		return ""
+	}
+	return m.GoCommand
+}
+
 // writeBuildDone writes /etc/faas/build-done.json (vmmd's Destroy loopback-
 // mounts the chroot drive1 to copy it out). Warm builders call this while the
 // guest remains alive; ordinary builders call it immediately before poweroff.
@@ -2166,6 +2241,7 @@ func writeBuildDone(m api.BuildManifest, runErr error, logTail string) {
 	if runErr == nil {
 		done.PublicBuildURLsSHA256 = api.PublicBuildURLsSHA256(m.PublicBuildURLs)
 		done.DockerfileBuildSHA256 = dockerfileBuildAcknowledgement(m)
+		done.GoCommand = goCommandAcknowledgement(m)
 		done.BuildDependencyDigest = m.BuildDependencyDigest
 		done.DependencyCacheUnchanged = m.DependencyCache && dependencyCacheKept(m.OutDir)
 		sourceMap, watchErr := devWatchSourceMap(m, buildDevPatchSourceMap(m, readBuildPlan))
@@ -2654,12 +2730,14 @@ func pivotInto(root string) error {
 	for _, mnt := range []struct{ src, dst, fs string }{
 		{"proc", "/proc", "proc"},
 		{"sysfs", "/sys", "sysfs"},
-		{"tmpfs", "/tmp", "tmpfs"},
 	} {
 		_ = os.MkdirAll(mnt.dst, 0o755)
 		if err := syscall.Mount(mnt.src, mnt.dst, mnt.fs, 0, ""); err != nil {
 			slog.Default().Warn("post-pivot mount failed", "dst", mnt.dst, "err", err)
 		}
+	}
+	if err := mountGuestTmp(); err != nil {
+		slog.Default().Warn("post-pivot mount failed", "dst", guestTmpDir, "err", err)
 	}
 	// A fresh devtmpfs lacks the /dev/fd and /dev/std{in,out,err} links
 	// images expect from a container runtime (nginx logs to /dev/stderr).

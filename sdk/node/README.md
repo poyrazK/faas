@@ -1,8 +1,27 @@
 # @gregale/sdk-node
 
 > Node 22 SDK for the Gregale platform. Generated from
-> [`api/openapi.yaml`](../../api/openapi.yaml), wrapped in a hand-written
-> façade that ships retry, RFC 7807 error sentinels, idempotency, and SSE.
+> [`sdk/openapi.yaml`](../openapi.yaml) (generally available and beta) and
+> [`api/openapi.yaml`](../../api/openapi.yaml) (preview), wrapped in a
+> hand-written façade that ships retry, RFC 7807 error sentinels,
+> idempotency, and SSE.
+
+## Default and preview entries
+
+`@gregale/sdk-node` exposes generally available and beta capabilities only:
+the client generated from `sdk/openapi.yaml` and the helpers for those
+capabilities (`FaaSClient`, error sentinels, idempotency, SSE, webhook and
+service-caller verification, release context). The `./browser`,
+`./secrets/runtime` and `./workflows` subpaths are part of it too.
+
+Preview and internal capabilities (realtime, durable entities, operations,
+events, queues, object storage, managed Postgres, disposable runs, issues,
+commit and data repair, and more) are in `@gregale/sdk-node/preview`, which
+re-exports the whole SDK, and its subpaths such as
+`@gregale/sdk-node/preview/operations` or
+`@gregale/sdk-node/preview/durable-entities/runtime`. apid serves a preview
+capability only to the accounts it is released to; elsewhere its calls
+answer `404 no such API route` (ADR-20261023115741).
 
 The SDK includes `verifyWebhook` for verifying signed outbound Gregale
 webhook requests. See
@@ -62,7 +81,7 @@ runtime, so scaffolding does not depend on a published npm SDK.
 
 ```ts
 import pg from 'pg';
-import {createPostgresPool, postgresPoolConfig} from '@gregale/sdk-node/postgres/runtime';
+import {createPostgresPool, postgresPoolConfig} from '@gregale/sdk-node/preview/postgres/runtime';
 
 const database = createPostgresPool(
   () => new pg.Pool(postgresPoolConfig(process.env.DATABASE_URL!)),
@@ -204,7 +223,9 @@ try {
 The four canonical error sentinels (`ErrNotFound`, `ErrUnauthorized`,
 `ErrRateLimited`, `ErrCapacity`) all extend `FaasError` and carry the
 parsed RFC 7807 `Problem` envelope, the HTTP status, and the daemon's
-`tx_id` for support tickets.
+`tx_id` for support tickets. Any other problem (a 400 `validation_failed`,
+a 409, a 422 or a 500) is thrown as the base `FaasError`: test it with
+`isFaasError(err)` and read `err.problem.code`.
 
 ## Supported surface
 
@@ -219,7 +240,7 @@ token. For example, with the separate `ws` package
 
 ```ts
 import WebSocket from 'ws';
-import { consumeRealtimeChannel } from '@gregale/sdk-node';
+import { consumeRealtimeChannel } from '@gregale/sdk-node/preview';
 
 await consumeRealtimeChannel({
   url: 'wss://app.example.com/__gregale/realtime/ENDPOINT_ID',
@@ -298,7 +319,7 @@ reconnect and gives you actions for the current connection:
 
 ```ts
 import WebSocket from 'ws';
-import { consumeRealtimeChannel, type RealtimeChannelActions } from '@gregale/sdk-node';
+import { consumeRealtimeChannel, type RealtimeChannelActions } from '@gregale/sdk-node/preview';
 
 let room: RealtimeChannelActions | undefined;
 function onTypingChanged(typing: boolean) {
@@ -357,7 +378,7 @@ For notifications that must survive a disconnect, have the backend use
 principal inbox. Give each independently consuming device a stable `consumerId`:
 
 ```ts
-import { consumeRealtimeInbox, createBrowserRealtimeSocketFactory } from '@gregale/sdk-node/browser';
+import { consumeRealtimeInbox, createBrowserRealtimeSocketFactory } from '@gregale/sdk-node/preview/browser';
 
 await consumeRealtimeInbox({
   url: realtimeEndpointURL,
@@ -400,7 +421,7 @@ are shared:
 
 ```ts
 import WebSocket from 'ws';
-import { consumeRealtimeChannels } from '@gregale/sdk-node';
+import { consumeRealtimeChannels } from '@gregale/sdk-node/preview';
 
 await consumeRealtimeChannels({
   url: 'wss://app.example.com/__gregale/realtime/ENDPOINT_ID',
@@ -434,7 +455,7 @@ it once from the logical event or outbox row, and reuse it only when retrying
 that exact payload:
 
 ```ts
-import { RealtimeService } from '@gregale/sdk-node';
+import { RealtimeService } from '@gregale/sdk-node/preview';
 
 const payload = Buffer.from(JSON.stringify(event));
 const outcome = await RealtimeService.publishManagedRealtimeChannel({
@@ -477,7 +498,7 @@ OIDC JWT in a reserved WebSocket subprotocol when the endpoint has an explicit
 import {
   consumeRealtimeChannel,
   createBrowserRealtimeSocketFactory,
-} from '@gregale/sdk-node/browser';
+} from '@gregale/sdk-node/preview/browser';
 
 const cursorKey = `realtime:ENDPOINT_ID:${currentUser.id}:notifications`;
 await consumeRealtimeChannel({
@@ -547,7 +568,7 @@ record in delivery order and returns the response body; a record whose handler
 throws is retried, the rest are complete:
 
 ```ts
-import { handleTriggerBatch, isTriggerBatch } from '@gregale/sdk-node/triggers/runtime';
+import { handleTriggerBatch, isTriggerBatch } from '@gregale/sdk-node/preview/triggers/runtime';
 
 export async function POST(request: Request) {
   const result = await handleTriggerBatch(await request.json(), async (record) => {
@@ -594,7 +615,7 @@ only when something does, so it works with `useSyncExternalStore` and other
 stores:
 
 ```ts
-import { createBrowserRealtimeTicketSocketFactory, createRealtimeClient } from '@gregale/sdk-node/browser';
+import { createBrowserRealtimeTicketSocketFactory, createRealtimeClient } from '@gregale/sdk-node/preview/browser';
 
 const client = createRealtimeClient({ url, webSocketFactory: createBrowserRealtimeTicketSocketFactory(fetchTicket) });
 const lobby = client.channel('lobby', { occupancy: true });
@@ -644,7 +665,7 @@ body, validate business input, and return a pure transition:
 import {
   decodeDurableEntityHandlerRequest, durableEntityWebhookIntent,
   encodeDurableEntityTransition,
-} from '@gregale/sdk-node';
+} from '@gregale/sdk-node/preview';
 
 const call = decodeDurableEntityHandlerRequest(originalBody);
 const next = { status: 'reserved', quantity: 2 };
@@ -751,7 +772,7 @@ managed service calls. In an Express service, install `devBridgeMiddleware` befo
 handlers and use `createDevBridgeFetch` for outbound HTTP:
 
 ```ts
-import { devBridgeMiddleware, createDevBridgeFetch } from '@gregale/sdk-node';
+import { devBridgeMiddleware, createDevBridgeFetch } from '@gregale/sdk-node/preview';
 
 app.use(devBridgeMiddleware);
 const serviceFetch = createDevBridgeFetch();
@@ -779,8 +800,8 @@ See [the Dev Bridge guide](../../docs/dev-bridge.md) for local execution.
 ## Project release context
 
 Capture the release selected for an inbound Gregale request and use the
-wrapped fetch for outbound managed service calls. The helper forwards only
-`X-Gregale-Release` to `*.svc.gregale` and removes the caller-scoped
+wrapped fetch for outbound managed service calls. The helper forwards
+`X-Gregale-Release` to `*.svc.gregale` and declared `*.internal` aliases, and removes the caller-scoped
 `X-Gregale-Revision` header on that hop:
 
 ```ts
@@ -798,6 +819,17 @@ async function checkout(request: Request) {
 The async context is isolated between concurrent handlers. Use it only around
 work caused by that inbound request; detached background jobs should capture
 the release explicitly when they are enqueued.
+
+The same request helper captures Gregale's signed `X-Gregale-Request-Deadline`
+for participating ordinary HTTP chains. Managed calls carry the current
+request's deadline even if a downstream header tries to override it. The
+gateway verifies it before wake and preserves the absolute deadline across
+retries. External calls have this private carrier removed. Signed managed
+calls return redirects for you to follow explicitly through `serviceFetch`;
+they never automatically forward the carrier to a redirect destination.
+Omitting the helper or carrier makes a call unlinked to the parent deadline.
+The platform's complete-path acceptance is still pending; see
+[the deadline contract](../../docs/ops/traffic-total-deadline.md).
 
 ### Browser SPA release pinning
 
@@ -828,7 +860,7 @@ Browser clients can use the browser-safe fetch adapter without importing the
 Node-only SDK entry point:
 
 ```ts
-import { createGregaleBrowserFetch } from '@gregale/sdk-node/browser';
+import { createGregaleBrowserFetch } from '@gregale/sdk-node/preview/browser';
 
 const releaseFromBootstrap = document
   .querySelector('meta[name="gregale-release"]')
@@ -1023,7 +1055,7 @@ enabled acceptance, import `GregaleOperationClient` from the browser entry point
 and supply a callback that obtains a current tenant-bound token:
 
 ```ts
-import { GregaleOperationClient } from '@gregale/sdk-node/browser';
+import { GregaleOperationClient } from '@gregale/sdk-node/preview/browser';
 
 const operations = new GregaleOperationClient({
   apiURL: 'https://api.example.com',
@@ -1080,7 +1112,7 @@ Managed source files remain supported. For file results, `prepareArtifact` snaps
 exact UTF-8 byte count and `sha256:` digest, and keeps one immutable report ID:
 
 ```ts
-import { GregaleOperations } from '@gregale/sdk-node/operations/runtime';
+import { GregaleOperations } from '@gregale/sdk-node/preview/operations/runtime';
 
 await runtime.runRequest(req.headers, async () => {
   const context = runtime.context()!;
@@ -1162,7 +1194,7 @@ browser-safe `@gregale/sdk-node/operations` entry point; handlers can import
 state. Its first type is the result; its second types explicit submissions:
 
 ```ts
-import { GregaleOperationClient, GregaleOperationSession, createBrowserOperationReceiptStore } from '@gregale/sdk-node/operations';
+import { GregaleOperationClient, GregaleOperationSession, createBrowserOperationReceiptStore } from '@gregale/sdk-node/preview/operations';
 
 type ExportInput = { count: number };
 type ExportResult = { csv: string };
@@ -1218,7 +1250,7 @@ responsible for returning the current tenant-bound token and reporting account
 changes:
 
 ```ts
-import { CustomerOperationFeature, createBrowserOperationReceiptStore } from '@gregale/sdk-node/operations';
+import { CustomerOperationFeature, createBrowserOperationReceiptStore } from '@gregale/sdk-node/preview/operations';
 
 type ExportInput = { count: number };
 type ExportResult = { artifact_id: string; rows: number };
@@ -1410,7 +1442,7 @@ import WebSocket from 'ws';
 import {
   consumeRealtimeChannel, createRealtimeSignalTracker,
   type RealtimeChannelActions,
-} from '@gregale/sdk-node';
+} from '@gregale/sdk-node/preview';
 
 const tracker = createRealtimeSignalTracker((active) => renderRoomActivity(active));
 let room: RealtimeChannelActions | undefined;
@@ -1523,7 +1555,7 @@ For an inbox, use `onReadActions` to obtain the same controls:
 
 ```ts
 import WebSocket from 'ws';
-import { consumeRealtimeInbox, type RealtimeReadActions } from '@gregale/sdk-node';
+import { consumeRealtimeInbox, type RealtimeReadActions } from '@gregale/sdk-node/preview';
 
 let reads: RealtimeReadActions | undefined;
 let processedThrough = 0;
@@ -1587,7 +1619,7 @@ Configure FCM, APNs, or Web Push on the endpoint with the account API/CLI. A
 verified inbox consumer can then register a token over its current socket:
 
 ```ts
-import { realtimeWebPushRegistration } from '@gregale/sdk-node/browser';
+import { realtimeWebPushRegistration } from '@gregale/sdk-node/preview/browser';
 
 await consumeRealtimeInbox({
   // ...connection options...
@@ -1754,7 +1786,7 @@ Load snapshots through an application-authorized backend route, then commit stat
 before returning the replay baseline:
 
 ```ts
-import { recoverRealtimeChannelSnapshot } from '@gregale/sdk-node';
+import { recoverRealtimeChannelSnapshot } from '@gregale/sdk-node/preview';
 
 const recover = () => recoverRealtimeChannelSnapshot(
   'jobs',
@@ -1779,7 +1811,7 @@ requires a fresh snapshot. Keep management credentials on the backend.
 transport, and validates the returned contiguous sequences:
 
 ```ts
-import { publishRealtimeChannelBatch } from '@gregale/sdk-node';
+import { publishRealtimeChannelBatch } from '@gregale/sdk-node/preview';
 
 const encode = (value: unknown) => new TextEncoder().encode(JSON.stringify(value));
 const result = await publishRealtimeChannelBatch('job-123-completed', [
@@ -1820,7 +1852,7 @@ Register immutable JSON Schema Draft 2020-12 versions through your backend's
 management API, then select them in publisher metadata:
 
 ```ts
-import { realtimeEventSchemaMetadata } from '@gregale/sdk-node';
+import { realtimeEventSchemaMetadata } from '@gregale/sdk-node/preview';
 
 const metadata = realtimeEventSchemaMetadata('job.progress', 1, { project_id: 'alpha' });
 // Supply this metadata on a retained publish or a batch item:
@@ -1842,7 +1874,7 @@ its exact current channel sequence. Retained operation events then maintain stat
 and channel snapshots atomically:
 
 ```ts
-import { realtimeReducerEvent } from '@gregale/sdk-node';
+import { realtimeReducerEvent } from '@gregale/sdk-node/preview';
 
 const data = realtimeReducerEvent({
   op: 'merge',
@@ -1864,7 +1896,7 @@ manual snapshot writes; publish compensating operations instead.
 Use a channel head or reducer snapshot sequence to avoid overwriting newer state:
 
 ```ts
-import { realtimeExpectedSequence } from '@gregale/sdk-node';
+import { realtimeExpectedSequence } from '@gregale/sdk-node/preview';
 
 const body = {
   ...realtimeExpectedSequence(42),
@@ -2260,6 +2292,11 @@ channel must fit 256 bytes, so long parent names may need shortening. The
 grouping still uses `presenceScope: 'principal'` within each scope independently.
 
 ## Batch event publication
+
+Events are a preview capability: the default `@gregale/sdk-node` entry does not
+export the event operations. Import them from the preview entry, for example
+`import { EventsService } from '@gregale/sdk-node/preview'`, then call
+`EventsService.publishEvent({ requestBody: { source, id, type, data } })`.
 
 `EventsService.publishEventBatch({ requestBody: { events } })` accepts 1–100
 stable-id envelopes in at most 1 MiB. Inspect every `results` entry: HTTP 200
@@ -3290,7 +3327,7 @@ It requires account `apps:read` or admin permission and preview app enablement.
 Missing delivery history is `unknown`; an empty queue does not prove delivery.
 
 ```ts
-import { inspectDurableEntity } from '@gregale/sdk-node';
+import { inspectDurableEntity } from '@gregale/sdk-node/preview';
 const inspection = await inspectDurableEntity({
   slug: 'reservations', namespace: 'reservations', key: 'reservation:123',
 });
@@ -3313,7 +3350,7 @@ receiver deliveries are not resent. After a conflict or uncertain response,
 inspect again before deciding whether to submit another recovery.
 
 ```ts
-import { retryDurableEntity } from '@gregale/sdk-node';
+import { retryDurableEntity } from '@gregale/sdk-node/preview';
 if (inspection.outbox.exhausted) {
   await retryDurableEntity({ slug: 'reservations', requestBody: {
     namespace: 'reservations', key: 'reservation:123', target: 'outbox',
@@ -3333,7 +3370,7 @@ helper rejects unsafe versions before sending a request.
 After configuring `FaaSClient`, bind logical entity selectors once:
 
 ```ts
-import { durableEntityHandle } from '@gregale/sdk-node';
+import { durableEntityHandle } from '@gregale/sdk-node/preview';
 const counter = durableEntityHandle<{ delta: number }, { count: number }>(
   { slug: 'counter', namespace: 'counters', key: 'customer:456', environment: 'staging' },
   value => {
@@ -3637,7 +3674,7 @@ Binding verification review endpoints return an executable plan and opaque diges
 After reviewing and creating a consented receipt, save its UUID and resume it directly:
 
 ```ts
-import { runBindingVerification, runProjectBindingVerification } from '@gregale/sdk-node';
+import { runBindingVerification, runProjectBindingVerification } from '@gregale/sdk-node/preview';
 const run = await runBindingVerification('api', savedRunId, {
   concurrency: 2,
   signal: controller.signal,

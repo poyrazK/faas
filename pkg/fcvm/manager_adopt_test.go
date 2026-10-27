@@ -9,10 +9,12 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"testing"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/runtimeadmission"
 )
 
 // adoptingVMM records what adoption asked of the VMM.
@@ -23,11 +25,26 @@ type adoptingVMM struct {
 	binds     int
 	jails     int
 	listeners int
+	origins   []GuestVsockStreamOrigin
 	jobExits  int
 	resumed   int
 	files     int
 	owners    []adoptedOwner
 	adoptErr  error
+	// handoffs records adoptRuntimeDriveHandoff calls; handoffErr fails them.
+	handoffs   []adoptedDriveHandoff
+	handoffErr error
+}
+
+type adoptedDriveHandoff struct {
+	lease Lease
+	pid   int
+	pins  []resourceAdoptionDrivePin
+}
+
+func (v *adoptingVMM) adoptRuntimeDriveHandoff(_ context.Context, l Lease, pid int, _ runtimeadmission.Receipt, pins []resourceAdoptionDrivePin) error {
+	v.handoffs = append(v.handoffs, adoptedDriveHandoff{lease: l, pid: pid, pins: pins})
+	return v.handoffErr
 }
 
 func (v *adoptingVMM) adoptGuestProcess(l Lease, _ resourceProcessIdentity, owner adoptedOwner, jails, binds, files []resourceAsset) error {
@@ -41,10 +58,14 @@ func (v *adoptingVMM) adoptGuestProcess(l Lease, _ resourceProcessIdentity, owne
 	v.files += len(files)
 	return nil
 }
-func (v *adoptingVMM) prepareRegisteredGuestVsockListeners(Lease) error { v.listeners++; return nil }
-func (v *adoptingVMM) adoptJobExitListener(Lease) error                 { v.jobExits++; return nil }
-func (v *adoptingVMM) chrootRoot(string) string                         { return v.root }
-func (v *adoptingVMM) ResumeVM(context.Context, Lease) error            { v.resumed++; return nil }
+func (v *adoptingVMM) prepareRegisteredGuestVsockListeners(_ Lease, origins ...GuestVsockStreamOrigin) error {
+	v.listeners++
+	v.origins = append(v.origins, origins...)
+	return nil
+}
+func (v *adoptingVMM) adoptJobExitListener(Lease) error      { v.jobExits++; return nil }
+func (v *adoptingVMM) chrootRoot(string) string              { return v.root }
+func (v *adoptingVMM) ResumeVM(context.Context, Lease) error { v.resumed++; return nil }
 
 // adoptionManager is a Manager that restarted over the fixture's journal:
 // the inventory quarantined the survivor, as at real startup.
@@ -224,6 +245,7 @@ func TestAdoptRestartSurvivorsRefusesOutsideSlice2Scope(t *testing.T) {
 		{name: "private network", block: func(b *resourceAdoption) { b.Network.PrivateNetworkHandleV4 = 9 }, reason: adoptionRefusedPrivateNetwork},
 		{name: "static egress ip", block: func(b *resourceAdoption) { b.Network.StaticEgressIP = "203.0.113.7" }, reason: adoptionRefusedStaticEgress},
 		{name: "rehearsal containment", block: func(b *resourceAdoption) { b.Network.RehearsalRunID = "run-1" }, reason: adoptionRefusedRehearsal},
+		{name: "egress circuits", block: func(b *resourceAdoption) { b.Network.EgressCircuits = true }, reason: adoptionRefusedEgressCircuit},
 		{name: "firecracker upgraded", vmm: func(v *adoptingVMM) { v.root = "/srv/fc/jail/firecracker-v1.8.0/x/root" }, reason: adoptionRefusedFCChanged},
 		{name: "vmm cannot adopt", vmm: func(v *adoptingVMM) { v.adoptErr = errors.New("no pidfd") }, reason: adoptionRefusedAdoptFailed},
 	}
@@ -360,6 +382,23 @@ func TestAdoptRestartSurvivorsKeepsTheObservedClass(t *testing.T) {
 	}
 	if inst := m.live[idLive]; inst == nil || !instanceHasNoHTTPContract(inst) {
 		t.Fatalf("adopted worker %+v lost its no-HTTP liveness contract", inst)
+	}
+}
+
+// An adopted guest keeps the wake identity its channels and readiness
+// observations carry (ADR-570), so sidecar health from it is still accepted.
+func TestAdoptRestartSurvivorsKeepTheWakeIdentity(t *testing.T) {
+	f := newAdoptionFixture(t)
+	block := f.block()
+	block.Instance.WakeID, block.Instance.NodeID = "wake-1", "node-1"
+	m, vmm := adoptionManager(t, f, block)
+	if rep, err := m.adoptClassified(t.Context(), vmm, f.classifier()); err != nil || rep.Adopted != 1 {
+		t.Fatalf("adoption = %+v, %v", rep, err)
+	}
+	inst := m.live[idLive]
+	want := GuestVsockStreamOrigin{AppID: block.Instance.AppID, WakeID: "wake-1", NodeID: "node-1"}
+	if inst == nil || inst.WakeID != want.WakeID || inst.NodeID != want.NodeID || !slices.Equal(vmm.origins, []GuestVsockStreamOrigin{want}) {
+		t.Fatalf("adopted %+v with channel origins %+v; want %+v", inst, vmm.origins, want)
 	}
 }
 

@@ -180,7 +180,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// reconcile service shares the same state.Store as the
 	// apid-side reconcile (one PgStore per daemon — no
 	// cross-process shared state).
-	store := state.NewPgStore(pool)
+	store := state.NewPgStore(pool, state.WithTrafficAppsDomain(cfg.AppsDomain))
 	wire.BootStamps(ctx, "githubd", ops)
 	wire.RegisterDefaultOps(ops)
 	// ADR-190 follow-up: export this pool's live statistics so the
@@ -287,6 +287,11 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	webhookSvc.Installs = installsAdapter
 	webhookSvc.Source = source
 	webhookSvc.Reconcile = ghReconcile
+	capabilityAllowed, err := startCapabilityFlags(ctx, store, pool, log)
+	if err != nil {
+		return err
+	}
+	webhookSvc.CapabilityAllowed = capabilityAllowed
 	// Issue #432 phase 5: workDir is the root under which
 	// the per-app source tarballs land during the dispatch
 	// loop (pkg/githubd/staging.go). Same value as the
@@ -355,6 +360,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 					return fmt.Errorf("githubd: new checks api: %w", checksErr)
 				}
 				checks.WithCheckRunStore(deliveryStore).WithGitHubDeploymentStore(deliveryStore)
+				if id, parseErr := strconv.ParseInt(appID, 10, 64); parseErr == nil && id > 0 {
+					checks.AppID = id
+				}
 				// PR-C: load the host age keypair so the install
 				// token can be sealed at rest (SealOne at mint)
 				// and unsealed at cold-start rehydrate (Open).

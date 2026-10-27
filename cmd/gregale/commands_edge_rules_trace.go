@@ -37,6 +37,7 @@ func cmdEdgeRulesTrace(args []string) int {
 	country := fs.String("country", "", "simulated ISO 3166-1 alpha-2 country for kind=geo rules")
 	asnFlag := fs.String("asn", "", "simulated client autonomous system for asn conditions, e.g. AS13335")
 	verifiedBot := fs.Bool("verified-bot", false, "simulate a client IP that passes crawler verification, so verified_bot is the crawler the User-Agent header claims")
+	verifiedAICrawler := fs.Bool("verified-ai-crawler", false, "simulate a client IP inside the published ranges of the AI crawler the User-Agent header claims, so verified_ai_crawler is that crawler")
 	bodyFile := fs.String("body-file", "", fmt.Sprintf("read request body from file (max %d bytes; contents are not output)", edgeruletrace.MaxTraceBodyBytes))
 	var headerArgs multiFlag
 	fs.Var(&headerArgs, "header", "simulated request header (Name:Value; repeat; values compare exactly)")
@@ -107,7 +108,7 @@ func cmdEdgeRulesTrace(args []string) int {
 			asn = uint32(n)
 		}
 		input, err = edgeruletrace.NormalizeInput(edgeruletrace.Input{
-			Project: *project, Environment: *environment, ASN: asn, VerifiedBot: *verifiedBot,
+			Project: *project, Environment: *environment, ASN: asn, VerifiedBot: *verifiedBot, VerifiedAICrawler: *verifiedAICrawler,
 			App: *slug, Host: u.Hostname(), Path: requestPath, Query: u.RawQuery, Method: *method,
 			ClientIP: *clientIP, Country: *country, Headers: requestHeaders,
 			Body: requestBody, BodyProvided: bodyProvided,
@@ -126,6 +127,9 @@ func cmdEdgeRulesTrace(args []string) int {
 	}
 	input.AppMaintenanceLoaded = true
 	input.AppMaintenanceMode = app.MaintenanceMode
+	input.EdgeAnswersLoaded = true
+	input.AppHealthPath = edgeruletrace.EdgeAnswerHealthPath(app.Manifest.HealthPath, app.Manifest.Healthz)
+	input.AppHealthPathWakes = app.Manifest.HealthPathWakes
 	input.AsyncWorkloadContextLoaded = true
 	input.AsyncRequestInvocationsEnabled = app.WorkloadClass != "worker" && app.WorkloadClass != "job" && app.Manifest.ExecutionMode != api.ExecutionModeWorker && app.Manifest.ExecutionMode != api.ExecutionModeJob
 	input.AsyncAppRetryPolicyLoaded = true
@@ -302,6 +306,11 @@ func renderEdgeRuleTrace(result edgeruletrace.Result) {
 		}
 	}
 	_, _ = fmt.Fprintf(osStdout, "simulation: status=%s outcome=%s final_path=%s\n", result.Simulation.Status, result.Simulation.Outcome, result.Simulation.FinalPath)
+	if policy := result.Simulation.TotalDeadlinePolicy; policy != nil {
+		_, _ = fmt.Fprintf(osStdout, "  ingress total deadline: %d ms effective (configured %d ms; plan ceiling %d ms; rule %s selected on original path %s; status %s; enforcement %s)\n",
+			policy.DeadlineMS, policy.ConfiguredMS, policy.PlanMaxMS, policy.RuleID, policy.SelectionPath, policy.Status, policy.EnforcementStatus)
+		_, _ = fmt.Fprintln(osStdout, "    scope: ordinary public HTTP and stream/upgrade handshake; includes upload/wake/queue and pins the execution rule; execution overrides cannot increase it")
+	}
 	for _, step := range result.Simulation.Steps {
 		label := step.RuleID
 		if label == "" {
@@ -312,6 +321,9 @@ func renderEdgeRuleTrace(result edgeruletrace.Result) {
 			policy := step.BudgetPolicy
 			_, _ = fmt.Fprintf(osStdout, "    request budget: %d ms effective (configured %d ms; plan ceiling %d ms; source %s; override %s)\n",
 				policy.BudgetMS, policy.ConfiguredMS, policy.PlanMaxMS, policy.Source, policy.OverrideStatus)
+			if policy.TotalDeadlineMS > 0 {
+				_, _ = fmt.Fprintf(osStdout, "    total deadline: %d ms from public ingress (includes upload/wake/queue; execution overrides cannot increase it)\n", policy.TotalDeadlineMS)
+			}
 		}
 		if step.ThrottlePolicy != nil {
 			policy := step.ThrottlePolicy

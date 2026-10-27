@@ -204,6 +204,10 @@ type AppManifest struct {
 	SecretReloadSignal string `json:"secret_reload_signal,omitempty"`
 	// SecretReloadReadiness waits for a per-process ready marker before signaling.
 	SecretReloadReadiness bool `json:"secret_reload_readiness,omitempty"`
+	// SecretFiles are app secrets guest-init writes to /run/secrets for the
+	// main workload (ADR-20261023090000). Names only; values come from the
+	// secrets vmmd hands the guest at boot and on live reload.
+	SecretFiles []SecretFile `json:"secret_files,omitempty"`
 	// StopGracePeriod mirrors OCI StopGracePeriod (the OCI image
 	// spec doesn't carry it; M-2 will populate from operator
 	// override or per-plan cap). Currently always zero.
@@ -866,6 +870,9 @@ func (m AppManifest) ValidatePlan(plan Plan) error {
 		}
 	}
 	if err := ValidateWorkloadPorts(m.Ports); err != nil {
+		return fmt.Errorf("app manifest: %w", err)
+	}
+	if err := ValidateSecretFiles(m.SecretFiles); err != nil {
 		return fmt.Errorf("app manifest: %w", err)
 	}
 	limits, ok := LimitsFor(plan)

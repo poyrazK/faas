@@ -13,7 +13,15 @@ WHERE app_service_wake_ahead.account_id = EXCLUDED.account_id
 RETURNING enabled, updated_at;
 
 -- name: ServiceWakeAheadEnabled :one
-SELECT COALESCE((SELECT enabled FROM app_service_wake_ahead WHERE app_id = sqlc.arg(app_id)), false)::boolean AS enabled;
+-- An app that never set wake-ahead gets state.ServiceWakeAheadDefault: on for
+-- a production project member under the project service policy
+-- (ADR-20261025105812).
+SELECT COALESCE(
+    (SELECT enabled FROM app_service_wake_ahead WHERE app_id = sqlc.arg(app_id)),
+    (SELECT a.project_id IS NOT NULL AND COALESCE(a.preview_of_slug, '') = ''
+            AND a.manifest->>'service_binding_policy' = 'project'
+       FROM apps a WHERE a.id = sqlc.arg(app_id)),
+    false)::boolean AS enabled;
 
 -- name: ServiceWakeAheadFleetResidency :one
 -- Billable RAM of live instances against the active nodes' admission ceilings.

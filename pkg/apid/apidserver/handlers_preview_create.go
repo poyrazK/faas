@@ -1,6 +1,7 @@
 package apidserver
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -86,16 +87,37 @@ func (s *server) provisionPreview(r *http.Request, acct state.Account, parent st
 		if !samePreview(existing, parent, req.PRNumber) {
 			return state.App{}, false, previewSlugTakenProblem(slug)
 		}
-		if reopened, reopenErr := s.store.RefreshPRPreview(r.Context(), existing.ID, expiresAt); reopenErr == nil {
+		reopen := s.store.RefreshPRPreview
+		if reopener, ok := s.store.(state.PRPreviewReopenStore); ok {
+			reopen = func(ctx context.Context, id string, expiresAt time.Time) (state.App, error) {
+				return reopener.ReopenPRPreview(ctx, id, expiresAt, api.MustLimitsFor(acct.Plan))
+			}
+		}
+		reopened, reopenErr := reopen(r.Context(), existing.ID, expiresAt)
+		var qe *state.QuotaError
+		switch {
+		case reopenErr == nil:
 			existing = reopened
-		} else if !errors.Is(reopenErr, state.ErrNotFound) {
+		case errors.As(reopenErr, &qe):
+			return state.App{}, false, previewQuotaProblem(qe, acct.Plan)
+		case !errors.Is(reopenErr, state.ErrNotFound):
 			return state.App{}, false, api.ErrCapacity("refresh preview")
 		}
 		return existing, false, nil
 	} else if !errors.Is(err, state.ErrNotFound) {
 		return state.App{}, false, api.ErrCapacity("look up preview")
 	}
-	created, err := s.store.CreateAppIfUnderQuota(r.Context(), previewAppFromParent(parent, slug, req.PRNumber, expiresAt), api.MustLimitsFor(acct.Plan))
+	desired := previewAppFromParent(parent, slug, req.PRNumber, expiresAt)
+	created, err := s.store.CreateAppIfUnderQuota(r.Context(), desired, api.MustLimitsFor(acct.Plan))
+	if errors.Is(err, state.ErrConflict) {
+		// A torn-down preview's tombstone keeps the slug for the restore
+		// window; the same preview is re-created as a fresh row instead.
+		if releaser, ok := s.store.(state.PreviewTombstoneStore); ok {
+			if released, releaseErr := releaser.ReleaseDeletedPreviewSlug(r.Context(), desired); releaseErr == nil && released {
+				created, err = s.store.CreateAppIfUnderQuota(r.Context(), desired, api.MustLimitsFor(acct.Plan))
+			}
+		}
+	}
 	if err == nil {
 		return created, true, nil
 	}
@@ -108,9 +130,30 @@ func (s *server) provisionPreview(r *http.Request, acct state.Account, parent st
 	}
 	var qe *state.QuotaError
 	if errors.As(err, &qe) {
-		return state.App{}, false, api.ErrPlanLimitApps(api.MustLimitsFor(acct.Plan), qe.Observed)
+		return state.App{}, false, previewQuotaProblem(qe, acct.Plan)
 	}
 	return state.App{}, false, api.ErrCapacity("create preview")
+}
+
+// previewQuotaProblem reports a PR preview admission failure with the
+// limits of the plan the admission transaction observed.
+func previewQuotaProblem(qe *state.QuotaError, plan api.Plan) *api.Problem {
+	limits := api.MustLimitsFor(plan)
+	if qe.Plan != "" {
+		if authoritative, ok := api.LimitsFor(qe.Plan); ok {
+			limits = authoritative
+		}
+	}
+	switch qe.Kind {
+	case state.QuotaErrorKindPreviewApps:
+		limits.PreviewApps = qe.Limit
+		return api.ErrPlanLimitPreviewEnvironments(limits, qe.Observed)
+	case state.QuotaErrorKindPreviewWorkloads:
+		limits.DeployedApps = qe.Limit
+		return api.ErrPlanLimitPreviewWorkloads(limits, qe.Observed)
+	default:
+		return api.ErrPlanLimitApps(limits, qe.Observed)
+	}
 }
 
 func previewSlugTakenProblem(slug string) *api.Problem {
@@ -134,8 +177,11 @@ func samePreview(app, parent state.App, prNumber int) bool {
 }
 
 func previewAppFromParent(parent state.App, slug string, prNumber int, expiresAt time.Time) state.App {
+	// A PR preview runs unpromoted code, and production env values can hold
+	// credentials (ADR-310): keep only the platform-owned service binding URLs,
+	// as the GitHub webhook path does.
 	manifest := parent.Manifest
-	manifest.Env = api.ServiceBindingEnvForTransport(parent.Manifest.Env, parent.Manifest.ServiceBindings, parent.Manifest.ServiceBindingTransport)
+	manifest.Env = api.ServiceBindingEnvForTransport(nil, parent.Manifest.ServiceBindings, parent.Manifest.ServiceBindingTransport)
 	return state.App{
 		AccountID: parent.AccountID, OrgID: parent.OrgID, Slug: slug, Visibility: parent.Visibility, Type: parent.Type,
 		Runtime: parent.Runtime, RAMMB: parent.RAMMB, CPUMillicores: parent.CPUMillicores,
@@ -151,6 +197,7 @@ func previewAppFromParent(parent state.App, slug string, prNumber int, expiresAt
 		RequireSigned:           parent.RequireSigned, StartCommand: parent.StartCommand, Manifest: manifest,
 		WarmSnapshotEnabled: parent.WarmSnapshotEnabled, RequireAuthn: parent.RequireAuthn,
 		PublicAuthMode: parent.PublicAuthMode, ConsumerAuthMode: parent.ConsumerAuthMode,
+		PublicAuthBasicSealed:   append([]byte(nil), parent.PublicAuthBasicSealed...),
 		WarmSnapshotMinRequests: parent.WarmSnapshotMinRequests, WarmSnapshotMinMs: parent.WarmSnapshotMinMs,
 		EvictionPriority: parent.EvictionPriority, Status: state.AppActive,
 		PreviewOfSlug: parent.Slug, PreviewPrNumber: prNumber, PreviewPrState: state.PreviewPrStateOpen,

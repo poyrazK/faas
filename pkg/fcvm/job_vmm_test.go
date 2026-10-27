@@ -300,11 +300,20 @@ func TestAdoptJobExitListenerReadsTheStoredBacklog(t *testing.T) {
 	}
 	// The exit is recorded: the listener left the store, and a retry of the
 	// frame, whose first ack the guest never saw, is acknowledged at once.
-	store.mu.Lock()
-	removed := len(store.removed) == 1 && store.removed[0] == name
-	store.mu.Unlock()
-	if !removed {
-		t.Fatalf("after the exit the store still holds the listener: removed %v", store.removed)
+	// The receiver publishes the exit before it unstores the listener, so
+	// the removal can trail WaitJobExit.
+	var removed []string
+	for deadline := time.Now().Add(5 * time.Second); ; {
+		store.mu.Lock()
+		removed = append([]string(nil), store.removed...)
+		store.mu.Unlock()
+		if len(removed) > 0 || time.Now().After(deadline) {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	if len(removed) != 1 || removed[0] != name {
+		t.Fatalf("after the exit the store still holds the listener: removed %v", removed)
 	}
 	if ack := sendJobExitFrame(t, path, want); ack != 0 {
 		t.Fatalf("retry ack = %d, want 0", ack)
@@ -342,13 +351,24 @@ func TestReadJobExitEnvelopeRejectsUnknownFields(t *testing.T) {
 	}
 }
 
-func TestEnsureJobManifestDirectoryRejectsImageSymlink(t *testing.T) {
+// stageJobManifestOn stages m onto a directory drive through the job path.
+func stageJobManifestOn(t *testing.T, root string, m JobManifest) error {
+	t.Helper()
+	v := newStagingVMM(t, "job-manifest")
+	withDriveDir(t, root)
+	return v.stageJobManifest("job-manifest", m)
+}
+
+func TestStageJobManifestRejectsImageSymlink(t *testing.T) {
 	root := t.TempDir()
 	escape := t.TempDir()
-	if err := os.Symlink(escape, filepath.Join(root, "etc")); err != nil {
+	if err := os.MkdirAll(filepath.Join(root, "upper"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := ensureJobManifestDirectory(root); err == nil {
+	if err := os.Symlink(escape, filepath.Join(root, "upper", "etc")); err != nil {
+		t.Fatal(err)
+	}
+	if err := stageJobManifestOn(t, root, JobManifest{}); err == nil {
 		t.Fatal("image-provided /etc symlink accepted")
 	}
 	if _, err := os.Stat(filepath.Join(escape, "faas")); !os.IsNotExist(err) {
@@ -356,22 +376,21 @@ func TestEnsureJobManifestDirectoryRejectsImageSymlink(t *testing.T) {
 	}
 }
 
-func TestJobManifestStorageRootUsesOptimizedUpper(t *testing.T) {
+func TestStageJobManifestUsesOptimizedUpper(t *testing.T) {
 	root := t.TempDir()
-	upper := filepath.Join(root, "upper")
-	if err := os.Mkdir(upper, 0o755); err != nil {
+	if err := os.Mkdir(filepath.Join(root, "upper"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	got, err := jobManifestStorageRoot(root)
-	if err != nil {
+	if err := stageJobManifestOn(t, root, JobManifest{}); err != nil {
 		t.Fatal(err)
 	}
-	if got != upper {
-		t.Fatalf("job manifest root = %q, want %q", got, upper)
+	info, err := os.Stat(filepath.Join(root, "upper", "etc", "faas", "job.json"))
+	if err != nil || info.Mode().Perm() != 0o600 {
+		t.Fatalf("job.json = %v (%v), want mode 0600 below upper", info, err)
 	}
 }
 
-func TestJobManifestStorageRootUsesFullRoot(t *testing.T) {
+func TestStageJobManifestUsesFullRoot(t *testing.T) {
 	root := t.TempDir()
 	marker := filepath.Join(root, strings.TrimPrefix(api.FullRootfsMarkerPath, "/"))
 	if err := os.MkdirAll(filepath.Dir(marker), 0o755); err != nil {
@@ -380,30 +399,15 @@ func TestJobManifestStorageRootUsesFullRoot(t *testing.T) {
 	if err := os.WriteFile(marker, []byte(api.FullRootfsMarkerValue), 0o444); err != nil {
 		t.Fatal(err)
 	}
-	got, err := jobManifestStorageRoot(root)
-	if err != nil {
+	if err := stageJobManifestOn(t, root, JobManifest{}); err != nil {
 		t.Fatal(err)
 	}
-	if got != root {
-		t.Fatalf("job manifest root = %q, want %q", got, root)
+	if _, err := os.Stat(filepath.Join(root, "etc", "faas", "job.json")); err != nil {
+		t.Fatalf("job.json not at the full-rootfs root: %v", err)
 	}
 }
 
-func TestJobManifestStorageRootRejectsMalformedLayouts(t *testing.T) {
-	t.Run("missing optimized upper", func(t *testing.T) {
-		if _, err := jobManifestStorageRoot(t.TempDir()); err == nil {
-			t.Fatal("missing optimized upper accepted")
-		}
-	})
-	t.Run("symlinked optimized upper", func(t *testing.T) {
-		root := t.TempDir()
-		if err := os.Symlink(t.TempDir(), filepath.Join(root, "upper")); err != nil {
-			t.Fatal(err)
-		}
-		if _, err := jobManifestStorageRoot(root); err == nil {
-			t.Fatal("symlinked optimized upper accepted")
-		}
-	})
+func TestStageJobManifestRejectsMalformedLayouts(t *testing.T) {
 	t.Run("invalid full-rootfs marker", func(t *testing.T) {
 		root := t.TempDir()
 		marker := filepath.Join(root, strings.TrimPrefix(api.FullRootfsMarkerPath, "/"))
@@ -413,8 +417,17 @@ func TestJobManifestStorageRootRejectsMalformedLayouts(t *testing.T) {
 		if err := os.WriteFile(marker, []byte("invalid\n"), 0o444); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := jobManifestStorageRoot(root); err == nil {
+		if err := stageJobManifestOn(t, root, JobManifest{}); err == nil {
 			t.Fatal("invalid full-rootfs marker accepted")
+		}
+	})
+	t.Run("symlinked optimized upper", func(t *testing.T) {
+		root := t.TempDir()
+		if err := os.Symlink(t.TempDir(), filepath.Join(root, "upper")); err != nil {
+			t.Fatal(err)
+		}
+		if err := stageJobManifestOn(t, root, JobManifest{}); err == nil {
+			t.Fatal("symlinked optimized upper accepted")
 		}
 	})
 }

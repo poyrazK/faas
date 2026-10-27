@@ -20,15 +20,12 @@ AccountsByIDs
 ActiveComputeNodes
 AlertPresetByName
 AlertRuleByAccountAppAndPresetName
-AlertRuleByID
 AppBySlug
 AppForkByID
 AppForkExecByID
 AppForkForApp
 AppForksDueForTeardown
-AppLogDrainByID
 AppLogDrainHealthByDrainID
-AppWebhookByID
 AppWebhookDeliveryByID
 AppendBuilderUsage
 AppendComputeNodeHeartbeat
@@ -61,6 +58,7 @@ ClaimNextAppForkExec
 ClaimNextCrashCapture
 ClaimNextPendingRun
 ClearDeployment
+ClearExpiredAppForkExecOutput
 ClearInstanceFrameworkReadyAt
 ClearMFA
 ClearObsoleteDeployments
@@ -142,7 +140,6 @@ DecrementInstanceTailCount
 DeleteAPIKeyReturning
 DeleteAccount
 DeleteAccountPassword
-DeleteAlertRule
 DeleteAppEnv
 DeleteAppEnvInScope
 DeleteAppErrorRequestsByIDs
@@ -235,7 +232,6 @@ GetTenantSurfaceByName
 GetUploadCommitOutcome
 GetUploadSession
 GetWorkflowEventsForRun
-GetWorkflowRunByIdempotencyKey
 GitHubBindingForApp
 GitHubInstallForAccount
 GithubInstallBindingForRepoBranch
@@ -246,7 +242,6 @@ HasStripePushHour
 IncInstanceRequestCount
 IncrementAppError
 InsertAppErrorRequest
-InsertAuditLog
 InsertDataUpstream
 InsertDataUpstreamProbe
 InsertMirrorResult
@@ -536,7 +531,6 @@ SetAccountEgressAllowlistExtra
 SetAccountKeyGraceWindow
 SetAccountPassword
 SetAlertRuleLastEvaluated
-SetAlertRuleState
 SetAppMinInstances
 SetAppWorkloadClass
 SetComputeNodeRole

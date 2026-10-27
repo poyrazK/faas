@@ -94,6 +94,35 @@ test('failures carry policy, retry on the next call and finally throw into the w
   assert.deepEqual(local.output, { recovered: 'boom 2', attempts: 2 });
 });
 
+test('a scheduled retry stays suspended while the rest of the workflow continues', async () => {
+  let runs = 0;
+  const both = defineWorkflow('both', async (_input, wf) => {
+    await Promise.all([
+      wf.step('call', () => { runs++; return 1; }),
+      (async () => { await wf.sleep('pause', '1s'); await wf.step('after', () => 2); })(),
+    ]);
+    return 'done';
+  });
+  const response = await runWorkflowInvocation(both, request('both', [
+    { seq: 0, name: 'call', kind: 'step', status: 'scheduled', attempt: 1, error: 'boom 1' },
+    { seq: 1, name: 'pause', kind: 'sleep', status: 'succeeded' },
+  ]));
+  assert.equal(runs, 0);
+  assert.deepEqual(response.ops, [{ seq: 2, name: 'after', kind: 'step', status: 'succeeded', output: 2 }]);
+  assert.equal(response.result.status, 'running');
+});
+
+test('operation names may not use the reserved # suffix', async () => {
+  const clash = defineWorkflow('clash', async (_input, wf) => {
+    await wf.step('poll', () => 1);
+    await wf.step('poll#2', () => 2);
+    return 'never';
+  });
+  const response = await runWorkflowInvocation(clash, request('clash', [{ seq: 0, name: 'poll', kind: 'step', status: 'succeeded', attempt: 1, output: 1 }]));
+  assert.equal(response.result.status, 'failed');
+  assert.match(response.result.error ?? '', /reserved for repeated names/);
+});
+
 test('non-retryable and non-JSON results fail without retry', async () => {
   const strict = defineWorkflow('strict', async (_input, wf) => {
     await wf.step('reject', () => { throw new NonRetryableError('card declined'); });

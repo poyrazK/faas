@@ -33,6 +33,11 @@ func WriteOperationError(w http.ResponseWriter, err error) {
 		api.WriteProblem(w, api.NewProblem(http.StatusConflict, "product_quote_changed", "Confirm current price", "the confirmed product terms have changed; refresh the assigned plan and confirm again before starting new work"))
 	case errors.Is(err, state.ErrProductInvoiceOverdue):
 		api.WriteProblem(w, productInvoiceOverdueProblem(err))
+	case errors.Is(err, state.ErrProductPaymentMethodRequired):
+		// The trial ended without a card on file and is not resolved yet
+		// (ADR-20261022180921). No start was consumed.
+		api.WriteProblem(w, api.NewProblem(http.StatusPaymentRequired, api.CodeProductPaymentMethodRequired, "Payment method required",
+			"the trial has ended; add a payment method to keep this plan, or new work resumes on the plan that follows the trial"))
 	case errors.Is(err, state.ErrProductAccess):
 		api.WriteProblem(w, api.NewProblem(http.StatusForbidden, "product_entitlement_denied", "Feature unavailable", "the assigned product plan does not permit this feature"))
 	case errors.Is(err, state.ErrProductBindingUnavailable):

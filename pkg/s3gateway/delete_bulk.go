@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"sync"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/objectstorage"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -17,6 +19,32 @@ func (h *Handler) deleteBulkTarget(ctx context.Context, req requestContext, targ
 		result.DeleteMarkerVersionID = j.VersionID
 	}
 	return result, err
+}
+
+type bulkDeleteOutcome struct {
+	deleted deletedObjectResult
+	err     error
+}
+
+// deleteBulkTargets deletes up to ObjectDeletionBulkConcurrency entries at once;
+// deletions of different keys no longer wait for each other
+// (ADR-20261025115958). Outcomes keep request order.
+func (h *Handler) deleteBulkTargets(ctx context.Context, req requestContext, targets []deleteObjectTarget, id string) []bulkDeleteOutcome {
+	out := make([]bulkDeleteOutcome, len(targets))
+	slots := make(chan struct{}, api.ObjectDeletionBulkConcurrency)
+	var wg sync.WaitGroup
+	for index, target := range targets {
+		slots <- struct{}{}
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			defer func() { <-slots }()
+			deleted, err := h.deleteBulkTarget(ctx, req, target, bulkDeletionRequestID(id, index))
+			out[index] = bulkDeleteOutcome{deleted: deleted, err: err}
+		}()
+	}
+	wg.Wait()
+	return out
 }
 
 func (h *Handler) readDeleteObjects(w http.ResponseWriter, r *http.Request, req requestContext) (deleteObjectsRequest, bool) {
@@ -59,6 +87,10 @@ func bulkDeleteError(target deleteObjectTarget, err error) deleteObjectError {
 		code, message = "NotImplemented", "This S3 operation is not implemented by the storage provider."
 	} else if errors.Is(err, state.ErrNotFound) {
 		code, message = "NoSuchVersion", "The specified version does not exist."
+	} else if errors.Is(err, state.ErrObjectBucketBusy) {
+		code, message = "SlowDown", objectBusyMessage
+	} else if errors.Is(err, state.ErrConflict) || errors.Is(err, objectstorage.ErrConflict) {
+		code, message = "OperationAborted", objectConflictMessage
 	}
 	return deleteObjectError{Key: target.Key, VersionID: target.VersionID, Code: code, Message: message}
 }

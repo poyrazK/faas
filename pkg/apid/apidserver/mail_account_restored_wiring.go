@@ -20,7 +20,7 @@ func (s *server) accountRestoredRequested() bool {
 // The verified ingress selects this before its expiring replay claim. Passing
 // selection explicitly prevents a late flag withdrawal from sending inline.
 func (s *server) handleAccountRestoredOutbox(w http.ResponseWriter, r *http.Request, provider string, ev billing.Event, acct state.Account) bool {
-	if ev.Type != billing.EventPaymentSucceeded || !s.accountRestoredRequested() {
+	if ev.Type != billing.EventPaymentSucceeded || !s.accountRestoredRequested() || orgBillingSubject(acct) {
 		return false
 	}
 	if err := s.handleSuccessfulPayment(r.Context(), ev, acct, provider == "polar", provider, true); err != nil {

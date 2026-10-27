@@ -49,14 +49,11 @@ import (
 	authmw "github.com/onebox-faas/faas/pkg/auth/middleware"
 	"github.com/onebox-faas/faas/pkg/dashboard"
 	"github.com/onebox-faas/faas/pkg/session"
+	"github.com/onebox-faas/faas/pkg/sessioncookie"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
 const (
-	// sessionCookie is the signed cookie name. Dashboards read this
-	// from request context; apid sets it on successful /login,
-	// /auth/reset, and /v1/auth/* callback.
-	sessionCookie = "faas_sid"
 	// sessionCookieLifetime is the lifetime baked into the test
 	// session manager. 7 days matches the production default in
 	// loadSessionManager + newServerWithDeps.
@@ -144,7 +141,7 @@ func magicLinkHash(token string) ([]byte, bool) {
 }
 
 func (a *authHandlers) finishMagicLink(w http.ResponseWriter, r *http.Request, acct state.Account) {
-	mfaPending := mfaSessionPending(acct)
+	mfaPending := a.srv.sessionMFAPending(acct)
 	// IAM-3 (ADR-039): the magic-link verify path now mints a sid
 	// + creates the sessions row + emits auth.session.created
 	// through the unified helper. The route never reaches the
@@ -158,8 +155,7 @@ func (a *authHandlers) finishMagicLink(w http.ResponseWriter, r *http.Request, a
 		).WithHint("Retry the link; if it still fails, return to sign in."))
 		return
 	}
-	http.SetCookie(w, &http.Cookie{
-		Name:     sessionCookie,
+	sessioncookie.Set(w, http.Cookie{
 		Value:    cookie,
 		Path:     "/",
 		HttpOnly: true,
@@ -189,15 +185,14 @@ func (a *authHandlers) logout(w http.ResponseWriter, r *http.Request) {
 	// or invalid we still clear it (best-effort UX) and skip the
 	// emit — there's no account to attribute the action to.
 	var accountID string
-	if c, err := r.Cookie(sessionCookie); err == nil && c.Value != "" {
+	if c, err := sessioncookie.Get(r); err == nil && c.Value != "" {
 		if env, err := a.srv.sessions.Verify(c.Value); err == nil {
 			if acct, err := a.srv.store.AccountByID(r.Context(), env.AccountID); err == nil && acct.Active() {
 				accountID = acct.ID
 			}
 		}
 	}
-	http.SetCookie(w, &http.Cookie{
-		Name:     sessionCookie,
+	sessioncookie.Set(w, http.Cookie{
 		Value:    "",
 		Path:     "/",
 		HttpOnly: true,
@@ -213,7 +208,7 @@ func (a *authHandlers) logout(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, loginPath, http.StatusFound)
 }
 
-// sessionAuth is the dashboard middleware. It reads faas_sid,
+// sessionAuth is the dashboard middleware. It reads the session cookie,
 // verifies via session.Manager, looks up the account, and stashes
 // both on the request context for downstream handlers to consume.
 //
@@ -230,7 +225,7 @@ func (a *authHandlers) logout(w http.ResponseWriter, r *http.Request) {
 //     link and the account page's Restore button were unreachable.
 func (s *server) sessionAuth(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		c, err := r.Cookie(sessionCookie)
+		c, err := sessioncookie.Get(r)
 		if err != nil || c.Value == "" {
 			http.Redirect(w, r, loginPath+"?next="+url.QueryEscape(r.URL.RequestURI()), http.StatusFound)
 			return
@@ -238,8 +233,7 @@ func (s *server) sessionAuth(next http.Handler) http.Handler {
 		env, err := s.sessions.Verify(c.Value)
 		if err != nil {
 			// Clear the bad cookie.
-			http.SetCookie(w, &http.Cookie{
-				Name:     sessionCookie,
+			sessioncookie.Set(w, http.Cookie{
 				Value:    "",
 				Path:     "/",
 				HttpOnly: true,
@@ -306,6 +300,10 @@ func (s *server) sessionAuth(next http.Handler) http.Handler {
 		//
 		//nolint:contextcheck // pointer-mutation contract (same as withSession/withPrincipal/withMFAPending at middleware.go:530-554): r.Context() must be the inherited ctx; capturing into a local would break observeWrap.
 		r = r.WithContext(authmw.WithStepUp(r.Context(), env.StepUpAt))
+		if !s.capabilityAllowedFor(r, acct) {
+			http.NotFound(w, r)
+			return
+		}
 		s.authorizeDashboardProject(next, w, r, acct)
 	})
 }

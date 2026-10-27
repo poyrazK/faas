@@ -117,7 +117,7 @@ func TestObsBundleRuleHealthAdvertisementAndCoverage(t *testing.T) {
 				obsBundleTestSection(w, r, snapshot)
 			}))
 			defer srv.Close()
-			bundle, err := collectObsBundle(t.Context(), srv.URL, "token", obsBundleTestRef, 2, 3)
+			bundle, err := collectObsBundle(t.Context(), srv.URL, obsCredential{bearer: "token"}, obsBundleTestRef, 2, 3)
 			if err != nil || len(paths) != tc.calls {
 				t.Fatalf("capture: calls=%v err=%v", paths, err)
 			}
@@ -162,7 +162,7 @@ func TestObsBundleRuleHealthDeadlineAndFailure(t *testing.T) {
 			defer srv.Close()
 			ctx, cancel := context.WithTimeout(t.Context(), 200*time.Millisecond)
 			defer cancel()
-			bundle, err := collectObsBundle(ctx, srv.URL, "token", obsBundleTestRef, 2, 3)
+			bundle, err := collectObsBundle(ctx, srv.URL, obsCredential{bearer: "token"}, obsBundleTestRef, 2, 3)
 			if mode == "disabled" {
 				if err != nil || bundle.Coverage.RuleHealthState != "disabled" {
 					t.Fatalf("explicit disabled source: %v %+v", err, bundle.Coverage)

@@ -42,6 +42,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/logsanitize"
 	"github.com/onebox-faas/faas/pkg/middleware"
 	"github.com/onebox-faas/faas/pkg/oauthpkce"
+	"github.com/onebox-faas/faas/pkg/sessioncookie"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -317,15 +318,14 @@ func (s *server) handleGitHubOAuthCallback(w http.ResponseWriter, r *http.Reques
 	//
 	// IAM-3 (ADR-039) goes through the unified helper so the sessions
 	// row is created + auth.session.created is emitted.
-	cookie, _, err := s.issueDashboardSessionWithGithub(r.Context(), r, acct.ID, mfaSessionPending(acct), "github", githubUser.Login)
+	cookie, _, err := s.issueDashboardSessionWithGithub(r.Context(), r, acct.ID, s.sessionMFAPending(acct), "github", githubUser.Login)
 	if err != nil {
 		writeCustomerInternalProblem(w, r, s.log, "create GitHub dashboard session",
 			"Gregale could not start your dashboard session.",
 			"Return to sign in and try connecting GitHub again.", err)
 		return
 	}
-	http.SetCookie(w, &http.Cookie{
-		Name:     sessionCookie,
+	sessioncookie.Set(w, http.Cookie{
 		Value:    cookie,
 		Path:     "/",
 		HttpOnly: true,

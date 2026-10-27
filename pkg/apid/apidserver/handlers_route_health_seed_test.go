@@ -34,7 +34,7 @@ func seedUsageRow(method, path string, tenants, requests int64) sqlc.RequestTele
 func seedCanaryFixture(t *testing.T, e testEnv, slug string) (state.App, state.Deployment, state.Deployment) {
 	t.Helper()
 	ctx := context.Background()
-	app, err := e.store.CreateApp(ctx, state.App{AccountID: e.acct.ID, Slug: slug})
+	app, err := e.store.CreateApp(ctx, state.App{AccountID: e.acct.ID, Slug: slug, MaxConcurrency: 1})
 	if err != nil {
 		t.Fatal(err)
 	}

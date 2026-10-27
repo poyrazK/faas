@@ -14,11 +14,16 @@
 //	gregalectl obs bundle    — export bounded incident evidence and source health.
 //	gregalectl obs overview  — fetch the bounded fleet/account KPI snapshot.
 //	gregalectl obs capacity  — fetch the bounded fleet capacity snapshot.
+//	gregalectl obs logs      — search platform logs in Loki (commands_obs_logs.go).
+//	gregalectl obs wake      — one wake's events and log lines as one timeline.
+//	gregalectl obs app       — one app's support page (commands_obs_app.go).
+//	gregalectl obs node      — one compute node's support page (commands_obs_node.go).
 //
 // The CLI dials apid via HTTP (not gRPC) — same path the operator
 // would use from a browser. The endpoint requires admin scope +
-// MFA + FAAS_ADMIN_EMAILS allowlist, so the CLI needs the same
-// admin bearer that the existing /v1/admin/* surface uses.
+// MFA + FAAS_ADMIN_EMAILS allowlist, so the CLI sends the operator
+// session from 'gregalectl auth login' or an admin bearer
+// (resolveObsCredential).
 //
 // apid URL resolution: $FAAS_APID_URL wins; defaults to
 // http://127.0.0.1:8080 (the apid loopback listen addr on
@@ -97,48 +102,57 @@ const defaultAPIDURL = "http://127.0.0.1:8080"
 // for `manifest validate` without --file).
 func cmdObsDispatch(args []string) int {
 	if len(args) == 0 {
-		fmt.Fprintln(os.Stderr, "gregalectl obs: missing subcommand; want health|input-health|rule-health|rule-coverage|recording-coverage|notification-health|summary|response-times|recurrence|collection-history|incidents|triage|triage-history|evidence|context|bundle|overview|capacity")
+		fmt.Fprintln(os.Stderr, "gregalectl obs: missing subcommand; want health|input-health|rule-health|rule-coverage|recording-coverage|notification-health|summary|response-times|recurrence|collection-history|incidents|triage|triage-history|evidence|context|bundle|overview|capacity|logs|wake|app|node")
 		return 2
 	}
-	switch args[0] {
+	sub, rest := args[0], args[1:]
+	switch sub {
 	case subObsRecordingCoverage:
-		return cmdObsRecordingCoverage(args[1:])
+		return cmdObsRecordingCoverage(rest)
 	case subObsInputHealth:
-		return cmdObsInputHealth(args[1:])
+		return cmdObsInputHealth(rest)
 	case subObsRuleCoverage:
-		return cmdObsRuleCoverage(args[1:])
+		return cmdObsRuleCoverage(rest)
 	case subObsRuleHealth:
-		return cmdObsRuleHealth(args[1:])
+		return cmdObsRuleHealth(rest)
 	case subObsNotificationHealth:
-		return cmdObsNotificationHealth(args[1:])
+		return cmdObsNotificationHealth(rest)
 	case subObsCollectionHistory:
-		return cmdObsCollectionHistory(args[1:])
+		return cmdObsCollectionHistory(rest)
 	case subObsRecurrence:
-		return cmdObsRecurrence(args[1:])
+		return cmdObsRecurrence(rest)
 	case subObsResponseTimes:
-		return cmdObsResponseTimes(args[1:])
+		return cmdObsResponseTimes(rest)
 	case subObsSummary:
-		return cmdObsSummary(args[1:])
+		return cmdObsSummary(rest)
 	case subObsHealth:
-		return cmdObsHealth(args[1:])
+		return cmdObsHealth(rest)
 	case subObsTriageHistory:
-		return cmdObsTriageHistory(args[1:])
+		return cmdObsTriageHistory(rest)
 	case subObsTriage:
-		return cmdObsTriage(args[1:])
+		return cmdObsTriage(rest)
 	case subObsIncidents:
-		return cmdObsIncidents(args[1:])
+		return cmdObsIncidents(rest)
 	case subObsEvidence:
-		return cmdObsEvidence(args[1:])
+		return cmdObsEvidence(rest)
 	case subObsContext:
-		return cmdObsContext(args[1:])
+		return cmdObsContext(rest)
 	case subObsBundle:
-		return cmdObsBundle(args[1:])
+		return cmdObsBundle(rest)
 	case subObsOverview:
-		return cmdObsOverview(args[1:])
+		return cmdObsOverview(rest)
 	case subObsCapacity:
-		return cmdObsCapacity(args[1:])
+		return cmdObsCapacity(rest)
+	case subObsLogs:
+		return cmdObsLogs(rest)
+	case subObsWake:
+		return cmdObsWake(rest)
+	case subObsApp:
+		return cmdObsApp(rest)
+	case subObsNode:
+		return cmdObsNode(rest)
 	default:
-		fmt.Fprintf(os.Stderr, "gregalectl obs: unknown subcommand %q\nRun 'gregalectl obs overview --help' for usage.\n", args[0])
+		fmt.Fprintf(os.Stderr, "gregalectl obs: unknown subcommand %q\nRun 'gregalectl obs overview --help' for usage.\n", sub)
 		return 2
 	}
 }
@@ -184,20 +198,15 @@ func cmdObsHealth(args []string) int {
 	fs := flag.NewFlagSet(subObsHealth, flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	jsonOut := fs.Bool("json", false, "emit structured JSON to stdout (overrides human summary)")
-	adminToken := fs.String("admin-token", "", "admin bearer for the FAAS_ADMIN_EMAILS-allowlisted admin scope (default: $FAAS_ADMIN_TOKEN)")
+	adminToken := fs.String("admin-token", "", obsAdminTokenUsage)
 	timeout := fs.Duration("timeout", 10*time.Second, "HTTP timeout for the apid round-trip (default 10s)")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
-	// Resolve bearer: --admin-token wins, then $FAAS_ADMIN_TOKEN.
-	// Empty bearer surfaces a stable error so the operator can
-	// tell "no auth supplied" from "apid rejected the request".
-	token := *adminToken
-	if token == "" {
-		token = os.Getenv("FAAS_ADMIN_TOKEN")
-	}
-	if token == "" {
-		fmt.Fprintln(os.Stderr, "gregalectl obs health: --admin-token (or $FAAS_ADMIN_TOKEN) required (admin scope is gated)")
+	// No usable credential surfaces a stable error so the operator
+	// can tell "no auth supplied" from "apid rejected the request".
+	cred, ok := resolveObsCredential("obs health", *adminToken)
+	if !ok {
 		return 2
 	}
 
@@ -210,7 +219,7 @@ func cmdObsHealth(args []string) int {
 		fmt.Fprintln(os.Stderr, "gregalectl obs health:", err)
 		return 1
 	}
-	req.Header.Set("Authorization", "Bearer "+token)
+	cred.apply(req)
 	req.Header.Set("Accept", "application/json")
 
 	httpClient := &http.Client{Timeout: *timeout}
@@ -268,13 +277,13 @@ func cmdObsHealth(args []string) int {
 }
 
 // cmdObsIncidents fetches the bounded operator incident inbox. It shares the
-// admin bearer and apid resolution with `obs health`, while exposing filters
+// credential and apid resolution with `obs health`, while exposing filters
 // that keep routine triage focused on one signal family or severity.
 func cmdObsIncidents(args []string) int {
 	fs := flag.NewFlagSet(subObsIncidents, flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	jsonOut := fs.Bool("json", false, "emit structured JSON to stdout")
-	adminToken := fs.String("admin-token", "", "admin bearer (default: $FAAS_ADMIN_TOKEN)")
+	adminToken := fs.String("admin-token", "", obsAdminTokenUsage)
 	typeFilter := fs.String("type", "", "incident type: deployment|job_run|compute_node|platform_alert")
 	severity := fs.String("severity", "", "severity: warning|error|critical")
 	alertStatus := fs.String("alert-status", "", "platform alert status: firing|resolved|unknown")
@@ -302,13 +311,21 @@ func cmdObsIncidents(args []string) int {
 			return 2
 		}
 	}
-	token := *adminToken
-	if token == "" {
-		token = os.Getenv("FAAS_ADMIN_TOKEN")
-	}
-	if token == "" && *ownership != "mine" {
-		fmt.Fprintln(os.Stderr, "gregalectl obs incidents: --admin-token (or $FAAS_ADMIN_TOKEN) required")
-		return 2
+	var cred obsCredential
+	if *ownership == "mine" {
+		// "mine" is the caller's own triage ownership, so only an operator
+		// session can answer it; a bearer names no operator.
+		session, err := loadOperatorSession()
+		if err != nil {
+			_, _ = fmt.Fprintln(osStderr, "gregalectl obs incidents:", err)
+			return 1
+		}
+		cred = obsCredential{sessionCookie: session.Cookie}
+	} else {
+		var ok bool
+		if cred, ok = resolveObsCredential("obs incidents", *adminToken); !ok {
+			return 2
+		}
 	}
 	query := url.Values{"limit": {strconv.Itoa(*limit)}}
 	for key, value := range map[string]string{"alert_status": *alertStatus, "acknowledgment": *acknowledgment, "ownership": *ownership, "snooze": *snooze} {
@@ -333,16 +350,7 @@ func cmdObsIncidents(args []string) int {
 		fmt.Fprintln(os.Stderr, "gregalectl obs incidents:", err)
 		return 1
 	}
-	if *ownership == "mine" {
-		session, err := loadOperatorSession()
-		if err != nil {
-			fmt.Fprintln(os.Stderr, "gregalectl obs incidents:", err)
-			return 1
-		}
-		req.AddCookie(&http.Cookie{Name: "faas_sid", Value: session.Cookie})
-	} else {
-		req.Header.Set("Authorization", "Bearer "+token)
-	}
+	cred.apply(req)
 	req.Header.Set("Accept", "application/json")
 	resp, err := (&http.Client{Timeout: *timeout, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}).Do(req)
 	if err != nil {
@@ -387,7 +395,7 @@ func cmdObsOverview(args []string) int {
 	fs := flag.NewFlagSet(subObsOverview, flag.ContinueOnError)
 	fs.SetOutput(osStderr)
 	jsonOut := fs.Bool("json", false, "emit structured JSON to stdout")
-	adminToken := fs.String("admin-token", "", "admin bearer (default: $FAAS_ADMIN_TOKEN)")
+	adminToken := fs.String("admin-token", "", obsAdminTokenUsage)
 	timeout := fs.Duration("timeout", 10*time.Second, "HTTP timeout for the apid round-trip")
 	if err := fs.Parse(args); err != nil {
 		return 2
@@ -396,15 +404,11 @@ func cmdObsOverview(args []string) int {
 		_, _ = fmt.Fprintln(osStderr, "gregalectl obs overview: positional arguments are not accepted")
 		return 2
 	}
-	token := *adminToken
-	if token == "" {
-		token = os.Getenv("FAAS_ADMIN_TOKEN")
-	}
-	if token == "" {
-		_, _ = fmt.Fprintln(osStderr, "gregalectl obs overview: --admin-token (or $FAAS_ADMIN_TOKEN) required")
+	cred, ok := resolveObsCredential("obs overview", *adminToken)
+	if !ok {
 		return 2
 	}
-	body, code := fetchObsSnapshot(subObsOverview, "/v1/admin/obs/overview", token, *timeout)
+	body, code := fetchObsSnapshot(subObsOverview, "/v1/admin/obs/overview", cred, *timeout)
 	if code != 0 {
 		return code
 	}
@@ -427,7 +431,7 @@ func cmdObsCapacity(args []string) int {
 	fs := flag.NewFlagSet(subObsCapacity, flag.ContinueOnError)
 	fs.SetOutput(osStderr)
 	jsonOut := fs.Bool("json", false, "emit structured JSON to stdout")
-	adminToken := fs.String("admin-token", "", "admin bearer (default: $FAAS_ADMIN_TOKEN)")
+	adminToken := fs.String("admin-token", "", obsAdminTokenUsage)
 	timeout := fs.Duration("timeout", 10*time.Second, "HTTP timeout for the apid round-trip")
 	if err := fs.Parse(args); err != nil {
 		return 2
@@ -436,15 +440,11 @@ func cmdObsCapacity(args []string) int {
 		_, _ = fmt.Fprintln(osStderr, "gregalectl obs capacity: positional arguments are not accepted")
 		return 2
 	}
-	token := *adminToken
-	if token == "" {
-		token = os.Getenv("FAAS_ADMIN_TOKEN")
-	}
-	if token == "" {
-		_, _ = fmt.Fprintln(osStderr, "gregalectl obs capacity: --admin-token (or $FAAS_ADMIN_TOKEN) required")
+	cred, ok := resolveObsCredential("obs capacity", *adminToken)
+	if !ok {
 		return 2
 	}
-	body, code := fetchObsSnapshot(subObsCapacity, "/v1/admin/obs/capacity", token, *timeout)
+	body, code := fetchObsSnapshot(subObsCapacity, "/v1/admin/obs/capacity", cred, *timeout)
 	if code != 0 {
 		return code
 	}
@@ -460,13 +460,13 @@ func cmdObsCapacity(args []string) int {
 	return 0
 }
 
-func fetchObsSnapshot(command, path, token string, timeout time.Duration) ([]byte, int) {
+func fetchObsSnapshot(command, path string, cred obsCredential, timeout time.Duration) ([]byte, int) {
 	req, err := http.NewRequest(http.MethodGet, apidBase()+path, nil)
 	if err != nil {
 		_, _ = fmt.Fprintln(osStderr, "gregalectl obs "+command+":", err)
 		return nil, 1
 	}
-	req.Header.Set("Authorization", "Bearer "+token)
+	cred.apply(req)
 	req.Header.Set("Accept", "application/json")
 	resp, err := (&http.Client{Timeout: timeout}).Do(req)
 	if err != nil {

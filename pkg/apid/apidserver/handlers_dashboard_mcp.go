@@ -97,20 +97,26 @@ func (s *server) renderMCPOperations(w http.ResponseWriter, r *http.Request, log
 	defer cancel()
 	data := dashboard.MCPOperationsData{ReadinessAttentionAfter: query.Get("attention_after"), ReadinessNotificationsAfter: query.Get("notification_after"), ReadinessIncidentsBefore: query.Get("incident_before"), ReadinessScope: scope, AppFilter: query.Get("app"), StatusMessage: dashboardMCPOAuthNotice(query.Get("notice"))}
 	appID := ""
-	var apps []state.App
+	// The connection-health and retirement panels are account-wide; hidden
+	// names the company apps whose rows they leave out. Without it they
+	// cannot be shown at all.
+	apps, err := s.store.ListApps(ctx, account.ID)
+	var hidden map[string]bool
+	if err == nil {
+		apps, hidden, err = s.visibleAccountApps(r, account, apps)
+	}
+	appsKnown := err == nil
 	if data.AppFilter != "" {
 		app, e := s.store.AppBySlug(ctx, data.AppFilter)
-		if e != nil || app.AccountID != account.ID {
+		if e != nil || app.AccountID != account.ID || !accountViewAppVisible(ctx, s.store, log, account, app) {
 			http.NotFound(w, r)
 			return
 		}
 		apps = []state.App{app}
 		appID = app.ID
-	} else {
-		apps, err = s.store.ListApps(ctx, account.ID)
-		if err != nil {
-			data.Error = "Application inventory is unavailable. Try again shortly."
-		}
+	} else if !appsKnown {
+		apps = nil
+		data.Error = "Application inventory is unavailable. Try again shortly."
 	}
 	// Read configuration before performance queries can exhaust the shared deadline.
 	s.dashboardMCPAlerts(w, r, ctx, account, appID, data.AppFilter, &data)
@@ -164,15 +170,15 @@ func (s *server) renderMCPOperations(w http.ResponseWriter, r *http.Request, log
 			return
 		}
 		app, e := s.store.AppByID(ctx, deployment.AppID)
-		if e != nil || app.AccountID != account.ID {
+		if e != nil || app.AccountID != account.ID || !accountViewAppVisible(ctx, s.store, log, account, app) {
 			http.NotFound(w, r)
 			return
 		}
 		evidence := dashboardMCPAdmission(receipt)
 		data.Evidence = &evidence
 	}
-	if source, ok := s.store.(state.MCPConnectionHealthStore); ok {
-		snapshot, e := source.MCPConnectionHealth(ctx, account.ID, appID, healthOffset, time.Now().UTC())
+	if source, ok := s.store.(state.MCPConnectionHealthStore); ok && (appsKnown || appID != "") {
+		snapshot, e := state.VisibleMCPConnectionHealth(ctx, source, account.ID, appID, hidden, healthOffset, time.Now().UTC())
 		if e != nil {
 			data.HealthError = "Connection health is unavailable. No healthy state can be inferred."
 		} else {
@@ -217,7 +223,7 @@ func (s *server) renderMCPOperations(w http.ResponseWriter, r *http.Request, log
 		}
 		data.PreviousAppsURL = dashboardMCPURL(query, "offset", strconv.Itoa(previous)) + "#applications"
 	}
-	s.dashboardMCPRetirements(w, r, ctx, account, query, &data)
+	s.dashboardMCPRetirements(w, r, ctx, account, query, hidden, appsKnown, &data)
 	page := dashboard.Page{Title: "MCP operations", Body: "mcp_operations", Account: dashboardAccountView(account, len(apps)), Data: data}
 	if err := dashboard.Render(w, log, httpsec.NonceFromContext(r.Context()), page); err != nil {
 		renderProblem(w, log, err)

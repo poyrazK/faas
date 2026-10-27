@@ -12,7 +12,8 @@
 // Modes:
 //
 //	(default)      serve the contents of -body-file on / and 200 on /healthz,
-//	               echo POST /echo request bodies back;
+//	               echo POST /echo request bodies back, and the bytes after
+//	               GET /upgrade-echo's 101;
 //	               bind $PORT when -addr is omitted (falling back to 8080)
 //	-spin          also burn one CPU forever (cpu-fairness fixture)
 //	-ignore-term   ignore SIGTERM (wedged-process fixture)
@@ -22,6 +23,7 @@
 //	-echo-session  interactive app-task fixture: report tty and size, echo lines
 //	-queue-consumer pull-queue worker: fetch a gregale:queues token, never listen
 //	-pprof-addr A  serve net/http/pprof on A and skip the Gregale collector
+//	-tcp-echo P    also echo TCP on port P; -udp-echo P, UDP datagrams on P
 //
 // GET /work burns CPU and retains heap for profile captures (ADR-1155).
 package main
@@ -84,6 +86,7 @@ func main() {
 	identityProbe := flag.Bool("identity-probe", false, "serve /identity, which fetches a workload identity token from guest-init")
 	queueConsumer := flag.Bool("queue-consumer", false, "run as a pull-queue worker: fetch a gregale:queues token, never listen")
 	failAPI := flag.Bool("fail-api", false, "answer /api with 500 while / and /healthz stay healthy (bad release)")
+	rejectAPI := flag.Int("reject-api", 0, "answer /api with this 4xx status, an error the platform's 5xx rules do not see (release gates; 0 disables)")
 	failLivez := flag.Bool("fail-livez", false, "answer /livez with 500 while /healthz stays healthy (crash loop)")
 	failRootAfter := flag.Int64("fail-root-after-requests", 0, "answer / with 500 after this many / requests, so a release passes its post-readiness smoke and fails later (0 disables)")
 	delayRoot := flag.Duration("delay-root", 0, "wait this long before answering / (a release that is slow at full traffic, ADR-1445)")
@@ -177,6 +180,7 @@ func main() {
 
 	mux := http.NewServeMux()
 	registerTCPFixture(mux)
+	registerStreamFixtures(mux)
 	if *identityProbe {
 		serveIdentityProbe(mux)
 	}
@@ -269,6 +273,10 @@ func main() {
 	mux.HandleFunc("/api", func(w http.ResponseWriter, _ *http.Request) {
 		if *failAPI {
 			http.Error(w, "fixture bad release", http.StatusInternalServerError)
+			return
+		}
+		if *rejectAPI != 0 {
+			http.Error(w, "fixture rejects the request", *rejectAPI)
 			return
 		}
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")

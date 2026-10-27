@@ -41,7 +41,7 @@
       "lane": "edge",
       "services": [
         {"name": "gatewayd-public", "host": "control-plane", "readyz": "http://127.0.0.1:9092/readyz"},
-        {"name": "gatewayd-public-edge", "host": "compute-only", "optional": true, "readyz": "http://127.0.0.1:9092/readyz"}
+        {"name": "gatewayd-public-edge", "host": "compute-only", "optional": true, "readyz": "http://127.0.0.1:9109/readyz"}
       ]
     },
     "realtimed": {"lane": "compute"},
@@ -51,6 +51,7 @@
     },
     "vmmd": {"lane": "compute"},
     "vmmd-jail-helper": {"lane": "compute"},
+    "vmmd-guestdisk": {"lane": "compute"},
     "vmmd-raw-bridge": {"lane": "compute"},
     "vmmd-tcp-bridge": {"lane": "compute"},
     "vmmd-udp-bridge": {"lane": "compute"},

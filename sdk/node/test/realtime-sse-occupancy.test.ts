@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { subscribeRealtimeSSE, type RealtimeSSEMessage } from '../src/index.js';
+import { subscribeRealtimeSSE, type RealtimeSSEMessage } from '../src/preview.js';
 
 function sseResponse(frames: string[]): Response {
   const body = new ReadableStream<Uint8Array>({

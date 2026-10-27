@@ -5,12 +5,16 @@
 import type { CreateEdgeRuleListRequest } from '../models/CreateEdgeRuleListRequest.js';
 import type { CreateEdgeRuleRequest } from '../models/CreateEdgeRuleRequest.js';
 import type { DeploymentRoutePolicySnapshotResponse } from '../models/DeploymentRoutePolicySnapshotResponse.js';
+import type { EdgeAttackModeStatus } from '../models/EdgeAttackModeStatus.js';
 import type { EdgeRuleEventsResponse } from '../models/EdgeRuleEventsResponse.js';
 import type { EdgeRuleListResponse } from '../models/EdgeRuleListResponse.js';
 import type { EdgeRuleRecipeSuggestionsResponse } from '../models/EdgeRuleRecipeSuggestionsResponse.js';
 import type { EdgeRuleResponse } from '../models/EdgeRuleResponse.js';
 import type { EdgeRuleSetVersionResponse } from '../models/EdgeRuleSetVersionResponse.js';
 import type { EdgeRuleStatsResponse } from '../models/EdgeRuleStatsResponse.js';
+import type { EdgeWAFExclusionsRequest } from '../models/EdgeWAFExclusionsRequest.js';
+import type { EdgeWAFReviewResponse } from '../models/EdgeWAFReviewResponse.js';
+import type { EnableEdgeAttackModeRequest } from '../models/EnableEdgeAttackModeRequest.js';
 import type { ListEdgeRuleListsResponse } from '../models/ListEdgeRuleListsResponse.js';
 import type { RollbackEdgeRulesRequest } from '../models/RollbackEdgeRulesRequest.js';
 import type { ThrottleSuggestionsResponse } from '../models/ThrottleSuggestionsResponse.js';
@@ -20,6 +24,109 @@ import type { CancelablePromise } from '../core/CancelablePromise.js';
 import { OpenAPI } from '../core/OpenAPI.js';
 import { request as __request } from '../core/request.js';
 export class EdgeRulesService {
+  /**
+   * Read an app's attack mode.
+   * @returns EdgeAttackModeStatus The app's attack mode.
+   * @throws ApiError
+   */
+  public static getAppEdgeAttackMode({
+    slug,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+  }): CancelablePromise<EdgeAttackModeStatus> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/edge-protection/attack-mode',
+      path: {
+        'slug': slug,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Switch attack mode on, or extend it.
+   * Challenges every request to every host of the app until it ends
+   * (ADR-20261021220456). Available on every plan, outside the plan's
+   * edge-rule quotas. The response returns once the serving gateways
+   * have applied it; `X-Faas-Edge-Rules-State: converging` with 503 means it
+   * was saved but not yet acknowledged. An empty body applies the
+   * default duration of one hour.
+   *
+   * @returns EdgeAttackModeStatus Attack mode is on.
+   * @throws ApiError
+   */
+  public static enableAppEdgeAttackMode({
+    slug,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    requestBody?: EnableEdgeAttackModeRequest,
+  }): CancelablePromise<EdgeAttackModeStatus> {
+    return __request(OpenAPI, {
+      method: 'PUT',
+      url: '/v1/apps/{slug}/edge-protection/attack-mode',
+      path: {
+        'slug': slug,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Switch attack mode off.
+   * Removes the attack-mode rule. Succeeds when attack mode is already off.
+   * @returns EdgeAttackModeStatus Attack mode is off.
+   * @throws ApiError
+   */
+  public static disableAppEdgeAttackMode({
+    slug,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+  }): CancelablePromise<EdgeAttackModeStatus> {
+    return __request(OpenAPI, {
+      method: 'DELETE',
+      url: '/v1/apps/{slug}/edge-protection/attack-mode',
+      path: {
+        'slug': slug,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
   /**
    * Read the gateway policy captured with a deployment.
    * Returns the immutable edge-rule set captured atomically when this
@@ -356,7 +463,9 @@ export class EdgeRulesService {
    * Every field is optional. `kind` is NOT patchable — rotating
    * kind mid-life would break the action union. To change kind,
    * delete and recreate. `action` replaces the jsonb column
-   * whole (no partial-update shape).
+   * whole (no partial-update shape). The app's attack-mode rule
+   * (`managed_by: attack_mode`) is refused with 409; change it through
+   * `/v1/apps/{slug}/edge-protection/attack-mode`.
    *
    * @returns EdgeRuleResponse Updated rule.
    * @throws ApiError
@@ -391,6 +500,7 @@ export class EdgeRulesService {
         400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
         401: `code: unauthorized`,
         404: `code: not_found`,
+        409: `code: edge_rule_conflict — duplicate or overlapping rule state rejected.`,
         412: `If-Match no longer names the app's latest edge-rule set version (edge_rules_version_mismatch). The response ETag carries the current version.`,
         422: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
         429: `429 application/problem+json response. Authentication throttling uses
@@ -432,6 +542,57 @@ export class EdgeRulesService {
         401: `code: unauthorized`,
         404: `code: not_found`,
         412: `If-Match no longer names the app's latest edge-rule set version (edge_rules_version_mismatch). The response ETag carries the current version.`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Add or remove CRS rule IDs on a kind=waf rule's exclusions.
+   * ADR-831 amendment 13. Changes exclude_rule_ids and keeps the rest of
+   * the rule's action and its penalty, so silencing a false positive does
+   * not mean restating the whole action. Recorded as a new rule-set
+   * version like any PATCH.
+   *
+   * @returns EdgeRuleResponse The updated rule.
+   * @throws ApiError
+   */
+  public static updateEdgeWafExclusions({
+    id,
+    requestBody,
+    ifMatch,
+  }: {
+    /**
+     * 32-hex-char opaque ID (NOT canonical UUID).
+     */
+    id: string,
+    requestBody: EdgeWAFExclusionsRequest,
+    /**
+     * Optional edge-rule set version (the ETag of the app's rule listing). The mutation is refused with 412 when it is no longer the app's latest version.
+     */
+    ifMatch?: string,
+  }): CancelablePromise<EdgeRuleResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/edge-rules/{id}/waf-exclusions',
+      path: {
+        'id': id,
+      },
+      headers: {
+        'If-Match': ifMatch,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        409: `code: edge_rule_conflict — duplicate or overlapping rule state rejected.`,
+        412: `If-Match no longer names the app's latest edge-rule set version (edge_rules_version_mismatch). The response ETag carries the current version.`,
+        422: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
@@ -541,9 +702,9 @@ export class EdgeRulesService {
      */
     rule?: string,
     /**
-     * Only events with this outcome; detected, warned and blocked are kind=waf detections; challenged, rejected, solved and failed are kind=challenge outcomes.
+     * Only events with this outcome; detected, warned and blocked are kind=waf detections; challenged, rejected, solved and failed are kind=challenge outcomes; boxed is a client put in a penalty box.
      */
-    outcome?: 'matched' | 'logged' | 'detected' | 'warned' | 'blocked' | 'challenged' | 'rejected' | 'solved' | 'failed',
+    outcome?: 'matched' | 'logged' | 'detected' | 'warned' | 'blocked' | 'challenged' | 'rejected' | 'solved' | 'failed' | 'boxed',
     /**
      * Only events for this request ID, such as the reference a visitor without JavaScript sees on the challenge page (ADR-831 amendment 8).
      */
@@ -574,6 +735,63 @@ export class EdgeRulesService {
         'since': since,
         'limit': limit,
         'cursor': cursor,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * The app's WAF detections grouped for a false-positive review.
+   * ADR-831 amendment 13. Reads the app's sampled kind=waf detections
+   * (detected, warned and blocked events, ADR-831 amendment 5) and groups
+   * them by edge rule, CRS rule and path, with id-like path segments read
+   * as {id}. Each group is assessed: likely_false_positive (a documented
+   * false positive, or at least 3 clients flagged on the path with none
+   * sending most of the detections), likely_attack (most detections from
+   * clients flagged on 5 or more paths), excluded (the rule already
+   * excludes the CRS rule) or review. The newest 5,000 detections of each
+   * outcome are read and at most 50 groups returned, largest first.
+   * Detections are sampled, so counts are lower bounds. The window
+   * defaults to 7 days and is clamped to the plan's event window.
+   *
+   * @returns EdgeWAFReviewResponse The review.
+   * @throws ApiError
+   */
+  public static getEdgeWafReview({
+    slug,
+    rule,
+    since = '7d',
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Only detections of this kind=waf edge rule id.
+     */
+    rule?: string,
+    /**
+     * Duration such as 24h or 7d.
+     */
+    since?: string,
+  }): CancelablePromise<EdgeWAFReviewResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/edge-rules/waf-review',
+      path: {
+        'slug': slug,
+      },
+      query: {
+        'rule': rule,
+        'since': since,
       },
       errors: {
         400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,

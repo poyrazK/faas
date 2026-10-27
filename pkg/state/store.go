@@ -14,6 +14,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/chaos"
+	"github.com/onebox-faas/faas/pkg/netns"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 	"github.com/onebox-faas/faas/pkg/workpolicy"
 )
@@ -356,6 +357,12 @@ var ErrRolloutNotStuck = errors.New("state: rollout is not stuck; use promote in
 // post-condition check is loud.
 var ErrRolloutStateInvalid = errors.New("state: rollout state does not permit recovery")
 
+// ErrRolloutAmbiguous is returned by an app-level RecoverRollout when rollouts
+// are in flight in more than one environment of the app. Recovery without a
+// deployment selector would otherwise act on whichever environment's rollout
+// is newest, which may not be the one the operator meant.
+var ErrRolloutAmbiguous = errors.New("state: rollouts are in progress in more than one environment")
+
 // CanaryAdvanceParams is the state-owned portion of one canary stage
 // transition. The API layer resolves the preset stage and supplies the audit
 // envelope; worker calls may also require the durable lease and stage dwell.
@@ -520,8 +527,11 @@ const (
 	QuotaErrorKindApps          QuotaErrorKind = "apps"
 	QuotaErrorKindDeveloperApps QuotaErrorKind = "developer_apps"
 	QuotaErrorKindPreviewApps   QuotaErrorKind = "preview_apps"
-	QuotaErrorKindCrons         QuotaErrorKind = "crons"
-	QuotaErrorKindMemory                       = "memory" // reserved for ADR-046 follow-on
+	// QuotaErrorKindPreviewWorkloads trips when one PR preview environment
+	// would hold more workloads than Limits.DeployedApps.
+	QuotaErrorKindPreviewWorkloads QuotaErrorKind = "preview_workloads"
+	QuotaErrorKindCrons            QuotaErrorKind = "crons"
+	QuotaErrorKindMemory                          = "memory" // reserved for ADR-046 follow-on
 	// QuotaErrorKindMirror (issue #72 / ADR-125) trips when a
 	// Pro/Scale customer tries to create more than
 	// limits.MirrorTargetsPerApp mirror rules on one app. Free /
@@ -554,7 +564,9 @@ func (e *QuotaError) Error() string {
 	case QuotaErrorKindDeveloperApps:
 		return fmt.Sprintf("state: developer environment quota exceeded (limit=%d, observed=%d)", e.Limit, e.Observed)
 	case QuotaErrorKindPreviewApps:
-		return fmt.Sprintf("state: PR preview quota exceeded (limit=%d, observed=%d)", e.Limit, e.Observed)
+		return fmt.Sprintf("state: PR preview environment quota exceeded (limit=%d, observed=%d)", e.Limit, e.Observed)
+	case QuotaErrorKindPreviewWorkloads:
+		return fmt.Sprintf("state: PR preview environment workload quota exceeded (limit=%d, observed=%d)", e.Limit, e.Observed)
 	case QuotaErrorKindCrons:
 		if e.NotAllowed {
 			return "state: crons not allowed on this plan"
@@ -864,6 +876,20 @@ type ComputeNodeCPUUsageBatcher interface {
 	ComputeNodeUsedCPUMillicoresByNode(ctx context.Context, nodeIDs []string) (map[string]int64, error)
 }
 
+// ComputeNodeVCPUUsageBatcher is the optional fleet-wide guest vCPU view used
+// by placement: each live instance's capacity_vcpu, grouped by node. Like the
+// CPU view it counts instances every scheduler placed, not only this one's.
+type ComputeNodeVCPUUsageBatcher interface {
+	ComputeNodeUsedVCPUByNode(ctx context.Context, nodeIDs []string) (map[string]int64, error)
+}
+
+// AppOwnershipLoadReader reports how much app RAM each node already owns
+// (Σ apps.ram_mb over its non-deleted apps), so a new app's owner can be
+// chosen by load (ADR-20261026170000). PgStore and MemStore implement it.
+type AppOwnershipLoadReader interface {
+	OwnedAppRAMByNode(ctx context.Context) (map[string]int64, error)
+}
+
 // ManagedRealtimeEndpointStore is the optional persistence surface for
 // managed realtime endpoint resources. It is intentionally separate from
 // Store so narrow test doubles and older integrations remain source-
@@ -935,6 +961,10 @@ type ProjectReconcileMutation struct {
 	Op                        string
 	App                       App
 	SetPlatformTenantRequired bool
+	// SetResources writes App's positive RAMMB, CPUMillicores and
+	// MaxConcurrency on an update or a restored app, because the source
+	// declares Compose resources (ADR-20261023120000). A zero keeps the app's.
+	SetResources bool
 }
 
 // ProjectReconcileCron is the desired cron attached to a scanned workload.
@@ -1310,7 +1340,10 @@ type Store interface {
 	// rollup; PgStore runs a SELECT … WHERE account_id = $1 AND minute >= $2.
 	// Empty since means "every row" — used by the GDPR export bundle.
 	UsageByAccount(ctx context.Context, accountID string, since time.Time) ([]Usage, error)
-	MarkAccountDeletionPending(ctx context.Context, id string) error
+	// MarkAccountDeletionPending with IncludingManagedPostgres(true) lets the
+	// account into deleted_pending while it owns live personal managed
+	// PostgreSQL databases; the grace sweep deletes them (ADR-20261024150500).
+	MarkAccountDeletionPending(ctx context.Context, id string, opts ...AccountDeletionOption) error
 	RestoreAccount(ctx context.Context, id string) error
 
 	// Dunning + quota warning (spec §4.7). These three are the load-
@@ -1334,8 +1367,9 @@ type Store interface {
 	// destination is past_due. Returns ErrNotFound when the row is
 	// missing OR its status didn't match `from` (the latter is the
 	// redelivery race: two ticks firing close together on the same
-	// overdue row, the second must not double-transition).
-	MarkDunningStep(ctx context.Context, accountID string, from, to AccountStatus) error
+	// overdue row, the second must not double-transition). Options apply
+	// only when `to` is deleted_pending.
+	MarkDunningStep(ctx context.Context, accountID string, from, to AccountStatus, opts ...AccountDeletionOption) error
 
 	// Mail suppression (issue #246 acceptance item 7, ADR-115 §D.3).
 	// RecordMailSuppression writes a row for a hard-bounce or
@@ -2816,7 +2850,11 @@ type Store interface {
 	// deployment_id returns (0, nil) — the SQL planner cannot fail
 	// a count(*) on a WHERE clause with no matching rows.
 	CountLiveInstancesByDeployment(ctx context.Context, deploymentID string) (int, error)
-	LatestSupersededDeployment(ctx context.Context, appID string) (Deployment, error)
+	// LatestSupersededDeployment returns the implicit rollback target of one
+	// environment: the deployment in scope that most recently stopped serving.
+	// Weights, live rows and rollbacks are per environment, so a target from
+	// another scope is never returned.
+	LatestSupersededDeployment(ctx context.Context, appID, scope string) (Deployment, error)
 	// GetDeploymentByIDScopedToSuperseded keeps its historical name but also
 	// accepts a live revision with zero traffic: it is not the current serving
 	// release and is eligible for readiness-gated rollback. A serving live
@@ -3020,6 +3058,11 @@ type Store interface {
 	AppendDeploymentLog(ctx context.Context, deploymentID, stream, line string) (seq int64, err error)
 	ListDeploymentLogs(ctx context.Context, deploymentID string, beforeSeq int64, limit int) (rows []LogEntry, hasMore bool, err error)
 	LogEventStore
+	LogProjectionStore
+	LogSavedSearchStore
+	DashboardStore
+	IncidentSourceStore
+	IncidentNoteStore
 	UpdateDeploymentStatus(ctx context.Context, id string, status DeploymentStatus, errMsg string) error
 	MarkDeploymentSuperseded(ctx context.Context, id string) error
 	MarkDeploymentLive(ctx context.Context, id string) error
@@ -4381,6 +4424,14 @@ type Store interface {
 	// Binding readers follow immutable message identity through rename/retirement.
 	QueueStateForBinding(ctx context.Context, appID, bindingID string) (QueueStats, error)
 	QueueStateForBindingInScope(ctx context.Context, appID, bindingID, scope string) (QueueStats, error)
+	// Scaling readers count depth only up to limit: a scheduler decision needs
+	// no more than the depth that saturates its pool, and a full count reads
+	// the whole backlog on every reconcile (ADR-20261022105723 amendment
+	// 2026-10-24). They match the QueueState readers above; a binding reader
+	// with an empty scope reads every scope, like QueueStateForBinding.
+	QueueDepthInScope(ctx context.Context, appID, scope string, limit int) (int, error)
+	QueueDepthForBindingInScope(ctx context.Context, appID, bindingID, scope string, limit int) (int, error)
+	QueueBindingHasInFlight(ctx context.Context, appID, bindingID, scope string) (bool, error)
 	WorkerPoolHistory(ctx context.Context, appID, deploymentID string) (WorkerPoolHistory, error)
 	// QueuePeek lists the oldest pending queue messages for an app
 	// without acquiring a lease or incrementing attempts. Paginated by
@@ -5955,7 +6006,9 @@ type Store interface {
 	ListAppSecretRuntimeReloadTargets(ctx context.Context, accountID, appID, scope string) ([]AppSecretRuntimeReloadTarget, error)
 
 	// Per-app private-registry Basic Auth (issue #461 / ADR-062). apid
-	// is the only writer; imaged is the only reader. PasswordEncrypted
+	// is the only writer. imaged opens the passwords to pull images;
+	// builderd forwards them unopened to vmmd, which opens them into a
+	// Dockerfile builder's Docker config (ADR-20261026090000). PasswordEncrypted
 	// is the age-sealed bytea produced by pkg/secretbox.SealBytes with
 	// namespace="registry_creds" — the plaintext password is never
 	// stored, never logged, never returned over the wire.
@@ -6722,6 +6775,9 @@ type Store interface {
 	// distinguishable to the loop. Postgres-only — MemStore returns the
 	// ADR-098 sentinel.
 	ListEgressCircuitCandidates(ctx context.Context, since time.Time) ([]EgressCircuitCandidate, error)
+	PutAppEgressCircuits(context.Context, string, []netns.EgressCircuitTarget) (netns.EgressCircuitSnapshot, error)
+	GetAppEgressCircuits(context.Context, string) (netns.EgressCircuitSnapshot, error)
+	ListAppEgressCircuitAppIDs(context.Context) ([]string, error)
 
 	// UpdateDataUpstreamCircuitBreaker (ADR-201 §3) applies a partial
 	// per-upstream egress-breaker policy update. Scoped by (id, app_id) so

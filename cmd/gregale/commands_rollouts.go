@@ -48,7 +48,7 @@ func cmdRollouts(args []string) int {
 		return cmdRolloutsStatus(args[1:])
 	}
 	printCommandValidation(os.Stderr, "unknown rollouts subcommand %q\n", args[0])
-	return 1
+	return unknownSubcommandChoices(os.Stderr, "rollouts", nestedCliCommand("rollouts"), args[0])
 }
 
 // cmdRolloutsRecover is the canonical manual-recovery path.

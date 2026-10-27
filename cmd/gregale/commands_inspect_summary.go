@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"sort"
 	"strings"
 	"sync"
@@ -42,6 +43,9 @@ type inspectAppSummary struct {
 	Runtime                string                        `json:"runtime,omitempty"`
 	WorkloadClass          string                        `json:"workload_class,omitempty"`
 	Protocol               string                        `json:"protocol,omitempty"`
+	// ExecutionMode is the app's lifecycle mode (worker, service, job);
+	// empty for request mode.
+	ExecutionMode string `json:"execution_mode,omitempty"`
 }
 
 type inspectRuntimeSummary struct {
@@ -79,6 +83,10 @@ type inspectResourceSummary struct {
 	MinInstances  int                `json:"min_instances"`
 	MaxInstances  int                `json:"max_instances"`
 	Target        *api.ScalingTarget `json:"target,omitempty"`
+	// Mode and ModeMetric describe a worker, service or job app's own
+	// replica policy (empty for request mode).
+	Mode       string `json:"mode,omitempty"`
+	ModeMetric string `json:"mode_metric,omitempty"`
 	// AutoscaleTargetRPS and AutoscaleTargetCPUPct are the legacy reactive
 	// scale-up targets returned by GET /v1/apps/{slug}. They remain effective
 	// when the newer ScalingPolicy.Target is unset, so inspect must not infer
@@ -241,6 +249,7 @@ func buildInspectSummary(app api.AppResponse, in inspectSummaryInputs) inspectSu
 			ParkedReason:           inspectParkedReason(app),
 			DeploymentAvailability: app.DeploymentAvailability,
 			Type:                   app.Type, Runtime: app.Runtime, WorkloadClass: app.WorkloadClass, Protocol: app.AppProtocol,
+			ExecutionMode: inspectExecutionMode(app),
 		},
 		Resources:   inspectResources(app),
 		API:         inspectOpenAPI(in.OpenAPIRaw),
@@ -281,8 +290,30 @@ func inspectResources(app api.AppResponse) inspectResourceSummary {
 		out.ScaleOutCooldownS = app.ScalingPolicy.ScaleOutCooldownS
 		out.ScaleInCooldownS = app.ScalingPolicy.ScaleInCooldownS
 	}
+	// A worker or service runs its own replica policy, not request-driven
+	// scaling: inspect called a running worker "0→1 instances ·
+	// request-driven" (Hunt 14 H14-1).
+	switch out.Mode = inspectExecutionMode(app); out.Mode {
+	case api.ExecutionModeWorker:
+		if replicas := app.Manifest.WorkerReplicas; replicas != nil {
+			out.MinInstances, out.MaxInstances, out.ModeMetric = replicas.Min, replicas.Max, replicas.Metric
+		}
+	case api.ExecutionModeService:
+		if replicas := app.Manifest.ServiceReplicas; replicas != nil {
+			out.MinInstances, out.MaxInstances = replicas.Min, replicas.Max
+		}
+	}
 	out.ScaleToZero = out.MinInstances == 0
 	return out
+}
+
+// inspectExecutionMode returns the app's non-request execution mode, or "".
+func inspectExecutionMode(app api.AppResponse) string {
+	switch mode := app.Manifest.ExecutionMode; mode {
+	case api.ExecutionModeWorker, api.ExecutionModeService, api.ExecutionModeJob:
+		return mode
+	}
+	return ""
 }
 
 func inspectRuntime(app api.AppResponse, dep *api.DeploymentResponse, unavailable *[]string) inspectRuntimeSummary {
@@ -491,11 +522,26 @@ func inspectUnavailable(in inspectSummaryInputs) []string {
 		name string
 		err  error
 	}{{"deployment", in.DeploymentErr}, {"openapi", in.OpenAPIErr}, {"upstreams", in.UpstreamsErr}, {"alerts", in.AlertsErr}, {"operational", in.OperationalErr}} {
-		if row.err != nil {
+		if row.err != nil && !routeNotOffered(row.err) {
 			out = append(out, row.name)
 		}
 	}
 	return out
+}
+
+// noSuchRouteDetail is the detail apid writes for an unregistered /v1 route
+// (pkg/apid/httpkit.NoSuchRoute).
+const noSuchRouteDetail = "no such API route"
+
+// routeNotOffered reports a 404 for a route this installation does not offer
+// the caller: one an older apid lacks, or one whose capability is not released
+// to the account. apid hides those exactly like missing routes
+// (ADR-20261023115741), so inspect leaves the section out instead of calling
+// the app's health unknown: with previews unreleased, every app on rc.295 read
+// "Incomplete information … Current health is not established" (2026-10-26).
+func routeNotOffered(err error) bool {
+	var ae *api.APIError
+	return errors.As(err, &ae) && ae.Problem.Status == http.StatusNotFound && ae.Problem.Detail == noSuchRouteDetail
 }
 
 func inspectRecommendations(summary inspectSummary) []inspectRecommendation {
@@ -509,13 +555,26 @@ func inspectRecommendations(summary inspectSummary) []inspectRecommendation {
 		// The next request wakes a parked app (gregale park: "until its next
 		// request"); "does not run or wake on its own" read as if requests
 		// were refused (Hunt 12 H12-60).
+		// A parked request app is scale to zero working, so it is info, not
+		// an error: h14-img read "Needs attention" after a plain `gregale
+		// park` (Hunt 14 H14-43). A crash-looped app, or a worker, service
+		// or job that no request wakes, still needs attention.
 		message := "This app is parked: its instances are stopped until the next request wakes it."
 		next := "Send a request, or run `gregale wake " + summary.App.Slug + "` to start it now."
-		if summary.App.ParkedReason == "liveness_exhausted" {
+		severity := "info"
+		switch {
+		case summary.App.ParkedReason == "liveness_exhausted":
 			message = "This app is parked because its instances repeatedly failed liveness checks or crashed; the next request starts it again."
 			next = "Fix the failure (see `gregale logs " + summary.App.Slug + " --since 1h`), deploy, then run `gregale wake " + summary.App.Slug + "`."
+			severity = "error"
+		case summary.App.ExecutionMode == api.ExecutionModeWorker:
+			message = "This worker is parked: requests do not wake a worker, so it stays stopped until you wake it."
+			next = "Run `gregale wake " + summary.App.Slug + "` to start it."
+			severity = "error"
+		case summary.App.ExecutionMode != "":
+			severity = "error"
 		}
-		add("app_parked", "error", message, next)
+		add("app_parked", severity, message, next)
 	}
 	if summary.App.DeploymentAvailability == api.AppDeploymentAvailabilityMissing {
 		add("no_live_deployment", "error", "This app has no live deployment, so requests, wakes, and app-backed workflows cannot run.", "Redeploy from current source with `gregale deploy`; if the latest attempt failed, inspect it with `gregale inspect "+summary.App.Slug+" --errors`. Restore an old revision only after its artifact and rollout history have been verified.")
@@ -612,7 +671,11 @@ func renderInspectSummaryHuman(w io.Writer, summary inspectSummary) {
 
 func renderInspectApp(w io.Writer, app inspectAppSummary) {
 	_, _ = fmt.Fprintf(w, "%s\n", app.Slug)
-	_, _ = fmt.Fprintf(w, "  app:       %s · %s · %s", fallback(app.Status), fallback(app.Type), fallback(app.WorkloadClass))
+	class := app.WorkloadClass
+	if app.ExecutionMode != "" {
+		class = app.ExecutionMode
+	}
+	_, _ = fmt.Fprintf(w, "  app:       %s · %s · %s", fallback(app.Status), fallback(app.Type), fallback(class))
 	if app.DeploymentAvailability == api.AppDeploymentAvailabilityMissing {
 		_, _ = fmt.Fprint(w, " · NO LIVE DEPLOYMENT")
 	}
@@ -651,6 +714,17 @@ func renderInspectResources(w io.Writer, resources inspectResourceSummary) {
 }
 
 func inspectScalingTargetLabel(resources inspectResourceSummary) string {
+	switch resources.Mode {
+	case api.ExecutionModeWorker:
+		if resources.ModeMetric != "" {
+			return "worker pool · scaled by " + resources.ModeMetric
+		}
+		return "worker pool"
+	case api.ExecutionModeService:
+		return "service replicas"
+	case api.ExecutionModeJob:
+		return "runs to completion"
+	}
 	labels := make([]string, 0, 3)
 	if resources.Target != nil && resources.Target.Metric != "" {
 		labels = append(labels, fmt.Sprintf("%s=%g", resources.Target.Metric, resources.Target.Value))
@@ -672,7 +746,11 @@ func inspectScalingTargetLabel(resources inspectResourceSummary) string {
 
 func renderInspectSignals(w io.Writer, summary inspectSummary) {
 	if summary.API.Available {
-		_, _ = fmt.Fprintf(w, "  api:       OpenAPI %s · %d paths · %d endpoints\n", fallback(summary.API.OpenAPIVersion), summary.API.Paths, summary.API.Endpoints)
+		discovered := ""
+		if summary.API.Source == "auto" {
+			discovered = " · discovered from traffic"
+		}
+		_, _ = fmt.Fprintf(w, "  api:       OpenAPI %s · %d paths · %d endpoints%s\n", fallback(summary.API.OpenAPIVersion), summary.API.Paths, summary.API.Endpoints, discovered)
 	} else {
 		_, _ = fmt.Fprintln(w, "  api:       unavailable")
 	}

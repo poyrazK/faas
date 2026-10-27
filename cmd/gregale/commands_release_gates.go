@@ -28,8 +28,8 @@ func cmdReleaseGates(args []string) int {
 	case "rm", "delete":
 		return releaseGatesRemove(args[1:])
 	}
-	fmt.Fprintf(os.Stderr, "gregale release-gates: unknown subcommand %q\n", args[0])
-	return 1
+	printCommandValidation(os.Stderr, "gregale release-gates: unknown subcommand %q\n", args[0])
+	return unknownSubcommandChoices(os.Stderr, "release-gates", nestedCliCommand("release-gates"), args[0])
 }
 
 // releaseGatesApp resolves --app from the flag or the linked project.
@@ -100,6 +100,8 @@ func releaseGateRule(g api.ReleaseGate) string {
 			threshold = *g.Threshold
 		}
 		return fmt.Sprintf("%s averages %s %s", g.Metric, g.Comparison, strconv.FormatFloat(threshold, 'g', -1, 64))
+	case "ai":
+		return fmt.Sprintf("AI %s rises more than %d%% over the previous release", g.Metric, g.MaxIncreasePercent)
 	}
 	return g.Kind
 }
@@ -116,16 +118,19 @@ func releaseGatesAdd(args []string) int {
 	metric := fs.String("metric", "", "fail when this custom metric crosses a bound")
 	below := fs.String("below", "", "custom metric average that fails the gate when the average is lower")
 	above := fs.String("above", "", "custom metric average that fails the gate when the average is higher")
-	minSamples := fs.Int("min-samples", 0, "requests or metric values before the gate is judged (default 20)")
+	aiMetric := fs.String("ai", "", "fail when this AI gateway metric gets worse: error_rate, flagged_rate, cost_per_call or ttfb_ms")
+	maxIncrease := fs.Int("max-increase", 0, "percent over the previous release that fails an --ai gate (default 50)")
+	minSamples := fs.Int("min-samples", 0, "requests, metric values or AI calls before the gate is judged (default 20)")
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
-	usage := "usage: gregale release-gates add --name NAME (--slo NAME [--max-burn-rate N] | --new-errors [--max-new-groups N] [--min-events N] | --metric NAME (--below V | --above V)) [--min-samples N] [--app <slug>]"
+	usage := "usage: gregale release-gates add --name NAME (--slo NAME [--max-burn-rate N] | --new-errors [--max-new-groups N] [--min-events N] | --metric NAME (--below V | --above V) | --ai METRIC [--max-increase PCT]) [--min-samples N] [--app <slug>]"
 	if rejectUnexpectedFlagArgs(fs) || *name == "" {
 		PrintUsage(os.Stderr, usage, "release-gates")
 		return 1
 	}
-	req, err := releaseGateRequest(*name, *slo, *maxBurn, *newErrors, *maxGroups, *minEvents, *metric, *below, *above, *minSamples)
+	req, err := releaseGateRequest(releaseGateFlags{name: *name, slo: *slo, maxBurn: *maxBurn, newErrors: *newErrors, maxGroups: *maxGroups,
+		minEvents: *minEvents, metric: *metric, below: *below, above: *above, aiMetric: *aiMetric, maxIncrease: *maxIncrease, minSamples: *minSamples})
 	if err != nil {
 		return printErr("Invalid release gate", err)
 	}
@@ -148,9 +153,22 @@ func releaseGatesAdd(args []string) int {
 	return 0
 }
 
+// releaseGateFlags are release-gates add's flags.
+type releaseGateFlags struct {
+	name, slo               string
+	maxBurn                 int
+	newErrors               bool
+	maxGroups, minEvents    int
+	metric, below, above    string
+	aiMetric                string
+	maxIncrease, minSamples int
+}
+
 // releaseGateRequest builds a create request from exactly one gate kind's flags.
-func releaseGateRequest(name, slo string, maxBurn int, newErrors bool, maxGroups, minEvents int, metric, below, above string, minSamples int) (api.CreateReleaseGateRequest, error) {
-	req := api.CreateReleaseGateRequest{Name: name, MinSamples: minSamples}
+func releaseGateRequest(f releaseGateFlags) (api.CreateReleaseGateRequest, error) {
+	name, slo, maxBurn, newErrors, maxGroups, minEvents := f.name, f.slo, f.maxBurn, f.newErrors, f.maxGroups, f.minEvents
+	metric, below, above := f.metric, f.below, f.above
+	req := api.CreateReleaseGateRequest{Name: name, MinSamples: f.minSamples}
 	kinds := 0
 	if slo != "" {
 		kinds++
@@ -179,8 +197,16 @@ func releaseGateRequest(name, slo string, maxBurn int, newErrors bool, maxGroups
 		}
 		req.Comparison, req.Threshold = comparison, &v
 	}
+	if f.aiMetric != "" {
+		// ADR 20261022153155.
+		kinds++
+		req.Kind, req.Metric, req.MaxIncreasePercent = "ai", f.aiMetric, f.maxIncrease
+	}
 	if kinds != 1 {
-		return req, errors.New("choose exactly one of --slo, --new-errors or --metric")
+		return req, errors.New("choose exactly one of --slo, --new-errors, --metric or --ai")
+	}
+	if req.Kind != "ai" && f.maxIncrease != 0 {
+		return req, errors.New("--max-increase applies to --ai")
 	}
 	if req.Kind != "slo" && maxBurn != 0 {
 		return req, errors.New("--max-burn-rate applies to --slo")

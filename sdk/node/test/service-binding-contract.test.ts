@@ -2,8 +2,8 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
 import ts from 'typescript';
-import { AppsService, OpenAPI } from '../src/index.js';
-import type { AppResponse, CreateAppRequest, UpdateAppRequest } from '../src/index.js';
+import { AppsService, OpenAPI } from '../src/preview.js';
+import type { AppResponse, CreateAppRequest, UpdateAppRequest } from '../src/preview.js';
 
 type Schema = {
   $ref?: string;

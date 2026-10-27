@@ -288,3 +288,18 @@ func TestIsCleanConnClose_WrappedClosedPipe(t *testing.T) {
 		t.Errorf("wrapped io.ErrClosedPipe should classify as clean")
 	}
 }
+
+// The per-connection raw bridge shares the session bridge's bounded head
+// reader: one endless header line is refused near the 64 KiB cap.
+func TestReadResponseHeadBoundsOneLongLine(t *testing.T) {
+	src := io.MultiReader(strings.NewReader("HTTP/1.1 101 Switching Protocols\nX-Filler: "),
+		strings.NewReader(strings.Repeat("a", 8<<20)), strings.NewReader("\n\n"))
+	r := bufio.NewReader(src)
+	_, _, err := readResponseHead(r)
+	if err == nil || !strings.Contains(err.Error(), "exceeds") {
+		t.Fatalf("err = %v, want the head cap", err)
+	}
+	if rest, _ := io.Copy(io.Discard, r); rest < 8<<20-64*1024-2*4096 {
+		t.Fatalf("the head reader consumed %d bytes of one header line", 8<<20+2-rest)
+	}
+}

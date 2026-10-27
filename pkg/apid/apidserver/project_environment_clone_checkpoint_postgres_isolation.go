@@ -55,8 +55,7 @@ func (s *server) isolateCheckpointPostgres(ctx context.Context, lease state.Proj
 func (s *server) isolateCheckpointPostgresSource(ctx context.Context, lease state.ProjectEnvironmentCloneLease, driver cloneCheckpointPostgresIsolationDriver, store state.ProjectEnvironmentCloneCheckpointPostgresIsolationStore, id string) error {
 	ctx, cancel := context.WithDeadline(ctx, lease.ExpiresAt)
 	defer cancel()
-	isolation, err := store.ReserveProjectEnvironmentCloneCheckpointPostgresIsolation(ctx, lease, id)
-	if err != nil {
+	if _, err := store.ReserveProjectEnvironmentCloneCheckpointPostgresIsolation(ctx, lease, id); err != nil {
 		return err
 	}
 	retention, err := s.checkpointTargetRetention(ctx, lease, driver)

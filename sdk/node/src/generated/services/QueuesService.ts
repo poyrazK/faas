@@ -1645,7 +1645,9 @@ export class QueuesService {
    * Replay one dead-letter event atomically.
    * Resets the source invocation, trigger record, or outbound webhook
    * delivery to pending, clears its retry error, and records replayed_at
-   * on the unified ledger.
+   * on the unified ledger. An event_route entry (a routing failure whose
+   * receipt was pruned) has nothing to redrive and answers 409
+   * dead_letter_not_replayable.
    *
    * @returns DeadLetterEvent Replay accepted.
    * @throws ApiError
@@ -1683,6 +1685,7 @@ export class QueuesService {
       errors: {
         401: `code: unauthorized`,
         404: `code: not_found`,
+        409: `code: conflict`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and

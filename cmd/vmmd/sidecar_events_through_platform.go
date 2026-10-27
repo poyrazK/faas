@@ -224,14 +224,14 @@ func (e *SidecarEventsThroughPlatform) EmitSidecarRestart(
 // local vmmd runs can still receive the wire without requiring a database or
 // metrics registry.
 func (e *SidecarEventsThroughPlatform) EmitSidecarHealth(
-	ctx context.Context, instanceID, appID, wakeID string, wireEnv sidecarHealthWire,
+	ctx context.Context, instanceID, appID, wakeID, nodeID string, wireEnv sidecarHealthWire,
 ) {
 	if e == nil {
 		return
 	}
 	if e.Platform != nil {
 		e.Platform.Emit(ctx, events.SidecarHealth{
-			EmitAt: nowOrDefault(e.Now), WakeID: wakeID, AppID: appID,
+			EmitAt: nowOrDefault(e.Now), WakeID: wakeID, NodeID: nodeID, AppID: appID,
 			InstanceID: instanceID, SidecarName: wireEnv.Sidecar,
 			Status: wireEnv.Status, Reason: wireEnv.Reason,
 		})

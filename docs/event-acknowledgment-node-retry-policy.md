@@ -7,7 +7,7 @@ Omitting the policy preserves the fixed one-second default and explicit
 `backoffMs` values.
 
 ```js
-import { recoverEventAcknowledgmentIntents } from '@gregale/sdk-node';
+import { recoverEventAcknowledgmentIntents } from '@gregale/sdk-node/preview';
 
 const progress = await recoverEventAcknowledgmentIntents(pool, accountId, appId, {
   signal: shutdown.signal,

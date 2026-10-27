@@ -30,8 +30,8 @@ func cmdScheduledReleases(args []string) int {
 	case "cancel":
 		return scheduledReleasesCancel(args[1:])
 	}
-	fmt.Fprintf(os.Stderr, "gregale scheduled-releases: unknown subcommand %q\n", args[0])
-	return 1
+	printCommandValidation(os.Stderr, "gregale scheduled-releases: unknown subcommand %q\n", args[0])
+	return unknownSubcommandChoices(os.Stderr, "scheduled-releases", nestedCliCommand("scheduled-releases"), args[0])
 }
 
 // parseReleaseAtFlag turns a --at value into a UTC time: "now", an offset

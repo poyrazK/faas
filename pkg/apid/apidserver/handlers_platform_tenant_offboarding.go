@@ -5,6 +5,7 @@ import (
 	"net/http"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/trafficproblem"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -28,7 +29,7 @@ func (s *server) planPlatformTenantOffboarding(w http.ResponseWriter, r *http.Re
 		return
 	}
 	if err != nil {
-		api.WriteProblem(w, api.ErrInternal("could not plan platform tenant offboarding"))
+		api.WriteProblem(w, trafficproblem.TenantBinding(err, api.ErrInternal("could not plan platform tenant offboarding")))
 		return
 	}
 	w.Header().Set("Cache-Control", "no-store")

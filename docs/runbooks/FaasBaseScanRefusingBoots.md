@@ -5,7 +5,7 @@
 
 ## Symptom
 
-vmmd has refused boots on one base ext4 for ten minutes. Every app on that
+vmmd has kept refusing boots on one base ext4 for fifteen minutes. Every app on that
 runtime fails to deploy ("snapshot prime failed ... scan_critical") and every
 cold boot or restore on it fails. Customers see the deploy fail or their app
 return 503.

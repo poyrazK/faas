@@ -48,6 +48,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/appevents"
 	"github.com/onebox-faas/faas/pkg/apid/edgerules"
+	"github.com/onebox-faas/faas/pkg/apid/logsearch"
 	"github.com/onebox-faas/faas/pkg/dashboard"
 	"github.com/onebox-faas/faas/pkg/logsanitize"
 	"github.com/onebox-faas/faas/pkg/oci"
@@ -114,8 +115,9 @@ func (s *server) listAlertRules(w http.ResponseWriter, r *http.Request, acct sta
 		return
 	}
 	out := make([]api.AlertRuleResponse, 0, len(rows))
+	creator := creatorView(r, acct)
 	for _, row := range rows {
-		if row.AppID != "" && row.AppID != app.ID {
+		if row.AppID != "" && row.AppID != app.ID || row.AppID == "" && !creator {
 			continue
 		}
 		out = append(out, s.alertRuleResponseWithChannels(r.Context(), row))
@@ -192,6 +194,10 @@ func (s *server) createAlertRule(w http.ResponseWriter, r *http.Request, acct st
 		}
 		req.EdgeRuleID = id
 	}
+	if prob := s.alertMetricCapabilityProblem(appFlagSubject(acct, app), req.Metric); prob != nil {
+		api.WriteProblem(w, prob)
+		return
+	}
 	if prob := validateCustomMetricAlert(req.Metric, req.CustomMetricName, req.WindowSpec, req.Action, s.customMetricHistoryEnabled); prob != nil {
 		api.WriteProblem(w, prob)
 		return
@@ -200,11 +206,20 @@ func (s *server) createAlertRule(w http.ResponseWriter, r *http.Request, acct st
 		api.WriteProblem(w, prob)
 		return
 	}
+	logQuery, prob := logsearch.ValidateAlertQuery(req.Metric, req.LogQuery, req.WindowSpec, req.Action, s.logSearch.Enabled)
+	if prob != nil {
+		api.WriteProblem(w, prob)
+		return
+	}
 	if prob := s.validateSLOAlert(r.Context(), app.ID, req); prob != nil {
 		api.WriteProblem(w, prob)
 		return
 	}
 	if !s.appEvents.CheckEventConsumerAlertTarget(w, r, acct.ID, app.ID, req) {
+		return
+	}
+	if len(req.ChannelIDs) > 0 && !creatorView(r, acct) {
+		api.WriteProblem(w, creatorChannelsProblem())
 		return
 	}
 	channelIDs, prob := s.validateRuleChannels(r.Context(), acct.ID, req.ChannelIDs)
@@ -224,6 +239,7 @@ func (s *server) createAlertRule(w http.ResponseWriter, r *http.Request, acct st
 	}
 	row, err := s.store.CreateAlertRuleIfUnderQuota(r.Context(), state.AlertRule{MCPReadinessScope: req.MCPReadinessScope, MCPMinCalls: minCalls, MCPForMinutes: forMinutes,
 		AccountID:                       acct.ID,
+		CreatedByAccountID:              actorAccount(r, acct).ID,
 		AppID:                           app.ID,
 		Name:                            req.Name,
 		Enabled:                         alertRuleEnabledFrom(req.Enabled),
@@ -235,6 +251,7 @@ func (s *server) createAlertRule(w http.ResponseWriter, r *http.Request, acct st
 		EdgeRuleID:                      req.EdgeRuleID,
 		FailureSource:                   state.AlertFailureSource(req.FailureSource),
 		CustomMetricName:                req.CustomMetricName,
+		LogQuery:                        logQuery,
 		SLOID:                           req.SLOID,
 		SyntheticCheckID:                req.SyntheticCheckID,
 		Action:                          alertRuleActionFrom(req.Action),
@@ -286,6 +303,7 @@ func (s *server) createAlertRule(w http.ResponseWriter, r *http.Request, acct st
 		"window_spec":                         row.WindowSpec,
 		"failure_source":                      row.FailureSource,
 		"custom_metric_name":                  row.CustomMetricName,
+		"log_query":                           row.LogQuery,
 		"slo_id":                              row.SLOID,
 		"synthetic_check_id":                  row.SyntheticCheckID,
 		"edge_rule_id":                        row.EdgeRuleID,
@@ -303,30 +321,48 @@ func (s *server) createAlertRule(w http.ResponseWriter, r *http.Request, acct st
 
 // --- get --------------------------------------------------------------------
 
-// getAlertRule resolves the rule + verifies the customer owns it.
-// AlertRuleByID does NOT filter by account, so the IDOR check is
-// load-bearing — a stolen API key must not be able to read a
-// foreign account's rule by id. Mirrors handlers_ext.go:789.
-func (s *server) getAlertRule(w http.ResponseWriter, r *http.Request, acct state.Account) {
-	id := r.PathValue("id")
+// alertRuleForSlug loads rule id as the {slug} app sees it: its own rules
+// and the account-wide ones its list shows. AlertRuleByID does NOT filter by
+// account, so the account check stops a stolen key reading a foreign
+// account's rule by id. The app check matters inside one account: an
+// organization's company apps and their creator's personal apps share
+// AccountID, and appaccess authorized the caller for {slug} only, so a
+// removed creator or an app-bound key must not reach another app's rule
+// through it.
+func (s *server) alertRuleForSlug(w http.ResponseWriter, r *http.Request, acct state.Account, id string) (state.AlertRule, bool) {
+	app, ok := s.loadApp(w, r, acct, r.PathValue("slug"))
+	if !ok {
+		return state.AlertRule{}, false
+	}
 	row, err := s.store.AlertRuleByID(r.Context(), id)
-	if err != nil {
+	if err != nil || row.AccountID != acct.ID || row.AppID != "" && row.AppID != app.ID || row.AppID == "" && !creatorView(r, acct) {
 		s.notFound(w, "no such alert rule")
-		return
+		return state.AlertRule{}, false
 	}
-	if row.AccountID != acct.ID {
-		s.notFound(w, "no such alert rule")
+	return row, true
+}
+
+// creatorView reports whether the caller is the account an app's rows
+// belong to. Company apps share their creator's AccountID, so an
+// organization owner or admin working on a company app (ADR-20261026151103)
+// acts on rows under the creator's account: the creator's account-wide
+// alert rules and notification channels are that person's own, and stay
+// out of their reach.
+func creatorView(r *http.Request, acct state.Account) bool {
+	return actorAccount(r, acct).ID == acct.ID
+}
+
+// creatorChannelsProblem refuses an organization member who is not the app's
+// creator binding notification channels, which are the creator's own.
+func creatorChannelsProblem() *api.Problem {
+	return api.ErrOrgRoleForbidden("binding the app creator's notification channels (give the rule a webhook_url instead)")
+}
+
+// getAlertRule returns the rule if the {slug} app may see it.
+func (s *server) getAlertRule(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	row, ok := s.alertRuleForSlug(w, r, acct, r.PathValue("id"))
+	if !ok {
 		return
-	}
-	// Cross-account app check (only when the rule is app-scoped).
-	// Account-wide rules (AppID == "") skip this — they don't have
-	// an app to verify against.
-	if row.AppID != "" {
-		app, err := s.store.AppByID(r.Context(), row.AppID)
-		if err != nil || app.AccountID != acct.ID {
-			s.notFound(w, "no such alert rule")
-			return
-		}
 	}
 	writeJSON(w, http.StatusOK, s.alertRuleResponseWithChannels(r.Context(), row))
 }
@@ -346,27 +382,13 @@ func (s *server) getAlertRule(w http.ResponseWriter, r *http.Request, acct state
 // partial index alert_deliveries_rule_fired_production_idx
 // (migrations/00528).
 //
-// Auth: same scope as getAlertRule (read surface). The IDOR check
-// uses AlertRuleByID + an AccountID match — mirroring getAlertRule
-// line-by-line so a customer cannot probe another account's
-// delivery ledger by guessing rule IDs.
+// Auth: same scope as getAlertRule (read surface), and the same
+// alertRuleForSlug check, so a caller cannot probe another account's
+// or another app's delivery ledger by guessing rule IDs.
 func (s *server) listAlertRuleDeliveries(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	id := r.PathValue("id")
-	row, err := s.store.AlertRuleByID(r.Context(), id)
-	if err != nil {
-		s.notFound(w, "no such alert rule")
+	if _, ok := s.alertRuleForSlug(w, r, acct, id); !ok {
 		return
-	}
-	if row.AccountID != acct.ID {
-		s.notFound(w, "no such alert rule")
-		return
-	}
-	if row.AppID != "" {
-		app, err := s.store.AppByID(r.Context(), row.AppID)
-		if err != nil || app.AccountID != acct.ID {
-			s.notFound(w, "no such alert rule")
-			return
-		}
 	}
 	includeTest, _ := strconv.ParseBool(r.URL.Query().Get("include_test"))
 	limit := 50
@@ -413,21 +435,9 @@ func (s *server) updateAlertRule(w http.ResponseWriter, r *http.Request, acct st
 		return
 	}
 	id := r.PathValue("id")
-	row, err := s.store.AlertRuleByID(r.Context(), id)
-	if err != nil {
-		s.notFound(w, "no such alert rule")
+	row, ok := s.alertRuleForSlug(w, r, acct, id)
+	if !ok {
 		return
-	}
-	if row.AccountID != acct.ID {
-		s.notFound(w, "no such alert rule")
-		return
-	}
-	if row.AppID != "" {
-		app, err := s.store.AppByID(r.Context(), row.AppID)
-		if err != nil || app.AccountID != acct.ID {
-			s.notFound(w, "no such alert rule")
-			return
-		}
 	}
 	if req.MCPReadinessScope != nil && *req.MCPReadinessScope != row.MCPReadinessScope {
 		api.WriteProblem(w, api.ErrAlertRuleInvalid("readiness alert environment cannot change; create a new rule"))
@@ -454,6 +464,12 @@ func (s *server) updateAlertRule(w http.ResponseWriter, r *http.Request, acct st
 		api.WriteProblem(w, prob)
 		return
 	}
+	if req.Metric != nil {
+		if prob := s.alertMetricCapabilityProblem(flagSubject(r, acct), *req.Metric); prob != nil {
+			api.WriteProblem(w, prob)
+			return
+		}
+	}
 	// Metric-family swap rejection. "Family" = the xor_chk partition:
 	// failed_invocations needs failure_source set; everything else
 	// needs it empty. Crossing that line in PATCH silently drops
@@ -474,6 +490,10 @@ func (s *server) updateAlertRule(w http.ResponseWriter, r *http.Request, acct st
 			return
 		}
 	}
+	if req.ChannelIDs != nil && len(*req.ChannelIDs) > 0 && !creatorView(r, acct) {
+		api.WriteProblem(w, creatorChannelsProblem())
+		return
+	}
 	newChannels, prob := s.updatedRuleChannels(r.Context(), acct.ID, row, merged, req.ChannelIDs)
 	if prob != nil {
 		api.WriteProblem(w, prob)
@@ -482,12 +502,12 @@ func (s *server) updateAlertRule(w http.ResponseWriter, r *http.Request, acct st
 	// Optional secret re-seal.
 	var sealedPtr *[]byte
 	if req.WebhookSecret != nil {
-		recipient := hostSecretRecipient()
-		if recipient == nil {
-			api.WriteProblem(w, api.ErrCapacity("host age recipient not loaded — refusing to seal webhook secret"))
+		recipients, recipientErr := alertingCredentialRecipients()
+		if recipientErr != nil {
+			api.WriteProblem(w, api.ErrCapacity("alerting recipient not loaded — refusing to seal webhook secret"))
 			return
 		}
-		sealed, err := secretbox.SealBytes(recipient, alertRuleSecretSealLabel, []byte(*req.WebhookSecret), api.AlertRuleWebhookSecretMaxBytes)
+		sealed, err := secretbox.SealBytesTo(recipients, alertRuleSecretSealLabel, []byte(*req.WebhookSecret), api.AlertRuleWebhookSecretMaxBytes)
 		if err != nil {
 			if prob := api.AsProblem(err); prob != nil {
 				api.WriteProblem(w, prob)
@@ -598,21 +618,9 @@ func (s *server) updateAlertRule(w http.ResponseWriter, r *http.Request, acct st
 // audit row would be empty.
 func (s *server) deleteAlertRule(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	id := r.PathValue("id")
-	row, err := s.store.AlertRuleByID(r.Context(), id)
-	if err != nil {
-		s.notFound(w, "no such alert rule")
+	row, ok := s.alertRuleForSlug(w, r, acct, id)
+	if !ok {
 		return
-	}
-	if row.AccountID != acct.ID {
-		s.notFound(w, "no such alert rule")
-		return
-	}
-	if row.AppID != "" {
-		app, err := s.store.AppByID(r.Context(), row.AppID)
-		if err != nil || app.AccountID != acct.ID {
-			s.notFound(w, "no such alert rule")
-			return
-		}
 	}
 	if err := s.store.DeleteAlertRule(r.Context(), id); err != nil {
 		if errors.Is(err, state.ErrNotFound) {
@@ -663,29 +671,17 @@ func (s *server) rotateAlertRuleSecret(w http.ResponseWriter, r *http.Request, a
 		return
 	}
 	id := r.PathValue("id")
-	row, err := s.store.AlertRuleByID(r.Context(), id)
-	if err != nil {
-		s.notFound(w, "no such alert rule")
+	row, ok := s.alertRuleForSlug(w, r, acct, id)
+	if !ok {
 		return
-	}
-	if row.AccountID != acct.ID {
-		s.notFound(w, "no such alert rule")
-		return
-	}
-	if row.AppID != "" {
-		app, err := s.store.AppByID(r.Context(), row.AppID)
-		if err != nil || app.AccountID != acct.ID {
-			s.notFound(w, "no such alert rule")
-			return
-		}
 	}
 	plaintext := []byte(req.WebhookSecret)
-	recipient := hostSecretRecipient()
-	if recipient == nil {
-		api.WriteProblem(w, api.ErrCapacity("host age recipient not loaded — refusing to seal webhook secret"))
+	recipients, recipientErr := alertingCredentialRecipients()
+	if recipientErr != nil {
+		api.WriteProblem(w, api.ErrCapacity("alerting recipient not loaded — refusing to seal webhook secret"))
 		return
 	}
-	sealed, err := secretbox.SealBytes(recipient, alertRuleSecretSealLabel, plaintext, api.AlertRuleWebhookSecretMaxBytes)
+	sealed, err := secretbox.SealBytesTo(recipients, alertRuleSecretSealLabel, plaintext, api.AlertRuleWebhookSecretMaxBytes)
 	if err != nil {
 		if prob := api.AsProblem(err); prob != nil {
 			api.WriteProblem(w, prob)
@@ -759,6 +755,7 @@ func alertRuleResponse(r state.AlertRule) api.AlertRuleResponse {
 		EdgeRuleID:                      r.EdgeRuleID,
 		FailureSource:                   string(r.FailureSource),
 		CustomMetricName:                r.CustomMetricName,
+		LogQuery:                        r.LogQuery,
 		SLOID:                           r.SLOID,
 		SyntheticCheckID:                r.SyntheticCheckID,
 		Action:                          string(r.Action),
@@ -844,6 +841,24 @@ func alertRuleActionFrom(p *string) state.AlertAction {
 // trimmed name. The same trim-non-empty check is mirrored on the
 // update path via state.AlertRule.Name (the DB schema enforces
 // non-empty via CHECK).
+// alertMetricCapabilities names the capability an alert metric needs beyond
+// alerts' own (ADR-20261023115741).
+var alertMetricCapabilities = map[string]string{
+	api.AlertRuleMetricCustomMetric:     "custom-metric-history",
+	api.AlertRuleMetricLogSearchMatches: "log-search",
+}
+
+// alertMetricCapabilityProblem refuses an alert on a metric whose capability
+// is not released to the subject, so an operator switch turned on to test one
+// account does not open the feature to every account.
+func (s *server) alertMetricCapabilityProblem(subject platformflags.Subject, metric string) *api.Problem {
+	capability, ok := alertMetricCapabilities[metric]
+	if !ok || s.capGate == nil || s.capGate.Enabled(capability, subject) {
+		return nil
+	}
+	return api.ErrCapabilityNotReleased("alert metric "+metric, s.capGate.Name(capability))
+}
+
 // anomalyAlertsGate keeps baseline comparisons (ADR-744) dark until the
 // operator enables FAAS_ANOMALY_ALERTS_ENABLED, or releases the
 // anomaly_alerts platform flag (ADR-1700) to the account.
@@ -1000,6 +1015,11 @@ func validateAlertRuleRowUpdate(merged state.AlertRule) *api.Problem {
 			return p
 		}
 	}
+	if merged.Metric == state.AlertMetricLogSearchMatches {
+		if p := logsearch.ValidateAlertWindow(string(merged.WindowSpec)); p != nil {
+			return p
+		}
+	}
 	if !api.IsFiniteFloat(merged.Threshold) {
 		return api.ErrAlertRuleInvalid("threshold must be a finite number")
 	}
@@ -1107,6 +1127,10 @@ func alertRuleFamily(m state.AlertMetric) string {
 		// metric (alert_rules_custom_metric_chk); swapping away would orphan it.
 		return api.AlertRuleMetricCustomMetric
 	}
+	if m == state.AlertMetricLogSearchMatches {
+		// log_query only means something for this metric (alert_rules_log_search_chk).
+		return api.AlertRuleMetricLogSearchMatches
+	}
 	if api.IsSLOAlertMetric(string(m)) {
 		// slo_id only means something for these metrics (alert_rules_slo_chk).
 		return "slo"
@@ -1174,7 +1198,10 @@ func resolveAndCheckEgress(c context.Context, rawURL string) *api.Problem {
 				Status: 403,
 				Type:   docsTypeBase + "/image-egress-denied",
 				Title:  "Egress denied",
-				Detail: fmt.Sprintf("webhook_url resolves to %s, which is in the egress denylist", ipa.IP),
+				// Log drains, webhooks, channels and realtime hosts share this
+				// check; "webhook_url" named a field a log drain does not have
+				// (Hunt 14 H14-66). The code stays stable for clients.
+				Detail: fmt.Sprintf("the URL's host %s resolves to %s, which is in the egress denylist (private, link-local and metadata ranges)", host, ipa.IP),
 				Code:   api.CodeImageEgressDenied,
 			}
 		}

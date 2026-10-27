@@ -8,7 +8,7 @@ export GOOS GOARCH
 TLS_CUTOVER_MODE ?= dry-run
 PKGS    := ./...
 COVERAGE_DIR := coverage
-DAEMONS := apid profiled bridged gatewayd-public gatewayd-internal realtimed s3-gatewayd livequeryd maild mail-report mail-metrics mail-feedback mailctl schedd vmmd vmmd-jail-helper vmmd-raw-bridge vmmd-tcp-bridge vmmd-udp-bridge vmmd-stream-bridge builderd imaged meterd githubd outboundd hostage-gen
+DAEMONS := apid profiled bridged gatewayd-public gatewayd-internal realtimed s3-gatewayd livequeryd maild mail-report mail-metrics mail-feedback mailctl schedd vmmd vmmd-jail-helper vmmd-guestdisk vmmd-raw-bridge vmmd-tcp-bridge vmmd-udp-bridge vmmd-stream-bridge builderd imaged meterd githubd outboundd hostage-gen
 GOVULNCHECK_VERSION ?= 1.7.0
 # gregale is the customer-facing CLI; gregalectl is the
 # operator-only companion CLI (issue #911 / ADR-110 PR-6.5).
@@ -361,7 +361,7 @@ memstore-stubs-check: ## Fail pure nil-return MemStore methods that can make tes
 	bash scripts/ci/check_memstore_stubs.sh
 
 .PHONY: fix-has-test-check
-fix-has-test-check: ## Require fix-shaped pull requests to change a Go regression test (issue #1529 / PR-4a)
+fix-has-test-check: ## Require fix-shaped pull requests to change a regression test (Go, shell, or SDK test file; issue #1529 / PR-4a)
 	bash scripts/ci/check_fix_has_test.sh
 
 .PHONY: fix-has-test-check-test
@@ -414,6 +414,16 @@ release-safety-check-test: ## Unit tests of the version-skew check, migration li
 	python3 scripts/ci/slo_gate_test.py
 	$(GO) test -count=1 ./scripts/ci/versionskew
 
+.PHONY: agent-eval-test
+agent-eval-test: ## Unit tests of the coding-agent eval harness; runs no agents (ADR-20261026152009)
+	python3 scripts/agent-eval/agent_eval_test.py
+
+AGENT_EVAL_AGENTS ?= claude
+AGENT_EVAL_TOOLSETS ?= core,all
+.PHONY: agent-eval
+agent-eval: ## Run coding agents against Gregale tasks; deploys real apps, needs GREGALE_EVAL_TOKEN (AGENT_EVAL_AGENTS, AGENT_EVAL_TOOLSETS, AGENT_EVAL_TASKS, AGENT_EVAL_REPEAT)
+	python3 scripts/agent-eval/agent_eval.py run --agents $(AGENT_EVAL_AGENTS) --toolsets $(AGENT_EVAL_TOOLSETS) $(if $(AGENT_EVAL_TASKS),--tasks $(AGENT_EVAL_TASKS)) --repeat $(or $(AGENT_EVAL_REPEAT),1)
+
 .PHONY: text-encoding-check-test
 text-encoding-check-test: ## Exercise the text-encoding gate against fixture trees in both directions
 	bash scripts/ci/check_text_encoding_test.sh
@@ -425,6 +435,12 @@ shell-quoting-check-test: ## Exercise the shell-quoting gate against fixture tre
 .PHONY: deploy-action-head-check
 deploy-action-head-check: ## Verify stale branch and invalid release-tag pushes cannot submit Action deployments
 	@bash scripts/ci/test_deploy_action_head.sh
+
+.PHONY: cli-install-check
+cli-install-check: ## Hermetic curl installer tests and the cli-channel pointer job (ADR-20261025092617)
+	@bash scripts/install_test.sh
+	@python3 scripts/ci/cli_channel_test.py
+	@bash scripts/ci/advance-cli-channel_test.sh
 
 .PHONY: deploy-action-cli-check
 deploy-action-cli-check: ## Verify the deploy Action unpacks and checks the gzip-compressed vendored CLI
@@ -578,6 +594,7 @@ test-metal: ## Integration tests tagged //go:build metal — needs KVM + root (R
 	@set -eu; helper_dir=$$(mktemp -d); trap 'rm -rf "$$helper_dir"' EXIT; \
 	  CGO_ENABLED=$(BUILD_CGO_ENABLED) $(GO) build $(GO_BUILD_FLAGS) -o "$$helper_dir/vmmd" ./cmd/vmmd; \
 	  CGO_ENABLED=0 $(GO) build -o "$$helper_dir/vmmd-jail-helper" ./cmd/vmmd-jail-helper; \
+	  CGO_ENABLED=0 $(GO) build -o "$$helper_dir/vmmd-guestdisk" ./cmd/vmmd-guestdisk; \
 	  if [ -n "$${RUN_REGEX:-}" ]; then set -- -run "$$RUN_REGEX"; else set --; fi; \
 	  FAAS_TEST_VMMD_BINARY="$$helper_dir/vmmd" $(GO) test -tags "$${FAAS_METAL_TEST_TAGS:-metal}" -race -count=1 $(RUN_ARGS) "$$@" $(PKGS)
 
@@ -613,6 +630,7 @@ test-metal-builder: ## Native KVM builder acceptance — requires staged release
 	@set -eu; helper_dir=$$(mktemp -d); trap 'rm -rf "$$helper_dir"' EXIT; \
 	  CGO_ENABLED=$(BUILD_CGO_ENABLED) $(GO) build $(GO_BUILD_FLAGS) -o "$$helper_dir/vmmd" ./cmd/vmmd; \
 	  CGO_ENABLED=0 $(GO) build -o "$$helper_dir/vmmd-jail-helper" ./cmd/vmmd-jail-helper; \
+	  CGO_ENABLED=0 $(GO) build -o "$$helper_dir/vmmd-guestdisk" ./cmd/vmmd-guestdisk; \
 	  FAAS_TEST_VMMD_BINARY="$$helper_dir/vmmd" FAAS_METAL_BUILD_ACCEPTANCE=1 \
 	  $(GO) test -tags metal -race -count=1 -run '^TestMetalBuilderAcceptance$$' \
 	  -v -timeout "$${METAL_BUILDER_TIMEOUT:-30m}" ./pkg/fcvm
@@ -632,12 +650,19 @@ e2e: ## End-to-end tests in cmd/e2e (needs Postgres reachable; metal subset via 
 	# reruns + cold-cache cold-runner edge cases.
 	$(GO) test -race -count=1 -timeout=20m ./cmd/e2e/...
 
+# E2E_GENERAL_RUN narrows e2e-general to one group (the e2e-general workflow
+# runs the two groups as separate jobs).
+E2E_GENERAL_RUN ?= ^TestE2E_(NormalPath|Routes)_
+
 .PHONY: e2e-general
-e2e-general: ## Focused KVM-free general-path acceptance gate (real daemons + Postgres; needs DATABASE_URL).
+e2e-general: ## Focused KVM-free general-path and routes acceptance gate (real daemons + Postgres; needs DATABASE_URL).
 	@command -v psql >/dev/null 2>&1 || (echo "psql not on PATH; e2e-general needs DATABASE_URL set to a reachable Postgres" ; exit 1)
 	@test -n "$$DATABASE_URL" || (echo "DATABASE_URL not set; set it to a reachable Postgres to run e2e-general" ; exit 1)
+	@test -z "$$FAAS_SKIP_PG_TESTS" || (echo "Unset FAAS_SKIP_PG_TESTS; e2e-general refuses a skipped run" ; exit 1)
 	@psql "$$DATABASE_URL" -v ON_ERROR_STOP=1 -Atqc 'select 1' >/dev/null || (echo "Postgres is not reachable; e2e-general refuses a green no-op run" ; exit 1)
-	$(GO) test -race -count=1 -timeout=12m -run '^TestE2E_NormalPath_' ./cmd/e2e/...
+	# The routes tests wait for closed one-minute telemetry windows (about
+	# four minutes each).
+	$(GO) test -race -count=1 -timeout=30m -run '$(E2E_GENERAL_RUN)' ./cmd/e2e/...
 
 .PHONY: e2e-start
 e2e-start: ## Gregale start acceptance: real CLI/daemons/Postgres, simulated build and VM boundary (Linux, no KVM).
@@ -702,6 +727,8 @@ lint-drill: ## Static lint of restore, backup-retention, and TLS drill scripts
 	bash deploy/scripts/faas-pg-wal-prune_test.sh
 	bash deploy/scripts/faas-pg-backup-contract-preflight_test.sh
 	bash deploy/scripts/faas-check-compute-edges_test.sh
+	bash deploy/scripts/faas-app-edge-pilot-check_test.sh
+	bash deploy/scripts/cloudflare-app-edge-tunnel_test.sh
 	bash deploy/ansible/roles/cp_state_backup/files/faas-cp-state-backup_test.sh
 
 .PHONY: m8-evidence-check
@@ -914,6 +941,16 @@ lint: egress-check lint-incompatible-mods image-validate sealed-env-scope-check 
 runbook-sql-check: ## Reject mutating SQL in normal operator docs; emergency recipes live under docs/break-glass
 	@python3 scripts/ci/check_runbook_mutating_sql.py
 
+.PHONY: committed-binaries-check
+committed-binaries-check: ## Reject committed ELF/Mach-O/PE executables outside the justified allowlist (ADR-131)
+	@python3 scripts/ci/check_committed_binaries_test.py
+	@python3 scripts/ci/check_committed_binaries.py
+
+.PHONY: action-pin-check
+action-pin-check: ## Require third-party GitHub Actions pinned to a commit SHA (`owner/repo@<sha> # vN`)
+	@python3 scripts/ci/check_action_pins_test.py
+	@python3 scripts/ci/check_action_pins.py
+
 .PHONY: postmortem
 postmortem: ## Create docs/postmortems/YYYY-MM-DD-NAME.md from the post-mortem template (NAME required)
 	@test -n "$(NAME)" || (echo "NAME is required, e.g. make postmortem NAME=api-outage" >&2; exit 2)
@@ -982,6 +1019,22 @@ systemd-hardening-check: ## Static release gate for production systemd isolation
 .PHONY: canary-artifact-retention-test
 canary-artifact-retention-test: ## Test bounded validation-artifact inventory, safety proofs, and cleanup
 	python3 scripts/ops/faas_canary_artifacts_test.py
+
+.PHONY: serving-probe-test
+serving-probe-test: ## Test the compute-node serving probe (ADR-20261023124955 §5)
+	python3 scripts/ops/faas_serving_probe_test.py
+
+.PHONY: cgroup-metrics-test
+cgroup-metrics-test: ## Test the per-slice cgroup metrics collector (ADR-20261023124955)
+	python3 scripts/ops/faas_cgroup_metrics_test.py
+
+.PHONY: postgres-activity-metrics-test
+postgres-activity-metrics-test: ## Test the control-plane PostgreSQL activity collector
+	python3 scripts/ops/faas_postgres_activity_metrics_test.py
+
+.PHONY: obs-gate-test
+obs-gate-test: ## Test the observability go/no-go check (ADR-20261023124955 §7)
+	python3 scripts/ops/obs_gate_test.py
 
 .PHONY: gcp-public-beta-policy-test
 gcp-public-beta-policy-test: ## Test the read-only GCP production policy and IAM transformer
@@ -1077,6 +1130,7 @@ ansible-syntax-check: ## Validate the bare-metal Ansible playbooks with the prod
 	$(ANSIBLE_PLAYBOOK) -i $(ANSIBLE_INVENTORY) deploy/ansible/postgres_promote.yml --syntax-check
 	$(ANSIBLE_PLAYBOOK) -i $(ANSIBLE_INVENTORY) deploy/ansible/standby_takeover.yml --syntax-check
 	$(ANSIBLE_PLAYBOOK) -i $(ANSIBLE_INVENTORY) deploy/ansible/cp_state_restore.yml --syntax-check
+	$(ANSIBLE_PLAYBOOK) -i $(ANSIBLE_INVENTORY) deploy/ansible/object_storage_reconcile.yml --syntax-check
 
 .PHONY: ansible-lint
 ansible-lint: ## Lint deploy/ansible at the production profile (config: deploy/ansible/.ansible-lint) — ADR-143
@@ -1099,9 +1153,9 @@ env-contract-check: ## Every FAAS_* a daemon reads is declared + delivered; docs
 verify-fleet: ## Strict post-activation verification: every required daemon enabled, active, probe-answering; gregalectl doctor — ADR-143
 	$(ANSIBLE_PLAYBOOK) -i $(ANSIBLE_INVENTORY) deploy/ansible/verify.yml
 
-.PHONY: bootstrap-observability
-bootstrap-observability: ## Deploy the off-host Loki backend and FaaS Promtail shippers
-	$(ANSIBLE_PLAYBOOK) -i $(ANSIBLE_INVENTORY) deploy/ansible/site.yml
+.PHONY: object-storage-reconcile
+object-storage-reconcile: ## After a PostgreSQL restore: compare the object bucket catalog with each provider, read-only; ACCEPT=1 once findings are handled (ADR 20261025111015)
+	$(ANSIBLE_PLAYBOOK) -i $(ANSIBLE_INVENTORY) deploy/ansible/object_storage_reconcile.yml $(if $(ACCEPT),-e faas_object_storage_reconcile_accept=true)
 
 .PHONY: manifest-scale-check
 manifest-scale-check: ## Validate manifest/Ansible generation at 1, 10, 100, and 1000 compute nodes
@@ -1452,6 +1506,23 @@ capabilities-check: ## Verify the product capability registry and generated matr
 	@cmp -s /tmp/faas-capabilities.md docs/capabilities.md || (echo "docs/capabilities.md is stale; run 'make capabilities-md'"; diff -u docs/capabilities.md /tmp/faas-capabilities.md || true; exit 1)
 	@echo "capabilities-check: OK"
 
+.PHONY: capability-coverage-check
+capability-coverage-check: ## CI gate: every customer entry point maps to a row of docs/ga-capability-inventory.md (ADR-20261023115741)
+	@python3 -I scripts/ga/capability_coverage_test.py
+	@python3 -I scripts/ga/capability_coverage.py
+	@python3 -I scripts/ci/require_capabilities_test.py
+
+.PHONY: sdk-spec
+sdk-spec: ## Regenerate sdk/openapi.yaml, the GA and beta spec the SDKs are generated from (ADR-20261023115741)
+	@$(GO) run ./cmd/sdk-spec > sdk/openapi.yaml
+	@echo "sdk-spec: sdk/openapi.yaml regenerated; run 'make sdk-gen-node sdk-gen-python'"
+
+.PHONY: sdk-spec-check
+sdk-spec-check: ## Verify sdk/openapi.yaml matches api/openapi.yaml and the product catalog
+	@$(GO) run ./cmd/sdk-spec > /tmp/faas-sdk-openapi.yaml
+	@cmp -s /tmp/faas-sdk-openapi.yaml sdk/openapi.yaml || (echo "sdk/openapi.yaml is stale; run 'make sdk-spec' and regenerate the SDKs"; exit 1)
+	@echo "sdk-spec-check: OK"
+
 .PHONY: standards-md
 standards-md: ## Regenerate the standards compatibility matrix from the standards registry
 	@$(GO) run ./cmd/standards-md > docs/standards.md
@@ -1651,6 +1722,10 @@ sdk-gen: ## (re)generate every generated SDK + assert clean diff vs HEAD
 pre-pr: ## Pre-PR drift check: every regenerate-and-diff gate that runs in CI
 	@echo "==> pre-pr: capabilities-check (product registry ↔ generated matrix)"
 	@$(MAKE) capabilities-check
+	@echo "==> pre-pr: capability-coverage-check (entry points ↔ capability inventory)"
+	@$(MAKE) capability-coverage-check
+	@echo "==> pre-pr: sdk-spec-check (sdk/openapi.yaml ↔ spec + catalog)"
+	@$(MAKE) sdk-spec-check
 	@echo "==> pre-pr: pricing-check (plan limits ↔ customer pricing)"
 	@$(MAKE) pricing-check
 	@echo "==> pre-pr: docs-links-check (docs URLs ↔ customer pages)"

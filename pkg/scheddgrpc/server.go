@@ -600,6 +600,9 @@ func (s *Server) AdmitInstance(ctx context.Context, req *scheddpb.AdmitInstanceR
 // legacy wire — this method is additive per ADR-016.
 func (s *Server) EnsureWake(ctx context.Context, req *scheddpb.EnsureWakeRequest) (*scheddpb.EnsureWakeResponse, error) {
 	const op = "EnsureWake"
+	// The pre-wake clock starts before authorization so wake.boot_started
+	// accounts for the whole RPC up to Engine.Wake.
+	ctx = sched.WithEnsureWakeRPCStarted(ctx, time.Now())
 	if _, err := s.authorizeApp(ctx, req.GetAppId()); err != nil {
 		return nil, err
 	}
@@ -1420,6 +1423,15 @@ func (s *Server) ReportCapacity(stream scheddpb.Schedd_ReportCapacityServer) err
 				}
 			}
 		}
+		if v := msg.GetInstanceBridgeResidentBytes(); v != nil {
+			if provider, ok := s.engine.(interface {
+				InstanceBridgeSink() sched.InstanceBridgeSink
+			}); ok {
+				if sink := provider.InstanceBridgeSink(); sink != nil {
+					sink(report.NodeID, time.Now(), v.GetValue())
+				}
+			}
+		}
 		// Only separately signed process inventories can drive destructive
 		// reconciliation. Legacy capacity signatures do not cover metrics IDs.
 		if observer, ok := s.engine.(interface {
@@ -1492,6 +1504,8 @@ func nodeTelemetryFromProto(in []*scheddpb.InstanceTelemetry) []sched.NodeTeleme
 		if value := row.GetLastRequestAt(); value != nil {
 			item.LastRequestAt = value.AsTime()
 		}
+		item.QuietPause = sched.QuietPauseRecordFromProto(row.GetQuietPausedSince(),
+			row.GetQuietLastPauseStartedAt(), row.GetQuietLastPauseEndedAt(), row.GetQuietPausedNsTotal())
 		if value := row.GetNetTxBytes(); value != nil {
 			v := value.GetValue()
 			item.NetTxBytes = &v

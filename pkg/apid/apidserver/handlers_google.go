@@ -16,6 +16,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/logsanitize"
 	"github.com/onebox-faas/faas/pkg/middleware"
 	"github.com/onebox-faas/faas/pkg/oauthpkce"
+	"github.com/onebox-faas/faas/pkg/sessioncookie"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -336,7 +337,7 @@ func (s *server) handleGoogleOAuthCallback(w http.ResponseWriter, r *http.Reques
 	// Issue Session Cookie. IAM-2 mfa_pending stamp preserved;
 	// IAM-3 (ADR-039) mints a sid + creates the sessions row +
 	// emits auth.session.created via the unified helper.
-	cookie, _, err := s.issueDashboardSession(r.Context(), r, acct.ID, mfaSessionPending(acct), "google")
+	cookie, _, err := s.issueDashboardSession(r.Context(), r, acct.ID, s.sessionMFAPending(acct), "google")
 	if err != nil {
 		writeCustomerInternalProblem(w, r, s.log, "create Google dashboard session",
 			"Gregale could not start your dashboard session.",
@@ -344,8 +345,7 @@ func (s *server) handleGoogleOAuthCallback(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	http.SetCookie(w, &http.Cookie{
-		Name:     sessionCookie,
+	sessioncookie.Set(w, http.Cookie{
 		Value:    cookie,
 		Path:     "/",
 		HttpOnly: true,

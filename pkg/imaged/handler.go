@@ -272,6 +272,10 @@ type Handler struct {
 	// Interface (not concrete *VMMClient) so tests can inject a
 	// fakeVMMClient (defined in vmmclient.go) without dialing.
 	vmmClient VMMClientIface
+	// nativeSnapshotRoot is vmmd's private tree for native runtime
+	// snapshots (ADR 20261022184951 amendment 1). imaged reads it to learn
+	// which objects vmmd must remove; "" keeps every delete on the backend.
+	nativeSnapshotRoot string
 	// runtimeBaseMu serializes on-demand runtime-base staging. Multiple
 	// deployments can arrive together after a cold start; without this
 	// guard they could concurrently rebuild the same ext4 and race the
@@ -298,6 +302,10 @@ type Handler struct {
 	// stay anonymous (matches the Free plan / no-credential case).
 	secretboxIdentity   *age.X25519Identity
 	secretboxIdentities []*age.X25519Identity
+	// registryIdentities, when set, open private-registry passwords in
+	// place of the secretbox identities: the build seal-domain identity
+	// first, then the fleet and host identities (ADR 20261022111812).
+	registryIdentities []*age.X25519Identity
 	// baseConvergence (ADR-567) tracks the bases this daemon staged so the
 	// convergence loop can keep each local copy byte-identical to the
 	// shared publication.
@@ -847,6 +855,27 @@ func (h *Handler) WithSecretboxIdentity(ident *age.X25519Identity) *Handler {
 	return h
 }
 
+// WithRegistryIdentities sets the identities that open private-registry
+// passwords. Crash captures keep the secretbox identities.
+func (h *Handler) WithRegistryIdentities(identities []*age.X25519Identity) *Handler {
+	h.registryIdentities = identities
+	return h
+}
+
+// registryCredentialIdentities returns the identities that open a
+// private-registry password; nil leaves pulls anonymous.
+func (h *Handler) registryCredentialIdentities() []*age.X25519Identity {
+	switch {
+	case len(h.registryIdentities) > 0:
+		return h.registryIdentities
+	case len(h.secretboxIdentities) > 0:
+		return h.secretboxIdentities
+	case h.secretboxIdentity != nil:
+		return []*age.X25519Identity{h.secretboxIdentity}
+	}
+	return nil
+}
+
 // WithSecretboxIdentities wires the fleet-first identity set while retaining
 // host identities for legacy ciphertext migration.
 func (h *Handler) WithSecretboxIdentities(identities []*age.X25519Identity) *Handler {
@@ -1036,6 +1065,7 @@ func (h *Handler) runDeployScan(ctx context.Context, app state.App, dep state.De
 		return verifiedScanFailure(app.SecurityPolicy, "scan handler is not wired")
 	}
 	start := time.Now()
+	ctx, timing := withScanTiming(ctx)
 	be, err := h.storageFor()
 	if err != nil {
 		// storageFor only errors when h.appsRoot is empty /
@@ -1080,7 +1110,9 @@ func (h *Handler) runDeployScan(ctx context.Context, app state.App, dep state.De
 		return verifiedScanFailure(app.SecurityPolicy, "scan staging failed: "+err.Error())
 	}
 	defer cleanup()
+	markScanPhase(ctx, "stage")
 	artifactDigest, artifactErr := digestScanArtifact(scanDir)
+	markScanPhase(ctx, "digest")
 	if artifactErr != nil {
 		h.log.Warn("imaged: hash scan artifact", "deployment", dep.ID, "app", app.Slug, "err", artifactErr)
 		if app.SecurityPolicy == api.AppSecurityPolicyEnforce {
@@ -1156,10 +1188,12 @@ func (h *Handler) runDeployScan(ctx context.Context, app state.App, dep state.De
 	} {
 		h.ops.ObserveDeployScanVulns(app.Slug, sev, n)
 	}
-	h.log.Info("imaged: per-deploy scan stamped",
+	markScanPhase(ctx, "record")
+	h.log.Info("imaged: per-deploy scan stamped", append([]any{
 		"deployment", dep.ID, "app", app.Slug,
 		"critical", result.SeverityCounts.Critical, "high", result.SeverityCounts.High,
-		"medium", result.SeverityCounts.Medium, "low", result.SeverityCounts.Low, "unknown", result.SeverityCounts.Unknown)
+		"medium", result.SeverityCounts.Medium, "low", result.SeverityCounts.Low, "unknown", result.SeverityCounts.Unknown,
+	}, timing.attrs()...)...)
 	return checkVerifiedScanGate(app.SecurityPolicy, dep, "complete", result)
 }
 
@@ -1793,6 +1827,11 @@ type snapshotWrittenPayload struct {
 	StoredBytes      int64  `json:"stored_bytes"`
 	FCVersion        string `json:"fc_version"`
 	BaseImageVersion string `json:"base_image_version,omitempty"`
+	// CPUTemplate and CPUModel are the capturing node's CPU identity
+	// (ADR-20261024225612); absent on payloads from an older schedd or an
+	// unregistered node, which leaves a legacy row.
+	CPUTemplate string `json:"cpu_template,omitempty"`
+	CPUModel    string `json:"cpu_model,omitempty"`
 	// Tier (issue #470 / PR #470-FU-B) is the snapshot tier this
 	// row belongs to: "init" (taken right after guest-init binds
 	// :8080; restore pays framework warmup) or "warm" (taken
@@ -2205,7 +2244,8 @@ func (h *Handler) handleAppTaskChanged(ctx context.Context, payload db.AppTaskCh
 // parsed ref ensures a customer can never accidentally widen the
 // credential to a different registry by manipulating a request body.
 func (h *Handler) resolveRegistryAuth(ctx context.Context, app state.App, host string) (*oci.BasicAuth, error) {
-	if h.secretboxIdentity == nil {
+	identities := h.registryCredentialIdentities()
+	if len(identities) == 0 {
 		return nil, nil
 	}
 	if host == "" {
@@ -2225,10 +2265,6 @@ func (h *Handler) resolveRegistryAuth(ctx context.Context, app state.App, host s
 	// app_secret namespace check). A namespace mismatch
 	// means the envelope was sealed for a different
 	// secretbox slot — refuse rather than passing through.
-	identities := h.secretboxIdentities
-	if len(identities) == 0 && h.secretboxIdentity != nil {
-		identities = []*age.X25519Identity{h.secretboxIdentity}
-	}
 	ns, plaintext, err := secretbox.OpenBytesMulti(identities, cred.PasswordEncrypted)
 	if err != nil {
 		// Don't echo the unseal error verbatim — it can include
@@ -2402,6 +2438,10 @@ func (h *Handler) buildImageLayer(ctx context.Context, app state.App, dep state.
 	if err := manifest.Validate(); err != nil {
 		_ = h.markDeployFailed(ctx, dep.ID, err, "manifest invalid")
 		return fmt.Errorf("imaged: validate manifest: %w", err)
+	}
+	if err := checkCompanionPorts(manifest, dep); err != nil {
+		_ = h.markDeployFailed(ctx, dep.ID, err, "workload ports")
+		return fmt.Errorf("imaged: workload ports: %w", err)
 	}
 	if err := h.store.SetDeploymentSecretReloadSignal(ctx, dep.ID, manifest.SecretReloadSignal); err != nil {
 		_ = h.markDeployFailed(ctx, dep.ID, err, "persist secret reload support")
@@ -3557,7 +3597,9 @@ func (h *Handler) handleDeploymentActivation(ctx context.Context, snapshot snaps
 			DeploymentID:                    snapshot.DeploymentID,
 			FCVersion:                       snapshot.FCVersion,        // pins Firecracker restore compatibility (ADR-005)
 			BaseImageVersion:                snapshot.BaseImageVersion, // pins H2C runner/base compatibility
-			StorageKey:                      snapshot.StorageKey,       // see snapshotWrittenPayload.StorageKey
+			CPUTemplate:                     snapshot.CPUTemplate,      // pins CPU restore compatibility (ADR-20261024225612)
+			CPUModel:                        snapshot.CPUModel,
+			StorageKey:                      snapshot.StorageKey, // see snapshotWrittenPayload.StorageKey
 			MemBytes:                        snapshot.MemBytes,
 			DiskBytes:                       snapshot.VMStateBytes,
 			StoredBytes:                     snapshot.StoredBytes,
@@ -3583,7 +3625,9 @@ func (h *Handler) handleDeploymentActivation(ctx context.Context, snapshot snaps
 				h.ops.RecordSnapshotPublication(snap.Tier, wire.SnapshotPublicationWriteError)
 				return fmt.Errorf("imaged: create snapshot: %w", createErr)
 			}
-			stored, createErr = h.store.LatestSnapshotForTier(ctx, snapshot.DeploymentID, snap.Tier)
+			// The conflicting row is this capture's CPU platform's live row
+			// (ADR-20261024225612 amendment 1): other platforms keep theirs.
+			stored, createErr = liveSnapshotOnPlatform(ctx, h.store, snapshot.DeploymentID, snap.Tier, snap.CPUPlatform())
 			if createErr != nil {
 				h.ops.RecordSnapshotPublication(snap.Tier, wire.SnapshotPublicationWriteError)
 				return fmt.Errorf("imaged: load existing snapshot: %w", createErr)
@@ -3789,13 +3833,14 @@ func (h *Handler) handleDeploymentActivation(ctx context.Context, snapshot snaps
 	// deliberately activates an older revision. Like a checked rollback it
 	// must skip the latest-revision fence and the source-branch freshness
 	// check, which would otherwise supersede every rollback target.
+	preparedRollback := false
 	if !checkedRollback {
 		if prepared, ok := h.store.(state.RollbackPreparedStore); ok {
 			isPrepared, err := prepared.DeploymentRollbackPrepared(ctx, dep.ID)
 			if err != nil && !errors.Is(err, state.ErrNotFound) {
 				return fmt.Errorf("imaged: read rollback marker: %w", err)
 			}
-			checkedRollback = isPrepared
+			checkedRollback, preparedRollback = isPrepared, isPrepared
 		}
 	}
 
@@ -3834,6 +3879,10 @@ func (h *Handler) handleDeploymentActivation(ctx context.Context, snapshot snaps
 		promoteErr = h.store.MarkMCPTaskRecoveryDeploymentLive(ctx, dep.ID, !checkedRollback && dep.Kind.RequiresLatestRevision())
 	} else if !checkedRollback && dep.Kind.RequiresLatestRevision() {
 		promoteErr = h.store.MarkDeploymentLiveIfLatest(ctx, dep.ID)
+	} else if preparedRollback {
+		// The store rechecks the marker under its lock: a rollback withdrawn
+		// since the read above (its receipt failed) must not cut over.
+		promoteErr = h.store.MarkDeploymentLive(state.WithPreparedRollbackPromotion(ctx), dep.ID)
 	} else {
 		promoteErr = h.store.MarkDeploymentLive(ctx, dep.ID)
 	}
@@ -3980,15 +4029,32 @@ func (h *Handler) discardStaleSnapshotCapture(ctx context.Context, snap state.Sn
 	if !state.IsSnapshotCaptureKey(snap.StorageKey) {
 		return nil
 	}
-	live, err := h.store.LatestSnapshotForTier(ctx, snap.DeploymentID, snap.Tier)
-	if err != nil && !errors.Is(err, state.ErrNotFound) {
+	live, err := state.LiveSnapshotsForTier(ctx, h.store, snap.DeploymentID, snap.Tier)
+	if err != nil {
 		return fmt.Errorf("imaged: inspect stale capture before cleanup: %w", err)
 	}
-	if err == nil && live.StorageKey == snap.StorageKey {
-		return nil
+	for _, row := range live {
+		if row.StorageKey == snap.StorageKey {
+			return nil
+		}
 	}
 	h.deleteSnapshotPair(ctx, snap)
 	return nil
+}
+
+// liveSnapshotOnPlatform is the deployment's live row of tier on one CPU
+// platform (ADR-20261024225612 amendment 1); ErrNotFound when there is none.
+func liveSnapshotOnPlatform(ctx context.Context, store state.Store, deploymentID, tier, platform string) (state.Snapshot, error) {
+	rows, err := state.LiveSnapshotsForTier(ctx, store, deploymentID, tier)
+	if err != nil {
+		return state.Snapshot{}, err
+	}
+	for _, row := range rows {
+		if row.CPUPlatform() == platform {
+			return row, nil
+		}
+	}
+	return state.Snapshot{}, state.ErrNotFound
 }
 
 func (h *Handler) notifyDeploymentState(ctx context.Context, appID, deploymentID string, status state.DeploymentStatus) {

@@ -300,6 +300,9 @@ export class AccountService {
   }
   /**
    * Replay one account-owned dead-letter event atomically.
+   * An event_route entry (a routing failure whose receipt was pruned) has
+   * nothing to redrive and answers 409 dead_letter_not_replayable.
+   *
    * @returns DeadLetterEvent Account dead-letter replay accepted.
    * @throws ApiError
    */
@@ -330,6 +333,7 @@ export class AccountService {
       errors: {
         401: `code: unauthorized`,
         404: `code: not_found`,
+        409: `code: conflict`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
@@ -993,7 +997,7 @@ export class AccountService {
    *
    * Once current-month overage meets/exceeds the cap, schedd refuses
    * new wakes with `code: admission_refused` (HTTP 402). The cap is
-   * account-self-scoped (no admin scope required) and the response
+   * account-self-scoped (admin scope required) and the response
    * is the post-update account state. Audit row
    * `overage.cap_changed` is emitted on every successful call.
    *

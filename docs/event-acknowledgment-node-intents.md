@@ -120,7 +120,7 @@ the host still decides when another pass runs.
 ```js
 import {
   recoverNextEventAcknowledgmentIntent, EventAcknowledgmentIntentError,
-} from '@gregale/sdk-node';
+} from '@gregale/sdk-node/preview';
 
 try {
   const status = await recoverNextEventAcknowledgmentIntent(pool, accountId, appId, {

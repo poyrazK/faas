@@ -47,7 +47,7 @@ func TestOperationsHTTPPostgresSDKAcceptance(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	sdk, err := filepath.Abs("../../../sdk/node/dist/index.js")
+	sdk, err := filepath.Abs("../../../sdk/node/dist/preview.js")
 	if err != nil {
 		t.Fatal(err)
 	}

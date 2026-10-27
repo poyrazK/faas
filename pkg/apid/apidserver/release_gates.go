@@ -2,6 +2,7 @@
 package apidserver
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"time"
@@ -34,13 +35,20 @@ func releaseGateView(g state.ReleaseGate, sloNames map[string]string) api.Releas
 	case state.ReleaseGateCustomMetric:
 		threshold := g.Threshold
 		out.Metric, out.Comparison, out.Threshold = g.MetricName, g.Comparison, &threshold
+	case state.ReleaseGateAI:
+		out.Metric, out.MaxIncreasePercent = g.MetricName, int(g.Threshold)
 	}
 	return out
 }
 
 func (s *server) appSLONames(r *http.Request, slos state.SLOStore, appID string) map[string]string {
+	return s.sloNames(r.Context(), slos, appID)
+}
+
+// sloNames maps the app's SLO IDs to their names; a failed read names none.
+func (s *server) sloNames(ctx context.Context, slos state.SLOStore, appID string) map[string]string {
 	names := map[string]string{}
-	list, err := slos.ListSLOs(r.Context(), appID)
+	list, err := slos.ListSLOs(ctx, appID)
 	if err != nil {
 		return names
 	}

@@ -291,6 +291,13 @@ func (h *Handler) serveEdgeAnswer(w http.ResponseWriter, r *http.Request, app Ap
 		if r.Method != http.MethodHead || app.HeadWakes || h.headWakes {
 			return false
 		}
+		// The cached headers come from a live response to a client the
+		// app's public access gate admitted, and this answer runs before
+		// that gate: an IP-allowlisted or credential-gated app replayed them,
+		// with a 200, to clients the gate refuses. Its HEAD takes the gate.
+		if mode := app.PublicAuth.Mode; mode != "" && mode != publicAuthModeOpen {
+			return false
+		}
 		if h.backend.HealthyCount(app.ID) != 0 {
 			return false
 		}

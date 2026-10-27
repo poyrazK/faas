@@ -91,9 +91,7 @@ func cmdWebhooks(args []string) int {
 		return cmdAccountReleaseWebhooks(args[1:])
 	}
 	printCommandValidation(os.Stderr, "unknown webhooks subcommand %q\n", args[0])
-	sug, _ := suggestSubcommand(args[0], parent)
-	maybeSuggestSub(sug)
-	return 1
+	return unknownSubcommandChoices(os.Stderr, "webhooks", parent, args[0])
 }
 
 func cmdWebhooksList(args []string) int {
@@ -508,6 +506,7 @@ var validAppWebhookEvents = map[string]struct{}{
 	"usage_statement.finalized":        {},
 	"consumer.usage_threshold":         {},
 	"outbound.ai_budget.threshold":     {},
+	"outbound.ai_quality.drift":        {},
 	"app.health.changed":               {},
 }
 
@@ -517,7 +516,7 @@ var webhookEventVocab = []string{
 	"app.parked", "app.woken", "deployment.live", "deployment.failed",
 	"app.health.changed",
 	"rollout.completed", "rollout.aborted", "job.finished", "usage_statement.finalized",
-	"consumer.usage_threshold", "outbound.ai_budget.threshold",
+	"consumer.usage_threshold", "outbound.ai_budget.threshold", "outbound.ai_quality.drift",
 }
 
 func validAppWebhookEvent(s string) bool {

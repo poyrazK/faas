@@ -47,10 +47,10 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/cronexpr"
 	"github.com/onebox-faas/faas/pkg/events"
 	"github.com/onebox-faas/faas/pkg/exclusivework"
 	"github.com/onebox-faas/faas/pkg/hostingconfig"
-	"github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/workpolicy"
 )
 
@@ -769,8 +769,8 @@ type Trigger struct {
 	// kafka poller reconciles its broker offset with a
 	// dead-lettered record. Closed vocab: "commit" (default —
 	// broker offset advances; same as no field) and
-	// "seek-to-offset" (the kafka poller calls SetOffset so the
-	// next Poll re-fetches the same message). Empty string
+	// "seek-to-offset" (the kafka poller keeps the record and
+	// hands it back on every Poll; nothing past it commits). Empty string
 	// means "use the plan default"; per-kind validator at
 	// Validate() rejects anything outside the closed vocabulary
 	// so a YAML typo surfaces at load time rather than at
@@ -1493,6 +1493,9 @@ type Manifest struct {
 	Databases  []DatabaseDependency `yaml:"databases,omitempty"`
 	Buckets    []BucketDependency   `yaml:"buckets,omitempty"`
 	Worker     *WorkerSpec          `yaml:"worker,omitempty"`
+	// Realtime declares managed realtime endpoints by slug
+	// (ADR-20261019102657).
+	Realtime *RealtimeConfig `yaml:"realtime,omitempty"`
 }
 
 // ReleaseConfig declares a command that must succeed for the candidate
@@ -2164,6 +2167,9 @@ func (m *Manifest) ValidateForPlan(plan api.Plan) error {
 	if err := m.validateFunctions(plan); err != nil {
 		return err
 	}
+	if err := m.validateRealtime(); err != nil {
+		return err
+	}
 	if m.Profiling != nil {
 		if err := m.Profiling.Validate(plan); err != nil {
 			return err
@@ -2646,7 +2652,7 @@ func (t Trigger) validateKindConfig(idx int) error {
 	}
 	switch t.Kind {
 	case TriggerKindCron:
-		if _, err := sched.ParseSchedule(t.Schedule); err != nil {
+		if _, err := cronexpr.Parse(t.Schedule, cronexpr.DefaultTimezone); err != nil {
 			return fmt.Errorf("trigger[%d]: bad schedule %q: %w", idx, t.Schedule, err)
 		}
 		if !strings.HasPrefix(t.Path, "/") {

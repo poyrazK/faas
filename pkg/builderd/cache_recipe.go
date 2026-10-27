@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -30,16 +31,20 @@ type BuildCacheRecipe struct {
 	PublicBuildURLs       map[string]string `json:"public_build_urls,omitempty"`
 	// DockerfileBuild separates builds of other stages or arguments
 	// (ADR-20261019142544). Omitted when nil, so existing keys are unchanged.
-	DockerfileBuild     *api.DockerfileBuildOptions `json:"dockerfile_build,omitempty"`
-	SourceSHA256        string                      `json:"source_sha256"`
-	SourceRoot          string                      `json:"source_root"`
-	DockerfilePath      string                      `json:"dockerfile_path,omitempty"`
-	Framework           Framework                   `json:"framework"`
-	Plan                api.Plan                    `json:"plan"`
-	RuntimeBaseRef      string                      `json:"runtime_base_ref"`
-	Function            bool                        `json:"function"`
-	BuilderBaseIdentity string                      `json:"builder_base_identity"`
-	TargetPlatform      string                      `json:"target_platform"`
+	DockerfileBuild *api.DockerfileBuildOptions `json:"dockerfile_build,omitempty"`
+	// GoCommand separates the commands of one Go module, which share source,
+	// root and framework (ADR-20261025134512). Omitted when empty, so
+	// existing keys are unchanged.
+	GoCommand           string    `json:"go_command,omitempty"`
+	SourceSHA256        string    `json:"source_sha256"`
+	SourceRoot          string    `json:"source_root"`
+	DockerfilePath      string    `json:"dockerfile_path,omitempty"`
+	Framework           Framework `json:"framework"`
+	Plan                api.Plan  `json:"plan"`
+	RuntimeBaseRef      string    `json:"runtime_base_ref"`
+	Function            bool      `json:"function"`
+	BuilderBaseIdentity string    `json:"builder_base_identity"`
+	TargetPlatform      string    `json:"target_platform"`
 
 	// DevWatchCommand separates watch-mode developer images (ADR-1170) from
 	// production-shaped builds of the same source. Omitted when empty, so
@@ -50,6 +55,41 @@ type BuildCacheRecipe struct {
 	DevWatchHost string `json:"dev_watch_host,omitempty"`
 	// Separate opted-in output from older builders that ignored the config.
 	IssueSourceMapsDirectory string `json:"issue_source_maps_directory,omitempty"`
+	// BuildSecretScope partitions builds that mount secrets (see
+	// buildSecretScope). Omitted when the build mounts none, so every
+	// existing recipe key is unchanged.
+	BuildSecretScope string `json:"build_secret_scope,omitempty"`
+	// RegistryAuthScope partitions builds that pull with the app's registry
+	// credentials (see registryAuthScope). Omitted without them.
+	RegistryAuthScope string `json:"registry_auth_scope,omitempty"`
+	// AccountID partitions every build by the account that owns the app. The
+	// rest of the recipe describes the build's inputs, and its output comes
+	// from a builder VM the tenant controls: without the account, a tenant who
+	// built a popular public commit first (the CLI packs a commit
+	// byte-reproducibly) served its artifact to every later account deploying
+	// that commit, which then ran it with its own secrets.
+	AccountID string `json:"account_id,omitempty"`
+}
+
+// buildSecretScope keys a build that mounts secrets to its account, app,
+// deployment scope and the sealed values it mounted. The rest of the recipe
+// names no tenant, so a byte-identical source submitted by another account
+// with the same Dockerfile options and secret names was served the first
+// account's image, including anything fetched with its private registry or
+// git token; a rotated secret also rebuilds. Empty without secrets.
+func buildSecretScope(accountID, appID, scope string, secrets []SealedBuildSecret) string {
+	if len(secrets) == 0 {
+		return ""
+	}
+	sorted := append([]SealedBuildSecret(nil), secrets...)
+	sort.Slice(sorted, func(i, j int) bool { return sorted[i].Key < sorted[j].Key })
+	h := sha256.New()
+	_, _ = fmt.Fprintf(h, "%s\x00%s\x00%s", accountID, appID, scope)
+	for _, secret := range sorted {
+		sum := sha256.Sum256(secret.Ciphertext)
+		_, _ = fmt.Fprintf(h, "\x00%s\x00%x", secret.Key, sum)
+	}
+	return hex.EncodeToString(h.Sum(nil))
 }
 
 const (

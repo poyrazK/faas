@@ -27,6 +27,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/netip"
 	"path/filepath"
 	"slices"
@@ -43,6 +44,7 @@ const (
 	adoptionRefusedPrivateNetwork  = "private_network"
 	adoptionRefusedPrepared        = "prepared_network"
 	adoptionRefusedRehearsal       = "rehearsal"
+	adoptionRefusedEgressCircuit   = "egress_circuit"
 	adoptionRefusedProductionFork  = "production_fork"
 	adoptionRefusedFunction        = "function_resources"
 	adoptionRefusedAsset           = "unsupported_asset"
@@ -57,7 +59,7 @@ const (
 // guestAdopter is the VMM side of adoption; JailerVMM implements it.
 type guestAdopter interface {
 	adoptGuestProcess(l Lease, process resourceProcessIdentity, owner adoptedOwner, jails, binds, files []resourceAsset) error
-	prepareRegisteredGuestVsockListeners(l Lease) error
+	prepareRegisteredGuestVsockListeners(l Lease, origins ...GuestVsockStreamOrigin) error
 	adoptJobExitListener(l Lease) error
 	chrootRoot(instance string) string
 	ResumeVM(ctx context.Context, l Lease) error
@@ -175,6 +177,8 @@ func adoptionScope(chrootRoot func(string) string, adoptAdmitted bool, r resourc
 		return adoptionRefusedStaticEgress, "static egress SNAT is not rebuilt yet"
 	case a.Network.RehearsalRunID != "":
 		return adoptionRefusedRehearsal, "rehearsal containment and recorder are not rebuilt"
+	case a.Network.EgressCircuits:
+		return adoptionRefusedEgressCircuit, "egress circuit registration is not rebuilt"
 	case r.Lease.Quarantine:
 		// ADR-732: the fork's quarantine lives on Instance.Net, which the
 		// block does not carry; a re-rendered netns would drop its chains.
@@ -322,6 +326,7 @@ func (m *Manager) adoptGuest(ctx context.Context, adopter guestAdopter, r resour
 		m.alloc.unadopt(id)
 		return err
 	}
+	m.adoptDriveHandoff(ctx, adopter, lease, r)
 	inst := m.adoptedInstance(lease, r.Adoption)
 	m.restoreAdoptedPolicy(id, inst.AppID, r.Adoption)
 	m.mu.Lock()
@@ -330,6 +335,26 @@ func (m *Manager) adoptGuest(ctx context.Context, adopter guestAdopter, r resour
 	delete(m.restartQuarantine, id)
 	m.mu.Unlock()
 	return nil
+}
+
+// driveHandoffAdopter rebuilds a measured guest's drive handoff
+// (runtime_drive_handoff_adopt.go); JailerVMM implements it.
+type driveHandoffAdopter interface {
+	adoptRuntimeDriveHandoff(ctx context.Context, lease Lease, pid int, r runtimeadmission.Receipt, pins []resourceAdoptionDrivePin) error
+}
+
+// adoptDriveHandoff gives an adopted measured guest back the drive handoff
+// its captures need. Without it the guest still serves; its next capture is
+// refused and the app's next wake cold-boots (ADR-005), as before.
+func (m *Manager) adoptDriveHandoff(ctx context.Context, adopter guestAdopter, lease Lease, r resourceJournalRecord) {
+	adm := r.Adoption.Instance.Admission
+	h, ok := adopter.(driveHandoffAdopter)
+	if !r.Adoption.Instance.Admitted || adm == nil || len(adm.Drives) == 0 || !ok {
+		return
+	}
+	if err := h.adoptRuntimeDriveHandoff(ctx, lease, r.Process.PID, adm.Receipt, adm.Drives); err != nil {
+		slog.Warn("vmmd: adopted measured guest has no drive handoff; its next capture is refused", "instance", lease.Instance, "err", err)
+	}
 }
 
 // adoptedInstance rebuilds the Instance from the record. Network policy that
@@ -355,7 +380,7 @@ func (m *Manager) adoptedInstance(l Lease, a *resourceAdoption) *Instance {
 	in := a.Instance
 	inst := &Instance{
 		Lease: l, Net: nc, Method: method, Plan: l.Plan,
-		AppID: in.AppID, AccountID: in.AccountID, DeploymentID: in.DeploymentID,
+		AppID: in.AppID, AccountID: in.AccountID, DeploymentID: in.DeploymentID, WakeID: in.WakeID, NodeID: in.NodeID,
 		Port: in.Port, HealthcheckPath: in.HealthcheckPath, HealthcheckGRPC: in.HealthcheckGRPC, ImageHealthcheckRequired: in.ImageHealthcheckRequired,
 		StartupDeadlineS: in.StartupDeadlineS, ExecutionMode: in.ExecutionMode, Runtime: in.Runtime,
 		WorkloadNames:          append([]string(nil), in.WorkloadNames...),
@@ -395,6 +420,9 @@ func (m *Manager) adoptedInstance(l Lease, a *resourceAdoption) *Instance {
 	if a.Lifecycle.State == adoptionStateFrozen && a.Lifecycle.FrozenSince != nil {
 		inst.Frozen, inst.FrozenSince = true, *a.Lifecycle.FrozenSince
 	}
+	// The successor proves the unit before it serves through it
+	// (vmmdgrpc ReconcileInstanceBridgeUnits).
+	inst.bridge = a.Bridge.clone()
 	return inst
 }
 
@@ -439,7 +467,10 @@ func (m *Manager) resumeAdoptedGuest(ctx context.Context, adopter guestAdopter, 
 	if inst == nil {
 		return errors.New("adopted guest is no longer live")
 	}
-	if err := adopter.prepareRegisteredGuestVsockListeners(inst.Lease); err != nil {
+	// The guest's channels carry the wake identity Wake bound them to, so
+	// identity-checked receivers (sidecar health) keep accepting them.
+	origin := GuestVsockStreamOrigin{AppID: inst.AppID, WakeID: inst.WakeID, NodeID: inst.NodeID}
+	if err := adopter.prepareRegisteredGuestVsockListeners(inst.Lease, origin); err != nil {
 		return fmt.Errorf("guest channels: %w", err)
 	}
 	if inst.IsJob {

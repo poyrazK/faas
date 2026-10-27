@@ -40,13 +40,20 @@ func TestFinancialBudgetPreviewStopMetal(t *testing.T) {
 	s := state.NewPgStore(pool)
 	image, _ := e2etest.HelloImageAboveBase("library/budget-hello", helloBody)
 	ref := registry.AddImage("library/budget-hello", image)
+	// apid inserts an app unplaced and announces it so schedd claims a node;
+	// these rows bypass apid, so place them on the harness node directly or
+	// the gateway refuses them ("empty NodeID").
+	var nodeID string
+	if err := pool.QueryRow(ctx, `SELECT id FROM compute_nodes WHERE name = 'default-local'`).Scan(&nodeID); err != nil {
+		t.Fatal(err)
+	}
 	var preview state.App
 	for _, slug := range []string{"budget-production", "budget-preview"} {
 		parent := ""
 		if slug == "budget-preview" {
 			parent = "budget-production"
 		}
-		app, err := s.CreateApp(ctx, state.App{AccountID: account, Slug: slug, PreviewOfSlug: parent, Type: state.AppTypeApp, Runtime: "node22", RAMMB: 128, MaxConcurrency: 2, IdleTimeoutS: 300})
+		app, err := s.CreateApp(ctx, state.App{AccountID: account, Slug: slug, PreviewOfSlug: parent, NodeID: nodeID, Type: state.AppTypeApp, Runtime: "node22", RAMMB: 128, MaxConcurrency: 2, IdleTimeoutS: 300})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -114,5 +121,18 @@ func TestFinancialBudgetPreviewStopMetal(t *testing.T) {
 	if _, err := s.UpdateFinancialBudget(ctx, account, p.ID, p.Revision, "native-acceptance", p.Spec); err != nil {
 		t.Fatal(err)
 	}
-	request("budget-preview", http.StatusOK)
+	// Gateways reuse a warm-traffic decision for FinancialBudgetAdmissionCacheTTL,
+	// so disabling the policy resumes the preview within that window, not at
+	// once (lane B eaedb-20261023T214830 asked 5 ms after a held answer).
+	resumeBy := time.Now().Add(api.FinancialBudgetAdmissionCacheTTL + 2*time.Second)
+	for {
+		body, status := doGetWithHost(t, &http.Client{}, h.GatewayURL+"/", "budget-preview.apps.test.example", 30*time.Second)
+		if status == http.StatusOK {
+			break
+		}
+		if status != http.StatusPaymentRequired || time.Now().After(resumeBy) {
+			t.Fatalf("budget-preview after disable: status=%d body=%s", status, body)
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
 }

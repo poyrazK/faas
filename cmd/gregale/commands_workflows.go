@@ -60,12 +60,8 @@ func cmdWorkflows(args []string) int {
 	case "events":
 		return cmdWorkflowsEvents(rest)
 	default:
-		PrintUsage(os.Stderr, fmt.Sprintf("unknown workflows subcommand: %s", subcommand), "workflows")
-		if parent, ok := lookupCliCommand("workflows"); ok {
-			sug, _ := suggestSubcommand(subcommand, parent)
-			maybeSuggestSub(sug)
-		}
-		return 1
+		printCommandValidation(os.Stderr, "unknown workflows subcommand %q\n", subcommand)
+		return unknownSubcommandChoices(os.Stderr, "workflows", nestedCliCommand("workflows"), subcommand)
 	}
 }
 
@@ -684,7 +680,7 @@ func cmdWorkflowsEvents(args []string) int {
 		return 1
 	}
 	if len(posArgs) != 2 {
-		PrintUsage(os.Stderr, "usage: gregale workflows events <run_id> <event_name> [--payload JSON | --payload-file PATH|-]", "workflows")
+		PrintUsage(os.Stderr, "usage: gregale workflows events <run_id> <event_name> [--payload JSON | --payload-file PATH|-]; legacy form: gregale workflows events send <run_id> <event_name>", "workflows")
 		return 1
 	}
 

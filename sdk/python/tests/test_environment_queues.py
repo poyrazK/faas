@@ -5,14 +5,14 @@ from http import HTTPStatus
 
 import httpx
 
-from faas_sdk.api.projects import (
+from faas_sdk.preview.api.projects import (
     get_project_environment_queue_bindings,
     replace_project_environment_queue_bindings,
 )
 from faas_sdk.client import AuthenticatedClient
-from faas_sdk.models.problem import Problem
-from faas_sdk.models.project_environment_queue_bindings_response import ProjectEnvironmentQueueBindingsResponse
-from faas_sdk.models.replace_project_environment_queue_bindings_request import (
+from faas_sdk.preview.models.problem import Problem
+from faas_sdk.preview.models.project_environment_queue_bindings_response import ProjectEnvironmentQueueBindingsResponse
+from faas_sdk.preview.models.replace_project_environment_queue_bindings_request import (
     ReplaceProjectEnvironmentQueueBindingsRequest,
 )
 

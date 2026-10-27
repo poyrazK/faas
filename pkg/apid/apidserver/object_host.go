@@ -12,6 +12,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/apid/object"
 	"github.com/onebox-faas/faas/pkg/billing"
 	"github.com/onebox-faas/faas/pkg/objectstorage"
+	"github.com/onebox-faas/faas/pkg/secretbox"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/wire"
 )
@@ -84,8 +85,16 @@ func (h objectHost) SecretRecipient() *age.X25519Recipient {
 	return hostSecretRecipient()
 }
 
+func (h objectHost) StorageCredentialRecipients() ([]*age.X25519Recipient, string, error) {
+	return storageCredentialRecipients()
+}
+
 func (h objectHost) RuntimeSecretRecipient() *age.X25519Recipient {
 	return runtimeSecretRecipient()
+}
+
+func (h objectHost) RuntimeSecretBinding(accountID string) secretbox.Binding {
+	return runtimeSecretBinding(accountID)
 }
 
 func (h objectHost) HostHMACKey() []byte {

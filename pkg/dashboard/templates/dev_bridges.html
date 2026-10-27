@@ -14,7 +14,7 @@
   </style>
 </head>
 <body>
-<header><nav><strong>Gregale</strong><a href="/dashboard/">Overview</a><a href="/dashboard/developers">Developer environments</a><a href="/dashboard/projects">Projects</a><a href="/dashboard/dev-bridges">Dev Bridge</a></nav></header>
+<header><nav><strong>Gregale</strong><a href="/dashboard/">Overview</a>{{if $.On "developer-environments"}}<a href="/dashboard/developers">Developer environments</a>{{end}}{{if $.On "projects"}}<a href="/dashboard/projects">Projects</a>{{end}}{{if $.On "dev-bridge"}}<a href="/dashboard/dev-bridges">Dev Bridge</a>{{end}}</nav></header>
 <main>
 {{template "email-verification-banner" .}}
 <h1>Dev Bridge</h1>

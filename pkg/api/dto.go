@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"net/netip"
+	"net/textproto"
 	"net/url"
 	"regexp"
 	"slices"
@@ -18,6 +19,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/google/uuid"
+	"golang.org/x/net/http/httpguts"
 
 	"github.com/onebox-faas/faas/pkg/api/canary"
 	"github.com/onebox-faas/faas/pkg/rehearsalcold"
@@ -829,6 +831,11 @@ type UpsertDevSessionRequest struct {
 	// the app's development server, instead of the production build. Omitted
 	// turns watch mode off. Takes effect from the next developer build.
 	Watch *DevWatch `json:"watch,omitempty"`
+	// GoCommand builds `cmd/<GoCommand>` of the Go module at the source root
+	// (ADR-20261026120412), as a project service's build_go_command does.
+	// Omitted builds what the source builds by default. Takes effect from the
+	// next developer build.
+	GoCommand string `json:"go_command,omitempty"`
 }
 
 // DevWatch is a developer environment's watch-mode setting (ADR-1170).
@@ -891,6 +898,10 @@ type DevSessionResponse struct {
 	Buckets   []DevBucketResponse  `json:"buckets,omitempty"`
 	// Watch is the stored watch-mode setting (ADR-1170); omitted when off.
 	Watch *DevWatch `json:"watch,omitempty"`
+	// GoCommand is the stored Go command (ADR-20261026120412); omitted when
+	// none. A client that asked for one and finds it missing is talking to an
+	// API that ignores the request field.
+	GoCommand string `json:"go_command,omitempty"`
 }
 
 // RegisterScenarioTestRequest binds developer sessions to one isolated run.
@@ -2491,6 +2502,34 @@ type PublicAuthStatus struct {
 // below for the contract.
 type Sidecars []Sidecar
 
+// DeploymentCompanion is one companion of a deployment as the API shows it:
+// identity, image, port and size, never environment values or secret
+// grants.
+type DeploymentCompanion struct {
+	Name           string `json:"name"`
+	Image          string `json:"image,omitempty"`
+	Preset         string `json:"preset,omitempty"`
+	Type           string `json:"type,omitempty"`
+	Port           int    `json:"port,omitempty"`
+	RAMMB          int    `json:"ram_mb,omitempty"`
+	PrimaryIngress bool   `json:"primary_ingress,omitempty"`
+}
+
+// Summaries returns the API view of each companion, nil when there are none.
+func (ss Sidecars) Summaries() []DeploymentCompanion {
+	if len(ss) == 0 {
+		return nil
+	}
+	out := make([]DeploymentCompanion, 0, len(ss))
+	for _, sc := range ss {
+		out = append(out, DeploymentCompanion{
+			Name: sc.Name, Image: sc.Image, Preset: sc.Preset, Type: string(sc.Type),
+			Port: sc.Port, RAMMB: sc.RamMB, PrimaryIngress: sc.PrimaryIngress,
+		})
+	}
+	return out
+}
+
 // Companion and Companions are the customer-facing names for the bounded
 // helper workload model. Sidecar/Sidecars remain the storage and runtime wire
 // names for backwards compatibility with deployments created before the
@@ -3354,6 +3393,9 @@ type DeploymentResponse struct {
 	// pending while it waits, or how its latest schedule ended
 	// (ADR-20261021152201).
 	ScheduledRelease *ScheduledRelease `json:"scheduled_release,omitempty"`
+	// DatabaseSwitch is set on the response to a rollback that restores the
+	// database (ADR-20261023181931).
+	DatabaseSwitch *DatabaseSwitch `json:"database_switch,omitempty"`
 	// DevPatch is set only on the response to a developer source upload
 	// (`gregale dev`). It reports whether the sync could have been applied as
 	// a live source patch (ADR-740 phase 1, measurement only).
@@ -3544,6 +3586,10 @@ type DeploymentResponse struct {
 	// deployment. It lets deploy preview compare the next immutable revision
 	// with the currently deployed workflow contract.
 	Workflows []WorkflowSpec `json:"workflows,omitempty"`
+	// Companions summarizes the companions this deployment carries, without
+	// their environment, so deploy preview can show companion changes and the
+	// public hostname a companion port opens (Hunt 14 H14-53).
+	Companions []DeploymentCompanion `json:"companions,omitempty"`
 	// APIHostingReceipt is the non-secret evidence captured when imaged
 	// promoted this deployment to live. It is intentionally free-form on the
 	// API surface so future receipt schema versions remain additive.
@@ -4074,6 +4120,12 @@ type RollbackRequest struct {
 	// rollback is refused with rollback_crosses_release. Automated rollbacks
 	// never set it.
 	AcknowledgeReleases bool `json:"acknowledge_releases,omitempty"`
+
+	// RestoreDatabases also restores the app's managed PostgreSQL database
+	// to just before the earliest crossed release and switches the app to
+	// that copy (ADR-20261023181931). It requires AcknowledgeReleases; the
+	// response carries the switch, and the code rollback happens inside it.
+	RestoreDatabases bool `json:"restore_databases,omitempty"`
 }
 
 // CapabilityStatus is a customer-visible catalog row with the account's
@@ -4102,6 +4154,11 @@ type CapabilitiesResponse struct {
 	RegistryVersion    int                `json:"registry_version"`
 	Plan               string             `json:"plan"`
 	Capabilities       []CapabilityStatus `json:"capabilities"`
+	// HiddenCapabilities are the catalog capabilities, internal ones
+	// included, whose platform flag is off for this account
+	// (ADR-20261023115741). Clients hide their commands and links. Omitted
+	// when nothing is hidden, and by servers without the capability gate.
+	HiddenCapabilities []string `json:"hidden_capabilities,omitempty"`
 }
 
 // AccountAbuseHold is the customer view of an ADR-361 account abuse hold.
@@ -5799,6 +5856,16 @@ type AccountTraceWake struct {
 	WakeID    string `json:"wake_id"`
 	Method    string `json:"method,omitempty"`
 	ReadyInMS int32  `json:"ready_in_ms,omitempty"`
+	// PlannedMethod and RestoreFallbackReason are set when a planned restore
+	// fell back to a cold boot, as on WakeTimelineJSONRow.
+	PlannedMethod         string `json:"planned_method,omitempty"`
+	RestoreFallbackReason string `json:"restore_fallback_reason,omitempty"`
+	// Thawed marks a request that resumed this wake's frozen instance
+	// (ADR-1151) instead of waiting for its boot; a thaw keeps the instance's
+	// original wake ID. ThawMS is how long the thaw took, and Method and
+	// ReadyInMS, which describe the original boot, are omitted.
+	Thawed bool  `json:"thawed,omitempty"`
+	ThawMS int32 `json:"thaw_ms,omitempty"`
 }
 
 // AccountTraceInvocation is a safe durable invocation lifecycle projection.
@@ -7135,6 +7202,12 @@ type WakeTimelineJSONRow struct {
 	AtCapacity         bool   `json:"at_capacity"`
 	AtCapacityPresent  bool   `json:"at_capacity_present"`
 	ReadyInMS          int32  `json:"ready_in_ms,omitempty"` // -1 = em-dash on absent
+	// PlannedMethod is the method schedd planned when vmmd ran another one,
+	// such as a restore that fell back to a cold boot; empty otherwise.
+	PlannedMethod string `json:"planned_method,omitempty"`
+	// RestoreFallbackReason is the closed reason for that fallback when one
+	// is reported (after_restore_failed); empty otherwise.
+	RestoreFallbackReason string `json:"restore_fallback_reason,omitempty"`
 }
 
 // AccountSLOResponse is the flat account-wide SLO rollup returned by
@@ -7355,8 +7428,17 @@ type PlanWorkload struct {
 	ImageProcess     *ComposeProcess     `json:"image_process,omitempty"`
 	// BuildTarget and BuildArgs show a source-built service's Compose build
 	// options (ADR-20261019142544); argument values stay out of plans.
-	BuildTarget         string            `json:"build_target,omitempty"`
-	BuildArgs           []string          `json:"build_args,omitempty"`
+	BuildTarget string   `json:"build_target,omitempty"`
+	BuildArgs   []string `json:"build_args,omitempty"`
+	// GoCommand is the `cmd/<name>` main package a service of a multi-command
+	// Go module builds from the module root (ADR-20261025134512).
+	GoCommand string `json:"go_command,omitempty"`
+	// SecretFiles are the Compose secrets written to /run/secrets
+	// (ADR-20261023090000); they name app secrets, never values.
+	SecretFiles []SecretFile `json:"secret_files,omitempty"`
+	// Resources are the Compose deploy.replicas and resource limits the
+	// service declares (ADR-20261023120000).
+	Resources           *ComposeResources `json:"resources,omitempty"`
 	Command             []string          `json:"command"`
 	DependsOn           []string          `json:"depends_on,omitempty"`
 	DependsOnConditions map[string]string `json:"depends_on_conditions,omitempty"`
@@ -7455,6 +7537,31 @@ type PlanManaged struct {
 	EnvHint string `json:"env_hint"`
 	Source  string `json:"source"`
 	Image   string `json:"image"`
+	// Provision is the managed PostgreSQL database apply creates or reuses
+	// for a Compose postgres service, and the keys it binds
+	// (ADR-20261025111824). Nil means apply does not provide it; see
+	// NotProvisionedReason.
+	Provision *PlanManagedProvision `json:"provision,omitempty"`
+	// NotProvisionedReason says why a Compose postgres service is not
+	// provided: unavailable, plan, quota, unsupported, configured,
+	// not_referenced or permission. Empty for other datastores.
+	NotProvisionedReason string `json:"not_provisioned_reason,omitempty"`
+}
+
+// PlanManagedProvision is a managed database a project apply provides.
+type PlanManagedProvision struct {
+	Database string `json:"database"`
+	Existing bool   `json:"existing,omitempty"`
+	// PostgresMajor is the database's PostgreSQL major: the Compose image's,
+	// or the nearest newer one the platform offers.
+	PostgresMajor int                  `json:"postgres_major,omitempty"`
+	Bindings      []PlanManagedBinding `json:"bindings"`
+}
+
+// PlanManagedBinding is one service key bound to a provided database.
+type PlanManagedBinding struct {
+	Workload string `json:"workload"`
+	EnvKey   string `json:"env_key"`
 }
 
 // PlanCron is the per-cron line in the scan response. Carries the
@@ -8576,7 +8683,9 @@ func (ss Sidecars) ValidateWithMainDependencies(mainDependencies []WorkloadDepen
 // collide inside the shared task network namespace. Port zero on a sidecar is
 // intentionally ignored: init/worker sidecars commonly have no listener and
 // image-derived ports are checked again by guest-init once the baked manifest
-// is available. A zero mainPort uses the platform's 8080 contract.
+// is available. A zero mainPort uses the platform's 8080 contract; a negative
+// mainPort means the main port is not known yet (the build decides it), so
+// only the companions are compared with each other.
 func (ss Sidecars) ValidatePortConflicts(mainPort int) *Problem {
 	if mainPort == 0 {
 		mainPort = DefaultAppPort
@@ -8767,6 +8876,11 @@ func (a *EdgeRuleRedirectAction) Validate() *Problem {
 	if a.To == "" {
 		return ErrValidation("redirect action To is required")
 	}
+	for name, value := range a.Headers {
+		if p := validateEdgeRuleHeaderField(name, value); p != nil {
+			return p
+		}
+	}
 	if a.Template {
 		if _, err := CompileEdgeRuleTemplate(a.To, EdgeRuleTemplateRedirect); err != nil {
 			return ErrValidation("redirect action to: " + err.Error())
@@ -8800,6 +8914,32 @@ var edgeRuleHeaderForbidden = map[string]struct{}{
 	"Connection":        {},
 }
 
+// EdgeRuleHeaderNameForbidden reports whether an edge rule may not set or
+// remove the header name. HTTP header names are case-insensitive, so the
+// name is compared in canonical form: "host" is as reserved as "Host".
+func EdgeRuleHeaderNameForbidden(name string) bool {
+	if _, bad := edgeRuleHeaderForbidden[textproto.CanonicalMIMEHeaderKey(name)]; bad {
+		return true
+	}
+	return len(name) >= len("x-faas-") && strings.EqualFold(name[:len("x-faas-")], "x-faas-")
+}
+
+// validateEdgeRuleHeaderField rejects a reserved name, a name that is not
+// an HTTP token and a value with control characters. A template value is
+// checked as written; its expansions drop control characters (ADR-968).
+func validateEdgeRuleHeaderField(name, value string) *Problem {
+	if EdgeRuleHeaderNameForbidden(name) {
+		return ErrHeaderMutationForbidden(name)
+	}
+	if !httpguts.ValidHeaderFieldName(name) {
+		return ErrValidation(fmt.Sprintf("header name %q is not a valid HTTP header name", name))
+	}
+	if !httpguts.ValidHeaderFieldValue(value) {
+		return ErrValidation(fmt.Sprintf("header %q value contains characters HTTP does not allow", name))
+	}
+	return nil
+}
+
 func (op *EdgeRuleHeaderOp) Validate() *Problem {
 	if op == nil {
 		return ErrValidation("header op is required")
@@ -8812,11 +8952,8 @@ func (op *EdgeRuleHeaderOp) Validate() *Problem {
 	default:
 		return ErrValidation(fmt.Sprintf("header op action must be one of add,set,remove (got %q)", op.Action))
 	}
-	if _, bad := edgeRuleHeaderForbidden[op.Name]; bad {
-		return ErrHeaderMutationForbidden(op.Name)
-	}
-	if strings.HasPrefix(strings.ToLower(op.Name), "x-faas-") {
-		return ErrHeaderMutationForbidden(op.Name)
+	if p := validateEdgeRuleHeaderField(op.Name, op.Value); p != nil {
+		return p
 	}
 	if op.Template {
 		if op.Action == "remove" {
@@ -9025,10 +9162,16 @@ type EdgeRuleJWTAction struct {
 	RequiredClaims                 map[string]string  `json:"required_claims,omitempty"`
 	PlatformTenantExternalRefClaim string             `json:"platform_tenant_external_ref_claim,omitempty"`
 	MCP                            *MCPResourcePolicy `json:"mcp,omitempty"`
-	// RequireExp rejects tokens without an `exp` claim. Off by default
-	// for compatibility: JWT validation only checks exp when present, so
-	// a token minted without one never expires unless this is set.
-	RequireExp bool `json:"require_exp,omitempty"`
+	// RequireExp rejects tokens without an `exp` claim. Nil means true: a
+	// token minted without exp would never expire, so accepting one takes
+	// an explicit false (ADR-091 amendment 2026-10-27). Rules saved before
+	// the default changed keep the value they were saved with.
+	RequireExp *bool `json:"require_exp,omitempty"`
+}
+
+// RequiresExp resolves RequireExp's default.
+func (a *EdgeRuleJWTAction) RequiresExp() bool {
+	return a.RequireExp == nil || *a.RequireExp
 }
 
 // edgeRuleJWTAllowedJWKSURLPrefixes is the closed list of prefixes
@@ -10176,13 +10319,19 @@ func validateThrottleMaxKeys(maxKeys, planMax int) *Problem {
 // The hot-path applier is
 // pkg/gateway.(*Handler).applyEdgeRuleBudget (§4.1.2.8d).
 type EdgeRuleBudgetAction struct {
-	BudgetMs            int    `json:"budget_ms"`
+	BudgetMs int `json:"budget_ms"`
+	// TotalDeadlineMs includes upload/wake/admission from trusted public ingress.
+	// Zero leaves the existing execution-only budget unchanged (ADR-570).
+	TotalDeadlineMs     int    `json:"total_deadline_ms,omitempty"`
 	AllowOverrideHeader string `json:"allow_override_header,omitempty"`
 }
 
 func (a *EdgeRuleBudgetAction) Validate() *Problem {
 	if a == nil {
 		return ErrValidation("budget action is required")
+	}
+	if a.TotalDeadlineMs < 0 || a.TotalDeadlineMs > int(RequestBudgetPlanMax.Milliseconds()) {
+		return ErrValidation("budget action: total_deadline_ms must be zero (unset) or within the platform request budget ceiling")
 	}
 	if a.BudgetMs <= 0 {
 		return ErrValidation(fmt.Sprintf(
@@ -10447,9 +10596,17 @@ type EdgeRuleResponse struct {
 	// Mode (ADR-960) is "enforce" or "log"; log-mode rules only count matches.
 	Mode string `json:"mode"`
 	// Penalty is the rule's penalty box (ADR-20261022105846), if any.
-	Penalty   *EdgeRulePenalty `json:"penalty,omitempty"`
-	CreatedAt time.Time        `json:"created_at"`
-	UpdatedAt time.Time        `json:"updated_at"`
+	Penalty *EdgeRulePenalty `json:"penalty,omitempty"`
+	// ManagedBy names the switch that owns the rule: "attack_mode" for
+	// the app's attack-mode rule (ADR-20261021220456), which PATCH refuses.
+	// Empty for every other rule.
+	ManagedBy string `json:"managed_by,omitempty"`
+	// UnreleasedFeatures names the gated features the rule uses that are
+	// not yet released to the account (EdgeFeature*, ADR-20261023113721);
+	// the gateway does not enforce them.
+	UnreleasedFeatures []string  `json:"unreleased_features,omitempty"`
+	CreatedAt          time.Time `json:"created_at"`
+	UpdatedAt          time.Time `json:"updated_at"`
 }
 
 // Edge-rule metadata bounds; the edge_rules CHECK constraints mirror them.
@@ -10575,8 +10732,9 @@ type EdgeRuleStatsResponse struct {
 // the rule has been deleted. Detections (outcome detected, warned or
 // blocked; ADR-831 amendment 5) also carry the CRS rule IDs that scored,
 // their attack categories and the anomaly score. Challenge outcomes
-// (challenged, rejected, solved or failed; amendment 7 follow-up) carry the
-// request fields only.
+// (challenged, rejected, solved or failed; amendment 7 follow-up) and
+// penalty boxes (boxed; ADR-20261022105846 amendment 2) carry the request
+// fields only.
 type EdgeRuleEventResponse struct {
 	ID         string    `json:"id"`
 	RuleID     string    `json:"rule_id"`

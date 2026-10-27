@@ -257,7 +257,7 @@ func (c *Client) UpdateNativeIssueTrackerStatus(ctx context.Context, slug, id, l
 }
 
 // CreateNativeIssueTicket creates or recovers a GitHub ticket using the owned app connection.
-func (c *Client) CreateNativeIssueTicket(ctx context.Context, slug, issueID string, in CreateNativeIssueTicketRequest) (NativeIssueTicketResult, error) {
+func (c *PreviewClient) CreateNativeIssueTicket(ctx context.Context, slug, issueID string, in CreateNativeIssueTicketRequest) (NativeIssueTicketResult, error) {
 	var out NativeIssueTicketResult
 	err := c.do(ctx, "POST", "/v1/apps/"+url.PathEscape(slug)+"/issues/"+url.PathEscape(issueID)+"/native-tickets", in, &out)
 	return out, err
@@ -274,18 +274,18 @@ func (c *Client) UpdateIssueTrackerAutoSync(ctx context.Context, slug, issue, li
 	return out, err
 }
 
-func (c *Client) GetIssueTrackerLinearConnection(ctx context.Context, slug string) (IssueTrackerLinearConnection, error) {
+func (c *PreviewClient) GetIssueTrackerLinearConnection(ctx context.Context, slug string) (IssueTrackerLinearConnection, error) {
 	var out IssueTrackerLinearConnection
 	err := c.do(ctx, "GET", "/v1/apps/"+url.PathEscape(slug)+"/issue-tracker-linear-connection", nil, &out)
 	return out, err
 }
-func (c *Client) UpdateIssueTrackerLinearConnection(ctx context.Context, slug string, in UpdateIssueTrackerLinearConnectionRequest) (IssueTrackerLinearConnection, error) {
+func (c *PreviewClient) UpdateIssueTrackerLinearConnection(ctx context.Context, slug string, in UpdateIssueTrackerLinearConnectionRequest) (IssueTrackerLinearConnection, error) {
 	var out IssueTrackerLinearConnection
 	err := c.do(ctx, "PUT", "/v1/apps/"+url.PathEscape(slug)+"/issue-tracker-linear-connection", in, &out)
 	return out, err
 }
 
-func (c *Client) CreateNativeLinearIssueTicket(ctx context.Context, slug, issue string, in CreateNativeLinearIssueTicketRequest) (NativeIssueTicketResult, error) {
+func (c *PreviewClient) CreateNativeLinearIssueTicket(ctx context.Context, slug, issue string, in CreateNativeLinearIssueTicketRequest) (NativeIssueTicketResult, error) {
 	var out NativeIssueTicketResult
 	err := c.do(ctx, "POST", "/v1/apps/"+url.PathEscape(slug)+"/issues/"+url.PathEscape(issue)+"/native-linear-tickets", in, &out)
 	return out, err

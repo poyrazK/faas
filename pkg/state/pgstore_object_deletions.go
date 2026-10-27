@@ -24,6 +24,18 @@ func (s *PgStore) HasActiveObjectDeletion(ctx context.Context, account, app, buc
 	return sqlc.New().ObjectDeletionActive(ctx, s.pool, mustPgUUID(bucket))
 }
 
+var _ ObjectLifecycleDeletionActivityStore = (*PgStore)(nil)
+
+func (s *PgStore) HasActiveObjectLifecycleDeletion(ctx context.Context, bucket, scan string) (bool, error) {
+	if _, e := uuid.Parse(bucket); e != nil {
+		return false, ErrNotFound
+	}
+	if _, e := uuid.Parse(scan); e != nil {
+		return false, ErrNotFound
+	}
+	return sqlc.New().ObjectLifecycleDeletionActive(ctx, s.pool, sqlc.ObjectLifecycleDeletionActiveParams{BucketID: mustPgUUID(bucket), ScanID: mustPgUUID(scan)})
+}
+
 func readDeletion(ctx context.Context, db sqlc.DBTX, id string) (ObjectDeletion, error) {
 	if _, e := uuid.Parse(id); e != nil {
 		return ObjectDeletion{}, ErrNotFound
@@ -125,11 +137,12 @@ func (s *PgStore) BeginObjectDeletion(ctx context.Context, j ObjectDeletion, pol
 	if j.ProtectionRequired && j.Lifecycle.ExpectedDeleteMarker == nil {
 		return j, false, ErrConflict
 	}
-	fenced, e := q.ObjectCapacityFenced(ctx, tx, mustPgUUID(j.BucketID))
+	// Only work on this key blocks the deletion (ADR-20261025115958).
+	fenced, e := q.ObjectCapacityFencedForKey(ctx, tx, sqlc.ObjectCapacityFencedForKeyParams{BucketID: mustPgUUID(j.BucketID), ObjectKey: j.Key})
 	if e != nil {
 		return j, false, e
 	}
-	ready, e := q.ObjectCapacityReadiness(ctx, tx, mustPgUUID(j.BucketID))
+	ready, e := q.ObjectDeletionKeyReadiness(ctx, tx, sqlc.ObjectDeletionKeyReadinessParams{BucketID: mustPgUUID(j.BucketID), ObjectKey: j.Key, KeyHash: objectKeyHash(j.Key)})
 	if e != nil {
 		return j, false, e
 	}
@@ -146,7 +159,13 @@ func (s *PgStore) BeginObjectDeletion(ctx context.Context, j ObjectDeletion, pol
 			j.ProviderStatus = "GCS_" + v.ObservedStatus
 		}
 	}
-	if fenced || ready.Pending > 0 || ready.Multipart || !immutableDeletion(j) && ready.Unsafe && (ready.Versions.Bool || j.ProviderStatus != "") {
+	if ready.Multipart || !immutableDeletion(j) && ready.Unsafe && (ready.Versions.Bool || j.ProviderStatus != "") {
+		return ObjectDeletion{}, false, ErrConflict
+	}
+	if ready.Pending > 0 {
+		return ObjectDeletion{}, false, errors.Join(ErrConflict, ErrObjectBucketBusy)
+	}
+	if fenced {
 		return ObjectDeletion{}, false, ErrConflict
 	}
 	now, e := q.ObjectVersioningNow(ctx, tx)
@@ -156,6 +175,11 @@ func (s *PgStore) BeginObjectDeletion(ctx context.Context, j ObjectDeletion, pol
 	snapshot, e := readObjectBucketUsage(ctx, tx, j.AccountID, j.BucketID, now.Time)
 	if e != nil {
 		return j, false, e
+	}
+	for _, u := range snapshot.Buckets {
+		if u.Bucket.ID == j.BucketID && inventoryClaimYields(u, now.Time) {
+			return ObjectDeletion{}, false, errors.Join(ErrConflict, ErrObjectBucketBusy)
+		}
 	}
 	if !immutableDeletion(j) && ready.Versions.Bool && (!versionAdmissionMode(snapshot, j.BucketID) || j.ProviderStatus == "") {
 		return ObjectDeletion{}, false, ErrConflict

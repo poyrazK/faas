@@ -63,6 +63,10 @@ var adoptionStateInventory = map[string]map[string]string{
 		"functionStarting":                  "bootonly",
 		"provenWorkers":                     "reset",   // costs one full characterization window per deployment
 		"rehearsalRecorders":                "refused", // rehearsal guests are refused (block network.rehearsal_run_id)
+		"httpForwards":                      "reset",   // forwarding bridges die with the predecessor
+		"egressCircuitNetworks":             "refused", // egress-circuit guests are refused (block network.egress_circuits)
+		"appEgressCircuits":                 "reset",   // reloaded from the durable source by the next registration or update
+		"appEgressCircuitRevisions":         "reset",
 	},
 	"JailerVMM": {
 		"bindMounts":               "rebuilt",
@@ -83,7 +87,7 @@ var adoptionStateInventory = map[string]map[string]string{
 		"proc":                                     "rebuilt",
 		"recs":                                     "rebuilt",
 		"rings":                                    "rebuilt",
-		"runtimeDriveHandoffs":                     "reset",    // the handoff descriptors closed with the predecessor
+		"runtimeDriveHandoffs":                     "rebuilt",  // measured cold boots: reopened through Firecracker's descriptors (runtime_drive_handoff_adopt.go)
 		"consoleOpens":                             "reset",    // console files being pre-opened for a boot in flight
 		"guestVsockLeaseHandlers":                  "bootonly", // registered by daemon wiring; adoption prepares the guest's listeners
 		"instanceLogStops":                         "rebuilt",  // adoption registers the app ring, which starts the observer
@@ -114,6 +118,8 @@ var adoptionInstanceInventory = map[string]string{
 	"Frozen":                          "rebuilt",
 	"FrozenSince":                     "rebuilt",
 	"freezing":                        "reset",   // no freeze is in flight at startup
+	"parking":                         "reset",   // no park is in flight at startup
+	"parkHeld":                        "reset",   // nor a forward held on one
 	"IsJob":                           "rebuilt", // job kind
 	"JobStartGateEnabled":             "rebuilt",
 	"JobInteractive":                  "rebuilt",
@@ -124,6 +130,9 @@ var adoptionInstanceInventory = map[string]string{
 	"RestoreError":                    "reset",
 	"RestoreFallbackReason":           "reset",
 	"AppID":                           "rebuilt",
+	"WakeID":                          "rebuilt", // channel and readiness identity (ADR-570)
+	"NodeID":                          "rebuilt",
+	"httpForwardGeneration":           "reset", // no forward outlives the predecessor; minted on first use
 	"AccountID":                       "rebuilt",
 	"DeploymentID":                    "rebuilt",
 	"LivenessProbe":                   "rebuilt",
@@ -156,6 +165,7 @@ var adoptionInstanceInventory = map[string]string{
 	"adoptionMemSizeMiB":              "rebuilt",
 	"adoptionOp":                      "reset", // resolved before adoption (slice 3)
 	"devPatched":                      "rebuilt",
+	"bridge":                          "rebuilt",
 	"migrationPaused":                 "rebuilt",
 	"warmSpare":                       "rebuilt",
 	"DataRepairOnly":                  "refused", // a data repair runs as an execution, which adoption kills

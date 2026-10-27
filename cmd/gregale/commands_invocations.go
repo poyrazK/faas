@@ -66,7 +66,7 @@ func cmdInvocations(args []string) int {
 		return cmdInvocationsWait(args[1:])
 	}
 	printCommandValidation(os.Stderr, "unknown invocations subcommand %q\n", args[0])
-	return 1
+	return unknownSubcommandChoices(os.Stderr, "invocations", nestedCliCommand("invocations"), args[0])
 }
 
 // cmdInvocationsWait polls the durable status endpoint until the invocation
@@ -199,6 +199,19 @@ func renderInvocationWaitResult(inv api.Invocation) int {
 // as cmdAuditEventsList but the server emits invocation rows, not
 // audit-event rows, so the renderer shape is different.
 func cmdInvocationsList(args []string) int {
+	// The ledger is account-wide; `invocations list --app h14-py` answered
+	// only "unknown flag --app" on production-us rc.294 (Hunt 14 H14-64).
+	if argsPassAppFlag(args) {
+		// Name `debug requests` only where it is offered: it belongs to the
+		// production-debugger preview, hidden on production-us rc.297
+		// (Hunt 14 H14-89).
+		perApp := "`gregale debug requests list <slug>` or `gregale logs <slug> --source http`"
+		if discoveryCapabilityView().hidesPath("debug requests") {
+			perApp = "`gregale logs <slug> --source http`"
+		}
+		PrintUsage(os.Stderr, "gregale invocations list lists every invocation in the account and names each row's app; it has no --app filter. For one app's requests use "+perApp+".\nusage: gregale invocations list [--cursor C] [--limit N] [--all]", "invocations")
+		return 1
+	}
 	fs := newFlagSet("invocations list", flag.ContinueOnError)
 	before := fs.String("before", "", "opaque pagination cursor (alias for --cursor)")
 	fs.StringVar(before, "cursor", "", "start after the cursor from a prior page")

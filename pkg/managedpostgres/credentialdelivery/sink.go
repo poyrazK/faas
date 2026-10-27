@@ -35,7 +35,13 @@ type Sink struct {
 	store     SecretStore
 	recipient func() *age.X25519Recipient
 	hmacKey   func() []byte
+	bind      func(accountID string) secretbox.Binding
 }
+
+// BindAccounts seals each credential bound to its binding's account through
+// bind (ADR-20261023173624), so vmmd opens it only for that account. Without
+// it credentials are sealed unbound.
+func (s *Sink) BindAccounts(bind func(accountID string) secretbox.Binding) { s.bind = bind }
 
 func New(store SecretStore, recipient func() *age.X25519Recipient, hmacKey func() []byte) (*Sink, error) {
 	if store == nil || recipient == nil || hmacKey == nil {
@@ -60,13 +66,38 @@ func (s *Sink) Put(ctx context.Context, binding managedpostgres.Binding, materia
 	return sealed.Ref, nil
 }
 
+// PublishSealed writes an envelope sealed earlier, such as a cutover's
+// staged credential, under its binding (ADR-20261023181931).
+func (s *Sink) PublishSealed(ctx context.Context, binding managedpostgres.Binding, sealed managedpostgres.SealedCredential) error {
+	if len(sealed.Ciphertext) == 0 || sealed.Ref == "" {
+		return managedpostgres.ErrInvalid
+	}
+	return normalizeCredentialSinkError(s.store.PutManagedPostgresSecret(ctx, state.AppSecret{
+		AccountID: binding.AccountID, AppID: binding.AppID, Scope: binding.Scope, Key: binding.EnvironmentKey,
+		Ciphertext: sealed.Ciphertext, Kid: sealed.Kid, ValueHash: sealed.ValueHash,
+		ManagedPostgresBindingID: binding.ID, ManagedPostgresAccess: string(binding.Access),
+		ManagedCredentialRef: sealed.Ref, ManagedCredentialGeneration: binding.CredentialGeneration,
+	}))
+}
+
 // SealCredential prepares an unpublished envelope. Only Put publishes to
 // app_secrets; cutover preparation persists the envelope in its staging table.
 func (s *Sink) SealCredential(_ context.Context, binding managedpostgres.Binding, material managedpostgres.CredentialMaterial) (managedpostgres.SealedCredential, error) {
-	return Seal(binding, material, s.recipient(), s.hmacKey())
+	var bound secretbox.Binding
+	if s.bind != nil {
+		bound = s.bind(binding.AccountID)
+	}
+	return SealBound(binding, material, s.recipient(), bound, s.hmacKey())
 }
 
+// Seal seals an unbound credential envelope.
 func Seal(binding managedpostgres.Binding, material managedpostgres.CredentialMaterial, recipient *age.X25519Recipient, hmacKey []byte) (managedpostgres.SealedCredential, error) {
+	return SealBound(binding, material, recipient, secretbox.Binding{}, hmacKey)
+}
+
+// SealBound seals the credential envelope bound to bound's account; a zero
+// bound seals it unbound.
+func SealBound(binding managedpostgres.Binding, material managedpostgres.CredentialMaterial, recipient *age.X25519Recipient, bound secretbox.Binding, hmacKey []byte) (managedpostgres.SealedCredential, error) {
 	value, err := ConnectionURL(binding.Access, material)
 	if err != nil {
 		return managedpostgres.SealedCredential{}, err
@@ -84,7 +115,7 @@ func Seal(binding managedpostgres.Binding, material managedpostgres.CredentialMa
 	if err != nil {
 		return managedpostgres.SealedCredential{}, managedpostgres.ErrUnavailable
 	}
-	ciphertext, err := secretbox.SealOne(recipient, binding.EnvironmentKey, value, MaxCredentialBytes)
+	ciphertext, err := secretbox.SealOneBound(recipient, bound, binding.EnvironmentKey, value, MaxCredentialBytes)
 	if err != nil {
 		return managedpostgres.SealedCredential{}, managedpostgres.ErrUnavailable
 	}

@@ -91,9 +91,7 @@ func cmdSecrets(args []string) int {
 		return cmdSecretReferences(args[1:])
 	}
 	printCommandValidation(os.Stderr, "unknown secrets subcommand %q\n", args[0])
-	sug, _ := suggestSubcommand(args[0], parent)
-	maybeSuggestSub(sug)
-	return 1
+	return unknownSubcommandChoices(os.Stderr, "secrets", parent, args[0])
 }
 
 // --- list ------------------------------------------------------------------
@@ -524,6 +522,16 @@ func secretsSet(args []string) int {
 	if err := fs.Parse(orderedArgs); err != nil {
 		return 1
 	}
+	// A leading word without "=" is no KEY=VALUE pair; it is the app, as in
+	// `secrets list h14-py`. `secrets set h14-py FOO=bar` answered only "no
+	// linked Gregale project context" on production-us rc.294 (Hunt 14 H14-64).
+	positionals := fs.Args()
+	if len(positionals) > 0 && !strings.Contains(positionals[0], "=") && api.ValidAppSlug(positionals[0]) {
+		if err := mergeLeadingSlug(app, positionals[0]); err != nil {
+			return printErr("Invalid arguments", err)
+		}
+		positionals = positionals[1:]
+	}
 	timeoutSpecified := false
 	fileSpecified := false
 	fs.Visit(func(f *flag.Flag) {
@@ -537,7 +545,7 @@ func secretsSet(args []string) int {
 	if *timeout <= 0 || (timeoutSpecified && !*waitForAck) {
 		return printErr("Invalid secret wait options", errors.New("--timeout must be positive and requires --wait-for-ack when supplied"))
 	}
-	if fileSpecified && (strings.TrimSpace(*file) == "" || *fromStdin || *interactive || fs.NArg() != 0) {
+	if fileSpecified && (strings.TrimSpace(*file) == "" || *fromStdin || *interactive || len(positionals) != 0) {
 		return printErr("Invalid secret input", errors.New("--file requires a non-empty path and cannot be combined with --from-stdin, --interactive, or positional KEY=VALUE pairs"))
 	}
 	resolvedApp, appErr := resolveSecretApp(*app)
@@ -552,7 +560,7 @@ func secretsSet(args []string) int {
 		return 1
 	}
 	if *interactive {
-		if *fromStdin || fs.NArg() != 0 || *restart || *dryRun || *waitForAck || timeoutSpecified {
+		if *fromStdin || len(positionals) != 0 || *restart || *dryRun || *waitForAck || timeoutSpecified {
 			return printErr("Invalid interactive secret flags", errors.New("--interactive takes no KEY=VALUE pairs, --from-stdin, --restart, --dry-run, --wait-for-ack, or --timeout; the flow offers a restart after saving"))
 		}
 		return secretsSetInteractive(*app, *scope, *secretClass)
@@ -572,7 +580,7 @@ func secretsSet(args []string) int {
 			return printErr("Could not read secrets file", err)
 		}
 	} else if *fromStdin {
-		if fs.NArg() != 0 {
+		if len(positionals) != 0 {
 			fmt.Fprintln(os.Stderr, "secret set: --from-stdin takes no positional pairs")
 			return 1
 		}
@@ -596,7 +604,7 @@ func secretsSet(args []string) int {
 			return 1
 		}
 	} else {
-		for _, a := range fs.Args() {
+		for _, a := range positionals {
 			p, err := parseSecretsPair(a)
 			if err != nil {
 				fmt.Fprintln(os.Stderr, err)
@@ -638,6 +646,19 @@ func secretsSet(args []string) int {
 	return writeSecretsPairs(context.Background(), client, *app, pairs, *scope, *secretClass, *restart, secretSetWaitOptions{enabled: *waitForAck, timeout: *timeout})
 }
 
+// warnPlatformOwnedEnvKey says when a saved key never reaches the app as
+// set: guest-init stamps PORT (ADR-053) and the FAAS_* identity variables over
+// customer values, so PORT=9999 was accepted and silently ignored on
+// production-us rc.294 (Hunt 14 H14-44).
+func warnPlatformOwnedEnvKey(key string) {
+	switch {
+	case key == "PORT":
+		PrintWarn(osStderr, "PORT is ignored: Gregale sets it at runtime to the port the app must listen on")
+	case api.IsPlatformIdentityEnvKey(key):
+		PrintWarn(osStderr, "%s is ignored: Gregale sets it at runtime to the workload's identity", key)
+	}
+}
+
 func writeSecretsPairs(ctx context.Context, client *Client, app string, pairs []secretsPair, scope, secretClass string, restart bool, waitOptions ...secretSetWaitOptions) int {
 	keys := make([]string, 0, len(pairs))
 	for _, p := range pairs {
@@ -650,6 +671,7 @@ func writeSecretsPairs(ctx context.Context, client *Client, app string, pairs []
 		keys = append(keys, p.Key)
 		if !jsonOutput {
 			PrintOK(osStdout, "%s set (scope=%s)", p.Key, scopeOrDefault(scope))
+			warnPlatformOwnedEnvKey(p.Key)
 		}
 	}
 	printConfigGuardNotice(ctx, client, app, scope)
@@ -963,13 +985,24 @@ func secretsUnset(args []string) int {
 	if err := fs.Parse(orderedArgs); err != nil {
 		return 1
 	}
+	// A leading app slug names the app, as `secrets set <slug> KEY=VALUE`
+	// does; `secrets rm h14-py H14_SWEEP` answered only "no linked Gregale
+	// project context" on production-us rc.297 (Hunt 14 H14-86). Secret keys
+	// are upper-case, so a valid key is never taken for the app.
+	positionals := fs.Args()
+	if len(positionals) > 1 && api.ValidAppSlug(positionals[0]) && api.ValidateSecretKey(positionals[0]) != nil {
+		if err := mergeLeadingSlug(app, positionals[0]); err != nil {
+			return printErr("Invalid arguments", err)
+		}
+		positionals = positionals[1:]
+	}
 	resolvedApp, appErr := resolveSecretApp(*app)
 	if appErr != nil {
 		return printErr("Could not resolve app", appErr)
 	}
 	appSource := targetValueSource(*app, resolvedApp)
 	*app = resolvedApp
-	if (!*interactive && fs.NArg() < 1) || (*interactive && fs.NArg() != 0) {
+	if (!*interactive && len(positionals) < 1) || (*interactive && len(positionals) != 0) {
 		PrintUsage(os.Stderr, "usage: gregale secrets unset [--app <slug>] (KEY...|--interactive) [--scope <name>] [--restart] [--dry-run] [--wait-for-ack [--timeout 2m]]", "secrets")
 		return 1
 	}
@@ -1007,7 +1040,7 @@ func secretsUnset(args []string) int {
 	*scope = resolvedScope
 	keys := []string{}
 	seen := map[string]bool{}
-	for _, key := range fs.Args() {
+	for _, key := range positionals {
 		if problem := api.ValidateSecretKey(key); problem != nil {
 			return printErr("Invalid secret key", errors.New(problem.Detail))
 		}

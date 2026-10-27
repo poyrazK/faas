@@ -419,8 +419,7 @@ func cmdTestWithChaos(args []string, chaosOverride *testChaosSpec) int {
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
-	if rejectUnexpectedFlagArgs(fs) || fs.NArg() != 0 {
-		PrintUsage(osStderr, "usage: gregale test [--validate|--preflight] [--scenario NAME|--suite NAME] [--fail-fast] [--engine real-vm|local|simulated] [--base-url URL] [--data PATH] [--load [--vus N] [--iterations N|--duration D [--rate N]] [--pacing D] [--progress] [--baseline PATH]] [--recovery-baseline PATH] [--sweep-baseline PATH] [--profile warm|cold|restored|all] [--repeat N] [--max-workload-minutes N] [--manifest PATH] [--report PATH] [--junit PATH] [--html PATH]", "test")
+	if rejectUnexpectedFlagArgs(fs) {
 		return 1
 	}
 	if err := validateDistinctTestReportPaths(*reportPath, *junitPath, *htmlPath); err != nil {
@@ -1238,6 +1237,7 @@ func runTestProfile(parent context.Context, client *Client, name string, scenari
 	session, err := client.UpsertDevSession(ctx, scenario.Project, config.sessionRequest(receipt.RunID, scenario.Postgres, "", 0, nil))
 	if err != nil {
 		receipt.Error = fmt.Sprintf("create isolated test environment: %v", err)
+		releaseUnconfirmedTestSession(ctx, client, scenario.Project, receipt.RunID, err)
 		return
 	}
 	receipt.AppSlug = session.App.Slug
@@ -1249,7 +1249,12 @@ func runTestProfile(parent context.Context, client *Client, name string, scenari
 	}
 	workloads := []deployedTestService{{name: scenario.Project, project: scenario.Project, sourceDir: sourceDir, config: config, session: session}}
 	registered := false
-	defer func() {
+	destroyed := false
+	destroyWorkloads := func() {
+		if destroyed {
+			return
+		}
+		destroyed = true
 		beginCleanup()
 		cleanupCtx, cleanupCancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Minute)
 		defer cleanupCancel()
@@ -1265,10 +1270,24 @@ func runTestProfile(parent context.Context, client *Client, name string, scenari
 				receipt.addCleanupError(fmt.Sprintf("release test service namespace: %v", err))
 			}
 		}
-	}()
+	}
+	defer destroyWorkloads()
+	// releaseIfInterrupted runs first in every cleanup path. CI sends SIGKILL
+	// seconds after SIGTERM, so an interrupted or timed-out run releases its
+	// billable sessions before evidence sealing, cleanup commands or
+	// diagnostics, none of which can complete such a run anyway.
+	releaseIfInterrupted := func() {
+		if ctx.Err() != nil && !destroyed {
+			receipt.addCleanupError("run interrupted: " + context.Cause(ctx).Error())
+			destroyWorkloads()
+		}
+	}
 	diagnosticSecrets := append(testDiagnosticScenarioSecrets(scenario), client.Token(), runSecret)
 	defer func() {
-		if receipt.Error == "" && receipt.CleanupError == "" {
+		releaseIfInterrupted()
+		// An interrupted run has already destroyed its sessions; there is
+		// nothing left to diagnose.
+		if destroyed || receipt.Error == "" && receipt.CleanupError == "" {
 			return
 		}
 		diagnosticCtx, diagnosticCancel := context.WithTimeout(context.WithoutCancel(ctx), 15*time.Second)
@@ -1320,6 +1339,7 @@ func runTestProfile(parent context.Context, client *Client, name string, scenari
 		serviceSession, err := client.UpsertDevSession(ctx, projectName, serviceConfig.sessionRequest(receipt.RunID, spec.Postgres, "", 0, nil))
 		if err != nil {
 			receipt.Error = fmt.Sprintf("create test workload %s: %v", serviceName, err)
+			releaseUnconfirmedTestSession(ctx, client, projectName, receipt.RunID, err)
 			return
 		}
 		workloads = append(workloads, deployedTestService{name: serviceName, project: projectName, sourceDir: serviceDir, config: serviceConfig, session: serviceSession})
@@ -1597,8 +1617,9 @@ func runTestProfile(parent context.Context, client *Client, name string, scenari
 		return runTestCommand(commandCtx, sourceDir, commandEnv, argv)
 	}
 	defer func() {
+		releaseIfInterrupted()
 		behavior.finish(&receipt)
-		if scenario.CommandExecution == nil {
+		if scenario.CommandExecution == nil && !destroyed {
 			captureActions()
 		}
 		beginCleanup()
@@ -1609,7 +1630,7 @@ func runTestProfile(parent context.Context, client *Client, name string, scenari
 				receipt.addCleanupError(fmt.Sprintf("fixture cleanup: %v", err))
 			}
 		}
-		if scenario.CommandExecution != nil {
+		if scenario.CommandExecution != nil && !destroyed {
 			captureActions()
 		}
 		postgres.finish(cleanupCtx, client, &receipt)
@@ -2481,6 +2502,19 @@ func verifyWakeBootMethod(ctx context.Context, client testWakeBootClient, slug, 
 		case <-ticker.C:
 		}
 	}
+}
+
+// releaseUnconfirmedTestSession destroys a test session whose create request
+// may have committed without its response arriving: an interrupt, a timeout
+// or a lost connection. A request the API refused created nothing.
+func releaseUnconfirmedTestSession(ctx context.Context, client *Client, project, runID string, createErr error) {
+	var apiErr *APIError
+	if errors.As(createErr, &apiErr) {
+		return
+	}
+	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
+	defer cancel()
+	_ = client.DestroyDevSession(cleanupCtx, project, runID)
 }
 
 func runTestCommand(ctx context.Context, dir string, env, argv []string) error {

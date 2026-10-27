@@ -90,7 +90,7 @@ func validateAdditionDrafts(accountID, projectID string, safe *api.ProjectSafeRe
 	return nil
 }
 
-func (m *MemStore) StageProjectReleaseAdditions(_ context.Context, accountID, attemptID, projectID string, safe *api.ProjectSafeRelease, drafts []App) ([]App, error) {
+func (m *MemStore) StageProjectReleaseAdditions(ctx context.Context, accountID, attemptID, projectID string, safe *api.ProjectSafeRelease, drafts []App) ([]App, error) {
 	if err := validateAdditionDrafts(accountID, projectID, safe, drafts); err != nil {
 		return nil, err
 	}
@@ -135,16 +135,13 @@ func (m *MemStore) StageProjectReleaseAdditions(_ context.Context, accountID, at
 	if observed+creates > limits.DeployedApps {
 		return nil, &QuotaError{Kind: QuotaErrorKindApps, Limit: limits.DeployedApps, Observed: observed + creates}
 	}
-	if m.projectReleaseAdditions == nil {
-		m.projectReleaseAdditions = map[string]projectReleaseAdditionRecord{}
-	}
 	var out []App
 	var inserted []string
 	for _, draft := range drafts {
 		app := draft
 		if draft.ID == "" {
 			var err error
-			app, err = m.createAppIfUnderQuotaLocked(draft, limits)
+			app, err = m.createAppIfUnderQuotaLocked(ctx, draft, limits)
 			if err != nil {
 				for _, id := range inserted {
 					delete(m.apps, id)
@@ -163,6 +160,9 @@ func (m *MemStore) StageProjectReleaseAdditions(_ context.Context, accountID, at
 			delete(m.apps, id)
 		}
 		return nil, err
+	}
+	if m.projectReleaseAdditions == nil {
+		m.projectReleaseAdditions = map[string]projectReleaseAdditionRecord{}
 	}
 	for _, app := range out {
 		m.projectReleaseAdditions[app.ID] = projectReleaseAdditionRecord{app.ID, attemptID, ProjectReleaseAdditionFingerprint(app), true}

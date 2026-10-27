@@ -1,0 +1,5 @@
+# Managed by the seal_domains role (ADR-20261023173624): true makes vmmd
+# refuse runtime secrets that carry no account binding. vmmd reads it at
+# start; faas_runtime_secret_binding_required reports it.
+[Service]
+Environment=FAAS_RUNTIME_SECRET_BINDING_REQUIRED={{ faas_seal_domain_runtime_binding_required | bool | lower }}

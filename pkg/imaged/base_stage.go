@@ -128,6 +128,9 @@ func (h *Handler) ensureBaseExt4(
 	if err != nil {
 		return BaseStageResult{}, fmt.Errorf("imaged: storageFor for base stage: %w", err)
 	}
+	if err := checkBaseGenerationRoute(be, baseKey, ref); err != nil {
+		return BaseStageResult{}, err
+	}
 	guestInitDigest, err := guestInitBinaryDigest(h.guestInitPath)
 	if err != nil {
 		return BaseStageResult{}, fmt.Errorf("imaged: hash guest-init %q: %w", h.guestInitPath, err)

@@ -123,6 +123,14 @@ func (b *environmentGitOpsBackend) VerifyRuntime(ctx context.Context, lease stat
 }
 
 func (b *environmentGitOpsBackend) prepareWorkloadCandidates(ctx context.Context, lease state.EnvironmentGitOpsLease, plan environmentsync.Plan) (bool, error) {
+	// The break-glass pause holds new environment releases (ADR
+	// 20261022140000): image and artifact candidates need no builder, and
+	// activation switches the release set. The sync stays unconverged and
+	// continues once the pause is lifted. Gateways route an already
+	// activated graph from the release set, so no switch is left halfway.
+	if b.server.platformReleasePaused() {
+		return false, nil
+	}
 	preparer, ok := b.intent.(state.EnvironmentGitOpsPreparationStore)
 	if !ok {
 		return false, nil // without a preparation adapter, the graph is not serving evidence
@@ -183,6 +191,14 @@ func (b *environmentGitOpsBackend) prepareWorkloadCandidates(ctx context.Context
 		}
 		if err := b.verifyCandidateCredentials(ctx, graph.ID); err != nil {
 			return false, err
+		}
+		hold, err := b.gitOpsReleaseHold(ctx, lease, graph)
+		if err != nil {
+			return false, err
+		}
+		if hold != "" {
+			b.server.log.Info("environment gitops: activation held", "source", lease.Source.ID, "graph", graph.ID, "hold", hold)
+			return false, nil
 		}
 		if activator, ok := b.intent.(state.EnvironmentGitOpsGraphActivationStore); ok {
 			_, activated, err := activator.ActivateEnvironmentGitOpsWorkloadGraph(ctx, lease, plan)
