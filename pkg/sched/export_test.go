@@ -882,3 +882,4 @@ func MarkPreWakeForTest(ctx context.Context) {
 }
 
 var LogVMMBootFailure = logVMMBootFailure
+var WorkerRecoveryRetryDelay = workerRecoveryRetryDelay

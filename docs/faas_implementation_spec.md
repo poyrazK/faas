@@ -1098,7 +1098,7 @@ Worker pools also have scheduler-owned durable recovery. A bounded startup and
 five-second sweep retries due active owned worker apps through the scoped
 planner, including captured environment settings. Persist retry deadlines,
 failure counts and expiring app leases independently of desired capacity.
-Failure backoff is 5–300 seconds; full healthy pools are checked every 30 seconds.
+Failure backoff is 5–300 seconds, and one hour after a refusal that repeats until the revision changes (execution mode conflict, wrong architecture, loopback bind, stateless-only violation; [deterministic refusal hold](adr/20261027164003-worker-recovery-deterministic-refusal-hold.md)); full healthy pools are checked every 30 seconds.
 Events honor admission cooldown while permitting scale-in and zero floors.
 Suspension, abuse holds, ownership and existing account/node admission fences
 remain authoritative. See [durable worker recovery](adr/20261017221000-durable-worker-recovery.md).
