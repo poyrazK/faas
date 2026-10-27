@@ -66,10 +66,10 @@ func TestGitHubDeploys(t *testing.T) {
 				t.Logf("github status: %s", tail(string(status.stdout), 800))
 			}
 		}()
-		expectVersion(t, base, pushed, 25*time.Minute)
+		expectVersion(t, base, pushed, 15*time.Minute)
 	})
 	s.check("checks_status", func(t *testing.T) {
-		eventually(t, "a successful Gregale check on the pushed commit", 10*time.Minute, 15*time.Second, func() (bool, string) {
+		eventually(t, "a successful Gregale check on the pushed commit", 5*time.Minute, 15*time.Second, func() (bool, string) {
 			runs := gh(t, "api", "repos/"+repo+"/commits/"+commit+"/check-runs",
 				"--jq", `[.check_runs[] | "\(.app.slug)|\(.name)|\(.status)|\(.conclusion)"] | join(";")`)
 			statuses := gh(t, "api", "repos/"+repo+"/commits/"+commit+"/status",
