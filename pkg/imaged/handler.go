@@ -539,9 +539,12 @@ func (h *Handler) WithContinuousProfiling(enabled bool) *Handler {
 func (h *Handler) stampProfiling(manifest api.AppManifest, acct state.Account) api.AppManifest {
 	limits, ok := api.LimitsFor(acct.Plan)
 	manifest.ProfilingOnDemand = h.profilingOnDemand && ok && limits.Profiling.Enabled
-	if manifest.Profiling != nil && manifest.Profiling.Enabled && !h.continuousProfiling {
+	if manifest.Profiling != nil && (manifest.Profiling.Enabled && !h.continuousProfiling || manifest.Profiling.AutomaticCaptures != nil) {
 		cfg := *manifest.Profiling
-		cfg.Enabled = false
+		cfg.Enabled = cfg.Enabled && h.continuousProfiling
+		// Automatic captures are the control plane's decision; the guest
+		// manifest stays what guests of every release understand.
+		cfg.AutomaticCaptures = nil
 		manifest.Profiling = &cfg
 	}
 	return manifest
