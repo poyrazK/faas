@@ -94,6 +94,20 @@ func TestTrafficPlacementsPostgresCompletenessHistoryAndOwners(t *testing.T) {
 	if got.Targets[0].DeploymentLive {
 		t.Fatal("retired cohort discovered as live")
 	}
+	// A snapshotting candidate's smoke instance stays visible as not live, so
+	// a hydration does not quarantine the target its smoke admission recorded.
+	if _, err := pool.Exec(ctx, `UPDATE deployments SET status='snapshotting' WHERE id=$1`, dep.ID); err != nil {
+		t.Fatal(err)
+	}
+	if got := read()[app.ID]; len(got.Targets) == 0 || got.Targets[0].DeploymentLive {
+		t.Fatalf("snapshotting candidate: %+v", got)
+	}
+	if _, err := pool.Exec(ctx, `UPDATE deployments SET status='failed' WHERE id=$1`, dep.ID); err != nil {
+		t.Fatal(err)
+	}
+	if got := read()[app.ID]; !got.Complete || len(got.Targets) != 0 {
+		t.Fatal("failed deployment retained placements")
+	}
 	if _, err := pool.Exec(ctx, `UPDATE deployments SET deleted_at=now() WHERE id=$1`, dep.ID); err != nil {
 		t.Fatal(err)
 	}

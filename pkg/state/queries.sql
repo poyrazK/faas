@@ -9708,8 +9708,11 @@ LEFT JOIN LATERAL (
            d.created_at AS deployment_created_at, d.image_digest
     FROM instances i
     JOIN apps a ON a.id = i.app_id AND a.status <> 'deleted'
+    -- A snapshotting candidate's smoke instance is reported as not live: the
+    -- gateway keeps the target its smoke admission recorded instead of
+    -- quarantining it, and still never discovers one it did not admit.
     JOIN deployments d ON d.id = i.deployment_id AND d.app_id = i.app_id
-                       AND d.deleted_at IS NULL AND d.status IN ('live', 'superseded')
+                       AND d.deleted_at IS NULL AND d.status IN ('live', 'superseded', 'snapshotting')
     LEFT JOIN compute_nodes cn ON cn.id = i.node_id
     -- ADR-732: a production fork shares the live deployment but never serves.
     WHERE i.app_id = requested.app_id AND i.state = 'running' AND i.mode <> 'fork'
