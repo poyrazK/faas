@@ -458,6 +458,16 @@ func (tg *target) deploy(t *testing.T, slug string, args ...string) map[string]a
 			tail(string(res.stdout), 1500), tg.deployLogTail(t, slug, res.stdout))
 	}
 	receipt := object(t, res.stdout)
+	// A redeploy's --wait returns once the candidate is live and verified,
+	// while traffic is still shifting; follow the rollout like
+	// production-release-acceptance.sh does.
+	if str(receipt, "status") == "live" && str(receipt, "rollout_state") == "rolling_out" {
+		waited := tg.ok(t, 12*time.Minute, "deployment", "wait", str(receipt, "id"),
+			"--rollout", "--timeout", "10m")
+		final := object(t, waited.stdout)
+		receipt["rollout_state"] = field(final, "rollout_state")
+		receipt["status"] = field(final, "status")
+	}
 	if str(receipt, "status") != "live" || str(receipt, "rollout_state") != "complete" ||
 		str(receipt, "hosting_receipt.smoke.status") != "verified" {
 		t.Fatalf("deploy %s receipt is not live, rollout-complete and smoke-verified: %s", slug,
