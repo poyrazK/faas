@@ -2702,6 +2702,8 @@ type ComputeNode struct {
 	CpuModel        string
 	Readiness       string
 	ReadinessReason pgtype.Text
+	// Last time this node's gatewayd-internal edge-rule listener reported alive (database clock); NULL before its first report (ADR-091).
+	EdgeListenerHeartbeatAt pgtype.Timestamptz
 }
 
 type ComputeNodeHeartbeat struct {
@@ -7994,6 +7996,13 @@ type ManagedPostgresDatabase struct {
 	CloneResourceRole           string
 	AccountingRequired          bool
 	OrgID                       pgtype.UUID
+}
+
+type ManagedPostgresDatabaseEndpoint struct {
+	DatabaseID pgtype.UUID
+	Host       string
+	Port       int32
+	UpdatedAt  pgtype.Timestamptz
 }
 
 type ManagedPostgresHealth struct {

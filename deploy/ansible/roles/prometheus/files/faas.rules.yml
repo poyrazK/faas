@@ -6308,6 +6308,24 @@ groups:
           summary: "meterd is billing quiet pauses the ledger could not prove"
           description: "More than 30 instance-minutes in 1h had an open quiet pause past its node's ledger watermark, so their uncovered pause time was billed. A schedd that stopped writing its node's ledger is the usual cause; see FaasQuietPauseLedgerWriteErrors and schedd_quiet_pause_ledger_watermark_seconds."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasQuietPauseBilling.md"
+      # The under-billing direction: meterd may only subtract pause time vmmd
+      # measured. Its seconds are floored per instance-minute and missed
+      # pauses are billed, so it normally reads a little under schedd's
+      # measurement; above it, the ledger proves pauses that did not happen.
+      # Shadow mode counts too, so the shadow week catches it before billing.
+      - alert: FaasQuietPauseUnbilledExceedsMeasured
+        expr: |
+          sum (increase(meterd_quiet_pause_unbilled_seconds_total[6h]))
+            > 1.05 * (sum (increase(schedd_quiet_pause_measured_seconds_total[6h])) or vector(0)) + 600
+        for: 30m
+        labels:
+          severity: warn
+          component: meterd
+          family: quiet_pause_billing
+        annotations:
+          summary: "meterd counted more quiet-paused time than vmmd measured"
+          description: "In 6h meterd subtracted (or, in shadow mode, would have subtracted) more quiet-paused seconds than vmmd measured on the nodes, by over 5% plus 10 minutes. The ledger is proving pauses that did not happen, so customers are or would be under-billed. Set quiet_pause_unbilled to shadow until it is explained."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasQuietPauseBilling.md"
 
   # ADR-1151 pause tiers: the frozen tier and quiet pause. Warnings while the
   # tiers are in canary; the dashboard is deploy/grafana/frozen-tier.json and

@@ -1130,6 +1130,33 @@ func (p *Provider) CancelAtPeriodEnd(ctx context.Context, acct state.Account) (t
 	return sub.CurrentPeriodEnd, nil
 }
 
+// SubscriptionState reads the subscription's current status and product.
+// Polar neither orders nor promptly delivers webhooks, so apid compares a
+// delivery with this before acting on it.
+func (p *Provider) SubscriptionState(ctx context.Context, subscriptionID string) (billing.SubscriptionState, error) {
+	if strings.TrimSpace(subscriptionID) == "" {
+		return billing.SubscriptionState{}, errors.New("polar: subscription state: empty subscription id")
+	}
+	var sub struct {
+		Status    string `json:"status"`
+		ProductID string `json:"product_id"`
+	}
+	path := "/v1/subscriptions/" + url.PathEscape(subscriptionID)
+	if err := p.doJSON(ctx, http.MethodGet, path, nil, &sub, ""); err != nil {
+		if hasStatus(err, http.StatusNotFound) {
+			return billing.SubscriptionState{}, fmt.Errorf("polar: subscription state %s: %w", subscriptionID, billing.ErrSubscriptionGone)
+		}
+		return billing.SubscriptionState{}, fmt.Errorf("polar: subscription state %s: %w", subscriptionID, err)
+	}
+	if sub.Status == "" {
+		return billing.SubscriptionState{}, fmt.Errorf("polar: subscription state %s: empty status", subscriptionID)
+	}
+	return billing.SubscriptionState{
+		Status: billing.SubscriptionStatus(strings.ToLower(sub.Status)),
+		PlanID: p.planForProduct(sub.ProductID),
+	}, nil
+}
+
 // PaymentMethodSummary intentionally returns the zero value. Polar keeps
 // payment-method management in the customer portal and its merchant customer
 // response exposes an opaque default_payment_method_id rather than a stable

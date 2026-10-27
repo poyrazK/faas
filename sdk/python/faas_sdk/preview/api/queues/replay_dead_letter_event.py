@@ -51,6 +51,11 @@ def _parse_response(
 
         return response_404
 
+    if response.status_code == 409:
+        response_409 = Problem.from_dict(response.json())
+
+        return response_409
+
     if response.status_code == 429:
         response_429 = Problem.from_dict(response.json())
 
@@ -84,7 +89,9 @@ def sync_detailed(
 
      Resets the source invocation, trigger record, or outbound webhook
     delivery to pending, clears its retry error, and records replayed_at
-    on the unified ledger.
+    on the unified ledger. An event_route entry (a routing failure whose
+    receipt was pruned) has nothing to redrive and answers 409
+    dead_letter_not_replayable.
 
     Args:
         slug (str):
@@ -123,7 +130,9 @@ def sync(
 
      Resets the source invocation, trigger record, or outbound webhook
     delivery to pending, clears its retry error, and records replayed_at
-    on the unified ledger.
+    on the unified ledger. An event_route entry (a routing failure whose
+    receipt was pruned) has nothing to redrive and answers 409
+    dead_letter_not_replayable.
 
     Args:
         slug (str):
@@ -157,7 +166,9 @@ async def asyncio_detailed(
 
      Resets the source invocation, trigger record, or outbound webhook
     delivery to pending, clears its retry error, and records replayed_at
-    on the unified ledger.
+    on the unified ledger. An event_route entry (a routing failure whose
+    receipt was pruned) has nothing to redrive and answers 409
+    dead_letter_not_replayable.
 
     Args:
         slug (str):
@@ -194,7 +205,9 @@ async def asyncio(
 
      Resets the source invocation, trigger record, or outbound webhook
     delivery to pending, clears its retry error, and records replayed_at
-    on the unified ledger.
+    on the unified ledger. An event_route entry (a routing failure whose
+    receipt was pruned) has nothing to redrive and answers 409
+    dead_letter_not_replayable.
 
     Args:
         slug (str):

@@ -3,6 +3,7 @@ package state_test
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -11,6 +12,7 @@ import (
 type ownedEdgeRulesTestStore interface {
 	CreateEdgeRule(ctx context.Context, p state.CreateEdgeRuleParams) (state.EdgeRule, error)
 	state.OwnedEdgeRuleStore
+	state.OwnerEdgeRuleSetStore
 }
 
 // adr: 091 — amendment 2026-10-26: OwnedEdgeRulesForHost returns only the
@@ -69,6 +71,25 @@ func checkOwnedEdgeRulesForHost(t *testing.T, ctx context.Context, s ownedEdgeRu
 	equal("owner A serving app A", ids(acctA, appA), []string{exact, appWide, wildcard, star})
 	equal("owner A, no app", ids(acctA, ""), []string{exact, wildcard, star})
 	equal("owner B serving app B", ids(acctB, appB), []string{foreignStar, foreignExact})
+
+	// ADR-091 amendment 2026-10-27: the owner's whole set, filtered per host,
+	// is what the per-host read returns.
+	set, complete, err := s.OwnerEdgeRules(ctx, acctA, 100)
+	if err != nil || !complete || len(set) != 6 {
+		t.Fatalf("OwnerEdgeRules = %d rules, complete=%v, err=%v; want account A's 6 enabled rules", len(set), complete, err)
+	}
+	fromSet := func(host, appID string) []string {
+		var out []string
+		for _, r := range state.EdgeRulesCoveringHost(set, host, appID, time.Now()) {
+			out = append(out, r.ID)
+		}
+		return out
+	}
+	equal("owner set, app A", fromSet(host, appA), ids(acctA, appA))
+	equal("owner set, no app", fromSet(host, ""), ids(acctA, ""))
+	if _, complete, err := s.OwnerEdgeRules(ctx, acctA, 5); err != nil || complete {
+		t.Fatalf("OwnerEdgeRules over its limit: complete=%v err=%v, want incomplete", complete, err)
+	}
 }
 
 func TestMemStoreOwnedEdgeRulesForHost(t *testing.T) {

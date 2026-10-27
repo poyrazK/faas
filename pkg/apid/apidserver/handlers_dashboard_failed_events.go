@@ -119,6 +119,7 @@ func projectFailedEvent(appSlug string, event state.DeadLetterEvent) dashboard.F
 		Headers: dashboardFailedEventJSON(event.Headers), ErrorDetail: dashboardFailedEventJSON(event.ErrorDetail),
 		RetryCount: event.RetryCount, FirstFailed: dashboardJobsTime(event.FirstFailedAt),
 		LastFailed: dashboardJobsTime(event.LastFailedAt), ReplayedAt: replayedAt, Status: status,
+		Replayable: state.DeadLetterReplayable(event.Source),
 	}
 }
 
@@ -384,6 +385,9 @@ func (s *server) dashboardFailedEventsSelectedAction(w http.ResponseWriter, r *h
 			event, err = s.store.DeadLetterEventByID(r.Context(), app.ID, id)
 		} else {
 			event, err = access.visibleEvent(r.Context(), id)
+		}
+		if err == nil && action == "replay" && !state.DeadLetterReplayable(event.Source) {
+			err = state.ErrDeadLetterNotReplayable
 		}
 		if err != nil || event.ReplayedAt != nil {
 			if err == nil {

@@ -711,6 +711,46 @@ func TestChangeSubscriptionPlanSchedulesNextPeriodUpdate(t *testing.T) {
 	}
 }
 
+// apid compares a webhook delivery with the subscription's current state
+// (Hunt 17 H17-1), so the read must report the live status and plan.
+func TestSubscriptionStateReadsCurrentStatusAndPlan(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/subscriptions/sub-1":
+			_, _ = io.WriteString(w, `{"id":"sub-1","status":"Active","product_id":"pro-product"}`)
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/subscriptions/sub-other":
+			_, _ = io.WriteString(w, `{"id":"sub-other","status":"past_due","product_id":"unknown-product"}`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+	p, err := NewProvider(testConfig(server.URL), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := p.SubscriptionState(context.Background(), "sub-1")
+	if err != nil {
+		t.Fatalf("SubscriptionState: %v", err)
+	}
+	if got.Status != billing.SubscriptionStatusActive || got.PlanID != string(api.PlanPro) {
+		t.Fatalf("state = %+v, want active pro", got)
+	}
+	got, err = p.SubscriptionState(context.Background(), "sub-other")
+	if err != nil {
+		t.Fatalf("SubscriptionState: %v", err)
+	}
+	if got.Status != billing.SubscriptionStatusPastDue || got.PlanID != "" {
+		t.Fatalf("state = %+v, want past_due with no plan", got)
+	}
+	if _, err := p.SubscriptionState(context.Background(), "sub-missing"); !errors.Is(err, billing.ErrSubscriptionGone) {
+		t.Fatalf("missing subscription error = %v, want ErrSubscriptionGone", err)
+	}
+	if _, err := p.SubscriptionState(context.Background(), ""); err == nil {
+		t.Fatal("an empty subscription id must be an error")
+	}
+}
+
 func TestReconcileUsageReadsMeterTotal(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet || r.URL.Path != "/v1/meters/meter-1/quantities" {

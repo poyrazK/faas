@@ -124,6 +124,15 @@
 # Default: false
 # quiet_pause = false
 
+# quiet_pause_observe: run quiet pause in observe mode (ADR-1151). vmmd
+# measures the pauses it would make on this node (vmmd_quiet_pause_observed_*:
+# count, durations, billable MB-seconds by plan) and pauses nothing; probes,
+# admission and the pause ledger see running instances. Use it to measure a
+# node's traffic before turning quiet_pause on. quiet_pause wins when both
+# are set. FAAS_QUIET_PAUSE_OBSERVE overrides.
+# Default: false
+# quiet_pause_observe = false
+
 # kernel_path: path to the Firecracker-compatible kernel image. The daemon
 # refuses to start if this file does not exist. Default: /srv/fc/base/vmlinux-6.1
 # kernel_path = "/srv/fc/base/vmlinux-6.1"
