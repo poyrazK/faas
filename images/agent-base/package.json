@@ -1,0 +1,12 @@
+{
+  "name": "gregale-agent-base",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Preset agent harnesses in the shared agent-base drive0 (ADR-20261027090010 §2). Versions must match pkg/agentpresets/presets.json.",
+  "license": "UNLICENSED",
+  "dependencies": {
+    "@anthropic-ai/claude-code": "2.1.302",
+    "@openai/codex": "0.163.0",
+    "opencode-ai": "1.19.3"
+  }
+}
