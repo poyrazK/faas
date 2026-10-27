@@ -786,12 +786,8 @@ func (d cliTreeDiscovery) node(path string) (cliTreeNode, bool) {
 	return walkCliTreeNode(command, words[1:])
 }
 
-// cliTreeEntries lists the verbs and subnouns under prefix that this account
-// can see, with the command each one runs today.
-func cliTreeEntries(prefix []string) []cliTreeEntry {
-	return newCliTreeDiscovery().entries(prefix)
-}
-
+// entries lists the verbs and subnouns under prefix that this account can
+// see, with the command each one runs today.
 func (d cliTreeDiscovery) entries(prefix []string) []cliTreeEntry {
 	var entries []cliTreeEntry
 	seen := map[string]bool{}
