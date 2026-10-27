@@ -114,6 +114,11 @@ type Spool struct {
 	mu      sync.Mutex
 	files   map[spoolKey]*fileHandle
 	written int64 // current local-spool size
+	// perInstance is each instance's unshipped bytes written by this
+	// process. One instance may hold at most maxBytes/InstanceShareDivisor,
+	// so a single noisy app (or an upload outage) cannot fill the shared
+	// budget and make every other tenant's lines fail with ErrSpoolFull.
+	perInstance map[string]int64
 
 	// counted turns true once CountExisting has added the unshipped bytes
 	// an earlier process left on disk. Before that, openLocked counts a
@@ -256,7 +261,8 @@ func (s *Spool) write(instanceID string, seq int64, stream string, ts time.Time,
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.written+int64(len(payload)) > s.maxBytes {
+	if s.written+int64(len(payload)) > s.maxBytes ||
+		s.perInstance[instanceID]+int64(len(payload)) > s.maxBytes/InstanceShareDivisor {
 		return 0, ErrSpoolFull
 	}
 	fh, err := s.openLocked(key)
@@ -269,6 +275,10 @@ func (s *Spool) write(instanceID string, seq int64, stream string, ts time.Time,
 	}
 	fh.size += int64(n)
 	s.written += int64(n)
+	if s.perInstance == nil {
+		s.perInstance = map[string]int64{}
+	}
+	s.perInstance[instanceID] += int64(n)
 	return n, nil
 }
 
@@ -541,8 +551,29 @@ func (s *Spool) CompleteUpload(path string) error {
 		if s.written < 0 {
 			s.written = 0
 		}
+		if instance := s.instanceOf(path); instance != "" {
+			if left := s.perInstance[instance] - info.Size(); left > 0 {
+				s.perInstance[instance] = left
+			} else {
+				delete(s.perInstance, instance)
+			}
+		}
 	}
 	return nil
+}
+
+// instanceOf is the instance directory a spool path sits under
+// (<root>/<instance>/<yyyy>/<mm>/<file>), or "".
+func (s *Spool) instanceOf(path string) string {
+	rel, err := filepath.Rel(s.root, path)
+	if err != nil {
+		return ""
+	}
+	instance, _, ok := strings.Cut(filepath.ToSlash(rel), "/")
+	if !ok || instance == ".." {
+		return ""
+	}
+	return instance
 }
 
 // FlushKey flushes the bufio buffer for the (instance, day) key
