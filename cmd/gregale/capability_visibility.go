@@ -147,6 +147,28 @@ func discoveryCapabilityView() capabilityView {
 	return capabilityViewMemo.view
 }
 
+// offlineCapabilityView is the run's discovery view when it is known, else
+// the cached account view, else the tier defaults. It never asks the API, so
+// an error path that lists verbs does not wait on it (Hunt 14 H14-89).
+func offlineCapabilityView() capabilityView {
+	capabilityViewMemo.Lock()
+	defer capabilityViewMemo.Unlock()
+	if capabilityViewMemo.set {
+		return capabilityViewMemo.view
+	}
+	if capabilityReleaseAll() {
+		return capabilityView{all: true}
+	}
+	token := loadTokenWithDiagnostics(io.Discard)
+	if token == "" {
+		return capabilityView{tier: true}
+	}
+	if hidden, _, ok := cachedHiddenCapabilities(token); ok {
+		return accountCapabilityView(hidden)
+	}
+	return capabilityView{tier: true}
+}
+
 func computeDiscoveryView() capabilityView {
 	if capabilityReleaseAll() {
 		return capabilityView{all: true}

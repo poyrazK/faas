@@ -4,26 +4,26 @@ import "testing"
 
 func TestEdgeRuleConvergenceFenceMatchesPatternsAndGeneration(t *testing.T) {
 	g := newGatewaydEdgeRules(nil, nil, nil, nil)
-	g.BeginConvergence("acct-a", []string{"*.Example.COM", "api.example.net"}, 7)
-	if !g.Converging("one.example.com", "acct-a") {
+	g.BeginConvergence("acct-a", "", []string{"*.Example.COM", "api.example.net"}, 7)
+	if !g.Converging("one.example.com", "acct-a", "") {
 		t.Fatal("wildcard hostname was not fenced")
 	}
-	if !g.Converging("API.EXAMPLE.NET", "acct-a") {
+	if !g.Converging("API.EXAMPLE.NET", "acct-a", "") {
 		t.Fatal("exact hostname comparison was not case-insensitive")
 	}
-	if g.Converging("unrelated.example.org", "acct-a") {
+	if g.Converging("unrelated.example.org", "acct-a", "") {
 		t.Fatal("unrelated hostname was fenced")
 	}
 
 	// A delayed completion from an older generation cannot release a newer
 	// fence for the same host.
-	g.BeginConvergence("acct-a", []string{"api.example.net"}, 8)
-	g.EndConvergence("acct-a", []string{"api.example.net"}, 7)
-	if !g.Converging("api.example.net", "acct-a") {
+	g.BeginConvergence("acct-a", "", []string{"api.example.net"}, 8)
+	g.EndConvergence("acct-a", "", []string{"api.example.net"}, 7)
+	if !g.Converging("api.example.net", "acct-a", "") {
 		t.Fatal("older generation released a newer fence")
 	}
-	g.EndConvergence("acct-a", []string{"api.example.net"}, 8)
-	if g.Converging("api.example.net", "acct-a") {
+	g.EndConvergence("acct-a", "", []string{"api.example.net"}, 8)
+	if g.Converging("api.example.net", "acct-a", "") {
 		t.Fatal("current generation did not release its fence")
 	}
 
@@ -51,8 +51,8 @@ func TestEdgeRuleConvergenceFenceIsScopedToMutatingAccount(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			g := newGatewaydEdgeRules(nil, nil, nil, nil)
-			g.BeginConvergence(tc.fenceAccount, []string{"*"}, 3)
-			if got := g.Converging("victim.apps.example.com", tc.requestOwner); got != tc.wantConverged {
+			g.BeginConvergence(tc.fenceAccount, "", []string{"*"}, 3)
+			if got := g.Converging("victim.apps.example.com", tc.requestOwner, ""); got != tc.wantConverged {
 				t.Fatalf("Converging = %v, want %v", got, tc.wantConverged)
 			}
 		})
@@ -61,10 +61,10 @@ func TestEdgeRuleConvergenceFenceIsScopedToMutatingAccount(t *testing.T) {
 	// Two accounts fencing the same pattern release independently: one
 	// account's apply does not lift the other's hold.
 	g := newGatewaydEdgeRules(nil, nil, nil, nil)
-	g.BeginConvergence("acct-a", []string{"shared.example.com"}, 4)
-	g.BeginConvergence("acct-b", []string{"shared.example.com"}, 5)
-	g.EndConvergence("acct-b", []string{"shared.example.com"}, 5)
-	if !g.Converging("shared.example.com", "acct-a") {
+	g.BeginConvergence("acct-a", "", []string{"shared.example.com"}, 4)
+	g.BeginConvergence("acct-b", "", []string{"shared.example.com"}, 5)
+	g.EndConvergence("acct-b", "", []string{"shared.example.com"}, 5)
+	if !g.Converging("shared.example.com", "acct-a", "") {
 		t.Fatal("another account's apply released this account's fence")
 	}
 }

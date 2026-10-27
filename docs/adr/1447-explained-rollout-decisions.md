@@ -1,6 +1,6 @@
 # ADR-1447 · Explained rollout decisions
 
-- **Status:** proposed; n2 drill passed 2026-10-14 (see Rollout)
+- **Status:** accepted (shipped in PR 4872, 2026-10-18); n2 drill passed 2026-10-14 (see Rollout)
 - **Date:** 2026-10-14
 - **Amends:** [ADR-1446](1446-safe-releases-by-default.md) (rollback outcome notifications were a follow-up), [ADR-224](224-account-scoped-release-webhooks.md) release payloads
 - **Follows:** [ADR-122](122-safe-releases.md) deployment audit, [ADR-456](456-saved-canary-route-health-decisions.md) saved route health decisions

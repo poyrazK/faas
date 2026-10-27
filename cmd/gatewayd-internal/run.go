@@ -1778,29 +1778,9 @@ func runOnPool(ctx context.Context, log *slog.Logger, pool *pgxpool.Pool) error 
 		// one-in-flight and cooldown. Off unless FAAS_CRASH_SNAPSHOTS=1.
 		WithCrashCaptureRequester(crashCaptureRequester(pgStore, os.Getenv("FAAS_CRASH_SNAPSHOTS"), crashCaptureRequests)).
 		// ADR-732: route a fork request only when the fork, its token and
-		// its instance all check out (gateway.ForkTargetFromState).
-		WithForkTargetLoader(func(ctx context.Context, appID, forkID, token string) (gateway.Target, bool, error) {
-			fork, err := pgStore.AppForkForApp(ctx, appID, forkID)
-			if errors.Is(err, state.ErrNotFound) || (err == nil && fork.InstanceID == nil) {
-				return gateway.Target{}, false, nil
-			}
-			if err != nil {
-				return gateway.Target{}, false, err
-			}
-			instance, err := pgStore.InstanceByID(ctx, *fork.InstanceID)
-			if errors.Is(err, state.ErrNotFound) {
-				return gateway.Target{}, false, nil
-			}
-			if err != nil {
-				return gateway.Target{}, false, err
-			}
-			dep, err := pgStore.DeploymentByID(ctx, instance.DeploymentID)
-			if err != nil {
-				return gateway.Target{}, false, err
-			}
-			target, ok := gateway.ForkTargetFromState(fork, instance, schedpkg.DeploymentRuntimePort(dep), token, time.Now())
-			return target, ok, nil
-		}).
+		// its instance all check out (gateway.ForkTargetFromState), and the
+		// fork's creator still holds the app (forkTargetLoader).
+		WithForkTargetLoader(forkTargetLoader(pgStore, pgStore, time.Now)).
 		WithClientForApp(func(ctx context.Context, app gateway.App) (gateway.Scheduler, bool, error) {
 			cli, err := deps.scheddRouter.ScheddForApp(ctx, state.App{ID: app.ID, NodeID: app.NodeID})
 			if err != nil {
@@ -3094,6 +3074,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// legacy wiring keep counting disabled.
 	if hitStore, ok := any(deps.pgStore).(state.EdgeRuleHitStore); ok && deps.pgStore != nil {
 		hitCounter := newEdgeRuleHitCounter()
+		hitCounter.register(metricsRegisterer)
 		handler.WithEdgeRuleHitRecorder(hitCounter)
 		// ADR-831 amendment 5: off-path WAF detections become events too.
 		wafInspector.WithEventRecorder(hitCounter)
@@ -3598,15 +3579,17 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 				Store:     deps.pgStore,
 				Log:       log,
 				Ops:       nil,
+				Traffic:   deps.trafficRevocations,
 			},
 			archive: &ArchiveLogsHandler{
-				Auth:   deps.authMw,
-				S3:     deps.archiveS3,
-				Bucket: deps.archiveBucket,
-				Store:  deps.pgStore,
-				Scope:  deps.pgStore,
-				Log:    log,
-				Ops:    nil,
+				Auth:    deps.authMw,
+				S3:      deps.archiveS3,
+				Bucket:  deps.archiveBucket,
+				Store:   deps.pgStore,
+				Scope:   deps.pgStore,
+				Log:     log,
+				Ops:     nil,
+				Traffic: deps.trafficRevocations,
 			},
 		})
 		logsHandler = logsMux
@@ -3695,15 +3678,15 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if deps.authMw != nil && deps.pgStore != nil && deps.nodeCache != nil {
 		attachMux := http.NewServeMux()
 		attachMux.Handle("GET /v1/apps/{slug}/tasks/{id}/attach",
-			&AppTaskAttachHandler{Auth: deps.authMw, Targets: deps.pgStore, Nodes: deps.nodeCache.cache, Log: log})
+			&AppTaskAttachHandler{Auth: deps.authMw, Targets: deps.pgStore, Nodes: deps.nodeCache.cache, Log: log, Traffic: deps.trafficRevocations})
 		// ADR-1330: an interactive image run's task uses the same session.
 		attachMux.Handle("GET /v1/jobs/{name}/runs/{id}/tasks/{idx}/attach",
-			&JobTaskAttachHandler{Auth: deps.authMw, Targets: deps.pgStore, Nodes: deps.nodeCache.cache, Log: log})
+			&JobTaskAttachHandler{Auth: deps.authMw, Targets: deps.pgStore, Nodes: deps.nodeCache.cache, Log: log, Traffic: deps.trafficRevocations})
 		apidHandler = appTaskAttachCarveOut{attach: attachMux, next: apidHandler}
 		// ADR-1163: live job task output follows the task VM on its node.
 		logsMux := http.NewServeMux()
 		logsMux.Handle("GET /v1/jobs/{name}/runs/{id}/tasks/{idx}/logs/stream",
-			&JobTaskLogsHandler{Auth: deps.authMw, Targets: deps.pgStore, Nodes: deps.nodeCache.cache, Log: log})
+			&JobTaskLogsHandler{Auth: deps.authMw, Targets: deps.pgStore, Nodes: deps.nodeCache.cache, Log: log, Traffic: deps.trafficRevocations})
 		apidHandler = jobTaskLogsCarveOut{logs: logsMux, next: apidHandler}
 	}
 
@@ -3967,7 +3950,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if deps.nodeCache != nil {
 		responseForward = deps.nodeCache.Forwarding()
 	}
-	responseChecker := deploymentResponseChecker{store: responseStore, picker: responsePicker, ensure: handler.EnsureServiceDeploymentCapacity, forward: responseForward, appsDomain: deps.domains.Apps}
+	responseChecker := deploymentResponseChecker{store: responseStore, picker: responsePicker, ensure: handler.EnsureRevisionDeploymentCapacity, forward: responseForward, appsDomain: deps.domains.Apps}
 	controlMux.HandleFunc(api.DeploymentResponseCheckCapabilitiesControlPath, responseChecker.Capabilities)
 	// ADR-093: mount the per-route observability reader on the
 	// control mux so apid can reverse-proxy
@@ -4547,7 +4530,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		if appsControl != nil {
 			apps = appsControl
 		}
-		privateMux := newPrivateControlMux(apps, http.HandlerFunc(responseChecker.Capabilities))
+		privateMux := newPrivateControlMux(apps, http.HandlerFunc(responseChecker.Capabilities), realtimeControlProxy)
 		privateListener, err := gateway.ListenControl(addr)
 		if err != nil {
 			return fmt.Errorf("gatewayd: private control listen %s: %w", addr, err)

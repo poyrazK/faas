@@ -34,3 +34,27 @@
   - **Raise `PreviewApps`.** Any fixed per-workload number still fails a larger repository, and it would price review environments by service count.
   - **Retry setup failures.** They repeat until the source or plan changes, and they burn the hourly deploy allowance and GitHub API quota while the PR shows nothing.
   - **Add dashboard routes to faas-web for the old link shapes.** That repository can lag the API. Links to the app page work with every dashboard release.
+
+## Amendment (2026-10-26): GA promotion
+
+`pr-previews` moves from `beta` to `ga` in `pkg/productcap/catalog.json`.
+Its platform flag default is unchanged, because beta and GA flags are both on
+for every account. Two changes come with the promotion:
+
+- The developer preview API (`POST /v1/apps/{slug}/previews`,
+  `gregale preview create --pr-number`) no longer copies the production app's
+  environment values into the preview. It keeps only the platform-owned
+  service binding URLs, as the GitHub webhook path already did (ADR-310).
+  Secrets were never copied, because they belong to an app row. Previews
+  created before this change keep their values until they are torn down.
+- The catalog's acceptance evidence is now
+  `cmd/e2e/github_webhook_deploy_e2e_test.go::TestE2E_GitHubWebhookEnqueuesDeployments`.
+  It runs a real apid and githubd's production webhook path against
+  PostgreSQL:
+  - open queues the preview build, its GitHub status sync and the PR comment;
+  - close starts the grace window;
+  - apid's janitor tears the environment down and queues the final GitHub
+    status sync.
+
+  Only the GitHub HTTP writes are recorded instead of sent. Their wire format
+  is covered by the `pkg/githubd` and `cmd/githubd` tests.

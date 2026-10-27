@@ -115,6 +115,11 @@ const (
 	// WAFInlineSkipBusy: every check slot on the node stayed busy through
 	// the slot wait.
 	WAFInlineSkipBusy = "busy"
+	// WAFInlineSkipAccountShare: every check slot stayed busy through the
+	// slot wait while the app's account held at least its share of them
+	// (api.EdgeWAFInlineAccountSharePercent), so other accounts were served
+	// first. One account's own load, not a node capacity shortfall.
+	WAFInlineSkipAccountShare = "account_share"
 )
 
 // WAFInlineChecker scores a sample's headers and URI on the request

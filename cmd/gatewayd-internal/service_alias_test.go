@@ -82,10 +82,10 @@ func TestServiceAliasAllowedNamesNamespaceSiblings(t *testing.T) {
 		}
 		return app
 	}
-	web, api1, loner := session("dev-web-1", "web"), session("dev-api-1", "api"), session("dev-other-1", "other")
+	web, api1, loner, ui := session("dev-web-1", "web"), session("dev-api-1", "api"), session("dev-other-1", "other"), session("dev-ui-1", "app-ui")
 	runID := "0123456789abcdef0123456789abcdef"
 	if err := store.RegisterScenarioTestMembers(ctx, account.ID, runID, []state.ScenarioTestMember{
-		{Workload: "web", AppID: web.ID}, {Workload: "api", AppID: api1.ID},
+		{Workload: "web", AppID: web.ID}, {Workload: "api", AppID: api1.ID}, {Workload: "ui", AppID: ui.ID}, // ADR-20261026105459: any service name
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -96,6 +96,8 @@ func TestServiceAliasAllowedNamesNamespaceSiblings(t *testing.T) {
 	}{
 		{web.ID, "api", true},
 		{api1.ID, "web", true},
+		{web.ID, "ui", true},
+		{ui.ID, "api", true},
 		{web.ID, "billing", false},
 		{loner.ID, "api", false},
 	} {
@@ -193,6 +195,10 @@ func TestServiceAliasAllowedNamesProjectServicesUnderProjectPolicy(t *testing.T)
 		PreviewOfSlug: caller.Slug, Manifest: projectPolicy})
 
 	allowed := newServiceAliasAllowed(store)
+	// Production asks through the pinned service-policy view, which has only
+	// the indexed project lookup; on rc.297 it refused every undeclared
+	// sibling alias with 403 (Hunt 14 H14-81).
+	pin := newServicePolicyPinner(serviceSnapshotStoreFixture{reader: store})
 	for _, tc := range []struct {
 		name, caller, service string
 		want                  bool
@@ -212,5 +218,13 @@ func TestServiceAliasAllowedNamesProjectServicesUnderProjectPolicy(t *testing.T)
 		if err != nil || got != tc.want {
 			t.Errorf("%s: alias %q = %v, %v; want %v", tc.name, tc.service, got, err, tc.want)
 		}
+		snapshot, err := pin(ctx, tc.caller, tc.service, true)
+		if err != nil || snapshot.AliasAllowed != tc.want {
+			t.Errorf("%s: pinned alias %q = %v, %v; want %v", tc.name, tc.service, snapshot.AliasAllowed, err, tc.want)
+		}
+	}
+	sibling, err := pin(ctx, caller.ID, "billing", true)
+	if err != nil || !sibling.Found || sibling.AuthorizationError != nil || sibling.Target.AppID == "" {
+		t.Fatalf("pinned sibling call = %+v, %v; want a found, authorized target", sibling, err)
 	}
 }

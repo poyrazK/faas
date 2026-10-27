@@ -361,7 +361,7 @@ memstore-stubs-check: ## Fail pure nil-return MemStore methods that can make tes
 	bash scripts/ci/check_memstore_stubs.sh
 
 .PHONY: fix-has-test-check
-fix-has-test-check: ## Require fix-shaped pull requests to change a Go regression test (issue #1529 / PR-4a)
+fix-has-test-check: ## Require fix-shaped pull requests to change a regression test (Go, shell, or SDK test file; issue #1529 / PR-4a)
 	bash scripts/ci/check_fix_has_test.sh
 
 .PHONY: fix-has-test-check-test
@@ -413,6 +413,16 @@ release-safety-check-test: ## Unit tests of the version-skew check, migration li
 	python3 scripts/ci/check_migration_expand_contract_test.py
 	python3 scripts/ci/slo_gate_test.py
 	$(GO) test -count=1 ./scripts/ci/versionskew
+
+.PHONY: agent-eval-test
+agent-eval-test: ## Unit tests of the coding-agent eval harness; runs no agents (ADR-20261026152009)
+	python3 scripts/agent-eval/agent_eval_test.py
+
+AGENT_EVAL_AGENTS ?= claude
+AGENT_EVAL_TOOLSETS ?= core,all
+.PHONY: agent-eval
+agent-eval: ## Run coding agents against Gregale tasks; deploys real apps, needs GREGALE_EVAL_TOKEN (AGENT_EVAL_AGENTS, AGENT_EVAL_TOOLSETS, AGENT_EVAL_TASKS, AGENT_EVAL_REPEAT)
+	python3 scripts/agent-eval/agent_eval.py run --agents $(AGENT_EVAL_AGENTS) --toolsets $(AGENT_EVAL_TOOLSETS) $(if $(AGENT_EVAL_TASKS),--tasks $(AGENT_EVAL_TASKS)) --repeat $(or $(AGENT_EVAL_REPEAT),1)
 
 .PHONY: text-encoding-check-test
 text-encoding-check-test: ## Exercise the text-encoding gate against fixture trees in both directions
@@ -640,12 +650,19 @@ e2e: ## End-to-end tests in cmd/e2e (needs Postgres reachable; metal subset via 
 	# reruns + cold-cache cold-runner edge cases.
 	$(GO) test -race -count=1 -timeout=20m ./cmd/e2e/...
 
+# E2E_GENERAL_RUN narrows e2e-general to one group (the e2e-general workflow
+# runs the two groups as separate jobs).
+E2E_GENERAL_RUN ?= ^TestE2E_(NormalPath|Routes)_
+
 .PHONY: e2e-general
-e2e-general: ## Focused KVM-free general-path acceptance gate (real daemons + Postgres; needs DATABASE_URL).
+e2e-general: ## Focused KVM-free general-path and routes acceptance gate (real daemons + Postgres; needs DATABASE_URL).
 	@command -v psql >/dev/null 2>&1 || (echo "psql not on PATH; e2e-general needs DATABASE_URL set to a reachable Postgres" ; exit 1)
 	@test -n "$$DATABASE_URL" || (echo "DATABASE_URL not set; set it to a reachable Postgres to run e2e-general" ; exit 1)
+	@test -z "$$FAAS_SKIP_PG_TESTS" || (echo "Unset FAAS_SKIP_PG_TESTS; e2e-general refuses a skipped run" ; exit 1)
 	@psql "$$DATABASE_URL" -v ON_ERROR_STOP=1 -Atqc 'select 1' >/dev/null || (echo "Postgres is not reachable; e2e-general refuses a green no-op run" ; exit 1)
-	$(GO) test -race -count=1 -timeout=12m -run '^TestE2E_NormalPath_' ./cmd/e2e/...
+	# The routes tests wait for closed one-minute telemetry windows (about
+	# four minutes each).
+	$(GO) test -race -count=1 -timeout=30m -run '$(E2E_GENERAL_RUN)' ./cmd/e2e/...
 
 .PHONY: e2e-start
 e2e-start: ## Gregale start acceptance: real CLI/daemons/Postgres, simulated build and VM boundary (Linux, no KVM).
@@ -1493,6 +1510,7 @@ capabilities-check: ## Verify the product capability registry and generated matr
 capability-coverage-check: ## CI gate: every customer entry point maps to a row of docs/ga-capability-inventory.md (ADR-20261023115741)
 	@python3 -I scripts/ga/capability_coverage_test.py
 	@python3 -I scripts/ga/capability_coverage.py
+	@python3 -I scripts/ci/require_capabilities_test.py
 
 .PHONY: sdk-spec
 sdk-spec: ## Regenerate sdk/openapi.yaml, the GA and beta spec the SDKs are generated from (ADR-20261023115741)

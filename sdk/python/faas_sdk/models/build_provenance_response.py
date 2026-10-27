@@ -40,7 +40,7 @@ class BuildProvenanceResponse:
     plan: str
     """free / hobby / pro / scale — copied from the account at claim time."""
     builder_node_id: str
-    """compute_node name (default `default-local` on the one-box)."""
+    """Compute node name (`default-local` on a single-node install)."""
     started_at: datetime.datetime
     finished_at: datetime.datetime
     buildkit_version: str | Unset = UNSET

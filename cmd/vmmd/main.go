@@ -81,15 +81,11 @@ func configuredRuntimeBaseGenerations(envLookup func(string) string) (map[string
 		envLookup = os.Getenv
 	}
 	// The rollout pre-stage publishes, and base-adoption-check gates on,
-	// this same list (ADR-20261024191249).
-	gated := imaged.GatedRuntimeBases()
-	out := make(map[string]string, len(gated))
-	for _, base := range gated {
-		ref, err := imaged.ResolveDeployBaseRef(base, envLookup)
-		if err != nil {
-			return nil, fmt.Errorf("vmmd: resolve runtime base generation %q: %w", base, err)
-		}
-		out[storagekey.BaseForArch(base, runtime.GOARCH)] = ref
+	// this same list (ADR-20261024191249), and imaged routes it to the same
+	// generation keys (ADR-20261026181418).
+	out, err := imaged.ConfiguredBaseGenerations(runtime.GOARCH, envLookup)
+	if err != nil {
+		return nil, fmt.Errorf("vmmd: %w", err)
 	}
 	return out, nil
 }
@@ -1298,6 +1294,13 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if err != nil {
 		return err
 	}
+	// ADR-20261026181418: read each gated base from the shared keys of the
+	// generation this release configures, never another release's copy.
+	routedBases, err := imaged.RouteBaseGenerations(storageBackend, baseGenerations)
+	if err != nil {
+		return fmt.Errorf("vmmd: %w", err)
+	}
+	log.Info("vmmd: runtime bases routed to their generation keys", "bases", routedBases)
 	mgr.WithBaseGenerations(baseGenerations)
 	// ADR-510: identify the kernel and cached bases in the background so the
 	// first restore after this start does not hash a base in its wake path.
@@ -1496,10 +1499,12 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		}
 		// Workstream B: the guest metadata event proxy sends only the
 		// caller-authored JSON over the instance-bound vsock stream. Resolve
-		// account identity from vmmd's live map and persist the same canonical
+		// account identity from vmmd's live or booting instance (ADR-1141
+		// amendment 2026-10-24) and persist the same canonical
 		// event envelope as POST /v1/events:publish. A missing database is the
 		// expected default-local development posture, so the endpoint reports
 		// a bounded transport error instead of accepting an unverifiable event.
+		guestRate := &guestEventRate{}
 		recv.WithEventPublisher(func(publishCtx context.Context, instance string, body []byte) error {
 			if store == nil || pool == nil {
 				return errors.New("event publish persistence is not configured")
@@ -1508,7 +1513,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			if identityErr != nil {
 				return identityErr
 			}
-			envelope, err := normalizeGuestEvent(publishCtx, store, accountID, body, time.Now().UTC())
+			envelope, err := normalizeGuestEvent(publishCtx, store, appID, accountID, body, time.Now().UTC())
 			if err != nil {
 				return err
 			}
@@ -1517,6 +1522,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			// A capture-only rehearsal keeps its ordinary network, but its
 			// events still belong to its run (ADR-20261020090000).
 			if captured, err := captureGuestEvent(publishCtx, store, appID, "", accountID, envelope); captured || err != nil {
+				return err
+			}
+			if err := guestRate.allow(publishCtx, store, accountID); err != nil {
 				return err
 			}
 			payload, err := json.Marshal(envelope)
@@ -1537,7 +1545,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			if store == nil {
 				return errors.New("rehearsal event capture persistence is not configured")
 			}
-			envelope, err := normalizeGuestEvent(captureCtx, store, accountID, body, time.Now().UTC())
+			envelope, err := normalizeGuestEvent(captureCtx, store, appID, accountID, body, time.Now().UTC())
 			if err != nil {
 				return err
 			}

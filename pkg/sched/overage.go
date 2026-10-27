@@ -206,6 +206,14 @@ func (c *memCacheOverageChecker) Check(ctx context.Context, accountID string) (O
 	status := OverageOK
 	if obsCents >= capCents {
 		status = OverageReached
+	} else if holds, ok := c.store.(state.SpendCapHoldStore); ok {
+		// Compute alone is under the cap, but the cap also bounds live
+		// secondary meters (egress) that only meterd prices. Its hold counts
+		// while the cap and month it was computed for still apply
+		// (ADR-20261026120843). A read failure fails open like the reads above.
+		if hold, found, holdErr := holds.GetSpendCapHold(ctx, accountID); holdErr == nil && found && hold.Holds(capCents, now) {
+			status, obsCents = OverageReached, max(obsCents, hold.ObservedCents)
+		}
 	}
 	c.mu.Lock()
 	c.cache[accountID] = overageEntry{

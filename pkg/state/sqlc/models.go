@@ -139,6 +139,15 @@ type AccountPassword struct {
 	UpdatedAt pgtype.Timestamptz
 }
 
+// Accounts whose combined billable overage (compute plus live secondary meters) reached overage_cap_cents this UTC month. Written by meterd, read by schedd (ADR-20261026120843).
+type AccountSpendCapHold struct {
+	AccountID     pgtype.UUID
+	Month         pgtype.Date
+	CapCents      int64
+	ObservedCents int64
+	ReachedAt     pgtype.Timestamptz
+}
+
 type AccountSpendSnapshot struct {
 	ID          pgtype.UUID
 	AccountID   pgtype.UUID
@@ -288,6 +297,7 @@ type AlertRule struct {
 	McpForMinutes                   int32
 	McpReadinessScope               string
 	LogQuery                        pgtype.Text
+	CreatedByAccountID              pgtype.UUID
 }
 
 type AlertRuleChannel struct {
@@ -1118,15 +1128,16 @@ type AppIssueTeamMember struct {
 }
 
 type AppLogDrain struct {
-	ID               pgtype.UUID
-	AppID            pgtype.UUID
-	AccountID        pgtype.UUID
-	Kind             string
-	TargetUrl        string
-	AuthHeaderSealed []byte
-	Enabled          bool
-	CreatedAt        pgtype.Timestamptz
-	UpdatedAt        pgtype.Timestamptz
+	ID                 pgtype.UUID
+	AppID              pgtype.UUID
+	AccountID          pgtype.UUID
+	Kind               string
+	TargetUrl          string
+	AuthHeaderSealed   []byte
+	Enabled            bool
+	CreatedAt          pgtype.Timestamptz
+	UpdatedAt          pgtype.Timestamptz
+	CreatedByAccountID pgtype.UUID
 }
 
 type AppLogDrainDeliveryAnalytic struct {
@@ -1582,6 +1593,7 @@ type AppWebhook struct {
 	PlatformTenantID                pgtype.UUID
 	ReceiverRecoveryProbeDeliveryID pgtype.UUID
 	ReceiverCooldownUntil           pgtype.Timestamptz
+	CreatedByAccountID              pgtype.UUID
 }
 
 type AppWebhookDelivery struct {
@@ -1896,6 +1908,18 @@ type AuditLog struct {
 	Actor        pgtype.Text
 	ReceivedAt   pgtype.Timestamptz
 	Data         []byte
+}
+
+type AuditLogAnchor struct {
+	Seq         int64
+	WindowStart pgtype.Timestamptz
+	WindowEnd   pgtype.Timestamptz
+	RowCount    int64
+	RowsDigest  string
+	PrevMac     string
+	Mac         string
+	KeyID       string
+	CreatedAt   pgtype.Timestamptz
 }
 
 type AutomaticRouteCheck struct {
@@ -2678,6 +2702,8 @@ type ComputeNode struct {
 	CpuModel        string
 	Readiness       string
 	ReadinessReason pgtype.Text
+	// Last time this node's gatewayd-internal edge-rule listener reported alive (database clock); NULL before its first report (ADR-091).
+	EdgeListenerHeartbeatAt pgtype.Timestamptz
 }
 
 type ComputeNodeHeartbeat struct {
@@ -7685,6 +7711,13 @@ type MailSuppression struct {
 	CreatedAt       pgtype.Timestamptz
 }
 
+// Whether a paid account runs its managed PostgreSQL databases past the monthly compute allowance, up to 2x, before suspension; written only by apid (ADR-20261025094915).
+type ManagedPostgresAccountOverage struct {
+	SubjectID pgtype.UUID
+	Enabled   bool
+	UpdatedAt pgtype.Timestamptz
+}
+
 type ManagedPostgresAccountingReconciliation struct {
 	AccountID          pgtype.UUID
 	ReconciliationID   pgtype.UUID
@@ -9665,6 +9698,13 @@ type ObjectStorageS3Credential struct {
 	UrlReceiptID         pgtype.UUID
 	IssuerAccountID      pgtype.UUID
 	IssuerAccessRevision pgtype.Int8
+}
+
+type ObjectStorageTimelineAcceptance struct {
+	Singleton  bool
+	Timeline   string
+	AcceptedAt pgtype.Timestamptz
+	AcceptedBy string
 }
 
 type ObjectStorageUploadGrant struct {

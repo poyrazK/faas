@@ -646,6 +646,8 @@ var methodRouteMap = map[string]string{
 	"POST /v1/apps/{slug}/source-review":                                             "ReviewSourceRef",
 	"POST /v1/projects/{slug}/environments/{environment}/approval-requests":          "RequestBrowserPromotionApproval",
 	"POST /v1/projects/{slug}/environments/{environment}/approval-requests/exchange": "ExchangeBrowserPromotionApproval",
+	"POST /v1/apps/{slug}/secret-requests":                                           "RequestSecretEntry",
+	"POST /v1/apps/{slug}/secret-requests/status":                                    "GetSecretEntryStatus",
 	// MCP readiness clients use explicit domain names rather than path-derived names.
 	"GET /v1/apps/{slug}/alerts/{id}/mcp-readiness-pagerduty-acknowledgements":        "GetMCPReadinessPagerDutyAcknowledgements",
 	"PUT /v1/apps/{slug}/alerts/{id}/mcp-readiness-pagerduty-acknowledgements":        "SetMCPReadinessPagerDutyAcknowledgements",
@@ -1394,6 +1396,8 @@ var methodRouteMap = map[string]string{
 	"POST /v1/postgres/databases/{id}/resize":                                         "ResizeManagedPostgresDatabase",
 	"GET /v1/postgres/databases/{id}/resizes/{resize_id}":                             "GetManagedPostgresResize",
 	"GET /v1/postgres/capabilities":                                                   "GetManagedPostgresCapabilities",
+	"GET /v1/postgres/overage":                                                        "GetManagedPostgresOverage",
+	"PUT /v1/postgres/overage":                                                        "SetManagedPostgresOverage",
 	"GET /v1/postgres/databases":                                                      "ListManagedPostgresDatabases",
 	"POST /v1/data/connections":                                                       "CreateDataConnection",
 	"GET /v1/data/connections":                                                        "ListDataConnections",

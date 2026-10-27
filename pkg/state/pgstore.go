@@ -2864,7 +2864,7 @@ func (s *PgStore) PreviewAppByProjectWorkload(ctx context.Context, accountID, pr
 		 where account_id = $1
 		   and project_id = $2
 		   and preview_pr_number = $3
-		   and workload_name = $4
+		   and translate(lower(workload_name), '_.', '--') = translate(lower($4), '_.', '--')
 		   and preview_of_slug is not null
 		   and status <> 'deleted'
 	`, accountID, projectID, previewPRNumber, workloadName)
@@ -3356,6 +3356,34 @@ func (s *PgStore) ListUnplacedApps(ctx context.Context) ([]App, error) {
 	}
 	defer rows.Close()
 	return scanApps(rows)
+}
+
+// OwnedAppRAMByNode implements AppOwnershipLoadReader: Σ apps.ram_mb over
+// the non-deleted apps each node owns.
+func (s *PgStore) OwnedAppRAMByNode(ctx context.Context) (map[string]int64, error) {
+	rows, err := s.pool.Query(ctx, `
+		select node_id::text, coalesce(sum(ram_mb), 0)::bigint
+		  from apps
+		 where node_id is not null
+		   and status <> 'deleted'
+		 group by node_id`)
+	if err != nil {
+		return nil, fmt.Errorf("state: owned app ram by node: %w", err)
+	}
+	defer rows.Close()
+	owned := make(map[string]int64)
+	for rows.Next() {
+		var nodeID string
+		var mb int64
+		if err := rows.Scan(&nodeID, &mb); err != nil {
+			return nil, fmt.Errorf("state: scan owned app ram by node: %w", err)
+		}
+		owned[nodeID] = mb
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("state: iterate owned app ram by node: %w", err)
+	}
+	return owned, nil
 }
 
 // SetAppNodeID atomically claims the owner for an unplaced app. The
@@ -5504,11 +5532,25 @@ func (s *PgStore) deleteProjectEnvironmentWithCleanup(
 	leaseToken string,
 	leaseDuration time.Duration,
 ) (ProjectEnvironmentCleanupJob, error) {
-	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
+	return retryTrafficSerialization(ctx, func() (ProjectEnvironmentCleanupJob, error) {
+		return s.deleteProjectEnvironmentOnce(ctx, accountID, projectID, slug, resources, leaseToken, leaseDuration)
+	})
+}
+
+// The environment's bound custom domains cascade with it, which can expose a
+// foreign wildcard fallback, so the delete joins the binding guard (ADR-570).
+func (s *PgStore) deleteProjectEnvironmentOnce(
+	ctx context.Context,
+	accountID, projectID, slug string,
+	resources ProjectEnvironmentCleanupResources,
+	leaseToken string,
+	leaseDuration time.Duration,
+) (ProjectEnvironmentCleanupJob, error) {
+	tx, err := s.beginAccountAppTrafficMutation(ctx, accountID, "")
 	if err != nil {
 		return ProjectEnvironmentCleanupJob{}, fmt.Errorf("state: begin project environment delete: %w", err)
 	}
-	defer func() { _ = tx.Rollback(ctx) }()
+	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
 
 	var projectSlug string
 	var protected bool
@@ -8306,9 +8348,9 @@ func (s *PgStore) updateDeploymentTraffic(ctx context.Context, id string, newPer
 		if _, err := tx.Exec(ctx,
 			`update deployments
 			    set traffic_percent = $2,
-			        traffic_percent_explicit = case when traffic_percent = $2 then traffic_percent_explicit else $3 end
+			        traffic_percent_explicit = case when traffic_percent = $2 or $4 then traffic_percent_explicit else $3 end
 			  where id = $1`,
-			stamp.id, stamp.next, manualTrafficExplicit(stamp.prior, stamp.next, false)); err != nil {
+			stamp.id, stamp.next, manualTrafficExplicit(stamp.prior, stamp.next, false), manualTrafficKeepsExplicit(stamp.prior, stamp.next)); err != nil {
 			if stamp.target {
 				return Deployment{}, fmt.Errorf("state: stamp traffic_percent %s: %w", stamp.id, mapErr(err))
 			}
@@ -19102,6 +19144,47 @@ func (s *PgStore) ComputeNodeUsedMBByNode(ctx context.Context, nodeIDs []string)
 	return used, nil
 }
 
+// ComputeNodeUsedVCPUByNode returns the guest vCPUs booked by live instances
+// on each requested node: capacity_vcpu, which capture_instance_capacity
+// stamps on every insert from the plan's vCPU count.
+func (s *PgStore) ComputeNodeUsedVCPUByNode(ctx context.Context, nodeIDs []string) (map[string]int64, error) {
+	used := make(map[string]int64, len(nodeIDs))
+	if len(nodeIDs) == 0 {
+		return used, nil
+	}
+	parsedIDs := make([]uuid.UUID, 0, len(nodeIDs))
+	for _, nodeID := range nodeIDs {
+		parsed, err := uuid.Parse(nodeID)
+		if err != nil {
+			return nil, fmt.Errorf("state: compute node %q is not a UUID: %w", nodeID, err)
+		}
+		parsedIDs = append(parsedIDs, parsed)
+	}
+	rows, err := s.pool.Query(ctx, `
+		select node_id::text, coalesce(sum(capacity_vcpu), 0)::bigint
+		  from instances
+		 where node_id = any($1::uuid[])
+		   and state in ('waking','cold_booting','running','draining','warm')
+		 group by node_id
+	`, parsedIDs)
+	if err != nil {
+		return nil, fmt.Errorf("state: compute nodes used_vcpu: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var nodeID string
+		var value int64
+		if err := rows.Scan(&nodeID, &value); err != nil {
+			return nil, fmt.Errorf("state: scan compute nodes used_vcpu: %w", err)
+		}
+		used[nodeID] = value
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("state: iterate compute nodes used_vcpu: %w", err)
+	}
+	return used, nil
+}
+
 // ComputeNodeUsedCPUMillicoresByNode returns the sustained parent-cgroup CPU
 // quota reserved by live app instances on each requested node. cpu_millicores
 // is app-owned rather than copied onto instances, so the aggregate joins apps;
@@ -28587,6 +28670,9 @@ func (s *PgStore) RemoveOrgMember(ctx context.Context, orgID, accountID string) 
 	}
 	if tag.RowsAffected() == 0 {
 		return ErrNotFound
+	}
+	if _, err := pauseDepartedMemberIntegrationsTx(ctx, tx, orgID, accountID); err != nil {
+		return err
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return fmt.Errorf("state: remove org member commit: %w", err)

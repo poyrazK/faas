@@ -720,6 +720,7 @@ var managedNotProvidedText = map[string]string{
 	"unsupported":    "not supported as a managed database, or its PostgreSQL version is not offered",
 	"configured":     "every service already has its database configured",
 	"not_referenced": "no service uses it",
+	"permission":     "your organization role or key cannot create and bind databases (needs postgres:manage)",
 }
 
 // printPublicURLs names every workload the plan puts on the public edge, so
@@ -793,7 +794,7 @@ func printUnsetEnvKeys(w io.Writer, workloads []api.PlanWorkload) {
 var envImportReasonText = map[string]string{
 	"not_opted_in":    "plain value in Compose",
 	"secret":          "looks like a secret",
-	"service_address": "Docker service address",
+	"service_address": "Docker address of a datastore or non-HTTP service",
 	"local_address":   "local address",
 	"interpolated":    "uses $ interpolation",
 	"host_value":      "read from the host",

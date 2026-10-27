@@ -1,18 +1,22 @@
 -- ADR-20261023181931: rollbacks that restore the database.
 
 -- name: InsertReleaseDatabaseSwitch :one
+-- No row when the account already runs max_active unfinished switches
+-- (api.DatabaseSwitchesActivePerAccount).
 INSERT INTO release_database_switches (
   id, account_id, app_id, scope, from_deployment_id, target_deployment_id, undone_deployment_ids,
   source_database_id, target_name, restore_point, phase, requested_by,
   phase_started_at, retry_at, created_at, updated_at
 )
-VALUES (
+SELECT
   sqlc.arg(id)::uuid, sqlc.arg(account_id)::uuid, sqlc.arg(app_id)::uuid, sqlc.arg(scope)::text,
   sqlc.narg(from_deployment_id)::uuid, sqlc.arg(target_deployment_id)::uuid, sqlc.arg(undone_deployment_ids)::uuid[],
   sqlc.arg(source_database_id)::uuid, sqlc.arg(target_name)::text, sqlc.arg(restore_point)::timestamptz,
   'restoring', sqlc.arg(requested_by)::text,
   sqlc.arg(now)::timestamptz, sqlc.arg(now)::timestamptz, sqlc.arg(now)::timestamptz, sqlc.arg(now)::timestamptz
-)
+ WHERE (SELECT count(*) FROM release_database_switches active
+         WHERE active.account_id = sqlc.arg(account_id)::uuid
+           AND active.phase NOT IN ('completed', 'failed', 'cancelled')) < sqlc.arg(max_active)::integer
 RETURNING *;
 
 -- name: GetReleaseDatabaseSwitch :one
@@ -45,10 +49,14 @@ UPDATE release_database_switches sw
 RETURNING sw.*;
 
 -- name: SaveReleaseDatabaseSwitch :one
+-- A cancel the API accepted while the step ran holds the switch in its
+-- cancellable phase: the drain's advance to switching is not saved and the
+-- switch is due at once, so the next step aborts it.
 UPDATE release_database_switches
    SET target_database_id = sqlc.narg(target_database_id)::uuid,
        cutover_id = sqlc.narg(cutover_id)::uuid,
-       phase = sqlc.arg(phase)::text,
+       phase = CASE WHEN cancel_requested_at IS NOT NULL AND phase IN ('restoring', 'staging', 'verifying', 'fencing', 'settling', 'draining') AND sqlc.arg(phase)::text = 'switching'
+                    THEN phase ELSE sqlc.arg(phase)::text END,
        failure_code = sqlc.arg(failure_code)::text,
        failure_detail = sqlc.arg(failure_detail)::text,
        last_error_code = sqlc.arg(last_error_code)::text,
@@ -57,13 +65,15 @@ UPDATE release_database_switches
        release_switched_at = sqlc.narg(release_switched_at)::timestamptz,
        activated_at = sqlc.narg(activated_at)::timestamptz,
        finished_at = sqlc.narg(finished_at)::timestamptz,
-       phase_started_at = sqlc.arg(phase_started_at)::timestamptz,
+       phase_started_at = CASE WHEN cancel_requested_at IS NOT NULL AND phase IN ('restoring', 'staging', 'verifying', 'fencing', 'settling', 'draining') AND sqlc.arg(phase)::text = 'switching'
+                               THEN phase_started_at ELSE sqlc.arg(phase_started_at)::timestamptz END,
        drain_retired = sqlc.arg(drain_retired)::integer,
        drain_parked = sqlc.arg(drain_parked)::integer,
        drain_pending = sqlc.arg(drain_pending)::integer,
        drain_blocked = sqlc.arg(drain_blocked)::integer,
        attempt_count = sqlc.arg(attempt_count)::integer,
-       retry_at = sqlc.arg(retry_at)::timestamptz,
+       retry_at = CASE WHEN cancel_requested_at IS NOT NULL AND phase IN ('restoring', 'staging', 'verifying', 'fencing', 'settling', 'draining') AND sqlc.arg(phase)::text = 'switching'
+                       THEN sqlc.arg(now)::timestamptz ELSE sqlc.arg(retry_at)::timestamptz END,
        lease_token = NULL,
        lease_until = NULL,
        updated_at = sqlc.arg(now)::timestamptz

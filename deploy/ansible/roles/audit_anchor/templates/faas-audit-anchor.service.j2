@@ -1,0 +1,34 @@
+# Managed by Ansible (audit_anchor). Local edits are overwritten.
+# ADR-20261026163015: seal the next window of audit_log into the anchor
+# chain, log the anchor for the off-host log, re-verify the last 48 hours.
+[Unit]
+Description=Gregale audit log anchor
+After=network-online.target postgresql.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+# Root reads apid's audit HMAC key (sealed.env or /var/lib/faas, 0600).
+User=root
+Group=root
+ExecStart={{ faas_audit_anchor_gregalectl }} audit anchor --db-env {{ faas_audit_anchor_db_env }} --metrics-file {{ faas_audit_anchor_textfile_dir }}/faas_audit_anchor.prom
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectHome=yes
+ProtectSystem=strict
+ReadWritePaths={{ faas_audit_anchor_textfile_dir }}
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+SystemCallArchitectures=native
+UMask=0077
+TimeoutStartSec=15min
+StandardOutput=journal
+StandardError=journal

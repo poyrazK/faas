@@ -117,7 +117,7 @@ func ValidateCreateSLO(req CreateSLORequest) (int, *Problem) {
 // ErrSLOInvalid is a 400 for a malformed SLO definition.
 func ErrSLOInvalid(reason string) *Problem {
 	return NewProblem(http.StatusBadRequest, CodeSLOInvalid, "Invalid SLO", reason).
-		WithDocs(docsBase + "/slos")
+		WithDocs(docsBase + "/cli#slos")
 }
 
 // ErrSLOLimitReached is a 422 naming the per-app cap and the observed count.
@@ -125,7 +125,7 @@ func ErrSLOLimitReached(observed int) *Problem {
 	return NewProblem(http.StatusUnprocessableEntity, CodeSLOLimit, "SLO limit reached",
 		fmt.Sprintf("an app can define at most %d SLOs; delete one to add another", MaxSLOsPerApp)).
 		WithLimit(int64(MaxSLOsPerApp), int64(observed)).
-		WithDocs(docsBase + "/slos")
+		WithDocs(docsBase + "/cli#slos")
 }
 
 // ListSLOs returns an app's customer-defined SLOs (ADR-747), name-ordered.

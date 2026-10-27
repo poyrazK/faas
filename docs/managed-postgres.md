@@ -732,6 +732,30 @@ Customers see the cap in `GET /v1/account/managed-postgres-usage` and
 The state is judged from the ledger, which can trail Neon by up to two hours.
 `guardrail_state` is unchanged; it still describes admission of new work.
 
+### Compute overage
+
+`GET` and `PUT /v1/postgres/overage` read and set a paid account's overage
+choice, `{"enabled": true|false}`:
+
+- Off is the default, and the databases are suspended at the allowance.
+- On, they keep running until twice the allowance (the ceiling), then are
+  suspended.
+- Compute above the allowance is not billed until managed PostgreSQL has
+  invoicing.
+- Free accounts get `403 managed_postgres_not_in_plan`.
+
+The setting is the `postgres-overage` capability, at maturity `internal`.
+Every account reads as off, and the route answers as unknown, until an operator
+releases it with `gregalectl flags`.
+
+The choice is stored per usage subject in `managed_postgres_account_overage`:
+the organization when it owns resources, else the namespace. The usage
+ledger, the compute cap sweep and admission of new databases all read it.
+Withdrawing the capability makes every stored choice read as off again.
+
+The environment-clone and pipeline workers admit new databases without
+overage, so they apply the plain allowance.
+
 A sweep skips an account, without failing it, when its provider has no quota
 support, or when the provider's consumption period does not start within an
 hour of the UTC month start. Metrics:

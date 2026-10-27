@@ -9,6 +9,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
+
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
@@ -84,10 +86,14 @@ func (s *PgStore) CreateDatabaseSwitch(ctx context.Context, sw DatabaseSwitch) (
 		TargetDeploymentID: mustPgUUID(sw.TargetDeploymentID), UndoneDeploymentIds: pgUUIDList(sw.UndoneDeploymentIDs),
 		SourceDatabaseID: mustPgUUID(sw.SourceDatabaseID), TargetName: sw.TargetName,
 		RestorePoint: pgTimestamptzUTC(sw.RestorePoint), RequestedBy: sw.RequestedBy, Now: pgTimestamptzUTC(now),
+		MaxActive: api.DatabaseSwitchesActivePerAccount,
 	})
 	if err != nil {
 		if isUniqueViolation(err) {
 			return DatabaseSwitch{}, ErrConflict
+		}
+		if errors.Is(err, pgx.ErrNoRows) {
+			return DatabaseSwitch{}, ErrDatabaseSwitchesActive
 		}
 		return DatabaseSwitch{}, fmt.Errorf("state: insert database switch: %w", mapErr(err))
 	}

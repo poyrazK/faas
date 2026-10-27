@@ -4415,3 +4415,40 @@ Evidence: `TestMemTrafficReleaseAdditionPublication`,
 legacy policy on the new hostname without changing intent and succeed after
 repair. The GitOps workload-creation writer has no dedicated refusal fixture;
 it shares the guarded transaction helper with candidate preparation.
+
+## Environment deletion and DNS-drift withdrawal — 2026-10-26
+
+`DeleteProjectEnvironment` (and its cleanup-job form) and
+`RollbackProjectEnvironmentClone` delete an environment whose bound custom
+domains cascade. They now begin through the account binding guard and retry
+serialization failures; the memory twin projects the environment, its bound
+domains and policies before deleting anything. Clone environment cleanup
+already counts bound custom domains as borrowers and refuses.
+`MarkCustomDomainDNSDrifted` stays unguarded by decision: it records external
+DNS state and always commits. `MarkTenantHostnameCheckFailed` keeps
+verification and changes no binding.
+
+Evidence: `TestMemTrafficEnvironmentRemoval` and
+`TestPgTrafficEnvironmentRemoval` refuse a deletion that would let a foreign
+wildcard's oversized policy serve the bound host, keep environment and domain
+intent, and succeed after repair. `TestMemTrafficDNSDriftWithdrawal` and
+`TestPgTrafficDNSDriftWithdrawal` show drift committing in the same topology.
+
+## Promotion visibility and GitOps environment policies — 2026-10-26
+
+`PublishProjectEnvironmentPromotionReleaseSet` and
+`RollbackProjectEnvironmentPromotionReleaseSet` project promoted settings,
+including visibility, onto production apps; both now begin through the account
+binding guard. The memory writer analyzes apps whose visibility changes before
+publishing anything. A GitOps apply whose reviewed plan changes environment
+edge policies runs inside the binding guard; its memory twin analyzes the
+staged policies first.
+
+Evidence: `TestMemTrafficPromotionVisibility` refuses an internal-to-public
+projection under an oversized legacy primary-host policy and ignores
+settings-only and non-production changes. The guarded PostgreSQL paths pass
+`TestPgPromotionActivatesAndRestoresWorkloadSettings`,
+`TestPgPromotionRollbackRejectsConcurrentWorkloadEdit` and
+`TestRealEnvironmentGitOpsAdoptionAndEnforcement` (memory and PostgreSQL),
+which applies a workload policy through the GitOps worker. No dedicated
+PostgreSQL refusal fixture exists for these two writers.

@@ -116,6 +116,24 @@ type ManagedPostgresUsageResponse struct {
 	ComputeAllowanceUnitSeconds int64  `json:"compute_allowance_unit_seconds,omitempty"`
 	ComputeCeilingUnitSeconds   int64  `json:"compute_ceiling_unit_seconds,omitempty"`
 	ComputeCapState             string `json:"compute_cap_state,omitempty"`
+	// OverageEnabled is true while the account runs its databases past the
+	// allowance, up to the ceiling (ADR-20261025094915 decision 2).
+	OverageEnabled bool `json:"overage_enabled,omitempty"`
+}
+
+// ManagedPostgresOverage is GET and PUT /v1/postgres/overage. With overage on,
+// a paid account's databases keep running past the monthly compute allowance
+// until the ceiling, twice the allowance, and are then suspended; with it
+// off (the default) they are suspended at the allowance.
+type ManagedPostgresOverage struct {
+	Enabled                     bool  `json:"enabled"`
+	ComputeAllowanceUnitSeconds int64 `json:"compute_allowance_unit_seconds"`
+	ComputeCeilingUnitSeconds   int64 `json:"compute_ceiling_unit_seconds"`
+}
+
+// ManagedPostgresOverageRequest is the PUT /v1/postgres/overage body.
+type ManagedPostgresOverageRequest struct {
+	Enabled *bool `json:"enabled"`
 }
 
 const (

@@ -248,11 +248,20 @@ Both now run on the work pool (`app_wake`: 8 slots, `runtime_config_restart`:
 3. **Overflow.** A delivery the pool cannot take stays pending, and the
    replay worker delivers it after the grace period (≤ about 7 s later).
 
-Unchanged: the replay worker, its handler and the private-network arms. A
-peer's replay worker can still claim and fail a foreign app's row. Mapping
-that to `ErrNotificationNotOwned` would stop its drain pass behind the
-foreign row, so it needs per-node targeting of these rows first (follow-up).
+Unchanged: the private-network arms.
+
+**Replay of another node's wake (follow-up, 2026-10-26).** The rows name no
+node, so every schedd's replay worker claims any of them. A peer used to fail
+another owner's row: that spent one of its bounded attempts and moved the
+owner's next try onto the retry backoff, and enough peers could dead-letter a
+wake the owner never saw. Releasing it as `ErrNotificationNotOwned` would
+stop the peer's drain pass behind the foreign row. schedd's replay handler
+now turns `ErrAppOwnedByAnotherNode` into a deferral of one retry interval
+(5 s). That gives the attempt back and leaves the row pending for the owner,
+and the peer's drain moves on. Replay matters only when the owner missed the
+broadcast, since the owner's immediate delivery claims the row first.
 
 Tests: `TestExplicitAppWakeLeavesTheLoopGoroutine`,
 `TestExplicitAppWakeLeavesAnotherNodesApp`,
-`TestExplicitAppWakeSettlesItsOutboxRow`.
+`TestExplicitAppWakeSettlesItsOutboxRow`,
+`TestDurableReplayDefersAnotherNodesWake`.

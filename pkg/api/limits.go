@@ -430,6 +430,11 @@ const DeploymentResponseCheckPreflightTimeout = 5 * time.Second
 const OperationBusinessConditionsMax = 16
 const OperationBusinessConditionDescriptionMaxBytes = 1024
 
+// ManagedPostgresOverageCeilingMultiplier is how far past the plan's monthly
+// compute allowance a paid account with overage on may run its managed
+// PostgreSQL databases before the cap suspends them (ADR-20261025094915).
+const ManagedPostgresOverageCeilingMultiplier = 2
+
 // Bounded recovery of explicitly requested PostgreSQL cutover retirements.
 const ManagedPostgresCutoverDrainBatchMax = 32
 const ManagedPostgresCutoverDrainTimeout = 20 * time.Second
@@ -1101,6 +1106,12 @@ const DatabaseSwitchRestoreTimeout = time.Hour
 const DatabaseSwitchSettleTimeout = 2 * time.Minute
 const DatabaseSwitchDrainTimeout = 10 * time.Minute
 const DatabaseSwitchListMax = 50
+
+// DatabaseSwitchesActivePerAccount is how many unfinished database switches
+// one account may run at once. The switch worker's queue is shared by every
+// tenant; the cap keeps one account's many apps from crowding out the
+// fenced switches of others, whose apps are down while they wait.
+const DatabaseSwitchesActivePerAccount = 3
 
 // Verified rollback outcomes (ADR-1446). apid resolves each plain rollback
 // every RollbackOutcomeCheckInterval: complete once the target serves,
@@ -2847,6 +2858,14 @@ const (
 // dispatching), including retained replay descendants. ADR-614.
 type EventDeliveryLimits struct{ PerConsumer, PerApp, PerAccount int }
 
+// EventPublishLimits bound how fast an account publishes events
+// (ADR-20261026140000). Every publication path counts each event once (a
+// batch counts every event it carries) against a token bucket refilled at
+// PerSecond. Burst is at least EventPublishBatchMaxEvents so a full batch can
+// pass. Buckets are per apid or vmmd process; storage budgets
+// (EventStorageLimits) still bound the sustained rate.
+type EventPublishLimits struct{ PerSecond, Burst int }
+
 // EventStorageLimits bounds retained customer event envelopes and immutable
 // recipient snapshots per account, including settled receipts. ADR-615.
 // SettledRetentionSeconds is how long a settled receipt is kept: it bounds
@@ -2971,6 +2990,7 @@ type Limits struct {
 	// allowances wait for exporters that classify reads and writes.
 	ObjectStorage   ObjectStoragePlanLimits
 	EventDeliveries EventDeliveryLimits
+	EventPublish    EventPublishLimits
 	Operations      OperationPlanLimits
 	Plan            Plan
 
@@ -4639,6 +4659,7 @@ var planLimits = map[Plan]Limits{
 		// Hobby so a customer mid-upgrade sees the cap before the
 		// plan flips. Deadline defaults to 5m, retention to 1d.
 		EventDeliveries:                   EventDeliveryLimits{64, 256, 1024},
+		EventPublish:                      EventPublishLimits{5, 100},
 		EventStorage:                      EventStorageLimits{4096, 8 << 20, 86400},
 		MaxAsyncInvocationsPerAccount:     100,
 		MaxAsyncInvocationDeadlineSeconds: 300,
@@ -5047,6 +5068,7 @@ var planLimits = map[Plan]Limits{
 		// ADR-134 PR-B: Hobby 1k / 1h / 7d. Matches the doubling
 		// from Free's 100/5m/1d.
 		EventDeliveries:                   EventDeliveryLimits{256, 1024, 4096},
+		EventPublish:                      EventPublishLimits{20, 200},
 		EventStorage:                      EventStorageLimits{131072, 256 << 20, 259200},
 		MaxAsyncInvocationsPerAccount:     1000,
 		MaxAsyncInvocationDeadlineSeconds: 3600,
@@ -5489,6 +5511,7 @@ var planLimits = map[Plan]Limits{
 		// ADR-134 PR-B: Pro 10k / 6h / 30d. Decadal bumps from
 		// Hobby track the Doubling pattern (1k->10k, 1h->6h, 7d->30d).
 		EventDeliveries:                   EventDeliveryLimits{1024, 4096, 16384},
+		EventPublish:                      EventPublishLimits{100, 1000},
 		EventStorage:                      EventStorageLimits{1048576, 2 << 30, 604800},
 		MaxAsyncInvocationsPerAccount:     10000,
 		MaxAsyncInvocationDeadlineSeconds: 21600,
@@ -5896,6 +5919,7 @@ var planLimits = map[Plan]Limits{
 		// pattern); 90d retention matches the audit-grade trace
 		// retention target.
 		EventDeliveries:                   EventDeliveryLimits{4096, 16384, 65536},
+		EventPublish:                      EventPublishLimits{500, 5000},
 		EventStorage:                      EventStorageLimits{8388608, 16 << 30, 1209600},
 		MaxAsyncInvocationsPerAccount:     100000,
 		MaxAsyncInvocationDeadlineSeconds: 86400,
@@ -6976,6 +7000,12 @@ const (
 	// 1 ms, so 500 ms/s is roughly 500 checked requests per second.
 	EdgeWAFInlineMsPerAppPerSecond = 500
 	EdgeWAFInlineMsPerAppBurst     = 1000
+	// EdgeWAFInlineAccountSharePercent is the share of the node's check
+	// slots (at least one) an account's waiting checks are served first
+	// for (ADR-831 amendment 16). An account may use every free slot, but a
+	// freed slot goes first to an account below its share, so one account's
+	// flood cannot make other accounts' block rules skip as busy.
+	EdgeWAFInlineAccountSharePercent = 50
 	// EdgeWAFDefaultParanoiaLevel and MaxEdgeWAFParanoiaLevel bound the
 	// OWASP CRS paranoia level a rule may select.
 	EdgeWAFDefaultParanoiaLevel = 1

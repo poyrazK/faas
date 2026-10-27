@@ -416,76 +416,81 @@ type MemStore struct {
 	customMetrics               map[string]map[string]CustomMetric
 	mcpTaskCompatibilityReports map[string]MCPTaskCompatibilityReport
 	notificationChannels        map[string][]NotificationChannel // account id → channels (ADR-749), lazily made
-	alertRuleChannels           map[string][]string              // rule id → channel ids (ADR-749)
-	appSLOs                     map[string][]SLO                 // app id → definitions (ADR-747), lazily made
-	sloHours                    map[string]map[time.Time]memSLOHour
-	syntheticChecks             map[string][]SyntheticCheck // app id → checks (ADR-748), lazily made
-	syntheticRuns               map[string][]SyntheticCheckRun
-	objectBuckets               map[string]ObjectBucket
-	objectMutations             map[string]ObjectBucketMutation
-	objectNodeSettlements       map[string]ObjectNodeSettlement
-	objectWriteFences           map[string]ObjectBucketWriteFence
-	objectUploadGrants          map[string]ObjectUploadGrant
-	objectUsage                 map[string]ObjectBucketUsage
-	objectGrants                map[string]map[string]int64
-	objectTrackedGrants         map[string]map[string]bool
-	objectWriteAdmissions       map[string]objectWriteAdmission
-	objectCapacityJobs          map[string]ObjectCapacityReconciliation
-	objectBucketVersioning      map[string]ObjectBucketVersioning
-	objectBucketCORS            map[string]api.ObjectBucketCORS
-	objectBucketEncryption      map[string]ObjectBucketEncryption
-	objectBucketObjectLock      map[string]ObjectBucketObjectLock
-	objectVersionProtection     map[string]ObjectVersionProtection
-	objectLifecyclePolicies     map[string]ObjectLifecyclePolicy
-	objectNotifications         map[string]api.ObjectBucketNotifications
-	objectLifecycleScans        map[string]ObjectLifecycleScan
-	objectDeletions             map[string]ObjectDeletion
-	objectVersionReferences     map[string]ObjectVersionIdentity
-	objectVersionReferenceIDs   map[string]string
-	objectVersionObservations   map[string]bool
-	objectReports               []api.ObjectStorageUsageReport
-	objectCustomerReportsV2     []api.ObjectStorageCustomerUsageReportV2
-	objectAuthorizations        map[string]int64
-	objectUsageCutovers         map[string]time.Time
-	objectOrgOwnedFrom          map[string]time.Time
-	orgAsyncQuotaPooled         map[string]time.Time
-	objectProviderRequests      map[string]int64
-	objectGatewayStorage        map[string]*memGatewayStorage
-	objectAccessGrants          map[string]ObjectBucketAccessGrant
-	objectS3Credentials         map[string]ObjectS3Credential
-	objectS3CopySources         map[string]ObjectS3CopySource
-	objectMultipartUploads      map[string]ObjectMultipartUpload
-	objectMultipartInitiations  map[string]ObjectMultipartInitiation
-	objectMultipartPartWriters  map[multipartPartWriterKey]multipartPartWriter
-	objectMultipartPartGrants   map[string]map[int32]int64
-	objectMultipartTransfers    map[string]map[int32]multipartPartTransfer
-	objectUploadRoutes          map[string]ObjectUploadRoute
-	objectUploadCompletions     map[string]ObjectUploadCompletion
-	outboundIntegrationOffers   map[string]OutboundIntegrationOffer
-	outboundAIUsage             map[string][]OutboundAIUsageItem
-	outboundAIPrices            map[string]OutboundAIPriceList
-	outboundAIRoutes            map[string]OutboundAIRoute
-	outboundAIAccessTokens      map[string]OutboundAIAccessToken
-	outboundCredentialKeys      map[string][]OutboundCredentialKey
-	outboundAIBudgetAlerts      map[string][]OutboundAIBudgetAlert
-	outboundAIDeploymentStats   map[string][]OutboundAIDeploymentStats
-	outboundAIRequestLog        map[string][]OutboundAIRequestLogEntry
-	outboundAIRequestContent    map[string]OutboundAIRequestContent
-	outboundAIReplays           map[string]OutboundAIReplay
-	outboundAIEvaluations       map[string]OutboundAIEvaluation
-	outboundAIUserUsage         map[string][]OutboundAIUserUsageItem
-	outboundAITagUsage          map[string][]OutboundAITagUsageItem
-	outboundAITagLimits         map[string][]api.OutboundAITagLimit
-	outboundAITraces            map[string][]OutboundAITrace
-	outboundAIQualityAlerts     map[string][]OutboundAIQualityAlert
-	outboundAppBindings         map[string]OutboundAppBinding
-	outboundCredentials         map[string][]byte
-	mu                          sync.Mutex
-	outboundProbePolicies       map[string]api.OutboundBindingProbePolicy
-	outboundCredentialRevisions map[string]int64
+	// objectStorageTimeline and acceptedObjectStorageTimeline mirror the
+	// object storage timeline fence (ADR-20261025111015 amendment).
+	objectStorageTimeline         string
+	acceptedObjectStorageTimeline string
+	alertRuleChannels             map[string][]string // rule id → channel ids (ADR-749)
+	appSLOs                       map[string][]SLO    // app id → definitions (ADR-747), lazily made
+	sloHours                      map[string]map[time.Time]memSLOHour
+	syntheticChecks               map[string][]SyntheticCheck // app id → checks (ADR-748), lazily made
+	syntheticRuns                 map[string][]SyntheticCheckRun
+	objectBuckets                 map[string]ObjectBucket
+	objectMutations               map[string]ObjectBucketMutation
+	objectNodeSettlements         map[string]ObjectNodeSettlement
+	objectWriteFences             map[string]ObjectBucketWriteFence
+	objectUploadGrants            map[string]ObjectUploadGrant
+	objectUsage                   map[string]ObjectBucketUsage
+	objectGrants                  map[string]map[string]int64
+	objectTrackedGrants           map[string]map[string]bool
+	objectWriteAdmissions         map[string]objectWriteAdmission
+	objectCapacityJobs            map[string]ObjectCapacityReconciliation
+	objectBucketVersioning        map[string]ObjectBucketVersioning
+	objectBucketCORS              map[string]api.ObjectBucketCORS
+	objectBucketEncryption        map[string]ObjectBucketEncryption
+	objectBucketObjectLock        map[string]ObjectBucketObjectLock
+	objectVersionProtection       map[string]ObjectVersionProtection
+	objectLifecyclePolicies       map[string]ObjectLifecyclePolicy
+	objectNotifications           map[string]api.ObjectBucketNotifications
+	objectLifecycleScans          map[string]ObjectLifecycleScan
+	objectDeletions               map[string]ObjectDeletion
+	objectVersionReferences       map[string]ObjectVersionIdentity
+	objectVersionReferenceIDs     map[string]string
+	objectVersionObservations     map[string]bool
+	objectReports                 []api.ObjectStorageUsageReport
+	objectCustomerReportsV2       []api.ObjectStorageCustomerUsageReportV2
+	objectAuthorizations          map[string]int64
+	objectUsageCutovers           map[string]time.Time
+	objectOrgOwnedFrom            map[string]time.Time
+	orgAsyncQuotaPooled           map[string]time.Time
+	objectProviderRequests        map[string]int64
+	objectGatewayStorage          map[string]*memGatewayStorage
+	objectAccessGrants            map[string]ObjectBucketAccessGrant
+	objectS3Credentials           map[string]ObjectS3Credential
+	objectS3CopySources           map[string]ObjectS3CopySource
+	objectMultipartUploads        map[string]ObjectMultipartUpload
+	objectMultipartInitiations    map[string]ObjectMultipartInitiation
+	objectMultipartPartWriters    map[multipartPartWriterKey]multipartPartWriter
+	objectMultipartPartGrants     map[string]map[int32]int64
+	objectMultipartTransfers      map[string]map[int32]multipartPartTransfer
+	objectUploadRoutes            map[string]ObjectUploadRoute
+	objectUploadCompletions       map[string]ObjectUploadCompletion
+	outboundIntegrationOffers     map[string]OutboundIntegrationOffer
+	outboundAIUsage               map[string][]OutboundAIUsageItem
+	outboundAIPrices              map[string]OutboundAIPriceList
+	outboundAIRoutes              map[string]OutboundAIRoute
+	outboundAIAccessTokens        map[string]OutboundAIAccessToken
+	outboundCredentialKeys        map[string][]OutboundCredentialKey
+	outboundAIBudgetAlerts        map[string][]OutboundAIBudgetAlert
+	outboundAIDeploymentStats     map[string][]OutboundAIDeploymentStats
+	outboundAIRequestLog          map[string][]OutboundAIRequestLogEntry
+	outboundAIRequestContent      map[string]OutboundAIRequestContent
+	outboundAIReplays             map[string]OutboundAIReplay
+	outboundAIEvaluations         map[string]OutboundAIEvaluation
+	outboundAIUserUsage           map[string][]OutboundAIUserUsageItem
+	outboundAITagUsage            map[string][]OutboundAITagUsageItem
+	outboundAITagLimits           map[string][]api.OutboundAITagLimit
+	outboundAITraces              map[string][]OutboundAITrace
+	outboundAIQualityAlerts       map[string][]OutboundAIQualityAlert
+	outboundAppBindings           map[string]OutboundAppBinding
+	outboundCredentials           map[string][]byte
+	mu                            sync.Mutex
+	outboundProbePolicies         map[string]api.OutboundBindingProbePolicy
+	outboundCredentialRevisions   map[string]int64
 	// egressFlows is the ADR-371 egress flow log.
 	egressFlows               []EgressFlowRecord
 	accounts                  map[string]Account
+	spendCapHolds             map[string]SpendCapHold
 	orgResourcePolicies       map[string]Account
 	freeQuotaSuspended        map[string]bool
 	accountDeployRates        map[string]accountDeployRateRow
@@ -1114,6 +1119,9 @@ type MemStore struct {
 	// section that drops the accounts row, mirroring the PG
 	// atomicity contract.
 	auditLog []AuditLog
+	// auditLogAnchors mirrors audit_log_anchors in seq order
+	// (ADR-20261026163015).
+	auditLogAnchors []AuditLogAnchor
 	// deploymentAudit is the in-memory mirror of the deployment_audit
 	// table (migrations/00332_deployment_audit.sql, issue #976 /
 	// ADR-122 / SAFE-RELEASES-E.2). Same shape as the PG row; the
@@ -1336,6 +1344,9 @@ type MemStore struct {
 	// CreateComputeNode to exercise the single-box path. Production
 	// (PgStore) gets the same row from migrations/00024_compute_nodes.
 	computeNodes map[string]ComputeNode
+	// edgeListenerHeartbeats mirrors compute_nodes.edge_listener_heartbeat_at,
+	// keyed by node name; nil until a gateway first reports.
+	edgeListenerHeartbeats map[string]time.Time
 	// computeNodeKeys is the in-memory mirror of compute_node_keys
 	// (migration 00076, ADR-053). Keyed by (nodeID, keyID) tuple
 	// joined by a NUL so the composite key stays string-typed for
@@ -4150,6 +4161,9 @@ func (m *MemStore) DeleteProjectEnvironmentWithCleanup(
 	if err := m.validateEnvironmentInvocationCleanupLocked(environmentID); err != nil {
 		return ProjectEnvironmentCleanupJob{}, err
 	}
+	if err := m.checkMemTrafficEnvironmentRemovalLocked(ctx, accountID, projectID, slug, environmentID); err != nil {
+		return ProjectEnvironmentCleanupJob{}, err
+	}
 
 	var job ProjectEnvironmentCleanupJob
 	if !resources.Empty() {
@@ -5244,7 +5258,7 @@ func (m *MemStore) PreviewAppByProjectWorkload(_ context.Context, accountID, pro
 	defer m.mu.Unlock()
 	for _, app := range m.apps {
 		if app.AccountID == accountID && app.ProjectID == projectID &&
-			app.PreviewPrNumber == previewPRNumber && app.WorkloadName == workloadName &&
+			app.PreviewPrNumber == previewPRNumber && api.SameServiceName(app.WorkloadName, workloadName) &&
 			app.PreviewOfSlug != "" && app.Status != AppDeleted {
 			return app, nil
 		}
@@ -5252,7 +5266,7 @@ func (m *MemStore) PreviewAppByProjectWorkload(_ context.Context, accountID, pro
 	return App{}, ErrNotFound
 }
 
-// ProjectAppByWorkload mirrors PgStore: a case-folded production alias in
+// ProjectAppByWorkload mirrors PgStore: a service-name production alias in
 // the owner's project, ErrConflict when two apps share it.
 func (m *MemStore) ProjectAppByWorkload(_ context.Context, accountID, projectID, name string) (App, error) {
 	m.mu.Lock()
@@ -5260,7 +5274,7 @@ func (m *MemStore) ProjectAppByWorkload(_ context.Context, accountID, projectID,
 	var found App
 	for _, app := range m.apps {
 		if app.AccountID != accountID || app.ProjectID == "" || app.ProjectID != projectID ||
-			app.PreviewOfSlug != "" || app.Status == AppDeleted || !strings.EqualFold(app.WorkloadName, name) {
+			app.PreviewOfSlug != "" || app.Status == AppDeleted || !api.SameServiceName(app.WorkloadName, name) {
 			continue
 		}
 		if found.ID != "" {
@@ -6238,6 +6252,19 @@ func (m *MemStore) ListOwnedCronsByNodeID(_ context.Context, nodeID string) ([]C
 		}
 	}
 	return out, nil
+}
+
+// OwnedAppRAMByNode mirrors PgStore.OwnedAppRAMByNode.
+func (m *MemStore) OwnedAppRAMByNode(_ context.Context) (map[string]int64, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	owned := make(map[string]int64)
+	for _, a := range m.apps {
+		if a.NodeID != "" && a.Status != AppDeleted {
+			owned[a.NodeID] += int64(a.RAMMB)
+		}
+	}
+	return owned, nil
 }
 
 // ListUnplacedApps mirrors pkg/state/pgstore.go: ListUnplacedApps.
@@ -17441,6 +17468,24 @@ func (m *MemStore) ComputeNodeUsedMBByNode(ctx context.Context, nodeIDs []string
 	return used, nil
 }
 
+// ComputeNodeUsedVCPUByNode mirrors PgStore's fleet-wide guest vCPU
+// aggregate: each live instance's captured capacity_vcpu.
+func (m *MemStore) ComputeNodeUsedVCPUByNode(_ context.Context, nodeIDs []string) (map[string]int64, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	used := make(map[string]int64, len(nodeIDs))
+	for _, nodeID := range nodeIDs {
+		used[nodeID] = 0
+	}
+	for _, ins := range m.instances {
+		if _, ok := used[ins.NodeID]; !ok || !nodeUsageCounts(State(ins.State)) {
+			continue
+		}
+		used[ins.NodeID] += m.capacityInstanceResources[ins.ID].VCPU
+	}
+	return used, nil
+}
+
 // ComputeNodeUsedCPUMillicoresByNode mirrors PgStore's fleet-wide CPU
 // reservation aggregate for local tests and in-memory deployments.
 func (m *MemStore) ComputeNodeUsedCPUMillicoresByNode(_ context.Context, nodeIDs []string) (map[string]int64, error) {
@@ -26620,6 +26665,7 @@ func (m *MemStore) RemoveOrgMember(ctx context.Context, orgID, accountID string)
 	now := time.Now().UTC()
 	mem.RemovedAt = &now
 	m.setOrgMembershipLocked(k, mem)
+	m.pauseDepartedMemberIntegrationsLocked(orgID, accountID)
 	return nil
 }
 

@@ -30,6 +30,7 @@ type MemoryStore struct {
 	usageProgress             map[usageProgressKey]UsageProgress
 	usageImports              map[string]usageImportReceipt
 	accountingReconciliations map[string]accountingReconciliationReceipt
+	overage                   map[string]bool
 }
 
 func NewMemoryStore() *MemoryStore {
@@ -51,6 +52,7 @@ func NewMemoryStore() *MemoryStore {
 		usageProgress:             map[usageProgressKey]UsageProgress{},
 		usageImports:              map[string]usageImportReceipt{},
 		accountingReconciliations: map[string]accountingReconciliationReceipt{},
+		overage:                   map[string]bool{},
 	}
 }
 

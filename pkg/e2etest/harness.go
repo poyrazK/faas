@@ -81,6 +81,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/cosign"
 	"github.com/onebox-faas/faas/pkg/daemonunitspec"
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
+	"github.com/onebox-faas/faas/pkg/logarchive"
 	"github.com/onebox-faas/faas/pkg/netns"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -1528,6 +1529,7 @@ func testEnvCommon(dbURL string) []string {
 		"FAAS_PADDLE_WEBHOOK_SECRET=whk_test_e2e_placeholder",
 	}
 	env = append(env, forwardedStorageEnv()...)
+	env = append(env, forwardedLogArchiveEnv()...)
 	// Every artifact consumer, including schedd's layer verifier, must read
 	// the same per-test app store that imaged publishes into.
 	if currentHarness != nil && currentHarness.ImagedTmp != "" {
@@ -1629,6 +1631,24 @@ func vmmdEnv(dbURL, cfgPath, scheddSock string) []string {
 // behaves exactly as before. The names come from the env contract rather
 // than string literals here: pkg/daemonunitspec is the single registry, and
 // duplicating the names is how they drift.
+// forwardedLogArchiveEnv passes a test's runtime-log archive configuration to
+// the daemons: vmmd ships retired lines, gatewayd-internal serves ?archive=1
+// reads. A test that runs the archive end to end sets these before Start;
+// otherwise none is set and the archive stays off, as before.
+func forwardedLogArchiveEnv() []string {
+	var out []string
+	for _, name := range []string{
+		logarchive.EnvBucket, logarchive.EnvEndpoint, logarchive.EnvRegion, logarchive.EnvAuthMode,
+		logarchive.EnvKeyID, logarchive.EnvSecret, logarchive.EnvCredentialsPath, logarchive.EnvInterval,
+		logarchive.EnvRetentionDays, logarchive.EnvLocalBytesMax, logarchive.EnvSpoolRoot, logarchive.EnvVMMDSpoolRoot,
+	} {
+		if v, ok := os.LookupEnv(name); ok && v != "" {
+			out = append(out, name+"="+v)
+		}
+	}
+	return out
+}
+
 func forwardedStorageEnv() []string {
 	var out []string
 	for _, name := range daemonunitspec.ArtifactStorageEnvNames() {

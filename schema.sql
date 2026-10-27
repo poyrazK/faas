@@ -45,6 +45,24 @@ CREATE TYPE public.compute_node_lifecycle AS ENUM (
 
 
 --
+-- Name: account_may_see_org_resources(uuid, uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.account_may_see_org_resources(p_account uuid, p_org uuid) RETURNS boolean
+    LANGUAGE sql STABLE
+    AS $$
+    SELECT p_org IS NULL OR EXISTS (
+        SELECT 1 FROM orgs o
+         WHERE o.id = p_org
+           AND (o.personal_org
+                OR (NOT o.deleted_pending AND o.status <> 'deleted_pending'
+                    AND EXISTS (SELECT 1 FROM org_memberships m
+                                 WHERE m.org_id = o.id AND m.account_id = p_account AND m.removed_at IS NULL
+                                   AND m.role IN ('owner', 'admin', 'developer', 'viewer')))))
+$$;
+
+
+--
 -- Name: account_traffic_security_epoch_trigger(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -2254,6 +2272,7 @@ CREATE TABLE public.app_log_drains (
     enabled boolean DEFAULT true NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    created_by_account_id uuid,
     CONSTRAINT app_log_drains_kind_chk CHECK ((kind = ANY (ARRAY['http_json'::text, 'otlp'::text, 'datadog'::text]))),
     CONSTRAINT app_log_drains_target_url_len_chk CHECK (((char_length(target_url) >= 8) AND (char_length(target_url) <= 2048)))
 );
@@ -5311,7 +5330,7 @@ BEGIN
   NOT EXISTS(SELECT 1 FROM object_buckets d JOIN object_buckets s ON s.id=source
     WHERE d.id=destination AND d.account_id=a AND s.account_id=a AND d.state='ready' AND s.state='ready'
     AND (d.backend_id,d.backend_fingerprint)=(s.backend_id,s.backend_fingerprint)) OR
-  EXISTS(SELECT 1 FROM object_deletions WHERE bucket_id IN (destination,source) AND state IN ('prepared','dispatched')) THEN
+  EXISTS(SELECT 1 FROM object_deletions WHERE bucket_id=source AND object_key=key AND state IN ('prepared','dispatched')) THEN
   RAISE EXCEPTION USING ERRCODE='23514',CONSTRAINT='object_copy_source_fenced',MESSAGE='Copy source authority changed';
  END IF;
 END $_$;
@@ -8037,7 +8056,8 @@ BEGIN
       JOIN apps a ON a.id = NEW.app_id AND a.account_id = h.account_id
      WHERE h.enabled
        AND ((h.scope = 'app' AND h.app_id = NEW.app_id)
-            OR (h.scope = 'account' AND h.app_id IS NULL))
+            OR (h.scope = 'account' AND h.app_id IS NULL
+                AND account_may_see_org_resources(h.account_id, a.org_id)))
        AND (event_name = ANY(h.event_filter)
             OR (h.scope = 'app' AND cardinality(h.event_filter) = 0));
     RETURN NEW;
@@ -8754,7 +8774,8 @@ BEGIN
       JOIN apps a ON a.id = NEW.app_id AND a.account_id = h.account_id
      WHERE h.enabled
        AND ((h.scope = 'app' AND h.app_id = NEW.app_id)
-            OR (h.scope = 'account' AND h.app_id IS NULL))
+            OR (h.scope = 'account' AND h.app_id IS NULL
+                AND account_may_see_org_resources(h.account_id, a.org_id)))
        AND (event_name = ANY(h.event_filter)
             OR (h.scope = 'app' AND cardinality(h.event_filter) = 0));
     RETURN NEW;
@@ -28066,6 +28087,29 @@ CREATE TABLE public.account_passwords (
 
 
 --
+-- Name: account_spend_cap_holds; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.account_spend_cap_holds (
+    account_id uuid NOT NULL,
+    month date NOT NULL,
+    cap_cents bigint NOT NULL,
+    observed_cents bigint NOT NULL,
+    reached_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT account_spend_cap_holds_cap_cents_check CHECK ((cap_cents >= 0)),
+    CONSTRAINT account_spend_cap_holds_check CHECK ((observed_cents >= cap_cents)),
+    CONSTRAINT account_spend_cap_holds_month_check CHECK ((month = (date_trunc('month'::text, (month)::timestamp with time zone))::date))
+);
+
+
+--
+-- Name: TABLE account_spend_cap_holds; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.account_spend_cap_holds IS 'Accounts whose combined billable overage (compute plus live secondary meters) reached overage_cap_cents this UTC month. Written by meterd, read by schedd (ADR-20261026120843).';
+
+
+--
 -- Name: account_spend_snapshot; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -28354,6 +28398,7 @@ CREATE TABLE public.alert_rules (
     mcp_for_minutes integer DEFAULT 0 NOT NULL,
     mcp_readiness_scope text DEFAULT ''::text NOT NULL,
     log_query text,
+    created_by_account_id uuid,
     CONSTRAINT alert_rules_action_chk CHECK ((action = ANY (ARRAY['webhook'::text, 'rollback'::text, 'demote'::text, 'promote'::text]))),
     CONSTRAINT alert_rules_comparison_chk CHECK ((comparison = ANY (ARRAY['gt'::text, 'gte'::text, 'lt'::text, 'lte'::text, 'above_baseline'::text, 'below_baseline'::text]))),
     CONSTRAINT alert_rules_cooldown_chk CHECK (((cooldown_minutes >= 5) AND (cooldown_minutes <= 1440))),
@@ -30546,6 +30591,7 @@ CREATE TABLE public.app_webhooks (
     platform_tenant_id uuid,
     receiver_recovery_probe_delivery_id uuid,
     receiver_cooldown_until timestamp with time zone,
+    created_by_account_id uuid,
     CONSTRAINT app_webhooks_delivery_format_chk CHECK ((delivery_format = ANY (ARRAY['json'::text, 'cloudevents'::text, 'datadog'::text]))),
     CONSTRAINT app_webhooks_retry_policy_chk CHECK ((retry_policy = ANY (ARRAY['default'::text, 'aggressive'::text, 'none'::text]))),
     CONSTRAINT app_webhooks_scope_chk CHECK ((((scope = 'app'::text) AND (app_id IS NOT NULL) AND (platform_tenant_id IS NULL)) OR ((scope = 'account'::text) AND (app_id IS NULL) AND (platform_tenant_id IS NULL) AND ((cardinality(event_filter) >= 1) AND (cardinality(event_filter) <= 5)) AND (array_position(event_filter, NULL::text) IS NULL) AND (event_filter <@ ARRAY['deployment.live'::text, 'deployment.failed'::text, 'rollout.completed'::text, 'rollout.aborted'::text, 'environment.gitops.changed'::text])) OR ((scope = 'platform_tenant'::text) AND (app_id IS NULL) AND (platform_tenant_id IS NOT NULL) AND ((cardinality(event_filter) >= 1) AND (cardinality(event_filter) <= 8)) AND (array_lower(event_filter, 1) = 1) AND (array_position(event_filter, NULL::text) IS NULL) AND (event_filter <@ ARRAY['platform_tenant.statement.finalized'::text, 'platform_tenant.hostname.verified'::text, 'platform_tenant.surface.certificate.changed'::text, 'platform_tenant.surface.deployment.changed'::text, 'platform_tenant.customer.linked'::text, 'platform_tenant.customer.offboarded'::text, 'platform_tenant.reconciliation.applied'::text, 'operation.effect'::text]) AND ((cardinality(event_filter) < 2) OR (event_filter[1] <> event_filter[2])) AND ((cardinality(event_filter) < 3) OR ((event_filter[1] <> event_filter[3]) AND (event_filter[2] <> event_filter[3]))) AND ((cardinality(event_filter) < 4) OR ((event_filter[1] <> event_filter[4]) AND (event_filter[2] <> event_filter[4]) AND (event_filter[3] <> event_filter[4]))) AND ((cardinality(event_filter) < 5) OR ((event_filter[1] <> event_filter[5]) AND (event_filter[2] <> event_filter[5]) AND (event_filter[3] <> event_filter[5]) AND (event_filter[4] <> event_filter[5]))) AND ((cardinality(event_filter) < 6) OR ((event_filter[1] <> event_filter[6]) AND (event_filter[2] <> event_filter[6]) AND (event_filter[3] <> event_filter[6]) AND (event_filter[4] <> event_filter[6]) AND (event_filter[5] <> event_filter[6]))) AND ((cardinality(event_filter) < 7) OR ((event_filter[1] <> event_filter[7]) AND (event_filter[2] <> event_filter[7]) AND (event_filter[3] <> event_filter[7]) AND (event_filter[4] <> event_filter[7]) AND (event_filter[5] <> event_filter[7]) AND (event_filter[6] <> event_filter[7]))) AND ((cardinality(event_filter) < 8) OR ((event_filter[1] <> event_filter[8]) AND (event_filter[2] <> event_filter[8]) AND (event_filter[3] <> event_filter[8]) AND (event_filter[4] <> event_filter[8]) AND (event_filter[5] <> event_filter[8]) AND (event_filter[6] <> event_filter[8]) AND (event_filter[7] <> event_filter[8])))))),
@@ -31026,6 +31072,31 @@ CREATE TABLE public.audit_log (
     actor text,
     received_at timestamp with time zone DEFAULT now() NOT NULL,
     data jsonb
+);
+
+
+--
+-- Name: audit_log_anchors; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.audit_log_anchors (
+    seq bigint NOT NULL,
+    window_start timestamp with time zone NOT NULL,
+    window_end timestamp with time zone NOT NULL,
+    row_count bigint NOT NULL,
+    rows_digest text NOT NULL,
+    prev_mac text NOT NULL,
+    mac text NOT NULL,
+    key_id text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT audit_log_anchors_check CHECK ((window_end > window_start)),
+    CONSTRAINT audit_log_anchors_check1 CHECK (((seq = 1) = (prev_mac = ''::text))),
+    CONSTRAINT audit_log_anchors_key_id_check CHECK ((key_id ~ '^[0-9a-f]{16}$'::text)),
+    CONSTRAINT audit_log_anchors_mac_check CHECK ((mac ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT audit_log_anchors_prev_mac_check CHECK (((prev_mac = ''::text) OR (prev_mac ~ '^[0-9a-f]{64}$'::text))),
+    CONSTRAINT audit_log_anchors_row_count_check CHECK ((row_count >= 0)),
+    CONSTRAINT audit_log_anchors_rows_digest_check CHECK ((rows_digest ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT audit_log_anchors_seq_check CHECK ((seq > 0))
 );
 
 
@@ -32513,6 +32584,7 @@ CREATE TABLE public.compute_nodes (
     cpu_model text DEFAULT ''::text NOT NULL,
     readiness text DEFAULT 'ready'::text NOT NULL,
     readiness_reason text,
+    edge_listener_heartbeat_at timestamp with time zone,
     CONSTRAINT compute_nodes_admission_ceiling_mb_check CHECK ((admission_ceiling_mb > 0)),
     CONSTRAINT compute_nodes_gateway_target_url_scheme_chk CHECK (((gateway_target_url IS NULL) OR (gateway_target_url ~ '^tcp://[^/:][^/]*:[0-9]+$'::text))),
     CONSTRAINT compute_nodes_last_recovery_outcome_chk CHECK (((last_recovery_outcome IS NULL) OR (last_recovery_outcome = ANY (ARRAY['succeeded'::text, 'failed'::text, 'partial'::text])))),
@@ -32605,6 +32677,13 @@ COMMENT ON COLUMN public.compute_nodes.cpu_template IS 'Firecracker CPU template
 --
 
 COMMENT ON COLUMN public.compute_nodes.cpu_model IS 'Host CPU signature <class>/<vendor>-<family>-<model>-<stepping>/<flags hash>; empty before vmmd reports it.';
+
+
+--
+-- Name: COLUMN compute_nodes.edge_listener_heartbeat_at; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.compute_nodes.edge_listener_heartbeat_at IS 'Last time this node''s gatewayd-internal edge-rule listener reported alive (database clock); NULL before its first report (ADR-091).';
 
 
 --
@@ -42035,6 +42114,24 @@ CREATE TABLE public.mail_suppressions (
 
 
 --
+-- Name: managed_postgres_account_overage; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.managed_postgres_account_overage (
+    subject_id uuid NOT NULL,
+    enabled boolean NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: TABLE managed_postgres_account_overage; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.managed_postgres_account_overage IS 'Whether a paid account runs its managed PostgreSQL databases past the monthly compute allowance, up to 2x, before suspension; written only by apid (ADR-20261025094915).';
+
+
+--
 -- Name: managed_postgres_accounting_reconciliations; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -45531,6 +45628,21 @@ CREATE TABLE public.object_storage_request_metrics (
     CONSTRAINT object_storage_request_metrics_egress_bytes_check CHECK (((egress_bytes >= 0) AND (egress_bytes <= '1152921504606846976'::bigint))),
     CONSTRAINT object_storage_request_metrics_period_start_check CHECK ((period_start = (date_trunc('month'::text, (period_start AT TIME ZONE 'UTC'::text)) AT TIME ZONE 'UTC'::text))),
     CONSTRAINT object_storage_request_metrics_request_count_check CHECK (((request_count >= 0) AND (request_count <= '1152921504606846976'::bigint)))
+);
+
+
+--
+-- Name: object_storage_timeline_acceptance; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.object_storage_timeline_acceptance (
+    singleton boolean DEFAULT true NOT NULL,
+    timeline text NOT NULL,
+    accepted_at timestamp with time zone DEFAULT now() NOT NULL,
+    accepted_by text NOT NULL,
+    CONSTRAINT object_storage_timeline_acceptance_accepted_by_check CHECK (((char_length(accepted_by) >= 1) AND (char_length(accepted_by) <= 128))),
+    CONSTRAINT object_storage_timeline_acceptance_singleton_check CHECK (singleton),
+    CONSTRAINT object_storage_timeline_acceptance_timeline_check CHECK ((timeline ~ '^[0-9A-F]{8}$'::text))
 );
 
 
@@ -53582,7 +53694,7 @@ CREATE TABLE public.scenario_test_members (
     chaos_generation uuid,
     CONSTRAINT scenario_test_members_chaos_rules_array_check CHECK ((jsonb_typeof(chaos_rules) = 'array'::text)),
     CONSTRAINT scenario_test_members_run_id_check CHECK ((run_id ~ '^[0-9a-f]{32}$'::text)),
-    CONSTRAINT scenario_test_members_workload_name_check CHECK ((workload_name ~ '^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$'::text))
+    CONSTRAINT scenario_test_members_service_name_check CHECK ((workload_name ~ '^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$'::text))
 );
 
 
@@ -55629,6 +55741,14 @@ ALTER TABLE ONLY public.account_passwords
 
 
 --
+-- Name: account_spend_cap_holds account_spend_cap_holds_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.account_spend_cap_holds
+    ADD CONSTRAINT account_spend_cap_holds_pkey PRIMARY KEY (account_id);
+
+
+--
 -- Name: account_spend_snapshot account_spend_snapshot_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -56962,6 +57082,14 @@ ALTER TABLE ONLY public.audit_event_outbox
 
 ALTER TABLE ONLY public.audit_event_outbox
     ADD CONSTRAINT audit_event_outbox_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: audit_log_anchors audit_log_anchors_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.audit_log_anchors
+    ADD CONSTRAINT audit_log_anchors_pkey PRIMARY KEY (seq);
 
 
 --
@@ -61997,6 +62125,14 @@ ALTER TABLE ONLY public.mail_suppressions
 
 
 --
+-- Name: managed_postgres_account_overage managed_postgres_account_overage_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_postgres_account_overage
+    ADD CONSTRAINT managed_postgres_account_overage_pkey PRIMARY KEY (subject_id);
+
+
+--
 -- Name: managed_postgres_accounting_reconciliations managed_postgres_accounting_r_backend_id_backend_fingerprin_key; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -63370,6 +63506,14 @@ ALTER TABLE ONLY public.object_storage_s3_credentials
 
 ALTER TABLE ONLY public.object_storage_s3_credentials
     ADD CONSTRAINT object_storage_s3_credentials_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: object_storage_timeline_acceptance object_storage_timeline_acceptance_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.object_storage_timeline_acceptance
+    ADD CONSTRAINT object_storage_timeline_acceptance_pkey PRIMARY KEY (singleton);
 
 
 --
@@ -70821,6 +70965,13 @@ CREATE INDEX edge_rule_hit_counts_app_bucket_idx ON public.edge_rule_hit_counts 
 
 
 --
+-- Name: edge_rules_account_enabled_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX edge_rules_account_enabled_idx ON public.edge_rules USING btree (account_id) WHERE enabled;
+
+
+--
 -- Name: edge_rules_app_id_enabled_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -72193,6 +72344,13 @@ CREATE INDEX instance_billing_intervals_range_idx ON public.instance_billing_int
 
 
 --
+-- Name: instance_quiet_pauses_ended_at; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX instance_quiet_pauses_ended_at ON public.instance_quiet_pauses USING btree (ended_at);
+
+
+--
 -- Name: instance_quiet_pauses_open; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -72557,6 +72715,13 @@ CREATE INDEX invocations_dispatching_due_idx ON public.invocations USING btree (
 
 
 --
+-- Name: invocations_drain_due_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX invocations_drain_due_idx ON public.invocations USING btree (due_at, id) WHERE ((state = 'pending'::text) AND ((source <> 'queue'::text) OR ((queue_name = ''::text) AND (queue_binding_id IS NULL))));
+
+
+--
 -- Name: invocations_due_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -72603,6 +72768,20 @@ CREATE INDEX invocations_platform_tenant_idx ON public.invocations USING btree (
 --
 
 CREATE INDEX invocations_queue_binding_scope_idx ON public.invocations USING btree (app_id, queue_binding_id, deployment_scope, state, created_at) WHERE ((source = 'queue'::text) AND (state = ANY (ARRAY['pending'::text, 'dispatching'::text, 'dead_letter'::text])));
+
+
+--
+-- Name: invocations_queue_lease_binding_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX invocations_queue_lease_binding_idx ON public.invocations USING btree (app_id, queue_binding_id, due_at, created_at, id) WHERE ((source = 'queue'::text) AND (state = 'pending'::text) AND (queue_binding_id IS NOT NULL));
+
+
+--
+-- Name: invocations_queue_lease_name_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX invocations_queue_lease_name_idx ON public.invocations USING btree (app_id, queue_name, due_at, created_at, id) WHERE ((source = 'queue'::text) AND (state = 'pending'::text) AND (queue_binding_id IS NULL));
 
 
 --
@@ -84718,6 +84897,14 @@ ALTER TABLE ONLY public.account_passwords
 
 
 --
+-- Name: account_spend_cap_holds account_spend_cap_holds_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.account_spend_cap_holds
+    ADD CONSTRAINT account_spend_cap_holds_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
 -- Name: account_spend_snapshot account_spend_snapshot_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -84819,6 +85006,14 @@ ALTER TABLE ONLY public.alert_rules
 
 ALTER TABLE ONLY public.alert_rules
     ADD CONSTRAINT alert_rules_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: alert_rules alert_rules_created_by_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.alert_rules
+    ADD CONSTRAINT alert_rules_created_by_account_id_fkey FOREIGN KEY (created_by_account_id) REFERENCES public.accounts(id) ON DELETE SET NULL;
 
 
 --
@@ -85918,6 +86113,14 @@ ALTER TABLE ONLY public.app_log_drains
 
 
 --
+-- Name: app_log_drains app_log_drains_created_by_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_log_drains
+    ADD CONSTRAINT app_log_drains_created_by_account_id_fkey FOREIGN KEY (created_by_account_id) REFERENCES public.accounts(id) ON DELETE SET NULL;
+
+
+--
 -- Name: app_mcp_readiness_policies app_mcp_readiness_policies_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -86427,6 +86630,14 @@ ALTER TABLE ONLY public.app_webhooks
 
 ALTER TABLE ONLY public.app_webhooks
     ADD CONSTRAINT app_webhooks_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: app_webhooks app_webhooks_created_by_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_webhooks
+    ADD CONSTRAINT app_webhooks_created_by_account_id_fkey FOREIGN KEY (created_by_account_id) REFERENCES public.accounts(id) ON DELETE SET NULL;
 
 
 --
@@ -92579,6 +92790,14 @@ ALTER TABLE ONLY public.magic_link_tokens
 
 ALTER TABLE ONLY public.mail_suppressions
     ADD CONSTRAINT mail_suppressions_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: managed_postgres_account_overage managed_postgres_account_overage_subject_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_postgres_account_overage
+    ADD CONSTRAINT managed_postgres_account_overage_subject_id_fkey FOREIGN KEY (subject_id) REFERENCES public.resource_namespaces(id) ON DELETE CASCADE;
 
 
 --

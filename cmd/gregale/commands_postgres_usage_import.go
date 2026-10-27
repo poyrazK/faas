@@ -13,6 +13,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/sessioncookie"
 )
 
 func cmdPostgresUsageImport(args []string) int {
@@ -94,7 +95,7 @@ func postgresAccountingClient(sessionPath string, apply bool) (*api.Client, erro
 	if value == "" || len(data) > 8192 {
 		return nil, fmt.Errorf("invalid operator session file")
 	}
-	cookie := &http.Cookie{Name: "faas_sid", Value: value, Path: "/"}
+	cookie := &http.Cookie{Name: sessioncookie.LegacyName, Value: value, Path: "/"}
 	if err := cookie.Valid(); err != nil {
 		return nil, fmt.Errorf("invalid operator session cookie")
 	}
@@ -107,7 +108,10 @@ func postgresAccountingClient(sessionPath string, apply bool) (*api.Client, erro
 		return nil, err
 	}
 	cookie.Secure = endpoint.Scheme == "https"
-	jar.SetCookies(endpoint, []*http.Cookie{cookie})
+	// Both names, so the session works before and after ADR-20261026112500.
+	hostCookie := *cookie
+	hostCookie.Name = sessioncookie.Name
+	jar.SetCookies(endpoint, []*http.Cookie{&hostCookie, cookie})
 	client := api.NewClient(endpoint.String(), "")
 	client.HTTPClient().Jar = jar
 	return client, nil
