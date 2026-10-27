@@ -169,30 +169,33 @@ func TestReadMemoryMax_ParsesPin(t *testing.T) {
 // the middle of an OOM kill, memory.current may have
 // dropped to 0 (the process is gone); memory.events.high
 // is the only post-kill signal.
-func TestReadMemoryHighOrCurrent_FallbackChain(t *testing.T) {
+func TestReadMemoryPeakOrCurrent_FallbackChain(t *testing.T) {
 	t.Parallel()
 	tmp := t.TempDir()
 	cases := []struct {
 		name        string
 		eventsFile  string // content of memory.events (optional)
+		peakFile    string // content of memory.peak (optional)
 		currentFile string // content of memory.current (optional)
 		want        uint64
 	}{
 		{
-			"high_field_present",
-			"low 0\nhigh 67108864\noom_kill 1\n", // high = 64 MiB
-			"",
+			"peak_preferred_over_current",
+			"low 0\nhigh 3\noom_kill 1\n", // high is a breach count, never bytes
+			"67108864\n",                  // peak = 64 MiB
+			"1048576\n",                   // current after the kill = 1 MiB
 			64 * 1024 * 1024,
 		},
 		{
-			"fallback_to_current_when_no_high",
-			"low 0\noom_kill 1\n", // no high field
-			"33554432\n",          // current = 32 MiB
+			"fallback_to_current_when_no_peak",
+			"low 0\nhigh 3\noom_kill 1\n",
+			"",
+			"33554432\n", // current = 32 MiB
 			32 * 1024 * 1024,
 		},
 		{
 			"neither_returns_zero",
-			"", "",
+			"", "", "",
 			0,
 		},
 	}
@@ -210,20 +213,79 @@ func TestReadMemoryHighOrCurrent_FallbackChain(t *testing.T) {
 					t.Fatalf("WriteFile memory.events: %v", err)
 				}
 			}
+			if tc.peakFile != "" {
+				if err := os.WriteFile(filepath.Join(leaf, "memory.peak"),
+					[]byte(tc.peakFile), 0o644); err != nil {
+					t.Fatalf("WriteFile memory.peak: %v", err)
+				}
+			}
 			if tc.currentFile != "" {
 				if err := os.WriteFile(filepath.Join(leaf, "memory.current"),
 					[]byte(tc.currentFile), 0o644); err != nil {
 					t.Fatalf("WriteFile memory.current: %v", err)
 				}
 			}
-			got, err := readMemoryHighOrCurrent(leaf)
+			got, err := readMemoryPeakOrCurrent(leaf)
 			if err != nil {
-				t.Fatalf("readMemoryHighOrCurrent: %v", err)
+				t.Fatalf("readMemoryPeakOrCurrent: %v", err)
 			}
 			if got != tc.want {
 				t.Errorf("got = %d, want %d", got, tc.want)
 			}
 		})
+	}
+}
+
+// TestWorkloadOOMWatch_StopReportsKillAfterExit pins the exit race: a kill
+// counted after the watch started is reported by stop even when the listener
+// never woke (a regular file never raises POLLPRI, so here only stop can see
+// it), exactly once, with the leaf's peak.
+func TestWorkloadOOMWatch_StopReportsKillAfterExit(t *testing.T) {
+	t.Parallel()
+	leaf := t.TempDir()
+	write := func(name, body string) {
+		t.Helper()
+		if err := os.WriteFile(filepath.Join(leaf, name), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("memory.events", "low 0\nhigh 0\noom_kill 2\n") // kills from an earlier run
+	var calls [][2]int
+	w := startWorkloadOOMWatch(leaf, 0, func(peakMB, planMB int) {
+		calls = append(calls, [2]int{peakMB, planMB})
+	}, nil)
+	write("memory.events", "low 0\nhigh 0\noom_kill 3\n")
+	write("memory.peak", fmt.Sprint(300<<20)+"\n")
+
+	if !w.stop() {
+		t.Fatal("stop() = false after an oom_kill increment")
+	}
+	if !w.stop() {
+		t.Fatal("second stop() = false")
+	}
+	if len(calls) != 1 || calls[0] != [2]int{300, 0} {
+		t.Fatalf("emits = %v, want one (300 MB peak, plan 0)", calls)
+	}
+}
+
+func TestWorkloadOOMWatch_NoKillNoReport(t *testing.T) {
+	t.Parallel()
+	leaf := t.TempDir()
+	if err := os.WriteFile(filepath.Join(leaf, "memory.events"), []byte("oom_kill 1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	w := startWorkloadOOMWatch(leaf, 256, func(int, int) {
+		t.Error("emit fired without a new oom_kill")
+	}, nil)
+	if w.stop() {
+		t.Fatal("stop() = true without a new oom_kill")
+	}
+	var nilWatch *workloadOOMWatch
+	if nilWatch.stop() {
+		t.Fatal("nil watch reported a kill")
+	}
+	if startWorkloadOOMWatch("", 0, func(int, int) {}, nil) != nil {
+		t.Fatal("an empty leaf must not start a watch")
 	}
 }
 

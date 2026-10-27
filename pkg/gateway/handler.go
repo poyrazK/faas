@@ -5098,9 +5098,11 @@ func (h *Handler) enforcePublicAuthBearer(w http.ResponseWriter, r *http.Request
 			"reason": reason,
 		})
 		rec.status = http.StatusUnauthorized
+		// RFC 6750 §3.1, and the same challenge the require_authn gate
+		// sends for an invalid key (issue #2707).
 		api.WriteProblem(w, api.NewProblem(http.StatusUnauthorized, api.CodeUnauthorized,
 			"Unauthorized", "the presented API key is not valid for this app").
-			WithHeader("WWW-Authenticate", `Bearer realm="apps"`))
+			WithHeader("WWW-Authenticate", `Bearer realm="apps", error="invalid_token"`))
 		h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
 		return false
 	}

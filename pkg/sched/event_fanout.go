@@ -33,7 +33,8 @@ const eventFanoutClaimBatch = 20
 const eventFanoutReleaseTimeout = 5 * time.Second
 
 // eventFanoutSafetyTick re-runs the fanout sweep when no event_published
-// wake arrives; a wake that lands while a sweep runs is coalesced away.
+// wake arrives; a wake that lands while a sweep runs asks the work pool for
+// one more sweep after it (workSpec.rerunCoalesced).
 const eventFanoutSafetyTick = 5 * time.Second
 
 type eventFanoutRouteError struct {
@@ -828,7 +829,7 @@ func (l *Loop) admitEventRecipient(ctx context.Context, store state.PublishedEve
 }
 
 func (l *Loop) observeEventRoutingHealth(ctx context.Context) {
-	if l.ops == nil {
+	if l.ops == nil || !l.eventRoutingHealthDue(l.eventFanoutNow()) {
 		return
 	}
 	if store, ok := l.engine.store.(state.EventRoutingHealthStore); ok {
@@ -921,4 +922,19 @@ func (l *Loop) observeEventRoutingPause(routing bool) {
 	} else {
 		l.log.Warn("sched: event routing paused: the events capability is switched off platform-wide")
 	}
+}
+
+// eventRoutingHealthInterval bounds how often a node reads routing health
+// (ADR-614 amendment 2026-10-27). The read aggregates every unsettled receipt
+// on the platform, and sweeps run every few seconds and on every publish.
+const eventRoutingHealthInterval = 15 * time.Second
+
+// eventRoutingHealthDue reports whether the routing health gauges are due a
+// refresh at now, and records the refresh when they are.
+func (l *Loop) eventRoutingHealthDue(now time.Time) bool {
+	if !l.eventRoutingHealthAt.IsZero() && now.Sub(l.eventRoutingHealthAt) < eventRoutingHealthInterval {
+		return false
+	}
+	l.eventRoutingHealthAt = now
+	return true
 }

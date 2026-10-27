@@ -97,7 +97,7 @@ func (m *Manager) CaptureEnvironmentQualification(ctx context.Context, frame sta
 	if !errors.Is(err, os.ErrNotExist) {
 		return proof, err
 	}
-	backing, err := m.qualificationSnapshotBacking(inst.Lease.Instance)
+	backing, err := m.qualificationSnapshotBacking(ctx, inst.Lease.Instance)
 	if err != nil {
 		return proof, err
 	}
@@ -193,10 +193,8 @@ func (j *nativeQualificationJournal) snapshotPhysical(ctx context.Context, incom
 	return physical, ctx.Err()
 }
 
-func (m *Manager) qualificationSnapshotBacking(instance string) (BackingIdentity, error) {
-	m.backingMu.Lock()
-	identity := m.instanceBacking[instance]
-	m.backingMu.Unlock()
+func (m *Manager) qualificationSnapshotBacking(ctx context.Context, instance string) (BackingIdentity, error) {
+	identity, _ := m.awaitInstanceBacking(ctx, instance)
 	if m.storage == nil || !identity.complete() {
 		return BackingIdentity{}, ErrSnapshotBackingUnverified
 	}

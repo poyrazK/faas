@@ -2,11 +2,13 @@ package sealmigrate_test
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"filippo.io/age"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/productemail"
 	"github.com/onebox-faas/faas/pkg/sealdomain"
 	"github.com/onebox-faas/faas/pkg/sealdomain/sealmigrate"
 	"github.com/onebox-faas/faas/pkg/secretbox"
@@ -62,5 +64,45 @@ func TestMigrateAccountIntegrations(t *testing.T) {
 	}
 	if ns, _, err := secretbox.OpenBytes(domain, f.rows[state.AccountSealedLinearConnection]["l2"].Sealed); err != nil || ns != api.IssueTrackerLinearOAuthNamespace {
 		t.Fatalf("Linear OAuth credential kept namespace %q, %v", ns, err)
+	}
+}
+
+// TestMigrateAccountProductEmail re-seals each product email value, keeping
+// its subscription binding, and refuses an envelope of another shape.
+func TestMigrateAccountProductEmail(t *testing.T) {
+	domain, fleet := mustIdentity(t), mustIdentity(t)
+	token := strings.Repeat("A", 43)
+	value := func(id string) []byte {
+		b, err := productemail.Seal(fleet, id, token)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return b
+	}
+	f := &accountValues{rows: map[string]map[string]state.AccountSealedValue{}}
+	f.put(state.AccountSealedValue{Kind: state.AccountSealedProductEmailGrant, ID: "s1", Sealed: value("s1")})
+	f.put(state.AccountSealedValue{Kind: state.AccountSealedProductEmailPause, ID: "s1", Sealed: value("evidence-s1")})
+	f.put(state.AccountSealedValue{Kind: state.AccountSealedProductEmailRecipient, ID: "d1", Sealed: value("evidence-d1")})
+	f.put(state.AccountSealedValue{Kind: state.AccountSealedProductEmailUnsubscribe, ID: "d1", Sealed: value("d1")})
+	other, err := secretbox.SealTo([]*age.X25519Recipient{fleet.Recipient()}, secretbox.Envelope{"MFA_SECRET": "JBSWY3DPEHPK3PXP"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.put(state.AccountSealedValue{Kind: state.AccountSealedProductEmailGrant, ID: "s2", Sealed: other})
+
+	report, err := sealmigrate.MigrateAccount(context.Background(), f, domain, []*age.X25519Identity{fleet})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := sealmigrate.MigrationReport{Domain: sealdomain.Account, Target: domain.Recipient().String(), Scanned: 5, Resealed: 4, Failed: 1}
+	if report != want {
+		t.Fatalf("report = %+v, want %+v", report, want)
+	}
+	grant := f.rows[state.AccountSealedProductEmailGrant]["s1"].Sealed
+	if _, err := productemail.Open([]*age.X25519Identity{fleet}, "s1", grant); err == nil {
+		t.Fatal("the fleet identity still opens the re-sealed grant")
+	}
+	if got, err := productemail.Open([]*age.X25519Identity{domain}, "s1", grant); err != nil || got != token {
+		t.Fatalf("re-sealed grant open = %q, %v; want its subscription binding kept", got, err)
 	}
 }

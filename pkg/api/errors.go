@@ -3065,12 +3065,18 @@ func ErrAuthRateLimited(retryAfterS int) *Problem {
 		WithDocs(docsBase + "/auth")
 }
 
+// DetailServerFailure is the detail of a 5xx problem whose cause is an
+// error the caller cannot act on. The error goes to the log, never into
+// the detail: text from a store, a provider or a decoder carries SQL,
+// constraint names, hostnames, socket and file paths
+// (scripts/ci/problemdetailcheck).
+const DetailServerFailure = "Gregale could not complete this request. Retry in a moment; if it keeps failing, contact support."
+
 // ErrInternal is the catch-all 500 envelope for handler-side failures
 // that aren't a deliberate refusal (use ErrCapacity for those) — DB
 // commit errors, partial state, unexpected plumbing. Pairs with
-// CodeInternal; the detail rides through verbatim because it surfaces
-// in the operator's browser console as the only breadcrumb for the
-// on-call engineer (the audit row carries the same text).
+// CodeInternal. The detail is fixed text, never an error's: log the
+// error and pass DetailServerFailure or a sentence of your own.
 func ErrInternal(detail string) *Problem {
 	return NewProblem(http.StatusInternalServerError, CodeInternal,
 		"Internal Error", detail)

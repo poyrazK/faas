@@ -233,6 +233,7 @@ func (m *MemStore) activateOrgResourceOwnershipLocked(org Org) Org {
 	}
 	m.objectOrgOwnedFrom[org.ID] = m.clock().UTC()
 	m.invalidateObjectUsageForAdoptionLocked(org)
+	m.creditObjectStorageAdoptionLocked(org)
 	return org
 }
 

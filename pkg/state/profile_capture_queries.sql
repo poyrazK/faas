@@ -3,6 +3,20 @@
 -- deleted app's captures are invisible before the cascade removes them.
 -- Lifecycle columns are merged into the public capture document on read.
 
+-- name: LockProfileCaptureAccount :exec
+-- Serializes the account-wide quota and storage checks across its apps.
+SELECT pg_advisory_xact_lock(hashtextextended('profile_captures:' || sqlc.arg(account_id)::text, 0));
+
+-- name: ProfileCaptureAccountStorage :one
+-- Stored bytes of the account's unexpired captures, and how many of its
+-- captures are still queued or running.
+SELECT
+  (SELECT coalesce(sum(octet_length(d.profile)), 0) FROM profile_capture_data d
+     JOIN profile_captures p ON p.id = d.capture_id
+   WHERE p.account_id = sqlc.arg(account_id)::text::uuid AND p.expires_at >= sqlc.arg(now)::timestamptz)::bigint AS stored_bytes,
+  (SELECT count(*) FROM profile_captures
+   WHERE account_id = sqlc.arg(account_id)::text::uuid AND status IN ('queued', 'capturing'))::bigint AS active;
+
 -- name: LockProfileCaptureApp :one
 SELECT id FROM apps WHERE id = sqlc.arg(app_id)::text::uuid AND account_id = sqlc.arg(account_id)::text::uuid AND status <> 'deleted' FOR UPDATE;
 

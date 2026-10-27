@@ -40,18 +40,18 @@ func (m *MemStore) profileCaptureLocked(accountID, appID, id string) (*memProfil
 	return row, true
 }
 
-func (m *MemStore) CreateProfileCapture(_ context.Context, accountID, appID string, c api.ProfileCapture) error {
-	return m.insertProfileCapture(accountID, appID, c, 0)
+func (m *MemStore) CreateProfileCapture(_ context.Context, accountID, appID string, c api.ProfileCapture, storageLimit int64) error {
+	return m.insertProfileCapture(accountID, appID, c, 0, storageLimit)
 }
 
-func (m *MemStore) QueueAutomaticProfileCapture(_ context.Context, accountID, appID string, c api.ProfileCapture, minInterval time.Duration) error {
+func (m *MemStore) QueueAutomaticProfileCapture(_ context.Context, accountID, appID string, c api.ProfileCapture, minInterval time.Duration, storageLimit int64) error {
 	if c.Trigger == "" || c.Trigger == api.ProfileCaptureTriggerManual || minInterval <= 0 {
 		return fmt.Errorf("automatic profile capture needs a trigger and minimum interval")
 	}
-	return m.insertProfileCapture(accountID, appID, c, minInterval)
+	return m.insertProfileCapture(accountID, appID, c, minInterval, storageLimit)
 }
 
-func (m *MemStore) insertProfileCapture(accountID, appID string, c api.ProfileCapture, automaticInterval time.Duration) error {
+func (m *MemStore) insertProfileCapture(accountID, appID string, c api.ProfileCapture, automaticInterval time.Duration, storageLimit int64) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if !m.profileInvestigationOwnedLocked(accountID, appID) {
@@ -75,6 +75,23 @@ func (m *MemStore) insertProfileCapture(accountID, appID string, c api.ProfileCa
 	}
 	if recent >= api.ProfileCaptureMaxPerAccountHour {
 		return ErrProfileCaptureQuota
+	}
+	var storedBytes, active int64
+	for _, row := range m.profileCaptures {
+		if row.accountID != accountID {
+			continue
+		}
+		if !row.capture.Done() {
+			active++
+		}
+		if !row.capture.ExpiresAt.Before(c.CreatedAt) {
+			for _, blob := range row.blobs {
+				storedBytes += int64(len(blob.Profile))
+			}
+		}
+	}
+	if err := checkProfileCaptureStorage(storedBytes, active, storageLimit); err != nil {
+		return err
 	}
 	if m.profileCaptures == nil {
 		m.profileCaptures = map[string]*memProfileCapture{}

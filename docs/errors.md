@@ -12,7 +12,8 @@ the caller supplies an occurrence URI.
 | `plan_*` | The current plan does not include a feature or quota | Check [plans](plans.md) and upgrade or reduce the request. |
 | `app_not_listening`, `app_loopback_bound` | The process did not expose a reachable listener | Bind `0.0.0.0:$PORT`; rerun `gregale deploy --dry-run`. |
 | `dep_install_failed` | Dependencies could not be installed | Pin the lockfile and inspect `gregale logs APP`. |
-| `app_startup_timeout`, `app_runtime_oom` | Readiness or memory budget was exceeded | Run `gregale doctor` and select a compatible profile. |
+| `app_startup_timeout` | Readiness budget was exceeded | Run `gregale doctor` and select a compatible profile. |
+| `app_runtime_oom` | The kernel killed the app for using more memory than its plan allows (the detail carries the peak). A deployment that is starting or rolling out fails and the previous release keeps serving; a live release is not failed and the instance is replaced | Lower the app's peak memory or move to a plan with at least the reported peak plus 8 MB. |
 | `app_startup_crash` | The app process exited before it became ready (the detail carries its last output lines) | Fix the error in that output; `gregale logs APP` has the full startup log. |
 | `execution_mode_conflict` | The app's startup behavior contradicts its `execution_mode` (a worker bound a port or exited, a job served; a worker with a push queue binding may listen for its deliveries) | Set `execution_mode` to match the app, or change its start command. |
 | `validation_failed` | A request or manifest is malformed | Correct the named field; no write is committed. |

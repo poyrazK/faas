@@ -877,20 +877,38 @@ units are rounded up independently to one millicent. Omit `pricing` while
 qualifying providers to keep charges disabled. The rate card is intentionally
 separate from upstream `cost_millicents`.
 
-Polar billing is independently default-off. In `shadow`, Gregale finalizes the
-completed UTC month and records the would-be charge without sending an event.
-In `live`, it sends one idempotent event per immutable billing record. The
-event quantity is the customer charge in millicents, held under the account's
-overage cap (see below). The uncapped total (`uncapped_millicents`) and the
-detailed storage, request, egress, and upstream-cost values remain in metadata
-and the local ledger. A durable provider receipt records pre-activation, shadow, or
-live handling; accounts that are not on a paid plan receive a permanent
-zero-quantity ineligible receipt. Changing modes, plans, or restarting cannot
-retroactively charge an older period. Configure the Polar meter to sum `charge_millicents` at USD
-`0.001` cents per unit, and follow the billing provider switch runbook for the
-required environment variables and catalog checks. Polar bills the month-close
-event in the provider cycle in which it is received; its metadata preserves the
-UTC usage month rather than implying a retroactive invoice adjustment.
+Polar billing is independently default-off. In `live`, Gregale bills object
+storage in steps inside its UTC month
+([ADR 20261027093220](adr/20261027093220-object-storage-billed-daily.md)):
+
+- **Daily steps.** At most once a day, each paid account's month-to-date
+  charge is priced and the part not yet billed is sent as one idempotent
+  event.
+- **Month close.** Once the month has ended, a last step brings the month up
+  to its finalized total.
+
+Steps are timestamped when they are sent, so Polar bills them in the
+subscription cycle in which the storage accrued. A customer whose subscription
+ends mid-month is billed up to their last daily step.
+
+- **Event quantity.** Each event's quantity is the step's charge in
+  millicents, held under the account's overage cap (see below). Metadata
+  carries the month and the cumulative charge.
+- **Month-close detail.** The month-close event also carries the uncapped
+  total (`uncapped_millicents`) and the detailed storage, request, egress, and
+  upstream-cost values, which the local ledger keeps too.
+- **Shadow.** In `shadow`, Gregale records the same steps and month-close
+  charges without sending events.
+- **Receipts.** A durable provider receipt records each month's pre-activation,
+  shadow, or live handling, with the cumulative charge.
+- **Plan changes.** An account that is not on a paid plan at month close gets
+  no new charge. Its receipt keeps what was billed while it was paid, or a
+  permanent zero-quantity ineligible receipt when nothing was. Changing modes,
+  plans, or restarting cannot retroactively charge an older period.
+
+Configure the Polar meter to sum `charge_millicents` at USD `0.001` cents per
+unit. Follow the billing provider switch runbook for the required environment
+variables and catalog checks.
 
 Before issuing PUT, an account-serialized transaction reserves the maximum
 authorized size for its bucket/key and one key slot. Reissuing the same size
@@ -1034,13 +1052,17 @@ bytes) is removed from each meter before pricing. The month uses the largest
 allowance among the plans active in it, and the finalized record copies the
 allowance it used. Plans include 1 / 10 / 50 / 200 GiB of stored bytes
 (Free / Hobby / Pro / Scale); request and egress allowances are zero until
-exporters report reads and writes separately (ADR-1430). A finalized
-month is billed only up to what the account's overage cap still allows after
+exporters report reads and writes separately (ADR-1430). Each step bills
+object storage only up to what the account's overage cap still allows after
 the month's billable compute and live egress, and capped usage is never billed
 later ([ADR-1320](adr/1320-object-storage-plan-allowances-ceilings-and-overage-cap.md)).
+Object storage already billed in the month keeps its place under the cap:
+meterd reserves it before billing compute and egress, and counts it toward
+the spend-cap hold that parks the account's workloads
+([ADR 20261027093220](adr/20261027093220-object-storage-billed-daily.md)).
 `apid` closes the prior UTC month once per deployment period and stores an
-immutable per-account billing snapshot. Polar can publish that
-snapshot idempotently when its independent rollout gate is live; other billing
+immutable per-account billing snapshot. Polar can bill the month's steps
+idempotently when its independent rollout gate is live; other billing
 providers retain the internal ledger only. A qualified provider usage exporter
 and live month-close verification remain required for paid launch; see
 [ADR-156](adr/156-object-storage-accounting.md). The future provider-neutral

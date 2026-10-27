@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/url"
 	"time"
 
@@ -20,7 +21,32 @@ var (
 	// ErrProfileCaptureRecent rejects an automatic capture inside the
 	// per-app minimum interval for its trigger.
 	ErrProfileCaptureRecent = errors.New("an automatic profile capture ran recently for this app")
+	// ErrProfileCaptureStorage matches a ProfileCaptureStorageError.
+	ErrProfileCaptureStorage = errors.New("profile capture storage is full for this account")
 )
+
+// ProfileCaptureStorageError rejects a capture that might not fit the
+// account's capture storage limit. Used counts the stored profiles plus
+// api.ProfileCaptureMaxProfileBytes for each capture still queued or running.
+type ProfileCaptureStorageError struct {
+	Limit, Used int64
+}
+
+func (e *ProfileCaptureStorageError) Error() string {
+	return fmt.Sprintf("%v: %d of %d bytes used", ErrProfileCaptureStorage, e.Used, e.Limit)
+}
+
+func (e *ProfileCaptureStorageError) Is(target error) bool { return target == ErrProfileCaptureStorage }
+
+// checkProfileCaptureStorage admits a capture when the account's stored and
+// reserved bytes leave room for one more capture of the largest size.
+func checkProfileCaptureStorage(storedBytes, active, limit int64) error {
+	used := storedBytes + active*api.ProfileCaptureMaxProfileBytes
+	if used+api.ProfileCaptureMaxProfileBytes > limit {
+		return &ProfileCaptureStorageError{Limit: limit, Used: used}
+	}
+	return nil
+}
 
 // ProfileCaptureBlob is one collector's unparsed pprof profile.
 type ProfileCaptureBlob struct {
@@ -44,7 +70,10 @@ type ClaimedProfileCapture struct {
 }
 
 type ProfileCaptureStore interface {
-	CreateProfileCapture(ctx context.Context, accountID, appID string, c api.ProfileCapture) error
+	// CreateProfileCapture queues a manual capture. storageLimit is the
+	// account plan's ProfilingLimits.CaptureStorageBytes; a capture that might
+	// not fit returns a *ProfileCaptureStorageError.
+	CreateProfileCapture(ctx context.Context, accountID, appID string, c api.ProfileCapture, storageLimit int64) error
 	GetProfileCapture(ctx context.Context, accountID, appID, id string) (api.ProfileCapture, error)
 	ListProfileCaptures(ctx context.Context, accountID, appID string) ([]api.ProfileCapture, error)
 	ProfileCaptureBlobs(ctx context.Context, accountID, appID, id string) ([]ProfileCaptureBlob, error)
@@ -76,9 +105,9 @@ type ProfileCaptureQueue interface {
 	// a capture still running announces it when it finishes.
 	StampProfileCaptureOOM(ctx context.Context, appID, instanceID string, oom ProfileCaptureOOM, since time.Time) (string, error)
 	// QueueAutomaticProfileCapture queues a platform-triggered capture under
-	// the same quota and single-active rules as CreateProfileCapture, plus a
-	// per-app minimum interval for c.Trigger.
-	QueueAutomaticProfileCapture(ctx context.Context, accountID, appID string, c api.ProfileCapture, minInterval time.Duration) error
+	// the same quota, storage and single-active rules as CreateProfileCapture,
+	// plus a per-app minimum interval for c.Trigger.
+	QueueAutomaticProfileCapture(ctx context.Context, accountID, appID string, c api.ProfileCapture, minInterval time.Duration, storageLimit int64) error
 }
 
 var (

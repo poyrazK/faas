@@ -333,6 +333,77 @@ func (x *IngestGuestSpansResponse) GetRetryAfterMs() int64 {
 	return 0
 }
 
+// IngestGuestLogsResponse reports how many log records from one export were
+// written and how many were dropped (over the per-export bound, without a
+// message, or otherwise invalid).
+type IngestGuestLogsResponse struct {
+	state           protoimpl.MessageState `protogen:"open.v1"`
+	Outcome         string                 `protobuf:"bytes,1,opt,name=outcome,proto3" json:"outcome,omitempty"`
+	AcceptedRecords int64                  `protobuf:"varint,2,opt,name=accepted_records,json=acceptedRecords,proto3" json:"accepted_records,omitempty"`
+	RejectedRecords int64                  `protobuf:"varint,3,opt,name=rejected_records,json=rejectedRecords,proto3" json:"rejected_records,omitempty"`
+	RetryAfterMs    int64                  `protobuf:"varint,4,opt,name=retry_after_ms,json=retryAfterMs,proto3" json:"retry_after_ms,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
+}
+
+func (x *IngestGuestLogsResponse) Reset() {
+	*x = IngestGuestLogsResponse{}
+	mi := &file_onebox_faas_apid_v1_spans_writer_proto_msgTypes[4]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *IngestGuestLogsResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*IngestGuestLogsResponse) ProtoMessage() {}
+
+func (x *IngestGuestLogsResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_onebox_faas_apid_v1_spans_writer_proto_msgTypes[4]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use IngestGuestLogsResponse.ProtoReflect.Descriptor instead.
+func (*IngestGuestLogsResponse) Descriptor() ([]byte, []int) {
+	return file_onebox_faas_apid_v1_spans_writer_proto_rawDescGZIP(), []int{4}
+}
+
+func (x *IngestGuestLogsResponse) GetOutcome() string {
+	if x != nil {
+		return x.Outcome
+	}
+	return ""
+}
+
+func (x *IngestGuestLogsResponse) GetAcceptedRecords() int64 {
+	if x != nil {
+		return x.AcceptedRecords
+	}
+	return 0
+}
+
+func (x *IngestGuestLogsResponse) GetRejectedRecords() int64 {
+	if x != nil {
+		return x.RejectedRecords
+	}
+	return 0
+}
+
+func (x *IngestGuestLogsResponse) GetRetryAfterMs() int64 {
+	if x != nil {
+		return x.RetryAfterMs
+	}
+	return 0
+}
+
 var File_onebox_faas_apid_v1_spans_writer_proto protoreflect.FileDescriptor
 
 const file_onebox_faas_apid_v1_spans_writer_proto_rawDesc = "" +
@@ -359,10 +430,16 @@ const file_onebox_faas_apid_v1_spans_writer_proto_rawDesc = "" +
 	"\aoutcome\x18\x01 \x01(\tR\aoutcome\x12%\n" +
 	"\x0eaccepted_spans\x18\x02 \x01(\x03R\racceptedSpans\x12%\n" +
 	"\x0erejected_spans\x18\x03 \x01(\x03R\rrejectedSpans\x12$\n" +
-	"\x0eretry_after_ms\x18\x04 \x01(\x03R\fretryAfterMs2\xf2\x01\n" +
+	"\x0eretry_after_ms\x18\x04 \x01(\x03R\fretryAfterMs\"\xaf\x01\n" +
+	"\x17IngestGuestLogsResponse\x12\x18\n" +
+	"\aoutcome\x18\x01 \x01(\tR\aoutcome\x12)\n" +
+	"\x10accepted_records\x18\x02 \x01(\x03R\x0facceptedRecords\x12)\n" +
+	"\x10rejected_records\x18\x03 \x01(\x03R\x0frejectedRecords\x12$\n" +
+	"\x0eretry_after_ms\x18\x04 \x01(\x03R\fretryAfterMs2\xe1\x02\n" +
 	"\vSpansWriter\x12r\n" +
 	"\x11WriteSpansSummary\x12-.onebox.faas.apid.v1.WriteSpansSummaryRequest\x1a..onebox.faas.apid.v1.WriteSpansSummaryResponse\x12o\n" +
-	"\x10IngestGuestSpans\x12,.onebox.faas.apid.v1.IngestGuestSpansRequest\x1a-.onebox.faas.apid.v1.IngestGuestSpansResponseBBZ@github.com/onebox-faas/faas/api/proto/onebox/faas/apid/v1;apidpbb\x06proto3"
+	"\x10IngestGuestSpans\x12,.onebox.faas.apid.v1.IngestGuestSpansRequest\x1a-.onebox.faas.apid.v1.IngestGuestSpansResponse\x12m\n" +
+	"\x0fIngestGuestLogs\x12,.onebox.faas.apid.v1.IngestGuestSpansRequest\x1a,.onebox.faas.apid.v1.IngestGuestLogsResponseBBZ@github.com/onebox-faas/faas/api/proto/onebox/faas/apid/v1;apidpbb\x06proto3"
 
 var (
 	file_onebox_faas_apid_v1_spans_writer_proto_rawDescOnce sync.Once
@@ -376,20 +453,23 @@ func file_onebox_faas_apid_v1_spans_writer_proto_rawDescGZIP() []byte {
 	return file_onebox_faas_apid_v1_spans_writer_proto_rawDescData
 }
 
-var file_onebox_faas_apid_v1_spans_writer_proto_msgTypes = make([]protoimpl.MessageInfo, 4)
+var file_onebox_faas_apid_v1_spans_writer_proto_msgTypes = make([]protoimpl.MessageInfo, 5)
 var file_onebox_faas_apid_v1_spans_writer_proto_goTypes = []any{
 	(*WriteSpansSummaryRequest)(nil),  // 0: onebox.faas.apid.v1.WriteSpansSummaryRequest
 	(*WriteSpansSummaryResponse)(nil), // 1: onebox.faas.apid.v1.WriteSpansSummaryResponse
 	(*IngestGuestSpansRequest)(nil),   // 2: onebox.faas.apid.v1.IngestGuestSpansRequest
 	(*IngestGuestSpansResponse)(nil),  // 3: onebox.faas.apid.v1.IngestGuestSpansResponse
+	(*IngestGuestLogsResponse)(nil),   // 4: onebox.faas.apid.v1.IngestGuestLogsResponse
 }
 var file_onebox_faas_apid_v1_spans_writer_proto_depIdxs = []int32{
 	0, // 0: onebox.faas.apid.v1.SpansWriter.WriteSpansSummary:input_type -> onebox.faas.apid.v1.WriteSpansSummaryRequest
 	2, // 1: onebox.faas.apid.v1.SpansWriter.IngestGuestSpans:input_type -> onebox.faas.apid.v1.IngestGuestSpansRequest
-	1, // 2: onebox.faas.apid.v1.SpansWriter.WriteSpansSummary:output_type -> onebox.faas.apid.v1.WriteSpansSummaryResponse
-	3, // 3: onebox.faas.apid.v1.SpansWriter.IngestGuestSpans:output_type -> onebox.faas.apid.v1.IngestGuestSpansResponse
-	2, // [2:4] is the sub-list for method output_type
-	0, // [0:2] is the sub-list for method input_type
+	2, // 2: onebox.faas.apid.v1.SpansWriter.IngestGuestLogs:input_type -> onebox.faas.apid.v1.IngestGuestSpansRequest
+	1, // 3: onebox.faas.apid.v1.SpansWriter.WriteSpansSummary:output_type -> onebox.faas.apid.v1.WriteSpansSummaryResponse
+	3, // 4: onebox.faas.apid.v1.SpansWriter.IngestGuestSpans:output_type -> onebox.faas.apid.v1.IngestGuestSpansResponse
+	4, // 5: onebox.faas.apid.v1.SpansWriter.IngestGuestLogs:output_type -> onebox.faas.apid.v1.IngestGuestLogsResponse
+	3, // [3:6] is the sub-list for method output_type
+	0, // [0:3] is the sub-list for method input_type
 	0, // [0:0] is the sub-list for extension type_name
 	0, // [0:0] is the sub-list for extension extendee
 	0, // [0:0] is the sub-list for field type_name
@@ -406,7 +486,7 @@ func file_onebox_faas_apid_v1_spans_writer_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_onebox_faas_apid_v1_spans_writer_proto_rawDesc), len(file_onebox_faas_apid_v1_spans_writer_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   4,
+			NumMessages:   5,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

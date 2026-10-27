@@ -196,8 +196,9 @@ func (s *server) listComputeNodes(w http.ResponseWriter, r *http.Request, acct s
 	includeInactive := r.URL.Query().Get("include_inactive") == "1"
 	rows, err := s.store.ListComputeNodes(r.Context(), includeInactive)
 	if err != nil {
+		logCustomerFailure(s.log, "List failed", err)
 		api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError, "internal",
-			"List failed", err.Error()))
+			"List failed", api.DetailServerFailure))
 		return
 	}
 	out := make([]computeNodeResponse, 0, len(rows))
@@ -231,8 +232,9 @@ func (s *server) createOrUpdateComputeNode(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	if err != nil {
+		logCustomerFailure(s.log, "Lookup failed", err)
 		api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError, "internal",
-			"Lookup failed", err.Error()))
+			"Lookup failed", api.DetailServerFailure))
 		return
 	}
 	row, err := s.store.UpsertComputeNodeFromOperator(r.Context(), node)
@@ -242,8 +244,9 @@ func (s *server) createOrUpdateComputeNode(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	if err != nil {
+		logCustomerFailure(s.log, "Upsert failed", err)
 		api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError, "internal",
-			"Upsert failed", err.Error()))
+			"Upsert failed", api.DetailServerFailure))
 		return
 	}
 	s.emitComputeNodeEnrollmentAudit(r, acct, row, reason, existed, p.DeferActivation)
@@ -447,7 +450,8 @@ func (s *server) hardDeleteRetiredComputeNode(w http.ResponseWriter, r *http.Req
 		api.WriteProblem(w, api.NewProblem(http.StatusConflict, "node_has_history", "Node has workload history", "hard deletion is limited to unused mistaken enrollments"))
 		return
 	} else if err != nil {
-		api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError, "internal", "Delete failed", err.Error()))
+		logCustomerFailure(s.log, "Delete failed", err)
+		api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError, "internal", "Delete failed", api.DetailServerFailure))
 		return
 	}
 	s.emitComputeNodeDeleteAudit(r, acct, row, reason)
