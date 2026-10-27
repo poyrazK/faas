@@ -736,7 +736,7 @@ export class DefaultService {
   /**
    * Get fire-now request state
    * Polling surface for the row that `POST /v1/crons/{id}/run`
-   * inserted (issue #791 PR-D / ADR-090 §Sub-decision 7).
+   * inserted (decision 7).
    *
    * @returns FireCronRequestResponse Current state of the fire-now request.
    * @throws ApiError

@@ -5,11 +5,11 @@
 import type { ConfigChangeReceipt } from './ConfigChangeReceipt.js';
 import type { SecretRuntimeReloadObservation } from './SecretRuntimeReloadObservation.js';
 /**
- * A sealed secret envelope: key name, sealed ciphertext (server can't read it), version, and timestamps. Scope is the env-scope the row belongs to (ADR-092 PR-B). Pre-PR-B callers see scope='default' echoed on every row.
+ * A sealed secret envelope: key name, sealed ciphertext (server can't read it), version, and timestamps. Scope is the env-scope the row belongs to. Older clients see scope='default' echoed on every row.
  */
 export type AppSecretResponse = {
   /**
-   * Present on writes: the config revision recorded and the config guard watching it (ADR-1451).
+   * Present on writes: the config revision recorded and the config guard watching it.
    */
   config_change?: ConfigChangeReceipt;
   key: string;
@@ -21,11 +21,11 @@ export type AppSecretResponse = {
   created_at: string;
   updated_at: string;
   /**
-   * age-1... recipient string of the host identity that sealed this row (ADR-089). Empty for rows sealed before migration 00166.
+   * age-1.. recipient string of the host identity that sealed this row. Empty for rows sealed before migration 00166.
    */
   kid?: string;
   /**
-   * 16-hex HMAC-SHA256(plaintext) keyed by the per-host host.hmac.key (ADR-117 PR-C). Empty for pre-PR-C rows. Same value across scopes = byte-identical plaintext.
+   * 16-hex HMAC-SHA256(plaintext) keyed by the per-host host.hmac.key. Empty for older rows. Same value across scopes = byte-identical plaintext.
    */
   value_hash?: string;
   /**

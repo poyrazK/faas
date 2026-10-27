@@ -19,7 +19,7 @@ T = TypeVar("T", bound="ScenarioCapturedQueueMessage")
 @_attrs_define
 class ScenarioCapturedQueueMessage:
     """A queue send, inbox message, delayed task or asynchronous invoke an enrolled app requested through the run-local
-    platform API. It was never enqueued (ADR-20261021090000, ADR-20261022082721).
+    platform API. It was never enqueued.
 
     """
 

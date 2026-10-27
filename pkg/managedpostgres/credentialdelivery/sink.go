@@ -27,6 +27,13 @@ type SecretStore interface {
 	DeleteManagedPostgresSecret(context.Context, string) error
 }
 
+// endpointRecorder is implemented by stores that keep each managed database's
+// non-secret endpoints, so the bridge resolver can open the database port to
+// bound apps on every plan (ADR-20261026150000).
+type endpointRecorder interface {
+	RecordManagedPostgresDatabaseEndpoint(ctx context.Context, databaseID, host string, port int) error
+}
+
 // Sink is the Gregale side of the provider-neutral
 // CredentialSink boundary. Plaintext exists only long enough to construct and
 // seal one connection URL; the app-secret store receives ciphertext plus
@@ -82,12 +89,29 @@ func (s *Sink) PublishSealed(ctx context.Context, binding managedpostgres.Bindin
 
 // SealCredential prepares an unpublished envelope. Only Put publishes to
 // app_secrets; cutover preparation persists the envelope in its staging table.
-func (s *Sink) SealCredential(_ context.Context, binding managedpostgres.Binding, material managedpostgres.CredentialMaterial) (managedpostgres.SealedCredential, error) {
+// Every credential passes here, so it also records the database's endpoint
+// host names (ADR-20261026150000); a failed record fails the seal, and the
+// caller's retry records it again.
+func (s *Sink) SealCredential(ctx context.Context, binding managedpostgres.Binding, material managedpostgres.CredentialMaterial) (managedpostgres.SealedCredential, error) {
 	var bound secretbox.Binding
 	if s.bind != nil {
 		bound = s.bind(binding.AccountID)
 	}
-	return SealBound(binding, material, s.recipient(), bound, s.hmacKey())
+	sealed, err := SealBound(binding, material, s.recipient(), bound, s.hmacKey())
+	if err != nil {
+		return managedpostgres.SealedCredential{}, err
+	}
+	if recorder, ok := s.store.(endpointRecorder); ok && binding.DatabaseID != "" {
+		for _, endpoint := range material.Endpoints {
+			if net.ParseIP(endpoint.Host) != nil {
+				continue
+			}
+			if err := recorder.RecordManagedPostgresDatabaseEndpoint(ctx, binding.DatabaseID, endpoint.Host, int(endpoint.Port)); err != nil {
+				return managedpostgres.SealedCredential{}, normalizeCredentialSinkError(err)
+			}
+		}
+	}
+	return sealed, nil
 }
 
 // Seal seals an unbound credential envelope.

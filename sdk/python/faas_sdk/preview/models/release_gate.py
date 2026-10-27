@@ -16,7 +16,7 @@ T = TypeVar("T", bound="ReleaseGate")
 
 @_attrs_define
 class ReleaseGate:
-    """One of an app's release gates (ADR-20261019071734)."""
+    """One of an app's release gates."""
 
     name: str
     kind: ReleaseGateKind

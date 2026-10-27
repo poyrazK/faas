@@ -34,8 +34,8 @@ class ProjectEnvironmentCloneResponse:
     """Destination-to-source references copied under the new catalog environment identity. Git source bindings,
     ownership, overrides and runtime receipts are not copied."""
     project_secrets_copied: int | Unset = UNSET
-    """Secrets the source environment shares with every service, copied to the new environment (ADR-1139). Values
-    are never returned."""
+    """Secrets the source environment shares with every service, copied to the new environment. Values are never
+    returned."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

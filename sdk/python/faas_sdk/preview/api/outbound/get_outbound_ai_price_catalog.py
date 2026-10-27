@@ -90,8 +90,8 @@ def sync_detailed(
 ) -> Response[OutboundAIPriceCatalogResponse | Problem]:
     """Read the built-in AI price catalog of one provider.
 
-     Requires MFA and read scope (ADR-994). The catalog prices the models an integration's own price list
-    does not name. Prices are the providers' list prices in US dollars, rounded up (ADR 20261019123822).
+     Requires MFA and read scope. The catalog prices the models an integration's own price list does not
+    name. Prices are the providers' list prices in US dollars, rounded up.
 
     Args:
         provider (GetOutboundAIPriceCatalogProvider):
@@ -125,8 +125,8 @@ def sync(
 ) -> OutboundAIPriceCatalogResponse | Problem | None:
     """Read the built-in AI price catalog of one provider.
 
-     Requires MFA and read scope (ADR-994). The catalog prices the models an integration's own price list
-    does not name. Prices are the providers' list prices in US dollars, rounded up (ADR 20261019123822).
+     Requires MFA and read scope. The catalog prices the models an integration's own price list does not
+    name. Prices are the providers' list prices in US dollars, rounded up.
 
     Args:
         provider (GetOutboundAIPriceCatalogProvider):
@@ -155,8 +155,8 @@ async def asyncio_detailed(
 ) -> Response[OutboundAIPriceCatalogResponse | Problem]:
     """Read the built-in AI price catalog of one provider.
 
-     Requires MFA and read scope (ADR-994). The catalog prices the models an integration's own price list
-    does not name. Prices are the providers' list prices in US dollars, rounded up (ADR 20261019123822).
+     Requires MFA and read scope. The catalog prices the models an integration's own price list does not
+    name. Prices are the providers' list prices in US dollars, rounded up.
 
     Args:
         provider (GetOutboundAIPriceCatalogProvider):
@@ -188,8 +188,8 @@ async def asyncio(
 ) -> OutboundAIPriceCatalogResponse | Problem | None:
     """Read the built-in AI price catalog of one provider.
 
-     Requires MFA and read scope (ADR-994). The catalog prices the models an integration's own price list
-    does not name. Prices are the providers' list prices in US dollars, rounded up (ADR 20261019123822).
+     Requires MFA and read scope. The catalog prices the models an integration's own price list does not
+    name. Prices are the providers' list prices in US dollars, rounded up.
 
     Args:
         provider (GetOutboundAIPriceCatalogProvider):

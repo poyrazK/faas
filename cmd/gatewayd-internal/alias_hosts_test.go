@@ -91,12 +91,12 @@ func (r *recordingScopedInvalidator) Lookup(context.Context, string) (gateway.Ap
 func TestOldHostEdgeRuleFenceHoldsTheCanonicalHost(t *testing.T) {
 	configureSplitDomains(t)
 	g := newGatewaydEdgeRules(nil, nil, nil, nil)
-	g.BeginConvergence("acct-a", []string{"shop.gregale.dev"}, 4)
-	if !g.Converging("shop.gregale.app", "acct-a") {
+	g.BeginConvergence("acct-a", "", []string{"shop.gregale.dev"}, 4)
+	if !g.Converging("shop.gregale.app", "acct-a", "") {
 		t.Fatal("an old-host rule mutation did not fence the canonical host")
 	}
-	g.EndConvergence("acct-a", []string{"shop.gregale.dev"}, 4)
-	if g.Converging("shop.gregale.app", "acct-a") {
+	g.EndConvergence("acct-a", "", []string{"shop.gregale.dev"}, 4)
+	if g.Converging("shop.gregale.app", "acct-a", "") {
 		t.Fatal("ending the mutation left the canonical host fenced")
 	}
 }

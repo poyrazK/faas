@@ -88,7 +88,7 @@ def sync_detailed(
 ) -> Response[OutboundCredentialKeyList | Problem]:
     """List an integration's extra provider keys.
 
-     Requires MFA and read scope (ADR-991). Values are write-only and never returned.
+     Requires MFA and read scope. Values are write-only and never returned.
 
     Args:
         integration (UUID):
@@ -119,7 +119,7 @@ def sync(
 ) -> OutboundCredentialKeyList | Problem | None:
     """List an integration's extra provider keys.
 
-     Requires MFA and read scope (ADR-991). Values are write-only and never returned.
+     Requires MFA and read scope. Values are write-only and never returned.
 
     Args:
         integration (UUID):
@@ -145,7 +145,7 @@ async def asyncio_detailed(
 ) -> Response[OutboundCredentialKeyList | Problem]:
     """List an integration's extra provider keys.
 
-     Requires MFA and read scope (ADR-991). Values are write-only and never returned.
+     Requires MFA and read scope. Values are write-only and never returned.
 
     Args:
         integration (UUID):
@@ -174,7 +174,7 @@ async def asyncio(
 ) -> OutboundCredentialKeyList | Problem | None:
     """List an integration's extra provider keys.
 
-     Requires MFA and read scope (ADR-991). Values are write-only and never returned.
+     Requires MFA and read scope. Values are write-only and never returned.
 
     Args:
         integration (UUID):

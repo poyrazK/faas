@@ -254,6 +254,16 @@ Step 1, quiet pause for function apps:
 5. Canary on one production node with the flag on, comparing resume
    latency, errors and CPU pressure against the other nodes; then on for
    every node.
+   (Amended 2026-10-26: before the canary, run the node with vmmd's
+   `quiet_pause_observe` instead. Observe mode runs the same pause pass,
+   pauses nothing, and records the pauses quiet pause would make:
+   `vmmd_quiet_pause_observed_total`, `vmmd_quiet_pause_observed_pause_seconds`,
+   `vmmd_quiet_pause_observed_mb_seconds_total{plan}` and
+   `vmmd_quiet_pause_observed_instances`. They measure the canary's
+   expected pauses and resumes, and the billable MB-seconds unbilled quiet
+   pause (ADR-20261023171905) would not bill, on real traffic instead of the
+   simulated trace. Probes, admission and the pause ledger see an observed
+   instance as running.)
 
 Step 2, frozen for function apps. Built behind schedd's `frozen_tier`
 switch, off by default (owner decision, 2026-10-13: build before the step 1

@@ -11,7 +11,7 @@ T = TypeVar("T", bound="RouteInsightFixRequest")
 
 @_attrs_define
 class RouteInsightFixRequest:
-    """Applies the fix an insight listed; refused when the fix changed since (ADR-20261020161310)."""
+    """Applies the fix an insight listed; refused when the fix changed since."""
 
     fix_id: str
     """The fix.id the insight lists now."""

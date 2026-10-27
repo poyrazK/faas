@@ -19,8 +19,8 @@ T = TypeVar("T", bound="OutboundAIBudgetAlert")
 
 @_attrs_define
 class OutboundAIBudgetAlert:
-    """The first settlement that reached a budget threshold in its period (ADR-991). limit and used are tokens for token
-    budgets and millicents for cost budgets.
+    """The first settlement that reached a budget threshold in its period. limit and used are tokens for token budgets and
+    millicents for cost budgets.
 
     """
 
@@ -29,14 +29,14 @@ class OutboundAIBudgetAlert:
     budget: OutboundAIBudgetAlertBudget
     app_id: None | UUID
     end_user: None | str
-    """The end user of a user_daily_tokens or user_daily_cost alert (ADR-995)."""
+    """The end user of a user_daily_tokens or user_daily_cost alert."""
     period_start: datetime.date
     threshold_percent: OutboundAIBudgetAlertThresholdPercent
     limit: int
     used: int
     crossed_at: datetime.datetime
     tag: None | str
-    """The tag of a tag_daily_cost alert (ADR-1438)."""
+    """The tag of a tag_daily_cost alert."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

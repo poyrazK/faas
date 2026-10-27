@@ -160,3 +160,37 @@ separate claim would not let customers tell the two apart there.
 than `default`, must update its trust policies to
 `app:<app_id>:env:<scope>`. Gregale is pre-GA, and the docs only ever showed
 the default scope.
+
+## Amendment 2026-10-27 — queue leases from production only
+
+Pull leases serve a queue's production binding only (the lease takes the
+unscoped binding), but the queue lease route accepted a `gregale:queues`
+token from any live instance of the app. A worker running a staging or
+preview deployment of the app, reviewed only for that stage, could therefore
+lease, settle and extend production messages, the cross-environment use the
+2026-10-25 amendment's `environment` claim exists to prevent.
+
+apid now accepts a queue token only when its `environment` claim, if present,
+and the scope of the instance's deployment are both the production lane:
+`production`, the default scope or no scope (`state.ProductionDeploymentScope`).
+Anything else is `401`. The deployment check also covers tokens minted before
+the claim existed. The workload path now also applies the per-account
+capability decision the API-key path applies (ADR-20261023115741).
+
+## Amendment 2026-10-27 — qualification candidates take no external action
+
+A held GitOps qualification candidate (ADR-568) cold-boots with its app's
+real identity, because the wake must name the app, deployment and account.
+Its code is not approved to act as the app (ADR-20261019152416: "no identity
+is minted for a held deployment"), but only qualification restores carried an
+empty identity: a cold-booted candidate could mint workload-identity tokens,
+call managed integrations through the outbound relay, and publish events to
+the account's bus, and the 2026-10-24 amendment extended that to its boot
+window. A security audit found it.
+
+- The booting record carries `qualification`, and a live instance its
+  `QualificationOnly`. `InstanceExternalActionIdentity` (tokens, relay,
+  events) and the rehearsal relay refuse both with
+  `ErrQualificationExternalActionDenied`; vmmd answers a token request with
+  `qualification_identity_unavailable`.
+- Read-only metadata keeps the ordinary `InstanceIdentity` path.

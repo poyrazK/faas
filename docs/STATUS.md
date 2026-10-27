@@ -7,6 +7,29 @@ does not mirror this list; customer-facing maturity belongs in the generated
 release or acceptance state changes, and keep older milestone notes clearly
 historical.
 
+## Crons GA blockers — 2026-10-26 (branch `fix/crons-ga-blockers`, not released)
+
+The 2026-10-26 crons GA review found four blockers; this branch fixes them
+([ADR-20261026201726](adr/20261026201726-cron-delivery-through-the-drain.md)):
+
+- HTTP cron fires and manual runs no longer wake the app or wait for it on
+  schedd's main loop. They queue a cron invocation that the invocation drain
+  delivers, so slow handlers cannot stall heartbeats, the reaper or other
+  tenants' crons. Plain HTTP crons keep one delivery attempt; manual runs
+  report their invocation's outcome and are capped at five active per cron.
+- `crons.schedule_anchor_at` restarts a schedule when it is edited, enabled
+  or unsuspended, so none of those fires the cron at once or replays passed
+  occurrences.
+- Command crons are scoped into the app-tasks preview (off in production).
+  Crons have a customer page, [docs/crons.md](crons.md).
+- Acceptance: `cmd/e2e/cron_e2e_test.go` (KVM-free, real apid, schedd and
+  gatewayd processes) proves a scheduled fire and a manual run reach the app
+  with the cron source header, and a visitor cannot forge that header.
+  PASS on the n2 test node on 2026-10-27 (76.6 s, revision a9e9c64e83; log
+  at `n2:/mnt/e2e-scratch/crons-ga/cron_e2e.log`). Unit and Postgres suites
+  for the cron, fire-now, drain and app-task paths pass; the five
+  `TestDrainSecurity*` failures are on main already.
+
 ## Release guards — 2026-10-26
 
 Production releases can be held back by:
@@ -28,19 +51,21 @@ Database-restoring rollbacks
 shipped in #5305 behind the preview `postgres-restore` flag. All of these are
 preview capabilities except rollback (GA).
 
-Evidence: an n2 metal drill on 2026-10-26
-(`cmd/e2e/release_guards_drill_metal_test.go`, branch
-`test/release-guards-drill`) covered:
+Evidence: the n2 metal drill `TestReleaseGuardsDrillMetal`
+(`cmd/e2e/release_guards_drill_metal_test.go`) passed 5/5 on 2026-10-27 on
+main `461fd086f8`, which includes the release-guard gap fixes (#5568) and the
+ADR-570 hosting-smoke fix (#5574). It covered:
 
-- a freeze refusing a release;
-- a canary gate abort in 18 s;
-- a post-release gate rollback in 85 s, followed by the after-rollback freeze;
-- a scheduled start, and a schedule blocked by a freeze;
-- an approval hold at 50%, self-approval refused, admin approval and rejection, with email notices.
+- a freeze refusing a release, an audited override, and a release after the lift;
+- a canary gate abort (`abort_release_gate`) in 47 s;
+- a post-release gate rollback in 58 s, followed by the after-rollback freeze;
+- an approval hold, admin approval to completion in 26 s, and a rejection, with email notices;
+- a scheduled start 11 s after its time, and a schedule blocked by a freeze.
 
-Leakcheck was clean. The drill ran on a pre-ADR-570 base. On current main,
-full-stack deploys on n2 fail ADR-570's `policy_unavailable` until the open
-gateway snapshot fix lands.
+Leakcheck was clean. An earlier run the same day, on a pre-ADR-570 base, also
+passed and also refused self-approval with `release_approval_self`. Runs on main
+before #5574 failed: the gateway refused imaged's hosting smoke of a
+`snapshotting` candidate with `policy_unavailable`.
 
 A release-tooling audit on 2026-10-26 closed these gaps (amendment 1 of the
 freeze and approval ADRs):

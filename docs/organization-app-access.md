@@ -15,6 +15,7 @@ query parameter cannot change that ownership.
 | Delete/restore an app | yes | yes | no | no | no |
 | Alert rules, log drains, webhooks and outbound bindings: read | yes | yes | yes | yes | no |
 | Alert rules, log drains and webhooks: create, change, delete; unbind an outbound integration | yes | yes | no | no | no |
+| App credentials (consumer keys, inbound-webhook secrets, issue ingest tokens, realtime endpoint auth and publisher/worker credentials, AI access tokens): list, rotate, revoke | yes | yes | no | no | no |
 
 Secret reads return metadata, never values. Billing members can use the safe
 organization app inventory and existing billing surfaces.
@@ -26,6 +27,14 @@ rules and notification channels stay the creator's: other members neither
 see them through the app nor bind them to its rules. Binding an outbound
 integration stays with the app's creator, whose provider credential it uses.
 See ADR-20261026151103.
+
+A company app's credentials keep working after the member who minted them
+leaves, so owners and admins list, rotate and revoke them whoever created the
+app: API consumer keys, inbound-webhook signing secrets, issue ingest tokens,
+the realtime endpoint's client authentication and its publisher and worker
+credentials, and AI gateway access tokens (issuing an AI access token stays
+with the creator, whose provider credential it spends). See
+ADR-20261026151103 amendment 1.
 
 Use an organization-bound API key when working on a teammate's app. Its scope
 must also permit the operation: a read key cannot deploy, even for an admin.

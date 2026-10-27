@@ -67,8 +67,7 @@ def sync_detailed(
     r"""Read the per-account egress allowlist extra budget.
 
      Returns the per-account additive budget on top of the
-    plan's `apps.egress_allowlist` cap (issue #679 / PR-B /
-    ADR-082). The plan cap (Pro 16 / Scale 64) is
+    plan's `apps.egress_allowlist` cap. The plan cap (Pro 16 / Scale 64) is
     authoritative for the default case; the additive budget
     lets admins raise one account's effective cap without
     changing the plan default for everyone. `extra=0`
@@ -100,8 +99,7 @@ def sync(
     r"""Read the per-account egress allowlist extra budget.
 
      Returns the per-account additive budget on top of the
-    plan's `apps.egress_allowlist` cap (issue #679 / PR-B /
-    ADR-082). The plan cap (Pro 16 / Scale 64) is
+    plan's `apps.egress_allowlist` cap. The plan cap (Pro 16 / Scale 64) is
     authoritative for the default case; the additive budget
     lets admins raise one account's effective cap without
     changing the plan default for everyone. `extra=0`
@@ -129,8 +127,7 @@ async def asyncio_detailed(
     r"""Read the per-account egress allowlist extra budget.
 
      Returns the per-account additive budget on top of the
-    plan's `apps.egress_allowlist` cap (issue #679 / PR-B /
-    ADR-082). The plan cap (Pro 16 / Scale 64) is
+    plan's `apps.egress_allowlist` cap. The plan cap (Pro 16 / Scale 64) is
     authoritative for the default case; the additive budget
     lets admins raise one account's effective cap without
     changing the plan default for everyone. `extra=0`
@@ -160,8 +157,7 @@ async def asyncio(
     r"""Read the per-account egress allowlist extra budget.
 
      Returns the per-account additive budget on top of the
-    plan's `apps.egress_allowlist` cap (issue #679 / PR-B /
-    ADR-082). The plan cap (Pro 16 / Scale 64) is
+    plan's `apps.egress_allowlist` cap. The plan cap (Pro 16 / Scale 64) is
     authoritative for the default case; the additive budget
     lets admins raise one account's effective cap without
     changing the plan default for everyone. `extra=0`

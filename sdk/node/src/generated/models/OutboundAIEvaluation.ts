@@ -6,7 +6,7 @@ import type { OutboundAIEvaluationItem } from './OutboundAIEvaluationItem.js';
 import type { OutboundAIEvaluationTargetStats } from './OutboundAIEvaluationTargetStats.js';
 import type { PutOutboundAIRouteCanaryRequest } from './PutOutboundAIRouteCanaryRequest.js';
 /**
- * An evaluation of a route target (ADR-1431). verdict is set when state is done, error_code when it is failed. items are returned only when one evaluation is read.
+ * An evaluation of a route target. verdict is set when state is done, error_code when it is failed. items are returned only when one evaluation is read.
  */
 export type OutboundAIEvaluation = {
   id: string;

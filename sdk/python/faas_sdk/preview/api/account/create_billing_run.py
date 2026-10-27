@@ -84,7 +84,7 @@ def sync_detailed(
     body: CreateBillingRunRequest,
     idempotency_key: str | Unset = UNSET,
 ) -> Response[BillingRunResponse | Problem]:
-    """Bill one ended month for every customer (ADR-1503).
+    """Bill one ended month for every customer.
 
      Starts a background run for one UTC calendar month that ended at least
     an hour ago. For every app consumer and platform tenant with billable
@@ -97,8 +97,8 @@ def sync_detailed(
 
     Args:
         idempotency_key (str | Unset):
-        body (CreateBillingRunRequest): A month-end billing run (ADR-1503). Omitted options bill
-            both sources, finalize, do not export, and hold consumers with completeness gaps.
+        body (CreateBillingRunRequest): A month-end billing run. Omitted options bill both
+            sources, finalize, do not export, and hold consumers with completeness gaps.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -126,7 +126,7 @@ def sync(
     body: CreateBillingRunRequest,
     idempotency_key: str | Unset = UNSET,
 ) -> BillingRunResponse | Problem | None:
-    """Bill one ended month for every customer (ADR-1503).
+    """Bill one ended month for every customer.
 
      Starts a background run for one UTC calendar month that ended at least
     an hour ago. For every app consumer and platform tenant with billable
@@ -139,8 +139,8 @@ def sync(
 
     Args:
         idempotency_key (str | Unset):
-        body (CreateBillingRunRequest): A month-end billing run (ADR-1503). Omitted options bill
-            both sources, finalize, do not export, and hold consumers with completeness gaps.
+        body (CreateBillingRunRequest): A month-end billing run. Omitted options bill both
+            sources, finalize, do not export, and hold consumers with completeness gaps.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -163,7 +163,7 @@ async def asyncio_detailed(
     body: CreateBillingRunRequest,
     idempotency_key: str | Unset = UNSET,
 ) -> Response[BillingRunResponse | Problem]:
-    """Bill one ended month for every customer (ADR-1503).
+    """Bill one ended month for every customer.
 
      Starts a background run for one UTC calendar month that ended at least
     an hour ago. For every app consumer and platform tenant with billable
@@ -176,8 +176,8 @@ async def asyncio_detailed(
 
     Args:
         idempotency_key (str | Unset):
-        body (CreateBillingRunRequest): A month-end billing run (ADR-1503). Omitted options bill
-            both sources, finalize, do not export, and hold consumers with completeness gaps.
+        body (CreateBillingRunRequest): A month-end billing run. Omitted options bill both
+            sources, finalize, do not export, and hold consumers with completeness gaps.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -203,7 +203,7 @@ async def asyncio(
     body: CreateBillingRunRequest,
     idempotency_key: str | Unset = UNSET,
 ) -> BillingRunResponse | Problem | None:
-    """Bill one ended month for every customer (ADR-1503).
+    """Bill one ended month for every customer.
 
      Starts a background run for one UTC calendar month that ended at least
     an hour ago. For every app consumer and platform tenant with billable
@@ -216,8 +216,8 @@ async def asyncio(
 
     Args:
         idempotency_key (str | Unset):
-        body (CreateBillingRunRequest): A month-end billing run (ADR-1503). Omitted options bill
-            both sources, finalize, do not export, and hold consumers with completeness gaps.
+        body (CreateBillingRunRequest): A month-end billing run. Omitted options bill both
+            sources, finalize, do not export, and hold consumers with completeness gaps.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

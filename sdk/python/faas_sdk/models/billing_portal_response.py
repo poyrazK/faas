@@ -17,8 +17,8 @@ T = TypeVar("T", bound="BillingPortalResponse")
 
 @_attrs_define
 class BillingPortalResponse:
-    """Provider-authenticated or operator-configured billing portal URL (issue #253) plus the
-    card-on-file summary (issue #242). The url field is omitted
+    """Provider-authenticated or operator-configured billing portal URL plus the
+    card-on-file summary. The url field is omitted
     when neither a provider session nor FAAS_BILLING_PORTAL_URL is
     available — that is the "absent" sentinel; the CLI branches on it
     to print a friendly hint instead of opening the browser to "". The payment_method
@@ -30,7 +30,7 @@ class BillingPortalResponse:
     url: None | str | Unset = UNSET
     """Short-lived provider session URL, or substituted operator URL when no provider session is available."""
     payment_method: PaymentMethodSummary | Unset = UNSET
-    """Card-on-file summary (issue #242). Provider-agnostic shape —
+    """Card-on-file summary. Provider-agnostic shape —
     the same wire shape is returned whether the operator runs
     Stripe or Paddle. brand is the lowercase network label
     ("visa", "mastercard", "amex"); last4 is the last-4 of the

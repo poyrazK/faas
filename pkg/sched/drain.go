@@ -1412,8 +1412,13 @@ func (d *Drain) invocationAttemptBudget(ctx context.Context, inv state.Invocatio
 
 // invocationRetryDelay applies the per-row exponential backoff curve when
 // supplied and preserves the drain's configured fixed delay as the producer
-// default for rows without an override.
+// default for rows without an override. A plain HTTP cron fire makes one
+// delivery attempt (ADR-20261026201726): zero ends it as failed rather than
+// dead-lettered, and the next schedule boundary is its retry.
 func (d *Drain) invocationRetryDelay(inv state.Invocation) time.Duration {
+	if cronSingleAttempt(inv) {
+		return 0
+	}
 	if delay := inv.RetryPolicy().Backoff(inv.Attempts); delay > 0 {
 		return delay
 	}

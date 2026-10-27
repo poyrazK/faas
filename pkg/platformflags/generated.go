@@ -71,6 +71,9 @@ var consumerAttributes = map[string][]Attribute{
 	"schedd":            {AttributePlan, AttributeOrg},
 	"githubd":           nil,
 	"gatewayd-internal": nil,
+	// vmmd decides events for an in-guest publish from the app's resource
+	// account and organization (ADR-20261027125625).
+	"vmmd": {AttributePlan, AttributeOrg},
 	// meterd reads the account and app of a firing alert (ADR-20261024222102).
 	"meterd": {AttributePlan, AttributeOrg},
 }

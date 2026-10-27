@@ -33,15 +33,15 @@ func sealMCPPagerDutyKey(_ context.Context, value string) ([]byte, *api.Problem)
 	return sealed, nil
 }
 
+// sealMCPPagerDutyWebhookSecret seals a PagerDuty acknowledgement signing
+// secret, an account value apid opens to verify PagerDuty's webhooks (ADR
+// 20261022111812).
 func sealMCPPagerDutyWebhookSecret(_ context.Context, value string) ([]byte, *api.Problem) {
-	if setSecretRecipient == nil {
+	recipients, err := accountRecipients(hostSecretRecipient())
+	if err != nil {
 		return nil, api.ErrCapacity("host age recipient not loaded")
 	}
-	recipient := setSecretRecipient()
-	if recipient == nil {
-		return nil, api.ErrCapacity("host age recipient not loaded")
-	}
-	sealed, err := secretbox.SealBytes(recipient, api.MCPReadinessPagerDutyWebhookSecretNamespace, []byte(value), api.MCPReadinessPagerDutyWebhookSecretMaxBytes)
+	sealed, err := secretbox.SealBytesTo(recipients, api.MCPReadinessPagerDutyWebhookSecretNamespace, []byte(value), api.MCPReadinessPagerDutyWebhookSecretMaxBytes)
 	if err != nil {
 		return nil, api.ErrCapacity("could not seal PagerDuty webhook signing secret")
 	}

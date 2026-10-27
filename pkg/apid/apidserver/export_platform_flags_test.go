@@ -183,3 +183,9 @@ func (r *server) TemplateNames(acct state.Account) []string {
 	}
 	return names
 }
+
+// EventsPausedProblem is the events-flag refusal the platform-tenant publish
+// route applies (ADR-20261027125625).
+func (r *server) EventsPausedProblem(acct state.Account, app state.App) *api.Problem {
+	return r.eventsPausedProblem(acct, app)
+}

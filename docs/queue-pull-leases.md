@@ -91,7 +91,9 @@ separately in `succeeded` and `failed`.
   for audience `gregale:queues` from the guest's loopback token endpoint. No
   secret is stored in the image, and the platform records which instance
   holds each lease, so a worker that is mid-message is not the one stopped
-  when the pool scales in.
+  when the pool scales in. Only a worker running a production deployment can
+  lease with its token: a staging or preview deployment of the same app gets
+  `401`, so code reviewed only for a stage never touches production messages.
 - **From anywhere else:** an API key with the `queues:consume` scope
   (`deploy:write` and `admin` keys also work).
 

@@ -1069,19 +1069,32 @@ func watchInvalidations(ctx context.Context, pool *pgxpool.Pool, inv invalidator
 	if subscribed != nil {
 		close(subscribed)
 	}
+	gatewayNode := ""
+	if len(nodeName) > 0 {
+		gatewayNode = strings.TrimSpace(nodeName[0])
+	}
+	// A named gateway stamps its edge-rule listener's liveness from this loop
+	// (ADR-091 amendment 2026-10-27), so a loop that stops draining
+	// notifications also stops vouching for this node in apid's convergence
+	// barrier.
+	var heartbeat <-chan time.Time
+	if gatewayNode != "" {
+		touchEdgeListenerHeartbeat(ctx, pool, gatewayNode, log)
+		ticker := time.NewTicker(state.EdgeListenerHeartbeatInterval)
+		defer ticker.Stop()
+		heartbeat = ticker.C
+	}
 	// Reconnect wrapper owns its own cancel via the deferred goroutine.
 	for {
 		select {
 		case <-ctx.Done():
 			return
+		case <-heartbeat:
+			touchEdgeListenerHeartbeat(ctx, pool, gatewayNode, log)
 		case n, ok := <-notif:
 			if !ok {
 				// Defensive — wrapper keeps open until ctx cancels.
 				return
-			}
-			gatewayNode := ""
-			if len(nodeName) > 0 {
-				gatewayNode = strings.TrimSpace(nodeName[0])
 			}
 			if n.Channel == db.NotifyDeploymentRouteChanged {
 				payload, applied := handleDeploymentRouteInvalidation(ctx, inv, n.Payload, log)
@@ -1091,6 +1104,7 @@ func watchInvalidations(ctx context.Context, pool *pgxpool.Pool, inv invalidator
 				continue
 			}
 			handleInvalidation(ctx, inv, n, log)
+			requestPublicRoutingRefresh(inv, n)
 			if n.Channel == db.NotifyEdgeRuleChanged && gatewayNode != "" {
 				ackEdgeRuleInvalidation(ctx, pool, n.Payload, gatewayNode, log)
 			}
@@ -1119,6 +1133,10 @@ func handleDeploymentRouteInvalidation(ctx context.Context, inv invalidator, raw
 		log.Warn("gatewayd: refresh deployment route weights failed", "app", payload.AppID, "generation", payload.Generation, "err", err)
 		return payload, false
 	}
+	if err := refreshPublicRoutingForRoute(ctx, inv, payload.AppID); err != nil {
+		log.Warn("gatewayd: refresh deployment route routing view failed", "app", payload.AppID, "generation", payload.Generation, "err", err)
+		return payload, false
+	}
 	return payload, true
 }
 
@@ -1129,6 +1147,15 @@ func ackDeploymentRouteInvalidation(ctx context.Context, pool *pgxpool.Pool, gen
 	}
 	if err := db.Notify(ctx, pool, db.NotifyDeploymentRouteAck, string(body)); err != nil {
 		log.Warn("gatewayd: acknowledge deployment route generation", "generation", generation, "node", node, "err", err)
+	}
+}
+
+func touchEdgeListenerHeartbeat(ctx context.Context, pool *pgxpool.Pool, node string, log *slog.Logger) {
+	// Short: the write runs on the notification loop it vouches for.
+	touchCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	if err := state.NewPgStore(pool).TouchEdgeListenerHeartbeat(touchCtx, node); err != nil {
+		log.Warn("gatewayd: edge listener heartbeat", "node", node, "err", err)
 	}
 }
 
@@ -1527,14 +1554,18 @@ func handleInvalidation(ctx context.Context, inv invalidator, n db.Notification,
 		// correct.
 		payload, parseErr := db.ParseEdgeRuleChangedPayload(n.Payload)
 		if parseErr == nil && payload.Generation > 0 && payload.Phase == "prepare" {
-			if converger, ok := inv.(interface{ BeginEdgeRuleConvergence(string, []string, int64) }); ok {
-				converger.BeginEdgeRuleConvergence(payload.AccountID, payload.MatchHosts, payload.Generation)
+			if converger, ok := inv.(interface {
+				BeginEdgeRuleConvergence(string, string, []string, int64)
+			}); ok {
+				converger.BeginEdgeRuleConvergence(payload.AccountID, payload.AppID, payload.MatchHosts, payload.Generation)
 			}
 			return
 		}
 		if parseErr == nil && payload.Generation > 0 && payload.Phase == "abort" {
-			if converger, ok := inv.(interface{ EndEdgeRuleConvergence(string, []string, int64) }); ok {
-				converger.EndEdgeRuleConvergence(payload.AccountID, payload.MatchHosts, payload.Generation)
+			if converger, ok := inv.(interface {
+				EndEdgeRuleConvergence(string, string, []string, int64)
+			}); ok {
+				converger.EndEdgeRuleConvergence(payload.AccountID, payload.AppID, payload.MatchHosts, payload.Generation)
 			}
 			return
 		}
@@ -1553,11 +1584,11 @@ func handleInvalidation(ctx context.Context, inv invalidator, n db.Notification,
 		}
 		if parseErr == nil && payload.Generation > 0 && payload.Phase == "apply" {
 			if converger, ok := inv.(interface {
-				EndEdgeRuleConvergence(string, []string, int64)
+				EndEdgeRuleConvergence(string, string, []string, int64)
 				SetEdgeRuleLoadedGeneration(int64)
 			}); ok {
 				converger.SetEdgeRuleLoadedGeneration(payload.Generation)
-				converger.EndEdgeRuleConvergence(payload.AccountID, payload.MatchHosts, payload.Generation)
+				converger.EndEdgeRuleConvergence(payload.AccountID, payload.AppID, payload.MatchHosts, payload.Generation)
 			}
 		}
 	case db.NotifyTenantSurfaceChanged:

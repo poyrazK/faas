@@ -558,6 +558,10 @@ type server struct {
 	// from it. Wired via WithDataPlacement from
 	// cmd/apid/main.go::dataPlacementEnabledFromEnv.
 	dataPlacementEnabled bool
+	// egressCircuitEnforced mirrors FAAS_EGRESS_CIRCUIT_BREAKER, the switch
+	// schedd and vmmd enforce egress circuits with (ADR-570). Off, apid
+	// refuses opting an upstream in rather than storing an unenforced breaker.
+	egressCircuitEnforced bool
 	// workflowRuntimeEnabled mirrors the schedd workflow dispatcher gate.
 	// The create-run handler rejects before persistence while the runtime is
 	// disabled, so customers never receive a permanently pending run.
@@ -993,6 +997,13 @@ func (s *server) WithEventsPlatform(p *events.Platform) *server {
 // cmd/apid/main.go::dataPlacementEnabledFromEnv. Mirrors the
 // WithBillingProvider / WithOpsMetrics chain-method style so
 // existing positional call sites in tests don't need editing.
+// WithEgressCircuitEnforcement records whether the platform enforces egress
+// circuit breakers (FAAS_EGRESS_CIRCUIT_BREAKER on schedd and vmmd).
+func (s *server) WithEgressCircuitEnforcement(enabled bool) *server {
+	s.egressCircuitEnforced = enabled
+	return s
+}
+
 func (s *server) WithDataPlacement(enabled bool) *server {
 	s.dataPlacementEnabled = enabled
 	if s.runtimeConfig == nil {
@@ -2810,6 +2821,7 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/deployments/{id}/audit", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listDeploymentAudit))))
 	readiness := mcpreadiness.New(s.store, s.mcpReadinessPreview, s.authMw)
 	readiness.Identities = hostIdentitiesForUnseal
+	readiness.AccountIdentities = accountIdentitiesFor
 	readiness.FallbackURL = resolveAndCheckEgress
 	readiness.FallbackSeal = sealMCPFallbackSecret
 	readiness.PagerDutySeal = sealMCPPagerDutyKey
@@ -4826,6 +4838,9 @@ func (s *server) handler() http.Handler {
 		// faster than the spec §11 10/min/IP budget.
 		CountStatuses: []int{http.StatusUnauthorized, http.StatusGone},
 	}, http.HandlerFunc(auth.verify)))
+	mux.Handle("POST /auth/verify", s.dashboardAuthChain(middleware.AuthLimitConfig{
+		CountStatuses: []int{http.StatusUnauthorized, http.StatusGone},
+	}, s.fromTrustedOrigin(http.HandlerFunc(auth.verifyConfirmed))))
 	mux.Handle("GET /v1/auth/verify-email", s.dashboardAuthChain(middleware.AuthLimitConfig{
 		CountStatuses: []int{middleware.CountEveryAttempt, http.StatusGone},
 	}, http.HandlerFunc(s.verifyEmail)))
@@ -4846,7 +4861,10 @@ func (s *server) handler() http.Handler {
 	mux.Handle("POST /v1/auth/signup/magic-link", s.dashboardAuthChain(middleware.AuthLimitConfig{
 		CountStatuses: []int{middleware.CountEveryAttempt},
 	}, http.HandlerFunc(s.postV1AuthSignupMagicLink)))
-	mux.Handle("POST /logout", s.dashboardChain(http.HandlerFunc(auth.logout)))
+	// A logout must come from Gregale itself: a sibling app host could
+	// otherwise post it to drop the __Host- session and leave a legacy
+	// faas_sid it planted to be read next (security audit 2026-10-27).
+	mux.Handle("POST /logout", s.dashboardChain(s.fromTrustedOrigin(http.HandlerFunc(auth.logout))))
 	// /oauth/callback is the GitHub App install redirect target
 	// (review finding #1+#2 closure for the M7.5 OAuth path).
 	// Behind sessionAuth so the bind row is anchored to the

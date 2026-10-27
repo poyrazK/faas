@@ -231,3 +231,48 @@ func TestServicePolicyPinnerPostgresScopedNamespaces(t *testing.T) {
 		t.Fatalf("test reached production fallback: %+v %v", noFallback, err)
 	}
 }
+
+// ADR-20261026170512 on the gateway's production path: the committed view
+// carries each app's service name, so a declared billing_api binding, a
+// caller allowlisted by service name and a PR sibling all match billing-api.
+func TestServicePolicyPinnerPostgresUsesServiceDNSNames(t *testing.T) {
+	pool := pgtest.OpenMigrated(t)
+	store := state.NewPgStore(pool)
+	account, err := store.CreateAccount(t.Context(), "snapshot-dns@test.local", api.PlanPro)
+	if err != nil {
+		t.Fatal(err)
+	}
+	project, err := store.CreateProject(t.Context(), state.Project{AccountID: account.ID, Slug: "snapshot-dns"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	expires := time.Now().Add(time.Hour)
+	callers := []string{"web-ui"}
+	bindings := []api.AppServiceBinding{{Binding: api.ServiceBindingEnvKey("billing_api"), Service: "billing_api"}}
+	create := func(slug, parent, workload string, pr int, manifest state.AppManifest) state.App {
+		t.Helper()
+		app, err := store.CreateApp(t.Context(), state.App{AccountID: account.ID, ProjectID: project.ID, Slug: slug,
+			Type: state.AppTypeApp, RAMMB: 128, WorkloadName: workload, PreviewOfSlug: parent, PreviewPrNumber: pr,
+			PreviewPrState: state.PreviewPrStateOpen, PreviewExpiresAt: &expires, Manifest: manifest})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return app
+	}
+	// Project-prefixed slugs, so no slug can stand in for the service name.
+	target := create("snapshot-dns-billing", "", "billing_api", 0, state.AppManifest{AllowedServiceCallers: &callers})
+	callerManifest := state.AppManifest{ServiceBindingPolicy: api.ServiceBindingPolicyDeclared, ServiceBindings: bindings}
+	caller := create("snapshot-dns-web", "", "Web_UI", 0, callerManifest)
+	previewCaller := create("snapshot-dns-pr-web", caller.Slug, "Web_UI", 9, callerManifest)
+	previewTarget := create("snapshot-dns-pr-billing", target.Slug, "billing_api", 9, state.AppManifest{AllowedServiceCallers: &callers})
+
+	pin := newServicePolicyPinner(store)
+	production, err := pin(t.Context(), caller.ID, "billing-api", false)
+	if err != nil || !production.Found || production.Target.AppID != target.ID || production.AuthorizationError != nil {
+		t.Fatalf("Web_UI -> billing-api = %+v %v; want billing_api, declared and allowlisted", production, err)
+	}
+	sibling, err := pin(t.Context(), previewCaller.ID, "billing-api", false)
+	if err != nil || sibling.Target.AppID != previewTarget.ID || !sibling.Target.PreviewScoped || sibling.AuthorizationError != nil {
+		t.Fatalf("PR 9 Web_UI -> billing-api = %+v %v; want PR 9's billing_api", sibling, err)
+	}
+}

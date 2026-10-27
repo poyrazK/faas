@@ -3,7 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * One service key bound to the database a project apply provides (ADR-20261025111824).
+ * One service key bound to the database a project apply provides.
  */
 export type PlanManagedBinding = {
   workload: string;

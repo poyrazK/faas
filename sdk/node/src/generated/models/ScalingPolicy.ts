@@ -5,23 +5,23 @@
 import type { ScalingSchedule } from './ScalingSchedule.js';
 import type { ScalingTarget } from './ScalingTarget.js';
 /**
- * Per-app autoscaling configuration (issue #462 / ADR-058). Mirrors the on-disk jsonb column `apps.scaling_policy`. Empty values map to the engine default (the apid gate is load-bearing for the floor / ceiling, not the encoder). PR-A persists the DTO; PR-C wires the engine; PR-D carves out the worker-class branch.
+ * Per-app autoscaling configuration. Mirrors the on-disk jsonb column `apps.scaling_policy`. Empty values map to the engine default (the API gate is load-bearing for the floor / ceiling, not the encoder).
  */
 export type ScalingPolicy = {
   /**
-   * Per-app cold-wake floor. 0 = scale to zero (default). Hobby+ unlocked at PR-A (was Pro/Scale pre-#462). Free → 403 plan_min_instances_not_allowed.
+   * Per-app cold-wake floor. 0 = scale to zero (default). Available on Hobby and above. Free → 403 plan_min_instances_not_allowed.
    */
   min_instances?: number;
   /**
-   * Per-app ceiling on live instances. Must be in [min_instances, plan.MaxConcurrency]. Hobby+ unlocked at PR-A. Free → 403 plan_max_instances_not_allowed. 0 = use plan max_concurrency.
+   * Per-app ceiling on live instances. Must be in [min_instances, plan.MaxConcurrency]. Available on Hobby and above. Free → 403 plan_max_instances_not_allowed. 0 = use plan max_concurrency.
    */
   max_instances?: number;
   /**
-   * Single-signal form, superseded by `targets` (ADR-194) and still accepted: it is read as a one-element list. Closed metric set: rps | cpu | concurrent_requests | queue_depth. queue_depth is a per-worker backlog budget and is valid for job/worker apps. Empty/null = engine falls back to the legacy autoscale_target_rps / autoscale_target_cpu_pct columns. Worker-class apps reject concurrent_requests with 422 scaling_target_incompatible_with_workload_class (PR-D carve-out). Mutually exclusive with `targets` — setting both is 422.
+   * Single-signal form, superseded by `targets` and still accepted: it is read as a one-element list. Closed metric set: rps | cpu | concurrent_requests | queue_depth. queue_depth is a per-worker backlog budget and is valid for job/worker apps. Empty/null = engine falls back to the legacy autoscale_target_rps / autoscale_target_cpu_pct columns. Worker-class apps reject concurrent_requests with 422 scaling_target_incompatible_with_workload_class (carve-out). Mutually exclusive with `targets` — setting both is 422.
    */
   target?: (null | ScalingTarget);
   /**
-   * Multi-signal autoscaling (ADR-194). Each entry states how much load ONE instance should carry on that metric; the platform evaluates every entry independently and provisions for the largest resulting instance count. The combination rule, the windowing and the cooldowns are platform policy and are not configurable per metric — declaring the signals is the whole surface. Each metric may appear at most once, every value must be > 0, and cpu is a percentage capped at 100. Mutually exclusive with `target`.
+   * Multi-signal autoscaling. Each entry states how much load ONE instance should carry on that metric; the platform evaluates every entry independently and provisions for the largest resulting instance count. The combination rule, the windowing and the cooldowns are platform policy and are not configurable per metric — declaring the signals is the whole surface. Each metric may appear at most once, every value must be > 0, and cpu is a percentage capped at 100. Mutually exclusive with `target`.
    */
   targets?: Array<ScalingTarget>;
   /**
@@ -53,15 +53,15 @@ export type ScalingPolicy = {
    */
   wake_max_queue_wait_seconds?: number;
   /**
-   * Requests one instance serves at once (ADR-20261022203523). The gateway admits at most this many to an instance and scales out on the next request; requests over every instance's limit wait in the warm queue (30 s unless max_queue_wait_ms is set). 0 uses the plan's concurrency_per_vm, which is also the upper bound.
+   * Requests one instance serves at once. The gateway admits at most this many to an instance and scales out on the next request; requests over every instance's limit wait in the warm queue (30 s unless max_queue_wait_ms is set). 0 uses the plan's concurrency_per_vm, which is also the upper bound.
    */
   per_instance_concurrency?: number;
   /**
-   * IANA timezone every schedule's cron expression is evaluated in (ADR-195). Empty means UTC. One zone per app rather than one per schedule: a business has a working day, not a working day per rule.
+   * IANA timezone every schedule's cron expression is evaluated in. Empty means UTC. One zone per app rather than one per schedule: a business has a working day, not a working day per rule.
    */
   timezone?: string;
   /**
-   * Recurring windows that raise the warm floor (ADR-195). Each entry is a cron fire plus a duration; while the window is open the app's min_instances is at least the entry's value, and outside every window the app falls back to min_instances and parks. Schedules only ever RAISE the floor — they cannot lower one and cannot cap max_instances, because a rule that only adds capacity cannot take an app down. Overlapping windows take the maximum, so list order carries no meaning. Every schedule's min_instances counts toward the plan gate and the per-plan min_instances cap.
+   * Recurring windows that raise the warm floor. Each entry is a cron fire plus a duration; while the window is open the app's min_instances is at least the entry's value, and outside every window the app falls back to min_instances and parks. Schedules only ever RAISE the floor — they cannot lower one and cannot cap max_instances, because a rule that only adds capacity cannot take an app down. Overlapping windows take the maximum, so list order carries no meaning. Every schedule's min_instances counts toward the plan gate and the per-plan min_instances cap.
    */
   schedules?: Array<ScalingSchedule>;
 };

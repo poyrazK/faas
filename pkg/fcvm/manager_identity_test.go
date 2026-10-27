@@ -46,11 +46,15 @@ func TestManagerWorkloadTokenDeployment(t *testing.T) {
 // wake already fixed its identity (ADR-1141 amendment 2026-10-17).
 func TestManagerWorkloadTokenIdentity(t *testing.T) {
 	m := &Manager{
-		live: map[string]*Instance{"live-1": {AppID: "app-1", AccountID: "acct-1"}},
+		live: map[string]*Instance{
+			"live-1":      {AppID: "app-1", AccountID: "acct-1"},
+			"candidate-1": {AppID: "app-4", AccountID: "acct-4", QualificationOnly: true},
+		},
 		waking: map[string]wakingInstance{
 			"boot-1":          {appID: "app-2", accountID: "acct-2"},
 			"qualification-1": {},
 			"contained-1":     {appID: "app-3", accountID: "acct-3", contained: true},
+			"candidate-boot":  {appID: "app-4", accountID: "acct-4", qualification: true},
 		},
 	}
 	tests := []struct {
@@ -63,6 +67,10 @@ func TestManagerWorkloadTokenIdentity(t *testing.T) {
 		{instance: "boot-1", app: "app-2", account: "acct-2", resolves: true},
 		{instance: "qualification-1"},
 		{instance: "contained-1"}, // a rehearsal-contained wake gets no token
+		// A held GitOps qualification candidate cold-boots with its app's
+		// identity but gets no token, relay or event, live or booting.
+		{instance: "candidate-1", instanceResolve: true},
+		{instance: "candidate-boot"},
 		{instance: "missing"},
 	}
 	for _, tt := range tests {

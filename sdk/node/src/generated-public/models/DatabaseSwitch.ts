@@ -4,7 +4,7 @@
 /* eslint-disable */
 import type { DatabaseSwitchDrain } from './DatabaseSwitchDrain.js';
 /**
- * A rollback that restores the app's managed PostgreSQL database with the code (ADR-20261023181931). The database is restored to restore_point as a new database, and the app moves to it and to the target release while it is fenced.
+ * A rollback that restores the app's managed PostgreSQL database with the code. The database is restored to restore_point as a new database, and the app moves to it and to the target release while it is fenced.
  */
 export type DatabaseSwitch = {
   id: string;

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
@@ -43,6 +44,11 @@ func (m *Manager) AcquireHTTPForward(ctx context.Context, instance string) (cont
 		return nil, nil, ErrHTTPForwardNotLive
 	}
 	cap := inst.Plan.ConcurrencyPerVMBound()
+	if m.httpAdmissionDisabled {
+		// FAAS_HTTP_ADMISSION=off: no cap and no plan requirement, but each
+		// exchange still holds a permit so park and retirement cancel it.
+		cap = math.MaxInt
+	}
 	if cap <= 0 {
 		return nil, nil, ErrHTTPForwardUntrusted
 	}
@@ -90,6 +96,16 @@ func (m *Manager) reopenHTTPForwards(inst *Instance) {
 	}
 }
 
+// WithHTTPAdmission sets the ADR-570 per-VM HTTP cap kill switch
+// (FAAS_HTTP_ADMISSION). Disabled, AcquireHTTPForward admits every live
+// routed instance; status reports the cap as not enforced.
+func (m *Manager) WithHTTPAdmission(enabled bool) *Manager {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.httpAdmissionDisabled = !enabled
+	return m
+}
+
 // HTTPAdmissionStatus reports the actual cap of this live VM generation.
 // Task/builder/disposable instances do not expose an ordinary HTTP listener.
 type HTTPAdmissionStatus struct {
@@ -109,7 +125,7 @@ func (m *Manager) HTTPAdmissionStatus(instance string) (HTTPAdmissionStatus, boo
 	}
 	ensureHTTPForwardGeneration(inst)
 	cap := inst.Plan.ConcurrencyPerVMBound()
-	state := HTTPAdmissionStatus{Enabled: cap > 0 && !inst.ExecutionOnly && !inst.AppTaskOnly && !inst.IsJob && !inst.Lease.IsBuilder,
+	state := HTTPAdmissionStatus{Enabled: cap > 0 && !m.httpAdmissionDisabled && !inst.ExecutionOnly && !inst.AppTaskOnly && !inst.IsJob && !inst.Lease.IsBuilder,
 		Limit: cap, Generation: inst.httpForwardGeneration, Plan: inst.Plan, Retiring: inst.warmSpare}
 	if g := m.httpForwards[instance]; g != nil && g.lease == inst.Lease {
 		state.Inflight = len(g.active)
