@@ -54,7 +54,7 @@ var cliTreeCompoundWords = []string{
 	"data-api", "rule-list", "egress-allowlist", "egress-ports", "static-egress-ip",
 	"port-forward", "wake-ahead", "wake-timeline", "streaming-cap", "spend-cap", "upload-cache",
 	"object-lock", "subscription-version", "subscription-retry", "subscription-circuit",
-	"subscription-capacity",
+	"subscription-capacity", "lock-policy",
 }
 
 // Rule 5: top-level verbs that may start a tree path.
@@ -207,6 +207,7 @@ func TestCliTreeRewrite(t *testing.T) {
 		{"app listener delete --protocol=tcp api l1", "app api tcp delete l1"},
 		{"alert maintenance create --app api --reason x", "mcp readiness maintenance create --app api --reason x"},
 		{"alert pagerduty get --app api", "mcp readiness pagerduty get --app api"},
+		{"job lock-policy set exports --file p.json", "operations policy upsert exports --file p.json"},
 		{"admin sites list", "sites list"},
 		{"admin postgres reconcile acct-1", "postgres reconcile acct-1"},
 		{"admin credit --reason x", "admin credit --reason x"},

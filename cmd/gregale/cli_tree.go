@@ -189,6 +189,11 @@ var cliTreeAliases = []cliTreeAlias{
 	// Work.
 	{"cron", "crons"},
 	{"trigger", "triggers"},
+	// Exclusive keyed work is --lock on job runs, crons and triggers; its
+	// policies live under job until a broader home is needed.
+	{"job lock-policy list", "operations policy list"},
+	{"job lock-policy set", "operations policy upsert"},
+	{"job lock-policy delete", "operations policy retire"},
 	{"job", "jobs"},
 	{"worker", "workers"},
 	{"workflow", "workflows"},
