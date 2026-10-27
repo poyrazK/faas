@@ -1,7 +1,7 @@
 // public_auth_basic_e2e_test.go — issue #1839: Basic auth on the live path.
 //
-// The customer sets public_auth mode=basic through apid, which seals the
-// credential to the fleet recipient; gatewayd-internal opens it with the
+// The customer sets public_auth mode=basic with the gregale CLI; apid seals
+// the credential to the fleet recipient; gatewayd-internal opens it with the
 // fleet identity it loads from FAAS_HOST_KEY_PATH's directory, as the
 // production unit's LoadCredential does. Requests arrive through
 // gatewayd-public. Twice this broke between the two processes while each
@@ -53,16 +53,6 @@ func basicAuthFleetEnv(t *testing.T) []string {
 	}
 }
 
-func setBasicAuth(t *testing.T, f *normalPathFixture, user, pass string) {
-	t.Helper()
-	body, status := doReq(t, f.h, f.key, http.MethodPatch, "/v1/apps/"+f.app.Slug, api.UpdateAppRequest{
-		PublicAuth: &api.PublicAuthBlock{Mode: api.AppPublicAuthModeBasic, BasicUser: user, BasicPass: pass},
-	})
-	if status != http.StatusOK {
-		t.Fatalf("PATCH public_auth basic: status=%d body=%s", status, body)
-	}
-}
-
 func basicAuthHeader(user, pass string) map[string]string {
 	return map[string]string{"Authorization": "Basic " + base64.StdEncoding.EncodeToString([]byte(user+":"+pass))}
 }
@@ -91,9 +81,13 @@ func TestE2E_NormalPath_PublicBasicAuthOpensSealedCredentials(t *testing.T) {
 	}
 	_, instance := createNormalPathLiveDeployment(t, f, f.app.ID, "v1")
 	f.vmmd.SetVersion(instance.ID, "v1")
+	bin := buildGregale(t)
+	// Start open whatever the plan's create default is.
+	runPublicAuthCLI(t, bin, f.h.APIDURL, f.key, f.app.Slug, "--public-auth", api.AppPublicAuthModeOpen)
 	waitForNormalPathResponse(t, f.h, f.host, "normal-path:v1\n", 10*time.Second)
 
-	setBasicAuth(t, f, "editor", "first-pass")
+	runPublicAuthCLI(t, bin, f.h.APIDURL, f.key, f.app.Slug,
+		"--public-auth", api.AppPublicAuthModeBasic, "--basic-user", "editor", "--basic-pass", "first-pass")
 	header, _ := waitForBasicAuthStatus(t, f, "anonymous after mode=basic", nil, http.StatusUnauthorized)
 	if got := header.Get("WWW-Authenticate"); got != `Basic realm="apps"` {
 		t.Errorf("anonymous WWW-Authenticate = %q, want a Basic challenge", got)
@@ -107,17 +101,13 @@ func TestE2E_NormalPath_PublicBasicAuthOpensSealedCredentials(t *testing.T) {
 
 	// Rotation takes effect without restarting the gateway: the new password
 	// opens the app and the old one stops working.
-	setBasicAuth(t, f, "editor", "second-pass")
+	runPublicAuthCLI(t, bin, f.h.APIDURL, f.key, f.app.Slug,
+		"--public-auth", api.AppPublicAuthModeBasic, "--basic-user", "editor", "--basic-pass", "second-pass")
 	waitForBasicAuthStatus(t, f, "rotated password", basicAuthHeader("editor", "second-pass"), http.StatusOK)
 	if _, body, status := doReqHeaders(t, f.h, f.host, http.MethodGet, "/", nil, basicAuthHeader("editor", "first-pass")); status != http.StatusUnauthorized {
 		t.Fatalf("old password after rotation: status=%d body=%q, want 401", status, body)
 	}
 
-	body, status := doReq(t, f.h, f.key, http.MethodPatch, "/v1/apps/"+f.app.Slug, api.UpdateAppRequest{
-		PublicAuth: &api.PublicAuthBlock{Mode: api.AppPublicAuthModeOpen},
-	})
-	if status != http.StatusOK {
-		t.Fatalf("PATCH public_auth open: status=%d body=%s", status, body)
-	}
+	runPublicAuthCLI(t, bin, f.h.APIDURL, f.key, f.app.Slug, "--public-auth", api.AppPublicAuthModeOpen)
 	waitForBasicAuthStatus(t, f, "anonymous after mode=open", nil, http.StatusOK)
 }
