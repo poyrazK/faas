@@ -244,6 +244,22 @@ func testAPIKeyRotationGrace(t *testing.T, fx *Fixture) {
 	if _, _, err := fx.Store.RotateAPIKey(fx.Ctx, fx.Account.ID, successor.ID, randomTokenHash(t), "revived", time.Hour); err == nil {
 		t.Fatal("RotateAPIKey revived a revoked key")
 	}
+
+	// Rotation keeps the predecessor's deadline: it dropped expires_at, so
+	// an expiring key (a 30-day sign-in key) rotated into a permanent one
+	// (bug hunt 2026-10-28 B25).
+	deadline := time.Now().Add(48 * time.Hour).UTC().Truncate(time.Second)
+	expiring, err := fx.Store.CreateAPIKeyWithExpiry(fx.Ctx, fx.Account.ID, randomTokenHash(t), "expiring", api.ScopesAdminOnly, &deadline)
+	if err != nil {
+		t.Fatal(err)
+	}
+	next, _, err := fx.Store.RotateAPIKey(fx.Ctx, fx.Account.ID, expiring.ID, randomTokenHash(t), "", time.Hour)
+	if err != nil {
+		t.Fatalf("RotateAPIKey(expiring): %v", err)
+	}
+	if next.ExpiresAt == nil || !next.ExpiresAt.Equal(deadline) {
+		t.Fatalf("successor expires_at = %v, want the predecessor's %v", next.ExpiresAt, deadline)
+	}
 }
 
 // testConsumerKeyLookupIsAppScoped pins the gateway's consumer-key lookup:
