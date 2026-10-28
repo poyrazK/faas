@@ -7775,6 +7775,10 @@ func (s *PgStore) SafedeployStampRollout(ctx context.Context, id string, rollout
 	if err != nil {
 		return Deployment{}, fmt.Errorf("state: safedeploy stamp load: %w", err)
 	}
+	// The row may have changed since the orchestrator listed it.
+	if err := checkRolloutStamp(dep.RolloutState, rolloutState); err != nil {
+		return dep, err
+	}
 	if _, err := tx.Exec(ctx,
 		`update deployments set
 			rollout_state = $2,
@@ -9617,12 +9621,12 @@ func (s *PgStore) recoverRolloutTx(ctx context.Context, tx pgx.Tx, appID, deploy
 		if now.Sub(*dep.CanaryStepStartedAt) < RecoverRolloutStuckAfter {
 			return Deployment{}, 0, ErrRolloutNotStuck
 		}
-		if dep.CanaryTotalSteps <= 0 || dep.CanaryStep >= dep.CanaryTotalSteps {
-			return dep, 0, ErrRolloutStateInvalid
+		// The next stage of the persisted ladder (Hunt 20 H20-1).
+		newStep, percent, complete, err := recoverAdvanceStage(dep)
+		if err != nil {
+			return dep, 0, err
 		}
-
-		newStep := dep.CanaryStep + 1
-		newTrafficP = stepToPercent(newStep, dep.CanaryTotalSteps)
+		newTrafficP = percent
 
 		// Bump step, stamp started_at, stamp traffic_percent.
 		if _, err := tx.Exec(ctx,
@@ -9675,9 +9679,8 @@ func (s *PgStore) recoverRolloutTx(ctx context.Context, tx pgx.Tx, appID, deploy
 			}
 		}
 
-		// If the bump reaches the top of the ladder, flip
-		// rollout_state='complete'.
-		if newStep >= dep.CanaryTotalSteps {
+		// Moving onto the last stage completes the rollout.
+		if complete {
 			if _, err := tx.Exec(ctx,
 				`update deployments set
 					rollout_state = 'complete',

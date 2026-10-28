@@ -27,6 +27,7 @@ type storedGrant struct {
 	AvailableApps         []api.AppResponse
 	Environments          *EnvironmentConsent
 	AvailableEnvironments []EnvironmentGrant
+	Capabilities          []string
 }
 
 type oauthSnapshot struct {
@@ -43,7 +44,7 @@ type oauthSnapshot struct {
 func (r *remoteServer) snapshotLocked() oauthSnapshot {
 	snapshot := oauthSnapshot{Format: stateFormat, APIBase: r.opts.APIBase, ResourceURL: r.opts.ResourceURL, Clients: r.clients, Requests: r.requests, Codes: r.codes, Grants: map[string]storedGrant{}, UsedRefresh: map[string]string{}}
 	for id, g := range r.grants {
-		snapshot.Grants[id] = storedGrant{ID: id, ClientID: g.clientID, AccountID: g.accountID, Scopes: g.scopes, Key: g.client.Token(), Expires: g.expires, CredentialExpires: g.credentialExpires, AccessExpires: g.accessExpires, AccessHash: g.accessHash, RefreshHash: g.refreshHash, Active: g.server != nil, AllowedApps: g.allowedApps, AvailableApps: g.availableApps, Environments: g.environments, AvailableEnvironments: g.availableEnvironments}
+		snapshot.Grants[id] = storedGrant{ID: id, ClientID: g.clientID, AccountID: g.accountID, Scopes: g.scopes, Key: g.client.Token(), Expires: g.expires, CredentialExpires: g.credentialExpires, AccessExpires: g.accessExpires, AccessHash: g.accessHash, RefreshHash: g.refreshHash, Active: g.server != nil, AllowedApps: g.allowedApps, AvailableApps: g.availableApps, Environments: g.environments, AvailableEnvironments: g.availableEnvironments, Capabilities: g.capabilities}
 	}
 	for hash, grant := range r.usedRefresh {
 		snapshot.UsedRefresh[hash] = grant.id
@@ -65,7 +66,7 @@ func (r *remoteServer) restoreOAuth() error {
 	if snapshot.Format != stateFormat || snapshot.APIBase != r.opts.APIBase || snapshot.ResourceURL != r.opts.ResourceURL {
 		return errors.New("stored OAuth endpoint binding mismatch")
 	}
-	if len(snapshot.Clients) > maxOAuthEntries || len(snapshot.Requests) > maxOAuthEntries || len(snapshot.Codes) > maxOAuthEntries || len(snapshot.Grants) > maxOAuthEntries || len(snapshot.UsedRefresh) > maxRefreshHistory {
+	if len(snapshot.Clients) > r.capacity() || len(snapshot.Requests) > r.capacity() || len(snapshot.Codes) > r.capacity() || len(snapshot.Grants) > r.capacity() || len(snapshot.UsedRefresh) > maxRefreshHistory {
 		return errors.New("stored OAuth capacity is invalid")
 	}
 	for id, client := range snapshot.Clients {
@@ -95,6 +96,7 @@ func (r *remoteServer) restoreOAuth() error {
 		client := r.apiClient(record.Key)
 		g := &oauthGrant{id: id, clientID: record.ClientID, accountID: record.AccountID, scopes: record.Scopes, client: client, expires: record.Expires, credentialExpires: record.CredentialExpires, accessExpires: record.AccessExpires, accessHash: record.AccessHash, refreshHash: record.RefreshHash, allowedApps: record.AllowedApps, availableApps: record.AvailableApps}
 		g.environments, g.availableEnvironments = record.Environments, record.AvailableEnvironments
+		g.capabilities = record.Capabilities
 		// Journals written before environment consent had default release access;
 		// restoring them must never grant named environments implicitly.
 		if g.environments == nil {
@@ -102,7 +104,7 @@ func (r *remoteServer) restoreOAuth() error {
 		}
 		if record.Active {
 			var err error
-			g.server, g.management, err = newManagementServer(client, Options{Lifecycle: r.opts.Lifecycle, Telemetry: r.opts.Telemetry, auditLogger: r.opts.AuditLogger, accountID: g.accountID, grantID: g.id, Profile: "oauth", APIBase: r.opts.APIBase, Version: r.opts.Version, Timeout: r.opts.Timeout, AllowWrites: r.opts.AllowWrites && slices.Contains(g.scopes, scopeWrite), AllowedApps: g.allowedApps, Environments: g.environments, planStore: r.opts.StateStore, planNamespace: id, Toolsets: r.opts.Toolsets})
+			g.server, g.management, err = newManagementServer(client, Options{Lifecycle: r.opts.Lifecycle, Telemetry: r.opts.Telemetry, auditLogger: r.opts.AuditLogger, accountID: g.accountID, grantID: g.id, Profile: "oauth", APIBase: r.opts.APIBase, Version: r.opts.Version, Timeout: r.opts.Timeout, AllowWrites: r.opts.AllowWrites && slices.Contains(g.scopes, scopeWrite), AllowedApps: g.allowedApps, Environments: g.environments, planStore: r.opts.StateStore, planNamespace: id, Toolsets: r.opts.Toolsets, Capabilities: g.capabilities, LocalCLI: r.grantCLI(client.Token()), uploads: r.uploads})
 			if err != nil {
 				return err
 			}

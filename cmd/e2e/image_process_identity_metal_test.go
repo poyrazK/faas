@@ -103,9 +103,7 @@ func TestImageProcessIdentityMetal(t *testing.T) {
 
 			parkCtx, parkCancel := context.WithTimeout(context.Background(), 60*time.Second)
 			defer parkCancel()
-			if _, status := doReq(t, h, key, http.MethodPost, "/v1/apps/"+tc.slug+"/park", nil); status != http.StatusNoContent {
-				t.Fatalf("park: status=%d", status)
-			}
+			parkApp(t, h, key, tc.slug)
 			if _, err := e2etest.WaitForInstanceState(parkCtx, t, pool, appID, state.StateParked, 45*time.Second); err != nil {
 				t.Fatalf("park: %v", err)
 			}

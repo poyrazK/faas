@@ -151,6 +151,25 @@
   when: not (faas_edge_on_compute_nodes | default(false) | bool)
   notify: restart faas-gatewayd-public
 
+# ADR-20261026195952: the hosted management MCP server runs beside this edge
+# on the control plane when control_plane_service enables it.
+- name: gatewayd_public_service — install hosted management MCP route drop-in
+  ansible.builtin.template:
+    src: 99-faas-mcp-bridge.conf.j2
+    dest: /etc/systemd/system/faas-gatewayd-public.service.d/99-faas-mcp-bridge.conf
+    owner: root
+    group: root
+    mode: "0644"
+  when: faas_mcp_bridge_enabled | default(false) | bool
+  notify: restart faas-gatewayd-public
+
+- name: gatewayd_public_service — remove hosted management MCP route drop-in
+  ansible.builtin.file:
+    path: /etc/systemd/system/faas-gatewayd-public.service.d/99-faas-mcp-bridge.conf
+    state: absent
+  when: not (faas_mcp_bridge_enabled | default(false) | bool)
+  notify: restart faas-gatewayd-public
+
 # ADR-520: rendered unconditionally so turning the feature off removes the
 # ask endpoint on the next converge.
 - name: gatewayd_public_service — install custom-domain TLS drop-in

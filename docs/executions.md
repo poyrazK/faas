@@ -15,15 +15,15 @@ gregale run --runtime node22 --file handler.js --input '{"url":"https://example.
 gregale run --runtime node22 --file handler.js --watch
 gregale run --runtime node22 --file handler.js --watch --json
 gregale run --runtime node22 --dir . --entrypoint src/index.mjs --wait
-gregale runs list --status running --json
-gregale runs list --workflow-id incident-42 --json
-gregale runs workflow incident-42 --json
-gregale runs workflow run --manifest incident.json --json
-gregale runs workflow run --manifest incident.json --managed
-gregale runs workflow run --manifest incident.json --dry-run --json
-gregale runs capabilities --json
-gregale runs status <execution-id>
-gregale runs cancel <execution-id>
+gregale sandbox list --status running --json
+gregale sandbox list --workflow-id incident-42 --json
+gregale sandbox workflow incident-42 --json
+gregale sandbox workflow run --manifest incident.json --json
+gregale sandbox workflow run --manifest incident.json --managed
+gregale sandbox workflow run --manifest incident.json --dry-run --json
+gregale sandbox capabilities --json
+gregale sandbox status <execution-id>
+gregale sandbox cancel <execution-id>
 ```
 
 `--watch` implies `--wait` and follows the resumable execution event stream,
@@ -41,7 +41,7 @@ RUN_ID:ARTIFACT_NAME=DESTINATION_PATH` with `--dir` to stage successful
 same-account run artifacts in that bundle. Use `--json` for a machine-readable
 receipt.
 
-Agents can call `gregale runs capabilities --json` before submitting work. The
+Agents can call `gregale sandbox capabilities --json` before submitting work. The
 response reports the account's Runs entitlement, accepted runtimes and
 profiles, network mode, plan limits, and fixed request caps. It lets an agent
 reject or resize work locally before upload. `admission_available` means the
@@ -89,7 +89,7 @@ can aggregate all matching runs. The workflow summary reports counts for every
 lifecycle state; its wall time, CPU time, output bytes, and maximum per-run peak
 memory cover terminal runs only.
 
-`gregale runs workflow run --manifest PLAN.json` is a restartable runner for
+`gregale sandbox workflow run --manifest PLAN.json` is a restartable runner for
 agent-owned plans. Add `--dry-run` to validate the plan and preview its current
 receipt state, dependency readiness, account concurrency cap, and available
 parallel slots without creating Runs. Step states distinguish dependency-ready
@@ -161,7 +161,7 @@ inline source to an entrypoint bundle when needed. Direct API requests with
 artifact inputs must provide `request.entrypoint` and `request.files`. Artifact
 bytes remain in ordinary bounded Run receipts and are copied into the next
 Run's sealed request; guest filesystems remain disposable, with no persistent
-disk. `gregale runs workflow <workflow-id>` reports managed status and the
+disk. `gregale sandbox workflow <workflow-id>` reports managed status and the
 number of admitted steps alongside normal Run counts. Managed steps can declare
 the same bounded `result_schema` contract as local workflows. The control plane
 checks each successful Run result before admitting dependents and retains the
@@ -522,7 +522,7 @@ def main(input, context):
 gregale run --runtime python313 --file tool.py \
   --output-file data.csv --output-file patch.diff --output-dir ./results
 # --output-dir implies --wait; omit it to receive inline artifacts in JSON.
-gregale runs artifacts <execution-id> --output-dir ./results-again
+gregale sandbox artifacts <execution-id> --output-dir ./results-again
 ```
 
 Up to eight unique normalized relative paths, each at most 256 UTF-8 bytes,
