@@ -111,7 +111,9 @@ func TestPublicSurface(t *testing.T) {
 }
 
 // TestDocsPages checks every page in docs/customer-pages.json answers 200,
-// so a renamed doc cannot leave a dead link in the CLI or dashboard.
+// so a renamed doc cannot leave a dead link in the CLI or dashboard. A route
+// marked unpublished (a preview or internal capability's page, with the
+// reason) is deliberately not on the site and is skipped (#5709).
 func TestDocsPages(t *testing.T) {
 	tg := needs(t, tierSmoke, false)
 	t.Parallel()
@@ -121,8 +123,9 @@ func TestDocsPages(t *testing.T) {
 	}
 	var pages struct {
 		Routes []struct {
-			Path     string `json:"path"`
-			External bool   `json:"external"`
+			Path        string `json:"path"`
+			External    bool   `json:"external"`
+			Unpublished string `json:"unpublished"`
 		} `json:"routes"`
 	}
 	if err := json.Unmarshal(raw, &pages); err != nil {
@@ -133,9 +136,13 @@ func TestDocsPages(t *testing.T) {
 	var failed []string
 	sem := make(chan struct{}, 8)
 	var wg sync.WaitGroup
-	checked := 0
+	checked, unpublished := 0, 0
 	for _, route := range pages.Routes {
 		if route.External {
+			continue
+		}
+		if route.Unpublished != "" {
+			unpublished++
 			continue
 		}
 		checked++
@@ -156,7 +163,7 @@ func TestDocsPages(t *testing.T) {
 		}()
 	}
 	wg.Wait()
-	t.Logf("checked %d docs pages", checked)
+	t.Logf("checked %d docs pages; %d unpublished by design", checked, unpublished)
 	for _, f := range failed {
 		t.Error(f)
 	}

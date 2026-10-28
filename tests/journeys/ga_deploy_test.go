@@ -259,8 +259,9 @@ func TestImageRegistryAndDeployTokens(t *testing.T) {
 			t.Errorf("the removed credential is still listed")
 		}
 	})
-	// Deploy tokens have no CLI command; the journey mints one through the
-	// API with a scoped key, deploys with it, and revokes it.
+	// The released CLI may predate `gregale app deploy-token` (#5794), so the
+	// journey mints one through the API with a scoped key, deploys with it,
+	// and revokes it.
 	key := tg.scopedKey(t, "tokens")
 	var token, tokenID string
 	t.Cleanup(func() {

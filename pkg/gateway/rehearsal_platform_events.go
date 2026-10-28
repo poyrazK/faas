@@ -59,7 +59,7 @@ func serveRehearsalEventBatch(w http.ResponseWriter, r *http.Request, call rehea
 	if problem != nil {
 		if problem.Status == http.StatusRequestEntityTooLarge {
 			problem = api.NewProblem(http.StatusRequestEntityTooLarge, "event_publish_batch_too_large", "Batch too large", "batch body exceeds the byte limit").
-				WithLimit(api.EventPublishBatchBodyMaxBytes, api.EventPublishBatchBodyMaxBytes+1).WithDocs("https://gregale.dev/docs/event-driven#batch-event-publishing")
+				WithLimit(api.EventPublishBatchBodyMaxBytes, api.EventPublishBatchBodyMaxBytes+1).WithDocs("https://gregale.dev/docs/events#batch-event-publishing")
 		}
 		api.WriteProblem(w, problem)
 		return
@@ -72,7 +72,7 @@ func serveRehearsalEventBatch(w http.ResponseWriter, r *http.Request, call rehea
 		return
 	}
 	if len(wire.Events) == 0 || len(wire.Events) > api.EventPublishBatchMaxEvents {
-		api.WriteProblem(w, api.ErrValidation("batch must contain 1–100 events").WithLimit(int64(api.EventPublishBatchMaxEvents), int64(len(wire.Events))).WithDocs("https://gregale.dev/docs/event-driven#batch-event-publishing"))
+		api.WriteProblem(w, api.ErrValidation("batch must contain 1–100 events").WithLimit(int64(api.EventPublishBatchMaxEvents), int64(len(wire.Events))).WithDocs("https://gregale.dev/docs/events#batch-event-publishing"))
 		return
 	}
 	response := api.PublishEventBatchResponse{Results: make([]api.PublishEventBatchResult, 0, len(wire.Events))}

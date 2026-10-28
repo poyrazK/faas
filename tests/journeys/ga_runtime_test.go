@@ -269,6 +269,8 @@ func websocketGreeting(rawURL string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	// A 101 has no body; the frames that follow are read from br.
+	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusSwitchingProtocols {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 500))
 		return "", fmt.Errorf("handshake answered HTTP %d: %s", resp.StatusCode, body)

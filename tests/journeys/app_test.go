@@ -53,6 +53,12 @@ func TestServeAndObserve(t *testing.T) {
 	s.check("http_request_logs", func(t *testing.T) {
 		eventually(t, "request in `gregale logs --source http`", 3*time.Minute, 5*time.Second, func() (bool, string) {
 			res := tg.run(t, time.Minute, "logs", slug, "--source", "http", "--since", "15m", "--limit", "50")
+			// HTTP request logs belong to the production debugger (ADR-127).
+			// While it is not released for the account, the CLI says so
+			// instead of failing; that is the documented answer (#5709).
+			if res.exit != 0 && strings.Contains(string(res.stderr), "part of the production debugger") {
+				t.Skip("the production debugger is not released for this account: " + res.problem())
+			}
 			if res.exit != 0 {
 				return false, res.problem()
 			}

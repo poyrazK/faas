@@ -30,8 +30,8 @@ printf '%s\n' "$ALERT_SECRET" | gregale alert preset enable automation_backlog \
 
 Use `workflow_due_age_seconds` for a custom threshold in seconds. Inspect
 [automation health](automation-authoring.md#inspect-automation-health) and run
-history to find waiting reasons. Enable this preset after the backlog-alert
-migration and evaluator upgrade; it does not enable itself for existing apps.
+history to find waiting reasons. The preset does not enable itself for
+existing apps; add it to each app that needs it.
 
 For login abuse, `login_target_pressure` is an opt-in security preset for apps that have enabled `observe_targets` on a pre-auth POST route. It sends a webhook when the aggregate target-threshold signal exceeds five events in 15 minutes. The alert includes `observations_path` for the API and `dashboard_path` for the read-only pre-auth protection view. It never includes the login target digest. This preset supports webhook notifications only.
 
@@ -41,8 +41,9 @@ missing or invalid target digest over 15 minutes, provided that route has at
 least 20 selected failures. The rule's `observed` value is the highest eligible
 route's missing/invalid percentage; the dashboard link shows which route needs
 attention. If every route has fewer than 20 failures, the rule is `unknown` and
-does not send a webhook. A Prometheus error sets it to `degraded`, also without
-firing. Neither state proves the integration is healthy.
+does not send a webhook. If Gregale cannot evaluate the signal, the rule is
+`degraded`, also without firing. Neither state proves the integration is
+healthy.
 
 Three more opt-in, webhook-only security presets watch the edge for traffic that
 is being rejected or would be:
@@ -193,7 +194,8 @@ To avoid alerts on tiny numbers, a baseline rule does not fire when:
 
 The webhook payload adds `baseline` (the usual value), `baseline_days`, and
 `ratio` (observed divided by baseline) to the usual fields. Baseline rules are a
-preview (ADR-744) and must be enabled for your deployment.
+preview (ADR-744) and may not be enabled for your account.
+
 ## Log alerts
 
 `log_error_lines` and `log_warn_lines` count the lines your app wrote at
@@ -273,7 +275,7 @@ up to 24h, and webhook action. They observe backlog, retries scheduled, terminal
 routing failures, routing latency, continuous pause duration, and drain rate.
 Paused consumers suppress all of these except the pause-duration metric.
 Compacted history and insufficient terminal samples skip rate evaluation.
-Drain-rate rules skip idle consumers. See [consumer health](event-driven.md#consumer-routing-health-and-maintenance-alerts)
+Drain-rate rules skip idle consumers. See [consumer health](events.md#consumer-routing-health-and-maintenance-alerts)
 for metric names, units, and sample thresholds.
 
 Consumer execution alerts use `--event-subscription-id` with
@@ -284,7 +286,7 @@ replays. Supported windows are `5m`, `15m`, `1h`, `6h`, and `24h`. Unlike routin
 alerts, they remain active during subscription pauses. Truncated observations,
 missing roots, unknown states, or insufficient samples produce `unknown`.
 Failure percentages require 20 retained success/failure attempts, and completion
-latency requires one success. See [consumer execution health](event-driven.md#consumer-execution-health)
+latency requires one success. See [consumer execution health](events.md#consumer-execution-health)
 for retention coverage and the distinction between backlog and formation rate.
 
 ## Custom metric alerts

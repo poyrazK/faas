@@ -7,46 +7,28 @@ workflows: [code-first](code-workflows.md) (ordinary async functions) or
 
 Jobs are bounded run-to-completion workloads. Create a job from an OCI image
 reference, then dispatch one or more tasks; each run retains task status and
-logs. A newly-created or image-updated job is `pending` until imaged resolves
-the reference and publishes its immutable ext4 rootfs. Tasks remain queued
-until that artifact is `ready`; pull/build failures are exposed as
-`image_materialization_status=failed` plus an actionable error. A terminal
-image failure marks any queued tasks failed and settles their runs; new runs
-are rejected until `image_ref` is updated and materialization succeeds.
+logs. A newly created or image-updated job is `pending` until Gregale has
+pulled and prepared its image. Tasks stay queued until the image is `ready`;
+pull and build failures show as `image_materialization_status=failed` with an
+actionable error. A terminal image failure marks any queued tasks failed and
+settles their runs; new runs are rejected until `image_ref` is updated and the
+image prepares successfully. Gregale retries bounded pull and build failures.
 
 `ram_mb` is the memory each task's VM gets. Omit it (or send 0) for the
-256 MB default; an explicit value must be at least 64 MB (`api.JobMinRAMMB`,
-the smallest guest that boots) and at most your plan's Job limit
-(`api.JobRAMMB`: Hobby 512 MB, Pro 2048 MB, Scale 4096 MB). Image runs follow
-the same rule.
+256 MB default; an explicit value must be at least 64 MB (the smallest guest
+that boots) and at most your plan's Job limit (Hobby 512 MB, Pro 2048 MB,
+Scale 4096 MB).
 
 Image pulls may use account-owned private-registry credentials configured with
 `gregale job registry`; passwords are sealed at rest and never returned by
-the API. Imaged retries bounded pull/build failures across restarts, and
-schedd does not dispatch a task until the job's ext4 artifact is ready.
-Each materialization attempt writes a unique `jobs/<job-id>__<attempt-id>.ext4`
-object, then publishes it only if its worker still owns the live claim. A
-losing attempt cannot overwrite or delete the winner; reconciliation removes
-unpublished and superseded objects.
+the API.
 
-Jobs created before OCI image materialization may still refer directly to an
-`apps/...ext4` artifact. During the upgrade, these rows briefly show
-`image_materialization_status=verifying_legacy` and cannot dispatch. imaged
-copies a readable legacy layer to the legacy job-owned `jobs/<job-id>.ext4` key
-before setting `ready`, so app-layer garbage collection cannot remove a
-running job's image. A missing artifact becomes `failed` with an explicit
-error; if the store cannot answer or the copy fails, the job remains
-non-dispatchable and the check retries. OCI/GCS storage compresses newly
-published job rootfs objects; previously stored uncompressed objects remain
-readable.
+Cancelling a task while its job VM is still starting also cancels that boot; a
+late boot result cannot start a runnable VM after cancellation.
 
-Cancelling a task while its job VM is still restoring an artifact also cancels
-that in-flight boot. The stop waits for vmmd to finish cleanup; a late boot
-result cannot publish a runnable VM after cancellation.
-
-The first execution on a compute node can take longer while that artifact
-fills its local cache. Job tasks use their own timeout and lease reaper during
-this phase; the shorter HTTP-app cold-boot watchdog does not apply.
+The first execution on a host can take longer while the image fills that
+host's cache. Job tasks use their own timeout during this phase, not the
+shorter app cold-boot limit.
 
 ```bash
 gregale job create nightly --image registry.example/nightly@sha256:DIGEST --timeout 900 --retries 2
@@ -67,7 +49,7 @@ gregale job artifact-url nightly RUN_ID 0 result
 gregale job logs nightly RUN_ID 0 [--max-bytes N]
 ```
 
-`--schedule` makes a job recurring: schedd creates one single-task run at
+`--schedule` makes a job recurring: Gregale creates one single-task run at
 each matching cron boundary, using UTC unless `--timezone` names an IANA
 timezone. A scheduled run snapshots the job's image, command, environment,
 retry/resource settings, and failure rules when it fires. Pausing a job stops
@@ -322,108 +304,3 @@ customer cancellation.
 `--follow` (`-f`) to stream a task's output while it runs: the stream waits
 while the task is queued, follows each retry attempt in turn, and ends when
 the task finishes (ADR-1163).
-
-## Image runs
-
-> **Preview.** Image runs are enabled by the platform operator. Until
-> `FAAS_IMAGE_RUNS=1` is set on the control plane, `POST /v1/image-runs`
-> returns 404. Interactive runs (`-it`) also need `FAAS_INTERACTIVE_IMAGE_RUNS=1`;
-> without it they return 501.
-
-`gregale run --image IMAGE [ARG...]` runs one command from an OCI image in a
-fresh microVM, the way `docker run` does (ADR-1161):
-
-```sh
-gregale run --image alpine echo hello
-gregale run --image python:3.12-slim -e MODE=batch python -c 'print(42)'
-gregale run --image my-registry.example/tool:1.4 --entrypoint /bin/sh -- -c 'tool --version'
-```
-
-Arguments after the flags replace the image `CMD`; the image `ENTRYPOINT`
-stays unless `--entrypoint` overrides it, which also drops the image `CMD`.
-The command waits for the run, prints its output, and exits with the
-command's exit code (124 after the deadline, 130 when cancelled). Ctrl-C
-cancels the run. `--detach` prints the run id instead of waiting.
-
-Each image run is a one-task Job run with no retries. Gregale keeps a
-platform-managed runner job per image (named `ir-<hash>`), so the first run
-pulls the image and later runs start from the cached copy. `--pull always`
-pulls a moved tag again. Runner jobs do not appear in `gregale job list` and
-do not count against your Job limit; inspect a run with
-`gregale job tasks ir-<hash> RUN_ID` and `gregale job logs ir-<hash> RUN_ID`,
-or delete a cached image with `gregale job delete ir-<hash>`.
-
-Image runs use your plan's Job limits for memory, deadline (by default the
-plan's maximum) and concurrent tasks. Plans cache a limited number of images
-(`api.ImageRunCachedImages`: Hobby 3, Pro 10, Scale 25); starting a run for a
-new image evicts the least recently used cached image that has no queued or
-running work. Free plans do not include Jobs or image runs. Output streams
-while the command runs (ADR-1163).
-
-The command runs the way `docker run` runs it (ADR-1790): with the image's
-`ENV` (your `-e` and `--env-file` values win), as the image's `USER` (root
-when the image sets none), in the image's `WORKDIR`, and a bare command name
-is looked up on the image `PATH`. Docker's flags override them:
-
-```sh
-gregale run -u nobody -w /data alpine sh -c 'id; pwd'
-gregale run --env-file .env -e DEBUG -e MODE=batch python:3.12-slim python job.py
-```
-
-- `-u/--user name|uid[:group|gid]` resolves in the image's own passwd and
-  group files.
-- `-w/--workdir DIR` takes an absolute path and creates it when missing.
-- `--env-file FILE` reads docker's env-file format: `KEY=VALUE` or `KEY` per
-  line, `#` comments, values taken literally. `-e KEY` without a value (or a
-  bare `KEY` line) passes your local value and is skipped when it is unset.
-  Files apply in order, then `-e` flags.
-- The image can be the first argument instead of `--image`.
-
-For a private registry, pass `--registry-username` and the password or token
-on stdin (`--registry-password-stdin`), in `GREGALE_REGISTRY_PASSWORD`, or at
-the prompt:
-
-```sh
-printf '%s' "$GHCR_TOKEN" | gregale run --registry-username ci --registry-password-stdin ghcr.io/acme/tool:1.4 --version
-```
-
-If you already ran `docker login`, `--docker-config` uses those credentials
-instead
-([ADR-20261025110000](adr/20261025110000-image-run-docker-config.md)):
-
-```sh
-gregale run --docker-config ~/.docker ghcr.io/acme/tool:1.4 --version
-```
-
-It reads the image registry's entry from that `config.json` (or the
-directory holding it), or asks the credential helper Docker is configured
-with, such as the macOS keychain or Docker Desktop. Identity tokens are
-not supported; use `--registry-username` with an access token for those
-registries.
-
-The credential is stored sealed on the image's runner job and is used for
-that image's registry only. Every run that passes it refreshes it, so it
-survives the runner job being evicted from the image cache. Without it, a
-runner job's credential can still be managed with
-`gregale job registry set ir-<hash> ...`.
-
-### Interactive image runs
-
-`gregale run -it --image IMAGE [ARG...]` attaches your terminal to the
-command, the way `docker run -it` does (ADR-1330):
-
-```sh
-gregale run -it --image alpine sh
-gregale run -i --image python:3.12-slim python -c 'print(input())' < answer.txt
-```
-
-`-i` connects stdin; `-t` also gives the command a terminal and needs `-i`.
-Without a terminal on your side, `-t` is dropped with a warning. The run's VM
-waits up to 60 seconds for the session before it starts the command, and the
-run's timeout (at most an hour) bounds the session. The CLI exits with the
-command's exit code. Ctrl-C before the session starts cancels the run; after
-that it reaches the remote terminal. Closing the session ends the command
-(the task finishes `cancelled`). Interactive runs keep no output: `jobs logs`
-is empty for them, and a failed interactive run cannot be replayed or
-retried; start a new run instead.
-`--detach` and `--json` do not apply.
