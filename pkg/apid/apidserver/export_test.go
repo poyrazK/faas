@@ -899,6 +899,16 @@ func (r *invocationCompletionWaiter) AppWaiterCount(appID string) int {
 
 const InvocationCompletionRecentCap = invocationCompletionRecentCap
 
+func NewAPIRequestBudgetAt(now func() time.Time) *apiRequestBudget {
+	b := newAPIRequestBudget()
+	b.now = now
+	return b
+}
+
+func (b *apiRequestBudget) Take(accountID string, capacity int) (time.Duration, bool) {
+	return b.take(accountID, capacity)
+}
+
 type QueueReceiveSlots = queueReceiveSlots
 
 func (q *queueReceiveSlots) Acquire(accountID string) (func(), int, int, bool) {

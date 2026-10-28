@@ -4633,6 +4633,12 @@ type Limits struct {
 	// rather than dropping silently. Hobby=1000, Pro=10000,
 	// Scale=50000.
 	DebugTelemetryRequestsPerMinute int
+	// APIRequestsPerMinute caps the authenticated API requests one account
+	// makes a minute, as a token bucket of this capacity refilled over a
+	// minute. Only failed authentications per client IP were limited, so
+	// one valid key could drive any endpoint at any rate (bug hunt
+	// 2026-10-28 H42). Free=600, Hobby=1200, Pro=3000, Scale=6000.
+	APIRequestsPerMinute int
 	// DebugGuestLogExportsPerMinute (ADR-213 runtime adapter, ADR-958) is
 	// the per-account cap on OTLP log exports a tracing-enabled app's guest
 	// bridge forwards to apid. Each export carries at most
@@ -5216,6 +5222,7 @@ var planLimits = map[Plan]Limits{
 		Profiling:                       ProfilingLimits{},
 		DebugTelemetryRetentionDays:     0,
 		DebugTelemetryRequestsPerMinute: 0,
+		APIRequestsPerMinute:            600,
 		DebugGuestLogExportsPerMinute:   0,
 		DebugTelemetryDeploymentsPerApp: 0,
 		DebugTelemetrySpansPerTrace:     0,
@@ -5652,6 +5659,7 @@ var planLimits = map[Plan]Limits{
 		DebugTelemetryRetentionDays:     3,
 		Profiling:                       ProfilingLimits{Enabled: true, RetentionDays: 3, UploadsPerMinute: 60, CaptureStorageBytes: 256 << 20},
 		DebugTelemetryRequestsPerMinute: 1000,
+		APIRequestsPerMinute:            1200,
 		DebugGuestLogExportsPerMinute:   60,
 		DebugTelemetryDeploymentsPerApp: 10,
 		DebugTelemetrySpansPerTrace:     50,
@@ -6054,6 +6062,7 @@ var planLimits = map[Plan]Limits{
 		DebugTelemetryRetentionDays:     7,
 		Profiling:                       ProfilingLimits{Enabled: true, RetentionDays: 7, UploadsPerMinute: 180, CaptureStorageBytes: 1 << 30},
 		DebugTelemetryRequestsPerMinute: 10000,
+		APIRequestsPerMinute:            3000,
 		DebugGuestLogExportsPerMinute:   600,
 		DebugTelemetryDeploymentsPerApp: 50,
 		DebugTelemetrySpansPerTrace:     200,
@@ -6487,6 +6496,7 @@ var planLimits = map[Plan]Limits{
 		DebugTelemetryRetentionDays:     14,
 		Profiling:                       ProfilingLimits{Enabled: true, RetentionDays: 14, UploadsPerMinute: 600, CaptureStorageBytes: 4 << 30},
 		DebugTelemetryRequestsPerMinute: 50000,
+		APIRequestsPerMinute:            6000,
 		DebugGuestLogExportsPerMinute:   3000,
 		DebugTelemetryDeploymentsPerApp: 200,
 		DebugTelemetrySpansPerTrace:     1000,

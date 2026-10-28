@@ -429,6 +429,9 @@ type server struct {
 	// loginFailures caps failed password sign-ins per email address across
 	// client addresses (login_failure_limit.go).
 	loginFailures *loginFailureLimiter
+	// apiRequests is each account's budget of authenticated API requests a
+	// minute (api_request_budget.go). Nil (bare test servers) is unlimited.
+	apiRequests *apiRequestBudget
 	// exportsInFlight holds the account IDs with a REST export bundle being
 	// built: one at a time per account.
 	exportsInFlight sync.Map
@@ -1465,6 +1468,7 @@ func newServerWithDeps(
 		securityMail:           newSecurityMailLimiter(),
 		signups:                newSignupNetworkLimiter(),
 		loginFailures:          newLoginFailureLimiter(),
+		apiRequests:            newAPIRequestBudget(),
 		domainCreateLimiter:    domainCreateLimiter,
 		audit:                  aud,
 		runtimeConfig:          newRuntimeConfigManager(nil),

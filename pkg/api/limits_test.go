@@ -392,7 +392,7 @@ func TestPlanLimitsMatchSpec(t *testing.T) {
 			// abuse-floor tier carries no per-request telemetry,
 			// no retention, no rate budget. Handler returns 402
 			// ErrPlanFeatureGated before the store is touched.
-			DebugTelemetryEnabled: false, DebugTelemetryRetentionDays: 0, DebugTelemetryRequestsPerMinute: 0, DebugGuestLogExportsPerMinute: 0, DebugTelemetryDeploymentsPerApp: 0, DebugTelemetrySpansPerTrace: 0,
+			DebugTelemetryEnabled: false, DebugTelemetryRetentionDays: 0, DebugTelemetryRequestsPerMinute: 0, APIRequestsPerMinute: 600, DebugGuestLogExportsPerMinute: 0, DebugTelemetryDeploymentsPerApp: 0, DebugTelemetrySpansPerTrace: 0,
 			// ADR-124: Free keeps cancel + clear-obsolete; reorder
 			// stays plan-gated (Free=false).
 			QueueControlsAllowed: false, MaxQueuedDeploysPerApp: 2, MaxCancelOpsPerHour: 0, MaxReorderOpsPerHour: 0},
@@ -563,7 +563,7 @@ func TestPlanLimitsMatchSpec(t *testing.T) {
 			// retention (matches log-archive retention), 1000
 			// req/min ingest, 10 deployments max in the histogram
 			// (small Hobby app), 50 spans per trace.
-			DebugTelemetryEnabled: true, DebugTelemetryRetentionDays: 3, DebugTelemetryRequestsPerMinute: 1000, DebugGuestLogExportsPerMinute: 60, DebugTelemetryDeploymentsPerApp: 10, DebugTelemetrySpansPerTrace: 50, PerAppMetricsAllowed: true, AppUsageSummaryAllowed: true, AppErrorsAllowed: true, JobsAllowed: true, WorkflowsAllowed: true, WorkflowMaxPerApp: 3, WorkflowMaxConcurrent: 10, WorkflowMaxParked: 100, WorkflowStepMaxTimeout: 10 * time.Minute, WorkflowMaxWaitDays: 30,
+			DebugTelemetryEnabled: true, DebugTelemetryRetentionDays: 3, DebugTelemetryRequestsPerMinute: 1000, APIRequestsPerMinute: 1200, DebugGuestLogExportsPerMinute: 60, DebugTelemetryDeploymentsPerApp: 10, DebugTelemetrySpansPerTrace: 50, PerAppMetricsAllowed: true, AppUsageSummaryAllowed: true, AppErrorsAllowed: true, JobsAllowed: true, WorkflowsAllowed: true, WorkflowMaxPerApp: 3, WorkflowMaxConcurrent: 10, WorkflowMaxParked: 100, WorkflowStepMaxTimeout: 10 * time.Minute, WorkflowMaxWaitDays: 30,
 			// ADR-124 queue controls — Hobby unlocks the gated surface.
 			QueueControlsAllowed: true, MaxQueuedDeploysPerApp: 5, MaxCancelOpsPerHour: 120, MaxReorderOpsPerHour: 60},
 		// ADR-031: Pro opt-in for per-app egress allowlist with a 16-CIDR cap.
@@ -727,7 +727,7 @@ func TestPlanLimitsMatchSpec(t *testing.T) {
 			// ADR-127: Pro = "this month" debugger surface — 7-day
 			// retention, 10000 req/min ingest, 50 deployments in
 			// the histogram, 200 spans per trace.
-			DebugTelemetryEnabled: true, DebugTelemetryRetentionDays: 7, DebugTelemetryRequestsPerMinute: 10000, DebugGuestLogExportsPerMinute: 600, DebugTelemetryDeploymentsPerApp: 50, DebugTelemetrySpansPerTrace: 200, PerAppMetricsAllowed: true, AppUsageSummaryAllowed: true, AppForkMaxActivePerApp: 1, AppForkMaxActivePerAccount: 2, AppErrorsAllowed: true, JobsAllowed: true, WorkflowsAllowed: true, WorkflowMaxPerApp: 10, WorkflowMaxConcurrent: 50, WorkflowMaxParked: 1000, WorkflowStepMaxTimeout: 30 * time.Minute, WorkflowMaxWaitDays: 90,
+			DebugTelemetryEnabled: true, DebugTelemetryRetentionDays: 7, DebugTelemetryRequestsPerMinute: 10000, APIRequestsPerMinute: 3000, DebugGuestLogExportsPerMinute: 600, DebugTelemetryDeploymentsPerApp: 50, DebugTelemetrySpansPerTrace: 200, PerAppMetricsAllowed: true, AppUsageSummaryAllowed: true, AppForkMaxActivePerApp: 1, AppForkMaxActivePerAccount: 2, AppErrorsAllowed: true, JobsAllowed: true, WorkflowsAllowed: true, WorkflowMaxPerApp: 10, WorkflowMaxConcurrent: 50, WorkflowMaxParked: 1000, WorkflowStepMaxTimeout: 30 * time.Minute, WorkflowMaxWaitDays: 90,
 			// ADR-124: Pro mirrors Hobby for queue controls.
 			QueueControlsAllowed: true, MaxQueuedDeploysPerApp: 10, MaxCancelOpsPerHour: 120, MaxReorderOpsPerHour: 60},
 		// ADR-031: Scale double-up to 64 CIDR cap (2× Pro, tracks 2×
@@ -902,7 +902,7 @@ func TestPlanLimitsMatchSpec(t *testing.T) {
 			// cap, a fleet with thousands of historical deployments
 			// would blow up Prometheus cardinality), 1000 spans per
 			// trace.
-			DebugTelemetryEnabled: true, DebugTelemetryRetentionDays: 14, DebugTelemetryRequestsPerMinute: 50000, DebugGuestLogExportsPerMinute: 3000, DebugTelemetryDeploymentsPerApp: 200, DebugTelemetrySpansPerTrace: 1000, PerAppMetricsAllowed: true, AppUsageSummaryAllowed: true, AppForkMaxActivePerApp: 1, AppForkMaxActivePerAccount: 2, AppErrorsAllowed: true, JobsAllowed: true, WorkflowsAllowed: true, WorkflowMaxPerApp: 50, WorkflowMaxConcurrent: 200, WorkflowMaxParked: 10000, WorkflowStepMaxTimeout: 2 * time.Hour, WorkflowMaxWaitDays: 365,
+			DebugTelemetryEnabled: true, DebugTelemetryRetentionDays: 14, DebugTelemetryRequestsPerMinute: 50000, APIRequestsPerMinute: 6000, DebugGuestLogExportsPerMinute: 3000, DebugTelemetryDeploymentsPerApp: 200, DebugTelemetrySpansPerTrace: 1000, PerAppMetricsAllowed: true, AppUsageSummaryAllowed: true, AppForkMaxActivePerApp: 1, AppForkMaxActivePerAccount: 2, AppErrorsAllowed: true, JobsAllowed: true, WorkflowsAllowed: true, WorkflowMaxPerApp: 50, WorkflowMaxConcurrent: 200, WorkflowMaxParked: 10000, WorkflowStepMaxTimeout: 2 * time.Hour, WorkflowMaxWaitDays: 365,
 			// ADR-124: Scale gets the highest queue depth (25) and
 			// the same 60/h reorder budget as Hobby/Pro.
 			QueueControlsAllowed: true, MaxQueuedDeploysPerApp: 25, MaxCancelOpsPerHour: 120, MaxReorderOpsPerHour: 60},

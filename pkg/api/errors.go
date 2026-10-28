@@ -663,6 +663,9 @@ const (
 	// same IP are still admitted, so one broken client behind a shared NAT
 	// cannot lock out other customers.
 	CodeAuthRateLimited = "auth_rate_limited"
+	// CodeAPIRateLimited is the 429 an account gets past its plan's
+	// APIRequestsPerMinute.
+	CodeAPIRateLimited = "api_rate_limited"
 	// CodeForbidden is returned when the authenticated principal lacks
 	// the scope required by the route (IAM-1, ADR-034). Distinct from
 	// CodeUnauthorized so a customer can tell "I need to log in" from
@@ -3063,6 +3066,20 @@ func ErrAuthRateLimited(retryAfterS int) *Problem {
 		WithHeader("Retry-After", strconv.Itoa(retryAfterS)).
 		WithHint("Wait for the retry window, then sign in again with valid credentials.").
 		WithDocs(docsBase + "/auth")
+}
+
+// ErrAPIRateLimited refuses an authenticated API request past the account's
+// plan budget of requests a minute.
+func ErrAPIRateLimited(limit, retryAfterS int) *Problem {
+	if retryAfterS <= 0 {
+		retryAfterS = 1
+	}
+	return NewProblem(http.StatusTooManyRequests, CodeAPIRateLimited,
+		"API rate limit reached",
+		fmt.Sprintf("This account's plan allows %d API requests a minute. Retry after %d seconds.", limit, retryAfterS)).
+		WithLimit(int64(limit), int64(limit)).
+		WithHeader("Retry-After", strconv.Itoa(retryAfterS)).
+		WithDocs(docsBase + "/limits#api-requests")
 }
 
 // DetailServerFailure is the detail of a 5xx problem whose cause is an
