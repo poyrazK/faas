@@ -6,6 +6,7 @@ import (
 	"errors"
 	"log/slog"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -56,6 +57,7 @@ func (f *fakeScheddDial) Dial(ctx context.Context, target string, _ *tls.Config)
 type stubSchedd struct {
 	id     int
 	target string
+	closes atomic.Int32
 }
 
 func (s *stubSchedd) AdmitInstance(context.Context, string, string, string, string) (string, string, string, string, int32, bool, int, error) {
@@ -82,7 +84,7 @@ func (s *stubSchedd) StreamAppLogs(context.Context, string, int64, time.Time, bo
 func (s *stubSchedd) StreamWarmHints(context.Context) (scheddgrpc.WarmHintStream, error) {
 	panic("stubSchedd.StreamWarmHints")
 }
-func (s *stubSchedd) Close() error { return nil }
+func (s *stubSchedd) Close() error { s.closes.Add(1); return nil }
 
 // stubSchedd is the bare-bones ScheddClient the router's tests
 // don't exercise beyond Close. The full surface is on
@@ -267,6 +269,38 @@ func TestScheddRouter_EvictClosesAndReDials(t *testing.T) {
 	}
 	if got := dial.dials[urlA]; got != 2 {
 		t.Errorf("dials after evict = %d, want 2", got)
+	}
+}
+
+// Hunt 14 H14-82: compute_node_changed fires on every heartbeat, and an
+// immediate Close cancelled the Admit/EnsureWake RPC in flight on the
+// evicted connection, killing cold boots and restores mid-flight. Eviction
+// must leave the old client open for the grace, then close it.
+func TestScheddRouter_EvictDefersCloseForInFlightRPCs(t *testing.T) {
+	old := scheddRouterCloseGrace
+	scheddRouterCloseGrace = 50 * time.Millisecond
+	t.Cleanup(func() { scheddRouterCloseGrace = old })
+	urlA := "tcp://10.0.0.1:7100"
+	nodeA := state.ComputeNode{ID: "node-A", Name: "fsn-1", Active: true, ScheddTargetURL: &urlA}
+	store := &stubRouterStore{nodes: map[string]state.ComputeNode{"node-A": nodeA}}
+	r := newScheddRouter(store, nil, newFakeScheddDial().Dial, nil)
+	defer func() { _ = r.Close() }()
+
+	cli, err := r.ScheddForApp(context.Background(), state.App{ID: "app-1", NodeID: "node-A"})
+	if err != nil {
+		t.Fatalf("ScheddForApp: %v", err)
+	}
+	stub := cli.(*stubSchedd)
+	r.Evict("node-A")
+	if got := stub.closes.Load(); got != 0 {
+		t.Fatalf("evicted client closed %d time(s) at once; in-flight RPCs would be cancelled", got)
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	for stub.closes.Load() == 0 && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if got := stub.closes.Load(); got != 1 {
+		t.Fatalf("evicted client closes after the grace = %d, want 1", got)
 	}
 }
 
