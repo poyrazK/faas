@@ -11583,6 +11583,10 @@ const (
 	// an environment overlay. Also bound the aggregate wire projection.
 	TrafficPolicyMaxHostRules = 50_020
 	TrafficPolicyMaxHostBytes = 64 * 1024 * 1024
+	// TrafficPolicyAnalysisRetryAfter is the Retry-After on a policy check
+	// that ran out of time. The refusal changed nothing, so clients resend
+	// the same request; a busy control plane usually clears within seconds.
+	TrafficPolicyAnalysisRetryAfter = 2 * time.Second
 
 	// AppErrorsDedupeWindowSeconds (ADR-096) is the platform-wide
 	// dedupe window for the IncrementAppError INSERT. NOT a

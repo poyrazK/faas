@@ -1167,6 +1167,15 @@ func TestErrTrafficPolicyTooComplexHintByUnit(t *testing.T) {
 			if !strings.Contains(p.Hint, "simplify") && !strings.Contains(p.Hint, "Simplify") {
 				t.Fatalf("hint = %q, want it to keep the simplify fallback", p.Hint)
 			}
+			// Only a time ceiling asks to be resent: Retry-After keeps apid
+			// from replaying the refusal and tells clients to retry.
+			header := p.HasHeader("Retry-After")
+			if tc.wantRetryFirst != (len(header) == 1 && header[0] == "2" && p.RetryAfterSeconds != nil && *p.RetryAfterSeconds == 2) {
+				t.Fatalf("Retry-After = %v body=%v, want it only on a time ceiling", header, p.RetryAfterSeconds)
+			}
+			if TrafficPolicyCheckTimedOut(*p) != tc.wantRetryFirst {
+				t.Fatalf("TrafficPolicyCheckTimedOut = %v, want %v", !tc.wantRetryFirst, tc.wantRetryFirst)
+			}
 		})
 	}
 }
