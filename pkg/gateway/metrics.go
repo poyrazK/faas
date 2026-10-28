@@ -141,6 +141,7 @@ type Metrics struct {
 	usageCommitAborts           prometheus.Counter
 	usageDelivered              prometheus.Counter
 	usageDeliveryFailures       prometheus.Counter
+	usageQuarantined            prometheus.Counter
 	wakeLatency                 prometheus.Histogram
 	// platformWakeLatency is the public-beta restore gate: gateway
 	// capacity-admission start through the first upstream byte. It excludes
@@ -1062,6 +1063,7 @@ func NewMetrics() *Metrics {
 		usageCommitAborts:     prometheus.NewCounter(prometheus.CounterOpts{Name: "gateway_usage_commit_aborts_total", Help: "Billable responses withheld because their usage could not be made durable (ADR-1505)."}),
 		usageDelivered:        prometheus.NewCounter(prometheus.CounterOpts{Name: "gateway_consumer_usage_delivered_total", Help: "Financial usage events acknowledged by apid."}),
 		usageDeliveryFailures: prometheus.NewCounter(prometheus.CounterOpts{Name: "gateway_consumer_usage_delivery_failures_total", Help: "Failed financial usage delivery attempts retained for replay."}),
+		usageQuarantined:      prometheus.NewCounter(prometheus.CounterOpts{Name: "gateway_consumer_usage_quarantined_total", Help: "Financial usage events apid permanently rejected, moved to the outbox quarantine file."}),
 		// ADR-089 PR 3 — kind=route substitution outcomes.
 		// Pre-instantiated below so the §12 panel surfaces from
 		// first scrape; PR 4-7 add (kind=rewrite, ...), (kind=jwt, ...).
@@ -2217,7 +2219,7 @@ func NewMetrics() *Metrics {
 			Help: "Most (app, route) pairs this gateway exports per-route series for; FAAS_GATEWAY_ROUTE_METRICS_MAX_ROUTES overrides the default (ADR-20261024154324).",
 		}, func() float64 { return float64(m.routeSeries.limit()) }),
 	)
-	reg.MustRegister(m.usageOutboxPending, m.usageOutboxBytes, m.usageOutboxFailures, m.usageCommitAborts, m.usageDelivered, m.usageDeliveryFailures)
+	reg.MustRegister(m.usageOutboxPending, m.usageOutboxBytes, m.usageOutboxFailures, m.usageCommitAborts, m.usageDelivered, m.usageDeliveryFailures, m.usageQuarantined)
 	// Issue #587 / PR-A: per-daemon graceful-shutdown drain
 	// observability. Same shape as the wire.OpsMetrics series,
 	// registered on the gateway.Metrics registry so it surfaces
@@ -4454,6 +4456,13 @@ func (m *Metrics) IncUsageDelivered() {
 func (m *Metrics) IncUsageDeliveryFailure() {
 	if m != nil {
 		m.usageDeliveryFailures.Inc()
+	}
+}
+
+// IncUsageQuarantined counts a usage event apid permanently rejected.
+func (m *Metrics) IncUsageQuarantined() {
+	if m != nil && m.usageQuarantined != nil {
+		m.usageQuarantined.Inc()
 	}
 }
 

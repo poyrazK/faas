@@ -452,6 +452,18 @@ groups:
           description: "The gateway aborted billable responses because their usage events could not be fsynced to the local outbox (ADR-1505). Clients saw failed requests. Check outbox capacity and disk health; readiness should already be draining the node."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasConsumerUsageDelivery.md"
 
+      - alert: FaasConsumerUsageQuarantined
+        expr: increase(gateway_consumer_usage_quarantined_total[15m]) > 0
+        for: 0m
+        labels:
+          severity: warn
+          component: gatewayd-internal
+          family: consumer_usage_delivery
+        annotations:
+          summary: "apid permanently rejected a financial usage event"
+          description: "The gateway moved a usage event apid rejected as invalid to quarantine.jsonl in its outbox directory so later events keep flowing. Reconcile it before trusting that window's usage totals."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasConsumerUsageDelivery.md"
+
       - alert: FaasConsumerUsageOutboxNearCapacity
         expr: gateway_consumer_usage_outbox_pending_bytes > 53687091
         for: 2m

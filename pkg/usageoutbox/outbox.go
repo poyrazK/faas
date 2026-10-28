@@ -459,6 +459,37 @@ func (q *Outbox) appendFrom(src *Outbox) error {
 	return q.waitDurableLocked(q.end)
 }
 
+// Quarantine appends item's event, with the receiver's reason, to
+// quarantine.jsonl beside the outbox and acknowledges it, so an event the
+// receiver will never accept stops blocking every later one. The file keeps
+// the event for reconciliation (bug hunt 2026-10-28 H38).
+func (q *Outbox) Quarantine(item Item, reason string) error {
+	line, err := json.Marshal(struct {
+		Reason        string    `json:"reason"`
+		QuarantinedAt time.Time `json:"quarantined_at"`
+		Event         Event     `json:"event"`
+	}{reason, time.Now().UTC(), item.Event})
+	if err != nil {
+		return err
+	}
+	f, err := os.OpenFile(filepath.Join(q.root, "quarantine.jsonl"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
+	if err != nil {
+		return err
+	}
+	if _, err := f.Write(append(line, '\n')); err != nil {
+		_ = f.Close()
+		return err
+	}
+	if err := f.Sync(); err != nil {
+		_ = f.Close()
+		return err
+	}
+	if err := f.Close(); err != nil {
+		return err
+	}
+	return q.Ack(item)
+}
+
 func (q *Outbox) Stats() Stats {
 	q.mu.Lock()
 	defer q.mu.Unlock()
