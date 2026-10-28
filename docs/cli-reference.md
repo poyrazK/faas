@@ -4391,6 +4391,62 @@ Examples:
 gregale app binding smoke public-api billing --caller-deployment v12 --target-deployment TARGET_UUID --path /ready --expect-status 200
 ```
 
+### app deploy-token
+
+Manage per-app deploy tokens for CI
+
+Adding or rotating a token needs an MFA step-up from the last 5 minutes: run `gregale mfa verify` first.
+
+#### app deploy-token list
+
+List an app&#39;s deploy tokens
+
+`gregale app deploy-token list --app <SLUG>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app the tokens deploy | required |
+
+#### app deploy-token create
+
+Mint a deploy token (shown once)
+
+`gregale app deploy-token create --app <SLUG> [--label <LABEL>] [--expires-at <RFC3339>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app the token deploys | required |
+| `--label <LABEL>` | label shown in the list, for example the CI system |  |
+| `--expires-at <RFC3339>` | expiry as an RFC3339 time (default 90 days) |  |
+
+Examples:
+
+```sh
+gregale app deploy-token create --app my-api --label github-actions
+```
+
+#### app deploy-token rotate
+
+Replace a deploy token; the old one stops working
+
+`gregale app deploy-token rotate --app <SLUG> [--label <LABEL>] [--expires-at <RFC3339>] <token-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app the token deploys | required |
+| `--label <LABEL>` | label for the replacement (default: the old label) |  |
+| `--expires-at <RFC3339>` | expiry as an RFC3339 time (default 90 days) |  |
+
+#### app deploy-token delete
+
+Revoke a deploy token
+
+`gregale app deploy-token delete --app <SLUG> <token-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app the token deploys | required |
+
 ### app streaming-cap
 
 Show app streaming classification

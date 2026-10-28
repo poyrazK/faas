@@ -1550,6 +1550,9 @@
       "routes": [
         "/dashboard/apps/{}/deploy-tokens",
         "/v1/apps/{}/deploy-tokens"
+      ],
+      "cli": [
+        "deploy-tokens"
       ]
     },
     {
