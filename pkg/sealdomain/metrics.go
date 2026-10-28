@@ -12,7 +12,7 @@ func RegisterLoaded(reg prometheus.Registerer, d Domain, loaded bool) {
 }
 
 // RegisterLoadedDomains is RegisterLoaded for a daemon that reads several
-// domains, as vmmd reads runtime and build (ADR-20261026090000). The gauge
+// domains, as vmmd reads runtime and build (ADR-20261026091500). The gauge
 // is registered once, with one series per domain.
 func RegisterLoadedDomains(reg prometheus.Registerer, loaded map[Domain]bool) {
 	g := prometheus.NewGaugeVec(prometheus.GaugeOpts{

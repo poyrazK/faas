@@ -81,6 +81,17 @@ type VMMDriver struct {
 	// dockerHubMirrors go into every build manifest; the builder's BuildKit
 	// daemon tries them before Docker Hub (ADR-20261025114554).
 	dockerHubMirrors []string
+
+	// reclaimDriveSpace frees space on the drive filesystem before a build
+	// would be refused for it (ADR-20261027173012); nil reclaims nothing.
+	reclaimDriveSpace BuildDriveSpaceReclaimer
+}
+
+// WithDriveSpaceReclaimer sets how Spawn frees space for a build drive on a
+// full node. Call before serving.
+func (d *VMMDriver) WithDriveSpaceReclaimer(reclaim BuildDriveSpaceReclaimer) *VMMDriver {
+	d.reclaimDriveSpace = reclaim
+	return d
 }
 
 // WithDockerHubMirrors sets the Docker Hub mirrors every builder VM uses.
@@ -260,6 +271,10 @@ func (d *VMMDriver) Spawn(ctx context.Context, req VMRequest) (BuildHandle, erro
 	// can't clean up. (The only thing we ever want gone is a >1h old *.ext4
 	// that wasn't WaitForCompletion'd.)
 	d.runJanitor()
+	// A full node evicts its oldest cached artifacts before the drive's
+	// capacity check refuses the build. Best effort: the reclaimer logs its
+	// own failures, and that check still decides.
+	_ = reclaimBuildDriveSpace(ctx, d.driveDir, d.reclaimDriveSpace, driveFilesystemAvailable)
 
 	drive1Path := filepath.Join(d.driveDir, instance+".ext4")
 	hostDrive1, err := os.CreateTemp(d.driveDir, instance+"-*.ext4")
@@ -344,7 +359,7 @@ func (d *VMMDriver) Spawn(ctx context.Context, req VMRequest) (BuildHandle, erro
 		Build: &vmmdpb.BuildSpec{
 			ExportDir:  buildExportDir,
 			TimeoutSec: int32(timeoutSec),
-			// ADR-20261026090000: vmmd opens these into the builder's
+			// ADR-20261026091500: vmmd opens these into the builder's
 			// Docker config for its base-image pulls. A build that has
 			// them never uses a warm builder.
 			RegistryCredentials: registryCredentialsToProto(req.RegistryCredentials),

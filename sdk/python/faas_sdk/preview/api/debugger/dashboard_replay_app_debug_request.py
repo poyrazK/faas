@@ -83,7 +83,7 @@ def sync_detailed(
     slug: str,
     req_id: str,
     *,
-    client: AuthenticatedClient | Client,
+    client: AuthenticatedClient,
     body: DashboardReplayAppDebugRequestBody,
 ) -> Response[Any | Problem]:
     """Queue a debugger replay from the dashboard.
@@ -124,7 +124,7 @@ def sync(
     slug: str,
     req_id: str,
     *,
-    client: AuthenticatedClient | Client,
+    client: AuthenticatedClient,
     body: DashboardReplayAppDebugRequestBody,
 ) -> Any | Problem | None:
     """Queue a debugger replay from the dashboard.
@@ -160,7 +160,7 @@ async def asyncio_detailed(
     slug: str,
     req_id: str,
     *,
-    client: AuthenticatedClient | Client,
+    client: AuthenticatedClient,
     body: DashboardReplayAppDebugRequestBody,
 ) -> Response[Any | Problem]:
     """Queue a debugger replay from the dashboard.
@@ -199,7 +199,7 @@ async def asyncio(
     slug: str,
     req_id: str,
     *,
-    client: AuthenticatedClient | Client,
+    client: AuthenticatedClient,
     body: DashboardReplayAppDebugRequestBody,
 ) -> Any | Problem | None:
     """Queue a debugger replay from the dashboard.

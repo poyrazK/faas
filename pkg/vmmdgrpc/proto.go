@@ -628,7 +628,7 @@ func toColdBootRequest(ctx context.Context, req *vmmdpb.CreateColdBootRequest) (
 		// after the VM exits.
 		ExportDir:       buildSpecExportDir(req.GetBuild()),
 		BuildTimeoutSec: buildSpecTimeoutSec(req.GetBuild()),
-		// ADR-20261026090000: the built app's sealed registry
+		// ADR-20261026091500: the built app's sealed registry
 		// credentials, for the builder's FROM pulls.
 		BuildRegistryCredentials: buildRegistryCredentialsFromProto(req.GetBuild()),
 	}, nil

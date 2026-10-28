@@ -6801,6 +6801,22 @@ groups:
           description: "{{ $labels.instance }} has not enforced the traffic security fence for 30 minutes, so a revoked account, app or deployment can still receive responses through it. A gateway it dials lacks the fence wiring or has no fresh observation."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasTrafficControl.md"
 
+      # ADR-20261027173012: inside the 5-minute outage grace a gateway keeps
+      # rate limits on its own bucket instead of refusing. Limits still hold,
+      # per gateway; past the grace FaasTrafficControlRefusing takes over.
+      - alert: FaasRateLimitCounterFallback
+        expr: sum by (instance) (rate(gateway_ratelimit_local_fallback_total{job="gatewayd-internal"}[5m])) > 0
+        for: 2m
+        labels:
+          severity: warn
+          component: gatewayd-internal
+          family: traffic_control
+          public_status: internal
+        annotations:
+          summary: "A gateway is enforcing rate limits without the shared counter"
+          description: "{{ $labels.instance }} could not reach the central rate counters and is deciding requests from its own buckets within the 5-minute outage grace. Each limit can admit up to once per gateway until the counter answers again; after the grace the gateway refuses with rate_limit_unavailable."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasTrafficControl.md"
+
   - name: retry_safety
     interval: 30s
     rules:

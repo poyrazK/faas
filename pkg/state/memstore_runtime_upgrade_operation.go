@@ -125,7 +125,7 @@ func (m *MemStore) ClaimRuntimeUpgradeOperation(ctx context.Context) (RuntimeUpg
 	op := ops[0]
 	op.LeaseToken, op.LeaseUntil = uuid.NewString(), now.Add(api.RuntimeUpgradeOperationLease)
 	m.runtimeUpgradeOperations[op.ID] = op
-	return RuntimeUpgradeOperationClaim{ID: op.ID, LeaseToken: op.LeaseToken}, nil
+	return RuntimeUpgradeOperationClaim{ID: op.ID, LeaseToken: op.LeaseToken, AccountID: op.AccountID, AppID: op.AppID, ServingDeploymentID: op.ServingDeploymentID}, nil
 }
 
 func (m *MemStore) AdvanceRuntimeUpgradeOperation(ctx context.Context, c RuntimeUpgradeOperationClaim) (RuntimeUpgradeOperation, error) {
@@ -142,7 +142,7 @@ func (m *MemStore) AdvanceRuntimeUpgradeOperation(ctx context.Context, c Runtime
 	if !ok || op.LeaseToken != c.LeaseToken || !op.LeaseUntil.After(now) || !runtimeUpgradeActive(op.Phase) {
 		return RuntimeUpgradeOperation{}, ErrConflict
 	}
-	phase, blocker, wake, err := m.advanceRuntimeUpgradeOperationLocked(ctx, op, now)
+	phase, blocker, wake, err := m.advanceRuntimeUpgradeOperationLocked(ctx, op, now, c.HoldCutover)
 	if err != nil {
 		return RuntimeUpgradeOperation{}, err
 	}
@@ -156,7 +156,7 @@ func (m *MemStore) AdvanceRuntimeUpgradeOperation(ctx context.Context, c Runtime
 	return op, nil
 }
 
-func (m *MemStore) advanceRuntimeUpgradeOperationLocked(ctx context.Context, op RuntimeUpgradeOperation, now time.Time) (RuntimeUpgradeOperationPhase, string, string, error) {
+func (m *MemStore) advanceRuntimeUpgradeOperationLocked(ctx context.Context, op RuntimeUpgradeOperation, now time.Time, holdCutover bool) (RuntimeUpgradeOperationPhase, string, string, error) {
 	r := op.RuntimeUpgradeOperationRequest
 	if old, ok := m.runtimeUpgradeCutovers[r.DeploymentID]; ok {
 		if !r.cutover(old.WakeID).matches(old) {
@@ -222,6 +222,9 @@ func (m *MemStore) advanceRuntimeUpgradeOperationLocked(ctx context.Context, op 
 	}
 	if err := m.validateRuntimeUpgradeAcceptanceLocked(d.ID); err != nil {
 		return blockedRuntimeUpgradeOperation("readiness_changed")
+	}
+	if holdCutover {
+		return RuntimeUpgradeWaiting, "", "", nil
 	}
 	cutover, err := m.cutoverRuntimeUpgradeLocked(ctx, r.cutover(a.WakeID))
 	if err != nil {
