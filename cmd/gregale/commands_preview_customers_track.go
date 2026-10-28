@@ -181,7 +181,7 @@ func cmdPreviewCustomersTrack(args []string) int {
 	if len(positional) != 0 || *rosterPath == "" || *mappingPath == "" || len(deployments) == 0 ||
 		!validRouteHealthSuggestionSince(*since) || !slices.Contains([]string{"text", "markdown", "csv"}, *format) ||
 		(jsonOutput && *format != "text") || rejectUnexpectedFlagArgs(fs) {
-		PrintUsage(osStderr, "usage: gregale preview customers track --roster <PATH> --mapping <PATH> --deployment APP=ID [--deployment APP=ID...] [--since 14d] [--format text|markdown|csv] [--out <PATH>] [--json]", "preview")
+		PrintUsage(osStderr, "usage: gregale preview customers track --roster <PATH> --mapping <PATH> --release APP=ID [--release APP=ID...] [--since 14d] [--format text|markdown|csv] [--out <PATH>] [--json]", "preview")
 		return 1
 	}
 	until := time.Now().UTC()

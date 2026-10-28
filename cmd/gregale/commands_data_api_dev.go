@@ -77,7 +77,7 @@ func runDataAPIDev(args []string, rehearsal *dataAPIMigrationOptions) int {
 		return 1
 	}
 	if (*approval != "" && (*baseline == "" || !*checkBreaking)) || (*checkTypes && !*once) || fs.NArg() != 0 || *port < 0 || *port > 65535 || *directory == "" || *output == "" || (*replay != "" && !*once) || (*scenario != "" && *replay == "") {
-		PrintUsage(os.Stderr, "usage: gregale data-api dev [--directory DIR] [--config FILE] [--output FILE] [--port PORT] [--check] [--validators] [--check-types --once] [--once] [--watch=false] [--baseline FILE] [--check-breaking] [--approval FILE] [--accepted-contracts FILE] [--replay FILE --once] [--scenario NAME]", "data-api")
+		PrintUsage(os.Stderr, "usage: gregale data-api dev [--directory DIR] [--config FILE] [--output FILE] [--port PORT] [--check] [--validators] [--check-types --once] [--once] [--follow=false] [--baseline FILE] [--check-breaking] [--approval FILE] [--accepted-contracts FILE] [--replay FILE --once] [--scenario NAME]", "data-api")
 		return 1
 	}
 	base, err := filepath.Abs(*directory)

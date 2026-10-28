@@ -74,7 +74,7 @@ func cmdDevBridgeControl(args []string) int {
 
 func cmdDevBridgeDoctor(args []string) (exit int) {
 	if len(args) == 0 {
-		return printErr("Missing service", errors.New("usage: gregale dev bridge doctor APP --environment development --local-port 8080"))
+		return printErr("Missing service", errors.New("usage: gregale dev bridge doctor APP --env development --local-port 8080"))
 	}
 	fs := newFlagSet("dev bridge doctor", flag.ContinueOnError)
 	environment := fs.String("environment", "development", "named development environment")

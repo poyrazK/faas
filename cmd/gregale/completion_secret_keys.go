@@ -39,7 +39,7 @@ func secretKeyCompletionTarget(words []string) (app, scope, prefix, inline strin
 			switch expecting {
 			case "app":
 				app = word
-			case "scope":
+			case "scope", "env":
 				scope = word
 			}
 			expecting = ""
@@ -52,12 +52,12 @@ func secretKeyCompletionTarget(words []string) (app, scope, prefix, inline strin
 		if !separated && strings.HasPrefix(word, "-") {
 			name, value, hasValue := strings.Cut(strings.TrimLeft(word, "-"), "=")
 			switch name {
-			case "app", "scope", "key", "class", "older-than", "delivery-status", "interval", "timeout":
+			case "app", "scope", "env", "key", "class", "older-than", "delivery-status", "interval", "timeout":
 				if hasValue {
 					if name == "app" {
 						app = value
 					}
-					if name == "scope" {
+					if name == "scope" || name == "env" { // --env is scope's canonical spelling
 						scope = value
 					}
 				} else {

@@ -12,7 +12,7 @@ import (
 )
 
 const (
-	linkUsage    = "usage: gregale link [<project-slug>] [--interactive] [--app <slug>] [--environment <environment>] [--no-gitignore]"
+	linkUsage    = "usage: gregale link [<project-slug>] [--interactive] [--app <slug>] [--env <environment>] [--no-gitignore]"
 	contextUsage = "usage: gregale context [--check] [--verify [--timeout 10s]] | gregale context --local-config [--problems-only]"
 )
 

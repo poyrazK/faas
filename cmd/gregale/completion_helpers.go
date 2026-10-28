@@ -244,6 +244,11 @@ func completionClosedSetValues(name string) []string {
 }
 
 func cliFlagUsesEnvironmentValues(flag cliFlag) bool {
+	// Completion shows a flag by its canonical spelling and names the earlier
+	// one in its help (cliTreeFlagsForDisplay); the values follow that one.
+	if earlier, ok := strings.CutPrefix(flag.Short[strings.LastIndex(flag.Short, "(also --")+1:], "also --"); ok && strings.HasSuffix(earlier, ")") {
+		flag.Name = strings.TrimSuffix(earlier, ")")
+	}
 	if flag.Name == "scope" {
 		return true
 	}

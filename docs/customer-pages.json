@@ -22,6 +22,7 @@
     {"path": "dashboards", "source": "docs/dashboards.md"},
     {"path": "incidents", "source": "docs/incidents.md"},
     {"path": "cli", "source": "docs/cli-reference.md"},
+    {"path": "cli-command-tree", "source": "docs/cli-command-tree.md"},
     {"path": "code-workflows", "source": "docs/code-workflows.md"},
     {"path": "companions", "source": "docs/companions.md"},
     {"path": "crash-snapshots", "source": "docs/crash-snapshots.md"},

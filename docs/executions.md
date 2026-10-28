@@ -12,8 +12,8 @@ ephemeral scratch filesystem.
 
 ```sh
 gregale run --runtime node22 --file handler.js --input '{"url":"https://example.invalid"}' --wait
-gregale run --runtime node22 --file handler.js --watch
-gregale run --runtime node22 --file handler.js --watch --json
+gregale run --runtime node22 --file handler.js --follow
+gregale run --runtime node22 --file handler.js --follow --json
 gregale run --runtime node22 --dir . --entrypoint src/index.mjs --wait
 gregale sandbox list --status running --json
 gregale sandbox list --workflow-id incident-42 --json

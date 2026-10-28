@@ -44,7 +44,7 @@ func cmdDeployCheck(args []string) int {
 	configFile := fs.String("config-file", "", "proposed paired non-secret release configuration")
 	secretsFile := fs.String("secrets-file", "", "proposed secret file; only key names leave this machine")
 	if fs.Parse(args) != nil || fs.NArg() != 0 || !*project {
-		PrintUsage(osStderr, "usage: gregale deploy check --project [--project-slug SLUG] [--path DIR] [--atomic --verify] [--from ENV --environment ENV --sync-config] [--json]", "deploy")
+		PrintUsage(osStderr, "usage: gregale deploy check --project [--project-slug SLUG] [--path DIR] [--atomic --verify] [--from ENV --env ENV --sync-config] [--json]", "deploy")
 		return 1
 	}
 	if request.FromEnvironment != "" && (*path != "" || *configFile != "" || *secretsFile != "" || *source != "auto" || *worktree) {
@@ -205,7 +205,7 @@ func renderDeploymentCheck(report api.ProjectDeploymentReadiness) {
 }
 
 func deploymentCheckCommand() cliSub {
-	return cliSub{Name: "check", Short: "Check local source, an image or project prerequisites before deploying", Notes: []string{"Without --project, checks local source or an image, as `gregale doctor` does; with --project, checks the project's release prerequisites against current state."}, Examples: []string{"gregale deploy check", "gregale deploy check --image ghcr.io/acme/api:1.2 --strict", "gregale deploy check --project --json", "gregale deploy check --project --atomic --verify", "gregale deploy check --project --project-slug shop --from staging --environment production --sync-config --verify"}, Flags: []cliFlag{
+	return cliSub{Name: "check", Short: "Check local source, an image or project prerequisites before deploying", Notes: []string{"Without --project, checks local source or an image, as `gregale doctor` does; with --project, checks the project's release prerequisites against current state."}, Examples: []string{"gregale deploy check", "gregale deploy check --image ghcr.io/acme/api:1.2 --strict", "gregale deploy check --project --json", "gregale deploy check --project --atomic --verify", "gregale deploy check --project --project-slug shop --from staging --env production --sync-config --verify"}, Flags: []cliFlag{
 		{Name: "project", Short: "check the complete project's release prerequisites", Bool: true},
 		{Name: "image", Short: "without --project: inspect this Linux/amd64 image without downloading layers", Value: "REF"},
 		{Name: "registry-user", Short: "without --project: registry username; requires --registry-password-stdin", Value: "USER"},

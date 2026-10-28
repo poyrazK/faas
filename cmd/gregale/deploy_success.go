@@ -135,7 +135,7 @@ func deploymentPromotionCommand(ctx context.Context, c *Client, appSlug string, 
 	if err != nil {
 		return "", ""
 	}
-	command = fmt.Sprintf("gregale release traffic promote --app %s --deployment %s", appSlug, deploymentCommandRef(dep))
+	command = fmt.Sprintf("gregale release traffic promote --app %s --release %s", appSlug, deploymentCommandRef(dep))
 	for _, sibling := range deployments {
 		if sibling.ID == dep.ID || sibling.Status != statusLive || sibling.TrafficPercent == 0 {
 			continue
@@ -358,7 +358,7 @@ func renderDeploymentReleaseSummary(w io.Writer, summary api.DeploymentSummaryRe
 	// to promote the still-serving release.
 	if prev := summary.Previous; prev != nil && prev.Status == statusLive && summary.Deployment.TrafficPercent < 100 &&
 		summary.Deployment.CanaryPreset != "" && summary.Deployment.CanaryPreset != "none" {
-		_, _ = fmt.Fprintf(w, "  Abort canary: gregale release traffic promote --app %s --deployment %s\n", appSlug, deploymentLabel(*prev))
+		_, _ = fmt.Fprintf(w, "  Abort canary: gregale release traffic promote --app %s --release %s\n", appSlug, deploymentLabel(*prev))
 		return
 	}
 	if summary.Deployment.TrafficPercent > 0 && summary.Deployment.TrafficPercent < 100 {
@@ -366,7 +366,7 @@ func renderDeploymentReleaseSummary(w io.Writer, summary api.DeploymentSummaryRe
 		// server refuses a plain rollback, and promoting the earlier live
 		// release is the way back, as for a canary.
 		if prev := summary.Previous; prev != nil && prev.Status == statusLive {
-			_, _ = fmt.Fprintf(w, "  Undo split: gregale release traffic promote --app %s --deployment %s\n", appSlug, deploymentLabel(*prev))
+			_, _ = fmt.Fprintf(w, "  Undo split: gregale release traffic promote --app %s --release %s\n", appSlug, deploymentLabel(*prev))
 			return
 		}
 		_, _ = fmt.Fprintf(w, "  Undo split: gregale release traffic status %s, then gregale release traffic promote --app %s --deployment <earlier release>\n", appSlug, appSlug)

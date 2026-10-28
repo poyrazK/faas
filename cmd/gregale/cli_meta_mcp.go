@@ -117,7 +117,7 @@ func mcpCLICommand() cliCommand {
 			{Name: "role", Short: "configured probe role with --record (default default)", Value: "NAME"},
 			{Name: "legacy", Short: "use the legacy protocol"},
 			{Name: "timeout", Short: "overall deadline up to 30s", Value: "DURATION"},
-		}, Examples: []string{"gregale mcp server readiness --app my-mcp --deployment <uuid> --token-env MCP_PROBE_TOKEN --baseline gregale-mcp.lock.json --json"}},
+		}, Examples: []string{"gregale mcp server readiness --app my-mcp --release <uuid> --token-env MCP_PROBE_TOKEN --baseline gregale-mcp.lock.json --json"}},
 		{Name: "init", Short: "Create an MCP starter in Node, Go or Python", Flags: []cliFlag{
 			{Name: "path", Short: "empty destination directory", Value: "DIR", Req: true},
 			{Name: "language", Short: "starter language alias", Value: "LANGUAGE", ClosedSet: []string{"node", "go", "python"}},
@@ -172,7 +172,7 @@ func mcpCLICommand() cliCommand {
 			{Name: "timeout", Short: "overall replica qualification deadline (default 10s)", Value: "DURATION"},
 			{Name: "watch", Short: "poll until interrupted and report status changes", Bool: true},
 			{Name: "interval", Short: "poll interval with --watch (default 30s)", Value: "DURATION"},
-		}, Examples: []string{"gregale mcp server status --app my-mcp", "gregale mcp server status --app my-mcp --token-env MCP_READER_TOKEN", "gregale mcp server status --app my-mcp --release-policy release.json --json", "gregale mcp server status --app my-mcp --watch --interval 15s --json"}},
+		}, Examples: []string{"gregale mcp server status --app my-mcp", "gregale mcp server status --app my-mcp --token-env MCP_READER_TOKEN", "gregale mcp server status --app my-mcp --release-policy release.json --json", "gregale mcp server status --app my-mcp --follow --interval 15s --json"}},
 		{Name: "doctor", Short: "Check discovery, Origin rejection, compatibility and streaming", Notes: []string{"The streaming check is optional."}, Positionals: []string{"[<app>]"}, Flags: append(append([]cliFlag{}, remote...),
 			cliFlag{Name: "stack", Short: "check hosting overview and reviewed OAuth configuration", Bool: true},
 			cliFlag{Name: "hosting", Short: "run the existing Task hosting doctor", Bool: true},

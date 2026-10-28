@@ -258,7 +258,7 @@ credentials. It gets:
 - the values and secrets you set for previews on the production app:
 
   ```sh
-  gregale env set --app shop-web --scope pr-preview STRIPE_KEY=sk_test_…
+  gregale env set --app shop-web --env pr-preview STRIPE_KEY=sk_test_…
   ```
 
 `pr-preview` values override the PR's Compose values. See

@@ -31,6 +31,9 @@ func cliTreeManifest(commands []cliCommand) []cliCommand {
 			manifest = append(manifest, command)
 		}
 	}
+	for i, command := range manifest {
+		manifest[i] = cliTreeDisplayCommand(command)
+	}
 	return manifest
 }
 

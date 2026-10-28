@@ -18,7 +18,7 @@ func cmdPostgresDiagnostics(args []string) int {
 	limit := fs.Int("limit", 50, "maximum databases in this page (1-100)")
 	if err := fs.Parse(normalizePostgresAttachArgs(args)); err != nil || fs.NArg() != 1 ||
 		uuid.Validate(fs.Arg(0)) != nil || (*after != "" && uuid.Validate(*after) != nil) || *limit < 1 || *limit > 100 {
-		PrintUsage(os.Stderr, "usage: gregale postgres diagnostics ACCOUNT_ID [--after UUID] [--limit 1-100]", "postgres")
+		PrintUsage(os.Stderr, "usage: gregale postgres diagnostics ACCOUNT_ID [--cursor UUID] [--limit 1-100]", "postgres")
 		return 1
 	}
 	client, err := authedClient()

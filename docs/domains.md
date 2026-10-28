@@ -31,7 +31,7 @@ To send a custom hostname to one project environment rather than the app's
 application-wide route, pass `--environment`:
 
 ```bash
-gregale domain create --app my-api --domain staging.example.com --environment staging
+gregale domain create --app my-api --domain staging.example.com --env staging
 gregale environment diff shop --from production --to staging
 ```
 

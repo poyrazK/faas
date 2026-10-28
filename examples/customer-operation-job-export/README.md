@@ -93,9 +93,9 @@ Deploy the SDK-equipped app source with your preview environment selector:
 
 ```sh
 gregale deploy --name <slug> --no-require-authn --secrets-file <app-settings-file>
-gregale operation definitions get customer-export --app <slug> --deployment <deployment-uuid> --json
+gregale operation definitions get customer-export --app <slug> --release <deployment-uuid> --json
 gregale env set --app <slug> GREGALE_EXPORT_DEFINITION_ID=<definition-uuid>
-gregale operation doctor --app <slug> --deployment <deployment-uuid>
+gregale operation doctor --app <slug> --release <deployment-uuid>
 ```
 
 The UI needs public app ingress. The browser authenticates directly to the

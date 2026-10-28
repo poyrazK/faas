@@ -235,7 +235,7 @@ func cmdDataAPIDeploy(args []string) int {
 		return 1
 	}
 	if fs.NArg() != 1 || !api.ValidAppSlug(fs.Arg(0)) || *migrations == "" || api.ValidateScope(*scope) != nil || !validDataAPIReleaseCommand(*releaseCommand) {
-		PrintUsage(os.Stderr, "usage: gregale data-api deploy NAME --migrations DIR [--release-command COMMAND] [--scope SCOPE] [--timeout DURATION]", "data-api")
+		PrintUsage(os.Stderr, "usage: gregale data-api deploy NAME --migrations DIR [--release-command COMMAND] [--env SCOPE] [--timeout DURATION]", "data-api")
 		return 1
 	}
 	client, err := authedClient()

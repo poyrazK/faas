@@ -9,7 +9,7 @@ preview feature on Hobby, Pro, and Scale.
 Create an issue reporting token for the exact deployment that runs the code:
 
 ```sh
-gregale debug issue create-token --app exports --deployment DEPLOYMENT_ID --name production --expires-in 24h
+gregale debug issue create-token --app exports --release DEPLOYMENT_ID --name production --expires-in 24h
 ```
 
 Store the returned `g_issue_…` token as an application secret. It is shown once;
@@ -134,7 +134,7 @@ gregale debug issue list --app exports --sort impact
 gregale debug issue list --app exports --sort impact --min-customers 3
 gregale debug issue get ISSUE_ID --app exports
 gregale debug issue assign ISSUE_ID --app exports --assignee ACCOUNT_ID
-gregale debug issue resolve ISSUE_ID --app exports --deployment FIXED_DEPLOYMENT_ID
+gregale debug issue resolve ISSUE_ID --app exports --release FIXED_DEPLOYMENT_ID
 gregale debug issue reopen ISSUE_ID --app exports
 gregale debug issue ignore ISSUE_ID --app exports --until 2026-10-02T12:00:00Z
 gregale debug issue merge SOURCE_ISSUE_ID --app exports --target DESTINATION_ISSUE_ID
@@ -784,8 +784,8 @@ three verified customers in ten minutes:
 
 ```sh
 gregale debug issue compound-alerts get --app payments
-gregale debug issue compound-alerts save --app payments --expected-revision 0 --key production-impact --environment production --minimum-events 20 --minimum-customers 3 --window-seconds 600 --cooldown-seconds 1800
-gregale debug issue compound-alerts preview --app payments --issue ISSUE_UUID --key production-impact --environment production --minimum-events 20 --minimum-customers 3 --window-seconds 600 --cooldown-seconds 1800
+gregale debug issue compound-alerts save --app payments --expected-revision 0 --key production-impact --env production --minimum-events 20 --minimum-customers 3 --window-seconds 600 --cooldown-seconds 1800
+gregale debug issue compound-alerts preview --app payments --issue ISSUE_UUID --key production-impact --env production --minimum-events 20 --minimum-customers 3 --window-seconds 600 --cooldown-seconds 1800
 gregale debug issue compound-alerts remove --app payments --expected-revision 1 --key production-impact
 ```
 

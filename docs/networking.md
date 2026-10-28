@@ -336,7 +336,7 @@ hatch, set `x-gregale-service-policy: account` on the caller. Under the
 `GET /v1/apps/{slug}/bindings` provides the shared binding inventory used by
 the CLI and SDKs. It batches app-scoped catalog reads for services, PostgreSQL,
 object storage, queues, and outbound integrations. Omit `scope` to inspect all
-resource scopes, or use `?scope=staging` / `gregale app binding public-api --scope
+resource scopes, or use `?scope=staging` / `gregale app binding public-api --env
 staging` to filter database, bucket, and environment queue bindings. Shared
 legacy queues and app-wide service and outbound bindings remain included; the filter does not create or isolate
 resources for that environment.
@@ -439,9 +439,9 @@ returns 130. Failed reads stop the wait with a nonzero result.
 For a staged rollout, verify and check the same deployment before promotion:
 
 ```sh
-gregale app binding verify public-api --deployment v12 --all
-gregale app binding check public-api --deployment v12 --max-verification-age 10m --json
-gregale release traffic promote --app public-api --deployment v12 --if-serving v11 --require-bindings --max-verification-age 10m
+gregale app binding verify public-api --release v12 --all
+gregale app binding check public-api --release v12 --max-verification-age 10m --json
+gregale release traffic promote --app public-api --release v12 --if-serving v11 --require-bindings --max-verification-age 10m
 ```
 
 `--require-bindings` makes the server repeat the exact deployment check and
@@ -511,7 +511,7 @@ push queue bindings while retaining strict verification for other dependencies:
 
 ```sh
 gregale app binding release-policy set public-api --scope production --mode enforce --expected-revision 0 --queue-require orders=consumer_readiness
-gregale app binding check public-api --deployment v12 --release-policy --json
+gregale app binding check public-api --release v12 --release-policy --json
 ```
 
 `orders` is the binding name. The requirement needs exactly one shared or
@@ -546,8 +546,8 @@ To prepare all dependencies for an enforced release policy with one command,
 preview the plan and then run it for the same candidate:
 
 ```sh
-gregale app binding verify public-api --deployment v12 --release-policy --dry-run --json
-gregale app binding verify public-api --deployment v12 --release-policy --wait-timeout 5m --json
+gregale app binding verify public-api --release v12 --release-policy --dry-run --json
+gregale app binding verify public-api --release v12 --release-policy --wait-timeout 5m --json
 ```
 
 The policy need not contain storage requirements. The plan covers services,
@@ -599,9 +599,9 @@ provider endpoint safe to call:
 
 ```sh
 gregale app binding probe-policy INTEGRATION_ID --path /health --method GET --expect-status 200
-gregale app binding verify public-api --deployment v12 --outbound INTEGRATION_ID
-gregale app binding check public-api --deployment v12
-gregale release traffic promote --app public-api --deployment v12 --require-bindings
+gregale app binding verify public-api --release v12 --outbound INTEGRATION_ID
+gregale app binding check public-api --release v12
+gregale release traffic promote --app public-api --release v12 --require-bindings
 ```
 
 The method must be GET or HEAD, the canonical path must fit the integration's
@@ -1335,8 +1335,8 @@ It contains no credential values, hashes or private binding owner IDs.
 To require application acknowledgements during a rollout:
 
 ```sh
-gregale app binding check public-api --deployment v12 --require-application-ack --json
-gregale release traffic promote --app public-api --deployment v12 --if-serving v11 --require-bindings --require-application-ack
+gregale app binding check public-api --release v12 --require-application-ack --json
+gregale release traffic promote --app public-api --release v12 --if-serving v11 --require-bindings --require-application-ack
 ```
 
 Strict mode requires current version-bound acknowledgements from every
@@ -1406,7 +1406,7 @@ To abort an active canary while enforcement stays enabled, first verify the
 exact retained predecessor, then pin both deployments:
 
 ```sh
-gregale app binding verify public-api --deployment v41 --all
+gregale app binding verify public-api --release v41 --all
 gregale rollouts recover public-api --action abort --deployment v42 \
   --expected-predecessor v41 --reason 'Restore verified predecessor'
 ```
@@ -1455,10 +1455,10 @@ live predecessor at zero weight after service cutover. Verify that predecessor,
 then request the abort and wait for the selected rollout:
 
 ```sh
-gregale app binding verify public-api --deployment v41 --all
+gregale app binding verify public-api --release v41 --all
 gregale rollouts recover public-api --action abort --deployment v42 \
   --expected-predecessor v41 --reason 'Restore verified predecessor'
-gregale rollouts status public-api --deployment v42 --wait --timeout 10m
+gregale rollouts status public-api --release v42 --wait --timeout 10m
 ```
 
 Service recovery returns 202 and `service_recovery` with the request UUID and
@@ -1480,7 +1480,7 @@ gregale rollback api --to v41 --expected-current v42 --reason "restore previous 
 The accepted operation retains both deployments through readiness and binding
 checks. The current release keeps serving while the target prepares at zero
 traffic. If bindings are blocked, verify the exact target with the existing
-`gregale app binding verify-all api --deployment v41` command, then inspect or resume
+`gregale app binding verify-all api --release v41` command, then inspect or resume
 waiting for the accepted operation:
 
 ```sh
@@ -1770,9 +1770,9 @@ The consumer must recognize `{"gregale_queue_canary":"v1","canary_id":"<unique U
 
 ```sh
 gregale app binding release-policy set my-api --scope production --require-verification --queue-require orders=handler_completion --expected-revision 0
-gregale app binding verify my-api --deployment v12 --release-policy --dry-run --json
-gregale app binding verify my-api --deployment v12 --release-policy --queue-publish --json
-gregale app binding verify my-api --deployment v12 --queue orders --queue-publish --json
+gregale app binding verify my-api --release v12 --release-policy --dry-run --json
+gregale app binding verify my-api --release v12 --release-policy --queue-publish --json
+gregale app binding verify my-api --release v12 --queue orders --queue-publish --json
 ```
 
 Checked graph verification also accepts `--queue-publish`. It reviews every member and publication consent requirement before admitting messages. Dry runs never publish; compatible pending canaries are observed and fresh successful evidence is reused.
@@ -1798,7 +1798,7 @@ remain registered until ordinary retention removes them. See
 
 ### Parallel binding qualification
 
-`gregale app binding verify APP --deployment ID --release-policy --concurrency 2`
+`gregale app binding verify APP --release ID --release-policy --concurrency 2`
 runs independent required probes concurrently. The default is 2; `--concurrency`
 accepts 1–8 and applies only to release-policy verification. Use 1 for serial
 execution when provider or application capacity requires it. Server admission
@@ -1823,7 +1823,7 @@ expiry and the atomic checks at activation remain unchanged. See
 Use a durable receipt when a CI job or CLI session may disconnect:
 
 ```sh
-gregale app binding verify my-api --deployment v12 --release-policy --durable \
+gregale app binding verify my-api --release v12 --release-policy --durable \
   --object-storage-write --queue-publish --concurrency 2 --json
 ```
 

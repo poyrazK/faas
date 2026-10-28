@@ -135,7 +135,7 @@ func TestRenderSuccessfulDarkDeploymentShowsPreviewAndPromotion(t *testing.T) {
 		"Staged v44 with 0% production traffic.",
 		"Preview: https://deploy-44-my-app.gregale.dev",
 		"Production remains on v43. https://my-app.gregale.dev",
-		"Promote: gregale release traffic promote --app my-app --deployment v44 --if-serving v43",
+		"Promote: gregale release traffic promote --app my-app --release v44 --if-serving v43",
 	} {
 		if !strings.Contains(out.String(), want) {
 			t.Errorf("dark deploy output missing %q\nfull output:\n%s", want, out.String())
@@ -256,7 +256,7 @@ func TestWriteWaitedDarkDeploymentReceiptIncludesPreviewAndPromotion(t *testing.
 	if receipt.PreviewURL != "https://deploy-44-my-app.gregale.dev" {
 		t.Fatalf("preview_url = %q", receipt.PreviewURL)
 	}
-	if receipt.PromotionCommand != "gregale release traffic promote --app my-app --deployment v44 --if-serving v43" {
+	if receipt.PromotionCommand != "gregale release traffic promote --app my-app --release v44 --if-serving v43" {
 		t.Fatalf("promotion_command = %q", receipt.PromotionCommand)
 	}
 	if receipt.ReleaseSummary != nil {
@@ -331,7 +331,7 @@ func TestRenderDeploymentReleaseSummary_MidCanaryOffersAbort(t *testing.T) {
 		RollbackTargetRevision: 5,
 	}, "h6-lab")
 	got := out.String()
-	if !strings.Contains(got, "Abort canary: gregale release traffic promote --app h6-lab --deployment v6") {
+	if !strings.Contains(got, "Abort canary: gregale release traffic promote --app h6-lab --release v6") {
 		t.Fatalf("mid-canary summary lacks the abort hint:\n%s", got)
 	}
 	if strings.Contains(got, "--to v5") {
@@ -359,7 +359,7 @@ func TestRenderDeploymentReleaseSummary_TrafficSplitOffersPromote(t *testing.T) 
 		Deployment: api.DeploymentResponse{ID: "d3", Revision: 3, Status: main.StatusLive, TrafficPercent: 50},
 		Previous:   &api.DeploymentResponse{ID: "d1", Revision: 1, Status: main.StatusLive, TrafficPercent: 50},
 	}, "h10-hello-node")
-	if got := out.String(); !strings.Contains(got, "Undo split: gregale release traffic promote --app h10-hello-node --deployment v1") {
+	if got := out.String(); !strings.Contains(got, "Undo split: gregale release traffic promote --app h10-hello-node --release v1") {
 		t.Fatalf("split summary with a live previous release lacks its exact promote command:\n%s", got)
 	}
 }

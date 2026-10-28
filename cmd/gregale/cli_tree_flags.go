@@ -72,20 +72,7 @@ func normalizeTreeFlags(args []string) []string {
 		if _, ok := defined[name]; ok {
 			continue
 		}
-		for _, synonym := range cliTreeFlagSynonyms {
-			if synonym.Canonical != name {
-				continue
-			}
-			match, count := "", 0
-			for _, old := range synonym.Old {
-				flag, ok := defined[old]
-				if ok && mentionsAny(strings.ToLower(flag.Short), synonym.Mentions) {
-					match, count = old, count+1
-				}
-			}
-			if count != 1 {
-				continue
-			}
+		if match, ok := cliTreeFlagEquivalent(defined, name); ok {
 			out[i] = "--" + match
 			if hasValue {
 				out[i] += "=" + value
@@ -93,6 +80,99 @@ func normalizeTreeFlags(args []string) []string {
 		}
 	}
 	return out
+}
+
+// cliTreeFlagEquivalent returns the flag a canonical spelling runs among
+// defined: the only one of its old spellings whose help names the concept,
+// when defined lacks the canonical spelling itself.
+func cliTreeFlagEquivalent(defined map[string]cliFlag, canonical string) (string, bool) {
+	if _, ok := defined[canonical]; ok {
+		return "", false
+	}
+	for _, synonym := range cliTreeFlagSynonyms {
+		if synonym.Canonical != canonical {
+			continue
+		}
+		match, count := "", 0
+		for _, old := range synonym.Old {
+			flag, ok := defined[old]
+			if ok && mentionsAny(strings.ToLower(flag.Short), synonym.Mentions) {
+				match, count = old, count+1
+			}
+		}
+		return match, count == 1
+	}
+	return "", false
+}
+
+// cliTreeCanonicalFlags maps each of flags that a canonical spelling runs
+// to that spelling (`scope` → `env` on `env set`).
+func cliTreeCanonicalFlags(flags []cliFlag) map[string]string {
+	defined := make(map[string]cliFlag, len(flags))
+	for _, flag := range flags {
+		defined[flag.Name] = flag
+	}
+	canonical := map[string]string{}
+	for _, synonym := range cliTreeFlagSynonyms {
+		if old, ok := cliTreeFlagEquivalent(defined, synonym.Canonical); ok {
+			canonical[old] = synonym.Canonical
+		}
+	}
+	return canonical
+}
+
+// cliTreeFlagsForDisplay spells flags as help, the reference and completion
+// show them: a flag a canonical spelling runs takes that spelling and names
+// its earlier one, which keeps working (ADR-20261026145832 step 4).
+func cliTreeFlagsForDisplay(flags []cliFlag) []cliFlag {
+	canonical := cliTreeCanonicalFlags(flags)
+	if len(canonical) == 0 {
+		return flags
+	}
+	shown := make([]cliFlag, len(flags))
+	for i, flag := range flags {
+		if name, ok := canonical[flag.Name]; ok {
+			flag.Short = strings.TrimSpace(flag.Short + " (also --" + flag.Name + ")")
+			flag.Name = name
+		}
+		shown[i] = flag
+	}
+	return shown
+}
+
+// cliTreeDisplayCommand spells the flags of command and its verbs for
+// display (cliTreeFlagsForDisplay).
+func cliTreeDisplayCommand(command cliCommand) cliCommand {
+	command.Flags = cliTreeFlagsForDisplay(command.Flags)
+	command.Subcommands = cliTreeDisplaySubs(command.Subcommands)
+	return command
+}
+
+func cliTreeDisplaySubs(subs []cliSub) []cliSub {
+	if len(subs) == 0 {
+		return subs
+	}
+	shown := make([]cliSub, len(subs))
+	for i, sub := range subs {
+		sub.Flags = cliTreeFlagsForDisplay(sub.Flags)
+		sub.Subcommands = cliTreeDisplaySubs(sub.Subcommands)
+		shown[i] = sub
+	}
+	return shown
+}
+
+// cliTreeCanonicalFlag returns the canonical spelling of flag on the
+// command args name, in today's or the tree's spelling.
+func cliTreeCanonicalFlag(args []string, flag string) (string, bool) {
+	if len(args) == 0 {
+		return "", false
+	}
+	today, err := rewriteCliTree(args)
+	if err != nil || len(today) == 0 {
+		return "", false
+	}
+	name, ok := cliTreeCanonicalFlags(manifestLeafFlags(today))[flag]
+	return name, ok
 }
 
 func mentionsAny(text string, words []string) bool {

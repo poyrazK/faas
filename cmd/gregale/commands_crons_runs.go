@@ -76,16 +76,16 @@ func cmdCronsRuns(args []string) int {
 		return printErr("Invalid app flag", fmt.Errorf("--app requires --interactive; otherwise supply a task ID"))
 	}
 	if len(pos) != 1 {
-		printCommandValidation(os.Stderr, "usage: gregale cron runs <id> [--before C] [--limit N] [--run TASK-ID]\n")
+		printCommandValidation(os.Stderr, "usage: gregale cron runs <id> [--cursor C] [--limit N] [--run TASK-ID]\n")
 		return 1
 	}
 	if err := validateCLILimit("limit", *limit, 100); err != nil {
-		printCommandValidation(os.Stderr, "usage: gregale cron runs <id> [--before C] [--limit N] (1 <= N <= 100)\n")
+		printCommandValidation(os.Stderr, "usage: gregale cron runs <id> [--cursor C] [--limit N] (1 <= N <= 100)\n")
 		return 1
 	}
 	id := pos[0]
 	if !cronIDPattern.MatchString(id) {
-		printCommandValidation(os.Stderr, "usage: gregale cron runs <id> [--before C] [--limit N] [--run TASK-ID]\n")
+		printCommandValidation(os.Stderr, "usage: gregale cron runs <id> [--cursor C] [--limit N] [--run TASK-ID]\n")
 		return 1
 	}
 	if *runID != "" {

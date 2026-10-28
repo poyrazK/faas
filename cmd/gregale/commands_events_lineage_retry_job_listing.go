@@ -21,7 +21,7 @@ func cmdEventsLineageRetryJobs(args []string) int {
 		return 1
 	}
 	if len(positional) != 2 || rejectUnexpectedFlagArgs(fs) {
-		PrintUsage(os.Stderr, "usage: gregale event subscription-lineage-retry-jobs APP SUB [--status STATE] [--limit N] [--after CURSOR] [--attention WARNING]", "events")
+		PrintUsage(os.Stderr, "usage: gregale event subscription-lineage-retry-jobs APP SUB [--status STATE] [--limit N] [--cursor CURSOR] [--attention WARNING]", "events")
 		return 1
 	}
 	option := api.EventExecutionLineageRetryJobAttentionOptions{Attention: *attention}

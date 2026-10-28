@@ -175,7 +175,7 @@ An event wait needs a `timeout`. While parked, the operation is `waiting` with
 gregale operation signal OP_ID --app shop --event payment.succeeded \
   --signal-id evt_3Nx --payload '{"charge":"ch_1"}'
 # Or reach every active operation about one business subject:
-gregale operation signal --app shop --scope production --operation fulfil \
+gregale operation signal --app shop --env production --operation fulfil \
   --subject order:ord_42 --event payment.succeeded --signal-id evt_3Nx
 ```
 
@@ -324,7 +324,7 @@ The browser client accepts `{appID, scope, subjectType: 'order', subjectID:
 them. An operator can use:
 
 ```sh
-gregale operation list --app orders --scope default \
+gregale operation list --app orders --env default \
   --subject-type order --subject-id ord-123
 ```
 
@@ -743,7 +743,7 @@ admission verification and rollback. The proposed
 cohort, for each native execution kind and for general admission per kind.
 
 Owning accounts can observe submission prerequisites with
-`gregale operation doctor --app SLUG --deployment DEPLOYMENT_UUID
+`gregale operation doctor --app SLUG --release DEPLOYMENT_UUID
 --tenant TENANT_UUID [--name NAME] [--json]`. The account read endpoint reports the
 responding API node's current preview decision, tenant and plan, pending capacity,
 deployment/definition/release pins and configuration presence.
@@ -914,7 +914,7 @@ Read retained facts using `GregaleOperationClient.milestones(operationID)` or `b
 
 ```sh
 gregale operation milestones OPERATION_UUID --app orders
-gregale operation milestones --app orders --scope default --subject-type order --subject-id ORDER_ID
+gregale operation milestones --app orders --env default --subject-type order --subject-id ORDER_ID
 ```
 
 Tenant credentials use `--self`; an Operation UUID needs no app argument, while business-reference reads require an app UUID. Feed pages use `--limit` and `--cursor`. The dashboard shows milestones on Operation detail pages and when an exact business reference is selected. Payloads are public fields defined by the application schema. Customer identity comes from credentials, and business-reference selectors never override ownership.
@@ -1145,10 +1145,10 @@ you browse. Refresh the first page for the latest view. The queue observes facts
 it neither authorizes nor performs business Operations.
 
 ```sh
-gregale operation attention list --app orders --scope production
-gregale operation attention list --app orders --scope production \
+gregale operation attention list --app orders --env production
+gregale operation attention list --app orders --env production \
   --workflow order-fulfillment --target-operation fulfill-order --reason blocked
-gregale operation attention list --self --app-id APP_UUID --scope production
+gregale operation attention list --self --app-id APP_UUID --env production
 ```
 
 Go exposes `ListAccountWorkflowAttention` and
@@ -1219,9 +1219,9 @@ workflows without blockers are not unassigned work. Identifiers retain their
 128 UTF-8 byte limit and may not contain control characters.
 
 ```sh
-gregale operation attention list --app orders --scope production --owner billing-team
-gregale operation attention list --app orders --scope production --unassigned
-gregale operation attention summary --app orders --scope production --group-by owner
+gregale operation attention list --app orders --env production --owner billing-team
+gregale operation attention list --app orders --env production --unassigned
+gregale operation attention summary --app orders --env production --group-by owner
 ```
 
 The account and customer-self attention endpoints accept the same query
@@ -1278,8 +1278,8 @@ blocker removes it from the current escalation queue; retained resolution histor
 remains available through the existing workflow links.
 
 ```sh
-gregale operation attention list --app orders --scope production --reason escalated
-gregale operation attention summary --app orders --scope production --reason escalated --group-by owner
+gregale operation attention list --app orders --env production --reason escalated
+gregale operation attention summary --app orders --env production --reason escalated --group-by owner
 ```
 
 Account and customer-self attention endpoints and SDKs accept `reason=escalated`.
@@ -1387,8 +1387,8 @@ workflow queue page or the bounded group page. Choose `workflow` (default),
 `blocker_code`, `target_operation`, or account-only `customer` grouping.
 
 ```sh
-gregale operation attention summary --app orders --scope production --group-by blocker_code
-gregale operation attention list --app orders --scope production --blocker-code payment-pending
+gregale operation attention summary --app orders --env production --group-by blocker_code
+gregale operation attention list --app orders --env production --blocker-code payment-pending
 ```
 
 Account API: `GET /v1/apps/{slug}/workflow-attention/summary`.
@@ -1479,8 +1479,8 @@ makes an active retained workflow overdue. Dates normalize to UTC microseconds.
 Reports remain idempotent and older revisions cannot replace newer snapshots.
 
 ```sh
-gregale operation attention list --app orders --scope production --reason overdue
-gregale operation attention summary --app orders --scope production --reason overdue --group-by workflow
+gregale operation attention list --app orders --env production --reason overdue
+gregale operation attention summary --app orders --env production --reason overdue --group-by workflow
 ```
 
 The existing attention APIs accept `reason=overdue`. They evaluate overdue
@@ -1548,8 +1548,8 @@ text of at most 512 bytes without control characters. Descriptions should not
 contain private business details. Outcome codes are defined by the application.
 
 ```sh
-gregale operation outcomes --app orders --scope production --code fulfilled
-gregale operation outcome summary --app orders --scope production --group-by outcome
+gregale operation outcomes --app orders --env production --code fulfilled
+gregale operation outcome summary --app orders --env production --group-by outcome
 ```
 
 Listings use `GET /v1/apps/{slug}/workflow-outcomes` or credential-scoped

@@ -351,7 +351,7 @@ A preview gets configuration from two places
   when the preview is built or reopened:
 
   ```sh
-  gregale env set --app shop-api --scope pr-preview STRIPE_KEY=sk_test_…
+  gregale env set --app shop-api --env pr-preview STRIPE_KEY=sk_test_…
   ```
 
   They override the PR's Compose values. Changing a value reaches each preview

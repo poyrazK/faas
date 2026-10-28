@@ -39,7 +39,7 @@ the caller supplies an occurrence URI.
 | `log_archive_retention_exceeded` (403) | The requested log date is outside the plan's retention window | Choose a more recent date or review plans with longer retention. |
 | `verification_link_invalid` (410) | A verification link is malformed, expired, or already used | Request a new verification email and open its latest link. |
 | `not_found` (404) | The requested resource is missing or not visible to this account | Check the URL and account, then retry. |
-| `bindings_check_failed` (409) | Candidate binding preflight has blockers | Inspect `bindings_check.blockers`, resolve them and verify the candidate with `gregale app binding verify APP --deployment ID --all`. |
+| `bindings_check_failed` (409) | Candidate binding preflight has blockers | Inspect `bindings_check.blockers`, resolve them and verify the candidate with `gregale app binding verify APP --release ID --all`. |
 | `bindings_check_changed` (409) | Configuration, evidence or runtime facts changed, or a proof/push-consumer poll expired before promotion | Inspect `bindings_check.blockers` and retry. For `verification_expired`, verify the candidate again. For `queue_consumer_stale`, restore scheduler polling and wait for a healthy poll; the consumer window is thirty seconds independently of probe age. Traffic remains unchanged. |
 | `bindings_gate_unavailable` (503) | Binding catalogs cannot enforce the atomic promotion fence | Update the server and apply its migrations; ensure managed PostgreSQL and traffic state share the same database pool. |
 | `outbound_probe_unavailable` (503) | The outbound probe policy catalog cannot be read or saved | Apply the server migrations and restore catalog availability before configuring or verifying the binding. |

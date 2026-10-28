@@ -54,6 +54,7 @@ func printHelpNotes(w io.Writer, notes []string) {
 // Groups follow their first appearance in the manifest; flags retain their
 // order within each group. Completion and references still see every flag.
 func printLocalHelpFlags(w io.Writer, flags []cliFlag, compact bool) {
+	flags = cliTreeFlagsForDisplay(flags)
 	var groups []string
 	byGroup := map[string][]cliFlag{}
 	for _, flag := range flags {

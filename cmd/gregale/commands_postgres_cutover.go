@@ -52,7 +52,7 @@ func cmdPostgresCutoverPrepare(args []string) int {
 		return 1
 	}
 	if fs.NArg() != 3 {
-		PrintUsage(osStderr, "usage: gregale postgres cutover prepare SOURCE TARGET APP [--scope SCOPE]", "postgres")
+		PrintUsage(osStderr, "usage: gregale postgres cutover prepare SOURCE TARGET APP [--env SCOPE]", "postgres")
 		return 1
 	}
 	resolvedScope, err := resolveEnvironmentFlagOrContext(*scope)

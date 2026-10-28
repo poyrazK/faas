@@ -118,7 +118,7 @@ is known; the browser feature remains unavailable. After deployment, obtain the
 definition and configure its ID:
 
 ```sh
-gregale operation definitions get customer-export --app <slug> --deployment <deployment-uuid> --json
+gregale operation definitions get customer-export --app <slug> --release <deployment-uuid> --json
 gregale env set --app <slug> GREGALE_EXPORT_DEFINITION_ID=<definition-uuid>
 ```
 

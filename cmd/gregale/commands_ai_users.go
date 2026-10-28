@@ -51,7 +51,7 @@ func cmdAICatalog(args []string) int {
 }
 
 const aiUsersUsage = "usage: gregale ai users <integration-id> [--date YYYY-MM-DD] [--user ID] [--limit N] | " +
-	"gregale ai users export <integration-id> [--from YYYY-MM-DD] [--to YYYY-MM-DD] [--format csv|ndjson]"
+	"gregale ai users export <integration-id> [--since YYYY-MM-DD] [--until YYYY-MM-DD] [--format csv|ndjson]"
 
 // cmdAIUsers lists one UTC day's end users by cost, then tokens.
 func cmdAIUsers(args []string) int {

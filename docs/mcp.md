@@ -2548,7 +2548,7 @@ Use `--endpoint /custom/path` when the app config uses a path other than `/mcp`.
 Tokens are passed in a dedicated request header and are not included in status
 reports.
 
-Run `gregale mcp server status --app my-mcp --watch` to keep polling the serving fleet.
+Run `gregale mcp server status --app my-mcp --follow` to keep polling the serving fleet.
 It emits an initial snapshot and then reports changes to replica health,
 protocol qualification, catalog revision or digest, and serving replica
 membership. Set `--interval` to change the 30-second polling interval. With
@@ -4786,7 +4786,7 @@ MCP traffic decisions are retained as `deploy.mcp_admission` events in the
 existing deployment audit timeline. Inspect a promotion or recovery target with:
 
 ```sh
-gregale mcp server access history --deployment DEPLOYMENT_ID --json
+gregale mcp server access history --release DEPLOYMENT_ID --json
 ```
 
 History pages contain up to 50 MCP receipts, with a continuation cursor.
@@ -4833,7 +4833,7 @@ These signals attest replay freshness, not live token enforcement.
 
 ### Search retained admission receipts
 
-Use `gregale mcp server access history --deployment UUID --limit 50` to page MCP-only receipts. Filter with `--outcome accepted` or `--outcome rejected`; pass the returned `next_cursor` as `--cursor` for the next page. `gregale mcp server access history --evidence UUID` reads an exact receipt, including receipts outside the recent generic audit window. These commands are read-only and account-authorized. Retention and deployment deletion can remove receipts; this is not permanent archival storage. Status and overview show the first MCP-only page and independently query the latest accepted and rejected receipts.
+Use `gregale mcp server access history --release UUID --limit 50` to page MCP-only receipts. Filter with `--outcome accepted` or `--outcome rejected`; pass the returned `next_cursor` as `--cursor` for the next page. `gregale mcp server access history --evidence UUID` reads an exact receipt, including receipts outside the recent generic audit window. These commands are read-only and account-authorized. Retention and deployment deletion can remove receipts; this is not permanent archival storage. Status and overview show the first MCP-only page and independently query the latest accepted and rejected receipts.
 
 ### Explain an admission decision
 
@@ -5333,7 +5333,7 @@ reports contain actionable checks without remote error bodies.
 To inspect every running replica through the existing account-scoped protocol API:
 
 ```sh
-gregale mcp server validate --app my-mcp --deployment DEPLOYMENT_ID --url https://my-mcp.example.com/mcp --endpoint-path /mcp
+gregale mcp server validate --app my-mcp --release DEPLOYMENT_ID --url https://my-mcp.example.com/mcp --endpoint-path /mcp
 ```
 
 The deployment preflight checks an independently running endpoint before source
@@ -5617,7 +5617,7 @@ Check a zero-traffic candidate or serving deployment through its public preview
 endpoint without moving traffic:
 
 ```sh
-gregale mcp server readiness --app my-mcp --deployment <deployment-uuid> \
+gregale mcp server readiness --app my-mcp --release <deployment-uuid> \
   --token-env MCP_PROBE_TOKEN --baseline gregale-mcp.lock.json --json > readiness.json
 ```
 
@@ -5654,7 +5654,7 @@ probe itself; uploading a local success report cannot satisfy the gate.
 3. Deploy a zero-traffic candidate and record each role's platform probe:
 
 ```sh
-gregale mcp server readiness --app my-mcp --deployment <uuid> --record \
+gregale mcp server readiness --app my-mcp --release <uuid> --record \
   --role reader --token-env MCP_READER_PROBE_TOKEN --json
 ```
 
@@ -5760,7 +5760,7 @@ Scheduled checks refresh expiring tokens under the existing connection lease and
 Explicit platform probes also use the managed connection:
 
 ```sh
-gregale mcp server readiness --app my-mcp --deployment <uuid> --role reader --record --json
+gregale mcp server readiness --app my-mcp --release <uuid> --role reader --record --json
 ```
 
 Omit `--token-env` for an OAuth-bound role. Supplying a probe token header is rejected. The platform never exports the managed token. Local checks in a release policy continue to use their configured local credentials; platform evidence recording selects the managed connection automatically.
@@ -5771,7 +5771,7 @@ Connection changes invalidate readiness evidence, including results still being 
 
 ### Separate OAuth grants for staging and production
 
-Set a connection's environment with `gregale mcp server monitor setup --scope staging
+Set a connection's environment with `gregale mcp server monitor setup --env staging
 --role staging-reader ...` (alongside the existing baseline/provider flags).
 Store its refresh source and confidential client secret in the same scope.
 Connection role names are app-wide and their scope is immutable; create separate
@@ -5807,8 +5807,8 @@ policies remain in `default`. Updating staging's catalog expectations or pinned
 OAuth connection requires new staging evidence; production evidence stays valid.
 
 ```sh
-gregale mcp server readiness policy get --app my-mcp --scope staging
-gregale mcp server readiness policy set --app my-mcp --scope staging --file staging-readiness.json
+gregale mcp server readiness policy get --app my-mcp --env staging
+gregale mcp server readiness policy set --app my-mcp --env staging --file staging-readiness.json
 ```
 
 The file contains the existing policy fields, `expected_revision` from the selected
@@ -5833,11 +5833,11 @@ existing behavior. Existing serving traffic and traffic decreases continue.
 Inspect policy revisions separately for each environment:
 
 ```sh
-gregale mcp server readiness policy history --app my-mcp --scope staging --limit 20
-gregale mcp server readiness policy history --app my-mcp --scope staging --before-revision <cursor>
-gregale mcp server readiness policy diff --app my-mcp --scope staging --from-revision <old-revision>
-gregale mcp server readiness policy diff --app my-mcp --scope staging --from-revision <old-revision> --to-revision <new-revision>
-gregale mcp server readiness policy restore --app my-mcp --scope staging --revision <old-revision> --expected-revision <current-revision> --reason 'Restore reviewed catalog expectations'
+gregale mcp server readiness policy history --app my-mcp --env staging --limit 20
+gregale mcp server readiness policy history --app my-mcp --env staging --before-revision <cursor>
+gregale mcp server readiness policy diff --app my-mcp --env staging --from-revision <old-revision>
+gregale mcp server readiness policy diff --app my-mcp --env staging --from-revision <old-revision> --to-revision <new-revision>
+gregale mcp server readiness policy restore --app my-mcp --env staging --revision <old-revision> --expected-revision <current-revision> --reason 'Restore reviewed catalog expectations'
 ```
 
 History contains author, time, audit reason and restore provenance. Diffs compare
@@ -5897,8 +5897,8 @@ next observed breach.
 Inspect events and delivery attempts for one environment:
 
 ```sh
-gregale mcp server readiness incidents --app my-mcp --scope staging --limit 20
-gregale mcp server readiness incidents --app my-mcp --scope staging --before '<next_before>'
+gregale mcp server readiness incidents --app my-mcp --env staging --limit 20
+gregale mcp server readiness incidents --app my-mcp --env staging --cursor '<next_before>'
 ```
 
 The read-only `GET /v1/apps/{slug}/mcp-readiness-incidents` endpoint accepts
@@ -5932,9 +5932,9 @@ notification control.
 Start a temporary silence immediately or schedule a future window:
 
 ```sh
-gregale alert maintenance create --app my-mcp --scope staging --duration 30m --reason 'Upgrade staging database'
-gregale alert maintenance create --app my-mcp --scope staging --start 2026-10-17T01:00:00Z --end 2026-10-17T02:00:00Z --reason 'Planned maintenance'
-gregale alert maintenance list --app my-mcp --scope staging --limit 20
+gregale alert maintenance create --app my-mcp --env staging --duration 30m --reason 'Upgrade staging database'
+gregale alert maintenance create --app my-mcp --env staging --since 2026-10-17T01:00:00Z --until 2026-10-17T02:00:00Z --reason 'Planned maintenance'
+gregale alert maintenance list --app my-mcp --env staging --limit 20
 gregale alert maintenance cancel --app my-mcp --id '<window UUID>' --reason 'Work finished early'
 ```
 
@@ -5981,7 +5981,7 @@ suppressed delivery state.
 Inspect delivery separately from MCP readiness:
 
 ```sh
-gregale mcp server readiness notifications list --app demo --scope production
+gregale mcp server readiness notifications list --app demo --env production
 ```
 
 The API is `GET /v1/apps/{slug}/mcp-readiness-notifications`, with optional
@@ -6035,7 +6035,7 @@ resolving it. Initial failure, recovery and maintenance-end notifications contin
 only reminders pause. An in-flight reminder may finish.
 
 ```sh
-gregale mcp server readiness attention list --app demo --scope production
+gregale mcp server readiness attention list --app demo --env production
 gregale mcp server readiness attention acknowledge --app demo --incident '<incident UUID>' \
   --expected-version 0 --request-id '<stable decision UUID>' \
   --reason 'Investigating provider outage' --expires-at 2026-10-18T12:00:00+03:00
