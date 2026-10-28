@@ -174,7 +174,7 @@ func checkBuildDriveCapacity(dest string) error {
 		return err
 	}
 	if available < BuildDriveMinFreeBytes {
-		return fmt.Errorf("builderd: insufficient host free space for build drive: available=%d bytes, required=%d bytes", available, BuildDriveMinFreeBytes)
+		return fmt.Errorf("%w: available=%d bytes, required=%d bytes", ErrBuildDriveCapacity, available, BuildDriveMinFreeBytes)
 	}
 	return nil
 }

@@ -729,6 +729,25 @@ func TestProcessOne_VMSpawnErrorFlipsDeployment(t *testing.T) {
 	}
 }
 
+// A full builder disk is temporary: the build is requeued instead of
+// failing the deploy (bug hunt 2026-10-28 B13).
+func TestProcessOne_LowDiskRequeuesInsteadOfFailing(t *testing.T) {
+	store := state.NewMemStore()
+	src := filepath.Join(t.TempDir(), "src.tar.gz")
+	makeTarballWithName(t, src, []string{"package.json"})
+
+	buildID, depID, _ := seedDeployment(t, store, src)
+	fvm := &fakeVM{spawnErr: fmt.Errorf("create drive: %w", ErrBuildDriveCapacity)}
+	b := New(store, &fakeNotifier{}, fvm, NewCache(t.TempDir()), NewDetector(), nil, Config{}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+
+	if _, err := b.ProcessOne(context.Background(), buildID); !errors.Is(err, ErrNoSlot) {
+		t.Fatalf("ProcessOne err = %v, want ErrNoSlot (requeued)", err)
+	}
+	if dep, _ := store.DeploymentByID(context.Background(), depID); dep.Status == state.DeployFailed {
+		t.Fatalf("deployment failed on a temporary disk shortage: %q", dep.Error)
+	}
+}
+
 func TestProcessOne_VMSpawnErrorIsInfra(t *testing.T) {
 	store := state.NewMemStore()
 	src := filepath.Join(t.TempDir(), "src.tar.gz")

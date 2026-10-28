@@ -74,6 +74,10 @@ var ErrNotMetal = errors.New("builderd: VM spawn is metal-only; use a fake VM in
 // implementation.
 var ErrNoSlot = errors.New("builderd: no builder slot available")
 
+// ErrBuildDriveCapacity reports that the builder filesystem is short of the
+// space a build drive needs. It is temporary: the build is requeued.
+var ErrBuildDriveCapacity = errors.New("builderd: insufficient host free space for build drive")
+
 // ErrDraining is returned when a new build arrives after builderd has begun
 // shutting down. The durable queue remains the source of truth, so rejecting
 // new work here lets the next builderd instance claim it cleanly.
@@ -1207,6 +1211,17 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 		handle, err = b.vm.Spawn(vmCtx, vmReq)
 	}
 	if err != nil {
+		// A full builder disk clears once another build's scratch drive or
+		// the node cache shrinks: requeue like a missing slot instead of
+		// failing the deploy (bug hunt 2026-10-28 B13).
+		if errors.Is(err, ErrBuildDriveCapacity) {
+			if rerr := b.requeueClaim(ctx, build, requeueCapacity); rerr != nil {
+				b.log.Warn("builderd: requeue on low disk", "build", build.ID, "err", rerr)
+			}
+			b.emitBuildLog(ctx, build.ID, "builder disk is short of space — requeued\n")
+			cancel()
+			return BuildResult{}, ErrNoSlot
+		}
 		var oomErr *builderSliceOOMError
 		if errors.As(err, &oomErr) {
 			b.ops.ObserveBuilderSliceOOMKills(oomErr.Delta)
