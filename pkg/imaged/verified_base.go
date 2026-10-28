@@ -202,12 +202,31 @@ func (h *Handler) buildVerifiedBase(ctx context.Context, r verifiedBaseRequest, 
 	return build, err
 }
 
+// parentSourceMatches reports whether a parent producer was staged from ref.
+// The producer records the resolved source reference, repository@digest. A
+// digest-pinned ref, which named production nodes require, must name that
+// digest. A tag ref (dev, CI and test nodes) never equals it, and every child
+// base (node24, python312) failed to stage there; it matches on the
+// repository, and the child's layer chain must still extend the parent's
+// (ADR-20261028090000).
+func parentSourceMatches(recorded, ref string) bool {
+	if recorded == ref {
+		return true
+	}
+	got, err := oci.ParseReference(recorded)
+	want, wantErr := oci.ParseReference(ref)
+	if err != nil || wantErr != nil || got.Registry != want.Registry || got.Repository != want.Repository {
+		return false
+	}
+	return want.Digest == "" || want.Digest == got.Digest
+}
+
 func (h *Handler) buildVerifiedChildBase(ctx context.Context, r verifiedBaseRequest, store state.BaseImageProducerStore, build verifiedBaseBuild) (verifiedBaseBuild, error) {
 	parent, err := store.GetCurrentBaseImageProducer(ctx, r.parentKey)
 	if err != nil {
 		return build, err
 	}
-	if parent.Input.SourceReference != r.parentRef || parent.Input.LayoutVersion != baseLayoutVersion || parent.Input.GuestInitDigest != baseGuestDigest(r.guestDigest) {
+	if !parentSourceMatches(parent.Input.SourceReference, r.parentRef) || parent.Input.LayoutVersion != baseLayoutVersion || parent.Input.GuestInitDigest != baseGuestDigest(r.guestDigest) {
 		return build, fmt.Errorf("imaged: selected parent producer does not match base intent")
 	}
 	base, err := imagechain.Validate(parent.Input.ImageChain, parent.Input.SourceDigest, parent.Input.SelectedDigest)

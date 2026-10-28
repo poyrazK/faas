@@ -71,7 +71,13 @@ push and a tarball from the edge to a serving app and found six gaps:
    serve. The own-base and shared deployments each serve after a rollback
    onto them, from a cold boot and from a snapshot restore. The Free plan case
    of `TestE2E_Streaming_Metal_PlanMatrix` (fixture now Node 24) covers the
-   256 MB cap.
+   256 MB cap. Staging runner-node24 then failed on every node that does not
+   digest-pin base refs (dev, CI, the n2 metal host). The parent producer
+   records `repository@digest`, and a child base compared that with the raw
+   `:latest` parent ref (`selected parent producer does not match base
+   intent`). A tag ref now matches the parent on its repository, and a
+   pinned ref still has to name the recorded digest. The child's layer chain
+   must still extend the parent's (`parentSourceMatches`).
 3. **In-tree links deploy.** A symlink's target resolves relative to the
    link's directory, a hard link's target is an archive path
    (`tarball.LinkTarget`); only absolute or escaping targets are refused.
