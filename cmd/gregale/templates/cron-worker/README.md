@@ -46,14 +46,14 @@ If you prefer to set secrets through the app API, reserve the app first:
 
 ```sh
 gregale deploy --create-only --template cron-worker --name <slug>
-gregale secrets set --app <slug> QSTASH_CURRENT_SIGNING_KEY=<current-signing-key> QSTASH_NEXT_SIGNING_KEY=<next-signing-key> UPSTASH_REDIS_REST_URL=https://<instance>.upstash.io UPSTASH_REDIS_REST_TOKEN=<redis-rest-token>
+gregale env set --app <slug> QSTASH_CURRENT_SIGNING_KEY=<current-signing-key> QSTASH_NEXT_SIGNING_KEY=<next-signing-key> UPSTASH_REDIS_REST_URL=https://<instance>.upstash.io UPSTASH_REDIS_REST_TOKEN=<redis-rest-token>
 cd <this-directory> && gregale deploy
 ```
 
 ## Rotate or update secrets
 
 ```sh
-gregale secrets set --app <slug> QSTASH_CURRENT_SIGNING_KEY=<current-signing-key> \
+gregale env set --app <slug> QSTASH_CURRENT_SIGNING_KEY=<current-signing-key> \
   QSTASH_NEXT_SIGNING_KEY=<next-signing-key> \
   UPSTASH_REDIS_REST_URL=https://<instance>.upstash.io \
   UPSTASH_REDIS_REST_TOKEN=<redis-rest-token>
@@ -61,7 +61,7 @@ gregale secrets set --app <slug> QSTASH_CURRENT_SIGNING_KEY=<current-signing-key
 
 If any of `QSTASH_CURRENT_SIGNING_KEY`, `QSTASH_NEXT_SIGNING_KEY`, `UPSTASH_REDIS_REST_URL`,
 `UPSTASH_REDIS_REST_TOKEN` are missing, the handler throws on the
-first invocation with the exact `gregale secrets set` command — the
+first invocation with the exact `gregale env set` command — the
 runtime surfaces it as a 500 to QStash (which logs it) and the
 customer sees the actionable hint in `gregale logs <slug>`.
 

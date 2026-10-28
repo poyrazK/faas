@@ -1,7 +1,7 @@
 # Incidents
 
 When something breaks, the first questions are what is broken, since when,
-and why. `gregale incidents` answers them in one list: your alerts while they
+and why. `gregale alert incident` answers them in one list: your alerts while they
 fire, route monitor incidents after a deploy, and platform incidents from the
 status page, open ones first.
 
@@ -10,9 +10,9 @@ Incidents are an internal preview (ADR-20261022193512).
 ## List them
 
 ```sh
-gregale incidents
-gregale incidents --app shop --open
-gregale incidents --since 24h
+gregale alert incident
+gregale alert incident --app shop --open
+gregale alert incident --since 24h
 ```
 
 ```text
@@ -40,7 +40,7 @@ incident stays open until the rule can tell again.
 ## Look at one
 
 ```sh
-gregale incidents show INCIDENT_ID
+gregale alert incident get INCIDENT_ID
 ```
 
 ```text
@@ -72,8 +72,8 @@ rather than left out silently.
 ## Acknowledge and add notes
 
 ```sh
-gregale incidents ack INCIDENT_ID
-gregale incidents note INCIDENT_ID "rolled back to v41; watching error rate"
+gregale alert incident ack INCIDENT_ID
+gregale alert incident note INCIDENT_ID "rolled back to v41; watching error rate"
 ```
 
 Acknowledging an open incident tells everyone in your account that someone

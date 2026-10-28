@@ -3,6 +3,7 @@
 package secretscan
 
 import (
+	"crypto/sha512"
 	"encoding/base64"
 	"strings"
 	"testing"
@@ -270,5 +271,32 @@ func TestScanFile_ValidatorBundleScansDecodedSources(t *testing.T) {
 	// Not a bundle: scanned as ordinary text.
 	if got := ScanFile("gregale.validator.json", []byte("token = \"sk_live_"+"51HbQ2pL8vXk9mT3nR7wY4cZ\"\n")); len(got) == 0 {
 		t.Fatal("a malformed bundle must fall back to the text scan")
+	}
+}
+
+// TestScanFile_SRIDigestsArePublic pins ADR-20261026152731: a Subresource
+// Integrity attribute (the usual CDN <script> snippet) is a checksum of a
+// public file, not a credential.
+func TestScanFile_SRIDigestsArePublic(t *testing.T) {
+	html := `<script src="https://cdn.example.com/lib.js" integrity="sha384-oqVuAfXRKap7fdgcCY5uykM6+R9GqQ8K/uxy9rx7HNQlGYl1kPzQho1wx4JwY8wC" crossorigin="anonymous"></script>` + "\n"
+	if got := ScanFile("templates/base.html", []byte(html)); len(got) != 0 {
+		t.Fatalf("SRI attribute produced findings: %+v", got)
+	}
+	// A literal merely prefixed like a digest, with the wrong length, still scans.
+	sum := sha512.Sum512([]byte("not a sha256 digest"))
+	bogus := `const token = "sha256-` + base64.StdEncoding.EncodeToString(sum[:40]) + `";` + "\n"
+	if got := ScanFile("src/token.js", []byte(bogus)); len(got) != 1 || got[0].Provider != "high_entropy" {
+		t.Fatalf("non-digest sha256- literal = %+v, want one high_entropy finding", got)
+	}
+}
+
+// TestScanFile_AllowSecretMarker pins the per-line escape hatch: the marker
+// suppresses every finding on its own line and nothing else.
+func TestScanFile_AllowSecretMarker(t *testing.T) {
+	body := "STRIPE_KEY = \"" + fakeStripeLiveKey + "\" // " + AllowSecretMarker + "\n" +
+		"STRIPE_KEY_2 = \"" + fakeStripeLiveKey + "\"\n"
+	got := ScanFile("test/fixtures.js", []byte(body))
+	if len(got) != 1 || got[0].Line != 2 || got[0].Provider != "stripe_live" {
+		t.Fatalf("findings = %+v, want only line 2 stripe_live", got)
 	}
 }

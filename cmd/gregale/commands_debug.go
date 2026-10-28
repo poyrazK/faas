@@ -18,6 +18,8 @@
 //	gregale debug coverage <slug> [--since <dur>]
 //	gregale debug dependencies <slug> [--since <dur>]
 //	gregale debug running <slug> [--since <dur>] [--limit <n>]
+//	gregale debug status <slug> [--since <dur>]
+//	gregale debug rollout <slug> [--deployment-id UUID]
 //	gregale debug bundle <slug> <request-id-or-row-id> [--since <dur>] [--source <id> --mirror <id>] [--output PATH]
 //	gregale debug regressions watch <slug> [--since <dur>] [--interval D] [--once]
 //	gregale debug regressions <slug> [--since <dur>]
@@ -52,6 +54,8 @@ import (
 // debugHelpLines are the `debug --help` rows; the first word names the
 // subcommand whose capability decides whether the row is shown.
 var debugHelpLines = []string{
+	"  status            one summary: health, release, regressions, recent failures",
+	"  rollout           explain a rolled-back or held release with request evidence",
 	"  requests list     list recent request telemetry",
 	"  requests watch    watch request telemetry for new or changed rows",
 	"  requests export   export metadata-only request telemetry",
@@ -83,7 +87,7 @@ var debugHelpLines = []string{
 func debugUsage(help bool) string {
 	view := discoveryCapabilityView()
 	var shown []string
-	for _, sub := range []string{"requests", "coverage", "dependencies", "running", "regressions", "compare", "bundle"} {
+	for _, sub := range []string{"status", "rollout", "requests", "coverage", "dependencies", "running", "regressions", "compare", "bundle"} {
 		if !view.hidesPath("debug " + sub) {
 			shown = append(shown, sub)
 		}
@@ -134,6 +138,10 @@ func cmdDebug(args []string) int {
 		return cmdDebugDependencies(args[1:])
 	case "running":
 		return cmdDebugRunning(args[1:])
+	case "status":
+		return cmdDebugStatus(args[1:])
+	case "rollout":
+		return cmdDebugRollout(args[1:])
 	case "regressions":
 		return cmdDebugRegressions(args[1:])
 	case "compare":

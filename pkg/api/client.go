@@ -7436,6 +7436,29 @@ func (c *Client) GetAppDebugRunning(ctx context.Context, slug, since string) (De
 	return out, c.do(ctx, "GET", path, nil, &out)
 }
 
+// GetAppDebugRollout explains why the app's newest canary rollout was
+// rolled back or is held, with the routes and requests behind the decision.
+// deploymentID selects a specific deployment; empty picks the newest rollout.
+func (c *Client) GetAppDebugRollout(ctx context.Context, slug, deploymentID string) (DebugRolloutExplanation, error) {
+	var out DebugRolloutExplanation
+	path := "/v1/apps/" + slug + "/debug/rollout"
+	if deploymentID != "" {
+		path += "?deployment_id=" + url.QueryEscape(deploymentID)
+	}
+	return out, c.do(ctx, "GET", path, nil, &out)
+}
+
+// GetAppDebugStatus summarizes the app's health, release, open regressions,
+// and recent failures over since (default 1h).
+func (c *Client) GetAppDebugStatus(ctx context.Context, slug, since string) (DebugStatusResponse, error) {
+	var out DebugStatusResponse
+	path := "/v1/apps/" + slug + "/debug/status"
+	if since != "" {
+		path += "?since=" + url.QueryEscape(since)
+	}
+	return out, c.do(ctx, "GET", path, nil, &out)
+}
+
 // GetAppDebugRunningWithLimit is the bounded-history form of
 // GetAppDebugRunning. Limit is sent only when positive so the API default is
 // preserved for callers that do not need a custom history size.

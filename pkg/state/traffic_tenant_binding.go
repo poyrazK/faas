@@ -27,6 +27,7 @@ type trafficTenantBindingTx struct {
 	hosts        []string
 	account      string
 	appsSuffix   string
+	writer       string
 	release      func(context.Context)
 }
 
@@ -144,27 +145,32 @@ func trafficTenantBindingOwners(ctx context.Context, reader sqlc.DBTX, claims tr
 }
 
 func (s *PgStore) beginTrafficTenantBinding(ctx context.Context, account string, hosts []string) (*trafficTenantBindingTx, error) {
-	return s.beginTrafficBinding(ctx, account, hosts, "")
+	return s.beginTrafficBinding(ctx, TrafficPolicyWriterTenantBinding, account, hosts, "")
 }
 
-func (s *PgStore) beginTrafficBinding(ctx context.Context, account string, hosts []string, appID string) (*trafficTenantBindingTx, error) {
+func (s *PgStore) beginTrafficBinding(ctx context.Context, writer, account string, hosts []string, appID string) (*trafficTenantBindingTx, error) {
+	start := time.Now()
 	for {
-		tx, retry, err := s.tryBeginTrafficBinding(ctx, account, hosts, appID)
+		attempt := time.Now()
+		tx, retry, err := s.tryBeginTrafficBinding(ctx, writer, account, hosts, appID)
 		if err != nil || !retry {
+			observeTrafficPolicyPhase(writer, TrafficPolicyPhaseLockWait, attempt.Sub(start))
 			return tx, err
 		}
 		timer := time.NewTimer(api.TrafficPolicyMutationLockRetry)
 		select {
 		case <-ctx.Done():
 			timer.Stop()
+			observeTrafficPolicyPhase(writer, TrafficPolicyPhaseLockWait, time.Since(start))
 			return nil, ctx.Err()
 		case <-timer.C:
 		}
 	}
 }
 
-func (s *PgStore) tryBeginTrafficBinding(ctx context.Context, account string, requested []string, appID string) (*trafficTenantBindingTx, bool, error) {
+func (s *PgStore) tryBeginTrafficBinding(ctx context.Context, writer, account string, requested []string, appID string) (*trafficTenantBindingTx, bool, error) {
 	var hosts, accounts []string
+	discover := time.Now()
 	err := boundedTrafficPolicyAnalysis(ctx, func(bounded context.Context) error {
 		claims, err := readTrafficBindingClaims(bounded, s.pool, s.trafficAppsSuffix)
 		if err != nil {
@@ -174,6 +180,7 @@ func (s *PgStore) tryBeginTrafficBinding(ctx context.Context, account string, re
 		accounts, err = trafficTenantBindingOwners(bounded, s.pool, claims, hosts, account)
 		return err
 	})
+	observeTrafficPolicyPhase(writer, TrafficPolicyPhaseDiscover, time.Since(discover))
 	if err != nil {
 		return nil, false, err
 	}
@@ -190,8 +197,9 @@ func (s *PgStore) tryBeginTrafficBinding(ctx context.Context, account string, re
 		release(ctx)
 		return nil, false, fmt.Errorf("state: begin tenant binding change: %w", err)
 	}
-	tx := &trafficTenantBindingTx{Tx: base, beforeViews: make(map[string]trafficHostAnalysis), accounts: accounts, hosts: hosts, account: account, appsSuffix: s.trafficAppsSuffix, release: release}
+	tx := &trafficTenantBindingTx{Tx: base, beforeViews: make(map[string]trafficHostAnalysis), accounts: accounts, hosts: hosts, account: account, appsSuffix: s.trafficAppsSuffix, writer: writer, release: release}
 	retry := false
+	before := time.Now()
 	err = boundedTrafficPolicyAnalysis(ctx, func(bounded context.Context) error {
 		if err := sqlc.New().LockTrafficCapacityWriter(bounded, base); err != nil {
 			return err
@@ -231,6 +239,9 @@ func (s *PgStore) tryBeginTrafficBinding(ctx context.Context, account string, re
 		}
 		return nil
 	})
+	if !retry {
+		observeTrafficPolicyPhase(writer, TrafficPolicyPhaseBefore, time.Since(before))
+	}
 	if err != nil || retry {
 		_ = tx.Rollback(context.WithoutCancel(ctx))
 		var pgErr *pgconn.PgError
@@ -255,6 +266,9 @@ func (tx *trafficTenantBindingTx) validate(ctx context.Context, claims trafficBi
 }
 
 func (tx *trafficTenantBindingTx) Validate(ctx context.Context) error {
+	defer func(start time.Time) {
+		observeTrafficPolicyPhase(tx.writer, TrafficPolicyPhaseValidate, time.Since(start))
+	}(time.Now())
 	return boundedTrafficPolicyAnalysis(ctx, func(bounded context.Context) error {
 		claims, err := readTrafficBindingClaims(bounded, tx.Tx, tx.appsSuffix)
 		if err != nil {
