@@ -357,7 +357,28 @@ type RepositoryNameFrom struct {
 }
 
 type RepositoryOwnerChange struct {
-	From PushRepositoryOwner `json:"from"`
+	From RepositoryPreviousOwner `json:"from"`
+}
+
+// RepositoryPreviousOwner is changes.owner.from of a transferred
+// repository. GitHub nests the previous owner one level deeper, as user or
+// organization; reading a login directly under from always found it empty,
+// so a transfer never moved its binding (bug hunt 2026-10-28 B28). Login is
+// kept as a fallback for older fixtures.
+type RepositoryPreviousOwner struct {
+	Login        string              `json:"login"`
+	User         PushRepositoryOwner `json:"user"`
+	Organization PushRepositoryOwner `json:"organization"`
+}
+
+// PreviousLogin returns the previous owner's login, or "".
+func (o RepositoryPreviousOwner) PreviousLogin() string {
+	for _, login := range []string{o.User.Login, o.Organization.Login, o.Login} {
+		if login != "" {
+			return login
+		}
+	}
+	return ""
 }
 
 func DecodeRepository(body []byte) (RepositoryEvent, error) {
