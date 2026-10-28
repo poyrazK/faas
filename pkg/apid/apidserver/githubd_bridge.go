@@ -332,9 +332,10 @@ func (g *githubdBridge) EnqueueBuild(ctx context.Context, req *githubdpb.Enqueue
 			rate.Limit, rate.WindowResetsAt.UTC().Format(time.RFC3339))
 	}
 	// ADR-20261028090000: a PR preview builds with its production app's
-	// pr-preview values and secrets.
-	if eventKindToDeploymentKind(req.EventKind) == state.DeploymentKindPreview {
-		synced, err := previewconfig.SyncFromParent(ctx, g.store, app)
+	// pr-preview values and secrets. The production store always implements
+	// previewconfig.Store; the narrow unit-test stubs do not.
+	if configStore, ok := g.store.(previewconfig.Store); ok && eventKindToDeploymentKind(req.EventKind) == state.DeploymentKindPreview {
+		synced, err := previewconfig.SyncFromParent(ctx, configStore, app)
 		if err != nil {
 			return nil, status.Errorf(codes.Unavailable, "EnqueueBuild: preview values: %v", err)
 		}
