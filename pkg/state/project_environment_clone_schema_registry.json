@@ -9392,7 +9392,8 @@
       "kid",
       "recipient",
       "retires_at",
-      "sealed_secret"
+      "sealed_secret",
+      "sealed_secret_sig"
     ],
     "kind": "operational"
   },
@@ -9406,6 +9407,7 @@
       "provider_identity_id",
       "recipient",
       "sealed_login",
+      "sealed_login_sig",
       "slot"
     ],
     "kind": "operational"

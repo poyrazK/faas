@@ -53,6 +53,14 @@ func (s *server) configureLiveQueries(pool *pgxpool.Pool, getenv func(string) st
 		}
 		svc.Recipient = recipient
 	}
+	// ADR 20261028161502: apid signs the live keys and logins it seals.
+	if path := getenv("FAAS_APID_LIVE_SIGNING_KEY_FILE"); path != "" {
+		key, err := livekeys.LoadSigningKey(path)
+		if err != nil {
+			return fmt.Errorf("live-query signing key: %w", err)
+		}
+		svc.Signer = livekeys.NewSigner(key)
+	}
 	s.liveQueries = svc
 	return nil
 }

@@ -42809,10 +42809,12 @@ CREATE TABLE public.managed_postgres_live_keys (
     recipient text NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     retires_at timestamp with time zone,
+    sealed_secret_sig bytea,
     CONSTRAINT managed_postgres_live_keys_check CHECK (((retires_at IS NULL) OR (retires_at > created_at))),
     CONSTRAINT managed_postgres_live_keys_kid_check CHECK ((kid ~ '^[0-9a-f]{16}$'::text)),
     CONSTRAINT managed_postgres_live_keys_recipient_check CHECK ((recipient ~ '^age1[0-9a-z]{58}$'::text)),
-    CONSTRAINT managed_postgres_live_keys_sealed_secret_check CHECK (((octet_length(sealed_secret) >= 1) AND (octet_length(sealed_secret) <= 4096)))
+    CONSTRAINT managed_postgres_live_keys_sealed_secret_check CHECK (((octet_length(sealed_secret) >= 1) AND (octet_length(sealed_secret) <= 4096))),
+    CONSTRAINT managed_postgres_live_keys_sealed_secret_sig_check CHECK (((sealed_secret_sig IS NULL) OR (octet_length(sealed_secret_sig) = 64)))
 );
 
 
@@ -42836,10 +42838,12 @@ CREATE TABLE public.managed_postgres_live_logins (
     slot text NOT NULL,
     awake text DEFAULT ''::text NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
+    sealed_login_sig bytea,
     CONSTRAINT managed_postgres_live_logins_awake_check CHECK ((awake ~ '^(neon:[A-Za-z0-9_-]{1,64}/[A-Za-z0-9_-]{1,64})?$'::text)),
     CONSTRAINT managed_postgres_live_logins_provider_identity_id_check CHECK ((provider_identity_id ~ '^[a-z0-9_]{1,63}$'::text)),
     CONSTRAINT managed_postgres_live_logins_recipient_check CHECK ((recipient ~ '^age1[0-9a-z]{58}$'::text)),
     CONSTRAINT managed_postgres_live_logins_sealed_login_check CHECK (((octet_length(sealed_login) >= 1) AND (octet_length(sealed_login) <= 8192))),
+    CONSTRAINT managed_postgres_live_logins_sealed_login_sig_check CHECK (((sealed_login_sig IS NULL) OR (octet_length(sealed_login_sig) = 64))),
     CONSTRAINT managed_postgres_live_logins_slot_check CHECK ((slot ~ '^[a-z0-9_]{1,63}$'::text))
 );
 

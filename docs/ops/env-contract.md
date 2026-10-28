@@ -41,6 +41,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_APID_INTERNAL_BASE_URL` | meterd | `default` |  | http://127.0.0.1:9101 | `` | Safe Deploy meterd-to-apid operator listener; must remain a loopback HTTP origin |
 | `FAAS_APID_LISTEN` | apid | `default` |  |  | `` |  |
 | `FAAS_APID_LIVE_KEY_RECIPIENT_FILE` | apid | `dropin` |  |  | `` | operator-only live-query preview (ADR-20261016151947): livequeryd's age recipient file, delivered by livequeryd_service's 99-faas-live-queries.conf; apid seals each database's live secret to it and cannot read one back; unset leaves live queries unavailable |
+| `FAAS_APID_LIVE_SIGNING_KEY_FILE` | apid | `dropin` |  |  | `` | live-query writer signing key (ADR 20261028161502): an Ed25519 PKCS#8 key apid signs live keys and logins with, delivered as a credential by livequeryd_service's 99-faas-live-queries.conf drop-in; unset writes unsigned rows |
 | `FAAS_APID_LOOPBACK` | gatewayd-internal | `default` |  |  | `` |  |
 | `FAAS_APID_METRICS_ADDR` | apid | `default` |  |  | `` |  |
 | `FAAS_APID_OTEL_SPANS_WRITER_SOCKET` | apid, gatewayd-internal, gatewayd-public, outboundd, vmmd | `default` |  |  | `` |  |

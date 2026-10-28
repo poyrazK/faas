@@ -96,7 +96,7 @@ func TestDiscoverDatabases(t *testing.T) {
 		backend_id text NOT NULL, backend_fingerprint text NOT NULL DEFAULT 'fp', deleted_at timestamptz)`); err != nil {
 		t.Fatal(err)
 	}
-	for _, name := range []string{"20261017121336518_managed_postgres_live_keys.sql", "20261021100642318_managed_postgres_live_logins.sql"} {
+	for _, name := range []string{"20261017121336518_managed_postgres_live_keys.sql", "20261021100642318_managed_postgres_live_logins.sql", "20261028161544217_managed_postgres_live_signatures.sql", "20261028161546331_managed_postgres_live_signatures_validate.sql"} {
 		raw, err := migrations.FS.ReadFile(name)
 		if err != nil {
 			t.Fatal(err)
