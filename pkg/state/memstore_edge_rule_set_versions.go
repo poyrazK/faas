@@ -127,6 +127,11 @@ func (m *MemStore) RestoreEdgeRuleSetVersion(ctx context.Context, appID string, 
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	for _, r := range target.Rules {
+		if err := m.memEdgeRuleListMissing(r.AccountID, r.Match); err != nil {
+			return EdgeRuleSetRestore{}, err
+		}
+	}
 	seen := map[string]struct{}{}
 	var previousHosts []string
 	for id, r := range m.edgeRules {

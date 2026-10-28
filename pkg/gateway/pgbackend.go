@@ -2956,6 +2956,24 @@ func (b *PGBackend) InvalidateEdgeRuleAccountHosts(accountID, appID string, patt
 	b.InvalidateEdgeRuleHosts(patterns)
 }
 
+// InvalidateEdgeRulesOfDeletedApp drops the compiled rule sets that can hold
+// a just-deleted app's rules: every set of its account, since a rule on "*",
+// a wildcard or another app's host applies to the account's other apps. The
+// gateway's rule reads skip a deleted app's rules (ADR-091 amendment
+// 2026-10-28), so the reload leaves them out. The account comes from the app
+// cache; an app this gateway has not cached leaves its account's sets to
+// expire with their 30 s TTL. Call it before ResetApp drops the cached app.
+func (b *PGBackend) InvalidateEdgeRulesOfDeletedApp(appID string) {
+	if b == nil {
+		return
+	}
+	app, ok := b.getApp(appID)
+	if !ok || app.AccountID == "" {
+		return
+	}
+	b.InvalidateEdgeRuleAccountHosts(app.AccountID, appID, []string{"*"})
+}
+
 // BeginEdgeRuleConvergence forwards the prepare phase to matchers that support
 // the distributed policy barrier. Legacy matchers retain reset-only behavior.
 func (b *PGBackend) BeginEdgeRuleConvergence(accountID, appID string, hosts []string, generation int64) {
@@ -2988,12 +3006,10 @@ func (b *PGBackend) SetEdgeRuleLoadedGeneration(generation int64) {
 // resolved EdgeRuleCORSResolved slice, so a preset edit
 // leaves stale resolved shapes in the LRU. Also purge the
 // response cache: a cached response may carry CORS headers
-// produced by the prior policy. Wholesale flush matches
-// ResetEdgeRules semantics; the per-account payload is
-// informational (the LRU is per-host keyed, not per-account;
-// per-account eviction would require a richer key — see
-// backend.go's handleInvalidation case for the trade-off).
-// nil-safe.
+// produced by the prior policy. This is the wholesale fallback;
+// gatewayd-internal drops only the changed account's sets and
+// responses through the scoped edge-rule surface (ADR-091
+// amendment 2026-10-28). nil-safe.
 func (b *PGBackend) ResetCorsPresets(accountID string) {
 	if b == nil {
 		return

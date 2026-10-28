@@ -24675,6 +24675,9 @@ func (m *MemStore) CreateEdgeRuleIfUnderQuota(ctx context.Context, in CreateEdge
 			return EdgeRule{}, exceeded
 		}
 	}
+	if err := m.memEdgeRuleListMissing(in.AccountID, in.Match); err != nil {
+		return EdgeRule{}, err
+	}
 	if in.MatchMethods == nil {
 		in.MatchMethods = []string{}
 	}
@@ -25259,6 +25262,11 @@ func (m *MemStore) UpdateEdgeRule(ctx context.Context, id string, p UpdateEdgeRu
 	if !ok {
 		return EdgeRule{}, ErrNotFound
 	}
+	if p.Match != nil {
+		if err := m.memEdgeRuleListMissing(r.AccountID, p.Match); err != nil {
+			return EdgeRule{}, err
+		}
+	}
 	before := r
 	if p.MatchHost != nil {
 		r.MatchHost = *p.MatchHost
@@ -25385,7 +25393,7 @@ func (m *MemStore) MatchEdgeRulesForHost(_ context.Context, host string) ([]Edge
 	defer m.mu.Unlock()
 	var out []EdgeRule
 	for _, r := range m.edgeRules {
-		if !r.Enabled || r.EdgeRuleExpired(time.Now()) {
+		if !r.Enabled || r.EdgeRuleExpired(time.Now()) || m.edgeRuleAppDeletedLocked(r) {
 			continue
 		}
 		if matchHostPattern(r.MatchHost, host) {

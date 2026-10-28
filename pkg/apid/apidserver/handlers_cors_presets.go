@@ -78,6 +78,10 @@ func (s *server) createCorsPreset(w http.ResponseWriter, r *http.Request, acct s
 		api.WriteProblem(w, prob)
 		return
 	}
+	if prob := edgerules.SharedDomainCORSOriginProblem(req.AllowOrigins, req.AllowCredentials); prob != nil {
+		api.WriteProblem(w, prob)
+		return
+	}
 	if prob := s.gateCorsPresetApp(r, acct, req.AppID); prob != nil {
 		api.WriteProblem(w, prob)
 		return
@@ -190,6 +194,10 @@ func (s *server) patchCorsPreset(w http.ResponseWriter, r *http.Request, acct st
 	// Check only the lists this PATCH replaces, so a preset created
 	// before the cap was enforced can still be renamed or re-scoped.
 	if prob := corsPresetWithinPlan(acct.Plan, api.MustLimitsFor(acct.Plan), req.AllowOrigins, req.AllowMethods); prob != nil {
+		api.WriteProblem(w, prob)
+		return
+	}
+	if prob := edgerules.SharedDomainCORSOriginProblem(merged.AllowOrigins, merged.AllowCredentials); prob != nil {
 		api.WriteProblem(w, prob)
 		return
 	}
