@@ -293,16 +293,31 @@ func TestAdminRevocationCommitFailureIsNotAcknowledged(t *testing.T) {
 	}
 	// Force atomic journal replacement to fail without relying on UID permissions.
 	store.mu.Lock()
+	original := store.persist.(*fileState).path
 	store.persist.(*fileState).path = filepath.Join(t.TempDir(), "missing-parent", "state.enc")
 	store.mu.Unlock()
 	reply := adminRequest(t, service.AdminHandler(), http.MethodDelete, "/connections/"+id)
 	if reply.Code != http.StatusServiceUnavailable || strings.Contains(reply.Body.String(), `"revoked":true`) {
 		t.Fatal("uncommitted revocation acknowledged")
 	}
-	if store.available() {
-		t.Fatal("commit failure did not disable bridge storage")
+	// One failed commit no longer disables the bridge until a restart; the
+	// change is committed with the next update (bug hunt 2026-10-28 B16).
+	if !store.available() {
+		t.Fatal("one failed commit disabled bridge storage")
 	}
-	if reply := adminRequest(t, service.AdminHandler(), http.MethodGet, "/connections"); reply.Code != http.StatusServiceUnavailable {
-		t.Fatal("failed storage still exposed connections")
+	store.mu.Lock()
+	store.persist.(*fileState).path = original
+	pending := len(store.pending)
+	store.mu.Unlock()
+	if pending == 0 {
+		t.Fatal("the uncommitted revocation was not kept for the next commit")
+	}
+	if err := store.update("retry-probe", nil); err != nil {
+		t.Fatalf("commit after storage recovered: %v", err)
+	}
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	if len(store.pending) != 0 {
+		t.Fatalf("pending after a successful commit: %v", store.pending)
 	}
 }

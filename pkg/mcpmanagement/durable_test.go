@@ -265,8 +265,12 @@ func TestManagementPersistenceFailurePreventsAPIMutation(t *testing.T) {
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	if f.writes != 0 || store.available() {
-		t.Fatal("failure did not disable mutations")
+	if f.writes != 0 {
+		t.Fatal("a write ran although its plan could not be persisted")
+	}
+	// The failure refuses this request only (bug hunt 2026-10-28 B16).
+	if !store.available() {
+		t.Fatal("one failed commit disabled the store")
 	}
 }
 

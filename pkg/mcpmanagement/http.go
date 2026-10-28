@@ -66,14 +66,19 @@ type remoteServer struct {
 	// registrations counts client registrations per address on the hosted
 	// bridge, in fixed windows.
 	registrations map[string]registrationWindow
-	mu            sync.Mutex
-	clients       map[string]*oauthClient
-	requests      map[string]*authorizationRequest
-	codes         map[string]*authorizationCode
-	grants        map[string]*oauthGrant
-	access        map[string]*oauthGrant
-	refresh       map[string]*oauthGrant
-	usedRefresh   map[string]*oauthGrant
+	// authorizations rate-limits GET /oauth/authorize per client address on
+	// the hosted bridge (hostedAuthorizeLimit).
+	authorizations map[string]registrationWindow
+	// snapshotSeq orders OAuth state snapshots committed outside mu.
+	snapshotSeq uint64
+	mu          sync.Mutex
+	clients     map[string]*oauthClient
+	requests    map[string]*authorizationRequest
+	codes       map[string]*authorizationCode
+	grants      map[string]*oauthGrant
+	access      map[string]*oauthGrant
+	refresh     map[string]*oauthGrant
+	usedRefresh map[string]*oauthGrant
 }
 
 type grantContextKey struct{}

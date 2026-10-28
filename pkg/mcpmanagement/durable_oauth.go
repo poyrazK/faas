@@ -153,9 +153,15 @@ func (r *remoteServer) durableHandler(next http.Handler) http.Handler {
 		}
 		reply := &bufferedResponse{header: make(http.Header)}
 		next.ServeHTTP(reply, req)
+		// Snapshot under the lock, commit outside it: holding r.mu across
+		// the CP write serialized every hosted request behind its latency
+		// (bug hunt 2026-10-28 B16). The sequence keeps a snapshot that
+		// commits late from replacing a newer one.
 		r.mu.Lock()
-		err := r.opts.StateStore.update("oauth", r.snapshotLocked())
+		r.snapshotSeq++
+		snapshot, seq := r.snapshotLocked(), r.snapshotSeq
 		r.mu.Unlock()
+		err := r.opts.StateStore.updateSnapshot("oauth", snapshot, seq)
 		if err != nil {
 			setPrivateHeaders(w)
 			oauthError(w, 503, "temporarily_unavailable", "Authorization storage could not be committed")

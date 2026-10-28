@@ -42,9 +42,12 @@ func (r *remoteServer) authorize(w http.ResponseWriter, req *http.Request) {
 		oauthError(w, 400, "invalid_request", "Registered redirect URI, exact resource, supported scopes, code response type and S256 PKCE are required")
 		return
 	}
-	if len(r.requests) >= r.capacity() {
-		oauthError(w, 429, "temporarily_unavailable", "Authorization capacity reached")
+	if !r.authorizeAllowedLocked(req) {
+		oauthError(w, 429, "temporarily_unavailable", "Too many authorization requests from this address; retry later")
 		return
+	}
+	for len(r.requests) >= r.capacity() {
+		r.evictOldestRequestLocked()
 	}
 	id, csrf, cookie, err := newFlowTokens()
 	if err != nil {
