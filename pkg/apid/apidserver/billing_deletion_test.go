@@ -78,8 +78,10 @@ func deletionProvider(t *testing.T, fake *deletionPolar) *polar.Provider {
 }
 
 // Hunt 17 H17-2: deleting an account cancels its subscription at period end,
-// so a deleted customer is never charged again. A provider failure keeps the
-// account, and a subscription that already ended needs no cancellation.
+// so a deleted customer is never charged again, and a subscription that
+// already ended needs no cancellation. The cancellation runs after the
+// deletion is recorded (bug hunt 2026-10-27 B3): a provider failure leaves the
+// deletion scheduled and answers 503, and a repeat request finishes it.
 func TestAccountDeletionEndsTheBillingSubscription(t *testing.T) {
 	for _, tc := range []struct {
 		name          string
@@ -110,15 +112,23 @@ func TestAccountDeletionEndsTheBillingSubscription(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			wantStatus := state.AccountDeletedPending
-			if tc.wantCode != http.StatusOK {
-				wantStatus = state.AccountActive
-			}
-			if acct.Status != wantStatus {
-				t.Fatalf("account status = %s, want %s", acct.Status, wantStatus)
+			if acct.Status != state.AccountDeletedPending {
+				t.Fatalf("account status = %s, want %s", acct.Status, state.AccountDeletedPending)
 			}
 			if got := fake.cancellations(); tc.wantCancelled != (len(got) == 1 && got[0] == "sub-del") {
 				t.Fatalf("cancellations = %v, want cancelled=%v", got, tc.wantCancelled)
+			}
+			if !tc.failPatch {
+				return
+			}
+			fake.mu.Lock()
+			fake.failPatch = false
+			fake.mu.Unlock()
+			if rec := e.Do(t, http.MethodDelete, "/v1/account", nil, nil); rec.Code != http.StatusOK {
+				t.Fatalf("repeat DELETE /v1/account = %d %s, want 200", rec.Code, rec.Body.String())
+			}
+			if got := fake.cancellations(); len(got) != 1 || got[0] != "sub-del" {
+				t.Fatalf("cancellations after the repeat = %v, want the subscription", got)
 			}
 		})
 	}
@@ -166,7 +176,8 @@ func TestHardDeleteEndsTheBillingSubscriptionFirst(t *testing.T) {
 }
 
 // Organizations are never hard-deleted, so deleting one must cancel its own
-// subscription before it closes, and a refusal keeps it open.
+// subscription. The cancellation runs once the organization is closed; a
+// provider failure answers 503 and a repeat DELETE finishes it.
 func TestOrganizationDeletionEndsItsBillingSubscription(t *testing.T) {
 	for _, failPatch := range []bool{false, true} {
 		fake := &deletionPolar{status: "active", failPatch: failPatch}
@@ -183,10 +194,13 @@ func TestOrganizationDeletionEndsItsBillingSubscription(t *testing.T) {
 			t.Fatal(err)
 		}
 		if failPatch {
-			if rec.Code != http.StatusServiceUnavailable || after.DeletedPending {
-				t.Fatalf("refused cancellation: DELETE = %d %s, deleted_pending=%v; want 503 and the organization open", rec.Code, rec.Body.String(), after.DeletedPending)
+			if rec.Code != http.StatusServiceUnavailable || !after.DeletedPending {
+				t.Fatalf("refused cancellation: DELETE = %d %s, deleted_pending=%v; want 503 and the deletion recorded", rec.Code, rec.Body.String(), after.DeletedPending)
 			}
-			continue
+			fake.mu.Lock()
+			fake.failPatch = false
+			fake.mu.Unlock()
+			rec = e.Do(t, http.MethodDelete, "/v1/orgs/"+org.Slug, nil, map[string]string{"X-Active-Org": org.Slug})
 		}
 		if rec.Code != http.StatusNoContent || !after.DeletedPending {
 			t.Fatalf("DELETE = %d %s, deleted_pending=%v", rec.Code, rec.Body.String(), after.DeletedPending)

@@ -2803,6 +2803,13 @@ func ErrCapacity(detail string) *Problem {
 		WithDocs("https://gregale.dev/status")
 }
 
+// ErrRequestBodyBudget reports that the gateway is already holding as many
+// request-body bytes as it may (RequestBodySpoolNodeBytes and friends).
+func ErrRequestBodyBudget() *Problem {
+	return ErrCapacity("this node is receiving too many large request bodies at once; retry shortly").
+		WithHeader("Retry-After", strconv.Itoa(int(RequestBodyBudgetRetryAfter.Seconds())))
+}
+
 // ErrIdempotencyKeyReused reports an Idempotency-Key sent with a request
 // other than the one it was first used for (ADR-20261022204036).
 func ErrIdempotencyKeyReused() *Problem {

@@ -91,6 +91,14 @@ func seedPreviewApp(t *testing.T, m *state.MemStore, slug, parent string, prNum 
 	if err != nil {
 		t.Fatalf("CreateAccount: %v", err)
 	}
+	// A PR preview's production app must exist, or the janitor tears the
+	// preview down as orphaned.
+	if _, err := m.AppBySlug(context.Background(), parent); errors.Is(err, state.ErrNotFound) {
+		if _, err := m.CreateAppIfUnderQuota(context.Background(), state.App{AccountID: acct.ID, Slug: parent,
+			Type: "stateless", RAMMB: 256, MaxConcurrency: 1, Status: state.AppActive}, api.Limits{DeployedApps: 10000}); err != nil {
+			t.Fatalf("create production app %q: %v", parent, err)
+		}
+	}
 	expires := expiresAt
 	a := state.App{
 		AccountID:        acct.ID,
@@ -180,6 +188,41 @@ func TestPreviewJanitor_ClosedAndExpiredRowIsTombstoned(t *testing.T) {
 		if !apidserver.Contains(payload, want) {
 			t.Errorf("payload missing %q; got %s", want, payload)
 		}
+	}
+}
+
+// adr: 20261028100000 — deleting a production app tears down its open PR
+// previews on the next sweep instead of leaving them serving until expiry.
+func TestPreviewJanitor_TearsDownPreviewsOfDeletedProductionApp(t *testing.T) {
+	m := state.NewMemStore()
+	notif := &fakeNotifier{}
+	now := time.Date(2026, 8, 13, 12, 0, 0, 0, time.UTC)
+	a, acct := seedPreviewApp(t, m, "pr-6-shop", "shop", 6, state.PreviewPrStateOpen, now.Add(7*24*time.Hour))
+	j := apidserver.NewPreviewJanitor(m, notif, nil, apidserver.TestLogger(), true).
+		WithClock(func() time.Time { return now })
+	if err := j.SweepOnce(context.Background()); err != nil {
+		t.Fatalf("sweepOnce: %v", err)
+	}
+	if got, _ := m.AppByID(context.Background(), a.ID); got.Status != state.AppActive {
+		t.Fatalf("preview of a live production app = %q, want active", got.Status)
+	}
+
+	shop, err := m.AppBySlug(context.Background(), "shop")
+	if err != nil || shop.AccountID != acct.ID {
+		t.Fatalf("production app = (%+v, %v)", shop, err)
+	}
+	if _, err := m.ScheduleAppDeletion(context.Background(), shop.ID, now.Add(time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	if err := j.SweepOnce(context.Background()); err != nil {
+		t.Fatalf("sweepOnce: %v", err)
+	}
+	got, err := m.AppByID(context.Background(), a.ID)
+	if err != nil || got.Status != state.AppDeleted || got.PreviewPrState != state.PreviewPrStateTornDown {
+		t.Fatalf("preview after the production delete = (%q/%q, %v), want torn down", got.Status, got.PreviewPrState, err)
+	}
+	if _, ok := notif.first("app_delete"); !ok {
+		t.Fatal("teardown did not notify app_delete")
 	}
 }
 

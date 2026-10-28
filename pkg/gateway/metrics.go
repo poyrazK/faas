@@ -253,6 +253,8 @@ type Metrics struct {
 	aiCrawlerRequests     *prometheus.CounterVec
 	edgePenalty           *prometheus.CounterVec
 	edgeChallengeRaised   *prometheus.CounterVec
+	// ADR-831 amendment 17: which key this gateway signs challenges with.
+	edgeChallengeKeyInfo *prometheus.GaugeVec
 	// ADR-20261024082000 amendment 1: penalty box sharing and attack mode.
 	edgePenaltyShare        *prometheus.CounterVec
 	edgePenaltyShareDropped prometheus.Counter
@@ -1464,6 +1466,10 @@ func NewMetrics() *Metrics {
 			Name: "gateway_edge_challenge_raised_total",
 			Help: "kind=challenge pages served at a difficulty raised under attack (ADR-831 amendment 8), by app; a subset of gateway_edge_challenge_total{outcome=\"issued\"}.",
 		}, []string{"app"}),
+		edgeChallengeKeyInfo: prometheus.NewGaugeVec(prometheus.GaugeOpts{
+			Name: "gateway_edge_challenge_key_info",
+			Help: "The key this gateway signs kind=challenge tokens and passes with (ADR-831 amendment 17): key_id names it without revealing it, source is fleet (FAAS_EDGE_CHALLENGE_KEY_FILE) or session (this host's session key). Gateways with different key_id refuse one another's passes.",
+		}, []string{"key_id", "source"}),
 		edgePenaltyShare: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "gateway_edge_penalty_share_total",
 			Help: "Penalty box sharing through Postgres (ADR-20261022105846 amendment 1), by op (flush: write this gateway's boxes; sync: read every gateway's; prune) and outcome (ok|error). A failed flush leaves its boxes on this gateway only.",
@@ -2186,7 +2192,7 @@ func NewMetrics() *Metrics {
 	reg.MustRegister(m.retryBudgetBackendInfo)
 	reg.MustRegister(m.requestIDJournalWrites, m.requestIDJournalWriteTime)
 	reg.MustRegister(m.preAuthRateLimited, m.preAuthPolicyShadow, m.edgeRejections)
-	reg.MustRegister(m.wafInspections, m.wafDetections, m.wafRuleMatches, m.wafInspectionSeconds, m.wafInline, m.wafInlineSkips, m.wafInlineSeconds, m.edgeChallenge, m.edgeChallengeRaised, m.edgePenalty, m.aiCrawlerRequests,
+	reg.MustRegister(m.wafInspections, m.wafDetections, m.wafRuleMatches, m.wafInspectionSeconds, m.wafInline, m.wafInlineSkips, m.wafInlineSeconds, m.edgeChallenge, m.edgeChallengeRaised, m.edgeChallengeKeyInfo, m.edgePenalty, m.aiCrawlerRequests,
 		m.edgePenaltyShare, m.edgePenaltyShareDropped, m.edgePenaltyShareSeconds, m.edgeAttackMode)
 	reg.MustRegister(m.servicePreviewToProduction, m.servicePreviewToPreview)
 	reg.MustRegister(m.serviceDependencyEdges, m.serviceDependencyDuration, m.serviceDependencyEdgeWakes)
@@ -2955,6 +2961,15 @@ func (m *Metrics) ObserveEdgeChallenge(appID, outcome string) {
 		return
 	}
 	m.edgeChallenge.WithLabelValues(appID, outcome).Inc()
+}
+
+// SetEdgeChallengeKey records the key this gateway signs challenges with,
+// so a fleet check can find gateways that refuse one another's passes.
+func (m *Metrics) SetEdgeChallengeKey(keyID, source string) {
+	if m == nil || m.edgeChallengeKeyInfo == nil || keyID == "" {
+		return
+	}
+	m.edgeChallengeKeyInfo.WithLabelValues(keyID, source).Set(1)
 }
 
 // ObserveEdgeChallengeRaised counts one challenge page served at a raised

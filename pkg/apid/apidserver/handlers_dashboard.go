@@ -1959,6 +1959,9 @@ func (s *server) renderAccount(w http.ResponseWriter, r *http.Request, log *slog
 	switch r.URL.Query().Get("restored") {
 	case "1":
 		data.FlashSurface = "Account restored. Welcome back."
+		if acct.Plan != api.PlanFree {
+			data.FlashSurface += " " + restoreSubscriptionNotice
+		}
 	}
 	switch r.URL.Query().Get("key_revoked") {
 	case "1":

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/base64"
 	"errors"
@@ -961,6 +962,9 @@ type Handler struct {
 	limiter                  *Limiter
 	preAuthLimiter           *preAuthSourceLimiter
 	preAuthCentral           CentralBackend
+	bodySpoolBudget          *requestBodyBudget
+	bodyMemoryBudget         *requestBodyBudget
+	keyLookups               *keyLookupLimiter
 	financialBudgetAdmission func(context.Context, App) error
 	// routeLimiter is the per-rule token-bucket throttle (ADR-091
 	// D20.5 amendment, issue #881). Same underlying *Limiter type as
@@ -988,9 +992,6 @@ type Handler struct {
 	// rotating across many apps is rejected before any per-app bucket
 	// drains and before the wake gate (a schedd gRPC RPC) is touched.
 	accountLimiter *Limiter
-	// validateBodies bounds the request bodies kind=validate rules hold in
-	// memory at once (ADR-091 amendment 2026-10-28).
-	validateBodies *validateBodyBudget
 	// Configured platform-customer admission is authoritative across apps.
 	// WithTenantRequestBudgetStore arms the gate; nil then fails closed.
 	tenantRequestBudgetStore TenantRequestBudgetStore
@@ -1480,6 +1481,11 @@ func NewHandlerWith(backend Backend, m *Metrics, log *slog.Logger) *Handler {
 		backend:        backend,
 		limiter:        NewLimiter(),
 		preAuthLimiter: newPreAuthSourceLimiter(),
+		// The request bodies this gateway holds at once: spooled uploads
+		// on disk, validate-rule bodies in the heap.
+		bodySpoolBudget:  newRequestBodyBudget(api.RequestBodySpoolNodeBytes, api.RequestBodySpoolPerClient),
+		keyLookups:       newKeyLookupLimiter(),
+		bodyMemoryBudget: newRequestBodyBudget(api.RequestBodyMemoryNodeBytes, 0),
 		// routeLimiter is built with NewLimiterWithLRU (#887) so
 		// the per-rule bucket map — keyed by appID+"\x00"+ruleID —
 		// cannot grow unboundedly; full-bucket-only eviction
@@ -1498,7 +1504,6 @@ func NewHandlerWith(backend Backend, m *Metrics, log *slog.Logger) *Handler {
 		// ratelimit.go::bucket.pinned).
 		routeConsumerLimiter: NewLimiterWithLRU(EdgeRuleConsumerCacheCap),
 		accountLimiter:       NewLimiter(),
-		validateBodies:       newValidateBodyBudget(api.EdgeRuleValidateBufferBudgetBytes),
 		contentObserver:      newContentObserver(api.RouteContentObserverMaxURLs),
 		gate:                 NewWakeGate(api.WakeQueueCap, time.Duration(api.WakeQueueTTLSeconds)*time.Second),
 		admissionQueue: newWakeAdmissionQueue(
@@ -1553,6 +1558,9 @@ func NewHandlerWith(backend Backend, m *Metrics, log *slog.Logger) *Handler {
 	h.proxyFor = defaultProxy
 	// Route priorities also order the cold-wake queue (ADR-20261018181846).
 	h.gate.classifier = h
+	// A wake generation outlives schedd's leader and its reply's trip back,
+	// so schedd's own outcome, not the gate's deadline, ends it.
+	h.gate.leaderFloor = sched.DefaultWakeLeaderBudget + time.Second
 	return h
 }
 
@@ -2269,7 +2277,13 @@ func (h *Handler) enforceRequireAuthn(w http.ResponseWriter, r *http.Request, re
 	// The hash call uses the same api.HashAPIKey helper the
 	// apid middleware uses (defense in depth — keys never
 	// reach the store unhashed).
-	acct, key, err := h.requireAuthnAuthn.AuthenticateKey(r.Context(), api.HashAPIKey(tok))
+	acct, key, err := h.authenticateBearer(r, tok)
+	if errors.Is(err, errKeyLookupThrottled) {
+		rec.status = http.StatusTooManyRequests
+		writeKeyLookupThrottled(w)
+		h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
+		return false
+	}
 	if err != nil {
 		// Distinguish expired/revoked (the store's typed
 		// sentinels) from "unknown key" so the audit row
@@ -3706,25 +3720,6 @@ func validateBodyCap(ruleCap int, planCap int64) int {
 	return int(min(limit, planCap))
 }
 
-// readValidateBody buffers a validated request's body within the gateway's
-// validate budget (ADR-091 amendment 2026-10-28). The reservation lasts until
-// the request ends, since r.Body keeps the bytes for the proxy leg; outside
-// ServeHTTP (no request-end hooks) it ends when the body has been read.
-func (h *Handler) readValidateBody(r *http.Request, cap int) ([]byte, error) {
-	declared := r.ContentLength
-	if declared > int64(cap) {
-		declared = int64(cap) + 1 // the MaxBytesReader stops the read there
-	}
-	body, reserved, err := h.validateBodies.read(r.Body, declared)
-	if err != nil || reserved == 0 {
-		return body, err
-	}
-	if !onResponseStatus(r.Context(), func(int) { h.validateBodies.release(reserved) }) {
-		h.validateBodies.release(reserved)
-	}
-	return body, nil
-}
-
 // applyEdgeRuleValidate (PR-B) consults the per-host edge-rule
 // matcher for a `kind=validate` rule. On a hit, the inbound
 // request body is buffered (up to the per-rule cap or
@@ -3840,15 +3835,15 @@ func (h *Handler) applyEdgeRuleValidate(w http.ResponseWriter, r *http.Request, 
 	// platform cap (spec §4.1.2) even on plans that accept larger
 	// bodies through the spooled proxy path.
 	cap := validateBodyCap(rule.MaxBodyBytes, app.Plan.MaxRequestBodyBytes())
-	r.Body = http.MaxBytesReader(w, r.Body, int64(cap))
-	body, err := h.readValidateBody(r, cap)
-	_ = r.Body.Close()
-	if errors.Is(err, errValidateBodyBudget) {
-		rec.status = http.StatusServiceUnavailable
-		w.Header().Set("Retry-After", "1")
-		h.rejectUnavailableEdgeRule(w, r, "validate", rule.ID, "validate_buffer_budget_exhausted")
+	lease, ok := h.holdValidateBody(r, int64(cap))
+	if !ok {
+		api.WriteProblem(w, api.ErrRequestBodyBudget())
 		return true
 	}
+	r.Body = http.MaxBytesReader(w, r.Body, int64(cap))
+	body, err := io.ReadAll(r.Body)
+	_ = r.Body.Close()
+	lease.shrink(int64(cap) - int64(len(body)))
 	if err != nil {
 		var maxErr *http.MaxBytesError
 		if errors.As(err, &maxErr) {
@@ -3898,6 +3893,23 @@ func (h *Handler) applyEdgeRuleValidate(w http.ResponseWriter, r *http.Request, 
 	}
 	h.recordEdgeRuleValidateMatch(r, rule)
 	return false
+}
+
+// holdValidateBody reserves heap budget for a validate rule's buffered body:
+// the declared length when the client sent one under the cap, else the cap.
+// The hold lasts until the request finishes, since the buffered bytes are
+// forwarded.
+func (h *Handler) holdValidateBody(r *http.Request, cap int64) (*requestBodyLease, bool) {
+	lease, _ := h.bodyMemoryBudget.lease("")
+	want := cap
+	if r.ContentLength >= 0 && r.ContentLength < cap {
+		want = r.ContentLength
+	}
+	if !lease.grow(want) {
+		return nil, false
+	}
+	context.AfterFunc(r.Context(), lease.release)
+	return lease, true
 }
 
 // recordEdgeRuleValidateMatch records a request that passed every check of
@@ -5139,7 +5151,13 @@ func (h *Handler) enforcePublicAuthBearer(w http.ResponseWriter, r *http.Request
 	// (2) Verify the key via the shared require_authn chain
 	// (same api.HashAPIKey helper; defense in depth — keys
 	// never reach the store unhashed).
-	acct, key, err := h.requireAuthnAuthn.AuthenticateKey(r.Context(), api.HashAPIKey(tok))
+	acct, key, err := h.authenticateBearer(r, tok)
+	if errors.Is(err, errKeyLookupThrottled) {
+		rec.status = http.StatusTooManyRequests
+		writeKeyLookupThrottled(w)
+		h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
+		return false
+	}
 	if err != nil {
 		reason := authnReasonInvalidBearer
 		if errors.Is(err, ErrAPIKeyExpired) {
@@ -5252,13 +5270,11 @@ func (h *Handler) enforcePublicAuthBasic(w http.ResponseWriter, r *http.Request,
 		h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
 		return false
 	}
-	// (3) Constant-time compare. Both sides are base64-
-	// decoded; we re-encode back to bytes for the compare so
-	// the function stays allocation-light. Length-mismatch
-	// short-circuits to 0 before the compare so an attacker
-	// who knows the password length can't probe via timing.
-	if subtle.ConstantTimeCompare([]byte(user), []byte(expectedUser)) != 1 ||
-		subtle.ConstantTimeCompare([]byte(pass), []byte(expectedPass)) != 1 {
+	// (3) Constant-time compare of fixed-length digests, both
+	// evaluated. ConstantTimeCompare returns early on unequal
+	// lengths and || skipped the password compare on a wrong
+	// username, so timing revealed the username and both lengths.
+	if !basicCredentialsMatch(user, pass, expectedUser, expectedPass) {
 		h.emitAuthnAudit(r, app, nil, "instances.public_auth_invalid", map[string]any{
 			"app_id": app.ID,
 			"slug":   r.Host,
@@ -6210,6 +6226,11 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	app = lookedApp
 haveApp:
+	// Previews serve unreleased code on guessable hosts; every answer for
+	// one, proxied or from the edge, tells search engines not to index it.
+	if app.IsPreview {
+		w.Header().Set("X-Robots-Tag", previewRobotsTag)
+	}
 	if app.EnvironmentNotReady {
 		api.WriteProblem(w, api.NewProblem(http.StatusServiceUnavailable, api.CodeCapacity,
 			"Environment is not ready", "the stage clone has not published all of its workloads and resources"))
@@ -6534,11 +6555,18 @@ haveApp:
 		h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
 		return
 	}
-	if h.matchAndApplyRedirect(w, r, app) {
+	// ADR-831 amendment 17: a challenge solution is the gateway's own request.
+	// It skips the redirect, rewrite and declared-route gates, which would
+	// move or refuse it and leave a visitor unable to pass; it still meets
+	// the IP and geo gates before it is checked.
+	challengeSolve := h.challengeSolveRequest(r, app)
+	if !challengeSolve && h.matchAndApplyRedirect(w, r, app) {
 		h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
 		return
 	}
-	h.matchAndApplyRewrite(r, app)
+	if !challengeSolve {
+		h.matchAndApplyRewrite(r, app)
+	}
 	h.applyEdgeRuleHeaders(w, r, app, rec)
 	// Resolve affinity after request-header rules so the picker, cache and
 	// forwarded header all use the same key. A configured browser cookie is
@@ -6577,7 +6605,7 @@ haveApp:
 	// auth/rate-limit and, critically, before the wake gate below. A request to
 	// an undeclared path is answered by the gateway and cannot create app work.
 	markTrafficPhase(r.Context(), trafficValidation)
-	if h.enforceDeclaredRoute(w, r, app, declaredPath, declaredMethod) {
+	if !challengeSolve && h.enforceDeclaredRoute(w, r, app, declaredPath, declaredMethod) {
 		h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
 		return
 	}
@@ -6645,7 +6673,8 @@ haveApp:
 	// runs after the IP and geo gates, so a blocked client cannot earn a
 	// pass, and before the body-reading gates, so a validate or limit rule
 	// cannot reject the form.
-	if h.handleChallengeSolve(w, r, app) {
+	if challengeSolve {
+		h.serveChallengeSolve(w, r, app)
 		h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
 		return
 	}
@@ -7134,7 +7163,7 @@ haveApp:
 	// Receive and bound the complete request body before wake admission. The
 	// upload has a plan-sized deadline and spills large bodies to disk. An
 	// explicit total deadline bounds it too; the execution budget starts later.
-	if admitRequestBody(w, r, app) {
+	if admitRequestBody(w, r, app, h.bodySpoolBudget) {
 		h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
 		return
 	}
@@ -9975,4 +10004,15 @@ func hostname(host string) string {
 		host = host[:i]
 	}
 	return strings.ToLower(host)
+}
+
+// basicCredentialsMatch compares Basic credentials in time independent of
+// which part differs and of either side's length: both values are hashed to
+// SHA-256 first and both comparisons always run.
+func basicCredentialsMatch(user, pass, expectedUser, expectedPass string) bool {
+	gotUser, wantUser := sha256.Sum256([]byte(user)), sha256.Sum256([]byte(expectedUser))
+	gotPass, wantPass := sha256.Sum256([]byte(pass)), sha256.Sum256([]byte(expectedPass))
+	userOK := subtle.ConstantTimeCompare(gotUser[:], wantUser[:])
+	passOK := subtle.ConstantTimeCompare(gotPass[:], wantPass[:])
+	return userOK&passOK == 1
 }

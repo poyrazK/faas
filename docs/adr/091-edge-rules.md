@@ -1396,14 +1396,7 @@ tenant's caches. All are fixed; none changes the rule format.
    the app brings them back. A gateway that has the deleted app cached drops
    its account's compiled sets at once; otherwise they expire within 30 s,
    which also bounds how soon a restored app's rules return.
-9. **Validated bodies have a memory budget.** `kind=validate` reads a body of
-   up to 25 MiB into memory, while request admission spills anything past
-   1 MiB to disk, so concurrent large bodies to a validated route grew the
-   shared gateway's heap without bound. Validated bodies held at once in one
-   gatewayd-internal are now bounded by
-   `api.EdgeRuleValidateBufferBudgetBytes` (256 MiB); a body that would
-   exceed it is refused with 503 and `Retry-After: 1` before it is read.
-10. Smaller fixes: cache rules are looked up by the host without its port, as
+9. Smaller fixes: cache rules are looked up by the host without its port, as
    every other kind is; a credentialed CORS rule or preset may not allow
    `https://*.<a platform domain>`, since every other customer's app is served
    there; a duplicated validation block on rule update is removed.

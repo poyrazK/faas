@@ -408,8 +408,8 @@ id>` to the response. A `Content-Type` outside `content_types` gets 415.
 
 The body is read into memory to validate it, up to `max_body_bytes`. Unset,
 the cap is 25 MiB, or your plan's request body cap if that is lower. Each
-gateway bounds the bodies it holds for validation at once; when that bound is
-reached, a request gets 503 `capacity_unavailable` with `Retry-After: 1`
+gateway bounds the request bodies it holds in memory at once; when that bound
+is reached, a request gets 503 `capacity_unavailable` with `Retry-After`
 before its body is read. Set
 `reject_on_unknown_fields` to reject properties the schema does not declare,
 and `apply_while_streaming` to validate requests the gateway would otherwise

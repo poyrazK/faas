@@ -38,6 +38,29 @@
   no_log: true
   when: faas_box_role | default('single-box') in ['compute-only', 'single-box']
 
+# Key rotation (ADR 20261022111812): while the previous identity is
+# set it stays beside the new one, so values sealed to it still open until
+# the domain's re-seal to the new key completes. Unset, it is removed.
+- name: seal_domains — install the previous runtime domain identity
+  ansible.builtin.copy:
+    src: "{{ faas_seal_domain_runtime_previous_identity_src }}"
+    dest: /etc/faas/secrets/domains/runtime.age.previous
+    owner: root
+    group: root
+    mode: "0400"
+  no_log: true
+  when:
+    - faas_box_role | default('single-box') in ['compute-only', 'single-box']
+    - faas_seal_domain_runtime_previous_identity_src | length > 0
+
+- name: seal_domains — remove the previous runtime domain identity
+  ansible.builtin.file:
+    path: /etc/faas/secrets/domains/runtime.age.previous
+    state: absent
+  when:
+    - faas_box_role | default('single-box') in ['compute-only', 'single-box']
+    - faas_seal_domain_runtime_previous_identity_src | length == 0
+
 # ADR-20261023173624, contract step. vmmd is not restarted here: it reads
 # the switch at its next start, and faas_runtime_secret_binding_required
 # says which vmmd enforces it.

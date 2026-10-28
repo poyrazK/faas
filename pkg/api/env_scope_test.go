@@ -156,4 +156,9 @@ func TestCatalogEnvironmentNamesAreValidRuntimeScopes(t *testing.T) {
 	if ValidProjectEnvironmentSlug(DefaultEnvScope) || ValidateScope(DefaultEnvScope) != nil {
 		t.Fatal("default must remain a runtime scope and reserved in the catalog")
 	}
+	// ADR-20261028090000: an environment named pr-preview would hand its
+	// values to code under review.
+	if ValidProjectEnvironmentSlug(PreviewEnvScope) || ValidateScope(PreviewEnvScope) != nil {
+		t.Fatal("pr-preview must be a writable scope and reserved in the catalog")
+	}
 }

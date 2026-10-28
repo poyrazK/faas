@@ -83,6 +83,9 @@ func (s *server) persistCheckedRollback(ctx context.Context, acct state.Account,
 	}
 	operation, err := store.CreateCheckedRollback(ctx, acct.ID, app.ID, target.ID, currentID, req.Reason)
 	if err != nil {
+		if errors.Is(err, state.ErrLayerArtifactRetired) {
+			return operation, target, rollbackTargetArtifactsReclaimed()
+		}
 		if errors.Is(err, state.ErrCheckedRollbackChanged) || errors.Is(err, state.ErrConflict) || errors.Is(err, state.ErrNoRollbackTarget) {
 			return operation, target, api.NewProblem(http.StatusConflict, "rollback_deployment_changed", "Rollback selection changed", "The expected deployment must still serve all traffic, with no active rollout or other rollback in this scope.")
 		}

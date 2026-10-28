@@ -125,7 +125,7 @@ func trafficTenantBindingOwners(ctx context.Context, reader sqlc.DBTX, claims tr
 	if err != nil {
 		return nil, err
 	}
-	routes, err := sqlc.New().ReadTrafficGlobalRouteAccounts(ctx, reader, api.TrafficPolicyMaxAnalysisInputs)
+	routes, err := readTrafficRouteOwners(ctx, reader, nil)
 	if err != nil {
 		return nil, fmt.Errorf("state: read tenant global route owners: %w", mapErr(err))
 	}

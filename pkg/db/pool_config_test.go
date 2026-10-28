@@ -62,3 +62,29 @@ func TestPoolConfigWarmFloor(t *testing.T) {
 		})
 	}
 }
+
+// TestPoolConfigMigratorTimeouts is issue #579: the migrator's sessions are
+// bounded so a hung or lock-starved migration fails the deploy; daemon pools
+// keep the server defaults.
+func TestPoolConfigMigratorTimeouts(t *testing.T) {
+	t.Setenv(NotifyHubEnv, "")
+	t.Setenv(DirectDSNEnv, "")
+	t.Setenv(RuntimeRoleEnv, "")
+	cfg, err := poolConfig("postgres://faas@127.0.0.1:5432/faas", MigratorAppName, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := cfg.ConnConfig.RuntimeParams["statement_timeout"]; got != "30000" {
+		t.Errorf("migrator statement_timeout = %q, want 30000", got)
+	}
+	if got := cfg.ConnConfig.RuntimeParams["lock_timeout"]; got != "10000" {
+		t.Errorf("migrator lock_timeout = %q, want 10000", got)
+	}
+	daemon, err := poolConfig("postgres://faas@127.0.0.1:5432/faas", "faas-apid", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, set := daemon.ConnConfig.RuntimeParams["statement_timeout"]; set {
+		t.Error("a daemon pool got the migrator's statement_timeout")
+	}
+}

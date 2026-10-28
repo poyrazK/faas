@@ -6,5 +6,8 @@
 # re-seal and the contract step complete.
 [Service]
 LoadCredential=faas_seal_domain_account:/etc/faas/secrets/domains/account.age
+{% if faas_seal_domain_account_previous_identity_src | length > 0 %}
+LoadCredential=faas_seal_domain_account_previous:/etc/faas/secrets/domains/account.age.previous
+{% endif %}
 Environment=FAAS_SEAL_DOMAIN_ACCOUNT_IDENTITY_PATH=%d/faas_seal_domain_account
 Environment=FAAS_SEAL_DOMAIN_ACCOUNT_WRITES={{ faas_seal_domain_account_writes }}

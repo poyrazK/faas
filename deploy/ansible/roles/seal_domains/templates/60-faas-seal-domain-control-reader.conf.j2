@@ -3,4 +3,7 @@
 # identity stays in the base unit until the domain re-seal completes.
 [Service]
 LoadCredential=faas_seal_domain_control:/etc/faas/secrets/domains/control.age
+{% if faas_seal_domain_control_previous_identity_src | length > 0 %}
+LoadCredential=faas_seal_domain_control_previous:/etc/faas/secrets/domains/control.age.previous
+{% endif %}
 Environment=FAAS_SEAL_DOMAIN_CONTROL_IDENTITY_PATH=%d/faas_seal_domain_control

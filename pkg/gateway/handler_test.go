@@ -4481,7 +4481,7 @@ func TestStampRequestBudget_LogsEndpointSanitized(t *testing.T) {
 		t.Fatalf("budget_stamped log line not emitted; buffer empty")
 	}
 	// Sanity: one log record, terminated by a single newline.
-	if got := strings.Count(out, "\n"); got < 1 || strings.Count(out, "\n") != strings.Count(out, "\n") {
+	if got := strings.Count(out, "\n"); got != 1 {
 		t.Fatalf("log output not newline-terminated: %q", out)
 	}
 	// The injected raw LF must not appear inside the structured

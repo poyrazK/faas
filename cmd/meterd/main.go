@@ -1416,6 +1416,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// the same mux as /healthz + /metrics. defer stop so the
 	// SIGTERM drain window surfaces in daemon_ready as 0.
 	meterdProbe := BuildReadinessProbe(loop)
+	if pool != nil {
+		registerDatabaseReadiness(ctx, meterdProbe, pool)
+	}
 	meterdProbe.SetReadyObserver(func(ready bool, reason string) {
 		ops.MarkReady("meterd", ready, reason)
 	})

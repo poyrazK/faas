@@ -26,13 +26,27 @@ func (s *PgStore) tryAcquireTrafficPolicySession(ctx context.Context, account pg
 }
 
 func (s *PgStore) tryAcquireTrafficPolicySessionKeys(ctx context.Context, keys []string) (*pgxpool.Conn, func(context.Context), bool, error) {
+	locks := make([]trafficSessionLock, len(keys))
+	for i, key := range keys {
+		locks[i] = trafficSessionLock{Key: key}
+	}
+	return s.tryAcquireTrafficPolicySessionLocks(ctx, locks)
+}
+
+// Shared keys admit other shared holders; exclusive keys admit no one.
+func (s *PgStore) tryAcquireTrafficPolicySessionLocks(ctx context.Context, locks []trafficSessionLock) (*pgxpool.Conn, func(context.Context), bool, error) {
 	conn, err := db.DirectPool(s.pool.Pool).Acquire(ctx)
 	if err != nil {
 		return nil, nil, false, fmt.Errorf("state: acquire traffic policy connection: %w", err)
 	}
-	locked := make([]string, 0, len(keys))
-	for _, key := range keys {
-		acquired, err := sqlc.New().TryLockTrafficPolicySession(ctx, conn, key)
+	locked := make([]trafficSessionLock, 0, len(locks))
+	for _, lock := range locks {
+		var acquired bool
+		if lock.Shared {
+			acquired, err = sqlc.New().TryLockTrafficPolicySessionShared(ctx, conn, lock.Key)
+		} else {
+			acquired, err = sqlc.New().TryLockTrafficPolicySession(ctx, conn, lock.Key)
+		}
 		if err != nil {
 			// A canceled query may have granted the session lock. Close the
 			// session even if the client never received the successful reply.
@@ -43,7 +57,7 @@ func (s *PgStore) tryAcquireTrafficPolicySessionKeys(ctx context.Context, keys [
 			releaseTrafficPolicySession(conn, locked)(ctx)
 			return nil, nil, true, nil
 		}
-		locked = append(locked, key)
+		locked = append(locked, lock)
 	}
 	return conn, releaseTrafficPolicySession(conn, locked), false, nil
 }
@@ -54,14 +68,20 @@ func closeTrafficPolicySession(ctx context.Context, conn *pgxpool.Conn) {
 	_ = conn.Hijack().Close(bounded)
 }
 
-func releaseTrafficPolicySession(conn *pgxpool.Conn, keys []string) func(context.Context) {
+func releaseTrafficPolicySession(conn *pgxpool.Conn, locks []trafficSessionLock) func(context.Context) {
 	var once sync.Once
 	return func(ctx context.Context) {
 		once.Do(func() {
 			bounded, cancel := context.WithTimeout(context.WithoutCancel(ctx), api.TrafficPolicyAnalysisTimeout)
 			defer cancel()
-			for i := len(keys) - 1; i >= 0; i-- {
-				unlocked, err := sqlc.New().UnlockTrafficPolicySession(bounded, conn, keys[i])
+			for i := len(locks) - 1; i >= 0; i-- {
+				var unlocked bool
+				var err error
+				if locks[i].Shared {
+					unlocked, err = sqlc.New().UnlockTrafficPolicySessionShared(bounded, conn, locks[i].Key)
+				} else {
+					unlocked, err = sqlc.New().UnlockTrafficPolicySession(bounded, conn, locks[i].Key)
+				}
 				if err != nil || !unlocked {
 					closeTrafficPolicySession(ctx, conn)
 					return
