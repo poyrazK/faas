@@ -3162,10 +3162,25 @@ func ErrTrafficPolicyTooComplex(scope, unit string, limit, observed int64) *Prob
 		WithLimit(limit, observed).
 		WithDocs(docsBase + "/plans#edge-rules").
 		WithHint(trafficPolicyTooComplexHint(unit))
-	if unit == "bytes" {
+	switch unit {
+	case "bytes":
 		problem = problem.WithByteLimit(limit, observed)
+	case "milliseconds":
+		// A time ceiling is not a verdict on the policy. Retry-After marks the
+		// refusal as temporary: apid does not replay it for the request's
+		// Idempotency-Key, and clients resend after the wait.
+		seconds := int64(TrafficPolicyAnalysisRetryAfter / time.Second)
+		problem.RetryAfterSeconds = &seconds
+		problem = problem.WithHeader("Retry-After", strconv.FormatInt(seconds, 10))
 	}
 	return problem
+}
+
+// TrafficPolicyCheckTimedOut reports a refusal whose policy check ran out of
+// time and that asks to be resent. Nothing was saved, so resending the same
+// request, with the same Idempotency-Key, is safe.
+func TrafficPolicyCheckTimedOut(p Problem) bool {
+	return p.Status == http.StatusUnprocessableEntity && p.Code == CodeTrafficPolicyTooComplex && p.RetryAfterSeconds != nil
 }
 
 // trafficPolicyTooComplexHint tells a time ceiling apart from a size one. The

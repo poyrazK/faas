@@ -18,6 +18,10 @@ var _ consumerbilling.Host = consumerBillingHost{}
 
 func (h consumerBillingHost) Store() state.Store { return h.s.store }
 
+func (h consumerBillingHost) CreatorBills(ctx context.Context, app state.App) bool {
+	return h.s.creatorBills(ctx, app)
+}
+
 func (h consumerBillingHost) Released(accountID string) bool {
 	return h.s.apiMonetizationFor(accountID)
 }

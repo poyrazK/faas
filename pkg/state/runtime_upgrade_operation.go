@@ -37,7 +37,16 @@ type RuntimeUpgradeOperation struct {
 	CreatedAt, DeadlineAt, NextAttemptAt, LeaseUntil, FinishedAt time.Time
 }
 
-type RuntimeUpgradeOperationClaim struct{ ID, LeaseToken string }
+type RuntimeUpgradeOperationClaim struct {
+	ID, LeaseToken string
+	// AccountID, AppID and ServingDeploymentID name the claimed upgrade, so
+	// the executor can check release freezes before it advances.
+	AccountID, AppID, ServingDeploymentID string
+	// HoldCutover keeps a ready upgrade waiting instead of switching traffic:
+	// a release freeze covers the app (ADR-20261019071733 amendment 2). The
+	// operation still fails closed at its deadline.
+	HoldCutover bool
+}
 
 // Only private apid orchestration uses this seam. Advance commits queue/phase
 // or cutover/completion together and fences every mutation by the current lease.
