@@ -13,7 +13,7 @@ Metrics use the daemon prefix (`apid_` or `vmmd_`):
 `<daemon>_log_archive_upload_duration_seconds`.
 For control-plane checks use the `apid` prefix and `apid` service below; on a
 compute host substitute the `vmmd` prefix and `faas-vmmd` service.
-Issue: #562.
+Issue: #562. Ownership, kill switches and recovery: [FaasLogs](FaasLogs.md).
 Severity: warn, including when the local spool approaches
 `FAAS_LOG_ARCHIVE_LOCAL_BYTES_MAX` (ADR-1236 demoted that page).
 

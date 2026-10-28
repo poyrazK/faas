@@ -4178,27 +4178,28 @@ type EdgePenaltyBox struct {
 }
 
 type EdgeRule struct {
-	ID           pgtype.UUID
-	AccountID    pgtype.UUID
-	AppID        pgtype.UUID
-	MatchHost    string
-	MatchPath    string
-	MatchMethods []string
-	Priority     int16
-	Enabled      bool
-	Kind         string
-	Action       []byte
-	CreatedAt    pgtype.Timestamptz
-	UpdatedAt    pgtype.Timestamptz
-	ValidateMode string
-	CorsPresetID pgtype.UUID
-	MatchHeaders []byte
-	ManifestKey  pgtype.Text
-	Name         pgtype.Text
-	Description  pgtype.Text
-	ExpiresAt    pgtype.Timestamptz
-	MatchExpr    []byte
-	Mode         string
+	ID             pgtype.UUID
+	AccountID      pgtype.UUID
+	AppID          pgtype.UUID
+	MatchHost      string
+	MatchPath      string
+	MatchMethods   []string
+	Priority       int16
+	Enabled        bool
+	Kind           string
+	Action         []byte
+	CreatedAt      pgtype.Timestamptz
+	UpdatedAt      pgtype.Timestamptz
+	ValidateMode   string
+	CorsPresetID   pgtype.UUID
+	MatchHeaders   []byte
+	ManifestKey    pgtype.Text
+	Name           pgtype.Text
+	Description    pgtype.Text
+	ExpiresAt      pgtype.Timestamptz
+	MatchExpr      []byte
+	Mode           string
+	MatchHostScope pgtype.Text
 }
 
 type EdgeRuleChangeLog struct {
@@ -14332,6 +14333,7 @@ type Snapshot struct {
 	CpuTemplate string
 	// Host CPU signature of the capturing node; a template-less snapshot restores only on the identical signature.
 	CpuModel string
+	StaleAt  pgtype.Timestamptz
 }
 
 type SnapshotFanoutEvent struct {

@@ -129,6 +129,7 @@ func TestBuildRecipeCachePartitionsInputs(t *testing.T) {
 		"platform":   func(r *BuildCacheRecipe) { r.TargetPlatform = "linux/arm64" },
 		"function":   func(r *BuildCacheRecipe) { r.Function = !r.Function },
 		"secrets":    func(r *BuildCacheRecipe) { r.BuildSecretScope = "account-app-scope" },
+		"zstd":       func(r *BuildCacheRecipe) { r.LayerCompression = api.BuildLayerCompressionZstd },
 	}
 	for name, change := range changes {
 		t.Run(name, func(t *testing.T) {
@@ -369,5 +370,27 @@ func TestBuildRecipeGitOpsFallbackOriginKeepsBytesAndOrigin(t *testing.T) {
 	afterInfo, err := os.Stat(after.Path)
 	if err != nil || !os.SameFile(beforeInfo, afterInfo) {
 		t.Fatal("metadata update copied the cached bytes", err)
+	}
+}
+
+// ADR-20261028084018: gzip builds keep their existing cache keys; only a zstd
+// build adds the field.
+func TestBuildRecipeGzipKeyOmitsLayerCompression(t *testing.T) {
+	recipe := BuildCacheRecipe{SourceSHA256: "source-a", Framework: FrameworkNode, Plan: api.PlanPro,
+		RuntimeBaseRef: "base-a", BuilderBaseIdentity: "builder-a", TargetPlatform: "linux/amd64"}
+	gzip, err := json.Marshal(recipe)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(gzip), "layer_compression") {
+		t.Fatalf("gzip recipe encodes layer_compression: %s", gzip)
+	}
+	recipe.LayerCompression = api.BuildLayerCompressionZstd
+	zstd, err := json.Marshal(recipe)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(zstd), `"layer_compression":"zstd"`) {
+		t.Fatalf("zstd recipe does not encode layer_compression: %s", zstd)
 	}
 }

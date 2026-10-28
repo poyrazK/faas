@@ -159,7 +159,7 @@ func TestInvalidateEdgeRuleScopeByAccount(t *testing.T) {
 	}{
 		{name: "the live notification narrows by account", account: "acct-a", hosts: []string{api.EdgeRuleAppHosts},
 			want: []string{"account:acct-a/app-a:@app", "response-app:app-a"}},
-		{name: "a wildcard still flushes responses", account: "acct-a", hosts: []string{"*"},
+		{name: "a wildcard flushes responses without an account invalidator", account: "acct-a", hosts: []string{"*"},
 			want: []string{"account:acct-a/app-a:*", "response-all"}},
 		{name: "the repair ledger has no account", hosts: []string{"a.example.com"},
 			want: []string{"hosts:a.example.com", "response-app:app-a"}},
@@ -171,5 +171,81 @@ func TestInvalidateEdgeRuleScopeByAccount(t *testing.T) {
 				t.Fatalf("calls = %v, want %v", f.calls, tc.want)
 			}
 		})
+	}
+}
+
+// accountCacheInvalidator adds account-scoped response cache invalidation;
+// listed is what InvalidateResponseCacheByAccount reports.
+type accountCacheInvalidator struct {
+	scopeRecordingInvalidator
+	listed bool
+}
+
+func (f *accountCacheInvalidator) InvalidateResponseCacheByAccount(_ context.Context, account string) bool {
+	f.calls = append(f.calls, "response-account:"+account)
+	return f.listed
+}
+
+// adr: 091 — amendment 2026-10-27 (GA hardening): a wildcard change drops
+// only the mutating account's cached responses; without the account, or when
+// its apps cannot be listed, the whole response cache goes.
+func TestInvalidateEdgeRuleScopeWildcardResponseCacheByAccount(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		account string
+		listed  bool
+		want    []string
+	}{
+		{name: "the account's apps are listed", account: "acct-a", listed: true,
+			want: []string{"account:acct-a/app-a:*.example.com", "response-account:acct-a"}},
+		{name: "listing the apps failed", account: "acct-a", listed: false,
+			want: []string{"account:acct-a/app-a:*.example.com", "response-account:acct-a", "response-all"}},
+		{name: "the repair ledger has no account", listed: true,
+			want: []string{"hosts:*.example.com", "response-all"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := &accountCacheInvalidator{listed: tc.listed}
+			invalidateEdgeRuleScope(context.Background(), f, tc.account, "app-a", []string{"*.example.com"})
+			if !slices.Equal(f.calls, tc.want) {
+				t.Fatalf("calls = %v, want %v", f.calls, tc.want)
+			}
+		})
+	}
+}
+
+// adr: 091 — amendment 2026-10-27 (GA hardening): the backend drops the
+// listed apps' entries and keeps every other account's.
+func TestPGBackendInvalidateResponseCacheByAccount(t *testing.T) {
+	cache := gateway.NewResponseCache()
+	put := func(app string) gateway.CacheKey {
+		t.Helper()
+		key := gateway.CacheKey{AppID: app, RuleID: "rule-" + app, Method: "GET", NormalizedPath: "/"}
+		if !cache.Put(key, 200, nil, []byte("ok"), time.Now().Add(time.Minute), time.Now().Add(time.Minute), nil) {
+			t.Fatalf("put %s", app)
+		}
+		return key
+	}
+	mine, theirs := put("app-mine"), put("app-theirs")
+	backend := gateway.NewPGBackend(nil, nil, testLogger()).WithResponseCache(cache).
+		WithAccountAppLister(func(_ context.Context, account string) ([]string, error) {
+			if account != "acct-mine" {
+				return nil, errors.New("unexpected account " + account)
+			}
+			return []string{"app-mine"}, nil
+		})
+	if !backend.InvalidateResponseCacheByAccount(context.Background(), "acct-mine") {
+		t.Fatal("listing the account's apps reported failure")
+	}
+	if got, _ := cache.Get(mine); got == "fresh" {
+		t.Fatal("the account's entry survived")
+	}
+	if got, _ := cache.Get(theirs); got != "fresh" {
+		t.Fatalf("another account's entry = %q, want fresh", got)
+	}
+	if backend.InvalidateResponseCacheByAccount(context.Background(), "acct-other") {
+		t.Fatal("a failed listing reported success")
+	}
+	if gateway.NewPGBackend(nil, nil, testLogger()).WithResponseCache(cache).InvalidateResponseCacheByAccount(context.Background(), "acct-mine") {
+		t.Fatal("a backend without a lister reported success")
 	}
 }

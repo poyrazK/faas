@@ -1549,6 +1549,9 @@ func NewHandlerWith(backend Backend, m *Metrics, log *slog.Logger) *Handler {
 	h.proxyFor = defaultProxy
 	// Route priorities also order the cold-wake queue (ADR-20261018181846).
 	h.gate.classifier = h
+	// A wake generation outlives schedd's leader and its reply's trip back,
+	// so schedd's own outcome, not the gate's deadline, ends it.
+	h.gate.leaderFloor = sched.DefaultWakeLeaderBudget + time.Second
 	return h
 }
 
@@ -1624,9 +1627,20 @@ func (h *Handler) WithCentralBackend(central CentralBackend) *Handler {
 	for _, limiter := range h.limiters() {
 		limiter.central = central
 		limiter.centralErrorObserver = h.observeCentralRateLimitDegraded
+		limiter.centralFallbackObserver = h.observeCentralRateLimitFallback
 	}
 	if h.metrics != nil && h.metrics.rateLimitShared != nil && !h.limiter.isNoopBackend() {
 		h.metrics.rateLimitShared.Set(1)
+	}
+	return h
+}
+
+// WithRateLimitOutageGrace replaces api.TrafficRateLimitOutageGrace on every
+// Limiter the Handler owns; a negative grace refuses at the first central
+// failure. Test fleets use it to cross the grace. Call before serving.
+func (h *Handler) WithRateLimitOutageGrace(grace time.Duration) *Handler {
+	for _, limiter := range h.limiters() {
+		limiter.centralOutageGrace = grace
 	}
 	return h
 }
@@ -1703,6 +1717,40 @@ func (h *Handler) observeCentralRateLimitDegraded(ctx context.Context, scope str
 			"scope": scope,
 			"error": err.Error(),
 		})
+	}
+}
+
+// observeCentralRateLimitFallback makes a shared counter outage inside the
+// outage grace visible: limits still hold, but per gateway. The warning log
+// shares the degraded path's per-scope cooldown under its own key.
+func (h *Handler) observeCentralRateLimitFallback(_ context.Context, scope string, err error) {
+	if h == nil || err == nil {
+		return
+	}
+	switch scope {
+	case rateLimitScopeApp, rateLimitScopeAccount, rateLimitScopeRule:
+	default:
+		scope = "other"
+	}
+	if h.metrics != nil {
+		h.metrics.ObserveRateLimitLocalFallback(scope)
+	}
+	now := time.Now()
+	key := "fallback:" + scope
+	h.centralRateLimitDegradedMu.Lock()
+	if h.centralRateLimitDegradedLast == nil {
+		h.centralRateLimitDegradedLast = make(map[string]time.Time, 8)
+	}
+	last := h.centralRateLimitDegradedLast[key]
+	if !last.IsZero() && now.Sub(last) < centralRateLimitDegradedCooldown {
+		h.centralRateLimitDegradedMu.Unlock()
+		return
+	}
+	h.centralRateLimitDegradedLast[key] = now
+	h.centralRateLimitDegradedMu.Unlock()
+	if h.log != nil {
+		h.log.Warn("gateway shared rate counter unavailable; enforcing limits per gateway within the outage grace",
+			"scope", scope, "grace", api.TrafficRateLimitOutageGrace, "error", err)
 	}
 }
 
@@ -6435,11 +6483,18 @@ haveApp:
 		h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
 		return
 	}
-	if h.matchAndApplyRedirect(w, r, app) {
+	// ADR-831 amendment 17: a challenge solution is the gateway's own request.
+	// It skips the redirect, rewrite and declared-route gates, which would
+	// move or refuse it and leave a visitor unable to pass; it still meets
+	// the IP and geo gates before it is checked.
+	challengeSolve := h.challengeSolveRequest(r, app)
+	if !challengeSolve && h.matchAndApplyRedirect(w, r, app) {
 		h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
 		return
 	}
-	h.matchAndApplyRewrite(r, app)
+	if !challengeSolve {
+		h.matchAndApplyRewrite(r, app)
+	}
 	h.applyEdgeRuleHeaders(w, r, app, rec)
 	// Resolve affinity after request-header rules so the picker, cache and
 	// forwarded header all use the same key. A configured browser cookie is
@@ -6478,7 +6533,7 @@ haveApp:
 	// auth/rate-limit and, critically, before the wake gate below. A request to
 	// an undeclared path is answered by the gateway and cannot create app work.
 	markTrafficPhase(r.Context(), trafficValidation)
-	if h.enforceDeclaredRoute(w, r, app, declaredPath, declaredMethod) {
+	if !challengeSolve && h.enforceDeclaredRoute(w, r, app, declaredPath, declaredMethod) {
 		h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
 		return
 	}
@@ -6546,7 +6601,8 @@ haveApp:
 	// runs after the IP and geo gates, so a blocked client cannot earn a
 	// pass, and before the body-reading gates, so a validate or limit rule
 	// cannot reject the form.
-	if h.handleChallengeSolve(w, r, app) {
+	if challengeSolve {
+		h.serveChallengeSolve(w, r, app)
 		h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
 		return
 	}
@@ -7194,21 +7250,27 @@ haveApp:
 			} else {
 				admittedWakeID, method, atCapacity, admitErr = h.backend.Admit(r.Context(), app.ID, exactDeploymentID, exactDeploymentScope, exactDeploymentTrigger, maxInstances+api.RolloutConcurrencyGrant)
 			}
-			if admitErr != nil || atCapacity {
-				if admitErr == nil {
-					if notServing := h.pinnedDeploymentNotServing(r.Context(), app, exactDeploymentID); notServing != nil {
-						admitErr = notServing
-					} else {
-						admitErr = api.ErrAppConcurrencyReachedAt(limits, maxInstances, backendCapacityCount(h.backend, app.ID))
-					}
+			settled := false
+			if admitErr == nil && atCapacity {
+				if notServing := h.pinnedDeploymentNotServing(r.Context(), app, exactDeploymentID); notServing != nil {
+					admitErr = notServing
+				} else {
+					pick, admitErr = h.settleAtCapacity(r.Context(), app, limits, maxInstances, func() PickResult {
+						return pickPublicDeployment(h.backend, app.ID, exactDeploymentID, preferredInstanceID)
+					})
+					settled = admitErr == nil
 				}
+			}
+			if admitErr != nil {
 				h.logFleetCapacityRefusal(app.ID, admitErr)
 				writeBurstCapacityError(w, r, admitErr)
 				h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
 				return
 			}
-			cold, wakeID, wakeMethod = true, admittedWakeID, method
-			pick = pickPublicDeployment(h.backend, app.ID, exactDeploymentID, preferredInstanceID)
+			if !settled {
+				cold, wakeID, wakeMethod = true, admittedWakeID, method
+				pick = pickPublicDeployment(h.backend, app.ID, exactDeploymentID, preferredInstanceID)
+			}
 			if !pick.OK {
 				api.WriteProblem(w, api.NewProblem(http.StatusServiceUnavailable, api.CodeCapacity,
 					exactUnavailableTitle, "the requested deployment became unavailable after admission"))
@@ -7433,22 +7495,35 @@ haveApp:
 		pick = h.pickAfterCapacity(app, preferredInstanceID, versionKey)
 	}
 	if !pick.OK {
-		// Race: every cached instance was evicted between
-		// ensureCapacity returning and our Pick. Surface the observed
-		// (current) HealthyCount so the operator's metrics panel
-		// shows 0 vs the cap (was 1+ microseconds ago).
-		wakeErr := api.ErrAppConcurrencyReachedAt(limits, effectiveAppConcurrencyLimit(app, limits.MaxConcurrency), backendCapacityCount(h.backend, app.ID))
-		h.markHealthFailure(app.ID, wakeErr)
-		writeBurstCapacityError(w, r, wakeErr)
-		h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
-		return
+		// No routable target after ensureCapacity: schedd answered at
+		// capacity for instances this gateway cannot route to yet, or every
+		// cached instance was evicted since. Only a true count of live
+		// instances is the customer's limit (#5709).
+		var wakeErr error
+		pick, wakeErr = h.settleAtCapacity(r.Context(), app, limits, effectiveAppConcurrencyLimit(app, limits.MaxConcurrency), func() PickResult {
+			return h.pickAfterCapacity(app, preferredInstanceID, versionKey)
+		})
+		if wakeErr != nil {
+			h.markHealthFailure(app.ID, wakeErr)
+			writeBurstCapacityError(w, r, wakeErr)
+			h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
+			return
+		}
 	}
 	// ADR-201 §2 (H4-68): an instance whose circuit is open is not
-	// selectable. An exact-deployment smoke must reach its deployment and is
-	// never re-picked.
-	if !exactDeployment {
+	// selectable. Every public request picks an exact deployment once its
+	// routing is pinned (ADR-570), so the re-pick stays within that
+	// deployment (ADR-091 amendment 2026-10-27, GA hardening: the check used
+	// to skip every exact-deployment pick, which left public traffic outside
+	// the breaker). A deployment smoke or route probe verifies one
+	// deployment's instance and is never re-picked.
+	if !deploymentSmoke && !routeProbe {
+		repick := func() PickResult { return h.pickAfterCapacity(app, "", versionKey) }
+		if exactDeployment {
+			repick = func() PickResult { return pickPublicDeployment(h.backend, app.ID, exactDeploymentID, "") }
+		}
 		var allowed, probe bool
-		pick, allowed, probe = h.selectByCircuit(app.ID, pick, func() PickResult { return h.pickAfterCapacity(app, "", versionKey) })
+		pick, allowed, probe = h.selectByCircuit(app.ID, pick, repick)
 		if !allowed {
 			writeCircuitOpen(w)
 			h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
@@ -9579,6 +9654,10 @@ func writeWakeError(w http.ResponseWriter, err error) {
 		w.Header().Set("Retry-After", strconv.Itoa(retryAfter))
 		api.WriteProblem(w, api.NewProblem(http.StatusServiceUnavailable, api.CodeCapacity,
 			"Wake admission is busy", "the gateway is admitting other cold wakes; retry shortly"))
+	case errors.Is(err, ErrInstanceSlotsSettling):
+		w.Header().Set("Retry-After", "1")
+		api.WriteProblem(w, api.NewProblem(http.StatusServiceUnavailable, api.CodeCapacity,
+			"App instance starting", "this app's instances are starting or stopping and none can take the request yet; retry shortly"))
 	case errors.Is(err, ErrBootstrapAborted):
 		// ADR-098 C7: the leader aborted under the bootstrap cap
 		// (queue empty AND no live instance). The customer should

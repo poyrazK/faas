@@ -150,7 +150,7 @@ internal hosting service and Gregale Agents are already unreachable.
 | 42 | Manual park / wake, prewarm | `park`, `wake`, `prewarm(s)` | **MISSING** | — | GA |
 | 43 | Autoscaling and min instances (target RPS / CPU), scheduled scaling | `autoscale_target_*`, `min_instances` on apps | **MISSING** | — | GA |
 | 44 | Service wake-ahead | `service-wake-ahead`, `gregale wake-ahead` | `service-wake-ahead` ga | — | GA |
-| 45 | Frozen tier (fast thaw) | operator env `FAAS_FROZEN_TIER`, `FAAS_FROZEN_FAST_PATH` | **MISSING** | operator env | internal |
+| 45 | Frozen tier (fast thaw) | operator env `FAAS_FROZEN_TIER`, `FAAS_FROZEN_FAST_PATH` | **MISSING** | operator env; unbilled quiet pause `pf: quiet_pause_unbilled` | internal |
 | 46 | Instances: list, restart, runtime-config restarts | `instances`, `restart`, `gregale ps` | **MISSING** | — | GA |
 | 47 | Health probes and auto-restart: startup, readiness, liveness; restart policy, stop signal, grace period, drain timeout | `gregale.yaml` probes, `restart_policy` | **MISSING** | — | GA |
 | 48 | Snapshot lifecycle hooks: run app code before checkpoint and after restore | `gregale.yaml` `before_checkpoint`, `after_restore` | **MISSING** | — | beta |
@@ -249,7 +249,7 @@ internal hosting service and Gregale Agents are already unreachable.
 | 121 | App, service and account metrics; request analytics | `metrics`, `gregale analytics` | **MISSING** | — | GA |
 | 122 | Custom metrics and OTLP metric ingest | `custom-metrics`, `otlp` | **MISSING** | — | beta |
 | 123 | Custom metric history | | `custom-metric-history` internal | env flag | internal |
-| 124 | Tracing: in-guest request tracing, customer OTLP trace ingest, W3C trace propagation | `gregale trace`, `/v1/traces`, `/v1/otel/v1/traces` | **MISSING** | `pf: guest_tracing` | preview |
+| 124 | Tracing: in-guest request tracing, customer OTLP trace ingest, W3C trace propagation | `gregale trace`, `/v1/account/traces`, `/v1/otel/v1/traces` (gatewayd-public's `/v1/traces/{id}` is an operator-token trace ring, not customer surface) | **MISSING** | `pf: guest_tracing` | preview |
 | 125 | Alerts, notification channels, alert presets | `alerts`, `notification-channels`, `alert-presets` | **MISSING** | — | beta |
 | 126 | Anomaly (baseline) alerts | | `anomaly-alerts` internal | `pf: anomaly_alerts` | internal |
 | 127 | Issues: error grouping, Linear and Slack integrations, errors view | `issues`, `errors` | `issues` preview | — | preview |

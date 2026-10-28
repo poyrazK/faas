@@ -6850,6 +6850,9 @@ func cmdLogsWithPreviewContext(args []string, viewPreview *logQueryPreviewView) 
 		PrintUsage(os.Stderr, "--status, --route, --request, --trace, --limit, and --all require --source http", "logs")
 		return 2
 	}
+	if logSource == logsSourceHTTP && !*dryRun && capabilityHiddenForRun(httpLogsCapability, false) {
+		return printHTTPLogsUnavailable()
+	}
 	if logsFlagWasSet(fs, "status") && (*status < 100 || *status > 599) {
 		PrintUsage(os.Stderr, "--status must be between 100 and 599", "logs")
 		return 2
@@ -7083,6 +7086,11 @@ func runLogsExplainingMissingArchive(ctx context.Context, slug, deployment strin
 		body, err = client.StreamAppLogs(ctx, slug, deployment, follow, filter)
 	}
 	if err != nil {
+		// Ctrl-C before the stream connects is a deliberate stop, like
+		// Ctrl-C while it streams, not an unreachable API (#2691).
+		if ctx.Err() != nil {
+			return 130
+		}
 		var ae *APIError
 		if errors.As(err, &ae) {
 			renderAPIError(os.Stderr, ae)

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"slices"
 	"strings"
 	"time"
 
@@ -408,6 +409,13 @@ func (s *server) listScheduledReleases(w http.ResponseWriter, r *http.Request, a
 			"Gregale could not list your scheduled releases.", "Retry in a moment.", err)
 		return
 	}
+	hidden, err := s.hiddenAccountApps(r, acct)
+	if err != nil {
+		writeCustomerInternalProblem(w, r, s.log, "list scheduled releases",
+			"Gregale could not list your scheduled releases.", "Retry in a moment.", err)
+		return
+	}
+	rows = slices.DeleteFunc(rows, func(row state.ScheduledRelease) bool { return hidden[row.AppID] })
 	writeJSON(w, http.StatusOK, api.ScheduledReleaseListResponse{Items: s.scheduleViews(r.Context(), acct.ID, rows)})
 }
 

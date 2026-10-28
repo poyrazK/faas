@@ -3477,7 +3477,7 @@ type BuildSpec struct {
 	// compile-time platform default.
 	TimeoutSec int32 `protobuf:"varint,2,opt,name=timeout_sec,json=timeoutSec,proto3" json:"timeout_sec,omitempty"`
 	// The private-registry credentials of the app being built
-	// (ADR-20261026090000). vmmd opens each password with the build seal
+	// (ADR-20261026091500). vmmd opens each password with the build seal
 	// domain and gives the builder a Docker config, so a Dockerfile can build
 	// FROM a private base image. Empty for every other build.
 	RegistryCredentials []*BuildRegistryCredential `protobuf:"bytes,3,rep,name=registry_credentials,json=registryCredentials,proto3" json:"registry_credentials,omitempty"`
