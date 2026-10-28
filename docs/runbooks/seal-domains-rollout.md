@@ -1235,3 +1235,34 @@ Values re-sealed in this step stay domain-only, so:
 - never remove `account.age` from a control-plane host;
 - never roll apid back past the first release that carried the account
   reader.
+
+## 13. Rotate a domain identity
+
+Rotate a domain's key pair when its identity may have leaked or by policy.
+Readers keep the old identity as `<domain>.age.previous` until every stored
+value is re-sealed to the new one, so nothing sealed before the rotation
+dead-letters. Use the domain's own reader hosts and writer (sections 2–12).
+
+1. Make the new pair on the operator workstation:
+   `gregalectl seal-domain init --domain <domain> --dir <new-dir> --force`.
+2. On the reader hosts, before the control plane, set
+   `faas_seal_domain_<domain>_identity_src` to the new identity and
+   `faas_seal_domain_<domain>_previous_identity_src` to the current one.
+   Leave `faas_seal_domain_<domain>_recipient_src` on the current recipient.
+   Converge them (`--limit` the compute hosts for a domain read there). Each
+   reader restarts holding both identities. The first one's
+   `seal-domain verify --publish` proves it holds the old identity and moves
+   the domain probe to the new one.
+3. Set `faas_seal_domain_<domain>_recipient_src` to the new recipient and
+   converge the control plane. The recipient check passes against the moved
+   probe, and the writer seals to the new recipient from its restart.
+4. Re-seal what is stored:
+   `sudo gregalectl seal-domain migrate --domain <domain> --readers-verified --db-env /etc/faas/compute-db.env`
+   on a host that holds both identities. Rows the previous identity opens are
+   re-sealed to the new one. Run it again until it reports nothing to write.
+5. Clear `faas_seal_domain_<domain>_previous_identity_src` and converge every
+   host. The role removes `<domain>.age.previous` and the second credential,
+   and the readers restart with the new identity alone.
+
+Never clear the previous identity before step 4 finishes: a value still
+sealed to it no longer opens.
