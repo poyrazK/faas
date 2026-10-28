@@ -255,6 +255,31 @@ search later does not change it. Counts include every occurrence of a
 deduplicated event. These rules are webhook-only and support windows up to
 `24h`. If the search cannot finish in time, the rule is `unknown` for that
 evaluation rather than firing or clearing.
+
+### Route monitor and canary hold alerts
+
+Two app metrics send route events to notification channels, so they reach
+you without a webhook receiver:
+
+- `route_monitor_incidents` counts the app's
+  [production route monitor](route-production-monitoring.md) incidents open
+  at any time within the window: still open, or closed within it.
+- `route_health_holds` counts the app's in-flight canaries the enforced
+  [route health guard](route-health.md#hold-deadline) holds now, plus the
+  canaries it aborted within the window.
+
+```bash
+gregale alert create --app shop --name "route incidents" \
+  --metric route_monitor_incidents --comparison gt --threshold 0 --window-spec 15m \
+  --channel OPS_EMAIL_ID
+```
+
+A firing notification lists up to five incidents or holds with their route,
+signal and reason. Both rules are notification-only and accept windows `5m`,
+`15m`, `1h`, `6h` and `24h`. The presets "Route monitor incident" and "Canary
+held by route health" create them with `gt 0` over 15 minutes. Each needs its
+feature released for the account: production route monitoring for incidents,
+the route health canary guard for holds.
 ## SLO alerts
 
 `slo_budget_burn` and `slo_budget_remaining_pct` watch one of the app's own

@@ -107,11 +107,11 @@ func TestPg_AlertPresetCatalog_ListOrdered(t *testing.T) {
 	}
 	// The base seed (migrations/00348_alert_presets_seed.sql) plus the
 	// safe-releases, B3, O2, login-abuse, automation notification, edge
-	// security and edge WAF seeds plus MCP readiness and route insight
-	// (ADR-20261020161310) seeds ship 33 rows. This test pins the count and
-	// (category, name) ordering shape.
-	if len(got) != 33 {
-		t.Errorf("catalog row count = %d; want 33 (base + safe-releases + B3 + O2 + login-abuse + automation + edge security + edge WAF + MCP readiness + route insight seeds)", len(got))
+	// security and edge WAF seeds plus MCP readiness, route insight
+	// (ADR-20261020161310) and route alert (ADR-20261028110044) seeds ship 35
+	// rows. This test pins the count and (category, name) ordering shape.
+	if len(got) != 35 {
+		t.Errorf("catalog row count = %d; want 35 (base + safe-releases + B3 + O2 + login-abuse + automation + edge security + edge WAF + MCP readiness + route insight + route alert seeds)", len(got))
 	}
 	// Verify (category, name) order is sorted.
 	for i := 1; i < len(got); i++ {
@@ -311,6 +311,8 @@ func TestPg_AlertPresetCatalog_AllEnabledAfterFlip(t *testing.T) {
 	defer rows.Close()
 	expectedNames := map[string]bool{
 		"route_insights_detected":            true,
+		"route_monitor_incidents":            true,
+		"route_health_holds":                 true,
 		"mcp_readiness_unhealthy":            true,
 		"mcp_oauth_issuance_unknown":         true,
 		"mcp_oauth_reauthorization_required": true,
