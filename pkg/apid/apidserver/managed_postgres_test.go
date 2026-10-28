@@ -18,7 +18,7 @@ import (
 )
 
 func TestLoadManagedPostgresIsDarkWhenUnconfigured(t *testing.T) {
-	service, reconciler, bindingService, bindingReconciler, usageCollector, healthCollector, err := apidserver.LoadManagedPostgres(nil, func(string) string { return "" }, slog.New(slog.NewTextHandler(io.Discard, nil)), nil, nil)
+	service, reconciler, bindingService, bindingReconciler, usageCollector, healthCollector, err := apidserver.LoadManagedPostgres(nil, func(string) string { return "" }, slog.New(slog.NewTextHandler(io.Discard, nil)), nil)
 	if err != nil || service != nil || reconciler != nil || bindingService != nil || bindingReconciler != nil || usageCollector != nil || healthCollector != nil {
 		t.Fatalf("unconfigured load = %v, %v, %v, %v, %v", service, reconciler, bindingService, bindingReconciler, err)
 	}
@@ -68,7 +68,7 @@ func TestLoadManagedPostgresRegistersNeonDriver(t *testing.T) {
 		}
 	}
 	registry := prometheus.NewRegistry()
-	service, reconciler, bindingService, bindingReconciler, usageCollector, healthCollector, err := apidserver.LoadManagedPostgres(pool, getenv, slog.New(slog.NewTextHandler(io.Discard, nil)), nil, nil, registry)
+	service, reconciler, bindingService, bindingReconciler, usageCollector, healthCollector, err := apidserver.LoadManagedPostgres(pool, getenv, slog.New(slog.NewTextHandler(io.Discard, nil)), nil, registry)
 	if err != nil || service == nil || reconciler == nil || bindingService == nil || bindingReconciler == nil || usageCollector == nil || healthCollector == nil {
 		t.Fatalf("configured load = %v, %v, %v, %v, %v", service, reconciler, bindingService, bindingReconciler, err)
 	}
