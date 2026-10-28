@@ -36,6 +36,12 @@ func (s *Server) CaptureProfile(ctx context.Context, req *vmmdpb.CaptureProfileR
 	}
 	s.beginActivity(req.GetInstance())
 	defer s.endActivity(req.GetInstance())
+	// A quiet-paused guest (ADR-1151) cannot answer until its vCPUs run.
+	// Activity is marked first, so the pause pass cannot pause it again
+	// during the window.
+	if rerr := s.resumeQuiet(ctx, req.GetInstance()); rerr != nil {
+		return nil, rerr
+	}
 	result, cerr := capturer.CaptureProfile(ctx, req.GetInstance(), capture)
 	if cerr != nil {
 		return nil, profileCaptureStatus(cerr)

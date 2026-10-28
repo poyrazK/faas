@@ -481,6 +481,13 @@ func cmdJobsRun(args []string) int {
 	if len(args) == 1 && args[0] == "--interactive" { //nolint:gosec // G602: len(args) == 1 guarantees index zero exists.
 		return cmdJobsRunInteractive()
 	}
+	lock, rest, err := takeLockFlags(args)
+	if err != nil {
+		return printErr("Invalid lock", err)
+	}
+	if lock != nil {
+		return cmdJobsRunLocked(lock, rest)
+	}
 	fs := newFlagSet("jobs-run", flag.ContinueOnError)
 	savedJob := fs.Bool("saved-job", false, "use the Job name and omitted run settings from local jobs defaults; excludes a positional Job name")
 	waitReady := fs.Bool("wait-ready", false, "wait for selected image preparation before submitting")

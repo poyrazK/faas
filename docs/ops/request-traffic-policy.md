@@ -166,6 +166,21 @@ When the exhausted ceiling is analysis time (the 2 s phase or 1.75 s SQL
 timeout, unit `milliseconds`), the hint leads with a retry: a busy control
 plane can trip it for an account with no edge rules (Hunt 14 H14-78). Size
 and automaton ceilings keep the simplify-the-policy hint.
+apid's `traffic_policy_analysis_seconds{writer,phase}` histogram times each
+phase of a guarded write, whether it is accepted or refused.
+- `writer` is `app_binding`, `tenant_binding`, `domain_binding`, `route_rule`
+  or `policy`.
+- `phase` is one of:
+  - `discover`: reading the owners to lock, before any lock is held.
+  - `lock_wait`: time spent retrying busy locks; zero without contention.
+  - `before`: reading the before projections, under the locks.
+  - `validate`: checking the after projections at commit.
+
+A `before` or `validate` phase near 2 s is a time refusal. A large
+`lock_wait` is the guard's fleet-wide serialization
+([ADR 20261027163626](../adr/20261027163626-traffic-binding-guard-per-host.md)).
+To find the slow phase:
+`histogram_quantile(0.99, sum by (writer, phase, le) (rate(traffic_policy_analysis_seconds_bucket[5m])))`.
 Legacy action aliases whose decoding cannot be verified by this projection
 also refuse analysis; replace the affected rule through the supported API
 shape or disable/delete it to repair that graph. Caller cancellation still
