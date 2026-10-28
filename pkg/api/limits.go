@@ -78,6 +78,16 @@ const (
 	SecurityMailTrackedAccountsMax = 100_000
 )
 
+// Queue receive long-polls one account, and one apid in all, may hold at a
+// time; past them a receive answers 429. A receive waits on apid's shared
+// completion listener, not on a database connection, so the caps bound
+// goroutines and the ownership read each matching completion costs (bug hunt
+// 2026-10-28 B21).
+const (
+	QueueReceiveWaitersPerAccount = 32
+	QueueReceiveWaitersPerAPID    = 4096
+)
+
 // Failed password sign-ins one email address may collect from any client
 // address within LoginFailureEmailWindow. The per-IP auth limit does not stop
 // a botnet guessing one account's password; past this budget every password

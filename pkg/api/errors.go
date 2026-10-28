@@ -3269,6 +3269,17 @@ func ErrUploadSessionTooMany(detail string, limitBytes, observedBytes int64) *Pr
 		WithDocs(docsBase + "/deploy-from-source#uploads")
 }
 
+// ErrQueueReceiveBusy refuses a queue receive long-poll past the concurrent
+// receive cap.
+func ErrQueueReceiveBusy(limit, observed int) *Problem {
+	return NewProblem(http.StatusTooManyRequests, CodeQueueReceiveBusy,
+		"Too many queue receives in flight",
+		fmt.Sprintf("At most %d queue receive long-polls may wait at once; %d are waiting. Retry after one returns.", limit, observed)).
+		WithLimit(int64(limit), int64(observed)).
+		WithHeader("Retry-After", "1").
+		WithDocs(docsBase + "/queues#receive")
+}
+
 // ErrUploadSessionAlreadyCommitted is returned by POST /v1/uploads/{id}/commit
 // on retry-after-success. The handler reads upload_commit_outcomes
 // for the original deployment_id and returns it in the message body;
@@ -4225,6 +4236,10 @@ const (
 	// CodePlanLimitApps so the dashboard can render a "cancel
 	// an in-progress upload" CTA rather than a generic 429.
 	CodeUploadSessionTooMany = "upload_session_too_many"
+	// CodeQueueReceiveBusy is the 429 a queue receive long-poll gets while
+	// its account already holds QueueReceiveWaitersPerAccount of them, or
+	// apid holds QueueReceiveWaitersPerAPID.
+	CodeQueueReceiveBusy = "queue_receive_busy"
 	// CodeUploadSessionAlreadyCommitted is the 409 emitted by
 	// POST /v1/uploads/{id}/commit on retry-after-success.
 	// Handled via the upload_commit_outcomes companion table:

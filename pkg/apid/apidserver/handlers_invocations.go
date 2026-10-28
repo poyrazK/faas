@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -197,7 +198,10 @@ func (s *server) invokeApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 	setInvocationVersionResponseHeaders(w, inv)
 	var waitErr error
 	if s.invocationCompletion != nil {
-		waitErr = s.invocationCompletion.Wait(r.Context(), inv.ID, timeout)
+		waitErr = s.invocationCompletion.Wait(r.Context(), inv.ID, timeout, func(ctx context.Context) bool {
+			row, err := s.store.InvocationByID(ctx, inv.ID)
+			return err == nil && invocationSettled(row.State)
+		})
 	} else {
 		var payload string
 		payload, waitErr = s.notif.WaitFor(r.Context(), db.NotifyInvocationDone,
@@ -211,17 +215,29 @@ func (s *server) invokeApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 			timeout)
 		_ = payload // payload is the pg_notify JSON; we re-read by id below
 	}
-	if errors.Is(waitErr, db.ErrWaitTimeout) {
-		api.WriteProblem(w, s.syncInvokeTimeoutProblem(r.Context(), inv, timeout))
-		return
-	}
-	if waitErr != nil {
+	s.writeSyncInvokeResult(w, r, inv, timeout, waitErr)
+}
+
+// invocationSettled reports whether an invocation reached a final state.
+func invocationSettled(st state.InvocationState) bool {
+	return st != state.InvocationPending && st != state.InvocationDispatching
+}
+
+// writeSyncInvokeResult answers a sync invoke once its wait ended. A wait that
+// timed out still answers with the result when the row settled meanwhile: the
+// completion notification can be lost (bug hunt 2026-10-28 B24).
+func (s *server) writeSyncInvokeResult(w http.ResponseWriter, r *http.Request, inv state.Invocation, timeout time.Duration, waitErr error) {
+	if waitErr != nil && !errors.Is(waitErr, db.ErrWaitTimeout) {
 		api.WriteProblem(w, api.ErrCapacity("long-poll"))
 		return
 	}
 	// Pull the post-state row. Drain stamps InstanceID + Result
 	// before emitting invocation_done.
 	final, ferr := s.store.InvocationByID(r.Context(), inv.ID)
+	if waitErr != nil && (ferr != nil || !invocationSettled(final.State)) {
+		api.WriteProblem(w, s.syncInvokeTimeoutProblem(r.Context(), inv, timeout))
+		return
+	}
 	if ferr != nil {
 		api.WriteProblem(w, api.ErrInvocationNotFound(inv.ID))
 		return
@@ -504,6 +520,12 @@ func (s *server) queueReceive(w http.ResponseWriter, r *http.Request, acct state
 		api.WriteProblem(w, api.ErrPlanFeatureGated("queues", acct.Plan))
 		return
 	}
+	release, limit, observed, admitted := s.queueReceives.acquire(acct.ID)
+	if !admitted {
+		api.WriteProblem(w, api.ErrQueueReceiveBusy(limit, observed))
+		return
+	}
+	defer release()
 	inv, err := s.receiveProductionQueueInvocation(r, acct, app)
 	if errors.Is(err, db.ErrWaitTimeout) {
 		w.WriteHeader(http.StatusNoContent)
@@ -526,6 +548,31 @@ func (s *server) receiveProductionQueueInvocation(r *http.Request, acct state.Ac
 	// The notification is an untrusted hint. Recheck ownership after waiting.
 	waitCtx, cancel := budgetCtx(r.Context(), 30*time.Second)
 	defer cancel()
+	if s.invocationCompletion == nil {
+		// Only when apid's shared completion listener failed to start, as
+		// for sync invokes: this LISTENs on a pooled connection per request.
+		return s.receiveQueueInvocationListening(waitCtx, r, acct, app)
+	}
+	deadline, ok := waitCtx.Deadline()
+	if !ok {
+		deadline = time.Now().Add(30 * time.Second)
+	}
+	for {
+		id, err := s.invocationCompletion.WaitApp(waitCtx, app.ID, time.Until(deadline))
+		if errors.Is(err, context.DeadlineExceeded) && r.Context().Err() == nil {
+			err = db.ErrWaitTimeout
+		}
+		if err != nil {
+			return state.Invocation{}, err
+		}
+		inv, err := s.store.ProductionQueueInvocationByID(waitCtx, id)
+		if err == nil && inv.AccountID == acct.ID && inv.AppID == app.ID {
+			return inv, nil
+		}
+	}
+}
+
+func (s *server) receiveQueueInvocationListening(waitCtx context.Context, r *http.Request, acct state.Account, app state.App) (state.Invocation, error) {
 	payload, err := s.notif.WaitFor(waitCtx, db.NotifyInvocationDone, func(p string) bool {
 		id, got := extractNotifyFields(p)
 		if got != app.ID || id == "" {
@@ -543,6 +590,43 @@ func (s *server) receiveProductionQueueInvocation(r *http.Request, acct state.Ac
 		return state.Invocation{ID: id}, state.ErrNotFound
 	}
 	return inv, nil
+}
+
+// queueReceiveSlots counts queue receive long-polls in flight per account and
+// in this apid (api.QueueReceiveWaitersPerAccount, ...PerAPID).
+type queueReceiveSlots struct {
+	mu         sync.Mutex
+	perAccount map[string]int
+	total      int
+}
+
+// acquire takes a slot for accountID, or reports the cap and the count that
+// refused it.
+func (q *queueReceiveSlots) acquire(accountID string) (release func(), limit, observed int, ok bool) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	if n := q.perAccount[accountID]; n >= api.QueueReceiveWaitersPerAccount {
+		return nil, api.QueueReceiveWaitersPerAccount, n, false
+	}
+	if q.total >= api.QueueReceiveWaitersPerAPID {
+		return nil, api.QueueReceiveWaitersPerAPID, q.total, false
+	}
+	if q.perAccount == nil {
+		q.perAccount = map[string]int{}
+	}
+	q.perAccount[accountID]++
+	q.total++
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			q.mu.Lock()
+			defer q.mu.Unlock()
+			q.total--
+			if q.perAccount[accountID]--; q.perAccount[accountID] <= 0 {
+				delete(q.perAccount, accountID)
+			}
+		})
+	}, 0, 0, true
 }
 
 // queueAck is a no-op state change (the row is already completed when

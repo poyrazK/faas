@@ -434,6 +434,8 @@ type server struct {
 	exportsInFlight sync.Map
 	// exportReplays bounds the retries of one export (handlers_account.go).
 	exportReplays exportReplayCounter
+	// queueReceives caps queue receive long-polls (handlers_invocations.go).
+	queueReceives queueReceiveSlots
 	// domainCreateLimiter caps pending DNS challenges per client IP. The
 	// durable store separately enforces per-account outstanding-claim quotas;
 	// this edge bucket prevents one source from cycling accounts to create an
