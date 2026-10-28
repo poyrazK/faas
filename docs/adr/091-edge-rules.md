@@ -1334,15 +1334,14 @@ A code review of the edge-rule path found ways a rule could stop protecting
 an app without any signal, and one tenant action that flushed every
 tenant's caches. All are fixed; none changes the rule format.
 
-1. **A CORS preset change is scoped to its account and goes through the
-   barrier.** A preset create, update or delete made every gateway drop every
-   account's compiled rule sets and cached responses, so one tenant editing a
-   preset in a loop cache-busted the fleet. Presets are per account, so the
-   gateway now drops only that account's sets and responses, the same scoped
-   invalidation a wildcard rule edit uses (amendment 2026-10-27, GA
-   hardening). Updating or deleting a preset that rules use now fences those
-   rules' hosts first and answers only after the serving fleet applied it, as
-   a list edit does; it used to answer before any gateway had.
+1. **A CORS preset change is scoped to its account.** A preset create,
+   update or delete made every gateway drop every account's compiled rule
+   sets and cached responses, so one tenant editing a preset in a loop
+   cache-busted the fleet. Presets are per account, so the gateway now drops
+   only that account's sets and responses, the same scoped invalidation a
+   wildcard rule edit uses (amendment 2026-10-27, GA hardening). Putting
+   preset updates and deletes through the generation barrier, which the
+   review also found missing, landed separately (#5809).
 2. **A rule whose condition does not compile fails its host closed.** A
    `match` condition that references a list that is missing, or that no
    longer compiles, made the rule never match. An `ip`, `geo`, `jwt`, `waf` or

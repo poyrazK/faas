@@ -77,6 +77,37 @@ var routeActions = map[string]authz.OrgAction{
 	"PUT /v1/deployments/{id}/schedule":    authz.OrgActionDeployApp,
 	"DELETE /v1/deployments/{id}/schedule": authz.OrgActionDeployApp,
 
+	// Operating a release (release review 2026-10-28). Unmapped, these were
+	// left to the app's creator, so on a company app no other member could
+	// roll back, advance or abort a canary, or move traffic, even during an
+	// incident. Members who deploy also operate releases; viewers read their
+	// state. Release gates and the route-health guard stop releases, so only
+	// owners and admins change them, as with the approval policy.
+	"POST /v1/apps/{slug}/rollback":                                                   authz.OrgActionDeployApp,
+	"GET /v1/apps/{slug}/rollbacks/{operation}":                                       authz.OrgActionReadApp,
+	"POST /v1/apps/{slug}/rollouts/recover":                                           authz.OrgActionDeployApp,
+	"GET /v1/apps/{slug}/rollouts/{id}/observation":                                   authz.OrgActionReadApp,
+	"GET /v1/apps/{slug}/debug/rollout":                                               authz.OrgActionReadApp,
+	"GET /v1/apps/{slug}/release-review":                                              authz.OrgActionReadApp,
+	"POST /v1/apps/{slug}/config/rollback":                                            authz.OrgActionConfigureApp,
+	"POST /v1/deployments/{id}/canary/advance":                                        authz.OrgActionDeployApp,
+	"GET /v1/deployments/{id}/canary/profile-gate":                                    authz.OrgActionReadApp,
+	"PATCH /v1/deployments/{id}/traffic":                                              authz.OrgActionDeployApp,
+	"POST /v1/deployments/{id}/promote":                                               authz.OrgActionDeployApp,
+	"POST /v1/deployments/{id}/promote-with-application-ack":                          authz.OrgActionDeployApp,
+	"GET /v1/apps/{slug}/freeze-status":                                               authz.OrgActionReadApp,
+	"GET /v1/apps/{slug}/release-gates":                                               authz.OrgActionReadApp,
+	"POST /v1/apps/{slug}/release-gates":                                              authz.OrgActionManageAppSecurity,
+	"DELETE /v1/apps/{slug}/release-gates/{name}":                                     authz.OrgActionManageAppSecurity,
+	"GET /v1/apps/{slug}/route-health/gate":                                           authz.OrgActionReadApp,
+	"PUT /v1/apps/{slug}/route-health/gate":                                           authz.OrgActionManageAppSecurity,
+	"GET /v1/apps/{slug}/route-health/deployments/{deployment}":                       authz.OrgActionReadApp,
+	"GET /v1/apps/{slug}/route-health/deployments/{deployment}/history":               authz.OrgActionReadApp,
+	"GET /v1/apps/{slug}/route-health/deployments/{deployment}/history/{decision_id}": authz.OrgActionReadApp,
+	"GET /v1/apps/{slug}/route-health/deployments/{deployment}/investigation":         authz.OrgActionReadApp,
+	"GET /v1/apps/{slug}/alert-rollbacks":                                             authz.OrgActionReadApp,
+	"GET /v1/apps/{slug}/alert-rollbacks/{fire}":                                      authz.OrgActionReadApp,
+
 	// Durable workflows (Hunt 13 H13-2). Viewers read runs; developers start,
 	// steer and replay them, as they deploy the code the runs execute.
 	// Binding a callback's webhook verification secret manages a secret. Run
