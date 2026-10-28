@@ -119,6 +119,9 @@ type ManagedPostgresUsageResponse struct {
 	// OverageEnabled is true while the account runs its databases past the
 	// allowance, up to the ceiling (ADR-20261025094915 decision 2).
 	OverageEnabled bool `json:"overage_enabled,omitempty"`
+	// ComputeSuspendedAt is when the cap suspended the databases this month,
+	// present while compute_cap_state is suspended.
+	ComputeSuspendedAt *time.Time `json:"compute_suspended_at,omitempty"`
 }
 
 // ManagedPostgresOverage is GET and PUT /v1/postgres/overage. With overage on,

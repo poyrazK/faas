@@ -79,7 +79,7 @@ def sync_detailed(
     client: AuthenticatedClient | Client,
     body: UpdateSyntheticCheckRequest,
 ) -> Response[Problem | SyntheticCheckResponse]:
-    """Pause or resume a synthetic check (ADR-748)
+    """Pause or resume a synthetic check
 
      Sets whether the check runs. To change its path, schedule or expectations, delete and recreate it.
 
@@ -116,7 +116,7 @@ def sync(
     client: AuthenticatedClient | Client,
     body: UpdateSyntheticCheckRequest,
 ) -> Problem | SyntheticCheckResponse | None:
-    """Pause or resume a synthetic check (ADR-748)
+    """Pause or resume a synthetic check
 
      Sets whether the check runs. To change its path, schedule or expectations, delete and recreate it.
 
@@ -148,7 +148,7 @@ async def asyncio_detailed(
     client: AuthenticatedClient | Client,
     body: UpdateSyntheticCheckRequest,
 ) -> Response[Problem | SyntheticCheckResponse]:
-    """Pause or resume a synthetic check (ADR-748)
+    """Pause or resume a synthetic check
 
      Sets whether the check runs. To change its path, schedule or expectations, delete and recreate it.
 
@@ -183,7 +183,7 @@ async def asyncio(
     client: AuthenticatedClient | Client,
     body: UpdateSyntheticCheckRequest,
 ) -> Problem | SyntheticCheckResponse | None:
-    """Pause or resume a synthetic check (ADR-748)
+    """Pause or resume a synthetic check
 
      Sets whether the check runs. To change its path, schedule or expectations, delete and recreate it.
 

@@ -20,6 +20,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -2442,6 +2443,12 @@ func (g *gatewaydEdgeRules) compileValidateRules(storeRules []state.EdgeRule) ([
 		// it here lets the load path surface a parse error
 		// before the rule reaches the cache.
 		schemaBytes := []byte(action.Schema)
+		// A parameter-only rule stored with "schema": null reads back as the
+		// literal null: it has no body schema. Compiling null failed the rule,
+		// and an owner's failed rule fails the whole host closed.
+		if string(bytes.TrimSpace(schemaBytes)) == "null" {
+			schemaBytes = nil
+		}
 		var digest [32]byte
 		if g.validate == nil {
 			// Adapter not wired — drop the rule. The

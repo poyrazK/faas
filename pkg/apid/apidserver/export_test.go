@@ -69,6 +69,7 @@ import (
 var ResolveAlertmanagerURL = resolveAlertmanagerURL
 
 var BuildDebugRequestCorrelation = buildDebugRequestCorrelation
+var DashboardDebugStatusView = dashboardDebugStatusView
 
 // Package-level types
 type AffectedPartition = affectedPartition
@@ -323,6 +324,9 @@ var AccountIdentities = accountIdentities
 var WorkflowPlanRecipients = workflowPlanRecipients
 var HoldsIdentityFor = holdsIdentityFor
 var SealInboundWebhookSigningSecret = sealInboundWebhookSigningSecret
+var SealGitLabTokens = sealGitLabTokens
+var OpenGitLabTokens = openGitLabTokens
+var OpenIssueSlackToken = openIssueSlackToken
 var VerifyInboundWebhook = verifyInboundWebhook
 var SealMCPPagerDutyWebhookSecret = sealMCPPagerDutyWebhookSecret
 
@@ -660,7 +664,11 @@ var SafeReleasesAlertMetric = safeReleasesAlertMetric
 var SafeReleasesAuditKind = safeReleasesAuditKind
 var SanContains = sanContains
 var ScanExtractedTreeSecrets = scanExtractedTreeSecrets
-var ScanSourceTarballSecrets = scanSourceTarballSecrets
+
+func ScanSourceTarballSecrets(sourcePath string, limits api.Limits) *api.Problem {
+	return (&server{log: slog.New(slog.DiscardHandler)}).scanSourceTarballSecrets(sourcePath, limits)
+}
+
 var ScopeGenericRootWorkload = scopeGenericRootWorkload
 var ScrapeOpsMetrics = scrapeOpsMetrics
 var SeedActivityPersonalOrg = seedActivityPersonalOrg

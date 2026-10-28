@@ -17,6 +17,7 @@ import (
 	"context"
 	"io"
 	"os"
+	"regexp"
 	"slices"
 	"strings"
 	"sync"
@@ -246,29 +247,90 @@ var localCommands = map[string]bool{"data-api dev": true}
 // agrees, so a capability released a minute ago runs at once.
 func hiddenCommand(args []string, helpRequest bool) (string, bool) {
 	path := commandCapabilityPath(args)
-	capability := cliPathCapability(path)
-	if capability == "" || capabilityReleaseAll() {
+	if !helpRequest && localCommands[path] {
 		return path, false
+	}
+	return path, capabilityHiddenForRun(cliPathCapability(path), helpRequest)
+}
+
+// capabilityHiddenForRun reports whether capability is hidden for the
+// account: by the discovery view for help, and for a run only when the
+// cached view hides it and a fresh read agrees.
+func capabilityHiddenForRun(capability string, helpRequest bool) bool {
+	if capability == "" || capabilityReleaseAll() {
+		return false
 	}
 	if helpRequest {
-		return path, discoveryCapabilityView().hides(capability)
-	}
-	if localCommands[path] {
-		return path, false
+		return discoveryCapabilityView().hides(capability)
 	}
 	token := loadTokenWithDiagnostics(io.Discard)
 	if token == "" {
-		return path, false
+		return false
 	}
 	cached, _, ok := cachedHiddenCapabilities(token)
 	if !ok || !slices.Contains(cached, capability) {
-		return path, false
+		return false
 	}
 	fresh, read := readHiddenCapabilities(token)
 	if !read {
-		return path, true
+		return true
 	}
-	return path, slices.Contains(fresh, capability)
+	return slices.Contains(fresh, capability)
+}
+
+// hiddenFlagArg returns the first flag in args whose manifest capability is
+// hidden for the account, for a refusal that reads like an unknown flag.
+func hiddenFlagArg(flags []cliFlag, args []string) (string, bool) {
+	for _, arg := range args {
+		if arg == "--" {
+			break
+		}
+		name, _, _ := strings.Cut(strings.TrimLeft(arg, "-"), "=")
+		if !strings.HasPrefix(arg, "-") || name == "" {
+			continue
+		}
+		for _, flag := range flags {
+			if flag.Name == name && flag.Capability != "" && capabilityHiddenForRun(flag.Capability, false) {
+				return "--" + name, true
+			}
+		}
+	}
+	return "", false
+}
+
+// discoverableFlags drops flags whose capability the view hides.
+func (v capabilityView) discoverableFlags(flags []cliFlag) []cliFlag {
+	if flags == nil {
+		return nil
+	}
+	kept := make([]cliFlag, 0, len(flags))
+	for _, flag := range flags {
+		if flag.Capability == "" || !v.hides(flag.Capability) {
+			kept = append(kept, flag)
+		}
+	}
+	return kept
+}
+
+// withoutHiddenFlags drops the examples or notes that use a flag the view
+// hides, so help does not show what it no longer lists.
+func (v capabilityView) withoutHiddenFlags(lines []string, flags []cliFlag) []string {
+	var hidden []*regexp.Regexp
+	for _, flag := range flags {
+		if flag.Capability != "" && v.hides(flag.Capability) {
+			hidden = append(hidden, regexp.MustCompile(`--`+regexp.QuoteMeta(flag.Name)+`([^a-z0-9-]|$)`))
+		}
+	}
+	if len(hidden) == 0 || lines == nil {
+		return lines
+	}
+	kept := make([]string, 0, len(lines))
+	for _, line := range lines {
+		if !slices.ContainsFunc(hidden, func(pattern *regexp.Regexp) bool { return pattern.MatchString(line) }) {
+			kept = append(kept, line)
+		}
+	}
+	return kept
 }
 
 // discoverableCliCommands is the manifest discovery surfaces read: the
@@ -284,6 +346,9 @@ func discoverableCliCommands() []cliCommand {
 		if view.hidesPath(command.Name) {
 			continue
 		}
+		command.Examples = view.withoutHiddenFlags(command.Examples, command.Flags)
+		command.HelpNotes = view.withoutHiddenFlags(command.HelpNotes, command.Flags)
+		command.Flags = view.discoverableFlags(command.Flags)
 		command.Subcommands = view.discoverableSubcommands(command.Name, command.Subcommands)
 		discoverable = append(discoverable, command)
 	}
@@ -300,6 +365,9 @@ func (v capabilityView) discoverableSubcommands(parent string, subs []cliSub) []
 		if v.hidesPath(path) {
 			continue
 		}
+		sub.Examples = v.withoutHiddenFlags(sub.Examples, sub.Flags)
+		sub.Notes = v.withoutHiddenFlags(sub.Notes, sub.Flags)
+		sub.Flags = v.discoverableFlags(sub.Flags)
 		sub.Subcommands = v.discoverableSubcommands(path, sub.Subcommands)
 		kept = append(kept, sub)
 	}

@@ -3,6 +3,7 @@ package realtime
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -41,6 +42,17 @@ func outboundTestConnection(t *testing.T, m *Manager, endpointID string) (*conne
 	return m.addConnection(state, *state.config.Load(), "", <-upgraded), client
 }
 
+// registerAccountEndpoints registers one endpoint per ID, each its own
+// account (named after it).
+func registerAccountEndpoints(t *testing.T, m *Manager, ids ...string) {
+	t.Helper()
+	for _, id := range ids {
+		if err := m.RegisterEndpoint(Endpoint{Preview: true, ID: id, AccountID: "acct-" + id, MaxMessageBytes: 1 << 20}); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
 func queueFrames(t *testing.T, m *Manager, c *connection, frames, size int) {
 	t.Helper()
 	for range frames {
@@ -54,20 +66,46 @@ func TestNodeOutboundReservation(t *testing.T) {
 	m := NewManager(Config{OutboundNodeBytes: 100}, nil)
 	defer m.cancel()
 	for _, step := range []struct {
-		n    int64
-		ok   bool
-		want int64
+		account string
+		n       int64
+		ok      bool
+		want    int64
 	}{
-		{60, true, 60},
-		{41, false, 60},
-		{40, true, 100},
-		{1, false, 100},
-		{-30, true, 70},
-		{30, true, 100},
+		{"a", 40, true, 40},
+		{"b", 50, true, 90},
+		{"c", 11, false, 90},
+		{"c", 10, true, 100},
+		{"c", 1, false, 100},
+		{"b", -30, true, 70},
+		{"b", 30, true, 100},
 	} {
-		if ok := m.reserveNodeOutbound(step.n); ok != step.ok || m.outboundPendingBytes.Load() != step.want {
-			t.Fatalf("reserve(%d) = %v with %d pending, want %v with %d", step.n, ok, m.outboundPendingBytes.Load(), step.ok, step.want)
+		if ok := m.reserveNodeOutbound(m.accountFor(step.account), step.n); ok != step.ok || m.outboundPendingBytes.Load() != step.want {
+			t.Fatalf("reserve(%s, %d) = %v with %d pending, want %v with %d", step.account, step.n, ok, m.outboundPendingBytes.Load(), step.ok, step.want)
 		}
+	}
+}
+
+// One account holds at most its share of the node's outbound budget, so its
+// slow readers (each just under the shedder's backlog floor) cannot fill the
+// budget and starve every other tenant's frames (security audit 2026-10-27).
+func TestNodeOutboundAccountShare(t *testing.T) {
+	m := NewManager(Config{OutboundNodeBytes: 100}, nil)
+	defer m.cancel()
+	flood, other := m.accountFor("flood"), m.accountFor("other")
+	if !m.reserveNodeOutbound(flood, 50) {
+		t.Fatal("an account's frames within its share were refused")
+	}
+	if m.reserveNodeOutbound(flood, 1) {
+		t.Fatal("an account reserved past its share of the node budget")
+	}
+	if flood.outbound.Load() != 50 || m.outboundPendingBytes.Load() != 50 {
+		t.Fatalf("after a refused reservation: account %d, node %d; want 50 and 50", flood.outbound.Load(), m.outboundPendingBytes.Load())
+	}
+	if !m.reserveNodeOutbound(other, 50) {
+		t.Fatal("another account's frames were refused while the flood held only its share")
+	}
+	if !m.reserveNodeOutbound(flood, -20) || !m.reserveNodeOutbound(flood, 20) {
+		t.Fatal("released bytes did not make room in the account's share")
 	}
 }
 
@@ -76,10 +114,10 @@ func TestNodeOutboundReservation(t *testing.T) {
 func TestNodeOutboundBudgetDisabled(t *testing.T) {
 	m := NewManager(Config{}, nil)
 	defer m.cancel()
-	if !m.reserveNodeOutbound(1<<40) || m.outboundPendingBytes.Load() != 1<<40 {
+	if !m.reserveNodeOutbound(m.accountFor(""), 1<<40) || m.outboundPendingBytes.Load() != 1<<40 {
 		t.Fatalf("disabled budget refused or lost bytes: %d pending", m.outboundPendingBytes.Load())
 	}
-	if !m.reserveNodeOutbound(-(1 << 40)) || m.outboundPendingBytes.Load() != 0 {
+	if !m.reserveNodeOutbound(m.accountFor(""), -(1<<40)) || m.outboundPendingBytes.Load() != 0 {
 		t.Fatalf("release left %d pending", m.outboundPendingBytes.Load())
 	}
 	select {
@@ -96,12 +134,11 @@ func TestNodeOutboundBudgetShedsLargestBacklog(t *testing.T) {
 	const kib = 1 << 10
 	m := NewManager(Config{OutboundQueueBytes: 512 * kib, OutboundNodeBytes: 1 << 20}, nil)
 	defer func() { _ = m.Close() }()
-	if err := m.RegisterEndpoint(Endpoint{Preview: true, ID: "e", MaxMessageBytes: 1 << 20}); err != nil {
-		t.Fatal(err)
-	}
-	big, bigClient := outboundTestConnection(t, m, "e")
-	mid, _ := outboundTestConnection(t, m, "e")
-	small, _ := outboundTestConnection(t, m, "e")
+	// One account each, so no backlog passes an account's share (512 KiB).
+	registerAccountEndpoints(t, m, "big", "mid", "small")
+	big, bigClient := outboundTestConnection(t, m, "big")
+	mid, _ := outboundTestConnection(t, m, "mid")
+	small, _ := outboundTestConnection(t, m, "small")
 	queueFrames(t, m, big, 8, 64*kib) // 512 KiB, its whole queue
 	queueFrames(t, m, mid, 4, 64*kib) // 256 KiB: the node now sits at 75%
 	queueFrames(t, m, small, 1, 16*kib)
@@ -142,18 +179,17 @@ func TestNodeOutboundBudgetRefusesFramesItCannotShed(t *testing.T) {
 	const kib = 1 << 10
 	m := NewManager(Config{OutboundQueueBytes: 1 << 20, OutboundNodeBytes: 256 * kib}, nil)
 	defer m.cancel()
-	if err := m.RegisterEndpoint(Endpoint{Preview: true, ID: "e", MaxMessageBytes: 1 << 20}); err != nil {
-		t.Fatal(err)
-	}
+	// One account each, so no account passes its share (128 KiB).
+	registerAccountEndpoints(t, m, "e0", "e1", "e2", "e3", "e4", "e5")
 	// Every backlog stays below 1/16 of the per-connection limit (64 KiB), so
 	// none is a slow consumer worth disconnecting.
 	var conns []*connection
-	for range 5 {
-		c := addSyntheticConnection(t, m, "e")
+	for i := range 5 {
+		c := addSyntheticConnection(t, m, fmt.Sprintf("e%d", i))
 		queueFrames(t, m, c, 3, 16*kib)
 		conns = append(conns, c)
 	}
-	last := addSyntheticConnection(t, m, "e")
+	last := addSyntheticConnection(t, m, "e5")
 	queueFrames(t, m, last, 1, 16*kib) // exactly the budget
 	err := m.queueOutbound(context.Background(), last, Message{Data: make([]byte, 16*kib)})
 	if !errors.Is(err, ErrOutboundQueueFull) {
@@ -175,7 +211,8 @@ func TestNodeOutboundBudgetRefusesFramesItCannotShed(t *testing.T) {
 }
 
 func TestNodeOutboundBudgetBoundsCoalescedSignals(t *testing.T) {
-	m := NewManager(Config{OutboundNodeBytes: 100}, nil)
+	// One account reserves at most half the budget: 100 bytes of 200.
+	m := NewManager(Config{OutboundNodeBytes: 200}, nil)
 	defer m.cancel()
 	if err := m.RegisterEndpoint(Endpoint{Preview: true, ID: "e", MaxMessageBytes: 1 << 20}); err != nil {
 		t.Fatal(err)
@@ -194,7 +231,7 @@ func TestNodeOutboundBudgetBoundsCoalescedSignals(t *testing.T) {
 		t.Fatalf("grown signal = %v with %d pending, want nil with 100", err, m.outboundPendingBytes.Load())
 	}
 	if err := signal(101, start.Add(2*time.Second)); !errors.Is(err, ErrOutboundQueueFull) || m.outboundPendingBytes.Load() != 100 {
-		t.Fatalf("signal past the budget = %v with %d pending", err, m.outboundPendingBytes.Load())
+		t.Fatalf("signal past the account's share = %v with %d pending", err, m.outboundPendingBytes.Load())
 	}
 	if err := signal(10, start.Add(3*time.Second)); err != nil || m.outboundPendingBytes.Load() != 10 {
 		t.Fatalf("shrunk signal = %v with %d pending, want nil with 10", err, m.outboundPendingBytes.Load())

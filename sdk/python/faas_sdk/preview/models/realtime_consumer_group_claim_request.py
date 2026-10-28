@@ -19,7 +19,7 @@ class RealtimeConsumerGroupClaimRequest:
     wait_seconds: int | Unset = 0
     """Realtime consumer group claim request properties wait seconds. Wait for available work, checking every 500
     ms without holding a transaction. Returns promptly on pause/drain or blockers. At most 64 waiting requests per
-    apid. Cancellation stops waiting; uncertain claims must not be retried automatically."""
+    the API. Cancellation stops waiting; uncertain claims must not be retried automatically."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

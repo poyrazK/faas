@@ -6162,17 +6162,21 @@ groups:
           description: "The most recent renewal failed on {{ $labels.host }}. A partial value means leaves were installed before a consumer restart or health check failed."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasInternalMTLSRenewal.md"
 
+      # Issue #2482: the control plane's node_exporter is job="node", compute
+      # hosts' job="node-compute"; both must alert. The daily run starts
+      # hours after its cron slot and drifts, so 36 h tolerates a late start
+      # and still catches a missed day.
       - alert: FaasInternalMTLSRenewalNeverCompleted
         expr: |
           (
             faas_internal_mtls_renewal_last_success_timestamp_seconds == 0
             and on(instance)
-            time() - node_boot_time_seconds{job="node-compute"} > 90000
+            time() - node_boot_time_seconds{job=~"node|node-compute"} > 129600
           )
           or
           (
             faas_internal_mtls_renewal_last_success_timestamp_seconds > 0
-            and time() - faas_internal_mtls_renewal_last_success_timestamp_seconds > 90000
+            and time() - faas_internal_mtls_renewal_last_success_timestamp_seconds > 129600
           )
         for: 15m
         labels:
@@ -6182,7 +6186,7 @@ groups:
           public_status: internal
         annotations:
           summary: "Scheduled internal mTLS renewal is stale"
-          description: "The host has not recorded a successful renewal check within one daily renewal interval. Verify the self-hosted runner and complete fleet inventory."
+          description: "The host has not recorded a successful renewal check for over 36 hours, so a daily run was missed. Verify the self-hosted runner and complete fleet inventory."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasInternalMTLSRenewal.md"
 
       - alert: FaasInternalMTLSComputeMetricsMissing
@@ -6547,6 +6551,44 @@ groups:
           description: "The p99 delay between a requested execution time and the first scheduler claim has exceeded 60 seconds for ten minutes. Check schedd health, invocation backlog, account concurrency pressure, and database latency."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasDelayedTaskDispatchLag.md"
 
+  # HTTP cron delivery (ADR-20261026201726). Scheduled fires and manual runs
+  # are queued invocations the drain delivers; schedd counts each settled
+  # attempt by outcome and records first-claim lag from the scheduled minute.
+  # Neither series carries an app or account label.
+  - name: faas_crons
+    interval: 30s
+    rules:
+      - alert: FaasCronDeliveryLag
+        expr: histogram_quantile(0.99, sum by (le) (rate(schedd_cron_schedule_lag_seconds_bucket[10m]))) > 60
+        for: 10m
+        labels:
+          severity: warn
+          component: schedd
+          family: crons
+        annotations:
+          summary: "HTTP cron runs are starting late"
+          description: "The p99 delay between an HTTP cron run's scheduled minute and its first delivery claim has exceeded 60 seconds for ten minutes. Check the cron tick, schedd health, invocation backlog, account concurrency pressure and database latency."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasCronDelivery.md"
+      # Fleet-wide, so one customer's broken handler cannot fire it: more
+      # than half of at least 20 deliveries in 30 minutes failing points at
+      # the platform (wake, routing or the gateway), not at an app.
+      - alert: FaasCronDeliveryFailing
+        expr: |
+          (
+            sum(rate(schedd_cron_delivery_total{outcome=~"failed|dead_letter"}[30m]))
+            / sum(rate(schedd_cron_delivery_total[30m]))
+          ) > 0.5
+          and sum(increase(schedd_cron_delivery_total[30m])) >= 20
+        for: 30m
+        labels:
+          severity: warn
+          component: schedd
+          family: crons
+        annotations:
+          summary: "Most HTTP cron runs are failing"
+          description: "More than half of HTTP cron deliveries across the fleet have ended failed or dead-lettered for thirty minutes. Check wake failures, gateway errors and recent deploys before blaming individual apps."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasCronDelivery.md"
+
   - name: faas_tcp_tls
     interval: 30s
     rules:
@@ -6641,6 +6683,39 @@ groups:
           summary: "Raw TCP idle timeouts are spiking"
           description: "The public gateway has reaped more than one raw TCP session per second for ten minutes. Check client keepalive behavior, the configured FAAS_TCPD_IDLE_TIMEOUT, and whether a downstream service is stalling."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasTCPIngress.md"
+
+  # ADR-570: the traffic controls fail closed. A store, revocation or node
+  # admission outage refuses customer requests with a 503, so each reason
+  # alerts on its own; customer-caused refusals (rate_limited, deadline,
+  # node_capacity) are not paging conditions.
+  - name: traffic_control
+    interval: 30s
+    rules:
+      - alert: FaasTrafficControlRefusing
+        expr: sum by (reason) (rate(gateway_traffic_refusals_total{job="gatewayd-internal",reason=~"policy_unavailable|security_unavailable|rate_limit_unavailable|node_admission_unavailable"}[5m])) > 0.2
+        for: 5m
+        labels:
+          severity: page
+          component: gatewayd-internal
+          family: traffic_control
+          public_status: internal
+        annotations:
+          summary: "Traffic controls are refusing requests ({{ $labels.reason }})"
+          description: "Gateways have refused more than 0.2 requests per second with {{ $labels.reason }} for five minutes. These refusals come from a fail-closed traffic control, not from the customer's app or limits."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasTrafficControl.md"
+
+      - alert: FaasPublicTrafficSecurityUnverified
+        expr: max by (job, instance) (gatewayd_public_traffic_security_enforced{job=~"gatewayd|gatewayd-public-edge"}) == 0
+        for: 30m
+        labels:
+          severity: warn
+          component: gatewayd-public
+          family: traffic_control
+          public_status: internal
+        annotations:
+          summary: "A public edge is passing responses without the revocation check"
+          description: "{{ $labels.instance }} has not enforced the traffic security fence for 30 minutes, so a revoked account, app or deployment can still receive responses through it. A gateway it dials lacks the fence wiring or has no fresh observation."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasTrafficControl.md"
 
   - name: retry_safety
     interval: 30s
@@ -8374,3 +8449,98 @@ groups:
         annotations:
           summary: "Internal mail domain authorization is failing or stale"
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/ops/internal-mail.md"
+
+  # ADR-20261024222102: the pipelines behind customer observability (synthetic
+  # checks, SLO budgets, the log ledger, alert channels) page an operator when
+  # they stop, instead of leaving customers' data silently stale.
+  - name: faas_customer_observability
+    interval: 1m
+    rules:
+      - alert: FaasObservabilityLoopStalled
+        expr: |
+          (
+            (time() - meterd_observability_loop_last_pass_timestamp_seconds{loop="synthetic_checks"}) > 600
+            or (time() - meterd_observability_loop_last_pass_timestamp_seconds{loop="slo_rollup"}) > 1800
+          )
+          and on (job, instance, loop) (meterd_observability_loop_enabled == 1)
+        for: 5m
+        labels:
+          severity: warn
+          component: meterd
+          family: customer_observability
+          public_status: internal
+        annotations:
+          summary: "A customer observability loop in meterd has stopped completing passes"
+          description: "The loop has not finished an error-free pass within its budget (synthetic_checks 10 minutes, slo_rollup 30 minutes), so customers' synthetic results or SLO budgets are going stale. Check meterd's log for the loop's errors and the database and Prometheus it reads."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasCustomerObservability.md"
+      - alert: FaasObservabilityLoopDisabled
+        expr: meterd_observability_loop_enabled == 0
+        for: 30m
+        labels:
+          severity: warn
+          component: meterd
+          family: customer_observability
+          public_status: internal
+        annotations:
+          summary: "A customer observability loop in meterd is not running"
+          description: "meterd started without the loop, usually slo_rollup with FAAS_PROMETHEUS_URL unset. Customers' SLO budgets then read as no data and slo_budget alerts never fire."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasCustomerObservability.md"
+      - alert: FaasObservabilityLoopItemsFailing
+        expr: |
+          sum by (job, instance, loop) (increase(meterd_observability_loop_items_total{loop="synthetic_checks",outcome="record_error"}[15m])) > 0
+          or sum by (job, instance, loop) (increase(meterd_observability_loop_items_total{loop="slo_rollup",outcome="failed"}[15m])) > 0
+        for: 15m
+        labels:
+          severity: warn
+          component: meterd
+          family: customer_observability
+          public_status: internal
+        annotations:
+          summary: "A customer observability loop keeps failing items"
+          description: "For 15 minutes synthetic_checks could not record probe results, or slo_rollup could not compute SLO hours from Prometheus. Each pass retries, but customers see missing runs or no-data hours while it lasts. A customer's own failing check is counted as failed, not here."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasCustomerObservability.md"
+      - alert: FaasLogLedgerWritesFailing
+        expr: |
+          sum by (job, instance) (increase(apid_log_projection_events_total{outcome="failed"}[15m])) > 0
+          or sum by (job, instance) (increase(apid_runtime_log_events_total{outcome="db_error"}[15m])) > 0
+        for: 15m
+        labels:
+          severity: warn
+          component: apid
+          family: customer_observability
+          public_status: internal
+        annotations:
+          summary: "apid cannot write build, deploy or runtime events to the log ledger"
+          description: "For 15 minutes the build and deploy projection or the runtime-line receiver has failed to insert into log_events. Log search, log_search_matches alerts and alert log context miss these events until writes recover; the projector retries from its cursor, while runtime lines that fail are dropped (the instance ring and archive keep them)."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasCustomerObservability.md"
+      - alert: FaasRuntimeLogForwardingFailing
+        expr: |
+          sum by (job, instance) (increase(vmmd_runtime_log_events_total{outcome="forward_failed"}[15m])) > 0
+          and on () (max(apid_log_search_ingest_enabled) == 1)
+        for: 15m
+        labels:
+          severity: warn
+          component: vmmd
+          family: customer_observability
+          public_status: internal
+        annotations:
+          summary: "vmmd cannot forward runtime warn and error lines to apid"
+          description: "For 15 minutes vmmd's runtime log forwarding has failed while apid accepts runtime lines. Lines that fail are not indexed (the instance ring and archive keep them). Check vmmd's guest-trace apid target and apid's LogEvents listener."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasCustomerObservability.md"
+      - alert: FaasAlertChannelDeliveriesFailing
+        expr: |
+          sum by (job, instance, kind) (increase(meterd_alert_channel_deliveries_total{outcome="unseal_failed"}[30m])) > 0
+          or (
+            sum by (job, instance, kind) (increase(meterd_alert_channel_deliveries_total{outcome="failed"}[30m])) >= 3
+            unless on (job, instance, kind) (sum by (job, instance, kind) (increase(meterd_alert_channel_deliveries_total{outcome="delivered"}[30m])) > 0)
+          )
+        for: 10m
+        labels:
+          severity: warn
+          component: meterd
+          family: customer_observability
+          public_status: internal
+        annotations:
+          summary: "Alert notifications to a channel kind are failing platform-wide"
+          description: "meterd could not unseal a channel's credentials, or every Slack, PagerDuty or email delivery failed for 30 minutes (at least three attempts, none delivered). One customer's broken destination does not fire this while others deliver; a platform failure such as the unseal key, the mail relay or egress does."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasCustomerObservability.md"

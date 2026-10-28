@@ -1,6 +1,7 @@
 import http from 'node:http'
 import https from 'node:https'
-import { createHash, createHmac } from 'node:crypto'
+import { closeSync, openSync, readSync } from 'node:fs'
+import { createHash, createHmac, randomBytes } from 'node:crypto'
 import pg from 'pg'
 import { limits } from './config.mjs'
 import { addResponseBytes } from './usage.mjs'
@@ -9,8 +10,41 @@ import { addResponseBytes } from './usage.mjs'
 // files; the owner's RLS policies on that table decide every upload, download
 // and removal, checked through PostgREST as the caller. Bytes stream between
 // the client and a bucket bound to this app; its credentials stay here.
+//
+// Every upload stores its bytes under a fresh object key that its row points
+// to (amendment 1), so an upload never writes bytes another row points to: a
+// racing upload the policies refuse at commit loses only its own bytes. A row
+// without an object key, such as one the owner inserted, names its bytes by
+// its name.
 
 export const storageTable = 'storage_objects'
+
+const objectKeyPattern = /^_gregale\/objects\/[0-9a-f]{32}$/
+
+// newObjectKey reads the kernel's generator, which the restore hook reseeds:
+// instances restored from one snapshot share Node's in-process generator
+// until it reseeds itself, and must never pick the same key.
+export function newObjectKey(read = kernelRandom) {
+  return `_gregale/objects/${read(16).toString('hex')}`
+}
+
+function kernelRandom(size) {
+  const buffer = Buffer.alloc(size)
+  let fd
+  try {
+    fd = openSync('/dev/urandom', 'r')
+    if (readSync(fd, buffer, 0, size, null) === size) return buffer
+  } catch { /* fall back below */ } finally { if (fd !== undefined) closeSync(fd) }
+  return randomBytes(size)
+}
+
+// storedKey is where a row's bytes live in the bucket.
+export function storedKey(row) {
+  return typeof row?.object_key === 'string' && objectKeyPattern.test(row.object_key) ? row.object_key : row.name
+}
+
+// Rows answer clients without their object key, which is storage-internal.
+const publicRow = ({ object_key: _key, ...row }) => row
 
 const actions = { object: { PUT: 'upload', GET: 'download', HEAD: 'head', DELETE: 'remove' }, sign: { POST: 'sign' } }
 
@@ -102,17 +136,20 @@ export function signHeaders({ method, url, region, accessKeyId, secretAccessKey,
 const storageTableQuery = `SELECT c.relkind AS kind, c.relrowsecurity AS rls,
  EXISTS (SELECT 1 FROM pg_trigger t JOIN pg_proc p ON p.oid=t.tgfoid
    WHERE t.tgrelid=c.oid AND t.tgname='storage_objects_guard' AND NOT t.tgisinternal AND t.tgenabled IN ('O','A')
-   AND (t.tgtype & 31)=31 AND p.prosrc LIKE '%gregale_storage%') AS guarded
+   AND (t.tgtype & 31)=31 AND p.prosrc LIKE '%gregale_storage%') AS guarded,
+ EXISTS (SELECT 1 FROM pg_attribute a WHERE a.attrelid=c.oid AND a.attname='object_key' AND a.atttypid='text'::regtype AND NOT a.attisdropped) AS versioned
  FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname=$1 AND c.relname=$2`
 
 // unsafeStorageTable explains why a catalog row cannot serve storage: the
-// table must have RLS enabled and its guard trigger must fire before each row
-// insert, update and delete (tgtype ROW|BEFORE|INSERT|DELETE|UPDATE).
+// table must have RLS enabled, its guard trigger must fire before each row
+// insert, update and delete (tgtype ROW|BEFORE|INSERT|DELETE|UPDATE), and it
+// needs the object_key column uploads record their bytes in.
 export function unsafeStorageTable(row) {
   if (!row) return 'the storage_objects table is missing'
   if (row.kind !== 'r' && row.kind !== 'p') return 'storage_objects is not a table'
   if (row.rls !== true) return 'storage_objects needs row-level security enabled'
   if (row.guarded !== true) return 'storage_objects needs its enabled storage_objects_guard trigger'
+  if (row.versioned !== true) return 'storage_objects needs its object_key column; apply gregale data-api storage sql --upgrade'
   return null
 }
 
@@ -157,7 +194,7 @@ function rows(ctx, { method, query, body, prefer, token, signal }) {
 // An eq filter takes the rest of the parameter as its value, so a percent-
 // encoded name needs no quoting (PostgREST would compare the quotes too).
 const rowFilter = route => `bucket=eq.${encodeURIComponent(route.bucket)}&name=eq.${encodeURIComponent(route.name)}`
-const columns = 'select=bucket,name,owner,size,content_type,created_at,updated_at'
+const columns = 'select=bucket,name,owner,size,content_type,created_at,updated_at,object_key'
 
 // refused answers a PostgREST refusal: RLS and the guard answer 401/403.
 function refused(ctx, result) {
@@ -189,6 +226,12 @@ async function transfer(ctx, work) {
   }
 }
 
+// discard deletes bytes no row points to any more. It is best effort: a
+// failure leaves an unreferenced object, never a row without its bytes.
+async function discard(binding, key) {
+  try { await drain(await objectRequest(binding, 'DELETE', key, { signal: AbortSignal.timeout(limits.queryMs) })) } catch { /* left unreferenced */ }
+}
+
 function objectRequest(binding, method, key, { headers = {}, signal, body } = {}) {
   const url = objectURL(binding, key)
   const signed = signHeaders({ method, url, region: binding.region, accessKeyId: binding.accessKeyId, secretAccessKey: binding.secretAccessKey, headers })
@@ -215,24 +258,36 @@ async function upload(ctx) {
   const size = Number(req.headers['content-length'])
   const contentType = storageContentType(req.headers['content-type'])
   if (!contentType) return ctx.problem(res, 400, 'storage_invalid_content_type')
-  const row = { bucket: route.bucket, name: route.name, size, content_type: contentType }
+  const key = newObjectKey()
+  const row = { bucket: route.bucket, name: route.name, size, content_type: contentType, object_key: key }
   const upsert = { method: 'POST', query: `on_conflict=bucket,name&${columns}`, body: row }
   const dry = await rows(ctx, { ...upsert, prefer: 'resolution=merge-duplicates,return=representation,tx=rollback', token: await ctx.token(true), signal: ctx.deadline.signal })
   if (!ctx.deadline.check()) return
   if (dry.status < 200 || dry.status > 299) return refused(ctx, dry)
+  // The version this upload replaces, when the caller may see it; its bytes
+  // go once the new row commits. One the caller cannot see stays unreferenced.
+  const current = await rows(ctx, { method: 'GET', query: `${rowFilter(route)}&${columns}`, token: await ctx.token(false), signal: ctx.deadline.signal })
+  if (!ctx.deadline.check()) return
+  const previous = current.status === 200 && Array.isArray(current.json) && current.json.length === 1 ? storedKey(current.json[0]) : null
   const binding = config.storage.buckets.get(route.bucket)
   return transfer(ctx, async signal => {
     let sent = 0
     req.on('data', chunk => { sent += chunk.length })
     let stored
     try {
-      stored = await objectRequest(binding, 'PUT', route.name, { headers: { 'content-length': size, 'content-type': contentType }, signal, body: req })
-    } catch { return ctx.problem(res, 502, 'storage_backend_unavailable') }
+      stored = await objectRequest(binding, 'PUT', key, { headers: { 'content-length': size, 'content-type': contentType }, signal, body: req })
+    } catch { await discard(binding, key); return ctx.problem(res, 502, 'storage_backend_unavailable') }
     await drain(stored)
-    if (stored.statusCode < 200 || stored.statusCode > 299 || sent !== size) return ctx.problem(res, 502, 'storage_backend_unavailable')
+    if (stored.statusCode < 200 || stored.statusCode > 299 || sent !== size) { await discard(binding, key); return ctx.problem(res, 502, 'storage_backend_unavailable') }
     const committed = await rows(ctx, { ...upsert, prefer: 'resolution=merge-duplicates,return=representation', token: await ctx.token(true), signal })
-    if (committed.status < 200 || committed.status > 299 || !Array.isArray(committed.json) || committed.json.length !== 1) return ctx.problem(res, 503, 'storage_commit_failed')
-    sendJSON(res, 200, committed.json[0])
+    if (committed.status < 200 || committed.status > 299 || !Array.isArray(committed.json) || committed.json.length !== 1) {
+      // A refused commit, such as a racing upload the policies reject, loses
+      // only its own bytes.
+      await discard(binding, key)
+      return committed.status === 401 || committed.status === 403 ? refused(ctx, committed) : ctx.problem(res, 503, 'storage_commit_failed')
+    }
+    if (previous !== null && previous !== key) await discard(binding, previous)
+    sendJSON(res, 200, publicRow(committed.json[0]))
   })
 }
 
@@ -261,7 +316,7 @@ async function download(ctx) {
   const binding = config.storage.buckets.get(route.bucket)
   return transfer(ctx, async signal => {
     let object
-    try { object = await objectRequest(binding, 'GET', route.name, { headers: range ? { range } : {}, signal }) } catch { return ctx.problem(res, 502, 'storage_backend_unavailable') }
+    try { object = await objectRequest(binding, 'GET', storedKey(row), { headers: range ? { range } : {}, signal }) } catch { return ctx.problem(res, 502, 'storage_backend_unavailable') }
     if (object.statusCode === 404) { await drain(object); return ctx.problem(res, 404, 'storage_not_found') }
     if (object.statusCode === 416) { await drain(object); return ctx.problem(res, 416, 'storage_range_not_satisfiable') }
     if (object.statusCode !== 200 && object.statusCode !== 206) { await drain(object); return ctx.problem(res, 502, 'storage_backend_unavailable') }
@@ -284,7 +339,7 @@ async function sign(ctx) {
   if (!row) return
   const binding = ctx.config.storage.buckets.get(ctx.route.bucket)
   const now = new Date()
-  const url = presign({ method: 'GET', url: objectURL(binding, ctx.route.name), region: binding.region, accessKeyId: binding.accessKeyId, secretAccessKey: binding.secretAccessKey, expires: limits.storageSignSeconds, now })
+  const url = presign({ method: 'GET', url: objectURL(binding, storedKey(row)), region: binding.region, accessKeyId: binding.accessKeyId, secretAccessKey: binding.secretAccessKey, expires: limits.storageSignSeconds, now })
   sendJSON(ctx.res, 200, { url, expires_at: new Date(now.getTime() + limits.storageSignSeconds * 1000).toISOString() })
 }
 
@@ -296,13 +351,16 @@ async function remove(ctx) {
   if (dry.status !== 200 || !Array.isArray(dry.json)) return refused(ctx, dry)
   if (dry.json.length !== 1) return ctx.problem(res, 404, 'storage_not_found')
   const binding = config.storage.buckets.get(route.bucket)
+  const key = storedKey(dry.json[0])
   return transfer(ctx, async signal => {
     let deleted
-    try { deleted = await objectRequest(binding, 'DELETE', route.name, { signal }) } catch { return ctx.problem(res, 502, 'storage_backend_unavailable') }
+    try { deleted = await objectRequest(binding, 'DELETE', key, { signal }) } catch { return ctx.problem(res, 502, 'storage_backend_unavailable') }
     await drain(deleted)
     if (deleted.statusCode !== 204 && deleted.statusCode !== 200 && deleted.statusCode !== 404) return ctx.problem(res, 502, 'storage_backend_unavailable')
     const committed = await rows(ctx, { method: 'DELETE', query, prefer: 'return=representation', token: await ctx.token(true), signal })
     if (committed.status !== 200) return ctx.problem(res, 503, 'storage_commit_failed')
+    // An upload that committed after the dry run left a newer version.
+    for (const removed of Array.isArray(committed.json) ? committed.json : []) if (storedKey(removed) !== key) await discard(binding, storedKey(removed))
     res.writeHead(204, { 'Cache-Control': 'no-store' })
     res.end()
   })

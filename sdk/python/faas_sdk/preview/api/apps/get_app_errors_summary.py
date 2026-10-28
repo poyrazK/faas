@@ -122,13 +122,13 @@ def sync_detailed(
     cursor: None | str | Unset = UNSET,
     limit: int | Unset = 20,
 ) -> Response[AppErrorsSummaryResponse | Problem]:
-    r"""Per-app customer-facing automatic error grouping summary (ADR-096 / PR-B).
+    r"""Per-app customer-facing automatic error grouping summary.
 
      Sentry-style grouped error view scoped to a customer's
     app. One row per `(account_id, app_id, fingerprint)` over
     the requested `[since, until]` window, sorted by `count
     DESC, last_seen_at DESC, fingerprint ASC`. Distinct from
-    `GET /v1/apps/{slug}/slo` (issue #696 / ADR-082) which is
+    `GET /v1/apps/{slug}/slo` which is
     the closed-set SLO summary (`1h` / `24h` / `7d`) — the
     errors summary uses a continuous `[since, until]` window
     with an explicit RFC3339Nano stamp instead.
@@ -187,13 +187,13 @@ def sync(
     cursor: None | str | Unset = UNSET,
     limit: int | Unset = 20,
 ) -> AppErrorsSummaryResponse | Problem | None:
-    r"""Per-app customer-facing automatic error grouping summary (ADR-096 / PR-B).
+    r"""Per-app customer-facing automatic error grouping summary.
 
      Sentry-style grouped error view scoped to a customer's
     app. One row per `(account_id, app_id, fingerprint)` over
     the requested `[since, until]` window, sorted by `count
     DESC, last_seen_at DESC, fingerprint ASC`. Distinct from
-    `GET /v1/apps/{slug}/slo` (issue #696 / ADR-082) which is
+    `GET /v1/apps/{slug}/slo` which is
     the closed-set SLO summary (`1h` / `24h` / `7d`) — the
     errors summary uses a continuous `[since, until]` window
     with an explicit RFC3339Nano stamp instead.
@@ -247,13 +247,13 @@ async def asyncio_detailed(
     cursor: None | str | Unset = UNSET,
     limit: int | Unset = 20,
 ) -> Response[AppErrorsSummaryResponse | Problem]:
-    r"""Per-app customer-facing automatic error grouping summary (ADR-096 / PR-B).
+    r"""Per-app customer-facing automatic error grouping summary.
 
      Sentry-style grouped error view scoped to a customer's
     app. One row per `(account_id, app_id, fingerprint)` over
     the requested `[since, until]` window, sorted by `count
     DESC, last_seen_at DESC, fingerprint ASC`. Distinct from
-    `GET /v1/apps/{slug}/slo` (issue #696 / ADR-082) which is
+    `GET /v1/apps/{slug}/slo` which is
     the closed-set SLO summary (`1h` / `24h` / `7d`) — the
     errors summary uses a continuous `[since, until]` window
     with an explicit RFC3339Nano stamp instead.
@@ -310,13 +310,13 @@ async def asyncio(
     cursor: None | str | Unset = UNSET,
     limit: int | Unset = 20,
 ) -> AppErrorsSummaryResponse | Problem | None:
-    r"""Per-app customer-facing automatic error grouping summary (ADR-096 / PR-B).
+    r"""Per-app customer-facing automatic error grouping summary.
 
      Sentry-style grouped error view scoped to a customer's
     app. One row per `(account_id, app_id, fingerprint)` over
     the requested `[since, until]` window, sorted by `count
     DESC, last_seen_at DESC, fingerprint ASC`. Distinct from
-    `GET /v1/apps/{slug}/slo` (issue #696 / ADR-082) which is
+    `GET /v1/apps/{slug}/slo` which is
     the closed-set SLO summary (`1h` / `24h` / `7d`) — the
     errors summary uses a continuous `[since, until]` window
     with an explicit RFC3339Nano stamp instead.

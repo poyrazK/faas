@@ -7,6 +7,43 @@ does not mirror this list; customer-facing maturity belongs in the generated
 release or acceptance state changes, and keep older milestone notes clearly
 historical.
 
+## Crons GA blockers — 2026-10-26 (#5649, merged 2026-10-27, not released)
+
+The 2026-10-26 crons GA review found four blockers; #5649 fixes them
+([ADR-20261026201726](adr/20261026201726-cron-delivery-through-the-drain.md)):
+
+- HTTP cron fires and manual runs no longer wake the app or wait for it on
+  schedd's main loop. They queue a cron invocation that the invocation drain
+  delivers, so slow handlers cannot stall heartbeats, the reaper or other
+  tenants' crons. Plain HTTP crons keep one delivery attempt; manual runs
+  report their invocation's outcome and are capped at five active per cron.
+- `crons.schedule_anchor_at` restarts a schedule when it is edited, enabled
+  or unsuspended, so none of those fires the cron at once or replays passed
+  occurrences.
+- Command crons are scoped into the app-tasks preview (off in production).
+  Crons have a customer page, [docs/crons.md](crons.md).
+- Acceptance: `cmd/e2e/cron_e2e_test.go` (KVM-free, real apid, schedd and
+  gatewayd processes) proves a scheduled fire and a manual run reach the app
+  with the cron source header, and a visitor cannot forge that header.
+  PASS on the n2 test node on 2026-10-27 (76.6 s, revision a9e9c64e83; log
+  at `n2:/mnt/e2e-scratch/crons-ga/cron_e2e.log`). Unit and Postgres suites
+  for the cron, fire-now, drain and app-task paths pass; the five
+  `TestDrainSecurity*` failures are on main already.
+
+Follow-ups from the same review (branch `fix/crons-ga-followups`):
+
+- Schedule decisions and manual-run requests older than 90 days
+  (`api.CronHistoryRetention`, the longest plan's run history) are pruned on
+  schedd's hourly retention tick; unsettled decisions are kept.
+- `schedd_cron_delivery_total{outcome}` and
+  `schedd_cron_schedule_lag_seconds` back two operator alerts,
+  `FaasCronDeliveryLag` and `FaasCronDeliveryFailing`
+  ([runbook](runbooks/FaasCronDelivery.md)).
+- Cron paths are validated (single leading `/`, no host, at most 2,048 bytes)
+  by the API, the triggers API, source-ref manifests and `gregale.yaml`.
+- The OpenAPI spec documents `GET /v1/crons?slug=`; the Go SDK gains
+  `GetCron`, `FireCron`, `GetFireCronRequest` and `ListCronRuns`.
+
 ## Release guards — 2026-10-26
 
 Production releases can be held back by:
@@ -65,13 +102,46 @@ freeze and approval ADRs):
 - **Dashboard.** `/dashboard/apps/{slug}/release-safety` shows freezes, gates,
   approvals and schedules.
 
+The n2 metal drill `TestReleaseGuardsGADrillMetal`
+(`cmd/e2e/release_guards_ga_drill_metal_test.go`) adds the GA evidence, on a
+Pro account against a real Prometheus. On 2026-10-27 it covered:
+
+- an approval wait that survived apid and meterd restarts, then timed out
+  (`abort_approval_timeout`) 2 s after its deadline, with the email notice;
+- a scheduled release that fell due while apid was down and started 0 s after
+  apid returned (48 s late);
+- a `new_errors` gate that kept judging a canary across a meterd restart and
+  aborted it 65 s later;
+- an `slo` latency gate that aborted a slow canary (burn rate 100, max 10, over
+  123 requests);
+- a `custom_metric` gate that aborted on the metric's history (8 pushed values
+  averaging 1, below 5). The gate used to read only the latest value and never
+  reached its sample floor; amendment 1 of ADR-20261019071734 fixed that;
+- an `error_rate_pct` alert that rolled a completed release back (ADR-604): the
+  release's own evidence was 17.6% 5xx over 1,344 requests, and the receipt
+  completed. apid used to accept a post-deploy window on rules that could never
+  roll back, such as `latency_p95_ms`; ADR-605 amendment 1 refuses them;
+- a critical-route guard in abort mode (ADR-458) that aborted a canary failing
+  `/api` 351 s after the deploy (share 50% to 0%,
+  `consecutive_server_error_regression`), while `/api` stayed under the circuit
+  breaker's 5% floor.
+
+Six cases passed in one run (`592b2953be`). Reruns passed the alert case with a
+stricter receipt check (`b7e1874099`) and the route case once the drill sent
+enough `/api` traffic and read the saved abort (`a13a35f012`).
+Leakcheck was clean after every run. Under the n2 host's I/O pressure, every
+run had at least one deploy refused with `traffic_policy_too_complex` (the 2 s
+policy-check limit, H14-78); the route case needed four attempts while it
+served about 30 requests a second. The drill retries, as the problem asks.
+
 Still open:
 
-- slo/custom-metric gates, real Slack/Resend delivery and the approval timeout
-  have not been drilled on metal;
+- real Slack/Resend delivery has not been drilled;
 - no database switch has been drilled with a real provider restore;
 - runtime-upgrade cutover must also hold for freezes before customer admission
-  ships.
+  ships;
+- the CLI and SDKs do not retry a timed-out traffic policy check, so a deploy
+  on a busy control plane can fail outright.
 
 ## Routes at public scale — 2026-10-24
 

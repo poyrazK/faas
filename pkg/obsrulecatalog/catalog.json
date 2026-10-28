@@ -4,7 +4,7 @@
   "sets": [
     {
       "id": "gregale-core-v1",
-      "revision": "ff198cda46d5612b952d8d8819d78c308b51becf59b86b2624c718f2881ea344",
+      "revision": "ad6197c1176b8dc2ec2c6c728f2c16c7c20bcaa61d3ebfa09399d28145d9a15b",
       "files": [
         "faas.rules.yml"
       ],
@@ -449,6 +449,19 @@
             "for_seconds": 600,
             "keep_firing_for_seconds": 0,
             "fingerprint": "81033b31bd45e58e16baca8f04a7a8c70ec9a12668198eb7eaedd731efd0ec55"
+          }
+        },
+        {
+          "id": "113c4f4b12bb6ac8a435a2c9fa218d7cd21eb7958c7ad1ce9f3642947f5be2aa",
+          "file_name": "faas.rules.yml",
+          "group_name": "traffic_control",
+          "rule_name": "FaasTrafficControlRefusing",
+          "definition": {
+            "expression_hash": "7069ad84d272d7ea7bb52175bd9921dfab52291bcb93d31edce482c29a5504d6",
+            "labels_hash": "60373e62812920b85bb60b169077319dc9edb0fc44ca94614f134df62b7dcd76",
+            "for_seconds": 300,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "c5596f37941efd8f65372684287fe02b7735c0f0605627eab55d813babff5207"
           }
         },
         {
@@ -2883,6 +2896,19 @@
           }
         },
         {
+          "id": "7e121af3aae80ad2c7c53561ce32ee7a65a675ff0c1c7c908d54a529f67ebcb8",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_crons",
+          "rule_name": "FaasCronDeliveryLag",
+          "definition": {
+            "expression_hash": "e759a76dbe4e16a7d44981dfe082300df4bccde3cbcde99dcee638caf5701541",
+            "labels_hash": "c6f6d722b369e1acd2c5f2a3a80d2a32fd8f76a3cf9c7d4cb7d100b0ba163dc9",
+            "for_seconds": 600,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "48ac53224915203806a2d20e5b6f167b73c10bb29d154872676a41aaeb03b4f0"
+          }
+        },
+        {
           "id": "7e646692586fafd8b7cae604b4e9df837bdd6383936bd8c1baca1d9491fbc7cc",
           "file_name": "faas.rules.yml",
           "group_name": "faas_frozen_tier",
@@ -3143,6 +3169,19 @@
           }
         },
         {
+          "id": "8bfe26b125b1a49edb2c484ff574d2a18658d4a1298578403f467771f6cfa6ef",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_crons",
+          "rule_name": "FaasCronDeliveryFailing",
+          "definition": {
+            "expression_hash": "9f1319a0088b203d62232954b1f15cc28576e25db6ca0ed62471d4d2bf4fc216",
+            "labels_hash": "c6f6d722b369e1acd2c5f2a3a80d2a32fd8f76a3cf9c7d4cb7d100b0ba163dc9",
+            "for_seconds": 1800,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "fea249b6589559f220c0ff2489545af686f104dd3c04f951c684bd263ba352a0"
+          }
+        },
+        {
           "id": "8d8bae7eb9dab4299b7b31d674414b23d6981cc4fdd78d77f4df42cd7b740974",
           "file_name": "faas.rules.yml",
           "group_name": "faas_billing",
@@ -3244,6 +3283,19 @@
             "for_seconds": 300,
             "keep_firing_for_seconds": 0,
             "fingerprint": "2e76efde300dc712601ad553438525e986396f94dd8ce602d682711f570a6431"
+          }
+        },
+        {
+          "id": "91b39944efd6e432f6ed22ef7a0987534f68f279e337a023b2f9d29762e84c90",
+          "file_name": "faas.rules.yml",
+          "group_name": "traffic_control",
+          "rule_name": "FaasPublicTrafficSecurityUnverified",
+          "definition": {
+            "expression_hash": "a1afa62654a1430b208152fa995382af0f0e79e075f41b7c80f8496761316107",
+            "labels_hash": "2be5390fadf61deaa3648684ba71595f86613bb38ce05166d9b68aae7e315970",
+            "for_seconds": 1800,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "78d53786410a3c6b120cdd581720081c23086f1cfd188c39ac8578541bf2cd02"
           }
         },
         {
@@ -5811,7 +5863,7 @@
     },
     {
       "id": "gregale-full-v1",
-      "revision": "594d29583b09b8daf1c8ad017e73d9322091349001b22a5aeba55e8130ce413d",
+      "revision": "620a72d4ac3e082ab75d1f3cdb2764974ec7c3ff17cda2966abf7523a571d8ea",
       "files": [
         "bridge.rules.yml",
         "data_placement.yaml",
@@ -6273,6 +6325,19 @@
             "for_seconds": 600,
             "keep_firing_for_seconds": 0,
             "fingerprint": "81033b31bd45e58e16baca8f04a7a8c70ec9a12668198eb7eaedd731efd0ec55"
+          }
+        },
+        {
+          "id": "113c4f4b12bb6ac8a435a2c9fa218d7cd21eb7958c7ad1ce9f3642947f5be2aa",
+          "file_name": "faas.rules.yml",
+          "group_name": "traffic_control",
+          "rule_name": "FaasTrafficControlRefusing",
+          "definition": {
+            "expression_hash": "7069ad84d272d7ea7bb52175bd9921dfab52291bcb93d31edce482c29a5504d6",
+            "labels_hash": "60373e62812920b85bb60b169077319dc9edb0fc44ca94614f134df62b7dcd76",
+            "for_seconds": 300,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "c5596f37941efd8f65372684287fe02b7735c0f0605627eab55d813babff5207"
           }
         },
         {
@@ -8850,6 +8915,19 @@
           }
         },
         {
+          "id": "7e121af3aae80ad2c7c53561ce32ee7a65a675ff0c1c7c908d54a529f67ebcb8",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_crons",
+          "rule_name": "FaasCronDeliveryLag",
+          "definition": {
+            "expression_hash": "e759a76dbe4e16a7d44981dfe082300df4bccde3cbcde99dcee638caf5701541",
+            "labels_hash": "c6f6d722b369e1acd2c5f2a3a80d2a32fd8f76a3cf9c7d4cb7d100b0ba163dc9",
+            "for_seconds": 600,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "48ac53224915203806a2d20e5b6f167b73c10bb29d154872676a41aaeb03b4f0"
+          }
+        },
+        {
           "id": "7e646692586fafd8b7cae604b4e9df837bdd6383936bd8c1baca1d9491fbc7cc",
           "file_name": "faas.rules.yml",
           "group_name": "faas_frozen_tier",
@@ -9136,6 +9214,19 @@
           }
         },
         {
+          "id": "8bfe26b125b1a49edb2c484ff574d2a18658d4a1298578403f467771f6cfa6ef",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_crons",
+          "rule_name": "FaasCronDeliveryFailing",
+          "definition": {
+            "expression_hash": "9f1319a0088b203d62232954b1f15cc28576e25db6ca0ed62471d4d2bf4fc216",
+            "labels_hash": "c6f6d722b369e1acd2c5f2a3a80d2a32fd8f76a3cf9c7d4cb7d100b0ba163dc9",
+            "for_seconds": 1800,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "fea249b6589559f220c0ff2489545af686f104dd3c04f951c684bd263ba352a0"
+          }
+        },
+        {
           "id": "8d8bae7eb9dab4299b7b31d674414b23d6981cc4fdd78d77f4df42cd7b740974",
           "file_name": "faas.rules.yml",
           "group_name": "faas_billing",
@@ -9237,6 +9328,19 @@
             "for_seconds": 300,
             "keep_firing_for_seconds": 0,
             "fingerprint": "2e76efde300dc712601ad553438525e986396f94dd8ce602d682711f570a6431"
+          }
+        },
+        {
+          "id": "91b39944efd6e432f6ed22ef7a0987534f68f279e337a023b2f9d29762e84c90",
+          "file_name": "faas.rules.yml",
+          "group_name": "traffic_control",
+          "rule_name": "FaasPublicTrafficSecurityUnverified",
+          "definition": {
+            "expression_hash": "a1afa62654a1430b208152fa995382af0f0e79e075f41b7c80f8496761316107",
+            "labels_hash": "2be5390fadf61deaa3648684ba71595f86613bb38ce05166d9b68aae7e315970",
+            "for_seconds": 1800,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "78d53786410a3c6b120cdd581720081c23086f1cfd188c39ac8578541bf2cd02"
           }
         },
         {

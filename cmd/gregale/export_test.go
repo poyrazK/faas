@@ -669,8 +669,10 @@ var ChooseMenuAction = chooseMenuAction
 var ClassifyDevRuntimeLog = classifyDevRuntimeLog
 var CleanupUploadCacheExclusive = cleanupUploadCacheExclusive
 var CliConfigPath = cliConfigPath
-var CliHelpGroup = cliHelpGroup
-var CliHelpGroups = &cliHelpGroups
+var CliTreePlaces = cliTreePlaces
+var CliTreeManifest = cliTreeManifest
+var CliTreeSpelling = cliTreeSpelling
+var CliTreeHintTerminal = &cliTreeHintTerminal
 var CliRelatedCommands = &cliRelatedCommands
 var CliSeeAlso = cliSeeAlso
 var CliPreAuthPatch = cliPreAuthPatch
@@ -1341,6 +1343,7 @@ var InspectData = inspectData
 var InspectOpenAPI = inspectOpenAPI
 var InspectProductPilotHelp = inspectProductPilotHelp
 var InspectRecommendations = inspectRecommendations
+var InspectRuntime = inspectRuntime
 var InspectResources = inspectResources
 var InspectUnavailable = inspectUnavailable
 var InspectWatchChanges = inspectWatchChanges
@@ -1393,6 +1396,7 @@ var McpCatalogDigestForPin = mcpCatalogDigestForPin
 var McpExpectedGatewayAction = mcpExpectedGatewayAction
 var McpHealthURL = mcpHealthURL
 var McpInputIsTerminal = mcpInputIsTerminal
+var McpLocalCLIDir = mcpLocalCLIDir
 var McpNativeDeploy = mcpNativeDeploy
 var McpNativeFingerprint = mcpNativeFingerprint
 var McpNativeWorkerLogs = mcpNativeWorkerLogs
@@ -1453,6 +1457,13 @@ var OutputAlertRollback = outputAlertRollback
 var OwnMCPJournal = ownMCPJournal
 var PackDirToTarGz = packDirToTarGz
 var PackGitArchive = packGitArchive
+
+// NormalizeGitArchive normalizes a `git archive HEAD` of repoRoot taken at
+// prefix ("" for the whole tree).
+func NormalizeGitArchive(repoRoot, prefix, archivePath string) ([]string, error) {
+	return normalizeGitArchive(gitArchiveSource{repoRoot: repoRoot, prefix: prefix, commit: "HEAD"}, archivePath)
+}
+
 var ParkedArchivePendingNote = parkedArchivePendingNote
 var ParkedLogsSelection = parkedLogsSelection
 var ParkedWindowInstances = parkedWindowInstances
@@ -1733,6 +1744,7 @@ var RequireTyped = requireTyped
 var ResetJSONOut = resetJSONOut
 var ResetJSONOutput = resetJSONOutput
 var ResetNOColorCache = resetNOColorCache
+var ResetCapabilityView = resetCapabilityView
 var ResetStdoutTTYCache = resetStdoutTTYCache
 var ResolveDeployReleaseAt = resolveDeployReleaseAt
 var ResolveDeployRollbackOn5xx = resolveDeployRollbackOn5xx
@@ -2477,6 +2489,43 @@ var PreviewCompanionsFromManifest = previewCompanionsFromManifest
 // FormatStageDuration is the live ticker's stage duration cell.
 var FormatStageDuration = formatStageDuration
 
+// ADR-20261026145832: the new command tree.
+type CliTreeAlias = cliTreeAlias
+type CliTreeNoun = cliTreeNoun
+
+var CliTreeAliases = &cliTreeAliases
+var CliTreeNouns = &cliTreeNouns
+var RewriteCliTree = rewriteCliTree
+var OldPathDepth = oldPathDepth
+
+// CliPathHasVerbs reports whether words name a manifest command or verb, and
+// whether it has verbs of its own that a tree noun can expose.
+func CliPathHasVerbs(words []string) (exists, hasVerbs bool) {
+	node, ok := lookupCliPath(words)
+	return ok, ok && len(node.Subs) > 0 && !node.AfterPositionals
+}
+
+// CliTreeChild is one verb under a manifest path, for the tree's verb baseline.
+type CliTreeChild struct {
+	Name     string
+	HasVerbs bool
+}
+
+var CliTreeStandardVerb = cliTreeStandardVerb
+
+// CliPathChildren lists the verbs under words, or nil for a slug-first family.
+func CliPathChildren(words []string) []CliTreeChild {
+	node, ok := lookupCliPath(words)
+	if !ok || node.AfterPositionals {
+		return nil
+	}
+	children := make([]CliTreeChild, 0, len(node.Subs))
+	for _, sub := range node.Subs {
+		children = append(children, CliTreeChild{Name: sub.Name, HasVerbs: len(sub.Subcommands) > 0 && !sub.SubcommandsAfterPositionals})
+	}
+	return children
+}
+
 // gregale logs --project (ADR-20261026190244).
 var RunProjectLogs = runProjectLogs
 var ProjectLogJSON = projectLogJSON
@@ -2499,9 +2548,25 @@ func DevGoCommandRequest(command string) api.UpsertDevSessionRequest {
 	return withDevGoCommand(devSourceConfig{shape: shapeApp}.sessionRequest("", false, "", 0, nil), command)
 }
 
+var NormalizeTreeFlags = normalizeTreeFlags
+
 // Bucket CORS CLI (ADR-20261025202805).
 var (
 	DecodeBucketCORSFile = decodeBucketCORSFile
 	ValidBucketCORSArgs  = validBucketCORSArgs
 	RunBucketCORS        = runBucketCORS
 )
+
+// TierDiscoverableFlags is discovery's flag filter under the logged-out tier
+// view (preview and internal capabilities hidden).
+func TierDiscoverableFlags(names, capabilities []string) []string {
+	flags := make([]cliFlag, len(names))
+	for i := range names {
+		flags[i] = cliFlag{Name: names[i], Capability: capabilities[i]}
+	}
+	var kept []string
+	for _, flag := range (capabilityView{tier: true}).discoverableFlags(flags) {
+		kept = append(kept, flag.Name)
+	}
+	return kept
+}

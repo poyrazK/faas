@@ -464,7 +464,7 @@ func fwdStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 		if handleForwardRequestCancellation(w, r, true) {
 			return
 		}
-		if writeNodeAdmissionRefusal(w, err) {
+		if writeNodeAdmissionRefusal(w, r, err) {
 			return
 		}
 		if st, ok := status.FromError(err); ok && st.Code() == codes.Unavailable {
@@ -578,7 +578,7 @@ func fwdStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 					"node", t.NodeID, "err", err.Error())
 				panic(http.ErrAbortHandler)
 			}
-			if writeNodeAdmissionRefusal(w, err) {
+			if writeNodeAdmissionRefusal(w, r, err) {
 				return
 			}
 			if st, ok := status.FromError(err); ok && st.Code() == codes.Unavailable {
@@ -901,7 +901,7 @@ func rawStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 		if handleForwardRequestCancellation(w, r, true) {
 			return
 		}
-		if writeNodeAdmissionRefusal(w, err) {
+		if writeNodeAdmissionRefusal(w, r, err) {
 			wsOutcome = WSOutcomeUpstreamUnavailable
 			return
 		}
@@ -931,7 +931,7 @@ func rawStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 		if handleForwardRequestCancellation(w, r, true) {
 			return
 		}
-		if writeNodeAdmissionRefusal(w, err) {
+		if writeNodeAdmissionRefusal(w, r, err) {
 			wsOutcome = WSOutcomeUpstreamUnavailable
 			return
 		}
@@ -977,6 +977,12 @@ func rawStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 	// the chunk is below the 32 KiB maybeFlush threshold).
 	wroteHeader := false
 	upgradeEstablished := false
+	// refusalRemaining counts the body bytes still owed by a guest that
+	// refused an upgrade with a Content-Length response; -1 otherwise. A
+	// keep-alive guest does not close its socket after the refusal, so the
+	// stream ends here once the declared body is relayed, not when the request
+	// budget expires (issue #2681).
+	refusalRemaining := int64(-1)
 	var stopResponseWrites func()
 	defer func() {
 		if stopResponseWrites != nil {
@@ -1011,7 +1017,7 @@ func rawStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 			if handleForwardRequestCancellation(w, r, !wroteHeader) {
 				return
 			}
-			if !wroteHeader && writeNodeAdmissionRefusal(w, err) {
+			if !wroteHeader && writeNodeAdmissionRefusal(w, r, err) {
 				wsOutcome = WSOutcomeUpstreamUnavailable
 				return
 			}
@@ -1069,6 +1075,9 @@ func rawStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 			} else {
 				w.WriteHeader(int(init.GetStatus()))
 				upgradeReader <- nil
+				if isUpgradeRequest(r) && init.Error == "" {
+					refusalRemaining = rawResponseContentLength(init.GetHeaders())
+				}
 			}
 			wroteHeader = true
 			if upgraded || (!isUpgradeRequest(r) && isLongLivedForward(r) && init.GetStatus() >= http.StatusOK && init.GetStatus() < http.StatusBadRequest) {
@@ -1144,9 +1153,16 @@ func rawStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 				}
 				flushSafe(w)
 			}
+			if refusalRemaining == 0 {
+				flushSafe(w)
+				break
+			}
 			continue
 		}
 		if chunk := frame.GetBodyChunk(); len(chunk) > 0 {
+			if refusalRemaining >= 0 && int64(len(chunk)) > refusalRemaining {
+				chunk = chunk[:refusalRemaining]
+			}
 			// Issue #676 / ADR-080 follow-up, PR-B: rx byte
 			// counter increments per chunk received
 			// (guest→customer). Counter is increment-before-
@@ -1195,6 +1211,12 @@ func rawStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 			if !upgraded {
 				flushSafe(w)
 			}
+			if refusalRemaining > 0 {
+				refusalRemaining -= int64(len(chunk))
+				if refusalRemaining == 0 {
+					break
+				}
+			}
 		}
 	}
 
@@ -1217,6 +1239,21 @@ func rawStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 	// could inspect bodyErrCh's final value to distinguish
 	// client-initiated FIN from server-initiated close; for
 	// PR-B the customer-side churn signal is sufficient.
+}
+
+// rawResponseContentLength is the guest response's Content-Length, or -1 when
+// it has none or an unusable one.
+func rawResponseContentLength(headers []*vmmdpb.Header) int64 {
+	for _, h := range headers {
+		if strings.EqualFold(h.GetName(), "Content-Length") {
+			n, err := strconv.ParseInt(strings.TrimSpace(h.GetValue()), 10, 64)
+			if err != nil || n < 0 {
+				return -1
+			}
+			return n
+		}
+	}
+	return -1
 }
 
 // finishForwardRequestBody joins the request pump on every exit, including

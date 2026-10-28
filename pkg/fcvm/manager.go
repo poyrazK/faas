@@ -1149,6 +1149,15 @@ type Manager struct {
 	backingMu       sync.Mutex
 	backingDigests  map[fileIdentityKey]string
 	instanceBacking map[string]BackingIdentity
+	// backingHashing is each file version being hashed now, and
+	// backingPending each instance whose identity is still being computed
+	// (rememberInstanceBacking): its channel closes when the identity, or
+	// its absence, is recorded.
+	backingHashing map[fileIdentityKey]*backingDigestCall
+	backingPending map[string]chan struct{}
+	// beforeBackingHash, when set, runs before a file version is hashed.
+	// Tests use it to hold a hash in flight.
+	beforeBackingHash func(path string)
 	// baseGenerations binds each logical runtime base key to the immutable
 	// OCI reference configured for this node. The separate mutex serializes
 	// the rare cross-node cache adoption path without holding Manager.mu
@@ -2996,6 +3005,9 @@ type wakingInstance struct {
 	appID        string
 	accountID    string
 	contained    bool // a rehearsal run contains it (ADR-20261017201005)
+	// qualification marks a held GitOps qualification candidate (ADR-568):
+	// it boots with its app's identity but takes no external action.
+	qualification bool
 }
 
 // WorkloadTokenIdentity resolves the identity a workload-identity token is
@@ -4728,7 +4740,8 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 	if m.waking == nil {
 		m.waking = make(map[string]wakingInstance)
 	}
-	m.waking[req.Instance] = wakingInstance{deploymentID: req.DeploymentID, appID: req.AppID, accountID: req.AccountID, contained: req.RehearsalRunID != ""}
+	m.waking[req.Instance] = wakingInstance{deploymentID: req.DeploymentID, appID: req.AppID, accountID: req.AccountID,
+		contained: req.RehearsalRunID != "", qualification: qualificationOnly}
 	m.mu.Unlock()
 	lease = m.beginProcessAttempt(lease)
 	m.beginFunctionExecutionBoot(lease, req)
@@ -5957,9 +5970,12 @@ func (m *Manager) bringUpScanCheck(ctx context.Context, baseKey string) error {
 	scanKey := wire.ScanKeyForBaseKey(baseKey)
 	if err := m.ensureBaseGeneration(ctx, baseKey, scanKey); err != nil {
 		m.imageScanMetrics.ObserveBaseScanRefusal(baseKey, "generation_unavailable")
+		if m.log != nil {
+			m.log.Warn("fcvm: runtime base could not adopt its configured generation", "base", baseKey, "err", err)
+		}
 		return api.NewProblem(http.StatusServiceUnavailable, api.CodeScanCritical,
 			"runtime base generation unavailable",
-			fmt.Sprintf("runtime base %q could not adopt its configured generation: %v", baseKey, err))
+			fmt.Sprintf("runtime base %q could not adopt its configured generation", baseKey))
 	}
 	scan, readErr := m.readBaseScan(ctx, scanKey)
 	reason, gateErr := m.baseScanVerdict(baseKey, scanKey, scan, readErr)
@@ -6100,7 +6116,7 @@ func (m *Manager) parkWithCleanupResult(ctx context.Context, instance string, sp
 	m.cancelReadinessLoop(instance)
 	m.cancelFrameworkReadyLoop(instance)
 
-	spec.nativeRuntime = m.nativeRuntimeCapture(inst, spec)
+	spec.nativeRuntime = m.nativeRuntimeCapture(operationCtx, inst, spec)
 	info, snapshotErr := m.vmm.Snapshot(operationCtx, inst.Lease, spec)
 	info, snapshotErr = checkedNativeSnapshotResult(operationCtx, spec, info, snapshotErr)
 	if snapshotErr != nil {
@@ -6182,7 +6198,7 @@ func (m *Manager) WarmSnapshot(ctx context.Context, instance string, spec Snapsh
 	if m.functionResourcesEnabled(inst) {
 		info, err, retire = m.warmFunctionSnapshot(ctx, inst, spec, flight)
 	} else {
-		spec.nativeRuntime = m.nativeRuntimeCapture(inst, spec)
+		spec.nativeRuntime = m.nativeRuntimeCapture(ctx, inst, spec)
 		info, err = m.warmSnapshotInstance(ctx, inst, spec)
 	}
 	if err != nil {

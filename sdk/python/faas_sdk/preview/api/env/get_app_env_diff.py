@@ -77,7 +77,7 @@ def sync_detailed(
     cell carries {present, value_hash} for secret rows and
     {present, value} for env rows. Two cells with the same
     `value_hash` therefore share byte-identical plaintext
-    (collision probability 2^-64). Pre-PR-C rows have
+    (collision probability 2^-64). Older rows have
     `value_hash = ''` and emit no `value_hash` key.
 
     Args:
@@ -114,7 +114,7 @@ def sync(
     cell carries {present, value_hash} for secret rows and
     {present, value} for env rows. Two cells with the same
     `value_hash` therefore share byte-identical plaintext
-    (collision probability 2^-64). Pre-PR-C rows have
+    (collision probability 2^-64). Older rows have
     `value_hash = ''` and emit no `value_hash` key.
 
     Args:
@@ -146,7 +146,7 @@ async def asyncio_detailed(
     cell carries {present, value_hash} for secret rows and
     {present, value} for env rows. Two cells with the same
     `value_hash` therefore share byte-identical plaintext
-    (collision probability 2^-64). Pre-PR-C rows have
+    (collision probability 2^-64). Older rows have
     `value_hash = ''` and emit no `value_hash` key.
 
     Args:
@@ -181,7 +181,7 @@ async def asyncio(
     cell carries {present, value_hash} for secret rows and
     {present, value} for env rows. Two cells with the same
     `value_hash` therefore share byte-identical plaintext
-    (collision probability 2^-64). Pre-PR-C rows have
+    (collision probability 2^-64). Older rows have
     `value_hash = ''` and emit no `value_hash` key.
 
     Args:

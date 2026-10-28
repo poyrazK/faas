@@ -4,7 +4,7 @@
 /* eslint-disable */
 import type { EdgeRuleResponse } from './EdgeRuleResponse.js';
 /**
- * One recorded state of an app's whole edge-rule set (ADR-961).
+ * One recorded state of an app's whole edge-rule set.
  */
 export type EdgeRuleSetVersionResponse = {
   version: number;

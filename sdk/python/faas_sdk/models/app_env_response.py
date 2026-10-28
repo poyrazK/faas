@@ -22,12 +22,11 @@ class AppEnvResponse:
 
     key: str
     scope: str
-    """Env-var scope (ADR-090). Always 'default' for the pre-PR-B flat response; varies for the nested
-    `env_by_scope` response."""
+    """Env-var scope. Always 'default' for the legacy flat response; varies for the nested `env_by_scope` response."""
     created_at: datetime.datetime
     updated_at: datetime.datetime
     config_change: ConfigChangeReceipt | Unset = UNSET
-    """The config revision an env or secret write recorded and the guard watching it (ADR-1451)."""
+    """The config revision an env or secret write recorded and the guard watching it."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

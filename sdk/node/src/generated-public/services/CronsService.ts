@@ -15,15 +15,26 @@ import { request as __request } from '../../generated/core/request.js';
 export class CronsService {
   /**
    * List cron triggers.
-   * @returns CronResponse Cron triggers on the account.
+   * @returns CronResponse Cron triggers on the account, or on the app named by slug.
    * @throws ApiError
    */
-  public static listCrons(): CancelablePromise<Array<CronResponse>> {
+  public static listCrons({
+    slug,
+  }: {
+    /**
+     * App slug or id. Lists only that app's crons; without it, every cron on the account's apps.
+     */
+    slug?: string,
+  }): CancelablePromise<Array<CronResponse>> {
     return __request(OpenAPI, {
       method: 'GET',
       url: '/v1/crons',
+      query: {
+        'slug': slug,
+      },
       errors: {
         401: `code: unauthorized`,
+        404: `code: not_found`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
@@ -77,8 +88,7 @@ export class CronsService {
   }
   /**
    * Get one cron trigger.
-   * Single-row read for one cron (issue #791 PR-E / ADR-090
-   * closure). Backs `gregale crons info <id>` and any dashboard
+   * Single-row read for one cron (closure). Backs `gregale crons info <id>` and any dashboard
    * drill-down. The wire shape matches `CronResponse` so SDK
    * clients decode it with the existing struct.
    *
@@ -380,7 +390,7 @@ export class CronsService {
    * Manually fire a cron now (bypasses the schedule boundary).
    * Inserts a pending row into
    * `cron_fire_now_requests` and emits `db.NotifyCronRunNow`;
-   * schedd claims the row on the next LISTEN delivery. HTTP crons
+   * the scheduler claims the row on the next LISTEN delivery. HTTP crons
    * dispatch through `RunCronNow`; command crons enqueue a task
    * pinned to the current live deployment. Poll the request to
    * obtain its invocation id or command task id.
@@ -389,7 +399,7 @@ export class CronsService {
    * the stored 202 without enqueuing a second fire.
    *
    * Scoped to `deploy:write` (or `admin`); no new `cron:write`
-   * scope is added (ADR-090 §Sub-decisions 1). The fire does
+   * scope is added (decisions 1). The fire does
    * NOT shift `last_fired_at` — the next scheduled boundary is
    * unaffected. For a command cron, its saved command, timeout,
    * output limit, retry policy, skip_if_running behavior, and

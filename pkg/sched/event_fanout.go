@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -32,7 +33,8 @@ const eventFanoutClaimBatch = 20
 const eventFanoutReleaseTimeout = 5 * time.Second
 
 // eventFanoutSafetyTick re-runs the fanout sweep when no event_published
-// wake arrives; a wake that lands while a sweep runs is coalesced away.
+// wake arrives; a wake that lands while a sweep runs asks the work pool for
+// one more sweep after it (workSpec.rerunCoalesced).
 const eventFanoutSafetyTick = 5 * time.Second
 
 type eventFanoutRouteError struct {
@@ -170,6 +172,15 @@ func (l *Loop) routePublishedEventSnapshot(ctx context.Context, work *state.Publ
 		// independent recipient wait within a claimed legacy receipt.
 		if previous.NextAttemptAt != nil && previous.NextAttemptAt.After(now) &&
 			(recipient.RoutingRetryPolicy != nil || previous.CapacityScope != "" || previous.DeliveryControlReason != "") {
+			routeErrs = append(routeErrs, state.ErrEventDeliveryCapacity)
+			continue
+		}
+		if l.eventsHeld(ctx, recipient, work.Payload) {
+			wait := state.EventCapabilityWaitProgress(previous, previous.Attempts+1, now.Add(capabilityDeferral))
+			if err := progressStore.RecordPublishedEventRecipientProgress(ctx, work.ID, work.ClaimToken, recipient.ID, wait); err != nil {
+				return err
+			}
+			work.RecipientProgress[recipient.ID] = wait
 			routeErrs = append(routeErrs, state.ErrEventDeliveryCapacity)
 			continue
 		}
@@ -470,9 +481,16 @@ func (l *Loop) runEventFanoutSweep(ctx context.Context) {
 	if !ok {
 		return
 	}
+	// ADR-20261027125625: the platform-wide events switch holds all routing
+	// (receipts, recipients, recoveries, backfills). Settled receipts still
+	// prune and routing health is still observed.
+	routing := l.engine.eventsReleased()
+	l.observeEventRoutingPause(routing)
 	// Disabling adoption must still drain previously adopted receipts.
 	defer l.observeEventRoutingHealth(ctx)
-	defer l.runEventRecipientSweep(ctx)
+	if routing {
+		defer l.runEventRecipientSweep(ctx)
+	}
 	now := time.Now().UTC()
 	if l.now != nil {
 		now = l.now().UTC()
@@ -503,6 +521,9 @@ func (l *Loop) runEventFanoutSweep(ctx context.Context) {
 				l.eventFanoutLastPrune = now
 			}
 		}
+	}
+	if !routing {
+		return
 	}
 	if recovery, ok := l.engine.store.(state.EventRecoveryStore); ok {
 		for i := 0; i < eventFanoutRecoveryBatch; i++ {
@@ -710,6 +731,14 @@ func (l *Loop) routeEventRecipient(ctx context.Context, store state.PublishedEve
 		}
 		return
 	}
+	if l.eventsHeld(ctx, work.Recipient, work.Payload) {
+		next := now.Add(capabilityDeferral)
+		wait := state.EventCapabilityWaitProgress(work.PreviousProgress, work.TotalAttempts, next)
+		if err := store.FinishPublishedEventRecipient(ctx, work, wait, next); err != nil && l.log != nil {
+			l.log.Error("sched: hold event recipient while events is off", "err", err)
+		}
+		return
+	}
 	if breaker, ok := l.engine.store.(state.EventCircuitBreakerStore); ok {
 		reason, next, err := breaker.AcquireEventCircuitPermit(ctx, work, now)
 		if err != nil {
@@ -800,7 +829,7 @@ func (l *Loop) admitEventRecipient(ctx context.Context, store state.PublishedEve
 }
 
 func (l *Loop) observeEventRoutingHealth(ctx context.Context) {
-	if l.ops == nil {
+	if l.ops == nil || !l.eventRoutingHealthDue(l.eventFanoutNow()) {
 		return
 	}
 	if store, ok := l.engine.store.(state.EventRoutingHealthStore); ok {
@@ -858,5 +887,54 @@ func (l *Loop) eventRecipientAdoptionSupported(work *state.PublishedEventWork) b
 			return supported
 		}
 	}
+	return true
+}
+
+// eventsHeld reports a customer event's recipient whose app's account has the
+// events capability off (ADR-20261027125625); it waits without spending a
+// routing attempt. Platform sources (gregale.*) belong to their own
+// capabilities and stop only with the platform-wide switch.
+func (l *Loop) eventsHeld(ctx context.Context, recipient state.PublishedEventRecipient, payload []byte) bool {
+	if l == nil || l.engine == nil || l.engine.capabilities == nil || recipient.AppID == "" {
+		return false
+	}
+	var event struct {
+		Source string `json:"source"`
+	}
+	if json.Unmarshal(payload, &event) != nil || strings.HasPrefix(event.Source, "gregale.") {
+		return false
+	}
+	return !l.engine.appEventsAllowed(ctx, recipient.AppID)
+}
+
+// observeEventRoutingPause logs when the platform-wide events switch stops or
+// resumes routing.
+func (l *Loop) observeEventRoutingPause(routing bool) {
+	if l.eventRoutingPaused == !routing {
+		return
+	}
+	l.eventRoutingPaused = !routing
+	if l.log == nil {
+		return
+	}
+	if routing {
+		l.log.Info("sched: event routing resumed: the events capability is back on")
+	} else {
+		l.log.Warn("sched: event routing paused: the events capability is switched off platform-wide")
+	}
+}
+
+// eventRoutingHealthInterval bounds how often a node reads routing health
+// (ADR-614 amendment 2026-10-27). The read aggregates every unsettled receipt
+// on the platform, and sweeps run every few seconds and on every publish.
+const eventRoutingHealthInterval = 15 * time.Second
+
+// eventRoutingHealthDue reports whether the routing health gauges are due a
+// refresh at now, and records the refresh when they are.
+func (l *Loop) eventRoutingHealthDue(now time.Time) bool {
+	if !l.eventRoutingHealthAt.IsZero() && now.Sub(l.eventRoutingHealthAt) < eventRoutingHealthInterval {
+		return false
+	}
+	l.eventRoutingHealthAt = now
 	return true
 }

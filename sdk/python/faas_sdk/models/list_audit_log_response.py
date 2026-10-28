@@ -18,7 +18,7 @@ T = TypeVar("T", bound="ListAuditLogResponse")
 @_attrs_define
 class ListAuditLogResponse:
     """Envelope for `GET /v1/audit-log` and `GET /v1/audit-log/all`
-    (issue #755 / PR-6). `entries` is newest-first
+    `entries` is newest-first
     (`received_at DESC, id DESC`) so the dashboard can render
     top-of-list without re-sorting. `limit` echoes the
     effective limit applied by the handler so the SDK can

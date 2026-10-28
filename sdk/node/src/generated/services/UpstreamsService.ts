@@ -15,14 +15,14 @@ export class UpstreamsService {
    * List data upstreams on an app.
    * Returns every captured (host_redacted_hash, kind, port) tuple
    * on the app. The plaintext host NEVER appears in the response —
-   * only the SHA-256 hash of (salt||host). See spec §11.
+   * only the SHA-256 hash of (salt||host).
    *
    * The list is bounded by the per-plan `api.DataPlacementHintsPerApp`
    * quota (Free=0, Hobby=3, Pro=10, Scale=50). When FAAS_DATA_PLACEMENT
    * is on the classifier derives entries on env mutation; when OFF
    * the table stays empty and the response is `[]`.
    *
-   * ADR-098 amendment (issue #954): `?deployment_scope=` narrows
+   * `?deployment_scope=` narrows
    * the list to one deployment so the dashboard can render
    * staging-vs-prod independently. Omitted = "all deployments".
    *
@@ -38,7 +38,7 @@ export class UpstreamsService {
      */
     slug: string,
     /**
-     * ADR-098 amendment (issue #954). Optional server-side filter
+     * Optional server-side filter
      * that narrows the list to one deployment. Omitted = return
      * all deployments for the app. Same shape as `scope` (1..40
      * chars, lowercase alnum + dash); empty string is treated as
@@ -69,11 +69,11 @@ export class UpstreamsService {
   }
   /**
    * Add a data upstream to an app.
-   * Captures a (host, kind, port) tuple so the meterd probe loop
-   * can dial it (PR-C) and schedd can bias wake placement by the
-   * probed RTT (PR-D). Plaintext host is hashed via
+   * Captures a (host, kind, port) tuple so the metering service probe loop
+   * can dial it and the scheduler can bias wake placement by the
+   * probed RTT. Plaintext host is hashed via
    * `sha256(HostHashSalt||host)` before insert; the response
-   * returns the hashed form only (§11 invariant).
+   * returns the hashed form only (invariant).
    *
    * **Plan limits.** Free plan returns 402
    * `plan_data_upstreams_not_allowed`. Hobby/Pro/Scale hit their
@@ -96,7 +96,7 @@ export class UpstreamsService {
     slug: string,
     requestBody: PutDataUpstreamRequest,
     /**
-     * ADR-098 amendment (issue #954). Optional server-side filter
+     * Optional server-side filter
      * that narrows the list to one deployment. Omitted = return
      * all deployments for the app. Same shape as `scope` (1..40
      * chars, lowercase alnum + dash); empty string is treated as
@@ -170,7 +170,7 @@ export class UpstreamsService {
      */
     region?: string,
     /**
-     * Optional deployment scope filter from the ADR-098 issue #954 overlay.
+     * Optional deployment scope filter from the overlay.
      */
     deploymentScope?: string,
   }): CancelablePromise<Array<DataUpstreamHistoryResponse>> {
@@ -202,7 +202,7 @@ export class UpstreamsService {
   /**
    * Get one data upstream.
    * Returns the single upstream row by id. Plaintext host NEVER
-   * appears in the response (§11 invariant).
+   * appears in the response (invariant).
    *
    * @returns DataUpstreamResponse The upstream envelope.
    * @throws ApiError
@@ -270,7 +270,7 @@ export class UpstreamsService {
   /**
    * Update an upstream's egress circuit-breaker policy.
    * Opts one upstream into (or out of) egress circuit breaking, and
-   * optionally tunes its thresholds (ADR-201 §3).
+   * optionally tunes its thresholds.
    *
    * Enabling this grants the platform permission to REJECT your app's
    * connections to this upstream while its circuit is open. Plaintext
@@ -313,6 +313,12 @@ export class UpstreamsService {
         402: `402 — the plan does not allow egress circuit breakers, or the per-app cap is reached.`,
         404: `404 — upstream_not_found: no upstream with this id belongs to the app.`,
         422: `422 — validation failed on the circuit-breaker body.`,
+        503: `503 — \`egress_circuit_disabled\`: the request sets \`enabled: true\`
+        but this platform does not enforce egress circuit breakers yet,
+        so the breaker would never reject a connection. Turning a breaker
+        off is still accepted. \`data_upstreams_disabled\`: data placement
+        is not enabled on this cluster.
+        `,
       },
     });
   }

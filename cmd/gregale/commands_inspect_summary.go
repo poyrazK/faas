@@ -57,6 +57,10 @@ type inspectRuntimeSummary struct {
 	Source           string                  `json:"source,omitempty"`
 	Warnings         []inspectRuntimeWarning `json:"warnings,omitempty"`
 	Health           *inspectHealthSummary   `json:"health,omitempty"`
+	// fromImage marks a release deployed from a prebuilt OCI image, whose
+	// ENTRYPOINT/CMD is the start command and which has no source to detect
+	// a framework from.
+	fromImage bool
 }
 
 type inspectRuntimeWarning struct {
@@ -307,6 +311,14 @@ func inspectResources(app api.AppResponse) inspectResourceSummary {
 	return out
 }
 
+// inspectServesNoRequests reports a worker or job: it serves no HTTP requests,
+// so a public health receipt cannot exist and "configure a health endpoint"
+// is wrong advice. h14-wk led inspect with "Review recommended: no verified
+// health receipt" (Hunt 14 H14-105).
+func inspectServesNoRequests(app inspectAppSummary) bool {
+	return app.ExecutionMode == api.ExecutionModeWorker || app.ExecutionMode == api.ExecutionModeJob
+}
+
 // inspectExecutionMode returns the app's non-request execution mode, or "".
 func inspectExecutionMode(app api.AppResponse) string {
 	switch mode := app.Manifest.ExecutionMode; mode {
@@ -324,6 +336,7 @@ func inspectRuntime(app api.AppResponse, dep *api.DeploymentResponse, unavailabl
 	if dep == nil {
 		return out
 	}
+	out.fromImage = dep.Kind == "image"
 	if dep.BuildPlan != nil {
 		if dep.BuildPlan.Framework != "" {
 			out.Framework = dep.BuildPlan.Framework
@@ -589,7 +602,7 @@ func inspectRecommendations(summary inspectSummary) []inspectRecommendation {
 		// request got 404 (Hunt 12 H12-59).
 		add("no_traffic", "error", "No deployment receives traffic, so requests to this app fail.",
 			"Check why deployment "+summary.Release.DeploymentID+" was not promoted, then run `gregale traffic promote --app "+summary.App.Slug+" --deployment "+summary.Release.DeploymentID+"`.")
-	} else if summary.Release.Status == "live" && (summary.Runtime.Health == nil || summary.Runtime.Health.Status != apihostingreceipt.SmokeVerified) {
+	} else if summary.Release.Status == "live" && !inspectServesNoRequests(summary.App) && (summary.Runtime.Health == nil || summary.Runtime.Health.Status != apihostingreceipt.SmokeVerified) {
 		if summary.Runtime.Health != nil && (summary.Runtime.Health.ErrorCode == apihostingreceipt.SmokeErrorNotConfigured || summary.Runtime.Health.ErrorCode == apihostingreceipt.SmokeErrorVerifierNotConfigured) {
 			add("health_verifier_unconfigured", "error", "The public smoke verifier is not configured, so this deployment is not externally verified.", "External health verification is not available on this Gregale installation right now; contact support.")
 		} else if summary.Runtime.Health != nil && summary.Runtime.Health.ErrorCode == "smoke_health_path_missing" {
@@ -604,7 +617,10 @@ func inspectRecommendations(summary inspectSummary) []inspectRecommendation {
 			"A newer zero-traffic deployment candidate failed; the serving release remains active.",
 			"Run `gregale inspect "+summary.App.Slug+" --errors` for candidate "+candidate.DeploymentID+" failure details.")
 	}
-	if summary.App.Type == "app" && (summary.Runtime.Framework == "" || summary.Runtime.Framework == "unknown") {
+	// An image deploy runs the image's own ENTRYPOINT/CMD: there is no source
+	// to detect a framework from and no Dockerfile to add, so a healthy nginx
+	// image led with "Review recommended" and Dockerfile advice (Hunt 14 H14-97).
+	if summary.App.Type == "app" && !summary.Runtime.fromImage && (summary.Runtime.Framework == "" || summary.Runtime.Framework == "unknown") {
 		add("framework_unknown", "warning", "Gregale could not identify the application framework.", "Set an explicit start command or Dockerfile.")
 	}
 	for _, warning := range summary.Runtime.Warnings {

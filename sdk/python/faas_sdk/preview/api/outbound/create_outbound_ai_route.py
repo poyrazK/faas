@@ -95,11 +95,11 @@ def sync_detailed(
 ) -> Response[Any | OutboundAIRoute | Problem]:
     """Create an AI fallback route over managed AI integrations.
 
-     Requires MFA and deploy-write scope (ADR-990, ADR-991). Every target must be an enabled managed AI
-    integration of this account; a native route needs one ai_provider, an openai route translates OpenAI
-    chat completions for anthropic and gemini targets. Apps call $GREGALE_OUTBOUND_URL/r/{id}/{provider
-    path}; the gateway tries targets in order and moves on after a budget or availability rejection, a
-    provider 408, 429 or 5xx, or a transport error, before any response byte is sent.
+     Requires MFA and deploy-write scope. Every target must be an enabled managed AI integration of this
+    account; a native route needs one ai_provider, an openai route translates OpenAI chat completions
+    for anthropic and gemini targets. Apps call $GREGALE_OUTBOUND_URL/r/{id}/{provider path}; the
+    gateway tries targets in order and moves on after a budget or availability rejection, a provider
+    408, 429 or 5xx, or a transport error, before any response byte is sent.
 
     Args:
         body (CreateOutboundAIRouteRequest): A new AI route with a DNS-label name, an optional
@@ -131,11 +131,11 @@ def sync(
 ) -> Any | OutboundAIRoute | Problem | None:
     """Create an AI fallback route over managed AI integrations.
 
-     Requires MFA and deploy-write scope (ADR-990, ADR-991). Every target must be an enabled managed AI
-    integration of this account; a native route needs one ai_provider, an openai route translates OpenAI
-    chat completions for anthropic and gemini targets. Apps call $GREGALE_OUTBOUND_URL/r/{id}/{provider
-    path}; the gateway tries targets in order and moves on after a budget or availability rejection, a
-    provider 408, 429 or 5xx, or a transport error, before any response byte is sent.
+     Requires MFA and deploy-write scope. Every target must be an enabled managed AI integration of this
+    account; a native route needs one ai_provider, an openai route translates OpenAI chat completions
+    for anthropic and gemini targets. Apps call $GREGALE_OUTBOUND_URL/r/{id}/{provider path}; the
+    gateway tries targets in order and moves on after a budget or availability rejection, a provider
+    408, 429 or 5xx, or a transport error, before any response byte is sent.
 
     Args:
         body (CreateOutboundAIRouteRequest): A new AI route with a DNS-label name, an optional
@@ -162,11 +162,11 @@ async def asyncio_detailed(
 ) -> Response[Any | OutboundAIRoute | Problem]:
     """Create an AI fallback route over managed AI integrations.
 
-     Requires MFA and deploy-write scope (ADR-990, ADR-991). Every target must be an enabled managed AI
-    integration of this account; a native route needs one ai_provider, an openai route translates OpenAI
-    chat completions for anthropic and gemini targets. Apps call $GREGALE_OUTBOUND_URL/r/{id}/{provider
-    path}; the gateway tries targets in order and moves on after a budget or availability rejection, a
-    provider 408, 429 or 5xx, or a transport error, before any response byte is sent.
+     Requires MFA and deploy-write scope. Every target must be an enabled managed AI integration of this
+    account; a native route needs one ai_provider, an openai route translates OpenAI chat completions
+    for anthropic and gemini targets. Apps call $GREGALE_OUTBOUND_URL/r/{id}/{provider path}; the
+    gateway tries targets in order and moves on after a budget or availability rejection, a provider
+    408, 429 or 5xx, or a transport error, before any response byte is sent.
 
     Args:
         body (CreateOutboundAIRouteRequest): A new AI route with a DNS-label name, an optional
@@ -196,11 +196,11 @@ async def asyncio(
 ) -> Any | OutboundAIRoute | Problem | None:
     """Create an AI fallback route over managed AI integrations.
 
-     Requires MFA and deploy-write scope (ADR-990, ADR-991). Every target must be an enabled managed AI
-    integration of this account; a native route needs one ai_provider, an openai route translates OpenAI
-    chat completions for anthropic and gemini targets. Apps call $GREGALE_OUTBOUND_URL/r/{id}/{provider
-    path}; the gateway tries targets in order and moves on after a budget or availability rejection, a
-    provider 408, 429 or 5xx, or a transport error, before any response byte is sent.
+     Requires MFA and deploy-write scope. Every target must be an enabled managed AI integration of this
+    account; a native route needs one ai_provider, an openai route translates OpenAI chat completions
+    for anthropic and gemini targets. Apps call $GREGALE_OUTBOUND_URL/r/{id}/{provider path}; the
+    gateway tries targets in order and moves on after a budget or availability rejection, a provider
+    408, 429 or 5xx, or a transport error, before any response byte is sent.
 
     Args:
         body (CreateOutboundAIRouteRequest): A new AI route with a DNS-label name, an optional

@@ -1232,10 +1232,10 @@ type Handler struct {
 	// by appID. Lazily created on the first request for an opt-in
 	// app (App.RouteMetricsEnabled=true AND the operator kill-
 	// switch is enabled) so the cold path is allocation-free for
-	// apps that don't opt in. The map is never deleted — the
-	// underlying routeLabelSet is non-evicting (the daemon
-	// restart is the only path that resets it, same contract as
-	// accountLabelSet / hostnameLabelSet). sync.Map because the
+	// apps that don't opt in. The map is never deleted; a full
+	// routeLabelSet only gives up a label idle for
+	// api.RouteLabelReuseAfterIdle (ADR-20261026143210 amendment
+	// 1). sync.Map because the
 	// hot path is the "already created" lookup. nil until
 	// SetRouteMetricsEnabled is called from the App→routeSet
 	// resolution path.
@@ -5054,9 +5054,11 @@ func (h *Handler) enforcePublicAuthBearer(w http.ResponseWriter, r *http.Request
 			"reason": reason,
 		})
 		rec.status = http.StatusUnauthorized
+		// RFC 6750 §3.1, and the same challenge the require_authn gate
+		// sends for an invalid key (issue #2707).
 		api.WriteProblem(w, api.NewProblem(http.StatusUnauthorized, api.CodeUnauthorized,
 			"Unauthorized", "the presented API key is not valid for this app").
-			WithHeader("WWW-Authenticate", `Bearer realm="apps"`))
+			WithHeader("WWW-Authenticate", `Bearer realm="apps", error="invalid_token"`))
 		h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
 		return false
 	}
@@ -5951,7 +5953,9 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	requestCtx, statusHooks := withResponseStatusHooks(requestCtx)
 	r = r.WithContext(requestCtx)
 	defer func() { //nolint:contextcheck // inspect the final rebound request context, including later admission and lifetime fences.
-		requestSpan.SetAttributes(trafficDecisionEvidence(r.Context(), rec.status, true).attributes()...)
+		decision := trafficDecisionEvidence(r.Context(), rec.status, true)
+		requestSpan.SetAttributes(decision.attributes()...)
+		h.metrics.observeTrafficDecision(decision)
 		statusHooks.run(rec.status)
 		requestSpan.SetAttributes(attribute.Int("http.status_code", rec.status))
 		requestSpan.End()
@@ -7139,6 +7143,13 @@ haveApp:
 			}
 		}
 		if !pick.OK {
+			// ADR-977: every public request takes this branch once its routing
+			// is pinned (ADR-570), so a cold app starts restoring the services
+			// it calls here too. Deployment smokes and route probes verify a
+			// deployment and do not wake its dependencies.
+			if !deploymentSmoke && !routeProbe {
+				h.noteColdWake(r.Context(), app.ID)
+			}
 			// A snapshot candidate or zero-percent live deployment can be cold
 			// before its exact URL is visited. Admit one deployment-scoped
 			// instance; schedd remains authoritative for the bounded rollout
@@ -8436,8 +8447,9 @@ func (p *preInstantiateApps) seen(appID string) bool {
 // creating a fresh one on the first sight of an opt-in app. The
 // lookup is O(1) (sync.Map.Load). Returns nil when the app is not
 // opted in (enabled=false) — the caller short-circuits the
-// per-route emission on nil. The map is never deleted; the
-// underlying routeLabelSet is non-evicting (ADR-093 D2).
+// per-route emission on nil. The map is never deleted; a full
+// routeLabelSet replaces only idle, undeclared labels and deletes
+// their series (ADR-20261026143210 amendment 1).
 //
 // Concurrency: sync.Map handles the parallel first-sight race
 // correctly. Two goroutines hitting the same opt-in app for the
@@ -8453,6 +8465,10 @@ func (h *Handler) routeSetFor(appID string, enabled bool) *routeLabelSet {
 		return v.(*routeLabelSet)
 	}
 	fresh := newRouteLabelSet()
+	// A replaced idle label takes its per-route series with it
+	// (ADR-20261026143210 amendment 1).
+	metrics := h.metrics
+	fresh.onEvict = func(route string) { metrics.DropRouteSeries(appID, route) }
 	actual, _ := h.routeSets.LoadOrStore(appID, fresh)
 	return actual.(*routeLabelSet)
 }
@@ -9615,15 +9631,37 @@ func publicWakeFailure(p *api.Problem) (*api.Problem, bool) {
 	return nil, false
 }
 
-// logWakeFailure keeps the detail publicWakeFailure withholds from visitors.
+// logWakeFailure keeps the detail publicWakeFailure withholds from visitors,
+// and the cause of an error writeWakeError answers with a bare "wake failed":
+// that 503 otherwise leaves no record of why (container qualification
+// 2026-10-27: a public-routing wake failed in 17 ms with nothing logged).
 func (h *Handler) logWakeFailure(appID string, err error) {
+	if h.log == nil || err == nil {
+		return
+	}
 	var prob *api.Problem
-	if h.log == nil || !errors.As(err, &prob) {
+	if !errors.As(err, &prob) {
+		if unclassifiedWakeError(err) && !errors.Is(err, context.Canceled) {
+			h.log.Warn("gateway: wake failed", "app_id", appID, "err", logsanitize.FieldAny(err))
+		}
 		return
 	}
 	if _, hidden := publicWakeFailure(prob); hidden {
 		h.log.Warn("gateway: wake failed", "app_id", appID, "code", prob.Code, "detail", logsanitize.Field(prob.Detail))
 	}
+}
+
+// unclassifiedWakeError reports an error writeWakeError has no answer for
+// but the generic "wake failed". Keep it in step with writeWakeError's cases.
+func unclassifiedWakeError(err error) bool {
+	for _, known := range []error{ErrConcurrencyQueueFull, ErrConcurrencyQueueWaitTimeout,
+		ErrConcurrencyQueueAdmissionUnavailable, ErrWakeQueueWaitTimeout, ErrQueueFull,
+		ErrWakeAdmissionQueueFull, ErrBootstrapAborted} {
+		if errors.Is(err, known) {
+			return false
+		}
+	}
+	return !isWakeConcurrencyDrop(err)
 }
 
 // fleetCapacityRetryAfterSeconds matches the gateway's own wake-queue

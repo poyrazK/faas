@@ -470,6 +470,7 @@ var routeExclude = map[string]bool{
 	"GET /login":                                                    true, // dashboard magic-link GET (HTML form, browser-only)
 	"POST /logout":                                                  true, // dashboard logout (HTML form, browser-only)
 	"GET /auth/verify":                                              true, // magic-link consume (legacy; PR #1 closed; kept for compat)
+	"POST /auth/verify":                                             true, // magic-link confirm page for a link reached from another site
 	"GET /oauth/callback":                                           true, // GitHub App install callback
 	"GET /oauth/code-callback":                                      true, // GitHub App user-to-server OAuth callback (PR-C)
 	"POST /v1/gitlab/connect":                                       true, // GitLab.com OAuth session + CSRF form
@@ -1510,6 +1511,16 @@ func strconvUnescape(s string) (string, error) {
 
 // --- Schemas parity --------------------------------------------------------
 
+// previewFieldExclude lists preview fields of public DTOs that stay out of
+// the spec until launch, by schema and JSON name.
+var previewFieldExclude = map[string]map[string]bool{
+	// ADR-20261027090010 §9: the automation agent step and agent trigger targets,
+	// behind the agents capability.
+	"WorkflowStepSpec":     {"agent": true},
+	"CreateTriggerRequest": {"agent": true},
+	"Trigger":              {"agent": true},
+}
+
 func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 	t.Helper()
 
@@ -1518,6 +1529,7 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", "data_api_connection_budget.go"),   // ADR-650 read-only shared database planning DTOs.
 		filepath.Join(root, "pkg", "api", "data_api_usage.go"),               // ADR-20261019102108 runtime usage reports and owner views.
 		filepath.Join(root, "pkg", "api", "data_api_access.go"),              // ADR-20261016151947 access settings for live reads without a token.
+		filepath.Join(root, "pkg", "api", "data_api_contract_tasks.go"),      // ADR-20261027123814 Data API contract tasks.
 		filepath.Join(root, "pkg", "api", "compose_healthcheck.go"),
 		filepath.Join(root, "pkg", "api", "compose_process.go"),   // ADR-1337 Compose process overrides for prebuilt images.
 		filepath.Join(root, "pkg", "api", "compose_resources.go"), // ADR-20261023120000 Compose deploy resources and replicas.
@@ -1936,6 +1948,7 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", "route_priority.go"),
 		filepath.Join(root, "pkg", "api", "route_awake.go"),
 		filepath.Join(root, "pkg", "api", "route_insights.go"),
+		filepath.Join(root, "pkg", "api", "debug_rollout.go"), // ADR-1447 amendment: rollout explanation + debug status
 	}
 	dtos, err := scanDTOs(files)
 	if err != nil {
@@ -2103,7 +2116,8 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 	}
 
 	// Per-schema: every JSON-named field must appear in the spec properties.
-	// Catches: field added to DTO but not to spec, renamed, etc.
+	// Catches: field added to DTO but not to spec, renamed, etc. Preview
+	// fields of public DTOs stay out of the spec until launch.
 	for name, fields := range dtos {
 		specBody, ok := spec.Schemas[name]
 		if !ok {
@@ -2115,7 +2129,7 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		}
 		var missing []string
 		for f := range fields {
-			if !propSet[f] {
+			if !propSet[f] && !previewFieldExclude[name][f] {
 				missing = append(missing, f)
 			}
 		}

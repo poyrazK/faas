@@ -179,8 +179,9 @@ func (s *server) resendWebhook(w http.ResponseWriter, r *http.Request) {
 		s.log.Error("resend_webhook.bounce_handler_failed",
 			"err", err, "delivery_id", logsanitize.Field(bounce.ProviderEventID))
 		s.releaseWebhookDelivery(r.Context(), webhookdedupe.ProviderResend, deliveryID)
+		logCustomerFailure(s.log, "Bounce handler failed", err)
 		api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError, api.CodeInternal,
-			"Bounce handler failed", err.Error()))
+			"Bounce handler failed", api.DetailServerFailure))
 		return
 	}
 	w.WriteHeader(http.StatusOK)

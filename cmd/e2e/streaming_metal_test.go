@@ -31,9 +31,11 @@ package e2e_test
 import (
 	"bufio"
 	"context"
+	"fmt"
 	"io"
 	"net/http"
 	"net/url"
+	"os"
 	"strconv"
 	"strings"
 	"testing"
@@ -242,19 +244,18 @@ func TestE2E_Streaming_Metal_TxBytesAccuracy(t *testing.T) {
 
 // TestE2E_Streaming_Metal_PlanMatrix covers AC #3: the per-plan
 // streaming cap matrix from spec §4.1. Free is locked to the legacy
-// 25 MB / 300 s buffered path and rejects streamed requests with
-// 413 streaming_not_available; Hobby+ unlocks the 100 MB / 900 s
+// 25 MB / 300 s buffered path; Hobby+ unlocks the 100 MB / 900 s
 // streaming path. The test deploys one app per plan and asserts:
 //
-//   - Free:    GET /payload?bytes=1048576 → 413 streaming_not_available
+//   - Free:    GET /payload?bytes=1048576 → 200 (buffered)
 //   - Hobby:   GET /payload?bytes=1048576 → 200
 //   - Pro:     GET /payload?bytes=1048576 → 200
 //   - Scale:   GET /payload?bytes=1048576 → 200
 //
-// The test uses a 1 MB payload — fits inside the buffered 25 MB
-// cap on Free so the platform returns 413 streaming_not_available
-// cleanly (the apid-side gate), not an upstream-side truncation.
-// The Hobby+ plans stream the full 1 MB.
+// The test uses a 1 MB payload. Free does not stream, but since issue
+// #995 / ADR-121 its responses are buffered up to the 25 MB
+// MaxResponseBodyBytesDefault and only a larger one gets 413, so the
+// 1 MB response arrives whole. The Hobby+ plans stream the full 1 MB.
 func TestE2E_Streaming_Metal_PlanMatrix(t *testing.T) {
 	if !metalAvailable(t) {
 		return
@@ -284,16 +285,22 @@ func TestE2E_Streaming_Metal_PlanMatrix(t *testing.T) {
 	e2etest.OverrideBuilderBase(t, builderBaseRef)
 	e2etest.OverrideDeployBase(t, registry.Host()+"/onebox-faas/deploy-base:latest")
 
-	h := e2etest.Start(t, pool, e2etest.DeployWake|e2etest.Builderd, []string{
-		"FAAS_GATEWAY_STREAMING=true",
-	}...)
+	// A Node source app fits Free's 256 MB layer cap only on the shared
+	// runner base (ADR-1500), which nodes enable with
+	// FAAS_SOURCE_APP_SHARED_RUNTIME; FAAS_E2E_SHARED_RUNTIME=1 runs it.
+	sharedRuntime := os.Getenv("FAAS_E2E_SHARED_RUNTIME") == "1"
+	harnessEnv := []string{"FAAS_GATEWAY_STREAMING=true"}
+	if sharedRuntime {
+		harnessEnv = append(harnessEnv, "FAAS_SOURCE_APP_SHARED_RUNTIME=1")
+	}
+	h := e2etest.Start(t, pool, e2etest.DeployWake|e2etest.Builderd, harnessEnv...)
 	defer h.DumpLogs(t)
 
 	plans := []struct {
 		plan       api.Plan
 		wantStatus int
 	}{
-		{api.PlanFree, http.StatusRequestEntityTooLarge}, // 413 streaming_not_available
+		{api.PlanFree, http.StatusOK}, // buffered under the 25 MB cap
 		{api.PlanHobby, http.StatusOK},
 		{api.PlanPro, http.StatusOK},
 		{api.PlanScale, http.StatusOK},
@@ -302,6 +309,9 @@ func TestE2E_Streaming_Metal_PlanMatrix(t *testing.T) {
 	for _, tc := range plans {
 		tc := tc
 		t.Run(string(tc.plan), func(t *testing.T) {
+			if tc.plan == api.PlanFree && !sharedRuntime {
+				t.Skip("a Node source app exceeds Free's 256 MB layer cap without the shared runtime (ADR-1500); set FAAS_E2E_SHARED_RUNTIME=1")
+			}
 			key := h.SeedAccount(context.Background(), tc.plan)
 			slug := "stream-matrix-" + string(tc.plan) + "-" + randHexSuffix()
 			// Issue #695 / ADR-080: Hobby/Pro/Scale now default to
@@ -309,6 +319,14 @@ func TestE2E_Streaming_Metal_PlanMatrix(t *testing.T) {
 			falsy := false
 			if got := postOK(t, h, key, "/v1/apps", api.CreateAppRequest{Slug: slug, Type: "app", RequireAuthn: &falsy}); got != 201 {
 				t.Fatalf("create app %q: status=%d", slug, got)
+			}
+			// Pro and Scale also default to public_auth_mode=bearer, which
+			// require_authn=false leaves on: open it, as the dev-loop test does.
+			if tc.plan.PublicAuthModeDefault() != api.AppPublicAuthModeOpen {
+				if body, status := doReq(t, h, key, http.MethodPatch, "/v1/apps/"+slug,
+					api.UpdateAppRequest{PublicAuth: &api.PublicAuthBlock{Mode: api.AppPublicAuthModeOpen}}); status != http.StatusOK {
+					t.Fatalf("open public auth: status=%d body=%s", status, body)
+				}
 			}
 			appID := mustGetAppID(t, h, key, slug)
 
@@ -337,14 +355,6 @@ func TestE2E_Streaming_Metal_PlanMatrix(t *testing.T) {
 			if httpStatus != tc.wantStatus {
 				t.Errorf("plan=%s: status=%d, want %d body=%q", tc.plan, httpStatus, tc.wantStatus, string(body))
 			}
-			if tc.plan == api.PlanFree {
-				// Free path returns the structured problem; assert
-				// the code is the streaming-not-available gate.
-				if !strings.Contains(string(body), "streaming_not_available") &&
-					!strings.Contains(string(body), "plan_streaming_not_allowed") {
-					t.Errorf("Free response missing plan-streaming code; body=%s", string(body))
-				}
-			}
 		})
 	}
 }
@@ -352,12 +362,12 @@ func TestE2E_Streaming_Metal_PlanMatrix(t *testing.T) {
 // TestE2E_Streaming_Metal_QuotaNonCounting covers AC #5: streamed
 // responses do NOT consume the per-app rate-limit bucket. The
 // limiter's Allow call happens once per request (not per flush),
-// so the bucket should drop by exactly the number of requests,
-// not by the number of flushes. AC #5 pins the contract: 3
-// streamed requests on Hobby should decrement
-// X-RateLimit-Remaining by exactly 3, not by 30 (the per-flush
-// count for a 30-chunk stream), proving the per-flush hook is
-// not miswired to call Limiter.Allow.
+// so the bucket should drop by the number of requests, not by the
+// number of flushes. Three concurrent five-flush streams on a
+// 1 token/s bucket must take three tokens, less the measured
+// refill, never the fifteen extra a per-flush Allow would take.
+// It used to expect an exact drop of 3 on the plan's 20 tokens/s
+// bucket, which refills during every stream, so it saw 0.
 //
 // The test is the PR-D tripwire for the R7 risk in ADR-047.
 func TestE2E_Streaming_Metal_QuotaNonCounting(t *testing.T) {
@@ -420,25 +430,47 @@ func TestE2E_Streaming_Metal_QuotaNonCounting(t *testing.T) {
 		t.Fatalf("no parked instance: %v", err)
 	}
 
+	// The bucket refills at the plan's rate (Hobby: 20 tokens/s), so at the
+	// plan default it is full again after every 1 s stream and no drop is
+	// visible. Slow it to 1 token/s, the smallest override, so refill over
+	// the measurement stays far below a per-flush Allow's extra tokens.
+	const rps, burst = 1, 50
+	rpsOverride, burstOverride := rps, burst
+	if body, status := doReq(t, h, key, http.MethodPatch, "/v1/apps/"+slug,
+		api.UpdateAppRequest{RequestRateLimitRPS: &rpsOverride, RequestRateLimitBurst: &burstOverride}); status != http.StatusOK {
+		t.Fatalf("lower app rate limit: status=%d body=%s", status, body)
+	}
+
 	client := h.HTTPClient()
-	// 3 chunks of 1024 bytes each at 500 ms — three streamed
-	// requests lasting ~1.5 s each. The X-RateLimit-Remaining
-	// header must drop by exactly 3 across the three requests.
-	target := gatewayAppURL(h, slug) + "/sse?chunks=3&size=1024&interval=500"
+	host := slug + ".apps.test.example"
+	// 5 chunks of 1024 bytes each at 200 ms: a ~1 s stream with five
+	// flushes. A per-flush Allow would take 15 extra tokens across three.
+	const streams, chunks = 3, 5
+	target := gatewayAppURL(h, slug) + "/sse?chunks=" + strconv.Itoa(chunks) + "&size=1024&interval=200"
 	if err := e2etest.WaitForHTTPReady(context.Background(), t, client, target, 10*time.Second); err != nil {
 		t.Fatalf("gateway not ready: %v", err)
 	}
+	// The gateway applies the override once its app cache refreshes.
+	deadline := time.Now().Add(30 * time.Second)
+	for readRateLimit(t, client, target, host).limit != burst {
+		if time.Now().After(deadline) {
+			t.Fatalf("X-RateLimit-Limit never became the %d-token override", burst)
+		}
+		time.Sleep(time.Second)
+	}
 
-	// Read the first request's pre-flight X-RateLimit-Remaining
-	// (the bucket is fresh), then run three sequential requests
-	// and read the post-flight X-RateLimit-Remaining on the
-	// fourth; the drop across the three requests must be exactly 3.
-	pre := readRateLimitRemaining(t, client, target, slug+".apps.test.example")
-	runN(t, client, target, slug+".apps.test.example", 3)
-	post := readRateLimitRemaining(t, client, target, slug+".apps.test.example")
-	drop := pre - post
-	if drop != 3 {
-		t.Errorf("X-RateLimit-Remaining drop = %d after 3 streamed requests; want 3 (a per-flush Allow would show 30-ish here)", drop)
+	// Each probe takes one token and reports the bucket after it. Between
+	// them the three concurrent streams take one token each, so without
+	// refill the drop is streams+1; refill over the window can only lower it.
+	pre := readRateLimit(t, client, target, host)
+	started := time.Now()
+	runConcurrent(t, client, target, host, streams)
+	post := readRateLimit(t, client, target, host)
+	refill := int(time.Since(started).Seconds()*rps) + 1 // +1: Peek floors the fraction
+	drop, most := pre.remaining-post.remaining, streams+1
+	if drop > most || drop < most-refill {
+		t.Errorf("X-RateLimit-Remaining drop = %d after %d streamed requests; want %d..%d (refill %d; a per-flush Allow would take %d more)",
+			drop, streams, most-refill, most, refill, streams*chunks)
 	}
 }
 
@@ -678,66 +710,71 @@ func doGetWithHostTruncated(t *testing.T, c *http.Client, urlStr, host string, t
 	return body, resp.StatusCode
 }
 
-// readRateLimitRemaining sends a single GET to the streamed
-// endpoint and extracts the X-RateLimit-Remaining header. Returns
-// -1 on missing / non-numeric header so the caller can detect a
-// regression that drops the limiter's wire surface.
-func readRateLimitRemaining(t *testing.T, c *http.Client, urlStr, host string) int {
+// rateLimitHeaders is the per-app bucket a response reported.
+type rateLimitHeaders struct{ limit, remaining int }
+
+// readRateLimit sends a single GET to the streamed endpoint and returns its
+// X-RateLimit-Limit and X-RateLimit-Remaining. A missing or non-numeric
+// header fails the test: the limiter's wire surface regressed.
+func readRateLimit(t *testing.T, c *http.Client, urlStr, host string) rateLimitHeaders {
 	t.Helper()
-	parsed, err := url.Parse(urlStr)
-	if err != nil {
-		t.Fatalf("parse url: %v", err)
-	}
-	req, err := http.NewRequest(http.MethodGet, parsed.String(), nil)
+	req, err := http.NewRequest(http.MethodGet, urlStr, nil)
 	if err != nil {
 		t.Fatalf("new request: %v", err)
 	}
 	req.Host = host
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	req = req.WithContext(ctx)
-	resp, err := c.Do(req)
+	resp, err := c.Do(req.WithContext(ctx))
 	if err != nil {
 		t.Fatalf("GET: %v", err)
 	}
 	defer resp.Body.Close()
-	io.Copy(io.Discard, resp.Body)
-	val := resp.Header.Get("X-RateLimit-Remaining")
-	if val == "" {
-		return -1
+	_, _ = io.Copy(io.Discard, resp.Body)
+	limit, limitErr := strconv.Atoi(resp.Header.Get("X-RateLimit-Limit"))
+	remaining, remainingErr := strconv.Atoi(resp.Header.Get("X-RateLimit-Remaining"))
+	if resp.StatusCode != http.StatusOK || limitErr != nil || remainingErr != nil {
+		t.Fatalf("GET status=%d X-RateLimit-Limit=%q X-RateLimit-Remaining=%q; want 200 with both headers",
+			resp.StatusCode, resp.Header.Get("X-RateLimit-Limit"), resp.Header.Get("X-RateLimit-Remaining"))
 	}
-	n, err := strconv.Atoi(val)
-	if err != nil {
-		return -1
-	}
-	return n
+	return rateLimitHeaders{limit: limit, remaining: remaining}
 }
 
-// runN fires N concurrent streamed requests and waits for all of
-// them to finish. The test uses sequential issuing inside a
-// goroutine so the limiter's Allow calls are spaced by the
-// request round-trip — the load-bearing assertion is the
-// X-RateLimit-Remaining drop, not the concurrency level.
-func runN(t *testing.T, c *http.Client, urlStr, host string, n int) {
+// runConcurrent fires n streamed requests at once and reads each to the end,
+// so the limiter sees them within one refill window.
+func runConcurrent(t *testing.T, c *http.Client, urlStr, host string, n int) {
 	t.Helper()
+	errs := make(chan error, n)
 	for i := 0; i < n; i++ {
-		parsed, err := url.Parse(urlStr)
-		if err != nil {
-			t.Fatalf("parse url: %v", err)
-		}
-		req, err := http.NewRequest(http.MethodGet, parsed.String(), nil)
-		if err != nil {
-			t.Fatalf("new request: %v", err)
-		}
-		req.Host = host
-		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
-		defer cancel()
-		req = req.WithContext(ctx)
-		resp, err := c.Do(req)
-		if err != nil {
-			t.Fatalf("GET %d: %v", i, err)
-		}
-		io.Copy(io.Discard, resp.Body)
-		resp.Body.Close()
+		go func() {
+			errs <- streamOnce(c, urlStr, host)
+		}()
 	}
+	for i := 0; i < n; i++ {
+		if err := <-errs; err != nil {
+			t.Fatalf("streamed GET: %v", err)
+		}
+	}
+}
+
+func streamOnce(c *http.Client, urlStr, host string) error {
+	req, err := http.NewRequest(http.MethodGet, urlStr, nil)
+	if err != nil {
+		return err
+	}
+	req.Host = host
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	resp, err := c.Do(req.WithContext(ctx))
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if _, err := io.Copy(io.Discard, resp.Body); err != nil {
+		return err
+	}
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("status %d", resp.StatusCode)
+	}
+	return nil
 }

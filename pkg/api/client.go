@@ -2991,11 +2991,9 @@ func (c *Client) GetCron(ctx context.Context, id string) (CronResponse, error) {
 	return out, c.do(ctx, "GET", "/v1/crons/"+id, nil, &out)
 }
 
-// ListCrons returns every cron on the account when slug is empty,
-// or every cron for the given app when slug is non-empty. The slug
-// filter is added to the wire only when non-empty so the request
-// matches the spec (zero documented parameters) and the server-side
-// listCrons handler returns 200 with the full account-scoped list.
+// ListCrons returns every cron on the account when slug is empty, or
+// every cron of the app named by slug (a slug or id). The ?slug= filter
+// is sent only when slug is non-empty.
 func (c *Client) ListCrons(ctx context.Context, slug string) ([]CronResponse, error) {
 	path := "/v1/crons"
 	if slug != "" {
@@ -7434,6 +7432,29 @@ func (c *Client) GetAppDebugRunning(ctx context.Context, slug, since string) (De
 	}
 	if len(q) > 0 {
 		path += "?" + q.Encode()
+	}
+	return out, c.do(ctx, "GET", path, nil, &out)
+}
+
+// GetAppDebugRollout explains why the app's newest canary rollout was
+// rolled back or is held, with the routes and requests behind the decision.
+// deploymentID selects a specific deployment; empty picks the newest rollout.
+func (c *Client) GetAppDebugRollout(ctx context.Context, slug, deploymentID string) (DebugRolloutExplanation, error) {
+	var out DebugRolloutExplanation
+	path := "/v1/apps/" + slug + "/debug/rollout"
+	if deploymentID != "" {
+		path += "?deployment_id=" + url.QueryEscape(deploymentID)
+	}
+	return out, c.do(ctx, "GET", path, nil, &out)
+}
+
+// GetAppDebugStatus summarizes the app's health, release, open regressions,
+// and recent failures over since (default 1h).
+func (c *Client) GetAppDebugStatus(ctx context.Context, slug, since string) (DebugStatusResponse, error) {
+	var out DebugStatusResponse
+	path := "/v1/apps/" + slug + "/debug/status"
+	if since != "" {
+		path += "?since=" + url.QueryEscape(since)
 	}
 	return out, c.do(ctx, "GET", path, nil, &out)
 }

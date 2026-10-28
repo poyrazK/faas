@@ -254,12 +254,20 @@ func (s *server) getManagedPostgresUsage(w http.ResponseWriter, r *http.Request,
 		managedPostgresPlanDenied(w, acct.Plan, "managed PostgreSQL usage is not available for this plan")
 		return
 	}
-	summary, overage, err := s.managedPostgresUsageFor(r.Context(), acct, acct.ResourceOwnerID(), limits)
+	subject := acct.ResourceOwnerID()
+	summary, overage, err := s.managedPostgresUsageFor(r.Context(), acct, subject, limits)
 	if err != nil {
 		managedPostgresProblem(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, managedPostgresUsageView(summary, limits, s.managedPostgresCapMode, overage))
+	view := managedPostgresUsageView(summary, limits, s.managedPostgresCapMode, overage)
+	if view.ComputeCapState == api.ManagedPostgresComputeCapSuspended {
+		if view.ComputeSuspendedAt, err = s.managedPostgres.CapSuspendedAt(r.Context(), subject, time.Now().UTC()); err != nil {
+			managedPostgresProblem(w, err)
+			return
+		}
+	}
+	writeJSON(w, http.StatusOK, view)
 }
 
 func managedPostgresUsageOperatorView(accountID string, summary managedpostgres.UsageSummary, limits api.ManagedPostgresPlanLimits, capMode managedpostgres.CapEnforcementMode, overage bool) (api.ManagedPostgresUsageOperatorResponse, error) {
@@ -480,6 +488,10 @@ func (s *server) createManagedPostgresBinding(w http.ResponseWriter, r *http.Req
 	// Application Auth is a dark launch: without it the mode is unknown.
 	if managedpostgres.CredentialAccess(req.Access) == managedpostgres.CredentialAuth && !s.applicationAuthEnabled(flagSubject(r, acct)) {
 		managedPostgresProblem(w, managedpostgres.ErrInvalid)
+		return
+	}
+	if problem := s.dataAPIAccessProblem(appFlagSubject(acct, app), managedpostgres.CredentialAccess(req.Access), `access "data_api"`); problem != nil {
+		api.WriteProblem(w, problem)
 		return
 	}
 	binding, err := s.managedPostgresBindings.Create(r.Context(), managedpostgres.CreateBindingRequest{AccountID: app.AccountID, DatabaseAccountID: acct.ID, DatabaseID: r.PathValue("id"), AppID: req.AppID, Scope: req.Scope, EnvironmentKey: req.EnvironmentKey, Access: managedpostgres.CredentialAccess(req.Access)})

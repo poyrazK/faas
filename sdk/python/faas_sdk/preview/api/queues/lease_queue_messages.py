@@ -109,8 +109,8 @@ def sync_detailed(
     Args:
         slug (str):
         queue (str):
-        body (QueueLeaseRequest | Unset): ADR-1140 pull lease. Zero values lease one message for
-            the default visibility timeout (30s) and return at once.
+        body (QueueLeaseRequest | Unset): Pull lease. Zero values lease one message for the
+            default visibility timeout (30s) and return at once.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -155,8 +155,8 @@ def sync(
     Args:
         slug (str):
         queue (str):
-        body (QueueLeaseRequest | Unset): ADR-1140 pull lease. Zero values lease one message for
-            the default visibility timeout (30s) and return at once.
+        body (QueueLeaseRequest | Unset): Pull lease. Zero values lease one message for the
+            default visibility timeout (30s) and return at once.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -196,8 +196,8 @@ async def asyncio_detailed(
     Args:
         slug (str):
         queue (str):
-        body (QueueLeaseRequest | Unset): ADR-1140 pull lease. Zero values lease one message for
-            the default visibility timeout (30s) and return at once.
+        body (QueueLeaseRequest | Unset): Pull lease. Zero values lease one message for the
+            default visibility timeout (30s) and return at once.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -240,8 +240,8 @@ async def asyncio(
     Args:
         slug (str):
         queue (str):
-        body (QueueLeaseRequest | Unset): ADR-1140 pull lease. Zero values lease one message for
-            the default visibility timeout (30s) and return at once.
+        body (QueueLeaseRequest | Unset): Pull lease. Zero values lease one message for the
+            default visibility timeout (30s) and return at once.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

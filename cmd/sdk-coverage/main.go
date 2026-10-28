@@ -818,6 +818,7 @@ var methodRouteMap = map[string]string{
 	"POST /v1/apps/{slug}/profiles/captures":           "CreateProfileCapture",
 	"GET /v1/apps/{slug}/profiles/captures":            "ListProfileCaptures",
 	"GET /v1/apps/{slug}/profiles/captures/{id}":       "GetProfileCapture",
+	"DELETE /v1/apps/{slug}/profiles/captures/{id}":    "DeleteProfileCapture",
 	"GET /v1/apps/{slug}/profiles/captures/{id}/view":  "GetProfileCaptureView",
 	"GET /v1/apps/{slug}/profiles/captures/{id}/diff":  "DiffProfileCaptures",
 	"GET /v1/apps/{slug}/profiles/captures/{id}/pprof": "DownloadProfileCapture",
@@ -1425,6 +1426,8 @@ var methodRouteMap = map[string]string{
 	"GET /v1/postgres/databases/{id}/connection-budget":                               "GetManagedPostgresConnectionBudget",
 	"GET /v1/apps/{slug}/data-api/connection-budget":                                  "GetAppDataAPIConnectionBudgets",
 	"GET /v1/apps/{slug}/data-api/usage":                                              "GetAppDataAPIUsage",
+	"POST /v1/apps/{slug}/data-api/contract-tasks":                                    "CreateDataAPIContractTask",
+	"GET /v1/apps/{slug}/data-api/contract-tasks/{id}":                                "GetDataAPIContractTask",
 	"POST /v1/postgres/cutovers/{id}/verify":                                          "VerifyManagedPostgresCutover",
 	"POST /v1/postgres/cutovers/{id}/cancel":                                          "CancelManagedPostgresCutover",
 	"GET /v1/apps/{slug}/logs":                                                        "StreamAppLogs",
@@ -2429,6 +2432,8 @@ var methodRouteMap = map[string]string{
 	"GET /v1/apps/{slug}/debug/coverage":                   "GetAppDebugCoverage",
 	"GET /v1/apps/{slug}/debug/running":                    "GetAppDebugRunning",
 	"GET /v1/apps/{slug}/debug/critical-paths":             "GetAppDebugCriticalPaths",
+	"GET /v1/apps/{slug}/debug/rollout":                    "GetAppDebugRollout",
+	"GET /v1/apps/{slug}/debug/status":                     "GetAppDebugStatus",
 
 	// ADR-127 / PR-B — production debugger consumer surface.
 	// Same rationale as the PR-A request list: drop the slug from

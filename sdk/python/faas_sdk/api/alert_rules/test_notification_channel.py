@@ -66,7 +66,7 @@ def sync_detailed(
     *,
     client: AuthenticatedClient | Client,
 ) -> Response[Problem | TestNotificationChannelResponse]:
-    """Send a test notification through a channel (ADR-749)
+    """Send a test notification through a channel
 
      Sends a clearly marked test message and records the outcome on the channel. Returns 200 whether or
     not the destination accepted it; delivered and error say which.
@@ -98,7 +98,7 @@ def sync(
     *,
     client: AuthenticatedClient | Client,
 ) -> Problem | TestNotificationChannelResponse | None:
-    """Send a test notification through a channel (ADR-749)
+    """Send a test notification through a channel
 
      Sends a clearly marked test message and records the outcome on the channel. Returns 200 whether or
     not the destination accepted it; delivered and error say which.
@@ -125,7 +125,7 @@ async def asyncio_detailed(
     *,
     client: AuthenticatedClient | Client,
 ) -> Response[Problem | TestNotificationChannelResponse]:
-    """Send a test notification through a channel (ADR-749)
+    """Send a test notification through a channel
 
      Sends a clearly marked test message and records the outcome on the channel. Returns 200 whether or
     not the destination accepted it; delivered and error say which.
@@ -155,7 +155,7 @@ async def asyncio(
     *,
     client: AuthenticatedClient | Client,
 ) -> Problem | TestNotificationChannelResponse | None:
-    """Send a test notification through a channel (ADR-749)
+    """Send a test notification through a channel
 
      Sends a clearly marked test message and records the outcome on the channel. Returns 200 whether or
     not the destination accepted it; delivered and error say which.

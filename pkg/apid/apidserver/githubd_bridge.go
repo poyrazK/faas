@@ -23,6 +23,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -39,6 +40,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/apid/approval"
 	"github.com/onebox-faas/faas/pkg/apid/freeze"
 	"github.com/onebox-faas/faas/pkg/apid/release"
+	"github.com/onebox-faas/faas/pkg/gregalemanifest"
 	"github.com/onebox-faas/faas/pkg/grpcerr"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/wire"
@@ -304,9 +306,16 @@ func (g *githubdBridge) EnqueueBuild(ctx context.Context, req *githubdpb.Enqueue
 		}
 		return nil, status.Error(code, "EnqueueBuild: "+standardFailure.Detail)
 	}
+	if err := bridgeSourcePolicy(g.log, req.SourcePath, app, acct.Plan); err != nil {
+		return nil, err
+	}
 	manifest, manifestProblem := loadSourceRefManifest(req.SourcePath, app, acct.Plan)
 	if manifestProblem != nil {
 		return nil, status.Errorf(codes.InvalidArgument, "EnqueueBuild: source manifest: %s", manifestProblem.Detail)
+	}
+	dockerfilePath, dockerfileBuild, buildErr := bridgeDockerfileBuild(req.SourcePath, app, manifest)
+	if buildErr != nil {
+		return nil, buildErr
 	}
 	releaseCommand, releaseProblem := resolveSourceReleaseCommand(req.SourcePath, app, manifest)
 	if releaseProblem != nil {
@@ -395,7 +404,8 @@ func (g *githubdBridge) EnqueueBuild(ctx context.Context, req *githubdpb.Enqueue
 		ImageCommand:         app.Manifest.ProjectImageCommand,
 		ImageHealthcheck:     app.Manifest.ProjectImageHealthcheck,
 		ImageProcess:         app.Manifest.ProjectImageProcess,
-		DockerfileBuild:      app.Manifest.DockerfileBuild,
+		DockerfilePath:       dockerfilePath,
+		DockerfileBuild:      dockerfileBuild,
 		FullRootfsAllowAuto:  api.FullRootfsAllowAutoDefault[acct.Plan],
 		SourcePath:           req.SourcePath,
 		SourceBytes:          req.SourceBytes,
@@ -513,6 +523,53 @@ func (g *githubdBridge) newDeploymentActivity(ctx context.Context, acct state.Ac
 		ResourceLabel: app.Slug, AppID: &appID, SourceType: "deployment.requested",
 		Data: activityData(map[string]any{"source": "github", "repo": req.RepoFullName, "branch": req.Branch, "phase": "requested"}),
 	}
+}
+
+// bridgeSourcePolicy gives a push the accept-time source policy a CLI upload
+// gets. The GitHub path used to skip both scans, so a repository refused by
+// `gregale deploy` still deployed on push (ADR-20261026152731). A Compose
+// image service builds nothing from the source and is skipped. A scan that
+// could not run (a 5xx problem) is Unavailable so githubd's delivery worker
+// retries it; a refused source is InvalidArgument.
+func bridgeSourcePolicy(log *slog.Logger, sourcePath string, app state.App, plan api.Plan) error {
+	if app.Manifest.ProjectImage != "" {
+		return nil
+	}
+	prob := scanSourceTarballSecretsLogged(log, sourcePath, api.MustLimitsFor(plan))
+	detail := ""
+	if prob != nil {
+		detail = "secret scan: " + secretScanProblemSummary(prob)
+	} else if prob = scanForStatefulShapeAtRoot(sourcePath, false, app.RootDir); prob != nil {
+		detail = "stateless contract: " + prob.Detail
+	}
+	if prob == nil {
+		return nil
+	}
+	code := codes.InvalidArgument
+	if prob.Status >= http.StatusInternalServerError {
+		code = codes.Unavailable
+	}
+	return status.Errorf(code, "EnqueueBuild: %s", detail)
+}
+
+// bridgeDockerfileBuild picks a push's Dockerfile build: a Compose build
+// recorded on a project app, or a gregale.yaml build: section
+// (ADR-20261026152731). Declaring both is refused rather than guessed.
+func bridgeDockerfileBuild(sourcePath string, app state.App, manifest *gregalemanifest.Manifest) (string, *api.DockerfileBuildOptions, error) {
+	if app.Manifest.ProjectImage != "" {
+		return "", app.Manifest.DockerfileBuild, nil
+	}
+	build, ok, problem := resolveSourceDockerfileBuild(sourcePath, app.RootDir, app, manifest)
+	if problem != nil {
+		return "", nil, status.Errorf(codes.InvalidArgument, "EnqueueBuild: build: %s", problem.Detail)
+	}
+	if !ok {
+		return "", app.Manifest.DockerfileBuild, nil
+	}
+	if app.Manifest.BuildDockerfile != "" || !app.Manifest.DockerfileBuild.IsZero() {
+		return "", nil, status.Error(codes.InvalidArgument, "EnqueueBuild: build: declare the Dockerfile build in the Compose file or in gregale.yaml, not both")
+	}
+	return build.path, build.options, nil
 }
 
 func (g *githubdBridge) recordDeploymentActivity(ctx context.Context, acct state.Account, app state.App, res apidsource.EnqueueResult, req *githubdpb.EnqueueBuildRequest) {

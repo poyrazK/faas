@@ -346,6 +346,78 @@ instrumented process and its snapshots, for a capture taken rarely. Also
 rejected: keeping the inspector open permanently, which would expose a
 debugger on loopback to any SSRF in the application.
 
+## Amendment: capture storage per account
+
+Captures keep their profiles in Postgres: up to 3 MiB each, 60 per account per
+hour, for 7 days. Those bounds alone let one account store about 29.5 GiB, and
+nothing bounded the total. `ProfilingLimits.CaptureStorageBytes` now bounds it
+per plan: 256 MiB on Hobby, 1 GiB on Pro and 4 GiB on Scale.
+
+A capture is queued only if the stored profiles of the account's unexpired
+captures, plus `ProfileCaptureMaxProfileBytes` (3 MiB) for every capture still
+queued or running and for the new one, fit. Reserving the largest size keeps
+the account under its limit whatever the captures in flight return.
+Otherwise the request fails with 429 `quota_exhausted` with `limit_bytes` and
+`observed_bytes`, and an automatic capture is skipped with a reason. The
+store checks it in the queueing transaction under a per-account advisory lock,
+which also serializes the hourly quota across the account's apps; both
+manual and automatic captures pass the plan's limit in, since the plan of an
+organization's app is the organization's. No column or migration is added:
+the stored bytes are summed from `profile_capture_data`.
+
+## Amendment: automatic captures beside manual ones (GA review, 2026-10-27)
+
+A review before GA found that automatic captures (memory pressure, slow
+requests, CPU saturation) could lock customers out of their own captures, and
+that customers had no way to stop or remove them:
+
+- **Hourly quota.** Up to nine automatic captures per app per hour counted
+  against the account's 60 per hour, so an account with seven busy apps could
+  start no capture itself. Manual and automatic captures now have separate
+  hourly quotas: 60 manual (`ProfileCaptureMaxPerAccountHour`) and 30
+  automatic (`ProfileCaptureAutomaticMaxPerAccountHour`) per account.
+- **Storage.** Automatic captures could fill the account's capture storage,
+  after which every manual capture failed with 429 until captures expired.
+  Automatic captures may now use at most
+  `ProfileCaptureAutomaticStoragePercent` (50%) of it, counting their stored
+  profiles and their in-flight reservations. When their share is full, a new
+  automatic capture deletes the oldest finished automatic captures it needs
+  room for (at most `ProfileCaptureMaxRotated`), never one linked to an OOM
+  kill, in the queueing transaction; if that is not enough, it is skipped and
+  nothing is deleted. Manual captures still may use the whole limit.
+- **Queue.** Automatic and manual captures shared one first-in, first-out
+  queue with four workers per scheduler, so manual captures could wait behind
+  automatic ones until they expired as interrupted. Claims now take manual
+  captures first.
+- **Opt-out.** `profiling.automatic_captures: false` turns automatic captures
+  off for an app; unset means on. schedd reads it from the app's current
+  settings when a trigger fires, so it applies without a redeploy. imaged
+  strips it from the guest manifest: guests never act on it.
+- **Deletion.** `DELETE /v1/apps/{slug}/profiles/captures/{id}` (deploy-write,
+  audited as `profile_capture.deleted`; `gregale debug captures <slug> <id>
+  --delete`) deletes a capture and its profiles in any status. A deleted
+  queued capture is never claimed; a running one finishes into nothing.
+
+Captures without a recorded trigger predate automatic captures and count as
+manual. No column or migration is added.
+
+The same review fixed four defects on the capture path:
+
+- vmmd now resumes a quiet-paused instance (ADR-1151) before contacting its
+  guest, as forwards do. A paused guest could not answer, and the capture
+  timed out after its window.
+- A guest without collectors now reports "this deployment has no profile
+  collectors; redeploy the app to enable on-demand captures": collectors are
+  stamped at deploy time, so deployments made before the rollout or a plan
+  upgrade need a redeploy.
+- schedd drops profiles the store cannot hold (counted in `dropped`), retries
+  a transient store error when a capture finishes, and finishes a ready
+  capture whose profiles still cannot be stored as failed with a reason. Before,
+  the capture stayed `capturing` until it expired as interrupted.
+- profiled's upload replay cache (ADR-819) is shared by every tenant on a
+  node. At its bound it refused every upload; it now evicts its oldest entries
+  (`ProfileRetryCacheMaxEntries`), so one tenant's volume cannot block another's.
+
 ## Rejected alternatives
 
 - **apid → schedd gRPC.** Violates the ownership rule (apid records intent in

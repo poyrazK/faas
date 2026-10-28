@@ -6,7 +6,7 @@ Internal events (publishing, `event_triggers` subscriptions, acknowledgments
 and delivery controls) are a preview capability. Until it is released to your
 account, a deploy that declares `event_triggers` answers `403
 capability_not_released`. Run `gregale previews list` to see whether you can
-join it with `gregale previews join <key>`, or contact support for access.
+join it with `gregale feature join <key>`, or contact support for access.
 
 ## Start a workflow on a schedule
 
@@ -52,11 +52,11 @@ workflow executor and enable `FAAS_WORKFLOWS_ENABLED=1` on both `apid` and
 `schedd`. Inspect the configuration and latest scheduling outcome with:
 
 ```bash
-gregale workflows schedules --app APP_SLUG
+gregale workflow schedules --app APP_SLUG
 gregale --json workflows schedules --app APP_SLUG
-gregale workflows list --app APP_SLUG
-gregale workflows steps RUN_ID
-gregale workflows attempts RUN_ID STEP_NAME
+gregale workflow list --app APP_SLUG
+gregale workflow steps RUN_ID
+gregale workflow attempts RUN_ID STEP_NAME
 ```
 
 The corresponding inspection API is
@@ -78,7 +78,7 @@ workflow, including a manual start, skips that minute. `allow` permits overlap
 within the app's existing concurrent-run quota. Quota refusal also skips the
 minute. A skipped occurrence is consumed; freeing capacity later does not
 retry it. You can still start the workflow manually with
-`gregale workflows run daily_report --app APP_SLUG --input '{"report":"daily"}'`.
+`gregale workflow run daily_report --app APP_SLUG --input '{"report":"daily"}'`.
 
 Only the live default deployment schedules work. Preview deployments do not
 create background copies. A new or redeployed schedule first arms when the
@@ -211,7 +211,7 @@ separate. If a receiver is disabled or invalid when Gregale accepts the result,
 the workflow step fails after the business transaction has committed. Configure
 the receiver before dispatch and make business writes safe to reconcile by the
 stable operation ID. Inspect delivery status with
-`gregale workflows attempts <run_id> <step_name>`; each attempt includes its
+`gregale workflow attempts <run_id> <step_name>`; each attempt includes its
 effect and delivery IDs, status, retries, and last error.
 
 ### Recover from a failed step
@@ -255,15 +255,15 @@ step.
 Deploy the manifest, then start a run with:
 
 ```bash
-gregale workflows run order_followup --app APP_SLUG --input '{"order_id":"ord_123"}'
+gregale workflow run order_followup --app APP_SLUG --input '{"order_id":"ord_123"}'
 ```
 
-Inspect the latest step summary with `gregale workflows steps RUN_ID`. To see
+Inspect the latest step summary with `gregale workflow steps RUN_ID`. To see
 each handler invocation or condition-check poll—including its outcome, HTTP
 status, start/finish times, error, and next scheduled attempt—use:
 
 ```bash
-gregale workflows attempts RUN_ID STEP_NAME
+gregale workflow attempts RUN_ID STEP_NAME
 ```
 
 The equivalent read-only API is
@@ -274,7 +274,7 @@ create executor-attempt records.
 For a terminal run with one failed or dead HTTP step, retry that step in place:
 
 ```bash
-gregale workflows retry RUN_ID STEP_NAME
+gregale workflow retry RUN_ID STEP_NAME
 ```
 
 This preserves the run ID, definition snapshot, resolved input, and existing
@@ -403,76 +403,23 @@ longer belongs in a job.
 ```bash
 gregale invoke --async --payload @payload.json APP_ID
 gregale invoke --async --on-success-webhook WEBHOOK_ID --on-failure-webhook DLQ_WEBHOOK_ID APP_ID
-gregale jobs run nightly --tasks 10
-gregale crons add --app APP_ID --schedule "0 * * * *" --path /jobs/nightly
-gregale crons add --app APP_ID --schedule "*/15 * * * *" --command bin/maintenance --arg=--compact
-gregale jobs add nightly-export --image registry.example/exporter:v1 --schedule "0 3 * * *" --timezone Europe/Istanbul
+gregale job run nightly --tasks 10
+gregale cron create --app APP_ID --schedule "0 * * * *" --path /jobs/nightly
+gregale cron create --app APP_ID --schedule "*/15 * * * *" --command bin/maintenance --arg=--compact
+gregale job create nightly-export --image registry.example/exporter:v1 --schedule "0 3 * * *" --timezone Europe/Istanbul
 ```
 
 Use a scheduled job when work should run to completion in an isolated job
-environment; use an HTTP app cron when the schedule should make a request to an
-app route. Use a command cron when a recurring task needs the app's deployment
-environment without an HTTP endpoint:
-
-```bash
-gregale crons add --app APP_ID --schedule "0 2 * * *" \
-  --command bin/rebuild-index --arg=--incremental --timezone Europe/Istanbul
-gregale crons add --app APP_ID --schedule "0 4 * * 0" \
-  --command "bin/cleanup --older-than 30d" --shell
-gregale crons runs CRON_ID
-```
-
-Command crons create one deployment-attached app task for each scheduled
-occurrence and select the app's currently live deployment at fire time, so a
-later deployment automatically supplies the new command environment. The
-command runs with a 10-minute timeout and 1 MiB output limit by default; use
-`--timeout-seconds` and `--max-output-bytes` to adjust them. `--arg` is
-repeatable and preserves argument boundaries. `--shell` instead treats the
-single `--command` value as a shell string and cannot be combined with `--arg`.
-Use `--skip-if-running` to skip a firing while an earlier command task remains
-active. By default command failures are not retried. Set `--retry-max` to allow
-up to five additional attempts after a command fails or times out; retries use
-exponential backoff from `--retry-backoff-seconds` (default 60 seconds, capped
-at 24 hours). A cron run remains one logical history row while it waits for a
-retry, and its task receipt reports the attempt count and next retry time.
-Failure rules can classify an exit code or a structured `outcome_code` written
-to `GREGALE_OUTPUT_MANIFEST_PATH`; a mapped code can turn exit 0 into a
-permanent failure or a retry. Unmapped successful outcomes remain successful.
-Retries are at-least-once: a command may have produced side effects before it
-failed, so make retryable commands idempotent. A worker lease lost after
-dispatch is not automatically replayed because completion is uncertain.
-
-To report a business outcome independently of the process exit status, write
-a version-1 result manifest atomically before the command exits:
-
-```bash
-printf '%s\n' '{"version":1,"artifacts":[],"outcome_code":"invalid_record"}' \
-  > "$GREGALE_OUTPUT_MANIFEST_PATH.tmp"
-mv "$GREGALE_OUTPUT_MANIFEST_PATH.tmp" "$GREGALE_OUTPUT_MANIFEST_PATH"
-```
-
-Configure that code explicitly with `--failure-rules`; Gregale does not infer
-retry safety from an error message. The command receipt retains the code and
-classifier decision for inspection.
-
-Inspect outcomes with `gregale crons runs CRON_ID`. The history includes a run
-id; for a command cron, inspect its captured stdout/stderr, exit status, and
-retry details on demand with `gregale crons runs CRON_ID --run TASK_ID`. Use
-`gregale crons run CRON_ID` to immediately run the cron's saved command on the
-current live deployment without moving its schedule cursor.
-If `--skip-if-running` is configured and another run is still active, the
-manual request fails rather than overlapping it.
-Cancel a queued or active command-cron run with
-`gregale crons cancel CRON_ID TASK_ID`; an active task reports its cancellation
-request while the worker stops it. Disabling a cron only prevents future fires.
-`gregale app APP_ID exec ...` remains the surface for an arbitrary one-off
-command. Scheduled jobs create one task per occurrence and
-pick up the job's current configuration at fire time.
+environment, and an HTTP app cron when the schedule should make a request to
+an app route; see [Crons](crons). Command crons, which run a command from
+the app's deployment on a schedule, are in preview and documented there too.
+Scheduled jobs create one task per occurrence and pick up the job's current
+configuration at fire time.
 
 Handlers receive an event id and delivery attempt. Persist that id before applying side effects so retries are idempotent. Set explicit payload limits, timeouts, retry counts, and retention; route poison messages to a dead-letter destination for inspection and replay.
 
-Trigger delivery records (`gregale triggers records`) are kept at least 7 days
-after their last dispatch, and trigger dead letters (`gregale triggers dlq`) at
+Trigger delivery records (`gregale trigger records`) are kept at least 7 days
+after their last dispatch, and trigger dead letters (`gregale trigger dlq`) at
 least 30 days, unless a record carries its own retention; after that they may
 be deleted. Retry or export dead letters you still need before then.
 
@@ -507,7 +454,7 @@ clamped to the plan's maximum invocation deadline. Omit either setting (or
 use zero for maximum age) to keep the existing app/plan default. The CLI
 equivalents are `--async-max-attempts`, `--async-retry-base-seconds`,
 `--async-retry-max-seconds`, `--async-retry-jitter-seconds`, and
-`--async-max-age-seconds` on `gregale edge-rules create`.
+`--async-max-age-seconds` on `gregale edge rule create`.
 
 For deployed apps, the same async route can be declared in `gregale.yaml` and
 reconciled with the source deployment:
@@ -531,7 +478,7 @@ async_routes:
 
 `app` is the target app slug (or, in a project deploy, its workload name), and
 destinations are existing webhook IDs from
-`gregale webhooks list --app reports`. Route names are stable per app: later
+`gregale webhook list --app reports`. Route names are stable per app: later
 deploys update a matching manifest-owned route and remove stale manifest-owned
 routes. Unmanaged edge rules are never adopted or deleted; an exact route
 collision fails deployment with guidance to resolve it first. Omitting
@@ -554,14 +501,14 @@ delayed tasks can ask for a shorter window with `retention_seconds`
 Failed and dead-lettered invocations are kept for at least 30 days, so you can
 inspect and replay them from the dead-letter queue (`gregale dlq list <app>`) on
 every plan. After the window, the invocation, its attempt history and its
-replay links are deleted: `gregale crons runs`, queue history and invocation
+replay links are deleted: `gregale cron runs`, queue history and invocation
 lookups only show work inside the window. Duplicate detection that relies on
 a stored invocation, such as inbound webhook receipts and async route
 idempotency keys, lasts as long as that invocation is kept.
 
 A failed queue or delayed-task message is one entry in `gregale dlq list <app>`: its
 invocation. When a push binding delivered it, the binding's receipt failure
-stays in `gregale triggers dlq`, and replaying the entry re-arms that receipt.
+stays in `gregale trigger dlq`, and replaying the entry re-arms that receipt.
 See [ADR-20261022203653](adr/20261022203653-one-dead-letter-entry-per-queue-message.md).
 
 ## Queue limits
@@ -604,7 +551,7 @@ For straightforward application-to-application work, send directly to the
 target app without operating RabbitMQ, SQS, or NATS:
 
 ```bash
-gregale send billing --type invoice.created \
+gregale event send billing --type invoice.created \
   --data '{"invoice_id":"inv_123"}'
 ```
 
@@ -631,11 +578,11 @@ Register the customer endpoint once so Gregale can validate the URL and seal
 its signing secret, then deliver arbitrary application events through it:
 
 ```bash
-gregale webhooks add --app checkout-api \
+gregale webhook create --app checkout-api \
   --target-url https://customer.example/webhook \
   --secret "$WEBHOOK_SECRET"
 
-gregale deliver checkout-api https://customer.example/webhook \
+gregale webhook deliver checkout-api https://customer.example/webhook \
   --type order.paid --data '{"order_id":"ord_123"}'
 ```
 
@@ -650,7 +597,7 @@ delivery to that destination.
 Gregale signs the same canonical string and emits the same delivery headers as
 ordinary app webhooks. Receivers should verify the signature, reject stale
 timestamps, and deduplicate the durable delivery id.
-Use `--idempotency-key` when retrying a `gregale deliver` call whose outcome
+Use `--idempotency-key` when retrying a `gregale webhook deliver` call whose outcome
 is unknown; a new key can enqueue a second delivery.
 
 ## Deployment lifecycle webhooks
@@ -659,7 +606,7 @@ Subscribe to `deployment.live` and `deployment.failed` to drive a platform's
 customer-facing deployment status without polling:
 
 ```bash
-gregale webhooks add --app checkout-api \
+gregale webhook create --app checkout-api \
   --target-url https://platform.example/deployments \
   --secret "$WEBHOOK_SECRET" \
   --event deployment.live --event deployment.failed
@@ -686,7 +633,7 @@ Subscribe to `rollout.completed` and `rollout.aborted` when an external
 platform needs to close a release workflow after the deployment becomes live:
 
 ```bash
-gregale webhooks add --app checkout-api \
+gregale webhook create --app checkout-api \
   --target-url https://platform.example/rollouts \
   --secret "$WEBHOOK_SECRET" \
   --event rollout.completed --event rollout.aborted
@@ -806,13 +753,13 @@ run while the app is at its quota waits like a full delivery capacity (scope
 `app`): it is retried every few seconds without spending its routing attempts,
 and its configured delivery age limit still applies.
 
-Use `gregale events preview` before publishing; its samples include the workflow
+Use `gregale event preview` before publishing; its samples include the workflow
 name, deployment ID, and stable recipient ID. Preview checks matching intent and
 does not reserve capacity or guarantee runtime availability. Publish with a
 stable source and `--id` when retrying the same logical event. Find admitted runs
-through `gregale workflows list --app APP`, then use workflow status, attempt,
+through `gregale workflow list --app APP`, then use workflow status, attempt,
 and cancellation commands as usual. Ordinary subscription invocations remain
-visible through `gregale events deliveries APP`.
+visible through `gregale event deliveries APP`.
 
 Event starts are part of the workflow preview on Hobby and above. Enable
 `FAAS_WORKFLOWS_ENABLED=1` on apid and schedd and configure the gateway executor.
@@ -839,9 +786,9 @@ a failed sibling wait for the parent receipt to settle before selective recovery
 
 Capacity or temporary target failures retry through the existing fanout system.
 After the 12-attempt cap, inspect routing failures and replay them using
-`gregale events deliveries APP` and `gregale events replay`; `subscription_id`
+`gregale event deliveries APP` and `gregale event replay`; `subscription_id`
 also identifies workflow recipients. You can select the same routing recovery
-with `gregale events recover --source SOURCE --id EVENT_ID --subscription ID`
+with `gregale event recover --source SOURCE --id EVENT_ID --subscription ID`
 and preview it with `--dry-run`. After admission, inspect and recover execution
 through the workflow run and step commands. Disabling the workflow runtime
 leaves workflow recipients waiting without consuming new retry attempts. App
@@ -943,7 +890,7 @@ Publish an event from the CLI without learning the CloudEvents envelope. Gregale
 generates the stable event id for you:
 
 ```bash
-gregale events publish billing.stripe invoice.paid \
+gregale event publish billing.stripe invoice.paid \
   --data '{"amount":150}'
 ```
 
@@ -951,7 +898,7 @@ Use `--id` when a producer is retrying the same logical event and needs to
 choose the idempotency key explicitly. The flag-based form remains supported:
 
 ```bash
-gregale events publish --id evt-123 --source billing.stripe --type invoice.paid \
+gregale event publish --id evt-123 --source billing.stripe --type invoice.paid \
   --data '{"amount":150}'
 ```
 
@@ -982,8 +929,8 @@ the window.
 
 A recipient whose routing fails for good (its retries run out, its delivery
 age expires, or its target is gone) never gets an invocation, so its failure
-lives on the event's receipt: `gregale events deliveries APP` lists it, and
-`gregale events replay` or `gregale events recover` route it again while the
+lives on the event's receipt: `gregale event deliveries APP` lists it, and
+`gregale event replay` or `gregale event recover` route it again while the
 receipt is kept. When the receipt is pruned at the end of the settled-receipt
 window, each failed recipient moves to the dead-letter queue as an
 `event_route` entry, kept for 30 days from the failure like other dead letters
@@ -1008,8 +955,8 @@ window, each failed recipient moves to the dead-letter queue as an
 Inspect retained receipts and storage pressure before scheduling recovery:
 
 ```sh
-gregale events retention --window 24h --json
-gregale events retention --source orders --app order-worker --window 6h --limit 20
+gregale event retention --window 24h --json
+gregale event retention --source orders --app order-worker --window 6h --limit 20
 ```
 
 `GET /v1/events/retention` accepts the same `source`, `app`, `window` and `limit`
@@ -1074,6 +1021,23 @@ Apply the retention-health migration before upgrading binaries. Remove the new
 alert rules and downgrade binaries before rolling it back. See
 [ADR-912](adr/912-event-retention-health.md).
 
+### Pausing events
+
+Gregale can pause the event bus, platform-wide during an incident or for one
+account ([ADR-20261027125625](adr/20261027125625-events-kill-switch.md)).
+While it is paused:
+
+- Publishing answers `503 events_paused` with `Retry-After`, from
+  `POST /v1/events:publish`, `:publish-batch`, the app producer route, the
+  platform-tenant route and in-app publishing (the runtime's metadata endpoint
+  answers `503 event_publish_unavailable`). Nothing is accepted, so resend the
+  same events after the back-off; the SDK outbox does this for you.
+- Events already accepted are kept and wait to be routed; routing resumes when
+  the pause ends. Delivery-age limits keep counting while they wait.
+- Deliveries that already became invocations run as usual.
+- Object-storage notifications, inbound webhook automation and other events
+  Gregale publishes for you are still accepted and wait with the rest.
+
 ### Publish rate
 
 An account publishes at most its plan's rate of events per second: 5 on Free,
@@ -1102,8 +1066,8 @@ For JSONL imports, put one envelope on each line:
 ```
 
 ```sh
-gregale events publish-batch --file orders.jsonl --json
-# Or: gregale events publish-batch --file - < orders.jsonl
+gregale event publish-batch --file orders.jsonl --json
+# Or: gregale event publish-batch --file - < orders.jsonl
 ```
 
 The CLI sends one bounded batch, requires stable ids, and exits nonzero if any
@@ -1210,10 +1174,10 @@ that order.
 Find recipients waiting to be routed without knowing their event IDs:
 
 ```bash
-gregale events backlog
-gregale events backlog --app analytics --capacity-scope consumer --min-age 10m
-gregale events backlog --consumer-kind workflow --state pending --json
-gregale events backlog --origin backfill --subscription-id SUB
+gregale event backlog
+gregale event backlog --app analytics --capacity-scope consumer --min-age 10m
+gregale event backlog --consumer-kind workflow --state pending --json
+gregale event backlog --origin backfill --subscription-id SUB
 ```
 
 The API is `GET /v1/events/backlog` with `app`, `subscription_id`,
@@ -1295,7 +1259,7 @@ Preview uses the router's matcher but does not persist the event or enqueue
 invocations:
 
 ```bash
-gregale events preview billing.stripe invoice.paid \
+gregale event preview billing.stripe invoice.paid \
   --data '{"amount":150}'
 ```
 
@@ -1308,10 +1272,10 @@ To confirm what Gregale reconciled for an app, list its active manifest
 subscriptions directly:
 
 ```bash
-gregale events subscriptions APP
-gregale events subscriptions APP --json
-gregale events deliveries APP
-gregale events deliveries APP --state failed --json
+gregale event subscription list APP
+gregale event subscription list APP --json
+gregale event deliveries APP
+gregale event deliveries APP --state failed --json
 ```
 
 This is useful after a deploy or manifest change: it shows the normalized
@@ -1321,7 +1285,7 @@ To discover older retained events matching one current ordinary subscription,
 use the read-only historical replay preview:
 
 ```bash
-gregale events replay-preview APP --subscription-id SUBSCRIPTION_UUID \
+gregale event replay-preview APP --subscription-id SUBSCRIPTION_UUID \
   --from 2026-10-01T00:00:00Z --until 2026-10-06T00:00:00Z --limit 50
 ```
 
@@ -1354,7 +1318,7 @@ To inspect historical workflow starts captured when each event was accepted,
 use the separate workflow replay preview:
 
 ```bash
-gregale events workflow-replay-preview APP --workflow-name paid \
+gregale event workflow-replay-preview APP --workflow-name paid \
   --from 2026-10-01T00:00:00Z --until 2026-10-06T00:00:00Z --limit 50
 ```
 
@@ -1381,10 +1345,10 @@ To start a currently eligible app workflow for retained events whose immutable
 recipient snapshot excluded it, create a durable workflow backfill:
 
 ```bash
-gregale events workflow-backfill APP --workflow-name paid \
+gregale event workflow-backfill APP --workflow-name paid \
   --from 2026-10-01T00:00:00Z --until 2026-10-06T00:00:00Z --yes
-gregale events backfill-status JOB_UUID
-gregale events backfill-items JOB_UUID --state enqueued
+gregale event backfill get JOB_UUID
+gregale event backfill items JOB_UUID --state enqueued
 ```
 
 The job snapshots the current workflow definition and trigger. It considers
@@ -1395,7 +1359,7 @@ receipts are skipped. The durable `(event, app workflow)` admission receipt
 deduplicates future jobs even after run retention removes the linked run.
 `enqueued` means the run was admitted; monitor the run separately for
 completion. Retryable quota and temporary target failures can be retried with
-`gregale events backfill-retry JOB_UUID --yes`. The range bound, active-job
+`gregale event backfill retry JOB_UUID --yes`. The range bound, active-job
 quotas, retained-history coverage and pruning protection follow subscription
 backfills. See [ADR-794](adr/794-durable-workflow-event-backfill.md).
 
@@ -1403,9 +1367,9 @@ To create actual independent deliveries for eligible historical events, start
 a durable backfill for the same ordinary subscription:
 
 ```bash
-gregale events backfill APP --subscription-id SUBSCRIPTION_UUID \
+gregale event backfill create APP --subscription-id SUBSCRIPTION_UUID \
   --from 2026-10-01T00:00:00Z --until 2026-10-06T00:00:00Z --yes
-gregale events backfill-status JOB_UUID
+gregale event backfill get JOB_UUID
 ```
 
 Backfill uses platform acceptance time and the half-open range `[from, until)`;
@@ -1435,7 +1399,7 @@ warning, not proof of a complete archive; already expired envelopes cannot be
 recovered. Poll status until `completed` or `completed_with_failures`; the
 status includes a separate `retryable_failed` count. Retry a bounded batch of
 eligible routing failures with
-`gregale events backfill-retry JOB_UUID --limit 100 --yes`; handler failures,
+`gregale event backfill retry JOB_UUID --limit 100 --yes`; handler failures,
 retries and dead letters continue through their existing lifecycle. Completed
 job metadata and per-envelope outcomes are retained for 30 days. See
 [ADR-639](adr/639-durable-subscription-event-backfill.md) for the full contract.
@@ -1443,7 +1407,7 @@ job metadata and per-envelope outcomes are retained for 30 days. See
 Inspect outcomes when you need to locate a failed or skipped event:
 
 ```bash
-gregale events backfill-items JOB_UUID --state failed --limit 50
+gregale event backfill items JOB_UUID --state failed --limit 50
 ```
 
 The command prints a continuation command when another page is available. Keep
@@ -1460,8 +1424,8 @@ complete filtered view, inspect after the job reaches a terminal state.
 Inspect one published event across captured and backfilled consumers:
 
 ```bash
-gregale events inspect --source billing.stripe --id evt-123
-gregale events inspect --source billing.stripe --id evt-123 --json
+gregale event get --source billing.stripe --id evt-123
+gregale event get --source billing.stripe --id evt-123 --json
 ```
 
 Publish returns a `receipt_url` and `Location` header for
@@ -1511,9 +1475,9 @@ Recover one captured application or workflow consumer, or a backfilled
 application consumer, directly from its receipt:
 
 ```bash
-gregale events recover --source billing.stripe --id evt-123 \
+gregale event recover --source billing.stripe --id evt-123 \
   --subscription SUBSCRIPTION_ID --dry-run
-gregale events recover --source billing.stripe --id evt-123 \
+gregale event recover --source billing.stripe --id evt-123 \
   --subscription SUBSCRIPTION_ID
 ```
 
@@ -1547,7 +1511,7 @@ attempts` to follow it. At-least-once delivery and application side-effect
 deduplication still apply.
 
 Plain handler replay uses `POST /v1/invocations/{id}/replay` (or
-`gregale invocations get --replay INVOCATION_ID`). Each failed parent creates
+`gregale invocation get --replay INVOCATION_ID`). Each failed parent creates
 one durable child. Repeated and concurrent requests return that child even
 with different request keys or after success; further recovery targets the
 failed child. Customer self-service and account-operator replay share this
@@ -1568,7 +1532,7 @@ event does not renew its deadline. Generic invocation replay rejects keyed
 work so it cannot bypass its claim gate.
 
 ```bash
-gregale invocations get --replay-keyed INVOCATION_ID
+gregale invocation get --replay-keyed INVOCATION_ID
 ```
 
 Repeated keyed recovery requests return the same child, even after it completes.
@@ -1588,7 +1552,7 @@ See [ADR-610](adr/610-keyed-dead-letter-replay-claim-exclusion.md).
 Inspect the original handler's delivery attempts and its trusted replay children:
 
 ```bash
-gregale events attempts --source billing.stripe --id evt-123 \
+gregale event attempts --source billing.stripe --id evt-123 \
   --subscription SUBSCRIPTION_ID --limit 100
 ```
 
@@ -1608,8 +1572,8 @@ that no delivery occurred. See [ADR-611](adr/611-invocation-backed-event-attempt
 List a consumer's retained replay executions, newest first:
 
 ```bash
-gregale events inspect --source billing.stripe --id evt-123 --subscription SUB
-gregale events inspect --source billing.stripe --id evt-123 --subscription SUB --json
+gregale event get --source billing.stripe --id evt-123 --subscription SUB
+gregale event get --source billing.stripe --id evt-123 --subscription SUB --json
 ```
 
 This reads `GET /v1/events/receipt/replays` with the same source, ID and captured
@@ -1651,7 +1615,7 @@ routing outcomes and replay requests for one published event, use
 `events fanout-history`:
 
 ```bash
-gregale events fanout-history APP \
+gregale event fanout-history APP \
   --event-source billing.stripe \
   --event-id evt-123
 ```
@@ -1681,7 +1645,7 @@ To retry one terminal pre-invocation failure, pass its event ID, source, and
 subscription ID from the failure row:
 
 ```bash
-gregale events replay APP \
+gregale event replay APP \
   --event-id evt-123 \
   --event-source billing.stripe \
   --subscription-id 5ef2a270-2c12-4ddd-a2a7-a0873995f7c8
@@ -1699,7 +1663,7 @@ After a transient outage, replay retryable failures for an app in bounded
 batches:
 
 ```bash
-gregale events replay-retryable APP --limit 100 --yes
+gregale event replay-retryable APP --limit 100 --yes
 ```
 
 This command requeues only terminal failures classified as retryable, oldest
@@ -1720,7 +1684,7 @@ The machine-readable event contract is published in
 
 ### Diagnosing ordered routing waits
 
-`gregale events backlog --waiting-reason ordering_blocked` lists recipients waiting for earlier routing in their captured app/policy/key lane. Filtering happens before recipient pagination and consumer aggregation. Consumer summaries include `ordering_waiting_recipients`.
+`gregale event backlog --waiting-reason ordering_blocked` lists recipients waiting for earlier routing in their captured app/policy/key lane. Filtering happens before recipient pagination and consumer aggregation. Consumer summaries include `ordering_waiting_recipients`.
 
 Each blocked recipient includes `ordering_blocker`: the earliest unresolved event and subscription, acceptance time and age, current routing state, next retry time when pending, and a receipt URL. Event data and resolved work keys are not exposed. The lookup uses the same predicate as recipient claims and is recomputed on each read, so recovering a blocker clears the wait without a projection update.
 
@@ -1735,16 +1699,16 @@ failures are selected by default; `--include-non-retryable` explicitly broadens
 the selection.
 
 ```sh
-gregale events recovery-preview invoice-worker \
+gregale event recovery-preview invoice-worker \
   --event-type invoice.created --failure-code invocation_enqueue_failed --min-age 10m
 
-gregale events recovery-create invoice-worker \
+gregale event recovery create invoice-worker \
   --event-type invoice.created --failure-code invocation_enqueue_failed --min-age 10m \
   --rate 10 --yes
 
-gregale events recovery-status JOB_ID
-gregale events recovery-items JOB_ID --limit 100
-gregale events recovery-cancel JOB_ID --yes
+gregale event recovery get JOB_ID
+gregale event recovery items JOB_ID --limit 100
+gregale event recovery cancel JOB_ID --yes
 ```
 
 The preview is read-only and returns at most 100 sample recipients. Its match
@@ -1798,12 +1762,12 @@ reconstructed from the job.
 Pause a captured application consumer during maintenance or an outage:
 
 ```sh
-gregale events subscription-pause invoice-worker SUBSCRIPTION_ID --yes
-gregale events subscription-status invoice-worker SUBSCRIPTION_ID
-gregale events backlog --app invoice-worker --waiting-reason subscription_paused
+gregale event subscription pause invoice-worker SUBSCRIPTION_ID --yes
+gregale event subscription get invoice-worker SUBSCRIPTION_ID
+gregale event backlog --app invoice-worker --waiting-reason subscription_paused
 
-gregale events subscription-resume invoice-worker SUBSCRIPTION_ID --rate 10 --yes
-gregale events backlog --app invoice-worker --waiting-reason subscription_rate_limited
+gregale event subscription resume invoice-worker SUBSCRIPTION_ID --rate 10 --yes
+gregale event backlog --app invoice-worker --waiting-reason subscription_rate_limited
 ```
 
 Pausing stops new routing admissions for that subscription ID. It does not
@@ -1860,7 +1824,7 @@ receipts use their original dynamic routing path.
 Inspect one application's subscription:
 
 ```sh
-gregale events subscription-health my-app <subscription-id> --window 15m
+gregale event subscription health my-app <subscription-id> --window 15m
 ```
 
 The health endpoint at
@@ -1879,7 +1843,7 @@ pending and excludes capacity, pause, and pacing waits. Coverage is
 incomplete retained samples. These are consumer API observations; they do not
 create subscription-labelled Prometheus series.
 
-Create an alert with `gregale alerts add --event-subscription-id <uuid>` and one
+Create an alert with `gregale alert create --event-subscription-id <uuid>` and one
 of these metrics:
 
 | Metric | Unit |
@@ -1931,9 +1895,9 @@ from 0 to 7d. Maximum backoff must be at least the initial delay.
 Inspect or replace settings for future events:
 
 ```sh
-gregale events subscription-retry-status my-app <subscription-id>
-gregale events subscription-retry-set my-app <subscription-id> --max-attempts 20 --initial-backoff 2s --max-backoff 2m --max-retry-duration 30m --yes
-gregale events subscription-retry-reset my-app <subscription-id> --yes
+gregale event subscription-retry get my-app <subscription-id>
+gregale event subscription-retry set my-app <subscription-id> --max-attempts 20 --initial-backoff 2s --max-backoff 2m --max-retry-duration 30m --yes
+gregale event subscription-retry reset my-app <subscription-id> --yes
 ```
 
 GET, PUT, and DELETE at
@@ -1969,10 +1933,10 @@ Invocation execution retries have their separate existing policy.
 Enable an opt-in circuit breaker for an application event subscription:
 
 ```sh
-gregale events subscription-circuit-set my-app <subscription-id> --yes
-gregale events subscription-circuit-status my-app <subscription-id>
-gregale events subscription-circuit-reset my-app <subscription-id> --yes
-gregale events subscription-circuit-disable my-app <subscription-id> --yes
+gregale event subscription-circuit set my-app <subscription-id> --yes
+gregale event subscription-circuit get my-app <subscription-id>
+gregale event subscription-circuit reset my-app <subscription-id> --yes
+gregale event subscription-circuit disable my-app <subscription-id> --yes
 ```
 
 Defaults open a circuit at 50% routing failures with at least 20 outcomes in
@@ -2036,7 +2000,7 @@ with each event recipient. Configure future events through the existing retry
 policy API using `max_delivery_age_ms`, or the CLI:
 
 ```sh
-gregale events subscription-retry-set inventory-api <subscription-id> --max-delivery-age 15m --yes
+gregale event subscription-retry set inventory-api <subscription-id> --max-delivery-age 15m --yes
 ```
 
 This command replaces the routing policy; include other retry flags to retain
@@ -2065,8 +2029,8 @@ backfill uses its captured policy against the original event acceptance time.
 To deliberately deliver stale work, request an explicit override:
 
 ```sh
-gregale events replay inventory-api --event-source inventory --event-id evt-123 --subscription-id <subscription-id> --allow-expired
-gregale events backfill inventory-api --subscription-id <subscription-id> --from 2026-10-01T00:00:00Z --until 2026-10-02T00:00:00Z --allow-expired --yes
+gregale event replay inventory-api --event-source inventory --event-id evt-123 --subscription-id <subscription-id> --allow-expired
+gregale event backfill create inventory-api --subscription-id <subscription-id> --from 2026-10-01T00:00:00Z --until 2026-10-02T00:00:00Z --allow-expired --yes
 ```
 
 The equivalent replay/backfill request field is `allow_expired: true`.
@@ -2096,9 +2060,9 @@ characters, starts with a letter or digit, and contains letters, digits, dots,
 underscores, or hyphens. Versions may be selected before registration.
 
 ```sh
-gregale events subscription-versions-status <app> <subscription-id>
-gregale events subscription-versions-set <app> <subscription-id> --versions v1,v2 --yes
-gregale events subscription-versions-reset <app> <subscription-id> --yes
+gregale event subscription-version get <app> <subscription-id>
+gregale event subscription-version set <app> <subscription-id> --versions v1,v2 --yes
+gregale event subscription-version reset <app> <subscription-id> --yes
 ```
 
 The API resource is
@@ -2126,7 +2090,7 @@ Before switching a producer to a new version, check consumer version coverage
 and validate event data with a read-only rollout preview:
 
 ```sh
-gregale events schema-rollout-preview billing.stripe invoice.paid \
+gregale event schema-rollout-preview billing.stripe invoice.paid \
   --version v2 --schema @invoice-v2.schema.json \
   --samples @invoice-samples.json \
   --from 2026-10-01T00:00:00Z --until 2026-10-08T00:00:00Z \
@@ -2193,7 +2157,7 @@ SDK's naming conventions).
 Routing health ends at admission. Inspect what admitted handlers do separately:
 
 ```sh
-gregale events subscription-execution-health my-app <subscription-id> --window 15m
+gregale event subscription-execution-health my-app <subscription-id> --window 15m
 ```
 
 The API is
@@ -2237,7 +2201,7 @@ New subscription alert metrics are:
 | `event_handler_failure_pct` | Retained handler attempt failure percentage |
 | `event_completion_latency_p95_seconds` | Acceptance-to-completion p95 seconds |
 
-For example, use `gregale alerts add` with the app and webhook flags,
+For example, use `gregale alert create` with the app and webhook flags,
 `--event-subscription-id <uuid> --metric event_handler_failure_pct
 --comparison gt --threshold 5 --window-spec 15m`. These rules require webhook
 actions and the supported windows. Failure percentage requires 20 retained
@@ -2257,16 +2221,16 @@ Use the same durable jobs with `--mode execution` to recover the latest retained
 failed handler or dead letter for each application event consumer:
 
 ```sh
-gregale events recovery-preview invoice-worker --mode execution \
+gregale event recovery-preview invoice-worker --mode execution \
   --subscription-id SUBSCRIPTION_ID --event-type invoice.created \
   --outcome dead_letter --min-age 10m
 
-gregale events recovery-create invoice-worker --mode execution \
+gregale event recovery create invoice-worker --mode execution \
   --subscription-id SUBSCRIPTION_ID --event-type invoice.created \
   --outcome dead_letter --min-age 10m --rate 5 --yes
 
-gregale events recovery-items JOB_ID
-gregale events recovery-cancel JOB_ID --yes
+gregale event recovery items JOB_ID
+gregale event recovery cancel JOB_ID --yes
 ```
 
 Omit `--outcome` to select both replayable `failed` and `dead_letter` executions.
@@ -2308,8 +2272,8 @@ Execution recovery now records the exact replay invocation and generation when
 it admits each item. Inspect them through the existing commands:
 
 ```sh
-gregale events recovery-status JOB_ID
-gregale events recovery-items JOB_ID --limit 100
+gregale event recovery get JOB_ID
+gregale event recovery items JOB_ID --limit 100
 gregale --json events recovery-items JOB_ID --limit 100
 ```
 
@@ -2360,8 +2324,8 @@ create a saved result. Missing completion timestamps remain absent.
 Read existing commands; no write or refresh is needed:
 
 ```sh
-gregale events recovery-status JOB_ID
-gregale events recovery-items JOB_ID --limit 100 --json
+gregale event recovery get JOB_ID
+gregale event recovery items JOB_ID --limit 100 --json
 ```
 
 Saved result metadata follows the existing recovery job lifetime and pruning:
@@ -2394,10 +2358,10 @@ can return observations to `unknown` when underlying history has expired. See
 Opt in when creating a routing or execution recovery job:
 
 ```sh
-gregale events recovery-preview APP --protect-receipts
-gregale events recovery-create APP --protect-receipts --rate 2 --yes
-gregale events recovery-preflight JOB_ID
-gregale events retention --app APP
+gregale event recovery-preview APP --protect-receipts
+gregale event recovery create APP --protect-receipts --rate 2 --yes
+gregale event recovery-preflight JOB_ID
+gregale event retention --app APP
 ```
 
 API and SDK requests set `protect_receipts: true` on the existing recovery
@@ -2444,10 +2408,10 @@ If outcomes show renewed failures, pause further admissions without losing the
 job's frozen selection:
 
 ```sh
-gregale events recovery-pause JOB_ID --yes
-gregale events recovery-rate JOB_ID --rate 2 --yes
-gregale events recovery-resume JOB_ID --yes
-gregale events recovery-status JOB_ID
+gregale event recovery pause JOB_ID --yes
+gregale event recovery update JOB_ID --rate 2 --yes
+gregale event recovery resume JOB_ID --yes
+gregale event recovery get JOB_ID
 ```
 
 These controls apply to routing and execution recovery. Pause waits for an
@@ -2478,9 +2442,9 @@ deploy-write/admin scope and MFA. See [ADR-808](adr/808-recovery-job-controls.md
 Discover paused jobs and recent recovery runs without retaining their IDs:
 
 ```sh
-gregale events recovery-list APP --state paused
-gregale events recovery-list APP --mode execution --subscription-id SUBSCRIPTION_ID --limit 10 --json
-gregale events recovery-list APP --created-after 2026-10-01T00:00:00Z
+gregale event recovery list APP --state paused
+gregale event recovery list APP --mode execution --subscription-id SUBSCRIPTION_ID --limit 10 --json
+gregale event recovery list APP --created-after 2026-10-01T00:00:00Z
 ```
 
 `recovery-list` returns newest jobs first, showing admission progress, current
@@ -2502,12 +2466,12 @@ Recovery control history identifies the authenticated account or API key that
 created or changed a job. Add an optional reason to write controls:
 
 ```sh
-gregale events recovery-create APP --mode execution --reason "Recover after billing fix" --yes
-gregale events recovery-pause JOB_ID --reason "Consumer failures increased" --yes
-gregale events recovery-rate JOB_ID --rate 2 --reason "Reduce downstream load" --yes
-gregale events recovery-resume JOB_ID --reason "Downstream service recovered" --yes
-gregale events recovery-cancel JOB_ID --reason "Abandon remaining recovery" --yes
-gregale events recovery-history JOB_ID --limit 20 --json
+gregale event recovery create APP --mode execution --reason "Recover after billing fix" --yes
+gregale event recovery pause JOB_ID --reason "Consumer failures increased" --yes
+gregale event recovery update JOB_ID --rate 2 --reason "Reduce downstream load" --yes
+gregale event recovery resume JOB_ID --reason "Downstream service recovered" --yes
+gregale event recovery cancel JOB_ID --reason "Abandon remaining recovery" --yes
+gregale event recovery history JOB_ID --limit 20 --json
 ```
 
 History records creation, effective pause/resume/rate changes, cancellation and
@@ -2537,8 +2501,8 @@ See [ADR-810](adr/810-recovery-control-audit-history.md).
 Inspect active recovery progress and expiry risk:
 
 ```sh
-gregale events recovery-health APP
-gregale events recovery-health APP --json
+gregale event recovery health APP
+gregale event recovery health APP --json
 ```
 
 The health view reports running, paused, stalled and expiring job counts, with
@@ -2606,7 +2570,7 @@ See [ADR-811](adr/811-recovery-health-and-alerts.md).
 Receive terminal recovery notifications through app webhooks:
 
 ```sh
-gregale webhooks add --app APP --target-url https://receiver.example.com/recoveries \
+gregale webhook create --app APP --target-url https://receiver.example.com/recoveries \
   --event event_recovery.completed \
   --event event_recovery.cancelled \
   --event event_recovery.expired \
@@ -2650,8 +2614,8 @@ recovery-specific subscription commands are needed. See
 Recovery health now includes capacity diagnostics for execution recovery:
 
 ```sh
-gregale events recovery-health APP
-gregale events recovery-health APP --json
+gregale event recovery health APP
+gregale event recovery health APP --json
 ```
 
 When admission hits a pending-delivery limit, `capacity_wait` identifies account,
@@ -2684,8 +2648,8 @@ healthy zero. Scheduler stalls and expiry risks remain separate metrics. See
 Assess a frozen recovery job before resuming it:
 
 ```sh
-gregale events recovery-preflight JOB_ID
-gregale events recovery-preflight JOB_ID --json
+gregale event recovery-preflight JOB_ID
+gregale event recovery-preflight JOB_ID --json
 ```
 
 Preflight is read-only. It reports all pending items as currently eligible,
@@ -2722,9 +2686,9 @@ Subscribe separately when you need to know that admitted recovery handlers
 have reached confirmed terminal outcomes:
 
 ```bash
-gregale webhooks add --app APP --target-url https://example.com/hooks/recovery \
+gregale webhook create --app APP --target-url https://example.com/hooks/recovery \
   --event event_recovery.execution_finished --retry-policy default
-gregale events recovery-status JOB_ID --json
+gregale event recovery get JOB_ID --json
 ```
 
 For execution recovery jobs created after this migration, the scheduler captures
@@ -2772,12 +2736,12 @@ After fixing a consumer, preview only failures from one terminal execution
 recovery instead of selecting app-wide failures:
 
 ```sh
-gregale events recovery-preview APP --parent-job PARENT_JOB_UUID \
+gregale event recovery-preview APP --parent-job PARENT_JOB_UUID \
   --outcome failed --json
-gregale events recovery-create APP --parent-job PARENT_JOB_UUID \
+gregale event recovery create APP --parent-job PARENT_JOB_UUID \
   --outcome failed --request-id 95ba3321-7648-4c93-9720-876ea9b44645 \
   --rate 5 --protect-receipts --reason 'Consumer fix deployed' --yes
-gregale events recovery-items CHILD_JOB_UUID --json
+gregale event recovery items CHILD_JOB_UUID --json
 ```
 
 Generate and save a fresh request UUID for each intended child creation. Repeat
@@ -2827,8 +2791,8 @@ fields. See [ADR-916](adr/916-parent-scoped-execution-recovery-retries.md).
 ### Inspect recovery notification delivery
 
 ```bash
-gregale events recovery-notifications JOB_ID
-gregale events recovery-notifications JOB_ID --json
+gregale event recovery-notifications JOB_ID
+gregale event recovery-notifications JOB_ID --json
 ```
 
 This read-only report separates admission notification capture from execution
@@ -2839,7 +2803,7 @@ Retained deliveries link to the existing attempt-history API. Dead deliveries
 with a retained subscription show the existing independent retry command:
 
 ```bash
-gregale webhooks retry --app APP WEBHOOK_ID DELIVERY_ID
+gregale webhook retry --app APP WEBHOOK_ID DELIVERY_ID
 ```
 
 Retry still requires the normal write authorization and MFA. Reporting never
@@ -2876,7 +2840,7 @@ and downgrade limits.
 
 ### Recovery notification delivery health
 
-`gregale events recovery-health APP` also reports separate admission and execution
+`gregale event recovery health APP` also reports separate admission and execution
 notification counts: overdue, dead, unknown, and no receivers. These count jobs,
 not receivers, and may overlap. A dead delivery can also be overdue. Overdue means
 at least one known unacknowledged receiver and a known capture timestamp at least
@@ -2891,7 +2855,7 @@ are lower bounds. Historical jobs can remain unknown until retention pruning.
 The bound limits report observations, while finding candidates can scan retained
 metadata within the existing five-second request budget. Reads do not capture,
 relay, retry, or mutate notification state. Use
-`gregale events recovery-notifications JOB_ID` for each receiver's evidence.
+`gregale event recovery-notifications JOB_ID` for each receiver's evidence.
 
 Eight optional app-scoped webhook alert metrics are available:
 `event_recovery_notification_{admission,execution}_{overdue,dead,unknown,no_receivers}_jobs`.
@@ -2907,7 +2871,7 @@ API and evaluator rollout. See [ADR-919](adr/919-recovery-notification-health-al
 Preview receiver eligibility without changing delivery state:
 
 ```bash
-gregale events recovery-notification-retry-preview JOB_ID --json
+gregale event recovery-notification-retry-preview JOB_ID --json
 ```
 
 The preview separates admission and execution receivers. It exposes delivery
@@ -2935,7 +2899,7 @@ Use actual IDs and generations from the preview. Include one receiver or an
 explicit set of up to 100 distinct deliveries; there is no implicit retry-all.
 
 ```bash
-gregale events recovery-notification-retry JOB_ID --request-file retry.json
+gregale event recovery-notification-retry JOB_ID --request-file retry.json
 ```
 
 Each result is `queued` or `skipped`. The action rechecks source event, receiver
@@ -2970,15 +2934,15 @@ before API rollout. See [ADR-920](adr/920-selective-recovery-notification-retrie
 List saved decisions for a retained recovery job:
 
 ```bash
-gregale events recovery-notification-retry-history JOB_ID
-gregale events recovery-notification-retry-history JOB_ID --json
+gregale event recovery-notification-retry-history JOB_ID
+gregale event recovery-notification-retry-history JOB_ID --json
 ```
 
 Inspect one request and compare its frozen queued/skipped result with the latest
 retained delivery state:
 
 ```bash
-gregale events recovery-notification-retry-history JOB_ID --request-id REQUEST_ID
+gregale event recovery-notification-retry-history JOB_ID --request-id REQUEST_ID
 ```
 
 The summary shows decision time and queued/skipped counts. Detail shows each
@@ -2998,12 +2962,12 @@ Go, Node, and Python expose list and detail methods. See
 
 Request-specific notification retry history also reports `retry_outcome` for the originally queued `replay_generation`: `pending`, `succeeded`, `failed`, or `unknown`. Skipped decisions report `not_applicable`. Retained terminal attempts establish success/failure and `completed_at`; a later delivery generation cannot establish the earlier generation's outcome. Removed evidence reports unknown.
 
-`retained_attempt_count` counts completed attempts from that generation only. `attempt_count_complete` indicates whether the retained sequence is complete for the known outcome; unknown outcomes always report false. Attempts still in flight are excluded. Read these fields using `gregale events recovery-notification-retry-history JOB_ID --request-id REQUEST_ID --json` or the existing request detail API/SDK method.
+`retained_attempt_count` counts completed attempts from that generation only. `attempt_count_complete` indicates whether the retained sequence is complete for the known outcome; unknown outcomes always report false. Attempts still in flight are excluded. Read these fields using `gregale event recovery-notification-retry-history JOB_ID --request-id REQUEST_ID --json` or the existing request detail API/SDK method.
 
 ### Wait for a saved notification retry
 
 ```bash
-gregale events recovery-notification-retry-history JOB_ID \
+gregale event recovery-notification-retry-history JOB_ID \
   --request-id REQUEST_ID --wait --timeout 5m --json
 ```
 
@@ -3027,12 +2991,12 @@ The retry history list now includes `succeeded_count`, `failed_count`, `pending_
 
 `status` is `failed` if any queued generation failed, otherwise `inconclusive` for unknown evidence or no queued targets, otherwise `pending` while any target remains pending, otherwise `succeeded`. Later retries do not establish earlier generation outcomes. `completed_at` is the latest terminal attempt finish time and appears only when every queued target has a known terminal outcome and at least one target was queued.
 
-`evidence_complete` requires known outcomes and complete retained attempt sequences for every queued target. An intact terminal attempt can prove success or failure even when earlier attempts are missing; completeness remains false in that case. All-skipped requests have complete empty evidence but are inconclusive. Removed deliveries remain unknown. Use `gregale events recovery-notification-retry-history JOB_ID --json` to scan request summaries, then inspect an individual request for receiver details.
+`evidence_complete` requires known outcomes and complete retained attempt sequences for every queued target. An intact terminal attempt can prove success or failure even when earlier attempts are missing; completeness remains false in that case. All-skipped requests have complete empty evidence but are inconclusive. Removed deliveries remain unknown. Use `gregale event recovery-notification-retry-history JOB_ID --json` to scan request summaries, then inspect an individual request for receiver details.
 
 ### Filter unresolved notification retry requests
 
 ```bash
-gregale events recovery-notification-retry-history JOB_ID \
+gregale event recovery-notification-retry-history JOB_ID \
   --status failed,inconclusive --json
 ```
 
@@ -3045,7 +3009,7 @@ Go callers can pass `api.EventRecoveryNotificationRetryHistoryQuery{Status: "fai
 ### App-wide notification retry backlog
 
 ```bash
-gregale events notification-retry-backlog my-app \
+gregale event notification-retry-backlog my-app \
   --status failed,pending,inconclusive --page-size 5 --json
 ```
 
@@ -3060,8 +3024,8 @@ Every page is a fresh read-only snapshot with its own `observed_at`. Restart wit
 To inspect or prepare a retry after finding a request:
 
 ```bash
-gregale events recovery-notification-retry-history JOB_ID --request-id REQUEST_ID --json
-gregale events recovery-notification-retry-preview JOB_ID --json
+gregale event recovery-notification-retry-history JOB_ID --request-id REQUEST_ID --json
+gregale event recovery-notification-retry-preview JOB_ID --json
 ```
 
 ### Selected notification retries across recovery jobs
@@ -3088,8 +3052,8 @@ Use the app retry backlog to identify requests, then inspect each job's retry pr
 ```
 
 ```sh
-gregale events notification-retry-plan --file selection.json --output plan.json
-gregale events notification-retry-apply --file plan.json > receipt.json
+gregale event notification-retry-plan --file selection.json --output plan.json
+gregale event notification-retry-apply --file plan.json > receipt.json
 ```
 
 Preview writes a new private plan file (never overwrites) and prints JSON containing exact selections, eligibility reasons and observed evidence. Up to ten distinct jobs and 100 explicit receivers per job are supported; selection/plan files are limited to 1 MiB. Every job must belong to the supplied app. No receiver is selected automatically.
@@ -3103,8 +3067,8 @@ These commands compose existing SDK preview, retry and history methods; no addit
 ### Reconcile a saved notification retry plan
 
 ```sh
-gregale events notification-retry-reconcile --file plan.json > reconciliation.json
-gregale events notification-retry-reconcile --file plan.json --wait --timeout 5m > reconciliation.json
+gregale event notification-retry-reconcile --file plan.json > reconciliation.json
+gregale event notification-retry-reconcile --file plan.json --wait --timeout 5m > reconciliation.json
 ```
 
 Reconciliation reads each plan request's saved decision and original-generation delivery outcomes. It never submits retries or changes the plan. The command validates the full selected intent and pins each accepted decision while polling. A later retry generation's delivery status cannot establish success for the original generation.
@@ -3120,7 +3084,7 @@ Exit codes: 0 for succeeded, 1 for failed/error, 2 for pending/inconclusive, 3 f
 Use `POST /v1/apps/{slug}/events:publish` or:
 
 ```sh
-gregale events publish-app my-app --file event.json --json
+gregale event publish-app my-app --file event.json --json
 ```
 
 ```json
@@ -3140,9 +3104,9 @@ The CLI always prints JSON. Go exposes `PublishAppEvent`; Node and Python expose
 ### Reconcile an application producer key without republishing
 
 ```sh
-gregale events publish-app-status my-app --key order-123-created --json
+gregale event publish-app-status my-app --key order-123-created --json
 # Continue the bounded consumer evidence page:
-gregale events publish-app-status my-app --key order-123-created --after CURSOR --limit 100 --json
+gregale event publish-app-status my-app --key order-123-created --after CURSOR --limit 100 --json
 ```
 
 `GET /v1/apps/{slug}/events/publish-status?key=KEY` derives the same identity as app-key publishing and only reads retained receipts. It requires apps:read/admin, MFA and existing app ownership and rate limits. The exact original key is required; optional expected_accepted_at pins a saved receipt instant. Repeated, empty, unknown or malformed query parameters are rejected. No publish, claim, replay or retention refresh occurs.
@@ -3164,7 +3128,7 @@ The CLI always prints JSON and exits 2 for unavailable, 0 for retained acceptanc
 ### Verify original publication content without publishing
 
 ```sh
-gregale events publish-app-verify my-app --file event.json --json
+gregale event publish-app-verify my-app --file event.json --json
 ```
 
 `POST /v1/apps/{slug}/events/verify-publication` accepts the same original JSON body as app-key publishing, including its exact key, type, data and optional schema version/time. Despite POST, it only reads: apps:read/admin, MFA, app ownership and rate limits apply. It accepts only the optional expected_accepted_at query guard and uses the existing 1 MiB body limit and five-second deadline.
@@ -3184,8 +3148,8 @@ Go exposes `VerifyAppEventPublication`; Node and Python expose `verifyAppEventPu
 ### Pin reconciliation to a saved acceptance
 
 ```sh
-gregale events publish-app-status my-app --key order-123-created --expected-accepted-at '2026-10-09T12:34:56.123456Z' --json
-gregale events publish-app-verify my-app --file event.json --expected-accepted-at '2026-10-09T12:34:56.123456Z' --json
+gregale event publish-app-status my-app --key order-123-created --expected-accepted-at '2026-10-09T12:34:56.123456Z' --json
+gregale event publish-app-verify my-app --file event.json --expected-accepted-at '2026-10-09T12:34:56.123456Z' --json
 ```
 
 Copy the exact `accepted_at` from the saved receipt, including its fractional digits. Both existing read endpoints accept optional `expected_accepted_at` in the query string. Verification still takes the original publish body. Timestamps must be nonzero RFC3339 with up to nanosecond precision; offset spellings compare by the exact UTC instant. No rounding or tolerance is applied.
@@ -3229,9 +3193,9 @@ Commit qualification gates.
 ### Limit one subscription's live delivery backlog
 
 ```sh
-gregale events subscription-capacity APP SUB --max-pending 16 --yes
-gregale events subscription-status APP SUB
-gregale events subscription-capacity APP SUB --max-pending 0 --yes
+gregale event subscription-capacity set APP SUB --max-pending 16 --yes
+gregale event subscription get APP SUB
+gregale event subscription-capacity set APP SUB --max-pending 0 --yes
 ```
 
 `PUT /v1/apps/{slug}/event-subscriptions/{subscriptionID}/delivery-control/capacity`
@@ -3313,7 +3277,7 @@ watch thresholds and at-least-once execution behavior remain unchanged. See
 
 ```sh
 gregale --json events subscription-capacity-preview APP SUB --max-pending 16
-gregale events subscription-capacity-preview APP SUB --max-pending 0 --timeout 5s --max-age 30s
+gregale event subscription-capacity-preview APP SUB --max-pending 0 --timeout 5s --max-age 30s
 ```
 
 This CLI command resolves the app UUID and reads existing delivery health, without
@@ -3351,7 +3315,7 @@ promise. See [ADR-1176](adr/1176-guarded-subscription-capacity-preview.md).
 
 ```sh
 gregale --json events subscription-capacity-preview APP SUB --max-pending 16
-gregale events subscription-capacity APP SUB --max-pending 16 --expected-max-pending 0 --expected-plan-max-pending 256 --yes
+gregale event subscription-capacity set APP SUB --max-pending 16 --expected-max-pending 0 --expected-plan-max-pending 256 --yes
 ```
 
 Use the actual saved setting and plan allowance from your preview; the numbers
@@ -3392,7 +3356,7 @@ Plan changes can occur after commit. See
 ### Recover an uncertain capacity change with a command UUID
 
 ```sh
-gregale events subscription-capacity APP SUB --max-pending 16 --expected-max-pending 0 --expected-plan-max-pending 256 --command-id 5c531f54-4f73-4f41-83bb-eb8771993256 --yes
+gregale event subscription-capacity set APP SUB --max-pending 16 --expected-max-pending 0 --expected-plan-max-pending 256 --command-id 5c531f54-4f73-4f41-83bb-eb8771993256 --yes
 ```
 
 Choose and save a fresh nonzero UUID before first use. After a timeout, repeat the
@@ -3439,7 +3403,7 @@ See [ADR-1178](adr/1178-idempotent-subscription-capacity-commands.md).
 Use the same command UUID with the read-only lookup:
 
 ```sh
-gregale events subscription-capacity-command APP SUBSCRIPTION_ID COMMAND_UUID --timeout 5s
+gregale event subscription-capacity get APP SUBSCRIPTION_ID COMMAND_UUID --timeout 5s
 ```
 
 The GET endpoint `/v1/apps/{slug}/event-subscriptions/{subscriptionID}/delivery-control/capacity/commands/{commandID}` requires `apps:read` or `admin` and MFA. Go `GetEventSubscriptionCapacityCommand`, Node `getEventSubscriptionCapacityCommand` and Python `faas_sdk.preview.api.events.get_event_subscription_capacity_command` (`sync` or `asyncio`) return the original receipt. `--json` includes the original proposed value, reviewed expectations, previous setting, outcome, original effective and plan ceilings, recording time and fixed retention deadline. The lookup does not change controls or extend the thirty-day retention window.
@@ -3449,9 +3413,9 @@ A receipt describes the original successful command, even if later commands chan
 ### Discover recent capacity commands
 
 ```sh
-gregale events subscription-capacity-commands APP SUBSCRIPTION_ID --outcome any --limit 25
+gregale event subscription-capacity list APP SUBSCRIPTION_ID --outcome any --limit 25
 # Continue using next_after from the response and the same scope/filter:
-gregale events subscription-capacity-commands APP SUBSCRIPTION_ID --outcome any --limit 25 --after CURSOR
+gregale event subscription-capacity list APP SUBSCRIPTION_ID --outcome any --limit 25 --after CURSOR
 ```
 
 The read-only GET collection at `/v1/apps/{slug}/event-subscriptions/{subscriptionID}/delivery-control/capacity/commands` requires `apps:read` or `admin` and MFA. Outcome can be `any`, `applied`, or `unchanged`. The page limit defaults to 25 and accepts 1–100; explicit HTTP zero is invalid. Go `ListEventSubscriptionCapacityCommands`, Node `listEventSubscriptionCapacityCommands`, and Python `faas_sdk.preview.api.events.list_event_subscription_capacity_commands` (`sync` or `asyncio`) expose the same listing. `--json` includes scope, normalized filter, observation time, original receipts, `has_more`, and `next_after` when available. The CLI fetches one page per invocation.
@@ -3469,7 +3433,7 @@ A full budget warns that new command UUIDs can be rejected; it does not prevent 
 ### Watch for a full capacity-command receipt budget
 
 ```sh
-gregale events subscription-delivery-health APP SUB --watch --receipt-budget-full-threshold 30s --interval 5s --timeout 10m
+gregale event subscription-delivery-health APP SUB --watch --receipt-budget-full-threshold 30s --interval 5s --timeout 10m
 ```
 
 The optional threshold defaults to zero (disabled) and accepts the existing 100ms–24h duration range. Go SDK users set `EventDeliveryHealthWatchOptions.ReceiptBudgetFull` on `WatchEventConsumerDeliveryHealth`. The metric `capacity_command_receipt_budget_full_seconds` measures locally confirmed fullness: an incident opens only after at least two fresh full observations and the configured elapsed duration. A fresh valid budget with remaining receipt slots resolves it. It does not measure the age of a command or prove continuous fullness between polls.
@@ -3481,7 +3445,7 @@ The watcher only reads health. A full receipt budget can reject new command UUID
 ### Warn before receipt slots run out
 
 ```sh
-gregale events subscription-delivery-health APP SUB --watch --receipt-budget-remaining-threshold 16 --receipt-budget-low-sustain 30s --interval 5s --timeout 10m
+gregale event subscription-delivery-health APP SUB --watch --receipt-budget-remaining-threshold 16 --receipt-budget-low-sustain 30s --interval 5s --timeout 10m
 ```
 
 The remaining-slot threshold defaults to zero (disabled); enabled values are 1–128. A warning opens when remaining slots stay **strictly below** N across at least two fresh observations and the confirmation duration. It clears when a fresh valid budget has N or more remaining slots. Confirmation defaults to 30 seconds and accepts 100ms–24h; selecting `--receipt-budget-low-sustain` requires an enabled remaining threshold. Go users set `EventDeliveryHealthWatchOptions.ReceiptBudgetRemaining` and optional `ReceiptBudgetLowSustain`.
@@ -3493,7 +3457,7 @@ Missing, stale, incomplete, repeated, future-dated or scope-mismatched evidence 
 ### Stabilize receipt-budget warning recovery
 
 ```sh
-gregale events subscription-delivery-health APP SUB --watch --receipt-budget-remaining-threshold 16 --receipt-budget-low-sustain 30s --receipt-budget-recovery-threshold 24 --receipt-budget-recovery-sustain 30s --interval 5s --timeout 10m
+gregale event subscription-delivery-health APP SUB --watch --receipt-budget-remaining-threshold 16 --receipt-budget-low-sustain 30s --receipt-budget-recovery-threshold 24 --receipt-budget-recovery-sustain 30s --interval 5s --timeout 10m
 ```
 
 This warns below 16 remaining receipt slots and clears only after at least two fresh observations at **24 or more** remaining slots spanning 30 seconds. A confirmed incident remains firing between those boundaries and during pending recovery. Dropping below the recovery boundary resets recovery confirmation. Invalid or unavailable evidence loses confirmation and resets both timers. A resumed incident stays unknown in the middle band until a warning or recovery is freshly confirmed; downtime does not count.
@@ -3557,7 +3521,7 @@ to an immutable window shorter than normal acceptance retention. See
 counts, waiting-reason counts and separate recovery boundaries:
 
 ```sh
-gregale events subscription-delivery-health APP SUB --watch --deadline-window 5m --deadline-upcoming-threshold 50 --deadline-upcoming-recovery 20 --deadline-expired-threshold 1 --deadline-sustain 1m --deadline-recovery-sustain 2m --confirmation-progress
+gregale event subscription-delivery-health APP SUB --watch --deadline-window 5m --deadline-upcoming-threshold 50 --deadline-upcoming-recovery 20 --deadline-expired-threshold 1 --deadline-sustain 1m --deadline-recovery-sustain 2m --confirmation-progress
 ```
 
 Use repeatable `--deadline-upcoming-reason REASON=N` and
@@ -3569,7 +3533,7 @@ apply. See [CLI configuration, validation and recovery semantics](event-subscrip
 ### Expired backlog percentage alerts
 
 ```sh
-gregale events subscription-delivery-health APP SUB --watch --deadline-window 5m --deadline-expired-ratio-threshold 10 --deadline-expired-ratio-recovery 5 --deadline-expired-ratio-min-recipients 100 --deadline-sustain 1m --deadline-recovery-sustain 2m --confirmation-progress
+gregale event subscription-delivery-health APP SUB --watch --deadline-window 5m --deadline-expired-ratio-threshold 10 --deadline-expired-ratio-recovery 5 --deadline-expired-ratio-min-recipients 100 --deadline-sustain 1m --deadline-recovery-sustain 2m --confirmation-progress
 ```
 
 This opens at >=10% expired among at least 100 pending deadline-bearing recipients
@@ -3581,8 +3545,8 @@ raw counts. Existing checkpoint/resume and alert acknowledgments apply. See
 ### Investigate a saved deadline alert
 
 ```sh
-gregale events deadline-alert-investigate APP --alert-file ./deadline-alert.json --limit 25
-gregale events deadline-alert-investigate APP --alert-file ./deadline-alert.json --limit 25 --explain
+gregale event deadline-alert-investigate APP --alert-file ./deadline-alert.json --limit 25
+gregale event deadline-alert-investigate APP --alert-file ./deadline-alert.json --limit 25 --explain
 gregale --json events deadline-alert-investigate APP --alert-file ./deadline-alert.json --limit 25 --cursor 'NEXT_CURSOR'
 ```
 

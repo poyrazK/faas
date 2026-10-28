@@ -2665,6 +2665,9 @@ func (s *server) planRollback(r *http.Request, acct state.Account, app state.App
 			return rollbackPlan{}, api.ErrNoRollbackTargetWithCandidates(app.Slug, s.zeroTrafficRollbackCandidates(ctx, app.ID))
 		}
 	}
+	if problem := s.rollbackTargetApprovalProblem(ctx, app, target); problem != nil {
+		return rollbackPlan{}, problem
+	}
 	if policies, ok := s.store.(state.BindingReleasePolicyStore); ok {
 		policy, err := policies.GetBindingReleasePolicy(ctx, acct.ID, app.ID, target.Scope)
 		if err != nil {
@@ -3812,7 +3815,8 @@ func (s *server) getDomainDoctor(w http.ResponseWriter, r *http.Request, acct st
 	}
 	report, err := s.buildDoctorReport(r.Context(), d)
 	if err != nil {
-		api.WriteProblem(w, api.ErrDoctorUnavailable(d.Domain, err.Error()))
+		logCustomerFailure(s.log, "build domain doctor report", err)
+		api.WriteProblem(w, api.ErrDoctorUnavailable(d.Domain, "a probe could not run"))
 		return
 	}
 	writeJSON(w, http.StatusOK, report)
@@ -4079,6 +4083,12 @@ func (s *server) createCron(w http.ResponseWriter, r *http.Request, acct state.A
 		api.WriteProblem(w, api.ErrCronInvalid("timezone must be a valid IANA location (for example, America/New_York)"))
 		return
 	}
+	if req.Path != "" {
+		if problem := api.ValidateCronPath(req.Path); problem != nil {
+			api.WriteProblem(w, problem)
+			return
+		}
+	}
 	var cronCommand []string
 	var commandShell bool
 	var commandTimeoutSeconds, commandMaxOutputBytes int
@@ -4297,6 +4307,12 @@ func (s *server) updateCron(w http.ResponseWriter, r *http.Request, acct state.A
 	if req.Path != nil && len(c.Command) > 0 {
 		api.WriteProblem(w, api.ErrValidation("command crons do not have an HTTP path; delete and recreate the cron to change its kind"))
 		return
+	}
+	if req.Path != nil {
+		if problem := api.ValidateCronPath(*req.Path); problem != nil {
+			api.WriteProblem(w, problem)
+			return
+		}
 	}
 	var retryOptions []state.CronOptions
 	if req.RetryMax != nil || req.RetryBackoffSeconds != nil {

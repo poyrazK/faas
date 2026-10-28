@@ -26,8 +26,8 @@ T = TypeVar("T", bound="DeploymentStageState")
 
 @_attrs_define
 class DeploymentStageState:
-    """Customer-visible deployment stage progress (ADR-117). `current` is the open stage, or an empty string once the
-    deployment is live, failed or cancelled and that stage has moved into `history`.
+    """Customer-visible deployment stage progress. `current` is the open stage, or an empty string once the deployment is
+    live, failed or cancelled and that stage has moved into `history`.
 
     """
 
@@ -38,21 +38,21 @@ class DeploymentStageState:
     """Start of the open stage. Null or absent when no stage is open, and on legacy rows created before stage
     timing."""
     retry_requested_stage: DeploymentStageStateRetryRequestedStage | Unset = UNSET
-    """Stage a retry asked to resume from (ADR-162). Present only on retry deployments, which always restart at
+    """Stage a retry asked to resume from. Present only on retry deployments, which always restart at
     source_download."""
     retry_restart_reason: str | Unset = UNSET
     """Why a retry restarted from source_download rather than retry_requested_stage."""
     dependency_gate: DeploymentDependencyGate | Unset = UNSET
-    """Compose dependency readiness gate pinned at admission (ADR-685). The deadline starts when the candidate
-    first presents its own readiness proof."""
+    """Compose dependency readiness gate pinned at admission. The deadline starts when the candidate first presents
+    its own readiness proof."""
     build_dependency_gate: DeploymentBuildDependencyGate | Unset = UNSET
-    """Build-time wait on the API deployments a guided service migration selected (ADR-1666). It is checked before
-    cache lookup and slot allocation and never holds a build slot while waiting."""
+    """Build-time wait on the API deployments a guided service migration selected. It is checked before cache
+    lookup and slot allocation and never holds a build slot while waiting."""
     hosting_verification: DeploymentHostingVerification | Unset = UNSET
-    """Candidate hosting verification recovery progress (ADR-481, ADR-482). last_error_code distinguishes
-    publication, gateway, transport and candidate-evidence failures; a transport failure does not attribute blame to
-    the app or platform. retry_not_before is an eligibility floor, not a promised delivery time; completed_at means
-    the attempt finished, while the hosting receipt records its verdict."""
+    """Candidate hosting verification recovery progress. last_error_code distinguishes publication, gateway,
+    transport and candidate-evidence failures; a transport failure does not attribute blame to the app or platform.
+    retry_not_before is an eligibility floor, not a promised delivery time; completed_at means the attempt finished,
+    while the hosting receipt records its verdict."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

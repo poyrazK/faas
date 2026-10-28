@@ -2588,6 +2588,39 @@ type DebugPageData struct {
 	CriticalPathHistory *DebugCriticalPathHistoryView
 	Running             *DebugRunningView
 	RunningError        string
+	DebugStatus         *DebugStatusView
+}
+
+// DebugStatusView is the dashboard projection of GET
+// /v1/apps/{slug}/debug/status (ADR-1447 amendment): one verdict for the
+// window, the release explanation, and links to the requests behind them.
+type DebugStatusView struct {
+	Verdict        string
+	VerdictLabel   string
+	Headline       string
+	Since          string
+	Requests       int64
+	ServerErrors   int64
+	P95MS          int
+	Regressions    int
+	TracingEnabled bool
+	Release        string
+	Examples       []DebugStatusRequestView
+	Failures       []DebugStatusRequestView
+	// OOMKills lists the window's out-of-memory kills (ADR-121), newest
+	// first; OOMKillsTotal counts all of them and OOMFix is the remedy.
+	OOMKills      []string
+	OOMKillsTotal int
+	OOMFix        []string
+	CLICommand    string
+}
+
+// DebugStatusRequestView links one request from the status card to its
+// evidence on the same page.
+type DebugStatusRequestView struct {
+	ReceivedAt string
+	Label      string
+	URL        string
 }
 
 // DebugRunningView is the dashboard projection of the bounded scheduler
@@ -2832,6 +2865,18 @@ type DebugRequestDetailView struct {
 	// ProfileCaptureURL links the stack snapshot taken while the request was
 	// in flight (ADR-1155 slow_request capture), when one exists.
 	ProfileCaptureURL string
+	// Logs are the request's own log lines, matched by trace ID.
+	Logs          []DebugLogLineView
+	LogsTruncated bool
+}
+
+// DebugLogLineView is one bounded log line attached to request evidence.
+type DebugLogLineView struct {
+	OccurredAt string
+	Source     string
+	Level      string
+	Stream     string
+	Message    string
 }
 
 // DebugCriticalPathView is the template-safe projection of the selected

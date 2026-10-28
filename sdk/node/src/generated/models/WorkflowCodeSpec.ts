@@ -4,7 +4,7 @@
 /* eslint-disable */
 import type { WorkflowRetrySpec } from './WorkflowRetrySpec.js';
 /**
- * A code-first workflow's entry handler (ADR-20261021204307). Exactly one of run or path. Gregale POSTs the run's journal to it at every durable boundary; the SDKs (@gregale/sdk-node/workflows, faas_sdk.workflows) answer with the operations the code reaches next. A code workflow has an empty steps list.
+ * A code-first workflow's entry handler. Exactly one of run or path. Gregale POSTs the run's journal to it at every durable boundary; the SDKs (@gregale/sdk-node/workflows, faas_sdk.workflows) answer with the operations the code reaches next. A code workflow has an empty steps list.
  */
 export type WorkflowCodeSpec = {
   /**
