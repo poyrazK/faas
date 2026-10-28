@@ -18,6 +18,7 @@ import (
 
 	vmmdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/vmmd/v1"
 	"github.com/onebox-faas/faas/pkg/e2etest"
+	"github.com/onebox-faas/faas/pkg/fcvm"
 	"github.com/onebox-faas/faas/pkg/financial"
 	"github.com/onebox-faas/faas/pkg/netns"
 	"github.com/onebox-faas/faas/pkg/vmmdgrpc"
@@ -49,6 +50,16 @@ func (v financialRemoteNativeVMM) PublicForwardTarget(instance string) (*netns.P
 	}
 	copy := v.target
 	return &copy, nil
+}
+
+// The RPC handler admits each exchange against the VM's per-VM HTTP cap
+// (ADR-570) and refuses one it cannot verify. The cap belongs to the
+// fixture's real vmmd; these variants check funding, so admit the attempt.
+func (v financialRemoteNativeVMM) AcquireHTTPForward(ctx context.Context, instance string) (context.Context, func(), error) {
+	if instance != v.record.Lease.Instance {
+		return nil, nil, fcvm.ErrHTTPForwardNotLive
+	}
+	return ctx, func() {}, nil
 }
 
 func financialRemoteVariantClient(t *testing.T, h *e2etest.Harness, record financialSystemRecord) vmmdpb.VmmdClient {
