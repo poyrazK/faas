@@ -447,6 +447,18 @@ var ErrSpoolFull = errors.New("logarchive: spool full")
 // pending, the active partial is merged into it so one daily object remains
 // complete instead of allowing retries to overwrite earlier lines.
 func (s *Spool) PrepareUpload(instance, day string) (string, error) {
+	return s.prepareUpload(instance, day, true)
+}
+
+// PreparePartUpload is PrepareUpload for part objects (ADR-20261028110000):
+// a pending upload is returned unchanged and the active partial waits for the
+// next flush, so an upload's bytes never change between its first attempt and
+// its CompleteUpload. A retry after a crash then rewrites the same part.
+func (s *Spool) PreparePartUpload(instance, day string) (string, error) {
+	return s.prepareUpload(instance, day, false)
+}
+
+func (s *Spool) prepareUpload(instance, day string, merge bool) (string, error) {
 	if instance == "" || instance == "." || instance == ".." || len(instance) > MaxInstanceIDLen || strings.ContainsAny(instance, "/\\\x00") {
 		return "", fmt.Errorf("logarchive: invalid instance id")
 	}
@@ -494,7 +506,7 @@ func (s *Spool) PrepareUpload(instance, day string) (string, error) {
 		}
 		return upload, nil
 	}
-	if partialInfo == nil {
+	if partialInfo == nil || !merge {
 		return upload, nil
 	}
 

@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/storage"
 )
@@ -68,6 +69,8 @@ func TestCleanupRetainsLayerReusedByStage(t *testing.T) {
 	if err := store.MarkDeploymentSuperseded(ctx, sourceID); err != nil {
 		t.Fatal(err)
 	}
+	// The source leaves the rollback window (Hunt 21 H21-1).
+	releaseNewerDeployments(t, store, appID, "", api.SnapshotRollbackRetentionDeployments)
 	stage, err := store.CreateDeployment(ctx, state.Deployment{AppID: appID, Scope: "stage", Kind: state.DeploymentKindImage})
 	if err != nil {
 		t.Fatal(err)

@@ -393,6 +393,10 @@ type PGBackend struct {
 	// unwired cache short-circuits the invalidation arms so the
 	// notify subscriber doesn't need a wiring branch.
 	responseCache *ResponseCache
+	// accountAppIDs lists an account's app IDs, so a wildcard edge-rule
+	// change drops only that account's cached responses (ADR-091 amendment
+	// 2026-10-27, GA hardening). nil keeps the wholesale flush.
+	accountAppIDs func(ctx context.Context, accountID string) ([]string, error)
 	// edgeRules (ADR-089 / issue #561 PR 3) is the
 	// per-host edge-rule matcher the invalidator drives.
 	// nil = no matcher wired (default; pre-PR-3 behaviour
@@ -864,6 +868,14 @@ func (b *PGBackend) WithMetrics(metrics *Metrics) *PGBackend {
 		b.refreshResponseCacheMetrics()
 	}
 	return b
+}
+
+// ObserveEdgeListenerHeartbeat records that the invalidation loop stamped
+// this gateway's edge listener heartbeat at at.
+func (b *PGBackend) ObserveEdgeListenerHeartbeat(at time.Time) {
+	if b != nil {
+		b.metrics.SetEdgeRuleListenerHeartbeat(at)
+	}
 }
 
 // PreInstantiateAppMetrics publishes the aggregate app/class histogram rows at
@@ -3101,6 +3113,41 @@ func (b *PGBackend) InvalidateResponseCacheByTag(appID, tag string) error {
 // strictly preferable to a stale serve against a deleted rule.
 //
 // nil-safe: same posture as InvalidateResponseCacheByApp.
+// WithAccountAppLister installs the lookup InvalidateResponseCacheByAccount
+// uses to find an account's apps.
+func (b *PGBackend) WithAccountAppLister(list func(ctx context.Context, accountID string) ([]string, error)) *PGBackend {
+	if b != nil {
+		b.accountAppIDs = list
+	}
+	return b
+}
+
+// InvalidateResponseCacheByAccount drops the cached responses of accountID's
+// apps, local and shared. It reports false when the apps cannot be listed
+// (no lister, no account, or the lookup failed); the caller then flushes the
+// whole cache, which is always safe.
+func (b *PGBackend) InvalidateResponseCacheByAccount(ctx context.Context, accountID string) bool {
+	if b == nil || b.responseCache == nil {
+		return true
+	}
+	if b.accountAppIDs == nil || accountID == "" {
+		return false
+	}
+	ids, err := b.accountAppIDs(ctx, accountID)
+	if err != nil {
+		if b.log != nil {
+			b.log.Warn("gatewayd: list account apps for response cache invalidation; flushing the whole cache",
+				"account", accountID, "err", err)
+		}
+		return false
+	}
+	for _, id := range ids {
+		b.responseCache.InvalidateByApp(id)
+	}
+	b.refreshResponseCacheMetrics()
+	return true
+}
+
 func (b *PGBackend) InvalidateResponseCacheAll() {
 	if b == nil || b.responseCache == nil {
 		return

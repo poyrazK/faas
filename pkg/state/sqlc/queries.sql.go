@@ -12211,7 +12211,7 @@ VALUES($1::uuid,$2::text,$3::text,
  $4::bigint,$5::bigint,$6::bigint,
  $7::text,$8::boolean,$9::text,$10::uuid,$11::bigint,
  $12::text,$13::text)
-RETURNING id, deployment_id, fc_version, mem_bytes, disk_bytes, stale, created_at, storage_key, tier, stored_bytes, base_image_version, delete_pending, application_standard_capture_token, recovery_generation, cpu_template, cpu_model
+RETURNING id, deployment_id, fc_version, mem_bytes, disk_bytes, stale, created_at, storage_key, tier, stored_bytes, base_image_version, delete_pending, application_standard_capture_token, recovery_generation, cpu_template, cpu_model, stale_at
 `
 
 type CreateSnapshotParams struct {
@@ -12264,6 +12264,7 @@ func (q *Queries) CreateSnapshot(ctx context.Context, db DBTX, arg CreateSnapsho
 		&i.RecoveryGeneration,
 		&i.CpuTemplate,
 		&i.CpuModel,
+		&i.StaleAt,
 	)
 	return i, err
 }
@@ -39559,7 +39560,7 @@ func (q *Queries) LatestRetainedRollbackDeployment(ctx context.Context, db DBTX,
 }
 
 const latestSnapshot = `-- name: LatestSnapshot :one
-SELECT id, deployment_id, fc_version, mem_bytes, disk_bytes, stale, created_at, storage_key, tier, stored_bytes, base_image_version, delete_pending, application_standard_capture_token, recovery_generation, cpu_template, cpu_model FROM snapshots WHERE deployment_id=$1::uuid AND stale=false
+SELECT id, deployment_id, fc_version, mem_bytes, disk_bytes, stale, created_at, storage_key, tier, stored_bytes, base_image_version, delete_pending, application_standard_capture_token, recovery_generation, cpu_template, cpu_model, stale_at FROM snapshots WHERE deployment_id=$1::uuid AND stale=false
 AND recovery_generation=(SELECT snapshot_recovery_generation FROM deployments WHERE id=$1::uuid)
 ORDER BY (tier='warm') DESC,created_at DESC LIMIT 1
 `
@@ -39584,12 +39585,13 @@ func (q *Queries) LatestSnapshot(ctx context.Context, db DBTX, deploymentID pgty
 		&i.RecoveryGeneration,
 		&i.CpuTemplate,
 		&i.CpuModel,
+		&i.StaleAt,
 	)
 	return i, err
 }
 
 const latestSnapshotForTier = `-- name: LatestSnapshotForTier :one
-SELECT id, deployment_id, fc_version, mem_bytes, disk_bytes, stale, created_at, storage_key, tier, stored_bytes, base_image_version, delete_pending, application_standard_capture_token, recovery_generation, cpu_template, cpu_model FROM snapshots WHERE deployment_id=$1::uuid AND tier=$2::text AND stale=false
+SELECT id, deployment_id, fc_version, mem_bytes, disk_bytes, stale, created_at, storage_key, tier, stored_bytes, base_image_version, delete_pending, application_standard_capture_token, recovery_generation, cpu_template, cpu_model, stale_at FROM snapshots WHERE deployment_id=$1::uuid AND tier=$2::text AND stale=false
 AND recovery_generation=(SELECT snapshot_recovery_generation FROM deployments WHERE id=$1::uuid)
 ORDER BY created_at DESC LIMIT 1
 `
@@ -39619,6 +39621,7 @@ func (q *Queries) LatestSnapshotForTier(ctx context.Context, db DBTX, arg Latest
 		&i.RecoveryGeneration,
 		&i.CpuTemplate,
 		&i.CpuModel,
+		&i.StaleAt,
 	)
 	return i, err
 }
@@ -39675,6 +39678,13 @@ SELECT EXISTS (
     SELECT 1 FROM deployments d JOIN apps a ON a.id = d.app_id
     WHERE a.status <> 'deleted'
       AND ((d.deleted_at IS NULL AND d.status IN ('pending', 'building', 'imaging', 'snapshotting', 'live'))
+           OR (d.deleted_at IS NULL AND d.status = 'superseded' AND (
+                SELECT count(*) FROM deployments n
+                 WHERE n.app_id = d.app_id
+                   AND COALESCE(NULLIF(n.scope, ''), 'default') = COALESCE(NULLIF(d.scope, ''), 'default')
+                   AND n.deleted_at IS NULL AND n.status IN ('live', 'superseded')
+                   AND (n.created_at > d.created_at OR (n.created_at = d.created_at AND n.id > d.id))
+               ) < $1::int)
            OR EXISTS (SELECT 1 FROM snapshots sn WHERE sn.deployment_id = d.id AND NOT sn.stale)
            OR EXISTS (SELECT 1 FROM instances i WHERE i.deployment_id = d.id AND i.state IN ('pending', 'waking', 'cold_booting', 'running', 'snapshotting', 'migrating', 'warm', 'frozen', 'draining'))
            OR EXISTS (SELECT 1 FROM deployment_aliases al WHERE al.deployment_id = d.id)
@@ -39682,30 +39692,39 @@ SELECT EXISTS (
            OR EXISTS (SELECT 1 FROM environment_workload_retirements r WHERE d.id=ANY(r.deployment_ids) AND r.phase IN ('planned','retiring','retired','recovering'))
            OR EXISTS (SELECT 1 FROM project_release_members rm JOIN project_release_sets rs ON rs.id = rm.release_id
                       WHERE rm.deployment_id = d.id AND (rs.active OR rs.expires_at > clock_timestamp())))
-      AND (d.rootfs_key = $1::text
-           OR $1::text = 'apps/' || a.slug || '/' || d.id::text || '.ext4'
-           OR left($1::text, length('apps/' || a.slug || '/' || d.id::text || '/')) = 'apps/' || a.slug || '/' || d.id::text || '/'
-           OR EXISTS (SELECT 1 FROM deployment_sidecar_layers l WHERE l.deployment_id = d.id AND l.storage_key = $1::text))
+      AND (d.rootfs_key = $2::text
+           OR $2::text = 'apps/' || a.slug || '/' || d.id::text || '.ext4'
+           OR left($2::text, length('apps/' || a.slug || '/' || d.id::text || '/')) = 'apps/' || a.slug || '/' || d.id::text || '/'
+           OR EXISTS (SELECT 1 FROM deployment_sidecar_layers l WHERE l.deployment_id = d.id AND l.storage_key = $2::text))
 ) OR EXISTS (
     SELECT 1 FROM project_environment_clone_layer_pins p
     JOIN project_environment_clone_operations op ON op.id = p.operation_id
     JOIN apps a ON a.id = p.app_id
-    WHERE p.storage_key = $1::text AND a.status <> 'deleted'
+    WHERE p.storage_key = $2::text AND a.status <> 'deleted'
       AND op.status NOT IN ('ready', 'compensated')
 ) OR EXISTS (
     SELECT 1 FROM jobs j WHERE j.status<>'deleted' AND j.image_ref LIKE 'gregale-source://%'
-        AND j.image_materialization_status='ready' AND j.image_storage_key=$1::text
+        AND j.image_materialization_status='ready' AND j.image_storage_key=$2::text
 ) OR EXISTS (
     SELECT 1 FROM job_runs r WHERE r.image_ref_snapshot LIKE 'gregale-source://%'
-        AND r.aggregate_status IN ('queued','running') AND r.image_storage_key_snapshot=$1::text
+        AND r.aggregate_status IN ('queued','running') AND r.image_storage_key_snapshot=$2::text
  ) OR EXISTS (
  SELECT 1 FROM environment_build_artifact_pins p JOIN source_build_rootfs f ON f.id=p.artifact_id
- WHERE f.input_snapshot->>'storage_key'=$1::text
- ) OR EXISTS (SELECT 1 FROM environment_recovery_retained_keys p WHERE p.storage_key=$1::text) AS referenced
+ WHERE f.input_snapshot->>'storage_key'=$2::text
+ ) OR EXISTS (SELECT 1 FROM environment_recovery_retained_keys p WHERE p.storage_key=$2::text) AS referenced
 `
 
-func (q *Queries) LayerArtifactHasReferences(ctx context.Context, db DBTX, storageKey string) (pgtype.Bool, error) {
-	row := db.QueryRow(ctx, layerArtifactHasReferences, storageKey)
+type LayerArtifactHasReferencesParams struct {
+	RollbackGenerations int32
+	StorageKey          string
+}
+
+// A superseded deployment among the newest rollback_generations live or
+// superseded deployments of its app and scope is a rollback target, whose
+// cold boot needs its layers whatever state its snapshots are in (Hunt 21
+// H21-1).
+func (q *Queries) LayerArtifactHasReferences(ctx context.Context, db DBTX, arg LayerArtifactHasReferencesParams) (pgtype.Bool, error) {
+	row := db.QueryRow(ctx, layerArtifactHasReferences, arg.RollbackGenerations, arg.StorageKey)
 	var referenced pgtype.Bool
 	err := row.Scan(&referenced)
 	return referenced, err
@@ -52964,7 +52983,7 @@ func (q *Queries) LiveServiceProxyInstanceRowsByHostIP(ctx context.Context, db D
 }
 
 const liveSnapshotsForTier = `-- name: LiveSnapshotsForTier :many
-SELECT id, deployment_id, fc_version, mem_bytes, disk_bytes, stale, created_at, storage_key, tier, stored_bytes, base_image_version, delete_pending, application_standard_capture_token, recovery_generation, cpu_template, cpu_model FROM snapshots WHERE deployment_id=$1::uuid AND tier=$2::text AND stale=false
+SELECT id, deployment_id, fc_version, mem_bytes, disk_bytes, stale, created_at, storage_key, tier, stored_bytes, base_image_version, delete_pending, application_standard_capture_token, recovery_generation, cpu_template, cpu_model, stale_at FROM snapshots WHERE deployment_id=$1::uuid AND tier=$2::text AND stale=false
 AND recovery_generation=(SELECT snapshot_recovery_generation FROM deployments WHERE id=$1::uuid)
 ORDER BY created_at DESC
 `
@@ -53000,6 +53019,7 @@ func (q *Queries) LiveSnapshotsForTier(ctx context.Context, db DBTX, arg LiveSna
 			&i.RecoveryGeneration,
 			&i.CpuTemplate,
 			&i.CpuModel,
+			&i.StaleAt,
 		); err != nil {
 			return nil, err
 		}
@@ -84881,72 +84901,6 @@ func (q *Queries) ReadServicePolicyDeploymentWeights(ctx context.Context, db DBT
 	return items, nil
 }
 
-const readServicePolicyPreviewApp = `-- name: ReadServicePolicyPreviewApp :one
-SELECT id, account_id, slug, workload_name, status, project_id, preview_of_slug,
-       preview_pr_number, preview_pr_state, preview_expires_at, app_protocol, websocket_enabled,
-       jsonb_strip_nulls(jsonb_build_object(
-           'service_bindings', manifest->'service_bindings',
-           'service_reliability', manifest->'service_reliability',
-           'service_binding_policy', manifest->'service_binding_policy',
-           'service_binding_transport', manifest->'service_binding_transport',
-           'preview_service_calls_policy', manifest->'preview_service_calls_policy',
-           'allowed_service_callers', manifest->'allowed_service_callers',
-           'allowed_service_call_scopes', manifest->'allowed_service_call_scopes'))::jsonb AS manifest
-FROM apps WHERE account_id = $1::uuid AND project_id = $2::uuid
-  AND preview_pr_number = $3::integer
-  AND translate(lower(workload_name), '_.', '--') = translate(lower($4::text), '_.', '--')
-  AND preview_of_slug IS NOT NULL AND status <> 'deleted'
-`
-
-type ReadServicePolicyPreviewAppParams struct {
-	AccountID       pgtype.UUID
-	ProjectID       pgtype.UUID
-	PreviewPrNumber int32
-	WorkloadName    string
-}
-
-type ReadServicePolicyPreviewAppRow struct {
-	ID               pgtype.UUID
-	AccountID        pgtype.UUID
-	Slug             string
-	WorkloadName     string
-	Status           string
-	ProjectID        pgtype.UUID
-	PreviewOfSlug    pgtype.Text
-	PreviewPrNumber  pgtype.Int4
-	PreviewPrState   pgtype.Text
-	PreviewExpiresAt pgtype.Timestamptz
-	AppProtocol      string
-	WebsocketEnabled bool
-	Manifest         []byte
-}
-
-func (q *Queries) ReadServicePolicyPreviewApp(ctx context.Context, db DBTX, arg ReadServicePolicyPreviewAppParams) (ReadServicePolicyPreviewAppRow, error) {
-	row := db.QueryRow(ctx, readServicePolicyPreviewApp,
-		arg.AccountID,
-		arg.ProjectID,
-		arg.PreviewPrNumber,
-		arg.WorkloadName,
-	)
-	var i ReadServicePolicyPreviewAppRow
-	err := row.Scan(
-		&i.ID,
-		&i.AccountID,
-		&i.Slug,
-		&i.WorkloadName,
-		&i.Status,
-		&i.ProjectID,
-		&i.PreviewOfSlug,
-		&i.PreviewPrNumber,
-		&i.PreviewPrState,
-		&i.PreviewExpiresAt,
-		&i.AppProtocol,
-		&i.WebsocketEnabled,
-		&i.Manifest,
-	)
-	return i, err
-}
-
 const readServicePolicyProject = `-- name: ReadServicePolicyProject :one
 SELECT preview_service_policy FROM github_deploy_policies
 WHERE project_id = $1::uuid AND account_id = $2::uuid
@@ -85107,6 +85061,10 @@ WITH metadata AS (
         a.account_id::text AS account_id, a.slug AS app_slug, a.status AS app_status,
         d.status AS deployment_status, s.fc_version, s.mem_bytes, s.disk_bytes,
         s.storage_key, s.stale, s.delete_pending, s.created_at, s.tier,
+        -- Stale retention counts from the stale mark, never from before the
+        -- row's creation; rows marked before stale_at existed count from
+        -- their creation (Hunt 21 H21-2).
+        GREATEST(s.stale_at, s.created_at)::timestamptz AS stale_since,
         COALESCE(NULLIF(d.scope,''),'default')::text AS scope,
         COALESCE(runtime_owner.environment_id::text,legacy.id::text,'')::text AS environment_id,
         COALESCE(d.rootfs_key,'')::text AS deployment_rootfs_key,
@@ -85133,9 +85091,9 @@ WITH metadata AS (
         AND legacy.account_id=a.account_id AND legacy.project_id=a.project_id AND legacy.slug=d.scope
         AND legacy.created_at<=d.created_at
 )
-SELECT id, deployment_id, app_id, account_id, app_slug, app_status, deployment_status, fc_version, mem_bytes, disk_bytes, storage_key, stale, delete_pending, created_at, tier, scope, environment_id, deployment_rootfs_key, warm_snapshot_enabled, runtime_owner_invalid FROM metadata
+SELECT id, deployment_id, app_id, account_id, app_slug, app_status, deployment_status, fc_version, mem_bytes, disk_bytes, storage_key, stale, delete_pending, created_at, tier, stale_since, scope, environment_id, deployment_rootfs_key, warm_snapshot_enabled, runtime_owner_invalid FROM metadata
 WHERE ($1::text='active' AND (NOT stale OR runtime_owner_invalid))
-    OR ($1::text='stale' AND stale AND created_at<now()-$2::bigint*interval '1 second')
+    OR ($1::text='stale' AND stale AND stale_since<now()-$2::bigint*interval '1 second')
     OR ($1::text='pending' AND delete_pending)
 ORDER BY CASE WHEN $1::text='active' THEN created_at END DESC,
     CASE WHEN $1::text<>'active' THEN created_at END ASC, id ASC
@@ -85163,6 +85121,7 @@ type ReadSnapshotGarbageCollectionRow struct {
 	DeletePending       bool
 	CreatedAt           pgtype.Timestamptz
 	Tier                string
+	StaleSince          pgtype.Timestamptz
 	Scope               string
 	EnvironmentID       string
 	DeploymentRootfsKey string
@@ -85195,6 +85154,7 @@ func (q *Queries) ReadSnapshotGarbageCollection(ctx context.Context, db DBTX, ar
 			&i.DeletePending,
 			&i.CreatedAt,
 			&i.Tier,
+			&i.StaleSince,
 			&i.Scope,
 			&i.EnvironmentID,
 			&i.DeploymentRootfsKey,
@@ -96736,6 +96696,48 @@ func (q *Queries) ServiceCapacityProtection(ctx context.Context, db DBTX) ([]byt
 	return snapshot, err
 }
 
+const servicePolicyPreviewAppIDs = `-- name: ServicePolicyPreviewAppIDs :many
+SELECT id FROM apps WHERE account_id = $1::uuid AND project_id = $2::uuid
+  AND preview_pr_number = $3::integer
+  AND translate(lower(workload_name), '_.', '--') = translate(lower($4::text), '_.', '--')
+  AND preview_of_slug IS NOT NULL AND status <> 'deleted'
+ORDER BY id
+LIMIT 2
+`
+
+type ServicePolicyPreviewAppIDsParams struct {
+	AccountID       pgtype.UUID
+	ProjectID       pgtype.UUID
+	PreviewPrNumber int32
+	WorkloadName    string
+}
+
+// Two IDs suffice to refuse an ambiguous service name, as production does.
+func (q *Queries) ServicePolicyPreviewAppIDs(ctx context.Context, db DBTX, arg ServicePolicyPreviewAppIDsParams) ([]pgtype.UUID, error) {
+	rows, err := db.Query(ctx, servicePolicyPreviewAppIDs,
+		arg.AccountID,
+		arg.ProjectID,
+		arg.PreviewPrNumber,
+		arg.WorkloadName,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []pgtype.UUID{}
+	for rows.Next() {
+		var id pgtype.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const serviceRecoveryByApp = `-- name: ServiceRecoveryByApp :one
 SELECT app_id, revision, claim_token, lease_until, status, failures, next_attempt_at, updated_at FROM service_recovery WHERE app_id = $1
 `
@@ -99947,6 +99949,18 @@ func (q *Queries) TryLockTrafficPolicySession(ctx context.Context, db DBTX, lock
 	return column_1, err
 }
 
+const tryLockTrafficPolicySessionShared = `-- name: TryLockTrafficPolicySessionShared :one
+SELECT pg_try_advisory_lock_shared(hashtextextended($1::text,0))::boolean
+`
+
+// A scoped binding writer's ancestor and root keys (ADR-20261027163626).
+func (q *Queries) TryLockTrafficPolicySessionShared(ctx context.Context, db DBTX, lockKey string) (bool, error) {
+	row := db.QueryRow(ctx, tryLockTrafficPolicySessionShared, lockKey)
+	var column_1 bool
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
 const uDPListenerByAppAndName = `-- name: UDPListenerByAppAndName :one
 SELECT id, account_id, app_id, listener_name, guest_port, public_port, protocol, enabled, created_at, updated_at FROM app_udp_listeners
 WHERE app_id = $1::text::uuid AND listener_name = $2
@@ -100037,6 +100051,17 @@ SELECT pg_advisory_unlock(hashtextextended($1::text,0))::boolean
 
 func (q *Queries) UnlockTrafficPolicySession(ctx context.Context, db DBTX, lockKey string) (bool, error) {
 	row := db.QueryRow(ctx, unlockTrafficPolicySession, lockKey)
+	var column_1 bool
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
+const unlockTrafficPolicySessionShared = `-- name: UnlockTrafficPolicySessionShared :one
+SELECT pg_advisory_unlock_shared(hashtextextended($1::text,0))::boolean
+`
+
+func (q *Queries) UnlockTrafficPolicySessionShared(ctx context.Context, db DBTX, lockKey string) (bool, error) {
+	row := db.QueryRow(ctx, unlockTrafficPolicySessionShared, lockKey)
 	var column_1 bool
 	err := row.Scan(&column_1)
 	return column_1, err

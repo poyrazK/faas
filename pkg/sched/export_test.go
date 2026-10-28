@@ -272,6 +272,7 @@ var WaitFor = waitFor
 var WakeEngineWithEvents = wakeEngineWithEvents
 var WakeN = wakeN
 var WireRenderMetrics = wireRenderMetrics
+var WorkerQueueDepthLimit = workerQueueDepthLimit
 var WithAppTaskStage = withAppTaskStage
 var WithRequestedWakeID = withRequestedWakeID
 var WithServiceReplicaPlacementSpread = withServiceReplicaPlacementSpread

@@ -140,6 +140,9 @@ type Config struct {
 	// resumes a guest kernel whose mounted ext4 state predates builderd's
 	// offline edits of the same drive (see prepareWarmBuilder).
 	DisableWarmBuilders bool `toml:"-"`
+	// LayerCompression is "" (gzip) or api.BuildLayerCompressionZstd, from
+	// LayerZstdEnv. It reaches every build manifest and cache key.
+	LayerCompression string `toml:"-"`
 	// BuilderNodeID is the compute_node name stamped onto every
 	// provenance row this Builderd writes (ADR-038, Tier 3 / issue
 	// #197 B3.1). Defaulted to "default-local" on the one-box by
@@ -991,6 +994,7 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 		DevWatchHost:    watch.Host,
 		AccountID:       app.AccountID,
 	}
+	recipe.LayerCompression = b.cfg.LayerCompression
 	recipe.BuildSecretScope = buildSecretScope(app.AccountID, app.ID, dep.Scope, buildSecrets)
 	recipe.RegistryAuthScope = registryAuthScope(app.ID, registryCreds)
 	reuseScope, reuseOptedIn := gitOpsReuseScope(app, dep)
@@ -1135,6 +1139,7 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 		DevWatchCommand:       watch.Command,
 		DevWatchHost:          watch.Host,
 		DependencyCacheKey:    dependencyCacheKey,
+		LayerCompression:      b.cfg.LayerCompression,
 		LogPath:               dep.LogPath,
 		RAMMB:                 api.BuildVMRAMMB,
 		TimeoutSec:            b.cfg.BuildTimeoutSeconds,

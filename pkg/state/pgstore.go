@@ -2854,11 +2854,13 @@ func (s *PgStore) PreviewAppsByParent(ctx context.Context, accountID, parentSlug
 	return scanApps(rows)
 }
 
+// PreviewAppByProjectWorkload answers ErrConflict when two of the PR's
+// previews share the name in DNS form, like ProjectAppByWorkload.
 func (s *PgStore) PreviewAppByProjectWorkload(ctx context.Context, accountID, projectID string, previewPRNumber int, workloadName string) (App, error) {
 	if accountID == "" || projectID == "" || previewPRNumber <= 0 || workloadName == "" {
 		return App{}, ErrNotFound
 	}
-	row := s.pool.QueryRow(ctx, `
+	rows, err := s.pool.Query(ctx, `
 		select `+appsSelectColumns+`
 		  from apps
 		 where account_id = $1
@@ -2867,8 +2869,24 @@ func (s *PgStore) PreviewAppByProjectWorkload(ctx context.Context, accountID, pr
 		   and translate(lower(workload_name), '_.', '--') = translate(lower($4), '_.', '--')
 		   and preview_of_slug is not null
 		   and status <> 'deleted'
+		 order by id
+		 limit 2
 	`, accountID, projectID, previewPRNumber, workloadName)
-	return scanApp(row)
+	if err != nil {
+		return App{}, fmt.Errorf("state: preview app by project workload: %w", mapErr(err))
+	}
+	defer rows.Close()
+	apps, err := scanApps(rows)
+	if err != nil {
+		return App{}, err
+	}
+	switch len(apps) {
+	case 0:
+		return App{}, ErrNotFound
+	case 1:
+		return apps[0], nil
+	}
+	return App{}, ErrConflict
 }
 
 // ListPreviewsForAccount (Mega-C PR-1 / issue #961 leaf 3) is the
@@ -11555,6 +11573,11 @@ func (s *PgStore) prepareDeploymentRollbackOnce(ctx context.Context, appID, targ
 	if target.Status != DeploySuperseded && (target.Status != DeployLive || target.TrafficPercent != 0) {
 		return Deployment{}, ErrRollbackTargetAlreadyLive
 	}
+	// A target whose layers were reclaimed cannot cold boot; refuse it here
+	// rather than fail its readiness prime later (Hunt 21 H21-1).
+	if err := requireDeploymentLayerArtifactsTx(ctx, tx, target.ID); err != nil {
+		return Deployment{}, err
+	}
 
 	now := time.Now().UTC()
 	prepared, err := scanDeploymentWithRootfs(tx.QueryRow(ctx, `
@@ -18852,10 +18875,12 @@ func (s *PgStore) MarkSnapshotStaleByAppProtocol(ctx context.Context, snapshotID
 // (typically 7 days per api.SnapshotStaleRetention) so an operator
 // rollback across an FC upgrade doesn't pay an extra cold boot.
 // F-07 closes the gap where the prior sweep only flipped stale=true
-// and stale rows accumulated indefinitely.
+// and stale rows accumulated indefinitely. Retention counts from the stale
+// mark; a row older than the window but marked stale today used to go on
+// the next sweep (Hunt 21 H21-2).
 func (s *PgStore) DeleteSnapshotsStaleOlderThan(ctx context.Context, retention time.Duration) (int64, error) {
 	tag, err := s.pool.Exec(ctx,
-		`delete from snapshots where stale = true and created_at < now() - $1::interval`,
+		`delete from snapshots where stale = true and greatest(stale_at, created_at) < now() - $1::interval`,
 		fmt.Sprintf("%d seconds", int64(retention.Seconds())))
 	if err != nil {
 		return 0, err

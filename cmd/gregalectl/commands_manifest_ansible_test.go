@@ -771,3 +771,62 @@ func TestRenderManifestAnsibleFiles_ObjectStorageGateway(t *testing.T) {
 		t.Errorf("compute node got gateway vars:\n%s", compute)
 	}
 }
+
+// The archive bucket comes from the manifest, on every host; without a
+// log_archive section nothing is rendered, so a converge keeps each host's
+// existing envelope instead of a bucket hard-coded in the repo.
+func TestRenderManifestAnsibleFiles_LogArchive(t *testing.T) {
+	base := strings.Replace(validManifestYAML,
+		"    - name: fsn-1\n      role: control-plane\n",
+		"    - name: fsn-1\n      role: control-plane\n      address: 10.42.0.1:7100\n    - name: fsn-2\n      role: compute-only\n      address: 10.42.0.2:50051\n", 1)
+	render := func(t *testing.T, yaml string) []string {
+		t.Helper()
+		m, err := manifest.Parse([]byte(yaml))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if errs := m.Validate(); errs != nil {
+			t.Fatal(errs)
+		}
+		files, err := renderManifestAnsibleFiles(m, t.TempDir())
+		if err != nil {
+			t.Fatal(err)
+		}
+		var hosts []string
+		for _, f := range files {
+			if strings.HasSuffix(f.Path, "fsn-1.yml") || strings.HasSuffix(f.Path, "fsn-2.yml") {
+				hosts = append(hosts, string(f.Body))
+			}
+		}
+		if len(hosts) != 2 {
+			t.Fatalf("rendered %d host files, want 2", len(hosts))
+		}
+		return hosts
+	}
+	for _, vars := range render(t, base) {
+		if strings.Contains(vars, "faas_log_archive") {
+			t.Fatalf("manifest without log_archive rendered archive vars:\n%s", vars)
+		}
+	}
+
+	gcs := base + "log_archive:\n  bucket: prod-log-archive\n  endpoint: https://storage.googleapis.com\n  auth: gcp_metadata\n"
+	for _, vars := range render(t, gcs) {
+		for _, want := range []string{`faas_log_archive_bucket: "prod-log-archive"`, `faas_log_archive_endpoint: "https://storage.googleapis.com"`, `faas_log_archive_region: "auto"`, `faas_log_archive_auth_mode: "gcp_metadata"`} {
+			if !strings.Contains(vars, want) {
+				t.Errorf("host vars missing %q:\n%s", want, vars)
+			}
+		}
+		if strings.Contains(vars, "faas_log_archive_credentials_src") {
+			t.Errorf("keyless archive rendered a credentials source:\n%s", vars)
+		}
+	}
+
+	static := base + "log_archive:\n  bucket: ovh-logs\n  endpoint: https://s3.gra.io.cloud.ovh.net\n  region: gra\n  auth: static\n  credentials_src: /operator/secrets/log-archive.json\n"
+	for _, vars := range render(t, static) {
+		for _, want := range []string{`faas_log_archive_region: "gra"`, `faas_log_archive_auth_mode: ""`, `faas_log_archive_credentials_src: "/operator/secrets/log-archive.json"`} {
+			if !strings.Contains(vars, want) {
+				t.Errorf("host vars missing %q:\n%s", want, vars)
+			}
+		}
+	}
+}

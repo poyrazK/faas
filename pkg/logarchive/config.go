@@ -118,6 +118,10 @@ const EnvCredentialsPath = "FAAS_LOG_ARCHIVE_CREDS_PATH"
 // gcp_metadata uses the attached GCE service account's short-lived token.
 const EnvAuthMode = "FAAS_LOG_ARCHIVE_AUTH_MODE"
 
+// EnvPartObjects ("1") makes the shipper write one part object per flush
+// (Config.PartObjects).
+const EnvPartObjects = "FAAS_LOG_ARCHIVE_PART_OBJECTS"
+
 // DefaultCredentialsPath is used outside systemd (for example by a manual
 // binary invocation) and is also the source path used by LoadCredential=.
 const DefaultCredentialsPath = "/etc/faas/secrets/storage-box/archive-creds.json"
@@ -172,6 +176,12 @@ type Config struct {
 	// SpoolRoot is the directory the spool writes into. Empty =
 	// DefaultSpoolRoot.
 	SpoolRoot string
+	// PartObjects uploads each flush as its own part object under
+	// DayPartPrefix instead of re-uploading the whole day, and keeps no local
+	// history (ADR-20261028110000). Readers of every release that ships this
+	// field read parts; switch writers on only once every gatewayd-internal
+	// runs such a release.
+	PartObjects bool
 
 	// regionExplicit distinguishes an explicit FAAS_LOG_ARCHIVE_REGION from
 	// ConfigFromEnv's us-east-1 default. It lets an archive envelope provide
@@ -213,6 +223,7 @@ func ConfigFromEnv(getenv func(string) string, log *slog.Logger) (Config, error)
 		RetentionDays:  parseIntEnv(getenv(EnvRetentionDays), DefaultRetentionDays, EnvRetentionDays, log),
 		LocalBytesMax:  parseInt64Env(getenv(EnvLocalBytesMax), DefaultLocalBytesMax, EnvLocalBytesMax, log),
 		SpoolRoot:      defaultSpoolRoot(getenv(EnvSpoolRoot)),
+		PartObjects:    getenv(EnvPartObjects) == "1",
 		regionExplicit: getenv(EnvRegion) != "",
 	}
 	if cfg.KeyID != "" && cfg.Secret == "" {

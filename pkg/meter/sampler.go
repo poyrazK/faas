@@ -10,6 +10,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/platformflags"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -210,6 +211,9 @@ type Sampler struct {
 	// pause ledger proves. The zero value is off.
 	quietPause   QuietPauseMode
 	quietMetrics *quietPauseMetrics
+	// quietRelease decides which accounts on mode applies to (the
+	// quiet_pause_unbilled platform flag); nil releases every account.
+	quietRelease func(platformflags.Subject) bool
 }
 
 // cpuBaseline is the per-instance baseline the sampler retains
@@ -564,6 +568,12 @@ func (s *Sampler) rollApps(ctx context.Context, observedAt, minute time.Time, ex
 		if app.Status == state.AppDeleted && !exactResidency {
 			continue
 		}
+		// The quiet_pause_unbilled flag decides per account whether on mode
+		// subtracts this app's paused seconds (ADR-20261023171905).
+		quietMode := s.quietPause
+		if quietPaused != nil {
+			quietMode = s.quietPauseModeFor(app, planByAccount[meterAppSubject(app, planByAccount)])
+		}
 		ins := instancesByApp[app.ID]
 		if instancesByApp == nil {
 			ins, err = s.store.ListInstancesForApp(ctx, app.ID)
@@ -627,7 +637,7 @@ func (s *Sampler) rollApps(ctx context.Context, observedAt, minute time.Time, ex
 				// A quiet-paused second is not a running second (§4.7,
 				// ADR-20261023171905). Subtracted before compute funding and
 				// the floor fill, so a floor still bills its paused capacity.
-				seconds = s.unbilledQuietSeconds(quietPaused, ins.ID,
+				seconds = s.unbilledQuietSeconds(quietPaused, quietMode, ins.ID,
 					string(planByAccount[meterAppSubject(app, planByAccount)]), seconds)
 			}
 			if seconds > 0 && (exactResidency || state.State(ins.State).Billable()) {
