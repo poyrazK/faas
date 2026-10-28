@@ -168,7 +168,7 @@ jobs:
           GREGALE_MCP_CODEX_BINARY="$GITHUB_WORKSPACE/scripts/ci/management-mcp-client/node_modules/.bin/codex" \
           GREGALE_MCP_CLIENT_REPORT="$RUNNER_TEMP/management-mcp-remote.json" \
             go test -race -p=1 ./pkg/mcpmanagement -run 'TestCodex(RemoteOAuth|RequestDiagnostics|RegressionTriage)Acceptance' -count=1 -v
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: ${{ !cancelled() && steps.management-build.outcome == 'success' }}
         with:
           name: management-mcp-client-acceptance

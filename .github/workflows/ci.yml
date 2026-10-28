@@ -772,7 +772,7 @@ jobs:
         run: scripts/ci/with-pg16-unix.sh go test -race -count=1 -p 1 -timeout=20m ./pkg/db -run '^TestApplicationStandardLedgerRecovery'
 
       - name: upload public API state-adapter coverage
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: coverage-state-api
           path: coverage/cover-shard1.out
@@ -881,7 +881,7 @@ jobs:
           go test -race -count=1 -timeout=60m -run "$RUN" -coverpkg="$APIDPKG,$STATEPKG" -covermode=atomic -coverprofile=coverage/cover-shard1-pgclone-${{ matrix.part }}.out ./pkg/apid/apidserver
           python3 scripts/ci/normalize_go_cover_profile.py coverage/cover-shard1-pgclone-${{ matrix.part }}.out
       - name: upload state-adapter coverage
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: coverage-state-api-pgclone-${{ matrix.part }}
           path: coverage/cover-shard1-pgclone-${{ matrix.part }}.out
@@ -973,7 +973,7 @@ jobs:
           go test -race -count=1 -v -p 4 -timeout=30m -run="$STATE_RUN" -coverpkg=./pkg/state -covermode=atomic -coverprofile=coverage/cover-shard-state-${{ matrix.shard }}.out ./pkg/state
           STATE_TESTS
       - name: upload state coverage
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: coverage-state-${{ matrix.shard }}
           path: coverage/cover-shard-state-${{ matrix.shard }}.out
@@ -1227,7 +1227,7 @@ jobs:
 
       - name: upload external state-adapter coverage
         if: matrix.state_coverage
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: coverage-state-parity
           path: coverage/${{ matrix.coverage_file }}
@@ -1241,7 +1241,7 @@ jobs:
 
       - name: upload PostgreSQL operation-policy retirement log
         if: always() && matrix.id == 'a'
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: operation-policy-postgres-contract
           path: operation-policy-postgres-contract.log
@@ -1257,7 +1257,7 @@ jobs:
 
       - name: upload PostgreSQL UDP contract log
         if: always() && matrix.id == 'a'
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: udp-postgres-contract
           path: udp-postgres-contract.log
@@ -1396,7 +1396,7 @@ jobs:
           PY
       - name: Retain traffic logs, source freeze and verdict
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: traffic-platform-${{ github.sha }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/traffic-evidence
@@ -1689,7 +1689,7 @@ jobs:
           python3 scripts/ci/udp-contract-check.py --packages cmd/gregale cmd/gatewayd-public pkg/e2etest api/proto/onebox/faas/vmmd/v1 2>&1 | tee udp-contract-customer-protocol.log
       - name: retain container qualification log
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: container-contract-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
