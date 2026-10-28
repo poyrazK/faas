@@ -58,13 +58,16 @@ const (
 	workWorkflowAgentRuns    workKind = "workflow_agent_runs"
 	workTriggerDispatch      workKind = "trigger_dispatch"
 	workQueuePushDispatch    workKind = "queue_push_dispatch"
-	workEventFanout          workKind = "event_fanout"
-	workReaper               workKind = "reaper"
-	workRehearsalFault       workKind = "rehearsal_worker_fault"
-	workRehearsalSuspend     workKind = "rehearsal_suspend_resume"
-	workRehearsalSweep       workKind = "rehearsal_sweep"
-	workWorkerRecovery       workKind = "worker_recovery"
-	workWorkerRecoverySweep  workKind = "worker_recovery_sweep"
+	// workBrokerTriggerDispatch runs one external broker trigger's batch;
+	// its key is the trigger, so a trigger has one batch in flight.
+	workBrokerTriggerDispatch workKind = "broker_trigger_dispatch"
+	workEventFanout           workKind = "event_fanout"
+	workReaper                workKind = "reaper"
+	workRehearsalFault        workKind = "rehearsal_worker_fault"
+	workRehearsalSuspend      workKind = "rehearsal_suspend_resume"
+	workRehearsalSweep        workKind = "rehearsal_sweep"
+	workWorkerRecovery        workKind = "worker_recovery"
+	workWorkerRecoverySweep   workKind = "worker_recovery_sweep"
 	// workAdoptionReport applies restarted vmmds' adoption reports.
 	workAdoptionReport workKind = "adoption_report"
 	// workAppWake and workRuntimeConfigRestart deliver the durable app_wake
@@ -78,7 +81,7 @@ const (
 var workKinds = []workKind{
 	workServiceRecovery, workServiceRecoverySweep,
 	workPrime, workRestart, workAppReconcile, workDeploymentReconcile, workJobCancel, workJobDispatch, workPrimeRecovery,
-	workWorkflowDispatch, workWorkflowSchedules, workWorkflowAgentRuns, workTriggerDispatch, workQueuePushDispatch, workEventFanout,
+	workWorkflowDispatch, workWorkflowSchedules, workWorkflowAgentRuns, workTriggerDispatch, workQueuePushDispatch, workBrokerTriggerDispatch, workEventFanout,
 	workReaper, workAdoptionReport, workRehearsalFault, workRehearsalSuspend, workRehearsalSweep, workWorkerRecovery, workWorkerRecoverySweep,
 	workAppWake, workRuntimeConfigRestart,
 }
@@ -144,7 +147,10 @@ var workSpecs = map[workKind]workSpec{
 	// Push-queue lanes (ADR-972) claim durable leases; a dropped lane is
 	// retried by the next trigger tick.
 	workQueuePushDispatch: {slots: api.QueuePushDispatchSlotsPerNode, overflow: overflowDrop},
-	workEventFanout:       {slots: 1, overflow: overflowDrop, rerunCoalesced: true},
+	// Broker trigger lanes (ADR-20261027162741): a dropped or coalesced
+	// lane is resubmitted by the next trigger tick.
+	workBrokerTriggerDispatch: {slots: api.BrokerTriggerDispatchSlotsPerNode, overflow: overflowDrop},
+	workEventFanout:           {slots: 1, overflow: overflowDrop, rerunCoalesced: true},
 	// One reaper tick at a time, sequential inside, as before it moved off
 	// the loop. A tick that fires while the previous one still runs
 	// coalesces into it; the next tick re-reads the instance table.

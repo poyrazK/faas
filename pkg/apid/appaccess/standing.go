@@ -31,7 +31,7 @@ func Standing(ctx context.Context, store Store, actorID string, app state.App, a
 	if org.DeletedPending || org.Status == state.OrgStatusDeletedPending {
 		return false, nil
 	}
-	if (org.Status == state.OrgStatusSuspended || org.Status == state.OrgStatusPastDue) &&
+	if org.Status == state.OrgStatusSuspended &&
 		action != authz.OrgActionReadApp && action != authz.OrgActionReadAppLogs {
 		return false, nil
 	}

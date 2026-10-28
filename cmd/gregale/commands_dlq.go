@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"strings"
 	"time"
 )
 
@@ -49,15 +50,35 @@ func dlqFlagSet(name, usage string) *flag.FlagSet {
 	return fs
 }
 
+// dlqSources maps the --source spellings to the ledger's source kinds.
+var dlqSources = map[string]string{
+	"invocation": "invocation", "trigger": "trigger_record", "trigger_record": "trigger_record",
+	"webhook": "webhook_delivery", "webhook_delivery": "webhook_delivery",
+}
+
+// cmdDLQList lists the unified dead-letter ledger. ADR-20261026145832: one
+// command lists dead letters from every source; --source and --trigger
+// narrow it to invocations, trigger records, webhook deliveries or one
+// trigger.
 func cmdDLQList(args []string) int {
 	flags, pos := splitArgsForFlags(args)
-	usage := "usage: gregale dlq list <app> [--limit N] [--before ID]"
+	usage := "usage: gregale dlq list <app> [--source invocation|trigger|webhook] [--trigger ID] [--limit N] [--before ID]"
 	fs := dlqFlagSet("dlq list", usage)
 	limit := fs.Int("limit", 50, "max events (1..200)")
 	before := fs.String("before", "", "pagination cursor (next_before from a prior page)")
 	app := fs.String("app", "", appSlugFlagUsage)
+	sourceFlag := fs.String("source", "", "only this source: invocation, trigger or webhook")
+	trigger := fs.String("trigger", "", "only dead letters from this trigger ID")
 	if err := fs.Parse(flags); err != nil {
 		return 1
+	}
+	source := ""
+	if *sourceFlag != "" {
+		var ok bool
+		if source, ok = dlqSources[strings.ToLower(*sourceFlag)]; !ok {
+			PrintUsage(os.Stderr, usage, "dlq")
+			return 1
+		}
 	}
 	pos, mergeErr := mergeAppFlag(pos, *app, 1)
 	if mergeErr != nil || len(pos) != 1 {
@@ -76,11 +97,24 @@ func cmdDLQList(args []string) int {
 	if err != nil {
 		return printErr("Could not list dead-letter events", err)
 	}
+	filtered := source != "" || *trigger != ""
+	if filtered {
+		kept := resp.Events[:0]
+		for _, event := range resp.Events {
+			if (source == "" || event.Source == source) && (*trigger == "" || event.TriggerID == *trigger) {
+				kept = append(kept, event)
+			}
+		}
+		resp.Events = kept
+	}
 	if jsonOutput {
 		return jsonOut(writeJSON(resp))
 	}
 	if len(resp.Events) == 0 {
 		_, _ = fmt.Fprintln(osStdout, "(no dead-letter events)")
+		if filtered && resp.NextBefore != "" {
+			_, _ = fmt.Fprintf(osStdout, "... later pages may match — pass --before %s\n", resp.NextBefore)
+		}
 		return 0
 	}
 	_, _ = fmt.Fprintln(osStdout, "ID\tSOURCE\tORIGIN\tRETRIES\tFAILED AT\tREPLAYED")

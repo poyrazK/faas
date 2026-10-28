@@ -6,23 +6,49 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"slices"
 	"sort"
 	"testing"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 // coreCatalogBudget bounds the tools/list bytes an agent loads with --tools
 // core. Raise it deliberately: every byte is paid on every turn.
 const coreCatalogBudget = 16 << 10
 
+// toolsetCatalog lists the tools of a local connection and of a fully
+// consented hosted grant (ADR-20261026195952) together: some tools exist on
+// only one of them.
 func toolsetCatalog(t *testing.T, toolsets []string) []*mcp.Tool {
+	t.Helper()
+	tools := connectionCatalog(t, toolsets, false)
+	for _, tool := range connectionCatalog(t, toolsets, true) {
+		if !slices.ContainsFunc(tools, func(listed *mcp.Tool) bool { return listed.Name == tool.Name }) {
+			tools = append(tools, tool)
+		}
+	}
+	return tools
+}
+
+func connectionCatalog(t *testing.T, toolsets []string, hosted bool) []*mcp.Tool {
 	t.Helper()
 	backend := httptest.NewServer(http.NotFoundHandler())
 	t.Cleanup(backend.Close)
 	noCLI := func(context.Context, []string, []byte) (LocalCLIResult, error) { return LocalCLIResult{}, nil }
-	cs, ctx := connectConfiguredTestServer(t, backend, Options{APIBase: backend.URL, Token: testToken, AllowWrites: true, LocalCLI: noCLI, Toolsets: toolsets}, "2026-07-28")
+	opts := Options{APIBase: backend.URL, Token: testToken, AllowWrites: true, LocalCLI: noCLI, Toolsets: toolsets}
+	if hosted {
+		store, err := newUploadStore(filepath.Join(t.TempDir(), "uploads"), "https://api.gregale.test/mcp")
+		if err != nil {
+			t.Fatal(err)
+		}
+		opts.Environments = &EnvironmentConsent{DefaultWrite: true, Named: map[string]EnvironmentGrant{}}
+		opts.Capabilities, opts.uploads = []string{api.ScopeSecretsRequest, api.ScopeStorageManage, api.ScopeManagedPostgresManage}, store
+	}
+	cs, ctx := connectConfiguredTestServer(t, backend, opts, "2026-07-28")
 	var tools []*mcp.Tool
 	params := &mcp.ListToolsParams{}
 	for {
@@ -77,18 +103,20 @@ func TestToolsetsListOnlySelectedTools(t *testing.T) {
 }
 
 func TestCoreCatalogStaysSmall(t *testing.T) {
-	core, err := json.Marshal(toolsetCatalog(t, []string{ToolsetCore}))
-	if err != nil {
-		t.Fatal(err)
+	for _, hosted := range []bool{false, true} {
+		core, err := json.Marshal(connectionCatalog(t, []string{ToolsetCore}, hosted))
+		if err != nil {
+			t.Fatal(err)
+		}
+		all, err := json.Marshal(connectionCatalog(t, nil, hosted))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(core) > coreCatalogBudget {
+			t.Errorf("hosted=%v: core catalog is %d bytes, over the %d-byte budget", hosted, len(core), coreCatalogBudget)
+		}
+		t.Logf("hosted=%v catalog bytes: core %d, all %d", hosted, len(core), len(all))
 	}
-	all, err := json.Marshal(toolsetCatalog(t, nil))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(core) > coreCatalogBudget {
-		t.Errorf("core catalog is %d bytes, over the %d-byte budget", len(core), coreCatalogBudget)
-	}
-	t.Logf("catalog bytes: core %d, all %d", len(core), len(all))
 }
 
 func TestParseToolsets(t *testing.T) {

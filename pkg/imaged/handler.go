@@ -542,9 +542,12 @@ func (h *Handler) WithContinuousProfiling(enabled bool) *Handler {
 func (h *Handler) stampProfiling(manifest api.AppManifest, acct state.Account) api.AppManifest {
 	limits, ok := api.LimitsFor(acct.Plan)
 	manifest.ProfilingOnDemand = h.profilingOnDemand && ok && limits.Profiling.Enabled
-	if manifest.Profiling != nil && manifest.Profiling.Enabled && !h.continuousProfiling {
+	if manifest.Profiling != nil && (manifest.Profiling.Enabled && !h.continuousProfiling || manifest.Profiling.AutomaticCaptures != nil) {
 		cfg := *manifest.Profiling
-		cfg.Enabled = false
+		cfg.Enabled = cfg.Enabled && h.continuousProfiling
+		// Automatic captures are the control plane's decision; the guest
+		// manifest stays what guests of every release understand.
+		cfg.AutomaticCaptures = nil
 		manifest.Profiling = &cfg
 	}
 	return manifest
@@ -2714,6 +2717,14 @@ func (h *Handler) buildImageLayer(ctx context.Context, app state.App, dep state.
 	upsertDeploymentSecretFindings(ctx, h.store, dep.ID,
 		allFindings, layerSecretScanStatusCompleteWithRedactions,
 		dep.ImageDigest, scannedAt, h.log)
+	// Every finding is recorded for `gregale deployment ID
+	// --show-secret-scan`; only credential formats fail the deploy
+	// (ADR-20261026152731). Heuristic findings stay advisory.
+	if len(secretscan.Blocking(allFindings)) == 0 {
+		h.log.Info("imaged: layer secret scan advisory findings",
+			"deployment", dep.ID, "app", app.Slug, "findings", len(allFindings))
+		return nil
+	}
 	if markErr := h.markDeployFailed(ctx, dep.ID, errImageSecretDetected, "image-layer secret detected"); markErr != nil {
 		h.log.Warn("imaged: mark deploy failed on layer secret",
 			"deployment", dep.ID, "app", app.Slug, "err", markErr)

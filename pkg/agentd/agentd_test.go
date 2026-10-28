@@ -52,8 +52,8 @@ func openStore(t *testing.T) (*pgxpool.Pool, *agentstore.Store) {
 		CREATE TABLE workflow_events (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), run_id uuid NOT NULL, event_name text NOT NULL);`); err != nil {
 		t.Fatal(err)
 	}
-	for _, name := range []string{"20261027141003390_agent_runs.sql", "20261027141010563_agent_run_execution.sql",
-		"20261027141017736_agent_run_model_access.sql", "20261027141024909_agent_run_checkout.sql", "20261027141038256_agent_deliveries.sql", "20261027141045429_agent_delivery_destinations.sql", "20261027141106948_agent_run_workflow_steps.sql"} {
+	for _, name := range []string{"20261027220903390_agent_runs.sql", "20261027220910563_agent_run_execution.sql",
+		"20261027220917736_agent_run_model_access.sql", "20261027220924909_agent_run_checkout.sql", "20261027220938256_agent_deliveries.sql", "20261027220945429_agent_delivery_destinations.sql", "20261027221006948_agent_run_workflow_steps.sql"} {
 		raw, err := migrations.FS.ReadFile(name)
 		if err != nil {
 			t.Fatal(err)
