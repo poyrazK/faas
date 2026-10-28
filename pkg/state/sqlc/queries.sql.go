@@ -101164,10 +101164,16 @@ INSERT INTO invoices (
 ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, clock_timestamp())
 ON CONFLICT (account_id, provider, provider_invoice_id) DO UPDATE SET
   provider_charge_id = coalesce(nullif(excluded.provider_charge_id, ''), invoices.provider_charge_id),
-  number = excluded.number, status = excluded.status,
+  -- A late "created"/"pending" delivery never reopens a paid invoice
+  -- (ADR-20261028101500): providers may deliver order events out of order.
+  number = excluded.number,
+  status = CASE WHEN invoices.status = 'paid' AND excluded.status IN ('open', 'draft')
+    THEN invoices.status ELSE excluded.status END,
   period_start = excluded.period_start, period_end = excluded.period_end,
   subtotal_cents = excluded.subtotal_cents, tax_cents = excluded.tax_cents,
-  total_cents = excluded.total_cents, amount_paid_cents = excluded.amount_paid_cents,
+  total_cents = excluded.total_cents,
+  amount_paid_cents = CASE WHEN invoices.status = 'paid' AND excluded.status IN ('open', 'draft')
+    THEN invoices.amount_paid_cents ELSE excluded.amount_paid_cents END,
   currency = excluded.currency, pdf_available = excluded.pdf_available,
   details = invoices.details || CASE WHEN excluded.details ? 'lines' THEN
     jsonb_set(excluded.details, '{lines,items}', coalesce((
