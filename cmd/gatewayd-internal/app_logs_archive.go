@@ -165,6 +165,9 @@ type ArchiveLogsHandler struct {
 	// Traffic enrolls the read under the app's security scopes
 	// (admitPlatformTraffic); nil only in legacy fixtures.
 	Traffic *trafficrevocation.Registry
+	// CapabilityAllowed hides the route while the logs capability is off
+	// for the caller's account (logsReleased); nil releases it.
+	CapabilityAllowed func(capability, accountID string) bool
 
 	// Backstop is the SSE stream idle timeout. 0 = use the
 	// production default (10 minutes, mirroring
@@ -203,7 +206,7 @@ func (h *ArchiveLogsHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	inner := mwauth.AccountHandler(func(w http.ResponseWriter, r *http.Request, acct state.Account) {
 		h.stream(w, r, acct, slug)
 	})
-	chain := h.Auth.RequireScope(api.ScopesReadSurface...)(h.Auth.RequireMFA(appaccess.Wrap(h.Store, h.Auth.Audit, inner)))
+	chain := h.Auth.RequireScope(api.ScopesReadSurface...)(h.Auth.RequireMFA(logsReleased(h.CapabilityAllowed, appaccess.Wrap(h.Store, h.Auth.Audit, inner))))
 	h.Auth.RequireLimited(chain)(w, r)
 }
 
