@@ -26,7 +26,7 @@ func cmdCompletionFish() int {
 
 func renderFishCompletion(w io.Writer) {
 	renderFishHeader(w)
-	for _, c := range customerCliCommands() {
+	for _, c := range completionCliCommands() {
 		renderFishCommand(w, c)
 	}
 	renderFishFooter(w)
@@ -259,85 +259,90 @@ func renderFishAppSlugPosition(w io.Writer) {
 }
 
 func renderFishEnvironmentProjectLookup(w io.Writer) {
-	command := projectCompletionCommand()
 	_, _ = fmt.Fprintln(w, "function __gregale_environment_project")
 	_, _ = fmt.Fprintln(w, "  set -l words (__gregale_context_words)")
-	for _, context := range projectCompletionContexts() {
-		projectIndex := 2 + len(context.Path) + context.Position
-		_, _ = fmt.Fprintf(w, "  if %s; and test -n \"$words[%d]\"\n", fishCompletionPathCondition(command, context.Path), projectIndex)
-		_, _ = fmt.Fprintf(w, "    printf '%%s\\n' $words[%d]\n", projectIndex)
-		_, _ = fmt.Fprintln(w, "    return 0")
-		_, _ = fmt.Fprintln(w, "  end")
+	for _, command := range completionPositionCommands() {
+		for _, context := range projectCompletionContexts(command) {
+			projectIndex := 2 + len(context.Path) + context.Position
+			_, _ = fmt.Fprintf(w, "  if %s; and test -n \"$words[%d]\"\n", fishCompletionPathCondition(command, context.Path), projectIndex)
+			_, _ = fmt.Fprintf(w, "    printf '%%s\\n' $words[%d]\n", projectIndex)
+			_, _ = fmt.Fprintln(w, "    return 0")
+			_, _ = fmt.Fprintln(w, "  end")
+		}
 	}
 	_, _ = fmt.Fprintln(w, "  return 1")
 	_, _ = fmt.Fprintln(w, "end")
 }
 
 func renderFishProjectEnvironmentPosition(w io.Writer) {
-	command := projectCompletionCommand()
 	_, _ = fmt.Fprintln(w, "function __gregale_project_environment_position")
 	_, _ = fmt.Fprintln(w, "  set -l words (__gregale_context_words)")
 	_, _ = fmt.Fprintln(w, "  set -l position (count $words)")
-	for _, completion := range projectCompletionPositions() {
-		if completion.Role != cliCompletionEnvironmentSlug {
-			continue
+	for _, command := range completionPositionCommands() {
+		for _, completion := range projectCompletionPositions(command) {
+			if completion.Role != cliCompletionEnvironmentSlug {
+				continue
+			}
+			projectIndex := 2 + len(completion.Path) + completion.ProjectPosition
+			_, _ = fmt.Fprintf(w, "  if %s; and test -n \"$words[%d]\"\n", fishCompletionPositionCondition(command, completion), projectIndex)
+			_, _ = fmt.Fprintln(w, "    return 0")
+			_, _ = fmt.Fprintln(w, "  end")
 		}
-		projectIndex := 2 + len(completion.Path) + completion.ProjectPosition
-		_, _ = fmt.Fprintf(w, "  if %s; and test -n \"$words[%d]\"\n", fishCompletionPositionCondition(command, completion), projectIndex)
-		_, _ = fmt.Fprintln(w, "    return 0")
-		_, _ = fmt.Fprintln(w, "  end")
 	}
 	_, _ = fmt.Fprintln(w, "  return 1")
 	_, _ = fmt.Fprintln(w, "end")
 }
 
 func renderFishProjectArgumentPosition(w io.Writer) {
-	command := projectCompletionCommand()
 	_, _ = fmt.Fprintln(w, "function __gregale_project_argument_position")
 	_, _ = fmt.Fprintln(w, "  set -l words (__gregale_context_words)")
 	_, _ = fmt.Fprintln(w, "  set -l position (count $words)")
-	for _, completion := range projectCompletionPositions() {
-		if completion.Role != cliCompletionProjectSlug {
-			continue
+	for _, command := range completionPositionCommands() {
+		for _, completion := range projectCompletionPositions(command) {
+			if completion.Role != cliCompletionProjectSlug {
+				continue
+			}
+			_, _ = fmt.Fprintf(w, "  if %s\n", fishCompletionPositionCondition(command, completion))
+			_, _ = fmt.Fprintln(w, "    return 0")
+			_, _ = fmt.Fprintln(w, "  end")
 		}
-		_, _ = fmt.Fprintf(w, "  if %s\n", fishCompletionPositionCondition(command, completion))
-		_, _ = fmt.Fprintln(w, "    return 0")
-		_, _ = fmt.Fprintln(w, "  end")
 	}
 	_, _ = fmt.Fprintln(w, "  return 1")
 	_, _ = fmt.Fprintln(w, "end")
 }
 
 func renderFishProjectArgumentChoices(w io.Writer) {
-	command := projectCompletionCommand()
 	_, _ = fmt.Fprintln(w, "function __gregale_project_argument_choices")
 	_, _ = fmt.Fprintln(w, "  set -l words (__gregale_context_words)")
 	_, _ = fmt.Fprintln(w, "  set -l position (count $words)")
-	for _, completion := range projectCompletionPositions() {
-		if completion.Role != cliCompletionProjectSlug || len(completion.Choices) == 0 {
-			continue
+	for _, command := range completionPositionCommands() {
+		for _, completion := range projectCompletionPositions(command) {
+			if completion.Role != cliCompletionProjectSlug || len(completion.Choices) == 0 {
+				continue
+			}
+			_, _ = fmt.Fprintf(w, "  if %s\n", fishCompletionPositionCondition(command, completion))
+			_, _ = fmt.Fprintf(w, "    printf '%%s\\n' %s\n", strings.Join(completion.Choices, " "))
+			_, _ = fmt.Fprintln(w, "    return 0")
+			_, _ = fmt.Fprintln(w, "  end")
 		}
-		_, _ = fmt.Fprintf(w, "  if %s\n", fishCompletionPositionCondition(command, completion))
-		_, _ = fmt.Fprintf(w, "    printf '%%s\\n' %s\n", strings.Join(completion.Choices, " "))
-		_, _ = fmt.Fprintln(w, "    return 0")
-		_, _ = fmt.Fprintln(w, "  end")
 	}
 	_, _ = fmt.Fprintln(w, "  return 1")
 	_, _ = fmt.Fprintln(w, "end")
 }
 
 func renderFishBuildIDPosition(w io.Writer) {
-	command, _ := lookupCliCommand("build")
 	_, _ = fmt.Fprintln(w, "function __gregale_build_id_position")
 	_, _ = fmt.Fprintln(w, "  set -l words (__gregale_context_words)")
 	_, _ = fmt.Fprintln(w, "  set -l position (count $words)")
-	for _, completion := range command.expandedCompletionPositions() {
-		if completion.Role != cliCompletionBuildID {
-			continue
+	for _, command := range completionPositionCommands() {
+		for _, completion := range command.expandedCompletionPositions() {
+			if completion.Role != cliCompletionBuildID {
+				continue
+			}
+			_, _ = fmt.Fprintf(w, "  if %s\n", fishCompletionPositionCondition(command, completion))
+			_, _ = fmt.Fprintln(w, "    return 0")
+			_, _ = fmt.Fprintln(w, "  end")
 		}
-		_, _ = fmt.Fprintf(w, "  if %s\n", fishCompletionPositionCondition(command, completion))
-		_, _ = fmt.Fprintln(w, "    return 0")
-		_, _ = fmt.Fprintln(w, "  end")
 	}
 	_, _ = fmt.Fprintln(w, "  return 1")
 	_, _ = fmt.Fprintln(w, "end")
@@ -347,7 +352,7 @@ func renderFishDeploymentIDPosition(w io.Writer) {
 	_, _ = fmt.Fprintln(w, "function __gregale_deployment_id_position")
 	_, _ = fmt.Fprintln(w, "  set -l words (__gregale_context_words)")
 	_, _ = fmt.Fprintln(w, "  set -l position (count $words)")
-	for _, command := range deploymentCompletionCommands() {
+	for _, command := range completionPositionCommands() {
 		for _, completion := range command.expandedCompletionPositions() {
 			if completion.Role != cliCompletionDeploymentID {
 				continue

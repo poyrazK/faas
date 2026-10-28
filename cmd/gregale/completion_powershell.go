@@ -27,7 +27,7 @@ func cmdCompletionPowershell() int {
 
 func renderPowershellCompletion(w io.Writer) {
 	renderPowershellHeader(w)
-	for _, c := range customerCliCommands() {
+	for _, c := range completionCliCommands() {
 		renderPowershellCommand(w, c)
 	}
 	renderPowershellFooter(w)
@@ -73,7 +73,7 @@ func renderPowershellHeader(w io.Writer) {
 	_, _ = fmt.Fprintln(w)
 	renderPowerShellDeploymentIDPositionHelper(w)
 	_, _ = fmt.Fprintln(w)
-	renderPowerShellManifestPositionHelpers(w, projectCompletionCommand())
+	renderPowerShellManifestPositionHelpers(w)
 	_, _ = fmt.Fprintln(w)
 	_, _ = fmt.Fprintln(w, "Register-ArgumentCompleter -Native -CommandName 'gregale' -ScriptBlock {")
 	_, _ = fmt.Fprintln(w, "  param($wordToComplete, $commandAst, $cursorPosition)")
@@ -190,7 +190,7 @@ func renderPowershellHeader(w io.Writer) {
 	_, _ = fmt.Fprintln(w, "  }")
 	_, _ = fmt.Fprintln(w, "  if ($tokens.Count -lt 2) {")
 	_, _ = fmt.Fprintln(w, "    if ('--non-interactive' -like \"$wordToComplete*\") { [System.Management.Automation.CompletionResult]::new('--non-interactive', '--non-interactive', 'ParameterName', 'Disable prompts and browser launches') }")
-	for _, c := range customerCliCommands() {
+	for _, c := range completionCliCommands() {
 		_, _ = fmt.Fprintf(w, "    if (%s -like \"$wordToComplete*\") { [System.Management.Automation.CompletionResult]::new(%s, %s, 'ParameterName', %s) }\n",
 			psLiteral(c.Name), psLiteral(c.Name), psLiteral(c.Name), psLiteral(c.Short))
 	}
@@ -226,15 +226,16 @@ func renderPowerShellAppSlugPositionHelper(w io.Writer) {
 }
 
 func renderPowerShellBuildIDPositionHelper(w io.Writer) {
-	command, _ := lookupCliCommand("build")
 	_, _ = fmt.Fprintln(w, "function __gregaleBuildIDPosition($words) {")
-	for _, position := range command.expandedCompletionPositions() {
-		if position.Role != cliCompletionBuildID {
-			continue
+	for _, command := range completionPositionCommands() {
+		for _, position := range command.expandedCompletionPositions() {
+			if position.Role != cliCompletionBuildID {
+				continue
+			}
+			contextCount := 1 + len(position.Path) + position.Position
+			_, _ = fmt.Fprintf(w, "  if ($words.Count -eq %d -and %s) { return $true }\n",
+				contextCount, powershellCompletionPathCondition(command, position.Path))
 		}
-		contextCount := 1 + len(position.Path) + position.Position
-		_, _ = fmt.Fprintf(w, "  if ($words.Count -eq %d -and %s) { return $true }\n",
-			contextCount, powershellCompletionPathCondition(command, position.Path))
 	}
 	_, _ = fmt.Fprintln(w, "  return $false")
 	_, _ = fmt.Fprintln(w, "}")
@@ -242,7 +243,7 @@ func renderPowerShellBuildIDPositionHelper(w io.Writer) {
 
 func renderPowerShellDeploymentIDPositionHelper(w io.Writer) {
 	_, _ = fmt.Fprintln(w, "function __gregaleDeploymentIDPosition($words) {")
-	for _, command := range deploymentCompletionCommands() {
+	for _, command := range completionPositionCommands() {
 		for _, position := range command.expandedCompletionPositions() {
 			if position.Role != cliCompletionDeploymentID {
 				continue
@@ -256,53 +257,61 @@ func renderPowerShellDeploymentIDPositionHelper(w io.Writer) {
 	_, _ = fmt.Fprintln(w, "}")
 }
 
-func renderPowerShellManifestPositionHelpers(w io.Writer, command cliCommand) {
+func renderPowerShellManifestPositionHelpers(w io.Writer) {
 	_, _ = fmt.Fprintln(w, "function __gregaleEnvironmentProject($words) {")
-	for _, context := range projectCompletionContexts() {
-		projectIndex := 1 + len(context.Path) + context.Position
-		_, _ = fmt.Fprintf(w, "  if ($words.Count -gt %d -and %s) { return [string]$words[%d] }\n",
-			projectIndex, powershellCompletionPathCondition(command, context.Path), projectIndex)
+	for _, command := range completionPositionCommands() {
+		for _, context := range projectCompletionContexts(command) {
+			projectIndex := 1 + len(context.Path) + context.Position
+			_, _ = fmt.Fprintf(w, "  if ($words.Count -gt %d -and %s) { return [string]$words[%d] }\n",
+				projectIndex, powershellCompletionPathCondition(command, context.Path), projectIndex)
+		}
 	}
 	_, _ = fmt.Fprintln(w, "  return ''")
 	_, _ = fmt.Fprintln(w, "}")
 	_, _ = fmt.Fprintln(w)
 	_, _ = fmt.Fprintln(w, "function __gregaleProjectEnvironmentPosition($words) {")
-	for _, position := range command.expandedCompletionPositions() {
-		if position.Role != cliCompletionEnvironmentSlug {
-			continue
+	for _, command := range completionPositionCommands() {
+		for _, position := range command.expandedCompletionPositions() {
+			if position.Role != cliCompletionEnvironmentSlug {
+				continue
+			}
+			contextCount := 1 + len(position.Path) + position.Position
+			projectIndex := 1 + len(position.Path) + position.ProjectPosition
+			_, _ = fmt.Fprintf(w, "  if ($words.Count -eq %d -and $words.Count -gt %d -and %s) { return [string]$words[%d] }\n",
+				contextCount, projectIndex, powershellCompletionPathCondition(command, position.Path), projectIndex)
 		}
-		contextCount := 1 + len(position.Path) + position.Position
-		projectIndex := 1 + len(position.Path) + position.ProjectPosition
-		_, _ = fmt.Fprintf(w, "  if ($words.Count -eq %d -and $words.Count -gt %d -and %s) { return [string]$words[%d] }\n",
-			contextCount, projectIndex, powershellCompletionPathCondition(command, position.Path), projectIndex)
 	}
 	_, _ = fmt.Fprintln(w, "  return ''")
 	_, _ = fmt.Fprintln(w, "}")
 	_, _ = fmt.Fprintln(w)
 	_, _ = fmt.Fprintln(w, "function __gregaleProjectArgumentPosition($words) {")
-	for _, position := range command.expandedCompletionPositions() {
-		if position.Role != cliCompletionProjectSlug {
-			continue
+	for _, command := range completionPositionCommands() {
+		for _, position := range command.expandedCompletionPositions() {
+			if position.Role != cliCompletionProjectSlug {
+				continue
+			}
+			contextCount := 1 + len(position.Path) + position.Position
+			kind := "project"
+			if len(position.Choices) > 0 {
+				kind = "config-choice"
+			}
+			_, _ = fmt.Fprintf(w, "  if ($words.Count -eq %d -and %s) { return %q }\n",
+				contextCount, powershellCompletionPathCondition(command, position.Path), kind)
 		}
-		contextCount := 1 + len(position.Path) + position.Position
-		kind := "project"
-		if len(position.Choices) > 0 {
-			kind = "config-choice"
-		}
-		_, _ = fmt.Fprintf(w, "  if ($words.Count -eq %d -and %s) { return %q }\n",
-			contextCount, powershellCompletionPathCondition(command, position.Path), kind)
 	}
 	_, _ = fmt.Fprintln(w, "  return ''")
 	_, _ = fmt.Fprintln(w, "}")
 	_, _ = fmt.Fprintln(w)
 	_, _ = fmt.Fprintln(w, "function __gregaleProjectArgumentChoices($words) {")
-	for _, position := range command.expandedCompletionPositions() {
-		if position.Role != cliCompletionProjectSlug || len(position.Choices) == 0 {
-			continue
+	for _, command := range completionPositionCommands() {
+		for _, position := range command.expandedCompletionPositions() {
+			if position.Role != cliCompletionProjectSlug || len(position.Choices) == 0 {
+				continue
+			}
+			contextCount := 1 + len(position.Path) + position.Position
+			_, _ = fmt.Fprintf(w, "  if ($words.Count -eq %d -and %s) { return @(%s) }\n",
+				contextCount, powershellCompletionPathCondition(command, position.Path), powershellStringArray(position.Choices))
 		}
-		contextCount := 1 + len(position.Path) + position.Position
-		_, _ = fmt.Fprintf(w, "  if ($words.Count -eq %d -and %s) { return @(%s) }\n",
-			contextCount, powershellCompletionPathCondition(command, position.Path), powershellStringArray(position.Choices))
 	}
 	_, _ = fmt.Fprintln(w, "  return @()")
 	_, _ = fmt.Fprintln(w, "}")

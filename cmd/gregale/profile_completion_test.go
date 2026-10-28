@@ -66,12 +66,12 @@ esac
 				{"gregale --profile=sta", "--profile=staging", false},
 				{"gregale profile use sta", "staging", false},
 				{"gregale --profile staging profile remove sta", "staging", false},
-				{"gregale --profile staging app staging", "staging-app", false},
+				{"gregale --profile staging app get staging", "staging-app", false},
 				{"gregale app demo scale --profile sta", "staging", true},
 				{"gregale --non-interactive --profile sta", "staging", false},
 				{"gregale --non-interactive --profile=sta", "--profile=staging", false},
 				{"gregale --json --non-interactive profile use sta", "staging", false},
-				{"gregale --profile staging --non-interactive app staging", "staging-app", false},
+				{"gregale --profile staging --non-interactive app get staging", "staging-app", false},
 				{"gregale app demo exec -- --non-interactive --profile sta", "staging", true},
 			}
 			for _, tc := range cases {

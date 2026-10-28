@@ -37,7 +37,7 @@ func TestCompletion_Bash_RegistersAllCommands(t *testing.T) {
 	if !strings.Contains(out, "complete -F __gregale gregale") {
 		t.Fatalf("bash registration missing")
 	}
-	for _, c := range customerCliCommands() {
+	for _, c := range completionCliCommands() {
 		if !strings.Contains(out, `"$cmd" = "`+c.Name+`"`) {
 			t.Errorf("bash missing dispatch for %q", c.Name)
 		}
@@ -51,7 +51,7 @@ func TestCompletion_Zsh_HasCompdef(t *testing.T) {
 	if !strings.HasPrefix(out, "#compdef gregale\n") {
 		t.Fatalf("zsh #compdef header missing or not first line; got prefix %q", firstLine(out))
 	}
-	for _, c := range customerCliCommands() {
+	for _, c := range completionCliCommands() {
 		if !strings.Contains(out, "_gregale_"+c.Name+"()") {
 			t.Errorf("zsh missing per-command function for %q", c.Name)
 		}
@@ -78,7 +78,7 @@ func TestCompletion_Fish_HasComplete(t *testing.T) {
 	if !strings.Contains(out, "complete -c gregale") {
 		t.Fatalf("fish complete -c missing")
 	}
-	for _, c := range customerCliCommands() {
+	for _, c := range completionCliCommands() {
 		if !strings.Contains(out, " -a '"+c.Name+"'") && !strings.Contains(out, " -a \""+c.Name+"\"") {
 			t.Errorf("fish missing complete entry for %q", c.Name)
 		}
@@ -92,7 +92,7 @@ func TestCompletion_Powershell_HasRegisterArgumentCompleter(t *testing.T) {
 	if !strings.Contains(out, "Register-ArgumentCompleter") {
 		t.Fatalf("powershell registration missing")
 	}
-	for _, c := range customerCliCommands() {
+	for _, c := range completionCliCommands() {
 		if !strings.Contains(out, " -eq '"+c.Name+"'") {
 			t.Errorf("powershell missing dispatch for %q", c.Name)
 		}

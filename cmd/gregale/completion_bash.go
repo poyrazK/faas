@@ -36,7 +36,7 @@ func cmdCompletionBash() int {
 
 func renderBashCompletion(w io.Writer) {
 	renderBashHeader(w)
-	for _, c := range customerCliCommands() {
+	for _, c := range completionCliCommands() {
 		renderBashCommand(w, c)
 	}
 	renderBashFooter(w)
@@ -255,9 +255,7 @@ func renderBashHeader(w io.Writer) {
 	_, _ = fmt.Fprintln(w, "    ;; esac")
 	_, _ = fmt.Fprintln(w)
 	renderBashAppSlugPositionCompletions(w)
-	renderBashManifestPositionCompletions(w, projectCompletionCommand())
-	renderBashManifestPositionCompletions(w, buildCompletionCommand())
-	for _, command := range deploymentCompletionCommands() {
+	for _, command := range completionPositionCommands() {
 		renderBashManifestPositionCompletions(w, command)
 	}
 	_, _ = fmt.Fprintln(w)
@@ -267,14 +265,15 @@ func renderBashHeader(w io.Writer) {
 }
 
 func renderBashEnvironmentProjectLookup(w io.Writer) {
-	command := projectCompletionCommand()
 	_, _ = fmt.Fprintln(w, "__gregale_environment_project() {")
-	for _, context := range projectCompletionContexts() {
-		projectIndex := 1 + len(context.Path) + context.Position
-		_, _ = fmt.Fprintf(w, "  if %s && [ -n \"${words[%d]}\" ]; then\n", bashCompletionPathCondition(command, context.Path), projectIndex)
-		_, _ = fmt.Fprintf(w, "    printf '%%s\\n' \"${words[%d]}\"\n", projectIndex)
-		_, _ = fmt.Fprintln(w, "    return 0")
-		_, _ = fmt.Fprintln(w, "  fi")
+	for _, command := range completionPositionCommands() {
+		for _, context := range projectCompletionContexts(command) {
+			projectIndex := 1 + len(context.Path) + context.Position
+			_, _ = fmt.Fprintf(w, "  if %s && [ -n \"${words[%d]}\" ]; then\n", bashCompletionPathCondition(command, context.Path), projectIndex)
+			_, _ = fmt.Fprintf(w, "    printf '%%s\\n' \"${words[%d]}\"\n", projectIndex)
+			_, _ = fmt.Fprintln(w, "    return 0")
+			_, _ = fmt.Fprintln(w, "  fi")
+		}
 	}
 	_, _ = fmt.Fprintln(w, "  return 1")
 	_, _ = fmt.Fprintln(w, "}")
@@ -563,7 +562,7 @@ func renderBashEnvironmentValueCompletion(w io.Writer, f cliFlag, indent string,
 func renderBashFooter(w io.Writer) {
 	_, _ = fmt.Fprintln(w, "  # Top-level: complete all known commands.")
 	_, _ = fmt.Fprintln(w, "  if [ $cword -eq 1 ]; then")
-	commands := customerCliCommands()
+	commands := completionCliCommands()
 	allCmds := []string{"--non-interactive"}
 	for _, c := range commands {
 		allCmds = append(allCmds, c.Name)

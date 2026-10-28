@@ -376,6 +376,36 @@ func TestCliTreeHintsEarlierNamesInATerminal(t *testing.T) {
 	}
 }
 
+// Shell completion offers the tree's names, and dynamic values (deployment
+// IDs, project slugs) complete on the tree paths that take them.
+func TestCliTreeCompletionOffersTheTree(t *testing.T) {
+	enableEveryCLIFeature(t)
+	_, script, _ := runCLI(t, "completion", "bash")
+	root := regexp.MustCompile(`compgen -W "(--non-interactive [^"]*)"`).FindStringSubmatch(script)
+	if root == nil {
+		t.Fatalf("bash completion has no top-level word list:\n%.400s", script)
+	}
+	words := strings.Fields(root[1])
+	for _, want := range []string{"cron", "release", "env", "app", "deploy", "logs"} {
+		if !slices.Contains(words, want) {
+			t.Errorf("top-level completion omits %q: %v", want, words)
+		}
+	}
+	for _, earlier := range []string{"crons", "deploys", "deployments", "secrets", "apps"} {
+		if slices.Contains(words, earlier) {
+			t.Errorf("top-level completion offers the earlier name %q", earlier)
+		}
+	}
+	for _, want := range []string{
+		`[ "${words[1]}" = "release" ] && [ "${words[2]}" = "get" ]`,
+		`[ "${words[1]}" = "environment" ]`,
+	} {
+		if !strings.Contains(script, want) {
+			t.Errorf("bash completion lacks the position condition %s", want)
+		}
+	}
+}
+
 // Help reached through a tree path is spelled in that path.
 func TestCliTreeLeafHelpUsesTheTypedPath(t *testing.T) {
 	enableEveryCLIFeature(t)
