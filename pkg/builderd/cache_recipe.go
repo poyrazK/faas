@@ -47,7 +47,7 @@ type BuildCacheRecipe struct {
 	TargetPlatform      string    `json:"target_platform"`
 
 	// LayerCompression keeps zstd artifacts apart from gzip ones, so turning
-	// api.BuildLayerZstdEnv off never serves a zstd image to an imaged that
+	// LayerZstdEnv off never serves a zstd image to an imaged that
 	// cannot read it. Omitted when empty, so every gzip key is unchanged.
 	LayerCompression string `json:"layer_compression,omitempty"`
 

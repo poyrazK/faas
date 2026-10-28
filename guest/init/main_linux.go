@@ -1919,7 +1919,8 @@ func buildArgv(m api.BuildManifest) []string {
 }
 
 // layerCompressionAttrs returns the BuildKit exporter attributes that switch
-// a build's layers from gzip to zstd (BuildLayerZstdEnv), or "" to keep gzip.
+// a build's layers from gzip to zstd (builderd's FAAS_BUILD_LAYER_ZSTD), or ""
+// to keep gzip.
 // force-compression stays off, so layers inherited from a gzip base image are
 // reused as they are rather than recompressed.
 func layerCompressionAttrs(m api.BuildManifest) string {

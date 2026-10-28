@@ -141,7 +141,7 @@ type Config struct {
 	// offline edits of the same drive (see prepareWarmBuilder).
 	DisableWarmBuilders bool `toml:"-"`
 	// LayerCompression is "" (gzip) or api.BuildLayerCompressionZstd, from
-	// api.BuildLayerZstdEnv. It reaches every build manifest and cache key.
+	// LayerZstdEnv. It reaches every build manifest and cache key.
 	LayerCompression string `toml:"-"`
 	// BuilderNodeID is the compute_node name stamped onto every
 	// provenance row this Builderd writes (ADR-038, Tier 3 / issue

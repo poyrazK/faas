@@ -233,7 +233,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	}
 	// ADR-20261028084018: zstd build layers, off until this node's imaged
 	// reads them.
-	layerCompression, err := api.ParseBuildLayerZstd(os.Getenv(api.BuildLayerZstdEnv))
+	layerCompression, err := builderdpkg.ParseLayerZstd(os.Getenv(builderdpkg.LayerZstdEnv))
 	if err != nil {
 		return fmt.Errorf("builderd: %w", err)
 	}

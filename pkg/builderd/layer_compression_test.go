@@ -1,12 +1,13 @@
-package api_test
+package builderd_test
 
 import (
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/builderd"
 )
 
-func TestParseBuildLayerZstd(t *testing.T) {
+func TestParseLayerZstd(t *testing.T) {
 	for _, tc := range []struct {
 		raw     string
 		want    string
@@ -23,12 +24,12 @@ func TestParseBuildLayerZstd(t *testing.T) {
 		{raw: "yes", wantErr: true},
 	} {
 		t.Run(tc.raw, func(t *testing.T) {
-			got, err := api.ParseBuildLayerZstd(tc.raw)
+			got, err := builderd.ParseLayerZstd(tc.raw)
 			if (err != nil) != tc.wantErr {
-				t.Fatalf("ParseBuildLayerZstd(%q) error = %v, wantErr %v", tc.raw, err, tc.wantErr)
+				t.Fatalf("ParseLayerZstd(%q) error = %v, wantErr %v", tc.raw, err, tc.wantErr)
 			}
 			if got != tc.want {
-				t.Fatalf("ParseBuildLayerZstd(%q) = %q, want %q", tc.raw, got, tc.want)
+				t.Fatalf("ParseLayerZstd(%q) = %q, want %q", tc.raw, got, tc.want)
 			}
 		})
 	}
