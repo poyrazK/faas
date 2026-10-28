@@ -131,3 +131,33 @@ loses them at once. Production forks and dev bridges, the two credentials
 that act as their creator outside apid, recheck the creator's standing on
 every use (`appaccess.Standing`). Traffic mirrors copy requests only to
 another deployment of the same app.
+
+## Amendment 2 (2026-10-28): API monetization on company apps
+
+API monetization bills an app's customers through billing connections that
+belong to an account (`/v1/account/billing-connections`), on billing runs
+that belong to an account (`/v1/account/billing-runs`). A company app keeps
+its creator's `account_id`, and so do its consumers, so all of it ran on
+the creator's personal account: their runs billed the company app's
+customers and exported the invoices to their Stripe account, sign-up saved
+new customers' cards there, and the customer portal opened there. None of
+that looked at the organization, so it went on after the creator left the
+company: the company's customers kept paying, and their names, usage and
+cards kept reaching, an account that no longer works there.
+
+**Decision.** A company app's customers are billed through its creator's
+account only while that account may see the company's apps
+(`account_may_see_org_resources`, the rule account-scope release webhooks
+follow under decision 5):
+
+- a billing run discovers a company app's consumers and Product Control
+  customers only while its account is a member of the company;
+- public sign-up answers as if the app took no sign-ups, and a pending
+  sign-up cannot complete, once the creator left;
+- the customer portal is unavailable for the same customers. Customers
+  still read their own usage, statements and plans, which never leave
+  Gregale.
+
+A company that wants to keep selling a departed member's app moves it to a
+new app created by a current member, with that member's billing
+connection; organization billing connections are future work.

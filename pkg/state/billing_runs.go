@@ -387,6 +387,12 @@ func (m *MemStore) DiscoverBillingRunItems(_ context.Context, runID, owner, tena
 	}
 	items := m.billingRunItems[runID]
 	add := func(item BillingRunItem) {
+		// A company app keeps its creator's account; its customers are
+		// billed on that account only while it is a member of the company
+		// (ADR-20261026151103 amendment 2).
+		if app, ok := m.apps[item.AppID]; ok && !m.accountMaySeeOrgLocked(run.AccountID, app.OrgID) {
+			return
+		}
 		item.RunID, item.NextAttemptAt, item.UpdatedAt = runID, now.UTC(), now.UTC()
 		if _, ok := items[item.Key()]; !ok {
 			items[item.Key()] = item

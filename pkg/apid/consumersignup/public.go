@@ -53,7 +53,9 @@ func (s *Service) publicApp(w http.ResponseWriter, r *http.Request, enabled bool
 		return state.App{}, state.APIConsumerSignupSettings{}, false
 	}
 	set, err := store.GetAPIConsumerSignupSettings(r.Context(), app.AccountID, app.ID)
-	if err != nil || (enabled && !set.Enabled) {
+	// Sign-up saves the customer's card with the Stripe account of the app's
+	// creator, so a company app stops taking sign-ups once its creator left.
+	if err != nil || (enabled && !set.Enabled) || !s.Host.CreatorBills(r.Context(), app) {
 		httpkit.NotFound(w, "this API does not take sign-ups")
 		return state.App{}, state.APIConsumerSignupSettings{}, false
 	}
