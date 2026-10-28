@@ -58,7 +58,8 @@ func TestRateLimitLeaseConfig(t *testing.T) {
 		wantErr string
 		want    gateway.LeaseConfig
 	}{
-		{name: "off by default", toml: "[ratelimit]\nmode = \"central\"\n"},
+		{name: "central default", toml: "[ratelimit]\nmode = \"central\"\n"},
+		{name: "local mode without lease", toml: "[ratelimit]\nmode = \"local\"\n"},
 		{name: "central with tunables", toml: "[ratelimit]\nmode = \"central\"\nlease = true\nlease_window_ms = 100\nlease_fraction = 0.2\nallowance_fraction = 0.01\n",
 			want: gateway.LeaseConfig{Window: 100 * time.Millisecond, Fraction: 0.2, AllowanceFraction: 0.01}},
 		// ADR-570: an unset mode is central, so local mode must be explicit.
@@ -87,5 +88,23 @@ func TestRateLimitLeaseConfig(t *testing.T) {
 				t.Fatalf("leaseConfig = %+v, %v; want %+v", got, err, tc.want)
 			}
 		})
+	}
+	// Leasing is on unless turned off, and only in central mode (H39).
+	for toml, want := range map[string]bool{
+		"[ratelimit]\nmode = \"central\"\n":                true,
+		"[ratelimit]\nmode = \"central\"\nlease = false\n": false,
+		"[ratelimit]\nmode = \"local\"\n":                  false,
+	} {
+		path := filepath.Join(t.TempDir(), "gatewayd.toml")
+		if err := os.WriteFile(path, []byte(toml), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		cfg, err := LoadConfig(path)
+		if err != nil {
+			t.Fatalf("LoadConfig: %v", err)
+		}
+		if got := cfg.RateLimit.leaseEnabled(); got != want {
+			t.Errorf("%q: leaseEnabled = %v, want %v", toml, got, want)
+		}
 	}
 }
