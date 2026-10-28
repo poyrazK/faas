@@ -161,7 +161,7 @@ func TestMCPAdmissionSummaryFindsOlderOutcome(t *testing.T) {
 			jsonOutput = false
 			defer func() { osStdout = oldOut; jsonOutput = oldJSON }()
 			_ = writeMCPAdmissionHistory(*history)
-			if !strings.Contains(out.String(), "Latest rejected: available") || !strings.Contains(out.String(), "gregale mcp access history --evidence "+rejected.ID) {
+			if !strings.Contains(out.String(), "Latest rejected: available") || !strings.Contains(out.String(), "gregale mcp server access history --evidence "+rejected.ID) {
 				t.Fatal("missing receipt inspection command")
 			}
 		})

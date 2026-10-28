@@ -250,7 +250,7 @@ func cmdGithubSetup(args []string) int {
 	bindingMutation := strings.TrimSpace(*repo) != "" || strings.TrimSpace(*productionBranch) != "" || strings.TrimSpace(*deployBranches) != ""
 	if bindingMutation {
 		if status.InstallationID <= 0 {
-			return printErr("GitHub bind failed", errors.New("no GitHub App installation is connected; run `gregale connect github` first"))
+			return printErr("GitHub bind failed", errors.New("no GitHub App installation is connected; run `gregale github connect` first"))
 		}
 		bound, err := client.BindGitHubConnection(ctx, positional[0], api.InstallBindRequest{
 			InstallationID:   status.InstallationID,

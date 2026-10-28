@@ -32,6 +32,7 @@ Automation: put `--non-interactive` before the command to disable prompts and br
 | [`whoami`](#whoami) | Show the authenticated account |
 | [`completion`](#completion) | Generate shell completion scripts or install them interactively |
 | [`version`](#version) | Print the CLI version |
+| [`man`](#man) | Print the CLI manual page, or one command&#39;s page |
 | [`release`](#release) | Inspect releases and control rollouts: canary, traffic, approvals |
 | [`preview`](#preview) | Manage pull-request preview environments |
 | [`environment`](#environment) | Manage project environments, promotions and rollbacks |
@@ -76,8 +77,6 @@ Automation: put `--non-interactive` before the command to disable prompts and br
 | [`billing`](#billing) | Manage plan, payment, usage, invoices and spend cap |
 | [`feature`](#feature) | See Gregale features and join early access |
 | [`config`](#config) | Manage local CLI settings, profiles and presets |
-| [`diff`](#diff) | Compare two named environments in the linked project |
-| [`man`](#man) | Print the CLI manual page, or one command&#39;s page |
 
 ## start
 
@@ -530,8 +529,8 @@ Rebuild confirmed failed workloads from a saved project deploy
 Examples:
 
 ```sh
-gregale deploy retry SESSION_ID --path . --source=worktree --yes
-gregale deploy retry SESSION_ID --tarball source.tar.gz --yes
+gregale release attempt retry SESSION_ID --path . --source=worktree --yes
+gregale release attempt retry SESSION_ID --tarball source.tar.gz --yes
 ```
 
 ### deploy resume
@@ -548,8 +547,8 @@ Reconnect to a saved app or project deploy and finish pending checks
 Examples:
 
 ```sh
-gregale deploy resume --app my-api
-gregale deploy resume SESSION_ID --json
+gregale release resume --app my-api
+gregale release resume SESSION_ID --json
 ```
 
 
@@ -1397,6 +1396,13 @@ Print the CLI version
 `gregale version`
 
 
+## man
+
+Print the CLI manual page, or one command&#39;s page
+
+`gregale man <command>`
+
+
 ## release
 
 Inspect releases and control rollouts: canary, traffic, approvals
@@ -1932,8 +1938,8 @@ Examples:
 gregale release approval require --app my-api --approvals 2 --notify releases
 gregale release approval require --app my-api --approvals 1 --approvers developer --timeout 4h
 gregale release approval pending --app my-api
-gregale release approval approve 3f9c1e2a-0b7d-4c55-9e1a-2d6f8b4c7e10 --comment "canary looks clean"
-gregale release approval reject v42 --app my-api --reason "checkout latency is up"
+gregale release approve 3f9c1e2a-0b7d-4c55-9e1a-2d6f8b4c7e10 --comment "canary looks clean"
+gregale release reject v42 --app my-api --reason "checkout latency is up"
 ```
 
 #### release approval require
@@ -2079,10 +2085,10 @@ Stop rollouts on SLO, error, metric or AI regressions and roll back
 Examples:
 
 ```sh
-gregale release gate add --app my-api --name checkout-slo --slo checkout --max-burn-rate 10
-gregale release gate add --app my-api --name no-new-errors --new-errors --min-events 3
-gregale release gate add --app my-api --name orders --metric orders_per_minute --below 5
-gregale release gate add --app my-api --name ai-cost --ai cost_per_call --max-increase 30
+gregale release gate create --app my-api --name checkout-slo --slo checkout --max-burn-rate 10
+gregale release gate create --app my-api --name no-new-errors --new-errors --min-events 3
+gregale release gate create --app my-api --name orders --metric orders_per_minute --below 5
+gregale release gate create --app my-api --name ai-cost --ai cost_per_call --max-increase 30
 gregale release gate list --app my-api
 ```
 
@@ -2361,7 +2367,7 @@ Review route changes, gateway rule drift and test evidence
 | `--customer-details` | include observed consumer and tenant IDs in the report |  |
 | `--baseline-deployment <ID>` | explicit parent deployment ID |  |
 | `--test-report <PATH>` | JSON receipts from gregale test |  |
-| `--source-impact <PATH>` | route impact report from gregale routes impact |  |
+| `--source-impact <PATH>` | route impact report from gregale api route impact |  |
 | `--requirements <PATH>` | versioned route requirements YAML or JSON file |  |
 | `--fail-on-breaking` | exit 1 for known response-contract breaks |  |
 | `--fail-on-request-breaking` | exit 1 for known request-contract restrictions |  |
@@ -2499,7 +2505,7 @@ Review contract compatibility and per-customer migration
 
 | Flag | Meaning | |
 |---|---|---|
-| `--contract-review <PATH>` | version 1 JSON from gregale routes migration review | required |
+| `--contract-review <PATH>` | version 1 JSON from gregale api route migration review | required |
 | `--snapshot <PATH>` | saved route customer tracker JSON; repeat for each observation window | required |
 | `--grace-period <DURATION>` | minimum continuous zero-traffic period before owner review (default 30d) |  |
 | `--min-windows <COUNT>` | minimum distinct complete observation windows (default 2) |  |
@@ -2575,6 +2581,30 @@ Manage project environments, promotions and rollbacks
 `gregale environment [<subcommand>]`
 
 Qualify binds probes to release, config and secret revisions.
+
+### environment migration
+
+recover
+
+#### environment migration recover
+
+Resume or resolve a promotion stopped by its migration task
+
+`gregale environment migration recover --to <ENV> --action <ACTION> --task-id <TASK> --generation <N> --database-state-checked --evidence-sha256 <HASH> [--schema-compatible] [--replacement-promotion <ID>] [--request-id <ID>] [--wait] [--timeout <SECONDS>] <project-slug> <promotion-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--to <ENV>` | destination environment | required |
+| `--action <ACTION>` | resume, or resolve through a verified repair promotion | required; one of `resume` · `resolve` |
+| `--task-id <TASK>` | original migration task ID | required |
+| `--generation <N>` | inspected promotion health generation | required |
+| `--database-state-checked` | attest that the destination database was inspected | required |
+| `--evidence-sha256 <HASH>` | SHA-256 of private inspection evidence (not uploaded) | required |
+| `--schema-compatible` | attest that the expected expansion is present (resume only) |  |
+| `--replacement-promotion <ID>` | verified repair promotion (resolve only) |  |
+| `--request-id <ID>` | stable request ID (default: derived from the request) |  |
+| `--wait` | wait for recovery confirmation |  |
+| `--timeout <SECONDS>` | maximum wait in seconds or a duration |  |
 
 ### environment list
 
@@ -3246,6 +3276,15 @@ Revoke a field override
 
 Compare environments
 
+Examples:
+
+```sh
+gregale environment diff staging production
+gregale environment diff shop --from staging --to production
+```
+
+Takes &lt;project&gt; --from F --to T, or &lt;from&gt; &lt;to&gt; [--project P] with the linked project as the default.
+
 ### environment preview
 
 Plan a promotion
@@ -3325,26 +3364,6 @@ Retry a blocked restoration without rebuilding or extending retention
 | `--request-id <ID>` | stable 32-character lowercase hexadecimal request ID |  |
 | `--wait` | wait for this decision to finish |  |
 | `--timeout <SECONDS|DURATION>` | maximum local wait; server work continues |  |
-
-### environment recover-migration
-
-Resume or resolve a promotion stopped by its migration task
-
-`gregale environment recover-migration --to <ENV> --action <ACTION> --task-id <TASK> --generation <N> --database-state-checked --evidence-sha256 <HASH> [--schema-compatible] [--replacement-promotion <ID>] [--request-id <ID>] [--wait] [--timeout <SECONDS>] <project-slug> <promotion-id>`
-
-| Flag | Meaning | |
-|---|---|---|
-| `--to <ENV>` | destination environment | required |
-| `--action <ACTION>` | resume, or resolve through a verified repair promotion | required; one of `resume` · `resolve` |
-| `--task-id <TASK>` | original migration task ID | required |
-| `--generation <N>` | inspected promotion health generation | required |
-| `--database-state-checked` | attest that the destination database was inspected | required |
-| `--evidence-sha256 <HASH>` | SHA-256 of private inspection evidence (not uploaded) | required |
-| `--schema-compatible` | attest that the expected expansion is present (resume only) |  |
-| `--replacement-promotion <ID>` | verified repair promotion (resolve only) |  |
-| `--request-id <ID>` | stable request ID (default: derived from the request) |  |
-| `--wait` | wait for recovery confirmation |  |
-| `--timeout <SECONDS>` | maximum wait in seconds or a duration |  |
 
 
 ## project
@@ -3958,8 +3977,8 @@ Examples:
 ```sh
 gregale app list
 gregale app list --json
-gregale app list rm my-api --dry-run
-gregale app list rm my-api --yes
+gregale app delete my-api --dry-run
+gregale app delete my-api --yes
 ```
 
 ### app delete
@@ -4494,7 +4513,7 @@ Check serving health and readiness
 Examples:
 
 ```sh
-gregale app my-api health --wait --timeout 2m
+gregale app health my-api --wait --timeout 2m
 ```
 
 ### app changes
@@ -4511,8 +4530,8 @@ List recorded changes and health transitions, newest first
 Examples:
 
 ```sh
-gregale app my-api changes
-gregale app my-api changes --since 2026-10-08T12:00:00Z --json
+gregale app changes my-api
+gregale app changes my-api --since 2026-10-08T12:00:00Z --json
 ```
 
 ### app scale
@@ -4562,9 +4581,9 @@ Preview or change resources and settings
 Examples:
 
 ```sh
-gregale app my-api scale --interactive
-gregale app my-api scale --plan --ram 512 --out scale-change.json
-gregale app my-api scale --apply scale-change.json --confirm
+gregale app scale my-api --interactive
+gregale app scale my-api --plan --ram 512 --out scale-change.json
+gregale app scale my-api --apply scale-change.json --confirm
 ```
 
 ### app costs
@@ -4581,8 +4600,8 @@ Show this app&#39;s attributed usage costs and source coverage
 Examples:
 
 ```sh
-gregale app my-api costs
-gregale app my-api costs --month 2026-10 --json
+gregale app costs my-api
+gregale app costs my-api --month 2026-10 --json
 ```
 
 ### app rename
@@ -4594,7 +4613,7 @@ Rename an app; the old hostname stops routing
 Examples:
 
 ```sh
-gregale app my-api rename my-api-v2
+gregale app rename my-api my-api-v2
 ```
 
 ### app restart
@@ -5463,6 +5482,16 @@ Manage custom domains
 
 `gregale domain [<subcommand>]`
 
+### domain default
+
+set
+
+#### domain default set
+
+Set a verified domain as the app default
+
+`gregale domain default set <domain>`
+
 ### domain setup
 
 Guide DNS setup and wait for verification and TLS
@@ -5511,12 +5540,6 @@ Bind a custom domain to an app or project environment
 Remove a custom domain binding
 
 `gregale domain delete <domain>`
-
-### domain set-default
-
-Set a verified domain as the app default
-
-`gregale domain set-default <domain>`
 
 ### domain verify
 
@@ -6134,7 +6157,7 @@ Examples:
 ```sh
 gregale edge rule-list create office-ips --kind ip --item 203.0.113.0/24 --item 2001:db8::1
 gregale edge rule-list create blocked --kind country --items-file countries.txt
-gregale edge-rules create --app my-api --kind throttle --match-host api.example.com --throttle-requests-per-second 5 --match '{"not":{"field":"client_ip","op":"in_list","list":"office-ips"}}'
+gregale edge rule create --app my-api --kind throttle --match-host api.example.com --throttle-requests-per-second 5 --match '{"not":{"field":"client_ip","op":"in_list","list":"office-ips"}}'
 ```
 
 #### edge rule-list update
@@ -9792,6 +9815,35 @@ Retire an idle policy and preserve ownership history
 
 `gregale job lock-policy delete <name>`
 
+### job artifact
+
+download
+
+#### job artifact download
+
+Download and verify current managed artifacts
+
+`gregale job artifact download [--task <N>] [--out <PATH>] [--all] [--all-tasks] [--include <GLOB>] [--exclude <GLOB>] [--dry-run] [--resume] [--out-dir <DIR>] [<name>] [<run-id|latest>] [<task-index>] [<artifact-name>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--task <N>` | single-artifact task index; omitted Job uses local defaults, omitted run uses latest |  |
+| `--out <PATH>` | new destination file; required for a single artifact |  |
+| `--all` | download all current managed artifacts |  |
+| `--all-tasks` | download current managed artifacts across all task pages into task directories |  |
+| `--include <GLOB>` | repeatable artifact-name glob for bulk modes; quote patterns |  |
+| `--exclude <GLOB>` | repeatable artifact-name glob to omit in bulk modes; exclusions take precedence |  |
+| `--dry-run` | preview bulk destinations, bytes, and conflicts; requires --all or --all-tasks |  |
+| `--resume` | verify and skip matching files; requires bulk mode and an explicit run UUID |  |
+| `--out-dir <DIR>` | destination directory, created when missing; required in bulk mode |  |
+
+Examples:
+
+```sh
+gregale job artifact download --task 2 report.csv --out report.csv
+gregale job artifact download nightly-report latest 0 report.csv --out report.csv
+```
+
 ### job resume
 
 Recover a saved Job run: observe, read failures or collect results
@@ -10361,31 +10413,6 @@ Examples:
 gregale job artifact-url nightly-report latest 0 report.csv
 gregale job artifact-url --interactive
 gregale job artifact-url <name> <run-id> <task-index> <artifact-name>
-```
-
-### job artifact-download
-
-Download and verify current managed artifacts
-
-`gregale job artifact-download [--task <N>] [--out <PATH>] [--all] [--all-tasks] [--include <GLOB>] [--exclude <GLOB>] [--dry-run] [--resume] [--out-dir <DIR>] [<name>] [<run-id|latest>] [<task-index>] [<artifact-name>]`
-
-| Flag | Meaning | |
-|---|---|---|
-| `--task <N>` | single-artifact task index; omitted Job uses local defaults, omitted run uses latest |  |
-| `--out <PATH>` | new destination file; required for a single artifact |  |
-| `--all` | download all current managed artifacts |  |
-| `--all-tasks` | download current managed artifacts across all task pages into task directories |  |
-| `--include <GLOB>` | repeatable artifact-name glob for bulk modes; quote patterns |  |
-| `--exclude <GLOB>` | repeatable artifact-name glob to omit in bulk modes; exclusions take precedence |  |
-| `--dry-run` | preview bulk destinations, bytes, and conflicts; requires --all or --all-tasks |  |
-| `--resume` | verify and skip matching files; requires bulk mode and an explicit run UUID |  |
-| `--out-dir <DIR>` | destination directory, created when missing; required in bulk mode |  |
-
-Examples:
-
-```sh
-gregale job artifact-download --task 2 report.csv --out report.csv
-gregale job artifact-download nightly-report latest 0 report.csv --out report.csv
 ```
 
 ### job artifacts
@@ -11616,6 +11643,22 @@ Preview retained work and explicitly clear a failure pause
 | `--name <NAME>` | automation name | required |
 | `--expected-generation <N>` | current failure pause generation | required |
 
+### automation policy
+
+publish
+
+#### automation policy publish
+
+Inspect or set required server publishing checks
+
+`gregale automation policy publish --app <SLUG> [--mode <MODE>] [--expected-version <N>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app slug | required |
+| `--mode <MODE>` | set publishing requirement (admin scope) | one of `optional` · `scenarios` · `coverage` |
+| `--expected-version <N>` | current policy version (required when setting mode) |  |
+
 ### automation live
 
 Start, observe and check saved cases against real execution
@@ -12331,18 +12374,6 @@ Save an automation definition as a draft
 | `--app <SLUG>` | app slug | required |
 | `--file <PATH>` | YAML or JSON definition file | required |
 | `--expected-version <N>` | current version; use 0 for a new draft | required |
-
-### automation publish-policy
-
-Inspect or set required server publishing checks
-
-`gregale automation publish-policy --app <SLUG> [--mode <MODE>] [--expected-version <N>]`
-
-| Flag | Meaning | |
-|---|---|---|
-| `--app <SLUG>` | app slug | required |
-| `--mode <MODE>` | set publishing requirement (admin scope) | one of `optional` · `scenarios` · `coverage` |
-| `--expected-version <N>` | current policy version (required when setting mode) |  |
 
 ### automation publish
 
@@ -13621,6 +13652,22 @@ Register webhooks and deliver events to them
 
 `gregale webhook [<subcommand>]`
 
+### webhook secret
+
+rotate
+
+#### webhook secret rotate
+
+Rotate the webhook signing secret
+
+`gregale webhook secret rotate --app <slug> [--secret <VALUE>] [--from-stdin] <webhook-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <slug>` | app slug | required |
+| `--secret <VALUE>` | replacement HMAC-SHA256 secret |  |
+| `--from-stdin` | read the replacement secret from stdin |  |
+
 ### webhook deliver
 
 Reliably deliver an event to a registered webhook
@@ -13720,18 +13767,6 @@ Retry a failed delivery
 | Flag | Meaning | |
 |---|---|---|
 | `--app <slug>` | app slug | required |
-
-### webhook rotate-secret
-
-Rotate the webhook signing secret
-
-`gregale webhook rotate-secret --app <slug> [--secret <VALUE>] [--from-stdin] <webhook-id>`
-
-| Flag | Meaning | |
-|---|---|---|
-| `--app <slug>` | app slug | required |
-| `--secret <VALUE>` | replacement HMAC-SHA256 secret |  |
-| `--from-stdin` | read the replacement secret from stdin |  |
 
 ### webhook account
 
@@ -15018,6 +15053,21 @@ Restore webhook primary for unattempted incidents
 | `--rule <UUID>` | readiness alert rule | required |
 | `--expected-version <N>` | current reminder defaults version | required |
 
+### alert secret
+
+rotate
+
+#### alert secret rotate
+
+Rotate the alert&#39;s webhook secret
+
+`gregale alert secret rotate --app <slug> [--from-stdin] <alert-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <slug>` | app slug | required |
+| `--from-stdin` | read the replacement secret from stdin |  |
+
 ### alert channel
 
 Manage where alerts are sent: Slack, PagerDuty or email
@@ -15374,17 +15424,6 @@ Delete one alert rule
 |---|---|---|
 | `--app <slug>` | app slug | required |
 | `--yes` | accepted for consistency; rm does not prompt |  |
-
-### alert rotate-secret
-
-Rotate the alert&#39;s webhook secret
-
-`gregale alert rotate-secret --app <slug> [--from-stdin] <alert-id>`
-
-| Flag | Meaning | |
-|---|---|---|
-| `--app <slug>` | app slug | required |
-| `--from-stdin` | read the replacement secret from stdin |  |
 
 ### alert preset
 
@@ -18213,7 +18252,7 @@ gregale feature list --early-access
 gregale feature list --early-access --org acme
 ```
 
-Signed in, the list ends with early-access features you can join or have joined; join one with `gregale previews join &lt;key&gt;`.
+Signed in, the list ends with early-access features you can join or have joined; join one with `gregale feature join &lt;key&gt;`.
 
 ### feature join
 
@@ -18248,7 +18287,6 @@ Leave a preview
 Manage local CLI settings, profiles and presets
 
 `gregale config [<subcommand>]`
-
 Examples:
 
 ```sh
@@ -18438,20 +18476,3 @@ Persist one non-secret setting
 
 Show all effective settings
 
-
-## diff
-
-Compare two named environments in the linked project
-
-`gregale diff <from-environment> <to-environment> [--project <SLUG>]`
-
-| Flag | Meaning | |
-|---|---|---|
-| `--project <SLUG>` | project slug (defaults to linked project) |  |
-
-
-## man
-
-Print the CLI manual page, or one command&#39;s page
-
-`gregale man <command>`

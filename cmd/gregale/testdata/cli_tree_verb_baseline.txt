@@ -15,7 +15,6 @@ ai content-policy  # hyphenated content-policy, verb content-policy
 ai quality-alerts  # hyphenated quality-alerts, verb quality-alerts
 ai tag-limits  # hyphenated tag-limits, verb tag-limits
 alert incident note  # verb note
-alert rotate-secret  # hyphenated rotate-secret, verb rotate-secret
 api consumer billing-policy  # hyphenated billing-policy, verb billing-policy
 api consumer billing-policy-delete  # hyphenated billing-policy-delete, verb billing-policy-delete
 api consumer billing-policy-set  # hyphenated billing-policy-set, verb billing-policy-set
@@ -149,7 +148,6 @@ automation live baseline promote  # more than three words
 automation live baseline retire  # more than three words
 automation live gate  # verb gate
 automation live suite  # verb suite
-automation publish-policy  # hyphenated publish-policy, verb publish-policy
 automation recovery-cancel-preview  # hyphenated recovery-cancel-preview, verb recovery-cancel-preview
 automation recovery-policy  # hyphenated recovery-policy, verb recovery-policy
 automation recovery-policy-evaluate  # hyphenated recovery-policy-evaluate, verb recovery-policy-evaluate
@@ -208,7 +206,6 @@ debug issue ownership-rules  # hyphenated ownership-rules, verb ownership-rules
 debug issue revoke-token  # hyphenated revoke-token, verb revoke-token
 debug issue source-maps  # hyphenated source-maps, verb source-maps
 debug regressions acknowledge  # verb acknowledge
-domain set-default  # hyphenated set-default, verb set-default
 edge cache GET  # verb GET
 edge cache HEAD  # verb HEAD
 edge rule attack-mode  # hyphenated attack-mode, verb attack-mode
@@ -224,7 +221,6 @@ environment gitops rollback-plan  # hyphenated rollback-plan, verb rollback-plan
 environment gitops rollback-pr  # hyphenated rollback-pr, verb rollback-pr
 environment preflight  # verb preflight
 environment preview  # verb preview
-environment recover-migration  # hyphenated recover-migration, verb recover-migration
 environment release-sets  # hyphenated release-sets
 environment release-sets activate  # hyphenated release-sets
 environment release-sets cancel-stage  # hyphenated release-sets, hyphenated cancel-stage, verb cancel-stage
@@ -296,7 +292,6 @@ event subscription-lineage-retry-preview  # hyphenated subscription-lineage-retr
 event subscription-reconcile-execution  # hyphenated subscription-reconcile-execution, verb subscription-reconcile-execution
 event workflow-backfill  # hyphenated workflow-backfill, verb workflow-backfill
 event workflow-replay-preview  # hyphenated workflow-replay-preview, verb workflow-replay-preview
-job artifact-download  # hyphenated artifact-download, verb artifact-download
 job artifact-url  # hyphenated artifact-url, verb artifact-url
 job next  # verb next
 job replay-failed  # hyphenated replay-failed, verb replay-failed
@@ -393,7 +388,6 @@ test coverage-trend  # hyphenated coverage-trend, verb coverage-trend
 test recovery-trend  # hyphenated recovery-trend, verb recovery-trend
 trigger dlq  # verb dlq
 webhook account rotate-secret  # hyphenated rotate-secret, verb rotate-secret
-webhook rotate-secret  # hyphenated rotate-secret, verb rotate-secret
 workflow cancel-queued  # hyphenated cancel-queued, verb cancel-queued
 workflow cancel-queued-preview  # hyphenated cancel-queued-preview, verb cancel-queued-preview
 workflow resume-wait  # hyphenated resume-wait, verb resume-wait

@@ -355,7 +355,7 @@ func TestCLIRegressionRejectedSubmissionShowsFindingsAndNoRetryAdvice(t *testing
 	defer restore()
 	rejected := &APIError{Problem: api.Problem{
 		Status: 422, Code: api.CodeSecretScanStrict, Title: "Secret-shaped values found in uploaded source",
-		Detail:         "redact secret values or move them to `gregale secrets set`",
+		Detail:         "redact secret values or move them to `gregale env set`",
 		SecretFindings: []api.SecretFinding{{File: "server.js", Line: 15, Provider: "high_entropy", Severity: "medium", Snippet: "012345…wxyz"}},
 	}}
 	if code := printDeploySubmissionError("Deploy failed", rejected, "demo", key, "submission", ""); code == 0 {

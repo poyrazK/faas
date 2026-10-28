@@ -95,7 +95,7 @@ func renderPowershellHeader(w io.Writer) {
 	_, _ = fmt.Fprintln(w, "    }")
 	_, _ = fmt.Fprintln(w, "    $normalizedContext += $token; if ($token -eq '--') { $afterSeparator = $true }")
 	_, _ = fmt.Fprintln(w, "  }")
-	_, _ = fmt.Fprintln(w, "  $profileValue = $skipProfile -or ($normalizedContext.Count -eq 3 -and $normalizedContext[1] -eq 'profile' -and $normalizedContext[2] -in @('use','remove'))")
+	_, _ = fmt.Fprintln(w, "  $profileValue = $skipProfile -or ($normalizedContext.Count -eq 3 -and $normalizedContext[1] -eq 'profile' -and $normalizedContext[2] -in @('use','remove')) -or ($normalizedContext.Count -eq 4 -and $normalizedContext[1] -eq 'config' -and $normalizedContext[2] -eq 'profile' -and $normalizedContext[3] -in @('use','delete','remove'))")
 	_, _ = fmt.Fprintln(w, "  $profileEquals = $normalizedContext.Count -eq 1 -and $wordToComplete.StartsWith('--profile=')")
 	_, _ = fmt.Fprintln(w, "  if ($profileValue -or $profileEquals) {")
 	_, _ = fmt.Fprintln(w, "    $prefix = ''; $value = $wordToComplete")

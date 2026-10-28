@@ -37,7 +37,7 @@ import (
 // health-based exit code.
 func cmdDomainsDoctor(args []string) int {
 	if len(args) != 1 {
-		printCommandValidation(os.Stderr, "usage: gregale domains doctor <domain>\n")
+		printCommandValidation(os.Stderr, "usage: gregale domain doctor <domain>\n")
 		return 1
 	}
 	domain := args[0]

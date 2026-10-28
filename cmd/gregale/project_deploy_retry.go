@@ -33,7 +33,7 @@ func cmdDeployRetry(ctx context.Context, args []string) int {
 		return 1
 	}
 	if len(positionals) != 1 || *timeout <= 0 {
-		return printErr("Invalid deploy retry arguments", errors.New("usage: gregale deploy retry SESSION_ID [--path DIR] [--source auto|head|worktree] [--tarball SOURCE.tar.gz] [--yes] [--no-wait] [--timeout SECONDS]"))
+		return printErr("Invalid deploy retry arguments", errors.New("usage: gregale release attempt retry SESSION_ID [--path DIR] [--source auto|head|worktree] [--tarball SOURCE.tar.gz] [--yes] [--no-wait] [--timeout SECONDS]"))
 	}
 	explicit := map[string]bool{}
 	fs.Visit(func(f *flag.Flag) { explicit[f.Name] = true })

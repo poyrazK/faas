@@ -11,7 +11,7 @@ import (
 )
 
 func cmdIssueSavedViews(args []string) int {
-	usage := "usage: gregale issues views <list|get|save|delete|apply> --app SLUG [--key KEY --name NAME --state open --assignee me --sort impact --min-customers N --tag component=payments --cursor CURSOR]"
+	usage := "usage: gregale debug issue views <list|get|save|delete|apply> --app SLUG [--key KEY --name NAME --state open --assignee me --sort impact --min-customers N --tag component=payments --cursor CURSOR]"
 	if len(args) > 0 && (args[0] == "--help" || args[0] == "-h") {
 		fmt.Fprintln(os.Stderr, usage)
 		return 0

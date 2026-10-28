@@ -541,7 +541,7 @@ func (r *startRunner) reviewLaunch(edit *startFileEdit) (int, bool) {
 	code := r.deploy(deployCtx, args, false, execution)
 	r.progress.Close()
 	if saveErr != nil || identityErr != nil {
-		PrintProgress(osStdout, "Inspect accepted deployment directly: %s deployment wait %s", recoveryCLI(), recoveryArgument(r.session.DeploymentID))
+		PrintProgress(osStdout, "Inspect accepted deployment directly: %s release wait %s", recoveryCLI(), recoveryArgument(r.session.DeploymentID))
 		if saveErr != nil {
 			return printErr("Deployment accepted but recovery state could not be saved", saveErr), false
 		}
@@ -651,7 +651,7 @@ func (r *startRunner) printRecovery() {
 		return
 	}
 	PrintProgress(osStdout, "Continue this launch: %s start %s", recoveryCLI(), recoveryArgument(r.session.ScopePath))
-	PrintProgress(osStdout, "Inspect directly: %s deployment wait %s", recoveryCLI(), recoveryArgument(r.session.DeploymentID))
+	PrintProgress(osStdout, "Inspect directly: %s release wait %s", recoveryCLI(), recoveryArgument(r.session.DeploymentID))
 	r.printPreviouslyVerified()
 }
 

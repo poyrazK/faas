@@ -64,14 +64,12 @@ func cmdMan(args []string) int {
 		renderManTop(osStdout)
 		return 0
 	case 1:
+		// A tree noun's page lists the tree's verbs (ADR-20261026145832); an
+		// earlier name keeps today's page.
 		cmd, ok := lookupDiscoverableCommand(args[0])
-		if !ok || cmd.Audience == cliAudienceCustomer && cliTreeEarlierName(cmd.Name) {
-			// A tree noun has a page of its own (ADR-20261026145832); an
-			// earlier name keeps its page when the tree has none.
-			for _, noun := range completionCliCommands() {
-				if noun.Name == args[0] {
-					cmd, ok = noun, true
-				}
+		for _, noun := range completionCliCommands() {
+			if noun.Name == args[0] {
+				cmd, ok = noun, true
 			}
 		}
 		if !ok || !cliCommandAvailable(cmd.Name) {
@@ -147,7 +145,7 @@ func renderManTop(w io.Writer) {
 		_, _ = fmt.Fprintln(w, `.PP`)
 		_, _ = fmt.Fprintln(w, ".RS 4")
 		_, _ = fmt.Fprintln(w, `.nf`)
-		_, _ = fmt.Fprintln(w, `gregale apps`)
+		_, _ = fmt.Fprintln(w, `gregale app list`)
 		_, _ = fmt.Fprintln(w, `.fi`)
 		_, _ = fmt.Fprintln(w, ".RE")
 		_, _ = fmt.Fprintln(w, `.PP`)

@@ -76,21 +76,21 @@ func cmdCronsRuns(args []string) int {
 		return printErr("Invalid app flag", fmt.Errorf("--app requires --interactive; otherwise supply a task ID"))
 	}
 	if len(pos) != 1 {
-		printCommandValidation(os.Stderr, "usage: gregale crons runs <id> [--before C] [--limit N] [--run TASK-ID]\n")
+		printCommandValidation(os.Stderr, "usage: gregale cron runs <id> [--before C] [--limit N] [--run TASK-ID]\n")
 		return 1
 	}
 	if err := validateCLILimit("limit", *limit, 100); err != nil {
-		printCommandValidation(os.Stderr, "usage: gregale crons runs <id> [--before C] [--limit N] (1 <= N <= 100)\n")
+		printCommandValidation(os.Stderr, "usage: gregale cron runs <id> [--before C] [--limit N] (1 <= N <= 100)\n")
 		return 1
 	}
 	id := pos[0]
 	if !cronIDPattern.MatchString(id) {
-		printCommandValidation(os.Stderr, "usage: gregale crons runs <id> [--before C] [--limit N] [--run TASK-ID]\n")
+		printCommandValidation(os.Stderr, "usage: gregale cron runs <id> [--before C] [--limit N] [--run TASK-ID]\n")
 		return 1
 	}
 	if *runID != "" {
 		if !fireNowRequestIDPattern.MatchString(*runID) || *before != "" || *limit != 10 {
-			printCommandValidation(os.Stderr, "usage: gregale crons runs <id> --run <task-id>\n")
+			printCommandValidation(os.Stderr, "usage: gregale cron runs <id> --run <task-id>\n")
 			return 1
 		}
 	}
@@ -137,16 +137,16 @@ func cmdCronsOccurrences(args []string) int {
 		return 1
 	}
 	if len(pos) != 1 || rejectUnexpectedFlagArgs(fs) {
-		printCommandValidation(os.Stderr, "usage: gregale crons occurrences <id> [--cursor C] [--all] [--limit N]\n")
+		printCommandValidation(os.Stderr, "usage: gregale cron occurrences <id> [--cursor C] [--all] [--limit N]\n")
 		return 1
 	}
 	if err := validateCLILimit("limit", *limit, 200); err != nil {
-		printCommandValidation(os.Stderr, "usage: gregale crons occurrences <id> [--cursor C] [--all] [--limit N] (1 <= N <= 200)\n")
+		printCommandValidation(os.Stderr, "usage: gregale cron occurrences <id> [--cursor C] [--all] [--limit N] (1 <= N <= 200)\n")
 		return 1
 	}
 	id := pos[0]
 	if !cronIDPattern.MatchString(id) {
-		printCommandValidation(os.Stderr, "usage: gregale crons occurrences <id> [--cursor C] [--all] [--limit N]\n")
+		printCommandValidation(os.Stderr, "usage: gregale cron occurrences <id> [--cursor C] [--all] [--limit N]\n")
 		return 1
 	}
 	client, err := authedClient()
@@ -175,7 +175,7 @@ func cmdCronsOccurrences(args []string) int {
 	}
 	renderScheduleOccurrences(osStdout, page.Occurrences)
 	if page.NextBefore != "" {
-		_, _ = fmt.Fprintf(osStdout, "next page: gregale crons occurrences %s --cursor %s\n", id, page.NextBefore)
+		_, _ = fmt.Fprintf(osStdout, "next page: gregale cron occurrences %s --cursor %s\n", id, page.NextBefore)
 	}
 	return 0
 }

@@ -53,7 +53,7 @@ func cmdRoutesSunsetsDiff(args []string) int {
 		return 1
 	}
 	if len(positional) != 0 || *beforePath == "" || *afterPath == "" || *maxStaleness <= 0 || rejectUnexpectedFlagArgs(fs) {
-		PrintUsage(osStderr, "usage: gregale routes sunsets diff --before PATH --after PATH [--max-staleness 24h] [--out PATH] [--fail-on-regression] [--fail-on-incomplete] [--json]", "cli")
+		PrintUsage(osStderr, "usage: gregale api route sunsets diff --before PATH --after PATH [--max-staleness 24h] [--out PATH] [--fail-on-regression] [--fail-on-incomplete] [--json]", "cli")
 		return 1
 	}
 	if *output != "" {

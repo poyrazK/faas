@@ -676,6 +676,7 @@ var CliTreeHintTerminal = &cliTreeHintTerminal
 
 // CustomerManifest is every customer command, earlier names included.
 func CustomerManifest() []cliCommand { return customerAudience(discoverableCliCommands()) }
+
 var CliRelatedCommands = &cliRelatedCommands
 var CliSeeAlso = cliSeeAlso
 var CliPreAuthPatch = cliPreAuthPatch

@@ -41,7 +41,7 @@ func TestEnsurePostgresEgressOpensThePort(t *testing.T) {
 		{name: "plan without extra ports", err: &main.APIError{Problem: api.Problem{Status: 403, Code: api.CodePlanEgressPortsNotAllowed}},
 			wantPorts: []int{5432}, wantCalls: 1, wantOut: "the binding opens outbound TCP 5432 to this database"},
 		{name: "other failure", err: errors.New("boom"), wantPorts: []int{5432}, wantCalls: 1,
-			wantOut: "gregale app api egress-ports add 5432"},
+			wantOut: "gregale app egress-ports add api 5432"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -119,7 +119,7 @@ func TestPostgresBindingDeliveryGuidance(t *testing.T) {
 	var runtime, migration bytes.Buffer
 	main.PrintPostgresBindingDelivery(&runtime, "api", "DATABASE_URL", "read_write")
 	main.PrintPostgresBindingDelivery(&migration, "api", "MIGRATION_DATABASE_URL", "migration")
-	if !strings.Contains(runtime.String(), "gregale app api restart") {
+	if !strings.Contains(runtime.String(), "gregale app restart api") {
 		t.Errorf("runtime guidance = %q", runtime.String())
 	}
 	if !strings.Contains(migration.String(), "release task") || strings.Contains(migration.String(), "restart") {

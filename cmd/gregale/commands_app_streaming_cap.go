@@ -62,7 +62,7 @@ const subStreamingCap = "streaming-cap"
 func cmdAppsStreamingCap(slug string, args []string) int {
 	_ = args // reserved for a future CLI route-shape form
 	if slug == "" {
-		PrintUsage(os.Stderr, "usage: gregale apps streaming-cap <slug>", "apps")
+		PrintUsage(os.Stderr, "usage: gregale app streaming-cap <slug>", "apps")
 		return 1
 	}
 	client, err := authedClient()

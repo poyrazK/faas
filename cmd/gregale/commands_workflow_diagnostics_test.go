@@ -51,7 +51,7 @@ func TestWorkflowDiagnosticsOffersEligibleResumeCommand(t *testing.T) {
 	result := api.WorkflowRunDiagnosticsResponse{RunID: id, Resume: api.WorkflowResumePreview{Eligible: true, ExpectedResumeCount: 2}}
 	var output bytes.Buffer
 	main.RenderWorkflowRunDiagnostics(&output, result)
-	if !strings.Contains(output.String(), "gregale workflows resume "+id+" --expected-resume-count 2") {
+	if !strings.Contains(output.String(), "gregale workflow resume "+id+" --expected-resume-count 2") {
 		t.Fatalf("missing command: %s", output.String())
 	}
 	for _, mode := range []string{"ineligible", "blocked", "bad-id", "bad-count"} {

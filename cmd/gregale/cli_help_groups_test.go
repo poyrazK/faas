@@ -22,7 +22,7 @@ func enableEveryCLIFeature(t *testing.T) {
 // cliTreeUnplacedCommands are customer commands the command tree does not
 // place yet; root help lists them under "More". The list only shrinks.
 var cliTreeUnplacedCommands = []string{
-	"auth", "diff", "man",
+	"auth", // unreleased; placed when it launches
 }
 
 // Every customer command is a shortcut, a noun, or reached through a noun
@@ -139,22 +139,12 @@ func TestCliRelatedCommandsCrossReference(t *testing.T) {
 	}
 	oldOut := (*main.OsStdout)
 	t.Cleanup(func() { (*main.OsStdout) = oldOut })
-	for _, tc := range []struct{ args []string }{
-		{[]string{"slo", "--help"}},
-		{[]string{"help", "slos"}},
-	} {
-		var out bytes.Buffer
-		(*main.OsStdout) = &out
-		if code := main.Run(tc.args); code != 0 {
-			t.Fatalf("%v exit = %d", tc.args, code)
-		}
-		other := "gregale slos"
-		if tc.args[1] == "slos" {
-			other = "gregale slo"
-		}
-		if !strings.Contains(out.String(), "See also: "+other+"\n") {
-			t.Errorf("%v help does not point at %q:\n%s", tc.args, other, out.String())
-		}
+	// Help reached by an earlier name speaks the command tree and leaves
+	// out "See also" (ADR-20261026145832); man pages keep it.
+	var help bytes.Buffer
+	(*main.OsStdout) = &help
+	if code := main.Run([]string{"help", "slos"}); code != 0 || strings.Contains(help.String(), "See also:") || !strings.Contains(help.String(), "gregale alert slo") {
+		t.Errorf("help slos = %d, want tree help without See also:\n%s", code, help.String())
 	}
 	var man bytes.Buffer
 	(*main.OsStdout) = &man

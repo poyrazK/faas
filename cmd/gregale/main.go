@@ -344,7 +344,7 @@ func run(args []string) (status int) {
 		// alias for the default list action.
 		if len(args) > 1 && (args[1] == "ls" || args[1] == "list") {
 			if len(args) != 2 {
-				PrintUsage(os.Stderr, "usage: gregale apps [ls|list]", "apps")
+				PrintUsage(os.Stderr, "usage: gregale app list [ls|list]", "apps")
 				return 1
 			}
 			return cmdApps()
@@ -409,7 +409,7 @@ func run(args []string) (status int) {
 			return cmdAppsRm(args[1:])
 		}
 		if len(args) > 1 {
-			PrintUsage(os.Stderr, "usage: gregale apps [ls|list|rm <slug>|restore <slug>|routes <slug>|tcp <slug>|udp <slug>|streaming-cap <slug>|-q|--quiet|--yes <slug>]", "apps")
+			PrintUsage(os.Stderr, "usage: gregale app list [ls|list|rm <slug>|restore <slug>|routes <slug>|tcp <slug>|udp <slug>|streaming-cap <slug>|-q|--quiet|--yes <slug>]", "apps")
 			return 1
 		}
 		return cmdApps()

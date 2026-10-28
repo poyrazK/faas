@@ -104,6 +104,6 @@ func bucketDefaultEncryptionSelection(args []string) (api.ObjectEncryption, erro
 }
 
 func bucketDefaultEncryptionUsage() int {
-	PrintUsage(osStderr, "usage: gregale bucket encryption <status|clear|AES256|aws:kms|aws:kms:dsse> <app> <bucket-id> [owned-key-ref] [bucket-key-enabled]", "bucket")
+	PrintUsage(osStderr, "usage: gregale bucket encryption set <status|clear|AES256|aws:kms|aws:kms:dsse> <app> <bucket-id> [owned-key-ref] [bucket-key-enabled]", "bucket")
 	return 1
 }

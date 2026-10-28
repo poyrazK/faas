@@ -2612,8 +2612,8 @@ Apps can enforce checks for dashboard publication. The default `optional` policy
 Inspect and change the policy with:
 
 ```sh
-gregale automation publish-policy --app billing
-gregale automation publish-policy --app billing --mode coverage --expected-version 0
+gregale automation policy publish --app billing
+gregale automation policy publish --app billing --mode coverage --expected-version 0
 gregale automation publish --app billing --name paid-invoice --expected-version 7 --scenarios scenarios.yaml
 ```
 

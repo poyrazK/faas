@@ -77,14 +77,14 @@ func cmdAutomationsFailureRecoveryReview(args []string) int {
 			_, _ = fmt.Fprintf(osStdout, "Evidence: %s | repairable %t\n", oneLine(a.Diagnosis.Reason), a.Diagnosis.Repairable)
 		}
 		if a.BlockReason != "" {
-			_, _ = fmt.Fprintf(osStdout, "%s\nInspect: gregale automations failure-recovery-evidence --app %s --review %s\n", oneLine(a.OperatorAction), automationCommandArgument(*app), oneLine(out.ID))
+			_, _ = fmt.Fprintf(osStdout, "%s\nInspect: gregale automation failure-recovery-evidence --app %s --review %s\n", oneLine(a.OperatorAction), automationCommandArgument(*app), oneLine(out.ID))
 		}
 	}
 	if out.Result != nil {
 		_, _ = fmt.Fprintf(osStdout, "Result: %s | generation %d\n", oneLine(out.Result.Outcome), out.Result.ResumeCount)
 	}
 	if out.Status == "prepared" {
-		_, _ = fmt.Fprintf(osStdout, "Submit: gregale automations failure-recovery-review --app %s --review %s --decision submit --reason REASON\n", automationCommandArgument(*app), oneLine(out.ID))
+		_, _ = fmt.Fprintf(osStdout, "Submit: gregale automation failure-recovery-review --app %s --review %s --decision submit --reason REASON\n", automationCommandArgument(*app), oneLine(out.ID))
 	}
 	return exit
 }

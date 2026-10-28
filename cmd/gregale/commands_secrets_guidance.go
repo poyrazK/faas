@@ -57,7 +57,7 @@ func renderSecretReferenceAvailability(ctx context.Context, client *Client, app 
 		sort.Strings(names)
 		_, _ = fmt.Fprintf(osStdout, "\nSupply these source keys: %s\n", strings.Join(names, ", "))
 		_, _ = fmt.Fprintln(osStdout, "Use a private file containing KEY=VALUE lines; do not put values in the command itself.")
-		_, _ = fmt.Fprintf(osStdout, "  %s secrets set --app %s --scope %s --from-stdin < secrets.env\n", recoveryCLI(), recoveryArgument(app), recoveryArgument(refs.Environment))
+		_, _ = fmt.Fprintf(osStdout, "  %s env set --app %s --scope %s --from-stdin < secrets.env\n", recoveryCLI(), recoveryArgument(app), recoveryArgument(refs.Environment))
 	}
 	printSecretReferenceApplicationHint(app, refs.Environment)
 	return 0

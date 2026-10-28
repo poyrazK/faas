@@ -75,7 +75,7 @@ func downloadJobRunArtifactsWithFilters(pos []string, directory string, resume, 
 
 func downloadJobRunArtifactsWithContext(parentCtx context.Context, pos []string, directory string, resume, dryRun bool, includes, excludes []string, accepted *api.JobRunResponse, receive func(jobRunArtifactReceipt) int) int {
 	if len(pos) != 2 || directory == "" || !jobSlugPattern.MatchString(pos[0]) || (pos[1] != "latest" && !jobRunIDPattern.MatchString(pos[1])) {
-		return printErr("Invalid whole-run download", fmt.Errorf("usage: gregale jobs artifact-download JOB RUN_ID|latest --all-tasks --out-dir DIR [--dry-run] [--resume]"))
+		return printErr("Invalid whole-run download", fmt.Errorf("usage: gregale job artifact download JOB RUN_ID|latest --all-tasks --out-dir DIR [--dry-run] [--resume]"))
 	}
 	if resume && pos[1] == "latest" {
 		return printErr("Invalid resume target", fmt.Errorf("--resume requires the explicit run UUID from the previous receipt"))

@@ -19,7 +19,7 @@ func TestDispatchersNameTheirVerbsAfterAnUnknownSubcommand(t *testing.T) {
 		without []string
 	}{
 		{"a verb word lists the verbs", main.CmdAlerts, "get", []string{`unknown alerts subcommand "get"`, "Subcommands: actions, list,"}, []string{"comes first"}},
-		{"an app slug gets the verb-first form", main.CmdCrons, "h14-py", []string{"Subcommands: next, list,", "If h14-py is an app, the subcommand comes first: gregale crons list --app h14-py"}, nil},
+		{"an app slug gets the verb-first form", main.CmdCrons, "h14-py", []string{"Subcommands: next, list,", "If h14-py is an app, the subcommand comes first: gregale cron list --app h14-py"}, nil},
 		{"a typo gets did-you-mean", main.CmdAlerts, "listz", []string{`Did you mean "list"`}, []string{"Subcommands:"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

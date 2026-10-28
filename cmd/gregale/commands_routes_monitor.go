@@ -28,7 +28,7 @@ type routeMonitorCLIOptions struct {
 func parseRouteMonitorCLI(args []string) (routeMonitorCLIOptions, error) {
 	o := routeMonitorCLIOptions{}
 	if len(args) == 0 {
-		return o, errors.New("usage: gregale routes monitor <get|set|preview|report|incidents|explain> APP [flags]")
+		return o, errors.New("usage: gregale api route monitor <get|set|preview|report|incidents|explain> APP [flags]")
 	}
 	o.action = args[0]
 	flags, pos := splitArgsForFlags(args[1:], "fail-on-unhealthy", "customer-details")
@@ -289,7 +289,7 @@ func cmdRoutesMonitor(args []string) int {
 			_, _ = fmt.Fprintf(osStdout, "%s  %s  %s  deployment %s\n", i.ID, i.Status, i.OpenedAt.Format("2006-01-02 15:04:05Z"), i.DeploymentID)
 		}
 		if page.NextBefore != "" {
-			_, _ = fmt.Fprintf(osStdout, "Next: gregale routes monitor incidents %s --before %s\n", o.slug, page.NextBefore)
+			_, _ = fmt.Fprintf(osStdout, "Next: gregale api route monitor incidents %s --before %s\n", o.slug, page.NextBefore)
 		}
 		return 0
 	}

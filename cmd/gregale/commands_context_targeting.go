@@ -35,14 +35,14 @@ func projectTargeting(context localProjectContext, path, configPath string, conn
 		overview.AppSource = "not set"
 		overview.EnvironmentSource = "command default"
 		overview.Notes = append(overview.Notes, "No project context was found in this directory or its ancestors.")
-		overview.NextCommand = recoveryCLI() + " projects list"
+		overview.NextCommand = recoveryCLI() + " project list"
 	} else {
 		overview.Notes = append(overview.Notes, "The nearest ancestor .gregale/project.json wins, including when running from a subdirectory.")
 		if context.App == "" {
 			overview.Status = "default app missing"
 			overview.AppSource = "not set"
 			overview.Notes = append(overview.Notes, "App-scoped commands need an explicit app or a link with --app; no workload is inferred here.")
-			overview.NextCommand = recoveryCLI() + " projects info " + recoveryArgument(context.Project)
+			overview.NextCommand = recoveryCLI() + " project get " + recoveryArgument(context.Project)
 		}
 		if context.Project == "" {
 			overview.AppSource = "saved standalone app"

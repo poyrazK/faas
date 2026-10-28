@@ -141,7 +141,7 @@ func renderBashHeader(w io.Writer) {
 	_, _ = fmt.Fprintln(w, "    while IFS= read -r name; do COMPREPLY+=(\"--profile=$name\"); done < <(compgen -W \"$(gregale completion profile-names 2>/dev/null)\" -- \"${cur#*=}\")")
 	_, _ = fmt.Fprintln(w, "    return 0")
 	_, _ = fmt.Fprintln(w, "  fi")
-	_, _ = fmt.Fprintln(w, "  if [ $cword -eq 3 ] && [ \"${words[1]}\" = profile ] && [[ \"${words[2]}\" = use || \"${words[2]}\" = remove ]]; then")
+	_, _ = fmt.Fprintln(w, "  if { [ $cword -eq 3 ] && [ \"${words[1]}\" = profile ] && [[ \"${words[2]}\" = use || \"${words[2]}\" = remove ]]; } || { [ $cword -eq 4 ] && [ \"${words[1]}\" = config ] && [ \"${words[2]}\" = profile ] && [[ \"${words[3]}\" = use || \"${words[3]}\" = delete || \"${words[3]}\" = remove ]]; }; then")
 	_, _ = fmt.Fprintln(w, "    COMPREPLY=( $(compgen -W \"$(gregale completion profile-names 2>/dev/null)\" -- \"$cur\") ); return 0")
 	_, _ = fmt.Fprintln(w, "  fi")
 

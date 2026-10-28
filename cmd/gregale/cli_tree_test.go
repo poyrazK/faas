@@ -423,8 +423,8 @@ func TestCliTreeLeafHelpUsesTheTypedPath(t *testing.T) {
 			t.Errorf("gregale %s = %d %q, want %q and not %q:\n%s", strings.Join(tc.args, " "), code, stderr, tc.want, tc.lack, stdout)
 		}
 	}
-	if _, stdout, _ := runCLI(t, "crons", "info", "--help"); !strings.Contains(stdout, "gregale crons info") {
-		t.Errorf("today's path keeps today's spelling:\n%s", stdout)
+	if _, stdout, _ := runCLI(t, "crons", "info", "--help"); !strings.Contains(stdout, "gregale cron get") || strings.Contains(stdout, "gregale crons info") {
+		t.Errorf("help reached by an earlier name speaks the tree:\n%s", stdout)
 	}
 }
 

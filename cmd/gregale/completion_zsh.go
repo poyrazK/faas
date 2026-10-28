@@ -111,7 +111,7 @@ func renderZshHeader(w io.Writer) {
 	_, _ = fmt.Fprintln(w, "    local -a profile_names; profile_names=( ${(f)\"$(gregale completion profile-names 2>/dev/null)\"} )")
 	_, _ = fmt.Fprintln(w, "    compset -P '--profile='; compadd -- \"${profile_names[@]}\"; return 0")
 	_, _ = fmt.Fprintln(w, "  fi")
-	_, _ = fmt.Fprintln(w, "  if (( CURRENT == 4 )) && [[ \"${words[2]}\" == profile && ( \"${words[3]}\" == use || \"${words[3]}\" == remove ) ]]; then")
+	_, _ = fmt.Fprintln(w, "  if { (( CURRENT == 4 )) && [[ \"${words[2]}\" == profile && ( \"${words[3]}\" == use || \"${words[3]}\" == remove ) ]] } || { (( CURRENT == 5 )) && [[ \"${words[2]}\" == config && \"${words[3]}\" == profile && ( \"${words[4]}\" == use || \"${words[4]}\" == delete || \"${words[4]}\" == remove ) ]] }; then")
 	_, _ = fmt.Fprintln(w, "    local -a profile_names; profile_names=( ${(f)\"$(gregale completion profile-names 2>/dev/null)\"} ); compadd -- \"${profile_names[@]}\"; return 0")
 	_, _ = fmt.Fprintln(w, "  fi")
 

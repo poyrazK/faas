@@ -17,16 +17,16 @@ func TestLeafHelpDocumentsRequiredArguments(t *testing.T) {
 		want []string
 	}{
 		{"edge-rules create", []string{"--app <slug>", "--kind <KIND>", "--match-host <HOST>", "--throttle-requests-per-second <RPS>", "--redirect-to <URL>", "--cache-max-age-seconds <N>", "--budget-ms <MS>"}},
-		{"cors allow", []string{"gregale cors allow <slug> <origin>", "--method <VERB>"}},
-		{"cors rm", []string{"gregale cors rm [<slug>] <rule-id>"}},
-		{"keys rotate", []string{"gregale keys rotate <key-id>"}},
-		{"crons run", []string{"gregale crons run <cron-id>"}},
+		{"cors allow", []string{"gregale edge cors allow <slug> <origin>", "--method <VERB>"}},
+		{"cors rm", []string{"gregale edge cors delete [<slug>] <rule-id>"}},
+		{"keys rotate", []string{"gregale key rotate <key-id>"}},
+		{"crons run", []string{"gregale cron run <cron-id>"}},
 		{"webhooks add", []string{"--app <slug>", "--target-url <URL>", "--event <EVENT>"}},
 		{"workflows run", []string{"<workflow-name>", "--app <slug>", "--input <JSON>"}},
 		{"realtime create", []string{"<slug>", "--callback-url <URL>"}},
 		{"alerts add", []string{"--app <slug>", "--name <NAME>", "--metric <METRIC>", "--threshold <N>", "--webhook-url <URL>"}},
 		{"queue send", []string{"gregale queue send <slug>"}},
-		{"jobs run", []string{"gregale jobs run <job-name>"}},
+		{"jobs run", []string{"gregale job run <job-name>"}},
 		{"data-api install", []string{"--bundle <MANIFEST>", "--restore", "--directory <DIR>", "--client-directory <DIR>", "--from <DIR>", "--base-url <HTTPS_URL>"}},
 		{"data-api refresh", []string{"gregale data-api refresh <name>", "--wait", "--timeout <DURATION>"}},
 		{"data-api health", []string{"gregale data-api health <name>", "--since <DURATION|RFC3339>", "--timeout <DURATION>"}},
@@ -77,7 +77,7 @@ func TestWorkflowsRunAcceptsNameAfterFlags(t *testing.T) {
 	_, readStderr, restore := main.SwapIO(t)
 	defer restore()
 	_ = main.CmdWorkflowsRun([]string{"--app", "my-api", "nightly"})
-	if stderr := readStderr(); strings.Contains(stderr, "usage: gregale workflows run") {
+	if stderr := readStderr(); strings.Contains(stderr, "usage: gregale workflow run") {
 		t.Fatalf("flags-before-name was rejected as a usage error: %s", stderr)
 	}
 }

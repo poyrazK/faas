@@ -21,7 +21,7 @@ func TestAutomationHealthOverviewCLI(t *testing.T) {
 	if code := main.CmdAutomationsHealth([]string{"--app", "consumer"}); code != 0 {
 		t.Fatalf("exit %d: %s", code, out)
 	}
-	for _, want := range []string{"Recovery overview: needs_attention | monitoring failing | incomplete true", "unresolved: 1 | polling failures: 1", "polling alert delivery: failed", "dead 1 | missing 1", "Inspect: /v1/apps/consumer/initial-recovery-reviews/review", "Inspect command: gregale automations failure-recovery-review --app consumer --review review", "Manual retry reviews awaiting inspection: 1 | approved awaiting completion observation: 2", "Inspect command: gregale automations recovery-policy-reviews --app consumer --review retryreview --status"} {
+	for _, want := range []string{"Recovery overview: needs_attention | monitoring failing | incomplete true", "unresolved: 1 | polling failures: 1", "polling alert delivery: failed", "dead 1 | missing 1", "Inspect: /v1/apps/consumer/initial-recovery-reviews/review", "Inspect command: gregale automation failure-recovery-review --app consumer --review review", "Manual retry reviews awaiting inspection: 1 | approved awaiting completion observation: 2", "Inspect command: gregale automation recovery-policy-reviews --app consumer --review retryreview --status"} {
 		if !strings.Contains(out.String(), want) {
 			t.Fatalf("missing %q: %s", want, out)
 		}

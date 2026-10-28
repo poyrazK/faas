@@ -23,7 +23,7 @@ func cmdEventsInspect(args []string) int {
 		return 1
 	}
 	if len(positional) != 0 || rejectUnexpectedFlagArgs(fs) || strings.TrimSpace(*source) == "" || strings.TrimSpace(*id) == "" || validateCLILimit("limit", *limit, api.EventReceiptPageMax) != nil {
-		PrintUsage(os.Stderr, "usage: gregale events inspect --source SOURCE --id ID [--subscription SUB] [--after CURSOR] [--limit N]", "events")
+		PrintUsage(os.Stderr, "usage: gregale event get --source SOURCE --id ID [--subscription SUB] [--after CURSOR] [--limit N]", "events")
 		return 1
 	}
 	client, err := authedClient()
@@ -64,7 +64,7 @@ func writeEventReceipt(receipt api.EventReceiptResponse) {
 	}
 	if len(receipt.Recipients) == 0 && receipt.NextAfter == "" {
 		// A bare table header followed "Recipients: 0" (Hunt 14 H14-47).
-		_, _ = fmt.Fprintln(osStdout, "No subscription matched this event; list an app's subscriptions with `gregale events subscriptions <app>`.")
+		_, _ = fmt.Fprintln(osStdout, "No subscription matched this event; list an app's subscriptions with `gregale event subscription list <app>`.")
 		return
 	}
 	_, _ = fmt.Fprintln(osStdout, "APP\tSUBSCRIPTION\tROUTING\tROUTE ATTEMPTS\tHANDLER\tHANDLER ATTEMPTS\tNEXT RETRY\tRECOVERY\tERROR")
@@ -108,16 +108,16 @@ func writeEventReceiptRecipient(receipt api.EventReceiptResponse, entry api.Even
 		}
 	}
 	if len(entry.RecoveryActions) > 0 {
-		_, _ = fmt.Fprintf(osStdout, "  Recover: gregale events recover --subscription %s %s (add --dry-run to preview)\n", oneLine(entry.SubscriptionID), eventArgs)
+		_, _ = fmt.Fprintf(osStdout, "  Recover: gregale event recover --subscription %s %s (add --dry-run to preview)\n", oneLine(entry.SubscriptionID), eventArgs)
 	}
 	if entry.Origin == "backfill" {
 		_, _ = fmt.Fprintln(osStdout, "  Origin: backfill")
 		if entry.BackfillJobURL != "" {
-			_, _ = fmt.Fprintf(osStdout, "  Backfill job: gregale events backfill-status %s\n", oneLine(entry.BackfillJobID))
+			_, _ = fmt.Fprintf(osStdout, "  Backfill job: gregale event backfill get %s\n", oneLine(entry.BackfillJobID))
 		}
 	}
 	if entry.AttemptHistoryURL != "" {
-		_, _ = fmt.Fprintf(osStdout, "  Attempt history: gregale events attempts --subscription %s %s\n", oneLine(entry.SubscriptionID), eventArgs)
+		_, _ = fmt.Fprintf(osStdout, "  Attempt history: gregale event attempts --subscription %s %s\n", oneLine(entry.SubscriptionID), eventArgs)
 	}
 	if entry.Recovery != nil && entry.Recovery.LatestReplay != nil {
 		latest := entry.Recovery.LatestReplay

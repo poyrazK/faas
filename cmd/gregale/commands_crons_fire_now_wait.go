@@ -64,7 +64,7 @@ func followCronFireNowRequest(parent context.Context, client *Client, cronID, re
 			}
 			if latest == nil && isNotFound(err) {
 				if cron, cronErr := client.GetCron(ctx, requestID); cronErr == nil && cron.ID != "" {
-					err = fmt.Errorf("%s is a cron rule, not a fire-now request; submit it with gregale crons run %s", requestID, requestID)
+					err = fmt.Errorf("%s is a cron rule, not a fire-now request; submit it with gregale cron run %s", requestID, requestID)
 				}
 			}
 			return finish("error", 1, err)

@@ -190,7 +190,7 @@ func cmdEventsNotificationRetryBatch(args []string, apply bool) int {
 			break
 		}
 		r := &receipt.Jobs[i]
-		r.ReconcileCommand = fmt.Sprintf("gregale events recovery-notification-retry-history %s --request-id %s --json", j.JobID, j.Request.RequestID)
+		r.ReconcileCommand = fmt.Sprintf("gregale event recovery-notification-retry-history %s --request-id %s --json", j.JobID, j.Request.RequestID)
 		writeCtx, cancel := context.WithTimeout(ctx, api.EventRecoveryRequestTimeout)
 		response, e := client.RetryEventRecoveryNotifications(writeCtx, j.JobID, j.Request)
 		cancel()

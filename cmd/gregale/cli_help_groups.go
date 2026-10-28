@@ -10,7 +10,7 @@ import (
 // (ADR-20261026145832 rule 5), in root help order.
 var cliTreeShortcutCommands = []string{
 	"start", "menu", "init", "dev", "deploy", "logs", "status", "open", "rollback", "run", "invoke",
-	"add", "link", "unlink", "login", "logout", "signup", "whoami", "completion", "version",
+	"add", "link", "unlink", "login", "logout", "signup", "whoami", "completion", "version", "man",
 }
 
 // cliTreeDailyCommands is the first screen of `gregale help`: guided
@@ -107,6 +107,7 @@ var cliTreeFolds = map[string]string{
 	"doctor":               "deploy check",
 	"inspect":              "app health --explain",
 	"scan":                 "deploy --plan",
+	"diff":                 "environment diff",
 	"delayed-task":         "cron create --at",
 	"delayed-task add":     "cron create --at",
 	"delayed-task list":    "cron list --one-off",

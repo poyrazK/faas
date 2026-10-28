@@ -123,6 +123,7 @@ var cliTreeAliases = []cliTreeAlias{
 	{"release schedule", "scheduled-releases"},
 	{"release mirror", "mirror"},
 	{"preview", "preview"},
+	{"environment migration recover", "projects environments recover-migration"},
 	{"environment", "projects environments"},
 	{"project", "projects"},
 	{"build", "build"},
@@ -168,6 +169,7 @@ var cliTreeAliases = []cliTreeAlias{
 	{"env diff", "env diff"},
 	{"env history", "env history"},
 	{"env rollback", "env rollback"},
+	{"domain default set", "domains set-default"},
 	{"domain", "domains"},
 	{"edge rule", "edge-rules"},
 	{"edge rule-list", "edge-rule-lists"},
@@ -206,6 +208,7 @@ var cliTreeAliases = []cliTreeAlias{
 	{"job lock-policy list", "operations policy list"},
 	{"job lock-policy set", "operations policy upsert"},
 	{"job lock-policy delete", "operations policy retire"},
+	{"job artifact download", "jobs artifact-download"},
 	{"job", "jobs"},
 	{"worker", "workers"},
 	{"workflow", "workflows"},
@@ -225,6 +228,7 @@ var cliTreeAliases = []cliTreeAlias{
 	{"automation failure list", "automations failures"},
 	{"automation failure policy", "automations failure-policy"},
 	{"automation failure resume", "automations failure-resume"},
+	{"automation policy publish", "automations publish-policy"},
 	{"automation", "automations"},
 	{"event send", "send"},
 	{"event subscription list", "events subscriptions"},
@@ -261,6 +265,7 @@ var cliTreeAliases = []cliTreeAlias{
 	{"event recovery cancel", "events recovery-cancel"},
 	{"event delivery retry", "events delivery-retry"},
 	{"event", "events"},
+	{"webhook secret rotate", "webhooks rotate-secret"},
 	{"webhook deliver", "deliver"},
 	{"webhook", "webhooks"},
 	{"queue watch", "queue tail"},
@@ -286,6 +291,7 @@ var cliTreeAliases = []cliTreeAlias{
 	{"alert pagerduty get", "mcp readiness pagerduty get"},
 	{"alert pagerduty set", "mcp readiness pagerduty set"},
 	{"alert pagerduty disable", "mcp readiness pagerduty disable"},
+	{"alert secret rotate", "alerts rotate-secret"},
 	{"alert channel", "channels"},
 	{"alert incident", "incidents"},
 	{"alert slo", "slos"},
@@ -920,10 +926,36 @@ func printCliTreeHelp(w io.Writer, topic cliTreeTopic) {
 // rewrite runs exactly args today. It reports false when args already use
 // the tree's names or have no tree spelling.
 func cliTreeSpelling(args []string) ([]string, bool) {
-	// A tree path rewrites to something else; today's path runs as typed.
-	if rewritten, err := rewriteCliTree(args); err != nil || !slices.Equal(rewritten, args) {
+	// A tree path rewrites to today's path; it is spelled as that path's
+	// tree spelling when the tree has since named it differently.
+	rewritten, err := rewriteCliTree(args)
+	if err != nil {
 		return nil, false
 	}
+	if slices.Equal(rewritten, args) {
+		return cliTreeSpellToday(args)
+	}
+	if again, err := rewriteCliTree(rewritten); err != nil || !slices.Equal(again, rewritten) {
+		return nil, false
+	}
+	canonical, ok := cliTreeSpellToday(rewritten)
+	if !ok || slices.Equal(canonical, args) {
+		return nil, false
+	}
+	return canonical, true
+}
+
+// cliTreeSpellPath spells a command path a message names in the tree's
+// names, or returns it as it is when the tree has no spelling for it.
+func cliTreeSpellPath(path string) string {
+	if spelled, ok := cliTreeSpelling(strings.Fields(path)); ok {
+		return strings.Join(spelled, " ")
+	}
+	return path
+}
+
+// cliTreeSpellToday spells today's path args in the tree's names.
+func cliTreeSpellToday(args []string) ([]string, bool) {
 	var candidate []string
 	appSlug := len(args) > 1 && args[0] == appSlugFallback && !cliTreeAppVerb(args[1]) && api.ValidAppSlug(args[1])
 	switch {
@@ -1050,7 +1082,13 @@ func cliTreeHelpRename(typed, args []string) (from, to string, ok bool) {
 		typed, args = typed[1:], args[1:]
 	}
 	if slices.Equal(typed, args) {
-		return "", "", false
+		// Help reached by an earlier name is spelled in the tree too.
+		words := typed[:oldPathDepth(typed)]
+		spelled, ok := cliTreeSpelling(words)
+		if !ok {
+			return "", "", false
+		}
+		return strings.Join(words, " "), strings.Join(spelled, " "), true
 	}
 	alias, used, ok := matchCliTreeAlias(typed)
 	if !ok {

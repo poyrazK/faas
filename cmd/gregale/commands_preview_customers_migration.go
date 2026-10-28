@@ -197,7 +197,7 @@ func cmdRouteMigrationCutoverReview(args []string, refreshContracts bool) int {
 		fs.Var(&fromValues, "from-deployment", "baseline deployment as APP=ID; repeat for each app")
 		fs.Var(&toValues, "to-deployment", "successor deployment as APP=ID; repeat for each app")
 	} else {
-		fs.StringVar(&contractPath, "contract-review", "", "version 1 JSON from gregale routes migration review")
+		fs.StringVar(&contractPath, "contract-review", "", "version 1 JSON from gregale api route migration review")
 	}
 	var snapshots previewCustomerCutoverReviewSnapshotPaths
 	fs.Var(&snapshots, "snapshot", "saved version 1 customer migration tracker JSON; repeat for each observation window")
@@ -517,7 +517,7 @@ func readPreviewCustomerCutoverContractReview(path string) (routeMigrationReview
 	}
 	var report routeMigrationReviewReport
 	if err := json.Unmarshal(body, &report); err != nil || report.Version != routeMigrationReviewVersion {
-		return routeMigrationReviewReport{}, 0, errors.New("contract review must be version 1 JSON from gregale routes migration review")
+		return routeMigrationReviewReport{}, 0, errors.New("contract review must be version 1 JSON from gregale api route migration review")
 	}
 	return report, int64(len(body)), nil
 }
