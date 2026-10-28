@@ -83,7 +83,9 @@ def check(base_url: str, selected: set[str] | None = None) -> list[str]:
     catalog = json.loads(CATALOG.read_text())
     failures: list[str] = []
     for route in catalog["routes"]:
-        if route.get("external") or (selected is not None and route["path"] not in selected):
+        # An unpublished route is deliberately not served (#5709); its reason
+        # is in the catalog.
+        if route.get("external") or route.get("unpublished") or (selected is not None and route["path"] not in selected):
             continue
         expected = source_heading(ROOT / route["source"])
         url = f"{base_url.rstrip('/')}/{route['path']}".rstrip("/") or base_url

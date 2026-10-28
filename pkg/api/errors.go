@@ -3047,7 +3047,7 @@ func ErrEventPublishRateLimited(perSecond, events int, retryAfter time.Duration)
 		fmt.Sprintf("This account publishes at most %d events per second; retry the same events after the indicated back-off.", perSecond)).
 		WithLimit(int64(perSecond), int64(events)).
 		WithHeader("Retry-After", strconv.Itoa(retryAfterS)).
-		WithDocs("https://gregale.dev/docs/event-driven#publish-rate")
+		WithDocs("https://gregale.dev/docs/events#publish-rate")
 }
 
 // ErrAuthRateLimited reports that the caller's source IP exhausted the

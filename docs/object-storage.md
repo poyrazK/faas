@@ -1859,7 +1859,7 @@ before delivery. Its `version_id`, when present, is an owned public selector.
 Native provider identities and placement never appear in the event.
 
 Declare an `event_triggers` subscription in the target application's deployment
-manifest, as described in [internal event subscriptions](event-driven.md#internal-event-subscriptions):
+manifest, as described in [internal event subscriptions](events.md#internal-event-subscriptions):
 
 ```yaml
 event_triggers:

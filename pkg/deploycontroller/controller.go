@@ -139,6 +139,22 @@ func (c *Controller) DeployOver(ctx context.Context, releaseID, expectedCurrent 
 		}
 	}
 
+	activation := Activation{Kind: ActivationDeploy, ReleaseID: releaseID, ReleaseRoot: releaseRoot, CommitSHA: manifest.CommitSHA}
+	if previous != "" {
+		activation.Previous = filepath.Base(previous)
+	}
+	record := c.startActivation(ctx, activation)
+	err = c.deployRelease(ctx, manifest, releaseRoot, rollbackTarget, record)
+	record.finish(ctx, err)
+	return err
+}
+
+// deployRelease runs a deployment's steps from preflight to retention,
+// unwinding to rollbackTarget when one fails after the host changed. It
+// records success as soon as the release is healthy: a retention failure
+// after that still fails the deploy, but the release is active.
+func (c *Controller) deployRelease(ctx context.Context, manifest releasebundle.Manifest, releaseRoot, rollbackTarget string, record *activationRecord) error {
+	releaseID := manifest.ReleaseID
 	if err := c.runtime.Preflight(ctx, manifest, releaseRoot); err != nil {
 		return fmt.Errorf("deploycontroller: preflight %q: %w", releaseID, err)
 	}
@@ -164,6 +180,7 @@ func (c *Controller) DeployOver(ctx context.Context, releaseID, expectedCurrent 
 	if err := c.runtime.Healthy(ctx, manifest); err != nil {
 		return c.rollback(ctx, releaseID, rollbackTarget, err)
 	}
+	record.finish(ctx, nil)
 	// The rollback target can be older than the retention window: a release
 	// built over a base installed before several others that were rolled
 	// back. Keep it while it is the release a rollback restores.
@@ -315,9 +332,13 @@ func (c *Controller) Rollback(ctx context.Context, req RollbackRequest) (string,
 		}
 	}
 	target := filepath.Join(c.config.ReleasesRoot, targetID)
+	record := c.startActivation(ctx, Activation{Kind: ActivationRollback, ReleaseID: targetID, ReleaseRoot: target, CommitSHA: commitOf(target), Previous: active})
 	if err := c.activateRelease(ctx, target); err != nil {
-		return "", fmt.Errorf("deploycontroller: rollback to %q: %w", targetID, err)
+		err = fmt.Errorf("deploycontroller: rollback to %q: %w", targetID, err)
+		record.finish(ctx, err)
+		return "", err
 	}
+	record.finish(ctx, nil)
 	if err := c.recordActive(targetID); err != nil {
 		return "", fmt.Errorf("deploycontroller: rolled back to %q: %w", targetID, err)
 	}
@@ -461,9 +482,9 @@ func (c *Controller) rollback(ctx context.Context, releaseID, previous string, c
 		return fmt.Errorf("deploycontroller: release %q failed; rollback: %w: %w", releaseID, err, cause)
 	}
 	if err := c.recordActive(filepath.Base(previous)); err != nil {
-		return fmt.Errorf("deploycontroller: release %q rolled back, but %w: %w", releaseID, err, cause)
+		return rolledBackError{fmt.Errorf("deploycontroller: release %q rolled back, but %w: %w", releaseID, err, cause)}
 	}
-	return fmt.Errorf("deploycontroller: release %q rolled back: %w", releaseID, cause)
+	return rolledBackError{fmt.Errorf("deploycontroller: release %q rolled back: %w", releaseID, cause)}
 }
 
 // verifyInstalledRelease permits the mutable CVE baseline that the installer
