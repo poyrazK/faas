@@ -8466,8 +8466,9 @@ SELECT public_auth_mode FROM apps
 WHERE id = sqlc.arg(id)::uuid AND status <> 'deleted' AND deleted_at IS NULL;
 
 -- ADR-570: minimal credential-free projection for one read-only service-policy snapshot.
+-- org_id is the tenant boundary SameAppResourceOwner checks (Hunt 23 H23-1).
 -- name: ReadServicePolicyAppByID :one
-SELECT id, account_id, slug, workload_name, status, project_id, preview_of_slug,
+SELECT id, account_id, org_id, slug, workload_name, status, project_id, preview_of_slug,
        preview_pr_number, preview_pr_state, preview_expires_at, app_protocol, websocket_enabled,
        jsonb_strip_nulls(jsonb_build_object(
            'service_bindings', manifest->'service_bindings',
@@ -8480,7 +8481,7 @@ SELECT id, account_id, slug, workload_name, status, project_id, preview_of_slug,
 FROM apps WHERE id = sqlc.arg(id)::uuid;
 
 -- name: ReadServicePolicyAppBySlug :one
-SELECT id, account_id, slug, workload_name, status, project_id, preview_of_slug,
+SELECT id, account_id, org_id, slug, workload_name, status, project_id, preview_of_slug,
        preview_pr_number, preview_pr_state, preview_expires_at, app_protocol, websocket_enabled,
        jsonb_strip_nulls(jsonb_build_object(
            'service_bindings', manifest->'service_bindings',
@@ -8502,7 +8503,7 @@ ORDER BY id
 LIMIT 2;
 
 -- name: ReadServicePolicyTestApp :one
-SELECT id, account_id, slug, workload_name, status, project_id, preview_of_slug,
+SELECT id, account_id, org_id, slug, workload_name, status, project_id, preview_of_slug,
        preview_pr_number, preview_pr_state, preview_expires_at, app_protocol, websocket_enabled,
        jsonb_strip_nulls(jsonb_build_object(
            'service_bindings', manifest->'service_bindings',
