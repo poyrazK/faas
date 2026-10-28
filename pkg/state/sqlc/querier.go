@@ -1215,6 +1215,8 @@ type Querier interface {
 	EventRecipientLockReceipt(ctx context.Context, db DBTX, id int64) (int64, error)
 	// Returns an unprocessed batch claim as if it had not been made.
 	EventRecipientReleaseClaim(ctx context.Context, db DBTX, arg EventRecipientReleaseClaimParams) (int64, error)
+	// ADR-20261028131500: a sweep renews the recipient claims it still holds.
+	EventRecipientRenewClaims(ctx context.Context, db DBTX, arg EventRecipientRenewClaimsParams) (int64, error)
 	EventRecipientReplay(ctx context.Context, db DBTX, arg EventRecipientReplayParams) (int64, error)
 	EventRecipientReplayCandidates(ctx context.Context, db DBTX, arg EventRecipientReplayCandidatesParams) ([]EventRecipientReplayCandidatesRow, error)
 	EventRecipientReplayGenerationGuard(ctx context.Context, db DBTX, arg EventRecipientReplayGenerationGuardParams) (EventRecipientReplayGenerationGuardRow, error)
@@ -1356,6 +1358,10 @@ type Querier interface {
 	EventRoutingRecordProgress(ctx context.Context, db DBTX, arg EventRoutingRecordProgressParams) (string, error)
 	// Returns an unprocessed adoption claim as if it had not been made.
 	EventRoutingReleaseAdoptionClaim(ctx context.Context, db DBTX, arg EventRoutingReleaseAdoptionClaimParams) (int64, error)
+	// ADR-20261028131500: a sweep renews the receipt claims it still holds; a
+	// claim another worker took since has a new token and stays. The arrays
+	// are parallel: the select list unnests them in step.
+	EventRoutingRenewReceiptClaims(ctx context.Context, db DBTX, arg EventRoutingRenewReceiptClaimsParams) (int64, error)
 	EventRoutingRetryLockTarget(ctx context.Context, db DBTX, arg EventRoutingRetryLockTargetParams) (EventSubscription, error)
 	EventRoutingRetrySet(ctx context.Context, db DBTX, arg EventRoutingRetrySetParams) error
 	EventRoutingRetryTarget(ctx context.Context, db DBTX, arg EventRoutingRetryTargetParams) (EventSubscription, error)
