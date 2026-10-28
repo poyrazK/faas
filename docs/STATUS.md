@@ -134,14 +134,21 @@ run had at least one deploy refused with `traffic_policy_too_complex` (the 2 s
 policy-check limit, H14-78); the route case needed four attempts while it
 served about 30 requests a second. The drill retries, as the problem asks.
 
+GA follow-ups closed on 2026-10-28:
+
+- **Timed-out policy checks.** A 422 `traffic_policy_too_complex` from the 2 s
+  time ceiling carries `Retry-After`. apid no longer replays it for the deploy's
+  Idempotency-Key; before, a retried `gregale deploy` got the stored refusal for
+  24 hours. The CLI and the SDK retry layers resend it (ADR-570 amendment).
+- **Runtime upgrade cutover.** It waits while a freeze is active, instead of
+  switching traffic (ADR-20261019071733 amendment 2).
+- **Route-health report.** After a guard abort, the report shows the saved abort
+  evidence instead of `unknown` (ADR-458 amendment).
+
 Still open:
 
 - real Slack/Resend delivery has not been drilled;
-- no database switch has been drilled with a real provider restore;
-- runtime-upgrade cutover must also hold for freezes before customer admission
-  ships;
-- the CLI and SDKs do not retry a timed-out traffic policy check, so a deploy
-  on a busy control plane can fail outright.
+- no database switch has been drilled with a real provider restore.
 
 ## Routes at public scale — 2026-10-24
 

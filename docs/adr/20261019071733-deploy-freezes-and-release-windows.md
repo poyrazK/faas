@@ -1,6 +1,6 @@
 # ADR-20261019071733 · Deploy freezes and release windows
 
-- **Status:** accepted (shipped in PR 5034, 2026-10-20); n2 metal drill passed 2026-10-26 (`cmd/e2e/release_guards_drill_metal_test.go`); amendment 1 (2026-10-26)
+- **Status:** accepted (shipped in PR 5034, 2026-10-20); n2 metal drill passed 2026-10-26 (`cmd/e2e/release_guards_drill_metal_test.go`); amendment 1 (2026-10-26); amendment 2 (2026-10-28)
 - **Date:** 2026-10-19
 - **Follows:** [ADR-1446](1446-safe-releases-by-default.md) (production releases), [ADR-1445](1445-post-release-watch.md) and [ADR-625](625-first-wake-5xx-rollback-from-request-telemetry.md) (automatic rollbacks)
 - **Decision:** An account can freeze production releases for all of its apps or for one app: for a fixed window, every week at set hours, or for a while after Gregale rolls a release back automatically. While a freeze is active, every path that creates a production deployment refuses with `409 release_frozen`, naming the freeze. A person can override one release with a reason, which is audited. Rollbacks are never frozen.
@@ -80,3 +80,16 @@ All three now meet the freeze.
 - **Runtime upgrades.** Staging an upgrade refuses an app a freeze covers (`runtimeupgrade.ErrReleaseFrozen`). It fails closed when freezes cannot be read, since a platform upgrade can wait. Upgrades have no customer route yet. Before customer admission ships, the cutover must also hold while a freeze is active, because a freeze can start between staging and cutover.
 - **Metrics.** `faas_release_guard_decisions_total{guard="freeze",outcome="refused|overridden"}` counts refusals and overrides on every path (`pkg/releasemetrics`). The runbook is `docs/runbooks/FaasReleaseGuards.md`.
 - **Dashboard.** `/dashboard/apps/{slug}/release-safety` shows the active and next freezes, alongside the app's gates, approvals and scheduled releases.
+
+## Amendment 2 (2026-10-28): runtime upgrade cutover holds while frozen
+
+Amendment 1 left one gap: a freeze that starts after staging, while the
+upgrade's candidate builds, did not stop the cutover. Now the runtime upgrade
+executor reads the app's freezes before every advance
+(`runtimeupgrade.ReleaseFreezeHold`). While one is active, a ready upgrade
+keeps waiting (phase `waiting`, no blocker) instead of switching traffic, and it
+completes once the freeze lifts or ends. A freeze read that fails holds the
+upgrade too: the iteration fails and its lease expires. The upgrade's deadline
+still applies, so a long freeze ends it as `deadline_exceeded`. The claim
+carries the account, app and serving deployment from the row it already
+returns, so no query or schema changes.

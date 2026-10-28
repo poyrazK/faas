@@ -486,3 +486,67 @@ func TestLoggingRoundTripper_StripsCRLFFromURL(t *testing.T) {
 		t.Errorf("expected body content to survive sanitisation, got:\n%s", out)
 	}
 }
+
+// problemResponse returns a 422 problem with the given code and Retry-After.
+func problemResponse(code, retryAfter string) *http.Response {
+	h := http.Header{"Content-Type": []string{"application/problem+json"}}
+	if retryAfter != "" {
+		h.Set("Retry-After", retryAfter)
+	}
+	return &http.Response{
+		StatusCode: http.StatusUnprocessableEntity,
+		Body:       io.NopCloser(strings.NewReader(`{"code":"` + code + `","status":422}`)),
+		Header:     h,
+	}
+}
+
+// TestRetryRoundTripper_TimedOutPolicyCheck: a traffic policy check that ran
+// out of time (422 traffic_policy_too_complex with Retry-After) saved nothing
+// and asks to be resent. Other 422s are returned at once, and the last answer
+// keeps its problem body.
+func TestRetryRoundTripper_TimedOutPolicyCheck(t *testing.T) {
+	timedOut := func() *http.Response { return problemResponse("traffic_policy_too_complex", "0") }
+	cases := []struct {
+		name       string
+		refusal    func() *http.Response
+		refusals   int
+		wantCalls  int
+		wantStatus int
+	}{
+		{"resent until accepted", timedOut, 2, 3, http.StatusOK},
+		{"gives up with the problem", timedOut, 10, 4, http.StatusUnprocessableEntity},
+		{"size ceiling without Retry-After", func() *http.Response { return problemResponse("traffic_policy_too_complex", "") }, 10, 1, http.StatusUnprocessableEntity},
+		{"other 422 with Retry-After", func() *http.Response { return problemResponse("validation_error", "0") }, 10, 1, http.StatusUnprocessableEntity},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			stub := &recordingTripper{fn: func(_ *http.Request, attempt int) (*http.Response, error) {
+				if attempt <= tc.refusals {
+					return tc.refusal(), nil
+				}
+				return okResponse(), nil
+			}}
+			req, err := http.NewRequest(http.MethodPost, "http://example.com/v1/apps/a/deployments", strings.NewReader(`{"image":"x"}`))
+			if err != nil {
+				t.Fatal(err)
+			}
+			resp, err := newRetryRoundTripper(stub, 3, time.Millisecond).RoundTrip(req)
+			if err != nil {
+				t.Fatalf("RoundTrip: %v", err)
+			}
+			defer resp.Body.Close()
+			body, _ := io.ReadAll(resp.Body)
+			if resp.StatusCode != tc.wantStatus || stub.calls != tc.wantCalls {
+				t.Fatalf("status=%d calls=%d, want %d after %d calls", resp.StatusCode, stub.calls, tc.wantStatus, tc.wantCalls)
+			}
+			if tc.wantStatus == http.StatusUnprocessableEntity && !strings.Contains(string(body), `"code"`) {
+				t.Fatalf("final problem body = %q, want it intact", body)
+			}
+			for i, b := range stub.bodies {
+				if b != `{"image":"x"}` {
+					t.Fatalf("attempt %d body = %q, want the request body resent", i+1, b)
+				}
+			}
+		})
+	}
+}
