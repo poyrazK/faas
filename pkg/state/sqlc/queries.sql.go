@@ -99923,6 +99923,18 @@ func (q *Queries) TryLockTrafficPolicySession(ctx context.Context, db DBTX, lock
 	return column_1, err
 }
 
+const tryLockTrafficPolicySessionShared = `-- name: TryLockTrafficPolicySessionShared :one
+SELECT pg_try_advisory_lock_shared(hashtextextended($1::text,0))::boolean
+`
+
+// A scoped binding writer's ancestor and root keys (ADR-20261027163626).
+func (q *Queries) TryLockTrafficPolicySessionShared(ctx context.Context, db DBTX, lockKey string) (bool, error) {
+	row := db.QueryRow(ctx, tryLockTrafficPolicySessionShared, lockKey)
+	var column_1 bool
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
 const uDPListenerByAppAndName = `-- name: UDPListenerByAppAndName :one
 SELECT id, account_id, app_id, listener_name, guest_port, public_port, protocol, enabled, created_at, updated_at FROM app_udp_listeners
 WHERE app_id = $1::text::uuid AND listener_name = $2
@@ -100013,6 +100025,17 @@ SELECT pg_advisory_unlock(hashtextextended($1::text,0))::boolean
 
 func (q *Queries) UnlockTrafficPolicySession(ctx context.Context, db DBTX, lockKey string) (bool, error) {
 	row := db.QueryRow(ctx, unlockTrafficPolicySession, lockKey)
+	var column_1 bool
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
+const unlockTrafficPolicySessionShared = `-- name: UnlockTrafficPolicySessionShared :one
+SELECT pg_advisory_unlock_shared(hashtextextended($1::text,0))::boolean
+`
+
+func (q *Queries) UnlockTrafficPolicySessionShared(ctx context.Context, db DBTX, lockKey string) (bool, error) {
+	row := db.QueryRow(ctx, unlockTrafficPolicySessionShared, lockKey)
 	var column_1 bool
 	err := row.Scan(&column_1)
 	return column_1, err

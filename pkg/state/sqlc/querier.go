@@ -6677,11 +6677,14 @@ type Querier interface {
 	TryLockBaseImageProducerKeyShared(ctx context.Context, db DBTX, storageKey string) (bool, error)
 	// Acquire on the direct connection before starting the repeatable-read view.
 	TryLockTrafficPolicySession(ctx context.Context, db DBTX, lockKey string) (bool, error)
+	// A scoped binding writer's ancestor and root keys (ADR-20261027163626).
+	TryLockTrafficPolicySessionShared(ctx context.Context, db DBTX, lockKey string) (bool, error)
 	UDPListenerByAppAndName(ctx context.Context, db DBTX, arg UDPListenerByAppAndNameParams) (AppUdpListener, error)
 	UDPListenerByID(ctx context.Context, db DBTX, id string) (AppUdpListener, error)
 	UDPListenerByPublicPort(ctx context.Context, db DBTX, publicPort int32) (AppUdpListener, error)
 	UnfenceCancelledManagedPostgresCutover(ctx context.Context, db DBTX, cutoverID string) error
 	UnlockTrafficPolicySession(ctx context.Context, db DBTX, lockKey string) (bool, error)
+	UnlockTrafficPolicySessionShared(ctx context.Context, db DBTX, lockKey string) (bool, error)
 	UnpinManagedPostgresCutoverBindings(ctx context.Context, db DBTX, id string) error
 	UnpinManagedPostgresCutoverDatabases(ctx context.Context, db DBTX, id string) error
 	UpdateAccountPlan(ctx context.Context, db DBTX, arg UpdateAccountPlanParams) error
