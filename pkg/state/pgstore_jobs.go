@@ -378,6 +378,9 @@ func (s *PgStore) JobUpdate(ctx context.Context, id string, command []string, im
 		   retry_max       = coalesce($7,          retry_max),
 		   env_overrides   = coalesce($8::jsonb,   env_overrides),
 		   status          = coalesce($9,          status),
+		   -- Resuming a paused job starts its schedule now (H65).
+		   last_scheduled_at = case when status = 'paused' and $9::text = 'active' and cron_schedule is not null
+		                            then now() else last_scheduled_at end,
 		   updated_at      = now()
 		 where id = $1::uuid and status <> 'deleted'
 		 returning `+jobSelectCols,
@@ -445,7 +448,10 @@ func (s *PgStore) JobUpdateWithSchedule(ctx context.Context, id string, command 
 		   cron_schedule   = case when $10::text is null then cron_schedule else nullif($10, '') end,
 		   cron_timezone   = coalesce($11, cron_timezone),
 		   kind            = case when $10::text is null then kind when $10 = '' then 'batch' else 'recurring' end,
-		   last_scheduled_at = case when $10::text is not null or $11::text is not null then now() else last_scheduled_at end,
+		   -- Resuming a paused job starts its schedule now rather than
+		   -- catching up every missed occurrence (bug hunt 2026-10-28 H65).
+		   last_scheduled_at = case when $10::text is not null or $11::text is not null
+		                              or (status = 'paused' and $9::text = 'active') then now() else last_scheduled_at end,
 		   schedule_policy = coalesce($12::jsonb, schedule_policy),
  failure_rules = coalesce($13::jsonb, failure_rules),
  updated_at      = now()
