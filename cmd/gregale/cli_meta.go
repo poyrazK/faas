@@ -109,11 +109,18 @@ type cliCommand struct {
 
 // customerCliCommands returns the commands intended for normal application
 // developers, without those whose capability is hidden for the account
-// (capability_visibility.go). Keep the full cliCommands manifest intact:
+// (capability_visibility.go) and without earlier names the command tree
+// replaced (ADR-20261026145832). Keep the full cliCommands manifest intact:
 // hidden operator and legacy entries still need completion/man/dispatch
-// coverage.
+// coverage, and earlier names still run.
 func customerCliCommands() []cliCommand {
-	return customerAudience(discoverableCliCommands())
+	var commands []cliCommand
+	for _, command := range customerAudience(discoverableCliCommands()) {
+		if !cliTreeEarlierName(command.Name) {
+			commands = append(commands, command)
+		}
+	}
+	return commands
 }
 
 func customerAudience(manifest []cliCommand) []cliCommand {

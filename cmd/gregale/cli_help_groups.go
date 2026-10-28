@@ -72,7 +72,7 @@ func writeCliTreeDailyCommands(b *strings.Builder, discovery cliTreeDiscovery) {
 // each with the nouns that now hold it. They stay accepted.
 func writeCliEarlierNames(b *strings.Builder, discovery cliTreeDiscovery) {
 	printed := false
-	for _, command := range customerCliCommands() {
+	for _, command := range customerAudience(discoverableCliCommands()) {
 		if _, ok := discovery.commands[command.Name]; !ok || cliTreeNamesCommand(command.Name) {
 			continue
 		}
@@ -125,6 +125,12 @@ func cliTreeFold(typed []string) (string, string, bool) {
 		}
 	}
 	return "", "", false
+}
+
+// cliTreeEarlierName reports a top-level command the tree renamed or
+// folded: it still runs, but customer surfaces name its tree path.
+func cliTreeEarlierName(name string) bool {
+	return !cliTreeNamesCommand(name) && cliTreePlaces(name)
 }
 
 // cliTreePlaces reports a top-level command the tree keeps, renames or

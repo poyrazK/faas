@@ -1008,7 +1008,7 @@ func printLocalHelpSubcommands(w io.Writer, subcommands []cliSub, compact bool) 
 // printHelpSeeAlso points at commands whose names are easy to confuse with
 // this one (cliRelatedCommands); `help --all` lists their summaries together.
 func printHelpSeeAlso(w io.Writer, name string) {
-	related := cliSeeAlso(name, customerCliCommands())
+	related := cliSeeAlso(name, customerAudience(discoverableCliCommands()))
 	if len(related) == 0 {
 		return
 	}

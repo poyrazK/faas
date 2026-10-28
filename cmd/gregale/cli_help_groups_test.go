@@ -121,7 +121,7 @@ func TestCliHelpTextOmitsADRReferences(t *testing.T) {
 
 func TestCliRelatedCommandsCrossReference(t *testing.T) {
 	enableEveryCLIFeature(t)
-	customer := main.CustomerCliCommands()
+	customer := main.CustomerManifest() // related sets name earlier names
 	for _, set := range *main.CliRelatedCommands {
 		if len(set) < 2 {
 			t.Errorf("related set %v needs at least two commands", set)
