@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/onebox-faas/faas/pkg/edgevalidate"
 	"github.com/onebox-faas/faas/pkg/jsonschemautil"
 	jsonschema "github.com/santhosh-tekuri/jsonschema/v6"
 )
@@ -38,6 +39,9 @@ func CompileResultSchema(raw json.RawMessage) (*Schema, error) {
 				return nil, fmt.Errorf("result_schema must use JSON Schema Draft 2020-12")
 			}
 		}
+	}
+	if err := edgevalidate.CheckSchemaComplexity(document); err != nil {
+		return nil, fmt.Errorf("result_schema is too complex: %w", err)
 	}
 	compiler := jsonschema.NewCompiler()
 	compiler.DefaultDraft(jsonschema.Draft2020)
