@@ -5,11 +5,11 @@ app they belong to. Gregale injects them into the guest at wake; plaintext
 values are never returned, logged, or included in deployment receipts.
 
 ```bash
-gregale secrets set --app my-api STRIPE_SECRET_KEY="$STRIPE_SECRET_KEY"
-gregale secrets set --app my-api DATABASE_URL="$DATABASE_URL" --restart
-gregale secrets rotate --app my-api DATABASE_URL="$NEW_DATABASE_URL" --restart
-gregale secrets list --app my-api
-gregale secrets unset --app my-api STRIPE_SECRET_KEY
+gregale env set --app my-api STRIPE_SECRET_KEY="$STRIPE_SECRET_KEY"
+gregale env set --app my-api DATABASE_URL="$DATABASE_URL" --restart
+gregale env rotate --app my-api DATABASE_URL="$NEW_DATABASE_URL" --restart
+gregale env list --app my-api
+gregale env unset --app my-api STRIPE_SECRET_KEY
 ```
 
 Use `--json` or `FAAS_JSON=1` in scripts. Successful `set`, `rotate`, and
@@ -23,7 +23,7 @@ in a `warnings` array, so stdout remains parseable JSON.
 
 ```bash
 gregale --json secrets set --app my-api STRIPE_SECRET_KEY="$STRIPE_SECRET_KEY"
-printf '%s\n' "DATABASE_URL=$DATABASE_URL" | FAAS_JSON=1 gregale secrets rotate --app my-api --from-stdin
+printf '%s\n' "DATABASE_URL=$DATABASE_URL" | FAAS_JSON=1 gregale env rotate --app my-api --from-stdin
 gregale --json secrets unset --app my-api OLD_API_KEY
 ```
 
@@ -119,7 +119,7 @@ its target history after the secret and runtime are removed; it stores only
 the app, scope, key name, opaque revision, timestamps, closed status/error
 codes, and runtime correlation IDs—never secret material. A runtime is counted
 as acknowledged only after its application reports that the deleted key is no
-longer in use. `gregale secrets unset --wait-for-ack --timeout 2m` waits for
+longer in use. `gregale env unset --wait-for-ack --timeout 2m` waits for
 that proof and exits non-zero on timeout, application failure, or a target
 that cannot live-reload. Without the wait flag, unset returns the revocation
 ID immediately; query its progress with
@@ -231,7 +231,7 @@ serialized behind startup. After seeing the first valid revision, all subsequent
 reads use strict validation. SIGTERM/SIGINT cancel the wait and ACK work. Redeploy
 the updated starter to obtain this behavior; no platform migration is required.
 
-`gregale secrets list` reports delivery for each key:
+`gregale env list` reports delivery for each key:
 
 - `pending` means the current version has not yet reached a successfully
   started runtime.
@@ -310,10 +310,10 @@ of once per app (ADR-1139):
 
 ```bash
 printf 'DATABASE_PASSWORD=%s\n' "$DATABASE_PASSWORD" | \
-  gregale projects environments secrets set shop production --from-stdin
-gregale projects environments secrets rotate shop production --file ./rotated.env
-gregale projects environments secrets shop production
-gregale projects environments secrets unset shop production PAYMENTS_KEY
+  gregale environment secrets set shop production --from-stdin
+gregale environment secrets rotate shop production --file ./rotated.env
+gregale environment secrets shop production
+gregale environment secrets unset shop production PAYMENTS_KEY
 ```
 
 Every service of the environment receives the value as an environment variable
@@ -324,7 +324,7 @@ value. Deployments that list their secrets explicitly (`env_secrets`) receive
 only what they list, and Git-managed scheduled Jobs receive only their reviewed
 definition.
 
-Creating an environment from another (`gregale projects environments create
+Creating an environment from another (`gregale environment create
 --from`) copies the source's shared secrets along with the services' own
 secrets. Promotion does not copy them: each environment keeps its own. A
 release qualification records the shared secrets it ran with, and promoting

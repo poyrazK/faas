@@ -135,6 +135,7 @@ func (h *Handler) writePublicRoutingWakeError(w http.ResponseWriter, r *http.Req
 			}
 		}
 		h.markHealthFailure(app.ID, err)
+		h.logWakeFailure(app.ID, err)
 		if served, _ := h.tryServeStaleOnWakeError(w, r, app, rec); served {
 			return
 		}

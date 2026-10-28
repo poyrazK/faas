@@ -21,11 +21,26 @@ func cmdAppHealth(slug string, args []string) int {
 	timeout := fs.Duration("timeout", 2*time.Minute, "maximum health wait (requires --wait)")
 	interval := fs.Duration("poll-interval", 2*time.Second, "health poll interval (requires --wait)")
 	environment := fs.String("environment", "", "assess this project environment's serving releases instead of the default scope")
+	// ADR-20261026145832: app health is the one place for an app's health;
+	// --explain and --errors show what `inspect` shows.
+	explain := fs.Bool("explain", false, "explain health from runtime, release, data and scaling")
+	errorsFlag := fs.Bool("errors", false, "explain the latest failed deployment")
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
 	if rejectUnexpectedFlagArgs(fs) {
 		return 1
+	}
+	if *explain || *errorsFlag {
+		alone := true
+		fs.Visit(func(f *flag.Flag) { alone = alone && (f.Name == "explain" || f.Name == "errors") })
+		if !alone || *explain && *errorsFlag {
+			return printErr("Invalid health options", fmt.Errorf("--explain and --errors each stand alone; drop the other health options"))
+		}
+		if *errorsFlag {
+			return cmdInspectErrors(slug)
+		}
+		return cmdInspectSummary(slug)
 	}
 	var waitOptions, historyOptions bool
 	fs.Visit(func(f *flag.Flag) {

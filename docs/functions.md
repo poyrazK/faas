@@ -49,7 +49,7 @@ idle timeout a function may be [frozen](cold-wake.md#frozen-instances)
 instead of parked. Set `lifecycle.pause` in `gregale.yaml` to `when_idle` to
 keep it running between requests, or to `never` to turn off both.
 
-Use `gregale invoke APP` for a smoke request and `gregale invocations get ID`
+Use `gregale invoke APP` for a smoke request and `gregale invocation get ID`
 for an async result. Runtime-specific limits are in [plans](plans.md).
 
 ## Several functions in one project
@@ -130,7 +130,7 @@ After each function deploys, Gregale applies its manifest settings:
   [function triggers](realtime.md#function-triggers)). Once a function declares
   one, its realtime triggers match `triggers:` by `slug`; a changed endpoint,
   channel or group replaces the trigger. A function that declares none keeps
-  realtime triggers created with `gregale triggers create`.
+  realtime triggers created with `gregale trigger create`.
 - **`bucket_events`**: notifications from that bucket go to the function.
   Gregale changes only the notification rules it created for this function
   and leaves every other rule on the bucket alone. Configuring notifications
@@ -222,13 +222,13 @@ functions:
 `/users/*` matches anything below `/users/`; `/users/**` also matches
 `/users` itself. Routes take effect once every function has deployed. Each is
 a `kind=route` edge rule on the entry app named `functions:<function>`;
-`gregale edge-rules list --app <entry app>` shows them. Rules you add by hand keep the default
+`gregale edge rule list --app <entry app>` shows them. Rules you add by hand keep the default
 priority and are checked first; Gregale only changes and removes the rules it
 named. Add a custom domain to the entry app and deploy again to route it too.
 
 Pass `--no-triggers` to deploy code without changing crons, bucket events or
 webhooks. A function removed from the list keeps its app; the deploy names
-it, and `gregale apps --yes <slug>` deletes it.
+it, and `gregale app list --yes <slug>` deletes it.
 
 A manifest with `functions:` holds only `functions`, cron `triggers` and
 `schema_version`. Other sections apply to a single app, so configure them per
