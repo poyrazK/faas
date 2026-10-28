@@ -199,24 +199,45 @@ func (s *server) countConsumerKeys(ctx context.Context, acctID, appID string) (i
 	return count, nil
 }
 
-func (s *server) countAccountConsumerKeys(ctx context.Context, acctID string) (int, error) {
-	apps, err := s.store.ListApps(ctx, acctID)
+// countAccountConsumerKeys counts the unrevoked keys that share app's
+// per-account allowance: every app of its company, whoever created it, for
+// a company app, and its creator's personal apps otherwise. A company app's
+// rows keep its creator's account_id, so counting by that account would
+// spend the creator's personal allowance on the company's keys and leave
+// the company's other creators uncounted.
+func (s *server) countAccountConsumerKeys(ctx context.Context, app state.App) (int, error) {
+	apps, err := s.consumerKeyScopeApps(ctx, app)
 	if err != nil {
 		return 0, err
 	}
 	count := 0
-	for _, app := range apps {
-		rows, err := s.store.ListConsumerKeysForApp(ctx, acctID, app.ID)
+	for _, scoped := range apps {
+		n, err := s.countConsumerKeys(ctx, scoped.AccountID, scoped.ID)
 		if err != nil {
 			return 0, err
 		}
-		for _, row := range rows {
-			if row.RevokedAt == nil {
-				count++
-			}
-		}
+		count += n
 	}
 	return count, nil
+}
+
+// consumerKeyScopeApps returns the apps whose keys share app's per-account
+// key allowance, the apps one plan governs.
+func (s *server) consumerKeyScopeApps(ctx context.Context, app state.App) ([]state.App, error) {
+	if app.OrgID != "" {
+		org, err := s.store.OrgByID(ctx, app.OrgID)
+		if err != nil {
+			return nil, err
+		}
+		if !org.Personal {
+			lister, ok := s.store.(state.OrgAppLister)
+			if !ok {
+				return nil, errors.New("store cannot list organization apps")
+			}
+			return lister.ListAppsByOrg(ctx, org.ID)
+		}
+	}
+	return s.planSubjectApps(ctx, state.Account{ID: app.AccountID})
 }
 
 // consumerKeyScopesProblem trims scopes in place and rejects unknown or
@@ -301,7 +322,11 @@ func (s *server) issueConsumerKey(ctx context.Context, acct state.Account, c sta
 	if appCount >= acct.Plan.ConsumerKeysPerApp() {
 		return state.ConsumerKey{}, "", api.ErrConsumerKeyQuota(acct.Plan, api.PlanQuotaScopeApp, acct.Plan.ConsumerKeysPerApp(), appCount)
 	}
-	accountCount, err := s.countAccountConsumerKeys(ctx, acct.ID)
+	app, err := s.store.AppByID(ctx, c.AppID)
+	if err != nil {
+		return state.ConsumerKey{}, "", api.ErrInternal("could not count account consumer keys")
+	}
+	accountCount, err := s.countAccountConsumerKeys(ctx, app)
 	if err != nil {
 		return state.ConsumerKey{}, "", api.ErrInternal("could not count account consumer keys")
 	}

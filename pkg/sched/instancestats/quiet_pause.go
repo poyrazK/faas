@@ -73,3 +73,18 @@ func (r *Reader) QuietPaused(nodeID string, now time.Time) (map[string]struct{},
 	}
 	return node.instances, node.sampledAt, true
 }
+
+// QuietPausedAcross is quiet pause admission's source on a multi-node
+// fleet. The node-local reader holds only the schedd's own node, which it
+// samples from vmmd's capacity stream. A schedd also places its apps'
+// instances on peer nodes, and the owner fleet reader polls those nodes for
+// its instances (ScaleUpInterval, 1 s by default), so peer nodes read from
+// it. Without an owner node (single box) both are the local reader.
+func QuietPausedAcross(local, fleet *Reader, ownerNodeID string) func(nodeID string, now time.Time) (map[string]struct{}, time.Time, bool) {
+	return func(nodeID string, now time.Time) (map[string]struct{}, time.Time, bool) {
+		if ownerNodeID == "" || nodeID == ownerNodeID || fleet == nil {
+			return local.QuietPaused(nodeID, now)
+		}
+		return fleet.QuietPaused(nodeID, now)
+	}
+}
