@@ -8,6 +8,7 @@ package githubd
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 )
 
@@ -116,12 +117,11 @@ func (ev *PullRequestEvent) HeadRepoFullName() string {
 func (ev *PullRequestEvent) IsFork() bool {
 	head := ev.HeadRepoFullName()
 	if head == "" {
-		// Head repo missing — treat conservatively as not-fork
-		// (we cannot prove it IS a fork, so don't refuse). This
-		// means a malformed payload where head.repo is absent
-		// gets the regular path; we'll surface the missing-field
-		// error from DecodePullRequest if the SHA is also missing.
-		return false
+		// GitHub sends head.repo null when the head repository was
+		// deleted, which is a deleted fork: refuse it rather than build
+		// code nobody can trace back to a repository (bug hunt 2026-10-28
+		// B27).
+		return true
 	}
 	return head != ev.Repository.FullName
 }
@@ -244,10 +244,24 @@ func DecodePullRequest(body []byte) (PullRequestEvent, error) {
 		return ev, err
 	}
 	if !ev.Action.IsPreviewAction() {
-		return ev, errors.New("githubd: pull_request action not in {opened,synchronize,reopened,closed}: " + string(ev.Action))
+		// GitHub sends every pull_request action (edited, labeled,
+		// review_requested, ...) to every installed repository; only the
+		// preview set is acted on. The rest complete without the eight
+		// retries a decode error cost (bug hunt 2026-10-28 B27).
+		return ev, fmt.Errorf("githubd: pull_request action %q is not a preview action: %w", ev.Action, ErrIgnored)
 	}
 	if ev.Number <= 0 {
 		return ev, errors.New("githubd: pull_request number must be > 0")
+	}
+	// GitHub carries the head commit and branch in pull_request.head. The
+	// top-level head_sha/head_ref this decoder required are never sent, so
+	// every real delivery failed to decode and no preview ever started
+	// (B27). They remain only as a fallback for older fixtures.
+	if ev.PullRequest.Head.SHA != "" {
+		ev.PullRequest.HeadSHA = ev.PullRequest.Head.SHA
+	}
+	if ev.PullRequest.Head.Ref != "" {
+		ev.PullRequest.HeadRef = ev.PullRequest.Head.Ref
 	}
 	if len(ev.PullRequest.HeadSHA) != 40 {
 		return ev, errors.New("githubd: pull_request.head_sha must be a 40-char SHA")
