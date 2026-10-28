@@ -1298,6 +1298,16 @@ The last code items before edge rules leave beta.
     (`api.TrafficStaleTargetQuarantine`) whatever the breaker says, and the
     gateway caches an app's breaker tuning for 30 s, so the breaker test
     waits out both; the customer reference states both.
+  - The breaker test found a production gap: the public path consulted the
+    breaker only for requests without an exact deployment, but every public
+    request picks an exact deployment once its routing is pinned (ADR-570).
+    An open circuit therefore never kept public traffic off an instance,
+    with or without a `kind=circuit_breaker` rule. The handler now applies
+    the breaker to exact-deployment picks too, re-picking within the same
+    deployment; only deployment smokes and route probes, which verify one
+    deployment's instance, skip it. Both resilience capabilities
+    (`request-retry`, `circuit-breaking`) are `internal`, so the tests
+    release them for the account first.
   - `BenchmarkEdgeRuleEvaluation500Rules` measures one request's matcher
     work with the per-app maximum of 500 rules on a host, compiled set
     cached, each kind scanning its whole slice. It found that every
