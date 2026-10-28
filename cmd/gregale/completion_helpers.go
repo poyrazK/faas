@@ -1,34 +1,47 @@
 package main
 
 import (
+	"slices"
 	"strconv"
 	"strings"
 )
 
-func projectCompletionCommand() cliCommand {
-	command, _ := lookupCliCommand("projects")
-	return command
+// completionCliCommands is the manifest shell completion offers: the
+// command tree's names for what this account can see
+// (ADR-20261026145832). Earlier names still run; completion leaves them
+// out.
+func completionCliCommands() []cliCommand {
+	return cliTreeManifest(discoverableCliCommands())
 }
 
-func buildCompletionCommand() cliCommand {
-	command, _ := lookupCliCommand("build")
-	return command
+// completionPositionCommands are the commands that declare positional
+// completions (project slugs, build and deployment IDs): today's owners,
+// whose earlier names keep completing when typed, and the tree nouns that
+// run them, which carry the same positions on their tree paths.
+func completionPositionCommands() []cliCommand {
+	var commands []cliCommand
+	for _, name := range []string{"projects", dispatchBuild, dispatchDeployment, dispatchDeploys} {
+		if command, ok := lookupCliCommand(name); ok {
+			commands = append(commands, command)
+		}
+	}
+	for _, command := range completionCliCommands() {
+		named := func(seen cliCommand) bool { return seen.Name == command.Name }
+		if len(command.CompletionPositions) > 0 && !slices.ContainsFunc(commands, named) {
+			commands = append(commands, command)
+		}
+	}
+	return commands
 }
 
-func deploymentCompletionCommands() []cliCommand {
-	deployment, _ := lookupCliCommand("deployment")
-	deploys, _ := lookupCliCommand("deploys")
-	return []cliCommand{deployment, deploys}
+func projectCompletionPositions(command cliCommand) []cliCompletionPosition {
+	return command.expandedCompletionPositions()
 }
 
-func projectCompletionPositions() []cliCompletionPosition {
-	return projectCompletionCommand().expandedCompletionPositions()
-}
-
-func projectCompletionContexts() []cliCompletionPosition {
+func projectCompletionContexts(command cliCommand) []cliCompletionPosition {
 	seen := make(map[string]bool)
 	var contexts []cliCompletionPosition
-	for _, position := range projectCompletionPositions() {
+	for _, position := range projectCompletionPositions(command) {
 		if position.Role != cliCompletionProjectSlug {
 			continue
 		}
@@ -68,7 +81,7 @@ func isAppSlugPositional(positional string) bool {
 
 func appSlugCompletionPositions() []cliAppSlugCompletionPosition {
 	var positions []cliAppSlugCompletionPosition
-	for _, command := range customerCliCommands() {
+	for _, command := range completionCliCommands() {
 		if len(command.Subcommands) == 0 || command.SubcommandsAfterPositionals {
 			for i, positional := range command.Positionals {
 				if isAppSlugPositional(positional) {
@@ -175,7 +188,7 @@ func customerCompletionFlags() []cliFlag {
 			visit(child)
 		}
 	}
-	for _, command := range customerCliCommands() {
+	for _, command := range completionCliCommands() {
 		flags = append(flags, command.Flags...)
 		for _, sub := range command.Subcommands {
 			visit(sub)

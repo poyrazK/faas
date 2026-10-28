@@ -31,7 +31,7 @@ A rule applies to a request when every selector it sets matches.
 |---|---|
 | `match_host` (required) | An exact host (`api.example.com`), `*` for any host, a glob such as `*.example.com` (subdomains, not the apex), or `@app` for every host the rule's app serves, including custom domains you add later. Hosts compare case-insensitively. |
 | `match_path` | A path glob; see below. Defaults to `/`, which matches only the root path. |
-| `match_methods` | HTTP methods. Empty matches any method. |
+| `match_methods` | HTTP methods: `GET`, `HEAD`, `POST`, `PUT`, `PATCH`, `DELETE`, `OPTIONS`, `CONNECT`, `TRACE`, in any letter case. Empty matches any method; `*` is rejected, so leave the field out instead. |
 | `match_headers` | Up to 10 request headers that must be present with an exact value. Names compare case-insensitively; any value of a repeated header can match. |
 | `match` | An optional condition over more request fields, ANDed with the selectors above. |
 
@@ -62,7 +62,9 @@ Rules that refuse or limit requests (`ip`, `geo`, `jwt`, `limit`, `throttle`,
 normalized form, with `.` and `..` segments and repeated slashes resolved, and
 compare it case-insensitively. `/public/../admin/x`, `//admin/x` and
 `/ADMIN/x` are all covered by a rule on `/admin/*`, because many frameworks
-serve them as `/admin/x`.
+serve them as `/admin/x`. For the same reason, such a rule that lists `GET` in
+`match_methods` also covers `HEAD`, which servers answer with the `GET`
+handler.
 
 ### Conditions
 
@@ -93,8 +95,10 @@ described under [AI crawlers](security#ai-crawlers).
 `in_list` names a reusable list on your account, so one list of office IPs or
 blocked countries can serve many rules. A list has a kind (`ip`, `country`,
 `host`, `string` or `asn`) that must fit the field it is used with. Editing a
-list reaches every rule that uses it within seconds, and a list cannot be
-deleted while a rule uses it.
+list is applied like a rule change (see [Changing rules](#changing-rules)),
+and a list cannot be deleted while a rule uses it. A rule that names a list
+your account does not have is rejected. If a rule's list cannot be loaded,
+requests to the rule's hosts get 503 rather than skipping the rule.
 
 ```sh
 gregale edge rule-list create office-ips --kind ip --item 203.0.113.0/24 --item 2001:db8::1
@@ -243,9 +247,12 @@ most 64 characters, and values at most 4096 characters without control
 characters. `template` expands `${name}` values as for `redirect`; each
 expanded value is capped at 1 KiB and loses control characters.
 
-`Host`, `Content-Length`, `Transfer-Encoding`, `Connection` and any
-`X-Faas-` header are reserved in any letter case; a rule that names one is
-rejected. Request headers are changed before authentication. Use `set`, not
+`Host`, `Content-Length`, `Transfer-Encoding`, `Connection`,
+`X-Forwarded-For`, `Forwarded` and any `X-Faas-` header are reserved in any
+letter case; a rule that names one is rejected. The client address that IP,
+`geo`, `throttle` and `challenge` rules use, and that your app receives in
+`X-Faas-Client-Ip` and `X-Real-IP`, is the one the request arrived with,
+whatever a `headers` rule does. Request headers are changed before authentication. Use `set`, not
 `add`, for a header your app relies on, so a client cannot supply its own
 value alongside it. For common security headers,
 [Security headers on your app](security#security-headers-on-your-app) sets a
@@ -265,9 +272,13 @@ waking the app; other requests from an allowed origin get the CORS response
 headers. An origin is
 `*`, `https://host[:port]`, `https://*.host` for subdomains, or
 `https://host:*` for any port. `*` cannot be combined with
-`allow_credentials`. `max_age_seconds` is at most 86400. Instead of inline
-fields, `cors_preset_id` can name a CORS preset shared by several rules
-(`/v1/cors-presets`). `gregale edge cors allow` creates a simple rule.
+`allow_credentials`, and neither can a subdomain wildcard under a Gregale
+domain (`https://*.<your apps domain>`): other customers' apps are served
+there. List your app origins instead. `max_age_seconds` is at most 86400.
+Instead of inline fields, `cors_preset_id` can name a CORS preset shared by
+several rules (`/v1/cors-presets`). Editing or deleting a preset is applied
+like a rule change to every rule that uses it. `gregale edge cors allow`
+creates a simple rule.
 
 ### jwt
 
@@ -396,7 +407,10 @@ request through and counts it; `warn` also adds `X-Validation-Warning: <rule
 id>` to the response. A `Content-Type` outside `content_types` gets 415.
 
 The body is read into memory to validate it, up to `max_body_bytes`. Unset,
-the cap is 25 MiB, or your plan's request body cap if that is lower. Set
+the cap is 25 MiB, or your plan's request body cap if that is lower. Each
+gateway bounds the request bodies it holds in memory at once; when that bound
+is reached, a request gets 503 `capacity_unavailable` with `Retry-After`
+before its body is read. Set
 `reject_on_unknown_fields` to reject properties the schema does not declare,
 and `apply_while_streaming` to validate requests the gateway would otherwise
 stream to the app.
@@ -537,7 +551,16 @@ gregale edge rule history --app my-api --version 12 # the rules in version 12
 gregale edge rule rollback --app my-api --to 12
 ```
 
-A deployment also records the rules it went live with.
+A rollback checks every restored rule as a new rule is checked: a version is
+refused if one of its rules uses a kind your plan no longer includes, a
+feature your account no longer has, a list that was deleted, or a route to an
+app that is now internal. A deployment also records the rules it went live
+with.
+
+Deleting an app keeps its rules, so restoring the app brings them back, but
+they stop applying within 30 seconds, including rules on `*` or a wildcard
+that covered your other apps' hosts. A restored app's rules apply again within
+the same time.
 
 ## Testing and observing
 

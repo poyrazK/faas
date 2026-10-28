@@ -192,7 +192,10 @@ func ValidateEdgeRuleAction(kind string, raw json.RawMessage, matchPath string, 
 		if err := json.Unmarshal(raw, &a); err != nil {
 			return api.ErrValidation(fmt.Sprintf("cors action: %v", err))
 		}
-		return a.Validate()
+		if prob := a.Validate(); prob != nil {
+			return prob
+		}
+		return SharedDomainCORSOriginProblem(a.AllowOrigins, a.AllowCredentials)
 	case state.EdgeRuleKindJWT:
 		var a api.EdgeRuleJWTAction
 		if err := json.Unmarshal(raw, &a); err != nil {
@@ -527,6 +530,11 @@ func ValidateEdgeRuleBody(req *api.CreateEdgeRuleRequest, plan api.Plan) *api.Pr
 		return api.ErrValidation(headerErr.Error())
 	}
 	req.MatchHeaders = matchHeaders
+	matchMethods, methodsProb := api.NormalizeEdgeRuleMatchMethods(req.MatchMethods)
+	if methodsProb != nil {
+		return methodsProb
+	}
+	req.MatchMethods = matchMethods
 	if req.MatchHost == "" {
 		return api.ErrValidation("match_host is required")
 	}

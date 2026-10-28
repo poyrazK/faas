@@ -57,7 +57,7 @@ type projectInspectionIssue struct {
 func cmdProjectsEnvironmentInspect(args []string) int {
 	project, environment, err := projectInspectionTarget(args)
 	if err != nil {
-		PrintUsage(os.Stderr, "usage: gregale projects environments inspect [<project> <environment>] (or use a linked project and environment)", "projects environments")
+		PrintUsage(os.Stderr, "usage: gregale environment get [<project> <environment>] (or use a linked project and environment)", "projects environments")
 		return printErr("Invalid inspection target", err)
 	}
 	client, err := authedClient()

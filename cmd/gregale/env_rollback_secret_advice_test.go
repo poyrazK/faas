@@ -22,11 +22,11 @@ func TestEnvRollbackSecretAdviceMatchesTheDifference(t *testing.T) {
 		want, not string
 	}{
 		{"added after the revision", api.ConfigSecretDifference{Key: "H12_FLAG", CurrentVersion: 1},
-			"remove it with `gregale secrets unset --app h12-go H12_FLAG`", "secrets set"},
+			"remove it with `gregale env unset --app h12-go H12_FLAG`", "secrets set"},
 		{"removed since the revision", api.ConfigSecretDifference{Key: "OLD", TargetVersion: 2},
-			"had version 2, now removed); set it with `gregale secrets set`", "unset"},
+			"had version 2, now removed); set it with `gregale env set`", "unset"},
 		{"rotated since the revision", api.ConfigSecretDifference{Key: "TOKEN", TargetVersion: 2, CurrentVersion: 3},
-			"had version 2, now 3); set it with `gregale secrets set`", "unset"},
+			"had version 2, now 3); set it with `gregale env set`", "unset"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

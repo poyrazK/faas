@@ -90,7 +90,7 @@ func cmdEventsRecoveryJob(args []string, action string) int {
 		return 1
 	}
 	if len(positional) != 1 || rejectUnexpectedFlagArgs(fs) || action != "status" && !*yes || action == "status" && *reason != "" || (api.EventRecoveryControlRequest{Reason: *reason}).Validate() != nil {
-		PrintUsage(os.Stderr, "usage: gregale events recovery-"+action+" <job-id>"+map[bool]string{true: " --yes", false: ""}[action != "status"], "events")
+		PrintUsage(os.Stderr, "usage: gregale event recovery-"+action+" <job-id>"+map[bool]string{true: " --yes", false: ""}[action != "status"], "events")
 		return 1
 	}
 	if _, err := uuid.Parse(positional[0]); err != nil {
@@ -129,7 +129,7 @@ func cmdEventsRecoveryItems(args []string) int {
 		return 1
 	}
 	if len(positional) != 1 || rejectUnexpectedFlagArgs(fs) || *after < 0 || validateCLILimit("limit", *limit, api.EventRecoveryItemsPageMax) != nil {
-		PrintUsage(os.Stderr, "usage: gregale events recovery-items <job-id> [--after POSITION] [--limit N]", "events")
+		PrintUsage(os.Stderr, "usage: gregale event recovery items <job-id> [--after POSITION] [--limit N]", "events")
 		return 1
 	}
 	if _, err := uuid.Parse(positional[0]); err != nil {
@@ -210,7 +210,7 @@ func cmdEventsRecoveryRate(args []string) int {
 	}
 	req := api.EventRecoveryRateRequest{Reason: *reason, RatePerSecond: *rate}
 	if len(positional) != 1 || rejectUnexpectedFlagArgs(fs) || !*yes || req.Validate() != nil {
-		PrintUsage(os.Stderr, "usage: gregale events recovery-rate <job-id> --rate N --yes", "events")
+		PrintUsage(os.Stderr, "usage: gregale event recovery update <job-id> --rate N --yes", "events")
 		return 1
 	}
 	if _, err := uuid.Parse(positional[0]); err != nil {
@@ -245,7 +245,7 @@ func cmdEventsRecoveryList(args []string) int {
 		return 1
 	}
 	if len(positional) != 1 || rejectUnexpectedFlagArgs(fs) || *limit < 1 {
-		PrintUsage(os.Stderr, "usage: gregale events recovery-list <app> [--state STATE] [--mode MODE] [--subscription-id ID] [--created-after TIME] [--created-before TIME] [--cursor CURSOR] [--limit N]", "events")
+		PrintUsage(os.Stderr, "usage: gregale event recovery list <app> [--state STATE] [--mode MODE] [--subscription-id ID] [--created-after TIME] [--created-before TIME] [--cursor CURSOR] [--limit N]", "events")
 		return 1
 	}
 	q := api.EventRecoveryListQuery{State: *state, Mode: *mode, SubscriptionID: *sub, Cursor: *cursor, Limit: *limit}
@@ -303,7 +303,7 @@ func cmdEventsRecoveryHistory(args []string) int {
 		return 1
 	}
 	if len(positional) != 1 || rejectUnexpectedFlagArgs(fs) || *after < 0 || *limit < 1 || *limit > api.EventRecoveryHistoryPageMax {
-		PrintUsage(os.Stderr, "usage: gregale events recovery-history <job-id> [--after ID] [--limit N]", "events")
+		PrintUsage(os.Stderr, "usage: gregale event recovery history <job-id> [--after ID] [--limit N]", "events")
 		return 1
 	}
 	if _, err := uuid.Parse(positional[0]); err != nil {
@@ -340,7 +340,7 @@ func cmdEventsRecoveryHealth(args []string) int {
 		return 1
 	}
 	if len(positional) != 1 || rejectUnexpectedFlagArgs(fs) {
-		PrintUsage(os.Stderr, "usage: gregale events recovery-health <app>", "events")
+		PrintUsage(os.Stderr, "usage: gregale event recovery health <app>", "events")
 		return 1
 	}
 	client, err := authedClient()
@@ -390,7 +390,7 @@ func cmdEventsRecoveryHealth(args []string) int {
 			_, _ = fmt.Fprintf(osStdout, "Partial notification counts: up to %d oldest candidate jobs; counts are lower bounds and cannot clear alerts.\n", notifications.JobLimit)
 		}
 		for _, job := range notifications.Jobs {
-			_, _ = fmt.Fprintf(osStdout, "%s | %s notification | overdue: %t | dead: %t | unknown: %t | no receivers: %t\n  Details: gregale events recovery-notifications %s\n", oneLine(job.JobID), oneLine(job.Kind), job.Overdue, job.Dead, job.Unknown, job.NoReceivers, oneLine(job.JobID))
+			_, _ = fmt.Fprintf(osStdout, "%s | %s notification | overdue: %t | dead: %t | unknown: %t | no receivers: %t\n  Details: gregale event recovery-notifications %s\n", oneLine(job.JobID), oneLine(job.Kind), job.Overdue, job.Dead, job.Unknown, job.NoReceivers, oneLine(job.JobID))
 		}
 	}
 	return 0
@@ -403,7 +403,7 @@ func cmdEventsRecoveryPreflight(args []string) int {
 		return 1
 	}
 	if len(positional) != 1 || rejectUnexpectedFlagArgs(fs) {
-		PrintUsage(os.Stderr, "usage: gregale events recovery-preflight <job-id>", "events")
+		PrintUsage(os.Stderr, "usage: gregale event recovery-preflight <job-id>", "events")
 		return 1
 	}
 	if _, err := uuid.Parse(positional[0]); err != nil {

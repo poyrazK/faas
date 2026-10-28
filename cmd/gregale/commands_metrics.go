@@ -261,7 +261,7 @@ func renderServiceMap(w io.Writer, m api.ServiceMapResponse) {
 			_, _ = fmt.Fprintf(w, "  Wake-ahead: %d of %d restores used\n", e.WakeAheadUsed, e.WakeAheadStarted)
 		}
 		if e.SuggestWakeAhead {
-			_, _ = fmt.Fprintf(w, "  Tip:        run `gregale wake-ahead %s on` to restore %s while %s wakes\n", e.CallerAppSlug, e.TargetAppSlug, e.CallerAppSlug)
+			_, _ = fmt.Fprintf(w, "  Tip:        run `gregale app wake-ahead %s on` to restore %s while %s wakes\n", e.CallerAppSlug, e.TargetAppSlug, e.CallerAppSlug)
 		}
 	}
 	if m.Truncated {

@@ -34,7 +34,7 @@ func cmdAutomationsInit(args []string) int {
 		return 0
 	}
 	if strings.TrimSpace(*template) == "" {
-		PrintUsage(os.Stderr, "usage: gregale automations init --template <name> [--path <new-directory>] | --list", "automations")
+		PrintUsage(os.Stderr, "usage: gregale automation init --template <name> [--path <new-directory>] | --list", "automations")
 		return 1
 	}
 	if *destination == "" {

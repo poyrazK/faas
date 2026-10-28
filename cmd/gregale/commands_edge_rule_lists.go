@@ -18,7 +18,7 @@ import (
 func cmdEdgeRuleLists(args []string) int {
 	parent, _ := lookupCliCommand("edge-rule-lists")
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale edge-rule-lists <list|get|create|update|rm> [args]", "edge-rule-lists")
+		PrintUsage(os.Stderr, "usage: gregale edge rule-list <list|get|create|update|rm> [args]", "edge-rule-lists")
 		return 1
 	}
 	switch args[0] {
@@ -62,7 +62,7 @@ func cmdEdgeRuleListsList(args []string) int {
 
 func edgeRuleListNameArg(fs *flag.FlagSet, sub, usage string) (string, bool) {
 	if fs.NArg() != 1 {
-		PrintUsage(os.Stderr, "usage: gregale edge-rule-lists "+sub+" "+usage, "edge-rule-lists")
+		PrintUsage(os.Stderr, "usage: gregale edge rule-list "+sub+" "+usage, "edge-rule-lists")
 		return "", false
 	}
 	return fs.Arg(0), true
@@ -140,12 +140,12 @@ func cmdEdgeRuleListsCreate(args []string) int {
 	}
 	const usage = "<name> --kind ip|country|host|string|asn [--item V]... [--items-file path|-] [--description D]"
 	if fs.NArg() != 1 {
-		PrintUsage(os.Stderr, "usage: gregale edge-rule-lists create "+usage, "edge-rule-lists")
+		PrintUsage(os.Stderr, "usage: gregale edge rule-list create "+usage, "edge-rule-lists")
 		return 1
 	}
 	name := fs.Arg(0)
 	if *kind == "" {
-		PrintUsage(os.Stderr, "usage: gregale edge-rule-lists create "+usage, "edge-rule-lists")
+		PrintUsage(os.Stderr, "usage: gregale edge rule-list create "+usage, "edge-rule-lists")
 		return 1
 	}
 	req := api.CreateEdgeRuleListRequest{Name: name, Kind: *kind, Description: *description, Items: []string(items)}
@@ -178,7 +178,7 @@ func cmdEdgeRuleListsUpdate(args []string) int {
 		return 1
 	}
 	if fs.NArg() != 1 {
-		PrintUsage(os.Stderr, "usage: gregale edge-rule-lists update <name> [--add V]... [--remove V]... [--replace-file path|-] [--description D]", "edge-rule-lists")
+		PrintUsage(os.Stderr, "usage: gregale edge rule-list update <name> [--add V]... [--remove V]... [--replace-file path|-] [--description D]", "edge-rule-lists")
 		return 1
 	}
 	name := fs.Arg(0)
@@ -210,7 +210,7 @@ func cmdEdgeRuleListsRm(args []string) int {
 		return 1
 	}
 	if fs.NArg() != 1 {
-		PrintUsage(os.Stderr, "usage: gregale edge-rule-lists rm <name>", "edge-rule-lists")
+		PrintUsage(os.Stderr, "usage: gregale edge rule-list delete <name>", "edge-rule-lists")
 		return 1
 	}
 	name := fs.Arg(0)

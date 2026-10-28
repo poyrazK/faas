@@ -14,7 +14,7 @@ import (
 )
 
 func cmdProjectsEnvironmentQueues(args []string) int {
-	const usage = "usage: gregale projects environments queues <get|set> <project> <stage> <workload> [--file PATH|--stdin]"
+	const usage = "usage: gregale environment queues <get|set> <project> <stage> <workload> [--file PATH|--stdin]"
 	if len(args) == 0 || (args[0] != "get" && args[0] != "set") {
 		PrintUsage(os.Stderr, usage, "projects environments")
 		return 1

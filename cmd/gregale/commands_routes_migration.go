@@ -77,7 +77,7 @@ func cmdRoutesMigration(args []string) int {
 		return cmdRoutesMigrationSuggest(args[1:])
 	}
 	if len(args) == 0 || args[0] != "review" {
-		PrintUsage(osStderr, "usage: gregale routes migration <suggest|review|readiness|gate|approve> [options]", "cli")
+		PrintUsage(osStderr, "usage: gregale api route migration <suggest|review|readiness|gate|approve> [options]", "cli")
 		return 1
 	}
 	return cmdRoutesMigrationReview(args[1:])
@@ -99,7 +99,7 @@ func cmdRoutesMigrationReview(args []string) int {
 	}
 	if len(positional) != 0 || *mappingPath == "" || !slices.Contains([]string{"text", "markdown"}, *format) ||
 		(jsonOutput && *format != "text") || rejectUnexpectedFlagArgs(fs) {
-		PrintUsage(osStderr, "usage: gregale routes migration review --mapping <PATH> --from-deployment APP=ID [--from-deployment APP=ID...] --to-deployment APP=ID [--to-deployment APP=ID...] [--format text|markdown] [--out PATH] [--fail-on-breaking] [--fail-on-incomplete] [--json]", "cli")
+		PrintUsage(osStderr, "usage: gregale api route migration review --mapping <PATH> --from-deployment APP=ID [--from-deployment APP=ID...] --to-deployment APP=ID [--to-deployment APP=ID...] [--format text|markdown] [--out PATH] [--fail-on-breaking] [--fail-on-incomplete] [--json]", "cli")
 		return 1
 	}
 	if *output != "" {

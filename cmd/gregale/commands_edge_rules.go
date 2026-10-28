@@ -79,7 +79,7 @@ func isEdgeRuleKind(k string) bool {
 func cmdEdgeRules(args []string) int {
 	parent, _ := lookupCliCommand("edge-rules")
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale edge-rules <list|summary|attack-mode|trace|recipes|recipe|suggest|create|get|update|rm|history|rollback|stats|review|events|waf-review|waf-exclude> [args]", "edge-rules")
+		PrintUsage(os.Stderr, "usage: gregale edge rule <list|summary|attack-mode|trace|recipes|recipe|suggest|create|get|update|rm|history|rollback|stats|review|events|waf-review|waf-exclude> [args]", "edge-rules")
 		return 1
 	}
 	switch args[0] {
@@ -202,7 +202,7 @@ func cmdEdgeRulesList(args []string) int {
 func warnTemplatedEdgeRulePaths(w io.Writer, items []api.EdgeRuleResponse) {
 	for _, it := range items {
 		if glob, templated := api.EdgeRuleTemplatedPath(it.MatchPath); templated {
-			_, _ = fmt.Fprintf(w, "warning: rule %s never matches: %q is an OpenAPI template, not a glob. Fix: gregale edge-rules update %s --match-path '%s'\n",
+			_, _ = fmt.Fprintf(w, "warning: rule %s never matches: %q is an OpenAPI template, not a glob. Fix: gregale edge rule update %s --match-path '%s'\n",
 				it.ID, it.MatchPath, it.ID, glob)
 		}
 	}
@@ -412,7 +412,7 @@ func cmdEdgeRulesCreate(args []string) int {
 		}
 	})
 	if *slug == "" || *kind == "" || *matchHost == "" {
-		PrintUsage(os.Stderr, "usage: gregale edge-rules create --app <slug> --kind <K> --match-host <H> [--match-path <P>] [--match-method M]... [--match-header Name=Value]... [--priority N] [--enabled] <kind-specific flags>", "edge-rules")
+		PrintUsage(os.Stderr, "usage: gregale edge rule create --app <slug> --kind <K> --match-host <H> [--match-path <P>] [--match-method M]... [--match-header Name=Value]... [--priority N] [--enabled] <kind-specific flags>", "edge-rules")
 		return 1
 	}
 	if !isEdgeRuleKind(*kind) {
@@ -618,7 +618,7 @@ func cmdEdgeRulesGet(args []string) int {
 		return 1
 	}
 	if fs.NArg() != 1 {
-		PrintUsage(os.Stderr, "usage: gregale edge-rules get <id>", "edge-rules")
+		PrintUsage(os.Stderr, "usage: gregale edge rule get <id>", "edge-rules")
 		return 1
 	}
 	id := fs.Arg(0)
@@ -829,7 +829,7 @@ func cmdEdgeRulesUpdate(args []string) int {
 		return 1
 	}
 	if fs.NArg() != 1 {
-		PrintUsage(os.Stderr, "usage: gregale edge-rules update <id> [--match-host H] [--match-path P] [--match-method M]... [--match-header Name=Value]... [--clear-match-headers] [--priority N] [--enable|--disable] [kind-specific flags]", "edge-rules")
+		PrintUsage(os.Stderr, "usage: gregale edge rule update <id> [--match-host H] [--match-path P] [--match-method M]... [--match-header Name=Value]... [--clear-match-headers] [--priority N] [--enable|--disable] [kind-specific flags]", "edge-rules")
 		return 1
 	}
 	if *enable && *disable {
@@ -1086,7 +1086,7 @@ func cmdEdgeRulesRm(args []string) int {
 		return 1
 	}
 	if fs.NArg() != 1 {
-		PrintUsage(os.Stderr, "usage: gregale edge-rules rm <id> [--app <slug>] [--yes]", "edge-rules")
+		PrintUsage(os.Stderr, "usage: gregale edge rule delete <id> [--app <slug>] [--yes]", "edge-rules")
 		return 1
 	}
 	if code := requireAutomationConfirmation(*quiet, "--yes (or --quiet)"); code != 0 {

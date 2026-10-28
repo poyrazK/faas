@@ -21,7 +21,7 @@ func cmdEventsPublishBatch(args []string) int {
 		return 1
 	}
 	if len(positional) != 0 || rejectUnexpectedFlagArgs(fs) || *input == "" {
-		PrintUsage(os.Stderr, "usage: gregale events publish-batch --file <file.jsonl|->", "events")
+		PrintUsage(os.Stderr, "usage: gregale event publish-batch --file <file.jsonl|->", "events")
 		return 1
 	}
 	req, err := readEventPublishBatch(*input)

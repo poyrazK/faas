@@ -147,5 +147,7 @@ func deploymentDashboardURL(base, slug, deploymentID string) string {
 	if base == "" {
 		base = "https://gregale.dev"
 	}
-	return base + "/dashboard/apps/" + url.PathEscape(slug) + "/deployments/" + url.PathEscape(deploymentID)
+	// The customer dashboard serves an app page and selects views with its
+	// query; a per-deployment path does not exist there.
+	return base + "/dashboard/apps/" + url.PathEscape(slug) + "?" + url.Values{"tab": {"Deployments"}, "deployment": {deploymentID}}.Encode()
 }

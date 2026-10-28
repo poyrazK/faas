@@ -163,8 +163,8 @@ func TestStartNextCommandsPreserveConnectionAndSource(t *testing.T) {
 			}
 			for _, want := range []string{
 				cli + " deploy --path '" + source + "' --source=worktree --name first-app",
-				cli + " logs first-app --deployment deployment-1 --follow", cli + " open first-app", cli + " apps rm first-app",
-				cli + " start '" + scope + "'", cli + " deployment wait deployment-1",
+				cli + " logs first-app --deployment deployment-1 --follow", cli + " open first-app", cli + " app delete first-app",
+				cli + " start '" + scope + "'", cli + " release wait deployment-1",
 			} {
 				if !strings.Contains(stdout.String(), want) {
 					t.Errorf("missing next command %q: %s", want, stdout)

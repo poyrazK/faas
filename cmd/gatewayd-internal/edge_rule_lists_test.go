@@ -42,7 +42,9 @@ func listRule(id, account, list string) state.EdgeRule {
 }
 
 // ADR-963: lists are resolved per account at host load, and a reference
-// that cannot be resolved disables only the rule that makes it.
+// that cannot be resolved never matches. compileHostRules also reports such
+// a rule as a compile error, so its host fails closed (ADR-091 amendment
+// 2026-10-28).
 func TestResolveEdgeRuleLists(t *testing.T) {
 	store := &fakeEdgeRuleListStore{lists: []state.EdgeRuleList{
 		{AccountID: "a", Name: "office", Kind: api.EdgeRuleListKindIP, Items: []string{"203.0.113.0/24"}},

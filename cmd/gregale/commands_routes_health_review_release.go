@@ -44,7 +44,7 @@ func cmdRoutesHealthReviewRelease(args []string) int {
 		return 1
 	}
 	if *releaseReportPath == "" || len(positional) != 0 || rejectUnexpectedFlagArgs(fs) {
-		PrintUsage(osStderr, "usage: gregale routes health review-release --release-report release-review.json [--fail-on-incomplete] [--json]", "routes")
+		PrintUsage(osStderr, "usage: gregale api route health review-release --release-report release-review.json [--fail-on-incomplete] [--json]", "routes")
 		return 1
 	}
 	release, err := readPreviewReleaseRouteReview(*releaseReportPath)

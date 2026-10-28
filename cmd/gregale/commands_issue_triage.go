@@ -15,7 +15,7 @@ import (
 )
 
 func cmdIssueTriage(args []string) int {
-	usage := "usage: gregale issues compare-releases --app SLUG --baseline UUID --candidate UUID [--environment application]\n       gregale issues bulk --app SLUG --issues UUID,UUID --action assign|resolve|ignore|reopen [--assignee UUID --deployment UUID --until RFC3339]"
+	usage := "usage: gregale debug issue compare-releases --app SLUG --baseline UUID --candidate UUID [--environment application]\n       gregale debug issue bulk --app SLUG --issues UUID,UUID --action assign|resolve|ignore|reopen [--assignee UUID --deployment UUID --until RFC3339]"
 	if len(args) == 0 {
 		fmt.Fprintln(os.Stderr, usage)
 		return 1

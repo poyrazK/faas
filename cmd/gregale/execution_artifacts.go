@@ -24,7 +24,7 @@ func cmdRunsArtifacts(args []string) int {
 		return 1
 	}
 	if len(positional) != 1 || *dir == "" {
-		PrintUsage(osStderr, "usage: gregale runs artifacts ID --output-dir DIR", "runs")
+		PrintUsage(osStderr, "usage: gregale sandbox artifacts ID --output-dir DIR", "runs")
 		return 1
 	}
 	client, err := authedClient()

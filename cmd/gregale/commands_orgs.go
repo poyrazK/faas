@@ -104,7 +104,7 @@ func cmdOrgs(args []string) int {
 // scheduled-requests surface.
 func cmdOrgsMembers(args []string) int {
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale orgs members <list|invite|change-role|rm> [args]", "orgs")
+		PrintUsage(os.Stderr, "usage: gregale org members <list|invite|change-role|rm> [args]", "orgs")
 		return 1
 	}
 	switch args[0] {
@@ -117,7 +117,7 @@ func cmdOrgsMembers(args []string) int {
 	case subRm:
 		return cmdOrgsMembersRm(args[1:])
 	default:
-		fmt.Fprintf(os.Stderr, "gregale orgs members: unknown subcommand %q\n", args[0])
+		fmt.Fprintf(os.Stderr, "gregale org members: unknown subcommand %q\n", args[0])
 		return 1
 	}
 }
@@ -128,7 +128,7 @@ func cmdOrgsMembers(args []string) int {
 // cmdInvitations below.
 func cmdOrgsInvitations(args []string) int {
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale orgs invitations <list|list-all|revoke> [args]", "orgs")
+		PrintUsage(os.Stderr, "usage: gregale org invitation <list|list-all|revoke> [args]", "orgs")
 		return 1
 	}
 	switch args[0] {
@@ -143,7 +143,7 @@ func cmdOrgsInvitations(args []string) int {
 	case "revoke":
 		return cmdOrgsInvitationsRevoke(args[1:])
 	default:
-		fmt.Fprintf(os.Stderr, "gregale orgs invitations: unknown subcommand %q\n", args[0])
+		fmt.Fprintf(os.Stderr, "gregale org invitation: unknown subcommand %q\n", args[0])
 		return 1
 	}
 }
@@ -228,7 +228,7 @@ func cmdOrgsCreate(args []string) int {
 		return 1
 	}
 	if *slug == "" || *name == "" {
-		PrintUsage(os.Stderr, "usage: gregale orgs create --slug <slug> --name <display>", "orgs")
+		PrintUsage(os.Stderr, "usage: gregale org create --slug <slug> --name <display>", "orgs")
 		return 1
 	}
 	client, err := authedClient()
@@ -252,7 +252,7 @@ func cmdOrgsInfo(args []string) int {
 		return 1
 	}
 	if fs.NArg() != 1 {
-		PrintUsage(os.Stderr, "usage: gregale orgs info <slug>", "orgs")
+		PrintUsage(os.Stderr, "usage: gregale org get <slug>", "orgs")
 		return 1
 	}
 	slug := fs.Arg(0)
@@ -291,7 +291,7 @@ func cmdOrgsActivity(args []string) int {
 		return 1
 	}
 	if rejectUnexpectedFlagArgs(fs) || *slug == "" || *limit < 1 || *limit > 100 || !validOrgActivityActor(*actorType) {
-		PrintUsage(os.Stderr, "usage: gregale orgs activity --org <slug> [--cursor <cursor>] [--all] [--kind-prefix <prefix>] [--actor-type <type>] [--app-id <uuid>] [--limit N]", "orgs")
+		PrintUsage(os.Stderr, "usage: gregale org activity --org <slug> [--cursor <cursor>] [--all] [--kind-prefix <prefix>] [--actor-type <type>] [--app-id <uuid>] [--limit N]", "orgs")
 		return 1
 	}
 	client, err := authedClient()
@@ -320,7 +320,7 @@ func cmdOrgsActivity(args []string) int {
 		_, _ = fmt.Fprintf(osStdout, "%s  %s\n", activityDisplayTime(item.OccurredAt), item.Summary)
 	}
 	if page.NextBefore != "" {
-		_, _ = fmt.Fprintf(osStdout, "next page: gregale orgs activity --org '%s' --cursor '%s' --limit %d", strings.ReplaceAll(*slug, "'", "'\"'\"'"), strings.ReplaceAll(page.NextBefore, "'", "'\"'\"'"), *limit)
+		_, _ = fmt.Fprintf(osStdout, "next page: gregale org activity --org '%s' --cursor '%s' --limit %d", strings.ReplaceAll(*slug, "'", "'\"'\"'"), strings.ReplaceAll(page.NextBefore, "'", "'\"'\"'"), *limit)
 		if *kindPrefix != "" {
 			_, _ = fmt.Fprintf(osStdout, " --kind-prefix '%s'", strings.ReplaceAll(*kindPrefix, "'", "'\"'\"'"))
 		}
@@ -359,7 +359,7 @@ func cmdOrgsRm(args []string) int {
 		return 1
 	}
 	if fs.NArg() != 1 {
-		PrintUsage(os.Stderr, "usage: gregale orgs rm <slug> [-q]", "orgs")
+		PrintUsage(os.Stderr, "usage: gregale org delete <slug> [-q]", "orgs")
 		return 1
 	}
 	slug := fs.Arg(0)
@@ -399,7 +399,7 @@ func cmdOrgsMembersLs(args []string) int {
 		return 1
 	}
 	if fs.NArg() != 1 {
-		PrintUsage(os.Stderr, "usage: gregale orgs members list <slug>", "orgs")
+		PrintUsage(os.Stderr, "usage: gregale org members list <slug>", "orgs")
 		return 1
 	}
 	slug := fs.Arg(0)
@@ -432,7 +432,7 @@ func cmdOrgsMembersInvite(args []string) int {
 		return 1
 	}
 	if *slug == "" || *email == "" {
-		PrintUsage(os.Stderr, "usage: gregale orgs members invite --org <slug> --email <addr> [--role admin|developer|viewer|billing]", "orgs")
+		PrintUsage(os.Stderr, "usage: gregale org members invite --org <slug> --email <addr> [--role admin|developer|viewer|billing]", "orgs")
 		return 1
 	}
 	if !strInSlice(*role, orgRoleForInviteVocab) {
@@ -470,7 +470,7 @@ func cmdOrgsMembersChangeRole(args []string) int {
 		return 1
 	}
 	if *slug == "" || *userID == "" || *role == "" {
-		PrintUsage(os.Stderr, "usage: gregale orgs members change-role --org <slug> --user <user-id> --role <role>", "orgs")
+		PrintUsage(os.Stderr, "usage: gregale org members change-role --org <slug> --user <user-id> --role <role>", "orgs")
 		return 1
 	}
 	if !strInSlice(*role, orgRoleForPatchVocab) {
@@ -498,7 +498,7 @@ func cmdOrgsMembersRm(args []string) int {
 		return 1
 	}
 	if *slug == "" || *userID == "" {
-		PrintUsage(os.Stderr, "usage: gregale orgs members rm --org <slug> --user <user-id>", "orgs")
+		PrintUsage(os.Stderr, "usage: gregale org members rm --org <slug> --user <user-id>", "orgs")
 		return 1
 	}
 	client, err := authedClient()
@@ -525,7 +525,7 @@ func cmdOrgsInvitationsLs(args []string) int {
 		return 1
 	}
 	if *slug == "" {
-		PrintUsage(os.Stderr, "usage: gregale orgs invitations list --org <slug> [--limit N]", "orgs")
+		PrintUsage(os.Stderr, "usage: gregale org invitation list --org <slug> [--limit N]", "orgs")
 		return 1
 	}
 	client, err := authedClient()
@@ -562,7 +562,7 @@ func cmdOrgsInvitationsRevoke(args []string) int {
 		return 1
 	}
 	if *slug == "" || *invID == "" {
-		PrintUsage(os.Stderr, "usage: gregale orgs invitations revoke --org <slug> --invitation <id>", "orgs")
+		PrintUsage(os.Stderr, "usage: gregale org invitation revoke --org <slug> --invitation <id>", "orgs")
 		return 1
 	}
 	client, err := authedClient()
@@ -589,7 +589,7 @@ func cmdOrgsTransferOwnership(args []string) int {
 		return 1
 	}
 	if *slug == "" || *to == "" {
-		PrintUsage(os.Stderr, "usage: gregale orgs transfer-ownership --org <slug> --to <user-id>", "orgs")
+		PrintUsage(os.Stderr, "usage: gregale org transfer-ownership --org <slug> --to <user-id>", "orgs")
 		return 1
 	}
 	client, err := authedClient()
@@ -613,7 +613,7 @@ func cmdOrgsSeatUsage(args []string) int {
 		return 1
 	}
 	if *slug == "" {
-		PrintUsage(os.Stderr, "usage: gregale orgs seat-usage --org <slug>", "orgs")
+		PrintUsage(os.Stderr, "usage: gregale org seat-usage --org <slug>", "orgs")
 		return 1
 	}
 	client, err := authedClient()
@@ -641,7 +641,7 @@ func cmdInvitationsPeek(args []string) int {
 		return 1
 	}
 	if fs.NArg() != 1 {
-		PrintUsage(os.Stderr, "usage: gregale invitations peek <token>", "invitations")
+		PrintUsage(os.Stderr, "usage: gregale org invitation peek <token>", "invitations")
 		return 1
 	}
 	token := fs.Arg(0)
@@ -670,7 +670,7 @@ func cmdInvitationsAccept(args []string) int {
 		return 1
 	}
 	if fs.NArg() != 1 {
-		PrintUsage(os.Stderr, "usage: gregale invitations accept <token>", "invitations")
+		PrintUsage(os.Stderr, "usage: gregale org invitation accept <token>", "invitations")
 		return 1
 	}
 	token := fs.Arg(0)
@@ -703,7 +703,7 @@ func cmdOrgsMe(args []string) int {
 		return 1
 	}
 	if fs.NArg() != 0 {
-		PrintUsage(os.Stderr, "usage: gregale orgs me", "orgs")
+		PrintUsage(os.Stderr, "usage: gregale org me", "orgs")
 		return 1
 	}
 	client, err := authedClient()
@@ -742,7 +742,7 @@ func cmdOrgsMe(args []string) int {
 // contractor key in another org via the personal-scope route.
 func cmdOrgsKeys(args []string) int {
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale orgs keys <list|add|info|rm|rotate> --org <slug> [args]", "orgs")
+		PrintUsage(os.Stderr, "usage: gregale org keys <list|add|info|rm|rotate> --org <slug> [args]", "orgs")
 		return 1
 	}
 	switch args[0] {
@@ -757,7 +757,7 @@ func cmdOrgsKeys(args []string) int {
 	case "rotate":
 		return cmdOrgsKeysRotate(args[1:])
 	default:
-		fmt.Fprintf(os.Stderr, "gregale orgs keys: unknown subcommand %q\n", args[0])
+		fmt.Fprintf(os.Stderr, "gregale org keys: unknown subcommand %q\n", args[0])
 		return 1
 	}
 }
@@ -776,7 +776,7 @@ func cmdOrgsKeysList(args []string) int {
 		return 1
 	}
 	if *slug == "" {
-		PrintUsage(os.Stderr, "usage: gregale orgs keys list --org <slug>", "orgs")
+		PrintUsage(os.Stderr, "usage: gregale org keys list --org <slug>", "orgs")
 		return 1
 	}
 	client, err := authedClient()
@@ -818,7 +818,7 @@ func cmdOrgsKeysAdd(args []string) int {
 		return 1
 	}
 	if *slug == "" || *label == "" {
-		PrintUsage(os.Stderr, "usage: gregale orgs keys add --org <slug> --label <text> [--scopes admin,apps:read,...]", "orgs")
+		PrintUsage(os.Stderr, "usage: gregale org keys add --org <slug> --label <text> [--scopes admin,apps:read,...]", "orgs")
 		return 1
 	}
 	var scopes []string
@@ -859,7 +859,7 @@ func cmdOrgsKeysInfo(args []string) int {
 		return 1
 	}
 	if *slug == "" || fs.NArg() != 1 {
-		PrintUsage(os.Stderr, "usage: gregale orgs keys info --org <slug> <key-id>", "orgs")
+		PrintUsage(os.Stderr, "usage: gregale org keys info --org <slug> <key-id>", "orgs")
 		return 1
 	}
 	id := fs.Arg(0)
@@ -900,7 +900,7 @@ func cmdOrgsKeysRm(args []string) int {
 		return 1
 	}
 	if *slug == "" || fs.NArg() != 1 {
-		PrintUsage(os.Stderr, "usage: gregale orgs keys rm --org <slug> <key-id>", "orgs")
+		PrintUsage(os.Stderr, "usage: gregale org keys rm --org <slug> <key-id>", "orgs")
 		return 1
 	}
 	id := fs.Arg(0)
@@ -932,7 +932,7 @@ func cmdOrgsKeysRotate(args []string) int {
 		return 1
 	}
 	if *slug == "" || fs.NArg() != 1 {
-		PrintUsage(os.Stderr, "usage: gregale orgs keys rotate --org <slug> [--label <text>] <key-id>", "orgs")
+		PrintUsage(os.Stderr, "usage: gregale org keys rotate --org <slug> [--label <text>] <key-id>", "orgs")
 		return 1
 	}
 	id := fs.Arg(0)
@@ -969,7 +969,7 @@ func cmdOrgsInvitationsListAll(args []string) int {
 		return 1
 	}
 	if *slug == "" {
-		PrintUsage(os.Stderr, "usage: gregale orgs invitations list-all --org <slug>", "orgs")
+		PrintUsage(os.Stderr, "usage: gregale org invitation list-all --org <slug>", "orgs")
 		return 1
 	}
 	client, err := authedClient()
@@ -1038,7 +1038,7 @@ func cmdOrgsUpdate(args []string) int {
 		req.Plan = &p
 	}
 	if req.Name == nil && req.Plan == nil {
-		PrintUsage(os.Stderr, "usage: gregale orgs update --org <slug> [--name <text>] [--plan <free|hobby|pro|scale>]", "orgs")
+		PrintUsage(os.Stderr, "usage: gregale org update --org <slug> [--name <text>] [--plan <free|hobby|pro|scale>]", "orgs")
 		return 1
 	}
 	client, err := authedClient()
@@ -1073,7 +1073,7 @@ func cmdOrgsUpdate(args []string) int {
 // so a typo costs zero latency.
 func validateOrgsUpdateFlags(slug, name, plan *string) bool {
 	if *slug == "" {
-		PrintUsage(os.Stderr, "usage: gregale orgs update --org <slug> [--name <text>] [--plan <free|hobby|pro|scale>]", "orgs")
+		PrintUsage(os.Stderr, "usage: gregale org update --org <slug> [--name <text>] [--plan <free|hobby|pro|scale>]", "orgs")
 		return false
 	}
 	if !orgSlugRe.MatchString(*slug) {

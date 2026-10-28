@@ -44,7 +44,7 @@ func verifyProjectConnection(link localProjectContext, linked bool, timeout time
 		if account.Diagnostic != nil {
 			report.Message = account.Diagnostic.Message
 		}
-		report.NextCommand = recoveryCLI() + " profile check"
+		report.NextCommand = recoveryCLI() + " config profile check"
 		return report
 	}
 	fail := func(message, next string) *contextVerification {
@@ -60,13 +60,13 @@ func verifyProjectConnection(link localProjectContext, linked bool, timeout time
 		return report
 	}
 	if !linked {
-		return fail("Account authenticated, but this checkout has no linked project.", recoveryCLI()+" projects list")
+		return fail("Account authenticated, but this checkout has no linked project.", recoveryCLI()+" project list")
 	}
 	if link.Project == "" {
 		report.Project, report.Environment = "not_set_standalone_app", "not_set_command_defaults"
 		if err := verifyStandaloneContextApp(ctx, client, link.App); err != nil {
 			report.App = "unavailable"
-			return fail(err.Error(), recoveryCLI()+" apps")
+			return fail(err.Error(), recoveryCLI()+" app list")
 		}
 		report.App, report.OK = "verified", true
 		report.Message = "Account and saved standalone app were verified on the selected connection; health was not checked."
@@ -75,11 +75,11 @@ func verifyProjectConnection(link localProjectContext, linked bool, timeout time
 	project, err := client.GetProject(ctx, link.Project)
 	if err != nil {
 		report.Project = "unavailable"
-		return fail("The linked project could not be verified on this connection.", recoveryCLI()+" projects list")
+		return fail("The linked project could not be verified on this connection.", recoveryCLI()+" project list")
 	}
 	if project.Slug != link.Project {
 		report.Project = "identity_mismatch"
-		return fail("Project response did not identify the linked project.", recoveryCLI()+" projects list")
+		return fail("Project response did not identify the linked project.", recoveryCLI()+" project list")
 	}
 	report.Project = "verified"
 	if link.App == "" {
@@ -99,16 +99,16 @@ func verifyProjectConnection(link localProjectContext, linked bool, timeout time
 		environment, err := client.GetProjectEnvironment(ctx, link.Project, link.Environment)
 		if err != nil {
 			report.Environment = "unavailable"
-			return fail("The linked environment could not be verified on this connection.", recoveryCLI()+" projects environments list "+recoveryArgument(link.Project))
+			return fail("The linked environment could not be verified on this connection.", recoveryCLI()+" environment list "+recoveryArgument(link.Project))
 		}
 		if environment.Slug != link.Environment || project.ID == "" || environment.ProjectID != project.ID {
 			report.Environment = "identity_mismatch"
-			return fail("Environment response did not match the linked project and environment.", recoveryCLI()+" projects environments list "+recoveryArgument(link.Project))
+			return fail("Environment response did not match the linked project and environment.", recoveryCLI()+" environment list "+recoveryArgument(link.Project))
 		}
 		report.Environment = "verified"
 	}
 	if report.App != "verified" {
-		return fail("The default app is missing or is not a workload in the linked project.", recoveryCLI()+" projects info "+recoveryArgument(link.Project))
+		return fail("The default app is missing or is not a workload in the linked project.", recoveryCLI()+" project get "+recoveryArgument(link.Project))
 	}
 	report.OK = true
 	report.Message = "Account and configured linked targets were verified on the selected connection. Unset environments retain command-specific defaults; health and configuration delivery are not checked."

@@ -49,7 +49,7 @@ func cmdEventsLineageRetryPreflight(args []string) int {
 		return 1
 	}
 	if len(positional) != 2 || rejectUnexpectedFlagArgs(fs) || *file == "" {
-		PrintUsage(os.Stderr, "usage: gregale events subscription-lineage-retry-preflight APP SUB --file PATH [--timeout 2m]", "events")
+		PrintUsage(os.Stderr, "usage: gregale event subscription-lineage-retry-preflight APP SUB --file PATH [--timeout 2m]", "events")
 		return 1
 	}
 	sub, err := uuid.Parse(positional[1])

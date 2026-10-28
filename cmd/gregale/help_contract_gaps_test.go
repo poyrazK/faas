@@ -24,14 +24,14 @@ func TestHelpDocumentsAuditCommandContracts(t *testing.T) {
 		want []string
 	}{
 		{"registry list", []string{"gregale registry list --app <slug>", "(required)"}},
-		{"registry rm", []string{"gregale registry rm --app <slug> --registry <host>", "(required)"}},
+		{"registry rm", []string{"gregale registry delete --app <slug> --registry <host>", "(required)"}},
 		{"webhooks account", []string{"<list|add|info|update|rm|deliveries|retry|rotate-secret>"}},
 		{"webhooks account add", []string{"--target-url <URL>", "--event <EVENT>", "--from-stdin"}},
-		{"webhooks account info", []string{"gregale webhooks account info <id>"}},
+		{"webhooks account info", []string{"gregale webhook account info <id>"}},
 		{"webhooks account update", []string{"<id>", "--enable", "--disable", "--delivery-format"}},
-		{"webhooks account rm", []string{"gregale webhooks account rm <id>"}},
+		{"webhooks account rm", []string{"gregale webhook account rm <id>"}},
 		{"webhooks account deliveries", []string{"<id>", "--page-size <N>", "--page-token <CURSOR>"}},
-		{"webhooks account retry", []string{"gregale webhooks account retry <id> <delivery-id>"}},
+		{"webhooks account retry", []string{"gregale webhook account retry <id> <delivery-id>"}},
 		{"webhooks account rotate-secret", []string{"<id>", "--from-stdin", "--secret <VALUE>"}},
 		{"alerts preset", []string{"<list|enable>"}},
 		{"alerts preset enable", []string{"--app <slug>", "--webhook-url <URL>", "<preset-name>", "--webhook-secret-stdin"}},

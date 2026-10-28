@@ -8924,11 +8924,28 @@ func EdgeRuleHeaderNameForbidden(name string) bool {
 	return len(name) >= len("x-faas-") && strings.EqualFold(name[:len("x-faas-")], "x-faas-")
 }
 
+// edgeRuleHeaderGatewayOwned are the forwarding headers the platform owns
+// inside the edge: X-Forwarded-For carries the one client address
+// gatewayd-public established, and gatewayd-internal replaces the RFC 7239
+// Forwarded header before the app sees it. A new rule may not set or remove
+// them (ADR-091 amendment 2026-10-28). They are kept out of
+// edgeRuleHeaderForbidden, which the gateway also applies when it compiles a
+// stored rule, so a rule saved before the amendment still compiles; the
+// gateway's IP-based gates read the client address it captured before any
+// rule ran, so such a rule cannot move them.
+var edgeRuleHeaderGatewayOwned = map[string]struct{}{
+	"X-Forwarded-For": {},
+	"Forwarded":       {},
+}
+
 // validateEdgeRuleHeaderField rejects a reserved name, a name that is not
 // an HTTP token and a value with control characters. A template value is
 // checked as written; its expansions drop control characters (ADR-968).
 func validateEdgeRuleHeaderField(name, value string) *Problem {
 	if EdgeRuleHeaderNameForbidden(name) {
+		return ErrHeaderMutationForbidden(name)
+	}
+	if _, owned := edgeRuleHeaderGatewayOwned[textproto.CanonicalMIMEHeaderKey(name)]; owned {
 		return ErrHeaderMutationForbidden(name)
 	}
 	if !httpguts.ValidHeaderFieldName(name) {

@@ -45,5 +45,5 @@ func followRolloutByDefault() bool {
 // rollout runs on Gregale, not in the CLI.
 func printRolloutDetached(d api.DeploymentResponse) {
 	PrintProgress(osStdout, "Detached at %d%% traffic; the rollout continues.", d.TrafficPercent)
-	PrintProgress(osStdout, "follow again: gregale deployment wait %s --rollout", d.ID)
+	PrintProgress(osStdout, "follow again: gregale release wait %s --rollout", d.ID)
 }

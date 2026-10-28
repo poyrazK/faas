@@ -123,6 +123,7 @@ var cliTreeAliases = []cliTreeAlias{
 	{"release schedule", "scheduled-releases"},
 	{"release mirror", "mirror"},
 	{"preview", "preview"},
+	{"environment migration recover", "projects environments recover-migration"},
 	{"environment", "projects environments"},
 	{"project", "projects"},
 	{"build", "build"},
@@ -169,6 +170,7 @@ var cliTreeAliases = []cliTreeAlias{
 	{"env diff", "env diff"},
 	{"env history", "env history"},
 	{"env rollback", "env rollback"},
+	{"domain default set", "domains set-default"},
 	{"domain", "domains"},
 	{"edge rule", "edge-rules"},
 	{"edge rule-list", "edge-rule-lists"},
@@ -207,6 +209,7 @@ var cliTreeAliases = []cliTreeAlias{
 	{"job lock-policy list", "operations policy list"},
 	{"job lock-policy set", "operations policy upsert"},
 	{"job lock-policy delete", "operations policy retire"},
+	{"job artifact download", "jobs artifact-download"},
 	{"job", "jobs"},
 	{"worker", "workers"},
 	{"workflow", "workflows"},
@@ -226,6 +229,7 @@ var cliTreeAliases = []cliTreeAlias{
 	{"automation failure list", "automations failures"},
 	{"automation failure policy", "automations failure-policy"},
 	{"automation failure resume", "automations failure-resume"},
+	{"automation policy publish", "automations publish-policy"},
 	{"automation", "automations"},
 	{"event send", "send"},
 	{"event subscription list", "events subscriptions"},
@@ -262,6 +266,7 @@ var cliTreeAliases = []cliTreeAlias{
 	{"event recovery cancel", "events recovery-cancel"},
 	{"event delivery retry", "events delivery-retry"},
 	{"event", "events"},
+	{"webhook secret rotate", "webhooks rotate-secret"},
 	{"webhook deliver", "deliver"},
 	{"webhook", "webhooks"},
 	{"queue watch", "queue tail"},
@@ -287,6 +292,7 @@ var cliTreeAliases = []cliTreeAlias{
 	{"alert pagerduty get", "mcp readiness pagerduty get"},
 	{"alert pagerduty set", "mcp readiness pagerduty set"},
 	{"alert pagerduty disable", "mcp readiness pagerduty disable"},
+	{"alert secret rotate", "alerts rotate-secret"},
 	{"alert channel", "channels"},
 	{"alert incident", "incidents"},
 	{"alert slo", "slos"},
@@ -329,6 +335,82 @@ var cliTreeAliases = []cliTreeAlias{
 	{"config preset", "context presets"},
 	{"config upload-cache", "upload-cache"},
 	{"config", "config"},
+
+	// Verb renames decided 2026-10-28: a hyphenated verb chain becomes a
+	// subnoun and a standard verb (rule 6).
+	{"account billing-run schedule delete", "account billing-run schedule-delete"},
+	{"account billing-run schedule set", "account billing-run schedule-set"},
+	{"api consumer billing-policy get", "consumers billing-policy"},
+	{"api consumer billing-policy delete", "consumers billing-policy-delete"},
+	{"api consumer billing-policy set", "consumers billing-policy-set"},
+	{"api consumer credit grant", "consumers credit-grant"},
+	{"api consumer credit void", "consumers credit-void"},
+	{"api consumer key create", "consumers key-create"},
+	{"api consumer key revoke", "consumers key-revoke"},
+	{"api consumer overdue-hold list", "consumers overdue-holds"},
+	{"api consumer plan create", "consumers plan-create"},
+	{"api consumer plan update", "consumers plan-update"},
+	{"api consumer plan list", "consumers plans"},
+	{"api consumer rate-card create", "consumers rate-card-create"},
+	{"api consumer rate-card list", "consumers rate-cards"},
+	{"api consumer plan set", "consumers set-plan"},
+	{"api consumer signup get", "consumers signup"},
+	{"api consumer signup delete", "consumers signup-delete"},
+	{"api consumer signup set", "consumers signup-set"},
+	{"api consumer spend-cap delete", "consumers spend-cap-delete"},
+	{"api consumer spend-cap set", "consumers spend-cap-set"},
+	{"api consumer statement draft", "consumers statement-draft"},
+	{"api consumer statement export", "consumers statement-export"},
+	{"api consumer statement finalize", "consumers statement-finalize"},
+	{"api consumer statement handoff", "consumers statement-handoff"},
+	{"api consumer statement get", "consumers statement-show"},
+	{"api consumer trial get", "consumers trial"},
+	{"api consumer trial end", "consumers trial-end"},
+	{"api consumer trial set", "consumers trial-set"},
+	{"api tenant billing-policy get", "platform-tenants billing-policy"},
+	{"api tenant billing-policy delete", "platform-tenants billing-policy-delete"},
+	{"api tenant billing-policy set", "platform-tenants billing-policy-set"},
+	{"api tenant credentials apply", "platform-tenants credentials-apply"},
+	{"api tenant credentials list", "platform-tenants credentials-list"},
+	{"api tenant credit grant", "platform-tenants credit-grant"},
+	{"api tenant credit void", "platform-tenants credit-void"},
+	{"api tenant consumer link", "platform-tenants link-consumer"},
+	{"api tenant surface link", "platform-tenants link-surface"},
+	{"api tenant overdue-hold list", "platform-tenants overdue-holds"},
+	{"api tenant plan create", "platform-tenants plan-create"},
+	{"api tenant plan update", "platform-tenants plan-update"},
+	{"api tenant plan list", "platform-tenants plans"},
+	{"api tenant rate-card create", "platform-tenants rate-card-create"},
+	{"api tenant rate-card list", "platform-tenants rate-cards"},
+	{"api tenant plan set", "platform-tenants set-plan"},
+	{"api tenant spend-cap delete", "platform-tenants spend-cap-delete"},
+	{"api tenant spend-cap set", "platform-tenants spend-cap-set"},
+	{"api tenant statement draft", "platform-tenants statement-draft"},
+	{"api tenant statement export", "platform-tenants statement-export"},
+	{"api tenant statement finalize", "platform-tenants statement-finalize"},
+	{"api tenant statement handoff", "platform-tenants statement-handoff"},
+	{"api tenant statement get", "platform-tenants statement-show"},
+	{"api tenant trial get", "platform-tenants trial"},
+	{"api tenant trial end", "platform-tenants trial-end"},
+	{"api tenant trial set", "platform-tenants trial-set"},
+	{"automation event recover", "automations event-recover"},
+	{"automation event-recovery start", "automations event-recovery-start"},
+	{"automation failure-recovery review", "automations failure-recovery-review"},
+	{"automation recovery-policy evaluate", "automations recovery-policy-evaluate"},
+	{"automation recovery-response apply", "automations recovery-response-apply"},
+	{"automation recovery-response status", "automations recovery-response-status"},
+	{"debug issue releases compare", "issues compare-releases"},
+	{"debug issue token create", "issues create-token"},
+	{"debug issue token revoke", "issues revoke-token"},
+	{"edge rule waf review", "edge-rules waf-review"},
+	{"environment release-sets stage cancel", "projects environments release-sets cancel-stage"},
+	{"environment release-sets deactivation prepare", "projects environments release-sets prepare-deactivation"},
+	{"environment release-sets stage status", "projects environments release-sets stage-status"},
+	{"event deadline-alert investigate", "events deadline-alert-investigate"},
+	{"event notification-retry apply", "events notification-retry-apply"},
+	{"event notification-retry reconcile", "events notification-retry-reconcile"},
+	{"event recovery-notification retry", "events recovery-notification-retry"},
+	{"webhook account secret rotate", "webhooks account rotate-secret"},
 
 	// Operator tools live under the hidden admin command (rule 7) and keep
 	// their names; the naming rules cover the customer tree.
@@ -921,10 +1003,36 @@ func printCliTreeHelp(w io.Writer, topic cliTreeTopic) {
 // rewrite runs exactly args today. It reports false when args already use
 // the tree's names or have no tree spelling.
 func cliTreeSpelling(args []string) ([]string, bool) {
-	// A tree path rewrites to something else; today's path runs as typed.
-	if rewritten, err := rewriteCliTree(args); err != nil || !slices.Equal(rewritten, args) {
+	// A tree path rewrites to today's path; it is spelled as that path's
+	// tree spelling when the tree has since named it differently.
+	rewritten, err := rewriteCliTree(args)
+	if err != nil {
 		return nil, false
 	}
+	if slices.Equal(rewritten, args) {
+		return cliTreeSpellToday(args)
+	}
+	if again, err := rewriteCliTree(rewritten); err != nil || !slices.Equal(again, rewritten) {
+		return nil, false
+	}
+	canonical, ok := cliTreeSpellToday(rewritten)
+	if !ok || slices.Equal(canonical, args) {
+		return nil, false
+	}
+	return canonical, true
+}
+
+// cliTreeSpellPath spells a command path a message names in the tree's
+// names, or returns it as it is when the tree has no spelling for it.
+func cliTreeSpellPath(path string) string {
+	if spelled, ok := cliTreeSpelling(strings.Fields(path)); ok {
+		return strings.Join(spelled, " ")
+	}
+	return path
+}
+
+// cliTreeSpellToday spells today's path args in the tree's names.
+func cliTreeSpellToday(args []string) ([]string, bool) {
 	var candidate []string
 	appSlug := len(args) > 1 && args[0] == appSlugFallback && !cliTreeAppVerb(args[1]) && api.ValidAppSlug(args[1])
 	switch {
@@ -1051,7 +1159,13 @@ func cliTreeHelpRename(typed, args []string) (from, to string, ok bool) {
 		typed, args = typed[1:], args[1:]
 	}
 	if slices.Equal(typed, args) {
-		return "", "", false
+		// Help reached by an earlier name is spelled in the tree too.
+		words := typed[:oldPathDepth(typed)]
+		spelled, ok := cliTreeSpelling(words)
+		if !ok {
+			return "", "", false
+		}
+		return strings.Join(words, " "), strings.Join(spelled, " "), true
 	}
 	alias, used, ok := matchCliTreeAlias(typed)
 	if !ok {
