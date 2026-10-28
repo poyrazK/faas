@@ -7,7 +7,7 @@ import (
 )
 
 // BuildRegistryAuthKey is the secrets.env entry that carries a builder VM's
-// Docker config (ADR-20261026090000). vmmd writes it after the build's own
+// Docker config (ADR-20261026091500). vmmd writes it after the build's own
 // secrets, so it replaces any app secret of the same name; guest-init moves
 // it into a DOCKER_CONFIG directory for buildctl and never mounts it as a
 // build secret.

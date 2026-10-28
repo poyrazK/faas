@@ -2002,24 +2002,22 @@ its consented workload inventory.
 
 ## Run the hosted MCP server
 
-Operators enable `https://api.<platform domain>/mcp` on the control plane
-(ADR-20261026195952). It is off by default.
+`https://api.<platform domain>/mcp` is on by default (ADR-20261026195952). A
+release that converges the control plane sets it up with no operator steps:
+- `control_plane_service` generates the state key once in
+  `/etc/faas/secrets/mcp-bridge/state.key`. Control-plane state staging copies
+  it to the standby with the rest of `/etc/faas/secrets`.
+- It installs and enables `faas-mcp-bridge`. The release's restart step starts
+  the service once `mcp-bridged` is in the active release.
+- `gatewayd_public_service` routes the bridge's paths on the `api.` host to
+  `127.0.0.1:8787`.
 
-1. Create the state key once, and keep a copy. Losing it signs every
-   connected agent out.
+If the key is lost, the role generates a new one. The server then drops the
+state it can no longer open, and connected agents sign in again.
 
-   ```sh
-   install -d -m 0700 /etc/faas/secrets/mcp-bridge
-   head -c 32 /dev/urandom > /etc/faas/secrets/mcp-bridge/state.key
-   chmod 0600 /etc/faas/secrets/mcp-bridge/state.key
-   ```
-
-2. Set `faas_mcp_bridge_enabled: true` for the control plane and converge.
-   - `control_plane_service` installs and starts `faas-mcp-bridge`.
-   - `gatewayd_public_service` routes the bridge's paths on the `api.` host
-     to `127.0.0.1:8787`.
-   - Releases update and restart the server while its role marker is in
-     place.
+To turn the server off, set `faas_mcp_bridge_enabled: false` for the control
+plane and converge. Both roles read it: the service stops and the route goes
+away.
 
 The server is the `mcp-bridged` daemon:
 - **Releases:** its tools run the active release's `gregale` CLI as a

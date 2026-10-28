@@ -82,7 +82,7 @@ type VMRequest struct {
 	// builder drive. It is host metadata and is never written into the guest.
 	WarmScopeKey string
 	// RegistryCredentials are the app's sealed registry credentials a
-	// Dockerfile build pulls its base images with (ADR-20261026090000);
+	// Dockerfile build pulls its base images with (ADR-20261026091500);
 	// vmmd opens them into the builder VM's Docker config.
 	RegistryCredentials []SealedRegistryCredential
 }

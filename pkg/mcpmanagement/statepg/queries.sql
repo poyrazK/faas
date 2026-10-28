@@ -44,3 +44,8 @@ SET sealed = EXCLUDED.sealed, epoch = EXCLUDED.epoch, updated_at = now();
 -- name: DeleteMCPBridgeState :exec
 DELETE FROM mcp_bridge_state
 WHERE bridge = @bridge AND namespace = @namespace;
+
+-- name: DeleteAllMCPBridgeState :exec
+-- Drops state that no longer opens with the bridge's key.
+DELETE FROM mcp_bridge_state
+WHERE bridge = @bridge;

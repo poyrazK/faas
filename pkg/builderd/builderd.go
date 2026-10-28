@@ -965,7 +965,7 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 			b.emitBuildLog(ctx, build.ID, fmt.Sprintf("mounting %d build secrets\n", len(dockerfileBuild.Secrets)))
 		}
 	}
-	// ADR-20261026090000: a Dockerfile build pulls its base images with the
+	// ADR-20261026091500: a Dockerfile build pulls its base images with the
 	// app's registry credentials, so it can build FROM a private image.
 	var registryCreds []SealedRegistryCredential
 	if fw == FrameworkDocker {
@@ -1144,7 +1144,7 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 	if len(buildSecrets) > 0 || len(registryCreds) > 0 {
 		// A build with secrets or registry credentials never restores or
 		// leaves a warm builder, so a value cannot outlive its build in a
-		// snapshot (ADR-20261022185329, ADR-20261026090000).
+		// snapshot (ADR-20261022185329, ADR-20261026091500).
 		vmReq.WarmScopeKey = ""
 	}
 	warmVM, warmResult, warmSnapshot, warmStarted := b.prepareWarmBuilder(ctx, slot, vmReq)

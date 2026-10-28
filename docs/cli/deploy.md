@@ -481,6 +481,8 @@ lifecycle:
 ```
 
 The equivalent one-off override is `gregale deploy --execution-mode worker`.
+For a worker that consumes a queue, the `worker:` block declares the mode and
+its queue scaling together; see [Workers](../workers.md).
 
 Queue-driven pools scale out on the tick that observes the backlog. Scale-in
 waits for demand to stay low for 60 seconds: a pool shrinks only to the highest

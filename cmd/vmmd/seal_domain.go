@@ -20,7 +20,7 @@ func loadRuntimeSealDomain(secretsDir string) ([]*age.X25519Identity, error) {
 
 // loadBuildSealDomain loads the build seal-domain identity, which opens the
 // registry passwords a builder VM pulls its base images with
-// (ADR-20261026090000). A node without it keeps opening older passwords
+// (ADR-20261026091500). A node without it keeps opening older passwords
 // with the fleet and host identities.
 func loadBuildSealDomain(secretsDir string) ([]*age.X25519Identity, error) {
 	return loadSealDomain(secretsDir, sealdomain.Build)

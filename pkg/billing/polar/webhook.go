@@ -294,13 +294,12 @@ func polarInvoice(eventType string, data map[string]any) *billing.InvoiceData {
 	}
 	status := invoiceStatus(eventType, firstString(data, "status"))
 	total := firstNumber(data, "total_amount", "amount", "net_amount")
-	periodStart := firstTime(data, "period_start", "billing_period_start", "current_period_start")
-	periodEnd := firstTime(data, "period_end", "billing_period_end", "current_period_end")
-	if periodStart.IsZero() {
-		periodStart = nestedTime(data, "billing_period", "starts_at")
-	}
-	if periodEnd.IsZero() {
-		periodEnd = nestedTime(data, "billing_period", "ends_at")
+	// The period lives on the order lines (polarOrderPeriod). Before that
+	// was read, every Polar invoice got start == end == created_at.
+	periodStart, periodEnd := polarOrderPeriod(data)
+	if periodStart.IsZero() || periodEnd.IsZero() {
+		periodStart = firstTime(data, "current_period_start")
+		periodEnd = firstTime(data, "current_period_end")
 	}
 	if periodStart.IsZero() {
 		periodStart = firstTime(data, "created_at")
