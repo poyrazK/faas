@@ -826,10 +826,16 @@ func validateUpdateApp(req *api.UpdateAppRequest, acct state.Account, limits api
 					return api.ErrScalingTargetIncompatibleWithWorkloadClass("concurrent_requests")
 				}
 			case "queue_depth", "queue_lag":
+				// A request that also makes the app a worker or job is judged
+				// on that mode (ADR-20261018101500 amendment 2026-10-27).
+				mode := app.Manifest.ExecutionMode
+				if req.ExecutionMode != nil {
+					mode = *req.ExecutionMode
+				}
 				if app.WorkloadClass != state.WorkloadClassWorker &&
 					app.WorkloadClass != state.WorkloadClassJob &&
-					app.Manifest.ExecutionMode != api.ExecutionModeWorker &&
-					app.Manifest.ExecutionMode != api.ExecutionModeJob {
+					mode != api.ExecutionModeWorker &&
+					mode != api.ExecutionModeJob {
 					return api.ErrScalingTargetIncompatibleWithWorkloadClass(sp.Target.Metric)
 				}
 			}
@@ -2509,6 +2515,13 @@ func rollbackDuringTrafficSplitProblem(appSlug, earlier string) *api.Problem {
 // two entry points cannot drift. It also opens the ADR-1446 outcome ledger
 // row; the returned receipt is nil only when that write failed, and the
 // rollback itself still proceeds.
+// rollbackTargetArtifactsReclaimed refuses a rollback whose target's layers
+// were reclaimed: it could not cold boot, and its readiness prime would only
+// fail later (Hunt 21 H21-1).
+func rollbackTargetArtifactsReclaimed() *api.Problem {
+	return api.ErrRollbackTargetIneligible("the rollback target's build artifacts were reclaimed, so it cannot start; redeploy that release instead")
+}
+
 func (s *server) rollbackAppCore(r *http.Request, acct state.Account, app state.App, req api.RollbackRequest, trigger string) (state.Deployment, *api.RollbackOperation, *api.Problem) {
 	ctx := r.Context()
 	alertRuleID := uuid.Nil
@@ -2526,6 +2539,9 @@ func (s *server) rollbackAppCore(r *http.Request, acct state.Account, app state.
 	priorTargetStatus := target.Status
 	target, err = s.store.PrepareDeploymentRollback(ctx, app.ID, target.ID)
 	if err != nil {
+		if errors.Is(err, state.ErrLayerArtifactRetired) {
+			return state.Deployment{}, nil, rollbackTargetArtifactsReclaimed()
+		}
 		if errors.Is(err, state.ErrNoRollbackTarget) || errors.Is(err, state.ErrRollbackTargetAlreadyLive) {
 			return state.Deployment{}, nil, api.ErrRollbackTargetIneligible("rollback target changed state while the request was being validated; refresh deployments and retry")
 		}
@@ -7114,7 +7130,32 @@ func (s *server) usageStorage(w http.ResponseWriter, r *http.Request, acct state
 // payload, not the status. The CLI branches on the empty string to
 // print a friendly "portal not configured" hint.
 func (s *server) getBillingPortal(w http.ResponseWriter, r *http.Request, acct state.Account) {
-	writeJSON(w, http.StatusOK, api.BillingPortalResponse{URL: s.billingPortalURLForProvider(r.Context(), acct)})
+	writeJSON(w, http.StatusOK, api.BillingPortalResponse{
+		URL:           s.billingPortalURLForProvider(r.Context(), acct),
+		PaymentMethod: s.paymentMethodSummary(r.Context(), acct),
+	})
+}
+
+// paymentMethodSummary asks the active provider for the card on file, so
+// `gregale billing payment-method` and the dashboard can show it (issues
+// #279, #280); nothing called Provider.PaymentMethodSummary before. No card,
+// a provider that keeps card details in its own portal (Polar), or a
+// provider error leaves the field out, and the portal URL still answers.
+func (s *server) paymentMethodSummary(ctx context.Context, acct state.Account) *api.PaymentMethodSummary {
+	if s.billingProvider == nil {
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+	pm, err := s.billingProvider.PaymentMethodSummary(ctx, acct)
+	if err != nil {
+		s.log.Warn("billing: payment method summary unavailable", "account", acct.ID, "err", err)
+		return nil
+	}
+	if pm.Brand == "" && pm.Last4 == "" {
+		return nil
+	}
+	return &api.PaymentMethodSummary{Brand: pm.Brand, Last4: pm.Last4, ExpMonth: pm.ExpMonth, ExpYear: pm.ExpYear}
 }
 
 // listInvoices serves GET /v1/invoices — issue #259 invoice history.

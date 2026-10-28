@@ -292,7 +292,7 @@
         {"kind": "test", "locator": "pkg/apid/apidserver/handlers_metrics_test.go::TestAppMetrics_HappyPath"},
         {"kind": "test", "locator": "pkg/apid/apidserver/handlers_notification_channels_test.go::TestNotificationChannelLifecycle"},
         {"kind": "test", "locator": "pkg/apid/apidserver/handlers_pgstore_test.go::TestPGHandler_DebuggerRequestAndRegressionReadPaths"},
-        {"kind": "test", "locator": "pkg/apid/apidserver/handlers_selected_trace_test.go::TestSelectedAppTraceRoute"},
+        {"kind": "test", "locator": "cmd/e2e/guest_tracing_metal_test.go::TestGuestTracingMetal"},
         {"kind": "test", "locator": "pkg/apid/apidserver/handlers_wake_timeline_page_test.go::TestWakeTimelineKeysetAPI"},
         {"kind": "test", "locator": "pkg/apid/apidserver/status_test.go::TestStatusHistoryRollup"}
       ]

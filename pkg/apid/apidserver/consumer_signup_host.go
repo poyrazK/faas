@@ -18,6 +18,10 @@ var _ consumersignup.Host = consumerSignupHost{}
 
 func (h consumerSignupHost) Store() state.Store { return h.s.store }
 
+func (h consumerSignupHost) CreatorBills(ctx context.Context, app state.App) bool {
+	return h.s.creatorBills(ctx, app)
+}
+
 func (h consumerSignupHost) Released(accountID string) bool { return h.s.apiMonetizationFor(accountID) }
 
 func (h consumerSignupHost) AppRoute(w http.ResponseWriter, r *http.Request, acct state.Account) (state.App, bool) {

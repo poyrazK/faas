@@ -6865,6 +6865,22 @@ groups:
           description: "{{ $labels.instance }} has not enforced the traffic security fence for 30 minutes, so a revoked account, app or deployment can still receive responses through it. A gateway it dials lacks the fence wiring or has no fresh observation."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasTrafficControl.md"
 
+      # ADR-20261027173012: inside the 5-minute outage grace a gateway keeps
+      # rate limits on its own bucket instead of refusing. Limits still hold,
+      # per gateway; past the grace FaasTrafficControlRefusing takes over.
+      - alert: FaasRateLimitCounterFallback
+        expr: sum by (instance) (rate(gateway_ratelimit_local_fallback_total{job="gatewayd-internal"}[5m])) > 0
+        for: 2m
+        labels:
+          severity: warn
+          component: gatewayd-internal
+          family: traffic_control
+          public_status: internal
+        annotations:
+          summary: "A gateway is enforcing rate limits without the shared counter"
+          description: "{{ $labels.instance }} could not reach the central rate counters and is deciding requests from its own buckets within the 5-minute outage grace. Each limit can admit up to once per gateway until the counter answers again; after the grace the gateway refuses with rate_limit_unavailable."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasTrafficControl.md"
+
   - name: retry_safety
     interval: 30s
     rules:
@@ -7396,9 +7412,11 @@ groups:
           description: "gateway_edge_rule_apply_total{result=\"error\"} for kind {{ $labels.kind }} has exceeded 1/min for 5m. Each error is a non-2xx response the edge wrote for a rule, so customers are seeing it."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasEdgeRuleApplyHigh.md"
       # ADR-1236: an access-gating rule that fails to compile is dropped
-      # and its route serves without the check, so those kinds page.
+      # and its route serves without the check, so those kinds page. Geo
+      # and challenge gate access too (ADR-091 amendment 2026-10-27, GA
+      # hardening).
       - alert: FaasEdgeRuleAuthCompileError
-        expr: sum by (kind) (increase(gateway_edge_rule_compile_error_total{kind=~"jwt|ip|waf"}[10m])) > 0
+        expr: sum by (kind) (increase(gateway_edge_rule_compile_error_total{kind=~"jwt|ip|geo|waf|challenge"}[10m])) > 0
         for: 1m
         labels:
           severity: page
@@ -7410,7 +7428,7 @@ groups:
           description: "gatewayd-internal dropped a {{ $labels.kind }} edge rule at load time in the last 10m. A dropped access rule is not enforced, so the route it protected is serving without that check. Fix or disable the rule now."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasEdgeRuleCompileError.md"
       - alert: FaasEdgeRuleCompileError
-        expr: sum by (kind) (increase(gateway_edge_rule_compile_error_total{kind!~"jwt|ip|waf"}[10m])) > 0
+        expr: sum by (kind) (increase(gateway_edge_rule_compile_error_total{kind!~"jwt|ip|geo|waf|challenge"}[10m])) > 0
         for: 1m
         labels:
           severity: warn
@@ -7437,6 +7455,47 @@ groups:
           summary: "{{ $labels.instance }} cannot read edge rules ({{ $labels.outcome }})"
           description: "gateway_edge_rule_load_total{outcome=\"{{ $labels.outcome }}\"} kept rising on {{ $labels.instance }} for 5m. last_known: hosts get their last compiled rules and rule edits do not apply. failed: hosts with nothing compiled are refused with 503 Edge security unavailable."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasEdgeRuleLoadFailing.md"
+      # ADR-091 amendment (2026-10-27, GA hardening): edge-rule changes reach
+      # the fleet through a two-phase barrier. A gateway whose listener stops
+      # stamping its heartbeat is left out of it; a phase that does not finish
+      # fails a customer's edit (prepare) or leaves hosts held (apply); and a
+      # fence that never clears answers a host's requests with 503.
+      - alert: FaasEdgeRuleListenerStale
+        expr: (time() - gateway_edge_rule_listener_heartbeat_timestamp_seconds > 90) and gateway_edge_rule_listener_heartbeat_timestamp_seconds > 0
+        for: 2m
+        labels:
+          severity: warn
+          component: gatewayd-internal
+          family: edge_rules
+          public_status: internal
+        annotations:
+          summary: "{{ $labels.instance }} stopped stamping its edge-rule listener heartbeat"
+          description: "gateway_edge_rule_listener_heartbeat_timestamp_seconds on {{ $labels.instance }} has not advanced for over 90s. apid now applies edge-rule changes without this gateway, which picks them up only as each host's 30s rule cache entry expires and does not hold hosts while a change converges."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasEdgeRuleConvergence.md"
+      - alert: FaasEdgeRuleConvergenceFailing
+        expr: sum by (phase) (increase(apid_edge_rule_convergence_failures_total[10m])) > 2
+        for: 5m
+        labels:
+          severity: warn
+          component: apid
+          family: edge_rules
+          public_status: internal
+        annotations:
+          summary: "Edge-rule changes are not converging ({{ $labels.phase }})"
+          description: "apid_edge_rule_convergence_failures_total{phase=\"{{ $labels.phase }}\"} rose more than twice in 10m. prepare: customers' edge-rule edits are refused with 503 and nothing changes. apply: edits committed but a gateway did not acknowledge them, so its hosts stay held with 503 until the 10s fence expires."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasEdgeRuleConvergence.md"
+      - alert: FaasEdgeRuleConvergenceStuck
+        expr: min_over_time(gateway_edge_rule_converging_hosts[5m]) > 0
+        for: 5m
+        labels:
+          severity: warn
+          component: gatewayd-internal
+          family: edge_rules
+          public_status: internal
+        annotations:
+          summary: "{{ $labels.instance }} has held hosts behind edge-rule fences for 10 minutes"
+          description: "gateway_edge_rule_converging_hosts on {{ $labels.instance }} has not dropped to zero for 10m. Requests to fenced hosts get 503 Edge policy update in progress. A fence expires 10s after its change is prepared, so one that never clears means changes keep being prepared without being applied."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasEdgeRuleConvergence.md"
       - alert: FaasEdgeRuleJWTFailures
         expr: sum(rate(gateway_edge_rule_match_total{kind="jwt",outcome="failed"}[5m])) * 60 > 5
         for: 5m

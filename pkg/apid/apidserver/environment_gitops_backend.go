@@ -239,7 +239,7 @@ func (b *environmentGitOpsBackend) RecoverEffects(ctx context.Context, lease sta
 func (b *environmentGitOpsBackend) recoveryConvergence(ctx context.Context, effect state.EnvironmentGitOpsEffect) (*edgerules.EdgeRuleConvergence, error) {
 	convergence := &edgerules.EdgeRuleConvergence{Notif: b.server.notif, Generation: effect.GatewayGeneration,
 		AppID: effect.AppID, Operation: "environment_gitops", Hosts: effect.MatchHosts, Expected: map[string]struct{}{},
-		Cancel: func() {}, Unlock: func(context.Context) {}}
+		Cancel: func() {}, Unlock: func(context.Context) {}, Metrics: b.server.edgeRules.Metrics}
 	for _, node := range effect.ExpectedNodes {
 		convergence.Expected[node] = struct{}{}
 	}

@@ -12,6 +12,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/billing"
 	"github.com/onebox-faas/faas/pkg/canary"
+	"github.com/onebox-faas/faas/pkg/platformflags"
 	"github.com/onebox-faas/faas/pkg/safedeploy"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/wire"
@@ -43,6 +44,7 @@ type Loop struct {
 	// health heartbeat active while provider delivery is intentionally paused.
 	billingDisabled       bool
 	financialBudgets      bool
+	quietPauseRelease     func(platformflags.Subject) bool
 	notif                 Notifier
 	quotaWarningRequested func() bool
 	quotaWarningCommands  QuotaWarningCommands
@@ -247,6 +249,15 @@ func (l *Loop) WithCanaryProgression(p *canary.Progression) *Loop {
 	return l
 }
 
+// WithQuietPauseRelease decides which accounts quiet_pause_unbilled = "on"
+// subtracts paused seconds for (ADR-20261023171905): cmd/meterd passes the
+// quiet_pause_unbilled platform flag. Without it on mode applies to every
+// account.
+func (l *Loop) WithQuietPauseRelease(released func(platformflags.Subject) bool) *Loop {
+	l.quietPauseRelease = released
+	return l
+}
+
 // WithSafeDeploy attaches the safedeploy orchestrator tick
 // runtime (issue #976 / ADR-122 / SAFE-RELEASES-F). cmd/meterd
 // calls this when FAAS_SAFEDEPLOY_TOKEN is set so the goroutine
@@ -286,8 +297,9 @@ func (l *Loop) Run(ctx context.Context) error {
 	if mode, err := ParseQuietPauseMode(l.cfg.QuietPauseUnbilled); err != nil {
 		l.log.Warn("meter: quiet pause billing stays off", "err", err)
 	} else if mode != QuietPauseOff {
-		sampler.WithQuietPause(mode, l.ops.Registry())
-		l.log.Info("meter: quiet pause billing (ADR-20261023171905)", "mode", mode)
+		sampler.WithQuietPause(mode, l.ops.Registry()).WithQuietPauseRelease(l.quietPauseRelease)
+		l.log.Info("meter: quiet pause billing (ADR-20261023171905)", "mode", mode,
+			"per_account_flag", l.quietPauseRelease != nil)
 	}
 	pusher := NewPusher(l.store, l.pusher, l.log, l.now, l.ops)
 	// One result slot per possible worker, including monitoring and delivery;
