@@ -5150,6 +5150,8 @@ type EventRecoveryJob struct {
 	NotificationReceipts          []byte
 	NotificationRetryReceipts     []byte
 	ExecutionAttentionNextAt      pgtype.Timestamptz
+	FailureCount                  int32
+	LastFailure                   string
 }
 
 type EventRecoveryWorkflowResult struct {
@@ -5191,6 +5193,9 @@ type EventReplayJob struct {
 	CompletedAt           pgtype.Timestamptz
 	ConsumerKind          string
 	WorkflowName          string
+	FailureCount          int32
+	NextAttemptAt         pgtype.Timestamptz
+	LastFailure           string
 }
 
 type EventReplayJobItem struct {

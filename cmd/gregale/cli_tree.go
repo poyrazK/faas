@@ -254,6 +254,7 @@ var cliTreeAliases = []cliTreeAlias{
 	{"event backfill get", "events backfill-status"},
 	{"event backfill items", "events backfill-items"},
 	{"event backfill retry", "events backfill-retry"},
+	{"event backfill cancel", "events backfill-cancel"},
 	{"event recovery list", "events recovery-list"},
 	{"event recovery get", "events recovery-status"},
 	{"event recovery create", "events recovery-create"},

@@ -179,6 +179,30 @@ func (s *Service) RetryFailedEventReplayBackfill(w http.ResponseWriter, r *http.
 	httpkit.WriteJSON(w, http.StatusOK, result)
 }
 
+// CancelEventReplayBackfill ends a running backfill as cancelled
+// (ADR-20261028095548). Cancelling an ended job returns it unchanged.
+func (s *Service) CancelEventReplayBackfill(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	w.Header().Set("Cache-Control", "no-store")
+	ctx, cancel := context.WithTimeout(r.Context(), api.EventReplayBackfillRequestTimeout)
+	defer cancel()
+	store, ok := s.Host.Store().(state.EventReplayBackfillStore)
+	lifecycle, canEnd := s.Host.Store().(state.EventReplayBackfillLifecycleStore)
+	if !ok || !canEnd {
+		api.WriteProblem(w, api.ErrInternal("event replay backfill store"))
+		return
+	}
+	if _, err := s.visibleEventReplayBackfill(ctx, store, acct, r.PathValue("jobID")); err != nil {
+		api.WriteProblem(w, eventReplayBackfillProblem(err, ctx.Err()))
+		return
+	}
+	job, err := lifecycle.CancelEventReplayBackfill(ctx, acct.ID, r.PathValue("jobID"))
+	if err != nil {
+		api.WriteProblem(w, eventReplayBackfillProblem(err, ctx.Err()))
+		return
+	}
+	httpkit.WriteJSON(w, http.StatusOK, job)
+}
+
 func decodeEventReplayBackfillRequest(r *http.Request) (api.EventReplayBackfillRequest, *api.Problem) {
 	var req api.EventReplayBackfillRequest
 	if err := httpkit.DecodeJSONSized(r, &req, 4<<10); err != nil {
@@ -204,7 +228,7 @@ func parseEventReplayBackfillItemsQuery(values url.Values) (api.EventReplayBackf
 		return query, api.ErrValidation("after must be a valid continuation cursor")
 	}
 	switch query.State {
-	case "", "pending", "processing", "enqueued", "filtered", "failed", "skipped_captured", "skipped_unknown", "skipped_existing", "skipped_unsettled":
+	case "", "pending", "processing", "enqueued", "filtered", "failed", "skipped_captured", "skipped_unknown", "skipped_existing", "skipped_unsettled", "cancelled":
 	default:
 		return query, api.ErrValidation("state must be a supported backfill item state")
 	}

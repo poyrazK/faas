@@ -1446,6 +1446,9 @@ var cliCommands = []cliCommand{
 				{Name: "limit", Short: "failed routing recipients to requeue (1..100; default 100)", Value: "N"},
 				{Name: "yes", Short: "confirm requeueing failed event deliveries", Req: true, Bool: true},
 			}},
+			{Name: "backfill-cancel", Short: "Cancel a running backfill; admitted deliveries finish", Positionals: []string{"<job-id>"}, Flags: []cliFlag{
+				{Name: "yes", Short: "confirm dropping the job's undelivered events", Req: true, Bool: true},
+			}},
 			{Name: "retention", Short: "Inspect receipt expiry, backfill holds and account storage", Flags: []cliFlag{
 				{Name: "source", Short: "exact event source", Value: "SOURCE"},
 				{Name: "app", Short: "receipt application filter; storage remains account-wide", Value: "APP"},

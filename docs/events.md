@@ -687,14 +687,29 @@ completed.
 
 The job scans at most 100 envelopes per page and holds at most 100 pending or
 processing target deliveries at once. Up to three jobs can run per account,
-with one active job per subscription. Active jobs protect their requested
-range from normal settled-receipt pruning. Retryable failed deliveries keep
+with one active job per subscription. A running job protects the part of its
+requested range that its scan has not reached yet from normal settled-receipt
+pruning. Retryable failed deliveries keep
 their source receipts through the job’s 30-day recovery window; other payloads
 follow ordinary retention while the job’s per-envelope outcome counts remain
 available for 30 days after completion. `earliest_retained_at` is a coverage
 warning, not proof of a complete archive; already expired envelopes cannot be
-recovered. Poll status until `completed` or `completed_with_failures`; the
-status includes a separate `retryable_failed` count. Retry a bounded batch of
+recovered. Poll status until it leaves `running`; the status includes a
+separate `retryable_failed` count. A job ends as:
+
+- `completed` or `completed_with_failures` once every envelope settles;
+- `cancelled` after `gregale event backfill cancel JOB_UUID --yes`
+  (`POST /v1/event-replays/{jobID}/cancel`);
+- `expired` when it makes no progress for 24 hours, for example while its
+  target subscription stays paused or circuit-open;
+- `failed` when processing the job fails ten times in a row; `last_failure`
+  names the class of the last failure (`conflict`, `invalid_job`, `timeout`
+  or `internal`). Between failures the job waits from 5 seconds up to an
+  hour, and other jobs keep running.
+
+When a job ends early, deliveries already admitted finish and the rest are
+dropped: their items become `cancelled`, and their receipts go back to normal
+retention. An ended job cannot be retried; create a new one. Retry a bounded batch of
 eligible routing failures with
 `gregale event backfill retry JOB_UUID --limit 100 --yes`; handler failures,
 retries and dead letters continue through their existing lifecycle. Completed
@@ -1730,6 +1745,12 @@ remaining items without admitting them. Completed, cancelled, or expired jobs
 cannot be paused, resumed, or rate-adjusted and return 409. Repeating a desired
 control state on an active job is safe. To abandon a paused job, use
 `recovery-cancel JOB_ID --yes`; admitted handlers continue.
+
+If processing a job's next item fails, the job waits before trying again,
+from 5 seconds doubling up to an hour, and other jobs keep running. After ten
+failures in a row the job is cancelled; its history shows a `cancelled` entry
+by the system actor `recovery_failure` whose reason names the class of the
+last failure.
 
 API and SDK clients use `POST /v1/event-recoveries/{jobID}/pause`, `POST
 /v1/event-recoveries/{jobID}/resume`, and `PUT
