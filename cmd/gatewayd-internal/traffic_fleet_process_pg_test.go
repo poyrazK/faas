@@ -55,6 +55,9 @@ type fleetDaemonSpec struct {
 	// BudgetAdmissionOff drops the financial budget check, a separate
 	// per-request Postgres read, so an outage test isolates routing.
 	BudgetAdmissionOff bool
+	// BudgetGraceMS shortens the production budget admission's outage grace
+	// (ADR-20261028083324) so the test can cross it.
+	BudgetGraceMS int
 }
 
 type fleetDaemonReady struct {
@@ -193,6 +196,9 @@ func TestTrafficFleetDaemonProcess(t *testing.T) {
 	deps.cachedHostPolicy = spec.CachedHostPolicy
 	if spec.BudgetAdmissionOff {
 		deps.financialBudgetAdmission = func(context.Context, gateway.App) error { return nil }
+	}
+	if spec.BudgetGraceMS > 0 {
+		deps.financialBudgetAdmission = newFinancialBudgetAdmissionWithGrace(store, time.Duration(spec.BudgetGraceMS)*time.Millisecond)
 	}
 	if spec.RoutingGraceMS > 0 {
 		deps.publicRoutingView = publicrouting.New(store).WithOutageGrace(time.Duration(spec.RoutingGraceMS) * time.Millisecond)
@@ -388,6 +394,7 @@ type fleetDaemonOptions struct {
 	RoutingGraceMS                int
 	LogWarnings, CachedHostPolicy bool
 	BudgetAdmissionOff            bool
+	BudgetGraceMS                 int
 }
 
 func startFleetDaemonConfigured(t *testing.T, pool *pgxpool.Pool, apps []fleetDaemonApp, nodeID, nodeName, usageSocket string, options fleetDaemonOptions) *fleetDaemonProcess {
@@ -410,7 +417,7 @@ func startFleetDaemonConfigured(t *testing.T, pool *pgxpool.Pool, apps []fleetDa
 	spec := fleetDaemonSpec{Database: pool.Config().ConnConfig.Database, SearchPath: pool.Config().ConnConfig.RuntimeParams["search_path"],
 		ConfigPath: configPath, NodeID: nodeID, Apps: apps, Managed: managed, DNSUpstream: dnsUpstream, RepairWithoutNotifications: repairWithoutNotifications,
 		DatabaseAddr: options.DatabaseAddr, RoutingGraceMS: options.RoutingGraceMS, LogWarnings: options.LogWarnings,
-		CachedHostPolicy: options.CachedHostPolicy, BudgetAdmissionOff: options.BudgetAdmissionOff}
+		CachedHostPolicy: options.CachedHostPolicy, BudgetAdmissionOff: options.BudgetAdmissionOff, BudgetGraceMS: options.BudgetGraceMS}
 	encoded, err := json.Marshal(spec)
 	if err != nil {
 		t.Fatal(err)
