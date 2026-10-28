@@ -6032,6 +6032,13 @@ func (m *Manager) baseScanVerdict(baseKey, scanKey string, scan baseScanSidecar,
 			"scan sidecar incomplete",
 			fmt.Sprintf("scan sidecar at %q has no fix-available CRITICAL total; refusing to boot (issue #299)", scanKey))
 	}
+	if n >= wire.BaseScanFailedCount {
+		// imaged's placeholder for a scan that failed, not findings (#5709:
+		// customers read "9999 fix-available CRITICAL vulnerabilities").
+		return "scan_failed", api.NewProblem(http.StatusServiceUnavailable, api.CodeScanCritical,
+			"Base image scan unavailable",
+			fmt.Sprintf("Gregale could not finish the vulnerability scan of its base image %q, so Gregale will not start instances on it until the scan completes; this is a platform problem, not your code", baseKey))
+	}
 	if n > 0 {
 		// The deploy and wake errors carry this detail to the customer, who
 		// cannot rebuild a Gregale runtime base: say whose problem it is.

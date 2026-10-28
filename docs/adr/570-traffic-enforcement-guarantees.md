@@ -141,6 +141,11 @@ deployment and port; this primes deployment weights outside the timed request.
 
 ## Shared traffic accounting
 
+Amended by ADR-20261027173012: for 5 minutes after the shared counter last
+decided a request on a gateway, a store error is decided by that gateway's
+own bucket (the limit holds per gateway); past that grace the refusal below
+applies.
+
 `[ratelimit] mode = "central"` is the daemon default and requires its Postgres
 pool. `local` remains an explicit operator/development exception; unknown
 values refuse startup. Central app/account/rule consumes are atomic. Store

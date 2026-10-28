@@ -35,30 +35,6 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-// BuildDriveSizeBytes is the drive1 image size for builder VMs (M6). 28 GiB
-// gives rootless native BuildKit enough room for Railpack's builder/runtime
-// images, dependency layers, and the native local exporter; the previous
-// 24 GiB budget exhausted while copying those layers. The produced app layer
-// (in /build/out) is typically
-// < 500 MB; the rest is transient build scratch.
-const BuildDriveSizeBytes = 28 << 30
-
-// BuildDriveMinWorkingSetBytes is the conservative host working-set budget for
-// a Railpack solve. The ext4 image itself is sparse; requiring the full 28 GiB
-// image size would reject healthy hosts even though the image only materialises
-// the blocks BuildKit actually writes.
-const BuildDriveMinWorkingSetBytes = 16 << 30
-
-// BuildDriveHostReserveBytes keeps room for the host-side export directory,
-// logs, and filesystem metadata. Without this preflight, a nearly-full host
-// lets the guest run until virtio reports ENOSPC, which is misclassified as an
-// opaque infrastructure timeout.
-const BuildDriveHostReserveBytes = 4 << 30
-
-// BuildDriveMinFreeBytes is the minimum filesystem space required before a
-// builder drive is materialised.
-const BuildDriveMinFreeBytes = BuildDriveMinWorkingSetBytes + BuildDriveHostReserveBytes
-
 // mkfs utility + label used for the build drive1 image.
 const (
 	buildMkfs  = "mkfs.ext4"
@@ -182,12 +158,21 @@ func createBuildDrive1WithCacheStager(ctx context.Context, dest string, m api.Bu
 	return cacheRestored, nil
 }
 
-func checkBuildDriveCapacity(dest string) error {
+// driveFilesystemAvailable reports the free bytes an unprivileged writer can
+// use on the filesystem holding dir.
+func driveFilesystemAvailable(dir string) (uint64, error) {
 	var stat unix.Statfs_t
-	if err := unix.Statfs(filepath.Dir(dest), &stat); err != nil {
-		return fmt.Errorf("builderd: stat drive filesystem: %w", err)
+	if err := unix.Statfs(dir, &stat); err != nil {
+		return 0, fmt.Errorf("builderd: stat drive filesystem: %w", err)
 	}
-	available := uint64(stat.Bavail) * uint64(stat.Bsize)
+	return uint64(stat.Bavail) * uint64(stat.Bsize), nil
+}
+
+func checkBuildDriveCapacity(dest string) error {
+	available, err := driveFilesystemAvailable(filepath.Dir(dest))
+	if err != nil {
+		return err
+	}
 	if available < BuildDriveMinFreeBytes {
 		return fmt.Errorf("builderd: insufficient host free space for build drive: available=%d bytes, required=%d bytes", available, BuildDriveMinFreeBytes)
 	}

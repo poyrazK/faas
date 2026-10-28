@@ -154,6 +154,50 @@ func TestTrafficFleetDaemonRateAdmissionAndRecovery(t *testing.T) {
 	}
 }
 
+// TestTrafficFleetDaemonRateCounterOutageGrace: a counter outage right after
+// the counter answered keeps limits on the gateway's own bucket instead of
+// refusing every request with rate_limit_unavailable (ADR-20261027173012).
+func TestTrafficFleetDaemonRateCounterOutageGrace(t *testing.T) {
+	f := newFleetDaemonFixture(t)
+	gateway := startFleetDaemonConfigured(t, f.pool, f.apps, f.nodes[0].ID, f.nodes[0].Name, f.usage, fleetDaemonOptions{})
+	// The first request creates the counter rows the fixture balance sets.
+	fleetDaemonCall(t, gateway, f.apps[0], "/work", http.StatusOK)
+	fleetDaemonSetBalance(t, f, "app", f.apps[0].ID, 3)
+	fleetDaemonSetBalance(t, f, "account", f.app.AccountID, 100)
+	fleetDaemonCall(t, gateway, f.apps[0], "/work", http.StatusOK)
+	if _, err := f.pool.Exec(t.Context(), "ALTER TABLE pg_ratelimit_counters RENAME TO pg_ratelimit_counters_offline"); err != nil {
+		t.Fatal(err)
+	}
+	served, limited := 0, 0
+	for range 12 {
+		response, err := requestFleetDaemon(t.Context(), gateway.ready.Endpoint, f.apps[0].Host, "/work")
+		if err != nil {
+			t.Fatal(err)
+		}
+		switch response.status {
+		case http.StatusOK:
+			served++
+		case http.StatusTooManyRequests:
+			if response.headers.Get("X-Faas-Rate-Limit-Scope") != "app" {
+				t.Fatalf("local refusal scope=%q", response.headers.Get("X-Faas-Rate-Limit-Scope"))
+			}
+			limited++
+		default:
+			t.Fatalf("counter outage inside the grace answered %+v", response)
+		}
+	}
+	// The gateway's bucket starts from the counter's last answer (2 left) and
+	// refills at the app's rate, so the limit still holds during the outage.
+	if served == 0 || limited == 0 || f.vm.guestCalls("/work") != served+2 {
+		t.Fatalf("outage grace served=%d limited=%d guest=%d", served, limited, f.vm.guestCalls("/work"))
+	}
+	if _, err := f.pool.Exec(t.Context(), "ALTER TABLE pg_ratelimit_counters_offline RENAME TO pg_ratelimit_counters"); err != nil {
+		t.Fatal(err)
+	}
+	fleetDaemonSetBalance(t, f, "app", f.apps[0].ID, 0)
+	fleetDaemonCall(t, gateway, f.apps[0], "/work", http.StatusTooManyRequests)
+}
+
 func TestTrafficFleetDaemonCacheHitsChargeAppAndAccount(t *testing.T) {
 	f := newFleetDaemonFixture(t)
 	first, second := f.process(t, 0), f.process(t, 1)
