@@ -7083,6 +7083,11 @@ func runLogsExplainingMissingArchive(ctx context.Context, slug, deployment strin
 		body, err = client.StreamAppLogs(ctx, slug, deployment, follow, filter)
 	}
 	if err != nil {
+		// Ctrl-C before the stream connects is a deliberate stop, like
+		// Ctrl-C while it streams, not an unreachable API (#2691).
+		if ctx.Err() != nil {
+			return 130
+		}
 		var ae *APIError
 		if errors.As(err, &ae) {
 			renderAPIError(os.Stderr, ae)
