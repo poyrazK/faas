@@ -14208,6 +14208,12 @@ const (
 	// outbound queue, so delivering it cannot close the connection as a slow
 	// consumer on its own.
 	LiveQueryResultBytesMax = 2 << 20
+	// LiveQueryReplicationMessageMaxBytes bounds one logical replication
+	// message livequeryd reads. pgx's default allows about 1 GiB, so one
+	// customer's large value (a 200 MB bytea) was read whole into the
+	// 512 MB process serving every database; past the bound only that
+	// database's capture fails (bug hunt 2026-10-28 H57).
+	LiveQueryReplicationMessageMaxBytes = 16 << 20
 	// Starting values for the operator preview, to be set per database class
 	// from measurements before general availability.
 	LiveQuerySubscriptionsPerDatabase   = 10000
