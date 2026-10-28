@@ -85,5 +85,6 @@ app_errors_tls_ca_path = "{{ gatewayd_app_errors_tls_ca_path }}"
 [ratelimit]
 mode = "{{ gatewayd_ratelimit_mode | default('central') }}"
 # ADR-1520: spend central counters from local leases instead of one
-# Postgres consult per request. Off until an environment opts in.
-lease = {{ gatewayd_ratelimit_lease | default(false) | string | lower }}
+# Postgres consult per request. On by default in central mode (bug hunt
+# 2026-10-28 H39); local mode has no central counters to lease.
+lease = {{ ((gatewayd_ratelimit_mode | default('central')) == 'central' and (gatewayd_ratelimit_lease | default(true) | bool)) | string | lower }}

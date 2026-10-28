@@ -216,9 +216,11 @@ type TOMLRateLimitConfig struct {
 	Mode string `toml:"mode"`
 
 	// Lease makes central mode spend tokens from local leases instead of
-	// consulting Postgres for every request (ADR-1520). It requires
-	// Mode = "central" and is off by default.
-	Lease bool `toml:"lease"`
+	// consulting Postgres for every request (ADR-1520). Unset means on in
+	// central mode: off, every rate-limited request wrote to CP Postgres and
+	// a CP outage answered 503 (bug hunt 2026-10-28 H39). An explicit true
+	// requires Mode = "central".
+	Lease *bool `toml:"lease"`
 	// LeaseWindowMS is how long a lease should last at the counter's recent
 	// rate. 0 takes the default, 250.
 	LeaseWindowMS int `toml:"lease_window_ms"`
@@ -233,7 +235,7 @@ type TOMLRateLimitConfig struct {
 // leaseConfig validates the leasing tunables. They are gateway tunables,
 // not plan limits, so they live here rather than in pkg/api/limits.go.
 func (c TOMLRateLimitConfig) leaseConfig() (gateway.LeaseConfig, error) {
-	if c.Lease && c.Mode != "central" {
+	if c.Lease != nil && *c.Lease && c.Mode != "central" {
 		return gateway.LeaseConfig{}, fmt.Errorf("ratelimit.lease requires ratelimit.mode = \"central\", got %q", c.Mode)
 	}
 	if c.LeaseWindowMS < 0 || c.LeaseWindowMS > 1000 {
@@ -249,6 +251,11 @@ func (c TOMLRateLimitConfig) leaseConfig() (gateway.LeaseConfig, error) {
 		Fraction:          c.LeaseFraction,
 		AllowanceFraction: c.AllowanceFraction,
 	}, nil
+}
+
+// leaseEnabled reports whether central counters spend from leases.
+func (c TOMLRateLimitConfig) leaseEnabled() bool {
+	return c.Mode == "central" && (c.Lease == nil || *c.Lease)
 }
 
 func (c *Config) validateTrafficMode() error {
