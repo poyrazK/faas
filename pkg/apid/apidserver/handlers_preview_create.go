@@ -40,9 +40,9 @@ func (s *server) createPreview(w http.ResponseWriter, r *http.Request, acct stat
 		return
 	}
 	slug := fmt.Sprintf("pr-%d-%s", req.PRNumber, parent.Slug)
-	if !validSlug(slug) {
+	if !api.ValidPreviewAppSlug(slug) {
 		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
-			"Preview slug too long", "shorten the parent app slug so the generated preview slug is at most 40 characters"))
+			"Preview slug too long", fmt.Sprintf("the generated preview slug must be at most %d characters", api.PreviewAppSlugMaxLen)))
 		return
 	}
 	expiresAt := time.Now().UTC().Add(ttl)
@@ -202,13 +202,14 @@ func samePreview(app, parent state.App, prNumber int) bool {
 func previewAppFromParent(parent state.App, slug string, prNumber int, expiresAt time.Time) state.App {
 	// A PR preview runs unpromoted code, and production env values can hold
 	// credentials (ADR-310): keep only the platform-owned service binding URLs,
-	// as the GitHub webhook path does.
+	// as the GitHub webhook path does. A preview scales to zero: production's
+	// warm instances (MinInstances) are not copied.
 	manifest := parent.Manifest
 	manifest.Env = api.ServiceBindingEnvForTransport(nil, parent.Manifest.ServiceBindings, parent.Manifest.ServiceBindingTransport)
 	return state.App{
 		AccountID: parent.AccountID, OrgID: parent.OrgID, Slug: slug, Visibility: parent.Visibility, Type: parent.Type,
 		Runtime: parent.Runtime, RAMMB: parent.RAMMB, CPUMillicores: parent.CPUMillicores,
-		IdleTimeoutS: parent.IdleTimeoutS, MaxConcurrency: parent.MaxConcurrency, MinInstances: parent.MinInstances,
+		IdleTimeoutS: parent.IdleTimeoutS, MaxConcurrency: parent.MaxConcurrency,
 		EgressAllowlist:       append([]netip.Prefix(nil), parent.EgressAllowlist...),
 		PublicAuthIPAllowlist: append([]netip.Prefix(nil), parent.PublicAuthIPAllowlist...),
 		ProjectID:             parent.ProjectID, RootDir: parent.RootDir, WorkloadName: parent.WorkloadName,

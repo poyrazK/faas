@@ -92,6 +92,7 @@ type bridgeStubStore struct {
 	accountUnverified bool
 	deployRate        state.AccountDeployRateSnapshot
 	deployRateErr     error
+	deployRateLimit   int // the limit the last admission was checked against
 }
 
 func (s *bridgeStubStore) AppByID(_ context.Context, _ string) (state.App, error) {
@@ -115,6 +116,7 @@ func (s *bridgeStubStore) AccountByID(_ context.Context, id string) (state.Accou
 }
 
 func (s *bridgeStubStore) ConsumeAccountDeployRate(_ context.Context, _ string, limit int, now time.Time) (state.AccountDeployRateSnapshot, error) {
+	s.deployRateLimit = limit
 	if s.deployRateErr != nil {
 		return state.AccountDeployRateSnapshot{}, s.deployRateErr
 	}
@@ -936,6 +938,11 @@ func TestEnqueueBuild_AnnotationsThreaded(t *testing.T) {
 	// Kind is derived from EventKind: pull_request → preview_deploy.
 	if created.Kind != state.DeploymentKindPreview {
 		t.Errorf("dep.Kind = %q, want %q (EventKind=pull_request → preview)", created.Kind, state.DeploymentKindPreview)
+	}
+	// A PR preview build is admitted against its share of the hourly
+	// window, not the whole budget (ADR-20261028100000).
+	if want := api.PlanFree.PreviewDeploysPerHour(); store.deployRateLimit != want || want >= api.PlanFree.DeploysPerHour() {
+		t.Errorf("preview admission limit = %d, want the preview share %d", store.deployRateLimit, want)
 	}
 }
 

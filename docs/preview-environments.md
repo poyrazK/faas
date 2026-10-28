@@ -409,3 +409,9 @@ with `X-Faas-Caller-Env: preview` and
 cannot be set by a workload. See [networking](networking.md) for how to use
 them to skip side effects or refuse the call, and for the separate
 preview-to-preview and preview-to-production counters.
+
+## Builds, lifetime and indexing
+
+- **Builds.** A pull request's preview builds use at most half of the account's hourly deploy limit, so production deploys keep the other half. Builders take every other queued build before a preview build.
+- **Lifetime.** Deleting a production app tears down its PR previews on the preview janitor's next pass, within five minutes.
+- **Indexing.** Previews answer every request with `X-Robots-Tag: noindex, nofollow` and serve a `robots.txt` that disallows everything.

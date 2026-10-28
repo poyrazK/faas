@@ -13120,12 +13120,18 @@ func (s *PgStore) QueuedBuildsCount(ctx context.Context) (int, error) {
 // when the row is missing OR already in another status — that second
 // case is what lets builderd drop duplicate build_queued notifications
 // (apid write path + imaged reaper) without spawning two builder VMs.
-// Equivalent to a compare-and-swap at the row level.
+// Equivalent to a compare-and-swap at the row level. A PR preview build is
+// not claimed while another build is queued; the polling claim takes it once
+// production work is drained (ADR-20261028100000).
 func (s *PgStore) ClaimQueuedBuild(ctx context.Context, id string) (Build, error) {
 	row := s.pool.QueryRow(ctx,
 		`update builds
 		   set status = 'running', started_at = now()
 		 where id = $1 and status = 'queued' and not exists (select 1 from deployment_build_dependency_gates g where g.deployment_id=builds.deployment_id and g.check_after>now())
+		   and not (kind = 'preview' and exists (
+		     select 1 from builds o
+		      where o.status = 'queued' and o.kind <> 'preview'
+		        and not exists (select 1 from deployment_build_dependency_gates g where g.deployment_id=o.deployment_id and g.check_after>now())))
 		 returning id, deployment_id, kind, source_bytes, status,
 		           coalesce(failure_class,''), coalesce(log_path,''),
 		           started_at, finished_at, enqueued_at,
@@ -13157,6 +13163,10 @@ func (s *PgStore) ClaimQueuedBuildWithNodeAffinity(ctx context.Context, id, node
 		  from deployments d
 		 where b.id = $1
 		   and b.status = 'queued' and not exists (select 1 from deployment_build_dependency_gates g where g.deployment_id=b.deployment_id and g.check_after>now())
+		   and not (b.kind = 'preview' and exists (
+		     select 1 from builds o
+		      where o.status = 'queued' and o.kind <> 'preview'
+		        and not exists (select 1 from deployment_build_dependency_gates g where g.deployment_id=o.deployment_id and g.check_after>now())))
 		   and d.id = b.deployment_id
 		   and (
 		     b.enqueued_at <= now() - $3::interval
@@ -13205,7 +13215,7 @@ func (s *PgStore) ClaimNextQueuedBuild(ctx context.Context) (Build, error) {
 		 where id = (
 		   select id from builds
 		    where status = 'queued' and not exists (select 1 from deployment_build_dependency_gates g where g.deployment_id=builds.deployment_id and g.check_after>now())
-		    order by enqueued_at asc
+		    order by (kind = 'preview'), enqueued_at asc
 		    limit 1
 		    for update skip locked
 		 )
@@ -13224,7 +13234,8 @@ func (s *PgStore) ClaimNextQueuedBuild(ctx context.Context) (Build, error) {
 	return b, nil
 }
 
-// ClaimNextQueuedBuildWithFairness prefers accounts without a recent claim,
+// ClaimNextQueuedBuildWithFairness claims every other build before a PR
+// preview build (ADR-20261028100000), prefers accounts without a recent claim,
 // then falls back to FIFO. Lock the build row itself before returning it so
 // polling workers and direct notification claims cannot execute one build
 // twice. Ranking rather than filtering also lets a worker skip a locked quiet
@@ -13238,7 +13249,7 @@ func (s *PgStore) ClaimNextQueuedBuildWithFairness(ctx context.Context, fairness
         join deployments d on d.id = b.deployment_id
         join apps a on a.id = d.app_id
        where b.status = 'queued' and not exists (select 1 from deployment_build_dependency_gates g where g.deployment_id=b.deployment_id and g.check_after>now())
-       order by exists (
+       order by (b.kind = 'preview'), exists (
          select 1 from recent_build_claims r
           where r.account_id = a.account_id
             and r.claimed_at > now() - $1::interval
@@ -13296,7 +13307,7 @@ func (s *PgStore) ClaimNextQueuedBuildWithNodeAffinity(ctx context.Context, node
 		           limit 1
 		        ), $1) = $1
 		      )
-		    order by exists (
+		    order by (b.kind = 'preview'), exists (
 		      select 1 from recent_build_claims r
 		       where $3::interval > interval '0 milliseconds'
 		         and r.account_id = a.account_id
