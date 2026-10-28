@@ -119,7 +119,7 @@ func TestJoinBootstrapContractHashTracksBootstrapSources(t *testing.T) {
 		}
 	}
 
-	before, err := joinBootstrapContractHash(ansibleDir)
+	before, err := joinBootstrapContractHash(ansibleDir, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -129,7 +129,7 @@ func TestJoinBootstrapContractHashTracksBootstrapSources(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(ansibleDir, "roles/compute/tasks/main.yml"), []byte("---\n- debug: msg=changed\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	after, err := joinBootstrapContractHash(ansibleDir)
+	after, err := joinBootstrapContractHash(ansibleDir, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -139,7 +139,7 @@ func TestJoinBootstrapContractHashTracksBootstrapSources(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(ansibleDir, "roles/control/tasks/main.yml"), []byte("---\n- debug: msg=control-only\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	controlOnly, err := joinBootstrapContractHash(ansibleDir)
+	controlOnly, err := joinBootstrapContractHash(ansibleDir, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -158,18 +158,50 @@ func TestJoinBootstrapContractHashTracksBootstrapSources(t *testing.T) {
 		{path: "group_vars/compute_nodes/log_archive.yml", changes: true},
 		{path: "group_vars/control_plane/off_host_backup.yml", changes: false},
 	} {
-		prior, err := joinBootstrapContractHash(ansibleDir)
+		prior, err := joinBootstrapContractHash(ansibleDir, "")
 		if err != nil {
 			t.Fatal(err)
 		}
 		writeContractTree(t, ansibleDir, map[string]string{tt.path: "# " + tt.path + "\n"})
-		next, err := joinBootstrapContractHash(ansibleDir)
+		next, err := joinBootstrapContractHash(ansibleDir, "")
 		if err != nil {
 			t.Fatal(err)
 		}
 		if changed := next != prior; changed != tt.changes {
 			t.Fatalf("adding %s changed the compute contract=%v, want %v", tt.path, changed, tt.changes)
 		}
+	}
+	// The operator vars are an input: a variable-only change must reconverge
+	// compute nodes, and running without a vars file must match the
+	// vars-free hash so existing nodes are not forced through a reconvergence.
+	withoutVars, err := joinBootstrapContractHash(ansibleDir, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	varsPath := filepath.Join(t.TempDir(), "ansible-vars.yml")
+	writeVars := func(body string) string {
+		t.Helper()
+		if err := os.WriteFile(varsPath, []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		got, err := joinBootstrapContractHash(ansibleDir, varsPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return got
+	}
+	first := writeVars("faas_builder_slots: 1\n")
+	if first == withoutVars {
+		t.Fatal("operator vars did not contribute to the compute contract")
+	}
+	if again := writeVars("faas_builder_slots: 1\n"); again != first {
+		t.Fatalf("identical operator vars changed the compute contract: %s != %s", again, first)
+	}
+	if changed := writeVars("faas_builder_slots: 2\n"); changed == first {
+		t.Fatal("a variable-only change did not change the compute contract")
+	}
+	if _, err := joinBootstrapContractHash(ansibleDir, filepath.Join(t.TempDir(), "missing.yml")); err == nil {
+		t.Fatal("an unreadable vars file must fail rather than silently skip")
 	}
 }
 
