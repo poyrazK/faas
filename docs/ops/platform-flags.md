@@ -120,7 +120,8 @@ flags in the table below release their capability; every other capability in
     customer events wait a minute at a time. Server-side events (object
     storage, inbound webhooks, commit relay) are still accepted and wait;
     deliveries already admitted finish. Nothing accepted is lost: turning it
-    back on resumes routing.
+    back on resumes routing. Runbook:
+    [FaasEventDriven](../runbooks/FaasEventDriven.md).
   - githubd ignores pushes (`github_deploys`) and pull-request previews
     (`pr_previews`) and does not replay them later; closing a pull request
     still tears its preview down.
