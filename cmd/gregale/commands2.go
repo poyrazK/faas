@@ -6850,6 +6850,9 @@ func cmdLogsWithPreviewContext(args []string, viewPreview *logQueryPreviewView) 
 		PrintUsage(os.Stderr, "--status, --route, --request, --trace, --limit, and --all require --source http", "logs")
 		return 2
 	}
+	if logSource == logsSourceHTTP && !*dryRun && capabilityHiddenForRun(httpLogsCapability, false) {
+		return printHTTPLogsUnavailable()
+	}
 	if logsFlagWasSet(fs, "status") && (*status < 100 || *status > 599) {
 		PrintUsage(os.Stderr, "--status must be between 100 and 599", "logs")
 		return 2
