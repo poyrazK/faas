@@ -344,7 +344,7 @@ func (d *VMMDriver) Spawn(ctx context.Context, req VMRequest) (BuildHandle, erro
 		Build: &vmmdpb.BuildSpec{
 			ExportDir:  buildExportDir,
 			TimeoutSec: int32(timeoutSec),
-			// ADR-20261026090000: vmmd opens these into the builder's
+			// ADR-20261026091500: vmmd opens these into the builder's
 			// Docker config for its base-image pulls. A build that has
 			// them never uses a warm builder.
 			RegistryCredentials: registryCredentialsToProto(req.RegistryCredentials),

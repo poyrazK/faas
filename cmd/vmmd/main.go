@@ -715,7 +715,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if err != nil {
 		return fmt.Errorf("vmmd: load runtime seal domain: %w", err)
 	}
-	// ADR-20261026090000: builder VMs pull private base images with the
+	// ADR-20261026091500: builder VMs pull private base images with the
 	// built app's registry credentials, which the build domain opens.
 	buildIdentities, err := loadBuildSealDomain(filepath.Dir(keyPath))
 	if err != nil {

@@ -1120,7 +1120,7 @@ type Manager struct {
 	// plaintext. vmmd owns the on-disk files.
 	hostIdentities []*age.X25519Identity
 	// registryIdentities open the registry passwords a builder VM pulls its
-	// base images with (ADR-20261026090000): the build seal domain, then
+	// base images with (ADR-20261026091500): the build seal domain, then
 	// the fleet and host identities. nil leaves builders anonymous.
 	registryIdentities []*age.X25519Identity
 	// requireSecretBinding refuses runtime envelopes that carry no account
@@ -3497,7 +3497,7 @@ func (m *Manager) prepareWakeFiles(req WakeRequest) (secretsJSON, apiJSON []byte
 			return nil, nil, err
 		}
 	}
-	// ADR-20261026090000: a builder's Docker config rides in its
+	// ADR-20261026091500: a builder's Docker config rides in its
 	// secrets.env, written after the build's own secrets.
 	if req.ExportDir != "" {
 		if config, ok := m.buildRegistryAuth(req.BuildRegistryCredentials); ok {
@@ -3782,7 +3782,7 @@ type WakeRequest struct {
 	// vmmd uses it to retain the corresponding export/teardown headroom.
 	BuildTimeoutSec int
 	// BuildRegistryCredentials are the sealed registry credentials of the
-	// app a builder VM builds (ADR-20261026090000). prepareWakeFiles opens
+	// app a builder VM builds (ADR-20261026091500). prepareWakeFiles opens
 	// them into the builder's secrets.env as a Docker config. Ignored for
 	// every VM that is not a builder.
 	BuildRegistryCredentials []BuildRegistryCredential
