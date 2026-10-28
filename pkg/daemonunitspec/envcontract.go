@@ -578,6 +578,7 @@ var EnvContract = []EnvVar{
 	{Name: "FAAS_LOG_ARCHIVE_INTERVAL", Owners: []string{"shared"}, Source: EnvSourceDefault},
 	{Name: "FAAS_LOG_ARCHIVE_KEY_ID", Owners: []string{"shared"}, Source: EnvSourceDefault},
 	{Name: "FAAS_LOG_ARCHIVE_LOCAL_BYTES_MAX", Owners: []string{"shared"}, Source: EnvSourceDefault},
+	{Name: "FAAS_LOG_ARCHIVE_PART_OBJECTS", Owners: []string{"shared"}, Source: EnvSourceDefault, Note: "1 makes apid's and vmmd's archive shippers upload one part object per flush instead of re-uploading the whole day (ADR-20261028110000); set only once every gatewayd-internal reads parts"},
 	{Name: "FAAS_LOG_ARCHIVE_REGION", Owners: []string{"shared"}, Source: EnvSourceDefault},
 	{Name: "FAAS_LOG_ARCHIVE_RETENTION_DAYS", Owners: []string{"shared"}, Source: EnvSourceDefault},
 	{Name: "FAAS_LOG_ARCHIVE_SECRET", Owners: []string{"shared"}, Source: EnvSourceDefault},
@@ -1013,7 +1014,7 @@ var EnvContract = []EnvVar{
 	{Name: "FAAS_WORKLOAD_IDENTITY_ISSUER", Owners: []string{"vmmd"}, Source: EnvSourceDefault, Note: "optional vmmd workload-identity issuer override; config TOML is the primary deployment setting"},
 	{Name: "FAAS_WORKLOAD_IDENTITY_KEY_ID", Owners: []string{"vmmd"}, Source: EnvSourceDropin, Note: "ADR-1141 cluster workload-identity key ID; vmmd_service 99-faas-workload-identity.conf renders it from the key's .kid file"},
 	{Name: "FAAS_WORKLOAD_IDENTITY_KEY_PATH", Owners: []string{"vmmd"}, Source: EnvSourceDropin, Note: "ADR-1141 cluster workload-identity signing key; vmmd_service 99-faas-workload-identity.conf sets it when the key is installed, and an empty path leaves issuance disabled"},
-	{Name: "FAAS_WORKLOAD_IDENTITY_TTL_SECONDS", Owners: []string{"vmmd"}, Source: EnvSourceDefault, Note: "optional vmmd workload-identity token lifetime override (30..3600 seconds)"},
+	{Name: "FAAS_WORKLOAD_IDENTITY_TTL_SECONDS", Owners: []string{"vmmd"}, Source: EnvSourceDefault, Note: "optional vmmd workload-identity token lifetime override (30..3600 seconds; tokens are capped at 300)"},
 	{Name: "FAAS_WORKLOAD_ISSUER", Owners: []string{"apid"}, Source: EnvSourceDefault, Validate: EnvValidationURL, Note: "ADR-1141 optional override for the cluster workload issuer apid trusts; defaults to the vmmd default issuer"},
 	{Name: "FAAS_WORKLOAD_JWKS_PATH", Owners: []string{"apid"}, Source: EnvSourceDropin, Validate: EnvValidationPathExists, Note: "ADR-1141 cluster workload-identity public JWKS for queue leases, and the fallback for Flags and Operations trust; control_plane_service 99-faas-workload-trust.conf"},
 }

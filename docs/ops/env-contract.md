@@ -499,6 +499,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_LOG_ARCHIVE_INTERVAL` | shared | `default` |  |  | `` |  |
 | `FAAS_LOG_ARCHIVE_KEY_ID` | shared | `default` |  |  | `` |  |
 | `FAAS_LOG_ARCHIVE_LOCAL_BYTES_MAX` | shared | `default` |  |  | `` |  |
+| `FAAS_LOG_ARCHIVE_PART_OBJECTS` | shared | `default` |  |  | `` | 1 makes apid's and vmmd's archive shippers upload one part object per flush instead of re-uploading the whole day (ADR-20261028110000); set only once every gatewayd-internal reads parts |
 | `FAAS_LOG_ARCHIVE_REGION` | shared | `default` |  |  | `` |  |
 | `FAAS_LOG_ARCHIVE_RETENTION_DAYS` | shared | `default` |  |  | `` |  |
 | `FAAS_LOG_ARCHIVE_SECRET` | shared | `default` |  |  | `` |  |
@@ -929,6 +930,6 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_WORKLOAD_IDENTITY_ISSUER` | vmmd | `default` |  |  | `` | optional vmmd workload-identity issuer override; config TOML is the primary deployment setting |
 | `FAAS_WORKLOAD_IDENTITY_KEY_ID` | vmmd | `dropin` |  |  | `` | ADR-1141 cluster workload-identity key ID; vmmd_service 99-faas-workload-identity.conf renders it from the key's .kid file |
 | `FAAS_WORKLOAD_IDENTITY_KEY_PATH` | vmmd | `dropin` |  |  | `` | ADR-1141 cluster workload-identity signing key; vmmd_service 99-faas-workload-identity.conf sets it when the key is installed, and an empty path leaves issuance disabled |
-| `FAAS_WORKLOAD_IDENTITY_TTL_SECONDS` | vmmd | `default` |  |  | `` | optional vmmd workload-identity token lifetime override (30..3600 seconds) |
+| `FAAS_WORKLOAD_IDENTITY_TTL_SECONDS` | vmmd | `default` |  |  | `` | optional vmmd workload-identity token lifetime override (30..3600 seconds; tokens are capped at 300) |
 | `FAAS_WORKLOAD_ISSUER` | apid | `default` |  |  | `url` | ADR-1141 optional override for the cluster workload issuer apid trusts; defaults to the vmmd default issuer |
 | `FAAS_WORKLOAD_JWKS_PATH` | apid | `dropin` |  |  | `path-exists` | ADR-1141 cluster workload-identity public JWKS for queue leases, and the fallback for Flags and Operations trust; control_plane_service 99-faas-workload-trust.conf |
