@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -223,7 +224,7 @@ func (j *nativeGitOpsJourney) waitStatus(t *testing.T, phase string, timeout tim
 			// A deadline that cancels this call must still report the last
 			// status that was actually read, not an empty response.
 			if ctx.Err() != nil {
-				t.Fatalf("%s timed out: source=%+v evidence=%+v", phase, last.Source, last.WorkloadEvidence)
+				t.Fatalf("%s timed out: source=%+v evidence=%+v%s", phase, last.Source, last.WorkloadEvidence, j.timeoutDiagnostics(t, last))
 			}
 			t.Fatalf("%s status: %v", phase, err)
 		}
@@ -233,10 +234,61 @@ func (j *nativeGitOpsJourney) waitStatus(t *testing.T, phase string, timeout tim
 		}
 		select {
 		case <-ctx.Done():
-			t.Fatalf("%s timed out: source=%+v evidence=%+v", phase, last.Source, last.WorkloadEvidence)
+			t.Fatalf("%s timed out: source=%+v evidence=%+v%s", phase, last.Source, last.WorkloadEvidence, j.timeoutDiagnostics(t, last))
 		case <-ticker.C:
 		}
 	}
+}
+
+// timeoutDiagnostics reports what the status response leaves out: the latest
+// GitOps runs, and the graph, qualification, release and deployment rows
+// behind them. The per-test schema is dropped at cleanup, so this is the only
+// record. Query failures are reported, not fatal.
+func (j *nativeGitOpsJourney) timeoutDiagnostics(t *testing.T, last api.EnvironmentGitOpsStatusResponse) string {
+	t.Helper()
+	var b strings.Builder
+	runs := slices.Clone(last.Runs)
+	slices.SortFunc(runs, func(x, y api.EnvironmentGitOpsRun) int { return y.StartedAt.Compare(x.StartedAt) })
+	for _, run := range runs[:min(len(runs), 6)] {
+		fmt.Fprintf(&b, "\n  run gen=%d status=%s code=%q started=%s", run.Generation, run.Status, run.ErrorCode, run.StartedAt.Format(time.RFC3339))
+	}
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(t.Context()), 10*time.Second)
+	defer cancel()
+	queries := []struct {
+		name, sql string
+		args      []any
+	}{
+		{"graph", `SELECT id::text, generation::text, phase, error_code, coalesce(prepared_at::text, '')
+			FROM environment_workload_graphs WHERE source_id=$1 ORDER BY created_at`, []any{j.source.ID}},
+		{"qualification", `SELECT q.resource, q.phase, q.attempt::text, coalesce(q.lease_until::text, ''), q.worker_id
+			FROM environment_workload_qualification_requests q JOIN environment_workload_graphs g ON g.id=q.graph_id
+			WHERE g.source_id=$1 ORDER BY q.resource`, []any{j.source.ID}},
+		{"release", `SELECT r.id::text, r.active::text, r.created_at::text, m.app_id::text, m.deployment_id::text
+			FROM project_release_sets r JOIN project_release_members m ON m.release_id=r.id
+			WHERE r.project_id=$1 AND r.environment_slug='production' ORDER BY r.created_at`, []any{j.project.ID}},
+		{"deployment", `SELECT id::text, app_id::text, status, created_at::text, ''
+			FROM deployments WHERE app_id = ANY($1::uuid[]) ORDER BY created_at`, []any{[]string{j.app.ID, j.worker.ID}}},
+	}
+	for _, q := range queries {
+		rows, err := j.h.Pool.Query(ctx, q.sql, q.args...)
+		if err != nil {
+			fmt.Fprintf(&b, "\n  %s: %v", q.name, err)
+			continue
+		}
+		for rows.Next() {
+			var c [5]string
+			if err := rows.Scan(&c[0], &c[1], &c[2], &c[3], &c[4]); err != nil {
+				fmt.Fprintf(&b, "\n  %s: %v", q.name, err)
+				break
+			}
+			fmt.Fprintf(&b, "\n  %s %s", q.name, strings.Join(c[:], " "))
+		}
+		if err := rows.Err(); err != nil {
+			fmt.Fprintf(&b, "\n  %s: %v", q.name, err)
+		}
+		rows.Close()
+	}
+	return b.String()
 }
 
 func (j *nativeGitOpsJourney) waitActivated(t *testing.T, revision string, generation int64) api.EnvironmentGitOpsStatusResponse {
