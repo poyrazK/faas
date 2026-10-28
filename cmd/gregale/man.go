@@ -53,9 +53,10 @@ func cmdMan(args []string) int {
 	// `--markdown` renders the customer command surface as one Markdown
 	// document for the public site. Operator and compatibility commands remain
 	// available through explicit man pages and `help --all`. The reference
-	// documents every released command, whatever this account can see.
+	// documents every released command, whatever this account can see, in
+	// the command tree's names (ADR-20261026145832 step 5).
 	if len(args) == 1 && args[0] == "--markdown" {
-		renderMarkdownReference(osStdout, customerAudience(visibleCliCommands()))
+		renderMarkdownReference(osStdout, cliTreeManifest(visibleCliCommands()))
 		return 0
 	}
 	switch len(args) {

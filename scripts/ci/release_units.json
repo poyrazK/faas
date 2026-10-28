@@ -69,6 +69,7 @@
     "mail-metrics": {"lane": "tool"},
     "mail-feedback": {"lane": "tool"},
     "gregale": {"lane": "tool"},
+    "mcp-bridged": {"lane": "control-plane", "services": [{"name": "mcp-bridge", "optional": true}]},
     "gregalectl": {"lane": "tool"}
   },
   "gates": {
@@ -106,6 +107,7 @@
       "deploy/ansible/roles/control_plane_service/files/faas-apid.service",
       "deploy/ansible/roles/control_plane_service/files/faas-apid.socket",
       "deploy/ansible/roles/control_plane_service/files/faas-cp.slice",
+      "deploy/ansible/roles/control_plane_service/files/faas-mcp-bridge.service",
       "deploy/ansible/roles/control_plane_service/files/faas-meterd.service",
       "deploy/ansible/roles/control_plane_service/files/faas-outboundd.service",
       "deploy/ansible/roles/control_plane_service/files/faas-schedd.service",

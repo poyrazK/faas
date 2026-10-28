@@ -539,6 +539,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_MANAGED_POSTGRES_REQUIRE_GUEST_QUALIFICATION` | shared | `default` |  |  | `` | optional staging-canary requirement for combined provider/durable and native guest evidence; unset defaults false, malformed or partial policy fails closed, and production admission remains disabled (ADR-992) |
 | `FAAS_MANAGED_POSTGRES_RUNTIME_MANIFEST_PATH` | shared | `default` |  |  | `` | optional independently approved PostgreSQL qualification-bundle manifest path; supplying this path requires combined staging qualification and the native guest report; reload requires an apid restart (ADR-992) |
 | `FAAS_MANIFEST_PATH` | imaged | `dropin` |  |  | `` |  |
+| `FAAS_MCP_BRIDGE_LOOPBACK` | gatewayd-public | `dropin` |  |  | `` | ADR-20261026195952; absolute URL of the hosted management MCP bridge on the control-plane host. Unset leaves /mcp on the api. host to the compute data plane |
 | `FAAS_METADATA_ENV_ENDPOINT` | guest, shared | `guest` |  | http://169.254.169.254/v1/metadata/env | `` | guest-init stamps the platform metadata endpoint; opt-in SDK helpers may override it for tests |
 | `FAAS_METERD_ROLE` | meterd, shared | `dropin` |  |  | `` |  |
 | `FAAS_MFA_RECOVERY_HMAC_KEY` | apid | `secrets-env` |  |  | `` | delivered by /etc/faas/sealed.env (apid, operator-provisioned via `gregalectl secrets init`) |

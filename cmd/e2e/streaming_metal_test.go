@@ -35,6 +35,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"os"
 	"strconv"
 	"strings"
 	"testing"
@@ -243,19 +244,18 @@ func TestE2E_Streaming_Metal_TxBytesAccuracy(t *testing.T) {
 
 // TestE2E_Streaming_Metal_PlanMatrix covers AC #3: the per-plan
 // streaming cap matrix from spec §4.1. Free is locked to the legacy
-// 25 MB / 300 s buffered path and rejects streamed requests with
-// 413 streaming_not_available; Hobby+ unlocks the 100 MB / 900 s
+// 25 MB / 300 s buffered path; Hobby+ unlocks the 100 MB / 900 s
 // streaming path. The test deploys one app per plan and asserts:
 //
-//   - Free:    GET /payload?bytes=1048576 → 413 streaming_not_available
+//   - Free:    GET /payload?bytes=1048576 → 200 (buffered)
 //   - Hobby:   GET /payload?bytes=1048576 → 200
 //   - Pro:     GET /payload?bytes=1048576 → 200
 //   - Scale:   GET /payload?bytes=1048576 → 200
 //
-// The test uses a 1 MB payload — fits inside the buffered 25 MB
-// cap on Free so the platform returns 413 streaming_not_available
-// cleanly (the apid-side gate), not an upstream-side truncation.
-// The Hobby+ plans stream the full 1 MB.
+// The test uses a 1 MB payload. Free does not stream, but since issue
+// #995 / ADR-121 its responses are buffered up to the 25 MB
+// MaxResponseBodyBytesDefault and only a larger one gets 413, so the
+// 1 MB response arrives whole. The Hobby+ plans stream the full 1 MB.
 func TestE2E_Streaming_Metal_PlanMatrix(t *testing.T) {
 	if !metalAvailable(t) {
 		return
@@ -285,16 +285,22 @@ func TestE2E_Streaming_Metal_PlanMatrix(t *testing.T) {
 	e2etest.OverrideBuilderBase(t, builderBaseRef)
 	e2etest.OverrideDeployBase(t, registry.Host()+"/onebox-faas/deploy-base:latest")
 
-	h := e2etest.Start(t, pool, e2etest.DeployWake|e2etest.Builderd, []string{
-		"FAAS_GATEWAY_STREAMING=true",
-	}...)
+	// A Node source app fits Free's 256 MB layer cap only on the shared
+	// runner base (ADR-1500), which nodes enable with
+	// FAAS_SOURCE_APP_SHARED_RUNTIME; FAAS_E2E_SHARED_RUNTIME=1 runs it.
+	sharedRuntime := os.Getenv("FAAS_E2E_SHARED_RUNTIME") == "1"
+	harnessEnv := []string{"FAAS_GATEWAY_STREAMING=true"}
+	if sharedRuntime {
+		harnessEnv = append(harnessEnv, "FAAS_SOURCE_APP_SHARED_RUNTIME=1")
+	}
+	h := e2etest.Start(t, pool, e2etest.DeployWake|e2etest.Builderd, harnessEnv...)
 	defer h.DumpLogs(t)
 
 	plans := []struct {
 		plan       api.Plan
 		wantStatus int
 	}{
-		{api.PlanFree, http.StatusRequestEntityTooLarge}, // 413 streaming_not_available
+		{api.PlanFree, http.StatusOK}, // buffered under the 25 MB cap
 		{api.PlanHobby, http.StatusOK},
 		{api.PlanPro, http.StatusOK},
 		{api.PlanScale, http.StatusOK},
@@ -303,6 +309,9 @@ func TestE2E_Streaming_Metal_PlanMatrix(t *testing.T) {
 	for _, tc := range plans {
 		tc := tc
 		t.Run(string(tc.plan), func(t *testing.T) {
+			if tc.plan == api.PlanFree && !sharedRuntime {
+				t.Skip("a Node source app exceeds Free's 256 MB layer cap without the shared runtime (ADR-1500); set FAAS_E2E_SHARED_RUNTIME=1")
+			}
 			key := h.SeedAccount(context.Background(), tc.plan)
 			slug := "stream-matrix-" + string(tc.plan) + "-" + randHexSuffix()
 			// Issue #695 / ADR-080: Hobby/Pro/Scale now default to
@@ -345,14 +354,6 @@ func TestE2E_Streaming_Metal_PlanMatrix(t *testing.T) {
 			body, httpStatus := doGetWithHostTruncated(t, client, target, slug+".apps.test.example", 30*time.Second, 1024)
 			if httpStatus != tc.wantStatus {
 				t.Errorf("plan=%s: status=%d, want %d body=%q", tc.plan, httpStatus, tc.wantStatus, string(body))
-			}
-			if tc.plan == api.PlanFree {
-				// Free path returns the structured problem; assert
-				// the code is the streaming-not-available gate.
-				if !strings.Contains(string(body), "streaming_not_available") &&
-					!strings.Contains(string(body), "plan_streaming_not_allowed") {
-					t.Errorf("Free response missing plan-streaming code; body=%s", string(body))
-				}
 			}
 		})
 	}

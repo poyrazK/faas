@@ -210,6 +210,10 @@ func cmdTriggersGet(args []string) int {
 }
 
 func cmdTriggersCreate(args []string) int {
+	lock, args, lockErr := takeLockFlags(args)
+	if lockErr != nil {
+		return printErr("Invalid lock", lockErr)
+	}
 	flags, pos := splitArgsForFlags(args, "disabled", "enabled")
 	usage := "usage: gregale triggers create --app <slug> --kind <" + triggerBrokerKindsUsage + "> [flags]"
 	fs := triggerFlagSet("triggers-create", usage)
@@ -294,10 +298,25 @@ func cmdTriggersCreate(args []string) int {
 	if err != nil {
 		return printErr("Could not create trigger", err)
 	}
+	var binding *api.ExclusiveTriggerBindingRecord
+	if lock != nil {
+		if binding, err = bindExclusiveLock(ctx, client, "broker", trigger.ID, lock); err != nil {
+			return printErr("Could not lock trigger", err)
+		}
+	}
 	if jsonOutput {
+		if binding != nil {
+			return jsonOut(writeJSON(struct {
+				api.Trigger
+				Lock *api.ExclusiveTriggerBindingRecord `json:"lock"`
+			}{trigger, binding}))
+		}
 		return jsonOut(writeJSON(trigger))
 	}
 	PrintOK(osStdout, "Created trigger %s", trigger.ID)
+	if binding != nil {
+		_, _ = fmt.Fprintf(osStdout, "Runs one at a time per key under lock %s.\n", binding.Policy)
+	}
 	return 0
 }
 

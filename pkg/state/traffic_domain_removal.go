@@ -86,15 +86,19 @@ func (s *PgStore) beginTrafficDomainPublication(ctx context.Context, domain, app
 }
 
 func (s *PgStore) beginTrafficDomainBinding(ctx context.Context, domain string, account, app pgtype.UUID, requireClaim bool) (*trafficDomainBindingTx, error) {
+	start := time.Now()
 	for {
+		attempt := time.Now()
 		guarded, retry, err := s.tryBeginTrafficDomainBinding(ctx, domain, account, app, requireClaim)
 		if err != nil || !retry {
+			observeTrafficPolicyPhase(TrafficPolicyWriterDomainBinding, TrafficPolicyPhaseLockWait, attempt.Sub(start))
 			return guarded, err
 		}
 		timer := time.NewTimer(api.TrafficPolicyMutationLockRetry)
 		select {
 		case <-ctx.Done():
 			timer.Stop()
+			observeTrafficPolicyPhase(TrafficPolicyWriterDomainBinding, TrafficPolicyPhaseLockWait, time.Since(start))
 			return nil, ctx.Err()
 		case <-timer.C:
 		}
@@ -103,6 +107,7 @@ func (s *PgStore) beginTrafficDomainBinding(ctx context.Context, domain string, 
 
 func (s *PgStore) tryBeginTrafficDomainBinding(ctx context.Context, domain string, originalAccount, originalApp pgtype.UUID, requireClaim bool) (*trafficDomainBindingTx, bool, error) {
 	var accounts []string
+	discover := time.Now()
 	err := boundedTrafficPolicyAnalysis(ctx, func(bounded context.Context) error {
 		claims, err := readTrafficBindingClaims(bounded, s.pool, s.trafficAppsSuffix)
 		if err != nil {
@@ -111,6 +116,7 @@ func (s *PgStore) tryBeginTrafficDomainBinding(ctx context.Context, domain strin
 		accounts, err = trafficDomainBindingOwners(bounded, s.pool, claims.Domains, claims.Tenants, domain, originalAccount.String())
 		return err
 	})
+	observeTrafficPolicyPhase(TrafficPolicyWriterDomainBinding, TrafficPolicyPhaseDiscover, time.Since(discover))
 	if err != nil {
 		return nil, false, err
 	}
@@ -129,6 +135,7 @@ func (s *PgStore) tryBeginTrafficDomainBinding(ctx context.Context, domain strin
 	}
 	guarded := &trafficDomainBindingTx{Tx: tx, accounts: accounts, appsSuffix: s.trafficAppsSuffix, appID: originalApp, release: release}
 	retry := false
+	before := time.Now()
 	err = boundedTrafficPolicyAnalysis(ctx, func(bounded context.Context) error {
 		for _, account := range accounts {
 			if _, err := sqlc.New().LockTrafficPolicyAccount(bounded, tx, uuidToPgtype(account)); err != nil {
@@ -177,6 +184,7 @@ func (s *PgStore) tryBeginTrafficDomainBinding(ctx context.Context, domain strin
 		guarded.globalBefore, err = readTrafficHostAnalysis(bounded, tx, pgtype.UUID{}, s.trafficAppsSuffix)
 		return err
 	})
+	observeTrafficPolicyPhase(TrafficPolicyWriterDomainBinding, TrafficPolicyPhaseBefore, time.Since(before))
 	if err != nil {
 		_ = guarded.Rollback(context.WithoutCancel(ctx))
 		return nil, false, err
@@ -185,6 +193,17 @@ func (s *PgStore) tryBeginTrafficDomainBinding(ctx context.Context, domain strin
 }
 
 func (tx *trafficDomainBindingTx) Commit(ctx context.Context) error {
+	if err := tx.validate(ctx); err != nil {
+		return err
+	}
+	defer tx.release(ctx)
+	return tx.Tx.Commit(ctx)
+}
+
+func (tx *trafficDomainBindingTx) validate(ctx context.Context) error {
+	defer func(start time.Time) {
+		observeTrafficPolicyPhase(TrafficPolicyWriterDomainBinding, TrafficPolicyPhaseValidate, time.Since(start))
+	}(time.Now())
 	var claims trafficBindingClaims
 	var globalAfter trafficHostAnalysis
 	if err := boundedTrafficPolicyAnalysis(ctx, func(bounded context.Context) error {
@@ -204,7 +223,7 @@ func (tx *trafficDomainBindingTx) Commit(ctx context.Context) error {
 	})); err != nil {
 		return err
 	}
-	if err := boundedTrafficPolicyAnalysis(ctx, func(bounded context.Context) error {
+	return boundedTrafficPolicyAnalysis(ctx, func(bounded context.Context) error {
 		for _, account := range tx.accounts {
 			view, err := readTrafficHostAnalysis(bounded, tx.Tx, uuidToPgtype(account), tx.appsSuffix)
 			if err != nil {
@@ -215,11 +234,7 @@ func (tx *trafficDomainBindingTx) Commit(ctx context.Context) error {
 			}
 		}
 		return nil
-	}); err != nil {
-		return err
-	}
-	defer tx.release(ctx)
-	return tx.Tx.Commit(ctx)
+	})
 }
 
 func (s *PgStore) acquireTrafficDomainBindingSession(ctx context.Context, keys []string) (conn *pgxpool.Conn, release func(context.Context), busy bool, err error) {

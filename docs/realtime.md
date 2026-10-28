@@ -363,5 +363,5 @@ triggers:
     config: {endpoint_id: 6f1c2a4e-1d9b-4c7a-9a39-0b8d6f0f4c11, channel: orders, group: billing}
 ```
 
-`gregale triggers add --delivery batch` and `PATCH /v1/triggers/{id}` with
+`gregale trigger add --delivery batch` and `PATCH /v1/triggers/{id}` with
 `{"delivery": "batch"}` set it outside a manifest.
