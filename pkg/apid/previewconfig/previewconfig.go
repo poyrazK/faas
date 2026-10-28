@@ -44,6 +44,10 @@ func SyncFromParent(ctx context.Context, store Store, preview state.App) (Result
 		return Result{}, nil
 	}
 	parent, err := store.AppBySlug(ctx, preview.PreviewOfSlug)
+	if errors.Is(err, state.ErrNotFound) {
+		// A preview whose production app is gone has no pr-preview values.
+		return Result{}, nil
+	}
 	if err != nil {
 		return Result{}, fmt.Errorf("previewconfig: load production app %s: %w", preview.PreviewOfSlug, err)
 	}

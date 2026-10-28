@@ -120,6 +120,11 @@ func TestSyncRefusesAppsThatAreNotItsPreview(t *testing.T) {
 	if result, err := previewconfig.SyncFromParent(t.Context(), f.store, f.parent); err != nil || result.Changed() {
 		t.Fatalf("sync of a production app = %+v, %v; want a no-op", result, err)
 	}
+	orphan := f.preview
+	orphan.PreviewOfSlug = "deleted-app"
+	if result, err := previewconfig.SyncFromParent(t.Context(), f.store, orphan); err != nil || result.Changed() {
+		t.Fatalf("sync of a preview whose production app is gone = %+v, %v; want a no-op, not a failed build", result, err)
+	}
 }
 
 // reservedEnvironmentStore reports a project environment named pr-preview,
