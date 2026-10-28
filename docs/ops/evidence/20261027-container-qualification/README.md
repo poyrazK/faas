@@ -24,8 +24,16 @@ Each image is pulled from Docker Hub through `mirror.gcr.io` (ADR-20261025114554
 | `python:3.12-alpine` (probe) | 6m1s | 84 ms | POSIX shared memory (32 MB) and a pty open. `localhost` resolves to 127.0.0.1. The hostname (`10.0.0.2`, set by kernel `ip=` autoconfig) resolves. `RLIMIT_NOFILE` is 65536/1048576. HOME is `/root` (the image has no USER). PATH is the image's. All identical after restore. |
 | `eclipse-temurin:21-jdk-alpine` | 14m15s | 34 ms | `InetAddress.getLocalHost()` succeeds |
 | `zenika/alpine-chrome:124` | 13m47s | 50 ms | Headless Chromium renders a page (it needs `/dev/shm`), before and after restore |
+| `traefik/whoami:v1.10.1` (2026-10-28) | 5m59s | 35 ms | A static Go binary `FROM scratch`, with no shell and no `/etc/passwd`, starts as the image declares it and reports the guest's `10.0.0.2` |
+| `prom/prometheus:v2.53.0` (2026-10-28) | 9m25s | 38 ms | `USER nobody`, resolved by name from the image's `/etc/passwd`, starts and serves while writing its TSDB to the image's `/prometheus` |
 
-The times to live include image pulls and full-rootfs assembly on the shared nested host.
+The times to live include image pulls and full-rootfs assembly on the shared nested host. The two 2026-10-28 rows ran at revision `2f143fd581` (main plus those cases) in `/mnt/e2e-scratch/cq-rerun-20261027`, attempt 4, with leakcheck clean.
+
+Image qualification matrix (`docs/container-qualification.md`) cells these runs touch:
+- **Covered here:** static binary in a minimal root (`whoami`), named non-root user (`prometheus`), Alpine/musl servers, Python and JVM servers, nginx, and multi-platform index resolution (the official images are indexes; the amd64 manifest is selected).
+- **Not yet covered by a real image:** Debian/glibc servers and a Node server.
+- **Covered by other metal tests:** multiple TCP and UDP declarations (`TestTCPIngressMetal`, `TestUDPIngressMetal`) and a main application with a companion (`TestDirectOCIMainHealthcheckWithCompanionMetal`).
+- **Not covered by a public smoke test:** private-registry pulls, which need credentials.
 
 ## Containers lane (`e2e-native` `containers` + image-run phase)
 
