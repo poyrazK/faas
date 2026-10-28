@@ -60,8 +60,8 @@ func TestEdgeRulesReviewCommand(t *testing.T) {
 	}
 	out := buf.String()
 	for _, want := range []string{
-		"READY       Ready rule (r-ready)", "Matched 40 requests in log mode", "gregale edge-rules update r-ready --mode enforce",
-		"COLLECTING  Fresh rule (r-fresh)", "QUIET       ip rule (r-dead)", "gregale edge-rules rm r-dead",
+		"READY       Ready rule (r-ready)", "Matched 40 requests in log mode", "gregale edge rule update r-ready --mode enforce",
+		"COLLECTING  Fresh rule (r-fresh)", "QUIET       ip rule (r-dead)", "gregale edge rule delete r-dead",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("output missing %q:\n%s", want, out)

@@ -12,7 +12,7 @@ import (
 )
 
 func cmdIssueTrackerLinks(args []string) int {
-	usage := "usage: gregale issues links <list|save|delete> --app SLUG --issue UUID [--url URL --title TEXT --link UUID --cursor CURSOR]"
+	usage := "usage: gregale debug issue links <list|save|delete> --app SLUG --issue UUID [--url URL --title TEXT --link UUID --cursor CURSOR]"
 	if len(args) == 0 {
 		fmt.Fprintln(os.Stderr, usage)
 		return 1

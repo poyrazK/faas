@@ -14829,6 +14829,9 @@ func (s *PgStore) CreateEdgeRuleIfUnderQuota(ctx context.Context, in CreateEdgeR
 			return EdgeRule{}, exceeded
 		}
 	}
+	if err := lockEdgeRuleListRefs(ctx, tx, in.AccountID, in.Match); err != nil {
+		return EdgeRule{}, err
+	}
 
 	actionBytes, err := json.Marshal(in.Action)
 	if err != nil {
@@ -15707,6 +15710,15 @@ func (s *PgStore) UpdateEdgeRule(ctx context.Context, id string, p UpdateEdgeRul
 	if p.ValidateMode != nil {
 		validateModeArg = *p.ValidateMode
 	}
+	if p.Match != nil {
+		var accountID string
+		if err := tx.QueryRow(ctx, `select account_id::text from edge_rules where id = $1`, id).Scan(&accountID); err != nil {
+			return EdgeRule{}, mapErr(err)
+		}
+		if err := lockEdgeRuleListRefs(ctx, tx, accountID, p.Match); err != nil {
+			return EdgeRule{}, err
+		}
+	}
 
 	row := tx.QueryRow(ctx, `
 		update edge_rules set
@@ -15813,6 +15825,7 @@ func (s *PgStore) MatchEdgeRulesForHost(ctx context.Context, host string) ([]Edg
 		select `+edgeRuleSelectCols+` from edge_rules
 		 where enabled = true
 		   and (expires_at is null or expires_at > now())
+		   and not exists (select 1 from apps a where a.id = edge_rules.app_id and a.status = 'deleted')
 		   and (
 		   	match_host = $1
 		   	or match_host = '*'
@@ -17677,6 +17690,7 @@ func scanCreatedInstance(row pgx.Row, wakeID, appID string) (Instance, error) {
 // non-empty string from state.InstanceMode{normal,mirror};
 // the engine validates before calling (Engine.AdmitMirrorInstance).
 func (s *PgStore) CreateInstanceWithMode(ctx context.Context, appID, deploymentID, state string, ramMB int, nodeID, wakeID, mode string) (Instance, error) {
+	ctx = fenceApp(ctx, appID)
 	var reserve func(pgx.Tx) error
 	if mode == string(InstanceModeWorker) && State(state).CountsForRAM() {
 		reserve = func(tx pgx.Tx) error {

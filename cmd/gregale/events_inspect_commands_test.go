@@ -30,8 +30,8 @@ func TestEventsInspectPrintsRunnableCommands(t *testing.T) {
 	restore()
 	got := out.String()
 	for _, want := range []string{
-		"Attempt history: gregale events attempts --subscription sub-1 --source billing.h12 --id ev-1\n",
-		"Recover: gregale events recover --subscription sub-1 --source billing.h12 --id ev-1 (add --dry-run to preview)\n",
+		"Attempt history: gregale event attempts --subscription sub-1 --source billing.h12 --id ev-1\n",
+		"Recover: gregale event recover --subscription sub-1 --source billing.h12 --id ev-1 (add --dry-run to preview)\n",
 	} {
 		if code != 0 || !strings.Contains(got, want) {
 			t.Fatalf("exit %d, missing %q in:\n%s", code, want, got)
@@ -55,7 +55,7 @@ func TestEventsPublishNamesTheInspectCommand(t *testing.T) {
 	out, restore := main.CaptureStdout(t)
 	code := main.Run([]string{"events", "publish", "billing.h12", "invoice.paid", "--data", `{"amount":250}`})
 	restore()
-	if want := "Inspect: gregale events inspect --source billing.h12 --id ev-9\n"; code != 0 || !strings.Contains(out.String(), want) {
+	if want := "Inspect: gregale event get --source billing.h12 --id ev-9\n"; code != 0 || !strings.Contains(out.String(), want) {
 		t.Fatalf("exit %d, want %q in:\n%s", code, want, out.String())
 	}
 }

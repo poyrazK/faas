@@ -82,7 +82,7 @@ func collectLatestMCPAdmission(ctx context.Context, client *Client, deploymentID
 	result.State = "available"
 	result.Receipt = &evidence
 	result.ReceiptPath = "/v1/mcp/admissions/" + evidence.ID
-	result.InspectCommand = "gregale mcp access history --evidence " + evidence.ID
+	result.InspectCommand = "gregale mcp server access history --evidence " + evidence.ID
 	return result
 }
 func writeLatestMCPAdmission(outcome string, latest *mcpAdmissionLatest) {

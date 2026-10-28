@@ -17,7 +17,7 @@ func cmdEventsRecoveryNotifications(args []string) int {
 		return 1
 	}
 	if len(positional) != 1 || rejectUnexpectedFlagArgs(fs) {
-		PrintUsage(os.Stderr, "usage: gregale events recovery-notifications <job-id>", "events")
+		PrintUsage(os.Stderr, "usage: gregale event recovery-notifications <job-id>", "events")
 		return 1
 	}
 	if _, err := uuid.Parse(positional[0]); err != nil {
@@ -54,7 +54,7 @@ func cmdEventsRecoveryNotifications(args []string) int {
 				_, _ = fmt.Fprintf(osStdout, "  Attempt history: GET %s\n", oneLine(receiver.AttemptsPath))
 			}
 			if receiver.RetryPath != "" {
-				_, _ = fmt.Fprintf(osStdout, "  Retry: gregale webhooks retry --app %s %s %s\n", oneLine(out.AppSlug), oneLine(receiver.WebhookID), oneLine(receiver.DeliveryID))
+				_, _ = fmt.Fprintf(osStdout, "  Retry: gregale webhook retry --app %s %s %s\n", oneLine(out.AppSlug), oneLine(receiver.WebhookID), oneLine(receiver.DeliveryID))
 			}
 		}
 	}

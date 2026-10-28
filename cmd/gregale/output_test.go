@@ -298,13 +298,13 @@ func TestPrintWarn_DropsBangWhenDisabled(t *testing.T) {
 // dead per-command path.
 func TestPrintUsage_EmitsTwoLinesWithTopic(t *testing.T) {
 	var buf bytes.Buffer
-	PrintUsage(&buf, "usage: gregale ps <app>", "ps")
+	PrintUsage(&buf, "usage: gregale app instances <app>", "ps")
 	got := buf.String()
 	lines := strings.Split(strings.TrimRight(got, "\n"), "\n")
 	if len(lines) != 2 {
 		t.Fatalf("want 2 lines, got %d:\n%s", len(lines), got)
 	}
-	if lines[0] != "usage: gregale ps <app>" {
+	if lines[0] != "usage: gregale app instances <app>" {
 		t.Errorf("line 0 = %q, want exact usage string", lines[0])
 	}
 	want := "  Docs: " + cliDocsURL

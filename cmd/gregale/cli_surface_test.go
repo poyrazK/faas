@@ -167,8 +167,8 @@ func TestCliAudienceFiltersOnlyDiscoverySurfaces(t *testing.T) {
 			t.Errorf("hidden command %q is missing from lookup manifest", command.Name)
 		}
 	}
-	if got := len(main.CustomerCliCommands()) + len(main.AdvancedCliCommands()); got != len(main.VisibleCliCommands()) {
-		t.Fatalf("audience partition lost commands: customer+advanced=%d visible=%d", got, len(main.VisibleCliCommands()))
+	if got := len(main.CustomerManifest()) + len(main.AdvancedCliCommands()); got != len(main.VisibleCliCommands()) {
+		t.Fatalf("audience partition lost commands: customer (earlier names included)+advanced=%d visible=%d", got, len(main.VisibleCliCommands()))
 	}
 }
 
@@ -234,9 +234,9 @@ func TestManifestHelpResolvesTopicsAndFlagOrder(t *testing.T) {
 		{[]string{"help", "deploy"}, "Source defaults to committed HEAD"},
 		{[]string{"deploy", "--plan", "--help"}, "Common flags:"},
 		{[]string{"deploy", "--plan", "--help", "--all"}, "--execution-mode"},
-		{[]string{"deployment", "wait", "--help"}, "gregale deployment wait <id|vN>"},
+		{[]string{"deployment", "wait", "--help"}, "gregale release wait <id|vN>"},
 		{[]string{"help", "deployment", "wait"}, "--rollout"},
-		{[]string{"deployments", "alias", "list", "--help"}, "gregale deployments alias list"},
+		{[]string{"deployments", "alias", "list", "--help"}, "gregale release alias list"},
 	} {
 		var out bytes.Buffer
 		(*main.OsStdout) = &out

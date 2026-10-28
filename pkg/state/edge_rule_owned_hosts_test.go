@@ -11,6 +11,8 @@ import (
 
 type ownedEdgeRulesTestStore interface {
 	CreateEdgeRule(ctx context.Context, p state.CreateEdgeRuleParams) (state.EdgeRule, error)
+	SoftDeleteAppCascade(ctx context.Context, id string) (state.App, error)
+	MatchEdgeRulesForHost(ctx context.Context, host string) ([]state.EdgeRule, error)
 	state.OwnedEdgeRuleStore
 	state.OwnerEdgeRuleSetStore
 }
@@ -89,6 +91,34 @@ func checkOwnedEdgeRulesForHost(t *testing.T, ctx context.Context, s ownedEdgeRu
 	equal("owner set, no app", fromSet(host, ""), ids(acctA, ""))
 	if _, complete, err := s.OwnerEdgeRules(ctx, acctA, 5); err != nil || complete {
 		t.Fatalf("OwnerEdgeRules over its limit: complete=%v err=%v, want incomplete", complete, err)
+	}
+
+	// adr: 091 — amendment 2026-10-28: a deleted app's "*" rule stops
+	// applying to the account's other apps. Every read the gateway uses skips
+	// it; the rule itself is kept for a restore.
+	deletedStar := mk(acctA, appA2, "*", 0, true)
+	equal("before the delete", ids(acctA, appA), []string{deletedStar, exact, appWide, wildcard, star})
+	if _, err := s.SoftDeleteAppCascade(ctx, appA2); err != nil {
+		t.Fatalf("SoftDeleteAppCascade: %v", err)
+	}
+	equal("after the delete", ids(acctA, appA), []string{exact, appWide, wildcard, star})
+	set, _, err = s.OwnerEdgeRules(ctx, acctA, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, r := range set {
+		if r.ID == deletedStar {
+			t.Fatal("OwnerEdgeRules returned a deleted app's rule")
+		}
+	}
+	unowned, err := s.MatchEdgeRulesForHost(ctx, host)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, r := range unowned {
+		if r.ID == deletedStar {
+			t.Fatal("MatchEdgeRulesForHost returned a deleted app's rule")
+		}
 	}
 }
 

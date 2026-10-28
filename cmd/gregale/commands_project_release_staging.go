@@ -18,7 +18,7 @@ func cmdProjectsReleaseStage(args []string) int {
 	ttl := fs.Int("ttl-seconds", api.ProjectReleaseStageMaxTTLSeconds, "temporary billable service capacity lease")
 	if err := fs.Parse(flags); err != nil || fs.NArg() != 0 || len(positional) != 2 || !api.ValidProjectSlug(positional[0]) || !api.ValidProjectEnvironmentSlug(positional[1]) ||
 		(action == "stage" && (*file == "" || *stageID != "" || *ttl < 1 || *ttl > api.ProjectReleaseStageMaxTTLSeconds)) || (action != "stage" && (*file != "" || *stageID == "")) {
-		PrintUsage(osStderr, "usage: gregale projects environments release-sets <stage|stage-status|cancel-stage> <project> <environment> [--file MANIFEST --ttl-seconds 1800 | --stage UUID] [--json]", "projects environments")
+		PrintUsage(osStderr, "usage: gregale environment release-sets <stage|stage-status|cancel-stage> <project> <environment> [--file MANIFEST --ttl-seconds 1800 | --stage UUID] [--json]", "projects environments")
 		return 1
 	}
 	if action != "stage" {

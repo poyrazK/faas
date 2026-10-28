@@ -12,7 +12,7 @@ import (
 	"os"
 )
 
-const deploysReorderUsage = "usage: gregale deploys reorder <id> --priority <int 0..1000> [--json]"
+const deploysReorderUsage = "usage: gregale release reorder <id> --priority <int 0..1000> [--json]"
 
 func cmdDeploysReorder(args []string) int {
 	fs := newFlagSet("deploys reorder", flag.ContinueOnError)

@@ -131,7 +131,7 @@ func cmdAutomationsFailureRecoveryPlan(args []string) int {
 		_, _ = fmt.Fprintf(osStdout, "  Blocker: %s\n", oneLine(code))
 	}
 	if *path != "" {
-		_, _ = fmt.Fprintf(osStdout, "Saved reviewed plan: %s\nSubmit: gregale automations recovery-start --plan %s\n", oneLine(*path), automationCommandArgument(*path))
+		_, _ = fmt.Fprintf(osStdout, "Saved reviewed plan: %s\nSubmit: gregale automation recovery create --plan %s\n", oneLine(*path), automationCommandArgument(*path))
 	}
 	return 0
 }

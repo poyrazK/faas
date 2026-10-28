@@ -12,7 +12,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
-const channelsUsage = "usage: gregale channels <list|add|test|rm>"
+const channelsUsage = "usage: gregale alert channel <list|add|test|rm>"
 
 // cmdChannels implements `gregale channels` (ADR-749): account-level alert
 // destinations in Slack, PagerDuty and email.
@@ -39,7 +39,7 @@ func cmdChannels(args []string) int {
 func cmdChannelsList(args []string) int {
 	fs := newFlagSet("channels list", flag.ContinueOnError)
 	if err := fs.Parse(args); err != nil || fs.NArg() != 0 {
-		PrintUsage(os.Stderr, "usage: gregale channels list", "channels")
+		PrintUsage(os.Stderr, "usage: gregale alert channel list", "channels")
 		return 1
 	}
 	client, err := authedClient()
@@ -59,7 +59,7 @@ func cmdChannelsList(args []string) int {
 
 func renderChannels(w io.Writer, chans []api.NotificationChannelResponse) {
 	if len(chans) == 0 {
-		_, _ = fmt.Fprintln(w, "No notification channels. Add one with `gregale channels add`.")
+		_, _ = fmt.Fprintln(w, "No notification channels. Add one with `gregale alert channel create`.")
 		return
 	}
 	_, _ = fmt.Fprintf(w, "%-36s  %-20s  %-9s  %-34s  %s\n", "ID", "NAME", "KIND", "TARGET", "LAST DELIVERY")
@@ -86,7 +86,7 @@ func cmdChannelsAdd(args []string) int {
 		return 1
 	}
 	if *name == "" || *kind == "" || fs.NArg() != 0 {
-		PrintUsage(os.Stderr, "usage: gregale channels add --name <name> --kind slack|pagerduty|email [--secret-stdin] [--pagerduty-region us|eu] [--email you@example.com]", "channels")
+		PrintUsage(os.Stderr, "usage: gregale alert channel create --name <name> --kind slack|pagerduty|email [--secret-stdin] [--pagerduty-region us|eu] [--email you@example.com]", "channels")
 		return 1
 	}
 	req := api.CreateNotificationChannelRequest{Name: *name, Kind: *kind, PagerDutyRegion: *region, Email: *email}
@@ -118,14 +118,14 @@ func cmdChannelsAdd(args []string) int {
 	if jsonOutput {
 		return jsonOut(writeJSON(ch))
 	}
-	_, _ = fmt.Fprintf(osStdout, "Added %s channel %s (%s) → %s\nSend a test with: gregale channels test %s\n", ch.Kind, ch.Name, ch.ID, ch.Target, ch.ID)
+	_, _ = fmt.Fprintf(osStdout, "Added %s channel %s (%s) → %s\nSend a test with: gregale alert channel test %s\n", ch.Kind, ch.Name, ch.ID, ch.Target, ch.ID)
 	return 0
 }
 
 func cmdChannelsTest(args []string) int {
 	fs := newFlagSet("channels test", flag.ContinueOnError)
 	if err := fs.Parse(args); err != nil || fs.NArg() != 1 {
-		PrintUsage(os.Stderr, "usage: gregale channels test <channel-id>", "channels")
+		PrintUsage(os.Stderr, "usage: gregale alert channel test <channel-id>", "channels")
 		return 1
 	}
 	client, err := authedClient()
@@ -149,7 +149,7 @@ func cmdChannelsTest(args []string) int {
 func cmdChannelsRm(args []string) int {
 	fs := newFlagSet("channels rm", flag.ContinueOnError)
 	if err := fs.Parse(args); err != nil || fs.NArg() != 1 {
-		PrintUsage(os.Stderr, "usage: gregale channels rm <channel-id>", "channels")
+		PrintUsage(os.Stderr, "usage: gregale alert channel delete <channel-id>", "channels")
 		return 1
 	}
 	client, err := authedClient()

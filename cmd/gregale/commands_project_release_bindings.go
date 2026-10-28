@@ -52,7 +52,7 @@ func cmdProjectsCheckedRelease(args []string) int {
 	timeout := fs.Duration("wait-timeout", bindingProbeWaitTimeoutDefault, "maximum time for the complete graph qualification")
 	interval := fs.Duration("poll-interval", executionPollIntervalDefault, "probe polling interval")
 	if err := fs.Parse(flags); err != nil || fs.NArg() != 0 || len(positional) != 2 || (*file == "" && action != "prepare-deactivation") || (action == "prepare-deactivation" && *file != "") || !api.ValidProjectSlug(positional[0]) || !api.ValidProjectEnvironmentSlug(positional[1]) || *timeout <= 0 || *interval <= 0 || (action != "verify" && (*dry || *consent)) {
-		PrintUsage(osStderr, "usage: gregale projects environments release-sets <prepare|prepare-rollback|prepare-deactivation|verify|activate|rollback|deactivate> <project> <environment> [--file FILE; required except prepare-deactivation] [--dry-run --object-storage-write --wait-timeout DURATION --poll-interval DURATION --json]", "projects environments")
+		PrintUsage(osStderr, "usage: gregale environment release-sets <prepare|prepare-rollback|prepare-deactivation|verify|activate|rollback|deactivate> <project> <environment> [--file FILE; required except prepare-deactivation] [--dry-run --object-storage-write --wait-timeout DURATION --poll-interval DURATION --json]", "projects environments")
 		return 1
 	}
 	explicitProgress := false

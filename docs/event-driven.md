@@ -2900,7 +2900,7 @@ Use actual IDs and generations from the preview. Include one receiver or an
 explicit set of up to 100 distinct deliveries; there is no implicit retry-all.
 
 ```bash
-gregale event recovery-notification-retry JOB_ID --request-file retry.json
+gregale event recovery-notification retry JOB_ID --request-file retry.json
 ```
 
 Each result is `queued` or `skipped`. The action rechecks source event, receiver
@@ -3054,7 +3054,7 @@ Use the app retry backlog to identify requests, then inspect each job's retry pr
 
 ```sh
 gregale event notification-retry-plan --file selection.json --output plan.json
-gregale event notification-retry-apply --file plan.json > receipt.json
+gregale event notification-retry apply --file plan.json > receipt.json
 ```
 
 Preview writes a new private plan file (never overwrites) and prints JSON containing exact selections, eligibility reasons and observed evidence. Up to ten distinct jobs and 100 explicit receivers per job are supported; selection/plan files are limited to 1 MiB. Every job must belong to the supplied app. No receiver is selected automatically.
@@ -3068,8 +3068,8 @@ These commands compose existing SDK preview, retry and history methods; no addit
 ### Reconcile a saved notification retry plan
 
 ```sh
-gregale event notification-retry-reconcile --file plan.json > reconciliation.json
-gregale event notification-retry-reconcile --file plan.json --wait --timeout 5m > reconciliation.json
+gregale event notification-retry reconcile --file plan.json > reconciliation.json
+gregale event notification-retry reconcile --file plan.json --wait --timeout 5m > reconciliation.json
 ```
 
 Reconciliation reads each plan request's saved decision and original-generation delivery outcomes. It never submits retries or changes the plan. The command validates the full selected intent and pins each accepted decision while polling. A later retry generation's delivery status cannot establish success for the original generation.
@@ -3546,8 +3546,8 @@ raw counts. Existing checkpoint/resume and alert acknowledgments apply. See
 ### Investigate a saved deadline alert
 
 ```sh
-gregale event deadline-alert-investigate APP --alert-file ./deadline-alert.json --limit 25
-gregale event deadline-alert-investigate APP --alert-file ./deadline-alert.json --limit 25 --explain
+gregale event deadline-alert investigate APP --alert-file ./deadline-alert.json --limit 25
+gregale event deadline-alert investigate APP --alert-file ./deadline-alert.json --limit 25 --explain
 gregale --json events deadline-alert-investigate APP --alert-file ./deadline-alert.json --limit 25 --cursor 'NEXT_CURSOR'
 ```
 

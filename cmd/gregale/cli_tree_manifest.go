@@ -60,7 +60,52 @@ func (d cliTreeDiscovery) treeCommand(noun cliTreeNoun) (cliCommand, bool) {
 	if noun.Name == appSlugFallback {
 		command.Flags, command.Positionals = nil, nil
 	}
+	command.CompletionPositions = d.treePositions(noun.Name)
 	return command, true
+}
+
+// treePositions moves the positional completions (project slugs, build and
+// deployment IDs) of today's commands onto the noun's tree paths that run
+// them, with each verb spelled as the tree lists it.
+func (d cliTreeDiscovery) treePositions(noun string) []cliCompletionPosition {
+	var positions []cliCompletionPosition
+	for _, alias := range cliTreeAliases {
+		path, old := strings.Fields(alias.New), strings.Fields(alias.Old)
+		today, ok := d.commands[old[0]]
+		if path[0] != noun || !ok || today.Audience != cliAudienceCustomer {
+			continue
+		}
+		for _, position := range today.CompletionPositions {
+			if len(position.Path) < len(old)-1 || !slices.Equal(position.Path[:len(old)-1], old[1:]) {
+				continue
+			}
+			rest := slices.Clone(position.Path[len(old)-1:])
+			if len(rest) > 0 {
+				node, ok := d.subAt(alias.Old)
+				if !ok {
+					continue
+				}
+				verb, listed := cliTreeVerbFor(rest[0], node.Subcommands)
+				if !listed || (alias.New != alias.Old && cliTreeRenamesPath(alias.Old+" "+rest[0])) {
+					continue
+				}
+				rest[0] = verb
+			}
+			position.Path = append(slices.Clone(path[1:]), rest...)
+			if !slices.ContainsFunc(positions, func(seen cliCompletionPosition) bool {
+				return slices.Equal(seen.Path, position.Path) && seen.Position == position.Position && seen.Role == position.Role
+			}) {
+				positions = append(positions, position)
+			}
+		}
+	}
+	return positions
+}
+
+// cliTreeRenamesPath reports a path of today's that the table gives a tree
+// name of its own.
+func cliTreeRenamesPath(old string) bool {
+	return slices.ContainsFunc(cliTreeAliases, func(alias cliTreeAlias) bool { return alias.Old == old && alias.New != alias.Old })
 }
 
 // cliTreeOldPath returns today's path for a tree path the table names.

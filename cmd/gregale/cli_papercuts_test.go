@@ -41,7 +41,7 @@ func TestInvocationsWaitAcceptsFlagsAfterID(t *testing.T) {
 	defer restore()
 	code := main.CmdInvocationsWait([]string{"inv-1", "--timeout", "5s", "--interval", "10ms"})
 	stderr := readStderr()
-	if strings.Contains(stderr, "usage: gregale invocations wait") {
+	if strings.Contains(stderr, "usage: gregale invocation wait") {
 		t.Fatalf("flags after the id were rejected: %s", stderr)
 	}
 	if code != 0 {

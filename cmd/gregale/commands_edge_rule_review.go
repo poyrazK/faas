@@ -17,7 +17,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
-const edgeRuleReviewUsage = "usage: gregale edge-rules review [--app <slug>]"
+const edgeRuleReviewUsage = "usage: gregale edge rule review [--app <slug>]"
 
 // edgeRuleReviewJSON is the --json shape of one reviewed rule.
 type edgeRuleReviewJSON struct {
@@ -111,14 +111,14 @@ func printEdgeRuleReview(slug string, it edgeRuleReviewJSON) {
 	switch it.Status {
 	case api.EdgeRuleReviewReady:
 		if it.Matches > 0 {
-			_, _ = fmt.Fprintf(osStdout, "READY       %s (%s)\n  Matched %d requests in log mode since %s (about %d a day).\n  Samples: gregale edge-rules events --app %s --rule %s --outcome logged --since 7d\n", label, it.RuleID, it.Matches, since, it.PerDay, slug, it.RuleID)
+			_, _ = fmt.Fprintf(osStdout, "READY       %s (%s)\n  Matched %d requests in log mode since %s (about %d a day).\n  Samples: gregale edge rule events --app %s --rule %s --outcome logged --since 7d\n", label, it.RuleID, it.Matches, since, it.PerDay, slug, it.RuleID)
 		} else {
 			_, _ = fmt.Fprintf(osStdout, "READY       %s (%s)\n  No matches since %s: enforcing it would not have changed any request so far.\n", label, it.RuleID, since)
 		}
-		_, _ = fmt.Fprintf(osStdout, "  Enforce: gregale edge-rules update %s --mode enforce\n\n", it.RuleID)
+		_, _ = fmt.Fprintf(osStdout, "  Enforce: gregale edge rule update %s --mode enforce\n\n", it.RuleID)
 	case api.EdgeRuleReviewCollecting:
 		_, _ = fmt.Fprintf(osStdout, "COLLECTING  %s (%s)\n  In log mode for %d h; give it a day of traffic before deciding.\n\n", label, it.RuleID, it.ObservedHours)
 	default:
-		_, _ = fmt.Fprintf(osStdout, "QUIET       %s (%s)\n  No matches in 7 days. Check what it matches, or remove it: gregale edge-rules rm %s\n\n", label, it.RuleID, it.RuleID)
+		_, _ = fmt.Fprintf(osStdout, "QUIET       %s (%s)\n  No matches in 7 days. Check what it matches, or remove it: gregale edge rule delete %s\n\n", label, it.RuleID, it.RuleID)
 	}
 }

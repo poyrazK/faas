@@ -37,7 +37,7 @@ func TestCapabilitiesListsEarlyAccess(t *testing.T) {
 
 	code, stdout, stderr := runCLI(t, "capabilities")
 	if code != 0 || !strings.Contains(stdout, "custom-domains") || !strings.Contains(stdout, "EARLY ACCESS") ||
-		!strings.Contains(stdout, "change_timeline") || !strings.Contains(stdout, "joined") || !strings.Contains(stdout, "gregale previews join <key>") {
+		!strings.Contains(stdout, "change_timeline") || !strings.Contains(stdout, "joined") || !strings.Contains(stdout, "gregale feature join <key>") {
 		t.Fatalf("capabilities = %d\n%s%s", code, stdout, stderr)
 	}
 

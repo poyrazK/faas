@@ -64,7 +64,14 @@ func cmdMan(args []string) int {
 		renderManTop(osStdout)
 		return 0
 	case 1:
+		// A tree noun's page lists the tree's verbs (ADR-20261026145832); an
+		// earlier name keeps today's page.
 		cmd, ok := lookupDiscoverableCommand(args[0])
+		for _, noun := range completionCliCommands() {
+			if noun.Name == args[0] {
+				cmd, ok = noun, true
+			}
+		}
 		if !ok || !cliCommandAvailable(cmd.Name) {
 			printCommandValidation(os.Stderr, "gregale man: unknown command %q\n", args[0])
 			if sug, has := suggestCommand(args[0]); has && !jsonOutput {
@@ -138,7 +145,7 @@ func renderManTop(w io.Writer) {
 		_, _ = fmt.Fprintln(w, `.PP`)
 		_, _ = fmt.Fprintln(w, ".RS 4")
 		_, _ = fmt.Fprintln(w, `.nf`)
-		_, _ = fmt.Fprintln(w, `gregale apps`)
+		_, _ = fmt.Fprintln(w, `gregale app list`)
 		_, _ = fmt.Fprintln(w, `.fi`)
 		_, _ = fmt.Fprintln(w, ".RE")
 		_, _ = fmt.Fprintln(w, `.PP`)
@@ -246,7 +253,7 @@ func renderManCommand(w io.Writer, c cliCommand) {
 		})
 	}
 	manSection(w, "SEE ALSO", func(w io.Writer) {
-		related := cliSeeAlso(c.Name, customerCliCommands())
+		related := cliSeeAlso(c.Name, customerAudience(discoverableCliCommands()))
 		for i, command := range related {
 			separator := ","
 			if i == len(related)-1 {
@@ -435,17 +442,28 @@ func escapeRoff(s string) string {
 // across unrelated commands (`apps` → `mfa` is distance 4).
 func suggestCommand(query string) (string, bool) {
 	const maxDist = 2
+	if query == "" {
+		return "", false
+	}
 	bestName := ""
 	bestDist := maxDist + 1
 	tied := false
+	// The command tree's names and the operator commands; an earlier name is
+	// never suggested (ADR-20261026145832).
+	var names []string
+	for _, c := range completionCliCommands() {
+		names = append(names, c.Name)
+	}
 	for _, c := range discoverableCliCommands() {
-		if !cliCommandAvailable(c.Name) {
-			continue
+		if c.Audience != cliAudienceCustomer && cliCommandAvailable(c.Name) {
+			names = append(names, c.Name)
 		}
-		d := editDistance(query, c.Name)
+	}
+	for _, name := range names {
+		d := editDistance(query, name)
 		switch {
 		case d < bestDist:
-			bestName, bestDist, tied = c.Name, d, false
+			bestName, bestDist, tied = name, d, false
 		case d == bestDist:
 			// Tie: another command at the same distance makes the
 			// suggestion ambiguous, so we suppress it.

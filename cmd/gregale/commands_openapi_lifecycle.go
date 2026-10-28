@@ -37,7 +37,7 @@ func cmdOpenapiPreview(args []string) int {
 		return 1
 	}
 	if len(pos) > 1 {
-		PrintUsage(osStderr, "usage: gregale openapi preview [<slug>] [--scope <scope>] [--fail-on-unavailable]", "openapi")
+		PrintUsage(osStderr, "usage: gregale api spec preview [<slug>] [--scope <scope>] [--fail-on-unavailable]", "openapi")
 		return 1
 	}
 	resolvedScope, scopeErr := resolveEnvironmentFlagOrContext(*scope)
@@ -56,7 +56,7 @@ func cmdOpenapiPreview(args []string) int {
 		slug, resolveErr = resolveRequiredAppSlug("")
 		if resolveErr != nil {
 			if errors.Is(resolveErr, errProjectContextNotFound) {
-				PrintUsage(osStderr, "usage: gregale openapi preview [<slug>] [--scope <scope>] [--fail-on-unavailable] (or run `gregale link <project-slug>`)", "openapi")
+				PrintUsage(osStderr, "usage: gregale api spec preview [<slug>] [--scope <scope>] [--fail-on-unavailable] (or run `gregale link <project-slug>`)", "openapi")
 				return 1
 			}
 			return printErr("Could not read local project context", resolveErr)
@@ -197,7 +197,7 @@ func cmdOpenapiApply(args []string) int {
 		return 1
 	}
 	if len(pos) != 1 {
-		PrintUsage(osStderr, "usage: gregale openapi apply <slug> [--confirm --preview-sha256 <sha256>] [--match-host <host>]", "openapi")
+		PrintUsage(osStderr, "usage: gregale api spec apply <slug> [--confirm --preview-sha256 <sha256>] [--match-host <host>]", "openapi")
 		return 1
 	}
 	if !validCLISlug(pos[0]) {
@@ -248,7 +248,7 @@ func cmdOpenapiGet(args []string) int {
 		return 1
 	}
 	if len(pos) > 1 {
-		PrintUsage(osStderr, "usage: gregale openapi get [<slug>] [--source manual_import|auto]", "openapi")
+		PrintUsage(osStderr, "usage: gregale api spec get [<slug>] [--source manual_import|auto]", "openapi")
 		return 1
 	}
 	slug := ""
@@ -259,7 +259,7 @@ func cmdOpenapiGet(args []string) int {
 		slug, resolveErr = resolveRequiredAppSlug("")
 		if resolveErr != nil {
 			if errors.Is(resolveErr, errProjectContextNotFound) {
-				PrintUsage(osStderr, "usage: gregale openapi get [<slug>] [--source manual_import|auto] (or run `gregale link <project-slug>`)", "openapi")
+				PrintUsage(osStderr, "usage: gregale api spec get [<slug>] [--source manual_import|auto] (or run `gregale link <project-slug>`)", "openapi")
 				return 1
 			}
 			return printErr("Could not read local project context", resolveErr)
@@ -280,7 +280,7 @@ func cmdOpenapiGet(args []string) int {
 	if errors.As(err, &ae) && *source == openapiDefaultSource && ae.Problem.Hint == "" && strings.Contains(ae.Problem.Detail, "no OpenAPI document imported") {
 		// `inspect` showed an OpenAPI document that `openapi get` then said did
 		// not exist: it was the discovered one (Hunt 14 H14-64).
-		ae.Problem.Hint = fmt.Sprintf("Read the document discovered from the app's traffic with `gregale openapi get %s --source auto`, or store one with `gregale openapi import`.", slug)
+		ae.Problem.Hint = fmt.Sprintf("Read the document discovered from the app's traffic with `gregale api spec get %s --source auto`, or store one with `gregale api spec import`.", slug)
 	}
 	if err != nil {
 		return printErr("Could not fetch OpenAPI document", err)
@@ -361,7 +361,7 @@ func cmdOpenapiRemove(args []string) int {
 		return 1
 	}
 	if len(pos) != 1 {
-		PrintUsage(osStderr, "usage: gregale openapi rm <slug>", "openapi")
+		PrintUsage(osStderr, "usage: gregale api spec delete <slug>", "openapi")
 		return 1
 	}
 	if !validCLISlug(pos[0]) {

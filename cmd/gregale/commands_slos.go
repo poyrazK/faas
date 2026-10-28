@@ -10,7 +10,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
-const slosUsage = "usage: gregale slos <list|create|status|rm> --app <slug>"
+const slosUsage = "usage: gregale alert slo <list|create|status|rm> --app <slug>"
 
 // cmdSLOs implements `gregale slos` (ADR-747): customer-defined SLO
 // definitions. Distinct from `gregale slo <slug>`, ADR-082's fixed panel.
@@ -45,7 +45,7 @@ func cmdSLOsList(args []string) int {
 		return 1
 	}
 	if *slug == "" || fs.NArg() != 0 || !validSLOPanelWindow(*window) {
-		PrintUsage(os.Stderr, "usage: gregale slos list --app <slug> [--window 1h|24h|7d]", "slos")
+		PrintUsage(os.Stderr, "usage: gregale alert slo list --app <slug> [--window 1h|24h|7d]", "slos")
 		return 1
 	}
 	client, err := authedClient()
@@ -83,7 +83,7 @@ func validSLOPanelWindow(window string) bool {
 
 func renderSLOList(w io.Writer, slos []api.SLOResponse) {
 	if len(slos) == 0 {
-		_, _ = fmt.Fprintln(w, "No SLOs defined. Create one with `gregale slos create`.")
+		_, _ = fmt.Fprintln(w, "No SLOs defined. Create one with `gregale alert slo create`.")
 		return
 	}
 	_, _ = fmt.Fprintf(w, "%-36s  %-24s  %-26s  %s\n", "ID", "NAME", "OBJECTIVE", "WINDOW")
@@ -112,7 +112,7 @@ func cmdSLOsCreate(args []string) int {
 		return 1
 	}
 	if *slug == "" || *name == "" || *objective == 0 || fs.NArg() != 0 {
-		PrintUsage(os.Stderr, "usage: gregale slos create --app <slug> --name <name> --objective <pct> [--sli availability|latency --latency-threshold-ms N] [--window-days 7|30]", "slos")
+		PrintUsage(os.Stderr, "usage: gregale alert slo create --app <slug> --name <name> --objective <pct> [--sli availability|latency --latency-threshold-ms N] [--window-days 7|30]", "slos")
 		return 1
 	}
 	req := api.CreateSLORequest{Name: *name, SLI: *sli, LatencyThresholdMS: *threshold, ObjectivePct: *objective, WindowDays: *window}
@@ -143,7 +143,7 @@ func cmdSLOsRm(args []string) int {
 		return 1
 	}
 	if *slug == "" || fs.NArg() != 1 {
-		PrintUsage(os.Stderr, "usage: gregale slos rm --app <slug> <slo-id> [--yes]", "slos")
+		PrintUsage(os.Stderr, "usage: gregale alert slo delete --app <slug> <slo-id> [--yes]", "slos")
 		return 1
 	}
 	client, err := authedClient()

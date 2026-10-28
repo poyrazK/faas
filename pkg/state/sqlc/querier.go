@@ -5624,6 +5624,10 @@ type Querier interface {
 	ReadTenantSurfaceTrafficAccount(ctx context.Context, db DBTX, surfaceID pgtype.UUID) (pgtype.UUID, error)
 	// Existing slug reservations, including tombstones/internal apps, keep their key.
 	ReadTrafficAliasHostnameConflict(ctx context.Context, db DBTX, hostLabel string) (bool, error)
+	// The synthetic hostnames a binding write on one app, or on every app of an
+	// account, may publish or release: each primary and alias URL, whatever the
+	// app's status (ADR-20261027163626).
+	ReadTrafficAppBindingHosts(ctx context.Context, db DBTX, arg ReadTrafficAppBindingHostsParams) ([]string, error)
 	// All hostname reservations, including inactive/deleted surfaces. Discovery
 	// transfers only identities and routing eligibility; no challenge or cert data.
 	ReadTrafficBindingClaims(ctx context.Context, db DBTX, arg ReadTrafficBindingClaimsParams) (ReadTrafficBindingClaimsRow, error)

@@ -37,7 +37,7 @@ import (
 // means the completion test only has one string to pin.
 const fromStageFlag = "--from="
 
-const deploysRetryUsage = "usage: gregale deploys retry <id> [--from=<stage>]"
+const deploysRetryUsage = "usage: gregale release retry <id> [--from=<stage>]"
 
 // cmdDeploysRetry is the subcommand handler. Returns 0 on
 // success, 1 on user-input errors, 2 on API errors (per the
@@ -147,7 +147,7 @@ func cmdDeploysRetry(args []string) int {
 		_, _ = fmt.Fprintf(osStdout, "  %s\n", reason)
 	}
 	_, _ = fmt.Fprintf(osStdout, "  status:            %s\n", resp.Status)
-	_, _ = fmt.Fprintf(osStdout, "\nFollow progress:\n  gregale deploys status %s\n", resp.ID)
+	_, _ = fmt.Fprintf(osStdout, "\nFollow progress:\n  gregale release get %s\n", resp.ID)
 	return 0
 }
 

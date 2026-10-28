@@ -23,7 +23,7 @@ func cmdEventsWorkflowBackfill(args []string) int {
 	end, endErr := time.Parse(time.RFC3339Nano, *until)
 	req := api.WorkflowEventReplayBackfillRequest{WorkflowName: *workflow, From: start, Until: end}
 	if len(positional) != 1 || rejectUnexpectedFlagArgs(fs) || !*yes || startErr != nil || endErr != nil || req.Validate() != nil {
-		PrintUsage(os.Stderr, "usage: gregale events workflow-backfill <app> --workflow-name NAME --from RFC3339 --until RFC3339 --yes", "events")
+		PrintUsage(os.Stderr, "usage: gregale event workflow-backfill <app> --workflow-name NAME --from RFC3339 --until RFC3339 --yes", "events")
 		return 1
 	}
 	client, err := authedClient()

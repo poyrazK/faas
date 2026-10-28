@@ -423,7 +423,7 @@ func cmdRoutesMigrationGate(args []string, approve bool) int {
 		return 1
 	}
 	if len(pos) != 0 || !validCLISlug(*app) || !canonicalRouteHealthID(*baselineID) || !canonicalRouteHealthID(*candidateID) || *baselineID == *candidateID || *mode != "report" && *mode != "enforce" || *maxAge <= 0 || *maxAge > 72*time.Hour || *candidateApp != "" && !validCLISlug(*candidateApp) || approve && (strings.TrimSpace(*approvedBy) == "" || *output == "" || *readiness == "" || *mapping == "") || !approve && *approvedBy != "" || approve && *approval != "" || rejectUnexpectedFlagArgs(fs) {
-		PrintUsage(osStderr, "usage: gregale routes migration "+name+" --app APP --baseline-deployment UUID --candidate-deployment UUID [--candidate-app APP] [--readiness PATH --mapping PATH] [--owner-approval PATH] [--mode report|enforce] [--approved-by OWNER --out PATH]", "cli")
+		PrintUsage(osStderr, "usage: gregale api route migration "+name+" --app APP --baseline-deployment UUID --candidate-deployment UUID [--candidate-app APP] [--readiness PATH --mapping PATH] [--owner-approval PATH] [--mode report|enforce] [--approved-by OWNER --out PATH]", "cli")
 		return 1
 	}
 	if *output != "" {

@@ -12,7 +12,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/productcap"
 )
 
-const capabilitiesUsage = "usage: gregale capabilities [--early-access [--org <slug>]] [--json]"
+const capabilitiesUsage = "usage: gregale feature list [--early-access [--org <slug>]] [--json]"
 
 // cmdCapabilities prints the account's canonical feature maturity and plan
 // availability matrix. The same endpoint powers future dashboard/docs
@@ -67,7 +67,7 @@ func cmdCapabilities(args []string) int {
 		for _, item := range earlyAccess {
 			_, _ = fmt.Fprintf(osStdout, "%-25s %-10s %s\n", item.Key, previewState(item), item.Label)
 		}
-		_, _ = fmt.Fprintln(osStdout, "Join with: gregale previews join <key>")
+		_, _ = fmt.Fprintln(osStdout, "Join with: gregale feature join <key>")
 	}
 	return 0
 }

@@ -243,6 +243,11 @@ func (s *PgStore) RestoreEdgeRuleSetVersion(ctx context.Context, appID string, v
 	if err := checkEdgeRuleSetQuota(target.Rules, limits); err != nil {
 		return EdgeRuleSetRestore{}, err
 	}
+	for _, rule := range target.Rules {
+		if err := lockEdgeRuleListRefs(ctx, tx, rule.AccountID, rule.Match); err != nil {
+			return EdgeRuleSetRestore{}, err
+		}
+	}
 	var previousHosts []string
 	if err := tx.QueryRow(ctx,
 		`select coalesce(array_agg(distinct match_host), '{}') from edge_rules where app_id = $1`, appID,
