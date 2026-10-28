@@ -1549,6 +1549,9 @@ func NewHandlerWith(backend Backend, m *Metrics, log *slog.Logger) *Handler {
 	h.proxyFor = defaultProxy
 	// Route priorities also order the cold-wake queue (ADR-20261018181846).
 	h.gate.classifier = h
+	// A wake generation outlives schedd's leader and its reply's trip back,
+	// so schedd's own outcome, not the gate's deadline, ends it.
+	h.gate.leaderFloor = sched.DefaultWakeLeaderBudget + time.Second
 	return h
 }
 
@@ -6475,11 +6478,18 @@ haveApp:
 		h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
 		return
 	}
-	if h.matchAndApplyRedirect(w, r, app) {
+	// ADR-831 amendment 17: a challenge solution is the gateway's own request.
+	// It skips the redirect, rewrite and declared-route gates, which would
+	// move or refuse it and leave a visitor unable to pass; it still meets
+	// the IP and geo gates before it is checked.
+	challengeSolve := h.challengeSolveRequest(r, app)
+	if !challengeSolve && h.matchAndApplyRedirect(w, r, app) {
 		h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
 		return
 	}
-	h.matchAndApplyRewrite(r, app)
+	if !challengeSolve {
+		h.matchAndApplyRewrite(r, app)
+	}
 	h.applyEdgeRuleHeaders(w, r, app, rec)
 	// Resolve affinity after request-header rules so the picker, cache and
 	// forwarded header all use the same key. A configured browser cookie is
@@ -6518,7 +6528,7 @@ haveApp:
 	// auth/rate-limit and, critically, before the wake gate below. A request to
 	// an undeclared path is answered by the gateway and cannot create app work.
 	markTrafficPhase(r.Context(), trafficValidation)
-	if h.enforceDeclaredRoute(w, r, app, declaredPath, declaredMethod) {
+	if !challengeSolve && h.enforceDeclaredRoute(w, r, app, declaredPath, declaredMethod) {
 		h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
 		return
 	}
@@ -6586,7 +6596,8 @@ haveApp:
 	// runs after the IP and geo gates, so a blocked client cannot earn a
 	// pass, and before the body-reading gates, so a validate or limit rule
 	// cannot reject the form.
-	if h.handleChallengeSolve(w, r, app) {
+	if challengeSolve {
+		h.serveChallengeSolve(w, r, app)
 		h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
 		return
 	}

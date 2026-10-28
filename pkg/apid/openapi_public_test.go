@@ -68,6 +68,24 @@ func TestPublicOpenAPIHidesDurableEntityPaths(t *testing.T) {
 	}
 }
 
+// The operator trace ring is never customer surface, whatever tier tracing
+// has: no capability's default may publish it.
+func TestPublicOpenAPIHidesOperatorTraceRing(t *testing.T) {
+	const path = "/v1/traces/{trace_id}"
+	if _, ok := decodeSpec(t, OpenAPIYAML()).Paths[path]; !ok {
+		t.Fatalf("embedded spec has no %s; the test is vacuous", path)
+	}
+	everything := func(string) bool { return false }
+	for name, raw := range map[string][]byte{
+		"served": PublicOpenAPIYAMLFor(allVisible),
+		"sdk":    FilterSpec(OpenAPIYAML(), everything, Visibility{}),
+	} {
+		if _, ok := decodeSpec(t, raw).Paths[path]; ok {
+			t.Errorf("%s spec lists the operator trace ring %s", name, path)
+		}
+	}
+}
+
 // Components only the hidden routes use go too; shared ones stay.
 func TestPublicOpenAPIPrunesExclusiveComponents(t *testing.T) {
 	full := decodeSpec(t, OpenAPIYAML())

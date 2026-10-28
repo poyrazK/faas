@@ -6,6 +6,7 @@ import (
 	"html"
 	"io"
 	"net/http"
+	"net/url"
 	"strconv"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -196,13 +197,20 @@ func writeChallengePage(w http.ResponseWriter, r *http.Request, token string, di
 		return
 	}
 	d := challengePageData{
-		Nonce: nonce, Action: ChallengeSolvePath, Token: token, Difficulty: difficulty,
+		Nonce: nonce, Action: challengeSolveAction(token), Token: token, Difficulty: difficulty,
 		Return: safeReturnPath(r.URL.RequestURI()),
 	}
 	if id := r.Header.Get(api.RequestIDHeader); id != "" {
 		d.Reference = " If you can't, give the site's owner this reference: " + truncateBytes(id, 128) + "."
 	}
 	_ = renderChallengePage(w, d)
+}
+
+// challengeSolveAction is where the page posts its solution: the solve path
+// with the token in the query, so the gateway recognises the post as its own
+// before any gate that could move or refuse it (ADR-831 amendment 17).
+func challengeSolveAction(token string) string {
+	return ChallengeSolvePath + "?" + url.Values{"token": {token}}.Encode()
 }
 
 // challengeCookie is the pass cookie: host-only, not readable by scripts,

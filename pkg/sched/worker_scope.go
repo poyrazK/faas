@@ -882,8 +882,11 @@ func workerPolicyFloor(policy *state.ScalingPolicy) (int, bool) {
 }
 
 // workerQueueDepthLimit is the depth at which ceil(depth/target) reaches
-// maxReplicas; no deeper read can change the pool's size.
+// maxReplicas; no deeper read can change the pool's size. A target stored
+// before api.ScalingQueueTargetMax existed reads as that maximum, so it
+// cannot make each reconcile count a whole queue.
 func workerQueueDepthLimit(target float64, maxReplicas int) int {
+	target = min(target, api.ScalingQueueTargetMax)
 	limit := math.Ceil(target * float64(max(maxReplicas, 1)))
 	if limit < 1 || math.IsNaN(limit) {
 		return 1
