@@ -212,6 +212,21 @@ Imports happen on reviewed deploys (`gregale deploy`, the dashboard,
 opted-in project.
 See [ADR-20261023085230](adr/20261023085230-compose-env-import.md).
 
+## Rename, remove or detach a service
+
+Each deploy compares the repository with the project, and the plan shows every
+change before anything is applied:
+
+- **Removing** a service from Compose removes its app when the plan is applied.
+  A service that still lists it in `depends_on` fails the plan.
+- **Renaming** a service is a removal and a new service. The new app starts
+  without the old one's environment values, secrets and domains, so set them
+  again (or rename the service back) before you apply.
+- **`gregale project delete`** deletes the project but not its services: each one
+  keeps running as a standalone app, with its domains, environment values and
+  crons. Detached apps are no longer one project, so they cannot call each
+  other by service name; delete them with `gregale app delete`.
+
 ## Pull request previews
 
 A pull request preview of a service under the `project` policy runs every
@@ -228,12 +243,28 @@ is refused by default (`403 preview_production_dependency_denied`). See
 [preview environments](preview-environments.md) and [networking](networking.md)
 for letting chosen production services accept preview traffic.
 
+A preview never receives production environment values, because they can hold
+credentials. It gets:
+
+- the service URLs Gregale injects;
+- the plain values its pull request's Compose file declares, under the same
+  `x-gregale-env-import: true` opt-in and rules as a deploy; and
+- the values and secrets you set for previews on the production app:
+
+  ```sh
+  gregale env set --app shop-web --scope pr-preview STRIPE_KEY=sk_test_…
+  ```
+
+`pr-preview` values override the PR's Compose values. See
+[preview environments](preview-environments.md#configuration).
+
 ## Cold starts and tracing
 
 Parked services wake on their first request, so a chain of cold services wakes
 one after another. Wake-ahead lets an app start restoring the services it
 usually calls while it is still waking itself. It is on by default for services
-under the `project` policy, once the gateways have measured which siblings an
-app calls after waking; `gregale app wake-ahead <app> off` turns it off. See
+under the `project` policy: the first wake restores the services an app lists in
+`depends_on`, and the gateways then learn which siblings it calls after waking.
+`gregale app wake-ahead <app> off` turns it off. See
 [wake-ahead](service-wake-ahead.md). Traces follow a request across services;
 see [tracing](tracing.md) and the [service map](service-map.md).

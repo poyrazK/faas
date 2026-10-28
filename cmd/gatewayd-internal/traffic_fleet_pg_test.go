@@ -138,8 +138,11 @@ func TestTrafficFleetDaemonRateAdmissionAndRecovery(t *testing.T) {
 	if _, err := tx.Exec(t.Context(), "SELECT subject_id FROM pg_ratelimit_counters WHERE scope='app' AND subject_id=$1 FOR UPDATE", f.apps[0].ID); err != nil {
 		t.Fatal(err)
 	}
+	// A locked counter row refuses within a bound instead of hanging. #5755
+	// (ADR-570 amendment 2026-10-28) lets the consume wait up to its 1 s
+	// centralConsumeTimeout for a row lock, so the bound is that plus slack.
 	response := fleetDaemonCall(t, second, f.apps[0], "/work", http.StatusServiceUnavailable)
-	if response.duration > time.Second || !strings.Contains(response.body, "rate_limit_unavailable") {
+	if response.duration > 2*time.Second || !strings.Contains(response.body, "rate_limit_unavailable") {
 		t.Fatalf("bounded lock response=%+v", response)
 	}
 	if err := tx.Rollback(t.Context()); err != nil {
@@ -149,6 +152,50 @@ func TestTrafficFleetDaemonRateAdmissionAndRecovery(t *testing.T) {
 	if fleetDaemonCounter(t, f, "app", f.apps[0].ID) != 0 || len(f.vm.calls("/work")) != allowed || f.vm.guestCalls("/work") != allowed {
 		t.Fatal("replacement, outage or lock recovery reset debt or forwarded a refused request")
 	}
+}
+
+// TestTrafficFleetDaemonRateCounterOutageGrace: a counter outage right after
+// the counter answered keeps limits on the gateway's own bucket instead of
+// refusing every request with rate_limit_unavailable (ADR-20261027173012).
+func TestTrafficFleetDaemonRateCounterOutageGrace(t *testing.T) {
+	f := newFleetDaemonFixture(t)
+	gateway := startFleetDaemonConfigured(t, f.pool, f.apps, f.nodes[0].ID, f.nodes[0].Name, f.usage, fleetDaemonOptions{})
+	// The first request creates the counter rows the fixture balance sets.
+	fleetDaemonCall(t, gateway, f.apps[0], "/work", http.StatusOK)
+	fleetDaemonSetBalance(t, f, "app", f.apps[0].ID, 3)
+	fleetDaemonSetBalance(t, f, "account", f.app.AccountID, 100)
+	fleetDaemonCall(t, gateway, f.apps[0], "/work", http.StatusOK)
+	if _, err := f.pool.Exec(t.Context(), "ALTER TABLE pg_ratelimit_counters RENAME TO pg_ratelimit_counters_offline"); err != nil {
+		t.Fatal(err)
+	}
+	served, limited := 0, 0
+	for range 12 {
+		response, err := requestFleetDaemon(t.Context(), gateway.ready.Endpoint, f.apps[0].Host, "/work")
+		if err != nil {
+			t.Fatal(err)
+		}
+		switch response.status {
+		case http.StatusOK:
+			served++
+		case http.StatusTooManyRequests:
+			if response.headers.Get("X-Faas-Rate-Limit-Scope") != "app" {
+				t.Fatalf("local refusal scope=%q", response.headers.Get("X-Faas-Rate-Limit-Scope"))
+			}
+			limited++
+		default:
+			t.Fatalf("counter outage inside the grace answered %+v", response)
+		}
+	}
+	// The gateway's bucket starts from the counter's last answer (2 left) and
+	// refills at the app's rate, so the limit still holds during the outage.
+	if served == 0 || limited == 0 || f.vm.guestCalls("/work") != served+2 {
+		t.Fatalf("outage grace served=%d limited=%d guest=%d", served, limited, f.vm.guestCalls("/work"))
+	}
+	if _, err := f.pool.Exec(t.Context(), "ALTER TABLE pg_ratelimit_counters_offline RENAME TO pg_ratelimit_counters"); err != nil {
+		t.Fatal(err)
+	}
+	fleetDaemonSetBalance(t, f, "app", f.apps[0].ID, 0)
+	fleetDaemonCall(t, gateway, f.apps[0], "/work", http.StatusTooManyRequests)
 }
 
 func TestTrafficFleetDaemonCacheHitsChargeAppAndAccount(t *testing.T) {

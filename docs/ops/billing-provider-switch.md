@@ -240,9 +240,20 @@ handling rules.
 
 ## Webhook and failure handling
 
-Register `https://<host>/v1/webhooks/polar` and subscribe to subscription
-creation/update/cancellation/past-due/revocation plus order creation/payment/
-refund events. Polar Standard Webhooks headers are verified before parsing;
+Register `https://<host>/v1/webhooks/polar` and subscribe to exactly these
+events:
+
+`subscription.created`, `subscription.updated`, `subscription.active`,
+`subscription.canceled`, `subscription.uncanceled`, `subscription.revoked`,
+`subscription.past_due`, `subscription.cycled`, `order.created`,
+`order.updated`, `order.paid`, `order.refunded`, `refund.created`,
+`refund.updated`.
+
+`order.created` and `order.updated` project an unpaid renewal as an `open`
+invoice, so a past-due customer sees what they owe; a late one never reopens a
+`paid` invoice (ADR-20261028101500). Compute and egress usage events are
+stamped when meterd sends them, so a Polar invoice's usage line covers usage
+delivered during the previous cycle. Polar Standard Webhooks headers are verified before parsing;
 database persistence and replay-claim failures return non-2xx so the provider
 can retry. A valid duplicate delivery is acknowledged without repeating the
 state transition.

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/base64"
 	"errors"
@@ -961,6 +962,9 @@ type Handler struct {
 	limiter                  *Limiter
 	preAuthLimiter           *preAuthSourceLimiter
 	preAuthCentral           CentralBackend
+	bodySpoolBudget          *requestBodyBudget
+	bodyMemoryBudget         *requestBodyBudget
+	keyLookups               *keyLookupLimiter
 	financialBudgetAdmission func(context.Context, App) error
 	// routeLimiter is the per-rule token-bucket throttle (ADR-091
 	// D20.5 amendment, issue #881). Same underlying *Limiter type as
@@ -1477,6 +1481,11 @@ func NewHandlerWith(backend Backend, m *Metrics, log *slog.Logger) *Handler {
 		backend:        backend,
 		limiter:        NewLimiter(),
 		preAuthLimiter: newPreAuthSourceLimiter(),
+		// The request bodies this gateway holds at once: spooled uploads
+		// on disk, validate-rule bodies in the heap.
+		bodySpoolBudget:  newRequestBodyBudget(api.RequestBodySpoolNodeBytes, api.RequestBodySpoolPerClient),
+		keyLookups:       newKeyLookupLimiter(),
+		bodyMemoryBudget: newRequestBodyBudget(api.RequestBodyMemoryNodeBytes, 0),
 		// routeLimiter is built with NewLimiterWithLRU (#887) so
 		// the per-rule bucket map — keyed by appID+"\x00"+ruleID —
 		// cannot grow unboundedly; full-bucket-only eviction
@@ -1549,6 +1558,9 @@ func NewHandlerWith(backend Backend, m *Metrics, log *slog.Logger) *Handler {
 	h.proxyFor = defaultProxy
 	// Route priorities also order the cold-wake queue (ADR-20261018181846).
 	h.gate.classifier = h
+	// A wake generation outlives schedd's leader and its reply's trip back,
+	// so schedd's own outcome, not the gate's deadline, ends it.
+	h.gate.leaderFloor = sched.DefaultWakeLeaderBudget + time.Second
 	return h
 }
 
@@ -1624,9 +1636,20 @@ func (h *Handler) WithCentralBackend(central CentralBackend) *Handler {
 	for _, limiter := range h.limiters() {
 		limiter.central = central
 		limiter.centralErrorObserver = h.observeCentralRateLimitDegraded
+		limiter.centralFallbackObserver = h.observeCentralRateLimitFallback
 	}
 	if h.metrics != nil && h.metrics.rateLimitShared != nil && !h.limiter.isNoopBackend() {
 		h.metrics.rateLimitShared.Set(1)
+	}
+	return h
+}
+
+// WithRateLimitOutageGrace replaces api.TrafficRateLimitOutageGrace on every
+// Limiter the Handler owns; a negative grace refuses at the first central
+// failure. Test fleets use it to cross the grace. Call before serving.
+func (h *Handler) WithRateLimitOutageGrace(grace time.Duration) *Handler {
+	for _, limiter := range h.limiters() {
+		limiter.centralOutageGrace = grace
 	}
 	return h
 }
@@ -1703,6 +1726,40 @@ func (h *Handler) observeCentralRateLimitDegraded(ctx context.Context, scope str
 			"scope": scope,
 			"error": err.Error(),
 		})
+	}
+}
+
+// observeCentralRateLimitFallback makes a shared counter outage inside the
+// outage grace visible: limits still hold, but per gateway. The warning log
+// shares the degraded path's per-scope cooldown under its own key.
+func (h *Handler) observeCentralRateLimitFallback(_ context.Context, scope string, err error) {
+	if h == nil || err == nil {
+		return
+	}
+	switch scope {
+	case rateLimitScopeApp, rateLimitScopeAccount, rateLimitScopeRule:
+	default:
+		scope = "other"
+	}
+	if h.metrics != nil {
+		h.metrics.ObserveRateLimitLocalFallback(scope)
+	}
+	now := time.Now()
+	key := "fallback:" + scope
+	h.centralRateLimitDegradedMu.Lock()
+	if h.centralRateLimitDegradedLast == nil {
+		h.centralRateLimitDegradedLast = make(map[string]time.Time, 8)
+	}
+	last := h.centralRateLimitDegradedLast[key]
+	if !last.IsZero() && now.Sub(last) < centralRateLimitDegradedCooldown {
+		h.centralRateLimitDegradedMu.Unlock()
+		return
+	}
+	h.centralRateLimitDegradedLast[key] = now
+	h.centralRateLimitDegradedMu.Unlock()
+	if h.log != nil {
+		h.log.Warn("gateway shared rate counter unavailable; enforcing limits per gateway within the outage grace",
+			"scope", scope, "grace", api.TrafficRateLimitOutageGrace, "error", err)
 	}
 }
 
@@ -2220,7 +2277,13 @@ func (h *Handler) enforceRequireAuthn(w http.ResponseWriter, r *http.Request, re
 	// The hash call uses the same api.HashAPIKey helper the
 	// apid middleware uses (defense in depth — keys never
 	// reach the store unhashed).
-	acct, key, err := h.requireAuthnAuthn.AuthenticateKey(r.Context(), api.HashAPIKey(tok))
+	acct, key, err := h.authenticateBearer(r, tok)
+	if errors.Is(err, errKeyLookupThrottled) {
+		rec.status = http.StatusTooManyRequests
+		writeKeyLookupThrottled(w)
+		h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
+		return false
+	}
 	if err != nil {
 		// Distinguish expired/revoked (the store's typed
 		// sentinels) from "unknown key" so the audit row
@@ -3772,9 +3835,15 @@ func (h *Handler) applyEdgeRuleValidate(w http.ResponseWriter, r *http.Request, 
 	// platform cap (spec §4.1.2) even on plans that accept larger
 	// bodies through the spooled proxy path.
 	cap := validateBodyCap(rule.MaxBodyBytes, app.Plan.MaxRequestBodyBytes())
+	lease, ok := h.holdValidateBody(r, int64(cap))
+	if !ok {
+		api.WriteProblem(w, api.ErrRequestBodyBudget())
+		return true
+	}
 	r.Body = http.MaxBytesReader(w, r.Body, int64(cap))
 	body, err := io.ReadAll(r.Body)
 	_ = r.Body.Close()
+	lease.shrink(int64(cap) - int64(len(body)))
 	if err != nil {
 		var maxErr *http.MaxBytesError
 		if errors.As(err, &maxErr) {
@@ -3824,6 +3893,23 @@ func (h *Handler) applyEdgeRuleValidate(w http.ResponseWriter, r *http.Request, 
 	}
 	h.recordEdgeRuleValidateMatch(r, rule)
 	return false
+}
+
+// holdValidateBody reserves heap budget for a validate rule's buffered body:
+// the declared length when the client sent one under the cap, else the cap.
+// The hold lasts until the request finishes, since the buffered bytes are
+// forwarded.
+func (h *Handler) holdValidateBody(r *http.Request, cap int64) (*requestBodyLease, bool) {
+	lease, _ := h.bodyMemoryBudget.lease("")
+	want := cap
+	if r.ContentLength >= 0 && r.ContentLength < cap {
+		want = r.ContentLength
+	}
+	if !lease.grow(want) {
+		return nil, false
+	}
+	context.AfterFunc(r.Context(), lease.release)
+	return lease, true
 }
 
 // recordEdgeRuleValidateMatch records a request that passed every check of
@@ -5039,7 +5125,13 @@ func (h *Handler) enforcePublicAuthBearer(w http.ResponseWriter, r *http.Request
 	// (2) Verify the key via the shared require_authn chain
 	// (same api.HashAPIKey helper; defense in depth — keys
 	// never reach the store unhashed).
-	acct, key, err := h.requireAuthnAuthn.AuthenticateKey(r.Context(), api.HashAPIKey(tok))
+	acct, key, err := h.authenticateBearer(r, tok)
+	if errors.Is(err, errKeyLookupThrottled) {
+		rec.status = http.StatusTooManyRequests
+		writeKeyLookupThrottled(w)
+		h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
+		return false
+	}
 	if err != nil {
 		reason := authnReasonInvalidBearer
 		if errors.Is(err, ErrAPIKeyExpired) {
@@ -5152,13 +5244,11 @@ func (h *Handler) enforcePublicAuthBasic(w http.ResponseWriter, r *http.Request,
 		h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
 		return false
 	}
-	// (3) Constant-time compare. Both sides are base64-
-	// decoded; we re-encode back to bytes for the compare so
-	// the function stays allocation-light. Length-mismatch
-	// short-circuits to 0 before the compare so an attacker
-	// who knows the password length can't probe via timing.
-	if subtle.ConstantTimeCompare([]byte(user), []byte(expectedUser)) != 1 ||
-		subtle.ConstantTimeCompare([]byte(pass), []byte(expectedPass)) != 1 {
+	// (3) Constant-time compare of fixed-length digests, both
+	// evaluated. ConstantTimeCompare returns early on unequal
+	// lengths and || skipped the password compare on a wrong
+	// username, so timing revealed the username and both lengths.
+	if !basicCredentialsMatch(user, pass, expectedUser, expectedPass) {
 		h.emitAuthnAudit(r, app, nil, "instances.public_auth_invalid", map[string]any{
 			"app_id": app.ID,
 			"slug":   r.Host,
@@ -6106,6 +6196,11 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	app = lookedApp
 haveApp:
+	// Previews serve unreleased code on guessable hosts; every answer for
+	// one, proxied or from the edge, tells search engines not to index it.
+	if app.IsPreview {
+		w.Header().Set("X-Robots-Tag", previewRobotsTag)
+	}
 	if app.EnvironmentNotReady {
 		api.WriteProblem(w, api.NewProblem(http.StatusServiceUnavailable, api.CodeCapacity,
 			"Environment is not ready", "the stage clone has not published all of its workloads and resources"))
@@ -6430,11 +6525,18 @@ haveApp:
 		h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
 		return
 	}
-	if h.matchAndApplyRedirect(w, r, app) {
+	// ADR-831 amendment 17: a challenge solution is the gateway's own request.
+	// It skips the redirect, rewrite and declared-route gates, which would
+	// move or refuse it and leave a visitor unable to pass; it still meets
+	// the IP and geo gates before it is checked.
+	challengeSolve := h.challengeSolveRequest(r, app)
+	if !challengeSolve && h.matchAndApplyRedirect(w, r, app) {
 		h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
 		return
 	}
-	h.matchAndApplyRewrite(r, app)
+	if !challengeSolve {
+		h.matchAndApplyRewrite(r, app)
+	}
 	h.applyEdgeRuleHeaders(w, r, app, rec)
 	// Resolve affinity after request-header rules so the picker, cache and
 	// forwarded header all use the same key. A configured browser cookie is
@@ -6473,7 +6575,7 @@ haveApp:
 	// auth/rate-limit and, critically, before the wake gate below. A request to
 	// an undeclared path is answered by the gateway and cannot create app work.
 	markTrafficPhase(r.Context(), trafficValidation)
-	if h.enforceDeclaredRoute(w, r, app, declaredPath, declaredMethod) {
+	if !challengeSolve && h.enforceDeclaredRoute(w, r, app, declaredPath, declaredMethod) {
 		h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
 		return
 	}
@@ -6541,7 +6643,8 @@ haveApp:
 	// runs after the IP and geo gates, so a blocked client cannot earn a
 	// pass, and before the body-reading gates, so a validate or limit rule
 	// cannot reject the form.
-	if h.handleChallengeSolve(w, r, app) {
+	if challengeSolve {
+		h.serveChallengeSolve(w, r, app)
 		h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
 		return
 	}
@@ -7030,7 +7133,7 @@ haveApp:
 	// Receive and bound the complete request body before wake admission. The
 	// upload has a plan-sized deadline and spills large bodies to disk. An
 	// explicit total deadline bounds it too; the execution budget starts later.
-	if admitRequestBody(w, r, app) {
+	if admitRequestBody(w, r, app, h.bodySpoolBudget) {
 		h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
 		return
 	}
@@ -7189,21 +7292,27 @@ haveApp:
 			} else {
 				admittedWakeID, method, atCapacity, admitErr = h.backend.Admit(r.Context(), app.ID, exactDeploymentID, exactDeploymentScope, exactDeploymentTrigger, maxInstances+api.RolloutConcurrencyGrant)
 			}
-			if admitErr != nil || atCapacity {
-				if admitErr == nil {
-					if notServing := h.pinnedDeploymentNotServing(r.Context(), app, exactDeploymentID); notServing != nil {
-						admitErr = notServing
-					} else {
-						admitErr = api.ErrAppConcurrencyReachedAt(limits, maxInstances, backendCapacityCount(h.backend, app.ID))
-					}
+			settled := false
+			if admitErr == nil && atCapacity {
+				if notServing := h.pinnedDeploymentNotServing(r.Context(), app, exactDeploymentID); notServing != nil {
+					admitErr = notServing
+				} else {
+					pick, admitErr = h.settleAtCapacity(r.Context(), app, limits, maxInstances, func() PickResult {
+						return pickPublicDeployment(h.backend, app.ID, exactDeploymentID, preferredInstanceID)
+					})
+					settled = admitErr == nil
 				}
+			}
+			if admitErr != nil {
 				h.logFleetCapacityRefusal(app.ID, admitErr)
 				writeBurstCapacityError(w, r, admitErr)
 				h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
 				return
 			}
-			cold, wakeID, wakeMethod = true, admittedWakeID, method
-			pick = pickPublicDeployment(h.backend, app.ID, exactDeploymentID, preferredInstanceID)
+			if !settled {
+				cold, wakeID, wakeMethod = true, admittedWakeID, method
+				pick = pickPublicDeployment(h.backend, app.ID, exactDeploymentID, preferredInstanceID)
+			}
 			if !pick.OK {
 				api.WriteProblem(w, api.NewProblem(http.StatusServiceUnavailable, api.CodeCapacity,
 					exactUnavailableTitle, "the requested deployment became unavailable after admission"))
@@ -7428,22 +7537,35 @@ haveApp:
 		pick = h.pickAfterCapacity(app, preferredInstanceID, versionKey)
 	}
 	if !pick.OK {
-		// Race: every cached instance was evicted between
-		// ensureCapacity returning and our Pick. Surface the observed
-		// (current) HealthyCount so the operator's metrics panel
-		// shows 0 vs the cap (was 1+ microseconds ago).
-		wakeErr := api.ErrAppConcurrencyReachedAt(limits, effectiveAppConcurrencyLimit(app, limits.MaxConcurrency), backendCapacityCount(h.backend, app.ID))
-		h.markHealthFailure(app.ID, wakeErr)
-		writeBurstCapacityError(w, r, wakeErr)
-		h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
-		return
+		// No routable target after ensureCapacity: schedd answered at
+		// capacity for instances this gateway cannot route to yet, or every
+		// cached instance was evicted since. Only a true count of live
+		// instances is the customer's limit (#5709).
+		var wakeErr error
+		pick, wakeErr = h.settleAtCapacity(r.Context(), app, limits, effectiveAppConcurrencyLimit(app, limits.MaxConcurrency), func() PickResult {
+			return h.pickAfterCapacity(app, preferredInstanceID, versionKey)
+		})
+		if wakeErr != nil {
+			h.markHealthFailure(app.ID, wakeErr)
+			writeBurstCapacityError(w, r, wakeErr)
+			h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
+			return
+		}
 	}
 	// ADR-201 §2 (H4-68): an instance whose circuit is open is not
-	// selectable. An exact-deployment smoke must reach its deployment and is
-	// never re-picked.
-	if !exactDeployment {
+	// selectable. Every public request picks an exact deployment once its
+	// routing is pinned (ADR-570), so the re-pick stays within that
+	// deployment (ADR-091 amendment 2026-10-27, GA hardening: the check used
+	// to skip every exact-deployment pick, which left public traffic outside
+	// the breaker). A deployment smoke or route probe verifies one
+	// deployment's instance and is never re-picked.
+	if !deploymentSmoke && !routeProbe {
+		repick := func() PickResult { return h.pickAfterCapacity(app, "", versionKey) }
+		if exactDeployment {
+			repick = func() PickResult { return pickPublicDeployment(h.backend, app.ID, exactDeploymentID, "") }
+		}
 		var allowed, probe bool
-		pick, allowed, probe = h.selectByCircuit(app.ID, pick, func() PickResult { return h.pickAfterCapacity(app, "", versionKey) })
+		pick, allowed, probe = h.selectByCircuit(app.ID, pick, repick)
 		if !allowed {
 			writeCircuitOpen(w)
 			h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
@@ -9574,6 +9696,10 @@ func writeWakeError(w http.ResponseWriter, err error) {
 		w.Header().Set("Retry-After", strconv.Itoa(retryAfter))
 		api.WriteProblem(w, api.NewProblem(http.StatusServiceUnavailable, api.CodeCapacity,
 			"Wake admission is busy", "the gateway is admitting other cold wakes; retry shortly"))
+	case errors.Is(err, ErrInstanceSlotsSettling):
+		w.Header().Set("Retry-After", "1")
+		api.WriteProblem(w, api.NewProblem(http.StatusServiceUnavailable, api.CodeCapacity,
+			"App instance starting", "this app's instances are starting or stopping and none can take the request yet; retry shortly"))
 	case errors.Is(err, ErrBootstrapAborted):
 		// ADR-098 C7: the leader aborted under the bootstrap cap
 		// (queue empty AND no live instance). The customer should
@@ -9848,4 +9974,15 @@ func hostname(host string) string {
 		host = host[:i]
 	}
 	return strings.ToLower(host)
+}
+
+// basicCredentialsMatch compares Basic credentials in time independent of
+// which part differs and of either side's length: both values are hashed to
+// SHA-256 first and both comparisons always run.
+func basicCredentialsMatch(user, pass, expectedUser, expectedPass string) bool {
+	gotUser, wantUser := sha256.Sum256([]byte(user)), sha256.Sum256([]byte(expectedUser))
+	gotPass, wantPass := sha256.Sum256([]byte(pass)), sha256.Sum256([]byte(expectedPass))
+	userOK := subtle.ConstantTimeCompare(gotUser[:], wantUser[:])
+	passOK := subtle.ConstantTimeCompare(gotPass[:], wantPass[:])
+	return userOK&passOK == 1
 }

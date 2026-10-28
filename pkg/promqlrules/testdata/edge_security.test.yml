@@ -111,6 +111,40 @@ tests:
               description: "More than half of the challenge solutions gw-2 received in 15m were invalid or expired. If only this gateway does it, its challenge key or clock differs from the gateway that issued the pages; visitors are sent back to the challenge."
               runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasEdgeChallenge.md"
 
+  # ADR-831 amendment 17.
+  - name: gateways signing challenges with different keys warn
+    interval: 1m
+    input_series:
+      - series: gateway_edge_challenge_key_info{job="gatewayd-internal",instance="gw-1",key_id="6ecec4c8a1b2",source="session"}
+        values: 1x20
+      - series: gateway_edge_challenge_key_info{job="gatewayd-internal",instance="gw-2",key_id="c2b8f982c3d4",source="session"}
+        values: 1x20
+    alert_rule_test:
+      - eval_time: 15m
+        alertname: FaasEdgeChallengeKeyMismatch
+        exp_alerts:
+          - exp_labels:
+              severity: warn
+              component: gatewayd-internal
+              family: edge_security
+              public_status: internal
+            exp_annotations:
+              summary: "Gateways sign browser challenges with different keys"
+              description: "gatewayd-internal processes report more than one gateway_edge_challenge_key_info key_id. A challenge pass one gateway issues is refused by the others, so visitors behind a challenge rule are challenged again whenever a request reaches another gateway. Give every gateway the fleet's gatewayd_edge_challenge_key before releasing edge_challenge."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasEdgeChallenge.md"
+
+  - name: gateways sharing the fleet challenge key do not warn
+    interval: 1m
+    input_series:
+      - series: gateway_edge_challenge_key_info{job="gatewayd-internal",instance="gw-1",key_id="3f09ab12cd34",source="fleet"}
+        values: 1x20
+      - series: gateway_edge_challenge_key_info{job="gatewayd-internal",instance="gw-2",key_id="3f09ab12cd34",source="fleet"}
+        values: 1x20
+    alert_rule_test:
+      - eval_time: 15m
+        alertname: FaasEdgeChallengeKeyMismatch
+        exp_alerts: []
+
   - name: penalty box sharing errors, drops and slow propagation warn
     interval: 1m
     input_series:

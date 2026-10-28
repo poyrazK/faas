@@ -153,6 +153,9 @@ func printFinancialForecast(w io.Writer, response api.FinancialForecastResponse)
 			_, _ = fmt.Fprintf(w, "%s forecast unavailable: %s\n", meter.Meter, f.Reason)
 		}
 	}
+	if response.ProjectedSubtotalMillicents != nil {
+		_, _ = fmt.Fprintf(w, "Projected subtotal (plan fee + usage): %s\n", financialMoney(*response.ProjectedSubtotalMillicents))
+	}
 	if !response.BillEstimateAvailable {
 		_, _ = fmt.Fprintf(w, "Full bill estimate unavailable: %s\n", strings.Join(response.MissingBillComponents, ", "))
 	}

@@ -215,6 +215,7 @@ func renderManifestAnsibleFiles(m *manifest.Manifest, outputDir string) ([]manif
 			}
 		}
 		body += renderComputeEdgeVars(m.PublicEdge.ComputeNodes, host.Role, postgresListenAddress, computeAllowedCIDRs)
+		body += renderLogArchiveVars(m.LogArchive)
 		body += renderWorkloadIdentityVars(m.WorkloadIdentity)
 		if host.Role == roleComputeOnly && m.Egress.TenantGateway != nil {
 			gatewayVars, gwErr := renderTenantEgressGatewayVars(m.Egress.TenantGateway, canonicalComputeNodeName(host.Name, roleTemplating.Role(host.Role)))
@@ -287,6 +288,30 @@ func renderObjectStorageGatewayVars(o manifest.ObjectStorage) string {
 	fmt.Fprintf(&b, "faas_object_storage_config_src: %q\n", o.ConfigSrc)
 	if o.ProviderEnvSrc != "" {
 		fmt.Fprintf(&b, "faas_object_storage_provider_env_src: %q\n", o.ProviderEnvSrc)
+	}
+	return b.String()
+}
+
+// renderLogArchiveVars hands the manifest's archive bucket to the log_archive
+// role on every host, which writes it into archive-creds.json. Absent emits
+// nothing, so a converge never rewrites an envelope the operator provisioned.
+func renderLogArchiveVars(l manifest.LogArchive) string {
+	if !l.Configured() {
+		return ""
+	}
+	region := l.Region
+	if region == "" {
+		region = "auto"
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "faas_log_archive_bucket: %q\n", l.Bucket)
+	fmt.Fprintf(&b, "faas_log_archive_endpoint: %q\n", l.Endpoint)
+	fmt.Fprintf(&b, "faas_log_archive_region: %q\n", region)
+	if l.Auth == "static" {
+		b.WriteString("faas_log_archive_auth_mode: \"\"\n")
+		fmt.Fprintf(&b, "faas_log_archive_credentials_src: %q\n", l.CredentialsSrc)
+	} else {
+		fmt.Fprintf(&b, "faas_log_archive_auth_mode: %q\n", l.Auth)
 	}
 	return b.String()
 }

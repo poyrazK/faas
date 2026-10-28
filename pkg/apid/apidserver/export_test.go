@@ -327,6 +327,13 @@ var SealInboundWebhookSigningSecret = sealInboundWebhookSigningSecret
 var SealGitLabTokens = sealGitLabTokens
 var OpenGitLabTokens = openGitLabTokens
 var OpenIssueSlackToken = openIssueSlackToken
+
+// RealtimeHostKeys exposes the keys apid gives managed realtime.
+func RealtimeHostKeys() (func() ([]*age.X25519Recipient, error), func(context.Context) []*age.X25519Identity) {
+	h := realtimeHost{}
+	return h.SecretRecipients, h.HostIdentitiesForUnseal
+}
+
 var VerifyInboundWebhook = verifyInboundWebhook
 var SealMCPPagerDutyWebhookSecret = sealMCPPagerDutyWebhookSecret
 
@@ -1064,7 +1071,7 @@ func (r *server) ConfigureOperations(p0 Config, p1 func(string) string) error {
 func (r *server) ConfigureQueueWorkload(p0 http.ResponseWriter, p1 *http.Request, p2 state.Account) {
 	r.configureQueueWorkload(p0, p1, p2)
 }
-func (r *server) CountAccountConsumerKeys(p0 context.Context, p1 string) (int, error) {
+func (r *server) CountAccountConsumerKeys(p0 context.Context, p1 state.App) (int, error) {
 	return r.countAccountConsumerKeys(p0, p1)
 }
 func (r *server) CountConsumerKeys(p0 context.Context, p1 string, p2 string) (int, error) {
@@ -1814,3 +1821,10 @@ func (r *server) RequestBillingMailOutboxesForTest() {
 }
 
 var AppRestartRefusal = appRestartRefusal
+
+// SecurityMailAllow is a fresh per-account sign-in mail limiter on clock now.
+func SecurityMailAllow(now func() time.Time) func(accountID, kind string) bool {
+	l := newSecurityMailLimiter()
+	l.now = now
+	return l.allow
+}

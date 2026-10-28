@@ -207,8 +207,11 @@ func enrollTrafficScopesWith(w http.ResponseWriter, r *http.Request, registry *t
 	if registry == nil { // Optional only for legacy in-process fixtures.
 		return false
 	}
-	if handleForwardRequestCancellation(w, r, true) || trafficFenceIsOff(r.Context()) {
-		return handleForwardRequestCancellation(w, r, true)
+	// One call: a true result has already written the refusal, and calling
+	// again wrote a second problem document into the same body.
+	cancelled := handleForwardRequestCancellation(w, r, true)
+	if cancelled || trafficFenceIsOff(r.Context()) {
+		return cancelled
 	}
 	enrollment, _ := r.Context().Value(trafficEnrollmentKey{}).(*trafficEnrollment)
 	if enrollment == nil {

@@ -434,10 +434,21 @@ SELECT key FROM (
 ) keys WHERE coalesce(key, '') <> '' ORDER BY key;
 
 -- name: LayerArtifactHasReferences :one
+-- A superseded deployment among the newest rollback_generations live or
+-- superseded deployments of its app and scope is a rollback target, whose
+-- cold boot needs its layers whatever state its snapshots are in (Hunt 21
+-- H21-1).
 SELECT EXISTS (
     SELECT 1 FROM deployments d JOIN apps a ON a.id = d.app_id
     WHERE a.status <> 'deleted'
       AND ((d.deleted_at IS NULL AND d.status IN ('pending', 'building', 'imaging', 'snapshotting', 'live'))
+           OR (d.deleted_at IS NULL AND d.status = 'superseded' AND (
+                SELECT count(*) FROM deployments n
+                 WHERE n.app_id = d.app_id
+                   AND COALESCE(NULLIF(n.scope, ''), 'default') = COALESCE(NULLIF(d.scope, ''), 'default')
+                   AND n.deleted_at IS NULL AND n.status IN ('live', 'superseded')
+                   AND (n.created_at > d.created_at OR (n.created_at = d.created_at AND n.id > d.id))
+               ) < sqlc.arg(rollback_generations)::int)
            OR EXISTS (SELECT 1 FROM snapshots sn WHERE sn.deployment_id = d.id AND NOT sn.stale)
            OR EXISTS (SELECT 1 FROM instances i WHERE i.deployment_id = d.id AND i.state IN ('pending', 'waking', 'cold_booting', 'running', 'snapshotting', 'migrating', 'warm', 'frozen', 'draining'))
            OR EXISTS (SELECT 1 FROM deployment_aliases al WHERE al.deployment_id = d.id)
@@ -1004,10 +1015,16 @@ INSERT INTO invoices (
 ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, clock_timestamp())
 ON CONFLICT (account_id, provider, provider_invoice_id) DO UPDATE SET
   provider_charge_id = coalesce(nullif(excluded.provider_charge_id, ''), invoices.provider_charge_id),
-  number = excluded.number, status = excluded.status,
+  -- A late "created"/"pending" delivery never reopens a paid invoice
+  -- (ADR-20261028101500): providers may deliver order events out of order.
+  number = excluded.number,
+  status = CASE WHEN invoices.status = 'paid' AND excluded.status IN ('open', 'draft')
+    THEN invoices.status ELSE excluded.status END,
   period_start = excluded.period_start, period_end = excluded.period_end,
   subtotal_cents = excluded.subtotal_cents, tax_cents = excluded.tax_cents,
-  total_cents = excluded.total_cents, amount_paid_cents = excluded.amount_paid_cents,
+  total_cents = excluded.total_cents,
+  amount_paid_cents = CASE WHEN invoices.status = 'paid' AND excluded.status IN ('open', 'draft')
+    THEN invoices.amount_paid_cents ELSE excluded.amount_paid_cents END,
   currency = excluded.currency, pdf_available = excluded.pdf_available,
   details = invoices.details || CASE WHEN excluded.details ? 'lines' THEN
     jsonb_set(excluded.details, '{lines,items}', coalesce((
@@ -8096,6 +8113,10 @@ WITH metadata AS (
         a.account_id::text AS account_id, a.slug AS app_slug, a.status AS app_status,
         d.status AS deployment_status, s.fc_version, s.mem_bytes, s.disk_bytes,
         s.storage_key, s.stale, s.delete_pending, s.created_at, s.tier,
+        -- Stale retention counts from the stale mark, never from before the
+        -- row's creation; rows marked before stale_at existed count from
+        -- their creation (Hunt 21 H21-2).
+        GREATEST(s.stale_at, s.created_at)::timestamptz AS stale_since,
         COALESCE(NULLIF(d.scope,''),'default')::text AS scope,
         COALESCE(runtime_owner.environment_id::text,legacy.id::text,'')::text AS environment_id,
         COALESCE(d.rootfs_key,'')::text AS deployment_rootfs_key,
@@ -8124,7 +8145,7 @@ WITH metadata AS (
 )
 SELECT * FROM metadata
 WHERE (sqlc.arg(mode)::text='active' AND (NOT stale OR runtime_owner_invalid))
-    OR (sqlc.arg(mode)::text='stale' AND stale AND created_at<now()-sqlc.arg(retention_seconds)::bigint*interval '1 second')
+    OR (sqlc.arg(mode)::text='stale' AND stale AND stale_since<now()-sqlc.arg(retention_seconds)::bigint*interval '1 second')
     OR (sqlc.arg(mode)::text='pending' AND delete_pending)
 ORDER BY CASE WHEN sqlc.arg(mode)::text='active' THEN created_at END DESC,
     CASE WHEN sqlc.arg(mode)::text<>'active' THEN created_at END ASC, id ASC
@@ -8445,8 +8466,9 @@ SELECT public_auth_mode FROM apps
 WHERE id = sqlc.arg(id)::uuid AND status <> 'deleted' AND deleted_at IS NULL;
 
 -- ADR-570: minimal credential-free projection for one read-only service-policy snapshot.
+-- org_id is the tenant boundary SameAppResourceOwner checks (Hunt 23 H23-1).
 -- name: ReadServicePolicyAppByID :one
-SELECT id, account_id, slug, workload_name, status, project_id, preview_of_slug,
+SELECT id, account_id, org_id, slug, workload_name, status, project_id, preview_of_slug,
        preview_pr_number, preview_pr_state, preview_expires_at, app_protocol, websocket_enabled,
        jsonb_strip_nulls(jsonb_build_object(
            'service_bindings', manifest->'service_bindings',
@@ -8459,7 +8481,7 @@ SELECT id, account_id, slug, workload_name, status, project_id, preview_of_slug,
 FROM apps WHERE id = sqlc.arg(id)::uuid;
 
 -- name: ReadServicePolicyAppBySlug :one
-SELECT id, account_id, slug, workload_name, status, project_id, preview_of_slug,
+SELECT id, account_id, org_id, slug, workload_name, status, project_id, preview_of_slug,
        preview_pr_number, preview_pr_state, preview_expires_at, app_protocol, websocket_enabled,
        jsonb_strip_nulls(jsonb_build_object(
            'service_bindings', manifest->'service_bindings',
@@ -8471,24 +8493,17 @@ SELECT id, account_id, slug, workload_name, status, project_id, preview_of_slug,
            'allowed_service_call_scopes', manifest->'allowed_service_call_scopes'))::jsonb AS manifest
 FROM apps WHERE slug = sqlc.arg(slug)::text AND status <> 'deleted';
 
--- name: ReadServicePolicyPreviewApp :one
-SELECT id, account_id, slug, workload_name, status, project_id, preview_of_slug,
-       preview_pr_number, preview_pr_state, preview_expires_at, app_protocol, websocket_enabled,
-       jsonb_strip_nulls(jsonb_build_object(
-           'service_bindings', manifest->'service_bindings',
-           'service_reliability', manifest->'service_reliability',
-           'service_binding_policy', manifest->'service_binding_policy',
-           'service_binding_transport', manifest->'service_binding_transport',
-           'preview_service_calls_policy', manifest->'preview_service_calls_policy',
-           'allowed_service_callers', manifest->'allowed_service_callers',
-           'allowed_service_call_scopes', manifest->'allowed_service_call_scopes'))::jsonb AS manifest
-FROM apps WHERE account_id = sqlc.arg(account_id)::uuid AND project_id = sqlc.arg(project_id)::uuid
+-- name: ServicePolicyPreviewAppIDs :many
+-- Two IDs suffice to refuse an ambiguous service name, as production does.
+SELECT id FROM apps WHERE account_id = sqlc.arg(account_id)::uuid AND project_id = sqlc.arg(project_id)::uuid
   AND preview_pr_number = sqlc.arg(preview_pr_number)::integer
   AND translate(lower(workload_name), '_.', '--') = translate(lower(sqlc.arg(workload_name)::text), '_.', '--')
-  AND preview_of_slug IS NOT NULL AND status <> 'deleted';
+  AND preview_of_slug IS NOT NULL AND status <> 'deleted'
+ORDER BY id
+LIMIT 2;
 
 -- name: ReadServicePolicyTestApp :one
-SELECT id, account_id, slug, workload_name, status, project_id, preview_of_slug,
+SELECT id, account_id, org_id, slug, workload_name, status, project_id, preview_of_slug,
        preview_pr_number, preview_pr_state, preview_expires_at, app_protocol, websocket_enabled,
        jsonb_strip_nulls(jsonb_build_object(
            'service_bindings', manifest->'service_bindings',
@@ -8614,9 +8629,28 @@ SELECT EXISTS (
 -- ADR-20261027085556: a gateway's public routing view reads every app it
 -- tracks in one repeatable-read snapshot. Each query below returns, for many
 -- apps at once, the rows its per-request counterpart above reads for one.
+-- revision_pins is ReadPublicRoutingRevision's manifest condition.
+-- revision_pin_ttl_valid is false when the stored value is not an integer, which
+-- the per-request read fails on; such an app's revision pins keep that read.
 -- name: ReadPublicRoutingViewOwners :many
-SELECT id, account_id, project_id FROM apps
+SELECT id, account_id, project_id,
+       (coalesce(manifest->>'revision_pin_ttl_seconds', '0') ~ '^-?[0-9]{1,9}$')::boolean AS revision_pin_ttl_valid,
+       (CASE WHEN coalesce(manifest->>'revision_pin_ttl_seconds', '0') ~ '^-?[0-9]{1,9}$'
+             THEN coalesce(manifest->>'revision_pin_ttl_seconds', '0')::integer > 0 ELSE false END)::boolean AS revision_pins
+FROM apps
 WHERE id = ANY(sqlc.arg(app_ids)::uuid[]) AND status <> 'deleted' AND deleted_at IS NULL;
+
+-- Live deployments in every scope, for host and revision pins
+-- (ReadPublicRoutingHostPin, ReadPublicRoutingRevision). row_limit + 1 rows per
+-- app tell the reader the list was cut.
+-- name: ReadPublicRoutingViewLive :many
+SELECT app_id, id, scope, traffic_percent, pin_expires_at FROM (
+    SELECT d.app_id, d.id, d.scope, d.traffic_percent, p.expires_at AS pin_expires_at,
+           row_number() OVER (PARTITION BY d.app_id ORDER BY d.id) AS position
+    FROM deployments d LEFT JOIN deployment_revision_pins p ON p.deployment_id = d.id
+    WHERE d.app_id = ANY(sqlc.arg(app_ids)::uuid[]) AND d.status = 'live' AND d.deleted_at IS NULL
+) ranked WHERE position <= sqlc.arg(row_limit)::integer
+ORDER BY app_id, id;
 
 -- Rows of ReadPublicRoutingWeights for every scope; a scope with more than
 -- row_limit rows is refused like the per-request roster.
@@ -8637,23 +8671,27 @@ FROM apps a JOIN project_release_canaries c ON c.project_id = a.project_id AND c
 WHERE a.id = ANY(sqlc.arg(app_ids)::uuid[]) AND c.status IN ('running', 'needs_operator')
 ORDER BY a.id, (c.status = 'running') DESC, c.created_at DESC;
 
--- Rows of ReadPublicRoutingRelease for each app: every active graph, and the
--- named graphs (a running canary's) while they are still usable. A graph's
--- target scope is its environment, the scope the per-request read filters on.
+-- Rows of ReadPublicRoutingRelease for each app: every active graph and every
+-- graph still usable by a release pin, the named graphs (a running canary's)
+-- first. A graph's target scope is its environment, the scope the per-request
+-- read filters on. row_limit + 1 rows per app tell the reader the list was cut.
 -- name: ReadPublicRoutingViewReleases :many
-SELECT a.id AS app_id, rs.id, rs.environment_slug, rs.active, member.deployment_id,
-       EXISTS (
-           SELECT 1 FROM deployments d WHERE d.id = member.deployment_id AND d.app_id = member.app_id
-             AND d.scope = rs.environment_slug AND d.status = 'live' AND d.deleted_at IS NULL
-             AND (d.traffic_percent > 0 OR EXISTS (SELECT 1 FROM deployment_revision_pins p WHERE p.deployment_id = d.id AND p.expires_at > now())
-                  OR EXISTS (SELECT 1 FROM project_release_members retained JOIN project_release_sets retained_set ON retained_set.id = retained.release_id
-                             WHERE retained.deployment_id = d.id AND retained.app_id = d.app_id AND (retained_set.active OR retained_set.expires_at > now())))
-       )::boolean AS target_live
-FROM apps a JOIN project_release_sets rs ON rs.project_id = a.project_id AND rs.account_id = a.account_id
-LEFT JOIN project_release_members member ON member.release_id = rs.id AND member.app_id = a.id
-WHERE a.id = ANY(sqlc.arg(app_ids)::uuid[]) AND a.status <> 'deleted' AND a.deleted_at IS NULL
-  AND (rs.active OR (rs.id = ANY(sqlc.arg(release_ids)::uuid[]) AND rs.expires_at > now()))
-ORDER BY a.id, rs.environment_slug, rs.created_at DESC, rs.id;
+SELECT app_id, id, environment_slug, active, expires_at, deployment_id, target_live FROM (
+    SELECT a.id AS app_id, rs.id, rs.environment_slug, rs.active, rs.expires_at, rs.created_at, member.deployment_id,
+           EXISTS (
+               SELECT 1 FROM deployments d WHERE d.id = member.deployment_id AND d.app_id = member.app_id
+                 AND d.scope = rs.environment_slug AND d.status = 'live' AND d.deleted_at IS NULL
+                 AND (d.traffic_percent > 0 OR EXISTS (SELECT 1 FROM deployment_revision_pins p WHERE p.deployment_id = d.id AND p.expires_at > now())
+                      OR EXISTS (SELECT 1 FROM project_release_members retained JOIN project_release_sets retained_set ON retained_set.id = retained.release_id
+                                 WHERE retained.deployment_id = d.id AND retained.app_id = d.app_id AND (retained_set.active OR retained_set.expires_at > now())))
+           )::boolean AS target_live,
+           row_number() OVER (PARTITION BY a.id ORDER BY rs.active DESC, (rs.id = ANY(sqlc.arg(release_ids)::uuid[])) DESC, rs.created_at DESC, rs.id) AS position
+    FROM apps a JOIN project_release_sets rs ON rs.project_id = a.project_id AND rs.account_id = a.account_id
+    LEFT JOIN project_release_members member ON member.release_id = rs.id AND member.app_id = a.id
+    WHERE a.id = ANY(sqlc.arg(app_ids)::uuid[]) AND a.status <> 'deleted' AND a.deleted_at IS NULL
+      AND (rs.active OR rs.expires_at > now())
+) ranked WHERE position <= sqlc.arg(row_limit)::integer
+ORDER BY app_id, environment_slug, created_at DESC, id;
 
 -- ADR-570: public host policy reads are credential-minimal and transaction-scoped.
 -- name: ReadPublicHostApp :one
@@ -8960,6 +8998,13 @@ SELECT pg_try_advisory_lock(hashtextextended(sqlc.arg(lock_key)::text,0))::boole
 -- name: UnlockTrafficPolicySession :one
 SELECT pg_advisory_unlock(hashtextextended(sqlc.arg(lock_key)::text,0))::boolean;
 
+-- name: TryLockTrafficPolicySessionShared :one
+-- A scoped binding writer's ancestor and root keys (ADR-20261027163626).
+SELECT pg_try_advisory_lock_shared(hashtextextended(sqlc.arg(lock_key)::text,0))::boolean;
+
+-- name: UnlockTrafficPolicySessionShared :one
+SELECT pg_advisory_unlock_shared(hashtextextended(sqlc.arg(lock_key)::text,0))::boolean;
+
 -- name: ReadEdgeRuleTrafficAccount :one
 SELECT account_id,kind FROM edge_rules WHERE id = sqlc.arg(rule_id)::uuid;
 
@@ -9029,7 +9074,13 @@ WITH environment_policies AS MATERIALIZED (
             'ExpiresAt', to_jsonb(edge_rules)->'expires_at', 'Match', to_jsonb(edge_rules)->'match_expr',
             'Mode', coalesce(to_jsonb(edge_rules)->>'mode', 'enforce'))::jsonb AS data
     FROM edge_rules WHERE enabled AND (account_id = sqlc.narg(account_id)::uuid
-        OR (sqlc.narg(account_id)::uuid IS NULL AND kind='route'))
+        OR (sqlc.narg(account_id)::uuid IS NULL AND kind='route'
+            -- A scoped binding write reads only the routes that can match the
+            -- names it may change (ADR-20261027163626); NULL reads every route.
+            AND (sqlc.narg(route_scope_names)::text[] IS NULL OR match_host_scope = ''
+                OR match_host_scope = ANY(sqlc.narg(route_scope_names)::text[])
+                OR EXISTS (SELECT 1 FROM unnest(sqlc.narg(route_scope_trees)::text[]) AS tree(name)
+                    WHERE match_host_scope LIKE '%.' || replace(replace(replace(tree.name,'\','\\'),'%','\%'),'_','\_')))))
     UNION ALL
     SELECT p.app_id, ''::text, coalesce(rule.value->>'kind',''), NULL::uuid,
         coalesce(rule.value->'action','{}'::jsonb), p.environment_id,
@@ -9300,6 +9351,10 @@ DELETE FROM custom_domains WHERE domain=sqlc.arg(domain)::text::citext AND app_i
 
 -- name: ReadTrafficGlobalRouteAccounts :many
 SELECT DISTINCT account_id FROM edge_rules WHERE enabled AND kind='route'
+    AND (sqlc.narg(route_scope_names)::text[] IS NULL OR match_host_scope = ''
+        OR match_host_scope = ANY(sqlc.narg(route_scope_names)::text[])
+        OR EXISTS (SELECT 1 FROM unnest(sqlc.narg(route_scope_trees)::text[]) AS tree(name)
+            WHERE match_host_scope LIKE '%.' || replace(replace(replace(tree.name,'\','\\'),'%','\%'),'_','\_')))
 ORDER BY account_id LIMIT (sqlc.arg(max_inputs)::integer+1);
 
 -- name: LockCustomDomainQuotaAccount :one
@@ -12507,6 +12562,52 @@ select exists (
     and (b.deployment_scope='' or i.deployment_scope=b.deployment_scope)
     and (i.queue_binding_id=b.id or (b.deployment_scope='' and i.queue_binding_id is null and i.queue_name=b.queue_name))
 )::boolean as in_flight;
+
+-- name: QueueBindingTelemetry :one
+-- QueueStateForBinding's figures for gauges and alerts without a
+-- backlog-sized read: each count stops at row_limit, and the oldest pending
+-- message is the first one due in the lease indexes
+-- (ADR-20261018101500 amendment 2026-10-27).
+with b as (
+  select id, account_id, queue_name, deployment_scope from queue_bindings
+  where id=sqlc.arg(binding_id)::uuid and app_id=sqlc.arg(app_id)::uuid
+), owned as (
+  select i.state, i.lease_expires_at from invocations i, b
+  where i.app_id=sqlc.arg(app_id)::uuid and i.account_id=b.account_id and i.source='queue'
+    and (b.deployment_scope='' or i.deployment_scope=b.deployment_scope)
+    and (i.queue_binding_id=b.id or (b.deployment_scope='' and i.queue_binding_id is null and i.queue_name=b.queue_name))
+)
+select
+  ((select count(*) from (
+     select 1 from invocations i, b
+     where i.app_id=sqlc.arg(app_id)::uuid and i.queue_binding_id=b.id and i.account_id=b.account_id
+       and i.source='queue' and i.state in ('pending','dispatching')
+       and (b.deployment_scope='' or i.deployment_scope=b.deployment_scope)
+     limit sqlc.arg(row_limit)::integer) own)
+  + (select count(*) from (
+     select 1 from invocations i, b
+     where b.deployment_scope='' and i.app_id=sqlc.arg(app_id)::uuid and i.queue_binding_id is null
+       and i.queue_name=b.queue_name and i.account_id=b.account_id
+       and i.source='queue' and i.state in ('pending','dispatching')
+     limit sqlc.arg(row_limit)::integer) legacy))::bigint as depth,
+  (select count(*) from (
+     select 1 from owned where state='dispatching' and lease_expires_at > now()
+     limit sqlc.arg(row_limit)::integer) leased)::bigint as in_flight,
+  (select count(*) from (
+     select 1 from owned where state='dead_letter'
+     limit sqlc.arg(row_limit)::integer) dead)::bigint as dead_letter,
+  (select min(first.created_at) from (
+     (select i.created_at from invocations i, b
+      where i.app_id=sqlc.arg(app_id)::uuid and i.queue_binding_id=b.id and i.account_id=b.account_id
+        and i.source='queue' and i.state='pending'
+        and (b.deployment_scope='' or i.deployment_scope=b.deployment_scope)
+      order by i.due_at, i.created_at, i.id limit 1)
+     union all
+     (select i.created_at from invocations i, b
+      where b.deployment_scope='' and i.app_id=sqlc.arg(app_id)::uuid and i.queue_binding_id is null
+        and i.queue_name=b.queue_name and i.account_id=b.account_id and i.source='queue' and i.state='pending'
+      order by i.due_at, i.created_at, i.id limit 1)
+  ) first)::timestamptz as oldest_pending_at;
 
 -- name: QueueClaimActiveCount :one
 select count(*)::bigint from invocations i
@@ -25973,6 +26074,17 @@ SELECT
 FROM managed_postgres_usage u JOIN managed_postgres_databases d ON d.id=u.database_id
 WHERE managed_postgres_usage_subject(d.org_id,d.account_id)=sqlc.arg(subject_id)::uuid
 AND u.window_from>=sqlc.arg(period_start)::timestamptz AND u.window_from<sqlc.arg(period_end)::timestamptz;
+
+-- name: ManagedPostgresFleetTotals :one
+-- ADR-20261028103115: the fleet database cap counts what reservation limits
+-- count; the spend breaker sums the month through the usage primary key, one
+-- index range per database, so the ledger's growth never forces a full scan.
+SELECT
+ ((SELECT count(*) FROM managed_postgres_databases d WHERE d.state<>'deleted')
+  + (SELECT count(*) FROM project_environment_clone_postgres_snapshot_restores r WHERE r.state<>'deleted' AND r.adopted_database_id IS NULL))::bigint AS databases,
+ (SELECT COALESCE(sum(c.cost),0) FROM managed_postgres_databases d CROSS JOIN LATERAL (
+   SELECT COALESCE(sum(u.cost_millicents),0) AS cost FROM managed_postgres_usage u
+   WHERE u.database_id=d.id AND u.window_from>=sqlc.arg(period_start)::timestamptz AND u.window_from<sqlc.arg(period_end)::timestamptz) c)::bigint AS cost_millicents;
 
 -- name: LockManagedPostgresReservationOwner :one
 SELECT o.id,o.personal_org,o.resource_ownership_enabled FROM orgs o

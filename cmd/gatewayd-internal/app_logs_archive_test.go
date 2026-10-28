@@ -125,9 +125,22 @@ func TestRenderArchiveLineWithIdentityIncludesDeploymentProvenance(t *testing.T)
 // with the same shape real S3 does (SigV4 verification is the
 // test's burden, not the fake's — the logarchive.S3Client
 // signs every request and the fake doesn't validate).
+// archiveBucket answers the day-part listing the reader makes before it opens
+// a day (ADR-20261028110000) with an empty page and hands every object GET to
+// h, so a fixture that serves one whole-day object reads exactly that.
+func archiveBucket(h func(http.ResponseWriter, *http.Request)) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Has("prefix") {
+			_, _ = io.WriteString(w, "<ListBucketResult></ListBucketResult>")
+			return
+		}
+		h(w, r)
+	}
+}
+
 func newFakeS3(t *testing.T, status int, body []byte) *httptest.Server {
 	t.Helper()
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewServer(archiveBucket(func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
 		case http.MethodGet:
 			w.WriteHeader(status)
@@ -196,12 +209,12 @@ func driveStream(t *testing.T, h *ArchiveLogsHandler, account state.Account, que
 // `event: end archive_complete` out. The instance id +
 // date + bucket key wire shape is pinned through the fake
 // server's request log so a future drift in
-// archiveObjectKey's layout fails loud.
+// logarchive.DayKey's layout fails loud.
 func TestArchiveStream_HappyPath(t *testing.T) {
 	// Use a relative date (yesterday) so the test stays inside the
 	// Hobby 7-day retention cap forever — calendar drift can't expire
 	// it. The bucket-key assertion pins YYYY/MM/DD derived from the
-	// same `now` so a future drift in archiveObjectKey fails loud.
+	// same `now` so a future drift in logarchive.DayKey fails loud.
 	day := archiveTestDate()
 	stamp := "2026-08-07T12:00:00Z"
 	lines := []string{
@@ -212,7 +225,7 @@ func TestArchiveStream_HappyPath(t *testing.T) {
 	body := gzipJSONL(t, lines)
 
 	var gotPath string
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewServer(archiveBucket(func(w http.ResponseWriter, r *http.Request) {
 		gotPath = r.URL.Path
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write(body)
@@ -487,7 +500,7 @@ func TestArchiveStream_MalformedJSONLine(t *testing.T) {
 		`{not json`,
 	}
 	body := gzipJSONL(t, lines)
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewServer(archiveBucket(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write(body)
 	}))
@@ -537,7 +550,7 @@ func TestArchiveStream_NilS3AndBucket_ServiceUnavailable(t *testing.T) {
 }
 
 // TestArchiveObjectKey pins the bucket-key layout. A
-// future drift in archiveObjectKey breaks the
+// future drift in logarchive.DayKey breaks the
 // TestArchiveStream_HappyPath assertion through the
 // fake-server request log; this pin makes the contract
 // loud + standalone.
@@ -553,9 +566,9 @@ func TestArchiveObjectKey(t *testing.T) {
 		{"inst", "x", "faas-logs/inst/x.jsonl.gz"},
 	}
 	for _, tc := range cases {
-		got := archiveObjectKey(tc.instance, tc.day)
+		got := logarchive.DayKey(tc.instance, tc.day)
 		if got != tc.want {
-			t.Errorf("archiveObjectKey(%q, %q) = %q, want %q", tc.instance, tc.day, got, tc.want)
+			t.Errorf("DayKey(%q, %q) = %q, want %q", tc.instance, tc.day, got, tc.want)
 		}
 	}
 }
@@ -592,7 +605,7 @@ func TestArchiveStream_FramePayloadShape(t *testing.T) {
 		`{"seq":42,"stream":"stdout","ts":"` + stamp + `","msg":"hello","level":"warn"}`,
 	}
 	body := gzipJSONL(t, lines)
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewServer(archiveBucket(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write(body)
 	}))
@@ -681,7 +694,7 @@ func TestArchiveStream_InstanceOutsideAppIsMissing(t *testing.T) {
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
 			fetched := false
-			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			srv := httptest.NewServer(archiveBucket(func(w http.ResponseWriter, r *http.Request) {
 				fetched = true
 				_, _ = w.Write(gzipJSONL(t, []string{`{"seq":1,"stream":"stdout","ts":"2026-08-07T12:00:00Z","msg":"secret"}`}))
 			}))
@@ -707,7 +720,7 @@ func TestArchiveStream_InstanceOutsideAppIsMissing(t *testing.T) {
 // the ownership check receives.
 func TestArchiveStream_ScopeCheckUsesAccountAppAndDayWindow(t *testing.T) {
 	day := archiveTestDate()
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewServer(archiveBucket(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write(gzipJSONL(t, []string{`{"seq":1,"stream":"stdout","ts":"2026-08-07T12:00:00Z","msg":"hi"}`}))
 	}))
 	t.Cleanup(srv.Close)

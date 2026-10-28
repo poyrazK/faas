@@ -21,7 +21,12 @@ import (
 // past the compute allowance (plan and capability); nil means never.
 type managedPostgresOverageGate func(state.Account) bool
 
-func loadManagedPostgres(pool *pgxpool.Pool, getenv func(string) string, log *slog.Logger, overage managedPostgresOverageGate, registerers ...prometheus.Registerer) (*managedpostgres.Service, *managedpostgres.Reconciler, *managedpostgres.BindingService, *managedpostgres.BindingReconciler, *managedpostgres.UsageCollector, *managedpostgres.HealthCollector, error) {
+// managedPostgresRelease decides production provisioning for one account
+// (ADR-20261028103115); nil releases every account, for workers that only
+// continue work apid already admitted.
+type managedPostgresRelease func(context.Context, string) bool
+
+func loadManagedPostgres(pool *pgxpool.Pool, getenv func(string) string, log *slog.Logger, overage managedPostgresOverageGate, released managedPostgresRelease, registerers ...prometheus.Registerer) (*managedpostgres.Service, *managedpostgres.Reconciler, *managedpostgres.BindingService, *managedpostgres.BindingReconciler, *managedpostgres.UsageCollector, *managedpostgres.HealthCollector, error) {
 	registry, err := managedpostgres.Load(getenv, managedPostgresFactories())
 	if err != nil || registry == nil {
 		return nil, nil, nil, nil, nil, nil, err
@@ -47,16 +52,22 @@ func loadManagedPostgres(pool *pgxpool.Pool, getenv func(string) string, log *sl
 	if err != nil {
 		return nil, nil, nil, nil, nil, nil, err
 	}
+	var fleet *managedpostgres.Service
 	usageOptions.AfterSweep = func(ctx context.Context) {
 		if _, err := capEnforcer.Enforce(ctx); err != nil && ctx.Err() == nil {
 			log.Warn("managed postgres compute cap sweep failed", "error", err)
 		}
+		observeManagedPostgresFleet(ctx, fleet, metrics, log)
 	}
 	usageCollector, err := managedpostgres.NewUsageCollector(registry, store, usageOptions)
 	if err != nil {
 		return nil, nil, nil, nil, nil, nil, err
 	}
-	baseProvisioningGate := managedpostgres.NewStagingProvisioningGate(registry, getenv, time.Now)
+	baseProvisioningGate := managedpostgres.NewProvisioningGate(registry, getenv, time.Now)
+	production := managedpostgres.ProductionEnvironmentActive(getenv)
+	if production {
+		logManagedPostgresProductionReadiness(registry, getenv, metrics, log)
+	}
 	provisioningGate := func() bool {
 		enabled := baseProvisioningGate()
 		if metrics != nil {
@@ -66,7 +77,12 @@ func loadManagedPostgres(pool *pgxpool.Pool, getenv func(string) string, log *sl
 	}
 	canaryAccountGate := managedpostgres.NewStagingCanaryAccountGate(getenv)
 	provisioningAllowed := func(ctx context.Context, accountID string) bool {
+		// Production releases accounts by the capability flag, staging by
+		// its canary allowlist.
 		allowed := canaryAccountGate(accountID)
+		if production {
+			allowed = released == nil || released(ctx, accountID)
+		}
 		if metrics != nil {
 			metrics.ObserveCanary(allowed)
 		}
@@ -134,6 +150,7 @@ func loadManagedPostgres(pool *pgxpool.Pool, getenv func(string) string, log *sl
 	if err != nil {
 		return nil, nil, nil, nil, nil, nil, err
 	}
+	fleet = service
 	reconciler, err := managedpostgres.NewReconciler(service, managedpostgres.ReconcilerOptions{
 		IncludeProvisioning: provisioningGate,
 		Observe: func(ob managedpostgres.ReconcileObservation) {

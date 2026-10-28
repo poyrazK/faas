@@ -36,6 +36,11 @@ type Host interface {
 	OfferedPlans(ctx context.Context, app state.App, settings state.APIConsumerSignupSettings) ([]api.ConsumerSignupPlan, error)
 	// StripeKey opens the account's Stripe billing connection (ADR-1502).
 	StripeKey(ctx context.Context, accountID string) (key string, livemode bool, problem *api.Problem)
+	// CreatorBills reports whether app's customers may be billed through
+	// the account that created it, whose billing connection they use: always
+	// for a personal app, and for a company app only while that account is a
+	// member of the company (ADR-20261026151103 amendment 2).
+	CreatorBills(ctx context.Context, app state.App) bool
 	Audit(ctx context.Context, event, accountID string, fields map[string]any)
 }
 

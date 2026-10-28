@@ -44,9 +44,9 @@ Columns:
 
 | Tier | Rows | Meaning |
 |---|---|---|
-| `GA` | 42 | Ships in v1.0, billed, held to the "ready to charge" bar. |
-| `beta` | 35 | On for every account, labelled beta, may change, no service credits. |
-| `preview` | 48 | Off by default; released per account with a platform flag (design partners). |
+| `GA` | 46 | Ships in v1.0, billed, held to the "ready to charge" bar. |
+| `beta` | 32 | On for every account, labelled beta, may change, no service credits. |
+| `preview` | 47 | Off by default; released per account with a platform flag (design partners). |
 | `internal` | 42 | Hidden from customers; development frozen until after v1.0. |
 
 **How the tiers were chosen**
@@ -55,9 +55,12 @@ Columns:
   probes, logs and metrics, rollback, crons, account, keys, billing, GDPR, CLI,
   dashboard, docs and status page. PR preview environments joined GA on
   2026-10-26 (ADR-20261026090000) with live-path acceptance evidence.
+  Multi-service projects (projects, internal services, service bindings and
+  service wake-ahead) joined GA on 2026-10-27 (ADR-20261027120000) with
+  end-to-end acceptance evidence on every pull request.
 - **beta** is what customers expect around that core and what already runs on
   production, but should not hold up the charge bar: canaries,
-  jobs and workflows, internal services, edge rules, caching, alerts, orgs.
+  jobs and workflows, edge rules, caching, alerts, orgs.
 - **preview** is every large standalone product (object storage, Postgres,
   Data API, realtime, live queries, application Auth, AI gateway, durable
   entities, events and queues, Operations, MCP hosting) and every feature that
@@ -76,7 +79,8 @@ Columns:
    scheduled scaling stay beta.
 4. Billing (`GA`): plans, usage, invoices, overage cap and per-app costs; the
    FOCUS export stays beta.
-5. Env vars (`GA`): environment clone belongs with Projects (`preview`).
+5. Env vars (`GA`): environment clone belongs with project environments
+   (`preview`); projects themselves are GA.
 6. Snapshot lifecycle hooks (`beta`): promote to GA if apps that hold database
    connections need `after_restore` to reconnect reliably after a wake.
 7. Release commands (`beta`): many teams expect a migration step before
@@ -110,7 +114,7 @@ internal hosting service and Gregale Agents are already unreachable.
 | 16 | Stateless-contract checks and source review | `source-review`, dashboard `stateless` | **MISSING** | — | GA |
 | 17 | Affected-workload preview: what a deploy will touch | `gregale diff`, `gregale scan`, `deploydiff` | **MISSING** | — | beta |
 | 18 | Deploy-time vulnerability scan (Grype) and secret scan | `gregale deployment --show-scan --show-secret-scan` | **MISSING** | — | beta |
-| 19 | Projects: multi-app apply, submissions, project previews | `/v1/projects` (93 routes), `gregale projects` | **MISSING** | — | preview |
+| 19 | Projects: multi-app apply, submissions, project previews | `/v1/projects` (93 routes), `gregale projects` | `projects` ga | — | GA |
 | 20 | Environments and Environment GitOps (field ownership) | `gregale environment`, `environment-field-ownership` | **MISSING** | — | preview |
 | 21 | App tasks: one-off commands (`app exec`, ADR-230) | `/v1/apps/{slug}/tasks` | **MISSING** | `env: FAAS_APP_TASK_API_ENABLED=0` | preview |
 | 22 | Image runs: run an image interactively | `/v1/image-runs` | **MISSING** | `faas_image_runs_enabled: false` | internal |
@@ -145,8 +149,8 @@ internal hosting service and Gregale Agents are already unreachable.
 | 41 | Function runtimes: Node 22/24, Python 3.12/3.13, Go 1.24 (+alpine), static binary | `guest/runners`, `images/runner-*`, `docs/runtimes` | **MISSING** | — | GA |
 | 42 | Manual park / wake, prewarm | `park`, `wake`, `prewarm(s)` | **MISSING** | — | GA |
 | 43 | Autoscaling and min instances (target RPS / CPU), scheduled scaling | `autoscale_target_*`, `min_instances` on apps | **MISSING** | — | GA |
-| 44 | Service wake-ahead | `service-wake-ahead`, `gregale wake-ahead` | **MISSING** | — | beta |
-| 45 | Frozen tier (fast thaw) | operator env `FAAS_FROZEN_TIER`, `FAAS_FROZEN_FAST_PATH` | **MISSING** | operator env | internal |
+| 44 | Service wake-ahead | `service-wake-ahead`, `gregale wake-ahead` | `service-wake-ahead` ga | — | GA |
+| 45 | Frozen tier (fast thaw) | operator env `FAAS_FROZEN_TIER`, `FAAS_FROZEN_FAST_PATH` | **MISSING** | operator env; unbilled quiet pause `pf: quiet_pause_unbilled` | internal |
 | 46 | Instances: list, restart, runtime-config restarts | `instances`, `restart`, `gregale ps` | **MISSING** | — | GA |
 | 47 | Health probes and auto-restart: startup, readiness, liveness; restart policy, stop signal, grace period, drain timeout | `gregale.yaml` probes, `restart_policy` | **MISSING** | — | GA |
 | 48 | Snapshot lifecycle hooks: run app code before checkpoint and after restore | `gregale.yaml` `before_checkpoint`, `after_restore` | **MISSING** | — | beta |
@@ -171,8 +175,8 @@ internal hosting service and Gregale Agents are already unreachable.
 |---|---|---|---|---|---|
 | 63 | Custom domains with managed TLS, wildcard domains (Pro+), domain doctor | `/v1/domains` | `custom-domains` beta | doctor: `env: FAAS_DOMAIN_DOCTOR_ENABLED=false` | GA |
 | 64 | Streaming, SSE, WebSockets, gRPC, protocol selector, streaming cap | `streaming-cap` | `streaming-and-grpc` beta | — | GA |
-| 65 | Internal services (call apps by name) | | `internal-services` preview | — | beta |
-| 66 | Service bindings, verification and probes | `bindings`, `gregale bindings` | **MISSING** | — | beta |
+| 65 | Internal services (call apps by name) | | `internal-services` ga | — | GA |
+| 66 | Service bindings, verification and probes | `bindings`, `gregale bindings` | `service-bindings` ga | — | GA |
 | 67 | Private apps | | `private-apps` preview | — | beta |
 | 68 | Private networks | `/v1/networks` | **MISSING** | — | preview |
 | 69 | TCP listeners | `tcp-listeners`, tcpd | **MISSING** | `faas_tcpd_enabled: false` | preview |
@@ -245,7 +249,7 @@ internal hosting service and Gregale Agents are already unreachable.
 | 121 | App, service and account metrics; request analytics | `metrics`, `gregale analytics` | **MISSING** | — | GA |
 | 122 | Custom metrics and OTLP metric ingest | `custom-metrics`, `otlp` | **MISSING** | — | beta |
 | 123 | Custom metric history | | `custom-metric-history` internal | env flag | internal |
-| 124 | Tracing: in-guest request tracing, customer OTLP trace ingest, W3C trace propagation | `gregale trace`, `/v1/traces`, `/v1/otel/v1/traces` | **MISSING** | `pf: guest_tracing` | preview |
+| 124 | Tracing: in-guest request tracing, customer OTLP trace ingest, W3C trace propagation | `gregale trace`, `/v1/account/traces`, `/v1/otel/v1/traces` (gatewayd-public's `/v1/traces/{id}` is an operator-token trace ring, not customer surface) | **MISSING** | `pf: guest_tracing` | preview |
 | 125 | Alerts, notification channels, alert presets | `alerts`, `notification-channels`, `alert-presets` | **MISSING** | — | beta |
 | 126 | Anomaly (baseline) alerts | | `anomaly-alerts` internal | `pf: anomaly_alerts` | internal |
 | 127 | Issues: error grouping, Linear and Slack integrations, errors view | `issues`, `errors` | `issues` preview | — | preview |

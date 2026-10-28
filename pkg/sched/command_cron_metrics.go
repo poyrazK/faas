@@ -39,7 +39,7 @@ func newCommandCronMetrics(reg prometheus.Registerer) *commandCronMetrics {
 	for _, v := range []string{"success", "error", "canceled"} {
 		m.sweeps.WithLabelValues(v)
 	}
-	for _, v := range []string{"disabled", "not_due", "account_held", "replacement_wait", "not_owned", "invalid_schedule", "lookup_error", "store_unavailable", "no_live_deployment", "canceled", "legacy_queued", "legacy_skipped", "legacy_stale", "legacy_error"} {
+	for _, v := range []string{"disabled", "not_due", "account_held", "plan_limit", "replacement_wait", "not_owned", "invalid_schedule", "lookup_error", "store_unavailable", "no_live_deployment", "canceled", "legacy_queued", "legacy_skipped", "legacy_stale", "legacy_error"} {
 		m.decisions.WithLabelValues(v)
 	}
 	for _, v := range []string{"queued", "exclusive_pending", "coalesced", "skipped_overlap", "missed_deadline", "stale", "deployment_unavailable", "rejected", "error", "canceled", "unknown"} {

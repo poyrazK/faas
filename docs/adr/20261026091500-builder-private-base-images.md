@@ -1,4 +1,4 @@
-# ADR-20261026090000 · Dockerfile builds pull private base images with the app's registry credentials
+# ADR-20261026091500 · Dockerfile builds pull private base images with the app's registry credentials
 
 - **Status:** accepted
 - **Date:** 2026-10-26

@@ -1392,7 +1392,7 @@ message BuildSpec {
   // compile-time platform default.
   int32 timeout_sec = 2;
   // The private-registry credentials of the app being built
-  // (ADR-20261026090000). vmmd opens each password with the build seal
+  // (ADR-20261026091500). vmmd opens each password with the build seal
   // domain and gives the builder a Docker config, so a Dockerfile can build
   // FROM a private base image. Empty for every other build.
   repeated BuildRegistryCredential registry_credentials = 3;

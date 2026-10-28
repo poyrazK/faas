@@ -103,8 +103,20 @@ UPDATE managed_postgres_live_keys SET sealed_secret=sqlc.arg(sealed_secret)::byt
 SELECT database_id::text AS database_id,sealed_login,recipient FROM managed_postgres_live_logins
  WHERE database_id::text>sqlc.arg(after)::text ORDER BY database_id::text LIMIT sqlc.arg(page_size)::int;
 
--- name: ResealLiveLogin :execrows
--- Replaces a login's seal only while it still holds the one the re-seal read.
-UPDATE managed_postgres_live_logins SET sealed_login=sqlc.arg(sealed_login)::bytea
+-- name: DropLegacyLiveLogin :execrows
+-- Removes a login the re-seal found under the legacy namespace, only while it
+-- still holds the seal the re-seal read (amended 2026-10-28). apid then
+-- issues the database a new login, sealed bound to it.
+DELETE FROM managed_postgres_live_logins
  WHERE database_id=sqlc.arg(database_id)::text::uuid AND sealed_login=sqlc.arg(previous)::bytea
    AND recipient=sqlc.arg(recipient)::text;
+
+-- name: LiveDatabasesWithoutLogin :many
+-- Databases with an active live key and no login, the ones apid issues a
+-- login for: a login the re-seal dropped, or one never stored.
+SELECT DISTINCT k.database_id::text AS database_id,k.account_id::text AS account_id
+ FROM managed_postgres_live_keys k
+ JOIN managed_postgres_databases d ON d.id=k.database_id
+ WHERE k.retires_at IS NULL AND d.deleted_at IS NULL AND d.state NOT IN ('deleting','deleted')
+   AND NOT EXISTS (SELECT 1 FROM managed_postgres_live_logins l WHERE l.database_id=k.database_id)
+ ORDER BY 1 LIMIT sqlc.arg(page_size)::int;

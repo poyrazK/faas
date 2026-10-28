@@ -244,7 +244,7 @@ func PersonalContext(ctx context.Context, store interface {
 // the organization closes; its problem keeps the organization open.
 func DeleteOrganization(ctx context.Context, store interface {
 	SoftDeleteOrg(context.Context, string) error
-}, service *managedpostgres.Service, org state.Org, beforeDelete func(context.Context) *api.Problem) *api.Problem {
+}, service *managedpostgres.Service, org state.Org, afterDelete func(context.Context) *api.Problem) *api.Problem {
 	if service != nil {
 		rows, err := service.List(managedpostgres.WithOwnership(ctx, org.ID, org.ID), org.ID)
 		if err != nil {
@@ -254,16 +254,18 @@ func DeleteOrganization(ctx context.Context, store interface {
 			return organizationHasDatabases()
 		}
 	}
-	if beforeDelete != nil {
-		if problem := beforeDelete(ctx); problem != nil {
-			return problem
-		}
-	}
 	if err := store.SoftDeleteOrg(ctx, org.ID); err != nil {
 		if errors.Is(err, state.ErrConflict) {
 			return api.NewProblem(http.StatusConflict, api.CodeConflict, "Organization has data resources", "delete the organization's object buckets and managed databases before deleting the organization")
 		}
 		return api.ErrCapacity("could not delete organization")
+	}
+	// afterDelete (ending the subscription) runs only once the deletion
+	// is recorded: run first, a refusal above left a paid plan cancelled
+	// on an organization that stays in use. Soft delete is idempotent, so
+	// a retried DELETE retries afterDelete.
+	if afterDelete != nil {
+		return afterDelete(ctx)
 	}
 	return nil
 }

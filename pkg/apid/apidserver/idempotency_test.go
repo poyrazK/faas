@@ -308,3 +308,41 @@ func TestIdempotent_FailedDeployIsNotReplayed(t *testing.T) {
 		}
 	}
 }
+
+// TestIdempotent_RetryAfterRefusalIsNotReplayed — a traffic policy check that
+// ran out of time answers 422 with Retry-After. It was stored like any 422, so
+// `gregale deploy` (whose key is the deploy's content digest) kept getting the
+// refusal for 24 hours although its hint said to retry in a few seconds. A 422
+// without Retry-After is still replayed.
+func TestIdempotent_RetryAfterRefusalIsNotReplayed(t *testing.T) {
+	e := apidserver.Setup(t, api.PlanPro)
+	var runs atomic.Int32
+	h := (*e.S()).Idempotent(func(w http.ResponseWriter, r *http.Request, _ state.Account) {
+		n := runs.Add(1)
+		switch {
+		case r.URL.Path == "/v1/apps/a/deployments" && n == 1:
+			api.WriteProblem(w, api.ErrTrafficPolicyTooComplex("time", "milliseconds", 2000, 2001))
+		case r.URL.Path == "/v1/apps/a/deployments":
+			apidserver.WriteJSON(w, http.StatusAccepted, map[string]string{"id": "dep-1"})
+		default:
+			api.WriteProblem(w, api.ErrTrafficPolicyTooComplex("states", "states", 100, 101))
+		}
+	})
+	call := func(path, key string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodPost, path, nil)
+		req.Header.Set("Idempotency-Key", key)
+		rec := httptest.NewRecorder()
+		h(rec, req, (*e.Acct()))
+		return rec
+	}
+	if first := call("/v1/apps/a/deployments", "deploy-digest"); first.Code != http.StatusUnprocessableEntity || first.Header().Get("Retry-After") != "2" {
+		t.Fatalf("first = %d Retry-After=%q, want 422 with Retry-After 2", first.Code, first.Header().Get("Retry-After"))
+	}
+	if retry := call("/v1/apps/a/deployments", "deploy-digest"); retry.Code != http.StatusAccepted || retry.Header().Get("Idempotent-Replayed") != "" || runs.Load() != 2 {
+		t.Fatalf("retry = %d replayed=%q runs=%d, want a fresh 202", retry.Code, retry.Header().Get("Idempotent-Replayed"), runs.Load())
+	}
+	call("/v1/apps/b/deployments", "size")
+	if replay := call("/v1/apps/b/deployments", "size"); replay.Header().Get("Idempotent-Replayed") != "true" || runs.Load() != 3 {
+		t.Fatalf("size refusal replayed=%q runs=%d, want it replayed", replay.Header().Get("Idempotent-Replayed"), runs.Load())
+	}
+}

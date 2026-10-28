@@ -280,6 +280,8 @@ type PGBackend struct {
 	metrics            *Metrics
 
 	routes *RouteCache // host -> app_id (LRU)
+	// rechecks keeps the warm custom-domain registry rechecks briefly.
+	rechecks *routeRecheckMemo
 	// stale (ADR-190) is the last-known-good host -> App tier consulted
 	// only when the Router errors. See stale_routes.go.
 	stale *staleRoutes
@@ -391,6 +393,10 @@ type PGBackend struct {
 	// unwired cache short-circuits the invalidation arms so the
 	// notify subscriber doesn't need a wiring branch.
 	responseCache *ResponseCache
+	// accountAppIDs lists an account's app IDs, so a wildcard edge-rule
+	// change drops only that account's cached responses (ADR-091 amendment
+	// 2026-10-27, GA hardening). nil keeps the wholesale flush.
+	accountAppIDs func(ctx context.Context, accountID string) ([]string, error)
 	// edgeRules (ADR-089 / issue #561 PR 3) is the
 	// per-host edge-rule matcher the invalidator drives.
 	// nil = no matcher wired (default; pre-PR-3 behaviour
@@ -864,6 +870,14 @@ func (b *PGBackend) WithMetrics(metrics *Metrics) *PGBackend {
 	return b
 }
 
+// ObserveEdgeListenerHeartbeat records that the invalidation loop stamped
+// this gateway's edge listener heartbeat at at.
+func (b *PGBackend) ObserveEdgeListenerHeartbeat(at time.Time) {
+	if b != nil {
+		b.metrics.SetEdgeRuleListenerHeartbeat(at)
+	}
+}
+
 // PreInstantiateAppMetrics publishes the aggregate app/class histogram rows at
 // zero. app_changed calls this before invalidating routing so a newly created
 // app is visible to Prometheus before its first request completes.
@@ -894,6 +908,7 @@ func NewPGBackend(router Router, sched Scheduler, log *slog.Logger) *PGBackend {
 		sched:           sched,
 		log:             log,
 		routes:          NewRouteCache(RouteCacheCap),
+		rechecks:        newRouteRecheckMemo(),
 		stale:           newStaleRoutes(RouteCacheCap, routeStaleTTL()),
 		apps:            map[string]App{},
 		appsPicker:      map[string]*appPicker{},
@@ -1138,6 +1153,7 @@ func (b *PGBackend) Lookup(ctx context.Context, host string) (App, bool) {
 			if !active {
 				b.routes.Invalidate(host)
 				b.stale.Delete(host)
+				b.rechecks.forget(host)
 				ok = false
 			}
 		}
@@ -1261,7 +1277,14 @@ func (b *PGBackend) cachedCustomDomainRouteActive(ctx context.Context, host, app
 	if !ok {
 		return true, nil
 	}
-	return validator.CachedCustomDomainRouteActive(ctx, host, appID)
+	if active, ok := b.rechecks.domain(host, appID); ok {
+		return active, nil
+	}
+	active, err := validator.CachedCustomDomainRouteActive(ctx, host, appID)
+	if err == nil {
+		b.rechecks.rememberDomain(host, appID, active)
+	}
+	return active, err
 }
 
 func (b *PGBackend) cachedPlatformTenantRouteValid(ctx context.Context, host string, target RouteTarget, app *App) (valid, deny bool) {
@@ -1269,7 +1292,16 @@ func (b *PGBackend) cachedPlatformTenantRouteValid(ctx context.Context, host str
 	if !ok {
 		return true, false
 	}
-	binding, found, err := resolver.ResolvePlatformTenantHost(ctx, host)
+	binding, found, memoized := b.rechecks.tenant(host)
+	var err error
+	if !memoized {
+		binding, found, err = resolver.ResolvePlatformTenantHost(ctx, host)
+		if err == nil && !found {
+			// Only "no tenant surface" is kept: a bound host's suspension
+			// must take effect on its next request.
+			b.rechecks.rememberTenant(host, binding, found)
+		}
+	}
 	if err != nil || (found && binding.Suspended) {
 		// A control-plane error cannot justify serving a possibly suspended
 		// customer. Do not enter the stale route tier for this host.
@@ -2775,6 +2807,7 @@ func (b *PGBackend) WithMirrorStore(s mirrorRulesStore) *PGBackend {
 func (b *PGBackend) FlushRoutes() {
 	b.workloadAdmissions.reset()
 	b.routes.Reset()
+	b.rechecks.reset()
 	b.appsMu.Lock()
 	b.apps = map[string]App{}
 	b.appsMu.Unlock()
@@ -2791,6 +2824,7 @@ func (b *PGBackend) InvalidateRoutesForApp(appID string) {
 	if b.routes != nil {
 		b.routes.InvalidateApp(appID)
 	}
+	b.rechecks.reset()
 	if b.stale != nil {
 		b.stale.DeleteApp(appID)
 	}
@@ -3079,6 +3113,41 @@ func (b *PGBackend) InvalidateResponseCacheByTag(appID, tag string) error {
 // strictly preferable to a stale serve against a deleted rule.
 //
 // nil-safe: same posture as InvalidateResponseCacheByApp.
+// WithAccountAppLister installs the lookup InvalidateResponseCacheByAccount
+// uses to find an account's apps.
+func (b *PGBackend) WithAccountAppLister(list func(ctx context.Context, accountID string) ([]string, error)) *PGBackend {
+	if b != nil {
+		b.accountAppIDs = list
+	}
+	return b
+}
+
+// InvalidateResponseCacheByAccount drops the cached responses of accountID's
+// apps, local and shared. It reports false when the apps cannot be listed
+// (no lister, no account, or the lookup failed); the caller then flushes the
+// whole cache, which is always safe.
+func (b *PGBackend) InvalidateResponseCacheByAccount(ctx context.Context, accountID string) bool {
+	if b == nil || b.responseCache == nil {
+		return true
+	}
+	if b.accountAppIDs == nil || accountID == "" {
+		return false
+	}
+	ids, err := b.accountAppIDs(ctx, accountID)
+	if err != nil {
+		if b.log != nil {
+			b.log.Warn("gatewayd: list account apps for response cache invalidation; flushing the whole cache",
+				"account", accountID, "err", err)
+		}
+		return false
+	}
+	for _, id := range ids {
+		b.responseCache.InvalidateByApp(id)
+	}
+	b.refreshResponseCacheMetrics()
+	return true
+}
+
 func (b *PGBackend) InvalidateResponseCacheAll() {
 	if b == nil || b.responseCache == nil {
 		return

@@ -51,6 +51,38 @@ func TestEdgeAnswerRobotsDefaultAndCustom(t *testing.T) {
 	}
 }
 
+// adr: 20261026090000 — previews serve unreleased code on guessable hosts, so
+// search engines are told not to index them, whatever production allows.
+func TestPreviewAnswersAreNotIndexed(t *testing.T) {
+	h, b, _ := newTestHandler(t)
+	h.proxyFor = func(string, int64) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			_, _ = io.WriteString(w, "live")
+		})
+	}
+	get := func(path string) *httptest.ResponseRecorder {
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "http://jane-api.apps.dom"+path, nil))
+		return rec
+	}
+	if rec := get("/"); rec.Header().Get("X-Robots-Tag") != "" {
+		t.Fatalf("production answer X-Robots-Tag = %q, want none", rec.Header().Get("X-Robots-Tag"))
+	}
+
+	b.app.IsPreview = true
+	b.app.RobotsTxt = "User-agent: *\nAllow: /\n"
+	robots := get("/robots.txt")
+	if robots.Body.String() != previewRobotsTxt || robots.Header().Get("X-Robots-Tag") != previewRobotsTag {
+		t.Fatalf("preview robots = %q (X-Robots-Tag %q), want disallow-all and noindex",
+			robots.Body.String(), robots.Header().Get("X-Robots-Tag"))
+	}
+	live := get("/")
+	if live.Body.String() != "live" || live.Header().Get("X-Robots-Tag") != previewRobotsTag {
+		t.Fatalf("preview answer = %q (X-Robots-Tag %q), want the app's answer with noindex",
+			live.Body.String(), live.Header().Get("X-Robots-Tag"))
+	}
+}
+
 func TestParkedHeadUsesLastLiveHeadersWithoutWake(t *testing.T) {
 	h, b, _ := newTestHandler(t)
 	// A normal live request seeds the process-local header cache.

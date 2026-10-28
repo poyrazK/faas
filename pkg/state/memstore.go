@@ -1084,6 +1084,10 @@ type MemStore struct {
 	// deploymentIDs are UUIDs).
 	deploymentSidecarLayers map[string]DeploymentSidecarLayer
 	snapshots               []Snapshot
+	// snapshotStaleAt mirrors snapshots.stale_at: when a snapshot was marked
+	// stale, which stale retention counts from (Hunt 21 H21-2). A stale row
+	// without an entry falls back to its creation time.
+	snapshotStaleAt map[string]time.Time
 	// snapshotStorage mirrors snapshot_storage_daily. The key is the
 	// (account, app, UTC day) primary-key tuple used by Postgres.
 	snapshotStorage map[string]StorageUsage
@@ -5259,14 +5263,21 @@ func (m *MemStore) PreviewAppByProjectWorkload(_ context.Context, accountID, pro
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	var found App
 	for _, app := range m.apps {
 		if app.AccountID == accountID && app.ProjectID == projectID &&
 			app.PreviewPrNumber == previewPRNumber && api.SameServiceName(app.WorkloadName, workloadName) &&
 			app.PreviewOfSlug != "" && app.Status != AppDeleted {
-			return app, nil
+			if found.ID != "" {
+				return App{}, ErrConflict
+			}
+			found = app
 		}
 	}
-	return App{}, ErrNotFound
+	if found.ID == "" {
+		return App{}, ErrNotFound
+	}
+	return found, nil
 }
 
 // ProjectAppByWorkload mirrors PgStore: a service-name production alias in
@@ -9713,7 +9724,7 @@ func (m *MemStore) markDeploymentSnapshotsStaleLocked(deploymentID string) {
 		if m.snapshots[i].DeploymentID != deploymentID {
 			continue
 		}
-		m.snapshots[i].Stale = true
+		m.markSnapshotStaleLocked(i)
 		m.deleteSnapshotReplicasLocked(m.snapshots[i].ID)
 	}
 }
@@ -9724,7 +9735,7 @@ func (m *MemStore) markAppSnapshotsStaleLocked(appID string) {
 		if !ok || deployment.AppID != appID {
 			continue
 		}
-		m.snapshots[i].Stale = true
+		m.markSnapshotStaleLocked(i)
 		m.deleteSnapshotReplicasLocked(m.snapshots[i].ID)
 	}
 }
@@ -10823,6 +10834,10 @@ func (m *MemStore) prepareDeploymentRollbackLocked(ctx context.Context, appID, t
 	}
 	if target.Status != DeploySuperseded && (target.Status != DeployLive || target.TrafficPercent != 0) {
 		return Deployment{}, ErrRollbackTargetAlreadyLive
+	}
+	// A target whose layers were reclaimed cannot cold boot (Hunt 21 H21-1).
+	if err := m.requireLayerArtifactsRetainedLocked(m.deploymentLayerKeysLocked(target)); err != nil {
+		return Deployment{}, err
 	}
 	now := time.Now().UTC()
 	var prior StageState
@@ -12408,13 +12423,21 @@ func (m *MemStore) ClaimQueuedBuild(_ context.Context, id string) (Build, error)
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	b, ok := m.builds[id]
-	if !ok || b.Status != BuildQueued || !m.buildDependencyEligibleLocked(b, time.Now()) {
+	if !ok || b.Status != BuildQueued || !m.buildDependencyEligibleLocked(b, time.Now()) || m.previewBuildWaitsLocked(b) {
 		return Build{}, ErrNotFound
 	}
 	b.Status = BuildRunning
 	b.StartedAt = time.Now()
 	m.builds[id] = b
 	return b, nil
+}
+
+// previewBuildWaitsLocked mirrors the by-id claims' preview deferral: a PR
+// preview build waits while another build is queued.
+func (m *MemStore) previewBuildWaitsLocked(b Build) bool {
+	return b.Kind == DeploymentKindPreview && m.nonPreviewBuildEligibleLocked(func(o Build) bool {
+		return o.Status == BuildQueued && m.buildDependencyEligibleLocked(o, time.Now())
+	})
 }
 
 // ClaimQueuedBuildWithNodeAffinity mirrors the PostgreSQL notification-path
@@ -12427,7 +12450,8 @@ func (m *MemStore) ClaimQueuedBuildWithNodeAffinity(ctx context.Context, id, nod
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	b, ok := m.builds[id]
-	if !ok || b.Status != BuildQueued || !m.buildDependencyEligibleLocked(b, time.Now()) || !m.buildEligibleOnNodeLocked(b, nodeID, affinityGrace, time.Now()) {
+	if !ok || b.Status != BuildQueued || !m.buildDependencyEligibleLocked(b, time.Now()) || m.previewBuildWaitsLocked(b) ||
+		!m.buildEligibleOnNodeLocked(b, nodeID, affinityGrace, time.Now()) {
 		return Build{}, ErrNotFound
 	}
 	b.Status = BuildRunning
@@ -12489,8 +12513,10 @@ func (m *MemStore) ClaimNextQueuedBuild(_ context.Context) (Build, error) {
 		earliest time.Time
 		found    bool
 	)
+	eligible := func(b Build) bool { return b.Status == BuildQueued && m.buildDependencyEligibleLocked(b, time.Now()) }
+	previewLast := m.nonPreviewBuildEligibleLocked(eligible)
 	for id, b := range m.builds {
-		if b.Status != BuildQueued || !m.buildDependencyEligibleLocked(b, time.Now()) {
+		if !eligible(b) || (previewLast && b.Kind == DeploymentKindPreview) {
 			continue
 		}
 		if !found || b.EnqueuedAt.Before(earliest) {
@@ -12507,6 +12533,29 @@ func (m *MemStore) ClaimNextQueuedBuild(_ context.Context) (Build, error) {
 	b.StartedAt = time.Now()
 	m.builds[pick] = b
 	return b, nil
+}
+
+// nonPreviewBuildEligibleLocked reports whether a build other than a PR
+// preview build can be claimed; while one can, preview builds wait
+// (ADR-20261028100000).
+func (m *MemStore) nonPreviewBuildEligibleLocked(eligible func(Build) bool) bool {
+	for _, b := range m.builds {
+		if b.Kind != DeploymentKindPreview && eligible(b) {
+			return true
+		}
+	}
+	return false
+}
+
+// buildHasAppLocked mirrors the claim queries' join through deployments to
+// apps.
+func (m *MemStore) buildHasAppLocked(b Build) bool {
+	dep, ok := m.deployments[b.DeploymentID]
+	if !ok {
+		return false
+	}
+	_, ok = m.apps[dep.AppID]
+	return ok
 }
 
 // ClaimNextQueuedBuildWithFairness mirrors PgStore (B2.2 issue #196).
@@ -12538,8 +12587,12 @@ func (m *MemStore) ClaimNextQueuedBuildWithFairness(_ context.Context, fairnessW
 		account    string
 	}
 	var queued []candidate
+	eligible := func(b Build) bool {
+		return b.Status == BuildQueued && m.buildDependencyEligibleLocked(b, time.Now()) && m.buildHasAppLocked(b)
+	}
+	previewLast := m.nonPreviewBuildEligibleLocked(eligible)
 	for id, b := range m.builds {
-		if b.Status != BuildQueued || !m.buildDependencyEligibleLocked(b, time.Now()) {
+		if !eligible(b) || (previewLast && b.Kind == DeploymentKindPreview) {
 			continue
 		}
 		dep, ok := m.deployments[b.DeploymentID]
@@ -12623,8 +12676,13 @@ func (m *MemStore) ClaimNextQueuedBuildWithNodeAffinity(ctx context.Context, nod
 		account    string
 	}
 	queued := make([]candidate, 0)
+	eligible := func(b Build) bool {
+		return b.Status == BuildQueued && m.buildDependencyEligibleLocked(b, now) &&
+			m.buildEligibleOnNodeLocked(b, nodeID, affinityGrace, now) && m.buildHasAppLocked(b)
+	}
+	previewLast := m.nonPreviewBuildEligibleLocked(eligible)
 	for id, build := range m.builds {
-		if build.Status != BuildQueued || !m.buildDependencyEligibleLocked(build, now) || !m.buildEligibleOnNodeLocked(build, nodeID, affinityGrace, now) {
+		if !eligible(build) || (previewLast && build.Kind == DeploymentKindPreview) {
 			continue
 		}
 		dep, ok := m.deployments[build.DeploymentID]
@@ -17062,7 +17120,7 @@ func (m *MemStore) MarkSnapshotStale(_ context.Context, snapshotID string) error
 	defer m.mu.Unlock()
 	for i := range m.snapshots {
 		if m.snapshots[i].ID == snapshotID {
-			m.snapshots[i].Stale = true
+			m.markSnapshotStaleLocked(i)
 			m.deleteSnapshotReplicasLocked(snapshotID)
 			return nil
 		}
@@ -17144,7 +17202,7 @@ func (m *MemStore) MarkAllSnapshotsStaleByFCVersion(_ context.Context, currentVe
 	var n int64
 	for i := range m.snapshots {
 		if !m.snapshots[i].Stale && m.snapshots[i].FCVersion != currentVersion {
-			m.snapshots[i].Stale = true
+			m.markSnapshotStaleLocked(i)
 			m.deleteSnapshotReplicasLocked(m.snapshots[i].ID)
 			n++
 		}
@@ -17185,7 +17243,7 @@ func (m *MemStore) MarkAllSnapshotsStaleByAppProtocol(_ context.Context, appProt
 			continue
 		}
 		if _, match := allowed[app.AppProtocol]; match && snap.BaseImageVersion != currentBaseImageVersion {
-			m.snapshots[i].Stale = true
+			m.markSnapshotStaleLocked(i)
 			m.deleteSnapshotReplicasLocked(m.snapshots[i].ID)
 			n++
 		}
@@ -17242,7 +17300,7 @@ func (m *MemStore) MarkSnapshotStaleByAppProtocol(_ context.Context, snapshotID 
 			// the single-row return is a found/not-found bool.
 			return nil
 		}
-		m.snapshots[i].Stale = true
+		m.markSnapshotStaleLocked(i)
 		m.deleteSnapshotReplicasLocked(snapshotID)
 		return nil
 	}
@@ -17264,7 +17322,7 @@ func (m *MemStore) MarkOldSnapshotsStale(_ context.Context, beforeSnapshotIDs []
 	var n int64
 	for i := range m.snapshots {
 		if _, ok := idSet[m.snapshots[i].ID]; ok {
-			m.snapshots[i].Stale = true
+			m.markSnapshotStaleLocked(i)
 			m.snapshots[i].DeletePending = true
 			m.deleteSnapshotReplicasLocked(m.snapshots[i].ID)
 			n++
@@ -17273,9 +17331,32 @@ func (m *MemStore) MarkOldSnapshotsStale(_ context.Context, beforeSnapshotIDs []
 	return n, nil
 }
 
+// markSnapshotStaleLocked marks m.snapshots[i] stale and records when, as the
+// snapshots.stale_at trigger does (Hunt 21 H21-2).
+func (m *MemStore) markSnapshotStaleLocked(i int) {
+	if m.snapshots[i].Stale {
+		return
+	}
+	m.snapshots[i].Stale = true
+	if m.snapshotStaleAt == nil {
+		m.snapshotStaleAt = map[string]time.Time{}
+	}
+	m.snapshotStaleAt[m.snapshots[i].ID] = time.Now().UTC()
+}
+
+// snapshotStaleSinceLocked is when a stale snapshot went stale, never earlier
+// than its creation, as GREATEST(stale_at, created_at) in Postgres.
+func (m *MemStore) snapshotStaleSinceLocked(s Snapshot) time.Time {
+	if at, ok := m.snapshotStaleAt[s.ID]; ok && at.After(s.CreatedAt) {
+		return at
+	}
+	return s.CreatedAt
+}
+
 // DeleteSnapshotsStaleOlderThan mirrors the SQL DELETE … WHERE stale=true
-// AND created_at < now()-retention. MemStore uses time.Now for the cutoff
-// (deterministic tests pass a future/injected CreatedAt at seed time).
+// AND coalesce(stale_at, created_at) < now()-retention. MemStore uses
+// time.Now for the cutoff (deterministic tests pass a future/injected
+// CreatedAt at seed time).
 func (m *MemStore) DeleteSnapshotsStaleOlderThan(_ context.Context, retention time.Duration) (int64, error) {
 	cutoff := time.Now().Add(-retention)
 	m.mu.Lock()
@@ -17283,8 +17364,9 @@ func (m *MemStore) DeleteSnapshotsStaleOlderThan(_ context.Context, retention ti
 	var n int64
 	kept := m.snapshots[:0]
 	for i := range m.snapshots {
-		if m.snapshots[i].Stale && m.snapshots[i].CreatedAt.Before(cutoff) {
+		if m.snapshots[i].Stale && m.snapshotStaleSinceLocked(m.snapshots[i]).Before(cutoff) {
 			delete(m.snapshotRuntimeConfigReceipts, m.snapshots[i].ID)
+			delete(m.snapshotStaleAt, m.snapshots[i].ID)
 			n++
 			continue
 		}
@@ -19667,6 +19749,11 @@ func (m *MemStore) UpsertInvoice(_ context.Context, inv Invoice) error {
 			inv.AmountRefundedCents = existing.AmountRefundedCents
 			inv.AmountRefundPendingCents = existing.AmountRefundPendingCents
 			inv.CreditsAppliedCents = existing.CreditsAppliedCents
+			if existing.Status == "paid" && (inv.Status == "open" || inv.Status == "draft") {
+				// A late "created"/"pending" delivery never reopens a paid
+				// invoice (ADR-20261028101500).
+				inv.Status, inv.AmountPaidCents = existing.Status, existing.AmountPaidCents
+			}
 			inv.Plan = existing.Plan
 			if inv.CreatedAt.IsZero() {
 				inv.CreatedAt = time.Now().UTC()
@@ -22025,7 +22112,7 @@ func (m *MemStore) markAppRuntimeConfigChangedAndSnapshotsStaleLocked(appID stri
 		if !ok || deployment.AppID != appID || m.snapshots[i].Stale {
 			continue
 		}
-		m.snapshots[i].Stale = true
+		m.markSnapshotStaleLocked(i)
 		m.deleteSnapshotReplicasLocked(m.snapshots[i].ID)
 	}
 }
