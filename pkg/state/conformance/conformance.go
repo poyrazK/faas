@@ -161,6 +161,7 @@ func Run(t *testing.T, open Open) {
 		{"mfa_disable_request_single_use", testMFADisableRequestSingleUse},
 		{"deploy_token_authentication", testDeployTokenAuthentication},
 		{"api_key_rotation_grace", testAPIKeyRotationGrace},
+		{"mcp_login_key_slides_on_use", testMCPLoginKeySlides},
 		{"consumer_key_lookup_is_app_scoped", testConsumerKeyLookupIsAppScoped},
 		{"app_secret_scope_and_class", testAppSecretScopeAndClass},
 		{"oidc_empty_subject_pattern_binds_nothing", testOIDCEmptySubjectPatternBindsNothing},

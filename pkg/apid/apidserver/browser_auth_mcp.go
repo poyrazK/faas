@@ -97,7 +97,8 @@ func browserAuthCredential(raw string) (string, []string, time.Duration) {
 	if !isMCPAuthCode(raw) {
 		return "cli-login", api.ScopesAdminOnly, cliAuthKeyTTL
 	}
-	return "mcp-login", mcpCodeScopes(raw), 8 * time.Hour
+	// The key slides while used (ADR-20261028205920; TouchKeyLastUsed).
+	return api.MCPLoginKeyLabel, mcpCodeScopes(raw), api.MCPLoginKeyIdle
 }
 
 // mcpCapabilities describes, for the consent page, what an MCP code grants

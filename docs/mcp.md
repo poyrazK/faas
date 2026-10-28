@@ -19,12 +19,17 @@ The client opens a Gregale page to connect:
    - ask you for secrets;
    - create buckets;
    - create PostgreSQL databases.
-2. Sign in to Gregale and authorize the connection.
+2. Sign in to Gregale and authorize the connection. No account yet? Sign up
+   with GitHub or Google on the same page; you come back to the authorization.
 3. Review the account, choose which apps the agent may use, and connect.
 
-The connection issues an eight-hour credential that refreshes while the
-agent uses it. Revoke it from your account's API keys page; its label is
-`mcp-login`. An account can have 10 connections at a time.
+It all happens in one browser tab (ADR-20261028205920).
+
+The connection's credential stays valid while the agent uses it: it ends
+after a week unused, and 30 days after you connect at the latest. Then the
+agent asks you to connect again. Revoke it any time from your account's API
+keys page; its label is `mcp-login`. An account can have 10 connections at a
+time.
 
 The hosted server lists the `core` and `provision` toolsets. A connection
 sees only the tools its consent covers:
@@ -2044,6 +2049,11 @@ The server is the `mcp-bridged` daemon:
 Operate it with:
 - **Metrics** on `127.0.0.1:9110/metrics`, scraped as the `mcp-bridged` job.
   The `gregale_management_mcp_*` series have no account, grant or app labels.
+- **Sign-up funnel:** `gregale_management_mcp_consent_total{step}` counts
+  connections reaching each consent step (`started`, `sign_in_started`,
+  `signed_in`, `approved`, `denied`). apid's `apid_signups_total{method,source}`
+  counts new accounts; `source="agent"` marks sign-ups that continued to an
+  agent's approval. Each new account also gets an `auth.signup` audit event.
 - **Alerts:** `FaasHostedMCPDown`, `FaasHostedMCPRestarting` and
   `FaasHostedMCPConnectionsNearCapacity`, all warn. See the
   [runbook](runbooks/FaasHostedMCP.md).
@@ -2065,8 +2075,9 @@ Streamable HTTP includes a self-hosted OAuth authorization bridge, independent
 of the API's existing OIDC token-exchange issuer. Browser onboarding is the
 default: start sign-in on the bridge, authorize in Gregale's signed-in dashboard,
 and return to review the resolved account, agent, callback, and apps. Gregale
-issues a dedicated eight-hour `mcp-login` credential with `apps:read` and optional
-`deploy:write`; it cannot administer keys, read secrets or change account settings.
+issues a dedicated `mcp-login` credential with `apps:read` and optional
+`deploy:write`. It lasts a week and is extended while used, up to 30 days after
+it was issued (ADR-20261028205920); it cannot administer keys, read secrets or change account settings.
 The existing dashboard session chooses the account. To connect another account,
 switch accounts in Gregale before authorizing.
 
@@ -2159,7 +2170,9 @@ both scopes in the client's OAuth settings as well as enabling bridge writes.
 Each grant has its own SDK server, API credential, and plan store. Every remote
 request rechecks its account credential through the API. Access tokens expire
 after 15 minutes; refresh rotates both tokens, and reusing a spent refresh token
-revokes the grant. Grants expire after eight hours. `POST /oauth/revoke` disconnects
+revokes the grant. A browser sign-in's grant follows its `mcp-login` credential:
+a week after its last use, 30 days after consent at the latest. A grant made with
+a pasted API key expires after eight hours. `POST /oauth/revoke` disconnects
 a grant using its token and registered client ID. Token/code lookups use hashes.
 Revoking the backing `mcp-login` credential in Gregale also disables the connection
 on its next request. Without a state file, restarting disconnects clients. Durable

@@ -21,6 +21,7 @@ type Telemetry struct {
 	duration *prometheus.HistogramVec
 	active   *prometheus.GaugeVec
 	updates  prometheus.Counter
+	consent  *prometheus.CounterVec
 	// connections reads a remote bridge's state at scrape time.
 	connections atomic.Pointer[func() connectionStats]
 }
@@ -31,12 +32,26 @@ func NewTelemetry() *Telemetry {
 		requests: prometheus.NewCounterVec(prometheus.CounterOpts{Name: "gregale_management_mcp_requests_total", Help: "Completed bridge requests and subscription snapshots by fixed operation, registered tool and outcome."}, []string{"operation", "tool", "outcome"}),
 		duration: prometheus.NewHistogramVec(prometheus.HistogramOpts{Name: "gregale_management_mcp_request_duration_seconds", Help: "Bridge handler duration including admission, validation and customer API reads.", Buckets: []float64{.005, .025, .1, .5, 1, 5, 15, 30, 60, 120}}, []string{"operation", "tool"}),
 		active:   prometheus.NewGaugeVec(prometheus.GaugeOpts{Name: "gregale_management_mcp_active", Help: "Process aggregate reserved bridge capacity by fixed kind."}, []string{"kind"}),
-		updates:  prometheus.NewCounter(prometheus.CounterOpts{Name: "gregale_management_mcp_resource_updates_total", Help: "URI invalidations successfully sent to individual subscription recipients."})}
-	t.registry.MustRegister(t.requests, t.duration, t.active, t.updates, connectionCollector{t})
+		updates:  prometheus.NewCounter(prometheus.CounterOpts{Name: "gregale_management_mcp_resource_updates_total", Help: "URI invalidations successfully sent to individual subscription recipients."}),
+		consent:  prometheus.NewCounterVec(prometheus.CounterOpts{Name: "gregale_management_mcp_consent_total", Help: "Agent connection consent steps reached: started, sign_in_started, signed_in, approved, denied (ADR-20261028205920)."}, []string{"step"})}
+	t.registry.MustRegister(t.requests, t.duration, t.active, t.updates, t.consent, connectionCollector{t})
 	for _, kind := range []string{"short_requests", "rollout_watches", "listen_streams", "resource_slots"} {
 		t.active.WithLabelValues(kind).Set(0)
 	}
+	for _, step := range consentSteps {
+		t.consent.WithLabelValues(step).Add(0)
+	}
 	return t
+}
+
+// consentSteps are the funnel an agent connection passes through.
+var consentSteps = []string{"started", "sign_in_started", "signed_in", "approved", "denied"}
+
+// consentStep counts one flow reaching step.
+func (t *Telemetry) consentStep(step string) {
+	if t != nil {
+		t.consent.WithLabelValues(step).Inc()
+	}
 }
 
 // Handler exposes only this bridge's aggregate Prometheus registry. Embedders

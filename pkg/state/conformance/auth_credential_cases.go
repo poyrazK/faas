@@ -199,6 +199,47 @@ func testDeployTokenAuthentication(t *testing.T, fx *Fixture) {
 	}
 }
 
+// testMCPLoginKeySlides pins ADR-20261028205920: a used, active, non-admin
+// mcp-login key is extended to api.MCPLoginKeyIdle from now; an admin key with
+// that label and any other key keep their expiry.
+func testMCPLoginKeySlides(t *testing.T, fx *Fixture) {
+	soon := time.Now().Add(time.Hour).Truncate(time.Second)
+	create := func(label string, scopes []string) ([]byte, string) {
+		hash := randomTokenHash(t)
+		key, err := fx.Store.CreateAPIKeyWithExpiryAndProvenance(fx.Ctx, fx.Account.ID, hash, label, scopes, &soon, "192.0.2.1", "conformance", nil)
+		if err != nil {
+			t.Fatalf("CreateAPIKeyWithExpiryAndProvenance(%s): %v", label, err)
+		}
+		if err := fx.Store.TouchKeyLastUsed(fx.Ctx, key.ID); err != nil {
+			t.Fatalf("TouchKeyLastUsed(%s): %v", label, err)
+		}
+		return hash, label
+	}
+	expiry := func(hash []byte) time.Time {
+		key, err := fx.Store.APIKeyByHash(fx.Ctx, hash)
+		if err != nil || key.ExpiresAt == nil {
+			t.Fatalf("APIKeyByHash: %v %v", err, key.ExpiresAt)
+		}
+		return *key.ExpiresAt
+	}
+	agent, _ := create(api.MCPLoginKeyLabel, []string{api.ScopeAppsRead, api.ScopeDeployWrite})
+	if got, want := expiry(agent), time.Now().Add(api.MCPLoginKeyIdle); got.Before(want.Add(-time.Minute)) || got.After(want.Add(time.Minute)) {
+		t.Fatalf("used mcp-login key expires %v, want about %v", got, want)
+	}
+	if _, _, err := fx.Store.AuthenticateKey(fx.Ctx, agent); err != nil {
+		t.Fatalf("slid key no longer authenticates: %v", err)
+	}
+	for _, other := range []struct {
+		label  string
+		scopes []string
+	}{{api.MCPLoginKeyLabel, api.ScopesAdminOnly}, {"cli-login", []string{api.ScopeAppsRead}}} {
+		hash, label := create(other.label, other.scopes)
+		if got := expiry(hash); !got.Equal(soon) {
+			t.Fatalf("%s key %v moved to %v", label, other.scopes, got)
+		}
+	}
+}
+
 // testAPIKeyRotationGrace pins rotation: the successor authenticates at
 // once, the predecessor keeps working only inside the grace window, a
 // zero grace retires it immediately, and a revoked key stops at once.

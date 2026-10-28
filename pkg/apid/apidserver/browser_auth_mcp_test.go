@@ -71,7 +71,8 @@ func TestMCPBrowserAuthLimitedCredentialAndPurposeBinding(t *testing.T) {
 				t.Fatal("credential followed posted identity")
 			}
 			expiry, err := time.Parse(time.RFC3339, exchange.ExpiresAt)
-			if err != nil || time.Until(expiry) > 8*time.Hour || time.Until(expiry) < 8*time.Hour-time.Minute {
+			// A week; it slides while used (ADR-20261028205920).
+			if err != nil || time.Until(expiry) > api.MCPLoginKeyIdle || time.Until(expiry) < api.MCPLoginKeyIdle-time.Minute {
 				t.Fatal("unexpected credential expiry")
 			}
 			replay := httptest.NewRecorder()
@@ -91,5 +92,60 @@ func TestMCPBrowserAuthRejectsUnrecognizedPurpose(t *testing.T) {
 		if rec.Code != 400 {
 			t.Fatalf("invalid mint=%d", rec.Code)
 		}
+	}
+}
+
+// The hosted MCP server asks for the browser back (ADR-20261028205920): an
+// approved MCP code carrying return=mcp continues on the platform's own MCP
+// server, never on a target the request names; a CLI code never does.
+func TestMCPApprovalReturnsToTheHostedServer(t *testing.T) {
+	srv, _ := newCliAuthTestServer(t)
+	approve := func(purpose, email string, ret bool) (*httptest.ResponseRecorder, string) {
+		t.Helper()
+		rec := httptest.NewRecorder()
+		body := `{}`
+		if purpose != "" {
+			body = `{"purpose":"` + purpose + `"}`
+		}
+		srv.ServeHTTP(rec, httptest.NewRequest("POST", "/v1/cli-auth/code", strings.NewReader(body)))
+		var code api.CliAuthCodeResponse
+		if rec.Code != 200 || json.Unmarshal(rec.Body.Bytes(), &code) != nil {
+			t.Fatalf("mint=%d", rec.Code)
+		}
+		suffix := ""
+		if ret {
+			suffix = "&return=mcp"
+		}
+		cookie, csrf := renderCliAuthForTestAs(t, srv, code.Code+suffix, email)
+		page := httptest.NewRecorder()
+		get := httptest.NewRequest(http.MethodGet, "/cli-auth?code="+code.Code+suffix, nil)
+		get.AddCookie(&http.Cookie{Name: sessionCookie, Value: srv.sessionCookies[cookie]})
+		srv.ServeHTTP(page, get)
+		form := "code=" + strings.ReplaceAll(code.Code, "-", "") + "&csrf_token=" + csrf
+		if ret {
+			form += "&return=mcp"
+		}
+		post := httptest.NewRequest(http.MethodPost, "/cli-auth", strings.NewReader(form))
+		post.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		post.AddCookie(&http.Cookie{Name: sessionCookie, Value: srv.sessionCookies[cookie]})
+		post.AddCookie(&http.Cookie{Name: "faas_csrf", Value: cookie})
+		out := httptest.NewRecorder()
+		srv.ServeHTTP(out, post)
+		return out, page.Body.String()
+	}
+	hosted, page := approve(api.CliAuthPurposeMCPRead, "hosted-mcp@example.com", true)
+	if !strings.Contains(page, `name="return" value="mcp"`) {
+		t.Fatal("approval page dropped the hosted return")
+	}
+	if hosted.Code != http.StatusSeeOther || hosted.Header().Get("Location") != "https://api.gregale.dev/mcp/oauth/continue" {
+		t.Fatalf("hosted approval = %d %q", hosted.Code, hosted.Header().Get("Location"))
+	}
+	twoTab, _ := approve(api.CliAuthPurposeMCPRead, "self-hosted-mcp@example.com", false)
+	if twoTab.Code != http.StatusFound || twoTab.Header().Get("Location") != cliAuthDashboard {
+		t.Fatalf("approval without return = %d %q", twoTab.Code, twoTab.Header().Get("Location"))
+	}
+	cli, _ := approve("", "cli@example.com", true)
+	if cli.Header().Get("Location") != cliAuthDashboard {
+		t.Fatalf("a CLI code followed return=mcp to %q", cli.Header().Get("Location"))
 	}
 }

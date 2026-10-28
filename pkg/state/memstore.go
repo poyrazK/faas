@@ -3283,6 +3283,17 @@ func (m *MemStore) TouchKeyLastUsed(_ context.Context, keyID string) error {
 	}
 	now := time.Now()
 	k.LastUsedAt = &now
+	// Mirrors PgStore: an mcp-login key slides (ADR-20261028205920).
+	if k.Label == api.MCPLoginKeyLabel && k.Status == "active" && k.ExpiresAt != nil && !slices.Contains(k.Scopes, api.ScopeAdmin) {
+		slid := now.Add(api.MCPLoginKeyIdle)
+		if limit := k.CreatedAt.Add(api.MCPLoginKeyMaxAge); limit.Before(slid) {
+			slid = limit
+		}
+		if slid.After(*k.ExpiresAt) {
+			k.ExpiresAt = &slid
+		}
+		m.keyByHash[hex.EncodeToString(k.Hash)] = k
+	}
 	m.keys[keyID] = k
 	return nil
 }

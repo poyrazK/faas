@@ -455,6 +455,7 @@ type server struct {
 	preflightHandler   *preflight.Handler
 	statusMetrics      *statusMetrics
 	idempotencyMetrics *idempotencyMetrics
+	signupMetrics      *signupMetrics
 	devLoopMetrics     *devloop.Metrics
 	// releaseMetrics instruments the release guards; nil records nothing.
 	releaseMetrics *releasemetrics.Metrics
@@ -772,6 +773,11 @@ func (s *server) WithOpsMetrics(ctx context.Context, ops *wire.OpsMetrics) *serv
 		s.idempotencyMetrics = nil
 	} else if s.idempotencyMetrics == nil || s.idempotencyMetrics.registry != ops.Registry() {
 		s.idempotencyMetrics = newIdempotencyMetrics(ops.Registry(), ops.MetricPrefix())
+	}
+	if ops == nil {
+		s.signupMetrics = nil
+	} else if s.signupMetrics == nil || s.signupMetrics.registry != ops.Registry() {
+		s.signupMetrics = newSignupMetrics(ops.Registry(), ops.MetricPrefix())
 	}
 	if ops == nil {
 		s.releaseMetrics = nil

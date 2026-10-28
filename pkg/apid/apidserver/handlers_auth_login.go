@@ -165,7 +165,7 @@ func (s *server) postSignup(w http.ResponseWriter, r *http.Request) {
 		// email will return state.ErrConflict; we collapse to the
 		// sign-in path so the duplicate caller signs in (idempotent)
 		// rather than learning "this email is taken".
-		res, createErr := s.createSignupAccount(r, state.CreateAccountWithPersonalOrgParams{
+		res, createErr := s.createSignupAccount(r, signupMethodPassword, signupSourceDirect, state.CreateAccountWithPersonalOrgParams{
 			Email:                    email,
 			Plan:                     api.PlanFree,
 			RequireEmailVerification: true,
@@ -888,7 +888,7 @@ func (s *server) postV1AuthSignup(w http.ResponseWriter, r *http.Request) {
 		// concurrent signup returns ErrConflict which we collapse to
 		// the idempotent sign-in path so the duplicate caller never
 		// learns "this email is taken".
-		res, createErr := s.createSignupAccount(r, state.CreateAccountWithPersonalOrgParams{
+		res, createErr := s.createSignupAccount(r, signupMethodPassword, signupSourceDirect, state.CreateAccountWithPersonalOrgParams{
 			Email:                    email,
 			Plan:                     api.PlanFree,
 			RequireEmailVerification: true,
@@ -999,7 +999,7 @@ func (s *server) postV1AuthSignupMagicLink(w http.ResponseWriter, r *http.Reques
 			// the dashboard verify page lands the user on a logged-in
 			// session for a fresh address. Mirrors the same shape as
 			// postForgotPassword (mailer fires only on a real hit).
-			res, createErr := s.createSignupAccount(r, state.CreateAccountWithPersonalOrgParams{
+			res, createErr := s.createSignupAccount(r, signupMethodMagicLink, signupSourceDirect, state.CreateAccountWithPersonalOrgParams{
 				Email:                    email,
 				Plan:                     api.PlanFree,
 				RequireEmailVerification: true,

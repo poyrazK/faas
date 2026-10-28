@@ -41,6 +41,8 @@ type remoteFixture struct {
 	mints      []api.CliAuthCodeRequest
 	opts       HTTPOptions
 	setHandler func(http.Handler)
+	// prefix is /mcp on a hosted bridge, whose OAuth routes live under it.
+	prefix string
 }
 
 func newRemoteFixture(t *testing.T, writes bool) *remoteFixture {
@@ -154,6 +156,9 @@ func newRemoteFixtureWithOptions(t *testing.T, writes bool, options HTTPOptions)
 		options.RedirectURIs = []string{testRedirect}
 	}
 	f.opts = options
+	if options.Hosted {
+		f.prefix = "/mcp"
+	}
 	h, err := NewHTTPHandler(options)
 	if err != nil {
 		t.Fatal(err)
@@ -162,7 +167,7 @@ func newRemoteFixtureWithOptions(t *testing.T, writes bool, options HTTPOptions)
 	f.setHandler(h)
 	f.client = f.server.Client()
 	f.client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
-	response := f.request(http.MethodPost, "/oauth/register", strings.NewReader(`{"client_name":"test-agent","redirect_uris":["`+testRedirect+`"],"grant_types":["authorization_code","refresh_token"],"token_endpoint_auth_method":"none"}`), "application/json", "")
+	response := f.request(http.MethodPost, f.prefix+"/oauth/register", strings.NewReader(`{"client_name":"test-agent","redirect_uris":["`+testRedirect+`"],"grant_types":["authorization_code","refresh_token"],"token_endpoint_auth_method":"none"}`), "application/json", "")
 	if response.StatusCode != 201 {
 		t.Fatalf("registration=%d", response.StatusCode)
 	}
@@ -213,7 +218,7 @@ func (f *remoteFixture) begin(scope string) browserFlow {
 	f.t.Helper()
 	sum := sha256.Sum256([]byte(testVerifier))
 	query := url.Values{"client_id": {f.clientID}, "redirect_uri": {testRedirect}, "response_type": {"code"}, "resource": {f.resource}, "scope": {scope}, "state": {"client-state"}, "code_challenge_method": {"S256"}, "code_challenge": {base64.RawURLEncoding.EncodeToString(sum[:])}}
-	return f.beginAt(context.Background(), f.server.URL+"/oauth/authorize?"+query.Encode())
+	return f.beginAt(context.Background(), f.server.URL+f.prefix+"/oauth/authorize?"+query.Encode())
 }
 
 func (f *remoteFixture) beginAt(ctx context.Context, authorizationURL string) browserFlow {
@@ -270,7 +275,7 @@ func (f *remoteFixture) consent(flow browserFlow, decision, key, origin, csrf st
 
 func (f *remoteFixture) submitConsent(flow browserFlow, form url.Values, origin string) *http.Response {
 	f.t.Helper()
-	req, err := http.NewRequest(http.MethodPost, f.server.URL+"/oauth/consent", strings.NewReader(form.Encode()))
+	req, err := http.NewRequest(http.MethodPost, f.server.URL+f.prefix+"/oauth/consent", strings.NewReader(form.Encode()))
 	if err != nil {
 		f.t.Fatal(err)
 	}
@@ -312,7 +317,7 @@ func (f *remoteFixture) authorizeAccount(key string, writes bool) string {
 
 func (f *remoteFixture) exchange(code, verifier, resource, clientID string) *http.Response {
 	form := url.Values{"grant_type": {"authorization_code"}, "code": {code}, "code_verifier": {verifier}, "resource": {resource}, "client_id": {clientID}, "redirect_uri": {testRedirect}}
-	return f.request(http.MethodPost, "/oauth/token", strings.NewReader(form.Encode()), "application/x-www-form-urlencoded", "")
+	return f.request(http.MethodPost, f.prefix+"/oauth/token", strings.NewReader(form.Encode()), "application/x-www-form-urlencoded", "")
 }
 
 func (f *remoteFixture) connect(tokens tokenResponse, version string) (*mcp.ClientSession, context.Context) {

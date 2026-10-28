@@ -1195,7 +1195,16 @@ select id, account_id, key_sha256, coalesce(label, ''), scopes, created_at, coal
 from api_keys where key_sha256 = $1;
 
 -- name: TouchKeyLastUsed :exec
-update api_keys set last_used_at = now() where id = $1;
+-- An active, non-admin mcp-login key also slides (ADR-20261028205920): use
+-- extends it to idle_seconds from now, never past max_age_seconds after it was
+-- created, and never shortens it.
+update api_keys set last_used_at = now(),
+    expires_at = case
+        when label = @mcp_login_label::text and status = 'active' and expires_at is not null and not ('admin' = any(scopes))
+        then greatest(expires_at, least(now() + make_interval(secs => @idle_seconds::double precision), created_at + make_interval(secs => @max_age_seconds::double precision)))
+        else expires_at
+    end
+where id = @id;
 
 -- name: CreateApp :one
 insert into apps (id, account_id, slug, type, runtime, ram_mb, idle_timeout_s, max_concurrency, status, manifest)

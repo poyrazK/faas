@@ -78,11 +78,21 @@ const (
 	SecurityMailTrackedAccountsMax = 100_000
 )
 
-// Self-service accounts (password and magic-link sign-up) one client
-// address, and one network (IPv4 /24, IPv6 /48), may create per day.
+// Self-service accounts (password, magic-link, Google and GitHub sign-up) one
+// client address, and one network (IPv4 /24, IPv6 /48), may create per day.
 const (
 	SignupAccountsPerAddressPerDay = 10
 	SignupAccountsPerNetworkPerDay = 50
+)
+
+// An agent connection's mcp-login key slides (ADR-20261028205920): each use
+// extends it to MCPLoginKeyIdle from now, never past MCPLoginKeyMaxAge after
+// it was created. A connection unused for a week ends; every one ends within
+// 30 days of consent.
+const (
+	MCPLoginKeyLabel  = "mcp-login"
+	MCPLoginKeyIdle   = 7 * 24 * time.Hour
+	MCPLoginKeyMaxAge = 30 * 24 * time.Hour
 )
 
 // InboundWebhookFailuresPerIPPerMinute is how many unknown-token or

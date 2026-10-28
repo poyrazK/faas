@@ -272,6 +272,8 @@ func (h *cliAuthHandlers) renderCliAuthPage(w http.ResponseWriter, r *http.Reque
 			"AccountEmail":    acct.Email,
 			"MCP":             isMCPAuthCode(raw),
 			"MCPCapabilities": mcpCapabilities(raw),
+			// The hosted bridge asks to have the browser back (ADR-20261028205920).
+			"ReturnMCP": isMCPAuthCode(raw) && r.URL.Query().Get("return") == "mcp" && h.srv.hostedMCPContinueURL() != "",
 		},
 	}
 	if err := dashboard.Render(w, h.log, httpsec.NonceFromContext(r.Context()), page); err != nil {
@@ -349,7 +351,24 @@ func (h *cliAuthHandlers) postCliAuthPage(w http.ResponseWriter, r *http.Request
 	}
 	_ = h.srv.notif.Notify(r.Context(), db.NotifyCliAuthCodeActivated,
 		`{"hash":"`+hex.EncodeToString(hash)+`"}`)
+	// An approved hosted MCP code continues on the platform's own MCP
+	// server, in this tab (ADR-20261028205920). The target never comes from
+	// the request, so the form field cannot redirect anywhere else.
+	if continueURL := h.srv.hostedMCPContinueURL(); continueURL != "" && isMCPAuthCode(rawCode) && r.PostForm.Get("return") == "mcp" {
+		http.Redirect(w, r, continueURL, http.StatusSeeOther)
+		return
+	}
 	http.Redirect(w, r, cliAuthDashboard, http.StatusFound)
+}
+
+// hostedMCPContinueURL is where the hosted MCP server continues a connection
+// after its code is approved, or "" when no platform domain is configured.
+func (s *server) hostedMCPContinueURL() string {
+	domain := strings.TrimPrefix(strings.TrimSpace(s.platformHost()), ".")
+	if domain == "" {
+		return ""
+	}
+	return "https://api." + domain + "/mcp/oauth/continue"
 }
 
 // renderCliAuthError renders the cli_auth template with the error

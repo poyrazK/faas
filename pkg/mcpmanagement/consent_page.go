@@ -5,6 +5,18 @@ import (
 	"strings"
 )
 
+// consentCapabilityChoices are the optional scopes chosen before sign-in.
+const consentCapabilityChoices = `<fieldset><legend>With write access, also allow (optional)</legend><label><input type="checkbox" name="capability" value="secrets:request"> Asking you to enter secrets on a Gregale page; the agent never sees their values</label><br><label><input type="checkbox" name="capability" value="storage:manage"> Creating object storage buckets and binding them to apps</label><br><label><input type="checkbox" name="capability" value="postgres:manage"> Creating managed PostgreSQL databases and binding them to apps (billed)</label></fieldset>`
+
+// connectionLifetime states how long an approved connection lasts: a browser
+// sign-in's slides while used (ADR-20261028205920), a pasted key's does not.
+func connectionLifetime(renewable bool) string {
+	if renewable {
+		return "The connection stays while your agent uses it: it ends after a week unused, and 30 days after you approve at the latest."
+	}
+	return "The connection lasts at most eight hours."
+}
+
 // consentPage renders the bridge's authorization page. It escapes every value
 // with html.EscapeString instead of executing an html/template: template
 // execution reaches reflect.Value.MethodByName, which makes the linker keep
@@ -67,8 +79,16 @@ func consentPage(v consentView) string {
 			}
 			w(`</p>`)
 		}
-		w(`</fieldset>`, "\n", `<p>Environment promotions affect every project workload and require consent for all of them. Protected targets still need a human-issued Gregale approval. The connection lasts at most eight hours. Revoke it through your client or revoke its credential in Gregale.</p>`, "\n",
+		w(`</fieldset>`, "\n", `<p>Environment promotions affect every project workload and require consent for all of them. Protected targets still need a human-issued Gregale approval. `, connectionLifetime(v.Native), ` Revoke it through your client or revoke its credential in Gregale.</p>`, "\n",
 			`<button name="decision" value="approve" type="submit">Connect this account</button> <button name="decision" value="deny" type="submit" formnovalidate>Cancel</button></form>`)
+	case v.Native && v.SameTab && v.LoginURL == "":
+		// The hosted bridge sends the browser to sign-in and back here.
+		w(`<p>Continue to Gregale to sign in, or to create an account with GitHub, Google or email. You come back here to review the agent's access.</p>`, "\n")
+		w("\n", `<form method="post" action="`, e(v.ConsentAction), `">`, hidden)
+		if v.Writes {
+			w(consentCapabilityChoices)
+		}
+		w(`<button name="decision" value="start-login" type="submit">Continue to Gregale</button><button name="decision" value="deny" type="submit">Cancel</button></form>`)
 	case v.Native:
 		w(`<p>Sign in to Gregale to choose your account. Then return here to review the agent's access.</p>`, "\n")
 		if v.LoginURL != "" {
@@ -76,7 +96,7 @@ func consentPage(v consentView) string {
 		}
 		w("\n", `<form method="post" action="`, e(v.ConsentAction), `">`, hidden)
 		if v.Writes && v.LoginURL == "" {
-			w(`<fieldset><legend>With write access, also allow (optional)</legend><label><input type="checkbox" name="capability" value="secrets:request"> Asking you to enter secrets on a Gregale page; the agent never sees their values</label><br><label><input type="checkbox" name="capability" value="storage:manage"> Creating object storage buckets and binding them to apps</label><br><label><input type="checkbox" name="capability" value="postgres:manage"> Creating managed PostgreSQL databases and binding them to apps (billed)</label></fieldset>`)
+			w(consentCapabilityChoices)
 		}
 		decision, label := "start-login", "Start Gregale sign-in"
 		if v.LoginURL != "" {

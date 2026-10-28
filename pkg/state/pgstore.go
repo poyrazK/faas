@@ -1685,8 +1685,17 @@ func (s *PgStore) GetAPIKey(ctx context.Context, accountID, keyID string) (APIKe
 		accountID, keyID))
 }
 
+// TouchKeyLastUsed stamps last_used_at. An active, non-admin mcp-login key
+// also slides (ADR-20261028205920): use extends it to api.MCPLoginKeyIdle from
+// now, never past api.MCPLoginKeyMaxAge after creation, and never shortens it.
 func (s *PgStore) TouchKeyLastUsed(ctx context.Context, keyID string) error {
-	_, err := s.pool.Exec(ctx, `update api_keys set last_used_at = now() where id = $1`, keyID)
+	_, err := s.pool.Exec(ctx, `update api_keys set last_used_at = now(),
+		expires_at = case
+			when label = $2 and status = 'active' and expires_at is not null and not ('admin' = any(scopes))
+			then greatest(expires_at, least(now() + make_interval(secs => $3), created_at + make_interval(secs => $4)))
+			else expires_at
+		end
+		where id = $1`, keyID, api.MCPLoginKeyLabel, api.MCPLoginKeyIdle.Seconds(), api.MCPLoginKeyMaxAge.Seconds())
 	return err
 }
 
