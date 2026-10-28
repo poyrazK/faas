@@ -6764,6 +6764,15 @@ const (
 
 	// Edge request caps (spec §4.1).
 	MaxRequestBodyBytes = 25 * 1024 * 1024 // 25 MB either direction
+	// EdgeRuleValidateBufferBudgetBytes bounds the request bodies kind=validate
+	// rules hold in memory at once in one gatewayd-internal, across every app
+	// it serves (ADR-091 amendment 2026-10-28). A rule reads a body of up to
+	// MaxRequestBodyBytes into memory to check it against its schema, while
+	// request body admission spills anything past 1 MiB to disk, so concurrent
+	// large bodies to a validated route grew the shared gateway's heap without
+	// bound. A body that would exceed the budget is refused with 503 and
+	// Retry-After before it is read.
+	EdgeRuleValidateBufferBudgetBytes = 256 * 1024 * 1024
 	// WakePageAfterMs is the browser-only grace period before the gateway
 	// returns its 200 "Waking up" page. API clients keep the normal wake
 	// wait/error contract; the page is an edge UX affordance only.

@@ -66,7 +66,7 @@ func PickFirstChallengeMatch(rules []EdgeRuleChallengeResolved, requestPath, met
 		if len(requestHeaders) > 0 && !RequestHeaderConditionsMatch(rule.MatchHeaders, requestHeaders[0]) {
 			continue
 		}
-		if rule.Methods != nil && !rule.Methods[method] {
+		if !protectiveMethodMatch(rule.Methods, method) {
 			continue
 		}
 		if rule.PathGlob != "" {

@@ -1327,3 +1327,83 @@ The last code items before edge rules leave beta.
   and `circuit_breaker` (capability maturity `internal`) and `async`
   (`preview`) are enabled per account. The kind-quota error passed its limit
   and usage in the wrong order; fixed.
+
+## Amendment (2026-10-28): review round 3 — rules that silently stopped applying
+
+A code review of the edge-rule path found ways a rule could stop protecting
+an app without any signal, and one tenant action that flushed every
+tenant's caches. All are fixed; none changes the rule format.
+
+1. **A CORS preset change is scoped to its account and goes through the
+   barrier.** A preset create, update or delete made every gateway drop every
+   account's compiled rule sets and cached responses, so one tenant editing a
+   preset in a loop cache-busted the fleet. Presets are per account, so the
+   gateway now drops only that account's sets and responses, the same scoped
+   invalidation a wildcard rule edit uses (amendment 2026-10-27, GA
+   hardening). Updating or deleting a preset that rules use now fences those
+   rules' hosts first and answers only after the serving fleet applied it, as
+   a list edit does; it used to answer before any gateway had.
+2. **A rule whose condition does not compile fails its host closed.** A
+   `match` condition that references a list that is missing, or that no
+   longer compiles, made the rule never match. An `ip`, `geo`, `jwt`, `waf` or
+   `challenge` rule built on a list therefore stopped refusing with only a log
+   line. Such a rule is now a compile error like an unparseable `match_path`:
+   counted in `gateway_edge_rule_compile_error_total` and failing the owner's
+   host closed (amendment 2026-10-26). The counter also gained the `cache`,
+   `retry` and `circuit_breaker` kinds, whose compile errors already failed
+   the host closed but were never counted, so `FaasEdgeRuleCompileError`
+   could not fire for them.
+3. **A list cannot be deleted under a rule that references it.** apid checks
+   a rule's lists exist before the write, without a lock, and deleting a list
+   only checked committed rules, so a concurrent create and delete could both
+   succeed. Rule creates, updates and rollbacks now take a share lock on every
+   list they reference in the same transaction and fail if one is gone; the
+   delete's row lock waits for them.
+4. **Rollback runs the create-time checks.** It checked only the plan's rule
+   counts, so it could restore a kind the plan no longer allows, a feature the
+   account's release no longer has, a rule whose list was deleted (which then
+   never matched), a route to an app that turned internal, an async callback
+   to a webhook that is gone, or an unvalidated method list. Each restored
+   rule now passes the plan, capability, release, list, route-target, async
+   and method checks; as on update, a feature the same rule already enforces
+   is not refused. Plan-dependent action bounds are clamped again by the
+   gateway when it compiles the rule.
+5. **The client address is pinned before any rule runs.** `kind=headers`
+   runs before the IP, geo, throttle, WAF, challenge and pre-auth gates, and
+   it could set, add or remove `X-Forwarded-For`, the single trusted hop
+   gatewayd-public writes. Removing it refused every client of an `ip` rule as
+   `caller_ip_forged`; a templated value let the client choose its address.
+   gatewayd-internal now reads the address once when the request arrives and
+   every gate, and the client address stamped for the app, uses that value.
+   New rules may not write `X-Forwarded-For` or `Forwarded`. They stay off the
+   list the gateway checks when it compiles a stored rule, so a rule saved
+   before still compiles; it only changes what the app sees in that header.
+6. **`match_methods` is validated.** It accepted any string, and the gateway
+   compares methods exactly, so `"*"`, a typo or a trailing space matched no
+   request and a rule scoped by it never applied. It is now the RFC 9110
+   methods plus `PATCH`, upper-cased on write; `"*"` is refused with a hint to
+   omit the field. Stored rules are unchanged.
+7. **Refusing rules that list GET also cover HEAD.** Servers answer HEAD with
+   the GET handler, so `HEAD /admin/x` reached the app past a GET-only `jwt`
+   or `ip` rule. The kinds that match paths protectively (`ip`, `geo`, `jwt`,
+   `limit`, `throttle`, `validate`, `maintenance`, `waf`, `challenge`) treat a
+   rule listing GET as listing HEAD too; the trace simulator does the same.
+   Other kinds keep exact matching.
+8. **A deleted app's rules stop applying.** Soft-deleting an app kept its
+   rules enabled, and a rule on `*`, a wildcard or another app's host kept
+   refusing or rewriting the account's other apps' traffic. The gateway's rule
+   reads now skip rules whose app is deleted; the rules are kept, so restoring
+   the app brings them back. A gateway that has the deleted app cached drops
+   its account's compiled sets at once; otherwise they expire within 30 s,
+   which also bounds how soon a restored app's rules return.
+9. **Validated bodies have a memory budget.** `kind=validate` reads a body of
+   up to 25 MiB into memory, while request admission spills anything past
+   1 MiB to disk, so concurrent large bodies to a validated route grew the
+   shared gateway's heap without bound. Validated bodies held at once in one
+   gatewayd-internal are now bounded by
+   `api.EdgeRuleValidateBufferBudgetBytes` (256 MiB); a body that would
+   exceed it is refused with 503 and `Retry-After: 1` before it is read.
+10. Smaller fixes: cache rules are looked up by the host without its port, as
+   every other kind is; a credentialed CORS rule or preset may not allow
+   `https://*.<a platform domain>`, since every other customer's app is served
+   there; a duplicated validation block on rule update is removed.

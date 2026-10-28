@@ -988,6 +988,9 @@ type Handler struct {
 	// rotating across many apps is rejected before any per-app bucket
 	// drains and before the wake gate (a schedd gRPC RPC) is touched.
 	accountLimiter *Limiter
+	// validateBodies bounds the request bodies kind=validate rules hold in
+	// memory at once (ADR-091 amendment 2026-10-28).
+	validateBodies *validateBodyBudget
 	// Configured platform-customer admission is authoritative across apps.
 	// WithTenantRequestBudgetStore arms the gate; nil then fails closed.
 	tenantRequestBudgetStore TenantRequestBudgetStore
@@ -1495,6 +1498,7 @@ func NewHandlerWith(backend Backend, m *Metrics, log *slog.Logger) *Handler {
 		// ratelimit.go::bucket.pinned).
 		routeConsumerLimiter: NewLimiterWithLRU(EdgeRuleConsumerCacheCap),
 		accountLimiter:       NewLimiter(),
+		validateBodies:       newValidateBodyBudget(api.EdgeRuleValidateBufferBudgetBytes),
 		contentObserver:      newContentObserver(api.RouteContentObserverMaxURLs),
 		gate:                 NewWakeGate(api.WakeQueueCap, time.Duration(api.WakeQueueTTLSeconds)*time.Second),
 		admissionQueue: newWakeAdmissionQueue(
@@ -3702,6 +3706,25 @@ func validateBodyCap(ruleCap int, planCap int64) int {
 	return int(min(limit, planCap))
 }
 
+// readValidateBody buffers a validated request's body within the gateway's
+// validate budget (ADR-091 amendment 2026-10-28). The reservation lasts until
+// the request ends, since r.Body keeps the bytes for the proxy leg; outside
+// ServeHTTP (no request-end hooks) it ends when the body has been read.
+func (h *Handler) readValidateBody(r *http.Request, cap int) ([]byte, error) {
+	declared := r.ContentLength
+	if declared > int64(cap) {
+		declared = int64(cap) + 1 // the MaxBytesReader stops the read there
+	}
+	body, reserved, err := h.validateBodies.read(r.Body, declared)
+	if err != nil || reserved == 0 {
+		return body, err
+	}
+	if !onResponseStatus(r.Context(), func(int) { h.validateBodies.release(reserved) }) {
+		h.validateBodies.release(reserved)
+	}
+	return body, nil
+}
+
 // applyEdgeRuleValidate (PR-B) consults the per-host edge-rule
 // matcher for a `kind=validate` rule. On a hit, the inbound
 // request body is buffered (up to the per-rule cap or
@@ -3818,8 +3841,14 @@ func (h *Handler) applyEdgeRuleValidate(w http.ResponseWriter, r *http.Request, 
 	// bodies through the spooled proxy path.
 	cap := validateBodyCap(rule.MaxBodyBytes, app.Plan.MaxRequestBodyBytes())
 	r.Body = http.MaxBytesReader(w, r.Body, int64(cap))
-	body, err := io.ReadAll(r.Body)
+	body, err := h.readValidateBody(r, cap)
 	_ = r.Body.Close()
+	if errors.Is(err, errValidateBodyBudget) {
+		rec.status = http.StatusServiceUnavailable
+		w.Header().Set("Retry-After", "1")
+		h.rejectUnavailableEdgeRule(w, r, "validate", rule.ID, "validate_buffer_budget_exhausted")
+		return true
+	}
 	if err != nil {
 		var maxErr *http.MaxBytesError
 		if errors.As(err, &maxErr) {
@@ -4803,6 +4832,32 @@ func TrustedClientIP(r *http.Request) (net.IP, bool) {
 }
 
 func clientIPFromTrustedXFF(r *http.Request) (net.IP, bool) {
+	if pinned, found := r.Context().Value(trustedClientIPKey{}).(trustedClientIP); found {
+		return pinned.ip, pinned.ok
+	}
+	return clientIPFromForwardedFor(r)
+}
+
+// trustedClientIPKey carries the client address ServeHTTP read from the
+// single trusted X-Forwarded-For hop when the request arrived (ADR-091
+// amendment 2026-10-28). kind=headers rules run on r.Header before the IP,
+// geo, throttle, WAF, challenge and pre-auth gates; a rule that removed,
+// added or templated X-Forwarded-For used to change the address those gates
+// judged, and the one stamped for the app.
+type trustedClientIPKey struct{}
+
+type trustedClientIP struct {
+	ip net.IP
+	ok bool
+}
+
+func withTrustedClientIP(ctx context.Context, ip net.IP, ok bool) context.Context {
+	return context.WithValue(ctx, trustedClientIPKey{}, trustedClientIP{ip: ip, ok: ok})
+}
+
+// clientIPFromForwardedFor parses the single trusted X-Forwarded-For entry
+// gatewayd-public writes; missing or ambiguous chains report false.
+func clientIPFromForwardedFor(r *http.Request) (net.IP, bool) {
 	values := r.Header.Values("X-Forwarded-For")
 	if len(values) != 1 {
 		return nil, false
@@ -5989,7 +6044,11 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	requestCtx = WithEdgeRuleRequestHeaders(requestCtx, r.Header)
 	// ADR-962: the snapshot rule conditions read. The client IP is only the
 	// single trusted forwarded hop; country is looked up lazily.
-	trustedIP, _ := clientIPFromTrustedXFF(r)
+	trustedIP, trustedIPOK := clientIPFromTrustedXFF(r)
+	// ADR-091 amendment 2026-10-28: pin that address before any edge rule
+	// runs, so every IP-based gate and the headers stamped for the app read
+	// it rather than whatever a kind=headers rule left in X-Forwarded-For.
+	requestCtx = withTrustedClientIP(requestCtx, trustedIP, trustedIPOK)
 	matchCtx := NewEdgeRuleMatchContext(r, trustedIP, h.edgeRuleCountryLookup(), h.edgeRuleHits)
 	matchCtx.SetASNLookup(h.edgeRuleASNLookup())
 	matchCtx.SetBotVerifier(requestCtx, h.botVerifier)
