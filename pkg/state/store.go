@@ -6012,7 +6012,7 @@ type Store interface {
 	// Per-app private-registry Basic Auth (issue #461 / ADR-062). apid
 	// is the only writer. imaged opens the passwords to pull images;
 	// builderd forwards them unopened to vmmd, which opens them into a
-	// Dockerfile builder's Docker config (ADR-20261026090000). PasswordEncrypted
+	// Dockerfile builder's Docker config (ADR-20261026091500). PasswordEncrypted
 	// is the age-sealed bytea produced by pkg/secretbox.SealBytes with
 	// namespace="registry_creds" — the plaintext password is never
 	// stored, never logged, never returned over the wire.
