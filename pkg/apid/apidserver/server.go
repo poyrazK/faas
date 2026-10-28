@@ -426,6 +426,9 @@ type server struct {
 	// signups caps self-service accounts per address and network a day
 	// (signup_network_limit.go).
 	signups *signupNetworkLimiter
+	// loginFailures caps failed password sign-ins per email address across
+	// client addresses (login_failure_limit.go).
+	loginFailures *loginFailureLimiter
 	// exportsInFlight holds the account IDs with a REST export bundle being
 	// built: one at a time per account.
 	exportsInFlight sync.Map
@@ -1457,6 +1460,7 @@ func newServerWithDeps(
 		dashboardExportLimiter: dashboardExportLimiter,
 		securityMail:           newSecurityMailLimiter(),
 		signups:                newSignupNetworkLimiter(),
+		loginFailures:          newLoginFailureLimiter(),
 		domainCreateLimiter:    domainCreateLimiter,
 		audit:                  aud,
 		runtimeConfig:          newRuntimeConfigManager(nil),

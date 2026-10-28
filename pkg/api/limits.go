@@ -78,6 +78,18 @@ const (
 	SecurityMailTrackedAccountsMax = 100_000
 )
 
+// Failed password sign-ins one email address may collect from any client
+// address within LoginFailureEmailWindow. The per-IP auth limit does not stop
+// a botnet guessing one account's password; past this budget every password
+// sign-in for the address answers 429 until failures age out or a password
+// reset succeeds, and a bound account's owner is emailed once. One apid
+// tracks at most LoginFailureEmailsTrackedMax addresses at a time.
+const (
+	LoginFailuresPerEmail        = 20
+	LoginFailureEmailWindow      = time.Hour
+	LoginFailureEmailsTrackedMax = 100_000
+)
+
 // Self-service accounts (password and magic-link sign-up) one client
 // address, and one network (IPv4 /24, IPv6 /48), may create per day.
 const (
