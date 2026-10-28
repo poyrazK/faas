@@ -39,6 +39,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/apid/apidsource"
 	"github.com/onebox-faas/faas/pkg/apid/approval"
 	"github.com/onebox-faas/faas/pkg/apid/freeze"
+	"github.com/onebox-faas/faas/pkg/apid/previewconfig"
 	"github.com/onebox-faas/faas/pkg/apid/release"
 	"github.com/onebox-faas/faas/pkg/gregalemanifest"
 	"github.com/onebox-faas/faas/pkg/grpcerr"
@@ -335,6 +336,18 @@ func (g *githubdBridge) EnqueueBuild(ctx context.Context, req *githubdpb.Enqueue
 		return nil, status.Errorf(codes.ResourceExhausted,
 			"EnqueueBuild: %s %d reached; resets at %s",
 			limitName, rate.Limit, rate.WindowResetsAt.UTC().Format(time.RFC3339))
+	}
+	// ADR-20261028090000: a PR preview builds with its production app's
+	// pr-preview values and secrets. The production store always implements
+	// previewconfig.Store; the narrow unit-test stubs do not.
+	if configStore, ok := g.store.(previewconfig.Store); ok && eventKindToDeploymentKind(req.EventKind) == state.DeploymentKindPreview {
+		synced, err := previewconfig.SyncFromParent(ctx, configStore, app)
+		if err != nil {
+			return nil, status.Errorf(codes.Unavailable, "EnqueueBuild: preview values: %v", err)
+		}
+		if synced.Skipped {
+			g.log.Warn("githubd bridge: preview values skipped; the project has an environment named pr-preview", "app_id", app.ID)
+		}
 	}
 
 	// The shared apidsource.Enqueue helper handles CreateDeployment +

@@ -27,15 +27,6 @@ func (s *PgStore) RuntimeAppEnvForDeployment(ctx context.Context, accountID, app
 	if snapshot.Inherited, err = decodeInheritedProjectEnv(snapshot, row.ProjectConfig); err != nil {
 		return RuntimeAppEnvSnapshot{}, err
 	}
-	// A PR preview inherits no project environment; its production app's
-	// preview values take that place (ADR-20261028100000).
-	preview, err := decodePreviewInheritedEnv(snapshot, row.PreviewValues)
-	if err != nil {
-		return RuntimeAppEnvSnapshot{}, err
-	}
-	if len(preview) > 0 {
-		snapshot.Inherited = preview
-	}
 	return snapshot, nil
 }
 

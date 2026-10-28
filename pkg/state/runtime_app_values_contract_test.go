@@ -64,34 +64,6 @@ func testRuntimeAppValuesPreviewSkipsProjectEnvironment(t *testing.T, store runt
 	if err != nil || len(env.Inherited) != 0 {
 		t.Fatalf("preview env inherited %+v (%v); want no production config", env.Inherited, err)
 	}
-
-	// adr: 20261028100000 — the production app's preview scope is what its PR
-	// previews receive; a value the preview sets itself still wins.
-	for key, value := range map[string]string{"MODE": "review", "LOG_LEVEL": "debug"} {
-		if err := store.UpsertAppEnvInScope(ctx, f.account.ID, f.app.ID, state.PreviewValuesScope, key, value); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if err := store.UpsertAppEnvInScope(ctx, f.account.ID, preview.ID, "default", "LOG_LEVEL", "trace"); err != nil {
-		t.Fatal(err)
-	}
-	if err := store.UpsertAppSecretWithKidAndValueHashInScope(ctx, f.account.ID, f.app.ID, state.PreviewValuesScope,
-		"STRIPE_KEY", "age1previewtestkid", "hash-2", []byte("preview-sealed")); err != nil {
-		t.Fatal(err)
-	}
-	got, err = store.RuntimeAppValuesForDeployment(ctx, f.account.ID, preview.ID, dep.ID)
-	if err != nil || len(got.Inherited) != 1 || got.Inherited[0].Key != "MODE" || got.Inherited[0].Value != "review" ||
-		got.Inherited[0].AppID != preview.ID || len(got.InheritedSecrets) != 1 || got.InheritedSecrets[0].Key != "STRIPE_KEY" ||
-		string(got.InheritedSecrets[0].Ciphertext) != "preview-sealed" {
-		t.Fatalf("preview inherited %+v / %+v (%v); want the production app's preview values below its own", got.Inherited, got.InheritedSecrets, err)
-	}
-	env, err = store.RuntimeAppEnvForDeployment(ctx, f.account.ID, preview.ID, dep.ID)
-	if err != nil || len(env.Inherited) != 1 || env.Inherited[0].Key != "MODE" {
-		t.Fatalf("preview env inherited %+v (%v); want the preview-scope MODE", env.Inherited, err)
-	}
-	if _, err := state.NewRuntimeAppConfigFence(got); err != nil {
-		t.Fatalf("runtime config fence over preview values: %v", err)
-	}
 }
 
 func testRuntimeAppValuesScopeGrantsAndLifetime(t *testing.T, store runtimeAppEnvTestStore) {

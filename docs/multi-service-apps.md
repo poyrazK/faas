@@ -243,11 +243,20 @@ is refused by default (`403 preview_production_dependency_denied`). See
 [preview environments](preview-environments.md) and [networking](networking.md)
 for letting chosen production services accept preview traffic.
 
-A preview gets the service URLs Gregale injects, but not the production
-environment values or the values imported from Compose, because those can hold
-credentials. A service whose code needs another value at startup should fall
-back to a default when it is unset; see
-[preview environments](preview-environments.md).
+A preview never receives production environment values, because they can hold
+credentials. It gets:
+
+- the service URLs Gregale injects;
+- the plain values its pull request's Compose file declares, under the same
+  `x-gregale-env-import: true` opt-in and rules as a deploy; and
+- the values and secrets you set for previews on the production app:
+
+  ```sh
+  gregale env set --app shop-web --scope pr-preview STRIPE_KEY=sk_test_…
+  ```
+
+`pr-preview` values override the PR's Compose values. See
+[preview environments](preview-environments.md#configuration).
 
 ## Cold starts and tracing
 

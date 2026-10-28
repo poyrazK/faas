@@ -39,15 +39,6 @@ func runtimeAppValuesDB(ctx context.Context, db sqlc.DBTX, accountID, appID, dep
 	if result.Inherited, err = decodeInheritedProjectEnv(owner, row.ProjectConfig); err != nil {
 		return RuntimeAppValuesSnapshot{}, err
 	}
-	// A PR preview inherits no project environment; its production app's
-	// preview values take that place (ADR-20261028100000).
-	previewEnv, err := decodePreviewInheritedEnv(owner, row.PreviewValues)
-	if err != nil {
-		return RuntimeAppValuesSnapshot{}, err
-	}
-	if len(previewEnv) > 0 {
-		result.Inherited = previewEnv
-	}
 	var secrets []runtimeAppSealedSecretRow
 	if err := json.Unmarshal(row.Secrets, &secrets); err != nil {
 		return RuntimeAppValuesSnapshot{}, ErrConflict
@@ -73,13 +64,6 @@ func runtimeAppValuesDB(ctx context.Context, db sqlc.DBTX, accountID, appID, dep
 	// app sets itself leave the inherited set.
 	if result.InheritedSecrets, err = decodeInheritedProjectSecrets(result, pgUUIDString(row.ProjectID), row.ProjectSecrets); err != nil {
 		return RuntimeAppValuesSnapshot{}, err
-	}
-	previewSecrets, err := decodePreviewInheritedSecrets(result, row.PreviewSecrets)
-	if err != nil {
-		return RuntimeAppValuesSnapshot{}, err
-	}
-	if len(previewSecrets) > 0 {
-		result.InheritedSecrets = previewSecrets
 	}
 	var settings ProjectEnvironmentWorkloadSettings
 	var artifact projectCloneArtifact
