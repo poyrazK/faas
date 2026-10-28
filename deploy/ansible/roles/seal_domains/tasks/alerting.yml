@@ -30,6 +30,29 @@
   no_log: true
   notify: restart faas-meterd for seal domains
 
+# Key rotation (ADR 20261022111812): while the previous identity is
+# set it stays beside the new one, so values sealed to it still open until
+# the domain's re-seal to the new key completes. Unset, it is removed.
+- name: seal_domains — install the previous alerting domain identity
+  ansible.builtin.copy:
+    src: "{{ faas_seal_domain_alerting_previous_identity_src }}"
+    dest: /etc/faas/secrets/domains/alerting.age.previous
+    owner: root
+    group: root
+    mode: "0400"
+  no_log: true
+  notify: restart faas-meterd for seal domains
+  when:
+    - faas_seal_domain_alerting_previous_identity_src | length > 0
+
+- name: seal_domains — remove the previous alerting domain identity
+  ansible.builtin.file:
+    path: /etc/faas/secrets/domains/alerting.age.previous
+    state: absent
+  notify: restart faas-meterd for seal domains
+  when:
+    - faas_seal_domain_alerting_previous_identity_src | length == 0
+
 - name: seal_domains — install the alerting domain recipient
   ansible.builtin.copy:
     src: "{{ faas_seal_domain_alerting_recipient_src }}"
