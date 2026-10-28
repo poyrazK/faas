@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"errors"
+	"fmt"
 	"testing"
 
 	"github.com/google/uuid"
@@ -139,7 +140,9 @@ func quotaSubjectKinds() []quotaSubjectKind {
 func TestMemPerAccountQuotasCountTheBillingSubject(t *testing.T) {
 	for _, kind := range quotaSubjectKinds() {
 		for _, adopted := range []bool{true, false} {
-			quotaSubjectContract(t, state.NewMemStore(), kind, adopted, nil)
+			t.Run(fmt.Sprintf("%s/adopted=%v", kind.name, adopted), func(t *testing.T) {
+				quotaSubjectContract(t, state.NewMemStore(), kind, adopted, nil)
+			})
 		}
 	}
 }
