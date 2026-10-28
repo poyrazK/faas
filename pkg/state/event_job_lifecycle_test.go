@@ -208,7 +208,7 @@ func TestEventRecoveryFailingJobBacksOffThenCancels(t *testing.T) {
 	}
 	// An item whose target no longer decodes fails every pass.
 	if _, err := pool.Exec(ctx, `INSERT INTO event_recovery_items(job_id,position,outbox_id,subscription_id,event_source,event_id,event_type,failed_at,failure_code,retryable,expected_progress)
-		VALUES ($1,1,1,'00000000-0000-4000-8000-000000000001','orders','evt-1','invoice.paid',now(),'internal',true,'{"run_id":5}')`, jobID); err != nil {
+		VALUES ($1,1,NULL,'','','','',now(),'internal',true,'{"run_id":"00000000-0000-4000-8000-000000000001","expected_resume_count":0,"parent_position":"first"}')`, jobID); err != nil {
 		t.Fatal(err)
 	}
 	now := time.Now().UTC()
