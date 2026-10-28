@@ -19,8 +19,7 @@ func TestPublishedEventClaimRenewal(t *testing.T) {
 	if _, _, err := s.UpsertEventSubscription(ctx, account, app, "orders", "invoice.paid", nil); err != nil {
 		t.Fatal(err)
 	}
-	now := time.Now().UTC().Truncate(time.Microsecond)
-	envelope, err := (events.Envelope{ID: "evt-renew", Source: "orders", Type: "invoice.paid", Data: json.RawMessage(`{}`)}).Normalize(account, now)
+	envelope, err := (events.Envelope{ID: "evt-renew", Source: "orders", Type: "invoice.paid", Data: json.RawMessage(`{}`)}).Normalize(account, time.Now().UTC())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -31,6 +30,8 @@ func TestPublishedEventClaimRenewal(t *testing.T) {
 	if err := s.AppendEvent(ctx, "apid", "event.published", &account, payload); err != nil {
 		t.Fatal(err)
 	}
+	// Claim after the receipt was accepted, so it is due.
+	now := time.Now().UTC().Add(time.Second).Truncate(time.Microsecond)
 	receipt, err := s.ClaimDuePublishedEventForRecipientAdoption(ctx, now)
 	if err != nil {
 		t.Fatal(err)
@@ -88,8 +89,7 @@ func TestMemPublishedEventClaimRenewal(t *testing.T) {
 	if _, _, err := m.UpsertEventSubscription(ctx, account, app, "orders", "invoice.paid", nil); err != nil {
 		t.Fatal(err)
 	}
-	now := time.Now().UTC()
-	envelope, err := (events.Envelope{ID: "evt-renew", Source: "orders", Type: "invoice.paid", Data: json.RawMessage(`{}`)}).Normalize(account, now)
+	envelope, err := (events.Envelope{ID: "evt-renew", Source: "orders", Type: "invoice.paid", Data: json.RawMessage(`{}`)}).Normalize(account, time.Now().UTC())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -100,6 +100,7 @@ func TestMemPublishedEventClaimRenewal(t *testing.T) {
 	if err := m.AppendEvent(ctx, "apid", "event.published", &account, payload); err != nil {
 		t.Fatal(err)
 	}
+	now := time.Now().UTC().Add(time.Second)
 	receipt, err := m.ClaimDuePublishedEventForRecipientAdoption(ctx, now)
 	if err != nil {
 		t.Fatal(err)
