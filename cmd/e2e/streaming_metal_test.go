@@ -337,9 +337,10 @@ func TestE2E_Streaming_Metal_PlanMatrix(t *testing.T) {
 			}
 			depID, _ := parseQueuedDeployment(t, raw)
 
-			ctx, cancel := context.WithTimeout(context.Background(), sourceDeployCtxTimeout())
+			// The first plan's deployment stages the shared runner base.
+			ctx, cancel := context.WithTimeout(context.Background(), sharedBaseCeiling+5*time.Minute)
 			defer cancel()
-			if _, _, err := e2etest.WaitForSourceDeployment(ctx, t, pool, depID, e2etest.DefaultBuildStallWindow, e2etest.DefaultBuildCeiling); err != nil {
+			if _, _, err := e2etest.WaitForSourceDeployment(ctx, t, pool, depID, e2etest.DefaultBuildStallWindow, sharedBaseCeiling); err != nil {
 				t.Fatalf("deployment did not reach live: %v", err)
 			}
 			if _, err := e2etest.WaitForInstanceState(ctx, t, pool, appID, state.StateParked, 120*time.Second); err != nil {

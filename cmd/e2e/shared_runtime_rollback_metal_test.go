@@ -95,16 +95,16 @@ func TestSharedRuntimeRollbackMetal(t *testing.T) {
 	setAppIdleTimeout(t, h, key, slug, api.IdleTimeoutFloorSeconds)
 	store := state.NewPgStore(pool)
 
-	deploy := func(t *testing.T, source []byte, idempotencyKey string) state.Deployment {
+	deploy := func(t *testing.T, source []byte, idempotencyKey string, ceiling time.Duration) state.Deployment {
 		t.Helper()
 		raw, status := postMultipartDeployment(t, h, key, slug, source, false, idempotencyKey)
 		if status != http.StatusAccepted {
 			t.Fatalf("deploy: status=%d body=%s", status, raw)
 		}
 		depID, _ := parseQueuedDeployment(t, raw)
-		ctx, cancel := context.WithTimeout(context.Background(), sourceDeployCtxTimeout())
+		ctx, cancel := context.WithTimeout(context.Background(), ceiling+5*time.Minute)
 		defer cancel()
-		dep, _, err := e2etest.WaitForSourceDeployment(ctx, t, pool, depID, e2etest.DefaultBuildStallWindow, e2etest.DefaultBuildCeiling)
+		dep, _, err := e2etest.WaitForSourceDeployment(ctx, t, pool, depID, e2etest.DefaultBuildStallWindow, ceiling)
 		if err != nil {
 			t.Fatalf("deployment %s did not go live: %v", depID, err)
 		}
@@ -172,7 +172,7 @@ func TestSharedRuntimeRollbackMetal(t *testing.T) {
 
 	var legacy, shared state.Deployment
 	t.Run("legacy-own-base", func(t *testing.T) {
-		legacy = deploy(t, layerKindFixture(t, "22", legacyBody, false), "aaaaaaaa-0000-4000-8000-000000000001")
+		legacy = deploy(t, layerKindFixture(t, "22", legacyBody, false), "aaaaaaaa-0000-4000-8000-000000000001", e2etest.DefaultBuildCeiling)
 		if legacy.RuntimeBase != "" {
 			t.Fatalf("Node 22 deployment runtime_base = %q, want the app's own base", legacy.RuntimeBase)
 		}
@@ -181,7 +181,8 @@ func TestSharedRuntimeRollbackMetal(t *testing.T) {
 		park(t)
 	})
 	t.Run("fallback-on-runner", func(t *testing.T) {
-		fallback := deploy(t, layerKindFixture(t, "24", fallbackBody, true), "aaaaaaaa-0000-4000-8000-000000000002")
+		// The first Node 24 deployment stages the runner base.
+		fallback := deploy(t, layerKindFixture(t, "24", fallbackBody, true), "aaaaaaaa-0000-4000-8000-000000000002", sharedBaseCeiling)
 		if fallback.RuntimeBase != "node24" {
 			t.Fatalf("ineligible Node 24 deployment runtime_base = %q, want node24", fallback.RuntimeBase)
 		}
@@ -190,7 +191,7 @@ func TestSharedRuntimeRollbackMetal(t *testing.T) {
 		park(t)
 	})
 	t.Run("shared-runtime", func(t *testing.T) {
-		shared = deploy(t, layerKindFixture(t, "24", sharedBody, false), "aaaaaaaa-0000-4000-8000-000000000003")
+		shared = deploy(t, layerKindFixture(t, "24", sharedBody, false), "aaaaaaaa-0000-4000-8000-000000000003", e2etest.DefaultBuildCeiling)
 		if shared.RuntimeBase != "node24" {
 			t.Fatalf("shared deployment runtime_base = %q, want node24", shared.RuntimeBase)
 		}
