@@ -143,7 +143,9 @@ func (s *server) recoverRollout(w http.ResponseWriter, r *http.Request, acct sta
 	}
 	// (6) Atomic-tx recovery, recording a person's request as a manual
 	// decision (ADR-1447).
-	updated, auditID, err := s.recoverRolloutRecordingDecision(r, app, req)
+	// A route guard whose capability is not released for the account cannot
+	// hold an advance or promote (ADR-20261028110044).
+	updated, auditID, err := s.recoverRolloutRecordingDecision(r, app, req, s.routeGuardRelease(acct, app))
 	if err != nil {
 		if problem := routeRemovalBlockedProblem(err); problem != nil {
 			api.WriteProblem(w, problem)
@@ -288,10 +290,11 @@ func int64ToAuditIDString(id int64) string {
 // recoverRolloutRecordingDecision runs the app-level recovery. A person's
 // request records advance_manual or abort_manual against the in-flight
 // candidate; meterd's mirror-drift abort on the internal route records none.
-func (s *server) recoverRolloutRecordingDecision(r *http.Request, app state.App, req api.RecoverRolloutRequest) (state.Deployment, int64, error) {
+// guards carries which route guards may hold the recovery.
+func (s *server) recoverRolloutRecordingDecision(r *http.Request, app state.App, req api.RecoverRolloutRequest, guards state.RouteGuardRelease) (state.Deployment, int64, error) {
 	decisions, ok := s.store.(state.RolloutDecisionStore)
 	if !ok || isInternalSafeDeployRequest(r) {
-		return s.store.RecoverRollout(r.Context(), app.ID, req.Action, req.Reason)
+		return s.store.RecoverRollout(state.WithRouteGuardRelease(r.Context(), guards), app.ID, req.Action, req.Reason)
 	}
 	var decision json.RawMessage
 	if rows, err := s.store.LiveDeployments(r.Context(), app.ID); err == nil {
@@ -306,5 +309,5 @@ func (s *server) recoverRolloutRecordingDecision(r *http.Request, app state.App,
 			decision = release.ManualDecision(release.RecoveryRule(req.Action), candidate, time.Now())
 		}
 	}
-	return decisions.RecoverRolloutWithDecision(r.Context(), app.ID, req.Action, req.Reason, decision)
+	return decisions.RecoverRolloutWithDecision(state.WithRouteGuardRelease(r.Context(), guards), app.ID, req.Action, req.Reason, decision)
 }
