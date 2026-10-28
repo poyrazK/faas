@@ -76,7 +76,7 @@ func cmdEventsRecoveryNotificationRetry(args []string) int {
 		return 1
 	}
 	if len(positional) != 1 || *path == "" || rejectUnexpectedFlagArgs(fs) {
-		PrintUsage(os.Stderr, "usage: gregale event recovery-notification-retry <job-id> --request-file PATH", "events")
+		PrintUsage(os.Stderr, "usage: gregale event recovery-notification retry <job-id> --request-file PATH", "events")
 		return 1
 	}
 	if _, err := uuid.Parse(positional[0]); err != nil {

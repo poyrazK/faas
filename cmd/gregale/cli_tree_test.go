@@ -30,7 +30,7 @@ var cliTreeVerbs = []string{
 	"unprotect", "qualify", "reconcile", "reconnect", "refresh", "rehearse", "reopen", "require",
 	"resize", "resync", "retire", "revoke", "review", "scan", "split", "start", "stop", "subscribe",
 	"unsubscribe", "suggest", "suspend", "test", "track", "use", "validate", "override", "advise",
-	"reset", "pull", "push", "signal", "generate",
+	"reset", "pull", "push", "signal", "generate", "void", "draft", "handoff", "end",
 }
 
 // A path may end with a noun it lists or shows (`app instances`).
@@ -56,6 +56,7 @@ var cliTreeCompoundWords = []string{
 	"port-forward", "wake-ahead", "wake-timeline", "streaming-cap", "spend-cap", "upload-cache",
 	"object-lock", "subscription-version", "subscription-retry", "subscription-circuit",
 	"subscription-capacity", "lock-policy",
+	"billing-run", "billing-policy", "rate-card", "overdue-hold", "event-recovery", "failure-recovery", "recovery-policy", "recovery-response", "deadline-alert", "notification-retry", "recovery-notification", "release-sets", "compute-policy",
 }
 
 // Rule 5: top-level verbs that may start a tree path.

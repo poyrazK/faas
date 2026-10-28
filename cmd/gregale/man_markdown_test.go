@@ -68,7 +68,7 @@ func TestMarkdownReferenceShape(t *testing.T) {
 	for _, want := range []string{
 		"# gregale CLI reference",
 		"## plan",
-		"`gregale plan [<subcommand>] <plan> [--json] --yes`",
+		"`gregale billing plan [<subcommand>] <plan> [--json] --yes`",
 		"`free` · `hobby`",
 		"| `--json` | machine output |  |",
 		"| `--yes` | explicit confirmation | required |",
@@ -94,7 +94,7 @@ func TestMarkdownReferenceNestedSubcommandSynopsisIncludesPositionals(t *testing
 			}},
 		}},
 	}})
-	if !strings.Contains(buf.String(), "`gregale bindings object-storage rotate <app> <bucket> <binding-id>`") {
+	if !strings.Contains(buf.String(), "`gregale app binding object-storage rotate <app> <bucket> <binding-id>`") {
 		t.Fatalf("nested command synopsis missing positionals:\n%s", buf.String())
 	}
 }
@@ -113,7 +113,7 @@ func TestMarkdownReferenceEscapesPlaceholdersAndFlagValues(t *testing.T) {
 	out := buf.String()
 	for _, want := range []string{
 		"Filter by &lt;slug&gt; \\| &lt;owner&gt;.",
-		"`gregale tail [<subcommand>] [--app <slug>] [--include-stateless]`",
+		"`gregale invocation watch [<subcommand>] [--app <slug>] [--include-stateless]`",
 		"| `--app <slug>` | app &lt;slug&gt; |  |",
 		"Show &lt;id&gt;",
 	} {

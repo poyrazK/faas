@@ -84,7 +84,7 @@ func cmdAutomationsFailureRecoveryReview(args []string) int {
 		_, _ = fmt.Fprintf(osStdout, "Result: %s | generation %d\n", oneLine(out.Result.Outcome), out.Result.ResumeCount)
 	}
 	if out.Status == "prepared" {
-		_, _ = fmt.Fprintf(osStdout, "Submit: gregale automation failure-recovery-review --app %s --review %s --decision submit --reason REASON\n", automationCommandArgument(*app), oneLine(out.ID))
+		_, _ = fmt.Fprintf(osStdout, "Submit: gregale automation failure-recovery review --app %s --review %s --decision submit --reason REASON\n", automationCommandArgument(*app), oneLine(out.ID))
 	}
 	return exit
 }
