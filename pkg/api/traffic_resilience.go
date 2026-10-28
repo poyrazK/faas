@@ -50,22 +50,29 @@ func HTTPAdmissionEnabled(value string) (bool, error) {
 // TrafficScopedBindingGuardEnabled parses apid's
 // FAAS_TRAFFIC_SCOPED_BINDING_GUARD (ADR-20261027163626). Unset is off.
 func TrafficScopedBindingGuardEnabled(value string) (bool, error) {
-	return envSwitch("FAAS_TRAFFIC_SCOPED_BINDING_GUARD", value)
+	enabled, ok := parseEnvSwitch(value)
+	if !ok {
+		return false, fmt.Errorf("FAAS_TRAFFIC_SCOPED_BINDING_GUARD must be a boolean")
+	}
+	return enabled, nil
 }
 
 func EgressCircuitBreakerEnabled(value string) (bool, error) {
-	return envSwitch("FAAS_EGRESS_CIRCUIT_BREAKER", value)
-}
-
-// envSwitch parses an off-by-default boolean environment switch.
-func envSwitch(name, value string) (bool, error) {
-	value = strings.TrimSpace(value)
-	if value == "" {
-		return false, nil
-	}
-	enabled, err := strconv.ParseBool(value)
-	if err != nil {
-		return false, fmt.Errorf("%s must be a boolean", name)
+	enabled, ok := parseEnvSwitch(value)
+	if !ok {
+		return false, fmt.Errorf("FAAS_EGRESS_CIRCUIT_BREAKER must be a boolean")
 	}
 	return enabled, nil
+}
+
+// parseEnvSwitch parses an off-by-default boolean environment switch. The
+// callers name their variable only inside messages: the env contract treats
+// a bare variable-name literal as a read by this package.
+func parseEnvSwitch(value string) (enabled, ok bool) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return false, true
+	}
+	enabled, err := strconv.ParseBool(value)
+	return enabled, err == nil
 }
