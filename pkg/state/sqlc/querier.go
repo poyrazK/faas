@@ -5578,6 +5578,7 @@ type Querier interface {
 	ReadServiceBindingRevision(ctx context.Context, db DBTX, arg ReadServiceBindingRevisionParams) (string, error)
 	ReadServicePolicyActiveRelease(ctx context.Context, db DBTX, arg ReadServicePolicyActiveReleaseParams) (bool, error)
 	// ADR-570: minimal credential-free projection for one read-only service-policy snapshot.
+	// org_id is the tenant boundary SameAppResourceOwner checks (Hunt 23 H23-1).
 	ReadServicePolicyAppByID(ctx context.Context, db DBTX, id pgtype.UUID) (ReadServicePolicyAppByIDRow, error)
 	ReadServicePolicyAppBySlug(ctx context.Context, db DBTX, slug string) (ReadServicePolicyAppBySlugRow, error)
 	ReadServicePolicyDeploymentOverride(ctx context.Context, db DBTX, arg ReadServicePolicyDeploymentOverrideParams) (bool, error)
