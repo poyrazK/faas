@@ -159,7 +159,7 @@ func TestAutomationLiveCLIResultsAndRoutes(t *testing.T) {
 			if strings.Contains(output.String()+stderr, "PRIVATE") {
 				t.Fatal("CLI report exposed a payload or backend error")
 			}
-			if report.Verification != nil && !strings.Contains(report.Reconnect, "automations live wait --app") {
+			if report.Verification != nil && !strings.Contains(report.Reconnect, "automation live wait --app") {
 				t.Fatal("known run has no reconnect command")
 			}
 			if verb != "start" && args[2] != "start" && (report.RunID != liveCLIRun || !strings.Contains(report.Reconnect, liveCLIRun)) {

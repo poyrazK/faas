@@ -1031,7 +1031,10 @@ func run(ctx context.Context, log *slog.Logger) error {
 		// evaluator records which routes keep running apps awake and which are
 		// measured safe to cache; a trigger notifies subscribed app webhooks.
 		if insightStore, ok := srv.store.(routeinsights.Store); ok {
-			insights := &routeinsights.Evaluator{Store: insightStore, Log: log}
+			insights := &routeinsights.Evaluator{Store: insightStore, Log: log,
+				Released: func(acct state.Account, app state.App) bool {
+					return srv.capabilityEnabledFor(routeInsightsCapability, acct, app)
+				}}
 			if srv.ops != nil {
 				insights.Metrics = routeinsights.NewMetrics(srv.ops.Registry(), srv.ops.MetricPrefix())
 			}
@@ -1857,6 +1860,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	srv.WithOpsMetrics(ctx, ops)
 	// ADR 20261027163626: time each phase of the traffic binding guard.
 	state.SetTrafficPolicyPhaseObserver(ops.ObserveTrafficPolicyPhase)
+	state.SetTrafficBindingScopeObserver(ops.ObserveTrafficBindingScope)
 
 	// ADR-093 / PR-D: end-to-end request budgets on the apid
 	// listener. Same shape as gatewayd-public PR-B: a fresh

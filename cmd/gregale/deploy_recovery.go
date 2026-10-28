@@ -46,7 +46,7 @@ type deployRecovery struct {
 
 func newDeployRecovery(stage, slug, deploymentID, key string, timeout time.Duration, rollout bool) *deployRecovery {
 	r := &deployRecovery{Stage: stage, App: slug, DeploymentID: deploymentID, IdempotencyKey: key}
-	r.InspectCommand = recoveryCLI() + " deployments --app " + recoveryArgument(slug)
+	r.InspectCommand = recoveryCLI() + " release list --app " + recoveryArgument(slug)
 	if deploymentID != "" {
 		r.SubmissionOutcome = deploySubmissionAccepted
 		r.InspectCommand = recoveryCLI() + " deployment " + recoveryArgument(deploymentID)

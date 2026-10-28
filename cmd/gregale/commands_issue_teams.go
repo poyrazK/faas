@@ -12,7 +12,7 @@ import (
 )
 
 func cmdIssueTeams(args []string) int {
-	usage := "usage: gregale issues teams <list|get|save|delete|inbox> --app SLUG [--key KEY --name NAME --members ACCOUNT_UUID,... --cursor CURSOR]"
+	usage := "usage: gregale debug issue teams <list|get|save|delete|inbox> --app SLUG [--key KEY --name NAME --members ACCOUNT_UUID,... --cursor CURSOR]"
 	if len(args) == 0 {
 		fmt.Fprintln(os.Stderr, usage)
 		return 1

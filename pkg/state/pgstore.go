@@ -8545,7 +8545,12 @@ func (s *PgStore) AdvanceCanary(ctx context.Context, id string, params CanaryAdv
 		}
 		return pgAbortProfileGatedCanary(ctx, tx, snapshot.Account.ID, dep, params, safeReleaseLeaseExpiresAt)
 	}
-	if err := pgCheckCanaryRouteGate(ctx, tx, snapshot, dep, params, now); err != nil {
+	// A guard whose capability is not released for the account neither holds
+	// the rollout nor records evidence (ADR-20261028110044).
+	guards := routeGuardRelease(ctx)
+	if !guards.Requirements {
+		params.RouteGateDecision = nil
+	} else if err := pgCheckCanaryRouteGate(ctx, tx, snapshot, dep, params, now); err != nil {
 		var blocked *RouteGateBlockedError
 		if errors.As(err, &blocked) {
 			if commitErr := tx.Commit(ctx); commitErr != nil {
@@ -8558,7 +8563,9 @@ func (s *PgStore) AdvanceCanary(ctx context.Context, id string, params CanaryAdv
 	if err := s.authorizeProductionLifecycle(ctx, tx, id, false); err != nil {
 		return Deployment{}, 0, err
 	}
-	if err := pgCheckRouteHealth(ctx, tx, snapshot, dep, now, params); err != nil {
+	if !guards.Health {
+		params.RouteHealthDecision = nil
+	} else if err := pgCheckRouteHealth(ctx, tx, snapshot, dep, now, params); err != nil {
 		var blocked *RouteHealthBlockedError
 		if errors.As(err, &blocked) {
 			if commitErr := tx.Commit(ctx); commitErr != nil {
@@ -9469,19 +9476,24 @@ func (s *PgStore) recoverRolloutTx(ctx context.Context, tx pgx.Tx, appID, deploy
 		if err := legacyProfileCanaryGate(p, dep); err != nil {
 			return dep, 0, err
 		}
-		gate, err := pgCanaryRouteGate(ctx, tx, owner.AccountID, dep.AppID)
-		if err != nil {
-			return dep, 0, err
+		guards := routeGuardRelease(ctx)
+		if guards.Requirements {
+			gate, err := pgCanaryRouteGate(ctx, tx, owner.AccountID, dep.AppID)
+			if err != nil {
+				return dep, 0, err
+			}
+			if err := legacyCanaryRouteGate(gate, dep, action); err != nil {
+				return dep, 0, err
+			}
 		}
-		if err := legacyCanaryRouteGate(gate, dep, action); err != nil {
-			return dep, 0, err
-		}
-		healthGate, err := pgRouteHealthGate(ctx, tx, owner.AccountID, dep.AppID)
-		if err != nil {
-			return dep, 0, err
-		}
-		if err := legacyRouteHealth(healthGate, dep, action); err != nil {
-			return dep, 0, err
+		if guards.Health {
+			healthGate, err := pgRouteHealthGate(ctx, tx, owner.AccountID, dep.AppID)
+			if err != nil {
+				return dep, 0, err
+			}
+			if err := legacyRouteHealth(healthGate, dep, action); err != nil {
+				return dep, 0, err
+			}
 		}
 	}
 	if emergencyGrace != nil {
@@ -14824,6 +14836,9 @@ func (s *PgStore) CreateEdgeRuleIfUnderQuota(ctx context.Context, in CreateEdgeR
 			return EdgeRule{}, exceeded
 		}
 	}
+	if err := lockEdgeRuleListRefs(ctx, tx, in.AccountID, in.Match); err != nil {
+		return EdgeRule{}, err
+	}
 
 	actionBytes, err := json.Marshal(in.Action)
 	if err != nil {
@@ -15702,6 +15717,15 @@ func (s *PgStore) UpdateEdgeRule(ctx context.Context, id string, p UpdateEdgeRul
 	if p.ValidateMode != nil {
 		validateModeArg = *p.ValidateMode
 	}
+	if p.Match != nil {
+		var accountID string
+		if err := tx.QueryRow(ctx, `select account_id::text from edge_rules where id = $1`, id).Scan(&accountID); err != nil {
+			return EdgeRule{}, mapErr(err)
+		}
+		if err := lockEdgeRuleListRefs(ctx, tx, accountID, p.Match); err != nil {
+			return EdgeRule{}, err
+		}
+	}
 
 	row := tx.QueryRow(ctx, `
 		update edge_rules set
@@ -15808,6 +15832,7 @@ func (s *PgStore) MatchEdgeRulesForHost(ctx context.Context, host string) ([]Edg
 		select `+edgeRuleSelectCols+` from edge_rules
 		 where enabled = true
 		   and (expires_at is null or expires_at > now())
+		   and not exists (select 1 from apps a where a.id = edge_rules.app_id and a.status = 'deleted')
 		   and (
 		   	match_host = $1
 		   	or match_host = '*'
@@ -17672,6 +17697,7 @@ func scanCreatedInstance(row pgx.Row, wakeID, appID string) (Instance, error) {
 // non-empty string from state.InstanceMode{normal,mirror};
 // the engine validates before calling (Engine.AdmitMirrorInstance).
 func (s *PgStore) CreateInstanceWithMode(ctx context.Context, appID, deploymentID, state string, ramMB int, nodeID, wakeID, mode string) (Instance, error) {
+	ctx = fenceApp(ctx, appID)
 	var reserve func(pgx.Tx) error
 	if mode == string(InstanceModeWorker) && State(state).CountsForRAM() {
 		reserve = func(tx pgx.Tx) error {

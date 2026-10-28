@@ -27,7 +27,7 @@ func cmdProjectsEnvironmentRecoverMigration(args []string) int {
 	wait := fs.Bool("wait", false, "wait for recovery confirmation; resumed promotion health continues afterward")
 	timeout := secondsOrDurationFlag(fs, "timeout", defaultDeployWaitTimeoutSeconds, "maximum recovery wait in seconds or duration")
 	if fs.Parse(flags) != nil || len(positional) != 2 || !api.ValidProjectSlug(positional[0]) || !api.ValidProjectEnvironmentSlug(*to) || *timeout <= 0 || *timeout > api.ProjectPromotionMigrationRecoveryWaitMaxSeconds {
-		return printErr("Invalid recovery options", fmt.Errorf("usage: gregale projects environments recover-migration PROJECT PROMOTION --to ENV --action resume|resolve --task-id TASK --generation N --database-state-checked --evidence-sha256 HASH [--schema-compatible | --replacement-promotion ID]"))
+		return printErr("Invalid recovery options", fmt.Errorf("usage: gregale environment migration recover PROJECT PROMOTION --to ENV --action resume|resolve --task-id TASK --generation N --database-state-checked --evidence-sha256 HASH [--schema-compatible | --replacement-promotion ID]"))
 	}
 	req := api.ProjectPromotionMigrationRecoveryRequest{RequestID: *request, ExpectedTaskID: *task, ExpectedGeneration: *generation, Action: *action, ReplacementPromotionID: *replacement, DatabaseStateChecked: *database, SchemaCompatible: *compatible, EvidenceHash: *evidence}
 	if req.RequestID == "" {

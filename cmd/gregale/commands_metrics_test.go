@@ -287,7 +287,7 @@ func TestCmdMetrics_Services_OmittedRangeDefersToServer(t *testing.T) {
 		"Calls:      12040 (errors 48, 0.40%)",
 		"p50=11.2ms p95=38.0ms",
 		"Woke:       9030 calls (75%) found the target parked",
-		"run `gregale wake-ahead public-api on` to restore billing while public-api wakes",
+		"run `gregale app wake-ahead public-api on` to restore billing while public-api wakes",
 		"Wake-ahead: 8 of 10 restores used",
 		"showing the 2 busiest edges",
 	} {

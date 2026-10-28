@@ -42,6 +42,15 @@ func (s *server) drainAutomaticRouteChecks(ctx context.Context) (int, error) {
 		if err != nil {
 			return completed, err
 		}
+		// Saved requirements are checked only where the capability is
+		// released (ADR-20261028110044); the claim retries on its schedule.
+		if !s.routeCapabilityReleased(ctx, routeRequirementsCapability, claim.AccountID, claim.AppID) {
+			if _, failErr := queue.FailAutomaticRouteCheck(ctx, claim); failErr != nil {
+				return completed, failErr
+			}
+			s.routeJobMetrics.ObserveCheck(routejobs.CheckSkipped)
+			continue
+		}
 		done, err := s.processAutomaticRouteCheck(ctx, queue, checks, claim)
 		switch {
 		case err != nil && ctx.Err() == nil:

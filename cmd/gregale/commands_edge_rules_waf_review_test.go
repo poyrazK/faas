@@ -36,8 +36,8 @@ func TestEdgeRulesWAFReviewCommand(t *testing.T) {
 	}
 	for _, want := range []string{"likely_false_positive", "942190", "/graphql", "waf (block)",
 		"a documented false positive: GraphQL query in the URL",
-		"gregale edge-rules waf-exclude r1 --add 942190",
-		"gregale edge-rules events --app demo --request-id req-9"} {
+		"gregale edge rule waf-exclude r1 --add 942190",
+		"gregale edge rule events --app demo --request-id req-9"} {
 		if !strings.Contains(out.String(), want) {
 			t.Errorf("output lacks %q:\n%s", want, out.String())
 		}

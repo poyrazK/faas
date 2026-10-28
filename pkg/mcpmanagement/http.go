@@ -78,6 +78,9 @@ type remoteServer struct {
 
 type grantContextKey struct{}
 
+// grantServerKey carries the connection's MCP server, held for the request.
+type grantServerKey struct{}
+
 // NewHTTPHandler exposes stateless Streamable HTTP and an OAuth 2.1 bridge.
 // Each grant owns a separate SDK server/client/plan store and account credential.
 // An optional encrypted state store preserves unexpired grants across restart.
@@ -149,6 +152,7 @@ func NewHTTPService(opts HTTPOptions) (*RemoteService, error) {
 	if err := r.restoreOAuth(); err != nil {
 		return nil, err
 	}
+	opts.Telemetry.attachConnections(r)
 	return &RemoteService{public: opts.Lifecycle.wrapHTTP(r.durableHandler(r.handler())), remote: r}, nil
 }
 
@@ -227,11 +231,8 @@ func (r *remoteServer) handler() http.Handler {
 	mux.HandleFunc("POST "+prefix+"/oauth/token", r.token)
 	mux.HandleFunc("POST "+prefix+"/oauth/revoke", r.revoke)
 	getServer := func(req *http.Request) *mcp.Server {
-		g, _ := req.Context().Value(grantContextKey{}).(*oauthGrant)
-		if g == nil {
-			return nil
-		}
-		return g.server
+		server, _ := req.Context().Value(grantServerKey{}).(*mcp.Server)
+		return server
 	}
 	mux.Handle("/mcp", r.authenticate(newWatchHTTPHandler(getServer)))
 	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
@@ -310,13 +311,20 @@ func (r *remoteServer) authenticate(next http.Handler) http.Handler {
 		verifyCtx, stopVerify := context.WithTimeout(leaseCtx, r.opts.Timeout)
 		account, err := g.client.Whoami(verifyCtx)
 		stopVerify()
-		r.mu.Lock()
-		current, currentExpiry, stillValid := r.accessLeaseLocked(key)
-		r.mu.Unlock()
-		if err != nil || account.ID != g.accountID || !stillValid || current != g || leaseCtx.Err() != nil {
+		if err != nil || account.ID != g.accountID || leaseCtx.Err() != nil {
 			r.challenge(w)
 			return
 		}
+		server, currentExpiry, release, err := r.holdServer(key, g)
+		if errors.Is(err, errStaleAccess) {
+			r.challenge(w)
+			return
+		}
+		if err != nil {
+			oauthError(w, http.StatusInternalServerError, "server_error", "Could not prepare account tools")
+			return
+		}
+		defer release()
 		// Reverification may shorten a lease, but refresh cannot extend this request.
 		if currentExpiry.Before(leaseExpires) {
 			leaseExpires = currentExpiry
@@ -324,7 +332,8 @@ func (r *remoteServer) authenticate(next http.Handler) http.Handler {
 		requestCtx, stopRequest := context.WithDeadline(leaseCtx, leaseExpires)
 		defer stopRequest()
 		requestCtx = context.WithValue(requestCtx, authorizationLeaseExpiresKey{}, leaseExpires)
-		next.ServeHTTP(w, req.WithContext(context.WithValue(requestCtx, grantContextKey{}, g)))
+		requestCtx = context.WithValue(requestCtx, grantContextKey{}, g)
+		next.ServeHTTP(w, req.WithContext(context.WithValue(requestCtx, grantServerKey{}, server)))
 	})
 }
 

@@ -81,11 +81,25 @@ var (
 	_ OwnedEdgeRuleStore = (*MemStore)(nil)
 )
 
+// The gateway's rule reads skip rules whose app is deleted (ADR-091 amendment
+// 2026-10-28). A soft-deleted app keeps its rules so a restore brings them
+// back, but a rule on "*", a wildcard or another app's host used to keep
+// refusing or rewriting the account's other apps' traffic after its app was
+// gone.
+
+// edgeRuleAppDeletedLocked reports whether r's app is soft-deleted. Callers
+// hold m.mu.
+func (m *MemStore) edgeRuleAppDeletedLocked(r EdgeRule) bool {
+	app, ok := m.apps[r.AppID]
+	return ok && app.Status == AppDeleted
+}
+
 func (s *PgStore) OwnedEdgeRulesForHost(ctx context.Context, host, resourceOwnerID, appID string) ([]EdgeRule, error) {
 	rows, err := s.pool.Query(ctx, `
 		select `+edgeRuleSelectColsE+` from edge_rules e
 		 join apps a on a.id = e.app_id
 		 where coalesce(a.org_id::text, a.account_id::text) = $2
+		   and a.status <> 'deleted'
 		   and e.enabled = true
 		   and (e.expires_at is null or e.expires_at > now())
 		   and (
@@ -108,7 +122,7 @@ func (m *MemStore) OwnedEdgeRulesForHost(_ context.Context, host, resourceOwnerI
 	defer m.mu.Unlock()
 	var out []EdgeRule
 	for _, r := range m.edgeRules {
-		if m.edgeRuleResourceOwnerLocked(r) != resourceOwnerID || !r.Enabled || r.EdgeRuleExpired(time.Now()) {
+		if m.edgeRuleResourceOwnerLocked(r) != resourceOwnerID || !r.Enabled || r.EdgeRuleExpired(time.Now()) || m.edgeRuleAppDeletedLocked(r) {
 			continue
 		}
 		appWide := appID != "" && r.AppID == appID && api.IsEdgeRuleAppHosts(r.MatchHost)
@@ -146,6 +160,7 @@ func (s *PgStore) OwnerEdgeRules(ctx context.Context, resourceOwnerID string, li
 		select `+edgeRuleSelectColsE+` from edge_rules e
 		 join apps a on a.id = e.app_id
 		 where coalesce(a.org_id::text, a.account_id::text) = $1
+		   and a.status <> 'deleted'
 		   and e.enabled = true
 		   and (e.expires_at is null or e.expires_at > now())
 		 order by e.priority asc, e.created_at asc, e.id asc
@@ -167,7 +182,7 @@ func (m *MemStore) OwnerEdgeRules(_ context.Context, resourceOwnerID string, lim
 	defer m.mu.Unlock()
 	var out []EdgeRule
 	for _, r := range m.edgeRules {
-		if m.edgeRuleResourceOwnerLocked(r) != resourceOwnerID || !r.Enabled || r.EdgeRuleExpired(time.Now()) {
+		if m.edgeRuleResourceOwnerLocked(r) != resourceOwnerID || !r.Enabled || r.EdgeRuleExpired(time.Now()) || m.edgeRuleAppDeletedLocked(r) {
 			continue
 		}
 		r.MatchHeaders = cloneEdgeRuleMatchHeaders(r.MatchHeaders)

@@ -133,7 +133,7 @@ func cmdBindingsVerificationRuns(args []string) int {
 	statusRetries := fs.Int("status-read-retries", api.BindingVerificationRunnerDefaultStatusReadRetries, "transient durable status GET retries (0–8)")
 	concurrency := fs.Int("concurrency", bindingVerificationConcurrencyDefault, "maximum concurrent probes (1–8)")
 	if err := fs.Parse(flags); err != nil || fs.NArg() != 0 || len(positional) != 3 || !slices.Contains([]string{"status", "diagnostics", "resume", "cancel"}, positional[0]) || !api.ValidAppSlug(positional[1]) || *interval <= 0 || *timeout <= 0 || *statusRetries < 0 || *statusRetries > api.BindingVerificationRunnerMaxStatusReadRetries || *concurrency < 1 || *concurrency > bindingVerificationConcurrencyMax {
-		PrintUsage(osStderr, "usage: gregale bindings verification-runs <status|diagnostics|resume|cancel> <app> <run-id> [flags]", "bindings")
+		PrintUsage(osStderr, "usage: gregale app binding verification-runs <status|diagnostics|resume|cancel> <app> <run-id> [flags]", "bindings")
 		return 1
 	}
 	if !validBindingProgress(*progressMode) {

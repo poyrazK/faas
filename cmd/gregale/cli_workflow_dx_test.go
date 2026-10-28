@@ -55,7 +55,7 @@ func TestRecoveryNextActionResumesOrGathersEvidence(t *testing.T) {
 			(*main.ProfileOverride) = profile
 			t.Cleanup(func() { (*main.ProfileOverride) = old })
 			waiting := main.NewDeployRecovery("readiness", "sample-app", "accepted-id", "", time.Minute, false)
-			if waiting.NextCommand != waiting.ResumeCommand || !strings.Contains(waiting.NextCommand, "--profile "+profile+" deployment wait accepted-id") || strings.Contains(waiting.NextCommand, " deploy ") {
+			if waiting.NextCommand != waiting.ResumeCommand || !strings.Contains(waiting.NextCommand, "--profile "+profile+" release wait accepted-id") || strings.Contains(waiting.NextCommand, " deploy ") {
 				t.Fatalf("unsafe wait recovery: %+v", waiting)
 			}
 			failure := main.FailedDeploymentRecovery("sample-app", api.DeploymentResponse{ID: "failed-id", Status: "failed"})

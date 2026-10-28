@@ -42,7 +42,7 @@ func TestRenderDebugStatus(t *testing.T) {
 		"11:41:00  plan 512 MB  deployment 7d1e2f3a  (deployment failed)",
 		"off (set tracing.enabled: true",
 		"Memory:\n  • upgrade from a 512 MB plan to a plan with at least 608 MB of RAM\n  • trim in-memory state\n",
-		"Next:\n  gregale debug rollout shop\n  gregale debug requests inspect shop req_8f2\n  gregale debug regressions shop\n  gregale logs shop\n",
+		"Next:\n  gregale debug explain shop\n  gregale debug requests inspect shop req_8f2\n  gregale debug regressions shop\n  gregale logs shop\n",
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("status output missing %q:\n%s", want, got)

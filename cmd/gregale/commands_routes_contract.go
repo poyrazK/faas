@@ -17,7 +17,7 @@ import (
 
 func cmdRoutesContract(args []string) int {
 	if len(args) == 0 || args[0] != "check" {
-		PrintUsage(osStderr, "usage: gregale routes contract check [<slug>] --openapi FILE --base REF [--head REF] [--path DIR] [--framework auto|fastapi|go-nethttp|node-http] [--entrypoint MODULE:VARIABLE] [--format text|markdown] [--out PATH] [--fail-on-drift] [--fail-on-incomplete] [--json]", "cli")
+		PrintUsage(osStderr, "usage: gregale api route contract check [<slug>] --openapi FILE --base REF [--head REF] [--path DIR] [--framework auto|fastapi|go-nethttp|node-http] [--entrypoint MODULE:VARIABLE] [--format text|markdown] [--out PATH] [--fail-on-drift] [--fail-on-incomplete] [--json]", "cli")
 		return 1
 	}
 	return cmdRoutesContractCheck(args[1:])
@@ -42,7 +42,7 @@ func cmdRoutesContractCheck(args []string) int {
 	if len(positional) > 1 || (len(positional) == 1 && !validCLISlug(positional[0])) ||
 		*openapi == "" || *base == "" || (*format != "text" && *format != "markdown") ||
 		(*framework != "auto" && *framework != "fastapi" && *framework != "go-nethttp" && *framework != "node-http") || rejectUnexpectedFlagArgs(fs) {
-		PrintUsage(osStderr, "usage: gregale routes contract check [<slug>] --openapi FILE --base REF [--head REF] [--path DIR] [--framework auto|fastapi|go-nethttp|node-http] [--entrypoint MODULE:VARIABLE] [--format text|markdown] [--out PATH] [--fail-on-drift] [--fail-on-incomplete] [--json]", "cli")
+		PrintUsage(osStderr, "usage: gregale api route contract check [<slug>] --openapi FILE --base REF [--head REF] [--path DIR] [--framework auto|fastapi|go-nethttp|node-http] [--entrypoint MODULE:VARIABLE] [--format text|markdown] [--out PATH] [--fail-on-drift] [--fail-on-incomplete] [--json]", "cli")
 		return 1
 	}
 	if *entrypoint != "" && *framework != "auto" && *framework != "fastapi" {

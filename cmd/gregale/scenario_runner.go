@@ -587,10 +587,10 @@ func cmdTestWithChaos(args []string, chaosOverride *testChaosSpec) int {
 	}
 	if chaosOverride != nil {
 		if len(scenario.Steps) > 0 {
-			return printErr("Invalid chaos plan", errors.New("gregale chaos inject cannot override a staged scenario; edit the scenario steps instead"))
+			return printErr("Invalid chaos plan", errors.New("gregale test chaos cannot override a staged scenario; edit the scenario steps instead"))
 		}
 		if scenario.Chaos != nil {
-			return printErr("Invalid chaos plan", errors.New("scenario already declares chaos rules; remove the manifest plan before using gregale chaos inject"))
+			return printErr("Invalid chaos plan", errors.New("scenario already declares chaos rules; remove the manifest plan before using gregale test chaos"))
 		}
 		scenario.Chaos = chaosOverride
 	}

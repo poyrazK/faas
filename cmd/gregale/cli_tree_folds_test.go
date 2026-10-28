@@ -123,3 +123,34 @@ func TestCliTreeHintsFoldedNames(t *testing.T) {
 		}
 	}
 }
+
+// Earlier names leave the customer manifest and suggestions, and still run.
+func TestCliTreeEarlierNamesLeaveCustomerSurfaces(t *testing.T) {
+	enableEveryCLIFeature(t)
+	names := map[string]bool{}
+	for _, command := range main.CustomerCliCommands() {
+		names[command.Name] = true
+	}
+	for _, earlier := range []string{"crons", "deploys", "secrets", "apps", "slo", "doctor"} {
+		if names[earlier] {
+			t.Errorf("customer commands still list the earlier name %q", earlier)
+		}
+	}
+	for _, kept := range []string{"deploy", "logs", "env", "app", "bucket", "man"} {
+		if !names[kept] {
+			t.Errorf("customer commands lost %q", kept)
+		}
+	}
+	if suggestion, ok := main.SuggestCommand("cronz"); !ok || suggestion != "cron" {
+		t.Errorf("SuggestCommand(cronz) = %q %v, want cron", suggestion, ok)
+	}
+	if _, ok := main.LookupCliCommand("crons"); !ok {
+		t.Error("the earlier name crons must still run")
+	}
+	if code, page, _ := runCLI(t, "man", "cron"); code != 0 || !strings.Contains(page, "gregale-cron") {
+		t.Errorf("man cron = %d, want the tree noun's page:\n%.300s", code, page)
+	}
+	if code, page, _ := runCLI(t, "man", "crons"); code != 0 || !strings.Contains(page, "gregale-crons") {
+		t.Errorf("man crons = %d, want the earlier name's page:\n%.300s", code, page)
+	}
+}

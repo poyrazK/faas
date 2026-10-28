@@ -30,7 +30,7 @@ var cliTreeVerbs = []string{
 	"unprotect", "qualify", "reconcile", "reconnect", "refresh", "rehearse", "reopen", "require",
 	"resize", "resync", "retire", "revoke", "review", "scan", "split", "start", "stop", "subscribe",
 	"unsubscribe", "suggest", "suspend", "test", "track", "use", "validate", "override", "advise",
-	"reset", "pull", "push", "signal", "generate",
+	"reset", "pull", "push", "signal", "generate", "void", "draft", "handoff", "end",
 }
 
 // A path may end with a noun it lists or shows (`app instances`).
@@ -56,6 +56,7 @@ var cliTreeCompoundWords = []string{
 	"port-forward", "wake-ahead", "wake-timeline", "streaming-cap", "spend-cap", "upload-cache",
 	"object-lock", "subscription-version", "subscription-retry", "subscription-circuit",
 	"subscription-capacity", "lock-policy", "deploy-token",
+	"billing-run", "billing-policy", "rate-card", "overdue-hold", "event-recovery", "failure-recovery", "recovery-policy", "recovery-response", "deadline-alert", "notification-retry", "recovery-notification", "release-sets", "compute-policy",
 }
 
 // Rule 5: top-level verbs that may start a tree path.
@@ -91,8 +92,8 @@ func TestCliTreePathsFollowNamingRules(t *testing.T) {
 		if path[0] == "admin" {
 			continue // operator tools keep their names (rule 7)
 		}
-		if len(path) > 3 {
-			t.Errorf("%q: at most three words come before the target", alias.New)
+		if len(path) > 4 {
+			t.Errorf("%q: at most four words come before the target", alias.New)
 		}
 		shortcut := slices.Contains(cliTreeShortcuts, path[0])
 		if !nouns[path[0]] && !shortcut {
@@ -376,6 +377,36 @@ func TestCliTreeHintsEarlierNamesInATerminal(t *testing.T) {
 	}
 }
 
+// Shell completion offers the tree's names, and dynamic values (deployment
+// IDs, project slugs) complete on the tree paths that take them.
+func TestCliTreeCompletionOffersTheTree(t *testing.T) {
+	enableEveryCLIFeature(t)
+	_, script, _ := runCLI(t, "completion", "bash")
+	root := regexp.MustCompile(`compgen -W "(--non-interactive [^"]*)"`).FindStringSubmatch(script)
+	if root == nil {
+		t.Fatalf("bash completion has no top-level word list:\n%.400s", script)
+	}
+	words := strings.Fields(root[1])
+	for _, want := range []string{"cron", "release", "env", "app", "deploy", "logs"} {
+		if !slices.Contains(words, want) {
+			t.Errorf("top-level completion omits %q: %v", want, words)
+		}
+	}
+	for _, earlier := range []string{"crons", "deploys", "deployments", "secrets", "apps"} {
+		if slices.Contains(words, earlier) {
+			t.Errorf("top-level completion offers the earlier name %q", earlier)
+		}
+	}
+	for _, want := range []string{
+		`[ "${words[1]}" = "release" ] && [ "${words[2]}" = "get" ]`,
+		`[ "${words[1]}" = "environment" ]`,
+	} {
+		if !strings.Contains(script, want) {
+			t.Errorf("bash completion lacks the position condition %s", want)
+		}
+	}
+}
+
 // Help reached through a tree path is spelled in that path.
 func TestCliTreeLeafHelpUsesTheTypedPath(t *testing.T) {
 	enableEveryCLIFeature(t)
@@ -393,8 +424,8 @@ func TestCliTreeLeafHelpUsesTheTypedPath(t *testing.T) {
 			t.Errorf("gregale %s = %d %q, want %q and not %q:\n%s", strings.Join(tc.args, " "), code, stderr, tc.want, tc.lack, stdout)
 		}
 	}
-	if _, stdout, _ := runCLI(t, "crons", "info", "--help"); !strings.Contains(stdout, "gregale crons info") {
-		t.Errorf("today's path keeps today's spelling:\n%s", stdout)
+	if _, stdout, _ := runCLI(t, "crons", "info", "--help"); !strings.Contains(stdout, "gregale cron get") || strings.Contains(stdout, "gregale crons info") {
+		t.Errorf("help reached by an earlier name speaks the tree:\n%s", stdout)
 	}
 }
 
@@ -412,8 +443,8 @@ func cliTreeVerbViolations() []string {
 	found := map[string]bool{}
 	check := func(path []string, leaf bool) {
 		var reasons []string
-		if len(path) > 3 {
-			reasons = append(reasons, "more than three words")
+		if len(path) > 4 {
+			reasons = append(reasons, "more than four words")
 		}
 		for _, word := range path {
 			if strings.Contains(word, "-") && !slices.Contains(cliTreeCompoundWords, word) {

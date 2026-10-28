@@ -108,7 +108,7 @@ func renderProjectEnvironmentPromotionProgress(status api.ProjectEnvironmentProm
 }
 
 func projectEnvironmentPromotionStatusCommand(status api.ProjectEnvironmentPromotionStatusResponse) string {
-	return fmt.Sprintf("gregale projects environments status %s %s --to %s", status.ProjectSlug, status.PromotionID, status.ToEnvironment)
+	return fmt.Sprintf("gregale environment status %s %s --to %s", status.ProjectSlug, status.PromotionID, status.ToEnvironment)
 }
 
 func renderProjectEnvironmentPromotionWait(status api.ProjectEnvironmentPromotionStatusResponse, timedOut bool, timeout time.Duration) int {

@@ -135,7 +135,7 @@ func cmdJobsList(args []string) int {
 	// Jobs belong to the account, not to an app, so there is no --app filter;
 	// the flag package answered only "unknown flag --app" (Hunt 14 H14-63).
 	if argsPassAppFlag(args) {
-		PrintUsage(os.Stderr, "gregale jobs list lists every job in the account; it has no --app filter. Inspect one job with `gregale jobs info <job>`.\nusage: gregale jobs list [--limit N] [--offset N] [--all]", "jobs")
+		PrintUsage(os.Stderr, "gregale job list lists every job in the account; it has no --app filter. Inspect one job with `gregale job get <job>`.\nusage: gregale job list [--limit N] [--offset N] [--all]", "jobs")
 		return 1
 	}
 	fs := newFlagSet("jobs-list", flag.ContinueOnError)
@@ -155,11 +155,11 @@ func cmdJobsList(args []string) int {
 		}
 	})
 	if limitProvided && (*limit < 1 || *limit > 200) {
-		PrintUsage(os.Stderr, "usage: gregale jobs list [--limit N] [--offset N] [--all]   (--limit must be between 1 and 200)", "jobs")
+		PrintUsage(os.Stderr, "usage: gregale job list [--limit N] [--offset N] [--all]   (--limit must be between 1 and 200)", "jobs")
 		return 1
 	}
 	if *offset < 0 {
-		PrintUsage(os.Stderr, "usage: gregale jobs list [--limit N] [--offset N] [--all]   (--offset must be >= 0)", "jobs")
+		PrintUsage(os.Stderr, "usage: gregale job list [--limit N] [--offset N] [--all]   (--offset must be >= 0)", "jobs")
 		return 1
 	}
 	client, err := authedClient()
@@ -186,9 +186,9 @@ func cmdJobsList(args []string) int {
 		return jsonOut(writeJSON(out))
 	}
 	if len(out.Jobs) == 0 {
-		next := recoveryCLI() + " jobs list"
+		next := recoveryCLI() + " job list"
 		if *offset == 0 {
-			next = recoveryCLI() + " jobs add --help"
+			next = recoveryCLI() + " job create --help"
 		}
 		printEmptyResult("Jobs", fmt.Sprintf("selected account; starting offset=%d", *offset), next)
 		if out.NextOffset >= 0 && out.NextOffset > out.Offset {
@@ -198,7 +198,7 @@ func cmdJobsList(args []string) int {
 	}
 	renderJobsTable(osStdout, out.Jobs)
 	if out.NextOffset >= 0 && out.NextOffset > out.Offset {
-		_, _ = fmt.Fprintf(osStdout, "next page: gregale jobs list --offset %d\n", out.NextOffset)
+		_, _ = fmt.Fprintf(osStdout, "next page: gregale job list --offset %d\n", out.NextOffset)
 	}
 	return 0
 }
@@ -230,16 +230,16 @@ func cmdJobsAdd(args []string) int {
 		return 1
 	}
 	if fs.NArg() != 1 {
-		PrintUsage(os.Stderr, "usage: gregale jobs add <name> --image REF [--schedule EXPR [--timezone TZ]] [--command A,B,C] [--ram N] [--timeout S] [--parallelism N] [--retries N] [--env K=V ...]", "jobs")
+		PrintUsage(os.Stderr, "usage: gregale job create <name> --image REF [--schedule EXPR [--timezone TZ]] [--command A,B,C] [--ram N] [--timeout S] [--parallelism N] [--retries N] [--env K=V ...]", "jobs")
 		return 1
 	}
 	name := fs.Arg(0)
 	if !jobSlugPattern.MatchString(name) {
-		PrintUsage(os.Stderr, "usage: gregale jobs add <name>   (name is 3..40 lowercase / digits / hyphens)", "jobs")
+		PrintUsage(os.Stderr, "usage: gregale job create <name>   (name is 3..40 lowercase / digits / hyphens)", "jobs")
 		return 1
 	}
 	if *image == "" {
-		PrintUsage(os.Stderr, "usage: gregale jobs add <name> --image REF [--schedule EXPR [--timezone TZ]] [--command A,B,C] [--ram N] [--timeout S] [--parallelism N] [--retries N] [--env K=V ...]", "jobs")
+		PrintUsage(os.Stderr, "usage: gregale job create <name> --image REF [--schedule EXPR [--timezone TZ]] [--command A,B,C] [--ram N] [--timeout S] [--parallelism N] [--retries N] [--env K=V ...]", "jobs")
 		return 1
 	}
 	req := api.CreateJobRequest{
@@ -327,12 +327,12 @@ func cmdJobsUpdate(args []string) int {
 		return 1
 	}
 	if fs.NArg() != 1 {
-		PrintUsage(os.Stderr, "usage: gregale jobs update <name> [--image REF] [--command A,B,C] [--schedule EXPR] [--timezone TZ] [--unschedule] [--ram N] [--timeout S] [--parallelism N] [--retries N] [--pause|--resume]", "jobs")
+		PrintUsage(os.Stderr, "usage: gregale job update <name> [--image REF] [--command A,B,C] [--schedule EXPR] [--timezone TZ] [--unschedule] [--ram N] [--timeout S] [--parallelism N] [--retries N] [--pause|--resume]", "jobs")
 		return 1
 	}
 	name := fs.Arg(0)
 	if !jobSlugPattern.MatchString(name) {
-		PrintUsage(os.Stderr, "usage: gregale jobs update <name>   (name is 3..40 lowercase / digits / hyphens)", "jobs")
+		PrintUsage(os.Stderr, "usage: gregale job update <name>   (name is 3..40 lowercase / digits / hyphens)", "jobs")
 		return 1
 	}
 	if *pause && *resume {
@@ -453,7 +453,7 @@ func cmdJobsRm(args []string) int {
 		return cmdJobsRmInteractive()
 	}
 	if len(args) != 1 {
-		PrintUsage(os.Stderr, "usage: gregale jobs rm <name>", "jobs")
+		PrintUsage(os.Stderr, "usage: gregale job delete <name>", "jobs")
 		return 1
 	}
 	client, err := authedClient()
@@ -520,7 +520,7 @@ func cmdJobsRun(args []string) int {
 		return 1
 	}
 	if fs.NArg() != 0 && fs.NArg() != 1 {
-		PrintUsage(os.Stderr, "usage: gregale jobs run <name> (--tasks N | --input ID=REF ...) [--parallelism N] [--retries N] [--timeout S] [--env K=V ...] [--arg VALUE ...]", "jobs")
+		PrintUsage(os.Stderr, "usage: gregale job run <name> (--tasks N | --input ID=REF ...) [--parallelism N] [--retries N] [--timeout S] [--env K=V ...] [--arg VALUE ...]", "jobs")
 		return 1
 	}
 	if *savedJob && fs.NArg() != 0 {
@@ -709,7 +709,7 @@ func cmdJobsRun(args []string) int {
 	}
 	run, err := client.CreateJobRun(submissionCtx, name, req)
 	if err != nil {
-		return printRunSubmissionError("Run failed", err, recoveryCLI()+" jobs runs "+recoveryArgument(name), false)
+		return printRunSubmissionError("Run failed", err, recoveryCLI()+" job runs "+recoveryArgument(name), false)
 	}
 	rememberAcceptedJob(name, run)
 	if collectResults {
@@ -748,7 +748,7 @@ func cmdJobsRuns(args []string) int {
 		return 1
 	}
 	if fs.NArg() > 1 || *offset < 0 || validateCLILimit("limit", *limit, 200) != nil {
-		PrintUsage(os.Stderr, "usage: gregale jobs runs [name] [--limit N] [--offset N] [--all] (1 <= N <= 200, offset >= 0)", "jobs")
+		PrintUsage(os.Stderr, "usage: gregale job runs [name] [--limit N] [--offset N] [--all] (1 <= N <= 200, offset >= 0)", "jobs")
 		return 1
 	}
 	statusSet := false
@@ -829,9 +829,9 @@ func cmdJobsRuns(args []string) int {
 		return 0
 	}
 	if len(items) == 0 {
-		nextCommand := recoveryCLI() + " jobs runs " + recoveryArgument(name)
+		nextCommand := recoveryCLI() + " job runs " + recoveryArgument(name)
 		if *offset == 0 {
-			nextCommand = recoveryCLI() + " jobs info " + recoveryArgument(name)
+			nextCommand = recoveryCLI() + " job get " + recoveryArgument(name)
 		}
 		printEmptyResult("runs of Job "+name, fmt.Sprintf("starting offset=%d", *offset), nextCommand)
 		_, _ = fmt.Fprintln(osStdout, "No returned runs does not establish whether an uncertain submission was accepted.")
@@ -843,7 +843,7 @@ func cmdJobsRuns(args []string) int {
 	renderJobRunsTable(osStdout, items)
 	printJobHistoryNextSteps(osStdout, name, items)
 	if next >= 0 && next > *offset {
-		_, _ = fmt.Fprintf(osStdout, "next page: gregale jobs runs %s --offset %d\n", name, next)
+		_, _ = fmt.Fprintf(osStdout, "next page: gregale job runs %s --offset %d\n", name, next)
 	}
 	return 0
 }
@@ -861,7 +861,7 @@ func cmdJobsOccurrences(args []string) int {
 		return 1
 	}
 	if fs.NArg() != 1 {
-		PrintUsage(os.Stderr, "usage: gregale jobs occurrences <name> [--limit N] [--cursor ID] [--all]", "jobs")
+		PrintUsage(os.Stderr, "usage: gregale job occurrences <name> [--limit N] [--cursor ID] [--all]", "jobs")
 		return 1
 	}
 	name := fs.Arg(0)
@@ -895,7 +895,7 @@ func cmdJobsOccurrences(args []string) int {
 	}
 	renderScheduleOccurrences(osStdout, page.Occurrences)
 	if page.NextBefore != "" {
-		_, _ = fmt.Fprintf(osStdout, "next page: gregale jobs occurrences %s --cursor %s\n", name, page.NextBefore)
+		_, _ = fmt.Fprintf(osStdout, "next page: gregale job occurrences %s --cursor %s\n", name, page.NextBefore)
 	}
 	return 0
 }
@@ -916,11 +916,11 @@ func cmdJobsCancel(args []string) int {
 	}
 	args = fs.Args()
 	if len(args) != 2 {
-		PrintUsage(os.Stderr, "usage: gregale jobs cancel <name> <run-id> [--dry-run]", "jobs")
+		PrintUsage(os.Stderr, "usage: gregale job cancel <name> <run-id> [--dry-run]", "jobs")
 		return 1
 	}
 	if !jobRunIDPattern.MatchString(args[1]) {
-		PrintUsage(os.Stderr, "usage: gregale jobs cancel <name> <run-id>   (run-id is uuid v4)", "jobs")
+		PrintUsage(os.Stderr, "usage: gregale job cancel <name> <run-id>   (run-id is uuid v4)", "jobs")
 		return 1
 	}
 	if *dryRun && !jobSlugPattern.MatchString(args[0]) {
@@ -995,7 +995,7 @@ func cmdJobsTasks(args []string) int {
 	}
 	args = fs.Args()
 	if len(args) > 2 {
-		PrintUsage(os.Stderr, "usage: gregale jobs tasks [JOB] [RUN_ID|latest] [--failed-only | --unsuccessful-only] [--artifacts-only] [--all] [--limit N] [--offset N]", "jobs")
+		PrintUsage(os.Stderr, "usage: gregale job tasks [JOB] [RUN_ID|latest] [--failed-only | --unsuccessful-only] [--artifacts-only] [--all] [--limit N] [--offset N]", "jobs")
 		return 1
 	}
 	if len(args) == 0 {
@@ -1015,7 +1015,7 @@ func cmdJobsTasks(args []string) int {
 		return printErr("Invalid Job name", fmt.Errorf("provide a valid Job name"))
 	}
 	if args[1] != "latest" && !jobRunIDPattern.MatchString(args[1]) {
-		PrintUsage(os.Stderr, "usage: gregale jobs tasks <name> <run-id|latest>   (run-id is uuid v4)", "jobs")
+		PrintUsage(os.Stderr, "usage: gregale job tasks <name> <run-id|latest>   (run-id is uuid v4)", "jobs")
 		return 1
 	}
 	client, err := authedClient()
@@ -1164,7 +1164,7 @@ func cmdJobsAttempts(args []string) int {
 	}
 	args = fs.Args()
 	if (taskSet && len(args) > 2) || (!taskSet && len(args) != 3) {
-		PrintUsage(os.Stderr, "usage: gregale jobs attempts [JOB] [RUN_ID|latest] --task N [--all] [--limit N] [--offset N] [--failed-only | --unsuccessful-only], or jobs attempts JOB RUN_ID|latest TASK_INDEX", "jobs")
+		PrintUsage(os.Stderr, "usage: gregale job attempts [JOB] [RUN_ID|latest] --task N [--all] [--limit N] [--offset N] [--failed-only | --unsuccessful-only], or jobs attempts JOB RUN_ID|latest TASK_INDEX", "jobs")
 		return 1
 	}
 	if taskSet {
@@ -1191,7 +1191,7 @@ func cmdJobsAttempts(args []string) int {
 	}
 	taskIdx, err := strconv.Atoi(args[2])
 	if err != nil || taskIdx < 0 {
-		PrintUsage(os.Stderr, "usage: gregale jobs attempts <name> <run-id|latest> <task-index>   (task-index >= 0)", "jobs")
+		PrintUsage(os.Stderr, "usage: gregale job attempts <name> <run-id|latest> <task-index>   (task-index >= 0)", "jobs")
 		return 1
 	}
 	if args[1] == "latest" && !jobSlugPattern.MatchString(args[0]) {
@@ -1290,7 +1290,7 @@ func cmdJobsReplayFailed(args []string) int {
 	}
 	args = fs.Args()
 	if len(args) > 2 {
-		PrintUsage(os.Stderr, "usage: gregale jobs replay-failed [JOB] [RUN_ID|latest] [--dry-run] [--wait | --results] [--wait-timeout 10m] [--poll-interval 2s]", "jobs")
+		PrintUsage(os.Stderr, "usage: gregale job replay-failed [JOB] [RUN_ID|latest] [--dry-run] [--wait | --results] [--wait-timeout 10m] [--poll-interval 2s]", "jobs")
 		return 1
 	}
 	if len(args) == 0 {
@@ -1376,7 +1376,7 @@ func cmdJobsReplayFailed(args []string) int {
 	}
 	run, err := client.ReplayFailedJobRun(requestCtx, args[0], args[1])
 	if err != nil {
-		return printRunSubmissionError("Replay failed", err, recoveryCLI()+" jobs runs "+recoveryArgument(args[0]), false)
+		return printRunSubmissionError("Replay failed", err, recoveryCLI()+" job runs "+recoveryArgument(args[0]), false)
 	}
 	if run.ID != args[1] {
 		rememberAcceptedJob(args[0], run)
@@ -1425,12 +1425,12 @@ func cmdJobsArtifactURL(args []string) int {
 		return cmdJobsArtifactURLInteractive()
 	}
 	if len(args) != 4 || (args[1] != "latest" && !jobRunIDPattern.MatchString(args[1])) || args[3] == "" {
-		PrintUsage(os.Stderr, "usage: gregale jobs artifact-url <name> <run-id|latest> <task-index> <artifact-name>", "jobs")
+		PrintUsage(os.Stderr, "usage: gregale job artifact-url <name> <run-id|latest> <task-index> <artifact-name>", "jobs")
 		return 1
 	}
 	taskIdx, err := strconv.Atoi(args[2])
 	if err != nil || taskIdx < 0 {
-		PrintUsage(os.Stderr, "usage: gregale jobs artifact-url <name> <run-id|latest> <task-index> <artifact-name>   (task-index >= 0)", "jobs")
+		PrintUsage(os.Stderr, "usage: gregale job artifact-url <name> <run-id|latest> <task-index> <artifact-name>   (task-index >= 0)", "jobs")
 		return 1
 	}
 	if args[1] == "latest" && !jobSlugPattern.MatchString(args[0]) {
@@ -1489,7 +1489,7 @@ func cmdJobsRetry(args []string) int {
 	}
 	args = fs.Args()
 	if (taskSet && len(args) > 2) || (!taskSet && len(args) != 3) {
-		PrintUsage(os.Stderr, "usage: gregale jobs retry [JOB] [RUN_ID|latest] --task N [--wait | --results], or jobs retry JOB RUN_ID TASK_INDEX [--wait | --results]", "jobs")
+		PrintUsage(os.Stderr, "usage: gregale job retry [JOB] [RUN_ID|latest] --task N [--wait | --results], or jobs retry JOB RUN_ID TASK_INDEX [--wait | --results]", "jobs")
 		return 1
 	}
 	if taskSet {
@@ -1512,12 +1512,12 @@ func cmdJobsRetry(args []string) int {
 		}
 	}
 	if (!taskSet || args[1] != "latest") && !jobRunIDPattern.MatchString(args[1]) {
-		PrintUsage(os.Stderr, "usage: gregale jobs retry <name> <run-id> <task-index>   (run-id is uuid v4)", "jobs")
+		PrintUsage(os.Stderr, "usage: gregale job retry <name> <run-id> <task-index>   (run-id is uuid v4)", "jobs")
 		return 1
 	}
 	taskIdx, err := strconv.Atoi(args[2])
 	if err != nil || taskIdx < 0 {
-		PrintUsage(os.Stderr, "usage: gregale jobs retry <name> <run-id> <task-index>   (task-index >= 0)", "jobs")
+		PrintUsage(os.Stderr, "usage: gregale job retry <name> <run-id> <task-index>   (task-index >= 0)", "jobs")
 		return 1
 	}
 	if *dryRun && !jobSlugPattern.MatchString(args[0]) {
@@ -1666,7 +1666,7 @@ func cmdJobsLogs(args []string) int {
 		return cmdJobsFilteredLogs(logArgs, true)
 	}
 	if !ok || (!taskSet && len(positionals) != 3) || (taskSet && len(positionals) > 2) {
-		PrintUsage(os.Stderr, "usage: gregale jobs logs [JOB] [RUN_ID|latest] --task N [--max-bytes N] [--attempt N], or jobs logs JOB RUN_ID|latest TASK_INDEX", "jobs")
+		PrintUsage(os.Stderr, "usage: gregale job logs [JOB] [RUN_ID|latest] --task N [--max-bytes N] [--attempt N], or jobs logs JOB RUN_ID|latest TASK_INDEX", "jobs")
 		return 1
 	}
 	if taskSet {
@@ -1689,12 +1689,12 @@ func cmdJobsLogs(args []string) int {
 		positionals = append(positionals, taskFlag)
 	}
 	if positionals[1] != "latest" && !jobRunIDPattern.MatchString(positionals[1]) {
-		PrintUsage(os.Stderr, "usage: gregale jobs logs <name> <run-id|latest> <task-index>   (run-id is uuid v4)", "jobs")
+		PrintUsage(os.Stderr, "usage: gregale job logs <name> <run-id|latest> <task-index>   (run-id is uuid v4)", "jobs")
 		return 1
 	}
 	taskIdx, err := strconv.Atoi(positionals[2])
 	if err != nil || taskIdx < 0 {
-		PrintUsage(os.Stderr, "usage: gregale jobs logs <name> <run-id> <task-index>   (task-index >= 0)", "jobs")
+		PrintUsage(os.Stderr, "usage: gregale job logs <name> <run-id> <task-index>   (task-index >= 0)", "jobs")
 		return 1
 	}
 	if attempt > 0 && !jobSlugPattern.MatchString(positionals[0]) {

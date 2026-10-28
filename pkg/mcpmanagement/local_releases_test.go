@@ -418,7 +418,7 @@ func TestEnvChangeRefusesSecretsAndBadInput(t *testing.T) {
 	f := newLocalFixture(t, true, "release-base")
 	cs, ctx := f.connect(t, true)
 	out := callTool(t, ctx, cs, "gregale_plan_env_change", map[string]any{"app": "alpha", "values": map[string]any{"STRIPE_KEY": "sk_live_abc"}, "reason": "billing"}, true)
-	if toolCode(t, out) != "secret_detected" || !strings.Contains(string(out["message"]), "gregale secrets set alpha") {
+	if toolCode(t, out) != "secret_detected" || !strings.Contains(string(out["message"]), "gregale env set alpha") {
 		t.Fatalf("finding = %v", out)
 	}
 	f.cliProblem = &api.Problem{Code: "secret_scan_strict", Title: "Secret scan rejected the push"}

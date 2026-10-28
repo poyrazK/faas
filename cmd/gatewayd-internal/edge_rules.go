@@ -454,32 +454,6 @@ func (g *gatewaydEdgeRules) compileHostRules(ctx context.Context, host string, s
 		CircuitBreaker: circuitBreaker,
 		Penalties:      compileEdgeRulePenalties(storeRules),
 	}
-	parseErrs := append(routeErrs, rewriteErrs...)
-	parseErrs = append(parseErrs, redirectErrs...)
-	parseErrs = append(parseErrs, headersErrs...)
-	parseErrs = append(parseErrs, corsErrs...)
-	parseErrs = append(parseErrs, jwtErrs...)
-	parseErrs = append(parseErrs, ipErrs...)
-	parseErrs = append(parseErrs, validateErrs...)
-	parseErrs = append(parseErrs, limitErrs...)
-	parseErrs = append(parseErrs, maintenanceErrs...)
-	parseErrs = append(parseErrs, geoErrs...)
-	parseErrs = append(parseErrs, throttleErrs...)
-	parseErrs = append(parseErrs, budgetErrs...)
-	parseErrs = append(parseErrs, cacheErrs...)
-	parseErrs = append(parseErrs, retryErrs...)
-	parseErrs = append(parseErrs, circuitBreakerErrs...)
-	parseErrs = append(parseErrs, respondErrs...)
-	parseErrs = append(parseErrs, asyncErrs...)
-	parseErrs = append(parseErrs, wafErrs...)
-	parseErrs = append(parseErrs, challengeErrs...)
-	if len(parseErrs) > 0 {
-		entry.PathGlobErrs = parseErrs
-		entry.PolicyRuleOwners = make(map[string]string, len(parseErrs))
-		for _, rule := range storeRules {
-			entry.PolicyRuleOwners[rule.ID] = rule.AccountID
-		}
-	}
 	// PR-B: surface per-rule compile errors to Prometheus so the
 	// §12 dashboard chip "edge rule compile errors" reflects every
 	// dropped rule. Incrementing once per error here keeps the
@@ -487,57 +461,41 @@ func (g *gatewaydEdgeRules) compileHostRules(ctx context.Context, host string, s
 	// of hosts that had any broken rules). loadHost is the natural
 	// choke point — every Match* falls through it on a cache miss,
 	// so we get one tick per dropped rule across the whole fleet.
-	if g.metrics != nil {
-		for range routeErrs {
-			g.metrics.ObserveEdgeRuleCompileError("route")
+	// One table drives both the host's error list and the counter, so a
+	// kind cannot fail its host closed without being counted (cache, retry
+	// and circuit_breaker were left out of the counter before).
+	var parseErrs []gateway.PathGlobError
+	for _, kindErrs := range []struct {
+		kind string
+		errs []gateway.PathGlobError
+	}{
+		{"route", routeErrs}, {"rewrite", rewriteErrs}, {"redirect", redirectErrs},
+		{"headers", headersErrs}, {"cors", corsErrs}, {"jwt", jwtErrs}, {"ip", ipErrs},
+		{"validate", validateErrs}, {"limit", limitErrs}, {"maintenance", maintenanceErrs},
+		{"geo", geoErrs}, {"throttle", throttleErrs}, {"budget", budgetErrs}, {"cache", cacheErrs},
+		{"retry", retryErrs}, {"circuit_breaker", circuitBreakerErrs}, {"respond", respondErrs},
+		{"async", asyncErrs}, {"waf", wafErrs}, {"challenge", challengeErrs},
+	} {
+		parseErrs = append(parseErrs, kindErrs.errs...)
+		for range kindErrs.errs {
+			g.metrics.ObserveEdgeRuleCompileError(kindErrs.kind)
 		}
-		for range rewriteErrs {
-			g.metrics.ObserveEdgeRuleCompileError("rewrite")
+	}
+	// A rule whose match condition does not compile (an account list that is
+	// missing or no longer compiles, ADR-963) is a broken rule like any other:
+	// compileEdgeRuleCondition makes it never match, so it fails its host
+	// closed here instead of silently letting traffic past a refusing rule.
+	for _, rule := range storeRules {
+		if err := edgeRuleConditionError(rule); err != nil {
+			parseErrs = append(parseErrs, gateway.PathGlobError{RuleID: rule.ID, Glob: "match", Err: err})
+			g.metrics.ObserveEdgeRuleCompileError(string(rule.Kind))
 		}
-		for range redirectErrs {
-			g.metrics.ObserveEdgeRuleCompileError("redirect")
-		}
-		for range headersErrs {
-			g.metrics.ObserveEdgeRuleCompileError("headers")
-		}
-		for range corsErrs {
-			g.metrics.ObserveEdgeRuleCompileError("cors")
-		}
-		for range jwtErrs {
-			g.metrics.ObserveEdgeRuleCompileError("jwt")
-		}
-		for range ipErrs {
-			g.metrics.ObserveEdgeRuleCompileError("ip")
-		}
-		for range validateErrs {
-			g.metrics.ObserveEdgeRuleCompileError("validate")
-		}
-		for range limitErrs {
-			g.metrics.ObserveEdgeRuleCompileError("limit")
-		}
-		for range maintenanceErrs {
-			g.metrics.ObserveEdgeRuleCompileError("maintenance")
-		}
-		for range geoErrs {
-			g.metrics.ObserveEdgeRuleCompileError("geo")
-		}
-		for range budgetErrs {
-			g.metrics.ObserveEdgeRuleCompileError("budget")
-		}
-		for range throttleErrs {
-			g.metrics.ObserveEdgeRuleCompileError("throttle")
-		}
-		for range respondErrs {
-			g.metrics.ObserveEdgeRuleCompileError("respond")
-		}
-		for range asyncErrs {
-			g.metrics.ObserveEdgeRuleCompileError("async")
-		}
-		for range wafErrs {
-			g.metrics.ObserveEdgeRuleCompileError("waf")
-		}
-		for range challengeErrs {
-			g.metrics.ObserveEdgeRuleCompileError("challenge")
+	}
+	if len(parseErrs) > 0 {
+		entry.PathGlobErrs = parseErrs
+		entry.PolicyRuleOwners = make(map[string]string, len(parseErrs))
+		for _, rule := range storeRules {
+			entry.PolicyRuleOwners[rule.ID] = rule.AccountID
 		}
 	}
 	entry.Host = host

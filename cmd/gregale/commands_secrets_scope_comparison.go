@@ -96,7 +96,7 @@ func compareRequiredSecretScopes(app string, scopes, required []string, source, 
 			report.Keys[i].States[scope] = state
 		}
 		if column.Status != "configured" {
-			column.NextCommand = recoveryCLI() + " secrets check --app " + recoveryArgument(app) + " --scope " + recoveryArgument(scope)
+			column.NextCommand = recoveryCLI() + " env check --app " + recoveryArgument(app) + " --scope " + recoveryArgument(scope)
 			if file != "" {
 				column.NextCommand += " --required-file " + recoveryArgument(file)
 			}

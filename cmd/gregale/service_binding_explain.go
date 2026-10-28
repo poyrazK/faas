@@ -138,7 +138,7 @@ func explainServiceAuthorization(r *serviceAuthorizationExplanation, caller, tar
 
 func cmdBindingsServiceExplain(args []string) int {
 	usageError := func() int {
-		return servicePolicyCommandError("Invalid service explanation", errors.New("usage: gregale bindings service explain CALLER TARGET [--deployment ID] [--scope ENV] [--method GET] [--path /path]"))
+		return servicePolicyCommandError("Invalid service explanation", errors.New("usage: gregale app binding service explain CALLER TARGET [--deployment ID] [--scope ENV] [--method GET] [--path /path]"))
 	}
 	flags, pos := splitArgsForFlags(args)
 	if len(pos) != 2 || !api.ValidAppSlug(pos[0]) || !api.ValidAppSlug(pos[1]) {

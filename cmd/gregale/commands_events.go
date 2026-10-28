@@ -221,7 +221,7 @@ func cmdEventsReplayRetryableFanoutFailures(args []string) int {
 	if len(positional) != 1 || rejectUnexpectedFlagArgs(fs) || !*yes ||
 		(strings.TrimSpace(*eventSource) == "") != (strings.TrimSpace(*eventID) == "") ||
 		validateCLILimit("limit", *limit, eventFanoutReplayBatchMax) != nil {
-		PrintUsage(os.Stderr, "usage: gregale events replay-retryable <app> [--event-source SOURCE --event-id ID] [--limit N] --yes", "events")
+		PrintUsage(os.Stderr, "usage: gregale event replay-retryable <app> [--event-source SOURCE --event-id ID] [--limit N] --yes", "events")
 		return 1
 	}
 	client, err := authedClient()
@@ -259,7 +259,7 @@ func cmdEventsReplayFanoutFailure(args []string) int {
 	}
 	if len(positional) != 1 || rejectUnexpectedFlagArgs(fs) || strings.TrimSpace(*eventID) == "" ||
 		strings.TrimSpace(*eventSource) == "" || strings.TrimSpace(*subscriptionID) == "" {
-		PrintUsage(os.Stderr, "usage: gregale events replay <app> --event-id ID --event-source SOURCE --subscription-id ID", "events")
+		PrintUsage(os.Stderr, "usage: gregale event replay <app> --event-id ID --event-source SOURCE --subscription-id ID", "events")
 		return 1
 	}
 	client, err := authedClient()
@@ -307,7 +307,7 @@ func cmdEventsPreview(args []string) int {
 		return 1
 	}
 	if len(positional) > 2 {
-		PrintUsage(os.Stderr, "usage: gregale events preview [SOURCE TYPE] --data <json|@file|-> [--id ID] [--time RFC3339]", "events")
+		PrintUsage(os.Stderr, "usage: gregale event preview [SOURCE TYPE] --data <json|@file|-> [--id ID] [--time RFC3339]", "events")
 		return 1
 	}
 	if len(positional) >= 1 {
@@ -326,7 +326,7 @@ func cmdEventsPreview(args []string) int {
 		return 1
 	}
 	if strings.TrimSpace(*source) == "" || strings.TrimSpace(*typ) == "" || strings.TrimSpace(*data) == "" {
-		PrintUsage(os.Stderr, "usage: gregale events preview [SOURCE TYPE] --data <json|@file|-> [--id ID] [--time RFC3339]", "events")
+		PrintUsage(os.Stderr, "usage: gregale event preview [SOURCE TYPE] --data <json|@file|-> [--id ID] [--time RFC3339]", "events")
 		return 1
 	}
 	body, err := resolveJSONFlag("--data", *data)
@@ -407,7 +407,7 @@ func cmdEventsDeliveries(args []string) int {
 	if len(positional) != 1 || rejectUnexpectedFlagArgs(fs) ||
 		(strings.TrimSpace(*eventSource) != "" && strings.TrimSpace(*eventID) == "") ||
 		validateCLILimit("limit", *limit, 200) != nil {
-		PrintUsage(os.Stderr, "usage: gregale events deliveries <app> [--event-source SOURCE --event-id ID] [--state STATE] [--before CURSOR] [--fanout-before CURSOR] [--limit N] [--all]", "events")
+		PrintUsage(os.Stderr, "usage: gregale event deliveries <app> [--event-source SOURCE --event-id ID] [--state STATE] [--before CURSOR] [--fanout-before CURSOR] [--limit N] [--all]", "events")
 		return 1
 	}
 	client, err := authedClient()
@@ -481,7 +481,7 @@ func cmdEventsFanoutHistory(args []string) int {
 	if len(positional) != 1 || rejectUnexpectedFlagArgs(fs) ||
 		strings.TrimSpace(*eventSource) == "" || strings.TrimSpace(*eventID) == "" ||
 		validateCLILimit("limit", *limit, 200) != nil {
-		PrintUsage(os.Stderr, "usage: gregale events fanout-history <app> --event-source SOURCE --event-id ID [--subscription-id ID] [--cursor CURSOR] [--limit N] [--all]", "events")
+		PrintUsage(os.Stderr, "usage: gregale event fanout-history <app> --event-source SOURCE --event-id ID [--subscription-id ID] [--cursor CURSOR] [--limit N] [--all]", "events")
 		return 1
 	}
 	client, err := authedClient()
@@ -533,7 +533,7 @@ func cmdEventsSubscriptions(args []string) int {
 	}
 	positional, mergeErr := mergeAppFlag(positional, *app, 1)
 	if mergeErr != nil || len(positional) != 1 || rejectUnexpectedFlagArgs(fs) {
-		PrintUsage(os.Stderr, "usage: gregale events subscriptions <app>", "events")
+		PrintUsage(os.Stderr, "usage: gregale event subscription list <app>", "events")
 		return 1
 	}
 	client, err := authedClient()
@@ -586,7 +586,7 @@ func cmdEventsPublish(args []string) int {
 		return 1
 	}
 	if len(positional) > 2 {
-		PrintUsage(os.Stderr, "usage: gregale events publish [SOURCE TYPE] --data <json|@file|-> [--id ID] [--time RFC3339]", "events")
+		PrintUsage(os.Stderr, "usage: gregale event publish [SOURCE TYPE] --data <json|@file|-> [--id ID] [--time RFC3339]", "events")
 		return 1
 	}
 	if len(positional) >= 1 {
@@ -605,7 +605,7 @@ func cmdEventsPublish(args []string) int {
 		return 1
 	}
 	if strings.TrimSpace(*source) == "" || strings.TrimSpace(*typ) == "" || strings.TrimSpace(*data) == "" {
-		PrintUsage(os.Stderr, "usage: gregale events publish [SOURCE TYPE] --data <json|@file|-> [--id ID] [--time RFC3339]", "events")
+		PrintUsage(os.Stderr, "usage: gregale event publish [SOURCE TYPE] --data <json|@file|-> [--id ID] [--time RFC3339]", "events")
 		return 1
 	}
 	eventID := strings.TrimSpace(*id)
@@ -650,7 +650,7 @@ func cmdEventsPublish(args []string) int {
 	if resp.ReceiptURL != "" {
 		// The receipt line was a raw API path; name the command that reads
 		// it (Hunt 12 H12-46).
-		_, _ = fmt.Fprintf(osStdout, "Inspect: gregale events inspect --source %s --id %s\n", quoteCLIArg(strings.TrimSpace(*source)), quoteCLIArg(resp.ID))
+		_, _ = fmt.Fprintf(osStdout, "Inspect: gregale event get --source %s --id %s\n", quoteCLIArg(strings.TrimSpace(*source)), quoteCLIArg(resp.ID))
 	}
 	return 0
 }

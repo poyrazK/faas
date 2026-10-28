@@ -136,7 +136,7 @@ func TestCmdRunsListRejectsInvalidStatus(t *testing.T) {
 	if got := main.CmdRuns([]string{"list", "--status", "not-a-status"}); got == 0 {
 		t.Fatal("invalid status unexpectedly succeeded")
 	}
-	if !strings.Contains(errOut(), "usage: gregale runs list") {
+	if !strings.Contains(errOut(), "usage: gregale sandbox list") {
 		t.Fatalf("stderr = %q", errOut())
 	}
 }

@@ -19,6 +19,9 @@ type RouteMonitorConfig struct {
 	Revision    int64               `json:"revision"`
 	Routes      []RouteMonitorRoute `json:"routes"`
 	UpdatedAt   *time.Time          `json:"updated_at,omitempty"`
+	// Warnings, on a save only, name selectors no request matched within
+	// the plan's telemetry lookback (ADR-20261028110044).
+	Warnings []string `json:"warnings,omitempty"`
 }
 type SetRouteMonitorRequest struct {
 	CustomerGroupBy  string              `json:"customer_group_by,omitempty"`
@@ -192,6 +195,9 @@ type RouteMonitorIncidentRollback struct {
 	TargetDeploymentID string    `json:"target_deployment_id,omitempty"`
 	OperationID        string    `json:"operation_id,omitempty"`
 	DecidedAt          time.Time `json:"decided_at"`
+	// RefusalCode is the checked rollback's problem code when it refused a
+	// rollback_target_ineligible request (ADR-20261028110044).
+	RefusalCode string `json:"refusal_code,omitempty"`
 }
 type RouteMonitorIncidentPage struct {
 	AppID      string                 `json:"app_id"`

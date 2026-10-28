@@ -11,7 +11,7 @@ StartLimitBurst=5
 Type=simple
 User=faas-mcp-bridge
 Group=faas
-ExecStart=/opt/faas/current/bin/mcp-bridged --state-key-file %d/faas_mcp_bridge_state_key --oauth-redirect-uri https://claude.ai/api/mcp/auth_callback --oauth-redirect-uri https://claude.com/api/mcp/auth_callback --oauth-redirect-uri https://chatgpt.com/connector_platform_oauth_redirect --oauth-redirect-uri http://localhost/callback --oauth-redirect-uri http://127.0.0.1/callback
+ExecStart=/opt/faas/current/bin/mcp-bridged --state-key-file %d/faas_mcp_bridge_state_key --admin-socket /run/faas-mcp-bridge/admin.sock --oauth-redirect-uri https://claude.ai/api/mcp/auth_callback --oauth-redirect-uri https://claude.com/api/mcp/auth_callback --oauth-redirect-uri https://chatgpt.com/connector_platform_oauth_redirect --oauth-redirect-uri http://localhost/callback --oauth-redirect-uri http://127.0.0.1/callback
 Restart=on-failure
 RestartSec=2s
 Slice=faas-cp.slice
@@ -37,6 +37,8 @@ ProtectHostname=yes
 ProtectClock=yes
 ProtectProc=invisible
 ReadOnlyPaths=/etc/faas
+RuntimeDirectory=faas-mcp-bridge
+RuntimeDirectoryMode=0700
 
 [Install]
 WantedBy=multi-user.target

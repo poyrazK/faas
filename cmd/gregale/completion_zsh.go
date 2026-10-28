@@ -39,7 +39,7 @@ func cmdCompletionZsh() int {
 
 func renderZshCompletion(w io.Writer) {
 	renderZshHeader(w)
-	for _, c := range customerCliCommands() {
+	for _, c := range completionCliCommands() {
 		renderZshCommand(w, c)
 	}
 	renderZshFooter(w)
@@ -111,14 +111,14 @@ func renderZshHeader(w io.Writer) {
 	_, _ = fmt.Fprintln(w, "    local -a profile_names; profile_names=( ${(f)\"$(gregale completion profile-names 2>/dev/null)\"} )")
 	_, _ = fmt.Fprintln(w, "    compset -P '--profile='; compadd -- \"${profile_names[@]}\"; return 0")
 	_, _ = fmt.Fprintln(w, "  fi")
-	_, _ = fmt.Fprintln(w, "  if (( CURRENT == 4 )) && [[ \"${words[2]}\" == profile && ( \"${words[3]}\" == use || \"${words[3]}\" == remove ) ]]; then")
+	_, _ = fmt.Fprintln(w, "  if { (( CURRENT == 4 )) && [[ \"${words[2]}\" == profile && ( \"${words[3]}\" == use || \"${words[3]}\" == remove ) ]] } || { (( CURRENT == 5 )) && [[ \"${words[2]}\" == config && \"${words[3]}\" == profile && ( \"${words[4]}\" == use || \"${words[4]}\" == delete || \"${words[4]}\" == remove ) ]] }; then")
 	_, _ = fmt.Fprintln(w, "    local -a profile_names; profile_names=( ${(f)\"$(gregale completion profile-names 2>/dev/null)\"} ); compadd -- \"${profile_names[@]}\"; return 0")
 	_, _ = fmt.Fprintln(w, "  fi")
 
 	_, _ = fmt.Fprintln(w, "  local -a commands")
 	_, _ = fmt.Fprintln(w, "  commands=(")
 	_, _ = fmt.Fprintln(w, "    \"--non-interactive:Disable prompts and browser launches\"")
-	for _, c := range customerCliCommands() {
+	for _, c := range completionCliCommands() {
 		_, _ = fmt.Fprintf(w, "    \"%s:%s\"\n", c.Name, escapeZshDQ(c.Short))
 	}
 	_, _ = fmt.Fprintln(w, "  )")
@@ -196,9 +196,7 @@ func renderZshHeader(w io.Writer) {
 	_, _ = fmt.Fprintln(w, "    fi")
 	_, _ = fmt.Fprintln(w, "  fi")
 	renderZshAppSlugPositionCompletions(w)
-	renderZshManifestPositionCompletions(w, projectCompletionCommand())
-	renderZshManifestPositionCompletions(w, buildCompletionCommand())
-	for _, command := range deploymentCompletionCommands() {
+	for _, command := range completionPositionCommands() {
 		renderZshManifestPositionCompletions(w, command)
 	}
 	// Leaf parsers accept --app/--org on nested command families even
@@ -216,14 +214,15 @@ func renderZshHeader(w io.Writer) {
 }
 
 func renderZshEnvironmentProjectLookup(w io.Writer) {
-	command := projectCompletionCommand()
 	_, _ = fmt.Fprintln(w, "_gregale_environment_project() {")
-	for _, context := range projectCompletionContexts() {
-		projectIndex := 2 + len(context.Path) + context.Position
-		_, _ = fmt.Fprintf(w, "  if %s && [[ -n \"${words[%d]}\" ]]; then\n", zshCompletionPathCondition(command, context.Path), projectIndex)
-		_, _ = fmt.Fprintf(w, "    print -r -- \"${words[%d]}\"\n", projectIndex)
-		_, _ = fmt.Fprintln(w, "    return 0")
-		_, _ = fmt.Fprintln(w, "  fi")
+	for _, command := range completionPositionCommands() {
+		for _, context := range projectCompletionContexts(command) {
+			projectIndex := 2 + len(context.Path) + context.Position
+			_, _ = fmt.Fprintf(w, "  if %s && [[ -n \"${words[%d]}\" ]]; then\n", zshCompletionPathCondition(command, context.Path), projectIndex)
+			_, _ = fmt.Fprintf(w, "    print -r -- \"${words[%d]}\"\n", projectIndex)
+			_, _ = fmt.Fprintln(w, "    return 0")
+			_, _ = fmt.Fprintln(w, "  fi")
+		}
 	}
 	_, _ = fmt.Fprintln(w, "  return 1")
 	_, _ = fmt.Fprintln(w, "}")
@@ -456,7 +455,7 @@ func renderZshFilePathCompletion(w io.Writer, flags []cliFlag, indent string) {
 // $words[2] (the first arg after `gregale`).
 func renderZshFooter(w io.Writer) {
 	_, _ = fmt.Fprintln(w, "  case \"$words[2]\" in")
-	for _, c := range customerCliCommands() {
+	for _, c := range completionCliCommands() {
 		_, _ = fmt.Fprintf(w, "    %s) _gregale_%s ;;\n", c.Name, c.Name)
 	}
 	_, _ = fmt.Fprintln(w, "  esac")
