@@ -1247,6 +1247,9 @@ type MemStore struct {
 	// object-storage month-close ledger.
 	objectStorageBilling           map[string]ObjectStorageBillingRecord
 	objectStorageBillingDeliveries map[string]ObjectStorageBillingDelivery
+	// objectStorageBillingProgress is the object-storage charge delivered
+	// so far per provider, account, month and mode (ADR-20261027093220).
+	objectStorageBillingProgress map[string]ObjectStorageBillingProgress
 	// accountCredits is the in-memory mirror of the `account_credits`
 	// table (migration 00049, issue #279). Keyed by credit id. The
 	// handler is the only writer in production; meterd never reads
@@ -8758,6 +8761,10 @@ func (m *MemStore) SafedeployStampRollout(_ context.Context, id string, rolloutS
 	if !ok {
 		return Deployment{}, ErrNotFound
 	}
+	// The row may have changed since the orchestrator listed it.
+	if err := checkRolloutStamp(d.RolloutState, rolloutState); err != nil {
+		return d, err
+	}
 	before := d
 	d.RolloutState = NormalizeRolloutState(rolloutState)
 	if startedAt != nil {
@@ -9021,31 +9028,14 @@ func (m *MemStore) recoverRolloutLocked(ctx context.Context, appID, deploymentID
 		if now.Sub(*target.CanaryStepStartedAt) < RecoverRolloutStuckAfter {
 			return Deployment{}, 0, ErrRolloutNotStuck
 		}
-		if target.CanaryTotalSteps <= 0 || target.CanaryStep >= target.CanaryTotalSteps {
-			return *target, 0, ErrRolloutStateInvalid
+		// The next stage of the persisted ladder (Hunt 20 H20-1).
+		newStep, stepPct, complete, err := recoverAdvanceStage(*target)
+		if err != nil {
+			return *target, 0, err
 		}
-
-		// Bump step, stamp started_at.
-		target.CanaryStep++
+		target.CanaryStep = newStep
 		t := now
 		target.CanaryStepStartedAt = &t
-
-		// Resolve the stage's traffic percent via the canary
-		// catalog (pkg/api/canary). We don't import it here —
-		// the MemStore reads the closed-set raw weights via
-		// the catalog-side helper resolved in the
-		// handler/safedeploy layer. For the MemStore test seam,
-		// we re-use the in-memory catalog (pkg/api/canary)
-		// through a deferred lookup. To keep the state
-		// package import-clean we use a linear step-to-percent
-		// mapping: step k / total N gets 1,10,50,100 in that
-		// progression. Real production resolves via the
-		// catalog; the store-layer semantics are "bump the
-		// step" — the orchestrator/handler layer applies the
-		// catalog and stamps traffic_percent. For the
-		// MemStore test we mirror the
-		// 1-10-50-100-equivalent curve.
-		stepPct := stepToPercent(target.CanaryStep, target.CanaryTotalSteps)
 		target.TrafficPercent = stepPct
 
 		// Redistribute residual across sibling live rows.
@@ -9071,9 +9061,8 @@ func (m *MemStore) recoverRolloutLocked(ctx context.Context, appID, deploymentID
 			m.putDeploymentLocked(s.ID, other)
 		}
 
-		// If the bump reaches the top of the ladder, flip
-		// rollout_state='complete'.
-		if target.CanaryStep >= target.CanaryTotalSteps {
+		// Moving onto the last stage completes the rollout.
+		if complete {
 			target.RolloutState = "complete"
 			t := now
 			target.RolloutCompletedAt = &t
@@ -9226,61 +9215,6 @@ func toHelperSiblings(in []siblingRow) []struct {
 		out[i].Prior = s.Prior
 	}
 	return out
-}
-
-// stepToPercent maps a (step, total_steps) pair onto the catalog's
-// percent for that step. The MemStore RecoverRollout doesn't import
-// pkg/api/canary (would invert the dependency), so it inlines the
-// canonical 1-10-50-100 progression the catalog returns for the
-// `1-10-50-100` preset (the only preset CLI surfaces today via
-// `gregale deploy --canary-preset 1-10-50-100`). Total steps == 0
-// or step > total returns 0 — the handler layer is responsible for
-// non-default presets, where the catalog resolves to a stage table
-// that's stamped by the canary_progression tick on each step.
-//
-// Production deployments that use the slower presets (slow,
-// balanced, aggressive) will continue to advance via the meterd
-// orchestrator (which DOES import pkg/api/canary); the CLI's
-// `recover` path is the operator escape hatch for stuck rollouts
-// and is calibrated for the headline 4-stage cadence. Pinning the
-// step-to-percent curve here keeps the MemStore test suite
-// deterministic without duplicating the catalog.
-func stepToPercent(step, total int) int {
-	if total <= 0 || step <= 0 {
-		return 0
-	}
-	switch total {
-	case 4: // 1-10-50-100 / balanced.
-		switch step {
-		case 1:
-			return 1
-		case 2:
-			return 10
-		case 3:
-			return 50
-		case 4:
-			return 100
-		default:
-			return 0
-		}
-	case 3: // aggressive (5/50/100).
-		switch step {
-		case 1:
-			return 5
-		case 2:
-			return 50
-		case 3:
-			return 100
-		}
-	case 2: // slow (1/100).
-		switch step {
-		case 1:
-			return 1
-		case 2:
-			return 100
-		}
-	}
-	return 0
 }
 
 // appendDeploymentAuditLocked is the lock-held variant of
@@ -17503,11 +17437,7 @@ func (m *MemStore) ComputeNodeUsedMB(_ context.Context, nodeID string) (int64, e
 	defer m.mu.Unlock()
 	used := m.functionMigrationNodeUsageLocked(nodeID).RAM
 	for _, ins := range m.instances {
-		if ins.NodeID != nodeID {
-			continue
-		}
-		switch ins.State {
-		case "waking", "cold_booting", "running", "draining", "warm":
+		if ins.NodeID == nodeID && nodeRAMCounts(State(ins.State)) {
 			used += m.migrationResidentRAMLocked(ins)
 		}
 	}
@@ -23803,6 +23733,11 @@ func (m *MemStore) DeleteAccount(ctx context.Context, id string) error {
 			delete(m.objectStorageBillingDeliveries, key)
 		}
 	}
+	for key, progress := range m.objectStorageBillingProgress {
+		if progress.AccountID == id {
+			delete(m.objectStorageBillingProgress, key)
+		}
+	}
 	for workflowID, workflow := range m.executionWorkflowJobs {
 		if workflow.AccountID == id {
 			clear(workflow.SealedPlan)
@@ -29193,20 +29128,28 @@ func (m *MemStore) ReapExpiredUploadSessions(_ context.Context) ([]sqlc.ReapExpi
 }
 
 // ReapStaleUploadPartFiles returns terminal-row sessions whose
-// part_path cleanup marker is set and last_patched_at < now() - 1h.
-// Bounded by 100 rows. The 1h grace matches the production query —
-// kept identical so the whitebox reaper tests exercise the same
+// part_path cleanup marker is set and whose grace has passed: 24h for a
+// committed source (1h otherwise), and never while the committed
+// deployment is in flight. Bounded by 100 rows. Kept identical to the
+// production query so the whitebox reaper tests exercise the same
 // predicate.
 func (m *MemStore) ReapStaleUploadPartFiles(_ context.Context) ([]sqlc.ReapStaleUploadPartFilesRow, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	var out []sqlc.ReapStaleUploadPartFilesRow
-	cutoff := time.Now().UTC().Add(-1 * time.Hour)
+	now := time.Now().UTC()
 	for _, row := range m.uploadSessions {
 		if row.Status != "committed" && row.Status != "cancelled" && row.Status != "expired" {
 			continue
 		}
 		if row.PartPath == "" {
+			continue
+		}
+		cutoff := now.Add(-1 * time.Hour)
+		if row.Status == "committed" {
+			cutoff = now.Add(-24 * time.Hour)
+		}
+		if dep, ok := m.deployments[row.DeploymentID.String]; ok && row.DeploymentID.Valid && deploymentInFlight(dep.Status) {
 			continue
 		}
 		if row.LastPatchedAt.Valid && row.LastPatchedAt.Time.Before(cutoff) {

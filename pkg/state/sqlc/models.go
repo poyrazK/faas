@@ -7769,6 +7769,19 @@ type ManagedPostgresBinding struct {
 	DatabaseAccountID          pgtype.UUID
 }
 
+// Compute cap thresholds a managed PostgreSQL usage subject reached in a UTC month; written only by apid (ADR-20261025094915).
+type ManagedPostgresCapEvent struct {
+	SubjectID            pgtype.UUID
+	PeriodStart          pgtype.Timestamptz
+	Threshold            string
+	ReachedAt            pgtype.Timestamptz
+	UsedUnitSeconds      int64
+	AllowanceUnitSeconds int64
+	CeilingUnitSeconds   int64
+	OverageEnabled       bool
+	MailIntentID         pgtype.UUID
+}
+
 type ManagedPostgresCheckpointMaintenance struct {
 	ID                       pgtype.UUID
 	SourceDatabaseID         pgtype.UUID
@@ -8810,6 +8823,21 @@ type ManagedRealtimeWorkerHeartbeat struct {
 	Lost         bool
 }
 
+type McpBridgeLease struct {
+	Bridge    string
+	Holder    string
+	Epoch     int64
+	ExpiresAt pgtype.Timestamptz
+}
+
+type McpBridgeState struct {
+	Bridge    string
+	Namespace string
+	Sealed    []byte
+	Epoch     int64
+	UpdatedAt pgtype.Timestamptz
+}
+
 type McpCatalogMonitor struct {
 	AppID     pgtype.UUID
 	AccountID pgtype.UUID
@@ -9523,6 +9551,20 @@ type ObjectStorageBillingPeriod struct {
 	IncludedStoredByteHours      int64
 	IncludedRequests             int64
 	IncludedEgressBytes          int64
+}
+
+// Object-storage charge delivered so far per provider, account, UTC month and mode. Written by apid in daily steps and at month close; meterd reserves live rows under the overage cap (ADR-20261027093220).
+type ObjectStorageBillingProgress struct {
+	Provider            string
+	AccountID           pgtype.UUID
+	PeriodStart         pgtype.Timestamptz
+	Mode                string
+	DeliveredMillicents int64
+	PendingMillicents   int64
+	PendingFixed        bool
+	CreditedMillicents  int64
+	Version             int64
+	UpdatedAt           pgtype.Timestamptz
 }
 
 type ObjectStorageBucketUsage struct {

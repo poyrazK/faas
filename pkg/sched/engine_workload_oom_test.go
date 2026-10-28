@@ -27,6 +27,7 @@ package sched_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -108,6 +109,10 @@ func TestWorkloadOOM_StampsAppRuntimeOOM(t *testing.T) {
 	ops := wire.NewOpsMetrics("schedd")
 	engine := sched.XNewEngine(t, store, vmm, &sched.FakeNotifier{}, "1.10.0").WithOpsMetrics(ops)
 	inst := sched.RunningInstance(t, store, app, dep, vmm, engine)
+	// Not live yet: the init snapshot is still being taken.
+	if err := store.UpdateDeploymentStatus(context.Background(), dep.ID, state.DeploySnapshotting, ""); err != nil {
+		t.Fatalf("UpdateDeploymentStatus: %v", err)
+	}
 
 	if err := engine.DestroyForWorkloadOOMFailure(context.Background(), inst.ID, 384, 256); err != nil {
 		t.Fatalf("DestroyForWorkloadOOMFailure: %v", err)
@@ -137,6 +142,93 @@ func TestWorkloadOOM_StampsAppRuntimeOOM(t *testing.T) {
 	}
 	if got.ErrorHint == "" {
 		t.Errorf("deployment.ErrorHint is empty; customer sees no next-action line")
+	}
+}
+
+// TestWorkloadOOM_LiveReleaseKeepsServing pins the ADR-121 amendment: an OOM
+// kill of a fully rolled-out live release replaces the instance and records
+// the kill, with the instance's plan RAM when the guest reported none, but
+// does not fail the release or move its traffic.
+func TestWorkloadOOM_LiveReleaseKeepsServing(t *testing.T) {
+	t.Parallel()
+	store := state.NewMemStore()
+	_, app, dep := sched.SeedApp(t, store, api.PlanPro, 512, 5)
+	vmm := &sched.FakeVMM{}
+	ops := wire.NewOpsMetrics("schedd")
+	platform := events.NewPlatform("schedd", store, sched.TestLog(), ops, nil)
+	engine := sched.XNewEngine(t, store, vmm, &sched.FakeNotifier{}, "1.10.0").
+		WithOpsMetrics(ops).
+		WithEvents(platform)
+	inst := sched.RunningInstance(t, store, app, dep, vmm, engine)
+
+	if err := engine.DestroyForWorkloadOOMFailure(context.Background(), inst.ID, 600, 0); err != nil {
+		t.Fatalf("DestroyForWorkloadOOMFailure: %v", err)
+	}
+
+	got, err := store.DeploymentByID(context.Background(), dep.ID)
+	if err != nil {
+		t.Fatalf("DeploymentByID: %v", err)
+	}
+	if got.Status != state.DeployLive || got.ErrorCode != "" {
+		t.Fatalf("live release status=%q error_code=%q, want live with no error", got.Status, got.ErrorCode)
+	}
+	after, err := store.InstanceByID(context.Background(), inst.ID)
+	if err != nil {
+		t.Fatalf("InstanceByID: %v", err)
+	}
+	if state.State(after.State) != state.StateStopped {
+		t.Fatalf("instance state = %q, want STOPPED", after.State)
+	}
+	allEvents, err := store.ListEvents(context.Background(), "", 0)
+	if err != nil {
+		t.Fatalf("ListEvents: %v", err)
+	}
+	var payload map[string]any
+	for _, ev := range allEvents {
+		if ev.Kind == events.InstanceWorkloadOOMFailed {
+			if err := json.Unmarshal(ev.Data, &payload); err != nil {
+				t.Fatalf("decode event: %v", err)
+			}
+		}
+	}
+	if payload == nil {
+		t.Fatal("no workload_oom_failed event recorded")
+	}
+	if payload["deployment_failed"] != false || payload["peak_mb"] != float64(600) || payload["plan_mb"] != float64(inst.RAMMB) {
+		t.Fatalf("event payload = %v, want deployment_failed=false peak_mb=600 plan_mb=%d", payload, inst.RAMMB)
+	}
+}
+
+func TestOOMFailsDeployment(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		status      state.DeploymentStatus
+		rollout     string
+		step, steps int
+		want        bool
+	}{
+		{state.DeployPending, "pending", 0, 0, true},
+		{state.DeployBuilding, "pending", 0, 0, true},
+		{state.DeployImaging, "pending", 0, 0, true},
+		{state.DeploySnapshotting, "pending", 0, 0, true},
+		{state.DeployLive, "pending", 0, 3, true},     // canary about to start
+		{state.DeployLive, "rolling_out", 1, 3, true}, // canary in flight
+		{state.DeployLive, "rolling_out", 0, 0, true}, // service handoff
+		{state.DeployLive, "pending", 0, 0, false},    // predates rollout tracking
+		{state.DeployLive, "pending", 3, 3, false},
+		{state.DeployLive, "complete", 3, 3, false},
+		{state.DeployLive, "aborted", 1, 3, false},
+		{state.DeployFailed, "aborted", 0, 0, false},
+		{state.DeploySuperseded, "complete", 0, 0, false},
+		{state.DeployCancelled, "aborted", 0, 0, false},
+	}
+	for _, tc := range cases {
+		got := sched.OOMFailsDeployment(state.Deployment{
+			Status: tc.status, RolloutState: tc.rollout, CanaryStep: tc.step, CanaryTotalSteps: tc.steps,
+		})
+		if got != tc.want {
+			t.Errorf("status=%s rollout=%q step=%d/%d: got %v, want %v", tc.status, tc.rollout, tc.step, tc.steps, got, tc.want)
+		}
 	}
 }
 

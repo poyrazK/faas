@@ -10,11 +10,11 @@ authentication. It supports MCP 2026-07-28 and stateless compatibility with
 npm ci
 npm test
 npm start
-gregale mcp doctor --url http://127.0.0.1:8080/mcp --legacy
-gregale mcp call --url http://127.0.0.1:8080/mcp --tool add --arguments '{"a":7,"b":5}'
-gregale mcp complete --url http://127.0.0.1:8080/mcp --prompt summarize --argument style --value exec
-gregale mcp deploy --path . --name my-mcp --profile small
-gregale mcp config --url https://my-mcp.gregale.dev/mcp --name my-mcp
+gregale mcp server doctor --url http://127.0.0.1:8080/mcp --legacy
+gregale mcp client call --url http://127.0.0.1:8080/mcp --tool add --arguments '{"a":7,"b":5}'
+gregale mcp client complete --url http://127.0.0.1:8080/mcp --prompt summarize --argument style --value exec
+gregale mcp server deploy --path . --name my-mcp --profile small
+gregale mcp server config --url https://my-mcp.gregale.dev/mcp --name my-mcp
 ```
 
 `gregale-mcp.json` declares the MCP contract. `gregale.yaml` declares ordinary
@@ -84,9 +84,9 @@ three harmless sample IDs included in the starter, filtered by the verified
 caller's sample-record ownership in external OAuth mode. Try either through the CLI:
 
 ```sh
-gregale mcp complete --url http://127.0.0.1:8080/mcp \
+gregale mcp client complete --url http://127.0.0.1:8080/mcp \
   --prompt summarize --argument style --value exec
-gregale mcp complete --url http://127.0.0.1:8080/mcp \
+gregale mcp client complete --url http://127.0.0.1:8080/mcp \
   --resource-template 'customer://records/{recordId}' --argument recordId --value example-
 ```
 
@@ -165,13 +165,13 @@ database.
 Try the built-in task with:
 
 ```sh
-gregale mcp call --url http://127.0.0.1:8080/mcp --tasks \
+gregale mcp client call --url http://127.0.0.1:8080/mcp --tasks \
   --tool build_report --arguments '{"report":"weekly","steps":8}'
-gregale mcp call --url http://127.0.0.1:8080/mcp --tasks \
+gregale mcp client call --url http://127.0.0.1:8080/mcp --tasks \
   --tool build_report --arguments '{"report":"weekly","steps":8,"request_approval":true}'
-gregale mcp task-wait --url http://127.0.0.1:8080/mcp --task-id TASK_ID
-gregale mcp resource-read --url http://127.0.0.1:8080/mcp --uri task://tasks/TASK_ID
-gregale mcp resource-watch --url http://127.0.0.1:8080/mcp --uri task://tasks/TASK_ID
+gregale mcp client wait --url http://127.0.0.1:8080/mcp --task-id TASK_ID
+gregale mcp client read --url http://127.0.0.1:8080/mcp --uri task://tasks/TASK_ID
+gregale mcp client watch --url http://127.0.0.1:8080/mcp --uri task://tasks/TASK_ID
 ```
 
 The server only creates a handle after PostgreSQL confirms the row, so
@@ -347,7 +347,7 @@ credentials. Set `MCP_TASKS_SCALING_APP_SLUG` to the worker slug you pass as
 Alongside the queue gauges, only this observer role publishes
 `mcp_tasks_observer_heartbeat`; a worker publisher cannot keep that signal fresh.
 It also publishes a bounded handler-compatibility snapshot with waiting task and
-live worker counts by tool/version. `gregale mcp tasks status --details` reads
+live worker counts by tool/version. `gregale mcp server tasks status --details` reads
 that snapshot from the API; it needs no local task database credentials.
 The observer must stay running while the worker fleet is at zero; metrics
 published by worker processes themselves require at least one worker replica.
@@ -365,12 +365,12 @@ payload-free `mcp_task_metrics_publish_failed` log event.
 Configure the dedicated worker's task-backlog scaler after deploying the worker:
 
 ```sh
-gregale mcp tasks setup --app mcp-worker
-gregale mcp tasks observer setup --app mcp-observer --worker-app mcp-worker --config ./gregale-mcp.json
-gregale mcp tasks observer setup --app mcp-observer --worker-app mcp-worker --config ./gregale-mcp.json --apply
-gregale mcp tasks observer status --app mcp-observer --worker-app mcp-worker --config ./gregale-mcp.json
-gregale mcp tasks setup --app mcp-worker --observer-app mcp-observer --min 0 --apply
-gregale mcp tasks status --app mcp-worker
+gregale mcp server tasks setup --app mcp-worker
+gregale mcp server tasks observer setup --app mcp-observer --worker-app mcp-worker --config ./gregale-mcp.json
+gregale mcp server tasks observer setup --app mcp-observer --worker-app mcp-worker --config ./gregale-mcp.json --apply
+gregale mcp server tasks observer status --app mcp-observer --worker-app mcp-worker --config ./gregale-mcp.json
+gregale mcp server tasks setup --app mcp-worker --observer-app mcp-observer --min 0 --apply
+gregale mcp server tasks status --app mcp-worker
 ```
 
 The first command previews the worker policy. Observer setup checks the task
@@ -391,7 +391,7 @@ To notify when queued work gets too old, create a webhook alert on
 `mcp_tasks_oldest_age_seconds`; the threshold is seconds (for example,
 `--comparison gt --threshold 300`). Missing or stale readings mark the rule
 degraded, and this signal cannot trigger deployment actions. See the MCP docs
-for the complete `gregale alerts add` command.
+for the complete `gregale alert create` command.
 
 To notify if a required task metric stops arriving, add a webhook rule on
 `mcp_tasks_metrics_stale` with `--comparison gt --threshold 0`. It fires when
@@ -408,7 +408,7 @@ observer is running; the CLI does not create the observer or provision its
 database and metrics credentials. `status` shows whether the worker's task
 metrics are present and fresh.
 
-For an additional gateway JWT/scope gate, run `gregale mcp policy --path . --name
+For an additional gateway JWT/scope gate, run `gregale mcp server policy --path . --name
 my-mcp` after configuring external OAuth. This separately updates the app-wide
 JWT edge rule. The provider retains login and token issuance; keep application
 catalog filtering and owner checks. Gateway resource policies accept simple
@@ -444,14 +444,14 @@ dynamic name or resource URI pattern to the matching scope allow-list; missing
 policy entries stay hidden and denied. The registry is local to one process, so
 every serving replica needs the same application registration code.
 
-`gregale mcp deploy` reads this digest from its zero-traffic candidate and pins
+`gregale mcp server deploy` reads this digest from its zero-traffic candidate and pins
 the promoted deployment revision with `MCP_CATALOG_EXPECTED_SHA256`. For other
 deploy paths, set that variable to the `/healthz` digest on every serving
 replica. Remove any existing app-wide env or secret with this key before using
-`gregale mcp deploy`; those runtime layers take precedence over deployment
+`gregale mcp server deploy`; those runtime layers take precedence over deployment
 overrides. A mismatch makes `/healthz` return 503 and blocks MCP requests.
 The health response includes Gregale's `FAAS_INSTANCE_ID`. In addition,
-`gregale mcp status` receives the selected replica identity from Gregale's
+`gregale mcp server status` receives the selected replica identity from Gregale's
 authenticated exact-instance probes. It initializes MCP and lists the
 caller-visible catalogs on every running replica without invoking tools,
 reading resources, or relying on load-balancer sampling. Use `--token-env` or
@@ -538,7 +538,7 @@ these together when diagnosing backlog and autoscaling.
 
 ### Task operational diagnostics
 
-`gregale mcp tasks status --app <worker-app>` shows running Tasks, capacity waits,
+`gregale mcp server tasks status --app <worker-app>` shows running Tasks, capacity waits,
 delayed retries, retained failures, active worker registrations, unsupported
 handler versions, and observer heartbeat freshness. JSON output adds stable
 `diagnostics` entries with `code` and `message`, plus `worker_heartbeats_fresh`
@@ -625,7 +625,7 @@ permissions, retained encryption keys, live workers and eligible handler coverag
 Exit code 1 means failed or unknown readiness. No schema changes or Task claims
 are made. Detailed database errors, keys and payloads are omitted. Repeat on every
 writer during key rotation; this report cannot establish fleet-wide consistency.
-For remote metrics and scale-to-zero checks, use `gregale mcp doctor --hosting
+For remote metrics and scale-to-zero checks, use `gregale mcp server doctor --hosting
 --app <worker-app> --preflight-path <this-directory>` with the same environment.
 
 Task workers drain on SIGTERM/SIGINT. Set `tasks.shutdown_timeout_ms` (default
@@ -723,7 +723,7 @@ worker that exceeds its shutdown deadline retains its registration until expiry;
 the gate fails rather than promoting prematurely.
 
 Gregale also provides a native deployment adapter:
-`gregale mcp tasks release --plan release.json --state release-state.json`.
+`gregale mcp server tasks release --plan release.json --state release-state.json`.
 Its plan names the web app/source, an empty candidate worker app/source, previous
 worker apps, and the always-on observer and its metric destination. It deploys
 candidates, verifies endpoint/observer health, captures worker IDs from runtime

@@ -1441,7 +1441,7 @@ func (d BucketDependency) EffectiveLabel() string {
 }
 
 // Manifest is the parsed `gregale.yaml` or event-enabled `gregale.toml` root.
-// The supported top-level declarations are `schema_version`, `hosting`,
+// The supported top-level declarations are `schema_version`, `hosting`, `build`,
 // `function`, `release`, `lifecycle`, `scaling`, `retry_policy`, `queue_bindings`,
 // `triggers`, `event_triggers`, `async_routes`, `routes`, `companions`, `main_depends_on`,
 // `exclusive_operations`, `extensions`, `workflows`, `databases`, `buckets`,
@@ -1456,8 +1456,11 @@ type Manifest struct {
 	// set it to 1; a future incompatible manifest requires a new version.
 	SchemaVersion int                   `yaml:"schema_version,omitempty"`
 	Hosting       *hostingconfig.Config `yaml:"hosting,omitempty"`
-	Dev           *DevConfig            `yaml:"dev,omitempty"`
-	Function      *FunctionConfig       `yaml:"function,omitempty"`
+	// Build selects and parameterizes a Dockerfile build for a source
+	// deploy (ADR-20261026152731).
+	Build    *BuildConfig    `yaml:"build,omitempty"`
+	Dev      *DevConfig      `yaml:"dev,omitempty"`
+	Function *FunctionConfig `yaml:"function,omitempty"`
 	// Functions declares several functions deployed from one manifest, each
 	// as its own app (ADR-985). Mutually exclusive with Function.
 	Functions []FunctionSpec   `yaml:"functions,omitempty"`
@@ -2205,6 +2208,12 @@ func (m *Manifest) ValidateForPlan(plan api.Plan) error {
 			return fmt.Errorf("hosting: %w", err)
 		}
 	}
+	if err := m.Build.Validate(); err != nil {
+		return fmt.Errorf("build: %w", err)
+	}
+	if m.Build != nil && (m.Function != nil || len(m.Functions) > 0) {
+		return fmt.Errorf("build: applies to app deploys; functions build from the platform runtime")
+	}
 	if m.Dev != nil {
 		if err := m.Dev.Validate(); err != nil {
 			return err
@@ -2655,8 +2664,8 @@ func (t Trigger) validateKindConfig(idx int) error {
 		if _, err := cronexpr.Parse(t.Schedule, cronexpr.DefaultTimezone); err != nil {
 			return fmt.Errorf("trigger[%d]: bad schedule %q: %w", idx, t.Schedule, err)
 		}
-		if !strings.HasPrefix(t.Path, "/") {
-			return fmt.Errorf("trigger[%d]: path must start with '/' (got %q)", idx, t.Path)
+		if problem := api.ValidateCronPath(t.Path); problem != nil {
+			return fmt.Errorf("trigger[%d]: invalid path %q: %s", idx, t.Path, problem.Detail)
 		}
 		if t.Timezone != "" {
 			if _, err := time.LoadLocation(t.Timezone); err != nil {

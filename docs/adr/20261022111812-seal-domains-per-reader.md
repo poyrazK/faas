@@ -593,6 +593,44 @@ The second account slice moves the integration credentials apid holds:
   left for their sweep.
 - The namespaces the re-seal shares with the writers moved to `pkg/api`.
 
+## Implemented in the twelfth slice: product email
+
+The third account slice moves product email's sealed values:
+`product_control_email_subscriptions` (`grant_sealed`,
+`pause_recipient_sealed`) and `product_control_email_deliveries`
+(`recipient_sealed`, `unsubscribe_sealed`). They have their own SQL package
+but live in the main schema.
+
+- Every product email value is sealed and opened through apid's two
+  product email functions, so the slice changes those two: they seal to the
+  account recipients (with apid's own identity's recipient as legacy) and
+  open with the account identity first (`productemail.SealTo`).
+- Each value binds a token to the subscription or evidence id it was sealed
+  for. The re-seal keeps that envelope as it is and refuses an envelope of
+  another shape.
+- **Later slices:** managed realtime, data pipelines (with the data-pipeline
+  worker's identity) and project environment clones (with the clone
+  worker's identity).
+
+## Implemented in the thirteenth slice: managed realtime
+
+The fourth account slice moves managed realtime's credentials:
+`managed_realtime_endpoints` (callback token, client auth token and the
+previous auth token kept through a rotation), `managed_realtime_push_devices`
+(push targets) and `managed_realtime_push_providers` (provider configs).
+
+- apid seals and opens them through the realtime service's host, so the
+  slice changes that host: `SecretRecipients()` returns the account
+  recipients (the fleet recipient as legacy) and `HostIdentitiesForUnseal`
+  opens with the account identity first. apid then hands the opened tokens
+  to the realtime fleet's registrar, as before.
+- A push value's namespace names its row (endpoint, principal key and
+  device, or endpoint and provider), so the re-seal rebuilds it from the
+  row and refuses a value copied to another row. The namespaces and the
+  push size bounds moved to `pkg/api`.
+- **Last slice:** data pipelines and project environment clones, read by
+  the data-pipeline and clone workers.
+
 ## Implemented: the alerting test-send relay
 
 Section 3 moves apid's alerting test sends behind meterd, ahead of the

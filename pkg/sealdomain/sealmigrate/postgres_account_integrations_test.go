@@ -4,6 +4,7 @@ import (
 	"context"
 	"math/rand/v2"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -16,19 +17,33 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-// TestPostgresMigrateAccountIntegrations runs every integration kind's list
-// and re-seal statements against the real schema, and re-seals a real
-// GitLab OAuth connection to the account domain alone.
+// TestPostgresMigrateAccountIntegrations runs every integration, product
+// email and managed realtime kind's list and re-seal statements against the
+// real schema, and
+// re-seals a real GitLab OAuth connection to the account domain alone.
 func TestPostgresMigrateAccountIntegrations(t *testing.T) {
 	store := openStore(t)
 	ctx := context.Background()
 	fleet, domain := mustIdentity(t), mustIdentity(t)
 	for _, kind := range []string{state.AccountSealedGitLabOAuth, state.AccountSealedSlackInstallation, state.AccountSealedSlackInteraction,
-		state.AccountSealedSlackDestination, state.AccountSealedSlackOAuthFlow, state.AccountSealedLinearConnection, state.AccountSealedLinearOAuthFlow} {
+		state.AccountSealedSlackDestination, state.AccountSealedSlackOAuthFlow, state.AccountSealedLinearConnection, state.AccountSealedLinearOAuthFlow,
+		state.AccountSealedProductEmailGrant, state.AccountSealedProductEmailPause, state.AccountSealedProductEmailRecipient, state.AccountSealedProductEmailUnsubscribe,
+		state.AccountSealedRealtimeCallback, state.AccountSealedRealtimeAuth, state.AccountSealedRealtimeAuthPrevious} {
 		if _, err := store.ListAccountSealedValues(ctx, kind, "", 10); err != nil {
 			t.Fatalf("list %s: %v", kind, err)
 		}
 		if replaced, err := store.ResealAccountValue(ctx, state.AccountSealedValue{Kind: kind, ID: uuid.NewString(), Sealed: []byte("old")}, []byte("new"), ""); err != nil || replaced {
+			t.Fatalf("reseal a missing %s = %v, %v; want nothing replaced", kind, replaced, err)
+		}
+	}
+	for kind, id := range map[string]string{
+		state.AccountSealedRealtimePushDevice:   uuid.NewString() + ":" + strings.Repeat("a", 64) + ":phone",
+		state.AccountSealedRealtimePushProvider: uuid.NewString() + ":apns",
+	} {
+		if _, err := store.ListAccountSealedValues(ctx, kind, "", 10); err != nil {
+			t.Fatalf("list %s: %v", kind, err)
+		}
+		if replaced, err := store.ResealAccountValue(ctx, state.AccountSealedValue{Kind: kind, ID: id, Sealed: []byte("old")}, []byte("new"), ""); err != nil || replaced {
 			t.Fatalf("reseal a missing %s = %v, %v; want nothing replaced", kind, replaced, err)
 		}
 	}

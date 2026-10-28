@@ -67,7 +67,7 @@ not turn a ready catalog row into a provisioning request.
 
 Health reads provider metadata only. Suspended compute is healthy when the
 resource is ready and its configuration matches. A healthy signal does not
-prove SQL connectivity; use `gregale bindings verify <app> --postgres DATABASE_URL`
+prove SQL connectivity; use `gregale app binding verify <app> --postgres DATABASE_URL`
 for the existing application connection check. Monitoring does not wake compute,
 retrieve credentials, repair roles, or recreate resources. API GET/list never
 contact the provider.

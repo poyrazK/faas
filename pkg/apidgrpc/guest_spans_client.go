@@ -11,11 +11,13 @@ import (
 	"google.golang.org/grpc"
 )
 
-// GuestSpansClient forwards in-guest trace exports from vmmd to apid's
-// SpansWriter service (ADR-958). It is separate from SpansWriterClient so the
-// gateway producers' interface and fakes are unaffected.
+// GuestSpansClient forwards in-guest trace and log exports from vmmd to
+// apid's SpansWriter service (ADR-958, ADR-213 runtime adapter). It is
+// separate from SpansWriterClient so the gateway producers' interface and
+// fakes are unaffected.
 type GuestSpansClient interface {
 	IngestGuestSpans(ctx context.Context, req *apidpb.IngestGuestSpansRequest) (*apidpb.IngestGuestSpansResponse, error)
+	IngestGuestLogs(ctx context.Context, req *apidpb.IngestGuestSpansRequest) (*apidpb.IngestGuestLogsResponse, error)
 	Close() error
 }
 
@@ -40,6 +42,10 @@ func DialGuestSpans(ctx context.Context, target string, tlsCfg *tls.Config) (*Gu
 
 func (c *GuestSpansClientImpl) IngestGuestSpans(ctx context.Context, req *apidpb.IngestGuestSpansRequest) (*apidpb.IngestGuestSpansResponse, error) {
 	return c.cli.IngestGuestSpans(ctx, req)
+}
+
+func (c *GuestSpansClientImpl) IngestGuestLogs(ctx context.Context, req *apidpb.IngestGuestSpansRequest) (*apidpb.IngestGuestLogsResponse, error) {
+	return c.cli.IngestGuestLogs(ctx, req)
 }
 
 func (c *GuestSpansClientImpl) Close() error {

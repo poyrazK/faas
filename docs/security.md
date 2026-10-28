@@ -76,7 +76,7 @@ If the app moves to a lower plan, the gateway clamps an existing setting to
 the new plan ceiling.
 To be notified when the guard blocks or would block a burst of requests,
 enable the webhook-only [`pre_auth_pressure` alert preset](alerts.md).
-`gregale edge-rules summary --app my-api` shows pre-auth blocks alongside
+`gregale edge rule summary --app my-api` shows pre-auth blocks alongside
 validation failures and rejections by the other edge gates.
 
 Up to 16 exact public method/path overrides can add stricter limits for
@@ -275,7 +275,7 @@ or a `Content-Security-Policy` `frame-ancestors` directive if your pages must
 not be framed, and `Permissions-Policy` to restrict browser features.
 
 ```sh
-gregale edge-rules create --app my-api --kind headers --match-host my-api.example.com \
+gregale edge rule create --app my-api --kind headers --match-host my-api.example.com \
   --headers-response-set 'X-Frame-Options:DENY'
 ```
 
@@ -317,10 +317,10 @@ within that wait, the rest pass unchecked and are counted as
 Start in `observe`, look for false positives, then switch to `block`:
 
 ```sh
-gregale edge-rules create --app my-api --kind waf --match-host my-api.example.com --match-path '/*'
-gregale edge-rules waf-review --app my-api            # detections grouped by CRS rule and path, each assessed
-gregale edge-rules waf-exclude <rule-id> --add 942100  # silence a false positive, keeping the rest of the rule
-gregale edge-rules update <rule-id> --kind waf --waf-mode block --waf-exclude-rules 942100
+gregale edge rule create --app my-api --kind waf --match-host my-api.example.com --match-path '/*'
+gregale edge rule waf-review --app my-api            # detections grouped by CRS rule and path, each assessed
+gregale edge rule waf-exclude <rule-id> --add 942100  # silence a false positive, keeping the rest of the rule
+gregale edge rule update <rule-id> --kind waf --waf-mode block --waf-exclude-rules 942100
 ```
 
 `edge-rules waf-review` groups the last 7 days of detections (your plan's
@@ -336,7 +336,7 @@ replaces the whole WAF action, so repeat every setting you want to keep
 (mode, exclusions, thresholds) when you use it.
 
 Each detection is also a security event, so you can see which request was
-flagged and why. `gregale edge-rules events --app my-api --outcome blocked`
+flagged and why. `gregale edge rule events --app my-api --outcome blocked`
 (or `detected` for sampled requests, `warned` for warn rules) lists the
 request ID, method, path, client and user agent, plus the CRS rule IDs that
 scored, their attack categories and the anomaly score. The matched payload
@@ -392,9 +392,9 @@ log mode to see what the rule would challenge, and add a `verified_bot
 missing` condition so search engine crawlers still reach your pages:
 
 ```sh
-gregale edge-rules create --app my-site --kind challenge --match-host my-site.example.com \
+gregale edge rule create --app my-site --kind challenge --match-host my-site.example.com \
   --match-path '/*' --match '{"field":"verified_bot","op":"missing"}' --mode log
-gregale edge-rules update <rule-id> --mode enforce
+gregale edge rule update <rule-id> --mode enforce
 ```
 
 `--challenge-difficulty` (10 to 22, default 16) sets how much work a browser
@@ -413,7 +413,7 @@ many pages were served at a raised difficulty. An update replaces the
 whole challenge action, so pass every setting you want to keep:
 
 ```sh
-gregale edge-rules update <rule-id> --kind challenge --challenge-difficulty 16 \
+gregale edge rule update <rule-id> --kind challenge --challenge-difficulty 16 \
   --challenge-max-difficulty 20 --challenge-pass-ttl 3600
 ```
 
@@ -423,7 +423,7 @@ address, then exempt it with a condition on the rule, such as
 `{"not":{"field":"client_ip","op":"in_list","list":"office-ips"}}`:
 
 ```sh
-gregale edge-rules events --app my-site --request-id <reference>
+gregale edge rule events --app my-site --request-id <reference>
 ```
 
 An enforced challenge rule records what it did as security events, with
@@ -435,7 +435,7 @@ who already hold a pass or a verified credential are counted, not recorded.
 In log mode the rule's matches appear as `logged` events instead.
 
 ```sh
-gregale edge-rules events --app my-site --outcome rejected
+gregale edge rule events --app my-site --outcome rejected
 ```
 
 ## Attack mode
@@ -460,9 +460,9 @@ choose, from 15 minutes to 24 hours (one hour by default). Switching it on
 again while it is on moves the end.
 
 ```sh
-gregale edge-rules attack-mode on --app my-site --for 1h
-gregale edge-rules attack-mode --app my-site       # is it on, and until when
-gregale edge-rules attack-mode off --app my-site
+gregale edge rule attack-mode on --app my-site --for 1h
+gregale edge rule attack-mode --app my-site       # is it on, and until when
+gregale edge rule attack-mode off --app my-site
 ```
 
 The dashboard's Edge protection panel has the same switch. Attack mode
@@ -484,7 +484,7 @@ differently:
 | `search` | an AI search index | OAI-SearchBot, Claude-SearchBot, PerplexityBot |
 | `assistant` | a page a user asked an assistant about | ChatGPT-User, Claude-User, Perplexity-User, MistralAI-User, DuckAssistBot |
 
-The edge protection summary (`gregale edge-rules summary`, or the Edge
+The edge protection summary (`gregale edge rule summary`, or the Edge
 protection panel) shows how many requests each AI crawler made, whatever
 your rules did with them.
 
@@ -499,8 +499,8 @@ and people alone. Like every recipe it starts in log mode, so you see what
 it would block first:
 
 ```sh
-gregale edge-rules recipe control-ai-crawlers --app my-site
-gregale edge-rules recipe control-ai-crawlers --app my-site --set purposes=all --set action=challenge
+gregale edge rule recipe control-ai-crawlers --app my-site
+gregale edge rule recipe control-ai-crawlers --app my-site --set purposes=all --set action=challenge
 ```
 
 For your own rules, conditions can use three fields:
@@ -520,7 +520,7 @@ let a crawler through, or to block only impersonators, also test
 
 ```sh
 # Block anything that claims to be GPTBot but is not from OpenAI's ranges.
-gregale edge-rules create --app my-site --kind ip --match-host @app --match-path '/**' \
+gregale edge rule create --app my-site --kind ip --match-host @app --match-path '/**' \
   --ip-deny 0.0.0.0/0 --ip-deny ::/0 \
   --match '{"all":[{"field":"ai_crawler","op":"eq","value":"gptbot"},{"field":"verified_ai_crawler","op":"missing"}]}'
 ```
@@ -546,13 +546,13 @@ nobody while the rules themselves keep refusing.
 
 ```sh
 # Block anyone who probes a scanner path from the whole app for 30 minutes.
-gregale edge-rules recipe block-scanner-paths --app my-site --set penalty_minutes=30 --enforce
+gregale edge rule recipe block-scanner-paths --app my-site --set penalty_minutes=30 --enforce
 
 # A sign-in throttle that boxes a client for 15 minutes after 5 refusals in a minute.
-gregale edge-rules update <rule-id> --penalty-for 15m --penalty-after 5 --penalty-within 1m
+gregale edge rule update <rule-id> --penalty-for 15m --penalty-after 5 --penalty-within 1m
 
 # Remove the penalty; clients it holds are let go on their next request.
-gregale edge-rules update <rule-id> --clear-penalty
+gregale edge rule update <rule-id> --clear-penalty
 ```
 
 A boxed client gets `403` with code `penalty_box`, naming the rule, and a
@@ -574,7 +574,7 @@ Some details to know:
 - The edge protection summary shows how many clients were boxed and how many
   of their requests were refused.
 - Each box is also an event, from the request that tipped the client in:
-  `gregale edge-rules events --app my-site --outcome boxed` lists the
+  `gregale edge rule events --app my-site --outcome boxed` lists the
   address, path and User-Agent, so you can tell a scanner from a customer.
   Events are sampled (up to 10 boxes per rule per minute on each edge node)
   and kept for 7 days.

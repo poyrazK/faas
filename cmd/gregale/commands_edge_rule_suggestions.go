@@ -15,10 +15,19 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
-const edgeRuleSuggestUsage = "usage: gregale edge-rules suggest [--app <slug>]"
+const edgeRuleSuggestUsage = "usage: gregale edge-rules suggest [--app <slug>] [--rate-limits [--range <window>] [--dry-run --candidate-rps <n> [--candidate-burst <n>]]]"
 
-// cmdEdgeRulesSuggest lists suggested protection recipes for an app.
+// cmdEdgeRulesSuggest lists suggested protection recipes for an app. With
+// --rate-limits it lists per-route rate limits instead, as
+// `throttle-suggestions` does (ADR-20261026145832: one suggest command).
 func cmdEdgeRulesSuggest(args []string) int {
+	if rest, ok := takeBoolFlag(args, "rate-limits"); ok {
+		app, rest, err := takeAppTarget(rest)
+		if err != nil {
+			return printErr("Could not resolve app slug", fmt.Errorf("pass --app <slug> or run inside a linked project: %w", err))
+		}
+		return cmdThrottleSuggestions(append([]string{app}, rest...))
+	}
 	fs := newFlagSet("edge-rules suggest", flag.ContinueOnError)
 	appFlag := fs.String("app", "", "app slug (defaults to linked project context)")
 	if err := fs.Parse(args); err != nil {
@@ -46,8 +55,9 @@ func cmdEdgeRulesSuggest(args []string) int {
 	if jsonOutput {
 		return jsonOut(writeJSON(out))
 	}
+	rateLimits := fmt.Sprintf("Per-route rate limits: gregale edge rule suggest --app %s --rate-limits\n", slug)
 	if len(out.Suggestions) == 0 {
-		_, _ = fmt.Fprintf(osStdout, "No suggested protections for %s from the last %s of traffic.\n  Browse every recipe: gregale edge-rules recipes\n", slug, out.Window)
+		_, _ = fmt.Fprintf(osStdout, "No suggested protections for %s from the last %s of traffic.\n  Browse every recipe: gregale edge-rules recipes\n%s", slug, out.Window, rateLimits)
 		return 0
 	}
 	_, _ = fmt.Fprintf(osStdout, "Suggested protections for %s, from the last %s of traffic:\n\n", slug, out.Window)
@@ -59,6 +69,7 @@ func cmdEdgeRulesSuggest(args []string) int {
 		}
 		_, _ = fmt.Fprintln(osStdout)
 	}
+	_, _ = fmt.Fprint(osStdout, rateLimits)
 	return 0
 }
 

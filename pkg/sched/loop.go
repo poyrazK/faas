@@ -104,6 +104,8 @@ type Loop struct {
 	// queuePushLanes holds each push-queue trigger's lane allowance
 	// (ADR-972). In memory and per schedd; a restart ramps from one lane.
 	queuePushLanes queuePushLaneAllowance
+	// brokerLanes tracks broker trigger lanes and app owners (ADR-20261027162741).
+	brokerLanes brokerLanes
 	// triggerSecretIdentities opens Kafka credentials only in the
 	// short-lived trigger copy passed to a poller factory. Current and
 	// previous identities coexist here during host-key rotation.
@@ -130,6 +132,9 @@ type Loop struct {
 	eventFanoutLastPrune        time.Time
 	eventFanoutHistoryLastPrune time.Time
 	eventRecipientClaims        bool
+	// eventRoutingHealthAt is the last routing health read; the fanout sweep
+	// runs on one work-pool slot, so it needs no lock.
+	eventRoutingHealthAt time.Time
 	// eventRoutingPaused remembers the events kill switch state for its log.
 	eventRoutingPaused    bool
 	now                   func() time.Time
@@ -836,6 +841,7 @@ func (l *Loop) Run(ctx context.Context) error {
 		db.NotifyOperatorIntent,
 		db.NotifyProfileCapture,         // ADR-1155: on-demand profile capture queued by apid.
 		db.NotifyInstanceFailureRelayed, // issue #3359: vmmd reports relayed by the hosting schedd to the app's owner.
+		db.NotifyFrameworkReadyRelayed,  // Hunt 14 H14-104: framework-ready receipts on the same route.
 	}, l.log)
 	if err != nil {
 		if ctx.Err() != nil {
@@ -1309,10 +1315,12 @@ func (l *Loop) Run(ctx context.Context) error {
 			// exclusively come from retentionT (the 1h ticker).
 			l.runRetention(ctx)
 			l.runDeadLetterRetention(ctx)
+			l.runCronHistoryRetention(ctx)
 			retentionFirst = nil
 		case <-retentionTick(retentionT):
 			l.runRetention(ctx)
 			l.runDeadLetterRetention(ctx)
+			l.runCronHistoryRetention(ctx)
 		case <-invocationsRetentionTick(invocationsRetentionT):
 			l.runInvocationsRetention(ctx)
 		case <-triggersRetentionTick(triggersRetentionT):
@@ -2373,6 +2381,12 @@ func (l *Loop) handleNotification(ctx context.Context, n db.Notification) {
 		// and relayed vmmd's terminal failure report. Non-owners discard.
 		if err := l.engine.HandleRelayedInstanceFailure(ctx, n.Payload); err != nil {
 			l.log.Warn("sched: relayed instance failure", "err", err)
+		}
+	case db.NotifyFrameworkReadyRelayed:
+		// Hunt 14 H14-104: a peer schedd hosts one of this schedd's instances
+		// and relayed vmmd's framework-ready receipt. Non-owners discard.
+		if err := l.engine.HandleRelayedFrameworkReady(ctx, n.Payload); err != nil {
+			l.log.Warn("sched: relayed framework ready", "err", err)
 		}
 	case db.NotifyAppDelete:
 		// ADR-098: app was deleted. Evict any in-flight wake for

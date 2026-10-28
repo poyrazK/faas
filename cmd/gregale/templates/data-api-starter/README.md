@@ -221,7 +221,7 @@ gregale deploy --create-only --path . --dockerfile --name notes-migrations
 gregale postgres attach notes-db notes-migrations --access migration --env MIGRATION_DATABASE_URL
 # Use the binding ID from the attachment receipt. Wait for state "ready".
 gregale postgres bindings get <binding-id>
-gregale app notes-migrations egress-ports add 5432
+gregale app egress-ports add notes-migrations 5432
 gregale deploy --name notes-migrations --dockerfile --wait --timeout 15m
 ```
 

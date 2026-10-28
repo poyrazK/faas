@@ -5054,9 +5054,11 @@ func (h *Handler) enforcePublicAuthBearer(w http.ResponseWriter, r *http.Request
 			"reason": reason,
 		})
 		rec.status = http.StatusUnauthorized
+		// RFC 6750 §3.1, and the same challenge the require_authn gate
+		// sends for an invalid key (issue #2707).
 		api.WriteProblem(w, api.NewProblem(http.StatusUnauthorized, api.CodeUnauthorized,
 			"Unauthorized", "the presented API key is not valid for this app").
-			WithHeader("WWW-Authenticate", `Bearer realm="apps"`))
+			WithHeader("WWW-Authenticate", `Bearer realm="apps", error="invalid_token"`))
 		h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
 		return false
 	}
@@ -7149,6 +7151,13 @@ haveApp:
 			}
 		}
 		if !pick.OK {
+			// ADR-977: every public request takes this branch once its routing
+			// is pinned (ADR-570), so a cold app starts restoring the services
+			// it calls here too. Deployment smokes and route probes verify a
+			// deployment and do not wake its dependencies.
+			if !deploymentSmoke && !routeProbe {
+				h.noteColdWake(r.Context(), app.ID)
+			}
 			// A snapshot candidate or zero-percent live deployment can be cold
 			// before its exact URL is visited. Admit one deployment-scoped
 			// instance; schedd remains authoritative for the bounded rollout
@@ -9630,15 +9639,37 @@ func publicWakeFailure(p *api.Problem) (*api.Problem, bool) {
 	return nil, false
 }
 
-// logWakeFailure keeps the detail publicWakeFailure withholds from visitors.
+// logWakeFailure keeps the detail publicWakeFailure withholds from visitors,
+// and the cause of an error writeWakeError answers with a bare "wake failed":
+// that 503 otherwise leaves no record of why (container qualification
+// 2026-10-27: a public-routing wake failed in 17 ms with nothing logged).
 func (h *Handler) logWakeFailure(appID string, err error) {
+	if h.log == nil || err == nil {
+		return
+	}
 	var prob *api.Problem
-	if h.log == nil || !errors.As(err, &prob) {
+	if !errors.As(err, &prob) {
+		if unclassifiedWakeError(err) && !errors.Is(err, context.Canceled) {
+			h.log.Warn("gateway: wake failed", "app_id", appID, "err", logsanitize.FieldAny(err))
+		}
 		return
 	}
 	if _, hidden := publicWakeFailure(prob); hidden {
 		h.log.Warn("gateway: wake failed", "app_id", appID, "code", prob.Code, "detail", logsanitize.Field(prob.Detail))
 	}
+}
+
+// unclassifiedWakeError reports an error writeWakeError has no answer for
+// but the generic "wake failed". Keep it in step with writeWakeError's cases.
+func unclassifiedWakeError(err error) bool {
+	for _, known := range []error{ErrConcurrencyQueueFull, ErrConcurrencyQueueWaitTimeout,
+		ErrConcurrencyQueueAdmissionUnavailable, ErrWakeQueueWaitTimeout, ErrQueueFull,
+		ErrWakeAdmissionQueueFull, ErrBootstrapAborted} {
+		if errors.Is(err, known) {
+			return false
+		}
+	}
+	return !isWakeConcurrencyDrop(err)
 }
 
 // fleetCapacityRetryAfterSeconds matches the gateway's own wake-queue

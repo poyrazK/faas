@@ -420,6 +420,11 @@ type instanceRecord struct {
 	// fileConsole marks a guest whose stdout and stderr are its console
 	// file, not a pipe into vmmd (console_file.go).
 	fileConsole bool
+	// oomKilled records the guest's ADR-121 workload OOM report so a startup
+	// that then fails is explained as app_runtime_oom; guarded by JailerVMM.mu.
+	oomKilled bool
+	oomPeakMB int
+	oomPlanMB int
 }
 
 // ringWriter is a thin io.Writer that forwards every Write call to the
@@ -4566,6 +4571,11 @@ func (v *JailerVMM) WaitBuilderReady(ctx context.Context, instance string, deadl
 // DeleteWarmSnapshot removes the memory and vmstate objects for a builder
 // warm capture. Deletion is idempotent because expiry and restore failure can
 // race a daemon restart or a previous cleanup attempt.
+//
+// A delete the backend refuses for good (GitHub Packages keeps versions past
+// its download threshold; some registries cannot delete at all) is final, as
+// imaged's snapshot GC treats it: the object stays for manual retention and
+// builderd does not retry it every sweep (issue #2673).
 func (v *JailerVMM) DeleteWarmSnapshot(ctx context.Context, storageKey, vmstateStorageKey string) error {
 	if v == nil || v.storage == nil {
 		return fmt.Errorf("vmm: delete warm snapshot: storage backend unavailable")
@@ -4576,7 +4586,13 @@ func (v *JailerVMM) DeleteWarmSnapshot(ctx context.Context, storageKey, vmstateS
 		if key == "" {
 			continue
 		}
-		if err := v.storage.Delete(ctx, key); err != nil && !storage.IsNotFound(err) {
+		err := v.storage.Delete(ctx, key)
+		switch {
+		case err == nil || storage.IsNotFound(err):
+		case errors.Is(err, storage.ErrDeleteQuarantined) || errors.Is(err, storage.ErrDeleteUnsupported):
+			slog.Warn("vmm: warm snapshot object kept; the backend refuses to delete it",
+				"key", key, "disposition", "remote_quarantine_manual_retention", "err", err)
+		default:
 			errs = append(errs, fmt.Errorf("delete %q: %w", key, err))
 		}
 	}
@@ -6917,6 +6933,50 @@ func (v *JailerVMM) cancelOnGuestStop(ctx context.Context, instance string) (con
 // waits for the Firecracker exit that usually follows a guest-init exit
 // (kernel panic, then VMM stop, ~1 s later).
 const guestExitReportGrace = 2 * time.Second
+
+// NoteWorkloadOOM records a guest's workload OOM report (ADR-121) for the
+// instance's startup classification. Reports for unknown instances are ignored.
+func (v *JailerVMM) NoteWorkloadOOM(instance string, peakMB, planMB int) {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	if rec := v.recs[instance]; rec != nil {
+		rec.oomKilled, rec.oomPeakMB, rec.oomPlanMB = true, peakMB, planMB
+	}
+}
+
+// startupOOMProblem explains a failed startup as app_runtime_oom when the
+// guest reported that the kernel killed a workload process for memory before
+// readiness (ADR-121 amendment). It returns nil when no OOM was reported.
+func (v *JailerVMM) startupOOMProblem(l Lease) *api.Problem {
+	v.mu.Lock()
+	rec := v.recs[l.Instance]
+	killed := rec != nil && rec.oomKilled
+	var peakMB, planMB int
+	if killed {
+		peakMB, planMB = rec.oomPeakMB, rec.oomPlanMB
+	}
+	v.mu.Unlock()
+	if !killed {
+		return nil
+	}
+	detail := "the kernel killed the app for running out of memory before it became ready"
+	switch {
+	case peakMB > 0 && planMB > 0:
+		detail += fmt.Sprintf(" (peak %d MB, plan %d MB)", peakMB, planMB)
+	case peakMB > 0:
+		detail += fmt.Sprintf(" (peak %d MB)", peakMB)
+	}
+	var lines []string
+	if ring := v.LogRing(l.Instance); ring != nil {
+		for _, line := range ring.Snapshot(1) {
+			lines = append(lines, line.Line)
+		}
+	}
+	if tail := workloadOutputTail(lines, 20); tail != "" {
+		detail += ": " + tail
+	}
+	return api.NewProblem(422, api.CodeAppRuntimeOOM, "app ran out of memory during startup", detail)
+}
 
 // guestExitedWithin reports whether the instance's Firecracker process exited
 // on its own, waiting at most grace. production-us hunt #8: a worker whose

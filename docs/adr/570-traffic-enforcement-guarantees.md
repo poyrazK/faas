@@ -159,6 +159,15 @@ table or row-lock recovery immediately. Neither path admits a local token or
 resets shared debt. Backends that cannot classify failures retain bounded
 consult backoff; caller cancellation does not open it.
 
+*Amendment 2026-10-28.* The app and account consume, including coalesced
+batches and their followers, has one second to complete; pre-auth and lease
+consults keep 250 ms. Connection acquisition stays bounded by 250 ms inside
+that budget, so a saturated pool still fails fast and opens the breaker.
+Before, one commit slower than 250 ms (a checkpoint or fsync stall, a
+row-lock wait) refused a customer request with `rate_limit_unavailable`/503
+even though the counter was healthy. A consume that does not finish within
+the budget still refuses; nothing is admitted unverified.
+
 ADR-104 consult coalescing preserves these rules for queued batches. Batch
 consumes and initial counter creation use SQLC, retain fractional refill and
 serialize replicas on the counter row. Negative elapsed time contributes no
@@ -1763,3 +1772,13 @@ Bounds and limits:
   consecutive releases have run with every member reporting the wiring, and
   not before rc.297. That is a separate change, with the release-compatibility
   tests updated to match.
+
+### Amendment: the binding guard is scoped to the hostnames a write changes (2026-10-27)
+
+[ADR 20261027163626](20261027163626-traffic-binding-guard-per-host.md)
+replaces the exclusive `gregale.traffic.global-routes.v1` lock with
+hierarchical per-name locks. The global key becomes their shared root. The
+guard analyses only hostnames whose claim changes, against the owned rules and
+the route candidates that can match them. The write-time guarantee, ceilings,
+error codes and the 2 s phase bound are unchanged. Until its switch is on, the
+sections above describe production.

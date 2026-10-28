@@ -130,8 +130,8 @@ var deliveryWriteMode sealdomain.WriteMode
 // previous twin once the seal_domains role stages them; nil until then.
 // apid is the account domain's reader: it opens MFA secrets, inbound
 // webhook signing secrets, billing connection keys, managed workflow plans,
-// PagerDuty acknowledgement secrets and GitLab, Slack and Linear
-// credentials with them.
+// PagerDuty acknowledgement secrets, GitLab, Slack and Linear credentials,
+// product email values and managed realtime credentials with them.
 var accountDomainIdentities []*age.X25519Identity
 
 // accountWriteMode picks the recipients of account values.
