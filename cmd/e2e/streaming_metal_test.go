@@ -310,7 +310,7 @@ func TestE2E_Streaming_Metal_PlanMatrix(t *testing.T) {
 		tc := tc
 		t.Run(string(tc.plan), func(t *testing.T) {
 			if tc.plan == api.PlanFree && !sharedRuntime {
-				t.Skip("a Node source app exceeds Free's 256 MB layer cap without the shared runtime (ADR-1500); set FAAS_E2E_SHARED_RUNTIME=1")
+				t.Skip("a Node source app exceeds Free's 256 MB layer cap without the shared runtime (ADR-1500); FAAS_E2E_SHARED_RUNTIME=0 turned it off")
 			}
 			key := h.SeedAccount(context.Background(), tc.plan)
 			slug := "stream-matrix-" + string(tc.plan) + "-" + randHexSuffix()

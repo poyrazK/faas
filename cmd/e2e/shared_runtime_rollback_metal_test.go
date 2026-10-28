@@ -1,13 +1,18 @@
 //go:build metal
 
 // shared_runtime_rollback_metal_test.go — ADR-1500 slice 4 acceptance
-// (ADR-20261028090000): rollback across the two Node app layer kinds.
+// (ADR-20261028090000): rollback across Node app bases and layer kinds.
 //
-// A full-layer deployment (base-minimal drive0, the toolchain in drive1) and
-// a shared-runtime deployment (runner-node22 drive0, an /app-only drive1)
-// of one app must each serve after a rollback onto it, from a cold boot and
-// from a snapshot restore. Each deployment boots the base it recorded, not
-// the app's current one.
+// One app gets three deployments:
+//   - legacy: Node 22 keeps its own base (base-minimal drive0, the toolchain
+//     in drive1), as every deployment before the shared runtime did;
+//   - fallback: Node 24 with an npm lifecycle hook is ineligible, so its
+//     drive1 keeps the toolchain above the runner-node24 drive0;
+//   - shared: Node 24, an /app-only drive1 on the runner-node24 drive0.
+//
+// Each serves when deployed, and legacy and shared each serve after a
+// rollback onto them, from a cold boot and from a snapshot restore: a
+// deployment boots the base it recorded, not the app's current one.
 package e2e_test
 
 import (
@@ -26,19 +31,21 @@ import (
 )
 
 const (
-	fullLayerBody     = "hello from faas (full layer)"
-	sharedRuntimeBody = "hello from faas (shared runtime)"
+	legacyBody   = "hello from faas (own base)"
+	fallbackBody = "hello from faas (runner fallback)"
+	sharedBody   = "hello from faas (shared runtime)"
 )
 
-// layerKindFixture is a Node 22 app answering body. A prestart hook keeps the
-// build on the full-layer path (sharedruntime.ReasonNPMLifecycleHooks).
-func layerKindFixture(t *testing.T, body string, prestart bool) []byte {
+// layerKindFixture is a Node app of the given major answering body. A
+// prestart hook makes it ineligible for the /app-only layer
+// (sharedruntime.ReasonNPMLifecycleHooks).
+func layerKindFixture(t *testing.T, node, body string, prestart bool) []byte {
 	t.Helper()
 	scripts := `"start": "node index.js"`
 	if prestart {
 		scripts += `, "prestart": "true"`
 	}
-	pkg := `{"name": "faas-layer-kind", "version": "1.0.0", "private": true, "engines": {"node": "22"}, "scripts": {` + scripts + `}, "dependencies": {}}` + "\n"
+	pkg := `{"name": "faas-layer-kind", "version": "1.0.0", "private": true, "engines": {"node": "` + node + `"}, "scripts": {` + scripts + `}, "dependencies": {}}` + "\n"
 	index := `require('http').createServer((req, res) => {
   res.writeHead(200, {'content-type': 'text/plain'});
   res.end('` + body + `\n');
@@ -72,7 +79,7 @@ func TestSharedRuntimeRollbackMetal(t *testing.T) {
 	t.Cleanup(func() { registry.Close() })
 	builderImg, _ := e2etest.HelloImage("onebox-faas/builder-base", "")
 	e2etest.OverrideBuilderBase(t, registry.AddImage("onebox-faas/builder-base", builderImg))
-	deployBaseImg, _ := e2etest.BaseLayerImage("onebox-faas/deploy-base", sharedRuntimeBody)
+	deployBaseImg, _ := e2etest.BaseLayerImage("onebox-faas/deploy-base", sharedBody)
 	_ = registry.AddImage("onebox-faas/deploy-base", deployBaseImg)
 	e2etest.OverrideDeployBase(t, registry.Host()+"/onebox-faas/deploy-base:latest")
 
@@ -163,46 +170,60 @@ func TestSharedRuntimeRollbackMetal(t *testing.T) {
 		}
 	}
 
-	var full, shared state.Deployment
-	t.Run("full-layer-deploy", func(t *testing.T) {
-		full = deploy(t, layerKindFixture(t, fullLayerBody, true), "aaaaaaaa-0000-4000-8000-000000000001")
-		if full.RuntimeBase != "" {
-			t.Fatalf("full-layer deployment runtime_base = %q, want the app's own base", full.RuntimeBase)
+	var legacy, shared state.Deployment
+	t.Run("legacy-own-base", func(t *testing.T) {
+		legacy = deploy(t, layerKindFixture(t, "22", legacyBody, false), "aaaaaaaa-0000-4000-8000-000000000001")
+		if legacy.RuntimeBase != "" {
+			t.Fatalf("Node 22 deployment runtime_base = %q, want the app's own base", legacy.RuntimeBase)
 		}
 		park(t)
-		wake(t, fullLayerBody, "restore")
-		park(t)
-	})
-	t.Run("shared-runtime-deploy", func(t *testing.T) {
-		if full.ID == "" {
-			t.Skip("full-layer deployment did not go live")
-		}
-		shared = deploy(t, layerKindFixture(t, sharedRuntimeBody, false), "aaaaaaaa-0000-4000-8000-000000000002")
-		if shared.RuntimeBase != "node22" {
-			t.Fatalf("shared deployment runtime_base = %q, want node22", shared.RuntimeBase)
-		}
-		if full.RootfsBytes > 0 && shared.RootfsBytes*4 > full.RootfsBytes {
-			t.Errorf("shared app layer %d bytes is not well below the full layer's %d", shared.RootfsBytes, full.RootfsBytes)
-		}
-		t.Logf("app layer bytes: full=%d shared=%d", full.RootfsBytes, shared.RootfsBytes)
-		park(t)
-		wake(t, sharedRuntimeBody, "restore")
+		wake(t, legacyBody, "restore")
 		park(t)
 	})
-	t.Run("rollback-to-full-layer", func(t *testing.T) {
-		if shared.ID == "" {
-			t.Skip("shared-runtime deployment did not go live")
+	t.Run("fallback-on-runner", func(t *testing.T) {
+		fallback := deploy(t, layerKindFixture(t, "24", fallbackBody, true), "aaaaaaaa-0000-4000-8000-000000000002")
+		if fallback.RuntimeBase != "node24" {
+			t.Fatalf("ineligible Node 24 deployment runtime_base = %q, want node24", fallback.RuntimeBase)
 		}
-		rollback(t, full)
 		park(t)
-		coldThenRestore(t, full, fullLayerBody)
+		wake(t, fallbackBody, "restore")
+		park(t)
+	})
+	t.Run("shared-runtime", func(t *testing.T) {
+		shared = deploy(t, layerKindFixture(t, "24", sharedBody, false), "aaaaaaaa-0000-4000-8000-000000000003")
+		if shared.RuntimeBase != "node24" {
+			t.Fatalf("shared deployment runtime_base = %q, want node24", shared.RuntimeBase)
+		}
+		// Every app layer carries guest-init as /sbin/init (rootfs.Build).
+		// Beyond that the fixture's /app is a few files, while Railpack's mise
+		// Node alone is ~200 MB, so a layer within 8 MiB of guest-init holds
+		// only /app.
+		guestInit, err := os.Stat(os.Getenv("FAAS_GUEST_INIT"))
+		if err != nil {
+			t.Fatalf("stat FAAS_GUEST_INIT: %v", err)
+		}
+		if limit := guestInit.Size() + 8<<20; shared.RootfsBytes <= 0 || shared.RootfsBytes > limit {
+			t.Fatalf("app layer = %d bytes, want guest-init (%d) plus an /app-only tree, at most %d", shared.RootfsBytes, guestInit.Size(), limit)
+		}
+		t.Logf("app layer bytes: own base=%d shared=%d", legacy.RootfsBytes, shared.RootfsBytes)
+		park(t)
+		wake(t, sharedBody, "restore")
+		park(t)
+	})
+	t.Run("rollback-to-own-base", func(t *testing.T) {
+		if legacy.ID == "" || shared.ID == "" {
+			t.Skip("an earlier deployment did not go live")
+		}
+		rollback(t, legacy)
+		park(t)
+		coldThenRestore(t, legacy, legacyBody)
 	})
 	t.Run("rollback-to-shared-runtime", func(t *testing.T) {
-		if shared.ID == "" {
-			t.Skip("shared-runtime deployment did not go live")
+		if legacy.ID == "" || shared.ID == "" {
+			t.Skip("an earlier deployment did not go live")
 		}
 		rollback(t, shared)
 		park(t)
-		coldThenRestore(t, shared, sharedRuntimeBody)
+		coldThenRestore(t, shared, sharedBody)
 	})
 }

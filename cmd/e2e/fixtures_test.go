@@ -340,14 +340,15 @@ http.createServer((req, res) => {
 // setTimeout clamp (≈24.8 days as Int32 ms); the metal tests pass
 // realistic durations (200 ms ≤ interval ≤ 1000 ms) way inside that
 // range. The fixture binds $PORT, the port the host routes to (see
-// NodeFixtureHealthcheck).
+// NodeFixtureHealthcheck). It declares Node 24 so it builds on the shared
+// glibc runner base and fits Free's layer cap (ADR-20261028090000).
 func NodeFixtureStreaming(t *testing.T) []byte {
 	t.Helper()
 	const pkgJSON = `{
   "name": "faas-fixture-node-streaming",
   "version": "1.0.0",
   "private": true,
-  "engines": {"node": "22"},
+  "engines": {"node": "24"},
   "scripts": {"start": "node index.js"},
   "dependencies": {}
 }

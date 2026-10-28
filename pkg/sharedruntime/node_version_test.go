@@ -40,3 +40,10 @@ func TestNodeRuntimeForSpec(t *testing.T) {
 		}
 	}
 }
+
+// adr: 20261028090000 — runner-node22 is Alpine; glibc builds never land on it.
+func TestMuslRunner(t *testing.T) {
+	if !MuslRunner(RuntimeNode22) || MuslRunner(RuntimeNode24) || MuslRunner("") {
+		t.Fatalf("MuslRunner: node22=%v node24=%v empty=%v; want true false false", MuslRunner(RuntimeNode22), MuslRunner(RuntimeNode24), MuslRunner(""))
+	}
+}

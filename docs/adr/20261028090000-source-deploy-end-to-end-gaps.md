@@ -54,14 +54,24 @@ push and a tarball from the edge to a serving app and found six gaps:
    still ends a build that never finds room (`deployment_queue_timeout`).
    imaged's 90 % eviction threshold is unchanged: it is spec-level snapshot
    policy and needs its own decision.
-2. **The shared runtime is on by default.** `FAAS_SOURCE_APP_SHARED_RUNTIME`
-   becomes an opt-out (`0`). The ADR-1500 acceptance runs in
-   `TestSharedRuntimeRollbackMetal` (a full-layer and a shared-runtime
-   deployment of one app, each serving after a rollback onto it from a cold
-   boot and from a snapshot restore) and in `TestSourceDeployWakeMetal`
-   (now on the shared base by default; `FAAS_E2E_SHARED_RUNTIME=0` runs the
-   full-layer path). The Free plan case of
-   `TestE2E_Streaming_Metal_PlanMatrix` covers the 256 MB cap.
+2. **The shared runtime is on by default, on glibc runner bases only.**
+   `FAAS_SOURCE_APP_SHARED_RUNTIME` becomes an opt-out (`0`). builderd picks
+   the runner base before the build, and guest-init's eligibility verdict
+   comes after it, so an ineligible app ships its own toolchain above the
+   runner base. Railpack's mise Node and any native addon are glibc builds.
+   runner-node22 is Alpine (musl), and the first acceptance run failed there:
+   an app with an npm lifecycle hook crashed with
+   `node: cannot execute: required file not found`. Node 22 apps
+   therefore keep their own base (`sharedruntime.MuslRunner`). Undeclared,
+   lower-bound and Node 24 declarations use the Debian runner-node24. A Node
+   22 app on Free still needs Node 24 to fit the 256 MB cap.
+   `TestSharedRuntimeRollbackMetal` is the ADR-1500 acceptance. One app has
+   three deployments: a Node 22 app on its own base, an ineligible Node 24
+   app on the runner base, and an eligible `/app`-only Node 24 app. All three
+   serve. The own-base and shared deployments each serve after a rollback
+   onto them, from a cold boot and from a snapshot restore. The Free plan case
+   of `TestE2E_Streaming_Metal_PlanMatrix` (fixture now Node 24) covers the
+   256 MB cap.
 3. **In-tree links deploy.** A symlink's target resolves relative to the
    link's directory, a hard link's target is an archive path
    (`tarball.LinkTarget`); only absolute or escaping targets are refused.
@@ -96,8 +106,9 @@ push and a tarball from the edge to a serving app and found six gaps:
   gives back cache space first. A node that stays full for six hours fails
   its queued builds with the queue timeout code.
 - Node source apps on every plan, Free included, deploy with an `/app`-only
-  layer when eligible. Apps that declare system packages, npm lifecycle
-  hooks or other ineligible traits keep the full layer.
+  layer when eligible and not pinned to Node 22. Apps that declare system
+  packages, npm lifecycle hooks or other ineligible traits keep their
+  toolchain in the layer.
 - Pushes and tarballs with ordinary repository links deploy. A link out of
   the repository builds as if its target were missing.
 - A burst of pushes builds only the newest revision once its turn comes.
@@ -108,7 +119,8 @@ push and a tarball from the edge to a serving app and found six gaps:
   `TestProcessOne_BuildDiskFullRequeuesTheBuild`,
   `TestReclaimDependencyCachesFreesOldestFirst`.
 - `TestSharedRuntimeRollbackMetal`, `TestSourceDeployWakeMetal` and
-  `TestE2E_Streaming_Metal_PlanMatrix` on the n2 metal host.
+  `TestE2E_Streaming_Metal_PlanMatrix` on the n2 metal host;
+  `TestSharedSourceAppRuntime`, `TestMuslRunner`.
 - `TestLinkTarget`, `TestExtractTarGz_InTreeLinksAreSkipped`,
   `TestExtractStreamCopiesInTreeLinks`,
   `TestExtractStreamLinkCopiesCountAgainstTheCaps`,
