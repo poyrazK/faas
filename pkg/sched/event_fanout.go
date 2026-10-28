@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
@@ -543,6 +544,7 @@ func (l *Loop) runEventFanoutSweep(ctx context.Context) {
 	adoption, adopting := store.(state.PublishedEventRecipientAdoptionClaimStore)
 	adopting = adopting && l.eventRecipientClaims && recipientSupported && workflowSupported
 	batches, batched := store.(state.PublishedEventAdoptionBatchClaimStore)
+	renewer, renewing := store.(state.PublishedEventClaimRenewalStore)
 	for claimed := 0; claimed < eventFanoutRecoveryBatch; {
 		var works []*state.PublishedEventWork
 		var err error
@@ -570,13 +572,23 @@ func (l *Loop) runEventFanoutSweep(ctx context.Context) {
 		if len(works) == 0 {
 			return
 		}
+		var next atomic.Int64
+		stop := func() {}
+		if renewing {
+			stop = l.keepEventClaims(ctx, func(ctx context.Context, now time.Time) error {
+				return renewer.RenewPublishedEventClaims(ctx, works[next.Load():], now)
+			})
+		}
 		for i, work := range works {
+			next.Store(int64(i))
 			if ctx.Err() != nil {
+				stop()
 				l.releaseEventAdoptionClaims(ctx, batches, works[i:])
 				return
 			}
 			l.routeClaimedEventReceipt(ctx, store, work, l.eventFanoutNow())
 		}
+		stop()
 		claimed += len(works)
 	}
 }
@@ -689,6 +701,7 @@ func (l *Loop) runEventRecipientSweep(ctx context.Context) {
 		return
 	}
 	batches, batched := l.engine.store.(state.PublishedEventRecipientBatchClaimStore)
+	renewer, renewing := l.engine.store.(state.PublishedEventClaimRenewalStore)
 	for routed := 0; routed < eventFanoutRecoveryBatch; {
 		var works []*state.PublishedEventRecipientWork
 		var err error
@@ -711,13 +724,23 @@ func (l *Loop) runEventRecipientSweep(ctx context.Context) {
 		if len(works) == 0 {
 			return
 		}
+		var next atomic.Int64
+		stop := func() {}
+		if renewing {
+			stop = l.keepEventClaims(ctx, func(ctx context.Context, now time.Time) error {
+				return renewer.RenewPublishedEventRecipientClaims(ctx, works[next.Load():], now)
+			})
+		}
 		for i, work := range works {
+			next.Store(int64(i))
 			if ctx.Err() != nil {
+				stop()
 				l.releaseEventRecipientClaims(ctx, batches, works[i:])
 				return
 			}
 			l.routeEventRecipient(ctx, store, work, l.eventFanoutNow())
 		}
+		stop()
 		routed += len(works)
 	}
 }

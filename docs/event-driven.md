@@ -1139,7 +1139,8 @@ notification destinations keep their existing routing paths. See
 boundary. Handler side effects still require application deduplication.
 
 Independent recipient routing is enabled by default (ADR-647). Each captured
-candidate has its own five-minute lease and backoff from five seconds to five
+candidate has its own one-minute lease, renewed while a scheduler is still
+routing it (ADR-20261028131500), and backoff from five seconds to five
 minutes. A terminal recipient can be replayed while its siblings are routing
 or waiting to retry. Each replay gets a fresh twelve-attempt routing budget;
 the visible attempt count and history remain cumulative. Successful siblings

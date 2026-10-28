@@ -4,7 +4,7 @@
   "sets": [
     {
       "id": "gregale-core-v1",
-      "revision": "f15470513c2f78a887a1c2b83b1c8632c0cf8c6e22b87a86465efd3e1881bed5",
+      "revision": "f5bfcc887fda219127ac60a659d732dd12c15632b99ea89317755547f4ab2c01",
       "files": [
         "faas.rules.yml"
       ],
@@ -4339,6 +4339,19 @@
           }
         },
         {
+          "id": "b3dc61873e3d10d6b7adeb17ff5ddcda72ab82658a17845dedca39a71177e47b",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_hosted_mcp",
+          "rule_name": "FaasHostedMCPRestarting",
+          "definition": {
+            "expression_hash": "47a9fef33a94044a1fd5bcbe5cc1b5a92519593ab72edc261c62b42ec8332544",
+            "labels_hash": "784d73869cf62e54cb8ca9304e622e65d889cbd31445e4f1d0fac59e3ff8db0b",
+            "for_seconds": 300,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "295d204c4e957a2ab49629fb3cb7a89453e4564fdf30ca32d8522331dcdeac19"
+          }
+        },
+        {
           "id": "b4a5d2962a8374a7d3854749ec5593efcc8f2749e599563aee63425abd61cbd5",
           "file_name": "faas.rules.yml",
           "group_name": "faas_billing",
@@ -5587,6 +5600,19 @@
           }
         },
         {
+          "id": "e8ed153f15f247670c3b0bc092a5638c390dc61312d8c25b8eef70d7074b0a75",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_hosted_mcp",
+          "rule_name": "FaasHostedMCPDown",
+          "definition": {
+            "expression_hash": "cf3a025a33d3a52f2ef3db7333257bcb8d684d30d1a84879c69340686d4c8c32",
+            "labels_hash": "784d73869cf62e54cb8ca9304e622e65d889cbd31445e4f1d0fac59e3ff8db0b",
+            "for_seconds": 300,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "60f8c857195d84e8201cc1451d8dea66cb61dd2ce5eb0f77a0e889130bca6c6a"
+          }
+        },
+        {
           "id": "ea056e3776cc86433a18ea03176655d533b11e380a19b5fdf7e9138331410714",
           "file_name": "faas.rules.yml",
           "group_name": "faas_udp_ingress",
@@ -5779,6 +5805,19 @@
             "for_seconds": 0,
             "keep_firing_for_seconds": 0,
             "fingerprint": "34ee454340b8d52de73cd8921edf2ee9205c812557a62ba4f6942a5483008381"
+          }
+        },
+        {
+          "id": "f1a53d86d72453c2f063501c5cf287722183544cfe01662a43bfbc8bb76cc6b0",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_hosted_mcp",
+          "rule_name": "FaasHostedMCPConnectionsNearCapacity",
+          "definition": {
+            "expression_hash": "b89941f4bd2f817ba1a9ee719b90f304f79f7db0477f165a3efb9271ee98b47e",
+            "labels_hash": "7e98bbc44375db33a16bbbf4530a264744b84d41fec981ba33801de88580949a",
+            "for_seconds": 1800,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "121e8e71943f70cd5e27329f2241b770907aed43cb23e7a052e5bd6c297050dd"
           }
         },
         {
@@ -6136,7 +6175,7 @@
     },
     {
       "id": "gregale-full-v1",
-      "revision": "4b548c694f95c649bebaf9b73d61137cf6614edcfc99f3f90fd9d9fe6581f7bc",
+      "revision": "fc5dcdb5db845d44878ff8283e249f677e82c95c2b8e16f5b22daffc5610edd8",
       "files": [
         "bridge.rules.yml",
         "data_placement.yaml",
@@ -10696,6 +10735,19 @@
           }
         },
         {
+          "id": "b3dc61873e3d10d6b7adeb17ff5ddcda72ab82658a17845dedca39a71177e47b",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_hosted_mcp",
+          "rule_name": "FaasHostedMCPRestarting",
+          "definition": {
+            "expression_hash": "47a9fef33a94044a1fd5bcbe5cc1b5a92519593ab72edc261c62b42ec8332544",
+            "labels_hash": "784d73869cf62e54cb8ca9304e622e65d889cbd31445e4f1d0fac59e3ff8db0b",
+            "for_seconds": 300,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "295d204c4e957a2ab49629fb3cb7a89453e4564fdf30ca32d8522331dcdeac19"
+          }
+        },
+        {
           "id": "b4a5d2962a8374a7d3854749ec5593efcc8f2749e599563aee63425abd61cbd5",
           "file_name": "faas.rules.yml",
           "group_name": "faas_billing",
@@ -11983,6 +12035,19 @@
           }
         },
         {
+          "id": "e8ed153f15f247670c3b0bc092a5638c390dc61312d8c25b8eef70d7074b0a75",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_hosted_mcp",
+          "rule_name": "FaasHostedMCPDown",
+          "definition": {
+            "expression_hash": "cf3a025a33d3a52f2ef3db7333257bcb8d684d30d1a84879c69340686d4c8c32",
+            "labels_hash": "784d73869cf62e54cb8ca9304e622e65d889cbd31445e4f1d0fac59e3ff8db0b",
+            "for_seconds": 300,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "60f8c857195d84e8201cc1451d8dea66cb61dd2ce5eb0f77a0e889130bca6c6a"
+          }
+        },
+        {
           "id": "ea056e3776cc86433a18ea03176655d533b11e380a19b5fdf7e9138331410714",
           "file_name": "faas.rules.yml",
           "group_name": "faas_udp_ingress",
@@ -12188,6 +12253,19 @@
             "for_seconds": 0,
             "keep_firing_for_seconds": 0,
             "fingerprint": "34ee454340b8d52de73cd8921edf2ee9205c812557a62ba4f6942a5483008381"
+          }
+        },
+        {
+          "id": "f1a53d86d72453c2f063501c5cf287722183544cfe01662a43bfbc8bb76cc6b0",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_hosted_mcp",
+          "rule_name": "FaasHostedMCPConnectionsNearCapacity",
+          "definition": {
+            "expression_hash": "b89941f4bd2f817ba1a9ee719b90f304f79f7db0477f165a3efb9271ee98b47e",
+            "labels_hash": "7e98bbc44375db33a16bbbf4530a264744b84d41fec981ba33801de88580949a",
+            "for_seconds": 1800,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "121e8e71943f70cd5e27329f2241b770907aed43cb23e7a052e5bd6c297050dd"
           }
         },
         {

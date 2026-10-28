@@ -1215,6 +1215,8 @@ type Querier interface {
 	EventRecipientLockReceipt(ctx context.Context, db DBTX, id int64) (int64, error)
 	// Returns an unprocessed batch claim as if it had not been made.
 	EventRecipientReleaseClaim(ctx context.Context, db DBTX, arg EventRecipientReleaseClaimParams) (int64, error)
+	// ADR-20261028131500: a sweep renews the recipient claims it still holds.
+	EventRecipientRenewClaims(ctx context.Context, db DBTX, arg EventRecipientRenewClaimsParams) (int64, error)
 	EventRecipientReplay(ctx context.Context, db DBTX, arg EventRecipientReplayParams) (int64, error)
 	EventRecipientReplayCandidates(ctx context.Context, db DBTX, arg EventRecipientReplayCandidatesParams) ([]EventRecipientReplayCandidatesRow, error)
 	EventRecipientReplayGenerationGuard(ctx context.Context, db DBTX, arg EventRecipientReplayGenerationGuardParams) (EventRecipientReplayGenerationGuardRow, error)
@@ -1378,6 +1380,10 @@ type Querier interface {
 	EventRoutingRecordProgress(ctx context.Context, db DBTX, arg EventRoutingRecordProgressParams) (string, error)
 	// Returns an unprocessed adoption claim as if it had not been made.
 	EventRoutingReleaseAdoptionClaim(ctx context.Context, db DBTX, arg EventRoutingReleaseAdoptionClaimParams) (int64, error)
+	// ADR-20261028131500: a sweep renews the receipt claims it still holds; a
+	// claim another worker took since has a new token and stays. The arrays
+	// are parallel: the select list unnests them in step.
+	EventRoutingRenewReceiptClaims(ctx context.Context, db DBTX, arg EventRoutingRenewReceiptClaimsParams) (int64, error)
 	EventRoutingRetryLockTarget(ctx context.Context, db DBTX, arg EventRoutingRetryLockTargetParams) (EventSubscription, error)
 	EventRoutingRetrySet(ctx context.Context, db DBTX, arg EventRoutingRetrySetParams) error
 	EventRoutingRetryTarget(ctx context.Context, db DBTX, arg EventRoutingRetryTargetParams) (EventSubscription, error)
@@ -3455,6 +3461,13 @@ type Querier interface {
 	// newest excludes rollback targets, which are older than what they replaced.
 	// An immediate release may not stamp rollout_started_at; its baseline then
 	// ends when it completed.
+	// The predecessor is the release a plain rollback returns to
+	// (LatestRetainedRollbackDeployment): the one that served most recently, never
+	// a canary candidate aborted before it completed. Ordered by created_at, a
+	// canary aborted between v1 and v3 (retired as superseded when v3 completed)
+	// or a build superseded before it went live was chosen, so the watch compared
+	// v3 with a release that never served and rolled back to it (release review
+	// 2026-10-28).
 	ListPostReleaseWatchCandidates(ctx context.Context, db DBTX, arg ListPostReleaseWatchCandidatesParams) ([]ListPostReleaseWatchCandidatesRow, error)
 	ListProductionDeadLetterEvents(ctx context.Context, db DBTX, arg ListProductionDeadLetterEventsParams) ([]DeadLetterEvent, error)
 	ListProductionLifecycleHistory(ctx context.Context, db DBTX, arg ListProductionLifecycleHistoryParams) ([][]byte, error)
