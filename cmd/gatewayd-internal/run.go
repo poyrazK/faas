@@ -1306,9 +1306,14 @@ type runDeps struct {
 	// session cookie. cmd/apid shares the same construct; the two
 	// daemons are independent processes so the AEAD keys are loaded
 	// separately per daemon. nil in tests.
-	sessions           *session.Manager
-	trafficDeadlines   *trafficdeadline.Signer
-	trafficRevocations *trafficrevocation.Registry
+	sessions *session.Manager
+	// edgeChallengeSecret signs kind=challenge tokens and passes, and
+	// edgeChallengeKeySource says where it came from (ADR-831 amendment 17).
+	// runWithDeps signs with the session key when it is nil.
+	edgeChallengeSecret    []byte
+	edgeChallengeKeySource string
+	trafficDeadlines       *trafficdeadline.Signer
+	trafficRevocations     *trafficrevocation.Registry
 	// publicRoutingView admits ordinary public requests (ADR-20261027085556);
 	// runWithDeps builds it when nil.
 	publicRoutingView *publicrouting.Registry
@@ -2305,6 +2310,10 @@ func runOnPool(ctx context.Context, log *slog.Logger, pool *pgxpool.Pool) error 
 		return fmt.Errorf("gatewayd: session manager init failed")
 	}
 	deps.sessions = sessions
+	deps.edgeChallengeSecret, deps.edgeChallengeKeySource, err = edgeChallengeSecret(osGetenv, sessions.BindingKey())
+	if err != nil {
+		return fmt.Errorf("gatewayd: %w", err)
+	}
 	deps.trafficDeadlines, err = loadTrafficDeadlineSigner(osGetenv)
 	if err != nil {
 		return fmt.Errorf("gatewayd: traffic deadline signer init: %w", err)
@@ -3052,10 +3061,19 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		log.Warn("edge waf in-path checks disabled by FAAS_EDGE_WAF_INLINE_DISABLED; warn and block rules only observe")
 	}
 	// ADR-831 amendment 7 — kind=challenge. Tokens and passes are signed
-	// with a key derived from the session key every gateway shares, so a
-	// pass issued by one gateway is honoured by all.
+	// with a key every gateway must share, so a pass issued by one gateway
+	// is honoured by all: the fleet key, else this host's session key
+	// (amendment 17). gateway_edge_challenge_key_info lets the fleet check
+	// that they agree.
 	if deps.sessions != nil {
-		handler.WithEdgeChallengeKey(gateway.DeriveEdgeChallengeKey(deps.sessions.BindingKey()))
+		secret, source := deps.edgeChallengeSecret, deps.edgeChallengeKeySource
+		if secret == nil {
+			secret, source = deps.sessions.BindingKey(), edgeChallengeKeySession
+		}
+		key := gateway.DeriveEdgeChallengeKey(secret)
+		handler.WithEdgeChallengeKey(key)
+		deps.metrics.SetEdgeChallengeKey(gateway.EdgeChallengeKeyID(key), source)
+		log.Info("edge challenge signing key", "source", source, "key_id", gateway.EdgeChallengeKeyID(key))
 	}
 	// Issue #561 / ADR-091 PR 5 — arm the per-rule JWT verifier.
 	// nil-safe: deps.edgeJWKSAdapter nil falls through
