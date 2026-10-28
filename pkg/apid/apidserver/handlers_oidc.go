@@ -193,6 +193,16 @@ func (a accountLookupAdapter) AccountByOIDCRepositoryBinding(ctx context.Context
 	return resolver.AccountByOIDCRepositoryBinding(ctx, issuerURL, subject)
 }
 
+// GitHubRepositoryIDsForOIDCSubject satisfies oidc.RepositoryIDLookup when the
+// store records the immutable IDs of a GitHub repository binding.
+func (a accountLookupAdapter) GitHubRepositoryIDsForOIDCSubject(ctx context.Context, accountID, issuerURL, subject string) (int64, int64, error) {
+	resolver, ok := a.store.(state.OIDCRepositoryIDResolver)
+	if !ok {
+		return 0, 0, nil
+	}
+	return resolver.GitHubRepositoryIDsForOIDCSubject(ctx, accountID, issuerURL, subject)
+}
+
 // auditorAsOIDCEmitter wraps *auditor as the narrow
 // pkg/oidc.AuditEmitter interface. The auditor's Emit is the same
 // signature (kind, accountID, data); the adapter is a single

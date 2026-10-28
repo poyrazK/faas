@@ -27879,6 +27879,37 @@ func (q *Queries) GetWorkflowScheduleOccurrenceForReplay(ctx context.Context, db
 	return i, err
 }
 
+const gitHubRepositoryIDsBoundToAccount = `-- name: GitHubRepositoryIDsBoundToAccount :one
+select coalesce(max(a.github_owner_id), 0)::bigint as owner_id,
+       coalesce(max(a.github_repo_id), 0)::bigint as repo_id
+from apps a
+where a.account_id = $1::uuid
+  and lower(a.github_repo_full_name) = lower($2::text)
+  and a.deleted_at is null
+`
+
+type GitHubRepositoryIDsBoundToAccountParams struct {
+	AccountID    pgtype.UUID
+	RepoFullName string
+}
+
+type GitHubRepositoryIDsBoundToAccountRow struct {
+	OwnerID int64
+	RepoID  int64
+}
+
+// The immutable owner and repository IDs an account's app binding recorded
+// for a repository name (bug hunt 2026-10-28 H68): the OIDC exchange
+// requires a token's repository_owner_id and repository_id claims to match
+// them, so a recreated repository under a freed owner name does not pass.
+// Zero when no binding of the name records them.
+func (q *Queries) GitHubRepositoryIDsBoundToAccount(ctx context.Context, db DBTX, arg GitHubRepositoryIDsBoundToAccountParams) (GitHubRepositoryIDsBoundToAccountRow, error) {
+	row := db.QueryRow(ctx, gitHubRepositoryIDsBoundToAccount, arg.AccountID, arg.RepoFullName)
+	var i GitHubRepositoryIDsBoundToAccountRow
+	err := row.Scan(&i.OwnerID, &i.RepoID)
+	return i, err
+}
+
 const guardWorkflowAdmissionSnapshot = `-- name: GuardWorkflowAdmissionSnapshot :exec
 SELECT guard_workflow_admission_snapshot($1::text::uuid)
 `

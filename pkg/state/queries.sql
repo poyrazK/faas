@@ -3212,6 +3212,19 @@ where lower(a.github_repo_full_name) = lower(sqlc.arg(repo_full_name)::text)
   and (sqlc.arg(repo_id)::bigint = 0 or a.github_repo_id = sqlc.arg(repo_id)::bigint)
 having count(distinct a.github_install_account_id) = 1;
 
+-- name: GitHubRepositoryIDsBoundToAccount :one
+-- The immutable owner and repository IDs an account's app binding recorded
+-- for a repository name (bug hunt 2026-10-28 H68): the OIDC exchange
+-- requires a token's repository_owner_id and repository_id claims to match
+-- them, so a recreated repository under a freed owner name does not pass.
+-- Zero when no binding of the name records them.
+select coalesce(max(a.github_owner_id), 0)::bigint as owner_id,
+       coalesce(max(a.github_repo_id), 0)::bigint as repo_id
+from apps a
+where a.account_id = sqlc.arg(account_id)::uuid
+  and lower(a.github_repo_full_name) = lower(sqlc.arg(repo_full_name)::text)
+  and a.deleted_at is null;
+
 -- name: InsertOIDCExchangedToken :one
 -- Fresh-token insert. The id is server-minted by sqlc (gen_random_uuid).
 -- Returns the full row (with created_at server-stamped).

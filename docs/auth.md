@@ -84,7 +84,7 @@ curl -X POST https://api.example.com/v1/auth/oidc/exchange \
   --data-urlencode 'grant_type=urn:ietf:params:oauth:grant-type:token-exchange' \
   --data-urlencode 'subject_token_type=urn:ietf:params:oauth:token-type:jwt' \
   --data-urlencode "subject_token=$OIDC_TOKEN" \
-  --data-urlencode 'audience=faas.example.com'
+  --data-urlencode 'audience=gregale'
 ```
 
 The response uses the OAuth token shape (`access_token`, `token_type`,
@@ -102,6 +102,15 @@ For GitHub Actions, first-use account lookup accepts both the legacy
 `repo:OWNER@OWNER_ID/REPO@REPO_ID:...` form. Gregale uses the owner/repository
 names only to locate an existing GitHub App binding. It verifies and pins the
 complete signed subject, including immutable IDs, in the trust policy.
+
+A trust policy Gregale creates on first use, and every exchange under one,
+accepts only the `gregale` audience (plus any audience the operator lists in
+`FAAS_OIDC_EXCHANGE_AUDIENCES`, comma-separated), so a GitHub token minted for
+another relying party cannot deploy. The token's `repository_owner_id` and
+`repository_id` claims must equal the IDs the repository binding recorded; a
+repository recreated under the same name has to be bound again. Other branches
+and workflows of a bound repository are admitted only under a policy Gregale
+created: a trust policy the account wrote is authoritative.
 ## Organization queue permissions
 
 Organization-owned queue operations apply current membership roles alongside
