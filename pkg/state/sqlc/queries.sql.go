@@ -72845,6 +72845,78 @@ func (q *Queries) QueueBindingHistoryByID(ctx context.Context, db DBTX, arg Queu
 	return i, err
 }
 
+const queueBindingTelemetry = `-- name: QueueBindingTelemetry :one
+with b as (
+  select id, account_id, queue_name, deployment_scope from queue_bindings
+  where id=$3::uuid and app_id=$1::uuid
+), owned as (
+  select i.state, i.lease_expires_at from invocations i, b
+  where i.app_id=$1::uuid and i.account_id=b.account_id and i.source='queue'
+    and (b.deployment_scope='' or i.deployment_scope=b.deployment_scope)
+    and (i.queue_binding_id=b.id or (b.deployment_scope='' and i.queue_binding_id is null and i.queue_name=b.queue_name))
+)
+select
+  ((select count(*) from (
+     select 1 from invocations i, b
+     where i.app_id=$1::uuid and i.queue_binding_id=b.id and i.account_id=b.account_id
+       and i.source='queue' and i.state in ('pending','dispatching')
+       and (b.deployment_scope='' or i.deployment_scope=b.deployment_scope)
+     limit $2::integer) own)
+  + (select count(*) from (
+     select 1 from invocations i, b
+     where b.deployment_scope='' and i.app_id=$1::uuid and i.queue_binding_id is null
+       and i.queue_name=b.queue_name and i.account_id=b.account_id
+       and i.source='queue' and i.state in ('pending','dispatching')
+     limit $2::integer) legacy))::bigint as depth,
+  (select count(*) from (
+     select 1 from owned where state='dispatching' and lease_expires_at > now()
+     limit $2::integer) leased)::bigint as in_flight,
+  (select count(*) from (
+     select 1 from owned where state='dead_letter'
+     limit $2::integer) dead)::bigint as dead_letter,
+  (select min(first.created_at) from (
+     (select i.created_at from invocations i, b
+      where i.app_id=$1::uuid and i.queue_binding_id=b.id and i.account_id=b.account_id
+        and i.source='queue' and i.state='pending'
+        and (b.deployment_scope='' or i.deployment_scope=b.deployment_scope)
+      order by i.due_at, i.created_at, i.id limit 1)
+     union all
+     (select i.created_at from invocations i, b
+      where b.deployment_scope='' and i.app_id=$1::uuid and i.queue_binding_id is null
+        and i.queue_name=b.queue_name and i.account_id=b.account_id and i.source='queue' and i.state='pending'
+      order by i.due_at, i.created_at, i.id limit 1)
+  ) first)::timestamptz as oldest_pending_at
+`
+
+type QueueBindingTelemetryParams struct {
+	AppID     pgtype.UUID
+	RowLimit  int32
+	BindingID pgtype.UUID
+}
+
+type QueueBindingTelemetryRow struct {
+	Depth           int64
+	InFlight        int64
+	DeadLetter      int64
+	OldestPendingAt pgtype.Timestamptz
+}
+
+// QueueStateForBinding's figures for gauges and alerts without a
+// backlog-sized read: each count stops at row_limit, and the oldest pending
+// message is the first one due in the lease indexes
+// (ADR-20261018101500 amendment 2026-10-27).
+func (q *Queries) QueueBindingTelemetry(ctx context.Context, db DBTX, arg QueueBindingTelemetryParams) (QueueBindingTelemetryRow, error) {
+	row := db.QueryRow(ctx, queueBindingTelemetry, arg.AppID, arg.RowLimit, arg.BindingID)
+	var i QueueBindingTelemetryRow
+	err := row.Scan(
+		&i.Depth,
+		&i.InFlight,
+		&i.DeadLetter,
+		&i.OldestPendingAt,
+	)
+	return i, err
+}
+
 const queueClaimActiveCount = `-- name: QueueClaimActiveCount :one
 select count(*)::bigint from invocations i
 where i.app_id=$1::uuid and i.source='queue'
@@ -101140,10 +101212,16 @@ INSERT INTO invoices (
 ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, clock_timestamp())
 ON CONFLICT (account_id, provider, provider_invoice_id) DO UPDATE SET
   provider_charge_id = coalesce(nullif(excluded.provider_charge_id, ''), invoices.provider_charge_id),
-  number = excluded.number, status = excluded.status,
+  -- A late "created"/"pending" delivery never reopens a paid invoice
+  -- (ADR-20261028101500): providers may deliver order events out of order.
+  number = excluded.number,
+  status = CASE WHEN invoices.status = 'paid' AND excluded.status IN ('open', 'draft')
+    THEN invoices.status ELSE excluded.status END,
   period_start = excluded.period_start, period_end = excluded.period_end,
   subtotal_cents = excluded.subtotal_cents, tax_cents = excluded.tax_cents,
-  total_cents = excluded.total_cents, amount_paid_cents = excluded.amount_paid_cents,
+  total_cents = excluded.total_cents,
+  amount_paid_cents = CASE WHEN invoices.status = 'paid' AND excluded.status IN ('open', 'draft')
+    THEN invoices.amount_paid_cents ELSE excluded.amount_paid_cents END,
   currency = excluded.currency, pdf_available = excluded.pdf_available,
   details = invoices.details || CASE WHEN excluded.details ? 'lines' THEN
     jsonb_set(excluded.details, '{lines,items}', coalesce((

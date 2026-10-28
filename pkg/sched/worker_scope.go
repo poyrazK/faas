@@ -627,6 +627,11 @@ func (e *Engine) workerReplicaTargetForScope(ctx context.Context, app state.App,
 		if replicas.Max > 0 && replicas.Max < max {
 			max = replicas.Max
 		}
+	} else if floor, ok := workerPolicyFloor(app.ScalingPolicy); ok {
+		// A worker declared with lifecycle and a scaling block: the policy's
+		// min_instances is the floor, so min 0 scales to zero
+		// (ADR-20261018101500 amendment 2026-10-27).
+		minAllowed = floor
 	}
 	desired := minAllowed
 	signal := ""
@@ -857,6 +862,23 @@ func (e *Engine) workerQueueDemandForScope(ctx context.Context, app state.App, s
 		desired += demand
 	}
 	return desired, nil
+}
+
+// workerPolicyFloor is a worker pool's minimum when the app has no worker
+// replica bounds: the scaling policy's min_instances, but only when the policy
+// has a signal the worker pool scales on. Without one, a floor of zero would
+// never start a worker.
+func workerPolicyFloor(policy *state.ScalingPolicy) (int, bool) {
+	if policy == nil {
+		return 0, false
+	}
+	for _, target := range policy.EffectiveTargets() {
+		switch target.Metric {
+		case api.ScalingMetricQueueDepth, api.ScalingMetricQueueLag, api.ScalingMetricCustom:
+			return max(policy.MinInstances, 0), true
+		}
+	}
+	return 0, false
 }
 
 // workerQueueDepthLimit is the depth at which ceil(depth/target) reaches

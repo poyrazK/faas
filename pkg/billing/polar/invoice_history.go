@@ -114,39 +114,7 @@ func (p *Provider) FetchInvoiceHistory(ctx context.Context, acct state.Account, 
 }
 
 func polarHistoryBillingPeriod(order map[string]any) (time.Time, time.Time) {
-	start := firstTime(order, "period_start", "billing_period_start")
-	end := firstTime(order, "period_end", "billing_period_end")
-	if start.IsZero() {
-		start = nestedTime(order, "billing_period", "starts_at")
-	}
-	if end.IsZero() {
-		end = nestedTime(order, "billing_period", "ends_at")
-	}
-	if !start.IsZero() && !end.IsZero() {
-		return start, end
-	}
-	items, ok := order["items"].([]any)
-	if !ok || len(items) == 0 {
-		return time.Time{}, time.Time{}
-	}
-	var earliest, latest time.Time
-	for _, raw := range items {
-		item, ok := raw.(map[string]any)
-		if !ok {
-			return time.Time{}, time.Time{}
-		}
-		lineStart, lineEnd := timeValue(item["start_timestamp"]), timeValue(item["end_timestamp"])
-		if lineStart.IsZero() || lineEnd.IsZero() {
-			return time.Time{}, time.Time{}
-		}
-		if earliest.IsZero() || lineStart.Before(earliest) {
-			earliest = lineStart
-		}
-		if latest.IsZero() || lineEnd.After(latest) {
-			latest = lineEnd
-		}
-	}
-	return earliest, latest
+	return polarOrderPeriod(order)
 }
 
 func polarHistoryInvoiceStatus(status string) (string, bool) {

@@ -108,6 +108,62 @@ func (s lostRuntimeUpgradeResponse) AdvanceRuntimeUpgradeOperation(ctx context.C
 	return state.RuntimeUpgradeOperation{}, errors.New("synthetic lost commit response")
 }
 
+// runRuntimeUpgradeExecutor runs the executor until it works one operation.
+func runRuntimeUpgradeExecutor(t *testing.T, e runtimeupgrade.Executor) {
+	t.Helper()
+	deadline := time.Now().Add(api.RuntimeUpgradeOperationInterval + 3*time.Second)
+	for {
+		worked, err := e.RunOnce(t.Context())
+		if err != nil {
+			t.Fatal("run executor", err)
+		}
+		if worked {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("no runtime upgrade became due")
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+}
+
+// adr: 20261019071733 amendment 2 — a freeze that starts while the candidate
+// builds holds the cutover; the upgrade waits and completes once it lifts.
+func TestRuntimeUpgradeOperationCutoverWaitsWhileFrozen(t *testing.T) {
+	runtimeReleaseStores(t, func(t *testing.T, s state.Store, releases state.RuntimeReleaseStore) {
+		app, serving, candidate, r := runtimeUpgradeOperationFixture(t, s, releases)
+		ops := s.(state.RuntimeUpgradeOperationStore)
+		if _, err := ops.RegisterRuntimeUpgradeOperation(t.Context(), r); err != nil {
+			t.Fatal(err)
+		}
+		executor := runtimeupgrade.Executor{Store: ops, ReleaseFrozen: runtimeupgrade.ReleaseFreezeHold(s)}
+		runRuntimeUpgradeExecutor(t, executor) // queues the build
+		wake := runtimeUpgradeOperationReady(t, s, releases, app, candidate, r)
+		freezes := s.(state.ReleaseFreezeStore)
+		now := time.Now().UTC()
+		frozen, err := freezes.CreateReleaseFreeze(t.Context(), state.ReleaseFreeze{AccountID: app.AccountID, AppID: app.ID,
+			Kind: state.ReleaseFreezeWindow, StartsAt: &now, Reason: "launch week", CreatedBy: "ops"}, api.ReleaseFreezesMax, now)
+		if err != nil {
+			t.Fatal(err)
+		}
+		runRuntimeUpgradeExecutor(t, executor)
+		held, err := ops.RuntimeUpgradeOperation(t.Context(), app.AccountID, r.ID)
+		if err != nil || held.Phase != state.RuntimeUpgradeWaiting || held.Blocker != "" {
+			t.Fatal("frozen upgrade did not keep waiting", held, err)
+		}
+		assertRuntimeUpgradeTraffic(t, s, serving, candidate, false)
+		if _, err := freezes.LiftReleaseFreeze(t.Context(), app.AccountID, frozen.ID, "ops", time.Now().UTC()); err != nil {
+			t.Fatal(err)
+		}
+		runRuntimeUpgradeExecutor(t, executor)
+		complete, err := ops.RuntimeUpgradeOperation(t.Context(), app.AccountID, r.ID)
+		if err != nil || complete.Phase != state.RuntimeUpgradeComplete || complete.WakeID != wake {
+			t.Fatal("upgrade after the freeze lifted", complete, err)
+		}
+		assertRuntimeUpgradeTraffic(t, s, serving, candidate, true)
+	})
+}
+
 func TestRuntimeUpgradeOperationCrashRecoveryAndHistoricalCompletion(t *testing.T) {
 	runtimeReleaseStores(t, func(t *testing.T, s state.Store, releases state.RuntimeReleaseStore) {
 		app, serving, candidate, r := runtimeUpgradeOperationFixture(t, s, releases)
