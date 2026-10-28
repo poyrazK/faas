@@ -45,7 +45,7 @@ func trafficDomainBindingOwners(ctx context.Context, reader sqlc.DBTX, claims []
 		}
 	}
 	owners = append(owners, originalAccount)
-	routes, err := sqlc.New().ReadTrafficGlobalRouteAccounts(ctx, reader, api.TrafficPolicyMaxAnalysisInputs)
+	routes, err := readTrafficRouteOwners(ctx, reader, nil)
 	if err != nil {
 		return nil, fmt.Errorf("state: read global route owners: %w", mapErr(err))
 	}

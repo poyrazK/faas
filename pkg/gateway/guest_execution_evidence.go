@@ -272,7 +272,7 @@ func forwardedResponseHeaderWithUpgrade(ctx context.Context, dst http.Header, na
 		return
 	}
 	if !recordGuestExecutionEvidence(ctx, name, value) && !platformResponseHeader(ctx, name) {
-		dst.Add(name, value)
+		dst.Add(name, scopeTenantCookie(name, value))
 	}
 }
 
@@ -285,9 +285,6 @@ func stripGuestManagedPlatformCookiesResponseHeader(resp *http.Response) {
 		return
 	}
 	ctx := resp.Request.Context()
-	if !managedVersionCookieProtected(ctx) && !managedReleaseContextCookieProtected(ctx) {
-		return
-	}
 	values := resp.Header.Values("Set-Cookie")
 	if len(values) == 0 {
 		return
@@ -296,7 +293,7 @@ func stripGuestManagedPlatformCookiesResponseHeader(resp *http.Response) {
 	for _, value := range values {
 		if !guestSetsManagedVersionCookie(ctx, "Set-Cookie", value) &&
 			!guestSetsManagedReleaseContextCookie(ctx, "Set-Cookie", value) {
-			resp.Header.Add("Set-Cookie", value)
+			resp.Header.Add("Set-Cookie", scopeTenantCookie("Set-Cookie", value))
 		}
 	}
 }

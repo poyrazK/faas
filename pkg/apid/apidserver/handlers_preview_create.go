@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/previewconfig"
 	"github.com/onebox-faas/faas/pkg/logsanitize"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -39,13 +40,16 @@ func (s *server) createPreview(w http.ResponseWriter, r *http.Request, acct stat
 		return
 	}
 	slug := fmt.Sprintf("pr-%d-%s", req.PRNumber, parent.Slug)
-	if !validSlug(slug) {
+	if !api.ValidPreviewAppSlug(slug) {
 		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
-			"Preview slug too long", "shorten the parent app slug so the generated preview slug is at most 40 characters"))
+			"Preview slug too long", fmt.Sprintf("the generated preview slug must be at most %d characters", api.PreviewAppSlugMaxLen)))
 		return
 	}
 	expiresAt := time.Now().UTC().Add(ttl)
 	created, isNew, prob := s.provisionPreview(r, acct, parent, req, slug, expiresAt)
+	if prob == nil {
+		prob = s.syncPreviewConfiguration(r.Context(), parent, created)
+	}
 	if prob != nil {
 		api.WriteProblem(w, prob)
 		return
@@ -67,6 +71,25 @@ func (s *server) createPreview(w http.ResponseWriter, r *http.Request, acct stat
 		status = http.StatusCreated
 	}
 	writeJSON(w, status, s.withParkedDeploymentRef(r.Context(), resp, created))
+}
+
+// syncPreviewConfiguration gives a created or reopened preview its production
+// app's pr-preview values and secrets (ADR-20261028090000). A change
+// invalidates the preview's snapshots, so its next wake starts with them.
+func (s *server) syncPreviewConfiguration(ctx context.Context, parent, preview state.App) *api.Problem {
+	synced, err := previewconfig.Sync(ctx, s.store, parent, preview)
+	if err != nil {
+		return api.ErrCapacity("could not apply the app's pr-preview values to the preview")
+	}
+	if synced.Skipped {
+		s.log.Warn("preview values skipped; the project has an environment named pr-preview", "app", preview.ID)
+	}
+	if synced.Changed() {
+		if _, err := s.invalidateAppSnapshots(ctx, preview.ID); err != nil {
+			return api.ErrCapacity("could not refresh the preview's snapshots")
+		}
+	}
+	return nil
 }
 
 func decodePreviewCreateRequest(r *http.Request) (api.CreatePreviewRequest, time.Duration, *api.Problem) {
@@ -179,13 +202,14 @@ func samePreview(app, parent state.App, prNumber int) bool {
 func previewAppFromParent(parent state.App, slug string, prNumber int, expiresAt time.Time) state.App {
 	// A PR preview runs unpromoted code, and production env values can hold
 	// credentials (ADR-310): keep only the platform-owned service binding URLs,
-	// as the GitHub webhook path does.
+	// as the GitHub webhook path does. A preview scales to zero: production's
+	// warm instances (MinInstances) are not copied.
 	manifest := parent.Manifest
 	manifest.Env = api.ServiceBindingEnvForTransport(nil, parent.Manifest.ServiceBindings, parent.Manifest.ServiceBindingTransport)
 	return state.App{
 		AccountID: parent.AccountID, OrgID: parent.OrgID, Slug: slug, Visibility: parent.Visibility, Type: parent.Type,
 		Runtime: parent.Runtime, RAMMB: parent.RAMMB, CPUMillicores: parent.CPUMillicores,
-		IdleTimeoutS: parent.IdleTimeoutS, MaxConcurrency: parent.MaxConcurrency, MinInstances: parent.MinInstances,
+		IdleTimeoutS: parent.IdleTimeoutS, MaxConcurrency: parent.MaxConcurrency,
 		EgressAllowlist:       append([]netip.Prefix(nil), parent.EgressAllowlist...),
 		PublicAuthIPAllowlist: append([]netip.Prefix(nil), parent.PublicAuthIPAllowlist...),
 		ProjectID:             parent.ProjectID, RootDir: parent.RootDir, WorkloadName: parent.WorkloadName,

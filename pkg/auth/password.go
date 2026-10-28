@@ -41,6 +41,8 @@ import (
 	"strings"
 
 	"golang.org/x/crypto/argon2"
+
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 // Argon2id parameter defaults per spec §11 (issue #165 / ADR-032).
@@ -114,7 +116,7 @@ func Encode(plaintext string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("auth: read salt: %w", err)
 	}
-	hash := argon2.IDKey([]byte(plaintext), salt, argonTime, argonMemoryKiB, argonThreads, keyLen)
+	hash := deriveKey([]byte(plaintext), salt, argonTime, argonMemoryKiB, argonThreads, keyLen)
 	return formatPHC(argonMemoryKiB, argonTime, argonThreads, salt, hash), nil
 }
 
@@ -153,7 +155,7 @@ func Verify(phc, plaintext string) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	got := argon2.IDKey([]byte(plaintext), salt, time, mem, threads, uint32(len(want)))
+	got := deriveKey([]byte(plaintext), salt, time, mem, threads, uint32(len(want)))
 	// subtle.ConstantTimeCompare returns 1 iff lengths match AND
 	// every byte is equal. Length mismatch is the natural result of
 	// a truncated hash and the comparison correctly reports 0.
@@ -161,6 +163,20 @@ func Verify(phc, plaintext string) (bool, error) {
 		return false, nil
 	}
 	return true, nil
+}
+
+// hashSlots bounds concurrent Argon2id derivations in this process. Each
+// allocates argonMemoryKiB (64 MiB) and apid runs under a 512 MB memory cap,
+// so about eight at once (a launch-day sign-up spike, or a few hundred
+// attacking addresses each under its own rate limit) OOM-killed apid and took
+// the whole API and dashboard down. Callers queue for a slot. Process-wide
+// by nature: it bounds this process's memory.
+var hashSlots = make(chan struct{}, api.PasswordHashConcurrency)
+
+func deriveKey(password, salt []byte, time, memory uint32, threads uint8, keyLen uint32) []byte {
+	hashSlots <- struct{}{}
+	defer func() { <-hashSlots }()
+	return argon2.IDKey(password, salt, time, memory, threads, keyLen)
 }
 
 // DummyPHC is a fixed, never-rotated Argon2id hash used by the

@@ -51,7 +51,10 @@ func decodeServicePolicyApp(row sqlc.ReadServicePolicyAppByIDRow, err error) (Ap
 	if err != nil {
 		return App{}, mapErr(err)
 	}
-	app := App{ID: pgUUIDString(row.ID), AccountID: pgUUIDString(row.AccountID), Slug: row.Slug, WorkloadName: row.WorkloadName,
+	// OrgID is the tenant boundary SameAppResourceOwner checks. Hunt 23 H23-1:
+	// without it two apps one person created in different orgs, or in an org
+	// and their personal account, authorized each other's service calls.
+	app := App{ID: pgUUIDString(row.ID), AccountID: pgUUIDString(row.AccountID), OrgID: pgUUIDString(row.OrgID), Slug: row.Slug, WorkloadName: row.WorkloadName,
 		Status: AppStatus(row.Status), ProjectID: pgUUIDString(row.ProjectID),
 		PreviewOfSlug: row.PreviewOfSlug.String, PreviewPrNumber: int(row.PreviewPrNumber.Int32),
 		PreviewPrState: row.PreviewPrState.String, AppProtocol: row.AppProtocol, WebSocketEnabled: row.WebsocketEnabled}

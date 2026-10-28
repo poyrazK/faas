@@ -79,7 +79,7 @@ func run() error {
 
 	ctx := context.Background()
 
-	pool, err := db.OpenWithAppName(ctx, "", "faas-migrate")
+	pool, err := db.OpenWithAppName(ctx, "", db.MigratorAppName)
 	if err != nil {
 		return fmt.Errorf("open: %w", err)
 	}

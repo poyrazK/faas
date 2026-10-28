@@ -204,6 +204,20 @@ repository through the GitHub installation before deploying. A transfer to a
 different owner also requires a rebind; a repository rename keeps the same
 identity.
 
+### Deploy tokens
+
+Other CI systems deploy with a deploy token: a credential that can only deploy
+one app. Minting and rotating one needs an MFA step-up from the last five
+minutes, so run `gregale account mfa verify` first. The token is shown once;
+store it as `FAAS_TOKEN` in the CI secret store.
+
+```bash
+gregale app deploy-token create --app my-api --label ci   # default expiry: 90 days
+gregale app deploy-token list --app my-api
+gregale app deploy-token rotate <token-id> --app my-api   # the old token stops working
+gregale app deploy-token delete <token-id> --app my-api
+```
+
 ## Safe changes
 
 Preview a change with `gregale deploy --diff` or `--dry-run`. For a bad live
