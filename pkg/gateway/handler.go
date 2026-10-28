@@ -1549,6 +1549,9 @@ func NewHandlerWith(backend Backend, m *Metrics, log *slog.Logger) *Handler {
 	h.proxyFor = defaultProxy
 	// Route priorities also order the cold-wake queue (ADR-20261018181846).
 	h.gate.classifier = h
+	// A wake generation outlives schedd's leader and its reply's trip back,
+	// so schedd's own outcome, not the gate's deadline, ends it.
+	h.gate.leaderFloor = sched.DefaultWakeLeaderBudget + time.Second
 	return h
 }
 
