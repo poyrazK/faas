@@ -80,3 +80,6 @@ __pycache__/
 deploy/cloudflare/*/wrangler.toml
 # Local owned-object-storage development data; never commit object bytes.
 /object-data/
+
+# Customer journey suite reports (scripts/e2e-journeys.sh)
+/.e2e-journeys/
