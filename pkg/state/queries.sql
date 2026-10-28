@@ -11886,10 +11886,10 @@ and queue_binding_id is not distinct from sqlc.narg(binding_id)::uuid for share;
 -- One snapshot includes active work and dead letters. A NULL queue selects
 -- every name in this scope; an empty string selects only legacy unnamed work.
 select
-  count(*) filter (where state in ('pending','dispatching'))::bigint as depth,
+  count(*) filter (where state='dispatching' or (state='pending' and due_at <= now()))::bigint as depth,
   count(*) filter (where state='dispatching' and lease_expires_at > now())::bigint as in_flight,
   count(*) filter (where state='dead_letter')::bigint as dead_letter,
-  min(created_at) filter (where state='pending')::timestamptz as oldest_pending_at
+  min(created_at) filter (where state='pending' and due_at <= now())::timestamptz as oldest_pending_at
 from invocations
 where app_id=sqlc.arg(app_id) and deployment_scope=sqlc.arg(deployment_scope)
   and source='queue' and state in ('pending','dispatching','dead_letter')
@@ -12518,10 +12518,10 @@ and i.state in ('waking','cold_booting','running','draining','snapshotting','mig
 -- Legacy unassigned work remains visible under its historical name; pinned
 -- work never follows a replacement binding that reuses that name.
 select
-  count(*) filter (where i.state in ('pending','dispatching'))::bigint as depth,
+  count(*) filter (where i.state='dispatching' or (i.state='pending' and i.due_at <= now()))::bigint as depth,
   count(*) filter (where i.state='dispatching' and i.lease_expires_at > now())::bigint as in_flight,
   count(*) filter (where i.state='dead_letter')::bigint as dead_letter,
-  min(i.created_at) filter (where i.state='pending')::timestamptz as oldest_pending_at
+  min(i.created_at) filter (where i.state='pending' and i.due_at <= now())::timestamptz as oldest_pending_at
 from invocations i join queue_bindings b on b.app_id=i.app_id and b.account_id=i.account_id
 where b.id=sqlc.arg(binding_id)::uuid and b.app_id=sqlc.arg(app_id)::uuid
   and (sqlc.narg(deployment_scope)::text is null or i.deployment_scope=sqlc.narg(deployment_scope)::text)
@@ -12536,7 +12536,7 @@ where b.id=sqlc.arg(binding_id)::uuid and b.app_id=sqlc.arg(app_id)::uuid
 select count(*)::bigint as depth from (
   select 1 from invocations
   where app_id=sqlc.arg(app_id)::uuid and deployment_scope=sqlc.arg(deployment_scope)::text
-    and source='queue' and state in ('pending','dispatching')
+    and source='queue' and state in ('pending','dispatching') and (state='dispatching' or due_at <= now())
   limit sqlc.arg(row_limit)::integer
 ) bounded;
 
@@ -12552,7 +12552,7 @@ select
   (select count(*) from (
      select 1 from invocations i, b
      where i.app_id=sqlc.arg(app_id)::uuid and i.queue_binding_id=b.id and i.account_id=b.account_id
-       and i.source='queue' and i.state in ('pending','dispatching')
+       and i.source='queue' and i.state in ('pending','dispatching') and (i.state='dispatching' or i.due_at <= now())
        and (sqlc.narg(deployment_scope)::text is null or i.deployment_scope=sqlc.narg(deployment_scope)::text)
        and (b.deployment_scope='' or i.deployment_scope=b.deployment_scope)
      limit sqlc.arg(row_limit)::integer) own)::bigint
@@ -12560,7 +12560,7 @@ select
      select 1 from invocations i, b
      where b.deployment_scope='' and i.app_id=sqlc.arg(app_id)::uuid and i.queue_binding_id is null
        and i.queue_name=b.queue_name and i.account_id=b.account_id
-       and i.source='queue' and i.state in ('pending','dispatching')
+       and i.source='queue' and i.state in ('pending','dispatching') and (i.state='dispatching' or i.due_at <= now())
        and (sqlc.narg(deployment_scope)::text is null or i.deployment_scope=sqlc.narg(deployment_scope)::text)
      limit sqlc.arg(row_limit)::integer) legacy)::bigint as depth;
 
@@ -12594,14 +12594,14 @@ select
   ((select count(*) from (
      select 1 from invocations i, b
      where i.app_id=sqlc.arg(app_id)::uuid and i.queue_binding_id=b.id and i.account_id=b.account_id
-       and i.source='queue' and i.state in ('pending','dispatching')
+       and i.source='queue' and i.state in ('pending','dispatching') and (i.state='dispatching' or i.due_at <= now())
        and (b.deployment_scope='' or i.deployment_scope=b.deployment_scope)
      limit sqlc.arg(row_limit)::integer) own)
   + (select count(*) from (
      select 1 from invocations i, b
      where b.deployment_scope='' and i.app_id=sqlc.arg(app_id)::uuid and i.queue_binding_id is null
        and i.queue_name=b.queue_name and i.account_id=b.account_id
-       and i.source='queue' and i.state in ('pending','dispatching')
+       and i.source='queue' and i.state in ('pending','dispatching') and (i.state='dispatching' or i.due_at <= now())
      limit sqlc.arg(row_limit)::integer) legacy))::bigint as depth,
   (select count(*) from (
      select 1 from owned where state='dispatching' and lease_expires_at > now()
@@ -12612,13 +12612,13 @@ select
   (select min(first.created_at) from (
      (select i.created_at from invocations i, b
       where i.app_id=sqlc.arg(app_id)::uuid and i.queue_binding_id=b.id and i.account_id=b.account_id
-        and i.source='queue' and i.state='pending'
+        and i.source='queue' and i.state='pending' and i.due_at <= now()
         and (b.deployment_scope='' or i.deployment_scope=b.deployment_scope)
       order by i.due_at, i.created_at, i.id limit 1)
      union all
      (select i.created_at from invocations i, b
       where b.deployment_scope='' and i.app_id=sqlc.arg(app_id)::uuid and i.queue_binding_id is null
-        and i.queue_name=b.queue_name and i.account_id=b.account_id and i.source='queue' and i.state='pending'
+        and i.queue_name=b.queue_name and i.account_id=b.account_id and i.source='queue' and i.state='pending' and i.due_at <= now()
       order by i.due_at, i.created_at, i.id limit 1)
   ) first)::timestamptz as oldest_pending_at;
 

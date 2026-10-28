@@ -72939,14 +72939,14 @@ select
   ((select count(*) from (
      select 1 from invocations i, b
      where i.app_id=$1::uuid and i.queue_binding_id=b.id and i.account_id=b.account_id
-       and i.source='queue' and i.state in ('pending','dispatching')
+       and i.source='queue' and i.state in ('pending','dispatching') and (i.state='dispatching' or i.due_at <= now())
        and (b.deployment_scope='' or i.deployment_scope=b.deployment_scope)
      limit $2::integer) own)
   + (select count(*) from (
      select 1 from invocations i, b
      where b.deployment_scope='' and i.app_id=$1::uuid and i.queue_binding_id is null
        and i.queue_name=b.queue_name and i.account_id=b.account_id
-       and i.source='queue' and i.state in ('pending','dispatching')
+       and i.source='queue' and i.state in ('pending','dispatching') and (i.state='dispatching' or i.due_at <= now())
      limit $2::integer) legacy))::bigint as depth,
   (select count(*) from (
      select 1 from owned where state='dispatching' and lease_expires_at > now()
@@ -72957,13 +72957,13 @@ select
   (select min(first.created_at) from (
      (select i.created_at from invocations i, b
       where i.app_id=$1::uuid and i.queue_binding_id=b.id and i.account_id=b.account_id
-        and i.source='queue' and i.state='pending'
+        and i.source='queue' and i.state='pending' and i.due_at <= now()
         and (b.deployment_scope='' or i.deployment_scope=b.deployment_scope)
       order by i.due_at, i.created_at, i.id limit 1)
      union all
      (select i.created_at from invocations i, b
       where b.deployment_scope='' and i.app_id=$1::uuid and i.queue_binding_id is null
-        and i.queue_name=b.queue_name and i.account_id=b.account_id and i.source='queue' and i.state='pending'
+        and i.queue_name=b.queue_name and i.account_id=b.account_id and i.source='queue' and i.state='pending' and i.due_at <= now()
       order by i.due_at, i.created_at, i.id limit 1)
   ) first)::timestamptz as oldest_pending_at
 `
@@ -73653,7 +73653,7 @@ select
   (select count(*) from (
      select 1 from invocations i, b
      where i.app_id=$1::uuid and i.queue_binding_id=b.id and i.account_id=b.account_id
-       and i.source='queue' and i.state in ('pending','dispatching')
+       and i.source='queue' and i.state in ('pending','dispatching') and (i.state='dispatching' or i.due_at <= now())
        and ($2::text is null or i.deployment_scope=$2::text)
        and (b.deployment_scope='' or i.deployment_scope=b.deployment_scope)
      limit $3::integer) own)::bigint
@@ -73661,7 +73661,7 @@ select
      select 1 from invocations i, b
      where b.deployment_scope='' and i.app_id=$1::uuid and i.queue_binding_id is null
        and i.queue_name=b.queue_name and i.account_id=b.account_id
-       and i.source='queue' and i.state in ('pending','dispatching')
+       and i.source='queue' and i.state in ('pending','dispatching') and (i.state='dispatching' or i.due_at <= now())
        and ($2::text is null or i.deployment_scope=$2::text)
      limit $3::integer) legacy)::bigint as depth
 `
@@ -73692,7 +73692,7 @@ const queueDepthInScope = `-- name: QueueDepthInScope :one
 select count(*)::bigint as depth from (
   select 1 from invocations
   where app_id=$1::uuid and deployment_scope=$2::text
-    and source='queue' and state in ('pending','dispatching')
+    and source='queue' and state in ('pending','dispatching') and (state='dispatching' or due_at <= now())
   limit $3::integer
 ) bounded
 `
@@ -74178,10 +74178,10 @@ func (q *Queries) QueueRuntimeUpgradeOperationBuild(ctx context.Context, db DBTX
 
 const queueStateForBinding = `-- name: QueueStateForBinding :one
 select
-  count(*) filter (where i.state in ('pending','dispatching'))::bigint as depth,
+  count(*) filter (where i.state='dispatching' or (i.state='pending' and i.due_at <= now()))::bigint as depth,
   count(*) filter (where i.state='dispatching' and i.lease_expires_at > now())::bigint as in_flight,
   count(*) filter (where i.state='dead_letter')::bigint as dead_letter,
-  min(i.created_at) filter (where i.state='pending')::timestamptz as oldest_pending_at
+  min(i.created_at) filter (where i.state='pending' and i.due_at <= now())::timestamptz as oldest_pending_at
 from invocations i join queue_bindings b on b.app_id=i.app_id and b.account_id=i.account_id
 where b.id=$1::uuid and b.app_id=$2::uuid
   and ($3::text is null or i.deployment_scope=$3::text)
@@ -74219,10 +74219,10 @@ func (q *Queries) QueueStateForBinding(ctx context.Context, db DBTX, arg QueueSt
 
 const queueStateInScope = `-- name: QueueStateInScope :one
 select
-  count(*) filter (where state in ('pending','dispatching'))::bigint as depth,
+  count(*) filter (where state='dispatching' or (state='pending' and due_at <= now()))::bigint as depth,
   count(*) filter (where state='dispatching' and lease_expires_at > now())::bigint as in_flight,
   count(*) filter (where state='dead_letter')::bigint as dead_letter,
-  min(created_at) filter (where state='pending')::timestamptz as oldest_pending_at
+  min(created_at) filter (where state='pending' and due_at <= now())::timestamptz as oldest_pending_at
 from invocations
 where app_id=$1 and deployment_scope=$2
   and source='queue' and state in ('pending','dispatching','dead_letter')
