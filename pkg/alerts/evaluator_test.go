@@ -72,8 +72,8 @@ func (s *selectivePromQL) QueryScalar(_ context.Context, query string) (float64,
 
 // recordingDispatcher captures every Dispatch call so tests assert on
 // the URL + payload without spinning an httptest.Server. Implements
-// alerts.Dispatcher; safe for concurrent use (the evaluator wraps the
-// dispatch in a mutex so the test fakes don't have to).
+// alerts.Dispatcher; safe for concurrent use (the evaluator dispatches
+// for several accounts at once).
 type recordingDispatcher struct {
 	mu     sync.Mutex
 	calls  []recordedCall

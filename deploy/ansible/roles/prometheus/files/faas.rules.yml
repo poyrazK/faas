@@ -8628,3 +8628,34 @@ groups:
           summary: "Alert notifications to a channel kind are failing platform-wide"
           description: "meterd could not unseal a channel's credentials, or every Slack, PagerDuty or email delivery failed for 30 minutes (at least three attempts, none delivered). One customer's broken destination does not fire this while others deliver; a platform failure such as the unseal key, the mail relay or egress does."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasCustomerObservability.md"
+      # ADR-20261028101615: accounts are evaluated in parallel with a tick
+      # budget each, so a slow tick means many accounts are slow at once, and
+      # persistent deferral means one account keeps outrunning its budget.
+      - alert: FaasAlertEvaluationSlow
+        expr: |
+          (
+            sum by (job, instance) (rate(meterd_op_duration_seconds_sum{op="alerts"}[15m]))
+            / sum by (job, instance) (rate(meterd_op_duration_seconds_count{op="alerts"}[15m]))
+          ) > 50
+        for: 15m
+        labels:
+          severity: warn
+          component: meterd
+          family: customer_observability
+          public_status: internal
+        annotations:
+          summary: "Alert evaluation ticks take most of their minute"
+          description: "meterd's alert ticks have averaged over 50 seconds for 15 minutes, so customers' alerts fire late. Accounts are evaluated in parallel, so many accounts are slow at once: check Prometheus and the database before any one account."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasCustomerObservability.md"
+      - alert: FaasAlertRulesDeferred
+        expr: sum by (job, instance) (increase(meterd_alert_rules_skipped_total{reason="deferred"}[30m])) > 0
+        for: 30m
+        labels:
+          severity: warn
+          component: meterd
+          family: customer_observability
+          public_status: internal
+        annotations:
+          summary: "Some alert rules keep missing their tick"
+          description: "For an hour some account has spent its alert tick budget, so part of its rules run a tick late. meterd logs the account (\"account spent its tick budget\"); look at its slow rules: log-search queries, an unresponsive webhook, or Prometheus."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasCustomerObservability.md"

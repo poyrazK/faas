@@ -26,7 +26,7 @@ type observabilityLoops struct {
 // loopItemOutcomes are each loop's per-item outcomes, created at zero so
 // increase() sees the first event.
 var loopItemOutcomes = map[string][]string{
-	loopSyntheticChecks: {"ok", "failed", "record_error"},
+	loopSyntheticChecks: {"ok", "failed", "record_error", "not_released"},
 	loopSLORollup:       {"recorded", "failed"},
 }
 
@@ -46,7 +46,7 @@ func newObservabilityLoops(reg prometheus.Registerer) *observabilityLoops {
 		}, []string{"loop", "outcome"}),
 		items: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "meterd_observability_loop_items_total",
-			Help: "Work items of a customer observability loop by outcome: synthetic_checks runs (ok, failed: the customer's check failed, record_error) and slo_rollup hours (recorded, failed).",
+			Help: "Work items of a customer observability loop by outcome: synthetic_checks runs (ok, failed: the customer's check failed, record_error, not_released: the account's plan or flags no longer cover the check) and slo_rollup hours (recorded, failed).",
 		}, []string{"loop", "outcome"}),
 	}
 	for loop, outcomes := range loopItemOutcomes {

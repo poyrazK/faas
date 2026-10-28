@@ -650,6 +650,10 @@ const (
 	// CodeDeployRateLimited marks an account that exhausted its plan's
 	// deployment admissions in the current one-hour window.
 	CodeDeployRateLimited = "deploy_rate_limited"
+	// CodeNotificationChannelTestRateLimited marks an account that sent its
+	// notification channels more test messages than a minute allows
+	// (ADR-20261028101615).
+	CodeNotificationChannelTestRateLimited = "notification_channel_test_rate_limited"
 	// CodeEventPublishRateLimited marks a publication beyond the account's
 	// event publish rate (EventPublishLimits); retry after Retry-After.
 	CodeEventPublishRateLimited = "event_publish_rate_limited"
@@ -3008,6 +3012,21 @@ func ErrDeployRateLimited(limit, retryAfterS int) *Problem {
 		WithLimit(int64(limit), int64(limit)).
 		WithHeader("Retry-After", strconv.Itoa(retryAfterS)).
 		WithDocs("https://gregale.dev/docs/deployments#rate-limit")
+}
+
+// ErrNotificationChannelTestRateLimited refuses a channel test send beyond
+// NotificationChannelTestsPerAccountMinute (ADR-20261028101615): each test is
+// a real Slack post, PagerDuty event or email.
+func ErrNotificationChannelTestRateLimited(limit, retryAfterS int) *Problem {
+	if retryAfterS <= 0 {
+		retryAfterS = 1
+	}
+	return NewProblem(http.StatusTooManyRequests, CodeNotificationChannelTestRateLimited,
+		"Notification channel test rate limited",
+		fmt.Sprintf("This account has sent its notification channels %d test messages in the last minute.", limit)).
+		WithLimit(int64(limit), int64(limit)).
+		WithHeader("Retry-After", strconv.Itoa(retryAfterS)).
+		WithDocs("https://gregale.dev/docs/alerts#notification-channels")
 }
 
 // ErrEventPublishRateLimited reports a publication of events beyond the

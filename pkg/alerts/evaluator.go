@@ -26,6 +26,7 @@
 package alerts
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -120,8 +121,8 @@ type Dispatcher interface {
 // that crosses the boundary, and Execute is the only method — the
 // evaluator never calls pkg/safedeploy.Orchestrator directly.
 //
-// Concurrency: the evaluator serialises Execute behind the same
-// dispatchMu that guards Dispatch. pkg/safedeploy.ActionDispatcher
+// Concurrency: the evaluator serialises Execute behind dispatchMu,
+// across the accounts it evaluates in parallel. pkg/safedeploy.ActionDispatcher
 // is concurrency-safe today (its only side-effect is a single HTTP
 // call into apid), but the lock keeps the contract honest if a
 // future fan-out becomes multi-goroutine.
@@ -167,7 +168,7 @@ type Evaluator struct {
 	identity   func() *age.X25519Identity // nil = meterd can't unseal; skip with warn
 	identities func() []*age.X25519Identity
 	dispatch   Dispatcher
-	dispatchMu *sync.Mutex // serialises the concurrency-unsafe Dispatcher
+	dispatchMu *sync.Mutex // serialises ActionExecutor calls (see ActionExecutor)
 	// actionExec (issue #976 / ADR-122 / SAFE-RELEASES-B) is the
 	// in-process action fan-out surface. Nil-coerced at
 	// construction so the evaluator's behaviour is the same on
@@ -201,6 +202,14 @@ type Evaluator struct {
 	logContextReleased func(ctx context.Context, accountID, appID string) bool
 	// releaseMetrics counts release notice deliveries; nil records nothing.
 	releaseMetrics *releasemetrics.Metrics
+
+	// Per-account evaluation (ADR-20261028101615); see accounts.go.
+	release       func(ctx context.Context, accountID string) RuleRelease
+	ruleOutcome   func(reason string, n int)
+	workers       int
+	accountBudget time.Duration
+	resumeMu      sync.Mutex
+	resume        map[string]string // account → rule its next tick starts with
 
 	// anomaly caches ADR-744 baselines per rule; see anomaly.go.
 	anomaly anomalyState
@@ -278,6 +287,10 @@ type EvaluatorOptions struct {
 	// ReleaseMetrics counts release approval and schedule notice
 	// deliveries; nil records nothing.
 	ReleaseMetrics *releasemetrics.Metrics
+	// Workers and AccountTickBudget override AlertEvaluationWorkers and
+	// AlertAccountTickBudget (ADR-20261028101615); zero keeps the default.
+	Workers           int
+	AccountTickBudget time.Duration
 }
 
 // NewEvaluator returns a wired Evaluator. nil-coerced dependencies
@@ -315,6 +328,8 @@ func NewEvaluator(o EvaluatorOptions) *Evaluator {
 		channelOutcome:   o.ChannelOutcome,
 		dashboardBaseURL: o.DashboardBaseURL,
 		releaseMetrics:   o.ReleaseMetrics,
+		workers:          cmp.Or(o.Workers, api.AlertEvaluationWorkers),
+		accountBudget:    cmp.Or(o.AccountTickBudget, api.AlertAccountTickBudget),
 	}
 	if o.ActionExec != nil {
 		e.actionExec = o.ActionExec
@@ -364,6 +379,28 @@ type Stats struct {
 	// ReleaseApprovalNotices counts release approval events delivered to at
 	// least one channel this tick (ADR-20261020085706).
 	ReleaseApprovalNotices int
+	// Deferred counts rules left for the next tick because their account
+	// spent its AlertAccountTickBudget (ADR-20261028101615).
+	Deferred int
+	// SkippedNotReleased counts rules not evaluated because the account's
+	// plan or capability flags no longer cover them (ADR-20261028101615).
+	SkippedNotReleased int
+}
+
+// add sums the per-rule counters of an account's tick into s; Evaluated and
+// ReleaseApprovalNotices are set once per tick by RunOnce.
+func (s *Stats) add(o Stats) {
+	s.Fired += o.Fired
+	s.Delivered += o.Delivered
+	s.Failed += o.Failed
+	s.SkippedDegraded += o.SkippedDegraded
+	s.SkippedInsufficient += o.SkippedInsufficient
+	s.SkippedNoIdentity += o.SkippedNoIdentity
+	s.ActionExecuted += o.ActionExecuted
+	s.ActionFailed += o.ActionFailed
+	s.ActionSkipped += o.ActionSkipped
+	s.Deferred += o.Deferred
+	s.SkippedNotReleased += o.SkippedNotReleased
 }
 
 // RunOnce walks the enabled alert-rule list once and applies the
@@ -373,7 +410,8 @@ type Stats struct {
 // a transient backend hiccup must not kill meterd).
 //
 // The function is safe to call from a single goroutine. cmd/meterd
-// wires one Evaluator per daemon.
+// wires one Evaluator per daemon. Within a tick, accounts are evaluated
+// in parallel and each account's rules in order (accounts.go).
 func (e *Evaluator) RunOnce(ctx context.Context) (Stats, error) {
 	var stats Stats
 	now := e.now()
@@ -388,12 +426,12 @@ func (e *Evaluator) RunOnce(ctx context.Context) (Stats, error) {
 	}
 	stats.Evaluated = len(rules)
 
-	for i := range rules {
-		rule := rules[i]
-		if err := ctx.Err(); err != nil {
-			return stats, err
-		}
-		e.evalRule(ctx, rule, now, &stats)
+	for _, account := range e.evalAccounts(ctx, groupByAccount(rules), now) {
+		stats.add(account)
+	}
+	e.recordRuleOutcomes(stats)
+	if err := ctx.Err(); err != nil {
+		return stats, err
 	}
 	// Record every readiness observation before any readiness transport wait.
 	// Other evaluators can continue recording while this worker owns a lease.
@@ -434,7 +472,11 @@ func (e *Evaluator) evalRule(ctx context.Context, rule state.AlertRule, now time
 	if api.IsMCPPolicyConvergenceMetric(string(rule.Metric)) {
 		ctx, convergence = withMCPPolicyConvergenceSnapshot(ctx, e.store, rule)
 	}
-	observed, comparisonResult, skipReason := e.observe(ctx, rule)
+	// Reading the value gets AlertObserveBudget (ADR-20261028101615); a
+	// read cut short is degraded like any other failed read.
+	octx, cancel := context.WithTimeout(ctx, api.AlertObserveBudget)
+	observed, comparisonResult, skipReason := e.observe(octx, rule)
+	cancel()
 	if skipReason != "" {
 		switch skipReason {
 		case skipDegraded:
@@ -711,18 +753,19 @@ func (e *Evaluator) deliverAlert(ctx context.Context, rule state.AlertRule, deli
 		}
 	}
 
-	// Serialise Dispatch calls. pkg/webhookout.Dispatcher is
-	// concurrency-unsafe; today the evaluator is single-goroutine,
-	// but the mutex keeps the contract for future parallelism
-	// honest (the dispatcher holds opts.HTTPClient + opts.Logger +
-	// the retry loop's backoff state — all of which would race on
-	// parallel Dispatch).
-	e.dispatchMu.Lock()
-	result := e.dispatch.Dispatch(ctx, webhookout.Target{
+	// The delivery, retries included, gets AlertWebhookBudget
+	// (ADR-20261028101615): an unresponsive receiver costs its own
+	// account's evaluation that long, never every account's. Accounts are
+	// evaluated in parallel, so deliveries are not serialised;
+	// webhookout.Dispatcher only reads its options while dispatching.
+	// Recording the result uses the tick's context, so a delivery cut
+	// short is still recorded as failed.
+	dctx, cancel := context.WithTimeout(ctx, api.AlertWebhookBudget)
+	result := e.dispatch.Dispatch(dctx, webhookout.Target{
 		URL:    rule.WebhookURL,
 		Signer: e.newSigner(plaintext),
 	}, evt)
-	e.dispatchMu.Unlock()
+	cancel()
 
 	e.recordResult(ctx, rule, deliveryID, observed, result, now, stats)
 

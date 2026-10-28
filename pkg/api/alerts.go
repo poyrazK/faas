@@ -249,6 +249,25 @@ func IsSyntheticCheckAlertMetric(metric string) bool {
 	return metric == AlertRuleMetricSyntheticConsecutiveFailures || metric == AlertRuleMetricSyntheticLatencyP95
 }
 
+// alertMetricCapabilities names the product capability an alert metric needs
+// beyond alerts' own (ADR-20261023115741).
+var alertMetricCapabilities = map[string]string{
+	AlertRuleMetricCustomMetric:                 "custom-metric-history",
+	AlertRuleMetricLogSearchMatches:             "log-search",
+	AlertRuleMetricSLOBudgetBurn:                "custom-slos",
+	AlertRuleMetricSLOBudgetRemaining:           "custom-slos",
+	AlertRuleMetricSyntheticConsecutiveFailures: "synthetic-checks",
+	AlertRuleMetricSyntheticLatencyP95:          "synthetic-checks",
+}
+
+// AlertMetricCapability returns the capability an alert metric needs beyond
+// alerts', if any. apid refuses creating such a rule while the capability is
+// off for the account, and meterd stops evaluating it (ADR-20261028101615).
+func AlertMetricCapability(metric string) (string, bool) {
+	capability, ok := alertMetricCapabilities[metric]
+	return capability, ok
+}
+
 // AllowedAlertRuleComparisons is the closed set for the `comparison` field.
 var AllowedAlertRuleComparisons = []string{"gt", "gte", "lt", "lte"}
 

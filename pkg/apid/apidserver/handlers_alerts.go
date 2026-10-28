@@ -841,18 +841,11 @@ func alertRuleActionFrom(p *string) state.AlertAction {
 // trimmed name. The same trim-non-empty check is mirrored on the
 // update path via state.AlertRule.Name (the DB schema enforces
 // non-empty via CHECK).
-// alertMetricCapabilities names the capability an alert metric needs beyond
-// alerts' own (ADR-20261023115741).
-var alertMetricCapabilities = map[string]string{
-	api.AlertRuleMetricCustomMetric:     "custom-metric-history",
-	api.AlertRuleMetricLogSearchMatches: "log-search",
-}
-
 // alertMetricCapabilityProblem refuses an alert on a metric whose capability
 // is not released to the subject, so an operator switch turned on to test one
 // account does not open the feature to every account.
 func (s *server) alertMetricCapabilityProblem(subject platformflags.Subject, metric string) *api.Problem {
-	capability, ok := alertMetricCapabilities[metric]
+	capability, ok := api.AlertMetricCapability(metric)
 	if !ok || s.capGate == nil || s.capGate.Enabled(capability, subject) {
 		return nil
 	}

@@ -5223,7 +5223,6 @@
       "match_expr",
       "match_headers",
       "match_host",
-      "match_host_scope",
       "match_methods",
       "match_path",
       "mode",

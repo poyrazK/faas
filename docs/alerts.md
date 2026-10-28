@@ -2,6 +2,13 @@
 
 Alerts turn platform signals into signed webhook deliveries. Configure them per account or app and keep the receiver idempotent.
 
+Rules are evaluated every minute, each account's on its own, so another
+account's slow rules never delay yours. A webhook gets 30 seconds per
+delivery, retries included. Rules are kept but stop being evaluated while
+your plan no longer includes them (alerts need Hobby or above; custom metric,
+SLO and synthetic check alerts need the plans those features need); they
+resume when you upgrade.
+
 ## Configure an alert
 
 ```bash
@@ -117,6 +124,8 @@ gregale alert channel list
 - Email channels can only send to the account's own email address for now.
 - `list` shows each channel's last successful delivery or last error, so a
   revoked Slack webhook shows up before an incident does.
+- An account can send 10 test messages a minute across its channels; more
+  return `429 notification_channel_test_rate_limited` with a `Retry-After`.
 
 Point a rule at channels with `--channel` (repeatable, up to five). A rule
 with at least one channel needs no webhook:

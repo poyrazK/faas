@@ -4178,28 +4178,27 @@ type EdgePenaltyBox struct {
 }
 
 type EdgeRule struct {
-	ID             pgtype.UUID
-	AccountID      pgtype.UUID
-	AppID          pgtype.UUID
-	MatchHost      string
-	MatchPath      string
-	MatchMethods   []string
-	Priority       int16
-	Enabled        bool
-	Kind           string
-	Action         []byte
-	CreatedAt      pgtype.Timestamptz
-	UpdatedAt      pgtype.Timestamptz
-	ValidateMode   string
-	CorsPresetID   pgtype.UUID
-	MatchHeaders   []byte
-	ManifestKey    pgtype.Text
-	Name           pgtype.Text
-	Description    pgtype.Text
-	ExpiresAt      pgtype.Timestamptz
-	MatchExpr      []byte
-	Mode           string
-	MatchHostScope pgtype.Text
+	ID           pgtype.UUID
+	AccountID    pgtype.UUID
+	AppID        pgtype.UUID
+	MatchHost    string
+	MatchPath    string
+	MatchMethods []string
+	Priority     int16
+	Enabled      bool
+	Kind         string
+	Action       []byte
+	CreatedAt    pgtype.Timestamptz
+	UpdatedAt    pgtype.Timestamptz
+	ValidateMode string
+	CorsPresetID pgtype.UUID
+	MatchHeaders []byte
+	ManifestKey  pgtype.Text
+	Name         pgtype.Text
+	Description  pgtype.Text
+	ExpiresAt    pgtype.Timestamptz
+	MatchExpr    []byte
+	Mode         string
 }
 
 type EdgeRuleChangeLog struct {

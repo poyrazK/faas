@@ -257,6 +257,9 @@
       ],
       "docs_url": "/docs/alerts",
       "acceptance_test": "pkg/apid/apidserver/handlers_alerts_channels_test.go::TestAlertRuleChannels",
+      "consumers": [
+        "meterd"
+      ],
       "routes": [
         "/dashboard/alerts",
         "/dashboard/apps/{}/alerts",
@@ -1134,6 +1137,9 @@
       "docs_url": "/docs/adr/745-custom-metric-history",
       "operator_flag": "FAAS_CUSTOM_METRIC_HISTORY_ENABLED",
       "acceptance_test": "pkg/apid/apidserver/custom_metric_exporter_test.go::TestCustomMetricExporterExportsOnlyFreshValues",
+      "consumers": [
+        "meterd"
+      ],
       "parent": "custom-metrics",
       "routes": [
         "/v1/apps/{}/custom-metrics/{}/series",
@@ -1171,6 +1177,9 @@
       ],
       "docs_url": "/docs/slos",
       "acceptance_test": "pkg/apid/apidserver/handlers_slo_status_test.go::TestGetSLOReportsBudgetFromHourlyRows",
+      "consumers": [
+        "meterd"
+      ],
       "routes": [
         "/dashboard/apps/{}/slo",
         "/dashboard/apps/{}/slos",
@@ -3289,6 +3298,9 @@
       ],
       "docs_url": "/docs/alerts",
       "acceptance_test": "pkg/apid/apidserver/handlers_notification_channels_test.go::TestNotificationChannelLifecycle",
+      "consumers": [
+        "meterd"
+      ],
       "parent": "alerts",
       "routes": [
         "/v1/notification-channels"
@@ -5376,6 +5388,9 @@
       ],
       "docs_url": "/docs/synthetic-checks",
       "acceptance_test": "pkg/synthetics/runner_test.go::TestRunOnceRecordsOutcomes",
+      "consumers": [
+        "meterd"
+      ],
       "routes": [
         "/dashboard/apps/{}/synthetics",
         "/v1/apps/{}/synthetics"

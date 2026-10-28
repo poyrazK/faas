@@ -5,8 +5,11 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/onebox-faas/faas/pkg/alertchannels"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/ratelimit/peraccount"
 	"github.com/onebox-faas/faas/pkg/secretbox"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -34,6 +37,10 @@ func (s *server) testNotificationChannel(w http.ResponseWriter, r *http.Request,
 		s.notFound(w, "no such notification channel")
 		return
 	}
+	if prob := s.channelTestAllowed(acct); prob != nil {
+		api.WriteProblem(w, prob)
+		return
+	}
 	now := time.Now()
 	errMsg, prob := s.sendChannelTest(r.Context(), acct, row, now)
 	if prob != nil {
@@ -45,6 +52,20 @@ func (s *server) testNotificationChannel(w http.ResponseWriter, r *http.Request,
 	}
 	s.audit.Emit(r.Context(), "notification_channel.tested", &acct.ID, map[string]any{"channel_id": row.ID, "delivered": errMsg == ""})
 	writeJSON(w, http.StatusOK, api.TestNotificationChannelResponse{Delivered: errMsg == "", Error: errMsg})
+}
+
+// channelTestAllowed takes one of the account's
+// NotificationChannelTestsPerAccountMinute test sends (ADR-20261028101615).
+func (s *server) channelTestAllowed(acct state.Account) *api.Problem {
+	account, err := uuid.Parse(acct.ID)
+	if err != nil {
+		return nil
+	}
+	s.channelTestsOnce.Do(func() { s.channelTests = peraccount.NewLimiter() })
+	if ok, retryMS := s.channelTests.Take(account, api.NotificationChannelTestsPerAccountMinute); !ok {
+		return api.ErrNotificationChannelTestRateLimited(api.NotificationChannelTestsPerAccountMinute, int((retryMS+999)/1000))
+	}
+	return nil
 }
 
 // sendChannelTest sends the test message and returns the delivery error,
