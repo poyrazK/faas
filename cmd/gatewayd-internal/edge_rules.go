@@ -361,16 +361,28 @@ func (g *gatewaydEdgeRules) loadHostUncached(ctx context.Context, host string) (
 // no owner (a request before host resolution), every account's rules covering
 // the host are read as before, and owner is "". The owner's rules come from
 // its cached rule set when it has one (ADR-091 amendment 2026-10-27).
+//
+// Hunt 24 H24-1: the store reads scope by the host app's resource owner (its
+// org, or its account when it has none), not by the app's creator account. A
+// company app keeps its creator's account_id, so reading by account let a rule
+// written on another of that creator's apps — in another org, or their
+// personal account, even after they left the org — ride along on this host.
+// The returned owner stays the account: it only keys cache invalidation, which
+// a rule mutation drives by account.
 func (g *gatewaydEdgeRules) hostStoreRules(ctx context.Context, host string) ([]state.EdgeRule, string, error) {
 	owner, appID := gateway.EdgeRuleOwner(ctx), gateway.EdgeRuleApp(ctx)
+	readOwner := gateway.EdgeRuleResourceOwner(ctx)
+	if readOwner == "" {
+		readOwner = owner
+	}
 	if owner != "" {
-		rules, ok, err := g.ownerStoreRules(ctx, host, owner, appID)
+		rules, ok, err := g.ownerStoreRules(ctx, host, readOwner, appID)
 		if err != nil || ok {
 			return rules, owner, err
 		}
 	}
 	if store, ok := g.store.(state.OwnedEdgeRuleStore); ok && owner != "" {
-		rules, err := store.OwnedEdgeRulesForHost(ctx, host, owner, appID)
+		rules, err := store.OwnedEdgeRulesForHost(ctx, host, readOwner, appID)
 		return rules, owner, err
 	}
 	rules, err := g.store.MatchEdgeRulesForHost(ctx, host)

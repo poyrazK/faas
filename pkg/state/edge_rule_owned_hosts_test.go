@@ -11,6 +11,7 @@ import (
 
 type ownedEdgeRulesTestStore interface {
 	CreateEdgeRule(ctx context.Context, p state.CreateEdgeRuleParams) (state.EdgeRule, error)
+	AppByID(ctx context.Context, id string) (state.App, error)
 	state.OwnedEdgeRuleStore
 	state.OwnerEdgeRuleSetStore
 }
@@ -42,16 +43,31 @@ func checkOwnedEdgeRulesForHost(t *testing.T, ctx context.Context, s ownedEdgeRu
 	foreignStar := mk(acctB, appB, "*", 1, true)    // another account's "*"
 	foreignExact := mk(acctB, appB, host, 2, true)  // another account, same host
 
-	ids := func(accountID, appID string) []string {
+	// Hunt 24 H24-1: the read is keyed by the app's resource owner (its org, or
+	// its account when it has none), not the app's creator account. In Postgres
+	// every app carries a personal org, so the owner is that org, not acctA.
+	ownerOf := func(appID string) string {
 		t.Helper()
-		rules, err := s.OwnedEdgeRulesForHost(ctx, host, accountID, appID)
+		app, err := s.AppByID(ctx, appID)
+		if err != nil {
+			t.Fatalf("AppByID(%s): %v", appID, err)
+		}
+		if app.OrgID != "" {
+			return app.OrgID
+		}
+		return app.AccountID
+	}
+	ownerA, ownerB := ownerOf(appA), ownerOf(appB)
+	ids := func(owner, creator, appID string) []string {
+		t.Helper()
+		rules, err := s.OwnedEdgeRulesForHost(ctx, host, owner, appID)
 		if err != nil {
 			t.Fatalf("OwnedEdgeRulesForHost: %v", err)
 		}
 		out := make([]string, len(rules))
 		for i, r := range rules {
-			if r.AccountID != accountID {
-				t.Fatalf("rule %s of account %s returned for owner %s", r.ID, r.AccountID, accountID)
+			if r.AccountID != creator {
+				t.Fatalf("rule %s of account %s returned for owner %s", r.ID, r.AccountID, owner)
 			}
 			out[i] = r.ID
 		}
@@ -68,15 +84,15 @@ func checkOwnedEdgeRulesForHost(t *testing.T, ctx context.Context, s ownedEdgeRu
 			}
 		}
 	}
-	equal("owner A serving app A", ids(acctA, appA), []string{exact, appWide, wildcard, star})
-	equal("owner A, no app", ids(acctA, ""), []string{exact, wildcard, star})
-	equal("owner B serving app B", ids(acctB, appB), []string{foreignStar, foreignExact})
+	equal("owner A serving app A", ids(ownerA, acctA, appA), []string{exact, appWide, wildcard, star})
+	equal("owner A, no app", ids(ownerA, acctA, ""), []string{exact, wildcard, star})
+	equal("owner B serving app B", ids(ownerB, acctB, appB), []string{foreignStar, foreignExact})
 
 	// ADR-091 amendment 2026-10-27: the owner's whole set, filtered per host,
 	// is what the per-host read returns.
-	set, complete, err := s.OwnerEdgeRules(ctx, acctA, 100)
+	set, complete, err := s.OwnerEdgeRules(ctx, ownerA, 100)
 	if err != nil || !complete || len(set) != 6 {
-		t.Fatalf("OwnerEdgeRules = %d rules, complete=%v, err=%v; want account A's 6 enabled rules", len(set), complete, err)
+		t.Fatalf("OwnerEdgeRules = %d rules, complete=%v, err=%v; want owner A's 6 enabled rules", len(set), complete, err)
 	}
 	fromSet := func(host, appID string) []string {
 		var out []string
@@ -85,9 +101,9 @@ func checkOwnedEdgeRulesForHost(t *testing.T, ctx context.Context, s ownedEdgeRu
 		}
 		return out
 	}
-	equal("owner set, app A", fromSet(host, appA), ids(acctA, appA))
-	equal("owner set, no app", fromSet(host, ""), ids(acctA, ""))
-	if _, complete, err := s.OwnerEdgeRules(ctx, acctA, 5); err != nil || complete {
+	equal("owner set, app A", fromSet(host, appA), ids(ownerA, acctA, appA))
+	equal("owner set, no app", fromSet(host, ""), ids(ownerA, acctA, ""))
+	if _, complete, err := s.OwnerEdgeRules(ctx, ownerA, 5); err != nil || complete {
 		t.Fatalf("OwnerEdgeRules over its limit: complete=%v err=%v, want incomplete", complete, err)
 	}
 }

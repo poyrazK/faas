@@ -14545,6 +14545,13 @@ const edgeRuleSelectCols = `id, account_id, app_id, match_host, match_path,
        cors_preset_id, validate_mode, created_at, updated_at, match_headers,
        manifest_key, name, description, expires_at, match_expr, mode`
 
+// edgeRuleSelectColsE is edgeRuleSelectCols qualified to the `e` alias, for the
+// resource-owner reads that join edge_rules to apps (Hunt 24 H24-1).
+const edgeRuleSelectColsE = `e.id, e.account_id, e.app_id, e.match_host, e.match_path,
+       e.match_methods, e.priority, e.enabled, e.kind, e.action,
+       e.cors_preset_id, e.validate_mode, e.created_at, e.updated_at, e.match_headers,
+       e.manifest_key, e.name, e.description, e.expires_at, e.match_expr, e.mode`
+
 // scanEdgeRule reads a single row. ErrNotFound on no-rows; raw error
 // otherwise. The kind column comes back as text; Action comes back
 // as raw bytes (jsonb round-trips through encoding/json in

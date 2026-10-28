@@ -16,6 +16,31 @@ func WithEdgeRuleOwner(ctx context.Context, accountID string) context.Context {
 	return context.WithValue(ctx, edgeRuleOwnerKey{}, accountID)
 }
 
+type edgeRuleResourceOwnerKey struct{}
+
+// WithEdgeRuleResourceOwner records the resource owner (the org when the app
+// belongs to one, otherwise the account) of the app a request resolved to.
+// The store reads scope a host's rule set by this, so a rule written on an app
+// of another tenant — another org, or the same creator's personal account —
+// is never read for this host (Hunt 24 H24-1). The account-level
+// WithEdgeRuleOwner stays the gateway's second, narrower filter.
+func WithEdgeRuleResourceOwner(ctx context.Context, resourceOwnerID string) context.Context {
+	if resourceOwnerID == "" {
+		return ctx
+	}
+	return context.WithValue(ctx, edgeRuleResourceOwnerKey{}, resourceOwnerID)
+}
+
+// EdgeRuleResourceOwner returns the resource owner recorded by
+// WithEdgeRuleResourceOwner, or "".
+func EdgeRuleResourceOwner(ctx context.Context) string {
+	if ctx == nil {
+		return ""
+	}
+	owner, _ := ctx.Value(edgeRuleResourceOwnerKey{}).(string)
+	return owner
+}
+
 type edgeRuleAppKey struct{}
 
 // WithEdgeRuleApp records the app a request resolved to, so app-wide

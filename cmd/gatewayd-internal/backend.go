@@ -230,7 +230,7 @@ func (r pgRouter) environmentHost(ctx context.Context, environmentID, appID stri
 		if app.Status == state.AppDeleted || api.NormalizeAppVisibility(app.Visibility) == api.AppVisibilityInternal {
 			return gateway.App{}, false, nil
 		}
-		return gateway.App{ID: app.ID, AccountID: acct.ID, ResourceOwnerID: acct.ResourceOrgID, Plan: acct.Plan, AccountStatus: string(acct.Status),
+		return gateway.App{ID: app.ID, AccountID: acct.ID, OrgID: app.OrgID, ResourceOwnerID: acct.ResourceOrgID, Plan: acct.Plan, AccountStatus: string(acct.Status),
 			AccountAbuseHeld: acct.AbuseHeld(), EnvironmentNotReady: true, DynamicRoute: true}, true, nil
 	}
 	if err != nil || !found {
@@ -674,6 +674,7 @@ func (r pgRouter) toAppWithDeployment(ctx context.Context, app state.App, exact 
 	return gateway.App{
 		ID:                           app.ID,
 		AccountID:                    acct.ID,
+		OrgID:                        app.OrgID,
 		ResourceOwnerID:              acct.ResourceOrgID,
 		SecurityQuarantined:          securityQuarantined,
 		Visibility:                   api.NormalizeAppVisibility(app.Visibility),
