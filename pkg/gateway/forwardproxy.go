@@ -1504,10 +1504,7 @@ func (cr *ctxReader) Read(p []byte) (int, error) {
 // touched exactly once per request.
 type NodeClientCache struct {
 	mu      sync.Mutex
-	clients map[string]*grpc.ClientConn // nodeID -> conn
-	// refcount lets us close the conn once the last lease is released,
-	// avoiding an idle conn lingering for a node that just got drained.
-	refs map[string]int
+	clients map[string]*nodeConn // nodeID -> current conn
 	// dialing coalesces the first-use resolver + gRPC dial for a node.
 	// Without this map, a burst that lands on a new node makes every
 	// request perform the same Postgres target lookup and start a
@@ -1519,6 +1516,20 @@ type NodeClientCache struct {
 	// restartNotices, when set, holds stream opens through a node's planned
 	// vmmd restart (vmmd_restart_hold.go).
 	restartNotices *restartNotices
+}
+
+// nodeConn is one dialed connection and the leases on it. Leases are counted
+// per connection, not per node: the count used to live in a map keyed by node
+// ID, so an eviction with requests in flight dropped the count and leaked the
+// connection, and the old leases then decremented the next connection's count
+// until an eviction closed it under live requests (bug hunt 2026-10-28 B17).
+// Guarded by NodeClientCache.mu.
+type nodeConn struct {
+	conn   *grpc.ClientConn
+	target string
+	refs   int
+	// retired is set once the conn left the cache; the last lease closes it.
+	retired bool
 }
 
 // WithRestartNotices makes forwards to a node whose vmmd is restarting under
@@ -1539,6 +1550,12 @@ func (c *NodeClientCache) client(nodeID string, conn *grpc.ClientConn) vmmdpb.Vm
 	return restartHoldClient{VmmdClient: cli, conn: conn, node: nodeID, notices: c.restartNotices, log: c.log}
 }
 
+// leaseLocked takes a lease on entry. Caller holds c.mu.
+func (c *NodeClientCache) leaseLocked(nodeID string, entry *nodeConn) (vmmdpb.VmmdClient, io.Closer) {
+	entry.refs++
+	return c.client(nodeID, entry.conn), &leaseCloser{c: c, entry: entry}
+}
+
 type nodeDialCall struct {
 	done        chan struct{}
 	invalidated bool
@@ -1552,8 +1569,7 @@ func NewNodeClientCache(dial func(ctx context.Context, target string) (*grpc.Cli
 		log = slog.Default()
 	}
 	return &NodeClientCache{
-		clients: map[string]*grpc.ClientConn{},
-		refs:    map[string]int{},
+		clients: map[string]*nodeConn{},
 		dialing: map[string]*nodeDialCall{},
 		dial:    dial,
 		log:     log,
@@ -1562,8 +1578,8 @@ func NewNodeClientCache(dial func(ctx context.Context, target string) (*grpc.Cli
 
 // ClientFor resolves nodeID to a VmmdClient on a cached
 // *grpc.ClientConn. Returns ok=false on a dial failure; the caller
-// surfaces 503. Each successful call increments the refcount so
-// Evict() can wait for in-flight requests before closing.
+// surfaces 503. Each successful call leases the connection so Evict()
+// can wait for in-flight requests before closing it.
 //
 // On a cache miss, one caller looks the node's dial target up via the
 // resolver (production: pkg/state.ComputeNodeByID; tests: a fixed
@@ -1575,16 +1591,12 @@ func (c *NodeClientCache) ClientFor(ctx context.Context, nodeID string) (vmmdpb.
 	}
 	c.mu.Lock()
 	if c.clients == nil {
-		c.clients = map[string]*grpc.ClientConn{}
+		c.clients = map[string]*nodeConn{}
 	}
-	if c.refs == nil {
-		c.refs = map[string]int{}
-	}
-	conn, ok := c.clients[nodeID]
-	if ok {
-		c.refs[nodeID]++
+	if entry, ok := c.clients[nodeID]; ok {
+		cli, lease := c.leaseLocked(nodeID, entry)
 		c.mu.Unlock()
-		return c.client(nodeID, conn), leaseCloser{c: c, nodeID: nodeID}, true
+		return cli, lease, true
 	}
 	if c.dialing == nil {
 		c.dialing = map[string]*nodeDialCall{}
@@ -1594,15 +1606,13 @@ func (c *NodeClientCache) ClientFor(ctx context.Context, nodeID string) (vmmdpb.
 		select {
 		case <-call.done:
 			c.mu.Lock()
-			conn, ok := c.clients[nodeID]
-			if ok {
-				c.refs[nodeID]++
-			}
-			c.mu.Unlock()
+			defer c.mu.Unlock()
+			entry, ok := c.clients[nodeID]
 			if !ok {
 				return nil, nil, false
 			}
-			return c.client(nodeID, conn), leaseCloser{c: c, nodeID: nodeID}, true
+			cli, lease := c.leaseLocked(nodeID, entry)
+			return cli, lease, true
 		case <-ctx.Done():
 			return nil, nil, false
 		}
@@ -1615,11 +1625,11 @@ func (c *NodeClientCache) ClientFor(ctx context.Context, nodeID string) (vmmdpb.
 	// must not block hits for other nodes.
 	target, ok := c.resolveTarget(ctx, nodeID)
 	if !ok {
-		c.finishNodeDial(nodeID, call, nil)
+		c.finishNodeDial(nodeID, call, nil, "")
 		return nil, nil, false
 	}
 	if c.dial == nil {
-		c.finishNodeDial(nodeID, call, nil)
+		c.finishNodeDial(nodeID, call, nil, "")
 		return nil, nil, false
 	}
 	conn, err := c.dial(ctx, target)
@@ -1628,10 +1638,11 @@ func (c *NodeClientCache) ClientFor(ctx context.Context, nodeID string) (vmmdpb.
 			c.log.Warn("gateway: vmmd dial failed",
 				"node", nodeID, "target", target, "err", err.Error())
 		}
-		c.finishNodeDial(nodeID, call, nil)
+		c.finishNodeDial(nodeID, call, nil, "")
 		return nil, nil, false
 	}
-	if !c.finishNodeDial(nodeID, call, conn) {
+	cli, lease, ok := c.finishNodeDial(nodeID, call, conn, target)
+	if !ok {
 		// The node was evicted or the cache was closed while the dial
 		// was in flight. The dial result was not published and is now
 		// owned by this caller.
@@ -1640,12 +1651,13 @@ func (c *NodeClientCache) ClientFor(ctx context.Context, nodeID string) (vmmdpb.
 		}
 		return nil, nil, false
 	}
-	return c.client(nodeID, conn), leaseCloser{c: c, nodeID: nodeID}, true
+	return cli, lease, true
 }
 
-// finishNodeDial publishes a successful connection and wakes all waiters.
-// It returns false when an eviction/close invalidated the in-flight dial.
-func (c *NodeClientCache) finishNodeDial(nodeID string, call *nodeDialCall, conn *grpc.ClientConn) bool {
+// finishNodeDial publishes a successful connection with the leader's lease
+// and wakes all waiters. It returns ok=false when an eviction/close
+// invalidated the in-flight dial.
+func (c *NodeClientCache) finishNodeDial(nodeID string, call *nodeDialCall, conn *grpc.ClientConn, target string) (vmmdpb.VmmdClient, io.Closer, bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.dialing != nil {
@@ -1653,20 +1665,16 @@ func (c *NodeClientCache) finishNodeDial(nodeID string, call *nodeDialCall, conn
 	}
 	if call.invalidated || conn == nil {
 		close(call.done)
-		return false
+		return nil, nil, false
 	}
 	if c.clients == nil {
-		c.clients = map[string]*grpc.ClientConn{}
+		c.clients = map[string]*nodeConn{}
 	}
-	if c.refs == nil {
-		c.refs = map[string]int{}
-	}
-	c.clients[nodeID] = conn
-	// The leader took its lease before starting the external work.
-	// Keep that reference while publishing the connection.
-	c.refs[nodeID] = 1
+	entry := &nodeConn{conn: conn, target: target}
+	c.clients[nodeID] = entry
+	cli, lease := c.leaseLocked(nodeID, entry)
 	close(call.done)
-	return true
+	return cli, lease, true
 }
 
 // resolveTarget is the seam that turns a compute_node.id into the
@@ -1695,27 +1703,50 @@ func (c *NodeClientCache) resolveTarget(ctx context.Context, nodeID string) (str
 }
 
 // Evict drops the cached conn for nodeID. Safe to call from a
-// LISTEN/NOTIFY goroutine; concurrent in-flight ClientFor calls
-// finish on their existing refcount before the conn is closed.
-func (c *NodeClientCache) Evict(nodeID string) {
+// LISTEN/NOTIFY goroutine; requests that leased the conn finish on it,
+// and the last of them closes it.
+func (c *NodeClientCache) Evict(nodeID string) { c.evict(nodeID) }
+
+// evict is Evict, reporting whether a cached conn was dropped.
+func (c *NodeClientCache) evict(nodeID string) bool {
 	c.mu.Lock()
 	if c.dialing != nil {
 		if call, ok := c.dialing[nodeID]; ok {
 			call.invalidated = true
 		}
 	}
-	conn, ok := c.clients[nodeID]
+	entry, ok := c.clients[nodeID]
 	if !ok {
 		c.mu.Unlock()
-		return
+		return false
 	}
-	refs := c.refs[nodeID]
 	delete(c.clients, nodeID)
-	delete(c.refs, nodeID)
+	entry.retired = true
+	idle := entry.refs == 0
 	c.mu.Unlock()
-	if refs == 0 {
-		_ = conn.Close()
+	if idle && entry.conn != nil {
+		_ = entry.conn.Close()
 	}
+	return true
+}
+
+// EvictIfChanged drops the cached conn for nodeID when the node is no
+// longer active or its dial target changed. Every heartbeat re-registration
+// fires compute_node_changed, and evicting on each one re-dialed every node
+// about 360 times an hour per gateway (bug hunt 2026-10-28 B17).
+func (c *NodeClientCache) EvictIfChanged(ctx context.Context, nodeID string, active bool) bool {
+	if active {
+		c.mu.Lock()
+		entry, cached := c.clients[nodeID]
+		c.mu.Unlock()
+		if !cached {
+			return false
+		}
+		if target, ok := c.resolveTarget(ctx, nodeID); ok && target == entry.target {
+			return false
+		}
+	}
+	return c.evict(nodeID)
 }
 
 // Close shuts down every cached conn. Called by cmd/gatewayd-internal/on
@@ -1726,32 +1757,45 @@ func (c *NodeClientCache) Close() error {
 	for _, call := range c.dialing {
 		call.invalidated = true
 	}
-	conns := c.clients
-	c.clients = map[string]*grpc.ClientConn{}
-	c.refs = map[string]int{}
+	entries := c.clients
+	c.clients = map[string]*nodeConn{}
+	for _, entry := range entries {
+		entry.retired = true
+	}
 	c.mu.Unlock()
 	var errs []error
-	for _, conn := range conns {
-		if err := conn.Close(); err != nil {
+	for _, entry := range entries {
+		if entry.conn == nil {
+			continue
+		}
+		if err := entry.conn.Close(); err != nil {
 			errs = append(errs, err)
 		}
 	}
 	return errors.Join(errs...)
 }
 
-// leaseCloser decrements the per-node refcount and closes the conn
-// when the last lease is released. The connection itself lives in
-// the cache so a subsequent request skips the dial.
+// leaseCloser releases one lease on the connection it was taken on. The
+// connection stays cached for the next caller; once evicted, the last lease
+// closes it. Close is idempotent.
 type leaseCloser struct {
-	c      *NodeClientCache
-	nodeID string
+	c        *NodeClientCache
+	entry    *nodeConn
+	released bool
 }
 
-func (l leaseCloser) Close() error {
+func (l *leaseCloser) Close() error {
 	l.c.mu.Lock()
-	l.c.refs[l.nodeID]--
+	if l.released {
+		l.c.mu.Unlock()
+		return nil
+	}
+	l.released = true
+	l.entry.refs--
+	closeConn := l.entry.retired && l.entry.refs == 0
 	l.c.mu.Unlock()
-	// Refcount-driven close happens on Evict; the conn stays cached
-	// for the next caller as long as the row stays alive.
+	if closeConn && l.entry.conn != nil {
+		return l.entry.conn.Close()
+	}
 	return nil
 }

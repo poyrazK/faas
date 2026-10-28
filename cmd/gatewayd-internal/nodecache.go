@@ -376,16 +376,16 @@ func (n *nodeCache) watchEvictionsWithInterval(ctx context.Context, pool *pgxpoo
 				n.log.Warn("gatewayd-internal: bad compute_node_changed payload", "payload", got.Payload)
 				continue
 			}
-			// Evict on every mutation: the resolver re-reads the row
-			// (active / target_url / overlay_ip) on the next ClientFor,
-			// so a re-activation transparently re-dials with the fresh
-			// state. We don't try to be clever and selectively evict
-			// only on active=false — the dial cost on a Tailscale
-			// overlay is sub-100 ms and the simpler invariant is worth
-			// the occasional extra dial.
-			n.cache.Evict(p.NodeID)
-			n.log.Info("gatewayd-internal: evicted node client cache",
-				"node", p.NodeID, "active", p.Active)
+			// Evict when the node went inactive or its dial target
+			// changed. Every heartbeat re-registration fires this
+			// notification, so evicting on each one re-dialed every node
+			// hundreds of times an hour (bug hunt 2026-10-28 B17); the
+			// resolver re-reads the row on the next ClientFor after an
+			// eviction, so a re-activation re-dials with the fresh state.
+			if n.cache.EvictIfChanged(ctx, p.NodeID, p.Active) {
+				n.log.Info("gatewayd-internal: evicted node client cache",
+					"node", p.NodeID, "active", p.Active)
+			}
 		}
 	}
 }

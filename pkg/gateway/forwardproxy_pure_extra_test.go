@@ -22,6 +22,8 @@ import (
 
 	vmmdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/vmmd/v1"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/connectivity"
+	"google.golang.org/grpc/credentials/insecure"
 )
 
 // --- WithSyntheticInvocation / isSyntheticInvocation ------------
@@ -286,56 +288,25 @@ func (f *fakeConn) Close() error {
 	return nil
 }
 
-func TestLeaseCloser_DecrementsRefcount(t *testing.T) {
-	cache := &NodeClientCache{
-		clients: map[string]*grpc.ClientConn{},
-		refs:    map[string]int{"node-1": 2},
-		dial:    nil,
-		log:     nil,
-	}
-	l := leaseCloser{c: cache, nodeID: "node-1"}
+func TestLeaseCloser_DecrementsItsOwnConnection(t *testing.T) {
+	entry := &nodeConn{refs: 2}
+	cache := &NodeClientCache{clients: map[string]*nodeConn{"node-1": entry}}
+	l := &leaseCloser{c: cache, entry: entry}
 	if err := l.Close(); err != nil {
 		t.Fatalf("Close err = %v", err)
 	}
-	if got := cache.refs["node-1"]; got != 1 {
-		t.Errorf("refs after one Close = %d, want 1", got)
-	}
-}
-
-func TestLeaseCloser_LastLeaseClosesConn(t *testing.T) {
-	// Pin: when refs drops to 0, the conn should NOT be reaped
-	// by leaseCloser itself (the Evict path owns the close-the-conn
-	// decision when refs==0). This test pins the documented
-	// contract: leaseCloser decrements and exits; it does NOT call
-	// conn.Close() directly.
-	conn := newFakeConn()
-	cache := &NodeClientCache{
-		clients: map[string]*grpc.ClientConn{"node-1": nil},
-		refs:    map[string]int{"node-1": 1},
-		log:     nil,
-	}
-	// The cache holds the entry (not the conn in this test; we
-	// just pin the refcount decrement path).
-	_ = conn
-	l := leaseCloser{c: cache, nodeID: "node-1"}
 	if err := l.Close(); err != nil {
-		t.Fatalf("Close err = %v", err)
+		t.Fatalf("second Close err = %v", err)
 	}
-	if got := cache.refs["node-1"]; got != 0 {
-		t.Errorf("refs after last Close = %d, want 0", got)
-	}
-	if conn.closeCount.Load() != 0 {
-		t.Error("leaseCloser should NOT close the conn directly")
+	if entry.refs != 1 {
+		t.Errorf("refs after a double Close = %d, want 1", entry.refs)
 	}
 }
 
 // --- NodeClientCache.Evict / Close ------------------------------
 
 func TestNodeClientCache_Evict_MissingNodeIsNoop(t *testing.T) {
-	cache := &NodeClientCache{
-		clients: map[string]*grpc.ClientConn{},
-		refs:    map[string]int{},
-	}
+	cache := &NodeClientCache{clients: map[string]*nodeConn{}}
 	cache.Evict("missing-node")
 	// Should not panic; cache state unchanged.
 	if len(cache.clients) != 0 {
@@ -343,51 +314,101 @@ func TestNodeClientCache_Evict_MissingNodeIsNoop(t *testing.T) {
 	}
 }
 
-func TestNodeClientCache_Evict_DropsEntryWithNoRefs(t *testing.T) {
-	// refs=0 → Evict removes the entry and would close the conn.
-	// We can't easily fake a *grpc.ClientConn here; the entry-
-	// removal branch is what we want to pin. Use refs>0 so Evict
-	// skips the conn.Close() call entirely, while still exercising
-	// the entry-removal branch.
-	cache := &NodeClientCache{
-		clients: map[string]*grpc.ClientConn{"node-1": nil},
-		refs:    map[string]int{"node-1": 1},
-		log:     nil,
-	}
-	cache.Evict("node-1")
-	if _, ok := cache.clients["node-1"]; ok {
-		t.Error("entry not removed")
-	}
-	if _, ok := cache.refs["node-1"]; ok {
-		t.Error("refs entry not removed")
-	}
-}
-
-func TestNodeClientCache_Evict_DropsEntryWithOutstandingRefs(t *testing.T) {
-	// When refs>0, the entry IS removed from the maps (the conn
-	// itself doesn't get closed; in-flight ClientFor calls finish
-	// on whatever lease state they already had).
-	cache := &NodeClientCache{
-		clients: map[string]*grpc.ClientConn{"node-1": nil},
-		refs:    map[string]int{"node-1": 3},
-		log:     nil,
-	}
+func TestNodeClientCache_Evict_RetiresEntryWithOutstandingRefs(t *testing.T) {
+	entry := &nodeConn{refs: 3}
+	cache := &NodeClientCache{clients: map[string]*nodeConn{"node-1": entry}}
 	cache.Evict("node-1")
 	if _, ok := cache.clients["node-1"]; ok {
 		t.Error("clients entry not removed")
 	}
-	if _, ok := cache.refs["node-1"]; ok {
-		t.Error("refs entry not removed")
+	if !entry.retired || entry.refs != 3 {
+		t.Errorf("entry = %+v, want retired with its 3 leases", entry)
 	}
 }
 
 func TestNodeClientCache_Close_EmptyCacheIsNoop(t *testing.T) {
-	cache := &NodeClientCache{
-		clients: map[string]*grpc.ClientConn{},
-		refs:    map[string]int{},
-	}
+	cache := &NodeClientCache{clients: map[string]*nodeConn{}}
 	if err := cache.Close(); err != nil {
 		t.Errorf("empty: Close err = %v", err)
+	}
+}
+
+// Leases were counted per node: an eviction with requests in flight leaked
+// the connection, and the old leases then decremented the next connection's
+// count until an eviction closed it under live requests (bug hunt 2026-10-28
+// B17).
+func TestNodeClientCache_EvictionKeepsLeasesOnTheirOwnConnection(t *testing.T) {
+	prev := resolveNodeTarget
+	t.Cleanup(func() { resolveNodeTarget = prev })
+	SetNodeResolver(func(context.Context, string) (string, bool) { return "passthrough:///vmmd", true })
+	var dialed []*grpc.ClientConn
+	cache := NewNodeClientCache(func(_ context.Context, target string) (*grpc.ClientConn, error) {
+		conn, err := grpc.NewClient(target, grpc.WithTransportCredentials(insecure.NewCredentials()))
+		if err == nil {
+			dialed = append(dialed, conn)
+		}
+		return conn, err
+	}, nil)
+	t.Cleanup(func() { _ = cache.Close() })
+	lease := func() io.Closer {
+		t.Helper()
+		_, closer, ok := cache.ClientFor(context.Background(), "node-1")
+		if !ok {
+			t.Fatal("ClientFor failed")
+		}
+		return closer
+	}
+	shutdown := func(conn *grpc.ClientConn) bool { return conn.GetState() == connectivity.Shutdown }
+
+	oldA, oldB := lease(), lease()
+	cache.Evict("node-1")
+	if shutdown(dialed[0]) {
+		t.Fatal("evicting closed a connection with leases in flight")
+	}
+	fresh := lease()
+	if len(dialed) != 2 {
+		t.Fatalf("dials = %d, want a fresh connection after eviction", len(dialed))
+	}
+	_ = oldA.Close()
+	_ = oldB.Close()
+	if !shutdown(dialed[0]) {
+		t.Fatal("the evicted connection stayed open after its last lease")
+	}
+	cache.Evict("node-1")
+	if shutdown(dialed[1]) {
+		t.Fatal("old leases let an eviction close the new connection under a live lease")
+	}
+	_ = fresh.Close()
+	if !shutdown(dialed[1]) {
+		t.Fatal("the second evicted connection stayed open after its last lease")
+	}
+}
+
+// A heartbeat re-registration fires compute_node_changed without changing the
+// node; it no longer drops the connection (bug hunt 2026-10-28 B17).
+func TestNodeClientCache_EvictIfChangedKeepsAnUnchangedNode(t *testing.T) {
+	prev := resolveNodeTarget
+	t.Cleanup(func() { resolveNodeTarget = prev })
+	target := "passthrough:///vmmd-a"
+	SetNodeResolver(func(context.Context, string) (string, bool) { return target, true })
+	cache := NewNodeClientCache(func(_ context.Context, target string) (*grpc.ClientConn, error) {
+		return grpc.NewClient(target, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	}, nil)
+	t.Cleanup(func() { _ = cache.Close() })
+	_, closer, ok := cache.ClientFor(context.Background(), "node-1")
+	if !ok {
+		t.Fatal("ClientFor failed")
+	}
+	_ = closer.Close()
+	if cache.EvictIfChanged(context.Background(), "node-1", true) {
+		t.Fatal("an unchanged active node was evicted")
+	}
+	target = "passthrough:///vmmd-b"
+	if !cache.EvictIfChanged(context.Background(), "node-1", true) {
+		t.Fatal("a node whose target changed was kept")
+	}
+	if cache.EvictIfChanged(context.Background(), "node-2", false) {
+		t.Fatal("evicting an uncached node reported an eviction")
 	}
 }
 
