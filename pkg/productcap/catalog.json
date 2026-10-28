@@ -4152,6 +4152,40 @@
       ]
     },
     {
+      "id": "profile-captures",
+      "name": "On-demand profile captures",
+      "category": "observability",
+      "description": "Capture CPU, heap, stack and Go lock profiles from a running instance on demand, compare two captures, and get automatic captures when memory runs low, a request is stuck or an instance uses its whole CPU limit, with frames linked to the deployment's source.",
+      "maturity": "preview",
+      "plans": [
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/profiling#capture-a-running-instance-on-demand",
+      "operator_flag": "FAAS_PROFILING_ON_DEMAND",
+      "acceptance_test": "pkg/apid/profilecapture/service_test.go::TestCaptureLifecycle",
+      "consumers": [
+        "imaged",
+        "schedd"
+      ],
+      "routes": [
+        "/dashboard/apps/{}/profiles/captures",
+        "/v1/apps/{}/profiles/captures"
+      ],
+      "settings": [
+        "app.profiling.automatic_captures",
+        "app.profiling.pprof_port",
+        "manifest.profiling.automatic_captures",
+        "manifest.profiling.pprof_port"
+      ],
+      "cli": [
+        "debug capture",
+        "debug capture-diff",
+        "debug captures"
+      ]
+    },
+    {
       "id": "progressive-rollouts",
       "name": "Progressive rollouts and rollback",
       "category": "delivery",
