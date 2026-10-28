@@ -321,14 +321,20 @@ func (g *githubdBridge) EnqueueBuild(ctx context.Context, req *githubdpb.Enqueue
 	if releaseProblem != nil {
 		return nil, status.Errorf(codes.InvalidArgument, "EnqueueBuild: release command: %s", releaseProblem.Detail)
 	}
-	rate, err := g.store.ConsumeAccountDeployRate(ctx, acct.ID, acct.Plan.DeploysPerHour(), timeNow().UTC())
+	// PR preview builds stop at their share of the window, so a busy pull
+	// request cannot spend the deploys production needs (ADR-20261028100000).
+	limit, limitName := acct.Plan.DeploysPerHour(), "account deploy rate limit"
+	if eventKindToDeploymentKind(req.EventKind) == state.DeploymentKindPreview {
+		limit, limitName = acct.Plan.PreviewDeploysPerHour(), "PR preview share of the account deploy rate limit"
+	}
+	rate, err := g.store.ConsumeAccountDeployRate(ctx, acct.ID, limit, timeNow().UTC())
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "EnqueueBuild: deploy admission: %v", err)
 	}
 	if !rate.Allowed {
 		return nil, status.Errorf(codes.ResourceExhausted,
-			"EnqueueBuild: account deploy rate limit %d reached; resets at %s",
-			rate.Limit, rate.WindowResetsAt.UTC().Format(time.RFC3339))
+			"EnqueueBuild: %s %d reached; resets at %s",
+			limitName, rate.Limit, rate.WindowResetsAt.UTC().Format(time.RFC3339))
 	}
 
 	// The shared apidsource.Enqueue helper handles CreateDeployment +

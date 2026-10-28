@@ -7883,6 +7883,11 @@ WITH owner AS (
         -- A PR preview runs unreviewed code: it never inherits the project
         -- environment its scope maps to (the default scope maps to production).
         (a.project_id IS NOT NULL AND COALESCE(a.preview_of_slug,'')='')::boolean AS inherits_project_environment,
+        -- ADR-20261028100000: a PR preview takes its production app's preview
+        -- scope values instead.
+        (SELECT parent.id FROM apps parent WHERE COALESCE(a.preview_pr_number,0)>0
+            AND parent.account_id=a.account_id AND parent.slug=a.preview_of_slug
+            AND parent.preview_of_slug IS NULL AND parent.status<>'deleted') AS preview_parent_id,
         COALESCE(NULLIF(d.scope,''),'default')::text AS scope,
         COALESCE(bound.id::text,legacy.id::text,'')::text AS environment_id
     FROM deployments d
@@ -7914,7 +7919,11 @@ SELECT owner.scope, owner.environment_id,
         FROM project_environment_config_versions c
         WHERE owner.inherits_project_environment AND c.account_id=owner.account_id AND c.project_id=owner.project_id
             AND c.environment_slug=CASE WHEN owner.scope='default' THEN 'production' ELSE owner.scope END
-        ORDER BY c.version DESC LIMIT 1),'{}'::jsonb)::jsonb AS project_config
+        ORDER BY c.version DESC LIMIT 1),'{}'::jsonb)::jsonb AS project_config,
+    -- ADR-20261028100000: the preview-scope variables of a PR preview's production app.
+    COALESCE((SELECT jsonb_agg(jsonb_build_object('key',v.key,'value',v.value,'created_at',v.created_at,'updated_at',v.updated_at) ORDER BY v.key)
+        FROM app_envs v WHERE owner.preview_parent_id IS NOT NULL AND v.account_id=owner.account_id
+            AND v.app_id=owner.preview_parent_id AND v.scope='preview'),'[]'::jsonb)::jsonb AS preview_values
 FROM owner;
 
 -- name: LockRuntimeSecretEnvironment :one
@@ -8026,6 +8035,11 @@ WITH owner AS (
         -- A PR preview runs unreviewed code: it never inherits the project
         -- environment its scope maps to (the default scope maps to production).
         (a.project_id IS NOT NULL AND COALESCE(a.preview_of_slug,'')='')::boolean AS inherits_project_environment,
+        -- ADR-20261028100000: a PR preview takes its production app's preview
+        -- scope values instead.
+        (SELECT parent.id FROM apps parent WHERE COALESCE(a.preview_pr_number,0)>0
+            AND parent.account_id=a.account_id AND parent.slug=a.preview_of_slug
+            AND parent.preview_of_slug IS NULL AND parent.status<>'deleted') AS preview_parent_id,
         COALESCE(NULLIF(d.scope,''),'default')::text AS scope,
         COALESCE(bound.id::text,legacy.id::text,'')::text AS environment_id,
         d.environment_workload_runtime,d.override_env_secrets,d.sidecars,COALESCE(d.secret_reload_signal,'')::text AS reload_signal,
@@ -8076,13 +8090,25 @@ SELECT (SELECT values_json FROM deployment_release_secret_snapshots WHERE deploy
         WHERE owner.inherits_project_environment AND c.account_id=owner.account_id AND c.project_id=owner.project_id
             AND c.environment_slug=CASE WHEN owner.scope='default' THEN 'production' ELSE owner.scope END
         ORDER BY c.version DESC LIMIT 1),'{}'::jsonb)::jsonb AS project_config,
+    -- ADR-20261028100000: the preview-scope variables of a PR preview's production app.
+    COALESCE((SELECT jsonb_agg(jsonb_build_object('key',v.key,'value',v.value,'created_at',v.created_at,'updated_at',v.updated_at) ORDER BY v.key)
+        FROM app_envs v WHERE owner.preview_parent_id IS NOT NULL AND v.account_id=owner.account_id
+            AND v.app_id=owner.preview_parent_id AND v.scope='preview'),'[]'::jsonb)::jsonb AS preview_values,
     owner.project_id,
     -- ADR-1139: the project environment secrets the deployment inherits.
     COALESCE((SELECT jsonb_agg(jsonb_build_object('key',p.key,'ciphertext',encode(p.ciphertext,'base64'),'kid',p.kid,
         'value_hash',p.value_hash,'secret_version',p.secret_version,'created_at',p.created_at,'updated_at',p.updated_at) ORDER BY p.key)
         FROM project_environment_secrets p
         WHERE owner.inherits_project_environment AND p.account_id=owner.account_id AND p.project_id=owner.project_id
-            AND p.environment_slug=CASE WHEN owner.scope='default' THEN 'production' ELSE owner.scope END),'[]'::jsonb)::jsonb AS project_secrets
+            AND p.environment_slug=CASE WHEN owner.scope='default' THEN 'production' ELSE owner.scope END),'[]'::jsonb)::jsonb AS project_secrets,
+    -- ADR-20261028100000: the preview-scope secrets of a PR preview's production
+    -- app. Managed credentials and ephemeral secrets stay with that app.
+    COALESCE((SELECT jsonb_agg(jsonb_build_object('key',s.key,'ciphertext',encode(s.ciphertext,'base64'),'kid',s.kid,
+        'value_hash',s.value_hash,'secret_version',s.secret_version,'created_at',s.created_at,'updated_at',s.updated_at) ORDER BY s.key)
+        FROM app_secrets s WHERE owner.preview_parent_id IS NOT NULL AND s.account_id=owner.account_id
+            AND s.app_id=owner.preview_parent_id AND s.scope='preview' AND s.secret_class<>'ephemeral'
+            AND s.managed_postgres_binding_id IS NULL AND s.managed_object_storage_credential_id IS NULL
+            AND s.managed_credential_ref IS NULL),'[]'::jsonb)::jsonb AS preview_secrets
 FROM owner;
 
 -- name: LockRuntimeConfigWorkloadSpec :many

@@ -333,9 +333,31 @@ previews. It injects the PR's declared internal service bindings after source
 scan. A new PR push clears environment values left on older preview rows.
 `gregale preview create` follows the same rule: the preview gets the
 production app's service binding URLs and none of its environment values.
-Configure preview-specific credentials separately before relying on a preview
-that needs external managed services; Gregale does not provision isolated
-databases or buckets for the PR.
+Gregale does not provision isolated databases or buckets for the PR.
+
+### Preview values
+
+Give previews their own credentials in the production app's `preview` scope.
+Every PR preview of that app receives these values, and nothing from
+production's other scopes:
+
+```bash
+gregale env set --app web --scope preview DATABASE_URL=postgres://staging.example/db
+gregale env set --app web --scope preview STRIPE_SECRET_KEY=sk_test_...
+```
+
+How preview values are applied:
+- A value set directly on a preview app (`--app pr-7-web`) wins over the same key in the `preview` scope.
+- A preview picks up a changed value the next time it starts. Its earlier snapshot no longer restores.
+- Writing a `preview` value counts as a secret change on the production app, so production's next wake is a cold start.
+- Managed database and object-storage credentials, and ephemeral secrets, stay with the production app.
+- A service that exists only in the pull request has no production app, so it receives no preview values.
+
+### Builds, lifetime and indexing
+
+- **Builds.** A pull request's preview builds use at most half of the account's hourly deploy limit, so production deploys keep the other half. Builders take every other queued build before a preview build.
+- **Lifetime.** Deleting a production app tears down its PR previews on the preview janitor's next pass, within five minutes.
+- **Indexing.** Previews answer every request with `X-Robots-Tag: noindex, nofollow` and serve a `robots.txt` that disallows everything.
 
 Previews keep their production app's access and egress gates: password,
 IP allowlist, signed-request and consumer-auth requirements, the egress

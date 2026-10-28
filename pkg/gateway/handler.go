@@ -6106,6 +6106,11 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	app = lookedApp
 haveApp:
+	// Previews serve unreleased code on guessable hosts; every answer for
+	// one, proxied or from the edge, tells search engines not to index it.
+	if app.IsPreview {
+		w.Header().Set("X-Robots-Tag", previewRobotsTag)
+	}
 	if app.EnvironmentNotReady {
 		api.WriteProblem(w, api.NewProblem(http.StatusServiceUnavailable, api.CodeCapacity,
 			"Environment is not ready", "the stage clone has not published all of its workloads and resources"))

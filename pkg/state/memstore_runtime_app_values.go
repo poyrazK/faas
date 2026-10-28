@@ -93,10 +93,32 @@ func inheritsProjectEnvironment(app App) bool {
 	return app.ProjectID != "" && app.PreviewOfSlug == ""
 }
 
+// previewParentLocked mirrors the snapshot queries' preview_parent_id: the
+// live production app whose preview values a PR preview inherits
+// (ADR-20261028100000).
+func (m *MemStore) previewParentLocked(app App) (App, bool) {
+	if app.PreviewOfSlug == "" || app.PreviewPrNumber <= 0 {
+		return App{}, false
+	}
+	for _, parent := range m.apps {
+		if parent.AccountID == app.AccountID && parent.Slug == app.PreviewOfSlug && parent.PreviewOfSlug == "" && parent.Status != AppDeleted {
+			return parent, true
+		}
+	}
+	return App{}, false
+}
+
 // inheritedProjectEnvLocked reads the latest configuration of the project
 // environment the owner's scope maps to (ADR-1136).
 func (m *MemStore) inheritedProjectEnvLocked(owner RuntimeAppEnvSnapshot) ([]AppEnv, error) {
 	app := m.apps[owner.AppID]
+	if parent, ok := m.previewParentLocked(app); ok {
+		var values []runtimePreviewValue
+		for _, row := range m.runtimeAppEnvRowsLocked(RuntimeAppEnvSnapshot{AccountID: owner.AccountID, AppID: parent.ID, Scope: PreviewValuesScope}) {
+			values = append(values, runtimePreviewValue{Key: row.Key, Value: row.Value, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt})
+		}
+		return previewInheritedEnv(owner, values), nil
+	}
 	if !inheritsProjectEnvironment(app) {
 		return []AppEnv{}, nil
 	}
@@ -112,6 +134,17 @@ func (m *MemStore) inheritedProjectEnvLocked(owner RuntimeAppEnvSnapshot) ([]App
 // project_secrets column (ADR-1139).
 func (m *MemStore) inheritedProjectSecretsLocked(snapshot RuntimeAppValuesSnapshot) []ProjectEnvironmentSecret {
 	app := m.apps[snapshot.AppID]
+	if parent, ok := m.previewParentLocked(app); ok {
+		var secrets []AppSecret
+		for _, row := range m.secrets {
+			if row.AccountID == snapshot.AccountID && row.AppID == parent.ID && row.Scope == PreviewValuesScope &&
+				row.SecretClass != SecretClassEphemeral && row.ManagedPostgresBindingID == "" &&
+				row.ManagedObjectStorageCredentialID == "" && row.ManagedCredentialRef == "" {
+				secrets = append(secrets, row)
+			}
+		}
+		return previewInheritedSecrets(snapshot, secrets)
+	}
 	if !inheritsProjectEnvironment(app) {
 		return []ProjectEnvironmentSecret{}
 	}
