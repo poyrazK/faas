@@ -5446,8 +5446,7 @@
       ],
       "routes": [
         "/v1/account/traces",
-        "/v1/otel",
-        "/v1/traces"
+        "/v1/otel"
       ],
       "cli": [
         "trace"

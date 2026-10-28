@@ -249,7 +249,7 @@ internal hosting service and Gregale Agents are already unreachable.
 | 121 | App, service and account metrics; request analytics | `metrics`, `gregale analytics` | **MISSING** | — | GA |
 | 122 | Custom metrics and OTLP metric ingest | `custom-metrics`, `otlp` | **MISSING** | — | beta |
 | 123 | Custom metric history | | `custom-metric-history` internal | env flag | internal |
-| 124 | Tracing: in-guest request tracing, customer OTLP trace ingest, W3C trace propagation | `gregale trace`, `/v1/traces`, `/v1/otel/v1/traces` | **MISSING** | `pf: guest_tracing` | preview |
+| 124 | Tracing: in-guest request tracing, customer OTLP trace ingest, W3C trace propagation | `gregale trace`, `/v1/account/traces`, `/v1/otel/v1/traces` (gatewayd-public's `/v1/traces/{id}` is an operator-token trace ring, not customer surface) | **MISSING** | `pf: guest_tracing` | preview |
 | 125 | Alerts, notification channels, alert presets | `alerts`, `notification-channels`, `alert-presets` | **MISSING** | — | beta |
 | 126 | Anomaly (baseline) alerts | | `anomaly-alerts` internal | `pf: anomaly_alerts` | internal |
 | 127 | Issues: error grouping, Linear and Slack integrations, errors view | `issues`, `errors` | `issues` preview | — | preview |
