@@ -86,7 +86,9 @@ func (c *budgetAdmissionCache) check(ctx context.Context, key budgetAdmissionKey
 		}
 		c.mu.Unlock()
 		if refresh {
-			c.spawn(func() { c.refresh(key, read) })
+			// The request ends before the refresh does; keep its values only.
+			detached := context.WithoutCancel(ctx)
+			c.spawn(func() { c.refresh(detached, key, read) })
 		}
 		return d.err
 	}
@@ -97,8 +99,8 @@ func (c *budgetAdmissionCache) check(ctx context.Context, key budgetAdmissionKey
 }
 
 // refresh re-reads one decision off the request path.
-func (c *budgetAdmissionCache) refresh(key budgetAdmissionKey, read func(context.Context) error) {
-	ctx, cancel := context.WithTimeout(context.Background(), api.FinancialBudgetAdmissionRefreshTimeout)
+func (c *budgetAdmissionCache) refresh(ctx context.Context, key budgetAdmissionKey, read func(context.Context) error) {
+	ctx, cancel := context.WithTimeout(ctx, api.FinancialBudgetAdmissionRefreshTimeout)
 	defer cancel()
 	err := read(ctx)
 	c.record(key, c.now(), err)
