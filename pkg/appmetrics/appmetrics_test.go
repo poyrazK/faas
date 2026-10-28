@@ -116,6 +116,8 @@ func TestFetchAlertMetricQueriesOnlyRequestedSeries(t *testing.T) {
 		{"latency_p99_ms", []string{"histogram_quantile(0.99", "or vector(0)"}},
 		{"cold_start_pct", []string{"gateway_cold_boot_total", "or vector(0)"}},
 		{"queue_depth", []string{"gateway_queue_depth", "or vector(0)"}},
+		{"queue_backlog", []string{`max(schedd_queue_depth{app=`, "or vector(0)"}},
+		{"queue_oldest_age_seconds", []string{`max(schedd_queue_oldest_age_seconds{app=`, "or vector(0)"}},
 		{"pre_auth_target_threshold", []string{`gateway_pre_auth_policy_shadow_total`, `policy=~"targets_[0-9]+"`, `outcome="target_threshold"`, `[5m]`, "or vector(0)"}},
 		{"pre_auth_pressure", []string{`gateway_pre_auth_rate_limit_total`, `outcome=~"blocked|route_blocked|would_block|route_would_block"`, `[5m]`, "or vector(0)"}},
 		{"edge_validation_failures", []string{`gateway_validate_failures_total{app_id=`, `[5m]`, "or vector(0)"}},

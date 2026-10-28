@@ -213,6 +213,24 @@ counted. A line that only mentions "error" in prose is not counted. Build
 logs are never counted. Log alerts support every alert action, including
 rollback, and every window.
 
+## Queue backlog alerts
+
+`queue_backlog` is the number of messages waiting in the app's queues or held
+by a worker, and `queue_oldest_age_seconds` is how long the oldest waiting
+message has waited. Use them to hear about a [worker](workers.md) that falls
+behind:
+
+```bash
+printf '%s\n' "$ALERT_SECRET" | gregale alert create --app my-worker --name "jobs backing up" \
+  --metric queue_oldest_age_seconds --comparison gt --threshold 600 --window-spec 15m \
+  --webhook-url https://example.com/hooks/gregale --webhook-secret-stdin
+```
+
+Both compare the latest reading, refreshed every 30 seconds. The backlog
+count stops at 100,000, and an empty queue reads 0. These rules are
+webhook-only. `queue_depth` is a different signal: requests the gateway holds
+while an instance wakes.
+
 ### Log search alerts
 
 Where log search is enabled (preview), `log_search_matches` counts the log

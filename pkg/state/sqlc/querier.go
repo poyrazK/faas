@@ -5034,6 +5034,11 @@ type Querier interface {
 	// counting the backlog.
 	QueueBindingHasInFlight(ctx context.Context, db DBTX, arg QueueBindingHasInFlightParams) (bool, error)
 	QueueBindingHistoryByID(ctx context.Context, db DBTX, arg QueueBindingHistoryByIDParams) (QueueBinding, error)
+	// QueueStateForBinding's figures for gauges and alerts without a
+	// backlog-sized read: each count stops at row_limit, and the oldest pending
+	// message is the first one due in the lease indexes
+	// (ADR-20261018101500 amendment 2026-10-27).
+	QueueBindingTelemetry(ctx context.Context, db DBTX, arg QueueBindingTelemetryParams) (QueueBindingTelemetryRow, error)
 	// Admission holds the parent app lock, also required by release publication.
 	// Read committed authority without reversing the publisher's release/app lock order.
 	QueueCanaryManagedAuthority(ctx context.Context, db DBTX, arg QueueCanaryManagedAuthorityParams) (QueueCanaryManagedAuthorityRow, error)
@@ -5511,13 +5516,21 @@ type Querier interface {
 	ReadPublicRoutingSmokeCandidate(ctx context.Context, db DBTX, arg ReadPublicRoutingSmokeCandidateParams) (bool, error)
 	// ReadProjectCanaryRouting and ActiveSafeProjectReleaseID for each app.
 	ReadPublicRoutingViewCanaries(ctx context.Context, db DBTX, appIds []pgtype.UUID) ([]ReadPublicRoutingViewCanariesRow, error)
+	// Live deployments in every scope, for host and revision pins
+	// (ReadPublicRoutingHostPin, ReadPublicRoutingRevision). row_limit + 1 rows per
+	// app tell the reader the list was cut.
+	ReadPublicRoutingViewLive(ctx context.Context, db DBTX, arg ReadPublicRoutingViewLiveParams) ([]ReadPublicRoutingViewLiveRow, error)
 	// ADR-20261027085556: a gateway's public routing view reads every app it
 	// tracks in one repeatable-read snapshot. Each query below returns, for many
 	// apps at once, the rows its per-request counterpart above reads for one.
+	// revision_pins is ReadPublicRoutingRevision's manifest condition.
+	// revision_pin_ttl_valid is false when the stored value is not an integer, which
+	// the per-request read fails on; such an app's revision pins keep that read.
 	ReadPublicRoutingViewOwners(ctx context.Context, db DBTX, appIds []pgtype.UUID) ([]ReadPublicRoutingViewOwnersRow, error)
-	// Rows of ReadPublicRoutingRelease for each app: every active graph, and the
-	// named graphs (a running canary's) while they are still usable. A graph's
-	// target scope is its environment, the scope the per-request read filters on.
+	// Rows of ReadPublicRoutingRelease for each app: every active graph and every
+	// graph still usable by a release pin, the named graphs (a running canary's)
+	// first. A graph's target scope is its environment, the scope the per-request
+	// read filters on. row_limit + 1 rows per app tell the reader the list was cut.
 	ReadPublicRoutingViewReleases(ctx context.Context, db DBTX, arg ReadPublicRoutingViewReleasesParams) ([]ReadPublicRoutingViewReleasesRow, error)
 	// Rows of ReadPublicRoutingWeights for every scope; a scope with more than
 	// row_limit rows is refused like the per-request roster.
@@ -5587,7 +5600,6 @@ type Querier interface {
 	ReadServicePolicyAppBySlug(ctx context.Context, db DBTX, slug string) (ReadServicePolicyAppBySlugRow, error)
 	ReadServicePolicyDeploymentOverride(ctx context.Context, db DBTX, arg ReadServicePolicyDeploymentOverrideParams) (bool, error)
 	ReadServicePolicyDeploymentWeights(ctx context.Context, db DBTX, arg ReadServicePolicyDeploymentWeightsParams) ([]ReadServicePolicyDeploymentWeightsRow, error)
-	ReadServicePolicyPreviewApp(ctx context.Context, db DBTX, arg ReadServicePolicyPreviewAppParams) (ReadServicePolicyPreviewAppRow, error)
 	ReadServicePolicyProject(ctx context.Context, db DBTX, arg ReadServicePolicyProjectParams) (string, error)
 	ReadServicePolicyReleaseCandidates(ctx context.Context, db DBTX, arg ReadServicePolicyReleaseCandidatesParams) ([]ReadServicePolicyReleaseCandidatesRow, error)
 	ReadServicePolicyTestApp(ctx context.Context, db DBTX, arg ReadServicePolicyTestAppParams) (ReadServicePolicyTestAppRow, error)
@@ -6382,6 +6394,8 @@ type Querier interface {
 	SelectSourceBuildRootfs(ctx context.Context, db DBTX, arg SelectSourceBuildRootfsParams) error
 	ServiceCapacityPlacement(ctx context.Context, db DBTX) ([]byte, error)
 	ServiceCapacityProtection(ctx context.Context, db DBTX) ([]byte, error)
+	// Two IDs suffice to refuse an ambiguous service name, as production does.
+	ServicePolicyPreviewAppIDs(ctx context.Context, db DBTX, arg ServicePolicyPreviewAppIDsParams) ([]pgtype.UUID, error)
 	ServiceProjectReleaseStages(ctx context.Context, db DBTX, appID pgtype.UUID) ([]ProjectReleaseStage, error)
 	ServiceRecoveryByApp(ctx context.Context, db DBTX, appID pgtype.UUID) (ServiceRecovery, error)
 	ServiceRolloutBindingEnforced(ctx context.Context, db DBTX, arg ServiceRolloutBindingEnforcedParams) (bool, error)
@@ -6685,11 +6699,14 @@ type Querier interface {
 	TryLockBaseImageProducerKeyShared(ctx context.Context, db DBTX, storageKey string) (bool, error)
 	// Acquire on the direct connection before starting the repeatable-read view.
 	TryLockTrafficPolicySession(ctx context.Context, db DBTX, lockKey string) (bool, error)
+	// A scoped binding writer's ancestor and root keys (ADR-20261027163626).
+	TryLockTrafficPolicySessionShared(ctx context.Context, db DBTX, lockKey string) (bool, error)
 	UDPListenerByAppAndName(ctx context.Context, db DBTX, arg UDPListenerByAppAndNameParams) (AppUdpListener, error)
 	UDPListenerByID(ctx context.Context, db DBTX, id string) (AppUdpListener, error)
 	UDPListenerByPublicPort(ctx context.Context, db DBTX, publicPort int32) (AppUdpListener, error)
 	UnfenceCancelledManagedPostgresCutover(ctx context.Context, db DBTX, cutoverID string) error
 	UnlockTrafficPolicySession(ctx context.Context, db DBTX, lockKey string) (bool, error)
+	UnlockTrafficPolicySessionShared(ctx context.Context, db DBTX, lockKey string) (bool, error)
 	UnpinManagedPostgresCutoverBindings(ctx context.Context, db DBTX, id string) error
 	UnpinManagedPostgresCutoverDatabases(ctx context.Context, db DBTX, id string) error
 	UpdateAccountPlan(ctx context.Context, db DBTX, arg UpdateAccountPlanParams) error

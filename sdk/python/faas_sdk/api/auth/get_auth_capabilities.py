@@ -48,7 +48,7 @@ def _build_response(
 
 def sync_detailed(
     *,
-    client: AuthenticatedClient | Client,
+    client: AuthenticatedClient,
 ) -> Response[Any | AuthCapabilities]:
     r"""Sign-in OAuth capability signal for the dashboard.
 
@@ -88,7 +88,7 @@ def sync_detailed(
 
 def sync(
     *,
-    client: AuthenticatedClient | Client,
+    client: AuthenticatedClient,
 ) -> Any | AuthCapabilities | None:
     r"""Sign-in OAuth capability signal for the dashboard.
 
@@ -124,7 +124,7 @@ def sync(
 
 async def asyncio_detailed(
     *,
-    client: AuthenticatedClient | Client,
+    client: AuthenticatedClient,
 ) -> Response[Any | AuthCapabilities]:
     r"""Sign-in OAuth capability signal for the dashboard.
 
@@ -162,7 +162,7 @@ async def asyncio_detailed(
 
 async def asyncio(
     *,
-    client: AuthenticatedClient | Client,
+    client: AuthenticatedClient,
 ) -> Any | AuthCapabilities | None:
     r"""Sign-in OAuth capability signal for the dashboard.
 

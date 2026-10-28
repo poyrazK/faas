@@ -748,6 +748,11 @@ func (s *server) WithOpsMetrics(ctx context.Context, ops *wire.OpsMetrics) *serv
 		s.routeJobMetrics = routejobs.NewMetrics(ops.Registry(), ops.MetricPrefix())
 	}
 	if ops == nil {
+		s.edgeRules.Metrics = nil
+	} else if s.edgeRules.Metrics.Registry() != ops.Registry() {
+		s.edgeRules.Metrics = edgerules.NewMetrics(ops.Registry(), ops.MetricPrefix())
+	}
+	if ops == nil {
 		s.honeytokenMetrics = nil
 	} else if s.honeytokenMetrics == nil || s.honeytokenMetrics.registry != ops.Registry() {
 		s.honeytokenMetrics = newHoneytokenMetrics(ops.Registry())
@@ -5894,7 +5899,7 @@ func (s *server) idempotentWithInEnvironment(environmentID string, next accountH
 		}
 		cap := &captureWriter{ResponseWriter: w, status: http.StatusOK}
 		next(cap, r, acct)
-		if idempotencyResponseReplayable(cap.status, cap.body.Bytes()) && !cap.skipReplay {
+		if cap.replayable() {
 			_ = s.store.PutIdempotent(r.Context(), acct.ID, key, cap.status, cap.body.Bytes())
 		}
 	}
@@ -6042,8 +6047,9 @@ func (s *server) idempotentReserved(w http.ResponseWriter, r *http.Request, acct
 		next(cap, r, acct)
 		ctx := context.WithoutCancel(r.Context())
 		// A response with a one-time credential (httpkit.SkipIdempotentReplay)
-		// releases the key: a retry runs the operation again.
-		if idempotencyResponseReplayable(cap.status, cap.body.Bytes()) && !cap.skipReplay {
+		// or a refusal that asks to be retried releases the key: a retry runs
+		// the operation again.
+		if cap.replayable() {
 			_ = s.store.PutIdempotent(ctx, acct.ID, key, cap.status, cap.body.Bytes())
 			return
 		}
@@ -6097,6 +6103,18 @@ type captureWriter struct {
 
 // SkipIdempotentReplay implements httpkit.IdempotentReplaySkipper.
 func (c *captureWriter) SkipIdempotentReplay() { c.skipReplay = true }
+
+// replayable reports whether the captured response may be stored for its
+// Idempotency-Key. A refusal with Retry-After says it can clear, like a 429
+// or 503: a policy check that ran out of time on a busy control plane kept
+// answering the same `gregale deploy` for 24 hours, whose key is the deploy's
+// content digest, although its hint said to retry in a few seconds.
+func (c *captureWriter) replayable() bool {
+	if c.skipReplay || c.status >= 400 && c.Header().Get("Retry-After") != "" {
+		return false
+	}
+	return idempotencyResponseReplayable(c.status, c.body.Bytes())
+}
 
 func (c *captureWriter) WriteHeader(status int) {
 	c.status = status

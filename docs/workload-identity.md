@@ -47,7 +47,9 @@ FAAS_WORKLOAD_IDENTITY_KEY_ID=gregale-workload-identity-1
 
 The equivalent TOML keys are `workload_identity_key_path`,
 `workload_identity_issuer`, `workload_identity_key_id`, and
-`workload_identity_ttl` (for example, `"5m"`).
+`workload_identity_ttl` (for example, `"2m"`). Tokens never live longer than
+5 minutes: a longer value is capped, because a cloud that trusts the issuer
+accepts a copied token for as long as it says.
 
 ### Provision with Ansible (ADR-1141)
 

@@ -150,7 +150,7 @@ internal hosting service and Gregale Agents are already unreachable.
 | 42 | Manual park / wake, prewarm | `park`, `wake`, `prewarm(s)` | **MISSING** | — | GA |
 | 43 | Autoscaling and min instances (target RPS / CPU), scheduled scaling | `autoscale_target_*`, `min_instances` on apps | **MISSING** | — | GA |
 | 44 | Service wake-ahead | `service-wake-ahead`, `gregale wake-ahead` | `service-wake-ahead` ga | — | GA |
-| 45 | Frozen tier (fast thaw) | operator env `FAAS_FROZEN_TIER`, `FAAS_FROZEN_FAST_PATH` | **MISSING** | operator env | internal |
+| 45 | Frozen tier (fast thaw) | operator env `FAAS_FROZEN_TIER`, `FAAS_FROZEN_FAST_PATH` | **MISSING** | operator env; unbilled quiet pause `pf: quiet_pause_unbilled` | internal |
 | 46 | Instances: list, restart, runtime-config restarts | `instances`, `restart`, `gregale ps` | **MISSING** | — | GA |
 | 47 | Health probes and auto-restart: startup, readiness, liveness; restart policy, stop signal, grace period, drain timeout | `gregale.yaml` probes, `restart_policy` | **MISSING** | — | GA |
 | 48 | Snapshot lifecycle hooks: run app code before checkpoint and after restore | `gregale.yaml` `before_checkpoint`, `after_restore` | **MISSING** | — | beta |

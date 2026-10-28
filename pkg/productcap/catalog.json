@@ -2990,6 +2990,9 @@
       ],
       "docs_url": "/docs/logs#log-drains",
       "acceptance_test": "cmd/gregale/commands_log_drains_test.go::TestCmdLogDrainsListJSON",
+      "consumers": [
+        "gatewayd-internal"
+      ],
       "routes": [
         "/dashboard/apps/{}/log-drains",
         "/v1/apps/{}/log-drains"
@@ -3036,6 +3039,9 @@
       ],
       "docs_url": "/docs/logs",
       "acceptance_test": "cmd/e2e/logs_archive_metal_test.go::TestLogsLiveAndArchivedMetal",
+      "consumers": [
+        "gatewayd-internal"
+      ],
       "routes": [
         "/dashboard/apps/{}/logs",
         "/v1/apps/{}/logs",

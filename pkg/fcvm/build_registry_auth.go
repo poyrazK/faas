@@ -17,7 +17,7 @@ const registryCredentialNamespace = "registry_creds"
 var errRegistryNamespace = errors.New("registry credential sealed under another namespace")
 
 // BuildRegistryCredential is one sealed registry credential of the app a
-// builder VM builds (ADR-20261026090000). builderd forwards the row; only
+// builder VM builds (ADR-20261026091500). builderd forwards the row; only
 // the Manager opens the password.
 type BuildRegistryCredential struct {
 	Registry       string

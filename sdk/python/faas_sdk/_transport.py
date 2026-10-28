@@ -4,7 +4,7 @@ The chain is composed outermost -> innermost, mirroring the Go
 SDK's `RoundTripper` stack in `sdk/go/transport.go` and the Node
 SDK's `makeWrappedFetch` in `src/client.ts`:
 
-    1. RetryTransport      (5xx + 429 only, exponential backoff)
+    1. RetryTransport      (5xx + 429 + timed-out policy checks, exponential backoff)
     2. LoggingTransport    (one log line per attempt, optional logger)
     3. Rfc7807Layer        (decode Problem bodies, raise sentinels)
     4. IdempotencyTransport (mint Idempotency-Key on mutating calls)
@@ -73,7 +73,27 @@ class _BodyCapturing:
 
 
 def _is_retryable(response: httpx.Response) -> bool:
-    return response.status_code == 429 or response.status_code >= 500
+    return response.status_code == 429 or response.status_code >= 500 or _policy_check_timed_out(response)
+
+
+def _may_be_policy_check_timeout(response: httpx.Response) -> bool:
+    """A 422 with Retry-After whose body the retry layer must read to
+    classify it."""
+    return response.status_code == 422 and "Retry-After" in response.headers
+
+
+def _policy_check_timed_out(response: httpx.Response) -> bool:
+    """A traffic policy check that ran out of time on a busy control
+    plane (422 `traffic_policy_too_complex` with Retry-After). The
+    refusal saved nothing and asks to be resent. The body must already
+    be read."""
+    if not _may_be_policy_check_timeout(response) or _retry_after_seconds(response) is None:
+        return False
+    try:
+        problem = response.json()
+    except (ValueError, httpx.ResponseNotRead):
+        return False
+    return isinstance(problem, dict) and problem.get("code") == "traffic_policy_too_complex"
 
 
 def _retry_after_seconds(response: httpx.Response) -> float | None:
@@ -89,7 +109,9 @@ def _retry_after_seconds(response: httpx.Response) -> float | None:
 
 
 class RetryTransport(httpx.BaseTransport):
-    """Retries on 5xx + 429 only. Bounded exponential backoff.
+    """Retries on 5xx + 429, and on a 422 `traffic_policy_too_complex`
+    with Retry-After (a policy check that ran out of time). Bounded
+    exponential backoff.
 
     `max_attempts=0` is a true identity (the wrapped transport runs
     once). `backoff=0` retries with no inter-attempt sleep (useful
@@ -117,6 +139,8 @@ class RetryTransport(httpx.BaseTransport):
             capture.apply(request)
             response = self._transport.handle_request(request)
             attempts += 1
+            if _may_be_policy_check_timeout(response):
+                response.read()
             if not _is_retryable(response) or attempts > self._max_attempts:
                 return response
             response.close()
@@ -260,6 +284,8 @@ class AsyncRetryTransport(httpx.AsyncBaseTransport):
             capture.apply(request)
             response = await self._transport.handle_async_request(request)
             attempts += 1
+            if _may_be_policy_check_timeout(response):
+                await response.aread()
             if not _is_retryable(response) or attempts > self._max_attempts:
                 return response
             response.close()

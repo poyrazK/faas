@@ -1,6 +1,7 @@
 package apidserver
 
 import (
+	"context"
 	"errors"
 	"net/http"
 
@@ -75,11 +76,28 @@ func (s *server) getRouteHealthReport(w http.ResponseWriter, r *http.Request, ac
 		s.routeHealthError(w, err)
 		return
 	}
+	report = s.routeHealthReportAfterAbort(r.Context(), acct.ID, app.ID, id.String(), report)
 	if candidate, err := s.store.DeploymentByID(r.Context(), id.String()); err == nil && candidate.AppID == app.ID {
 		report.ProfileSignal = s.profileCanarySignal(r.Context(), acct, app, candidate)
 	}
 	writeJSON(w, http.StatusOK, report)
 }
+
+// routeHealthReportAfterAbort shows the evidence an ADR-458 abort was saved
+// with: the aborted candidate serves nothing, so the live windows read
+// unknown. Without readable history the live report stands.
+func (s *server) routeHealthReportAfterAbort(ctx context.Context, accountID, appID, deploymentID string, live api.RouteHealthReport) api.RouteHealthReport {
+	history, ok := s.store.(state.RouteHealthHistoryStore)
+	if !ok {
+		return live
+	}
+	page, err := history.ListRouteHealthHistory(ctx, accountID, appID, deploymentID, 1, "")
+	if err != nil || len(page.Entries) == 0 {
+		return live
+	}
+	return routehealth.WithSavedAbort(live, &page.Entries[0])
+}
+
 func (s *server) routeHealthError(w http.ResponseWriter, err error) {
 	var blocked *state.RouteHealthBlockedError
 	switch {
