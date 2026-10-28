@@ -407,6 +407,11 @@ const (
 	BuildExportPublicationVerificationTTL         = 24 * time.Hour
 )
 
+// LocalOCIZstdMaxWindowBytes bounds the decoder window, and so the memory, a
+// zstd-compressed source-build layer may demand. BuildKit's default zstd level
+// uses a few MiB; 128 MiB still admits zstd's long-distance mode.
+const LocalOCIZstdMaxWindowBytes = 128 << 20
+
 // Registry image verification bounds both retained metadata and consumed layers.
 // Signature attachment bounds cover the supported keyed simple-signing format.
 // Final converted app layers remain subject to the creating account's plan.
@@ -6545,6 +6550,16 @@ const (
 	// funded deadline, not this check, bounds strict spending.
 	FinancialBudgetAdmissionCacheTTL  = time.Second
 	FinancialBudgetAdmissionCacheSize = 10_000
+	// FinancialBudgetAdmissionOutageGrace is how long a gateway keeps serving
+	// an app's last budget decision while the store cannot be read
+	// (ADR-20261028083324). Past it, admission fails closed. A held decision
+	// is never turned into an admission. It matches
+	// TrafficPublicRoutingOutageGrace, so the request path survives the same
+	// control-plane Postgres outage. The owner sets the final length.
+	FinancialBudgetAdmissionOutageGrace = 5 * time.Minute
+	// FinancialBudgetAdmissionRefreshTimeout bounds one background re-read of
+	// a decision older than FinancialBudgetAdmissionCacheTTL.
+	FinancialBudgetAdmissionRefreshTimeout = 2 * time.Second
 
 	// Production forks (ADR-732). A fork is destroyed at its TTL; the
 	// caller may ask for less than the default, never more than the max.
@@ -7684,6 +7699,12 @@ const (
 	// limit. It is deliberately larger than the number of distinct sources
 	// that exist, so no app can hit it by declaring every real metric.
 	MaxScalingTargets = 8
+	// ScalingQueueTargetMax bounds the value of a queue_depth or queue_lag
+	// target, the messages one worker should take. The scheduler counts an
+	// app's backlog up to value × max replicas on every reconcile, so an
+	// unbounded value turned each pass into a scan of the whole queue
+	// (2026-10-27 audit).
+	ScalingQueueTargetMax = 10_000
 	// MaxScalingSchedules bounds the recurring windows one app may declare
 	// (ADR-195). Each schedule costs a cron parse per app per floor
 	// evaluation, and the floor is read on the wake hot path, so this is a
@@ -11583,6 +11604,10 @@ const (
 	// an environment overlay. Also bound the aggregate wire projection.
 	TrafficPolicyMaxHostRules = 50_020
 	TrafficPolicyMaxHostBytes = 64 * 1024 * 1024
+	// TrafficPolicyAnalysisRetryAfter is the Retry-After on a policy check
+	// that ran out of time. The refusal changed nothing, so clients resend
+	// the same request; a busy control plane usually clears within seconds.
+	TrafficPolicyAnalysisRetryAfter = 2 * time.Second
 
 	// AppErrorsDedupeWindowSeconds (ADR-096) is the platform-wide
 	// dedupe window for the IncrementAppError INSERT. NOT a
@@ -11721,6 +11746,19 @@ const (
 	// refresh, dropping the least recently used.
 	TrafficPublicRoutingWarmTTL  = 10 * time.Minute
 	TrafficPublicRoutingMaxViews = 4_096
+	// TrafficPublicRoutingMaxLiveDeployments and
+	// TrafficPublicRoutingMaxReleaseGraphs bound what one app's view keeps
+	// for pinned requests (ADR-20261028095914): its live deployments in every
+	// scope, and its active and still-usable release graphs. A pin the cut
+	// list does not hold is read from the store, as before.
+	TrafficPublicRoutingMaxLiveDeployments = 128
+	TrafficPublicRoutingMaxReleaseGraphs   = 64
+	// TrafficRateLimitOutageGrace is how long after its last successful shared
+	// counter decision a gateway enforces central rate limits from its own
+	// per-gateway bucket while the counter cannot be read
+	// (ADR-20261027173012). It matches TrafficSecurityOutageGrace: past it,
+	// unverified admission is refused with rate_limit_unavailable.
+	TrafficRateLimitOutageGrace = 5 * time.Minute
 	// Runtime feature observations are small fleet snapshots, independent of
 	// request accounting and policy-revision convergence.
 	TrafficRuntimeObservationInterval  = 2 * time.Second

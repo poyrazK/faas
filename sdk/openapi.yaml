@@ -326,6 +326,45 @@ tags:
 security:
   - bearerAuth: []
 paths:
+  /v1/projects/apply-plan:
+    post:
+      tags: [projects]
+      operationId: applyCachedProjectPlan
+      summary: Deploy an account-owned reviewed project source without another upload.
+      description: |
+        Applies the exact archive retained by a project scan, not the current
+        head of a mutable Git ref. The normal scanner and apply admission gates
+        run again. The account-scoped source expires after one hour; rescan on
+        preview_expired. Initial secrets require secrets:write or admin and are
+        sealed before any deployment is enqueued. Failed configuration starts
+        no builds; saved apps and any completed configuration remain available
+        for correction. Values are never included in responses or scan plans.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/ApplyCachedProjectPlanRequest'}
+      responses:
+        '200':
+          description: Project applied with per-workload deployment receipts.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ApplyResponse'}
+        '403':
+          description: The caller lacks deployment or secret write permission.
+          content:
+            application/problem+json:
+              schema: {$ref: '#/components/schemas/Problem'}
+        '409':
+          description: The plan is stale, blocked, or requires environment approval.
+          content:
+            application/problem+json:
+              schema: {$ref: '#/components/schemas/Problem'}
+        '410':
+          description: The account-owned reviewed source expired; scan again.
+          content:
+            application/problem+json:
+              schema: {$ref: '#/components/schemas/Problem'}
   /v1/apps/{slug}/bindings/release-policy:
     parameters:
       - $ref: '#/components/parameters/Slug'
@@ -1595,6 +1634,7 @@ paths:
     get:
       tags: [auth]
       operationId: getAuthCapabilities
+      security: [{cookieAuth: []}]
       summary: Sign-in OAuth capability signal for the dashboard.
       description: |
         Returns the boot-resolved OAuth provider state for this API
@@ -1902,6 +1942,7 @@ paths:
     post:
       tags: [auth]
       operationId: setPassword
+      security: [{cookieAuth: []}]
       summary: Set or replace the password on the authenticated account.
       description: |
         Authenticated. Lets OAuth-only customers opt into password
@@ -5597,6 +5638,7 @@ paths:
     post:
       tags: [github]
       operationId: listInstallableRepos
+      security: [{cookieAuth: []}]
       summary: List repos the user's GitHub App installation can see.
       description: |
         Cookie-session-authenticated (NOT API-key). Hydrates the
@@ -5885,6 +5927,7 @@ paths:
     get:
       tags: [github]
       operationId: getGitHubInstallBinding
+      security: [{cookieAuth: []}]
       summary: Inspect the app's GitHub repository binding.
       description: |
         Cookie-session-authenticated (NOT API-key). Returns the durable
@@ -5907,6 +5950,7 @@ paths:
     post:
       tags: [github]
       operationId: bindAppInstall
+      security: [{cookieAuth: []}]
       summary: Persist the (account, app, installation, repo, branch) bind row.
       description: |
         Cookie-session-authenticated (NOT API-key). Persists the
@@ -5956,6 +6000,7 @@ paths:
     delete:
       tags: [github]
       operationId: disconnectGitHubApp
+      security: [{cookieAuth: []}]
       summary: Disconnect an app from its GitHub repository.
       description: |
         Cookie-session-authenticated and CSRF-protected. Idempotently removes
@@ -5990,6 +6035,7 @@ paths:
     get:
       tags: [github]
       operationId: getGitHubInstallStatus
+      security: [{cookieAuth: []}]
       summary: Read the GitHub installation and binding health for an app.
       description: |
         Cookie-session-authenticated (NOT API-key). This is the canonical
@@ -6016,6 +6062,7 @@ paths:
     post:
       tags: [github]
       operationId: syncGitHubInstall
+      security: [{cookieAuth: []}]
       summary: Reconcile an app's GitHub repository access immediately.
       description: |
         Cookie-session-authenticated and CSRF-protected. Queries GitHub's
@@ -6059,6 +6106,7 @@ paths:
     post:
       tags: [github]
       operationId: retryGitHubInstallActivity
+      security: [{cookieAuth: []}]
       summary: Retry failed GitHub activity from the signed-in dashboard session.
       description: |
         This cookie-session action is CSRF-protected and requeues up to 10
@@ -9906,6 +9954,106 @@ paths:
         '401': {$ref: '#/components/responses/Unauthorized'}
         '404': {$ref: '#/components/responses/NotFound'}
         '429': {$ref: '#/components/responses/TooManyRequests'}
+  # ─── Projects (ADR-050 / Phase 3) ───────────────────────────────────
+  # Two endpoints:
+  #   POST /v1/projects/scan  — dry-run; runs reposcan.Scan over the
+  #                             uploaded tarball and returns a plan
+  #                             with can_apply + plan_token. Never
+  #                             writes.
+  #   POST /v1/projects       — applies the plan in one transaction;
+  #                             emits NotifyAppChanged per inserted
+  #                             app; surfaces the limit problem on
+  #                             over-quota with zero rows inserted.
+  # Both accept the same multipart body shape; the only difference is
+  # the optional `plan_token` query parameter on /v1/projects, which
+  # lets the CLI pass back the dry-run token to skip the second
+  # extract on the interactive flow.
+  /v1/projects/scan:
+    post:
+      tags: [projects]
+      operationId: scanProject
+      summary: Scan an uploaded tarball and return a deploy plan.
+      description: |
+        Dry-run. Accepts a multipart upload (`source=<tar.gz>`,
+        `project_slug`, `production_branch`, `install_id`, `only`)
+        and returns a PlanResponse with the discovered workloads,
+        managed services, derived scan_source, and a plan_token
+        that the apply endpoint can echo back to skip the
+        second extract.
+
+        On over-quota the response carries `can_apply=false`
+        (and `crons_not_allowed=true` for Free plan) so the CLI
+        can branch without a second request.
+      parameters:
+        - name: Project-Add-Services
+          in: header
+          required: false
+          description: Require planned HTTP source service additions; disabled until native qualification. No removals or configuration changes.
+          schema: {type: string, enum: [required]}
+        - name: Project-Stabilization
+          in: header
+          required: false
+          description: Plan a progressive release with ten minutes of monitoring after rollout success.
+          schema: {type: string, enum: [required]}
+        - name: Project-Progressive
+          in: header
+          required: false
+          description: Preview a progressive project rollout with immutable paired configuration and verified health.
+          schema: {type: string, enum: [required]}
+        - name: Project-Worker-Health
+          in: header
+          required: false
+          description: Require real worker job outcomes in an atomic verified worker release.
+          schema: {type: string, enum: [required]}
+        - name: Project-Release-Mode
+          in: header
+          description: Set atomic to preview a source-only safe project release against the active production graph.
+          schema: {type: string, enum: [atomic, atomic-verify, atomic-config-verify, atomic-migrate-verify, atomic-config-migrate-verify, atomic-verify-workers, atomic-config-verify-workers, atomic-migrate-verify-workers, atomic-config-migrate-verify-workers]}
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/ProjectScanRequest'
+      responses:
+        '200':
+          description: The deploy plan.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PlanResponse'
+              example:
+                project_slug: my-app
+                scan_source: compose
+                tier: compose
+                workloads:
+                  - {name: api, root_dir: '', command: [], ports: [8080]}
+                  - {name: worker, root_dir: '', command: [], ports: []}
+                managed:
+                  - {name: db, kind: postgres, env_hint: DATABASE_URL}
+                crons:
+                  - {workload_name: nightly, schedule: "0 3 * * *", path: "/", enabled: true}
+                observed_apps: 3
+                observed_crons: 1
+                limit_apps: 5
+                limit_crons: 5
+                can_apply: true
+                plan_token: eyJoYXMiOiI...
+                # ADR-124 partition fields (preview surface).
+                will_deploy:
+                  - {name: api, root_dir: '', class: http, action: create}
+                  - {name: worker, root_dir: '', class: http, action: update}
+                unaffected:
+                  - {name: legacy-job, root_dir: jobs/legacy, class: http, action: noop, id: 0123456789abcdef0123456789abcdef}
+                skipped:
+                  - {name: risky-migration, root_dir: jobs/migrate, class: http, action: noop}
+                removed: []
+        '400': {$ref: '#/components/responses/ValidationFailed'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '402': {$ref: '#/components/responses/CronInvalid'}
+        '403': {$ref: '#/components/responses/PlanLimit'}
+        '413': {$ref: '#/components/responses/SourceTooLarge'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
   /v1/projects/scan/source-ref:
     post:
       tags: [projects]
@@ -9938,6 +10086,399 @@ paths:
         '413': {$ref: '#/components/responses/SourceTooLarge'}
         '429': {$ref: '#/components/responses/TooManyRequests'}
         '503': {$ref: '#/components/responses/CapacityUnavailable'}
+  /v1/project-submissions/{attempt_id}:
+    get:
+      tags: [projects]
+      operationId: getProjectSubmission
+      summary: Read a durable project apply acceptance receipt.
+      description: Recover the selected workload set and accepted deployment identities for an owned attempt. Reads do not enqueue builds, change configuration, or restart interrupted submissions.
+      parameters:
+        - name: attempt_id
+          description: The opaque project apply attempt recorded before submission.
+          in: path
+          required: true
+          schema: {type: string, pattern: '^[a-f0-9]{32}$'}
+      responses:
+        '200':
+          description: Current project submission and accepted workload identities. Reads never enqueue builds.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ProjectSubmissionReceipt'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+        '503': {$ref: '#/components/responses/ServiceUnavailable'}
+  /v1/project-submissions/{attempt_id}/{action}:
+    post:
+      tags: [projects]
+      operationId: controlProjectRelease
+      summary: Control an owned progressive deployment or admit planned schema cleanup.
+      description: Persist a generation-fenced operator decision. Before full activation abort preserves the unchanged baseline. At full traffic new unassigned work is blocked while fresh baseline health permits paired graph/config restoration. Recovery retries that bounded verification without forcing health or overwriting newer intent. Reusing the same request identity and generation is idempotent. Contract admission additionally requires fresh current health and drained retained versions and work; it permanently fences retired deployments before queuing the source-declared cleanup task.
+      parameters:
+        - name: attempt_id
+          in: path
+          required: true
+          description: Durable project deployment attempt.
+          schema: {type: string, pattern: '^[a-f0-9]{32}$'}
+        - name: action
+          in: path
+          required: true
+          description: Abort a running canary, retry baseline recovery, or run declared schema cleanup after stabilization and drain barriers.
+          schema: {type: string, enum: [abort, recover, contract, resolve-contract]}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              oneOf:
+                - {$ref: '#/components/schemas/ProjectReleaseControlRequest'}
+                - {$ref: '#/components/schemas/ProjectMigrationRecoveryRequest'}
+      responses:
+        '200':
+          description: Durable decision and current receipt; acceptance does not imply restoration has completed.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ProjectSubmissionReceipt'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '410':
+          description: Retained rollback baseline expired; deploy a compatible replacement.
+          content:
+            application/problem+json:
+              schema: {$ref: '#/components/schemas/Problem'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+        '503': {$ref: '#/components/responses/ServiceUnavailable'}
+  /v1/projects/safe-deploy:
+    post:
+      tags: [projects]
+      operationId: safeApplyProject
+      summary: Build an existing HTTP project and atomically publish its ready release.
+      description: Requires an active production release set, the complete project, no_triggers=true, and a durable attempt. Candidates receive zero traffic and publish only after every candidate completes readiness. Project-Add-Services opts into independent HTTP source additions behind native qualification admission. All serving services must remain unchanged. Additions cannot combine with configuration, secrets, migrations, workers or progressive rollout. Verified releases probe existing critical routes and restore the original membership on regression; new services are checked by startup readiness. Failed or withdrawn additions remain quota-counted reservations without a default route and may be retried with identical settings.
+      parameters:
+        - name: Project-Add-Services
+          in: header
+          required: false
+          description: Apply the scanned independent HTTP service additions after native qualification; preserve existing membership and configuration.
+          schema: {type: string, enum: [required]}
+        - name: Project-Stabilization
+          in: header
+          required: false
+          description: Require ten minutes of guarded health monitoring after progressive rollout success.
+          schema: {type: string, enum: [required]}
+        - name: Project-Progressive
+          in: header
+          required: false
+          description: Submit a progressive project rollout behind native qualification admission.
+          schema: {type: string, enum: [required]}
+        - name: Project-Worker-Health
+          in: header
+          required: false
+          description: Keep the required worker delivery health policy when applying the scanned release.
+          schema: {type: string, enum: [required]}
+        - name: Project-Release-Mode
+          in: header
+          description: atomic-verify enables durable probes; atomic-config-verify pairs configuration; atomic-migrate-verify and atomic-config-migrate-verify also admit one backward-compatible migration.
+          schema: {type: string, enum: [atomic, atomic-verify, atomic-config-verify, atomic-migrate-verify, atomic-config-migrate-verify, atomic-verify-workers, atomic-config-verify-workers, atomic-migrate-verify-workers, atomic-config-migrate-verify-workers]}
+        - name: Deployment-Attempt-ID
+          in: header
+          required: true
+          description: Durable identity for this safe project submission and release operation.
+          schema: {type: string, pattern: '^[a-f0-9]{32}$'}
+        - name: plan_token
+          in: query
+          description: Scan token bound to the safe release baseline.
+          schema: {type: string}
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema: {$ref: '#/components/schemas/ProjectApplyRequest'}
+      responses:
+        '200':
+          description: Accepted candidate deployments and durable safe release state.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ApplyResponse'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+        '503': {$ref: '#/components/responses/ServiceUnavailable'}
+  /v1/projects:
+    get:
+      tags: [projects]
+      operationId: listProjects
+      summary: List durable projects owned by the current account.
+      responses:
+        '200':
+          description: Account-scoped project summaries.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: {$ref: '#/components/schemas/ProjectSummaryResponse'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+    post:
+      tags: [projects]
+      operationId: applyProject
+      summary: Apply a deploy plan in one transaction.
+      description: |
+        Accepts the same multipart body as /scan plus an optional
+        `plan_token` query parameter echoing the dry-run token. On
+        success the response carries the inserted project_id and
+        per-app IDs so the CLI's `--yes` flow can render
+        `applied: <slug> → <app_id>`. On quota the response is
+        the matching RFC 7807 problem (402 Free crons, 403 apps
+        or cron cap) with zero rows inserted.
+
+        The apply handler resolves workload-name → app_id from
+        the just-inserted apps and inserts crons in a follow-up
+        pass; the quota check ran inside ApplyProjectPlan's Tx.
+      parameters:
+        - name: Project-Retry-Targets
+          in: header
+          description: JSON object mapping selected app IDs to their latest failed deployment IDs. Requires Deployment-Attempt-ID, exact only selection, no_triggers=true, and no secret or exclusion changes. Forces unchanged workloads to rebuild; rejects stale targets. Acceptance checks the target under the app lock.
+          schema: {type: string, maxLength: 32768}
+        - name: Deployment-Attempt-ID
+          in: header
+          description: Durable project submission identity. Reuse only for the same request; inspect its receipt after an uncertain response.
+          schema: {type: string, pattern: '^[a-f0-9]{32}$'}
+        - name: plan_token
+          in: query
+          required: false
+          description: Echo of the dry-run plan_token (base64-JSON). Omit to skip the cache.
+          schema: {type: string}
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/ProjectApplyRequest'
+      responses:
+        '200':
+          description: The applied project + apps + crons.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApplyResponse'
+              example:
+                project_id: 0123456789abcdef0123456789abcdef
+                apps:
+                  - {slug: api, id: 0123456789abcdef0123456789abcdef}
+                  - {slug: worker, id: 0123456789abcdef0123456789abcdef}
+                scan_source: compose
+                can_apply: true
+                # ADR-124 partition fields (apply surface; mirrors
+                # PlanResponse so the CLI --show-affected render
+                # doesn't have to switch DTOs between scan and
+                # apply).
+                will_deploy:
+                  - {name: api, root_dir: '', class: http, action: create}
+                  - {name: worker, root_dir: '', class: http, action: update}
+                unaffected: []
+                skipped: []
+                removed: []
+                # ADR-124 follow-up #3 — slugs that were folded in
+                # from the deployment_scope_exclusions table on this
+                # apply (operator's --persist-exclude carry-forward).
+                persisted_exclusions: []
+        '400': {$ref: '#/components/responses/ValidationFailed'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '402': {$ref: '#/components/responses/CronInvalid'}
+        '403': {$ref: '#/components/responses/PlanLimit'}
+        '409': {$ref: '#/components/responses/ValidationFailed'}
+        '413': {$ref: '#/components/responses/SourceTooLarge'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+  /v1/projects/{slug}/release-secrets:
+    post:
+      tags: [projects]
+      operationId: stageProjectReleaseSecrets
+      summary: Stage encrypted application secret versions for an atomic HTTP release.
+      description: Requires MFA and secrets write permission. Admission defaults off pending native qualification. Values are encrypted before persistence; the response contains opaque version IDs. Request replay is bounded to the staging window. Existing production keys only; managed credentials are unsupported.
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          description: Existing project slug owning the proposed secret snapshots.
+          schema: {type: string}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/ProjectReleaseSecretStageRequest'}
+      responses:
+        '200':
+          description: Immutable staged version references, without encrypted or plaintext values.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ProjectReleaseSecretStageResponse'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+        '503': {$ref: '#/components/responses/ServiceUnavailable'}
+  /v1/projects/{slug}/deployment-readiness:
+    parameters:
+      - name: slug
+        in: path
+        required: true
+        description: Project slug in the authenticated account; a missing project can be checked as a proposed first deployment.
+        schema: {type: string, pattern: '^[a-z0-9][a-z0-9-]{0,62}$'}
+    post:
+      tags: [projects]
+      operationId: checkProjectDeployment
+      summary: Check project deployment or environment promotion readiness without submitting work.
+      description: |
+        Evaluates declared metadata and current account/project state without source
+        uploads, credential staging, probe execution, builds, approvals or writes.
+        Only key names and bounded remedies appear in the report. Status is blocked
+        when a definite blocker exists, otherwise unknown when a required read fails,
+        otherwise ready. Ready applies to control-plane prerequisites; deployment
+        still validates source bytes and runtime health. A state hash is provided
+        only when required state was readable. It is a comparison identity, not
+        an approval or an apply token. Deployment admission remains authoritative.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/ProjectDeploymentCheckRequest'}
+      responses:
+        '200':
+          description: Current prerequisite report, including blocked and unknown outcomes.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ProjectDeploymentReadiness'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+  /v1/projects/{slug}:
+    parameters:
+      - name: slug
+        in: path
+        required: true
+        description: Project slug to inspect, update, or delete in the authenticated account.
+        schema: {type: string, pattern: '^[a-z0-9][a-z0-9-]{0,62}$'}
+    get:
+      tags: [projects]
+      operationId: getProject
+      summary: Inspect a project, its workloads, exclusions, and latest status.
+      responses:
+        '200':
+          description: Project recovery and workload state.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ProjectResponse'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+    patch:
+      tags: [projects]
+      operationId: updateProject
+      summary: Update a project's repository binding or production branch.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/UpdateProjectRequest'}
+      responses:
+        '200':
+          description: Updated project state.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ProjectResponse'}
+        '400': {$ref: '#/components/responses/ValidationFailed'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/ValidationFailed'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+    delete:
+      tags: [projects]
+      operationId: deleteProject
+      summary: Delete a project and detach its live workloads.
+      description: The apps remain live. Their project_id is cleared by the database foreign-key action.
+      responses:
+        '204': {description: Project deleted.}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+  /v1/projects/{slug}/delete-preview:
+    parameters:
+      - name: slug
+        in: path
+        required: true
+        description: Project slug whose deletion impact should be previewed.
+        schema: {type: string, pattern: '^[a-z0-9][a-z0-9-]{0,62}$'}
+    get:
+      tags: [projects]
+      operationId: previewDeleteProject
+      summary: Preview the workloads and related state affected by project deletion.
+      responses:
+        '200':
+          description: Deletion impact. Workloads and their related resources remain live after detachment.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ProjectDeletePreviewResponse'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+  /v1/projects/{slug}/exclusions/{slug2}:
+    parameters:
+      - name: slug
+        in: path
+        required: true
+        description: Project slug (the (account, project) namespace owning the persisted exclusion).
+        schema: {type: string}
+      - name: slug2
+        in: path
+        required: true
+        description: Excluded workload slug (the app slug persisted via a prior --persist-exclude deploy).
+        schema: {type: string}
+    delete:
+      tags: [projects]
+      operationId: deleteDeploymentScopeExclusion
+      summary: Drop a persisted --exclude row from deployment_scope_exclusions.
+      description: |
+        Operator escape hatch (code-review fix #2) for
+        when a persisted slug no longer exists in the repo
+        (workload was renamed or deleted) and is blocking
+        subsequent deploys via exclude_unknown_slug. Without
+        this endpoint the only option was psql + hand-DELETE;
+        the CLI's `gregale deployments exclude clear
+        --slug=NAME --project-slug=SLUG` calls into here as the
+        operator-grade path. Idempotent — DELETE on no row
+        returns 404 scope_exclusion_not_found so the CLI can
+        render "already clear" without surfacing a hard error.
+      responses:
+        '200':
+          description: The exclusion was cleared.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: {type: boolean}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '404':
+          description: |
+            Either the project does not exist or no persisted
+            exclusion matches the slug. Both surface as
+            scope_exclusion_not_found so the existence of a
+            project is not leaked via the operator surface.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Problem'
   # ─── Alert rules (issue #396 / ADR-045 PR 3) ─────────────────────────
   # Per-app CRUD surface. Account-wide rules (app_id == "") appear in
   # the per-app list endpoint but the create/update/delete endpoints
@@ -10457,6 +10998,7 @@ paths:
     post:
       tags: [alert_rules]
       operationId: dashboardEnableAlertPreset
+      security: [{cookieAuth: []}]
       summary: Form-POST sibling of enableAlertPreset for the dashboard.
       description: |
         Receives application/x-www-form-urlencoded payload from the
@@ -10575,6 +11117,7 @@ paths:
     post:
       tags: [alert_rules]
       operationId: dashboardTestAlertPreset
+      security: [{cookieAuth: []}]
       summary: Form-POST sibling of testAlertPreset for the dashboard.
       description: |
         Receives the per-card "Send test alert" form submission
@@ -10756,13 +11299,15 @@ paths:
       parameters:
         - $ref: '#/components/parameters/EdgeRuleSetIfMatch'
       description: |
-        Kind is one of {route, rewrite, redirect, headers, cors, jwt, ip,
-        validate, geo, async}. `action` is a kind-tagged jsonb body — the per-kind
-        shape is documented under components/schemas. Plan-kind gate:
-        jwt/ip return 402 plan_edge_rule_kind_not_allowed on Free; geo
-        is allowed on Free with a tighter per-app quota. Per-app
-        quota returns 402 plan_limit_edge_rules once EdgeRulesPerApp
-        is reached.
+        Kind is one of route, rewrite, redirect, headers, cors, jwt, ip,
+        validate, limit, maintenance, geo, throttle, budget, cache, respond,
+        retry, circuit_breaker, async, waf and challenge. `action` is the
+        kind's action object (the EdgeRule*Action schemas). jwt, ip and async
+        return 402 plan_edge_rule_kind_not_allowed on Free; a kind past its
+        per-app quota returns 403 plan_edge_rule_kind_quota_reached, the per-app
+        total 403 plan_limit_edge_rules, and a kind not enabled for the account
+        403 capability_not_released. Reference:
+        https://gregale.dev/docs/edge-rules
       requestBody:
         required: true
         content:
@@ -14060,6 +14605,7 @@ paths:
     get:
       tags: [templates]
       operationId: listTemplates
+      security: [{cookieAuth: []}]
       summary: Catalog of starter templates the dashboard wizard renders.
       description: |
         Cookie-session-authenticated (NOT API-key). The dashboard and
@@ -17115,6 +17661,347 @@ paths:
         '403': {$ref: '#/components/responses/Forbidden'}
         '404': {$ref: '#/components/responses/NotFound'}
         '429': {$ref: '#/components/responses/TooManyRequests'}
+  /v1/orgs/{organization}/projects:
+    parameters:
+      - $ref: '#/components/parameters/OrgProjectOrganization'
+    get:
+      tags: [projects]
+      operationId: listOrgProjects
+      summary: "List projects owned by a company organization."
+      responses:
+        '200':
+          description: "Projects visible to the current company member."
+          content:
+            application/json:
+              schema:
+                type: array
+                items: {$ref: '#/components/schemas/ProjectSummaryResponse'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+    post:
+      tags: [projects]
+      operationId: applyOrgProject
+      summary: "Create or apply an organization project from uploaded source."
+      description: "Upload source and project_slug using the existing multipart contract. An adopted organization supplies the new project resource namespace and deployment budget. Database and async-route manifest bindings are rejected before personal services are resolved."
+      parameters:
+        - $ref: '#/components/parameters/OrgProjectPlanToken'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/ProjectApplyRequest'
+      responses:
+        '200':
+          description: "Applied organization project and workload results."
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApplyResponse'
+              example:
+                project_id: 0123456789abcdef0123456789abcdef
+                apps:
+                  - {slug: api, id: 0123456789abcdef0123456789abcdef}
+                  - {slug: worker, id: 0123456789abcdef0123456789abcdef}
+                scan_source: compose
+                can_apply: true
+                # ADR-124 partition fields (apply surface; mirrors
+                # PlanResponse so the CLI --show-affected render
+                # doesn't have to switch DTOs between scan and
+                # apply).
+                will_deploy:
+                  - {name: api, root_dir: '', class: http, action: create}
+                  - {name: worker, root_dir: '', class: http, action: update}
+                unaffected: []
+                skipped: []
+                removed: []
+                # ADR-124 follow-up #3 — slugs that were folded in
+                # from the deployment_scope_exclusions table on this
+                # apply (operator's --persist-exclude carry-forward).
+                persisted_exclusions: []
+        '400': {$ref: '#/components/responses/ValidationFailed'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '402': {$ref: '#/components/responses/CronInvalid'}
+        '403': {$ref: '#/components/responses/PlanLimit'}
+        '409': {$ref: '#/components/responses/ValidationFailed'}
+        '413': {$ref: '#/components/responses/SourceTooLarge'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+        '404': {$ref: '#/components/responses/NotFound'}
+  /v1/orgs/{organization}/projects/{slug}:
+    parameters:
+      - $ref: '#/components/parameters/OrgProjectOrganization'
+      - $ref: '#/components/parameters/OrgProjectSlug'
+    get:
+      tags: [projects]
+      operationId: getOrgProject
+      summary: "Inspect an organization project and its workloads."
+      responses:
+        '200':
+          description: "Company project metadata, exclusions and recovery state."
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ProjectResponse'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '409': {$ref: '#/components/responses/Conflict'}
+    patch:
+      tags: [projects]
+      operationId: updateOrgProject
+      summary: "Update an organization project production branch."
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/UpdateProjectRequest'}
+      responses:
+        '200':
+          description: "Updated company project source settings."
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ProjectResponse'}
+        '400': {$ref: '#/components/responses/ValidationFailed'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/ValidationFailed'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+    delete:
+      tags: [projects]
+      operationId: deleteOrgProject
+      summary: "Delete a company project and detach its workloads."
+      description: "Owners and admins may remove the company project. Its workloads remain live and are detached from the deleted project."
+      responses:
+        '204': {description: "Company project deleted; detached workloads remain live."}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '409': {$ref: '#/components/responses/Conflict'}
+  /v1/orgs/{organization}/projects/{slug}/delete-preview:
+    parameters:
+      - $ref: '#/components/parameters/OrgProjectOrganization'
+      - $ref: '#/components/parameters/OrgProjectSlug'
+    get:
+      tags: [projects]
+      operationId: previewDeleteOrgProject
+      summary: "Preview deletion of an organization project."
+      responses:
+        '200':
+          description: "Company workloads and related state affected by project deletion."
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ProjectDeletePreviewResponse'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '409': {$ref: '#/components/responses/Conflict'}
+  /v1/orgs/{organization}/projects/{slug}/exclusions/{slug2}:
+    parameters:
+      - $ref: '#/components/parameters/OrgProjectOrganization'
+      - $ref: '#/components/parameters/OrgProjectSlugb08370'
+      - $ref: '#/components/parameters/OrgProjectSlug2'
+    delete:
+      tags: [projects]
+      operationId: orgProjectDeleteDeploymentScopeExclusion
+      summary: "Remove a persisted company project deployment exclusion."
+      description: "Removes a company workload exclusion saved by a previous persist-exclude deployment so a later source apply can include it again."
+      responses:
+        '200':
+          description: "Company workload exclusion removed."
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: {type: boolean}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '404':
+          description: The company project or saved workload exclusion was not found; both return scope_exclusion_not_found.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+                # ─── Alert rules (issue #396 / ADR-045 PR 3) ─────────────────────────
+                # Per-app CRUD surface. Account-wide rules (app_id == "") appear in
+                # the per-app list endpoint but the create/update/delete endpoints
+                # pin to a specific app. The /rotate-secret action accepts a
+                # caller-supplied replacement; the response carries the masked constant +
+                # rotated_at only.
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '409': {$ref: '#/components/responses/Conflict'}
+  /v1/orgs/{organization}/projects/scan:
+    parameters:
+      - $ref: '#/components/parameters/OrgProjectOrganization'
+    post:
+      tags: [projects]
+      operationId: scanOrgProject
+      summary: "Preview an organization source upload before applying it."
+      description: "Accepts a source tarball and project_slug without mutating the organization project. Existing projects in a legacy creator namespace must use their project-specific scan URL."
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/ProjectScanRequest'
+      responses:
+        '200':
+          description: "Company source scan, workload partitions and deployment plan."
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PlanResponse'
+              example:
+                project_slug: my-app
+                scan_source: compose
+                tier: compose
+                workloads:
+                  - {name: api, root_dir: '', command: [], ports: [8080]}
+                  - {name: worker, root_dir: '', command: [], ports: []}
+                managed:
+                  - {name: db, kind: postgres, env_hint: DATABASE_URL}
+                crons:
+                  - {workload_name: nightly, schedule: "0 3 * * *", path: "/", enabled: true}
+                observed_apps: 3
+                observed_crons: 1
+                limit_apps: 5
+                limit_crons: 5
+                can_apply: true
+                plan_token: eyJoYXMiOiI...
+                # ADR-124 partition fields (preview surface).
+                will_deploy:
+                  - {name: api, root_dir: '', class: http, action: create}
+                  - {name: worker, root_dir: '', class: http, action: update}
+                unaffected:
+                  - {name: legacy-job, root_dir: jobs/legacy, class: http, action: noop, id: 0123456789abcdef0123456789abcdef}
+                skipped:
+                  - {name: risky-migration, root_dir: jobs/migrate, class: http, action: noop}
+                removed: []
+        '400': {$ref: '#/components/responses/ValidationFailed'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '402': {$ref: '#/components/responses/CronInvalid'}
+        '403': {$ref: '#/components/responses/PlanLimit'}
+        '413': {$ref: '#/components/responses/SourceTooLarge'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+  /v1/orgs/{organization}/projects/{slug}/scan:
+    parameters:
+      - $ref: '#/components/parameters/OrgProjectOrganization'
+    post:
+      tags: [projects]
+      operationId: scanOrgProjectDeployment
+      summary: "Preview source for an existing organization project."
+      description: "The uploaded project_slug must match the addressed company project. This preview preserves existing resource IDs and works with legacy creator namespaces after erasure."
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/ProjectScanRequest'
+      responses:
+        '200':
+          description: "Deployment preview bound to the addressed company project."
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PlanResponse'
+              example:
+                project_slug: my-app
+                scan_source: compose
+                tier: compose
+                workloads:
+                  - {name: api, root_dir: '', command: [], ports: [8080]}
+                  - {name: worker, root_dir: '', command: [], ports: []}
+                managed:
+                  - {name: db, kind: postgres, env_hint: DATABASE_URL}
+                crons:
+                  - {workload_name: nightly, schedule: "0 3 * * *", path: "/", enabled: true}
+                observed_apps: 3
+                observed_crons: 1
+                limit_apps: 5
+                limit_crons: 5
+                can_apply: true
+                plan_token: eyJoYXMiOiI...
+                # ADR-124 partition fields (preview surface).
+                will_deploy:
+                  - {name: api, root_dir: '', class: http, action: create}
+                  - {name: worker, root_dir: '', class: http, action: update}
+                unaffected:
+                  - {name: legacy-job, root_dir: jobs/legacy, class: http, action: noop, id: 0123456789abcdef0123456789abcdef}
+                skipped:
+                  - {name: risky-migration, root_dir: jobs/migrate, class: http, action: noop}
+                removed: []
+        '400': {$ref: '#/components/responses/ValidationFailed'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '402': {$ref: '#/components/responses/CronInvalid'}
+        '403': {$ref: '#/components/responses/PlanLimit'}
+        '413': {$ref: '#/components/responses/SourceTooLarge'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+      parameters:
+        - $ref: '#/components/parameters/OrgProjectSlug'
+  /v1/orgs/{organization}/projects/{slug}/deploy:
+    parameters:
+      - $ref: '#/components/parameters/OrgProjectOrganization'
+    post:
+      tags: [projects]
+      operationId: deployOrgProject
+      summary: "Deploy uploaded source to an existing company project."
+      description: "Uses the existing company project resource namespace even after creator erasure. The uploaded slug must match the URL; protected environments require an exact approved plan."
+      parameters:
+        - $ref: '#/components/parameters/OrgProjectSlug'
+        - $ref: '#/components/parameters/OrgProjectPlanToken'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/ProjectApplyRequest'
+      responses:
+        '200':
+          description: "Applied source results in the existing company resource namespace."
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApplyResponse'
+              example:
+                project_id: 0123456789abcdef0123456789abcdef
+                apps:
+                  - {slug: api, id: 0123456789abcdef0123456789abcdef}
+                  - {slug: worker, id: 0123456789abcdef0123456789abcdef}
+                scan_source: compose
+                can_apply: true
+                # ADR-124 partition fields (apply surface; mirrors
+                # PlanResponse so the CLI --show-affected render
+                # doesn't have to switch DTOs between scan and
+                # apply).
+                will_deploy:
+                  - {name: api, root_dir: '', class: http, action: create}
+                  - {name: worker, root_dir: '', class: http, action: update}
+                unaffected: []
+                skipped: []
+                removed: []
+                # ADR-124 follow-up #3 — slugs that were folded in
+                # from the deployment_scope_exclusions table on this
+                # apply (operator's --persist-exclude carry-forward).
+                persisted_exclusions: []
+        '400': {$ref: '#/components/responses/ValidationFailed'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '402': {$ref: '#/components/responses/CronInvalid'}
+        '403': {$ref: '#/components/responses/PlanLimit'}
+        '409': {$ref: '#/components/responses/ValidationFailed'}
+        '413': {$ref: '#/components/responses/SourceTooLarge'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+        '404': {$ref: '#/components/responses/NotFound'}
 components:
   securitySchemes:
     consumerKey:
@@ -17196,6 +18083,45 @@ components:
         type: string
         example: '</v1/uploads>; rel="successor-version", <https://github.com/poyrazK/faas/blob/main/docs/adr/115-local-tarball-deploy-trust-root.md>; rel="deprecation"'
   parameters:
+    OrgProjectOrganization:
+      name: organization
+      in: path
+      required: true
+      description: Company organization slug that owns the addressed project; requires current membership and compatible organization credentials.
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 63
+        pattern: ^[a-z0-9][a-z0-9-]*$
+    OrgProjectPlanToken:
+      name: plan_token
+      in: query
+      required: false
+      description: Plan token returned by the organization source scan; must match the uploaded source and addressed project.
+      schema:
+        type: string
+    OrgProjectSlug:
+      name: slug
+      in: path
+      required: true
+      description: Project slug within the organization named in the URL.
+      schema:
+        type: string
+        pattern: ^[a-z0-9][a-z0-9-]{0,62}$
+    OrgProjectSlugb08370:
+      name: slug
+      in: path
+      required: true
+      description: Project slug within the organization named in the URL. The value is resolved in the selected project.
+      schema:
+        type: string
+    OrgProjectSlug2:
+      name: slug2
+      in: path
+      required: true
+      description: Company workload app slug whose saved deployment exclusion is removed.
+      schema:
+        type: string
     EdgeRuleSetIfMatch:
       name: If-Match
       in: header
@@ -29545,6 +30471,79 @@ components:
         sasl:
           type: [object, "null"]
           $ref: '#/components/schemas/KafkaSASLConfig'
+    # ─── Project decomposition (ADR-050 / Phase 3) ──────────────────────
+    # Wire shape mirrors cmd/apid/scan_service.go::scanPlanResponse +
+    # the reposcan.Workload / Managed structs. The `workloads` and
+    # `managed` arrays are sorted deterministically (by name asc,
+    # case-insensitive) so two scans of identical bytes produce
+    # byte-identical JSON — the §4 acceptance gate asserts this in CI.
+    ProjectScanRequest:
+      description: "Multipart body for POST /v1/projects/scan (dry-run)."
+      type: object
+      required: [source]
+      properties:
+        release_config:
+          type: string
+          description: JSON-encoded ProjectReleaseConfigRequest for atomic-config-verify; contains only non-secret workload variables.
+        migration:
+          type: boolean
+          default: false
+          description: "Preserve repository service identities and suggest project-prefixed app names. Requires no_triggers and no repository push binding; apply repeats the reviewed setting."
+        app_slugs:
+          type: object
+          additionalProperties: {type: string}
+          description: "Exact repository service names mapped to Gregale app names. Existing project members retain their names. Names are checked for format, reservation and availability; they are never allocated by scan. Multipart clients send this field as JSON."
+        source:
+          type: string
+          format: binary
+          description: "tar.gz of the repo root."
+        project_slug:
+          type: string
+          pattern: '^[a-z0-9][a-z0-9-]{0,62}$'
+          description: "kebab slug; default = repo dir basename"
+        repo_full_name:
+          type: string
+          pattern: '^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$'
+          description: "GitHub owner/name to persist for push reconciliation"
+        production_branch:
+          type: string
+          example: main
+        install_id:
+          type: integer
+          format: int64
+          description: "GitHub installation id (with --repository or --repo); 0 for unbound repos"
+        only:
+          type: string
+          description: "CSV of workload names to include (others skipped)"
+        environment:
+          type: string
+          pattern: '^[a-z0-9](?:[a-z0-9-]{0,31}[a-z0-9])?$'
+          description: "Environment slug used to scope all discovered workloads"
+        no_triggers:
+          type: boolean
+          default: false
+          description: "Leave trigger and async-route declarations and existing project trigger/route state unchanged for this scan/apply pair."
+        platform_tenant_required:
+          type: boolean
+          description: "Override the customer identity policy for selected workloads in this scan/apply pair (Hobby and above). Omitted uses Compose declarations and preserves existing app policy. Apply must repeat the same override as scan."
+        override_freeze:
+          type: string
+          maxLength: 200
+          description: "Apply only: release frozen apps to production anyway; the reason is audited."
+    ProjectSummaryResponse:
+      description: Project list item with its persisted organization owner.
+      type: object
+      required: [id, slug, scan_source, workload_count, created_at, updated_at]
+      properties:
+        org_id: {type: string, format: uuid}
+        id: {type: string, pattern: '^[a-f0-9]{32}$'}
+        slug: {type: string, pattern: '^[a-z0-9][a-z0-9-]{0,62}$'}
+        repo_full_name: {type: string}
+        production_branch: {type: string}
+        scan_source: {type: string}
+        workload_count: {type: integer, minimum: 0}
+        created_at: {type: string, format: date-time}
+        updated_at: {type: string, format: date-time}
     PutAppSecretReferenceRequest:
       description: Named sealed source selected within the exact registered project environment; contains no secret value.
       type: object
@@ -29580,6 +30579,79 @@ components:
         environment: {type: string}
         key: {type: string}
         reference: {type: string, pattern: '^secret:[A-Z][A-Z0-9_]*$'}
+    ProjectDeploymentCheckRequest:
+      type: object
+      additionalProperties: false
+      description: Metadata-only project intent. Local source checks provide workloads; promotion checks provide from_environment instead. Proposed files never stage production changes.
+      properties:
+        environment: {type: string, default: production}
+        from_environment: {type: string}
+        expected_state_hash: {type: string, pattern: '^[a-f0-9]{64}$'}
+        atomic: {type: boolean}
+        add_services: {type: boolean}
+        verify: {type: boolean}
+        workers: {type: boolean}
+        worker_health: {type: boolean}
+        migrate: {type: boolean}
+        progressive: {type: boolean}
+        stabilize: {type: boolean}
+        sync_config: {type: boolean}
+        release_config:
+          $ref: '#/components/schemas/ProjectReleaseConfigRequest'
+        workloads:
+          type: array
+          maxItems: 100
+          items: {$ref: '#/components/schemas/ProjectDeploymentCheckWorkload'}
+        managed:
+          type: array
+          maxItems: 100
+          items: {type: string}
+    ProjectDeploymentCheckWorkload:
+      description: Planned workload and provided key names used by metadata-only deployment readiness checks.
+      type: object
+      additionalProperties: false
+      required: [workload]
+      properties:
+        workload: {$ref: '#/components/schemas/PlanWorkload'}
+        command_shell: {type: boolean}
+        release_command:
+          type: array
+          items: {type: string}
+        release_command_shell: {type: boolean}
+        provided_keys:
+          description: Key names proposed by a separate secrets input; values are never included.
+          type: array
+          maxItems: 256
+          items: {type: string}
+    ProjectDeploymentCheck:
+      description: Public deployment readiness finding with its status, observed limits and suggested remedy.
+      type: object
+      required: [code, status, message]
+      properties:
+        code: {type: string}
+        status: {type: string, enum: [passed, blocked, unknown]}
+        workload: {type: string}
+        message: {type: string}
+        remedy: {type: string}
+        observed: {type: integer}
+        limit: {type: integer}
+    ProjectDeploymentReadiness:
+      description: Metadata-only project deployment readiness report tied to the inspected environment and state hash.
+      type: object
+      required: [schema_version, project_slug, environment, status, checked_at, runtime_checked, checks]
+      properties:
+        schema_version: {type: integer, enum: [1]}
+        project_slug: {type: string}
+        environment: {type: string}
+        from_environment: {type: string}
+        status: {type: string, enum: [ready, blocked, unknown]}
+        state_hash: {type: string, pattern: '^[a-f0-9]{64}$'}
+        checked_at: {type: string, format: date-time}
+        runtime_checked: {type: boolean, enum: [false]}
+        checks:
+          type: array
+          maxItems: 1024
+          items: {$ref: '#/components/schemas/ProjectDeploymentCheck'}
     SecretEntryRequest:
       description: A secret the account owner is asked to enter on a one-time page.
       type: object
@@ -29614,6 +30686,60 @@ components:
         key: {type: string}
         scope: {type: string}
         expires_at: {type: string, format: date-time}
+    ProjectWorkloadResponse:
+      description: Live app attached to a durable project and its latest release state.
+      type: object
+      required: [slug, workload_name, status]
+      properties:
+        slug: {type: string}
+        workload_name: {type: string}
+        status: {type: string}
+        deployment_status: {type: string}
+        rollout_state: {type: string}
+        build_status: {type: string}
+        depends_on:
+          type: array
+          items: {type: string}
+          description: "The project services this one declares it calls (Compose depends_on), sorted. Omitted when none."
+    ProjectResponse:
+      description: Project metadata with its workloads, exclusions, and latest reconciliation state.
+      allOf:
+        - $ref: '#/components/schemas/ProjectSummaryResponse'
+        - type: object
+          required: [workloads, exclusions]
+          properties:
+            workloads:
+              type: array
+              items: {$ref: '#/components/schemas/ProjectWorkloadResponse'}
+            exclusions:
+              type: array
+              items: {type: string}
+            last_reconciliation_status: {type: string}
+            last_build_status: {type: string}
+    UpdateProjectRequest:
+      description: Patch for the customer-managed repository binding and production branch.
+      type: object
+      minProperties: 1
+      properties:
+        repo_full_name:
+          type: string
+          description: GitHub owner/name. An empty string removes the repository binding.
+        production_branch:
+          type: string
+          minLength: 1
+          maxLength: 255
+    ProjectDeletePreviewResponse:
+      description: Workloads and related resources that remain live when a project is deleted.
+      type: object
+      required: [project, workloads, domain_count, env_count, cron_count]
+      properties:
+        project: {$ref: '#/components/schemas/ProjectSummaryResponse'}
+        workloads:
+          type: array
+          items: {$ref: '#/components/schemas/ProjectWorkloadResponse'}
+        domain_count: {type: integer, minimum: 0}
+        env_count: {type: integer, minimum: 0}
+        cron_count: {type: integer, minimum: 0}
     ProjectSourceRefScanRequest:
       description: "Connected GitHub repository input for POST /v1/projects/scan/source-ref."
       type: object
@@ -30009,6 +31135,74 @@ components:
           type: string
           enum: [free, hobby, pro, scale]
           description: "Echoed at top level too — kept in sync with diff.plan."
+    ProjectInitialSecrets:
+      type: object
+      description: Request-only mapping of exact selected workload names to initial sealed environment values. Values stay in memory until sealing and never enter responses or source caches.
+      additionalProperties:
+        type: object
+        additionalProperties: {type: string, writeOnly: true}
+    ApplyCachedProjectPlanRequest:
+      type: object
+      description: Applies an account-owned reviewed project archive with selected workloads and optional initial sealed configuration.
+      required: [plan_token]
+      properties:
+        plan_token: {type: string, minLength: 1}
+        only:
+          type: array
+          items: {type: string}
+          description: Selected workload names; unselected existing workloads remain unchanged.
+        exclude:
+          type: array
+          items: {type: string}
+        approval_token: {type: string}
+        initial_secrets: {$ref: '#/components/schemas/ProjectInitialSecrets'}
+    ProjectApplyRequest:
+      description: |
+        Multipart body for POST /v1/projects (apply). Same shape as
+        ProjectScanRequest; the apply handler resolves AppIDs and
+        inserts crons in a follow-up pass.
+      type: object
+      required: [source]
+      properties:
+        release_config:
+          type: string
+          description: Planned non-secret workload variables encoded as ProjectReleaseConfigRequest JSON for atomic-config-verify admission.
+        migration:
+          type: boolean
+          default: false
+          description: "Apply the reviewed migration naming mode, preserving repository service identities and project-prefixed app allocations. Automatic triggers and repository push bindings must be disabled."
+        app_slugs:
+          type: object
+          additionalProperties: {type: string}
+          description: "Reviewed repository service-to-app allocations for this apply. Preserve existing project app names and repeat the exact selected names from review; multipart clients encode this object as JSON."
+        source:
+          type: string
+          format: binary
+        project_slug: {type: string, pattern: '^[a-z0-9][a-z0-9-]{0,62}$'}
+        repo_full_name: {type: string, pattern: '^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$'}
+        production_branch: {type: string}
+        install_id: {type: integer, format: int64}
+        only: {type: string}
+        environment:
+          type: string
+          pattern: '^[a-z0-9](?:[a-z0-9-]{0,31}[a-z0-9])?$'
+          description: "Environment slug applied to deployments created by this apply"
+        secrets:
+          type: string
+          writeOnly: true
+          description: "JSON object of secret names to plaintext values, sealed for every selected workload in the deployment environment before any build is queued. Requires secrets:write or admin in addition to deploy permission. Uses the existing plan secret count/value quotas; never included in source or responses. Failed configuration queues no builds; already applied configuration remains available for retry."
+        approval_token:
+          type: string
+          description: "Short-lived approval credential for the exact protected-environment plan"
+        no_triggers:
+          type: boolean
+          default: false
+          description: "Leave trigger and async-route declarations and existing project trigger/route state unchanged for this apply."
+        platform_tenant_required:
+          type: boolean
+          description: "Override the customer identity policy for selected workloads (Hobby and above). Must match the scan override. Omitted uses Compose declarations and preserves existing app policy."
+        initial_secrets:
+          $ref: '#/components/schemas/ProjectInitialSecrets'
     ComposeHealthcheck:
       type: object
       description: "Partial Compose override for a prebuilt image HEALTHCHECK. Empty test and zero timing/retry values inherit image settings. NONE disables the check. Durations retain nanosecond precision; positive durations must be at least 1ms."
@@ -30560,6 +31754,19 @@ components:
         exit_code: {type: integer}
         failure_code: {type: string}
         recovery: {$ref: '#/components/schemas/ProjectMigrationRecovery'}
+    ProjectMigrationRecoveryRequest:
+      type: object
+      additionalProperties: false
+      description: Operator attestation after database inspection and cleanup execution quiescence, bound to a different verified active replacement. This request records recovery and retires drained old code; it does not execute SQL or replay cleanup.
+      required: [request_id, expected_task_id, expected_generation, replacement_attempt_id, database_state_checked, execution_quiescent, evidence_hash]
+      properties:
+        request_id: {type: string, pattern: '^[a-f0-9]{32}$'}
+        expected_task_id: {type: string, format: uuid}
+        expected_generation: {type: integer, format: int64, minimum: 1}
+        replacement_attempt_id: {type: string, pattern: '^[a-f0-9]{32}$'}
+        database_state_checked: {type: boolean, description: Operator must attest that database state was inspected and repaired.}
+        execution_quiescent: {type: boolean, description: Operator must confirm the original cleanup execution has stopped.}
+        evidence_hash: {type: string, pattern: '^[a-f0-9]{64}$'}
     ProjectMigrationRecovery:
       type: object
       description: Durable operator resolution and verified roll-forward identity. The cleanup outcome remains unchanged; database and execution checks are operator attestations.
@@ -30602,6 +31809,27 @@ components:
       properties:
         versions: {$ref: '#/components/schemas/ProjectReleaseSecretVersionMap'}
         previous_versions: {$ref: '#/components/schemas/ProjectReleaseSecretVersionMap'}
+    ProjectReleaseSecretStageRequest:
+      type: object
+      description: A bounded secret staging identity and complete private workload value sets.
+      additionalProperties: false
+      required: [request_id, workloads]
+      properties:
+        request_id: {type: string, pattern: '^[a-f0-9]{32}$'}
+        workloads:
+          type: object
+          description: Complete proposed workload secret snapshots within shared document and per-plan value limits. Values are accepted over TLS and sealed before storage.
+          additionalProperties:
+            type: object
+            additionalProperties: {type: string, minLength: 1, writeOnly: true}
+    ProjectReleaseSecretStageResponse:
+      type: object
+      description: Stable staging identity and version references returned after encryption.
+      additionalProperties: false
+      required: [request_id, versions]
+      properties:
+        request_id: {type: string, pattern: '^[a-f0-9]{32}$'}
+        versions: {$ref: '#/components/schemas/ProjectReleaseSecretVersionMap'}
     ProjectReleaseConfiguration:
       type: object
       description: Paired release configuration fingerprints and committed version identities; values remain private to server storage.
@@ -30615,6 +31843,20 @@ components:
         request_hash: {type: string}
         target_version: {type: integer, format: int64}
         restored_version: {type: integer, format: int64}
+    ProjectReleaseConfigRequest:
+      type: object
+      description: Complete variable sets and optional staged secret version references for selected workloads; omitted snapshots inherit prior release values.
+      anyOf:
+        - required: [env]
+        - required: [secrets]
+      additionalProperties: false
+      properties:
+        secrets: {$ref: '#/components/schemas/ProjectReleaseSecretVersionMap'}
+        env:
+          type: object
+          additionalProperties:
+            type: object
+            additionalProperties: {type: string}
     ProjectWorkerJobSample:
       type: object
       description: Attributed delivery attempts in a bounded window, including unknown unfinished deliveries.
@@ -30638,6 +31880,14 @@ components:
         oldest_pending_age_ms: {type: integer, format: int64}
         baseline_pending_jobs: {type: integer, format: int64}
         baseline_oldest_pending_age_ms: {type: integer, format: int64}
+    ProjectReleaseControlRequest:
+      description: An operator decision fenced against the inspected progressive checkpoint.
+      type: object
+      additionalProperties: false
+      required: [request_id, expected_generation]
+      properties:
+        request_id: {type: string, pattern: '^[a-f0-9]{32}$', description: Reuse this identity after an ambiguous response.}
+        expected_generation: {type: integer, format: int64, minimum: 1, description: Inspected checkpoint generation.}
     ProjectReleaseControl:
       description: Most recent durable operator decision and its restoration outcome.
       type: object
@@ -30704,6 +31954,127 @@ components:
         stable_errors: {type: integer}
         unauthenticated: {type: integer}
         unexpected_responses: {type: integer}
+    ProjectSubmissionReceipt:
+      type: object
+      description: Durable, account-scoped recovery for one project apply attempt.
+      required: [attempt_id, project_slug, status, selection_complete, apply]
+      properties:
+        selection_complete: {type: boolean, description: "Whether the selected workload set was durably recorded before enqueue."}
+        attempt_id: {type: string, pattern: '^[a-f0-9]{32}$'}
+        project_slug: {type: string}
+        environment: {type: string}
+        status: {type: string, enum: [processing, complete, rejected, interrupted]}
+        apply: {$ref: '#/components/schemas/ApplyResponse'}
+    ApplyResponse:
+      description: "Apply response. Carries the inserted project_id and per-app IDs."
+      type: object
+      required: [project_slug, scan_source, can_apply, plan_token]
+      properties:
+        safe_release: {$ref: '#/components/schemas/ProjectSafeRelease'}
+        submission_attempt_id: {type: string, pattern: '^[a-f0-9]{32}$'}
+        project_slug: {type: string}
+        repo_full_name: {type: string}
+        scan_source: {type: string}
+        tier: {type: string}
+        workloads:
+          type: array
+          items: {$ref: '#/components/schemas/PlanWorkload'}
+        managed:
+          type: array
+          items: {$ref: '#/components/schemas/PlanManaged'}
+        crons:
+          type: array
+          items: {$ref: '#/components/schemas/PlanCron'}
+        async_routes:
+          type: array
+          description: "Structured async-route reconciliation returned with the applied plan."
+          items: {$ref: '#/components/schemas/PlanAsyncRoute'}
+        warnings:
+          type: array
+          items: {type: string}
+        detection_warnings:
+          type: array
+          description: "Structured skipped/merged detector decisions returned with the applied plan."
+          items: {$ref: '#/components/schemas/PlanDetectionWarning'}
+        observed_apps: {type: integer}
+        observed_crons: {type: integer}
+        limit_apps: {type: integer}
+        limit_crons: {type: integer}
+        can_apply: {type: boolean}
+        crons_not_allowed: {type: boolean}
+        plan_token: {type: string}
+        # ADR-124 can_apply rescue signal (mirrors PlanResponse).
+        can_apply_pre_exclude: {type: boolean}
+        gate_rescued_by_exclude: {type: boolean}
+        can_apply_reasons:
+          type: array
+          items: {type: string}
+        # ADR-124 blast-radius partition (mirrors PlanResponse).
+        will_deploy:
+          type: array
+          items: {$ref: '#/components/schemas/PlanAffectedApp'}
+        unaffected:
+          type: array
+          items: {$ref: '#/components/schemas/PlanAffectedApp'}
+        skipped:
+          type: array
+          items: {$ref: '#/components/schemas/PlanAffectedApp'}
+        removed:
+          type: array
+          items: {type: string}
+        # ADR-124 follow-up #3 — mirrors PlanResponse; the apply
+        # response also surfaces persisted_exclusions so the CLI
+        # can render "(carried forward from --persist-exclude:
+        # slug1, slug2)" alongside the partition.
+        persisted_exclusions:
+          type: array
+          items: {type: string, description: "Slugs folded into this apply from deployment_scope_exclusions (a prior --persist-exclude deploy). Empty when the apply path took the per-deploy req.Exclude list verbatim."}
+        # ADR-124 code-review fix #2 — mirrors PlanResponse.
+        stale_persisted_exclusions:
+          type: array
+          items: {type: string, description: "Persisted slug no longer in the repo; ignored this deploy."}
+        project_id: {type: string, pattern: '^[a-f0-9]{32}$'}
+        apps:
+          type: array
+          items:
+            type: object
+            required: [slug, id]
+            properties:
+              slug: {type: string}
+              id: {type: string, pattern: '^[a-f0-9]{32}$'}
+        builds:
+          description: |
+            Per-workload build enqueue results. Populated when the apply
+            path actually enqueued one (deployment, build) per added or
+            changed workload (repo decomposition close-
+            the-loop). On staging or enqueue failure the per-app Error
+            field is populated and the IDs are empty.
+          type: array
+          items: {$ref: '#/components/schemas/AppliedBuild'}
+        unchanged:
+          description: |
+            Slugs in apps that this apply did not rebuild: nothing in them
+            changed, or --only left them out. apps is the whole project
+            membership, so a client compares it with builds plus unchanged.
+          type: array
+          items: {type: string}
+    AppliedBuild:
+      description: |
+        Per-workload build result from the apply-time build-enqueue loop.
+        On success: slug + app_id + deployment_id + build_id. On failure:
+        slug + app_id + error, no IDs.
+      type: object
+      required: [slug, app_id]
+      properties:
+        slug: {type: string}
+        app_id: {type: string, pattern: '^[a-f0-9]{32}$'}
+        deployment_id: {type: string, pattern: '^[a-f0-9]{32}$'}
+        build_id: {type: string, pattern: '^[a-f0-9]{32}$'}
+        deployment_status: {type: string, description: "Terminal deployment status added by wait-aware CLI responses."}
+        build_status: {type: string, description: "Terminal build status added by wait-aware CLI responses."}
+        configuration:
+          $ref: '#/components/schemas/DeploymentConfigurationStatus'
+        error: {type: string, description: "Staging or enqueue error message; partial-failure rows carry this in lieu of IDs."}
     # ─── Alert rules (issue #396 / ADR-045 PR 3) ──────────────────────────
     # Wire shape mirrors pkg/api/alerts.go. Plaintext webhook_secret is
     # only present on the create/update request bodies; every response
@@ -30843,6 +32214,8 @@ components:
             - workflow_due_age_seconds
             - custom_metric
             - log_search_matches
+            - queue_backlog
+            - queue_oldest_age_seconds
             - log_error_lines
             - log_warn_lines
             - slo_budget_burn
@@ -30950,7 +32323,7 @@ components:
         metric:
           type: string
           description: 'Selected metric for the existing alert rule. MCP task age reads a fresh app gauge in seconds and degrades when unavailable; mcp_tasks_metrics_stale is 1 when either task gauge is missing, stale, or invalid. Min=0 worker apps also require a fresh observer heartbeat with value 1. mcp_task_promotion_hold_age_seconds reads the oldest active hold directly from state (seconds, zero with no holds); its alerts support webhook action only.'
-          enum: [error_rate_pct, latency_p50_ms, latency_p95_ms, latency_p99_ms, cold_start_pct, request_count, failed_invocations, api_up, account_spend_eur, deployment_failed, cert_expiry_seconds, cert_issuance_failed, queue_depth, new_error_fingerprint, cold_wake_rate_pct, daily_cost_cents, slo_burn_rate, pre_auth_target_threshold, pre_auth_target_signal_gap_pct, pre_auth_pressure, edge_validation_failures, edge_rejections, edge_waf_detections, event_pending_recipients, event_oldest_pending_seconds, event_retry_rate_per_second, event_terminal_failure_pct, event_routing_latency_p95_seconds, event_paused_seconds, event_drain_rate_per_second, event_execution_dead_letters, event_execution_dead_letter_rate_per_second, event_handler_failure_pct, event_completion_latency_p95_seconds, event_recovery_stalled_jobs, event_recovery_expiring_jobs, event_recovery_capacity_wait_jobs, event_recovery_execution_waiting_jobs, event_recovery_execution_prolonged_wait_jobs, event_recovery_execution_unknown_jobs, event_recovery_execution_retention_risk_jobs, event_recovery_notification_admission_overdue_jobs, event_recovery_notification_admission_dead_jobs, event_recovery_notification_admission_unknown_jobs, event_recovery_notification_admission_no_receivers_jobs, event_recovery_notification_execution_overdue_jobs, event_recovery_notification_execution_dead_jobs, event_recovery_notification_execution_unknown_jobs, event_recovery_notification_execution_no_receivers_jobs, event_retention_expiring_receipts, event_storage_utilization_pct, mcp_tasks_oldest_age_seconds, mcp_tasks_metrics_stale, mcp_task_promotion_hold_age_seconds, mcp_policy_unconverged_gateways, mcp_policy_unverified, mcp_readiness_unhealthy, mcp_catalog_drift, mcp_catalog_monitor_unavailable, mcp_oauth_reauthorization_required, mcp_oauth_renewal_failed, mcp_oauth_retirement_expiring, mcp_oauth_issuance_unknown, mcp_protocol_error_rate_pct, mcp_protocol_execution_p95_ms, edge_rule_hits, edge_rule_log_hits, custom_metric, log_error_lines, log_warn_lines, slo_budget_burn, slo_budget_remaining_pct, synthetic_check_consecutive_failures, synthetic_check_latency_p95_ms, edge_rule_activity, route_insights_detected, log_search_matches]
+          enum: [error_rate_pct, latency_p50_ms, latency_p95_ms, latency_p99_ms, cold_start_pct, request_count, failed_invocations, api_up, account_spend_eur, deployment_failed, cert_expiry_seconds, cert_issuance_failed, queue_depth, new_error_fingerprint, cold_wake_rate_pct, daily_cost_cents, slo_burn_rate, pre_auth_target_threshold, pre_auth_target_signal_gap_pct, pre_auth_pressure, edge_validation_failures, edge_rejections, edge_waf_detections, event_pending_recipients, event_oldest_pending_seconds, event_retry_rate_per_second, event_terminal_failure_pct, event_routing_latency_p95_seconds, event_paused_seconds, event_drain_rate_per_second, event_execution_dead_letters, event_execution_dead_letter_rate_per_second, event_handler_failure_pct, event_completion_latency_p95_seconds, event_recovery_stalled_jobs, event_recovery_expiring_jobs, event_recovery_capacity_wait_jobs, event_recovery_execution_waiting_jobs, event_recovery_execution_prolonged_wait_jobs, event_recovery_execution_unknown_jobs, event_recovery_execution_retention_risk_jobs, event_recovery_notification_admission_overdue_jobs, event_recovery_notification_admission_dead_jobs, event_recovery_notification_admission_unknown_jobs, event_recovery_notification_admission_no_receivers_jobs, event_recovery_notification_execution_overdue_jobs, event_recovery_notification_execution_dead_jobs, event_recovery_notification_execution_unknown_jobs, event_recovery_notification_execution_no_receivers_jobs, event_retention_expiring_receipts, event_storage_utilization_pct, mcp_tasks_oldest_age_seconds, mcp_tasks_metrics_stale, mcp_task_promotion_hold_age_seconds, mcp_policy_unconverged_gateways, mcp_policy_unverified, mcp_readiness_unhealthy, mcp_catalog_drift, mcp_catalog_monitor_unavailable, mcp_oauth_reauthorization_required, mcp_oauth_renewal_failed, mcp_oauth_retirement_expiring, mcp_oauth_issuance_unknown, mcp_protocol_error_rate_pct, mcp_protocol_execution_p95_ms, edge_rule_hits, edge_rule_log_hits, custom_metric, log_error_lines, log_warn_lines, slo_budget_burn, slo_budget_remaining_pct, synthetic_check_consecutive_failures, synthetic_check_latency_p95_ms, edge_rule_activity, route_insights_detected, log_search_matches, queue_backlog, queue_oldest_age_seconds]
         comparison:
           type: string
           enum: [gt, gte, lt, lte, above_baseline, below_baseline]
@@ -31034,7 +32407,7 @@ components:
         metric:
           type: string
           description: 'Cannot cross metric families (e.g. error_rate_pct → failed_invocations) — returns 400. MCP task metrics are notification-only.'
-          enum: [error_rate_pct, latency_p50_ms, latency_p95_ms, latency_p99_ms, cold_start_pct, request_count, failed_invocations, api_up, account_spend_eur, deployment_failed, cert_expiry_seconds, cert_issuance_failed, queue_depth, new_error_fingerprint, cold_wake_rate_pct, daily_cost_cents, slo_burn_rate, pre_auth_target_threshold, pre_auth_target_signal_gap_pct, pre_auth_pressure, edge_validation_failures, edge_rejections, edge_waf_detections, event_pending_recipients, event_oldest_pending_seconds, event_retry_rate_per_second, event_terminal_failure_pct, event_routing_latency_p95_seconds, event_paused_seconds, event_drain_rate_per_second, event_execution_dead_letters, event_execution_dead_letter_rate_per_second, event_handler_failure_pct, event_completion_latency_p95_seconds, event_recovery_stalled_jobs, event_recovery_expiring_jobs, event_recovery_capacity_wait_jobs, event_recovery_execution_waiting_jobs, event_recovery_execution_prolonged_wait_jobs, event_recovery_execution_unknown_jobs, event_recovery_execution_retention_risk_jobs, event_recovery_notification_admission_overdue_jobs, event_recovery_notification_admission_dead_jobs, event_recovery_notification_admission_unknown_jobs, event_recovery_notification_admission_no_receivers_jobs, event_recovery_notification_execution_overdue_jobs, event_recovery_notification_execution_dead_jobs, event_recovery_notification_execution_unknown_jobs, event_recovery_notification_execution_no_receivers_jobs, event_retention_expiring_receipts, event_storage_utilization_pct, mcp_tasks_oldest_age_seconds, mcp_tasks_metrics_stale, mcp_task_promotion_hold_age_seconds, mcp_policy_unconverged_gateways, mcp_policy_unverified, mcp_readiness_unhealthy, mcp_catalog_drift, mcp_catalog_monitor_unavailable, mcp_oauth_reauthorization_required, mcp_oauth_renewal_failed, mcp_oauth_retirement_expiring, mcp_oauth_issuance_unknown, mcp_protocol_error_rate_pct, mcp_protocol_execution_p95_ms, edge_rule_hits, edge_rule_log_hits, custom_metric, log_error_lines, log_warn_lines, slo_budget_burn, slo_budget_remaining_pct, synthetic_check_consecutive_failures, synthetic_check_latency_p95_ms, edge_rule_activity, route_insights_detected, log_search_matches]
+          enum: [error_rate_pct, latency_p50_ms, latency_p95_ms, latency_p99_ms, cold_start_pct, request_count, failed_invocations, api_up, account_spend_eur, deployment_failed, cert_expiry_seconds, cert_issuance_failed, queue_depth, new_error_fingerprint, cold_wake_rate_pct, daily_cost_cents, slo_burn_rate, pre_auth_target_threshold, pre_auth_target_signal_gap_pct, pre_auth_pressure, edge_validation_failures, edge_rejections, edge_waf_detections, event_pending_recipients, event_oldest_pending_seconds, event_retry_rate_per_second, event_terminal_failure_pct, event_routing_latency_p95_seconds, event_paused_seconds, event_drain_rate_per_second, event_execution_dead_letters, event_execution_dead_letter_rate_per_second, event_handler_failure_pct, event_completion_latency_p95_seconds, event_recovery_stalled_jobs, event_recovery_expiring_jobs, event_recovery_capacity_wait_jobs, event_recovery_execution_waiting_jobs, event_recovery_execution_prolonged_wait_jobs, event_recovery_execution_unknown_jobs, event_recovery_execution_retention_risk_jobs, event_recovery_notification_admission_overdue_jobs, event_recovery_notification_admission_dead_jobs, event_recovery_notification_admission_unknown_jobs, event_recovery_notification_admission_no_receivers_jobs, event_recovery_notification_execution_overdue_jobs, event_recovery_notification_execution_dead_jobs, event_recovery_notification_execution_unknown_jobs, event_recovery_notification_execution_no_receivers_jobs, event_retention_expiring_receipts, event_storage_utilization_pct, mcp_tasks_oldest_age_seconds, mcp_tasks_metrics_stale, mcp_task_promotion_hold_age_seconds, mcp_policy_unconverged_gateways, mcp_policy_unverified, mcp_readiness_unhealthy, mcp_catalog_drift, mcp_catalog_monitor_unavailable, mcp_oauth_reauthorization_required, mcp_oauth_renewal_failed, mcp_oauth_retirement_expiring, mcp_oauth_issuance_unknown, mcp_protocol_error_rate_pct, mcp_protocol_execution_p95_ms, edge_rule_hits, edge_rule_log_hits, custom_metric, log_error_lines, log_warn_lines, slo_budget_burn, slo_budget_remaining_pct, synthetic_check_consecutive_failures, synthetic_check_latency_p95_ms, edge_rule_activity, route_insights_detected, log_search_matches, queue_backlog, queue_oldest_age_seconds]
         comparison: {type: string, enum: [gt, gte, lt, lte, above_baseline, below_baseline]}
         threshold: {type: number, format: double}
         window_spec: {type: string, enum: ['5m', '15m', '1h', '6h', '24h', '7d', '15d']}

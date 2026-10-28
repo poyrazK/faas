@@ -9,7 +9,8 @@ Metric: `gateway_edge_rule_compile_error_total{kind}`.
 Spec: §12 + ADR-091 Amendment 1 (`pkg/gateway/metrics.go::ObserveEdgeRuleCompileError`
 doc-comment: "a rule shipped broken is an actionable correctness
 signal, not a headroom signal").
-Severity: **page** for access-gating kinds (`jwt`, `ip`, `waf`) via
+Severity: **page** for access-gating kinds (`jwt`, `ip`, `geo`, `waf`,
+`challenge`) via
 `FaasEdgeRuleAuthCompileError`: a dropped access rule is not enforced, so
 its route serves without the check. Other kinds are warn via
 `FaasEdgeRuleCompileError` (ADR-1236).

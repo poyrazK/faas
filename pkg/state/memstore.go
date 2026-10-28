@@ -5259,14 +5259,21 @@ func (m *MemStore) PreviewAppByProjectWorkload(_ context.Context, accountID, pro
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	var found App
 	for _, app := range m.apps {
 		if app.AccountID == accountID && app.ProjectID == projectID &&
 			app.PreviewPrNumber == previewPRNumber && api.SameServiceName(app.WorkloadName, workloadName) &&
 			app.PreviewOfSlug != "" && app.Status != AppDeleted {
-			return app, nil
+			if found.ID != "" {
+				return App{}, ErrConflict
+			}
+			found = app
 		}
 	}
-	return App{}, ErrNotFound
+	if found.ID == "" {
+		return App{}, ErrNotFound
+	}
+	return found, nil
 }
 
 // ProjectAppByWorkload mirrors PgStore: a service-name production alias in
@@ -19667,6 +19674,11 @@ func (m *MemStore) UpsertInvoice(_ context.Context, inv Invoice) error {
 			inv.AmountRefundedCents = existing.AmountRefundedCents
 			inv.AmountRefundPendingCents = existing.AmountRefundPendingCents
 			inv.CreditsAppliedCents = existing.CreditsAppliedCents
+			if existing.Status == "paid" && (inv.Status == "open" || inv.Status == "draft") {
+				// A late "created"/"pending" delivery never reopens a paid
+				// invoice (ADR-20261028101500).
+				inv.Status, inv.AmountPaidCents = existing.Status, existing.AmountPaidCents
+			}
 			inv.Plan = existing.Plan
 			if inv.CreatedAt.IsZero() {
 				inv.CreatedAt = time.Now().UTC()

@@ -1821,6 +1821,7 @@ var RunIssueTicketSync = runIssueTicketSync
 var RunIssueTickets = runIssueTickets
 var RunLocalTest = runLocalTest
 var RunLocalTestWithLoad = runLocalTestWithLoad
+var RunLogs = runLogs
 var RunMCPBrowserConnection = runMCPBrowserConnection
 var RunMCPCatalogMonitor = runMCPCatalogMonitor
 var RunMCPNativeRelease = runMCPNativeRelease

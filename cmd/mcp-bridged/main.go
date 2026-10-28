@@ -115,7 +115,15 @@ func serve(ctx context.Context, log *slog.Logger, cfg config) error {
 	}
 	defer pool.Close()
 	// Losing the lease stops this process; its successor holds the state.
-	store, err := mcpmanagement.OpenPostgresStateStore(ctx, mcpmanagement.PostgresStateOptions{Pool: pool, Bridge: cfg.stateBridge, KeyPath: cfg.stateKeyFile, OnLeaseLost: func(err error) { cancel(err) }})
+	// The control plane generates the state key on first converge; state a
+	// rebuilt host's new key cannot open is dropped, and agents sign in again.
+	store, err := mcpmanagement.OpenPostgresStateStore(ctx, mcpmanagement.PostgresStateOptions{
+		Pool: pool, Bridge: cfg.stateBridge, KeyPath: cfg.stateKeyFile, OnLeaseLost: func(err error) { cancel(err) },
+		DiscardUnreadable: true,
+		OnDiscard: func(err error) {
+			log.Warn("discarded hosted MCP state the state key cannot open; connected agents must sign in again", "err", err)
+		},
+	})
 	if err != nil {
 		return err
 	}

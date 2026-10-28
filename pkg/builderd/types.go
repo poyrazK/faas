@@ -78,11 +78,14 @@ type VMRequest struct {
 	// The guaranteed-slot orchestrator sets it only after the vmmd warm
 	// transport capability has been confirmed.
 	KeepWarm bool
+	// LayerCompression is the build manifest's LayerCompression: "" for
+	// BuildKit's gzip or api.BuildLayerCompressionZstd.
+	LayerCompression string
 	// WarmScopeKey identifies the app/runtime scope allowed to reuse a warm
 	// builder drive. It is host metadata and is never written into the guest.
 	WarmScopeKey string
 	// RegistryCredentials are the app's sealed registry credentials a
-	// Dockerfile build pulls its base images with (ADR-20261026090000);
+	// Dockerfile build pulls its base images with (ADR-20261026091500);
 	// vmmd opens them into the builder VM's Docker config.
 	RegistryCredentials []SealedRegistryCredential
 }

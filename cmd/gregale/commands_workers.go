@@ -494,6 +494,28 @@ func cmdWorkersLogs(args []string) int {
 	return cmdLogs(logArgs)
 }
 
+// defaultWorkerScaling is the starting point for an app without worker
+// scaling: the queue metric its scaling policy already uses, or Gregale queue
+// depth. queue_lag needs an external broker trigger and gives the scheduler
+// no signal for Gregale queues (ADR-20261018101500 amendment 2026-10-27).
+func defaultWorkerScaling(policy *api.ScalingPolicy) api.WorkerScaling {
+	scaling := api.WorkerScaling{Min: 0, Max: 10, Metric: api.ScalingMetricQueueDepth, Target: 100}
+	if policy == nil {
+		return scaling
+	}
+	for _, target := range policy.EffectiveTargets() {
+		switch target.Metric {
+		case api.ScalingMetricQueueDepth, api.ScalingMetricQueueLag, api.ScalingMetricCustom:
+			scaling.Metric, scaling.Name = target.Metric, target.Name
+			if target.Value > 0 {
+				scaling.Target = target.Value
+			}
+			return scaling
+		}
+	}
+	return scaling
+}
+
 func cmdWorkersScale(args []string) int {
 	usage := "usage: gregale worker scale <app> [--min N] [--max N] [--target N] [--metric METRIC] [--name CUSTOM_METRIC] [--drain-timeout DURATION] [--stop-signal SIG]"
 	fs := newFlagSet("workers scale", flag.ContinueOnError)
@@ -541,7 +563,7 @@ func cmdWorkersScale(args []string) int {
 	if existingScaling != nil {
 		newScaling = *existingScaling
 	} else {
-		newScaling = api.WorkerScaling{Min: 0, Max: 10, Metric: "queue_lag", Target: 100}
+		newScaling = defaultWorkerScaling(app.ScalingPolicy)
 	}
 
 	if *minFlag >= 0 {

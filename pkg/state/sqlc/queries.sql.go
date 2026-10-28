@@ -72845,6 +72845,78 @@ func (q *Queries) QueueBindingHistoryByID(ctx context.Context, db DBTX, arg Queu
 	return i, err
 }
 
+const queueBindingTelemetry = `-- name: QueueBindingTelemetry :one
+with b as (
+  select id, account_id, queue_name, deployment_scope from queue_bindings
+  where id=$3::uuid and app_id=$1::uuid
+), owned as (
+  select i.state, i.lease_expires_at from invocations i, b
+  where i.app_id=$1::uuid and i.account_id=b.account_id and i.source='queue'
+    and (b.deployment_scope='' or i.deployment_scope=b.deployment_scope)
+    and (i.queue_binding_id=b.id or (b.deployment_scope='' and i.queue_binding_id is null and i.queue_name=b.queue_name))
+)
+select
+  ((select count(*) from (
+     select 1 from invocations i, b
+     where i.app_id=$1::uuid and i.queue_binding_id=b.id and i.account_id=b.account_id
+       and i.source='queue' and i.state in ('pending','dispatching')
+       and (b.deployment_scope='' or i.deployment_scope=b.deployment_scope)
+     limit $2::integer) own)
+  + (select count(*) from (
+     select 1 from invocations i, b
+     where b.deployment_scope='' and i.app_id=$1::uuid and i.queue_binding_id is null
+       and i.queue_name=b.queue_name and i.account_id=b.account_id
+       and i.source='queue' and i.state in ('pending','dispatching')
+     limit $2::integer) legacy))::bigint as depth,
+  (select count(*) from (
+     select 1 from owned where state='dispatching' and lease_expires_at > now()
+     limit $2::integer) leased)::bigint as in_flight,
+  (select count(*) from (
+     select 1 from owned where state='dead_letter'
+     limit $2::integer) dead)::bigint as dead_letter,
+  (select min(first.created_at) from (
+     (select i.created_at from invocations i, b
+      where i.app_id=$1::uuid and i.queue_binding_id=b.id and i.account_id=b.account_id
+        and i.source='queue' and i.state='pending'
+        and (b.deployment_scope='' or i.deployment_scope=b.deployment_scope)
+      order by i.due_at, i.created_at, i.id limit 1)
+     union all
+     (select i.created_at from invocations i, b
+      where b.deployment_scope='' and i.app_id=$1::uuid and i.queue_binding_id is null
+        and i.queue_name=b.queue_name and i.account_id=b.account_id and i.source='queue' and i.state='pending'
+      order by i.due_at, i.created_at, i.id limit 1)
+  ) first)::timestamptz as oldest_pending_at
+`
+
+type QueueBindingTelemetryParams struct {
+	AppID     pgtype.UUID
+	RowLimit  int32
+	BindingID pgtype.UUID
+}
+
+type QueueBindingTelemetryRow struct {
+	Depth           int64
+	InFlight        int64
+	DeadLetter      int64
+	OldestPendingAt pgtype.Timestamptz
+}
+
+// QueueStateForBinding's figures for gauges and alerts without a
+// backlog-sized read: each count stops at row_limit, and the oldest pending
+// message is the first one due in the lease indexes
+// (ADR-20261018101500 amendment 2026-10-27).
+func (q *Queries) QueueBindingTelemetry(ctx context.Context, db DBTX, arg QueueBindingTelemetryParams) (QueueBindingTelemetryRow, error) {
+	row := db.QueryRow(ctx, queueBindingTelemetry, arg.AppID, arg.RowLimit, arg.BindingID)
+	var i QueueBindingTelemetryRow
+	err := row.Scan(
+		&i.Depth,
+		&i.InFlight,
+		&i.DeadLetter,
+		&i.OldestPendingAt,
+	)
+	return i, err
+}
+
 const queueClaimActiveCount = `-- name: QueueClaimActiveCount :one
 select count(*)::bigint from invocations i
 where i.app_id=$1::uuid and i.source='queue'
@@ -83045,20 +83117,81 @@ func (q *Queries) ReadPublicRoutingViewCanaries(ctx context.Context, db DBTX, ap
 	return items, nil
 }
 
+const readPublicRoutingViewLive = `-- name: ReadPublicRoutingViewLive :many
+SELECT app_id, id, scope, traffic_percent, pin_expires_at FROM (
+    SELECT d.app_id, d.id, d.scope, d.traffic_percent, p.expires_at AS pin_expires_at,
+           row_number() OVER (PARTITION BY d.app_id ORDER BY d.id) AS position
+    FROM deployments d LEFT JOIN deployment_revision_pins p ON p.deployment_id = d.id
+    WHERE d.app_id = ANY($1::uuid[]) AND d.status = 'live' AND d.deleted_at IS NULL
+) ranked WHERE position <= $2::integer
+ORDER BY app_id, id
+`
+
+type ReadPublicRoutingViewLiveParams struct {
+	AppIds   []pgtype.UUID
+	RowLimit int32
+}
+
+type ReadPublicRoutingViewLiveRow struct {
+	AppID          pgtype.UUID
+	ID             pgtype.UUID
+	Scope          string
+	TrafficPercent int32
+	PinExpiresAt   pgtype.Timestamptz
+}
+
+// Live deployments in every scope, for host and revision pins
+// (ReadPublicRoutingHostPin, ReadPublicRoutingRevision). row_limit + 1 rows per
+// app tell the reader the list was cut.
+func (q *Queries) ReadPublicRoutingViewLive(ctx context.Context, db DBTX, arg ReadPublicRoutingViewLiveParams) ([]ReadPublicRoutingViewLiveRow, error) {
+	rows, err := db.Query(ctx, readPublicRoutingViewLive, arg.AppIds, arg.RowLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ReadPublicRoutingViewLiveRow{}
+	for rows.Next() {
+		var i ReadPublicRoutingViewLiveRow
+		if err := rows.Scan(
+			&i.AppID,
+			&i.ID,
+			&i.Scope,
+			&i.TrafficPercent,
+			&i.PinExpiresAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const readPublicRoutingViewOwners = `-- name: ReadPublicRoutingViewOwners :many
-SELECT id, account_id, project_id FROM apps
+SELECT id, account_id, project_id,
+       (coalesce(manifest->>'revision_pin_ttl_seconds', '0') ~ '^-?[0-9]{1,9}$')::boolean AS revision_pin_ttl_valid,
+       (CASE WHEN coalesce(manifest->>'revision_pin_ttl_seconds', '0') ~ '^-?[0-9]{1,9}$'
+             THEN coalesce(manifest->>'revision_pin_ttl_seconds', '0')::integer > 0 ELSE false END)::boolean AS revision_pins
+FROM apps
 WHERE id = ANY($1::uuid[]) AND status <> 'deleted' AND deleted_at IS NULL
 `
 
 type ReadPublicRoutingViewOwnersRow struct {
-	ID        pgtype.UUID
-	AccountID pgtype.UUID
-	ProjectID pgtype.UUID
+	ID                  pgtype.UUID
+	AccountID           pgtype.UUID
+	ProjectID           pgtype.UUID
+	RevisionPinTtlValid bool
+	RevisionPins        bool
 }
 
 // ADR-20261027085556: a gateway's public routing view reads every app it
 // tracks in one repeatable-read snapshot. Each query below returns, for many
 // apps at once, the rows its per-request counterpart above reads for one.
+// revision_pins is ReadPublicRoutingRevision's manifest condition.
+// revision_pin_ttl_valid is false when the stored value is not an integer, which
+// the per-request read fails on; such an app's revision pins keep that read.
 func (q *Queries) ReadPublicRoutingViewOwners(ctx context.Context, db DBTX, appIds []pgtype.UUID) ([]ReadPublicRoutingViewOwnersRow, error) {
 	rows, err := db.Query(ctx, readPublicRoutingViewOwners, appIds)
 	if err != nil {
@@ -83068,7 +83201,13 @@ func (q *Queries) ReadPublicRoutingViewOwners(ctx context.Context, db DBTX, appI
 	items := []ReadPublicRoutingViewOwnersRow{}
 	for rows.Next() {
 		var i ReadPublicRoutingViewOwnersRow
-		if err := rows.Scan(&i.ID, &i.AccountID, &i.ProjectID); err != nil {
+		if err := rows.Scan(
+			&i.ID,
+			&i.AccountID,
+			&i.ProjectID,
+			&i.RevisionPinTtlValid,
+			&i.RevisionPins,
+		); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -83080,24 +83219,28 @@ func (q *Queries) ReadPublicRoutingViewOwners(ctx context.Context, db DBTX, appI
 }
 
 const readPublicRoutingViewReleases = `-- name: ReadPublicRoutingViewReleases :many
-SELECT a.id AS app_id, rs.id, rs.environment_slug, rs.active, member.deployment_id,
-       EXISTS (
-           SELECT 1 FROM deployments d WHERE d.id = member.deployment_id AND d.app_id = member.app_id
-             AND d.scope = rs.environment_slug AND d.status = 'live' AND d.deleted_at IS NULL
-             AND (d.traffic_percent > 0 OR EXISTS (SELECT 1 FROM deployment_revision_pins p WHERE p.deployment_id = d.id AND p.expires_at > now())
-                  OR EXISTS (SELECT 1 FROM project_release_members retained JOIN project_release_sets retained_set ON retained_set.id = retained.release_id
-                             WHERE retained.deployment_id = d.id AND retained.app_id = d.app_id AND (retained_set.active OR retained_set.expires_at > now())))
-       )::boolean AS target_live
-FROM apps a JOIN project_release_sets rs ON rs.project_id = a.project_id AND rs.account_id = a.account_id
-LEFT JOIN project_release_members member ON member.release_id = rs.id AND member.app_id = a.id
-WHERE a.id = ANY($1::uuid[]) AND a.status <> 'deleted' AND a.deleted_at IS NULL
-  AND (rs.active OR (rs.id = ANY($2::uuid[]) AND rs.expires_at > now()))
-ORDER BY a.id, rs.environment_slug, rs.created_at DESC, rs.id
+SELECT app_id, id, environment_slug, active, expires_at, deployment_id, target_live FROM (
+    SELECT a.id AS app_id, rs.id, rs.environment_slug, rs.active, rs.expires_at, rs.created_at, member.deployment_id,
+           EXISTS (
+               SELECT 1 FROM deployments d WHERE d.id = member.deployment_id AND d.app_id = member.app_id
+                 AND d.scope = rs.environment_slug AND d.status = 'live' AND d.deleted_at IS NULL
+                 AND (d.traffic_percent > 0 OR EXISTS (SELECT 1 FROM deployment_revision_pins p WHERE p.deployment_id = d.id AND p.expires_at > now())
+                      OR EXISTS (SELECT 1 FROM project_release_members retained JOIN project_release_sets retained_set ON retained_set.id = retained.release_id
+                                 WHERE retained.deployment_id = d.id AND retained.app_id = d.app_id AND (retained_set.active OR retained_set.expires_at > now())))
+           )::boolean AS target_live,
+           row_number() OVER (PARTITION BY a.id ORDER BY rs.active DESC, (rs.id = ANY($1::uuid[])) DESC, rs.created_at DESC, rs.id) AS position
+    FROM apps a JOIN project_release_sets rs ON rs.project_id = a.project_id AND rs.account_id = a.account_id
+    LEFT JOIN project_release_members member ON member.release_id = rs.id AND member.app_id = a.id
+    WHERE a.id = ANY($2::uuid[]) AND a.status <> 'deleted' AND a.deleted_at IS NULL
+      AND (rs.active OR rs.expires_at > now())
+) ranked WHERE position <= $3::integer
+ORDER BY app_id, environment_slug, created_at DESC, id
 `
 
 type ReadPublicRoutingViewReleasesParams struct {
-	AppIds     []pgtype.UUID
 	ReleaseIds []pgtype.UUID
+	AppIds     []pgtype.UUID
+	RowLimit   int32
 }
 
 type ReadPublicRoutingViewReleasesRow struct {
@@ -83105,15 +83248,17 @@ type ReadPublicRoutingViewReleasesRow struct {
 	ID              pgtype.UUID
 	EnvironmentSlug string
 	Active          bool
+	ExpiresAt       pgtype.Timestamptz
 	DeploymentID    pgtype.UUID
 	TargetLive      bool
 }
 
-// Rows of ReadPublicRoutingRelease for each app: every active graph, and the
-// named graphs (a running canary's) while they are still usable. A graph's
-// target scope is its environment, the scope the per-request read filters on.
+// Rows of ReadPublicRoutingRelease for each app: every active graph and every
+// graph still usable by a release pin, the named graphs (a running canary's)
+// first. A graph's target scope is its environment, the scope the per-request
+// read filters on. row_limit + 1 rows per app tell the reader the list was cut.
 func (q *Queries) ReadPublicRoutingViewReleases(ctx context.Context, db DBTX, arg ReadPublicRoutingViewReleasesParams) ([]ReadPublicRoutingViewReleasesRow, error) {
-	rows, err := db.Query(ctx, readPublicRoutingViewReleases, arg.AppIds, arg.ReleaseIds)
+	rows, err := db.Query(ctx, readPublicRoutingViewReleases, arg.ReleaseIds, arg.AppIds, arg.RowLimit)
 	if err != nil {
 		return nil, err
 	}
@@ -83126,6 +83271,7 @@ func (q *Queries) ReadPublicRoutingViewReleases(ctx context.Context, db DBTX, ar
 			&i.ID,
 			&i.EnvironmentSlug,
 			&i.Active,
+			&i.ExpiresAt,
 			&i.DeploymentID,
 			&i.TargetLive,
 		); err != nil {
@@ -84733,72 +84879,6 @@ func (q *Queries) ReadServicePolicyDeploymentWeights(ctx context.Context, db DBT
 		return nil, err
 	}
 	return items, nil
-}
-
-const readServicePolicyPreviewApp = `-- name: ReadServicePolicyPreviewApp :one
-SELECT id, account_id, slug, workload_name, status, project_id, preview_of_slug,
-       preview_pr_number, preview_pr_state, preview_expires_at, app_protocol, websocket_enabled,
-       jsonb_strip_nulls(jsonb_build_object(
-           'service_bindings', manifest->'service_bindings',
-           'service_reliability', manifest->'service_reliability',
-           'service_binding_policy', manifest->'service_binding_policy',
-           'service_binding_transport', manifest->'service_binding_transport',
-           'preview_service_calls_policy', manifest->'preview_service_calls_policy',
-           'allowed_service_callers', manifest->'allowed_service_callers',
-           'allowed_service_call_scopes', manifest->'allowed_service_call_scopes'))::jsonb AS manifest
-FROM apps WHERE account_id = $1::uuid AND project_id = $2::uuid
-  AND preview_pr_number = $3::integer
-  AND translate(lower(workload_name), '_.', '--') = translate(lower($4::text), '_.', '--')
-  AND preview_of_slug IS NOT NULL AND status <> 'deleted'
-`
-
-type ReadServicePolicyPreviewAppParams struct {
-	AccountID       pgtype.UUID
-	ProjectID       pgtype.UUID
-	PreviewPrNumber int32
-	WorkloadName    string
-}
-
-type ReadServicePolicyPreviewAppRow struct {
-	ID               pgtype.UUID
-	AccountID        pgtype.UUID
-	Slug             string
-	WorkloadName     string
-	Status           string
-	ProjectID        pgtype.UUID
-	PreviewOfSlug    pgtype.Text
-	PreviewPrNumber  pgtype.Int4
-	PreviewPrState   pgtype.Text
-	PreviewExpiresAt pgtype.Timestamptz
-	AppProtocol      string
-	WebsocketEnabled bool
-	Manifest         []byte
-}
-
-func (q *Queries) ReadServicePolicyPreviewApp(ctx context.Context, db DBTX, arg ReadServicePolicyPreviewAppParams) (ReadServicePolicyPreviewAppRow, error) {
-	row := db.QueryRow(ctx, readServicePolicyPreviewApp,
-		arg.AccountID,
-		arg.ProjectID,
-		arg.PreviewPrNumber,
-		arg.WorkloadName,
-	)
-	var i ReadServicePolicyPreviewAppRow
-	err := row.Scan(
-		&i.ID,
-		&i.AccountID,
-		&i.Slug,
-		&i.WorkloadName,
-		&i.Status,
-		&i.ProjectID,
-		&i.PreviewOfSlug,
-		&i.PreviewPrNumber,
-		&i.PreviewPrState,
-		&i.PreviewExpiresAt,
-		&i.AppProtocol,
-		&i.WebsocketEnabled,
-		&i.Manifest,
-	)
-	return i, err
 }
 
 const readServicePolicyProject = `-- name: ReadServicePolicyProject :one
@@ -96590,6 +96670,48 @@ func (q *Queries) ServiceCapacityProtection(ctx context.Context, db DBTX) ([]byt
 	return snapshot, err
 }
 
+const servicePolicyPreviewAppIDs = `-- name: ServicePolicyPreviewAppIDs :many
+SELECT id FROM apps WHERE account_id = $1::uuid AND project_id = $2::uuid
+  AND preview_pr_number = $3::integer
+  AND translate(lower(workload_name), '_.', '--') = translate(lower($4::text), '_.', '--')
+  AND preview_of_slug IS NOT NULL AND status <> 'deleted'
+ORDER BY id
+LIMIT 2
+`
+
+type ServicePolicyPreviewAppIDsParams struct {
+	AccountID       pgtype.UUID
+	ProjectID       pgtype.UUID
+	PreviewPrNumber int32
+	WorkloadName    string
+}
+
+// Two IDs suffice to refuse an ambiguous service name, as production does.
+func (q *Queries) ServicePolicyPreviewAppIDs(ctx context.Context, db DBTX, arg ServicePolicyPreviewAppIDsParams) ([]pgtype.UUID, error) {
+	rows, err := db.Query(ctx, servicePolicyPreviewAppIDs,
+		arg.AccountID,
+		arg.ProjectID,
+		arg.PreviewPrNumber,
+		arg.WorkloadName,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []pgtype.UUID{}
+	for rows.Next() {
+		var id pgtype.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const serviceRecoveryByApp = `-- name: ServiceRecoveryByApp :one
 SELECT app_id, revision, claim_token, lease_until, status, failures, next_attempt_at, updated_at FROM service_recovery WHERE app_id = $1
 `
@@ -99801,6 +99923,18 @@ func (q *Queries) TryLockTrafficPolicySession(ctx context.Context, db DBTX, lock
 	return column_1, err
 }
 
+const tryLockTrafficPolicySessionShared = `-- name: TryLockTrafficPolicySessionShared :one
+SELECT pg_try_advisory_lock_shared(hashtextextended($1::text,0))::boolean
+`
+
+// A scoped binding writer's ancestor and root keys (ADR-20261027163626).
+func (q *Queries) TryLockTrafficPolicySessionShared(ctx context.Context, db DBTX, lockKey string) (bool, error) {
+	row := db.QueryRow(ctx, tryLockTrafficPolicySessionShared, lockKey)
+	var column_1 bool
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
 const uDPListenerByAppAndName = `-- name: UDPListenerByAppAndName :one
 SELECT id, account_id, app_id, listener_name, guest_port, public_port, protocol, enabled, created_at, updated_at FROM app_udp_listeners
 WHERE app_id = $1::text::uuid AND listener_name = $2
@@ -99891,6 +100025,17 @@ SELECT pg_advisory_unlock(hashtextextended($1::text,0))::boolean
 
 func (q *Queries) UnlockTrafficPolicySession(ctx context.Context, db DBTX, lockKey string) (bool, error) {
 	row := db.QueryRow(ctx, unlockTrafficPolicySession, lockKey)
+	var column_1 bool
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
+const unlockTrafficPolicySessionShared = `-- name: UnlockTrafficPolicySessionShared :one
+SELECT pg_advisory_unlock_shared(hashtextextended($1::text,0))::boolean
+`
+
+func (q *Queries) UnlockTrafficPolicySessionShared(ctx context.Context, db DBTX, lockKey string) (bool, error) {
+	row := db.QueryRow(ctx, unlockTrafficPolicySessionShared, lockKey)
 	var column_1 bool
 	err := row.Scan(&column_1)
 	return column_1, err
@@ -101164,10 +101309,16 @@ INSERT INTO invoices (
 ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, clock_timestamp())
 ON CONFLICT (account_id, provider, provider_invoice_id) DO UPDATE SET
   provider_charge_id = coalesce(nullif(excluded.provider_charge_id, ''), invoices.provider_charge_id),
-  number = excluded.number, status = excluded.status,
+  -- A late "created"/"pending" delivery never reopens a paid invoice
+  -- (ADR-20261028101500): providers may deliver order events out of order.
+  number = excluded.number,
+  status = CASE WHEN invoices.status = 'paid' AND excluded.status IN ('open', 'draft')
+    THEN invoices.status ELSE excluded.status END,
   period_start = excluded.period_start, period_end = excluded.period_end,
   subtotal_cents = excluded.subtotal_cents, tax_cents = excluded.tax_cents,
-  total_cents = excluded.total_cents, amount_paid_cents = excluded.amount_paid_cents,
+  total_cents = excluded.total_cents,
+  amount_paid_cents = CASE WHEN invoices.status = 'paid' AND excluded.status IN ('open', 'draft')
+    THEN invoices.amount_paid_cents ELSE excluded.amount_paid_cents END,
   currency = excluded.currency, pdf_available = excluded.pdf_available,
   details = invoices.details || CASE WHEN excluded.details ? 'lines' THEN
     jsonb_set(excluded.details, '{lines,items}', coalesce((

@@ -6,11 +6,13 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"slices"
 	"sort"
 	"strings"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/appaccess"
 	"github.com/onebox-faas/faas/pkg/apid/approval"
 	"github.com/onebox-faas/faas/pkg/apid/freeze"
 	"github.com/onebox-faas/faas/pkg/releasemetrics"
@@ -70,7 +72,25 @@ func (s *server) listReleaseFreezes(w http.ResponseWriter, r *http.Request, acct
 		}
 		freezes = kept
 	}
+	hidden, err := s.hiddenAccountApps(r, acct)
+	if err != nil {
+		api.WriteProblem(w, api.ErrCapacity("could not list freezes"))
+		return
+	}
+	freezes = slices.DeleteFunc(freezes, func(f state.ReleaseFreeze) bool { return hidden[f.AppID] })
 	writeJSON(w, http.StatusOK, api.ListReleaseFreezesResponse{Freezes: s.freezeViews(r.Context(), freezes, now)})
+}
+
+// hiddenAccountApps names the account's apps the request's principal may no
+// longer see (appaccess.HiddenApps): a company's apps once their creator has
+// left it. Account-wide lists name no app in their URL, so appaccess.Wrap
+// never decides for them.
+func (s *server) hiddenAccountApps(r *http.Request, acct state.Account) (map[string]bool, error) {
+	apps, err := s.store.ListApps(r.Context(), acct.ID)
+	if err != nil {
+		return nil, err
+	}
+	return appaccess.HiddenApps(r, s.store, actorAccount(r, acct), apps)
 }
 
 // createReleaseFreeze serves POST /v1/freezes.

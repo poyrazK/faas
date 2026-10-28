@@ -292,7 +292,7 @@
         {"kind": "test", "locator": "pkg/apid/apidserver/handlers_metrics_test.go::TestAppMetrics_HappyPath"},
         {"kind": "test", "locator": "pkg/apid/apidserver/handlers_notification_channels_test.go::TestNotificationChannelLifecycle"},
         {"kind": "test", "locator": "pkg/apid/apidserver/handlers_pgstore_test.go::TestPGHandler_DebuggerRequestAndRegressionReadPaths"},
-        {"kind": "test", "locator": "pkg/apid/apidserver/handlers_selected_trace_test.go::TestSelectedAppTraceRoute"},
+        {"kind": "test", "locator": "cmd/e2e/guest_tracing_metal_test.go::TestGuestTracingMetal"},
         {"kind": "test", "locator": "pkg/apid/apidserver/handlers_wake_timeline_page_test.go::TestWakeTimelineKeysetAPI"},
         {"kind": "test", "locator": "pkg/apid/apidserver/status_test.go::TestStatusHistoryRollup"}
       ]
@@ -669,14 +669,15 @@
       "id": "service-mesh-readiness",
       "name": "Internal service reachability and isolation",
       "category": "reliability",
-      "description": "A same-account service is reachable by name, a parked one is woken by the call rather than refused, its configured wire protocol survives to the guest, and a private app stays off the public edge while cross-account callers are denied.",
+      "description": "A same-account service is reachable by name, a parked one is woken by the call rather than refused, its configured wire protocol survives to the guest, and a private app stays off the public edge while cross-account callers are denied. A Compose project's services call each other by name, stay inside their declared calls, wake their declared dependencies ahead and keep a preview on its own PR.",
       "capabilities": ["internal-services", "private-apps"],
       "targets": [{"metric": "ratio", "operator": "gte", "value": 100, "unit": "percent"}],
       "evidence": [
         {"kind": "test", "locator": "cmd/e2e/service_mesh_e2e_test.go::TestE2E_ServiceMesh_WakesParkedTarget"},
         {"kind": "test", "locator": "cmd/e2e/service_mesh_e2e_test.go::TestE2E_ServiceMesh_StampsTargetProtocol"},
         {"kind": "test", "locator": "cmd/e2e/service_mesh_e2e_test.go::TestE2E_ServiceMesh_AccessBoundaries"},
-        {"kind": "test", "locator": "cmd/gatewayd-internal/backend_test.go::TestPgRouter_InternalAppIsNotPubliclyRouted"}
+        {"kind": "test", "locator": "cmd/gatewayd-internal/backend_test.go::TestPgRouter_InternalAppIsNotPubliclyRouted"},
+        {"kind": "test", "locator": "cmd/e2e/multi_service_project_e2e_test.go::TestE2E_MultiServiceProject_ComposeServicesCallEachOtherByName"}
       ]
     },
     {
