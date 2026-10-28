@@ -1315,6 +1315,9 @@ type runDeps struct {
 	// financialBudgetAdmission defaults to the pgStore-backed check; outage
 	// tests replace it to isolate the routing view.
 	financialBudgetAdmission func(context.Context, gateway.App) error
+	// rateLimitOutageGrace replaces api.TrafficRateLimitOutageGrace when
+	// non-zero (negative: none); outage tests use it to cross the grace.
+	rateLimitOutageGrace time.Duration
 	// hostKeyDir (issue #477 / ADR-079) is the directory
 	// secretbox.LoadHostKeys reads from to build the
 	// multi-identity rotation-overlap slice for the basic-auth
@@ -2897,6 +2900,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			return errors.New("gatewayd-internal: ratelimit.mode central requires a Postgres pool")
 		}
 		handler.WithCentralBackend(backend)
+		if deps.rateLimitOutageGrace != 0 {
+			handler.WithRateLimitOutageGrace(deps.rateLimitOutageGrace)
+		}
 		// ADR-1520: spend central tokens from local leases.
 		if leaseEnabled {
 			handler.WithRateLimitLeasing(leaseCfg)

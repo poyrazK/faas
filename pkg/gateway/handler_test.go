@@ -1844,15 +1844,16 @@ func TestHandlerObserveWakeLocality(t *testing.T) {
 			wantLocalCB:   0,
 		},
 		{
-			name: "pick-fail failure increments neither counter",
+			name: "transient pick miss after a cold admit is served and counted once",
 			setup: func(b *fakeBackend) {
-				// Drive an admit so cold==true is in play, then force
-				// Pick to fail mid-request. The handler returns 503
-				// before the after-proxy chokepoint.
+				// Drive an admit so cold==true is in play, then force one
+				// Pick to miss. The handler waits for a routable target
+				// (settleAtCapacity, #5709), finds the admitted one and
+				// serves it through the after-proxy chokepoint.
 				b.failNextPick = true
 			},
 			wantLocalSnap: 0,
-			wantLocalCB:   0,
+			wantLocalCB:   1,
 		},
 	}
 	for _, tc := range cases {

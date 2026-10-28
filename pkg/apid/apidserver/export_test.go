@@ -327,6 +327,13 @@ var SealInboundWebhookSigningSecret = sealInboundWebhookSigningSecret
 var SealGitLabTokens = sealGitLabTokens
 var OpenGitLabTokens = openGitLabTokens
 var OpenIssueSlackToken = openIssueSlackToken
+
+// RealtimeHostKeys exposes the keys apid gives managed realtime.
+func RealtimeHostKeys() (func() ([]*age.X25519Recipient, error), func(context.Context) []*age.X25519Identity) {
+	h := realtimeHost{}
+	return h.SecretRecipients, h.HostIdentitiesForUnseal
+}
+
 var VerifyInboundWebhook = verifyInboundWebhook
 var SealMCPPagerDutyWebhookSecret = sealMCPPagerDutyWebhookSecret
 

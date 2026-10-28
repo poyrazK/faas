@@ -142,6 +142,12 @@ A lease that fails opens the existing breaker for `centralBreakerWindow`
 (1 s) and the request is decided locally, as today. Leases already held are
 still spent.
 
+Amended by ADR-20261027173012: ADR-570 had turned that local decision into a
+refusal (503 `rate_limit_unavailable`), which this design and its accuracy
+note predate. A failed lease, a lease wait that runs out, or an open breaker
+is now decided by the gateway's own bucket for 5 minutes after the counter
+last answered on that gateway, and refused after that.
+
 ## Configuration and rollout
 
 - `[ratelimit] lease = true` in gatewayd-internal's TOML, default `false`, so
