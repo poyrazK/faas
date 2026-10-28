@@ -1,8 +1,11 @@
 package apidserver
 
 import (
+	"context"
 	"errors"
+	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -114,6 +117,10 @@ func (s *server) deleteSLO(w http.ResponseWriter, r *http.Request, acct state.Ac
 		return
 	}
 	id := r.PathValue("id")
+	if p := s.sloGateProblem(r.Context(), app, id); p != nil {
+		api.WriteProblem(w, p)
+		return
+	}
 	if err := store.DeleteSLO(r.Context(), app.ID, id); err != nil {
 		if errors.Is(err, state.ErrNotFound) {
 			s.notFound(w, "no such SLO")
@@ -124,6 +131,32 @@ func (s *server) deleteSLO(w http.ResponseWriter, r *http.Request, acct state.Ac
 	}
 	s.audit.Emit(r.Context(), "slo.deleted", &acct.ID, map[string]any{"slo_id": id, "app_id": app.ID})
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// sloGateProblem refuses to delete an SLO that release gates judge
+// (ADR-20261019071734 amendment 2). Postgres cascaded the delete to those
+// gates with no audit, so a release lost a guard without anyone removing it.
+func (s *server) sloGateProblem(ctx context.Context, app state.App, sloID string) *api.Problem {
+	gates, ok := s.store.(state.ReleaseGateStore)
+	if !ok {
+		return nil
+	}
+	rows, err := gates.ListReleaseGates(ctx, app.ID)
+	if err != nil {
+		return api.ErrCapacity("could not read the app's release gates")
+	}
+	var names []string
+	for _, g := range rows {
+		if g.SLOID == sloID {
+			names = append(names, g.Name)
+		}
+	}
+	if len(names) == 0 {
+		return nil
+	}
+	return api.NewProblem(http.StatusConflict, api.CodeConflict, "SLO used by release gates",
+		fmt.Sprintf("Release gates judge releases of %s on this SLO: %s.", app.Slug, strings.Join(names, ", "))).
+		WithHint(fmt.Sprintf("Remove those gates first with `gregale release-gates rm NAME --app %s`, then delete the SLO.", app.Slug))
 }
 
 func sloResponse(row state.SLO) api.SLOResponse {

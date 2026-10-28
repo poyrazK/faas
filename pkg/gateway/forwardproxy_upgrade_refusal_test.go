@@ -38,19 +38,29 @@ func TestRawStreamUpgradeRefusalEndsWithItsBody(t *testing.T) {
 	for name, tc := range map[string]struct {
 		status        int32
 		contentLength string
+		chunked       bool
 		chunks        []string
 		wantBody      string
 	}{
 		"401 split across chunks": {status: 401, contentLength: "6", chunks: []string{"den", "ied"}, wantBody: "denied"},
 		"426 with no body":        {status: 426, contentLength: "0", wantBody: ""},
 		"trailing bytes dropped":  {status: 403, contentLength: "6", chunks: []string{"deniedEXTRA"}, wantBody: "denied"},
+		// A chunked refusal is decoded: the client gets the payload, not the
+		// framing, and the exchange ends at the terminating chunk.
+		"chunked split across frames": {status: 401, chunked: true, chunks: []string{"6\r\nden", "ied\r\n0\r", "\n\r\n"}, wantBody: "denied"},
+		"chunked with extension and trailer": {status: 403, chunked: true,
+			chunks: []string{"4;ext=1\r\nnope\r\n3\r\n!!!\r\n0\r\nX-Trace: 1\r\n\r\n"}, wantBody: "nope!!!"},
 	} {
 		t.Run(name, func(t *testing.T) {
+			headers := []*vmmdpb.Header{{Name: "Content-Type", Value: "text/plain"}}
+			if tc.contentLength != "" {
+				headers = append(headers, &vmmdpb.Header{Name: "Content-Length", Value: tc.contentLength})
+			}
+			if tc.chunked {
+				headers = append(headers, &vmmdpb.Header{Name: "Transfer-Encoding", Value: "chunked"})
+			}
 			frames := []*vmmdpb.ForwardRawResponse{{Frame: &vmmdpb.ForwardRawResponse_Init{
-				Init: &vmmdpb.ForwardRawResponseInit{Status: tc.status, Headers: []*vmmdpb.Header{
-					{Name: "Content-Length", Value: tc.contentLength},
-					{Name: "Content-Type", Value: "text/plain"},
-				}},
+				Init: &vmmdpb.ForwardRawResponseInit{Status: tc.status, Headers: headers},
 			}}}
 			for _, chunk := range tc.chunks {
 				frames = append(frames, &vmmdpb.ForwardRawResponse{Frame: &vmmdpb.ForwardRawResponse_BodyChunk{BodyChunk: []byte(chunk)}})

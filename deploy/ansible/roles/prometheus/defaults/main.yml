@@ -159,6 +159,13 @@ prom_targets:
     port: 9471
     box_roles: [control-plane, single-box]
     enabled: "{{ faas_livequeryd_managed | default(false) | bool }}"
+  # Hosted management MCP (ADR-20261026195952); control_plane_service runs it
+  # unless faas_mcp_bridge_enabled is false.
+  - job: mcp-bridged
+    host: 127.0.0.1
+    port: 9110
+    box_roles: [control-plane, single-box]
+    enabled: "{{ faas_mcp_bridge_enabled | default(true) | bool }}"
   - job: prometheus
     host: 127.0.0.1
     port: 9095

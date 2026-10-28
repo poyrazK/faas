@@ -3672,6 +3672,10 @@ const (
 	// AlertMetricRouteInsightsDetected counts the app's route insights that
 	// became active in the window (ADR-20261020161310).
 	AlertMetricRouteInsightsDetected AlertMetric = "route_insights_detected"
+	// Route monitor incidents open within the window and canaries the route
+	// health guard holds or aborted (ADR-20261028110044).
+	AlertMetricRouteMonitorIncidents AlertMetric = "route_monitor_incidents"
+	AlertMetricRouteHealthHolds      AlertMetric = "route_health_holds"
 	// AlertMetricSLOBurnRate is the customer-facing ADR-082 API
 	// availability burn-rate signal. The evaluator combines the 1h
 	// 14.4x and 6h 6x Google SRE windows into one effective value.

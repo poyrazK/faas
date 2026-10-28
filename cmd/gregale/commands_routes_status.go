@@ -198,7 +198,9 @@ func renderRouteStatus(w io.Writer, s routestatus.Status) {
 			if rb.OperationID != "" {
 				_, _ = fmt.Fprintf(w, " (operation %s)", rb.OperationID)
 			}
-			if rb.Reason != "" {
+			if rb.Reason != "" && rb.RefusalCode != "" {
+				_, _ = fmt.Fprintf(w, " (%s: %s)", rb.Reason, previewReportText(rb.RefusalCode))
+			} else if rb.Reason != "" {
 				_, _ = fmt.Fprintf(w, " (%s)", rb.Reason)
 			}
 		}

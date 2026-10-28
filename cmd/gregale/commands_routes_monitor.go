@@ -189,6 +189,7 @@ func cmdRoutesMonitor(args []string) int {
 		for _, r := range config.Routes {
 			renderRouteMonitorBudget(r)
 		}
+		printRouteSelectorWarnings(config.Warnings)
 		return 0
 	case "report":
 		r, err := c.GetRouteMonitorReportWithOptions(ctx, o.slug, api.RouteMonitorReadOptions{CustomerDetails: o.customerDetails})
@@ -410,7 +411,11 @@ func renderRouteMonitorIncident(i api.RouteMonitorIncident, slug string) {
 		case "requested":
 			_, _ = fmt.Fprintf(osStdout, "Automatic rollback: requested to %s for %s (operation %s)\n", rb.TargetDeploymentID, rb.Route, rb.OperationID)
 		case "skipped":
-			_, _ = fmt.Fprintf(osStdout, "Automatic rollback: skipped (%s)\n", rb.Reason)
+			reason := rb.Reason
+			if rb.RefusalCode != "" {
+				reason += ": " + previewReportText(rb.RefusalCode)
+			}
+			_, _ = fmt.Fprintf(osStdout, "Automatic rollback: skipped (%s)\n", reason)
 		default:
 			_, _ = fmt.Fprintf(osStdout, "Automatic rollback: %s\n", rb.Status)
 		}

@@ -1,6 +1,6 @@
 # ADR-20261019071734 · Release gates on customer signals
 
-- **Status:** accepted (shipped in PR 5034, 2026-10-20); n2 metal drill passed 2026-10-26 (canary abort and post-release rollback); amendment 1 (2026-10-27)
+- **Status:** accepted (shipped in PR 5034, 2026-10-20); n2 metal drill passed 2026-10-26 (canary abort and post-release rollback); amendments 1 (2026-10-27) and 2 (2026-10-28)
 - **Date:** 2026-10-19
 - **Amends:** [ADR-1446](1446-safe-releases-by-default.md) and [ADR-1447](1447-explained-rollout-decisions.md) (the canary circuit breaker), [ADR-1445](1445-post-release-watch.md) (the post-release watch)
 - **Uses:** SLOs (`app_slos`), captured errors (`app_errors`), custom metrics ([ADR-202](202-custom-application-metrics.md), [ADR-745](745-custom-metric-history.md))
@@ -75,3 +75,19 @@ Entries hold no routes, messages or metric labels. The decision's summary names 
 A `custom_metric` gate now reads its window from the history ADR-745 already keeps: the `gregale_app_custom_metric` series apid exports for Prometheus. The window's sample count is `count_over_time` and its value is `avg_over_time`, both pinned to the window's end (`@ <until>`). `max()` folds the identical series each apid replica exports. meterd's canary progression and apid's post-release watch both pass their Prometheus client. When no Prometheus is configured, the gate falls back to the stored latest value: one sample, so only a gate with `min_samples: 1` is judged.
 
 A gate whose history cannot be read is unavailable and not judged, as for the other kinds. The history only exists while apid exports fresh pushes (`FAAS_CUSTOM_METRIC_HISTORY_ENABLED`, capability `custom-metric-history`). An app that pushes less often than `min_samples` times per window is never judged.
+
+## Amendment 2 (2026-10-28): gates that were not judged, and their SLOs
+
+- **Not judged is recorded.** A gate with too few samples or unreadable
+  evidence never holds a rollout, but it was also left out of the decision,
+  so a canary on a quiet app completed with no sign its gates never ran. It
+  now appears in the decision's `gates` with `not_judged: true`, `passed: true`
+  and a summary naming what it waited for (for example "not judged: 4 of 20
+  requests so far"). It still never fails or holds a rollout.
+- **An SLO in use cannot be deleted.** Deleting an SLO cascaded to the gates
+  that judge it, with no audit, so a release lost a guard nobody removed. apid
+  refuses the delete (`409 conflict`) and names the gates to remove first.
+
+The custom-metric limits above (per-app values, an absolute bound) and gates
+not running after a completed release that opted out of automatic rollback
+are unchanged.
