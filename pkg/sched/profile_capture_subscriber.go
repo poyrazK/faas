@@ -16,6 +16,7 @@ package sched
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"time"
 
@@ -27,6 +28,12 @@ import (
 )
 
 const profileCaptureSafetyTick = 30 * time.Second
+
+// profileCaptureFinishAttempts bounds retries of a transient store error when
+// a capture finishes: the window's profiles exist only in this goroutine.
+const profileCaptureFinishAttempts = 3
+
+const profileCaptureUnstoredReason = "the capture's profiles could not be stored; start the capture again"
 
 // profileCaptureSlotsFor lazily allocates the worker slots. Only the loop
 // goroutine calls it, so no synchronization is needed for the allocation.
@@ -92,7 +99,7 @@ func (l *Loop) runProfileCapture(ctx context.Context, queue state.ProfileCapture
 		}
 	}
 	result, blobs := profileCaptureOutcome(out, err)
-	if ferr := queue.FinishProfileCapture(context.WithoutCancel(ctx), c.ID, result, blobs, time.Now()); ferr != nil {
+	if ferr := finishProfileCapture(context.WithoutCancel(ctx), queue, c.ID, result, blobs, time.Sleep); ferr != nil {
 		l.log.Warn("sched: profile_capture: finish failed", "capture_id", c.ID, "err", ferr)
 		return
 	}
@@ -122,10 +129,45 @@ func profileCaptureOutcome(out ProfileCaptureOutcome, err error) (api.ProfileCap
 		Processes: out.Result.Processes, Dropped: out.Result.Dropped, Reason: out.Result.Reason, Partial: out.Result.Partial, Profiles: []api.ProfileCaptureProfile{}}
 	blobs := make([]state.ProfileCaptureBlob, 0, len(out.Result.Profiles))
 	for _, p := range out.Result.Profiles {
-		blobs = append(blobs, state.ProfileCaptureBlob{Kind: p.Kind, ProcessID: p.ProcessID, Profile: p.Profile})
+		blob := state.ProfileCaptureBlob{Kind: p.Kind, ProcessID: p.ProcessID, Profile: p.Profile}
+		if !state.ProfileCaptureBlobFits(blob) {
+			// A profile the store cannot hold (a guest-reported process id
+			// too long, say) is dropped; the rest of the capture is kept.
+			result.Dropped++
+			continue
+		}
+		blobs = append(blobs, blob)
 		result.Profiles = append(result.Profiles, api.ProfileCaptureProfile{Kind: p.Kind, ProcessID: p.ProcessID, Bytes: len(p.Profile)})
 	}
 	return result, blobs
+}
+
+type profileCaptureFinisher interface {
+	FinishProfileCapture(ctx context.Context, id string, result api.ProfileCapture, blobs []state.ProfileCaptureBlob, now time.Time) error
+}
+
+// finishProfileCapture stores a capture's terminal record, retrying a
+// transient store error. A ready capture whose profiles still cannot be
+// stored finishes failed with a reason instead of expiring later as
+// interrupted. ErrNotFound (the row expired or was deleted) is final.
+func finishProfileCapture(ctx context.Context, queue profileCaptureFinisher, id string, result api.ProfileCapture, blobs []state.ProfileCaptureBlob, wait func(time.Duration)) error {
+	var err error
+	for attempt := range profileCaptureFinishAttempts {
+		if attempt > 0 {
+			wait(time.Duration(attempt) * time.Second)
+		}
+		if err = queue.FinishProfileCapture(ctx, id, result, blobs, time.Now()); err == nil || errors.Is(err, state.ErrNotFound) {
+			return err
+		}
+	}
+	if result.Status != api.ProfileCaptureReady {
+		return err
+	}
+	failed := api.ProfileCapture{Status: api.ProfileCaptureFailed, InstanceID: result.InstanceID, DeploymentID: result.DeploymentID, Reason: profileCaptureUnstoredReason}
+	if ferr := queue.FinishProfileCapture(ctx, id, failed, nil, time.Now()); ferr != nil {
+		return errors.Join(err, ferr)
+	}
+	return fmt.Errorf("profiles not stored, capture marked failed: %w", err)
 }
 
 func profileCaptureFailureReason(err error) string {

@@ -88,6 +88,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/routeprobe"
 	"github.com/onebox-faas/faas/pkg/sealdomain"
 	"github.com/onebox-faas/faas/pkg/secretbox"
+	"github.com/onebox-faas/faas/pkg/sourcespool"
 	"github.com/onebox-faas/faas/pkg/state"
 	artifactstorage "github.com/onebox-faas/faas/pkg/storage"
 	"github.com/onebox-faas/faas/pkg/trace"
@@ -897,6 +898,12 @@ func run(ctx context.Context, log *slog.Logger) error {
 					log.Error("deployment watchdog exited", "err", err)
 				}
 			}()
+		}
+		// ADR-20261026152731: accepted source archives and build logs no
+		// longer stay on the control plane for good.
+		if spoolStore, ok := srv.store.(state.SourceSpoolStore); ok {
+			go sourcespool.Sweeper{Root: spoolRoot(), Layout: sourcespool.BuildSpool, Store: spoolStore,
+				MaxAge: api.SourceSpoolRetention, Log: log}.Run(ctx, api.SourceSpoolSweepInterval)
 		}
 		// Move 3 (M7.5 prep): bridge pg_notify → in-process broadcaster.
 		// Runs as a background goroutine for the daemon's lifetime; the
@@ -1839,6 +1846,8 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		ReaperFailedTotal:      promCounterAdapter{c: ops.UploadSessionReaperFailedTotal()},
 	})
 	srv.WithOpsMetrics(ctx, ops)
+	// ADR 20261027163626: time each phase of the traffic binding guard.
+	state.SetTrafficPolicyPhaseObserver(ops.ObserveTrafficPolicyPhase)
 
 	// ADR-093 / PR-D: end-to-end request budgets on the apid
 	// listener. Same shape as gatewayd-public PR-B: a fresh

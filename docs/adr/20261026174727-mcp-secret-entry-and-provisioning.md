@@ -131,3 +131,24 @@ again with the user's answer.
   tools' contract. Fake-CLI tests pin the shapes the tools read.
 - `--tools all` grows to 70 tools. `core` grows to 20 and stays under its
   16 KB budget at 12.9 KB.
+
+## Amendment 1 (2026-10-27): company access at both ends
+
+The 2026-10-27 security audit found that the entry form checked only that the
+signed-in account created the app. A creator removed from the app's company
+could still finish a request opened while a member. The request route also
+had no reviewed organization permission, so on a company app only a creator
+who was an owner or admin could ask for a secret.
+
+- `POST /v1/apps/{slug}/secret-requests` and its `/status` route require
+  `org.manage_app_secrets`, like setting a secret. Developers can request one.
+- The ticket names the member who asked (`ActorID`) as well as the account
+  that owns the app's secrets. Only that member opens the form and reads the
+  status. Tickets sealed before this change name the creator in both roles.
+- The form repeats the request route's organization decision for the signed-in
+  member on open and on submit, and saves the value as the app's resource
+  account.
+
+The read-only management MCP server's `gregale_check_domain` now runs
+`domains show`. `domains verify` asks Gregale to re-check DNS (a POST), so
+on a writable server the tool is registered as a write.

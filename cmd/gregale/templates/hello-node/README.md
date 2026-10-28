@@ -36,7 +36,7 @@ gregale logs <slug> --follow    # app logs
 gregale env push --app <slug> -f .env
 ```
 
-Confirm the keys landed with `gregale secrets list --app <slug>`. It shows
+Confirm the keys landed with `gregale env list --app <slug>`. It shows
 key names only and needs your login. The app's public `/` response does not
 list environment variables.
 

@@ -38,6 +38,8 @@ type Host interface {
 	// SourceProvenance is the deployment origin continuous profiles link
 	// frames against; captures link the same way.
 	SourceProvenance(app state.App, dep state.Deployment) profiling.SourceProvenance
+	// Audit records a customer action in the account's audit log.
+	Audit(ctx context.Context, action, accountID string, details map[string]any)
 }
 
 // Service is the profile capture surface.
@@ -179,8 +181,35 @@ func (s *Service) Owned(w http.ResponseWriter, r *http.Request, acct state.Accou
 	return capture, true
 }
 
+// Delete handles DELETE /v1/apps/{slug}/profiles/captures/{id}. Its
+// storage frees at once; a capture still running finishes into nothing.
+func (s *Service) Delete(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	app, store, ok := s.Target(w, r, acct)
+	if !ok {
+		return
+	}
+	id := r.PathValue("id")
+	if _, err := uuid.Parse(id); err != nil {
+		api.WriteProblem(w, captureNotFound())
+		return
+	}
+	if err := store.DeleteProfileCapture(r.Context(), acct.ID, app.ID, id); errors.Is(err, state.ErrNotFound) {
+		api.WriteProblem(w, captureNotFound())
+		return
+	} else if err != nil {
+		api.WriteProblem(w, api.ErrCapacity("profile capture could not be deleted"))
+		return
+	}
+	s.Host.Audit(r.Context(), "profile_capture.deleted", acct.ID, map[string]any{"app_id": app.ID, "capture_id": id})
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func captureNotFound() *api.Problem {
+	return api.NewProblem(http.StatusNotFound, api.CodeNotFound, "Capture not found", "profile capture does not exist")
+}
+
 func load(ctx context.Context, acct state.Account, app state.App, store state.ProfileCaptureStore, id string) (api.ProfileCapture, *api.Problem) {
-	notFound := api.NewProblem(http.StatusNotFound, api.CodeNotFound, "Capture not found", "profile capture does not exist")
+	notFound := captureNotFound()
 	if _, err := uuid.Parse(id); err != nil {
 		return api.ProfileCapture{}, notFound
 	}

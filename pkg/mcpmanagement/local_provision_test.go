@@ -166,6 +166,18 @@ func TestProvisionDomainAttachesAndChecksDNS(t *testing.T) {
 	}
 }
 
+// A read-only connection checks a domain without asking Gregale to re-verify
+// it: `domains verify` is a POST.
+func TestProvisionReadOnlyDomainCheckOnlyReads(t *testing.T) {
+	cli := newProvisionCLI()
+	cli.domains["api.example.com"] = "app-one"
+	_, call := connectProvision(t, cli, false)
+	call("gregale_check_domain", map[string]any{"app": "alpha", "domain": "api.example.com"}, false)
+	if verify, show := cli.count("domains verify"), cli.count("domains show"); verify != 0 || show != 1 {
+		t.Fatalf("domains verify ran %d times, show %d; want 0 and 1", verify, show)
+	}
+}
+
 func TestProvisionDomainRetryAdoptsTheAttachedDomain(t *testing.T) {
 	cli := newProvisionCLI()
 	_, call := connectProvision(t, cli, true)

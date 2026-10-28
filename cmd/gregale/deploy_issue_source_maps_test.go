@@ -158,7 +158,7 @@ func TestDeployIssueSourceMapsSourceSelection(t *testing.T) {
 	if err := main.GitArchiveHEAD(repo, headArchive); err != nil {
 		t.Fatal(err)
 	}
-	packed, _, _, err := main.PackGitArchive(headArchive, main.DefaultZeroConfigSourceCapMB, main.ModeSourceTree, nil)
+	packed, _, _, err := main.PackGitArchive(headArchive, main.DefaultZeroConfigSourceCapMB, main.ModeSourceTree, nil, false)
 	if err != nil {
 		t.Fatal(err)
 	}

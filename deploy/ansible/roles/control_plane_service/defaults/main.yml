@@ -72,3 +72,10 @@ faas_postgres_runtime_role_units:
   - { unit: faas-meterd, os_user: faas-meterd, role: faas_meterd, restart: restart faas-meterd }
   - { unit: faas-outboundd, os_user: faas-outboundd, role: faas_outboundd, restart: restart faas-outboundd }
   - { unit: faas-bridged, os_user: faas-bridged, role: faas_bridged, restart: restart faas-bridged }
+  - { unit: faas-mcp-bridge, os_user: faas-mcp-bridge, role: faas_mcp_bridge, restart: restart faas-mcp-bridge }
+
+# ADR-20261026195952: the hosted management MCP server at
+# https://api.<platform domain>/mcp. Off until an operator writes its state key
+# (/etc/faas/secrets/mcp-bridge/state.key: 32 random bytes) and sets this, and
+# gatewayd_public_service's faas_mcp_bridge_enabled, on the control plane.
+faas_mcp_bridge_enabled: false

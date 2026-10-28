@@ -83,7 +83,7 @@ the real gateways:
 
 | Test | Regression class |
 | --- | --- |
-| `TestE2E_MultiServiceProject_ComposeServicesCallEachOtherByName` | a `billing_api` service is called `billing-api` (injected URL, imported Compose address and Postgres name lookup), the project lists what each service calls, a call wakes the parked service, a declared service cannot call an undeclared one, and a PR preview calls its own sibling |
+| `TestE2E_MultiServiceProject_ComposeServicesCallEachOtherByName` | a `billing_api` service is called `billing-api` (injected URL, imported Compose address and Postgres name lookup), the project lists what each service calls, a call wakes the parked service, a declared service cannot call an undeclared one, waking a service wakes the dependency it declared, and a PR preview calls its own sibling |
 
 The tests seed a deployment after the source/build/image pipeline has produced
 its durable state. They must not become a second KVM suite. Add a scenario here

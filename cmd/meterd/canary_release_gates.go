@@ -4,6 +4,7 @@ import (
 	"context"
 	"time"
 
+	"github.com/onebox-faas/faas/pkg/appmetrics"
 	"github.com/onebox-faas/faas/pkg/canary"
 	"github.com/onebox-faas/faas/pkg/releasegate"
 	"github.com/onebox-faas/faas/pkg/releasegate/gather"
@@ -23,6 +24,10 @@ func (a *canaryStoreAdapter) ReleaseGateVerdict(ctx context.Context, row canary.
 		since = now.Add(-5 * time.Minute)
 	}
 	window := gather.Window{Since: since, Until: now}
-	return gather.Verdict(ctx, a.store, gather.Request{AppID: row.AppID, ReleaseID: row.ID, BaselineID: stableDeploymentID,
-		ReleaseWindow: window, BaselineWindow: window})
+	req := gather.Request{AppID: row.AppID, ReleaseID: row.ID, BaselineID: stableDeploymentID,
+		ReleaseWindow: window, BaselineWindow: window}
+	if history := appmetrics.NewCustomMetricHistory(a.promQL); history != nil {
+		req.CustomMetrics = history
+	}
+	return gather.Verdict(ctx, a.store, req)
 }

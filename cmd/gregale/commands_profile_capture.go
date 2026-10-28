@@ -61,18 +61,20 @@ func cmdDebugCapture(args []string) int {
 	return showProfileCapture(ctx, client, positional[0], capture, *output, *top)
 }
 
-const profileCapturesUsage = "usage: gregale debug captures <slug> [<capture-id>] [--output DIR] [--top N]"
+const profileCapturesUsage = "usage: gregale debug captures <slug> [<capture-id>] [--output DIR] [--top N] [--delete]"
 
-// cmdDebugCaptures lists an app's captures or shows one.
+// cmdDebugCaptures lists an app's captures, shows one, or deletes one with
+// --delete, freeing its share of the account's capture storage (ADR-1155).
 func cmdDebugCaptures(args []string) int {
 	fs := newFlagSet("debug captures", flag.ContinueOnError)
 	output := fs.String("output", "", "directory for the merged .pb.gz pprof files")
 	top := fs.Int("top", 15, "functions to print per kind")
+	del := fs.Bool("delete", false, "delete the named capture and its profiles")
 	flags, positional := normalizeDebugFlagArgs(args, map[string]bool{"output": true, "top": true})
 	if err := fs.Parse(flags); err != nil {
 		return 1
 	}
-	if len(positional) < 1 || len(positional) > 2 {
+	if len(positional) < 1 || len(positional) > 2 || *del && len(positional) != 2 {
 		PrintUsage(osStderr, profileCapturesUsage, debugCmdDocsTopic)
 		return 1
 	}
@@ -81,6 +83,16 @@ func cmdDebugCaptures(args []string) int {
 		return printErr("Not logged in", err)
 	}
 	ctx := context.Background()
+	if *del {
+		if err := client.DeleteProfileCapture(ctx, positional[0], positional[1]); err != nil {
+			return printErr("Could not delete profile capture", err)
+		}
+		if jsonOutput {
+			return jsonOut(writeJSON(map[string]any{"app": positional[0], "id": positional[1], "deleted": true}))
+		}
+		_, _ = fmt.Fprintf(osStdout, "Deleted profile capture %s.\n", positional[1])
+		return 0
+	}
 	if len(positional) == 2 {
 		capture, err := client.GetProfileCapture(ctx, positional[0], positional[1])
 		if err != nil {
