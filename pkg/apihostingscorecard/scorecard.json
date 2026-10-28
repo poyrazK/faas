@@ -432,7 +432,7 @@
       "id": "edge-browser-challenge-ga",
       "name": "Browser challenge (generally available)",
       "category": "security",
-      "description": "A browser navigation on a challenged route solves the page and passes on its pass while a script is refused with 403 challenge_required, verified credentials and crawlers pass, the browser's solver agrees with the gateway, raised difficulty is capped and falls back, and the edge_challenge platform flag makes rules inert for accounts it leaves out (ADR-831 amendments 7-8, ADR-20261023113721, ADR-20261024082000).",
+      "description": "A browser navigation on a challenged route solves the page and passes on its pass while a script is refused with 403 challenge_required, verified credentials and crawlers pass, the browser's solver agrees with the gateway, raised difficulty is capped and falls back, the edge_challenge platform flag makes rules inert for accounts it leaves out, and a visitor passes across the fleet's gateways, past declared-route and rewrite gates, and on hosts whose paths route to several of the account's apps (ADR-831 amendments 7-8 and 17, ADR-20261023113721, ADR-20261024082000).",
       "capabilities": ["edge-browser-challenge"],
       "targets": [{"metric": "ratio", "operator": "gte", "value": 100, "unit": "percent"}, {"metric": "p95", "operator": "lte", "value": 2000, "unit": "milliseconds"}, {"metric": "ratio", "operator": "gte", "value": 90, "unit": "percent"}],
       "evidence": [
@@ -443,6 +443,11 @@
         {"kind": "test", "locator": "pkg/gateway/edge_rules_challenge_load_test.go::TestChallengeLoadRaisesAndLowers"},
         {"kind": "test", "locator": "pkg/gateway/edge_feature_flags_test.go::TestEdgeChallengeFlag"},
         {"kind": "test", "locator": "pkg/edgeruletrace/unreleased_test.go::TestSimulateUnreleasedChallengeRule"},
+        {"kind": "test", "locator": "pkg/gateway/edge_rules_challenge_routing_test.go::TestChallengeSolvePassesRouteGates"},
+        {"kind": "test", "locator": "pkg/gateway/edge_rules_challenge_routing_test.go::TestChallengePassCoversTheHostForTheAccount"},
+        {"kind": "test", "locator": "pkg/gateway/edge_rules_challenge_routing_test.go::TestChallengeSolveRefusesForeignTokens"},
+        {"kind": "test", "locator": "cmd/gatewayd-internal/edge_challenge_key_test.go::TestEdgeChallengeSecret"},
+        {"kind": "runbook", "locator": "docs/runbooks/FaasEdgeChallenge.md"},
         {"kind": "runbook", "locator": "docs/security.md"}
       ]
     },

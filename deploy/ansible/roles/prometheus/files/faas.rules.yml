@@ -7237,6 +7237,19 @@ groups:
           summary: "{{ $labels.instance }} refuses most challenge solutions it receives"
           description: "More than half of the challenge solutions {{ $labels.instance }} received in 15m were invalid or expired. If only this gateway does it, its challenge key or clock differs from the gateway that issued the pages; visitors are sent back to the challenge."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasEdgeChallenge.md"
+      # ADR-831 amendment 17: every gateway must sign challenges with one key.
+      - alert: FaasEdgeChallengeKeyMismatch
+        expr: count(count by (key_id) (gateway_edge_challenge_key_info{job="gatewayd-internal"})) > 1
+        for: 10m
+        labels:
+          severity: warn
+          component: gatewayd-internal
+          family: edge_security
+          public_status: internal
+        annotations:
+          summary: "Gateways sign browser challenges with different keys"
+          description: "gatewayd-internal processes report more than one gateway_edge_challenge_key_info key_id. A challenge pass one gateway issues is refused by the others, so visitors behind a challenge rule are challenged again whenever a request reaches another gateway. Give every gateway the fleet's gatewayd_edge_challenge_key before releasing edge_challenge."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasEdgeChallenge.md"
       # ADR-20261022105846 amendment 1: boxes are shared through Postgres.
       - alert: FaasEdgePenaltyShareFailing
         expr: sum by (instance, op) (rate(gateway_edge_penalty_share_total{outcome="error"}[5m])) > 0
