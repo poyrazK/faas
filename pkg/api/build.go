@@ -127,6 +127,10 @@ type BuildManifest struct {
 	// otherwise-ephemeral builder VM.
 	DependencyCache       bool `json:"dependency_cache,omitempty"`
 	DependencyCacheImport bool `json:"dependency_cache_import,omitempty"`
+	// LayerCompression is "" (BuildKit's gzip) or BuildLayerCompressionZstd,
+	// which compresses the exported OCI image and the dependency cache with
+	// zstd (BuildLayerZstdEnv). An older guest ignores it and keeps gzip.
+	LayerCompression string `json:"layer_compression,omitempty"`
 	// KeepWarm leaves a successful builder guest alive in a host-controlled
 	// wait state so vmmd can capture a paused snapshot. Failed builds still
 	// power off immediately; the warm path is only a successful-build handoff.

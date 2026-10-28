@@ -231,6 +231,12 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		d.WithBuilderBaseDigest(builderBaseDigestPath)
 		d.WithDockerHubMirrors(mirrors)
 	}
+	// ADR-20261028084018: zstd build layers, off until this node's imaged
+	// reads them.
+	layerCompression, err := api.ParseBuildLayerZstd(os.Getenv(api.BuildLayerZstdEnv))
+	if err != nil {
+		return fmt.Errorf("builderd: %w", err)
+	}
 	if c, ok := driver.(*builderdpkg.VMMDriver); ok {
 		defer func() { _ = c.Close() }()
 	}
@@ -283,6 +289,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		CacheAffinityGrace:  cfg.CacheAffinityGrace,
 		WarmIdle:            cfg.WarmIdle,
 		DisableWarmBuilders: !cfg.WarmBuilders,
+		LayerCompression:    layerCompression,
 		// ADR-038: BuilderNodeID is stamped onto every
 		// build_provenance row builderd writes. Defaulted to
 		// "default-local" in LoadConfig; multi-node deployments
