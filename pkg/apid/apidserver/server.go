@@ -432,6 +432,8 @@ type server struct {
 	// exportsInFlight holds the account IDs with a REST export bundle being
 	// built: one at a time per account.
 	exportsInFlight sync.Map
+	// exportReplays bounds the retries of one export (handlers_account.go).
+	exportReplays exportReplayCounter
 	// domainCreateLimiter caps pending DNS challenges per client IP. The
 	// durable store separately enforces per-account outstanding-claim quotas;
 	// this edge bucket prevents one source from cycling accounts to create an

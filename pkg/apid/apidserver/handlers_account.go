@@ -19,6 +19,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -73,7 +74,8 @@ func (s *server) exportAccount(w http.ResponseWriter, r *http.Request, acct stat
 		// expires, so a retry counts as the original only shortly after
 		// it; otherwise one ID replayed forever ran unlimited exports.
 		case err == nil && prior.Action == state.GdprActionExport &&
-			time.Since(prior.RequestedAt) <= api.ExportReplayWindow:
+			time.Since(prior.RequestedAt) <= api.ExportReplayWindow &&
+			s.exportReplays.allow(prior.ID, prior.RequestedAt, time.Now()):
 			isIdempotentRetry = true
 			s.log.Info("apid: export request_id idempotent hit",
 				"account", acct.ID, "request_id", requestID, "ledger_id", prior.ID)
@@ -614,7 +616,8 @@ func prepareAccountExport(ctx context.Context, s *server, acct state.Account, in
 		_ = os.Remove(spool.Name())
 		return nil, 0, cause
 	}
-	if err := writeAccountExportJSON(ctx, s, acct, includeSecrets, spool); err != nil {
+	capped := &cappedExportWriter{dst: spool, left: api.AccountExportSpoolMaxBytes}
+	if err := writeAccountExportJSON(ctx, s, acct, includeSecrets, capped); err != nil {
 		return fail(err)
 	}
 	info, err := spool.Stat()
@@ -625,6 +628,62 @@ func prepareAccountExport(ctx context.Context, s *server, acct state.Account, in
 		return fail(err)
 	}
 	return spool, info.Size(), nil
+}
+
+// errAccountExportTooLarge stops an export whose bundle outgrew
+// AccountExportSpoolMaxBytes.
+var errAccountExportTooLarge = errors.New("apidserver: account export exceeds the spool limit")
+
+// cappedExportWriter stops an export bundle at AccountExportSpoolMaxBytes so
+// one account cannot fill the control-plane disk (bug hunt 2026-10-28 H61).
+type cappedExportWriter struct {
+	dst  io.Writer
+	left int64
+}
+
+func (w *cappedExportWriter) Write(p []byte) (int, error) {
+	if int64(len(p)) > w.left {
+		return 0, errAccountExportTooLarge
+	}
+	n, err := w.dst.Write(p)
+	w.left -= int64(n)
+	return n, err
+}
+
+// exportReplayCounter bounds how many retries of one export, identified by
+// its ledger row, rebuild the bundle (api.ExportReplaysMax). The request ID
+// is chosen by the client, so without a count one replayed ID ran a full
+// export on every call inside the replay window (bug hunt 2026-10-28 H61).
+// Per apid process.
+type exportReplayCounter struct {
+	mu   sync.Mutex
+	seen map[string]exportReplays
+}
+
+type exportReplays struct {
+	count       int
+	requestedAt time.Time
+}
+
+// allow counts a retry of the export recorded as ledgerID at requestedAt and
+// reports whether it may rebuild the bundle.
+func (c *exportReplayCounter) allow(ledgerID string, requestedAt, now time.Time) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for id, r := range c.seen {
+		if now.Sub(r.requestedAt) > api.ExportReplayWindow {
+			delete(c.seen, id)
+		}
+	}
+	r := c.seen[ledgerID]
+	if r.count >= api.ExportReplaysMax {
+		return false
+	}
+	if c.seen == nil {
+		c.seen = map[string]exportReplays{}
+	}
+	c.seen[ledgerID] = exportReplays{count: r.count + 1, requestedAt: requestedAt}
+	return true
 }
 
 func cleanupAccountExportSpool(s *server, spool *os.File) {

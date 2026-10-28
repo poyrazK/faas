@@ -3052,6 +3052,13 @@ const (
 	// ExportReplayWindow is how long after an export a retry with the same
 	// request ID still counts as that export instead of a new one.
 	ExportReplayWindow = 15 * time.Minute
+	// ExportReplaysMax is how many such retries one export admits. Each
+	// retry rebuilds the bundle, so an unbounded count let one replayed ID
+	// run full exports back to back (bug hunt 2026-10-28 H61).
+	ExportReplaysMax = 2
+	// AccountExportSpoolMaxBytes caps the temporary file one export bundle
+	// is assembled in on the control-plane disk.
+	AccountExportSpoolMaxBytes = 1 << 30
 	// ExportInFlightRetryAfterSeconds is the Retry-After for an export
 	// refused because the account already has one being built.
 	ExportInFlightRetryAfterSeconds = 30
