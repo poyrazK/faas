@@ -4073,6 +4073,9 @@ func (v *JailerVMM) Kill(ctx context.Context, l Lease) (err error) {
 		if err == nil {
 			err = v.releaseRuntimeSources(l.Instance)
 		}
+		if err == nil {
+			v.removeConsoleFile(l.Instance)
+		}
 	}()
 	if v.nativeRecovery != nil {
 		return v.killNative(ctx, l)
@@ -5567,7 +5570,7 @@ func (v *JailerVMM) startJailer(ctx context.Context, l Lease, extraFCArgs ...str
 		// Firecracker writes the file itself; tailConsole feeds the ring.
 		stdout = consoleFile
 	} else if consoleFile != nil {
-		stdout = io.MultiWriter(stdout, consoleFile)
+		stdout = io.MultiWriter(stdout, &cappedConsoleFile{f: consoleFile})
 	}
 	cmd.Stdout = stdout
 	if consoleFile != nil {

@@ -26,7 +26,45 @@ const (
 	consoleTailBusy = 20 * time.Millisecond
 	consoleTailIdle = 200 * time.Millisecond
 	consoleTailRead = 32 << 10
+	// consoleFileMaxBytes caps one VM's console file on the node's root
+	// filesystem. Every byte a tenant app writes to stdout or stderr lands
+	// there, so an app logging in a loop filled the host disk (bug hunt
+	// 2026-10-28 B15). Past the cap the file starts over with a marker; the
+	// bounded per-instance log ring is unaffected.
+	consoleFileMaxBytes = 16 << 20
 )
+
+var consoleTruncatedMarker = []byte("\n[gregale: console file exceeded its size cap; earlier output dropped]\n")
+
+// cappedConsoleFile is the console file vmmd writes in pipe mode, started
+// over with a marker once it would pass consoleFileMaxBytes. The file is
+// opened O_APPEND, so writes after Truncate land at the new end.
+type cappedConsoleFile struct {
+	f       *os.File
+	written int64
+}
+
+func (c *cappedConsoleFile) Write(p []byte) (int, error) {
+	if c.written+int64(len(p)) > consoleFileMaxBytes {
+		if err := c.f.Truncate(0); err == nil {
+			n, _ := c.f.Write(consoleTruncatedMarker)
+			c.written = int64(n)
+		}
+	}
+	n, err := c.f.Write(p)
+	c.written += int64(n)
+	return n, err
+}
+
+// removeConsoleFile deletes instance's console file once the VM is gone.
+// Nothing removed them, so the directory grew by one file per wake for the
+// life of the node (B15). A failed restore's preserved console has another
+// name and stays.
+func (v *JailerVMM) removeConsoleFile(instance string) {
+	if err := os.Remove(v.consoleLogPath(instance)); err != nil && !errors.Is(err, os.ErrNotExist) {
+		slog.Warn("vmm: remove console file", "instance", instance, "err", err)
+	}
+}
 
 // defaultConsoleLogDir holds each VM's serial console copy,
 // vm-<instance>.console.
@@ -181,6 +219,13 @@ func tailConsole(path string, from int64, w io.Writer, flush func() error, done 
 		if err != nil && !errors.Is(err, io.EOF) {
 			slog.Warn("vmm: console tail read", "path", path, "err", err)
 			return
+		}
+		// Firecracker appends to a file console itself; start the file
+		// over at the cap once everything written so far was read (B15).
+		if offset, serr := f.Seek(0, io.SeekCurrent); serr == nil && offset > consoleFileMaxBytes {
+			if terr := os.Truncate(path, 0); terr == nil {
+				_, _ = f.Seek(0, io.SeekStart)
+			}
 		}
 		select {
 		case <-done:
