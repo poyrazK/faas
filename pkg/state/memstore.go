@@ -24506,6 +24506,7 @@ func (m *MemStore) CreateEdgeRule(ctx context.Context, in CreateEdgeRuleParams) 
 		ExpiresAt:    in.ExpiresAt,
 		Match:        in.Match,
 		Mode:         edgeRuleModeOrEnforce(in.Mode),
+		CorsPresetID: in.CorsPresetID,
 		CreatedAt:    now,
 		UpdatedAt:    now,
 	}
@@ -24641,6 +24642,7 @@ func (m *MemStore) CreateEdgeRuleIfUnderQuota(ctx context.Context, in CreateEdge
 		ExpiresAt:    in.ExpiresAt,
 		Match:        in.Match,
 		Mode:         edgeRuleModeOrEnforce(in.Mode),
+		CorsPresetID: in.CorsPresetID,
 		CreatedAt:    now,
 		UpdatedAt:    now,
 	}
