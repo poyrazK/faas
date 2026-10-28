@@ -4,7 +4,7 @@
   "sets": [
     {
       "id": "gregale-core-v1",
-      "revision": "9b8caeca5e2ee04b69234db906ec34f72df24af2e488e5ec8435183b1fe00977",
+      "revision": "6b9cca45c3644d70dac74827f2c8f4ae05478d8f178a636fa799bc2c035c3130",
       "files": [
         "faas.rules.yml"
       ],
@@ -2329,11 +2329,11 @@
           "group_name": "internal_mtls_lifecycle",
           "rule_name": "FaasInternalMTLSRenewalNeverCompleted",
           "definition": {
-            "expression_hash": "21d7d295a1ac7110e280553bc4a677200d34e9edee02d524bed60c2760f53da8",
+            "expression_hash": "02b55c4d9d8695ba1948e557f8a33166419cbd55fc24dcb9b9ba3882e2a92c52",
             "labels_hash": "7ecc832e031340dfa2bcf30c227a8e6eaec78d5ba1c8443f1d147ae81d92eb4c",
             "for_seconds": 900,
             "keep_firing_for_seconds": 0,
-            "fingerprint": "d331f9c0962c73e451be158b82f83f055453dac565f6dcf4d06a7250c9946b6a"
+            "fingerprint": "5faeb9d79fb32083c4c2475049138cd526224ae9ab29169b18d4686cccd13eb0"
           }
         },
         {
@@ -5980,7 +5980,7 @@
     },
     {
       "id": "gregale-full-v1",
-      "revision": "90bb6c0f7742a0727b72e3d008f2e781cfb62294caaa31ad201024714447f385",
+      "revision": "176529ec9b3d8f3e7213ed88817b8814ac7e556ae9efeb4ff970cc24a2cfd15e",
       "files": [
         "bridge.rules.yml",
         "data_placement.yaml",
@@ -8413,11 +8413,11 @@
           "group_name": "internal_mtls_lifecycle",
           "rule_name": "FaasInternalMTLSRenewalNeverCompleted",
           "definition": {
-            "expression_hash": "21d7d295a1ac7110e280553bc4a677200d34e9edee02d524bed60c2760f53da8",
+            "expression_hash": "02b55c4d9d8695ba1948e557f8a33166419cbd55fc24dcb9b9ba3882e2a92c52",
             "labels_hash": "7ecc832e031340dfa2bcf30c227a8e6eaec78d5ba1c8443f1d147ae81d92eb4c",
             "for_seconds": 900,
             "keep_firing_for_seconds": 0,
-            "fingerprint": "d331f9c0962c73e451be158b82f83f055453dac565f6dcf4d06a7250c9946b6a"
+            "fingerprint": "5faeb9d79fb32083c4c2475049138cd526224ae9ab29169b18d4686cccd13eb0"
           }
         },
         {
