@@ -384,14 +384,37 @@ func TestStoreResealSwapsOnlyTheSealItRead(t *testing.T) {
 	if rest, err := store.SealedLoginsAfter(ctx, logins[0].ID, 10); err != nil || len(rest) != 0 {
 		t.Fatalf("login page after the last = %+v, %v", rest, err)
 	}
-	if swapped, err := store.ResealLogin(ctx, logins[0], []byte("bound-login")); err != nil || !swapped {
-		t.Fatalf("re-seal login = %v, %v", swapped, err)
+	stale := logins[0]
+	stale.Blob = []byte("another-login")
+	if dropped, err := store.DropLegacyLogin(ctx, stale); err != nil || dropped {
+		t.Fatalf("drop login from a stale read = %v, %v; want it refused", dropped, err)
 	}
-	if swapped, err := store.ResealLogin(ctx, logins[0], []byte("bound-again")); err != nil || swapped {
-		t.Fatalf("re-seal login from a stale read = %v, %v; want it refused", swapped, err)
+	if missing, err := store.DatabasesWithoutLogin(ctx, 10); err != nil || len(missing) != 0 {
+		t.Fatalf("databases without a login before the drop = %+v, %v", missing, err)
+	}
+	if dropped, err := store.DropLegacyLogin(ctx, logins[0]); err != nil || !dropped {
+		t.Fatalf("drop legacy login = %v, %v", dropped, err)
+	}
+	// The database keeps its keys and has no login: apid issues one.
+	missing, err := store.DatabasesWithoutLogin(ctx, 10)
+	if err != nil || len(missing) != 1 || missing[0].DatabaseID != dbID || missing[0].AccountID != account {
+		t.Fatalf("databases without a login = %+v, %v", missing, err)
+	}
+	issued, err := store.IssueMissingLogin(ctx, account, dbID, func(context.Context) (*livekeys.Login, error) {
+		return &livekeys.Login{Sealed: []byte("bound-login"), Recipient: recipient, Identity: "gregale_live_x", Slot: "slot"}, nil
+	})
+	if err != nil || !issued {
+		t.Fatalf("issue the missing login = %v, %v", issued, err)
+	}
+	again, err := store.IssueMissingLogin(ctx, account, dbID, func(context.Context) (*livekeys.Login, error) {
+		t.Fatal("a database that has a login was issued another")
+		return nil, nil
+	})
+	if err != nil || again {
+		t.Fatalf("issue for a database that has a login = %v, %v", again, err)
 	}
 	dbs, err := store.LiveDatabases(ctx, []string{"native-a"})
 	if err != nil || len(dbs) != 1 || string(dbs[0].Sealed) != "bound-login" {
-		t.Fatalf("discovered after re-seal = %+v, %v", dbs, err)
+		t.Fatalf("discovered after the new login = %+v, %v", dbs, err)
 	}
 }

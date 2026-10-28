@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"log/slog"
 	"net"
 	"net/netip"
 	"sync"
@@ -81,14 +82,23 @@ const databaseEgressIndexRefresh = 10 * time.Second
 // to it and its port (ADR-20261026150000). It lives in memory because the
 // resolver consults it for every forwarded answer; a stale index refreshes on
 // the next lookup, and a failed refresh keeps the previous one.
+//
+// Only the lookup that wins refreshMu reads Postgres; every concurrent answer
+// reads the current index. The refresh used to run under the index lock, so
+// every guest DNS answer on the node waited on a control-plane query.
 type databaseEgressIndex struct {
 	source databaseEgressSource
 	now    func() time.Time
 
-	mu       sync.Mutex
-	byHost   map[string]map[string]uint16
-	loadedAt time.Time
+	refreshMu sync.Mutex
+	mu        sync.RWMutex
+	byHost    map[string]map[string]uint16
+	loadedAt  time.Time
 }
+
+// databaseEgressEndpointsCap mirrors the LIMIT of
+// ListManagedPostgresEgressEndpoints: a full page may have dropped bindings.
+const databaseEgressEndpointsCap = 100000
 
 func newDatabaseEgressIndex(source databaseEgressSource) *databaseEgressIndex {
 	return &databaseEgressIndex{source: source, now: time.Now}
@@ -99,27 +109,45 @@ func (x *databaseEgressIndex) lookup(ctx context.Context, name string) map[strin
 	if x == nil || x.source == nil || name == "" {
 		return nil
 	}
+	x.mu.RLock()
+	byHost, stale := x.byHost, x.now().Sub(x.loadedAt) >= databaseEgressIndexRefresh
+	x.mu.RUnlock()
+	if stale && x.refreshMu.TryLock() {
+		byHost = x.refresh(ctx)
+		x.refreshMu.Unlock()
+	}
+	return byHost[name]
+}
+
+// refresh reloads the index unless another lookup just did. A slow or failed
+// read keeps the previous index until the next interval.
+func (x *databaseEgressIndex) refresh(ctx context.Context) map[string]map[string]uint16 {
+	x.mu.RLock()
+	current, stale := x.byHost, x.now().Sub(x.loadedAt) >= databaseEgressIndexRefresh
+	x.mu.RUnlock()
+	if !stale {
+		return current
+	}
+	refreshCtx, cancel := context.WithTimeout(ctx, time.Second)
+	endpoints, err := x.source.ManagedPostgresEgressEndpoints(refreshCtx)
+	cancel()
+	if len(endpoints) >= databaseEgressEndpointsCap {
+		slog.Error("gatewayd-internal: managed database egress index hit its row cap; bindings past it stay closed", "rows", len(endpoints))
+	}
 	x.mu.Lock()
 	defer x.mu.Unlock()
-	if x.now().Sub(x.loadedAt) >= databaseEgressIndexRefresh {
-		// A slow or failed read keeps the previous index until the next
-		// interval rather than stalling every answer behind the lock.
-		refreshCtx, cancel := context.WithTimeout(ctx, time.Second)
-		endpoints, err := x.source.ManagedPostgresEgressEndpoints(refreshCtx)
-		cancel()
-		if err == nil {
-			byHost := make(map[string]map[string]uint16, len(endpoints))
-			for _, e := range endpoints {
-				if byHost[e.Host] == nil {
-					byHost[e.Host] = map[string]uint16{}
-				}
-				byHost[e.Host][e.AppID] = uint16(e.Port)
+	if err == nil {
+		byHost := make(map[string]map[string]uint16, len(endpoints))
+		for _, e := range endpoints {
+			if byHost[e.Host] == nil {
+				byHost[e.Host] = map[string]uint16{}
 			}
-			x.byHost = byHost
+			byHost[e.Host][e.AppID] = uint16(e.Port)
 		}
-		x.loadedAt = x.now()
+		x.byHost = byHost
 	}
-	return x.byHost[name]
+	x.loadedAt = x.now()
+	return x.byHost
 }
 
 type computeNodeByName interface {
@@ -127,14 +155,19 @@ type computeNodeByName interface {
 }
 
 // localNodeID resolves and caches this node's compute_nodes.id from its
-// manifest name. A failed vmmd lookup forgets the cached id so a re-registered
-// node is picked up on the next query.
+// manifest name. A failed vmmd lookup marks the cached id for a background
+// re-resolve, so a re-registered node is picked up without every DNS answer
+// querying the control plane meanwhile (a vmmd restart used to turn each
+// answer into a CP query).
 type localNodeID struct {
 	store computeNodeByName
 	name  string
 
-	mu sync.Mutex
-	id string
+	mu          sync.Mutex
+	id          string
+	recheck     bool
+	rechecking  bool
+	recheckDone chan struct{} // closed when a background re-resolve ends; tests wait on it
 }
 
 func newLocalNodeID(store computeNodeByName, name string) *localNodeID {
@@ -145,6 +178,11 @@ func (l *localNodeID) Get(ctx context.Context) (string, error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	if l.id != "" {
+		if l.recheck && !l.rechecking {
+			l.rechecking = true
+			l.recheckDone = make(chan struct{})
+			go l.reresolve(context.WithoutCancel(ctx), l.recheckDone)
+		}
 		return l.id, nil
 	}
 	node, err := l.store.ComputeNodeByName(ctx, l.name)
@@ -155,9 +193,25 @@ func (l *localNodeID) Get(ctx context.Context) (string, error) {
 	return l.id, nil
 }
 
+func (l *localNodeID) reresolve(ctx context.Context, done chan struct{}) {
+	defer close(done)
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	node, err := l.store.ComputeNodeByName(ctx, l.name)
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.rechecking = false
+	if err == nil && node.ID != "" {
+		l.id = node.ID
+		l.recheck = false
+	}
+}
+
+// Forget marks the cached id for a background re-resolve; the cached id is
+// served until a new one is read.
 func (l *localNodeID) Forget() {
 	l.mu.Lock()
-	l.id = ""
+	l.recheck = true
 	l.mu.Unlock()
 }
 

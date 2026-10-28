@@ -2963,7 +2963,11 @@ type Querier interface {
 	LatestSnapshot(ctx context.Context, db DBTX, deploymentID pgtype.UUID) (Snapshot, error)
 	LatestSnapshotForTier(ctx context.Context, db DBTX, arg LatestSnapshotForTierParams) (Snapshot, error)
 	LatestSupersededDeployment(ctx context.Context, db DBTX, appID pgtype.UUID) (LatestSupersededDeploymentRow, error)
-	LayerArtifactHasReferences(ctx context.Context, db DBTX, storageKey string) (pgtype.Bool, error)
+	// A superseded deployment among the newest rollback_generations live or
+	// superseded deployments of its app and scope is a rollback target, whose
+	// cold boot needs its layers whatever state its snapshots are in (Hunt 21
+	// H21-1).
+	LayerArtifactHasReferences(ctx context.Context, db DBTX, arg LayerArtifactHasReferencesParams) (pgtype.Bool, error)
 	LifecycleApprovalClock(ctx context.Context, db DBTX) (pgtype.Timestamptz, error)
 	LifecycleHistoryCursorExists(ctx context.Context, db DBTX, arg LifecycleHistoryCursorExistsParams) (bool, error)
 	LiftReleaseFreeze(ctx context.Context, db DBTX, arg LiftReleaseFreezeParams) (ReleaseFreeze, error)
@@ -4077,6 +4081,10 @@ type Querier interface {
 	ManagedPostgresCutoverUnreleasedSourceFences(ctx context.Context, db DBTX, cutoverID string) (int64, error)
 	ManagedPostgresDrainPlanHasUnplannedInstances(ctx context.Context, db DBTX, arg ManagedPostgresDrainPlanHasUnplannedInstancesParams) (bool, error)
 	ManagedPostgresDueBindings(ctx context.Context, db DBTX, arg ManagedPostgresDueBindingsParams) ([]ManagedPostgresBinding, error)
+	// ADR-20261028103115: the fleet database cap counts what reservation limits
+	// count; the spend breaker sums the month through the usage primary key, one
+	// index range per database, so the ledger's growth never forces a full scan.
+	ManagedPostgresFleetTotals(ctx context.Context, db DBTX, arg ManagedPostgresFleetTotalsParams) (ManagedPostgresFleetTotalsRow, error)
 	// ADR-20261025094915: managed PostgreSQL compute overage and cap subjects.
 	ManagedPostgresOverageEnabled(ctx context.Context, db DBTX, subjectID pgtype.UUID) (bool, error)
 	ManagedPostgresPersonalBindingReference(ctx context.Context, db DBTX, arg ManagedPostgresPersonalBindingReferenceParams) (bool, error)
@@ -5574,6 +5582,7 @@ type Querier interface {
 	ReadServiceBindingRevision(ctx context.Context, db DBTX, arg ReadServiceBindingRevisionParams) (string, error)
 	ReadServicePolicyActiveRelease(ctx context.Context, db DBTX, arg ReadServicePolicyActiveReleaseParams) (bool, error)
 	// ADR-570: minimal credential-free projection for one read-only service-policy snapshot.
+	// org_id is the tenant boundary SameAppResourceOwner checks (Hunt 23 H23-1).
 	ReadServicePolicyAppByID(ctx context.Context, db DBTX, id pgtype.UUID) (ReadServicePolicyAppByIDRow, error)
 	ReadServicePolicyAppBySlug(ctx context.Context, db DBTX, slug string) (ReadServicePolicyAppBySlugRow, error)
 	ReadServicePolicyDeploymentOverride(ctx context.Context, db DBTX, arg ReadServicePolicyDeploymentOverrideParams) (bool, error)
@@ -5604,7 +5613,7 @@ type Querier interface {
 	// Secret-free binding metadata only, bounded before transfer. Unverified and
 	// ineligible claims are retained because they block less-specific fallbacks.
 	ReadTrafficDomainClaims(ctx context.Context, db DBTX, arg ReadTrafficDomainClaimsParams) (ReadTrafficDomainClaimsRow, error)
-	ReadTrafficGlobalRouteAccounts(ctx context.Context, db DBTX, maxInputs int32) ([]pgtype.UUID, error)
+	ReadTrafficGlobalRouteAccounts(ctx context.Context, db DBTX, arg ReadTrafficGlobalRouteAccountsParams) ([]pgtype.UUID, error)
 	// Only selectors, counts, sizes and referenced IDs leave the database.
 	ReadTrafficHostAnalysis(ctx context.Context, db DBTX, arg ReadTrafficHostAnalysisParams) (ReadTrafficHostAnalysisRow, error)
 	ReadTrafficSecurityEpochs(ctx context.Context, db DBTX, arg ReadTrafficSecurityEpochsParams) ([]ReadTrafficSecurityEpochsRow, error)

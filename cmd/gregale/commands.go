@@ -117,7 +117,9 @@ func cmdLogin(args []string) int {
 		return printErr("Could not start login", err)
 	}
 
+	_, _ = fmt.Fprintf(osStdout, "Your code: %s\n", codeResp.Code)
 	_, _ = fmt.Fprintf(osStdout, "Opening %s in your browser...\n", codeResp.URL)
+	_, _ = fmt.Fprintln(osStdout, "  Type the code there to approve this terminal. Never type a code someone sent you.")
 	_, _ = fmt.Fprintln(osStdout, "  (or visit that URL and paste the code below)")
 
 	// Best-effort browser open. On a sandboxed CI box the helper

@@ -57,7 +57,7 @@ func (m *MemStore) ListSnapshotsStaleOlderThan(_ context.Context, retention time
 	defer m.mu.Unlock()
 	var rows []SnapshotForGC
 	for _, snapshot := range m.snapshots {
-		if !snapshot.Stale || !snapshot.CreatedAt.Before(cutoff) {
+		if !snapshot.Stale || !m.snapshotStaleSinceLocked(snapshot).Before(cutoff) {
 			continue
 		}
 		if row, ok := m.snapshotGCMetadataLocked(snapshot); ok {

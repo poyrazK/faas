@@ -23,6 +23,7 @@ package gateway
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net"
 	"net/http"
@@ -58,6 +59,7 @@ const (
 	OnDemandTLSAllowWildcard  = "allow_wildcard"
 	OnDemandTLSDenyUnverified = "deny_unverified"
 	OnDemandTLSDenyBudget     = "deny_wildcard_budget"
+	OnDemandTLSDenyPlan       = "deny_wildcard_plan"
 	OnDemandTLSDenyUnknown    = "deny_unknown"
 	OnDemandTLSDenyPlatform   = "deny_platform"
 	OnDemandTLSDenyInvalid    = "deny_invalid"
@@ -193,6 +195,13 @@ func (p *OnDemandTLSPolicy) decideWildcard(ctx context.Context, host string) (bo
 	case !wildcard.Verified():
 		return false, OnDemandTLSDenyUnverified
 	}
+	if allowed, err := p.wildcardPlanAllows(lookupCtx, wildcard); err != nil {
+		// codeql[go/log-injection] false-positive: host passed state.ValidateCustomDomainName (letters, digits, hyphens, dots only) before any lookup, and CodeQL does not recognise logsanitize.Field as a sanitizer.
+		p.log.Warn("gateway: on-demand tls wildcard plan lookup failed; denying", "host", logsanitize.Field(host), "err", err)
+		return false, OnDemandTLSDenyError
+	} else if !allowed {
+		return false, OnDemandTLSDenyPlan
+	}
 	admitted, err := p.store.AdmitCustomDomainTLSHost(lookupCtx, wildcard.Domain, host, p.now(),
 		onDemandTLSWildcardWindow, api.OnDemandTLSWildcardNewHostsPerWeek)
 	switch {
@@ -210,6 +219,32 @@ func (p *OnDemandTLSPolicy) decideWildcard(ctx context.Context, host string) (bo
 	}
 	p.rememberKnown(host)
 	return true, OnDemandTLSAllowWildcard
+}
+
+// onDemandTLSPlanStore resolves the plan a wildcard domain is held under. A
+// store without it skips the plan check.
+type onDemandTLSPlanStore interface {
+	AppByID(ctx context.Context, id string) (state.App, error)
+	AccountByID(ctx context.Context, id string) (state.Account, error)
+}
+
+// wildcardPlanAllows reports whether the wildcard's owner is still on a plan
+// with wildcard domains. The plan is checked only when the domain is
+// created, so after a downgrade a wildcard kept drawing new certificates.
+func (p *OnDemandTLSPolicy) wildcardPlanAllows(ctx context.Context, wildcard state.CustomDomain) (bool, error) {
+	plans, ok := p.store.(onDemandTLSPlanStore)
+	if !ok || wildcard.AppID == "" {
+		return true, nil
+	}
+	app, err := plans.AppByID(ctx, wildcard.AppID)
+	if err != nil {
+		return false, fmt.Errorf("wildcard app: %w", err)
+	}
+	acct, err := plans.AccountByID(ctx, app.AccountID)
+	if err != nil {
+		return false, fmt.Errorf("wildcard owner: %w", err)
+	}
+	return acct.Plan.WildcardDomainsAllowed(), nil
 }
 
 // Handler serves the edge's ask URL. Only loopback peers are answered: the

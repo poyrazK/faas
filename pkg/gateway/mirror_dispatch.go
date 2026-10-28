@@ -782,19 +782,25 @@ func (h *Handler) acquireMirrorSlot(ctx context.Context, ruleID string) (func(co
 	if cap <= 0 {
 		cap = api.MirrorMaxConcurrentPerRule
 	}
+	// The process-local counter goes first even with a shared authority:
+	// a rule already at its cap here costs no control-plane lease write
+	// (at 100% sampling a saturated rule otherwise wrote a lease attempt
+	// per request).
+	if !h.tryAcquireMirrorSlot(ruleID) {
+		return nil, false, nil
+	}
 	if h.mirrorSlotLeaseStore == nil {
-		if !h.tryAcquireMirrorSlot(ruleID) {
-			return nil, false, nil
-		}
 		return func(context.Context) { h.releaseMirrorSlot(ruleID) }, true, nil
 	}
 	leaseID, acquired, err := h.mirrorSlotLeaseStore.TryAcquireMirrorSlotLease(ctx, ruleID, int(cap), mirrorSlotLeaseTTL)
 	if err != nil || !acquired {
+		h.releaseMirrorSlot(ruleID)
 		return nil, acquired, err
 	}
 	var once sync.Once
 	release := func(releaseCtx context.Context) {
 		once.Do(func() {
+			h.releaseMirrorSlot(ruleID)
 			cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(releaseCtx), mirrorSlotReleaseTimeout)
 			defer cancel()
 			if err := h.mirrorSlotLeaseStore.ReleaseMirrorSlotLease(cleanupCtx, ruleID, leaseID); err != nil && h.log != nil {

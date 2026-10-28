@@ -11573,6 +11573,11 @@ func (s *PgStore) prepareDeploymentRollbackOnce(ctx context.Context, appID, targ
 	if target.Status != DeploySuperseded && (target.Status != DeployLive || target.TrafficPercent != 0) {
 		return Deployment{}, ErrRollbackTargetAlreadyLive
 	}
+	// A target whose layers were reclaimed cannot cold boot; refuse it here
+	// rather than fail its readiness prime later (Hunt 21 H21-1).
+	if err := requireDeploymentLayerArtifactsTx(ctx, tx, target.ID); err != nil {
+		return Deployment{}, err
+	}
 
 	now := time.Now().UTC()
 	prepared, err := scanDeploymentWithRootfs(tx.QueryRow(ctx, `
@@ -13115,12 +13120,18 @@ func (s *PgStore) QueuedBuildsCount(ctx context.Context) (int, error) {
 // when the row is missing OR already in another status — that second
 // case is what lets builderd drop duplicate build_queued notifications
 // (apid write path + imaged reaper) without spawning two builder VMs.
-// Equivalent to a compare-and-swap at the row level.
+// Equivalent to a compare-and-swap at the row level. A PR preview build is
+// not claimed while another build is queued; the polling claim takes it once
+// production work is drained (ADR-20261028100000).
 func (s *PgStore) ClaimQueuedBuild(ctx context.Context, id string) (Build, error) {
 	row := s.pool.QueryRow(ctx,
 		`update builds
 		   set status = 'running', started_at = now()
 		 where id = $1 and status = 'queued' and not exists (select 1 from deployment_build_dependency_gates g where g.deployment_id=builds.deployment_id and g.check_after>now())
+		   and not (kind = 'preview' and exists (
+		     select 1 from builds o
+		      where o.status = 'queued' and o.kind <> 'preview'
+		        and not exists (select 1 from deployment_build_dependency_gates g where g.deployment_id=o.deployment_id and g.check_after>now())))
 		 returning id, deployment_id, kind, source_bytes, status,
 		           coalesce(failure_class,''), coalesce(log_path,''),
 		           started_at, finished_at, enqueued_at,
@@ -13152,6 +13163,10 @@ func (s *PgStore) ClaimQueuedBuildWithNodeAffinity(ctx context.Context, id, node
 		  from deployments d
 		 where b.id = $1
 		   and b.status = 'queued' and not exists (select 1 from deployment_build_dependency_gates g where g.deployment_id=b.deployment_id and g.check_after>now())
+		   and not (b.kind = 'preview' and exists (
+		     select 1 from builds o
+		      where o.status = 'queued' and o.kind <> 'preview'
+		        and not exists (select 1 from deployment_build_dependency_gates g where g.deployment_id=o.deployment_id and g.check_after>now())))
 		   and d.id = b.deployment_id
 		   and (
 		     b.enqueued_at <= now() - $3::interval
@@ -13200,7 +13215,7 @@ func (s *PgStore) ClaimNextQueuedBuild(ctx context.Context) (Build, error) {
 		 where id = (
 		   select id from builds
 		    where status = 'queued' and not exists (select 1 from deployment_build_dependency_gates g where g.deployment_id=builds.deployment_id and g.check_after>now())
-		    order by enqueued_at asc
+		    order by (kind = 'preview'), enqueued_at asc
 		    limit 1
 		    for update skip locked
 		 )
@@ -13219,7 +13234,8 @@ func (s *PgStore) ClaimNextQueuedBuild(ctx context.Context) (Build, error) {
 	return b, nil
 }
 
-// ClaimNextQueuedBuildWithFairness prefers accounts without a recent claim,
+// ClaimNextQueuedBuildWithFairness claims every other build before a PR
+// preview build (ADR-20261028100000), prefers accounts without a recent claim,
 // then falls back to FIFO. Lock the build row itself before returning it so
 // polling workers and direct notification claims cannot execute one build
 // twice. Ranking rather than filtering also lets a worker skip a locked quiet
@@ -13233,7 +13249,7 @@ func (s *PgStore) ClaimNextQueuedBuildWithFairness(ctx context.Context, fairness
         join deployments d on d.id = b.deployment_id
         join apps a on a.id = d.app_id
        where b.status = 'queued' and not exists (select 1 from deployment_build_dependency_gates g where g.deployment_id=b.deployment_id and g.check_after>now())
-       order by exists (
+       order by (b.kind = 'preview'), exists (
          select 1 from recent_build_claims r
           where r.account_id = a.account_id
             and r.claimed_at > now() - $1::interval
@@ -13291,7 +13307,7 @@ func (s *PgStore) ClaimNextQueuedBuildWithNodeAffinity(ctx context.Context, node
 		           limit 1
 		        ), $1) = $1
 		      )
-		    order by exists (
+		    order by (b.kind = 'preview'), exists (
 		      select 1 from recent_build_claims r
 		       where $3::interval > interval '0 milliseconds'
 		         and r.account_id = a.account_id
@@ -18870,10 +18886,12 @@ func (s *PgStore) MarkSnapshotStaleByAppProtocol(ctx context.Context, snapshotID
 // (typically 7 days per api.SnapshotStaleRetention) so an operator
 // rollback across an FC upgrade doesn't pay an extra cold boot.
 // F-07 closes the gap where the prior sweep only flipped stale=true
-// and stale rows accumulated indefinitely.
+// and stale rows accumulated indefinitely. Retention counts from the stale
+// mark; a row older than the window but marked stale today used to go on
+// the next sweep (Hunt 21 H21-2).
 func (s *PgStore) DeleteSnapshotsStaleOlderThan(ctx context.Context, retention time.Duration) (int64, error) {
 	tag, err := s.pool.Exec(ctx,
-		`delete from snapshots where stale = true and created_at < now() - $1::interval`,
+		`delete from snapshots where stale = true and greatest(stale_at, created_at) < now() - $1::interval`,
 		fmt.Sprintf("%d seconds", int64(retention.Seconds())))
 	if err != nil {
 		return 0, err
@@ -26923,20 +26941,43 @@ func (s *PgStore) MarkAccountEmailVerified(ctx context.Context, accountID string
 }
 
 // DeleteOldEvents (ADR-075) prunes audit-log events whose `at` is
-// older than the cutoff. Returns the row count. The
-// (subject, at desc) partial index on the events table keeps the
-// WHERE a partial range scan; the per-tick cost is bounded by
-// (cutoff × recent rows added in that window).
+// older than the cutoff. Returns the row count.
+//
+// It deletes in batches of eventRetentionBatchRows, each found through the
+// events_at_brin_idx BRIN index, with a short pause between them. One
+// unbatched DELETE of a day's rows (several days after a missed run) held a
+// long transaction and flooded WAL and vacuum across all of the table's
+// indexes on the CP Postgres every request path shares (bug hunt O9).
 //
 // Used by pkg/eventretention's daily loop; the maintenance floor
 // is 90 days (SOC 2 CC6.2).
 func (s *PgStore) DeleteOldEvents(ctx context.Context, before time.Time) (int64, error) {
-	tag, err := s.pool.Exec(ctx, `delete from events where at < $1`, before)
-	if err != nil {
-		return 0, err
+	var total int64
+	for {
+		tag, err := s.pool.Exec(ctx, `delete from events
+			 where ctid = any(array(select ctid from events where at < $1 limit $2))`,
+			before, eventRetentionBatchRows)
+		if err != nil {
+			return total, err
+		}
+		total += tag.RowsAffected()
+		if tag.RowsAffected() < eventRetentionBatchRows {
+			return total, nil
+		}
+		select {
+		case <-ctx.Done():
+			return total, ctx.Err()
+		case <-time.After(eventRetentionBatchPause):
+		}
 	}
-	return tag.RowsAffected(), nil
 }
+
+// The events retention deletes this many rows per statement and pauses this
+// long between statements.
+const (
+	eventRetentionBatchRows  = 5000
+	eventRetentionBatchPause = 50 * time.Millisecond
+)
 
 // SetAccountPassword upserts the Argon2id PHC hash for an account.
 // ON CONFLICT (account_id) DO UPDATE so a password change / set

@@ -6927,6 +6927,21 @@ func (e *Engine) cleanupInterruptedPrime(ctx context.Context, appID string, prim
 		"wake_boot_error", "prime_interrupted_by_scheduler_shutdown")
 }
 
+// watchdogColdBootFailurePrefix starts the deployment error the watchdog
+// writes when it stops a priming guest at the cold-boot budget.
+const watchdogColdBootFailurePrefix = "cold_boot_timeout: "
+
+// refinesWatchdogStartupTimeout reports a prime failure that explains a
+// deployment the watchdog already failed with its generic cold-boot timeout:
+// vmmd's typed readiness problem for the stopped guest (for example a
+// healthcheck that answered 503) says why the app was not ready.
+func refinesWatchdogStartupTimeout(dep state.Deployment, cause error) bool {
+	var problem *api.Problem
+	return dep.Status == state.DeployFailed && dep.ErrorCode == api.CodeAppStartupTimeout &&
+		strings.HasPrefix(dep.Error, watchdogColdBootFailurePrefix) &&
+		errors.As(cause, &problem) && problem != nil && problem.Code != ""
+}
+
 // markPrimeFailed closes the deployment lifecycle when the scheduler cannot
 // produce the first snapshot. Prime already transitions its instance to
 // FAILED, but historically the deployment row was left in SNAPSHOTTING, so
@@ -6952,8 +6967,10 @@ func (e *Engine) markPrimeFailed(ctx context.Context, deploymentID string, cause
 	}
 	// A duplicate notification can arrive after another worker has already
 	// completed or terminally failed the deployment. Do not let a late prime
-	// error overwrite a successful/live or independently terminal result.
-	if dep.Status == state.DeployLive || dep.Status.IsTerminal() {
+	// error overwrite a successful/live or independently terminal result,
+	// except the watchdog's generic cold-boot timeout: it stops the priming
+	// guest first, so vmmd's reason for that guest arrives after it (#5709).
+	if dep.Status == state.DeployLive || dep.Status.IsTerminal() && !refinesWatchdogStartupTimeout(dep, cause) {
 		return
 	}
 
@@ -9445,7 +9462,7 @@ func (e *Engine) KillStuck(ctx context.Context, instanceID, appID string, reason
 			_ = whycopy.Decorate(p, api.CodeAppStartupTimeout, nil)
 			if _, err := e.store.SetDeploymentFailedEx(ctx, fresh.DeploymentID,
 				api.CodeAppStartupTimeout,
-				fmt.Sprintf("cold_boot_timeout: instance=%s", instanceID),
+				fmt.Sprintf("%sinstance=%s", watchdogColdBootFailurePrefix, instanceID),
 				p.Hint, p.Why, p.Fix, nil,
 			); err != nil {
 				e.log.Warn("watchdog: stamp app_startup_timeout failed", "deployment", fresh.DeploymentID, "err", err)

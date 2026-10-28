@@ -172,7 +172,7 @@ func (r *startRunner) authenticate() int {
 	if err != nil {
 		return printErr("Could not start login", err)
 	}
-	_, _ = fmt.Fprintf(osStdout, "Approve this session in your browser:\n  %s\n", code.URL)
+	_, _ = fmt.Fprintf(osStdout, "Approve this session in your browser with code %s:\n  %s\n", code.Code, code.URL)
 	if err := openBrowser(code.URL); err != nil {
 		PrintWarn(osStdout, "Open the link above manually: %v", err)
 	}

@@ -950,3 +950,34 @@ func TestPostgresStoreListUsageDatabasesPagesByKeyset(t *testing.T) {
 		}
 	}
 }
+
+// adr: 20261028103115 — the fleet totals count reservations and sum only the
+// current UTC month's provider cost across every database.
+func TestPostgresStoreFleetTotalsCountDatabasesAndMonthCost(t *testing.T) {
+	store, pool, ctx, accountID := postgresStoreFixture(t)
+	at := time.Date(2026, 9, 5, 20, 0, 0, 0, time.UTC)
+	first := postgresReadyDatabase(t, store, accountID, "fleet-one", at)
+	second := postgresReadyDatabase(t, store, accountID, "fleet-two", at)
+	insert := func(database Database, from time.Time, cost int64) {
+		t.Helper()
+		if _, err := pool.Exec(ctx, `INSERT INTO managed_postgres_usage(account_id,database_id,backend_id,backend_fingerprint,window_from,window_to,observed_at,meter,quantity,cost_millicents)
+			VALUES($1,$2,$3,$4,$5,$6,$6,'compute_unit_seconds',1,$7)`, accountID, database.ID, database.BackendID, database.BackendFingerprint, from, from.Add(time.Hour), cost); err != nil {
+			t.Fatalf("insert usage: %v", err)
+		}
+	}
+	month := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
+	insert(first, month.Add(-time.Hour), 10_000)
+	insert(first, month, 300)
+	insert(second, month.Add(48*time.Hour), 200)
+	insert(second, month.AddDate(0, 1, 0), 7_000)
+	totals, err := store.FleetTotals(ctx, at)
+	if err != nil {
+		t.Fatalf("FleetTotals: %v", err)
+	}
+	if totals.CostMillicents != 500 || totals.Databases < 2 {
+		t.Fatalf("fleet totals = %+v, want this month's 500 millicents and both databases", totals)
+	}
+	if _, err := store.FleetTotals(ctx, time.Time{}); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("zero period = %v, want ErrInvalid", err)
+	}
+}

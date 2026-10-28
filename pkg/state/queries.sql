@@ -434,10 +434,21 @@ SELECT key FROM (
 ) keys WHERE coalesce(key, '') <> '' ORDER BY key;
 
 -- name: LayerArtifactHasReferences :one
+-- A superseded deployment among the newest rollback_generations live or
+-- superseded deployments of its app and scope is a rollback target, whose
+-- cold boot needs its layers whatever state its snapshots are in (Hunt 21
+-- H21-1).
 SELECT EXISTS (
     SELECT 1 FROM deployments d JOIN apps a ON a.id = d.app_id
     WHERE a.status <> 'deleted'
       AND ((d.deleted_at IS NULL AND d.status IN ('pending', 'building', 'imaging', 'snapshotting', 'live'))
+           OR (d.deleted_at IS NULL AND d.status = 'superseded' AND (
+                SELECT count(*) FROM deployments n
+                 WHERE n.app_id = d.app_id
+                   AND COALESCE(NULLIF(n.scope, ''), 'default') = COALESCE(NULLIF(d.scope, ''), 'default')
+                   AND n.deleted_at IS NULL AND n.status IN ('live', 'superseded')
+                   AND (n.created_at > d.created_at OR (n.created_at = d.created_at AND n.id > d.id))
+               ) < sqlc.arg(rollback_generations)::int)
            OR EXISTS (SELECT 1 FROM snapshots sn WHERE sn.deployment_id = d.id AND NOT sn.stale)
            OR EXISTS (SELECT 1 FROM instances i WHERE i.deployment_id = d.id AND i.state IN ('pending', 'waking', 'cold_booting', 'running', 'snapshotting', 'migrating', 'warm', 'frozen', 'draining'))
            OR EXISTS (SELECT 1 FROM deployment_aliases al WHERE al.deployment_id = d.id)
@@ -8102,6 +8113,10 @@ WITH metadata AS (
         a.account_id::text AS account_id, a.slug AS app_slug, a.status AS app_status,
         d.status AS deployment_status, s.fc_version, s.mem_bytes, s.disk_bytes,
         s.storage_key, s.stale, s.delete_pending, s.created_at, s.tier,
+        -- Stale retention counts from the stale mark, never from before the
+        -- row's creation; rows marked before stale_at existed count from
+        -- their creation (Hunt 21 H21-2).
+        GREATEST(s.stale_at, s.created_at)::timestamptz AS stale_since,
         COALESCE(NULLIF(d.scope,''),'default')::text AS scope,
         COALESCE(runtime_owner.environment_id::text,legacy.id::text,'')::text AS environment_id,
         COALESCE(d.rootfs_key,'')::text AS deployment_rootfs_key,
@@ -8130,7 +8145,7 @@ WITH metadata AS (
 )
 SELECT * FROM metadata
 WHERE (sqlc.arg(mode)::text='active' AND (NOT stale OR runtime_owner_invalid))
-    OR (sqlc.arg(mode)::text='stale' AND stale AND created_at<now()-sqlc.arg(retention_seconds)::bigint*interval '1 second')
+    OR (sqlc.arg(mode)::text='stale' AND stale AND stale_since<now()-sqlc.arg(retention_seconds)::bigint*interval '1 second')
     OR (sqlc.arg(mode)::text='pending' AND delete_pending)
 ORDER BY CASE WHEN sqlc.arg(mode)::text='active' THEN created_at END DESC,
     CASE WHEN sqlc.arg(mode)::text<>'active' THEN created_at END ASC, id ASC
@@ -8451,8 +8466,9 @@ SELECT public_auth_mode FROM apps
 WHERE id = sqlc.arg(id)::uuid AND status <> 'deleted' AND deleted_at IS NULL;
 
 -- ADR-570: minimal credential-free projection for one read-only service-policy snapshot.
+-- org_id is the tenant boundary SameAppResourceOwner checks (Hunt 23 H23-1).
 -- name: ReadServicePolicyAppByID :one
-SELECT id, account_id, slug, workload_name, status, project_id, preview_of_slug,
+SELECT id, account_id, org_id, slug, workload_name, status, project_id, preview_of_slug,
        preview_pr_number, preview_pr_state, preview_expires_at, app_protocol, websocket_enabled,
        jsonb_strip_nulls(jsonb_build_object(
            'service_bindings', manifest->'service_bindings',
@@ -8465,7 +8481,7 @@ SELECT id, account_id, slug, workload_name, status, project_id, preview_of_slug,
 FROM apps WHERE id = sqlc.arg(id)::uuid;
 
 -- name: ReadServicePolicyAppBySlug :one
-SELECT id, account_id, slug, workload_name, status, project_id, preview_of_slug,
+SELECT id, account_id, org_id, slug, workload_name, status, project_id, preview_of_slug,
        preview_pr_number, preview_pr_state, preview_expires_at, app_protocol, websocket_enabled,
        jsonb_strip_nulls(jsonb_build_object(
            'service_bindings', manifest->'service_bindings',
@@ -8487,7 +8503,7 @@ ORDER BY id
 LIMIT 2;
 
 -- name: ReadServicePolicyTestApp :one
-SELECT id, account_id, slug, workload_name, status, project_id, preview_of_slug,
+SELECT id, account_id, org_id, slug, workload_name, status, project_id, preview_of_slug,
        preview_pr_number, preview_pr_state, preview_expires_at, app_protocol, websocket_enabled,
        jsonb_strip_nulls(jsonb_build_object(
            'service_bindings', manifest->'service_bindings',
@@ -9058,7 +9074,13 @@ WITH environment_policies AS MATERIALIZED (
             'ExpiresAt', to_jsonb(edge_rules)->'expires_at', 'Match', to_jsonb(edge_rules)->'match_expr',
             'Mode', coalesce(to_jsonb(edge_rules)->>'mode', 'enforce'))::jsonb AS data
     FROM edge_rules WHERE enabled AND (account_id = sqlc.narg(account_id)::uuid
-        OR (sqlc.narg(account_id)::uuid IS NULL AND kind='route'))
+        OR (sqlc.narg(account_id)::uuid IS NULL AND kind='route'
+            -- A scoped binding write reads only the routes that can match the
+            -- names it may change (ADR-20261027163626); NULL reads every route.
+            AND (sqlc.narg(route_scope_names)::text[] IS NULL OR match_host_scope = ''
+                OR match_host_scope = ANY(sqlc.narg(route_scope_names)::text[])
+                OR EXISTS (SELECT 1 FROM unnest(sqlc.narg(route_scope_trees)::text[]) AS tree(name)
+                    WHERE match_host_scope LIKE '%.' || replace(replace(replace(tree.name,'\','\\'),'%','\%'),'_','\_')))))
     UNION ALL
     SELECT p.app_id, ''::text, coalesce(rule.value->>'kind',''), NULL::uuid,
         coalesce(rule.value->'action','{}'::jsonb), p.environment_id,
@@ -9329,6 +9351,10 @@ DELETE FROM custom_domains WHERE domain=sqlc.arg(domain)::text::citext AND app_i
 
 -- name: ReadTrafficGlobalRouteAccounts :many
 SELECT DISTINCT account_id FROM edge_rules WHERE enabled AND kind='route'
+    AND (sqlc.narg(route_scope_names)::text[] IS NULL OR match_host_scope = ''
+        OR match_host_scope = ANY(sqlc.narg(route_scope_names)::text[])
+        OR EXISTS (SELECT 1 FROM unnest(sqlc.narg(route_scope_trees)::text[]) AS tree(name)
+            WHERE match_host_scope LIKE '%.' || replace(replace(replace(tree.name,'\','\\'),'%','\%'),'_','\_')))
 ORDER BY account_id LIMIT (sqlc.arg(max_inputs)::integer+1);
 
 -- name: LockCustomDomainQuotaAccount :one
@@ -26048,6 +26074,17 @@ SELECT
 FROM managed_postgres_usage u JOIN managed_postgres_databases d ON d.id=u.database_id
 WHERE managed_postgres_usage_subject(d.org_id,d.account_id)=sqlc.arg(subject_id)::uuid
 AND u.window_from>=sqlc.arg(period_start)::timestamptz AND u.window_from<sqlc.arg(period_end)::timestamptz;
+
+-- name: ManagedPostgresFleetTotals :one
+-- ADR-20261028103115: the fleet database cap counts what reservation limits
+-- count; the spend breaker sums the month through the usage primary key, one
+-- index range per database, so the ledger's growth never forces a full scan.
+SELECT
+ ((SELECT count(*) FROM managed_postgres_databases d WHERE d.state<>'deleted')
+  + (SELECT count(*) FROM project_environment_clone_postgres_snapshot_restores r WHERE r.state<>'deleted' AND r.adopted_database_id IS NULL))::bigint AS databases,
+ (SELECT COALESCE(sum(c.cost),0) FROM managed_postgres_databases d CROSS JOIN LATERAL (
+   SELECT COALESCE(sum(u.cost_millicents),0) AS cost FROM managed_postgres_usage u
+   WHERE u.database_id=d.id AND u.window_from>=sqlc.arg(period_start)::timestamptz AND u.window_from<sqlc.arg(period_end)::timestamptz) c)::bigint AS cost_millicents;
 
 -- name: LockManagedPostgresReservationOwner :one
 SELECT o.id,o.personal_org,o.resource_ownership_enabled FROM orgs o

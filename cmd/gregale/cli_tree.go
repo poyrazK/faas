@@ -147,6 +147,7 @@ var cliTreeAliases = []cliTreeAlias{
 	{"app wake-ahead", "wake-ahead"},
 	{"app wake-timeline", "wake-timeline"},
 	{"app binding", "bindings"},
+	{"app deploy-token", "deploy-tokens"},
 	{"app streaming-cap", "apps streaming-cap"},
 	{"sandbox run", "run"},
 	{"sandbox", "runs"},
