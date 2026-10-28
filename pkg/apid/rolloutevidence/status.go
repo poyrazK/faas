@@ -41,6 +41,11 @@ func (r Reader) Status(ctx context.Context, app state.App, since, retention time
 	}
 	sort.SliceStable(live, func(i, j int) bool { return live[i].TrafficPercent > live[j].TrafficPercent })
 	for _, dep := range live {
+		// A rolled-back candidate stays live at 0% traffic. Its failures
+		// belong to Rollout, not to the health of what serves now.
+		if dep.RolloutState == api.DebugRolloutAborted {
+			continue
+		}
 		out.Deployments = append(out.Deployments, api.DebugStatusDeployment{
 			ID: dep.ID, TrafficPercent: dep.TrafficPercent, RolloutState: dep.RolloutState,
 			CommitSHA: dep.CommitSHA, CreatedAt: dep.CreatedAt.UTC().Format(time.RFC3339),

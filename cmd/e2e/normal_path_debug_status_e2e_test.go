@@ -63,7 +63,10 @@ func TestE2E_NormalPath_DebugStatusExplainsRollbackAndOOM(t *testing.T) {
 
 	// A canary at 50% answers /checkout with 500s; the gateway alternates
 	// deployments request by request.
-	windowStart := time.Now().UTC().Add(-time.Second)
+	// The gateway stamps collapsed telemetry rows with their minute, and the
+	// orchestrator's decision windows are whole minutes, so the window starts
+	// on one.
+	windowStart := time.Now().UTC().Truncate(time.Minute)
 	candidate := startDebugStatusCanary(t, f, stable.ID, stableInstance.ID)
 	failed, served := 0, 0
 	for range 12 {
@@ -136,7 +139,7 @@ func TestE2E_NormalPath_DebugStatusExplainsRollbackAndOOM(t *testing.T) {
 	if oom.Verdict != api.DebugStatusRollback {
 		t.Fatalf("verdict with a rollback and an OOM kill = %q, want %q", oom.Verdict, api.DebugStatusRollback)
 	}
-	if out, errOut, exit := runGregaleAgainstHarness(t, gregale, f, "debug", "status", debugStatusSlug); exit != 0 || !strings.Contains(out, "Memory:") {
+	if out, errOut, exit := runGregaleAgainstHarness(t, gregale, f, "debug", "status", debugStatusSlug); exit != 0 || !strings.Contains(out, "(instance replaced)") || !strings.Contains(out, "Memory:") {
 		t.Fatalf("gregale debug status (OOM): exit=%d stdout=%q stderr=%q", exit, out, errOut)
 	}
 }
