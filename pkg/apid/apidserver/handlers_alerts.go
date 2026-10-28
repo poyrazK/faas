@@ -844,8 +844,9 @@ func alertRuleActionFrom(p *string) state.AlertAction {
 // alertMetricCapabilities names the capability an alert metric needs beyond
 // alerts' own (ADR-20261023115741).
 var alertMetricCapabilities = map[string]string{
-	api.AlertRuleMetricCustomMetric:     "custom-metric-history",
-	api.AlertRuleMetricLogSearchMatches: "log-search",
+	api.AlertRuleMetricCustomMetric:      "custom-metric-history",
+	api.AlertRuleMetricLogSearchMatches:  "log-search",
+	api.AlertMetricRouteInsightsDetected: routeInsightsCapability,
 }
 
 // alertMetricCapabilityProblem refuses an alert on a metric whose capability

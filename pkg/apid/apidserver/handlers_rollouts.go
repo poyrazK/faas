@@ -106,6 +106,9 @@ func (s *server) recoverRollout(w http.ResponseWriter, r *http.Request, acct sta
 		api.WriteProblem(w, api.ErrValidation("reviewed recovery requires exact abort selectors"))
 		return
 	}
+	// A route guard whose capability is not released for the account cannot
+	// hold a promote (ADR-20261028110044).
+	r = r.WithContext(state.WithRouteGuardRelease(r.Context(), s.routeGuardRelease(acct, app)))
 	// ADR-20261020085706: advance and promote cannot skip an approval wait.
 	if p := s.recoverRolloutApprovalProblem(r, app, req.Action); p != nil {
 		api.WriteProblem(w, p)

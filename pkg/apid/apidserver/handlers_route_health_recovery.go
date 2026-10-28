@@ -24,6 +24,12 @@ func (s *server) recoverCanaryRouteHealth(w http.ResponseWriter, r *http.Request
 	if !ok {
 		return
 	}
+	// An unreleased guard recovers nothing; the canary worker carries on with
+	// its own gates (ADR-20261028110044).
+	if !s.capabilityEnabledFor(routeHealthCapability, acct, app) {
+		writeJSON(w, http.StatusOK, api.CanaryRouteHealthRecoveryResponse{})
+		return
+	}
 	store, ok := s.store.(state.RouteHealthRecoveryStore)
 	if !ok {
 		api.WriteProblem(w, api.ErrCapacity("route health recovery unavailable"))

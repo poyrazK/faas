@@ -90,9 +90,14 @@ func (s *server) advanceCanaryWithLeasePolicy(w http.ResponseWriter, r *http.Req
 		api.WriteProblem(w, problem)
 		return
 	}
+	// Route guards run only where their capability is released
+	// (ADR-20261028110044).
+	guards := s.routeGuardRelease(acct, app)
 	// Best-effort and report-only: an unconfigured app gets observed critical
 	// routes before its first stage advances (ADR-844).
-	s.seedDefaultRouteHealthGate(r.Context(), acct, app, d)
+	if guards.Health {
+		s.seedDefaultRouteHealthGate(r.Context(), acct, app, d)
+	}
 	var profileDecision api.ProfileCanaryGateDecision
 	if !requireWorkerLease {
 		audit.Actor = "account:" + acct.ID
@@ -103,7 +108,7 @@ func (s *server) advanceCanaryWithLeasePolicy(w http.ResponseWriter, r *http.Req
 	var auditID int64
 	gateProblem, err := s.withBindingReleaseTraffic(r, acct, app, d, profileIntent, func(ctx context.Context) error {
 		var writeErr error
-		updated, auditID, writeErr = advancer.AdvanceCanary(ctx, d.ID, state.CanaryAdvanceParams{
+		updated, auditID, writeErr = advancer.AdvanceCanary(state.WithRouteGuardRelease(ctx, guards), d.ID, state.CanaryAdvanceParams{
 			ExpectedStep: req.ExpectedStep, TrafficPercent: next.Percent,
 			ProfileGateDecision: &profileDecision, ProfileGateOverride: req.ProfileGateOverride, ProfileGateRollback: profileIntent == 0,
 			RequireSafeReleaseLease:   requireWorkerLease,
@@ -125,9 +130,17 @@ func (s *server) advanceCanaryWithLeasePolicy(w http.ResponseWriter, r *http.Req
 		return
 	}
 	s.notifyCanaryTraffic(r, app, updated)
-	writeJSON(w, http.StatusOK, api.CanaryAdvanceResponse{
+	response := api.CanaryAdvanceResponse{
 		Deployment: s.deploymentResponse(r.Context(), updated, app), AuditID: int64ToAuditIDString(auditID), RouteGate: &gateDecision, RouteHealth: &healthDecision, ProfileGate: &profileDecision,
-	})
+	}
+	// An unreleased guard made no decision; the response does not name it.
+	if !guards.Requirements {
+		response.RouteGate = nil
+	}
+	if !guards.Health {
+		response.RouteHealth = nil
+	}
+	writeJSON(w, http.StatusOK, response)
 }
 
 // advanceDecision is the ADR-1447 record for an advance: meterd's validated
