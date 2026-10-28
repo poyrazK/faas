@@ -30,13 +30,14 @@ type ManagedPostgresDatabase struct {
 }
 
 type ManagedPostgresLiveKey struct {
-	Kid          string
-	AccountID    pgtype.UUID
-	DatabaseID   pgtype.UUID
-	SealedSecret []byte
-	Recipient    string
-	CreatedAt    pgtype.Timestamptz
-	RetiresAt    pgtype.Timestamptz
+	Kid             string
+	AccountID       pgtype.UUID
+	DatabaseID      pgtype.UUID
+	SealedSecret    []byte
+	Recipient       string
+	CreatedAt       pgtype.Timestamptz
+	RetiresAt       pgtype.Timestamptz
+	SealedSecretSig []byte
 }
 
 type ManagedPostgresLiveLogin struct {
@@ -48,4 +49,5 @@ type ManagedPostgresLiveLogin struct {
 	Slot               string
 	Awake              string
 	CreatedAt          pgtype.Timestamptz
+	SealedLoginSig     []byte
 }

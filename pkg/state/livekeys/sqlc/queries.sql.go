@@ -162,16 +162,18 @@ func (q *Queries) HasActiveLiveKey(ctx context.Context, db DBTX, databaseID stri
 }
 
 const insertLiveKey = `-- name: InsertLiveKey :exec
-INSERT INTO managed_postgres_live_keys (kid,account_id,database_id,sealed_secret,recipient)
- VALUES ($1::text,$2::text::uuid,$3::text::uuid,$4::bytea,$5::text)
+INSERT INTO managed_postgres_live_keys (kid,account_id,database_id,sealed_secret,recipient,sealed_secret_sig)
+ VALUES ($1::text,$2::text::uuid,$3::text::uuid,$4::bytea,$5::text,
+ $6::bytea)
 `
 
 type InsertLiveKeyParams struct {
-	Kid          string
-	AccountID    string
-	DatabaseID   string
-	SealedSecret []byte
-	Recipient    string
+	Kid             string
+	AccountID       string
+	DatabaseID      string
+	SealedSecret    []byte
+	Recipient       string
+	SealedSecretSig []byte
 }
 
 func (q *Queries) InsertLiveKey(ctx context.Context, db DBTX, arg InsertLiveKeyParams) error {
@@ -181,6 +183,7 @@ func (q *Queries) InsertLiveKey(ctx context.Context, db DBTX, arg InsertLiveKeyP
 		arg.DatabaseID,
 		arg.SealedSecret,
 		arg.Recipient,
+		arg.SealedSecretSig,
 	)
 	return err
 }
@@ -250,7 +253,7 @@ func (q *Queries) LiveDatabaseApps(ctx context.Context, db DBTX, databaseID stri
 }
 
 const liveDatabases = `-- name: LiveDatabases :many
-SELECT d.id::text AS database_id,d.backend_id,l.sealed_login,l.recipient,l.slot,l.awake
+SELECT d.id::text AS database_id,d.backend_id,l.sealed_login,l.recipient,l.slot,l.awake,l.sealed_login_sig
  FROM managed_postgres_live_logins l
  JOIN managed_postgres_databases d ON d.id=l.database_id
  WHERE d.backend_id=ANY($1::text[]) AND d.deleted_at IS NULL AND d.state NOT IN ('deleting','deleted')
@@ -259,12 +262,13 @@ SELECT d.id::text AS database_id,d.backend_id,l.sealed_login,l.recipient,l.slot,
 `
 
 type LiveDatabasesRow struct {
-	DatabaseID  string
-	BackendID   string
-	SealedLogin []byte
-	Recipient   string
-	Slot        string
-	Awake       string
+	DatabaseID     string
+	BackendID      string
+	SealedLogin    []byte
+	Recipient      string
+	Slot           string
+	Awake          string
+	SealedLoginSig []byte
 }
 
 // The live databases of the given backends that have a login: the databases
@@ -285,6 +289,7 @@ func (q *Queries) LiveDatabases(ctx context.Context, db DBTX, backendIds []strin
 			&i.Recipient,
 			&i.Slot,
 			&i.Awake,
+			&i.SealedLoginSig,
 		); err != nil {
 			return nil, err
 		}
@@ -333,7 +338,7 @@ func (q *Queries) LiveDatabasesWithoutLogin(ctx context.Context, db DBTX, pageSi
 }
 
 const liveKeyRing = `-- name: LiveKeyRing :many
-SELECT k.kid,k.sealed_secret,k.recipient,k.retires_at FROM managed_postgres_live_keys k
+SELECT k.kid,k.sealed_secret,k.recipient,k.retires_at,k.sealed_secret_sig FROM managed_postgres_live_keys k
  JOIN managed_postgres_databases d ON d.id=k.database_id
  WHERE k.database_id=$1::text::uuid AND d.deleted_at IS NULL AND d.state NOT IN ('deleting','deleted')
  AND (k.retires_at IS NULL OR k.retires_at>clock_timestamp())
@@ -341,10 +346,11 @@ SELECT k.kid,k.sealed_secret,k.recipient,k.retires_at FROM managed_postgres_live
 `
 
 type LiveKeyRingRow struct {
-	Kid          string
-	SealedSecret []byte
-	Recipient    string
-	RetiresAt    pgtype.Timestamptz
+	Kid             string
+	SealedSecret    []byte
+	Recipient       string
+	RetiresAt       pgtype.Timestamptz
+	SealedSecretSig []byte
 }
 
 func (q *Queries) LiveKeyRing(ctx context.Context, db DBTX, databaseID string) ([]LiveKeyRingRow, error) {
@@ -361,6 +367,7 @@ func (q *Queries) LiveKeyRing(ctx context.Context, db DBTX, databaseID string) (
 			&i.SealedSecret,
 			&i.Recipient,
 			&i.RetiresAt,
+			&i.SealedSecretSig,
 		); err != nil {
 			return nil, err
 		}
@@ -426,7 +433,7 @@ func (q *Queries) LockLiveDatabase(ctx context.Context, db DBTX, arg LockLiveDat
 }
 
 const resealLiveKey = `-- name: ResealLiveKey :execrows
-UPDATE managed_postgres_live_keys SET sealed_secret=$1::bytea
+UPDATE managed_postgres_live_keys SET sealed_secret=$1::bytea, sealed_secret_sig=NULL
  WHERE kid=$2::text AND database_id=$3::text::uuid AND sealed_secret=$4::bytea
    AND recipient=$5::text
 `
@@ -441,7 +448,8 @@ type ResealLiveKeyParams struct {
 
 // Replaces a key's seal only while it still holds the one the re-seal read
 // and names the recipient the re-seal sealed to, so a key rotated, revoked
-// or redirected meanwhile is left as it is.
+// or redirected meanwhile is left as it is. The new ciphertext is unsigned
+// until the operator backfill signs it (ADR 20261028161502).
 func (q *Queries) ResealLiveKey(ctx context.Context, db DBTX, arg ResealLiveKeyParams) (int64, error) {
 	result, err := db.Exec(ctx, resealLiveKey,
 		arg.SealedSecret,
@@ -475,7 +483,7 @@ func (q *Queries) RetireActiveLiveKey(ctx context.Context, db DBTX, arg RetireAc
 }
 
 const sealedLiveKeysAfter = `-- name: SealedLiveKeysAfter :many
-SELECT kid,database_id::text AS database_id,sealed_secret,recipient FROM managed_postgres_live_keys
+SELECT kid,database_id::text AS database_id,sealed_secret,recipient,sealed_secret_sig FROM managed_postgres_live_keys
  WHERE kid>$1::text ORDER BY kid LIMIT $2::int
 `
 
@@ -485,10 +493,11 @@ type SealedLiveKeysAfterParams struct {
 }
 
 type SealedLiveKeysAfterRow struct {
-	Kid          string
-	DatabaseID   string
-	SealedSecret []byte
-	Recipient    string
+	Kid             string
+	DatabaseID      string
+	SealedSecret    []byte
+	Recipient       string
+	SealedSecretSig []byte
 }
 
 // One page of every live key in key-ID order, for the operator re-seal
@@ -507,6 +516,7 @@ func (q *Queries) SealedLiveKeysAfter(ctx context.Context, db DBTX, arg SealedLi
 			&i.DatabaseID,
 			&i.SealedSecret,
 			&i.Recipient,
+			&i.SealedSecretSig,
 		); err != nil {
 			return nil, err
 		}
@@ -519,7 +529,7 @@ func (q *Queries) SealedLiveKeysAfter(ctx context.Context, db DBTX, arg SealedLi
 }
 
 const sealedLiveLoginsAfter = `-- name: SealedLiveLoginsAfter :many
-SELECT database_id::text AS database_id,sealed_login,recipient FROM managed_postgres_live_logins
+SELECT database_id::text AS database_id,sealed_login,recipient,sealed_login_sig FROM managed_postgres_live_logins
  WHERE database_id::text>$1::text ORDER BY database_id::text LIMIT $2::int
 `
 
@@ -529,9 +539,10 @@ type SealedLiveLoginsAfterParams struct {
 }
 
 type SealedLiveLoginsAfterRow struct {
-	DatabaseID  string
-	SealedLogin []byte
-	Recipient   string
+	DatabaseID     string
+	SealedLogin    []byte
+	Recipient      string
+	SealedLoginSig []byte
 }
 
 // One page of every live login in database order, for the operator re-seal.
@@ -544,7 +555,12 @@ func (q *Queries) SealedLiveLoginsAfter(ctx context.Context, db DBTX, arg Sealed
 	items := []SealedLiveLoginsAfterRow{}
 	for rows.Next() {
 		var i SealedLiveLoginsAfterRow
-		if err := rows.Scan(&i.DatabaseID, &i.SealedLogin, &i.Recipient); err != nil {
+		if err := rows.Scan(
+			&i.DatabaseID,
+			&i.SealedLogin,
+			&i.Recipient,
+			&i.SealedLoginSig,
+		); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -555,12 +571,71 @@ func (q *Queries) SealedLiveLoginsAfter(ctx context.Context, db DBTX, arg Sealed
 	return items, nil
 }
 
+const signLiveKey = `-- name: SignLiveKey :execrows
+UPDATE managed_postgres_live_keys SET sealed_secret_sig=$1::bytea
+ WHERE kid=$2::text AND database_id=$3::text::uuid AND sealed_secret=$4::bytea
+   AND recipient=$5::text AND sealed_secret_sig IS NULL
+`
+
+type SignLiveKeyParams struct {
+	SealedSecretSig []byte
+	Kid             string
+	DatabaseID      string
+	SealedSecret    []byte
+	Recipient       string
+}
+
+// The operator backfill signs an unsigned key as it stands (ADR
+// 20261028161502), only while it still holds the ciphertext and recipient
+// the backfill read.
+func (q *Queries) SignLiveKey(ctx context.Context, db DBTX, arg SignLiveKeyParams) (int64, error) {
+	result, err := db.Exec(ctx, signLiveKey,
+		arg.SealedSecretSig,
+		arg.Kid,
+		arg.DatabaseID,
+		arg.SealedSecret,
+		arg.Recipient,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const signLiveLogin = `-- name: SignLiveLogin :execrows
+UPDATE managed_postgres_live_logins SET sealed_login_sig=$1::bytea
+ WHERE database_id=$2::text::uuid AND sealed_login=$3::bytea
+   AND recipient=$4::text AND sealed_login_sig IS NULL
+`
+
+type SignLiveLoginParams struct {
+	SealedLoginSig []byte
+	DatabaseID     string
+	SealedLogin    []byte
+	Recipient      string
+}
+
+// As SignLiveKey, for a login.
+func (q *Queries) SignLiveLogin(ctx context.Context, db DBTX, arg SignLiveLoginParams) (int64, error) {
+	result, err := db.Exec(ctx, signLiveLogin,
+		arg.SealedLoginSig,
+		arg.DatabaseID,
+		arg.SealedLogin,
+		arg.Recipient,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const upsertLiveLogin = `-- name: UpsertLiveLogin :exec
-INSERT INTO managed_postgres_live_logins (database_id,account_id,sealed_login,recipient,provider_identity_id,slot,awake)
+INSERT INTO managed_postgres_live_logins (database_id,account_id,sealed_login,recipient,provider_identity_id,slot,awake,sealed_login_sig)
  VALUES ($1::text::uuid,$2::text::uuid,$3::bytea,$4::text,
- $5::text,$6::text,$7::text)
+ $5::text,$6::text,$7::text,$8::bytea)
  ON CONFLICT (database_id) DO UPDATE SET sealed_login=EXCLUDED.sealed_login, recipient=EXCLUDED.recipient,
- provider_identity_id=EXCLUDED.provider_identity_id, slot=EXCLUDED.slot, awake=EXCLUDED.awake, created_at=now()
+ provider_identity_id=EXCLUDED.provider_identity_id, slot=EXCLUDED.slot, awake=EXCLUDED.awake,
+ sealed_login_sig=EXCLUDED.sealed_login_sig, created_at=now()
 `
 
 type UpsertLiveLoginParams struct {
@@ -571,6 +646,7 @@ type UpsertLiveLoginParams struct {
 	ProviderIdentityID string
 	Slot               string
 	Awake              string
+	SealedLoginSig     []byte
 }
 
 func (q *Queries) UpsertLiveLogin(ctx context.Context, db DBTX, arg UpsertLiveLoginParams) error {
@@ -582,6 +658,7 @@ func (q *Queries) UpsertLiveLogin(ctx context.Context, db DBTX, arg UpsertLiveLo
 		arg.ProviderIdentityID,
 		arg.Slot,
 		arg.Awake,
+		arg.SealedLoginSig,
 	)
 	return err
 }

@@ -120,6 +120,7 @@ var EnvContract = []EnvVar{
 	{Name: "FAAS_APID_INTERNAL_BASE_URL", Owners: []string{"meterd"}, Source: EnvSourceDefault, Default: "http://127.0.0.1:9101", Note: "Safe Deploy meterd-to-apid operator listener; must remain a loopback HTTP origin"},
 	{Name: "FAAS_APID_LISTEN", Owners: []string{"apid"}, Source: EnvSourceDefault},
 	{Name: "FAAS_APID_LIVE_KEY_RECIPIENT_FILE", Owners: []string{"apid"}, Source: EnvSourceDropin, Default: "", Note: "operator-only live-query preview (ADR-20261016151947): livequeryd's age recipient file, delivered by livequeryd_service's 99-faas-live-queries.conf; apid seals each database's live secret to it and cannot read one back; unset leaves live queries unavailable"},
+	{Name: "FAAS_APID_LIVE_SIGNING_KEY_FILE", Owners: []string{"apid"}, Source: EnvSourceDropin, Default: "", Note: "live-query writer signing key (ADR 20261028161502): an Ed25519 PKCS#8 key apid signs live keys and logins with, delivered as a credential by livequeryd_service's 99-faas-live-queries.conf drop-in; unset writes unsigned rows"},
 	{Name: "FAAS_APID_LOOPBACK", Owners: []string{"gatewayd-internal"}, Source: EnvSourceDefault},
 	{Name: "FAAS_APID_METRICS_ADDR", Owners: []string{"apid"}, Source: EnvSourceDefault},
 	{Name: "FAAS_APID_OTEL_SPANS_WRITER_SOCKET", Owners: []string{"apid", "gatewayd-internal", "gatewayd-public", "outboundd", "vmmd"}, Source: EnvSourceDefault},
