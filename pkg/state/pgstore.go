@@ -27196,6 +27196,7 @@ func (s *PgStore) ConsumeCliAuthCode(ctx context.Context, tokenHash []byte) (api
 		`update cli_auth_codes
 		 set consumed_at = now()
 		 where token_hash = $1
+		   and device_hash is null
 		   and status = 'consumed'
 		   and account_id is not null
 		   and consumed_at is null
@@ -27210,9 +27211,11 @@ func (s *PgStore) ConsumeCliAuthCode(ctx context.Context, tokenHash []byte) (api
 			// polling CLI: if the row exists and is still pending
 			// we tell it to keep waiting; otherwise we stop.
 			var status string
+			// A device-bound row answers the short code as if it did
+			// not exist (H67).
 			err2 := s.pool.QueryRow(ctx,
 				`select status from cli_auth_codes
-				 where token_hash = $1 and expires_at > now()`,
+				 where token_hash = $1 and device_hash is null and expires_at > now()`,
 				tokenHash,
 			).Scan(&status)
 			if err2 == nil && status == string(api.CliAuthStatusPending) {
@@ -27223,6 +27226,55 @@ func (s *PgStore) ConsumeCliAuthCode(ctx context.Context, tokenHash []byte) (api
 		return "", "", err
 	}
 	return api.CliAuthStatusConsumed, accountID, nil
+}
+
+// IssueCliAuthDeviceCode implements CliAuthDeviceCodeStore. A colliding
+// short code is refused rather than ignored: it would bind the device code
+// to someone else's pending row.
+func (s *PgStore) IssueCliAuthDeviceCode(ctx context.Context, tokenHash, deviceHash []byte, expiresAt time.Time) error {
+	tag, err := s.pool.Exec(ctx,
+		`insert into cli_auth_codes (token_hash, device_hash, expires_at) values ($1, $2, $3)
+		 on conflict do nothing`,
+		tokenHash, deviceHash, expiresAt)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrConflict
+	}
+	return nil
+}
+
+// ConsumeCliAuthDeviceCode implements CliAuthDeviceCodeStore with
+// ConsumeCliAuthCode's contract, keyed by the device code's hash.
+func (s *PgStore) ConsumeCliAuthDeviceCode(ctx context.Context, deviceHash []byte) (api.CliAuthStatus, string, error) {
+	var accountID string
+	err := s.pool.QueryRow(ctx,
+		`update cli_auth_codes
+		 set consumed_at = now()
+		 where device_hash = $1
+		   and status = 'consumed'
+		   and account_id is not null
+		   and consumed_at is null
+		   and expires_at > now()
+		 returning account_id`,
+		deviceHash,
+	).Scan(&accountID)
+	if err == nil {
+		return api.CliAuthStatusConsumed, accountID, nil
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return "", "", err
+	}
+	var status string
+	err = s.pool.QueryRow(ctx,
+		`select status from cli_auth_codes where device_hash = $1 and expires_at > now()`,
+		deviceHash,
+	).Scan(&status)
+	if err == nil && status == string(api.CliAuthStatusPending) {
+		return api.CliAuthStatusPending, "", nil
+	}
+	return api.CliAuthStatusExpired, "", ErrNotFound
 }
 
 // AppendDeploymentLog inserts one row and returns the seq Postgres

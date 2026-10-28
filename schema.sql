@@ -32522,6 +32522,7 @@ CREATE TABLE public.cli_auth_codes (
     expires_at timestamp with time zone NOT NULL,
     consumed_at timestamp with time zone,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
+    device_hash bytea,
     CONSTRAINT cli_auth_codes_status_check CHECK ((status = ANY (ARRAY['pending'::text, 'consumed'::text, 'expired'::text])))
 );
 
@@ -69946,6 +69947,13 @@ CREATE INDEX ci_revisions_account_created_idx ON public.ci_pipeline_revisions US
 --
 
 CREATE INDEX ci_runs_account_created_idx ON public.ci_runs USING btree (account_id, created_at DESC, id);
+
+
+--
+-- Name: cli_auth_codes_device_hash; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX cli_auth_codes_device_hash ON public.cli_auth_codes USING btree (device_hash) WHERE (device_hash IS NOT NULL);
 
 
 --

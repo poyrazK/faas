@@ -4739,10 +4739,22 @@ func (c *Client) ListAuditLogAllPage(ctx context.Context, before, accountID, sin
 
 // CLI auth device-code flow (spec §2.2).
 
-// MintCliAuthCode anonymously mints a fresh device code.
+// MintCliAuthCode anonymously mints a fresh login code bound to a device
+// code; ExchangeCliAuthLogin exchanges it.
 func (c *Client) MintCliAuthCode(ctx context.Context) (CliAuthCodeResponse, error) {
 	var out CliAuthCodeResponse
-	return out, c.do(ctx, "POST", "/v1/cli-auth/code", struct{}{}, &out)
+	return out, c.do(ctx, "POST", "/v1/cli-auth/code", CliAuthCodeRequest{Device: true}, &out)
+}
+
+// ExchangeCliAuthLogin polls for a minted code's approval: with its device
+// code when the server issued one, else with the code (an older server).
+func (c *Client) ExchangeCliAuthLogin(ctx context.Context, minted CliAuthCodeResponse) (CliAuthExchangeResponse, error) {
+	if minted.DeviceCode == "" {
+		return c.ExchangeCliAuthCode(ctx, strings.ReplaceAll(minted.Code, "-", ""))
+	}
+	var out CliAuthExchangeResponse
+	return out, c.do(ctx, "POST", "/v1/cli-auth/exchange",
+		CliAuthExchangeRequest{DeviceCode: minted.DeviceCode}, &out)
 }
 
 // ExchangeCliAuthCode polls the server for the user's approval.

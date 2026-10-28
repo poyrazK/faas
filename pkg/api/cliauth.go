@@ -33,11 +33,18 @@ type CliAuthCodeResponse struct {
 	Code      string `json:"code"`
 	URL       string `json:"url"`
 	ExpiresAt string `json:"expires_at"` // RFC3339
+	// DeviceCode is set when the request asked for one (Device): 32 random
+	// bytes, hex, that only this CLI holds. Exchange then accepts only it,
+	// never Code, so guessing the short code a user approves yields nothing
+	// (bug hunt 2026-10-28 H67).
+	DeviceCode string `json:"device_code,omitempty"`
 }
 
-// CliAuthExchangeRequest is the CLI's poll body.
+// CliAuthExchangeRequest is the CLI's poll body: DeviceCode for a code
+// minted with one, else Code (CLIs that predate device codes).
 type CliAuthExchangeRequest struct {
-	Code string `json:"code"`
+	Code       string `json:"code,omitempty"`
+	DeviceCode string `json:"device_code,omitempty"`
 }
 
 // CliAuthExchangeResponse is the only response the CLI writes to disk.
@@ -55,6 +62,9 @@ type CliAuthCodeRequest struct {
 	Purpose string `json:"purpose,omitempty"`
 	// Scopes, with purpose "mcp" only, adds MCPGrantableScopes to apps:read.
 	Scopes []string `json:"scopes,omitempty"`
+	// Device asks for a CLI login code bound to a device code
+	// (CliAuthCodeResponse.DeviceCode).
+	Device bool `json:"device,omitempty"`
 }
 
 const CliAuthPurposeMCPRead = "mcp-read"

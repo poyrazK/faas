@@ -76,7 +76,7 @@ type cliAuthHandlers struct {
 // shape as a fresh code. The only 4xx is 429 from the cliAuthLimiter
 // (cliAuthChain, server.go).
 func (h *cliAuthHandlers) mintCliAuthCode(w http.ResponseWriter, r *http.Request) {
-	code, hash, err := mintBrowserAuthCode(r)
+	code, hash, device, err := mintBrowserAuthCode(r)
 	if errors.Is(err, errBrowserAuthInput) {
 		api.WriteProblem(w, api.NewProblem(400, api.CodeValidation, "Invalid authorization", "purpose must be empty, mcp-read, or mcp-write"))
 		return
@@ -87,17 +87,60 @@ func (h *cliAuthHandlers) mintCliAuthCode(w http.ResponseWriter, r *http.Request
 		return
 	}
 	expiresAt := time.Now().Add(cliAuthCodeTTL)
-	if err := h.srv.store.IssueCliAuthCode(r.Context(), hash, expiresAt); err != nil {
+	deviceCode, err := h.issueCliAuthCode(r, hash, device, expiresAt)
+	if err != nil {
 		h.log.Error("cli_auth.issue", "err", err)
 		api.WriteProblem(w, api.ErrCapacity("could not persist code"))
 		return
 	}
 	url := strings.TrimRight(h.urlBase, "/") + cliAuthPath + "?code=" + code
 	writeJSON(w, http.StatusOK, api.CliAuthCodeResponse{
-		Code:      code,
-		URL:       url,
-		ExpiresAt: expiresAt.UTC().Format(time.RFC3339),
+		Code:       code,
+		URL:        url,
+		ExpiresAt:  expiresAt.UTC().Format(time.RFC3339),
+		DeviceCode: deviceCode,
 	})
+}
+
+// issueCliAuthCode persists a minted code. With device, it also mints a
+// 32-byte device code, stores only its hash, and returns it: the row can
+// then be exchanged only with that device code, never with the short code
+// the user types (bug hunt 2026-10-28 H67). A store without device codes
+// keeps the code-only exchange.
+func (h *cliAuthHandlers) issueCliAuthCode(r *http.Request, hash []byte, device bool, expiresAt time.Time) (string, error) {
+	devices, ok := h.srv.store.(state.CliAuthDeviceCodeStore)
+	if !device || !ok {
+		return "", h.srv.store.IssueCliAuthCode(r.Context(), hash, expiresAt)
+	}
+	raw := make([]byte, 32)
+	if _, err := rand.Read(raw); err != nil {
+		return "", err
+	}
+	if err := devices.IssueCliAuthDeviceCode(r.Context(), hash, api.HashToken(raw), expiresAt); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(raw), nil
+}
+
+// consumeCliAuthExchange resolves an exchange body to the code's state: by
+// device code when one is given, else by the short code (legacy CLIs).
+// valid is false for a malformed body.
+func (h *cliAuthHandlers) consumeCliAuthExchange(r *http.Request, req api.CliAuthExchangeRequest) (status api.CliAuthStatus, accountID string, valid bool, err error) {
+	if req.DeviceCode != "" {
+		raw, decodeErr := hex.DecodeString(strings.TrimSpace(req.DeviceCode))
+		devices, ok := h.srv.store.(state.CliAuthDeviceCodeStore)
+		if decodeErr != nil || len(raw) != 32 || !ok {
+			return "", "", false, nil
+		}
+		status, accountID, err = devices.ConsumeCliAuthDeviceCode(r.Context(), api.HashToken(raw))
+		return status, accountID, true, err
+	}
+	hash, ok := normalizeCliAuthCode(req.Code)
+	if !ok {
+		return "", "", false, nil
+	}
+	status, accountID, err = h.srv.store.ConsumeCliAuthCode(r.Context(), hash)
+	return status, accountID, true, err
 }
 
 // exchangeCliAuthCode handles POST /v1/cli-auth/exchange. The CLI
@@ -117,14 +160,12 @@ func (h *cliAuthHandlers) exchangeCliAuthCode(w http.ResponseWriter, r *http.Req
 			"Invalid request", "body must be {\"code\":\"ABCD-1234\"}"))
 		return
 	}
-	hash, ok := normalizeCliAuthCode(req.Code)
+	status, accountID, ok, err := h.consumeCliAuthExchange(r, req)
 	if !ok {
 		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
-			"Invalid code", "code must be 8 alphanumeric characters (XXXX-NNNN)"))
+			"Invalid code", "code must be 8 alphanumeric characters (XXXX-NNNN), or device_code 64 hex characters"))
 		return
 	}
-
-	status, accountID, err := h.srv.store.ConsumeCliAuthCode(r.Context(), hash)
 	if err != nil {
 		if errors.Is(err, state.ErrNotFound) {
 			api.WriteProblem(w, api.NewProblem(http.StatusGone, api.CodeCliAuthUnavailable,

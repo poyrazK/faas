@@ -17,16 +17,27 @@ import (
 // changes the lookup identity, so neither browser nor exchange can widen a code.
 var errBrowserAuthInput = errors.New("invalid browser authorization request")
 
-func mintBrowserAuthCode(r *http.Request) (string, []byte, error) {
+// mintBrowserAuthCode mints the code the request asks for; device reports a
+// CLI login code whose request asked for a device code (H67).
+func mintBrowserAuthCode(r *http.Request) (code string, hash []byte, device bool, err error) {
 	var input api.CliAuthCodeRequest
 	if r.ContentLength != 0 && r.Body != http.NoBody {
 		if err := decodeJSON(r, &input); err != nil {
-			return "", nil, errBrowserAuthInput
+			return "", nil, false, errBrowserAuthInput
 		}
 	}
 	if input.Purpose == "" && len(input.Scopes) == 0 {
-		return mintCliAuthCodeRaw()
+		code, hash, err := mintCliAuthCodeRaw()
+		return code, hash, input.Device, err
 	}
+	if input.Device {
+		return "", nil, false, errBrowserAuthInput
+	}
+	code, hash, err = mintMCPAuthCode(input)
+	return code, hash, false, err
+}
+
+func mintMCPAuthCode(input api.CliAuthCodeRequest) (string, []byte, error) {
 	prefix := "MCPR"
 	switch input.Purpose {
 	case api.CliAuthPurposeMCPRead:

@@ -5679,7 +5679,10 @@ func (s *server) cliAuthChain(h http.Handler) http.Handler {
 	h = middleware.RequestID(h)
 	h = middleware.Recovery(s.log)(h)
 	h = middleware.AuthLimitWithLimiter(middleware.AuthLimitConfig{
-		CountStatuses: []int{http.StatusTooManyRequests, http.StatusBadRequest},
+		// 410 is an exchange for a code that is unknown, used or expired:
+		// what guessing codes produces, and at most once per real login
+		// (bug hunt 2026-10-28 H67).
+		CountStatuses: []int{http.StatusTooManyRequests, http.StatusBadRequest, http.StatusGone},
 		Log:           s.log,
 	}, s.cliAuthLimiter)(h)
 	return h

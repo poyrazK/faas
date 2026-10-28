@@ -2574,6 +2574,7 @@ type CliAuthCode struct {
 	ExpiresAt  pgtype.Timestamptz
 	ConsumedAt pgtype.Timestamptz
 	CreatedAt  pgtype.Timestamptz
+	DeviceHash []byte
 }
 
 type CloneCheckpointAdmissionGuard struct {
