@@ -138,8 +138,11 @@ func TestTrafficFleetDaemonRateAdmissionAndRecovery(t *testing.T) {
 	if _, err := tx.Exec(t.Context(), "SELECT subject_id FROM pg_ratelimit_counters WHERE scope='app' AND subject_id=$1 FOR UPDATE", f.apps[0].ID); err != nil {
 		t.Fatal(err)
 	}
+	// A locked counter row refuses within a bound instead of hanging. #5755
+	// (ADR-570 amendment 2026-10-28) lets the consume wait up to its 1 s
+	// centralConsumeTimeout for a row lock, so the bound is that plus slack.
 	response := fleetDaemonCall(t, second, f.apps[0], "/work", http.StatusServiceUnavailable)
-	if response.duration > time.Second || !strings.Contains(response.body, "rate_limit_unavailable") {
+	if response.duration > 2*time.Second || !strings.Contains(response.body, "rate_limit_unavailable") {
 		t.Fatalf("bounded lock response=%+v", response)
 	}
 	if err := tx.Rollback(t.Context()); err != nil {
