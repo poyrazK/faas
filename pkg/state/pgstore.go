@@ -27427,6 +27427,17 @@ func (s *PgStore) DeleteAccount(ctx context.Context, id string) error {
 	if err := sqlc.New().DeleteTrafficAccountInvocations(ctx, tx, uuidToPgtype(id)); err != nil {
 		return fmt.Errorf("state: delete account invocations: %w", err)
 	}
+	// Per-request telemetry and logs of the personal apps, as the app purge
+	// removes them: the apps' rows go below, and request_telemetry has no FK
+	// to them, so it outlived the account (bug hunt 2026-10-28 B11).
+	for _, step := range []struct{ name, sql string }{
+		{"request_telemetry", `delete from request_telemetry where app_id in (select id from apps where account_id = $1)`},
+		{"log_events", `delete from log_events where app_id in (select id from apps where account_id = $1)`},
+	} {
+		if _, err := tx.Exec(ctx, step.sql, mustPgUUID(id)); err != nil {
+			return fmt.Errorf("state: purge account %s: %w", step.name, err)
+		}
+	}
 
 	for _, purge := range []func(context.Context, sqlc.DBTX, pgtype.UUID) error{sqlc.New().ObjectStoragePurgeIdentityEventOutbox, sqlc.New().ObjectStoragePurgeIdentityEventLog} {
 		if err := purge(ctx, tx, mustPgUUID(id)); err != nil {
