@@ -102,6 +102,20 @@ func realImageCases() []realImageCase {
 					t.Fatalf("chromium did not render the page: %q", body)
 				}
 			}},
+		// A static Go binary FROM scratch: no shell, no /etc/passwd, launched
+		// as the image declares it. It reports the guest's 10.0.0.2 (ADR-009).
+		{slug: "real-static-whoami", image: "docker.io/traefik/whoami:v1.10.1", check: func(t *testing.T, body []byte) {
+			if !strings.Contains(string(body), "Hostname:") || !strings.Contains(string(body), "10.0.0.2") {
+				t.Fatalf("whoami body = %q", body)
+			}
+		}},
+		// USER nobody, resolved by name from the image's /etc/passwd, writing
+		// its TSDB to the image's nobody-owned /prometheus.
+		{slug: "real-named-user", image: "docker.io/prom/prometheus:v2.53.0", check: func(t *testing.T, body []byte) {
+			if !strings.Contains(string(body), "Prometheus") {
+				t.Fatalf("prometheus body = %q", body)
+			}
+		}},
 	}
 }
 
@@ -134,7 +148,9 @@ func checkPythonRuntime(t *testing.T, body []byte) {
 // TestRealImageSmokeMetal deploys public images from real registries, the
 // way customers deploy them, and checks each serves through the gateway and
 // wakes from its snapshot: nginx, a Python probe of the guest's container
-// environment, Java's InetAddress.getLocalHost and headless Chromium. Docker
+// environment, Java's InetAddress.getLocalHost, headless Chromium, a static
+// binary FROM scratch and a named non-root USER. The official images are
+// multi-platform indexes, so those also resolve the amd64 manifest. Docker
 // Hub pulls go through mirror.gcr.io first (ADR-20261025114554).
 //
 // It needs registry access and runs only with FAAS_E2E_REAL_IMAGES=1. It is
