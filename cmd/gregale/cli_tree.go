@@ -409,7 +409,6 @@ var cliTreeAliases = []cliTreeAlias{
 	{"event notification-retry apply", "events notification-retry-apply"},
 	{"event notification-retry reconcile", "events notification-retry-reconcile"},
 	{"event recovery-notification retry", "events recovery-notification-retry"},
-	{"postgres compute-policy status", "postgres compute-policy-status"},
 	{"webhook account secret rotate", "webhooks account rotate-secret"},
 
 	// Operator tools live under the hidden admin command (rule 7) and keep

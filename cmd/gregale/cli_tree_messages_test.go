@@ -102,14 +102,14 @@ func TestCliMessagesSpellCommandsInTheTree(t *testing.T) {
 		paths = append(paths, matches...)
 	}
 	t.Chdir(t.TempDir()) // no linked checkout may resolve an app
-	// =1 rewrites the CLI's messages; =tests also rewrites the expectations
-	// tests hold for them, once, after a rename.
-	mode := os.Getenv("GREGALE_UPDATE_CLI_TREE_MESSAGES")
-	update := mode == "1" || mode == "tests"
+	// Tests whose expectations echo a rewritten message are updated by
+	// hand: some hold today's names on purpose (synthetic manifests,
+	// today's pages, typed earlier names).
+	update := os.Getenv("GREGALE_UPDATE_CLI_TREE_MESSAGES") == "1"
 	total := 0
 	for _, path := range paths {
 		name := filepath.Base(path)
-		if cliTreeMessageExempt(name) && (mode != "tests" || !strings.HasSuffix(name, "_test.go") || strings.HasPrefix(name, "cli_tree") || strings.HasPrefix(name, "cli_help_groups")) {
+		if cliTreeMessageExempt(name) {
 			continue
 		}
 		after, changed := spellGoLiterals(t, path)

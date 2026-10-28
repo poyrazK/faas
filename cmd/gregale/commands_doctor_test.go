@@ -238,7 +238,7 @@ func TestRunDoctorChecks_EnvVarReferenceForms(t *testing.T) {
 				t.Fatalf("sources = %v, want %v", envCheck.Sources, tt.wantSources)
 			}
 			if tt.name == "node dot property" {
-				for _, want := range []string{"gregale env push --app <app-slug> -f .env", "gregale env set --app <app-slug> API_TOKEN=<value>"} {
+				for _, want := range []string{"gregale env push --app <app-slug> -f .env", "gregale secrets set --app <app-slug> API_TOKEN=<value>"} {
 					if !strings.Contains(envCheck.Fix, want) {
 						t.Errorf("fix missing %q: %s", want, envCheck.Fix)
 					}

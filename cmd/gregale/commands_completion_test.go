@@ -496,7 +496,7 @@ func TestMan_RegistryDocumentsRequiredLeafFlags(t *testing.T) {
 	}
 	var buf bytes.Buffer
 	renderManCommand(&buf, c)
-	for _, want := range []string{"gregale registry list --app <slug>", "gregale registry delete --app <slug> --registry <host>"} {
+	for _, want := range []string{"gregale registry list --app <slug>", "gregale registry rm --app <slug> --registry <host>"} {
 		if !strings.Contains(buf.String(), escapeRoff(want)) {
 			t.Errorf("man registry missing required leaf syntax %q: %s", want, buf.String())
 		}
