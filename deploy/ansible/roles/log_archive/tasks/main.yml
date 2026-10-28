@@ -50,10 +50,14 @@
 # root is a no-op on a converged box; the asserts are read-only.
 # Re-running produces zero `changed`.
 
-# GCE production uses the attached service account, so this envelope contains
-# routing metadata only. Converging it here keeps apid, vmmd, and the archive
-# read path on one source of truth and repairs an old two-byte placeholder.
-- name: log_archive — create archive credential directory for metadata auth
+# The manifest's log_archive section names the bucket (gregalectl manifest
+# ansible renders it into host_vars). Keyless GCS uses the host's attached
+# service account, so the envelope holds routing metadata only; static S3
+# keys (OVH, R2, MinIO) are read from a controller-local file and merged in.
+# Converging it here keeps apid, vmmd, and the archive read path on one source
+# of truth and repairs an old two-byte placeholder. Without a bucket the
+# envelope the operator provisioned is left alone.
+- name: log_archive — create archive credential directory
   ansible.builtin.file:
     path: /etc/faas/secrets/storage-box
     state: directory
@@ -62,20 +66,40 @@
     mode: "0700"
   when: faas_log_archive_bucket | trim | length > 0
 
-- name: log_archive — converge keyless archive metadata envelope
+- name: log_archive — read static archive keys on the controller
+  ansible.builtin.set_fact:
+    log_archive_static_keys: "{{ lookup('ansible.builtin.file', faas_log_archive_credentials_src) | from_json }}"
+  when:
+    - faas_log_archive_bucket | trim | length > 0
+    - faas_log_archive_credentials_src | trim | length > 0
+  no_log: true
+
+- name: log_archive — require both static archive keys
+  ansible.builtin.assert:
+    that:
+      - log_archive_static_keys.key_id | default('') | trim | length > 0
+      - log_archive_static_keys.secret | default('') | trim | length > 0
+    fail_msg: "{{ faas_log_archive_credentials_src }} must hold non-empty key_id and secret."
+  when: log_archive_static_keys is defined
+
+- name: log_archive — converge archive credential envelope
   ansible.builtin.copy:
     dest: /etc/faas/secrets/storage-box/archive-creds.json
     owner: root
     group: root
     mode: "0400"
     content: >-
-      {{ {
+      {{ ({
         'endpoint': faas_log_archive_endpoint,
         'region': faas_log_archive_region,
         'bucket': faas_log_archive_bucket,
         'auth_mode': faas_log_archive_auth_mode
-      } | to_nice_json }}
+      } | combine({
+        'key_id': log_archive_static_keys.key_id,
+        'secret': log_archive_static_keys.secret
+      } if log_archive_static_keys is defined else {})) | to_nice_json }}
   when: faas_log_archive_bucket | trim | length > 0
+  no_log: "{{ log_archive_static_keys is defined }}"
   notify:
     - daemon-reload log_archive
     - activate log archive configuration

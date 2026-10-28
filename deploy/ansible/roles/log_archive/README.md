@@ -15,6 +15,35 @@ envelope. This role is the host-level glue: where the source
 envelope lives, what perms it must have, and where the local
 spool root sits.
 
+## Where the bucket comes from
+
+The manifest's `log_archive` section (see `deploy/manifest/README.md`).
+`gregalectl manifest ansible` renders it into every host's inventory
+`host_vars`, and this role writes it into `archive-creds.json`:
+
+```yaml
+log_archive:                 # keyless GCS: the host's attached service account
+  bucket: gregale-prod-280686321025-log-archive
+  endpoint: https://storage.googleapis.com
+  auth: gcp_metadata
+```
+
+```yaml
+log_archive:                 # static S3 keys (OVH, R2, MinIO)
+  bucket: gregale-logs
+  endpoint: https://s3.gra.io.cloud.ovh.net
+  region: gra
+  auth: static
+  credentials_src: /operator/secrets/log-archive.json  # {"key_id": "…", "secret": "…"}
+```
+
+The key file stays on the controller; the role reads it with `no_log` and
+merges the pair into the envelope. Without a `log_archive` section the role
+leaves each host's envelope as the operator provisioned it, and
+`faas_log_archive_required` (set for both node groups) fails a host that has
+none. The repo carries no bucket name: the one it used to carry belonged to a
+closed project.
+
 ## What this role does
 
 1. Fail-closed asserts on
