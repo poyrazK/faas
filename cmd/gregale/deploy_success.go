@@ -135,7 +135,7 @@ func deploymentPromotionCommand(ctx context.Context, c *Client, appSlug string, 
 	if err != nil {
 		return "", ""
 	}
-	command = fmt.Sprintf("gregale traffic promote --app %s --deployment %s", appSlug, deploymentCommandRef(dep))
+	command = fmt.Sprintf("gregale release traffic promote --app %s --deployment %s", appSlug, deploymentCommandRef(dep))
 	for _, sibling := range deployments {
 		if sibling.ID == dep.ID || sibling.Status != statusLive || sibling.TrafficPercent == 0 {
 			continue
@@ -203,7 +203,7 @@ func renderSuccessfulDeploymentWithOptions(ctx context.Context, c *Client, dep a
 			PrintOK(osStdout, "Candidate live. %s", appURL)
 		}
 		PrintProgress(osStdout, "Rollout: %d%% traffic · step %d/%d · in progress", final.TrafficPercent, step, final.CanaryTotalSteps)
-		PrintProgress(osStdout, "follow: gregale deployment wait %s --rollout", final.ID)
+		PrintProgress(osStdout, "follow: gregale release wait %s --rollout", final.ID)
 		// ADR-1446: a production release rolls out behind the health-gated
 		// canary by default, so name both ways out of it. Only when this
 		// rollout is that default: after an explicit `--rollout fast` the line
@@ -217,10 +217,10 @@ func renderSuccessfulDeploymentWithOptions(ctx context.Context, c *Client, dep a
 			// as soon as it is ready (ADR-20261021152201).
 			if sr, err := c.GetDeploymentSchedule(ctx, final.ID); err == nil && sr.State == api.ScheduledReleaseStateStarted {
 				PrintOK(osStdout, "Scheduled %s started its rollout at %s. %s", deploymentCommandRef(final), localReleaseTime(sr.StartedAt), appURL)
-				PrintProgress(osStdout, "follow: gregale deployment wait %s --rollout", final.ID)
+				PrintProgress(osStdout, "follow: gregale release wait %s --rollout", final.ID)
 				return 0
 			}
-			PrintFail(osStderr, "Deployment %s became live with %d%% production traffic; expected 0%%. Inspect with: gregale traffic status %s", final.ID, final.TrafficPercent, appSlug)
+			PrintFail(osStderr, "Deployment %s became live with %d%% production traffic; expected 0%%. Inspect with: gregale release traffic status %s", final.ID, final.TrafficPercent, appSlug)
 			return 1
 		}
 		if renderPendingSchedule(final, appURL) {
@@ -231,7 +231,7 @@ func renderSuccessfulDeploymentWithOptions(ctx context.Context, c *Client, dep a
 		if previewURL := deploymentPreviewURL(ctx, c, final.ID); previewURL != "" {
 			PrintProgress(osStdout, "Preview: %s", previewURL)
 		} else {
-			PrintProgress(osStdout, "Preview: gregale deploys show %s --app %s --url", ref, appSlug)
+			PrintProgress(osStdout, "Preview: gregale release stages %s --app %s --url", ref, appSlug)
 		}
 		promotionCommand, servingRef := deploymentPromotionCommand(ctx, c, appSlug, final)
 		if servingRef != "" {
@@ -242,7 +242,7 @@ func renderSuccessfulDeploymentWithOptions(ctx context.Context, c *Client, dep a
 		if promotionCommand != "" {
 			PrintProgress(osStdout, "Promote: %s", promotionCommand)
 		} else {
-			PrintProgress(osStdout, "Promotion: inspect current traffic with gregale traffic status %s", appSlug)
+			PrintProgress(osStdout, "Promotion: inspect current traffic with gregale release traffic status %s", appSlug)
 		}
 	} else if noHTTP {
 		// A worker or job has no URL to visit; the cold-wake and access
@@ -358,7 +358,7 @@ func renderDeploymentReleaseSummary(w io.Writer, summary api.DeploymentSummaryRe
 	// to promote the still-serving release.
 	if prev := summary.Previous; prev != nil && prev.Status == statusLive && summary.Deployment.TrafficPercent < 100 &&
 		summary.Deployment.CanaryPreset != "" && summary.Deployment.CanaryPreset != "none" {
-		_, _ = fmt.Fprintf(w, "  Abort canary: gregale traffic promote --app %s --deployment %s\n", appSlug, deploymentLabel(*prev))
+		_, _ = fmt.Fprintf(w, "  Abort canary: gregale release traffic promote --app %s --deployment %s\n", appSlug, deploymentLabel(*prev))
 		return
 	}
 	if summary.Deployment.TrafficPercent > 0 && summary.Deployment.TrafficPercent < 100 {
@@ -366,10 +366,10 @@ func renderDeploymentReleaseSummary(w io.Writer, summary api.DeploymentSummaryRe
 		// server refuses a plain rollback, and promoting the earlier live
 		// release is the way back, as for a canary.
 		if prev := summary.Previous; prev != nil && prev.Status == statusLive {
-			_, _ = fmt.Fprintf(w, "  Undo split: gregale traffic promote --app %s --deployment %s\n", appSlug, deploymentLabel(*prev))
+			_, _ = fmt.Fprintf(w, "  Undo split: gregale release traffic promote --app %s --deployment %s\n", appSlug, deploymentLabel(*prev))
 			return
 		}
-		_, _ = fmt.Fprintf(w, "  Undo split: gregale traffic status %s, then gregale traffic promote --app %s --deployment <earlier release>\n", appSlug, appSlug)
+		_, _ = fmt.Fprintf(w, "  Undo split: gregale release traffic status %s, then gregale release traffic promote --app %s --deployment <earlier release>\n", appSlug, appSlug)
 		return
 	}
 	if summary.RollbackTargetID == "" {
@@ -414,7 +414,7 @@ func deploymentWaitResumeCommandWithRollout(deploymentID string, deadline time.D
 	if rollout {
 		rolloutFlag = " --rollout"
 	}
-	return fmt.Sprintf("%s deployment wait %s%s --timeout %d", recoveryCLI(), recoveryArgument(deploymentID), rolloutFlag, seconds)
+	return fmt.Sprintf("%s release wait %s%s --timeout %d", recoveryCLI(), recoveryArgument(deploymentID), rolloutFlag, seconds)
 }
 
 func warnDeploymentWaitTimeout(appSlug, deploymentID string, deadline time.Duration) {

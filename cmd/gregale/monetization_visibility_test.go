@@ -71,7 +71,7 @@ func TestReleasedUsage(t *testing.T) {
 	if got := main.ReleasedUsage("account", "usage: gregale account {export|billing-run|invoices|slo}"); got != "usage: gregale account {export|slo}" {
 		t.Errorf("account usage = %q", got)
 	}
-	if got := main.ReleasedUsage("consumers", "usage: gregale consumers <list|quote|rate-cards|usage> <slug>"); got != "usage: gregale consumers <list|usage> <slug>" {
+	if got := main.ReleasedUsage("consumers", "usage: gregale api consumer <list|quote|rate-cards|usage> <slug>"); got != "usage: gregale api consumer <list|usage> <slug>" {
 		t.Errorf("consumers usage = %q", got)
 	}
 	t.Setenv("FAAS_API_MONETIZATION_ENABLED", "1")

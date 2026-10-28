@@ -2612,8 +2612,8 @@ Apps can enforce checks for dashboard publication. The default `optional` policy
 Inspect and change the policy with:
 
 ```sh
-gregale automation publish-policy --app billing
-gregale automation publish-policy --app billing --mode coverage --expected-version 0
+gregale automation policy publish --app billing
+gregale automation policy publish --app billing --mode coverage --expected-version 0
 gregale automation publish --app billing --name paid-invoice --expected-version 7 --scenarios scenarios.yaml
 ```
 
@@ -2665,7 +2665,7 @@ one supported routing replay action:
 gregale automation event-recovery-plan --app billing --name paid-invoice \
   --source billing --event invoice-42 --event invoice-43 \
   --idempotency-key incident-1 --out event-recovery.json
-gregale automation event-recover --plan event-recovery.json --journal events-attempt-1.jsonl
+gregale automation event recover --plan event-recovery.json --journal events-attempt-1.jsonl
 ```
 
 Export is read-only. The plan pins the app identity, published automation version,
@@ -2702,7 +2702,7 @@ Admission rules still apply when the queued recipient is processed.
 Submit a saved event plan as a server-managed job:
 
 ```sh
-gregale automation event-recovery-start --plan event-recovery.json --rate 5 --reason "invoice routing incident"
+gregale automation event-recovery start --plan event-recovery.json --rate 5 --reason "invoice routing incident"
 gregale event recovery get JOB_ID
 gregale event recovery items JOB_ID
 gregale event recovery pause JOB_ID --yes
@@ -2796,8 +2796,8 @@ gregale automation recovery-response-plan --app consumer --job JOB_UUID \
   --key incident-20261011 --reason 'provider incident' \
   --cancel-position 1 --retry-position 2 --plan-out response.json
 gregale automation recovery-response-preview --plan response.json
-gregale automation recovery-response-apply --plan response.json --yes
-gregale automation recovery-response-status --plan response.json
+gregale automation recovery-response apply --plan response.json --yes
+gregale automation recovery-response status --plan response.json
 ```
 
 Positions are explicit and repeatable; a target can appear only once. Cancellation requires an admitted active generation. Retry requires a retained failed execution and unchanged eligible generation. Plan creation and preview do not apply actions. The saved file pins the app, parent job, run generations, reasons and action IDs; protect and review it before applying.
@@ -2834,8 +2834,8 @@ gregale automation recovery-policy-reviews --app consumer
 gregale automation recovery-policy-reviews --app consumer \
   --review REVIEW_UUID --plan-out prepared.json
 gregale automation recovery-response-preview --plan prepared.json
-gregale automation recovery-response-apply --plan prepared.json --yes
-gregale automation recovery-response-status --plan prepared.json
+gregale automation recovery-response apply --plan prepared.json --yes
+gregale automation recovery-response status --plan prepared.json
 ```
 
 Policies are disabled by default and only `preview` mode is supported. A stale `expected_version` conflicts; read the policy before changing it. Set `enabled` to false to stop future preparation. Existing plans remain available for explicit application.
@@ -3123,7 +3123,7 @@ caused a recovery. Reading the report does not change automation state.
 
 ### Historical recovery policy evaluation
 
-Use `gregale automation recovery-policy-evaluate --app APP --file POLICY.json
+Use `gregale automation recovery-policy evaluate --app APP --file POLICY.json
 --since 7d` to compare current configuration settings with a proposed policy
 against retained historical review decisions. The file uses the existing
 `{"expected_version": VERSION, "policy": {...}}` update shape; evaluation rejects
@@ -3222,11 +3222,11 @@ names and failure statuses. Preparation uses the saved version, rather than a
 candidate file:
 
 ```sh
-gregale automation failure-recovery-review --app orders --failure FAILURE_UUID --expected-policy-version 3
+gregale automation failure-recovery review --app orders --failure FAILURE_UUID --expected-policy-version 3
 gregale automation failure-recovery-reviews --app orders --limit 25
-gregale automation failure-recovery-review --app orders --review REVIEW_UUID
-gregale automation failure-recovery-review --app orders --review REVIEW_UUID --decision submit --reason 'Provider recovered; reviewed safe resume'
-gregale automation failure-recovery-review --app orders --review REVIEW_UUID --decision cancel --reason 'Handled manually'
+gregale automation failure-recovery review --app orders --review REVIEW_UUID
+gregale automation failure-recovery review --app orders --review REVIEW_UUID --decision submit --reason 'Provider recovered; reviewed safe resume'
+gregale automation failure-recovery review --app orders --review REVIEW_UUID --decision cancel --reason 'Handled manually'
 ```
 
 Submission and cancellation require a non-empty operator reason. A stale submission

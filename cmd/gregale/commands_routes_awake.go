@@ -11,7 +11,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
-const routesAwakeUsage = "usage: gregale routes awake APP [--since 7d] [--until RFC3339]"
+const routesAwakeUsage = "usage: gregale api route awake APP [--since 7d] [--until RFC3339]"
 
 // cmdRoutesAwake shows which routes keep a scale-to-zero app awake and what
 // each costs in awake time (ADR-1187).

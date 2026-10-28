@@ -34,6 +34,7 @@ type trafficDomainBindingTx struct {
 	accounts      []string
 	appsSuffix    string
 	appID         pgtype.UUID
+	scope         trafficBindingScope
 	release       func(context.Context)
 }
 
@@ -151,6 +152,9 @@ func (s *PgStore) tryBeginTrafficDomainBinding(ctx context.Context, domain strin
 			return err
 		}
 		guarded.beforeClaims, guarded.beforeTenants, guarded.beforeAliases = claims.Domains, claims.Tenants, claims.Aliases
+		if guarded.scope, err = declareTrafficBindingScope(bounded, tx, claims, originalAccount.String(), []string{domain}, originalApp.String(), s.trafficAppsSuffix); err != nil {
+			return err
+		}
 		account, err := sqlc.New().ReadAppTrafficAccount(bounded, tx, originalApp)
 		if err != nil {
 			return err
@@ -219,6 +223,10 @@ func (tx *trafficDomainBindingTx) validate(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
+		// This transaction keeps no primary claims, so neither side compares them.
+		before := trafficBindingClaims{Domains: tx.beforeClaims, Tenants: tx.beforeTenants, Aliases: tx.beforeAliases}
+		after := trafficBindingClaims{Domains: claims.Domains, Tenants: claims.Tenants, Aliases: claims.Aliases}
+		auditTrafficBindingScope(TrafficPolicyWriterDomainBinding, tx.scope, trafficBindingChanges(before, after, tx.globalBefore.Reservations, globalAfter.Reservations))
 		return checkTrafficHostAnalysis(bounded, tx.globalBefore, globalAfter)
 	})); err != nil {
 		return err

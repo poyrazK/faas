@@ -128,6 +128,17 @@ type ProjectsData struct {
 	Environments  []string
 	CSRFToken     string
 	Flash         string
+	// CalledBy lists, by service name, the Project services that declare
+	// they call that service.
+	CalledBy map[string][]string
+	// ServiceCalls are the measured calls between Project's services over
+	// ServiceCallsRange, from the service map (ADR-1131). ServiceCallsRange
+	// is empty while the map is not released to the account or its plan has
+	// no per-app metrics; ServiceCallsNote explains degraded telemetry.
+	ServiceCalls      []api.ServiceMapEdge
+	ServiceCallsRange string
+	ServiceCallsNote  string
+	HighErrorRatePct  float64
 }
 
 type EnvironmentGitOpsData struct {

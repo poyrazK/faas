@@ -28,6 +28,7 @@ type trafficTenantBindingTx struct {
 	account      string
 	appsSuffix   string
 	writer       string
+	scope        trafficBindingScope
 	release      func(context.Context)
 }
 
@@ -226,6 +227,9 @@ func (s *PgStore) tryBeginTrafficBinding(ctx context.Context, writer, account st
 		if retry {
 			return nil
 		}
+		if tx.scope, err = declareTrafficBindingScope(bounded, base, tx.before, account, requested, appID, tx.appsSuffix); err != nil {
+			return err
+		}
 		tx.globalBefore, err = readTrafficHostAnalysis(bounded, base, pgtype.UUID{}, tx.appsSuffix)
 		if err != nil {
 			return err
@@ -278,6 +282,7 @@ func (tx *trafficTenantBindingTx) Validate(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
+		auditTrafficBindingScope(tx.writer, tx.scope, trafficBindingChanges(tx.before, claims, tx.globalBefore.Reservations, globalAfter.Reservations))
 		views := make(map[string]trafficHostAnalysis, len(tx.accounts))
 		for _, owner := range tx.accounts {
 			view, err := readTrafficHostAnalysis(bounded, tx.Tx, uuidToPgtype(owner), tx.appsSuffix)

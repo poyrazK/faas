@@ -76,7 +76,7 @@ func cmdEdgeRulesTrace(args []string) int {
 		}
 	} else {
 		if *slug == "" || *rawURL == "" {
-			PrintUsage(os.Stderr, "usage: gregale edge-rules trace (--config <file|-> | --app <slug> --url <http(s)://host/path> [--project <slug> --environment <slug>] [--method GET] [--header Name:Value]... [--client-ip IP] [--country CC] [--asn AS] [--verified-bot] [--body-file <path|->]) [--proposal <file|->] [--add-rule JSON|@file]... [--remove-rule ID]...", "edge-rules")
+			PrintUsage(os.Stderr, "usage: gregale edge rule trace (--config <file|-> | --app <slug> --url <http(s)://host/path> [--project <slug> --environment <slug>] [--method GET] [--header Name:Value]... [--client-ip IP] [--country CC] [--asn AS] [--verified-bot] [--body-file <path|->]) [--proposal <file|->] [--add-rule JSON|@file]... [--remove-rule ID]...", "edge-rules")
 			return 1
 		}
 		u, parseErr := url.Parse(*rawURL)

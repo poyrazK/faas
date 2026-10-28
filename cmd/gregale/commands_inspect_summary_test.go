@@ -368,7 +368,7 @@ func TestInspectRecommendations_ParkedAppPointsToWake(t *testing.T) {
 			Release: main.InspectReleaseSummary{Available: true, Status: "live", TrafficPercent: 100},
 			Runtime: main.InspectRuntimeSummary{Health: &main.InspectHealthSummary{Status: apihostingreceipt.SmokeVerified}},
 		})
-		if len(recs) == 0 || recs[0].Code != "app_parked" || !strings.Contains(recs[0].Message, tc.want) || !strings.Contains(recs[0].Next, "gregale wake demo") {
+		if len(recs) == 0 || recs[0].Code != "app_parked" || !strings.Contains(recs[0].Message, tc.want) || !strings.Contains(recs[0].Next, "gregale app wake demo") {
 			t.Fatalf("reason %q: recommendations = %+v", tc.reason, recs)
 		}
 	}
@@ -433,7 +433,7 @@ func TestInspectRecommendations_LiveReleaseWithoutTraffic(t *testing.T) {
 		got := false
 		for _, rec := range recs {
 			if rec.Code == "no_traffic" {
-				got = rec.Severity == "error" && strings.Contains(rec.Next, "gregale traffic promote --app h12-mcp --deployment dep-1")
+				got = rec.Severity == "error" && strings.Contains(rec.Next, "gregale release traffic promote --app h12-mcp --deployment dep-1")
 			}
 		}
 		if got != tc.want {

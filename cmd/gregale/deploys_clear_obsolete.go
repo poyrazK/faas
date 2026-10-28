@@ -16,7 +16,7 @@ import (
 	"time"
 )
 
-const deploysClearObsoleteUsage = "usage: gregale deploys clear-obsolete --app <slug> [--older-than 168h] [--dry-run] [--force] [--json]"
+const deploysClearObsoleteUsage = "usage: gregale release prune --app <slug> [--older-than 168h] [--dry-run] [--force] [--json]"
 
 func cmdDeploysClearObsolete(args []string) int {
 	fs := newFlagSet("deploys clear-obsolete", flag.ContinueOnError)

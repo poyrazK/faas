@@ -18,8 +18,8 @@ import (
 )
 
 const (
-	edgeWAFReviewUsage  = "usage: gregale edge-rules waf-review [--app <slug>] [--rule ID] [--since 7d]"
-	edgeWAFExcludeUsage = "usage: gregale edge-rules waf-exclude <rule-id> [--add ID,...] [--remove ID,...]"
+	edgeWAFReviewUsage  = "usage: gregale edge rule waf-review [--app <slug>] [--rule ID] [--since 7d]"
+	edgeWAFExcludeUsage = "usage: gregale edge rule waf-exclude <rule-id> [--add ID,...] [--remove ID,...]"
 )
 
 // cmdEdgeRulesWAFReview prints the WAF false-positive review for an app.
@@ -75,10 +75,10 @@ func printEdgeWAFReview(slug string, out api.EdgeWAFReviewResponse) {
 			g.Assessment, g.CRSRuleID, g.Category, g.Events, g.Clients, truncate(rule, 24), truncate(g.Path, 60))
 		_, _ = fmt.Fprintf(osStdout, "  %s\n", g.Reason)
 		if g.Assessment == api.EdgeWAFReviewLikelyFalsePositive {
-			_, _ = fmt.Fprintf(osStdout, "  exclude: gregale edge-rules waf-exclude %s --add %d\n", g.RuleID, g.CRSRuleID)
+			_, _ = fmt.Fprintf(osStdout, "  exclude: gregale edge rule waf-exclude %s --add %d\n", g.RuleID, g.CRSRuleID)
 		}
 		if len(g.RequestIDs) > 0 {
-			_, _ = fmt.Fprintf(osStdout, "  example: gregale edge-rules events --app %s --request-id %s\n", slug, g.RequestIDs[0])
+			_, _ = fmt.Fprintf(osStdout, "  example: gregale edge rule events --app %s --request-id %s\n", slug, g.RequestIDs[0])
 		}
 	}
 	_, _ = fmt.Fprintf(osStdout, "%d detections since %s; detections are sampled, so counts are lower bounds.\n",

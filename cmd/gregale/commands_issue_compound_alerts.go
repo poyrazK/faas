@@ -15,7 +15,7 @@ import (
 )
 
 func cmdIssueCompoundAlerts(args []string) int {
-	usage := "usage: gregale issues compound-alerts <get|save|remove|preview> --app SLUG [--key KEY --environment NAME --minimum-events N --minimum-customers N --window-seconds N --cooldown-seconds N --enabled=true|false --expected-revision N --issue UUID]"
+	usage := "usage: gregale debug issue compound-alerts <get|save|remove|preview> --app SLUG [--key KEY --environment NAME --minimum-events N --minimum-customers N --window-seconds N --cooldown-seconds N --enabled=true|false --expected-revision N --issue UUID]"
 	if len(args) == 0 {
 		_, _ = fmt.Fprintln(os.Stderr, usage)
 		return 1

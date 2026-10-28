@@ -121,21 +121,79 @@ func (s *server) renderProjectDetail(w http.ResponseWriter, r *http.Request, log
 		environmentSlugs = append(environmentSlugs, environment.Slug)
 	}
 	view, _ := AccountFrom(r.Context())
+	data := dashboard.ProjectsData{
+		Project:       &response,
+		DeletePreview: &preview,
+		Environments:  environmentSlugs,
+		CSRFToken:     token,
+		Flash:         projectDashboardFlash(r),
+		CalledBy:      projectCalledBy(response.Workloads),
+	}
+	s.addProjectServiceCalls(r, acct, &data)
 	page := dashboard.Page{
 		Title:   "Project " + slug,
 		Body:    "projects",
 		Account: dashboardAccountView(view, 0),
-		Data: dashboard.ProjectsData{
-			Project:       &response,
-			DeletePreview: &preview,
-			Environments:  environmentSlugs,
-			CSRFToken:     token,
-			Flash:         projectDashboardFlash(r),
-		},
+		Data:    data,
 	}
 	if err := dashboard.Render(w, log, httpsec.NonceFromContext(r.Context()), page); err != nil {
 		renderProblem(w, log, err)
 	}
+}
+
+// projectCalledBy inverts the services' declared calls: for each service,
+// the services that declare they call it, matched by service name
+// (ADR-20261026170512).
+func projectCalledBy(workloads []api.ProjectWorkloadResponse) map[string][]string {
+	calledBy := make(map[string][]string)
+	for _, caller := range workloads {
+		for _, dependency := range caller.DependsOn {
+			for _, target := range workloads {
+				if target.WorkloadName != "" && api.SameServiceName(target.WorkloadName, dependency) {
+					calledBy[target.WorkloadName] = append(calledBy[target.WorkloadName], caller.WorkloadName)
+				}
+			}
+		}
+	}
+	return calledBy
+}
+
+// addProjectServiceCalls adds the measured calls between the project's
+// services from the service map (ADR-1131), when the map is released to the
+// account and its plan has per-app metrics.
+func (s *server) addProjectServiceCalls(r *http.Request, acct state.Account, data *dashboard.ProjectsData) {
+	serviceMap, err := s.serviceMap.DashboardData(r, acct)
+	if err != nil {
+		data.ServiceCallsNote = "Service call health is unavailable right now."
+		return
+	}
+	if !serviceMap.Enabled || !serviceMap.PlanAllowed {
+		return
+	}
+	data.ServiceCallsRange, data.HighErrorRatePct = serviceMap.Range, serviceMap.HighErrorRatePct
+	if serviceMap.Degraded != "" {
+		data.ServiceCallsNote = "Service call health is unavailable right now (" + serviceMap.Degraded + ")."
+		return
+	}
+	if serviceMap.Map != nil {
+		data.ServiceCalls = projectServiceCalls(serviceMap.Map.Edges, data.Project.Workloads)
+	}
+}
+
+// projectServiceCalls keeps the service-map edges between a project's own
+// services; calls to or from other apps belong to the account's map.
+func projectServiceCalls(edges []api.ServiceMapEdge, workloads []api.ProjectWorkloadResponse) []api.ServiceMapEdge {
+	members := make(map[string]bool, len(workloads))
+	for _, workload := range workloads {
+		members[workload.Slug] = true
+	}
+	var out []api.ServiceMapEdge
+	for _, edge := range edges {
+		if members[edge.CallerAppSlug] && members[edge.TargetAppSlug] {
+			out = append(out, edge)
+		}
+	}
+	return out
 }
 
 func projectDashboardRedirect(w http.ResponseWriter, r *http.Request, slug, result string) {

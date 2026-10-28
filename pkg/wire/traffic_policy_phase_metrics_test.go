@@ -22,3 +22,18 @@ func TestTrafficPolicyPhaseHistogramIsApidOnly(t *testing.T) {
 	var unwired *OpsMetrics
 	unwired.ObserveTrafficPolicyPhase("app_binding", "validate", time.Second)
 }
+
+func TestTrafficBindingScopeCountersAreApidOnly(t *testing.T) {
+	apid := NewOpsMetrics("apid")
+	apid.ObserveTrafficBindingScope("app_binding", nil)
+	apid.ObserveTrafficBindingScope("app_binding", []string{"alias", "alias"})
+	if got := testutil.ToFloat64(apid.trafficBindingScopeAudits.WithLabelValues("app_binding", "covered")); got != 1 {
+		t.Fatalf("covered audits = %v", got)
+	}
+	if got := testutil.ToFloat64(apid.trafficBindingScopeMisses.WithLabelValues("app_binding", "alias")); got != 2 {
+		t.Fatalf("alias misses = %v", got)
+	}
+	NewOpsMetrics("schedd").ObserveTrafficBindingScope("app_binding", []string{"alias"})
+	var unwired *OpsMetrics
+	unwired.ObserveTrafficBindingScope("app_binding", []string{"alias"})
+}

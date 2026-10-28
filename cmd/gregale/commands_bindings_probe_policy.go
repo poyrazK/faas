@@ -18,7 +18,7 @@ func cmdBindingsProbePolicy(args []string) int {
 	remove := fs.Bool("delete", false, "remove the configured probe")
 	flags, pos := splitArgsForFlags(args, "delete")
 	if fs.Parse(flags) != nil || len(pos) != 1 {
-		return printErr("Invalid probe policy", fmt.Errorf("usage: gregale bindings probe-policy <integration-id> [--path /health --method GET --expect-status 200 | --delete]"))
+		return printErr("Invalid probe policy", fmt.Errorf("usage: gregale app binding probe-policy <integration-id> [--path /health --method GET --expect-status 200 | --delete]"))
 	}
 	id, err := uuid.Parse(pos[0])
 	if err != nil {

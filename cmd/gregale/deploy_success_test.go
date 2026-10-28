@@ -49,10 +49,10 @@ func TestDefaultDeployWaitTimeoutCoversServerBuildBudget(t *testing.T) {
 }
 
 func TestDeploymentWaitResumeCommand(t *testing.T) {
-	if got, want := main.DeploymentWaitResumeCommand("dep-1", 90*time.Second), "gregale deployment wait dep-1 --timeout 90"; got != want {
+	if got, want := main.DeploymentWaitResumeCommand("dep-1", 90*time.Second), "gregale release wait dep-1 --timeout 90"; got != want {
 		t.Fatalf("resume command = %q, want %q", got, want)
 	}
-	if got, want := main.DeploymentWaitResumeCommand("dep-1", 0), "gregale deployment wait dep-1 --timeout 1200"; got != want {
+	if got, want := main.DeploymentWaitResumeCommand("dep-1", 0), "gregale release wait dep-1 --timeout 1200"; got != want {
 		t.Fatalf("zero-deadline resume command = %q, want %q", got, want)
 	}
 }

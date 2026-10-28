@@ -332,6 +332,7 @@ sql:
       - "pkg/state/release_gate_queries.sql"
       - "pkg/state/release_review_queries.sql"
       - "pkg/state/route_advice_queries.sql"
+      - "pkg/state/route_alert_queries.sql"
       - "pkg/state/route_awake_queries.sql"
       - "pkg/state/route_insights_queries.sql"
       - "pkg/state/route_priority_queries.sql"

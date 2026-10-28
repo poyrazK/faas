@@ -14,7 +14,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
-const edgeRuleRecipeUsage = "usage: gregale edge-rules recipe <recipe> [--app <slug>] [--host <hostname>] [--set name=value]... [--enforce] [--alert-webhook-url <url> (--alert-webhook-secret-stdin|--alert-webhook-secret <s>) [--alert-threshold N]]"
+const edgeRuleRecipeUsage = "usage: gregale edge rule recipe <recipe> [--app <slug>] [--host <hostname>] [--set name=value]... [--enforce] [--alert-webhook-url <url> (--alert-webhook-secret-stdin|--alert-webhook-secret <s>) [--alert-threshold N]]"
 
 // edgeRuleRecipeJSON is the --json shape of one catalog entry.
 type edgeRuleRecipeJSON struct {
@@ -77,7 +77,7 @@ func cmdEdgeRulesRecipe(args []string) int {
 	appFlag := fs.String("app", "", "app slug (defaults to linked project context)")
 	hostFlag := fs.String("host", "", "restrict the rule to one hostname (default: every host the app serves)")
 	var sets multiFlag
-	fs.Var(&sets, "set", "recipe parameter as name=value (repeat; see gregale edge-rules recipes)")
+	fs.Var(&sets, "set", "recipe parameter as name=value (repeat; see gregale edge rule recipes)")
 	enforce := fs.Bool("enforce", false, "enforce immediately instead of starting in log mode")
 	alertURL := fs.String("alert-webhook-url", "", "also alert this webhook when the rule spikes (ADR-986 amendment)")
 	alertSecret := fs.String("alert-webhook-secret", "", "webhook signing secret for the spike alert (prefer --alert-webhook-secret-stdin)")
@@ -152,7 +152,7 @@ func cmdEdgeRulesRecipe(args []string) int {
 		return 0
 	}
 	PrintOK(osStdout, "Added %q on %s %s (rule %s) in log mode: it is counted but never acts.", recipe.Title, recipeHostLabel(host), req.MatchPath, out.ID)
-	_, _ = fmt.Fprintf(osStdout, "  %s\n  Watch:   gregale edge-rules stats --app %s\n  Enforce: gregale edge-rules update %s --mode enforce\n", recipe.LogNote, slug, out.ID)
+	_, _ = fmt.Fprintf(osStdout, "  %s\n  Watch:   gregale edge rule stats --app %s\n  Enforce: gregale edge rule update %s --mode enforce\n", recipe.LogNote, slug, out.ID)
 	return 0
 }
 
@@ -173,7 +173,7 @@ func createRecipeAlert(client *api.Client, slug, recipeID, ruleID string, perHou
 	}
 	alert, err := client.CreateAlertRule(context.Background(), slug, req)
 	if err != nil {
-		return printErr("Rule "+ruleID+" was added, but its spike alert failed (retry with gregale alerts add --metric edge_rule_activity --edge-rule-id "+ruleID+")", err)
+		return printErr("Rule "+ruleID+" was added, but its spike alert failed (retry with gregale alert create --metric edge_rule_activity --edge-rule-id "+ruleID+")", err)
 	}
 	if !jsonOutput {
 		_, _ = fmt.Fprintf(osStdout, "  Alert:   %q fires above %d matches per hour (alert %s)\n", alert.Name, perHour, alert.ID)

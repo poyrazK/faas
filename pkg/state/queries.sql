@@ -9346,6 +9346,20 @@ SELECT CASE WHEN inputs<=sqlc.arg(max_inputs)::integer AND bytes<=sqlc.arg(max_b
         'Primaries',(SELECT coalesce(jsonb_agg(data),'[]'::jsonb) FROM primaries)) ELSE NULL::jsonb END::jsonb AS data,
     inputs::bigint,bytes::bigint FROM bounds;
 
+-- name: ReadTrafficAppBindingHosts :many
+-- The synthetic hostnames a binding write on one app, or on every app of an
+-- account, may publish or release: each primary and alias URL, whatever the
+-- app's status (ADR-20261027163626).
+SELECT host::text FROM (
+    SELECT lower(a.slug)||sqlc.arg(apps_suffix)::text AS host FROM apps a
+    WHERE a.id=sqlc.narg(app_id)::uuid OR (sqlc.narg(app_id)::uuid IS NULL AND a.account_id=sqlc.arg(account_id)::uuid)
+    UNION
+    SELECT lower('tag-'||z.name||'-'||replace(a.id::text,'-',''))||sqlc.arg(apps_suffix)::text
+    FROM deployment_aliases z JOIN apps a ON a.id=z.app_id
+    WHERE a.id=sqlc.narg(app_id)::uuid OR (sqlc.narg(app_id)::uuid IS NULL AND a.account_id=sqlc.arg(account_id)::uuid)
+) hosts WHERE sqlc.arg(apps_suffix)::text<>''
+ORDER BY host LIMIT (sqlc.arg(max_inputs)::integer+1);
+
 -- name: DeleteTrafficCustomDomain :execrows
 DELETE FROM custom_domains WHERE domain=sqlc.arg(domain)::text::citext AND app_id=sqlc.arg(app_id)::uuid;
 
@@ -16022,7 +16036,9 @@ SELECT h.entry FROM route_health_history h
  ORDER BY checked_at DESC, id DESC LIMIT sqlc.arg(page_limit)::integer;
 
 -- name: ReadRouteHealthNotificationState :one
-SELECT context_key, status, COALESCE(blocked_decision_id::text, '')::text AS blocked_decision_id
+-- updated_at is when the status began; a hold keeps its first blocking
+-- decision's time while its context lasts (ADR-20261028110044).
+SELECT context_key, status, COALESCE(blocked_decision_id::text, '')::text AS blocked_decision_id, updated_at
 FROM route_health_notification_state WHERE deployment_id = sqlc.arg(deployment_id)::text::uuid
  AND app_id = sqlc.arg(app_id)::text::uuid AND account_id = sqlc.arg(account_id)::text::uuid;
 

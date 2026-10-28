@@ -27,7 +27,7 @@ func TestSlugConflictNamesOwnDeletedApp(t *testing.T) {
 	}{
 		{name: "restorable",
 			deleted: `{"apps":[{"id":"a1","slug":"other"},{"id":"a2","slug":"taken","restore_eligible":true,"delete_grace_until":"` + grace.Format(time.RFC3339) + `"}]}`,
-			want:    []string{`"taken"`, "an app you deleted", "gregale apps restore taken", "2026-11-24 08:10 UTC"}},
+			want:    []string{`"taken"`, "an app you deleted", "gregale app restore taken", "2026-11-24 08:10 UTC"}},
 		{name: "not restorable",
 			deleted:   `{"apps":[{"id":"a2","slug":"taken","restore_eligible":false,"restore_blocker":"plan_quota"}]}`,
 			want:      []string{"held by an app you deleted until it is purged", "pick a different --name"},
@@ -94,7 +94,7 @@ func TestAppScaleMinOnParkedAppSaysWakeStartsFloor(t *testing.T) {
 			if code != 0 {
 				t.Fatalf("exit = %d, stderr = %s", code, readStderr())
 			}
-			hasNote := strings.Contains(stdout.String(), "Run gregale wake demo to start it now")
+			hasNote := strings.Contains(stdout.String(), "Run gregale app wake demo to start it now")
 			if hasNote != (status == "evicted_cold") {
 				t.Fatalf("status %s: wake note present = %v, stdout = %s", status, hasNote, stdout)
 			}
