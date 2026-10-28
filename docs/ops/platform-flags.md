@@ -212,6 +212,7 @@ flags in the table below release their capability; every other capability in
 | `realtime_occupancy` | Realtime channel occupancy (ADR-1324) | apid → realtimed | `FAAS_REALTIME_OCCUPANCY_PREVIEW_ENABLED` |
 | `realtime_preview` | Realtime preview: retained history and what builds on it, tickets, access controls, occupancy, usage, endpoint slugs and channel rules, the v2 protocol and SSE (ADR-20261019102657). The v2 protocol, tickets, access controls and occupancy also need their own flag above | apid → realtimed | `FAAS_REALTIME_PREVIEW_ACCOUNTS` |
 | `strict_budgets` | Strict compute and egress budgets (ADR-1750) | apid | none (off until an operator writes it) |
+| `quiet_pause_unbilled` | Unbilled quiet pause: bill running seconds, not quiet-paused ones (ADR-20261023171905). Takes effect only where meterd's `quiet_pause_unbilled` mode is `on`; accounts it does not release are counted as in shadow mode and billed in full | meterd | none (off until an operator writes it) |
 | `edge_waf_blocking` | Warn and block modes of WAF edge rules (ADR-20261023113721) | apid, gatewayd-internal | none (off until an operator writes it) |
 | `edge_challenge` | Challenge edge rules, with difficulty escalation (ADR-20261023113721) | apid, gatewayd-internal | none (off until an operator writes it) |
 | `edge_penalty_box` | Edge rule penalties (ADR-20261023113721) | apid, gatewayd-internal | none (off until an operator writes it) |
