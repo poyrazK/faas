@@ -11740,6 +11740,13 @@ const (
 	// refresh, dropping the least recently used.
 	TrafficPublicRoutingWarmTTL  = 10 * time.Minute
 	TrafficPublicRoutingMaxViews = 4_096
+	// TrafficPublicRoutingMaxLiveDeployments and
+	// TrafficPublicRoutingMaxReleaseGraphs bound what one app's view keeps
+	// for pinned requests (ADR-20261028095914): its live deployments in every
+	// scope, and its active and still-usable release graphs. A pin the cut
+	// list does not hold is read from the store, as before.
+	TrafficPublicRoutingMaxLiveDeployments = 128
+	TrafficPublicRoutingMaxReleaseGraphs   = 64
 	// TrafficRateLimitOutageGrace is how long after its last successful shared
 	// counter decision a gateway enforces central rate limits from its own
 	// per-gateway bucket while the counter cannot be read
