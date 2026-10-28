@@ -12508,6 +12508,52 @@ select exists (
     and (i.queue_binding_id=b.id or (b.deployment_scope='' and i.queue_binding_id is null and i.queue_name=b.queue_name))
 )::boolean as in_flight;
 
+-- name: QueueBindingTelemetry :one
+-- QueueStateForBinding's figures for gauges and alerts without a
+-- backlog-sized read: each count stops at row_limit, and the oldest pending
+-- message is the first one due in the lease indexes
+-- (ADR-20261018101500 amendment 2026-10-27).
+with b as (
+  select id, account_id, queue_name, deployment_scope from queue_bindings
+  where id=sqlc.arg(binding_id)::uuid and app_id=sqlc.arg(app_id)::uuid
+), owned as (
+  select i.state, i.lease_expires_at from invocations i, b
+  where i.app_id=sqlc.arg(app_id)::uuid and i.account_id=b.account_id and i.source='queue'
+    and (b.deployment_scope='' or i.deployment_scope=b.deployment_scope)
+    and (i.queue_binding_id=b.id or (b.deployment_scope='' and i.queue_binding_id is null and i.queue_name=b.queue_name))
+)
+select
+  ((select count(*) from (
+     select 1 from invocations i, b
+     where i.app_id=sqlc.arg(app_id)::uuid and i.queue_binding_id=b.id and i.account_id=b.account_id
+       and i.source='queue' and i.state in ('pending','dispatching')
+       and (b.deployment_scope='' or i.deployment_scope=b.deployment_scope)
+     limit sqlc.arg(row_limit)::integer) own)
+  + (select count(*) from (
+     select 1 from invocations i, b
+     where b.deployment_scope='' and i.app_id=sqlc.arg(app_id)::uuid and i.queue_binding_id is null
+       and i.queue_name=b.queue_name and i.account_id=b.account_id
+       and i.source='queue' and i.state in ('pending','dispatching')
+     limit sqlc.arg(row_limit)::integer) legacy))::bigint as depth,
+  (select count(*) from (
+     select 1 from owned where state='dispatching' and lease_expires_at > now()
+     limit sqlc.arg(row_limit)::integer) leased)::bigint as in_flight,
+  (select count(*) from (
+     select 1 from owned where state='dead_letter'
+     limit sqlc.arg(row_limit)::integer) dead)::bigint as dead_letter,
+  (select min(first.created_at) from (
+     (select i.created_at from invocations i, b
+      where i.app_id=sqlc.arg(app_id)::uuid and i.queue_binding_id=b.id and i.account_id=b.account_id
+        and i.source='queue' and i.state='pending'
+        and (b.deployment_scope='' or i.deployment_scope=b.deployment_scope)
+      order by i.due_at, i.created_at, i.id limit 1)
+     union all
+     (select i.created_at from invocations i, b
+      where b.deployment_scope='' and i.app_id=sqlc.arg(app_id)::uuid and i.queue_binding_id is null
+        and i.queue_name=b.queue_name and i.account_id=b.account_id and i.source='queue' and i.state='pending'
+      order by i.due_at, i.created_at, i.id limit 1)
+  ) first)::timestamptz as oldest_pending_at;
+
 -- name: QueueClaimActiveCount :one
 select count(*)::bigint from invocations i
 where i.app_id=sqlc.arg(app_id)::uuid and i.source='queue'

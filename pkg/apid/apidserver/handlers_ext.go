@@ -826,10 +826,16 @@ func validateUpdateApp(req *api.UpdateAppRequest, acct state.Account, limits api
 					return api.ErrScalingTargetIncompatibleWithWorkloadClass("concurrent_requests")
 				}
 			case "queue_depth", "queue_lag":
+				// A request that also makes the app a worker or job is judged
+				// on that mode (ADR-20261018101500 amendment 2026-10-27).
+				mode := app.Manifest.ExecutionMode
+				if req.ExecutionMode != nil {
+					mode = *req.ExecutionMode
+				}
 				if app.WorkloadClass != state.WorkloadClassWorker &&
 					app.WorkloadClass != state.WorkloadClassJob &&
-					app.Manifest.ExecutionMode != api.ExecutionModeWorker &&
-					app.Manifest.ExecutionMode != api.ExecutionModeJob {
+					mode != api.ExecutionModeWorker &&
+					mode != api.ExecutionModeJob {
 					return api.ErrScalingTargetIncompatibleWithWorkloadClass(sp.Target.Metric)
 				}
 			}
