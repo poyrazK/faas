@@ -8040,13 +8040,14 @@ type ManagedPostgresHealth struct {
 
 // ADR-20261016151947 live-query secrets per managed database, sealed to livequeryd; at most one active and one retiring key.
 type ManagedPostgresLiveKey struct {
-	Kid          string
-	AccountID    pgtype.UUID
-	DatabaseID   pgtype.UUID
-	SealedSecret []byte
-	Recipient    string
-	CreatedAt    pgtype.Timestamptz
-	RetiresAt    pgtype.Timestamptz
+	Kid             string
+	AccountID       pgtype.UUID
+	DatabaseID      pgtype.UUID
+	SealedSecret    []byte
+	Recipient       string
+	CreatedAt       pgtype.Timestamptz
+	RetiresAt       pgtype.Timestamptz
+	SealedSecretSig []byte
 }
 
 // ADR-20261016151947 replication login per live managed database, sealed to livequeryd; livequeryd discovers its databases here.
@@ -8059,6 +8060,7 @@ type ManagedPostgresLiveLogin struct {
 	Slot               string
 	Awake              string
 	CreatedAt          pgtype.Timestamptz
+	SealedLoginSig     []byte
 }
 
 type ManagedPostgresResize struct {

@@ -175,6 +175,15 @@ func (h *Handler) enforceConsumerAuth(w http.ResponseWriter, r *http.Request, re
 		return h.consumerAuthUnavailable(w, r, rec, app)
 	}
 
+	// A forged key with a fresh prefix reaches the store every time, so a
+	// source past its failed-lookup budget is refused before the lookup.
+	source := keyLookupSource(r)
+	if !h.keyLookups.allow(source) {
+		rec.status = http.StatusTooManyRequests
+		writeKeyLookupThrottled(w)
+		h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
+		return false
+	}
 	prefix := consumerKeyPrefixFromPlaintext(token)
 	key, err := h.consumerAuthStore.ConsumerKeyByAppAndPrefix(r.Context(), app.AccountID, app.ID, prefix)
 	if err != nil {
@@ -184,6 +193,7 @@ func (h *Handler) enforceConsumerAuth(w http.ResponseWriter, r *http.Request, re
 			}
 			return h.consumerAuthUnavailable(w, r, rec, app)
 		}
+		h.keyLookups.fail(source)
 		api.WriteProblem(w, api.ErrConsumerKeyInvalid())
 		rec.status = http.StatusUnauthorized
 		h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
@@ -200,6 +210,7 @@ func (h *Handler) enforceConsumerAuth(w http.ResponseWriter, r *http.Request, re
 	}
 	expectedHash := api.HashConsumerKey(token)
 	if subtle.ConstantTimeCompare(key.Hash, expectedHash) != 1 || key.AccountID != app.AccountID || key.AppID != app.ID || key.Prefix != prefix || key.ConsumerID == "" {
+		h.keyLookups.fail(source)
 		api.WriteProblem(w, api.ErrConsumerKeyInvalid())
 		rec.status = http.StatusUnauthorized
 		h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})

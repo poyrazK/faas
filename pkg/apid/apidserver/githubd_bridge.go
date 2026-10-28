@@ -39,6 +39,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/apid/apidsource"
 	"github.com/onebox-faas/faas/pkg/apid/approval"
 	"github.com/onebox-faas/faas/pkg/apid/freeze"
+	"github.com/onebox-faas/faas/pkg/apid/previewconfig"
 	"github.com/onebox-faas/faas/pkg/apid/release"
 	"github.com/onebox-faas/faas/pkg/gregalemanifest"
 	"github.com/onebox-faas/faas/pkg/grpcerr"
@@ -87,6 +88,25 @@ type githubdBridge struct {
 	spool       string // build-spool root for the build.log path
 	stagingRoot string // allowed prefix for SourcePath (FAAS_GITHUBD_WORK_DIR/build-sources)
 	spoolRoot   string // allowed prefix for SourcePath (FAAS_SPOOL_ROOT) — kept for future expansion
+}
+
+// checkSourcePlanLimit refuses a GitHub build whose source is above the
+// account's plan limit. githubd fetches every push with Scale's limits, so
+// without it the Free and Hobby 100 MB source cap held only for CLI uploads.
+func (g *githubdBridge) checkSourcePlanLimit(ctx context.Context, accountID string, sourceBytes int64) error {
+	acct, err := g.store.AccountByID(ctx, accountID)
+	if err != nil {
+		return status.Errorf(codes.Internal, "EnqueueBuild: account lookup: %v", err)
+	}
+	limits, ok := api.LimitsFor(acct.Plan)
+	if !ok {
+		return status.Errorf(codes.FailedPrecondition, "EnqueueBuild: account %q has unknown plan %q", accountID, acct.Plan)
+	}
+	if maxBytes := int64(limits.SourceTarballMaxMB) << 20; sourceBytes > maxBytes {
+		return status.Errorf(codes.ResourceExhausted,
+			"EnqueueBuild: source is %d bytes, above the %s plan's %d MB source limit", sourceBytes, acct.Plan, limits.SourceTarballMaxMB)
+	}
+	return nil
 }
 
 // stagingPathAllowed reports whether sourcePath is under one of the
@@ -237,6 +257,9 @@ func (g *githubdBridge) EnqueueBuild(ctx context.Context, req *githubdpb.Enqueue
 		return nil, status.Errorf(codes.FailedPrecondition,
 			"EnqueueBuild: app %q is not active (status=%q)", req.AppId, app.Status)
 	}
+	if err := g.checkSourcePlanLimit(ctx, req.AccountId, req.SourceBytes); err != nil {
+		return nil, err
+	}
 
 	// Source-path allowlist (issue #432 phase 5 review follow-up):
 	// the unix-socket DAC is the only auth in v1.0 (ADR-015), but
@@ -321,14 +344,32 @@ func (g *githubdBridge) EnqueueBuild(ctx context.Context, req *githubdpb.Enqueue
 	if releaseProblem != nil {
 		return nil, status.Errorf(codes.InvalidArgument, "EnqueueBuild: release command: %s", releaseProblem.Detail)
 	}
-	rate, err := g.store.ConsumeAccountDeployRate(ctx, acct.ID, acct.Plan.DeploysPerHour(), timeNow().UTC())
+	// PR preview builds stop at their share of the window, so a busy pull
+	// request cannot spend the deploys production needs (ADR-20261028100000).
+	limit, limitName := acct.Plan.DeploysPerHour(), "account deploy rate limit"
+	if eventKindToDeploymentKind(req.EventKind) == state.DeploymentKindPreview {
+		limit, limitName = acct.Plan.PreviewDeploysPerHour(), "PR preview share of the account deploy rate limit"
+	}
+	rate, err := g.store.ConsumeAccountDeployRate(ctx, acct.ID, limit, timeNow().UTC())
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "EnqueueBuild: deploy admission: %v", err)
 	}
 	if !rate.Allowed {
 		return nil, status.Errorf(codes.ResourceExhausted,
-			"EnqueueBuild: account deploy rate limit %d reached; resets at %s",
-			rate.Limit, rate.WindowResetsAt.UTC().Format(time.RFC3339))
+			"EnqueueBuild: %s %d reached; resets at %s",
+			limitName, rate.Limit, rate.WindowResetsAt.UTC().Format(time.RFC3339))
+	}
+	// ADR-20261028090000: a PR preview builds with its production app's
+	// pr-preview values and secrets. The production store always implements
+	// previewconfig.Store; the narrow unit-test stubs do not.
+	if configStore, ok := g.store.(previewconfig.Store); ok && eventKindToDeploymentKind(req.EventKind) == state.DeploymentKindPreview {
+		synced, err := previewconfig.SyncFromParent(ctx, configStore, app)
+		if err != nil {
+			return nil, status.Errorf(codes.Unavailable, "EnqueueBuild: preview values: %v", err)
+		}
+		if synced.Skipped {
+			g.log.Warn("githubd bridge: preview values skipped; the project has an environment named pr-preview", "app_id", app.ID)
+		}
 	}
 
 	// The shared apidsource.Enqueue helper handles CreateDeployment +

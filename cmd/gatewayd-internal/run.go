@@ -1346,6 +1346,9 @@ type runDeps struct {
 	// constructed; the AppLogsHandler-style carve-out (only
 	// when deps.authMw is non-nil) makes the wiring safe.
 	requireAuthnAdapter *requireAuthnAdapter
+	// keyAuthCache wraps requireAuthnAdapter so key-protected apps do not
+	// read Postgres on every request; key_changed invalidates it.
+	keyAuthCache *gateway.KeyAuthCache
 	// requireAuthnAudit is the cmd/gatewayd-scope audit emitter
 	// the per-deployment authz branch uses for the
 	// instances.authn_* rows. nil = audit-disabled (tests).
@@ -2345,6 +2348,10 @@ func runOnPool(ctx context.Context, log *slog.Logger, pool *pgxpool.Pool) error 
 	// them when deps.authMw is non-nil (which it always is
 	// outside unit tests).
 	deps.requireAuthnAdapter = newRequireAuthnAdapter(deps.authMw)
+	if deps.requireAuthnAdapter != nil {
+		deps.keyAuthCache = gateway.NewKeyAuthCache(deps.requireAuthnAdapter)
+		go watchKeyChanges(ctx, pool, deps.keyAuthCache, log)
+	}
 	// Request-path audit rows (authn gates, edge-rule denials and matches)
 	// go through one bounded async writer so attack traffic cannot turn into
 	// synchronous Postgres inserts on the request path.
@@ -2962,7 +2969,11 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// leave deps.requireAuthnAdapter / deps.requireAuthnAudit
 	// nil. Production wires both unconditionally after
 	// deps.authMw is built in run().
-	handler.WithRequireAuthn(deps.requireAuthnAdapter, deps.requireAuthnAudit)
+	if deps.keyAuthCache != nil {
+		handler.WithRequireAuthn(deps.keyAuthCache, deps.requireAuthnAudit)
+	} else {
+		handler.WithRequireAuthn(deps.requireAuthnAdapter, deps.requireAuthnAudit)
+	}
 	// ADR-120: arm end-customer consumer-key authentication against the same
 	// PgStore used by apid. The gateway keeps the hot-path policy and the
 	// adapter translates only the narrow lookup/touch contract.

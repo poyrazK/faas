@@ -202,6 +202,38 @@ then expand the list deliberately. Leave the variable empty only when every
 qualified staging account is an intentional canary. The gate is fail-closed on
 malformed entries and never blocks database deletion or credential revocation.
 
+## Production rollout
+
+Production does not use a qualification artifact
+([ADR-20261028103115](adr/20261028103115-managed-postgres-production-provisioning.md)).
+To open it:
+
+1. In the managed PostgreSQL configuration, set `provisioning_enabled`, turn
+   on `usage` with real prices and ceilings, and add
+   `"fleet": {"max_databases": N, "max_monthly_cost_millicents": M}` sized to
+   the provider budget.
+2. With `FAAS_ENVIRONMENT=production`, run
+   `managed-postgres-qualify --check-production`. It prints the readiness
+   codes and the configured backend's ID and fingerprint, and never contacts
+   the provider.
+3. Set `FAAS_MANAGED_POSTGRES_PRODUCTION_BACKEND` and
+   `FAAS_MANAGED_POSTGRES_PRODUCTION_FINGERPRINT` to those values,
+   `FAAS_MANAGED_POSTGRES_PRODUCTION_APPROVED_AT` to now and
+   `FAAS_MANAGED_POSTGRES_PRODUCTION_UNTIL` at most 90 days later. Rerun the
+   check until it exits 0, then restart apid. apid logs the closed reasons at
+   startup.
+4. Release accounts with the `managed-postgres` capability flag: an account
+   rule first, then plan rules or a ramp. Releasing an account is a flag
+   change, not a deploy; the kill switch closes every account.
+5. Renew the approval before `FaasManagedPostgresProductionApprovalExpiring`
+   turns into `FaasManagedPostgresProductionApprovalExpired`. Changing the
+   backend configuration changes its fingerprint and closes provisioning
+   until step 3 is repeated.
+
+`FaasManagedPostgresFleetNearCeiling` and `FaasManagedPostgresFleetPaused`
+follow the fleet ceilings; see
+[FaasManagedPostgresDegraded](runbooks/FaasManagedPostgresDegraded.md).
+
 ## Admission failures
 
 - `managed_postgres_usage_stale`: stop new reservations, verify the provider
@@ -221,6 +253,12 @@ malformed entries and never blocks database deletion or credential revocation.
   canary account allowlist). Nothing is down; existing databases and
   bindings keep working. Reopen the gate deliberately; an expired operator
   test window closes it without any other signal.
+- `managed_postgres_new_databases_paused`: the fleet database cap or the
+  monthly provider-spend breaker is reached for every account. Existing
+  databases keep working. Check `apid_managed_postgres_fleet_*` against the
+  configured ceilings and raise one deliberately, or wait: the database cap
+  reopens as databases are deleted and the spend breaker at the next UTC
+  month.
 - `managed_postgres_unavailable`: keep provisioning disabled and use the
   lifecycle reconciler to finish deletion of known resources.
 

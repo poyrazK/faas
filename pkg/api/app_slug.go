@@ -42,6 +42,20 @@ func IsReservedAppSlug(slug string) bool {
 	return ok || IsPreviewAppSlug(slug)
 }
 
+// PreviewAppSlugMaxLen is the longest PR preview slug: one DNS label. The
+// preview of a 40-character app is longer than ValidAppSlug allows.
+const PreviewAppSlugMaxLen = 63
+
+// ValidPreviewAppSlug reports a pr-<N>-<parent> slug whose parent is a valid
+// app slug and that fits one DNS label.
+func ValidPreviewAppSlug(slug string) bool {
+	if len(slug) > PreviewAppSlugMaxLen || !IsPreviewAppSlug(slug) {
+		return false
+	}
+	_, parent, _ := strings.Cut(strings.TrimPrefix(slug, "pr-"), "-")
+	return ValidAppSlug(parent)
+}
+
 // IsPreviewAppSlug reports the pr-<N>-<parent> shape PR previews are
 // allocated under (and that pr-<N>-<parent>.<apps domain> routes to). Only
 // preview provisioning may create it: an ordinary app holding

@@ -27,12 +27,27 @@
 package main
 
 import (
+	"context"
 	"strings"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/meter"
 	"github.com/onebox-faas/faas/pkg/wire"
 )
+
+// databasePinger is the part of *pgxpool.Pool the database signal needs.
+type databasePinger interface {
+	Ping(ctx context.Context) error
+}
+
+// registerDatabaseReadiness adds a Postgres ping to the probe (issue #571):
+// loop health flips only once a timer goes stale, so a lost database would
+// otherwise take a full loop interval to show; with the ping it flips
+// /readyz within 5 s, as the other daemons' probes do.
+func registerDatabaseReadiness(ctx context.Context, p *wire.ReadyzProbe, pool databasePinger) {
+	sig, stop := wire.NewPGPingSignal(ctx, pool, 5*time.Second)
+	p.RegisterSignal(sig, stop)
+}
 
 // BuildReadinessProbe constructs the meterd /readyz probe
 // driven by loop.Health. The probe starts at (false, "meterd

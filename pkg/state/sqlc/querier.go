@@ -4081,6 +4081,10 @@ type Querier interface {
 	ManagedPostgresCutoverUnreleasedSourceFences(ctx context.Context, db DBTX, cutoverID string) (int64, error)
 	ManagedPostgresDrainPlanHasUnplannedInstances(ctx context.Context, db DBTX, arg ManagedPostgresDrainPlanHasUnplannedInstancesParams) (bool, error)
 	ManagedPostgresDueBindings(ctx context.Context, db DBTX, arg ManagedPostgresDueBindingsParams) ([]ManagedPostgresBinding, error)
+	// ADR-20261028103115: the fleet database cap counts what reservation limits
+	// count; the spend breaker sums the month through the usage primary key, one
+	// index range per database, so the ledger's growth never forces a full scan.
+	ManagedPostgresFleetTotals(ctx context.Context, db DBTX, arg ManagedPostgresFleetTotalsParams) (ManagedPostgresFleetTotalsRow, error)
 	// ADR-20261025094915: managed PostgreSQL compute overage and cap subjects.
 	ManagedPostgresOverageEnabled(ctx context.Context, db DBTX, subjectID pgtype.UUID) (bool, error)
 	ManagedPostgresPersonalBindingReference(ctx context.Context, db DBTX, arg ManagedPostgresPersonalBindingReferenceParams) (bool, error)
@@ -5608,7 +5612,7 @@ type Querier interface {
 	// Secret-free binding metadata only, bounded before transfer. Unverified and
 	// ineligible claims are retained because they block less-specific fallbacks.
 	ReadTrafficDomainClaims(ctx context.Context, db DBTX, arg ReadTrafficDomainClaimsParams) (ReadTrafficDomainClaimsRow, error)
-	ReadTrafficGlobalRouteAccounts(ctx context.Context, db DBTX, maxInputs int32) ([]pgtype.UUID, error)
+	ReadTrafficGlobalRouteAccounts(ctx context.Context, db DBTX, arg ReadTrafficGlobalRouteAccountsParams) ([]pgtype.UUID, error)
 	// Only selectors, counts, sizes and referenced IDs leave the database.
 	ReadTrafficHostAnalysis(ctx context.Context, db DBTX, arg ReadTrafficHostAnalysisParams) (ReadTrafficHostAnalysisRow, error)
 	ReadTrafficSecurityEpochs(ctx context.Context, db DBTX, arg ReadTrafficSecurityEpochsParams) ([]ReadTrafficSecurityEpochsRow, error)
