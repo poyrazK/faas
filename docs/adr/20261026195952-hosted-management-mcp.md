@@ -3,6 +3,9 @@
 Date: 2026-10-26
 Status: Accepted. Amendment 1 (2026-10-28): on by default; the control plane
 generates the state key, and the bridge drops state a new key cannot open.
+Amendment 2 (2026-10-28): operations: metrics, warn alerts and a runbook,
+operator revocation over the admin socket, servers built on first use, and
+an exit when a state write fails.
 Amends: ADR-1238 (delegated OAuth), ADR-1239 (browser authorization and durable connections), ADR-20261026141841 (local deploy and env), ADR-20261026174727 (secret entry and provisioning)
 Related: ADR-1256 (request admission), ADR-1344 (control-plane availability), ADR-480 (platform hosts), ADR-20261026100000 (platform and app domains)
 
@@ -92,7 +95,7 @@ never restarts the server; only a release of `mcp-bridged` does.
   a transaction that still holds the lease at the same epoch.
 - **Losing the lease.** An instance that loses it disables access, as the file
   store does on a storage failure, and exits. It can never overwrite its
-  successor's state.
+  successor's state. A write Postgres refuses exits the same way (amendment 2).
 - **Standby.** The bridge follows the control-plane failover runbook
   (ADR-1344): after the database is promoted, the new primary's bootstrap and
   deploy start it like every control-plane daemon. It acquires the lease with
@@ -187,8 +190,11 @@ deleted when the plan is applied or expires, and on start.
   gatewayd-public's X-Forwarded-For, trusted only over loopback.
 - **Per account:** 10 usable grants, and 2 uploads waiting.
 - **Per grant:** request admission is unchanged (ADR-1256).
-- **Memory:** every grant keeps its SDK server, so the grant bound is also the
-  memory bound. Building servers on first use is the path past it.
+- **Memory (amendment 2):** a grant's SDK server (about 130 KiB) is built on
+  its first request, not at restore, and dropped after ten idle minutes. It is
+  kept while it serves a request, holds work or a listen stream, or holds a
+  secret request, which lives only in memory. Plans are durable, so a rebuild
+  loses nothing. Memory follows active connections, not the grant bound.
 
 ### 9. Toolsets
 
@@ -198,6 +204,26 @@ decides the rest. A grant lists write tools only with write consent, and
 secret requests, buckets and PostgreSQL only with their scopes. Release and
 diagnose tools stay with self-hosted and local bridges until a client needs
 them hosted.
+
+### 10. Operations (amendment 2)
+
+- **Metrics** on `127.0.0.1:9110`, Prometheus job `mcp-bridged`: the
+  bridge's aggregate registry (no account, grant or app labels), the
+  authorization entries by kind and their bound, approved connections, built
+  servers, state availability, and Go and process metrics.
+- **Alerts**, all warn while the capability is a preview:
+  `FaasHostedMCPDown`, `FaasHostedMCPRestarting` and
+  `FaasHostedMCPConnectionsNearCapacity`. The last measures demand, so its
+  family is one the release gate ignores. Runbook:
+  `docs/runbooks/FaasHostedMCP.md`; owner: the apid owner.
+- **Revocation:** the unit opens the existing owner-only admin socket at
+  `/run/faas-mcp-bridge/admin.sock`, in a 0700 runtime directory. Operators
+  list and revoke connections with `gregale mcp connection` as the service
+  user. No route is added to the public listener.
+- **A failed state write exits.** It used to disable the store until someone
+  restarted the process, so the bridge stayed up but refused every sign-in
+  and tool call. Memory then differs from what committed, so the bridge
+  exits as it does on a lost lease; systemd restarts it and it reloads.
 
 ## Not included
 

@@ -2036,6 +2036,28 @@ The server is the `mcp-bridged` daemon:
   - 10 grants per account;
   - 20 client registrations per address per hour;
   - 2 waiting uploads per account.
+- **Memory:** a connection's MCP server is built on its first request and
+  dropped after ten idle minutes, so memory follows active connections.
+- **Failures:** the server exits when it loses its state lease or Postgres
+  refuses a state write. systemd restarts it and it reloads what committed.
+
+Operate it with:
+- **Metrics** on `127.0.0.1:9110/metrics`, scraped as the `mcp-bridged` job.
+  The `gregale_management_mcp_*` series have no account, grant or app labels.
+- **Alerts:** `FaasHostedMCPDown`, `FaasHostedMCPRestarting` and
+  `FaasHostedMCPConnectionsNearCapacity`, all warn. See the
+  [runbook](runbooks/FaasHostedMCP.md).
+- **Revocation** over the admin socket, as the service user:
+
+```sh
+sudo -u faas-mcp-bridge /opt/faas/current/bin/gregale mcp connection list \
+  --socket /run/faas-mcp-bridge/admin.sock
+sudo -u faas-mcp-bridge /opt/faas/current/bin/gregale mcp connection revoke \
+  --socket /run/faas-mcp-bridge/admin.sock --grant-id <grant_id>
+```
+
+  [Inspect and revoke agent connections locally](#inspect-and-revoke-agent-connections-locally)
+  describes the output.
 
 ## Connect a remote agent with OAuth
 
@@ -4477,7 +4499,8 @@ including requests authenticated before revocation. Other grants remain usable.
 A success response includes `durable: true` only after the encrypted OAuth snapshot
 is committed. Without state files, it returns `durable: false`. Unknown or already
 revoked grant IDs return 404. Storage failure returns 503 and disables further
-bridge access until repaired; failed revocation is not reported as durable success.
+bridge access until repaired (the hosted server exits and restarts instead);
+failed revocation is not reported as durable success.
 
 Revocation does not revoke native account API keys or undo operations Gregale has
 already accepted. Inspect native deployment state before issuing replacement plans

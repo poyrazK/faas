@@ -77,6 +77,13 @@ func (l *Lifecycle) BeginDrain() {
 	l.closeIfDrained()
 }
 
+// busy reports whether any tracked handler or worker is running.
+func (l *Lifecycle) busy() bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return len(l.work) > 0
+}
+
 // Drained reports whether no tracked handler or subscription worker remains.
 func (l *Lifecycle) Drained() bool {
 	l.mu.Lock()

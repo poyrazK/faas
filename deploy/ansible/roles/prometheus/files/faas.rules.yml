@@ -8395,6 +8395,52 @@ groups:
           description: "An opted-in executing instance has stopped reporting heartbeats after its startup grace period. This indicates missing process telemetry, independently of MCP readiness and tool success. Paused and retired host log lifecycles are excluded."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasMCPProtocolPerformance.md"
 
+  # The hosted management MCP server, mcp-bridged at api.<platform>/mcp
+  # (ADR-20261026195952). A preview, so every alert warns rather than pages.
+  # Connections near the bound are demand, not release health: that family is
+  # one of slo_gate.py's TENANT_SIGNAL_FAMILIES.
+  - name: faas_hosted_mcp
+    interval: 30s
+    rules:
+      - alert: FaasHostedMCPDown
+        expr: up{job="mcp-bridged"} == 0
+        for: 5m
+        labels:
+          severity: warn
+          component: mcp-bridged
+          family: hosted_mcp
+        annotations:
+          summary: "The hosted MCP server is down on {{ $labels.instance }}"
+          description: "Prometheus has not scraped mcp-bridged for 5m, so agents cannot sign in to or use the hosted MCP server. Check systemctl status faas-mcp-bridge and its journal. It exits when it loses its state lease or cannot commit its state, and systemd stops restarting it after five failures in a minute."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasHostedMCP.md"
+
+      - alert: FaasHostedMCPRestarting
+        expr: changes(process_start_time_seconds{job="mcp-bridged"}[30m]) >= 3
+        for: 5m
+        labels:
+          severity: warn
+          component: mcp-bridged
+          family: hosted_mcp
+        annotations:
+          summary: "The hosted MCP server keeps restarting on {{ $labels.instance }}"
+          description: "mcp-bridged started at least three times in 30m. Each start after a crash waits up to a minute for the old state lease to lapse, and agents' requests fail meanwhile. The journal names the cause: a lost lease, a state commit Postgres refused, or a crash."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasHostedMCP.md"
+
+      - alert: FaasHostedMCPConnectionsNearCapacity
+        expr: |
+          gregale_management_mcp_oauth_entries
+            / ignoring (kind) group_left gregale_management_mcp_oauth_entry_limit
+          >= 0.9
+        for: 30m
+        labels:
+          severity: warn
+          component: mcp-bridged
+          family: hosted_mcp_demand
+        annotations:
+          summary: "Hosted MCP {{ $labels.kind }} are at {{ $value | humanizePercentage }} of their bound"
+          description: "The hosted MCP server holds at least 90% of the {{ $labels.kind }} it allows. At the bound it refuses new client registrations or sign-ins until entries expire. List connections over the admin socket and revoke abandoned ones; raising the bound is a code change (ADR-20261026195952)."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasHostedMCP.md"
+
   - name: faas-internal-mail
     rules:
       - alert: InternalMailMonitoringUnavailable

@@ -44,7 +44,7 @@ type oauthSnapshot struct {
 func (r *remoteServer) snapshotLocked() oauthSnapshot {
 	snapshot := oauthSnapshot{Format: stateFormat, APIBase: r.opts.APIBase, ResourceURL: r.opts.ResourceURL, Clients: r.clients, Requests: r.requests, Codes: r.codes, Grants: map[string]storedGrant{}, UsedRefresh: map[string]string{}}
 	for id, g := range r.grants {
-		snapshot.Grants[id] = storedGrant{ID: id, ClientID: g.clientID, AccountID: g.accountID, Scopes: g.scopes, Key: g.client.Token(), Expires: g.expires, CredentialExpires: g.credentialExpires, AccessExpires: g.accessExpires, AccessHash: g.accessHash, RefreshHash: g.refreshHash, Active: g.server != nil, AllowedApps: g.allowedApps, AvailableApps: g.availableApps, Environments: g.environments, AvailableEnvironments: g.availableEnvironments, Capabilities: g.capabilities}
+		snapshot.Grants[id] = storedGrant{ID: id, ClientID: g.clientID, AccountID: g.accountID, Scopes: g.scopes, Key: g.client.Token(), Expires: g.expires, CredentialExpires: g.credentialExpires, AccessExpires: g.accessExpires, AccessHash: g.accessHash, RefreshHash: g.refreshHash, Active: g.approved, AllowedApps: g.allowedApps, AvailableApps: g.availableApps, Environments: g.environments, AvailableEnvironments: g.availableEnvironments, Capabilities: g.capabilities}
 	}
 	for hash, grant := range r.usedRefresh {
 		snapshot.UsedRefresh[hash] = grant.id
@@ -102,13 +102,8 @@ func (r *remoteServer) restoreOAuth() error {
 		if g.environments == nil {
 			g.environments = &EnvironmentConsent{DefaultWrite: slices.Contains(g.scopes, scopeWrite), Named: map[string]EnvironmentGrant{}}
 		}
-		if record.Active {
-			var err error
-			g.server, g.management, err = newManagementServer(client, Options{Lifecycle: r.opts.Lifecycle, Telemetry: r.opts.Telemetry, auditLogger: r.opts.AuditLogger, accountID: g.accountID, grantID: g.id, Profile: "oauth", APIBase: r.opts.APIBase, Version: r.opts.Version, Timeout: r.opts.Timeout, AllowWrites: r.opts.AllowWrites && slices.Contains(g.scopes, scopeWrite), AllowedApps: g.allowedApps, Environments: g.environments, planStore: r.opts.StateStore, planNamespace: id, Toolsets: r.opts.Toolsets, Capabilities: g.capabilities, LocalCLI: r.grantCLI(client.Token()), uploads: r.uploads})
-			if err != nil {
-				return err
-			}
-		}
+		// An approved connection's server is built on its first request.
+		g.approved = record.Active
 		r.grants[id] = g
 		if g.accessHash != "" {
 			r.access[g.accessHash] = g
