@@ -27,15 +27,12 @@
 // Two callbacks, two URLs, two CSRF tokens — both scoped narrowly
 // so a stale tab can't replay one against the other.
 //
-// CSRF posture: the state token here is generated when the dashboard
-// "Connect GitHub" button is rendered and stored in a short-lived
-// 5-minute cookie scoped to /oauth/code-callback. The handler reads
-// the cookie + the query string, constant-time compares, and
-// rejects mismatch (with an audit event). The AEAD-sealed session
-// cookie is NOT touched — adding a ConnectState field to the
-// envelope would require rotating session cookies for every other
-// auth method; this cookie approach keeps the change isolated to
-// PR-C's surface.
+// CSRF posture: the state token is sealed with the session key to the
+// signed-in account, the selected installation and a 5-minute expiry
+// (bug hunt 2026-10-28 H64), and also stored in a short-lived cookie
+// (host-only `__Host-` over HTTPS). The handler requires the cookie to
+// match the query string and the sealed state to name the signed-in
+// account, and rejects anything else (with an audit event).
 //
 // Failure surfaces:
 //   - missing code or state query param   → 400 problem
@@ -51,7 +48,10 @@ package apidserver
 import (
 	"crypto/rand"
 	"crypto/subtle"
+	"encoding/base64"
 	"encoding/hex"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -63,6 +63,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/middleware"
+	"github.com/onebox-faas/faas/pkg/session"
 )
 
 const (
@@ -130,24 +131,77 @@ func (s *server) issueOAuthCodeState(w http.ResponseWriter, r *http.Request) (st
 }
 
 func (s *server) issueOAuthCodeStateForInstallation(w http.ResponseWriter, r *http.Request, installationID int64) (string, error) {
-	tokenBytes := make([]byte, 16)
-	if _, err := rand.Read(tokenBytes); err != nil {
+	acct, ok := AccountFrom(r.Context())
+	if !ok || acct.ID == "" || s.sessions == nil {
+		return "", errors.New("oauth code state: no signed-in account or session key")
+	}
+	stateToken, err := sealOAuthCodeState(s.sessions, acct.ID, installationID)
+	if err != nil {
 		return "", err
 	}
-	stateToken := hex.EncodeToString(tokenBytes)
+	setOAuthFlowCookie(w, r, oauthCodeStateCookie, stateToken, oauthCodeCallbackPath)
+	return stateToken, nil
+}
+
+// sealOAuthCodeState seals the Connect GitHub state to the signed-in
+// account, the selected installation and an expiry. A cookie alone proved
+// nothing: any tenant page on a sibling host could plant a matching cookie
+// and send a signed-in customer to the callback with the attacker's GitHub
+// code (bug hunt 2026-10-28 H64). githubd still reads the installation
+// after the last '.'; base64url never contains one.
+func sealOAuthCodeState(sessions *session.Manager, accountID string, installationID int64) (string, error) {
+	nonce := make([]byte, 16)
+	if _, err := rand.Read(nonce); err != nil {
+		return "", err
+	}
+	envelope, err := json.Marshal(oauthCodeStateEnvelope{
+		AccountID: accountID, InstallationID: installationID,
+		Nonce: hex.EncodeToString(nonce), Expires: time.Now().Add(oauthCodeStateTTL),
+	})
+	if err != nil {
+		return "", err
+	}
+	stateToken, err := sessions.SealForCSRF(envelope)
+	if err != nil {
+		return "", err
+	}
 	if installationID > 0 {
 		stateToken += "." + strconv.FormatInt(installationID, 10)
 	}
-	http.SetCookie(w, &http.Cookie{
-		Name:     oauthCodeStateCookie,
-		Value:    stateToken,
-		Path:     oauthCodeCallbackPath,
-		HttpOnly: true,
-		Secure:   r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == schemeHTTPS,
-		SameSite: http.SameSiteLaxMode,
-		MaxAge:   int(oauthCodeStateTTL.Seconds()),
-	})
 	return stateToken, nil
+}
+
+// oauthCodeStateEnvelope is the sealed half of the Connect GitHub state.
+type oauthCodeStateEnvelope struct {
+	AccountID      string    `json:"a"`
+	InstallationID int64     `json:"i,omitempty"`
+	Nonce          string    `json:"n"`
+	Expires        time.Time `json:"e"`
+}
+
+// verifyOAuthCodeState reports whether state was sealed by this server for
+// accountID, is unexpired, and names the same installation it carries.
+func (s *server) verifyOAuthCodeState(state, accountID string) bool {
+	if s.sessions == nil {
+		return false
+	}
+	sealed, suffix, hasSuffix := strings.Cut(state, ".")
+	raw, err := base64.RawURLEncoding.DecodeString(sealed)
+	if err != nil {
+		return false
+	}
+	plaintext, err := s.sessions.OpenForCSRF(raw)
+	if err != nil {
+		return false
+	}
+	var env oauthCodeStateEnvelope
+	if json.Unmarshal(plaintext, &env) != nil || env.AccountID != accountID || !env.Expires.After(time.Now()) {
+		return false
+	}
+	if hasSuffix {
+		return suffix == strconv.FormatInt(env.InstallationID, 10)
+	}
+	return env.InstallationID == 0
 }
 
 // redirectToGitHubAuthorization obtains the user-to-server proof that the
@@ -222,7 +276,7 @@ func (s *server) renderOAuthCodeCallback(w http.ResponseWriter, r *http.Request)
 	}
 
 	// CSRF check via the narrowly-scoped state cookie.
-	stateCookie, err := r.Cookie(oauthCodeStateCookie)
+	stateCookie, err := oauthFlowCookie(r, oauthCodeStateCookie)
 	if err != nil || stateCookie.Value == "" {
 		log.Warn("oauth code callback: missing CSRF state cookie",
 			"account_id", acct.ID)
@@ -238,7 +292,7 @@ func (s *server) renderOAuthCodeCallback(w http.ResponseWriter, r *http.Request)
 	// and query are both 32 hex chars (16 bytes random), so the
 	// only sane attack is replay with a leaked cookie — the
 	// short TTL + narrow Path scope is what makes that tractable.
-	if subtle.ConstantTimeCompare([]byte(stateCookie.Value), []byte(queryState)) != 1 {
+	if subtle.ConstantTimeCompare([]byte(stateCookie.Value), []byte(queryState)) != 1 || !s.verifyOAuthCodeState(queryState, acct.ID) {
 		log.Warn("oauth code callback: state mismatch",
 			"account_id", acct.ID,
 			// CodeQL go/log-injection (CWE-117): both halves are
@@ -260,12 +314,16 @@ func (s *server) renderOAuthCodeCallback(w http.ResponseWriter, r *http.Request)
 	// Clear the state cookie immediately. It's single-use: a
 	// successful exchange shouldn't leave the token lying around
 	// for a redirect-replay to use.
+	clearPath := oauthCodeCallbackPath
+	if requestIsHTTPS(r) {
+		clearPath = "/"
+	}
 	http.SetCookie(w, &http.Cookie{
-		Name:     oauthCodeStateCookie,
+		Name:     oauthFlowCookieName(r, oauthCodeStateCookie),
 		Value:    "",
-		Path:     oauthCodeCallbackPath,
+		Path:     clearPath,
 		HttpOnly: true,
-		Secure:   r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == schemeHTTPS,
+		Secure:   requestIsHTTPS(r),
 		SameSite: http.SameSiteLaxMode,
 		MaxAge:   -1,
 	})

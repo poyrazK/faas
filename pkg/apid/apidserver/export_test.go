@@ -1828,3 +1828,6 @@ func SecurityMailAllow(now func() time.Time) func(accountID, kind string) bool {
 	l.now = now
 	return l.allow
 }
+
+// SealOAuthCodeState mints a Connect GitHub state for accountID (H64).
+var SealOAuthCodeState = sealOAuthCodeState
