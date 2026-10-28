@@ -110753,6 +110753,7 @@ components:
         baseline_bad_fraction: { type: number, description: "slo gates: the predecessor's bad fraction." }
         error_classes: { type: array, maxItems: 5, items: { type: string }, description: "new_errors gates: the new groups' error classes." }
         summary: { type: string, description: "What the gate measured, in one line." }
+        not_judged: { type: boolean, description: "True when the gate had too few samples or unreadable evidence. It did not hold the rollout; summary says what it was waiting for." }
     ConfigRollbackRequest:
       description: "The config revision whose variables a rollback restores."
       type: object
