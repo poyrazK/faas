@@ -41,7 +41,7 @@ func connectLeaseFixture(t *testing.T, backend *httptest.Server, opts Options, v
 		t.Fatal(err)
 	}
 	token := "gmcp_at_authorization_fixture"
-	grant := &oauthGrant{id: "lease-grant", accountID: "account-one", server: server, management: manager, client: native, accessExpires: time.Now().Add(time.Hour), expires: time.Now().Add(time.Hour), accessHash: tokenHash(token)}
+	grant := &oauthGrant{id: "lease-grant", accountID: "account-one", approved: true, lastUsed: time.Now(), server: server, management: manager, client: native, accessExpires: time.Now().Add(time.Hour), expires: time.Now().Add(time.Hour), accessHash: tokenHash(token)}
 	remote := &remoteServer{opts: HTTPOptions{APIBase: backend.URL, Timeout: time.Second}, host: origin.Host, origin: origin.String(), access: map[string]*oauthGrant{tokenHash(token): grant}, grants: map[string]*oauthGrant{grant.id: grant}, refresh: map[string]*oauthGrant{}}
 	endpoint.Config.Handler = remote.handler()
 	endpoint.Start()
