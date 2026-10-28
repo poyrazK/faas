@@ -152,7 +152,8 @@ func authorize(r *http.Request, store Store, audit authz.AuditEmitter, actor sta
 	if !supported {
 		return zero, member, fence, api.ErrOrgRoleForbidden("use a database operation without a reviewed organization permission")
 	}
-	if org.Status != state.OrgStatusActive && action != authz.OrgActionReadPostgres && action != authz.OrgActionReadPostgresUsage {
+	// Past due loses only deploys (spec §4.7); the owner account carries it.
+	if org.Status != state.OrgStatusActive && org.Status != state.OrgStatusPastDue && action != authz.OrgActionReadPostgres && action != authz.OrgActionReadPostgresUsage {
 		return zero, member, fence, api.ErrOrgRoleForbidden("change a database in an inactive organization")
 	}
 	ctx := authmw.WithPrincipal(r.Context(), actor, key, &member)

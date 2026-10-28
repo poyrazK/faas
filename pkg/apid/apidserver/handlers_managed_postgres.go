@@ -254,12 +254,20 @@ func (s *server) getManagedPostgresUsage(w http.ResponseWriter, r *http.Request,
 		managedPostgresPlanDenied(w, acct.Plan, "managed PostgreSQL usage is not available for this plan")
 		return
 	}
-	summary, overage, err := s.managedPostgresUsageFor(r.Context(), acct, acct.ResourceOwnerID(), limits)
+	subject := acct.ResourceOwnerID()
+	summary, overage, err := s.managedPostgresUsageFor(r.Context(), acct, subject, limits)
 	if err != nil {
 		managedPostgresProblem(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, managedPostgresUsageView(summary, limits, s.managedPostgresCapMode, overage))
+	view := managedPostgresUsageView(summary, limits, s.managedPostgresCapMode, overage)
+	if view.ComputeCapState == api.ManagedPostgresComputeCapSuspended {
+		if view.ComputeSuspendedAt, err = s.managedPostgres.CapSuspendedAt(r.Context(), subject, time.Now().UTC()); err != nil {
+			managedPostgresProblem(w, err)
+			return
+		}
+	}
+	writeJSON(w, http.StatusOK, view)
 }
 
 func managedPostgresUsageOperatorView(accountID string, summary managedpostgres.UsageSummary, limits api.ManagedPostgresPlanLimits, capMode managedpostgres.CapEnforcementMode, overage bool) (api.ManagedPostgresUsageOperatorResponse, error) {

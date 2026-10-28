@@ -183,7 +183,8 @@ func authorize(r *http.Request, store Store, audit authz.AuditEmitter, actor sta
 	if !supported {
 		return zero, member, fence, api.ErrOrgRoleForbidden("use a project operation without a reviewed organization permission")
 	}
-	if org.Status != state.OrgStatusActive && action != authz.OrgActionReadProject && action != authz.OrgActionReadQueues {
+	// Past due loses only deploys (spec §4.7); the owner account carries it.
+	if org.Status != state.OrgStatusActive && org.Status != state.OrgStatusPastDue && action != authz.OrgActionReadProject && action != authz.OrgActionReadQueues {
 		return zero, member, fence, api.ErrOrgRoleForbidden("change a project in an inactive organization")
 	}
 	if p := authz.AuthorizeOrgAction(ctx, action, audit); p != nil {
