@@ -52,6 +52,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/auth/middleware"
 	"github.com/onebox-faas/faas/pkg/logsanitize"
+	"github.com/onebox-faas/faas/pkg/platformflags"
 	"github.com/onebox-faas/faas/pkg/secretbox"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/webhookout"
@@ -82,7 +83,7 @@ func isOperatorOnlyAlertPreset(name string) bool {
 // minimum_plan see enabled_in_catalog=true iff the catalog has it
 // enabled at the migration level (the seed sets this column for
 // the 3 shipped-in-PR-A vs 5 staged-for-future rows).
-func (s *server) listAlertPresets(w http.ResponseWriter, r *http.Request, _ state.Account) {
+func (s *server) listAlertPresets(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	rows, err := s.store.ListAlertPresets(r.Context())
 	if err != nil {
 		api.WriteProblem(w, api.ErrCapacity("could not list alert presets"))
@@ -91,6 +92,11 @@ func (s *server) listAlertPresets(w http.ResponseWriter, r *http.Request, _ stat
 	out := make([]api.AlertPresetResponse, 0, len(rows))
 	for _, row := range rows {
 		if isOperatorOnlyAlertPreset(row.Name) {
+			continue
+		}
+		// A preset on a metric whose capability is not released for the
+		// account is not offered (ADR-20261028110044).
+		if s.alertMetricCapabilityProblem(flagSubject(r, acct), row.Metric) != nil {
 			continue
 		}
 		out = append(out, api.AlertPresetResponseFromRow(api.AlertPresetRow{
@@ -223,6 +229,9 @@ func (s *server) loadAndGateAlertPreset(ctx context.Context, acct state.Account,
 	}
 	if !api.PlanMeetsMinimumPlan(acct.Plan, api.Plan(preset.MinimumPlan)) {
 		return state.AlertPreset{}, api.ErrPlanAlertPresetsNotAllowed(acct.Plan, preset.Name, preset.MinimumPlan)
+	}
+	if prob := s.alertMetricCapabilityProblem(platformflags.Subject{AccountID: acct.ID, Plan: string(acct.Plan)}, preset.Metric); prob != nil {
+		return state.AlertPreset{}, prob
 	}
 	return preset, nil
 }

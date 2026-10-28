@@ -2189,8 +2189,10 @@ openssl rand -hex 32 > ./mcp-state/key
 Add `--state-file ./mcp-state/state --state-key-file ./mcp-state/key` to the HTTP
 serve command. Keep the same key across restarts and store backups separately
 from the key. The journal seals account credentials, OAuth registrations/grants,
-refresh replay history, browser flows and release plans with AES-256-GCM. Files
-must be private regular files. Atomic replacement and fsync precede successful
+refresh replay history, browser flows and release plans with AES-256-GCM. Both
+must be regular files, not symlinks: the state file 0600, the key file one of the
+platform's secret-file modes (0400, 0440, 0600, 0640; systemd `LoadCredential=`
+delivers it as 0440). Atomic replacement and fsync precede successful
 OAuth responses; mutation attempts are committed before the API request.
 
 One process holds an exclusive state lease. A second writer, modified journal,

@@ -7,6 +7,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/routehealth"
 	"github.com/onebox-faas/faas/pkg/routemonitor"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -66,6 +67,13 @@ func (s *server) putRouteMonitor(w http.ResponseWriter, r *http.Request, a state
 		return
 	}
 	s.audit.Emit(r.Context(), "route_monitor.updated", &a.ID, map[string]any{"app_id": app.ID, "enabled": c.Enabled, "revision": c.Revision, "route_count": len(c.Routes), "customer_group_by": c.CustomerGroupBy})
+	if c.Enabled {
+		labels := make([]string, 0, len(c.Routes))
+		for _, route := range c.Routes {
+			labels = append(labels, routehealth.RouteLabel(route.Method, route.Path))
+		}
+		c.Warnings = s.unobservedRouteWarnings(r.Context(), a, app.ID, labels)
+	}
 	writeJSON(w, http.StatusOK, c)
 }
 func (s *server) postRouteMonitorPreview(w http.ResponseWriter, r *http.Request, a state.Account) {

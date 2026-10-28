@@ -137,6 +137,53 @@ func TestManagementEncryptedStateLockTamperAndPermissions(t *testing.T) {
 	}
 }
 
+// systemd LoadCredential= hands the hosted bridge its key as a 0440 file, so
+// the key takes the platform's secret-file modes; the state itself stays 0600.
+func TestManagementStateKeyFileModes(t *testing.T) {
+	for _, tc := range []struct {
+		mode os.FileMode
+		ok   bool
+	}{
+		{0o600, true}, {0o400, true}, {0o440, true}, {0o640, true},
+		{0o644, false}, {0o660, false}, {0o604, false}, {0o700, false},
+	} {
+		t.Run(tc.mode.String(), func(t *testing.T) {
+			key := filepath.Join(t.TempDir(), "key")
+			if err := os.WriteFile(key, bytes.Repeat([]byte{27}, 32), 0600); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Chmod(key, tc.mode); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := readStateKey(key); (err == nil) != tc.ok {
+				t.Fatalf("mode %v: err = %v, want ok=%v", tc.mode, err, tc.ok)
+			}
+		})
+	}
+	dir := t.TempDir()
+	target := filepath.Join(dir, "key")
+	if err := os.WriteFile(target, bytes.Repeat([]byte{27}, 32), 0400); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(dir, "link")
+	if err := os.Symlink(target, link); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := readStateKey(link); err == nil {
+		t.Fatal("symlinked key accepted")
+	}
+	store, path, _ := testStateStore(t)
+	if err := store.update("test", map[string]string{"k": "v"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(path, 0o640); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := readPrivateFile(path, maxStateBytes, ownerOnly); err == nil {
+		t.Fatal("group-readable state accepted")
+	}
+}
+
 func TestRemoteOAuthSurvivesRestartRotationAndRevocation(t *testing.T) {
 	store, path, key := testStateStore(t)
 	f := newRemoteFixtureWithOptions(t, true, HTTPOptions{Onboarding: "api-key", StateStore: store})
