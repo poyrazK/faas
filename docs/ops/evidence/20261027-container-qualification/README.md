@@ -33,12 +33,29 @@ The times to live include image pulls and full-rootfs assembly on the shared nes
 - Passed: `TestDirectOCIFullRootfsMetal`, `TestDirectOCIProcessContractMetal`, `TestDirectOCIPort3000Metal`, `TestUDPIngressMetal`, `TestE2E_Streaming_Metal_TxBytesAccuracy`, `TestBeforeCheckpointMetal`, `TestInteractiveAppTaskMetal`, `TestImageRunsMetal` and `TestImageRunProcessMetal`.
 - No failure traces to the container changes. The failures fall into these groups:
   - **Host speed.** Deployments sat in `imaging` or `snapshotting` past the tests' 60–75 s deadlines. Streaming TTFB measured 3.4 s and 1.04 s against a 1 s ceiling. Which tests pass changes from run to run: the other session's attempt 15 on the same host failed `TestDirectOCIFullRootfsMetal` and passed `TestDirectOCIMainHealthcheckMetal`.
-  - **Failing the same way in attempt 15, and outside this change:**
+  - **Failing the same way in attempt 15, and outside this change** (each one is resolved in the follow-up below):
     - `TestTCPIngressMetal`: readiness probes `/healthz` on port 5432 and is refused. The host now routes readiness to the deployment port (#5416).
     - `TestJobTaskLiveOutputMetal` and `TestInteractiveImageRunMetal`: 503 `traffic_revocation_unavailable`.
-    - `TestE2E_Streaming_Metal_PlanMatrix`: 401 on Pro and Scale, which default to bearer public auth (ADR-079). It also hit a Free-plan layer of 509 MB against the 256 MB cap.
+    - `TestE2E_Streaming_Metal_PlanMatrix`: 401 on Pro and Scale, which default to bearer public auth (ADR-080). It also hit a Free-plan layer of 509 MB against the 256 MB cap.
     - `TestE2E_Streaming_Metal_QuotaNonCounting`: `X-RateLimit-Remaining` did not drop.
 
 ## Finding: a wake after an explicit park can be torn down
 
 `POST /v1/apps/{slug}/park` sets the app `evicted_cold`. In the first smoke attempts, the next request's wake started a snapshot restore. About 3 s later its context was cancelled ("wait for wake network: context canceled", or "read resume ack: use of closed network connection"). The reaper's `parked app reconcile` then destroyed the in-flight wake, and the request got 503 `internal`. This happened for nginx, Python and Java. The lane's park/wake tests pass because their small VMs restore before it happens. Waking after an idle park, which does not set `evicted_cold`, works for all four images.
+
+The cause was that the gateway's deployment-routed wake and the raw TCP/UDP edges admit through schedd's `AdmitInstance` RPC, which never claimed the parked → active lifecycle that `EnsureWake` claims. #5672 makes request admission un-park the app first.
+
+## Follow-up on main (2026-10-27)
+
+| Failure above | Cause | Fix | Nested-host re-run |
+|---|---|---|---|
+| Wake after an explicit park torn down | Request admission left the app `evicted_cold` | #5672 | `TestBeforeCheckpointMetal` and `TestAfterRestoreMetal` PASS |
+| `TestTCPIngressMetal` refused | Source builds default to HTTP `GET /healthz` readiness, which a raw TCP service cannot answer. Only the probes before the bind were refused; later non-HTTP replies went uncounted. | #5672, ADR-20261027090000: a routed port declared as a public TCP listener uses TCP readiness | PASS |
+| `traffic_revocation_unavailable` on job logs and attach | Platform responses lacked the traffic-security snapshot through the public hop | #5611 (merged after this run's build) | not re-run |
+| PlanMatrix 401 on Pro/Scale | Test bug: `require_authn: false` leaves `public_auth_mode=bearer` | #5703 | Hobby, Pro, Scale PASS |
+| PlanMatrix Free 509 MB layer | **Product gap**: without ADR-1500's shared runtime (`FAAS_SOURCE_APP_SHARED_RUNTIME`, off everywhere), a Node source app's layer is the whole Railpack image | open; the default is off until ADR-1500's native acceptance | still FAIL |
+| QuotaNonCounting drop 0 | Test bug: Hobby's bucket refills 20 tokens/s, so it was full again after every stream | #5703 | PASS |
+| `TestAfterRestoreMetal` park 503 | Test bug: a 512 MB capture takes 6.5–7.3 s here, apid waits 5 s and answers a retryable 503 that `api.Client.park` retries. The test did not. | #5753 | PASS |
+| `TestAfterRestoreMetal` first wake 503 "wake failed" (one of three runs) | Unknown: the gateway refused it in 17 ms and logged no cause | #5748 now logs the cause of such a wake | did not recur |
+
+Re-runs used revisions `1380fa85c0`, `92961f1c5a` and `92514a2b61` (main plus the open fix) in `/mnt/e2e-scratch/cq-rerun-20261027`. Leakcheck was clean on all three.

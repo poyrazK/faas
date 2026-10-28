@@ -231,9 +231,8 @@ func runRealImageCase(t *testing.T, h *e2etest.Harness, pool *pgxpool.Pool, key 
 	woke := time.Now()
 	tc.check(t, getOK(t, h, host, "wake GET"))
 	t.Logf("%s served after waking in %s", tc.image, time.Since(woke).Round(time.Millisecond))
-	if _, status := doReq(t, h, key, http.MethodPost, "/v1/apps/"+tc.slug+"/park", nil); status != http.StatusNoContent {
-		t.Fatalf("cleanup park: status=%d", status)
-	}
+	// A full-rootfs capture of these images outlasts apid's park drain wait.
+	parkApp(t, h, key, tc.slug)
 }
 
 // getOK GETs the app through the gateway until it answers 200, retrying a
