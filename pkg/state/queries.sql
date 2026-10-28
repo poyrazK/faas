@@ -8614,9 +8614,28 @@ SELECT EXISTS (
 -- ADR-20261027085556: a gateway's public routing view reads every app it
 -- tracks in one repeatable-read snapshot. Each query below returns, for many
 -- apps at once, the rows its per-request counterpart above reads for one.
+-- revision_pins is ReadPublicRoutingRevision's manifest condition.
+-- revision_pin_ttl_valid is false when the stored value is not an integer, which
+-- the per-request read fails on; such an app's revision pins keep that read.
 -- name: ReadPublicRoutingViewOwners :many
-SELECT id, account_id, project_id FROM apps
+SELECT id, account_id, project_id,
+       (coalesce(manifest->>'revision_pin_ttl_seconds', '0') ~ '^-?[0-9]{1,9}$')::boolean AS revision_pin_ttl_valid,
+       (CASE WHEN coalesce(manifest->>'revision_pin_ttl_seconds', '0') ~ '^-?[0-9]{1,9}$'
+             THEN coalesce(manifest->>'revision_pin_ttl_seconds', '0')::integer > 0 ELSE false END)::boolean AS revision_pins
+FROM apps
 WHERE id = ANY(sqlc.arg(app_ids)::uuid[]) AND status <> 'deleted' AND deleted_at IS NULL;
+
+-- Live deployments in every scope, for host and revision pins
+-- (ReadPublicRoutingHostPin, ReadPublicRoutingRevision). row_limit + 1 rows per
+-- app tell the reader the list was cut.
+-- name: ReadPublicRoutingViewLive :many
+SELECT app_id, id, scope, traffic_percent, pin_expires_at FROM (
+    SELECT d.app_id, d.id, d.scope, d.traffic_percent, p.expires_at AS pin_expires_at,
+           row_number() OVER (PARTITION BY d.app_id ORDER BY d.id) AS position
+    FROM deployments d LEFT JOIN deployment_revision_pins p ON p.deployment_id = d.id
+    WHERE d.app_id = ANY(sqlc.arg(app_ids)::uuid[]) AND d.status = 'live' AND d.deleted_at IS NULL
+) ranked WHERE position <= sqlc.arg(row_limit)::integer
+ORDER BY app_id, id;
 
 -- Rows of ReadPublicRoutingWeights for every scope; a scope with more than
 -- row_limit rows is refused like the per-request roster.
@@ -8637,23 +8656,27 @@ FROM apps a JOIN project_release_canaries c ON c.project_id = a.project_id AND c
 WHERE a.id = ANY(sqlc.arg(app_ids)::uuid[]) AND c.status IN ('running', 'needs_operator')
 ORDER BY a.id, (c.status = 'running') DESC, c.created_at DESC;
 
--- Rows of ReadPublicRoutingRelease for each app: every active graph, and the
--- named graphs (a running canary's) while they are still usable. A graph's
--- target scope is its environment, the scope the per-request read filters on.
+-- Rows of ReadPublicRoutingRelease for each app: every active graph and every
+-- graph still usable by a release pin, the named graphs (a running canary's)
+-- first. A graph's target scope is its environment, the scope the per-request
+-- read filters on. row_limit + 1 rows per app tell the reader the list was cut.
 -- name: ReadPublicRoutingViewReleases :many
-SELECT a.id AS app_id, rs.id, rs.environment_slug, rs.active, member.deployment_id,
-       EXISTS (
-           SELECT 1 FROM deployments d WHERE d.id = member.deployment_id AND d.app_id = member.app_id
-             AND d.scope = rs.environment_slug AND d.status = 'live' AND d.deleted_at IS NULL
-             AND (d.traffic_percent > 0 OR EXISTS (SELECT 1 FROM deployment_revision_pins p WHERE p.deployment_id = d.id AND p.expires_at > now())
-                  OR EXISTS (SELECT 1 FROM project_release_members retained JOIN project_release_sets retained_set ON retained_set.id = retained.release_id
-                             WHERE retained.deployment_id = d.id AND retained.app_id = d.app_id AND (retained_set.active OR retained_set.expires_at > now())))
-       )::boolean AS target_live
-FROM apps a JOIN project_release_sets rs ON rs.project_id = a.project_id AND rs.account_id = a.account_id
-LEFT JOIN project_release_members member ON member.release_id = rs.id AND member.app_id = a.id
-WHERE a.id = ANY(sqlc.arg(app_ids)::uuid[]) AND a.status <> 'deleted' AND a.deleted_at IS NULL
-  AND (rs.active OR (rs.id = ANY(sqlc.arg(release_ids)::uuid[]) AND rs.expires_at > now()))
-ORDER BY a.id, rs.environment_slug, rs.created_at DESC, rs.id;
+SELECT app_id, id, environment_slug, active, expires_at, deployment_id, target_live FROM (
+    SELECT a.id AS app_id, rs.id, rs.environment_slug, rs.active, rs.expires_at, rs.created_at, member.deployment_id,
+           EXISTS (
+               SELECT 1 FROM deployments d WHERE d.id = member.deployment_id AND d.app_id = member.app_id
+                 AND d.scope = rs.environment_slug AND d.status = 'live' AND d.deleted_at IS NULL
+                 AND (d.traffic_percent > 0 OR EXISTS (SELECT 1 FROM deployment_revision_pins p WHERE p.deployment_id = d.id AND p.expires_at > now())
+                      OR EXISTS (SELECT 1 FROM project_release_members retained JOIN project_release_sets retained_set ON retained_set.id = retained.release_id
+                                 WHERE retained.deployment_id = d.id AND retained.app_id = d.app_id AND (retained_set.active OR retained_set.expires_at > now())))
+           )::boolean AS target_live,
+           row_number() OVER (PARTITION BY a.id ORDER BY rs.active DESC, (rs.id = ANY(sqlc.arg(release_ids)::uuid[])) DESC, rs.created_at DESC, rs.id) AS position
+    FROM apps a JOIN project_release_sets rs ON rs.project_id = a.project_id AND rs.account_id = a.account_id
+    LEFT JOIN project_release_members member ON member.release_id = rs.id AND member.app_id = a.id
+    WHERE a.id = ANY(sqlc.arg(app_ids)::uuid[]) AND a.status <> 'deleted' AND a.deleted_at IS NULL
+      AND (rs.active OR rs.expires_at > now())
+) ranked WHERE position <= sqlc.arg(row_limit)::integer
+ORDER BY app_id, environment_slug, created_at DESC, id;
 
 -- ADR-570: public host policy reads are credential-minimal and transaction-scoped.
 -- name: ReadPublicHostApp :one
