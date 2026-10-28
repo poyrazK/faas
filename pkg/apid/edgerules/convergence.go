@@ -50,6 +50,8 @@ type EdgeRuleConvergence struct {
 	Hosts             []string
 	Expected          map[string]struct{}
 	OnAcknowledgement func(context.Context, string) error
+	// Metrics counts a phase that does not finish; nil records nothing.
+	Metrics *Metrics
 }
 
 // edgeRuleAccountLocks serializes this process's mutations per account
@@ -193,7 +195,7 @@ func (s *Service) PrepareEdgeRuleMutationLocked(ctx context.Context, appID, rule
 	conv := &EdgeRuleConvergence{
 		Notif: s.Host.Notifier(), Generation: generation, AppID: appID, AccountID: accountID, RuleID: ruleID,
 		Operation: operation, Hosts: canonicalEdgeRuleHosts(hosts), Expected: map[string]struct{}{},
-		Cancel: func() {}, Unlock: unlock,
+		Cancel: func() {}, Unlock: unlock, Metrics: s.Metrics,
 	}
 	nodes, err := s.ServingEdgeRuleNodes(ctx)
 	if err != nil {
@@ -228,8 +230,10 @@ func (s *Service) PrepareEdgeRuleMutationLocked(ctx context.Context, appID, rule
 			listenCancel()
 		}
 	}
-	if err := conv.notifyAndWait(ctx, "prepare"); err != nil {
+	if err := conv.notifyAndWait(ctx, ConvergencePhasePrepare); err != nil {
 		conv.Abort(ctx)
+		s.Host.Logger().Warn("edge-rule convergence prepare failed; the change was refused",
+			"app", appID, "generation", generation, "err", err)
 		return nil, err
 	}
 	return conv, nil
@@ -262,6 +266,7 @@ func (s *Service) ServingEdgeRuleNodes(ctx context.Context) ([]string, error) {
 		for _, node := range stale {
 			if _, ok := seen[node]; ok {
 				delete(seen, node)
+				s.Metrics.gatewaySkipped(node)
 				s.Host.Logger().Warn("edge-rule convergence skips a gateway whose listener is stale",
 					"node", node, "stale_after", state.EdgeListenerStaleAfter)
 			}
@@ -299,7 +304,17 @@ func (c *EdgeRuleConvergence) payload(phase string) (string, error) {
 	return string(body), err
 }
 
+// notifyAndWait publishes phase and waits for every expected gateway to
+// acknowledge it. A phase that does not finish is counted by phase.
 func (c *EdgeRuleConvergence) notifyAndWait(ctx context.Context, phase string) error {
+	err := c.publishAndWait(ctx, phase)
+	if err != nil {
+		c.Metrics.convergenceFailed(phase)
+	}
+	return err
+}
+
+func (c *EdgeRuleConvergence) publishAndWait(ctx context.Context, phase string) error {
 	payload, err := c.payload(phase)
 	if err != nil {
 		return err
@@ -363,7 +378,7 @@ func (c *EdgeRuleConvergence) Apply(ctx context.Context, ruleID string) error {
 	c.RuleID = ruleID
 	applyCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), EdgeRuleConvergenceTimeout+time.Second)
 	defer cancel()
-	return c.notifyAndWait(applyCtx, "apply")
+	return c.notifyAndWait(applyCtx, ConvergencePhaseApply)
 }
 
 func (c *EdgeRuleConvergence) Abort(ctx context.Context) {

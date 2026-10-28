@@ -42,7 +42,7 @@ RULES = [
     (r"synthetic", "Synthetic checks"),
     (r"app-cost|cost-trend|costs-overview", "Per-app costs"),
     (r"async-route|execution-mode", "Async routes at the edge"),
-    (r"frozen|thaw", "Frozen tier"),
+    (r"frozen|thaw|quiet-pause-unbilled", "Frozen tier"),
     (r"^/orders|^/users|^/v1\\?api|^/v1/apps\\$", "TEST"),
     (r"^apps/diff", "Affected-workload preview"),
     (r"^apps/env", "Env vars:"),
