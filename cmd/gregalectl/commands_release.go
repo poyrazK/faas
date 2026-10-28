@@ -62,6 +62,7 @@ const (
 	subReleaseInstall   = "install"
 	subReleaseKGV       = "kgv"
 	subReleaseReconcile = "reconcile"
+	subReleaseHistory   = "history"
 
 	// Canonical release asset names. These are the names attached to a
 	// GitHub Release and retained under each installed release directory.
@@ -85,11 +86,13 @@ func cmdReleaseDispatch(args []string) int {
 		return cmdReleaseKGV(args[1:])
 	case subReleaseReconcile:
 		return cmdReleaseReconcile(args[1:])
+	case subReleaseHistory:
+		return cmdReleaseHistory(args[1:])
 	case flagHelpShort, flagHelpLong:
 		printReleaseUsage(os.Stderr)
 		return 0
 	default:
-		fmt.Fprintf(os.Stderr, "gregalectl release: unknown subcommand %q (expected: bundle | install | kgv | reconcile)\n", args[0])
+		fmt.Fprintf(os.Stderr, "gregalectl release: unknown subcommand %q (expected: bundle | install | kgv | reconcile | history)\n", args[0])
 		return 1
 	}
 }
@@ -104,6 +107,8 @@ Subcommands:
   install   Install a release on the local box (atomic symlink flip +
             release_bundles.applied_at first-write-wins stamp).
   reconcile Remove retained database rows for superseded failed rollouts.
+  history   List release activations (deploys and rollbacks) on
+            control-plane hosts, newest first.
 
 Flags (bundle):
   --bin-dir PATH        Path to the directory holding the daemon binaries
@@ -128,6 +133,11 @@ Flags (reconcile):
   --releases-root PATH  Releases root (default: /opt/faas/releases).
   --retention DURATION  Minimum abandoned-row age (default: 24h).
   --dry-run             Report eligible rows without deleting them.
+
+Flags (history):
+  --host NAME           Only this host (default: every host).
+  --limit N             Most rows to show, 1-1000 (default: 20).
+  --json                Emit structured JSON to stdout.
 
 Exit codes:
   0  success

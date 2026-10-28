@@ -12704,6 +12704,24 @@
     "kind": "operational"
   },
   {
+    "table": "platform_release_activations",
+    "columns": [
+      "actor",
+      "commit_sha",
+      "detail",
+      "finished_at",
+      "host",
+      "id",
+      "kind",
+      "previous_release_id",
+      "release_id",
+      "services",
+      "started_at",
+      "status"
+    ],
+    "kind": "platform_configuration"
+  },
+  {
     "table": "platform_mail_producer_outbox",
     "columns": [
       "account_id",
