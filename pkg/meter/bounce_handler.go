@@ -220,31 +220,15 @@ func (h *BounceHandler) HandleMailBounce(ctx context.Context, b MailBounce) erro
 		})
 	}
 
-	// Step 3: only hard bounces advance dunning, and only on a
-	// fresh insert (replay-safety — the bool is the guard the
-	// plan calls out).
-	if b.Reason != "hard_bounce" || !inserted || accountPtr == nil {
-		return nil
-	}
-
-	// MarkDunningStep's CAS returns ErrNotFound when the status
-	// doesn't match — that is the redelivery-race guard. We log
-	// and return nil rather than fail the webhook; the existing
-	// 7-day timer continues to drive the row to suspended /
-	// deleted_pending from any of {active, past_due}.
-	if err := h.Store.MarkDunningStep(ctx, *accountPtr, state.AccountActive, state.AccountPastDue); err != nil {
-		if errors.Is(err, state.ErrNotFound) {
-			if h.Log != nil {
-				h.Log.Info("meter: bounce dunning CAS lost — already past_due / suspended",
-					"account", *accountPtr, "event_id", b.ProviderEventID)
-			}
-			return nil
-		}
-		return fmt.Errorf("meter: MarkDunningStep: %w", err)
-	}
-	if h.Log != nil {
-		h.Log.Warn("meter: bounce marked account past_due",
-			"account", *accountPtr, "email", b.Email, "event_id", b.ProviderEventID)
+	// A bounce never moves an account's billing status. It used to mark an
+	// active account past_due, so one bounce on a removed work mailbox
+	// suspended a paying customer a week later and scheduled a Free account
+	// for deletion with its databases, while the notices went to the
+	// suppressed address (bug hunt 2026-10-28 B26). Dunning follows billing
+	// events only; the suppression above marks the address undeliverable.
+	if h.Log != nil && b.Reason == "hard_bounce" && inserted && accountPtr != nil {
+		h.Log.Warn("meter: account email bounced; address suppressed",
+			"account", *accountPtr, "event_id", b.ProviderEventID)
 	}
 	return nil
 }

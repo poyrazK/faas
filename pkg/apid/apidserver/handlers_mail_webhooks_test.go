@@ -69,7 +69,7 @@ func signResendReq(t *testing.T, body []byte, secret, id string) *http.Request {
 // the parsed email + delivery UUID.
 func TestResendWebhook_HappyPath(t *testing.T) {
 	secret := mail.RandomResendSecretForTest()
-	body := []byte(`{"type":"email.bounced","data":{"email":"alice@example.com","created_at":"2026-08-29T10:00:00Z"}}`)
+	body := []byte(`{"type":"email.bounced","data":{"to":["alice@example.com"],"created_at":"2026-08-29T10:00:00Z","bounce":{"type":"Permanent","subType":"General"}}}`)
 	bouncer := &fakeMailBounce{}
 	s := resendServerForTest(t, secret, bouncer)
 
@@ -102,7 +102,7 @@ func TestResendWebhook_HappyPath(t *testing.T) {
 // "secret unset" branch).
 func TestResendWebhook_BadSignature(t *testing.T) {
 	secret := mail.RandomResendSecretForTest()
-	body := []byte(`{"type":"email.bounced","data":{"email":"a@b"}}`)
+	body := []byte(`{"type":"email.bounced","data":{"to":["a@b"],"bounce":{"type":"Permanent"}}}`)
 	bouncer := &fakeMailBounce{}
 	s := resendServerForTest(t, secret, bouncer)
 
@@ -127,7 +127,7 @@ func TestResendWebhook_UnsetSecret(t *testing.T) {
 	bouncer := &fakeMailBounce{}
 	s := resendServerForTest(t, "", bouncer)
 
-	body := []byte(`{"type":"email.bounced","data":{"email":"a@b"}}`)
+	body := []byte(`{"type":"email.bounced","data":{"to":["a@b"],"bounce":{"type":"Permanent"}}}`)
 	rec := httptest.NewRecorder()
 	s.ResendWebhook(rec, signResendReq(t, body, mail.RandomResendSecretForTest(), "msg_unset"))
 
@@ -145,7 +145,7 @@ func TestResendWebhook_UnsetSecret(t *testing.T) {
 // Resend stops retrying.
 func TestResendWebhook_ReplayIgnored(t *testing.T) {
 	secret := mail.RandomResendSecretForTest()
-	body := []byte(`{"type":"email.bounced","data":{"email":"a@b"}}`)
+	body := []byte(`{"type":"email.bounced","data":{"to":["a@b"],"bounce":{"type":"Permanent"}}}`)
 	bouncer := &fakeMailBounce{}
 	s := resendServerForTest(t, secret, bouncer)
 
@@ -194,7 +194,7 @@ func TestResendWebhook_UnknownEventType(t *testing.T) {
 // events round-trip into the bounce handler with reason=complaint.
 func TestResendWebhook_ComplaintRecognised(t *testing.T) {
 	secret := mail.RandomResendSecretForTest()
-	body := []byte(`{"type":"email.complained","data":{"email":"alice@example.com"}}`)
+	body := []byte(`{"type":"email.complained","data":{"to":["alice@example.com"]}}`)
 	bouncer := &fakeMailBounce{}
 	s := resendServerForTest(t, secret, bouncer)
 
@@ -213,7 +213,7 @@ func TestResendWebhook_ComplaintRecognised(t *testing.T) {
 // A 10-minute-old delivery fails the tolerance check → 400.
 func TestResendWebhook_StaleTimestamp(t *testing.T) {
 	secret := mail.RandomResendSecretForTest()
-	body := []byte(`{"type":"email.bounced","data":{"email":"a@b"}}`)
+	body := []byte(`{"type":"email.bounced","data":{"to":["a@b"],"bounce":{"type":"Permanent"}}}`)
 	bouncer := &fakeMailBounce{}
 	s := resendServerForTest(t, secret, bouncer)
 
@@ -259,7 +259,7 @@ func TestResendWebhook_BadJSON(t *testing.T) {
 // The handler must not silently swallow a DB outage.
 func TestResendWebhook_BouncerErrorIs500(t *testing.T) {
 	secret := mail.RandomResendSecretForTest()
-	body := []byte(`{"type":"email.bounced","data":{"email":"a@b"}}`)
+	body := []byte(`{"type":"email.bounced","data":{"to":["a@b"],"bounce":{"type":"Permanent"}}}`)
 	bouncer := &fakeMailBounce{err: io.ErrUnexpectedEOF}
 	s := resendServerForTest(t, secret, bouncer)
 
@@ -276,7 +276,7 @@ func TestResendWebhook_BouncerErrorIs500(t *testing.T) {
 // the route must NOT no-op.
 func TestResendWebhook_NilBouncerIs500(t *testing.T) {
 	secret := mail.RandomResendSecretForTest()
-	body := []byte(`{"type":"email.bounced","data":{"email":"a@b"}}`)
+	body := []byte(`{"type":"email.bounced","data":{"to":["a@b"],"bounce":{"type":"Permanent"}}}`)
 	s := resendServerForTest(t, secret, nil)
 	(*s.MailBounce()) = nil // explicit nil for clarity
 
@@ -294,7 +294,7 @@ func TestResendWebhook_NilBouncerIs500(t *testing.T) {
 // stops retrying.
 func TestResendWebhook_SoftBounceIgnoredIs200(t *testing.T) {
 	secret := mail.RandomResendSecretForTest()
-	body := []byte(`{"type":"email.bounced","data":{"email":"a@b"}}`)
+	body := []byte(`{"type":"email.bounced","data":{"to":["a@b"],"bounce":{"type":"Permanent"}}}`)
 	bouncer := &fakeMailBounce{err: meter.ErrMailBounceIgnored}
 	s := resendServerForTest(t, secret, bouncer)
 
@@ -306,41 +306,48 @@ func TestResendWebhook_SoftBounceIgnoredIs200(t *testing.T) {
 	}
 }
 
-// TestResendReason_Mapping pins the closed-set mapping table.
-// A typo here would silently misclassify complaints as
-// hard_bounces (or vice versa), advancing dunning for a spam
-// report — the kind of bug that costs customers.
+// TestResendReason_Mapping pins the closed-set mapping table. Only a
+// Permanent bounce is a hard bounce; a Temporary or unclassified one is soft
+// and suppresses nothing (bug hunt 2026-10-28 B26).
 func TestResendReason_Mapping(t *testing.T) {
-	cases := map[string]string{
-		"email.bounced":    "hard_bounce",
-		"email.complained": "complaint",
-		"email.delivered":  "",
-		"email.opened":     "",
-		"email.clicked":    "",
-		"email.unknown":    "",
+	cases := []struct {
+		body, want string
+	}{
+		{`{"type":"email.bounced","data":{"bounce":{"type":"Permanent"}}}`, "hard_bounce"},
+		{`{"type":"email.bounced","data":{"bounce":{"type":"Temporary"}}}`, "soft_bounce"},
+		{`{"type":"email.bounced","data":{}}`, "soft_bounce"},
+		{`{"type":"email.complained","data":{}}`, "complaint"},
+		{`{"type":"email.delivered","data":{}}`, ""},
+		{`{"type":"email.opened","data":{}}`, ""},
+		{`{"type":"email.clicked","data":{}}`, ""},
+		{`{"type":"email.unknown","data":{}}`, ""},
 	}
-	for in, want := range cases {
-		if got := apidserver.ResendReason(in); got != want {
-			t.Fatalf("resendReason(%q) = %q, want %q", in, got, want)
+	for _, tc := range cases {
+		var ev apidserver.ResendEvent
+		if err := json.Unmarshal([]byte(tc.body), &ev); err != nil {
+			t.Fatal(err)
+		}
+		if got := apidserver.ResendReason(ev); got != tc.want {
+			t.Fatalf("resendReason(%s) = %q, want %q", tc.body, got, tc.want)
 		}
 	}
 }
 
-// TestResendWebhook_PayloadShape pins the Resend envelope the
-// handler parses. A future Resend schema change that breaks
-// this contract surfaces here — the audit row + bouncer call
-// would otherwise go silently wrong.
+// TestResendWebhook_PayloadShape pins the Resend envelope the handler
+// parses: recipients are in data.to, an array, and bounce.type classifies
+// the bounce. The handler read a data.email field Resend never sends, so
+// every bounce failed and nothing was suppressed (bug hunt 2026-10-28 B26).
 func TestResendWebhook_PayloadShape(t *testing.T) {
-	body := []byte(`{"type":"email.bounced","data":{"email":"x@y","created_at":"2026-08-29T10:00:00Z"}}`)
+	body := []byte(`{"type":"email.bounced","created_at":"2026-08-29T10:00:00Z","data":{"email_id":"56761188-7520-42d8-8898-ff6fc54ce618","from":"Acme <onboarding@resend.dev>","to":["x@y","z@w"],"subject":"Sending this example","created_at":"2026-08-29T10:00:00Z","bounce":{"message":"The recipient's email address is on the suppression list.","subType":"Suppressed","type":"Permanent"}}}`)
 	var ev apidserver.ResendEvent
 	if err := json.Unmarshal(body, &ev); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
-	if ev.Type != "email.bounced" {
-		t.Fatalf("ev.Type = %q, want email.bounced", ev.Type)
+	if ev.Type != "email.bounced" || ev.Data.Bounce.Type != "Permanent" {
+		t.Fatalf("event = %+v, want a Permanent email.bounced", ev)
 	}
-	if ev.Data.Email != "x@y" {
-		t.Fatalf("ev.Data.Email = %q, want x@y", ev.Data.Email)
+	if got := len(ev.Data.To); got != 2 || ev.Data.To[0] != "x@y" {
+		t.Fatalf("ev.Data.To = %v, want both recipients", ev.Data.To)
 	}
 	if ev.Data.CreatedAt == "" {
 		t.Fatal("ev.Data.CreatedAt not captured")
