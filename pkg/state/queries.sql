@@ -8966,6 +8966,13 @@ SELECT pg_try_advisory_lock(hashtextextended(sqlc.arg(lock_key)::text,0))::boole
 -- name: UnlockTrafficPolicySession :one
 SELECT pg_advisory_unlock(hashtextextended(sqlc.arg(lock_key)::text,0))::boolean;
 
+-- name: TryLockTrafficPolicySessionShared :one
+-- A scoped binding writer's ancestor and root keys (ADR-20261027163626).
+SELECT pg_try_advisory_lock_shared(hashtextextended(sqlc.arg(lock_key)::text,0))::boolean;
+
+-- name: UnlockTrafficPolicySessionShared :one
+SELECT pg_advisory_unlock_shared(hashtextextended(sqlc.arg(lock_key)::text,0))::boolean;
+
 -- name: ReadEdgeRuleTrafficAccount :one
 SELECT account_id,kind FROM edge_rules WHERE id = sqlc.arg(rule_id)::uuid;
 
