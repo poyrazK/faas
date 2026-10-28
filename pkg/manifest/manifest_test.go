@@ -2,10 +2,13 @@ package manifest
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 const validManifest = `schema_version: "1.0.0"
@@ -269,6 +272,42 @@ func TestValidate_GatewaydInternalRateLimitMode(t *testing.T) {
 				t.Fatalf("Validate = %v, want error containing %q", errs, tc.wantErr)
 			}
 		})
+	}
+}
+
+// ADR-20261021215353: early freeze is schedd-only and takes 0 (off) or the
+// api.FrozenEarlyFreeze* bounds, the range schedd itself accepts at startup.
+func TestValidate_ScheddFrozenTierEarlyFreeze(t *testing.T) {
+	const schedd = "    bind: tcp://0.0.0.0:7100\n"
+	cases := []struct {
+		name, replace, wantErr string
+	}{
+		{"off", schedd + "    frozen_tier_early_freeze_after_s: 0\n", ""},
+		{"recommended", schedd + "    frozen_tier_early_freeze_after_s: 10\n", ""},
+		{"min", schedd + fmt.Sprintf("    frozen_tier_early_freeze_after_s: %d\n", api.FrozenEarlyFreezeMinSeconds), ""},
+		{"max", schedd + fmt.Sprintf("    frozen_tier_early_freeze_after_s: %d\n", api.FrozenEarlyFreezeMaxSeconds), ""},
+		{"below min", schedd + "    frozen_tier_early_freeze_after_s: 1\n", "daemons.schedd.frozen_tier_early_freeze_after_s: must be 0 or"},
+		{"above max", schedd + "    frozen_tier_early_freeze_after_s: 301\n", "daemons.schedd.frozen_tier_early_freeze_after_s: must be 0 or"},
+		{"negative", schedd + "    frozen_tier_early_freeze_after_s: -5\n", "daemons.schedd.frozen_tier_early_freeze_after_s: must be 0 or"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			errs := mustParseValidate(t, strings.Replace(validManifest, schedd, tc.replace, 1))
+			if tc.wantErr == "" {
+				if errs != nil {
+					t.Fatalf("Validate = %v, want nil", errs)
+				}
+				return
+			}
+			if errs == nil || !strings.Contains(errs.Error(), tc.wantErr) {
+				t.Fatalf("Validate = %v, want error containing %q", errs, tc.wantErr)
+			}
+		})
+	}
+	wrong := strings.Replace(validManifest, "overlay:\n",
+		"  apid:\n    bind: unix:///run/faas/apid.sock\n    frozen_tier_early_freeze_after_s: 10\noverlay:\n", 1)
+	if errs := mustParseValidate(t, wrong); errs == nil || !strings.Contains(errs.Error(), "daemons.apid.frozen_tier_early_freeze_after_s: is only valid for schedd") {
+		t.Fatalf("Validate = %v, want schedd-only error", errs)
 	}
 }
 

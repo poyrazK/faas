@@ -152,6 +152,9 @@ var AllowedAlertRuleMetrics = []string{
 	"cert_expiry_seconds",
 	"cert_issuance_failed",
 	"queue_depth",
+	// ADR-20261018101500 amendment 2026-10-27: an app's durable queue.
+	"queue_backlog",
+	"queue_oldest_age_seconds",
 	"pre_auth_target_threshold",
 	"pre_auth_target_signal_gap_pct",
 	"pre_auth_pressure",
@@ -339,7 +342,7 @@ func AlertRuleActionAllowedForMetric(metric, action string) bool {
 	if IsEventRetentionAlertMetric(metric) || IsEventRecoveryAlertMetric(metric) || IsEventConsumerAlertMetric(metric) || IsEdgeSecurityAlertMetric(metric) ||
 		metric == "workflow_failures" || metric == "workflow_schedule_quota_skips" ||
 		metric == "workflow_pending_age_seconds" || metric == "workflow_waiting_age_seconds" || metric == "workflow_due_age_seconds" ||
-		metric == AlertRuleMetricCustomMetric || metric == AlertRuleMetricLogSearchMatches || IsEdgeRuleAlertMetric(metric) || metric == AlertMetricRouteInsightsDetected {
+		metric == AlertRuleMetricCustomMetric || metric == AlertRuleMetricLogSearchMatches || metric == "queue_backlog" || metric == "queue_oldest_age_seconds" || IsEdgeRuleAlertMetric(metric) || metric == AlertMetricRouteInsightsDetected {
 		return action == "" || action == "webhook"
 	}
 	if metric == MetricMCPReadinessUnhealthy || IsMCPProtocolMetric(metric) || IsMCPConnectionHealthMetric(metric) || IsMCPCatalogMonitorMetric(metric) || IsMCPPolicyConvergenceMetric(metric) || metric == "mcp_tasks_oldest_age_seconds" || metric == "mcp_tasks_metrics_stale" || metric == "mcp_task_promotion_hold_age_seconds" {

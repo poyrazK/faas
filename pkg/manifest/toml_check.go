@@ -200,6 +200,8 @@ var HostKeys = map[string]HostBlock{
 			"owner_user",
 			"metrics_addr",
 			"db_url",
+			// ADR-20261021215353, rendered only when the manifest sets it.
+			"frozen_tier_early_freeze_after_s",
 		},
 		// schedd has no [compute_node] block on its TOML today.
 		ComputeNodeBlock: nil,
