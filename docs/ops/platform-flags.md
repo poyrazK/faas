@@ -126,7 +126,11 @@ flags in the table below release their capability; every other capability in
     (`pr_previews`) and does not replay them later; closing a pull request
     still tears its preview down.
   - gatewayd-internal drops cache, async, retry and circuit-breaker edge rules
-    and stops traffic mirroring, session affinity and the wake page.
+    and stops traffic mirroring, session affinity and the wake page. It also
+    serves the customer logs route and delivers log drains: off `logs` hides
+    `GET /v1/apps/{slug}/logs` (live and archive) for the caller's account,
+    and off `log_drains` stops delivering that account's drains within a
+    30-second reconcile. Runbook: [FaasLogs](../runbooks/FaasLogs.md).
     Restrictive edge rules (WAF, challenge, IP, JWT, geo, limits,
     maintenance, headers, routing) keep enforcing while `edge_rules` or
     `edge_protection` is off, so switching those off never opens an app.
