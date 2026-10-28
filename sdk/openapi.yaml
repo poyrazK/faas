@@ -1634,6 +1634,7 @@ paths:
     get:
       tags: [auth]
       operationId: getAuthCapabilities
+      security: [{cookieAuth: []}]
       summary: Sign-in OAuth capability signal for the dashboard.
       description: |
         Returns the boot-resolved OAuth provider state for this API
@@ -1941,6 +1942,7 @@ paths:
     post:
       tags: [auth]
       operationId: setPassword
+      security: [{cookieAuth: []}]
       summary: Set or replace the password on the authenticated account.
       description: |
         Authenticated. Lets OAuth-only customers opt into password
@@ -5636,6 +5638,7 @@ paths:
     post:
       tags: [github]
       operationId: listInstallableRepos
+      security: [{cookieAuth: []}]
       summary: List repos the user's GitHub App installation can see.
       description: |
         Cookie-session-authenticated (NOT API-key). Hydrates the
@@ -5924,6 +5927,7 @@ paths:
     get:
       tags: [github]
       operationId: getGitHubInstallBinding
+      security: [{cookieAuth: []}]
       summary: Inspect the app's GitHub repository binding.
       description: |
         Cookie-session-authenticated (NOT API-key). Returns the durable
@@ -5946,6 +5950,7 @@ paths:
     post:
       tags: [github]
       operationId: bindAppInstall
+      security: [{cookieAuth: []}]
       summary: Persist the (account, app, installation, repo, branch) bind row.
       description: |
         Cookie-session-authenticated (NOT API-key). Persists the
@@ -5995,6 +6000,7 @@ paths:
     delete:
       tags: [github]
       operationId: disconnectGitHubApp
+      security: [{cookieAuth: []}]
       summary: Disconnect an app from its GitHub repository.
       description: |
         Cookie-session-authenticated and CSRF-protected. Idempotently removes
@@ -6029,6 +6035,7 @@ paths:
     get:
       tags: [github]
       operationId: getGitHubInstallStatus
+      security: [{cookieAuth: []}]
       summary: Read the GitHub installation and binding health for an app.
       description: |
         Cookie-session-authenticated (NOT API-key). This is the canonical
@@ -6055,6 +6062,7 @@ paths:
     post:
       tags: [github]
       operationId: syncGitHubInstall
+      security: [{cookieAuth: []}]
       summary: Reconcile an app's GitHub repository access immediately.
       description: |
         Cookie-session-authenticated and CSRF-protected. Queries GitHub's
@@ -6098,6 +6106,7 @@ paths:
     post:
       tags: [github]
       operationId: retryGitHubInstallActivity
+      security: [{cookieAuth: []}]
       summary: Retry failed GitHub activity from the signed-in dashboard session.
       description: |
         This cookie-session action is CSRF-protected and requeues up to 10
@@ -10989,6 +10998,7 @@ paths:
     post:
       tags: [alert_rules]
       operationId: dashboardEnableAlertPreset
+      security: [{cookieAuth: []}]
       summary: Form-POST sibling of enableAlertPreset for the dashboard.
       description: |
         Receives application/x-www-form-urlencoded payload from the
@@ -11107,6 +11117,7 @@ paths:
     post:
       tags: [alert_rules]
       operationId: dashboardTestAlertPreset
+      security: [{cookieAuth: []}]
       summary: Form-POST sibling of testAlertPreset for the dashboard.
       description: |
         Receives the per-card "Send test alert" form submission
@@ -14592,6 +14603,7 @@ paths:
     get:
       tags: [templates]
       operationId: listTemplates
+      security: [{cookieAuth: []}]
       summary: Catalog of starter templates the dashboard wizard renders.
       description: |
         Cookie-session-authenticated (NOT API-key). The dashboard and
