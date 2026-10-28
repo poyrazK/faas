@@ -17,8 +17,8 @@ import (
 )
 
 var (
-	reseal        = flag.Bool("reseal", false, "re-seal every live key and login still under the legacy namespace to its database's (ADR-20261016151947 at-rest binding, release 2) with -keys-identity, then exit; idempotent")
-	resealDSNFile = flag.String("reseal-dsn-file", "", "with -reseal: file holding a control-plane connection string whose role may update managed_postgres_live_keys and managed_postgres_live_logins")
+	reseal        = flag.Bool("reseal", false, "re-seal every live key still under the legacy namespace to its database's and drop every legacy live login for apid to issue again (ADR-20261016151947 at-rest binding, release 2) with -keys-identity, then exit; idempotent")
+	resealDSNFile = flag.String("reseal-dsn-file", "", "with -reseal: file holding a control-plane connection string whose role may update managed_postgres_live_keys and delete from managed_postgres_live_logins")
 )
 
 // runReseal is `livequeryd -reseal`, an operator-run backfill. It runs on a
@@ -52,7 +52,7 @@ func runReseal(ctx context.Context, log *slog.Logger) error {
 	report, err := liveserver.Reseal(ctx, livekeys.New(pool), identities, log)
 	log.InfoContext(ctx, "livequeryd: re-seal finished",
 		"keys_resealed", report.Keys.Resealed, "keys_bound", report.Keys.Bound, "keys_changed", report.Keys.Changed, "keys_refused", report.Keys.Refused,
-		"logins_resealed", report.Logins.Resealed, "logins_bound", report.Logins.Bound, "logins_changed", report.Logins.Changed, "logins_refused", report.Logins.Refused)
+		"logins_dropped", report.Logins.Dropped, "logins_bound", report.Logins.Bound, "logins_changed", report.Logins.Changed, "logins_refused", report.Logins.Refused)
 	if err != nil {
 		return err
 	}

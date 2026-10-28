@@ -550,13 +550,20 @@ func (s *Sampler) rollApps(ctx context.Context, observedAt, minute time.Time, ex
 	var out []RolledRow
 	for _, app := range apps {
 		compute, hasCompute := s.store.(state.FinancialComputeStore)
-		computeCovered := false
-		if hasCompute {
-			var err error
-			computeCovered, err = compute.FinancialComputeAppManaged(ctx, app.AccountID, app.ID)
-			if err != nil {
-				return nil, err
+		// The strict-budget check costs one or two queries. It ran for every
+		// app every minute, parked and deleted ones included; it is now read
+		// only for an app with an instance row or a floor gap to bill.
+		var computeKnown, computeCovered bool
+		managed := func() (bool, error) {
+			if !hasCompute || computeKnown {
+				return computeCovered, nil
 			}
+			covered, err := compute.FinancialComputeAppManaged(ctx, app.AccountID, app.ID)
+			if err != nil {
+				return false, err
+			}
+			computeKnown, computeCovered = true, covered
+			return covered, nil
 		}
 		if app.Status == state.AppDeleted && !exactResidency {
 			continue
@@ -633,11 +640,16 @@ func (s *Sampler) rollApps(ctx context.Context, observedAt, minute time.Time, ex
 				seconds = s.unbilledQuietSeconds(quietPaused, quietMode, ins.ID,
 					string(planByAccount[meterAppSubject(app, planByAccount)]), seconds)
 			}
-			if computeCovered {
-				var err error
-				seconds, err = compute.FinancialComputeBillingSeconds(ctx, app.AccountID, app.ID, ins.ID, minute, seconds)
+			if seconds > 0 && (exactResidency || state.State(ins.State).Billable()) {
+				covered, err := managed()
 				if err != nil {
-					return out, fmt.Errorf("meter: strict compute funding: %w", err)
+					return nil, err
+				}
+				if covered {
+					seconds, err = compute.FinancialComputeBillingSeconds(ctx, app.AccountID, app.ID, ins.ID, minute, seconds)
+					if err != nil {
+						return out, fmt.Errorf("meter: strict compute funding: %w", err)
+					}
 				}
 			}
 			// FROZEN is resident but unbilled (ADR-1151).
@@ -755,18 +767,6 @@ func (s *Sampler) rollApps(ctx context.Context, observedAt, minute time.Time, ex
 			continue
 		}
 		subject := meterAppSubject(app, planByAccount)
-		// A strict app budget preempts the capacity floor. The retained book
-		// waives synthetic charges for its UTC month, including catch-up after
-		// policy deletion; only funded physical residency remains billable.
-		if computeCovered {
-			covered, err := compute.FinancialComputeFloorCovered(ctx, app.AccountID, app.ID, minute)
-			if err != nil {
-				return out, err
-			}
-			if covered {
-				continue
-			}
-		}
 		// PR-A (ADR-060, issue #515): per-app GB-h floor for
 		// ScalingPolicy.MinInstances. When the floor is set
 		// and live instance count is below it, append
@@ -813,6 +813,9 @@ func (s *Sampler) rollApps(ctx context.Context, observedAt, minute time.Time, ex
 		// closed would be billed as if it were still open, or vice versa.
 		floor := app.EffectiveMinInstancesAt(observedAt)
 		deploymentFloor := 0
+		// One read per deployment, not per instance: a deployment's
+		// instances share its floor (bug hunt 2026-10-27 O3).
+		floorByDeployment := map[string]int{}
 		for _, ins := range ins {
 			if !state.State(ins.State).CountsForRAM() {
 				continue
@@ -828,20 +831,49 @@ func (s *Sampler) rollApps(ctx context.Context, observedAt, minute time.Time, ex
 			if ins.DeploymentID == "" {
 				continue
 			}
-			dep, err := s.store.DeploymentByID(ctx, ins.DeploymentID)
-			if err != nil {
-				continue
+			depFloor, seen := floorByDeployment[ins.DeploymentID]
+			if !seen {
+				dep, err := s.store.DeploymentByID(ctx, ins.DeploymentID)
+				if err != nil {
+					continue
+				}
+				depFloor = dep.EffectiveMinInstances()
+				floorByDeployment[ins.DeploymentID] = depFloor
 			}
-			deploymentFloor = max(deploymentFloor, dep.EffectiveMinInstances())
+			deploymentFloor = max(deploymentFloor, depFloor)
 		}
 		floor = max(floor, deploymentFloor)
+		// Bill only the floor schedd may hold under the plan: a stored floor
+		// outlives a downgrade, and schedd then holds none (Free) or no more
+		// than the plan allows, while the gap was still billed. An unknown
+		// plan (a failed prefetch) keeps the stored floor, as before.
+		floorCap := floor
+		if plan, known := planByAccount[app.AccountID]; known {
+			floorCap = planFloorCap(app, plan)
+		}
+		floor = min(floor, floorCap)
 		floorSeconds := int64(floor) * 60
 		floorGap := floor > 0 && liveCount < floor
 		if exactResidency {
-			floorSeconds = app.EffectiveMinInstanceSecondsInMinute(minute, deploymentFloor)
+			floorSeconds = min(app.EffectiveMinInstanceSecondsInMinute(minute, deploymentFloor), int64(floorCap)*60)
 			floorGap = floorSeconds > liveSeconds
 		}
 		if floorGap {
+			// A strict app budget preempts the capacity floor. The retained
+			// book waives synthetic charges for its UTC month, including
+			// catch-up after policy deletion; only funded physical residency
+			// remains billable.
+			if managedApp, err := managed(); err != nil {
+				return nil, err
+			} else if managedApp {
+				covered, err := compute.FinancialComputeFloorCovered(ctx, app.AccountID, app.ID, minute)
+				if err != nil {
+					return out, err
+				}
+				if covered {
+					continue
+				}
+			}
 			// The floor is a promise to provide capacity. Preserve ADR-060's
 			// billed-from-t=0 contract while a deployment is starting, but
 			// stop synthetic billing once every deployment is terminal. At

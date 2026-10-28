@@ -159,6 +159,34 @@ keeps cloud credentials out of the control plane while the provider adapter is
 rolled out; a future connector can replace the registry without changing the
 customer-facing attachment contract.
 
+## Outbound connections
+
+An app can open TCP connections to public hosts on ports 80 and 443. Pro and
+Scale apps can add up to 8 and 32 more ports with
+`gregale app egress-ports add <port>`.
+
+Connect by hostname. Gregale's resolver allows the addresses each lookup
+returns, for between 10 minutes and an hour, so an HTTP client that looks up
+`api.example.com` connects normally. A connection to an IP address the app
+never looked up is refused.
+
+An egress allowlist (Hobby and up; 8, 16 or 64 entries by plan) changes both
+rules: the listed ranges are reachable without a lookup, on any TCP port but
+25, and every other destination is refused, hostnames included. Use it to pin
+an app to the services it calls, or to reach fixed addresses, and list every
+destination the app needs:
+
+```bash
+gregale app egress-allowlist add 203.0.113.10/32
+```
+
+Always refused: private ranges (`10.0.0.0/8`, `100.64.0.0/10`,
+`172.16.0.0/12`, `192.168.0.0/16`), link-local and cloud metadata addresses
+(`169.254.0.0/16`), port 25, and anything but TCP apart from DNS. Ports 465
+and 587 reach allowlisted destinations only. DNS always goes to Gregale's
+resolver, so DNS over HTTPS or TLS does not work. New connections are
+rate-limited per plan.
+
 ## Public WebSockets
 
 Enable WebSockets on an app with `gregale app APP_SLUG --websocket-enabled`.

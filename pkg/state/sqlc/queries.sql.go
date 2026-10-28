@@ -59194,6 +59194,35 @@ func (q *Queries) ManagedPostgresDueBindings(ctx context.Context, db DBTX, arg M
 	return items, nil
 }
 
+const managedPostgresFleetTotals = `-- name: ManagedPostgresFleetTotals :one
+SELECT
+ ((SELECT count(*) FROM managed_postgres_databases d WHERE d.state<>'deleted')
+  + (SELECT count(*) FROM project_environment_clone_postgres_snapshot_restores r WHERE r.state<>'deleted' AND r.adopted_database_id IS NULL))::bigint AS databases,
+ (SELECT COALESCE(sum(c.cost),0) FROM managed_postgres_databases d CROSS JOIN LATERAL (
+   SELECT COALESCE(sum(u.cost_millicents),0) AS cost FROM managed_postgres_usage u
+   WHERE u.database_id=d.id AND u.window_from>=$1::timestamptz AND u.window_from<$2::timestamptz) c)::bigint AS cost_millicents
+`
+
+type ManagedPostgresFleetTotalsParams struct {
+	PeriodStart pgtype.Timestamptz
+	PeriodEnd   pgtype.Timestamptz
+}
+
+type ManagedPostgresFleetTotalsRow struct {
+	Databases      int64
+	CostMillicents int64
+}
+
+// ADR-20261028103115: the fleet database cap counts what reservation limits
+// count; the spend breaker sums the month through the usage primary key, one
+// index range per database, so the ledger's growth never forces a full scan.
+func (q *Queries) ManagedPostgresFleetTotals(ctx context.Context, db DBTX, arg ManagedPostgresFleetTotalsParams) (ManagedPostgresFleetTotalsRow, error) {
+	row := db.QueryRow(ctx, managedPostgresFleetTotals, arg.PeriodStart, arg.PeriodEnd)
+	var i ManagedPostgresFleetTotalsRow
+	err := row.Scan(&i.Databases, &i.CostMillicents)
+	return i, err
+}
+
 const managedPostgresPersonalBindingReference = `-- name: ManagedPostgresPersonalBindingReference :one
 SELECT EXISTS(SELECT 1 FROM managed_postgres_bindings b JOIN managed_postgres_databases d ON d.id=b.database_id JOIN orgs o ON o.id=d.org_id
  WHERE b.id=$1 AND b.account_id=$2 AND o.personal_org)::boolean
@@ -85457,11 +85486,21 @@ func (q *Queries) ReadTrafficDomainClaims(ctx context.Context, db DBTX, arg Read
 
 const readTrafficGlobalRouteAccounts = `-- name: ReadTrafficGlobalRouteAccounts :many
 SELECT DISTINCT account_id FROM edge_rules WHERE enabled AND kind='route'
-ORDER BY account_id LIMIT ($1::integer+1)
+    AND ($1::text[] IS NULL OR match_host_scope = ''
+        OR match_host_scope = ANY($1::text[])
+        OR EXISTS (SELECT 1 FROM unnest($2::text[]) AS tree(name)
+            WHERE match_host_scope LIKE '%.' || replace(replace(replace(tree.name,'\','\\'),'%','\%'),'_','\_')))
+ORDER BY account_id LIMIT ($3::integer+1)
 `
 
-func (q *Queries) ReadTrafficGlobalRouteAccounts(ctx context.Context, db DBTX, maxInputs int32) ([]pgtype.UUID, error) {
-	rows, err := db.Query(ctx, readTrafficGlobalRouteAccounts, maxInputs)
+type ReadTrafficGlobalRouteAccountsParams struct {
+	RouteScopeNames []string
+	RouteScopeTrees []string
+	MaxInputs       int32
+}
+
+func (q *Queries) ReadTrafficGlobalRouteAccounts(ctx context.Context, db DBTX, arg ReadTrafficGlobalRouteAccountsParams) ([]pgtype.UUID, error) {
+	rows, err := db.Query(ctx, readTrafficGlobalRouteAccounts, arg.RouteScopeNames, arg.RouteScopeTrees, arg.MaxInputs)
 	if err != nil {
 		return nil, err
 	}
@@ -85509,12 +85548,18 @@ WITH environment_policies AS MATERIALIZED (
             'ExpiresAt', to_jsonb(edge_rules)->'expires_at', 'Match', to_jsonb(edge_rules)->'match_expr',
             'Mode', coalesce(to_jsonb(edge_rules)->>'mode', 'enforce'))::jsonb AS data
     FROM edge_rules WHERE enabled AND (account_id = $3::uuid
-        OR ($3::uuid IS NULL AND kind='route'))
+        OR ($3::uuid IS NULL AND kind='route'
+            -- A scoped binding write reads only the routes that can match the
+            -- names it may change (ADR-20261027163626); NULL reads every route.
+            AND ($4::text[] IS NULL OR match_host_scope = ''
+                OR match_host_scope = ANY($4::text[])
+                OR EXISTS (SELECT 1 FROM unnest($5::text[]) AS tree(name)
+                    WHERE match_host_scope LIKE '%.' || replace(replace(replace(tree.name,'\','\\'),'%','\%'),'_','\_')))))
     UNION ALL
     SELECT p.app_id, ''::text, coalesce(rule.value->>'kind',''), NULL::uuid,
         coalesce(rule.value->'action','{}'::jsonb), p.environment_id,
         jsonb_build_object('ID','00000000-0000-0000-0000-000000000000','AccountID',$3::uuid,
-            'AppID',p.app_id,'MatchHost',repeat('x',$4::integer),
+            'AppID',p.app_id,'MatchHost',repeat('x',$6::integer),
             'ManifestKey','','MatchPath',coalesce(rule.value->>'match_path',''),
             'MatchMethods',coalesce(rule.value->'match_methods','null'::jsonb),
             'MatchHeaders',coalesce(rule.value->'match_headers','null'::jsonb),
@@ -85528,7 +85573,7 @@ WITH environment_policies AS MATERIALIZED (
     SELECT app_id, match_host, kind, cors_preset_id, action,
         (SELECT count(*) FROM jsonb_object_keys(action) AS field(key)
             WHERE key <> replace(replace(lower(key),chr(383),'s'),chr(8490),'k')
-              AND ($5::jsonb->'Action') ? replace(replace(lower(key),chr(383),'s'),chr(8490),'k')) +
+              AND ($7::jsonb->'Action') ? replace(replace(lower(key),chr(383),'s'),chr(8490),'k')) +
         (SELECT count(*) FROM jsonb_object_keys(CASE WHEN jsonb_typeof(action->'cors')='object' THEN action->'cors' ELSE '{}'::jsonb END) AS field(key)
             WHERE key <> 'cors_preset_id' AND replace(replace(lower(key),chr(383),'s'),chr(8490),'k')='cors_preset_id') +
         (SELECT count(*) FROM jsonb_object_keys(CASE WHEN jsonb_typeof(action->'headers')='object' THEN action->'headers' ELSE '{}'::jsonb END) AS field(key)
@@ -85542,12 +85587,12 @@ WITH environment_policies AS MATERIALIZED (
     SELECT source.app_id, source.match_host, source.kind, source.cors_preset_id, source.action, source.unsupported, source.preset, source.data, source.environment_id,
         jsonb_build_object('kind','') || coalesce((SELECT jsonb_object_agg(member.key,
             CASE WHEN jsonb_typeof(member.value) = 'object'
-                THEN coalesce($5::jsonb->'Action'->member.key,'{}'::jsonb) ||
+                THEN coalesce($7::jsonb->'Action'->member.key,'{}'::jsonb) ||
                     CASE WHEN member.key = 'headers' THEN coalesce((SELECT jsonb_object_agg(header.key,
                         CASE WHEN header.key IN ('request_headers','response_headers') AND jsonb_typeof(header.value) = 'array'
                             THEN (SELECT coalesce(jsonb_agg(CASE WHEN jsonb_typeof(operation.value) = 'object'
-                                THEN $5::jsonb->'HeaderOp' || operation.value
-                                WHEN operation.value = 'null'::jsonb THEN $5::jsonb->'HeaderOp'
+                                THEN $7::jsonb->'HeaderOp' || operation.value
+                                WHEN operation.value = 'null'::jsonb THEN $7::jsonb->'HeaderOp'
                                 ELSE operation.value END), '[]'::jsonb)
                                 FROM jsonb_array_elements(header.value) AS operation(value))
                             ELSE header.value END) FROM jsonb_each(member.value) AS header(key,value)), '{}'::jsonb)
@@ -85567,7 +85612,7 @@ WITH environment_policies AS MATERIALIZED (
             THEN octet_length(replace(replace(replace(replace(replace(compiled_data,
                 '<','______'),'&','______'),'>','______'),chr(8232),'______'),chr(8233),'______'))
             ELSE octet_length(compiled_data) END +16+2+
-            (SELECT count(*) FROM jsonb_path_query($5::jsonb,'$.Action.** ? (@ == false)')) AS compiled
+            (SELECT count(*) FROM jsonb_path_query($7::jsonb,'$.Action.** ? (@ == false)')) AS compiled
     FROM decoded CROSS JOIN LATERAL (
         -- OFFSET is an evaluation barrier: format each row only once, then
         -- materialize scalar measurements rather than large formatted bodies.
@@ -85598,26 +85643,26 @@ WITH environment_policies AS MATERIALIZED (
         'ContractBytes',contract_bytes,'Unsupported',unsupported) AS data
     FROM environment_policies ORDER BY environment_id,app_id LIMIT ($1::integer+1)
 ), primary_hosts AS (
-    SELECT to_jsonb(slug || $6::text) AS data FROM apps
+    SELECT to_jsonb(slug || $8::text) AS data FROM apps
     WHERE account_id=$3::uuid AND status<>'deleted' AND visibility<>'internal'
-      AND $6::text<>''
+      AND $8::text<>''
     ORDER BY slug LIMIT ($1::integer+1)
 ), alias_hosts AS (
-    SELECT to_jsonb('tag-' || z.name || '-' || replace(a.id::text,'-','') || $6::text) AS data
+    SELECT to_jsonb('tag-' || z.name || '-' || replace(a.id::text,'-','') || $8::text) AS data
     FROM deployment_aliases z JOIN apps a ON a.id=z.app_id
     JOIN deployments d ON d.id=z.deployment_id AND d.app_id=a.id
     WHERE a.account_id=$3::uuid AND a.status<>'deleted' AND a.deleted_at IS NULL
       AND a.visibility<>'internal' AND d.deleted_at IS NULL
       AND d.status IN ('pending','building','imaging','snapshotting','live','superseded')
-      AND $6::text<>''
+      AND $8::text<>''
     ORDER BY a.id,z.name LIMIT ($1::integer+1)
 ), revision_hosts AS (
-    SELECT to_jsonb('deploy-' || d.revision::text || '-' || a.slug || $7::text) AS data
+    SELECT to_jsonb('deploy-' || d.revision::text || '-' || a.slug || $9::text) AS data
     FROM deployments d JOIN apps a ON a.id=d.app_id
     WHERE a.account_id=$3::uuid AND a.status<>'deleted' AND a.deleted_at IS NULL
       AND a.visibility<>'internal' AND d.deleted_at IS NULL AND d.revision>0
       AND d.status IN ('pending','building','imaging','snapshotting','live')
-      AND $7::text<>''
+      AND $9::text<>''
     ORDER BY a.id,d.revision LIMIT ($1::integer+1)
 ), tenant_hosts AS (
     SELECT jsonb_build_object('Host',lower(h.hostname::text),'App',a.id,'Surface',s.id,'ID',h.id,
@@ -85638,8 +85683,8 @@ WITH environment_policies AS MATERIALIZED (
     ORDER BY d.domain LIMIT ($1::integer+1)
 ), reservations AS (
     SELECT data FROM (
-        SELECT jsonb_build_object('Kind','primary','Host',slug||$6::text) AS data FROM apps
-        WHERE $3::uuid IS NULL AND $6::text<>''
+        SELECT jsonb_build_object('Kind','primary','Host',slug||$8::text) AS data FROM apps
+        WHERE $3::uuid IS NULL AND $8::text<>''
         UNION ALL
         SELECT jsonb_build_object('Kind','domain','Host',domain) FROM custom_domains
         WHERE $3::uuid IS NULL
@@ -85680,6 +85725,8 @@ type ReadTrafficHostAnalysisParams struct {
 	MaxInputs            int32
 	MaxBytes             int64
 	AccountID            pgtype.UUID
+	RouteScopeNames      []string
+	RouteScopeTrees      []string
 	EnvironmentHostBytes int32
 	Defaults             []byte
 	AppsSuffix           string
@@ -85698,6 +85745,8 @@ func (q *Queries) ReadTrafficHostAnalysis(ctx context.Context, db DBTX, arg Read
 		arg.MaxInputs,
 		arg.MaxBytes,
 		arg.AccountID,
+		arg.RouteScopeNames,
+		arg.RouteScopeTrees,
 		arg.EnvironmentHostBytes,
 		arg.Defaults,
 		arg.AppsSuffix,

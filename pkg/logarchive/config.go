@@ -49,6 +49,10 @@ const DefaultRetentionDays = 7
 // overridable via FAAS_LOG_ARCHIVE_LOCAL_BYTES_MAX.
 const DefaultLocalBytesMax = 10 << 30
 
+// InstanceShareDivisor bounds one instance's unshipped bytes to
+// 1/InstanceShareDivisor of the local spool budget.
+const InstanceShareDivisor = 8
+
 // EnvBucket is the FAAS_LOG_ARCHIVE_BUCKET env var — required for
 // the shipper to run. Empty = shipper exits on ctx.Done() (the
 // disabled-path branch in cmd/apid/main.go).
