@@ -37,8 +37,9 @@ log_archive:                 # static S3 keys (OVH, R2, MinIO)
   credentials_src: /operator/secrets/log-archive.json  # {"key_id": "…", "secret": "…"}
 ```
 
-The key file stays on the controller; the role reads it with `no_log` and
-merges the pair into the envelope. Without a `log_archive` section the role
+The key file lives on the controller, never in the manifest. The role copies
+it to `/etc/faas/secrets/storage-box/archive-keys.json` (0400 root), reads it
+there with `no_log`, and merges the pair into the envelope. Without a `log_archive` section the role
 leaves each host's envelope as the operator provisioned it, and
 `faas_log_archive_required` (set for both node groups) fails a host that has
 none. The repo carries no bucket name: the one it used to carry belonged to a

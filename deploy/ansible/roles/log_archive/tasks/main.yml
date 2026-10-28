@@ -66,12 +66,33 @@
     mode: "0700"
   when: faas_log_archive_bucket | trim | length > 0
 
-- name: log_archive — read static archive keys on the controller
-  ansible.builtin.set_fact:
-    log_archive_static_keys: "{{ lookup('ansible.builtin.file', faas_log_archive_credentials_src) | from_json }}"
+# Static keys travel from the controller-local file to a root-only staging
+# file on the host (copy reads the controller), and are read back there.
+- name: log_archive — stage static archive keys
+  ansible.builtin.copy:
+    src: "{{ faas_log_archive_credentials_src }}"
+    dest: /etc/faas/secrets/storage-box/archive-keys.json
+    owner: root
+    group: root
+    mode: "0400"
   when:
     - faas_log_archive_bucket | trim | length > 0
     - faas_log_archive_credentials_src | trim | length > 0
+  no_log: true
+
+- name: log_archive — read staged static archive keys
+  ansible.builtin.slurp:
+    src: /etc/faas/secrets/storage-box/archive-keys.json
+  register: log_archive_static_keys_raw
+  when:
+    - faas_log_archive_bucket | trim | length > 0
+    - faas_log_archive_credentials_src | trim | length > 0
+  no_log: true
+
+- name: log_archive — decode static archive keys
+  ansible.builtin.set_fact:
+    log_archive_static_keys: "{{ log_archive_static_keys_raw.content | b64decode | from_json }}"
+  when: log_archive_static_keys_raw is not skipped
   no_log: true
 
 - name: log_archive — require both static archive keys
