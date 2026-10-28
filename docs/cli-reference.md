@@ -4395,7 +4395,7 @@ gregale app binding smoke public-api billing --caller-deployment v12 --target-de
 
 Manage per-app deploy tokens for CI
 
-Adding or rotating a token needs an MFA step-up from the last 5 minutes: run `gregale mfa verify` first.
+Adding or rotating a token needs an MFA step-up from the last 5 minutes: run `gregale account mfa verify` first.
 
 #### app deploy-token list
 

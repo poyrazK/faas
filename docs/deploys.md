@@ -208,8 +208,8 @@ identity.
 
 Other CI systems deploy with a deploy token: a credential that can only deploy
 one app. Minting and rotating one needs an MFA step-up from the last five
-minutes, so run `gregale mfa verify` first. The token is shown once; store it
-as `FAAS_TOKEN` in the CI secret store.
+minutes, so run `gregale account mfa verify` first. The token is shown once;
+store it as `FAAS_TOKEN` in the CI secret store.
 
 ```bash
 gregale app deploy-token create --app my-api --label ci   # default expiry: 90 days

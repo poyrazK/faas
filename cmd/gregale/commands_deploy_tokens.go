@@ -2,8 +2,9 @@ package main
 
 // `gregale deploy-tokens` — per-app CI deploy tokens (GET/POST
 // /v1/apps/{slug}/deploy-tokens, DELETE …/{id}, POST …/{id}/rotate). The
-// capability was GA with no CLI command (#5709). Minting and rotating need a
-// MFA step-up from the last 5 minutes (`gregale mfa verify`); the API's refusal says so.
+// capability was GA with no CLI command (#5709). Minting and rotating need an
+// MFA step-up from the last 5 minutes (`gregale account mfa verify`); the
+// API's refusal says so.
 
 import (
 	"context"

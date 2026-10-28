@@ -460,7 +460,10 @@ type ScanResult struct {
 	ScannerDBStatus  string         `json:"scanner_db_status,omitempty"`
 	ScannerDBVersion string         `json:"scanner_db_version,omitempty"`
 	ScannerDBBuiltAt string         `json:"scanner_db_built_at,omitempty"`
-	SeverityCounts   SeverityCounts `json:"severity_counts"`
+	// ReusedFrom names the deployment whose scan of the same artifact, by the
+	// same scanner and database, this result repeats (scan_reuse.go).
+	ReusedFrom     string         `json:"reused_from,omitempty"`
+	SeverityCounts SeverityCounts `json:"severity_counts"`
 	// Vulnerabilities is the full typed CVE list, ALWAYS
 	// present (no omitempty). For a zero-finding scan
 	// (len(out.Matches) == 0 in parseGrypeOutput) the
