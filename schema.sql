@@ -7355,6 +7355,24 @@ $$;
 
 
 --
+-- Name: edge_rule_match_host_scope(text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.edge_rule_match_host_scope(match_host text) RETURNS text
+    LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
+    AS $$
+  SELECT CASE
+    WHEN host = '@app' THEN NULL
+    WHEN host !~ '[][*?%_\\]' THEN host
+    WHEN strpos(tail, '.') = 0 THEN ''
+    ELSE substr(tail, strpos(tail, '.') + 1)
+  END
+  FROM (SELECT host, regexp_replace(host, '^.*[][*?%_\\]', '') AS tail
+          FROM (SELECT lower(btrim(match_host)) AS host) normalized) parts
+$$;
+
+
+--
 -- Name: edge_rule_set_snapshot(uuid); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -7465,6 +7483,19 @@ BEGIN
     RETURN NULL;
 END;
 $$;
+
+
+--
+-- Name: edge_rules_set_match_host_scope(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.edge_rules_set_match_host_scope() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    NEW.match_host_scope := edge_rule_match_host_scope(NEW.match_host);
+    RETURN NEW;
+END $$;
 
 
 --
@@ -35548,6 +35579,7 @@ CREATE TABLE public.edge_rules (
     expires_at timestamp with time zone,
     match_expr jsonb,
     mode text DEFAULT 'enforce'::text NOT NULL,
+    match_host_scope text,
     CONSTRAINT edge_rules_description_chk CHECK (((description IS NULL) OR (length(description) <= 1000))),
     CONSTRAINT edge_rules_kind_check CHECK ((kind = ANY (ARRAY['route'::text, 'rewrite'::text, 'redirect'::text, 'headers'::text, 'cors'::text, 'jwt'::text, 'ip'::text, 'validate'::text, 'limit'::text, 'geo'::text, 'maintenance'::text, 'throttle'::text, 'budget'::text, 'cache'::text, 'respond'::text, 'retry'::text, 'circuit_breaker'::text, 'async'::text, 'waf'::text, 'challenge'::text]))),
     CONSTRAINT edge_rules_match_expr_shape_chk CHECK (((match_expr IS NULL) OR ((jsonb_typeof(match_expr) = 'object'::text) AND (octet_length((match_expr)::text) <= 65536)))),
@@ -42272,6 +42304,36 @@ CREATE TABLE public.managed_postgres_bindings (
 
 
 --
+-- Name: managed_postgres_cap_events; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.managed_postgres_cap_events (
+    subject_id uuid NOT NULL,
+    period_start timestamp with time zone NOT NULL,
+    threshold text NOT NULL,
+    reached_at timestamp with time zone NOT NULL,
+    used_unit_seconds bigint NOT NULL,
+    allowance_unit_seconds bigint NOT NULL,
+    ceiling_unit_seconds bigint NOT NULL,
+    overage_enabled boolean NOT NULL,
+    mail_intent_id uuid,
+    CONSTRAINT managed_postgres_cap_events_allowance_unit_seconds_check CHECK ((allowance_unit_seconds > 0)),
+    CONSTRAINT managed_postgres_cap_events_check CHECK ((isfinite(reached_at) AND (reached_at >= period_start))),
+    CONSTRAINT managed_postgres_cap_events_check1 CHECK ((ceiling_unit_seconds >= allowance_unit_seconds)),
+    CONSTRAINT managed_postgres_cap_events_period_start_check CHECK ((period_start = (date_trunc('month'::text, (period_start AT TIME ZONE 'UTC'::text)) AT TIME ZONE 'UTC'::text))),
+    CONSTRAINT managed_postgres_cap_events_threshold_check CHECK ((threshold = ANY (ARRAY['warning'::text, 'allowance'::text, 'ceiling_warning'::text, 'suspended'::text]))),
+    CONSTRAINT managed_postgres_cap_events_used_unit_seconds_check CHECK ((used_unit_seconds >= 0))
+);
+
+
+--
+-- Name: TABLE managed_postgres_cap_events; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.managed_postgres_cap_events IS 'Compute cap thresholds a managed PostgreSQL usage subject reached in a UTC month; written only by apid (ADR-20261025094915).';
+
+
+--
 -- Name: managed_postgres_checkpoint_maintenance; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -47500,7 +47562,7 @@ CREATE TABLE public.platform_mail_outbox_reconciliations (
     CONSTRAINT platform_mail_outbox_reconciliations_reason_check CHECK ((reason ~ '^[a-z][a-z0-9_]{0,63}$'::text)),
     CONSTRAINT platform_mail_outbox_reconciliations_request_hash_check CHECK ((octet_length(request_hash) = 32)),
     CONSTRAINT platform_mail_outbox_reconciliations_request_id_check CHECK ((request_id <> '00000000-0000-0000-0000-000000000000'::uuid)),
-    CONSTRAINT platform_mail_outbox_reconciliations_template_check CHECK ((template = ANY (ARRAY['account_deletion_pending'::text, 'email_verification'::text, 'password_reset'::text, 'magic_link'::text, 'mfa_recovery_used'::text, 'mfa_disable_request'::text, 'mfa_disabled'::text, 'password_changed'::text, 'mfa_enabled'::text, 'payment_failed'::text, 'account_restored'::text, 'account_suspended'::text, 'nonpayment_deletion'::text, 'quota_warning'::text, 'subscription_ended'::text, 'deployment_failed'::text])))
+    CONSTRAINT platform_mail_outbox_reconciliations_template_check CHECK ((template = ANY (ARRAY['account_deletion_pending'::text, 'email_verification'::text, 'password_reset'::text, 'magic_link'::text, 'mfa_recovery_used'::text, 'mfa_disable_request'::text, 'mfa_disabled'::text, 'password_changed'::text, 'mfa_enabled'::text, 'payment_failed'::text, 'account_restored'::text, 'account_suspended'::text, 'nonpayment_deletion'::text, 'quota_warning'::text, 'subscription_ended'::text, 'deployment_failed'::text, 'managed_postgres_cap'::text])))
 );
 
 
@@ -47576,14 +47638,14 @@ CREATE TABLE public.platform_mail_producer_outbox (
     CONSTRAINT platform_mail_producer_outbox_recipient_address_check CHECK (((length(recipient_address) <= 254) AND (POSITION((chr(10)) IN (recipient_address)) = 0) AND (POSITION((chr(13)) IN (recipient_address)) = 0))),
     CONSTRAINT platform_mail_producer_outbox_restored_check CHECK ((((template = 'account_restored'::text) AND (account_restored_revision IS NOT NULL) AND (account_restored_revision > 0)) OR ((template <> 'account_restored'::text) AND (account_restored_revision IS NULL)))),
     CONSTRAINT platform_mail_producer_outbox_revision_check CHECK ((revision > 0)),
-    CONSTRAINT platform_mail_producer_outbox_security_alert_check CHECK ((((template <> ALL (ARRAY['mfa_recovery_used'::text, 'mfa_disabled'::text, 'password_changed'::text, 'mfa_enabled'::text, 'payment_failed'::text, 'account_restored'::text, 'account_suspended'::text, 'nonpayment_deletion'::text, 'quota_warning'::text, 'subscription_ended'::text, 'deployment_failed'::text])) AND (octet_length(sealed_security_alert) = 0) AND (security_alert_key_id = ''::text)) OR ((template = ANY (ARRAY['mfa_recovery_used'::text, 'mfa_disabled'::text, 'password_changed'::text, 'mfa_enabled'::text, 'payment_failed'::text, 'account_restored'::text, 'account_suspended'::text, 'nonpayment_deletion'::text, 'quota_warning'::text, 'subscription_ended'::text, 'deployment_failed'::text])) AND (((state = ANY (ARRAY['queued'::text, 'claimed'::text])) AND ((octet_length(sealed_security_alert) >= 64) AND (octet_length(sealed_security_alert) <= 4096)) AND (security_alert_key_id ~ '^[0-9a-f]{64}$'::text)) OR ((state <> ALL (ARRAY['queued'::text, 'claimed'::text])) AND (octet_length(sealed_security_alert) = 0) AND (security_alert_key_id = ''::text)))))),
+    CONSTRAINT platform_mail_producer_outbox_security_alert_check CHECK ((((template <> ALL (ARRAY['mfa_recovery_used'::text, 'mfa_disabled'::text, 'password_changed'::text, 'mfa_enabled'::text, 'payment_failed'::text, 'account_restored'::text, 'account_suspended'::text, 'nonpayment_deletion'::text, 'quota_warning'::text, 'subscription_ended'::text, 'deployment_failed'::text, 'managed_postgres_cap'::text])) AND (octet_length(sealed_security_alert) = 0) AND (security_alert_key_id = ''::text)) OR ((template = ANY (ARRAY['mfa_recovery_used'::text, 'mfa_disabled'::text, 'password_changed'::text, 'mfa_enabled'::text, 'payment_failed'::text, 'account_restored'::text, 'account_suspended'::text, 'nonpayment_deletion'::text, 'quota_warning'::text, 'subscription_ended'::text, 'deployment_failed'::text, 'managed_postgres_cap'::text])) AND (((state = ANY (ARRAY['queued'::text, 'claimed'::text])) AND ((octet_length(sealed_security_alert) >= 64) AND (octet_length(sealed_security_alert) <= 4096)) AND (security_alert_key_id ~ '^[0-9a-f]{64}$'::text)) OR ((state <> ALL (ARRAY['queued'::text, 'claimed'::text])) AND (octet_length(sealed_security_alert) = 0) AND (security_alert_key_id = ''::text)))))),
     CONSTRAINT platform_mail_producer_outbox_state_check CHECK ((state = ANY (ARRAY['queued'::text, 'claimed'::text, 'admitted'::text, 'failed'::text, 'expired'::text, 'cancelled'::text, 'suppressed'::text]))),
     CONSTRAINT platform_mail_producer_outbox_subscription_ended_check CHECK ((((template = 'subscription_ended'::text) AND (subscription_ended_revision IS NOT NULL) AND (subscription_ended_revision > 0)) OR ((template <> 'subscription_ended'::text) AND (subscription_ended_revision IS NULL)))),
     CONSTRAINT platform_mail_producer_outbox_suspended_check CHECK ((((template = 'account_suspended'::text) AND (suspension_past_due_at IS NOT NULL) AND isfinite(suspension_past_due_at) AND (account_suspended_revision IS NOT NULL) AND (account_suspended_revision > 0)) OR ((template <> 'account_suspended'::text) AND (suspension_past_due_at IS NULL) AND (account_suspended_revision IS NULL)))),
-    CONSTRAINT platform_mail_producer_outbox_template_check CHECK ((template = ANY (ARRAY['account_deletion_pending'::text, 'email_verification'::text, 'password_reset'::text, 'magic_link'::text, 'mfa_recovery_used'::text, 'mfa_disable_request'::text, 'mfa_disabled'::text, 'password_changed'::text, 'mfa_enabled'::text, 'payment_failed'::text, 'account_restored'::text, 'account_suspended'::text, 'nonpayment_deletion'::text, 'quota_warning'::text, 'subscription_ended'::text, 'deployment_failed'::text]))),
+    CONSTRAINT platform_mail_producer_outbox_template_check CHECK ((template = ANY (ARRAY['account_deletion_pending'::text, 'email_verification'::text, 'password_reset'::text, 'magic_link'::text, 'mfa_recovery_used'::text, 'mfa_disable_request'::text, 'mfa_disabled'::text, 'password_changed'::text, 'mfa_enabled'::text, 'payment_failed'::text, 'account_restored'::text, 'account_suspended'::text, 'nonpayment_deletion'::text, 'quota_warning'::text, 'subscription_ended'::text, 'deployment_failed'::text, 'managed_postgres_cap'::text]))),
     CONSTRAINT platform_mail_producer_outbox_template_version_check CHECK ((template_version = 1)),
     CONSTRAINT platform_mail_producer_outbox_updated_at_check CHECK (isfinite(updated_at)),
-    CONSTRAINT platform_mail_producer_outbox_verification_check CHECK ((((template = 'account_deletion_pending'::text) AND (deletion_requested_at IS NOT NULL) AND (restore_until IS NOT NULL) AND (verification_token_hash IS NULL) AND (octet_length(sealed_verification) = 0) AND (verification_key_id = ''::text) AND (verification_origin = ''::text)) OR ((template = ANY (ARRAY['mfa_recovery_used'::text, 'mfa_disabled'::text, 'password_changed'::text, 'mfa_enabled'::text, 'payment_failed'::text, 'account_restored'::text, 'account_suspended'::text, 'nonpayment_deletion'::text, 'quota_warning'::text, 'subscription_ended'::text, 'deployment_failed'::text])) AND (deletion_requested_at IS NULL) AND (restore_until IS NULL) AND (verification_token_hash IS NULL) AND (octet_length(sealed_verification) = 0) AND (verification_key_id = ''::text) AND (verification_origin = ''::text)) OR ((template = ANY (ARRAY['email_verification'::text, 'password_reset'::text, 'magic_link'::text, 'mfa_disable_request'::text])) AND (deletion_requested_at IS NULL) AND (restore_until IS NULL) AND (((state = ANY (ARRAY['queued'::text, 'claimed'::text])) AND (verification_token_hash IS NOT NULL) AND (octet_length(verification_token_hash) = 32) AND ((octet_length(sealed_verification) >= 64) AND (octet_length(sealed_verification) <= 4096)) AND (verification_key_id ~ '^[0-9a-f]{64}$'::text) AND ((length(verification_origin) >= 9) AND (length(verification_origin) <= 2048)) AND (verification_origin ~ '^https://[^/?#[:space:]]+$'::text)) OR ((state <> ALL (ARRAY['queued'::text, 'claimed'::text])) AND (verification_token_hash IS NULL) AND (octet_length(sealed_verification) = 0) AND (verification_key_id = ''::text) AND (verification_origin = ''::text))))))
+    CONSTRAINT platform_mail_producer_outbox_verification_check CHECK ((((template = 'account_deletion_pending'::text) AND (deletion_requested_at IS NOT NULL) AND (restore_until IS NOT NULL) AND (verification_token_hash IS NULL) AND (octet_length(sealed_verification) = 0) AND (verification_key_id = ''::text) AND (verification_origin = ''::text)) OR ((template = ANY (ARRAY['mfa_recovery_used'::text, 'mfa_disabled'::text, 'password_changed'::text, 'mfa_enabled'::text, 'payment_failed'::text, 'account_restored'::text, 'account_suspended'::text, 'nonpayment_deletion'::text, 'quota_warning'::text, 'subscription_ended'::text, 'deployment_failed'::text, 'managed_postgres_cap'::text])) AND (deletion_requested_at IS NULL) AND (restore_until IS NULL) AND (verification_token_hash IS NULL) AND (octet_length(sealed_verification) = 0) AND (verification_key_id = ''::text) AND (verification_origin = ''::text)) OR ((template = ANY (ARRAY['email_verification'::text, 'password_reset'::text, 'magic_link'::text, 'mfa_disable_request'::text])) AND (deletion_requested_at IS NULL) AND (restore_until IS NULL) AND (((state = ANY (ARRAY['queued'::text, 'claimed'::text])) AND (verification_token_hash IS NOT NULL) AND (octet_length(verification_token_hash) = 32) AND ((octet_length(sealed_verification) >= 64) AND (octet_length(sealed_verification) <= 4096)) AND (verification_key_id ~ '^[0-9a-f]{64}$'::text) AND ((length(verification_origin) >= 9) AND (length(verification_origin) <= 2048)) AND (verification_origin ~ '^https://[^/?#[:space:]]+$'::text)) OR ((state <> ALL (ARRAY['queued'::text, 'claimed'::text])) AND (verification_token_hash IS NULL) AND (octet_length(sealed_verification) = 0) AND (verification_key_id = ''::text) AND (verification_origin = ''::text))))))
 );
 
 
@@ -62295,6 +62357,14 @@ ALTER TABLE ONLY public.managed_postgres_bindings
 
 
 --
+-- Name: managed_postgres_cap_events managed_postgres_cap_events_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_postgres_cap_events
+    ADD CONSTRAINT managed_postgres_cap_events_pkey PRIMARY KEY (subject_id, period_start, threshold);
+
+
+--
 -- Name: managed_postgres_checkpoint_maintenance managed_postgres_checkpoint_m_backend_id_backend_fingerprin_key; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -71158,6 +71228,13 @@ CREATE INDEX edge_rules_enabled_match_host_idx ON public.edge_rules USING btree 
 --
 
 CREATE INDEX edge_rules_match_host_pattern_idx ON public.edge_rules USING btree (match_host text_pattern_ops) WHERE enabled;
+
+
+--
+-- Name: edge_rules_route_match_host_scope_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX edge_rules_route_match_host_scope_idx ON public.edge_rules USING btree (match_host_scope) WHERE (enabled AND (kind = 'route'::text));
 
 
 --
@@ -80689,6 +80766,13 @@ CREATE TRIGGER deployments_runtime_upgrade_traffic_fence BEFORE INSERT OR UPDATE
 --
 
 CREATE TRIGGER deployments_traffic_security_epoch AFTER INSERT OR DELETE OR UPDATE OF parked_reason ON public.deployments FOR EACH ROW EXECUTE FUNCTION public.deployment_traffic_security_epoch_trigger();
+
+
+--
+-- Name: edge_rules edge_rules_match_host_scope; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER edge_rules_match_host_scope BEFORE INSERT OR UPDATE OF match_host, match_host_scope ON public.edge_rules FOR EACH ROW EXECUTE FUNCTION public.edge_rules_set_match_host_scope();
 
 
 --
@@ -93022,6 +93106,14 @@ ALTER TABLE ONLY public.managed_postgres_bindings
 
 ALTER TABLE ONLY public.managed_postgres_bindings
     ADD CONSTRAINT managed_postgres_bindings_database_id_fkey FOREIGN KEY (database_id) REFERENCES public.managed_postgres_databases(id);
+
+
+--
+-- Name: managed_postgres_cap_events managed_postgres_cap_events_subject_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_postgres_cap_events
+    ADD CONSTRAINT managed_postgres_cap_events_subject_id_fkey FOREIGN KEY (subject_id) REFERENCES public.resource_namespaces(id) ON DELETE CASCADE;
 
 
 --

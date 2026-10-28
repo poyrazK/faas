@@ -68,7 +68,7 @@ def sync_detailed(
     slug: str,
     id: str,
     *,
-    client: AuthenticatedClient | Client,
+    client: AuthenticatedClient,
     body: DashboardDiscardFailedEventBody,
 ) -> Response[Any | Problem]:
     """Discard a failed event from the dashboard.
@@ -105,7 +105,7 @@ def sync(
     slug: str,
     id: str,
     *,
-    client: AuthenticatedClient | Client,
+    client: AuthenticatedClient,
     body: DashboardDiscardFailedEventBody,
 ) -> Any | Problem | None:
     """Discard a failed event from the dashboard.
@@ -137,7 +137,7 @@ async def asyncio_detailed(
     slug: str,
     id: str,
     *,
-    client: AuthenticatedClient | Client,
+    client: AuthenticatedClient,
     body: DashboardDiscardFailedEventBody,
 ) -> Response[Any | Problem]:
     """Discard a failed event from the dashboard.
@@ -172,7 +172,7 @@ async def asyncio(
     slug: str,
     id: str,
     *,
-    client: AuthenticatedClient | Client,
+    client: AuthenticatedClient,
     body: DashboardDiscardFailedEventBody,
 ) -> Any | Problem | None:
     """Discard a failed event from the dashboard.

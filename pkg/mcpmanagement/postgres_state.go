@@ -48,6 +48,14 @@ type PostgresStateOptions struct {
 	// OnLeaseLost runs once after the store has disabled access because the
 	// lease was lost or could not be renewed in time. The process should exit.
 	OnLeaseLost func(error)
+	// DiscardUnreadable starts empty, deleting the stored rows, when they do
+	// not open with KeyPath, instead of refusing to start. Every connection
+	// then signs in again. The hosted bridge sets it because its key is
+	// generated on the host and a rebuilt host can generate a new one
+	// (ADR-20261026195952).
+	DiscardUnreadable bool
+	// OnDiscard reports state discarded under DiscardUnreadable.
+	OnDiscard func(error)
 }
 
 // OpenPostgresStateStore takes the bridge's lease, waiting for an expired
@@ -73,7 +81,7 @@ func OpenPostgresStateStore(ctx context.Context, opts PostgresStateOptions) (*St
 	if _, err := rand.Read(holder); err != nil {
 		return nil, err
 	}
-	p := &pgState{pool: opts.Pool, q: sqlc.New(), bridge: opts.Bridge, holder: hex.EncodeToString(holder), aead: aead, ttl: opts.LeaseTTL, onLost: opts.OnLeaseLost, stop: make(chan struct{}), done: make(chan struct{})}
+	p := &pgState{pool: opts.Pool, q: sqlc.New(), bridge: opts.Bridge, holder: hex.EncodeToString(holder), aead: aead, ttl: opts.LeaseTTL, onLost: opts.OnLeaseLost, discardUnreadable: opts.DiscardUnreadable, onDiscard: opts.OnDiscard, stop: make(chan struct{}), done: make(chan struct{})}
 	if err := p.acquire(ctx, opts.AcquireTimeout); err != nil {
 		return nil, err
 	}
@@ -97,6 +105,9 @@ type pgState struct {
 	aead   cipher.AEAD
 	ttl    time.Duration
 	onLost func(error)
+
+	discardUnreadable bool
+	onDiscard         func(error)
 
 	mu    sync.Mutex
 	epoch int64
@@ -145,6 +156,20 @@ func (p *pgState) load() (map[string]json.RawMessage, error) {
 	if err != nil {
 		return nil, fmt.Errorf("read MCP state: %w", err)
 	}
+	records, err := p.open(rows)
+	if err == nil || !p.discardUnreadable {
+		return records, err
+	}
+	if err := p.discardAll(ctx); err != nil {
+		return nil, fmt.Errorf("discard unreadable MCP state: %w", err)
+	}
+	if p.onDiscard != nil {
+		p.onDiscard(err)
+	}
+	return map[string]json.RawMessage{}, nil
+}
+
+func (p *pgState) open(rows []sqlc.ListMCPBridgeStateRow) (map[string]json.RawMessage, error) {
 	records := make(map[string]json.RawMessage, len(rows))
 	n := p.aead.NonceSize()
 	for _, row := range rows {
@@ -161,6 +186,25 @@ func (p *pgState) load() (map[string]json.RawMessage, error) {
 		records[row.Namespace] = plain
 	}
 	return records, nil
+}
+
+// discardAll deletes the bridge's rows while this process holds the lease.
+func (p *pgState) discardAll(ctx context.Context) error {
+	tx, err := p.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if _, err := p.q.HoldMCPBridgeLease(ctx, tx, sqlc.HoldMCPBridgeLeaseParams{Bridge: p.bridge, Holder: p.holder, Epoch: p.epoch}); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ErrStateLeaseLost
+		}
+		return err
+	}
+	if err := p.q.DeleteAllMCPBridgeState(ctx, tx, p.bridge); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
 }
 
 func (p *pgState) commit(records map[string]json.RawMessage, changed []string) error {

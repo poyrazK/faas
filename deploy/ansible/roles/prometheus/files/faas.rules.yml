@@ -6536,6 +6536,90 @@ groups:
           description: "The schedd consumer is at least 1,000 messages behind the broker high-water mark for source {{ $labels.source }} shard {{ $labels.shard }} for ten minutes. Check the binding's worker capacity, retry rate, and broker connectivity before increasing concurrency."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasDurableQueue.md"
 
+  - name: faas_event_routing
+    interval: 30s
+    rules:
+      # The event bus's operator signals (ADR-1236 amendment 2026-10-28). The routing
+      # sweep runs every 5 s on every schedd and on every publish; a fleet
+      # with no completed sweep for ten minutes routes no event at all.
+      - alert: FaasEventRoutingStalled
+        expr: sum(increase(schedd_loop_work_duration_seconds_count{kind="event_fanout"}[10m])) == 0
+        for: 5m
+        labels:
+          severity: page
+          component: schedd
+          family: event_routing
+          public_status: internal
+        annotations:
+          summary: "Event routing has stopped on every schedd"
+          description: "No schedd has completed an event routing sweep for fifteen minutes, so published events, object notifications and webhook automations are accepted but not delivered. Check schedd health, the event_fanout work kind and database latency."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasEventDriven.md"
+      - alert: FaasEventRoutingSweepSlow
+        expr: |
+          histogram_quantile(0.95, sum by (le) (rate(schedd_loop_work_duration_seconds_bucket{kind="event_fanout"}[10m]))) > 30
+          and on () sum(increase(schedd_loop_work_duration_seconds_count{kind="event_fanout"}[10m])) >= 5
+        for: 15m
+        labels:
+          severity: warn
+          component: schedd
+          family: event_routing
+          public_status: internal
+        annotations:
+          summary: "Event routing sweeps are slow"
+          description: "The p95 event routing sweep has taken longer than 30 seconds for fifteen minutes. Events still route, but late. Check the routing claim and recovery queries, database latency and the events backlog."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasEventDriven.md"
+      - alert: FaasEventDeliveryCapacityBacklog
+        expr: max(schedd_event_delivery_capacity_waiting) > 10000
+        for: 30m
+        labels:
+          severity: warn
+          component: schedd
+          family: event_routing
+          public_status: internal
+        annotations:
+          summary: "Many event deliveries are waiting for consumer capacity"
+          description: "{{ $value }} event deliveries platform-wide have waited for consumer capacity for thirty minutes. One account's slow consumer is the usual cause; many accounts at once point at the invocation drain or node capacity."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasEventDriven.md"
+      - alert: FaasDeadLetterSpike
+        expr: sum(increase(faas_dlq_events_total[10m])) > 200
+        for: 5m
+        labels:
+          severity: warn
+          component: schedd
+          family: event_routing
+          public_status: internal
+        annotations:
+          summary: "Dead letters are arriving fast"
+          description: "More than 200 invocations and trigger records reached the dead-letter queue in ten minutes, fleet-wide. One app's failing handler is the usual cause; many apps at once point at the gateway, wakes or a broker."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasEventDriven.md"
+      - alert: FaasBrokerTriggerPollErrors
+        expr: |
+          sum by (source) (rate(schedd_esm_polls_total{source=~"kafka|nats|redis_streams|sqs_compat",outcome="error"}[10m]))
+            / sum by (source) (rate(schedd_esm_polls_total{source=~"kafka|nats|redis_streams|sqs_compat"}[10m])) > 0.5
+          and on (source) sum by (source) (increase(schedd_esm_polls_total{source=~"kafka|nats|redis_streams|sqs_compat"}[10m])) >= 20
+        for: 15m
+        labels:
+          severity: warn
+          component: schedd
+          family: event_routing
+          public_status: internal
+        annotations:
+          summary: "Most {{ $labels.source }} trigger polls are failing"
+          description: "More than half of the {{ $labels.source }} broker trigger polls have failed for fifteen minutes. One customer's unreachable broker can do this on a small fleet; many triggers at once point at egress, DNS or credentials."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasEventDriven.md"
+      - alert: FaasEventsPublishingPaused
+        expr: sum(increase(apid_capability_hidden_requests_total{capability="events",stage="kill_switch"}[30m])) > 0
+        for: 30m
+        labels:
+          severity: warn
+          component: apid
+          family: event_routing
+          public_status: internal
+        annotations:
+          summary: "The events kill switch is refusing publishes"
+          description: "The events capability's kill switch has been off for at least an hour while producers kept publishing: every publish answers 503 events_paused and routing is held. Turn it back on once the incident is over."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasEventDriven.md"
+
   - name: faas_delayed_tasks
     interval: 30s
     rules:
@@ -6715,6 +6799,22 @@ groups:
         annotations:
           summary: "A public edge is passing responses without the revocation check"
           description: "{{ $labels.instance }} has not enforced the traffic security fence for 30 minutes, so a revoked account, app or deployment can still receive responses through it. A gateway it dials lacks the fence wiring or has no fresh observation."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasTrafficControl.md"
+
+      # ADR-20261027173012: inside the 5-minute outage grace a gateway keeps
+      # rate limits on its own bucket instead of refusing. Limits still hold,
+      # per gateway; past the grace FaasTrafficControlRefusing takes over.
+      - alert: FaasRateLimitCounterFallback
+        expr: sum by (instance) (rate(gateway_ratelimit_local_fallback_total{job="gatewayd-internal"}[5m])) > 0
+        for: 2m
+        labels:
+          severity: warn
+          component: gatewayd-internal
+          family: traffic_control
+          public_status: internal
+        annotations:
+          summary: "A gateway is enforcing rate limits without the shared counter"
+          description: "{{ $labels.instance }} could not reach the central rate counters and is deciding requests from its own buckets within the 5-minute outage grace. Each limit can admit up to once per gateway until the counter answers again; after the grace the gateway refuses with rate_limit_unavailable."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasTrafficControl.md"
 
   - name: retry_safety

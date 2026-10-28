@@ -132,3 +132,13 @@ Pages for components that are not deployed in production (Loki, GCP Ops Agent) o
   instead of every four hours, optional `am_*_warn_webhook_url_file`
   channels keep warns out of the page chat, and the fleet dashboard opens
   with a firing-pages count and a firing-warn table.
+
+## Amendment (2026-10-28): event routing
+
+`FaasEventRoutingStalled` pages: no schedd has completed an event routing
+sweep for fifteen minutes, so every published event, object notification and
+webhook automation is accepted but none is delivered (rule 1, customers are
+failing now). The other event-routing alerts (`FaasEventRoutingSweepSlow`,
+`FaasEventDeliveryCapacityBacklog`, `FaasDeadLetterSpike`,
+`FaasBrokerTriggerPollErrors`, `FaasEventsPublishingPaused`) are warn. Runbook:
+[FaasEventDriven](../runbooks/FaasEventDriven.md).

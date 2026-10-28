@@ -1156,10 +1156,10 @@ converge. Values re-sealed in this step stay domain-only, so:
 apid both seals and opens account values, so it holds `account.age` itself;
 there is no recipient file. It covers TOTP secrets, inbound webhook
 secrets, billing provider keys, managed workflow plans, PagerDuty
-acknowledgement secrets, GitLab, Slack and Linear credentials, and product
-email values. The other account columns (managed realtime, data pipelines,
-project clones) stay on the fleet key until later releases (ADR
-20261022111812, tenth to twelfth slices).
+acknowledgement secrets, GitLab, Slack and Linear credentials, product
+email values and managed realtime credentials. The data pipeline and
+project clone columns stay on the fleet key until a later release (ADR
+20261022111812, tenth to thirteenth slices).
 
 ### 12a. Create the identity (operator machine)
 
@@ -1170,7 +1170,8 @@ gregalectl seal-domain init --domain account --dir ~/gregale-seal/<environment>
 Store `account.age` with the other domain identities. If it is lost after
 12d, every customer with MFA must enroll again; inbound webhooks, billing
 connections and GitLab, Slack and Linear connections must be set again; and
-queued managed workflows fail.
+queued managed workflows fail; managed realtime endpoints need new tokens
+and push devices must register again.
 
 ### 12b. Stage apid; seal to both keys
 

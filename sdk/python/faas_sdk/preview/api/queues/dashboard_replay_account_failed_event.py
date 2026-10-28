@@ -65,7 +65,7 @@ def _build_response(*, client: AuthenticatedClient | Client, response: httpx.Res
 def sync_detailed(
     id: str,
     *,
-    client: AuthenticatedClient | Client,
+    client: AuthenticatedClient,
     body: DashboardReplayAccountFailedEventBody,
 ) -> Response[Any | Problem]:
     """Replay an account-owned failed event from the dashboard.
@@ -99,7 +99,7 @@ def sync_detailed(
 def sync(
     id: str,
     *,
-    client: AuthenticatedClient | Client,
+    client: AuthenticatedClient,
     body: DashboardReplayAccountFailedEventBody,
 ) -> Any | Problem | None:
     """Replay an account-owned failed event from the dashboard.
@@ -128,7 +128,7 @@ def sync(
 async def asyncio_detailed(
     id: str,
     *,
-    client: AuthenticatedClient | Client,
+    client: AuthenticatedClient,
     body: DashboardReplayAccountFailedEventBody,
 ) -> Response[Any | Problem]:
     """Replay an account-owned failed event from the dashboard.
@@ -160,7 +160,7 @@ async def asyncio_detailed(
 async def asyncio(
     id: str,
     *,
-    client: AuthenticatedClient | Client,
+    client: AuthenticatedClient,
     body: DashboardReplayAccountFailedEventBody,
 ) -> Any | Problem | None:
     """Replay an account-owned failed event from the dashboard.
