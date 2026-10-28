@@ -696,7 +696,7 @@ and deployctl, and the listeners the ADR leaves without socket activation.
 
 `worker.scale` in gregale.yaml now becomes the app's queue scaling policy on
 CLI, repository and GitHub deploys, and a first deploy of a worker is no longer
-refused for its queue target. `gregale workers scale` keeps the app's queue
+refused for its queue target. `gregale worker scale` keeps the app's queue
 metric (default `queue_depth`), and a scaling policy's `min_instances: 0` lets
 the pool stop when worker replica bounds are unset
 ([ADR-20261018101500](adr/20261018101500-worker-pool-scale-out-off-loop.md)

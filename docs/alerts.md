@@ -221,7 +221,7 @@ message has waited. Use them to hear about a [worker](workers.md) that falls
 behind:
 
 ```bash
-printf '%s\n' "$ALERT_SECRET" | gregale alerts add --app my-worker --name "jobs backing up" \
+printf '%s\n' "$ALERT_SECRET" | gregale alert create --app my-worker --name "jobs backing up" \
   --metric queue_oldest_age_seconds --comparison gt --threshold 600 --window-spec 15m \
   --webhook-url https://example.com/hooks/gregale --webhook-secret-stdin
 ```
