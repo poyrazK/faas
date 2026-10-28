@@ -660,7 +660,7 @@ func (q *Queries) ActiveSafeProjectReleaseID(ctx context.Context, db DBTX, proje
 const activeTCPListenerByPublicPort = `-- name: ActiveTCPListenerByPublicPort :one
 SELECT l.id, l.account_id, l.app_id, l.listener_name, l.guest_port, l.public_port, l.protocol, l.enabled, l.created_at, l.updated_at, l.tls_mode, l.tls_hostname FROM app_tcp_listeners l JOIN apps a ON a.id = l.app_id
 WHERE l.public_port = $1 AND l.enabled
-  AND a.status <> 'deleted' AND a.account_id = l.account_id
+  AND a.status <> 'deleted' AND a.visibility <> 'internal' AND a.account_id = l.account_id
 `
 
 func (q *Queries) ActiveTCPListenerByPublicPort(ctx context.Context, db DBTX, publicPort int32) (AppTcpListener, error) {
@@ -40633,7 +40633,7 @@ func (q *Queries) ListActiveRegressionsByApp(ctx context.Context, db DBTX, arg L
 
 const listActiveTCPListeners = `-- name: ListActiveTCPListeners :many
 SELECT l.id, l.account_id, l.app_id, l.listener_name, l.guest_port, l.public_port, l.protocol, l.enabled, l.created_at, l.updated_at, l.tls_mode, l.tls_hostname FROM app_tcp_listeners l JOIN apps a ON a.id = l.app_id
-WHERE l.enabled AND a.status <> 'deleted' AND a.account_id = l.account_id
+WHERE l.enabled AND a.status <> 'deleted' AND a.visibility <> 'internal' AND a.account_id = l.account_id
 ORDER BY l.public_port
 `
 
@@ -46238,7 +46238,7 @@ func (q *Queries) ListEnabledTriggers(ctx context.Context, db DBTX) ([]ListEnabl
 
 const listEnabledUDPListeners = `-- name: ListEnabledUDPListeners :many
 SELECT id, account_id, app_id, listener_name, guest_port, public_port, protocol, enabled, created_at, updated_at FROM app_udp_listeners l
-WHERE enabled AND EXISTS (SELECT 1 FROM apps a WHERE a.id = l.app_id AND a.account_id = l.account_id AND a.status <> 'deleted')
+WHERE enabled AND EXISTS (SELECT 1 FROM apps a WHERE a.id = l.app_id AND a.account_id = l.account_id AND a.status <> 'deleted' AND a.visibility <> 'internal')
 ORDER BY public_port ASC
 `
 
@@ -100101,7 +100101,7 @@ func (q *Queries) UDPListenerByID(ctx context.Context, db DBTX, id string) (AppU
 const uDPListenerByPublicPort = `-- name: UDPListenerByPublicPort :one
 SELECT id, account_id, app_id, listener_name, guest_port, public_port, protocol, enabled, created_at, updated_at FROM app_udp_listeners l
 WHERE public_port = $1 AND enabled
-AND EXISTS (SELECT 1 FROM apps a WHERE a.id = l.app_id AND a.account_id = l.account_id AND a.status <> 'deleted')
+AND EXISTS (SELECT 1 FROM apps a WHERE a.id = l.app_id AND a.account_id = l.account_id AND a.status <> 'deleted' AND a.visibility <> 'internal')
 `
 
 func (q *Queries) UDPListenerByPublicPort(ctx context.Context, db DBTX, publicPort int32) (AppUdpListener, error) {

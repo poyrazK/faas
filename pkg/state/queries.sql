@@ -13783,7 +13783,7 @@ WHERE app_id = sqlc.arg(app_id)::text::uuid AND listener_name = sqlc.arg(listene
 -- name: UDPListenerByPublicPort :one
 SELECT * FROM app_udp_listeners l
 WHERE public_port = sqlc.arg(public_port) AND enabled
-AND EXISTS (SELECT 1 FROM apps a WHERE a.id = l.app_id AND a.account_id = l.account_id AND a.status <> 'deleted');
+AND EXISTS (SELECT 1 FROM apps a WHERE a.id = l.app_id AND a.account_id = l.account_id AND a.status <> 'deleted' AND a.visibility <> 'internal');
 
 -- name: ListUDPListenersForApp :many
 SELECT * FROM app_udp_listeners
@@ -13791,7 +13791,7 @@ WHERE app_id = sqlc.arg(app_id)::text::uuid ORDER BY created_at DESC, id DESC;
 
 -- name: ListEnabledUDPListeners :many
 SELECT * FROM app_udp_listeners l
-WHERE enabled AND EXISTS (SELECT 1 FROM apps a WHERE a.id = l.app_id AND a.account_id = l.account_id AND a.status <> 'deleted')
+WHERE enabled AND EXISTS (SELECT 1 FROM apps a WHERE a.id = l.app_id AND a.account_id = l.account_id AND a.status <> 'deleted' AND a.visibility <> 'internal')
 ORDER BY public_port ASC;
 
 -- name: SetUDPListenerEnabled :one
@@ -13807,11 +13807,11 @@ SELECT count(*) FROM app_udp_listeners WHERE app_id = sqlc.arg(app_id)::text::uu
 -- name: ActiveTCPListenerByPublicPort :one
 SELECT l.* FROM app_tcp_listeners l JOIN apps a ON a.id = l.app_id
 WHERE l.public_port = sqlc.arg(public_port) AND l.enabled
-  AND a.status <> 'deleted' AND a.account_id = l.account_id;
+  AND a.status <> 'deleted' AND a.visibility <> 'internal' AND a.account_id = l.account_id;
 
 -- name: ListActiveTCPListeners :many
 SELECT l.* FROM app_tcp_listeners l JOIN apps a ON a.id = l.app_id
-WHERE l.enabled AND a.status <> 'deleted' AND a.account_id = l.account_id
+WHERE l.enabled AND a.status <> 'deleted' AND a.visibility <> 'internal' AND a.account_id = l.account_id
 ORDER BY l.public_port;
 -- name: LockExclusiveWorkAccount :one
 SELECT id::text,plan FROM accounts WHERE id=sqlc.arg(account_id)::text::uuid
