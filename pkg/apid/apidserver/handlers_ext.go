@@ -324,6 +324,13 @@ func validateUpdateApp(req *api.UpdateAppRequest, acct state.Account, limits api
 			if err != nil || prefix.Bits() == 0 {
 				return api.ErrInvalidEgressAllowlist(raw, errOrZero("parse failed", err))
 			}
+			// Allowlisted destinations skip the SMTP block, the port
+			// policy and the DNS gate, so 0.0.0.0/1 plus 128.0.0.0/1
+			// lifted every abuse control for the whole internet (bug hunt
+			// 2026-10-28 H51). Entries may be at most a v4 /8 or v6 /32.
+			if prefix.Addr().Is4() && prefix.Bits() < 8 || !prefix.Addr().Is4() && !prefix.Addr().Is4In6() && prefix.Bits() < 32 {
+				return api.ErrInvalidEgressAllowlist(raw, errors.New("prefix is broader than a v4 /8 or v6 /32"))
+			}
 			// v4-mapped v6 → v4. RFC 4291 §2.5.5.2: ::ffff:0:0/96
 			// is the v4-mapped block; any prefix inside that block
 			// (bits >= 96) is a v4 prefix translated to v6 form.
