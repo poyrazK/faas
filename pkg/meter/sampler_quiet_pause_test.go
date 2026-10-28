@@ -12,6 +12,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus/testutil"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/platformflags"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -62,6 +63,47 @@ func TestSamplerSubtractsProvenQuietPauses(t *testing.T) {
 			}
 			if got := testutil.ToFloat64(m.unproven.WithLabelValues(string(tc.mode))); got != tc.wantUnproven {
 				t.Fatalf("unproven minutes = %v, want %v", got, tc.wantUnproven)
+			}
+		})
+	}
+}
+
+// On mode subtracts paused seconds only for the accounts the
+// quiet_pause_unbilled flag releases, so the rollout can start with internal
+// accounts. Every other account is counted as in shadow mode and billed in
+// full, which keeps the measured-versus-unbilled alert whole.
+func TestSamplerQuietPauseOnFollowsTheAccountRelease(t *testing.T) {
+	perSecond := int64(api.BillableRAMMB(256))
+	for _, released := range []bool{true, false} {
+		t.Run(map[bool]string{true: "released", false: "not released"}[released], func(t *testing.T) {
+			store := newLedgerStore()
+			acct, ins := seedRunningInstance(t, store, quietBase, quietBase.Add(time.Minute))
+			recordComplete(t, store, quietBase.Add(-api.MeterCatchUpWindow), quietBase)
+			store.paused[quietBase] = map[string]state.QuietPausedSeconds{ins.ID: {Seconds: 50}}
+			now := quietBase.Add(time.Minute)
+			var asked []platformflags.Subject
+			sampler := NewSampler(store, nil, func() time.Time { return now }).
+				WithQuietPause(QuietPauseOn, prometheus.NewRegistry()).
+				WithQuietPauseRelease(func(subject platformflags.Subject) bool {
+					asked = append(asked, subject)
+					return released && subject.AccountID == acct.ID
+				})
+			if _, err := tick(t, store, sampler, now); err != nil {
+				t.Fatal(err)
+			}
+			if len(asked) == 0 || asked[0].AccountID != acct.ID || asked[0].Plan != string(api.PlanHobby) {
+				t.Fatalf("release asked about %+v, want the app's account on hobby", asked)
+			}
+			wantMB, mode := 60*perSecond, QuietPauseShadow
+			if released {
+				wantMB, mode = 10*perSecond, QuietPauseOn
+			}
+			if got, _ := store.appended(quietBase); got != wantMB {
+				t.Fatalf("billed %d MB-seconds, want %d", got, wantMB)
+			}
+			m := sampler.quietMetrics
+			if got := testutil.ToFloat64(m.seconds.WithLabelValues(string(mode), string(api.PlanHobby))); got != 50 {
+				t.Fatalf("unbilled seconds under mode %s = %v, want 50", mode, got)
 			}
 		})
 	}

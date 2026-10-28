@@ -395,6 +395,18 @@ func TestBuildManifestForRequestCarriesWarmInputs(t *testing.T) {
 	}
 }
 
+func TestBuildManifestForRequestCarriesLayerCompression(t *testing.T) {
+	for _, want := range []string{"", api.BuildLayerCompressionZstd} {
+		manifest, err := buildManifestForRequest(VMRequest{BuildID: "build-1", TenantID: "acct-1", DeploymentID: "dep-1", Framework: FrameworkNode, LayerCompression: want}, 900)
+		if err != nil {
+			t.Fatalf("buildManifestForRequest: %v", err)
+		}
+		if manifest.LayerCompression != want {
+			t.Fatalf("manifest layer compression = %q, want %q", manifest.LayerCompression, want)
+		}
+	}
+}
+
 func TestRunJanitorRemovesStaleBuildArtifacts(t *testing.T) {
 	driveDir := t.TempDir()
 	staleStage := filepath.Join(driveDir, ".faas-buildstage-stale")

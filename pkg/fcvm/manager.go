@@ -1120,7 +1120,7 @@ type Manager struct {
 	// plaintext. vmmd owns the on-disk files.
 	hostIdentities []*age.X25519Identity
 	// registryIdentities open the registry passwords a builder VM pulls its
-	// base images with (ADR-20261026090000): the build seal domain, then
+	// base images with (ADR-20261026091500): the build seal domain, then
 	// the fleet and host identities. nil leaves builders anonymous.
 	registryIdentities []*age.X25519Identity
 	// requireSecretBinding refuses runtime envelopes that carry no account
@@ -3497,7 +3497,7 @@ func (m *Manager) prepareWakeFiles(req WakeRequest) (secretsJSON, apiJSON []byte
 			return nil, nil, err
 		}
 	}
-	// ADR-20261026090000: a builder's Docker config rides in its
+	// ADR-20261026091500: a builder's Docker config rides in its
 	// secrets.env, written after the build's own secrets.
 	if req.ExportDir != "" {
 		if config, ok := m.buildRegistryAuth(req.BuildRegistryCredentials); ok {
@@ -3782,7 +3782,7 @@ type WakeRequest struct {
 	// vmmd uses it to retain the corresponding export/teardown headroom.
 	BuildTimeoutSec int
 	// BuildRegistryCredentials are the sealed registry credentials of the
-	// app a builder VM builds (ADR-20261026090000). prepareWakeFiles opens
+	// app a builder VM builds (ADR-20261026091500). prepareWakeFiles opens
 	// them into the builder's secrets.env as a Docker config. Ignored for
 	// every VM that is not a builder.
 	BuildRegistryCredentials []BuildRegistryCredential
@@ -6031,6 +6031,13 @@ func (m *Manager) baseScanVerdict(baseKey, scanKey string, scan baseScanSidecar,
 		return "incomplete", api.NewProblem(http.StatusServiceUnavailable, api.CodeScanCritical,
 			"scan sidecar incomplete",
 			fmt.Sprintf("scan sidecar at %q has no fix-available CRITICAL total; refusing to boot (issue #299)", scanKey))
+	}
+	if n >= wire.BaseScanFailedCount {
+		// imaged's placeholder for a scan that failed, not findings (#5709:
+		// customers read "9999 fix-available CRITICAL vulnerabilities").
+		return "scan_failed", api.NewProblem(http.StatusServiceUnavailable, api.CodeScanCritical,
+			"Base image scan unavailable",
+			fmt.Sprintf("Gregale could not finish the vulnerability scan of its base image %q, so Gregale will not start instances on it until the scan completes; this is a platform problem, not your code", baseKey))
 	}
 	if n > 0 {
 		// The deploy and wake errors carry this detail to the customer, who

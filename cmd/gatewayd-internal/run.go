@@ -1315,6 +1315,9 @@ type runDeps struct {
 	// financialBudgetAdmission defaults to the pgStore-backed check; outage
 	// tests replace it to isolate the routing view.
 	financialBudgetAdmission func(context.Context, gateway.App) error
+	// rateLimitOutageGrace replaces api.TrafficRateLimitOutageGrace when
+	// non-zero (negative: none); outage tests use it to cross the grace.
+	rateLimitOutageGrace time.Duration
 	// hostKeyDir (issue #477 / ADR-079) is the directory
 	// secretbox.LoadHostKeys reads from to build the
 	// multi-identity rotation-overlap slice for the basic-auth
@@ -1746,6 +1749,7 @@ func runOnPool(ctx context.Context, log *slog.Logger, pool *pgxpool.Pool) error 
 		return err
 	}
 	backend := gateway.NewPGBackend(router, sched, log).
+		WithAccountAppLister(accountAppIDLister(pgStore)).
 		WithTargetReadinessLoader(newTargetReadinessLoader(pgStore)).
 		WithTargetPlacementLoader(newTargetPlacementLoader(pgStore)).
 		WithProjectReleaseResolver(func(ctx context.Context, appID, scope, requestedID string) (string, string, error) {
@@ -2890,6 +2894,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			return errors.New("gatewayd-internal: ratelimit.mode central requires a Postgres pool")
 		}
 		handler.WithCentralBackend(backend)
+		if deps.rateLimitOutageGrace != 0 {
+			handler.WithRateLimitOutageGrace(deps.rateLimitOutageGrace)
+		}
 		// ADR-1520: spend central tokens from local leases.
 		if leaseEnabled {
 			handler.WithRateLimitLeasing(leaseCfg)
@@ -3600,21 +3607,23 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 				// retained for the warm-hint stream (single-stream
 				// fallback); the log stream is the second fan-in
 				// consumer and resolves per-app.
-				ScheddFor: appLogsScheddResolver{store: deps.pgStore, router: deps.scheddRouter},
-				Store:     deps.pgStore,
-				Log:       log,
-				Ops:       nil,
-				Traffic:   deps.trafficRevocations,
+				ScheddFor:         appLogsScheddResolver{store: deps.pgStore, router: deps.scheddRouter},
+				Store:             deps.pgStore,
+				Log:               log,
+				Ops:               nil,
+				Traffic:           deps.trafficRevocations,
+				CapabilityAllowed: deps.capabilityAllowed,
 			},
 			archive: &ArchiveLogsHandler{
-				Auth:    deps.authMw,
-				S3:      deps.archiveS3,
-				Bucket:  deps.archiveBucket,
-				Store:   deps.pgStore,
-				Scope:   deps.pgStore,
-				Log:     log,
-				Ops:     nil,
-				Traffic: deps.trafficRevocations,
+				Auth:              deps.authMw,
+				S3:                deps.archiveS3,
+				Bucket:            deps.archiveBucket,
+				Store:             deps.pgStore,
+				Scope:             deps.pgStore,
+				Log:               log,
+				Ops:               nil,
+				Traffic:           deps.trafficRevocations,
+				CapabilityAllowed: deps.capabilityAllowed,
 			},
 		})
 		logsHandler = logsMux
@@ -3635,6 +3644,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			log,
 		)
 		manager.standardNode = newLocalNodeID(deps.pgStore, cfg.NodeName)
+		manager.capabilityAllowed = deps.capabilityAllowed
 		if cfg.NodeName != "" {
 			manager.owns = newAppLogDrainOwnership(deps.pgStore, cfg.NodeName)
 		}

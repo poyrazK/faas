@@ -19684,6 +19684,11 @@ func (m *MemStore) UpsertInvoice(_ context.Context, inv Invoice) error {
 			inv.AmountRefundedCents = existing.AmountRefundedCents
 			inv.AmountRefundPendingCents = existing.AmountRefundPendingCents
 			inv.CreditsAppliedCents = existing.CreditsAppliedCents
+			if existing.Status == "paid" && (inv.Status == "open" || inv.Status == "draft") {
+				// A late "created"/"pending" delivery never reopens a paid
+				// invoice (ADR-20261028101500).
+				inv.Status, inv.AmountPaidCents = existing.Status, existing.AmountPaidCents
+			}
 			inv.Plan = existing.Plan
 			if inv.CreatedAt.IsZero() {
 				inv.CreatedAt = time.Now().UTC()

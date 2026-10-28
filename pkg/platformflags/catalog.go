@@ -56,6 +56,10 @@ const (
 	RealtimeOccupancy  = "realtime_occupancy"
 	StrictBudgets      = "strict_budgets"
 
+	// QuietPauseUnbilled releases unbilled quiet pause (ADR-20261023171905)
+	// to accounts where meterd's quiet_pause_unbilled mode is on.
+	QuietPauseUnbilled = "quiet_pause_unbilled"
+
 	// TrafficRevocationFence is the ADR-570 security revocation fence kill
 	// switch: on by default, an operator turns it off for an account or the
 	// platform when the fence itself refuses healthy traffic.
@@ -329,6 +333,17 @@ var catalog = []Spec{
 		Consumers:   []string{"apid"},
 		Attributes:  []Attribute{AttributePlan},
 		RetireBy:    "2027-01-31",
+	},
+	{
+		Key:   QuietPauseUnbilled,
+		Label: "Unbilled quiet pause",
+		Description: "Bill the seconds a VM runs, not the seconds it is quiet-paused between requests, for the accounts it releases. " +
+			"It takes effect only where meterd's quiet_pause_unbilled mode is on; meterd counts every other account's paused seconds as in shadow mode and bills them in full. " +
+			"Off by default: release it to internal accounts first, then to every account after the financial-model sign-off.",
+		ADR:        "ADR-20261023171905",
+		Consumers:  []string{"meterd"},
+		Attributes: []Attribute{AttributePlan, AttributeOrg},
+		RetireBy:   "2027-06-30",
 	},
 	{
 		Key:        EdgeWAFBlocking,

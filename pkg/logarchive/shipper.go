@@ -221,6 +221,9 @@ func (s *Shipper) RunOnce(ctx context.Context) (int, int64, error) {
 // evictions can continue into a fresh .partial file while the upload runs;
 // failed .upload files remain for the next retry.
 func (s *Shipper) uploadFile(ctx context.Context, f FileInfo) (int64, error) {
+	if s.cfg.PartObjects {
+		return s.uploadPart(ctx, f)
+	}
 	path, err := s.spool.PrepareUpload(f.Instance, f.Day)
 	if err != nil {
 		return 0, fmt.Errorf("prepare %s: %w", f.Path, err)
@@ -362,15 +365,7 @@ func copyArchiveHistory(dst io.Writer, path string) error {
 // sharing a bucket across multiple Gregale installs gets a
 // namespace without renaming the bucket.
 func (s *Shipper) bucketKey(instance, day string) string {
-	if len(day) < 10 {
-		// Defensive: spool's day format is YYYY-MM-DD;
-		// shorter values come from a buggy caller. The
-		// read-back path would 404 either way; surface as
-		// a clear error here.
-		return fmt.Sprintf("faas-logs/%s/%s.jsonl.gz", instance, day)
-	}
-	return fmt.Sprintf("faas-logs/%s/%s/%s/%s.jsonl.gz",
-		instance, day[:4], day[5:7], day[:10])
+	return DayKey(instance, day)
 }
 
 // classifyFailure maps an upload error to the closed-set reason

@@ -13481,6 +13481,7 @@ paths:
     get:
       tags: [auth]
       operationId: getAuthCapabilities
+      security: [{ cookieAuth: [] }]
       summary: Sign-in OAuth capability signal for the dashboard.
       description: |
         Returns the boot-resolved OAuth provider state for this API
@@ -13795,6 +13796,7 @@ paths:
     post:
       tags: [auth]
       operationId: setPassword
+      security: [{ cookieAuth: [] }]
       summary: Set or replace the password on the authenticated account.
       description: |
         Authenticated. Lets OAuth-only customers opt into password
@@ -28797,6 +28799,7 @@ paths:
     post:
       tags: [github]
       operationId: listInstallableRepos
+      security: [{ cookieAuth: [] }]
       summary: List repos the user's GitHub App installation can see.
       description: |
         Cookie-session-authenticated (NOT API-key). Hydrates the
@@ -29092,6 +29095,7 @@ paths:
     get:
       tags: [github]
       operationId: getGitHubInstallBinding
+      security: [{ cookieAuth: [] }]
       summary: Inspect the app's GitHub repository binding.
       description: |
         Cookie-session-authenticated (NOT API-key). Returns the durable
@@ -29114,6 +29118,7 @@ paths:
     post:
       tags: [github]
       operationId: bindAppInstall
+      security: [{ cookieAuth: [] }]
       summary: Persist the (account, app, installation, repo, branch) bind row.
       description: |
         Cookie-session-authenticated (NOT API-key). Persists the
@@ -29163,6 +29168,7 @@ paths:
     delete:
       tags: [github]
       operationId: disconnectGitHubApp
+      security: [{ cookieAuth: [] }]
       summary: Disconnect an app from its GitHub repository.
       description: |
         Cookie-session-authenticated and CSRF-protected. Idempotently removes
@@ -29198,6 +29204,7 @@ paths:
     get:
       tags: [github]
       operationId: getGitHubInstallStatus
+      security: [{ cookieAuth: [] }]
       summary: Read the GitHub installation and binding health for an app.
       description: |
         Cookie-session-authenticated (NOT API-key). This is the canonical
@@ -29225,6 +29232,7 @@ paths:
     post:
       tags: [github]
       operationId: syncGitHubInstall
+      security: [{ cookieAuth: [] }]
       summary: Reconcile an app's GitHub repository access immediately.
       description: |
         Cookie-session-authenticated and CSRF-protected. Queries GitHub's
@@ -29269,6 +29277,7 @@ paths:
     post:
       tags: [github]
       operationId: retryGitHubInstallActivity
+      security: [{ cookieAuth: [] }]
       summary: Retry failed GitHub activity from the signed-in dashboard session.
       description: |
         This cookie-session action is CSRF-protected and requeues up to 10
@@ -39635,6 +39644,7 @@ paths:
     post:
       tags: [alert_rules]
       operationId: dashboardEnableAlertPreset
+      security: [{ cookieAuth: [] }]
       summary: Form-POST sibling of enableAlertPreset for the dashboard.
       description: |
         Receives application/x-www-form-urlencoded payload from the
@@ -39675,6 +39685,7 @@ paths:
     post:
       tags: [debugger]
       operationId: dashboardReplayAppDebugRequest
+      security: [{ cookieAuth: [] }]
       summary: Queue a debugger replay from the dashboard.
       description: |
         Accepts the server-rendered dashboard form payload and queues the
@@ -39726,6 +39737,7 @@ paths:
     post:
       tags: [queues]
       operationId: dashboardReplayFailedEvent
+      security: [{ cookieAuth: [] }]
       summary: Replay a failed event from the dashboard.
       description: Resets the source event to pending and redirects to the Failed Events inbox.
       requestBody:
@@ -39760,6 +39772,7 @@ paths:
     post:
       tags: [queues]
       operationId: dashboardDiscardFailedEvent
+      security: [{ cookieAuth: [] }]
       summary: Discard a failed event from the dashboard.
       description: Removes the ledger projection and redirects to the Failed Events inbox.
       requestBody:
@@ -39793,6 +39806,7 @@ paths:
     post:
       tags: [queues]
       operationId: dashboardReplayAccountFailedEvent
+      security: [{ cookieAuth: [] }]
       summary: Replay an account-owned failed event from the dashboard.
       description: Resets an account-scoped source event to pending and redirects to the Failed Events inbox.
       requestBody:
@@ -39826,6 +39840,7 @@ paths:
     post:
       tags: [queues]
       operationId: dashboardDiscardAccountFailedEvent
+      security: [{ cookieAuth: [] }]
       summary: Discard an account-owned failed event from the dashboard.
       description: Removes the account-wide ledger projection and redirects to the Failed Events inbox.
       requestBody:
@@ -39947,6 +39962,7 @@ paths:
     post:
       tags: [alert_rules]
       operationId: dashboardTestAlertPreset
+      security: [{ cookieAuth: [] }]
       summary: Form-POST sibling of testAlertPreset for the dashboard.
       description: |
         Receives the per-card "Send test alert" form submission
@@ -40368,13 +40384,15 @@ paths:
       parameters:
         - $ref: '#/components/parameters/EdgeRuleSetIfMatch'
       description: |
-        Kind is one of {route, rewrite, redirect, headers, cors, jwt, ip,
-        validate, geo, async}. `action` is a kind-tagged jsonb body — the per-kind
-        shape is documented under components/schemas. Plan-kind gate:
-        jwt/ip return 402 plan_edge_rule_kind_not_allowed on Free; geo
-        is allowed on Free with a tighter per-app quota. Per-app
-        quota returns 402 plan_limit_edge_rules once EdgeRulesPerApp
-        is reached.
+        Kind is one of route, rewrite, redirect, headers, cors, jwt, ip,
+        validate, limit, maintenance, geo, throttle, budget, cache, respond,
+        retry, circuit_breaker, async, waf and challenge. `action` is the
+        kind's action object (the EdgeRule*Action schemas). jwt, ip and async
+        return 402 plan_edge_rule_kind_not_allowed on Free; a kind past its
+        per-app quota returns 403 plan_edge_rule_kind_quota_reached, the per-app
+        total 403 plan_limit_edge_rules, and a kind not enabled for the account
+        403 capability_not_released. Reference:
+        https://gregale.dev/docs/edge-rules
       requestBody:
         required: true
         content:
@@ -52735,6 +52753,7 @@ paths:
     get:
       tags: [templates]
       operationId: listTemplates
+      security: [{ cookieAuth: [] }]
       summary: Catalog of starter templates the dashboard wizard renders.
       description: |
         Cookie-session-authenticated (NOT API-key). The dashboard and
@@ -107112,6 +107131,8 @@ components:
             - workflow_due_age_seconds
             - custom_metric
             - log_search_matches
+            - queue_backlog
+            - queue_oldest_age_seconds
             - log_error_lines
             - log_warn_lines
             - slo_budget_burn
@@ -107222,7 +107243,7 @@ components:
         metric:
           type: string
           description: 'Selected metric for the existing alert rule. MCP task age reads a fresh app gauge in seconds and degrades when unavailable; mcp_tasks_metrics_stale is 1 when either task gauge is missing, stale, or invalid. Min=0 worker apps also require a fresh observer heartbeat with value 1. mcp_task_promotion_hold_age_seconds reads the oldest active hold directly from state (seconds, zero with no holds); its alerts support webhook action only.'
-          enum: [error_rate_pct, latency_p50_ms, latency_p95_ms, latency_p99_ms, cold_start_pct, request_count, failed_invocations, api_up, account_spend_eur, deployment_failed, cert_expiry_seconds, cert_issuance_failed, queue_depth, new_error_fingerprint, cold_wake_rate_pct, daily_cost_cents, slo_burn_rate, pre_auth_target_threshold, pre_auth_target_signal_gap_pct, pre_auth_pressure, edge_validation_failures, edge_rejections, edge_waf_detections, event_pending_recipients, event_oldest_pending_seconds, event_retry_rate_per_second, event_terminal_failure_pct, event_routing_latency_p95_seconds, event_paused_seconds, event_drain_rate_per_second, event_execution_dead_letters, event_execution_dead_letter_rate_per_second, event_handler_failure_pct, event_completion_latency_p95_seconds, event_recovery_stalled_jobs, event_recovery_expiring_jobs, event_recovery_capacity_wait_jobs, event_recovery_execution_waiting_jobs, event_recovery_execution_prolonged_wait_jobs, event_recovery_execution_unknown_jobs, event_recovery_execution_retention_risk_jobs, event_recovery_notification_admission_overdue_jobs, event_recovery_notification_admission_dead_jobs, event_recovery_notification_admission_unknown_jobs, event_recovery_notification_admission_no_receivers_jobs, event_recovery_notification_execution_overdue_jobs, event_recovery_notification_execution_dead_jobs, event_recovery_notification_execution_unknown_jobs, event_recovery_notification_execution_no_receivers_jobs, event_retention_expiring_receipts, event_storage_utilization_pct, mcp_tasks_oldest_age_seconds, mcp_tasks_metrics_stale, mcp_task_promotion_hold_age_seconds, mcp_policy_unconverged_gateways, mcp_policy_unverified, mcp_readiness_unhealthy, mcp_catalog_drift, mcp_catalog_monitor_unavailable, mcp_oauth_reauthorization_required, mcp_oauth_renewal_failed, mcp_oauth_retirement_expiring, mcp_oauth_issuance_unknown, mcp_protocol_error_rate_pct, mcp_protocol_execution_p95_ms, edge_rule_hits, edge_rule_log_hits, custom_metric, log_error_lines, log_warn_lines, slo_budget_burn, slo_budget_remaining_pct, synthetic_check_consecutive_failures, synthetic_check_latency_p95_ms, edge_rule_activity, route_insights_detected, route_monitor_incidents, route_health_holds, log_search_matches]
+          enum: [error_rate_pct, latency_p50_ms, latency_p95_ms, latency_p99_ms, cold_start_pct, request_count, failed_invocations, api_up, account_spend_eur, deployment_failed, cert_expiry_seconds, cert_issuance_failed, queue_depth, new_error_fingerprint, cold_wake_rate_pct, daily_cost_cents, slo_burn_rate, pre_auth_target_threshold, pre_auth_target_signal_gap_pct, pre_auth_pressure, edge_validation_failures, edge_rejections, edge_waf_detections, event_pending_recipients, event_oldest_pending_seconds, event_retry_rate_per_second, event_terminal_failure_pct, event_routing_latency_p95_seconds, event_paused_seconds, event_drain_rate_per_second, event_execution_dead_letters, event_execution_dead_letter_rate_per_second, event_handler_failure_pct, event_completion_latency_p95_seconds, event_recovery_stalled_jobs, event_recovery_expiring_jobs, event_recovery_capacity_wait_jobs, event_recovery_execution_waiting_jobs, event_recovery_execution_prolonged_wait_jobs, event_recovery_execution_unknown_jobs, event_recovery_execution_retention_risk_jobs, event_recovery_notification_admission_overdue_jobs, event_recovery_notification_admission_dead_jobs, event_recovery_notification_admission_unknown_jobs, event_recovery_notification_admission_no_receivers_jobs, event_recovery_notification_execution_overdue_jobs, event_recovery_notification_execution_dead_jobs, event_recovery_notification_execution_unknown_jobs, event_recovery_notification_execution_no_receivers_jobs, event_retention_expiring_receipts, event_storage_utilization_pct, mcp_tasks_oldest_age_seconds, mcp_tasks_metrics_stale, mcp_task_promotion_hold_age_seconds, mcp_policy_unconverged_gateways, mcp_policy_unverified, mcp_readiness_unhealthy, mcp_catalog_drift, mcp_catalog_monitor_unavailable, mcp_oauth_reauthorization_required, mcp_oauth_renewal_failed, mcp_oauth_retirement_expiring, mcp_oauth_issuance_unknown, mcp_protocol_error_rate_pct, mcp_protocol_execution_p95_ms, edge_rule_hits, edge_rule_log_hits, custom_metric, log_error_lines, log_warn_lines, slo_budget_burn, slo_budget_remaining_pct, synthetic_check_consecutive_failures, synthetic_check_latency_p95_ms, edge_rule_activity, route_insights_detected, log_search_matches, queue_backlog, queue_oldest_age_seconds, route_monitor_incidents, route_health_holds]
         comparison:
           type: string
           enum: [gt, gte, lt, lte, above_baseline, below_baseline]
@@ -107307,7 +107328,7 @@ components:
         metric:
           type: string
           description: 'Cannot cross metric families (e.g. error_rate_pct → failed_invocations) — returns 400. MCP task metrics are notification-only.'
-          enum: [error_rate_pct, latency_p50_ms, latency_p95_ms, latency_p99_ms, cold_start_pct, request_count, failed_invocations, api_up, account_spend_eur, deployment_failed, cert_expiry_seconds, cert_issuance_failed, queue_depth, new_error_fingerprint, cold_wake_rate_pct, daily_cost_cents, slo_burn_rate, pre_auth_target_threshold, pre_auth_target_signal_gap_pct, pre_auth_pressure, edge_validation_failures, edge_rejections, edge_waf_detections, event_pending_recipients, event_oldest_pending_seconds, event_retry_rate_per_second, event_terminal_failure_pct, event_routing_latency_p95_seconds, event_paused_seconds, event_drain_rate_per_second, event_execution_dead_letters, event_execution_dead_letter_rate_per_second, event_handler_failure_pct, event_completion_latency_p95_seconds, event_recovery_stalled_jobs, event_recovery_expiring_jobs, event_recovery_capacity_wait_jobs, event_recovery_execution_waiting_jobs, event_recovery_execution_prolonged_wait_jobs, event_recovery_execution_unknown_jobs, event_recovery_execution_retention_risk_jobs, event_recovery_notification_admission_overdue_jobs, event_recovery_notification_admission_dead_jobs, event_recovery_notification_admission_unknown_jobs, event_recovery_notification_admission_no_receivers_jobs, event_recovery_notification_execution_overdue_jobs, event_recovery_notification_execution_dead_jobs, event_recovery_notification_execution_unknown_jobs, event_recovery_notification_execution_no_receivers_jobs, event_retention_expiring_receipts, event_storage_utilization_pct, mcp_tasks_oldest_age_seconds, mcp_tasks_metrics_stale, mcp_task_promotion_hold_age_seconds, mcp_policy_unconverged_gateways, mcp_policy_unverified, mcp_readiness_unhealthy, mcp_catalog_drift, mcp_catalog_monitor_unavailable, mcp_oauth_reauthorization_required, mcp_oauth_renewal_failed, mcp_oauth_retirement_expiring, mcp_oauth_issuance_unknown, mcp_protocol_error_rate_pct, mcp_protocol_execution_p95_ms, edge_rule_hits, edge_rule_log_hits, custom_metric, log_error_lines, log_warn_lines, slo_budget_burn, slo_budget_remaining_pct, synthetic_check_consecutive_failures, synthetic_check_latency_p95_ms, edge_rule_activity, route_insights_detected, route_monitor_incidents, route_health_holds, log_search_matches]
+          enum: [error_rate_pct, latency_p50_ms, latency_p95_ms, latency_p99_ms, cold_start_pct, request_count, failed_invocations, api_up, account_spend_eur, deployment_failed, cert_expiry_seconds, cert_issuance_failed, queue_depth, new_error_fingerprint, cold_wake_rate_pct, daily_cost_cents, slo_burn_rate, pre_auth_target_threshold, pre_auth_target_signal_gap_pct, pre_auth_pressure, edge_validation_failures, edge_rejections, edge_waf_detections, event_pending_recipients, event_oldest_pending_seconds, event_retry_rate_per_second, event_terminal_failure_pct, event_routing_latency_p95_seconds, event_paused_seconds, event_drain_rate_per_second, event_execution_dead_letters, event_execution_dead_letter_rate_per_second, event_handler_failure_pct, event_completion_latency_p95_seconds, event_recovery_stalled_jobs, event_recovery_expiring_jobs, event_recovery_capacity_wait_jobs, event_recovery_execution_waiting_jobs, event_recovery_execution_prolonged_wait_jobs, event_recovery_execution_unknown_jobs, event_recovery_execution_retention_risk_jobs, event_recovery_notification_admission_overdue_jobs, event_recovery_notification_admission_dead_jobs, event_recovery_notification_admission_unknown_jobs, event_recovery_notification_admission_no_receivers_jobs, event_recovery_notification_execution_overdue_jobs, event_recovery_notification_execution_dead_jobs, event_recovery_notification_execution_unknown_jobs, event_recovery_notification_execution_no_receivers_jobs, event_retention_expiring_receipts, event_storage_utilization_pct, mcp_tasks_oldest_age_seconds, mcp_tasks_metrics_stale, mcp_task_promotion_hold_age_seconds, mcp_policy_unconverged_gateways, mcp_policy_unverified, mcp_readiness_unhealthy, mcp_catalog_drift, mcp_catalog_monitor_unavailable, mcp_oauth_reauthorization_required, mcp_oauth_renewal_failed, mcp_oauth_retirement_expiring, mcp_oauth_issuance_unknown, mcp_protocol_error_rate_pct, mcp_protocol_execution_p95_ms, edge_rule_hits, edge_rule_log_hits, custom_metric, log_error_lines, log_warn_lines, slo_budget_burn, slo_budget_remaining_pct, synthetic_check_consecutive_failures, synthetic_check_latency_p95_ms, edge_rule_activity, route_insights_detected, log_search_matches, queue_backlog, queue_oldest_age_seconds, route_monitor_incidents, route_health_holds]
         comparison: { type: string, enum: [gt, gte, lt, lte, above_baseline, below_baseline] }
         threshold: { type: number, format: double }
         window_spec: { type: string, enum: ['5m', '15m', '1h', '6h', '24h', '7d', '15d'] }

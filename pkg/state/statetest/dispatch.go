@@ -107,6 +107,7 @@ var memDispatched = map[string]bool{
 	"GetFeatureFlags":                                         true,
 	"GetObjectBucketObjectLock":                               true,
 	"GetRouteHealthReport":                                    true,
+	"ListRouteHealthHistory":                                  true,
 	"HasSnapshotHistory":                                      true,
 	"InstanceByID":                                            true,
 	"IssueObjectMultipartURLCredential":                       true,
@@ -740,6 +741,15 @@ func (s *Mem) GetRouteHealthReport(p0 context.Context, p1 string, p2 string, p3 
 		return o.GetRouteHealthReport(p0, p1, p2, p3)
 	}
 	return s.MemStore.GetRouteHealthReport(p0, p1, p2, p3)
+}
+
+func (s *Mem) ListRouteHealthHistory(p0 context.Context, p1 string, p2 string, p3 string, p4 int, p5 string) (api.RouteHealthHistoryPage, error) {
+	if o, ok := s.over.(interface {
+		ListRouteHealthHistory(context.Context, string, string, string, int, string) (api.RouteHealthHistoryPage, error)
+	}); ok {
+		return o.ListRouteHealthHistory(p0, p1, p2, p3, p4, p5)
+	}
+	return s.MemStore.ListRouteHealthHistory(p0, p1, p2, p3, p4, p5)
 }
 
 func (s *Mem) HasSnapshotHistory(p0 context.Context, p1 string) (bool, error) {

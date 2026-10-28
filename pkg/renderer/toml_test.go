@@ -243,6 +243,40 @@ func TestRenderTOML_GatewaydInternalRateLimitTable(t *testing.T) {
 	}
 }
 
+// ADR-20261021215353: daemons.schedd.frozen_tier_early_freeze_after_s
+// reaches schedd.toml as a TOML integer, and an omitted key renders nothing
+// so schedd keeps its own default.
+func TestRenderTOML_ScheddFrozenTierEarlyFreeze(t *testing.T) {
+	ten, zero := 10, 0
+	for _, tc := range []struct {
+		name    string
+		value   *int
+		want    int64
+		present bool
+	}{
+		{name: "omitted renders nothing"},
+		{name: "explicit off", value: &zero, want: 0, present: true},
+		{name: "ten seconds", value: &ten, want: 10, present: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dc := fixtureTOML("schedd")
+			dc.FrozenTierEarlyFreezeAfterS = tc.value
+			body, _, err := renderTOML(tomlRenderCtx{Daemon: "schedd", DC: dc})
+			if err != nil {
+				t.Fatalf("renderTOML: %v", err)
+			}
+			var decoded map[string]any
+			if _, err := toml.Decode(string(body), &decoded); err != nil {
+				t.Fatalf("decode rendered TOML: %v\n%s", err, body)
+			}
+			got, ok := decoded["frozen_tier_early_freeze_after_s"]
+			if ok != tc.present || (ok && got != tc.want) {
+				t.Fatalf("frozen_tier_early_freeze_after_s = %#v (present %v), want %d (present %v)\n%s", got, ok, tc.want, tc.present, body)
+			}
+		})
+	}
+}
+
 func TestRenderTOML_GatewaydInternalExplicitFeatureDisable(t *testing.T) {
 	disabled := false
 	body, _, err := renderTOML(tomlRenderCtx{

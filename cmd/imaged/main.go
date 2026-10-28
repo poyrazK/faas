@@ -686,6 +686,7 @@ func (d runDeps) run(ctx context.Context, log *slog.Logger) error {
 		cacheRoot = cache.Root()
 	}
 	imagedProbe := buildImageReadinessProbe(envOr("FAAS_STORAGE_BACKEND", "local"), envOr("FAAS_STORAGE_ROOT", defaultStorageRoot), cacheRoot)
+	registerDatabaseReadiness(ctx, imagedProbe, pool)
 	imagedProbe.SetReadyObserver(func(ready bool, reason string) {
 		ops.MarkReady("imaged", ready, reason)
 	})

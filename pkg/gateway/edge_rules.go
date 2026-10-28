@@ -581,6 +581,20 @@ func (c *EdgeRuleCache) GetHost(host string) (*HostEntry, bool) {
 	return cloneHostEntry(entry), true
 }
 
+// HostRules returns a copy of one kind's compiled rules for a current host,
+// without copying the rest of the host's set as GetHost does. A request asks
+// for each kind separately, so copying the whole set per kind cost about
+// 1.4 MB per request at 500 rules (ADR-091 amendment 2026-10-27, GA
+// hardening). Cached entries are never modified after Put, so reading one
+// after getEntry releases the lock is safe, as it is for GetHost.
+func HostRules[T any](c *EdgeRuleCache, host string, selectRules func(*HostEntry) []T) ([]T, bool) {
+	entry, ok := c.getEntry(host)
+	if !ok {
+		return nil, false
+	}
+	return slices.Clone(selectRules(entry)), true
+}
+
 // GetLastKnownHost returns the host's most recent compiled rule set even when
 // its lifetime has lapsed. Loaders fall back to it when the database read
 // fails, so a deny rule (ip, geo, maintenance) keeps applying through a

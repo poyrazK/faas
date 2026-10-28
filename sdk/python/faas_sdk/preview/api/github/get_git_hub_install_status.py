@@ -68,7 +68,7 @@ def _build_response(
 def sync_detailed(
     slug: str,
     *,
-    client: AuthenticatedClient | Client,
+    client: AuthenticatedClient,
 ) -> Response[GitHubInstallStatus | Problem]:
     """Read the GitHub installation and binding health for an app.
 
@@ -103,7 +103,7 @@ def sync_detailed(
 def sync(
     slug: str,
     *,
-    client: AuthenticatedClient | Client,
+    client: AuthenticatedClient,
 ) -> GitHubInstallStatus | Problem | None:
     """Read the GitHub installation and binding health for an app.
 
@@ -133,7 +133,7 @@ def sync(
 async def asyncio_detailed(
     slug: str,
     *,
-    client: AuthenticatedClient | Client,
+    client: AuthenticatedClient,
 ) -> Response[GitHubInstallStatus | Problem]:
     """Read the GitHub installation and binding health for an app.
 
@@ -166,7 +166,7 @@ async def asyncio_detailed(
 async def asyncio(
     slug: str,
     *,
-    client: AuthenticatedClient | Client,
+    client: AuthenticatedClient,
 ) -> GitHubInstallStatus | Problem | None:
     """Read the GitHub installation and binding health for an app.
 

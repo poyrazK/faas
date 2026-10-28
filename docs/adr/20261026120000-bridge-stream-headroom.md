@@ -1,13 +1,14 @@
 # ADR-20261026120000 · Bridge stream headroom
 
-- **Status:** Proposed
+- **Status:** Proposed. Amended 2026-10-27: the switch is on by default
+  (see "Amendment 2026-10-27").
 - **Date:** 2026-10-26
 - **Amends:** [ADR-127](127-g19.1-h2c-bridge-hardening.md) §D2. The bridge's
   server-side cap of 100 streams per connection stays. What changes is vmmd's
   client: with the switch on, it stops forcing every request onto one
   connection.
 - **Switch:** vmmd `bridge_stream_headroom` / `FAAS_BRIDGE_STREAM_HEADROOM`,
-  default off.
+  default on since 2026-10-27 (default off before).
 
 ## Context
 
@@ -98,3 +99,23 @@ With `bridge_stream_headroom` on:
   - Requests the gateway admits should not stall for ~30 s.
   - Guest connection churn should fall: new connects per second and TIME-WAIT
     count in the instance's netns.
+
+## Amendment 2026-10-27: on by default
+
+The production check above ran on rc.297 on 2026-10-27: warm 350-client
+closed-loop bursts against `h10-hello-node` (210-280 req/s) failed 0.1%,
+3.6% and 0% of requests with the switch on in compute-1's (fsn-2)
+`vmmd.toml`, against 9.3% with it off, and `bridge_stream_wait` p99 stayed
+at 2 ms. The off run was on the other node (fsn-3), so this is not a strict
+A/B, but no run with the switch on stalled as the off run did.
+
+vmmd's default is now on (`cmd/vmmd/config.go`).
+`bridge_stream_headroom = false` in `vmmd.toml` or
+`FAAS_BRIDGE_STREAM_HEADROOM=false` turns it off; on a managed node, use a
+systemd drop-in, since the TOML is re-rendered.
+
+Why the binary and not the node: release rollouts run `gregalectl manifest
+render` on every compute node (`deploy/ansible/node_join.yml`), which rewrites
+`/etc/faas/vmmd.toml` and `/etc/faas/schedd.toml` from the manifest. A
+switch set by hand in those files is lost at the next rollout and is never
+present on a new node; a default in the binary reaches both the same way.

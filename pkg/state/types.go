@@ -3638,8 +3638,13 @@ const (
 	AlertMetricCertExpirySeconds                            AlertMetric = "cert_expiry_seconds"
 	AlertMetricCertIssuanceFailed                           AlertMetric = "cert_issuance_failed"
 	AlertMetricQueueDepth                                   AlertMetric = "queue_depth"
-	AlertMetricPreAuthTargetThreshold                       AlertMetric = "pre_auth_target_threshold"
-	AlertMetricPreAuthTargetSignalGapPct                    AlertMetric = "pre_auth_target_signal_gap_pct"
+	// AlertMetricQueueBacklog and AlertMetricQueueOldestAge watch the app's
+	// durable queue: messages waiting for its workers and the age of the
+	// oldest (ADR-20261018101500 amendment 2026-10-27). Webhook-only.
+	AlertMetricQueueBacklog              AlertMetric = "queue_backlog"
+	AlertMetricQueueOldestAge            AlertMetric = "queue_oldest_age_seconds"
+	AlertMetricPreAuthTargetThreshold    AlertMetric = "pre_auth_target_threshold"
+	AlertMetricPreAuthTargetSignalGapPct AlertMetric = "pre_auth_target_signal_gap_pct"
 	// AlertMetricPreAuthPressure counts pre-auth source-limit blocks and
 	// observe-mode would-blocks; AlertMetricEdgeValidationFailures counts
 	// kind=validate mismatches in any mode; AlertMetricEdgeRejections counts
