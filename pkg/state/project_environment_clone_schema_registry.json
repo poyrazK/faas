@@ -9043,6 +9043,21 @@
     "kind": "account_identity"
   },
   {
+    "table": "managed_postgres_cap_events",
+    "columns": [
+      "allowance_unit_seconds",
+      "ceiling_unit_seconds",
+      "mail_intent_id",
+      "overage_enabled",
+      "period_start",
+      "reached_at",
+      "subject_id",
+      "threshold",
+      "used_unit_seconds"
+    ],
+    "kind": "account_identity"
+  },
+  {
     "table": "managed_postgres_bindings",
     "columns": [
       "access",
@@ -10322,6 +10337,27 @@
       "ready",
       "status_code",
       "worker"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "mcp_bridge_leases",
+    "columns": [
+      "bridge",
+      "epoch",
+      "expires_at",
+      "holder"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "mcp_bridge_state",
+    "columns": [
+      "bridge",
+      "epoch",
+      "namespace",
+      "sealed",
+      "updated_at"
     ],
     "kind": "operational"
   },

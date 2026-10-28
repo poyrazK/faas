@@ -3,6 +3,7 @@ package state
 import (
 	"context"
 	"errors"
+	"fmt"
 
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -53,7 +54,11 @@ func (s *PgStore) publishOwnedInstanceRuntimeOnce(ctx context.Context, p Runtime
 	// database has the admission functions.
 	if guarded && p.RuntimeUpgradeColdBoot == nil && p.ExpectedState != string(StateWarm) &&
 		p.ExpectedState != string(StateFrozen) && s.admissionFunctionsUsable(ctx) {
-		return s.publishOnGenerationFunction(ctx, p, guard)
+		instance, err := s.publishOnGenerationFunction(ctx, p, guard)
+		if err != nil {
+			return Instance{}, fmt.Errorf("runtime publication on generation: %w", err)
+		}
+		return instance, nil
 	}
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
@@ -62,7 +67,7 @@ func (s *PgStore) publishOwnedInstanceRuntimeOnce(ctx context.Context, p Runtime
 	defer func() { _ = tx.Rollback(ctx) }()
 	if !guarded {
 		if err := runtimeAppConfigFenceDB(ctx, tx, p); err != nil {
-			return Instance{}, err
+			return Instance{}, fmt.Errorf("runtime publication: app config fence: %w", err)
 		}
 	}
 	if p.ExpectedState == string(StateWarm) || p.ExpectedState == string(StateFrozen) {
@@ -71,29 +76,29 @@ func (s *PgStore) publishOwnedInstanceRuntimeOnce(ctx context.Context, p Runtime
 			return Instance{}, mapErr(err)
 		}
 		if !fresh {
-			return Instance{}, ErrConflict
+			return Instance{}, fmt.Errorf("%w: runtime publication: snapshot recovery is no longer fresh", ErrConflict)
 		}
 	}
 	acceptance, err := prepareRuntimeUpgradeAcceptanceDB(ctx, tx, p)
 	if err != nil {
-		return Instance{}, err
+		return Instance{}, fmt.Errorf("runtime publication: runtime upgrade acceptance: %w", err)
 	}
 	instance, err := publishOwnedRuntimeRow(ctx, tx, p)
 	if err != nil {
-		return Instance{}, err
+		return Instance{}, fmt.Errorf("runtime publication: instance row %s→%s: %w", p.ExpectedState, p.targetState(), err)
 	}
 	saved, err := sqlc.New().SaveRuntimeInstanceConfigProof(ctx, tx, runtimeConfigProofParams(p))
 	if err != nil {
-		return Instance{}, err
+		return Instance{}, fmt.Errorf("runtime publication: config proof: %w", err)
 	}
 	if p.Inputs != nil && p.targetState() == string(StateRunning) {
 		if err := recordInstanceRuntimeConfigReceipt(ctx, tx, p.InstanceID, p.WakeID, *p.Inputs); err != nil {
-			return Instance{}, err
+			return Instance{}, fmt.Errorf("runtime publication: config receipt: %w", err)
 		}
 	}
 	if acceptance != nil {
 		if err := insertRuntimeUpgradeAcceptanceDB(ctx, tx, *acceptance); err != nil {
-			return Instance{}, err
+			return Instance{}, fmt.Errorf("runtime publication: record runtime upgrade acceptance: %w", err)
 		}
 	}
 	// ADR-1741: the generation stands in for the fence's reads. It is taken
@@ -101,7 +106,7 @@ func (s *PgStore) publishOwnedInstanceRuntimeOnce(ctx context.Context, p Runtime
 	// a writer that bumps it after its own row locks.
 	if guarded {
 		if err := checkRuntimeGenerationTx(ctx, tx, guard); err != nil {
-			return Instance{}, err
+			return Instance{}, fmt.Errorf("runtime publication: generation: %w", err)
 		}
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -155,31 +160,37 @@ func runtimeAppConfigFenceDB(ctx context.Context, db sqlc.DBTX, p RuntimeInstanc
 		if _, err := q.LockRuntimeSecretEnvironment(ctx, db, sqlc.LockRuntimeSecretEnvironmentParams{
 			EnvironmentID: mustPgUUID(fence.EnvironmentID), AccountID: mustPgUUID(p.AccountID), AppID: mustPgUUID(p.AppID), Scope: fence.Scope,
 		}); err != nil {
-			return runtimeSecretFenceError(err)
+			return fmt.Errorf("lock environment: %w", runtimeSecretFenceError(err))
 		}
 	}
 	if _, err := q.LockRuntimeSecretApp(ctx, db, sqlc.LockRuntimeSecretAppParams{AccountID: mustPgUUID(p.AccountID), AppID: mustPgUUID(p.AppID)}); err != nil {
-		return runtimeSecretFenceError(err)
+		return fmt.Errorf("lock app: %w", runtimeSecretFenceError(err))
 	}
 	owner, err := q.LockRuntimeSecretOwner(ctx, db, sqlc.LockRuntimeSecretOwnerParams{
 		AccountID: mustPgUUID(p.AccountID), AppID: mustPgUUID(p.AppID), InstanceID: mustPgUUID(p.InstanceID), RequireActive: true,
 	})
 	if err != nil {
-		return runtimeSecretFenceError(err)
+		return fmt.Errorf("lock active instance owner: %w", runtimeSecretFenceError(err))
 	}
 	if pgUUIDString(owner.DeploymentID) != fence.DeploymentID || owner.Scope != fence.Scope {
-		return ErrConflict
+		return fmt.Errorf("%w: instance runs deployment %s scope %q, the wake fenced deployment %s scope %q",
+			ErrConflict, pgUUIDString(owner.DeploymentID), owner.Scope, fence.DeploymentID, fence.Scope)
 	}
 	if _, err := q.LockRuntimeConfigWorkloadSpec(ctx, db, owner.DeploymentID); err != nil {
-		return runtimeSecretFenceError(err)
+		return fmt.Errorf("lock workload spec: %w", runtimeSecretFenceError(err))
 	}
 	snapshot, err := runtimeAppValuesDB(ctx, db, p.AccountID, p.AppID, fence.DeploymentID)
 	if err != nil {
-		return runtimeSecretFenceError(err)
+		return fmt.Errorf("read app values: %w", runtimeSecretFenceError(err))
 	}
 	current, err := NewRuntimeAppConfigFence(snapshot)
-	if err != nil || current != p.ConfigFence || current.SecretFence != fence {
-		return ErrConflict
+	switch {
+	case err != nil:
+		return fmt.Errorf("%w: rebuild app config fence: %w", ErrConflict, err)
+	case current.SecretFence != fence:
+		return fmt.Errorf("%w: secrets changed since the wake read them", ErrConflict)
+	case current != p.ConfigFence:
+		return fmt.Errorf("%w: app config changed since the wake read it", ErrConflict)
 	}
 	return nil
 }

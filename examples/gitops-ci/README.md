@@ -5,7 +5,7 @@ release, build it from this reviewed checkout with Go 1.26.10:
 
 ```sh
 go build -o bin/gregale ./cmd/gregale
-bin/gregale projects environments gitops plan shop staging \
+bin/gregale environment gitops plan shop staging \
   --commit "$CANDIDATE_SHA" --format markdown --fail-on-blocked
 ```
 
@@ -29,7 +29,7 @@ was produced. Exit 1 means the preview could not be obtained or validated.
 JSON is the default and can be retained as an artifact:
 
 ```sh
-gregale projects environments gitops plan shop staging \
+gregale environment gitops plan shop staging \
   --commit "$CANDIDATE_SHA" --fail-on-blocked > gitops-plan.json
 ```
 

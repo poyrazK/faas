@@ -30,11 +30,7 @@ func (m *MemStore) appResourceAccountLocked(app App) (Account, bool) {
 	}
 	owner, ok := m.accounts[app.AccountID]
 	if ok && exists && !org.Personal {
-		if org.DeletedPending {
-			owner.Status = AccountDeletedPending
-		} else if org.Status != OrgStatusActive && org.Status != OrgStatusPastDue {
-			owner.Status = AccountStatus(org.Status)
-		}
+		owner.Status = orgLegacyOwnerStatus(org, owner.Status)
 		if org.AbuseHoldAt != nil {
 			owner.AbuseHoldAt, owner.AbuseHoldReason = org.AbuseHoldAt, org.AbuseHoldReason
 		}

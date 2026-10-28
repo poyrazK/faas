@@ -18,6 +18,17 @@ sql:
         sql_package: "pgx/v5"
         emit_methods_with_db_argument: true
         emit_interface: true
+  # Hosted management MCP bridge state and lease (ADR-20261026195952).
+  - engine: "postgresql"
+    queries: "pkg/mcpmanagement/statepg/queries.sql"
+    schema: "pkg/mcpmanagement/statepg/schema.sql"
+    gen:
+      go:
+        package: "sqlc"
+        out: "pkg/mcpmanagement/statepg/sqlc"
+        sql_package: "pgx/v5"
+        emit_methods_with_db_argument: true
+        emit_empty_slices: true
   - engine: "postgresql"
     queries: "pkg/productemail/queries.sql"
     schema: "pkg/productemail/schema.sql"
@@ -248,6 +259,7 @@ sql:
       - "pkg/state/managed_postgres_cutover_activation_queries.sql"
       - "pkg/state/managed_postgres_drain_plan_queries.sql"
       - "pkg/state/managed_postgres_drain_queries.sql"
+      - "pkg/state/managed_postgres_cap_event_queries.sql"
       - "pkg/state/managed_postgres_egress_queries.sql"
       - "pkg/state/managed_postgres_overage_queries.sql"
       - "pkg/state/managed_postgres_preflight_queries.sql"

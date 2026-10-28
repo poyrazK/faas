@@ -90,6 +90,9 @@ UNITS = {
     "outboundd": {"jobs": ["outboundd"], "components": ["outboundd"]},
     "githubd": {"jobs": ["githubd"], "components": ["githubd"]},
     "s3-gatewayd": {"jobs": ["s3-gatewayd"], "components": []},
+    # The hosted management MCP server (ADR-20261026195952) has no scrape
+    # target; the platform SLOs judge its releases.
+    "mcp-bridged": {"jobs": [], "components": []},
     # Schema migrations: the data tier has no daemon of its own to scrape.
     "migrations": {"jobs": [], "components": ["postgres"]},
     # Guest-init, runner and base images: judged by wake and restore SLOs.
