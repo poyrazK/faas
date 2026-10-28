@@ -329,6 +329,7 @@ func (l *Loop) Run(ctx context.Context) error {
 	// their own goroutine (they stream whole guest memory images) and
 	// expire on time regardless of disk pressure.
 	go l.runCrashCaptureCrypto(ctx)
+	go l.runScannerDBRefresh(ctx)
 	go l.reconcileSecurityScans(ctx, l.now(), securityScanEvery)
 	go l.runProducedEvidenceRenewal(ctx)
 	go l.reconcileSecurityLeases(ctx, l.now(), securityScanEvery)
@@ -372,6 +373,25 @@ func (l *Loop) Run(ctx context.Context) error {
 			if l.runFCSweep(ctx) {
 				l.fcCh = nil
 			}
+		}
+	}
+}
+
+// runScannerDBRefresh keeps the vulnerability database current on its own
+// goroutine (ADR-20261028102540): at start, then every
+// api.ScannerDBRefreshEvery, so a download never holds the main loop.
+func (l *Loop) runScannerDBRefresh(ctx context.Context) {
+	if l.handler == nil {
+		return
+	}
+	ticker := time.NewTicker(api.ScannerDBRefreshEvery)
+	defer ticker.Stop()
+	for {
+		l.handler.refreshScannerDB(ctx)
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
 		}
 	}
 }

@@ -109,7 +109,43 @@ func (h *Handler) currentScannerIdentity(ctx context.Context) (scannerIdentity, 
 // WithGrypeIdentityProbe reads the scanner identity from the Grype binary the
 // scans use (FAAS_GRYPE_BIN; empty means grype on PATH).
 func (h *Handler) WithGrypeIdentityProbe(bin string) *Handler {
+	h.scannerDBUpdater = grypeDBUpdater(bin)
 	return h.WithScannerIdentity(grypeIdentityProbe(bin))
+}
+
+// WithScannerDBUpdater installs the database refresh; nil disables it.
+func (h *Handler) WithScannerDBUpdater(update func(context.Context) error) *Handler {
+	h.scannerDBUpdater = update
+	return h
+}
+
+// grypeDBUpdater runs `grype db update`, which downloads a newer database
+// when one is published and otherwise only checks.
+func grypeDBUpdater(bin string) func(context.Context) error {
+	if bin == "" {
+		bin = "grype"
+	}
+	return func(ctx context.Context) error {
+		_, _, err := runBoundedScanCommand(ctx, api.ScannerIdentityMaxOutputBytes, bin, "db", "update")
+		return err
+	}
+}
+
+// refreshScannerDB updates the vulnerability database and forgets the cached
+// scanner identity, so the next reuse decision compares against the database
+// now installed. Without it, reused scans would leave Grype's own update
+// check, which runs only inside a scan, nearly idle.
+func (h *Handler) refreshScannerDB(ctx context.Context) {
+	if h.scannerDBUpdater == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(ctx, api.ScannerDBUpdateTimeout)
+	defer cancel()
+	err := h.scannerDBUpdater(ctx)
+	h.scannerIdentityCache.set(scannerIdentity{}, time.Time{})
+	if err != nil && h.log != nil {
+		h.log.Warn("imaged: vulnerability database update failed", "err", err)
+	}
 }
 
 // grypeIdentityProbe reads the Grype version and the installed vulnerability

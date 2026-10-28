@@ -230,6 +230,8 @@ type Handler struct {
 	// reuse, so every renewal scans.
 	scannerIdentityProbe func(context.Context) (scannerIdentity, error)
 	scannerIdentityCache scannerIdentityCache
+	// scannerDBUpdater refreshes the vulnerability database outside any scan.
+	scannerDBUpdater func(context.Context) error
 	// Active entries live only for a job; restart reconstructs work from durable
 	// producer selections and scan leases. Storage/native fences remain authoritative.
 	runtimeScanMu     sync.Mutex

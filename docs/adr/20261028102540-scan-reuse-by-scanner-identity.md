@@ -56,7 +56,8 @@ report.
    real scan, including database age, so a database older than 30 days still
    forces a scan that will fail. Anything else, including a refused
    publication, falls through to a real scan.
-3. **Live rescans skip current evidence.** The six-hour sweep skips a
+3. **The database is refreshed on a schedule.** See Consequences.
+4. **Live rescans skip current evidence.** The six-hour sweep skips a
    deployment whose last scan completed with no critical, high or unknown
    findings under the installed identity. A deployment's layer is immutable,
    so only a new scanner or database can change its findings. Failed,
@@ -68,10 +69,12 @@ report.
 - Base scans drop from about one per deploy to about one per base per
   database build. Deploys stop waiting for them under the runtime-base lock.
   Live rescans run once per database build, not four times a day.
-- The database's freshness now depends on Grype's own update check during
-  real scans. Every new deployment layer is still scanned for real, so the
-  database keeps updating as before. A fleet with no deploys for days keeps
-  reusing its last database build until the 30-day age limit forces a scan.
+- Grype updates its database only inside a scan, and reuse removes most
+  scans. So imaged runs `grype db update` itself on its own goroutine, at
+  start and every `api.ScannerDBRefreshEvery` (six hours), and then forgets
+  the cached identity. A newer database therefore reaches reuse decisions,
+  and the next live sweep rescans everything under it, whether or not
+  anything was deployed.
 - `reused_scan_id` makes renewals without rescanning auditable. It is
   omitted for real scans, so existing record hashes hold.
 - Not covered: per-deploy scans of new layers, which always run; the ADR-595

@@ -152,3 +152,26 @@ func TestScanEvidenceCurrent(t *testing.T) {
 		t.Fatal("evidence counted as current without a scanner identity")
 	}
 }
+
+func TestRefreshScannerDBUpdatesAndForgetsTheIdentity(t *testing.T) {
+	(&Handler{}).refreshScannerDB(t.Context()) // no updater: a no-op
+	for _, updateErr := range []error{nil, errors.New("registry unreachable")} {
+		h := &Handler{}
+		updates := 0
+		h.WithScannerDBUpdater(func(ctx context.Context) error {
+			if _, ok := ctx.Deadline(); !ok {
+				t.Fatal("database update has no deadline")
+			}
+			updates++
+			return updateErr
+		})
+		h.scannerIdentityCache.set(scannerIdentity{Version: "0.116.0", DBVersion: "v6.1.10", DBBuiltAt: "2026-10-28T06:23:30Z"}, time.Now())
+		h.refreshScannerDB(t.Context())
+		if updates != 1 {
+			t.Fatalf("updater ran %d times, want 1", updates)
+		}
+		if _, ok := h.scannerIdentityCache.get(time.Now()); ok {
+			t.Fatalf("identity survived a database update (err %v)", updateErr)
+		}
+	}
+}
