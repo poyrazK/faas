@@ -76,9 +76,10 @@ func (r *MigrationReport) count(outcome resealOutcome, replaced bool) {
 // rows were already sealed as the target asks; Changed rows were rotated
 // by a customer between read and write and are left for the next run;
 // Failed rows opened with no supplied identity. Skipped rows cannot be
-// re-sealed in place in this release (the edge domain's
-// application-standard log destinations and the drains they manage); they
-// keep opening with the fleet identity.
+// re-sealed in place (the edge domain's application-standard log
+// destinations and the drains they manage, and the account domain's
+// project environment clone values); they keep opening with the fleet
+// identity.
 type MigrationReport struct {
 	Domain   sealdomain.Domain `json:"domain"`
 	Target   string            `json:"target"`

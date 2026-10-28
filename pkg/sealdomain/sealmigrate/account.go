@@ -22,11 +22,14 @@ const accountBatch = 32
 type AccountStore interface {
 	ListAccountSealedValues(ctx context.Context, kind, afterID string, limit int) ([]state.AccountSealedValue, error)
 	ResealAccountValue(ctx context.Context, v state.AccountSealedValue, sealed []byte, kid string) (bool, error)
+	CountAccountCloneValuesOffDomain(ctx context.Context, kid string) (int, error)
 }
 
-// accountKinds are the account values this release seals to the domain.
-// The data pipeline and project clone values follow in a later slice and
-// stay on the fleet key until then.
+// accountKinds are the account values the re-seal moves to the domain.
+// Project environment clone values are not among them: clone records bind
+// each other by ciphertext hash, so apid seals new ones to the domain once
+// it is domain-only and the old ones stay on the fleet key until their
+// clones finish. The re-seal counts them as Skipped.
 var accountKinds = []string{
 	state.AccountSealedMFASecret,
 	state.AccountSealedInboundWebhook,
@@ -93,6 +96,11 @@ func MigrateAccount(ctx context.Context, store AccountStore, domain *age.X25519I
 			}
 		}
 	}
+	clones, err := store.CountAccountCloneValuesOffDomain(ctx, kid)
+	if err != nil {
+		return report, err
+	}
+	report.Skipped += clones
 	return report, nil
 }
 

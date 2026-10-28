@@ -52,8 +52,8 @@ func (s *server) projectEnvironmentClonePostgresArchive(ctx context.Context, lea
 		if !d.CapturedAllowConnections || produce == nil || setSecretRecipient == nil {
 			return copyarchive.Receipt{}, managedpostgres.ErrUnavailable
 		}
-		recipient := hostSecretRecipient()
-		if !cloneInventoryCanOpen(recipient, mfaIdentities()) {
+		recipient := cloneSealRecipient()
+		if !cloneInventoryCanOpen(recipient, accountIdentities()) {
 			return copyarchive.Receipt{}, managedpostgres.ErrUnavailable
 		}
 		a, _, err = store.ReserveProjectEnvironmentClonePostgresArchive(ctx, lease, state.ProjectEnvironmentClonePostgresArchiveRequest{Scope: d.Scope, DatabaseOID: oid,
@@ -66,7 +66,7 @@ func (s *server) projectEnvironmentClonePostgresArchive(ctx context.Context, lea
 		return copyarchive.Receipt{}, managedpostgres.ErrConflict
 	}
 	var identities []*age.X25519Identity
-	for _, id := range mfaIdentities() {
+	for _, id := range accountIdentities() {
 		if id != nil && id.Recipient().String() == a.KeyID {
 			identities = append(identities, id)
 		}

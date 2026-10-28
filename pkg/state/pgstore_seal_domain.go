@@ -893,3 +893,34 @@ func (s *PgStore) ResealAccountValue(ctx context.Context, v AccountSealedValue, 
 	}
 	return tag.RowsAffected() == 1, nil
 }
+
+// CountAccountCloneValuesOffDomain counts project environment clone rows,
+// archives included, filed under a key id other than kid (ADR
+// 20261022111812). Clone values are never re-sealed in place: other clone
+// rows bind them by ciphertext hash. The account re-seal reports these rows
+// as left on the fleet key; they clear as their clones finish.
+func (s *PgStore) CountAccountCloneValuesOffDomain(ctx context.Context, kid string) (int, error) {
+	if kid == "" {
+		return 0, errors.New("state: count clone values needs the domain key id")
+	}
+	var n int
+	err := s.pool.QueryRow(ctx, `
+		SELECT (SELECT count(*) FROM project_environment_clone_checkpoint_pg_connection_values WHERE key_id IS NOT NULL AND key_id <> $1)
+		     + (SELECT count(*) FROM project_environment_clone_checkpoint_postgres_credentials WHERE key_id IS NOT NULL AND key_id <> $1)
+		     + (SELECT count(*) FROM project_environment_clone_postgres_archives WHERE key_id <> $1)
+		     + (SELECT count(*) FROM project_environment_clone_postgres_checkpoint_selections WHERE key_id <> $1)
+		     + (SELECT count(*) FROM project_environment_clone_postgres_contents WHERE key_id <> $1)
+		     + (SELECT count(*) FROM project_environment_clone_postgres_database_plans WHERE key_id <> $1)
+		     + (SELECT count(*) FROM project_environment_clone_postgres_database_sql_pins WHERE key_id <> $1)
+		     + (SELECT count(*) FROM project_environment_clone_postgres_inventories WHERE key_id <> $1)
+		     + (SELECT count(*) FROM project_environment_clone_postgres_membership_plans WHERE key_id <> $1)
+		     + (SELECT count(*) FROM project_environment_clone_postgres_role_plans WHERE key_id <> $1)
+		     + (SELECT count(*) FROM project_environment_clone_postgres_target_sql_pins WHERE key_id <> $1)
+		     + (SELECT count(*) FROM project_environment_clone_postgres_verification_attempts WHERE key_id <> $1)
+		     + (SELECT count(*) FROM project_environment_clone_postgres_verifications WHERE key_id <> $1)
+	`, kid).Scan(&n)
+	if err != nil {
+		return 0, fmt.Errorf("state: count clone values off the account domain: %w", err)
+	}
+	return n, nil
+}

@@ -191,3 +191,33 @@ func withAccountDomain(t *testing.T, fleet *age.X25519Identity, staged bool, dom
 	}
 	*apidserver.AccountWriteMode = mode
 }
+
+// TestCloneSealRecipient pins who project environment clone values are
+// sealed to: the fleet recipient at every step short of domain-only, then
+// the account domain alone, and apid opens either through the identity the
+// row's key id names.
+func TestCloneSealRecipient(t *testing.T) {
+	fleet, domain := mustSealIdentity(t), mustSealIdentity(t)
+	for _, tc := range edgeDomainSteps {
+		t.Run(tc.name, func(t *testing.T) {
+			withAccountDomain(t, fleet, tc.staged, domain, tc.mode)
+			got := apidserver.CloneSealRecipient()
+			if tc.unavailable {
+				if got != nil {
+					t.Fatalf("clone recipient = %s with no domain identity in domain mode", got)
+				}
+				return
+			}
+			want := fleet.Recipient().String()
+			if tc.mode == sealdomain.WriteDomain {
+				want = domain.Recipient().String()
+			}
+			if got == nil || got.String() != want {
+				t.Fatalf("clone recipient = %v, want %s", got, want)
+			}
+			if !apidserver.HoldsIdentityFor(apidserver.AccountIdentities(), got.String()) {
+				t.Fatalf("apid holds no identity for the clone key id %s", got)
+			}
+		})
+	}
+}

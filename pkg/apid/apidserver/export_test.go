@@ -322,6 +322,7 @@ var AccountWriteMode = &accountWriteMode
 var AccountRecipients = accountRecipients
 var AccountIdentities = accountIdentities
 var WorkflowPlanRecipients = workflowPlanRecipients
+var CloneSealRecipient = cloneSealRecipient
 var HoldsIdentityFor = holdsIdentityFor
 var SealInboundWebhookSigningSecret = sealInboundWebhookSigningSecret
 var SealGitLabTokens = sealGitLabTokens

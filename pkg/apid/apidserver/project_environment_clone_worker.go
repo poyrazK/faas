@@ -68,6 +68,11 @@ func runProjectEnvironmentCloneWorker(ctx context.Context, log *slog.Logger) (er
 	if err = loadProjectEnvironmentCloneWorkerKeys(os.Getenv); err != nil {
 		return err
 	}
+	// ADR 20261022111812: clone values are account values; the worker seals
+	// and opens them as apid does.
+	if err = loadAccountDomain(os.Getenv, log); err != nil {
+		return err
+	}
 	pool, err := db.OpenWithAppName(ctx, cfg.DBURL, "faas-apid-clone-worker")
 	if err != nil {
 		return errors.New("clone worker: control-plane database unavailable")

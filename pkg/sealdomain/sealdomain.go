@@ -160,9 +160,10 @@ var registry = []Spec{
 	// apid seals and opens the TOTP secrets, inbound webhook secrets,
 	// billing keys, workflow plans, PagerDuty acknowledgement secrets,
 	// GitLab, Slack and Linear credentials, product email values and managed
-	// realtime credentials through the domain; the project clone columns
-	// stay on the fleet key until their slice. Data pipeline values were
-	// never on the fleet key: they have their own identity (Pipeline).
+	// realtime credentials through the domain, and apid and its clone worker
+	// seal project clone values to it once it is domain-only. Data pipeline
+	// values were never on the fleet key: they have their own identity
+	// (Pipeline).
 	{Domain: Account, Readers: []string{"apid", "apid-clone-worker", "apid-data-pipeline-worker"}, Roles: cpOnly, Wired: true, Columns: join(
 		cols("accounts", "mfa_secret_encrypted"),
 		// apid seals a managed workflow's plan and its workflow worker

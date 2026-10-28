@@ -62,12 +62,12 @@ func (s *server) projectEnvironmentClonePostgresVerification(ctx context.Context
 		return zero, managedpostgres.ErrConflict
 	}
 	owner, err := verifications.ProjectEnvironmentClonePostgresVerificationForLease(ctx, l, id, oid)
-	identities := mfaIdentities()
+	identities := accountIdentities()
 	if errors.Is(err, state.ErrNotFound) {
 		if l.Operation.Status != state.CloneOperationCapturing || setSecretRecipient == nil {
 			return zero, managedpostgres.ErrUnavailable
 		}
-		recipient := hostSecretRecipient()
+		recipient := cloneSealRecipient()
 		if !cloneInventoryCanOpen(recipient, identities) {
 			return zero, managedpostgres.ErrUnavailable
 		}

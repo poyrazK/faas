@@ -19,8 +19,9 @@ are wired, each opened by one daemon:
   seals to the recipient);
 - `account`: TOTP secrets, inbound webhook secrets, billing keys, workflow
   plans, PagerDuty acknowledgement secrets, GitLab, Slack and Linear
-  credentials, product email values and managed realtime credentials
-  (apid, which also seals them,
+  credentials, product email values, managed realtime credentials and
+  project environment clone values (apid and its clone worker, which also
+  seal them,
   so it holds the identity and there is no recipient file). The other
   account columns join in later releases.
 
