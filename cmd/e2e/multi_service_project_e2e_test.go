@@ -207,6 +207,25 @@ func ownerNodeOf(t *testing.T, f *normalPathFixture, app state.App) string {
 	}
 }
 
+// createPreviewThroughAPI creates app's PR preview with the developer preview
+// API (`gregale preview create`) and reads the row back.
+func createPreviewThroughAPI(t *testing.T, f *normalPathFixture, app state.App, pr int) state.App {
+	t.Helper()
+	body, status := doReq(t, f.h, f.key, http.MethodPost, "/v1/apps/"+app.Slug+"/previews", api.CreatePreviewRequest{PRNumber: pr})
+	if status != http.StatusCreated {
+		t.Fatalf("create PR %d preview of %s: status=%d body=%s", pr, app.Slug, status, body)
+	}
+	var created api.AppResponse
+	if err := json.Unmarshal(body, &created); err != nil {
+		t.Fatalf("decode preview: %v body=%s", err, body)
+	}
+	preview, err := f.store.AppByID(f.ctx, created.ID)
+	if err != nil {
+		t.Fatalf("read preview %s: %v", created.Slug, err)
+	}
+	return preview
+}
+
 // previewOf creates the PR-number preview of a project service, carrying its
 // manifest and owner node, as the preview path does. The preview row is
 // inserted directly, with no created notify, so schedd never claims it: it
@@ -322,8 +341,18 @@ func TestE2E_MultiServiceProject_ComposeServicesCallEachOtherByName(t *testing.T
 			resident, ceiling, err, metricLines(f.h.GatewayControlURL+"/metrics", "gateway_service_wake_ahead"))
 	}
 
-	// PR 7's web calls PR 7's billing_api, never production's.
-	previewWeb, previewBilling := previewOf(t, f, web, 7), previewOf(t, f, billing, 7)
+	// PR 7's web gets web's pr-preview values (ADR-20261028090000) and calls
+	// PR 7's billing_api, never production's.
+	if body, status := doReq(t, f.h, f.key, http.MethodPut, "/v1/apps/"+web.Slug+"/env/PAYMENTS_MODE?scope="+api.PreviewEnvScope,
+		api.PutAppEnvRequest{Value: "sandbox"}); status != http.StatusOK {
+		t.Fatalf("set web's pr-preview value: status=%d body=%s", status, body)
+	}
+	previewWeb := createPreviewThroughAPI(t, f, web, 7)
+	previewBilling := previewOf(t, f, billing, 7)
+	if rows, err := f.store.ListAppEnvInScope(f.ctx, previewWeb.AccountID, previewWeb.ID, api.DefaultEnvScope); err != nil ||
+		!slices.ContainsFunc(rows, func(row state.AppEnv) bool { return row.Key == "PAYMENTS_MODE" && row.Value == "sandbox" }) {
+		t.Fatalf("PR 7's web values = %+v, %v; want web's pr-preview PAYMENTS_MODE=sandbox", rows, err)
+	}
 	parkMultiServiceApp(t, f, previewBilling)
 	if status, _, body := pollServiceCall(t, f.h, previewWeb.ID, "billing-api", "/v1/invoices?pr=7", http.StatusOK, 30*time.Second); status != http.StatusOK {
 		t.Fatalf("preview web -> billing-api status = %d, want 200; body=%s", status, body)

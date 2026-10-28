@@ -83,8 +83,9 @@ func (e *Engine) WithEnvironmentWorkloadQualificationRuntime(ctx context.Context
 	if graphNodePinned && graphNodeID != "" {
 		preferredNodeID = graphNodeID
 	}
-	placement, err := e.choosePlacementLocked(ctx, Request{AppID: app.ID, Plan: acct.Plan, RAMMB: app.RAMMB,
-		VCPU: limits.VCPU, CPUMillicores: startupCPU, MaxConcurrency: app.MaxConcurrency, PreferredNodeID: preferredNodeID})
+	req := Request{AppID: app.ID, Plan: acct.Plan, RAMMB: app.RAMMB,
+		VCPU: limits.VCPU, CPUMillicores: startupCPU, MaxConcurrency: app.MaxConcurrency, PreferredNodeID: preferredNodeID}
+	placement, err := e.choosePlacementLocked(ctx, req)
 	if err != nil {
 		return err
 	}
@@ -95,7 +96,7 @@ func (e *Engine) WithEnvironmentWorkloadQualificationRuntime(ctx context.Context
 	if err != nil {
 		return fmt.Errorf("preflight qualification service listener: %w", err)
 	}
-	admission, err := admitter.CreateEnvironmentWorkloadQualificationInstance(e.nodePlacementContext(ctx, placement), claimed, state.EnvironmentWorkloadQualificationPlacement{
+	admission, err := admitter.CreateEnvironmentWorkloadQualificationInstance(e.nodePlacementContext(ctx, placement, req), claimed, state.EnvironmentWorkloadQualificationPlacement{
 		NodeID: placement.NodeID, WakeID: uuid.NewString(), RAMMB: app.RAMMB})
 	if err != nil {
 		return fmt.Errorf("admit qualification instance: %w", err)

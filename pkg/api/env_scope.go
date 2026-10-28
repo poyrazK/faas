@@ -38,6 +38,12 @@ const EnvScopeAllSentinel = "__all__"
 // env. The schema and ValidateScope accept it without a special case.
 const DefaultEnvScope = "default"
 
+// PreviewEnvScope holds a production app's values and secrets for its PR
+// previews. Each preview receives them as its own default-scope values when
+// it is built or reopened (ADR-20261028090000). No project environment may
+// use the name.
+const PreviewEnvScope = "pr-preview"
+
 // envScopeRe is the compiled form of EnvScopePattern. Compiled once
 // at init so each ValidateScope call is a MatchString and not a
 // MustCompile. The pattern is small + constant — no need for sync.Once.

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/previewconfig"
 	"github.com/onebox-faas/faas/pkg/logsanitize"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -46,6 +47,9 @@ func (s *server) createPreview(w http.ResponseWriter, r *http.Request, acct stat
 	}
 	expiresAt := time.Now().UTC().Add(ttl)
 	created, isNew, prob := s.provisionPreview(r, acct, parent, req, slug, expiresAt)
+	if prob == nil {
+		prob = s.syncPreviewConfiguration(r.Context(), parent, created)
+	}
 	if prob != nil {
 		api.WriteProblem(w, prob)
 		return
@@ -67,6 +71,25 @@ func (s *server) createPreview(w http.ResponseWriter, r *http.Request, acct stat
 		status = http.StatusCreated
 	}
 	writeJSON(w, status, s.withParkedDeploymentRef(r.Context(), resp, created))
+}
+
+// syncPreviewConfiguration gives a created or reopened preview its production
+// app's pr-preview values and secrets (ADR-20261028090000). A change
+// invalidates the preview's snapshots, so its next wake starts with them.
+func (s *server) syncPreviewConfiguration(ctx context.Context, parent, preview state.App) *api.Problem {
+	synced, err := previewconfig.Sync(ctx, s.store, parent, preview)
+	if err != nil {
+		return api.ErrCapacity("could not apply the app's pr-preview values to the preview")
+	}
+	if synced.Skipped {
+		s.log.Warn("preview values skipped; the project has an environment named pr-preview", "app", preview.ID)
+	}
+	if synced.Changed() {
+		if _, err := s.invalidateAppSnapshots(ctx, preview.ID); err != nil {
+			return api.ErrCapacity("could not refresh the preview's snapshots")
+		}
+	}
+	return nil
 }
 
 func decodePreviewCreateRequest(r *http.Request) (api.CreatePreviewRequest, time.Duration, *api.Problem) {
