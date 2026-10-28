@@ -48,7 +48,7 @@ func cmdRoutesLifecyclePrepareApproval(args []string) int {
 		return 1
 	}
 	if len(positional) != 1 || !validCLISlug(positional[0]) || !canonicalRouteHealthID(*from) || !canonicalRouteHealthID(*to) || *from == *to || *mappingFile == "" || *out == "" || rejectUnexpectedFlagArgs(fs) {
-		PrintUsage(osStderr, "usage: gregale routes lifecycle prepare-approval <slug> --from-deployment UUID --to-deployment UUID --mappings FILE --out REQUEST.json [--json]", "cli")
+		PrintUsage(osStderr, "usage: gregale api route lifecycle prepare-approval <slug> --from-deployment UUID --to-deployment UUID --mappings FILE --out REQUEST.json [--json]", "cli")
 		return 1
 	}
 	var mappings []api.RouteLifecycleMapping
@@ -113,7 +113,7 @@ func cmdRoutesLifecycleApprove(args []string) int {
 		return 1
 	}
 	if len(positional) != 1 || !validCLISlug(positional[0]) || *path == "" || rejectUnexpectedFlagArgs(fs) {
-		PrintUsage(osStderr, "usage: gregale routes lifecycle approve <slug> --request FILE [--json]", "cli")
+		PrintUsage(osStderr, "usage: gregale api route lifecycle approve <slug> --request FILE [--json]", "cli")
 		return 1
 	}
 	var request api.ApproveRouteLifecycleRequest
@@ -140,7 +140,7 @@ func cmdRoutesLifecycleReceipt(args []string) int {
 		return 1
 	}
 	if len(positional) != 1 || !validCLISlug(positional[0]) || !canonicalRouteHealthID(*id) || rejectUnexpectedFlagArgs(fs) {
-		PrintUsage(osStderr, "usage: gregale routes lifecycle receipt <slug> --id UUID [--json]", "cli")
+		PrintUsage(osStderr, "usage: gregale api route lifecycle receipt <slug> --id UUID [--json]", "cli")
 		return 1
 	}
 	client, err := authedClient()

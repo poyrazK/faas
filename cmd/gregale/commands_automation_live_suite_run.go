@@ -279,7 +279,7 @@ func renderAutomationLiveSuite(path string, j automationLiveSuiteJournal, outcom
 		Summary          map[string]int                  `json:"summary"`
 		Cases            []automationLiveSuiteCaseResult `json:"cases"`
 		Resume           string                          `json:"resume"`
-	}{SchemaVersion: 1, App: j.Plan.App, Name: j.Plan.Name, Outcome: outcome, ExitCode: code, Message: message, ObservedAt: time.Now().UTC(), PublishedVersion: j.Plan.Target.ExpectedPublishedVersion, DeploymentID: j.Plan.Target.ExpectedDeploymentID, Summary: map[string]int{"selected": len(j.Cases), "passed": 0, "failed": 0, "pending": 0, "not_started": 0, "unresolved": 0}, Cases: []automationLiveSuiteCaseResult{}, Resume: recoveryCLI() + " automations live suite --resume " + recoveryArgument(path) + " --confirm-real-actions"}
+	}{SchemaVersion: 1, App: j.Plan.App, Name: j.Plan.Name, Outcome: outcome, ExitCode: code, Message: message, ObservedAt: time.Now().UTC(), PublishedVersion: j.Plan.Target.ExpectedPublishedVersion, DeploymentID: j.Plan.Target.ExpectedDeploymentID, Summary: map[string]int{"selected": len(j.Cases), "passed": 0, "failed": 0, "pending": 0, "not_started": 0, "unresolved": 0}, Cases: []automationLiveSuiteCaseResult{}, Resume: recoveryCLI() + " automation live suite --resume " + recoveryArgument(path) + " --confirm-real-actions"}
 	if j.Plan.Shared {
 		result.SharedSuiteID = sharedAutomationLiveSuiteID(j)
 	}

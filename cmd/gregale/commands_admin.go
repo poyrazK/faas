@@ -241,7 +241,7 @@ func cmdAdminConsumeCredits(args []string) int {
 		// for the first time benefits from the breadcrumb.
 		var ae *APIError
 		if errors.As(err, &ae) && ae.Problem.Status == http.StatusForbidden {
-			return printErr("Consume-credits failed (likely missing admin scope on the active API key — use `gregale keys ls` to check, or rotate to an admin-scoped key)",
+			return printErr("Consume-credits failed (likely missing admin scope on the active API key — use `gregale key ls` to check, or rotate to an admin-scoped key)",
 				err)
 		}
 		return printErr("Consume-credits failed", err)

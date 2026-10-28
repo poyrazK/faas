@@ -11,7 +11,7 @@ import (
 
 func cmdEventsExecutionReconciliation(args []string, request bool) int {
 	if len(args) != 2 {
-		PrintUsage(os.Stderr, "usage: gregale events subscription-execution-reconciliation <app> <subscription-id> | subscription-reconcile-execution <app> <subscription-id>", "events")
+		PrintUsage(os.Stderr, "usage: gregale event subscription-execution-reconciliation <app> <subscription-id> | subscription-reconcile-execution <app> <subscription-id>", "events")
 		return 1
 	}
 	if _, err := uuid.Parse(args[1]); err != nil {

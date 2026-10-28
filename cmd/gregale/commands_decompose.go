@@ -783,7 +783,7 @@ func printUnsetEnvKeys(w io.Writer, workloads []api.PlanWorkload) {
 		}
 		fmt.Fprintf(w, "  - %-20s %s\n", wl.Name, strings.Join(keys, ", "))
 	}
-	fmt.Fprintln(w, "  Set them with `gregale env set --app <app> KEY=VALUE` or `gregale secrets set --app <app> KEY=VALUE`,")
+	fmt.Fprintln(w, "  Set them with `gregale env set --app <app> KEY=VALUE` or `gregale env set --app <app> KEY=VALUE`,")
 	fmt.Fprintln(w, "  or pass them in a --secrets-file to gregale deploy.")
 	if notOptedIn {
 		fmt.Fprintln(w, "  To import plain Compose values, add `x-gregale-env-import: true` at the top of the Compose file.")

@@ -46,7 +46,7 @@ func cmdEventsLineageControlHistoryInspect(args []string) int {
 		return 1
 	}
 	if len(positional) != 0 || rejectUnexpectedFlagArgs(fs) || *file == "" {
-		PrintUsage(os.Stderr, "usage: gregale events subscription-lineage-retry-job-controls-inspect --file PATH [--compare BASELINE_PATH]", "events")
+		PrintUsage(os.Stderr, "usage: gregale event subscription-lineage-retry-job-controls-inspect --file PATH [--compare BASELINE_PATH]", "events")
 		return 1
 	}
 	artifact, err := readLineageControlHistoryArtifact(*file)

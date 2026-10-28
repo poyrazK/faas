@@ -10,7 +10,7 @@ import (
 // (ADR-20261026145832 rule 5), in root help order.
 var cliTreeShortcutCommands = []string{
 	"start", "menu", "init", "dev", "deploy", "logs", "status", "open", "rollback", "run", "invoke",
-	"add", "link", "unlink", "login", "logout", "signup", "whoami", "completion", "version",
+	"add", "link", "unlink", "login", "logout", "signup", "whoami", "completion", "version", "man",
 }
 
 // cliTreeDailyCommands is the first screen of `gregale help`: guided
@@ -72,7 +72,7 @@ func writeCliTreeDailyCommands(b *strings.Builder, discovery cliTreeDiscovery) {
 // each with the nouns that now hold it. They stay accepted.
 func writeCliEarlierNames(b *strings.Builder, discovery cliTreeDiscovery) {
 	printed := false
-	for _, command := range customerCliCommands() {
+	for _, command := range customerAudience(discoverableCliCommands()) {
 		if _, ok := discovery.commands[command.Name]; !ok || cliTreeNamesCommand(command.Name) {
 			continue
 		}
@@ -107,6 +107,7 @@ var cliTreeFolds = map[string]string{
 	"doctor":               "deploy check",
 	"inspect":              "app health --explain",
 	"scan":                 "deploy --plan",
+	"diff":                 "environment diff",
 	"delayed-task":         "cron create --at",
 	"delayed-task add":     "cron create --at",
 	"delayed-task list":    "cron list --one-off",
@@ -125,6 +126,12 @@ func cliTreeFold(typed []string) (string, string, bool) {
 		}
 	}
 	return "", "", false
+}
+
+// cliTreeEarlierName reports a top-level command the tree renamed or
+// folded: it still runs, but customer surfaces name its tree path.
+func cliTreeEarlierName(name string) bool {
+	return !cliTreeNamesCommand(name) && cliTreePlaces(name)
 }
 
 // cliTreePlaces reports a top-level command the tree keeps, renames or

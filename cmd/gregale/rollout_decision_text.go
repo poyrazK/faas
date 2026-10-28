@@ -62,7 +62,7 @@ func describeRolloutDecision(d *api.RolloutDecision) string {
 	case api.RolloutRuleHoldObservation:
 		return "health data is unavailable; the rollout waits and retries"
 	case api.RolloutRuleHoldAwaitingApproval:
-		return strings.TrimSpace(d.Summary) + "; an eligible teammate approves with: gregale approvals approve <deployment>"
+		return strings.TrimSpace(d.Summary) + "; an eligible teammate approves with: gregale release approve <deployment>"
 	case api.RolloutRuleAbortApprovalReject:
 		return "aborted: " + strings.TrimSpace(d.Summary)
 	case api.RolloutRuleAbortApprovalTimeout:

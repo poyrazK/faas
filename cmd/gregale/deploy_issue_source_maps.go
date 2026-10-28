@@ -179,12 +179,12 @@ func printDeployIssueSourceMapsError(err error, slug, deployment string, set *is
 		recovery.Hint = "The deployment receipt did not confirm this source and zero production traffic. Inspect the deployment; do not publish artifacts or promote it until the discrepancy is resolved."
 		return printErr("Source-map deployment binding failed", &deployRecoveryError{err: err, recovery: recovery})
 	}
-	recovery.InspectCommand = recoveryCLI() + " issues source-maps status --app " + recoveryArgument(slug) + " --deployment " + recoveryArgument(deployment)
+	recovery.InspectCommand = recoveryCLI() + " debug issue source-maps status --app " + recoveryArgument(slug) + " --deployment " + recoveryArgument(deployment)
 	recovery.ResumeCommand = ""
 	recovery.Hint = "The deployment was accepted, but source-map readiness was not confirmed. Keep production traffic at zero. Recover publication for this deployment; do not submit another deployment or promote until artifacts are ready."
 	file, saveErr := saveDeployIssueSourceMapsRecovery(set)
 	if saveErr == nil {
-		recovery.ResumeCommand = recoveryCLI() + " issues source-maps publish --app " + recoveryArgument(slug) + " --deployment " + recoveryArgument(deployment) +
+		recovery.ResumeCommand = recoveryCLI() + " debug issue source-maps publish --app " + recoveryArgument(slug) + " --deployment " + recoveryArgument(deployment) +
 			" --directory " + recoveryArgument(set.Request.Directory) + " --manifest-file " + recoveryArgument(file)
 		recovery.Hint += " The resume command uses a private sanitized manifest snapshot. Remove that file and its directory after recovery."
 	} else {

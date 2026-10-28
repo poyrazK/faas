@@ -49,7 +49,7 @@ func cmdLinkInteractive(projectSlug string, noGitignore bool) int {
 			return printErr("Could not list projects", err)
 		}
 		if len(projects) == 0 {
-			return printErr("No projects available", errors.New("create a project with gregale projects create before linking"))
+			return printErr("No projects available", errors.New("create a project with gregale project create before linking"))
 		}
 		sort.Slice(projects, func(i, j int) bool { return projects[i].Slug < projects[j].Slug })
 		labels := make([]string, len(projects))

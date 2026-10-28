@@ -19,7 +19,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
-const logDrainsUsage = "usage: gregale log-drains <list|add|get|health|update|rm> --app <slug> [flags]"
+const logDrainsUsage = "usage: gregale logs drain <list|add|get|health|update|rm> --app <slug> [flags]"
 
 func cmdLogDrains(args []string) int {
 	if len(args) == 0 {
@@ -83,7 +83,7 @@ func logDrainFlags(name string, args []string, needID bool, define func(*flag.Fl
 		return "", "", false
 	}
 	if *app == "" || (needID && *drain == "") {
-		usage := "usage: gregale log-drains " + name + " --app <slug>"
+		usage := "usage: gregale logs drain " + name + " --app <slug>"
 		if needID {
 			usage += " --id <drain-id>"
 		}
@@ -175,7 +175,7 @@ func cmdLogDrainsAdd(args []string) int {
 		return 1
 	}
 	if *target == "" {
-		PrintUsage(os.Stderr, "usage: gregale log-drains add --app <slug> --url <URL> [--kind http_json|otlp] [--auth-header-env VAR]", "log-drains")
+		PrintUsage(os.Stderr, "usage: gregale logs drain create --app <slug> --url <URL> [--kind http_json|otlp] [--auth-header-env VAR]", "log-drains")
 		return 1
 	}
 	auth, err := logDrainAuthHeader(*authEnv)

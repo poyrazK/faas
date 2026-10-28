@@ -25,7 +25,7 @@ func cmdRoutesStatus(args []string) int {
 		return 1
 	}
 	if len(positional) != 1 || !validCLISlug(positional[0]) {
-		return printErr("Invalid route status command", errors.New("usage: gregale routes status APP [--deployment ID] [--since 168h]"))
+		return printErr("Invalid route status command", errors.New("usage: gregale api route status APP [--deployment ID] [--since 168h]"))
 	}
 	if !validRouteHealthSuggestionSince(*since) {
 		return printErr("Invalid route status command", fmt.Errorf("--since must be a duration such as 168h or 7d, or an RFC3339 time; got %q", *since))
@@ -189,7 +189,7 @@ func renderRouteStatus(w io.Writer, s routestatus.Status) {
 		_ = tw.Flush()
 	}
 	if s.Summary.Advice > 0 {
-		_, _ = fmt.Fprintf(w, "\n%d route advisor suggestions: run `gregale routes advise %s`.\n", s.Summary.Advice, s.App)
+		_, _ = fmt.Fprintf(w, "\n%d route advisor suggestions: run `gregale api route advise %s`.\n", s.Summary.Advice, s.App)
 	}
 	if i := s.LatestIncident; i != nil {
 		_, _ = fmt.Fprintf(w, "\nLatest production incident %s: %s, opened %s", i.ID, i.Status, i.OpenedAt)

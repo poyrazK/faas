@@ -26,7 +26,7 @@ func printMCPHostingDoctor(status mcpTasksStatusResult, preflightPath string) in
 		}
 	}
 	if len(status.ControlPlaneChecks) == 0 {
-		add("conditional_parking", "unknown", "Verify control-plane compatibility with gregale mcp doctor --hosting before release")
+		add("conditional_parking", "unknown", "Verify control-plane compatibility with gregale mcp server doctor --hosting before release")
 	}
 	for _, check := range status.ControlPlaneChecks {
 		add(check.Name, check.Status, check.Detail)
@@ -34,7 +34,7 @@ func printMCPHostingDoctor(status mcpTasksStatusResult, preflightPath string) in
 	if status.Configured {
 		add("scaling_policy", "passed", "Task scaling policy matches the deployment manifest")
 	} else {
-		add("scaling_policy", "failed", "Run gregale mcp tasks setup --app "+status.AppSlug+" --apply")
+		add("scaling_policy", "failed", "Run gregale mcp server tasks setup --app "+status.AppSlug+" --apply")
 	}
 	for _, metric := range status.Metrics {
 		if metric.Name == "mcp_tasks_observer_heartbeat" && !status.ScaleToZeroConfigured {

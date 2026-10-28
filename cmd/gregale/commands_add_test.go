@@ -165,7 +165,7 @@ func TestCmdAddBucketSaysWhenTheNewBindingReachesRunningInstances(t *testing.T) 
 	if code := main.Run(append([]string(nil), args...)); code != 0 {
 		t.Fatalf("first add exit = %d, output = %s", code, out.String())
 	}
-	if !strings.Contains(out.String(), "gregale app api restart") || !strings.Contains(out.String(), "GREGALE_S3_ASSETS_*") {
+	if !strings.Contains(out.String(), "gregale app restart api") || !strings.Contains(out.String(), "GREGALE_S3_ASSETS_*") {
 		t.Fatalf("new binding output lacks the restart guidance: %s", out.String())
 	}
 	out.Reset()

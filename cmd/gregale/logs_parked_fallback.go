@@ -66,7 +66,7 @@ func runParkedAppLogs(ctx context.Context, client *Client, slug, deployment stri
 	}
 	instance, selector, ok := parkedLogsSelection(instances, since)
 	if !ok {
-		_, _ = fmt.Fprintf(osStderr, "%s has no running instance and no instance with activity in the requested window; wake it with `gregale wake %s`.\n", slug, slug)
+		_, _ = fmt.Fprintf(osStderr, "%s has no running instance and no instance with activity in the requested window; wake it with `gregale app wake %s`.\n", slug, slug)
 		return 3
 	}
 	header := fmt.Sprintf("%s is parked; showing the retained logs of its most recent instance %s (started %s, UTC day %s).", slug, instance.ID, instance.StartedAt, selector.Date)

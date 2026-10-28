@@ -23,7 +23,7 @@ func cmdEventsLineageRetryJobControls(args []string) int {
 		return 1
 	}
 	if len(positional) != 3 || rejectUnexpectedFlagArgs(fs) {
-		PrintUsage(os.Stderr, "usage: gregale events subscription-lineage-retry-job-controls APP SUB REQUEST_UUID --expected-created-at TIMESTAMP [--after SEQUENCE] [--limit N] [--action ACTION] [--actor-id UUID_OR_STORE] [--credential-type TYPE]", "events")
+		PrintUsage(os.Stderr, "usage: gregale event subscription-lineage-retry-job-controls APP SUB REQUEST_UUID --expected-created-at TIMESTAMP [--after SEQUENCE] [--limit N] [--action ACTION] [--actor-id UUID_OR_STORE] [--credential-type TYPE]", "events")
 		return 1
 	}
 	at, err := time.Parse(time.RFC3339Nano, *expected)

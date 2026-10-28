@@ -816,7 +816,7 @@ func TestRenderDeployFailureWithoutReasonIsActionable(t *testing.T) {
 	if code != 1 {
 		t.Fatalf("exit = %d, want 1", code)
 	}
-	if got := stderr.String(); !strings.Contains(got, "gregale deploys status d-empty") {
+	if got := stderr.String(); !strings.Contains(got, "gregale release get d-empty") {
 		t.Fatalf("stderr = %q, want status inspection command", got)
 	}
 }

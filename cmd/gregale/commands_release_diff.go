@@ -22,7 +22,7 @@ func cmdDeploymentDiff(args []string) int {
 		return 1
 	}
 	if fs.NArg() != 1 {
-		PrintUsage(os.Stderr, "usage: gregale deployment diff <id|vN> [--against <id|vN>] [--app <slug>]", "deployment")
+		PrintUsage(os.Stderr, "usage: gregale release diff <id|vN> [--against <id|vN>] [--app <slug>]", "deployment")
 		return 1
 	}
 	client, err := authedClient()

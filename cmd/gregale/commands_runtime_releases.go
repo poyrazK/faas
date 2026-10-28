@@ -18,7 +18,7 @@ func cmdDeploymentRuntime(args []string) int {
 		return 1
 	}
 	if len(positional) != 1 || !validDeploymentRef(positional[0]) {
-		return printErr("Invalid runtime preview", errors.New("usage: gregale deployment runtime <ID|vN> [--app SLUG] [--target RELEASE_ID]"))
+		return printErr("Invalid runtime preview", errors.New("usage: gregale release runtime <ID|vN> [--app SLUG] [--target RELEASE_ID]"))
 	}
 	client, err := authedClient()
 	if err != nil {
