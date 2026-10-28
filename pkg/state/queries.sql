@@ -8698,6 +8698,7 @@ ORDER BY app_id, environment_slug, created_at DESC, id;
 SELECT (jsonb_build_object(
     'ID', a.id,
     'AccountID', a.account_id,
+    'OrgID', a.org_id,
     'Slug', a.slug,
     'Type', a.type,
     'Status', a.status,
