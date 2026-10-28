@@ -230,6 +230,7 @@ func legacySkips() map[string]bool {
 		"s3-gatewayd":          true,
 		"gatewayd-public-edge": true,
 		"livequeryd":           true,
+		"mcp-bridge":           true,
 		"agentd":               true,
 	}
 }

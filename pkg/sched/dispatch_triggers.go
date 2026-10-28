@@ -357,21 +357,38 @@ func (l *Loop) runTriggerTick(ctx context.Context) {
 		l.log.Warn("sched trigger tick: list", "err", err)
 		return
 	}
-	l.evictTriggerPollers(triggers)
 	if len(triggers) == 0 {
+		l.evictTriggerPollers(nil)
 		return
 	}
 	resolvePlan := l.triggerPlanResolver(ctx)
+	// polled are the triggers this schedd keeps pollers for: an external
+	// broker trigger is polled only by the schedd that owns its app
+	// (ADR-20261027162741), so a poller left behind by an ownership move is
+	// closed and a Kafka reader leaves its consumer group.
+	polled := make([]sqlc.Trigger, 0, len(triggers))
+	defer func() { l.evictTriggerPollers(polled) }()
 	for i := range triggers {
 		t := triggers[i]
 		if queuePushLaneEligible(t) {
+			polled = append(polled, t)
 			l.scheduleQueuePushLanes(ctx, t, store)
 			continue
 		}
 		if t.Kind == string(api.TriggerKindRealtime) {
+			polled = append(polled, t)
 			l.scheduleRealtimeLanes(ctx, t, store)
 			continue
 		}
+		if brokerTriggerLaneEligible(t) {
+			if !l.triggerAppOwned(ctx, t) {
+				continue
+			}
+			polled = append(polled, t)
+			l.scheduleBrokerTriggerLane(ctx, t, store)
+			continue
+		}
+		polled = append(polled, t)
 		if err := l.dispatchOneTrigger(ctx, t, store, resolvePlan); err != nil {
 			if errors.Is(err, errTriggerGatewayDispatch) {
 				continue
@@ -2558,6 +2575,29 @@ func (l *Loop) pollerForTrigger(t sqlc.Trigger) (triggerSource, bool, error) {
 		// when the reader is built, so the old reader must leave.
 		l.closeTriggerPollerLocked(id)
 	}
+	// Build without the shared lock (ADR-20261027162741): a broker connect
+	// can take seconds while other lanes look up their pollers.
+	l.triggerPollersMu.Unlock()
+	src, registered, err := l.buildTriggerPoller(t)
+	l.triggerPollersMu.Lock()
+	if err != nil || !registered {
+		return nil, registered, err
+	}
+	if existing, ok := l.triggerPollers[id]; ok {
+		// Another caller built this trigger's poller meanwhile; keep it.
+		_ = src.Close()
+		return existing, true, nil
+	}
+	l.triggerPollers[id] = src
+	if l.triggerPollerConfigs == nil {
+		l.triggerPollerConfigs = map[string]string{}
+	}
+	l.triggerPollerConfigs[id] = fingerprint
+	return src, true, nil
+}
+
+// buildTriggerPoller opens a trigger's credentials and builds its poller.
+func (l *Loop) buildTriggerPoller(t sqlc.Trigger) (triggerSource, bool, error) {
 	pollerTrigger := t
 	openedConfig, err := triggerconfig.Open(api.TriggerKind(t.Kind), t.Config, l.triggerSecretIdentities)
 	if err != nil {
@@ -2576,11 +2616,6 @@ func (l *Loop) pollerForTrigger(t sqlc.Trigger) (triggerSource, bool, error) {
 	if err != nil {
 		return nil, true, fmt.Errorf("construct %s trigger poller: %w", t.Kind, err)
 	}
-	l.triggerPollers[id] = src
-	if l.triggerPollerConfigs == nil {
-		l.triggerPollerConfigs = map[string]string{}
-	}
-	l.triggerPollerConfigs[id] = fingerprint
 	return src, true, nil
 }
 
@@ -2618,7 +2653,8 @@ func (l *Loop) evictTriggerPollers(enabled []sqlc.Trigger) {
 		live[enabled[i].ID.String()] = true
 	}
 	for id := range l.triggerPollerConfigs {
-		if !live[id] {
+		// A lane still delivering keeps its poller until a later tick.
+		if !live[id] && !l.brokerLaneActive(id) {
 			l.closeTriggerPollerLocked(id)
 		}
 	}

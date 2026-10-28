@@ -103,6 +103,12 @@ func (m *management) planLocalDeploy(ctx context.Context, args planLocalDeployAr
 	if err != nil {
 		return nil, err
 	}
+	return m.planDirDeploy(ctx, dir, args)
+}
+
+// planDirDeploy plans deploying dir as one app: a local project, or the
+// hosted bridge's sanitized copy of an upload (ADR-20261026195952).
+func (m *management) planDirDeploy(ctx context.Context, dir string, args planLocalDeployArgs) (any, error) {
 	fingerprint, files, size, err := fingerprintTree(dir)
 	if err != nil {
 		return nil, err

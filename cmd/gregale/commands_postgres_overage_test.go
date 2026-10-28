@@ -69,7 +69,7 @@ func TestPostgresOverageIsHiddenUntilReleased(t *testing.T) {
 	view := &capabilitiesAPI{}
 	server := httptest.NewServer(view)
 	defer server.Close()
-	t.Setenv("FAAS_CAPABILITY_FLAGS_RELEASE_ALL", "")
+	clearCapabilityReleaseAll(t)
 	t.Setenv("FAAS_API", server.URL)
 	t.Setenv("FAAS_TOKEN", "test-token")
 	t.Setenv("FAAS_COMPLETION_CACHE_PATH", filepath.Join(t.TempDir(), "cache.json"))

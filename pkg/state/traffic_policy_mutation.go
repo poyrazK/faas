@@ -49,7 +49,9 @@ func (s *PgStore) beginRuleTrafficPolicyMutation(ctx context.Context, account pg
 }
 
 func (s *PgStore) beginTrafficPolicyMutationWithRoutes(ctx context.Context, account pgtype.UUID, globalRoutes bool) (pgx.Tx, error) {
+	writer, start := trafficPolicyMutationWriter(globalRoutes), time.Now()
 	for {
+		attempt := time.Now()
 		conn, release, busy, err := s.tryAcquireTrafficPolicySession(ctx, account, globalRoutes)
 		if err != nil {
 			return nil, err
@@ -73,6 +75,7 @@ func (s *PgStore) beginTrafficPolicyMutationWithRoutes(ctx context.Context, acco
 				err = guardOrgAccessTx(ctx, tx)
 			}
 			if err == nil {
+				observeTrafficPolicyPhase(writer, TrafficPolicyPhaseLockWait, attempt.Sub(start))
 				guarded := &trafficPolicyMutationTx{Tx: tx, account: account, globalRoutes: globalRoutes, release: release, appsSuffix: s.trafficAppsSuffix}
 				if err := guarded.readBefore(ctx); err != nil {
 					_ = guarded.Rollback(context.WithoutCancel(ctx))
@@ -92,6 +95,7 @@ func (s *PgStore) beginTrafficPolicyMutationWithRoutes(ctx context.Context, acco
 		select {
 		case <-ctx.Done():
 			timer.Stop()
+			observeTrafficPolicyPhase(writer, TrafficPolicyPhaseLockWait, time.Since(start))
 			return nil, ctx.Err()
 		case <-timer.C:
 		}
@@ -111,6 +115,9 @@ type trafficPolicyMutationTx struct {
 }
 
 func (tx *trafficPolicyMutationTx) readBefore(ctx context.Context) error {
+	defer func(start time.Time) {
+		observeTrafficPolicyPhase(trafficPolicyMutationWriter(tx.globalRoutes), TrafficPolicyPhaseBefore, time.Since(start))
+	}(time.Now())
 	if err := boundedTrafficPolicyAnalysis(ctx, func(bounded context.Context) error {
 		var err error
 		tx.before, err = readTrafficHostAnalysis(bounded, tx.Tx, tx.account, tx.appsSuffix)
@@ -129,6 +136,17 @@ func (tx *trafficPolicyMutationTx) readBefore(ctx context.Context) error {
 }
 
 func (tx *trafficPolicyMutationTx) Commit(ctx context.Context) error {
+	if err := tx.validate(ctx); err != nil {
+		return err
+	}
+	defer tx.release(ctx)
+	return tx.Tx.Commit(ctx)
+}
+
+func (tx *trafficPolicyMutationTx) validate(ctx context.Context) error {
+	defer func(start time.Time) {
+		observeTrafficPolicyPhase(trafficPolicyMutationWriter(tx.globalRoutes), TrafficPolicyPhaseValidate, time.Since(start))
+	}(time.Now())
 	if err := boundedTrafficPolicyAnalysis(ctx, func(bounded context.Context) error {
 		after, err := readTrafficHostAnalysis(bounded, tx.Tx, tx.account, tx.appsSuffix)
 		if err != nil {
@@ -149,8 +167,7 @@ func (tx *trafficPolicyMutationTx) Commit(ctx context.Context) error {
 			return err
 		}
 	}
-	defer tx.release(ctx)
-	return tx.Tx.Commit(ctx)
+	return nil
 }
 
 func (tx *trafficPolicyMutationTx) Rollback(ctx context.Context) error {

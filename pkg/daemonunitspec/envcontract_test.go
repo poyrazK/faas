@@ -21,7 +21,7 @@ var envLiteral = regexp.MustCompile(`"(FAAS_[A-Z0-9_]+)"`)
 // run on the operator's machine, and their env is not a deploy concern.
 var daemonDirs = []string{
 	"cmd/apid", "cmd/bridged", "cmd/schedd", "cmd/vmmd", "cmd/imaged", "cmd/builderd",
-	"cmd/meterd", "cmd/githubd", "cmd/gatewayd-internal", "cmd/gatewayd-public", "cmd/s3-gatewayd", "cmd/maild", "cmd/mail-report", "cmd/mail-metrics", "cmd/mail-feedback",
+	"cmd/meterd", "cmd/githubd", "cmd/gatewayd-internal", "cmd/gatewayd-public", "cmd/s3-gatewayd", "cmd/mcp-bridged", "cmd/maild", "cmd/mail-report", "cmd/mail-metrics", "cmd/mail-feedback",
 	"cmd/vmmd-stream-bridge", "cmd/vmmd-raw-bridge", "cmd/vmmd-tcp-bridge", "cmd/vmmd-udp-bridge", "cmd/realtimed", "cmd/profiled", "cmd/outboundd", "cmd/agentd",
 }
 

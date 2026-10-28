@@ -94,9 +94,9 @@ redelivered after its visibility timeout.
 
 ```bash
 gregale workers                     # worker apps and their pools
-gregale workers status my-worker    # replicas, scaling metric, backlog, dead letters
-gregale workers logs my-worker --follow
-gregale workers scale my-worker --min 0 --max 3 --target 100
+gregale worker status my-worker    # replicas, scaling metric, backlog, dead letters
+gregale worker logs my-worker --follow
+gregale worker scale my-worker --min 0 --max 3 --target 100
 ```
 
 ## Limits

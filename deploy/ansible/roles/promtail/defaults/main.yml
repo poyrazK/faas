@@ -46,6 +46,7 @@ promtail_journal_units:
   - faas-imaged.service
   - faas-builderd.service
   - faas-bridged.service
+  - faas-mcp-bridge.service
   - faas-outboundd.service
   - faas-agentd.service
   - faas-realtimed.service
