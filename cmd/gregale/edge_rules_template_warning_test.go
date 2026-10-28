@@ -17,7 +17,7 @@ func TestWarnTemplatedEdgeRulePaths(t *testing.T) {
 	})
 	out := buf.String()
 	if !strings.Contains(out, "rule rule-dead never matches") ||
-		!strings.Contains(out, "gregale edge-rules update rule-dead --match-path '/users/?*'") {
+		!strings.Contains(out, "gregale edge rule update rule-dead --match-path '/users/?*'") {
 		t.Fatalf("warning = %q", out)
 	}
 	if strings.Contains(out, "rule-ok") || strings.Count(out, "\n") != 1 {

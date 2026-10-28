@@ -409,7 +409,7 @@ func validateTestChaosMinimums(evidence *testChaosEvidence) error {
 
 func cmdChaos(args []string) int {
 	if len(args) == 0 || args[0] != "inject" {
-		PrintUsage(osStderr, "usage: gregale chaos inject --scenario NAME --target SERVICE (--latency D|--error CODE|--bandwidth N|--timeout|--reset|--connect-timeout|--connect-refused|--dns-latency D|--dns-timeout|--dns-servfail|--dns-nxdomain|--malformed-json|--truncated-body|--response-lost) [--tcp-port N] [--direction upstream|downstream|both] --percent N [--duration D] [--from SERVICE] [--profile warm|cold|restored]", "chaos")
+		PrintUsage(osStderr, "usage: gregale test chaos --scenario NAME --target SERVICE (--latency D|--error CODE|--bandwidth N|--timeout|--reset|--connect-timeout|--connect-refused|--dns-latency D|--dns-timeout|--dns-servfail|--dns-nxdomain|--malformed-json|--truncated-body|--response-lost) [--tcp-port N] [--direction upstream|downstream|both] --percent N [--duration D] [--from SERVICE] [--profile warm|cold|restored]", "chaos")
 		return 1
 	}
 	fs := newFlagSet("chaos inject", flag.ContinueOnError)
@@ -443,7 +443,7 @@ func cmdChaos(args []string) int {
 		return 1
 	}
 	if rejectUnexpectedFlagArgs(fs) || fs.NArg() != 0 {
-		PrintUsage(osStderr, "usage: gregale chaos inject --scenario NAME --target SERVICE (--latency D|--error CODE|--bandwidth N|--timeout|--reset|--connect-timeout|--connect-refused|--dns-latency D|--dns-timeout|--dns-servfail|--dns-nxdomain|--malformed-json|--truncated-body|--response-lost) [--tcp-port N] [--direction upstream|downstream|both] --percent N [--duration D] [--from SERVICE] [--profile warm|cold|restored]", "chaos")
+		PrintUsage(osStderr, "usage: gregale test chaos --scenario NAME --target SERVICE (--latency D|--error CODE|--bandwidth N|--timeout|--reset|--connect-timeout|--connect-refused|--dns-latency D|--dns-timeout|--dns-servfail|--dns-nxdomain|--malformed-json|--truncated-body|--response-lost) [--tcp-port N] [--direction upstream|downstream|both] --percent N [--duration D] [--from SERVICE] [--profile warm|cold|restored]", "chaos")
 		return 1
 	}
 	if *scenario == "" || *target == "" {

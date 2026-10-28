@@ -18,7 +18,7 @@ func TestAutomationQueueEvidenceCLI(t *testing.T) {
 		if r.Method != "GET" || r.URL.Path != "/v1/apps/consumer/recovery-policy/queue" {
 			t.Fatalf("unexpected request %s %s", r.Method, r.URL)
 		}
-		_ = json.NewEncoder(w).Encode(api.WorkflowRecoveryAutomaticQueue{Entries: []api.WorkflowRecoveryAutomaticQueueEntry{{WaitCategory: "policy", WaitReason: "automatic_paused", Evidence: &api.WorkflowRecoveryQueueEvidence{Diagnosis: api.WorkflowRetryEvidenceDiagnosis{EvidenceKind: "parent", RunID: "run", ResumeCount: 1, Reason: "terminal_outcome_not_saved", Repairable: true}, EvidenceURL: "/evidence/parent", CLICommand: "gregale automations recovery-retry-evidence --app consumer --parent"}}}})
+		_ = json.NewEncoder(w).Encode(api.WorkflowRecoveryAutomaticQueue{Entries: []api.WorkflowRecoveryAutomaticQueueEntry{{WaitCategory: "policy", WaitReason: "automatic_paused", Evidence: &api.WorkflowRecoveryQueueEvidence{Diagnosis: api.WorkflowRetryEvidenceDiagnosis{EvidenceKind: "parent", RunID: "run", ResumeCount: 1, Reason: "terminal_outcome_not_saved", Repairable: true}, EvidenceURL: "/evidence/parent", CLICommand: "gregale automation recovery-retry-evidence --app consumer --parent"}}}})
 	})
 	out := main.CaptureAutomationStdout(t)
 	if code := main.CmdAutomationsRecoveryPolicy([]string{"--app", "consumer", "--queue"}); code != 0 {

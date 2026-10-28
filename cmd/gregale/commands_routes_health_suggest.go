@@ -91,7 +91,7 @@ func routeHealthTargetError(positional []string, deployment string) error {
 	case !validCLISlug(positional[0]):
 		return fmt.Errorf("%q is not a valid app slug", positional[0])
 	case strings.TrimSpace(deployment) == "":
-		return fmt.Errorf("--deployment is required: pass the deployment UUID to inspect (list them with `gregale deployments --app %s`)", positional[0])
+		return fmt.Errorf("--deployment is required: pass the deployment UUID to inspect (list them with `gregale release list --app %s`)", positional[0])
 	case !canonicalRouteHealthID(deployment):
 		return fmt.Errorf("--deployment must be a canonical deployment UUID; got %q", deployment)
 	}
@@ -513,6 +513,6 @@ func renderRouteHealthSuggestions(w io.Writer, report routeHealthSuggestionRepor
 		_, _ = fmt.Fprintf(w, "\n%s\n", report.SampleNote)
 	}
 	if output != "" {
-		_, _ = fmt.Fprintf(w, "\nSaved %d reviewable selectors to %s; pass that file to `gregale routes health set --routes`.\n", len(report.Selectors), previewReportText(output))
+		_, _ = fmt.Fprintf(w, "\nSaved %d reviewable selectors to %s; pass that file to `gregale api route health set --routes`.\n", len(report.Selectors), previewReportText(output))
 	}
 }

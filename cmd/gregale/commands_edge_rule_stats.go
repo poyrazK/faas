@@ -24,7 +24,7 @@ func cmdEdgeRulesStats(args []string) int {
 		return 1
 	}
 	if *slug == "" || fs.NArg() != 0 {
-		PrintUsage(os.Stderr, "usage: gregale edge-rules stats --app <slug> [--window 1h|24h|7d]", "edge-rules")
+		PrintUsage(os.Stderr, "usage: gregale edge rule stats --app <slug> [--window 1h|24h|7d]", "edge-rules")
 		return 1
 	}
 	client, err := authedClient()

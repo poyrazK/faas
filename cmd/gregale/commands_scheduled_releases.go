@@ -17,7 +17,7 @@ import (
 
 func cmdScheduledReleases(args []string) int {
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale scheduled-releases <list|show|set|cancel>", "scheduled-releases")
+		PrintUsage(os.Stderr, "usage: gregale release schedule <list|show|set|cancel>", "scheduled-releases")
 		return 1
 	}
 	switch args[0] {
@@ -30,7 +30,7 @@ func cmdScheduledReleases(args []string) int {
 	case "cancel":
 		return scheduledReleasesCancel(args[1:])
 	}
-	printCommandValidation(os.Stderr, "gregale scheduled-releases: unknown subcommand %q\n", args[0])
+	printCommandValidation(os.Stderr, "gregale release schedule: unknown subcommand %q\n", args[0])
 	return unknownSubcommandChoices(os.Stderr, "scheduled-releases", nestedCliCommand("scheduled-releases"), args[0])
 }
 
@@ -149,7 +149,7 @@ func scheduledReleasesShow(args []string) int {
 		return 1
 	}
 	if fs.NArg() != 1 {
-		PrintUsage(os.Stderr, "usage: gregale scheduled-releases show <deployment> [--app <slug>]", "scheduled-releases")
+		PrintUsage(os.Stderr, "usage: gregale release schedule get <deployment> [--app <slug>]", "scheduled-releases")
 		return 1
 	}
 	client, id, code := scheduledReleaseClient(*app, fs.Arg(0))
@@ -174,7 +174,7 @@ func scheduledReleasesSet(args []string) int {
 		return 1
 	}
 	if fs.NArg() != 1 {
-		PrintUsage(os.Stderr, "usage: gregale scheduled-releases set <deployment> --at <when> [--app <slug>] [--rollout safe|fast|immediate] [--notify CHANNEL,...]", "scheduled-releases")
+		PrintUsage(os.Stderr, "usage: gregale release schedule set <deployment> --at <when> [--app <slug>] [--rollout safe|fast|immediate] [--notify CHANNEL,...]", "scheduled-releases")
 		return 1
 	}
 	client, id, code := scheduledReleaseClient(*app, fs.Arg(0))
@@ -205,7 +205,7 @@ func scheduledReleasesCancel(args []string) int {
 		return 1
 	}
 	if fs.NArg() != 1 {
-		PrintUsage(os.Stderr, "usage: gregale scheduled-releases cancel <deployment> [--app <slug>]", "scheduled-releases")
+		PrintUsage(os.Stderr, "usage: gregale release schedule cancel <deployment> [--app <slug>]", "scheduled-releases")
 		return 1
 	}
 	client, id, code := scheduledReleaseClient(*app, fs.Arg(0))
@@ -220,7 +220,7 @@ func scheduledReleasesCancel(args []string) int {
 		return jsonOut(writeJSON(sr))
 	}
 	PrintOK(osStdout, "Cancelled the schedule of %s. It stays built without traffic.", scheduledReleaseRef(sr))
-	PrintProgress(osStdout, "Start it later with: gregale scheduled-releases set %s --app %s --at <when>", scheduledReleaseRef(sr), sr.App)
+	PrintProgress(osStdout, "Start it later with: gregale release schedule set %s --app %s --at <when>", scheduledReleaseRef(sr), sr.App)
 	return 0
 }
 
@@ -258,8 +258,8 @@ func scheduledReleaseLines(sr api.ScheduledRelease, now time.Time) []string {
 		lines = append(lines, fmt.Sprintf("Overrides %d deploy freeze(s): %s", len(sr.OverriddenFreezes), sr.OverrideFreeze))
 	}
 	if sr.State == api.ScheduledReleaseStatePending {
-		lines = append(lines, fmt.Sprintf("Move: gregale scheduled-releases set %s --app %s --at <when>", ref, sr.App),
-			fmt.Sprintf("Cancel: gregale scheduled-releases cancel %s --app %s", ref, sr.App))
+		lines = append(lines, fmt.Sprintf("Move: gregale release schedule set %s --app %s --at <when>", ref, sr.App),
+			fmt.Sprintf("Cancel: gregale release schedule cancel %s --app %s", ref, sr.App))
 	}
 	return lines
 }
@@ -378,6 +378,6 @@ func renderPendingSchedule(dep api.DeploymentResponse, appURL string) bool {
 	ref := scheduledReleaseRef(*sr)
 	PrintOK(osStdout, "Scheduled %s: its rollout starts %s.", ref, describeReleaseTime(sr.ReleaseAt, time.Now()))
 	PrintProgress(osStdout, "Rollout: %s. Until then it waits built, without traffic; production is unchanged. %s", scheduledRolloutLabel(sr.Canary), appURL)
-	PrintProgress(osStdout, "Move: gregale scheduled-releases set %s --app %s --at <when> · Cancel: gregale scheduled-releases cancel %s --app %s", ref, sr.App, ref, sr.App)
+	PrintProgress(osStdout, "Move: gregale release schedule set %s --app %s --at <when> · Cancel: gregale release schedule cancel %s --app %s", ref, sr.App, ref, sr.App)
 	return true
 }

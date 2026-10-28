@@ -101,7 +101,7 @@ func bucketObjectLockSelection(args []string) (api.ObjectBucketObjectLockConfigu
 }
 
 func bucketObjectLockUsage() int {
-	PrintUsage(osStderr, "usage: gregale bucket object-lock <status|capabilities|enable|clear-default|GOVERNANCE|COMPLIANCE> <app> <bucket-id> [--days N | --years N] [--event-days N | --event-years N]", "bucket")
+	PrintUsage(osStderr, "usage: gregale bucket object-lock set <status|capabilities|enable|clear-default|GOVERNANCE|COMPLIANCE> <app> <bucket-id> [--days N | --years N] [--event-days N | --event-years N]", "bucket")
 	return 1
 }
 

@@ -20,7 +20,7 @@ func waitAcceptedJobRun(client *api.Client, name string, accepted api.JobRunResp
 		}
 		return printErr("Cannot wait for accepted Job run", fmt.Errorf("acceptance response did not identify a complete run; inspect %s jobs runs %s before submitting again", recoveryCLI(), recoveryArgument(name)))
 	}
-	resume := recoveryCLI() + " jobs wait " + recoveryArgument(name) + " " + recoveryArgument(accepted.ID) + " --timeout " + timeout.String() + " --poll-interval " + interval.String()
+	resume := recoveryCLI() + " job wait " + recoveryArgument(name) + " " + recoveryArgument(accepted.ID) + " --timeout " + timeout.String() + " --poll-interval " + interval.String()
 	if !jsonOutput {
 		_, _ = fmt.Fprintf(osStderr, "Job %s run accepted: %s. Waiting for this exact run.\nResume waiting (POSIX shells):\n  %s\n", name, accepted.ID, resume)
 	}

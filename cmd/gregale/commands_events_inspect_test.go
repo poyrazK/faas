@@ -44,7 +44,7 @@ func TestCmdEventsInspectWorkflowAdmission(t *testing.T) {
 			} else if strings.Contains(stdout.String(), "Workflow run:") {
 				t.Fatalf("unadmitted workflow has run evidence=%s", stdout)
 			}
-			if state == "failed" && !strings.Contains(stdout.String(), "Recover: gregale events recover") {
+			if state == "failed" && !strings.Contains(stdout.String(), "Recover: gregale event recover") {
 				t.Fatalf("routing recovery hint is missing: %s", stdout)
 			}
 		})
@@ -86,7 +86,7 @@ func TestCmdEventsInspectBackfillOutcomes(t *testing.T) {
 	if code := main.CmdEventsInspect([]string{"--source", "orders", "--id", "evt"}); code != 0 {
 		t.Fatalf("exit=%d", code)
 	}
-	for _, want := range []string{"Recipients: 1", "Backfill recipients: 1", "Origin: backfill", "gregale events backfill-status job-1", "failed", "handler failure", "handler_replay"} {
+	for _, want := range []string{"Recipients: 1", "Backfill recipients: 1", "Origin: backfill", "gregale event backfill get job-1", "failed", "handler failure", "handler_replay"} {
 		if !strings.Contains(stdout.String(), want) {
 			t.Errorf("missing %q: %s", want, stdout)
 		}

@@ -147,7 +147,7 @@ func applyDevDebugSetting(client *Client, slug string, enabled bool) int {
 	case err != nil && enabled:
 		return printErr("Could not enable the developer debugger", err)
 	case err != nil:
-		PrintWarn(osStderr, "could not turn off a previous --debug setting (%v); run `gregale secrets unset --app %s %s`", err, slug, api.DevDebugEnv)
+		PrintWarn(osStderr, "could not turn off a previous --debug setting (%v); run `gregale env unset --app %s %s`", err, slug, api.DevDebugEnv)
 	}
 	return 0
 }

@@ -81,7 +81,7 @@ func cmdCors(args []string) int {
 	parent, _ := lookupCliCommand("cors")
 	if len(args) == 0 {
 		PrintUsage(os.Stderr,
-			"usage: gregale cors <allow|ls|rm|show> [args]",
+			"usage: gregale edge cors <allow|ls|rm|show> [args]",
 			"cors")
 		return 1
 	}
@@ -118,7 +118,7 @@ func cmdCorsAllow(args []string) int {
 	flags, positional := splitArgsForFlags(args, "credentials")
 	if len(positional) < 2 {
 		PrintUsage(os.Stderr,
-			"usage: gregale cors allow <slug> <origin> [<origin>...] [--method VERB] [--credentials] [--max-age N] [--host HOST]",
+			"usage: gregale edge cors allow <slug> <origin> [<origin>...] [--method VERB] [--credentials] [--max-age N] [--host HOST]",
 			"cors")
 		return 1
 	}
@@ -233,7 +233,7 @@ func cmdCorsAllow(args []string) int {
 // quota so an in-memory filter stays cheap.
 func cmdCorsLs(args []string) int {
 	if len(args) > 1 {
-		PrintUsage(os.Stderr, "usage: gregale cors ls [<slug>]", "cors")
+		PrintUsage(os.Stderr, "usage: gregale edge cors list [<slug>]", "cors")
 		return 1
 	}
 	slug := ""
@@ -244,7 +244,7 @@ func cmdCorsLs(args []string) int {
 		slug, resolveErr = resolveRequiredAppSlug("")
 		if resolveErr != nil {
 			if errors.Is(resolveErr, errProjectContextNotFound) {
-				PrintUsage(os.Stderr, "usage: gregale cors ls [<slug>] (or run `gregale link <project-slug>`)", "cors")
+				PrintUsage(os.Stderr, "usage: gregale edge cors list [<slug>] (or run `gregale link <project-slug>`)", "cors")
 				return 1
 			}
 			return printErr("Could not read local project context", resolveErr)
@@ -293,12 +293,12 @@ func cmdCorsRm(args []string) int {
 		args = args[1:]
 	}
 	if len(args) != 1 {
-		PrintUsage(os.Stderr, "usage: gregale cors rm [<slug>] <rule-id>", "cors")
+		PrintUsage(os.Stderr, "usage: gregale edge cors delete [<slug>] <rule-id>", "cors")
 		return 1
 	}
 	id := args[0]
 	if _, err := uuid.Parse(id); err != nil {
-		return printErr("Invalid CORS rule id", fmt.Errorf("%q is not a rule id; use the id `gregale cors ls <slug>` prints", id))
+		return printErr("Invalid CORS rule id", fmt.Errorf("%q is not a rule id; use the id `gregale edge cors list <slug>` prints", id))
 	}
 	client, err := authedClient()
 	if err != nil {
@@ -322,7 +322,7 @@ func cmdCorsRm(args []string) int {
 // defaults first then the rule list.
 func cmdCorsShow(args []string) int {
 	if len(args) > 1 {
-		PrintUsage(os.Stderr, "usage: gregale cors show [<slug>]", "cors")
+		PrintUsage(os.Stderr, "usage: gregale edge cors get [<slug>]", "cors")
 		return 1
 	}
 	slug := ""
@@ -333,7 +333,7 @@ func cmdCorsShow(args []string) int {
 		slug, resolveErr = resolveRequiredAppSlug("")
 		if resolveErr != nil {
 			if errors.Is(resolveErr, errProjectContextNotFound) {
-				PrintUsage(os.Stderr, "usage: gregale cors show [<slug>] (or run `gregale link <project-slug>`)", "cors")
+				PrintUsage(os.Stderr, "usage: gregale edge cors get [<slug>] (or run `gregale link <project-slug>`)", "cors")
 				return 1
 			}
 			return printErr("Could not read local project context", resolveErr)

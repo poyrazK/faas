@@ -20,7 +20,7 @@ func cmdWorkflowSchedules(args []string) int {
 		return 1
 	}
 	if *app == "" {
-		PrintUsage(os.Stderr, "usage: gregale workflows schedules --app <slug>", "workflows")
+		PrintUsage(os.Stderr, "usage: gregale workflow schedules --app <slug>", "workflows")
 		return 1
 	}
 	client, err := authedClient()

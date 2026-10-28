@@ -27,7 +27,7 @@ func cmdEventsBackfill(args []string) int {
 	subID, subErr := uuid.Parse(*subscription)
 	req := api.EventReplayBackfillRequest{AllowExpired: *allowExpired, From: start, Until: end}
 	if len(positional) != 1 || rejectUnexpectedFlagArgs(fs) || !*yes || startErr != nil || endErr != nil || subErr != nil || req.Validate() != nil {
-		PrintUsage(os.Stderr, "usage: gregale events backfill <app> --subscription-id UUID --from RFC3339 --until RFC3339 --yes", "events")
+		PrintUsage(os.Stderr, "usage: gregale event backfill create <app> --subscription-id UUID --from RFC3339 --until RFC3339 --yes", "events")
 		return 1
 	}
 	client, err := authedClient()
@@ -52,11 +52,11 @@ func cmdEventsBackfillStatus(args []string) int {
 		return 1
 	}
 	if len(positional) != 1 || rejectUnexpectedFlagArgs(fs) {
-		PrintUsage(os.Stderr, "usage: gregale events backfill-status <job-id>", "events")
+		PrintUsage(os.Stderr, "usage: gregale event backfill get <job-id>", "events")
 		return 1
 	}
 	if _, err := uuid.Parse(positional[0]); err != nil {
-		PrintUsage(os.Stderr, "usage: gregale events backfill-status <job-id>", "events")
+		PrintUsage(os.Stderr, "usage: gregale event backfill get <job-id>", "events")
 		return 1
 	}
 	client, err := authedClient()
@@ -84,11 +84,11 @@ func cmdEventsBackfillItems(args []string) int {
 		return 1
 	}
 	if len(positional) != 1 || rejectUnexpectedFlagArgs(fs) || validateCLILimit("limit", *limit, api.EventReplayBackfillItemsPageMax) != nil {
-		PrintUsage(os.Stderr, "usage: gregale events backfill-items <job-id> [--state STATE] [--limit N] [--after CURSOR]", "events")
+		PrintUsage(os.Stderr, "usage: gregale event backfill items <job-id> [--state STATE] [--limit N] [--after CURSOR]", "events")
 		return 1
 	}
 	if _, err := uuid.Parse(positional[0]); err != nil {
-		PrintUsage(os.Stderr, "usage: gregale events backfill-items <job-id> [--state STATE] [--limit N] [--after CURSOR]", "events")
+		PrintUsage(os.Stderr, "usage: gregale event backfill items <job-id> [--state STATE] [--limit N] [--after CURSOR]", "events")
 		return 1
 	}
 	client, err := authedClient()
@@ -132,7 +132,7 @@ func cmdEventsBackfillItems(args []string) int {
 		}
 	}
 	if page.NextAfter != "" {
-		_, _ = fmt.Fprintf(osStdout, "Next page: gregale events backfill-items %s --limit %d", page.JobID, *limit)
+		_, _ = fmt.Fprintf(osStdout, "Next page: gregale event backfill items %s --limit %d", page.JobID, *limit)
 		if *stateFilter != "" {
 			_, _ = fmt.Fprintf(osStdout, " --state %s", *stateFilter)
 		}
@@ -150,11 +150,11 @@ func cmdEventsBackfillRetry(args []string) int {
 		return 1
 	}
 	if len(positional) != 1 || rejectUnexpectedFlagArgs(fs) || !*yes || validateCLILimit("limit", *limit, api.EventReplayBackfillRetryMax) != nil {
-		PrintUsage(os.Stderr, "usage: gregale events backfill-retry <job-id> [--limit N] --yes", "events")
+		PrintUsage(os.Stderr, "usage: gregale event backfill retry <job-id> [--limit N] --yes", "events")
 		return 1
 	}
 	if _, err := uuid.Parse(positional[0]); err != nil {
-		PrintUsage(os.Stderr, "usage: gregale events backfill-retry <job-id> [--limit N] --yes", "events")
+		PrintUsage(os.Stderr, "usage: gregale event backfill retry <job-id> [--limit N] --yes", "events")
 		return 1
 	}
 	client, err := authedClient()

@@ -58,7 +58,7 @@ func TestCmdDeploysRetry_LocalValidation(t *testing.T) {
 					if got := calls.Load(); got != 0 {
 						t.Errorf("API requests = %d, want zero", got)
 					}
-					if tt.help && !strings.Contains(out.String(), "gregale deploys retry <id> [--from=<stage>]") {
+					if tt.help && !strings.Contains(out.String(), "gregale release retry <id> [--from=<stage>]") {
 						t.Errorf("missing retry usage: %q", out.String())
 					}
 				})

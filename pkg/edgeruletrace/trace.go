@@ -2825,6 +2825,12 @@ func MethodMatches(methods []string, method string) bool {
 // The ordinary HTTP method has already been normalized; Access-Control-Request-Method
 // is passed to the gateway matcher as submitted, without case normalization.
 func ruleMethodMatches(kind string, methods []string, method string) bool {
+	// A rule that refuses or limits requests and lists GET also covers HEAD,
+	// as the gateway's protectiveMethodMatch does (ADR-091 amendment
+	// 2026-10-28).
+	if api.EdgeRuleKindUsesProtectivePathMatch(kind) && strings.EqualFold(method, http.MethodHead) && MethodMatches(methods, http.MethodGet) {
+		return true
+	}
 	if kind != "cors" || len(methods) == 0 {
 		return MethodMatches(methods, method)
 	}

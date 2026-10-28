@@ -16,7 +16,7 @@ func cmdCronsRm(args []string) int {
 		return 1
 	}
 	if fs.NArg() != 1 {
-		PrintUsage(os.Stderr, "usage: gregale crons rm <id>", "crons")
+		PrintUsage(os.Stderr, "usage: gregale cron delete <id>", "crons")
 		return 1
 	}
 	id := fs.Arg(0)

@@ -285,7 +285,7 @@ func buildSecretConfigurationReport(app, scope string, required []string, metada
 			report.Status = "needs attention"
 		}
 		if !present && report.NextCommand == "" {
-			report.NextCommand = recoveryCLI() + " secrets set --app " + recoveryArgument(app) + " --scope " + recoveryArgument(scope) + " --from-stdin"
+			report.NextCommand = recoveryCLI() + " env set --app " + recoveryArgument(app) + " --scope " + recoveryArgument(scope) + " --from-stdin"
 		}
 		report.Keys = append(report.Keys, row)
 	}
