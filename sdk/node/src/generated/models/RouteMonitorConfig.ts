@@ -20,5 +20,9 @@ export type RouteMonitorConfig = {
   revision: number;
   routes: Array<RouteMonitorRoute>;
   updated_at?: string;
+  /**
+   * Returned by a save of an enabled monitor: selectors no request matched within the plan's telemetry lookback (at most 7 days). Selectors match the route label exactly.
+   */
+  warnings?: Array<string>;
 };
 

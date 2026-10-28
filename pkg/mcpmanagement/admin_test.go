@@ -184,8 +184,14 @@ func TestAdminRevocationClosesLiveSubscriptionsAndPreauthenticatedGate(t *testin
 		t.Fatal("grant missing")
 	}
 	// A stateless session authenticated before revocation must fail its private gate.
+	service.remote.mu.Lock()
+	server, err := service.remote.serverLocked(grant)
+	service.remote.mu.Unlock()
+	if err != nil {
+		t.Fatal(err)
+	}
 	ct, st := mcp.NewInMemoryTransports()
-	ss, err := grant.server.Connect(t.Context(), st, nil)
+	ss, err := server.Connect(t.Context(), st, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -249,7 +255,7 @@ func TestAdminRevocationCancelsWatchWithoutCrossingGrant(t *testing.T) {
 		}
 		time.Sleep(time.Millisecond)
 	}
-	grant := &oauthGrant{id: "gmcp_grant_target", server: first.manager.resourceServer, management: first.manager}
+	grant := &oauthGrant{id: "gmcp_grant_target", approved: true, lastUsed: time.Now(), server: first.manager.resourceServer, management: first.manager}
 	remote := &remoteServer{opts: HTTPOptions{Lifecycle: root}, grants: map[string]*oauthGrant{grant.id: grant}}
 	service := &RemoteService{remote: remote}
 	if reply := adminRequest(t, service.AdminHandler(), "DELETE", "/connections/"+grant.id); reply.Code != 200 {

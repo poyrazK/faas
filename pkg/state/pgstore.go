@@ -8545,7 +8545,12 @@ func (s *PgStore) AdvanceCanary(ctx context.Context, id string, params CanaryAdv
 		}
 		return pgAbortProfileGatedCanary(ctx, tx, snapshot.Account.ID, dep, params, safeReleaseLeaseExpiresAt)
 	}
-	if err := pgCheckCanaryRouteGate(ctx, tx, snapshot, dep, params, now); err != nil {
+	// A guard whose capability is not released for the account neither holds
+	// the rollout nor records evidence (ADR-20261028110044).
+	guards := routeGuardRelease(ctx)
+	if !guards.Requirements {
+		params.RouteGateDecision = nil
+	} else if err := pgCheckCanaryRouteGate(ctx, tx, snapshot, dep, params, now); err != nil {
 		var blocked *RouteGateBlockedError
 		if errors.As(err, &blocked) {
 			if commitErr := tx.Commit(ctx); commitErr != nil {
@@ -8558,7 +8563,9 @@ func (s *PgStore) AdvanceCanary(ctx context.Context, id string, params CanaryAdv
 	if err := s.authorizeProductionLifecycle(ctx, tx, id, false); err != nil {
 		return Deployment{}, 0, err
 	}
-	if err := pgCheckRouteHealth(ctx, tx, snapshot, dep, now, params); err != nil {
+	if !guards.Health {
+		params.RouteHealthDecision = nil
+	} else if err := pgCheckRouteHealth(ctx, tx, snapshot, dep, now, params); err != nil {
 		var blocked *RouteHealthBlockedError
 		if errors.As(err, &blocked) {
 			if commitErr := tx.Commit(ctx); commitErr != nil {
@@ -9469,19 +9476,24 @@ func (s *PgStore) recoverRolloutTx(ctx context.Context, tx pgx.Tx, appID, deploy
 		if err := legacyProfileCanaryGate(p, dep); err != nil {
 			return dep, 0, err
 		}
-		gate, err := pgCanaryRouteGate(ctx, tx, owner.AccountID, dep.AppID)
-		if err != nil {
-			return dep, 0, err
+		guards := routeGuardRelease(ctx)
+		if guards.Requirements {
+			gate, err := pgCanaryRouteGate(ctx, tx, owner.AccountID, dep.AppID)
+			if err != nil {
+				return dep, 0, err
+			}
+			if err := legacyCanaryRouteGate(gate, dep, action); err != nil {
+				return dep, 0, err
+			}
 		}
-		if err := legacyCanaryRouteGate(gate, dep, action); err != nil {
-			return dep, 0, err
-		}
-		healthGate, err := pgRouteHealthGate(ctx, tx, owner.AccountID, dep.AppID)
-		if err != nil {
-			return dep, 0, err
-		}
-		if err := legacyRouteHealth(healthGate, dep, action); err != nil {
-			return dep, 0, err
+		if guards.Health {
+			healthGate, err := pgRouteHealthGate(ctx, tx, owner.AccountID, dep.AppID)
+			if err != nil {
+				return dep, 0, err
+			}
+			if err := legacyRouteHealth(healthGate, dep, action); err != nil {
+				return dep, 0, err
+			}
 		}
 	}
 	if emergencyGrace != nil {

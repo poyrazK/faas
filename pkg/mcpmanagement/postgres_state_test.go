@@ -157,11 +157,44 @@ func TestPostgresStateDiscardsWhatANewKeyCannotOpen(t *testing.T) {
 	}
 }
 
+// A write that cannot commit leaves memory ahead of Postgres, so the store
+// disables itself and asks the process to exit once; a restart reloads.
+func TestPostgresStateCommitFailureStopsTheBridgeOnce(t *testing.T) {
+	pool := openStatePool(t)
+	key := writeStateKey(t, 7)
+	failures := make(chan error, 2)
+	store, err := openPGState(t, pool, key, func(o *PostgresStateOptions) { o.OnFailure = func(err error) { failures <- err } })
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = store.Close() }()
+	if _, err := pool.Exec(t.Context(), `ALTER TABLE mcp_bridge_state RENAME TO mcp_bridge_state_gone`); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.update("plans/g", map[string]int{"n": 1}); err == nil || store.available() {
+		t.Fatal("a failed commit left the store open")
+	}
+	if err := store.update("plans/g", map[string]int{"n": 2}); err == nil {
+		t.Fatal("a disabled store accepted a write")
+	}
+	select {
+	case err := <-failures:
+		if !errors.Is(err, ErrStateCommitFailed) || errors.Is(err, ErrStateLeaseLost) {
+			t.Fatalf("failure = %v, want a commit failure", err)
+		}
+	default:
+		t.Fatal("the commit failure was not reported")
+	}
+	if len(failures) != 0 {
+		t.Fatal("the failure was reported twice")
+	}
+}
+
 func TestPostgresStateLeaseFencesAFormerHolder(t *testing.T) {
 	pool := openStatePool(t)
 	key := writeStateKey(t, 7)
 	lost := make(chan error, 1)
-	first, err := openPGState(t, pool, key, func(o *PostgresStateOptions) { o.OnLeaseLost = func(err error) { lost <- err } })
+	first, err := openPGState(t, pool, key, func(o *PostgresStateOptions) { o.OnFailure = func(err error) { lost <- err } })
 	if err != nil {
 		t.Fatal(err)
 	}

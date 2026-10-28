@@ -15,6 +15,8 @@ import (
 	"sync"
 
 	"github.com/gofrs/flock"
+
+	"github.com/onebox-faas/faas/pkg/secretbox"
 )
 
 const stateFormat = "gregale-mcp-state-v1"
@@ -87,9 +89,13 @@ func OpenStateStore(path, keyPath string) (*StateStore, error) {
 	return openStateStore(&fileState{path: path, lock: lock, aead: aead})
 }
 
-// readStateKey reads the independent 32-byte state key.
+// readStateKey reads the independent 32-byte state key. The key is an
+// operator-provisioned secret, so it takes the platform's secret-file modes:
+// the hosted bridge receives it through systemd LoadCredential=, which exposes
+// it as a 0440 root-owned file the unit's user reads through an ACL
+// (production rc.300, 2026-10-28: a 0600-only check kept the bridge from starting).
 func readStateKey(keyPath string) (cipher.AEAD, error) {
-	key, err := readPrivateFile(keyPath, 128)
+	key, err := readPrivateFile(keyPath, 128, secretbox.AllowedSecretFileMode)
 	if err != nil {
 		return nil, fmt.Errorf("read MCP state key: %w", err)
 	}
@@ -106,13 +112,16 @@ func readStateKey(keyPath string) (cipher.AEAD, error) {
 	return cipher.NewGCM(block)
 }
 
-func readPrivateFile(path string, limit int64) ([]byte, error) {
+// ownerOnly is the mode rule for the files the bridge writes itself.
+func ownerOnly(perm os.FileMode) bool { return perm&0077 == 0 }
+
+func readPrivateFile(path string, limit int64, allowed func(os.FileMode) bool) ([]byte, error) {
 	info, err := os.Lstat(path)
 	if err != nil {
 		return nil, err
 	}
-	if !info.Mode().IsRegular() || info.Mode().Perm()&0077 != 0 {
-		return nil, errors.New("must be a private regular file (0600)")
+	if !info.Mode().IsRegular() || !allowed(info.Mode().Perm()) {
+		return nil, fmt.Errorf("must be a private regular file, not %s", info.Mode())
 	}
 	f, err := os.Open(path) //nolint:forbidigo // operator-owned state/key path, checked above for private permissions and no symlink
 	if err != nil {
@@ -218,7 +227,7 @@ type fileState struct {
 }
 
 func (f *fileState) load() (map[string]json.RawMessage, error) {
-	data, err := readPrivateFile(f.path, maxStateBytes)
+	data, err := readPrivateFile(f.path, maxStateBytes, ownerOnly)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, nil
 	}

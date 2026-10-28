@@ -154,8 +154,18 @@ func cmdRoutesHealth(args []string) int {
 		}
 		_, _ = fmt.Fprintln(osStdout)
 	}
+	printRouteSelectorWarnings(gate.Warnings)
 	return 0
 }
+
+// printRouteSelectorWarnings prints a save's unobserved-selector warnings
+// (ADR-20261028110044) to stderr.
+func printRouteSelectorWarnings(warnings []string) {
+	for _, warning := range warnings {
+		_, _ = fmt.Fprintf(osStderr, "Warning: %s\n", previewReportText(warning))
+	}
+}
+
 func readRouteHealthSelectors(path string) ([]api.RouteHealthRoute, error) {
 	file, err := openCustomerFile(path)
 	if err != nil {

@@ -1156,6 +1156,12 @@ func (r *server) GetManagedPostgresDatabase(p0 http.ResponseWriter, p1 *http.Req
 func (r *server) GetProject(p0 http.ResponseWriter, p1 *http.Request, p2 state.Account) {
 	r.getProject(p0, p1, p2)
 }
+
+var ProjectServiceCalls = projectServiceCalls
+
+func (r *server) RenderProjectDetail(w http.ResponseWriter, req *http.Request, acct state.Account, slug string) {
+	r.renderProjectDetail(w, req, r.log, acct, slug)
+}
 func (r *server) GetProjectEnvironmentApprovalStatus(p0 http.ResponseWriter, p1 *http.Request, p2 state.Account) {
 	r.getProjectEnvironmentApprovalStatus(p0, p1, p2)
 }

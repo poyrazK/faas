@@ -83571,7 +83571,7 @@ func (q *Queries) ReadRouteHealthHistoryEntry(ctx context.Context, db DBTX, arg 
 }
 
 const readRouteHealthNotificationState = `-- name: ReadRouteHealthNotificationState :one
-SELECT context_key, status, COALESCE(blocked_decision_id::text, '')::text AS blocked_decision_id
+SELECT context_key, status, COALESCE(blocked_decision_id::text, '')::text AS blocked_decision_id, updated_at
 FROM route_health_notification_state WHERE deployment_id = $1::text::uuid
  AND app_id = $2::text::uuid AND account_id = $3::text::uuid
 `
@@ -83586,12 +83586,20 @@ type ReadRouteHealthNotificationStateRow struct {
 	ContextKey        string
 	Status            string
 	BlockedDecisionID string
+	UpdatedAt         pgtype.Timestamptz
 }
 
+// updated_at is when the status began; a hold keeps its first blocking
+// decision's time while its context lasts (ADR-20261028110044).
 func (q *Queries) ReadRouteHealthNotificationState(ctx context.Context, db DBTX, arg ReadRouteHealthNotificationStateParams) (ReadRouteHealthNotificationStateRow, error) {
 	row := db.QueryRow(ctx, readRouteHealthNotificationState, arg.DeploymentID, arg.AppID, arg.AccountID)
 	var i ReadRouteHealthNotificationStateRow
-	err := row.Scan(&i.ContextKey, &i.Status, &i.BlockedDecisionID)
+	err := row.Scan(
+		&i.ContextKey,
+		&i.Status,
+		&i.BlockedDecisionID,
+		&i.UpdatedAt,
+	)
 	return i, err
 }
 
