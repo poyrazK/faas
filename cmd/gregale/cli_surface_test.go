@@ -29,9 +29,15 @@ func TestTopLevelUsageGroupsCustomerCommands(t *testing.T) {
 			t.Errorf("default help exposes hidden command %q:\n%s", hidden, out)
 		}
 	}
-	for _, visible := range []string{"deploy", "dev", "inspect", "logs", "openapi"} {
+	// The first screen speaks the command tree (ADR-20261026145832).
+	for _, visible := range []string{"deploy", "dev", "app", "env", "logs", "status"} {
 		if !strings.Contains(out, "  "+visible+" ") {
-			t.Errorf("default help omits customer command %q", visible)
+			t.Errorf("default help omits %q:\n%s", visible, out)
+		}
+	}
+	for _, earlier := range []string{"apps", "inspect", "openapi", "doctor"} {
+		if strings.Contains(out, "  "+earlier+" ") {
+			t.Errorf("default help lists today's name %q instead of the tree's:\n%s", earlier, out)
 		}
 	}
 	if lines := strings.Count(out, "\n"); lines > 45 {
@@ -42,39 +48,57 @@ func TestTopLevelUsageGroupsCustomerCommands(t *testing.T) {
 // operatorCommands are callable but listed only by `help --all --operator`.
 var operatorCommands = []string{"admin", "commit", "data-repair", "entities", "github-webhook-secret", "mail", "postgres", "product", "rollouts", "tenant-surfaces"}
 
-func TestTopLevelUsageAllFollowsTheCustomerJourney(t *testing.T) {
+// cliTreeFamilies are the sections of `help --all` after the shortcuts.
+var cliTreeFamilies = []string{"Shortcuts:", "Ship:", "Run:", "Configure:", "Data:", "Work:", "Observe:", "Agents:", "Account:"}
+
+// helpSection returns the lines of a root help section.
+func helpSection(out, title string) string {
+	start := strings.Index(out, "\n"+title+"\n")
+	if start < 0 {
+		return ""
+	}
+	end := strings.Index(out[start+1:], "\n\n") + start + 1
+	return out[start:end]
+}
+
+func TestTopLevelUsageAllListsTheCommandTree(t *testing.T) {
+	enableEveryCLIFeature(t)
 	out := main.TopLevelUsage(true, false)
-	sections := []string{"Get started:", "Develop & deploy:", "Operate & observe:", "Configure:", "Async & data:", "Account & billing:"}
 	last := -1
-	for _, section := range sections {
+	for _, section := range cliTreeFamilies {
 		at := strings.Index(out, "\n"+section+"\n")
 		if at < 0 {
 			t.Fatalf("--all help omits %q:\n%s", section, out)
 		}
 		if at < last {
-			t.Errorf("--all help lists %q out of journey order", section)
+			t.Errorf("--all help lists %q out of family order", section)
 		}
 		last = at
 	}
 	for _, tc := range []struct{ command, section string }{
-		{"start", "Get started:"}, {"deploy", "Develop & deploy:"}, {"logs", "Operate & observe:"},
-		{"secrets", "Configure:"}, {"crons", "Async & data:"}, {"billing", "Account & billing:"},
+		{"deploy", "Shortcuts:"}, {"logs", "Shortcuts:"}, {"release", "Ship:"}, {"app", "Run:"},
+		{"env", "Configure:"}, {"bucket", "Data:"}, {"cron", "Work:"}, {"alert", "Observe:"},
+		{"mcp", "Agents:"}, {"billing", "Account:"}, {"start", "Shortcuts:"}, {"operation", "Work:"},
 	} {
-		section := strings.Index(out, "\n"+tc.section+"\n")
-		end := strings.Index(out[section+1:], "\n\n") + section + 1
-		if !strings.Contains(out[section:end], "\n  "+tc.command+" ") {
-			t.Errorf("--all help does not list %q under %q", tc.command, tc.section)
+		if !strings.Contains(helpSection(out, tc.section), "\n  "+tc.command+" ") {
+			t.Errorf("--all help does not list %q under %q:\n%s", tc.command, tc.section, out)
 		}
 	}
-	for _, command := range operatorCommands {
-		if strings.Contains(out, "\n  "+command+" ") {
-			t.Errorf("--all help lists operator command %q to customers", command)
+	for _, earlier := range append([]string{"crons", "deploys", "deployments", "secrets", "apps", "slos"}, operatorCommands...) {
+		if strings.Contains(out, "\n  "+earlier+" ") {
+			t.Errorf("--all help lists %q; customers see the tree's names", earlier)
 		}
 	}
-	for _, unwanted := range []string{"Customer commands:", "Advanced", "Other:", "Operator and compatibility:"} {
-		if strings.Contains(out, unwanted) {
-			t.Errorf("--all help contains %q", unwanted)
+	entries := 0
+	for _, line := range strings.Split(out, "\n") {
+		if strings.HasPrefix(line, "  ") && len(line) > 2 && line[2] >= 'a' && line[2] <= 'z' {
+			entries++
 		}
+	}
+	// 19 shortcuts and 44 nouns, down from 120 commands; unplaced commands
+	// are listed under More until they find a noun.
+	if entries > 80 {
+		t.Errorf("--all help lists %d commands; the tree keeps it near 75", entries)
 	}
 	if !strings.Contains(out, "gregale help --all --operator") {
 		t.Error("--all help does not say how to list operator commands")
@@ -92,8 +116,14 @@ func TestTopLevelUsageOperatorKeepsCompatibilityCommandsDiscoverable(t *testing.
 			t.Errorf("operator help omits %q", command)
 		}
 	}
-	if !strings.Contains(out, "\nGet started:\n") {
-		t.Error("operator help drops the customer groups")
+	earlier := helpSection(out, "Earlier names (still accepted):")
+	for _, tc := range []struct{ name, now string }{{"crons", "now gregale cron"}, {"secrets", "now gregale env"}, {"apps", "now gregale app"}} {
+		if !strings.Contains(earlier, "\n  "+tc.name+" ") || !strings.Contains(earlier, tc.now) {
+			t.Errorf("operator help does not map %q to %q:\n%s", tc.name, tc.now, earlier)
+		}
+	}
+	if !strings.Contains(out, "\nShortcuts:\n") {
+		t.Error("operator help drops the customer tree")
 	}
 }
 
@@ -118,7 +148,7 @@ func TestRootHelpFlagsSelectTheView(t *testing.T) {
 		if code := main.Run(tc.args); code != 0 {
 			t.Fatalf("%v exit = %d", tc.args, code)
 		}
-		if got := strings.Contains(out.String(), "\nAsync & data:\n"); got != tc.all {
+		if got := strings.Contains(out.String(), "\nWork:\n"); got != tc.all {
 			t.Errorf("%v lists every command = %v, want %v", tc.args, got, tc.all)
 		}
 		if got := strings.Contains(out.String(), "\nOperator and compatibility:\n"); got != tc.operators {

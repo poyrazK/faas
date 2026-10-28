@@ -8,21 +8,55 @@
 SELECT pg_advisory_xact_lock(hashtextextended('profile_captures:' || sqlc.arg(account_id)::text, 0));
 
 -- name: ProfileCaptureAccountStorage :one
--- Stored bytes of the account's unexpired captures, and how many of its
--- captures are still queued or running.
+-- Stored bytes of the account's unexpired captures and how many of its
+-- captures are still queued or running, in total and for automatic captures
+-- alone. A capture without a trigger predates automatic captures: manual.
 SELECT
   (SELECT coalesce(sum(octet_length(d.profile)), 0) FROM profile_capture_data d
      JOIN profile_captures p ON p.id = d.capture_id
    WHERE p.account_id = sqlc.arg(account_id)::text::uuid AND p.expires_at >= sqlc.arg(now)::timestamptz)::bigint AS stored_bytes,
   (SELECT count(*) FROM profile_captures
-   WHERE account_id = sqlc.arg(account_id)::text::uuid AND status IN ('queued', 'capturing'))::bigint AS active;
+   WHERE account_id = sqlc.arg(account_id)::text::uuid AND status IN ('queued', 'capturing'))::bigint AS active,
+  (SELECT coalesce(sum(octet_length(d.profile)), 0) FROM profile_capture_data d
+     JOIN profile_captures p ON p.id = d.capture_id
+   WHERE p.account_id = sqlc.arg(account_id)::text::uuid AND p.expires_at >= sqlc.arg(now)::timestamptz
+     AND coalesce(p.capture->>'trigger', 'manual') <> 'manual')::bigint AS automatic_stored_bytes,
+  (SELECT count(*) FROM profile_captures
+   WHERE account_id = sqlc.arg(account_id)::text::uuid AND status IN ('queued', 'capturing')
+     AND coalesce(capture->>'trigger', 'manual') <> 'manual')::bigint AS automatic_active;
+
+-- name: ListEvictableAutomaticProfileCaptures :many
+-- The account's finished, unexpired automatic captures without an OOM link,
+-- oldest first, with their stored bytes. The oldest are rotated out to make
+-- room for a newer automatic capture (ADR-1155).
+SELECT p.id::text AS id, coalesce(sum(octet_length(d.profile)), 0)::bigint AS bytes
+FROM profile_captures p LEFT JOIN profile_capture_data d ON d.capture_id = p.id
+WHERE p.account_id = sqlc.arg(account_id)::text::uuid AND p.status IN ('ready', 'failed')
+  AND coalesce(p.capture->>'trigger', 'manual') <> 'manual' AND p.capture->>'oom_killed_at' IS NULL
+  AND p.expires_at >= sqlc.arg(now)::timestamptz
+GROUP BY p.id, p.created_at
+ORDER BY p.created_at, p.id
+LIMIT sqlc.arg(max_rows)::int;
+
+-- name: DeleteAccountProfileCaptures :execrows
+DELETE FROM profile_captures
+WHERE account_id = sqlc.arg(account_id)::text::uuid AND id = ANY(sqlc.arg(ids)::text[]::uuid[]);
+
+-- name: DeleteProfileCapture :execrows
+-- A customer deletes one capture of a live app; its profiles cascade.
+DELETE FROM profile_captures p USING apps a
+WHERE p.id = sqlc.arg(id)::text::uuid AND p.app_id = sqlc.arg(app_id)::text::uuid
+  AND p.account_id = sqlc.arg(account_id)::text::uuid AND a.id = p.app_id
+  AND a.account_id = p.account_id AND a.status <> 'deleted';
 
 -- name: LockProfileCaptureApp :one
 SELECT id FROM apps WHERE id = sqlc.arg(app_id)::text::uuid AND account_id = sqlc.arg(account_id)::text::uuid AND status <> 'deleted' FOR UPDATE;
 
 -- name: CountRecentProfileCaptures :one
+-- Manual and automatic captures have separate hourly quotas (ADR-1155).
 SELECT count(*) FROM profile_captures
-WHERE account_id = sqlc.arg(account_id)::text::uuid AND created_at >= sqlc.arg(since)::timestamptz;
+WHERE account_id = sqlc.arg(account_id)::text::uuid AND created_at >= sqlc.arg(since)::timestamptz
+  AND (coalesce(capture->>'trigger', 'manual') <> 'manual') = sqlc.arg(automatic)::boolean;
 
 -- name: CountActiveProfileCaptures :one
 SELECT count(*) FROM profile_captures
@@ -58,8 +92,10 @@ WHERE d.capture_id = sqlc.arg(id)::text::uuid AND p.app_id = sqlc.arg(app_id)::t
 ORDER BY d.seq;
 
 -- name: ClaimQueuedProfileCapture :one
+-- Manual captures are claimed before automatic ones: someone is waiting.
 UPDATE profile_captures SET status = 'capturing', claimed_at = sqlc.arg(now)::timestamptz
-WHERE id = (SELECT q.id FROM profile_captures q WHERE q.status = 'queued' ORDER BY q.created_at, q.id FOR UPDATE SKIP LOCKED LIMIT 1)
+WHERE id = (SELECT q.id FROM profile_captures q WHERE q.status = 'queued'
+  ORDER BY (coalesce(q.capture->>'trigger', 'manual') <> 'manual'), q.created_at, q.id FOR UPDATE SKIP LOCKED LIMIT 1)
 RETURNING id::text AS id, app_id::text AS app_id, account_id::text AS account_id, capture, created_at;
 
 -- name: FinishProfileCapture :execrows

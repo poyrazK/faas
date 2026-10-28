@@ -1,6 +1,6 @@
 # ADR-20261019071734 · Release gates on customer signals
 
-- **Status:** accepted (shipped in PR 5034, 2026-10-20); n2 metal drill passed 2026-10-26 (canary abort and post-release rollback)
+- **Status:** accepted (shipped in PR 5034, 2026-10-20); n2 metal drill passed 2026-10-26 (canary abort and post-release rollback); amendment 1 (2026-10-27)
 - **Date:** 2026-10-19
 - **Amends:** [ADR-1446](1446-safe-releases-by-default.md) and [ADR-1447](1447-explained-rollout-decisions.md) (the canary circuit breaker), [ADR-1445](1445-post-release-watch.md) (the post-release watch)
 - **Uses:** SLOs (`app_slos`), captured errors (`app_errors`), custom metrics ([ADR-202](202-custom-application-metrics.md), [ADR-745](745-custom-metric-history.md))
@@ -67,3 +67,11 @@ Entries hold no routes, messages or metric labels. The decision's summary names 
 - Deleting an SLO deletes the gates that use it.
 - The first-wake 5xx rollback (ADR-625) does not judge gates; it has its own absolute bar.
 - Gates do not run on releases that opted out of automatic rollback (`--rollback-on-5xx=false`) once they are complete, as for the post-release watch. In the canary they always run, because aborting a canary is never a rollback past the predecessor.
+
+## Amendment 1 (2026-10-27): custom_metric gates read the metric's history
+
+`app_custom_metrics` holds one row per app and metric: each push replaces the last value (ADR-202). The `custom_metric` gate counted that table's rows inside its window, so it saw at most one sample. It never reached `min_samples` (default 20) and was never judged. The gate's unit tests used a fake evidence store and missed this; a release-guards GA drill found it.
+
+A `custom_metric` gate now reads its window from the history ADR-745 already keeps: the `gregale_app_custom_metric` series apid exports for Prometheus. The window's sample count is `count_over_time` and its value is `avg_over_time`, both pinned to the window's end (`@ <until>`). `max()` folds the identical series each apid replica exports. meterd's canary progression and apid's post-release watch both pass their Prometheus client. When no Prometheus is configured, the gate falls back to the stored latest value: one sample, so only a gate with `min_samples: 1` is judged.
+
+A gate whose history cannot be read is unavailable and not judged, as for the other kinds. The history only exists while apid exports fresh pushes (`FAAS_CUSTOM_METRIC_HISTORY_ENABLED`, capability `custom-metric-history`). An app that pushes less often than `min_samples` times per window is never judged.

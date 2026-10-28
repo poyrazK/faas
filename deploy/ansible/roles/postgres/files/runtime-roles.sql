@@ -25,7 +25,7 @@ BEGIN
 	END IF;
 	ALTER ROLE faas_runtime NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;
 	FOREACH r IN ARRAY ARRAY['faas_apid', 'faas_schedd', 'faas_meterd', 'faas_githubd',
-		'faas_outboundd', 'faas_bridged', 'faas_shared'] LOOP
+		'faas_outboundd', 'faas_bridged', 'faas_mcp_bridge', 'faas_shared'] LOOP
 		IF to_regrole(r) IS NULL THEN
 			EXECUTE format('CREATE ROLE %I LOGIN', r);
 		END IF;

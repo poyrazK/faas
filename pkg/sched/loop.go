@@ -104,6 +104,8 @@ type Loop struct {
 	// queuePushLanes holds each push-queue trigger's lane allowance
 	// (ADR-972). In memory and per schedd; a restart ramps from one lane.
 	queuePushLanes queuePushLaneAllowance
+	// brokerLanes tracks broker trigger lanes and app owners (ADR-20261027162741).
+	brokerLanes brokerLanes
 	// triggerSecretIdentities opens Kafka credentials only in the
 	// short-lived trigger copy passed to a poller factory. Current and
 	// previous identities coexist here during host-key rotation.

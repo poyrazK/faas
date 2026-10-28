@@ -6162,17 +6162,21 @@ groups:
           description: "The most recent renewal failed on {{ $labels.host }}. A partial value means leaves were installed before a consumer restart or health check failed."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasInternalMTLSRenewal.md"
 
+      # Issue #2482: the control plane's node_exporter is job="node", compute
+      # hosts' job="node-compute"; both must alert. The daily run starts
+      # hours after its cron slot and drifts, so 36 h tolerates a late start
+      # and still catches a missed day.
       - alert: FaasInternalMTLSRenewalNeverCompleted
         expr: |
           (
             faas_internal_mtls_renewal_last_success_timestamp_seconds == 0
             and on(instance)
-            time() - node_boot_time_seconds{job="node-compute"} > 90000
+            time() - node_boot_time_seconds{job=~"node|node-compute"} > 129600
           )
           or
           (
             faas_internal_mtls_renewal_last_success_timestamp_seconds > 0
-            and time() - faas_internal_mtls_renewal_last_success_timestamp_seconds > 90000
+            and time() - faas_internal_mtls_renewal_last_success_timestamp_seconds > 129600
           )
         for: 15m
         labels:
@@ -6182,7 +6186,7 @@ groups:
           public_status: internal
         annotations:
           summary: "Scheduled internal mTLS renewal is stale"
-          description: "The host has not recorded a successful renewal check within one daily renewal interval. Verify the self-hosted runner and complete fleet inventory."
+          description: "The host has not recorded a successful renewal check for over 36 hours, so a daily run was missed. Verify the self-hosted runner and complete fleet inventory."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasInternalMTLSRenewal.md"
 
       - alert: FaasInternalMTLSComputeMetricsMissing

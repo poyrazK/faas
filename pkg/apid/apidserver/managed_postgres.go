@@ -235,17 +235,18 @@ func loadManagedPostgresCapEnforcer(registry *managedpostgres.Registry, store *m
 	options := managedpostgres.CapEnforcerOptions{
 		Mode:   mode,
 		Logger: log,
-		Ceiling: func(ctx context.Context, subject string) (int64, error) {
+		Ceiling: func(ctx context.Context, subject string) (managedpostgres.CapLimits, error) {
 			account, err := state.BillingResourceAccount(ctx, accountStore, subject)
 			if err != nil {
-				return 0, err
+				return managedpostgres.CapLimits{}, err
 			}
 			limits, _ := api.ManagedPostgresLimitsFor(api.Plan(account.Plan))
 			overageOn, err := managedPostgresStoredOverage(ctx, store, overage, account, subject)
 			if err != nil {
-				return 0, err
+				return managedpostgres.CapLimits{}, err
 			}
-			return managedPostgresComputeCeiling(limits, overageOn), nil
+			return managedpostgres.CapLimits{Allowance: limits.MonthlyComputeUnitSeconds,
+				Ceiling: managedPostgresComputeCeiling(limits, overageOn), Overage: overageOn}, nil
 		},
 	}
 	if mode == managedpostgres.CapEnforcementOn {

@@ -34,6 +34,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"path"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -249,10 +250,25 @@ func (s *server) handleSourceTarballDeploy(w http.ResponseWriter, r *http.Reques
 		api.WriteProblem(w, prob)
 		return
 	}
+	if prob := scanForStatefulShapeAtRoot(spoolPath, false, app.RootDir); prob != nil {
+		api.WriteProblem(w, prob)
+		return
+	}
 	manifest, manifestProblem := loadSourceRefManifest(spoolPath, app, acct.Plan, s.agentStepsAllowed(acct))
 	if manifestProblem != nil {
 		api.WriteProblem(w, manifestProblem)
 		return
+	}
+	sourceBuild, hasSourceBuild, buildProblem := resolveSourceDockerfileBuild(spoolPath, app.RootDir, app, manifest)
+	if buildProblem != nil {
+		api.WriteProblem(w, buildProblem)
+		return
+	}
+	kind := state.DeploymentKindTarball
+	if hasSourceBuild {
+		// This route records no source root, so the Dockerfile is named
+		// from the archive root.
+		kind, sourceBuild.path = state.DeploymentKindDockerfile, path.Join(app.RootDir, sourceBuild.path)
 	}
 	manifestOverrides, workloadsApplied, workloadProblem := s.applyManifestWorkloads(rolloutReq, manifest, acct, limits)
 	if workloadProblem != nil {
@@ -294,9 +310,11 @@ func (s *server) handleSourceTarballDeploy(w http.ResponseWriter, r *http.Reques
 		OperationAdmissionEnabled: s.operation.OperationDefinitionsAdmission(app.AccountID, app.ID, rollout.Scope, sourceOperationSpecs(manifest)),
 		Activity:                  s.newDeploymentActivity(r.Context(), r, acct, app, map[string]any{"source": "local_tarball", "scope": rollout.Scope}),
 		AppID:                     app.ID,
-		Kind:                      state.DeploymentKindTarball,
+		Kind:                      kind,
 		SourcePath:                spoolPath,
 		SourceBytes:               spoolBytes,
+		DockerfilePath:            sourceBuild.path,
+		DockerfileBuild:           sourceBuild.options,
 		SourceURL:                 sourceURL,
 		CommitSHA:                 commitSHA,
 		Scope:                     rollout.Scope,
