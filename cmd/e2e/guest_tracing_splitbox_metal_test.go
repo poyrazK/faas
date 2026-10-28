@@ -50,11 +50,11 @@ func newSplitBoxIngest(t *testing.T, dir string) *splitBoxIngest {
 		t.Fatalf("apid listener leaf: %v", err)
 	}
 	vmmdRole := splitBoxRole(t, "vmmd", "apid-client")
-	if err := pki.EnsureLeafWithCNAndSANs(root, vmmdRole, state.DefaultLocalNodeName, caCert, caKey, false, nil); err != nil {
+	if err := pki.EnsureLeafWithCNAndSANs(root, vmmdRole, state.DefaultLocalNodeName, caCert, caKey, false, pki.AltNames{}); err != nil {
 		t.Fatalf("vmmd apid-client leaf: %v", err)
 	}
 	foreignRoot := filepath.Join(dir, "pki-foreign")
-	if err := pki.EnsureLeafWithCNAndSANs(foreignRoot, vmmdRole, "unregistered-node", caCert, caKey, false, nil); err != nil {
+	if err := pki.EnsureLeafWithCNAndSANs(foreignRoot, vmmdRole, "unregistered-node", caCert, caKey, false, pki.AltNames{}); err != nil {
 		t.Fatalf("unregistered node leaf: %v", err)
 	}
 	s := &splitBoxIngest{target: "tcp://" + freeLoopbackAddr(t)}
