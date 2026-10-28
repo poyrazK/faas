@@ -1749,6 +1749,7 @@ func runOnPool(ctx context.Context, log *slog.Logger, pool *pgxpool.Pool) error 
 		return err
 	}
 	backend := gateway.NewPGBackend(router, sched, log).
+		WithAccountAppLister(accountAppIDLister(pgStore)).
 		WithTargetReadinessLoader(newTargetReadinessLoader(pgStore)).
 		WithTargetPlacementLoader(newTargetPlacementLoader(pgStore)).
 		WithProjectReleaseResolver(func(ctx context.Context, appID, scope, requestedID string) (string, string, error) {
