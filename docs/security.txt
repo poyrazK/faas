@@ -2,9 +2,11 @@
 
 The live machine-readable document is served at `/.well-known/security.txt`.
 It is backed by the static handler in `pkg/securitytxt` so it remains
-available during control-plane incidents. It publishes the current PGP
-encryption key and the acknowledgments page through the RFC 9116
-`Encryption` and `Acknowledgments` fields.
+available during control-plane incidents. It publishes the contacts,
+expiry, canonical URLs and the disclosure policy. The RFC 9116
+`Encryption` and `Acknowledgments` fields are added only once a public PGP
+key and an acknowledgments page exist, because every URL it lists must
+resolve.
 
 Security reports are accepted at `security@gregale.dev` or through the
 GitHub Security Advisories link in the live document. Our responsible

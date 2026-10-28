@@ -117,6 +117,10 @@ func matchRecoveryCode(ctx context.Context, st matchRecoveryCodeSelector, accoun
 // 409 CodeConflict when the customer has already enrolled —
 // the dashboard re-renders the "manage MFA" page instead.
 func (s *server) mfaEnroll(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	if requestUsesAPIKey(r) {
+		writeSessionRequired(w)
+		return
+	}
 	if acct.MFAEnrolled() {
 		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeConflict,
 			"Already enrolled", "call /v1/account/mfa/disable before re-enrolling"))

@@ -50,6 +50,71 @@ const (
 // DeploymentAttemptIDBytes is the encoded size of a random 128-bit submission identity.
 const DeploymentAttemptIDBytes = 32
 
+// Keys minted by a JSON password sign-in (POST /v1/auth/login and
+// /v1/auth/signup) lapse like CLI device-code keys, and an account keeps at
+// most SignInAPIKeysMax of them: the next sign-in revokes the oldest.
+const (
+	SignInAPIKeyTTL  = 30 * 24 * time.Hour
+	SignInAPIKeysMax = 5
+)
+
+// Request bodies one gateway holds at once. Uploads spooled to disk share
+// RequestBodySpoolNodeBytes and one client IP (an IPv6 /64) holds at most
+// RequestBodySpoolPerClient of them; validate-rule bodies read into the heap
+// share RequestBodyMemoryNodeBytes. A request that would pass a budget gets
+// 503 with Retry-After RequestBodyBudgetRetryAfter.
+// gatewayd-internal keeps verified and definitely-invalid API key lookups for
+// GatewayKeyAuthCacheTTL (key_changed drops them sooner) and serves a verified
+// key for up to GatewayKeyAuthOutageGrace while the store fails. One client
+// source (IPv4 address or IPv6 /64) may fail GatewayFailedKeyLookupsPerSource
+// lookups per GatewayFailedKeyLookupWindow before it gets 429 with no lookup.
+// Sign-in mail of one kind (password reset, magic link, email verification)
+// one account may receive: one per SecurityMailPerAccountInterval and
+// SecurityMailPerAccountPerHour an hour. One apid tracks at most
+// SecurityMailTrackedAccountsMax accounts at a time.
+const (
+	SecurityMailPerAccountInterval = time.Minute
+	SecurityMailPerAccountPerHour  = 5
+	SecurityMailTrackedAccountsMax = 100_000
+)
+
+// Self-service accounts (password and magic-link sign-up) one client
+// address, and one network (IPv4 /24, IPv6 /48), may create per day.
+const (
+	SignupAccountsPerAddressPerDay = 10
+	SignupAccountsPerNetworkPerDay = 50
+)
+
+// InboundWebhookFailuresPerIPPerMinute is how many unknown-token or
+// failed-signature deliveries one client IP may send to /v1/hooks a minute
+// before it gets 429 without a lookup.
+const InboundWebhookFailuresPerIPPerMinute = 30
+
+// PasswordHashConcurrency caps the Argon2id password hashes (64 MiB each)
+// one process computes at once; the rest wait for a slot.
+const PasswordHashConcurrency = 3
+
+// GatewayRouteRecheckInterval is how long a warm custom-domain route trusts
+// its last registry recheck (domain verified, tenant surface binding) before
+// asking again; domain_changed and app_changed drop it sooner.
+const GatewayRouteRecheckInterval = 10 * time.Second
+
+const (
+	GatewayKeyAuthCacheTTL           = 30 * time.Second
+	GatewayKeyAuthOutageGrace        = 5 * time.Minute
+	GatewayKeyAuthCacheEntries       = 50_000
+	GatewayFailedKeyLookupWindow     = time.Minute
+	GatewayFailedKeyLookupsPerSource = 30
+	GatewayKeyLookupSourcesMax       = 100_000
+)
+
+const (
+	RequestBodySpoolNodeBytes   int64 = 2 << 30
+	RequestBodySpoolPerClient         = 4
+	RequestBodyMemoryNodeBytes  int64 = 96 << 20
+	RequestBodyBudgetRetryAfter       = 5 * time.Second
+)
+
 // Migration verification shares normal task and wake admission. These bounds
 // limit orchestration receipts, not customer compute entitlements.
 const (
@@ -448,6 +513,18 @@ const OperationBusinessConditionDescriptionMaxBytes = 1024
 // compute allowance a paid account with overage on may run its managed
 // PostgreSQL databases before the cap suspends them (ADR-20261025094915).
 const ManagedPostgresOverageCeilingMultiplier = 2
+
+// Production managed PostgreSQL provisioning (ADR-20261028103115). An
+// operator approval pins one backend for at most the approval window; the
+// expiry alert fires the warning lead before it closes provisioning.
+const ManagedPostgresProductionApprovalMaxWindow = 90 * 24 * time.Hour
+const ManagedPostgresProductionApprovalWarning = 14 * 24 * time.Hour
+
+// Fleet safety ceilings bound what operators may configure as the platform's
+// total managed PostgreSQL databases and monthly provider cost (integer
+// millicents). They are COGS breakers across every account, not plan quotas.
+const ManagedPostgresFleetDatabasesCeiling = 100000
+const ManagedPostgresFleetMonthlyCostCeilingMillicents = 10_000_000_000
 
 // Bounded recovery of explicitly requested PostgreSQL cutover retirements.
 const ManagedPostgresCutoverDrainBatchMax = 32
@@ -2960,6 +3037,12 @@ func RealtimeLimitsFor(p Plan) (RealtimeLimits, bool) {
 const (
 	ExportRateLimitWindow        = 24 * time.Hour
 	ExportRateLimitWindowSeconds = int(24 * time.Hour / time.Second)
+	// ExportReplayWindow is how long after an export a retry with the same
+	// request ID still counts as that export instead of a new one.
+	ExportReplayWindow = 15 * time.Minute
+	// ExportInFlightRetryAfterSeconds is the Retry-After for an export
+	// refused because the account already has one being built.
+	ExportInFlightRetryAfterSeconds = 30
 )
 
 // Limits is the full quota/limit set for one plan. Every field has a spec
@@ -3134,6 +3217,11 @@ type Limits struct {
 	// DeploysPerHour is the account-wide number of deployment admissions in a
 	// fixed one-hour window. It applies across every app and source path.
 	DeploysPerHour int
+	// PreviewDeploysPerHour is the share of that window GitHub PR preview
+	// builds may use: a preview build is admitted only while the account's
+	// hourly count is below it, so production deploys always keep
+	// DeploysPerHour - PreviewDeploysPerHour (ADR-20261028100000).
+	PreviewDeploysPerHour int
 	// DeveloperApps is the separate cap for expiring `gregale dev`
 	// environments. These sessions do not consume DeployedApps slots.
 	DeveloperApps      int
@@ -4713,10 +4801,11 @@ var planLimits = map[Plan]Limits{
 		OutboundRatePerSecondMax:  10, OutboundBurstMax: 20, OutboundMaxInFlightMax: 10, OutboundRequestTimeoutMSMax: 30_000, OutboundMaxRetriesMax: MaxOutboundRetries, OutboundResponseCacheTTLSecondsMax: MaxOutboundResponseCacheTTLSeconds, OutboundRetryBudgetPerMinuteMax: 60,
 		DeveloperLeaseMaxHours: 24, // `gregale dev --ttl` ceiling
 
-		DeploysPerHour: 10,
-		DeveloperApps:  1,
-		MaxConcurrency: 1,
-		RAMMB:          256,
+		DeploysPerHour:        10,
+		PreviewDeploysPerHour: 5,
+		DeveloperApps:         1,
+		MaxConcurrency:        1,
+		RAMMB:                 256,
 		// ConcurrencyPerVMBound (issue #559): Free allows four
 		// concurrent requests per VM. This keeps the demo tier useful
 		// for small bursts while MaxConcurrency (= 1) still limits a
@@ -5128,6 +5217,7 @@ var planLimits = map[Plan]Limits{
 		DeveloperLeaseMaxHours: 72, // `gregale dev --ttl` ceiling
 
 		DeploysPerHour:        50,
+		PreviewDeploysPerHour: 25,
 		DeveloperApps:         2,
 		MaxConcurrency:        2,
 		RAMMB:                 512,
@@ -5563,6 +5653,7 @@ var planLimits = map[Plan]Limits{
 		DeveloperLeaseMaxHours: 168, // `gregale dev --ttl` ceiling
 
 		DeploysPerHour:        250,
+		PreviewDeploysPerHour: 125,
 		DeveloperApps:         5,
 		MaxConcurrency:        5,
 		RAMMB:                 1024,
@@ -5963,6 +6054,7 @@ var planLimits = map[Plan]Limits{
 		DeveloperLeaseMaxHours: 336, // `gregale dev --ttl` ceiling
 
 		DeploysPerHour:        1000,
+		PreviewDeploysPerHour: 500,
 		DeveloperApps:         10,
 		MaxConcurrency:        20,
 		RAMMB:                 2048,
@@ -6680,8 +6772,11 @@ const (
 	// generations whose restore snapshots remain eligible for the fast rollback
 	// path. The window includes the live deployment, so the default retains the
 	// live release plus two previous releases. Older snapshots are reclaimed by
-	// imaged's nightly GC and rollback still has the documented cold-boot
-	// fallback when an operator selects one of those releases.
+	// imaged's nightly GC. The window's deployments also keep their cold-boot
+	// layers whatever state their snapshots are in, so a rollback to one can
+	// always cold boot (spec §4.6, Hunt 21 H21-1). An older release keeps its
+	// layers only while a snapshot or another reference holds them; a rollback
+	// to one whose layers were reclaimed is refused.
 	SnapshotRollbackRetentionDeployments = 3
 	// SnapshotBudgetAlarmPct is the lv-fc percentage at which the nightly
 	// imaged GC switches from per-app retention (keep the rollback window
@@ -7699,6 +7794,12 @@ const (
 	// limit. It is deliberately larger than the number of distinct sources
 	// that exist, so no app can hit it by declaring every real metric.
 	MaxScalingTargets = 8
+	// ScalingQueueTargetMax bounds the value of a queue_depth or queue_lag
+	// target, the messages one worker should take. The scheduler counts an
+	// app's backlog up to value × max replicas on every reconcile, so an
+	// unbounded value turned each pass into a scan of the whole queue
+	// (2026-10-27 audit).
+	ScalingQueueTargetMax = 10_000
 	// MaxScalingSchedules bounds the recurring windows one app may declare
 	// (ADR-195). Each schedule costs a cron parse per app per floor
 	// evaluation, and the floor is read on the wake hot path, so this is a
@@ -11096,6 +11197,16 @@ func (p Plan) DeploysPerHour() int {
 	return l.DeploysPerHour
 }
 
+// PreviewDeploysPerHour returns the share of the hourly deploy window GitHub
+// PR preview builds may use. Unknown plans fail closed.
+func (p Plan) PreviewDeploysPerHour() int {
+	l, ok := LimitsFor(p)
+	if !ok {
+		return 0
+	}
+	return l.PreviewDeploysPerHour
+}
+
 // ScaleUpTargetRPSAllowed reports whether the plan may set
 // `autoscale_target_rps` (issue #169 / #172). Hobby + Pro + Scale opt
 // in; Free stays off. apid's updateApp handler gates `req.AutoscaleTargetRPS`
@@ -11740,6 +11851,13 @@ const (
 	// refresh, dropping the least recently used.
 	TrafficPublicRoutingWarmTTL  = 10 * time.Minute
 	TrafficPublicRoutingMaxViews = 4_096
+	// TrafficPublicRoutingMaxLiveDeployments and
+	// TrafficPublicRoutingMaxReleaseGraphs bound what one app's view keeps
+	// for pinned requests (ADR-20261028095914): its live deployments in every
+	// scope, and its active and still-usable release graphs. A pin the cut
+	// list does not hold is read from the store, as before.
+	TrafficPublicRoutingMaxLiveDeployments = 128
+	TrafficPublicRoutingMaxReleaseGraphs   = 64
 	// TrafficRateLimitOutageGrace is how long after its last successful shared
 	// counter decision a gateway enforces central rate limits from its own
 	// per-gateway bucket while the counter cannot be read
@@ -12250,6 +12368,14 @@ const UDPIdleTimeoutDefault = 30 * time.Second
 const UDPPeerQueueDepth = 4
 const UDPMaxPeersDefault = 64
 const UDPMaxPeersPerAccountDefault = 16
+
+// Raw TCP ingress sessions one gatewayd-public holds, in all and per account,
+// when FAAS_TCPD_MAX_CONNECTIONS(_PER_ACCOUNT) is unset or 0. Each session
+// holds a read buffer, a copied chunk per read and a stream to vmmd, so an
+// unlimited default let a few thousand idle connections push the node's only
+// public listener past its 512 MB cap.
+const RawTCPMaxConnectionsDefault = 1024
+const RawTCPMaxConnectionsPerAccountDefault = 128
 
 const UDPReplyQueueDepth = 64
 const UDPWriteTimeout = time.Second

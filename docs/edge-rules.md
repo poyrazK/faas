@@ -172,12 +172,17 @@ Each rule has one `kind` and an `action` object whose fields depend on it.
 | [`maintenance`](#maintenance) | Answers 503 for a route | All |
 | [`budget`](#budget) | Sets a route's time budget | All |
 | [`cache`](#cache) | Caches responses at the edge | Hobby+ |
-| [`retry`](#retry) | Tunes replay of requests that failed in transport | Hobby+ |
-| [`circuit_breaker`](#circuit_breaker) | Tunes when a failing instance is taken out | Hobby+ |
-| [`async`](#async) | Accepts the request and runs it later | Hobby+ |
+| [`retry`](#retry) | Tunes replay of requests that failed in transport | Hobby+, on request* |
+| [`circuit_breaker`](#circuit_breaker) | Tunes when a failing instance is taken out | Hobby+, on request* |
+| [`async`](#async) | Accepts the request and runs it later | Hobby+, preview* |
 | [`respond`](#respond) | Answers with fixed JSON (preview apps only) | All |
 | `waf` | Checks requests against the OWASP Core Rule Set; see [Web application firewall](security#web-application-firewall) | Pro+ |
 | `challenge` | Asks browsers for a proof of work; see [Browser challenge](security#browser-challenge) | Hobby+ |
+
+\* `retry` and `circuit_breaker` are not yet generally available, and `async`
+is in preview. Each is enabled per account: until it is enabled for yours,
+creating such a rule returns 403 `capability_not_released`. Contact support
+to have one enabled.
 
 `ip`, `geo`, `throttle` and blocking `waf` rules can also put a client they
 keep refusing in a penalty box for the whole app; see
@@ -443,7 +448,9 @@ or `Accept-Encoding` to the cache key.
 Requests with credentials (`Authorization`, cookies) are never cached or
 served from the cache, and neither are responses with `Set-Cookie` or
 `Cache-Control: no-store` or `private`. `gregale edge cache purge` removes cached
-responses.
+responses. Changing an edge rule also clears the cached responses of the
+apps it covers; a `*` or glob host pattern clears all of your account's
+apps.
 
 ### retry
 
@@ -475,7 +482,10 @@ least `min_requests` requests in `window_seconds` failed at
 `failure_threshold` or more (a ratio). It gets one probe request after
 `open_seconds`, then twice as long after each failed probe, up to
 `max_open_seconds`. The breaker is per app: the highest-priority rule tunes
-it for every instance, and selectors do not split it by route.
+it for every instance, and selectors do not split it by route. Independently
+of the breaker, an instance that fails at the transport layer gets no
+traffic for 30 seconds, so an `open_seconds` below 30 shows only after
+repeated failures. A rule change reaches the breaker within 30 seconds.
 
 ### async
 
@@ -564,10 +574,11 @@ A deployment also records the rules it went live with.
 | Items per list | 0 | 100 | 1000 | 10000 |
 | Event history | 24 hours | 72 hours | 7 days | 7 days |
 
-A rule past a count limit is refused with 402
+A rule past a count limit is refused with 403
 `plan_edge_rule_kind_quota_reached` (or `plan_limit_edge_rules` for the rule
-total), and a kind your plan does not include with 402
-`plan_edge_rule_kind_not_allowed`.
+total), a kind your plan does not include with 402
+`plan_edge_rule_kind_not_allowed`, and a kind not enabled for your account
+with 403 `capability_not_released`.
 
 ## Responses from the edge
 

@@ -382,15 +382,17 @@ func restrictFilesystem(spec helperSpec) error {
 	if abi >= 5 {
 		handled |= unix.LANDLOCK_ACCESS_FS_IOCTL_DEV
 	}
-	attr := unix.LandlockRulesetAttr{Access_fs: handled}
-	size := unsafe.Sizeof(attr.Access_fs)
+	attr := unix.LandlockRulesetAttr{Handled_access_fs: handled}
+	size := unsafe.Sizeof(attr.Handled_access_fs)
 	if abi >= 4 {
-		attr.Access_net = unix.LANDLOCK_ACCESS_NET_BIND_TCP | unix.LANDLOCK_ACCESS_NET_CONNECT_TCP
+		attr.Handled_access_net = unix.LANDLOCK_ACCESS_NET_BIND_TCP | unix.LANDLOCK_ACCESS_NET_CONNECT_TCP
 		size = unsafe.Offsetof(attr.Scoped)
 	}
 	if abi >= 6 {
 		attr.Scoped = unix.LANDLOCK_SCOPE_ABSTRACT_UNIX_SOCKET | unix.LANDLOCK_SCOPE_SIGNAL
-		size = unsafe.Sizeof(attr)
+		// The struct grew quiet_* fields after ABI 6; the size stops at
+		// scoped so the kernel reads only the fields this ABI defines.
+		size = unsafe.Offsetof(attr.Scoped) + unsafe.Sizeof(attr.Scoped)
 	}
 	fd, _, errno := unix.Syscall(unix.SYS_LANDLOCK_CREATE_RULESET, uintptr(unsafe.Pointer(&attr)), size, 0) //nolint:gosec // G103: Landlock takes a C struct by pointer; x/sys has no wrapper.
 	if errno != 0 {

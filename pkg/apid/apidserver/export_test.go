@@ -1821,3 +1821,10 @@ func (r *server) RequestBillingMailOutboxesForTest() {
 }
 
 var AppRestartRefusal = appRestartRefusal
+
+// SecurityMailAllow is a fresh per-account sign-in mail limiter on clock now.
+func SecurityMailAllow(now func() time.Time) func(accountID, kind string) bool {
+	l := newSecurityMailLimiter()
+	l.now = now
+	return l.allow
+}

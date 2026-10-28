@@ -40,12 +40,11 @@ concurrency:
   group: ci-full-${{ github.ref }}
   cancel-in-progress: false
 
+# Least privilege (issue #584): every job reads only. Coverage uploads use
+# OIDC through their own job-level `id-token: write`, and no job here uploads
+# SARIF or comments on pull requests; a job that needs more declares it.
 permissions:
   contents: read
-  # Codecov + CodeQL need write to attach comments / SARIF uploads.
-  # Each restricted here so the default-`read` token isn't open.
-  pull-requests: write
-  security-events: write
 
 env:
   # Pinned to a patch (not a minor) so the govulncheck supply-chain gate
@@ -2578,8 +2577,8 @@ jobs:
       - name: install SDK + test deps
         working-directory: sdk/python
         run: |
-          python -m pip install --upgrade pip
-          python -m pip install ruamel.yaml 'openapi-python-client==0.29.0' pytest pytest-asyncio httpx
+          python -m pip install 'pip==26.2.2'
+          python -m pip install 'ruamel.yaml==0.19.1' 'openapi-python-client==0.29.0' 'pytest==9.2.0' 'pytest-asyncio==1.4.1' 'httpx==0.28.1'
           python -m pip install -e '.[auth]'
           python -m pip install -r ../../cmd/gregale/templates/rest-api-postgres-python/requirements.txt
           python -m pip install -r ../../cmd/gregale/templates/object-storage-python/requirements.txt
@@ -3147,7 +3146,7 @@ jobs:
           sudo apt-get -o Acquire::Retries=3 update
           sudo apt-get install -y postgresql-client
       - name: install jinja2 (ADR-055 cross-check)
-        run: python3 -m pip install --quiet jinja2
+        run: python3 -m pip install --quiet 'jinja2==3.1.6'
       - name: compile Jobs metal acceptance tests
         # The metal tag is not part of the regular e2e shards. Keep this
         # KVM-only acceptance harness type-checked on ordinary PR CI without
@@ -3239,7 +3238,7 @@ jobs:
           sudo apt-get -o Acquire::Retries=3 update
           sudo apt-get install -y postgresql-client
       - name: install jinja2 (ADR-055 cross-check)
-        run: python3 -m pip install --quiet jinja2
+        run: python3 -m pip install --quiet 'jinja2==3.1.6'
       - name: e2e tests (shard 2)
         run: |
           E2E_RUN=$(go run ./scripts/ci/e2eshard -shard=2 -shards=4)
@@ -3323,7 +3322,7 @@ jobs:
           sudo apt-get -o Acquire::Retries=3 update
           sudo apt-get install -y postgresql-client
       - name: install jinja2 (ADR-055 cross-check)
-        run: python3 -m pip install --quiet jinja2
+        run: python3 -m pip install --quiet 'jinja2==3.1.6'
       - name: e2e tests (shard 3)
         run: |
           E2E_RUN=$(go run ./scripts/ci/e2eshard -shard=3 -shards=4)
@@ -3407,7 +3406,7 @@ jobs:
           sudo apt-get -o Acquire::Retries=3 update
           sudo apt-get install -y postgresql-client
       - name: install jinja2 (ADR-055 cross-check)
-        run: python3 -m pip install --quiet jinja2
+        run: python3 -m pip install --quiet 'jinja2==3.1.6'
       - name: e2e tests (shard 4)
         run: |
           E2E_RUN=$(go run ./scripts/ci/e2eshard -shard=4 -shards=4)

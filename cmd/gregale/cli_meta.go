@@ -2980,6 +2980,26 @@ var cliCommands = []cliCommand{
 		},
 	},
 	{
+		Name:      "deploy-tokens",
+		DocSlug:   "deploys",
+		Short:     "Manage per-app deploy tokens for CI",
+		HelpNotes: []string{"Adding or rotating a token needs an MFA step-up from the last 5 minutes: run `gregale account mfa verify` first."},
+		Subcommands: []cliSub{
+			{Name: subList, Short: "List an app's deploy tokens", Flags: []cliFlag{{Name: "app", Short: "app the tokens deploy", Value: "SLUG", Req: true}}},
+			{Name: subAdd, Short: "Mint a deploy token (shown once)", Examples: []string{"gregale deploy-tokens add --app my-api --label github-actions"}, Flags: []cliFlag{
+				{Name: "app", Short: "app the token deploys", Value: "SLUG", Req: true},
+				{Name: "label", Short: "label shown in the list, for example the CI system", Value: "LABEL"},
+				{Name: "expires-at", Short: "expiry as an RFC3339 time (default 90 days)", Value: "RFC3339"},
+			}},
+			{Name: subRotate, Short: "Replace a deploy token; the old one stops working", Positionals: []string{"<token-id>"}, Flags: []cliFlag{
+				{Name: "app", Short: "app the token deploys", Value: "SLUG", Req: true},
+				{Name: "label", Short: "label for the replacement (default: the old label)", Value: "LABEL"},
+				{Name: "expires-at", Short: "expiry as an RFC3339 time (default 90 days)", Value: "RFC3339"},
+			}},
+			{Name: subRm, Short: "Revoke a deploy token", Positionals: []string{"<token-id>"}, Flags: []cliFlag{{Name: "app", Short: "app the token deploys", Value: "SLUG", Req: true}}},
+		},
+	},
+	{
 		Name:    "domains",
 		DocSlug: "domains",
 		Short:   "Manage custom domains",

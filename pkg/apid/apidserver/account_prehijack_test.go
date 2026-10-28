@@ -116,6 +116,34 @@ func TestEmailOwnershipClaimRevokesPreVerificationCredentials(t *testing.T) {
 	}
 }
 
+// A squatter who enrolled TOTP on an unverified sign-up left the real owner
+// facing a second factor they never had (bug hunt 2026-10-27 H21): the
+// ownership claim clears it with the squatter's other credentials.
+func TestEmailOwnershipClaimClearsPreVerificationTOTP(t *testing.T) {
+	srv, _, store := v1AuthTestHarness(t)
+	signupWithPassword(t, srv.handler(), "totp-victim@example.com", "attacker-password-123!")
+	acct, err := store.AccountByEmail(context.Background(), "totp-victim@example.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SetMFASecret(context.Background(), acct.ID, []byte("squatter-secret"), nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.MarkMFAEnrolled(context.Background(), acct.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := srv.verifyOAuthAccountEmail(context.Background(), acct); err != nil {
+		t.Fatal(err)
+	}
+	after, err := store.AccountByID(context.Background(), acct.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after.MFAEnrolled() || len(after.MFASecretEncrypted) > 0 {
+		t.Fatalf("squatter's TOTP survived the ownership claim: enrolled=%v secret=%d bytes", after.MFAEnrolled(), len(after.MFASecretEncrypted))
+	}
+}
+
 // The verify-email link goes to the address that set the password, so it
 // proves the password creator owns the address: credentials survive it.
 func TestVerifyEmailLinkKeepsSignupCredentials(t *testing.T) {

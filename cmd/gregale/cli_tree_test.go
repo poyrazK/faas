@@ -55,7 +55,7 @@ var cliTreeCompoundWords = []string{
 	"data-api", "rule-list", "egress-allowlist", "egress-ports", "static-egress-ip",
 	"port-forward", "wake-ahead", "wake-timeline", "streaming-cap", "spend-cap", "upload-cache",
 	"object-lock", "subscription-version", "subscription-retry", "subscription-circuit",
-	"subscription-capacity", "lock-policy",
+	"subscription-capacity", "lock-policy", "deploy-token",
 }
 
 // Rule 5: top-level verbs that may start a tree path.

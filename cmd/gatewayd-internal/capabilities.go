@@ -2,9 +2,13 @@ package main
 
 import (
 	"fmt"
+	"net/http"
 
+	"github.com/onebox-faas/faas/pkg/api"
+	mwauth "github.com/onebox-faas/faas/pkg/auth/middleware"
 	"github.com/onebox-faas/faas/pkg/capflags"
 	"github.com/onebox-faas/faas/pkg/platformflags"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 // Capability flags (ADR-20261023115741) gatewayd-internal decides per
@@ -16,6 +20,16 @@ const (
 	capabilityAsyncRoutes     = "async-routes"
 	capabilityRequestRetry    = "request-retry"
 	capabilityCircuitBreaking = "circuit-breaking"
+)
+
+// The logs kill switches. apid hides the logs pages and the drain routes, but
+// the customer logs route (live and archive) and drain delivery are served
+// here, so gatewayd-internal decides them too: an off `logs` hides
+// GET /v1/apps/{slug}/logs for the caller's account, an off `log-drains`
+// stops delivering the drains of the app's account.
+const (
+	capabilityLogs      = "logs"
+	capabilityLogDrains = "log-drains"
 )
 
 // capabilityDecision decides capability flags from the daemon's platform-flag
@@ -51,4 +65,21 @@ func capabilityRules[T any](allowed func(capability, accountID string) bool, cap
 		return rules
 	}
 	return kept
+}
+
+// logsReleased hides the logs route from a caller whose account has the logs
+// capability off. It runs before the app is resolved and answers as apid
+// answers a missing /v1 route, so a hidden route never reveals whether the
+// app exists.
+func logsReleased(allowed func(capability, accountID string) bool, next mwauth.AccountHandler) mwauth.AccountHandler {
+	if allowed == nil {
+		return next
+	}
+	return func(w http.ResponseWriter, r *http.Request, acct state.Account) {
+		if !allowed(capabilityLogs, acct.ID) {
+			api.WriteProblem(w, api.NewProblem(http.StatusNotFound, api.CodeNotFound, "Not found", "no such API route"))
+			return
+		}
+		next(w, r, acct)
+	}
 }

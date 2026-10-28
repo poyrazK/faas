@@ -175,8 +175,8 @@ func TestPublicRoutingViewPostgresResolvesCanaryLikeExactRead(t *testing.T) {
 	}
 }
 
-// Ordinary requests read the store once per app; pinned requests still read
-// it every time.
+// Ordinary and pinned requests read the store once per app
+// (ADR-20261028095914); only a hosting smoke reads it every time.
 func TestPublicRoutingViewPostgresKeepsWarmRequestsOffTheStore(t *testing.T) {
 	f := newPublicRoutingPGFixture(t)
 	current := f.deployment(t, "production", "sha256:current")
@@ -197,8 +197,12 @@ func TestPublicRoutingViewPostgresKeepsWarmRequestsOffTheStore(t *testing.T) {
 			t.Fatalf("pinned snapshot=%+v err=%v", snapshot, err)
 		}
 	}
-	if exact.count() != 3 || view.Tracked() != 1 {
-		t.Fatalf("exact reads=%d tracked views=%d; want only the pinned requests to read per request", exact.count(), view.Tracked())
+	smoke := gateway.PublicRoutingInputs{Valid: true, Scope: "production", HostDeploymentID: current.ID, Smoke: true}
+	if snapshot, err := pin(t.Context(), app, smoke); err != nil || !snapshot.HostAllowed {
+		t.Fatalf("smoke snapshot=%+v err=%v", snapshot, err)
+	}
+	if exact.count() != 1 || view.Tracked() != 1 {
+		t.Fatalf("exact reads=%d tracked views=%d; want only the hosting smoke to read per request", exact.count(), view.Tracked())
 	}
 	next := f.deployment(t, "production", "sha256:next")
 	f.publish(t, next.ID)
@@ -268,5 +272,113 @@ func TestHandleDeploymentRouteInvalidationRefreshesRoutingViewBeforeAck(t *testi
 	if _, applied := handleDeploymentRouteInvalidation(context.Background(), inv,
 		`{"app_id":"app-7","deployment_id":"dep-3","generation":44}`, testLogger()); applied {
 		t.Fatal("route change acknowledged before the routing view refreshed")
+	}
+}
+
+// ADR-20261028095914: host, revision and release pins admit from the view with
+// the verdict the exact read gives against the same committed state, and
+// without an exact read. A pin the view cannot answer keeps the exact read.
+func TestPublicRoutingViewPostgresAnswersPinsLikeExactRead(t *testing.T) {
+	f := newPublicRoutingPGFixture(t)
+	app := gateway.App{ID: f.app.ID, AccountID: f.app.AccountID, ProjectID: f.project.ID}
+	first := f.deployment(t, "production", "sha256:first")
+	firstRelease := f.publish(t, first.ID)
+	current := f.deployment(t, "production", "sha256:current")
+	currentRelease := f.publish(t, current.ID)
+	if _, err := f.pool.Exec(t.Context(), `UPDATE deployments SET status = 'superseded', traffic_percent = 0 WHERE id = $1`, first.ID); err != nil {
+		t.Fatal(err)
+	}
+	stage := f.deployment(t, "staging", "sha256:stage")
+	quiet := f.deployment(t, "preview", "sha256:quiet")
+	if _, err := f.pool.Exec(t.Context(), `UPDATE deployments SET traffic_percent = 0 WHERE id = $1`, quiet.ID); err != nil {
+		t.Fatal(err)
+	}
+	host := func(scope, id string) gateway.PublicRoutingInputs {
+		return gateway.PublicRoutingInputs{Valid: true, Scope: "production", HostDeploymentID: id, HostScope: scope}
+	}
+	revision := func(scope, id string) gateway.PublicRoutingInputs {
+		return gateway.PublicRoutingInputs{Valid: true, Scope: scope, RevisionPresent: true, RequestedRevisionID: id}
+	}
+	release := func(id string) gateway.PublicRoutingInputs {
+		return gateway.PublicRoutingInputs{Valid: true, Scope: "production", ResolveRelease: true, ReleasePresent: true, RequestedReleaseID: id}
+	}
+	check := func(name string, app gateway.App, inputs gateway.PublicRoutingInputs, wantExactReads int) gateway.PublicRoutingSnapshot {
+		t.Helper()
+		exact, exactErr := publicRoutingPinnerFor(f.store, true)(t.Context(), app, inputs)
+		counting := &countingRoutingSnapshotStore{PublicRoutingSnapshotStore: f.store}
+		view, viewErr := publicRoutingViewPinnerFor(counting, publicrouting.New(f.store), true)(t.Context(), app, inputs)
+		if (exactErr == nil) != (viewErr == nil) || exactErr == nil && fmt.Sprintf("%+v", exact) != fmt.Sprintf("%+v", view) {
+			t.Fatalf("%s: view differs from the exact read:\nexact %+v %v\nview  %+v %v", name, exact, exactErr, view, viewErr)
+		}
+		if counting.count() != wantExactReads {
+			t.Fatalf("%s: exact reads=%d, want %d", name, counting.count(), wantExactReads)
+		}
+		return view
+	}
+	for _, tc := range []struct {
+		name   string
+		inputs gateway.PublicRoutingInputs
+		want   func(gateway.PublicRoutingSnapshot) bool
+	}{
+		{"host pin to the live deployment", host("production", current.ID), func(s gateway.PublicRoutingSnapshot) bool { return s.HostAllowed }},
+		{"host pin to a staging deployment", host("staging", stage.ID), func(s gateway.PublicRoutingSnapshot) bool { return s.HostAllowed }},
+		{"host pin in the wrong scope", host("staging", current.ID), func(s gateway.PublicRoutingSnapshot) bool { return !s.HostAllowed }},
+		{"host pin to a superseded deployment", host("production", first.ID), func(s gateway.PublicRoutingSnapshot) bool { return !s.HostAllowed }},
+		{"host pin to an unknown deployment", host("production", uuid.NewString()), func(s gateway.PublicRoutingSnapshot) bool { return !s.HostAllowed }},
+		{"revision with traffic", revision("production", current.ID), func(s gateway.PublicRoutingSnapshot) bool { return s.RevisionAllowed }},
+		{"revision without traffic or pin", revision("preview", quiet.ID), func(s gateway.PublicRoutingSnapshot) bool { return !s.RevisionAllowed }},
+		{"revision in the wrong scope", revision("staging", current.ID), func(s gateway.PublicRoutingSnapshot) bool { return !s.RevisionAllowed }},
+		{"active release", release(currentRelease.ID), func(s gateway.PublicRoutingSnapshot) bool {
+			return s.ReleaseVerdict == "allowed" && s.ReleaseDeploymentID == current.ID
+		}},
+		{"retained release", release(firstRelease.ID), func(s gateway.PublicRoutingSnapshot) bool {
+			return s.ReleaseVerdict == "allowed" && s.ReleaseDeploymentID == first.ID || s.ReleaseVerdict == "conflict"
+		}},
+		{"unknown release", release(uuid.NewString()), func(s gateway.PublicRoutingSnapshot) bool { return s.ReleaseVerdict == "gone" }},
+	} {
+		if snapshot := check(tc.name, app, tc.inputs, 0); !tc.want(snapshot) {
+			t.Fatalf("%s: %+v", tc.name, snapshot)
+		}
+	}
+	// A revision pin keeps a quiet deployment routable until it expires.
+	if _, err := f.pool.Exec(t.Context(), `INSERT INTO deployment_revision_pins (deployment_id, app_id, expires_at) VALUES ($1, $2, now() + interval '1 hour')`, quiet.ID, f.app.ID); err != nil {
+		t.Fatal(err)
+	}
+	if snapshot := check("revision kept by a pin", app, revision("preview", quiet.ID), 0); !snapshot.RevisionAllowed {
+		t.Fatalf("pinned revision: %+v", snapshot)
+	}
+	if _, err := f.pool.Exec(t.Context(), `UPDATE deployment_revision_pins SET expires_at = now() - interval '1 minute' WHERE deployment_id = $1`, quiet.ID); err != nil {
+		t.Fatal(err)
+	}
+	if snapshot := check("revision whose pin expired", app, revision("preview", quiet.ID), 0); snapshot.RevisionAllowed {
+		t.Fatalf("expired pin: %+v", snapshot)
+	}
+	// A retained graph that expired is gone; one whose member was removed is
+	// incomplete.
+	if _, err := f.pool.Exec(t.Context(), `UPDATE project_release_sets SET active = false, expires_at = now() - interval '1 minute' WHERE id = $1`, firstRelease.ID); err != nil {
+		t.Fatal(err)
+	}
+	if snapshot := check("expired release", app, release(firstRelease.ID), 0); snapshot.ReleaseVerdict != "gone" {
+		t.Fatalf("expired release: %+v", snapshot)
+	}
+	if _, err := f.pool.Exec(t.Context(), `DELETE FROM project_release_members WHERE release_id = $1 AND app_id = $2`, currentRelease.ID, f.app.ID); err != nil {
+		t.Fatal(err)
+	}
+	if snapshot := check("incomplete release", app, release(currentRelease.ID), 0); snapshot.ReleaseVerdict != "conflict" {
+		t.Fatalf("incomplete release: %+v", snapshot)
+	}
+	// Outside a project a release pin names no graph.
+	unscoped := f.sourceApp(t, "public-routing-pins-unscoped", f.app.AccountID)
+	if snapshot := check("release pin outside a project", gateway.App{ID: unscoped.ID, AccountID: unscoped.AccountID}, release(currentRelease.ID), 0); snapshot.ReleaseVerdict != "gone" {
+		t.Fatalf("unscoped release pin: %+v", snapshot)
+	}
+	// An app whose revision setting is not an integer keeps the exact read,
+	// which refuses it.
+	if _, err := f.pool.Exec(t.Context(), `UPDATE apps SET manifest = jsonb_set(manifest, '{revision_pin_ttl_seconds}', '"soon"') WHERE id = $1`, f.app.ID); err != nil {
+		t.Fatal(err)
+	}
+	check("revision pin with an unreadable setting", app, revision("production", current.ID), 1)
+	if f.pool.Stat().AcquiredConns() != 0 {
+		t.Fatal("the routing view retained a transaction")
 	}
 }

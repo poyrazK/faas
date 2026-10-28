@@ -22,6 +22,14 @@ func onDemandTLSFixture(t *testing.T) (*state.MemStore, *OnDemandTLSPolicy, *pro
 	t.Helper()
 	ctx := context.Background()
 	s := state.NewMemStore()
+	owner, err := s.CreateAccount(ctx, "tls-owner@example.com", api.PlanPro)
+	if err != nil {
+		t.Fatal(err)
+	}
+	app, err := s.CreateApp(ctx, state.App{AccountID: owner.ID, Slug: "tls-app", Type: state.AppTypeApp, RAMMB: 256})
+	if err != nil {
+		t.Fatal(err)
+	}
 	for domain, verified := range map[string]bool{
 		"shop.example.com":          true,
 		"pending.example.com":       false,
@@ -29,7 +37,7 @@ func onDemandTLSFixture(t *testing.T) (*state.MemStore, *OnDemandTLSPolicy, *pro
 		"*.unverified.example.org":  false,
 		"exact.tenants.example.net": false,
 	} {
-		if _, err := s.CreateCustomDomain(ctx, domain, "app-1", "tok"); err != nil {
+		if _, err := s.CreateCustomDomain(ctx, domain, app.ID, "tok"); err != nil {
 			t.Fatal(err)
 		}
 		if verified {
@@ -74,6 +82,27 @@ func TestOnDemandTLSPolicyDecide(t *testing.T) {
 				t.Fatalf("Decide(%q) = %v, %q; want %v, %q", tc.host, allowed, decision, tc.allowed, tc.decision)
 			}
 		})
+	}
+}
+
+// The plan is checked when a wildcard domain is created; after a downgrade
+// to a plan without wildcard domains it must stop drawing new certificates.
+// Exact domains are unaffected.
+func TestOnDemandTLSPolicyWildcardFollowsOwnersPlan(t *testing.T) {
+	s, p, _ := onDemandTLSFixture(t)
+	ctx := context.Background()
+	owner, err := s.AccountByEmail(ctx, "tls-owner@example.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.UpdateAccountPlan(ctx, owner.ID, api.PlanFree); err != nil {
+		t.Fatal(err)
+	}
+	if ok, decision := p.Decide(ctx, "new.tenants.example.net"); ok || decision != OnDemandTLSDenyPlan {
+		t.Fatalf("wildcard host after downgrade = %v, %q; want deny %q", ok, decision, OnDemandTLSDenyPlan)
+	}
+	if ok, decision := p.Decide(ctx, "shop.example.com"); !ok {
+		t.Fatalf("exact domain after downgrade refused: %s", decision)
 	}
 }
 

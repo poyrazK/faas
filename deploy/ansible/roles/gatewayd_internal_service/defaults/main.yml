@@ -29,6 +29,16 @@ faas_compute_durable_listeners: false
 gatewayd_retry_budget_redis_url: ""
 gatewayd_retry_budget_required: false
 
+# ADR-831 amendment 17: one browser-challenge signing key for the gateway
+# fleet, set once through Ansible Vault (64 hex digits: `openssl rand -hex
+# 32`). The role copies it to a root-only systemd credential on each gateway
+# node. Without it each gateway signs with its own host's session key and
+# refuses the challenge passes the others issue. Set
+# gatewayd_edge_challenge_key_required=true from the run that precedes
+# releasing edge_challenge, so a host missing the variable fails the play.
+gatewayd_edge_challenge_key: ""
+gatewayd_edge_challenge_key_required: false
+
 # Shared public wildcard suffix. Operators with a different Cloudflare/public
 # zone override this variable; the split compute gateway must receive the same
 # value as apid and gatewayd-public.

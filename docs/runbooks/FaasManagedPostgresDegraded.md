@@ -122,3 +122,39 @@ To lift one customer's suspension by hand during an outage, raise that project's
 `settings.quota.compute_time_seconds` in the Neon console. Never set it to 0,
 which means unlimited. The next successful sweep rewrites it from the ledger.
 Switching enforcement to `off` stops new writes but leaves every quota in place.
+
+## Production approval and fleet ceilings
+
+These alerts cover production provisioning
+([ADR-20261028103115](../adr/20261028103115-managed-postgres-production-provisioning.md)).
+None of them affects existing databases or credentials.
+
+`FaasManagedPostgresProductionApprovalExpiring` means the operator's backend
+approval ends within 14 days. When it ends, new databases, bindings, restores
+and resizes close for every account (`managed_postgres_provisioning_not_enabled`).
+To renew:
+
+1. Review the backend: provider status, the usage collector, recent
+   reconcile failures.
+2. Confirm the pinned fingerprint still matches the configured backend
+   (`managed-postgres-qualify --check-production`).
+3. Set a new window: `FAAS_MANAGED_POSTGRES_PRODUCTION_APPROVED_AT` (now) and
+   `FAAS_MANAGED_POSTGRES_PRODUCTION_UNTIL` (at most 90 days later).
+4. Restart apid.
+
+`FaasManagedPostgresProductionApprovalExpired` pages because provisioning is
+already closed. Renew as above.
+
+`FaasManagedPostgresFleetNearCeiling` warns at 80% of the fleet database cap
+or of the monthly provider-spend breaker (`fleet.max_databases`,
+`fleet.max_monthly_cost_millicents` in the managed PostgreSQL configuration).
+Compare `apid_managed_postgres_fleet_databases` and
+`apid_managed_postgres_fleet_cost_millicents` with the ceilings. Either raise
+a ceiling deliberately, within the provider budget, and restart apid, or
+review the largest consumers with `gregale postgres diagnostics`.
+
+`FaasManagedPostgresFleetPaused` pages at the ceiling. Every account gets
+`managed_postgres_new_databases_paused` for new databases; at the spend
+breaker, restores and compute increases pause as well. The database cap
+reopens as databases are deleted. The spend breaker reopens at the next UTC
+month, or earlier if you raise it.
