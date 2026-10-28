@@ -16,6 +16,11 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
+// profileCapturesCapability is the product capability whose platform flag
+// releases on-demand captures to an account (ADR-20261023115741); schedd
+// queues automatic captures only for accounts it is released to.
+const profileCapturesCapability = "profile-captures"
+
 // ErrNoRunningInstance means an on-demand profile capture found no RUNNING
 // instance to profile. Captures never wake a parked app: a fresh process would
 // not show the state the caller is investigating.
@@ -142,6 +147,9 @@ func (e *Engine) queueAutomaticCapture(ctx context.Context, instanceID string, c
 	limits, ok := api.LimitsFor(acct.Plan)
 	if !ok || !limits.Profiling.Enabled {
 		return false, "plan does not include profiling", nil
+	}
+	if !e.appCapabilityAllowed(ctx, app, profileCapturesCapability) {
+		return false, "on-demand profile captures are not released to this account", nil
 	}
 	if !app.Manifest.Profiling.AutomaticCapturesEnabled() {
 		return false, "the app turned automatic captures off", nil
