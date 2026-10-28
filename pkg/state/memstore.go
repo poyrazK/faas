@@ -12423,13 +12423,21 @@ func (m *MemStore) ClaimQueuedBuild(_ context.Context, id string) (Build, error)
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	b, ok := m.builds[id]
-	if !ok || b.Status != BuildQueued || !m.buildDependencyEligibleLocked(b, time.Now()) {
+	if !ok || b.Status != BuildQueued || !m.buildDependencyEligibleLocked(b, time.Now()) || m.previewBuildWaitsLocked(b) {
 		return Build{}, ErrNotFound
 	}
 	b.Status = BuildRunning
 	b.StartedAt = time.Now()
 	m.builds[id] = b
 	return b, nil
+}
+
+// previewBuildWaitsLocked mirrors the by-id claims' preview deferral: a PR
+// preview build waits while another build is queued.
+func (m *MemStore) previewBuildWaitsLocked(b Build) bool {
+	return b.Kind == DeploymentKindPreview && m.nonPreviewBuildEligibleLocked(func(o Build) bool {
+		return o.Status == BuildQueued && m.buildDependencyEligibleLocked(o, time.Now())
+	})
 }
 
 // ClaimQueuedBuildWithNodeAffinity mirrors the PostgreSQL notification-path
@@ -12442,7 +12450,8 @@ func (m *MemStore) ClaimQueuedBuildWithNodeAffinity(ctx context.Context, id, nod
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	b, ok := m.builds[id]
-	if !ok || b.Status != BuildQueued || !m.buildDependencyEligibleLocked(b, time.Now()) || !m.buildEligibleOnNodeLocked(b, nodeID, affinityGrace, time.Now()) {
+	if !ok || b.Status != BuildQueued || !m.buildDependencyEligibleLocked(b, time.Now()) || m.previewBuildWaitsLocked(b) ||
+		!m.buildEligibleOnNodeLocked(b, nodeID, affinityGrace, time.Now()) {
 		return Build{}, ErrNotFound
 	}
 	b.Status = BuildRunning
@@ -12504,8 +12513,10 @@ func (m *MemStore) ClaimNextQueuedBuild(_ context.Context) (Build, error) {
 		earliest time.Time
 		found    bool
 	)
+	eligible := func(b Build) bool { return b.Status == BuildQueued && m.buildDependencyEligibleLocked(b, time.Now()) }
+	previewLast := m.nonPreviewBuildEligibleLocked(eligible)
 	for id, b := range m.builds {
-		if b.Status != BuildQueued || !m.buildDependencyEligibleLocked(b, time.Now()) {
+		if !eligible(b) || (previewLast && b.Kind == DeploymentKindPreview) {
 			continue
 		}
 		if !found || b.EnqueuedAt.Before(earliest) {
@@ -12522,6 +12533,29 @@ func (m *MemStore) ClaimNextQueuedBuild(_ context.Context) (Build, error) {
 	b.StartedAt = time.Now()
 	m.builds[pick] = b
 	return b, nil
+}
+
+// nonPreviewBuildEligibleLocked reports whether a build other than a PR
+// preview build can be claimed; while one can, preview builds wait
+// (ADR-20261028100000).
+func (m *MemStore) nonPreviewBuildEligibleLocked(eligible func(Build) bool) bool {
+	for _, b := range m.builds {
+		if b.Kind != DeploymentKindPreview && eligible(b) {
+			return true
+		}
+	}
+	return false
+}
+
+// buildHasAppLocked mirrors the claim queries' join through deployments to
+// apps.
+func (m *MemStore) buildHasAppLocked(b Build) bool {
+	dep, ok := m.deployments[b.DeploymentID]
+	if !ok {
+		return false
+	}
+	_, ok = m.apps[dep.AppID]
+	return ok
 }
 
 // ClaimNextQueuedBuildWithFairness mirrors PgStore (B2.2 issue #196).
@@ -12553,8 +12587,12 @@ func (m *MemStore) ClaimNextQueuedBuildWithFairness(_ context.Context, fairnessW
 		account    string
 	}
 	var queued []candidate
+	eligible := func(b Build) bool {
+		return b.Status == BuildQueued && m.buildDependencyEligibleLocked(b, time.Now()) && m.buildHasAppLocked(b)
+	}
+	previewLast := m.nonPreviewBuildEligibleLocked(eligible)
 	for id, b := range m.builds {
-		if b.Status != BuildQueued || !m.buildDependencyEligibleLocked(b, time.Now()) {
+		if !eligible(b) || (previewLast && b.Kind == DeploymentKindPreview) {
 			continue
 		}
 		dep, ok := m.deployments[b.DeploymentID]
@@ -12638,8 +12676,13 @@ func (m *MemStore) ClaimNextQueuedBuildWithNodeAffinity(ctx context.Context, nod
 		account    string
 	}
 	queued := make([]candidate, 0)
+	eligible := func(b Build) bool {
+		return b.Status == BuildQueued && m.buildDependencyEligibleLocked(b, now) &&
+			m.buildEligibleOnNodeLocked(b, nodeID, affinityGrace, now) && m.buildHasAppLocked(b)
+	}
+	previewLast := m.nonPreviewBuildEligibleLocked(eligible)
 	for id, build := range m.builds {
-		if build.Status != BuildQueued || !m.buildDependencyEligibleLocked(build, now) || !m.buildEligibleOnNodeLocked(build, nodeID, affinityGrace, now) {
+		if !eligible(build) || (previewLast && build.Kind == DeploymentKindPreview) {
 			continue
 		}
 		dep, ok := m.deployments[build.DeploymentID]

@@ -911,6 +911,16 @@ func MarkPreWakeForTest(ctx context.Context) {
 var LogVMMBootFailure = logVMMBootFailure
 var WorkerRecoveryRetryDelay = workerRecoveryRetryDelay
 
+// NewCronPlanGate exposes the cron plan gate's admit decision.
+func NewCronPlanGate(accounts interface {
+	AccountByID(context.Context, string) (state.Account, error)
+}) func(context.Context, state.App, int) bool {
+	return newCronPlanGate(accounts).admit
+}
+
+var OldestCronsFirst = oldestCronsFirst
+var CronDue = cronDue
+
 // XRunCronHistoryRetention runs the hourly cron history sweep once.
 func (l *Loop) XRunCronHistoryRetention(ctx context.Context) { l.runCronHistoryRetention(ctx) }
 

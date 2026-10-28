@@ -375,6 +375,18 @@ is a later step.
      A login whose plaintext another row also holds is refused on both rows:
      a legacy blob names no database, so a copy of one database's login onto
      another is told apart only that way.
+     Amended 2026-10-28: logins are re-issued, not re-sealed. Refusing copies
+     left a login moved (not copied) onto another database's row: the
+     re-seal would bind it there for good. The re-seal now drops every legacy
+     login (a compare-and-swap delete on the blob and recipient it read) and
+     re-seals only keys. apid looks every five minutes for databases with an
+     active live key and no login and issues each one a login from the
+     provider, for that database, sealed bound to it
+     (`livequeries.Service.IssueMissingLogins`, audit
+     `managed_postgres.live.login_issued`). A login issued again gets a new
+     password, which only livequeryd uses. Live queries on a database pause
+     from the drop until its new login is discovered. `-reseal-dsn-file`'s
+     role needs DELETE on `managed_postgres_live_logins`.
   3. livequeryd stops opening the legacy form.
 - **What the binding does not stop (2026-10-27).** age envelopes do not
   authenticate their sender and livequeryd's recipient is public, so a

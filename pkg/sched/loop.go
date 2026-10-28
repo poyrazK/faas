@@ -4362,8 +4362,23 @@ func (l *Loop) runCronTick(ctx context.Context) {
 		return
 	}
 	now := l.now()
+	appRank := oldestCronsFirst(crons)
+	plans := newCronPlanGate(store)
+	apps := map[string]state.App{}
 	for _, c := range crons {
-		app, appErr := store.AppByID(ctx, c.AppID)
+		if !cronDue(c, now) {
+			if len(c.Command) > 0 {
+				l.cronMetrics.decision("not_due")
+			}
+			continue
+		}
+		app, cached := apps[c.AppID]
+		var appErr error
+		if !cached {
+			if app, appErr = store.AppByID(ctx, c.AppID); appErr == nil {
+				apps[c.AppID] = app
+			}
+		}
 		if appErr != nil {
 			scanErr = appErr
 			if len(c.Command) > 0 {
@@ -4375,6 +4390,12 @@ func (l *Loop) runCronTick(ctx context.Context) {
 		if !l.engine.ownsApp(app) {
 			if len(c.Command) > 0 {
 				l.cronMetrics.decision("not_owned")
+			}
+			continue
+		}
+		if !plans.admit(ctx, app, appRank[c.ID]) {
+			if len(c.Command) > 0 {
+				l.cronMetrics.decision("plan_limit")
 			}
 			continue
 		}

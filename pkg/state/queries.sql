@@ -8466,8 +8466,9 @@ SELECT public_auth_mode FROM apps
 WHERE id = sqlc.arg(id)::uuid AND status <> 'deleted' AND deleted_at IS NULL;
 
 -- ADR-570: minimal credential-free projection for one read-only service-policy snapshot.
+-- org_id is the tenant boundary SameAppResourceOwner checks (Hunt 23 H23-1).
 -- name: ReadServicePolicyAppByID :one
-SELECT id, account_id, slug, workload_name, status, project_id, preview_of_slug,
+SELECT id, account_id, org_id, slug, workload_name, status, project_id, preview_of_slug,
        preview_pr_number, preview_pr_state, preview_expires_at, app_protocol, websocket_enabled,
        jsonb_strip_nulls(jsonb_build_object(
            'service_bindings', manifest->'service_bindings',
@@ -8480,7 +8481,7 @@ SELECT id, account_id, slug, workload_name, status, project_id, preview_of_slug,
 FROM apps WHERE id = sqlc.arg(id)::uuid;
 
 -- name: ReadServicePolicyAppBySlug :one
-SELECT id, account_id, slug, workload_name, status, project_id, preview_of_slug,
+SELECT id, account_id, org_id, slug, workload_name, status, project_id, preview_of_slug,
        preview_pr_number, preview_pr_state, preview_expires_at, app_protocol, websocket_enabled,
        jsonb_strip_nulls(jsonb_build_object(
            'service_bindings', manifest->'service_bindings',
@@ -8502,7 +8503,7 @@ ORDER BY id
 LIMIT 2;
 
 -- name: ReadServicePolicyTestApp :one
-SELECT id, account_id, slug, workload_name, status, project_id, preview_of_slug,
+SELECT id, account_id, org_id, slug, workload_name, status, project_id, preview_of_slug,
        preview_pr_number, preview_pr_state, preview_expires_at, app_protocol, websocket_enabled,
        jsonb_strip_nulls(jsonb_build_object(
            'service_bindings', manifest->'service_bindings',
@@ -9073,7 +9074,13 @@ WITH environment_policies AS MATERIALIZED (
             'ExpiresAt', to_jsonb(edge_rules)->'expires_at', 'Match', to_jsonb(edge_rules)->'match_expr',
             'Mode', coalesce(to_jsonb(edge_rules)->>'mode', 'enforce'))::jsonb AS data
     FROM edge_rules WHERE enabled AND (account_id = sqlc.narg(account_id)::uuid
-        OR (sqlc.narg(account_id)::uuid IS NULL AND kind='route'))
+        OR (sqlc.narg(account_id)::uuid IS NULL AND kind='route'
+            -- A scoped binding write reads only the routes that can match the
+            -- names it may change (ADR-20261027163626); NULL reads every route.
+            AND (sqlc.narg(route_scope_names)::text[] IS NULL OR match_host_scope = ''
+                OR match_host_scope = ANY(sqlc.narg(route_scope_names)::text[])
+                OR EXISTS (SELECT 1 FROM unnest(sqlc.narg(route_scope_trees)::text[]) AS tree(name)
+                    WHERE match_host_scope LIKE '%.' || replace(replace(replace(tree.name,'\','\\'),'%','\%'),'_','\_')))))
     UNION ALL
     SELECT p.app_id, ''::text, coalesce(rule.value->>'kind',''), NULL::uuid,
         coalesce(rule.value->'action','{}'::jsonb), p.environment_id,
@@ -9344,6 +9351,10 @@ DELETE FROM custom_domains WHERE domain=sqlc.arg(domain)::text::citext AND app_i
 
 -- name: ReadTrafficGlobalRouteAccounts :many
 SELECT DISTINCT account_id FROM edge_rules WHERE enabled AND kind='route'
+    AND (sqlc.narg(route_scope_names)::text[] IS NULL OR match_host_scope = ''
+        OR match_host_scope = ANY(sqlc.narg(route_scope_names)::text[])
+        OR EXISTS (SELECT 1 FROM unnest(sqlc.narg(route_scope_trees)::text[]) AS tree(name)
+            WHERE match_host_scope LIKE '%.' || replace(replace(replace(tree.name,'\','\\'),'%','\%'),'_','\_')))
 ORDER BY account_id LIMIT (sqlc.arg(max_inputs)::integer+1);
 
 -- name: LockCustomDomainQuotaAccount :one
@@ -26063,6 +26074,17 @@ SELECT
 FROM managed_postgres_usage u JOIN managed_postgres_databases d ON d.id=u.database_id
 WHERE managed_postgres_usage_subject(d.org_id,d.account_id)=sqlc.arg(subject_id)::uuid
 AND u.window_from>=sqlc.arg(period_start)::timestamptz AND u.window_from<sqlc.arg(period_end)::timestamptz;
+
+-- name: ManagedPostgresFleetTotals :one
+-- ADR-20261028103115: the fleet database cap counts what reservation limits
+-- count; the spend breaker sums the month through the usage primary key, one
+-- index range per database, so the ledger's growth never forces a full scan.
+SELECT
+ ((SELECT count(*) FROM managed_postgres_databases d WHERE d.state<>'deleted')
+  + (SELECT count(*) FROM project_environment_clone_postgres_snapshot_restores r WHERE r.state<>'deleted' AND r.adopted_database_id IS NULL))::bigint AS databases,
+ (SELECT COALESCE(sum(c.cost),0) FROM managed_postgres_databases d CROSS JOIN LATERAL (
+   SELECT COALESCE(sum(u.cost_millicents),0) AS cost FROM managed_postgres_usage u
+   WHERE u.database_id=d.id AND u.window_from>=sqlc.arg(period_start)::timestamptz AND u.window_from<sqlc.arg(period_end)::timestamptz) c)::bigint AS cost_millicents;
 
 -- name: LockManagedPostgresReservationOwner :one
 SELECT o.id,o.personal_org,o.resource_ownership_enabled FROM orgs o

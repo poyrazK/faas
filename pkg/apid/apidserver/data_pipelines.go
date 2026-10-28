@@ -130,7 +130,7 @@ func runDataPipelineWorker(ctx context.Context, log *slog.Logger) error {
 		return errors.New("data pipelines: catalog unavailable")
 	}
 	defer pool.Close()
-	service, reconciler, bindings, bindingReconciler, usage, health, err := loadManagedPostgres(pool, os.Getenv, log, nil)
+	service, reconciler, bindings, bindingReconciler, usage, health, err := loadManagedPostgres(pool, os.Getenv, log, nil, nil)
 	if err != nil {
 		return err
 	}
