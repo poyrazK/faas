@@ -88,7 +88,7 @@ func cmdDeployTokensList(args []string) int {
 		return 0
 	}
 	for _, token := range out.Tokens {
-		fmt.Fprintf(osStdout, "%-38s %-22s %-10s %-24s %s\n", token.ID, token.Prefix, token.Status, token.Label, deployTokenExpiry(token))
+		_, _ = fmt.Fprintf(osStdout, "%-38s %-22s %-10s %-24s %s\n", token.ID, token.Prefix, token.Status, token.Label, deployTokenExpiry(token))
 	}
 	return 0
 }
