@@ -24160,20 +24160,14 @@ func (m *MemStore) CreateAlertRuleIfUnderQuota(_ context.Context, in AlertRule, 
 		}
 	}
 
-	// Per-account count excludes rules whose pinned app is soft-
-	// deleted (matches the PgStore's EXISTS predicate).
-	accountCount := 0
+	// The per-account count covers the billing subject's account-wide rules
+	// and the rules of its apps, excluding soft-deleted apps (matches the
+	// PgStore's predicate).
+	subject, accountCount := m.appBillingSubjectLocked(in.AccountID, in.AppID), 0
 	for _, r := range m.alertRules {
-		if r.AccountID != in.AccountID {
-			continue
+		if m.countsTowardQuotaSubjectLocked(r.AccountID, r.AppID, subject) {
+			accountCount++
 		}
-		if r.AppID != "" {
-			app, ok := m.apps[r.AppID]
-			if !ok || app.Status == AppDeleted {
-				continue
-			}
-		}
-		accountCount++
 	}
 	if accountCount >= limits.AlertRuleLimitPerAccount {
 		return AlertRule{}, &AlertRuleQuotaError{
@@ -24774,17 +24768,11 @@ func (m *MemStore) CreateCorsPresetIfUnderQuota(ctx context.Context, p CorsPrese
 			}
 		}
 	}
-	// Per-account count excludes soft-deleted apps' preset rows.
-	var accountCount int
+	// The per-account count covers the billing subject's account-wide presets
+	// and the presets of its apps, excluding soft-deleted apps.
+	subject, accountCount := m.appBillingSubjectLocked(p.AccountID, p.AppID), 0
 	for _, q := range m.corsPresets {
-		if q.AccountID != p.AccountID {
-			continue
-		}
-		if q.AppID == "" {
-			accountCount++
-			continue
-		}
-		if app, ok := m.apps[q.AppID]; ok && app.Status != "deleted" {
+		if m.countsTowardQuotaSubjectLocked(q.AccountID, q.AppID, subject) {
 			accountCount++
 		}
 	}

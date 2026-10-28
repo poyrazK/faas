@@ -192,6 +192,22 @@ func (m *MemStore) CreateAppWebhook(_ context.Context, in AppWebhook) (AppWebhoo
 	return in, nil
 }
 
+// appWebhookQuotaCountLocked mirrors appWebhookQuotaCountSQL: the webhooks
+// that share subject's per-account allowance.
+func (m *MemStore) appWebhookQuotaCountLocked(subject string) int {
+	count := 0
+	for _, w := range m.appWebhooks {
+		if w.Scope == AppWebhookScopeAccount || w.Scope == AppWebhookScopePlatformTenant {
+			if w.AccountID == subject {
+				count++
+			}
+		} else if w.AppID != "" && m.countsTowardQuotaSubjectLocked(w.AccountID, w.AppID, subject) {
+			count++
+		}
+	}
+	return count
+}
+
 // CreateAppWebhookIfUnderQuota enforces the per-app + per-account
 // caps with the same TOCTOU-defence shape as CreateCronIfUnderQuota:
 // MemStore is single-process so a single critical section (m.mu)
@@ -229,19 +245,7 @@ func (m *MemStore) CreateAppWebhookIfUnderQuota(_ context.Context, in AppWebhook
 			Observed: appCount,
 		}
 	}
-	accountCount := 0
-	for _, w := range m.appWebhooks {
-		if w.AccountID != in.AccountID {
-			continue
-		}
-		if w.Scope == AppWebhookScopeAccount || w.Scope == AppWebhookScopePlatformTenant {
-			accountCount++
-			continue
-		}
-		if a, ok := m.apps[w.AppID]; ok && a.Status != AppDeleted {
-			accountCount++
-		}
-	}
+	accountCount := m.appWebhookQuotaCountLocked(m.appBillingSubjectLocked(app.AccountID, app.ID))
 	if accountCount >= limits.WebhookPerAccount {
 		return AppWebhook{}, &AppWebhookQuotaError{
 			Scope:    AppWebhookQuotaScopeAccount,

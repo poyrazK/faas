@@ -36,6 +36,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/frameworkprofile"
 	"github.com/onebox-faas/faas/pkg/publicstatus"
+	quotasql "github.com/onebox-faas/faas/pkg/state/appquota/sqlc"
 	ownersql "github.com/onebox-faas/faas/pkg/state/resourceownership/sqlc"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 	"github.com/onebox-faas/faas/pkg/workpolicy"
@@ -14335,16 +14336,10 @@ func (s *PgStore) CreateAlertRuleIfUnderQuota(ctx context.Context, in AlertRule,
 	}
 	defer func() { _ = tx.Rollback(ctx) }() //nolint:errcheck // no-op after Commit
 
+	subject := in.AccountID
 	if in.AppID != "" {
-		var locked int
-		err = tx.QueryRow(ctx,
-			`select 1 from apps where id = $1 and status <> 'deleted' for update`, in.AppID,
-		).Scan(&locked)
-		if err != nil {
-			if errors.Is(err, pgx.ErrNoRows) {
-				return AlertRule{}, ErrNotFound
-			}
-			return AlertRule{}, fmt.Errorf("state: lock app %s: %w", in.AppID, err)
+		if subject, _, err = lockQuotaSubjectTx(ctx, tx, in.AppID); err != nil {
+			return AlertRule{}, err
 		}
 
 		var appCount int
@@ -14360,19 +14355,22 @@ func (s *PgStore) CreateAlertRuleIfUnderQuota(ctx context.Context, in AlertRule,
 				Observed: appCount,
 			}
 		}
+	} else if err := lockAccountQuotaSubjectTx(ctx, tx, in.AccountID); err != nil {
+		return AlertRule{}, err
 	}
 
-	// Per-account count excludes soft-deleted apps' alert rows.
+	// The per-account count covers the subject's account-wide rules and the
+	// rules of its apps, excluding soft-deleted apps.
 	var accountCount int
 	if err := tx.QueryRow(ctx, `
 		select count(*) from alert_rules r
-		 where r.account_id = $1
-		   and (r.app_id is null
-		        or exists(select 1 from apps a
-		                   where a.id = r.app_id and a.status <> 'deleted'))`,
-		in.AccountID,
+		  left join apps a on a.id = r.app_id
+		  left join orgs o on o.id = a.org_id
+		 where (r.app_id is null and r.account_id = $1::uuid)
+		    or (a.status <> 'deleted' and `+quotaSubjectSQL+` = $1::uuid)`,
+		subject,
 	).Scan(&accountCount); err != nil {
-		return AlertRule{}, fmt.Errorf("state: count alert_rules for account %s: %w", in.AccountID, err)
+		return AlertRule{}, fmt.Errorf("state: count alert_rules for %s: %w", subject, err)
 	}
 	if accountCount >= limits.AlertRuleLimitPerAccount {
 		return AlertRule{}, &AlertRuleQuotaError{
@@ -15019,16 +15017,23 @@ func (s *PgStore) GetCorsPresetByID(ctx context.Context, accountID, id string) (
 //   - (CorsPreset{}, ErrConflict) on UNIQUE collision
 //     ((account_id, COALESCE(app_id, ...), name))
 //
-// The FOR UPDATE row lock on the apps row is the TOCTOU defence
-// for app-scoped presets: concurrent inserts serialise on the
-// apps row before reading the count, so a burst of N parallel
-// inserts cannot race past the cap by N-1. Account-wide presets
-// skip the apps-row lock and rely on the per-account count alone.
+// Locking the app's billing owner is the TOCTOU defence for app-scoped
+// presets: concurrent inserts serialise on it before reading the count, so a
+// burst of N parallel inserts cannot race past the cap by N-1. Account-wide
+// presets rely on the account's traffic-policy session. An organization's
+// presets are counted across creators whose sessions differ, so the
+// organization's quota fence is written as well: a repeatable-read count
+// whose snapshot predates another creator's commit fails with 40001 and is
+// retried (ADR-570).
 // The cors_presets_changed_notify trigger transactionally records the
 // account-scoped durable replay event and emits pg_notify as the low-latency
 // signal. The notification is delivered after commit; gatewayd also polls the
 // ledger so a missed notification cannot leave compiled CORS policy stale.
 func (s *PgStore) CreateCorsPresetIfUnderQuota(ctx context.Context, p CorsPreset, limits api.Limits) (CorsPreset, error) {
+	return retryTrafficSerialization(ctx, func() (CorsPreset, error) { return s.createCorsPresetIfUnderQuotaOnce(ctx, p, limits) })
+}
+
+func (s *PgStore) createCorsPresetIfUnderQuotaOnce(ctx context.Context, p CorsPreset, limits api.Limits) (CorsPreset, error) {
 	proposed := p
 	proposed.ID = "" // the insert generates its UUID rather than accepting p.ID
 	if err := s.validateTrafficProjection(ctx, "cors_preset", corsPresetTrafficProjection(proposed)); err != nil {
@@ -15040,16 +15045,15 @@ func (s *PgStore) CreateCorsPresetIfUnderQuota(ctx context.Context, p CorsPreset
 	}
 	defer func() { _ = tx.Rollback(ctx) }() //nolint:errcheck // no-op after Commit
 
+	subject := p.AccountID
 	if p.AppID != "" {
-		var locked int
-		err = tx.QueryRow(ctx,
-			`select 1 from apps where id = $1 and status <> 'deleted' for update`, p.AppID,
-		).Scan(&locked)
-		if err != nil {
-			if errors.Is(err, pgx.ErrNoRows) {
-				return CorsPreset{}, ErrNotFound
+		if subject, _, err = lockQuotaSubjectTx(ctx, tx, p.AppID); err != nil {
+			return CorsPreset{}, err
+		}
+		if subject != p.AccountID {
+			if err := quotasql.New().LockOwner(ctx, tx, mustPgUUID(subject)); err != nil {
+				return CorsPreset{}, fmt.Errorf("state: lock organization cors quota: %w", err)
 			}
-			return CorsPreset{}, fmt.Errorf("state: lock app %s: %w", p.AppID, err)
 		}
 
 		var appCount int
@@ -15067,19 +15071,19 @@ func (s *PgStore) CreateCorsPresetIfUnderQuota(ctx context.Context, p CorsPreset
 		}
 	}
 
-	// Per-account count excludes soft-deleted apps' preset rows.
-	// Mirrors the alert_rules per-account query at pgstore.go:7213
-	// so the soft-delete semantics are consistent.
+	// The per-account count covers the billing subject's account-wide presets
+	// and the presets of its apps, excluding soft-deleted apps; it mirrors the
+	// alert_rules per-account query.
 	var accountCount int
 	if err := tx.QueryRow(ctx, `
 		select count(*) from cors_presets p
-		 where p.account_id = $1
-		   and (p.app_id is null
-		        or exists(select 1 from apps a
-		                   where a.id = p.app_id and a.status <> 'deleted'))`,
-		p.AccountID,
+		  left join apps a on a.id = p.app_id
+		  left join orgs o on o.id = a.org_id
+		 where (p.app_id is null and p.account_id = $1::uuid)
+		    or (a.status <> 'deleted' and `+quotaSubjectSQL+` = $1::uuid)`,
+		subject,
 	).Scan(&accountCount); err != nil {
-		return CorsPreset{}, fmt.Errorf("state: count cors_presets for account %s: %w", p.AccountID, err)
+		return CorsPreset{}, fmt.Errorf("state: count cors_presets for %s: %w", subject, err)
 	}
 	if accountCount >= limits.CorsPresetsPerAccount {
 		return CorsPreset{}, &CorsPresetQuotaError{

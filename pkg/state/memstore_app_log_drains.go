@@ -28,15 +28,14 @@ func (m *MemStore) CreateAppLogDrainIfUnderQuota(_ context.Context, in AppLogDra
 	if !ok || app.Status == AppDeleted {
 		return AppLogDrain{}, ErrNotFound
 	}
+	subject := m.appBillingSubjectLocked(app.AccountID, app.ID)
 	appCount, accountCount := 0, 0
 	for _, drain := range m.appLogDrains {
 		if drain.AppID == in.AppID {
 			appCount++
 		}
-		if drain.AccountID == in.AccountID {
-			if owner, exists := m.apps[drain.AppID]; !exists || owner.Status != AppDeleted {
-				accountCount++
-			}
+		if m.countsTowardQuotaSubjectLocked(drain.AccountID, drain.AppID, subject) {
+			accountCount++
 		}
 	}
 	if appCount >= limits.LogDrainPerApp {

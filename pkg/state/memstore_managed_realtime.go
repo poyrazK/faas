@@ -23,15 +23,14 @@ func (m *MemStore) CreateManagedRealtimeEndpointIfUnderQuota(_ context.Context, 
 			return ManagedRealtimeEndpoint{}, ErrConflict
 		}
 	}
+	subject := m.appBillingSubjectLocked(app.AccountID, app.ID)
 	appCount, accountCount := 0, 0
 	for _, existing := range m.managedRealtimeEndpoints {
 		if existing.AppID == in.AppID {
 			appCount++
 		}
-		if existing.AccountID == in.AccountID {
-			if owner, exists := m.apps[existing.AppID]; exists && owner.Status != AppDeleted {
-				accountCount++
-			}
+		if m.countsTowardQuotaSubjectLocked(existing.AccountID, existing.AppID, subject) {
+			accountCount++
 		}
 	}
 	if appCount >= perApp {

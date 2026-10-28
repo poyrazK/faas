@@ -92,6 +92,17 @@ func (m *MemStore) appBillingSubjectLocked(accountID, appID string) string {
 	return accountID
 }
 
+// countsTowardQuotaSubjectLocked reports whether a row of accountID, on appID
+// or on the account itself when appID is empty, spends subject's per-account
+// allowance (see quotaSubjectSQL); a row of a deleted app spends none.
+func (m *MemStore) countsTowardQuotaSubjectLocked(accountID, appID, subject string) bool {
+	if appID == "" {
+		return accountID == subject
+	}
+	app, ok := m.apps[appID]
+	return ok && app.Status != AppDeleted && m.appBillingSubjectLocked(app.AccountID, app.ID) == subject
+}
+
 func (m *MemStore) personalAppLocked(app App) bool {
 	return app.OrgID == "" || m.orgs[app.OrgID].Personal
 }

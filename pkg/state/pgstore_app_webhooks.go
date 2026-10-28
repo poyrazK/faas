@@ -65,9 +65,19 @@ func (s *PgStore) CreateAppWebhook(ctx context.Context, in AppWebhook) (AppWebho
 	return w, nil
 }
 
-// CreateAppWebhookIfUnderQuota locks the account before the app, counts
-// both scopes against the shared account cap and app rows against the app
-// cap, then inserts. Returns AppWebhookQuotaError on cap trips,
+// appWebhookQuotaCountSQL counts the webhooks that share a billing subject's
+// per-account allowance ($1): its account-wide and platform-tenant webhooks,
+// and the webhooks of its apps (see quotaSubjectSQL), excluding deleted apps.
+const appWebhookQuotaCountSQL = `
+		select count(*) from app_webhooks w
+		  left join apps a on a.id = w.app_id
+		  left join orgs o on o.id = a.org_id
+		 where (w.scope in ('account', 'platform_tenant') and w.account_id = $1::uuid)
+		    or (w.scope = 'app' and a.status <> 'deleted' and ` + quotaSubjectSQL + ` = $1::uuid)`
+
+// CreateAppWebhookIfUnderQuota locks the app's billing owner, counts the
+// owner's webhooks against the shared per-account cap and app rows against
+// the app cap, then inserts. Returns AppWebhookQuotaError on cap trips,
 // ErrNotFound on a missing/foreign app, and ErrConflict on a duplicate.
 func (s *PgStore) CreateAppWebhookIfUnderQuota(ctx context.Context, in AppWebhook, limits api.Limits) (AppWebhook, error) {
 	if in.Scope != "" && in.Scope != AppWebhookScopeApp {
@@ -81,23 +91,12 @@ func (s *PgStore) CreateAppWebhookIfUnderQuota(ctx context.Context, in AppWebhoo
 
 	// Use one account lock for the shared cap across different apps. Acquire
 	// it before the app lock, matching app-creation's lock order.
-	var locked int
-	err = tx.QueryRow(ctx, `select 1 from accounts where id = $1 for update`, in.AccountID).Scan(&locked)
+	subject, accountID, err := lockQuotaSubjectTx(ctx, tx, in.AppID)
 	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return AppWebhook{}, ErrNotFound
-		}
-		return AppWebhook{}, fmt.Errorf("state: lock webhook account %s: %w", in.AccountID, err)
+		return AppWebhook{}, err
 	}
-	err = tx.QueryRow(ctx,
-		`select 1 from apps where id = $1 and account_id = $2 and status <> 'deleted' for update`,
-		in.AppID, in.AccountID,
-	).Scan(&locked)
-	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return AppWebhook{}, ErrNotFound
-		}
-		return AppWebhook{}, fmt.Errorf("state: lock app %s: %w", in.AppID, err)
+	if accountID != in.AccountID {
+		return AppWebhook{}, ErrNotFound
 	}
 
 	var appCount int
@@ -115,14 +114,8 @@ func (s *PgStore) CreateAppWebhookIfUnderQuota(ctx context.Context, in AppWebhoo
 	}
 
 	var accountCount int
-	if err := tx.QueryRow(ctx, `
-		select count(*) from app_webhooks w
-		 left join apps a on a.id = w.app_id
-		 where w.account_id = $1
-		   and (w.scope in ('account', 'platform_tenant') or
-		        (w.scope = 'app' and a.account_id = $1 and a.status <> 'deleted'))
-	`, in.AccountID).Scan(&accountCount); err != nil {
-		return AppWebhook{}, fmt.Errorf("state: count app_webhooks for account %s: %w", in.AccountID, err)
+	if err := tx.QueryRow(ctx, appWebhookQuotaCountSQL, subject).Scan(&accountCount); err != nil {
+		return AppWebhook{}, fmt.Errorf("state: count app_webhooks for %s: %w", subject, err)
 	}
 	if accountCount >= limits.WebhookPerAccount {
 		return AppWebhook{}, &AppWebhookQuotaError{

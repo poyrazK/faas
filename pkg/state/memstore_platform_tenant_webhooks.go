@@ -21,22 +21,12 @@ func (m *MemStore) CreatePlatformTenantWebhookIfUnderQuota(_ context.Context, in
 	if !ok || tenant.AccountID != in.AccountID {
 		return AppWebhook{}, ErrNotFound
 	}
-	count := 0
 	for _, hook := range m.appWebhooks {
-		if hook.AccountID != in.AccountID {
-			continue
-		}
-		if hook.Scope == AppWebhookScopePlatformTenant && hook.PlatformTenantID == in.PlatformTenantID && hook.TargetURL == in.TargetURL {
+		if hook.AccountID == in.AccountID && hook.Scope == AppWebhookScopePlatformTenant && hook.PlatformTenantID == in.PlatformTenantID && hook.TargetURL == in.TargetURL {
 			return AppWebhook{}, ErrConflict
 		}
-		if hook.Scope == AppWebhookScopeAccount || hook.Scope == AppWebhookScopePlatformTenant {
-			count++
-			continue
-		}
-		if app, exists := m.apps[hook.AppID]; exists && app.Status != AppDeleted && app.AccountID == in.AccountID {
-			count++
-		}
 	}
+	count := m.appWebhookQuotaCountLocked(in.AccountID)
 	if count >= limits.WebhookPerAccount {
 		return AppWebhook{}, &AppWebhookQuotaError{Scope: AppWebhookQuotaScopeAccount, Limit: limits.WebhookPerAccount, Observed: count}
 	}

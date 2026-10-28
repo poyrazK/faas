@@ -200,11 +200,8 @@ func (s *server) countConsumerKeys(ctx context.Context, acctID, appID string) (i
 }
 
 // countAccountConsumerKeys counts the unrevoked keys that share app's
-// per-account allowance: every app of its company, whoever created it, for
-// a company app, and its creator's personal apps otherwise. A company app's
-// rows keep its creator's account_id, so counting by that account would
-// spend the creator's personal allowance on the company's keys and leave
-// the company's other creators uncounted.
+// per-account allowance, the keys of its billing subject's apps (see
+// consumerKeyScopeApps).
 func (s *server) countAccountConsumerKeys(ctx context.Context, app state.App) (int, error) {
 	apps, err := s.consumerKeyScopeApps(ctx, app)
 	if err != nil {
@@ -222,22 +219,50 @@ func (s *server) countAccountConsumerKeys(ctx context.Context, app state.App) (i
 }
 
 // consumerKeyScopeApps returns the apps whose keys share app's per-account
-// key allowance, the apps one plan governs.
+// key allowance, those of its billing subject (ADR-202610171904): every app
+// of its organization, whoever created it, once the organization adopted
+// billing, and otherwise its creator's apps outside adopted organizations,
+// personal and unadopted company apps alike. A company app's rows keep its
+// creator's account_id, so counting by that account alone would spend an
+// adopted organization's allowance on its creator's personal one.
 func (s *server) consumerKeyScopeApps(ctx context.Context, app state.App) ([]state.App, error) {
-	if app.OrgID != "" {
-		org, err := s.store.OrgByID(ctx, app.OrgID)
-		if err != nil {
-			return nil, err
-		}
-		if !org.Personal {
-			lister, ok := s.store.(state.OrgAppLister)
-			if !ok {
-				return nil, errors.New("store cannot list organization apps")
-			}
-			return lister.ListAppsByOrg(ctx, org.ID)
-		}
+	owner, err := state.AppResourceAccount(ctx, s.store, app)
+	if err != nil {
+		return nil, err
 	}
-	return s.planSubjectApps(ctx, state.Account{ID: app.AccountID})
+	if owner.ResourceOrgID != "" {
+		lister, ok := s.store.(state.OrgAppLister)
+		if !ok {
+			return nil, errors.New("store cannot list organization apps")
+		}
+		return lister.ListAppsByOrg(ctx, owner.ResourceOrgID)
+	}
+	apps, err := s.store.ListApps(ctx, app.AccountID)
+	if err != nil {
+		return nil, err
+	}
+	adopted, scoped := map[string]bool{}, apps[:0]
+	for _, candidate := range apps {
+		if candidate.AccountID != app.AccountID {
+			continue
+		}
+		if candidate.OrgID != "" {
+			orgAdopted, seen := adopted[candidate.OrgID]
+			if !seen {
+				org, err := s.store.OrgByID(ctx, candidate.OrgID)
+				if err != nil {
+					return nil, err
+				}
+				orgAdopted = !org.Personal && org.ResourceOwnershipEnabled
+				adopted[candidate.OrgID] = orgAdopted
+			}
+			if orgAdopted {
+				continue
+			}
+		}
+		scoped = append(scoped, candidate)
+	}
+	return scoped, nil
 }
 
 // consumerKeyScopesProblem trims scopes in place and rejects unknown or

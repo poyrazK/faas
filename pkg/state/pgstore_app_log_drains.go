@@ -35,17 +35,9 @@ func (s *PgStore) CreateAppLogDrainIfUnderQuota(ctx context.Context, in AppLogDr
 	}
 	defer func() { _ = tx.Rollback(ctx) }() //nolint:errcheck
 
-	var accountID string
-	if err := tx.QueryRow(ctx, `
-		select account_id from apps where id = $1 and status <> 'deleted' for update
-	`, in.AppID).Scan(&accountID); err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return AppLogDrain{}, ErrNotFound
-		}
-		return AppLogDrain{}, fmt.Errorf("state: lock app %s for log drain: %w", in.AppID, err)
-	}
-	if _, err := tx.Exec(ctx, `select 1 from accounts where id = $1 for update`, accountID); err != nil {
-		return AppLogDrain{}, fmt.Errorf("state: lock account %s for log drain: %w", accountID, err)
+	subject, accountID, err := lockQuotaSubjectTx(ctx, tx, in.AppID)
+	if err != nil {
+		return AppLogDrain{}, err
 	}
 
 	var appCount int
@@ -60,9 +52,10 @@ func (s *PgStore) CreateAppLogDrainIfUnderQuota(ctx context.Context, in AppLogDr
 	if err := tx.QueryRow(ctx, `
 		select count(*) from app_log_drains d
 		join apps a on a.id = d.app_id
-		where a.account_id = $1 and a.status <> 'deleted'
-	`, accountID).Scan(&accountCount); err != nil {
-		return AppLogDrain{}, fmt.Errorf("state: count app log drains for account %s: %w", accountID, err)
+		left join orgs o on o.id = a.org_id
+		where `+quotaSubjectSQL+` = $1::uuid and a.status <> 'deleted'
+	`, subject).Scan(&accountCount); err != nil {
+		return AppLogDrain{}, fmt.Errorf("state: count app log drains for %s: %w", subject, err)
 	}
 	if accountCount >= limits.LogDrainPerAccount {
 		return AppLogDrain{}, &AppLogDrainQuotaError{Scope: AppLogDrainQuotaScopeAccount, Limit: limits.LogDrainPerAccount, Observed: accountCount}

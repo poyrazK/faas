@@ -70,11 +70,20 @@ func (s *PgStore) applyGitOpsQueue(ctx context.Context, tx pgx.Tx, source Enviro
 				return ErrConflict
 			}
 			if binding.Mode == "push" {
-				account, err := sqlc.New().QueueConsumerLockAccount(ctx, tx, mustPgUUID(source.AccountID))
+				// A recovered push consumer counts against its app's billing
+				// subject and plan, as mutateQueueBindingConsumerTx does.
+				owner, err := queuePolicyAccountDB(ctx, tx, source.AccountID, appID, true)
 				if err != nil {
-					return mapErr(err)
+					return err
 				}
-				if err := queueConsumerCheckQuota(ctx, sqlc.New(), tx, mustPgUUID(appID), mustPgUUID(source.AccountID), api.MustLimitsFor(api.Plan(account.Plan))); err != nil {
+				if !owner.ResourceOwnershipEnabled {
+					account, err := sqlc.New().QueueConsumerLockAccount(ctx, tx, mustPgUUID(source.AccountID))
+					if err != nil {
+						return mapErr(err)
+					}
+					owner.Plan = api.Plan(account.Plan)
+				}
+				if err := queueConsumerCheckQuota(ctx, sqlc.New(), tx, mustPgUUID(appID), mustPgUUID(owner.ResourceOwnerID()), api.MustLimitsFor(owner.Plan)); err != nil {
 					return err
 				}
 			}
