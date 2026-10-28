@@ -14,12 +14,20 @@ import (
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/profileproto"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/wire"
 )
 
 // profileCapturesCapability is the product capability whose platform flag
 // releases on-demand captures to an account (ADR-20261023115741); schedd
 // queues automatic captures only for accounts it is released to.
 const profileCapturesCapability = "profile-captures"
+
+// WithProfileCaptureMetrics installs the capture metrics (ADR-1155); nil
+// records nothing.
+func (e *Engine) WithProfileCaptureMetrics(m *wire.ProfileCaptureMetrics) *Engine {
+	e.profileCaptureMetrics = m
+	return e
+}
 
 // ErrNoRunningInstance means an on-demand profile capture found no RUNNING
 // instance to profile. Captures never wake a parked app: a fresh process would
@@ -125,16 +133,20 @@ func truncateRunes(s string, n int) string {
 // instance whose plan includes profiling, at most once per minInterval per
 // app and trigger, and notifies the capture drain.
 func (e *Engine) queueAutomaticCapture(ctx context.Context, instanceID string, capture api.ProfileCapture, minInterval time.Duration) (bool, string, error) {
+	skip := func(code, reason string) (bool, string, error) {
+		e.profileCaptureMetrics.AutomaticSkipped(capture.Trigger, code)
+		return false, reason, nil
+	}
 	queue, ok := e.store.(state.ProfileCaptureQueue)
 	if !ok {
-		return false, "profile capture storage is unavailable", nil
+		return skip("unavailable", "profile capture storage is unavailable")
 	}
 	ins, err := e.store.InstanceByID(ctx, instanceID)
 	if err != nil {
 		return false, "", err
 	}
 	if ins.State != string(state.StateRunning) {
-		return false, "instance is not running", nil
+		return skip("not_running", "instance is not running")
 	}
 	app, err := e.store.AppByID(ctx, ins.AppID)
 	if err != nil {
@@ -146,30 +158,30 @@ func (e *Engine) queueAutomaticCapture(ctx context.Context, instanceID string, c
 	}
 	limits, ok := api.LimitsFor(acct.Plan)
 	if !ok || !limits.Profiling.Enabled {
-		return false, "plan does not include profiling", nil
+		return skip("plan", "plan does not include profiling")
 	}
 	if !e.appCapabilityAllowed(ctx, app, profileCapturesCapability) {
-		return false, "on-demand profile captures are not released to this account", nil
+		return skip("not_released", "on-demand profile captures are not released to this account")
 	}
 	if !app.Manifest.Profiling.AutomaticCapturesEnabled() {
-		return false, "the app turned automatic captures off", nil
+		return skip("opted_out", "the app turned automatic captures off")
 	}
 	now := time.Now().UTC()
 	capture.ID, capture.AppID, capture.RequestedInstanceID = uuid.NewString(), app.ID, ins.ID
 	capture.CreatedAt, capture.ExpiresAt = now, now.Add(api.ProfileCaptureRetention)
 	switch err := queue.QueueAutomaticProfileCapture(ctx, app.AccountID, app.ID, capture, minInterval, limits.Profiling.CaptureStorageBytes); {
 	case errors.Is(err, state.ErrProfileCaptureRecent):
-		return false, "an automatic capture ran for this app within the minimum interval", nil
+		return skip("interval", "an automatic capture ran for this app within the minimum interval")
 	case errors.Is(err, state.ErrProfileCaptureActive):
-		return false, "a capture is already queued or running for this app", nil
+		return skip("active", "a capture is already queued or running for this app")
 	case errors.Is(err, state.ErrProfileCaptureQuota):
-		return false, "the account's hourly automatic capture quota is used", nil
+		return skip("quota", "the account's hourly automatic capture quota is used")
 	case errors.Is(err, state.ErrProfileCaptureStorage):
 		var full *state.ProfileCaptureStorageError
 		if errors.As(err, &full) && full.Automatic {
-			return false, "automatic captures fill their share of the account's capture storage", nil
+			return skip("storage_share", "automatic captures fill their share of the account's capture storage")
 		}
-		return false, "the account's profile capture storage is full", nil
+		return skip("storage_full", "the account's profile capture storage is full")
 	case err != nil:
 		return false, "", err
 	}

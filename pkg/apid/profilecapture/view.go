@@ -83,7 +83,7 @@ func (s *Service) View(w http.ResponseWriter, r *http.Request, acct state.Accoun
 	}
 	view, problem := s.KindView(r.Context(), acct, app, store, capture, requestKind(r, capture))
 	if problem != nil {
-		api.WriteProblem(w, problem)
+		api.WriteProblemForRequest(w, r, problem)
 		return
 	}
 	httpkit.WriteJSON(w, http.StatusOK, view)
@@ -122,16 +122,16 @@ func (s *Service) Download(w http.ResponseWriter, r *http.Request, acct state.Ac
 	kind := requestKind(r, capture)
 	merged, problem := mergeKind(r.Context(), acct, app, store, capture, kind)
 	if problem != nil {
-		api.WriteProblem(w, problem)
+		api.WriteProblemForRequest(w, r, problem)
 		return
 	}
 	if merged == nil {
-		api.WriteProblem(w, api.NewProblem(http.StatusNotFound, api.CodeNotFound, "Profile not captured", "the capture has no "+kind+" profile"))
+		api.WriteProblemForRequest(w, r, api.NewProblem(http.StatusNotFound, api.CodeNotFound, "Profile not captured", "the capture has no "+kind+" profile"))
 		return
 	}
 	body, err := profiling.EncodeCapture(merged)
 	if err != nil {
-		api.WriteProblem(w, api.ErrCapacity("profile could not be encoded"))
+		api.WriteProblemForRequest(w, r, api.ErrCapacity("profile could not be encoded"))
 		return
 	}
 	w.Header().Set("Content-Type", "application/octet-stream")

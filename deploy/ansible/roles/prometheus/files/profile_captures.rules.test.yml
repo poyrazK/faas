@@ -1,0 +1,73 @@
+# ADR-1155: on-demand profile capture alerts fire for platform-side failures
+# and slow manual captures, and stay quiet for results the customer causes.
+rule_files:
+  - faas.rules.yml
+evaluation_interval: 1m
+tests:
+  - name: platform-side capture failures fire
+    interval: 1m
+    input_series:
+      - series: schedd_profile_captures_total{job="schedd",instance="a",trigger="manual",result="timeout"}
+        values: 0+1x40
+      - series: schedd_profile_captures_total{job="schedd",instance="a",trigger="manual",result="ready"}
+        values: 0+0x40
+    alert_rule_test:
+      - eval_time: 3m
+        alertname: FaasProfileCapturesFailing
+        exp_alerts: []
+      - eval_time: 25m
+        alertname: FaasProfileCapturesFailing
+        exp_alerts:
+          - exp_labels:
+              severity: warn
+              component: schedd
+              family: profile_captures
+              public_status: internal
+            exp_annotations:
+              summary: "Most on-demand profile captures are failing on the platform side"
+              description: "More than half of the profile captures that finished in 30 minutes (at least five) timed out, lost their instance, could not reach its host, or could not be stored. Results the customer causes (no running instance, a deployment without collectors) do not count. Check schedd's profile_capture log lines and vmmd's CaptureProfile errors."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasProfileCaptures.md"
+
+  - name: failures the customer causes stay quiet
+    interval: 1m
+    input_series:
+      - series: schedd_profile_captures_total{job="schedd",instance="a",trigger="manual",result="no_running_instance"}
+        values: 0+1x40
+      - series: schedd_profile_captures_total{job="schedd",instance="a",trigger="slow_request",result="guest_refused"}
+        values: 0+1x40
+      - series: schedd_profile_captures_total{job="schedd",instance="a",trigger="manual",result="ready"}
+        values: 0+1x40
+    alert_rule_test:
+      - eval_time: 25m
+        alertname: FaasProfileCapturesFailing
+        exp_alerts: []
+
+  - name: slow manual captures fire, slow automatic ones do not
+    interval: 1m
+    input_series:
+      - series: schedd_profile_capture_queue_wait_seconds_bucket{job="schedd",instance="a",trigger="manual",le="60"}
+        values: 0+0x40
+      - series: schedd_profile_capture_queue_wait_seconds_bucket{job="schedd",instance="a",trigger="manual",le="120"}
+        values: 0+0x40
+      - series: schedd_profile_capture_queue_wait_seconds_bucket{job="schedd",instance="a",trigger="manual",le="300"}
+        values: 0+1x40
+      - series: schedd_profile_capture_queue_wait_seconds_bucket{job="schedd",instance="a",trigger="manual",le="+Inf"}
+        values: 0+1x40
+      - series: schedd_profile_capture_queue_wait_seconds_bucket{job="schedd",instance="b",trigger="cpu_saturation",le="+Inf"}
+        values: 0+5x40
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: FaasProfileCaptureQueueBacklog
+        exp_alerts: []
+      - eval_time: 25m
+        alertname: FaasProfileCaptureQueueBacklog
+        exp_alerts:
+          - exp_labels:
+              severity: warn
+              component: schedd
+              family: profile_captures
+              public_status: internal
+            exp_annotations:
+              summary: "Manual profile captures wait more than two minutes to start"
+              description: "The 95th percentile time a manual capture waited queued exceeded 120 s for 10 minutes. Each schedd runs four captures at a time and claims manual captures first; a capture still queued after 10 minutes fails as interrupted. Check that schedd drains captures and how long captures hold their slots."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasProfileCaptures.md"

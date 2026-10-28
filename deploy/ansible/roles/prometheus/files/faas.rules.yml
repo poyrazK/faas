@@ -8628,3 +8628,40 @@ groups:
           summary: "Alert notifications to a channel kind are failing platform-wide"
           description: "meterd could not unseal a channel's credentials, or every Slack, PagerDuty or email delivery failed for 30 minutes (at least three attempts, none delivered). One customer's broken destination does not fire this while others deliver; a platform failure such as the unseal key, the mail relay or egress does."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasCustomerObservability.md"
+
+  # ADR-1155 on-demand profile captures: apid queues them, schedd claims them
+  # and runs them on the instance's vmmd. docs/runbooks/FaasProfileCaptures.md
+  # covers both alerts.
+  - name: faas_profile_captures
+    interval: 30s
+    rules:
+      - alert: FaasProfileCapturesFailing
+        expr: |
+          (
+            sum (increase(schedd_profile_captures_total{result=~"instance_stopped|timeout|unreachable|not_stored"}[30m]))
+            / sum (increase(schedd_profile_captures_total[30m]))
+          ) > 0.5
+          and on () sum (increase(schedd_profile_captures_total[30m])) >= 5
+        for: 10m
+        labels:
+          severity: warn
+          component: schedd
+          family: profile_captures
+          public_status: internal
+        annotations:
+          summary: "Most on-demand profile captures are failing on the platform side"
+          description: "More than half of the profile captures that finished in 30 minutes (at least five) timed out, lost their instance, could not reach its host, or could not be stored. Results the customer causes (no running instance, a deployment without collectors) do not count. Check schedd's profile_capture log lines and vmmd's CaptureProfile errors."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasProfileCaptures.md"
+      - alert: FaasProfileCaptureQueueBacklog
+        expr: |
+          histogram_quantile(0.95, sum by (le) (rate(schedd_profile_capture_queue_wait_seconds_bucket{trigger="manual"}[15m]))) > 120
+        for: 10m
+        labels:
+          severity: warn
+          component: schedd
+          family: profile_captures
+          public_status: internal
+        annotations:
+          summary: "Manual profile captures wait more than two minutes to start"
+          description: "The 95th percentile time a manual capture waited queued exceeded 120 s for 10 minutes. Each schedd runs four captures at a time and claims manual captures first; a capture still queued after 10 minutes fails as interrupted. Check that schedd drains captures and how long captures hold their slots."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasProfileCaptures.md"

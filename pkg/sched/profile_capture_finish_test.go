@@ -14,6 +14,8 @@ import (
 	"github.com/onebox-faas/faas/pkg/profileproto"
 	"github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/state"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 func TestProfileCaptureOutcomeDropsProfilesOutsideStoreBounds(t *testing.T) {
@@ -84,5 +86,29 @@ func TestFinishProfileCapture(t *testing.T) {
 				t.Fatalf("fallback finish = %+v with %d profiles", last, f.blobs[len(f.blobs)-1])
 			}
 		})
+	}
+}
+
+// TestProfileCaptureResultLabel pins the metric result of a finished capture,
+// which the FaasProfileCapturesFailing alert splits into the customer's and
+// the platform's.
+func TestProfileCaptureResultLabel(t *testing.T) {
+	for _, tc := range []struct {
+		capture, finish error
+		want            string
+	}{
+		{nil, nil, "ready"},
+		{sched.ErrNoRunningInstance, nil, "no_running_instance"},
+		{status.Error(codes.NotFound, "gone"), nil, "instance_stopped"},
+		{status.Error(codes.FailedPrecondition, "redeploy"), nil, "guest_refused"},
+		{status.Error(codes.DeadlineExceeded, "slow"), nil, "timeout"},
+		{context.DeadlineExceeded, nil, "timeout"},
+		{status.Error(codes.Unavailable, "down"), nil, "unreachable"},
+		{nil, errors.New("connection reset"), "not_stored"},
+		{nil, state.ErrNotFound, "gone"},
+	} {
+		if got := sched.ProfileCaptureResultLabel(tc.capture, tc.finish); got != tc.want {
+			t.Errorf("result(%v, %v) = %q, want %q", tc.capture, tc.finish, got, tc.want)
+		}
 	}
 }

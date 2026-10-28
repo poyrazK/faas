@@ -237,8 +237,8 @@ func TestSampleNodeInspectorRefusesAnotherProcess(t *testing.T) {
 	if _, err := sampleNodeInspector(context.Background(), f.start(t), 4242, true, strings.Repeat("e", 32)); !errors.Is(err, errNodeOtherProcess) {
 		t.Fatalf("err = %v, want errNodeOtherProcess", err)
 	}
-	if seen := f.methods(); strings.Contains(seen, "Debugger.pause") {
-		t.Fatalf("another process was paused:\n%s", seen)
+	if seen := f.methods(); strings.Contains(seen, "Debugger.pause") || strings.Contains(seen, nodeCloseExpr) {
+		t.Fatalf("another process was paused, or its own inspector closed:\n%s", seen)
 	}
 }
 

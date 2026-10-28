@@ -756,6 +756,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		return fmt.Errorf("schedd: load capability catalog: %w", err)
 	}
 	engine.WithCapabilities(capabilities)
+	// ADR-1155: on-demand profile capture outcomes, queue waits and the
+	// automatic captures schedd skips, for the capture alerts.
+	engine.WithProfileCaptureMetrics(wire.NewProfileCaptureMetrics(ops.Registry()))
 	runtimeKeys, runtimeApply := runtimeconfig.WithPlatformFlags([]string{runtimeconfig.KeyDataPlacement},
 		func(ctx context.Context, key string, value json.RawMessage, _ int64) error {
 			enabled, err := runtimeconfig.Bool(value)

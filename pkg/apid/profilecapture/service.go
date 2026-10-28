@@ -66,16 +66,16 @@ func (s *Service) CaptureStore() (state.ProfileCaptureStore, bool) {
 // written the response.
 func (s *Service) Target(w http.ResponseWriter, r *http.Request, acct state.Account) (state.App, state.ProfileCaptureStore, bool) {
 	if !s.Enabled {
-		api.WriteProblem(w, api.NewProblem(http.StatusNotFound, api.CodeNotFound, "On-demand profiling unavailable", "on-demand profiling is not enabled on this installation"))
+		api.WriteProblemForRequest(w, r, api.NewProblem(http.StatusNotFound, api.CodeNotFound, "On-demand profiling unavailable", "on-demand profiling is not enabled on this installation"))
 		return state.App{}, nil, false
 	}
 	if !api.MustLimitsFor(acct.Plan).Profiling.Enabled {
-		api.WriteProblem(w, api.ErrPlanFeatureGated("profiling", acct.Plan))
+		api.WriteProblemForRequest(w, r, api.ErrPlanFeatureGated("profiling", acct.Plan))
 		return state.App{}, nil, false
 	}
 	store, ok := s.CaptureStore()
 	if !ok {
-		api.WriteProblem(w, api.ErrCapacity("profile capture storage is unavailable"))
+		api.WriteProblemForRequest(w, r, api.ErrCapacity("profile capture storage is unavailable"))
 		return state.App{}, nil, false
 	}
 	app, ok := s.Host.LoadApp(w, r, acct, r.PathValue("slug"))
@@ -90,12 +90,12 @@ func (s *Service) Create(w http.ResponseWriter, r *http.Request, acct state.Acco
 	}
 	var req api.CreateProfileCaptureRequest
 	if err := httpkit.DecodeJSONSized(r, &req, api.ProfileControlMaxBytes); err != nil {
-		api.WriteProblem(w, api.ErrValidation("invalid profile capture request"))
+		api.WriteProblemForRequest(w, r, api.ErrValidation("invalid profile capture request"))
 		return
 	}
 	capture, problem := s.Queue(r.Context(), acct, app, store, req)
 	if problem != nil {
-		api.WriteProblem(w, problem)
+		api.WriteProblemForRequest(w, r, problem)
 		return
 	}
 	httpkit.WriteJSON(w, http.StatusAccepted, capture)
@@ -152,7 +152,7 @@ func (s *Service) List(w http.ResponseWriter, r *http.Request, acct state.Accoun
 	}
 	captures, err := store.ListProfileCaptures(r.Context(), acct.ID, app.ID)
 	if err != nil {
-		api.WriteProblem(w, api.ErrCapacity("profile captures are unavailable"))
+		api.WriteProblemForRequest(w, r, api.ErrCapacity("profile captures are unavailable"))
 		return
 	}
 	httpkit.WriteJSON(w, http.StatusOK, api.ProfileCaptureList{Captures: captures})
@@ -175,7 +175,7 @@ func (s *Service) Get(w http.ResponseWriter, r *http.Request, acct state.Account
 func (s *Service) Owned(w http.ResponseWriter, r *http.Request, acct state.Account, app state.App, store state.ProfileCaptureStore) (api.ProfileCapture, bool) {
 	capture, problem := load(r.Context(), acct, app, store, r.PathValue("id"))
 	if problem != nil {
-		api.WriteProblem(w, problem)
+		api.WriteProblemForRequest(w, r, problem)
 		return capture, false
 	}
 	return capture, true
@@ -190,14 +190,14 @@ func (s *Service) Delete(w http.ResponseWriter, r *http.Request, acct state.Acco
 	}
 	id := r.PathValue("id")
 	if _, err := uuid.Parse(id); err != nil {
-		api.WriteProblem(w, captureNotFound())
+		api.WriteProblemForRequest(w, r, captureNotFound())
 		return
 	}
 	if err := store.DeleteProfileCapture(r.Context(), acct.ID, app.ID, id); errors.Is(err, state.ErrNotFound) {
-		api.WriteProblem(w, captureNotFound())
+		api.WriteProblemForRequest(w, r, captureNotFound())
 		return
 	} else if err != nil {
-		api.WriteProblem(w, api.ErrCapacity("profile capture could not be deleted"))
+		api.WriteProblemForRequest(w, r, api.ErrCapacity("profile capture could not be deleted"))
 		return
 	}
 	s.Host.Audit(r.Context(), "profile_capture.deleted", acct.ID, map[string]any{"app_id": app.ID, "capture_id": id})

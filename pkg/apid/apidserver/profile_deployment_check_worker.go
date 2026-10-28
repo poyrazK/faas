@@ -34,44 +34,52 @@ func startProfileDeploymentChecks(ctx context.Context, s *server, log *slog.Logg
 	}()
 }
 
+// runProfileDeploymentChecksOnce runs one pass of the deployment, canary and
+// periodic profile checks. A failing stage does not hold back the others;
+// their errors are joined.
 func (s *server) runProfileDeploymentChecksOnce(ctx context.Context) error {
+	var errs []error
 	if store, ok := s.store.(state.ProfileDeploymentCheckStore); ok && s.profileBackend != nil {
-		if err := store.MaintainProfileDeploymentChecks(ctx, time.Now()); err != nil {
-			return err
-		}
-		if _, err := store.DiscoverProfileDeploymentChecks(ctx, time.Now()); err != nil {
-			return err
-		}
-		for range api.ProfileAutoBatchSize {
-			if ctx.Err() != nil {
-				return ctx.Err()
-			}
-			work, err := store.ClaimProfileDeploymentCheck(ctx, time.Now())
-			if errors.Is(err, state.ErrNotFound) {
-				break
-			}
-			if err != nil {
-				return err
-			}
-			assessment, retry := s.assessProfileDeploymentCheck(ctx, work)
-			out, err := store.FinishProfileDeploymentCheck(ctx, work, assessment, retry, time.Now())
-			if errors.Is(err, state.ErrProfileCheckLease) || errors.Is(err, state.ErrNotFound) {
-				continue
-			}
-			if err != nil {
-				return err
-			}
-			if out.CompletedAt != nil {
-				s.audit.Emit(ctx, "profile_deployment.checked", &work.AccountID, map[string]any{"app_id": out.AppID, "deployment_id": out.DeploymentID, "status": out.Status, "investigation_id": out.InvestigationID})
-			}
-		}
+		errs = append(errs, s.runDeploymentProfileChecksOnce(ctx, store))
 	}
 	if store, ok := s.store.(state.ProfileCanaryCheckStore); ok {
-		if err := s.runProfileCanaryChecksOnce(ctx, store); err != nil {
+		errs = append(errs, s.runProfileCanaryChecksOnce(ctx, store))
+	}
+	errs = append(errs, s.runProfilePeriodicChecksOnce(ctx))
+	return errors.Join(errs...)
+}
+
+func (s *server) runDeploymentProfileChecksOnce(ctx context.Context, store state.ProfileDeploymentCheckStore) error {
+	if err := store.MaintainProfileDeploymentChecks(ctx, time.Now()); err != nil {
+		return err
+	}
+	if _, err := store.DiscoverProfileDeploymentChecks(ctx, time.Now()); err != nil {
+		return err
+	}
+	for range api.ProfileAutoBatchSize {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		work, err := store.ClaimProfileDeploymentCheck(ctx, time.Now())
+		if errors.Is(err, state.ErrNotFound) {
+			break
+		}
+		if err != nil {
 			return err
 		}
+		assessment, retry := s.assessProfileDeploymentCheck(ctx, work)
+		out, err := store.FinishProfileDeploymentCheck(ctx, work, assessment, retry, time.Now())
+		if errors.Is(err, state.ErrProfileCheckLease) || errors.Is(err, state.ErrNotFound) {
+			continue
+		}
+		if err != nil {
+			return err
+		}
+		if out.CompletedAt != nil {
+			s.audit.Emit(ctx, "profile_deployment.checked", &work.AccountID, map[string]any{"app_id": out.AppID, "deployment_id": out.DeploymentID, "status": out.Status, "investigation_id": out.InvestigationID})
+		}
 	}
-	return s.runProfilePeriodicChecksOnce(ctx)
+	return nil
 }
 
 func (s *server) runProfileCanaryChecksOnce(ctx context.Context, store state.ProfileCanaryCheckStore) error {
@@ -184,7 +192,7 @@ func (s *server) assessProfileDeploymentCheck(ctx context.Context, work state.Pr
 		status := s.profileInvestigationWindow(ctx, acct, app, q)
 		if status.Status != "retained" {
 			out.Reason = status.Detail
-			return out, status.Status == "backend_unavailable"
+			return out, status.Status == "backend_unavailable" && check.Attempts < api.ProfileAutoMaxAttempts
 		}
 	}
 	out = s.assessOwnedProfileRegression(ctx, acct, app, input, check.Config.Options)
