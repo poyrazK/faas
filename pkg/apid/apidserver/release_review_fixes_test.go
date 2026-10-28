@@ -24,7 +24,7 @@ func TestFreezeRefusesTrafficForAReleaseParkedBeforeIt(t *testing.T) {
 		t.Helper()
 		d, err := store.CreateDeployment(ctx, state.Deployment{AppID: f.release.AppID, Kind: state.DeploymentKindImage,
 			ImageDigest: "sha256:" + apidserver.Repeat(string(digit), 64), Status: state.DeployLive, CreatedAt: created,
-			TrafficPercent: 0, TrafficPercentExplicit: true})
+			RootfsKey: "apps/frz-dark/" + string(digit) + ".ext4", TrafficPercent: 0, TrafficPercentExplicit: true})
 		if err != nil {
 			t.Fatal(err)
 		}
