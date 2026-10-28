@@ -409,7 +409,11 @@ How each gate judges:
   `gregale ai deployments` lists them by deployment.
 
 A gate that has too few requests or values (`--min-samples`, default 20) is
-not judged. A gate never holds a rollout on missing evidence.
+not judged. A gate never holds a rollout on missing evidence. The rollout
+decision still lists it, with `not_judged: true` and what it was waiting for,
+such as "not judged: 4 of 20 requests so far", so a canary that completes on a
+quiet app shows which gates never ran. An SLO that a gate judges cannot be
+deleted until the gate is removed.
 
 ## What changed between releases
 
@@ -487,7 +491,12 @@ Who may approve:
   and admins; `developer` adds developers.
 - **The deployer:** their own approval does not count unless you pass
   `--allow-self-approval`. An app outside an organization has one person,
-  whose own approval always counts.
+  whose own approval always counts. A GitHub push names a GitHub login, not a
+  Gregale account, so its author can't be recognised; without
+  `--allow-self-approval` a pushed release needs one more approval than the
+  policy asks.
+- **Once approved:** a release that has its approvals is decided. Further
+  approvals and rejections are refused; to stop it, abort its rollout.
 - **Changing the policy:** only owners and admins can change or remove it.
 
 Tell people when a release waits, is approved or rejected, or times out:
@@ -562,6 +571,10 @@ with `release_frozen`, which names the freeze, its reason and its creator:
 - promotions into `production`;
 - `gregale release retry` and the dashboard's retry button. A retry can't
   carry an override; deploy again with `--override-freeze` instead.
+- giving traffic to a release deployed without traffic before the freeze
+  began (`traffic`, promote, or a rollback to it): it has never served, so it
+  waits like a new deploy. A release deployed during the freeze, or one that
+  served before, is not refused.
 
 A GitOps source managing the `production` environment keeps its sync
 unconverged while a freeze covers one of its apps, and activates the new
@@ -584,7 +597,7 @@ gregale environment promote shop --from staging --to production --override-freez
 ```
 
 The override is recorded in the audit log (`release.freeze_overridden`) with
-the freezes it overrode. A GitHub push can't carry an override, so a frozen
+the freezes it overrode and the deployment it created. A GitHub push can't carry an override, so a frozen
 push fails, and the commit shows why.
 
 An `--after-rollback` freeze is a policy. Each time the rollout circuit
