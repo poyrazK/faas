@@ -47,14 +47,25 @@ func HTTPAdmissionEnabled(value string) (bool, error) {
 // EgressCircuitBreakerEnabled is shared by schedd and vmmd. An unset flag
 // defaults off; false/0 stay off, and malformed values fail startup rather
 // than silently enabling or disabling protection.
+// TrafficScopedBindingGuardEnabled parses apid's
+// FAAS_TRAFFIC_SCOPED_BINDING_GUARD (ADR-20261027163626). Unset is off.
+func TrafficScopedBindingGuardEnabled(value string) (bool, error) {
+	return envSwitch("FAAS_TRAFFIC_SCOPED_BINDING_GUARD", value)
+}
+
 func EgressCircuitBreakerEnabled(value string) (bool, error) {
+	return envSwitch("FAAS_EGRESS_CIRCUIT_BREAKER", value)
+}
+
+// envSwitch parses an off-by-default boolean environment switch.
+func envSwitch(name, value string) (bool, error) {
 	value = strings.TrimSpace(value)
 	if value == "" {
 		return false, nil
 	}
 	enabled, err := strconv.ParseBool(value)
 	if err != nil {
-		return false, fmt.Errorf("FAAS_EGRESS_CIRCUIT_BREAKER must be a boolean")
+		return false, fmt.Errorf("%s must be a boolean", name)
 	}
 	return enabled, nil
 }
