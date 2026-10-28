@@ -191,6 +191,9 @@ func openDirect(ctx context.Context, appName, ordinaryDSN string) (*pgxpool.Pool
 		// operator looks when a LISTEN or an advisory lock misbehaves.
 		cfg.ConnConfig.RuntimeParams["application_name"] = appName + "-direct"
 	}
+	if appName != MigratorAppName {
+		applyDaemonSessionTimeouts(cfg.ConnConfig.RuntimeParams)
+	}
 	pool, err := pgxpool.NewWithConfig(ctx, cfg)
 	if err != nil {
 		return nil, fmt.Errorf("db: open direct pool: %w", err)
@@ -222,9 +225,15 @@ func openDirect(ctx context.Context, appName, ordinaryDSN string) (*pgxpool.Pool
 // without introducing a transaction pooler, so retain pgx's typed default
 // mode: QueryExecModeExec guesses []byte JSONB parameters as bytea text.
 func applyPooledExecMode(cfg *pgxpool.Config, ordinaryDSN string) {
-	directDSN := os.Getenv(DirectDSNEnv)
-	if directDSN == "" || directDSN == ordinaryDSN {
+	if !pooledDSN(ordinaryDSN) {
 		return
 	}
 	cfg.ConnConfig.DefaultQueryExecMode = pgx.QueryExecModeExec
+}
+
+// pooledDSN reports whether ordinaryDSN reaches a transaction-mode pooler:
+// a separate direct DSN is configured beside it.
+func pooledDSN(ordinaryDSN string) bool {
+	directDSN := os.Getenv(DirectDSNEnv)
+	return directDSN != "" && directDSN != ordinaryDSN
 }

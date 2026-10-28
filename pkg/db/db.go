@@ -255,6 +255,28 @@ const (
 	MigrationLockTimeout      = 10 * time.Second
 )
 
+// Daemon session bounds. Nothing bounded a daemon's statements or open
+// transactions, and some transactions wait on network work while holding row
+// locks, so one stuck session could hold locks until an operator killed it
+// (bug hunt 2026-10-28 H59). These are backstops well above the slowest
+// statements that bound themselves with SET LOCAL; tighten them once
+// pg_stat_statements shows the fleet's longest statements. A DSN that names
+// either setting keeps its own value. LISTEN and session advisory locks are
+// idle outside a transaction, so neither bound touches them.
+const (
+	DaemonStatementTimeout                = 5 * time.Minute
+	DaemonIdleInTransactionSessionTimeout = 2 * time.Minute
+)
+
+func applyDaemonSessionTimeouts(params map[string]string) {
+	if _, set := params["statement_timeout"]; !set {
+		params["statement_timeout"] = strconv.FormatInt(DaemonStatementTimeout.Milliseconds(), 10)
+	}
+	if _, set := params["idle_in_transaction_session_timeout"]; !set {
+		params["idle_in_transaction_session_timeout"] = strconv.FormatInt(DaemonIdleInTransactionSessionTimeout.Milliseconds(), 10)
+	}
+}
+
 func poolConfig(dsn, appName string, readOnly bool) (*pgxpool.Config, error) {
 	cfg, err := pgxpool.ParseConfig(dsn)
 	if err != nil {
@@ -286,6 +308,10 @@ func poolConfig(dsn, appName string, readOnly bool) (*pgxpool.Config, error) {
 		// bound with SET LOCAL (docs/runbooks/migration-rollback.md).
 		cfg.ConnConfig.RuntimeParams["statement_timeout"] = strconv.FormatInt(MigrationStatementTimeout.Milliseconds(), 10)
 		cfg.ConnConfig.RuntimeParams["lock_timeout"] = strconv.FormatInt(MigrationLockTimeout.Milliseconds(), 10)
+	} else if !pooledDSN(dsn) {
+		// pgbouncer refuses unknown startup parameters; behind it the
+		// pooler's own idle_transaction_timeout applies instead.
+		applyDaemonSessionTimeouts(cfg.ConnConfig.RuntimeParams)
 	}
 	// Safe under a transaction-mode pooler; a no-op without one.
 	applyPooledExecMode(cfg, dsn)
