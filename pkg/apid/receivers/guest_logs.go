@@ -25,6 +25,8 @@ import (
 	collectorlogspb "go.opentelemetry.io/proto/otlp/collector/logs/v1"
 	commonpb "go.opentelemetry.io/proto/otlp/common/v1"
 	logspb "go.opentelemetry.io/proto/otlp/logs/v1"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
 
@@ -128,6 +130,13 @@ func (g *GuestSpansIngester) ingestLogs(ctx context.Context, req *apidpb.IngestG
 func (r *spansWriterReceiver) IngestGuestLogs(ctx context.Context, req *apidpb.IngestGuestSpansRequest) (*apidpb.IngestGuestLogsResponse, error) {
 	if !r.enabled || r.guest == nil {
 		return &apidpb.IngestGuestLogsResponse{Outcome: guestSpansUnavailable}, nil
+	}
+	refused, err := r.guest.bindToPeerNode(ctx, req)
+	if err != nil {
+		return nil, status.Errorf(codes.Unauthenticated, "guest logs: %v", err)
+	}
+	if refused != "" {
+		return &apidpb.IngestGuestLogsResponse{Outcome: refused}, nil
 	}
 	return r.guest.ingestLogs(ctx, req), nil
 }

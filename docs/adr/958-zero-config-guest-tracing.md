@@ -122,7 +122,8 @@ On that shared listener any active compute node can submit spans for any
 account, exactly as gatewayd-internal on the same node already can through
 `WriteSpansSummary`. Binding each export to an instance scheduled on the
 authenticated node (via `NodeIdentityResolver`) would tighten both producers
-together and is left to a follow-up.
+together and is left to a follow-up. (Guest exports are bound since the
+2026-10-28 amendment below.)
 
 apid checks the account's plan (`DebugTelemetryEnabled`), takes from the
 existing per-account `DebugTelemetryRequestsPerMinute` bucket, bounds buffered
@@ -365,3 +366,54 @@ passed. A scratch image built only on the package, deployed with
 unsampled `traceparent`, put its `SELECT orders` (`postgresql`) and loopback
 `http` client spans on the request evidence as `app_dependency`. The run left
 no VM resources behind.
+
+## Amendment (2026-10-28): guest exports are bound to the sending node
+
+### Context
+
+§4 left the shared mTLS listener unbound: a compute node's `vmmd/apid-client`
+leaf could submit guest spans, and since the ADR-213 runtime adapter guest
+log records, for any account. Guest logs land in the customer's log stream,
+so a frame forged for another tenant would be visible in their dashboard and
+log search. ADR-20261018083536 slice B already binds vmmd's runtime log lines
+to the caller's node through `NodeIdentityResolver`.
+
+### Decision
+
+On the mTLS listener apid accepts an `IngestGuestSpans` or `IngestGuestLogs`
+frame only when its instance belongs to the frame's app and deployment, the
+app to the frame's account, and the instance runs on the node the caller's
+certificate names, or ran there before it migrated
+(`MigrationInstanceByID`). Otherwise:
+
+- another node's, an unknown or a non-UUID instance, or a mismatched app,
+  deployment or account, answers `invalid`, which vmmd turns into a permanent
+  refusal so the SDK does not retry;
+- a certificate that names no registered node answers `Unauthenticated`;
+- a failed lookup answers `unavailable`, so the SDK retries.
+
+Decisions are cached per node and principal: an accepted one for a minute, a
+refusal for five seconds (a migrating instance's new node may export before
+its row names it), at most 50,000 entries. A steady exporter therefore costs
+no database read per frame. The local Unix socket (single box) and an apid
+without a node resolver are unchanged. The code is
+`pkg/apid/receivers/guest_ingest_binding.go`, wired in apidserver beside the
+runtime log binding.
+
+### Consequences
+
+- No compute node certificate can write another node's apps' guest spans or
+  logs.
+- gatewayd-internal's `WriteSpansSummary` and request telemetry stay unbound
+  by design: a gateway routes every app's traffic, so its telemetry is not
+  tied to instances on its own node.
+- Refused frames log a warning once per cache window, naming the node and
+  instance.
+
+### Validation
+
+Unit (`pkg/apid/receivers`, `-race`): own and migrated instances accepted;
+another node's instance, another deployment, app or account, an unknown and a
+non-UUID instance refused, for spans and logs; an unregistered node
+`Unauthenticated`; local socket and unbound apid unchanged; cache hit, expiry,
+refusal expiry after migration, lookup errors not cached, and the bound.
