@@ -1157,9 +1157,10 @@ apid both seals and opens account values, so it holds `account.age` itself;
 there is no recipient file. It covers TOTP secrets, inbound webhook
 secrets, billing provider keys, managed workflow plans, PagerDuty
 acknowledgement secrets, GitLab, Slack and Linear credentials, product
-email values and managed realtime credentials. The data pipeline and
-project clone columns stay on the fleet key until a later release (ADR
-20261022111812, tenth to thirteenth slices).
+email values and managed realtime credentials. The project clone columns
+stay on the fleet key until a later release (ADR 20261022111812, tenth to
+thirteenth slices). Data pipeline values are not part of this stage: they
+have always been sealed to the pipeline workers' own `pipeline.age`.
 
 ### 12a. Create the identity (operator machine)
 

@@ -110,10 +110,14 @@ sealing customer secrets but can no longer open them.
 | `storage` | `domains/storage.age` | s3-gatewayd | where s3-gatewayd runs | `object_storage_s3_credentials` |
 | `delivery` | `domains/delivery.age` | schedd | both | `execution_payloads`, `app_webhooks`, trigger config envelopes, `commit_sources` |
 | `control` | `domains/control.age` | schedd; `gregalectl` at node join | both | `cluster_signing_keys`, internal service keys (`internal_svc`, `cluster_svc`) |
-| `account` | `domains/account.age` | apid, apid clone worker, apid data-pipeline worker | control plane | `accounts.mfa_secret_encrypted`, `agent_execution_workflows.sealed_plan`, `inbound_webhook_endpoints`, GitLab, Slack, Linear and MCP OAuth rows, `managed_realtime_*`, `project_environment_clone_*`, `data_pipeline_*`, `product_control_email_*`, `account_billing_connections`, `mcp_readiness_pagerduty_acknowledgements` |
+| `account` | `domains/account.age` | apid, apid clone worker | control plane | `accounts.mfa_secret_encrypted`, `agent_execution_workflows.sealed_plan`, `inbound_webhook_endpoints`, GitLab, Slack, Linear and MCP OAuth rows, `managed_realtime_*`, `project_environment_clone_*`, `product_control_email_*`, `account_billing_connections`, `mcp_readiness_pagerduty_acknowledgements` |
 
-Internal mail and livequeryd keep their existing dedicated identities and
-join the registry as the `mail`, `mail-verification` and `livequery` domains.
+Internal mail, livequeryd and data pipelines keep their existing dedicated
+identities and join the registry as the `mail`, `mail-verification`,
+`livequery` and `pipeline` domains. Data pipelines were first listed under
+`account`; ADR-1591 had already sealed them to `pipeline.age`, which only the
+data-pipeline and pipeline-alert workers hold, with apid holding the
+recipient alone, so they never needed a move.
 
 Identities live under `/etc/faas/secrets/domains/` (mode 0400 root:root) and
 are delivered to units with `LoadCredential=`, as ADR-127 requires. Each
