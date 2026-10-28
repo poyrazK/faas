@@ -579,6 +579,7 @@ var EnvContract = []EnvVar{
 	{Name: "FAAS_LOG_ARCHIVE_INTERVAL", Owners: []string{"shared"}, Source: EnvSourceDefault},
 	{Name: "FAAS_LOG_ARCHIVE_KEY_ID", Owners: []string{"shared"}, Source: EnvSourceDefault},
 	{Name: "FAAS_LOG_ARCHIVE_LOCAL_BYTES_MAX", Owners: []string{"shared"}, Source: EnvSourceDefault},
+	{Name: "FAAS_LOG_ARCHIVE_PART_OBJECTS", Owners: []string{"shared"}, Source: EnvSourceDefault, Note: "1 makes apid's and vmmd's archive shippers upload one part object per flush instead of re-uploading the whole day (ADR-20261028110000); set only once every gatewayd-internal reads parts"},
 	{Name: "FAAS_LOG_ARCHIVE_REGION", Owners: []string{"shared"}, Source: EnvSourceDefault},
 	{Name: "FAAS_LOG_ARCHIVE_RETENTION_DAYS", Owners: []string{"shared"}, Source: EnvSourceDefault},
 	{Name: "FAAS_LOG_ARCHIVE_SECRET", Owners: []string{"shared"}, Source: EnvSourceDefault},

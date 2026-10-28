@@ -7503,11 +7503,19 @@ haveApp:
 		}
 	}
 	// ADR-201 §2 (H4-68): an instance whose circuit is open is not
-	// selectable. An exact-deployment smoke must reach its deployment and is
-	// never re-picked.
-	if !exactDeployment {
+	// selectable. Every public request picks an exact deployment once its
+	// routing is pinned (ADR-570), so the re-pick stays within that
+	// deployment (ADR-091 amendment 2026-10-27, GA hardening: the check used
+	// to skip every exact-deployment pick, which left public traffic outside
+	// the breaker). A deployment smoke or route probe verifies one
+	// deployment's instance and is never re-picked.
+	if !deploymentSmoke && !routeProbe {
+		repick := func() PickResult { return h.pickAfterCapacity(app, "", versionKey) }
+		if exactDeployment {
+			repick = func() PickResult { return pickPublicDeployment(h.backend, app.ID, exactDeploymentID, "") }
+		}
 		var allowed, probe bool
-		pick, allowed, probe = h.selectByCircuit(app.ID, pick, func() PickResult { return h.pickAfterCapacity(app, "", versionKey) })
+		pick, allowed, probe = h.selectByCircuit(app.ID, pick, repick)
 		if !allowed {
 			writeCircuitOpen(w)
 			h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})

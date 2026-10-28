@@ -52,4 +52,7 @@ type Service struct {
 	// compute registry and apply the same generation locally without fleet
 	// ACKs.
 	FleetRequired bool
+
+	// Metrics counts convergence skips and failures; nil records nothing.
+	Metrics *Metrics
 }

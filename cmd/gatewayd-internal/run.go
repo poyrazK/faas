@@ -1754,6 +1754,7 @@ func runOnPool(ctx context.Context, log *slog.Logger, pool *pgxpool.Pool) error 
 		return err
 	}
 	backend := gateway.NewPGBackend(router, sched, log).
+		WithAccountAppLister(accountAppIDLister(pgStore)).
 		WithTargetReadinessLoader(newTargetReadinessLoader(pgStore)).
 		WithTargetPlacementLoader(newTargetPlacementLoader(pgStore)).
 		WithProjectReleaseResolver(func(ctx context.Context, appID, scope, requestedID string) (string, string, error) {
@@ -3624,21 +3625,23 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 				// retained for the warm-hint stream (single-stream
 				// fallback); the log stream is the second fan-in
 				// consumer and resolves per-app.
-				ScheddFor: appLogsScheddResolver{store: deps.pgStore, router: deps.scheddRouter},
-				Store:     deps.pgStore,
-				Log:       log,
-				Ops:       nil,
-				Traffic:   deps.trafficRevocations,
+				ScheddFor:         appLogsScheddResolver{store: deps.pgStore, router: deps.scheddRouter},
+				Store:             deps.pgStore,
+				Log:               log,
+				Ops:               nil,
+				Traffic:           deps.trafficRevocations,
+				CapabilityAllowed: deps.capabilityAllowed,
 			},
 			archive: &ArchiveLogsHandler{
-				Auth:    deps.authMw,
-				S3:      deps.archiveS3,
-				Bucket:  deps.archiveBucket,
-				Store:   deps.pgStore,
-				Scope:   deps.pgStore,
-				Log:     log,
-				Ops:     nil,
-				Traffic: deps.trafficRevocations,
+				Auth:              deps.authMw,
+				S3:                deps.archiveS3,
+				Bucket:            deps.archiveBucket,
+				Store:             deps.pgStore,
+				Scope:             deps.pgStore,
+				Log:               log,
+				Ops:               nil,
+				Traffic:           deps.trafficRevocations,
+				CapabilityAllowed: deps.capabilityAllowed,
 			},
 		})
 		logsHandler = logsMux
@@ -3659,6 +3662,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			log,
 		)
 		manager.standardNode = newLocalNodeID(deps.pgStore, cfg.NodeName)
+		manager.capabilityAllowed = deps.capabilityAllowed
 		if cfg.NodeName != "" {
 			manager.owns = newAppLogDrainOwnership(deps.pgStore, cfg.NodeName)
 		}

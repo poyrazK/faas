@@ -228,7 +228,7 @@ func (s *Service) createRule(ctx context.Context, acct state.Account, app state.
 		switch {
 		case errors.As(err, &qe):
 			if qe.PerKind {
-				return m, api.ErrPlanEdgeRuleKindQuotaReached(acct.Plan, qe.Kind, qe.Limit, qe.Observed)
+				return m, api.ErrPlanEdgeRuleKindQuotaReached(acct.Plan, qe.Kind, qe.Observed, qe.Limit)
 			}
 			return m, api.ErrPlanLimitEdgeRules(acct.Plan, qe.Limit, qe.Observed)
 		case errors.Is(err, state.ErrNotFound):
