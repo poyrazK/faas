@@ -9043,6 +9043,21 @@
     "kind": "account_identity"
   },
   {
+    "table": "managed_postgres_cap_events",
+    "columns": [
+      "allowance_unit_seconds",
+      "ceiling_unit_seconds",
+      "mail_intent_id",
+      "overage_enabled",
+      "period_start",
+      "reached_at",
+      "subject_id",
+      "threshold",
+      "used_unit_seconds"
+    ],
+    "kind": "account_identity"
+  },
+  {
     "table": "managed_postgres_bindings",
     "columns": [
       "access",
