@@ -54,7 +54,7 @@ func buildLogsForUnrunDeployment(ctx context.Context, client *api.Client, deploy
 				Line string `json:"line"`
 			}
 			if json.Unmarshal([]byte(e.Data), &entry) == nil && entry.Line != "" {
-				_, _ = fmt.Fprintln(osStdout, entry.Line)
+				_, _ = fmt.Fprintln(osStdout, terminalSafe(entry.Line))
 			}
 		case "end":
 			return finishUnrunDeploymentLogs(ctx, client, dep), true

@@ -506,6 +506,7 @@ const UploadSessionAlreadyCommittedCode = uploadSessionAlreadyCommittedCode
 const UploadSessionOffsetConflictCode = uploadSessionOffsetConflictCode
 
 // Package-level vars
+var TerminalSafe = terminalSafe
 var AuthAdminHTTPClient = &authAdminHTTPClient
 var AuthAdminKeyID = &authAdminKeyID
 var AuthAdminKeyName = &authAdminKeyName

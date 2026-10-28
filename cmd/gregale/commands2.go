@@ -7758,9 +7758,9 @@ streamLoop:
 				}
 				if !opts.quiet && json.Unmarshal([]byte(e.Data), &entry) == nil && entry.Line != "" {
 					if opts.prefixBuildLogs {
-						fmt.Printf("build | %s\n", entry.Line)
+						fmt.Printf("build | %s\n", terminalSafe(entry.Line))
 					} else {
-						fmt.Println(entry.Line)
+						fmt.Println(terminalSafe(entry.Line))
 					}
 				}
 			case "stage":
