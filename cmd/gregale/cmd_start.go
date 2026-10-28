@@ -722,6 +722,6 @@ func (r *startRunner) finish() {
 	} else {
 		_, _ = fmt.Fprintf(osStdout, "  Inspect: %s deployment %s\n", cli, recoveryArgument(r.session.DeploymentID))
 	}
-	_, _ = fmt.Fprintf(osStdout, "  Delete app: %s apps rm %s\n", cli, app)
+	_, _ = fmt.Fprintf(osStdout, "  Delete app: %s app delete %s\n", cli, app)
 	r.printPreviouslyVerified()
 }

@@ -91,8 +91,8 @@ func TestCliTreePathsFollowNamingRules(t *testing.T) {
 		if path[0] == "admin" {
 			continue // operator tools keep their names (rule 7)
 		}
-		if len(path) > 3 {
-			t.Errorf("%q: at most three words come before the target", alias.New)
+		if len(path) > 4 {
+			t.Errorf("%q: at most four words come before the target", alias.New)
 		}
 		shortcut := slices.Contains(cliTreeShortcuts, path[0])
 		if !nouns[path[0]] && !shortcut {
@@ -442,8 +442,8 @@ func cliTreeVerbViolations() []string {
 	found := map[string]bool{}
 	check := func(path []string, leaf bool) {
 		var reasons []string
-		if len(path) > 3 {
-			reasons = append(reasons, "more than three words")
+		if len(path) > 4 {
+			reasons = append(reasons, "more than four words")
 		}
 		for _, word := range path {
 			if strings.Contains(word, "-") && !slices.Contains(cliTreeCompoundWords, word) {

@@ -211,7 +211,7 @@ func TestCLIRegressionDeployRecoveryAndCancellation(t *testing.T) {
 	if err := json.Unmarshal([]byte(stderr.String()), &report); err != nil {
 		t.Fatal(err)
 	}
-	if report.Recovery.IdempotencyKey != key || report.Recovery.InspectCommand != "gregale --profile staging deployments --app demo" || report.Recovery.RetryFlag != "--idempotency-key="+key {
+	if report.Recovery.IdempotencyKey != key || report.Recovery.InspectCommand != "gregale --profile staging release list --app demo" || report.Recovery.RetryFlag != "--idempotency-key="+key {
 		t.Fatalf("recovery=%+v", report.Recovery)
 	}
 	retryKey, _ := deployIdempotencyKey(key, deployIdempotencyIntent{Slug: "demo", Image: "image@sha256:abc"})
@@ -243,7 +243,7 @@ func TestCLIRegressionDeployRecoveryAndCancellation(t *testing.T) {
 		if rollout {
 			stage = "rollout"
 		}
-		if code != 130 || !receipt.Interrupted || receipt.TimedOut || receipt.ID != "d1" || receipt.WaitStage != stage || receipt.Recovery == nil || !strings.HasPrefix(receipt.ResumeCommand, "gregale --profile staging deployment wait d1") {
+		if code != 130 || !receipt.Interrupted || receipt.TimedOut || receipt.ID != "d1" || receipt.WaitStage != stage || receipt.Recovery == nil || !strings.HasPrefix(receipt.ResumeCommand, "gregale --profile staging release wait d1") {
 			t.Fatalf("exit=%d receipt=%+v stderr=%s", code, receipt, stderr.String())
 		}
 		assertOneProblem(t, stderr.String())
