@@ -81,6 +81,26 @@ const chromiumDumpDOM = `mkdir -p /tmp/www
 chromium-browser --headless --no-sandbox --disable-gpu --dump-dom 'data:text/html,<p>gregale-chromium-ok</p>' > /tmp/www/index.html 2> /tmp/www/chromium.log || cat /tmp/www/chromium.log >> /tmp/www/index.html
 while true; do { printf 'HTTP/1.0 200 OK\r\nContent-Type: text/html\r\n\r\n'; cat /tmp/www/index.html; } | nc -l -p "$PORT"; done`
 
+// nodeRuntimeProbe serves the Node version, the image's NODE_VERSION, the
+// glibc the process loaded (from Node's diagnostic report), HOME, PATH and the
+// working directory.
+const nodeRuntimeProbe = `
+const http = require("http");
+const header = process.report.getReport().header;
+const body = JSON.stringify({
+  node: process.versions.node,
+  nodeVersionEnv: process.env.NODE_VERSION || "",
+  glibc: header.glibcVersionRuntime || "",
+  home: process.env.HOME || "",
+  path: process.env.PATH || "",
+  cwd: process.cwd(),
+});
+http.createServer((req, res) => {
+  res.writeHead(200, {"Content-Type": "application/json"});
+  res.end(body);
+}).listen(Number(process.env.PORT), "0.0.0.0");
+`
+
 func realImageCases() []realImageCase {
 	return []realImageCase{
 		{slug: "real-nginx", image: "docker.io/library/nginx:1.27-alpine", check: func(t *testing.T, body []byte) {
@@ -116,7 +136,43 @@ func realImageCases() []realImageCase {
 				t.Fatalf("prometheus body = %q", body)
 			}
 		}},
+		// Apache httpd on Debian: a glibc server with its default command.
+		{slug: "real-debian-httpd", image: "docker.io/library/httpd:2.4.62-bookworm", check: func(t *testing.T, body []byte) {
+			if !strings.Contains(string(body), "It works!") {
+				t.Fatalf("httpd body = %q", body)
+			}
+		}},
+		// A cmd-only override keeps the image's ENTRYPOINT (docker-entrypoint.sh),
+		// which prepends node to the -e argument; without it the argv is not
+		// executable and the deployment never goes live.
+		{slug: "real-node-runtime", image: "docker.io/library/node:22-bookworm-slim",
+			cmd: []string{"-e", nodeRuntimeProbe}, port: 8080, check: checkNodeRuntime},
 	}
+}
+
+func checkNodeRuntime(t *testing.T, body []byte) {
+	t.Helper()
+	var got struct {
+		Node           string `json:"node"`
+		NodeVersionEnv string `json:"nodeVersionEnv"`
+		Glibc          string `json:"glibc"`
+		Home           string `json:"home"`
+		Path           string `json:"path"`
+		Cwd            string `json:"cwd"`
+	}
+	if err := json.Unmarshal(body, &got); err != nil {
+		t.Fatalf("node probe body %q: %v", body, err)
+	}
+	if got.Node == "" || got.Node != got.NodeVersionEnv {
+		t.Errorf("node %q, image NODE_VERSION %q", got.Node, got.NodeVersionEnv)
+	}
+	if got.Glibc == "" {
+		t.Errorf("no glibc runtime version: %+v", got)
+	}
+	if got.Home == "" || got.Home == "/" || !strings.Contains(got.Path, "/usr/local/bin") {
+		t.Errorf("HOME/PATH: %+v", got)
+	}
+	t.Logf("node runtime probe: %s", body)
 }
 
 func checkPythonRuntime(t *testing.T, body []byte) {
@@ -149,7 +205,8 @@ func checkPythonRuntime(t *testing.T, body []byte) {
 // way customers deploy them, and checks each serves through the gateway and
 // wakes from its snapshot: nginx, a Python probe of the guest's container
 // environment, Java's InetAddress.getLocalHost, headless Chromium, a static
-// binary FROM scratch and a named non-root USER. The official images are
+// binary FROM scratch, a named non-root USER, httpd on Debian/glibc and a
+// Node probe launched through its image's entrypoint. The official images are
 // multi-platform indexes, so those also resolve the amd64 manifest. Docker
 // Hub pulls go through mirror.gcr.io first (ADR-20261025114554).
 //
