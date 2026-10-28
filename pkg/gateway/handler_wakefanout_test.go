@@ -227,8 +227,10 @@ func TestHandler_WakeFanOut_AdmitsOnceEvenIfRetryStillCold(t *testing.T) {
 	if got := b.totalAdmits.Load(); got != 1 {
 		t.Fatalf("totalAdmits = %d, want 1 (single wake-fan-out retry)", got)
 	}
-	if got := b.picks.Load(); got != 2 {
-		t.Errorf("Pick calls = %d, want 2 (initial + single retry)", got)
+	// After the single retry the handler only looks for a target to become
+	// routable (settleAtCapacity, #5709); those picks never admit.
+	if got := b.picks.Load(); got < 2 {
+		t.Errorf("Pick calls = %d, want at least 2 (initial + single retry)", got)
 	}
 }
 

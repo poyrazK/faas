@@ -71,6 +71,26 @@ func (s *PgStore) QueueBindingHasInFlight(ctx context.Context, appID, bindingID,
 	return inFlight, nil
 }
 
+func (s *PgStore) QueueBindingTelemetry(ctx context.Context, appID, bindingID string, limit int) (QueueStats, error) {
+	app, binding, err := parseQueueBindingScope(appID, bindingID, "")
+	if err != nil {
+		return QueueStats{}, err
+	}
+	rows, err := queueDepthLimit(limit)
+	if err != nil {
+		return QueueStats{}, err
+	}
+	row, err := sqlc.New().QueueBindingTelemetry(ctx, s.pool, sqlc.QueueBindingTelemetryParams{AppID: app, BindingID: binding, RowLimit: rows})
+	if err != nil {
+		return QueueStats{}, mapErr(err)
+	}
+	stats := QueueStats{Depth: min(int(row.Depth), limit), InFlight: int(row.InFlight), DeadLetter: int(row.DeadLetter)}
+	if row.OldestPendingAt.Valid {
+		stats.OldestPendingAt = row.OldestPendingAt.Time
+	}
+	return stats, nil
+}
+
 func parseQueueBindingScope(appID, bindingID, scope string) (pgtype.UUID, pgtype.UUID, error) {
 	app, err := uuid.Parse(appID)
 	if err != nil {
@@ -108,4 +128,13 @@ func (m *MemStore) QueueBindingHasInFlight(_ context.Context, appID, bindingID, 
 	}
 	stats, err := m.queueStateForBinding(appID, bindingID, scope)
 	return stats.InFlight > 0, err
+}
+
+func (m *MemStore) QueueBindingTelemetry(_ context.Context, appID, bindingID string, limit int) (QueueStats, error) {
+	if _, err := queueDepthLimit(limit); err != nil {
+		return QueueStats{}, err
+	}
+	stats, err := m.queueStateForBinding(appID, bindingID, "")
+	stats.Depth, stats.InFlight, stats.DeadLetter = min(stats.Depth, limit), min(stats.InFlight, limit), min(stats.DeadLetter, limit)
+	return stats, err
 }
