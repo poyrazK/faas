@@ -5445,15 +5445,14 @@
         "scale"
       ],
       "docs_url": "/docs/tracing",
-      "acceptance_test": "pkg/apid/apidserver/handlers_selected_trace_test.go::TestSelectedAppTraceRoute",
+      "acceptance_test": "cmd/e2e/guest_tracing_metal_test.go::TestGuestTracingMetal",
       "settings": [
         "app.tracing",
         "manifest.tracing"
       ],
       "routes": [
         "/v1/account/traces",
-        "/v1/otel",
-        "/v1/traces"
+        "/v1/otel"
       ],
       "cli": [
         "trace"

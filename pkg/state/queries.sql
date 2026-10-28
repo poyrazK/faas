@@ -434,10 +434,21 @@ SELECT key FROM (
 ) keys WHERE coalesce(key, '') <> '' ORDER BY key;
 
 -- name: LayerArtifactHasReferences :one
+-- A superseded deployment among the newest rollback_generations live or
+-- superseded deployments of its app and scope is a rollback target, whose
+-- cold boot needs its layers whatever state its snapshots are in (Hunt 21
+-- H21-1).
 SELECT EXISTS (
     SELECT 1 FROM deployments d JOIN apps a ON a.id = d.app_id
     WHERE a.status <> 'deleted'
       AND ((d.deleted_at IS NULL AND d.status IN ('pending', 'building', 'imaging', 'snapshotting', 'live'))
+           OR (d.deleted_at IS NULL AND d.status = 'superseded' AND (
+                SELECT count(*) FROM deployments n
+                 WHERE n.app_id = d.app_id
+                   AND COALESCE(NULLIF(n.scope, ''), 'default') = COALESCE(NULLIF(d.scope, ''), 'default')
+                   AND n.deleted_at IS NULL AND n.status IN ('live', 'superseded')
+                   AND (n.created_at > d.created_at OR (n.created_at = d.created_at AND n.id > d.id))
+               ) < sqlc.arg(rollback_generations)::int)
            OR EXISTS (SELECT 1 FROM snapshots sn WHERE sn.deployment_id = d.id AND NOT sn.stale)
            OR EXISTS (SELECT 1 FROM instances i WHERE i.deployment_id = d.id AND i.state IN ('pending', 'waking', 'cold_booting', 'running', 'snapshotting', 'migrating', 'warm', 'frozen', 'draining'))
            OR EXISTS (SELECT 1 FROM deployment_aliases al WHERE al.deployment_id = d.id)
@@ -8102,6 +8113,10 @@ WITH metadata AS (
         a.account_id::text AS account_id, a.slug AS app_slug, a.status AS app_status,
         d.status AS deployment_status, s.fc_version, s.mem_bytes, s.disk_bytes,
         s.storage_key, s.stale, s.delete_pending, s.created_at, s.tier,
+        -- Stale retention counts from the stale mark, never from before the
+        -- row's creation; rows marked before stale_at existed count from
+        -- their creation (Hunt 21 H21-2).
+        GREATEST(s.stale_at, s.created_at)::timestamptz AS stale_since,
         COALESCE(NULLIF(d.scope,''),'default')::text AS scope,
         COALESCE(runtime_owner.environment_id::text,legacy.id::text,'')::text AS environment_id,
         COALESCE(d.rootfs_key,'')::text AS deployment_rootfs_key,
@@ -8130,7 +8145,7 @@ WITH metadata AS (
 )
 SELECT * FROM metadata
 WHERE (sqlc.arg(mode)::text='active' AND (NOT stale OR runtime_owner_invalid))
-    OR (sqlc.arg(mode)::text='stale' AND stale AND created_at<now()-sqlc.arg(retention_seconds)::bigint*interval '1 second')
+    OR (sqlc.arg(mode)::text='stale' AND stale AND stale_since<now()-sqlc.arg(retention_seconds)::bigint*interval '1 second')
     OR (sqlc.arg(mode)::text='pending' AND delete_pending)
 ORDER BY CASE WHEN sqlc.arg(mode)::text='active' THEN created_at END DESC,
     CASE WHEN sqlc.arg(mode)::text<>'active' THEN created_at END ASC, id ASC
@@ -8477,21 +8492,14 @@ SELECT id, account_id, slug, workload_name, status, project_id, preview_of_slug,
            'allowed_service_call_scopes', manifest->'allowed_service_call_scopes'))::jsonb AS manifest
 FROM apps WHERE slug = sqlc.arg(slug)::text AND status <> 'deleted';
 
--- name: ReadServicePolicyPreviewApp :one
-SELECT id, account_id, slug, workload_name, status, project_id, preview_of_slug,
-       preview_pr_number, preview_pr_state, preview_expires_at, app_protocol, websocket_enabled,
-       jsonb_strip_nulls(jsonb_build_object(
-           'service_bindings', manifest->'service_bindings',
-           'service_reliability', manifest->'service_reliability',
-           'service_binding_policy', manifest->'service_binding_policy',
-           'service_binding_transport', manifest->'service_binding_transport',
-           'preview_service_calls_policy', manifest->'preview_service_calls_policy',
-           'allowed_service_callers', manifest->'allowed_service_callers',
-           'allowed_service_call_scopes', manifest->'allowed_service_call_scopes'))::jsonb AS manifest
-FROM apps WHERE account_id = sqlc.arg(account_id)::uuid AND project_id = sqlc.arg(project_id)::uuid
+-- name: ServicePolicyPreviewAppIDs :many
+-- Two IDs suffice to refuse an ambiguous service name, as production does.
+SELECT id FROM apps WHERE account_id = sqlc.arg(account_id)::uuid AND project_id = sqlc.arg(project_id)::uuid
   AND preview_pr_number = sqlc.arg(preview_pr_number)::integer
   AND translate(lower(workload_name), '_.', '--') = translate(lower(sqlc.arg(workload_name)::text), '_.', '--')
-  AND preview_of_slug IS NOT NULL AND status <> 'deleted';
+  AND preview_of_slug IS NOT NULL AND status <> 'deleted'
+ORDER BY id
+LIMIT 2;
 
 -- name: ReadServicePolicyTestApp :one
 SELECT id, account_id, slug, workload_name, status, project_id, preview_of_slug,
@@ -8988,6 +8996,13 @@ SELECT pg_try_advisory_lock(hashtextextended(sqlc.arg(lock_key)::text,0))::boole
 
 -- name: UnlockTrafficPolicySession :one
 SELECT pg_advisory_unlock(hashtextextended(sqlc.arg(lock_key)::text,0))::boolean;
+
+-- name: TryLockTrafficPolicySessionShared :one
+-- A scoped binding writer's ancestor and root keys (ADR-20261027163626).
+SELECT pg_try_advisory_lock_shared(hashtextextended(sqlc.arg(lock_key)::text,0))::boolean;
+
+-- name: UnlockTrafficPolicySessionShared :one
+SELECT pg_advisory_unlock_shared(hashtextextended(sqlc.arg(lock_key)::text,0))::boolean;
 
 -- name: ReadEdgeRuleTrafficAccount :one
 SELECT account_id,kind FROM edge_rules WHERE id = sqlc.arg(rule_id)::uuid;

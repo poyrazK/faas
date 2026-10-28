@@ -159,6 +159,14 @@ egress:
 public_edge:
   compute_nodes: true
 
+# Customer log archive (pkg/logarchive). Keyless: every node's attached
+# service account holds roles/storage.objectUser on the bucket, whose
+# lifecycle rule deletes faas-logs/ objects after 90 days.
+log_archive:
+  bucket: gregale-prod-280686321025-log-archive
+  endpoint: https://storage.googleapis.com
+  auth: gcp_metadata
+
 dns:
   apps_domain: gregale.dev
   mode: cloudflare

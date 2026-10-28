@@ -177,6 +177,10 @@ type Manifest struct {
 	// the gateway unmanaged; strict fleet verify then fails if one runs.
 	ObjectStorage ObjectStorage `yaml:"object_storage,omitempty"`
 
+	// LogArchive is the bucket customer logs are archived to. Absent leaves
+	// each host's archive credential envelope untouched.
+	LogArchive LogArchive `yaml:"log_archive,omitempty"`
+
 	// WorkloadIdentity turns on workload-identity tokens (ADR-1141): the
 	// renderer hands its source directory to every control-plane and
 	// compute host, so the roles install the JWKS and the signing key.
@@ -1110,6 +1114,7 @@ func (m *Manifest) Validate() Errors {
 	errs = append(errs, m.PKI.validate()...)
 	errs = append(errs, m.Egress.validate(m.Overlay.CIDR)...)
 	errs = append(errs, m.ObjectStorage.validate()...)
+	errs = append(errs, m.LogArchive.validate()...)
 	errs = append(errs, m.WorkloadIdentity.validate()...)
 	if len(errs) > 0 {
 		return errs
