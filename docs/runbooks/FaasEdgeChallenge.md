@@ -2,11 +2,13 @@
 
 Source: `deploy/ansible/roles/prometheus/files/faas.rules.yml`, group
 `faas_edge_security` (ADR-20261024082000 amendment 1).
-Alerts: `FaasEdgeChallengeSolveRateLow`, `FaasEdgeChallengeSolutionsRefused`.
+Alerts: `FaasEdgeChallengeSolveRateLow`, `FaasEdgeChallengeSolutionsRefused`,
+`FaasEdgeChallengeKeyMismatch`.
 Metric: `gateway_edge_challenge_total{app,outcome}` (issued, solved, passed,
-bypassed, rejected, invalid, expired) and
-`gateway_edge_challenge_raised_total{app}`.
-Design: ADR-831 amendments 7 and 8.
+bypassed, rejected, invalid, expired),
+`gateway_edge_challenge_raised_total{app}` and
+`gateway_edge_challenge_key_info{key_id,source}`.
+Design: ADR-831 amendments 7, 8 and 17.
 Severity: warn.
 
 ## Symptom
@@ -16,6 +18,11 @@ Severity: warn.
   criterion H5 expects 90% over 14 days.
 - **SolutionsRefused**: one gateway refuses more than half the solutions it
   receives as `invalid` or `expired`.
+- **KeyMismatch**: the gateways report more than one challenge key. A pass one
+  of them issues is refused by the others, and gatewayd-public sends a
+  visitor's requests to any of them, so visitors are challenged again and
+  again. It fires before any challenge is served, as soon as two gateways run
+  with different keys.
 
 ## Verify
 
@@ -29,6 +36,9 @@ topk(5, sum by (app) (rate(gateway_edge_challenge_total{outcome="issued"}[1h])))
 
 # Refusals per gateway
 sum by (instance, outcome) (rate(gateway_edge_challenge_total{outcome=~"solved|invalid|expired"}[15m]))
+
+# The key each gateway signs with: one key_id, source="fleet", on every gateway
+gateway_edge_challenge_key_info{job="gatewayd-internal"}
 ```
 
 ```bash
@@ -51,8 +61,11 @@ gregale edge-rules events --app <slug> --outcome failed --since 1h
   whichever gateway receives it, against the key and clock of the one that
   served the page. `expired` points at clock skew (check `timedatectl` and
   `FaasHostClock`); `invalid` at a challenge key that differs between
-  gateways. The key derives from the session binding key, so a gateway
-  started with a different binding key refuses the others' pages.
+  gateways (`KeyMismatch` fires too).
+- **Key mismatch**: a gateway with `source="session"` signs with its own
+  host's session key, which `gregalectl secrets init` makes per host, so two
+  such gateways never agree. A gateway with `source="fleet"` but its own
+  `key_id` was given another `gatewayd_edge_challenge_key`.
 
 ## Silence
 
@@ -69,5 +82,13 @@ amtool silence add --matchers='alertname=~"FaasEdgeChallenge.*"' --duration=2h \
    or withdraw challenges while it is fixed with
    `gregalectl flags disable --key edge_challenge --reason "..." --yes`
    (challenge rules and attack mode stop challenging; nothing is deleted).
-3. Key or clock drift on one gateway: fix the clock or the binding key, then
-   restart that gateway. Visitors sent back to the challenge solve it again.
+3. Clock drift on one gateway: fix the clock, then restart that gateway.
+   Visitors sent back to the challenge solve it again.
+4. Key mismatch: put one key in the fleet vault as
+   `gatewayd_edge_challenge_key` (`openssl rand -hex 32`) and run the
+   `gatewayd_internal_service` role on every gateway host with
+   `gatewayd_edge_challenge_key_required=true`. The role installs it as
+   `FAAS_EDGE_CHALLENGE_KEY_FILE` and restarts gatewayd-internal; every
+   gateway then reports the same `key_id` with `source="fleet"`. Passes signed
+   with an old key are refused once, and their visitors solve the challenge
+   again.

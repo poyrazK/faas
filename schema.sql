@@ -4446,6 +4446,7 @@ CREATE TABLE public.snapshots (
     recovery_generation bigint DEFAULT 0 NOT NULL,
     cpu_template text DEFAULT ''::text NOT NULL,
     cpu_model text DEFAULT ''::text NOT NULL,
+    stale_at timestamp with time zone,
     CONSTRAINT snapshots_recovery_generation_check CHECK ((recovery_generation >= 0)),
     CONSTRAINT snapshots_stored_bytes_nonnegative CHECK ((stored_bytes >= 0)),
     CONSTRAINT snapshots_tier_check CHECK ((tier = ANY (ARRAY['init'::text, 'warm'::text])))
@@ -26974,6 +26975,23 @@ BEGIN
     RETURN NEW;
 END;
 $$;
+
+
+--
+-- Name: snapshot_stale_at_stamp(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.snapshot_stale_at_stamp() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    IF NEW.stale AND NOT OLD.stale THEN
+        NEW.stale_at := clock_timestamp();
+    ELSIF NOT NEW.stale THEN
+        NEW.stale_at := NULL;
+    END IF;
+    RETURN NEW;
+END $$;
 
 
 --
@@ -67482,6 +67500,14 @@ ALTER TABLE ONLY public.snapshots
 
 
 --
+-- Name: snapshots snapshots_stale_at_check; Type: CHECK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE public.snapshots
+    ADD CONSTRAINT snapshots_stale_at_check CHECK (((stale_at IS NULL) OR stale)) NOT VALID;
+
+
+--
 -- Name: source_build_rootfs_current source_build_rootfs_current_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -84777,6 +84803,13 @@ CREATE TRIGGER snapshot_stale_after_app_ram_change AFTER UPDATE OF ram_mb ON pub
 --
 
 CREATE TRIGGER snapshot_stale_after_terminal_deployment AFTER UPDATE OF status ON public.deployments FOR EACH ROW WHEN (((new.status = ANY (ARRAY['failed'::text, 'cancelled'::text])) AND (old.status IS DISTINCT FROM new.status))) EXECUTE FUNCTION public.snapshot_stale_after_terminal_deployment();
+
+
+--
+-- Name: snapshots snapshot_stale_at_stamp; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER snapshot_stale_at_stamp BEFORE UPDATE OF stale ON public.snapshots FOR EACH ROW EXECUTE FUNCTION public.snapshot_stale_at_stamp();
 
 
 --

@@ -11573,6 +11573,11 @@ func (s *PgStore) prepareDeploymentRollbackOnce(ctx context.Context, appID, targ
 	if target.Status != DeploySuperseded && (target.Status != DeployLive || target.TrafficPercent != 0) {
 		return Deployment{}, ErrRollbackTargetAlreadyLive
 	}
+	// A target whose layers were reclaimed cannot cold boot; refuse it here
+	// rather than fail its readiness prime later (Hunt 21 H21-1).
+	if err := requireDeploymentLayerArtifactsTx(ctx, tx, target.ID); err != nil {
+		return Deployment{}, err
+	}
 
 	now := time.Now().UTC()
 	prepared, err := scanDeploymentWithRootfs(tx.QueryRow(ctx, `
@@ -18870,10 +18875,12 @@ func (s *PgStore) MarkSnapshotStaleByAppProtocol(ctx context.Context, snapshotID
 // (typically 7 days per api.SnapshotStaleRetention) so an operator
 // rollback across an FC upgrade doesn't pay an extra cold boot.
 // F-07 closes the gap where the prior sweep only flipped stale=true
-// and stale rows accumulated indefinitely.
+// and stale rows accumulated indefinitely. Retention counts from the stale
+// mark; a row older than the window but marked stale today used to go on
+// the next sweep (Hunt 21 H21-2).
 func (s *PgStore) DeleteSnapshotsStaleOlderThan(ctx context.Context, retention time.Duration) (int64, error) {
 	tag, err := s.pool.Exec(ctx,
-		`delete from snapshots where stale = true and created_at < now() - $1::interval`,
+		`delete from snapshots where stale = true and greatest(stale_at, created_at) < now() - $1::interval`,
 		fmt.Sprintf("%d seconds", int64(retention.Seconds())))
 	if err != nil {
 		return 0, err

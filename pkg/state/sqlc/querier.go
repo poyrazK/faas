@@ -2985,7 +2985,11 @@ type Querier interface {
 	LatestSnapshot(ctx context.Context, db DBTX, deploymentID pgtype.UUID) (Snapshot, error)
 	LatestSnapshotForTier(ctx context.Context, db DBTX, arg LatestSnapshotForTierParams) (Snapshot, error)
 	LatestSupersededDeployment(ctx context.Context, db DBTX, appID pgtype.UUID) (LatestSupersededDeploymentRow, error)
-	LayerArtifactHasReferences(ctx context.Context, db DBTX, storageKey string) (pgtype.Bool, error)
+	// A superseded deployment among the newest rollback_generations live or
+	// superseded deployments of its app and scope is a rollback target, whose
+	// cold boot needs its layers whatever state its snapshots are in (Hunt 21
+	// H21-1).
+	LayerArtifactHasReferences(ctx context.Context, db DBTX, arg LayerArtifactHasReferencesParams) (pgtype.Bool, error)
 	LifecycleApprovalClock(ctx context.Context, db DBTX) (pgtype.Timestamptz, error)
 	LifecycleHistoryCursorExists(ctx context.Context, db DBTX, arg LifecycleHistoryCursorExistsParams) (bool, error)
 	LiftReleaseFreeze(ctx context.Context, db DBTX, arg LiftReleaseFreezeParams) (ReleaseFreeze, error)

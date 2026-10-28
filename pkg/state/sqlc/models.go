@@ -14338,6 +14338,7 @@ type Snapshot struct {
 	CpuTemplate string
 	// Host CPU signature of the capturing node; a template-less snapshot restores only on the identical signature.
 	CpuModel string
+	StaleAt  pgtype.Timestamptz
 }
 
 type SnapshotFanoutEvent struct {
